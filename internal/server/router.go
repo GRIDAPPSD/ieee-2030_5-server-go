@@ -29,6 +29,9 @@ type Stores struct {
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]
 	DERCurves          *memory.Store[sep2.DERCurve]
 
+	// FSA store
+	FSAs *memory.ScopedStore[sep2.FunctionSetAssignments]
+
 	// Subscription store
 	Subscriptions *memory.SubscriptionStore
 }
@@ -74,6 +77,14 @@ func registerEndDeviceRoutes(mux *http.ServeMux, stores *Stores) {
 	mux.HandleFunc("GET /edev/{id}", handler.HandleEndDevice(stores.EndDevices))
 	mux.HandleFunc("PUT /edev/{id}", handler.HandleUpdateEndDevice(stores.EndDevices))
 	mux.HandleFunc("DELETE /edev/{id}", handler.HandleDeleteEndDevice(stores.EndDevices))
+
+	// FSA endpoints
+	if stores.FSAs != nil {
+		mux.HandleFunc("GET /edev/{id}/fsa", scopedListHandler[sep2.FunctionSetAssignments, sep2.FunctionSetAssignmentsList](
+			stores.FSAs, handler.BuildFSAList, 900,
+		))
+		mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}", handler.HandleFSA(stores.FSAs))
+	}
 
 	// Subscription endpoints
 	if stores.Subscriptions != nil {

@@ -12,17 +12,33 @@ import (
 	"github.com/craig8/ieee-2030_5-go/internal/config"
 	"github.com/craig8/ieee-2030_5-go/internal/handler"
 	sepTLS "github.com/craig8/ieee-2030_5-go/internal/tls"
+	"github.com/craig8/ieee-2030_5-go/pkg/store/memory"
 )
 
 // Run starts the IEEE 2030.5 server with mutual TLS and optionally
-// an admin HTTPS server on a separate port with auto self-signed cert.
+// an admin HTTPS server on a separate port.
 func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService) error {
 	tlsCfg, err := sepTLS.NewServerTLSConfig(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
 	if err != nil {
 		return fmt.Errorf("TLS config: %w", err)
 	}
 
-	router := NewRouter(cfg, svc)
+	// Compute server identity from its own certificate
+	serverSFDI, serverLFDI := "", ""
+	if len(tlsCfg.Certificates) > 0 {
+		leaf := tlsCfg.Certificates[0]
+		if leaf.Leaf != nil {
+			serverSFDI = sepTLS.SFDI(leaf.Leaf)
+			serverLFDI = sepTLS.LFDI(leaf.Leaf)
+		}
+	}
+
+	// Initialize stores
+	stores := &Stores{
+		EndDevices: memory.NewEndDeviceStore(),
+	}
+
+	router := NewRouter(cfg, stores, svc, serverSFDI, serverLFDI)
 
 	listener, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
@@ -40,7 +56,6 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		errCh <- protocolSrv.Serve(tlsListener)
 	}()
 
-	// Start admin HTTPS server if configured
 	var adminSrv *http.Server
 	if cfg.AdminAddr != "" && svc != nil {
 		adminSrv, err = startAdminServer(cfg, svc, errCh)
@@ -64,7 +79,6 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 }
 
 func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, errCh chan error) (*http.Server, error) {
-	// Auto-generate self-signed TLS cert for admin listener
 	adminCertPEM, adminKeyPEM, err := certs.GenerateSelfSignedTLS([]string{"localhost", "127.0.0.1", "::1"})
 	if err != nil {
 		return nil, fmt.Errorf("generate admin TLS cert: %w", err)

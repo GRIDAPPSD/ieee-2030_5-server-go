@@ -15,6 +15,7 @@ import (
 	"github.com/craig8/ieee-2030_5-go/internal/server"
 	sepTLS "github.com/craig8/ieee-2030_5-go/internal/tls"
 	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
+	"github.com/craig8/ieee-2030_5-go/pkg/store/memory"
 )
 
 func TestAdminIntegrationBearerToken(t *testing.T) {
@@ -155,7 +156,8 @@ func TestProtocolRegressionWithAdminEnabled(t *testing.T) {
 	defer listener.Close()
 
 	tlsListener := tls.NewListener(listener, serverTLSCfg)
-	router := server.NewRouter(cfg, env.svc)
+	stores := &server.Stores{EndDevices: memory.NewEndDeviceStore()}
+	router := server.NewRouter(cfg, stores, env.svc, "", "")
 	srv := &http.Server{Handler: router}
 	go srv.Serve(tlsListener)
 	defer srv.Close()

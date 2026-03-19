@@ -6,22 +6,47 @@ import (
 	"github.com/craig8/ieee-2030_5-go/internal/auth"
 	"github.com/craig8/ieee-2030_5-go/internal/config"
 	"github.com/craig8/ieee-2030_5-go/internal/handler"
+	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
+	"github.com/craig8/ieee-2030_5-go/pkg/store"
 )
 
+// Stores holds all resource stores for the server.
+type Stores struct {
+	EndDevices store.EndDeviceStore
+}
+
 // NewRouter creates the HTTP router for the protocol listener.
-// Protocol endpoints get identity middleware (SFDI/LFDI extraction).
-// Admin API endpoints (/api/) get admin auth middleware (mTLS OID or Bearer).
-func NewRouter(cfg *config.Config, svc *handler.AdminCertService) http.Handler {
+func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService, serverSFDI, serverLFDI string) http.Handler {
 	top := http.NewServeMux()
 
-	// IEEE 2030.5 protocol endpoints — identity middleware
+	// Protocol endpoints
 	protocolMux := http.NewServeMux()
-	protocolMux.Handle("GET /dcap", handler.HandleDeviceCapability())
-	protocolMux.Handle("GET /tm", handler.HandleTime(cfg))
-	top.Handle("/dcap", auth.IdentityMiddleware(protocolMux))
-	top.Handle("/tm", auth.IdentityMiddleware(protocolMux))
+	protocolMux.HandleFunc("GET /dcap", handler.HandleDeviceCapability())
+	protocolMux.HandleFunc("GET /tm", handler.HandleTime(cfg))
+	protocolMux.HandleFunc("GET /sdev", handler.HandleSelfDevice(serverSFDI, serverLFDI))
 
-	// Admin API on protocol port — admin auth middleware (mTLS with admin OID)
+	// EndDevice endpoints
+	if stores != nil {
+		protocolMux.HandleFunc("GET /edev", handler.ListHandler[sep2.EndDevice, sep2.EndDeviceList](
+			stores.EndDevices, handler.BuildEndDeviceList, 900,
+		))
+		protocolMux.HandleFunc("POST /edev", handler.HandleCreateEndDevice(stores.EndDevices))
+		protocolMux.HandleFunc("GET /edev/{id}", handler.HandleEndDevice(stores.EndDevices))
+		protocolMux.HandleFunc("PUT /edev/{id}", handler.HandleUpdateEndDevice(stores.EndDevices))
+		protocolMux.HandleFunc("DELETE /edev/{id}", handler.HandleDeleteEndDevice(stores.EndDevices))
+	}
+
+	// Wrap protocol routes: identity extraction → ACL check → handler
+	aclRules := auth.DefaultACLRules()
+	protocolChain := auth.IdentityMiddleware(auth.ACLMiddleware(aclRules)(protocolMux))
+
+	top.Handle("/dcap", protocolChain)
+	top.Handle("/tm", protocolChain)
+	top.Handle("/sdev", protocolChain)
+	top.Handle("/edev", protocolChain)
+	top.Handle("/edev/", protocolChain)
+
+	// Admin API on protocol port (mTLS with admin OID)
 	if svc != nil {
 		adminMux := http.NewServeMux()
 		adminMux.HandleFunc("GET /api/certs/ca", svc.HandleGetCA())

@@ -14,7 +14,15 @@ const (
 )
 
 // NegotiateEncoder selects the appropriate encoder based on the Accept header.
-// Phase 1: always returns XML. Phase 3 will add EXI support.
+// Returns nil if the requested encoding is not supported (caller should return 406).
 func NegotiateEncoder(accept string) Encoder {
+	if accept == ContentTypeSEPEXI {
+		return nil // EXI not yet supported
+	}
 	return NewXMLEncoder()
+}
+
+// IsEXIRequested returns true if the Accept header requests EXI encoding.
+func IsEXIRequested(accept string) bool {
+	return accept == ContentTypeSEPEXI
 }

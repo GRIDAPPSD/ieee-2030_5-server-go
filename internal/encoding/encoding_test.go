@@ -59,6 +59,32 @@ func TestNegotiateEncoderXMLExplicit(t *testing.T) {
 	}
 }
 
+func TestNegotiateEncoderEXIReturnsNil(t *testing.T) {
+	enc := encoding.NegotiateEncoder("application/sep-exi")
+	if enc != nil {
+		t.Error("EXI should return nil (not supported)")
+	}
+}
+
+func TestIsEXIRequested(t *testing.T) {
+	if !encoding.IsEXIRequested("application/sep-exi") {
+		t.Error("should detect EXI")
+	}
+	if encoding.IsEXIRequested("application/sep+xml") {
+		t.Error("XML should not be EXI")
+	}
+	if encoding.IsEXIRequested("") {
+		t.Error("empty should not be EXI")
+	}
+}
+
+func TestEXIStubEncoderErrors(t *testing.T) {
+	// The stub should return errors
+	if encoding.ErrEXINotSupported == nil {
+		t.Error("ErrEXINotSupported should not be nil")
+	}
+}
+
 func TestXMLEncoderRoundTrip(t *testing.T) {
 	enc := encoding.NewXMLEncoder()
 

@@ -114,7 +114,11 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// Start admin HTTPS server if configured
 	var adminSrv *http.Server
 	if cfg.AdminAddr != "" && svc != nil {
-		adminSrv, err = startAdminServer(cfg, svc, errCh)
+		tlsModeName := "GCM"
+		if cfg.EnableCCM {
+			tlsModeName = "CCM-8"
+		}
+		adminSrv, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh)
 		if err != nil {
 			protocolSrv.Close()
 			return fmt.Errorf("admin server: %w", err)
@@ -134,7 +138,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	}
 }
 
-func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, errCh chan error) (*http.Server, error) {
+func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error) (*http.Server, error) {
 	adminCertPEM, adminKeyPEM, err := certs.GenerateSelfSignedTLS([]string{"localhost", "127.0.0.1", "::1"})
 	if err != nil {
 		return nil, fmt.Errorf("generate admin TLS cert: %w", err)
@@ -150,7 +154,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, errCh c
 		MinVersion:   tls.VersionTLS12,
 	}
 
-	adminRouter := NewAdminRouter(cfg.AdminKey, svc)
+	adminRouter := NewAdminRouter(cfg.AdminKey, svc, stores, tlsMode)
 
 	adminListener, err := net.Listen("tcp", cfg.AdminAddr)
 	if err != nil {

@@ -2,11 +2,12 @@ package config
 
 // Config holds server configuration.
 type Config struct {
-	Addr        string // listen address (e.g., ":443")
+	Addr        string // listen address for IEEE 2030.5 protocol (e.g., ":443")
 	CertFile    string // server cert PEM path
 	KeyFile     string // server key PEM path
 	CAFile      string // CA cert PEM path
-	AdminAddr   string // admin/management API listen address (e.g., ":8080")
+	AdminAddr   string // admin HTTPS listener address (e.g., ":8443")
+	AdminKey    string // Bearer token for admin API (empty = Bearer auth disabled)
 	TZOffset    int32  // timezone offset from UTC in seconds
 	DSTOffset   int32  // DST offset in seconds
 	DSTStart    int64  // DST start (unix seconds)

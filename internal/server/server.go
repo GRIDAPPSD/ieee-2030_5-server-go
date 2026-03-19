@@ -12,6 +12,7 @@ import (
 	"github.com/craig8/ieee-2030_5-go/internal/config"
 	"github.com/craig8/ieee-2030_5-go/internal/handler"
 	sepTLS "github.com/craig8/ieee-2030_5-go/internal/tls"
+	gotls "github.com/craig8/ieee-2030_5-go/internal/tls/gotls"
 	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
 	"github.com/craig8/ieee-2030_5-go/pkg/store/memory"
 )
@@ -19,20 +20,8 @@ import (
 // Run starts the IEEE 2030.5 server with mutual TLS and optionally
 // an admin HTTPS server on a separate port.
 func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService) error {
-	tlsCfg, err := sepTLS.NewServerTLSConfig(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
-	if err != nil {
-		return fmt.Errorf("TLS config: %w", err)
-	}
-
-	// Compute server identity from its own certificate
+	// Compute server identity from certificate
 	serverSFDI, serverLFDI := "", ""
-	if len(tlsCfg.Certificates) > 0 {
-		leaf := tlsCfg.Certificates[0]
-		if leaf.Leaf != nil {
-			serverSFDI = sepTLS.SFDI(leaf.Leaf)
-			serverLFDI = sepTLS.LFDI(leaf.Leaf)
-		}
-	}
 
 	// Initialize stores
 	stores := &Stores{
@@ -60,16 +49,51 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	}
 	defer listener.Close()
 
-	tlsListener := tls.NewListener(listener, tlsCfg)
-	protocolSrv := &http.Server{Handler: router}
+	var tlsListener net.Listener
+	protocolSrv := &http.Server{}
+
+	if cfg.EnableCCM {
+		// CCM-8 mode: use forked crypto/tls with IEEE 2030.5 mandatory cipher
+		ccmCfg, err := sepTLS.NewCCMServerConfig(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
+		if err != nil {
+			return fmt.Errorf("CCM TLS config: %w", err)
+		}
+		tlsListener = gotls.NewListener(listener, ccmCfg)
+
+		// Bridge: inject gotls connection state into request context
+		sepTLS.SetupCCMServer(protocolSrv)
+		protocolSrv.Handler = sepTLS.CCMIdentityMiddleware(router)
+
+		log.Printf("IEEE 2030.5 server listening on %s (mTLS, CCM-8 primary)", cfg.Addr)
+	} else {
+		// GCM fallback mode: standard crypto/tls
+		tlsCfg, err := sepTLS.NewServerTLSConfig(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
+		if err != nil {
+			return fmt.Errorf("TLS config: %w", err)
+		}
+
+		// Compute server identity
+		if len(tlsCfg.Certificates) > 0 {
+			leaf := tlsCfg.Certificates[0]
+			if leaf.Leaf != nil {
+				serverSFDI = sepTLS.SFDI(leaf.Leaf)
+				serverLFDI = sepTLS.LFDI(leaf.Leaf)
+			}
+		}
+
+		tlsListener = tls.NewListener(listener, tlsCfg)
+		protocolSrv.Handler = router
+
+		log.Printf("IEEE 2030.5 server listening on %s (mTLS, GCM)", cfg.Addr)
+	}
 
 	errCh := make(chan error, 2)
 
 	go func() {
-		log.Printf("IEEE 2030.5 protocol server listening on %s (mTLS)", cfg.Addr)
 		errCh <- protocolSrv.Serve(tlsListener)
 	}()
 
+	// Start admin HTTPS server if configured
 	var adminSrv *http.Server
 	if cfg.AdminAddr != "" && svc != nil {
 		adminSrv, err = startAdminServer(cfg, svc, errCh)

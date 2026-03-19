@@ -51,6 +51,9 @@ func runServe() error {
 		AdminKey:    os.Getenv("SEP2_ADMIN_KEY"),
 		TZOffset:    -28800,
 		TimeQuality: 7,
+		EnableCCM:   os.Getenv("SEP2_CCM") == "true",
+		EnableMDNS:  os.Getenv("SEP2_MDNS") == "true",
+		MDNSHost:    envOr("SEP2_MDNS_HOST", "localhost"),
 	}
 
 	// Load CA for admin cert service

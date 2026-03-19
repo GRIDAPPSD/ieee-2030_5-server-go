@@ -8,9 +8,8 @@ import (
 )
 
 // NewAdminRouter creates the admin API router with auth middleware.
-// All routes are JSON endpoints protected by AdminAuthMiddleware.
-// The admin port also serves the admin UI at / (future).
-func NewAdminRouter(adminKey string, svc *handler.AdminCertService) http.Handler {
+// Serves the HTML dashboard at /, JSON API at /api/, and SSE at /dashboard/.
+func NewAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string) http.Handler {
 	mux := http.NewServeMux()
 
 	// Certificate management API
@@ -18,16 +17,11 @@ func NewAdminRouter(adminKey string, svc *handler.AdminCertService) http.Handler
 	mux.HandleFunc("POST /api/certs/server", svc.HandleCreateServerCert())
 	mux.HandleFunc("POST /api/certs/device", svc.HandleCreateDeviceCert())
 
-	// Placeholder for admin UI (future)
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(`<!DOCTYPE html><html><head><title>IEEE 2030.5 Admin</title></head>
-<body><h1>IEEE 2030.5 Server Admin</h1><p>Admin API available at /api/</p></body></html>`))
-	})
+	// Admin dashboard
+	if stores != nil {
+		dashboard := NewDashboardHandler(stores, tlsMode)
+		dashboard.RegisterRoutes(mux)
+	}
 
 	return auth.AdminAuthMiddleware(adminKey)(mux)
 }

@@ -17,7 +17,6 @@ import (
 	"github.com/craig8/ieee-2030_5-go/internal/server"
 	sepTLS "github.com/craig8/ieee-2030_5-go/internal/tls"
 	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
-	"github.com/craig8/ieee-2030_5-go/pkg/store/memory"
 )
 
 func TestIntegrationEndToEnd(t *testing.T) {
@@ -73,11 +72,7 @@ func TestIntegrationEndToEnd(t *testing.T) {
 	defer listener.Close()
 
 	tlsListener := tls.NewListener(listener, serverTLSCfg)
-	stores := &server.Stores{
-		EndDevices:          memory.NewEndDeviceStore(),
-		MirrorUsagePoints:   memory.NewStore[sep2.MirrorUsagePoint](),
-		MirrorMeterReadings: memory.NewScopedStore[sep2.MirrorMeterReading](),
-	}
+	stores := newTestStores()
 	router := server.NewRouter(cfg, stores, nil, "", "")
 	srv := &http.Server{Handler: router}
 	go srv.Serve(tlsListener)

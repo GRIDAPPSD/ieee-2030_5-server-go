@@ -19,6 +19,7 @@ func HandleDeviceCapability() http.HandlerFunc {
 		},
 		SelfDeviceLink:           &sep2.Link{Href: "/sdev"},
 		MirrorUsagePointListLink: &sep2.ListLink{Href: "/mup"},
+		DERProgramListLink:       &sep2.ListLink{Href: "/dc"},
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {

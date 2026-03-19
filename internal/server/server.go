@@ -48,6 +48,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		DERControls:        memory.NewScopedStore[sep2.DERControl](),
 		DefaultDERControls: memory.NewScopedStore[sep2.DefaultDERControl](),
 		DERCurves:          memory.NewStore[sep2.DERCurve](),
+		FSAs:               memory.NewScopedStore[sep2.FunctionSetAssignments](),
 		Subscriptions:      memory.NewSubscriptionStore(),
 	}
 

@@ -1,0 +1,48 @@
+# AI assistant files
+CLAUDE.md
+.claude/
+*.claude
+
+# Documentation PDFs (copyrighted specs - do not distribute)
+docs/*.pdf
+docs/**/*.pdf
+
+# Go build artifacts
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Go coverage
+*.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Temporary files
+tmp/
+*.tmp

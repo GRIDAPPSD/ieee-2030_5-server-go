@@ -37,6 +37,7 @@ func DefaultACLRules() []ACLRule {
 		{"/tm", MethodGet | MethodHead, AuthNone | AuthDeviceCert, false},
 		{"/sdev", MethodGet | MethodHead, AuthDeviceCert, false},
 		{"/edev", MethodGet | MethodHead | MethodPost, AuthDeviceCert, false},
+		{"/mup", MethodGet | MethodHead | MethodPost, AuthDeviceCert, false},
 	}
 }
 

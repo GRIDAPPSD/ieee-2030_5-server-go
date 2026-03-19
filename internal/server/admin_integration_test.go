@@ -156,7 +156,11 @@ func TestProtocolRegressionWithAdminEnabled(t *testing.T) {
 	defer listener.Close()
 
 	tlsListener := tls.NewListener(listener, serverTLSCfg)
-	stores := &server.Stores{EndDevices: memory.NewEndDeviceStore()}
+	stores := &server.Stores{
+		EndDevices:          memory.NewEndDeviceStore(),
+		MirrorUsagePoints:   memory.NewStore[sep2.MirrorUsagePoint](),
+		MirrorMeterReadings: memory.NewScopedStore[sep2.MirrorMeterReading](),
+	}
 	router := server.NewRouter(cfg, stores, env.svc, "", "")
 	srv := &http.Server{Handler: router}
 	go srv.Serve(tlsListener)

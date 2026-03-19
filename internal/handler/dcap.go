@@ -17,7 +17,8 @@ func HandleDeviceCapability() http.HandlerFunc {
 		EndDeviceListLink: &sep2.ListLink{
 			Href: "/edev",
 		},
-		SelfDeviceLink: &sep2.Link{Href: "/sdev"},
+		SelfDeviceLink:           &sep2.Link{Href: "/sdev"},
+		MirrorUsagePointListLink: &sep2.ListLink{Href: "/mup"},
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {

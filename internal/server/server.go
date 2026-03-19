@@ -12,6 +12,7 @@ import (
 	"github.com/craig8/ieee-2030_5-go/internal/config"
 	"github.com/craig8/ieee-2030_5-go/internal/handler"
 	sepTLS "github.com/craig8/ieee-2030_5-go/internal/tls"
+	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
 	"github.com/craig8/ieee-2030_5-go/pkg/store/memory"
 )
 
@@ -35,7 +36,9 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 
 	// Initialize stores
 	stores := &Stores{
-		EndDevices: memory.NewEndDeviceStore(),
+		EndDevices:          memory.NewEndDeviceStore(),
+		MirrorUsagePoints:   memory.NewStore[sep2.MirrorUsagePoint](),
+		MirrorMeterReadings: memory.NewScopedStore[sep2.MirrorMeterReading](),
 	}
 
 	router := NewRouter(cfg, stores, svc, serverSFDI, serverLFDI)

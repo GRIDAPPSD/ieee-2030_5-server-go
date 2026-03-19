@@ -8,13 +8,15 @@ import (
 
 func TestRegister(t *testing.T) {
 	reg, err := discovery.Register(discovery.Config{
-		Hostname: "localhost",
+		Hostname: "test-server",
 		Port:     443,
 		Path:     "/dcap",
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Register: %v", err)
 	}
+	defer reg.Close()
+
 	if !reg.IsActive() {
 		t.Error("registration should be active")
 	}
@@ -22,12 +24,14 @@ func TestRegister(t *testing.T) {
 
 func TestRegisterDefaultPath(t *testing.T) {
 	reg, err := discovery.Register(discovery.Config{
-		Hostname: "localhost",
-		Port:     443,
+		Hostname: "test-default",
+		Port:     8443,
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Register: %v", err)
 	}
+	defer reg.Close()
+
 	if !reg.IsActive() {
 		t.Error("registration should be active")
 	}
@@ -35,7 +39,7 @@ func TestRegisterDefaultPath(t *testing.T) {
 
 func TestRegisterInvalidPort(t *testing.T) {
 	_, err := discovery.Register(discovery.Config{
-		Hostname: "localhost",
+		Hostname: "test",
 		Port:     0,
 	})
 	if err == nil {
@@ -44,10 +48,13 @@ func TestRegisterInvalidPort(t *testing.T) {
 }
 
 func TestClose(t *testing.T) {
-	reg, _ := discovery.Register(discovery.Config{
-		Hostname: "localhost",
+	reg, err := discovery.Register(discovery.Config{
+		Hostname: "test-close",
 		Port:     443,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	reg.Close()
 	if reg.IsActive() {
@@ -56,10 +63,13 @@ func TestClose(t *testing.T) {
 }
 
 func TestCloseIdempotent(t *testing.T) {
-	reg, _ := discovery.Register(discovery.Config{
-		Hostname: "localhost",
+	reg, err := discovery.Register(discovery.Config{
+		Hostname: "test-idempotent",
 		Port:     443,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	reg.Close()
 	reg.Close() // should not panic

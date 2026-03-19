@@ -28,6 +28,9 @@ type Stores struct {
 	DERControls        *memory.ScopedStore[sep2.DERControl]
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]
 	DERCurves          *memory.Store[sep2.DERCurve]
+
+	// Subscription store
+	Subscriptions *memory.SubscriptionStore
 }
 
 // NewRouter creates the HTTP router for the protocol listener.
@@ -71,6 +74,15 @@ func registerEndDeviceRoutes(mux *http.ServeMux, stores *Stores) {
 	mux.HandleFunc("GET /edev/{id}", handler.HandleEndDevice(stores.EndDevices))
 	mux.HandleFunc("PUT /edev/{id}", handler.HandleUpdateEndDevice(stores.EndDevices))
 	mux.HandleFunc("DELETE /edev/{id}", handler.HandleDeleteEndDevice(stores.EndDevices))
+
+	// Subscription endpoints
+	if stores.Subscriptions != nil {
+		mux.HandleFunc("GET /edev/{id}/sub", handler.ListHandler[sep2.Subscription, sep2.SubscriptionList](
+			stores.Subscriptions.Store, handler.BuildSubscriptionList, 900,
+		))
+		mux.HandleFunc("POST /edev/{id}/sub", handler.HandleCreateSubscription(stores.Subscriptions))
+		mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", handler.HandleDeleteSubscription(stores.Subscriptions))
+	}
 }
 
 func registerMirrorRoutes(mux *http.ServeMux, stores *Stores) {

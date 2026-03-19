@@ -20,5 +20,6 @@ func newTestStores() *server.Stores {
 		DERControls:        memory.NewScopedStore[sep2.DERControl](),
 		DefaultDERControls: memory.NewScopedStore[sep2.DefaultDERControl](),
 		DERCurves:          memory.NewStore[sep2.DERCurve](),
+		Subscriptions:      memory.NewSubscriptionStore(),
 	}
 }

@@ -43,3 +43,9 @@ func GetIdentity(ctx context.Context) (DeviceIdentity, bool) {
 	id, ok := ctx.Value(identityKey).(DeviceIdentity)
 	return id, ok
 }
+
+// IdentityContextKey returns the context key used for DeviceIdentity.
+// Exported for test helpers that need to inject identity into context.
+func IdentityContextKey() contextKey {
+	return identityKey
+}

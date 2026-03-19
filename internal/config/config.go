@@ -13,4 +13,7 @@ type Config struct {
 	DSTStart    int64  // DST start (unix seconds)
 	DSTEnd      int64  // DST end (unix seconds)
 	TimeQuality uint8  // TimeQualityType per spec section 9.2
+	EnableCCM   bool   // use CCM-8 cipher suite (spec-compliant) vs GCM fallback
+	EnableMDNS  bool   // enable mDNS service advertisement
+	MDNSHost    string // mDNS hostname
 }

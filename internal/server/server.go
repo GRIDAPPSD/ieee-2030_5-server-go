@@ -8,8 +8,12 @@ import (
 	"net"
 	"net/http"
 
+	"strconv"
+	"strings"
+
 	"github.com/craig8/ieee-2030_5-go/internal/certs"
 	"github.com/craig8/ieee-2030_5-go/internal/config"
+	"github.com/craig8/ieee-2030_5-go/internal/discovery"
 	"github.com/craig8/ieee-2030_5-go/internal/handler"
 	sepTLS "github.com/craig8/ieee-2030_5-go/internal/tls"
 	gotls "github.com/craig8/ieee-2030_5-go/internal/tls/gotls"
@@ -93,6 +97,20 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		errCh <- protocolSrv.Serve(tlsListener)
 	}()
 
+	// Start mDNS if configured
+	if cfg.EnableMDNS {
+		mdnsReg, err := discovery.Register(discovery.Config{
+			Hostname: cfg.MDNSHost,
+			Port:     parsePort(cfg.Addr),
+			Path:     "/dcap",
+		})
+		if err != nil {
+			log.Printf("mDNS registration failed: %v (continuing without mDNS)", err)
+		} else {
+			defer mdnsReg.Close()
+		}
+	}
+
 	// Start admin HTTPS server if configured
 	var adminSrv *http.Server
 	if cfg.AdminAddr != "" && svc != nil {
@@ -153,4 +171,13 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, errCh c
 	}()
 
 	return adminSrv, nil
+}
+
+func parsePort(addr string) int {
+	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+		if port, err := strconv.Atoi(addr[idx+1:]); err == nil {
+			return port
+		}
+	}
+	return 443
 }

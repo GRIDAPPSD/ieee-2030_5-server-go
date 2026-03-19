@@ -8,18 +8,21 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/craig8/ieee-2030_5-go/internal/certs"
 	"github.com/craig8/ieee-2030_5-go/internal/config"
+	"github.com/craig8/ieee-2030_5-go/internal/handler"
 	sepTLS "github.com/craig8/ieee-2030_5-go/internal/tls"
 )
 
-// Run starts the IEEE 2030.5 server with mutual TLS.
-func Run(ctx context.Context, cfg *config.Config) error {
+// Run starts the IEEE 2030.5 server with mutual TLS and optionally
+// an admin HTTPS server on a separate port with auto self-signed cert.
+func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService) error {
 	tlsCfg, err := sepTLS.NewServerTLSConfig(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
 	if err != nil {
 		return fmt.Errorf("TLS config: %w", err)
 	}
 
-	router := NewRouter(cfg)
+	router := NewRouter(cfg, svc)
 
 	listener, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
@@ -28,22 +31,74 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	defer listener.Close()
 
 	tlsListener := tls.NewListener(listener, tlsCfg)
+	protocolSrv := &http.Server{Handler: router}
 
-	srv := &http.Server{
-		Handler: router,
-	}
+	errCh := make(chan error, 2)
 
-	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("IEEE 2030.5 server listening on %s (TLS)", cfg.Addr)
-		errCh <- srv.Serve(tlsListener)
+		log.Printf("IEEE 2030.5 protocol server listening on %s (mTLS)", cfg.Addr)
+		errCh <- protocolSrv.Serve(tlsListener)
 	}()
+
+	// Start admin HTTPS server if configured
+	var adminSrv *http.Server
+	if cfg.AdminAddr != "" && svc != nil {
+		adminSrv, err = startAdminServer(cfg, svc, errCh)
+		if err != nil {
+			protocolSrv.Close()
+			return fmt.Errorf("admin server: %w", err)
+		}
+	}
 
 	select {
 	case <-ctx.Done():
-		log.Println("shutting down server...")
-		return srv.Shutdown(context.Background())
+		log.Println("shutting down servers...")
+		protocolSrv.Shutdown(context.Background())
+		if adminSrv != nil {
+			adminSrv.Shutdown(context.Background())
+		}
+		return nil
 	case err := <-errCh:
 		return err
 	}
+}
+
+func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, errCh chan error) (*http.Server, error) {
+	// Auto-generate self-signed TLS cert for admin listener
+	adminCertPEM, adminKeyPEM, err := certs.GenerateSelfSignedTLS([]string{"localhost", "127.0.0.1", "::1"})
+	if err != nil {
+		return nil, fmt.Errorf("generate admin TLS cert: %w", err)
+	}
+
+	adminTLSCert, err := tls.X509KeyPair(adminCertPEM, adminKeyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("parse admin TLS cert: %w", err)
+	}
+
+	adminTLSCfg := &tls.Config{
+		Certificates: []tls.Certificate{adminTLSCert},
+		MinVersion:   tls.VersionTLS12,
+	}
+
+	adminRouter := NewAdminRouter(cfg.AdminKey, svc)
+
+	adminListener, err := net.Listen("tcp", cfg.AdminAddr)
+	if err != nil {
+		return nil, fmt.Errorf("admin listen: %w", err)
+	}
+
+	adminTLSListener := tls.NewListener(adminListener, adminTLSCfg)
+	adminSrv := &http.Server{Handler: adminRouter}
+
+	go func() {
+		log.Printf("Admin HTTPS server listening on %s (self-signed TLS)", cfg.AdminAddr)
+		if cfg.AdminKey != "" {
+			log.Println("Admin API key configured")
+		} else {
+			log.Println("WARNING: No admin API key set (SEP2_ADMIN_KEY). Bearer auth disabled.")
+		}
+		errCh <- adminSrv.Serve(adminTLSListener)
+	}()
+
+	return adminSrv, nil
 }

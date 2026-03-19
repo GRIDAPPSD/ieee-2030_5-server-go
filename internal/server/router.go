@@ -8,15 +8,27 @@ import (
 	"github.com/craig8/ieee-2030_5-go/internal/handler"
 )
 
-// NewRouter creates the HTTP router with all IEEE 2030.5 endpoints.
-// Protocol endpoints are wrapped with identity middleware.
-func NewRouter(cfg *config.Config) http.Handler {
-	mux := http.NewServeMux()
+// NewRouter creates the HTTP router for the protocol listener.
+// Protocol endpoints get identity middleware (SFDI/LFDI extraction).
+// Admin API endpoints (/api/) get admin auth middleware (mTLS OID or Bearer).
+func NewRouter(cfg *config.Config, svc *handler.AdminCertService) http.Handler {
+	top := http.NewServeMux()
 
-	// IEEE 2030.5 protocol endpoints
-	mux.Handle("GET /dcap", handler.HandleDeviceCapability())
-	mux.Handle("GET /tm", handler.HandleTime(cfg))
+	// IEEE 2030.5 protocol endpoints — identity middleware
+	protocolMux := http.NewServeMux()
+	protocolMux.Handle("GET /dcap", handler.HandleDeviceCapability())
+	protocolMux.Handle("GET /tm", handler.HandleTime(cfg))
+	top.Handle("/dcap", auth.IdentityMiddleware(protocolMux))
+	top.Handle("/tm", auth.IdentityMiddleware(protocolMux))
 
-	// Wrap all protocol routes with identity extraction
-	return auth.IdentityMiddleware(mux)
+	// Admin API on protocol port — admin auth middleware (mTLS with admin OID)
+	if svc != nil {
+		adminMux := http.NewServeMux()
+		adminMux.HandleFunc("GET /api/certs/ca", svc.HandleGetCA())
+		adminMux.HandleFunc("POST /api/certs/server", svc.HandleCreateServerCert())
+		adminMux.HandleFunc("POST /api/certs/device", svc.HandleCreateDeviceCert())
+		top.Handle("/api/", auth.AdminAuthMiddleware(cfg.AdminKey)(adminMux))
+	}
+
+	return top
 }

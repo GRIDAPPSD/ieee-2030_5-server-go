@@ -72,7 +72,7 @@ func TestIntegrationEndToEnd(t *testing.T) {
 	defer listener.Close()
 
 	tlsListener := tls.NewListener(listener, serverTLSCfg)
-	router := server.NewRouter(cfg)
+	router := server.NewRouter(cfg, nil)
 	srv := &http.Server{Handler: router}
 	go srv.Serve(tlsListener)
 	defer srv.Close()

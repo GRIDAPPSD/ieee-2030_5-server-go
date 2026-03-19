@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/craig8/ieee-2030_5-go/internal/certs"
 	"github.com/craig8/ieee-2030_5-go/internal/config"
+	"github.com/craig8/ieee-2030_5-go/internal/handler"
 	"github.com/craig8/ieee-2030_5-go/internal/server"
 )
 
@@ -44,14 +47,29 @@ func runServe() error {
 		CertFile:    envOr("SEP2_CERT", "certs/server.crt"),
 		KeyFile:     envOr("SEP2_KEY", "certs/server.key"),
 		CAFile:      envOr("SEP2_CA", "certs/ca.crt"),
+		AdminAddr:   os.Getenv("SEP2_ADMIN_ADDR"),
+		AdminKey:    os.Getenv("SEP2_ADMIN_KEY"),
 		TZOffset:    -28800,
 		TimeQuality: 7,
+	}
+
+	// Load CA for admin cert service
+	var svc *handler.AdminCertService
+	caFile := envOr("SEP2_CA", "certs/ca.crt")
+	caKeyFile := envOr("SEP2_CA_KEY", "certs/ca.key")
+	caCert, caKey, err := certs.LoadCA(caFile, caKeyFile)
+	if err != nil {
+		log.Printf("CA not loaded (%v) — admin cert API disabled", err)
+	} else {
+		caCertPEM, _ := os.ReadFile(caFile)
+		svc = handler.NewAdminCertService(caCert, caKey, caCertPEM)
+		log.Println("CA loaded — admin cert API enabled")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	return server.Run(ctx, cfg)
+	return server.Run(ctx, cfg, svc)
 }
 
 func envOr(key, fallback string) string {

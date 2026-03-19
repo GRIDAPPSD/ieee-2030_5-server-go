@@ -131,7 +131,11 @@ window.addEventListener('resize', function() { chart.resize(); });
 
 var history = [];
 
-var evtSource = new EventSource('/dashboard/events');
+// Get auth token from the page request (passed via URL or header)
+var authToken = new URLSearchParams(window.location.search).get('token') || '';
+var sseUrl = '/dashboard/events';
+if (authToken) sseUrl += '?token=' + encodeURIComponent(authToken);
+var evtSource = new EventSource(sseUrl);
 evtSource.onmessage = function(event) {
   var d = JSON.parse(event.data);
 

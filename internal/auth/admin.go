@@ -27,15 +27,18 @@ func AdminAuthMiddleware(adminKey string) func(http.Handler) http.Handler {
 				}
 			}
 
-			// Path B: Bearer token
+			// Path B: Bearer token (header or query param for SSE/EventSource)
 			if adminKey != "" {
+				token := ""
 				authHeader := r.Header.Get("Authorization")
 				if strings.HasPrefix(authHeader, "Bearer ") {
-					token := authHeader[7:]
-					if constantTimeEqual(token, adminKey) {
-						next.ServeHTTP(w, r)
-						return
-					}
+					token = authHeader[7:]
+				} else if qToken := r.URL.Query().Get("token"); qToken != "" {
+					token = qToken
+				}
+				if token != "" && constantTimeEqual(token, adminKey) {
+					next.ServeHTTP(w, r)
+					return
 				}
 			}
 

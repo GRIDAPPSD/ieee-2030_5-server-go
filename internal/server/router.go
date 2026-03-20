@@ -5,6 +5,7 @@ import (
 
 	"github.com/craig8/ieee-2030_5-go/internal/auth"
 	"github.com/craig8/ieee-2030_5-go/internal/config"
+	"github.com/craig8/ieee-2030_5-go/internal/encoding"
 	"github.com/craig8/ieee-2030_5-go/internal/handler"
 	"github.com/craig8/ieee-2030_5-go/internal/paging"
 	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
@@ -66,7 +67,9 @@ func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService
 		top.Handle("/api/", auth.AdminAuthMiddleware(cfg.AdminKey)(adminMux))
 	}
 
-	return top
+	// Wrap entire router with namespace detection — rewrites XML output
+	// for 2013 clients (EPRI reference client) automatically
+	return encoding.NamespaceMiddleware(top)
 }
 
 func registerEndDeviceRoutes(mux *http.ServeMux, stores *Stores) {

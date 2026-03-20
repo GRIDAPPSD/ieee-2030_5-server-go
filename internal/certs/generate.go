@@ -47,11 +47,12 @@ func GenerateCA(opts CAOptions) (certPEM, keyPEM []byte, err error) {
 		MaxPathLenZero:        false,
 	}
 
-	// Add anyPolicy certificate policy
+	// Add anyPolicy certificate policy (critical per IEEE 2030.5 section 6.11)
 	policyExt, err := buildCertPolicies(asn1.ObjectIdentifier{2, 5, 29, 32, 0})
 	if err != nil {
 		return nil, nil, fmt.Errorf("build CA policy: %w", err)
 	}
+	policyExt.Critical = true
 	template.ExtraExtensions = append(template.ExtraExtensions, policyExt)
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
@@ -99,6 +100,14 @@ func GenerateServerCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, opts 
 		},
 		BasicConstraintsValid: true,
 	}
+
+	// Add CertificatePolicies extension (required by EPRI client check_cert)
+	policyExt, err := buildCertPolicies(OIDPolicyServiceProv)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build server policy: %w", err)
+	}
+	policyExt.Critical = true
+	template.ExtraExtensions = append(template.ExtraExtensions, policyExt)
 
 	for _, h := range opts.Hosts {
 		if ip := net.ParseIP(h); ip != nil {
@@ -259,6 +268,7 @@ func GenerateDeviceCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, opts 
 	if err != nil {
 		return nil, nil, fmt.Errorf("build device policy: %w", err)
 	}
+	policyExt.Critical = true
 	template.ExtraExtensions = append(template.ExtraExtensions, policyExt)
 
 	// Build HardwareModuleName SAN extension if hw info provided

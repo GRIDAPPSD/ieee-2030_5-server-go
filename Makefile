@@ -110,6 +110,21 @@ run-scenario: build-all    ## Run a specific scenario (use SCENARIO=voltvar)
 list-scenarios: build-all  ## List available inverter test scenarios
 	./$(CLIENT) --list-scenarios
 
+# ─── EPRI Client Interop ──────────────────────────────────────────
+
+EPRI_CLIENT := $(HOME)/repos/IEEE-2030.5-Client
+
+test-interop: build certs ## Run interop tests with curl (server must be running)
+	./scripts/test-epri-client.sh
+
+build-epri:               ## Build the EPRI C client (requires gcc + OpenSSL)
+	cd $(EPRI_CLIENT) && bash build.sh
+
+test-epri: build certs    ## Run EPRI C client against our server (CCM mode, server must be running)
+	$(EPRI_CLIENT)/build/client_test lo \
+		$(CERT_DIR)/device.crt $(CERT_DIR)/ca.crt \
+		https://localhost:8443/dcap edev time
+
 # ─── Code Quality ────────────────────────────────────────────────
 
 lint:                     ## Run golangci-lint

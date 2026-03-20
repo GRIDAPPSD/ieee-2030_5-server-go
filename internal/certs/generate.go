@@ -109,13 +109,13 @@ func GenerateServerCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, opts 
 	policyExt.Critical = true
 	template.ExtraExtensions = append(template.ExtraExtensions, policyExt)
 
-	for _, h := range opts.Hosts {
-		if ip := net.ParseIP(h); ip != nil {
-			template.IPAddresses = append(template.IPAddresses, ip)
-		} else {
-			template.DNSNames = append(template.DNSNames, h)
-		}
+	// Build SAN as critical extension (EPRI client compatibility — its check_cert
+	// has a C fall-through that requires SAN to be critical. Harmless per RFC 5280.)
+	sanExt, err := buildCriticalSAN(opts.Hosts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build SAN: %w", err)
 	}
+	template.ExtraExtensions = append(template.ExtraExtensions, sanExt)
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
 	if err != nil {
@@ -292,6 +292,46 @@ func GenerateDeviceCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, opts 
 	}
 
 	return certPEM, keyPEM, nil
+}
+
+// buildCriticalSAN builds a SubjectAlternativeName extension with Critical=true.
+// Go's x509.CreateCertificate auto-generates SAN as non-critical from DNSNames/IPAddresses,
+// so we build it manually to set Critical=true (EPRI client compatibility).
+func buildCriticalSAN(hosts []string) (pkix.Extension, error) {
+	var rawValues []asn1.RawValue
+
+	for _, h := range hosts {
+		if ip := net.ParseIP(h); ip != nil {
+			// iPAddress [7]
+			ipBytes := ip.To4()
+			if ipBytes == nil {
+				ipBytes = ip.To16()
+			}
+			rawValues = append(rawValues, asn1.RawValue{
+				Tag:   7,
+				Class: asn1.ClassContextSpecific,
+				Bytes: ipBytes,
+			})
+		} else {
+			// dNSName [2]
+			rawValues = append(rawValues, asn1.RawValue{
+				Tag:   2,
+				Class: asn1.ClassContextSpecific,
+				Bytes: []byte(h),
+			})
+		}
+	}
+
+	val, err := asn1.Marshal(rawValues)
+	if err != nil {
+		return pkix.Extension{}, fmt.Errorf("marshal SAN: %w", err)
+	}
+
+	return pkix.Extension{
+		Id:       OIDSubjectAltName,
+		Critical: true,
+		Value:    val,
+	}, nil
 }
 
 // buildCertPolicies creates a CertificatePolicies extension containing

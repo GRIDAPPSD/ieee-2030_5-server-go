@@ -6,6 +6,8 @@ import (
 )
 
 // WriteXML marshals v as IEEE 2030.5 XML and writes it to the response.
+// If NamespaceMiddleware is active, the Write() call will automatically
+// rewrite the namespace to match the client's expected version.
 func WriteXML(w http.ResponseWriter, status int, v any) {
 	enc := NewXMLEncoder()
 	data, err := enc.Marshal(v)

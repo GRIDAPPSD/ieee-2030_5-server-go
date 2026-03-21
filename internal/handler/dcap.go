@@ -9,17 +9,23 @@ import (
 
 // HandleDeviceCapability returns a handler for GET /dcap.
 // DeviceCapability is the mandatory entry point for IEEE 2030.5 servers.
+// Element order matches XSD (FunctionSetAssignmentsBase first, then extensions).
 func HandleDeviceCapability() http.HandlerFunc {
 	dcap := sep2.DeviceCapability{
 		Resource: sep2.Resource{Href: "/dcap"},
 		PollRate: 900,
-		TimeLink: &sep2.Link{Href: "/tm"},
-		EndDeviceListLink: &sep2.ListLink{
-			Href: "/edev",
-		},
-		SelfDeviceLink:           &sep2.Link{Href: "/sdev"},
-		MirrorUsagePointListLink: &sep2.ListLink{Href: "/mup"},
-		DERProgramListLink:       &sep2.ListLink{Href: "/dc"},
+
+		// FunctionSetAssignmentsBase elements (XSD order)
+		DERProgramListLink:           &sep2.ListLink{Href: "/dc"},
+		MessagingProgramListLink:     &sep2.ListLink{Href: "/msg"},
+		ResponseSetListLink:          &sep2.ListLink{Href: "/rsps"},
+		TimeLink:                     &sep2.Link{Href: "/tm"},
+		UsagePointListLink:           &sep2.ListLink{Href: "/upt"},
+
+		// DeviceCapability extension elements (XSD order)
+		EndDeviceListLink:            &sep2.ListLink{Href: "/edev"},
+		MirrorUsagePointListLink:     &sep2.ListLink{Href: "/mup"},
+		SelfDeviceLink:               &sep2.Link{Href: "/sdev"},
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {

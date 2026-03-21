@@ -35,6 +35,24 @@ type Stores struct {
 
 	// Subscription store
 	Subscriptions *memory.SubscriptionStore
+
+	// Server-side metering
+	UsagePoints   *memory.Store[sep2.UsagePoint]
+	MeterReadings *memory.ScopedStore[sep2.MeterReading]
+	Readings      *memory.ScopedStore[sep2.Reading]
+	ReadingTypes  *memory.Store[sep2.ReadingType]
+
+	// New function sets
+	Configurations *memory.ScopedStore[sep2.Configuration]
+	DeviceStatuses *memory.ScopedStore[sep2.DeviceStatus]
+	LogEvents      *memory.ScopedStore[sep2.LogEvent]
+	PowerStatuses  *memory.ScopedStore[sep2.PowerStatus]
+	MessagingPrograms *memory.Store[sep2.MessagingProgram]
+	TextMessages      *memory.ScopedStore[sep2.TextMessage]
+	FlowReservationRequests  *memory.ScopedStore[sep2.FlowReservationRequest]
+	FlowReservationResponses *memory.ScopedStore[sep2.FlowReservationResponse]
+	ResponseSets  *memory.Store[sep2.ResponseSet]
+	Responses     *memory.ScopedStore[sep2.Response]
 }
 
 // NewRouter creates the HTTP router for the protocol listener.
@@ -45,17 +63,28 @@ func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService
 	protocolMux.HandleFunc("GET /dcap", handler.HandleDeviceCapability())
 	protocolMux.HandleFunc("GET /tm", handler.HandleTime(cfg))
 	protocolMux.HandleFunc("GET /sdev", handler.HandleSelfDevice(serverSFDI, serverLFDI))
+	protocolMux.HandleFunc("GET /sdev/sdi", handler.HandleDeviceInformation(serverLFDI))
 
 	if stores != nil {
 		registerEndDeviceRoutes(protocolMux, stores)
 		registerMirrorRoutes(protocolMux, stores)
 		registerDERRoutes(protocolMux, stores)
+		registerMeteringRoutes(protocolMux, stores)
+		registerNewFunctionSetRoutes(protocolMux, stores)
 	}
 
 	aclRules := auth.DefaultACLRules()
 	protocolChain := auth.IdentityMiddleware(auth.ACLMiddleware(aclRules)(protocolMux))
 
-	for _, prefix := range []string{"/dcap", "/tm", "/sdev", "/edev", "/edev/", "/mup", "/mup/", "/dc", "/dc/"} {
+	for _, prefix := range []string{
+		"/dcap", "/tm", "/sdev", "/sdev/",
+		"/edev", "/edev/",
+		"/mup", "/mup/",
+		"/dc", "/dc/",
+		"/upt", "/upt/", "/rt", "/rt/",
+		"/msg", "/msg/",
+		"/rsps", "/rsps/",
+	} {
 		top.Handle(prefix, protocolChain)
 	}
 
@@ -185,6 +214,110 @@ func scopedListHandlerDeep[T store.Copier[T], L any](
 
 		h := handler.ListHandler[T, L](st, buildList, pollRate)
 		h.ServeHTTP(w, r)
+	}
+}
+
+func registerMeteringRoutes(mux *http.ServeMux, stores *Stores) {
+	if stores.UsagePoints == nil {
+		return
+	}
+	mux.HandleFunc("GET /upt", handler.ListHandler[sep2.UsagePoint, sep2.UsagePointList](
+		stores.UsagePoints, handler.BuildUsagePointList, 900,
+	))
+	mux.HandleFunc("POST /upt", handler.HandleCreateUsagePoint(stores.UsagePoints))
+	mux.HandleFunc("GET /upt/{uptId}", handler.HandleUsagePoint(stores.UsagePoints))
+
+	// MeterReadings scoped under UsagePoint
+	mux.HandleFunc("GET /upt/{uptId}/mr", scopedListHandler[sep2.MeterReading, sep2.MeterReadingList](
+		stores.MeterReadings, handler.BuildMeterReadingList, 900,
+	))
+
+	// Readings scoped under MeterReading (deep: uptId/mrId)
+	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/r", func(w http.ResponseWriter, r *http.Request) {
+		key := r.PathValue("uptId") + "/" + r.PathValue("mrId")
+		st := stores.Readings.ForParent(key)
+		h := handler.ListHandler[sep2.Reading, sep2.ReadingList](st, handler.BuildReadingList, 900)
+		h.ServeHTTP(w, r)
+	})
+
+	// ReadingTypes (global)
+	mux.HandleFunc("GET /rt", handler.ListHandler[sep2.ReadingType, sep2.ReadingTypeList](
+		stores.ReadingTypes, handler.BuildReadingTypeList, 900,
+	))
+	mux.HandleFunc("GET /rt/{id}", handler.HandleReadingType(stores.ReadingTypes))
+}
+
+func registerNewFunctionSetRoutes(mux *http.ServeMux, stores *Stores) {
+	// Device sub-resources (all scoped under /edev/{id})
+	if stores.Configurations != nil {
+		mux.HandleFunc("GET /edev/{id}/cfg", handler.HandleConfiguration(stores.Configurations))
+		mux.HandleFunc("PUT /edev/{id}/cfg", handler.HandleConfiguration(stores.Configurations))
+	}
+	if stores.DeviceStatuses != nil {
+		mux.HandleFunc("GET /edev/{id}/dstat", handler.HandleSingletonGetPut[sep2.DeviceStatus](
+			stores.DeviceStatuses,
+			func(r *http.Request) string { return r.PathValue("id") },
+			func(r *http.Request) sep2.DeviceStatus {
+				ds := sep2.DeviceStatus{}
+				ds.Href = "/edev/" + r.PathValue("id") + "/dstat"
+				return ds
+			},
+		))
+		mux.HandleFunc("PUT /edev/{id}/dstat", handler.HandleSingletonGetPut[sep2.DeviceStatus](
+			stores.DeviceStatuses,
+			func(r *http.Request) string { return r.PathValue("id") },
+			func(r *http.Request) sep2.DeviceStatus {
+				ds := sep2.DeviceStatus{}
+				ds.Href = "/edev/" + r.PathValue("id") + "/dstat"
+				return ds
+			},
+		))
+	}
+	if stores.LogEvents != nil {
+		mux.HandleFunc("GET /edev/{id}/log", scopedListHandler[sep2.LogEvent, sep2.LogEventList](
+			stores.LogEvents, handler.BuildLogEventList, 900,
+		))
+		mux.HandleFunc("POST /edev/{id}/log", handler.HandlePostLogEvent(stores.LogEvents))
+	}
+	if stores.PowerStatuses != nil {
+		mux.HandleFunc("GET /edev/{id}/ps", handler.HandlePowerStatus(stores.PowerStatuses))
+		mux.HandleFunc("PUT /edev/{id}/ps", handler.HandlePowerStatus(stores.PowerStatuses))
+	}
+
+	// Messaging (global)
+	if stores.MessagingPrograms != nil {
+		mux.HandleFunc("GET /msg", handler.ListHandler[sep2.MessagingProgram, sep2.MessagingProgramList](
+			stores.MessagingPrograms, handler.BuildMessagingProgramList, 900,
+		))
+		mux.HandleFunc("GET /msg/{msgId}", handler.HandleMessagingProgram(stores.MessagingPrograms))
+		mux.HandleFunc("GET /msg/{msgId}/tm", scopedListHandler[sep2.TextMessage, sep2.TextMessageList](
+			stores.TextMessages, handler.BuildTextMessageList, 900,
+		))
+		mux.HandleFunc("POST /msg/{msgId}/tm", handler.HandlePostTextMessage(stores.TextMessages))
+	}
+
+	// Flow Reservation (scoped under device)
+	if stores.FlowReservationRequests != nil {
+		mux.HandleFunc("GET /edev/{id}/frq", scopedListHandler[sep2.FlowReservationRequest, sep2.FlowReservationRequestList](
+			stores.FlowReservationRequests, handler.BuildFlowReservationRequestList, 900,
+		))
+		mux.HandleFunc("POST /edev/{id}/frq", handler.HandlePostFlowReservationRequest(
+			stores.FlowReservationRequests, stores.FlowReservationResponses,
+		))
+		mux.HandleFunc("GET /edev/{id}/frp", scopedListHandler[sep2.FlowReservationResponse, sep2.FlowReservationResponseList](
+			stores.FlowReservationResponses, handler.BuildFlowReservationResponseList, 900,
+		))
+	}
+
+	// Response Sets (global)
+	if stores.ResponseSets != nil {
+		mux.HandleFunc("GET /rsps", handler.ListHandler[sep2.ResponseSet, sep2.ResponseSetList](
+			stores.ResponseSets, handler.BuildResponseSetList, 900,
+		))
+		mux.HandleFunc("GET /rsps/{rspsId}/rsp", scopedListHandler[sep2.Response, sep2.ResponseList](
+			stores.Responses, handler.BuildResponseList, 900,
+		))
+		mux.HandleFunc("POST /rsps/{rspsId}/rsp", handler.HandlePostResponse(stores.Responses))
 	}
 }
 

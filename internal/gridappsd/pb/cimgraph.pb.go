@@ -169,6 +169,50 @@ func (x *GetEquipmentRequest) GetMrid() string {
 	return ""
 }
 
+type ListFeedersRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DatabaseType  string                 `protobuf:"bytes,1,opt,name=database_type,json=databaseType,proto3" json:"database_type,omitempty"` // optional: override database type
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFeedersRequest) Reset() {
+	*x = ListFeedersRequest{}
+	mi := &file_cimgraph_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFeedersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFeedersRequest) ProtoMessage() {}
+
+func (x *ListFeedersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cimgraph_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFeedersRequest.ProtoReflect.Descriptor instead.
+func (*ListFeedersRequest) Descriptor() ([]byte, []int) {
+	return file_cimgraph_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ListFeedersRequest) GetDatabaseType() string {
+	if x != nil {
+		return x.DatabaseType
+	}
+	return ""
+}
+
 type SPARQLRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Query         string                 `protobuf:"bytes,1,opt,name=query,proto3" json:"query,omitempty"` // SPARQL query string
@@ -178,7 +222,7 @@ type SPARQLRequest struct {
 
 func (x *SPARQLRequest) Reset() {
 	*x = SPARQLRequest{}
-	mi := &file_cimgraph_proto_msgTypes[3]
+	mi := &file_cimgraph_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -190,7 +234,7 @@ func (x *SPARQLRequest) String() string {
 func (*SPARQLRequest) ProtoMessage() {}
 
 func (x *SPARQLRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cimgraph_proto_msgTypes[3]
+	mi := &file_cimgraph_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -203,7 +247,7 @@ func (x *SPARQLRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SPARQLRequest.ProtoReflect.Descriptor instead.
 func (*SPARQLRequest) Descriptor() ([]byte, []int) {
-	return file_cimgraph_proto_rawDescGZIP(), []int{3}
+	return file_cimgraph_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SPARQLRequest) GetQuery() string {
@@ -221,7 +265,7 @@ type HealthCheckRequest struct {
 
 func (x *HealthCheckRequest) Reset() {
 	*x = HealthCheckRequest{}
-	mi := &file_cimgraph_proto_msgTypes[4]
+	mi := &file_cimgraph_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -233,7 +277,7 @@ func (x *HealthCheckRequest) String() string {
 func (*HealthCheckRequest) ProtoMessage() {}
 
 func (x *HealthCheckRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cimgraph_proto_msgTypes[4]
+	mi := &file_cimgraph_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -246,7 +290,7 @@ func (x *HealthCheckRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthCheckRequest.ProtoReflect.Descriptor instead.
 func (*HealthCheckRequest) Descriptor() ([]byte, []int) {
-	return file_cimgraph_proto_rawDescGZIP(), []int{4}
+	return file_cimgraph_proto_rawDescGZIP(), []int{5}
 }
 
 type FeederModelResponse struct {
@@ -261,7 +305,7 @@ type FeederModelResponse struct {
 
 func (x *FeederModelResponse) Reset() {
 	*x = FeederModelResponse{}
-	mi := &file_cimgraph_proto_msgTypes[5]
+	mi := &file_cimgraph_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -273,7 +317,7 @@ func (x *FeederModelResponse) String() string {
 func (*FeederModelResponse) ProtoMessage() {}
 
 func (x *FeederModelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cimgraph_proto_msgTypes[5]
+	mi := &file_cimgraph_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -286,7 +330,7 @@ func (x *FeederModelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FeederModelResponse.ProtoReflect.Descriptor instead.
 func (*FeederModelResponse) Descriptor() ([]byte, []int) {
-	return file_cimgraph_proto_rawDescGZIP(), []int{5}
+	return file_cimgraph_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *FeederModelResponse) GetFeederMrid() string {
@@ -317,6 +361,126 @@ func (x *FeederModelResponse) GetEquipmentTypes() []string {
 	return nil
 }
 
+type Feeder struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Mrid          string                 `protobuf:"bytes,1,opt,name=mrid,proto3" json:"mrid,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Region        string                 `protobuf:"bytes,3,opt,name=region,proto3" json:"region,omitempty"`         // geographical region name
+	Subregion     string                 `protobuf:"bytes,4,opt,name=subregion,proto3" json:"subregion,omitempty"`   // sub-geographical region name
+	Substation    string                 `protobuf:"bytes,5,opt,name=substation,proto3" json:"substation,omitempty"` // substation name
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Feeder) Reset() {
+	*x = Feeder{}
+	mi := &file_cimgraph_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Feeder) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Feeder) ProtoMessage() {}
+
+func (x *Feeder) ProtoReflect() protoreflect.Message {
+	mi := &file_cimgraph_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Feeder.ProtoReflect.Descriptor instead.
+func (*Feeder) Descriptor() ([]byte, []int) {
+	return file_cimgraph_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *Feeder) GetMrid() string {
+	if x != nil {
+		return x.Mrid
+	}
+	return ""
+}
+
+func (x *Feeder) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Feeder) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *Feeder) GetSubregion() string {
+	if x != nil {
+		return x.Subregion
+	}
+	return ""
+}
+
+func (x *Feeder) GetSubstation() string {
+	if x != nil {
+		return x.Substation
+	}
+	return ""
+}
+
+type ListFeedersResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Feeders       []*Feeder              `protobuf:"bytes,1,rep,name=feeders,proto3" json:"feeders,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListFeedersResponse) Reset() {
+	*x = ListFeedersResponse{}
+	mi := &file_cimgraph_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListFeedersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListFeedersResponse) ProtoMessage() {}
+
+func (x *ListFeedersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cimgraph_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListFeedersResponse.ProtoReflect.Descriptor instead.
+func (*ListFeedersResponse) Descriptor() ([]byte, []int) {
+	return file_cimgraph_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ListFeedersResponse) GetFeeders() []*Feeder {
+	if x != nil {
+		return x.Feeders
+	}
+	return nil
+}
+
 type PowerElectronicsConnection struct {
 	state         protoimpl.MessageState  `protogen:"open.v1"`
 	Mrid          string                  `protobuf:"bytes,1,opt,name=mrid,proto3" json:"mrid,omitempty"`
@@ -334,7 +498,7 @@ type PowerElectronicsConnection struct {
 
 func (x *PowerElectronicsConnection) Reset() {
 	*x = PowerElectronicsConnection{}
-	mi := &file_cimgraph_proto_msgTypes[6]
+	mi := &file_cimgraph_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -346,7 +510,7 @@ func (x *PowerElectronicsConnection) String() string {
 func (*PowerElectronicsConnection) ProtoMessage() {}
 
 func (x *PowerElectronicsConnection) ProtoReflect() protoreflect.Message {
-	mi := &file_cimgraph_proto_msgTypes[6]
+	mi := &file_cimgraph_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -359,7 +523,7 @@ func (x *PowerElectronicsConnection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PowerElectronicsConnection.ProtoReflect.Descriptor instead.
 func (*PowerElectronicsConnection) Descriptor() ([]byte, []int) {
-	return file_cimgraph_proto_rawDescGZIP(), []int{6}
+	return file_cimgraph_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *PowerElectronicsConnection) GetMrid() string {
@@ -438,7 +602,7 @@ type PowerElectronicsUnit struct {
 
 func (x *PowerElectronicsUnit) Reset() {
 	*x = PowerElectronicsUnit{}
-	mi := &file_cimgraph_proto_msgTypes[7]
+	mi := &file_cimgraph_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -450,7 +614,7 @@ func (x *PowerElectronicsUnit) String() string {
 func (*PowerElectronicsUnit) ProtoMessage() {}
 
 func (x *PowerElectronicsUnit) ProtoReflect() protoreflect.Message {
-	mi := &file_cimgraph_proto_msgTypes[7]
+	mi := &file_cimgraph_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -463,7 +627,7 @@ func (x *PowerElectronicsUnit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PowerElectronicsUnit.ProtoReflect.Descriptor instead.
 func (*PowerElectronicsUnit) Descriptor() ([]byte, []int) {
-	return file_cimgraph_proto_rawDescGZIP(), []int{7}
+	return file_cimgraph_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *PowerElectronicsUnit) GetMrid() string {
@@ -510,7 +674,7 @@ type PECListResponse struct {
 
 func (x *PECListResponse) Reset() {
 	*x = PECListResponse{}
-	mi := &file_cimgraph_proto_msgTypes[8]
+	mi := &file_cimgraph_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -522,7 +686,7 @@ func (x *PECListResponse) String() string {
 func (*PECListResponse) ProtoMessage() {}
 
 func (x *PECListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cimgraph_proto_msgTypes[8]
+	mi := &file_cimgraph_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -535,7 +699,7 @@ func (x *PECListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PECListResponse.ProtoReflect.Descriptor instead.
 func (*PECListResponse) Descriptor() ([]byte, []int) {
-	return file_cimgraph_proto_rawDescGZIP(), []int{8}
+	return file_cimgraph_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *PECListResponse) GetConnections() []*PowerElectronicsConnection {
@@ -557,7 +721,7 @@ type EquipmentResponse struct {
 
 func (x *EquipmentResponse) Reset() {
 	*x = EquipmentResponse{}
-	mi := &file_cimgraph_proto_msgTypes[9]
+	mi := &file_cimgraph_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -569,7 +733,7 @@ func (x *EquipmentResponse) String() string {
 func (*EquipmentResponse) ProtoMessage() {}
 
 func (x *EquipmentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cimgraph_proto_msgTypes[9]
+	mi := &file_cimgraph_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -582,7 +746,7 @@ func (x *EquipmentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EquipmentResponse.ProtoReflect.Descriptor instead.
 func (*EquipmentResponse) Descriptor() ([]byte, []int) {
-	return file_cimgraph_proto_rawDescGZIP(), []int{9}
+	return file_cimgraph_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *EquipmentResponse) GetMrid() string {
@@ -622,7 +786,7 @@ type SPARQLResponse struct {
 
 func (x *SPARQLResponse) Reset() {
 	*x = SPARQLResponse{}
-	mi := &file_cimgraph_proto_msgTypes[10]
+	mi := &file_cimgraph_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -634,7 +798,7 @@ func (x *SPARQLResponse) String() string {
 func (*SPARQLResponse) ProtoMessage() {}
 
 func (x *SPARQLResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cimgraph_proto_msgTypes[10]
+	mi := &file_cimgraph_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -647,7 +811,7 @@ func (x *SPARQLResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SPARQLResponse.ProtoReflect.Descriptor instead.
 func (*SPARQLResponse) Descriptor() ([]byte, []int) {
-	return file_cimgraph_proto_rawDescGZIP(), []int{10}
+	return file_cimgraph_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *SPARQLResponse) GetResultJson() string {
@@ -669,7 +833,7 @@ type HealthCheckResponse struct {
 
 func (x *HealthCheckResponse) Reset() {
 	*x = HealthCheckResponse{}
-	mi := &file_cimgraph_proto_msgTypes[11]
+	mi := &file_cimgraph_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -681,7 +845,7 @@ func (x *HealthCheckResponse) String() string {
 func (*HealthCheckResponse) ProtoMessage() {}
 
 func (x *HealthCheckResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cimgraph_proto_msgTypes[11]
+	mi := &file_cimgraph_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -694,7 +858,7 @@ func (x *HealthCheckResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthCheckResponse.ProtoReflect.Descriptor instead.
 func (*HealthCheckResponse) Descriptor() ([]byte, []int) {
-	return file_cimgraph_proto_rawDescGZIP(), []int{11}
+	return file_cimgraph_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *HealthCheckResponse) GetHealthy() bool {
@@ -739,7 +903,9 @@ const file_cimgraph_proto_rawDesc = "" +
 	"\vfeeder_mrid\x18\x01 \x01(\tR\n" +
 	"feederMrid\")\n" +
 	"\x13GetEquipmentRequest\x12\x12\n" +
-	"\x04mrid\x18\x01 \x01(\tR\x04mrid\"%\n" +
+	"\x04mrid\x18\x01 \x01(\tR\x04mrid\"9\n" +
+	"\x12ListFeedersRequest\x12#\n" +
+	"\rdatabase_type\x18\x01 \x01(\tR\fdatabaseType\"%\n" +
 	"\rSPARQLRequest\x12\x14\n" +
 	"\x05query\x18\x01 \x01(\tR\x05query\"\x14\n" +
 	"\x12HealthCheckRequest\"\xa9\x01\n" +
@@ -749,7 +915,17 @@ const file_cimgraph_proto_rawDesc = "" +
 	"\vfeeder_name\x18\x02 \x01(\tR\n" +
 	"feederName\x12'\n" +
 	"\x0fequipment_count\x18\x03 \x01(\x05R\x0eequipmentCount\x12'\n" +
-	"\x0fequipment_types\x18\x04 \x03(\tR\x0eequipmentTypes\"\x89\x02\n" +
+	"\x0fequipment_types\x18\x04 \x03(\tR\x0eequipmentTypes\"\x86\x01\n" +
+	"\x06Feeder\x12\x12\n" +
+	"\x04mrid\x18\x01 \x01(\tR\x04mrid\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
+	"\x06region\x18\x03 \x01(\tR\x06region\x12\x1c\n" +
+	"\tsubregion\x18\x04 \x01(\tR\tsubregion\x12\x1e\n" +
+	"\n" +
+	"substation\x18\x05 \x01(\tR\n" +
+	"substation\"A\n" +
+	"\x13ListFeedersResponse\x12*\n" +
+	"\afeeders\x18\x01 \x03(\v2\x10.cimgraph.FeederR\afeeders\"\x89\x02\n" +
 	"\x1aPowerElectronicsConnection\x12\x12\n" +
 	"\x04mrid\x18\x01 \x01(\tR\x04mrid\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x17\n" +
@@ -787,12 +963,13 @@ const file_cimgraph_proto_rawDesc = "" +
 	"\rdatabase_type\x18\x02 \x01(\tR\fdatabaseType\x12\x1f\n" +
 	"\vcim_profile\x18\x03 \x01(\tR\n" +
 	"cimProfile\x12\x18\n" +
-	"\aversion\x18\x04 \x01(\tR\aversion2\x95\x03\n" +
+	"\aversion\x18\x04 \x01(\tR\aversion2\xe1\x03\n" +
 	"\x0fCIMGraphService\x12P\n" +
 	"\x0eGetFeederModel\x12\x1f.cimgraph.GetFeederModelRequest\x1a\x1d.cimgraph.FeederModelResponse\x12T\n" +
 	"\x1eGetPowerElectronicsConnections\x12\x17.cimgraph.GetPECRequest\x1a\x19.cimgraph.PECListResponse\x12J\n" +
 	"\fGetEquipment\x12\x1d.cimgraph.GetEquipmentRequest\x1a\x1b.cimgraph.EquipmentResponse\x12B\n" +
 	"\rExecuteSPARQL\x12\x17.cimgraph.SPARQLRequest\x1a\x18.cimgraph.SPARQLResponse\x12J\n" +
+	"\vListFeeders\x12\x1c.cimgraph.ListFeedersRequest\x1a\x1d.cimgraph.ListFeedersResponse\x12J\n" +
 	"\vHealthCheck\x12\x1c.cimgraph.HealthCheckRequest\x1a\x1d.cimgraph.HealthCheckResponseB5Z3github.com/PNNL-CIM-Tools/CIM-Graph/grpc_wrapper/pbb\x06proto3"
 
 var (
@@ -807,41 +984,47 @@ func file_cimgraph_proto_rawDescGZIP() []byte {
 	return file_cimgraph_proto_rawDescData
 }
 
-var file_cimgraph_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_cimgraph_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_cimgraph_proto_goTypes = []any{
 	(*GetFeederModelRequest)(nil),      // 0: cimgraph.GetFeederModelRequest
 	(*GetPECRequest)(nil),              // 1: cimgraph.GetPECRequest
 	(*GetEquipmentRequest)(nil),        // 2: cimgraph.GetEquipmentRequest
-	(*SPARQLRequest)(nil),              // 3: cimgraph.SPARQLRequest
-	(*HealthCheckRequest)(nil),         // 4: cimgraph.HealthCheckRequest
-	(*FeederModelResponse)(nil),        // 5: cimgraph.FeederModelResponse
-	(*PowerElectronicsConnection)(nil), // 6: cimgraph.PowerElectronicsConnection
-	(*PowerElectronicsUnit)(nil),       // 7: cimgraph.PowerElectronicsUnit
-	(*PECListResponse)(nil),            // 8: cimgraph.PECListResponse
-	(*EquipmentResponse)(nil),          // 9: cimgraph.EquipmentResponse
-	(*SPARQLResponse)(nil),             // 10: cimgraph.SPARQLResponse
-	(*HealthCheckResponse)(nil),        // 11: cimgraph.HealthCheckResponse
-	nil,                                // 12: cimgraph.EquipmentResponse.AttributesEntry
+	(*ListFeedersRequest)(nil),         // 3: cimgraph.ListFeedersRequest
+	(*SPARQLRequest)(nil),              // 4: cimgraph.SPARQLRequest
+	(*HealthCheckRequest)(nil),         // 5: cimgraph.HealthCheckRequest
+	(*FeederModelResponse)(nil),        // 6: cimgraph.FeederModelResponse
+	(*Feeder)(nil),                     // 7: cimgraph.Feeder
+	(*ListFeedersResponse)(nil),        // 8: cimgraph.ListFeedersResponse
+	(*PowerElectronicsConnection)(nil), // 9: cimgraph.PowerElectronicsConnection
+	(*PowerElectronicsUnit)(nil),       // 10: cimgraph.PowerElectronicsUnit
+	(*PECListResponse)(nil),            // 11: cimgraph.PECListResponse
+	(*EquipmentResponse)(nil),          // 12: cimgraph.EquipmentResponse
+	(*SPARQLResponse)(nil),             // 13: cimgraph.SPARQLResponse
+	(*HealthCheckResponse)(nil),        // 14: cimgraph.HealthCheckResponse
+	nil,                                // 15: cimgraph.EquipmentResponse.AttributesEntry
 }
 var file_cimgraph_proto_depIdxs = []int32{
-	7,  // 0: cimgraph.PowerElectronicsConnection.units:type_name -> cimgraph.PowerElectronicsUnit
-	6,  // 1: cimgraph.PECListResponse.connections:type_name -> cimgraph.PowerElectronicsConnection
-	12, // 2: cimgraph.EquipmentResponse.attributes:type_name -> cimgraph.EquipmentResponse.AttributesEntry
-	0,  // 3: cimgraph.CIMGraphService.GetFeederModel:input_type -> cimgraph.GetFeederModelRequest
-	1,  // 4: cimgraph.CIMGraphService.GetPowerElectronicsConnections:input_type -> cimgraph.GetPECRequest
-	2,  // 5: cimgraph.CIMGraphService.GetEquipment:input_type -> cimgraph.GetEquipmentRequest
-	3,  // 6: cimgraph.CIMGraphService.ExecuteSPARQL:input_type -> cimgraph.SPARQLRequest
-	4,  // 7: cimgraph.CIMGraphService.HealthCheck:input_type -> cimgraph.HealthCheckRequest
-	5,  // 8: cimgraph.CIMGraphService.GetFeederModel:output_type -> cimgraph.FeederModelResponse
-	8,  // 9: cimgraph.CIMGraphService.GetPowerElectronicsConnections:output_type -> cimgraph.PECListResponse
-	9,  // 10: cimgraph.CIMGraphService.GetEquipment:output_type -> cimgraph.EquipmentResponse
-	10, // 11: cimgraph.CIMGraphService.ExecuteSPARQL:output_type -> cimgraph.SPARQLResponse
-	11, // 12: cimgraph.CIMGraphService.HealthCheck:output_type -> cimgraph.HealthCheckResponse
-	8,  // [8:13] is the sub-list for method output_type
-	3,  // [3:8] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	7,  // 0: cimgraph.ListFeedersResponse.feeders:type_name -> cimgraph.Feeder
+	10, // 1: cimgraph.PowerElectronicsConnection.units:type_name -> cimgraph.PowerElectronicsUnit
+	9,  // 2: cimgraph.PECListResponse.connections:type_name -> cimgraph.PowerElectronicsConnection
+	15, // 3: cimgraph.EquipmentResponse.attributes:type_name -> cimgraph.EquipmentResponse.AttributesEntry
+	0,  // 4: cimgraph.CIMGraphService.GetFeederModel:input_type -> cimgraph.GetFeederModelRequest
+	1,  // 5: cimgraph.CIMGraphService.GetPowerElectronicsConnections:input_type -> cimgraph.GetPECRequest
+	2,  // 6: cimgraph.CIMGraphService.GetEquipment:input_type -> cimgraph.GetEquipmentRequest
+	4,  // 7: cimgraph.CIMGraphService.ExecuteSPARQL:input_type -> cimgraph.SPARQLRequest
+	3,  // 8: cimgraph.CIMGraphService.ListFeeders:input_type -> cimgraph.ListFeedersRequest
+	5,  // 9: cimgraph.CIMGraphService.HealthCheck:input_type -> cimgraph.HealthCheckRequest
+	6,  // 10: cimgraph.CIMGraphService.GetFeederModel:output_type -> cimgraph.FeederModelResponse
+	11, // 11: cimgraph.CIMGraphService.GetPowerElectronicsConnections:output_type -> cimgraph.PECListResponse
+	12, // 12: cimgraph.CIMGraphService.GetEquipment:output_type -> cimgraph.EquipmentResponse
+	13, // 13: cimgraph.CIMGraphService.ExecuteSPARQL:output_type -> cimgraph.SPARQLResponse
+	8,  // 14: cimgraph.CIMGraphService.ListFeeders:output_type -> cimgraph.ListFeedersResponse
+	14, // 15: cimgraph.CIMGraphService.HealthCheck:output_type -> cimgraph.HealthCheckResponse
+	10, // [10:16] is the sub-list for method output_type
+	4,  // [4:10] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_cimgraph_proto_init() }
@@ -855,7 +1038,7 @@ func file_cimgraph_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cimgraph_proto_rawDesc), len(file_cimgraph_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -23,6 +23,7 @@ const (
 	CIMGraphService_GetPowerElectronicsConnections_FullMethodName = "/cimgraph.CIMGraphService/GetPowerElectronicsConnections"
 	CIMGraphService_GetEquipment_FullMethodName                   = "/cimgraph.CIMGraphService/GetEquipment"
 	CIMGraphService_ExecuteSPARQL_FullMethodName                  = "/cimgraph.CIMGraphService/ExecuteSPARQL"
+	CIMGraphService_ListFeeders_FullMethodName                    = "/cimgraph.CIMGraphService/ListFeeders"
 	CIMGraphService_HealthCheck_FullMethodName                    = "/cimgraph.CIMGraphService/HealthCheck"
 )
 
@@ -41,6 +42,8 @@ type CIMGraphServiceClient interface {
 	GetEquipment(ctx context.Context, in *GetEquipmentRequest, opts ...grpc.CallOption) (*EquipmentResponse, error)
 	// ExecuteSPARQL runs a raw SPARQL query against the connected database.
 	ExecuteSPARQL(ctx context.Context, in *SPARQLRequest, opts ...grpc.CallOption) (*SPARQLResponse, error)
+	// ListFeeders returns all available feeders in the connected database.
+	ListFeeders(ctx context.Context, in *ListFeedersRequest, opts ...grpc.CallOption) (*ListFeedersResponse, error)
 	// HealthCheck verifies the service and database connection are alive.
 	HealthCheck(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error)
 }
@@ -93,6 +96,16 @@ func (c *cIMGraphServiceClient) ExecuteSPARQL(ctx context.Context, in *SPARQLReq
 	return out, nil
 }
 
+func (c *cIMGraphServiceClient) ListFeeders(ctx context.Context, in *ListFeedersRequest, opts ...grpc.CallOption) (*ListFeedersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFeedersResponse)
+	err := c.cc.Invoke(ctx, CIMGraphService_ListFeeders_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *cIMGraphServiceClient) HealthCheck(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HealthCheckResponse)
@@ -118,6 +131,8 @@ type CIMGraphServiceServer interface {
 	GetEquipment(context.Context, *GetEquipmentRequest) (*EquipmentResponse, error)
 	// ExecuteSPARQL runs a raw SPARQL query against the connected database.
 	ExecuteSPARQL(context.Context, *SPARQLRequest) (*SPARQLResponse, error)
+	// ListFeeders returns all available feeders in the connected database.
+	ListFeeders(context.Context, *ListFeedersRequest) (*ListFeedersResponse, error)
 	// HealthCheck verifies the service and database connection are alive.
 	HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error)
 	mustEmbedUnimplementedCIMGraphServiceServer()
@@ -141,6 +156,9 @@ func (UnimplementedCIMGraphServiceServer) GetEquipment(context.Context, *GetEqui
 }
 func (UnimplementedCIMGraphServiceServer) ExecuteSPARQL(context.Context, *SPARQLRequest) (*SPARQLResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExecuteSPARQL not implemented")
+}
+func (UnimplementedCIMGraphServiceServer) ListFeeders(context.Context, *ListFeedersRequest) (*ListFeedersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListFeeders not implemented")
 }
 func (UnimplementedCIMGraphServiceServer) HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method HealthCheck not implemented")
@@ -238,6 +256,24 @@ func _CIMGraphService_ExecuteSPARQL_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CIMGraphService_ListFeeders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFeedersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CIMGraphServiceServer).ListFeeders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CIMGraphService_ListFeeders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CIMGraphServiceServer).ListFeeders(ctx, req.(*ListFeedersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CIMGraphService_HealthCheck_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(HealthCheckRequest)
 	if err := dec(in); err != nil {
@@ -278,6 +314,10 @@ var CIMGraphService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExecuteSPARQL",
 			Handler:    _CIMGraphService_ExecuteSPARQL_Handler,
+		},
+		{
+			MethodName: "ListFeeders",
+			Handler:    _CIMGraphService_ListFeeders_Handler,
 		},
 		{
 			MethodName: "HealthCheck",

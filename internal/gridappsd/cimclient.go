@@ -113,6 +113,35 @@ func (c *CIMClient) DiscoverDERDevices(ctx context.Context, feederMRID string) (
 	return devices, nil
 }
 
+// Feeder represents a CIM feeder from the power system model.
+type Feeder struct {
+	MRID       string
+	Name       string
+	Region     string
+	SubRegion  string
+	Substation string
+}
+
+// ListFeeders returns all available feeders in the connected database.
+func (c *CIMClient) ListFeeders(ctx context.Context) ([]Feeder, error) {
+	resp, err := c.client.ListFeeders(ctx, &pb.ListFeedersRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("list feeders: %w", err)
+	}
+
+	var feeders []Feeder
+	for _, f := range resp.Feeders {
+		feeders = append(feeders, Feeder{
+			MRID:       f.Mrid,
+			Name:       f.Name,
+			Region:     f.Region,
+			SubRegion:  f.Subregion,
+			Substation: f.Substation,
+		})
+	}
+	return feeders, nil
+}
+
 // GetEquipment returns details for a specific equipment by mRID.
 func (c *CIMClient) GetEquipment(ctx context.Context, mrid string) (*pb.EquipmentResponse, error) {
 	return c.client.GetEquipment(ctx, &pb.GetEquipmentRequest{Mrid: mrid})

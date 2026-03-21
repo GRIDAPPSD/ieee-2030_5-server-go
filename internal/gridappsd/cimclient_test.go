@@ -17,6 +17,16 @@ type mockCIMGraphServer struct {
 	pb.UnimplementedCIMGraphServiceServer
 }
 
+func (m *mockCIMGraphServer) ListFeeders(ctx context.Context, req *pb.ListFeedersRequest) (*pb.ListFeedersResponse, error) {
+	return &pb.ListFeedersResponse{
+		Feeders: []*pb.Feeder{
+			{Mrid: "_AAA-BBB-CCC", Name: "IEEE 13 Node", Region: "Region 1", Subregion: "Sub 1", Substation: "Station A"},
+			{Mrid: "_DDD-EEE-FFF", Name: "IEEE 123 Node", Region: "Region 1", Subregion: "Sub 2", Substation: "Station B"},
+			{Mrid: "_GGG-HHH-III", Name: "Test Feeder", Region: "Region 2", Subregion: "Sub 3", Substation: "Station C"},
+		},
+	}, nil
+}
+
 func (m *mockCIMGraphServer) HealthCheck(ctx context.Context, req *pb.HealthCheckRequest) (*pb.HealthCheckResponse, error) {
 	return &pb.HealthCheckResponse{
 		Healthy:      true,
@@ -200,6 +210,44 @@ func TestAdapterNoFeederID(t *testing.T) {
 	_, err := adapter.DiscoverDevices(context.Background())
 	if err == nil {
 		t.Error("should fail without feeder_id")
+	}
+}
+
+func TestCIMClientListFeeders(t *testing.T) {
+	addr := startMockServer(t)
+	client, err := gridappsd.NewCIMClient(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	feeders, err := client.ListFeeders(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(feeders) != 3 {
+		t.Fatalf("feeder count = %d, want 3", len(feeders))
+	}
+
+	if feeders[0].Name != "IEEE 13 Node" {
+		t.Errorf("feeders[0].Name = %q", feeders[0].Name)
+	}
+	if feeders[0].MRID != "_AAA-BBB-CCC" {
+		t.Errorf("feeders[0].MRID = %q", feeders[0].MRID)
+	}
+	if feeders[0].Region != "Region 1" {
+		t.Errorf("feeders[0].Region = %q", feeders[0].Region)
+	}
+	if feeders[0].Substation != "Station A" {
+		t.Errorf("feeders[0].Substation = %q", feeders[0].Substation)
+	}
+
+	// Verify all feeders have data
+	for i, f := range feeders {
+		if f.MRID == "" || f.Name == "" {
+			t.Errorf("feeder[%d] missing data: %+v", i, f)
+		}
 	}
 }
 

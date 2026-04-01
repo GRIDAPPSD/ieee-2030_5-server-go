@@ -93,7 +93,7 @@ func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService
 		adminMux.HandleFunc("GET /api/certs/ca", svc.HandleGetCA())
 		adminMux.HandleFunc("POST /api/certs/server", svc.HandleCreateServerCert())
 		adminMux.HandleFunc("POST /api/certs/device", svc.HandleCreateDeviceCert())
-		top.Handle("/api/", auth.AdminAuthMiddleware(cfg.AdminKey)(adminMux))
+		top.Handle("/api/", auth.AdminAuthMiddleware(cfg.AdminKey, nil)(adminMux))
 	}
 
 	// Wrap entire router with namespace detection — rewrites XML output

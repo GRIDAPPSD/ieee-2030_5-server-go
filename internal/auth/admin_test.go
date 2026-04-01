@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/craig8/ieee-2030_5-go/internal/auth"
 	"github.com/craig8/ieee-2030_5-go/internal/certs"
@@ -16,7 +17,7 @@ import (
 func TestAdminAuthMTLSWithAdminCert(t *testing.T) {
 	adminCert := generateAdminCert(t)
 
-	handler := auth.AdminAuthMiddleware("test-key")(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.TLS = &tls.ConnectionState{
 		PeerCertificates: []*x509.Certificate{adminCert},
@@ -33,7 +34,7 @@ func TestAdminAuthMTLSWithAdminCert(t *testing.T) {
 func TestAdminAuthMTLSWithDeviceCert(t *testing.T) {
 	deviceCert := generateDeviceCert(t)
 
-	handler := auth.AdminAuthMiddleware("test-key")(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.TLS = &tls.ConnectionState{
 		PeerCertificates: []*x509.Certificate{deviceCert},
@@ -48,7 +49,7 @@ func TestAdminAuthMTLSWithDeviceCert(t *testing.T) {
 }
 
 func TestAdminAuthBearerCorrectKey(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("my-secret-key")(okHandler())
+	handler := auth.AdminAuthMiddleware("my-secret-key", nil)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.Header.Set("Authorization", "Bearer my-secret-key")
 
@@ -61,7 +62,7 @@ func TestAdminAuthBearerCorrectKey(t *testing.T) {
 }
 
 func TestAdminAuthBearerWrongKey(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("my-secret-key")(okHandler())
+	handler := auth.AdminAuthMiddleware("my-secret-key", nil)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.Header.Set("Authorization", "Bearer wrong-key")
 
@@ -74,7 +75,7 @@ func TestAdminAuthBearerWrongKey(t *testing.T) {
 }
 
 func TestAdminAuthBearerDisabledWhenEmpty(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("")(okHandler())
+	handler := auth.AdminAuthMiddleware("", nil)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.Header.Set("Authorization", "Bearer anything")
 
@@ -88,7 +89,7 @@ func TestAdminAuthBearerDisabledWhenEmpty(t *testing.T) {
 }
 
 func TestAdminAuthNoCredentials(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("test-key")(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 
 	w := httptest.NewRecorder()
@@ -100,7 +101,7 @@ func TestAdminAuthNoCredentials(t *testing.T) {
 }
 
 func TestAdminAuthBearerMalformedHeader(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("test-key")(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
 
@@ -109,6 +110,77 @@ func TestAdminAuthBearerMalformedHeader(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("Basic auth header should be rejected, got %d", w.Code)
+	}
+}
+
+func TestAdminAuthTicketValid(t *testing.T) {
+	tickets := auth.NewTicketStore(30 * time.Second)
+	ticket, err := tickets.Issue()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handler := auth.AdminAuthMiddleware("test-key", tickets)(okHandler())
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/events?ticket="+ticket, nil)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("valid ticket should be authorized, got %d", w.Code)
+	}
+}
+
+func TestAdminAuthTicketOneTimeUse(t *testing.T) {
+	tickets := auth.NewTicketStore(30 * time.Second)
+	ticket, err := tickets.Issue()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handler := auth.AdminAuthMiddleware("test-key", tickets)(okHandler())
+
+	// First request succeeds
+	req1 := httptest.NewRequest(http.MethodGet, "/dashboard/events?ticket="+ticket, nil)
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+	if w1.Code != http.StatusOK {
+		t.Errorf("first use should succeed, got %d", w1.Code)
+	}
+
+	// Second request with same ticket fails
+	req2 := httptest.NewRequest(http.MethodGet, "/dashboard/events?ticket="+ticket, nil)
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusUnauthorized {
+		t.Errorf("second use should be rejected, got %d", w2.Code)
+	}
+}
+
+func TestAdminAuthTicketInvalid(t *testing.T) {
+	tickets := auth.NewTicketStore(30 * time.Second)
+	handler := auth.AdminAuthMiddleware("test-key", tickets)(okHandler())
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/events?ticket=bogus", nil)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("invalid ticket should be rejected, got %d", w.Code)
+	}
+}
+
+func TestAdminAuthQueryTokenNoLongerAccepted(t *testing.T) {
+	tickets := auth.NewTicketStore(30 * time.Second)
+	handler := auth.AdminAuthMiddleware("test-key", tickets)(okHandler())
+	// Pass the admin key as ?token= (old pattern) — must be rejected
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/events?token=test-key", nil)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("?token= query param should no longer be accepted, got %d", w.Code)
 	}
 }
 

@@ -9,13 +9,16 @@ import (
 )
 
 // AdminAuthMiddleware returns middleware that checks for admin authorization.
-// Two paths are supported:
+// Three paths are supported (checked in order):
 //
 //  1. mTLS: client cert with admin policy OID (1.3.6.1.4.1.40732.2.5)
 //  2. Bearer token: Authorization header matches adminKey
+//  3. Auth ticket: ?ticket= query param validated against the TicketStore
+//     (short-lived, one-time-use — for browser SSE/EventSource clients)
 //
 // If adminKey is empty, Bearer auth is disabled (mTLS only).
-func AdminAuthMiddleware(adminKey string) func(http.Handler) http.Handler {
+// If tickets is nil, ticket auth is disabled.
+func AdminAuthMiddleware(adminKey string, tickets *TicketStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Path A: mTLS with admin OID
@@ -27,18 +30,25 @@ func AdminAuthMiddleware(adminKey string) func(http.Handler) http.Handler {
 				}
 			}
 
-			// Path B: Bearer token (header or query param for SSE/EventSource)
+			// Path B: Bearer token
 			if adminKey != "" {
-				token := ""
 				authHeader := r.Header.Get("Authorization")
 				if strings.HasPrefix(authHeader, "Bearer ") {
-					token = authHeader[7:]
-				} else if qToken := r.URL.Query().Get("token"); qToken != "" {
-					token = qToken
+					token := authHeader[7:]
+					if token != "" && constantTimeEqual(token, adminKey) {
+						next.ServeHTTP(w, r)
+						return
+					}
 				}
-				if token != "" && constantTimeEqual(token, adminKey) {
-					next.ServeHTTP(w, r)
-					return
+			}
+
+			// Path C: Short-lived auth ticket (for SSE/EventSource)
+			if tickets != nil {
+				if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+					if tickets.Redeem(ticket) {
+						next.ServeHTTP(w, r)
+						return
+					}
 				}
 			}
 

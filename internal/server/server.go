@@ -10,7 +10,9 @@ import (
 
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/craig8/ieee-2030_5-go/internal/auth"
 	"github.com/craig8/ieee-2030_5-go/internal/certs"
 	"github.com/craig8/ieee-2030_5-go/internal/config"
 	"github.com/craig8/ieee-2030_5-go/internal/discovery"
@@ -168,7 +170,8 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		MinVersion:   tls.VersionTLS12,
 	}
 
-	adminRouter := NewAdminRouter(cfg.AdminKey, svc, stores, tlsMode)
+	tickets := auth.NewTicketStore(30 * time.Second)
+	adminRouter := NewAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets)
 
 	adminListener, err := net.Listen("tcp", cfg.AdminAddr)
 	if err != nil {

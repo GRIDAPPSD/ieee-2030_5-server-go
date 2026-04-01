@@ -131,12 +131,31 @@ window.addEventListener('resize', function() { chart.resize(); });
 
 var history = [];
 
-// Get auth token from the page request (passed via URL or header)
-var authToken = new URLSearchParams(window.location.search).get('token') || '';
-var sseUrl = '/dashboard/events';
-if (authToken) sseUrl += '?token=' + encodeURIComponent(authToken);
-var evtSource = new EventSource(sseUrl);
-evtSource.onmessage = function(event) {
+// Fetch a short-lived auth ticket, then connect SSE with it.
+// The ticket is one-time-use and expires in 30 seconds.
+function connectSSE(ticketParam) {
+  var sseUrl = '/dashboard/events';
+  if (ticketParam) sseUrl += '?ticket=' + encodeURIComponent(ticketParam);
+  var evtSource = new EventSource(sseUrl);
+  evtSource.onmessage = onSSEMessage;
+  evtSource.onerror = function() {
+    evtSource.close();
+    // Re-fetch a fresh ticket and reconnect after a delay
+    setTimeout(function() {
+      fetch('/auth/ticket', { method: 'POST', credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) { connectSSE(d.ticket); })
+        .catch(function() { connectSSE(''); });
+    }, 3000);
+  };
+}
+
+fetch('/auth/ticket', { method: 'POST', credentials: 'same-origin' })
+  .then(function(r) { return r.json(); })
+  .then(function(d) { connectSSE(d.ticket); })
+  .catch(function() { connectSSE(''); });
+
+function onSSEMessage(event) {
   var d = JSON.parse(event.data);
 
   setText('tlsMode', d.tlsMode);

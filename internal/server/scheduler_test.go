@@ -108,9 +108,9 @@ func TestGetActiveControls(t *testing.T) {
 		Duration: 3600,
 	}
 
-	store.Create(ctx, "scope1", "1", activeCtrl)
-	store.Create(ctx, "scope1", "2", expiredCtrl)
-	store.Create(ctx, "scope1", "3", futureCtrl)
+	_ = store.Create(ctx, "scope1", "1", activeCtrl)
+	_ = store.Create(ctx, "scope1", "2", expiredCtrl)
+	_ = store.Create(ctx, "scope1", "3", futureCtrl)
 
 	active, err := GetActiveControls(ctx, store, "scope1", now)
 	if err != nil {

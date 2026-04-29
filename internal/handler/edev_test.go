@@ -17,7 +17,7 @@ func TestHandleEndDeviceGet(t *testing.T) {
 	s := memory.NewEndDeviceStore()
 	dev := sep2.EndDevice{SFDI: "123456789012", LFDI: "AABB"}
 	dev.Href = "/edev/1"
-	s.Create(context.Background(), "1", dev)
+	_ = s.Create(context.Background(), "1", dev)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /edev/{id}", handler.HandleEndDevice(s))
@@ -31,7 +31,7 @@ func TestHandleEndDeviceGet(t *testing.T) {
 	}
 
 	var got sep2.EndDevice
-	xml.Unmarshal(w.Body.Bytes(), &got)
+	_ = xml.Unmarshal(w.Body.Bytes(), &got)
 	if got.SFDI != "123456789012" {
 		t.Errorf("SFDI = %q", got.SFDI)
 	}
@@ -71,7 +71,7 @@ func TestHandleCreateEndDevice(t *testing.T) {
 	}
 
 	var got sep2.EndDevice
-	xml.Unmarshal(w.Body.Bytes(), &got)
+	_ = xml.Unmarshal(w.Body.Bytes(), &got)
 	if got.SFDI != "123456789012" {
 		t.Errorf("SFDI = %q, want cert identity", got.SFDI)
 	}
@@ -119,7 +119,7 @@ func TestHandleUpdateEndDevice(t *testing.T) {
 	s := memory.NewEndDeviceStore()
 	dev := sep2.EndDevice{SFDI: "111", LFDI: "AAA"}
 	dev.Href = "/edev/1"
-	s.Create(context.Background(), "1", dev)
+	_ = s.Create(context.Background(), "1", dev)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /edev/{id}", handler.HandleUpdateEndDevice(s))
@@ -159,7 +159,7 @@ func TestHandleUpdateEndDeviceNotFound(t *testing.T) {
 func TestHandleDeleteEndDevice(t *testing.T) {
 	s := memory.NewEndDeviceStore()
 	dev := sep2.EndDevice{SFDI: "111"}
-	s.Create(context.Background(), "1", dev)
+	_ = s.Create(context.Background(), "1", dev)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("DELETE /edev/{id}", handler.HandleDeleteEndDevice(s))
@@ -199,7 +199,7 @@ func TestHandleSelfDevice(t *testing.T) {
 	}
 
 	var sdev sep2.SelfDevice
-	xml.Unmarshal(w.Body.Bytes(), &sdev)
+	_ = xml.Unmarshal(w.Body.Bytes(), &sdev)
 	if sdev.SFDI != "123456789012" {
 		t.Errorf("SFDI = %q", sdev.SFDI)
 	}

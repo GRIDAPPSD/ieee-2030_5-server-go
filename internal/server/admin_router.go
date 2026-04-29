@@ -37,10 +37,10 @@ func handleIssueTicket(tickets *auth.TicketStore) http.HandlerFunc {
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(`{"error":"failed to issue ticket"}`))
+			_, _ = w.Write([]byte(`{"error":"failed to issue ticket"}`))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"ticket":"` + ticket + `"}`))
+		_, _ = w.Write([]byte(`{"ticket":"` + ticket + `"}`))
 	}
 }

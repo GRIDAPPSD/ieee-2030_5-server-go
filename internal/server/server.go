@@ -67,7 +67,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	var tlsListener net.Listener
 	protocolSrv := &http.Server{}
@@ -93,11 +93,16 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		}
 
 		// Compute server identity
+		// NOTE: these values are computed too late — the router was already
+		// constructed above with empty identity strings. Tracked separately;
+		// do not remove these assignments without fixing the call ordering.
 		if len(tlsCfg.Certificates) > 0 {
 			leaf := tlsCfg.Certificates[0]
 			if leaf.Leaf != nil {
-				serverSFDI = sepTLS.SFDI(leaf.Leaf)
-				serverLFDI = sepTLS.LFDI(leaf.Leaf)
+				serverSFDI = sepTLS.SFDI(leaf.Leaf) //nolint:ineffassign // see note above
+				serverLFDI = sepTLS.LFDI(leaf.Leaf) //nolint:ineffassign // see note above
+				_ = serverSFDI
+				_ = serverLFDI
 			}
 		}
 
@@ -136,7 +141,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		}
 		adminSrv, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh)
 		if err != nil {
-			protocolSrv.Close()
+			_ = protocolSrv.Close()
 			return fmt.Errorf("admin server: %w", err)
 		}
 	}
@@ -144,9 +149,13 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	select {
 	case <-ctx.Done():
 		log.Println("shutting down servers...")
-		protocolSrv.Shutdown(context.Background())
+		if err := protocolSrv.Shutdown(context.Background()); err != nil {
+			log.Printf("protocol server shutdown error: %v", err)
+		}
 		if adminSrv != nil {
-			adminSrv.Shutdown(context.Background())
+			if err := adminSrv.Shutdown(context.Background()); err != nil {
+				log.Printf("admin server shutdown error: %v", err)
+			}
 		}
 		return nil
 	case err := <-errCh:

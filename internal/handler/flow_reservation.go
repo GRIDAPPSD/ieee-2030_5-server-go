@@ -91,7 +91,10 @@ func HandlePostFlowReservationRequest(
 		status := sep2.EventStatusActive
 		frp.EventStatus = &sep2.EventStatus{CurrentStatus: status, DateTime: time.Now().Unix()}
 
-		frpStore.Create(r.Context(), edevID, frpID, frp)
+		if err := frpStore.Create(r.Context(), edevID, frpID, frp); err != nil {
+			http.Error(w, "create flow reservation: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		w.Header().Set("Location", frq.Href)
 		encoding.WriteXML(w, http.StatusCreated, &frq)

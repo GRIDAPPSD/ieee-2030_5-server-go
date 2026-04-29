@@ -30,7 +30,7 @@ func TestHandleGetCA(t *testing.T) {
 	var resp struct {
 		CertPEM string `json:"certPEM"`
 	}
-	json.NewDecoder(w.Body).Decode(&resp)
+	_ = json.NewDecoder(w.Body).Decode(&resp)
 	if resp.CertPEM == "" {
 		t.Error("certPEM should not be empty")
 	}
@@ -57,7 +57,7 @@ func TestHandleCreateServerCert(t *testing.T) {
 		CertPEM string `json:"certPEM"`
 		KeyPEM  string `json:"keyPEM"`
 	}
-	json.NewDecoder(w.Body).Decode(&resp)
+	_ = json.NewDecoder(w.Body).Decode(&resp)
 	if resp.CertPEM == "" || resp.KeyPEM == "" {
 		t.Error("response should contain certPEM and keyPEM")
 	}
@@ -96,7 +96,7 @@ func TestHandleCreateDeviceCert(t *testing.T) {
 		SFDI    string `json:"sfdi"`
 		LFDI    string `json:"lfdi"`
 	}
-	json.NewDecoder(w.Body).Decode(&resp)
+	_ = json.NewDecoder(w.Body).Decode(&resp)
 
 	if resp.CertPEM == "" || resp.KeyPEM == "" {
 		t.Error("should contain certPEM and keyPEM")

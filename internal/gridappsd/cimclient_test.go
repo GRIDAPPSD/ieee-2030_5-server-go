@@ -81,7 +81,7 @@ func startMockServer(t *testing.T) string {
 	srv := grpc.NewServer()
 	pb.RegisterCIMGraphServiceServer(srv, &mockCIMGraphServer{})
 
-	go srv.Serve(lis)
+	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop() })
 
 	return lis.Addr().String()
@@ -93,7 +93,7 @@ func TestCIMClientHealthCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	resp, err := client.HealthCheck(context.Background())
 	if err != nil {
@@ -113,7 +113,7 @@ func TestCIMClientDiscoverDERDevices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	devices, err := client.DiscoverDERDevices(context.Background(), "test-feeder-123")
 	if err != nil {
@@ -205,7 +205,7 @@ func TestAdapterNoFeederID(t *testing.T) {
 	// No FeederID set
 
 	adapter, _ := gridappsd.NewAdapter(cfg)
-	adapter.Connect(context.Background())
+	_ = adapter.Connect(context.Background())
 
 	_, err := adapter.DiscoverDevices(context.Background())
 	if err == nil {
@@ -219,7 +219,7 @@ func TestCIMClientListFeeders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	feeders, err := client.ListFeeders(context.Background())
 	if err != nil {
@@ -259,7 +259,7 @@ func TestProtoDirectCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := pb.NewCIMGraphServiceClient(conn)
 	resp, err := client.GetFeederModel(context.Background(), &pb.GetFeederModelRequest{

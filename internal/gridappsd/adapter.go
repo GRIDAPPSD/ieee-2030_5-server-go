@@ -41,11 +41,11 @@ func (a *Adapter) Connect(ctx context.Context) error {
 
 	health, err := client.HealthCheck(ctx)
 	if err != nil {
-		client.Close()
+		_ = client.Close()
 		return fmt.Errorf("CIM-Graph health check: %w", err)
 	}
 	if !health.Healthy {
-		client.Close()
+		_ = client.Close()
 		return fmt.Errorf("CIM-Graph unhealthy: %s", health.DatabaseType)
 	}
 
@@ -59,7 +59,7 @@ func (a *Adapter) Connect(ctx context.Context) error {
 // Close disconnects from CIM-Graph.
 func (a *Adapter) Close() {
 	if a.cimClient != nil {
-		a.cimClient.Close()
+		_ = a.cimClient.Close()
 	}
 }
 

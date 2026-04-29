@@ -14,9 +14,9 @@ func TestScopedStoreIsolation(t *testing.T) {
 	ctx := context.Background()
 
 	// Add items to different parents
-	s.Create(ctx, "parent-A", "1", testItem{Name: "a1", Value: 1})
-	s.Create(ctx, "parent-A", "2", testItem{Name: "a2", Value: 2})
-	s.Create(ctx, "parent-B", "1", testItem{Name: "b1", Value: 10})
+	_ = s.Create(ctx, "parent-A", "1", testItem{Name: "a1", Value: 1})
+	_ = s.Create(ctx, "parent-A", "2", testItem{Name: "a2", Value: 2})
+	_ = s.Create(ctx, "parent-B", "1", testItem{Name: "b1", Value: 10})
 
 	// Parent A should have 2 items
 	countA, _ := s.Count(ctx, "parent-A")
@@ -46,7 +46,7 @@ func TestScopedStoreList(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		id := string(rune('a' + i))
-		s.Create(ctx, "p1", id, testItem{Name: id, Value: i})
+		_ = s.Create(ctx, "p1", id, testItem{Name: id, Value: i})
 	}
 
 	result, err := s.List(ctx, "p1", store.ListOptions{Limit: 3})
@@ -78,8 +78,8 @@ func TestScopedStoreDelete(t *testing.T) {
 	s := memory.NewScopedStore[testItem]()
 	ctx := context.Background()
 
-	s.Create(ctx, "p1", "a", testItem{Name: "a"})
-	s.Delete(ctx, "p1", "a")
+	_ = s.Create(ctx, "p1", "a", testItem{Name: "a"})
+	_ = s.Delete(ctx, "p1", "a")
 
 	_, err := s.Get(ctx, "p1", "a")
 	if !errors.Is(err, store.ErrNotFound) {
@@ -95,7 +95,7 @@ func TestScopedStoreHasParent(t *testing.T) {
 		t.Error("should not have parent before any operations")
 	}
 
-	s.Create(ctx, "p1", "a", testItem{})
+	_ = s.Create(ctx, "p1", "a", testItem{})
 
 	if !s.HasParent("p1") {
 		t.Error("should have parent after create")

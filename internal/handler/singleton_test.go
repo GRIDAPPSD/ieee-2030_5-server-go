@@ -32,7 +32,7 @@ func TestSingletonGetReturnsDefault(t *testing.T) {
 	}
 
 	var cap sep2.DERCapability
-	xml.Unmarshal(w.Body.Bytes(), &cap)
+	_ = xml.Unmarshal(w.Body.Bytes(), &cap)
 	if cap.Href != "/edev/1/der/1/dercap" {
 		t.Errorf("default href = %q", cap.Href)
 	}
@@ -72,7 +72,7 @@ func TestSingletonPutThenGet(t *testing.T) {
 	}
 
 	var got sep2.DERSettings
-	xml.Unmarshal(getW.Body.Bytes(), &got)
+	_ = xml.Unmarshal(getW.Body.Bytes(), &got)
 	if got.SetMaxW == nil || got.SetMaxW.Value != 5000 {
 		t.Errorf("SetMaxW = %v, want 5000", got.SetMaxW)
 	}
@@ -115,7 +115,7 @@ func TestSingletonPutUpdateExisting(t *testing.T) {
 	h.ServeHTTP(getW, getReq)
 
 	var got sep2.DERStatus
-	xml.Unmarshal(getW.Body.Bytes(), &got)
+	_ = xml.Unmarshal(getW.Body.Bytes(), &got)
 	if got.ReadingTime != 200 {
 		t.Errorf("ReadingTime = %d, want 200 (updated)", got.ReadingTime)
 	}

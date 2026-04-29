@@ -75,7 +75,7 @@ func (w *nsBufferedWriter) flush() {
 		w.status = 200
 	}
 	w.ResponseWriter.WriteHeader(w.status)
-	w.ResponseWriter.Write(data)
+	_, _ = w.ResponseWriter.Write(data)
 }
 
 // NamespaceMiddleware detects the client's namespace preference and

@@ -54,7 +54,7 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore) func(http.Handle
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte(`{"error":"admin authentication required"}`))
+			_, _ = w.Write([]byte(`{"error":"admin authentication required"}`))
 		})
 	}
 }

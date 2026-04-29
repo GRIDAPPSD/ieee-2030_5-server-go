@@ -54,7 +54,7 @@ func (d *DashboardHandler) RegisterRoutes(mux *http.ServeMux) {
 func (d *DashboardHandler) handleData(w http.ResponseWriter, r *http.Request) {
 	data := d.collectData()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	_ = json.NewEncoder(w).Encode(data)
 }
 
 func (d *DashboardHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +71,7 @@ func (d *DashboardHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// Send initial data
 	data := d.collectData()
 	jsonData, _ := json.Marshal(data)
-	fmt.Fprintf(w, "data: %s\n\n", jsonData)
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", jsonData)
 	flusher.Flush()
 
 	// Send updates every 5 seconds
@@ -86,7 +86,7 @@ func (d *DashboardHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 			data := d.collectData()
 			jsonData, _ := json.Marshal(data)
-			fmt.Fprintf(w, "data: %s\n\n", jsonData)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", jsonData)
 			flusher.Flush()
 		}
 	}
@@ -127,5 +127,5 @@ func (d *DashboardHandler) handleDashboardPage(w http.ResponseWriter, r *http.Re
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(dashboardHTML))
+	_, _ = w.Write([]byte(dashboardHTML))
 }

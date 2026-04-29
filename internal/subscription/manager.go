@@ -108,7 +108,7 @@ func (m *Manager) deliver(_ context.Context, task notificationTask) {
 		log.Printf("notification: POST to %s failed: %v", task.notificationURI, err)
 		return
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
 		log.Printf("notification: POST to %s returned %d", task.notificationURI, resp.StatusCode)

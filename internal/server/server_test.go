@@ -69,14 +69,14 @@ func TestIntegrationEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	tlsListener := tls.NewListener(listener, serverTLSCfg)
 	stores := newTestStores()
 	router := server.NewRouter(cfg, stores, nil, "", "")
 	srv := &http.Server{Handler: router}
-	go srv.Serve(tlsListener)
-	defer srv.Close()
+	go func() { _ = srv.Serve(tlsListener) }()
+	defer func() { _ = srv.Close() }()
 
 	// Create client
 	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, caCertPEM)
@@ -94,7 +94,7 @@ func TestIntegrationEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET /dcap: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != 200 {
 			t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -128,7 +128,7 @@ func TestIntegrationEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET /tm: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != 200 {
 			t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -160,7 +160,7 @@ func TestIntegrationEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.TLS.CipherSuite != tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 {
 			t.Errorf("cipher = 0x%04x, want ECDHE_ECDSA_AES128_GCM", resp.TLS.CipherSuite)
@@ -173,7 +173,7 @@ func TestIntegrationEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if resp.StatusCode != http.StatusMethodNotAllowed {
 			t.Errorf("status = %d, want 405", resp.StatusCode)

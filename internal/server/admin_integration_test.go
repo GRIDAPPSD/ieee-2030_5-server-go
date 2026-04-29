@@ -35,13 +35,13 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer adminListener.Close()
+	defer func() { _ = adminListener.Close() }()
 
 	adminTLSListener := tls.NewListener(adminListener, adminTLSCfg)
-	adminRouter := server.NewAdminRouter("test-admin-key", env.svc, nil, "GCM")
+	adminRouter := server.NewAdminRouter("test-admin-key", env.svc, nil, "GCM", nil)
 	adminSrv := &http.Server{Handler: adminRouter}
-	go adminSrv.Serve(adminTLSListener)
-	defer adminSrv.Close()
+	go func() { _ = adminSrv.Serve(adminTLSListener) }()
+	defer func() { _ = adminSrv.Close() }()
 
 	// Client trusts the self-signed admin cert
 	adminClient := &http.Client{
@@ -59,7 +59,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != 200 {
 			body, _ := io.ReadAll(resp.Body)
@@ -69,7 +69,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 		var result struct {
 			CertPEM string `json:"certPEM"`
 		}
-		json.NewDecoder(resp.Body).Decode(&result)
+		_ = json.NewDecoder(resp.Body).Decode(&result)
 		if result.CertPEM == "" {
 			t.Error("CA certPEM should not be empty")
 		}
@@ -85,7 +85,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != 201 {
 			respBody, _ := io.ReadAll(resp.Body)
@@ -98,7 +98,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 			SFDI    string `json:"sfdi"`
 			LFDI    string `json:"lfdi"`
 		}
-		json.NewDecoder(resp.Body).Decode(&result)
+		_ = json.NewDecoder(resp.Body).Decode(&result)
 
 		if len(result.SFDI) != 12 {
 			t.Errorf("SFDI length = %d, want 12", len(result.SFDI))
@@ -119,7 +119,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != 401 {
 			t.Errorf("status = %d, want 401", resp.StatusCode)
 		}
@@ -132,7 +132,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != 401 {
 			t.Errorf("status = %d, want 401", resp.StatusCode)
 		}
@@ -152,14 +152,14 @@ func TestProtocolRegressionWithAdminEnabled(t *testing.T) {
 	}
 
 	listener, _ := net.Listen("tcp", "127.0.0.1:0")
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	tlsListener := tls.NewListener(listener, serverTLSCfg)
 	stores := newTestStores()
 	router := server.NewRouter(cfg, stores, env.svc, "", "")
 	srv := &http.Server{Handler: router}
-	go srv.Serve(tlsListener)
-	defer srv.Close()
+	go func() { _ = srv.Serve(tlsListener) }()
+	defer func() { _ = srv.Close() }()
 
 	// Device client (not admin)
 	clientTLSCfg, _ := sepTLS.NewClientTLSConfigFromPEM(env.deviceCertPEM, env.deviceKeyPEM, env.caCertPEM)
@@ -174,7 +174,7 @@ func TestProtocolRegressionWithAdminEnabled(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != 200 {
 			t.Errorf("status = %d, want 200", resp.StatusCode)
 		}
@@ -185,7 +185,7 @@ func TestProtocolRegressionWithAdminEnabled(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != 200 {
 			t.Errorf("status = %d, want 200", resp.StatusCode)
 		}

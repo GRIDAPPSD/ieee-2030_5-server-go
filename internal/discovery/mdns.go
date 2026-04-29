@@ -90,7 +90,9 @@ func Register(cfg Config) (*Registration, error) {
 func (r *Registration) Close() {
 	if r.server != nil {
 		log.Printf("DNS-SD: deregistering %s", ServiceType)
-		r.server.Shutdown()
+		if err := r.server.Shutdown(); err != nil {
+			log.Printf("DNS-SD: shutdown error: %v", err)
+		}
 		r.server = nil
 	}
 }

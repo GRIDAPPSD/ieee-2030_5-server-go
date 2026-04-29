@@ -49,7 +49,7 @@ func TestAutoRegistrationSkipsExisting(t *testing.T) {
 	// Pre-register a device
 	dev := sep2.EndDevice{SFDI: "123456789012", LFDI: "AABB"}
 	dev.Href = "/edev/12345678"
-	store.Create(context.Background(), "12345678", dev)
+	_ = store.Create(context.Background(), "12345678", dev)
 
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := auth.GetDeviceID(r.Context())

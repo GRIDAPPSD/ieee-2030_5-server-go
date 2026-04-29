@@ -20,7 +20,7 @@ func TestEndDeviceGetBySFDI(t *testing.T) {
 	}
 	dev.Href = "/edev/1"
 
-	s.Create(ctx, "1", dev)
+	_ = s.Create(ctx, "1", dev)
 
 	got, err := s.GetBySFDI(ctx, "123456789012")
 	if err != nil {
@@ -39,7 +39,7 @@ func TestEndDeviceGetByLFDI(t *testing.T) {
 		SFDI: "123456789012",
 		LFDI: "AABBCCDD00112233445566778899AABBCCDDEEFF",
 	}
-	s.Create(ctx, "1", dev)
+	_ = s.Create(ctx, "1", dev)
 
 	got, err := s.GetByLFDI(ctx, "AABBCCDD00112233445566778899AABBCCDDEEFF")
 	if err != nil {
@@ -70,12 +70,12 @@ func TestEndDeviceIndexUpdateReindexes(t *testing.T) {
 	ctx := context.Background()
 
 	dev := sep2.EndDevice{SFDI: "111111111111", LFDI: "AAAA"}
-	s.Create(ctx, "1", dev)
+	_ = s.Create(ctx, "1", dev)
 
 	// Update with new SFDI
 	updated := sep2.EndDevice{SFDI: "222222222222", LFDI: "BBBB"}
 	updated.Href = "/edev/1"
-	s.Update(ctx, "1", updated)
+	_ = s.Update(ctx, "1", updated)
 
 	// Old SFDI should not find anything
 	_, err := s.GetBySFDI(ctx, "111111111111")
@@ -98,8 +98,8 @@ func TestEndDeviceIndexDeleteRemoves(t *testing.T) {
 	ctx := context.Background()
 
 	dev := sep2.EndDevice{SFDI: "333333333333", LFDI: "CCCC"}
-	s.Create(ctx, "1", dev)
-	s.Delete(ctx, "1")
+	_ = s.Create(ctx, "1", dev)
+	_ = s.Delete(ctx, "1")
 
 	_, err := s.GetBySFDI(ctx, "333333333333")
 	if !errors.Is(err, store.ErrNotFound) {

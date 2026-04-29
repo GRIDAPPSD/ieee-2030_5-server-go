@@ -48,13 +48,13 @@ func TestPythonClientInterop(t *testing.T) {
 	cfg := &config.Config{TZOffset: -28800, TimeQuality: sep2.TimeQualityNTP}
 
 	listener, _ := net.Listen("tcp", "127.0.0.1:0")
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	tlsListener := tls.NewListener(listener, serverTLSCfg)
 	router := server.NewRouter(cfg, stores, nil, "", "")
 	srv := &http.Server{Handler: router}
-	go srv.Serve(tlsListener)
-	defer srv.Close()
+	go func() { _ = srv.Serve(tlsListener) }()
+	defer func() { _ = srv.Close() }()
 
 	// Create client mimicking Python behavior:
 	// - check_hostname = False → InsecureSkipVerify (for hostname, not cert chain)
@@ -91,7 +91,7 @@ func TestPythonClientInterop(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET /dcap: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != 200 {
 			t.Fatalf("status = %d", resp.StatusCode)
@@ -129,11 +129,11 @@ func TestPythonClientInterop(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET /tm: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		var tm sep2.Time
 		body, _ := io.ReadAll(resp.Body)
-		xml.Unmarshal(body, &tm)
+		_ = xml.Unmarshal(body, &tm)
 
 		if tm.CurrentTime == 0 {
 			t.Error("currentTime should not be 0")
@@ -151,7 +151,7 @@ func TestPythonClientInterop(t *testing.T) {
 		if err != nil {
 			t.Fatalf("POST /edev: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != 201 && resp.StatusCode != 200 {
 			body, _ := io.ReadAll(resp.Body)
@@ -170,11 +170,11 @@ func TestPythonClientInterop(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		var list sep2.EndDeviceList
 		body, _ := io.ReadAll(resp.Body)
-		xml.Unmarshal(body, &list)
+		_ = xml.Unmarshal(body, &list)
 
 		if list.All < 1 {
 			t.Error("EndDeviceList should have at least 1 device")
@@ -197,7 +197,7 @@ func TestPythonClientInterop(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != 201 && resp.StatusCode != 200 {
 			body, _ := io.ReadAll(resp.Body)
@@ -226,7 +226,7 @@ func TestPythonClientInterop(t *testing.T) {
 			if err != nil {
 				t.Fatalf("POST /mup/%s/mr: %v", mupID, err)
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if resp.StatusCode != 201 {
 				t.Errorf("POST meter reading status = %d", resp.StatusCode)

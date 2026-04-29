@@ -50,7 +50,7 @@ func TestCreateDuplicate(t *testing.T) {
 	s := memory.NewStore[testItem]()
 	ctx := context.Background()
 
-	s.Create(ctx, "a", testItem{Name: "first"})
+	_ = s.Create(ctx, "a", testItem{Name: "first"})
 	err := s.Create(ctx, "a", testItem{Name: "second"})
 	if !errors.Is(err, store.ErrAlreadyExists) {
 		t.Errorf("got %v, want ErrAlreadyExists", err)
@@ -61,7 +61,7 @@ func TestUpdate(t *testing.T) {
 	s := memory.NewStore[testItem]()
 	ctx := context.Background()
 
-	s.Create(ctx, "a", testItem{Name: "v1", Value: 1})
+	_ = s.Create(ctx, "a", testItem{Name: "v1", Value: 1})
 	err := s.Update(ctx, "a", testItem{Name: "v2", Value: 2})
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestDelete(t *testing.T) {
 	s := memory.NewStore[testItem]()
 	ctx := context.Background()
 
-	s.Create(ctx, "a", testItem{Name: "alpha"})
+	_ = s.Create(ctx, "a", testItem{Name: "alpha"})
 	err := s.Delete(ctx, "a")
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestListPaging(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		id := string(rune('a' + i))
-		s.Create(ctx, id, testItem{Name: id, Value: i})
+		_ = s.Create(ctx, id, testItem{Name: id, Value: i})
 	}
 
 	tests := []struct {
@@ -174,7 +174,7 @@ func TestImmutability(t *testing.T) {
 	s := memory.NewStore[testItem]()
 	ctx := context.Background()
 
-	s.Create(ctx, "a", testItem{Name: "original", Value: 42})
+	_ = s.Create(ctx, "a", testItem{Name: "original", Value: 42})
 
 	// Mutate the returned value
 	got, _ := s.Get(ctx, "a")
@@ -199,7 +199,7 @@ func TestConcurrency(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			id := string(rune('A' + (i % 26)))
-			s.Create(ctx, id+string(rune('0'+i%10)), testItem{Name: id, Value: i})
+			_ = s.Create(ctx, id+string(rune('0'+i%10)), testItem{Name: id, Value: i})
 		}(i)
 	}
 
@@ -208,7 +208,7 @@ func TestConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.List(ctx, store.ListOptions{Limit: 10})
+			_, _ = s.List(ctx, store.ListOptions{Limit: 10})
 		}()
 	}
 
@@ -229,8 +229,8 @@ func TestCount(t *testing.T) {
 		t.Errorf("empty store count = %d", count)
 	}
 
-	s.Create(ctx, "a", testItem{})
-	s.Create(ctx, "b", testItem{})
+	_ = s.Create(ctx, "a", testItem{})
+	_ = s.Create(ctx, "b", testItem{})
 
 	count, _ = s.Count(ctx)
 	if count != 2 {

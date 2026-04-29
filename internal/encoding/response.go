@@ -19,7 +19,9 @@ func WriteXML(w http.ResponseWriter, status int, v any) {
 
 	w.Header().Set("Content-Type", ContentTypeSEPXML)
 	w.WriteHeader(status)
-	w.Write(data)
+	if _, err := w.Write(data); err != nil {
+		log.Printf("response write error: %v", err)
+	}
 }
 
 // MethodNotAllowed returns a 405 response with an Allow header.

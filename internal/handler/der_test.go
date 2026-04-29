@@ -53,7 +53,7 @@ func TestDERSingletonHandlersCapability(t *testing.T) {
 	mux.ServeHTTP(getW, getReq)
 
 	var got sep2.DERCapability
-	xml.Unmarshal(getW.Body.Bytes(), &got)
+	_ = xml.Unmarshal(getW.Body.Bytes(), &got)
 	if got.RTGMaxW == nil || got.RTGMaxW.Value != 10000 {
 		t.Errorf("RTGMaxW = %v", got.RTGMaxW)
 	}
@@ -91,7 +91,7 @@ func TestDERSingletonHandlersStatus(t *testing.T) {
 	mux.ServeHTTP(getW, httptest.NewRequest(http.MethodGet, "/edev/e1/der/d1/ders", nil))
 
 	var got sep2.DERStatus
-	xml.Unmarshal(getW.Body.Bytes(), &got)
+	_ = xml.Unmarshal(getW.Body.Bytes(), &got)
 	if got.GenConnectStatus == nil || got.GenConnectStatus.Value != 1 {
 		t.Errorf("GenConnectStatus = %v", got.GenConnectStatus)
 	}
@@ -132,7 +132,7 @@ func TestDefaultDERControlHandler(t *testing.T) {
 	mux.ServeHTTP(getW2, httptest.NewRequest(http.MethodGet, "/edev/e1/fsa/f1/derp/p1/dderc", nil))
 
 	var got sep2.DefaultDERControl
-	xml.Unmarshal(getW2.Body.Bytes(), &got)
+	_ = xml.Unmarshal(getW2.Body.Bytes(), &got)
 	if got.DERControlBase == nil || got.DERControlBase.OpModConnect == nil || !*got.DERControlBase.OpModConnect {
 		t.Error("OpModConnect should be true after PUT")
 	}

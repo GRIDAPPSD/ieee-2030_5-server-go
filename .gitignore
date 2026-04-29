@@ -7,6 +7,12 @@ CLAUDE.md
 docs/*.pdf
 docs/**/*.pdf
 
+# IEEE 2030.5 vendor packages (copyrighted - dev obtains from ieee.org download)
+docs/2030.5-*/
+
+# Local TLS material (dev/test PKI - never commit private keys)
+certs/
+
 # Go build artifacts
 /bin/
 /dist/

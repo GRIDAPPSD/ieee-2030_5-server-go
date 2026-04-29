@@ -39,7 +39,9 @@ func runGenerateCA(args []string) error {
 	cn := fs.String("cn", "IEEE 2030.5 Root CA", "Common name")
 	outDir := fs.String("out", "./certs", "Output directory")
 	years := fs.Int("years", 10, "Validity in years (0 = indefinite)")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	certPEM, keyPEM, err := certs.GenerateCA(certs.CAOptions{
 		Organization: *org,
@@ -74,7 +76,9 @@ func runGenerateServer(args []string) error {
 	cn := fs.String("cn", "IEEE 2030.5 Server", "Common name")
 	outDir := fs.String("out", "./certs", "Output directory")
 	years := fs.Int("years", 1, "Validity in years")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	caCert, caKey, err := certs.LoadCA(*caFile, *caKeyFile)
 	if err != nil {
@@ -116,7 +120,9 @@ func runGenerateAdmin(args []string) error {
 	cn := fs.String("cn", "IEEE 2030.5 Admin", "Common name")
 	outDir := fs.String("out", "./certs", "Output directory")
 	years := fs.Int("years", 1, "Validity in years")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	caCert, caKey, err := certs.LoadCA(*caFile, *caKeyFile)
 	if err != nil {
@@ -152,7 +158,9 @@ func runGenerateDevice(args []string) error {
 	name := fs.String("name", "device", "Output filename prefix")
 	outDir := fs.String("out", "./certs", "Output directory")
 	isTest := fs.Bool("test", false, "Generate test certificate")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	caCert, caKey, err := certs.LoadCA(*caFile, *caKeyFile)
 	if err != nil {

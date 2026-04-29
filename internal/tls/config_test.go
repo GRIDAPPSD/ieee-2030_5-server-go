@@ -61,7 +61,7 @@ func TestMutualTLSHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	tlsListener := tls.NewListener(listener, serverTLSCfg)
 
@@ -76,12 +76,12 @@ func TestMutualTLSHandshake(t *testing.T) {
 		sfdi := sepTLS.SFDI(cert)
 		lfdi := sepTLS.LFDI(cert)
 
-		fmt.Fprintf(w, "SFDI=%s LFDI=%s", sfdi, lfdi)
+		_, _ = fmt.Fprintf(w, "SFDI=%s LFDI=%s", sfdi, lfdi)
 	})
 
 	srv := &http.Server{Handler: handler}
-	go srv.Serve(tlsListener)
-	defer srv.Close()
+	go func() { _ = srv.Serve(tlsListener) }()
+	defer func() { _ = srv.Close() }()
 
 	// Make client request
 	client := &http.Client{
@@ -95,7 +95,7 @@ func TestMutualTLSHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
@@ -137,14 +137,14 @@ func TestTLSRejectsNoClientCert(t *testing.T) {
 	serverTLSCfg, _ := sepTLS.NewServerTLSConfigFromPEM(serverCertPEM, serverKeyPEM, caCertPEM)
 
 	listener, _ := net.Listen("tcp", "127.0.0.1:0")
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	tlsListener := tls.NewListener(listener, serverTLSCfg)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	})}
-	go srv.Serve(tlsListener)
-	defer srv.Close()
+	go func() { _ = srv.Serve(tlsListener) }()
+	defer func() { _ = srv.Close() }()
 
 	// Client WITHOUT a certificate
 	client := &http.Client{

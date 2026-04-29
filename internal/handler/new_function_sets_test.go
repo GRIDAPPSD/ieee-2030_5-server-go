@@ -64,7 +64,7 @@ func TestHandleConfiguration(t *testing.T) {
 	getW := httptest.NewRecorder()
 	mux.ServeHTTP(getW, httptest.NewRequest(http.MethodGet, "/edev/dev1/cfg", nil))
 	var got sep2.Configuration
-	xml.Unmarshal(getW.Body.Bytes(), &got)
+	_ = xml.Unmarshal(getW.Body.Bytes(), &got)
 	if got.CurrentLocale != "en-US" {
 		t.Errorf("CurrentLocale = %q", got.CurrentLocale)
 	}
@@ -129,7 +129,7 @@ func TestHandlePowerStatus(t *testing.T) {
 	getW := httptest.NewRecorder()
 	mux.ServeHTTP(getW, httptest.NewRequest(http.MethodGet, "/edev/dev1/ps", nil))
 	var got sep2.PowerStatus
-	xml.Unmarshal(getW.Body.Bytes(), &got)
+	_ = xml.Unmarshal(getW.Body.Bytes(), &got)
 	if got.CurrentPowerSource != sep2.PowerSourceMains {
 		t.Errorf("CurrentPowerSource = %d", got.CurrentPowerSource)
 	}
@@ -139,7 +139,7 @@ func TestHandlePowerStatus(t *testing.T) {
 
 func TestHandleMessagingProgram(t *testing.T) {
 	msgStore := memory.NewStore[sep2.MessagingProgram]()
-	msgStore.Create(context.Background(), "msg1", sep2.MessagingProgram{
+	_ = msgStore.Create(context.Background(), "msg1", sep2.MessagingProgram{
 		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/msg/msg1"}},
 		MRID: "msg1", Primacy: 1,
 	})
@@ -276,7 +276,7 @@ func TestHandleUsagePoint(t *testing.T) {
 	uptStore := memory.NewStore[sep2.UsagePoint]()
 	upt := sep2.UsagePoint{MRID: "upt1", Description: "Meter"}
 	upt.Href = "/upt/upt1"
-	uptStore.Create(context.Background(), "upt1", upt)
+	_ = uptStore.Create(context.Background(), "upt1", upt)
 
 	h := handler.HandleUsagePoint(uptStore)
 	mux := http.NewServeMux()

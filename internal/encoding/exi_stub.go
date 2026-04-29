@@ -19,3 +19,7 @@ func (e *exiStubEncoder) Marshal(v any) ([]byte, error) {
 func (e *exiStubEncoder) Unmarshal(data []byte, v any) error {
 	return ErrEXINotSupported
 }
+
+// Compile-time assertion that exiStubEncoder satisfies the Encoder interface.
+// Documents the intended shape for future EXI implementation (Phase 3).
+var _ Encoder = (*exiStubEncoder)(nil)

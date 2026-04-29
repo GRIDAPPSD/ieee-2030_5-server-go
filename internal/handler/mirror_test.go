@@ -44,7 +44,7 @@ func TestHandleCreateMirrorUsagePoint(t *testing.T) {
 
 	// Verify DeviceLFDI was set from cert identity
 	var result sep2.MirrorUsagePoint
-	xml.Unmarshal(w.Body.Bytes(), &result)
+	_ = xml.Unmarshal(w.Body.Bytes(), &result)
 	if result.DeviceLFDI != "TEST_LFDI_40CHARS_AABBCCDD00112233445566" {
 		t.Errorf("DeviceLFDI = %q, want cert value", result.DeviceLFDI)
 	}
@@ -52,7 +52,7 @@ func TestHandleCreateMirrorUsagePoint(t *testing.T) {
 
 func TestHandleMirrorUsagePointGet(t *testing.T) {
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
-	s.Create(context.Background(), "test1", sep2.MirrorUsagePoint{
+	_ = s.Create(context.Background(), "test1", sep2.MirrorUsagePoint{
 		Resource: sep2.Resource{Href: "/mup/test1"},
 		MRID:     "TEST1",
 	})
@@ -73,7 +73,7 @@ func TestHandlePostMirrorMeterReading(t *testing.T) {
 	mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
 	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
 
-	mupStore.Create(context.Background(), "inv1", sep2.MirrorUsagePoint{
+	_ = mupStore.Create(context.Background(), "inv1", sep2.MirrorUsagePoint{
 		Resource: sep2.Resource{Href: "/mup/inv1"},
 		MRID:     "INV1",
 	})
@@ -124,8 +124,8 @@ func TestHandlePostMirrorMeterReadingNotFoundParent(t *testing.T) {
 
 func TestHandleMirrorListHandler(t *testing.T) {
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
-	s.Create(context.Background(), "a", sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/a"}, MRID: "A"})
-	s.Create(context.Background(), "b", sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/b"}, MRID: "B"})
+	_ = s.Create(context.Background(), "a", sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/a"}, MRID: "A"})
+	_ = s.Create(context.Background(), "b", sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/b"}, MRID: "B"})
 
 	h := handler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
 		s, handler.BuildMirrorUsagePointList, 300,
@@ -136,7 +136,7 @@ func TestHandleMirrorListHandler(t *testing.T) {
 	h.ServeHTTP(w, req)
 
 	var list sep2.MirrorUsagePointList
-	xml.Unmarshal(w.Body.Bytes(), &list)
+	_ = xml.Unmarshal(w.Body.Bytes(), &list)
 
 	if list.All != 2 {
 		t.Errorf("All = %d, want 2", list.All)

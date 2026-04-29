@@ -20,7 +20,7 @@ func TestListHandlerPaging(t *testing.T) {
 		id := string(rune('1' + i))
 		dev := sep2.EndDevice{SFDI: "00000000000" + id}
 		dev.Href = "/edev/" + id
-		s.Create(context.Background(), id, dev)
+		_ = s.Create(context.Background(), id, dev)
 	}
 
 	h := handler.ListHandler[sep2.EndDevice, sep2.EndDeviceList](
@@ -51,7 +51,7 @@ func TestListHandlerPaging(t *testing.T) {
 		}
 
 		var list sep2.EndDeviceList
-		xml.Unmarshal(w.Body.Bytes(), &list)
+		_ = xml.Unmarshal(w.Body.Bytes(), &list)
 
 		if list.All != 5 {
 			t.Errorf("All = %d, want 5", list.All)
@@ -67,7 +67,7 @@ func TestListHandlerPaging(t *testing.T) {
 		h.ServeHTTP(w, req)
 
 		var list sep2.EndDeviceList
-		xml.Unmarshal(w.Body.Bytes(), &list)
+		_ = xml.Unmarshal(w.Body.Bytes(), &list)
 
 		if list.All != 5 {
 			t.Errorf("All = %d, want 5", list.All)
@@ -86,7 +86,7 @@ func TestListHandlerPaging(t *testing.T) {
 		h.ServeHTTP(w, req)
 
 		var list sep2.EndDeviceList
-		xml.Unmarshal(w.Body.Bytes(), &list)
+		_ = xml.Unmarshal(w.Body.Bytes(), &list)
 
 		if list.Results != 2 {
 			t.Errorf("Results = %d, want 2 (items 4,5)", list.Results)
@@ -127,7 +127,7 @@ func TestListHandlerPaging(t *testing.T) {
 		emptyHandler.ServeHTTP(w, req)
 
 		var list sep2.EndDeviceList
-		xml.Unmarshal(w.Body.Bytes(), &list)
+		_ = xml.Unmarshal(w.Body.Bytes(), &list)
 
 		if list.All != 0 || list.Results != 0 {
 			t.Errorf("empty list: All=%d Results=%d", list.All, list.Results)

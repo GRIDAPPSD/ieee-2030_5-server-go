@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/craig8/ieee-2030_5-go/internal/certs"
-	"github.com/craig8/ieee-2030_5-go/internal/config"
-	"github.com/craig8/ieee-2030_5-go/internal/server"
-	sepTLS "github.com/craig8/ieee-2030_5-go/internal/tls"
-	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
+	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 )
 
 // TestPythonClientInterop simulates the GridAPPS-D Python IEEE 2030.5 client's

@@ -3,7 +3,7 @@ package discovery_test
 import (
 	"testing"
 
-	"github.com/craig8/ieee-2030_5-go/internal/discovery"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/discovery"
 )
 
 func TestRegister(t *testing.T) {

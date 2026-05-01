@@ -1,9 +1,9 @@
 package server_test
 
 import (
-	"github.com/craig8/ieee-2030_5-go/internal/server"
-	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
-	"github.com/craig8/ieee-2030_5-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 )
 
 func newTestStores() *server.Stores {

@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/craig8/ieee-2030_5-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
 )
 
 const (

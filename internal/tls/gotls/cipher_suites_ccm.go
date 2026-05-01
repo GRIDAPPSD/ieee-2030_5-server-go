@@ -3,7 +3,7 @@ package gotls
 import (
 	"crypto/aes"
 
-	"github.com/craig8/ieee-2030_5-go/internal/tls/ccm"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls/ccm"
 )
 
 // TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 is the mandatory cipher suite

@@ -10,9 +10,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/craig8/ieee-2030_5-go/internal/certs"
-	"github.com/craig8/ieee-2030_5-go/internal/handler"
-	sepTLS "github.com/craig8/ieee-2030_5-go/internal/tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
+	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
 )
 
 func TestHandleGetCA(t *testing.T) {

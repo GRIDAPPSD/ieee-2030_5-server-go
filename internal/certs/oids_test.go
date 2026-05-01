@@ -6,7 +6,7 @@ import (
 	"encoding/pem"
 	"testing"
 
-	"github.com/craig8/ieee-2030_5-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
 )
 
 func TestHasPolicyOIDAdmin(t *testing.T) {

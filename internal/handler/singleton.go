@@ -6,9 +6,9 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/craig8/ieee-2030_5-go/internal/encoding"
-	"github.com/craig8/ieee-2030_5-go/pkg/store"
-	"github.com/craig8/ieee-2030_5-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 )
 
 // SingletonKey is the fixed key used for singleton sub-resources.

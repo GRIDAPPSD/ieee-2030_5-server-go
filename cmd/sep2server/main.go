@@ -8,10 +8,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/craig8/ieee-2030_5-go/internal/certs"
-	"github.com/craig8/ieee-2030_5-go/internal/config"
-	"github.com/craig8/ieee-2030_5-go/internal/handler"
-	"github.com/craig8/ieee-2030_5-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
 )
 
 const version = "0.1.0"

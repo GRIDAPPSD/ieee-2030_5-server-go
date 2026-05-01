@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
-	"github.com/craig8/ieee-2030_5-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
 )
 
 // EndDeviceStore wraps the generic Store with SFDI/LFDI secondary indexes.

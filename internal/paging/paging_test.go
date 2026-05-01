@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/craig8/ieee-2030_5-go/internal/paging"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/paging"
 )
 
 func TestParseQueryDefaults(t *testing.T) {

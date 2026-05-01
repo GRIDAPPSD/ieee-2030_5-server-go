@@ -3,9 +3,9 @@ package handler
 import (
 	"net/http"
 
-	"github.com/craig8/ieee-2030_5-go/internal/encoding"
-	"github.com/craig8/ieee-2030_5-go/internal/paging"
-	"github.com/craig8/ieee-2030_5-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/paging"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
 )
 
 // ListHandler creates a generic HTTP handler for any IEEE 2030.5 list resource.

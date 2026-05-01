@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/craig8/ieee-2030_5-go/internal/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/encoding"
 )
 
 type testResource struct {

@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 
-	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 )
 
 // EndDeviceStore extends ResourceStore with device identity lookups.

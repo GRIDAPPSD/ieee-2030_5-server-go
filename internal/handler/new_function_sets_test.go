@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/craig8/ieee-2030_5-go/internal/handler"
-	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
-	"github.com/craig8/ieee-2030_5-go/pkg/store"
-	"github.com/craig8/ieee-2030_5-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 )
 
 // --- DeviceInformation ---

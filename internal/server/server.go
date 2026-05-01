@@ -12,15 +12,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/craig8/ieee-2030_5-go/internal/auth"
-	"github.com/craig8/ieee-2030_5-go/internal/certs"
-	"github.com/craig8/ieee-2030_5-go/internal/config"
-	"github.com/craig8/ieee-2030_5-go/internal/discovery"
-	"github.com/craig8/ieee-2030_5-go/internal/handler"
-	sepTLS "github.com/craig8/ieee-2030_5-go/internal/tls"
-	gotls "github.com/craig8/ieee-2030_5-go/internal/tls/gotls"
-	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
-	"github.com/craig8/ieee-2030_5-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/discovery"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
+	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls/gotls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 )
 
 // Run starts the IEEE 2030.5 server with mutual TLS and optionally

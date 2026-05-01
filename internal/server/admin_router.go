@@ -3,8 +3,8 @@ package server
 import (
 	"net/http"
 
-	"github.com/craig8/ieee-2030_5-go/internal/auth"
-	"github.com/craig8/ieee-2030_5-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 )
 
 // NewAdminRouter creates the admin API router with auth middleware.

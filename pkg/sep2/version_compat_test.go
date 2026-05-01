@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 )
 
 // Test that 2023-only fields are present when set and omitted when empty.

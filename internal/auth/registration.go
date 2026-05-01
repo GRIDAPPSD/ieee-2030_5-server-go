@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
-	"github.com/craig8/ieee-2030_5-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
 )
 
 // RegistrationMode controls how unknown devices are handled.

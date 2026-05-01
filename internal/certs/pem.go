@@ -56,3 +56,9 @@ func LoadCA(certFile, keyFile string) (*x509.Certificate, *ecdsa.PrivateKey, err
 
 	return cert, key, nil
 }
+
+// CAInfo holds a loaded CA certificate and key pair.
+type CAInfo struct {
+	Cert *x509.Certificate
+	Key  *ecdsa.PrivateKey
+}

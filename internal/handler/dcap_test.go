@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/craig8/ieee-2030_5-go/internal/handler"
-	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 )
 
 func TestHandleDeviceCapabilityGET(t *testing.T) {

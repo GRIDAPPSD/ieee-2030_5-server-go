@@ -7,7 +7,7 @@
 package gotls
 
 import (
-	"github.com/craig8/ieee-2030_5-go/internal/tls/gotls/stubs/fipstls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls/gotls/stubs/fipstls"
 )
 
 // needFIPS returns fipstls.Required(); it avoids a new import in common.go.

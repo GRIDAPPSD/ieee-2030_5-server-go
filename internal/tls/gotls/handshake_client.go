@@ -17,7 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"github.com/craig8/ieee-2030_5-go/internal/tls/gotls/stubs/godebug"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls/gotls/stubs/godebug"
 	"io"
 	"net"
 	"strconv"

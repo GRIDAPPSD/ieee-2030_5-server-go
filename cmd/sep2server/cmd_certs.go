@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/craig8/ieee-2030_5-go/internal/certs"
-	sepTLS "github.com/craig8/ieee-2030_5-go/internal/tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
+	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
 )
 
 func runCerts(args []string) error {

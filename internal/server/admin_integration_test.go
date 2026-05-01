@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/craig8/ieee-2030_5-go/internal/certs"
-	"github.com/craig8/ieee-2030_5-go/internal/config"
-	"github.com/craig8/ieee-2030_5-go/internal/handler"
-	"github.com/craig8/ieee-2030_5-go/internal/server"
-	sepTLS "github.com/craig8/ieee-2030_5-go/internal/tls"
-	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
+	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 )
 
 func TestAdminIntegrationBearerToken(t *testing.T) {

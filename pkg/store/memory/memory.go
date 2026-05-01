@@ -5,7 +5,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/craig8/ieee-2030_5-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
 )
 
 // Store is a generic in-memory ResourceStore backed by a map and sorted key slice.

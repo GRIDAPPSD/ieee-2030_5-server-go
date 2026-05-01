@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/craig8/ieee-2030_5-go/pkg/sep2"
-	"github.com/craig8/ieee-2030_5-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 )
 
 // HandlePowerStatus returns a singleton GET/PUT handler for /edev/{id}/ps.

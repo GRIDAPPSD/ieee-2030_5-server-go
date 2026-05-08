@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"os"
 
 	"strconv"
 	"strings"
@@ -175,8 +177,21 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		return nil, fmt.Errorf("parse admin TLS cert: %w", err)
 	}
 
+	// Wire the CA pool so the admin listener can verify a presented
+	// client cert. ClientAuth = VerifyClientCertIfGiven means: a
+	// client that presents a cert has it verified against the CA pool
+	// (so AdminAuthMiddleware Path A — admin policy OID — can trust
+	// r.TLS.PeerCertificates); a client that presents no cert falls
+	// through to Path B (bearer) or Path C (ticket).
+	adminClientCAs, err := loadAdminClientCAs(cfg.CAFile)
+	if err != nil {
+		return nil, fmt.Errorf("load admin client CAs: %w", err)
+	}
+
 	adminTLSCfg := &tls.Config{
 		Certificates: []tls.Certificate{adminTLSCert},
+		ClientCAs:    adminClientCAs,
+		ClientAuth:   tls.VerifyClientCertIfGiven,
 		MinVersion:   tls.VersionTLS12,
 	}
 
@@ -211,4 +226,24 @@ func parsePort(addr string) int {
 		}
 	}
 	return 443
+}
+
+// loadAdminClientCAs builds an x509 cert pool from the given CA file
+// path for use as ClientCAs on the admin listener. An empty caFile
+// returns an empty pool (no client certs will verify, which combined
+// with VerifyClientCertIfGiven means clients always fall through to
+// non-mTLS auth paths).
+func loadAdminClientCAs(caFile string) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	if caFile == "" {
+		return pool, nil
+	}
+	pemBytes, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read CA cert: %w", err)
+	}
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		return nil, fmt.Errorf("parse CA cert: no PEM blocks in %q", caFile)
+	}
+	return pool, nil
 }

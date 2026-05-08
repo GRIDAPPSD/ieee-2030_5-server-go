@@ -3,6 +3,7 @@ package server_test
 import (
 	"bytes"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"io"
 	"net"
@@ -244,3 +245,199 @@ func setupTestEnv(t *testing.T) testEnv {
 		svc:           svc,
 	}
 }
+
+// TestAdminListenerClientAuthPaths verifies the AdminAuthMiddleware
+// auth precedence under a realistic admin TLS config:
+//
+//   - Path A: an admin-OID client cert authenticates without bearer.
+//   - Path B: no client cert, valid bearer → 200.
+//   - Path B fall-through: a non-admin client cert (device cert) does
+//     NOT auto-authorize; the request falls through to bearer, and a
+//     valid bearer succeeds.
+//   - Bare request (no cert, no bearer) → 401.
+func TestAdminListenerClientAuthPaths(t *testing.T) {
+	// Issue a CA + server admin TLS cert + admin client cert + device
+	// client cert. setupTestEnv discards the CA private key, so we
+	// roll our own here to keep the test self-contained.
+	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{
+		CommonName: "Path A Test CA",
+		ValidYears: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCert, caKey, err := parsePEMPair(caCertPEM, caKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	adminCertPEM, adminKeyPEM, err := certs.GenerateSelfSignedTLS([]string{"127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminTLSCert, err := tls.X509KeyPair(adminCertPEM, adminKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(caCertPEM) {
+		t.Fatal("append CA cert: no PEM blocks")
+	}
+
+	adminTLSCfg := &tls.Config{
+		Certificates: []tls.Certificate{adminTLSCert},
+		ClientCAs:    clientCAs,
+		ClientAuth:   tls.VerifyClientCertIfGiven,
+		MinVersion:   tls.VersionTLS12,
+	}
+
+	// Stand up the admin router against an in-memory cert service.
+	svc := handler.NewAdminCertService(caCert, caKey, caCertPEM)
+	adminRouter := server.NewAdminRouter("test-admin-key", svc, nil, "GCM", nil)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	tlsListener := tls.NewListener(listener, adminTLSCfg)
+	adminSrv := &http.Server{Handler: adminRouter}
+	go func() { _ = adminSrv.Serve(tlsListener) }()
+	defer func() { _ = adminSrv.Close() }()
+	adminURL := "https://" + listener.Addr().String()
+
+	// Mint an admin client cert (carries OIDPolicyAdmin).
+	adminClientCertPEM, adminClientKeyPEM, err := certs.GenerateAdminCert(
+		caCert, caKey, certs.AdminCertOptions{
+			CommonName: "Path A Tooling",
+			ValidYears: 1,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminClientCert, err := tls.X509KeyPair(adminClientCertPEM, adminClientKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Mint a device client cert (NO admin OID).
+	deviceClientCertPEM, deviceClientKeyPEM, err := certs.GenerateDeviceCert(
+		caCert, caKey, certs.DeviceCertOptions{
+			DeviceType:  certs.DeviceTypeGeneric,
+			HWSerialNum: "PATH-A-TEST",
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceClientCert, err := tls.X509KeyPair(deviceClientCertPEM, deviceClientKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("Path A: admin-OID cert authenticates without bearer", func(t *testing.T) {
+		client := &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					Certificates:       []tls.Certificate{adminClientCert},
+					InsecureSkipVerify: true, //nolint:gosec // self-signed admin TLS cert
+				},
+			},
+		}
+		req, _ := http.NewRequest("GET", adminURL+"/api/certs/ca", nil)
+		// no bearer
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Errorf("Path A: status = %d, want 200", resp.StatusCode)
+		}
+	})
+
+	t.Run("Path B: no cert + bearer authenticates", func(t *testing.T) {
+		client := &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true, //nolint:gosec // self-signed admin TLS cert
+				},
+			},
+		}
+		req, _ := http.NewRequest("GET", adminURL+"/api/certs/ca", nil)
+		req.Header.Set("Authorization", "Bearer test-admin-key")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Errorf("Path B: status = %d, want 200", resp.StatusCode)
+		}
+	})
+
+	t.Run("Non-admin cert falls through to bearer", func(t *testing.T) {
+		// A device cert (no admin OID) presented at the TLS layer
+		// must NOT auto-authorize. With a valid bearer it succeeds
+		// via Path B; without one it would 401.
+		client := &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					Certificates:       []tls.Certificate{deviceClientCert},
+					InsecureSkipVerify: true, //nolint:gosec // self-signed admin TLS cert
+				},
+			},
+		}
+		req, _ := http.NewRequest("GET", adminURL+"/api/certs/ca", nil)
+		req.Header.Set("Authorization", "Bearer test-admin-key")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Errorf("Non-admin cert + bearer: status = %d, want 200", resp.StatusCode)
+		}
+	})
+
+	t.Run("Non-admin cert without bearer rejected", func(t *testing.T) {
+		client := &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					Certificates:       []tls.Certificate{deviceClientCert},
+					InsecureSkipVerify: true, //nolint:gosec // self-signed admin TLS cert
+				},
+			},
+		}
+		req, _ := http.NewRequest("GET", adminURL+"/api/certs/ca", nil)
+		// no bearer
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != 401 {
+			t.Errorf("Non-admin cert no bearer: status = %d, want 401", resp.StatusCode)
+		}
+	})
+
+	t.Run("No cert no bearer rejected", func(t *testing.T) {
+		client := &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true, //nolint:gosec // self-signed admin TLS cert
+				},
+			},
+		}
+		req, _ := http.NewRequest("GET", adminURL+"/api/certs/ca", nil)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != 401 {
+			t.Errorf("Bare request: status = %d, want 401", resp.StatusCode)
+		}
+	})
+}
+

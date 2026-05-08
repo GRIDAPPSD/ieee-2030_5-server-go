@@ -4,7 +4,7 @@ CLAUDE.md
 *.claude
 
 # Local TLS material (dev/test PKI - never commit private keys)
-certs/
+/certs/
 
 # Go build artifacts
 /bin/

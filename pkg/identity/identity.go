@@ -1,4 +1,14 @@
-package tls
+// Package identity computes IEEE 2030.5 device identifiers (LFDI, SFDI)
+// from x509 client certificates per IEEE 2030.5-2018 sections 6.3.3 and
+// 6.3.4.
+//
+// LFDI is the Long Form Device Identifier: 40 hex characters derived
+// from the SHA-256 fingerprint of the certificate's DER encoding.
+//
+// SFDI is the Short Form Device Identifier: 12 decimal digits, derived
+// from the same fingerprint truncated to 36 bits with a sum-of-digits
+// check digit appended.
+package identity
 
 import (
 	"crypto/sha256"
@@ -13,18 +23,18 @@ func Fingerprint(cert *x509.Certificate) [32]byte {
 	return sha256.Sum256(cert.Raw)
 }
 
-// LFDI returns the Long Form Device Identifier: the first 20 bytes
-// of the SHA-256 fingerprint, hex-encoded as 40 uppercase characters.
-// Per spec section 6.3.4.
+// LFDI returns the Long Form Device Identifier: the first 20 bytes of
+// the SHA-256 fingerprint, hex-encoded as 40 uppercase characters.
+// Per IEEE 2030.5-2018 section 6.3.4.
 func LFDI(cert *x509.Certificate) string {
 	fp := Fingerprint(cert)
 	return fmt.Sprintf("%X", fp[:20])
 }
 
 // SFDI returns the Short Form Device Identifier: the certificate
-// fingerprint left-truncated to 36 bits, expressed as 11 decimal digits
-// with a sum-of-digits check digit appended (12 digits total).
-// Per spec section 6.3.3.
+// fingerprint left-truncated to 36 bits, expressed as 11 decimal
+// digits with a sum-of-digits check digit appended (12 digits total).
+// Per IEEE 2030.5-2018 section 6.3.3.
 func SFDI(cert *x509.Certificate) string {
 	fp := Fingerprint(cert)
 
@@ -36,10 +46,10 @@ func SFDI(cert *x509.Certificate) string {
 		uint64(fp[3])<<4 |
 		uint64(fp[4])>>4
 
-	// Format as 11 decimal digits, zero-padded
+	// Format as 11 decimal digits, zero-padded.
 	digits := fmt.Sprintf("%011d", val)
 
-	// Compute check digit: sum of all 11 digits, then (10 - sum%10) % 10
+	// Compute check digit: (10 - sum(digits) mod 10) mod 10.
 	sum := 0
 	for _, c := range digits {
 		sum += int(c - '0')
@@ -68,7 +78,8 @@ func ValidateSFDI(sfdi string) bool {
 }
 
 // FormatSFDI formats a 12-digit SFDI with hyphens for display.
-// e.g., "167261211391" -> "167-261-211-391"
+// e.g. "167261211391" becomes "167-261-211-391".
+// Returns the input unchanged if it is not exactly 12 characters.
 func FormatSFDI(sfdi string) string {
 	if len(sfdi) != 12 {
 		return sfdi

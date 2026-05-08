@@ -3,15 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
+	pkgserver "github.com/GRIDAPPSD/ieee-2030_5-go/pkg/server"
 )
 
 const version = "0.1.0"
@@ -42,11 +38,12 @@ func main() {
 }
 
 func runServe() error {
-	cfg := &config.Config{
+	cfg := pkgserver.Config{
 		Addr:        envOr("SEP2_ADDR", ":443"),
 		CertFile:    envOr("SEP2_CERT", "certs/server.crt"),
 		KeyFile:     envOr("SEP2_KEY", "certs/server.key"),
 		CAFile:      envOr("SEP2_CA", "certs/ca.crt"),
+		CAKeyFile:   envOr("SEP2_CA_KEY", "certs/ca.key"),
 		AdminAddr:   os.Getenv("SEP2_ADMIN_ADDR"),
 		AdminKey:    os.Getenv("SEP2_ADMIN_KEY"),
 		TZOffset:    -28800,
@@ -56,23 +53,15 @@ func runServe() error {
 		MDNSHost:    envOr("SEP2_MDNS_HOST", "localhost"),
 	}
 
-	// Load CA for admin cert service
-	var svc *handler.AdminCertService
-	caFile := envOr("SEP2_CA", "certs/ca.crt")
-	caKeyFile := envOr("SEP2_CA_KEY", "certs/ca.key")
-	caCert, caKey, err := certs.LoadCA(caFile, caKeyFile)
+	srv, err := pkgserver.New(cfg)
 	if err != nil {
-		log.Printf("CA not loaded (%v) — admin cert API disabled", err)
-	} else {
-		caCertPEM, _ := os.ReadFile(caFile)
-		svc = handler.NewAdminCertService(caCert, caKey, caCertPEM)
-		log.Println("CA loaded — admin cert API enabled")
+		return fmt.Errorf("server init: %w", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	return server.Run(ctx, cfg, svc)
+	return srv.Start(ctx)
 }
 
 func envOr(key, fallback string) string {

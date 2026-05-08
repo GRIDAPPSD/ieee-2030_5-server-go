@@ -1,4 +1,4 @@
-package tls_test
+package identity_test
 
 import (
 	"crypto/ecdsa"
@@ -6,19 +6,18 @@ import (
 	"encoding/pem"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/identity"
 )
 
 func TestLFDI(t *testing.T) {
 	cert := generateTestDeviceCert(t)
-	lfdi := sepTLS.LFDI(cert)
+	lfdi := identity.LFDI(cert)
 
 	if len(lfdi) != 40 {
 		t.Errorf("LFDI length = %d, want 40 hex chars", len(lfdi))
 	}
 
-	// Verify it's valid hex
 	for _, c := range lfdi {
 		if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')) {
 			t.Errorf("LFDI contains non-hex char: %c", c)
@@ -28,21 +27,19 @@ func TestLFDI(t *testing.T) {
 
 func TestSFDI(t *testing.T) {
 	cert := generateTestDeviceCert(t)
-	sfdi := sepTLS.SFDI(cert)
+	sfdi := identity.SFDI(cert)
 
 	if len(sfdi) != 12 {
 		t.Errorf("SFDI length = %d, want 12 decimal digits", len(sfdi))
 	}
 
-	// Verify it's all digits
 	for _, c := range sfdi {
 		if c < '0' || c > '9' {
 			t.Errorf("SFDI contains non-digit: %c", c)
 		}
 	}
 
-	// Verify checksum: sum of all digits mod 10 == 0
-	if !sepTLS.ValidateSFDI(sfdi) {
+	if !identity.ValidateSFDI(sfdi) {
 		t.Errorf("SFDI %q fails checksum validation", sfdi)
 	}
 }
@@ -52,14 +49,14 @@ func TestSFDIChecksumValidation(t *testing.T) {
 		sfdi  string
 		valid bool
 	}{
-		{"167261211391", true},  // spec example
-		{"167261211390", false}, // wrong checksum
-		{"000000000000", true},  // all zeros valid (sum=0, 0 mod 10 = 0)
-		{"12345", false},        // too short
+		{"167261211391", true},
+		{"167261211390", false},
+		{"000000000000", true},
+		{"12345", false},
 	}
 
 	for _, tt := range tests {
-		got := sepTLS.ValidateSFDI(tt.sfdi)
+		got := identity.ValidateSFDI(tt.sfdi)
 		if got != tt.valid {
 			t.Errorf("ValidateSFDI(%q) = %v, want %v", tt.sfdi, got, tt.valid)
 		}
@@ -69,16 +66,14 @@ func TestSFDIChecksumValidation(t *testing.T) {
 func TestSFDIConsistency(t *testing.T) {
 	cert := generateTestDeviceCert(t)
 
-	// Same cert should always produce same SFDI
-	sfdi1 := sepTLS.SFDI(cert)
-	sfdi2 := sepTLS.SFDI(cert)
+	sfdi1 := identity.SFDI(cert)
+	sfdi2 := identity.SFDI(cert)
 	if sfdi1 != sfdi2 {
 		t.Errorf("SFDI not deterministic: %q != %q", sfdi1, sfdi2)
 	}
 
-	// Same cert should always produce same LFDI
-	lfdi1 := sepTLS.LFDI(cert)
-	lfdi2 := sepTLS.LFDI(cert)
+	lfdi1 := identity.LFDI(cert)
+	lfdi2 := identity.LFDI(cert)
 	if lfdi1 != lfdi2 {
 		t.Errorf("LFDI not deterministic: %q != %q", lfdi1, lfdi2)
 	}
@@ -86,10 +81,27 @@ func TestSFDIConsistency(t *testing.T) {
 
 func TestFingerprintDeterministic(t *testing.T) {
 	cert := generateTestDeviceCert(t)
-	fp1 := sepTLS.Fingerprint(cert)
-	fp2 := sepTLS.Fingerprint(cert)
+	fp1 := identity.Fingerprint(cert)
+	fp2 := identity.Fingerprint(cert)
 	if fp1 != fp2 {
 		t.Error("Fingerprint not deterministic")
+	}
+}
+
+func TestFormatSFDI(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"167261211391", "167-261-211-391"},
+		{"000000000000", "000-000-000-000"},
+		{"short", "short"}, // pass-through for non-12-char input
+	}
+	for _, tt := range tests {
+		got := identity.FormatSFDI(tt.in)
+		if got != tt.want {
+			t.Errorf("FormatSFDI(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
 

@@ -11,8 +11,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/identity"
 )
 
 func TestMutualTLSHandshake(t *testing.T) {
@@ -73,8 +74,8 @@ func TestMutualTLSHandshake(t *testing.T) {
 		}
 
 		cert := r.TLS.PeerCertificates[0]
-		sfdi := sepTLS.SFDI(cert)
-		lfdi := sepTLS.LFDI(cert)
+		sfdi := identity.SFDI(cert)
+		lfdi := identity.LFDI(cert)
 
 		_, _ = fmt.Fprintf(w, "SFDI=%s LFDI=%s", sfdi, lfdi)
 	})

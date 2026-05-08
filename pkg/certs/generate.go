@@ -233,8 +233,12 @@ func GenerateSelfSignedTLS(hosts []string) (certPEM, keyPEM []byte, err error) {
 }
 
 // GenerateDeviceCert creates a device certificate signed by the given CA.
-// Per IEEE 2030.5 spec section 6.11.7, device certs have an empty Subject
-// and include deviceType and policy OIDs in certificate extensions.
+// Per IEEE 2030.5 spec section 6.11.7, device certs default to an empty
+// Subject and an indefinite NotAfter (9999-12-31), and they carry the
+// deviceType and policy OIDs in certificate extensions. The opts
+// CommonName and ValidYears fields are non-spec overrides for testing
+// and short-lived embedded scenarios; leaving them zero preserves the
+// SEP2-compliant defaults.
 func GenerateDeviceCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, opts DeviceCertOptions) (certPEM, keyPEM []byte, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -246,11 +250,21 @@ func GenerateDeviceCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, opts 
 		return nil, nil, err
 	}
 
+	notAfter := maxValidity
+	if opts.ValidYears > 0 {
+		notAfter = time.Now().AddDate(opts.ValidYears, 0, 0)
+	}
+
+	subject := pkix.Name{}
+	if opts.CommonName != "" {
+		subject.CommonName = opts.CommonName
+	}
+
 	template := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{},
+		Subject:      subject,
 		NotBefore:    time.Now().Add(-1 * time.Minute),
-		NotAfter:     maxValidity,
+		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyAgreement,
 		ExtKeyUsage: []x509.ExtKeyUsage{
 			x509.ExtKeyUsageClientAuth,

@@ -13,12 +13,13 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/discovery"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls/gotls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/identity"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 )
@@ -99,8 +100,8 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		if len(tlsCfg.Certificates) > 0 {
 			leaf := tlsCfg.Certificates[0]
 			if leaf.Leaf != nil {
-				serverSFDI = sepTLS.SFDI(leaf.Leaf) //nolint:ineffassign // see note above
-				serverLFDI = sepTLS.LFDI(leaf.Leaf) //nolint:ineffassign // see note above
+				serverSFDI = identity.SFDI(leaf.Leaf) //nolint:ineffassign // see note above
+				serverLFDI = identity.LFDI(leaf.Leaf) //nolint:ineffassign // see note above
 				_ = serverSFDI
 				_ = serverLFDI
 			}

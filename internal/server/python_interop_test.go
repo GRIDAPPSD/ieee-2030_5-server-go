@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"

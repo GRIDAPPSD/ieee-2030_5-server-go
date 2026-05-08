@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/certs"
 )
 
 // AdminAuthMiddleware returns middleware that checks for admin authorization.

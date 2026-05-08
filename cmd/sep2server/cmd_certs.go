@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/identity"
 )
 
 func runCerts(args []string) error {
@@ -193,12 +193,12 @@ func runGenerateDevice(args []string) error {
 		return err
 	}
 
-	sfdi := sepTLS.SFDI(cert)
-	lfdi := sepTLS.LFDI(cert)
+	sfdi := identity.SFDI(cert)
+	lfdi := identity.LFDI(cert)
 
 	fmt.Printf("Device certificate: %s\n", certFile)
 	fmt.Printf("Device private key: %s\n", keyFile)
-	fmt.Printf("SFDI: %s (%s)\n", sfdi, sepTLS.FormatSFDI(sfdi))
+	fmt.Printf("SFDI: %s (%s)\n", sfdi, identity.FormatSFDI(sfdi))
 	fmt.Printf("LFDI: %s\n", lfdi)
 	return nil
 }

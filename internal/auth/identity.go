@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/identity"
 )
 
 type contextKey string
@@ -29,8 +29,8 @@ func IdentityMiddleware(next http.Handler) http.Handler {
 
 		cert := r.TLS.PeerCertificates[0]
 		identity := DeviceIdentity{
-			SFDI: sepTLS.SFDI(cert),
-			LFDI: sepTLS.LFDI(cert),
+			SFDI: identity.SFDI(cert),
+			LFDI: identity.LFDI(cert),
 		}
 
 		ctx := context.WithValue(r.Context(), identityKey, identity)

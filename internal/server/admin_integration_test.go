@@ -9,11 +9,12 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/identity"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 )
 
@@ -106,7 +107,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 		if len(result.LFDI) != 40 {
 			t.Errorf("LFDI length = %d, want 40", len(result.LFDI))
 		}
-		if !sepTLS.ValidateSFDI(result.SFDI) {
+		if !identity.ValidateSFDI(result.SFDI) {
 			t.Errorf("SFDI %q invalid checksum", result.SFDI)
 		}
 	})

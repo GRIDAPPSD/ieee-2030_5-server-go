@@ -10,9 +10,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/identity"
 )
 
 func TestHandleGetCA(t *testing.T) {
@@ -104,7 +104,7 @@ func TestHandleCreateDeviceCert(t *testing.T) {
 	if len(resp.SFDI) != 12 {
 		t.Errorf("SFDI length = %d, want 12", len(resp.SFDI))
 	}
-	if !sepTLS.ValidateSFDI(resp.SFDI) {
+	if !identity.ValidateSFDI(resp.SFDI) {
 		t.Errorf("SFDI %q has invalid checksum", resp.SFDI)
 	}
 	if len(resp.LFDI) != 40 {

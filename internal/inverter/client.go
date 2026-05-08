@@ -13,7 +13,7 @@ import (
 	"os"
 	"time"
 
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/identity"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 )
 
@@ -72,8 +72,8 @@ func NewSEP2Client(cfg SimConfig) (*SEP2Client, error) {
 			Timeout: 30 * time.Second,
 		},
 		baseURL: cfg.ServerURL,
-		sfdi:    sepTLS.SFDI(parsedCert),
-		lfdi:    sepTLS.LFDI(parsedCert),
+		sfdi:    identity.SFDI(parsedCert),
+		lfdi:    identity.LFDI(parsedCert),
 	}, nil
 }
 

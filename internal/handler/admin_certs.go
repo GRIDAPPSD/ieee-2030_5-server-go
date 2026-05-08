@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/identity"
 )
 
 // AdminCertService holds the CA state for certificate management.
@@ -164,8 +164,8 @@ func (s *AdminCertService) HandleCreateDeviceCert() http.HandlerFunc {
 		writeJSON(w, http.StatusCreated, createDeviceCertResponse{
 			CertPEM: string(certPEM),
 			KeyPEM:  string(keyPEM),
-			SFDI:    sepTLS.SFDI(cert),
-			LFDI:    sepTLS.LFDI(cert),
+			SFDI:    identity.SFDI(cert),
+			LFDI:    identity.LFDI(cert),
 		})
 	}
 }

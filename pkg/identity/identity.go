@@ -24,11 +24,11 @@ func Fingerprint(cert *x509.Certificate) [32]byte {
 }
 
 // LFDI returns the Long Form Device Identifier: the first 20 bytes of
-// the SHA-256 fingerprint, hex-encoded as 40 uppercase characters.
-// Per IEEE 2030.5-2018 section 6.3.4.
+// the SHA-256 fingerprint, hex-encoded as 40 lowercase characters.
+// Per IEEE 2030.5-2018 section 6.3.4, which specifies lowercase hex.
 func LFDI(cert *x509.Certificate) string {
 	fp := Fingerprint(cert)
-	return fmt.Sprintf("%X", fp[:20])
+	return fmt.Sprintf("%x", fp[:20])
 }
 
 // SFDI returns the Short Form Device Identifier: the certificate

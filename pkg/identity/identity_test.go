@@ -18,10 +18,50 @@ func TestLFDI(t *testing.T) {
 		t.Errorf("LFDI length = %d, want 40 hex chars", len(lfdi))
 	}
 
+	// Per IEEE 2030.5-2018 §6.3.4, LFDI hex must be lowercase.
 	for _, c := range lfdi {
-		if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')) {
-			t.Errorf("LFDI contains non-hex char: %c", c)
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			t.Errorf("LFDI contains non-lowercase-hex char: %c", c)
 		}
+	}
+}
+
+// TestLFDIGoldenVector pins the exact lowercase LFDI for a fixed
+// device certificate PEM. This guards against regression to uppercase
+// hex (which violated IEEE 2030.5-2018 §6.3.4) and against any future
+// change to the fingerprinting algorithm. The PEM and expected LFDI
+// were generated once; the LFDI was independently confirmed via:
+//
+//	openssl x509 -outform DER -in <pem> | \
+//	  openssl dgst -sha256 -binary | head -c 20 | xxd -p
+func TestLFDIGoldenVector(t *testing.T) {
+	const goldenCertPEM = `-----BEGIN CERTIFICATE-----
+MIIBTTCB9KADAgECAgEqMAoGCCqGSM49BAMCMBQxEjAQBgNVBAMTCUdvbGRlbiBD
+QTAeFw0yNTAxMDEwMDAwMDBaFw0zNTAxMDEwMDAwMDBaMBgxFjAUBgNVBAMTDUdv
+bGRlbiBEZXZpY2UwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARtCLILXa4bvL2L
+sWvokDP3/PV/uDgUvFCb6rW5tmYhxPCPWRyNIBSWxpIBfScS40nxFly8yK5VGYZx
+lz+rvJiCozMwMTAOBgNVHQ8BAf8EBAMCB4AwHwYDVR0jBBgwFoAUbDHZ7UHB/gT1
+/rVbVVCqIKvdHeMwCgYIKoZIzj0EAwIDSAAwRQIgCPCE76jaKvKDfT3syd/tFAxA
+tlAVhkLnR/Moswd5jy4CIQCuiwIaRpdskqJxMl9cGCKxulQCEk2EcUVnKAucZXQC
+bw==
+-----END CERTIFICATE-----`
+	const wantLFDI = "19e072b8ea55f93c0fb8776c1e6918529bff4db6"
+
+	block, _ := pem.Decode([]byte(goldenCertPEM))
+	if block == nil {
+		t.Fatal("decode golden PEM: nil block")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse golden cert: %v", err)
+	}
+
+	got := identity.LFDI(cert)
+	if got != wantLFDI {
+		t.Errorf("LFDI = %q, want %q", got, wantLFDI)
+	}
+	if len(got) != 40 {
+		t.Errorf("LFDI length = %d, want 40", len(got))
 	}
 }
 

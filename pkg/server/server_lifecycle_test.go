@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -64,8 +63,8 @@ func TestServerStartStop(t *testing.T) {
 
 	select {
 	case err := <-startErr:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			t.Errorf("Start returned %v, want nil or ErrServerClosed", err)
+		if err != nil {
+			t.Errorf("Start returned %v on clean shutdown, want nil", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Error("Start did not return after Shutdown")
@@ -112,8 +111,8 @@ func TestServerStartContextCancel(t *testing.T) {
 
 	select {
 	case err := <-startErr:
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, http.ErrServerClosed) {
-			t.Errorf("Start returned %v, want nil/Canceled/ErrServerClosed", err)
+		if err != nil {
+			t.Errorf("Start returned %v on context cancel, want nil", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Error("Start did not return after context cancel")

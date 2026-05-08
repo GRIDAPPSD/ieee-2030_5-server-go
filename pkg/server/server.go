@@ -118,10 +118,14 @@ func New(cfg Config) (*Server, error) {
 	}, nil
 }
 
-// Start binds the listeners and serves traffic. It blocks until ctx is
-// cancelled, Shutdown is called, or the underlying server returns an
-// error. Returning nil means clean shutdown; a non-nil error means the
-// listener died unexpectedly.
+// Start binds the listeners and serves traffic. It blocks until ctx
+// is cancelled, Shutdown is called, or the underlying server returns
+// an error.
+//
+// Start returns nil on clean shutdown (ctx cancelled or Shutdown
+// called); a non-nil return means the listener failed unexpectedly.
+// context.Canceled and http.ErrServerClosed are treated as clean
+// shutdown sentinels and filtered out.
 //
 // Start is not safe to call concurrently; it returns an error if the
 // server has already been started.
@@ -143,10 +147,15 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	err := intsrv.Run(internalCtx, s.toInternalConfig(), s.svc)
-	s.mu.Lock()
-	s.startErr = err
-	s.mu.Unlock()
-	return err
+	if err != nil &&
+		!errors.Is(err, context.Canceled) &&
+		!errors.Is(err, http.ErrServerClosed) {
+		s.mu.Lock()
+		s.startErr = err
+		s.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 // Shutdown initiates a graceful stop and returns when Start has

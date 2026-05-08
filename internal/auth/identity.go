@@ -28,12 +28,12 @@ func IdentityMiddleware(next http.Handler) http.Handler {
 		}
 
 		cert := r.TLS.PeerCertificates[0]
-		identity := DeviceIdentity{
+		id := DeviceIdentity{
 			SFDI: identity.SFDI(cert),
 			LFDI: identity.LFDI(cert),
 		}
 
-		ctx := context.WithValue(r.Context(), identityKey, identity)
+		ctx := context.WithValue(r.Context(), identityKey, id)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

@@ -79,6 +79,9 @@ type Config struct {
 
 // Server is an IEEE 2030.5 protocol server with optional admin HTTPS
 // listener. The zero value is not usable; construct with New.
+//
+// A Server is single-shot: after Start returns or Shutdown is called,
+// construct a new Server via New to restart.
 type Server struct {
 	cfg Config
 	svc *handler.AdminCertService

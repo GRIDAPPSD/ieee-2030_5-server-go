@@ -79,7 +79,7 @@ func TestLoadCA(t *testing.T) {
 		t.Fatalf("LoadCA: %v", err)
 	}
 	if cert == nil || key == nil {
-		t.Error("LoadCA returned nil cert or key")
+		t.Fatal("LoadCA returned nil cert or key")
 	}
 	if cert.Subject.CommonName != "LoadCA Test" {
 		t.Errorf("CN = %q, want %q", cert.Subject.CommonName, "LoadCA Test")

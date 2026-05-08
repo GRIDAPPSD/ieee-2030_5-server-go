@@ -14,7 +14,20 @@ import (
 	"time"
 )
 
+// maxValidity is the IEEE 2030.5 §6.11.7 "indefinite" expiry used as
+// the default NotAfter when DeviceCertOptions.ValidYears (and the
+// equivalent fields on the other Options) is zero.
 var maxValidity = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+
+// notAfterFor returns time.Now()+years if years > 0, otherwise the
+// IEEE 2030.5 max-validity sentinel. Centralizes the policy shared
+// across all GenerateXxx functions in this package.
+func notAfterFor(years int) time.Time {
+	if years > 0 {
+		return time.Now().AddDate(years, 0, 0)
+	}
+	return maxValidity
+}
 
 // GenerateCA creates a self-signed ECDSA P-256 root CA certificate.
 func GenerateCA(opts CAOptions) (certPEM, keyPEM []byte, err error) {
@@ -28,10 +41,7 @@ func GenerateCA(opts CAOptions) (certPEM, keyPEM []byte, err error) {
 		return nil, nil, err
 	}
 
-	notAfter := maxValidity
-	if opts.ValidYears > 0 {
-		notAfter = time.Now().AddDate(opts.ValidYears, 0, 0)
-	}
+	notAfter := notAfterFor(opts.ValidYears)
 
 	template := &x509.Certificate{
 		SerialNumber: serial,
@@ -81,10 +91,7 @@ func GenerateServerCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, opts 
 		return nil, nil, err
 	}
 
-	notAfter := maxValidity
-	if opts.ValidYears > 0 {
-		notAfter = time.Now().AddDate(opts.ValidYears, 0, 0)
-	}
+	notAfter := notAfterFor(opts.ValidYears)
 
 	template := &x509.Certificate{
 		SerialNumber: serial,
@@ -144,10 +151,7 @@ func GenerateAdminCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, opts A
 		return nil, nil, err
 	}
 
-	notAfter := maxValidity
-	if opts.ValidYears > 0 {
-		notAfter = time.Now().AddDate(opts.ValidYears, 0, 0)
-	}
+	notAfter := notAfterFor(opts.ValidYears)
 
 	template := &x509.Certificate{
 		SerialNumber: serial,
@@ -250,10 +254,7 @@ func GenerateDeviceCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, opts 
 		return nil, nil, err
 	}
 
-	notAfter := maxValidity
-	if opts.ValidYears > 0 {
-		notAfter = time.Now().AddDate(opts.ValidYears, 0, 0)
-	}
+	notAfter := notAfterFor(opts.ValidYears)
 
 	subject := pkix.Name{}
 	if opts.CommonName != "" {

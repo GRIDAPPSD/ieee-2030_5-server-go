@@ -163,3 +163,27 @@ func mustParseKeyPEM(t *testing.T, data []byte) *ecdsa.PrivateKey {
 	}
 	return key
 }
+
+func TestDeviceTypeOID(t *testing.T) {
+	tests := []struct {
+		dt   certs.DeviceType
+		want []int
+	}{
+		{certs.DeviceTypeGeneric, []int{1, 3, 6, 1, 4, 1, 40732, 1, 1}},
+		{certs.DeviceTypeMobile, []int{1, 3, 6, 1, 4, 1, 40732, 1, 2}},
+		{certs.DeviceTypePostMfg, []int{1, 3, 6, 1, 4, 1, 40732, 1, 3}},
+		{certs.DeviceType(99), []int{1, 3, 6, 1, 4, 1, 40732, 1, 1}}, // default
+	}
+	for _, tt := range tests {
+		got := tt.dt.OID()
+		if len(got) != len(tt.want) {
+			t.Errorf("OID(%d) length = %d, want %d", tt.dt, len(got), len(tt.want))
+			continue
+		}
+		for i, v := range tt.want {
+			if got[i] != v {
+				t.Errorf("OID(%d)[%d] = %d, want %d", tt.dt, i, got[i], v)
+			}
+		}
+	}
+}

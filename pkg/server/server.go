@@ -92,16 +92,24 @@ type Server struct {
 // New constructs a Server from cfg. It validates that the cert files
 // exist and parses the optional CA key, but does not bind listeners.
 // Listeners bind on Start.
+//
+// CA-key handling:
+//   - cfg.CAKeyFile == "": admin cert minting is silently disabled.
+//   - cfg.CAKeyFile != "": the file MUST load and parse cleanly. A
+//     load failure returns an error rather than silently disabling the
+//     admin cert API (which would mask misconfiguration).
 func New(cfg Config) (*Server, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
 	}
 
-	svc, err := loadAdminCertService(cfg)
-	if err != nil {
-		// CA load failure is not fatal; the admin cert API is
-		// disabled and the server runs without it.
-		svc = nil
+	var svc *handler.AdminCertService
+	if cfg.CAKeyFile != "" {
+		s, err := loadAdminCertService(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("admin cert service: %w", err)
+		}
+		svc = s
 	}
 
 	return &Server{

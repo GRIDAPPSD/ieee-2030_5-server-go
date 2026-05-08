@@ -52,25 +52,46 @@ func TestServerLoadsAdminCertServiceWhenCAKeyProvided(t *testing.T) {
 	<-startErr
 }
 
-// TestServerNewToleratesMissingCAKey confirms that an unreachable CA
-// key file does not fail New; the admin cert API is silently disabled
-// (matching the prior cmd/sep2server behavior).
-func TestServerNewToleratesMissingCAKey(t *testing.T) {
+// TestServerNewWhenCAKeyFileUnset confirms that omitting CAKeyFile
+// silently disables the admin cert API. New must not error in this
+// case; the operator simply opts out of admin cert minting.
+func TestServerNewWhenCAKeyFileUnset(t *testing.T) {
 	dir, _ := mustWriteCerts(t)
 	port := freePort(t)
 
 	srv, err := pkgserver.New(pkgserver.Config{
+		Addr:     fmt.Sprintf("127.0.0.1:%d", port),
+		CertFile: filepath.Join(dir, "server.crt"),
+		KeyFile:  filepath.Join(dir, "server.key"),
+		CAFile:   filepath.Join(dir, "ca.crt"),
+		// CAKeyFile intentionally empty
+	})
+	if err != nil {
+		t.Fatalf("New with empty CAKeyFile should not error: %v", err)
+	}
+	if srv == nil {
+		t.Fatal("New returned nil server")
+	}
+}
+
+// TestServerNewWhenCAKeyFileUnreadable verifies that a CAKeyFile path
+// pointing at a missing file is treated as a hard error. The previous
+// behavior (silent disable) masked operator misconfiguration; the
+// admin cert API is now opt-in via empty CAKeyFile, so any non-empty
+// value MUST load.
+func TestServerNewWhenCAKeyFileUnreadable(t *testing.T) {
+	dir, _ := mustWriteCerts(t)
+	port := freePort(t)
+
+	_, err := pkgserver.New(pkgserver.Config{
 		Addr:      fmt.Sprintf("127.0.0.1:%d", port),
 		CertFile:  filepath.Join(dir, "server.crt"),
 		KeyFile:   filepath.Join(dir, "server.key"),
 		CAFile:    filepath.Join(dir, "ca.crt"),
 		CAKeyFile: filepath.Join(dir, "definitely-not-here.key"),
 	})
-	if err != nil {
-		t.Fatalf("New with missing CA key should not error: %v", err)
-	}
-	if srv == nil {
-		t.Fatal("New returned nil server")
+	if err == nil {
+		t.Fatal("New with unreadable CAKeyFile should error, got nil")
 	}
 }
 

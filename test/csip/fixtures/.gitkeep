@@ -1,0 +1,4 @@
+# This directory holds CSIP conformance test fixtures.
+#
+# Fixtures themselves are gitignored — see ../../../.gitignore and
+# ../README.md for provisioning.

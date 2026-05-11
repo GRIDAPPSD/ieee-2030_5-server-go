@@ -1,4 +1,5 @@
 .PHONY: build build-all test test-cover test-race test-verbose test-e2e \
+       test-csip-server test-csip-client \
        lint vet clean run run-ccm certs serve help \
        verify-run-inverter-url
 
@@ -131,6 +132,16 @@ test-epri: build certs    ## Run EPRI C client against our server (CCM mode, ser
 	$(EPRI_CLIENT)/build/client_test lo \
 		$(CERT_DIR)/device.crt $(CERT_DIR)/ca.crt \
 		https://localhost:8443/dcap edev time
+
+# ─── CSIP Conformance Harness ────────────────────────────────────
+
+test-csip-server:         ## Run CSIP server-side conformance harness (requires fixtures, see test/csip/README.md)
+	./scripts/test-csip-server.sh
+
+test-csip-client:         ## CSIP client-side conformance harness (blocked on IEEE-019)
+	@echo "# IEEE-019 blocks this target: inverter client must move onto vendored gotls"
+	@echo "# stack to negotiate CCM-8 before client-side conformance can be exercised."
+	@echo "# See GRIDAPPSD/ieee-2030_5-go#21."
 
 # ─── Code Quality ────────────────────────────────────────────────
 

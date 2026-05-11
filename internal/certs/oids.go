@@ -138,6 +138,92 @@ func ExtractHardwareModuleName(cert *x509.Certificate) (HardwareModuleName, bool
 	return HardwareModuleName{}, false
 }
 
+// SANAllOtherNamesAreHardwareModuleName reports whether the cert's
+// SubjectAlternativeName extension is a well-formed GeneralNames SEQUENCE
+// AND every otherName entry inside is a well-formed RFC 4108 §5
+// HardwareModuleName (TypeID == OIDHardwareModuleName, inner value parses as
+// the HMN SEQUENCE).
+//
+// Returns:
+//   - (true, true)  — SAN present, well-formed, every otherName is HMN.
+//   - (false, true) — SAN present but malformed, OR contains an otherName
+//     that is NOT HMN, OR has zero otherName entries. The caller MUST treat
+//     the SAN as unacknowledged.
+//   - (false, false) — no SAN extension on the cert at all.
+//
+// Non-otherName GeneralName forms (dNSName, iPAddress, etc.) cause this to
+// return false: a CSIP device cert SAN is otherName-only, and the verifier
+// path that consults this helper is acknowledge-only for the HMN case. Any
+// other SAN content remains unhandled and must trip x509.Verify.
+//
+// This is the strict counterpart to ExtractHardwareModuleName, which returns
+// the first HMN match and is the right tool for callers that just want to
+// read the HMN payload off a known-good cert.
+func SANAllOtherNamesAreHardwareModuleName(cert *x509.Certificate) (allHMN bool, sanPresent bool) {
+	for _, ext := range cert.Extensions {
+		if !ext.Id.Equal(OIDSubjectAltName) {
+			continue
+		}
+		sanPresent = true
+
+		var seq asn1.RawValue
+		if _, err := asn1.Unmarshal(ext.Value, &seq); err != nil {
+			return false, true
+		}
+		if seq.Class != asn1.ClassUniversal || seq.Tag != asn1.TagSequence || !seq.IsCompound {
+			return false, true
+		}
+
+		rest := seq.Bytes
+		entries := 0
+		for len(rest) > 0 {
+			var gn asn1.RawValue
+			var err error
+			rest, err = asn1.Unmarshal(rest, &gn)
+			if err != nil {
+				return false, true
+			}
+			entries++
+			// Every GeneralName must be an otherName ([0] IMPLICIT) AND
+			// every otherName must be a well-formed HMN. Any non-otherName
+			// GeneralName (dNSName, iPAddress, etc.) means the SAN as a
+			// whole still carries content the verifier should not silently
+			// acknowledge.
+			if gn.Class != asn1.ClassContextSpecific || gn.Tag != 0 {
+				return false, true
+			}
+			var on struct {
+				TypeID asn1.ObjectIdentifier
+				Value  asn1.RawValue
+			}
+			if _, err := asn1.UnmarshalWithParams(gn.FullBytes, &on, "tag:0"); err != nil {
+				return false, true
+			}
+			if !on.TypeID.Equal(OIDHardwareModuleName) {
+				return false, true
+			}
+			var hmn struct {
+				HWType      asn1.ObjectIdentifier
+				HWSerialNum asn1.RawValue
+			}
+			if _, err := asn1.Unmarshal(on.Value.Bytes, &hmn); err != nil {
+				return false, true
+			}
+			if len(hmn.HWType) == 0 {
+				return false, true
+			}
+			if hmn.HWSerialNum.Tag != asn1.TagOctetString || hmn.HWSerialNum.Class != asn1.ClassUniversal {
+				return false, true
+			}
+		}
+		if entries == 0 {
+			return false, true
+		}
+		return true, true
+	}
+	return false, false
+}
+
 // HasPolicyOID checks whether a certificate's CertificatePolicies
 // extension contains the given policy OID.
 func HasPolicyOID(cert *x509.Certificate, target asn1.ObjectIdentifier) bool {

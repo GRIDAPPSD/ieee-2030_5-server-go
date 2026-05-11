@@ -271,14 +271,17 @@ func GenerateDeviceCert(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, opts 
 	policyExt.Critical = true
 	template.ExtraExtensions = append(template.ExtraExtensions, policyExt)
 
-	// Build HardwareModuleName SAN extension if hw info provided
-	if opts.HWSerialNum != "" {
-		sanExt, err := buildHardwareModuleNameSAN(opts.HWType, opts.HWSerialNum)
-		if err != nil {
-			return nil, nil, fmt.Errorf("build HW SAN: %w", err)
-		}
-		template.ExtraExtensions = append(template.ExtraExtensions, sanExt)
+	// Build HardwareModuleName SAN extension. Required by CSIP §6.2 /
+	// IEEE 2030.5 §6.11 for every device cert participating in CSIP
+	// registration — silently omitting it produces a non-compliant cert.
+	if opts.HWSerialNum == "" {
+		return nil, nil, fmt.Errorf("device cert: HWSerialNum is required (CSIP §6.2 HardwareModuleName SAN)")
 	}
+	sanExt, err := buildHardwareModuleNameSAN(opts.HWType, opts.HWSerialNum)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build HW SAN: %w", err)
+	}
+	template.ExtraExtensions = append(template.ExtraExtensions, sanExt)
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
 	if err != nil {
@@ -415,9 +418,12 @@ func buildHardwareModuleNameSAN(hwType asn1.ObjectIdentifier, hwSerialNum string
 		return pkix.Extension{}, fmt.Errorf("marshal SAN: %w", err)
 	}
 
+	// Device certs use an empty Subject, so RFC 5280 §4.2.1.6 requires the
+	// SAN extension to be marked critical.
 	return pkix.Extension{
-		Id:    OIDSubjectAltName,
-		Value: sanValue,
+		Id:       OIDSubjectAltName,
+		Critical: true,
+		Value:    sanValue,
 	}, nil
 }
 

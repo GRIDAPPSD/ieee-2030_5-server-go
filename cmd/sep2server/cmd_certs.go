@@ -1,12 +1,10 @@
 package main
 
 import (
-	"encoding/asn1"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
@@ -150,16 +148,28 @@ func runGenerateAdmin(args []string) error {
 }
 
 func runGenerateDevice(args []string) error {
-	fs := flag.NewFlagSet("generate-device", flag.ExitOnError)
+	fs := flag.NewFlagSet("generate-device", flag.ContinueOnError)
 	caFile := fs.String("ca", "./certs/ca.crt", "CA certificate PEM")
 	caKeyFile := fs.String("ca-key", "./certs/ca.key", "CA private key PEM")
 	deviceType := fs.Int("device-type", 1, "Device type (1=generic, 2=mobile, 3=postMfg)")
-	hwSerial := fs.String("hw-serial", "", "Hardware serial number")
+	hwSerial := fs.String("hw-serial", "", "Hardware serial number (required for CSIP §6.2 HardwareModuleName SAN)")
+	hwType := fs.String("hw-type", "", "manufacturer PEN OID (e.g. 1.3.6.1.4.1.<PEN>) — required for CSIP HardwareModuleName SAN")
 	name := fs.String("name", "device", "Output filename prefix")
 	outDir := fs.String("out", "./certs", "Output directory")
 	isTest := fs.Bool("test", false, "Generate test certificate")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	if *hwSerial == "" {
+		return fmt.Errorf("-hw-serial is required (CSIP §6.2 HardwareModuleName SAN)")
+	}
+	if *hwType == "" {
+		return fmt.Errorf("-hw-type is required: pass your manufacturer's PEN OID (e.g. 1.3.6.1.4.1.<PEN>)")
+	}
+	hwTypeOID, err := certs.ParseOID(*hwType)
+	if err != nil {
+		return fmt.Errorf("-hw-type: %w", err)
 	}
 
 	caCert, caKey, err := certs.LoadCA(*caFile, *caKeyFile)
@@ -169,7 +179,7 @@ func runGenerateDevice(args []string) error {
 
 	certPEM, keyPEM, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
 		DeviceType:  certs.DeviceType(*deviceType),
-		HWType:      asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 40732, 99},
+		HWType:      hwTypeOID,
 		HWSerialNum: *hwSerial,
 		IsTestCert:  *isTest,
 	})
@@ -226,5 +236,3 @@ func printCertsUsage() {
 	fmt.Fprintln(os.Stderr, "  generate-device  Generate device certificate")
 }
 
-// suppress unused import warning
-var _ = strconv.Itoa

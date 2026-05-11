@@ -81,7 +81,7 @@ func TestHandleCreateDeviceCert(t *testing.T) {
 	svc := newTestCertService(t)
 	h := svc.HandleCreateDeviceCert()
 
-	body := `{"deviceType":1,"hwSerialNum":"INV-001"}`
+	body := `{"deviceType":1,"hwSerialNum":"INV-001","hwType":"1.3.6.1.4.1.40732.99"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(body))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)

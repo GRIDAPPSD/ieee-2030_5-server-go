@@ -32,6 +32,7 @@ func NewAdminCertService(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, caCe
 type createDeviceCertRequest struct {
 	DeviceType  int    `json:"deviceType"`
 	HWSerialNum string `json:"hwSerialNum"`
+	HWType      string `json:"hwType"` // manufacturer PEN OID, e.g. "1.3.6.1.4.1.40732.99"
 	IsTestCert  bool   `json:"isTestCert"`
 }
 
@@ -144,9 +145,23 @@ func (s *AdminCertService) HandleCreateDeviceCert() http.HandlerFunc {
 		if req.DeviceType < 1 || req.DeviceType > 3 {
 			req.DeviceType = 1
 		}
+		if req.HWSerialNum == "" {
+			writeError(w, http.StatusBadRequest, "hwSerialNum is required (CSIP §6.2 HardwareModuleName SAN)")
+			return
+		}
+		if req.HWType == "" {
+			writeError(w, http.StatusBadRequest, "hwType (manufacturer PEN OID) is required")
+			return
+		}
+		hwTypeOID, err := certs.ParseOID(req.HWType)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "hwType: "+err.Error())
+			return
+		}
 
 		certPEM, keyPEM, err := certs.GenerateDeviceCert(s.caCert, s.caKey, certs.DeviceCertOptions{
 			DeviceType:  certs.DeviceType(req.DeviceType),
+			HWType:      hwTypeOID,
 			HWSerialNum: req.HWSerialNum,
 			IsTestCert:  req.IsTestCert,
 		})
@@ -169,3 +184,4 @@ func (s *AdminCertService) HandleCreateDeviceCert() http.HandlerFunc {
 		})
 	}
 }
+

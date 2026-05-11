@@ -399,6 +399,202 @@ func TestVerifyRejectsExtKeyUsageMismatch(t *testing.T) {
 	}
 }
 
+// TestVerifyRejectsSANWithExtraForeignOtherName proves clearKnownCriticalSAN
+// does NOT acknowledge the SAN OID when the SAN contains a valid
+// HardwareModuleName otherName entry plus an additional otherName with a
+// different (foreign) OID. The acknowledgement contract is "every otherName
+// in the SAN must be a well-formed HardwareModuleName"; an extra foreign
+// otherName means the SAN as a whole still carries semantics Go's verifier
+// intentionally treated as unhandled, so x509.Verify must reject the chain.
+// (Copilot round 2 finding on internal/tls/verify.go:105.)
+func TestVerifyRejectsSANWithExtraForeignOtherName(t *testing.T) {
+	caCert, caKey := genCA(t)
+
+	sanExt := mustBuildMultiOtherNameSAN(t, []otherNameSpec{
+		{OID: certs.OIDHardwareModuleName, InnerKind: innerKindValidHMN},
+		{OID: asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 8, 5}, InnerKind: innerKindArbitraryBytes},
+	})
+	deviceCert := genDeviceCertWithSANExt(t, caCert, caKey, sanExt)
+
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+
+	err := verifyClientCertWithHardwareModuleSAN([][]byte{deviceCert.Raw}, roots)
+	if err == nil {
+		t.Fatal("verify accepted SAN with foreign otherName alongside HMN; want rejection")
+	}
+}
+
+// TestVerifyRejectsSANWithExtraMalformedHMNOtherName covers the case where the
+// SAN contains a valid HardwareModuleName otherName plus a second otherName
+// that ALSO claims the HardwareModuleName OID but whose inner bytes are junk.
+// Every otherName must parse as a well-formed HardwareModuleName for the SAN
+// to be acknowledged; one bad apple spoils the bunch.
+func TestVerifyRejectsSANWithExtraMalformedHMNOtherName(t *testing.T) {
+	caCert, caKey := genCA(t)
+
+	sanExt := mustBuildMultiOtherNameSAN(t, []otherNameSpec{
+		{OID: certs.OIDHardwareModuleName, InnerKind: innerKindValidHMN},
+		{OID: certs.OIDHardwareModuleName, InnerKind: innerKindGarbage},
+	})
+	deviceCert := genDeviceCertWithSANExt(t, caCert, caKey, sanExt)
+
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+
+	err := verifyClientCertWithHardwareModuleSAN([][]byte{deviceCert.Raw}, roots)
+	if err == nil {
+		t.Fatal("verify accepted SAN with one good HMN plus one malformed HMN; want rejection")
+	}
+}
+
+// TestVerifyRejectsSANWithCorruptOuterSequence covers the case where the
+// SubjectAlternativeName extension value is NOT a well-formed GeneralNames
+// SEQUENCE. In practice the stdlib's x509.ParseCertificate rejects such
+// certs at parse time, but the verifier must still surface a clean error
+// rather than crash or accept. This documents the fail-closed boundary.
+func TestVerifyRejectsSANWithCorruptOuterSequence(t *testing.T) {
+	caCert, caKey := genCA(t)
+
+	// A critical SAN whose value bytes do not form a valid SEQUENCE.
+	sanExt := pkix.Extension{
+		Id:       certs.OIDSubjectAltName,
+		Critical: true,
+		// Garbage — not a valid SEQUENCE; the outer asn1.Unmarshal in
+		// ExtractHardwareModuleName must fail and the SAN OID must remain
+		// listed as unhandled critical even if the cert somehow parses.
+		Value: []byte{0xFF, 0xFF, 0xFF, 0xFF},
+	}
+
+	der := mintRawCertDER(t, caCert, caKey, []pkix.Extension{sanExt})
+
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+
+	err := verifyClientCertWithHardwareModuleSAN([][]byte{der}, roots)
+	if err == nil {
+		t.Fatal("verify accepted cert with corrupt SAN outer bytes; want rejection")
+	}
+}
+
+// mintRawCertDER builds a CA-signed leaf with the given extra extensions and
+// returns the raw DER (no parse step). Used by tests that need to feed certs
+// to the verifier without going through x509.ParseCertificate first, e.g. to
+// exercise corrupt-SAN paths the stdlib parser would otherwise reject.
+func mintRawCertDER(t *testing.T, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, extra []pkix.Extension) []byte {
+	t.Helper()
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa.GenerateKey: %v", err)
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("serial: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{},
+		NotBefore:             time.Now().Add(-1 * time.Minute),
+		NotAfter:              time.Now().AddDate(1, 0, 0),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyAgreement,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+		ExtraExtensions:       extra,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, caCert, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+	return der
+}
+
+// otherNameSpec describes a single otherName entry inside a SAN for tests
+// that need to assemble multi-entry GeneralNames sequences.
+type otherNameSpec struct {
+	OID       asn1.ObjectIdentifier
+	InnerKind innerKind
+}
+
+type innerKind int
+
+const (
+	innerKindValidHMN innerKind = iota
+	innerKindGarbage
+	innerKindArbitraryBytes
+)
+
+// mustBuildMultiOtherNameSAN assembles a SAN extension whose GeneralNames
+// SEQUENCE contains the given otherName entries in order. Each entry's inner
+// [0] EXPLICIT value is either a valid HardwareModuleName SEQUENCE, garbage,
+// or arbitrary opaque bytes — selected by InnerKind.
+func mustBuildMultiOtherNameSAN(t *testing.T, specs []otherNameSpec) pkix.Extension {
+	t.Helper()
+
+	var allOtherNames []byte
+	for i, spec := range specs {
+		var innerBytes []byte
+		switch spec.InnerKind {
+		case innerKindValidHMN:
+			hmn := struct {
+				HWType      asn1.ObjectIdentifier
+				HWSerialNum asn1.RawValue
+			}{
+				HWType: certs.OIDIeee20305,
+				HWSerialNum: asn1.RawValue{
+					Class: asn1.ClassUniversal,
+					Tag:   asn1.TagOctetString,
+					Bytes: []byte("TEST-SN"),
+				},
+			}
+			b, err := asn1.Marshal(hmn)
+			if err != nil {
+				t.Fatalf("spec[%d]: marshal HardwareModuleName: %v", i, err)
+			}
+			innerBytes = b
+		case innerKindGarbage:
+			innerBytes = []byte{0xFF, 0xFF, 0xFF, 0xFF}
+		case innerKindArbitraryBytes:
+			// Plausible-looking but spec-foreign payload.
+			innerBytes = []byte{0x04, 0x04, 0xDE, 0xAD, 0xBE, 0xEF}
+		}
+
+		otherName := struct {
+			TypeID asn1.ObjectIdentifier
+			Value  asn1.RawValue
+		}{
+			TypeID: spec.OID,
+			Value: asn1.RawValue{
+				Class:      asn1.ClassContextSpecific,
+				Tag:        0,
+				IsCompound: true,
+				Bytes:      innerBytes,
+			},
+		}
+
+		otherNameBytes, err := asn1.MarshalWithParams(otherName, "tag:0")
+		if err != nil {
+			t.Fatalf("spec[%d]: marshal OtherName: %v", i, err)
+		}
+		allOtherNames = append(allOtherNames, otherNameBytes...)
+	}
+
+	sanValue, err := asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassUniversal,
+		Tag:        asn1.TagSequence,
+		IsCompound: true,
+		Bytes:      allOtherNames,
+	})
+	if err != nil {
+		t.Fatalf("marshal SAN: %v", err)
+	}
+
+	return pkix.Extension{
+		Id:       certs.OIDSubjectAltName,
+		Critical: true,
+		Value:    sanValue,
+	}
+}
+
 // TestVerifyAcceptsCertWithoutSAN documents the acknowledge-only contract: the
 // verifier does NOT enforce that a HardwareModuleName SAN is present. A
 // well-signed cert with no SAN at all passes verification because there is no

@@ -47,8 +47,17 @@ const (
 )
 
 // ParseOID parses a dot-separated OID string (e.g.
-// "1.3.6.1.4.1.40732.99") into an asn1.ObjectIdentifier. It returns an
-// error on empty input or any non-numeric / negative arc.
+// "1.3.6.1.4.1.40732.99") into an asn1.ObjectIdentifier and validates the
+// basic ASN.1 / X.660 well-formedness constraints:
+//
+//   - at least two arcs (X.660 §3.5.1)
+//   - arc[0] ∈ {0, 1, 2}
+//   - if arc[0] < 2, then arc[1] ∈ [0, 39]
+//
+// Without these checks, syntactically numeric but semantically invalid OIDs
+// would surface much later as ASN.1 marshaling failures during certificate
+// generation — i.e. as a 500 from the admin API instead of a clean 400
+// validation error.
 func ParseOID(s string) (asn1.ObjectIdentifier, error) {
 	if s == "" {
 		return nil, fmt.Errorf("empty OID")
@@ -65,6 +74,18 @@ func ParseOID(s string) (asn1.ObjectIdentifier, error) {
 		}
 		oid = append(oid, n)
 	}
+
+	// X.660 well-formedness.
+	if len(oid) < 2 {
+		return nil, fmt.Errorf("invalid ASN.1 OID %q: must have at least two arcs", s)
+	}
+	if oid[0] > 2 {
+		return nil, fmt.Errorf("invalid ASN.1 OID %q: first arc must be 0, 1, or 2 (got %d)", s, oid[0])
+	}
+	if oid[0] < 2 && oid[1] > 39 {
+		return nil, fmt.Errorf("invalid ASN.1 OID %q: when first arc is %d, second arc must be in 0..39 (got %d)", s, oid[0], oid[1])
+	}
+
 	return oid, nil
 }
 
@@ -164,7 +185,7 @@ func SANAllOtherNamesAreHardwareModuleName(cert *x509.Certificate) (allHMN bool,
 		if !ext.Id.Equal(OIDSubjectAltName) {
 			continue
 		}
-		sanPresent = true
+		// SAN extension found — every return below is (_, true).
 
 		var seq asn1.RawValue
 		if _, err := asn1.Unmarshal(ext.Value, &seq); err != nil {

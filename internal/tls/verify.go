@@ -109,9 +109,28 @@ func certHasHardwareModuleSAN(cert *x509.Certificate) bool {
 			if _, err := asn1.UnmarshalWithParams(gn.FullBytes, &on, "tag:0"); err != nil {
 				return false
 			}
-			if on.TypeID.Equal(oidHardwareModuleName) {
-				return true
+			if !on.TypeID.Equal(oidHardwareModuleName) {
+				continue
 			}
+			// Verify the inner [0] EXPLICIT value actually parses as
+			// HardwareModuleName ::= SEQUENCE { hwType OID, hwSerialNum
+			// OCTET STRING } per RFC 4108 §5. A matching outer OID with
+			// garbage inside is rejected — the docstring's fail-closed
+			// promise holds end-to-end.
+			var hmn struct {
+				HWType      asn1.ObjectIdentifier
+				HWSerialNum asn1.RawValue
+			}
+			if _, err := asn1.Unmarshal(on.Value.Bytes, &hmn); err != nil {
+				return false
+			}
+			if len(hmn.HWType) == 0 {
+				return false
+			}
+			if hmn.HWSerialNum.Tag != asn1.TagOctetString || hmn.HWSerialNum.Class != asn1.ClassUniversal {
+				return false
+			}
+			return true
 		}
 	}
 	return false

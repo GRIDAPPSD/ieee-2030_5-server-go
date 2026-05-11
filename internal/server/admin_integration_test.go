@@ -77,7 +77,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 
 	// Test: POST /api/certs/device with correct Bearer
 	t.Run("Bearer create device cert", func(t *testing.T) {
-		body := `{"deviceType":1,"hwSerialNum":"INV-INTEG-001"}`
+		body := `{"deviceType":1,"hwSerialNum":"INV-INTEG-001","hwType":"1.3.6.1.4.1.40732.99"}`
 		req, _ := http.NewRequest("POST", adminURL+"/api/certs/device", bytes.NewBufferString(body))
 		req.Header.Set("Authorization", "Bearer test-admin-key")
 		req.Header.Set("Content-Type", "application/json")

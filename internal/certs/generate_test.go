@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
 	"testing"
@@ -139,15 +140,13 @@ func TestGenerateDeviceCert(t *testing.T) {
 		t.Error("device cert should use ECDSA")
 	}
 
-	// Verify signed by CA
-	roots := x509.NewCertPool()
-	roots.AddCert(caCert)
-	opts := x509.VerifyOptions{
-		Roots:     roots,
-		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-	}
-	if _, err := cert.Verify(opts); err != nil {
-		t.Errorf("device cert should verify against CA: %v", err)
+	// Chain check: device cert must be signed by the CA. We use
+	// CheckSignatureFrom rather than cert.Verify because CSIP-compliant
+	// device certs carry a critical HardwareModuleName SAN that stdlib
+	// x509 leaves in UnhandledCriticalExtensions; the production verify
+	// path acknowledges this OID via VerifyPeerCertificate.
+	if err := cert.CheckSignatureFrom(caCert); err != nil {
+		t.Errorf("device cert should be signed by CA: %v", err)
 	}
 
 	// Check certificate has policy extension with deviceType OID
@@ -186,6 +185,88 @@ func TestGenerateDeviceTestCert(t *testing.T) {
 	}
 	if !foundPolicy {
 		t.Error("test device cert should have CertificatePolicies extension")
+	}
+}
+
+// TestGenerateDeviceCertRejectsEmptyHWSerial verifies that the generator
+// refuses to produce a device cert without a hardware serial number.
+// Per CSIP §6.2 / IEEE 2030.5 §6.11, every device cert participating in
+// CSIP registration MUST carry a HardwareModuleName SAN — silently
+// omitting the SAN is non-compliant. (IEEE-017)
+func TestGenerateDeviceCertRejectsEmptyHWSerial(t *testing.T) {
+	caCert, caKey := generateTestCA(t)
+
+	_, _, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
+		DeviceType:  certs.DeviceTypeGeneric,
+		HWType:      asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 12345},
+		HWSerialNum: "",
+		IsTestCert:  false,
+	})
+	if err == nil {
+		t.Fatal("GenerateDeviceCert with empty HWSerialNum: want error, got nil")
+	}
+}
+
+// TestGenerateDeviceCertSANIsCritical verifies the HardwareModuleName SAN
+// extension is marked critical, as required by RFC 5280 §4.2.1.6 for
+// certificates with an empty Subject. (IEEE-017)
+func TestGenerateDeviceCertSANIsCritical(t *testing.T) {
+	caCert, caKey := generateTestCA(t)
+
+	certPEM, _, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
+		DeviceType:  certs.DeviceTypeGeneric,
+		HWType:      asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 12345},
+		HWSerialNum: "SN-CRIT-001",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeviceCert: %v", err)
+	}
+
+	cert := parseCertPEM(t, certPEM)
+
+	var sanExt *pkix.Extension
+	for i, ext := range cert.Extensions {
+		if ext.Id.Equal(certs.OIDSubjectAltName) {
+			sanExt = &cert.Extensions[i]
+			break
+		}
+	}
+	if sanExt == nil {
+		t.Fatal("device cert is missing SubjectAlternativeName extension")
+	}
+	if !sanExt.Critical {
+		t.Error("device cert SAN extension must be marked critical (RFC 5280 §4.2.1.6, empty Subject)")
+	}
+}
+
+// TestGenerateDeviceCertSANEncodesHardwareModuleName verifies the SAN
+// otherName carries the configured HWType OID and HWSerialNum bytes so
+// that downstream CSIP verification can extract them. (IEEE-017)
+func TestGenerateDeviceCertSANEncodesHardwareModuleName(t *testing.T) {
+	caCert, caKey := generateTestCA(t)
+
+	wantHWType := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 7}
+	wantSerial := "MFR-PEN-001"
+
+	certPEM, _, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
+		DeviceType:  certs.DeviceTypeGeneric,
+		HWType:      wantHWType,
+		HWSerialNum: wantSerial,
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeviceCert: %v", err)
+	}
+
+	cert := parseCertPEM(t, certPEM)
+	hmn, ok := certs.ExtractHardwareModuleName(cert)
+	if !ok {
+		t.Fatal("device cert SAN does not contain HardwareModuleName otherName")
+	}
+	if !hmn.HWType.Equal(wantHWType) {
+		t.Errorf("HWType = %v, want %v", hmn.HWType, wantHWType)
+	}
+	if string(hmn.HWSerialNum) != wantSerial {
+		t.Errorf("HWSerialNum = %q, want %q", string(hmn.HWSerialNum), wantSerial)
 	}
 }
 

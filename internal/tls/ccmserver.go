@@ -43,9 +43,16 @@ func NewCCMServerConfig(certFile, keyFile, caFile string) (*gotls.Config, error)
 	return &gotls.Config{
 		Certificates: []gotls.Certificate{cert},
 		ClientCAs:    caPool,
-		ClientAuth:   gotls.RequireAndVerifyClientCert,
-		MinVersion:   gotls.VersionTLS12,
-		MaxVersion:   gotls.VersionTLS12,
+		// IEEE 2030.5 / CSIP device certs carry a critical HardwareModuleName
+		// SAN that stdlib x509 cannot parse. Switch to RequireAnyClientCert
+		// + manual verification so we can acknowledge the OID. See
+		// verifyClientCertWithHardwareModuleSAN.
+		ClientAuth: gotls.RequireAnyClientCert,
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			return verifyClientCertWithHardwareModuleSAN(rawCerts, caPool)
+		},
+		MinVersion: gotls.VersionTLS12,
+		MaxVersion: gotls.VersionTLS12,
 		CipherSuites: []uint16{
 			gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8,
 			0xC02B, // TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 (fallback)

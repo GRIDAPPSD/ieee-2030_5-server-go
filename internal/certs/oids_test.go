@@ -120,6 +120,62 @@ func TestGenerateSelfSignedTLS(t *testing.T) {
 	}
 }
 
+// TestParseOIDRejectsInvalidASN1 covers the ASN.1 OID well-formedness
+// constraints (X.660): minimum two arcs; arc[0] ∈ {0,1,2}; if arc[0] < 2
+// then arc[1] ∈ [0,39]. Without these checks, syntactically numeric but
+// semantically invalid OIDs slip past ParseOID and surface later as 500-
+// class failures during ASN.1 marshaling at cert generation time, instead
+// of clean 400 validation errors at the API boundary.
+//
+// Per Copilot round 2 finding on internal/certs/oids.go:69.
+func TestParseOIDRejectsInvalidASN1(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"empty string", ""},
+		{"single arc", "1"},
+		{"arc[0] greater than 2", "3.1.2"},
+		{"arc[0]=0 with arc[1] >= 40", "0.40"},
+		{"arc[0]=1 with arc[1] >= 40", "1.40"},
+		{"arc[0]=0 with arc[1] >> 40", "0.999.1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oid, err := certs.ParseOID(tc.in)
+			if err == nil {
+				t.Fatalf("ParseOID(%q) = %v, want error", tc.in, oid)
+			}
+		})
+	}
+}
+
+// TestParseOIDAcceptsValidASN1 pins the positive cases — including the X.660
+// boundary values that should remain valid: arc[0]=1 with arc[1]=39, and any
+// arc[1] when arc[0]=2.
+func TestParseOIDAcceptsValidASN1(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"two-arc minimum", "1.2"},
+		{"arc[0]=1 boundary arc[1]=39", "1.39.5"},
+		{"arc[0]=2 with large arc[1]", "2.999.1"},
+		{"IEEE 2030.5 PEN OID", "1.3.6.1.4.1.40732.1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oid, err := certs.ParseOID(tc.in)
+			if err != nil {
+				t.Fatalf("ParseOID(%q) returned error: %v", tc.in, err)
+			}
+			if oid == nil {
+				t.Fatalf("ParseOID(%q) returned nil OID without error", tc.in)
+			}
+		})
+	}
+}
+
 func mustGenerateTestCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey) {
 	t.Helper()
 	certPEM, keyPEM, err := certs.GenerateCA(certs.CAOptions{

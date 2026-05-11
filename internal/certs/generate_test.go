@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
 	"testing"
@@ -187,6 +188,146 @@ func TestGenerateDeviceTestCert(t *testing.T) {
 	if !foundPolicy {
 		t.Error("test device cert should have CertificatePolicies extension")
 	}
+}
+
+// TestGenerateDeviceCertRejectsEmptyHWSerial verifies that the generator
+// refuses to produce a device cert without a hardware serial number.
+// Per CSIP §6.2 / IEEE 2030.5 §6.11, every device cert participating in
+// CSIP registration MUST carry a HardwareModuleName SAN — silently
+// omitting the SAN is non-compliant. (IEEE-017)
+func TestGenerateDeviceCertRejectsEmptyHWSerial(t *testing.T) {
+	caCert, caKey := generateTestCA(t)
+
+	_, _, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
+		DeviceType:  certs.DeviceTypeGeneric,
+		HWType:      asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 12345},
+		HWSerialNum: "",
+		IsTestCert:  false,
+	})
+	if err == nil {
+		t.Fatal("GenerateDeviceCert with empty HWSerialNum: want error, got nil")
+	}
+}
+
+// TestGenerateDeviceCertSANIsCritical verifies the HardwareModuleName SAN
+// extension is marked critical, as required by RFC 5280 §4.2.1.6 for
+// certificates with an empty Subject. (IEEE-017)
+func TestGenerateDeviceCertSANIsCritical(t *testing.T) {
+	caCert, caKey := generateTestCA(t)
+
+	certPEM, _, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
+		DeviceType:  certs.DeviceTypeGeneric,
+		HWType:      asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 12345},
+		HWSerialNum: "SN-CRIT-001",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeviceCert: %v", err)
+	}
+
+	cert := parseCertPEM(t, certPEM)
+
+	var sanExt *pkix.Extension
+	for i, ext := range cert.Extensions {
+		if ext.Id.Equal(certs.OIDSubjectAltName) {
+			sanExt = &cert.Extensions[i]
+			break
+		}
+	}
+	if sanExt == nil {
+		t.Fatal("device cert is missing SubjectAlternativeName extension")
+	}
+	if !sanExt.Critical {
+		t.Error("device cert SAN extension must be marked critical (RFC 5280 §4.2.1.6, empty Subject)")
+	}
+}
+
+// TestGenerateDeviceCertSANEncodesHardwareModuleName verifies the SAN
+// otherName carries the configured HWType OID and HWSerialNum bytes so
+// that downstream CSIP verification can extract them. (IEEE-017)
+func TestGenerateDeviceCertSANEncodesHardwareModuleName(t *testing.T) {
+	caCert, caKey := generateTestCA(t)
+
+	wantHWType := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 7}
+	wantSerial := "MFR-PEN-001"
+
+	certPEM, _, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
+		DeviceType:  certs.DeviceTypeGeneric,
+		HWType:      wantHWType,
+		HWSerialNum: wantSerial,
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeviceCert: %v", err)
+	}
+
+	cert := parseCertPEM(t, certPEM)
+	gotHWType, gotSerial, ok := extractHardwareModuleName(t, cert)
+	if !ok {
+		t.Fatal("device cert SAN does not contain HardwareModuleName otherName")
+	}
+	if !gotHWType.Equal(wantHWType) {
+		t.Errorf("HWType = %v, want %v", gotHWType, wantHWType)
+	}
+	if gotSerial != wantSerial {
+		t.Errorf("HWSerialNum = %q, want %q", gotSerial, wantSerial)
+	}
+}
+
+// extractHardwareModuleName parses the SAN extension and returns the
+// HardwareModuleName HWType OID and HWSerialNum, or ok=false if absent.
+func extractHardwareModuleName(t *testing.T, cert *x509.Certificate) (asn1.ObjectIdentifier, string, bool) {
+	t.Helper()
+
+	var sanExt *pkix.Extension
+	for i, ext := range cert.Extensions {
+		if ext.Id.Equal(certs.OIDSubjectAltName) {
+			sanExt = &cert.Extensions[i]
+			break
+		}
+	}
+	if sanExt == nil {
+		return nil, "", false
+	}
+
+	// SAN value is a SEQUENCE of GeneralName; otherName is [0] IMPLICIT.
+	var seq asn1.RawValue
+	if _, err := asn1.Unmarshal(sanExt.Value, &seq); err != nil {
+		t.Fatalf("unmarshal SAN sequence: %v", err)
+	}
+
+	rest := seq.Bytes
+	for len(rest) > 0 {
+		var gn asn1.RawValue
+		var err error
+		rest, err = asn1.Unmarshal(rest, &gn)
+		if err != nil {
+			t.Fatalf("unmarshal GeneralName: %v", err)
+		}
+		if gn.Class != asn1.ClassContextSpecific || gn.Tag != 0 {
+			continue
+		}
+
+		// otherName ::= SEQUENCE { type-id OID, value [0] EXPLICIT ANY }
+		var on struct {
+			TypeID asn1.ObjectIdentifier
+			Value  asn1.RawValue
+		}
+		if _, err := asn1.UnmarshalWithParams(gn.FullBytes, &on, "tag:0"); err != nil {
+			t.Fatalf("unmarshal otherName: %v", err)
+		}
+		if !on.TypeID.Equal(certs.OIDHardwareModuleName) {
+			continue
+		}
+
+		var hmn struct {
+			HWType      asn1.ObjectIdentifier
+			HWSerialNum asn1.RawValue
+		}
+		if _, err := asn1.Unmarshal(on.Value.Bytes, &hmn); err != nil {
+			t.Fatalf("unmarshal HardwareModuleName: %v", err)
+		}
+		return hmn.HWType, string(hmn.HWSerialNum.Bytes), true
+	}
+	return nil, "", false
 }
 
 func TestSerialNumberUniqueness(t *testing.T) {

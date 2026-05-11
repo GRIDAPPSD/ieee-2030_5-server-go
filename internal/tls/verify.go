@@ -24,10 +24,13 @@ import (
 //
 //  1. Parse every certificate in the presented chain.
 //  2. Acknowledge the SubjectAlternativeName extension iff the leaf (or
-//     intermediate) SAN carries a well-formed RFC 4108 HardwareModuleName
-//     otherName — i.e. remove only the SAN OID from
-//     UnhandledCriticalExtensions, leaving every other unhandled critical
-//     extension in place so stdlib Verify still fails closed.
+//     intermediate) SAN is a well-formed GeneralNames SEQUENCE in which
+//     EVERY otherName entry is a well-formed RFC 4108 HardwareModuleName.
+//     A SAN that mixes HMN with foreign otherName OIDs, malformed HMN
+//     inner bytes, or any non-otherName GeneralName form is left
+//     unacknowledged. Only the SAN OID is removed from
+//     UnhandledCriticalExtensions; every other unhandled critical
+//     extension stays so stdlib Verify still fails closed.
 //  3. Call leaf.Verify(opts) with the configured Roots, Intermediates, and
 //     KeyUsages=[ExtKeyUsageClientAuth]. This is the standard chain walk:
 //     signature, expiry, basic constraints, key usage, and trust anchor
@@ -79,11 +82,16 @@ func verifyClientCertWithHardwareModuleSAN(rawCerts [][]byte, roots *x509.CertPo
 }
 
 // clearKnownCriticalSAN removes the SubjectAlternativeName OID from
-// cert.UnhandledCriticalExtensions if and only if the cert's SAN carries a
-// well-formed RFC 4108 HardwareModuleName otherName. All other unhandled
-// critical OIDs — including a SAN whose otherName uses a different OID or
-// whose inner bytes don't parse — are left in place so x509.Verify fails
-// closed.
+// cert.UnhandledCriticalExtensions if and only if the cert's SAN is a
+// well-formed GeneralNames SEQUENCE in which EVERY otherName is a
+// well-formed RFC 4108 §5 HardwareModuleName. A SAN that mixes a valid
+// HardwareModuleName with any other otherName (different OID, or HMN OID
+// but malformed inner bytes) or with any non-otherName GeneralName form is
+// left unacknowledged so x509.Verify fails closed.
+//
+// All other unhandled critical OIDs are also left in place. This is the
+// fail-closed counterpart to ExtractHardwareModuleName — see
+// certs.SANAllOtherNamesAreHardwareModuleName for the strict checker.
 //
 // Note: this function mutates cert.UnhandledCriticalExtensions in place.
 // Callers must not share *cert across goroutines or cache it; in the current
@@ -93,10 +101,10 @@ func clearKnownCriticalSAN(cert *x509.Certificate) {
 	if len(cert.UnhandledCriticalExtensions) == 0 {
 		return
 	}
-	_, hasHMN := certs.ExtractHardwareModuleName(cert)
+	allHMN, _ := certs.SANAllOtherNamesAreHardwareModuleName(cert)
 	filtered := cert.UnhandledCriticalExtensions[:0]
 	for _, oid := range cert.UnhandledCriticalExtensions {
-		if oid.Equal(certs.OIDSubjectAltName) && hasHMN {
+		if oid.Equal(certs.OIDSubjectAltName) && allHMN {
 			continue
 		}
 		filtered = append(filtered, oid)

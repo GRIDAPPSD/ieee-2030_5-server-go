@@ -91,13 +91,22 @@ The resulting cert profile matches IEEE 2030.5-2018 §6.11 / CSIP V1.2:
 ### 2. Start the server with the CSIP-mandated cipher
 
 ```bash
-make run-ccm    # CCM-8 cipher, spec-compliant
-make run-full   # CCM-8 plus mDNS plus admin dashboard
+make run-ccm    # CCM-8 enabled (with GCM fallback for compat)
+make run-full   # same plus mDNS plus admin dashboard
 ```
 
 Both targets build the server against the vendored `internal/tls/gotls` fork, which registers the CCM-8 cipher suite that upstream Go does not ship, then call `make certs` and serve on `:8443` with mutual TLS required.
 
-`make run` uses GCM instead of CCM. GCM is fine for local testing but is **not** spec-compliant — CSIP requires CCM-8.
+The CCM server's cipher list is **CCM-8 first, then GCM as a fallback** so connections from clients that do not implement CCM-8 still complete the handshake. See `internal/tls/ccmserver.go` (the `CipherSuites` slice in `NewCCMServerConfig`). The cipher that is actually negotiated depends on what the client offers:
+
+- A CCM-capable client (e.g., the EPRI IEEE-2030.5-Client invoked by `make test-epri`) will negotiate `TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8`.
+- A stdlib-TLS client (including `make run-inverter` — see section 3) will negotiate the GCM fallback, not CCM-8.
+
+So `make run-ccm` on its own does **not** guarantee a CSIP-compliant cipher on the wire. CSIP cipher conformance is conditional on (a) the client supporting CCM-8 and (b) verifying the handshake actually negotiated CCM-8 — check the server log line that prints the negotiated cipher on every accepted handshake (see section 4).
+
+`make run` uses GCM only (no CCM-8 offered at all). Fine for local testing; not spec-compliant.
+
+A future `csip-strict` server mode that drops the GCM fallback — so any non-CCM client fails the handshake instead of silently falling back — is on the backlog but not implemented.
 
 ### 3. Run the inverter client against a CSIP server
 
@@ -106,6 +115,18 @@ make run-inverter
 ```
 
 `make run-inverter` points `bin/inverterclient` at `https://localhost:8443` with the device cert and CA from `certs/`. The client presents its CSIP-compliant device cert; the server's TLS verifier acknowledges the critical `HardwareModuleName` SAN automatically. (The verifier acknowledges the SAN so the handshake succeeds; it does not yet enforce a full CSIP function-set profile — see `Future: CSIP enforcement` below.)
+
+**Cipher caveat — `run-inverter` is not a CCM-8 conformance demo.** The inverter client uses the Go standard library `crypto/tls` package (see `internal/inverter/client.go`), which does not implement the CCM-8 cipher suite. Against `make run-ccm`, the inverter client will silently land on the server's GCM fallback (and against a hypothetical strict-CCM server with no fallback, it would fail the handshake outright). What `run-inverter` does exercise honestly:
+
+- The full IEEE 2030.5 protocol path: registration, DER capability/settings/status reporting, DefaultDERControl retrieval, metering via mirror usage points, scenario-driven behavior.
+- Mutual TLS with the CSIP `HardwareModuleName` SAN profile.
+- The server-side verifier and handler stack.
+
+What it does **not** demonstrate: CSIP cipher conformance (CCM-8 on the wire).
+
+For an end-to-end test that actually negotiates CCM-8 against the server, use the EPRI IEEE-2030.5-Client via `make test-epri` (driver: `scripts/test-epri-client.sh`). That client implements CCM-8 and will negotiate it as the primary cipher.
+
+Moving the inverter client onto the vendored `internal/tls/gotls` stack so it can negotiate CCM-8 itself is on the backlog but not implemented.
 
 `make run-scenario SCENARIO=<name>` runs the simulator with a non-default scenario (`voltvar`, `freqdroop`, `ridethrough`, etc.); `make list-scenarios` prints the full set.
 

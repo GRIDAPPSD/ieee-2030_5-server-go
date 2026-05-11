@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/x509/pkix"
-	"encoding/asn1"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,15 +59,15 @@ func TestRunGenerateDeviceHWTypeFlag(t *testing.T) {
 		t.Fatalf("parse cert: %v", err)
 	}
 
-	gotHWType, gotSerial, ok := extractCLIHardwareModuleName(t, cert.Extensions)
+	hmn, ok := certs.ExtractHardwareModuleName(cert)
 	if !ok {
 		t.Fatal("generated cert is missing HardwareModuleName SAN")
 	}
-	if gotHWType.String() != wantPEN {
-		t.Errorf("HWType OID = %v, want %s", gotHWType, wantPEN)
+	if hmn.HWType.String() != wantPEN {
+		t.Errorf("HWType OID = %v, want %s", hmn.HWType, wantPEN)
 	}
-	if gotSerial != "CLI-TEST-SN" {
-		t.Errorf("HWSerialNum = %q, want %q", gotSerial, "CLI-TEST-SN")
+	if string(hmn.HWSerialNum) != "CLI-TEST-SN" {
+		t.Errorf("HWSerialNum = %q, want %q", string(hmn.HWSerialNum), "CLI-TEST-SN")
 	}
 }
 
@@ -96,58 +94,4 @@ func setupTestCertDir(t *testing.T) string {
 	return dir
 }
 
-// extractCLIHardwareModuleName is a local copy of the helper used in the
-// certs package tests — duplicated here because Go test packages are
-// compiled separately and the helper is unexported.
-func extractCLIHardwareModuleName(t *testing.T, exts []pkix.Extension) (asn1.ObjectIdentifier, string, bool) {
-	t.Helper()
-
-	var sanExt *pkix.Extension
-	for i, ext := range exts {
-		if ext.Id.Equal(certs.OIDSubjectAltName) {
-			sanExt = &exts[i]
-			break
-		}
-	}
-	if sanExt == nil {
-		return nil, "", false
-	}
-
-	var seq asn1.RawValue
-	if _, err := asn1.Unmarshal(sanExt.Value, &seq); err != nil {
-		t.Fatalf("unmarshal SAN sequence: %v", err)
-	}
-
-	rest := seq.Bytes
-	for len(rest) > 0 {
-		var gn asn1.RawValue
-		var err error
-		rest, err = asn1.Unmarshal(rest, &gn)
-		if err != nil {
-			t.Fatalf("unmarshal GeneralName: %v", err)
-		}
-		if gn.Class != asn1.ClassContextSpecific || gn.Tag != 0 {
-			continue
-		}
-		var on struct {
-			TypeID asn1.ObjectIdentifier
-			Value  asn1.RawValue
-		}
-		if _, err := asn1.UnmarshalWithParams(gn.FullBytes, &on, "tag:0"); err != nil {
-			t.Fatalf("unmarshal otherName: %v", err)
-		}
-		if !on.TypeID.Equal(certs.OIDHardwareModuleName) {
-			continue
-		}
-		var hmn struct {
-			HWType      asn1.ObjectIdentifier
-			HWSerialNum asn1.RawValue
-		}
-		if _, err := asn1.Unmarshal(on.Value.Bytes, &hmn); err != nil {
-			t.Fatalf("unmarshal HardwareModuleName: %v", err)
-		}
-		return hmn.HWType, string(hmn.HWSerialNum.Bytes), true
-	}
-	return nil, "", false
-}
 

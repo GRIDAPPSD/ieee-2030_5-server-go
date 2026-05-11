@@ -68,6 +68,76 @@ func ParseOID(s string) (asn1.ObjectIdentifier, error) {
 	return oid, nil
 }
 
+// HardwareModuleName carries the parsed contents of an RFC 4108 §5
+// HardwareModuleName otherName entry, as embedded in a SubjectAlternativeName
+// extension on an IEEE 2030.5 / CSIP device certificate.
+type HardwareModuleName struct {
+	HWType      asn1.ObjectIdentifier // manufacturer hwType OID (e.g. PEN-rooted)
+	HWSerialNum []byte                // hwSerialNum, raw OCTET STRING bytes
+}
+
+// ExtractHardwareModuleName walks a parsed certificate's SubjectAlternativeName
+// extension looking for an otherName with TypeID == OIDHardwareModuleName
+// (RFC 4108 §5). It returns the parsed HardwareModuleName and ok=true on the
+// first match.
+//
+// The function is intentionally conservative: any ASN.1 parse failure or a
+// malformed inner SEQUENCE returns ok=false. This is the canonical extractor;
+// callers that need a presence-only check should rely on the boolean ok
+// without inspecting the returned struct.
+func ExtractHardwareModuleName(cert *x509.Certificate) (HardwareModuleName, bool) {
+	for _, ext := range cert.Extensions {
+		if !ext.Id.Equal(OIDSubjectAltName) {
+			continue
+		}
+
+		var seq asn1.RawValue
+		if _, err := asn1.Unmarshal(ext.Value, &seq); err != nil {
+			return HardwareModuleName{}, false
+		}
+		rest := seq.Bytes
+		for len(rest) > 0 {
+			var gn asn1.RawValue
+			var err error
+			rest, err = asn1.Unmarshal(rest, &gn)
+			if err != nil {
+				return HardwareModuleName{}, false
+			}
+			if gn.Class != asn1.ClassContextSpecific || gn.Tag != 0 {
+				continue
+			}
+			var on struct {
+				TypeID asn1.ObjectIdentifier
+				Value  asn1.RawValue
+			}
+			if _, err := asn1.UnmarshalWithParams(gn.FullBytes, &on, "tag:0"); err != nil {
+				return HardwareModuleName{}, false
+			}
+			if !on.TypeID.Equal(OIDHardwareModuleName) {
+				continue
+			}
+			var hmn struct {
+				HWType      asn1.ObjectIdentifier
+				HWSerialNum asn1.RawValue
+			}
+			if _, err := asn1.Unmarshal(on.Value.Bytes, &hmn); err != nil {
+				return HardwareModuleName{}, false
+			}
+			if len(hmn.HWType) == 0 {
+				return HardwareModuleName{}, false
+			}
+			if hmn.HWSerialNum.Tag != asn1.TagOctetString || hmn.HWSerialNum.Class != asn1.ClassUniversal {
+				return HardwareModuleName{}, false
+			}
+			return HardwareModuleName{
+				HWType:      hmn.HWType,
+				HWSerialNum: hmn.HWSerialNum.Bytes,
+			}, true
+		}
+	}
+	return HardwareModuleName{}, false
+}
+
 // HasPolicyOID checks whether a certificate's CertificatePolicies
 // extension contains the given policy OID.
 func HasPolicyOID(cert *x509.Certificate, target asn1.ObjectIdentifier) bool {

@@ -258,74 +258,16 @@ func TestGenerateDeviceCertSANEncodesHardwareModuleName(t *testing.T) {
 	}
 
 	cert := parseCertPEM(t, certPEM)
-	gotHWType, gotSerial, ok := extractHardwareModuleName(t, cert)
+	hmn, ok := certs.ExtractHardwareModuleName(cert)
 	if !ok {
 		t.Fatal("device cert SAN does not contain HardwareModuleName otherName")
 	}
-	if !gotHWType.Equal(wantHWType) {
-		t.Errorf("HWType = %v, want %v", gotHWType, wantHWType)
+	if !hmn.HWType.Equal(wantHWType) {
+		t.Errorf("HWType = %v, want %v", hmn.HWType, wantHWType)
 	}
-	if gotSerial != wantSerial {
-		t.Errorf("HWSerialNum = %q, want %q", gotSerial, wantSerial)
+	if string(hmn.HWSerialNum) != wantSerial {
+		t.Errorf("HWSerialNum = %q, want %q", string(hmn.HWSerialNum), wantSerial)
 	}
-}
-
-// extractHardwareModuleName parses the SAN extension and returns the
-// HardwareModuleName HWType OID and HWSerialNum, or ok=false if absent.
-func extractHardwareModuleName(t *testing.T, cert *x509.Certificate) (asn1.ObjectIdentifier, string, bool) {
-	t.Helper()
-
-	var sanExt *pkix.Extension
-	for i, ext := range cert.Extensions {
-		if ext.Id.Equal(certs.OIDSubjectAltName) {
-			sanExt = &cert.Extensions[i]
-			break
-		}
-	}
-	if sanExt == nil {
-		return nil, "", false
-	}
-
-	// SAN value is a SEQUENCE of GeneralName; otherName is [0] IMPLICIT.
-	var seq asn1.RawValue
-	if _, err := asn1.Unmarshal(sanExt.Value, &seq); err != nil {
-		t.Fatalf("unmarshal SAN sequence: %v", err)
-	}
-
-	rest := seq.Bytes
-	for len(rest) > 0 {
-		var gn asn1.RawValue
-		var err error
-		rest, err = asn1.Unmarshal(rest, &gn)
-		if err != nil {
-			t.Fatalf("unmarshal GeneralName: %v", err)
-		}
-		if gn.Class != asn1.ClassContextSpecific || gn.Tag != 0 {
-			continue
-		}
-
-		// otherName ::= SEQUENCE { type-id OID, value [0] EXPLICIT ANY }
-		var on struct {
-			TypeID asn1.ObjectIdentifier
-			Value  asn1.RawValue
-		}
-		if _, err := asn1.UnmarshalWithParams(gn.FullBytes, &on, "tag:0"); err != nil {
-			t.Fatalf("unmarshal otherName: %v", err)
-		}
-		if !on.TypeID.Equal(certs.OIDHardwareModuleName) {
-			continue
-		}
-
-		var hmn struct {
-			HWType      asn1.ObjectIdentifier
-			HWSerialNum asn1.RawValue
-		}
-		if _, err := asn1.Unmarshal(on.Value.Bytes, &hmn); err != nil {
-			t.Fatalf("unmarshal HardwareModuleName: %v", err)
-		}
-		return hmn.HWType, string(hmn.HWSerialNum.Bytes), true
-	}
-	return nil, "", false
 }
 
 func TestSerialNumberUniqueness(t *testing.T) {

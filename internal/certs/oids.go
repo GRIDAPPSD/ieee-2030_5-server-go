@@ -3,6 +3,9 @@ package certs
 import (
 	"crypto/x509"
 	"encoding/asn1"
+	"fmt"
+	"strconv"
+	"strings"
 )
 
 // IEEE 2030.5 OID arc: 1.3.6.1.4.1.40732
@@ -42,6 +45,28 @@ const (
 	DeviceTypeMobile  DeviceType = 2
 	DeviceTypePostMfg DeviceType = 3
 )
+
+// ParseOID parses a dot-separated OID string (e.g.
+// "1.3.6.1.4.1.40732.99") into an asn1.ObjectIdentifier. It returns an
+// error on empty input or any non-numeric / negative arc.
+func ParseOID(s string) (asn1.ObjectIdentifier, error) {
+	if s == "" {
+		return nil, fmt.Errorf("empty OID")
+	}
+	parts := strings.Split(s, ".")
+	oid := make(asn1.ObjectIdentifier, 0, len(parts))
+	for _, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return nil, fmt.Errorf("invalid OID arc %q in %q", p, s)
+		}
+		if n < 0 {
+			return nil, fmt.Errorf("negative OID arc %d in %q", n, s)
+		}
+		oid = append(oid, n)
+	}
+	return oid, nil
+}
 
 // HasPolicyOID checks whether a certificate's CertificatePolicies
 // extension contains the given policy OID.

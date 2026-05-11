@@ -11,22 +11,39 @@ import (
 // verifyClientCertWithHardwareModuleSAN performs full chain verification of
 // a presented client certificate chain against the configured CA pool.
 //
-// Before calling x509.Verify it acknowledges the SubjectAlternativeName
-// extension when that SAN carries an RFC 4108 HardwareModuleName otherName
-// (IEEE 2030.5 §6.11 / CSIP §6.2). RFC 5280 §4.2.1.6 requires the SAN to be
-// marked critical when the Subject is empty, and Go's x509 parser does not
-// understand the HardwareModuleName otherName form, so the parser leaves the
-// SAN OID under UnhandledCriticalExtensions and stdlib Verify would reject
-// the chain. This hook removes only that single OID — and only when the SAN
-// actually parses as a HardwareModuleName — leaving every other unhandled
-// critical extension intact so Verify still fails closed.
+// CSIP enforcement scope (read before refactoring):
 //
-// Contract: this hook is acknowledge-only. It does NOT enforce CSIP cert
-// profile requirements (HardwareModuleName presence, indefinite notAfter,
-// specific keyUsage flag combinations, etc.). Those are enforced at cert
-// generation time in internal/certs, not at handshake time. A well-signed
-// cert with no SAN at all is accepted here. If stricter CSIP enforcement at
-// the handshake is needed later, file a separate ticket.
+// This hook is acknowledge-only — it does NOT enforce CSIP / IEEE 2030.5
+// cert profile requirements at the TLS handshake. In particular it does
+// NOT require the leaf to carry a HardwareModuleName SAN, does NOT check
+// HardwareModuleName format, does NOT require an indefinite notAfter, and
+// does NOT validate the IEEE 2030.5 policy-OID set. Those are enforced at
+// cert generation time in internal/certs.
+//
+// What this hook DOES do, in order:
+//
+//  1. Parse every certificate in the presented chain.
+//  2. Acknowledge the SubjectAlternativeName extension iff the leaf (or
+//     intermediate) SAN carries a well-formed RFC 4108 HardwareModuleName
+//     otherName — i.e. remove only the SAN OID from
+//     UnhandledCriticalExtensions, leaving every other unhandled critical
+//     extension in place so stdlib Verify still fails closed.
+//  3. Call leaf.Verify(opts) with the configured Roots, Intermediates, and
+//     KeyUsages=[ExtKeyUsageClientAuth]. This is the standard chain walk:
+//     signature, expiry, basic constraints, key usage, and trust anchor
+//     are all enforced by the stdlib.
+//
+// Why the acknowledge step is needed: RFC 5280 §4.2.1.6 requires the SAN
+// to be marked critical when the Subject is empty (which CSIP device certs
+// are), and Go's x509 parser does not understand the HardwareModuleName
+// otherName form, so the parser lists the SAN OID in
+// UnhandledCriticalExtensions and stdlib Verify would otherwise reject the
+// chain.
+//
+// A well-signed cert with no SAN at all is accepted here — there is no
+// unhandled critical extension to trip. Tightening the verifier to also
+// require SAN presence at handshake time is a separate concern; file a
+// ticket if needed.
 func verifyClientCertWithHardwareModuleSAN(rawCerts [][]byte, roots *x509.CertPool) error {
 	if len(rawCerts) == 0 {
 		return errors.New("verify: no client certificate presented")

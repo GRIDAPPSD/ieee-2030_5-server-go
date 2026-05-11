@@ -40,9 +40,16 @@ func NewServerTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		ClientCAs:    caPool,
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		MinVersion:   tls.VersionTLS12,
-		MaxVersion:   tls.VersionTLS12,
+		// IEEE 2030.5 / CSIP device certs carry a critical HardwareModuleName
+		// SAN that stdlib x509 leaves in UnhandledCriticalExtensions. Switch
+		// to RequireAnyClientCert + manual verification so we can acknowledge
+		// that OID before chain validation.
+		ClientAuth: tls.RequireAnyClientCert,
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			return verifyClientCertWithHardwareModuleSAN(rawCerts, caPool)
+		},
+		MinVersion: tls.VersionTLS12,
+		MaxVersion: tls.VersionTLS12,
 		CipherSuites: []uint16{
 			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 		},
@@ -95,9 +102,12 @@ func NewServerTLSConfigFromPEM(certPEM, keyPEM, caPEM []byte) (*tls.Config, erro
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		ClientCAs:    caPool,
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		MinVersion:   tls.VersionTLS12,
-		MaxVersion:   tls.VersionTLS12,
+		ClientAuth:   tls.RequireAnyClientCert,
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			return verifyClientCertWithHardwareModuleSAN(rawCerts, caPool)
+		},
+		MinVersion: tls.VersionTLS12,
+		MaxVersion: tls.VersionTLS12,
 		CipherSuites: []uint16{
 			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 		},

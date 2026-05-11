@@ -46,7 +46,8 @@ certs:                    ## Generate CA, server, and device certificates
 		--out $(CERT_DIR)
 	$(SERVER) certs generate-device \
 		--ca $(CERT_DIR)/ca.crt --ca-key $(CERT_DIR)/ca.key \
-		--hw-serial INV-001 --name device --out $(CERT_DIR)
+		--hw-serial INV-001 --hw-type 1.3.6.1.4.1.40732.99 \
+		--name device --out $(CERT_DIR)
 
 # ─── Run ──────────────────────────────────────────────────────────
 

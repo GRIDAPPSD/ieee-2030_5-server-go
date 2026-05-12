@@ -47,6 +47,7 @@ type DERControl struct {
 // Copy returns an independent copy.
 func (d DERControl) Copy() DERControl {
 	c := d
+	if d.ResponseRequired != nil { v := *d.ResponseRequired; c.ResponseRequired = &v }
 	if d.EventStatus != nil { es := d.EventStatus.Copy(); c.EventStatus = &es }
 	if d.Interval != nil { i := *d.Interval; c.Interval = &i }
 	if d.RandomizeDuration != nil { v := *d.RandomizeDuration; c.RandomizeDuration = &v }

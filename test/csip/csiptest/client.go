@@ -1,27 +1,31 @@
 // Package csiptest provides reusable helpers for the CSIP conformance
 // harness under test/csip/. It lifts the inline HTTP plumbing patterns
 // established by test/csip/handshake_test.go (IEEE-021) so downstream
-// Phase 3 tests can express the canonical "GET /dcap → walk advertised
-// link → parse body" flow without re-implementing each step.
+// Phase 3 tests can express the canonical "boot a server, GET /dcap,
+// walk advertised links, parse the body" flow without re-implementing
+// each step.
 //
 // The package is co-located under test/csip/ on purpose: it is harness
 // scaffolding, not production code, and should not appear in the
 // `github.com/GRIDAPPSD/ieee-2030_5-go/...` public import surface used
 // by consumers of the server.
 //
-// Scope today (IEEE-056):
-//   - Client.GetDeviceCapability — GET <baseURL>/dcap and parse.
-//   - Client.WalkLink            — GET <baseURL>+link.Href and parse.
+// Scope today:
+//   - Client.GetDeviceCapability — GET <baseURL>/dcap and parse (IEEE-056).
+//   - Client.WalkLink            — GET <baseURL>+link.Href and parse (IEEE-056).
+//   - BootServer                 — boot an in-process spec server on a
+//     random port with t.Cleanup teardown (IEEE-058). See server.go.
 //
 // Out of scope (separate tickets):
-//   - BootServer helper          — IEEE-058.
 //   - Fixture loader             — IEEE-057.
 //
 // The Client deliberately accepts a pre-built *http.Client + base URL.
-// Callers (handshake_test.go, future tests) own the mTLS plumbing —
-// cert loading, CCM config — and hand a ready transport to the helper.
-// This keeps the helper composable across CCM-mode and GCM-mode tests
-// without baking CSIP-specific TLS assumptions into the helper itself.
+// BootServer constructs one wired to its ephemeral CA and exposes it
+// via BootedServer.Client(); callers that drive the server with their
+// own transport (e.g. SunSpec V1.2 device cert) can still pass it in
+// via the BootOption WithClientCert. This keeps the helpers composable
+// across CCM-mode and GCM-mode tests without baking CSIP-specific TLS
+// assumptions into the Client itself.
 package csiptest
 
 import (

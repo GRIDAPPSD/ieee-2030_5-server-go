@@ -1,0 +1,313 @@
+# IEEE-064 fixture — 15-level FSA priority chain for CORE-011.
+#
+# Extends IEEE-057's seven-level-fsa.yaml pattern from 7 levels to 15
+# levels. One EndDevice; fifteen FunctionSetAssignments hung off it,
+# each pointing at a DERProgramList that contains exactly one
+# DERProgram. DERProgram primacy values ascend 0..14 (lower primacy =
+# higher priority per spec §10.2; L0 is the system-level top, L14 the
+# closest-to-the-inverter device-immediate program).
+#
+# CSIP V1.2 does not mandate a vocabulary for the 15-level hierarchy
+# beyond what Noor's V1.2 matrix Section 4 documents. The level names
+# below are chosen by IEEE-064 for descriptive value; the assertions
+# in core_011_fsa_fifteen_level_test.go key on primacy ordering and
+# the deterministic ID-as-zero-padded-int ordering produced by the
+# FSA store's key sort. They do NOT key on the descriptions.
+#
+# Priority chain (utility -> field -> device granularity; finer
+# than the 7-level chain — adds intermediate primacy levels for
+# day-ahead / hour-ahead / real-time horizons and per-zone overrides
+# so the chain exercises the same priority-ordering invariant as
+# CORE-010 with twice the depth):
+#
+#   primacy  0  L0-day-ahead         System operator, day-ahead horizon.
+#   primacy  1  L1-hour-ahead        System operator, hour-ahead horizon.
+#   primacy  2  L2-rto-realtime      RTO real-time dispatch.
+#   primacy  3  L3-balancing-area    Balancing authority area program.
+#   primacy  4  L4-substation        Substation-level program.
+#   primacy  5  L5-feeder            Feeder section program.
+#   primacy  6  L6-lateral           Lateral / branch program.
+#   primacy  7  L7-zone              Voltage / VAR zone program.
+#   primacy  8  L8-transformer       Service transformer.
+#   primacy  9  L9-service-point     Service Point per CSIP §3.2.
+#   primacy 10  L10-meter            Revenue meter.
+#   primacy 11  L11-aggregator       Aggregator override program.
+#   primacy 12  L12-site             Site / behind-the-meter program.
+#   primacy 13  L13-device-group     Device group / fleet program.
+#   primacy 14  L14-immediate        Closest-to-inverter immediate program.
+#
+# CORE-011 procedure: client follows /dcap -> /edev -> /edev/0/fsa
+# (this list, all=15) -> each FSA -> DERProgramList -> single
+# DERProgram. The 15 FSAs are emitted in ID order (FSA store sorts
+# its keys). Two-digit zero padding ("00".."14") so lexicographic
+# sort matches numeric sort across the 10-boundary.
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    registration_link: "/edev/0/rg"
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 15
+
+fsas:
+  - end_device_id: "0"
+    id: "00"
+    mrid: "L00-DAY-AHEAD-FSA"
+    description: "L0-day-ahead"
+    der_program_list_link:
+      href: "/edev/0/fsa/00/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "01"
+    mrid: "L01-HOUR-AHEAD-FSA"
+    description: "L1-hour-ahead"
+    der_program_list_link:
+      href: "/edev/0/fsa/01/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "02"
+    mrid: "L02-RTO-REALTIME-FSA"
+    description: "L2-rto-realtime"
+    der_program_list_link:
+      href: "/edev/0/fsa/02/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "03"
+    mrid: "L03-BALANCING-AREA-FSA"
+    description: "L3-balancing-area"
+    der_program_list_link:
+      href: "/edev/0/fsa/03/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "04"
+    mrid: "L04-SUBSTATION-FSA"
+    description: "L4-substation"
+    der_program_list_link:
+      href: "/edev/0/fsa/04/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "05"
+    mrid: "L05-FEEDER-FSA"
+    description: "L5-feeder"
+    der_program_list_link:
+      href: "/edev/0/fsa/05/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "06"
+    mrid: "L06-LATERAL-FSA"
+    description: "L6-lateral"
+    der_program_list_link:
+      href: "/edev/0/fsa/06/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "07"
+    mrid: "L07-ZONE-FSA"
+    description: "L7-zone"
+    der_program_list_link:
+      href: "/edev/0/fsa/07/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "08"
+    mrid: "L08-TRANSFORMER-FSA"
+    description: "L8-transformer"
+    der_program_list_link:
+      href: "/edev/0/fsa/08/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "09"
+    mrid: "L09-SERVICE-POINT-FSA"
+    description: "L9-service-point"
+    der_program_list_link:
+      href: "/edev/0/fsa/09/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "10"
+    mrid: "L10-METER-FSA"
+    description: "L10-meter"
+    der_program_list_link:
+      href: "/edev/0/fsa/10/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "11"
+    mrid: "L11-AGGREGATOR-FSA"
+    description: "L11-aggregator"
+    der_program_list_link:
+      href: "/edev/0/fsa/11/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "12"
+    mrid: "L12-SITE-FSA"
+    description: "L12-site"
+    der_program_list_link:
+      href: "/edev/0/fsa/12/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "13"
+    mrid: "L13-DEVICE-GROUP-FSA"
+    description: "L13-device-group"
+    der_program_list_link:
+      href: "/edev/0/fsa/13/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "14"
+    mrid: "L14-IMMEDIATE-FSA"
+    description: "L14-immediate"
+    der_program_list_link:
+      href: "/edev/0/fsa/14/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "00"
+    id: "00"
+    mrid: "L00-DAY-AHEAD-DERP"
+    description: "L0-day-ahead"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/00/derp/00/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/00/derp/00/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "01"
+    id: "01"
+    mrid: "L01-HOUR-AHEAD-DERP"
+    description: "L1-hour-ahead"
+    primacy: 1
+    default_der_control_link: "/edev/0/fsa/01/derp/01/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/01/derp/01/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "02"
+    id: "02"
+    mrid: "L02-RTO-REALTIME-DERP"
+    description: "L2-rto-realtime"
+    primacy: 2
+    default_der_control_link: "/edev/0/fsa/02/derp/02/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/02/derp/02/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "03"
+    id: "03"
+    mrid: "L03-BALANCING-AREA-DERP"
+    description: "L3-balancing-area"
+    primacy: 3
+    default_der_control_link: "/edev/0/fsa/03/derp/03/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/03/derp/03/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "04"
+    id: "04"
+    mrid: "L04-SUBSTATION-DERP"
+    description: "L4-substation"
+    primacy: 4
+    default_der_control_link: "/edev/0/fsa/04/derp/04/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/04/derp/04/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "05"
+    id: "05"
+    mrid: "L05-FEEDER-DERP"
+    description: "L5-feeder"
+    primacy: 5
+    default_der_control_link: "/edev/0/fsa/05/derp/05/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/05/derp/05/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "06"
+    id: "06"
+    mrid: "L06-LATERAL-DERP"
+    description: "L6-lateral"
+    primacy: 6
+    default_der_control_link: "/edev/0/fsa/06/derp/06/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/06/derp/06/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "07"
+    id: "07"
+    mrid: "L07-ZONE-DERP"
+    description: "L7-zone"
+    primacy: 7
+    default_der_control_link: "/edev/0/fsa/07/derp/07/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/07/derp/07/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "08"
+    id: "08"
+    mrid: "L08-TRANSFORMER-DERP"
+    description: "L8-transformer"
+    primacy: 8
+    default_der_control_link: "/edev/0/fsa/08/derp/08/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/08/derp/08/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "09"
+    id: "09"
+    mrid: "L09-SERVICE-POINT-DERP"
+    description: "L9-service-point"
+    primacy: 9
+    default_der_control_link: "/edev/0/fsa/09/derp/09/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/09/derp/09/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "10"
+    id: "10"
+    mrid: "L10-METER-DERP"
+    description: "L10-meter"
+    primacy: 10
+    default_der_control_link: "/edev/0/fsa/10/derp/10/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/10/derp/10/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "11"
+    id: "11"
+    mrid: "L11-AGGREGATOR-DERP"
+    description: "L11-aggregator"
+    primacy: 11
+    default_der_control_link: "/edev/0/fsa/11/derp/11/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/11/derp/11/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "12"
+    id: "12"
+    mrid: "L12-SITE-DERP"
+    description: "L12-site"
+    primacy: 12
+    default_der_control_link: "/edev/0/fsa/12/derp/12/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/12/derp/12/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "13"
+    id: "13"
+    mrid: "L13-DEVICE-GROUP-DERP"
+    description: "L13-device-group"
+    primacy: 13
+    default_der_control_link: "/edev/0/fsa/13/derp/13/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/13/derp/13/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "14"
+    id: "14"
+    mrid: "L14-IMMEDIATE-DERP"
+    description: "L14-immediate"
+    primacy: 14
+    default_der_control_link: "/edev/0/fsa/14/derp/14/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/14/derp/14/derc"
+      all: 0

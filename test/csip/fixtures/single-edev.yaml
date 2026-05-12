@@ -1,0 +1,31 @@
+# IEEE-057 fixture — one EndDevice matching the SunSpec V1.2 test
+# device certificate.
+#
+# Identity derivation (matches internal/tls/identity.go, spec §6.3):
+#
+#   LFDI = first 20 bytes of SHA-256(cert.DER), hex-uppercase (40 chars).
+#   SFDI = top 36 bits of the same hash, formatted as 11 zero-padded
+#          decimal digits + a sum-of-digits mod-10 check digit
+#          (12 digits total).
+#
+# Values below are computed offline from the SunSpec V1.2 device leaf
+# distributed with this repo (see test/csip/README.md). Regenerate
+# with the SFDI/LFDI helpers in internal/tls if the cert ever rolls.
+#
+#   LFDI prefix bytes:  65 DE 11 59 BA  -> top-36 = 0x65DE1159B
+#   = 27,344,835,995 -> "27344835995"  (digit sum 59) -> check 1
+#   SFDI = "273448359951"
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    registration_link: "/edev/0/rg"
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 0
+    der_list_link:
+      href: "/edev/0/der"
+      all: 0

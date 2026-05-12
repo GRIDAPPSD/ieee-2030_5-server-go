@@ -1,0 +1,56 @@
+# IEEE-057 fixture — one DERProgram with one DefaultDERControl,
+# zero DERControls, zero DERCurves. Targets CORE-012 (Basic DER
+# Program/Control) per Noor's V1.2 matrix.
+#
+# Topology is intentionally minimal:
+#   EndDevice 0 -> FSA 0 -> DERProgram 0 -> DefaultDERControl
+#                                          (no DERControls, no curves)
+#
+# DefaultDERControl carries an opModMaxLimW limit so CORE-012's
+# "default-only operating envelope" assertion has a concrete value
+# to walk to. Multiplier 0, value 5000 = 5 kW.
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    registration_link: "/edev/0/rg"
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 1
+
+fsas:
+  - end_device_id: "0"
+    id: "0"
+    mrid: "CORE-012-FSA"
+    description: "CORE-012 single FSA"
+    der_program_list_link:
+      href: "/edev/0/fsa/0/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "0"
+    id: "0"
+    mrid: "CORE-012-DERP"
+    description: "CORE-012 single DERProgram"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/0/derp/0/derc"
+      all: 0
+    der_curve_list_link:
+      href: "/edev/0/fsa/0/derp/0/dc"
+      all: 0
+
+default_der_controls:
+  - end_device_id: "0"
+    fsa_id: "0"
+    der_program_id: "0"
+    mrid: "CORE-012-DDERC"
+    der_control_base:
+      op_mod_max_lim_w:
+        multiplier: 0
+        value: 5000

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -110,8 +111,15 @@ func HandleCreateEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 
 		if err := s.Create(r.Context(), id, dev); err != nil {
 			if errors.Is(err, store.ErrAlreadyExists) {
-				// Race condition — another goroutine registered this device
-				existing, _ := s.Get(r.Context(), id)
+				// Race condition — another goroutine registered this device.
+				// If the record was deleted between Create and Get, return 5xx
+				// rather than a zero-value 200 (silent data loss).
+				existing, getErr := s.Get(r.Context(), id)
+				if getErr != nil {
+					log.Printf("edev: race-loss after ErrAlreadyExists for id=%q: %v", id, getErr)
+					http.Error(w, "registration race", http.StatusInternalServerError)
+					return
+				}
 				w.Header().Set("Location", existing.Href)
 				encoding.WriteXML(w, http.StatusOK, &existing)
 				return

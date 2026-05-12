@@ -74,6 +74,7 @@ func RegisterMutationHandlers(top *http.ServeMux, stores *Stores) {
 	mux.HandleFunc("POST /test/mutations/derctl-add", handleDERControlAdd(stores))
 	mux.HandleFunc("POST /test/mutations/time-advance", handleTimeAdvance(stores))
 	mux.HandleFunc("POST /test/mutations/fsa-swap", handleFSASwap(stores))
+	mux.HandleFunc("POST /test/mutations/subscription-cancel", handleSubscriptionCancel(stores))
 
 	top.Handle("/test/mutations/", tokenAuthMiddleware(token, mux))
 	log.Printf("csip_test_hooks: test mutation surface enabled at /test/mutations/ (token auth)")
@@ -466,6 +467,77 @@ func handleFSASwap(stores *Stores) http.HandlerFunc {
 			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// --- /test/mutations/subscription-cancel (IEEE-079, MAINT-006) ---
+
+// subscriptionCancelRequest is the JSON body for /test/mutations/subscription-cancel.
+type subscriptionCancelRequest struct {
+	SubscriptionID string `json:"subscription_id"`
+}
+
+// handleSubscriptionCancel removes a subscription from the server's
+// authoritative store AND records its ID in a tombstone set so a
+// subsequent POST /edev/{id}/sub that resolves to the same ID is refused
+// with 409 Conflict. Used by CSIP V1.2 MAINT-006 (server-side
+// subscription terminate, refuses retry).
+//
+// Tombstone shape chosen: option (a) — a small canceled-id set scoped to
+// the test surface, lives in internal/handler/subscription_test_hook.go
+// (csip_test_hooks gated). The production HandleCreateSubscription
+// consults the set via a nil-checked package-var hook; under no-tag
+// builds the hook is never registered and the create path's nil-compare
+// is the entire cost. No new field on SubscriptionStore — the
+// canceled-id set is process-local test state, not subscription state.
+//
+// Companion knobs (csip_test_hooks only):
+//   - X-CSIP-Test-Subscription-ID header on POST /edev/{id}/sub: lets the
+//     harness pin a deterministic ID instead of the auto-generated
+//     "sub-<unixnano>" — needed so the harness can drive the same ID
+//     into the create path and observe the refusal.
+//   - handler.MarkSubscriptionCanceled / IsSubscriptionCanceled /
+//     ResetCanceledSubscriptions: package-level helpers backing the set.
+//
+// HTTP status codes: 204 success; 400 missing/malformed body; 401
+// missing/wrong token (handled by tokenAuthMiddleware); 404 unknown
+// subscription_id.
+func handleSubscriptionCancel(stores *Stores) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req subscriptionCancelRequest
+		if err := readJSON(r, &req); err != nil {
+			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.SubscriptionID == "" {
+			http.Error(w, "bad request: subscription_id required", http.StatusBadRequest)
+			return
+		}
+		if stores.Subscriptions == nil {
+			http.Error(w, "internal error: subscription store not configured", http.StatusInternalServerError)
+			return
+		}
+
+		// Delete first so a 404 on a never-existing ID does not poison the
+		// tombstone set. ErrNotFound surfaces as 404; the tombstone is
+		// only recorded after a successful delete.
+		if err := stores.Subscriptions.Delete(r.Context(), req.SubscriptionID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "subscription not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Tombstone the ID so a subsequent POST /edev/{id}/sub that
+		// resolves to it (via X-CSIP-Test-Subscription-ID) is refused.
+		// Idempotent — second cancel of the same ID is a 404 above, never
+		// reaches here, which keeps the tombstone reflective of the
+		// server's authoritative delete history.
+		handler.MarkSubscriptionCanceled(req.SubscriptionID)
+
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

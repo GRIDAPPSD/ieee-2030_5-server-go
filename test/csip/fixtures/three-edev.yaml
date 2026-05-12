@@ -1,0 +1,57 @@
+# IEEE-060 fixture — three EndDevices for CORE-004 (List Handling) per
+# CSIP V1.2 §5.6. Each EndDevice gets a unique SFDI/LFDI so the
+# EndDeviceStore's secondary indexes (GetBySFDI/GetByLFDI) stay
+# usable; the test asserts paging behavior on /edev, not identity.
+#
+# SFDI/LFDI derivation note: these are invented test values, NOT
+# derived from real device certs. Real CSIP fixtures derive SFDI
+# from the top 36 bits of SHA-256(cert.DER) (see single-edev.yaml
+# for the SunSpec V1.2 example). Three-edev.yaml exists purely to
+# satisfy CORE-004's "3-EndDevice fixture" requirement and uses
+# fabricated identities so the test does not depend on cert PKI.
+#
+# Store insertion order: the in-memory EndDeviceStore sorts by ID
+# (slices.BinarySearch). Listing /edev with default paging returns
+# items in ID-string ascending order: "0", "1", "2".
+#
+# After-key semantics: the `a` query param is the store key (the
+# EndDevice ID), not the href. /edev?a=0 returns items strictly
+# greater than "0" → IDs "1" and "2".
+
+end_devices:
+  - id: "0"
+    sfdi: "111100000001"
+    lfdi: "1111000000000000000000000000000000000001"
+    enabled: true
+    changed_time: 1700000000
+    registration_link: "/edev/0/rg"
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 0
+    der_list_link:
+      href: "/edev/0/der"
+      all: 0
+  - id: "1"
+    sfdi: "222200000002"
+    lfdi: "2222000000000000000000000000000000000002"
+    enabled: true
+    changed_time: 1700000001
+    registration_link: "/edev/1/rg"
+    function_set_assignments_list_link:
+      href: "/edev/1/fsa"
+      all: 0
+    der_list_link:
+      href: "/edev/1/der"
+      all: 0
+  - id: "2"
+    sfdi: "333300000003"
+    lfdi: "3333000000000000000000000000000000000003"
+    enabled: true
+    changed_time: 1700000002
+    registration_link: "/edev/2/rg"
+    function_set_assignments_list_link:
+      href: "/edev/2/fsa"
+      all: 0
+    der_list_link:
+      href: "/edev/2/der"
+      all: 0

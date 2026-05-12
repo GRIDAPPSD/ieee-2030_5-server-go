@@ -6,6 +6,11 @@ CLAUDE.md
 # Local TLS material (dev/test PKI - never commit private keys)
 certs/
 
+# CSIP conformance fixtures (SunSpec V1.2 test PKI is gitignored per
+# workspace policy; provision out of band, see test/csip/README.md)
+test/csip/fixtures/*
+!test/csip/fixtures/.gitkeep
+
 # Go build artifacts
 /bin/
 /dist/

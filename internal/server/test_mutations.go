@@ -3,8 +3,8 @@
 // Build-tag-gated test-only mutation HTTP surface for the CSIP V1.2
 // conformance harness. These endpoints simulate utility-side topology and
 // program edits that the spec models as out-of-band — they exist solely
-// to drive BASIC-003 and MAINT-001/MAINT-003..006 tests and are NOT
-// compiled into production binaries.
+// to drive BASIC-003 and MAINT-001/MAINT-003..006 and CORE-006 tests and
+// are NOT compiled into production binaries.
 //
 // To enable, build with `-tags csip_test_hooks`. Without the tag, the
 // companion stub in test_mutations_notest.go registers no routes and the
@@ -16,7 +16,7 @@
 // a belt-and-suspenders against a misconfigured production-with-tag build
 // exposing mutation endpoints unauthenticated.
 //
-// IEEE-024 / plan-2 Phase 5.
+// IEEE-024 (BASIC/MAINT mutations) / IEEE-025 (time-advance) / plan-2 Phase 5.
 
 package server
 
@@ -30,7 +30,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
 )
@@ -69,6 +71,7 @@ func RegisterMutationHandlers(top *http.ServeMux, stores *Stores) {
 	mux.HandleFunc("POST /test/mutations/edev-delete-oob", handleEdevDeleteOOB(stores))
 	mux.HandleFunc("POST /test/mutations/derprog-primacy", handleDERProgPrimacy(stores))
 	mux.HandleFunc("POST /test/mutations/derctl-add", handleDERControlAdd(stores))
+	mux.HandleFunc("POST /test/mutations/time-advance", handleTimeAdvance(stores))
 
 	top.Handle("/test/mutations/", tokenAuthMiddleware(token, mux))
 	log.Printf("csip_test_hooks: test mutation surface enabled at /test/mutations/ (token auth)")
@@ -255,4 +258,102 @@ func handleDERControlAdd(stores *Stores) http.HandlerFunc {
 // flag for dedup if a third caller appears.
 func derControlScope(edev, fsa, derp string) string {
 	return edev + "/" + fsa + "/" + derp
+}
+
+// --- /test/mutations/time-advance (IEEE-025, CORE-006) ---
+
+// selfDeviceLogScope is the sentinel parent key under which TM_TIME_ADJUSTED
+// LogEvents are persisted. The existing LogEventList store is scoped per
+// EndDevice (parent = edev id); CSIP V1.2 CORE-006 requires the event on
+// SelfDevice. Using a reserved non-edev key keeps the same store and
+// avoids collision with any real EndDevice (whose ids are caller-supplied
+// SFDIs/LFDIs, not the literal "sdev").
+const selfDeviceLogScope = "sdev"
+
+// LogEvent identifiers for the CSIP V1.2 conformance harness. Function set
+// is the standard sep2 Time function set (6); logEventID is project-local
+// (the spec leaves vendor-defined numbering inside each function set), so
+// we pin a small constant the harness can recognize without ambiguity.
+// Reference: IEEE 2030.5 §10.10, CSIP V1.2 §4 CORE-006 sentinel
+// "TM_TIME_ADJUSTED".
+const (
+	logEventCodeTimeAdjusted uint8  = 1
+	logEventIDTimeAdjusted   uint16 = 1
+	logEventTimeAdjustedPEN  uint32 = 0
+)
+
+// timeAdvanceRequest is the JSON body for /test/mutations/time-advance.
+// Seconds is signed so the harness may rewind as well as advance the
+// reported wall clock (CSIP V1.2 CORE-006 prescribes a +1h advance; a
+// rewind capability falls out of using a signed offset and helps the
+// harness reset between cases).
+type timeAdvanceRequest struct {
+	Seconds *int64 `json:"seconds"`
+}
+
+// handleTimeAdvance shifts the test-only clock offset by the request's
+// signed `seconds` value and appends a TM_TIME_ADJUSTED LogEvent to the
+// SelfDevice LogEventList. Used by CSIP V1.2 CORE-006.
+//
+// The actual clock mutation is delegated to handler.AdvanceClock, which
+// updates an atomic offset added to time.Now() by handler.HandleTime's
+// nowFunc seam (see internal/handler/time_test_hook.go). The shift is
+// additive (cumulative across calls) by design — the harness drives
+// CORE-006 with a single +3600s advance and then teardown via -<offset>.
+func handleTimeAdvance(stores *Stores) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req timeAdvanceRequest
+		if err := readJSON(r, &req); err != nil {
+			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Seconds == nil {
+			http.Error(w, "bad request: seconds required", http.StatusBadRequest)
+			return
+		}
+
+		// Reject the request before any state mutation if the LogEvent
+		// store is missing — CORE-006 requires both the clock shift AND
+		// the LogEvent emission, and we'd rather fail the entire op than
+		// half-apply it.
+		if stores.LogEvents == nil {
+			http.Error(w, "internal error: log event store not configured", http.StatusInternalServerError)
+			return
+		}
+
+		// Shift the clock first; the LogEvent records the post-shift wall
+		// time. Read the offset once after the shift to stamp both the
+		// LogEvent body and the response envelope from the same snapshot.
+		handler.AdvanceClock(time.Duration(*req.Seconds) * time.Second)
+		offset := handler.ClockOffset()
+		now := time.Now().Add(offset)
+
+		id := fmt.Sprintf("%020d", now.UnixNano())
+		evt := sep2.LogEvent{
+			Resource:        sep2.Resource{Href: "/sdev/log/" + id},
+			CreatedDateTime: now.Unix(),
+			Details:         fmt.Sprintf("TM_TIME_ADJUSTED: clock advanced by %d seconds", *req.Seconds),
+			FunctionSet:     sep2.FunctionSetTime,
+			LogEventCode:    logEventCodeTimeAdjusted,
+			LogEventID:      logEventIDTimeAdjusted,
+			LogEventPEN:     logEventTimeAdjustedPEN,
+			ProfileID:       0,
+		}
+		if err := stores.LogEvents.Create(r.Context(), selfDeviceLogScope, id, evt); err != nil {
+			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		// Encode after WriteHeader: status line already on the wire, no
+		// way to convert a downstream write failure into an HTTP error.
+		// The payload is small and primitive — encoding itself cannot
+		// fail, only the underlying writer can.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"log_event_href": evt.Href,
+			"current_time":   now.Unix(),
+			"offset_seconds": int64(offset / time.Second),
+		})
+	}
 }

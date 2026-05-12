@@ -50,6 +50,7 @@ type TextMessage struct {
 // Copy returns an independent copy.
 func (t TextMessage) Copy() TextMessage {
 	c := t
+	if t.ResponseRequired != nil { v := *t.ResponseRequired; c.ResponseRequired = &v }
 	if t.EventStatus != nil { es := t.EventStatus.Copy(); c.EventStatus = &es }
 	if t.Interval != nil { i := *t.Interval; c.Interval = &i }
 	if t.RandomizeDuration != nil { v := *t.RandomizeDuration; c.RandomizeDuration = &v }

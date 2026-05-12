@@ -55,8 +55,11 @@ type Stores struct {
 	Responses     *memory.ScopedStore[sep2.Response]
 }
 
-// NewRouter creates the HTTP router for the protocol listener.
-func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService, serverSFDI, serverLFDI string) http.Handler {
+// NewRouter creates the HTTP router for the protocol listener. The notifier
+// is invoked on resource state changes that drive subscription fan-out
+// (e.g. CSIP V1.2 MAINT-002 EndDevice DELETE). Pass nil to disable
+// notification — tests that don't care about subscriptions can do this.
+func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService, serverSFDI, serverLFDI string, notifier handler.ResourceNotifier) http.Handler {
 	top := http.NewServeMux()
 
 	protocolMux := http.NewServeMux()
@@ -66,7 +69,7 @@ func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService
 	protocolMux.HandleFunc("GET /sdev/sdi", handler.HandleDeviceInformation(serverLFDI))
 
 	if stores != nil {
-		registerEndDeviceRoutes(protocolMux, stores)
+		registerEndDeviceRoutes(protocolMux, stores, notifier)
 		registerMirrorRoutes(protocolMux, stores)
 		registerDERRoutes(protocolMux, stores)
 		registerMeteringRoutes(protocolMux, stores)
@@ -108,14 +111,14 @@ func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService
 	return encoding.NamespaceMiddleware(top)
 }
 
-func registerEndDeviceRoutes(mux *http.ServeMux, stores *Stores) {
+func registerEndDeviceRoutes(mux *http.ServeMux, stores *Stores, notifier handler.ResourceNotifier) {
 	mux.HandleFunc("GET /edev", handler.ListHandler[sep2.EndDevice, sep2.EndDeviceList](
 		stores.EndDevices, handler.BuildEndDeviceList, 900,
 	))
 	mux.HandleFunc("POST /edev", handler.HandleCreateEndDevice(stores.EndDevices))
 	mux.HandleFunc("GET /edev/{id}", handler.HandleEndDevice(stores.EndDevices))
 	mux.HandleFunc("PUT /edev/{id}", handler.HandleUpdateEndDevice(stores.EndDevices))
-	mux.HandleFunc("DELETE /edev/{id}", handler.HandleDeleteEndDevice(stores.EndDevices))
+	mux.HandleFunc("DELETE /edev/{id}", handler.HandleDeleteEndDevice(stores.EndDevices, notifier))
 
 	// FSA endpoints
 	if stores.FSAs != nil {

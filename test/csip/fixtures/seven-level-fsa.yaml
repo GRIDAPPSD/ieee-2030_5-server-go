@@ -1,0 +1,158 @@
+# IEEE-057 fixture — 7-level FSA priority chain for CORE-010.
+#
+# One EndDevice; seven FunctionSetAssignments hung off it, each
+# pointing at a DERProgramList that contains exactly one DERProgram.
+# DERProgram primacy values ascend 0..6 (lower primacy = higher
+# priority per spec §10.2; L0 is the system-level top).
+#
+# Priority chain (utility-down-to-inverter granularity; level names
+# chosen by IEEE-057 since CSIP V1.2 does not mandate a vocabulary —
+# Noor's V1.2 matrix Section 4 makes no fixed naming claim):
+#
+#   primacy 0  L0-system          System operator / RTO top of stack.
+#   primacy 1  L1-substation      Substation-level program.
+#   primacy 2  L2-feeder          Feeder section program.
+#   primacy 3  L3-transformer     Service transformer.
+#   primacy 4  L4-service-point   Service Point per CSIP §3.2.
+#   primacy 5  L5-meter           Revenue meter.
+#   primacy 6  L6-device          Closest-to-inverter device program.
+#
+# CORE-010 procedure: client follows /dcap -> /edev -> /edev/0/fsa
+# (this list, all=7) -> each FSA -> DERProgramList -> single
+# DERProgram. The 7 FSAs are emitted in ID order (FSA store sorts
+# its keys), so test code asserting "L0 first" can rely on the
+# ID-as-zero-padded-int convention used below.
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    registration_link: "/edev/0/rg"
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 7
+
+fsas:
+  - end_device_id: "0"
+    id: "0"
+    mrid: "L0-SYSTEM-FSA"
+    description: "L0-system"
+    der_program_list_link:
+      href: "/edev/0/fsa/0/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "1"
+    mrid: "L1-SUBSTATION-FSA"
+    description: "L1-substation"
+    der_program_list_link:
+      href: "/edev/0/fsa/1/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "2"
+    mrid: "L2-FEEDER-FSA"
+    description: "L2-feeder"
+    der_program_list_link:
+      href: "/edev/0/fsa/2/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "3"
+    mrid: "L3-TRANSFORMER-FSA"
+    description: "L3-transformer"
+    der_program_list_link:
+      href: "/edev/0/fsa/3/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "4"
+    mrid: "L4-SERVICE-POINT-FSA"
+    description: "L4-service-point"
+    der_program_list_link:
+      href: "/edev/0/fsa/4/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "5"
+    mrid: "L5-METER-FSA"
+    description: "L5-meter"
+    der_program_list_link:
+      href: "/edev/0/fsa/5/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "6"
+    mrid: "L6-DEVICE-FSA"
+    description: "L6-device"
+    der_program_list_link:
+      href: "/edev/0/fsa/6/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "0"
+    id: "0"
+    mrid: "L0-SYSTEM-DERP"
+    description: "L0-system"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/0/derp/0/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "1"
+    id: "1"
+    mrid: "L1-SUBSTATION-DERP"
+    description: "L1-substation"
+    primacy: 1
+    default_der_control_link: "/edev/0/fsa/1/derp/1/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/1/derp/1/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "2"
+    id: "2"
+    mrid: "L2-FEEDER-DERP"
+    description: "L2-feeder"
+    primacy: 2
+    default_der_control_link: "/edev/0/fsa/2/derp/2/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/2/derp/2/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "3"
+    id: "3"
+    mrid: "L3-TRANSFORMER-DERP"
+    description: "L3-transformer"
+    primacy: 3
+    default_der_control_link: "/edev/0/fsa/3/derp/3/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/3/derp/3/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "4"
+    id: "4"
+    mrid: "L4-SERVICE-POINT-DERP"
+    description: "L4-service-point"
+    primacy: 4
+    default_der_control_link: "/edev/0/fsa/4/derp/4/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/4/derp/4/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "5"
+    id: "5"
+    mrid: "L5-METER-DERP"
+    description: "L5-meter"
+    primacy: 5
+    default_der_control_link: "/edev/0/fsa/5/derp/5/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/5/derp/5/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "6"
+    id: "6"
+    mrid: "L6-DEVICE-DERP"
+    description: "L6-device"
+    primacy: 6
+    default_der_control_link: "/edev/0/fsa/6/derp/6/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/6/derp/6/derc"
+      all: 0

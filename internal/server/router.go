@@ -96,6 +96,13 @@ func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService
 		top.Handle("/api/", auth.AdminAuthMiddleware(cfg.AdminKey, nil)(adminMux))
 	}
 
+	// IEEE-024: test-only mutation surface for the CSIP V1.2 conformance
+	// harness. RegisterMutationHandlers is a no-op in production builds;
+	// it only registers routes when the binary is built with the
+	// csip_test_hooks tag AND SEP2_TEST_MUTATION_TOKEN is set. See
+	// internal/server/test_mutations.go.
+	RegisterMutationHandlers(top, stores)
+
 	// Wrap entire router with namespace detection — rewrites XML output
 	// for 2013 clients (EPRI reference client) automatically
 	return encoding.NamespaceMiddleware(top)

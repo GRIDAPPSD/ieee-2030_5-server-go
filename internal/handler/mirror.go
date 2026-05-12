@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -70,7 +71,15 @@ func HandleCreateMirrorUsagePoint(s store.ResourceStore[sep2.MirrorUsagePoint]) 
 
 		if err := s.Create(r.Context(), id, mup); err != nil {
 			if errors.Is(err, store.ErrAlreadyExists) {
-				existing, _ := s.Get(r.Context(), id)
+				// Race condition — another goroutine registered this MUP.
+				// If the record was deleted between Create and Get, return 5xx
+				// rather than a zero-value 200 (silent data loss).
+				existing, getErr := s.Get(r.Context(), id)
+				if getErr != nil {
+					log.Printf("mup: race-loss after ErrAlreadyExists for id=%q: %v", id, getErr)
+					http.Error(w, "registration race", http.StatusInternalServerError)
+					return
+				}
 				w.Header().Set("Location", existing.Href)
 				encoding.WriteXML(w, http.StatusOK, &existing)
 				return

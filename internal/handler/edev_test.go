@@ -162,7 +162,7 @@ func TestHandleDeleteEndDevice(t *testing.T) {
 	_ = s.Create(context.Background(), "1", dev)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("DELETE /edev/{id}", handler.HandleDeleteEndDevice(s))
+	mux.HandleFunc("DELETE /edev/{id}", handler.HandleDeleteEndDevice(s, nil))
 
 	req := httptest.NewRequest(http.MethodDelete, "/edev/1", nil)
 	w := httptest.NewRecorder()
@@ -176,7 +176,7 @@ func TestHandleDeleteEndDevice(t *testing.T) {
 func TestHandleDeleteEndDeviceNotFound(t *testing.T) {
 	s := memory.NewEndDeviceStore()
 	mux := http.NewServeMux()
-	mux.HandleFunc("DELETE /edev/{id}", handler.HandleDeleteEndDevice(s))
+	mux.HandleFunc("DELETE /edev/{id}", handler.HandleDeleteEndDevice(s, nil))
 
 	req := httptest.NewRequest(http.MethodDelete, "/edev/missing", nil)
 	w := httptest.NewRecorder()

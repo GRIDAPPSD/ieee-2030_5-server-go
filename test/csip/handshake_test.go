@@ -11,10 +11,9 @@
 package csip_test
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/xml"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -29,6 +28,7 @@ import (
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
 )
 
 // Fixture resolution: env first, then default to test/csip/fixtures/sunspec/.
@@ -181,23 +181,14 @@ func TestCSIPHandshakeWithSunSpecDeviceCert(t *testing.T) {
 		state.Version, state.CipherSuite, tls.CipherSuiteName(state.CipherSuite), len(state.PeerCertificates))
 	_ = rawConn.Close()
 
-	// 5. GET /dcap over a fresh connection, expect 200 and parseable XML.
-	resp, err := httpClient.Get(baseURL + "/dcap")
+	// 5. GET /dcap via the csiptest helper — this proves the chained-GET
+	//    helper (IEEE-056) is actually consumed by the harness scaffold,
+	//    not just defined. Future Phase 3 tests use Client.WalkLink to
+	//    chain further (dcap → /edev → /edev/0/rg, etc.).
+	csipClient := csiptest.NewClient(httpClient, baseURL)
+	dcap, err := csipClient.GetDeviceCapability(context.Background())
 	if err != nil {
-		t.Fatalf("GET /dcap: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	var dcap sep2.DeviceCapability
-	if err := xml.Unmarshal(body, &dcap); err != nil {
-		t.Fatalf("unmarshal DeviceCapability: %v", err)
+		t.Fatalf("GetDeviceCapability: %v", err)
 	}
 	if dcap.Href != "/dcap" {
 		t.Errorf("DeviceCapability.Href = %q, want /dcap", dcap.Href)

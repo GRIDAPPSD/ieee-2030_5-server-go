@@ -285,7 +285,7 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 		tlsListener = tls.NewListener(listener, stdCfg)
 	}
 
-	router := server.NewRouter(cfg.serverConfig, cfg.stores, nil, serverSFDI, serverLFDI)
+	router := server.NewRouter(cfg.serverConfig, cfg.stores, nil, serverSFDI, serverLFDI, nil)
 
 	if cfg.cipher == cipherCCM {
 		sepTLS.SetupCCMServer(httpSrv)

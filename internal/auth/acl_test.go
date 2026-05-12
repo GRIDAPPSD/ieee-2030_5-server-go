@@ -114,6 +114,54 @@ func TestACLNoMatchingRule(t *testing.T) {
 	}
 }
 
+// TestDefaultACLRulesAllowDeleteOnEdev guards the IEEE-023 / CSIP V1.2
+// MAINT-002 requirement that HTTP DELETE be permitted on /edev/{id}.
+// Without DELETE in the bitmap the ACL middleware short-circuits with 405
+// before the handler runs.
+func TestDefaultACLRulesAllowDeleteOnEdev(t *testing.T) {
+	rules := auth.DefaultACLRules()
+
+	var edev *auth.ACLRule
+	for i := range rules {
+		if rules[i].PathPrefix == "/edev" {
+			edev = &rules[i]
+			break
+		}
+	}
+	if edev == nil {
+		t.Fatal("no /edev rule in DefaultACLRules")
+	}
+
+	if edev.AllowedMethods&auth.MethodDelete == 0 {
+		t.Errorf("/edev AllowedMethods missing DELETE bit (mask=0x%02x)", edev.AllowedMethods)
+	}
+
+	// End-to-end through ACLMiddleware: device-cert client + DELETE = 200.
+	mw := auth.ACLMiddleware(rules)(okHandler())
+	req := httptest.NewRequest(http.MethodDelete, "/edev/abc", nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{{}}}
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("DELETE /edev/abc through default ACL: status = %d, want 200", w.Code)
+	}
+}
+
+// TestDefaultACLDeleteEdevWithoutCertForbidden — unauthenticated DELETE on
+// /edev/{id} is forbidden. The /edev rule requires AuthDeviceCert, so a
+// request with no TLS peer cert returns 403 (not 401; ACLMiddleware
+// uniformly maps "wrong auth type" to 403).
+func TestDefaultACLDeleteEdevWithoutCertForbidden(t *testing.T) {
+	mw := auth.ACLMiddleware(auth.DefaultACLRules())(okHandler())
+	req := httptest.NewRequest(http.MethodDelete, "/edev/abc", nil) // no req.TLS
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("unauth DELETE /edev/abc: status = %d, want 403", w.Code)
+	}
+}
+
 func TestHTTPMethodToBitmap(t *testing.T) {
 	tests := []struct {
 		method string

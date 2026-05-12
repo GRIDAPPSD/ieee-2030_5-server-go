@@ -19,10 +19,16 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/discovery"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/subscription"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+)
+
+const (
+	subscriptionWorkers   = 4
+	subscriptionQueueSize = 256
 )
 
 // Run starts the IEEE 2030.5 server with mutual TLS and optionally
@@ -121,7 +127,15 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		log.Printf("boot fixture loaded: %s", cfg.BootFixtureFile)
 	}
 
-	router := NewRouter(cfg, stores, svc, serverSFDI, serverLFDI)
+	// Subscription notification dispatcher. Owns its own bounded worker pool
+	// and exits when ctx is cancelled (see shutdown branch below). The
+	// router takes it as a handler.ResourceNotifier so DELETE/UPDATE
+	// handlers can fan out notifications without depending on the
+	// subscription package directly.
+	notifier := subscription.NewManager(stores.Subscriptions, subscriptionWorkers, subscriptionQueueSize)
+	go notifier.Start(ctx)
+
+	router := NewRouter(cfg, stores, svc, serverSFDI, serverLFDI, notifier)
 
 	if cfg.EnableCCM {
 		// Bridge: inject gotls connection state into request context

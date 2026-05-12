@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -14,6 +15,21 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
 )
+
+// EndDeviceListHref is the resource href that EndDeviceList subscribers
+// register against per IEEE 2030.5 section 11.1. Used by the DELETE handler
+// to identify the subscription fan-out target when an EndDevice is removed
+// (CSIP V1.2 MAINT-002 step 5).
+const EndDeviceListHref = "/edev"
+
+// ResourceNotifier dispatches subscription notifications for a resource
+// href. It is the minimal surface HandleDeleteEndDevice needs from the
+// subscription package and is defined here at the consumer (Pike rule:
+// interfaces at the consumer, not at the producer). The production
+// implementation is *subscription.Manager.
+type ResourceNotifier interface {
+	Notify(ctx context.Context, resourceHref string, status uint8)
+}
 
 // BuildEndDeviceList constructs an EndDeviceList from store results.
 func BuildEndDeviceList(href string, result store.ListResult[sep2.EndDevice], pollRate uint32) sep2.EndDeviceList {
@@ -175,8 +191,13 @@ func HandleUpdateEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 	}
 }
 
-// HandleDeleteEndDevice returns a handler for DELETE /edev/{id}.
-func HandleDeleteEndDevice(s store.EndDeviceStore) http.HandlerFunc {
+// HandleDeleteEndDevice returns a handler for DELETE /edev/{id}. CSIP V1.2
+// MAINT-002 step 5 mandates that on successful deletion the server fires a
+// Notification on the EndDeviceList subscription (SubscribedResource =
+// "/edev") with NotificationStatusRemoved. The notifier is optional —
+// passing nil disables notification fan-out (useful for tests that don't
+// exercise the subscription path).
+func HandleDeleteEndDevice(s store.EndDeviceStore, n ResourceNotifier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			encoding.MethodNotAllowed(w, "DELETE")
@@ -184,13 +205,26 @@ func HandleDeleteEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 		}
 
 		id := r.PathValue("id")
+		if id == "" {
+			http.Error(w, "device id required", http.StatusBadRequest)
+			return
+		}
+
 		if err := s.Delete(r.Context(), id); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
+			log.Printf("edev: delete id=%q: %v", id, err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
+		}
+
+		// MAINT-002 step 5: fan out a removal notification to every
+		// EndDeviceList subscriber. The Manager enqueues onto a bounded
+		// queue and returns immediately, so this stays non-blocking.
+		if n != nil {
+			n.Notify(r.Context(), EndDeviceListHref, sep2.NotificationStatusRemoved)
 		}
 
 		w.WriteHeader(http.StatusNoContent)

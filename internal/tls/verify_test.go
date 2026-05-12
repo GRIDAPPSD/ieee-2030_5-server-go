@@ -36,7 +36,7 @@ func TestVerifyRejectsMalformedHardwareModuleSANInner(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 
-	err := verifyClientCertWithHardwareModuleSAN(rawCerts, roots)
+	err := VerifyPeerCertWithHardwareModuleSAN(rawCerts, roots)
 	if err == nil {
 		t.Fatal("verify accepted cert with malformed HardwareModuleName SAN inner content; want rejection")
 	}
@@ -178,7 +178,7 @@ func TestVerifyAcceptsCompliantDeviceCert(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 
-	if err := verifyClientCertWithHardwareModuleSAN([][]byte{deviceCert.Raw}, roots); err != nil {
+	if err := VerifyPeerCertWithHardwareModuleSAN([][]byte{deviceCert.Raw}, roots); err != nil {
 		t.Fatalf("verify rejected compliant device cert: %v", err)
 	}
 }
@@ -192,11 +192,11 @@ func TestVerifyRejectsEmptyRawCerts(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 
-	err := verifyClientCertWithHardwareModuleSAN(nil, roots)
+	err := VerifyPeerCertWithHardwareModuleSAN(nil, roots)
 	if err == nil {
 		t.Fatal("verify accepted empty rawCerts; want error")
 	}
-	if !strings.Contains(err.Error(), "no client certificate") {
+	if !strings.Contains(err.Error(), "no peer certificate") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -215,7 +215,7 @@ func TestVerifyRejectsSANWithWrongOtherNameOID(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 
-	err := verifyClientCertWithHardwareModuleSAN([][]byte{deviceCert.Raw}, roots)
+	err := VerifyPeerCertWithHardwareModuleSAN([][]byte{deviceCert.Raw}, roots)
 	if err == nil {
 		t.Fatal("verify accepted cert with off-by-one otherName OID; want rejection")
 	}
@@ -269,7 +269,7 @@ func TestVerifyRejectsAdditionalUnknownCriticalExtension(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 
-	err = verifyClientCertWithHardwareModuleSAN([][]byte{leaf.Raw}, roots)
+	err = VerifyPeerCertWithHardwareModuleSAN([][]byte{leaf.Raw}, roots)
 	if err == nil {
 		t.Fatal("verify accepted cert with additional unknown critical extension; want rejection")
 	}
@@ -306,7 +306,7 @@ func TestVerifyRejectsCertSignedByDifferentCA(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(trustedCA) // only trust the FIRST CA
 
-	err = verifyClientCertWithHardwareModuleSAN([][]byte{deviceCert.Raw}, roots)
+	err = VerifyPeerCertWithHardwareModuleSAN([][]byte{deviceCert.Raw}, roots)
 	if err == nil {
 		t.Fatal("verify accepted cert signed by untrusted CA; want rejection")
 	}
@@ -349,7 +349,7 @@ func TestVerifyRejectsExpiredCert(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 
-	err = verifyClientCertWithHardwareModuleSAN([][]byte{leaf.Raw}, roots)
+	err = VerifyPeerCertWithHardwareModuleSAN([][]byte{leaf.Raw}, roots)
 	if err == nil {
 		t.Fatal("verify accepted expired cert; want rejection")
 	}
@@ -393,7 +393,7 @@ func TestVerifyRejectsExtKeyUsageMismatch(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 
-	err = verifyClientCertWithHardwareModuleSAN([][]byte{leaf.Raw}, roots)
+	err = VerifyPeerCertWithHardwareModuleSAN([][]byte{leaf.Raw}, roots)
 	if err == nil {
 		t.Fatal("verify accepted cert without ExtKeyUsageClientAuth; want rejection")
 	}
@@ -419,7 +419,7 @@ func TestVerifyRejectsSANWithExtraForeignOtherName(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 
-	err := verifyClientCertWithHardwareModuleSAN([][]byte{deviceCert.Raw}, roots)
+	err := VerifyPeerCertWithHardwareModuleSAN([][]byte{deviceCert.Raw}, roots)
 	if err == nil {
 		t.Fatal("verify accepted SAN with foreign otherName alongside HMN; want rejection")
 	}
@@ -442,7 +442,7 @@ func TestVerifyRejectsSANWithExtraMalformedHMNOtherName(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 
-	err := verifyClientCertWithHardwareModuleSAN([][]byte{deviceCert.Raw}, roots)
+	err := VerifyPeerCertWithHardwareModuleSAN([][]byte{deviceCert.Raw}, roots)
 	if err == nil {
 		t.Fatal("verify accepted SAN with one good HMN plus one malformed HMN; want rejection")
 	}
@@ -471,7 +471,7 @@ func TestVerifyRejectsSANWithCorruptOuterSequence(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 
-	err := verifyClientCertWithHardwareModuleSAN([][]byte{der}, roots)
+	err := VerifyPeerCertWithHardwareModuleSAN([][]byte{der}, roots)
 	if err == nil {
 		t.Fatal("verify accepted cert with corrupt SAN outer bytes; want rejection")
 	}
@@ -599,7 +599,7 @@ func mustBuildMultiOtherNameSAN(t *testing.T, specs []otherNameSpec) pkix.Extens
 // verifier does NOT enforce that a HardwareModuleName SAN is present. A
 // well-signed cert with no SAN at all passes verification because there is no
 // unhandled critical extension to trip. This matches the docstring on
-// verifyClientCertWithHardwareModuleSAN (see PR #18 M1 doc clarification);
+// VerifyPeerCertWithHardwareModuleSAN (see PR #18 M1 doc clarification);
 // enforcing the SAN's presence is intentionally a separate concern, handled
 // at cert generation time. (Leon row 5 — empirical accept confirmed.)
 func TestVerifyAcceptsCertWithoutSAN(t *testing.T) {
@@ -634,7 +634,7 @@ func TestVerifyAcceptsCertWithoutSAN(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 
-	if err := verifyClientCertWithHardwareModuleSAN([][]byte{leaf.Raw}, roots); err != nil {
+	if err := VerifyPeerCertWithHardwareModuleSAN([][]byte{leaf.Raw}, roots); err != nil {
 		t.Fatalf("verify rejected no-SAN cert; the verifier is acknowledge-only and must accept (got: %v)", err)
 	}
 }

@@ -315,9 +315,20 @@ func registerNewFunctionSetRoutes(mux *http.ServeMux, stores *Stores) {
 		mux.HandleFunc("GET /rsps", handler.ListHandler[sep2.ResponseSet, sep2.ResponseSetList](
 			stores.ResponseSets, handler.BuildResponseSetList, 900,
 		))
-		mux.HandleFunc("GET /rsps/{rspsId}/rsp", scopedListHandler[sep2.Response, sep2.ResponseList](
-			stores.Responses, handler.BuildResponseList, 900,
-		))
+		// IEEE-066: scopedListHandler keys on PathValue("id"), which is
+		// empty under the {rspsId} placeholder — the POST writes under
+		// rspsId, the GET would read under "" and return an empty list.
+		// Inline the response-list GET so it scopes by the correct path
+		// value. Mirrors the deep-scoped pattern used for DERControl
+		// lists; rsps is just one level deep, so a one-off closure is
+		// cheaper than a second generic helper.
+		mux.HandleFunc("GET /rsps/{rspsId}/rsp", func(w http.ResponseWriter, r *http.Request) {
+			rspsID := r.PathValue("rspsId")
+			inner := stores.Responses.ForParent(rspsID)
+			handler.ListHandler[sep2.Response, sep2.ResponseList](
+				inner, handler.BuildResponseList, 900,
+			)(w, r)
+		})
 		mux.HandleFunc("POST /rsps/{rspsId}/rsp", handler.HandlePostResponse(stores.Responses))
 	}
 }

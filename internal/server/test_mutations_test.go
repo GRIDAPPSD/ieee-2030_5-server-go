@@ -10,11 +10,14 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +38,8 @@ const (
 	tmDERCtlAdd    = "/test/mutations/derctl-add"
 	tmTimeAdvance  = "/test/mutations/time-advance"
 	tmFSASwap      = "/test/mutations/fsa-swap"
+	tmSubCancel    = "/test/mutations/subscription-cancel"
+	tmSubIDHdr     = "X-CSIP-Test-Subscription-ID"
 	tmSelfDevScope = "sdev"
 )
 
@@ -859,5 +864,389 @@ func TestFSASwap_UnknownField_Rejected(t *testing.T) {
 	})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (DisallowUnknownFields)", rr.Code)
+	}
+}
+
+// --- /test/mutations/subscription-cancel (IEEE-079, MAINT-006) ---
+
+// seedSubscription installs a subscription with the given id into the
+// store. The tombstone set is independent of the store, so this leaves it
+// in whatever state the test arranged.
+func seedSubscription(t *testing.T, stores *server.Stores, edevID, subID string) {
+	t.Helper()
+	sub := sep2.Subscription{
+		SubscribableResource: sep2.SubscribableResource{
+			Resource: sep2.Resource{Href: "/edev/" + edevID + "/sub/" + subID},
+		},
+		SubscribedResource: "/edev/" + edevID,
+		NotificationURI:    "https://example.test/notify",
+	}
+	if err := stores.Subscriptions.Create(context.Background(), subID, sub); err != nil {
+		t.Fatalf("seed subscription %s: %v", subID, err)
+	}
+}
+
+// createSubscriptionViaAPI exercises the production POST /edev/{id}/sub
+// path with the test-only X-CSIP-Test-Subscription-ID header so the
+// caller can drive a deterministic ID. Returns the recorder for status
+// assertions. The override header is honored only because the
+// csip_test_hooks build tag is set; production builds ignore it.
+//
+// Stubs a minimal *tls.ConnectionState with a single peer certificate so
+// auth.IdentityMiddleware admits the request. Mirrors the stubbing used
+// in internal/auth/acl_test.go and elsewhere.
+func createSubscriptionViaAPI(t *testing.T, h http.Handler, edevID, subID string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := []byte(`<Subscription xmlns="urn:ieee:std:2030.5:ns">` +
+		`<subscribedResource>/edev/` + edevID + `</subscribedResource>` +
+		`<notificationURI>https://example.test/notify</notificationURI>` +
+		`<encoding>0</encoding>` +
+		`</Subscription>`)
+	req := httptest.NewRequest(http.MethodPost, "/edev/"+edevID+"/sub", bytes.NewReader(body))
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{{}}}
+	if subID != "" {
+		req.Header.Set(tmSubIDHdr, subID)
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+// getWithClientCert is the GET equivalent of createSubscriptionViaAPI:
+// stubs a client cert so the ACL chain admits the request.
+func getWithClientCert(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{{}}}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestSubscriptionCancel_Success(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, stores := newRouterWithTokenAndStores(t)
+	seedSubscription(t, stores, "edev-1", "sub-A")
+
+	rr := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
+		"subscription_id": "sub-A",
+	})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rr.Code, rr.Body.String())
+	}
+	// Subscription removed from store.
+	if _, err := stores.Subscriptions.Get(context.Background(), "sub-A"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("post-cancel Get: err = %v, want ErrNotFound", err)
+	}
+	// Subscription ID is now tombstoned.
+	if !handler.IsSubscriptionCanceled("sub-A") {
+		t.Fatal("sub-A not in canceled set after cancel")
+	}
+}
+
+func TestSubscriptionCancel_MissingToken_Unauthorized(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, stores := newRouterWithTokenAndStores(t)
+	seedSubscription(t, stores, "edev-1", "sub-A")
+
+	rr := postJSON(t, h, tmSubCancel, "", map[string]string{"subscription_id": "sub-A"})
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+	// Store untouched.
+	if _, err := stores.Subscriptions.Get(context.Background(), "sub-A"); err != nil {
+		t.Fatalf("subscription removed by unauthorized request: %v", err)
+	}
+}
+
+func TestSubscriptionCancel_WrongToken_Unauthorized(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, _ := newRouterWithTokenAndStores(t)
+	rr := postJSON(t, h, tmSubCancel, "not-the-token", map[string]string{"subscription_id": "sub-A"})
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+}
+
+func TestSubscriptionCancel_UnknownID_NotFound(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, _ := newRouterWithTokenAndStores(t)
+	rr := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
+		"subscription_id": "sub-missing",
+	})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rr.Code)
+	}
+	// A 404 must NOT poison the tombstone — a never-existing ID being
+	// recorded as canceled would block legitimate future creates.
+	if handler.IsSubscriptionCanceled("sub-missing") {
+		t.Fatal("unknown id tombstoned on 404; tombstone must only follow a successful delete")
+	}
+}
+
+func TestSubscriptionCancel_MissingID_BadRequest(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, _ := newRouterWithTokenAndStores(t)
+	rr := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+func TestSubscriptionCancel_MalformedBody_BadRequest(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, _ := newRouterWithTokenAndStores(t)
+	req := httptest.NewRequest(http.MethodPost, tmSubCancel, strings.NewReader("{not json"))
+	req.Header.Set(tmTokenHdr, tmTestToken)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+func TestSubscriptionCancel_EmptyBody_BadRequest(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, _ := newRouterWithTokenAndStores(t)
+	req := httptest.NewRequest(http.MethodPost, tmSubCancel, nil)
+	req.Header.Set(tmTokenHdr, tmTestToken)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+func TestSubscriptionCancel_UnknownField_Rejected(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, _ := newRouterWithTokenAndStores(t)
+	rr := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
+		"subscription_id": "sub-A",
+		"extra_garbage":   true,
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (DisallowUnknownFields)", rr.Code)
+	}
+}
+
+func TestSubscriptionCancel_StoreNil_InternalError(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	t.Setenv(tmTokenEnv, tmTestToken)
+	stores := newTestStores()
+	stores.Subscriptions = nil
+	cfg := &config.Config{}
+	h := server.NewRouter(cfg, stores, nil, "", "", nil)
+
+	rr := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
+		"subscription_id": "sub-A",
+	})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rr.Code)
+	}
+}
+
+func TestSubscriptionCancel_ReSubscribeRefused_Conflict(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, stores := newRouterWithTokenAndStores(t)
+	seedEndDevice(t, stores, "edev-1")
+	seedSubscription(t, stores, "edev-1", "sub-A")
+
+	// Cancel the subscription via the mutation hook.
+	cancel := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
+		"subscription_id": "sub-A",
+	})
+	if cancel.Code != http.StatusNoContent {
+		t.Fatalf("cancel status = %d, want 204", cancel.Code)
+	}
+
+	// Drive the production POST /edev/{id}/sub path with the canceled ID
+	// via the test-only header. The tombstone hook should reject it with
+	// 409 Conflict before the subscription store is touched.
+	resub := createSubscriptionViaAPI(t, h, "edev-1", "sub-A")
+	if resub.Code != http.StatusConflict {
+		t.Fatalf("re-subscribe status = %d, want 409: %s", resub.Code, resub.Body.String())
+	}
+	// Subscription is still absent from the store after the refusal.
+	if _, err := stores.Subscriptions.Get(context.Background(), "sub-A"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("post-refusal Get: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSubscriptionCancel_DifferentIDAfterCancel_Allowed(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, stores := newRouterWithTokenAndStores(t)
+	seedEndDevice(t, stores, "edev-1")
+	seedSubscription(t, stores, "edev-1", "sub-A")
+
+	cancel := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
+		"subscription_id": "sub-A",
+	})
+	if cancel.Code != http.StatusNoContent {
+		t.Fatalf("cancel status = %d, want 204", cancel.Code)
+	}
+
+	// A different ID is not tombstoned and the production create path
+	// must produce a 201.
+	create := createSubscriptionViaAPI(t, h, "edev-1", "sub-B")
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create sub-B status = %d, want 201: %s", create.Code, create.Body.String())
+	}
+	got, err := stores.Subscriptions.Get(context.Background(), "sub-B")
+	if err != nil {
+		t.Fatalf("sub-B not in store after create: %v", err)
+	}
+	if !strings.HasSuffix(got.Href, "/edev/edev-1/sub/sub-B") {
+		t.Fatalf("sub-B Href = %q, want suffix /edev/edev-1/sub/sub-B", got.Href)
+	}
+	// Sanity: the original ID stays refused even after a different ID
+	// succeeds.
+	if !handler.IsSubscriptionCanceled("sub-A") {
+		t.Fatal("sub-A tombstone cleared by unrelated successful create")
+	}
+}
+
+func TestSubscriptionCancel_DoubleCancel_SecondIsNotFound(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, stores := newRouterWithTokenAndStores(t)
+	seedSubscription(t, stores, "edev-1", "sub-A")
+
+	first := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
+		"subscription_id": "sub-A",
+	})
+	if first.Code != http.StatusNoContent {
+		t.Fatalf("first cancel status = %d, want 204", first.Code)
+	}
+	// Second cancel: store no longer has it, so 404 — the tombstone is
+	// already set from the first call and is not re-marked.
+	second := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
+		"subscription_id": "sub-A",
+	})
+	if second.Code != http.StatusNotFound {
+		t.Fatalf("second cancel status = %d, want 404", second.Code)
+	}
+	// Tombstone still in place.
+	if !handler.IsSubscriptionCanceled("sub-A") {
+		t.Fatal("tombstone cleared between first and second cancel")
+	}
+}
+
+// TestSubscriptionCancel_NoOverrideHeader_AutoIDStillWorks verifies that
+// the production create path with no override header generates an
+// auto-id (sub-<unixnano>) and is unaffected by the tombstone set when
+// the new id is not in it. Ensures the override hook does not regress
+// the default path.
+func TestSubscriptionCancel_NoOverrideHeader_AutoIDStillWorks(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, stores := newRouterWithTokenAndStores(t)
+	seedEndDevice(t, stores, "edev-1")
+	handler.MarkSubscriptionCanceled("sub-tombstoned")
+
+	// No X-CSIP-Test-Subscription-ID header: the create path generates
+	// "sub-<unixnano>" which will not collide with "sub-tombstoned".
+	rr := createSubscriptionViaAPI(t, h, "edev-1", "")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create with auto-id status = %d, want 201: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestSubscriptionCancel_ListGet_Excludes verifies the GET /edev/{id}/sub
+// list excludes the canceled subscription so the harness can confirm
+// removal via the public read path, not just the store API.
+func TestSubscriptionCancel_ListGet_Excludes(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, stores := newRouterWithTokenAndStores(t)
+	seedEndDevice(t, stores, "edev-1")
+	seedSubscription(t, stores, "edev-1", "sub-A")
+	seedSubscription(t, stores, "edev-1", "sub-B")
+
+	cancel := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
+		"subscription_id": "sub-A",
+	})
+	if cancel.Code != http.StatusNoContent {
+		t.Fatalf("cancel status = %d, want 204", cancel.Code)
+	}
+
+	rr := getWithClientCert(t, h, "/edev/edev-1/sub")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	var list sep2.SubscriptionList
+	if err := xml.Unmarshal(rr.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	for _, s := range list.Subscription {
+		if strings.HasSuffix(s.Href, "/sub-A") {
+			t.Fatalf("canceled subscription still in list: %+v", s)
+		}
+	}
+	// sub-B must still be there.
+	found := false
+	for _, s := range list.Subscription {
+		if strings.HasSuffix(s.Href, "/sub-B") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("sibling subscription sub-B missing from list after cancel of sub-A")
+	}
+}
+
+// TestSubscriptionCancel_GET_NotAllowed verifies method gating on the
+// mutation path. Mirrors TestMutationSurface_GET_NotAllowed but scoped
+// to the new endpoint.
+func TestSubscriptionCancel_GET_NotAllowed(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, _ := newRouterWithTokenAndStores(t)
+	req := httptest.NewRequest(http.MethodGet, tmSubCancel, nil)
+	req.Header.Set(tmTokenHdr, tmTestToken)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rr.Code)
+	}
+}
+
+// TestSubscriptionCancel_Race exercises concurrent cancel + create on
+// distinct IDs. Run with -race to assert the canceled-id set's mutex is
+// honored. Distinct IDs avoid cross-test ordering noise.
+func TestSubscriptionCancel_Race(t *testing.T) {
+	defer handler.ResetCanceledSubscriptions()
+	h, stores := newRouterWithTokenAndStores(t)
+	seedEndDevice(t, stores, "edev-1")
+	const n = 32
+	for i := 0; i < n; i++ {
+		id := "sub-race-" + strconv.Itoa(i)
+		if err := stores.Subscriptions.Create(context.Background(), id, sep2.Subscription{
+			SubscribableResource: sep2.SubscribableResource{
+				Resource: sep2.Resource{Href: "/edev/edev-1/sub/" + id},
+			},
+		}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < n; i++ {
+			id := "sub-race-" + strconv.Itoa(i)
+			_ = postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
+				"subscription_id": id,
+			})
+		}
+	}()
+	for i := 0; i < n; i++ {
+		id := "sub-new-" + strconv.Itoa(i)
+		_ = createSubscriptionViaAPI(t, h, "edev-1", id)
+	}
+	<-done
+
+	for i := 0; i < n; i++ {
+		id := "sub-race-" + strconv.Itoa(i)
+		// Re-resolve the value separately for the post-race assertion.
+		if !handler.IsSubscriptionCanceled(id) {
+			t.Fatalf("%s not tombstoned after race", id)
+		}
 	}
 }

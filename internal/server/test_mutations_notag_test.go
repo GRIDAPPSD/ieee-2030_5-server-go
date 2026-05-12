@@ -24,12 +24,13 @@ func TestMutationSurface_AbsentWithoutBuildTag(t *testing.T) {
 	t.Setenv("SEP2_TEST_MUTATION_TOKEN", "anything")
 	stores := newTestStores()
 	cfg := &config.Config{}
-	h := server.NewRouter(cfg, stores, nil, "", "")
+	h := server.NewRouter(cfg, stores, nil, "", "", nil)
 
 	paths := []string{
 		"/test/mutations/edev-delete-oob",
 		"/test/mutations/derprog-primacy",
 		"/test/mutations/derctl-add",
+		"/test/mutations/time-advance",
 	}
 	for _, p := range paths {
 		var buf bytes.Buffer

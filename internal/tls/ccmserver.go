@@ -46,10 +46,10 @@ func NewCCMServerConfig(certFile, keyFile, caFile string) (*gotls.Config, error)
 		// IEEE 2030.5 / CSIP device certs carry a critical HardwareModuleName
 		// SAN that stdlib x509 cannot parse. Switch to RequireAnyClientCert
 		// + manual verification so we can acknowledge the OID. See
-		// verifyClientCertWithHardwareModuleSAN.
+		// VerifyPeerCertWithHardwareModuleSAN.
 		ClientAuth: gotls.RequireAnyClientCert,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			return verifyClientCertWithHardwareModuleSAN(rawCerts, caPool)
+			return VerifyPeerCertWithHardwareModuleSAN(rawCerts, caPool)
 		},
 		MinVersion: gotls.VersionTLS12,
 		MaxVersion: gotls.VersionTLS12,

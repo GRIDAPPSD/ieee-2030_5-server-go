@@ -8,8 +8,19 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
 )
 
-// verifyClientCertWithHardwareModuleSAN performs full chain verification of
-// a presented client certificate chain against the configured CA pool.
+// VerifyPeerCertWithHardwareModuleSAN performs full chain verification of a
+// presented peer certificate chain against the configured CA pool, tolerating
+// the IEEE 2030.5 §6.11 / CSIP §6.2 critical HardwareModuleName SAN that the
+// stdlib x509 parser leaves in UnhandledCriticalExtensions.
+//
+// Peer-neutral: usable as the VerifyPeerCertificate hook on either a TLS
+// server (verifying a client cert chain) or a TLS client (verifying a server
+// cert chain). The chain walk uses KeyUsages=[ExtKeyUsageClientAuth] —
+// retained from the original server-side helper for behavior parity. CSIP
+// server certs (internal/certs GenerateServerCert) carry both ServerAuth and
+// ClientAuth ExtKeyUsage, so this constraint is satisfied for our own
+// servers. Outside callers that need a ServerAuth-only profile can layer an
+// additional check on top.
 //
 // CSIP enforcement scope (read before refactoring):
 //
@@ -47,9 +58,9 @@ import (
 // unhandled critical extension to trip. Tightening the verifier to also
 // require SAN presence at handshake time is a separate concern; file a
 // ticket if needed.
-func verifyClientCertWithHardwareModuleSAN(rawCerts [][]byte, roots *x509.CertPool) error {
+func VerifyPeerCertWithHardwareModuleSAN(rawCerts [][]byte, roots *x509.CertPool) error {
 	if len(rawCerts) == 0 {
-		return errors.New("verify: no client certificate presented")
+		return errors.New("verify: no peer certificate presented")
 	}
 
 	chain := make([]*x509.Certificate, 0, len(rawCerts))
@@ -76,7 +87,7 @@ func verifyClientCertWithHardwareModuleSAN(rawCerts [][]byte, roots *x509.CertPo
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
 	if _, err := leaf.Verify(opts); err != nil {
-		return fmt.Errorf("verify client cert: %w", err)
+		return fmt.Errorf("verify peer cert: %w", err)
 	}
 	return nil
 }

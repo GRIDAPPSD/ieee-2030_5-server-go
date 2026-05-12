@@ -1,0 +1,165 @@
+# IEEE-065 fixture — 7 DERPrograms hung off 7 FSAs for CORE-013.
+#
+# CSIP V1.2 §6.6 — DER Program advanced. One EndDevice; seven
+# FunctionSetAssignments, each pointing at a DERProgramList carrying
+# exactly one DERProgram. DERProgram primacy values ascend 0..6
+# (lower primacy = higher priority per spec §10.2).
+#
+# CORE-013 procedure metadata (asserted by the test, not by the
+# loader — DefaultDERControl carries no DateTimeInterval field by
+# spec, and DERControl PUT is not wired into the server today, so
+# the test seeds DefaultDERControls programmatically with the
+# opModFixedPFInjectW values and proves the per-program scope
+# stays intact under the priority chain):
+#
+#   primacy | start-time offset | duration | mode
+#   --------|-------------------|----------|-----------------------
+#   0       | T+0  min          | 30 s     | opModFixedPFInjectW
+#   1       | T+1  min          | 30 s     | opModFixedPFInjectW
+#   2       | T+2  min          | 30 s     | opModFixedPFInjectW
+#   3       | T+3  min          | 30 s     | opModFixedPFInjectW
+#   4       | T+4  min          | 30 s     | opModFixedPFInjectW
+#   5       | T+5  min          | 30 s     | opModFixedPFInjectW
+#   6       | T+6  min          | 30 s     | opModFixedPFInjectW
+#
+# Why no default_der_controls in the YAML: the IEEE-057 loader's
+# DERControlBaseSpec covers opModConnect/Energize/FixedW/MaxLimW/
+# TargetW/VoltVar/FreqDroop only — opModFixedPFInjectW (FixedPowerFactor
+# shape) is not in the schema today. Per the IEEE-065 ticket Pike does
+# not touch csiptest internals, so the test seeds DefaultDERControls
+# via the public store API in-test, then asserts wire fidelity via the
+# server's GET handler.
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    registration_link: "/edev/0/rg"
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 7
+
+fsas:
+  - end_device_id: "0"
+    id: "0"
+    mrid: "CORE-013-FSA-0"
+    description: "primacy-0"
+    der_program_list_link:
+      href: "/edev/0/fsa/0/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "1"
+    mrid: "CORE-013-FSA-1"
+    description: "primacy-1"
+    der_program_list_link:
+      href: "/edev/0/fsa/1/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "2"
+    mrid: "CORE-013-FSA-2"
+    description: "primacy-2"
+    der_program_list_link:
+      href: "/edev/0/fsa/2/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "3"
+    mrid: "CORE-013-FSA-3"
+    description: "primacy-3"
+    der_program_list_link:
+      href: "/edev/0/fsa/3/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "4"
+    mrid: "CORE-013-FSA-4"
+    description: "primacy-4"
+    der_program_list_link:
+      href: "/edev/0/fsa/4/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "5"
+    mrid: "CORE-013-FSA-5"
+    description: "primacy-5"
+    der_program_list_link:
+      href: "/edev/0/fsa/5/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "6"
+    mrid: "CORE-013-FSA-6"
+    description: "primacy-6"
+    der_program_list_link:
+      href: "/edev/0/fsa/6/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "0"
+    id: "0"
+    mrid: "CORE-013-DERP-0"
+    description: "primacy-0"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/0/derp/0/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "1"
+    id: "1"
+    mrid: "CORE-013-DERP-1"
+    description: "primacy-1"
+    primacy: 1
+    default_der_control_link: "/edev/0/fsa/1/derp/1/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/1/derp/1/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "2"
+    id: "2"
+    mrid: "CORE-013-DERP-2"
+    description: "primacy-2"
+    primacy: 2
+    default_der_control_link: "/edev/0/fsa/2/derp/2/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/2/derp/2/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "3"
+    id: "3"
+    mrid: "CORE-013-DERP-3"
+    description: "primacy-3"
+    primacy: 3
+    default_der_control_link: "/edev/0/fsa/3/derp/3/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/3/derp/3/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "4"
+    id: "4"
+    mrid: "CORE-013-DERP-4"
+    description: "primacy-4"
+    primacy: 4
+    default_der_control_link: "/edev/0/fsa/4/derp/4/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/4/derp/4/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "5"
+    id: "5"
+    mrid: "CORE-013-DERP-5"
+    description: "primacy-5"
+    primacy: 5
+    default_der_control_link: "/edev/0/fsa/5/derp/5/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/5/derp/5/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "6"
+    id: "6"
+    mrid: "CORE-013-DERP-6"
+    description: "primacy-6"
+    primacy: 6
+    default_der_control_link: "/edev/0/fsa/6/derp/6/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/6/derp/6/derc"
+      all: 0

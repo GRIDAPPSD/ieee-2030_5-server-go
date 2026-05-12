@@ -89,9 +89,11 @@ serve: run                 ## Alias for run
 
 # ─── Inverter Simulator ──────────────────────────────────────────
 
-run-inverter: build-all    ## Run inverter simulator against local server
+SERVER_URL ?= https://localhost:8443
+
+run-inverter: build-all    ## Run inverter simulator (override target with SERVER_URL=...)
 	./$(CLIENT) \
-		--server https://localhost:8443 \
+		--server $(SERVER_URL) \
 		--cert $(CERT_DIR)/device.crt \
 		--key $(CERT_DIR)/device.key \
 		--ca $(CERT_DIR)/ca.crt \

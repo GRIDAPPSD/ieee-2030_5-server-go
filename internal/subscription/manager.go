@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 )
+
+const notificationContentType = "application/sep+xml"
 
 // SubscriptionLister provides lookup of subscriptions by resource href.
 type SubscriptionLister interface {
@@ -98,19 +101,31 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 func (m *Manager) worker(ctx context.Context) {
 	defer m.wg.Done()
 	for task := range m.queue {
-		m.deliver(ctx, task)
+		if err := m.deliver(ctx, task); err != nil {
+			log.Printf("notification: deliver to %s: %v", task.notificationURI, err)
+		}
 	}
 }
 
-func (m *Manager) deliver(_ context.Context, task notificationTask) {
-	resp, err := m.client.Post(task.notificationURI, "application/sep+xml", bytes.NewReader(task.payload))
+// deliver POSTs a single notification. The supplied ctx is attached to the
+// outgoing request so that worker shutdown cancels in-flight deliveries
+// instead of waiting for TCP timeouts. Errors are wrapped with %w so callers
+// can use errors.Is to detect context cancellation or other sentinel causes.
+func (m *Manager) deliver(ctx context.Context, task notificationTask) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, task.notificationURI, bytes.NewReader(task.payload))
 	if err != nil {
-		log.Printf("notification: POST to %s failed: %v", task.notificationURI, err)
-		return
+		return fmt.Errorf("build notification request for %s: %w", task.notificationURI, err)
 	}
-	_ = resp.Body.Close()
+	req.Header.Set("Content-Type", notificationContentType)
+
+	resp, err := m.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST notification to %s: %w", task.notificationURI, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
-		log.Printf("notification: POST to %s returned %d", task.notificationURI, resp.StatusCode)
+		return fmt.Errorf("POST notification to %s: status %d", task.notificationURI, resp.StatusCode)
 	}
+	return nil
 }

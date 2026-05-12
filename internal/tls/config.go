@@ -21,20 +21,29 @@ const (
 
 // NewServerTLSConfig creates a TLS configuration for the IEEE 2030.5 server.
 // It enforces mutual TLS with ECDSA P-256 certificates.
+//
+// Equivalent to NewServerTLSConfigWithExtraCAs with no extra roots.
 func NewServerTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
+	return NewServerTLSConfigWithExtraCAs(certFile, keyFile, caFile, nil)
+}
+
+// NewServerTLSConfigWithExtraCAs is like NewServerTLSConfig but appends
+// additional client-CA roots from extraCAFiles into the ClientCAs pool.
+// Use this to trust device certs issued under multiple CSIP test roots
+// (e.g. SunSpec PKI plus Enphase test PKI) at the same listener.
+//
+// A nil or empty extraCAFiles slice is the no-op case (matches
+// NewServerTLSConfig behavior). Empty strings inside the slice are
+// tolerated (treated as no-op), accommodating trailing-comma env values.
+func NewServerTLSConfigWithExtraCAs(certFile, keyFile, caFile string, extraCAFiles []string) (*tls.Config, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("load server cert: %w", err)
 	}
 
-	caCertPEM, err := os.ReadFile(caFile)
+	caPool, err := LoadClientCAs(caFile, extraCAFiles)
 	if err != nil {
-		return nil, fmt.Errorf("read CA cert: %w", err)
-	}
-
-	caPool := x509.NewCertPool()
-	if !caPool.AppendCertsFromPEM(caCertPEM) {
-		return nil, fmt.Errorf("failed to parse CA certificate")
+		return nil, fmt.Errorf("load client CAs: %w", err)
 	}
 
 	return &tls.Config{

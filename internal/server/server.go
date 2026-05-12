@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/discovery"
@@ -45,7 +46,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 
 	if cfg.EnableCCM {
 		// CCM-8 mode: use forked crypto/tls with IEEE 2030.5 mandatory cipher
-		ccmCfg, err := sepTLS.NewCCMServerConfig(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
+		ccmCfg, err := sepTLS.NewCCMServerConfigWithExtraCAs(cfg.CertFile, cfg.KeyFile, cfg.CAFile, cfg.ExtraClientCAs)
 		if err != nil {
 			return fmt.Errorf("CCM TLS config: %w", err)
 		}
@@ -57,7 +58,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		log.Printf("IEEE 2030.5 server listening on %s (mTLS, CCM-8 primary)", cfg.Addr)
 	} else {
 		// GCM fallback mode: standard crypto/tls
-		tlsCfg, err := sepTLS.NewServerTLSConfig(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
+		tlsCfg, err := sepTLS.NewServerTLSConfigWithExtraCAs(cfg.CertFile, cfg.KeyFile, cfg.CAFile, cfg.ExtraClientCAs)
 		if err != nil {
 			return fmt.Errorf("TLS config: %w", err)
 		}
@@ -67,6 +68,10 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		}
 		tlsListener = tls.NewListener(listener, tlsCfg)
 		log.Printf("IEEE 2030.5 server listening on %s (mTLS, GCM)", cfg.Addr)
+	}
+
+	if len(cfg.ExtraClientCAs) > 0 {
+		log.Printf("trusted extra client CAs: %v", cfg.ExtraClientCAs)
 	}
 
 	// Initialize stores
@@ -99,6 +104,21 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		FlowReservationResponses: memory.NewScopedStore[sep2.FlowReservationResponse](),
 		ResponseSets:       memory.NewStore[sep2.ResponseSet](),
 		Responses:          memory.NewScopedStore[sep2.Response](),
+	}
+
+	if cfg.BootFixtureFile != "" {
+		target := &bootfixture.Target{
+			EndDevices:         stores.EndDevices,
+			FSAs:               stores.FSAs,
+			DERPrograms:        stores.DERPrograms,
+			DERControls:        stores.DERControls,
+			DefaultDERControls: stores.DefaultDERControls,
+			DERCurves:          stores.DERCurves,
+		}
+		if err := bootfixture.Load(ctx, target, cfg.BootFixtureFile); err != nil {
+			return fmt.Errorf("load boot fixture %q: %w", cfg.BootFixtureFile, err)
+		}
+		log.Printf("boot fixture loaded: %s", cfg.BootFixtureFile)
 	}
 
 	router := NewRouter(cfg, stores, svc, serverSFDI, serverLFDI)

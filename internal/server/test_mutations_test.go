@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,6 +34,7 @@ const (
 	tmPrimacy      = "/test/mutations/derprog-primacy"
 	tmDERCtlAdd    = "/test/mutations/derctl-add"
 	tmTimeAdvance  = "/test/mutations/time-advance"
+	tmFSASwap      = "/test/mutations/fsa-swap"
 	tmSelfDevScope = "sdev"
 )
 
@@ -576,5 +578,286 @@ func TestMutationSurface_GET_NotAllowed(t *testing.T) {
 	// http.ServeMux returns 405 when the method-qualified pattern misses.
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rr.Code)
+	}
+}
+
+// --- /test/mutations/fsa-swap (IEEE-078) ---
+
+// seedFSA installs an FSA under (edevID, fsaID) with Href and a
+// DERProgramListLink stamped at the canonical path so the swap's re-stamp
+// can be verified after the fact.
+func seedFSA(t *testing.T, stores *server.Stores, edevID, fsaID string) sep2.FunctionSetAssignments {
+	t.Helper()
+	fsa := sep2.FunctionSetAssignments{
+		Resource:    sep2.Resource{Href: "/edev/" + edevID + "/fsa/" + fsaID},
+		MRID:        "MRID-" + fsaID,
+		Description: "seeded fsa " + fsaID,
+		DERProgramListLink: &sep2.ListLink{
+			Href: "/edev/" + edevID + "/fsa/" + fsaID + "/derp",
+		},
+	}
+	if err := stores.FSAs.Create(context.Background(), edevID, fsaID, fsa); err != nil {
+		t.Fatalf("seed fsa %s: %v", fsaID, err)
+	}
+	return fsa
+}
+
+// seedEndDevice installs an EndDevice id so the FSA-swap parent-check
+// passes. Body shape doesn't matter — only the existence of the record.
+func seedEndDevice(t *testing.T, stores *server.Stores, edevID string) {
+	t.Helper()
+	if err := stores.EndDevices.Create(context.Background(), edevID, sep2.EndDevice{}); err != nil {
+		t.Fatalf("seed end device %s: %v", edevID, err)
+	}
+}
+
+func TestFSASwap_Success(t *testing.T) {
+	h, stores := newRouterWithTokenAndStores(t)
+	ctx := context.Background()
+	seedEndDevice(t, stores, "edev-1")
+	original := seedFSA(t, stores, "edev-1", "fsa-old")
+
+	rr := postJSON(t, h, tmFSASwap, tmTestToken, map[string]any{
+		"end_device_id": "edev-1",
+		"from_fsa":      "fsa-old",
+		"to_fsa":        "fsa-new",
+	})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rr.Code, rr.Body.String())
+	}
+
+	// Source key must no longer resolve.
+	if _, err := stores.FSAs.Get(ctx, "edev-1", "fsa-old"); err == nil {
+		t.Fatal("source fsa still present after swap")
+	} else if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("source fsa Get err = %v, want ErrNotFound", err)
+	}
+
+	// Target key must hold the swapped record with re-stamped Hrefs and
+	// preserved content fields.
+	got, err := stores.FSAs.Get(ctx, "edev-1", "fsa-new")
+	if err != nil {
+		t.Fatalf("target fsa missing after swap: %v", err)
+	}
+	if got.Href != "/edev/edev-1/fsa/fsa-new" {
+		t.Errorf("Href = %q, want %q", got.Href, "/edev/edev-1/fsa/fsa-new")
+	}
+	if got.DERProgramListLink == nil {
+		t.Fatal("DERProgramListLink lost during swap")
+	}
+	if got.DERProgramListLink.Href != "/edev/edev-1/fsa/fsa-new/derp" {
+		t.Errorf("DERProgramListLink.Href = %q, want %q",
+			got.DERProgramListLink.Href, "/edev/edev-1/fsa/fsa-new/derp")
+	}
+	if got.MRID != original.MRID {
+		t.Errorf("MRID = %q, want %q (content must be preserved)", got.MRID, original.MRID)
+	}
+	if got.Description != original.Description {
+		t.Errorf("Description = %q, want %q", got.Description, original.Description)
+	}
+}
+
+// TestFSASwap_ListReflectsNewAssociation verifies BASIC-003's
+// observable behavior at the store layer that drives GET /edev/{id}/fsa:
+// after the swap, the per-EndDevice FSA list contains only the new id
+// (with the seeded content) and no entry for the old id. This is the
+// data side of what the handler then renders to the harness — the GET
+// path itself is exercised by the integration-level admin tests under
+// real TLS chains.
+func TestFSASwap_ListReflectsNewAssociation(t *testing.T) {
+	h, stores := newRouterWithTokenAndStores(t)
+	ctx := context.Background()
+	seedEndDevice(t, stores, "edev-1")
+	seedFSA(t, stores, "edev-1", "fsa-old")
+
+	rr := postJSON(t, h, tmFSASwap, tmTestToken, map[string]any{
+		"end_device_id": "edev-1",
+		"from_fsa":      "fsa-old",
+		"to_fsa":        "fsa-new",
+	})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("swap status = %d, want 204: %s", rr.Code, rr.Body.String())
+	}
+
+	list, err := stores.FSAs.List(ctx, "edev-1", store.ListOptions{Limit: 100})
+	if err != nil {
+		t.Fatalf("list fsas: %v", err)
+	}
+	if list.All != 1 {
+		t.Fatalf("list.All = %d, want 1 (one fsa after swap)", list.All)
+	}
+	got := list.Items[0]
+	if got.Href != "/edev/edev-1/fsa/fsa-new" {
+		t.Errorf("Href = %q, want %q", got.Href, "/edev/edev-1/fsa/fsa-new")
+	}
+	if got.MRID != "MRID-fsa-old" {
+		t.Errorf("MRID = %q, want %q (content preserved across swap)", got.MRID, "MRID-fsa-old")
+	}
+}
+
+func TestFSASwap_MissingToken_Unauthorized(t *testing.T) {
+	h, stores := newRouterWithTokenAndStores(t)
+	seedEndDevice(t, stores, "edev-1")
+	seedFSA(t, stores, "edev-1", "fsa-old")
+	rr := postJSON(t, h, tmFSASwap, "", map[string]any{
+		"end_device_id": "edev-1",
+		"from_fsa":      "fsa-old",
+		"to_fsa":        "fsa-new",
+	})
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+}
+
+func TestFSASwap_WrongToken_Unauthorized(t *testing.T) {
+	h, stores := newRouterWithTokenAndStores(t)
+	seedEndDevice(t, stores, "edev-1")
+	seedFSA(t, stores, "edev-1", "fsa-old")
+	rr := postJSON(t, h, tmFSASwap, "not-the-token", map[string]any{
+		"end_device_id": "edev-1",
+		"from_fsa":      "fsa-old",
+		"to_fsa":        "fsa-new",
+	})
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+}
+
+func TestFSASwap_UnknownEndDevice_NotFound(t *testing.T) {
+	h, _ := newRouterWithTokenAndStores(t)
+	rr := postJSON(t, h, tmFSASwap, tmTestToken, map[string]any{
+		"end_device_id": "missing-edev",
+		"from_fsa":      "fsa-old",
+		"to_fsa":        "fsa-new",
+	})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestFSASwap_UnknownFromFSA_NotFound(t *testing.T) {
+	h, stores := newRouterWithTokenAndStores(t)
+	seedEndDevice(t, stores, "edev-1")
+	// No FSA seeded under fsa-old.
+	rr := postJSON(t, h, tmFSASwap, tmTestToken, map[string]any{
+		"end_device_id": "edev-1",
+		"from_fsa":      "fsa-old",
+		"to_fsa":        "fsa-new",
+	})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestFSASwap_TargetExists_Conflict(t *testing.T) {
+	h, stores := newRouterWithTokenAndStores(t)
+	seedEndDevice(t, stores, "edev-1")
+	seedFSA(t, stores, "edev-1", "fsa-old")
+	seedFSA(t, stores, "edev-1", "fsa-new")
+	rr := postJSON(t, h, tmFSASwap, tmTestToken, map[string]any{
+		"end_device_id": "edev-1",
+		"from_fsa":      "fsa-old",
+		"to_fsa":        "fsa-new",
+	})
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", rr.Code, rr.Body.String())
+	}
+	// Source must still resolve — Create-before-Delete preserved it.
+	if _, err := stores.FSAs.Get(context.Background(), "edev-1", "fsa-old"); err != nil {
+		t.Errorf("source fsa wiped after conflict: %v", err)
+	}
+}
+
+func TestFSASwap_SameFromAndTo_BadRequest(t *testing.T) {
+	h, stores := newRouterWithTokenAndStores(t)
+	seedEndDevice(t, stores, "edev-1")
+	seedFSA(t, stores, "edev-1", "fsa-old")
+	rr := postJSON(t, h, tmFSASwap, tmTestToken, map[string]any{
+		"end_device_id": "edev-1",
+		"from_fsa":      "fsa-old",
+		"to_fsa":        "fsa-old",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+func TestFSASwap_MissingFields_BadRequest(t *testing.T) {
+	h, _ := newRouterWithTokenAndStores(t)
+	cases := []struct {
+		name string
+		body map[string]any
+	}{
+		{"missing end_device_id", map[string]any{"from_fsa": "a", "to_fsa": "b"}},
+		{"missing from_fsa", map[string]any{"end_device_id": "edev-1", "to_fsa": "b"}},
+		{"missing to_fsa", map[string]any{"end_device_id": "edev-1", "from_fsa": "a"}},
+		{"empty body", map[string]any{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := postJSON(t, h, tmFSASwap, tmTestToken, tc.body)
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", rr.Code)
+			}
+		})
+	}
+}
+
+func TestFSASwap_MalformedJSON_BadRequest(t *testing.T) {
+	h, _ := newRouterWithTokenAndStores(t)
+	req := httptest.NewRequest(http.MethodPost, tmFSASwap, strings.NewReader("{not json"))
+	req.Header.Set(tmTokenHdr, tmTestToken)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+func TestFSASwap_NoBody_BadRequest(t *testing.T) {
+	h, _ := newRouterWithTokenAndStores(t)
+	req := httptest.NewRequest(http.MethodPost, tmFSASwap, nil)
+	req.Header.Set(tmTokenHdr, tmTestToken)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+// TestFSASwap_NilFSAStore_InternalError exercises the defensive guard
+// against an unconfigured FSA store. The production Stores always wires
+// stores.FSAs, but a misconfigured test setup or future deployment shape
+// could omit it — the handler must refuse instead of NPE'ing.
+func TestFSASwap_NilFSAStore_InternalError(t *testing.T) {
+	t.Setenv(tmTokenEnv, tmTestToken)
+	stores := newTestStores()
+	stores.FSAs = nil
+	cfg := &config.Config{}
+	h := server.NewRouter(cfg, stores, nil, "", "", nil)
+
+	seedEndDevice(t, stores, "edev-1")
+	rr := postJSON(t, h, tmFSASwap, tmTestToken, map[string]any{
+		"end_device_id": "edev-1",
+		"from_fsa":      "fsa-old",
+		"to_fsa":        "fsa-new",
+	})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rr.Code)
+	}
+}
+
+func TestFSASwap_UnknownField_Rejected(t *testing.T) {
+	h, stores := newRouterWithTokenAndStores(t)
+	seedEndDevice(t, stores, "edev-1")
+	seedFSA(t, stores, "edev-1", "fsa-old")
+	rr := postJSON(t, h, tmFSASwap, tmTestToken, map[string]any{
+		"end_device_id": "edev-1",
+		"from_fsa":      "fsa-old",
+		"to_fsa":        "fsa-new",
+		"extra_garbage": true,
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (DisallowUnknownFields)", rr.Code)
 	}
 }

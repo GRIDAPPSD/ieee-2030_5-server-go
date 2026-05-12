@@ -14,6 +14,22 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 )
 
+// subscriptionIDOverride is a test-only seam: when non-nil, the create
+// path calls it with the incoming request and uses the returned non-empty
+// string as the subscription ID instead of the auto-generated one. Set
+// only when the csip_test_hooks build tag is present (see
+// subscription_test_hook.go). Production builds leave this nil; the
+// create path's nil-check is a single compare and the override branch is
+// dead code.
+var subscriptionIDOverride func(r *http.Request) string
+
+// subscriptionRefuseCreate is a test-only seam: when non-nil, the create
+// path calls it with the resolved subscription ID and returns 409
+// Conflict if it reports the ID is refused (e.g. tombstoned by a prior
+// /test/mutations/subscription-cancel call). Set only when the
+// csip_test_hooks build tag is present. Nil in production builds.
+var subscriptionRefuseCreate func(id string) bool
+
 // BuildSubscriptionList constructs a SubscriptionList from store results.
 func BuildSubscriptionList(href string, result store.ListResult[sep2.Subscription], pollRate uint32) sep2.SubscriptionList {
 	return sep2.SubscriptionList{
@@ -51,7 +67,27 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore) http.HandlerFu
 			return
 		}
 
-		id := fmt.Sprintf("sub-%d", time.Now().UnixNano())
+		// Allow the csip_test_hooks build to override the auto-generated
+		// ID via an X-CSIP-Test-Subscription-ID header. Nil in production;
+		// the override branch is unreachable without the build tag.
+		var id string
+		if subscriptionIDOverride != nil {
+			id = subscriptionIDOverride(r)
+		}
+		if id == "" {
+			id = fmt.Sprintf("sub-%d", time.Now().UnixNano())
+		}
+
+		// Tombstone check (csip_test_hooks only). Refuses re-creation of
+		// an ID that a prior /test/mutations/subscription-cancel call
+		// marked as canceled. Returns 409 Conflict: the resource has been
+		// terminated, not destroyed at a URL, so 409 is a closer fit than
+		// 410 Gone.
+		if subscriptionRefuseCreate != nil && subscriptionRefuseCreate(id) {
+			http.Error(w, "subscription canceled", http.StatusConflict)
+			return
+		}
+
 		sub.Href = fmt.Sprintf("/edev/%s/sub/%s", edevID, id)
 
 		if err := subStore.Create(r.Context(), id, sub); err != nil {

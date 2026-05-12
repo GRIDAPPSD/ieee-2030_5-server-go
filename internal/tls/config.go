@@ -46,7 +46,7 @@ func NewServerTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
 		// that OID before chain validation.
 		ClientAuth: tls.RequireAnyClientCert,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			return verifyClientCertWithHardwareModuleSAN(rawCerts, caPool)
+			return VerifyPeerCertWithHardwareModuleSAN(rawCerts, caPool)
 		},
 		MinVersion: tls.VersionTLS12,
 		MaxVersion: tls.VersionTLS12,
@@ -104,7 +104,7 @@ func NewServerTLSConfigFromPEM(certPEM, keyPEM, caPEM []byte) (*tls.Config, erro
 		ClientCAs:    caPool,
 		ClientAuth:   tls.RequireAnyClientCert,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
-			return verifyClientCertWithHardwareModuleSAN(rawCerts, caPool)
+			return VerifyPeerCertWithHardwareModuleSAN(rawCerts, caPool)
 		},
 		MinVersion: tls.VersionTLS12,
 		MaxVersion: tls.VersionTLS12,

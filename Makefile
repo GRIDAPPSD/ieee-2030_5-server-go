@@ -1,5 +1,6 @@
 .PHONY: build build-all test test-cover test-race test-verbose test-e2e \
-       lint vet clean run run-ccm certs serve help
+       lint vet clean run run-ccm certs serve help \
+       verify-run-inverter-url
 
 SERVER   := bin/sep2server
 CLIENT   := bin/inverterclient
@@ -110,6 +111,9 @@ run-scenario: build-all    ## Run a specific scenario (use SCENARIO=voltvar)
 
 list-scenarios: build-all  ## List available inverter test scenarios
 	./$(CLIENT) --list-scenarios
+
+verify-run-inverter-url:   ## Smoke-check that run-inverter honors SERVER_URL env override (IEEE-026)
+	bash scripts/test-run-inverter-url.sh
 
 # ─── EPRI Client Interop ──────────────────────────────────────────
 

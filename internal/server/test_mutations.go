@@ -16,7 +16,8 @@
 // a belt-and-suspenders against a misconfigured production-with-tag build
 // exposing mutation endpoints unauthenticated.
 //
-// IEEE-024 (BASIC/MAINT mutations) / IEEE-025 (time-advance) / plan-2 Phase 5.
+// IEEE-024 (BASIC/MAINT mutations) / IEEE-025 (time-advance) /
+// IEEE-078 (FSA swap) / plan-2 Phase 5.
 
 package server
 
@@ -72,6 +73,7 @@ func RegisterMutationHandlers(top *http.ServeMux, stores *Stores) {
 	mux.HandleFunc("POST /test/mutations/derprog-primacy", handleDERProgPrimacy(stores))
 	mux.HandleFunc("POST /test/mutations/derctl-add", handleDERControlAdd(stores))
 	mux.HandleFunc("POST /test/mutations/time-advance", handleTimeAdvance(stores))
+	mux.HandleFunc("POST /test/mutations/fsa-swap", handleFSASwap(stores))
 
 	top.Handle("/test/mutations/", tokenAuthMiddleware(token, mux))
 	log.Printf("csip_test_hooks: test mutation surface enabled at /test/mutations/ (token auth)")
@@ -355,5 +357,115 @@ func handleTimeAdvance(stores *Stores) http.HandlerFunc {
 			"current_time":   now.Unix(),
 			"offset_seconds": int64(offset / time.Second),
 		})
+	}
+}
+
+// --- /test/mutations/fsa-swap (IEEE-078, BASIC-003 / MAINT-003) ---
+
+// fsaSwapRequest is the JSON body for /test/mutations/fsa-swap.
+//
+// FromFSA names the FSA id currently associated with the EndDevice; ToFSA
+// is the new id to re-key it under. Both must be non-empty and distinct.
+type fsaSwapRequest struct {
+	EndDeviceID string `json:"end_device_id"`
+	FromFSA     string `json:"from_fsa"`
+	ToFSA       string `json:"to_fsa"`
+}
+
+// handleFSASwap reassigns the EndDevice's FunctionSetAssignment by re-keying
+// the FSA record stored at (end_device_id, from_fsa) to (end_device_id,
+// to_fsa). The FSA content (mRID, description, list links) is preserved;
+// only Href and the DERProgramListLink.Href are re-stamped to reflect the
+// new path. Used by CSIP BASIC-003 (feeder swap) and MAINT-003 (EndDevice→
+// FSA reassignment).
+//
+// Reassignment shape chosen: re-key the FSA list entry under the EndDevice
+// scope (option (a) in the IEEE-078 ticket). The other materialization
+// — re-keying DERControls under the composite edev/fsa/derp scope — is
+// intentionally not performed here: DERPrograms are keyed by EndDevice
+// alone (not by FSA), and BASIC-003's feeder-swap procedure is satisfied
+// by the FSA list rescoping alone. A harness needing fresh controls under
+// the new FSA can chain a derctl-add mutation.
+func handleFSASwap(stores *Stores) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req fsaSwapRequest
+		if err := readJSON(r, &req); err != nil {
+			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.EndDeviceID == "" || req.FromFSA == "" || req.ToFSA == "" {
+			http.Error(w, "bad request: end_device_id, from_fsa, to_fsa all required", http.StatusBadRequest)
+			return
+		}
+		if req.FromFSA == req.ToFSA {
+			http.Error(w, "bad request: from_fsa and to_fsa must differ", http.StatusBadRequest)
+			return
+		}
+
+		// Guard against an unconfigured FSA store; mirrors the
+		// time-advance pre-mutation guard for the LogEvents store.
+		if stores.FSAs == nil {
+			http.Error(w, "internal error: fsa store not configured", http.StatusInternalServerError)
+			return
+		}
+
+		ctx := r.Context()
+
+		// Verify the parent EndDevice exists. Without this, a swap under
+		// an unknown EndDevice would silently create empty per-parent
+		// FSA buckets via ForParent and report success — BASIC-003 needs
+		// the explicit 404.
+		if _, err := stores.EndDevices.Get(ctx, req.EndDeviceID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "end device not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		fsas := stores.FSAs.ForParent(req.EndDeviceID)
+
+		existing, err := fsas.Get(ctx, req.FromFSA)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "source fsa not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Re-stamp Href on the copy. The store returns an independent
+		// copy (Copier contract), so this mutation does not leak back
+		// into the source record before the Delete below.
+		swapped := existing
+		swapped.Href = fmt.Sprintf("/edev/%s/fsa/%s", req.EndDeviceID, req.ToFSA)
+		if swapped.DERProgramListLink != nil {
+			link := *swapped.DERProgramListLink
+			link.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp", req.EndDeviceID, req.ToFSA)
+			swapped.DERProgramListLink = &link
+		}
+
+		// Create-before-Delete so a Create collision (409) leaves the
+		// source FSA in place. Delete-before-Create would orphan the
+		// EndDevice mid-swap if the target id were already taken.
+		if err := fsas.Create(ctx, req.ToFSA, swapped); err != nil {
+			if errors.Is(err, store.ErrAlreadyExists) {
+				http.Error(w, "target fsa already exists", http.StatusConflict)
+				return
+			}
+			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := fsas.Delete(ctx, req.FromFSA); err != nil {
+			// Best-effort rollback of the new entry. ErrNotFound on the
+			// source between Get and Delete would be a race against a
+			// concurrent mutation — surface it instead of swallowing.
+			_ = fsas.Delete(ctx, req.ToFSA)
+			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }

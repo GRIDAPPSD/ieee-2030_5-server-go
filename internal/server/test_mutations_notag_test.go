@@ -32,6 +32,7 @@ func TestMutationSurface_AbsentWithoutBuildTag(t *testing.T) {
 		"/test/mutations/derctl-add",
 		"/test/mutations/time-advance",
 		"/test/mutations/fsa-swap",
+		"/test/mutations/subscription-cancel",
 	}
 	for _, p := range paths {
 		var buf bytes.Buffer

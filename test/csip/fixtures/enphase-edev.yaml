@@ -1,0 +1,27 @@
+# IEEE-068 fixture — pre-seeded EndDevice for the real Enphase test
+# microinverter that mTLS-connects via `make run-enphase`.
+#
+# Identity values are derived live from the vendored Enphase device leaf
+# (testdata/csip-pki/enphase/Enph_cert_chain.pem chain[0]); see
+# testdata/csip-pki/enphase/README.md for the derivation method.
+#
+#   LFDI = 9711948EBF52B988A39728F756AEAA763EFF5540
+#   SFDI = 405521881394   (display 405-521-881-394)
+#   PIN  = 111115         (out-of-band admin-pairing secret, not on the wire)
+#
+# Loaded at boot via SEP2_BOOT_FIXTURE. Schema matches
+# internal/bootfixture.Spec (same shape as test/csip/csiptest.Spec).
+
+end_devices:
+  - id: "enphase"
+    sfdi: "405521881394"
+    lfdi: "9711948EBF52B988A39728F756AEAA763EFF5540"
+    enabled: true
+    changed_time: 1747006800
+    registration_link: "/edev/enphase/rg"
+    function_set_assignments_list_link:
+      href: "/edev/enphase/fsa"
+      all: 0
+    der_list_link:
+      href: "/edev/enphase/der"
+      all: 0

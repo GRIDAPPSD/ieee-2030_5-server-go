@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
@@ -43,17 +44,19 @@ func main() {
 
 func runServe() error {
 	cfg := &config.Config{
-		Addr:        envOr("SEP2_ADDR", ":443"),
-		CertFile:    envOr("SEP2_CERT", "certs/server.crt"),
-		KeyFile:     envOr("SEP2_KEY", "certs/server.key"),
-		CAFile:      envOr("SEP2_CA", "certs/ca.crt"),
-		AdminAddr:   os.Getenv("SEP2_ADMIN_ADDR"),
-		AdminKey:    os.Getenv("SEP2_ADMIN_KEY"),
-		TZOffset:    -28800,
-		TimeQuality: 7,
-		EnableCCM:   os.Getenv("SEP2_CCM") == "true",
-		EnableMDNS:  os.Getenv("SEP2_MDNS") == "true",
-		MDNSHost:    envOr("SEP2_MDNS_HOST", "localhost"),
+		Addr:            envOr("SEP2_ADDR", ":443"),
+		CertFile:        envOr("SEP2_CERT", "certs/server.crt"),
+		KeyFile:         envOr("SEP2_KEY", "certs/server.key"),
+		CAFile:          envOr("SEP2_CA", "certs/ca.crt"),
+		ExtraClientCAs:  parseCSV(os.Getenv("SEP2_EXTRA_CLIENT_CAS")),
+		BootFixtureFile: os.Getenv("SEP2_BOOT_FIXTURE"),
+		AdminAddr:       os.Getenv("SEP2_ADMIN_ADDR"),
+		AdminKey:        os.Getenv("SEP2_ADMIN_KEY"),
+		TZOffset:        -28800,
+		TimeQuality:     7,
+		EnableCCM:       os.Getenv("SEP2_CCM") == "true",
+		EnableMDNS:      os.Getenv("SEP2_MDNS") == "true",
+		MDNSHost:        envOr("SEP2_MDNS_HOST", "localhost"),
 	}
 
 	// Load CA for admin cert service
@@ -80,6 +83,27 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parseCSV splits a comma-separated env value into trimmed, non-empty
+// entries. Returns nil for an empty input (no-op cascade through the
+// TLS-config layer). Used by SEP2_EXTRA_CLIENT_CAS so callers can list
+// any number of additional client-CA PEM files on a single env var.
+func parseCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func printUsage() {

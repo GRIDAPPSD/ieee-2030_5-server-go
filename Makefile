@@ -1,6 +1,6 @@
 .PHONY: build build-all test test-cover test-race test-verbose test-e2e \
        test-csip-server test-csip-client \
-       lint vet clean run run-ccm certs serve help \
+       lint vet clean run run-ccm run-enphase certs serve help \
        verify-run-inverter-url
 
 SERVER   := bin/sep2server
@@ -84,6 +84,40 @@ run-full: build certs      ## Start with CCM + mDNS + admin dashboard
 	SEP2_ADMIN_KEY=admin \
 	SEP2_CCM=true \
 	SEP2_MDNS=true \
+	./$(SERVER) serve
+
+# Enphase microinverter demo (IEEE-068).
+#
+# Boots the server bound to 10.0.0.101:8888 with the Enphase test root
+# appended to ClientCAs and a pre-seeded EndDevice matching the device's
+# LFDI/SFDI. Server still presents its own SunSpec-CA-signed leaf — the
+# Enphase root only authenticates the inverter's client cert.
+#
+# CSIP §6.11 compliance: the Enphase test leaf is NOT compliant
+# (no HardwareModuleName SAN, no Key Usage, no Basic Constraints,
+# non-empty Subject). The server must run in non-strict cert verification
+# mode (the default). SEP2_CSIP_STRICT=true (IEEE-020) is incompatible
+# with this device.
+#
+# Manual prerequisite: the host's network must reach 10.0.0.101.
+# Switching to the Enphase LAN is a manual step performed before running
+# this target. Override the bind via ENPHASE_ADDR=host:port for local
+# smoke runs (e.g. ENPHASE_ADDR=127.0.0.1:8888).
+ENPHASE_ADDR ?= 10.0.0.101:8888
+
+run-enphase: build certs   ## Start server with Enphase root + EndDevice pre-seed (override ENPHASE_ADDR for local smoke)
+	@echo "# Enphase profile: binding $(ENPHASE_ADDR) (override with ENPHASE_ADDR=...)"
+	@echo "# Trusted extra client CAs: testdata/csip-pki/enphase/Enph_root.pem"
+	@echo "# Pre-seeded EndDevice fixture: test/csip/fixtures/enphase-edev.yaml"
+	@echo "# Non-strict cert mode (Enphase leaf is CSIP §6.11 non-compliant)"
+	SEP2_ADDR=$(ENPHASE_ADDR) \
+	SEP2_CERT=$(CERT_DIR)/server.crt \
+	SEP2_KEY=$(CERT_DIR)/server.key \
+	SEP2_CA=$(CERT_DIR)/ca.crt \
+	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
+	SEP2_EXTRA_CLIENT_CAS=testdata/csip-pki/enphase/Enph_root.pem \
+	SEP2_BOOT_FIXTURE=test/csip/fixtures/enphase-edev.yaml \
+	SEP2_CCM=true \
 	./$(SERVER) serve
 
 serve: run                 ## Alias for run

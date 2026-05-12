@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log"
 	"net"
@@ -26,8 +27,47 @@ import (
 // Run starts the IEEE 2030.5 server with mutual TLS and optionally
 // an admin HTTPS server on a separate port.
 func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService) error {
-	// Compute server identity from certificate
-	serverSFDI, serverLFDI := "", ""
+	// Build TLS config and derive server identity (SFDI/LFDI) from the leaf
+	// cert BEFORE constructing the router, so /sdev and /sdev/sdi see
+	// non-empty values under both GCM and CCM modes (IEEE-001).
+	var (
+		tlsListener net.Listener
+		serverSFDI  string
+		serverLFDI  string
+	)
+	protocolSrv := &http.Server{}
+
+	listener, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	if cfg.EnableCCM {
+		// CCM-8 mode: use forked crypto/tls with IEEE 2030.5 mandatory cipher
+		ccmCfg, err := sepTLS.NewCCMServerConfig(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
+		if err != nil {
+			return fmt.Errorf("CCM TLS config: %w", err)
+		}
+		serverSFDI, serverLFDI, err = deriveServerIdentity(ccmCfg.Certificates[0].Certificate)
+		if err != nil {
+			return fmt.Errorf("derive server identity (CCM): %w", err)
+		}
+		tlsListener = gotls.NewListener(listener, ccmCfg)
+		log.Printf("IEEE 2030.5 server listening on %s (mTLS, CCM-8 primary)", cfg.Addr)
+	} else {
+		// GCM fallback mode: standard crypto/tls
+		tlsCfg, err := sepTLS.NewServerTLSConfig(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
+		if err != nil {
+			return fmt.Errorf("TLS config: %w", err)
+		}
+		serverSFDI, serverLFDI, err = deriveServerIdentity(tlsCfg.Certificates[0].Certificate)
+		if err != nil {
+			return fmt.Errorf("derive server identity (GCM): %w", err)
+		}
+		tlsListener = tls.NewListener(listener, tlsCfg)
+		log.Printf("IEEE 2030.5 server listening on %s (mTLS, GCM)", cfg.Addr)
+	}
 
 	// Initialize stores
 	stores := &Stores{
@@ -63,53 +103,12 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 
 	router := NewRouter(cfg, stores, svc, serverSFDI, serverLFDI)
 
-	listener, err := net.Listen("tcp", cfg.Addr)
-	if err != nil {
-		return fmt.Errorf("listen: %w", err)
-	}
-	defer func() { _ = listener.Close() }()
-
-	var tlsListener net.Listener
-	protocolSrv := &http.Server{}
-
 	if cfg.EnableCCM {
-		// CCM-8 mode: use forked crypto/tls with IEEE 2030.5 mandatory cipher
-		ccmCfg, err := sepTLS.NewCCMServerConfig(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
-		if err != nil {
-			return fmt.Errorf("CCM TLS config: %w", err)
-		}
-		tlsListener = gotls.NewListener(listener, ccmCfg)
-
 		// Bridge: inject gotls connection state into request context
 		sepTLS.SetupCCMServer(protocolSrv)
 		protocolSrv.Handler = sepTLS.CCMIdentityMiddleware(router)
-
-		log.Printf("IEEE 2030.5 server listening on %s (mTLS, CCM-8 primary)", cfg.Addr)
 	} else {
-		// GCM fallback mode: standard crypto/tls
-		tlsCfg, err := sepTLS.NewServerTLSConfig(cfg.CertFile, cfg.KeyFile, cfg.CAFile)
-		if err != nil {
-			return fmt.Errorf("TLS config: %w", err)
-		}
-
-		// Compute server identity
-		// NOTE: these values are computed too late — the router was already
-		// constructed above with empty identity strings. Tracked separately;
-		// do not remove these assignments without fixing the call ordering.
-		if len(tlsCfg.Certificates) > 0 {
-			leaf := tlsCfg.Certificates[0]
-			if leaf.Leaf != nil {
-				serverSFDI = sepTLS.SFDI(leaf.Leaf) //nolint:ineffassign // see note above
-				serverLFDI = sepTLS.LFDI(leaf.Leaf) //nolint:ineffassign // see note above
-				_ = serverSFDI
-				_ = serverLFDI
-			}
-		}
-
-		tlsListener = tls.NewListener(listener, tlsCfg)
 		protocolSrv.Handler = router
-
-		log.Printf("IEEE 2030.5 server listening on %s (mTLS, GCM)", cfg.Addr)
 	}
 
 	errCh := make(chan error, 2)
@@ -210,4 +209,19 @@ func parsePort(addr string) int {
 		}
 	}
 	return 443
+}
+
+// deriveServerIdentity parses the leaf certificate from a raw DER chain
+// (as found in tls.Certificate.Certificate / gotls.Certificate.Certificate)
+// and returns the server SFDI and LFDI. Mode-agnostic — works for both
+// the stdlib crypto/tls path (GCM) and the forked gotls path (CCM).
+func deriveServerIdentity(rawChain [][]byte) (sfdi, lfdi string, err error) {
+	if len(rawChain) == 0 {
+		return "", "", fmt.Errorf("empty certificate chain")
+	}
+	leaf, err := x509.ParseCertificate(rawChain[0])
+	if err != nil {
+		return "", "", fmt.Errorf("parse server leaf: %w", err)
+	}
+	return sepTLS.SFDI(leaf), sepTLS.LFDI(leaf), nil
 }

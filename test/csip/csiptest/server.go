@@ -53,6 +53,27 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 )
 
+// deriveServerIdentity parses the leaf cert from a raw DER chain (as
+// found in tls.Certificate.Certificate / gotls.Certificate.Certificate)
+// and returns the server SFDI and LFDI. Mirrors the unexported helper
+// of the same name in internal/server/server.go (IEEE-001) so the
+// in-process harness populates /sdev and /sdev/sdi the same way the
+// production Run() flow does. Mode-agnostic — same code path for both
+// GCM (stdlib crypto/tls) and CCM-8 (vendored gotls). t.Fatal on any
+// failure; an empty chain means the caller fed BootServer a broken
+// PKI and the test should surface that loudly.
+func deriveServerIdentity(t *testing.T, rawChain [][]byte) (sfdi, lfdi string) {
+	t.Helper()
+	if len(rawChain) == 0 {
+		t.Fatalf("csiptest: derive server identity: empty certificate chain")
+	}
+	leaf, err := x509.ParseCertificate(rawChain[0])
+	if err != nil {
+		t.Fatalf("csiptest: derive server identity: parse leaf: %v", err)
+	}
+	return sepTLS.SFDI(leaf), sepTLS.LFDI(leaf)
+}
+
 // cipherMode selects the TLS path the booted server listens on.
 type cipherMode int
 
@@ -219,8 +240,6 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	router := server.NewRouter(cfg.serverConfig, cfg.stores, nil, "", "")
-
 	// Pick the trust root the server validates client certs against.
 	// Default: our ephemeral CA (so the helper-generated device cert
 	// validates). Override: caller-supplied path (e.g. SunSpec roots
@@ -235,7 +254,18 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 		clientCAsPEM = raw
 	}
 
-	var tlsListener net.Listener
+	// Build the TLS listener AND derive the server's SFDI/LFDI from its
+	// leaf cert BEFORE constructing the router. Mirrors the production
+	// Run() flow fixed by IEEE-001 so /sdev and /sdev/sdi see populated
+	// identity under both cipher modes. Without this, NewRouter is fed
+	// empty strings and the SelfDevice handler closes over them — exactly
+	// the regression IEEE-001 fixed in production but which this harness
+	// did not previously replicate.
+	var (
+		tlsListener net.Listener
+		serverSFDI  string
+		serverLFDI  string
+	)
 	switch cfg.cipher {
 	case cipherCCM:
 		ccmCfg, ccmErr := newCCMConfig(t, serverCertPEM, serverKeyPEM, clientCAsPEM)
@@ -243,16 +273,24 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 			_ = listener.Close()
 			t.Fatalf("csiptest: CCM config: %v", ccmErr)
 		}
+		serverSFDI, serverLFDI = deriveServerIdentity(t, ccmCfg.Certificates[0].Certificate)
 		tlsListener = gotls.NewListener(listener, ccmCfg)
-		sepTLS.SetupCCMServer(httpSrv)
-		httpSrv.Handler = sepTLS.CCMIdentityMiddleware(router)
 	default:
 		stdCfg, stdErr := sepTLS.NewServerTLSConfigFromPEM(serverCertPEM, serverKeyPEM, clientCAsPEM)
 		if stdErr != nil {
 			_ = listener.Close()
 			t.Fatalf("csiptest: GCM config: %v", stdErr)
 		}
+		serverSFDI, serverLFDI = deriveServerIdentity(t, stdCfg.Certificates[0].Certificate)
 		tlsListener = tls.NewListener(listener, stdCfg)
+	}
+
+	router := server.NewRouter(cfg.serverConfig, cfg.stores, nil, serverSFDI, serverLFDI)
+
+	if cfg.cipher == cipherCCM {
+		sepTLS.SetupCCMServer(httpSrv)
+		httpSrv.Handler = sepTLS.CCMIdentityMiddleware(router)
+	} else {
 		httpSrv.Handler = router
 	}
 

@@ -4,31 +4,30 @@
 // ResponseSet's /rsps/{rspsId}/rsp endpoint with the four
 // status-progression values the V1.2 procedure exercises:
 //
-//	Received     = 1
-//	Started      = 2
-//	Completed    = 3
-//	Acknowledged = 6 (mapped to ResponseStatusEventSuperseded in our
-//	                  sep2 enum; see status-mapping note below.)
+//	Received  = 1  (sep2.ResponseStatusEventReceived)
+//	Started   = 2  (sep2.ResponseStatusEventStarted)
+//	Completed = 3  (sep2.ResponseStatusEventCompleted)
+//	Cancelled = 6  (sep2.ResponseStatusEventCancelled — Table 31
+//	                "Cancelled" row)
 //
 // V1.2 procedure step → assertion mapping:
 //
-//	Step 1 (POST Response status=1 (Received))        ──► postResponse, expects 201 + Location
-//	Step 2 (POST Response status=2 (Started))         ──► postResponse, expects 201 + Location
-//	Step 3 (POST Response status=3 (Completed))       ──► postResponse, expects 201 + Location
-//	Step 4 (POST Response status=6 (Acknowledged))    ──► postResponse, expects 201 + Location
+//	Step 1 (POST Response status=1 (Received))   ──► postResponse, expects 201 + Location
+//	Step 2 (POST Response status=2 (Started))    ──► postResponse, expects 201 + Location
+//	Step 3 (POST Response status=3 (Completed))  ──► postResponse, expects 201 + Location
+//	Step 4 (POST Response status=6 (Cancelled))  ──► postResponse, expects 201 + Location
 //	Step 5 (GET /rsps/{rspsId}/rsp and assert all four are present)
-//	                                                  ──► assertAllStatusesPresent
+//	                                             ──► assertAllStatusesPresent
 //
-// Status-mapping note: the V1.2 procedure labels the four exercised
-// statuses Received / Started / Completed / Acknowledged. The 2030.5
-// ResponseStatusType enum (sep2/response.go) uses the names
-// EventReceived (0), EventStarted (1), EventCompleted (2),
-// EventSuperseded (6). The PROCEDURE wire values are 1/2/3/6 and that
-// is what we send; the matching Go constants are not 1:1 with the
-// procedure names. This test uses raw uint8 literals for the four
-// procedure-required statuses and documents each. A future ticket
-// could realign the constants if the procedure intent diverges from
-// the enum semantics — that is out of scope here.
+// Constant-vs-wire-value alignment: prior to IEEE-044a the sep2
+// ResponseStatus* constants were off-by-one against IEEE 2030.5-2023
+// §10.10 Table 31, so this test used raw uint8 literals 1/2/3/6.
+// IEEE-044a renumbered the constants to match Table 31 wire values
+// (EventReceived=1, EventStarted=2, EventCompleted=3, EventCancelled=6)
+// so this test now references the named constants directly. The
+// CSIP V1.2 procedure step 4 says "Acknowledged" in prose; the wire
+// value is 6, which Table 31 names "Cancelled" — the V1.2 procedure
+// text predates the Table 31 naming. The wire value is what matters.
 //
 // Why no V1.2 §7.2 mention of HTTP 200: the procedure expects 201
 // Created on POST per IEEE 2030.5 §6.4.3 (create-via-POST returns
@@ -61,14 +60,15 @@ import (
 
 // V1.2 §7.2 status wire values exercised by CORE-022.
 //
-// These are the literal uint8 values the procedure dictates, not the
-// sep2.ResponseStatus* Go constants. See the status-mapping note in
-// the package doc comment.
+// IEEE-044a aligned the sep2.ResponseStatus* Go constants with Table 31
+// wire values (Received=1, Started=2, Completed=3, Cancelled=6) so the
+// procedure-required statuses are now expressed via the named
+// constants directly.
 const (
-	core022StatusReceived     uint8 = 1
-	core022StatusStarted      uint8 = 2
-	core022StatusCompleted    uint8 = 3
-	core022StatusAcknowledged uint8 = 6
+	core022StatusReceived  = sep2.ResponseStatusEventReceived  // 1
+	core022StatusStarted   = sep2.ResponseStatusEventStarted   // 2
+	core022StatusCompleted = sep2.ResponseStatusEventCompleted // 3
+	core022StatusCancelled = sep2.ResponseStatusEventCancelled // 6
 )
 
 // core022ResponseSetID is the {rspsId} path segment we POST under. The
@@ -107,7 +107,7 @@ func TestCORE_022_Responses(t *testing.T) {
 		{stepName: "Step1_Received", status: core022StatusReceived, subject: "evt-A"},
 		{stepName: "Step2_Started", status: core022StatusStarted, subject: "evt-A"},
 		{stepName: "Step3_Completed", status: core022StatusCompleted, subject: "evt-A"},
-		{stepName: "Step4_Acknowledged", status: core022StatusAcknowledged, subject: "evt-A"},
+		{stepName: "Step4_Cancelled", status: core022StatusCancelled, subject: "evt-A"},
 	}
 
 	for _, step := range postSteps {
@@ -130,7 +130,7 @@ func TestCORE_022_Responses(t *testing.T) {
 		core022StatusReceived,
 		core022StatusStarted,
 		core022StatusCompleted,
-		core022StatusAcknowledged,
+		core022StatusCancelled,
 	})
 }
 

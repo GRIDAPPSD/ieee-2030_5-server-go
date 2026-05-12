@@ -1,13 +1,24 @@
-// Package csip_test holds the IEEE-2030.5 CSIP conformance harness.
+// This file (handshake_test.go) is the SunSpec-PKI external-cert smoke:
+// it proves the cert path + verifier hook + mTLS handshake end-to-end
+// against real CSIP §6.11 external materials (SunSpec V1.2 test PKI),
+// in CCM-8 cipher mode. Its fixtures are provisioned out of band (see
+// test/csip/README.md); the test t.Skip's cleanly when they are missing
+// so fresh clones never fail.
 //
-// Smoke-level coverage today: one test, TestCSIPHandshakeWithSunSpecDeviceCert,
-// proves the cert path + verifier hook + mTLS handshake end-to-end against
-// real CSIP §6.11 external materials (SunSpec V1.2 test PKI). It does NOT
-// (yet) cover the 25 SunSpec V1.2 conformance requirements — those land
-// once the scaffold is in place.
+// The CSIP-named conformance counterparts for V1.2 §5.2 Out-of-Band
+// Discovery and V1.2 §5.3 Basic Security live alongside this file:
 //
-// Fixtures are provisioned out of band; see test/csip/README.md. The test
-// skips cleanly when fixtures are unavailable so fresh clones never fail.
+//   - comm_002_oob_discovery_test.go (IEEE-067) — V1.2 §5.2, runs
+//     unconditionally against an ephemeral PKI booted by
+//     csiptest.BootServer. Satisfies the COMM-002 line item in the
+//     Phase 3 V1.2 coverage matrix.
+//   - comm_003_basic_security_test.go (IEEE-067) — V1.2 §5.3,
+//     skeleton in lax mode (accepts CCM-8 or GCM). Tightens to
+//     CCM-8 only once IEEE-020 lands.
+//
+// This SunSpec smoke is kept on top of those two because it is the
+// only test in the package that exercises the real external CSIP test
+// PKI — a different signal from the ephemeral-PKI conformance tests.
 package csip_test
 
 import (

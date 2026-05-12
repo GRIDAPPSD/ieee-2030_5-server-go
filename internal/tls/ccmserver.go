@@ -16,7 +16,17 @@ type ccmStateKey struct{}
 
 // NewCCMServerConfig creates a gotls.Config with CCM-8 as primary cipher
 // and GCM as fallback for compatibility.
+//
+// Equivalent to NewCCMServerConfigWithExtraCAs with no extra roots.
 func NewCCMServerConfig(certFile, keyFile, caFile string) (*gotls.Config, error) {
+	return NewCCMServerConfigWithExtraCAs(certFile, keyFile, caFile, nil)
+}
+
+// NewCCMServerConfigWithExtraCAs is like NewCCMServerConfig but appends
+// additional client-CA roots from extraCAFiles into the ClientCAs pool.
+// See NewServerTLSConfigWithExtraCAs (config.go) for the multi-root
+// rationale and slice semantics.
+func NewCCMServerConfigWithExtraCAs(certFile, keyFile, caFile string, extraCAFiles []string) (*gotls.Config, error) {
 	certPEM, err := os.ReadFile(certFile)
 	if err != nil {
 		return nil, fmt.Errorf("read cert: %w", err)
@@ -25,19 +35,15 @@ func NewCCMServerConfig(certFile, keyFile, caFile string) (*gotls.Config, error)
 	if err != nil {
 		return nil, fmt.Errorf("read key: %w", err)
 	}
-	caPEM, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, fmt.Errorf("read CA: %w", err)
-	}
 
 	cert, err := gotls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		return nil, fmt.Errorf("parse cert: %w", err)
 	}
 
-	caPool := x509.NewCertPool()
-	if !caPool.AppendCertsFromPEM(caPEM) {
-		return nil, fmt.Errorf("parse CA cert")
+	caPool, err := LoadClientCAs(caFile, extraCAFiles)
+	if err != nil {
+		return nil, fmt.Errorf("load client CAs: %w", err)
 	}
 
 	return &gotls.Config{

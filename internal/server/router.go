@@ -163,6 +163,7 @@ func registerDERRoutes(mux *http.ServeMux, stores *Stores) {
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/ders", ders)
 	mux.HandleFunc("PUT /edev/{id}/der/{derId}/ders", ders)
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/dera", dera)
+	mux.HandleFunc("PUT /edev/{id}/der/{derId}/dera", dera)
 
 	// DERProgram under FSA
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp", scopedListHandler[sep2.DERProgram, sep2.DERProgramList](

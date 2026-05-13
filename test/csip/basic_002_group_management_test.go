@@ -352,7 +352,7 @@ func bootWithBasicFixture(
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
 		FSAs:               stores.FSAs,
-		DERPrograms:        stores.DERPrograms,
+		DERPrograms:        stores.DERPrograms.ScopedStore, // IEEE-097 wrapper; IEEE-104.
 		DERControls:        stores.DERControls,
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,

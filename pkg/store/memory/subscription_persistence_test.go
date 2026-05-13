@@ -200,9 +200,12 @@ func TestPersistence_LoadRebuildsSecondaryIndexes(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("ListByResource(/edev/1) = %d entries, want 1 (secondary index not rebuilt)", len(got))
 	}
-	if got[0].NotificationURI != subA.NotificationURI {
+	if got[0].Subscription.NotificationURI != subA.NotificationURI {
 		t.Errorf("ListByResource entry NotificationURI = %q, want %q",
-			got[0].NotificationURI, subA.NotificationURI)
+			got[0].Subscription.NotificationURI, subA.NotificationURI)
+	}
+	if got[0].ID != "subA" {
+		t.Errorf("ListByResource entry ID = %q, want %q", got[0].ID, "subA")
 	}
 }
 

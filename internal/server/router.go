@@ -15,7 +15,7 @@ import (
 
 // Stores holds all resource stores for the server.
 type Stores struct {
-	EndDevices          store.EndDeviceStore
+	EndDevices store.EndDeviceStore
 	// Registrations is the persistent-aware wrapper around the in-memory
 	// Store[sep2.Registration]. The embedded *Store gives back-compat
 	// method promotion (Get/List/Count) for call sites that don't need
@@ -25,11 +25,11 @@ type Stores struct {
 	MirrorMeterReadings *memory.ScopedStore[sep2.MirrorMeterReading]
 
 	// DER stores
-	DERs               *memory.ScopedStore[sep2.DER]
-	DERCapabilities    *memory.ScopedStore[sep2.DERCapability]
-	DERSettings        *memory.ScopedStore[sep2.DERSettings]
-	DERStatuses        *memory.ScopedStore[sep2.DERStatus]
-	DERAvailabilities  *memory.ScopedStore[sep2.DERAvailability]
+	DERs              *memory.ScopedStore[sep2.DER]
+	DERCapabilities   *memory.ScopedStore[sep2.DERCapability]
+	DERSettings       *memory.ScopedStore[sep2.DERSettings]
+	DERStatuses       *memory.ScopedStore[sep2.DERStatus]
+	DERAvailabilities *memory.ScopedStore[sep2.DERAvailability]
 	// DERPrograms is the persistent-aware wrapper. It embeds
 	// *ScopedStore[sep2.DERProgram] so existing handlers that call
 	// .ForParent(...) keep working unchanged; the shadowed
@@ -57,16 +57,16 @@ type Stores struct {
 	ReadingTypes  *memory.Store[sep2.ReadingType]
 
 	// New function sets
-	Configurations *memory.ScopedStore[sep2.Configuration]
-	DeviceStatuses *memory.ScopedStore[sep2.DeviceStatus]
-	LogEvents      *memory.ScopedStore[sep2.LogEvent]
-	PowerStatuses  *memory.ScopedStore[sep2.PowerStatus]
-	MessagingPrograms *memory.Store[sep2.MessagingProgram]
-	TextMessages      *memory.ScopedStore[sep2.TextMessage]
+	Configurations           *memory.ScopedStore[sep2.Configuration]
+	DeviceStatuses           *memory.ScopedStore[sep2.DeviceStatus]
+	LogEvents                *memory.ScopedStore[sep2.LogEvent]
+	PowerStatuses            *memory.ScopedStore[sep2.PowerStatus]
+	MessagingPrograms        *memory.Store[sep2.MessagingProgram]
+	TextMessages             *memory.ScopedStore[sep2.TextMessage]
 	FlowReservationRequests  *memory.ScopedStore[sep2.FlowReservationRequest]
 	FlowReservationResponses *memory.ScopedStore[sep2.FlowReservationResponse]
-	ResponseSets  *memory.Store[sep2.ResponseSet]
-	Responses     *memory.ScopedStore[sep2.Response]
+	ResponseSets             *memory.Store[sep2.ResponseSet]
+	Responses                *memory.ScopedStore[sep2.Response]
 }
 
 // NewRouter creates the HTTP router for the protocol listener. The notifier
@@ -160,8 +160,30 @@ func registerEndDeviceRoutes(mux *http.ServeMux, stores *Stores, notifier handle
 		// Store, which leaked subscriptions across EndDevices.
 		mux.HandleFunc("GET /edev/{id}/sub", handler.HandleListSubscriptionsByDevice(stores.Subscriptions, 900))
 		mux.HandleFunc("POST /edev/{id}/sub", handler.HandleCreateSubscription(stores.Subscriptions))
-		mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", handler.HandleDeleteSubscription(stores.Subscriptions))
+		// IEEE-100 / CSIP V1.2 §11.6: DELETE fires a best-effort final
+		// Removed Notification to the just-deleted subscriber. The
+		// router-level notifier (a *subscription.Manager) satisfies
+		// both handler.ResourceNotifier (used by HandleDeleteEndDevice)
+		// and handler.SubscriberNotifier; a nil notifier disables the
+		// final Notification.
+		mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", handler.HandleDeleteSubscription(stores.Subscriptions, asSubscriberNotifier(notifier)))
 	}
+}
+
+// asSubscriberNotifier returns the supplied notifier as a
+// handler.SubscriberNotifier if it implements that interface, or nil
+// otherwise. The double-interface dance keeps the router free of
+// subscription-package coupling — handler.ResourceNotifier remains the
+// published parameter surface and the production *subscription.Manager
+// happens to satisfy both interfaces.
+func asSubscriberNotifier(n handler.ResourceNotifier) handler.SubscriberNotifier {
+	if n == nil {
+		return nil
+	}
+	if sn, ok := n.(handler.SubscriberNotifier); ok {
+		return sn
+	}
+	return nil
 }
 
 func registerMirrorRoutes(mux *http.ServeMux, stores *Stores) {

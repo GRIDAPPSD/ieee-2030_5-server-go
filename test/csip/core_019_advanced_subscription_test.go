@@ -152,13 +152,31 @@ func TestCORE_019_AdvancedSubscription(t *testing.T) {
 	if len(gotB) != 1 {
 		t.Errorf("CORE-019 (b): survivor receiver got %d, want 1", len(gotB))
 	}
-	// Give the worker pool a beat to deliver any straggler to A. The
-	// fan-out is non-blocking (queue + worker pool); a 100ms grace is
-	// generous and still bounded so a regression that double-delivers
-	// surfaces here rather than hiding behind the harness teardown.
+	// IEEE-100 / CSIP V1.2 §11.6: the DELETE itself fires a final
+	// Removed Notification (Status=3) to the deleted subscriber so it
+	// can flush local state. So receiverA must have exactly one
+	// Notification — the Removed — and a subsequent Notify on the
+	// resource must NOT add a second (the sub is gone from
+	// ListByResource).
+	gotA, okA := receiverA.Wait(1, 2*time.Second)
+	if !okA {
+		t.Fatalf("CORE-019 (b): deleted-sub receiver never got the final Removed Notification; received %d", len(gotA))
+	}
+	if len(gotA) != 1 {
+		t.Errorf("CORE-019 (b): deleted-sub receiver got %d Notifications, want exactly 1 (Removed)", len(gotA))
+	}
+	if gotA[0].Notification == nil {
+		t.Fatalf("CORE-019 (b): Removed Notification did not parse")
+	}
+	if gotA[0].Notification.Status != sep2.NotificationStatusRemoved {
+		t.Errorf("CORE-019 (b): final Notification Status = %d, want %d (Removed)",
+			gotA[0].Notification.Status, sep2.NotificationStatusRemoved)
+	}
+	// A second beat to confirm the post-DELETE Notify() did not
+	// double-deliver to the gone subscription.
 	time.Sleep(100 * time.Millisecond)
-	if got := receiverA.Count(); got != 0 {
-		t.Errorf("CORE-019 (b): deleted-sub receiver got %d Notifications, want 0", got)
+	if got := receiverA.Count(); got != 1 {
+		t.Errorf("CORE-019 (b): deleted-sub receiver got %d Notifications after post-delete Notify, want 1 (Removed only)", got)
 	}
 
 	// --- (c) Malformed Notification body → HTTP 400. ---------------

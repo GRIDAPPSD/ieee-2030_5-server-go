@@ -219,18 +219,27 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// weakening the SEP2 mTLS requirement. AdminTLS=false serves plain HTTP
 	// (Caddy mode); AdminTLS=true serves HTTPS (operator-supplied cert or
 	// self-signed fallback).
-	var adminSrv *http.Server
+	var (
+		adminSrv     *http.Server
+		adminTLSDesc string
+	)
+	tlsModeName := "GCM"
+	if cfg.EnableCCM {
+		tlsModeName = "CCM-8"
+	}
 	if cfg.EffectiveAdminListen() != "" && svc != nil {
-		tlsModeName := "GCM"
-		if cfg.EnableCCM {
-			tlsModeName = "CCM-8"
-		}
-		adminSrv, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh)
+		adminSrv, adminTLSDesc, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh)
 		if err != nil {
 			_ = protocolSrv.Close()
 			return fmt.Errorf("admin server: %w", err)
 		}
 	}
+
+	// IEEE-112: print the operator-facing connection-details banner once
+	// after both listeners are up. Banner is log output only — it does not
+	// change behavior and intentionally suppresses secrets (admin key,
+	// private keys). Format is pinned by TestRenderConnectionBanner_*.
+	log.Print("\n" + RenderConnectionBanner(buildBannerInput(cfg, tlsModeName, serverSFDI, serverLFDI, adminTLSDesc)))
 
 	select {
 	case <-ctx.Done():
@@ -261,7 +270,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 // Path A still works for cert-bearing operators while Bearer/cookie clients
 // can connect without presenting a cert. The SEP2 protocol listener keeps
 // its own RequireAnyClientCert + manual-verify posture untouched.
-func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error) (*http.Server, error) {
+func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error) (*http.Server, string, error) {
 	addr := cfg.EffectiveAdminListen()
 
 	tickets := auth.NewTicketStore(30 * time.Second)
@@ -269,7 +278,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 
 	adminListener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("admin listen: %w", err)
+		return nil, "", fmt.Errorf("admin listen: %w", err)
 	}
 
 	serveListener := adminListener
@@ -278,7 +287,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		tlsCfg, desc, err := buildAdminTLSConfig(cfg)
 		if err != nil {
 			_ = adminListener.Close()
-			return nil, fmt.Errorf("admin TLS config: %w", err)
+			return nil, "", fmt.Errorf("admin TLS config: %w", err)
 		}
 		serveListener = tls.NewListener(adminListener, tlsCfg)
 		tlsModeDescription = desc
@@ -296,7 +305,51 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		errCh <- adminSrv.Serve(serveListener)
 	}()
 
-	return adminSrv, nil
+	return adminSrv, tlsModeDescription, nil
+}
+
+// buildBannerInput projects the runtime config + derived identity into the
+// flat BannerInput struct. Keeping this projection separate from the
+// renderer means tests can pin the formatting independently from changes
+// to the config struct or the admin-listener wiring.
+//
+// Admin URL: empty AdminListen ⇒ banner shows "(disabled)". Admin auth:
+// AdminKey present ⇒ "Bearer key set"; empty + no AdminTLS ⇒ "disabled"
+// (the only auth path is Bearer at this listener — IEEE-094 admin runs on
+// its own port and does not require client certs). The key itself is NEVER
+// printed.
+func buildBannerInput(cfg *config.Config, tlsMode, serverSFDI, serverLFDI, adminTLSDesc string) BannerInput {
+	adminAuth := "disabled"
+	if cfg.AdminKey != "" {
+		adminAuth = "Bearer key set"
+	}
+
+	dataDir := "in-memory"
+	if cfg.DataDir != "" {
+		dataDir = cfg.DataDir
+	}
+	// SEP2_SUBSCRIPTION_STORE_PATH takes precedence over the DataDir-derived
+	// path for the subscription store (back-compat from IEEE-077). Surface
+	// it on the banner so the operator can see exactly which file the
+	// subscription store is persisting to.
+	if cfg.SubscriptionStorePath != "" {
+		dataDir = fmt.Sprintf("%s (subscriptions: %s)", dataDir, cfg.SubscriptionStorePath)
+	}
+
+	return BannerInput{
+		Addr:           cfg.Addr,
+		TLSMode:        tlsMode,
+		CertFile:       cfg.CertFile,
+		ServerSFDI:     serverSFDI,
+		ServerLFDI:     serverLFDI,
+		CAFile:         cfg.CAFile,
+		ExtraClientCAs: cfg.ExtraClientCAs,
+		AdminListen:    cfg.EffectiveAdminListen(),
+		AdminTLSDesc:   adminTLSDesc,
+		AdminAuthDesc:  adminAuth,
+		DataDirDesc:    dataDir,
+		MDNSEnabled:    cfg.EnableMDNS,
+	}
 }
 
 // buildAdminTLSConfig assembles the admin listener's *tls.Config from the

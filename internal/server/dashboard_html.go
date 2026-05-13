@@ -6,7 +6,7 @@ const dashboardHTML = `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>IEEE 2030.5 Server Admin</title>
-<script src="https://cdn.jsdelivr.net/npm/apache-echarts@5/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
   :root { --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #e2e8f0; --dim: #94a3b8; --accent: #3b82f6; --green: #22c55e; --red: #ef4444; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -171,9 +171,9 @@ const dashboardHTML = `<!DOCTYPE html>
 </div>
 
 <script>
-// Echarts loads from CDN. If the CDN is unreachable (offline / restricted
+// ECharts loads from CDN. If the CDN is unreachable (offline / restricted
 // network), keep the rest of the dashboard alive by guarding the chart
-// init — IEEE-096's FSA tree must render with or without the chart.
+// init — the FSA topology tree must render with or without the chart.
 var chart = null;
 try {
   if (typeof echarts !== 'undefined') {

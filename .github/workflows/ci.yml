@@ -68,9 +68,12 @@ jobs:
         run: make test-race
 
       - name: Test (coverage)
-        # Coverage gate is warn-not-fail at this stage. IEEE-107 (Phase 8)
-        # ratchets the gate to fail at the achieved threshold once the
-        # CSIP V1.2 matrix walk identifies the right coverage scope.
+        # Aggregate `./...` coverage profile for the upload artifact.
+        # The fail-gate operates on the CSIP-scoped profile in the
+        # `csip` job below (IEEE-107) — this step stays informational
+        # because the vendored internal/tls/gotls/ fork drags the
+        # aggregate well below policy and is not in the conformance
+        # scope.
         run: make test-cover
 
       - name: Upload coverage artifact
@@ -170,6 +173,28 @@ jobs:
           set -o pipefail
           make test-csip-race 2>&1 | tee ci-logs/csip-race.log
 
+      - name: CSIP scoped coverage profile (csip_test_hooks tag)
+        # IEEE-107 Deliverable 3 — runs the CSIP suite once more under
+        # the hooks-on axis with the scoped -coverpkg set so the gate
+        # operates on production code reachable from CSIP-mode
+        # execution. Achieved 79.1% at IEEE-106 merge; gate floors at
+        # 78% (1pp below for measurement noise).
+        if: matrix.hooks == 'on'
+        shell: bash
+        run: |
+          set -o pipefail
+          make test-csip-cover 2>&1 | tee ci-logs/csip-cover.log
+
+      - name: CSIP coverage gate (fail-at-threshold)
+        # IEEE-107 — flips the gate from warn-not-fail (IEEE-105) to
+        # fail at the achieved threshold. Unit-tested by
+        # scripts/coverage_gate_test.go.
+        if: matrix.hooks == 'on'
+        shell: bash
+        run: |
+          set -o pipefail
+          make coverage-gate 2>&1 | tee ci-logs/csip-coverage-gate.log
+
       - name: Upload CSIP archive-grade logs
         if: always()
         # 90-day retention = GitHub Actions max. Phase 9 IEEE-109 indexes
@@ -179,5 +204,17 @@ jobs:
         with:
           name: csip-logs-${{ matrix.hooks }}-${{ github.sha }}
           path: ci-logs/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Upload CSIP scoped coverage profile
+        # IEEE-107 — separate artifact so Phase 9 IEEE-109 can pull the
+        # scoped profile directly without parsing ci-logs/. Hooks-on
+        # axis only (the axis that runs `make test-csip-cover`).
+        if: matrix.hooks == 'on' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: csip-coverage-${{ github.sha }}
+          path: coverage-csip.out
           if-no-files-found: warn
           retention-days: 90

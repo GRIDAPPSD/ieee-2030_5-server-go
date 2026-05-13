@@ -28,7 +28,7 @@ func setupAdminRouter(t *testing.T) (*server.Stores, http.Handler) {
 	stores := &server.Stores{
 		EndDevices:  memory.NewEndDeviceStore(),
 		FSAs:        memory.NewScopedStore[sep2.FunctionSetAssignments](),
-		DERPrograms: memory.NewScopedStore[sep2.DERProgram](),
+		DERPrograms: memory.NewDERProgramStore(),
 		AdminFSAs:   memory.NewAdminFSAStore(),
 	}
 	tickets := auth.NewTicketStore(5 * time.Minute)

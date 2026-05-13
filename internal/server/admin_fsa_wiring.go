@@ -69,6 +69,6 @@ func newAdminFSAHandler(stores *Stores) *handler.AdminFSAHandler {
 		AdminFSAs:   stores.AdminFSAs,
 		DeviceFSAs:  stores.FSAs,
 		EndDevices:  stores.EndDevices,
-		DERPrograms: &derProgramHrefValidator{programs: stores.DERPrograms},
+		DERPrograms: &derProgramHrefValidator{programs: stores.DERPrograms.ScopedStore},
 	}
 }

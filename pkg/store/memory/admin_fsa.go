@@ -27,6 +27,13 @@ type AdminFSAStore struct {
 	keys         []string // sorted for deterministic list ordering
 	programLinks map[string][]string // fsaID -> sorted program hrefs
 	deviceLinks  map[string][]string // fsaID -> sorted device ids
+
+	// IEEE-097: durable persistence. Empty persistPath = pure in-memory
+	// (the historical AdminFSAStore behavior). When set, every mutation
+	// flushes a snapshot under persistMu. Held separately from mu so the
+	// disk syscall does not block readers/writers on the in-memory state.
+	persistMu   sync.Mutex
+	persistPath string
 }
 
 // NewAdminFSAStore returns an empty store.
@@ -41,15 +48,17 @@ func NewAdminFSAStore() *AdminFSAStore {
 // Create persists an admin FSA. Returns ErrAlreadyExists if id is taken.
 func (s *AdminFSAStore) Create(_ context.Context, id string, fsa sep2.FunctionSetAssignments) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if _, exists := s.fsas[id]; exists {
+		s.mu.Unlock()
 		return store.ErrAlreadyExists
 	}
 	s.fsas[id] = fsa.Copy()
 	idx, _ := slices.BinarySearch(s.keys, id)
 	s.keys = slices.Insert(s.keys, idx, id)
-	return nil
+	s.mu.Unlock()
+	// IEEE-097: persist outside the lock so disk I/O does not block
+	// concurrent readers on s.mu.
+	return s.persist()
 }
 
 // Get returns an independent copy of the FSA. ErrNotFound if absent.
@@ -81,38 +90,39 @@ func (s *AdminFSAStore) List(_ context.Context) []sep2.FunctionSetAssignments {
 // first; the store does NOT silently cascade.
 func (s *AdminFSAStore) Delete(_ context.Context, id string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if _, exists := s.fsas[id]; !exists {
+		s.mu.Unlock()
 		return store.ErrNotFound
 	}
 	if len(s.programLinks[id]) > 0 || len(s.deviceLinks[id]) > 0 {
+		s.mu.Unlock()
 		return ErrAdminFSAInUse
 	}
 	delete(s.fsas, id)
 	if idx, found := slices.BinarySearch(s.keys, id); found {
 		s.keys = slices.Delete(s.keys, idx, idx+1)
 	}
-	return nil
+	s.mu.Unlock()
+	return s.persist()
 }
 
 // AttachProgram links a DERProgram href to an FSA. ErrNotFound if FSA is
 // absent; ErrAlreadyExists if the program is already attached.
 func (s *AdminFSAStore) AttachProgram(_ context.Context, fsaID, programHref string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if _, ok := s.fsas[fsaID]; !ok {
+		s.mu.Unlock()
 		return store.ErrNotFound
 	}
 	hrefs := s.programLinks[fsaID]
-	if idx, found := slices.BinarySearch(hrefs, programHref); found {
-		_ = idx
+	idx, found := slices.BinarySearch(hrefs, programHref)
+	if found {
+		s.mu.Unlock()
 		return store.ErrAlreadyExists
-	} else {
-		s.programLinks[fsaID] = slices.Insert(hrefs, idx, programHref)
 	}
-	return nil
+	s.programLinks[fsaID] = slices.Insert(hrefs, idx, programHref)
+	s.mu.Unlock()
+	return s.persist()
 }
 
 // DetachProgram unlinks a DERProgram href from an FSA. ErrNotFound if the
@@ -120,18 +130,19 @@ func (s *AdminFSAStore) AttachProgram(_ context.Context, fsaID, programHref stri
 // to distinguish (operator UX: "the link is gone either way").
 func (s *AdminFSAStore) DetachProgram(_ context.Context, fsaID, programHref string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if _, ok := s.fsas[fsaID]; !ok {
+		s.mu.Unlock()
 		return store.ErrNotFound
 	}
 	hrefs := s.programLinks[fsaID]
 	idx, found := slices.BinarySearch(hrefs, programHref)
 	if !found {
+		s.mu.Unlock()
 		return store.ErrNotFound
 	}
 	s.programLinks[fsaID] = slices.Delete(hrefs, idx, idx+1)
-	return nil
+	s.mu.Unlock()
+	return s.persist()
 }
 
 // Programs returns sorted program hrefs attached to the FSA, or empty slice.
@@ -148,35 +159,37 @@ func (s *AdminFSAStore) Programs(_ context.Context, fsaID string) []string {
 // ErrAlreadyExists if the device is already assigned.
 func (s *AdminFSAStore) AssignDevice(_ context.Context, fsaID, deviceID string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if _, ok := s.fsas[fsaID]; !ok {
+		s.mu.Unlock()
 		return store.ErrNotFound
 	}
 	devs := s.deviceLinks[fsaID]
 	idx, found := slices.BinarySearch(devs, deviceID)
 	if found {
+		s.mu.Unlock()
 		return store.ErrAlreadyExists
 	}
 	s.deviceLinks[fsaID] = slices.Insert(devs, idx, deviceID)
-	return nil
+	s.mu.Unlock()
+	return s.persist()
 }
 
 // UnassignDevice unlinks a device from an FSA. ErrNotFound if no such link.
 func (s *AdminFSAStore) UnassignDevice(_ context.Context, fsaID, deviceID string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if _, ok := s.fsas[fsaID]; !ok {
+		s.mu.Unlock()
 		return store.ErrNotFound
 	}
 	devs := s.deviceLinks[fsaID]
 	idx, found := slices.BinarySearch(devs, deviceID)
 	if !found {
+		s.mu.Unlock()
 		return store.ErrNotFound
 	}
 	s.deviceLinks[fsaID] = slices.Delete(devs, idx, idx+1)
-	return nil
+	s.mu.Unlock()
+	return s.persist()
 }
 
 // Devices returns sorted device ids assigned to the FSA, or empty slice.

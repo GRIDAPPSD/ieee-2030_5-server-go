@@ -1,6 +1,6 @@
 .PHONY: build build-all test test-cover test-race test-verbose test-e2e \
        test-csip-server test-csip-client \
-       test-csip test-csip-hooks test-csip-race \
+       test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
        lint vet clean run run-ccm run-enphase certs serve help \
        verify-run-inverter-url
 
@@ -193,6 +193,27 @@ test-csip-hooks:          ## Run CSIP suite + internal with csip_test_hooks buil
 test-csip-race:           ## Race detector on the CSIP suite with csip_test_hooks tag
 	go test -race -tags csip_test_hooks ./test/csip/...
 
+# IEEE-107 — CSIP-scoped coverage profile + gate.
+#
+# Phase 8 Deliverable 3: the coverage gate operates on production code
+# reachable from CSIP-mode execution, not on raw ./... (which includes
+# the vendored internal/tls/gotls/ fork and would always drag the
+# aggregate below policy). The -coverpkg list below pins the in-scope
+# packages; the gate floor is enforced by scripts/coverage-gate.sh.
+#
+# Achieved threshold at IEEE-106 merge: 79.1% scoped. Gate floors at
+# 78% (1pp below for measurement noise) per Phase 8 doc.
+CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/encoding/...,./internal/handler/...,./internal/inverter/...,./internal/paging/...,./internal/server/...,./internal/subscription/...,./internal/tls,./internal/tls/ccm
+CSIP_COVER_THRESHOLD ?= 78
+
+test-csip-cover:          ## Run CSIP suite with scoped coverage profile (writes coverage-csip.out)
+	go test -coverprofile=coverage-csip.out -coverpkg='$(CSIP_COVERPKG)' \
+	       -tags csip_test_hooks ./test/csip/... ./internal/...
+	@echo "Coverage profile: coverage-csip.out"
+
+coverage-gate:            ## Enforce CSIP coverage floor on coverage-csip.out
+	./scripts/coverage-gate.sh coverage-csip.out $(CSIP_COVER_THRESHOLD)
+
 # ─── Code Quality ────────────────────────────────────────────────
 
 lint:                     ## Run golangci-lint
@@ -204,7 +225,7 @@ vet:                      ## Run go vet
 # ─── Cleanup ─────────────────────────────────────────────────────
 
 clean:                    ## Remove build artifacts and generated certs
-	rm -rf bin/ coverage.out coverage.html $(CERT_DIR)/ sep2server
+	rm -rf bin/ coverage.out coverage.html coverage-csip.out $(CERT_DIR)/ sep2server
 
 # ─── Help ────────────────────────────────────────────────────────
 

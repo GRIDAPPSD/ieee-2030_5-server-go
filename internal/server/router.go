@@ -136,6 +136,14 @@ func registerEndDeviceRoutes(mux *http.ServeMux, stores *Stores, notifier handle
 	mux.HandleFunc("PUT /edev/{id}", handler.HandleUpdateEndDevice(stores.EndDevices))
 	mux.HandleFunc("DELETE /edev/{id}", handler.HandleDeleteEndDevice(stores.EndDevices, notifier))
 
+	// IEEE-101: Registration GET handler at /edev/{id}/rg. The Registration
+	// resource is created by the admin POST /api/devices flow (IEEE-095) and
+	// read here by the device over SEP2. Skip wiring when the store is nil
+	// (boot-fixture builds that don't exercise the registration path).
+	if stores.Registrations != nil {
+		mux.HandleFunc("GET /edev/{id}/rg", handler.HandleGetRegistration(stores.EndDevices, stores.Registrations))
+	}
+
 	// FSA endpoints
 	if stores.FSAs != nil {
 		mux.HandleFunc("GET /edev/{id}/fsa", scopedListHandler[sep2.FunctionSetAssignments, sep2.FunctionSetAssignmentsList](

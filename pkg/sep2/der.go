@@ -3,20 +3,36 @@ package sep2
 import "encoding/xml"
 
 // DERControlBase contains all DER operating mode parameters.
-// Spec reference: section 10.10
+// Spec reference: IEEE 2030.5 §10.10.
+//
+// Curve-reference fields (OpModVoltVar, OpModVoltWatt, OpModFreqWatt,
+// OpModLVRT*, OpModHVRT*, OpModLFRT*, OpModHFRT*) are typed as *int32
+// to match the established project convention introduced with
+// OpModVoltVar — the value names the referenced DERCurve resource by
+// the int32 hash/ID the global /dc store keys on. Per IEEE 2030.5 the
+// schema element is a DERCurveLink (Link to a DERCurve); the project
+// trades wire fidelity for an integer ref keyed off the same /dc store.
 type DERControlBase struct {
-	OpModConnect        *bool             `xml:"opModConnect,omitempty"`
-	OpModEnergize       *bool             `xml:"opModEnergize,omitempty"`
-	OpModFixedPFAbsorbW *FixedPowerFactor `xml:"opModFixedPFAbsorbW,omitempty"`
-	OpModFixedPFInjectW *FixedPowerFactor `xml:"opModFixedPFInjectW,omitempty"`
-	OpModFixedW         *ActivePower      `xml:"opModFixedW,omitempty"`
-	OpModFixedVar       *ReactivePower    `xml:"opModFixedVar,omitempty"`
-	OpModMaxLimW        *ActivePower      `xml:"opModMaxLimW,omitempty"`
-	OpModTargetW        *ActivePower      `xml:"opModTargetW,omitempty"`
-	OpModTargetVar      *ReactivePower    `xml:"opModTargetVar,omitempty"`
-	OpModVoltVar        *int32            `xml:"opModVoltVar,omitempty"`
-	OpModFreqDroop      *uint16           `xml:"opModFreqDroop,omitempty"`
-	RampTms             *uint16           `xml:"rampTms,omitempty"`
+	OpModConnect                *bool             `xml:"opModConnect,omitempty"`
+	OpModEnergize               *bool             `xml:"opModEnergize,omitempty"`
+	OpModFixedPFAbsorbW         *FixedPowerFactor `xml:"opModFixedPFAbsorbW,omitempty"`
+	OpModFixedPFInjectW         *FixedPowerFactor `xml:"opModFixedPFInjectW,omitempty"`
+	OpModFixedW                 *ActivePower      `xml:"opModFixedW,omitempty"`
+	OpModFixedVar               *ReactivePower    `xml:"opModFixedVar,omitempty"`
+	OpModFreqDroop              *uint16           `xml:"opModFreqDroop,omitempty"`
+	OpModFreqWatt               *int32            `xml:"opModFreqWatt,omitempty"`
+	OpModHFRTMustTrip           *int32            `xml:"opModHFRTMustTrip,omitempty"`
+	OpModHVRTMomentaryCessation *int32            `xml:"opModHVRTMomentaryCessation,omitempty"`
+	OpModHVRTMustTrip           *int32            `xml:"opModHVRTMustTrip,omitempty"`
+	OpModLFRTMustTrip           *int32            `xml:"opModLFRTMustTrip,omitempty"`
+	OpModLVRTMomentaryCessation *int32            `xml:"opModLVRTMomentaryCessation,omitempty"`
+	OpModLVRTMustTrip           *int32            `xml:"opModLVRTMustTrip,omitempty"`
+	OpModMaxLimW                *ActivePower      `xml:"opModMaxLimW,omitempty"`
+	OpModTargetW                *ActivePower      `xml:"opModTargetW,omitempty"`
+	OpModTargetVar              *ReactivePower    `xml:"opModTargetVar,omitempty"`
+	OpModVoltVar                *int32            `xml:"opModVoltVar,omitempty"`
+	OpModVoltWatt               *int32            `xml:"opModVoltWatt,omitempty"`
+	RampTms                     *uint16           `xml:"rampTms,omitempty"`
 }
 
 // Copy returns an independent copy.
@@ -28,11 +44,19 @@ func (d DERControlBase) Copy() DERControlBase {
 	if d.OpModFixedPFInjectW != nil { v := *d.OpModFixedPFInjectW; c.OpModFixedPFInjectW = &v }
 	if d.OpModFixedW != nil { v := *d.OpModFixedW; c.OpModFixedW = &v }
 	if d.OpModFixedVar != nil { v := *d.OpModFixedVar; c.OpModFixedVar = &v }
+	if d.OpModFreqDroop != nil { v := *d.OpModFreqDroop; c.OpModFreqDroop = &v }
+	if d.OpModFreqWatt != nil { v := *d.OpModFreqWatt; c.OpModFreqWatt = &v }
+	if d.OpModHFRTMustTrip != nil { v := *d.OpModHFRTMustTrip; c.OpModHFRTMustTrip = &v }
+	if d.OpModHVRTMomentaryCessation != nil { v := *d.OpModHVRTMomentaryCessation; c.OpModHVRTMomentaryCessation = &v }
+	if d.OpModHVRTMustTrip != nil { v := *d.OpModHVRTMustTrip; c.OpModHVRTMustTrip = &v }
+	if d.OpModLFRTMustTrip != nil { v := *d.OpModLFRTMustTrip; c.OpModLFRTMustTrip = &v }
+	if d.OpModLVRTMomentaryCessation != nil { v := *d.OpModLVRTMomentaryCessation; c.OpModLVRTMomentaryCessation = &v }
+	if d.OpModLVRTMustTrip != nil { v := *d.OpModLVRTMustTrip; c.OpModLVRTMustTrip = &v }
 	if d.OpModMaxLimW != nil { v := *d.OpModMaxLimW; c.OpModMaxLimW = &v }
 	if d.OpModTargetW != nil { v := *d.OpModTargetW; c.OpModTargetW = &v }
 	if d.OpModTargetVar != nil { v := *d.OpModTargetVar; c.OpModTargetVar = &v }
 	if d.OpModVoltVar != nil { v := *d.OpModVoltVar; c.OpModVoltVar = &v }
-	if d.OpModFreqDroop != nil { v := *d.OpModFreqDroop; c.OpModFreqDroop = &v }
+	if d.OpModVoltWatt != nil { v := *d.OpModVoltWatt; c.OpModVoltWatt = &v }
 	if d.RampTms != nil { v := *d.RampTms; c.RampTms = &v }
 	return c
 }
@@ -64,17 +88,27 @@ type DERControlList struct {
 }
 
 // DefaultDERControl is the default operating parameters when no active control.
+// Spec reference: IEEE 2030.5 §10.11.
+//
+// SetGradW and SetSoftGradW are device-level default ramp rates
+// (hundredths of percent per second) per IEEE 2030.5 §10.11. They live
+// on DefaultDERControl directly rather than DERControlBase because the
+// spec scopes them as device defaults, not per-event overrides.
 type DefaultDERControl struct {
 	XMLName        xml.Name        `xml:"urn:ieee:std:2030.5:ns DefaultDERControl"`
 	SubscribableResource
 	MRID           string          `xml:"mRID,omitempty"`
 	DERControlBase *DERControlBase `xml:"DERControlBase,omitempty"`
+	SetGradW       *uint16         `xml:"setGradW,omitempty"`
+	SetSoftGradW   *uint16         `xml:"setSoftGradW,omitempty"`
 }
 
 // Copy returns an independent copy.
 func (d DefaultDERControl) Copy() DefaultDERControl {
 	c := d
 	if d.DERControlBase != nil { cb := d.DERControlBase.Copy(); c.DERControlBase = &cb }
+	if d.SetGradW != nil { v := *d.SetGradW; c.SetGradW = &v }
+	if d.SetSoftGradW != nil { v := *d.SetSoftGradW; c.SetSoftGradW = &v }
 	return c
 }
 

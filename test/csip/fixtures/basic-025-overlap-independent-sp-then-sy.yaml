@@ -1,0 +1,119 @@
+# IEEE-085 / BASIC-025 fixture — CSIP V1.2 §8.25.
+#
+# Topology: 2 DERPrograms (SP primacy=0, SY primacy=1), each with one
+# DefaultDERControl and one DERControl. The two DERControls drive
+# DIFFERENT opMod* fields (SP→opModFixedW, SY→opModMaxLimW —
+# "independent") and occupy OVERLAPPING intervals where SY starts
+# FIRST and SP starts while SY is still active. Timing mirrors
+# BASIC-022 (the reverse of BASIC-024); the only delta is the
+# opMod-family split.
+#
+# Intervals (SY starts first, SP starts inside SY's window):
+#   SY DERC "a": [1700000060, 1700000180)  — 120s, primacy 1, opModMaxLimW
+#   SP DERC "a": [1700000100, 1700000220)  — 120s, primacy 0, opModFixedW
+#   Overlap region: [1700000100, 1700000180)  — 80s
+#
+# Server-side test asserts both events render with the expected MRIDs,
+# Intervals, and per-family opMod* values. Both apply across the
+# overlap (independent — different fields, no §10.10 conflict).
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    registration_link: "/edev/0/rg"
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 2
+
+fsas:
+  - end_device_id: "0"
+    id: "sp"
+    mrid: "BASIC-025-FSA-SP"
+    description: "BASIC-025 Service Point FSA"
+    der_program_list_link:
+      href: "/edev/0/fsa/sp/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "sy"
+    mrid: "BASIC-025-FSA-SY"
+    description: "BASIC-025 Smart Inverter Yard FSA"
+    der_program_list_link:
+      href: "/edev/0/fsa/sy/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "sp"
+    id: "sp"
+    mrid: "BASIC-025-DERP-SP"
+    description: "BASIC-025 Service Point DERProgram"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/sp/derp/sp/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/sp/derp/sp/derc"
+      all: 1
+  - end_device_id: "0"
+    fsa_id: "sy"
+    id: "sy"
+    mrid: "BASIC-025-DERP-SY"
+    description: "BASIC-025 Smart Inverter Yard DERProgram"
+    primacy: 1
+    default_der_control_link: "/edev/0/fsa/sy/derp/sy/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/sy/derp/sy/derc"
+      all: 1
+
+default_der_controls:
+  - end_device_id: "0"
+    fsa_id: "sp"
+    der_program_id: "sp"
+    mrid: "BASIC-025-DDERC-SP"
+    der_control_base:
+      op_mod_fixed_w:
+        multiplier: 0
+        value: 4000
+  - end_device_id: "0"
+    fsa_id: "sy"
+    der_program_id: "sy"
+    mrid: "BASIC-025-DDERC-SY"
+    der_control_base:
+      op_mod_max_lim_w:
+        multiplier: 0
+        value: 6000
+
+der_controls:
+  - end_device_id: "0"
+    fsa_id: "sp"
+    der_program_id: "sp"
+    id: "a"
+    mrid: "BASIC-025-DERC-SP-A"
+    description: "BASIC-025 SP scheduled, starts inside SY window, opModFixedW"
+    event_status:
+      current_status: 0
+      date_time: 1700000000
+    interval:
+      start: 1700000100
+      duration: 120
+    der_control_base:
+      op_mod_fixed_w:
+        multiplier: 0
+        value: 4500
+  - end_device_id: "0"
+    fsa_id: "sy"
+    der_program_id: "sy"
+    id: "a"
+    mrid: "BASIC-025-DERC-SY-A"
+    description: "BASIC-025 SY scheduled, starts first, opModMaxLimW"
+    event_status:
+      current_status: 0
+      date_time: 1700000000
+    interval:
+      start: 1700000060
+      duration: 120
+    der_control_base:
+      op_mod_max_lim_w:
+        multiplier: 0
+        value: 5500

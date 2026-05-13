@@ -153,13 +153,47 @@ type DefaultDERControlSpec struct {
 // DERControlSpec describes one DERControl scoped under
 // (EndDevice, FSA, DERProgram). Same composite scope key as
 // DefaultDERControl; ID is the per-event key.
+//
+// IEEE-084 (BASIC-016..020 non-overlap event-prioritization) extended
+// this with Interval, EventStatus, and Description so fixtures can
+// express the per-event timing windows the V1.2 §8.16-§8.20 procedures
+// assert. MRID was previously declared but never copied to the
+// rendered DERControl — IEEE-084 plumbs that through buildDERControl
+// too (latent bug fix in scope).
 type DERControlSpec struct {
 	EndDeviceID    string              `yaml:"end_device_id"`
 	FSAID          string              `yaml:"fsa_id"`
 	DERProgramID   string              `yaml:"der_program_id"`
 	ID             string              `yaml:"id"`
 	MRID           string              `yaml:"mrid,omitempty"`
+	Description    string              `yaml:"description,omitempty"`
+	EventStatus    *EventStatusSpec    `yaml:"event_status,omitempty"`
+	Interval       *IntervalSpec       `yaml:"interval,omitempty"`
 	DERControlBase *DERControlBaseSpec `yaml:"der_control_base,omitempty"`
+}
+
+// EventStatusSpec is the YAML shape of sep2.EventStatus. The
+// CSIP V1.2 event-prioritization procedures (BASIC-016..026) drive
+// CurrentStatus through Scheduled (0), Active (1), Cancelled (2),
+// Superseded (4), Complete (5). DateTime is the timestamp the status
+// transition occurred — fixtures set this to the same epoch the
+// containing Interval references so the wire-rendered event looks
+// internally consistent.
+type EventStatusSpec struct {
+	CurrentStatus         uint8  `yaml:"current_status"`
+	DateTime              int64  `yaml:"date_time"`
+	PotentiallySuperseded bool   `yaml:"potentially_superseded,omitempty"`
+	Reason                string `yaml:"reason,omitempty"`
+}
+
+// IntervalSpec is the YAML shape of sep2.DateTimeInterval. Start is
+// the epoch seconds the event becomes Active; Duration is its length
+// in seconds. The BASIC-016..020 non-overlap fixtures place events on
+// disjoint [Start, Start+Duration) windows; IEEE-085 (overlapping)
+// will reuse the same spec with intersecting windows.
+type IntervalSpec struct {
+	Start    int64  `yaml:"start"`
+	Duration uint32 `yaml:"duration"`
 }
 
 // DERCurveSpec describes one DERCurve in the global curve store.
@@ -437,6 +471,21 @@ func buildDERControl(s DERControlSpec) sep2.DERControl {
 	dc := sep2.DERControl{}
 	dc.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/derc/%s",
 		s.EndDeviceID, s.FSAID, s.DERProgramID, s.ID)
+	dc.MRID = s.MRID
+	dc.Description = s.Description
+	if s.EventStatus != nil {
+		es := sep2.EventStatus{
+			CurrentStatus:         s.EventStatus.CurrentStatus,
+			DateTime:              s.EventStatus.DateTime,
+			PotentiallySuperseded: s.EventStatus.PotentiallySuperseded,
+			Reason:                s.EventStatus.Reason,
+		}
+		dc.EventStatus = &es
+	}
+	if s.Interval != nil {
+		iv := sep2.DateTimeInterval{Start: s.Interval.Start, Duration: s.Interval.Duration}
+		dc.Interval = &iv
+	}
 	if s.DERControlBase != nil {
 		base := buildDERControlBase(*s.DERControlBase)
 		dc.DERControlBase = &base

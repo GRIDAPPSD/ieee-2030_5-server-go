@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/paging"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
@@ -42,6 +43,87 @@ func BuildSubscriptionList(href string, result store.ListResult[sep2.Subscriptio
 			PollRate: pollRate,
 		},
 		Subscription: result.Items,
+	}
+}
+
+// HandleListSubscriptionsByDevice returns a handler for GET /edev/{id}/sub
+// that scopes the response to subscriptions owned by EndDevice {id}.
+//
+// Per IEEE 2030.5 §10.6.3 and CSIP V1.2 §10.1 the subscription list under
+// an EndDevice contains only that EndDevice's subscriptions. IEEE-099
+// fixed an earlier wiring that piped the route through the underlying
+// union Store, which leaked subscriptions across EndDevices and forced
+// AGG-001 to a presence-only assertion as a workaround.
+//
+// Paging (s/l/a) follows the same spec-§4.6.2 contract as the generic
+// list handler. The store returns the full per-EndDevice slice; we
+// page it here so callers don't pay for filtering at the storage layer.
+func HandleListSubscriptionsByDevice(subStore *memory.SubscriptionStore, pollRate uint32) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			encoding.MethodNotAllowed(w, "GET, HEAD")
+			return
+		}
+
+		edevID := r.PathValue("id")
+		records, err := subStore.ListByDeviceWithIDs(r.Context(), edevID)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
+		params := paging.ParseQuery(r.URL.Query())
+		result := pageSubscriptionRecords(records, params.ToListOptions())
+
+		list := BuildSubscriptionList(r.URL.Path, result, pollRate)
+		encoding.WriteXML(w, http.StatusOK, list)
+	}
+}
+
+// pageSubscriptionRecords applies spec §4.6.2 paging (s/l/a) to a
+// per-EndDevice slice of subscription records. The All field carries
+// the per-EndDevice total so clients can compute the next-page offset
+// without seeing the cross-EndDevice union.
+//
+// Records arrive in deviceIndex insertion order (Create time); paging
+// keys off the storage ID so a's "items strictly after key" semantics
+// stay deterministic when the index order matches ID order.
+func pageSubscriptionRecords(records []memory.SubscriptionRecord, opts store.ListOptions) store.ListResult[sep2.Subscription] {
+	all := uint32(len(records))
+
+	if opts.After != "" {
+		idx := len(records)
+		for i, rec := range records {
+			if rec.ID > opts.After {
+				idx = i
+				break
+			}
+		}
+		records = records[idx:]
+	}
+
+	if opts.Start >= uint32(len(records)) {
+		return store.ListResult[sep2.Subscription]{All: all, Results: 0, Items: nil}
+	}
+	records = records[opts.Start:]
+
+	limit := opts.Limit
+	if limit == 0 {
+		return store.ListResult[sep2.Subscription]{All: all, Results: 0, Items: nil}
+	}
+	if limit > uint32(len(records)) {
+		limit = uint32(len(records))
+	}
+	records = records[:limit]
+
+	items := make([]sep2.Subscription, 0, len(records))
+	for _, rec := range records {
+		items = append(items, rec.Subscription)
+	}
+	return store.ListResult[sep2.Subscription]{
+		All:     all,
+		Results: uint32(len(items)),
+		Items:   items,
 	}
 }
 

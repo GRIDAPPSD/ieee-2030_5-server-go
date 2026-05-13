@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
@@ -209,21 +210,17 @@ func postAggregatorSubscription(t *testing.T, ctx context.Context, client *http.
 }
 
 // assertAggregatorSubscriptionsPresent GETs /edev/{edevID}/sub and
-// asserts each href in `wantResources` is present in the returned list.
-// Used by AGG-001 after the parallel per-inverter subscription burst
-// joins, to confirm every subscription that should belong to this
-// inverter is still findable.
+// asserts strict per-inverter membership: exactly the supplied
+// wantResources are present, with no extras and no foreign-edev
+// leakage. Used by AGG-001 after the parallel per-inverter subscription
+// burst joins.
 //
-// Scope-isolation gap: today's SubscriptionStore returns the union of
-// all POSTed subscriptions for every /edev/{id}/sub GET (verified
-// against AGG-001 reality: 24 entries returned for each of the 4
-// inverters after a 24-POST burst). The CSIP V1.2 §10.1 procedure
-// describes per-inverter subscription scope, so strict per-inverter
-// counting is the eventual conformance gate. Per Pike-rule discipline,
-// AGG-090 does not change `internal/handler` to enforce scoping; it
-// asserts the necessary-condition (presence) only, and the follow-up
-// "subscription per-EndDevice scoping" ticket lands separately. See
-// IEEE-090 PR description.
+// Pre-IEEE-099, the SubscriptionStore returned the union of all POSTed
+// subscriptions for every /edev/{id}/sub GET, and this helper accepted
+// the union as long as each wanted href was present (24 entries for
+// each of the 4 inverters after a 24-POST burst). IEEE-099 scoped
+// GET /edev/{id}/sub to the EndDevice {id}, so this helper now enforces
+// the strict membership the V1.2 §10.1 procedure implies.
 func assertAggregatorSubscriptionsPresent(t *testing.T, ctx context.Context, client *http.Client, baseURL, edevID string, wantResources []string) {
 	t.Helper()
 	listURL := fmt.Sprintf("%s/edev/%s/sub?l=255", baseURL, edevID)
@@ -247,17 +244,46 @@ func assertAggregatorSubscriptionsPresent(t *testing.T, ctx context.Context, cli
 	if err := xml.Unmarshal(raw, &list); err != nil {
 		t.Fatalf("count_gate unmarshal %s: %v", listURL, err)
 	}
+
+	// IEEE-099: strict per-inverter scoping. Every entry the server
+	// returns must belong to this inverter (Href prefix /edev/{edevID}/sub/)
+	// and must be one of this inverter's aggregator subscriptions
+	// (NotificationURI matches aggregatorNotificationURI). Anything
+	// else is a cross-EndDevice leak.
+	wantHrefPrefix := fmt.Sprintf("/edev/%s/sub/", edevID)
 	seen := make(map[string]bool, len(list.Subscription))
 	for _, s := range list.Subscription {
-		if s.NotificationURI == aggregatorNotificationURI {
-			seen[s.SubscribedResource] = true
+		if s.NotificationURI != aggregatorNotificationURI {
+			t.Errorf("inverter=%q /sub list contains non-aggregator entry: SubscribedResource=%q NotificationURI=%q",
+				edevID, s.SubscribedResource, s.NotificationURI)
+			continue
 		}
+		if !strings.HasPrefix(s.Href, wantHrefPrefix) {
+			t.Errorf("inverter=%q /sub list leaked foreign entry: Href=%q (want prefix %q)",
+				edevID, s.Href, wantHrefPrefix)
+			continue
+		}
+		if seen[s.SubscribedResource] {
+			t.Errorf("inverter=%q /sub list has duplicate SubscribedResource=%q", edevID, s.SubscribedResource)
+		}
+		seen[s.SubscribedResource] = true
 	}
+
 	for _, want := range wantResources {
 		if !seen[want] {
 			t.Errorf("inverter=%q /sub list missing SubscribedResource=%q (had %d entries)",
 				edevID, want, len(list.Subscription))
 		}
+	}
+	// Exact count: this inverter's list must contain exactly the wanted
+	// 6 aggregator subscriptions — no extras, no foreign-edev bleed.
+	if list.All != uint32(len(wantResources)) {
+		t.Errorf("inverter=%q SubscriptionList.All = %d, want %d (per-EndDevice scope)",
+			edevID, list.All, len(wantResources))
+	}
+	if len(list.Subscription) != len(wantResources) {
+		t.Errorf("inverter=%q len(SubscriptionList.Subscription) = %d, want %d (per-EndDevice scope)",
+			edevID, len(list.Subscription), len(wantResources))
 	}
 }
 

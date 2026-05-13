@@ -1,11 +1,20 @@
 # IEEE-105 — CI workflow scaffold (Plan 2 Phase 7 ticket 1 of 2).
 # IEEE-106 — CSIP harness integration + archive-grade logs (ticket 2 of 2).
+# IEEE-109 — workflow_dispatch entry point for re-attestation runs.
 #
 # Standard Go signal: build, vet, lint, test, test-race, coverage (`ci` job).
 # CSIP V1.2 harness: build-tag matrix (csip_test_hooks off/on) plus race
 # detector on the hooks-on suite. Per-job stdout/stderr is teed to a file
 # and uploaded as a workflow artifact with 90-day retention so Phase 9
 # IEEE-109 can index the archive-grade evidence.
+#
+# Re-attestation runs (IEEE-109): `gh workflow run ci.yml --ref <SHA>`.
+# `workflow_dispatch` lets us pin a CI run to a specific main SHA for the
+# conformance package without pushing a fresh commit. After the run
+# completes, `scripts/archive-ci-logs.sh <run-id>` mirrors the artifacts
+# into the Knowledge workspace at projects/ieee-2030_5-go/artifacts/
+# outputs/ci-archive/.
+#
 # Self-hosted runner per .claude/rules/devops.md.
 # Coverage gate is warn-not-fail at this stage; IEEE-107 (Phase 8) ratchets
 # the gate to fail at the achieved threshold.
@@ -16,6 +25,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual run (e.g. "IEEE-108 re-attestation against SHA xyz")'
+        required: false
+        default: 'manual'
 
 # Cancel in-flight runs for the same ref when a new push arrives.
 concurrency:

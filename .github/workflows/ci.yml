@@ -1,10 +1,14 @@
 # IEEE-105 — CI workflow scaffold (Plan 2 Phase 7 ticket 1 of 2).
+# IEEE-106 — CSIP harness integration + archive-grade logs (ticket 2 of 2).
 #
-# Standard Go signal: build, vet, lint, test, test-race, coverage.
+# Standard Go signal: build, vet, lint, test, test-race, coverage (`ci` job).
+# CSIP V1.2 harness: build-tag matrix (csip_test_hooks off/on) plus race
+# detector on the hooks-on suite. Per-job stdout/stderr is teed to a file
+# and uploaded as a workflow artifact with 90-day retention so Phase 9
+# IEEE-109 can index the archive-grade evidence.
 # Self-hosted runner per .claude/rules/devops.md.
 # Coverage gate is warn-not-fail at this stage; IEEE-107 (Phase 8) ratchets
-# the gate to fail at the achieved threshold. CSIP-harness integration +
-# archive-grade logs land in IEEE-106 (Phase 7 ticket 2 of 2).
+# the gate to fail at the achieved threshold.
 name: ci
 
 on:
@@ -79,3 +83,101 @@ jobs:
             coverage.html
           if-no-files-found: warn
           retention-days: 14
+
+  # IEEE-106 — CSIP V1.2 harness with the csip_test_hooks build-tag matrix.
+  #
+  # Two parallel jobs: tag `off` exercises the production code path, tag
+  # `on` exercises the IEEE-024/025 mutation + time-advance hooks. Both
+  # must pass for the workflow to be green.
+  #
+  # The harness covers `./test/csip/...` and `./internal/...` so production
+  # paths reached by CSIP tests participate in the captured signal. After
+  # the matrix call, the hooks-on job runs the race detector against the
+  # CSIP suite — catches subscription-fan-out / aggregator races the unit
+  # race pass might not surface.
+  #
+  # Archive-grade logs: each `go test` invocation tees stdout+stderr to a
+  # per-step `.log` file via the Makefile-equivalent inline command, and
+  # the per-job artifact ships at 90-day retention (GitHub max). Phase 9
+  # IEEE-109 indexes these into the Knowledge repo and mirrors the bulk
+  # tarball to the durable store it owns.
+  csip:
+    name: csip harness (hooks=${{ matrix.hooks }})
+    runs-on: self-hosted
+    timeout-minutes: 30
+    needs: ci
+    strategy:
+      fail-fast: false
+      matrix:
+        hooks: [off, on]
+    env:
+      # `SEP2_TEST_MUTATION_TOKEN` gates the IEEE-024 mutation surface in
+      # hooks-on builds; without it, those endpoints stay disabled and the
+      # binary logs a warning. The csip_test_hooks suite tolerates an
+      # empty token (mutation-dependent tests skip), but CI exercises the
+      # full path by providing a per-run token. Not a secret — the
+      # mutation surface only exists in -tags csip_test_hooks builds and
+      # only listens on the in-process test server.
+      SEP2_TEST_MUTATION_TOKEN: ci-${{ github.run_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Prepare log directory
+        run: mkdir -p ci-logs
+
+      - name: CSIP harness (default tag)
+        if: matrix.hooks == 'off'
+        # `set -o pipefail` so `tee` does not mask test failures.
+        # The Makefile `test-csip` target wraps `go test ./test/csip/...
+        # ./internal/...` under the production build tag.
+        shell: bash
+        run: |
+          set -o pipefail
+          make test-csip 2>&1 | tee ci-logs/csip-tag-off.log
+
+      - name: CSIP harness — scripts/test-csip-server.sh wrapper smoke
+        if: matrix.hooks == 'off'
+        # Validates the CLAUDE.md-referenced `make test-csip-server` entry
+        # point keeps working alongside the new make targets. The script
+        # wraps `go test -v ./test/csip/...` (production tag) and skips
+        # cleanly when SunSpec PKI fixtures are absent.
+        shell: bash
+        run: |
+          set -o pipefail
+          make test-csip-server 2>&1 | tee ci-logs/csip-server-script.log
+
+      - name: CSIP harness (csip_test_hooks tag)
+        if: matrix.hooks == 'on'
+        shell: bash
+        run: |
+          set -o pipefail
+          make test-csip-hooks 2>&1 | tee ci-logs/csip-tag-on.log
+
+      - name: CSIP harness — race detector (csip_test_hooks tag)
+        if: matrix.hooks == 'on'
+        # Race only runs on the hooks-on axis (per Phase 7 doc): the
+        # mutation + time-advance hooks are the surface most likely to
+        # surface subscription-fan-out / aggregator races.
+        shell: bash
+        run: |
+          set -o pipefail
+          make test-csip-race 2>&1 | tee ci-logs/csip-race.log
+
+      - name: Upload CSIP archive-grade logs
+        if: always()
+        # 90-day retention = GitHub Actions max. Phase 9 IEEE-109 indexes
+        # these artifacts into Knowledge and mirrors the bulk tarball to
+        # the long-term durable store it owns.
+        uses: actions/upload-artifact@v4
+        with:
+          name: csip-logs-${{ matrix.hooks }}-${{ github.sha }}
+          path: ci-logs/
+          if-no-files-found: warn
+          retention-days: 90

@@ -1,5 +1,6 @@
 .PHONY: build build-all test test-cover test-race test-verbose test-e2e \
        test-csip-server test-csip-client \
+       test-csip test-csip-hooks test-csip-race \
        lint vet clean run run-ccm run-enphase certs serve help \
        verify-run-inverter-url
 
@@ -176,6 +177,21 @@ test-csip-client:         ## CSIP client-side conformance harness (blocked on IE
 	@echo "# IEEE-019 blocks this target: inverter client must move onto vendored gotls"
 	@echo "# stack to negotiate CCM-8 before client-side conformance can be exercised."
 	@echo "# See GRIDAPPSD/ieee-2030_5-go#21."
+
+# IEEE-106 — CSIP harness CI integration. The two targets below shape the
+# build-tag matrix axis: `test-csip` runs the suite under the production
+# code path (no tag), `test-csip-hooks` runs it with the IEEE-024/025
+# mutation + time-advance hooks compiled in. Both target the CSIP harness
+# AND `./internal/...` so the standard library code reached by the CSIP
+# tests participates in the coverage signal CI captures.
+test-csip:                ## Run CSIP suite under the default (production) build tag
+	go test ./test/csip/... ./internal/...
+
+test-csip-hooks:          ## Run CSIP suite + internal with csip_test_hooks build tag
+	go test -tags csip_test_hooks ./test/csip/... ./internal/...
+
+test-csip-race:           ## Race detector on the CSIP suite with csip_test_hooks tag
+	go test -race -tags csip_test_hooks ./test/csip/...
 
 # ─── Code Quality ────────────────────────────────────────────────
 

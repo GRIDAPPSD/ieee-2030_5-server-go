@@ -1,0 +1,50 @@
+# IEEE-082 fixture — BASIC-007 Ramp Rates (CSIP V1.2 §8.7).
+#
+# CSIP §8.7 is the only V1.2 BASIC procedure that targets
+# DefaultDERControl directly (no DERControl event). The spec calls
+# for setGradW and setSoftGradW on the DefaultDERControl — neither
+# field exists on pkg/sep2.DefaultDERControl today. See IEEE-092.
+#
+# The fixture seeds a DefaultDERControl with RampTms (the one
+# ramp-adjacent field DERControlBase carries today) so the procedure's
+# default-walk leg renders something meaningful; the per-mode
+# assertion for setGradW/setSoftGradW t.Skip's against IEEE-092.
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 1
+
+fsas:
+  - end_device_id: "0"
+    id: "0"
+    mrid: "BASIC-007-FSA"
+    description: "BASIC-007 single FSA"
+    der_program_list_link:
+      href: "/edev/0/fsa/0/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "0"
+    id: "0"
+    mrid: "BASIC-007-DERP"
+    description: "BASIC-007 Ramp Rates program"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/0/derp/0/derc"
+      all: 0
+
+default_der_controls:
+  - end_device_id: "0"
+    fsa_id: "0"
+    der_program_id: "0"
+    mrid: "BASIC-007-DDERC"
+    der_control_base:
+      ramp_tms: 30  # seconds; closest existing field to setGradW.

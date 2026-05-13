@@ -1,0 +1,81 @@
+# IEEE-105 — CI workflow scaffold (Plan 2 Phase 7 ticket 1 of 2).
+#
+# Standard Go signal: build, vet, lint, test, test-race, coverage.
+# Self-hosted runner per .claude/rules/devops.md.
+# Coverage gate is warn-not-fail at this stage; IEEE-107 (Phase 8) ratchets
+# the gate to fail at the achieved threshold. CSIP-harness integration +
+# archive-grade logs land in IEEE-106 (Phase 7 ticket 2 of 2).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs for the same ref when a new push arrives.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: build / vet / lint / test
+    runs-on: self-hosted
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install golangci-lint
+        # Pinned to v2.5.0 — built with go1.25, matches go.mod's go 1.25.0.
+        # See `.golangci.yml` (config version 2).
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.5.0
+          install-mode: binary
+          args: --version
+          # The next `make lint` step actually runs the linter; this step
+          # just installs the binary so the Makefile target finds it on
+          # PATH. The action caches the binary across runs.
+
+      - name: Vet
+        run: make vet
+
+      - name: Build
+        run: make build-all
+
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test
+
+      - name: Test (race detector)
+        run: make test-race
+
+      - name: Test (coverage)
+        # Coverage gate is warn-not-fail at this stage. IEEE-107 (Phase 8)
+        # ratchets the gate to fail at the achieved threshold once the
+        # CSIP V1.2 matrix walk identifies the right coverage scope.
+        run: make test-cover
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            coverage.out
+            coverage.html
+          if-no-files-found: warn
+          retention-days: 14

@@ -35,6 +35,19 @@ func NewAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stor
 		}
 	}
 
+	// IEEE-096 FSA hierarchy management API.
+	if fsaH := newAdminFSAHandler(stores); fsaH != nil {
+		authed.HandleFunc("POST /api/fsas", fsaH.HandleCreateAdminFSA())
+		authed.HandleFunc("GET /api/fsas", fsaH.HandleListAdminFSAs())
+		authed.HandleFunc("GET /api/fsas/{id}", fsaH.HandleGetAdminFSA())
+		authed.HandleFunc("DELETE /api/fsas/{id}", fsaH.HandleDeleteAdminFSA())
+		authed.HandleFunc("POST /api/fsas/{id}/programs", fsaH.HandleAttachProgram())
+		authed.HandleFunc("DELETE /api/fsas/{id}/programs", fsaH.HandleDetachProgram())
+		authed.HandleFunc("POST /api/devices/{id}/fsa-assignment", fsaH.HandleAssignDeviceFSA())
+		authed.HandleFunc("DELETE /api/devices/{id}/fsa-assignment", fsaH.HandleUnassignDeviceFSA())
+		authed.HandleFunc("GET /api/topology", handler.HandleTopology(stores.AdminFSAs, stores.EndDevices))
+	}
+
 	// Admin dashboard
 	if stores != nil {
 		dashboard := NewDashboardHandler(stores, tlsMode)

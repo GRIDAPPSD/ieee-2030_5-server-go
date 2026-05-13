@@ -52,6 +52,10 @@ export async function startServer(): Promise<string> {
       SEP2_CA_KEY: join(certDir, 'ca.key'),
       SEP2_ADMIN_ADDR: `:${adminPort}`,
       SEP2_ADMIN_KEY: 'e2e-test-key',
+      // IEEE-094: admin listener defaults to plain HTTP. Force HTTPS with
+      // self-signed cert so the e2e dashboard URL keeps the `https://...`
+      // shape it used pre-split.
+      SEP2_ADMIN_TLS: 'true',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });

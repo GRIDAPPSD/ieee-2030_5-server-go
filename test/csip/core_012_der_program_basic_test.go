@@ -251,7 +251,7 @@ func bootWithDERProgramFixture(t *testing.T, fixture string, extraOpts []csiptes
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
 		FSAs:               stores.FSAs,
-		DERPrograms:        stores.DERPrograms,
+		DERPrograms:        stores.DERPrograms.ScopedStore,
 		DERControls:        stores.DERControls,
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,

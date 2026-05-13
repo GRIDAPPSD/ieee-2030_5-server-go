@@ -130,7 +130,7 @@ func bootWithSingleEdev(t *testing.T, extraOpts []csiptest.BootOption) (*csiptes
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
 		FSAs:               stores.FSAs,
-		DERPrograms:        stores.DERPrograms,
+		DERPrograms:        stores.DERPrograms.ScopedStore,
 		DERControls:        stores.DERControls,
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,

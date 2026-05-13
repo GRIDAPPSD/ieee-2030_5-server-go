@@ -190,7 +190,7 @@ func TestCORE_019_AdvancedSubscription(t *testing.T) {
 	malformedURL := srv.BaseURL + "/edev/" + core019EndDeviceID + "/sub"
 	resp := doSubRequest(t, srv, http.MethodPost, malformedURL,
 		"application/sep+xml", []byte("<not-a-subscription"))
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("CORE-019 (c): POST malformed body status = %d, want 400", resp.StatusCode)
 	}
@@ -201,7 +201,7 @@ func TestCORE_019_AdvancedSubscription(t *testing.T) {
 func getSubscriptionList(t *testing.T, srv *csiptest.BootedServer, url string) sep2.SubscriptionList {
 	t.Helper()
 	resp := doSubRequest(t, srv, http.MethodGet, url, "", nil)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s: status = %d, want 200", url, resp.StatusCode)
 	}
@@ -218,7 +218,7 @@ func getSubscriptionList(t *testing.T, srv *csiptest.BootedServer, url string) s
 func deleteSubscriptionExpect204(t *testing.T, srv *csiptest.BootedServer, url string) {
 	t.Helper()
 	resp := doSubRequest(t, srv, http.MethodDelete, url, "", nil)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("DELETE %s: status = %d, want 204", url, resp.StatusCode)
 	}

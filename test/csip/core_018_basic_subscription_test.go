@@ -194,7 +194,7 @@ func postSubscriptionExpect201(t *testing.T, srv *csiptest.BootedServer, edevID 
 	}
 	url := srv.BaseURL + "/edev/" + edevID + "/sub"
 	resp := doSubRequest(t, srv, http.MethodPost, url, "application/sep+xml", body)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST %s: status = %d, want 201", url, resp.StatusCode)
 	}

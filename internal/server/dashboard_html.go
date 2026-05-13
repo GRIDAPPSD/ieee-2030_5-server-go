@@ -129,12 +129,37 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="result" id="lookupResult"></div>
   </div>
 
+  <!-- IEEE-096: Create FSA -->
+  <div class="card full-width">
+    <h2>Create FSA Template</h2>
+    <p style="font-size: 12px; color: var(--dim); margin-bottom: 8px;">
+      Create a FunctionSetAssignments template, then attach DERPrograms and assign it to one or more devices.
+    </p>
+    <div class="form-row">
+      <input type="text" id="newFSADesc" placeholder="Description (required)">
+      <input type="text" id="newFSAMRID" placeholder="mRID (optional, auto-generated if blank)">
+      <input type="number" id="newFSAPrimacy" placeholder="Primacy" min="0" max="255" style="max-width: 100px;">
+      <button class="btn btn-green" onclick="createFSA()">Create FSA</button>
+    </div>
+    <div class="result" id="createFSAResult"></div>
+  </div>
+
+  <!-- IEEE-096: FSA Tree -->
+  <div class="card full-width">
+    <h2>FSA Tree (SY &rarr; FD &rarr; SP &rarr; DEV)</h2>
+    <div style="font-size: 12px; color: var(--dim); margin-bottom: 8px;">
+      <button class="btn" onclick="refreshTopology()">Refresh</button>
+      <span style="margin-left: 8px;">Click a node to expand or collapse.</span>
+    </div>
+    <div id="topologyTree" style="font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.6;"></div>
+  </div>
+
   <!-- Device Table -->
   <div class="card full-width">
     <h2>End Devices</h2>
     <table>
-      <thead><tr><th>SFDI</th><th>LFDI</th><th>Status</th><th>Href</th></tr></thead>
-      <tbody id="deviceTable"><tr><td colspan="4" style="color: var(--dim);">No devices registered</td></tr></tbody>
+      <thead><tr><th>SFDI</th><th>LFDI</th><th>Status</th><th>Href</th><th>Assign FSA</th></tr></thead>
+      <tbody id="deviceTable"><tr><td colspan="5" style="color: var(--dim);">No devices registered</td></tr></tbody>
     </table>
   </div>
 
@@ -146,26 +171,39 @@ const dashboardHTML = `<!DOCTYPE html>
 </div>
 
 <script>
-const chart = echarts.init(document.getElementById('activityChart'), 'dark');
-chart.setOption({
-  backgroundColor: 'transparent',
-  tooltip: { trigger: 'axis' },
-  xAxis: { type: 'category', data: [], axisLabel: { color: '#94a3b8' } },
-  yAxis: [
-    { type: 'value', name: 'Devices', axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: '#334155' } } },
-    { type: 'value', name: 'MUPs', axisLabel: { color: '#94a3b8' }, splitLine: { show: false } }
-  ],
-  series: [
-    { name: 'Devices', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2, color: '#3b82f6' }, areaStyle: { color: 'rgba(59,130,246,0.1)' }, data: [] },
-    { name: 'MUPs', type: 'line', smooth: true, symbol: 'none', yAxisIndex: 1, lineStyle: { width: 2, color: '#22c55e' }, data: [] }
-  ],
-  legend: { textStyle: { color: '#94a3b8' }, top: 0 },
-  grid: { left: 50, right: 50, top: 40, bottom: 30 },
-  animation: false
-});
-window.addEventListener('resize', function() { chart.resize(); });
+// Echarts loads from CDN. If the CDN is unreachable (offline / restricted
+// network), keep the rest of the dashboard alive by guarding the chart
+// init — IEEE-096's FSA tree must render with or without the chart.
+var chart = null;
+try {
+  if (typeof echarts !== 'undefined') {
+    chart = echarts.init(document.getElementById('activityChart'), 'dark');
+    chart.setOption({
+      backgroundColor: 'transparent',
+      tooltip: { trigger: 'axis' },
+      xAxis: { type: 'category', data: [], axisLabel: { color: '#94a3b8' } },
+      yAxis: [
+        { type: 'value', name: 'Devices', axisLabel: { color: '#94a3b8' }, splitLine: { lineStyle: { color: '#334155' } } },
+        { type: 'value', name: 'MUPs', axisLabel: { color: '#94a3b8' }, splitLine: { show: false } }
+      ],
+      series: [
+        { name: 'Devices', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2, color: '#3b82f6' }, areaStyle: { color: 'rgba(59,130,246,0.1)' }, data: [] },
+        { name: 'MUPs', type: 'line', smooth: true, symbol: 'none', yAxisIndex: 1, lineStyle: { width: 2, color: '#22c55e' }, data: [] }
+      ],
+      legend: { textStyle: { color: '#94a3b8' }, top: 0 },
+      grid: { left: 50, right: 50, top: 40, bottom: 30 },
+      animation: false
+    });
+    window.addEventListener('resize', function() { if (chart) chart.resize(); });
+  }
+} catch (e) {
+  console.warn('chart init skipped:', e);
+}
 
 var history = [];
+// IEEE-096: in-memory state for FSA tree + per-device assignment dropdown.
+var fsaCatalog = []; // [{mRID, description, href, programs:[], devices:[]}]
+var topologyState = { collapsed: {} };
 
 // Fetch a short-lived auth ticket, then connect SSE with it.
 // The ticket is one-time-use and expires in 30 seconds.
@@ -211,30 +249,56 @@ function onSSEMessage(event) {
       var tr = document.createElement('tr');
       appendCell(tr, dev.sfdi, 'mono');
       appendCell(tr, (dev.lfdi || '').substring(0, 16) + '...', 'mono');
-      var statusCell = appendCell(tr, dev.enabled ? 'ONLINE' : 'OFFLINE', dev.enabled ? 'online' : 'offline');
+      appendCell(tr, dev.enabled ? 'ONLINE' : 'OFFLINE', dev.enabled ? 'online' : 'offline');
       appendCell(tr, dev.href, 'mono');
+      // IEEE-096: assign-FSA cell.
+      var assignTd = document.createElement('td');
+      var deviceId = pathTail(dev.href);
+      var sel = document.createElement('select');
+      sel.id = 'assignSel-' + deviceId;
+      sel.style.cssText = 'background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 2px 4px; font-size: 12px; max-width: 120px;';
+      var defaultOpt = document.createElement('option');
+      defaultOpt.value = '';
+      defaultOpt.textContent = '(pick FSA)';
+      sel.appendChild(defaultOpt);
+      fsaCatalog.forEach(function(f) {
+        var o = document.createElement('option');
+        o.value = '/api/fsas/' + f.mRID;
+        o.textContent = f.mRID;
+        sel.appendChild(o);
+      });
+      assignTd.appendChild(sel);
+      var btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.style.cssText = 'padding: 2px 8px; font-size: 12px; margin-left: 4px;';
+      btn.textContent = 'Assign';
+      btn.onclick = function() { assignFSAToDevice(deviceId); };
+      assignTd.appendChild(btn);
+      tr.appendChild(assignTd);
       tbody.appendChild(tr);
     });
   } else {
     var tr = document.createElement('tr');
     var td = document.createElement('td');
-    td.colSpan = 4;
+    td.colSpan = 5;
     td.style.color = 'var(--dim)';
     td.textContent = 'No devices registered';
     tr.appendChild(td);
     tbody.appendChild(tr);
   }
 
-  // Update chart
+  // Update chart (only if echarts initialized).
   history.push({ time: d.timestamp, devices: d.deviceCount, mups: d.mupCount });
   if (history.length > 60) history.shift();
-  chart.setOption({
-    xAxis: { data: history.map(function(h) { return h.time; }) },
-    series: [
-      { data: history.map(function(h) { return h.devices; }) },
-      { data: history.map(function(h) { return h.mups; }) }
-    ]
-  });
+  if (chart) {
+    chart.setOption({
+      xAxis: { data: history.map(function(h) { return h.time; }) },
+      series: [
+        { data: history.map(function(h) { return h.devices; }) },
+        { data: history.map(function(h) { return h.mups; }) }
+      ]
+    });
+  }
 };
 
 function setText(id, value) {
@@ -358,6 +422,269 @@ function addDevice() {
     resultEl.style.color = '#ef4444';
   });
 }
+
+// IEEE-096: helpers + create / attach / assign / topology UI.
+
+function pathTail(href) {
+  if (!href) return '';
+  var i = href.lastIndexOf('/');
+  return i < 0 ? href : href.substring(i + 1);
+}
+
+function refreshFSACatalog() {
+  return fetch('/api/fsas', { method: 'GET', credentials: 'same-origin' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      fsaCatalog = (data && data.fsas) ? data.fsas : [];
+    })
+    .catch(function() { fsaCatalog = []; });
+}
+
+function createFSA() {
+  var desc = document.getElementById('newFSADesc').value;
+  var mRID = document.getElementById('newFSAMRID').value;
+  var primacyRaw = document.getElementById('newFSAPrimacy').value;
+  var resultEl = document.getElementById('createFSAResult');
+
+  if (!desc) {
+    resultEl.textContent = 'Description required.';
+    resultEl.style.color = '#ef4444';
+    return;
+  }
+  var body = { description: desc };
+  if (mRID) body.mRID = mRID;
+  var primacy = parseInt(primacyRaw, 10);
+  if (!isNaN(primacy) && primacy >= 0) body.primacy = primacy;
+
+  fetch('/api/fsas', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, status: r.status, body: d }; }); })
+  .then(function(res) {
+    if (!res.ok) {
+      resultEl.textContent = 'Error (' + res.status + '): ' + (res.body.error || 'create failed');
+      resultEl.style.color = '#ef4444';
+      return;
+    }
+    resultEl.textContent = 'Created ' + res.body.href + ' (mRID=' + res.body.mRID + ')';
+    resultEl.style.color = '#22c55e';
+    document.getElementById('newFSADesc').value = '';
+    document.getElementById('newFSAMRID').value = '';
+    document.getElementById('newFSAPrimacy').value = '';
+    refreshFSACatalog().then(refreshTopology);
+  })
+  .catch(function(err) {
+    resultEl.textContent = 'Error: ' + err.message;
+    resultEl.style.color = '#ef4444';
+  });
+}
+
+function attachProgramToFSA(fsaID) {
+  var inp = document.getElementById('attachInp-' + fsaID);
+  var resultEl = document.getElementById('attachResult-' + fsaID);
+  if (!inp || !inp.value) {
+    if (resultEl) {
+      resultEl.textContent = 'programHref required';
+      resultEl.style.color = '#ef4444';
+    }
+    return;
+  }
+  fetch('/api/fsas/' + encodeURIComponent(fsaID) + '/programs', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ programHref: inp.value })
+  })
+  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, status: r.status, body: d }; }); })
+  .then(function(res) {
+    if (!res.ok) {
+      if (resultEl) {
+        resultEl.textContent = 'Error (' + res.status + '): ' + (res.body.error || 'attach failed');
+        resultEl.style.color = '#ef4444';
+      }
+      return;
+    }
+    if (resultEl) {
+      resultEl.textContent = 'Attached ' + res.body.programHref;
+      resultEl.style.color = '#22c55e';
+    }
+    inp.value = '';
+    refreshFSACatalog().then(refreshTopology);
+  })
+  .catch(function(err) {
+    if (resultEl) {
+      resultEl.textContent = 'Error: ' + err.message;
+      resultEl.style.color = '#ef4444';
+    }
+  });
+}
+
+function deleteFSA(fsaID) {
+  fetch('/api/fsas/' + encodeURIComponent(fsaID), {
+    method: 'DELETE',
+    credentials: 'same-origin'
+  })
+  .then(function(r) {
+    if (r.status === 204) {
+      refreshFSACatalog().then(refreshTopology);
+    } else {
+      return r.json().then(function(d) {
+        alert('Delete failed (' + r.status + '): ' + (d.error || ''));
+      });
+    }
+  })
+  .catch(function(err) { alert('Delete error: ' + err.message); });
+}
+
+function assignFSAToDevice(deviceId) {
+  var sel = document.getElementById('assignSel-' + deviceId);
+  if (!sel || !sel.value) return;
+  fetch('/api/devices/' + encodeURIComponent(deviceId) + '/fsa-assignment', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fsaHref: sel.value })
+  })
+  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, status: r.status, body: d }; }); })
+  .then(function(res) {
+    if (!res.ok) {
+      alert('Assign failed (' + res.status + '): ' + (res.body.error || ''));
+      return;
+    }
+    sel.value = '';
+    refreshFSACatalog().then(refreshTopology);
+  })
+  .catch(function(err) { alert('Assign error: ' + err.message); });
+}
+
+function refreshTopology() {
+  return fetch('/api/topology', { method: 'GET', credentials: 'same-origin' })
+    .then(function(r) { return r.json(); })
+    .then(function(tree) { renderTopology(tree); })
+    .catch(function(err) {
+      var el = document.getElementById('topologyTree');
+      if (el) el.textContent = 'Error loading topology: ' + err.message;
+    });
+}
+
+function renderTopology(root) {
+  var container = document.getElementById('topologyTree');
+  while (container.firstChild) container.removeChild(container.firstChild);
+  if (!root) return;
+  container.appendChild(renderNode(root, 0));
+}
+
+function renderNode(node, depth) {
+  var div = document.createElement('div');
+  div.style.marginLeft = (depth * 16) + 'px';
+  div.style.color = nodeColor(node.kind);
+
+  var key = node.kind + ':' + node.id;
+  var isCollapsed = !!topologyState.collapsed[key];
+  var hasChildren = (node.children && node.children.length > 0) || (node.fsas && node.fsas.length > 0);
+
+  var header = document.createElement('div');
+  header.style.cursor = hasChildren ? 'pointer' : 'default';
+  var prefix = hasChildren ? (isCollapsed ? '[+] ' : '[-] ') : '    ';
+  header.textContent = prefix + node.kind + ' ' + (node.label || node.id);
+  if (node.kind === 'DEV') {
+    header.textContent += ' (SFDI=' + (node.sfdi || '-') + ', ' + (node.enabled ? 'ON' : 'OFF') + ')';
+  }
+  header.onclick = function() {
+    topologyState.collapsed[key] = !isCollapsed;
+    refreshTopology();
+  };
+  div.appendChild(header);
+
+  if (!isCollapsed) {
+    // FSAs hanging off this node
+    if (node.fsas && node.fsas.length > 0) {
+      node.fsas.forEach(function(fsa) {
+        div.appendChild(renderFSA(fsa, depth + 1, node.kind === 'SY'));
+      });
+    }
+    // Children nodes
+    if (node.children && node.children.length > 0) {
+      node.children.forEach(function(c) {
+        div.appendChild(renderNode(c, depth + 1));
+      });
+    }
+  }
+  return div;
+}
+
+function renderFSA(fsa, depth, allowDelete) {
+  var wrap = document.createElement('div');
+  wrap.style.marginLeft = (depth * 16) + 'px';
+  wrap.style.color = '#fbbf24';
+
+  var line = document.createElement('div');
+  line.textContent = 'FSA ' + fsa.mRID + ' — ' + (fsa.description || '');
+  wrap.appendChild(line);
+
+  // Programs.
+  if (fsa.programs && fsa.programs.length > 0) {
+    fsa.programs.forEach(function(p) {
+      var ptxt = document.createElement('div');
+      ptxt.style.marginLeft = '16px';
+      ptxt.style.color = '#a3e635';
+      ptxt.textContent = 'PROG ' + p;
+      wrap.appendChild(ptxt);
+    });
+  }
+
+  // Attach controls.
+  var controls = document.createElement('div');
+  controls.style.marginLeft = '16px';
+  controls.style.marginTop = '4px';
+  controls.style.color = 'var(--dim)';
+  var inp = document.createElement('input');
+  inp.type = 'text';
+  inp.id = 'attachInp-' + fsa.mRID;
+  inp.placeholder = 'programHref to attach';
+  inp.style.cssText = 'background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 2px 4px; font-size: 12px; width: 320px;';
+  controls.appendChild(inp);
+  var btn = document.createElement('button');
+  btn.className = 'btn';
+  btn.style.cssText = 'padding: 2px 8px; font-size: 12px; margin-left: 4px;';
+  btn.textContent = 'Attach program';
+  btn.onclick = function() { attachProgramToFSA(fsa.mRID); };
+  controls.appendChild(btn);
+
+  if (allowDelete) {
+    var del = document.createElement('button');
+    del.className = 'btn btn-red';
+    del.style.cssText = 'padding: 2px 8px; font-size: 12px; margin-left: 4px;';
+    del.textContent = 'Delete';
+    del.onclick = function() { deleteFSA(fsa.mRID); };
+    controls.appendChild(del);
+  }
+
+  var resultEl = document.createElement('span');
+  resultEl.id = 'attachResult-' + fsa.mRID;
+  resultEl.style.marginLeft = '8px';
+  resultEl.style.fontSize = '12px';
+  controls.appendChild(resultEl);
+
+  wrap.appendChild(controls);
+  return wrap;
+}
+
+function nodeColor(kind) {
+  switch (kind) {
+    case 'SY': return '#93c5fd';
+    case 'FD': return '#a78bfa';
+    case 'SP': return '#f472b6';
+    case 'DEV': return '#e2e8f0';
+    default: return 'var(--text)';
+  }
+}
+
+// Kick off initial loads.
+refreshFSACatalog().then(refreshTopology);
 
 // IEEE-095: GET /api/devices/by-lfdi/{lfdi}
 function lookupLFDI() {

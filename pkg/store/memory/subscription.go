@@ -9,14 +9,27 @@ import (
 
 // SubscriptionStore wraps the generic Store with secondary indexes
 // for lookup by subscribed resource and by device ID.
+//
+// If a persistence path is configured (see NewSubscriptionStoreWithPersistence),
+// successful Create / Delete operations flush a fresh JSON snapshot to disk
+// via atomic rename. The default zero-value store has no persistence path
+// and behaves exactly like the pre-IEEE-077 in-memory store.
 type SubscriptionStore struct {
 	*Store[sep2.Subscription]
 	idxMu         sync.RWMutex
 	resourceIndex map[string][]string // subscribedResource -> []subID
 	deviceIndex   map[string][]string // deviceID -> []subID
+
+	// persistMu serializes on-disk snapshot writes. Held only for the
+	// duration of marshal+write+rename; the primary Store and index
+	// locks are released before the disk syscall to keep readers
+	// non-blocked during persistence.
+	persistMu   sync.Mutex
+	persistPath string // empty = persistence disabled (pure in-memory)
 }
 
-// NewSubscriptionStore creates an in-memory SubscriptionStore.
+// NewSubscriptionStore creates an in-memory SubscriptionStore with no
+// persistence (the historical pre-IEEE-077 behavior; pure RAM).
 func NewSubscriptionStore() *SubscriptionStore {
 	return &SubscriptionStore{
 		Store:         NewStore[sep2.Subscription](),
@@ -30,7 +43,7 @@ func (s *SubscriptionStore) Create(ctx context.Context, id string, sub sep2.Subs
 		return err
 	}
 	s.indexSub(id, sub)
-	return nil
+	return s.persistSnapshot()
 }
 
 func (s *SubscriptionStore) Delete(ctx context.Context, id string) error {
@@ -39,7 +52,10 @@ func (s *SubscriptionStore) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	s.removeIndex(id, old)
-	return s.Store.Delete(ctx, id)
+	if err := s.Store.Delete(ctx, id); err != nil {
+		return err
+	}
+	return s.persistSnapshot()
 }
 
 // ListByResource returns all subscriptions for a given resource href.

@@ -18,4 +18,10 @@ type Config struct {
 	EnableCCM       bool     // use CCM-8 cipher suite (spec-compliant) vs GCM fallback
 	EnableMDNS      bool     // enable mDNS service advertisement
 	MDNSHost        string   // mDNS hostname
+
+	// SubscriptionStorePath enables IEEE-077 durable subscription persistence
+	// when non-empty. Path to a JSON file the server reads at startup and
+	// rewrites atomically on every subscription Create / Delete. Empty
+	// (default) keeps subscriptions in memory only — historical behavior.
+	SubscriptionStorePath string
 }

@@ -1,10 +1,8 @@
-# IEEE-082 fixture — BASIC-011 Volt/Watt (CSIP V1.2 §8.11).
+# IEEE-082/IEEE-092 fixture — BASIC-011 Volt/Watt (CSIP V1.2 §8.11).
 #
-# Same shape as BASIC-006 but the per-mode DERControl field is
-# opModVoltWatt — which does NOT exist on pkg/sep2.DERControlBase
-# today. See IEEE-092. The DERCurve does exist (curveType =
-# CurveTypeOpModVoltWatt = 3) and the procedure's curve-list walk
-# leg is wire-asserted before the per-field t.Skip.
+# IEEE-092 added opModVoltWatt to pkg/sep2.DERControlBase. The
+# fixture seeds it pointing at DERCurve id "0" (curveType =
+# CurveTypeOpModVoltWatt = 3).
 
 end_devices:
   - id: "0"
@@ -46,7 +44,8 @@ der_controls:
     der_program_id: "0"
     id: "0"
     mrid: "BASIC-011-DERC"
-    # DERControlBase intentionally empty — opModVoltWatt not in sep2.
+    der_control_base:
+      op_mod_volt_watt: 0  # → der_curves[0].id
 
 der_curves:
   - id: "0"

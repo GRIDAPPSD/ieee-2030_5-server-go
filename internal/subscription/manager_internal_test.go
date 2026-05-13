@@ -3,6 +3,7 @@ package subscription
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 )
 
 // TestDeliverHappyPath verifies the POST carries the expected payload and
@@ -182,11 +184,14 @@ type mockSubStore struct {
 	subs []sep2.Subscription
 }
 
-func (m *mockSubStore) ListByResource(_ context.Context, href string) ([]sep2.Subscription, error) {
-	var result []sep2.Subscription
-	for _, s := range m.subs {
+func (m *mockSubStore) ListByResource(_ context.Context, href string) ([]memory.SubscriptionRecord, error) {
+	var result []memory.SubscriptionRecord
+	for i, s := range m.subs {
 		if s.SubscribedResource == href {
-			result = append(result, s)
+			result = append(result, memory.SubscriptionRecord{
+				ID:           fmt.Sprintf("mock-sub-%d", i),
+				Subscription: s,
+			})
 		}
 	}
 	return result, nil

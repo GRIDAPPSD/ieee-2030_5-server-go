@@ -64,14 +64,18 @@ func runServe() error {
 		AdminCert:    os.Getenv("SEP2_ADMIN_CERT"),
 		AdminKeyFile: os.Getenv("SEP2_ADMIN_KEY_FILE"),
 
+		// IEEE-097: single-knob persistence. Empty SEP2_DATA_DIR keeps the
+		// historical pure in-memory behavior. SEP2_SUBSCRIPTION_STORE_PATH
+		// is preserved for back-compat and wins over the derived datadir
+		// path when both are set.
+		DataDir:               os.Getenv("SEP2_DATA_DIR"),
+		SubscriptionStorePath: os.Getenv("SEP2_SUBSCRIPTION_STORE_PATH"),
+
 		TZOffset:    -28800,
 		TimeQuality: 7,
 		EnableCCM:   os.Getenv("SEP2_CCM") == "true",
 		EnableMDNS:  os.Getenv("SEP2_MDNS") == "true",
 		MDNSHost:    envOr("SEP2_MDNS_HOST", "localhost"),
-
-		// IEEE-077: opt-in subscription persistence. Empty = in-memory only.
-		SubscriptionStorePath: os.Getenv("SEP2_SUBSCRIPTION_STORE_PATH"),
 	}
 
 	// Load CA for admin cert service

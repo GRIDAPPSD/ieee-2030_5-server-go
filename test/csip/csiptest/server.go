@@ -182,6 +182,17 @@ func (b *BootedServer) Client() *Client {
 	return b.client
 }
 
+// HTTPClient returns the underlying *http.Client used by Client(),
+// already wired with the server's ephemeral CA in RootCAs and the
+// configured device cert in Certificates. Use this for direct PUT /
+// POST / DELETE flows that the csiptest.Client (read-only at present)
+// does not cover — UTIL-002 commissioning, UTIL-003 subscription POST,
+// UTIL-004 Response POST. The returned client is safe to use across
+// concurrent goroutines per net/http semantics.
+func (b *BootedServer) HTTPClient() *http.Client {
+	return b.client.http
+}
+
 // Addr returns the listener's local address. Useful for tests that
 // need to verify the server is actually torn down (post-cleanup Dial
 // should fail).

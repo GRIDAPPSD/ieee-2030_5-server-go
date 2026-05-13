@@ -50,13 +50,25 @@ func runServe() error {
 		CAFile:          envOr("SEP2_CA", "certs/ca.crt"),
 		ExtraClientCAs:  parseCSV(os.Getenv("SEP2_EXTRA_CLIENT_CAS")),
 		BootFixtureFile: os.Getenv("SEP2_BOOT_FIXTURE"),
-		AdminAddr:       os.Getenv("SEP2_ADMIN_ADDR"),
-		AdminKey:        os.Getenv("SEP2_ADMIN_KEY"),
-		TZOffset:        -28800,
-		TimeQuality:     7,
-		EnableCCM:       os.Getenv("SEP2_CCM") == "true",
-		EnableMDNS:      os.Getenv("SEP2_MDNS") == "true",
-		MDNSHost:        envOr("SEP2_MDNS_HOST", "localhost"),
+
+		// IEEE-094: admin listener configuration. SEP2_ADMIN_LISTEN is the
+		// canonical knob; SEP2_ADMIN_ADDR is preserved as a deprecated alias
+		// for pre-IEEE-094 deployments. SEP2_ADMIN_TLS toggles between plain
+		// HTTP (Caddy mode, default) and HTTPS. SEP2_ADMIN_CERT +
+		// SEP2_ADMIN_KEY_FILE point at an operator-supplied cert/key; when
+		// HTTPS is on and they are empty, a self-signed cert is generated.
+		AdminListen:  os.Getenv("SEP2_ADMIN_LISTEN"),
+		AdminAddr:    os.Getenv("SEP2_ADMIN_ADDR"),
+		AdminKey:     os.Getenv("SEP2_ADMIN_KEY"),
+		AdminTLS:     os.Getenv("SEP2_ADMIN_TLS") == "true",
+		AdminCert:    os.Getenv("SEP2_ADMIN_CERT"),
+		AdminKeyFile: os.Getenv("SEP2_ADMIN_KEY_FILE"),
+
+		TZOffset:    -28800,
+		TimeQuality: 7,
+		EnableCCM:   os.Getenv("SEP2_CCM") == "true",
+		EnableMDNS:  os.Getenv("SEP2_MDNS") == "true",
+		MDNSHost:    envOr("SEP2_MDNS_HOST", "localhost"),
 
 		// IEEE-077: opt-in subscription persistence. Empty = in-memory only.
 		SubscriptionStorePath: os.Getenv("SEP2_SUBSCRIPTION_STORE_PATH"),

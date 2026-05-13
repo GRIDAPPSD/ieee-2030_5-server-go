@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
 // 1. Dashboard loads and shows server info
 test('dashboard loads and shows server info', async ({ page }) => {
   await page.goto(baseUrl + '/?token=e2e-test-key');
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('domcontentloaded');
 
   await expect(page).toHaveTitle(/IEEE 2030.5/);
   await expect(page.locator('.navbar h1')).toContainText('IEEE 2030.5');
@@ -39,7 +39,7 @@ test('dashboard loads and shows server info', async ({ page }) => {
 // 2. Device table updates when a device registers
 test('device table shows data', async ({ page }) => {
   await page.goto(baseUrl + '/?token=e2e-test-key');
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('domcontentloaded');
 
   const deviceCount = page.locator('#bigDeviceCount');
   await expect(deviceCount).toBeVisible();
@@ -56,7 +56,7 @@ test('device table shows data', async ({ page }) => {
 // 3. Certificate generation form works
 test('certificate generation form works', async ({ page }) => {
   await page.goto(baseUrl + '/?token=e2e-test-key');
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('domcontentloaded');
 
   const serialInput = page.locator('#hwSerial');
   await expect(serialInput).toBeVisible();
@@ -73,7 +73,7 @@ test('certificate generation form works', async ({ page }) => {
 // 4. DER control panel accepts input
 test('DER control panel sends commands', async ({ page }) => {
   await page.goto(baseUrl + '/?token=e2e-test-key');
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('domcontentloaded');
 
   const controlSelect = page.locator('#controlType');
   await expect(controlSelect).toBeVisible();
@@ -90,7 +90,7 @@ test('DER control panel sends commands', async ({ page }) => {
 // 5. Dashboard renders all sections correctly
 test('dashboard renders all UI sections', async ({ page }) => {
   await page.goto(baseUrl + '/?token=e2e-test-key');
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('domcontentloaded');
 
   // Overview card
   await expect(page.getByText('CONNECTED DEVICES')).toBeVisible();

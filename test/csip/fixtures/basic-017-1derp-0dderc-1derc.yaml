@@ -1,0 +1,57 @@
+# IEEE-084 / BASIC-017 fixture — CSIP V1.2 §8.17.
+#
+# Topology: 1 DERProgram, NO DefaultDERControl, 1 DERControl active
+# for 2 minutes carrying opModFixedW. Per §8.17 the procedure asserts
+# the client follows the lone scheduled event.
+#
+# Time anchor: 1700000000 (Nov 2023, UTC). Interval [1700000000,
+# 1700000120) — 2 minute window.
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    registration_link: "/edev/0/rg"
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 1
+
+fsas:
+  - end_device_id: "0"
+    id: "0"
+    mrid: "BASIC-017-FSA"
+    description: "BASIC-017 single FSA"
+    der_program_list_link:
+      href: "/edev/0/fsa/0/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "0"
+    id: "0"
+    mrid: "BASIC-017-DERP"
+    description: "BASIC-017 lone DERProgram"
+    primacy: 0
+    der_control_list_link:
+      href: "/edev/0/fsa/0/derp/0/derc"
+      all: 1
+
+der_controls:
+  - end_device_id: "0"
+    fsa_id: "0"
+    der_program_id: "0"
+    id: "a"
+    mrid: "BASIC-017-DERC-A"
+    description: "BASIC-017 active 2-min DERControl"
+    event_status:
+      current_status: 1
+      date_time: 1700000000
+    interval:
+      start: 1700000000
+      duration: 120
+    der_control_base:
+      op_mod_fixed_w:
+        multiplier: 0
+        value: 3500

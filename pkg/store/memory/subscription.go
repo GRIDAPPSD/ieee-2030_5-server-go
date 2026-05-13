@@ -58,17 +58,21 @@ func (s *SubscriptionStore) Delete(ctx context.Context, id string) error {
 	return s.persistSnapshot()
 }
 
-// ListByResource returns all subscriptions for a given resource href.
-func (s *SubscriptionStore) ListByResource(_ context.Context, resourceHref string) ([]sep2.Subscription, error) {
+// ListByResource returns all subscriptions for a given resource href,
+// paired with their storage IDs. The Manager threads each record's ID
+// through to its notification worker so that a 4xx response from the
+// receiver can be cleaned up via Delete (IEEE-080, CSIP V1.2 ERR-002).
+func (s *SubscriptionStore) ListByResource(_ context.Context, resourceHref string) ([]SubscriptionRecord, error) {
 	s.idxMu.RLock()
-	ids := s.resourceIndex[resourceHref]
+	ids := make([]string, len(s.resourceIndex[resourceHref]))
+	copy(ids, s.resourceIndex[resourceHref])
 	s.idxMu.RUnlock()
 
-	var result []sep2.Subscription
+	var result []SubscriptionRecord
 	for _, id := range ids {
 		sub, err := s.Store.Get(context.Background(), id)
 		if err == nil {
-			result = append(result, sub)
+			result = append(result, SubscriptionRecord{ID: id, Subscription: sub})
 		}
 	}
 	return result, nil

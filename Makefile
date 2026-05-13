@@ -1,7 +1,7 @@
 .PHONY: build build-all test test-cover test-race test-verbose test-e2e \
        test-csip-server test-csip-client \
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
-       lint vet clean run run-ccm run-enphase certs serve help \
+       lint vet clean run run-ccm run-enphase run-sunspec certs serve help \
        verify-run-inverter-url
 
 SERVER   := bin/sep2server
@@ -118,6 +118,37 @@ run-enphase: build certs   ## Start server with Enphase root + EndDevice pre-see
 	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
 	SEP2_EXTRA_CLIENT_CAS=testdata/csip-pki/enphase/Enph_root.pem \
 	SEP2_BOOT_FIXTURE=test/csip/fixtures/enphase-edev.yaml \
+	SEP2_CCM=true \
+	./$(SERVER) serve
+
+# SunSpec CSIP test PKI profile (IEEE-111).
+#
+# Boots the server in CCM-8 mode on :8443 with the SunSpec CSIP test PKI's
+# trust roots loaded as extra client CAs via SEP2_EXTRA_CLIENT_CAS. The
+# server still presents its own local-CA-signed leaf — the SunSpec roots
+# only authenticate inverter client certs issued under that test PKI.
+#
+# The default SUNSPEC_ROOTS path lives in the operator's Knowledge
+# workspace (gitignored). Override SUNSPEC_ROOTS=... to relocate, or fetch
+# the SunSpec CSIP test PKI to that path before running.
+#
+# Device side (manual): point the inverter at https://localhost:8443 with
+# its SunSpec-issued client cert/key (e.g. sunspec/cert.pem + sunspec/key.pem
+# from the same test PKI bundle). For our own inverter simulator, prefer
+# `make run-inverter` against the locally-generated device cert instead.
+SUNSPEC_ROOTS ?= $(HOME)/knowledge/projects/ieee-2030_5-go/artifacts/inputs/csip-test-pki/sunspec/roots.pem
+
+run-sunspec: build certs   ## Start server trusting SunSpec CSIP test PKI roots (override SUNSPEC_ROOTS to relocate)
+	@test -f $(SUNSPEC_ROOTS) || (echo "ERROR: SUNSPEC_ROOTS not found at $(SUNSPEC_ROOTS); set SUNSPEC_ROOTS=... or fetch the SunSpec CSIP test PKI to that path" && exit 1)
+	@echo "# SunSpec profile: binding :8443 (CCM-8)"
+	@echo "# Server cert: local CA chain ($(CERT_DIR)/server.crt)"
+	@echo "# Trusted extra client CAs: $(SUNSPEC_ROOTS)"
+	SEP2_ADDR=:8443 \
+	SEP2_CERT=$(CERT_DIR)/server.crt \
+	SEP2_KEY=$(CERT_DIR)/server.key \
+	SEP2_CA=$(CERT_DIR)/ca.crt \
+	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
+	SEP2_EXTRA_CLIENT_CAS=$(SUNSPEC_ROOTS) \
 	SEP2_CCM=true \
 	./$(SERVER) serve
 

@@ -199,6 +199,29 @@ func TestHandleDeleteSubscription_NotFoundDoesNotNotify(t *testing.T) {
 	}
 }
 
+// TestHandleDeleteSubscription_MethodNotAllowed verifies that a non-DELETE
+// method on the registered route returns 405 and does not touch the
+// store or notifier.
+func TestHandleDeleteSubscription_MethodNotAllowed(t *testing.T) {
+	t.Parallel()
+
+	s := memory.NewSubscriptionStore()
+	notifier := &recordingNotifier{}
+
+	h := handler.HandleDeleteSubscription(s, notifier)
+
+	req := httptest.NewRequest(http.MethodGet, "/edev/edev-1/sub/sub-1", nil)
+	rec := httptest.NewRecorder()
+	h(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", rec.Code)
+	}
+	if got := len(notifier.snapshot()); got != 0 {
+		t.Errorf("notifier called %d times on 405 path; want 0", got)
+	}
+}
+
 // TestHandleDeleteSubscription_Integration uses a real *subscription.Manager
 // to confirm the wire-up: receiver server captures the Removed Notification
 // and asserts Status=3 and the subscription Href.

@@ -30,8 +30,8 @@ func TestManagerNotifyRemovedPostsToSubscriber(t *testing.T) {
 	t.Parallel()
 
 	type captured struct {
-		path        string
-		contentType string
+		path         string
+		contentType  string
 		notification sep2.Notification
 	}
 	gotCh := make(chan captured, 1)

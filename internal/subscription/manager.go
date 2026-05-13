@@ -38,6 +38,19 @@ type SubscriptionWriter interface {
 // rather than the generic "deliver failed" line.
 var errDeleteAfter4xx = errors.New("subscription deleted: receiver returned 4xx")
 
+// ErrQueueFull is returned by NotifyRemoved when the worker pool's
+// bounded queue cannot accept another task. Callers (e.g.
+// HandleDeleteSubscription) treat this as best-effort: a full queue is
+// logged but does not change the DELETE response — the spec doesn't
+// require the final Notification, so dropping it is acceptable.
+var ErrQueueFull = errors.New("notification queue full")
+
+// ErrInvalidNotificationURI is returned by NotifyRemoved when the
+// supplied Subscription has no NotificationURI. There is no transport
+// target, so enqueueing the task would only generate a guaranteed
+// failure log later on the worker.
+var ErrInvalidNotificationURI = errors.New("subscription has no notificationURI")
+
 type notificationTask struct {
 	subscriptionID  string
 	notificationURI string
@@ -80,6 +93,59 @@ func (m *Manager) Start(ctx context.Context) {
 	<-ctx.Done()
 	close(m.queue)
 	m.wg.Wait()
+}
+
+// NotifyRemoved enqueues a final "Removed" Notification (Status=3) targeted
+// at exactly one subscriber, identified by the supplied Subscription's
+// NotificationURI. The Notification's SubscriptionURI field carries the
+// subscription's Href and SubscribedResource carries the resource it was
+// observing, so the subscriber can correlate locally.
+//
+// Unlike Notify(href, status), which fans out to every subscription
+// matching the resource, NotifyRemoved targets a single subscription —
+// the one being deleted. Callers must hand the subscription record they
+// have *before* the store-level Delete; once Delete returns, the
+// subscription is gone and the ListByResource lookup that Notify uses
+// would miss it.
+//
+// Returns ErrInvalidNotificationURI synchronously if the supplied
+// subscription has no NotificationURI, or ErrQueueFull when the worker
+// pool's bounded queue cannot accept the task. Both errors are
+// recoverable from the caller's perspective: the spec does not require
+// the final Notification, so the deletion proceeds either way.
+//
+// IEEE-100 / CSIP V1.2 §11.6.
+func (m *Manager) NotifyRemoved(_ context.Context, sub sep2.Subscription) error {
+	if sub.NotificationURI == "" {
+		return fmt.Errorf("notify removed for %q: %w", sub.Href, ErrInvalidNotificationURI)
+	}
+
+	notification := sep2.Notification{
+		Resource:           sep2.Resource{Href: sub.SubscribedResource},
+		SubscribedResource: sub.SubscribedResource,
+		SubscriptionURI:    sub.Href,
+		Status:             sep2.NotificationStatusRemoved,
+	}
+
+	payload, err := xml.Marshal(&notification)
+	if err != nil {
+		return fmt.Errorf("notify removed: marshal Notification for %q: %w", sub.Href, err)
+	}
+
+	task := notificationTask{
+		// subscriptionID intentionally left empty: the receiver-side
+		// delete-on-4xx path in deliver() would be a double-delete here
+		// (the caller is about to Delete or has just Deleted the sub).
+		notificationURI: sub.NotificationURI,
+		payload:         payload,
+	}
+
+	select {
+	case m.queue <- task:
+		return nil
+	default:
+		return fmt.Errorf("notify removed for %q: %w", sub.Href, ErrQueueFull)
+	}
 }
 
 // Notify looks up all subscriptions for the given resource and enqueues

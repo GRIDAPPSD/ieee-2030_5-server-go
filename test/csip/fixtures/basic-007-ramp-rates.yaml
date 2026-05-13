@@ -1,14 +1,11 @@
-# IEEE-082 fixture — BASIC-007 Ramp Rates (CSIP V1.2 §8.7).
+# IEEE-082/IEEE-092 fixture — BASIC-007 Ramp Rates (CSIP V1.2 §8.7).
 #
 # CSIP §8.7 is the only V1.2 BASIC procedure that targets
-# DefaultDERControl directly (no DERControl event). The spec calls
-# for setGradW and setSoftGradW on the DefaultDERControl — neither
-# field exists on pkg/sep2.DefaultDERControl today. See IEEE-092.
-#
-# The fixture seeds a DefaultDERControl with RampTms (the one
-# ramp-adjacent field DERControlBase carries today) so the procedure's
-# default-walk leg renders something meaningful; the per-mode
-# assertion for setGradW/setSoftGradW t.Skip's against IEEE-092.
+# DefaultDERControl directly (no DERControl event). IEEE-092 added
+# setGradW and setSoftGradW to pkg/sep2.DefaultDERControl per
+# IEEE 2030.5 §10.11 (Unsigned16, hundredths of percent per second).
+# The fixture seeds both, plus RampTms on DERControlBase for the
+# event-side ramp coverage that BASIC-007's mode header documents.
 
 end_devices:
   - id: "0"
@@ -46,5 +43,10 @@ default_der_controls:
     fsa_id: "0"
     der_program_id: "0"
     mrid: "BASIC-007-DDERC"
+    # setGradW / setSoftGradW are device-default ramp rates per
+    # IEEE 2030.5 §10.11, expressed in hundredths of percent per
+    # second. 1000 = 10%/s; 500 = 5%/s.
+    set_grad_w: 1000
+    set_soft_grad_w: 500
     der_control_base:
-      ramp_tms: 30  # seconds; closest existing field to setGradW.
+      ramp_tms: 30  # seconds — per-event ramp window.

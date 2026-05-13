@@ -30,7 +30,9 @@ func (s *EndDeviceStore) Create(ctx context.Context, id string, device sep2.EndD
 		return err
 	}
 	s.indexDevice(id, device)
-	return nil
+	// IEEE-097: snapshot to disk if persistence is configured. No-op for
+	// in-memory stores so back-compat is automatic.
+	return s.persistEndDeviceSnapshot()
 }
 
 func (s *EndDeviceStore) Update(ctx context.Context, id string, device sep2.EndDevice) error {
@@ -45,7 +47,7 @@ func (s *EndDeviceStore) Update(ctx context.Context, id string, device sep2.EndD
 		return err
 	}
 	s.indexDevice(id, device)
-	return nil
+	return s.persistEndDeviceSnapshot()
 }
 
 func (s *EndDeviceStore) Delete(ctx context.Context, id string) error {
@@ -54,7 +56,10 @@ func (s *EndDeviceStore) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	s.removeIndex(old)
-	return s.Store.Delete(ctx, id)
+	if err := s.Store.Delete(ctx, id); err != nil {
+		return err
+	}
+	return s.persistEndDeviceSnapshot()
 }
 
 func (s *EndDeviceStore) GetBySFDI(_ context.Context, sfdi string) (sep2.EndDevice, error) {

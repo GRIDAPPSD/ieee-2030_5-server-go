@@ -80,10 +80,43 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		log.Printf("trusted extra client CAs: %v", cfg.ExtraClientCAs)
 	}
 
+	// IEEE-097: build the admin-mutated stores honoring SEP2_DATA_DIR.
+	// Empty DataDir + empty per-store dedicated paths = pure in-memory
+	// (back-compat). The constructors return non-persistent stores in
+	// that case, so every existing test path keeps the same semantics.
+	endDevices, err := memory.NewEndDeviceStoreWithPersistence(
+		cfg.EffectiveStorePath("enddevices", ""),
+	)
+	if err != nil {
+		return fmt.Errorf("EndDevice persistence: %w", err)
+	}
+	registrations, err := memory.NewRegistrationStoreWithPersistence(
+		cfg.EffectiveStorePath("registrations", ""),
+	)
+	if err != nil {
+		return fmt.Errorf("Registration persistence: %w", err)
+	}
+	adminFSAs, err := memory.NewAdminFSAStoreWithPersistence(
+		cfg.EffectiveStorePath("fsas", ""),
+	)
+	if err != nil {
+		return fmt.Errorf("AdminFSA persistence: %w", err)
+	}
+	derPrograms, err := memory.NewDERProgramStoreWithPersistence(
+		cfg.EffectiveStorePath("derprograms", ""),
+	)
+	if err != nil {
+		return fmt.Errorf("DERProgram persistence: %w", err)
+	}
+
 	// IEEE-077: build the subscription store with optional durable
 	// persistence. Empty cfg.SubscriptionStorePath = in-memory only
 	// (historical behavior). Non-empty path = JSON file behind atomic
 	// rename, loaded at startup and rewritten on every Create/Delete.
+	//
+	// IEEE-097 anticipated this rebase: <datadir>/subscriptions.json
+	// routing via EffectiveStorePath is deferred to a follow-up so
+	// neither IEEE-077 nor IEEE-097's behavior changes here.
 	subStore, subErr := memory.NewSubscriptionStoreWithPersistence(cfg.SubscriptionStorePath)
 	if subErr != nil {
 		return fmt.Errorf("subscription store: %w", subErr)
@@ -94,8 +127,8 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 
 	// Initialize stores
 	stores := &Stores{
-		EndDevices:          memory.NewEndDeviceStore(),
-		Registrations:       memory.NewStore[sep2.Registration](),
+		EndDevices:          endDevices,
+		Registrations:       registrations,
 		MirrorUsagePoints:   memory.NewStore[sep2.MirrorUsagePoint](),
 		MirrorMeterReadings: memory.NewScopedStore[sep2.MirrorMeterReading](),
 		DERs:               memory.NewScopedStore[sep2.DER](),
@@ -103,12 +136,12 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		DERSettings:        memory.NewScopedStore[sep2.DERSettings](),
 		DERStatuses:        memory.NewScopedStore[sep2.DERStatus](),
 		DERAvailabilities:  memory.NewScopedStore[sep2.DERAvailability](),
-		DERPrograms:        memory.NewScopedStore[sep2.DERProgram](),
+		DERPrograms:        derPrograms,
 		DERControls:        memory.NewScopedStore[sep2.DERControl](),
 		DefaultDERControls: memory.NewScopedStore[sep2.DefaultDERControl](),
 		DERCurves:          memory.NewStore[sep2.DERCurve](),
 		FSAs:               memory.NewScopedStore[sep2.FunctionSetAssignments](),
-		AdminFSAs:          memory.NewAdminFSAStore(),
+		AdminFSAs:          adminFSAs,
 		Subscriptions:      subStore,
 		UsagePoints:        memory.NewStore[sep2.UsagePoint](),
 		MeterReadings:      memory.NewScopedStore[sep2.MeterReading](),
@@ -130,7 +163,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		target := &bootfixture.Target{
 			EndDevices:         stores.EndDevices,
 			FSAs:               stores.FSAs,
-			DERPrograms:        stores.DERPrograms,
+			DERPrograms:        stores.DERPrograms.ScopedStore,
 			DERControls:        stores.DERControls,
 			DefaultDERControls: stores.DefaultDERControls,
 			DERCurves:          stores.DERCurves,

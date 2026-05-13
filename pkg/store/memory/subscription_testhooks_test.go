@@ -137,14 +137,14 @@ func TestRestoreForTestingPopulatesIndexes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListByResource(/edev/1): %v", err)
 	}
-	if len(gotA) != 1 || gotA[0].NotificationURI != subA.NotificationURI {
+	if len(gotA) != 1 || gotA[0].ID != "subA" || gotA[0].Subscription.NotificationURI != subA.NotificationURI {
 		t.Errorf("ListByResource(/edev/1) = %+v, want one entry for subA", gotA)
 	}
 	gotB, err := store.ListByResource(ctx, "/edev/2")
 	if err != nil {
 		t.Fatalf("ListByResource(/edev/2): %v", err)
 	}
-	if len(gotB) != 1 || gotB[0].NotificationURI != subB.NotificationURI {
+	if len(gotB) != 1 || gotB[0].ID != "subB" || gotB[0].Subscription.NotificationURI != subB.NotificationURI {
 		t.Errorf("ListByResource(/edev/2) = %+v, want one entry for subB", gotB)
 	}
 

@@ -1,21 +1,19 @@
 // CSIP V1.2 §8.11 — Inverter Control: Volt/Watt.
 //
-// BASIC-011 calls for a DERControl carrying opModVoltWatt referencing
-// a Volt/Watt DERCurve per Figure 11. opModVoltWatt does NOT exist
-// on pkg/sep2.DERControlBase today — see IEEE-092. The DERCurve type
-// constant `CurveTypeOpModVoltWatt = 3` IS in sep2 and the
-// procedure's curve-list walk leg renders correctly; the per-field
-// assertion is t.Skip'd against the follow-up ticket.
+// BASIC-011 proves the server renders a DERControl carrying
+// opModVoltWatt referencing a Volt/Watt DERCurve (curveType =
+// CurveTypeOpModVoltWatt = 3) per Figure 11.
 //
 // V1.2 procedure step → assertion mapping (per V1.2 §8.11):
 //
 //	Step 1 (server has DERProgram + 1 DERControl + 1 DERCurve)    ──► fixture load
 //	Step 2 (client walks /dcap → /edev → /fsa → DERProgram → DERControl)
 //	                                                               ──► basicModeWalk
-//	Step 3 (global /dc carries 1 Volt/Watt curve, curveType = 3)   ──► walkSingleCurveBasic
-//	Step 4 (DERControl carries opModVoltWatt curve ref)            ──► t.Skip (IEEE-092)
+//	Step 3 (DERControl carries opModVoltWatt curve ref)            ──► per-field assertion
+//	Step 4 (global /dc carries 1 Volt/Watt curve, curveType = 3)   ──► walkSingleCurveBasic
 //
-// Pinned by IEEE-092 — implementation gap.
+// IEEE-092 added opModVoltWatt to pkg/sep2.DERControlBase and flipped
+// this test from SKIP to active.
 package csip_test
 
 import (
@@ -25,6 +23,9 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
 )
+
+// basic011VoltWattRef is the opModVoltWatt curve ref the fixture seeds.
+const basic011VoltWattRef int32 = 0
 
 // TestBASIC_011_VoltWatt implements CSIP V1.2 §8.11.
 func TestBASIC_011_VoltWatt(t *testing.T) {
@@ -39,6 +40,13 @@ func TestBASIC_011_VoltWatt(t *testing.T) {
 			if got := len(list.DERControl); got != 1 {
 				t.Fatalf("[%s] len(DERControlList.DERControl) = %d, want 1", cipher, got)
 			}
+			dc := list.DERControl[0]
+			if dc.DERControlBase == nil {
+				t.Fatalf("[%s] DERControl.DERControlBase is nil", cipher)
+			}
+
+			assertCurveRef(t, cipher, "opModVoltWatt",
+				dc.DERControlBase.OpModVoltWatt, basic011VoltWattRef)
 
 			curve := walkSingleCurveBasic(t, context.Background(), c,
 				sep2.CurveTypeOpModVoltWatt, 1)
@@ -49,7 +57,5 @@ func TestBASIC_011_VoltWatt(t *testing.T) {
 				t.Errorf("[%s] DERCurve.CurveData len = %d, want 4 (Figure 11 4-point envelope)",
 					cipher, got)
 			}
-
-			t.Skip(formatGap("BASIC-011 (Volt/Watt)", "opModVoltWatt"))
 		})
 }

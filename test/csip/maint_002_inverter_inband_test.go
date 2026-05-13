@@ -118,7 +118,7 @@ func TestMAINT_002_InverterMaintenanceInband(t *testing.T) {
 
 	// Step 3b: subsequent GET on the deleted href is 404.
 	getResp := doSubRequest(t, srv, http.MethodGet, deleteURL, "", nil)
-	defer getResp.Body.Close()
+	defer func() { _ = getResp.Body.Close() }()
 	if getResp.StatusCode != http.StatusNotFound {
 		t.Errorf("MAINT-002 Step 3b: GET-after-delete status = %d, want 404", getResp.StatusCode)
 	}

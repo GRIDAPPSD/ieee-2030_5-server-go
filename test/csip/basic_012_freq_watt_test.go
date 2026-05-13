@@ -1,23 +1,20 @@
 // CSIP V1.2 §8.12 — Inverter Control: Frequency/Watt.
 //
-// BASIC-012 calls for a DERControl carrying opModFreqWatt referencing
-// a Freq/Watt DERCurve per Figure 12. opModFreqWatt does NOT exist on
-// pkg/sep2.DERControlBase today — see IEEE-092. The DERCurve type
-// constant `CurveTypeOpModFreqWatt = 1` IS in sep2; opModFreqDroop
-// (a uint16 droop coefficient) is on DERControlBase but is NOT the
-// §8.12 curve-based mode (it is the §8.5 LFRT/HFRT droop family).
-// The procedure's curve-list walk leg renders correctly; the
-// per-field assertion is t.Skip'd against the follow-up ticket.
+// BASIC-012 proves the server renders a DERControl carrying
+// opModFreqWatt referencing a Freq/Watt DERCurve (curveType =
+// CurveTypeOpModFreqWatt = 1) per Figure 12.
 //
 // V1.2 procedure step → assertion mapping (per V1.2 §8.12):
 //
 //	Step 1 (server has DERProgram + 1 DERControl + 1 DERCurve)    ──► fixture load
 //	Step 2 (client walks /dcap → /edev → /fsa → DERProgram → DERControl)
 //	                                                               ──► basicModeWalk
-//	Step 3 (global /dc carries 1 Freq/Watt curve, curveType = 1)   ──► walkSingleCurveBasic
-//	Step 4 (DERControl carries opModFreqWatt curve ref)            ──► t.Skip (IEEE-092)
+//	Step 3 (DERControl carries opModFreqWatt curve ref)            ──► per-field assertion
+//	Step 4 (global /dc carries 1 Freq/Watt curve, curveType = 1)   ──► walkSingleCurveBasic
 //
-// Pinned by IEEE-092 — implementation gap.
+// IEEE-092 added opModFreqWatt to pkg/sep2.DERControlBase and flipped
+// this test from SKIP to active. Note opModFreqDroop (§8.5 LFRT/HFRT
+// droop coefficient) is unrelated to the curve-based §8.12 mode.
 package csip_test
 
 import (
@@ -27,6 +24,9 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
 )
+
+// basic012FreqWattRef is the opModFreqWatt curve ref the fixture seeds.
+const basic012FreqWattRef int32 = 0
 
 // TestBASIC_012_FreqWatt implements CSIP V1.2 §8.12.
 func TestBASIC_012_FreqWatt(t *testing.T) {
@@ -41,6 +41,13 @@ func TestBASIC_012_FreqWatt(t *testing.T) {
 			if got := len(list.DERControl); got != 1 {
 				t.Fatalf("[%s] len(DERControlList.DERControl) = %d, want 1", cipher, got)
 			}
+			dc := list.DERControl[0]
+			if dc.DERControlBase == nil {
+				t.Fatalf("[%s] DERControl.DERControlBase is nil", cipher)
+			}
+
+			assertCurveRef(t, cipher, "opModFreqWatt",
+				dc.DERControlBase.OpModFreqWatt, basic012FreqWattRef)
 
 			curve := walkSingleCurveBasic(t, context.Background(), c,
 				sep2.CurveTypeOpModFreqWatt, 1)
@@ -51,7 +58,5 @@ func TestBASIC_012_FreqWatt(t *testing.T) {
 				t.Errorf("[%s] DERCurve.CurveData len = %d, want 4 (Figure 12 4-point envelope)",
 					cipher, got)
 			}
-
-			t.Skip(formatGap("BASIC-012 (Freq/Watt)", "opModFreqWatt"))
 		})
 }

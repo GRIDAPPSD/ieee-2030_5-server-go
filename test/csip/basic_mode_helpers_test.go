@@ -239,10 +239,27 @@ func walkSingleCurveBasic(
 // formatGap is a small string-builder so each gap-skipped test prints
 // a consistent message format pointing at IEEE-092 — the follow-up
 // ticket gathering all BASIC-NNN sep2 implementation gaps.
+//
+// IEEE-092 closed all five gaps formatGap used to flag. Kept here so
+// any future gap re-opens land at the same call site.
 func formatGap(test, missingField string) string {
 	return fmt.Sprintf(
 		"%s wire-fidelity assertion pinned by IEEE-092 — pkg/sep2.DERControlBase carries no %s field today; "+
 			"adding it changes the public API and is out of scope per IEEE-082. "+
 			"Procedure walk up to this point succeeded (program + control list rendered correctly).",
 		test, missingField)
+}
+
+// assertCurveRef checks that a *int32 curve-reference field on a
+// DERControlBase survived the wire roundtrip with the expected
+// value. Shared by BASIC-004 (4 refs), BASIC-005 (2 refs), BASIC-011
+// (1 ref), and BASIC-012 (1 ref).
+func assertCurveRef(t *testing.T, cipher, field string, got *int32, want int32) {
+	t.Helper()
+	if got == nil {
+		t.Fatalf("[%s] DERControlBase.%s is nil — fixture dropped or wire-decode lost field", cipher, field)
+	}
+	if *got != want {
+		t.Errorf("[%s] DERControlBase.%s = %d, want %d", cipher, field, *got, want)
+	}
 }

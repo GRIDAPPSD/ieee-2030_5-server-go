@@ -1,13 +1,10 @@
 // CSIP V1.2 §8.7 — Inverter Control: Ramp Rates.
 //
 // BASIC-007 is the only V1.2 BASIC procedure that targets
-// DefaultDERControl directly (no DERControl event). The spec calls
-// for setGradW and setSoftGradW on the DefaultDERControl per Figure 7.
-// Neither field exists on pkg/sep2.DefaultDERControl today — see
-// IEEE-092. The fixture seeds RampTms (the closest existing field)
-// on DERControlBase so the procedure's default-walk leg renders;
-// the per-field assertion for setGradW/setSoftGradW is t.Skip'd
-// against the follow-up ticket.
+// DefaultDERControl directly (no DERControl event). The spec calls for
+// setGradW and setSoftGradW on the DefaultDERControl per Figure 7.
+// IEEE-092 added both fields to pkg/sep2.DefaultDERControl per
+// IEEE 2030.5 §10.11 (Unsigned16, hundredths of percent per second).
 //
 // V1.2 procedure step → assertion mapping (per V1.2 §8.7):
 //
@@ -15,11 +12,10 @@
 //	         the ramp parameters, NO DERControl events)         ──► fixture load
 //	Step 2 (client walks /dcap → /edev → /fsa → DERProgram →
 //	         DefaultDERControl)                                  ──► basicModeWalkDefault
-//	Step 3 (DefaultDERControl.RampTms renders — proxy for the
-//	         ramp-rate-class fields that BASIC-007 would assert) ──► assertRampTms
-//	Step 4 (DefaultDERControl carries setGradW and setSoftGradW) ──► t.Skip (IEEE-092)
-//
-// Pinned by IEEE-092 — implementation gap.
+//	Step 3 (DefaultDERControl.SetGradW and SetSoftGradW
+//	         survive wire roundtrip)                             ──► per-field assertions
+//	Step 4 (DefaultDERControl.DERControlBase.RampTms also
+//	         renders — per-event ramp window)                    ──► assertRampTms
 package csip_test
 
 import (
@@ -29,8 +25,12 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
 )
 
-// basic007RampTms is the fixture's RampTms value (30 s).
-const basic007RampTms uint16 = 30
+// basic007 fixture seeds.
+const (
+	basic007RampTms      uint16 = 30   // seconds
+	basic007SetGradW     uint16 = 1000 // 10%/s in hundredths of percent
+	basic007SetSoftGradW uint16 = 500  // 5%/s
+)
 
 // TestBASIC_007_RampRates implements CSIP V1.2 §8.7.
 func TestBASIC_007_RampRates(t *testing.T) {
@@ -43,21 +43,33 @@ func TestBASIC_007_RampRates(t *testing.T) {
 				t.Errorf("[%s] DefaultDERControl.MRID = %q, want BASIC-007-DDERC",
 					cipher, dderc.MRID)
 			}
+
+			// Step 3: setGradW and setSoftGradW on DefaultDERControl
+			// (per IEEE 2030.5 §10.11 — device-level default ramp rates).
+			if dderc.SetGradW == nil {
+				t.Fatalf("[%s] DefaultDERControl.SetGradW is nil — fixture dropped", cipher)
+			}
+			if got := *dderc.SetGradW; got != basic007SetGradW {
+				t.Errorf("[%s] DefaultDERControl.SetGradW = %d, want %d",
+					cipher, got, basic007SetGradW)
+			}
+			if dderc.SetSoftGradW == nil {
+				t.Fatalf("[%s] DefaultDERControl.SetSoftGradW is nil — fixture dropped", cipher)
+			}
+			if got := *dderc.SetSoftGradW; got != basic007SetSoftGradW {
+				t.Errorf("[%s] DefaultDERControl.SetSoftGradW = %d, want %d",
+					cipher, got, basic007SetSoftGradW)
+			}
+
+			// Step 4: per-event ramp window also renders.
 			if dderc.DERControlBase == nil {
 				t.Fatalf("[%s] DefaultDERControl.DERControlBase is nil", cipher)
 			}
-			// Proxy assertion: RampTms is the closest existing ramp-
-			// related field; assert it round-trips so the
-			// DefaultDERControl wire shape is at least partially
-			// regression-guarded.
 			if dderc.DERControlBase.RampTms == nil {
 				t.Fatalf("[%s] DefaultDERControl.RampTms is nil — fixture dropped", cipher)
 			}
 			if got := *dderc.DERControlBase.RampTms; got != basic007RampTms {
 				t.Errorf("[%s] RampTms = %d, want %d", cipher, got, basic007RampTms)
 			}
-
-			t.Skip(formatGap("BASIC-007 (Ramp Rates)",
-				"setGradW / setSoftGradW on DefaultDERControl"))
 		})
 }

@@ -142,12 +142,19 @@ type DERProgramSpec struct {
 // a (EndDevice, FSA, DERProgram) triple. The server stores
 // DefaultDERControl under composite key "{edev}/{fsa}/{derp}" with
 // inner id "default" (handler.SingletonKey).
+//
+// SetGradW / SetSoftGradW live on the DefaultDERControl directly (per
+// IEEE 2030.5 §10.11), not on DERControlBase — they are device-level
+// default ramp rates, not per-event overrides. IEEE-092 wired these
+// through after IEEE-082's BASIC-007 skip-flip.
 type DefaultDERControlSpec struct {
 	EndDeviceID    string              `yaml:"end_device_id"`
 	FSAID          string              `yaml:"fsa_id"`
 	DERProgramID   string              `yaml:"der_program_id"`
 	MRID           string              `yaml:"mrid,omitempty"`
 	DERControlBase *DERControlBaseSpec `yaml:"der_control_base,omitempty"`
+	SetGradW       *uint16             `yaml:"set_grad_w,omitempty"`
+	SetSoftGradW   *uint16             `yaml:"set_soft_grad_w,omitempty"`
 }
 
 // DERControlSpec describes one DERControl scoped under
@@ -217,21 +224,29 @@ type CurveDataSpec struct {
 // readable.
 //
 // IEEE-082 (BASIC-002 + BASIC-004..012) extended this with
-// op_mod_fixed_pf_inject_w (already in sep2.DERControlBase since
-// before IEEE-021). The other V1.2 per-mode fields (LVRT/HVRT/LFRT/
-// HFRT curve refs, opModVoltWatt, opModFreqWatt, setGradW/setSoftGradW)
-// do not exist in pkg/sep2 today — see IEEE-092 for the product-code
-// gap follow-up.
+// op_mod_fixed_pf_inject_w. IEEE-092 wired the remaining per-mode
+// curve-reference fields (LVRT/HVRT/LFRT/HFRT, VoltWatt, FreqWatt) and
+// flipped the BASIC-004/005/007/011/012 skips to active assertions.
+// SetGradW/SetSoftGradW live on DefaultDERControlSpec, not here, per
+// IEEE 2030.5 §10.11.
 type DERControlBaseSpec struct {
-	OpModConnect        *bool                  `yaml:"op_mod_connect,omitempty"`
-	OpModEnergize       *bool                  `yaml:"op_mod_energize,omitempty"`
-	OpModFixedW         *ActivePowerSpec       `yaml:"op_mod_fixed_w,omitempty"`
-	OpModFixedPFInjectW *FixedPowerFactorSpec  `yaml:"op_mod_fixed_pf_inject_w,omitempty"`
-	OpModMaxLimW        *ActivePowerSpec       `yaml:"op_mod_max_lim_w,omitempty"`
-	OpModTargetW        *ActivePowerSpec       `yaml:"op_mod_target_w,omitempty"`
-	OpModVoltVar        *int32                 `yaml:"op_mod_volt_var,omitempty"`
-	OpModFreqDroop      *uint16                `yaml:"op_mod_freq_droop,omitempty"`
-	RampTms             *uint16                `yaml:"ramp_tms,omitempty"`
+	OpModConnect                *bool                  `yaml:"op_mod_connect,omitempty"`
+	OpModEnergize               *bool                  `yaml:"op_mod_energize,omitempty"`
+	OpModFixedW                 *ActivePowerSpec       `yaml:"op_mod_fixed_w,omitempty"`
+	OpModFixedPFInjectW         *FixedPowerFactorSpec  `yaml:"op_mod_fixed_pf_inject_w,omitempty"`
+	OpModFreqDroop              *uint16                `yaml:"op_mod_freq_droop,omitempty"`
+	OpModFreqWatt               *int32                 `yaml:"op_mod_freq_watt,omitempty"`
+	OpModHFRTMustTrip           *int32                 `yaml:"op_mod_hfrt_must_trip,omitempty"`
+	OpModHVRTMomentaryCessation *int32                 `yaml:"op_mod_hvrt_momentary_cessation,omitempty"`
+	OpModHVRTMustTrip           *int32                 `yaml:"op_mod_hvrt_must_trip,omitempty"`
+	OpModLFRTMustTrip           *int32                 `yaml:"op_mod_lfrt_must_trip,omitempty"`
+	OpModLVRTMomentaryCessation *int32                 `yaml:"op_mod_lvrt_momentary_cessation,omitempty"`
+	OpModLVRTMustTrip           *int32                 `yaml:"op_mod_lvrt_must_trip,omitempty"`
+	OpModMaxLimW                *ActivePowerSpec       `yaml:"op_mod_max_lim_w,omitempty"`
+	OpModTargetW                *ActivePowerSpec       `yaml:"op_mod_target_w,omitempty"`
+	OpModVoltVar                *int32                 `yaml:"op_mod_volt_var,omitempty"`
+	OpModVoltWatt               *int32                 `yaml:"op_mod_volt_watt,omitempty"`
+	RampTms                     *uint16                `yaml:"ramp_tms,omitempty"`
 }
 
 // ActivePowerSpec is the YAML shape of sep2.ActivePower.
@@ -479,6 +494,14 @@ func buildDefaultDERControl(s DefaultDERControlSpec) sep2.DefaultDERControl {
 		base := buildDERControlBase(*s.DERControlBase)
 		dc.DERControlBase = &base
 	}
+	if s.SetGradW != nil {
+		v := *s.SetGradW
+		dc.SetGradW = &v
+	}
+	if s.SetSoftGradW != nil {
+		v := *s.SetSoftGradW
+		dc.SetSoftGradW = &v
+	}
 	return dc
 }
 
@@ -538,9 +561,41 @@ func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
 		v := *s.OpModVoltVar
 		base.OpModVoltVar = &v
 	}
+	if s.OpModVoltWatt != nil {
+		v := *s.OpModVoltWatt
+		base.OpModVoltWatt = &v
+	}
 	if s.OpModFreqDroop != nil {
 		v := *s.OpModFreqDroop
 		base.OpModFreqDroop = &v
+	}
+	if s.OpModFreqWatt != nil {
+		v := *s.OpModFreqWatt
+		base.OpModFreqWatt = &v
+	}
+	if s.OpModLVRTMustTrip != nil {
+		v := *s.OpModLVRTMustTrip
+		base.OpModLVRTMustTrip = &v
+	}
+	if s.OpModLVRTMomentaryCessation != nil {
+		v := *s.OpModLVRTMomentaryCessation
+		base.OpModLVRTMomentaryCessation = &v
+	}
+	if s.OpModHVRTMustTrip != nil {
+		v := *s.OpModHVRTMustTrip
+		base.OpModHVRTMustTrip = &v
+	}
+	if s.OpModHVRTMomentaryCessation != nil {
+		v := *s.OpModHVRTMomentaryCessation
+		base.OpModHVRTMomentaryCessation = &v
+	}
+	if s.OpModLFRTMustTrip != nil {
+		v := *s.OpModLFRTMustTrip
+		base.OpModLFRTMustTrip = &v
+	}
+	if s.OpModHFRTMustTrip != nil {
+		v := *s.OpModHFRTMustTrip
+		base.OpModHFRTMustTrip = &v
 	}
 	if s.RampTms != nil {
 		v := *s.RampTms

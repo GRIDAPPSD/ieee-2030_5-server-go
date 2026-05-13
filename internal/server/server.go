@@ -80,6 +80,18 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		log.Printf("trusted extra client CAs: %v", cfg.ExtraClientCAs)
 	}
 
+	// IEEE-077: build the subscription store with optional durable
+	// persistence. Empty cfg.SubscriptionStorePath = in-memory only
+	// (historical behavior). Non-empty path = JSON file behind atomic
+	// rename, loaded at startup and rewritten on every Create/Delete.
+	subStore, subErr := memory.NewSubscriptionStoreWithPersistence(cfg.SubscriptionStorePath)
+	if subErr != nil {
+		return fmt.Errorf("subscription store: %w", subErr)
+	}
+	if cfg.SubscriptionStorePath != "" {
+		log.Printf("subscription persistence enabled: %s", cfg.SubscriptionStorePath)
+	}
+
 	// Initialize stores
 	stores := &Stores{
 		EndDevices:          memory.NewEndDeviceStore(),
@@ -95,7 +107,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		DefaultDERControls: memory.NewScopedStore[sep2.DefaultDERControl](),
 		DERCurves:          memory.NewStore[sep2.DERCurve](),
 		FSAs:               memory.NewScopedStore[sep2.FunctionSetAssignments](),
-		Subscriptions:      memory.NewSubscriptionStore(),
+		Subscriptions:      subStore,
 		UsagePoints:        memory.NewStore[sep2.UsagePoint](),
 		MeterReadings:      memory.NewScopedStore[sep2.MeterReading](),
 		Readings:           memory.NewScopedStore[sep2.Reading](),

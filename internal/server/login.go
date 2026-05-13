@@ -1,0 +1,100 @@
+package server
+
+import (
+	"crypto/subtle"
+	"log"
+	"net/http"
+	"strings"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
+)
+
+// IEEE-095: browser login flow for the admin surface.
+//
+// The login form is served at GET /login (unauthenticated) and posts to
+// POST /auth/login (also unauthenticated). On a successful key match the
+// server issues a TicketStore ticket and sets it as the admin_ticket cookie,
+// then redirects to /. The middleware's Path D consumes the cookie and
+// re-issues a fresh one on every authenticated request.
+//
+// Only the admin key + cookie path is touched here. mTLS, Bearer, and
+// query-param ticket auth keep their behavior.
+
+// HandleLoginPage returns a handler for GET /login. errMsg is interpolated
+// into the page; pass "" for the normal landing render. The handler always
+// returns 200 — the form is the response.
+func HandleLoginPage(errMsg string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		body := strings.Replace(loginHTML, "{{ERROR}}", htmlEscape(errMsg), 1)
+		_, _ = w.Write([]byte(body))
+	}
+}
+
+// HandleLoginSubmit returns a handler for POST /auth/login. Validates the
+// posted "key" form field against adminKey with a constant-time compare. On
+// success, issues a ticket via the supplied TicketStore and sets the
+// admin_ticket cookie with HttpOnly + Secure + SameSite=Strict, then
+// redirects to /. On wrong key, re-renders /login with an error message.
+//
+// If adminKey is empty the server is in mTLS-only mode and the login form is
+// not a valid auth path; the handler returns 503.
+func HandleLoginSubmit(adminKey string, tickets *auth.TicketStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if adminKey == "" || tickets == nil {
+			http.Error(w, "browser login not available (no admin key configured)", http.StatusServiceUnavailable)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			HandleLoginPage("Could not read form data.")(w, r)
+			return
+		}
+		submitted := r.PostFormValue("key")
+		if submitted == "" || !constantTimeEqual(submitted, adminKey) {
+			w.WriteHeader(http.StatusOK)
+			HandleLoginPage("Invalid admin key.")(w, r)
+			return
+		}
+
+		ticket, err := tickets.Issue()
+		if err != nil {
+			log.Printf("login: issue ticket: %v", err)
+			http.Error(w, "could not issue session ticket", http.StatusInternalServerError)
+			return
+		}
+		http.SetCookie(w, auth.NewAdminTicketCookie(ticket))
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	}
+}
+
+// constantTimeEqual compares two strings in constant time. Duplicated here
+// from internal/auth so server doesn't depend on auth's unexported helper;
+// each comparison is small and the duplication is bounded.
+func constantTimeEqual(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+// htmlEscape is a minimal HTML-attribute-safe escape for the error message
+// embedded into the login template. Operator-supplied input doesn't reach
+// this codepath — the message is server-controlled — but the substitution
+// goes through DOM-as-string, so escape defensively.
+func htmlEscape(s string) string {
+	replacer := strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		"\"", "&quot;",
+		"'", "&#39;",
+	)
+	return replacer.Replace(s)
+}

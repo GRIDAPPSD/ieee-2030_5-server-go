@@ -64,4 +64,6 @@ func timeoutAfter(secs int) <-chan time.Time {
 
 // memorySubStoreFor returns a typed alias so the test file reads more
 // naturally. (Package-internal; only the tests use it.)
+//
+//nolint:unused // retained for readability in adjacent test files
 type memorySubStore = memory.SubscriptionStore

@@ -64,6 +64,8 @@ const (
 // aggInverterFSAIDs is the per-inverter FSA ID list in store-key /
 // priority-chain order. UTIL-001 iterates over this to assert the
 // chain SY → FDx → SPxx → DEV.
+//
+//nolint:unused // referenced by future UTIL-NNN tests; retained for ordering reference
 var aggInverterFSAIDs = []string{aggFSAIDSY, aggFSAIDFD, aggFSAIDSP, aggFSAIDDEV}
 
 // aggInverterDescriptions maps the per-inverter FSA index to the

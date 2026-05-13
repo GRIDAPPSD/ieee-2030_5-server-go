@@ -242,6 +242,8 @@ func walkSingleCurveBasic(
 //
 // IEEE-092 closed all five gaps formatGap used to flag. Kept here so
 // any future gap re-opens land at the same call site.
+//
+//nolint:unused // retained per comment above for future BASIC-NNN gap re-opens
 func formatGap(test, missingField string) string {
 	return fmt.Sprintf(
 		"%s wire-fidelity assertion pinned by IEEE-092 — pkg/sep2.DERControlBase carries no %s field today; "+

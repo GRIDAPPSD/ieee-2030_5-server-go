@@ -1,0 +1,52 @@
+# IEEE-082 fixture — BASIC-010 Limit Max Active Power Mode (CSIP V1.2 §8.10).
+#
+# Minimal topology: 1 EndDevice, 1 FSA, 1 DERProgram, 1 DERControl
+# carrying opModMaxLimW = 5 kW per Figure 10. Immediate control mode
+# — no DERCurve reference.
+#
+# Per matrix: "Set Active Power %" and "Set Active Power Watts"
+# (BASIC-013/014) are DER-Client-only and skipped from the Server
+# roadmap. Limit Max Active Power Mode (BASIC-010) IS on the Server
+# roadmap and maps to opModMaxLimW directly.
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 1
+
+fsas:
+  - end_device_id: "0"
+    id: "0"
+    mrid: "BASIC-010-FSA"
+    description: "BASIC-010 single FSA"
+    der_program_list_link:
+      href: "/edev/0/fsa/0/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "0"
+    id: "0"
+    mrid: "BASIC-010-DERP"
+    description: "BASIC-010 Limit Max Active P program"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/0/derp/0/derc"
+      all: 1
+
+der_controls:
+  - end_device_id: "0"
+    fsa_id: "0"
+    der_program_id: "0"
+    id: "0"
+    mrid: "BASIC-010-DERC"
+    der_control_base:
+      op_mod_max_lim_w:
+        multiplier: 0
+        value: 5000

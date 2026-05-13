@@ -1,0 +1,72 @@
+# IEEE-082 fixture — BASIC-006 Volt/Var (CSIP V1.2 §8.6).
+#
+# Minimal topology: 1 EndDevice, 1 FSA, 1 DERProgram, 1 DERControl
+# carrying opModVoltVar (an int32 reference into a Volt/Var DERCurve).
+# The global DERCurve store carries one Volt/Var curve (curveType=0
+# per sep2.CurveTypeOpModVoltVar) so the assertion includes the
+# field-on-DERControl AND a sanity walk of /dc to confirm the curve
+# is renderable.
+#
+# Per Figure 6 the spec calls for a 4-point V-Var curve; the fixture
+# uses representative deadband values: 92%, 96%, 104%, 108% voltage
+# mapped to +Q, 0, 0, -Q reactive output. These are illustrative;
+# BASIC-006's server-side assertion is wire-fidelity of the seeded
+# CurveData round-trip, not numeric correctness of the curve shape.
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 1
+
+fsas:
+  - end_device_id: "0"
+    id: "0"
+    mrid: "BASIC-006-FSA"
+    description: "BASIC-006 single FSA"
+    der_program_list_link:
+      href: "/edev/0/fsa/0/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "0"
+    id: "0"
+    mrid: "BASIC-006-DERP"
+    description: "BASIC-006 Volt/Var program"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/0/derp/0/derc"
+      all: 1
+    der_curve_list_link:
+      href: "/dc"
+      all: 1
+
+der_controls:
+  - end_device_id: "0"
+    fsa_id: "0"
+    der_program_id: "0"
+    id: "0"
+    mrid: "BASIC-006-DERC"
+    der_control_base:
+      op_mod_volt_var: 0  # int32 reference; the curve at id "0" is the V-Var curve.
+
+der_curves:
+  - id: "0"
+    mrid: "BASIC-006-CURVE"
+    description: "Volt/Var (Figure 6 deadband 92/96/104/108)"
+    curve_type: 0  # CurveTypeOpModVoltVar
+    curve_data:
+      - x: 9200
+        y: 3000
+      - x: 9600
+        y: 0
+      - x: 10400
+        y: 0
+      - x: 10800
+        y: -3000

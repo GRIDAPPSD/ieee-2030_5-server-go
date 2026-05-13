@@ -181,21 +181,36 @@ type CurveDataSpec struct {
 // CSIP V1.2 fixture set needs today. Add fields incrementally as new
 // tests require them — keeping the surface narrow makes each fixture
 // readable.
+//
+// IEEE-082 (BASIC-002 + BASIC-004..012) extended this with
+// op_mod_fixed_pf_inject_w (already in sep2.DERControlBase since
+// before IEEE-021). The other V1.2 per-mode fields (LVRT/HVRT/LFRT/
+// HFRT curve refs, opModVoltWatt, opModFreqWatt, setGradW/setSoftGradW)
+// do not exist in pkg/sep2 today — see IEEE-092 for the product-code
+// gap follow-up.
 type DERControlBaseSpec struct {
-	OpModConnect   *bool            `yaml:"op_mod_connect,omitempty"`
-	OpModEnergize  *bool            `yaml:"op_mod_energize,omitempty"`
-	OpModFixedW    *ActivePowerSpec `yaml:"op_mod_fixed_w,omitempty"`
-	OpModMaxLimW   *ActivePowerSpec `yaml:"op_mod_max_lim_w,omitempty"`
-	OpModTargetW   *ActivePowerSpec `yaml:"op_mod_target_w,omitempty"`
-	OpModVoltVar   *int32           `yaml:"op_mod_volt_var,omitempty"`
-	OpModFreqDroop *uint16          `yaml:"op_mod_freq_droop,omitempty"`
-	RampTms        *uint16          `yaml:"ramp_tms,omitempty"`
+	OpModConnect        *bool                  `yaml:"op_mod_connect,omitempty"`
+	OpModEnergize       *bool                  `yaml:"op_mod_energize,omitempty"`
+	OpModFixedW         *ActivePowerSpec       `yaml:"op_mod_fixed_w,omitempty"`
+	OpModFixedPFInjectW *FixedPowerFactorSpec  `yaml:"op_mod_fixed_pf_inject_w,omitempty"`
+	OpModMaxLimW        *ActivePowerSpec       `yaml:"op_mod_max_lim_w,omitempty"`
+	OpModTargetW        *ActivePowerSpec       `yaml:"op_mod_target_w,omitempty"`
+	OpModVoltVar        *int32                 `yaml:"op_mod_volt_var,omitempty"`
+	OpModFreqDroop      *uint16                `yaml:"op_mod_freq_droop,omitempty"`
+	RampTms             *uint16                `yaml:"ramp_tms,omitempty"`
 }
 
 // ActivePowerSpec is the YAML shape of sep2.ActivePower.
 type ActivePowerSpec struct {
 	Multiplier int8  `yaml:"multiplier"`
 	Value      int64 `yaml:"value"`
+}
+
+// FixedPowerFactorSpec is the YAML shape of sep2.FixedPowerFactor.
+type FixedPowerFactorSpec struct {
+	Displacement uint16 `yaml:"displacement"`
+	Excitation   bool   `yaml:"excitation"`
+	Multiplier   int8   `yaml:"multiplier,omitempty"`
 }
 
 // ListRef is the YAML shape of sep2.ListLink (href + advertised count).
@@ -456,6 +471,13 @@ func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
 	}
 	if s.OpModFixedW != nil {
 		base.OpModFixedW = &sep2.ActivePower{Multiplier: s.OpModFixedW.Multiplier, Value: s.OpModFixedW.Value}
+	}
+	if s.OpModFixedPFInjectW != nil {
+		base.OpModFixedPFInjectW = &sep2.FixedPowerFactor{
+			Displacement: s.OpModFixedPFInjectW.Displacement,
+			Excitation:   s.OpModFixedPFInjectW.Excitation,
+			Multiplier:   s.OpModFixedPFInjectW.Multiplier,
+		}
 	}
 	if s.OpModMaxLimW != nil {
 		base.OpModMaxLimW = &sep2.ActivePower{Multiplier: s.OpModMaxLimW.Multiplier, Value: s.OpModMaxLimW.Value}

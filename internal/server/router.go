@@ -154,9 +154,11 @@ func registerEndDeviceRoutes(mux *http.ServeMux, stores *Stores, notifier handle
 
 	// Subscription endpoints
 	if stores.Subscriptions != nil {
-		mux.HandleFunc("GET /edev/{id}/sub", handler.ListHandler[sep2.Subscription, sep2.SubscriptionList](
-			stores.Subscriptions.Store, handler.BuildSubscriptionList, 900,
-		))
+		// IEEE-099: GET /edev/{id}/sub returns subscriptions scoped to
+		// the EndDevice {id}, not the cross-EndDevice union. The earlier
+		// wiring used the generic ListHandler against the underlying
+		// Store, which leaked subscriptions across EndDevices.
+		mux.HandleFunc("GET /edev/{id}/sub", handler.HandleListSubscriptionsByDevice(stores.Subscriptions, 900))
 		mux.HandleFunc("POST /edev/{id}/sub", handler.HandleCreateSubscription(stores.Subscriptions))
 		mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", handler.HandleDeleteSubscription(stores.Subscriptions))
 	}

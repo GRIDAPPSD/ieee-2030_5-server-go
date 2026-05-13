@@ -93,6 +93,42 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="result" id="controlResult"></div>
   </div>
 
+  <!-- IEEE-095: Add EndDevice from cert -->
+  <div class="card full-width">
+    <h2>Add End Device</h2>
+    <p style="font-size: 12px; color: var(--dim); margin-bottom: 8px;">
+      Paste the device certificate (PEM). The server derives SFDI and LFDI; you supply PIN and description.
+    </p>
+    <textarea id="addDevCert" rows="6" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
+      style="width:100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 12px;"></textarea>
+    <div class="form-row" style="margin-top:8px;">
+      <button class="btn" onclick="parseCert()">Parse Cert</button>
+    </div>
+    <div class="form-row">
+      <input type="text" id="addDevSFDI" placeholder="SFDI (12 digits)" readonly>
+      <input type="text" id="addDevLFDI" placeholder="LFDI (40 hex chars)" readonly>
+    </div>
+    <div class="form-row">
+      <input type="text" id="addDevDesc" placeholder="Description">
+      <input type="number" id="addDevPIN" placeholder="PIN (uint32)" min="0" max="4294967295">
+      <label style="display:flex; align-items:center; gap:6px; font-size:13px; color: var(--dim);">
+        <input type="checkbox" id="addDevEnabled" checked> Enabled
+      </label>
+      <button class="btn btn-green" onclick="addDevice()">Add Device</button>
+    </div>
+    <div class="result" id="addDevResult"></div>
+  </div>
+
+  <!-- IEEE-095: Lookup device by LFDI -->
+  <div class="card full-width">
+    <h2>Lookup Device by LFDI</h2>
+    <div class="form-row">
+      <input type="text" id="lookupLFDI" placeholder="LFDI (40 hex chars)">
+      <button class="btn" onclick="lookupLFDI()">Lookup</button>
+    </div>
+    <div class="result" id="lookupResult"></div>
+  </div>
+
   <!-- Device Table -->
   <div class="card full-width">
     <h2>End Devices</h2>
@@ -245,6 +281,117 @@ function sendControl() {
   resultEl.textContent = 'Control "' + type + '" sent (value: ' + (value || 'n/a') + ')';
   resultEl.style.color = '#22c55e';
   // TODO: POST to /api/der/controls when admin DER API is wired
+}
+
+// IEEE-095: parse PEM cert via /api/certs/info and auto-fill SFDI + LFDI.
+function parseCert() {
+  var pem = document.getElementById('addDevCert').value;
+  var resultEl = document.getElementById('addDevResult');
+  if (!pem || pem.indexOf('BEGIN CERTIFICATE') === -1) {
+    resultEl.textContent = 'Paste a PEM certificate first.';
+    resultEl.style.color = '#ef4444';
+    return;
+  }
+  fetch('/api/certs/info', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/x-pem-file' },
+    body: pem
+  })
+  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, body: d }; }); })
+  .then(function(res) {
+    if (!res.ok) {
+      resultEl.textContent = 'Error: ' + (res.body.error || 'parse failed');
+      resultEl.style.color = '#ef4444';
+      return;
+    }
+    document.getElementById('addDevSFDI').value = res.body.sfdi || '';
+    document.getElementById('addDevLFDI').value = res.body.lfdi || '';
+    resultEl.textContent = 'Parsed cert. SFDI=' + res.body.sfdi + ' Subject="' + (res.body.subject || '') + '"';
+    resultEl.style.color = '#22c55e';
+  })
+  .catch(function(err) {
+    resultEl.textContent = 'Error: ' + err.message;
+    resultEl.style.color = '#ef4444';
+  });
+}
+
+// IEEE-095: POST /api/devices to create EndDevice + Registration with PIN.
+function addDevice() {
+  var sfdi = document.getElementById('addDevSFDI').value;
+  var lfdi = document.getElementById('addDevLFDI').value;
+  var description = document.getElementById('addDevDesc').value;
+  var pinRaw = document.getElementById('addDevPIN').value;
+  var enabled = document.getElementById('addDevEnabled').checked;
+  var resultEl = document.getElementById('addDevResult');
+
+  if (!sfdi || !lfdi) {
+    resultEl.textContent = 'Parse a cert first (SFDI + LFDI required).';
+    resultEl.style.color = '#ef4444';
+    return;
+  }
+  var pin = parseInt(pinRaw, 10);
+  if (isNaN(pin) || pin < 0) {
+    resultEl.textContent = 'PIN must be a non-negative integer.';
+    resultEl.style.color = '#ef4444';
+    return;
+  }
+
+  fetch('/api/devices', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sfdi: sfdi, lfdi: lfdi, description: description, pin: pin, enabled: enabled })
+  })
+  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, status: r.status, body: d }; }); })
+  .then(function(res) {
+    if (!res.ok) {
+      resultEl.textContent = 'Error (' + res.status + '): ' + (res.body.error || 'add failed');
+      resultEl.style.color = '#ef4444';
+      return;
+    }
+    resultEl.textContent = 'Created ' + res.body.href + ' (PIN persisted).';
+    resultEl.style.color = '#22c55e';
+  })
+  .catch(function(err) {
+    resultEl.textContent = 'Error: ' + err.message;
+    resultEl.style.color = '#ef4444';
+  });
+}
+
+// IEEE-095: GET /api/devices/by-lfdi/{lfdi}
+function lookupLFDI() {
+  var lfdi = document.getElementById('lookupLFDI').value;
+  var resultEl = document.getElementById('lookupResult');
+  if (!lfdi) {
+    resultEl.textContent = 'Enter an LFDI to look up.';
+    resultEl.style.color = '#ef4444';
+    return;
+  }
+  fetch('/api/devices/by-lfdi/' + encodeURIComponent(lfdi), {
+    method: 'GET',
+    credentials: 'same-origin'
+  })
+  .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, status: r.status, body: d }; }); })
+  .then(function(res) {
+    if (!res.ok) {
+      resultEl.textContent = 'Error (' + res.status + '): ' + (res.body.error || 'lookup failed');
+      resultEl.style.color = '#ef4444';
+      return;
+    }
+    if (!res.body.found) {
+      resultEl.textContent = 'No device registered for that LFDI.';
+      resultEl.style.color = '#94a3b8';
+      return;
+    }
+    var dev = res.body.device || {};
+    resultEl.textContent = 'Found: ' + dev.href + ' SFDI=' + dev.sfdi + ' enabled=' + dev.enabled;
+    resultEl.style.color = '#22c55e';
+  })
+  .catch(function(err) {
+    resultEl.textContent = 'Error: ' + err.message;
+    resultEl.style.color = '#ef4444';
+  });
 }
 </script>
 </body>

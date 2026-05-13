@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -14,6 +16,17 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 )
+
+// SubscriberNotifier sends a single "Removed" Notification to one
+// subscriber. Defined here at the consumer (Pike rule: interfaces at the
+// consumer) so the handler can take nil from tests that don't exercise
+// the notification pipeline. Production wiring passes
+// *subscription.Manager.
+//
+// IEEE-100 / CSIP V1.2 §11.6.
+type SubscriberNotifier interface {
+	NotifyRemoved(ctx context.Context, sub sep2.Subscription) error
+}
 
 // subscriptionIDOverride is a test-only seam: when non-nil, the create
 // path calls it with the incoming request and uses the returned non-empty
@@ -183,7 +196,18 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore) http.HandlerFu
 }
 
 // HandleDeleteSubscription returns a handler for DELETE /edev/{id}/sub/{subId}.
-func HandleDeleteSubscription(subStore *memory.SubscriptionStore) http.HandlerFunc {
+//
+// On a successful delete, the handler dispatches a final "Removed"
+// Notification (Status=3) to the deleted subscription's notification
+// receiver via the supplied SubscriberNotifier — IEEE-100 / CSIP V1.2
+// §11.6 strengthening. The notify call is best-effort: the spec does
+// not require the final Notification, so a queue-full, marshal, or
+// transport error is logged but does not change the 204 response.
+//
+// The notifier is optional. Passing nil disables the final
+// Notification (useful for tests that don't exercise the subscription
+// pipeline). Production wires *subscription.Manager.
+func HandleDeleteSubscription(subStore *memory.SubscriptionStore, notifier SubscriberNotifier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			encoding.MethodNotAllowed(w, "DELETE")
@@ -191,6 +215,23 @@ func HandleDeleteSubscription(subStore *memory.SubscriptionStore) http.HandlerFu
 		}
 
 		subID := r.PathValue("subId")
+
+		// Look up the subscription record before Delete so we can hand
+		// the pre-delete value to the notifier — once Delete returns,
+		// the record is gone from the store. ErrNotFound here is the
+		// "DELETE on unknown ID" path; surface 404 immediately and skip
+		// the notify (no subscriber existed).
+		sub, getErr := subStore.Store.Get(r.Context(), subID)
+		if getErr != nil {
+			if errors.Is(getErr, store.ErrNotFound) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			log.Printf("subscription: lookup %q before delete: %v", subID, getErr)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
 		if err := subStore.Delete(r.Context(), subID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, "not found", http.StatusNotFound)
@@ -198,6 +239,18 @@ func HandleDeleteSubscription(subStore *memory.SubscriptionStore) http.HandlerFu
 			}
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
+		}
+
+		// Best-effort final Removed Notification (IEEE-100). A nil
+		// notifier or an error from NotifyRemoved is logged but does
+		// not change the 204 — the spec doesn't require this and the
+		// subscription has already been deleted from authoritative
+		// state.
+		if notifier != nil {
+			if err := notifier.NotifyRemoved(r.Context(), sub); err != nil {
+				log.Printf("subscription: notify removed for %q to %q: %v",
+					sub.Href, sub.NotificationURI, err)
+			}
 		}
 
 		w.WriteHeader(http.StatusNoContent)

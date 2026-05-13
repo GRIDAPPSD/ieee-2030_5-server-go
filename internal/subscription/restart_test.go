@@ -108,17 +108,13 @@ func TestERR002RestartPreservesSubscriptions(t *testing.T) {
 
 // TestERR002RestartReceiverReturns400 covers the second leg of ERR-002:
 // after a simulated restart the server emits a Notification whose receiver
-// rejects with HTTP 400. Today's Manager (post-IEEE-013) logs the error
-// and leaves the subscription in place; ERR-002's full "400-and-delete"
-// cleanup procedure is a Manager behavior change that is OUT OF SCOPE for
-// Path A (see backlog IEEE-022 "Out of scope" and the Path A docstring on
-// pkg/store/memory/subscription_testhooks.go).
+// rejects with HTTP 400. Per CSIP V1.2 ERR-002, a 4xx response from the
+// receiver indicates the subscription should be considered terminated and
+// the server MUST delete it from its store rather than retrying.
 //
-// This test asserts the current Path-A behavior — the restart hook works,
-// the bad-body notification produces no callback success, and the
-// subscription is still present after the failed delivery — and is the
-// pinning point for the follow-up that adds delete-on-400 (filed as a
-// separate ticket alongside Path B persistence).
+// This test pins the delete-on-4xx behavior. The companion
+// TestERR002RestartReceiverReturns503 pins the 5xx leave-in-place behavior
+// (5xx is transient; deletion would be data loss).
 func TestERR002RestartReceiverReturns400(t *testing.T) {
 	t.Parallel()
 
@@ -174,14 +170,99 @@ func TestERR002RestartReceiverReturns400(t *testing.T) {
 		}
 	}
 
-	// The receiver returned 400 — verify it really did and that the
-	// subscription survived (current Path A behavior; delete-on-400 is
-	// follow-up work, see test docstring).
 	if rejected.Load() == 0 {
 		t.Fatalf("receiver did not return 400; rejected = %d", rejected.Load())
 	}
-	if _, err := storeB.Get(ctx, subID); err != nil {
-		t.Errorf("subscription removed after 400 response: %v (Path A leaves it in place)", err)
+
+	// Manager must delete the subscription after the 4xx response. The
+	// Delete is dispatched from the worker goroutine asynchronously after
+	// the POST returns, so poll briefly rather than asserting on the same
+	// instant the receiver sees the call.
+	deadline = time.After(2 * time.Second)
+	for {
+		if _, err := storeB.Get(ctx, subID); err != nil {
+			break // gone — desired
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("subscription %q still present after 4xx response; want delete-on-4xx",
+				subID)
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Manager did not shut down within 2s")
+	}
+}
+
+// TestERR002RestartReceiverReturns503 pins the complementary half of the
+// ERR-002 second-leg rule: a 5xx response from the receiver is transient.
+// The Manager MUST NOT delete the subscription on 5xx — deletion would be
+// data loss on what is by spec a recoverable upstream failure. Retry /
+// back-off on 5xx is a separate ticket; this test only asserts that the
+// subscription survives the failed delivery.
+func TestERR002RestartReceiverReturns503(t *testing.T) {
+	t.Parallel()
+
+	var received atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received.Add(1)
+		http.Error(w, "receiver overloaded", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	const subID = "sub-err002-3"
+	const resourceHref = "/edev/3"
+	sub := sep2.Subscription{
+		SubscribableResource: sep2.SubscribableResource{
+			Resource: sep2.Resource{Href: "/edev/3/sub/1"},
+		},
+		SubscribedResource: resourceHref,
+		NotificationURI:    srv.URL + "/notify",
+		Encoding:           sep2.EncodingXML,
+	}
+
+	store := memory.NewSubscriptionStore()
+	if err := store.Create(context.Background(), subID, sub); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mgr := subscription.NewManager(store, 2, 10)
+	done := make(chan struct{})
+	go func() {
+		mgr.Start(ctx)
+		close(done)
+	}()
+
+	mgr.Notify(ctx, resourceHref, sep2.NotificationStatusChanged)
+
+	// Wait for the receiver to observe the failed POST.
+	deadline := time.After(2 * time.Second)
+	for received.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("receiver never observed the notification; received = %d",
+				received.Load())
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	// Give the worker a small grace window to (incorrectly) delete the
+	// subscription if delete-on-5xx were misapplied. 100ms is well above
+	// the dispatch overhead of the worker but short enough to keep the
+	// test snappy.
+	time.Sleep(100 * time.Millisecond)
+	if _, err := store.Get(ctx, subID); err != nil {
+		t.Errorf("subscription %q removed after 5xx response: %v (5xx must leave it in place)",
+			subID, err)
 	}
 
 	cancel()

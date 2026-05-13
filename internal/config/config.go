@@ -1,5 +1,7 @@
 package config
 
+import "path/filepath"
+
 // Config holds server configuration.
 type Config struct {
 	Addr            string   // listen address for IEEE 2030.5 protocol (e.g., ":443")
@@ -8,6 +10,18 @@ type Config struct {
 	CAFile          string   // CA cert PEM path
 	ExtraClientCAs  []string // additional PEM paths appended to the ClientCAs pool (additive to CAFile)
 	BootFixtureFile string   // optional YAML topology fixture loaded at startup; empty = no fixture
+
+	// IEEE-097: persistence root for admin-mutated stores. Empty = pure
+	// in-memory (back-compat with every test path that predates IEEE-097).
+	// When set, each persistent store auto-files under <DataDir>/<name>.json
+	// unless a store-specific dedicated path env var overrides it (see
+	// EffectiveStorePath for the precedence rule).
+	DataDir string // env SEP2_DATA_DIR
+
+	// IEEE-097: dedicated path for the subscription store. Predates DataDir;
+	// preserved for back-compat with IEEE-077-era deployments. When both are
+	// set, the dedicated path wins.
+	SubscriptionStorePath string // env SEP2_SUBSCRIPTION_STORE_PATH
 
 	// IEEE-094: admin listener configuration.
 	//
@@ -37,12 +51,6 @@ type Config struct {
 	EnableCCM   bool   // use CCM-8 cipher suite (spec-compliant) vs GCM fallback
 	EnableMDNS  bool   // enable mDNS service advertisement
 	MDNSHost    string // mDNS hostname
-
-	// SubscriptionStorePath enables IEEE-077 durable subscription persistence
-	// when non-empty. Path to a JSON file the server reads at startup and
-	// rewrites atomically on every subscription Create / Delete. Empty
-	// (default) keeps subscriptions in memory only — historical behavior.
-	SubscriptionStorePath string
 }
 
 // EffectiveAdminListen returns the admin listener address, falling back to
@@ -53,4 +61,26 @@ func (c *Config) EffectiveAdminListen() string {
 		return c.AdminListen
 	}
 	return c.AdminAddr
+}
+
+// EffectiveStorePath resolves the on-disk JSON snapshot path for a named
+// store under the IEEE-097 single-knob shape:
+//
+//  1. dedicatedPath wins if non-empty (back-compat for
+//     SEP2_SUBSCRIPTION_STORE_PATH and any future per-store overrides).
+//  2. Else if DataDir is non-empty, derive <DataDir>/<storeName>.json.
+//  3. Else return "" — pure in-memory mode (historical default).
+//
+// storeName is the bare filename stem (e.g. "enddevices", "registrations",
+// "fsas", "derprograms", "subscriptions"). Caller adds the .json suffix via
+// this helper; callers MUST NOT hand-roll the path because the precedence
+// rule is the one place we test.
+func (c *Config) EffectiveStorePath(storeName, dedicatedPath string) string {
+	if dedicatedPath != "" {
+		return dedicatedPath
+	}
+	if c.DataDir == "" {
+		return ""
+	}
+	return filepath.Join(c.DataDir, storeName+".json")
 }

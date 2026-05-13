@@ -16,7 +16,11 @@ import (
 // Stores holds all resource stores for the server.
 type Stores struct {
 	EndDevices          store.EndDeviceStore
-	Registrations       *memory.Store[sep2.Registration]
+	// Registrations is the persistent-aware wrapper around the in-memory
+	// Store[sep2.Registration]. The embedded *Store gives back-compat
+	// method promotion (Get/List/Count) for call sites that don't need
+	// the persistence flush.
+	Registrations       *memory.RegistrationStore
 	MirrorUsagePoints   *memory.Store[sep2.MirrorUsagePoint]
 	MirrorMeterReadings *memory.ScopedStore[sep2.MirrorMeterReading]
 
@@ -26,7 +30,11 @@ type Stores struct {
 	DERSettings        *memory.ScopedStore[sep2.DERSettings]
 	DERStatuses        *memory.ScopedStore[sep2.DERStatus]
 	DERAvailabilities  *memory.ScopedStore[sep2.DERAvailability]
-	DERPrograms        *memory.ScopedStore[sep2.DERProgram]
+	// DERPrograms is the persistent-aware wrapper. It embeds
+	// *ScopedStore[sep2.DERProgram] so existing handlers that call
+	// .ForParent(...) keep working unchanged; the shadowed
+	// Create/Delete add the disk flush.
+	DERPrograms        *memory.DERProgramStore
 	DERControls        *memory.ScopedStore[sep2.DERControl]
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]
 	DERCurves          *memory.Store[sep2.DERCurve]
@@ -183,9 +191,12 @@ func registerDERRoutes(mux *http.ServeMux, stores *Stores) {
 	mux.HandleFunc("GET /edev/{id}/der/{derId}/dera", dera)
 	mux.HandleFunc("PUT /edev/{id}/der/{derId}/dera", dera)
 
-	// DERProgram under FSA
+	// DERProgram under FSA — use the embedded *ScopedStore so the helper
+	// signature stays unchanged. Writes through stores.DERPrograms.Create
+	// still go through the persistent wrapper (the list handler is
+	// read-only and does not need the persistence flush).
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp", scopedListHandler[sep2.DERProgram, sep2.DERProgramList](
-		stores.DERPrograms, handler.BuildDERProgramList, 900,
+		stores.DERPrograms.ScopedStore, handler.BuildDERProgramList, 900,
 	))
 
 	// DERControl under DERProgram

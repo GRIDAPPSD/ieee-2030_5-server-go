@@ -9,7 +9,7 @@ import (
 func newTestStores() *server.Stores {
 	return &server.Stores{
 		EndDevices:          memory.NewEndDeviceStore(),
-		Registrations:       memory.NewStore[sep2.Registration](),
+		Registrations:       memory.NewRegistrationStore(),
 		MirrorUsagePoints:   memory.NewStore[sep2.MirrorUsagePoint](),
 		MirrorMeterReadings: memory.NewScopedStore[sep2.MirrorMeterReading](),
 		DERs:               memory.NewScopedStore[sep2.DER](),
@@ -17,7 +17,7 @@ func newTestStores() *server.Stores {
 		DERSettings:        memory.NewScopedStore[sep2.DERSettings](),
 		DERStatuses:        memory.NewScopedStore[sep2.DERStatus](),
 		DERAvailabilities:  memory.NewScopedStore[sep2.DERAvailability](),
-		DERPrograms:        memory.NewScopedStore[sep2.DERProgram](),
+		DERPrograms:        memory.NewDERProgramStore(),
 		DERControls:        memory.NewScopedStore[sep2.DERControl](),
 		DefaultDERControls: memory.NewScopedStore[sep2.DefaultDERControl](),
 		DERCurves:          memory.NewStore[sep2.DERCurve](),

@@ -74,6 +74,19 @@ func NewClient(httpClient *http.Client, baseURL string) *Client {
 	return &Client{http: httpClient, baseURL: baseURL}
 }
 
+// HTTPClient returns the underlying *http.Client. Tests that need to
+// issue verbs the typed Client does not expose (POST a Subscription,
+// DELETE a sub, POST malformed XML to assert 400) can use this to
+// reuse the same TLS / device-cert wiring BootServer set up, without
+// rebuilding the transport stack.
+//
+// Mutating the returned client (e.g. swapping Transport) leaks back to
+// every Client method on the same instance — don't do that. Read-only
+// use (NewRequestWithContext + Do) is the intended shape.
+func (c *Client) HTTPClient() *http.Client {
+	return c.http
+}
+
 // GetDeviceCapability issues GET <baseURL>/dcap and parses the response
 // as a sep2.DeviceCapability. It wraps errors with %w at every boundary
 // (transport, status, body read, XML unmarshal) so callers can

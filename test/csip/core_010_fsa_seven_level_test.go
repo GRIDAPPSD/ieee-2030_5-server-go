@@ -112,7 +112,7 @@ func runFSAHierarchy(t *testing.T, p fsaHierarchyParams) {
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
 		FSAs:               stores.FSAs,
-		DERPrograms:        stores.DERPrograms,
+		DERPrograms:        stores.DERPrograms.ScopedStore,
 		DERControls:        stores.DERControls,
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,

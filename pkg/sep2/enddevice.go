@@ -17,6 +17,15 @@ type EndDevice struct {
 	FunctionSetAssignmentsListLink *ListLink `xml:"FunctionSetAssignmentsListLink,omitempty"`
 	DERListLink                    *ListLink `xml:"DERListLink,omitempty"`
 	LogEventListLink               *ListLink `xml:"LogEventListLink,omitempty"`
+	// SubscriptionListLink is the per-EndDevice subscription list, per
+	// IEEE 2030.5 §10.5.5 / CSIP V1.2 CORE-018 step 1. Servers that support
+	// subscription/notification advertise this link so an inverter can POST
+	// a Subscription resource to it (IEEE-050); servers that don't simply
+	// omit it (and any POST to a non-advertised path returns 405, which the
+	// inverter handles as polling-only fallback). omitempty preserves
+	// backward XML compatibility — existing EndDevice payloads without this
+	// link round-trip unchanged.
+	SubscriptionListLink *ListLink `xml:"SubscriptionListLink,omitempty"`
 }
 
 // Copy returns an independent copy of the EndDevice.
@@ -46,6 +55,10 @@ func (e EndDevice) Copy() EndDevice {
 	if e.LogEventListLink != nil {
 		l := *e.LogEventListLink
 		c.LogEventListLink = &l
+	}
+	if e.SubscriptionListLink != nil {
+		l := *e.SubscriptionListLink
+		c.SubscriptionListLink = &l
 	}
 	return c
 }

@@ -1,0 +1,102 @@
+# IEEE-082 fixture — BASIC-004 LVRT/HVRT (CSIP V1.2 §8.4).
+#
+# Minimal topology that lets the procedure walk run as far as the
+# DERControl render, where the per-mode assertion would inspect
+# opModLVRTMustTrip / opModLVRTMomentaryCessation / opModHVRTMustTrip
+# / opModHVRTMomentaryCessation curve references. None of those
+# fields exist in pkg/sep2.DERControlBase today — see IEEE-092.
+#
+# The fixture seeds 4 DERCurves in /dc (one per LVRT/HVRT mode, as
+# §8.4 calls for) so the curve-list walk leg of the procedure is
+# wire-asserted. The DERControl's DERControlBase carries the only
+# field BASIC-004 shares with the supported modes — none — so the
+# wire body is intentionally empty of mode fields and the test
+# t.Skip's after the curve-list assertion.
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 1
+
+fsas:
+  - end_device_id: "0"
+    id: "0"
+    mrid: "BASIC-004-FSA"
+    description: "BASIC-004 single FSA"
+    der_program_list_link:
+      href: "/edev/0/fsa/0/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "0"
+    id: "0"
+    mrid: "BASIC-004-DERP"
+    description: "BASIC-004 LVRT/HVRT program"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/0/derp/0/derc"
+      all: 1
+    der_curve_list_link:
+      href: "/dc"
+      all: 4
+
+der_controls:
+  - end_device_id: "0"
+    fsa_id: "0"
+    der_program_id: "0"
+    id: "0"
+    mrid: "BASIC-004-DERC"
+    # DERControlBase intentionally empty — the V1.2 mode fields this
+    # control would reference are unimplemented in pkg/sep2. See
+    # IEEE-092.
+
+# Four curves: LVRT-must-trip, LVRT-momentary-cessation, HVRT-must-trip,
+# HVRT-momentary-cessation. The sep2 DERCurve type today does not
+# carry a "ride-through mode" sub-classifier; curveType=0 (VoltVar) is
+# the closest existing tag. The procedure walk renders these as
+# generic curves; the per-mode assertion that would discriminate them
+# by sub-type is pinned by IEEE-092.
+der_curves:
+  - id: "0"
+    mrid: "BASIC-004-LVRT-MUST-TRIP"
+    description: "LVRT must trip envelope"
+    curve_type: 0
+    curve_data:
+      - x: 5000
+        y: 100
+      - x: 7000
+        y: 1000
+  - id: "1"
+    mrid: "BASIC-004-LVRT-MOMENTARY"
+    description: "LVRT momentary cessation"
+    curve_type: 0
+    curve_data:
+      - x: 8000
+        y: 0
+      - x: 8800
+        y: 0
+  - id: "2"
+    mrid: "BASIC-004-HVRT-MUST-TRIP"
+    description: "HVRT must trip envelope"
+    curve_type: 0
+    curve_data:
+      - x: 11000
+        y: 100
+      - x: 12000
+        y: 1000
+  - id: "3"
+    mrid: "BASIC-004-HVRT-MOMENTARY"
+    description: "HVRT momentary cessation"
+    curve_type: 0
+    curve_data:
+      - x: 11000
+        y: 0
+      - x: 11200
+        y: 0

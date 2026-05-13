@@ -16,6 +16,7 @@ import (
 // Stores holds all resource stores for the server.
 type Stores struct {
 	EndDevices          store.EndDeviceStore
+	Registrations       *memory.Store[sep2.Registration]
 	MirrorUsagePoints   *memory.Store[sep2.MirrorUsagePoint]
 	MirrorMeterReadings *memory.ScopedStore[sep2.MirrorMeterReading]
 

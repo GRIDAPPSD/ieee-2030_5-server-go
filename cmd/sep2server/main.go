@@ -57,6 +57,9 @@ func runServe() error {
 		EnableCCM:       os.Getenv("SEP2_CCM") == "true",
 		EnableMDNS:      os.Getenv("SEP2_MDNS") == "true",
 		MDNSHost:        envOr("SEP2_MDNS_HOST", "localhost"),
+
+		// IEEE-077: opt-in subscription persistence. Empty = in-memory only.
+		SubscriptionStorePath: os.Getenv("SEP2_SUBSCRIPTION_STORE_PATH"),
 	}
 
 	// Load CA for admin cert service

@@ -111,6 +111,11 @@ run-enphase: build certs   ## Start server with Enphase root + EndDevice pre-see
 	@echo "# Trusted extra client CAs: testdata/csip-pki/enphase/Enph_root.pem"
 	@echo "# Pre-seeded EndDevice fixture: test/csip/fixtures/enphase-edev.yaml"
 	@echo "# Non-strict cert mode (Enphase leaf is CSIP §6.11 non-compliant)"
+	@echo "# Device-side cert (Enphase microinverter ships its own client cert):"
+	@echo "#   --cert <enphase-device>.crt   (device's vendor-issued client cert)"
+	@echo "#   --key  <enphase-device>.key   (device's private key)"
+	@echo "#   --ca   $(CERT_DIR)/ca.crt     (server CA — what the device must trust)"
+	@echo "# Server prints a full connection-details banner at boot (IEEE-112)."
 	SEP2_ADDR=$(ENPHASE_ADDR) \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
@@ -143,6 +148,11 @@ run-sunspec: build certs   ## Start server trusting SunSpec CSIP test PKI roots 
 	@echo "# SunSpec profile: binding :8443 (CCM-8)"
 	@echo "# Server cert: local CA chain ($(CERT_DIR)/server.crt)"
 	@echo "# Trusted extra client CAs: $(SUNSPEC_ROOTS)"
+	@echo "# Device-side cert (CSIP V1.2 SunSpec test PKI):"
+	@echo "#   --cert $(subst roots.pem,cert.pem,$(SUNSPEC_ROOTS))"
+	@echo "#   --key  $(subst roots.pem,key.pem,$(SUNSPEC_ROOTS))"
+	@echo "#   --ca   $(CERT_DIR)/ca.crt   (server's CA — what the device must trust)"
+	@echo "# Server prints a full connection-details banner at boot (IEEE-112)."
 	SEP2_ADDR=:8443 \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \

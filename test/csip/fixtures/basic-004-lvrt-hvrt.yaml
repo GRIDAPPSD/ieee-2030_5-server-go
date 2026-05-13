@@ -1,17 +1,10 @@
-# IEEE-082 fixture — BASIC-004 LVRT/HVRT (CSIP V1.2 §8.4).
+# IEEE-082/IEEE-092 fixture — BASIC-004 LVRT/HVRT (CSIP V1.2 §8.4).
 #
-# Minimal topology that lets the procedure walk run as far as the
-# DERControl render, where the per-mode assertion would inspect
-# opModLVRTMustTrip / opModLVRTMomentaryCessation / opModHVRTMustTrip
-# / opModHVRTMomentaryCessation curve references. None of those
-# fields exist in pkg/sep2.DERControlBase today — see IEEE-092.
-#
-# The fixture seeds 4 DERCurves in /dc (one per LVRT/HVRT mode, as
-# §8.4 calls for) so the curve-list walk leg of the procedure is
-# wire-asserted. The DERControl's DERControlBase carries the only
-# field BASIC-004 shares with the supported modes — none — so the
-# wire body is intentionally empty of mode fields and the test
-# t.Skip's after the curve-list assertion.
+# IEEE-092 added the four LVRT/HVRT curve-ref fields to
+# pkg/sep2.DERControlBase. The fixture now seeds all four, each
+# pointing at the corresponding DERCurve id in /dc; the procedure
+# walk asserts each ref round-trips on the wire and the curve-list
+# carries the four ride-through curves.
 
 end_devices:
   - id: "0"
@@ -53,9 +46,12 @@ der_controls:
     der_program_id: "0"
     id: "0"
     mrid: "BASIC-004-DERC"
-    # DERControlBase intentionally empty — the V1.2 mode fields this
-    # control would reference are unimplemented in pkg/sep2. See
-    # IEEE-092.
+    der_control_base:
+      # Curve IDs reference der_curves[].id below. IEEE-092 fields.
+      op_mod_lvrt_must_trip: 0
+      op_mod_lvrt_momentary_cessation: 1
+      op_mod_hvrt_must_trip: 2
+      op_mod_hvrt_momentary_cessation: 3
 
 # Four curves: LVRT-must-trip, LVRT-momentary-cessation, HVRT-must-trip,
 # HVRT-momentary-cessation. The sep2 DERCurve type today does not

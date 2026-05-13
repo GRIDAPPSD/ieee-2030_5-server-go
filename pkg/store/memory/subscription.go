@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
@@ -78,17 +79,43 @@ func (s *SubscriptionStore) ListByResource(_ context.Context, resourceHref strin
 	return result, nil
 }
 
-// ListByDevice returns all subscriptions for a given device ID.
+// ListByDevice returns all subscriptions scoped to the given EndDevice
+// ID. The EndDevice scope is derived from each subscription's Href
+// (the canonical "/edev/{edevID}/sub/{subID}" shape produced by
+// HandleCreateSubscription). Subscriptions whose Href does not match
+// that shape are absent from the per-EndDevice view.
 func (s *SubscriptionStore) ListByDevice(_ context.Context, deviceID string) ([]sep2.Subscription, error) {
 	s.idxMu.RLock()
-	ids := s.deviceIndex[deviceID]
+	ids := make([]string, len(s.deviceIndex[deviceID]))
+	copy(ids, s.deviceIndex[deviceID])
 	s.idxMu.RUnlock()
 
-	var result []sep2.Subscription
+	result := make([]sep2.Subscription, 0, len(ids))
 	for _, id := range ids {
 		sub, err := s.Store.Get(context.Background(), id)
 		if err == nil {
 			result = append(result, sub)
+		}
+	}
+	return result, nil
+}
+
+// ListByDeviceWithIDs returns the EndDevice-scoped subscriptions paired
+// with their storage IDs, matching the ListByResource record shape.
+// Used by the GET /edev/{id}/sub handler so it can page the result by
+// stable storage ID. IDs are returned in insertion order to keep paging
+// deterministic.
+func (s *SubscriptionStore) ListByDeviceWithIDs(_ context.Context, deviceID string) ([]SubscriptionRecord, error) {
+	s.idxMu.RLock()
+	ids := make([]string, len(s.deviceIndex[deviceID]))
+	copy(ids, s.deviceIndex[deviceID])
+	s.idxMu.RUnlock()
+
+	result := make([]SubscriptionRecord, 0, len(ids))
+	for _, id := range ids {
+		sub, err := s.Store.Get(context.Background(), id)
+		if err == nil {
+			result = append(result, SubscriptionRecord{ID: id, Subscription: sub})
 		}
 	}
 	return result, nil
@@ -99,6 +126,9 @@ func (s *SubscriptionStore) indexSub(id string, sub sep2.Subscription) {
 	defer s.idxMu.Unlock()
 	if sub.SubscribedResource != "" {
 		s.resourceIndex[sub.SubscribedResource] = append(s.resourceIndex[sub.SubscribedResource], id)
+	}
+	if edevID := edevIDFromHref(sub.Href); edevID != "" {
+		s.deviceIndex[edevID] = append(s.deviceIndex[edevID], id)
 	}
 }
 
@@ -115,5 +145,35 @@ func (s *SubscriptionStore) removeIndex(id string, sub sep2.Subscription) {
 			}
 		}
 	}
+	if edevID := edevIDFromHref(sub.Href); edevID != "" {
+		ids := s.deviceIndex[edevID]
+		for i, sid := range ids {
+			if sid == id {
+				s.deviceIndex[edevID] = append(ids[:i], ids[i+1:]...)
+				break
+			}
+		}
+	}
+}
+
+// edevIDFromHref extracts the EndDevice ID segment from a subscription
+// href of the canonical shape "/edev/{edevID}/sub/{subID}".
+// Non-conforming hrefs (no /edev/ prefix, missing /sub/ segment, empty
+// id) return "" so the caller treats the subscription as out-of-scope
+// for per-EndDevice listing.
+func edevIDFromHref(href string) string {
+	const prefix = "/edev/"
+	if !strings.HasPrefix(href, prefix) {
+		return ""
+	}
+	rest := href[len(prefix):]
+	slash := strings.IndexByte(rest, '/')
+	if slash <= 0 {
+		return ""
+	}
+	if !strings.HasPrefix(rest[slash:], "/sub/") && rest[slash:] != "/sub" {
+		return ""
+	}
+	return rest[:slash]
 }
 

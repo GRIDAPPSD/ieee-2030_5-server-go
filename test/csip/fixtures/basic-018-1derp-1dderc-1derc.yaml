@@ -1,0 +1,68 @@
+# IEEE-084 / BASIC-018 fixture — CSIP V1.2 §8.18.
+#
+# Topology: 1 DERProgram, 1 DefaultDERControl, 1 DERControl. The
+# DDERC carries opModFixedW = 2 kW (the fallback when no event is
+# active); the DERControl carries opModFixedW = 3 kW with Interval
+# [t0+60, t0+180) and EventStatus = Scheduled. Per §8.18 the client
+# applies DDERC while the event is scheduled, then transitions to
+# DERControl when active. Server-side just asserts the fixture renders.
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    registration_link: "/edev/0/rg"
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 1
+
+fsas:
+  - end_device_id: "0"
+    id: "0"
+    mrid: "BASIC-018-FSA"
+    description: "BASIC-018 single FSA"
+    der_program_list_link:
+      href: "/edev/0/fsa/0/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "0"
+    id: "0"
+    mrid: "BASIC-018-DERP"
+    description: "BASIC-018 single DERProgram"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/0/derp/0/derc"
+      all: 1
+
+default_der_controls:
+  - end_device_id: "0"
+    fsa_id: "0"
+    der_program_id: "0"
+    mrid: "BASIC-018-DDERC"
+    der_control_base:
+      op_mod_fixed_w:
+        multiplier: 0
+        value: 2000
+
+der_controls:
+  - end_device_id: "0"
+    fsa_id: "0"
+    der_program_id: "0"
+    id: "a"
+    mrid: "BASIC-018-DERC-A"
+    description: "BASIC-018 scheduled 2-min DERControl"
+    event_status:
+      current_status: 0
+      date_time: 1700000000
+    interval:
+      start: 1700000060
+      duration: 120
+    der_control_base:
+      op_mod_fixed_w:
+        multiplier: 0
+        value: 3000

@@ -178,9 +178,15 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		}
 	}
 
-	// Start admin HTTPS server if configured
+	// Start admin server if configured. IEEE-094: admin runs on its own
+	// listener (SEP2_ADMIN_LISTEN, falling back to SEP2_ADMIN_ADDR for
+	// back-compat) with a weaker TLS posture than the SEP2 wire, so the
+	// browser login + cert-paste flows can use Bearer/cookie auth without
+	// weakening the SEP2 mTLS requirement. AdminTLS=false serves plain HTTP
+	// (Caddy mode); AdminTLS=true serves HTTPS (operator-supplied cert or
+	// self-signed fallback).
 	var adminSrv *http.Server
-	if cfg.AdminAddr != "" && svc != nil {
+	if cfg.EffectiveAdminListen() != "" && svc != nil {
 		tlsModeName := "GCM"
 		if cfg.EnableCCM {
 			tlsModeName = "CCM-8"
@@ -209,44 +215,97 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	}
 }
 
+// startAdminServer brings up the admin listener on its own port. IEEE-094:
+// the listener selection matrix is
+//
+//	AdminListen empty  → admin disabled (caller gates this case)
+//	AdminTLS = false   → plain HTTP (Caddy reverse-proxy mode)
+//	AdminTLS = true    → HTTPS with operator cert (AdminCert/AdminKeyFile)
+//	                     or self-signed fallback if neither is set
+//
+// HTTPS modes use VerifyClientCertIfGiven so AdminAuthMiddleware's mTLS
+// Path A still works for cert-bearing operators while Bearer/cookie clients
+// can connect without presenting a cert. The SEP2 protocol listener keeps
+// its own RequireAnyClientCert + manual-verify posture untouched.
 func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error) (*http.Server, error) {
-	adminCertPEM, adminKeyPEM, err := certs.GenerateSelfSignedTLS([]string{"localhost", "127.0.0.1", "::1"})
-	if err != nil {
-		return nil, fmt.Errorf("generate admin TLS cert: %w", err)
-	}
-
-	adminTLSCert, err := tls.X509KeyPair(adminCertPEM, adminKeyPEM)
-	if err != nil {
-		return nil, fmt.Errorf("parse admin TLS cert: %w", err)
-	}
-
-	adminTLSCfg := &tls.Config{
-		Certificates: []tls.Certificate{adminTLSCert},
-		MinVersion:   tls.VersionTLS12,
-	}
+	addr := cfg.EffectiveAdminListen()
 
 	tickets := auth.NewTicketStore(30 * time.Second)
 	adminRouter := NewAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets)
 
-	adminListener, err := net.Listen("tcp", cfg.AdminAddr)
+	adminListener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("admin listen: %w", err)
 	}
 
-	adminTLSListener := tls.NewListener(adminListener, adminTLSCfg)
+	serveListener := adminListener
+	tlsModeDescription := "plain HTTP (Caddy mode)"
+	if cfg.AdminTLS {
+		tlsCfg, desc, err := buildAdminTLSConfig(cfg)
+		if err != nil {
+			_ = adminListener.Close()
+			return nil, fmt.Errorf("admin TLS config: %w", err)
+		}
+		serveListener = tls.NewListener(adminListener, tlsCfg)
+		tlsModeDescription = desc
+	}
+
 	adminSrv := &http.Server{Handler: adminRouter}
 
 	go func() {
-		log.Printf("Admin HTTPS server listening on %s (self-signed TLS)", cfg.AdminAddr)
+		log.Printf("Admin server listening on %s (%s)", addr, tlsModeDescription)
 		if cfg.AdminKey != "" {
 			log.Println("Admin API key configured")
 		} else {
 			log.Println("WARNING: No admin API key set (SEP2_ADMIN_KEY). Bearer auth disabled.")
 		}
-		errCh <- adminSrv.Serve(adminTLSListener)
+		errCh <- adminSrv.Serve(serveListener)
 	}()
 
 	return adminSrv, nil
+}
+
+// buildAdminTLSConfig assembles the admin listener's *tls.Config from the
+// admin-cert env vars. Operator-supplied cert/key wins; otherwise a fresh
+// self-signed cert covering localhost is generated (current default). The
+// resulting config uses VerifyClientCertIfGiven so mTLS-bearing operators
+// flow through AdminAuthMiddleware Path A while browser clients without a
+// cert still complete the handshake and authenticate via Bearer/cookie.
+//
+// The returned description string is human-readable for the startup log.
+func buildAdminTLSConfig(cfg *config.Config) (*tls.Config, string, error) {
+	var (
+		cert tls.Certificate
+		desc string
+	)
+	switch {
+	case cfg.AdminCert != "" && cfg.AdminKeyFile != "":
+		c, err := tls.LoadX509KeyPair(cfg.AdminCert, cfg.AdminKeyFile)
+		if err != nil {
+			return nil, "", fmt.Errorf("load admin cert/key: %w", err)
+		}
+		cert = c
+		desc = "HTTPS, operator cert"
+	case cfg.AdminCert != "" || cfg.AdminKeyFile != "":
+		return nil, "", fmt.Errorf("admin cert/key must be set together (got AdminCert=%q AdminKeyFile=%q)", cfg.AdminCert, cfg.AdminKeyFile)
+	default:
+		certPEM, keyPEM, err := certs.GenerateSelfSignedTLS([]string{"localhost", "127.0.0.1", "::1"})
+		if err != nil {
+			return nil, "", fmt.Errorf("generate admin TLS cert: %w", err)
+		}
+		c, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err != nil {
+			return nil, "", fmt.Errorf("parse admin TLS cert: %w", err)
+		}
+		cert = c
+		desc = "HTTPS, self-signed"
+	}
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+		ClientAuth:   tls.VerifyClientCertIfGiven,
+	}, desc, nil
 }
 
 func parsePort(addr string) int {

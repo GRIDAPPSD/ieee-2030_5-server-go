@@ -1,0 +1,436 @@
+# IEEE-089 fixture — Utility-Aggregator topology for UTIL-001..UTIL-004
+# (CSIP V1.2 §9.1-§9.4). Per Noor's V1.2 coverage matrix Section 2 this is
+# "the heaviest fixture in the matrix" — bigger than IEEE-057's
+# seven-level-fsa.yaml (1 EndDevice, 7 FSAs, 7 DERPrograms).
+#
+# Topology shape:
+#
+#   5 EndDevices:
+#     - EDFI  (id="0") — the Aggregator itself (Utility-side end device).
+#     - EDA1  (id="1") — managed inverter A1.
+#     - EDA2  (id="2") — managed inverter A2.
+#     - EDB1  (id="3") — managed inverter B1.
+#     - EDB2  (id="4") — managed inverter B2.
+#
+#   4-level FSA chain per managed inverter:
+#
+#     SY (system, primacy 0)
+#       ├── FDA (feeder A, primacy 1)
+#       │     ├── SPA1 (service point A1, primacy 2)
+#       │     │     └── DEV-EDA1 (device, primacy 3)  → EDA1
+#       │     └── SPA2 (service point A2, primacy 2)
+#       │           └── DEV-EDA2 (device, primacy 3)  → EDA2
+#       └── FDB (feeder B, primacy 1)
+#             ├── SPB1 (service point B1, primacy 2)
+#             │     └── DEV-EDB1 (device, primacy 3)  → EDB1
+#             └── SPB2 (service point B2, primacy 2)
+#                   └── DEV-EDB2 (device, primacy 3)  → EDB2
+#
+#   Per managed inverter the 4 FSAs (SY/FDx/SPxx/DEV) are hung off that
+#   inverter's EndDevice. Each FSA points to ONE DERProgram. The total
+#   distinct DERPrograms across the topology is 7:
+#     SY (1), FDA + FDB (2), SPA1 + SPA2 + SPB1 + SPB2 (4) = 7 nodes.
+#   Per-inverter device-level DERPrograms are 4 additional (DEV-EDA1..B2)
+#   but they are scoped under each inverter's EndDevice — the spec models
+#   the "node" tree above as the shared utility/feeder/service-point
+#   hierarchy, while the device program is per-inverter. Total DERPrograms
+#   stored = 7 shared nodes × 4 inverters (each inverter sees the chain
+#   from its perspective via FSA→DERProgramList) + 4 device-level
+#   programs. The loader keys DERPrograms by EndDevice (see csiptest
+#   loader doc); we replicate the per-inverter chain so each managed
+#   inverter's FSA→DERProgram walk surfaces the full SY→FDx→SPxx→DEV
+#   priority chain.
+#
+# The Aggregator EDFI (id="0") gets a single FSA → its own DERProgram so
+# UTIL-002's "find own EDFI" step has something coherent to discover.
+# It does NOT carry the full inverter topology — it is the management
+# endpoint, not a managed inverter.
+#
+# SFDI/LFDI are fabricated test values per the same convention as
+# three-edev.yaml (real-cert-derivation is out of scope for UTIL tests
+# that don't drive against a SunSpec V1.2 leaf).
+#
+# IEEE-090 (AGG-001..012) will reuse this fixture wholesale. Do not add
+# UTIL-004-specific DERControls here — those are created at test time
+# by the procedure step.
+
+end_devices:
+  - id: "0"
+    sfdi: "100000000001"
+    lfdi: "1000000000000000000000000000000000000001"
+    enabled: true
+    changed_time: 1700000000
+    registration_link: "/edev/0/rg"
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 1
+    der_list_link:
+      href: "/edev/0/der"
+      all: 0
+  - id: "1"
+    sfdi: "200000000001"
+    lfdi: "2000000000000000000000000000000000000001"
+    enabled: true
+    changed_time: 1700000001
+    registration_link: "/edev/1/rg"
+    function_set_assignments_list_link:
+      href: "/edev/1/fsa"
+      all: 4
+    der_list_link:
+      href: "/edev/1/der"
+      all: 1
+  - id: "2"
+    sfdi: "200000000002"
+    lfdi: "2000000000000000000000000000000000000002"
+    enabled: true
+    changed_time: 1700000002
+    registration_link: "/edev/2/rg"
+    function_set_assignments_list_link:
+      href: "/edev/2/fsa"
+      all: 4
+    der_list_link:
+      href: "/edev/2/der"
+      all: 1
+  - id: "3"
+    sfdi: "300000000001"
+    lfdi: "3000000000000000000000000000000000000001"
+    enabled: true
+    changed_time: 1700000003
+    registration_link: "/edev/3/rg"
+    function_set_assignments_list_link:
+      href: "/edev/3/fsa"
+      all: 4
+    der_list_link:
+      href: "/edev/3/der"
+      all: 1
+  - id: "4"
+    sfdi: "300000000002"
+    lfdi: "3000000000000000000000000000000000000002"
+    enabled: true
+    changed_time: 1700000004
+    registration_link: "/edev/4/rg"
+    function_set_assignments_list_link:
+      href: "/edev/4/fsa"
+      all: 4
+    der_list_link:
+      href: "/edev/4/der"
+      all: 1
+
+# FSAs — the Aggregator gets one; each managed inverter gets four
+# (SY/FDx/SPxx/DEV). FSA store keys sort lexicographically; the IDs
+# below are chosen so the priority chain is store-key-ordered (0=SY,
+# 1=FDx, 2=SPxx, 3=DEV per inverter).
+fsas:
+  # EDFI (aggregator) — single FSA for its own management.
+  - end_device_id: "0"
+    id: "0"
+    mrid: "EDFI-SELF-FSA"
+    description: "EDFI-management"
+    der_program_list_link:
+      href: "/edev/0/fsa/0/derp"
+      all: 1
+
+  # EDA1 — SY → FDA → SPA1 → DEV
+  - end_device_id: "1"
+    id: "0"
+    mrid: "EDA1-SY-FSA"
+    description: "SY"
+    der_program_list_link:
+      href: "/edev/1/fsa/0/derp"
+      all: 1
+  - end_device_id: "1"
+    id: "1"
+    mrid: "EDA1-FDA-FSA"
+    description: "FDA"
+    der_program_list_link:
+      href: "/edev/1/fsa/1/derp"
+      all: 1
+  - end_device_id: "1"
+    id: "2"
+    mrid: "EDA1-SPA1-FSA"
+    description: "SPA1"
+    der_program_list_link:
+      href: "/edev/1/fsa/2/derp"
+      all: 1
+  - end_device_id: "1"
+    id: "3"
+    mrid: "EDA1-DEV-FSA"
+    description: "DEV-EDA1"
+    der_program_list_link:
+      href: "/edev/1/fsa/3/derp"
+      all: 1
+
+  # EDA2 — SY → FDA → SPA2 → DEV
+  - end_device_id: "2"
+    id: "0"
+    mrid: "EDA2-SY-FSA"
+    description: "SY"
+    der_program_list_link:
+      href: "/edev/2/fsa/0/derp"
+      all: 1
+  - end_device_id: "2"
+    id: "1"
+    mrid: "EDA2-FDA-FSA"
+    description: "FDA"
+    der_program_list_link:
+      href: "/edev/2/fsa/1/derp"
+      all: 1
+  - end_device_id: "2"
+    id: "2"
+    mrid: "EDA2-SPA2-FSA"
+    description: "SPA2"
+    der_program_list_link:
+      href: "/edev/2/fsa/2/derp"
+      all: 1
+  - end_device_id: "2"
+    id: "3"
+    mrid: "EDA2-DEV-FSA"
+    description: "DEV-EDA2"
+    der_program_list_link:
+      href: "/edev/2/fsa/3/derp"
+      all: 1
+
+  # EDB1 — SY → FDB → SPB1 → DEV
+  - end_device_id: "3"
+    id: "0"
+    mrid: "EDB1-SY-FSA"
+    description: "SY"
+    der_program_list_link:
+      href: "/edev/3/fsa/0/derp"
+      all: 1
+  - end_device_id: "3"
+    id: "1"
+    mrid: "EDB1-FDB-FSA"
+    description: "FDB"
+    der_program_list_link:
+      href: "/edev/3/fsa/1/derp"
+      all: 1
+  - end_device_id: "3"
+    id: "2"
+    mrid: "EDB1-SPB1-FSA"
+    description: "SPB1"
+    der_program_list_link:
+      href: "/edev/3/fsa/2/derp"
+      all: 1
+  - end_device_id: "3"
+    id: "3"
+    mrid: "EDB1-DEV-FSA"
+    description: "DEV-EDB1"
+    der_program_list_link:
+      href: "/edev/3/fsa/3/derp"
+      all: 1
+
+  # EDB2 — SY → FDB → SPB2 → DEV
+  - end_device_id: "4"
+    id: "0"
+    mrid: "EDB2-SY-FSA"
+    description: "SY"
+    der_program_list_link:
+      href: "/edev/4/fsa/0/derp"
+      all: 1
+  - end_device_id: "4"
+    id: "1"
+    mrid: "EDB2-FDB-FSA"
+    description: "FDB"
+    der_program_list_link:
+      href: "/edev/4/fsa/1/derp"
+      all: 1
+  - end_device_id: "4"
+    id: "2"
+    mrid: "EDB2-SPB2-FSA"
+    description: "SPB2"
+    der_program_list_link:
+      href: "/edev/4/fsa/2/derp"
+      all: 1
+  - end_device_id: "4"
+    id: "3"
+    mrid: "EDB2-DEV-FSA"
+    description: "DEV-EDB2"
+    der_program_list_link:
+      href: "/edev/4/fsa/3/derp"
+      all: 1
+
+# DERPrograms — one per FSA above. DERProgram store is scoped by
+# EndDevice; the FSA-id position is fixture metadata for the priority
+# chain assertion. IDs are zero-padded by inverter so they sort
+# alphabetically within an EndDevice in priority-chain order.
+der_programs:
+  # EDFI (aggregator) — single program.
+  - end_device_id: "0"
+    fsa_id: "0"
+    id: "0"
+    mrid: "EDFI-DERP"
+    description: "EDFI-management"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/0/derp/0/derc"
+      all: 0
+
+  # EDA1
+  - end_device_id: "1"
+    fsa_id: "0"
+    id: "0"
+    mrid: "EDA1-SY-DERP"
+    description: "SY"
+    primacy: 0
+    default_der_control_link: "/edev/1/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/1/fsa/0/derp/0/derc"
+      all: 0
+  - end_device_id: "1"
+    fsa_id: "1"
+    id: "1"
+    mrid: "EDA1-FDA-DERP"
+    description: "FDA"
+    primacy: 1
+    default_der_control_link: "/edev/1/fsa/1/derp/1/dderc"
+    der_control_list_link:
+      href: "/edev/1/fsa/1/derp/1/derc"
+      all: 0
+  - end_device_id: "1"
+    fsa_id: "2"
+    id: "2"
+    mrid: "EDA1-SPA1-DERP"
+    description: "SPA1"
+    primacy: 2
+    default_der_control_link: "/edev/1/fsa/2/derp/2/dderc"
+    der_control_list_link:
+      href: "/edev/1/fsa/2/derp/2/derc"
+      all: 0
+  - end_device_id: "1"
+    fsa_id: "3"
+    id: "3"
+    mrid: "EDA1-DEV-DERP"
+    description: "DEV-EDA1"
+    primacy: 3
+    default_der_control_link: "/edev/1/fsa/3/derp/3/dderc"
+    der_control_list_link:
+      href: "/edev/1/fsa/3/derp/3/derc"
+      all: 0
+
+  # EDA2
+  - end_device_id: "2"
+    fsa_id: "0"
+    id: "0"
+    mrid: "EDA2-SY-DERP"
+    description: "SY"
+    primacy: 0
+    default_der_control_link: "/edev/2/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/2/fsa/0/derp/0/derc"
+      all: 0
+  - end_device_id: "2"
+    fsa_id: "1"
+    id: "1"
+    mrid: "EDA2-FDA-DERP"
+    description: "FDA"
+    primacy: 1
+    default_der_control_link: "/edev/2/fsa/1/derp/1/dderc"
+    der_control_list_link:
+      href: "/edev/2/fsa/1/derp/1/derc"
+      all: 0
+  - end_device_id: "2"
+    fsa_id: "2"
+    id: "2"
+    mrid: "EDA2-SPA2-DERP"
+    description: "SPA2"
+    primacy: 2
+    default_der_control_link: "/edev/2/fsa/2/derp/2/dderc"
+    der_control_list_link:
+      href: "/edev/2/fsa/2/derp/2/derc"
+      all: 0
+  - end_device_id: "2"
+    fsa_id: "3"
+    id: "3"
+    mrid: "EDA2-DEV-DERP"
+    description: "DEV-EDA2"
+    primacy: 3
+    default_der_control_link: "/edev/2/fsa/3/derp/3/dderc"
+    der_control_list_link:
+      href: "/edev/2/fsa/3/derp/3/derc"
+      all: 0
+
+  # EDB1
+  - end_device_id: "3"
+    fsa_id: "0"
+    id: "0"
+    mrid: "EDB1-SY-DERP"
+    description: "SY"
+    primacy: 0
+    default_der_control_link: "/edev/3/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/3/fsa/0/derp/0/derc"
+      all: 0
+  - end_device_id: "3"
+    fsa_id: "1"
+    id: "1"
+    mrid: "EDB1-FDB-DERP"
+    description: "FDB"
+    primacy: 1
+    default_der_control_link: "/edev/3/fsa/1/derp/1/dderc"
+    der_control_list_link:
+      href: "/edev/3/fsa/1/derp/1/derc"
+      all: 0
+  - end_device_id: "3"
+    fsa_id: "2"
+    id: "2"
+    mrid: "EDB1-SPB1-DERP"
+    description: "SPB1"
+    primacy: 2
+    default_der_control_link: "/edev/3/fsa/2/derp/2/dderc"
+    der_control_list_link:
+      href: "/edev/3/fsa/2/derp/2/derc"
+      all: 0
+  - end_device_id: "3"
+    fsa_id: "3"
+    id: "3"
+    mrid: "EDB1-DEV-DERP"
+    description: "DEV-EDB1"
+    primacy: 3
+    default_der_control_link: "/edev/3/fsa/3/derp/3/dderc"
+    der_control_list_link:
+      href: "/edev/3/fsa/3/derp/3/derc"
+      all: 0
+
+  # EDB2
+  - end_device_id: "4"
+    fsa_id: "0"
+    id: "0"
+    mrid: "EDB2-SY-DERP"
+    description: "SY"
+    primacy: 0
+    default_der_control_link: "/edev/4/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/4/fsa/0/derp/0/derc"
+      all: 0
+  - end_device_id: "4"
+    fsa_id: "1"
+    id: "1"
+    mrid: "EDB2-FDB-DERP"
+    description: "FDB"
+    primacy: 1
+    default_der_control_link: "/edev/4/fsa/1/derp/1/dderc"
+    der_control_list_link:
+      href: "/edev/4/fsa/1/derp/1/derc"
+      all: 0
+  - end_device_id: "4"
+    fsa_id: "2"
+    id: "2"
+    mrid: "EDB2-SPB2-DERP"
+    description: "SPB2"
+    primacy: 2
+    default_der_control_link: "/edev/4/fsa/2/derp/2/dderc"
+    der_control_list_link:
+      href: "/edev/4/fsa/2/derp/2/derc"
+      all: 0
+  - end_device_id: "4"
+    fsa_id: "3"
+    id: "3"
+    mrid: "EDB2-DEV-DERP"
+    description: "DEV-EDB2"
+    primacy: 3
+    default_der_control_link: "/edev/4/fsa/3/derp/3/dderc"
+    der_control_list_link:
+      href: "/edev/4/fsa/3/derp/3/derc"
+      all: 0

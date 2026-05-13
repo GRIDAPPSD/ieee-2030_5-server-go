@@ -33,6 +33,7 @@ package csiptest
 // fixtures in handshake_test.go) pass WithClientCert.
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -46,7 +47,9 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/subscription"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
@@ -88,8 +91,9 @@ type bootCfg struct {
 	cipher        cipherMode
 	stores        *server.Stores
 	serverConfig  *config.Config
-	clientCert    *tls.Certificate // if nil, helper generates an ephemeral device cert
-	clientCAsPath string           // if non-empty, overrides the ClientCAs file fed to the server-side TLS config
+	clientCert    *tls.Certificate         // if nil, helper generates an ephemeral device cert
+	clientCAsPath string                   // if non-empty, overrides the ClientCAs file fed to the server-side TLS config
+	notifier      handler.ResourceNotifier // if nil, BootServer wires a default subscription.Manager bound to Stores.Subscriptions (IEEE-093)
 }
 
 // BootOption configures BootServer. Apply via the functional-options
@@ -128,6 +132,18 @@ func WithServerConfig(cfg *config.Config) BootOption {
 // by its ephemeral CA and presents that.
 func WithClientCert(cert tls.Certificate) BootOption {
 	return func(c *bootCfg) { c.clientCert = &cert }
+}
+
+// WithNotifier supplies a caller-built handler.ResourceNotifier. The
+// default is a fresh subscription.Manager wired to Stores.Subscriptions
+// and started on a t.Cleanup-cancelled context (IEEE-093); pass an
+// explicit value (including a stub) to override.
+//
+// The default Manager runs its worker pool on a background context that
+// BootServer cancels at test teardown — workers drain and exit before
+// the listener is closed.
+func WithNotifier(n handler.ResourceNotifier) BootOption {
+	return func(c *bootCfg) { c.notifier = n }
 }
 
 // WithClientCAsFile overrides the trust root the server uses to
@@ -296,7 +312,32 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 		tlsListener = tls.NewListener(listener, stdCfg)
 	}
 
-	router := server.NewRouter(cfg.serverConfig, cfg.stores, nil, serverSFDI, serverLFDI, nil)
+	// IEEE-093: wire a notifier so the test surface fans out Notifications.
+	// The default is a real subscription.Manager bound to Stores.Subscriptions
+	// — same dispatcher production uses. Manager.Start blocks on ctx.Done,
+	// so we own a context tied to test teardown and cancel it from Cleanup.
+	// The Manager's worker pool drains before BootServer's listener closes.
+	notifier := cfg.notifier
+	if notifier == nil && cfg.stores != nil && cfg.stores.Subscriptions != nil {
+		mgr := subscription.NewManager(cfg.stores.Subscriptions, 2, 64)
+		notifierCtx, cancel := context.WithCancel(context.Background())
+		mgrDone := make(chan struct{})
+		go func() {
+			defer close(mgrDone)
+			mgr.Start(notifierCtx)
+		}()
+		t.Cleanup(func() {
+			cancel()
+			select {
+			case <-mgrDone:
+			case <-time.After(2 * time.Second):
+				t.Logf("csiptest: subscription manager did not drain within 2s")
+			}
+		})
+		notifier = mgr
+	}
+
+	router := server.NewRouter(cfg.serverConfig, cfg.stores, nil, serverSFDI, serverLFDI, notifier)
 
 	if cfg.cipher == cipherCCM {
 		sepTLS.SetupCCMServer(httpSrv)

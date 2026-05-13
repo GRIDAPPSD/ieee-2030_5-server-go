@@ -53,9 +53,15 @@ func aggMRIDPrefix(test string) string {
 func injectEventSpec(t *testing.T, srv *csiptest.BootedServer, spec *csiptest.Spec) {
 	t.Helper()
 	target := &csiptest.Target{
-		EndDevices:         srv.Stores.EndDevices,
-		FSAs:               srv.Stores.FSAs,
-		DERPrograms:        srv.Stores.DERPrograms,
+		EndDevices: srv.Stores.EndDevices,
+		FSAs:       srv.Stores.FSAs,
+		// IEEE-097 wrapped the scoped DERProgram store in
+		// *memory.DERProgramStore for disk persistence; the loader
+		// Target still keys on the embedded *ScopedStore[sep2.DERProgram].
+		// The production router reaches through the embedded field the
+		// same way (internal/server/router.go uses stores.DERPrograms.ScopedStore).
+		// See IEEE-104.
+		DERPrograms:        srv.Stores.DERPrograms.ScopedStore,
 		DERControls:        srv.Stores.DERControls,
 		DefaultDERControls: srv.Stores.DefaultDERControls,
 		DERCurves:          srv.Stores.DERCurves,

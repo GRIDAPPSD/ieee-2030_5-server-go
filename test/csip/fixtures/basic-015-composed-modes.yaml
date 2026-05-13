@@ -1,0 +1,118 @@
+# IEEE-083 fixture — BASIC-015 Advanced Inverter Control composed modes (CSIP V1.2 §8.15).
+#
+# Per matrix Section 2 line 152: "Composition of modes; DERControl
+# uses multiple opMod* simultaneously" — first procedure that stacks
+# multiple inverter-control modes on a single DERControl payload.
+#
+# The composed payload mixes both styles of opMod* field that
+# DERControlBase carries today:
+#
+#   - Curve-reference modes (opModVoltVar, opModVoltWatt,
+#     opModFreqWatt) — each a *int32 reference into /dc with distinct
+#     curveType (0, 3, 1 respectively).
+#   - Immediate-control modes (opModConnect, opModEnergize,
+#     opModFixedPFInjectW, opModMaxLimW) — each carries an inline
+#     value, no curve.
+#
+# Three DERCurves live in the global /dc store, one per curve-ref
+# mode. The procedure walk asserts every composed field round-trips
+# on the wire AND that /dc renders all three curve types — i.e. the
+# DERControl store accepts a multi-mode payload AND the curve list
+# carries the heterogeneous-curveType set.
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 1
+
+fsas:
+  - end_device_id: "0"
+    id: "0"
+    mrid: "BASIC-015-FSA"
+    description: "BASIC-015 single FSA"
+    der_program_list_link:
+      href: "/edev/0/fsa/0/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "0"
+    id: "0"
+    mrid: "BASIC-015-DERP"
+    description: "BASIC-015 composed-modes program"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/0/derp/0/derc"
+      all: 1
+    der_curve_list_link:
+      href: "/dc"
+      all: 3
+
+der_controls:
+  - end_device_id: "0"
+    fsa_id: "0"
+    der_program_id: "0"
+    id: "0"
+    mrid: "BASIC-015-DERC"
+    der_control_base:
+      # Curve-ref modes — each int32 references der_curves[].id below.
+      op_mod_volt_var: 0   # → der_curves[0]  (curveType=0, V-Var)
+      op_mod_volt_watt: 1  # → der_curves[1]  (curveType=3, V-Watt)
+      op_mod_freq_watt: 2  # → der_curves[2]  (curveType=1, F-Watt)
+      # Immediate-control modes — inline scalar payloads.
+      op_mod_connect: true
+      op_mod_energize: true
+      op_mod_fixed_pf_inject_w:
+        displacement: 950
+        excitation: true
+        multiplier: 0
+      op_mod_max_lim_w:
+        multiplier: 0
+        value: 5000
+
+der_curves:
+  - id: "0"
+    mrid: "BASIC-015-CURVE-VV"
+    description: "Volt/Var (§8.6 deadband 92/96/104/108)"
+    curve_type: 0  # CurveTypeOpModVoltVar
+    curve_data:
+      - x: 9200
+        y: 3000
+      - x: 9600
+        y: 0
+      - x: 10400
+        y: 0
+      - x: 10800
+        y: -3000
+  - id: "1"
+    mrid: "BASIC-015-CURVE-VW"
+    description: "Volt/Watt (§8.11 4-point envelope)"
+    curve_type: 3  # CurveTypeOpModVoltWatt
+    curve_data:
+      - x: 10500
+        y: 10000
+      - x: 10700
+        y: 10000
+      - x: 10800
+        y: 2000
+      - x: 11000
+        y: 0
+  - id: "2"
+    mrid: "BASIC-015-CURVE-FW"
+    description: "Freq/Watt (§8.12 4-point envelope)"
+    curve_type: 1  # CurveTypeOpModFreqWatt
+    curve_data:
+      - x: 5970
+        y: 10000
+      - x: 6000
+        y: 10000
+      - x: 6020
+        y: 5000
+      - x: 6100
+        y: 0

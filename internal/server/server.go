@@ -110,19 +110,19 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	}
 
 	// IEEE-077: build the subscription store with optional durable
-	// persistence. Empty cfg.SubscriptionStorePath = in-memory only
-	// (historical behavior). Non-empty path = JSON file behind atomic
-	// rename, loaded at startup and rewritten on every Create/Delete.
+	// persistence. IEEE-102 routes the path through
+	// cfg.EffectiveStorePath so the precedence is:
 	//
-	// IEEE-097 anticipated this rebase: <datadir>/subscriptions.json
-	// routing via EffectiveStorePath is deferred to a follow-up so
-	// neither IEEE-077 nor IEEE-097's behavior changes here.
-	subStore, subErr := memory.NewSubscriptionStoreWithPersistence(cfg.SubscriptionStorePath)
+	//  1. SEP2_SUBSCRIPTION_STORE_PATH wins (back-compat for IEEE-077).
+	//  2. Else SEP2_DATA_DIR set → <datadir>/subscriptions.json.
+	//  3. Else "" → pure in-memory (historical default).
+	subPath := cfg.EffectiveStorePath("subscriptions", cfg.SubscriptionStorePath)
+	subStore, subErr := memory.NewSubscriptionStoreWithPersistence(subPath)
 	if subErr != nil {
 		return fmt.Errorf("subscription store: %w", subErr)
 	}
-	if cfg.SubscriptionStorePath != "" {
-		log.Printf("subscription persistence enabled: %s", cfg.SubscriptionStorePath)
+	if subPath != "" {
+		log.Printf("subscription persistence enabled: %s", subPath)
 	}
 
 	// Initialize stores

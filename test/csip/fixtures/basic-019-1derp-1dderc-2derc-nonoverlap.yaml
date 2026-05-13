@@ -1,0 +1,91 @@
+# IEEE-084 / BASIC-019 fixture — CSIP V1.2 §8.19.
+#
+# Topology: 1 DERProgram, 1 DefaultDERControl, 2 DERControls with
+# the same opMod* type (opModFixedW), non-overlapping intervals. Per
+# §8.19 the client applies DDERC outside event windows and the
+# respective DERControl inside each window — and because both events
+# share the same opMod, there is no priority resolution to do.
+#
+# Intervals:
+#   DERC "a": [1700000060, 1700000120)  — t0+60s..t0+120s   (60s window)
+#   DERC "b": [1700000180, 1700000240)  — t0+180s..t0+240s  (60s window)
+#
+# Gap [120, 180) is intentional — that's the non-overlap. The IDs
+# sort lexically as "a" then "b" so the wire order matches the time
+# order, simplifying the test assertion.
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    registration_link: "/edev/0/rg"
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 1
+
+fsas:
+  - end_device_id: "0"
+    id: "0"
+    mrid: "BASIC-019-FSA"
+    description: "BASIC-019 single FSA"
+    der_program_list_link:
+      href: "/edev/0/fsa/0/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "0"
+    id: "0"
+    mrid: "BASIC-019-DERP"
+    description: "BASIC-019 single DERProgram"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/0/derp/0/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/0/derp/0/derc"
+      all: 2
+
+default_der_controls:
+  - end_device_id: "0"
+    fsa_id: "0"
+    der_program_id: "0"
+    mrid: "BASIC-019-DDERC"
+    der_control_base:
+      op_mod_fixed_w:
+        multiplier: 0
+        value: 1500
+
+der_controls:
+  - end_device_id: "0"
+    fsa_id: "0"
+    der_program_id: "0"
+    id: "a"
+    mrid: "BASIC-019-DERC-A"
+    description: "BASIC-019 first scheduled non-overlap DERControl"
+    event_status:
+      current_status: 0
+      date_time: 1700000000
+    interval:
+      start: 1700000060
+      duration: 60
+    der_control_base:
+      op_mod_fixed_w:
+        multiplier: 0
+        value: 3000
+  - end_device_id: "0"
+    fsa_id: "0"
+    der_program_id: "0"
+    id: "b"
+    mrid: "BASIC-019-DERC-B"
+    description: "BASIC-019 second scheduled non-overlap DERControl"
+    event_status:
+      current_status: 0
+      date_time: 1700000000
+    interval:
+      start: 1700000180
+      duration: 60
+    der_control_base:
+      op_mod_fixed_w:
+        multiplier: 0
+        value: 3500

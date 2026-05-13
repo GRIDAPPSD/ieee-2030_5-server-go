@@ -47,18 +47,13 @@
 //	            "presence_gate" subtest which sequences after the
 //	            parallel inverter subtests.
 //
-// SCOPE BOUNDARY — strict per-inverter count gate.
-// The server today returns the union of all POSTed Subscriptions on
-// every /edev/{id}/sub GET (i.e. SubscriptionStore is not scoped by
-// EndDevice — verified against AGG-001 reality: 24 entries returned
-// for each of the 4 inverters after a 24-POST burst). The CSIP V1.2
-// §10.1 procedure implies per-inverter scope, so strict per-inverter
-// counting is the eventual conformance gate. Per the IEEE-090 Pike-rule
-// discipline ("don't change `internal/handler` / `pkg/sep2` public API
-// — if a real gap is found, xfail with reference to a follow-up
-// ticket"), AGG-001 asserts the necessary condition (presence) only;
-// the per-EndDevice scoping fix lands in a separate follow-up ticket.
-// See IEEE-090 PR description.
+// Per-inverter scoping gate.
+// IEEE-099 scoped GET /edev/{id}/sub to the EndDevice {id}: the
+// SubscriptionStore now indexes by EndDevice and the handler returns
+// only that EndDevice's subscriptions. AGG-001 asserts strict per-
+// inverter membership (exactly the 6 aggregator subscriptions for the
+// queried inverter; no extras; no foreign-edev leakage) in
+// assertAggregatorSubscriptionsPresent.
 //
 // Step 4 (deliver-side) — notification *delivery* on resource change is
 // gated on IEEE-013 follow-ups (the IEEE-024 mutation hook does not yet
@@ -100,10 +95,9 @@ func TestAGG_001_AggregatorSubscription(t *testing.T) {
 	})
 
 	// After the parallel inverter subtests join, assert each managed
-	// inverter's /sub list surfaces all 6 of its subscribed resources.
-	// Strict count gating is documented as a follow-up (see file-level
-	// scope boundary note).
-	t.Run("presence_gate", func(t *testing.T) {
+	// inverter's /sub list surfaces all 6 of its subscribed resources
+	// AND nothing else (strict per-EndDevice scoping per IEEE-099).
+	t.Run("scope_gate", func(t *testing.T) {
 		for _, edevID := range aggManagedInverters {
 			edevID := edevID
 			t.Run("inverter_"+edevID, func(t *testing.T) {

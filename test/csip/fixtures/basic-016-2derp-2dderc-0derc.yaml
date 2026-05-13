@@ -1,0 +1,81 @@
+# IEEE-084 / BASIC-016 fixture — CSIP V1.2 §8.16.
+#
+# Topology: 2 DERPrograms (SP + SY), each carrying its own
+# DefaultDERControl, zero DERControls. The server renders both DDERCs;
+# the client-side responsibility (out of scope here) is to apply the
+# higher-primacy program's DDERC. We seed:
+#
+#   FSA "sp"  -> DERProgram "sp" primacy=0 -> DDERC opModFixedW = 4 kW
+#   FSA "sy"  -> DERProgram "sy" primacy=1 -> DDERC opModFixedW = 2 kW
+#
+# Per IEEE 2030.5 §10.10, lower primacy = higher precedence; the
+# Service Point program (primacy 0) wins on the client side. The
+# test asserts BOTH programs render with the expected primacy and
+# opModFixedW values.
+
+end_devices:
+  - id: "0"
+    sfdi: "273448359951"
+    lfdi: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
+    enabled: true
+    changed_time: 1700000000
+    registration_link: "/edev/0/rg"
+    function_set_assignments_list_link:
+      href: "/edev/0/fsa"
+      all: 2
+
+fsas:
+  - end_device_id: "0"
+    id: "sp"
+    mrid: "BASIC-016-FSA-SP"
+    description: "BASIC-016 Service Point FSA"
+    der_program_list_link:
+      href: "/edev/0/fsa/sp/derp"
+      all: 1
+  - end_device_id: "0"
+    id: "sy"
+    mrid: "BASIC-016-FSA-SY"
+    description: "BASIC-016 Smart Inverter Yard FSA"
+    der_program_list_link:
+      href: "/edev/0/fsa/sy/derp"
+      all: 1
+
+der_programs:
+  - end_device_id: "0"
+    fsa_id: "sp"
+    id: "sp"
+    mrid: "BASIC-016-DERP-SP"
+    description: "BASIC-016 Service Point DERProgram"
+    primacy: 0
+    default_der_control_link: "/edev/0/fsa/sp/derp/sp/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/sp/derp/sp/derc"
+      all: 0
+  - end_device_id: "0"
+    fsa_id: "sy"
+    id: "sy"
+    mrid: "BASIC-016-DERP-SY"
+    description: "BASIC-016 Smart Inverter Yard DERProgram"
+    primacy: 1
+    default_der_control_link: "/edev/0/fsa/sy/derp/sy/dderc"
+    der_control_list_link:
+      href: "/edev/0/fsa/sy/derp/sy/derc"
+      all: 0
+
+default_der_controls:
+  - end_device_id: "0"
+    fsa_id: "sp"
+    der_program_id: "sp"
+    mrid: "BASIC-016-DDERC-SP"
+    der_control_base:
+      op_mod_fixed_w:
+        multiplier: 0
+        value: 4000
+  - end_device_id: "0"
+    fsa_id: "sy"
+    der_program_id: "sy"
+    mrid: "BASIC-016-DDERC-SY"
+    der_control_base:
+      op_mod_fixed_w:
+        multiplier: 0
+        value: 2000

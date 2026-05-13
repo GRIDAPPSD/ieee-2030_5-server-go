@@ -102,9 +102,11 @@ func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService
 	// IEEE-024: test-only mutation surface for the CSIP V1.2 conformance
 	// harness. RegisterMutationHandlers is a no-op in production builds;
 	// it only registers routes when the binary is built with the
-	// csip_test_hooks tag AND SEP2_TEST_MUTATION_TOKEN is set. See
-	// internal/server/test_mutations.go.
-	RegisterMutationHandlers(top, stores)
+	// csip_test_hooks tag AND SEP2_TEST_MUTATION_TOKEN is set. The
+	// notifier is threaded through (IEEE-093) so the derctl-add hook
+	// can fan a DERProgramList Notification out on Create — UTIL-004
+	// step 3 / CSIP V1.2 §11.4. See internal/server/test_mutations.go.
+	RegisterMutationHandlers(top, stores, notifier)
 
 	// Wrap entire router with namespace detection — rewrites XML output
 	// for 2013 clients (EPRI reference client) automatically

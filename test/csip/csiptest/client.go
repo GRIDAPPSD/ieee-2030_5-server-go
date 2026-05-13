@@ -133,3 +133,11 @@ func (c *Client) WalkLink(ctx context.Context, link sep2.Link, dest any) error {
 	}
 	return nil
 }
+
+// HTTPClient exposes the underlying *http.Client so callers can issue
+// non-SEP2 requests (e.g. JSON POSTs to the IEEE-078 /test/mutations/*
+// surface) over the same mTLS-trusted transport. The returned client is
+// the Client's own; do not mutate its Transport.
+func (c *Client) HTTPClient() *http.Client {
+	return c.http
+}

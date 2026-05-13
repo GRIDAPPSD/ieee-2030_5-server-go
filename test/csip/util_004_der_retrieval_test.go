@@ -16,32 +16,26 @@
 //     managed inverter against /rsps/{rspsId}/rsp.
 //  5. Server's response list reflects the POSTs.
 //
-// SCOPE BOUNDARY — Step 3 (notification fan-out from the mutation hook).
-// The IEEE-024 derctl-add mutation hook (`handleDERControlAdd` in
-// `internal/server/test_mutations.go`) creates the DERControl in the
-// scoped store but does NOT call a ResourceNotifier today. Only
-// HandleDeleteEndDevice (IEEE-023) is wired to a notifier on the
-// server side. Bridging the gap is a server-side product change —
-// extending the mutation hook to call into the subscription manager
-// for DERControlList notifications — and falls outside the IEEE-089
-// scope (which is "build the topology fixture + wire the 4 UTIL
-// tests"). Filed as a follow-up; see backlog entry referenced in the
-// IEEE-089 PR description.
+// IEEE-093 update — Step 3 notification fan-out is now wired. The
+// IEEE-024 derctl-add mutation hook calls ResourceNotifier.Notify on
+// the parent DERProgramList href after a successful Create, and the
+// csiptest.BootServer wires a real subscription.Manager into the test
+// surface. Step 3 below stands up a small in-process HTTP receiver
+// (utilNotificationReceiver, defined in this file) and points the per
+// inverter Subscription's NotificationURI at it; after step 2 commits
+// the 16 controls, the receiver records one Notification per managed
+// inverter per derctl-add on the subscribed (SY-level) DERProgramList
+// href — 4 inverters × 1 SY-level DERControl = 4 Notifications.
 //
-// What UTIL-004 verifies on the *server side* without the gap fix:
-//
-//   - The IEEE-024 derctl-add hook persists DERControls per node such
-//     that a subsequent GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc
-//     surfaces the new control (step 2 in this file).
-//   - Subscriptions for each managed inverter remain present in the
-//     store across the mutation calls (step 1 → step 2 invariant).
-//   - The aggregator's Response POSTs against /rsps/{rspsId}/rsp are
-//     accepted with 201 Created and round-trip via GET, mirroring the
-//     received → started → completed status progression (step 4 → 5).
-//
-// When the notification fan-out follow-up lands, UTIL-004 grows a
-// notification-receive assertion. The procedure mapping below already
-// pins the steps so the future extension is additive.
+// Out-of-scope for IEEE-093 (and future Pike tickets):
+//   - Receiver-side TLS verification — the receiver is plain HTTP.
+//     UTIL-004 asserts the server emitted the Notification, not that
+//     the spec's mTLS hop survives. A separate ticket can drive that.
+//   - Notifications for non-subscribed FSA levels (FDx / SPxx / DEV).
+//     UTIL-003 subscribes only the SY level; the other three
+//     derctl-add calls happen but no Subscription is registered on
+//     those hrefs so Manager.Notify does not fan out. This is by
+//     design — the procedure exercises the priority-chain top.
 package csip_test
 
 import (
@@ -52,7 +46,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 )
@@ -92,6 +89,19 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 	client := srv.Client()
 	rawClient := srv.HTTPClient()
 
+	// IEEE-093: stand up a notification receiver before the
+	// subscriptions are POSTed. The receiver's URL becomes each
+	// Subscription's NotificationURI so the BootServer's Manager
+	// fan-out path (step 3) lands here. The receiver is plain HTTP
+	// (httptest.NewServer) — UTIL-004 asserts the server emitted the
+	// Notification, not the spec's mTLS hop. Drop in IEEE-087's
+	// csiptest.NotificationReceiver once #152 lands.
+	receiver := newUTILNotificationReceiver(t)
+
+	// Track which SY-level DERProgramList hrefs were subscribed; the
+	// step-3 assertion checks for exactly these resource hrefs.
+	subscribedHrefs := make(map[string]string, len(aggManagedInverters))
+
 	// Step 1: open one Subscription per managed inverter against its
 	// SY-level DERProgramList. We re-walk to discover the href rather
 	// than hard-coding, so a fixture URL renaming surfaces here too.
@@ -105,7 +115,10 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 		if progLink == nil {
 			t.Fatalf("step 1: edev=%q SY-FSA missing DERProgramListLink", edevID)
 		}
-		postAndVerifySubscription(t, ctx, rawClient, srv.BaseURL, edevID, progLink.Href)
+		// IEEE-093: POST the subscription with the receiver's URL so
+		// Manager.Notify fan-out reaches an in-test recorder.
+		postSubscriptionToURI(t, ctx, rawClient, srv.BaseURL, edevID, progLink.Href, receiver.URL())
+		subscribedHrefs[edevID] = progLink.Href
 	}
 
 	// Step 2: create a DERControl on each FSA node for each managed
@@ -152,11 +165,39 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 		}
 	}
 
-	// Step 3: notification fan-out is the documented out-of-scope gap.
-	// When the follow-up extends the mutation hook to call
-	// ResourceNotifier.Notify, an assertion here will receive the
-	// notifications against an in-test HTTP receiver. See file-level
-	// doc comment for scope rationale.
+	// Step 3 (IEEE-093): assert the notification fan-out reached the
+	// receiver. One Notification per managed inverter is expected —
+	// the SY-level derctl-add fires Notify on the subscribed
+	// DERProgramList href; the other three FSA levels have no
+	// subscription registered against them. The Manager dispatches on
+	// a bounded worker pool, so we Wait for the deliveries to land
+	// before snapshotting.
+	got, ok := receiver.Wait(len(aggManagedInverters), 2*time.Second)
+	if !ok {
+		t.Fatalf("step 3: receiver got %d Notifications, want %d before 2s timeout",
+			len(got), len(aggManagedInverters))
+	}
+	// Build a (resource-href → seen) presence map keyed by inverter so
+	// a missing inverter names itself in the failure message.
+	seenHrefs := map[string]bool{}
+	for _, n := range got {
+		if n.Notification == nil {
+			t.Errorf("step 3: received un-parseable Notification body: %q", string(n.Body))
+			continue
+		}
+		seenHrefs[n.Notification.SubscribedResource] = true
+		if n.Notification.Status != sep2.NotificationStatusChanged {
+			t.Errorf("step 3: subscribedResource=%q Status=%d, want %d (Changed)",
+				n.Notification.SubscribedResource, n.Notification.Status, sep2.NotificationStatusChanged)
+		}
+	}
+	for _, edevID := range aggManagedInverters {
+		want := subscribedHrefs[edevID]
+		if !seenHrefs[want] {
+			t.Errorf("step 3: edev=%q: no Notification for SubscribedResource=%q (saw hrefs: %v)",
+				edevID, want, seenHrefs)
+		}
+	}
 
 	// Step 4 + 5: aggregator POSTs Response (received → started →
 	// completed) for each managed inverter, then GET the response list
@@ -301,5 +342,133 @@ func postResponseAck(t *testing.T, ctx context.Context, client *http.Client, bas
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("Response POST status=%d subject=%q: code = %d, want 201",
 			status, subject, resp.StatusCode)
+	}
+}
+
+// --- IEEE-093 step-3 helpers ----------------------------------------------
+//
+// utilReceivedNotification, utilNotificationReceiver, postSubscriptionToURI
+// are local to UTIL-004. They cover exactly the step-3 surface — record
+// POSTed Notifications, expose Wait/Snapshot, and POST a Subscription
+// with a caller-supplied NotificationURI. When IEEE-087 lands the
+// general csiptest.NotificationReceiver helper, delete this block and
+// switch UTIL-004 to that. The local version is deliberately minimal
+// (no WithStatusCode option, no Reset) — anything beyond step-3 verify
+// belongs to the shared helper, not here.
+
+// utilReceivedNotification is one captured POST body and its parsed
+// sep2.Notification. Parsed Notification is nil when the body did not
+// round-trip; the step-3 assertion treats that as a failure.
+type utilReceivedNotification struct {
+	Body         []byte
+	Notification *sep2.Notification
+}
+
+// utilNotificationReceiver is an httptest server that records every
+// POSTed Notification. Lifetime is bound to t via t.Cleanup; callers
+// must not call Close themselves.
+type utilNotificationReceiver struct {
+	srv *httptest.Server
+	mu  sync.Mutex
+	got []utilReceivedNotification
+}
+
+// newUTILNotificationReceiver boots an in-process HTTP listener and
+// registers t.Cleanup. Every POST records the request body and replies
+// 200. The Subscription.NotificationURI in step 1 is pointed at
+// URL().
+func newUTILNotificationReceiver(t *testing.T) *utilNotificationReceiver {
+	t.Helper()
+	r := &utilNotificationReceiver{}
+	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(req.Body, 1<<16))
+		if err != nil {
+			http.Error(w, "read body", http.StatusBadRequest)
+			return
+		}
+		var n sep2.Notification
+		rec := utilReceivedNotification{Body: body}
+		if uerr := xml.Unmarshal(body, &n); uerr == nil {
+			rec.Notification = &n
+		}
+		r.mu.Lock()
+		r.got = append(r.got, rec)
+		r.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(r.srv.Close)
+	return r
+}
+
+// URL returns the receiver's base URL, suitable as a Subscription's
+// NotificationURI.
+func (r *utilNotificationReceiver) URL() string { return r.srv.URL }
+
+// Wait blocks until at least n Notifications have been recorded or
+// timeout elapses. Returns a snapshot and an ok flag — the caller
+// decides how to format the failure.
+func (r *utilNotificationReceiver) Wait(n int, timeout time.Duration) ([]utilReceivedNotification, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		r.mu.Lock()
+		count := len(r.got)
+		r.mu.Unlock()
+		if count >= n {
+			r.mu.Lock()
+			out := make([]utilReceivedNotification, len(r.got))
+			copy(out, r.got)
+			r.mu.Unlock()
+			return out, true
+		}
+		if time.Now().After(deadline) {
+			r.mu.Lock()
+			out := make([]utilReceivedNotification, len(r.got))
+			copy(out, r.got)
+			r.mu.Unlock()
+			return out, false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// postSubscriptionToURI POSTs one Subscription against /edev/{id}/sub
+// with the supplied SubscribedResource and NotificationURI. Asserts
+// 201 + a Location header. Mirrors postAndVerifySubscription from
+// util_003 but takes the NotificationURI as a parameter so step 3 can
+// route fan-outs to a recording receiver instead of the unreachable
+// constant in UTIL-003.
+func postSubscriptionToURI(t *testing.T, ctx context.Context, client *http.Client, baseURL, edevID, resource, notificationURI string) {
+	t.Helper()
+	sub := sep2.Subscription{
+		SubscribedResource: resource,
+		NotificationURI:    notificationURI,
+		Encoding:           0, // 0 = XML per sep2 SubscriptionEncodingType
+		Limit:              1,
+	}
+	body, err := xml.Marshal(&sub)
+	if err != nil {
+		t.Fatalf("postSubscriptionToURI: marshal: %v", err)
+	}
+	postURL := fmt.Sprintf("%s/edev/%s/sub", baseURL, edevID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("postSubscriptionToURI: build %s: %v", postURL, err)
+	}
+	req.Header.Set("Content-Type", "application/sep+xml")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("postSubscriptionToURI POST %s: %v", postURL, err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("postSubscriptionToURI POST %s: status = %d, want 201", postURL, resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc == "" {
+		t.Fatalf("postSubscriptionToURI POST %s: empty Location header", postURL)
 	}
 }

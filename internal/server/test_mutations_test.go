@@ -19,6 +19,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -343,6 +344,134 @@ func TestDERControlAdd_MissingControlID(t *testing.T) {
 	})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+// recordingNotifier is a handler.ResourceNotifier stub that captures every
+// Notify call. Used by IEEE-093 to verify the derctl-add hook fans out
+// on success and stays silent on failure paths.
+//
+// The mutex protects the slice; the production code path calls Notify
+// from the same goroutine that serves the request, but a future Manager
+// rewiring could fan out asynchronously and this keeps the test safe.
+type recordingNotifier struct {
+	mu    sync.Mutex
+	calls []recordedNotify
+}
+
+type recordedNotify struct {
+	resourceHref string
+	status       uint8
+}
+
+func (r *recordingNotifier) Notify(_ context.Context, resourceHref string, status uint8) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, recordedNotify{resourceHref: resourceHref, status: status})
+}
+
+func (r *recordingNotifier) snapshot() []recordedNotify {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]recordedNotify, len(r.calls))
+	copy(out, r.calls)
+	return out
+}
+
+// newRouterWithNotifier builds a router with the token env set AND a
+// recording notifier wired through. Returns the handler, the stores,
+// and the notifier so tests can assert the Notify call sequence.
+func newRouterWithNotifier(t *testing.T) (http.Handler, *server.Stores, *recordingNotifier) {
+	t.Helper()
+	t.Setenv(tmTokenEnv, tmTestToken)
+	stores := newTestStores()
+	cfg := &config.Config{}
+	n := &recordingNotifier{}
+	return server.NewRouter(cfg, stores, nil, "", "", n), stores, n
+}
+
+// TestDERControlAdd_FiresNotification — IEEE-093. On successful Create
+// the derctl-add hook calls notifier.Notify with the DERProgramList
+// href and NotificationStatusChanged. Aggregators subscribe to the
+// DERProgramList href (UTIL-003 pattern); a new DERControl under one
+// of its programs is the change event.
+func TestDERControlAdd_FiresNotification(t *testing.T) {
+	h, stores, n := newRouterWithNotifier(t)
+	if err := stores.DERPrograms.Create(context.Background(), "edev-7", "prog-9", sep2.DERProgram{}); err != nil {
+		t.Fatalf("seed program: %v", err)
+	}
+	rr := postJSON(t, h, tmDERCtlAdd, tmTestToken, map[string]any{
+		"end_device_id":  "edev-7",
+		"fsa_id":         "fsa-3",
+		"der_program_id": "prog-9",
+		"control_id":     "ctl-42",
+		"control":        sep2.DERControl{},
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", rr.Code, rr.Body.String())
+	}
+	calls := n.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("Notify calls = %d, want 1: %+v", len(calls), calls)
+	}
+	wantHref := "/edev/edev-7/fsa/fsa-3/derp"
+	if calls[0].resourceHref != wantHref {
+		t.Errorf("Notify href = %q, want %q", calls[0].resourceHref, wantHref)
+	}
+	if calls[0].status != sep2.NotificationStatusChanged {
+		t.Errorf("Notify status = %d, want %d (NotificationStatusChanged)", calls[0].status, sep2.NotificationStatusChanged)
+	}
+}
+
+// TestDERControlAdd_NoNotificationOnParentMissing — IEEE-093. A 404
+// from the parent-program lookup must NOT fan out. Notification fires
+// only when the store Create commits.
+func TestDERControlAdd_NoNotificationOnParentMissing(t *testing.T) {
+	h, _, n := newRouterWithNotifier(t)
+	rr := postJSON(t, h, tmDERCtlAdd, tmTestToken, map[string]any{
+		"end_device_id":  "edev-1",
+		"fsa_id":         "fsa-1",
+		"der_program_id": "prog-missing",
+		"control_id":     "ctl-1",
+		"control":        sep2.DERControl{},
+	})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rr.Code)
+	}
+	if got := n.snapshot(); len(got) != 0 {
+		t.Errorf("Notify called on 404 path: %+v", got)
+	}
+}
+
+// TestDERControlAdd_NoNotificationOnDuplicate — IEEE-093. A 409 from
+// the Create path must NOT fan out — the store was not changed on the
+// second call.
+func TestDERControlAdd_NoNotificationOnDuplicate(t *testing.T) {
+	h, stores, n := newRouterWithNotifier(t)
+	ctx := context.Background()
+	if err := stores.DERPrograms.Create(ctx, "edev-1", "prog-1", sep2.DERProgram{}); err != nil {
+		t.Fatalf("seed program: %v", err)
+	}
+	body := map[string]any{
+		"end_device_id":  "edev-1",
+		"fsa_id":         "fsa-1",
+		"der_program_id": "prog-1",
+		"control_id":     "ctl-1",
+		"control":        sep2.DERControl{},
+	}
+	if rr := postJSON(t, h, tmDERCtlAdd, tmTestToken, body); rr.Code != http.StatusCreated {
+		t.Fatalf("first add status = %d, want 201", rr.Code)
+	}
+	// First Create fired one Notification.
+	if got := n.snapshot(); len(got) != 1 {
+		t.Fatalf("after first add Notify calls = %d, want 1", len(got))
+	}
+	// Second is 409 and must not fire again.
+	if rr := postJSON(t, h, tmDERCtlAdd, tmTestToken, body); rr.Code != http.StatusConflict {
+		t.Fatalf("second add status = %d, want 409", rr.Code)
+	}
+	if got := n.snapshot(); len(got) != 1 {
+		t.Errorf("Notify fired on 409 path; calls = %+v", got)
 	}
 }
 

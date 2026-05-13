@@ -55,9 +55,16 @@ const maxMutationBody = 1 << 16 // 64 KiB
 // stub in test_mutations_notest.go provides a no-op companion for
 // production builds.
 //
+// The notifier is optional. When non-nil, mutation handlers that change
+// a subscribable resource fan a Notification out to subscribed receivers
+// after the store mutation commits (IEEE-093: derctl-add → DERProgramList
+// notification, matching CSIP V1.2 §11.4 / UTIL-004 step 3). nil disables
+// the fan-out — production builds never compile this code path, and the
+// existing unit tests that pass nil keep working unchanged.
+//
 // All routes live under /test/mutations/ and bypass the protocol ACL
 // chain — mutations are out-of-band by design.
-func RegisterMutationHandlers(top *http.ServeMux, stores *Stores) {
+func RegisterMutationHandlers(top *http.ServeMux, stores *Stores, notifier handler.ResourceNotifier) {
 	if stores == nil {
 		return
 	}
@@ -71,7 +78,7 @@ func RegisterMutationHandlers(top *http.ServeMux, stores *Stores) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /test/mutations/edev-delete-oob", handleEdevDeleteOOB(stores))
 	mux.HandleFunc("POST /test/mutations/derprog-primacy", handleDERProgPrimacy(stores))
-	mux.HandleFunc("POST /test/mutations/derctl-add", handleDERControlAdd(stores))
+	mux.HandleFunc("POST /test/mutations/derctl-add", handleDERControlAdd(stores, notifier))
 	mux.HandleFunc("POST /test/mutations/time-advance", handleTimeAdvance(stores))
 	mux.HandleFunc("POST /test/mutations/fsa-swap", handleFSASwap(stores))
 	mux.HandleFunc("POST /test/mutations/subscription-cancel", handleSubscriptionCancel(stores))
@@ -211,8 +218,16 @@ type derControlAddRequest struct {
 
 // handleDERControlAdd appends a new DERControl under an existing
 // DERProgram. The parent DERProgram must already exist. Used by CSIP
-// MAINT-004 (DERControl add to live program).
-func handleDERControlAdd(stores *Stores) http.HandlerFunc {
+// MAINT-004 (DERControl add to live program) and CSIP V1.2 §9.4 /
+// UTIL-004 (Utility-Aggregator DER retrieval).
+//
+// On successful Create the handler fires a Notification on the parent
+// DERProgramList href with NotificationStatusChanged. The DERProgramList
+// is the resource aggregators subscribe to (see UTIL-003 procedure), so
+// fanning out at that href reaches every subscribed aggregator. nil
+// notifier disables the fan-out — used by the existing unit tests that
+// exercise only the store-mutation side of the hook.
+func handleDERControlAdd(stores *Stores, notifier handler.ResourceNotifier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req derControlAddRequest
 		if err := readJSON(r, &req); err != nil {
@@ -252,8 +267,27 @@ func handleDERControlAdd(stores *Stores) http.HandlerFunc {
 			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+
+		// IEEE-093: fan out a "Changed" Notification to subscribers of
+		// the parent DERProgramList. Aggregators subscribe to this href
+		// in UTIL-003; the new DERControl appearing under one of the
+		// programs in that list is the change event. The Manager.Notify
+		// path is non-blocking (bounded queue, drops on full).
+		if notifier != nil {
+			notifier.Notify(ctx, derProgramListHref(req.EndDeviceID, req.FSAID), sep2.NotificationStatusChanged)
+		}
+
 		w.WriteHeader(http.StatusCreated)
 	}
+}
+
+// derProgramListHref returns the canonical href for the DERProgramList
+// scoped to (edev, fsa). Mirrors router.go's "GET /edev/{id}/fsa/{fsaId}/derp"
+// route. Single source of the path shape so a route rename surfaces here
+// at compile time (the route is a string literal in router.go; if/when
+// that becomes a typed constant this helper consumes it).
+func derProgramListHref(edev, fsa string) string {
+	return "/edev/" + edev + "/fsa/" + fsa + "/derp"
 }
 
 // derControlScope mirrors internal/bootfixture.compositeKey. Duplicated

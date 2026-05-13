@@ -1,9 +1,9 @@
-# IEEE-082 fixture — BASIC-005 LFRT/HFRT (CSIP V1.2 §8.5).
+# IEEE-082/IEEE-092 fixture — BASIC-005 LFRT/HFRT (CSIP V1.2 §8.5).
 #
-# Same shape as BASIC-004 but for frequency ride-through: 2 curves
-# (LFRT-must-trip, HFRT-must-trip) per Figure 5. The opModLFRTMustTrip
-# / opModHFRTMustTrip curve references do not exist on
-# pkg/sep2.DERControlBase today — see IEEE-092.
+# IEEE-092 added the opModLFRTMustTrip and opModHFRTMustTrip
+# curve-reference fields to pkg/sep2.DERControlBase. The fixture
+# now seeds both, each pointing at the corresponding DERCurve id
+# below (Figure 5 LFRT left side, HFRT right side).
 
 end_devices:
   - id: "0"
@@ -45,7 +45,9 @@ der_controls:
     der_program_id: "0"
     id: "0"
     mrid: "BASIC-005-DERC"
-    # DERControlBase intentionally empty — see IEEE-092.
+    der_control_base:
+      op_mod_lfrt_must_trip: 0
+      op_mod_hfrt_must_trip: 1
 
 der_curves:
   - id: "0"

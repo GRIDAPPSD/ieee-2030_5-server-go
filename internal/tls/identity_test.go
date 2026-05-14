@@ -8,6 +8,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
+	"pgregory.net/rapid"
 )
 
 func TestLFDI(t *testing.T) {
@@ -130,6 +131,95 @@ func TestFormatSFDIRoundTrip(t *testing.T) {
 	if stripped != sfdi {
 		t.Errorf("stripping hyphens from %q recovered %q, want %q", formatted, stripped, sfdi)
 	}
+}
+
+// TestPropSFDIChecksumLaw is a property test (plan-4, IEEE-116).
+//
+// Property: for any device certificate, SFDI(cert) always produces a valid
+// SFDI string — i.e. ValidateSFDI(SFDI(cert)) == true for all inputs.
+//
+// The CA is generated once and shared across iterations; only the device cert
+// (varying HWSerialNum) is generated per iteration to keep the test fast.
+//
+// TDD shape note: this is regression-pinning, not driving new behaviour. The
+// SFDI checksum law has held since day one; the property documents the
+// invariant and acts as a tripwire for future regressions. It passes on first
+// run. See plan-4-property-based-testing/plan.md, decision 2 (pinned
+// RAPID_SEED for deterministic PR-gate failures).
+func TestPropSFDIChecksumLaw(t *testing.T) {
+	// Pre-generate CA once outside the rapid loop: only device-cert key
+	// generation varies per iteration.
+	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{
+		CommonName: "Prop Test CA",
+		ValidYears: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	caBlock, _ := pem.Decode(caCertPEM)
+	caCert, _ := x509.ParseCertificate(caBlock.Bytes)
+	keyBlock, _ := pem.Decode(caKeyPEM)
+	caKeyRaw, _ := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+	caKey := caKeyRaw.(*ecdsa.PrivateKey)
+
+	rapid.Check(t, func(rt *rapid.T) {
+		serial := rapid.StringN(1, 20, -1).Draw(rt, "serial")
+		devCertPEM, _, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
+			DeviceType:  certs.DeviceTypeGeneric,
+			HWSerialNum: serial,
+		})
+		if err != nil {
+			rt.Skip() // skip if cert generation fails for this serial (e.g. empty string)
+		}
+		devBlock, _ := pem.Decode(devCertPEM)
+		devCert, _ := x509.ParseCertificate(devBlock.Bytes)
+
+		sfdi := sepTLS.SFDI(devCert)
+		if !sepTLS.ValidateSFDI(sfdi) {
+			rt.Errorf("ValidateSFDI(SFDI(cert)) = false for serial %q, sfdi %q", serial, sfdi)
+		}
+	})
+}
+
+// TestPropSFDIValidatorRejectsMalformed is a property test (plan-4, IEEE-116).
+//
+// Property: for any string that is not exactly 12 ASCII decimal digits,
+// ValidateSFDI must return false. Three classes of malformed input are tested:
+//   - Strings shorter than 12 runes
+//   - Strings longer than 12 runes
+//   - Strings of exactly 12 runes containing at least one non-digit rune
+//
+// TDD shape note: regression-pinning. Passes on first run.
+func TestPropSFDIValidatorRejectsMalformed(t *testing.T) {
+	// Generator for a non-digit rune (any Unicode rune outside '0'..'9').
+	nonDigit := rapid.Custom(func(ct *rapid.T) rune {
+		r := rapid.Rune().Draw(ct, "r")
+		for r >= '0' && r <= '9' {
+			r = rapid.Rune().Draw(ct, "r")
+		}
+		return r
+	})
+
+	// Generator for a 12-rune string that contains at least one non-digit.
+	// Build 12 runes where position 0 is always a non-digit.
+	twelveWithNonDigit := rapid.Custom(func(ct *rapid.T) string {
+		first := nonDigit.Draw(ct, "first")
+		rest := rapid.StringOfN(rapid.Rune(), 11, 11, -1).Draw(ct, "rest")
+		return string(first) + rest
+	})
+
+	malformed := rapid.OneOf(
+		rapid.StringN(0, 11, -1),   // too short (0–11 runes)
+		rapid.StringN(13, 30, -1),  // too long (13–30 runes)
+		twelveWithNonDigit,         // exactly 12 runes but contains non-digit
+	)
+
+	rapid.Check(t, func(rt *rapid.T) {
+		s := malformed.Draw(rt, "s")
+		if sepTLS.ValidateSFDI(s) {
+			rt.Errorf("ValidateSFDI(%q) = true, want false (malformed input)", s)
+		}
+	})
 }
 
 func generateTestDeviceCert(t *testing.T) *x509.Certificate {

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -73,7 +74,7 @@ func AutoRegistrationMiddleware(edevStore store.EndDeviceStore, mode Registratio
 			}
 
 			if err := edevStore.Create(r.Context(), id, edev); err != nil {
-				if err == store.ErrAlreadyExists {
+				if errors.Is(err, store.ErrAlreadyExists) {
 					// Race condition — another request registered this device
 					log.Printf("auto-register: device %s already exists (race)", identity.SFDI)
 				} else {

@@ -15,7 +15,11 @@
 # into the Knowledge workspace at projects/ieee-2030_5-go/artifacts/
 # outputs/ci-archive/.
 #
-# Self-hosted runner per .claude/rules/devops.md.
+# Runner: ubuntu-latest. This is a documented exception to the
+# workspace `runs-on: self-hosted` policy — see .claude/rules/devops.md.
+# Rationale: third-party-org repo (GRIDAPPSD), test-only CI (no deploy,
+# no secrets, no docker push). Self-hosted is reserved for projects with
+# deploy-bearing CI.
 # Coverage gate is warn-not-fail at this stage; IEEE-107 (Phase 8) ratchets
 # the gate to fail at the achieved threshold.
 name: ci
@@ -43,7 +47,7 @@ permissions:
 jobs:
   ci:
     name: build / vet / lint / test
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -55,18 +59,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install golangci-lint
-        # Pinned to v2.5.0 — built with go1.25, matches go.mod's go 1.25.0.
-        # See `.golangci.yml` (config version 2).
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v2.5.0
-          install-mode: binary
-          args: --version
-          # The next `make lint` step actually runs the linter; this step
-          # just installs the binary so the Makefile target finds it on
-          # PATH. The action caches the binary across runs.
-
       - name: Vet
         run: make vet
 
@@ -74,7 +66,14 @@ jobs:
         run: make build-all
 
       - name: Lint
-        run: make lint
+        # golangci-lint v2.5.0 — built with go1.25, matches go.mod's go 1.25.0.
+        # See `.golangci.yml` (config version 2).
+        # The action installs the binary (cached across runs) and runs it.
+        # golangci-lint-action@v7 is required for golangci-lint v2.x —
+        # v6 rejected the v2 version string with a hard install error.
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.5.0
 
       - name: Test
         run: make test
@@ -121,7 +120,7 @@ jobs:
   # tarball to the durable store it owns.
   csip:
     name: csip harness (hooks=${{ matrix.hooks }})
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: ci
     strategy:

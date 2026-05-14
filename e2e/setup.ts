@@ -1,5 +1,5 @@
 import { execFileSync, spawn, ChildProcess } from 'child_process';
-import { mkdtempSync } from 'fs';
+import { existsSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -20,11 +20,18 @@ export async function startServer(): Promise<string> {
   const projectRoot = join(__dirname, '..');
   const sep2server = join(projectRoot, 'sep2server');
 
-  // Build the server
-  execFileSync('go', ['build', '-o', sep2server, './cmd/sep2server/'], {
-    cwd: projectRoot,
-    stdio: 'pipe',
-  });
+  // IEEE-114: the binary is built once in globalSetup (e2e/global-setup.ts)
+  // before any worker starts, eliminating the ETXTBSY race that occurred when
+  // multiple workers raced to `go build -o sep2server` against the same path.
+  // Fail fast here so a misconfigured run surfaces immediately instead of
+  // failing with a confusing exec error.
+  if (!existsSync(sep2server)) {
+    throw new Error(
+      `sep2server binary not found at ${sep2server}. ` +
+      'globalSetup (e2e/global-setup.ts) must run before workers start. ' +
+      'Check that playwright.config.ts has globalSetup configured.'
+    );
+  }
 
   // Generate certs
   execFileSync(sep2server, ['certs', 'generate-ca', '--out', certDir], { stdio: 'pipe' });

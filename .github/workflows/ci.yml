@@ -62,7 +62,7 @@ jobs:
       - name: Install golangci-lint
         # Pinned to v2.5.0 — built with go1.25, matches go.mod's go 1.25.0.
         # See `.golangci.yml` (config version 2).
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.5.0
           install-mode: binary

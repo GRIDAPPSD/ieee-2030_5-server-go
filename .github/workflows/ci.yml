@@ -62,14 +62,13 @@ jobs:
       - name: Install golangci-lint
         # Pinned to v2.5.0 — built with go1.25, matches go.mod's go 1.25.0.
         # See `.golangci.yml` (config version 2).
+        # skip-run: true — install the binary only; do not execute a lint
+        # pass here. The next `make lint` step runs the linter so the
+        # Makefile controls flags. The action caches the binary across runs.
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.5.0
-          install-mode: binary
-          args: --version
-          # The next `make lint` step actually runs the linter; this step
-          # just installs the binary so the Makefile target finds it on
-          # PATH. The action caches the binary across runs.
+          skip-run: true
 
       - name: Vet
         run: make vet

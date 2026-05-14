@@ -119,8 +119,13 @@ func HandleCreateEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 			return
 		}
 
-		// Generate ID and href
-		id := identity.SFDI[:8] // use first 8 chars of SFDI as ID
+		// Generate ID and href — auth.ExtractSFDIPrefix guards against short SFDI (IEEE-014).
+		id, err := auth.ExtractSFDIPrefix(identity.SFDI)
+		if err != nil {
+			log.Printf("edev create: %v", err)
+			http.Error(w, "invalid device identity", http.StatusInternalServerError)
+			return
+		}
 		dev.Href = "/edev/" + id
 		dev.RegistrationLink = &sep2.Link{Href: fmt.Sprintf("/edev/%s/rg", id)}
 		dev.FunctionSetAssignmentsListLink = &sep2.ListLink{Href: fmt.Sprintf("/edev/%s/fsa", id)}

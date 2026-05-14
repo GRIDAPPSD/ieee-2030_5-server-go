@@ -53,7 +53,12 @@ func AutoRegistrationMiddleware(edevStore store.EndDeviceStore, mode Registratio
 			}
 
 			// Auto-register
-			id := identity.SFDI[:8]
+			id, err := extractSFDIPrefix(identity.SFDI)
+			if err != nil {
+				log.Printf("auto-register: %v", err)
+				http.Error(w, "invalid device identity", http.StatusInternalServerError)
+				return
+			}
 			enabled := true
 			edev := sep2.EndDevice{
 				SubscribableResource: sep2.SubscribableResource{

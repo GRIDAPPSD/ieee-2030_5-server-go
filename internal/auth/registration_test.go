@@ -104,3 +104,36 @@ func TestManualModeDoesNotAutoRegister(t *testing.T) {
 		t.Errorf("manual mode should not auto-register, count = %d", count)
 	}
 }
+
+// TestAutoRegistrationShortSFDI covers the extractSFDIPrefix error path
+// introduced by IEEE-014: when a device identity carries a SFDI shorter
+// than 8 characters the middleware must return 500 and not panic.
+func TestAutoRegistrationShortSFDI(t *testing.T) {
+	store := memory.NewEndDeviceStore()
+
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Should never reach here when SFDI is too short.
+		t.Error("inner handler called despite short SFDI")
+		w.WriteHeader(200)
+	})
+
+	handler := auth.AutoRegistrationMiddleware(store, auth.RegistrationModeAuto)(inner)
+
+	// SFDI shorter than 8 characters — triggers the extractSFDIPrefix error path.
+	identity := auth.DeviceIdentity{SFDI: "SHORT", LFDI: "AABBCC"}
+	ctx := context.WithValue(context.Background(), auth.IdentityContextKey(), identity)
+	req := httptest.NewRequest(http.MethodGet, "/edev", nil).WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 for short SFDI", w.Code)
+	}
+
+	// No device should have been created.
+	count, _ := store.Count(context.Background())
+	if count != 0 {
+		t.Errorf("device count = %d, want 0 (no registration on short SFDI)", count)
+	}
+}

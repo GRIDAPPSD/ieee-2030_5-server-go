@@ -52,10 +52,12 @@ func TestSFDIChecksumValidation(t *testing.T) {
 		sfdi  string
 		valid bool
 	}{
-		{"167261211391", true},  // spec example
-		{"167261211390", false}, // wrong checksum
-		{"000000000000", true},  // all zeros valid (sum=0, 0 mod 10 = 0)
-		{"12345", false},        // too short
+		{"167261211391", true},   // spec example
+		{"167261211390", false},  // wrong checksum
+		{"000000000000", true},   // all zeros valid (sum=0, 0 mod 10 = 0)
+		{"12345", false},         // too short
+		{"1234567890ab", false},  // 12 chars but contains non-digit runes
+		{"abcdefghijkl", false},  // all non-digit runes, 12 chars
 	}
 
 	for _, tt := range tests {
@@ -90,6 +92,43 @@ func TestFingerprintDeterministic(t *testing.T) {
 	fp2 := sepTLS.Fingerprint(cert)
 	if fp1 != fp2 {
 		t.Error("Fingerprint not deterministic")
+	}
+}
+
+func TestFormatSFDI(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"167261211391", "167-261-211-391"},
+		{"000000000000", "000-000-000-000"},
+		{"123456789012", "123-456-789-012"},
+		// non-12-length inputs pass through unchanged (documented behaviour)
+		{"12345", "12345"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := sepTLS.FormatSFDI(tt.input)
+		if got != tt.want {
+			t.Errorf("FormatSFDI(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestFormatSFDIRoundTrip(t *testing.T) {
+	// FormatSFDI should produce a 15-char hyphenated string for a valid 12-digit SFDI;
+	// stripping hyphens must recover the original.
+	cert := generateTestDeviceCert(t)
+	sfdi := sepTLS.SFDI(cert)
+	formatted := sepTLS.FormatSFDI(sfdi)
+
+	if len(formatted) != 15 {
+		t.Errorf("FormatSFDI length = %d, want 15", len(formatted))
+	}
+
+	stripped := formatted[0:3] + formatted[4:7] + formatted[8:11] + formatted[12:15]
+	if stripped != sfdi {
+		t.Errorf("stripping hyphens from %q recovered %q, want %q", formatted, stripped, sfdi)
 	}
 }
 

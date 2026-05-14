@@ -9,12 +9,19 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 )
 
 const notificationContentType = "application/sep+xml"
+
+// notificationClientTimeout is the deadline for a single outbound
+// notification POST. Zero would mean "wait forever"; 30 s is generous
+// for a LAN-reachable subscriber while preventing worker goroutine leaks
+// against slow or unreachable notification URIs.
+const notificationClientTimeout = 30 * time.Second
 
 // SubscriptionLister provides lookup of subscriptions by resource href.
 // The returned records pair each subscription with its storage ID so the
@@ -67,6 +74,12 @@ type Manager struct {
 	workerCount int
 }
 
+// newNotificationClient returns an http.Client with a bounded Timeout so
+// worker goroutines cannot block indefinitely on slow subscribers.
+func newNotificationClient() *http.Client {
+	return &http.Client{Timeout: notificationClientTimeout}
+}
+
 // NewManager creates a NotificationManager with the given worker pool size.
 func NewManager(store SubscriptionLister, workerCount, queueSize int) *Manager {
 	if workerCount < 1 {
@@ -77,7 +90,7 @@ func NewManager(store SubscriptionLister, workerCount, queueSize int) *Manager {
 	}
 	return &Manager{
 		store:       store,
-		client:      &http.Client{},
+		client:      newNotificationClient(),
 		queue:       make(chan notificationTask, queueSize),
 		workerCount: workerCount,
 	}

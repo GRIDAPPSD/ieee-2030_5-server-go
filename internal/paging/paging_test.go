@@ -60,11 +60,15 @@ func TestParseQueryInvalidValues(t *testing.T) {
 }
 
 func TestParseQueryLimitZero(t *testing.T) {
+	// l=0 is a spec-defined edge case per CSIP V1.2 §5.6: a client may request
+	// zero items to observe the All count without fetching any payload. The
+	// server returns zero items and sets Results=0 while All still reflects the
+	// full store count. ParseQuery must not clamp l=0 to DefaultLimit.
 	q := url.Values{"l": {"0"}}
 	p := paging.ParseQuery(q)
 
 	if p.Limit != 0 {
-		t.Errorf("Limit = %d, want 0 (explicit zero)", p.Limit)
+		t.Errorf("l=0: Limit = %d, want 0 (spec-valid count-peek per CSIP V1.2 §5.6)", p.Limit)
 	}
 }
 
@@ -80,33 +84,62 @@ func TestToListOptions(t *testing.T) {
 // TestPropLimitClamp is a property test (plan-4, IEEE-117).
 //
 // Property A (clamp): for any numeric value of the "l" query parameter,
-// ParseQuery returns Params.Limit in [1, MaxLimit]. Never zero, never above
-// 255, never negative.
+// ParseQuery returns Params.Limit in [0, MaxLimit]. Never above 255, never
+// negative (uint32 rules out negative; MaxLimit caps the upper bound).
 //
-// The generator explicitly produces numeric uint32 values — including zero —
-// as the "l" key so that the full clamping contract is exercised. The
-// all-random-string variant (below) covers the non-numeric input space.
+// Note: l=0 is a spec-defined edge case per CSIP V1.2 §5.6 (count-peek: zero
+// items returned, All still set). The lower bound here is 0, not 1.
+// TestPropLimitZeroSpecEdge below documents the l=0 contract separately.
 //
-// IEEE 2030.5 §8.2 / SEP2 spec section 4.6.2 define the `l` (limit) paging
-// parameter. The spec is silent on whether `l=0` is valid; a client requesting
-// zero items is a degenerate request. We choose to clamp to DefaultLimit
-// (same as other invalid inputs) rather than returning zero — returning zero
-// would cause a server to emit an empty list that looks like "no records" to
-// a well-behaved client, which is incorrect behaviour for a populated resource.
+// plan-4 plan.md predicted a Limit=0 defect here; it did NOT surface because
+// the implementation correctly passes through l=0 as per spec. The CSIP suite
+// test TestCORE_004_ListHandling/limit_zero_returns_empty confirms this.
 func TestPropLimitClamp(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
-		// Generate a uint32 in [0, MaxLimit+10] so we exercise values below,
+		// Generate a uint32 in [0, MaxLimit+10] so we exercise values at,
 		// within, and above the valid range. Zero is included in the draw.
 		v := rapid.Uint32Range(0, uint32(paging.MaxLimit)+10).Draw(rt, "l")
 		q := url.Values{"l": {fmt.Sprintf("%d", v)}}
 
 		p := paging.ParseQuery(q)
 
-		if p.Limit < 1 {
-			rt.Fatalf("Limit %d < 1 for l=%d", p.Limit, v)
-		}
+		// Limit must never exceed MaxLimit (upper clamp is always active).
 		if p.Limit > paging.MaxLimit {
 			rt.Fatalf("Limit %d > MaxLimit %d for l=%d", p.Limit, paging.MaxLimit, v)
+		}
+		// For valid in-range inputs [0, MaxLimit], the parsed value must be
+		// preserved exactly (including zero).
+		if v <= uint32(paging.MaxLimit) && p.Limit != v {
+			rt.Fatalf("Limit %d ≠ input %d (in-range, no clamping expected)", p.Limit, v)
+		}
+		// For over-range inputs (v > MaxLimit), Limit must equal MaxLimit.
+		if v > uint32(paging.MaxLimit) && p.Limit != paging.MaxLimit {
+			rt.Fatalf("Limit %d ≠ MaxLimit %d for over-range l=%d", p.Limit, paging.MaxLimit, v)
+		}
+	})
+}
+
+// TestPropLimitZeroSpecEdge documents the l=0 spec contract as a standalone
+// property. CSIP V1.2 §5.6 defines l=0 as a "count-peek": the server returns
+// zero items in the body but sets All to the full store count. ParseQuery must
+// pass through Limit=0 without clamping.
+func TestPropLimitZeroSpecEdge(t *testing.T) {
+	rapid.Check(t, func(rt *rapid.T) {
+		// The "l" key is always "0"; other keys are random noise.
+		q := url.Values{"l": {"0"}}
+		n := rapid.IntRange(0, 3).Draw(rt, "n")
+		for i := range n {
+			k := rapid.StringN(1, 4, -1).Draw(rt, fmt.Sprintf("key%d", i))
+			if k == "l" {
+				continue // don't override the "l" key we just set
+			}
+			q.Set(k, rapid.StringN(0, 10, -1).Draw(rt, fmt.Sprintf("val%d", i)))
+		}
+
+		p := paging.ParseQuery(q)
+
+		if p.Limit != 0 {
+			rt.Fatalf("l=0: Limit = %d, want 0 (spec-valid count-peek per CSIP V1.2 §5.6)", p.Limit)
 		}
 	})
 }

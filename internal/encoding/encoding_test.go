@@ -60,29 +60,24 @@ func TestNegotiateEncoderXMLExplicit(t *testing.T) {
 	}
 }
 
-func TestNegotiateEncoderEXIReturnsNil(t *testing.T) {
-	enc := encoding.NegotiateEncoder("application/sep-exi")
-	if enc != nil {
-		t.Error("EXI should return nil (not supported)")
+// TestNegotiateEncoderUnknownAccept verifies that an unrecognized Accept value
+// (including the removed "application/sep-exi") falls back to the XML encoder.
+// EXI support was removed in IEEE-002; this is the post-removal contract.
+func TestNegotiateEncoderUnknownAccept(t *testing.T) {
+	cases := []string{
+		"application/sep-exi",
+		"text/html",
+		"application/json",
+		"*/*",
 	}
-}
-
-func TestIsEXIRequested(t *testing.T) {
-	if !encoding.IsEXIRequested("application/sep-exi") {
-		t.Error("should detect EXI")
-	}
-	if encoding.IsEXIRequested("application/sep+xml") {
-		t.Error("XML should not be EXI")
-	}
-	if encoding.IsEXIRequested("") {
-		t.Error("empty should not be EXI")
-	}
-}
-
-func TestEXIStubEncoderErrors(t *testing.T) {
-	// The stub should return errors
-	if encoding.ErrEXINotSupported == nil {
-		t.Error("ErrEXINotSupported should not be nil")
+	for _, accept := range cases {
+		enc := encoding.NegotiateEncoder(accept)
+		if enc == nil {
+			t.Errorf("NegotiateEncoder(%q) = nil, want XML encoder", accept)
+		}
+		if enc != nil && enc.ContentType() != encoding.ContentTypeSEPXML {
+			t.Errorf("NegotiateEncoder(%q).ContentType() = %q, want %q", accept, enc.ContentType(), encoding.ContentTypeSEPXML)
+		}
 	}
 }
 

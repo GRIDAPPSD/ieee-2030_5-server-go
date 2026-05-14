@@ -1,6 +1,7 @@
 package encoding_test
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
@@ -82,6 +83,50 @@ func TestEXIStubEncoderErrors(t *testing.T) {
 	// The stub should return errors
 	if encoding.ErrEXINotSupported == nil {
 		t.Error("ErrEXINotSupported should not be nil")
+	}
+}
+
+// unmarshalableType cannot be marshaled to XML (channels are not XML-serializable).
+// Used to exercise the WriteXML error path.
+type unmarshalableType struct {
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns Broken"`
+	Ch      chan int  `xml:"ch"`
+}
+
+func TestWriteXMLMarshalError(t *testing.T) {
+	w := httptest.NewRecorder()
+	encoding.WriteXML(w, http.StatusOK, &unmarshalableType{Ch: make(chan int)})
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("marshal error should produce 500, got %d", w.Code)
+	}
+}
+
+func TestGetNamespaceDefaultsTo2018(t *testing.T) {
+	// GetNamespace on a plain context (no middleware) should return Namespace2018.
+	mode := encoding.GetNamespace(context.Background())
+	if mode != encoding.Namespace2018 {
+		t.Errorf("GetNamespace on empty context = %d, want Namespace2018 (%d)", mode, encoding.Namespace2018)
+	}
+}
+
+func TestGetNamespaceFromMiddlewareContext(t *testing.T) {
+	// NamespaceMiddleware injects Namespace2013 into the context when the
+	// client sends a 2013 Accept header; GetNamespace must recover it.
+	var capturedMode encoding.NamespaceMode
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedMode = encoding.GetNamespace(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+
+	wrapped := encoding.NamespaceMiddleware(inner)
+	req := httptest.NewRequest("GET", "/dcap", nil)
+	req.Header.Set("Accept", "application/sep+xml; level=-S1")
+	w := httptest.NewRecorder()
+	wrapped.ServeHTTP(w, req)
+
+	if capturedMode != encoding.Namespace2013 {
+		t.Errorf("GetNamespace inside 2013 middleware = %d, want Namespace2013 (%d)", capturedMode, encoding.Namespace2013)
 	}
 }
 

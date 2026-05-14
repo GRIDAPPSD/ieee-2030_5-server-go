@@ -60,10 +60,12 @@ jobs:
       RAPID_SEED: 1747227600
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        # IEEE-124: bumped v4→v6 for Node.js 24 runtime.
+        uses: actions/checkout@v6
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        # IEEE-124: bumped v5→v6 for Node.js 24 runtime.
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -78,9 +80,10 @@ jobs:
         # golangci-lint v2.5.0 — built with go1.25, matches go.mod's go 1.25.0.
         # See `.golangci.yml` (config version 2).
         # The action installs the binary (cached across runs) and runs it.
-        # golangci-lint-action@v7 is required for golangci-lint v2.x —
-        # v6 rejected the v2 version string with a hard install error.
-        uses: golangci/golangci-lint-action@v7
+        # golangci-lint-action@v9 ships Node.js 24 (v9.0.0 release).
+        # The `version:` input name is unchanged from v7.
+        # IEEE-124: bumped v7→v9 for Node.js 24 runtime.
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.5.0
 
@@ -101,7 +104,8 @@ jobs:
 
       - name: Upload coverage artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        # IEEE-124: bumped v4→v7 for Node.js 24 runtime.
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -147,10 +151,12 @@ jobs:
       SEP2_TEST_MUTATION_TOKEN: ci-${{ github.run_id }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        # IEEE-124: bumped v4→v6 for Node.js 24 runtime.
+        uses: actions/checkout@v6
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        # IEEE-124: bumped v5→v6 for Node.js 24 runtime.
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -223,7 +229,8 @@ jobs:
         # 90-day retention = GitHub Actions max. Phase 9 IEEE-109 indexes
         # these artifacts into Knowledge and mirrors the bulk tarball to
         # the long-term durable store it owns.
-        uses: actions/upload-artifact@v4
+        # IEEE-124: bumped v4→v7 for Node.js 24 runtime.
+        uses: actions/upload-artifact@v7
         with:
           name: csip-logs-${{ matrix.hooks }}-${{ github.sha }}
           path: ci-logs/
@@ -234,8 +241,9 @@ jobs:
         # IEEE-107 — separate artifact so Phase 9 IEEE-109 can pull the
         # scoped profile directly without parsing ci-logs/. Hooks-on
         # axis only (the axis that runs `make test-csip-cover`).
+        # IEEE-124: bumped v4→v7 for Node.js 24 runtime.
         if: matrix.hooks == 'on' && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: csip-coverage-${{ github.sha }}
           path: coverage-csip.out

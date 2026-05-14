@@ -66,6 +66,7 @@ func HandleEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
+			log.Printf("edev: GET id=%q: %v (path=%s)", id, err, r.URL.Path)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -140,6 +141,7 @@ func HandleCreateEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 				encoding.WriteXML(w, http.StatusOK, &existing)
 				return
 			}
+			log.Printf("edev: create id=%q: %v (path=%s)", id, err, r.URL.Path)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -183,6 +185,7 @@ func HandleUpdateEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
+			log.Printf("edev: update id=%q: %v (path=%s)", id, err, r.URL.Path)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}

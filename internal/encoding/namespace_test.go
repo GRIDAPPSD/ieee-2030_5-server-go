@@ -87,6 +87,27 @@ func TestNamespaceMiddleware2013(t *testing.T) {
 	}
 }
 
+func TestNamespaceMiddleware2013NoExplicitWriteHeader(t *testing.T) {
+	// Inner handler writes body without calling WriteHeader explicitly.
+	// nsBufferedWriter.flush() must default w.status to 200 when it is zero.
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Deliberately no WriteHeader call — exercises the w.status==0 default branch.
+		if _, err := w.Write([]byte(`<T xmlns="urn:ieee:std:2030.5:ns"/>`)); err != nil {
+			t.Errorf("inner Write: %v", err)
+		}
+	})
+
+	wrapped := encoding.NamespaceMiddleware(inner)
+	req := httptest.NewRequest("GET", "/tm", nil)
+	req.Header.Set("Accept", "application/sep+xml; level=-S1")
+	w := httptest.NewRecorder()
+	wrapped.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("flush default status should be 200, got %d", w.Code)
+	}
+}
+
 func TestNamespaceMiddleware2018PassThrough(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		encoding.WriteXML(w, 200, &sep2.Time{

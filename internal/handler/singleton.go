@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/encoding"
@@ -38,6 +39,7 @@ func HandleSingletonGetPut[T store.Copier[T]](
 					encoding.WriteXML(w, http.StatusOK, &def)
 					return
 				}
+				log.Printf("singleton: GET parent=%q: %v (path=%s)", parentKey, err, r.URL.Path)
 				http.Error(w, "internal error", http.StatusInternalServerError)
 				return
 			}
@@ -61,10 +63,12 @@ func HandleSingletonGetPut[T store.Copier[T]](
 				if errors.Is(err, store.ErrAlreadyExists) {
 					st := scopedStore.ForParent(parentKey)
 					if err := st.Update(r.Context(), SingletonKey, resource); err != nil {
+						log.Printf("singleton: update parent=%q: %v (path=%s)", parentKey, err, r.URL.Path)
 						http.Error(w, "internal error", http.StatusInternalServerError)
 						return
 					}
 				} else {
+					log.Printf("singleton: create parent=%q: %v (path=%s)", parentKey, err, r.URL.Path)
 					http.Error(w, "internal error", http.StatusInternalServerError)
 					return
 				}

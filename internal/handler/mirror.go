@@ -84,6 +84,7 @@ func HandleCreateMirrorUsagePoint(s store.ResourceStore[sep2.MirrorUsagePoint]) 
 				encoding.WriteXML(w, http.StatusOK, &existing)
 				return
 			}
+			log.Printf("mup: create id=%q: %v (path=%s)", id, err, r.URL.Path)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
@@ -108,6 +109,7 @@ func HandleMirrorUsagePoint(s store.ResourceStore[sep2.MirrorUsagePoint]) http.H
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
+			log.Printf("mup: GET id=%q: %v (path=%s)", id, err, r.URL.Path)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}

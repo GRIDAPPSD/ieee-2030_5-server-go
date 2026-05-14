@@ -1,6 +1,6 @@
 # ieee-2030_5-go
 
-[![CI](https://github.com/GRIDAPPSD/ieee-2030_5-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GRIDAPPSD/ieee-2030_5-go/actions/workflows/ci.yml) [![Go](https://img.shields.io/badge/go-1.25-blue)](https://go.dev/) [![License](https://img.shields.io/badge/License-BSD--2--Clause-blue)](LICENSE) [![IEEE 2030.5](https://img.shields.io/badge/IEEE%202030.5-CSIP%20V1.2-orange)](https://standards.ieee.org/ieee/2030.5/5897/)
+[![CI](https://github.com/GRIDAPPSD/ieee-2030_5-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GRIDAPPSD/ieee-2030_5-go/actions/workflows/ci.yml) [![Go](https://img.shields.io/badge/go-1.25-blue)](https://go.dev/) [![License](https://img.shields.io/badge/License-BSD--3--Clause-blue)](LICENSE) [![IEEE 2030.5](https://img.shields.io/badge/IEEE%202030.5-CSIP%20V1.2-orange)](https://standards.ieee.org/ieee/2030.5/5897/)
 
 Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server, an inverter simulator client, and an admin dashboard.
 
@@ -181,4 +181,4 @@ Two third-party items live in `internal/tls/`:
 
 ## License
 
-BSD-2-Clause-style (PNNL/Battelle). See `LICENSE`.
+BSD-3-Clause (PNNL/Battelle). See `LICENSE`.

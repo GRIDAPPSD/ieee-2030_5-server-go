@@ -52,3 +52,8 @@ Thumbs.db
 # Temporary files
 tmp/
 *.tmp
+
+# rapid (property-based testing) failure-repro files.
+# IEEE-116: failures reproduce from the seed logged in test output, not
+# from committed files. See plan-4-property-based-testing/plan.md.
+testdata/rapid/

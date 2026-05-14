@@ -6,6 +6,7 @@ require (
 	github.com/hashicorp/mdns v1.0.6
 	golang.org/x/crypto v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
+	pgregory.net/rapid v1.3.0
 )
 
 require (

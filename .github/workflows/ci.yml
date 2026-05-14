@@ -15,7 +15,11 @@
 # into the Knowledge workspace at projects/ieee-2030_5-go/artifacts/
 # outputs/ci-archive/.
 #
-# Self-hosted runner per .claude/rules/devops.md.
+# Runner: ubuntu-latest. This is a documented exception to the
+# workspace `runs-on: self-hosted` policy — see .claude/rules/devops.md.
+# Rationale: third-party-org repo (GRIDAPPSD), test-only CI (no deploy,
+# no secrets, no docker push). Self-hosted is reserved for projects with
+# deploy-bearing CI.
 # Coverage gate is warn-not-fail at this stage; IEEE-107 (Phase 8) ratchets
 # the gate to fail at the achieved threshold.
 name: ci
@@ -43,7 +47,7 @@ permissions:
 jobs:
   ci:
     name: build / vet / lint / test
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -121,7 +125,7 @@ jobs:
   # tarball to the durable store it owns.
   csip:
     name: csip harness (hooks=${{ matrix.hooks }})
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: ci
     strategy:

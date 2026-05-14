@@ -29,7 +29,43 @@ import (
 const (
 	subscriptionWorkers   = 4
 	subscriptionQueueSize = 256
+
+	// HTTP server timeout defaults. All servers (protocol, admin, HMI) share
+	// these values unless a caller overrides them. Zero means "no limit";
+	// these non-zero values defend against Slowloris and slow-body exhaustion.
+	// ReadHeaderTimeout < ReadTimeout: header parsing has a tighter deadline
+	// than the full body read.
+	serverReadHeaderTimeout = 10 * time.Second
+	serverReadTimeout       = 30 * time.Second
+	serverWriteTimeout      = 30 * time.Second
+	serverIdleTimeout       = 120 * time.Second
 )
+
+// newProtocolServer constructs the SEP2 protocol http.Server with the
+// standard timeout values. handler may be nil; callers assign Server.Handler
+// after choosing the CCM/GCM middleware chain.
+func newProtocolServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
+		ReadTimeout:       serverReadTimeout,
+		WriteTimeout:      serverWriteTimeout,
+		IdleTimeout:       serverIdleTimeout,
+	}
+}
+
+// newAdminServer constructs the admin http.Server with the standard timeout
+// values. handler may be nil; callers assign Server.Handler after building
+// the admin router.
+func newAdminServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
+		ReadTimeout:       serverReadTimeout,
+		WriteTimeout:      serverWriteTimeout,
+		IdleTimeout:       serverIdleTimeout,
+	}
+}
 
 // Run starts the IEEE 2030.5 server with mutual TLS and optionally
 // an admin HTTPS server on a separate port.
@@ -42,7 +78,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		serverSFDI  string
 		serverLFDI  string
 	)
-	protocolSrv := &http.Server{}
+	protocolSrv := newProtocolServer(nil)
 
 	listener, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
@@ -293,7 +329,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		tlsModeDescription = desc
 	}
 
-	adminSrv := &http.Server{Handler: adminRouter}
+	adminSrv := newAdminServer(adminRouter)
 
 	go func() {
 		log.Printf("Admin server listening on %s (%s)", addr, tlsModeDescription)

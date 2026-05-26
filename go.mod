@@ -1,6 +1,6 @@
 module github.com/GRIDAPPSD/ieee-2030_5-go
 
-go 1.25.0
+go 1.26.3
 
 require (
 	github.com/hashicorp/mdns v1.0.6

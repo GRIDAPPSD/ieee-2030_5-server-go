@@ -77,15 +77,17 @@ jobs:
         run: make build-all
 
       - name: Lint
-        # golangci-lint v2.5.0 — built with go1.25, matches go.mod's go 1.25.0.
-        # See `.golangci.yml` (config version 2).
+        # golangci-lint v2.9.0 is the first v2.x release built with go1.26 and
+        # carrying the "go1.26 support" change (PR #6271). It matches go.mod's
+        # `go 1.26.3` so the analyzer can parse go1.26 packages. Config schema
+        # is unchanged (v2). See `.golangci.yml`.
         # The action installs the binary (cached across runs) and runs it.
         # golangci-lint-action@v9 ships Node.js 24 (v9.0.0 release).
         # The `version:` input name is unchanged from v7.
         # IEEE-124: bumped v7→v9 for Node.js 24 runtime.
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.5.0
+          version: v2.9.0
 
       - name: Test
         run: make test

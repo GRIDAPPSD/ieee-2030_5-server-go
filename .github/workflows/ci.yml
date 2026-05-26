@@ -77,7 +77,10 @@ jobs:
         run: make build-all
 
       - name: Lint
-        # golangci-lint v2.5.0 — built with go1.25, matches go.mod's go 1.25.0.
+        # golangci-lint v2.5.0 — built with go1.25; go.mod now requires go 1.26.3.
+        # A go1.25-built linter analyzing go1.26 packages can emit "requires newer
+        # Go version" errors; bump this pin if CI's lint step fails (tracked as a
+        # follow-up to IEEE-126).
         # See `.golangci.yml` (config version 2).
         # The action installs the binary (cached across runs) and runs it.
         # golangci-lint-action@v9 ships Node.js 24 (v9.0.0 release).

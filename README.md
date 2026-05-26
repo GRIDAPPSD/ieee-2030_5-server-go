@@ -4,7 +4,7 @@ Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utili
 
 ## Prerequisites
 
-- Go 1.25 or newer
+- Go 1.26 or newer
 - GNU make
 - `golangci-lint` (optional, for `make lint`)
 - Node.js plus `npx` if you intend to run the Playwright E2E suite

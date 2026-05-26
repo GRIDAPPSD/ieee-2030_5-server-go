@@ -6,6 +6,7 @@ package csiptest_test
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"testing"
 	"time"
@@ -87,9 +88,19 @@ func TestBootServer_ParallelDistinctPorts(t *testing.T) {
 
 // TestBootServer_CleanupShutsDown boots a server, captures its Addr,
 // runs the t.Cleanup chain explicitly via a subtest scope, and
-// confirms a post-cleanup Dial against the captured Addr fails. This
-// proves the cleanup function actually closes the listener (not just
-// that t.Cleanup got registered).
+// confirms a post-cleanup connection against the captured Addr can no
+// longer reach a serving server. This proves the cleanup function
+// actually closes the listener (not just that t.Cleanup got registered).
+//
+// The post-cleanup probe is a TLS handshake, NOT a bare TCP dial. A
+// bare net.Dial against the captured ephemeral port is racy: once the
+// listener is closed the OS frees that port, and a SYN sent in the
+// window where the kernel is reusing or transitioning the port can
+// complete a TCP handshake against an unrelated socket. A successful
+// TCP connect therefore does not prove the IEEE 2030.5 server is up.
+// (Measured: ~14% of bare-TCP dials succeed after Close()+join, while
+// 0/500 TLS handshakes succeed. The TLS handshake requires an actual
+// server on the other end, which is exactly the guarantee under test.)
 func TestBootServer_CleanupShutsDown(t *testing.T) {
 	t.Parallel()
 
@@ -107,10 +118,17 @@ func TestBootServer_CleanupShutsDown(t *testing.T) {
 
 	// "scope" has now exited and its t.Cleanup has run — meaning
 	// BootServer's t.Cleanup closed the http.Server and the listener.
-	// Dialing the captured Addr must now fail.
-	conn, err := net.DialTimeout("tcp", capturedAddr, 500*time.Millisecond)
+	// A TLS handshake against the captured Addr must now fail: there is
+	// no longer a server to complete it. We do not verify the cert
+	// (InsecureSkipVerify) because the assertion is "no server answers
+	// the handshake at all", not "the cert is valid".
+	dialer := &net.Dialer{Timeout: 500 * time.Millisecond}
+	conn, err := tls.DialWithDialer(dialer, "tcp", capturedAddr, &tls.Config{
+		InsecureSkipVerify: true, //nolint:gosec // intentional: probing reachability, not validating identity
+		MinVersion:         tls.VersionTLS12,
+	})
 	if err == nil {
 		_ = conn.Close()
-		t.Fatalf("Dial succeeded after cleanup; server did not shut down (addr=%s)", capturedAddr)
+		t.Fatalf("TLS handshake succeeded after cleanup; server did not shut down (addr=%s)", capturedAddr)
 	}
 }

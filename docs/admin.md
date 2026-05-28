@@ -25,7 +25,7 @@ SEP2_ADMIN_KEY=admin
 | Profile | Command |
 |---|---|
 | Default (admin enabled, no mDNS) | `make run` |
-| CSIP-8 + admin | `make run-ccm` |
+| CCM-8 + admin | `make run-ccm` |
 | CCM-8 + admin + mDNS | `make run-full` |
 
 The browser entry point is `https://localhost:8444/login`. Submit

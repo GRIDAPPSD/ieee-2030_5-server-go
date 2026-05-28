@@ -51,10 +51,18 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 	}
 	adminURL := "https://" + adminListener.Addr().String()
 
+	// IEEE-132: these tests bind on 127.0.0.1, which would now trigger the
+	// loopback bypass and admit every request. To exercise the actual
+	// Bearer-auth path, every request below carries X-Forwarded-For, which
+	// simulates the production case (Caddy in front injects it) and forces
+	// the bypass to decline.
+	const xffOperator = "203.0.113.5"
+
 	// Test: GET /api/certs/ca with correct Bearer
 	t.Run("Bearer GET CA", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", adminURL+"/api/certs/ca", nil)
 		req.Header.Set("Authorization", "Bearer test-admin-key")
+		req.Header.Set("X-Forwarded-For", xffOperator)
 		resp, err := adminClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -81,6 +89,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 		req, _ := http.NewRequest("POST", adminURL+"/api/certs/device", bytes.NewBufferString(body))
 		req.Header.Set("Authorization", "Bearer test-admin-key")
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", xffOperator)
 		resp, err := adminClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -115,6 +124,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 	t.Run("Bearer wrong key rejected", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", adminURL+"/api/certs/ca", nil)
 		req.Header.Set("Authorization", "Bearer wrong-key")
+		req.Header.Set("X-Forwarded-For", xffOperator)
 		resp, err := adminClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -128,6 +138,8 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 	// Test: No auth gets 401
 	t.Run("No auth rejected", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", adminURL+"/api/certs/ca", nil)
+		req.Header.Set("Authorization", "")
+		req.Header.Set("X-Forwarded-For", xffOperator)
 		resp, err := adminClient.Do(req)
 		if err != nil {
 			t.Fatal(err)

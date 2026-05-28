@@ -6,17 +6,17 @@ import "encoding/xml"
 // Spec reference: section 9.3 (DeviceStatus sub-resource)
 // Element order matches 2023 XSD.
 type DeviceStatus struct {
-	XMLName                xml.Name     `xml:"urn:ieee:std:2030.5:ns DeviceStatus"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DeviceStatus"`
 	Resource
-	PollRate               uint32       `xml:"pollRate,attr,omitempty"`
+	PollRate uint32 `xml:"pollRate,attr,omitempty"`
 
 	// XSD element order (2023):
-	ChangedTime            int64        `xml:"changedTime"`
-	OnCount                *uint16      `xml:"onCount,omitempty"`
-	OpState                *uint8       `xml:"opState,omitempty"` // 0=not applicable, 1=not operating, 2=operating, 3=starting up, 4=shutting down, 5=at disconnect level
-	OpTime                 *uint32      `xml:"opTime,omitempty"`  // seconds of operation
-	Temperature            []Temperature `xml:"Temperature,omitempty"`
-	TimeLink               *Link        `xml:"TimeLink,omitempty"`
+	ChangedTime int64         `xml:"changedTime"`
+	OnCount     *uint16       `xml:"onCount,omitempty"`
+	OpState     *uint8        `xml:"opState,omitempty"` // 0=not applicable, 1=not operating, 2=operating, 3=starting up, 4=shutting down, 5=at disconnect level
+	OpTime      *uint32       `xml:"opTime,omitempty"`  // seconds of operation
+	Temperature []Temperature `xml:"Temperature,omitempty"`
+	TimeLink    *Link         `xml:"TimeLink,omitempty"`
 }
 
 // Temperature is a temperature measurement.
@@ -29,10 +29,22 @@ type Temperature struct {
 // Copy returns an independent copy.
 func (d DeviceStatus) Copy() DeviceStatus {
 	c := d
-	if d.OnCount != nil { v := *d.OnCount; c.OnCount = &v }
-	if d.OpState != nil { v := *d.OpState; c.OpState = &v }
-	if d.OpTime != nil { v := *d.OpTime; c.OpTime = &v }
-	if d.TimeLink != nil { l := *d.TimeLink; c.TimeLink = &l }
+	if d.OnCount != nil {
+		v := *d.OnCount
+		c.OnCount = &v
+	}
+	if d.OpState != nil {
+		v := *d.OpState
+		c.OpState = &v
+	}
+	if d.OpTime != nil {
+		v := *d.OpTime
+		c.OpTime = &v
+	}
+	if d.TimeLink != nil {
+		l := *d.TimeLink
+		c.TimeLink = &l
+	}
 	if d.Temperature != nil {
 		c.Temperature = make([]Temperature, len(d.Temperature))
 		copy(c.Temperature, d.Temperature)

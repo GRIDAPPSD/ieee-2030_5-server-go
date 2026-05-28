@@ -38,32 +38,92 @@ type DERControlBase struct {
 // Copy returns an independent copy.
 func (d DERControlBase) Copy() DERControlBase {
 	c := d
-	if d.OpModConnect != nil { v := *d.OpModConnect; c.OpModConnect = &v }
-	if d.OpModEnergize != nil { v := *d.OpModEnergize; c.OpModEnergize = &v }
-	if d.OpModFixedPFAbsorbW != nil { v := *d.OpModFixedPFAbsorbW; c.OpModFixedPFAbsorbW = &v }
-	if d.OpModFixedPFInjectW != nil { v := *d.OpModFixedPFInjectW; c.OpModFixedPFInjectW = &v }
-	if d.OpModFixedW != nil { v := *d.OpModFixedW; c.OpModFixedW = &v }
-	if d.OpModFixedVar != nil { v := *d.OpModFixedVar; c.OpModFixedVar = &v }
-	if d.OpModFreqDroop != nil { v := *d.OpModFreqDroop; c.OpModFreqDroop = &v }
-	if d.OpModFreqWatt != nil { v := *d.OpModFreqWatt; c.OpModFreqWatt = &v }
-	if d.OpModHFRTMustTrip != nil { v := *d.OpModHFRTMustTrip; c.OpModHFRTMustTrip = &v }
-	if d.OpModHVRTMomentaryCessation != nil { v := *d.OpModHVRTMomentaryCessation; c.OpModHVRTMomentaryCessation = &v }
-	if d.OpModHVRTMustTrip != nil { v := *d.OpModHVRTMustTrip; c.OpModHVRTMustTrip = &v }
-	if d.OpModLFRTMustTrip != nil { v := *d.OpModLFRTMustTrip; c.OpModLFRTMustTrip = &v }
-	if d.OpModLVRTMomentaryCessation != nil { v := *d.OpModLVRTMomentaryCessation; c.OpModLVRTMomentaryCessation = &v }
-	if d.OpModLVRTMustTrip != nil { v := *d.OpModLVRTMustTrip; c.OpModLVRTMustTrip = &v }
-	if d.OpModMaxLimW != nil { v := *d.OpModMaxLimW; c.OpModMaxLimW = &v }
-	if d.OpModTargetW != nil { v := *d.OpModTargetW; c.OpModTargetW = &v }
-	if d.OpModTargetVar != nil { v := *d.OpModTargetVar; c.OpModTargetVar = &v }
-	if d.OpModVoltVar != nil { v := *d.OpModVoltVar; c.OpModVoltVar = &v }
-	if d.OpModVoltWatt != nil { v := *d.OpModVoltWatt; c.OpModVoltWatt = &v }
-	if d.RampTms != nil { v := *d.RampTms; c.RampTms = &v }
+	if d.OpModConnect != nil {
+		v := *d.OpModConnect
+		c.OpModConnect = &v
+	}
+	if d.OpModEnergize != nil {
+		v := *d.OpModEnergize
+		c.OpModEnergize = &v
+	}
+	if d.OpModFixedPFAbsorbW != nil {
+		v := *d.OpModFixedPFAbsorbW
+		c.OpModFixedPFAbsorbW = &v
+	}
+	if d.OpModFixedPFInjectW != nil {
+		v := *d.OpModFixedPFInjectW
+		c.OpModFixedPFInjectW = &v
+	}
+	if d.OpModFixedW != nil {
+		v := *d.OpModFixedW
+		c.OpModFixedW = &v
+	}
+	if d.OpModFixedVar != nil {
+		v := *d.OpModFixedVar
+		c.OpModFixedVar = &v
+	}
+	if d.OpModFreqDroop != nil {
+		v := *d.OpModFreqDroop
+		c.OpModFreqDroop = &v
+	}
+	if d.OpModFreqWatt != nil {
+		v := *d.OpModFreqWatt
+		c.OpModFreqWatt = &v
+	}
+	if d.OpModHFRTMustTrip != nil {
+		v := *d.OpModHFRTMustTrip
+		c.OpModHFRTMustTrip = &v
+	}
+	if d.OpModHVRTMomentaryCessation != nil {
+		v := *d.OpModHVRTMomentaryCessation
+		c.OpModHVRTMomentaryCessation = &v
+	}
+	if d.OpModHVRTMustTrip != nil {
+		v := *d.OpModHVRTMustTrip
+		c.OpModHVRTMustTrip = &v
+	}
+	if d.OpModLFRTMustTrip != nil {
+		v := *d.OpModLFRTMustTrip
+		c.OpModLFRTMustTrip = &v
+	}
+	if d.OpModLVRTMomentaryCessation != nil {
+		v := *d.OpModLVRTMomentaryCessation
+		c.OpModLVRTMomentaryCessation = &v
+	}
+	if d.OpModLVRTMustTrip != nil {
+		v := *d.OpModLVRTMustTrip
+		c.OpModLVRTMustTrip = &v
+	}
+	if d.OpModMaxLimW != nil {
+		v := *d.OpModMaxLimW
+		c.OpModMaxLimW = &v
+	}
+	if d.OpModTargetW != nil {
+		v := *d.OpModTargetW
+		c.OpModTargetW = &v
+	}
+	if d.OpModTargetVar != nil {
+		v := *d.OpModTargetVar
+		c.OpModTargetVar = &v
+	}
+	if d.OpModVoltVar != nil {
+		v := *d.OpModVoltVar
+		c.OpModVoltVar = &v
+	}
+	if d.OpModVoltWatt != nil {
+		v := *d.OpModVoltWatt
+		c.OpModVoltWatt = &v
+	}
+	if d.RampTms != nil {
+		v := *d.RampTms
+		c.RampTms = &v
+	}
 	return c
 }
 
 // DERControl is a specific DER control action.
 type DERControl struct {
-	XMLName        xml.Name        `xml:"urn:ieee:std:2030.5:ns DERControl"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERControl"`
 	RandomizableEvent
 	DERControlBase *DERControlBase `xml:"DERControlBase,omitempty"`
 }
@@ -71,18 +131,36 @@ type DERControl struct {
 // Copy returns an independent copy.
 func (d DERControl) Copy() DERControl {
 	c := d
-	if d.ResponseRequired != nil { v := *d.ResponseRequired; c.ResponseRequired = &v }
-	if d.EventStatus != nil { es := d.EventStatus.Copy(); c.EventStatus = &es }
-	if d.Interval != nil { i := *d.Interval; c.Interval = &i }
-	if d.RandomizeDuration != nil { v := *d.RandomizeDuration; c.RandomizeDuration = &v }
-	if d.RandomizeStart != nil { v := *d.RandomizeStart; c.RandomizeStart = &v }
-	if d.DERControlBase != nil { cb := d.DERControlBase.Copy(); c.DERControlBase = &cb }
+	if d.ResponseRequired != nil {
+		v := *d.ResponseRequired
+		c.ResponseRequired = &v
+	}
+	if d.EventStatus != nil {
+		es := d.EventStatus.Copy()
+		c.EventStatus = &es
+	}
+	if d.Interval != nil {
+		i := *d.Interval
+		c.Interval = &i
+	}
+	if d.RandomizeDuration != nil {
+		v := *d.RandomizeDuration
+		c.RandomizeDuration = &v
+	}
+	if d.RandomizeStart != nil {
+		v := *d.RandomizeStart
+		c.RandomizeStart = &v
+	}
+	if d.DERControlBase != nil {
+		cb := d.DERControlBase.Copy()
+		c.DERControlBase = &cb
+	}
 	return c
 }
 
 // DERControlList is a list of DERControl resources.
 type DERControlList struct {
-	XMLName    xml.Name     `xml:"urn:ieee:std:2030.5:ns DERControlList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERControlList"`
 	ListResource
 	DERControl []DERControl `xml:"DERControl,omitempty"`
 }
@@ -95,7 +173,7 @@ type DERControlList struct {
 // on DefaultDERControl directly rather than DERControlBase because the
 // spec scopes them as device defaults, not per-event overrides.
 type DefaultDERControl struct {
-	XMLName        xml.Name        `xml:"urn:ieee:std:2030.5:ns DefaultDERControl"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DefaultDERControl"`
 	SubscribableResource
 	MRID           string          `xml:"mRID,omitempty"`
 	DERControlBase *DERControlBase `xml:"DERControlBase,omitempty"`
@@ -106,19 +184,28 @@ type DefaultDERControl struct {
 // Copy returns an independent copy.
 func (d DefaultDERControl) Copy() DefaultDERControl {
 	c := d
-	if d.DERControlBase != nil { cb := d.DERControlBase.Copy(); c.DERControlBase = &cb }
-	if d.SetGradW != nil { v := *d.SetGradW; c.SetGradW = &v }
-	if d.SetSoftGradW != nil { v := *d.SetSoftGradW; c.SetSoftGradW = &v }
+	if d.DERControlBase != nil {
+		cb := d.DERControlBase.Copy()
+		c.DERControlBase = &cb
+	}
+	if d.SetGradW != nil {
+		v := *d.SetGradW
+		c.SetGradW = &v
+	}
+	if d.SetSoftGradW != nil {
+		v := *d.SetSoftGradW
+		c.SetSoftGradW = &v
+	}
 	return c
 }
 
 // DERProgram contains controls and curves for DER devices.
 type DERProgram struct {
-	XMLName                 xml.Name `xml:"urn:ieee:std:2030.5:ns DERProgram"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERProgram"`
 	SubscribableResource
-	MRID                    string   `xml:"mRID,omitempty"`
-	Description             string   `xml:"description,omitempty"`
-	Primacy                 uint8    `xml:"primacy"`
+	MRID        string `xml:"mRID,omitempty"`
+	Description string `xml:"description,omitempty"`
+	Primacy     uint8  `xml:"primacy"`
 
 	ActiveDERControlListLink *ListLink `xml:"ActiveDERControlListLink,omitempty"`
 	DefaultDERControlLink    *Link     `xml:"DefaultDERControlLink,omitempty"`
@@ -129,23 +216,35 @@ type DERProgram struct {
 // Copy returns an independent copy.
 func (p DERProgram) Copy() DERProgram {
 	c := p
-	if p.ActiveDERControlListLink != nil { l := *p.ActiveDERControlListLink; c.ActiveDERControlListLink = &l }
-	if p.DefaultDERControlLink != nil { l := *p.DefaultDERControlLink; c.DefaultDERControlLink = &l }
-	if p.DERControlListLink != nil { l := *p.DERControlListLink; c.DERControlListLink = &l }
-	if p.DERCurveListLink != nil { l := *p.DERCurveListLink; c.DERCurveListLink = &l }
+	if p.ActiveDERControlListLink != nil {
+		l := *p.ActiveDERControlListLink
+		c.ActiveDERControlListLink = &l
+	}
+	if p.DefaultDERControlLink != nil {
+		l := *p.DefaultDERControlLink
+		c.DefaultDERControlLink = &l
+	}
+	if p.DERControlListLink != nil {
+		l := *p.DERControlListLink
+		c.DERControlListLink = &l
+	}
+	if p.DERCurveListLink != nil {
+		l := *p.DERCurveListLink
+		c.DERCurveListLink = &l
+	}
 	return c
 }
 
 // DERProgramList is a list of DERProgram resources.
 type DERProgramList struct {
-	XMLName    xml.Name     `xml:"urn:ieee:std:2030.5:ns DERProgramList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERProgramList"`
 	ListResource
 	DERProgram []DERProgram `xml:"DERProgram,omitempty"`
 }
 
 // DER represents device-level DER capability.
 type DER struct {
-	XMLName                      xml.Name `xml:"urn:ieee:std:2030.5:ns DER"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DER"`
 	SubscribableResource
 	AssociatedDERProgramListLink *ListLink `xml:"AssociatedDERProgramListLink,omitempty"`
 	DERAvailabilityLink          *Link     `xml:"DERAvailabilityLink,omitempty"`
@@ -157,11 +256,26 @@ type DER struct {
 // Copy returns an independent copy.
 func (d DER) Copy() DER {
 	c := d
-	if d.AssociatedDERProgramListLink != nil { l := *d.AssociatedDERProgramListLink; c.AssociatedDERProgramListLink = &l }
-	if d.DERAvailabilityLink != nil { l := *d.DERAvailabilityLink; c.DERAvailabilityLink = &l }
-	if d.DERCapabilityLink != nil { l := *d.DERCapabilityLink; c.DERCapabilityLink = &l }
-	if d.DERSettingsLink != nil { l := *d.DERSettingsLink; c.DERSettingsLink = &l }
-	if d.DERStatusLink != nil { l := *d.DERStatusLink; c.DERStatusLink = &l }
+	if d.AssociatedDERProgramListLink != nil {
+		l := *d.AssociatedDERProgramListLink
+		c.AssociatedDERProgramListLink = &l
+	}
+	if d.DERAvailabilityLink != nil {
+		l := *d.DERAvailabilityLink
+		c.DERAvailabilityLink = &l
+	}
+	if d.DERCapabilityLink != nil {
+		l := *d.DERCapabilityLink
+		c.DERCapabilityLink = &l
+	}
+	if d.DERSettingsLink != nil {
+		l := *d.DERSettingsLink
+		c.DERSettingsLink = &l
+	}
+	if d.DERStatusLink != nil {
+		l := *d.DERStatusLink
+		c.DERStatusLink = &l
+	}
 	return c
 }
 
@@ -169,12 +283,12 @@ func (d DER) Copy() DER {
 type DERList struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERList"`
 	ListResource
-	DER     []DER    `xml:"DER,omitempty"`
+	DER []DER `xml:"DER,omitempty"`
 }
 
 // DERCapability describes device-level DER capabilities.
 type DERCapability struct {
-	XMLName              xml.Name       `xml:"urn:ieee:std:2030.5:ns DERCapability"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERCapability"`
 	Resource
 	ModesSupported       *uint32        `xml:"modesSupported,omitempty"`
 	RTGMaxW              *ActivePower   `xml:"rtgMaxW,omitempty"`
@@ -188,19 +302,40 @@ type DERCapability struct {
 // Copy returns an independent copy.
 func (d DERCapability) Copy() DERCapability {
 	c := d
-	if d.ModesSupported != nil { v := *d.ModesSupported; c.ModesSupported = &v }
-	if d.RTGMaxW != nil { v := *d.RTGMaxW; c.RTGMaxW = &v }
-	if d.RTGMaxA != nil { v := *d.RTGMaxA; c.RTGMaxA = &v }
-	if d.RTGMaxVar != nil { v := *d.RTGMaxVar; c.RTGMaxVar = &v }
-	if d.RTGMaxChargeRateW != nil { v := *d.RTGMaxChargeRateW; c.RTGMaxChargeRateW = &v }
-	if d.RTGMaxDischargeRateW != nil { v := *d.RTGMaxDischargeRateW; c.RTGMaxDischargeRateW = &v }
-	if d.Type != nil { v := *d.Type; c.Type = &v }
+	if d.ModesSupported != nil {
+		v := *d.ModesSupported
+		c.ModesSupported = &v
+	}
+	if d.RTGMaxW != nil {
+		v := *d.RTGMaxW
+		c.RTGMaxW = &v
+	}
+	if d.RTGMaxA != nil {
+		v := *d.RTGMaxA
+		c.RTGMaxA = &v
+	}
+	if d.RTGMaxVar != nil {
+		v := *d.RTGMaxVar
+		c.RTGMaxVar = &v
+	}
+	if d.RTGMaxChargeRateW != nil {
+		v := *d.RTGMaxChargeRateW
+		c.RTGMaxChargeRateW = &v
+	}
+	if d.RTGMaxDischargeRateW != nil {
+		v := *d.RTGMaxDischargeRateW
+		c.RTGMaxDischargeRateW = &v
+	}
+	if d.Type != nil {
+		v := *d.Type
+		c.Type = &v
+	}
 	return c
 }
 
 // DERSettings describes current device DER settings.
 type DERSettings struct {
-	XMLName              xml.Name       `xml:"urn:ieee:std:2030.5:ns DERSettings"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERSettings"`
 	SubscribableResource
 	ModesEnabled         *uint32        `xml:"modesEnabled,omitempty"`
 	SetMaxW              *ActivePower   `xml:"setMaxW,omitempty"`
@@ -213,11 +348,26 @@ type DERSettings struct {
 // Copy returns an independent copy.
 func (d DERSettings) Copy() DERSettings {
 	c := d
-	if d.ModesEnabled != nil { v := *d.ModesEnabled; c.ModesEnabled = &v }
-	if d.SetMaxW != nil { v := *d.SetMaxW; c.SetMaxW = &v }
-	if d.SetMaxVar != nil { v := *d.SetMaxVar; c.SetMaxVar = &v }
-	if d.SetMaxChargeRateW != nil { v := *d.SetMaxChargeRateW; c.SetMaxChargeRateW = &v }
-	if d.SetMaxDischargeRateW != nil { v := *d.SetMaxDischargeRateW; c.SetMaxDischargeRateW = &v }
+	if d.ModesEnabled != nil {
+		v := *d.ModesEnabled
+		c.ModesEnabled = &v
+	}
+	if d.SetMaxW != nil {
+		v := *d.SetMaxW
+		c.SetMaxW = &v
+	}
+	if d.SetMaxVar != nil {
+		v := *d.SetMaxVar
+		c.SetMaxVar = &v
+	}
+	if d.SetMaxChargeRateW != nil {
+		v := *d.SetMaxChargeRateW
+		c.SetMaxChargeRateW = &v
+	}
+	if d.SetMaxDischargeRateW != nil {
+		v := *d.SetMaxDischargeRateW
+		c.SetMaxDischargeRateW = &v
+	}
 	return c
 }
 
@@ -241,7 +391,7 @@ type OperationalModeStatusType struct {
 
 // DERStatus reports current DER operational status.
 type DERStatus struct {
-	XMLName               xml.Name                   `xml:"urn:ieee:std:2030.5:ns DERStatus"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERStatus"`
 	SubscribableResource
 	GenConnectStatus      *ConnectStatusType         `xml:"genConnectStatus,omitempty"`
 	InverterStatus        *InverterStatusType        `xml:"inverterStatus,omitempty"`
@@ -254,17 +404,32 @@ type DERStatus struct {
 // Copy returns an independent copy.
 func (d DERStatus) Copy() DERStatus {
 	c := d
-	if d.GenConnectStatus != nil { v := *d.GenConnectStatus; c.GenConnectStatus = &v }
-	if d.InverterStatus != nil { v := *d.InverterStatus; c.InverterStatus = &v }
-	if d.OperationalModeStatus != nil { v := *d.OperationalModeStatus; c.OperationalModeStatus = &v }
-	if d.AlarmStatus != nil { v := *d.AlarmStatus; c.AlarmStatus = &v }
-	if d.StateOfChargeStatus != nil { v := *d.StateOfChargeStatus; c.StateOfChargeStatus = &v }
+	if d.GenConnectStatus != nil {
+		v := *d.GenConnectStatus
+		c.GenConnectStatus = &v
+	}
+	if d.InverterStatus != nil {
+		v := *d.InverterStatus
+		c.InverterStatus = &v
+	}
+	if d.OperationalModeStatus != nil {
+		v := *d.OperationalModeStatus
+		c.OperationalModeStatus = &v
+	}
+	if d.AlarmStatus != nil {
+		v := *d.AlarmStatus
+		c.AlarmStatus = &v
+	}
+	if d.StateOfChargeStatus != nil {
+		v := *d.StateOfChargeStatus
+		c.StateOfChargeStatus = &v
+	}
 	return c
 }
 
 // DERAvailability reports device availability.
 type DERAvailability struct {
-	XMLName              xml.Name       `xml:"urn:ieee:std:2030.5:ns DERAvailability"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERAvailability"`
 	SubscribableResource
 	AvailabilityDuration *uint32        `xml:"availabilityDuration,omitempty"`
 	MaxChargeDuration    *uint32        `xml:"maxChargeDuration,omitempty"`
@@ -276,10 +441,22 @@ type DERAvailability struct {
 // Copy returns an independent copy.
 func (d DERAvailability) Copy() DERAvailability {
 	c := d
-	if d.AvailabilityDuration != nil { v := *d.AvailabilityDuration; c.AvailabilityDuration = &v }
-	if d.MaxChargeDuration != nil { v := *d.MaxChargeDuration; c.MaxChargeDuration = &v }
-	if d.StatVarAvail != nil { v := *d.StatVarAvail; c.StatVarAvail = &v }
-	if d.StatWAvail != nil { v := *d.StatWAvail; c.StatWAvail = &v }
+	if d.AvailabilityDuration != nil {
+		v := *d.AvailabilityDuration
+		c.AvailabilityDuration = &v
+	}
+	if d.MaxChargeDuration != nil {
+		v := *d.MaxChargeDuration
+		c.MaxChargeDuration = &v
+	}
+	if d.StatVarAvail != nil {
+		v := *d.StatVarAvail
+		c.StatVarAvail = &v
+	}
+	if d.StatWAvail != nil {
+		v := *d.StatWAvail
+		c.StatWAvail = &v
+	}
 	return c
 }
 
@@ -291,7 +468,7 @@ type CurveData struct {
 
 // DERCurve defines volt-var, freq-watt, etc. curves.
 type DERCurve struct {
-	XMLName     xml.Name    `xml:"urn:ieee:std:2030.5:ns DERCurve"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERCurve"`
 	Resource
 	MRID        string      `xml:"mRID,omitempty"`
 	Description string      `xml:"description,omitempty"`
@@ -309,23 +486,32 @@ func (d DERCurve) Copy() DERCurve {
 		c.CurveData = make([]CurveData, len(d.CurveData))
 		copy(c.CurveData, d.CurveData)
 	}
-	if d.RampDecTms != nil { v := *d.RampDecTms; c.RampDecTms = &v }
-	if d.RampIncTms != nil { v := *d.RampIncTms; c.RampIncTms = &v }
-	if d.RampPT1Tms != nil { v := *d.RampPT1Tms; c.RampPT1Tms = &v }
+	if d.RampDecTms != nil {
+		v := *d.RampDecTms
+		c.RampDecTms = &v
+	}
+	if d.RampIncTms != nil {
+		v := *d.RampIncTms
+		c.RampIncTms = &v
+	}
+	if d.RampPT1Tms != nil {
+		v := *d.RampPT1Tms
+		c.RampPT1Tms = &v
+	}
 	return c
 }
 
 // DERCurveList is a list of DERCurve resources.
 type DERCurveList struct {
-	XMLName  xml.Name   `xml:"urn:ieee:std:2030.5:ns DERCurveList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERCurveList"`
 	ListResource
 	DERCurve []DERCurve `xml:"DERCurve,omitempty"`
 }
 
 // DER curve type constants.
 const (
-	CurveTypeOpModVoltVar   uint8 = 0
-	CurveTypeOpModFreqWatt  uint8 = 1
-	CurveTypeOpModWattPF    uint8 = 2
-	CurveTypeOpModVoltWatt  uint8 = 3
+	CurveTypeOpModVoltVar  uint8 = 0
+	CurveTypeOpModFreqWatt uint8 = 1
+	CurveTypeOpModWattPF   uint8 = 2
+	CurveTypeOpModVoltWatt uint8 = 3
 )

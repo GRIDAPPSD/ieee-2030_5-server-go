@@ -22,14 +22,14 @@ type EndDeviceLister interface {
 
 // TopologyNode represents one tier of the SY -> FD -> SP -> DEV tree.
 type TopologyNode struct {
-	Kind        string         `json:"kind"`        // "SY" | "FD" | "SP" | "DEV"
-	ID          string         `json:"id"`
-	Label       string         `json:"label"`
-	SFDI        string         `json:"sfdi,omitempty"`
-	LFDI        string         `json:"lfdi,omitempty"`
-	Enabled     bool           `json:"enabled,omitempty"`
-	FSAs        []TopologyFSA  `json:"fsas,omitempty"`
-	Children    []TopologyNode `json:"children,omitempty"`
+	Kind     string         `json:"kind"` // "SY" | "FD" | "SP" | "DEV"
+	ID       string         `json:"id"`
+	Label    string         `json:"label"`
+	SFDI     string         `json:"sfdi,omitempty"`
+	LFDI     string         `json:"lfdi,omitempty"`
+	Enabled  bool           `json:"enabled,omitempty"`
+	FSAs     []TopologyFSA  `json:"fsas,omitempty"`
+	Children []TopologyNode `json:"children,omitempty"`
 }
 
 // TopologyFSA describes an admin FSA hanging off a node.

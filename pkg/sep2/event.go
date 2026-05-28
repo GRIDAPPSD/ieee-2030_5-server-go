@@ -2,11 +2,11 @@ package sep2
 
 // EventStatus describes the current state of an event.
 type EventStatus struct {
-	CurrentStatus            uint8  `xml:"currentStatus"`
-	DateTime                 int64  `xml:"dateTime"`
-	PotentiallySuperseded    bool   `xml:"potentiallySuperseded"`
+	CurrentStatus             uint8  `xml:"currentStatus"`
+	DateTime                  int64  `xml:"dateTime"`
+	PotentiallySuperseded     bool   `xml:"potentiallySuperseded"`
 	PotentiallySupersededTime *int64 `xml:"potentiallySupersededTime,omitempty"`
-	Reason                   string `xml:"reason,omitempty"`
+	Reason                    string `xml:"reason,omitempty"`
 }
 
 // Copy returns an independent copy.
@@ -59,9 +59,9 @@ type RandomizableEvent struct {
 
 // EventStatus current status values per spec.
 const (
-	EventStatusScheduled   uint8 = 0
-	EventStatusActive      uint8 = 1
-	EventStatusCancelled   uint8 = 2
-	EventStatusSuperseded  uint8 = 4
-	EventStatusComplete    uint8 = 5
+	EventStatusScheduled  uint8 = 0
+	EventStatusActive     uint8 = 1
+	EventStatusCancelled  uint8 = 2
+	EventStatusSuperseded uint8 = 4
+	EventStatusComplete   uint8 = 5
 )

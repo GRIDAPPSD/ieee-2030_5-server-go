@@ -230,10 +230,10 @@ func TestHandleEndDevice5xxLogged(t *testing.T) {
 
 func TestHandleMirror5xxLogged(t *testing.T) {
 	cases := []struct {
-		name     string
-		mupErr   error
-		handler  func(*errMUPStore) http.Handler
-		makeReq  func() *http.Request
+		name    string
+		mupErr  error
+		handler func(*errMUPStore) http.Handler
+		makeReq func() *http.Request
 	}{
 		{
 			name:   "HandleMirrorUsagePoint/store.Get fails",

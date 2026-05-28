@@ -16,12 +16,12 @@ func TestRenderConnectionBanner_FullProfile(t *testing.T) {
 	t.Parallel()
 
 	input := BannerInput{
-		Addr:          ":8443",
-		TLSMode:       "CCM-8",
-		CertFile:      "certs/server.crt",
-		ServerSFDI:    "123456789012",
-		ServerLFDI:    "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
-		CAFile:        "certs/ca.crt",
+		Addr:       ":8443",
+		TLSMode:    "CCM-8",
+		CertFile:   "certs/server.crt",
+		ServerSFDI: "123456789012",
+		ServerLFDI: "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
+		CAFile:     "certs/ca.crt",
 		ExtraClientCAs: []string{
 			"testdata/csip-pki/enphase/Enph_root.pem",
 			"testdata/csip-pki/sunspec/roots.pem",
@@ -76,17 +76,17 @@ func TestRenderConnectionBanner_DefaultsAndMinimal(t *testing.T) {
 	t.Parallel()
 
 	input := BannerInput{
-		Addr:           ":443",
-		TLSMode:        "GCM",
-		CertFile:       "certs/server.crt",
-		ServerSFDI:     "000000000000",
-		ServerLFDI:     "0000000000000000000000000000000000000000",
-		CAFile:         "certs/ca.crt",
-		AdminListen:    "",
-		AdminTLSDesc:   "",
-		AdminAuthDesc:  "disabled",
-		DataDirDesc:    "in-memory",
-		MDNSEnabled:    false,
+		Addr:          ":443",
+		TLSMode:       "GCM",
+		CertFile:      "certs/server.crt",
+		ServerSFDI:    "000000000000",
+		ServerLFDI:    "0000000000000000000000000000000000000000",
+		CAFile:        "certs/ca.crt",
+		AdminListen:   "",
+		AdminTLSDesc:  "",
+		AdminAuthDesc: "disabled",
+		DataDirDesc:   "in-memory",
+		MDNSEnabled:   false,
 	}
 
 	out := RenderConnectionBanner(input)

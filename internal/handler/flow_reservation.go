@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -43,10 +44,19 @@ func BuildFlowReservationResponseList(href string, result store.ListResult[sep2.
 	}
 }
 
+// frpCreator is the minimal interface HandlePostFlowReservationRequest
+// needs from the FlowReservationResponse store. Extracted so the
+// 500-on-create-failure branch (line ~95) can be exercised in tests
+// with a fake that returns a sentinel error. *memory.ScopedStore[T]
+// satisfies this implicitly.
+type frpCreator interface {
+	Create(ctx context.Context, parentID, id string, resource sep2.FlowReservationResponse) error
+}
+
 // HandlePostFlowReservationRequest returns a handler for POST /edev/{id}/frq.
 func HandlePostFlowReservationRequest(
 	frqStore *memory.ScopedStore[sep2.FlowReservationRequest],
-	frpStore *memory.ScopedStore[sep2.FlowReservationResponse],
+	frpStore frpCreator,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

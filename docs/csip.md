@@ -93,23 +93,29 @@ LFDI/SFDI derivation and the CCM-8 cipher registration live in
 
 ## Cipher
 
-Two relevant Make targets:
+Server-side TLS stacks:
 
 | Target | TLS stack | Cipher list | CSIP-conformant on the wire? |
 |---|---|---|---|
 | `make run` | Go stdlib | [GCM](glossary.md) only | No |
-| `make run-ccm`, `make run-full` | Vendored `internal/tls/gotls` | [CCM-8](glossary.md) first, GCM fallback | Conditional |
-| `make test-epri` (against a running `run-ccm` server) | EPRI C client (CCM-capable) | — | Yes (negotiates CCM-8) |
-| `make run-inverter` (against a running `run-ccm` server) | Go stdlib | — | No (silently lands on GCM fallback) |
+| `make run-ccm`, `make run-full` | Vendored `internal/tls/gotls` | [CCM-8](glossary.md) first, GCM fallback (see footnote) | Conditional |
 
-CSIP cipher conformance under `run-ccm` is conditional on the client
-supporting CCM-8 and on verifying the negotiated cipher in the server's
-handshake log. The `run-inverter` simulator does not yet negotiate CCM-8;
-moving it onto the vendored `gotls` stack is tracked but not done.
+> **GCM-fallback footnote:** under `run-ccm` the server still accepts a
+> non-CSIP client that lands on GCM. Strict-mode (handshake fails when
+> the peer can't negotiate CCM-8) is tracked under
+> [#22 (IEEE-020)](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/22).
+> Until that lands, conformance must be confirmed in the server's
+> handshake log, not assumed from the target name.
 
-A future `csip-strict` server mode that drops the GCM fallback (so any
-non-CCM client fails the handshake) is tracked under
-[#22 (IEEE-020)](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/22).
+Client-side stacks (paired with a running `run-ccm` server):
+
+| Target | TLS stack | CSIP-conformant on the wire? |
+|---|---|---|
+| `make test-epri` | EPRI C client (CCM-capable) | Yes (negotiates CCM-8) |
+| `make run-inverter` | Go stdlib | No (silently lands on GCM fallback) |
+
+The `run-inverter` simulator does not yet negotiate CCM-8; moving it
+onto the vendored `gotls` stack is tracked but not done.
 
 The cipher list is built in
 [`internal/tls/ccmserver.go`](../internal/tls/ccmserver.go); the cipher

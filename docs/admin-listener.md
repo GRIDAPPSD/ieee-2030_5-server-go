@@ -48,6 +48,16 @@ at `docs/caddy-admin.example.conf`. Bind the admin port to localhost only
 (`SEP2_ADMIN_LISTEN=127.0.0.1:9443`) so the plain-HTTP socket is never
 exposed off-box.
 
+Caddy injects `X-Forwarded-For` by default, so the IEEE-132 loopback
+bypass declines automatically and normal Bearer / cookie / mTLS auth
+runs against operator requests routed through Caddy. Proxies that strip
+`X-Forwarded-*` would defeat this safety; verify your proxy preserves
+the `Forwarded-*` headers (or `Forwarded` per RFC 7239).
+
+If you hit `error:0A0000C6:SSL routines::packet length too long`, the
+admin listener is in plain-HTTP mode and you sent it TLS bytes — drop
+the `https://` or set `SEP2_ADMIN_TLS=true`.
+
 ## Quick start
 
 ```bash

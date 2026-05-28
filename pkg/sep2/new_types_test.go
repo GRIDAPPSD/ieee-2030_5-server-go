@@ -15,12 +15,18 @@ func TestDeviceStatusMarshalAndCopy(t *testing.T) {
 	ds.Href = "/sdev/dstat"
 
 	data, err := xml.Marshal(&ds)
-	if err != nil { t.Fatal(err) }
-	if !strings.Contains(string(data), "DeviceStatus") { t.Error("missing root element") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "DeviceStatus") {
+		t.Error("missing root element")
+	}
 
 	copied := ds.Copy()
 	*copied.OnCount = 99
-	if *ds.OnCount != 5 { t.Error("original mutated") }
+	if *ds.OnCount != 5 {
+		t.Error("original mutated")
+	}
 }
 
 func TestConfigurationMarshalAndCopy(t *testing.T) {
@@ -29,12 +35,18 @@ func TestConfigurationMarshalAndCopy(t *testing.T) {
 	cfg.TimeConfiguration = &sep2.TimeConfiguration{TzOffset: -28800}
 
 	data, err := xml.Marshal(&cfg)
-	if err != nil { t.Fatal(err) }
-	if !strings.Contains(string(data), "Configuration") { t.Error("missing root element") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Configuration") {
+		t.Error("missing root element")
+	}
 
 	copied := cfg.Copy()
 	copied.TimeConfiguration.TzOffset = 0
-	if cfg.TimeConfiguration.TzOffset != -28800 { t.Error("original mutated") }
+	if cfg.TimeConfiguration.TzOffset != -28800 {
+		t.Error("original mutated")
+	}
 }
 
 func TestLogEventMarshalAndCopy(t *testing.T) {
@@ -46,13 +58,21 @@ func TestLogEventMarshalAndCopy(t *testing.T) {
 	}
 
 	data, err := xml.Marshal(&le)
-	if err != nil { t.Fatal(err) }
-	if !strings.Contains(string(data), "LogEvent") { t.Error("missing root element") }
-	if !strings.Contains(string(data), "voltage fault") { t.Error("missing details (2023 field)") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "LogEvent") {
+		t.Error("missing root element")
+	}
+	if !strings.Contains(string(data), "voltage fault") {
+		t.Error("missing details (2023 field)")
+	}
 
 	copied := le.Copy()
 	*copied.ExtendedData = 999
-	if *le.ExtendedData != 42 { t.Error("original mutated") }
+	if *le.ExtendedData != 42 {
+		t.Error("original mutated")
+	}
 }
 
 func TestPowerStatusMarshalAndCopy(t *testing.T) {
@@ -63,12 +83,18 @@ func TestPowerStatusMarshalAndCopy(t *testing.T) {
 	}
 
 	data, err := xml.Marshal(&ps)
-	if err != nil { t.Fatal(err) }
-	if !strings.Contains(string(data), "PowerStatus") { t.Error("missing root element") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "PowerStatus") {
+		t.Error("missing root element")
+	}
 
 	copied := ps.Copy()
 	*copied.BatteryStatus = sep2.BatteryStatusLow
-	if *ps.BatteryStatus != sep2.BatteryStatusNormal { t.Error("original mutated") }
+	if *ps.BatteryStatus != sep2.BatteryStatusNormal {
+		t.Error("original mutated")
+	}
 }
 
 func TestMessagingProgramMarshalAndCopy(t *testing.T) {
@@ -77,12 +103,18 @@ func TestMessagingProgramMarshalAndCopy(t *testing.T) {
 	mp.TextMessageListLink = &sep2.ListLink{Href: "/msg/1/tm"}
 
 	data, err := xml.Marshal(&mp)
-	if err != nil { t.Fatal(err) }
-	if !strings.Contains(string(data), "MessagingProgram") { t.Error("missing root element") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "MessagingProgram") {
+		t.Error("missing root element")
+	}
 
 	copied := mp.Copy()
 	copied.TextMessageListLink.Href = "/changed"
-	if mp.TextMessageListLink.Href != "/msg/1/tm" { t.Error("original mutated") }
+	if mp.TextMessageListLink.Href != "/msg/1/tm" {
+		t.Error("original mutated")
+	}
 }
 
 func TestTextMessageMarshalAndCopy(t *testing.T) {
@@ -90,9 +122,15 @@ func TestTextMessageMarshalAndCopy(t *testing.T) {
 	tm.MRID = "tm1"
 
 	data, err := xml.Marshal(&tm)
-	if err != nil { t.Fatal(err) }
-	if !strings.Contains(string(data), "TextMessage") { t.Error("missing root element") }
-	if !strings.Contains(string(data), "Alert: high voltage") { t.Error("missing text body") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "TextMessage") {
+		t.Error("missing root element")
+	}
+	if !strings.Contains(string(data), "Alert: high voltage") {
+		t.Error("missing text body")
+	}
 }
 
 func TestFlowReservationRequestMarshalAndCopy(t *testing.T) {
@@ -103,12 +141,18 @@ func TestFlowReservationRequestMarshalAndCopy(t *testing.T) {
 	}
 
 	data, err := xml.Marshal(&frq)
-	if err != nil { t.Fatal(err) }
-	if !strings.Contains(string(data), "FlowReservationRequest") { t.Error("missing root element") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "FlowReservationRequest") {
+		t.Error("missing root element")
+	}
 
 	copied := frq.Copy()
 	copied.EnergyRequested.Value = 999
-	if frq.EnergyRequested.Value != 5000 { t.Error("original mutated") }
+	if frq.EnergyRequested.Value != 5000 {
+		t.Error("original mutated")
+	}
 }
 
 func TestFlowReservationResponseMarshal(t *testing.T) {
@@ -118,11 +162,17 @@ func TestFlowReservationResponseMarshal(t *testing.T) {
 	}
 
 	data, err := xml.Marshal(&frp)
-	if err != nil { t.Fatal(err) }
-	if !strings.Contains(string(data), "FlowReservationResponse") { t.Error("missing root element") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "FlowReservationResponse") {
+		t.Error("missing root element")
+	}
 	if !strings.Contains(string(data), "SignedRealEnergy") || !strings.Contains(string(data), "3000") {
 		// SignedRealEnergy is inline, so just check the value
-		if !strings.Contains(string(data), "3000") { t.Error("missing energy value") }
+		if !strings.Contains(string(data), "3000") {
+			t.Error("missing energy value")
+		}
 	}
 }
 
@@ -131,12 +181,18 @@ func TestResponseMarshalAndCopy(t *testing.T) {
 	rsp := sep2.Response{Subject: "event1", Status: &status, EndDeviceLFDI: "AABB"}
 
 	data, err := xml.Marshal(&rsp)
-	if err != nil { t.Fatal(err) }
-	if !strings.Contains(string(data), "Response") { t.Error("missing root element") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Response") {
+		t.Error("missing root element")
+	}
 
 	copied := rsp.Copy()
 	*copied.Status = sep2.ResponseStatusOptOut
-	if *rsp.Status != sep2.ResponseStatusEventReceived { t.Error("original mutated") }
+	if *rsp.Status != sep2.ResponseStatusEventReceived {
+		t.Error("original mutated")
+	}
 }
 
 func TestResponseSetMarshalAndCopy(t *testing.T) {
@@ -144,12 +200,18 @@ func TestResponseSetMarshalAndCopy(t *testing.T) {
 	rs.ResponseListLink = &sep2.ListLink{Href: "/rsps/rsps1/rsp"}
 
 	data, err := xml.Marshal(&rs)
-	if err != nil { t.Fatal(err) }
-	if !strings.Contains(string(data), "ResponseSet") { t.Error("missing root element") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "ResponseSet") {
+		t.Error("missing root element")
+	}
 
 	copied := rs.Copy()
 	copied.ResponseListLink.Href = "/changed"
-	if rs.ResponseListLink.Href != "/rsps/rsps1/rsp" { t.Error("original mutated") }
+	if rs.ResponseListLink.Href != "/rsps/rsps1/rsp" {
+		t.Error("original mutated")
+	}
 }
 
 func TestDERControlResponseMarshal(t *testing.T) {
@@ -158,6 +220,10 @@ func TestDERControlResponseMarshal(t *testing.T) {
 	dcr.Subject = "ctrl1"
 
 	data, err := xml.Marshal(&dcr)
-	if err != nil { t.Fatal(err) }
-	if !strings.Contains(string(data), "DERControlResponse") { t.Error("missing root element") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "DERControlResponse") {
+		t.Error("missing root element")
+	}
 }

@@ -161,8 +161,8 @@ func TestEdevDeleteOOB_MalformedJSON(t *testing.T) {
 func TestEdevDeleteOOB_UnknownField_Rejected(t *testing.T) {
 	h, _ := newRouterWithTokenAndStores(t)
 	rr := postJSON(t, h, tmEdevDelete, tmTestToken, map[string]any{
-		"end_device_id":  "edev-1",
-		"extra_garbage":  true,
+		"end_device_id": "edev-1",
+		"extra_garbage": true,
 	})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (DisallowUnknownFields)", rr.Code)

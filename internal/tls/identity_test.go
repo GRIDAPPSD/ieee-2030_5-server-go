@@ -53,12 +53,12 @@ func TestSFDIChecksumValidation(t *testing.T) {
 		sfdi  string
 		valid bool
 	}{
-		{"167261211391", true},   // spec example
-		{"167261211390", false},  // wrong checksum
-		{"000000000000", true},   // all zeros valid (sum=0, 0 mod 10 = 0)
-		{"12345", false},         // too short
-		{"1234567890ab", false},  // 12 chars but contains non-digit runes
-		{"abcdefghijkl", false},  // all non-digit runes, 12 chars
+		{"167261211391", true},  // spec example
+		{"167261211390", false}, // wrong checksum
+		{"000000000000", true},  // all zeros valid (sum=0, 0 mod 10 = 0)
+		{"12345", false},        // too short
+		{"1234567890ab", false}, // 12 chars but contains non-digit runes
+		{"abcdefghijkl", false}, // all non-digit runes, 12 chars
 	}
 
 	for _, tt := range tests {
@@ -209,9 +209,9 @@ func TestPropSFDIValidatorRejectsMalformed(t *testing.T) {
 	})
 
 	malformed := rapid.OneOf(
-		rapid.StringN(0, 11, -1),   // too short (0–11 runes)
-		rapid.StringN(13, 30, -1),  // too long (13–30 runes)
-		twelveWithNonDigit,         // exactly 12 runes but contains non-digit
+		rapid.StringN(0, 11, -1),  // too short (0–11 runes)
+		rapid.StringN(13, 30, -1), // too long (13–30 runes)
+		twelveWithNonDigit,        // exactly 12 runes but contains non-digit
 	)
 
 	rapid.Check(t, func(rt *rapid.T) {

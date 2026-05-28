@@ -6,16 +6,16 @@
 // util_topology_test.go). They cover the two shapes the AGG cluster
 // shares:
 //
-//   1. injectEventSpec — overlay a Spec of DDERCs/DERControls onto an
-//      already-booted topology. AGG-002..AGG-012 each declare what
-//      events to inject across the topology nodes and then walk
-//      /edev/{id}/fsa/{fsaId}/derp/{derpId}/{dderc,derc} on every
-//      managed inverter to assert the wire shape.
+//  1. injectEventSpec — overlay a Spec of DDERCs/DERControls onto an
+//     already-booted topology. AGG-002..AGG-012 each declare what
+//     events to inject across the topology nodes and then walk
+//     /edev/{id}/fsa/{fsaId}/derp/{derpId}/{dderc,derc} on every
+//     managed inverter to assert the wire shape.
 //
-//   2. walkAggregatorDERControlListAcrossInverters / walkAggregator-
-//      DefaultDERControlAcrossInverters — verify that the injected
-//      events surface on each of the 4 managed inverters at the named
-//      FSA level (SY/FDx/SPxx/DEV).
+//  2. walkAggregatorDERControlListAcrossInverters / walkAggregator-
+//     DefaultDERControlAcrossInverters — verify that the injected
+//     events surface on each of the 4 managed inverters at the named
+//     FSA level (SY/FDx/SPxx/DEV).
 //
 // Anti-abstraction rule (per IEEE-090 ticket): every AGG-* procedure
 // gets its own named Go test function. These helpers are setup +

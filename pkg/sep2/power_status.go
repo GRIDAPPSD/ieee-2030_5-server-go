@@ -6,9 +6,9 @@ import "encoding/xml"
 // Spec reference: section 9.4
 // Element order matches 2023 XSD.
 type PowerStatus struct {
-	XMLName                  xml.Name `xml:"urn:ieee:std:2030.5:ns PowerStatus"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns PowerStatus"`
 	Resource
-	PollRate                 uint32   `xml:"pollRate,attr,omitempty"`
+	PollRate uint32 `xml:"pollRate,attr,omitempty"`
 
 	BatteryStatus            *uint8   `xml:"batteryStatus,omitempty"`
 	ChangedTime              int64    `xml:"changedTime"`
@@ -22,13 +22,13 @@ type PowerStatus struct {
 
 // PEVInfo provides plug-in electric vehicle information.
 type PEVInfo struct {
-	ChargingPowerNow      ActivePower      `xml:"chargingPowerNow"`
-	EnergyRequestNow      RealEnergy       `xml:"energyRequestNow"`
-	MaxForwardPower        ActivePower      `xml:"maxForwardPower"`
-	MinimumChargingDuration uint32          `xml:"minimumChargingDuration"`
-	TargetStateOfCharge    uint16           `xml:"targetStateOfCharge"` // percent
-	TimeChargeIsNeeded     int64            `xml:"timeChargeIsNeeded"`
-	TimeChargingStatusPEV  int64            `xml:"timeChargingStatusPEV"`
+	ChargingPowerNow        ActivePower `xml:"chargingPowerNow"`
+	EnergyRequestNow        RealEnergy  `xml:"energyRequestNow"`
+	MaxForwardPower         ActivePower `xml:"maxForwardPower"`
+	MinimumChargingDuration uint32      `xml:"minimumChargingDuration"`
+	TargetStateOfCharge     uint16      `xml:"targetStateOfCharge"` // percent
+	TimeChargeIsNeeded      int64       `xml:"timeChargeIsNeeded"`
+	TimeChargingStatusPEV   int64       `xml:"timeChargingStatusPEV"`
 }
 
 // RealEnergy represents energy in watt-hours.
@@ -46,12 +46,30 @@ type SignedRealEnergy struct {
 // Copy returns an independent copy.
 func (p PowerStatus) Copy() PowerStatus {
 	c := p
-	if p.BatteryStatus != nil { v := *p.BatteryStatus; c.BatteryStatus = &v }
-	if p.EstimatedChargeRemaining != nil { v := *p.EstimatedChargeRemaining; c.EstimatedChargeRemaining = &v }
-	if p.EstimatedTimeRemaining != nil { v := *p.EstimatedTimeRemaining; c.EstimatedTimeRemaining = &v }
-	if p.PEVInfo != nil { pev := *p.PEVInfo; c.PEVInfo = &pev }
-	if p.SessionTimeOnBattery != nil { v := *p.SessionTimeOnBattery; c.SessionTimeOnBattery = &v }
-	if p.TotalTimeOnBattery != nil { v := *p.TotalTimeOnBattery; c.TotalTimeOnBattery = &v }
+	if p.BatteryStatus != nil {
+		v := *p.BatteryStatus
+		c.BatteryStatus = &v
+	}
+	if p.EstimatedChargeRemaining != nil {
+		v := *p.EstimatedChargeRemaining
+		c.EstimatedChargeRemaining = &v
+	}
+	if p.EstimatedTimeRemaining != nil {
+		v := *p.EstimatedTimeRemaining
+		c.EstimatedTimeRemaining = &v
+	}
+	if p.PEVInfo != nil {
+		pev := *p.PEVInfo
+		c.PEVInfo = &pev
+	}
+	if p.SessionTimeOnBattery != nil {
+		v := *p.SessionTimeOnBattery
+		c.SessionTimeOnBattery = &v
+	}
+	if p.TotalTimeOnBattery != nil {
+		v := *p.TotalTimeOnBattery
+		c.TotalTimeOnBattery = &v
+	}
 	return c
 }
 

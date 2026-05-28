@@ -93,5 +93,3 @@ func setupTestCertDir(t *testing.T) string {
 	}
 	return dir
 }
-
-

@@ -8,12 +8,12 @@
 // TODO: tighten to CCM-8-only once SEP2_CSIP_STRICT lands (IEEE-020)
 //
 // Procedure (V1.2 §5.3 — Basic Security):
-//   1. Client opens a TCP connection to the server and starts a TLS
-//      handshake offering the cipher suites it supports.
-//   2. Server selects a cipher suite from the offered set, completes
-//      the handshake, and reports the negotiated cipher via
-//      tls.ConnectionState.CipherSuite.
-//   3. The negotiated cipher MUST be in the CSIP-permitted set.
+//  1. Client opens a TCP connection to the server and starts a TLS
+//     handshake offering the cipher suites it supports.
+//  2. Server selects a cipher suite from the offered set, completes
+//     the handshake, and reports the negotiated cipher via
+//     tls.ConnectionState.CipherSuite.
+//  3. The negotiated cipher MUST be in the CSIP-permitted set.
 //
 // Under default BootServer() (GCM path, stdlib crypto/tls) the server
 // is restricted to TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 (0xC02B);

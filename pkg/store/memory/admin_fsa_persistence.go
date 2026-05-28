@@ -19,10 +19,10 @@ import (
 
 // adminFSARecord is the on-disk shape per FSA.
 type adminFSARecord struct {
-	ID       string                       `json:"id"`
-	FSA      sep2.FunctionSetAssignments  `json:"fsa"`
-	Programs []string                     `json:"programs,omitempty"`
-	Devices  []string                     `json:"devices,omitempty"`
+	ID       string                      `json:"id"`
+	FSA      sep2.FunctionSetAssignments `json:"fsa"`
+	Programs []string                    `json:"programs,omitempty"`
+	Devices  []string                    `json:"devices,omitempty"`
 }
 
 // NewAdminFSAStoreWithPersistence builds an AdminFSAStore wired to a JSON

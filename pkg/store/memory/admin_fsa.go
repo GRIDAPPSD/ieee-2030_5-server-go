@@ -24,7 +24,7 @@ import (
 type AdminFSAStore struct {
 	mu           sync.RWMutex
 	fsas         map[string]sep2.FunctionSetAssignments
-	keys         []string // sorted for deterministic list ordering
+	keys         []string            // sorted for deterministic list ordering
 	programLinks map[string][]string // fsaID -> sorted program hrefs
 	deviceLinks  map[string][]string // fsaID -> sorted device ids
 

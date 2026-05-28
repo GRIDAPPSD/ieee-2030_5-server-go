@@ -24,10 +24,10 @@ const (
 
 // ACLRule defines access control for a resource path pattern.
 type ACLRule struct {
-	PathPrefix      string // path prefix to match (e.g., "/edev")
-	AllowedMethods  uint8  // bitmask of allowed HTTP methods
-	RequiredAuth    uint8  // bitmask of allowed auth types
-	RequireOwnership bool  // if true, device must own the resource
+	PathPrefix       string // path prefix to match (e.g., "/edev")
+	AllowedMethods   uint8  // bitmask of allowed HTTP methods
+	RequiredAuth     uint8  // bitmask of allowed auth types
+	RequireOwnership bool   // if true, device must own the resource
 }
 
 // DefaultACLRules returns the default ACL rules for IEEE 2030.5 resources.

@@ -230,23 +230,23 @@ type CurveDataSpec struct {
 // SetGradW/SetSoftGradW live on DefaultDERControlSpec, not here, per
 // IEEE 2030.5 §10.11.
 type DERControlBaseSpec struct {
-	OpModConnect                *bool                  `yaml:"op_mod_connect,omitempty"`
-	OpModEnergize               *bool                  `yaml:"op_mod_energize,omitempty"`
-	OpModFixedW                 *ActivePowerSpec       `yaml:"op_mod_fixed_w,omitempty"`
-	OpModFixedPFInjectW         *FixedPowerFactorSpec  `yaml:"op_mod_fixed_pf_inject_w,omitempty"`
-	OpModFreqDroop              *uint16                `yaml:"op_mod_freq_droop,omitempty"`
-	OpModFreqWatt               *int32                 `yaml:"op_mod_freq_watt,omitempty"`
-	OpModHFRTMustTrip           *int32                 `yaml:"op_mod_hfrt_must_trip,omitempty"`
-	OpModHVRTMomentaryCessation *int32                 `yaml:"op_mod_hvrt_momentary_cessation,omitempty"`
-	OpModHVRTMustTrip           *int32                 `yaml:"op_mod_hvrt_must_trip,omitempty"`
-	OpModLFRTMustTrip           *int32                 `yaml:"op_mod_lfrt_must_trip,omitempty"`
-	OpModLVRTMomentaryCessation *int32                 `yaml:"op_mod_lvrt_momentary_cessation,omitempty"`
-	OpModLVRTMustTrip           *int32                 `yaml:"op_mod_lvrt_must_trip,omitempty"`
-	OpModMaxLimW                *ActivePowerSpec       `yaml:"op_mod_max_lim_w,omitempty"`
-	OpModTargetW                *ActivePowerSpec       `yaml:"op_mod_target_w,omitempty"`
-	OpModVoltVar                *int32                 `yaml:"op_mod_volt_var,omitempty"`
-	OpModVoltWatt               *int32                 `yaml:"op_mod_volt_watt,omitempty"`
-	RampTms                     *uint16                `yaml:"ramp_tms,omitempty"`
+	OpModConnect                *bool                 `yaml:"op_mod_connect,omitempty"`
+	OpModEnergize               *bool                 `yaml:"op_mod_energize,omitempty"`
+	OpModFixedW                 *ActivePowerSpec      `yaml:"op_mod_fixed_w,omitempty"`
+	OpModFixedPFInjectW         *FixedPowerFactorSpec `yaml:"op_mod_fixed_pf_inject_w,omitempty"`
+	OpModFreqDroop              *uint16               `yaml:"op_mod_freq_droop,omitempty"`
+	OpModFreqWatt               *int32                `yaml:"op_mod_freq_watt,omitempty"`
+	OpModHFRTMustTrip           *int32                `yaml:"op_mod_hfrt_must_trip,omitempty"`
+	OpModHVRTMomentaryCessation *int32                `yaml:"op_mod_hvrt_momentary_cessation,omitempty"`
+	OpModHVRTMustTrip           *int32                `yaml:"op_mod_hvrt_must_trip,omitempty"`
+	OpModLFRTMustTrip           *int32                `yaml:"op_mod_lfrt_must_trip,omitempty"`
+	OpModLVRTMomentaryCessation *int32                `yaml:"op_mod_lvrt_momentary_cessation,omitempty"`
+	OpModLVRTMustTrip           *int32                `yaml:"op_mod_lvrt_must_trip,omitempty"`
+	OpModMaxLimW                *ActivePowerSpec      `yaml:"op_mod_max_lim_w,omitempty"`
+	OpModTargetW                *ActivePowerSpec      `yaml:"op_mod_target_w,omitempty"`
+	OpModVoltVar                *int32                `yaml:"op_mod_volt_var,omitempty"`
+	OpModVoltWatt               *int32                `yaml:"op_mod_volt_watt,omitempty"`
+	RampTms                     *uint16               `yaml:"ramp_tms,omitempty"`
 }
 
 // ActivePowerSpec is the YAML shape of sep2.ActivePower.

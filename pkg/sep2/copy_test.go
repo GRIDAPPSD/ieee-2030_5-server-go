@@ -119,10 +119,10 @@ func TestMirrorUsagePointCopy(t *testing.T) {
 
 func TestDERCopy(t *testing.T) {
 	der := sep2.DER{
-		DERCapabilityLink: &sep2.Link{Href: "/dercap"},
-		DERStatusLink:     &sep2.Link{Href: "/ders"},
-		DERSettingsLink:   &sep2.Link{Href: "/derg"},
-		DERAvailabilityLink: &sep2.Link{Href: "/dera"},
+		DERCapabilityLink:            &sep2.Link{Href: "/dercap"},
+		DERStatusLink:                &sep2.Link{Href: "/ders"},
+		DERSettingsLink:              &sep2.Link{Href: "/derg"},
+		DERAvailabilityLink:          &sep2.Link{Href: "/dera"},
 		AssociatedDERProgramListLink: &sep2.ListLink{Href: "/derp"},
 	}
 	copied := der.Copy()
@@ -202,10 +202,10 @@ func TestDERStatusCopy(t *testing.T) {
 	alarm := uint32(0x01)
 	soc := uint16(85)
 	status := sep2.DERStatus{
-		AlarmStatus:         &alarm,
-		StateOfChargeStatus: &soc,
-		GenConnectStatus:    &sep2.ConnectStatusType{Value: 1},
-		InverterStatus:      &sep2.InverterStatusType{Value: 2},
+		AlarmStatus:           &alarm,
+		StateOfChargeStatus:   &soc,
+		GenConnectStatus:      &sep2.ConnectStatusType{Value: 1},
+		InverterStatus:        &sep2.InverterStatusType{Value: 2},
 		OperationalModeStatus: &sep2.OperationalModeStatusType{Value: 3},
 	}
 	copied := status.Copy()
@@ -238,8 +238,8 @@ func TestSelfDeviceCopyNil(t *testing.T) {
 
 func TestFSACopy(t *testing.T) {
 	fsa := sep2.FunctionSetAssignments{
-		DERProgramListLink: &sep2.ListLink{Href: "/derp"},
-		UsagePointListLink: &sep2.ListLink{Href: "/upt"},
+		DERProgramListLink:            &sep2.ListLink{Href: "/derp"},
+		UsagePointListLink:            &sep2.ListLink{Href: "/upt"},
 		DemandResponseProgramListLink: &sep2.ListLink{Href: "/drp"},
 	}
 	copied := fsa.Copy()
@@ -261,7 +261,7 @@ func TestFSACopyNil(t *testing.T) {
 func TestEventStatusCopy(t *testing.T) {
 	supersededTime := int64(1234)
 	es := sep2.EventStatus{
-		CurrentStatus:            1,
+		CurrentStatus:             1,
 		PotentiallySupersededTime: &supersededTime,
 	}
 	copied := es.Copy()

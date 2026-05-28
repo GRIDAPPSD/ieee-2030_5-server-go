@@ -278,4 +278,3 @@ func loadSunSpecCert(t *testing.T, certPath, keyPath string) tls.Certificate {
 	}
 	return cert
 }
-

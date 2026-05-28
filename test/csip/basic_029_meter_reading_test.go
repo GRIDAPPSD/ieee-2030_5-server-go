@@ -113,8 +113,8 @@ func TestBASIC_029_MeterReading(t *testing.T) {
 	mupIn := sep2.MirrorUsagePoint{
 		MRID:                mupMRID,
 		Description:         "BASIC-029 four-reading inverter mirror",
-		ServiceCategoryKind: 0,        // 0 == "electricity" per V1.2 §10.4 ServiceKind
-		Status:              1,        // 1 == "on" per V1.2 §10.4 UsagePointStatus
+		ServiceCategoryKind: 0,         // 0 == "electricity" per V1.2 §10.4 ServiceKind
+		Status:              1,         // 1 == "on" per V1.2 §10.4 UsagePointStatus
 		RoleFlags:           uint16(1), // 0x01 == "isPremisesAggregationPoint"
 	}
 	mupBody, err := xml.Marshal(&mupIn)

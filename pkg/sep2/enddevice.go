@@ -65,7 +65,7 @@ func (e EndDevice) Copy() EndDevice {
 
 // EndDeviceList is a list of EndDevice resources.
 type EndDeviceList struct {
-	XMLName   xml.Name    `xml:"urn:ieee:std:2030.5:ns EndDeviceList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns EndDeviceList"`
 	ListResource
 	EndDevice []EndDevice `xml:"EndDevice,omitempty"`
 }
@@ -75,8 +75,8 @@ type EndDeviceList struct {
 type SelfDevice struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns SelfDevice"`
 	SubscribableResource
-	LFDI    string `xml:"lFDI,omitempty"`
-	SFDI    string `xml:"sFDI"`
+	LFDI string `xml:"lFDI,omitempty"`
+	SFDI string `xml:"sFDI"`
 
 	DeviceInformationLink *Link `xml:"DeviceInformationLink,omitempty"`
 }

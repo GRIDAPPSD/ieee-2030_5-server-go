@@ -5,7 +5,7 @@ import "encoding/xml"
 // Subscription allows a client to receive notifications when a resource changes.
 // Spec reference: section 8.7
 type Subscription struct {
-	XMLName            xml.Name `xml:"urn:ieee:std:2030.5:ns Subscription"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns Subscription"`
 	SubscribableResource
 	SubscribedResource string     `xml:"subscribedResource"`
 	NotificationURI    string     `xml:"notificationURI"`
@@ -37,14 +37,14 @@ type Condition struct {
 
 // SubscriptionList is a list of Subscription resources.
 type SubscriptionList struct {
-	XMLName      xml.Name       `xml:"urn:ieee:std:2030.5:ns SubscriptionList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns SubscriptionList"`
 	ListResource
 	Subscription []Subscription `xml:"Subscription,omitempty"`
 }
 
 // Notification is pushed to a subscriber when a resource changes.
 type Notification struct {
-	XMLName            xml.Name `xml:"urn:ieee:std:2030.5:ns Notification"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns Notification"`
 	Resource
 	SubscribedResource string `xml:"subscribedResource"`
 	SubscriptionURI    string `xml:"subscriptionURI"`
@@ -59,7 +59,7 @@ func (n Notification) Copy() Notification {
 
 // NotificationList is a list of Notification resources.
 type NotificationList struct {
-	XMLName      xml.Name       `xml:"urn:ieee:std:2030.5:ns NotificationList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns NotificationList"`
 	ListResource
 	Notification []Notification `xml:"Notification,omitempty"`
 }

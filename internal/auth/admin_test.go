@@ -184,6 +184,78 @@ func TestAdminAuthQueryTokenNoLongerAccepted(t *testing.T) {
 	}
 }
 
+// IEEE-132: loopback bypass tests. Path 0 of AdminAuthMiddleware admits any
+// request whose RemoteAddr is a loopback address AND carries no reverse-proxy
+// forwarded header. Caddy in front injects X-Forwarded-* by default, so the
+// bypass declines and the normal Bearer/cookie/mTLS chain runs.
+
+func TestAdminAuth_LoopbackBypass(t *testing.T) {
+	handler := auth.AdminAuthMiddleware("test-key", nil)(okHandler())
+	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	req.RemoteAddr = "127.0.0.1:54321"
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("loopback w/o forwarded headers should be admitted, got %d", w.Code)
+	}
+}
+
+func TestAdminAuth_LoopbackWithXFF_FallsThrough(t *testing.T) {
+	handler := auth.AdminAuthMiddleware("test-key", nil)(okHandler())
+	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set("X-Forwarded-For", "1.2.3.4")
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("loopback + XFF + no creds must fall through to 401, got %d", w.Code)
+	}
+}
+
+func TestAdminAuth_NonLoopback_FallsThrough(t *testing.T) {
+	handler := auth.AdminAuthMiddleware("test-key", nil)(okHandler())
+	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	req.RemoteAddr = "192.168.1.10:54321"
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("non-loopback + no creds must fall through to 401, got %d", w.Code)
+	}
+}
+
+func TestAdminAuth_IPv6Loopback(t *testing.T) {
+	handler := auth.AdminAuthMiddleware("test-key", nil)(okHandler())
+	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	req.RemoteAddr = "[::1]:54321"
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("IPv6 loopback w/o forwarded headers should be admitted, got %d", w.Code)
+	}
+}
+
+func TestAdminAuth_LoopbackWithForwardedRFC7239(t *testing.T) {
+	handler := auth.AdminAuthMiddleware("test-key", nil)(okHandler())
+	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.Header.Set("Forwarded", "for=1.2.3.4")
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("loopback + RFC 7239 Forwarded + no creds must fall through to 401, got %d", w.Code)
+	}
+}
+
 // helpers
 
 func okHandler() http.Handler {

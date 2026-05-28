@@ -32,18 +32,42 @@ MUST set `SEP2_ADMIN_KEY` to a high-entropy value; the literal string
 | CCM-8 + admin | `make run-ccm` |
 | CCM-8 + admin + mDNS | `make run-full` |
 
-The browser entry point is `https://localhost:8444/login`. Submit
-`SEP2_ADMIN_KEY` as the `key` field; on success the server issues a
-short-lived `admin_ticket` cookie and redirects to `/`, the dashboard.
+The Make targets above leave `SEP2_ADMIN_TLS` unset, so the admin
+listener serves **plain HTTP** on `:8444` (Caddy mode). Two browser
+entry points are supported, depending on which posture you want:
+
+- **HTTP, default — IEEE-132 loopback bypass.** Hit
+  `http://localhost:8444/` directly. No `/login`, no Bearer token, no
+  client cert needed: `AdminAuthMiddleware` admits any request from a
+  loopback address that carries no reverse-proxy forwarded header.
+  Caddy in front injects `X-Forwarded-For` by default, so the bypass
+  declines for production traffic and the normal auth chain runs.
+- **HTTPS, opt-in.** Set `SEP2_ADMIN_TLS=true` (and optionally
+  `SEP2_ADMIN_CERT` / `SEP2_ADMIN_KEY_FILE`), then hit
+  `https://localhost:8444/login`. Submit `SEP2_ADMIN_KEY` as the
+  `key` field; on success the server issues a short-lived
+  `admin_ticket` cookie and redirects to `/`, the dashboard. The
+  loopback bypass still applies, but you can also use Bearer or mTLS
+  if you want to exercise the post-bypass chain. See
+  [`admin-listener.md`](admin-listener.md) for the full TLS posture
+  matrix.
 
 ## Auth model
 
 `AdminAuthMiddleware`
 ([`internal/auth/admin.go`](../internal/auth/admin.go)) gates everything
-behind the login routes. Four paths are checked in order; **any single
+behind the login routes. Five paths are checked in order; **any single
 path that succeeds admits the request** (this is fallback ordering, not
 defense in depth):
 
+0. **Loopback bypass (IEEE-132)** — RemoteAddr is a loopback address
+   (127.0.0.0/8 or `::1`) AND the request carries no reverse-proxy
+   forwarded header (`X-Forwarded-For`, `X-Forwarded-Host`,
+   `X-Forwarded-Proto`, RFC 7239 `Forwarded`). Local-developer
+   ergonomic path: `make run` on localhost has no working credentials
+   by default, and a reverse proxy in front injects `X-Forwarded-*` so
+   the bypass declines automatically for production traffic. Every
+   admission is logged.
 1. **[mTLS](glossary.md)** — peer cert with the IEEE 2030.5 admin policy OID
    `1.3.6.1.4.1.40732.2.5` (matched by
    [`certs.HasPolicyOID`](../internal/certs/oids.go)).
@@ -99,14 +123,30 @@ the dashboard form (where one exists) submits to it.
 | `certs/admin.crt`, `certs/admin.key` | `sep2server certs generate-admin` | Operator client cert. Carries the admin policy OID `1.3.6.1.4.1.40732.2.5` so `AdminAuthMiddleware` Path A admits it. |
 | `certs/device.crt`, `certs/device.key` | `sep2server certs generate-device` | Sample device cert. CSIP-compliant when `--hw-serial` and `--hw-type` are supplied (see [`csip.md`](csip.md)). |
 
-To use the admin cert against an HTTPS admin listener:
+Two equivalent curl forms hit the cert API. Pick the one that matches
+your listener posture:
 
 ```bash
+# Plain-HTTP admin listener (default for `make run` / `make run-full`).
+# IEEE-132 loopback bypass admits the request — no Bearer needed.
+curl http://localhost:8444/api/certs/ca
+
+# HTTPS admin listener (after `SEP2_ADMIN_TLS=true`). The bypass still
+# applies, but mTLS exercises Path A explicitly.
 curl --cacert certs/ca.crt \
      --cert  certs/admin.crt \
      --key   certs/admin.key \
      https://localhost:8444/api/certs/ca
+
+# HTTPS admin listener with Bearer (no client cert needed):
+curl https://localhost:8444/api/certs/ca \
+     --cacert certs/ca.crt \
+     -H "Authorization: Bearer $SEP2_ADMIN_KEY"
 ```
+
+If you hit `error:0A0000C6:SSL routines::packet length too long`, the
+listener is in plain-HTTP mode and you sent it TLS bytes — drop the
+`https://` or set `SEP2_ADMIN_TLS=true`.
 
 The cert generation entry points live in
 [`cmd/sep2server/cmd_certs.go`](../cmd/sep2server/cmd_certs.go); the

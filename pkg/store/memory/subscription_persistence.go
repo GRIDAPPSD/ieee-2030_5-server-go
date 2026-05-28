@@ -189,4 +189,3 @@ func writeFileAtomic(path string, payload []byte) error {
 	}
 	return nil
 }
-

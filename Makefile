@@ -258,8 +258,18 @@ coverage-gate:            ## Enforce CSIP coverage floor on coverage-csip.out
 
 # ─── Code Quality ────────────────────────────────────────────────
 
-lint:                     ## Run golangci-lint
+lint:                     ## Run golangci-lint + gofmt drift check
 	golangci-lint run ./...
+	$(MAKE) gofmt-check
+
+gofmt-check:              ## Verify gofmt drift (excludes vendored paths)
+	@# Vendored paths excluded per VENDORED.md (also listed in .golangci.yml exclusions).
+	@drift=`gofmt -l . | grep -vE '^(internal/tls/gotls/|internal/tls/ccm/|vendor/)' || true`; \
+		if [ -n "$$drift" ]; then \
+			echo "gofmt drift detected (run: gofmt -w <files>):"; \
+			echo "$$drift"; \
+			exit 1; \
+		fi
 
 vet:                      ## Run go vet
 	go vet ./...

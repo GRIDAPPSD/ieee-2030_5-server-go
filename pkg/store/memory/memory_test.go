@@ -120,10 +120,10 @@ func TestListPaging(t *testing.T) {
 	}
 
 	tests := []struct {
-		name    string
-		opts    store.ListOptions
-		wantAll uint32
-		wantN   int
+		name      string
+		opts      store.ListOptions
+		wantAll   uint32
+		wantN     int
 		wantFirst string
 	}{
 		{"default", store.ListOptions{Limit: 10}, 10, 10, "a"},

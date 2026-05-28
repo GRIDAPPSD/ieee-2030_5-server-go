@@ -17,20 +17,20 @@
 // COMM-002 line item in the Phase 3 V1.2 coverage matrix.
 //
 // Procedure (V1.2 §5.2 — Out-of-Band Discovery):
-//   1. Client has the server's base URL provisioned out-of-band.
-//   2. Client issues GET <base>/dcap over mTLS.
-//   3. Server returns 200 OK with a DeviceCapability resource.
-//   4. DeviceCapability advertises the function-set links the server
-//      supports. CSIP V1.2 requires the entry-point links a server
-//      must populate to participate in a conformant deployment.
+//  1. Client has the server's base URL provisioned out-of-band.
+//  2. Client issues GET <base>/dcap over mTLS.
+//  3. Server returns 200 OK with a DeviceCapability resource.
+//  4. DeviceCapability advertises the function-set links the server
+//     supports. CSIP V1.2 requires the entry-point links a server
+//     must populate to participate in a conformant deployment.
 //
 // Required links asserted here (the CSIP-minimum baseline that lets a
 // V1.2 client walk the resource graph):
 //   - EndDeviceListLink — entry to per-device function sets.
 //   - TimeLink          — required for time-quality validation
-//                         (chained-GET pattern, see CORE-005).
+//     (chained-GET pattern, see CORE-005).
 //   - SelfDeviceLink    — server's own identity surface (required
-//                         once IEEE-001 lands SFDI/LFDI in GCM mode).
+//     once IEEE-001 lands SFDI/LFDI in GCM mode).
 //
 // We use t.Errorf rather than t.Fatalf at each link so that a single
 // run surfaces every gap; a future server regression that drops two

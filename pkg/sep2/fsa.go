@@ -5,7 +5,7 @@ import "encoding/xml"
 // FunctionSetAssignments maps function sets to a device.
 // Spec reference: section 8.6
 type FunctionSetAssignments struct {
-	XMLName     xml.Name `xml:"urn:ieee:std:2030.5:ns FunctionSetAssignments"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns FunctionSetAssignments"`
 	Resource
 	MRID        string `xml:"mRID,omitempty"`
 	Description string `xml:"description,omitempty"`
@@ -35,7 +35,7 @@ func (f FunctionSetAssignments) Copy() FunctionSetAssignments {
 
 // FunctionSetAssignmentsList is a list of FunctionSetAssignments.
 type FunctionSetAssignmentsList struct {
-	XMLName                xml.Name                 `xml:"urn:ieee:std:2030.5:ns FunctionSetAssignmentsList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns FunctionSetAssignmentsList"`
 	ListResource
 	FunctionSetAssignments []FunctionSetAssignments `xml:"FunctionSetAssignments,omitempty"`
 }

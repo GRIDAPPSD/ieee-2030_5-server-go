@@ -15,12 +15,12 @@
 // primacy order. The procedural assertion CORE-010 already pins down
 // is re-asserted here as a regression guard; what BASIC-002 adds is:
 //
-//   1. A populated DefaultDERControl on L6 (opModMaxLimW = 4 kW) and
-//      an empty DefaultDERControl on each of L0..L5 (the handler
-//      returns 200 OK with an empty body when the resource is missing,
-//      per HandleSingletonGetPut's "Return empty default" branch).
-//   2. A single active DERControl on L6 carrying opModFixedW = 3 kW.
-//      L0..L5 each render an empty DERControlList (all=0).
+//  1. A populated DefaultDERControl on L6 (opModMaxLimW = 4 kW) and
+//     an empty DefaultDERControl on each of L0..L5 (the handler
+//     returns 200 OK with an empty body when the resource is missing,
+//     per HandleSingletonGetPut's "Return empty default" branch).
+//  2. A single active DERControl on L6 carrying opModFixedW = 3 kW.
+//     L0..L5 each render an empty DERControlList (all=0).
 //
 // V1.2 procedure step → assertion mapping (per V1.2 §8.2):
 //

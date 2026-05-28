@@ -235,4 +235,3 @@ func printCertsUsage() {
 	fmt.Fprintln(os.Stderr, "  generate-admin   Generate admin certificate")
 	fmt.Fprintln(os.Stderr, "  generate-device  Generate device certificate")
 }
-

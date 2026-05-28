@@ -363,8 +363,8 @@ func buildCertPolicies(oids ...asn1.ObjectIdentifier) (pkix.Extension, error) {
 // hardwareModuleName is the ASN.1 structure for id-on-hardwareModuleName
 // per RFC 4108 section 5.
 type hardwareModuleName struct {
-	HWType        asn1.ObjectIdentifier
-	HWSerialNum   asn1.RawValue
+	HWType      asn1.ObjectIdentifier
+	HWSerialNum asn1.RawValue
 }
 
 // buildHardwareModuleNameSAN creates a SubjectAlternativeName extension

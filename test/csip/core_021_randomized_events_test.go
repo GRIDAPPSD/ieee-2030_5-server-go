@@ -177,4 +177,3 @@ func assertRandomizedFields(t *testing.T, list sep2.DERControlList) {
 		t.Errorf("DERControl.RandomizeDuration = %d, want %d", *got.RandomizeDuration, core021RandomizeDuration)
 	}
 }
-

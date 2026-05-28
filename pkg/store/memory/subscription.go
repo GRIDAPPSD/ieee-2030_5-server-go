@@ -176,4 +176,3 @@ func edevIDFromHref(href string) string {
 	}
 	return rest[:slash]
 }
-

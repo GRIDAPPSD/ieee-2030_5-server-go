@@ -39,10 +39,10 @@ import (
 // Interfaces are kept small and defined here at the consumer per the Pike
 // rule. Production wiring passes concrete types; tests use stubs.
 type AdminFSAHandler struct {
-	AdminFSAs     *memory.AdminFSAStore
-	DeviceFSAs    DeviceFSAWriter
-	EndDevices    EndDeviceReader
-	DERPrograms   DERProgramHrefValidator
+	AdminFSAs   *memory.AdminFSAStore
+	DeviceFSAs  DeviceFSAWriter
+	EndDevices  EndDeviceReader
+	DERPrograms DERProgramHrefValidator
 }
 
 // DeviceFSAWriter mirrors the slice of *memory.ScopedStore[FSA] surface

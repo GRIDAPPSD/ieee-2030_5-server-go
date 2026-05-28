@@ -127,8 +127,8 @@ func TestRegistrationMarshalXML(t *testing.T) {
 func TestEndDeviceCopy(t *testing.T) {
 	enabled := true
 	original := sep2.EndDevice{
-		Enabled: &enabled,
-		SFDI:    "123",
+		Enabled:          &enabled,
+		SFDI:             "123",
 		RegistrationLink: &sep2.Link{Href: "/rg"},
 	}
 

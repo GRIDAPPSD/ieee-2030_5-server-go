@@ -184,4 +184,3 @@ func (s *AdminCertService) HandleCreateDeviceCert() http.HandlerFunc {
 		})
 	}
 }
-

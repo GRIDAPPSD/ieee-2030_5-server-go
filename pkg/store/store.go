@@ -39,6 +39,6 @@ type ListResult[T any] struct {
 
 // Sentinel errors for store operations.
 var (
-	ErrNotFound     = errors.New("resource not found")
+	ErrNotFound      = errors.New("resource not found")
 	ErrAlreadyExists = errors.New("resource already exists")
 )

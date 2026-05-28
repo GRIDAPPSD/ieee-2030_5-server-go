@@ -38,7 +38,7 @@ short-lived `admin_ticket` cookie and redirects to `/`, the dashboard.
 ([`internal/auth/admin.go`](../internal/auth/admin.go)) gates everything
 behind the login routes. Four paths are checked in order:
 
-1. **mTLS** — peer cert with the IEEE 2030.5 admin policy OID
+1. **[mTLS](glossary.md)** — peer cert with the IEEE 2030.5 admin policy OID
    `1.3.6.1.4.1.40732.2.5` (matched by
    [`certs.HasPolicyOID`](../internal/certs/)).
 2. **Bearer** — `Authorization: Bearer <SEP2_ADMIN_KEY>`. Disabled when
@@ -130,5 +130,6 @@ Putting the suite under CI is tracked under
 - [`2030_5.md`](2030_5.md) — protocol surface
 - [`csip.md`](csip.md) — CSIP V1.2 profile
 - [`admin-listener.md`](admin-listener.md) — admin listener TLS posture
+- [`glossary.md`](glossary.md) — acronyms and protocol terms
 - [`caddy-admin.example.conf`](caddy-admin.example.conf) — example
   Caddy fronting config

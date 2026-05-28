@@ -9,8 +9,8 @@
 // What this test injects on top of bootAggregatorTopology():
 //
 //   - For every managed inverter EDA1/EDA2/EDB1/EDB2:
-//     * One DefaultDERControl on the SY-level DERProgram (FSA="0", DERP="0").
-//     * One DefaultDERControl on the FDx-level DERProgram (FSA="1", DERP="1").
+//   - One DefaultDERControl on the SY-level DERProgram (FSA="0", DERP="0").
+//   - One DefaultDERControl on the FDx-level DERProgram (FSA="1", DERP="1").
 //   - Zero DERControls.
 //
 // Procedure step → assertion mapping (per V1.2 §10.2):

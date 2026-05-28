@@ -163,36 +163,36 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 
 	// Initialize stores
 	stores := &Stores{
-		EndDevices:          endDevices,
-		Registrations:       registrations,
-		MirrorUsagePoints:   memory.NewStore[sep2.MirrorUsagePoint](),
-		MirrorMeterReadings: memory.NewScopedStore[sep2.MirrorMeterReading](),
-		DERs:               memory.NewScopedStore[sep2.DER](),
-		DERCapabilities:    memory.NewScopedStore[sep2.DERCapability](),
-		DERSettings:        memory.NewScopedStore[sep2.DERSettings](),
-		DERStatuses:        memory.NewScopedStore[sep2.DERStatus](),
-		DERAvailabilities:  memory.NewScopedStore[sep2.DERAvailability](),
-		DERPrograms:        derPrograms,
-		DERControls:        memory.NewScopedStore[sep2.DERControl](),
-		DefaultDERControls: memory.NewScopedStore[sep2.DefaultDERControl](),
-		DERCurves:          memory.NewStore[sep2.DERCurve](),
-		FSAs:               memory.NewScopedStore[sep2.FunctionSetAssignments](),
-		AdminFSAs:          adminFSAs,
-		Subscriptions:      subStore,
-		UsagePoints:        memory.NewStore[sep2.UsagePoint](),
-		MeterReadings:      memory.NewScopedStore[sep2.MeterReading](),
-		Readings:           memory.NewScopedStore[sep2.Reading](),
-		ReadingTypes:       memory.NewStore[sep2.ReadingType](),
-		Configurations:     memory.NewScopedStore[sep2.Configuration](),
-		DeviceStatuses:     memory.NewScopedStore[sep2.DeviceStatus](),
-		LogEvents:          memory.NewScopedStore[sep2.LogEvent](),
-		PowerStatuses:      memory.NewScopedStore[sep2.PowerStatus](),
-		MessagingPrograms:  memory.NewStore[sep2.MessagingProgram](),
-		TextMessages:       memory.NewScopedStore[sep2.TextMessage](),
+		EndDevices:               endDevices,
+		Registrations:            registrations,
+		MirrorUsagePoints:        memory.NewStore[sep2.MirrorUsagePoint](),
+		MirrorMeterReadings:      memory.NewScopedStore[sep2.MirrorMeterReading](),
+		DERs:                     memory.NewScopedStore[sep2.DER](),
+		DERCapabilities:          memory.NewScopedStore[sep2.DERCapability](),
+		DERSettings:              memory.NewScopedStore[sep2.DERSettings](),
+		DERStatuses:              memory.NewScopedStore[sep2.DERStatus](),
+		DERAvailabilities:        memory.NewScopedStore[sep2.DERAvailability](),
+		DERPrograms:              derPrograms,
+		DERControls:              memory.NewScopedStore[sep2.DERControl](),
+		DefaultDERControls:       memory.NewScopedStore[sep2.DefaultDERControl](),
+		DERCurves:                memory.NewStore[sep2.DERCurve](),
+		FSAs:                     memory.NewScopedStore[sep2.FunctionSetAssignments](),
+		AdminFSAs:                adminFSAs,
+		Subscriptions:            subStore,
+		UsagePoints:              memory.NewStore[sep2.UsagePoint](),
+		MeterReadings:            memory.NewScopedStore[sep2.MeterReading](),
+		Readings:                 memory.NewScopedStore[sep2.Reading](),
+		ReadingTypes:             memory.NewStore[sep2.ReadingType](),
+		Configurations:           memory.NewScopedStore[sep2.Configuration](),
+		DeviceStatuses:           memory.NewScopedStore[sep2.DeviceStatus](),
+		LogEvents:                memory.NewScopedStore[sep2.LogEvent](),
+		PowerStatuses:            memory.NewScopedStore[sep2.PowerStatus](),
+		MessagingPrograms:        memory.NewStore[sep2.MessagingProgram](),
+		TextMessages:             memory.NewScopedStore[sep2.TextMessage](),
 		FlowReservationRequests:  memory.NewScopedStore[sep2.FlowReservationRequest](),
 		FlowReservationResponses: memory.NewScopedStore[sep2.FlowReservationResponse](),
-		ResponseSets:       memory.NewStore[sep2.ResponseSet](),
-		Responses:          memory.NewScopedStore[sep2.Response](),
+		ResponseSets:             memory.NewStore[sep2.ResponseSet](),
+		Responses:                memory.NewScopedStore[sep2.Response](),
 	}
 
 	if cfg.BootFixtureFile != "" {
@@ -245,6 +245,20 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 			log.Printf("mDNS registration failed: %v (continuing without mDNS)", err)
 		} else {
 			defer mdnsReg.Close()
+		}
+
+		// IEEE-133: also advertise the admin surface as ieee2030-5.local
+		// when an admin listener is configured. RegisterAdmin returns
+		// (nil, nil) when the admin listen is loopback (the published
+		// address would be unreachable off-box) — that's a skip, not a
+		// failure, so the server keeps coming up.
+		if listen := cfg.EffectiveAdminListen(); listen != "" {
+			adminMdnsReg, err := discovery.RegisterAdmin(discovery.AdminConfig{Listen: listen})
+			if err != nil {
+				log.Printf("mDNS admin registration failed: %v (continuing without admin mDNS)", err)
+			} else if adminMdnsReg != nil {
+				defer adminMdnsReg.Close()
+			}
 		}
 	}
 

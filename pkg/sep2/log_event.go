@@ -6,13 +6,13 @@ import "encoding/xml"
 // Spec reference: section 9.6
 // Element order matches 2023 XSD.
 type LogEvent struct {
-	XMLName        xml.Name `xml:"urn:ieee:std:2030.5:ns LogEvent"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns LogEvent"`
 	Resource
 
 	CreatedDateTime int64  `xml:"createdDateTime"`
-	Details         string `xml:"details,omitempty"`         // 2023: NEW
+	Details         string `xml:"details,omitempty"` // 2023: NEW
 	ExtendedData    *int64 `xml:"extendedData,omitempty"`
-	FunctionSet     uint8  `xml:"functionSet"`               // FunctionSetID enum
+	FunctionSet     uint8  `xml:"functionSet"` // FunctionSetID enum
 	LogEventCode    uint8  `xml:"logEventCode"`
 	LogEventID      uint16 `xml:"logEventID"`
 	LogEventPEN     uint32 `xml:"logEventPEN"`
@@ -22,13 +22,16 @@ type LogEvent struct {
 // Copy returns an independent copy.
 func (l LogEvent) Copy() LogEvent {
 	c := l
-	if l.ExtendedData != nil { v := *l.ExtendedData; c.ExtendedData = &v }
+	if l.ExtendedData != nil {
+		v := *l.ExtendedData
+		c.ExtendedData = &v
+	}
 	return c
 }
 
 // LogEventList is a list of LogEvent resources.
 type LogEventList struct {
-	XMLName  xml.Name   `xml:"urn:ieee:std:2030.5:ns LogEventList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns LogEventList"`
 	ListResource
 	LogEvent []LogEvent `xml:"LogEvent,omitempty"`
 }

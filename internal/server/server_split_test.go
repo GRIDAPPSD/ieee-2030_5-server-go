@@ -61,9 +61,14 @@ func TestAdminListenerSplit_PlainHTTP(t *testing.T) {
 		t.Fatal("SEP2 listener accepted a cert-less client; want handshake failure")
 	}
 
-	// 2. Admin listener (plain HTTP): no Bearer → 401.
+	// 2. Admin listener (plain HTTP): no Bearer → 401. IEEE-132: this test
+	//    binds 127.0.0.1, so we set X-Forwarded-For to simulate the
+	//    Caddy-fronted production case and force the loopback bypass to
+	//    decline so AdminAuthMiddleware actually runs.
 	adminClient := &http.Client{Timeout: 2 * time.Second}
-	resp, err := adminClient.Get("http://" + env.adminAddr + "/api/certs/ca")
+	noAuthReq, _ := http.NewRequest(http.MethodGet, "http://"+env.adminAddr+"/api/certs/ca", nil)
+	noAuthReq.Header.Set("X-Forwarded-For", "203.0.113.5")
+	resp, err := adminClient.Do(noAuthReq)
 	if err != nil {
 		t.Fatalf("admin GET (no auth): %v", err)
 	}
@@ -75,6 +80,7 @@ func TestAdminListenerSplit_PlainHTTP(t *testing.T) {
 	// 3. Admin listener: Bearer → 200 on an IEEE-095 endpoint.
 	req, _ := http.NewRequest(http.MethodPost, "http://"+env.adminAddr+"/api/certs/info", nil)
 	req.Header.Set("Authorization", "Bearer "+adminTestKey)
+	req.Header.Set("X-Forwarded-For", "203.0.113.5")
 	resp, err = adminClient.Do(req)
 	if err != nil {
 		t.Fatalf("admin POST /api/certs/info: %v", err)
@@ -110,12 +116,15 @@ func TestAdminListenerSplit_HTTPS(t *testing.T) {
 	}
 
 	// 2. Admin listener: TLS handshake succeeds without a client cert
-	//    (VerifyClientCertIfGiven), and no Bearer → 401.
+	//    (VerifyClientCertIfGiven), and no Bearer → 401. IEEE-132: XFF
+	//    forces the loopback bypass to decline so the auth chain runs.
 	adminClient := &http.Client{
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 		Timeout:   2 * time.Second,
 	}
-	resp, err := adminClient.Get("https://" + env.adminAddr + "/api/certs/ca")
+	noAuthReq, _ := http.NewRequest(http.MethodGet, "https://"+env.adminAddr+"/api/certs/ca", nil)
+	noAuthReq.Header.Set("X-Forwarded-For", "203.0.113.5")
+	resp, err := adminClient.Do(noAuthReq)
 	if err != nil {
 		t.Fatalf("admin GET on HTTPS listener (no auth): %v", err)
 	}
@@ -127,6 +136,7 @@ func TestAdminListenerSplit_HTTPS(t *testing.T) {
 	// 3. Admin listener: Bearer → IEEE-095 endpoint reachable.
 	req, _ := http.NewRequest(http.MethodPost, "https://"+env.adminAddr+"/api/certs/info", nil)
 	req.Header.Set("Authorization", "Bearer "+adminTestKey)
+	req.Header.Set("X-Forwarded-For", "203.0.113.5")
 	resp, err = adminClient.Do(req)
 	if err != nil {
 		t.Fatalf("admin POST /api/certs/info: %v", err)
@@ -155,6 +165,7 @@ func TestAdminListenerBackCompatAdminAddr(t *testing.T) {
 	}
 	req, _ := http.NewRequest(http.MethodPost, "https://"+env.adminAddr+"/api/certs/info", nil)
 	req.Header.Set("Authorization", "Bearer "+adminTestKey)
+	req.Header.Set("X-Forwarded-For", "203.0.113.5")
 	resp, err := adminClient.Do(req)
 	if err != nil {
 		t.Fatalf("admin POST via back-compat AdminAddr: %v", err)
@@ -529,4 +540,3 @@ func mustProbePort(t *testing.T) string {
 	_ = l.Close()
 	return addr
 }
-

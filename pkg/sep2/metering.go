@@ -5,13 +5,13 @@ import "encoding/xml"
 // UsagePoint represents a physical metering point.
 // Spec reference: section 10.4
 type UsagePoint struct {
-	XMLName             xml.Name `xml:"urn:ieee:std:2030.5:ns UsagePoint"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns UsagePoint"`
 	SubscribableResource
-	MRID                string   `xml:"mRID,omitempty"`
-	Description         string   `xml:"description,omitempty"`
-	RoleFlags           uint16   `xml:"roleFlags,omitempty"`
-	ServiceCategoryKind uint8    `xml:"serviceCategoryKind"`
-	Status              uint8    `xml:"status"`
+	MRID                string `xml:"mRID,omitempty"`
+	Description         string `xml:"description,omitempty"`
+	RoleFlags           uint16 `xml:"roleFlags,omitempty"`
+	ServiceCategoryKind uint8  `xml:"serviceCategoryKind"`
+	Status              uint8  `xml:"status"`
 
 	MeterReadingListLink *ListLink `xml:"MeterReadingListLink,omitempty"`
 }
@@ -32,20 +32,20 @@ func (u UsagePoint) Copy() UsagePoint {
 
 // UsagePointList is a list of UsagePoint resources.
 type UsagePointList struct {
-	XMLName    xml.Name     `xml:"urn:ieee:std:2030.5:ns UsagePointList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns UsagePointList"`
 	ListResource
 	UsagePoint []UsagePoint `xml:"UsagePoint,omitempty"`
 }
 
 // MeterReading describes a specific measurement type at a usage point.
 type MeterReading struct {
-	XMLName           xml.Name `xml:"urn:ieee:std:2030.5:ns MeterReading"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns MeterReading"`
 	SubscribableResource
-	MRID              string   `xml:"mRID,omitempty"`
-	Description       string   `xml:"description,omitempty"`
+	MRID        string `xml:"mRID,omitempty"`
+	Description string `xml:"description,omitempty"`
 
-	ReadingTypeLink   *Link     `xml:"ReadingTypeLink,omitempty"`
-	ReadingLink       *Link     `xml:"ReadingLink,omitempty"`
+	ReadingTypeLink    *Link     `xml:"ReadingTypeLink,omitempty"`
+	ReadingLink        *Link     `xml:"ReadingLink,omitempty"`
 	ReadingSetListLink *ListLink `xml:"ReadingSetListLink,omitempty"`
 }
 
@@ -73,7 +73,7 @@ func (m MeterReading) Copy() MeterReading {
 
 // MeterReadingList is a list of MeterReading resources.
 type MeterReadingList struct {
-	XMLName      xml.Name       `xml:"urn:ieee:std:2030.5:ns MeterReadingList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns MeterReadingList"`
 	ListResource
 	MeterReading []MeterReading `xml:"MeterReading,omitempty"`
 }
@@ -86,7 +86,7 @@ type DateTimeInterval struct {
 
 // Reading is an individual meter data point.
 type Reading struct {
-	XMLName      xml.Name          `xml:"urn:ieee:std:2030.5:ns Reading"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns Reading"`
 	Resource
 	Value        *int64            `xml:"value,omitempty"`
 	TimePeriod   *DateTimeInterval `xml:"timePeriod,omitempty"`
@@ -113,43 +113,67 @@ func (r Reading) Copy() Reading {
 
 // ReadingList is a list of Reading resources.
 type ReadingList struct {
-	XMLName xml.Name  `xml:"urn:ieee:std:2030.5:ns ReadingList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns ReadingList"`
 	ListResource
 	Reading []Reading `xml:"Reading,omitempty"`
 }
 
 // ReadingType describes the unit and semantics of a meter reading.
 type ReadingType struct {
-	XMLName                xml.Name `xml:"urn:ieee:std:2030.5:ns ReadingType"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns ReadingType"`
 	Resource
-	MRID                   string `xml:"mRID,omitempty"`
-	AccumulationBehaviour  *uint8 `xml:"accumulationBehaviour,omitempty"`
-	Commodity              *uint8 `xml:"commodity,omitempty"`
-	DataQualifier          *uint8 `xml:"dataQualifier,omitempty"`
-	FlowDirection          *uint8 `xml:"flowDirection,omitempty"`
-	Kind                   *uint8 `xml:"kind,omitempty"`
-	Phase                  *uint8 `xml:"phase,omitempty"`
-	PowerOfTenMultiplier   *int8  `xml:"powerOfTenMultiplier,omitempty"`
-	Uom                    *uint8 `xml:"uom,omitempty"`
+	MRID                  string `xml:"mRID,omitempty"`
+	AccumulationBehaviour *uint8 `xml:"accumulationBehaviour,omitempty"`
+	Commodity             *uint8 `xml:"commodity,omitempty"`
+	DataQualifier         *uint8 `xml:"dataQualifier,omitempty"`
+	FlowDirection         *uint8 `xml:"flowDirection,omitempty"`
+	Kind                  *uint8 `xml:"kind,omitempty"`
+	Phase                 *uint8 `xml:"phase,omitempty"`
+	PowerOfTenMultiplier  *int8  `xml:"powerOfTenMultiplier,omitempty"`
+	Uom                   *uint8 `xml:"uom,omitempty"`
 }
 
 // Copy returns an independent copy.
 func (rt ReadingType) Copy() ReadingType {
 	c := rt
-	if rt.AccumulationBehaviour != nil { v := *rt.AccumulationBehaviour; c.AccumulationBehaviour = &v }
-	if rt.Commodity != nil { v := *rt.Commodity; c.Commodity = &v }
-	if rt.DataQualifier != nil { v := *rt.DataQualifier; c.DataQualifier = &v }
-	if rt.FlowDirection != nil { v := *rt.FlowDirection; c.FlowDirection = &v }
-	if rt.Kind != nil { v := *rt.Kind; c.Kind = &v }
-	if rt.Phase != nil { v := *rt.Phase; c.Phase = &v }
-	if rt.PowerOfTenMultiplier != nil { v := *rt.PowerOfTenMultiplier; c.PowerOfTenMultiplier = &v }
-	if rt.Uom != nil { v := *rt.Uom; c.Uom = &v }
+	if rt.AccumulationBehaviour != nil {
+		v := *rt.AccumulationBehaviour
+		c.AccumulationBehaviour = &v
+	}
+	if rt.Commodity != nil {
+		v := *rt.Commodity
+		c.Commodity = &v
+	}
+	if rt.DataQualifier != nil {
+		v := *rt.DataQualifier
+		c.DataQualifier = &v
+	}
+	if rt.FlowDirection != nil {
+		v := *rt.FlowDirection
+		c.FlowDirection = &v
+	}
+	if rt.Kind != nil {
+		v := *rt.Kind
+		c.Kind = &v
+	}
+	if rt.Phase != nil {
+		v := *rt.Phase
+		c.Phase = &v
+	}
+	if rt.PowerOfTenMultiplier != nil {
+		v := *rt.PowerOfTenMultiplier
+		c.PowerOfTenMultiplier = &v
+	}
+	if rt.Uom != nil {
+		v := *rt.Uom
+		c.Uom = &v
+	}
 	return c
 }
 
 // ReadingTypeList is a list of ReadingType resources.
 type ReadingTypeList struct {
-	XMLName     xml.Name      `xml:"urn:ieee:std:2030.5:ns ReadingTypeList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns ReadingTypeList"`
 	ListResource
 	ReadingType []ReadingType `xml:"ReadingType,omitempty"`
 }
@@ -166,6 +190,6 @@ const (
 
 // FlowDirection constants.
 const (
-	FlowDirectionForward uint8 = 1 // delivered to customer
+	FlowDirectionForward uint8 = 1  // delivered to customer
 	FlowDirectionReverse uint8 = 19 // received from customer
 )

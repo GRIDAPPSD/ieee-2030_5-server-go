@@ -16,16 +16,16 @@ func HandleDeviceCapability() http.HandlerFunc {
 		PollRate: 900,
 
 		// FunctionSetAssignmentsBase elements (XSD order)
-		DERProgramListLink:           &sep2.ListLink{Href: "/dc"},
-		MessagingProgramListLink:     &sep2.ListLink{Href: "/msg"},
-		ResponseSetListLink:          &sep2.ListLink{Href: "/rsps"},
-		TimeLink:                     &sep2.Link{Href: "/tm"},
-		UsagePointListLink:           &sep2.ListLink{Href: "/upt"},
+		DERProgramListLink:       &sep2.ListLink{Href: "/dc"},
+		MessagingProgramListLink: &sep2.ListLink{Href: "/msg"},
+		ResponseSetListLink:      &sep2.ListLink{Href: "/rsps"},
+		TimeLink:                 &sep2.Link{Href: "/tm"},
+		UsagePointListLink:       &sep2.ListLink{Href: "/upt"},
 
 		// DeviceCapability extension elements (XSD order)
-		EndDeviceListLink:            &sep2.ListLink{Href: "/edev"},
-		MirrorUsagePointListLink:     &sep2.ListLink{Href: "/mup"},
-		SelfDeviceLink:               &sep2.Link{Href: "/sdev"},
+		EndDeviceListLink:        &sep2.ListLink{Href: "/edev"},
+		MirrorUsagePointListLink: &sep2.ListLink{Href: "/mup"},
+		SelfDeviceLink:           &sep2.Link{Href: "/sdev"},
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {

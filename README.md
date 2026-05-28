@@ -10,6 +10,7 @@ Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utili
 - **[docs/csip.md](docs/csip.md)** — CSIP V1.2 profile: cert profile, cipher, conformance harness, operator profiles.
 - **[docs/admin.md](docs/admin.md)** — admin surface: dashboard, login flow, auth model, mTLS cert flow, admin features.
 - **[docs/admin-listener.md](docs/admin-listener.md)** — admin listener TLS posture matrix (plain HTTP behind Caddy, direct HTTPS, self-signed fallback).
+- **[docs/glossary.md](docs/glossary.md)** — acronyms and protocol terms (GCM, CCM-8, SFDI/LFDI, FSA, PEN, etc.).
 - **[VENDORED.md](VENDORED.md)** — provenance for the vendored CCM AEAD and the `crypto/tls` fork that registers the CCM-8 cipher.
 
 ## Prerequisites
@@ -33,17 +34,18 @@ Binaries land in `bin/`.
 ## Run
 
 ```bash
-make run           # builds, generates certs, serves on :8443 (GCM mode)
-make run-ccm       # same, with CCM-8 cipher suite (spec compliant)
-make run-full      # CCM-8 plus mDNS plus admin dashboard on :8444
+make run           # builds, generates certs, serves on :8443; admin on :8444
+make run-ccm       # same, with CCM-8 cipher suite (CSIP-conformant)
+make run-full      # CCM-8 plus mDNS plus admin dashboard
 make run-inverter  # inverter simulator against https://localhost:8443
 ```
 
 `make run-scenario SCENARIO=voltvar` runs the simulator with a specific scenario. `make list-scenarios` prints available scenarios.
 
-CCM-8 vs GCM, the run-inverter cipher caveat, and the operator profiles
-(`run-enphase`, `run-sunspec`) are all covered in
-[docs/csip.md](docs/csip.md).
+[CCM-8](docs/glossary.md) vs [GCM](docs/glossary.md), the run-inverter
+cipher caveat, and the operator profiles (`run-enphase`, `run-sunspec`)
+are all covered in [docs/csip.md](docs/csip.md). `make run` enables the
+admin dashboard on `:8444` by default; see [docs/admin.md](docs/admin.md).
 
 ## Test
 

@@ -13,7 +13,7 @@ flag. A `sep2server` plus client pair is operating in CSIP mode when:
    manufacturer's PEN OID and the hardware serial (RFC 4108 OID
    `1.3.6.1.5.5.7.8.4`).
 2. The TLS stack negotiates
-   `TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8` (code point `0xc0ae`).
+   [`TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8`](glossary.md) (code point `0xc0ae`).
 3. Mutual TLS is enforced; both peers present CSIP-compliant device or
    server certs.
 
@@ -97,8 +97,8 @@ Two relevant Make targets:
 
 | Target | TLS stack | Cipher list | CSIP-conformant on the wire? |
 |---|---|---|---|
-| `make run` | Go stdlib | GCM only | No |
-| `make run-ccm`, `make run-full` | Vendored `internal/tls/gotls` | CCM-8 first, GCM fallback | Conditional |
+| `make run` | Go stdlib | [GCM](glossary.md) only | No |
+| `make run-ccm`, `make run-full` | Vendored `internal/tls/gotls` | [CCM-8](glossary.md) first, GCM fallback | Conditional |
 | `make test-epri` (against a running `run-ccm` server) | EPRI C client (CCM-capable) | — | Yes (negotiates CCM-8) |
 | `make run-inverter` (against a running `run-ccm` server) | Go stdlib | — | No (silently lands on GCM fallback) |
 
@@ -157,4 +157,5 @@ Both targets print a connection-details banner at boot (IEEE-112).
 - [`2030_5.md`](2030_5.md) — full IEEE 2030.5 surface
 - [`admin.md`](admin.md) — operator surface
 - [`admin-listener.md`](admin-listener.md) — admin TLS posture
+- [`glossary.md`](glossary.md) — acronyms and protocol terms
 - [`VENDORED.md`](../VENDORED.md) — CCM AEAD + `gotls` fork provenance

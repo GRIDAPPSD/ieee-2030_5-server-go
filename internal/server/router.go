@@ -105,13 +105,15 @@ func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService
 		top.Handle(prefix, protocolChain)
 	}
 
-	if svc != nil {
-		adminMux := http.NewServeMux()
-		adminMux.HandleFunc("GET /api/certs/ca", svc.HandleGetCA())
-		adminMux.HandleFunc("POST /api/certs/server", svc.HandleCreateServerCert())
-		adminMux.HandleFunc("POST /api/certs/device", svc.HandleCreateDeviceCert())
-		top.Handle("/api/", auth.AdminAuthMiddleware(cfg.AdminKey, nil)(adminMux))
-	}
+	// IEEE-134 (PR #246 Leon CRITICAL): /api/certs/* are deliberately
+	// NOT mounted on the protocol-listener mux. The protocol listener
+	// uses tls.RequireAnyClientCert (internal/tls/config.go), which
+	// admits any self-signed client cert without CA validation. Combined
+	// with the loopback bypass in AdminAuthMiddleware (Path 0), exposing
+	// the cert API here would let any co-resident process mint server
+	// certs from the CA. The cert API is mounted on the admin listener
+	// only (NewAdminRouter), where AdminAuthMiddleware is the intended
+	// guard and the bind address is operator-controlled.
 
 	// IEEE-024: test-only mutation surface for the CSIP V1.2 conformance
 	// harness. RegisterMutationHandlers is a no-op in production builds;

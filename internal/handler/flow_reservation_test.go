@@ -8,9 +8,11 @@ package handler_test
 //     the created FlowReservationRequest and an XML body that round-trips
 //     back into a FlowReservationRequest with the matching Href.
 //   - When the FlowReservationResponse store's Create fails, the handler
-//     surfaces 500 Internal Server Error with the underlying error
-//     bubbled up in the body — not a silent 201. Exercised via the
-//     package-private frpCreator interface (see flow_reservation.go).
+//     surfaces 500 Internal Server Error with an opaque "internal error"
+//     body, the underlying cause is logged server-side, and no Location
+//     header leaks to the client. Exercised via the exported FRPCreator
+//     interface (see flow_reservation.go). Matches the FRQ branch above
+//     and the IEEE-009 5xx-logging discipline (see log5xx_test.go).
 
 import (
 	"bytes"
@@ -116,10 +118,9 @@ func TestHandlePostFlowReservationRequest_InvalidXMLReturns400(t *testing.T) {
 	}
 }
 
-// failingFRPStore is a fake that satisfies the handler's package-private
-// frpCreator interface and always returns errFRPCreate from Create. Used
-// to exercise the 500-on-frpStore-failure branch (line ~95 of
-// flow_reservation.go).
+// failingFRPStore is a fake that satisfies handler.FRPCreator and always
+// returns errFRPCreate from Create. Used to exercise the
+// 500-on-frpStore-failure branch in HandlePostFlowReservationRequest.
 type failingFRPStore struct {
 	calls int
 }
@@ -133,10 +134,14 @@ func (f *failingFRPStore) Create(ctx context.Context, parentID, id string, resou
 
 // TestHandlePostFlowReservationRequest_StoreCreateFailureReturns500 locks
 // in the contract that a frpStore.Create failure surfaces as 500
-// Internal Server Error with the underlying error in the body, not a
-// silent 201. Regression for IEEE-005 (GitHub Issue #4).
+// Internal Server Error with an OPAQUE "internal error" body (matching
+// the FRQ branch above), the underlying cause is captured in the
+// server-side log, and no Location header leaks. Regression for
+// IEEE-005 (GitHub Issue #4); body-opacity guard for PR #241 review
+// round 1 (Leon, MEDIUM).
 func TestHandlePostFlowReservationRequest_StoreCreateFailureReturns500(t *testing.T) {
-	t.Parallel()
+	// NOTE: not t.Parallel() — captureLog mutates the package-global
+	// log writer, which would race with other parallel tests.
 
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := &failingFRPStore{}
@@ -159,16 +164,23 @@ func TestHandlePostFlowReservationRequest_StoreCreateFailureReturns500(t *testin
 
 	req := httptest.NewRequest(http.MethodPost, "/edev/dev99/frq", bytes.NewReader(body))
 	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
+
+	logOutput := captureLog(func() { mux.ServeHTTP(w, req) })
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "create flow reservation:") {
-		t.Errorf("body = %q, want it to contain %q", w.Body.String(), "create flow reservation:")
+	// Wire body must be opaque. http.Error appends a newline.
+	if got, want := w.Body.String(), "internal error\n"; got != want {
+		t.Errorf("body = %q, want %q (opaque, matching FRQ branch)", got, want)
 	}
-	if !strings.Contains(w.Body.String(), errFRPCreate.Error()) {
-		t.Errorf("body = %q, want it to contain underlying error %q", w.Body.String(), errFRPCreate.Error())
+	// And explicitly: the underlying error string must NOT be on the wire.
+	if strings.Contains(w.Body.String(), errFRPCreate.Error()) {
+		t.Errorf("body = %q, must NOT leak underlying error %q to mTLS client", w.Body.String(), errFRPCreate.Error())
+	}
+	// Server-side log must contain the wrapped cause for ops.
+	if !strings.Contains(logOutput, errFRPCreate.Error()) {
+		t.Errorf("log output does not contain underlying error %q\ngot: %q", errFRPCreate.Error(), logOutput)
 	}
 	if frpStore.calls != 1 {
 		t.Errorf("failingFRPStore.calls = %d, want 1", frpStore.calls)

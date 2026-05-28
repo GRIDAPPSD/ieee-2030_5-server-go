@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -43,10 +45,17 @@ func BuildFlowReservationResponseList(href string, result store.ListResult[sep2.
 	}
 }
 
+// FRPCreator is the subset of the FlowReservationResponse store that
+// HandlePostFlowReservationRequest needs to persist an auto-approved
+// response.
+type FRPCreator interface {
+	Create(ctx context.Context, parentID, id string, resource sep2.FlowReservationResponse) error
+}
+
 // HandlePostFlowReservationRequest returns a handler for POST /edev/{id}/frq.
 func HandlePostFlowReservationRequest(
 	frqStore *memory.ScopedStore[sep2.FlowReservationRequest],
-	frpStore *memory.ScopedStore[sep2.FlowReservationResponse],
+	frpStore FRPCreator,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -92,7 +101,8 @@ func HandlePostFlowReservationRequest(
 		frp.EventStatus = &sep2.EventStatus{CurrentStatus: status, DateTime: time.Now().Unix()}
 
 		if err := frpStore.Create(r.Context(), edevID, frpID, frp); err != nil {
-			http.Error(w, "create flow reservation: "+err.Error(), http.StatusInternalServerError)
+			log.Printf("frq: create flow reservation response edev=%q frp=%q: %v", edevID, frpID, err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 

@@ -85,7 +85,7 @@ func TestNegotiateEncoderUnknownAccept(t *testing.T) {
 // Used to exercise the WriteXML error path.
 type unmarshalableType struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns Broken"`
-	Ch      chan int  `xml:"ch"`
+	Ch      chan int `xml:"ch"`
 }
 
 func TestWriteXMLMarshalError(t *testing.T) {

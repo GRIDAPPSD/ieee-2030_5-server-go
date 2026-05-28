@@ -56,9 +56,9 @@ func (s *stubEndDevices) List(_ context.Context, _ store.ListOptions) (store.Lis
 func newAdminFSAHandler(t *testing.T) *handler.AdminFSAHandler {
 	t.Helper()
 	return &handler.AdminFSAHandler{
-		AdminFSAs:  memory.NewAdminFSAStore(),
-		DeviceFSAs: memory.NewScopedStore[sep2.FunctionSetAssignments](),
-		EndDevices: &stubEndDevices{devs: map[string]sep2.EndDevice{}},
+		AdminFSAs:   memory.NewAdminFSAStore(),
+		DeviceFSAs:  memory.NewScopedStore[sep2.FunctionSetAssignments](),
+		EndDevices:  &stubEndDevices{devs: map[string]sep2.EndDevice{}},
 		DERPrograms: &stubPrograms{known: map[string]bool{}},
 	}
 }
@@ -639,11 +639,11 @@ func TestExtractFSAID_RejectsBadShape(t *testing.T) {
 
 	cases := []string{
 		"",
-		"fsa-1",                     // missing prefix
-		"/api/fsas/",                // empty id
-		"/api/fsas/fsa-1/extra",     // trailing path
-		"/api/fsas/fsa-1?x=1",       // query in body
-		"/wrong/api/fsas/fsa-1",     // wrong prefix
+		"fsa-1",                 // missing prefix
+		"/api/fsas/",            // empty id
+		"/api/fsas/fsa-1/extra", // trailing path
+		"/api/fsas/fsa-1?x=1",   // query in body
+		"/wrong/api/fsas/fsa-1", // wrong prefix
 	}
 	for _, h_ := range cases {
 		body := `{"fsaHref":"` + h_ + `"}`

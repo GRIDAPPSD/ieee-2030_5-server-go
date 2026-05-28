@@ -141,7 +141,7 @@ func TestHandleMessagingProgram(t *testing.T) {
 	msgStore := memory.NewStore[sep2.MessagingProgram]()
 	_ = msgStore.Create(context.Background(), "msg1", sep2.MessagingProgram{
 		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/msg/msg1"}},
-		MRID: "msg1", Primacy: 1,
+		MRID:                 "msg1", Primacy: 1,
 	})
 
 	h := handler.HandleMessagingProgram(msgStore)
@@ -256,7 +256,7 @@ func TestHandleCreateUsagePoint(t *testing.T) {
 
 	upt := sep2.UsagePoint{
 		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{}},
-		MRID: "upt-test", Description: "Test Meter", ServiceCategoryKind: 0, Status: 1,
+		MRID:                 "upt-test", Description: "Test Meter", ServiceCategoryKind: 0, Status: 1,
 	}
 	body, _ := xml.Marshal(&upt)
 

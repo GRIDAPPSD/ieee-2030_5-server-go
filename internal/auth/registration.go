@@ -17,7 +17,7 @@ type RegistrationMode string
 
 const (
 	RegistrationModeAuto   RegistrationMode = "auto"   // auto-register on first connection
-	RegistrationModeManual RegistrationMode = "manual"  // reject unknown devices
+	RegistrationModeManual RegistrationMode = "manual" // reject unknown devices
 )
 
 type contextKeyDeviceID string
@@ -65,11 +65,11 @@ func AutoRegistrationMiddleware(edevStore store.EndDeviceStore, mode Registratio
 				SubscribableResource: sep2.SubscribableResource{
 					Resource: sep2.Resource{Href: "/edev/" + id},
 				},
-				SFDI:        identity.SFDI,
-				LFDI:        identity.LFDI,
-				ChangedTime: time.Now().Unix(),
-				Enabled:     &enabled,
-				RegistrationLink: &sep2.Link{Href: fmt.Sprintf("/edev/%s/rg", id)},
+				SFDI:                           identity.SFDI,
+				LFDI:                           identity.LFDI,
+				ChangedTime:                    time.Now().Unix(),
+				Enabled:                        &enabled,
+				RegistrationLink:               &sep2.Link{Href: fmt.Sprintf("/edev/%s/rg", id)},
 				FunctionSetAssignmentsListLink: &sep2.ListLink{Href: fmt.Sprintf("/edev/%s/fsa", id)},
 			}
 

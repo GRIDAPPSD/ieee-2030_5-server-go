@@ -7,20 +7,16 @@ package handler_test
 //   - On success, returns 201 Created with a Location header pointing at
 //     the created FlowReservationRequest and an XML body that round-trips
 //     back into a FlowReservationRequest with the matching Href.
-//
-// The companion contract — that a frpStore.Create failure surfaces as
-// 500 Internal Server Error rather than a silent 201 — is asserted at
-// internal/handler/flow_reservation.go:94 but cannot be exercised here
-// without a production-code change. HandlePostFlowReservationRequest
-// takes a concrete *memory.ScopedStore[T], not an interface, and the
-// FRP id is generated inside the handler from time.Now().UnixNano(),
-// so a fresh ScopedStore can't be made to fail Create deterministically
-// from a test. See IEEE-005 follow-up notes for the deferred refactor.
+//   - When the FlowReservationResponse store's Create fails, the handler
+//     surfaces 500 Internal Server Error with the underlying error
+//     bubbled up in the body — not a silent 201. Exercised via the
+//     package-private frpCreator interface (see flow_reservation.go).
 
 import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,6 +113,73 @@ func TestHandlePostFlowReservationRequest_InvalidXMLReturns400(t *testing.T) {
 	// 400 path must not have written a Location header.
 	if loc := w.Header().Get("Location"); loc != "" {
 		t.Errorf("Location = %q, want empty on 400", loc)
+	}
+}
+
+// failingFRPStore is a fake that satisfies the handler's package-private
+// frpCreator interface and always returns errFRPCreate from Create. Used
+// to exercise the 500-on-frpStore-failure branch (line ~95 of
+// flow_reservation.go).
+type failingFRPStore struct {
+	calls int
+}
+
+var errFRPCreate = errors.New("simulated frp store failure")
+
+func (f *failingFRPStore) Create(ctx context.Context, parentID, id string, resource sep2.FlowReservationResponse) error {
+	f.calls++
+	return errFRPCreate
+}
+
+// TestHandlePostFlowReservationRequest_StoreCreateFailureReturns500 locks
+// in the contract that a frpStore.Create failure surfaces as 500
+// Internal Server Error with the underlying error in the body, not a
+// silent 201. Regression for IEEE-005 (GitHub Issue #4).
+func TestHandlePostFlowReservationRequest_StoreCreateFailureReturns500(t *testing.T) {
+	t.Parallel()
+
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := &failingFRPStore{}
+	h := handler.HandlePostFlowReservationRequest(frqStore, frpStore)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /edev/{id}/frq", h)
+
+	energy := sep2.SignedRealEnergy{Value: 1000}
+	power := sep2.ActivePower{Value: 500}
+	frq := sep2.FlowReservationRequest{
+		MRID:            "frq-failure-probe",
+		EnergyRequested: &energy,
+		PowerRequested:  &power,
+	}
+	body, err := xml.Marshal(&frq)
+	if err != nil {
+		t.Fatalf("marshal request body: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/edev/dev99/frq", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "create flow reservation:") {
+		t.Errorf("body = %q, want it to contain %q", w.Body.String(), "create flow reservation:")
+	}
+	if !strings.Contains(w.Body.String(), errFRPCreate.Error()) {
+		t.Errorf("body = %q, want it to contain underlying error %q", w.Body.String(), errFRPCreate.Error())
+	}
+	if frpStore.calls != 1 {
+		t.Errorf("failingFRPStore.calls = %d, want 1", frpStore.calls)
+	}
+	// FRQ store should still have the request (frq.Create succeeded before frp.Create failed).
+	if frqCount, _ := frqStore.Count(context.Background(), "dev99"); frqCount != 1 {
+		t.Errorf("frqStore count for dev99 = %d, want 1", frqCount)
+	}
+	// 500 path must not have written a Location header.
+	if loc := w.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want empty on 500", loc)
 	}
 }
 

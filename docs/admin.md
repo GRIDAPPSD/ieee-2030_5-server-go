@@ -14,13 +14,17 @@ The admin listener binds `SEP2_ADMIN_LISTEN` (preferred) or the
 deprecated `SEP2_ADMIN_ADDR` alias. Empty disables the admin surface
 entirely. The Make targets bind it on `:8444`:
 
-```
-SEP2_ADMIN_ADDR=:8444
-SEP2_ADMIN_KEY=admin
+```bash
+SEP2_ADMIN_LISTEN=:8444
+SEP2_ADMIN_KEY="$(openssl rand -hex 32)"   # bearer secret; do NOT ship "admin"
 ```
 
 `SEP2_ADMIN_KEY` is the Bearer token the login form validates against
-(constant-time compare).
+(constant-time compare). It is distinct from `SEP2_ADMIN_KEY_FILE`,
+which is the admin listener's TLS private key path — see
+[`admin-listener.md`](admin-listener.md). Any non-loopback deployment
+MUST set `SEP2_ADMIN_KEY` to a high-entropy value; the literal string
+`admin` is fine for `make run` on localhost only.
 
 | Profile | Command |
 |---|---|
@@ -36,11 +40,13 @@ short-lived `admin_ticket` cookie and redirects to `/`, the dashboard.
 
 `AdminAuthMiddleware`
 ([`internal/auth/admin.go`](../internal/auth/admin.go)) gates everything
-behind the login routes. Four paths are checked in order:
+behind the login routes. Four paths are checked in order; **any single
+path that succeeds admits the request** (this is fallback ordering, not
+defense in depth):
 
 1. **[mTLS](glossary.md)** — peer cert with the IEEE 2030.5 admin policy OID
    `1.3.6.1.4.1.40732.2.5` (matched by
-   [`certs.HasPolicyOID`](../internal/certs/)).
+   [`certs.HasPolicyOID`](../internal/certs/oids.go)).
 2. **Bearer** — `Authorization: Bearer <SEP2_ADMIN_KEY>`. Disabled when
    `SEP2_ADMIN_KEY` is empty.
 3. **Query-param ticket** — `?ticket=<value>` redeemed against the

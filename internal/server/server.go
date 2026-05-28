@@ -246,6 +246,20 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		} else {
 			defer mdnsReg.Close()
 		}
+
+		// IEEE-133: also advertise the admin surface as ieee2030-5.local
+		// when an admin listener is configured. RegisterAdmin returns
+		// (nil, nil) when the admin listen is loopback (the published
+		// address would be unreachable off-box) — that's a skip, not a
+		// failure, so the server keeps coming up.
+		if listen := cfg.EffectiveAdminListen(); listen != "" {
+			adminMdnsReg, err := discovery.RegisterAdmin(discovery.AdminConfig{Listen: listen})
+			if err != nil {
+				log.Printf("mDNS admin registration failed: %v (continuing without admin mDNS)", err)
+			} else if adminMdnsReg != nil {
+				defer adminMdnsReg.Close()
+			}
+		}
 	}
 
 	// Start admin server if configured. IEEE-094: admin runs on its own

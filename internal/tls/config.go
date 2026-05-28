@@ -49,10 +49,15 @@ func NewServerTLSConfigWithExtraCAs(certFile, keyFile, caFile string, extraCAFil
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		ClientCAs:    caPool,
-		// IEEE 2030.5 / CSIP device certs carry a critical HardwareModuleName
-		// SAN that stdlib x509 leaves in UnhandledCriticalExtensions. Switch
-		// to RequireAnyClientCert + manual verification so we can acknowledge
-		// that OID before chain validation.
+		// IEEE 2030.5 §6.11 / CSIP §6.2 device certs carry a critical
+		// HardwareModuleName SAN that stdlib x509 leaves in
+		// UnhandledCriticalExtensions, which would cause RequireAndVerify
+		// to fail closed at handshake. RequireAnyClientCert is intentional,
+		// not a weakening: the full chain walk (signature, expiry, basic
+		// constraints, key usage, trust anchor) runs in VerifyPeerCertificate
+		// below via VerifyPeerCertWithHardwareModuleSAN, after the HMN OID
+		// is acknowledged. See internal/tls/verify.go and tests
+		// TestVerifyRejectsCertSignedByDifferentCA, TestMutualTLSHandshake.
 		ClientAuth: tls.RequireAnyClientCert,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			return VerifyPeerCertWithHardwareModuleSAN(rawCerts, caPool)

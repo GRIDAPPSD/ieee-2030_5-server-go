@@ -13,10 +13,10 @@ func TestUsagePointRoundTrip(t *testing.T) {
 		SubscribableResource: sep2.SubscribableResource{
 			Resource: sep2.Resource{Href: "/upt/1"},
 		},
-		MRID:                "AAAA0100000000000000000004D1",
-		Description:         "Meter Usage Point",
-		ServiceCategoryKind: 0,
-		Status:              1,
+		MRID:                 "AAAA0100000000000000000004D1",
+		Description:          "Meter Usage Point",
+		ServiceCategoryKind:  0,
+		Status:               1,
 		MeterReadingListLink: &sep2.ListLink{Href: "/upt/1/mr", All: 3},
 	}
 
@@ -47,8 +47,8 @@ func TestMeterReadingMarshal(t *testing.T) {
 		SubscribableResource: sep2.SubscribableResource{
 			Resource: sep2.Resource{Href: "/upt/1/mr/1"},
 		},
-		MRID:        "BBBB01",
-		Description: "Instantaneous Demand",
+		MRID:            "BBBB01",
+		Description:     "Instantaneous Demand",
 		ReadingTypeLink: &sep2.Link{Href: "/rt/1"},
 		ReadingLink:     &sep2.Link{Href: "/upt/1/mr/1/r"},
 	}
@@ -100,10 +100,10 @@ func TestReadingTypeMarshal(t *testing.T) {
 
 func TestMirrorUsagePointRoundTrip(t *testing.T) {
 	mup := sep2.MirrorUsagePoint{
-		Resource:    sep2.Resource{Href: "/mup/1"},
-		MRID:        "MUP001",
-		Description: "Inverter Mirror",
-		DeviceLFDI:  "AABBCCDD00112233445566778899AABBCCDDEEFF",
+		Resource:            sep2.Resource{Href: "/mup/1"},
+		MRID:                "MUP001",
+		Description:         "Inverter Mirror",
+		DeviceLFDI:          "AABBCCDD00112233445566778899AABBCCDDEEFF",
 		ServiceCategoryKind: 0,
 		Status:              1,
 	}

@@ -6,37 +6,40 @@ import "encoding/xml"
 // Spec reference: section 8.8
 // Element order matches 2023 XSD.
 type Response struct {
-	XMLName         xml.Name `xml:"urn:ieee:std:2030.5:ns Response"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns Response"`
 	Resource
 
 	// XSD element order:
 	CreatedDateTime int64  `xml:"createdDateTime,omitempty"`
 	EndDeviceLFDI   string `xml:"endDeviceLFDI,omitempty"`
-	Status          *uint8 `xml:"status,omitempty"` // ResponseStatus enum
+	Status          *uint8 `xml:"status,omitempty"`  // ResponseStatus enum
 	Subject         string `xml:"subject,omitempty"` // mRID of the event
 }
 
 // Copy returns an independent copy.
 func (r Response) Copy() Response {
 	c := r
-	if r.Status != nil { v := *r.Status; c.Status = &v }
+	if r.Status != nil {
+		v := *r.Status
+		c.Status = &v
+	}
 	return c
 }
 
 // ResponseList is a list of Response resources.
 type ResponseList struct {
-	XMLName  xml.Name   `xml:"urn:ieee:std:2030.5:ns ResponseList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns ResponseList"`
 	ListResource
 	Response []Response `xml:"Response,omitempty"`
 }
 
 // ResponseSet groups responses for management.
 type ResponseSet struct {
-	XMLName          xml.Name  `xml:"urn:ieee:std:2030.5:ns ResponseSet"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns ResponseSet"`
 	Resource
-	MRID             string    `xml:"mRID,omitempty"`
-	Description      string    `xml:"description,omitempty"`
-	Version          *uint16   `xml:"version,omitempty"`
+	MRID        string  `xml:"mRID,omitempty"`
+	Description string  `xml:"description,omitempty"`
+	Version     *uint16 `xml:"version,omitempty"`
 
 	ResponseListLink *ListLink `xml:"ResponseListLink,omitempty"`
 }
@@ -44,21 +47,27 @@ type ResponseSet struct {
 // Copy returns an independent copy.
 func (r ResponseSet) Copy() ResponseSet {
 	c := r
-	if r.Version != nil { v := *r.Version; c.Version = &v }
-	if r.ResponseListLink != nil { l := *r.ResponseListLink; c.ResponseListLink = &l }
+	if r.Version != nil {
+		v := *r.Version
+		c.Version = &v
+	}
+	if r.ResponseListLink != nil {
+		l := *r.ResponseListLink
+		c.ResponseListLink = &l
+	}
 	return c
 }
 
 // ResponseSetList is a list of ResponseSet resources.
 type ResponseSetList struct {
-	XMLName     xml.Name      `xml:"urn:ieee:std:2030.5:ns ResponseSetList"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns ResponseSetList"`
 	ListResource
 	ResponseSet []ResponseSet `xml:"ResponseSet,omitempty"`
 }
 
 // DERControlResponse is a response specific to DER controls (2023 addition).
 type DERControlResponse struct {
-	XMLName        xml.Name `xml:"urn:ieee:std:2030.5:ns DERControlResponse"`
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERControlResponse"`
 	Response
 
 	ModesResponded *uint32 `xml:"modesResponded,omitempty"` // DERControlType bitmap
@@ -68,7 +77,10 @@ type DERControlResponse struct {
 func (d DERControlResponse) Copy() DERControlResponse {
 	c := d
 	c.Response = d.Response.Copy()
-	if d.ModesResponded != nil { v := *d.ModesResponded; c.ModesResponded = &v }
+	if d.ModesResponded != nil {
+		v := *d.ModesResponded
+		c.ModesResponded = &v
+	}
 	return c
 }
 

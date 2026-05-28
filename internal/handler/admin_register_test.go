@@ -310,7 +310,7 @@ func TestAddEndDeviceCollisionOnLFDI(t *testing.T) {
 	id := sfdi[:8]
 	if err := devStore.Create(context.Background(), id, sep2.EndDevice{
 		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/" + id}},
-		SFDI: sfdi, LFDI: lfdi, Enabled: &enabled,
+		SFDI:                 sfdi, LFDI: lfdi, Enabled: &enabled,
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -10,15 +10,23 @@ import (
 
 // NewAdminRouter creates the admin router.
 //
-// Two layers:
-//  1. Public outer mux — /login, /auth/login (login form + submit). These
+// Three layers, outermost first:
+//  1. Host-header allowlist (IEEE-138) — rejects any request whose Host
+//     header isn't a hostname this server claims (loopback, localhost, the
+//     IEEE-133 mDNS hostname, plus operator-extended entries from
+//     SEP2_ADMIN_ALLOWED_HOSTS). DNS-rebinding defense-in-depth at the
+//     admin boundary; runs BEFORE auth so a wrong-Host request never
+//     reaches the auth chain. allowedHosts nil/empty disables the gate
+//     (test paths and the few callers that pre-IEEE-138 didn't supply
+//     hosts).
+//  2. Public outer mux — /login, /auth/login (login form + submit). These
 //     routes are unauthenticated by design: the operator cannot reach the
 //     dashboard without first hitting them.
-//  2. Authenticated inner mux — everything else (dashboard, /api/*, SSE,
+//  3. Authenticated inner mux — everything else (dashboard, /api/*, SSE,
 //     ticket exchange). Guarded by AdminAuthMiddleware which supports mTLS,
 //     Bearer, query-param ticket, and the IEEE-095 admin_ticket cookie.
-func NewAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore) http.Handler {
-	h, _ := BuildAdminRouter(adminKey, svc, stores, tlsMode, tickets)
+func NewAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, allowedHosts []string) http.Handler {
+	h, _ := BuildAdminRouter(adminKey, svc, stores, tlsMode, tickets, allowedHosts)
 	return h
 }
 
@@ -28,8 +36,11 @@ func NewAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stor
 // mux are merged into one sorted list, prefixed appropriately —
 // callers (the boot-time route enumerator) want a single flat view of
 // every admin-listener route. NewAdminRouter delegates here. Pre-
-// sorted and deduplicated; see recordingMux.Patterns.
-func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore) (http.Handler, []string) {
+// sorted and deduplicated; see recordingMux.Patterns. The IEEE-138
+// host-header allowlist wraps the outer mux when allowedHosts is
+// non-empty; the returned pattern list reflects routes mounted under
+// the listener regardless of host gating.
+func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, allowedHosts []string) (http.Handler, []string) {
 	authed := newRecordingMux()
 
 	// Certificate management API
@@ -86,7 +97,7 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 	// IEEE-140: assemble the final pattern list. The two public outer
 	// routes (login form + login submit) join the inner authed routes
 	// so the boot-time enumerator sees a single flat list per listener.
-	// Sort + dedup runs through recordingMux.Patterns at the end of the
+	// Sort + dedup runs through sortDedupePatterns at the end of the
 	// merge.
 	merged := append([]string{
 		"GET /login",
@@ -94,7 +105,17 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 	}, authed.Patterns()...)
 	sortDedupePatterns(&merged)
 
-	return outer, merged
+	// IEEE-138: wrap the entire outer mux in the host-header allowlist
+	// when the caller supplied one. The gate runs BEFORE login routes so
+	// /login and /auth/login are protected from DNS-rebinding too. The
+	// returned route list reflects what is mounted under the listener
+	// regardless of host gating — boot-log enumeration is independent
+	// of which Host headers reach the handlers.
+	var h http.Handler = outer
+	if len(allowedHosts) > 0 {
+		h = HostAllowlistMiddleware(allowedHosts)(outer)
+	}
+	return h, merged
 }
 
 // sortDedupePatterns sorts in place and de-duplicates adjacent equal

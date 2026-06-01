@@ -28,7 +28,7 @@ func TestRoutesEnumerationConfirmsCertAPIAdminOnly(t *testing.T) {
 	stores := newTestStores()
 
 	_, protoRoutes := server.BuildProtocolRouter(cfg, stores, svc, "", "", nil)
-	_, adminRoutes := server.BuildAdminRouter("test-admin-key", svc, stores, "", nil)
+	_, adminRoutes := server.BuildAdminRouter("test-admin-key", svc, stores, "", nil, nil)
 
 	// Protocol routes MUST NOT contain any /api/certs/* pattern. A hit
 	// here is the regression IEEE-134 tried to prevent — surface it
@@ -118,7 +118,7 @@ func TestAdminRoutesContainsLoginAndDashboard(t *testing.T) {
 	svc := newScopeTestCertService(t)
 	stores := newTestStores()
 
-	_, adminRoutes := server.BuildAdminRouter("test-admin-key", svc, stores, "", nil)
+	_, adminRoutes := server.BuildAdminRouter("test-admin-key", svc, stores, "", nil, nil)
 
 	wantContains := []string{
 		"GET /login",       // public outer mux

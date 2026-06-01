@@ -23,11 +23,12 @@ import (
 
 func TestHostAllowlistMiddleware(t *testing.T) {
 	cases := []struct {
-		name       string
-		allowed    []string
-		host       string
-		proto      string // "HTTP/1.1" (default) or "HTTP/1.0"
-		wantStatus int
+		name            string
+		allowed         []string
+		host            string
+		proto           string // "HTTP/1.1" (default) or "HTTP/1.0"
+		wantStatus      int
+		wantBodyContain string // substring required in the response body when set
 	}{
 		{
 			name:       "allowed bare host (localhost)",
@@ -48,16 +49,43 @@ func TestHostAllowlistMiddleware(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "rejected non-allowlisted host (DNS rebinding)",
-			allowed:    []string{"localhost", "127.0.0.1"},
-			host:       "evil.example.com",
-			wantStatus: http.StatusMisdirectedRequest,
+			name:            "rejected non-allowlisted host (DNS rebinding)",
+			allowed:         []string{"localhost", "127.0.0.1"},
+			host:            "evil.example.com",
+			wantStatus:      http.StatusMisdirectedRequest,
+			wantBodyContain: "Misdirected Request",
 		},
 		{
-			name:       "rejected non-allowlisted host:port (DNS rebinding with port)",
-			allowed:    []string{"localhost", "127.0.0.1"},
-			host:       "evil.example.com:8444",
-			wantStatus: http.StatusMisdirectedRequest,
+			name:            "rejected non-allowlisted host:port (DNS rebinding with port)",
+			allowed:         []string{"localhost", "127.0.0.1"},
+			host:            "evil.example.com:8444",
+			wantStatus:      http.StatusMisdirectedRequest,
+			wantBodyContain: "Misdirected Request",
+		},
+		// HIGH-1 (Tess): pin the substring-suffix-bypass behavior so a
+		// future loosening to strings.HasSuffix-style matching cannot
+		// regress silently. Map-keyed lookup makes these REJECT today;
+		// these cases are the backstop assertion.
+		{
+			name:            "rejected suffix-of-allowed (evil-localhost.com against localhost)",
+			allowed:         []string{"localhost", "127.0.0.1"},
+			host:            "evil-localhost.com",
+			wantStatus:      http.StatusMisdirectedRequest,
+			wantBodyContain: "Misdirected Request",
+		},
+		{
+			name:            "rejected suffix-with-dot (localhost.evil.com against localhost)",
+			allowed:         []string{"localhost", "127.0.0.1"},
+			host:            "localhost.evil.com",
+			wantStatus:      http.StatusMisdirectedRequest,
+			wantBodyContain: "Misdirected Request",
+		},
+		{
+			name:            "rejected suffix-with-dot (127.0.0.1.evil.com against 127.0.0.1)",
+			allowed:         []string{"localhost", "127.0.0.1"},
+			host:            "127.0.0.1.evil.com",
+			wantStatus:      http.StatusMisdirectedRequest,
+			wantBodyContain: "Misdirected Request",
 		},
 		{
 			name:       "allowed mDNS hostname (IEEE-133)",
@@ -102,24 +130,30 @@ func TestHostAllowlistMiddleware(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "rejected IPv6 non-loopback",
-			allowed:    []string{"::1"},
-			host:       "[2001:db8::1]:8444",
-			wantStatus: http.StatusMisdirectedRequest,
+			name:            "rejected IPv6 non-loopback",
+			allowed:         []string{"::1"},
+			host:            "[2001:db8::1]:8444",
+			wantStatus:      http.StatusMisdirectedRequest,
+			wantBodyContain: "Misdirected Request",
 		},
 		{
-			name:       "empty Host on HTTP/1.1 → 400",
-			allowed:    []string{"localhost"},
-			host:       "",
-			proto:      "HTTP/1.1",
-			wantStatus: http.StatusBadRequest,
+			// HIGH-2 (Tess): the 400 body fragment is load-bearing for
+			// operators triaging boot logs and clients differentiating
+			// "no Host" from "wrong Host".
+			name:            "empty Host on HTTP/1.1 → 400",
+			allowed:         []string{"localhost"},
+			host:            "",
+			proto:           "HTTP/1.1",
+			wantStatus:      http.StatusBadRequest,
+			wantBodyContain: "Bad Request: missing Host header",
 		},
 		{
-			name:       "empty Host on HTTP/1.0 → 421",
-			allowed:    []string{"localhost"},
-			host:       "",
-			proto:      "HTTP/1.0",
-			wantStatus: http.StatusMisdirectedRequest,
+			name:            "empty Host on HTTP/1.0 → 421",
+			allowed:         []string{"localhost"},
+			host:            "",
+			proto:           "HTTP/1.0",
+			wantStatus:      http.StatusMisdirectedRequest,
+			wantBodyContain: "Misdirected Request",
 		},
 	}
 
@@ -145,6 +179,9 @@ func TestHostAllowlistMiddleware(t *testing.T) {
 			if rec.Code != tc.wantStatus {
 				t.Errorf("status: got %d, want %d (body=%q)", rec.Code, tc.wantStatus, rec.Body.String())
 			}
+			if tc.wantBodyContain != "" && !strings.Contains(rec.Body.String(), tc.wantBodyContain) {
+				t.Errorf("body: got %q, want substring %q", rec.Body.String(), tc.wantBodyContain)
+			}
 			passed := rec.Code == http.StatusOK
 			if passed && !nextCalled {
 				t.Errorf("expected next handler called when status is 200")
@@ -157,7 +194,7 @@ func TestHostAllowlistMiddleware(t *testing.T) {
 }
 
 func TestHostAllowlistMiddleware_DisabledWhenEmpty(t *testing.T) {
-	// Length-0 allowlist short-circuits at the call site (NewAdminRouter
+	// Length-0 allowlist short-circuits at the call site (BuildAdminRouter
 	// skips the wrap). But the middleware itself, when constructed with
 	// an empty list, MUST reject everything — there is no "open by
 	// default" mode for the middleware itself. The router-level skip is
@@ -248,7 +285,7 @@ func TestAdminRouterHostAllowlistGatesLogin(t *testing.T) {
 	stores := newTestStores()
 	tickets := auth.NewTicketStore(5 * time.Minute)
 	allowed := []string{"localhost", "127.0.0.1"}
-	r := server.NewAdminRouter("the-key", nil, stores, "GCM", tickets, allowed)
+	r, _ := server.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, allowed)
 
 	srv := httptest.NewServer(r)
 	defer srv.Close()

@@ -59,23 +59,36 @@ func (r *recordingMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // Patterns returns a sorted, de-duplicated copy of every registered
 // pattern. Stable output keeps the boot log diff-friendly across runs.
+// (A pattern registered against multiple HTTP methods on the SAME
+// ServeMux is illegal — the stdlib panics — so duplicates here would
+// only come from a second registration on the same recordingMux, which
+// we collapse defensively.)
 func (r *recordingMux) Patterns() []string {
 	if len(r.patterns) == 0 {
 		return nil
 	}
 	out := make([]string, len(r.patterns))
 	copy(out, r.patterns)
-	sort.Strings(out)
-	// de-duplicate after sort (a pattern registered against multiple
-	// HTTP methods on the SAME ServeMux is illegal — the stdlib panics
-	// — so duplicates here would only come from a second registration
-	// on the same recordingMux, which we treat defensively).
+	sortDedupePatterns(&out)
+	return out
+}
+
+// sortDedupePatterns sorts in place and de-duplicates adjacent equal
+// entries. Centralized so the protocol-listener and admin-listener
+// route enumerators (BuildProtocolRouter and BuildAdminRouter) and
+// recordingMux.Patterns produce byte-identical output shapes.
+func sortDedupePatterns(p *[]string) {
+	if len(*p) == 0 {
+		return
+	}
+	s := *p
+	sort.Strings(s)
 	w := 0
-	for i, p := range out {
-		if i == 0 || p != out[w-1] {
-			out[w] = p
+	for i, v := range s {
+		if i == 0 || v != s[w-1] {
+			s[w] = v
 			w++
 		}
 	}
-	return out[:w]
+	*p = s[:w]
 }

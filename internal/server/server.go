@@ -321,7 +321,12 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 // can connect without presenting a cert. The SEP2 protocol listener keeps
 // its own RequireAnyClientCert + manual-verify posture untouched.
 func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error) (*http.Server, string, error) {
-	addr := cfg.EffectiveAdminListen()
+	// IEEE-136: resolve the operator-supplied env value into the actual
+	// bind string. A bare ":<port>" gets a loopback default so the admin
+	// listener is safe-by-default; any explicit host (0.0.0.0, an LAN IP,
+	// [::]) is honored verbatim. The banner still surfaces the env value
+	// (see buildBannerInput) — only the net.Listen site uses the resolved.
+	addr := config.ResolveAdminBind(cfg.EffectiveAdminListen())
 
 	tickets := auth.NewTicketStore(30 * time.Second)
 	adminRouter := NewAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets)

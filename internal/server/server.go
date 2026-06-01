@@ -218,7 +218,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	notifier := subscription.NewManager(stores.Subscriptions, subscriptionWorkers, subscriptionQueueSize)
 	go notifier.Start(ctx)
 
-	router := NewRouter(cfg, stores, svc, serverSFDI, serverLFDI, notifier)
+	router, protocolRoutes := BuildProtocolRouter(cfg, stores, svc, serverSFDI, serverLFDI, notifier)
 
 	if cfg.EnableCCM {
 		// Bridge: inject gotls connection state into request context
@@ -272,18 +272,28 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	var (
 		adminSrv     *http.Server
 		adminTLSDesc string
+		adminAddr    string
+		adminRoutes  []string
 	)
 	tlsModeName := "GCM"
 	if cfg.EnableCCM {
 		tlsModeName = "CCM-8"
 	}
 	if cfg.EffectiveAdminListen() != "" && svc != nil {
-		adminSrv, adminTLSDesc, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh)
+		adminSrv, adminTLSDesc, adminAddr, adminRoutes, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh)
 		if err != nil {
 			_ = protocolSrv.Close()
 			return fmt.Errorf("admin server: %w", err)
 		}
 	}
+
+	// IEEE-140: enumerate routes mounted on each listener at boot. The
+	// /api/certs/* mis-mount that became Leon CRITICAL on PR #246 was
+	// hard to spot by reading router.go; surfacing every route here at
+	// startup means a duplicate / cross-listener mount lands in the
+	// boot log on first run. Defense-in-depth observability companion
+	// to the routing-scope test pinned by router_certs_scope_test.go.
+	log.Print("\n" + RenderRoutesLog(cfg.Addr, protocolRoutes, adminAddr, adminRoutes))
 
 	// IEEE-112: print the operator-facing connection-details banner once
 	// after both listeners are up. Banner is log output only — it does not
@@ -320,7 +330,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 // Path A still works for cert-bearing operators while Bearer/cookie clients
 // can connect without presenting a cert. The SEP2 protocol listener keeps
 // its own RequireAnyClientCert + manual-verify posture untouched.
-func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error) (*http.Server, string, error) {
+func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error) (*http.Server, string, string, []string, error) {
 	// IEEE-136: resolve the operator-supplied env value into the actual
 	// bind string. A bare ":<port>" gets a loopback default so the admin
 	// listener is safe-by-default; any explicit host (0.0.0.0, an LAN IP,
@@ -343,11 +353,11 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	}
 
 	tickets := auth.NewTicketStore(30 * time.Second)
-	adminRouter := NewAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets)
+	adminRouter, adminRoutes := BuildAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets)
 
 	adminListener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, "", fmt.Errorf("admin listen: %w", err)
+		return nil, "", "", nil, fmt.Errorf("admin listen: %w", err)
 	}
 
 	serveListener := adminListener
@@ -356,7 +366,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		tlsCfg, desc, err := buildAdminTLSConfig(cfg)
 		if err != nil {
 			_ = adminListener.Close()
-			return nil, "", fmt.Errorf("admin TLS config: %w", err)
+			return nil, "", "", nil, fmt.Errorf("admin TLS config: %w", err)
 		}
 		serveListener = tls.NewListener(adminListener, tlsCfg)
 		tlsModeDescription = desc
@@ -374,7 +384,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		errCh <- adminSrv.Serve(serveListener)
 	}()
 
-	return adminSrv, tlsModeDescription, nil
+	return adminSrv, tlsModeDescription, addr, adminRoutes, nil
 }
 
 // buildBannerInput projects the runtime config + derived identity into the

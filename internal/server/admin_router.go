@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"sort"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
@@ -17,7 +18,19 @@ import (
 //     ticket exchange). Guarded by AdminAuthMiddleware which supports mTLS,
 //     Bearer, query-param ticket, and the IEEE-095 admin_ticket cookie.
 func NewAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore) http.Handler {
-	authed := http.NewServeMux()
+	h, _ := BuildAdminRouter(adminKey, svc, stores, tlsMode, tickets)
+	return h
+}
+
+// BuildAdminRouter is the IEEE-140 sibling that returns the admin
+// router AND the canonical pattern list mounted under it. Patterns
+// from BOTH the public outer mux (login routes) and the authed inner
+// mux are merged into one sorted list, prefixed appropriately —
+// callers (the boot-time route enumerator) want a single flat view of
+// every admin-listener route. NewAdminRouter delegates here. Pre-
+// sorted and deduplicated; see recordingMux.Patterns.
+func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore) (http.Handler, []string) {
+	authed := newRecordingMux()
 
 	// Certificate management API
 	if svc != nil {
@@ -62,12 +75,45 @@ func NewAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stor
 	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets)(authed)
 
 	// Outer mux: login routes are public; everything else is authed.
+	// IEEE-138 (bundle B) wraps authedWithMiddleware with a Host-allowlist
+	// middleware at the `outer.Handle("/", ...)` line — leave that wrap
+	// point clean.
 	outer := http.NewServeMux()
 	outer.HandleFunc("GET /login", HandleLoginPage(""))
 	outer.HandleFunc("POST /auth/login", HandleLoginSubmit(adminKey, tickets))
 	outer.Handle("/", authedWithMiddleware)
 
-	return outer
+	// IEEE-140: assemble the final pattern list. The two public outer
+	// routes (login form + login submit) join the inner authed routes
+	// so the boot-time enumerator sees a single flat list per listener.
+	// Sort + dedup runs through recordingMux.Patterns at the end of the
+	// merge.
+	merged := append([]string{
+		"GET /login",
+		"POST /auth/login",
+	}, authed.Patterns()...)
+	sortDedupePatterns(&merged)
+
+	return outer, merged
+}
+
+// sortDedupePatterns sorts in place and de-duplicates adjacent equal
+// entries. Centralized so the protocol and admin path produce
+// byte-identical output shapes.
+func sortDedupePatterns(p *[]string) {
+	if len(*p) == 0 {
+		return
+	}
+	s := *p
+	sort.Strings(s)
+	w := 0
+	for i, v := range s {
+		if i == 0 || v != s[w-1] {
+			s[w] = v
+			w++
+		}
+	}
+	*p = s[:w]
 }
 
 func handleIssueTicket(tickets *auth.TicketStore) http.HandlerFunc {

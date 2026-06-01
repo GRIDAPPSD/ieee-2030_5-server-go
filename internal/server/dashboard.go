@@ -44,8 +44,11 @@ func NewDashboardHandler(stores *Stores, tlsMode string) *DashboardHandler {
 	}
 }
 
-// RegisterRoutes adds dashboard routes to the admin mux.
-func (d *DashboardHandler) RegisterRoutes(mux *http.ServeMux) {
+// RegisterRoutes adds dashboard routes to the admin mux. Accepts the
+// IEEE-140 routeRegistrar interface (satisfied by both *http.ServeMux
+// and *recordingMux) so dashboard patterns participate in the boot-
+// time route enumeration.
+func (d *DashboardHandler) RegisterRoutes(mux routeRegistrar) {
 	mux.HandleFunc("GET /", d.handleDashboardPage)
 	mux.HandleFunc("GET /dashboard/events", d.handleSSE)
 	mux.HandleFunc("GET /dashboard/data", d.handleData)

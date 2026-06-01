@@ -352,6 +352,17 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		log.Print(msg)
 	}
 
+	// IEEE-137 follow-up (Wren MED-4): when the operator silences the
+	// non-loopback warning by setting SEP2_ADMIN_BEHIND_PROXY=true, drop
+	// a one-shot INFO line in the boot log so the operator-trust signal
+	// is recorded for incident-response triage. The warning itself is
+	// suppressed unconditionally (operator-trust signal); this INFO is
+	// the audit trail.
+	if cfg.AdminBehindProxy {
+		log.Printf("admin: SEP2_ADMIN_BEHIND_PROXY=true on %s; trusting upstream proxy to inject X-Forwarded-For/Forwarded for AdminAuthMiddleware Path 0",
+			addr)
+	}
+
 	tickets := auth.NewTicketStore(30 * time.Second)
 	// IEEE-138: resolve the admin host-header allowlist from the static
 	// defaults plus operator-supplied SEP2_ADMIN_ALLOWED_HOSTS extras.

@@ -101,6 +101,12 @@ func TestIsLoopbackBind(t *testing.T) {
 		{"127.0.0.1:8444", true},
 		{"127.0.0.5:8444", true}, // entire 127.0.0.0/8 is loopback
 		{"[::1]:8444", true},
+		// HIGH-3 (Tess): IPv4-in-IPv6 mapped form parses as loopback.
+		// net.ParseIP("::ffff:127.0.0.1") returns a non-nil IP whose
+		// IsLoopback() is true; pin that so a future net-package or
+		// helper change cannot silently bypass the warning gate on
+		// dual-stack listeners.
+		{"[::ffff:127.0.0.1]:8444", true},
 		{"0.0.0.0:8444", false},
 		{"[::]:8444", false},
 		{"192.168.1.5:8444", false},

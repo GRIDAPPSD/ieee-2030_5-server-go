@@ -51,7 +51,7 @@ const testMutationTokenHeader = "X-CSIP-Test-Token"
 const maxMutationBody = 1 << 16 // 64 KiB
 
 // RegisterMutationHandlers wires the test-only mutation HTTP endpoints
-// onto top. It is the entry point called from NewRouter. The build-tag
+// onto top. It is the entry point called from BuildProtocolRouter. The build-tag
 // stub in test_mutations_notest.go provides a no-op companion for
 // production builds.
 //

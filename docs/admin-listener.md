@@ -58,6 +58,45 @@ If you hit `error:0A0000C6:SSL routines::packet length too long`, the
 admin listener is in plain-HTTP mode and you sent it TLS bytes — drop
 the `https://` or set `SEP2_ADMIN_TLS=true`.
 
+## Host-header allowlist (DNS-rebinding defense, IEEE-138)
+
+The admin listener wraps every request in a Host-header allowlist before
+the auth chain runs. The threat: with `ieee2030-5.local` advertised over
+mDNS (IEEE-133) and a loopback admin bind, a DNS-rebinding attacker can
+resolve a malicious domain to `127.0.0.1`, lure a browser to a page
+hosted at that domain, and have the browser's same-origin requests hit
+the admin port. The IEEE-132 loopback bypass admits because RemoteAddr
+is loopback. The host gate is the defense-in-depth.
+
+A request whose `Host` header is not on the allowlist receives HTTP 421
+Misdirected Request and never reaches the auth middleware. An empty
+`Host` on HTTP/1.1 returns 400 (RFC 7230 §5.4 violation).
+
+The static defaults — always installed — are:
+
+- `localhost`
+- `127.0.0.1`
+- `::1`
+- `ieee2030-5.local` (the IEEE-133 mDNS hostname)
+
+Allowlist entries match BOTH the bare host and the host-with-port form,
+so an entry of `localhost` matches a `Host: localhost:8444` header from
+a browser hitting the default admin bind.
+
+`SEP2_ADMIN_ALLOWED_HOSTS` is a CSV of additional entries appended to
+the defaults. There is no opt-out: the local-dev defaults stay
+installed even when the env var is set. Use it when fronting the admin
+listener with Caddy on a public hostname:
+
+```bash
+export SEP2_ADMIN_ALLOWED_HOSTS=admin.example.com,admin.example.lan
+```
+
+The protocol listener at `:443` is NOT host-gated: devices cannot be
+relied upon to send a particular `Host` header, and the SEP2 wire is
+already protected by `RequireAnyClientCert` plus a manual chain walk.
+This gate is admin-mux-only.
+
 ## Quick start
 
 ```bash

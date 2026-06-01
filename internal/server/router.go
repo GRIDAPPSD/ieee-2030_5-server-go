@@ -69,23 +69,20 @@ type Stores struct {
 	Responses                *memory.ScopedStore[sep2.Response]
 }
 
-// NewRouter creates the HTTP router for the protocol listener. The notifier
-// is invoked on resource state changes that drive subscription fan-out
-// (e.g. CSIP V1.2 MAINT-002 EndDevice DELETE). Pass nil to disable
-// notification — tests that don't care about subscriptions can do this.
-func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService, serverSFDI, serverLFDI string, notifier handler.ResourceNotifier) http.Handler {
-	h, _ := BuildProtocolRouter(cfg, stores, svc, serverSFDI, serverLFDI, notifier)
-	return h
-}
-
-// BuildProtocolRouter is the IEEE-140 sibling that returns the protocol
-// router AND the canonical pattern list mounted on its protocol mux.
-// NewRouter delegates to this helper; callers that need to enumerate
-// routes for the boot-time log call this directly. The pattern list is
-// pre-sorted and deduplicated (see recordingMux.Patterns). The
-// /test/mutations/* surface (csip_test_hooks tag) is intentionally NOT
-// reflected — it is out-of-band by design and only present in non-
-// production builds.
+// BuildProtocolRouter creates the HTTP router for the protocol listener
+// AND returns the canonical pattern list mounted on its protocol mux.
+// The notifier is invoked on resource state changes that drive
+// subscription fan-out (e.g. CSIP V1.2 MAINT-002 EndDevice DELETE).
+// Pass nil to disable notification — tests that don't care about
+// subscriptions can do this.
+//
+// The pattern list is pre-sorted and deduplicated (see
+// recordingMux.Patterns). The /test/mutations/* surface
+// (csip_test_hooks tag) is intentionally NOT reflected — it is
+// out-of-band by design and only present in non-production builds.
+//
+// Test callers that don't need the pattern list discard the second
+// return value with `_`.
 func BuildProtocolRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService, serverSFDI, serverLFDI string, notifier handler.ResourceNotifier) (http.Handler, []string) {
 	top := http.NewServeMux()
 
@@ -125,7 +122,7 @@ func BuildProtocolRouter(cfg *config.Config, stores *Stores, svc *handler.AdminC
 	// with the loopback bypass in AdminAuthMiddleware (Path 0), exposing
 	// the cert API here would let any co-resident process mint server
 	// certs from the CA. The cert API is mounted on the admin listener
-	// only (NewAdminRouter), where AdminAuthMiddleware is the intended
+	// only (BuildAdminRouter), where AdminAuthMiddleware is the intended
 	// guard and the bind address is operator-controlled.
 
 	// IEEE-024: test-only mutation surface for the CSIP V1.2 conformance

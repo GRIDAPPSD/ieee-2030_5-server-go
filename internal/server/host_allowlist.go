@@ -4,6 +4,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/discovery"
@@ -88,7 +89,7 @@ func HostAllowlistMiddleware(allowed []string) func(http.Handler) http.Handler {
 			}
 
 			log.Printf("admin: rejecting request with disallowed Host header %q from %s %s %s (allowlist: %v)",
-				host, r.RemoteAddr, r.Method, r.URL.Path, sortedKeys(allowSet))
+				host, r.RemoteAddr, r.Method, r.URL.Path, allowedKeys(allowSet))
 			http.Error(w, "Misdirected Request", http.StatusMisdirectedRequest)
 		})
 	}
@@ -139,14 +140,16 @@ func ResolveAdminAllowedHosts(extras []string) []string {
 	return out
 }
 
-// sortedKeys returns the keys of m in stable order for log output. We
-// don't sort lexicographically with sort.Strings to avoid the import
-// just for log decoration; insertion-stable order is fine because the
-// log line is human-debug, not machine-parsed.
-func sortedKeys(m map[string]struct{}) []string {
+// allowedKeys returns the keys of m sorted lexicographically for log
+// output. Map iteration order in Go is randomized, so the previous
+// "insertion-stable order" claim was wrong — sorting gives diff-friendly
+// log lines across runs and lets operators eyeball-compare allowlists
+// from different boots.
+func allowedKeys(m map[string]struct{}) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
 	}
+	sort.Strings(out)
 	return out
 }

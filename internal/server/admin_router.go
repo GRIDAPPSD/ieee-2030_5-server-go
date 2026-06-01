@@ -1,45 +1,40 @@
 package server
 
 import (
+	"log"
 	"net/http"
-	"sort"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 )
 
-// NewAdminRouter creates the admin router.
-//
-// Three layers, outermost first:
+// BuildAdminRouter creates the admin router AND returns the canonical
+// pattern list mounted under it. Three layers, outermost first:
 //  1. Host-header allowlist (IEEE-138) — rejects any request whose Host
 //     header isn't a hostname this server claims (loopback, localhost, the
 //     IEEE-133 mDNS hostname, plus operator-extended entries from
 //     SEP2_ADMIN_ALLOWED_HOSTS). DNS-rebinding defense-in-depth at the
 //     admin boundary; runs BEFORE auth so a wrong-Host request never
 //     reaches the auth chain. allowedHosts nil/empty disables the gate
-//     (test paths and the few callers that pre-IEEE-138 didn't supply
-//     hosts).
+//     (test paths only — the production caller in startAdminServer
+//     always supplies the resolved defaults; an empty allowlist logs a
+//     loud WARNING at construction time).
 //  2. Public outer mux — /login, /auth/login (login form + submit). These
 //     routes are unauthenticated by design: the operator cannot reach the
 //     dashboard without first hitting them.
 //  3. Authenticated inner mux — everything else (dashboard, /api/*, SSE,
 //     ticket exchange). Guarded by AdminAuthMiddleware which supports mTLS,
 //     Bearer, query-param ticket, and the IEEE-095 admin_ticket cookie.
-func NewAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, allowedHosts []string) http.Handler {
-	h, _ := BuildAdminRouter(adminKey, svc, stores, tlsMode, tickets, allowedHosts)
-	return h
-}
-
-// BuildAdminRouter is the IEEE-140 sibling that returns the admin
-// router AND the canonical pattern list mounted under it. Patterns
-// from BOTH the public outer mux (login routes) and the authed inner
-// mux are merged into one sorted list, prefixed appropriately —
-// callers (the boot-time route enumerator) want a single flat view of
-// every admin-listener route. NewAdminRouter delegates here. Pre-
-// sorted and deduplicated; see recordingMux.Patterns. The IEEE-138
-// host-header allowlist wraps the outer mux when allowedHosts is
-// non-empty; the returned pattern list reflects routes mounted under
-// the listener regardless of host gating.
+//
+// Patterns from BOTH the public outer mux (login routes) and the authed
+// inner mux are merged into one sorted, deduplicated list — callers
+// (the boot-time route enumerator) want a single flat view of every
+// admin-listener route. The IEEE-138 host-header allowlist wraps the
+// outer mux when allowedHosts is non-empty; the returned pattern list
+// reflects routes mounted under the listener regardless of host gating.
+//
+// Test callers that don't need the pattern list discard the second
+// return value with `_`.
 func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, allowedHosts []string) (http.Handler, []string) {
 	authed := newRecordingMux()
 
@@ -114,27 +109,16 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 	var h http.Handler = outer
 	if len(allowedHosts) > 0 {
 		h = HostAllowlistMiddleware(allowedHosts)(outer)
+	} else {
+		// Wren MED-5: empty allowlist disables the DNS-rebinding gate.
+		// The production caller in startAdminServer always supplies the
+		// resolved defaults; this branch is reachable only by direct
+		// callers (test fixtures, future unscoped callers). Log loudly
+		// at construction so the only opt-out path leaves a tripwire in
+		// the boot log.
+		log.Printf("WARNING: admin: host-allowlist gate DISABLED (BuildAdminRouter called with empty allowedHosts) — DNS-rebinding defense is OFF for this admin router")
 	}
 	return h, merged
-}
-
-// sortDedupePatterns sorts in place and de-duplicates adjacent equal
-// entries. Centralized so the protocol and admin path produce
-// byte-identical output shapes.
-func sortDedupePatterns(p *[]string) {
-	if len(*p) == 0 {
-		return
-	}
-	s := *p
-	sort.Strings(s)
-	w := 0
-	for i, v := range s {
-		if i == 0 || v != s[w-1] {
-			s[w] = v
-			w++
-		}
-	}
-	*p = s[:w]
 }
 
 func handleIssueTicket(tickets *auth.TicketStore) http.HandlerFunc {

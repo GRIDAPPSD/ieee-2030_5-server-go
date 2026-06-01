@@ -54,7 +54,10 @@ certs:                    ## Generate CA, server, and device certificates
 
 # ─── Run ──────────────────────────────────────────────────────────
 
-run: build certs           ## Build, generate certs, and start server (GCM mode)
+# IEEE-136: SEP2_ADMIN_ADDR=:8444 binds admin to 127.0.0.1:8444 by default
+# (loopback). To make admin reachable off-box, override:
+#   SEP2_ADMIN_LISTEN=0.0.0.0:8444 make run-ccm
+run: build certs           ## Build, generate certs, and start server (GCM mode; admin on loopback :8444)
 	SEP2_ADDR=:8443 \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
@@ -64,7 +67,7 @@ run: build certs           ## Build, generate certs, and start server (GCM mode)
 	SEP2_ADMIN_KEY=admin \
 	./$(SERVER) serve
 
-run-ccm: build certs       ## Start server with CCM-8 cipher (spec-compliant)
+run-ccm: build certs       ## Start server with CCM-8 cipher (spec-compliant; admin on loopback :8444)
 	SEP2_ADDR=:8443 \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
@@ -75,7 +78,7 @@ run-ccm: build certs       ## Start server with CCM-8 cipher (spec-compliant)
 	SEP2_CCM=true \
 	./$(SERVER) serve
 
-run-full: build certs      ## Start with CCM + mDNS + admin dashboard
+run-full: build certs      ## Start with CCM + mDNS + admin dashboard (admin on loopback :8444)
 	SEP2_ADDR=:8443 \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \

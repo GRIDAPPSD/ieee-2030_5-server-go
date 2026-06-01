@@ -43,6 +43,13 @@ type Config struct {
 	AdminCert    string // admin listener cert PEM path; empty + AdminTLS = self-signed
 	AdminKeyFile string // admin listener key PEM path; required when AdminCert is set
 
+	// IEEE-138: extra Host-header values appended to the static admin
+	// allowlist (defaults: localhost, 127.0.0.1, ::1, ieee2030-5.local).
+	// Loaded from SEP2_ADMIN_ALLOWED_HOSTS as a CSV. Defense-in-depth
+	// against DNS rebinding at the admin listener boundary; the static
+	// defaults are NEVER opted out by setting this var.
+	AdminAllowedHosts []string // env SEP2_ADMIN_ALLOWED_HOSTS
+
 	TZOffset    int32  // timezone offset from UTC in seconds
 	DSTOffset   int32  // DST offset in seconds
 	DSTStart    int64  // DST start (unix seconds)

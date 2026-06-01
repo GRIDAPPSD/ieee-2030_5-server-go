@@ -64,6 +64,10 @@ func runServe() error {
 		AdminCert:    os.Getenv("SEP2_ADMIN_CERT"),
 		AdminKeyFile: os.Getenv("SEP2_ADMIN_KEY_FILE"),
 
+		// IEEE-138: extra Host-header allowlist entries (defense-in-depth
+		// against DNS rebinding). CSV; appended to the static defaults.
+		AdminAllowedHosts: parseCSV(os.Getenv("SEP2_ADMIN_ALLOWED_HOSTS")),
+
 		// IEEE-097: single-knob persistence. Empty SEP2_DATA_DIR keeps the
 		// historical pure in-memory behavior. SEP2_SUBSCRIPTION_STORE_PATH
 		// is preserved for back-compat and wins over the derived datadir

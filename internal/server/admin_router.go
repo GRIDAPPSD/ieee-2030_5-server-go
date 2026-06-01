@@ -9,14 +9,22 @@ import (
 
 // NewAdminRouter creates the admin router.
 //
-// Two layers:
-//  1. Public outer mux — /login, /auth/login (login form + submit). These
+// Three layers, outermost first:
+//  1. Host-header allowlist (IEEE-138) — rejects any request whose Host
+//     header isn't a hostname this server claims (loopback, localhost, the
+//     IEEE-133 mDNS hostname, plus operator-extended entries from
+//     SEP2_ADMIN_ALLOWED_HOSTS). DNS-rebinding defense-in-depth at the
+//     admin boundary; runs BEFORE auth so a wrong-Host request never
+//     reaches the auth chain. allowedHosts nil/empty disables the gate
+//     (test paths and the few callers that pre-IEEE-138 didn't supply
+//     hosts).
+//  2. Public outer mux — /login, /auth/login (login form + submit). These
 //     routes are unauthenticated by design: the operator cannot reach the
 //     dashboard without first hitting them.
-//  2. Authenticated inner mux — everything else (dashboard, /api/*, SSE,
+//  3. Authenticated inner mux — everything else (dashboard, /api/*, SSE,
 //     ticket exchange). Guarded by AdminAuthMiddleware which supports mTLS,
 //     Bearer, query-param ticket, and the IEEE-095 admin_ticket cookie.
-func NewAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore) http.Handler {
+func NewAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, allowedHosts []string) http.Handler {
 	authed := http.NewServeMux()
 
 	// Certificate management API
@@ -67,6 +75,12 @@ func NewAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stor
 	outer.HandleFunc("POST /auth/login", HandleLoginSubmit(adminKey, tickets))
 	outer.Handle("/", authedWithMiddleware)
 
+	// IEEE-138: wrap the entire outer mux in the host-header allowlist
+	// when the caller supplied one. The gate runs BEFORE login routes so
+	// /login and /auth/login are protected from DNS-rebinding too.
+	if len(allowedHosts) > 0 {
+		return HostAllowlistMiddleware(allowedHosts)(outer)
+	}
 	return outer
 }
 

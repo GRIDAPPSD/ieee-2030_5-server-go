@@ -83,7 +83,7 @@ func TestAdminListenerStillMountsCertAPI(t *testing.T) {
 	svc := newScopeTestCertService(t)
 	stores := newTestStores()
 
-	adminRouter := server.NewAdminRouter("test-admin-key", svc, stores, "", nil)
+	adminRouter := server.NewAdminRouter("test-admin-key", svc, stores, "", nil, nil)
 
 	cases := []struct {
 		name   string

@@ -324,7 +324,10 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	addr := cfg.EffectiveAdminListen()
 
 	tickets := auth.NewTicketStore(30 * time.Second)
-	adminRouter := NewAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets)
+	// IEEE-138: resolve the admin host-header allowlist from the static
+	// defaults plus operator-supplied SEP2_ADMIN_ALLOWED_HOSTS extras.
+	allowedHosts := ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
+	adminRouter := NewAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets, allowedHosts)
 
 	adminListener, err := net.Listen("tcp", addr)
 	if err != nil {

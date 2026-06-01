@@ -38,7 +38,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 	defer func() { _ = adminListener.Close() }()
 
 	adminTLSListener := tls.NewListener(adminListener, adminTLSCfg)
-	adminRouter := server.NewAdminRouter("test-admin-key", env.svc, nil, "GCM", nil)
+	adminRouter := server.NewAdminRouter("test-admin-key", env.svc, nil, "GCM", nil, nil)
 	adminSrv := &http.Server{Handler: adminRouter}
 	go func() { _ = adminSrv.Serve(adminTLSListener) }()
 	defer func() { _ = adminSrv.Close() }()

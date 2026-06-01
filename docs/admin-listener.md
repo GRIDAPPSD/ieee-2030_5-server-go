@@ -79,6 +79,33 @@ runs against operator requests routed through Caddy. Proxies that strip
 `X-Forwarded-*` would defeat this safety; verify your proxy preserves
 the `Forwarded-*` headers (or `Forwarded` per RFC 7239).
 
+### Reverse-proxy XFF requirement (IEEE-137)
+
+`AdminAuthMiddleware` Path 0 admits requests that arrive over loopback
+with no proxy headers. That bypass is intentional — it makes a local
+operator session usable without juggling Bearer tokens — but it has a
+sharp edge when an upstream reverse proxy fronts the admin listener
+without injecting `X-Forwarded-For` or RFC 7239 `Forwarded`. In that
+configuration the proxy relays public traffic to the loopback admin
+socket, the relayed connection looks loopback-local from the listener's
+view, and Path 0 admits with no creds.
+
+**nginx's default config does NOT inject `X-Forwarded-*`.** A stock-
+nginx admin front-end would silently expose the admin surface and the
+cert API to public traffic. Caddy injects `X-Forwarded-For` by default;
+HAProxy needs `option forwardfor`; AWS ALB injects automatically;
+Traefik injects by default. Verify your proxy.
+
+When the admin listener is bound to a non-loopback address
+(`SEP2_ADMIN_LISTEN=0.0.0.0:8444` or any specific interface IP) and
+`SEP2_ADMIN_BEHIND_PROXY=true` is NOT set, the server logs a startup
+WARNING explaining the requirement. Set `SEP2_ADMIN_BEHIND_PROXY=true`
+once the upstream proxy is verified to inject the headers.
+
+For loopback-only admin (the IEEE-136 default for bare-port input),
+the warning does not fire — there is no proxy gap to mind because no
+public traffic can reach the listener.
+
 If you hit `error:0A0000C6:SSL routines::packet length too long`, the
 admin listener is in plain-HTTP mode and you sent it TLS bytes — drop
 the `https://` or set `SEP2_ADMIN_TLS=true`.

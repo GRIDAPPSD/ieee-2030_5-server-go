@@ -328,6 +328,20 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	// (see buildBannerInput) — only the net.Listen site uses the resolved.
 	addr := config.ResolveAdminBind(cfg.EffectiveAdminListen())
 
+	// IEEE-137: warn loudly when the admin listener is bound to a non-
+	// loopback address WITHOUT a proxy hint. Without an upstream proxy
+	// injecting X-Forwarded-For/Forwarded, AdminAuthMiddleware Path 0
+	// admits ALL traffic as loopback-local (the SEP2 protocol listener
+	// uses RequireAnyClientCert and the loopback bypass admits any
+	// request that arrives over loopback with no XFF). nginx's stock
+	// config does NOT inject XFF; an operator who fronts the admin
+	// listener with stock-nginx would silently expose the admin surface
+	// to public traffic. The warning is doc-and-startup defense in depth;
+	// IEEE-136 is the structural fix.
+	if msg := adminProxyWarning(addr, cfg.AdminBehindProxy); msg != "" {
+		log.Print(msg)
+	}
+
 	tickets := auth.NewTicketStore(30 * time.Second)
 	adminRouter := NewAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets)
 
@@ -457,6 +471,56 @@ func parsePort(addr string) int {
 		}
 	}
 	return 443
+}
+
+// adminProxyWarning returns the IEEE-137 startup-warning text when the
+// admin listener is bound to a non-loopback address AND the operator
+// has not declared an upstream proxy. Returns empty string when no
+// warning is warranted (loopback bind, or proxy hint set, or empty
+// addr — caller already gates the disabled case).
+//
+// The warning explains the failure mode in operator-facing terms: an
+// upstream proxy MUST inject X-Forwarded-For (or RFC 7239 Forwarded)
+// for AdminAuthMiddleware Path 0's loopback-bypass decline to function.
+// Pure function so tests can assert content directly without intercepting
+// log output.
+func adminProxyWarning(addr string, behindProxy bool) string {
+	if addr == "" || behindProxy {
+		return ""
+	}
+	if isLoopbackBind(addr) {
+		return ""
+	}
+	return "WARNING: admin listener bound to non-loopback address " + addr +
+		" without SEP2_ADMIN_BEHIND_PROXY=true. " +
+		"AdminAuthMiddleware Path 0 declines requests that carry " +
+		"X-Forwarded-For/Forwarded headers, but stock nginx does NOT " +
+		"inject those headers by default — an unconfigured nginx in " +
+		"front of this listener would let all relayed traffic look " +
+		"loopback-local and bypass admin auth. Configure your upstream " +
+		"proxy to inject X-Forwarded-For (or Forwarded per RFC 7239), " +
+		"then set SEP2_ADMIN_BEHIND_PROXY=true to silence this warning. " +
+		"For loopback-only admin, leave SEP2_ADMIN_LISTEN as :<port> " +
+		"(IEEE-136 default)."
+}
+
+// isLoopbackBind reports whether addr is bound to a loopback host.
+// Used by IEEE-137's warning gate. Accepts a "host:port" string; treats
+// the empty host as non-loopback (caller already resolves bare
+// ":<port>" via ResolveAdminBind to "127.0.0.1:<port>" so this case
+// should not arise in production). Hostnames are NOT resolved — a name
+// like "admin.internal" is treated as non-loopback so the warning
+// fires. The hostname might be loopback but we will not gamble on it
+// without DNS, and a false-positive warning is harmless.
+func isLoopbackBind(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || host == "" {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // deriveServerIdentity parses the leaf certificate from a raw DER chain

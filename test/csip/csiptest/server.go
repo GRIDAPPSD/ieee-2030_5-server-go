@@ -337,7 +337,7 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 		notifier = mgr
 	}
 
-	router := server.NewRouter(cfg.serverConfig, cfg.stores, nil, serverSFDI, serverLFDI, notifier)
+	router, _ := server.BuildProtocolRouter(cfg.serverConfig, cfg.stores, nil, serverSFDI, serverLFDI, notifier)
 
 	if cfg.cipher == cipherCCM {
 		sepTLS.SetupCCMServer(httpSrv)

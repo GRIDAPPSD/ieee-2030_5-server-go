@@ -25,6 +25,31 @@ the IEEE-095 cookie all keep working.
 The `SEP2_ADMIN_ADDR` env var from the pre-IEEE-094 deployment is preserved
 as a deprecated alias: empty `SEP2_ADMIN_LISTEN` falls back to it.
 
+### Loopback by default (IEEE-136)
+
+A bare-port value (`:8444`, `:9443`) binds the admin listener to `127.0.0.1`
+by default, NOT `0.0.0.0`. This makes the admin surface safe-by-default —
+the SEP2 protocol listener admits any self-signed client cert
+(`tls.RequireAnyClientCert`), and the admin auth middleware's Path 0
+admits loopback requests with no proxy headers, so a `0.0.0.0` admin bind
+combined with the loopback bypass would hand the admin API to any network
+neighbor (or any co-resident process on a multi-tenant host). Defaulting
+bare ports to loopback closes that compound vulnerability.
+
+| Operator input | Effective bind |
+|---|---|
+| `SEP2_ADMIN_LISTEN=:8444` | `127.0.0.1:8444` (loopback default) |
+| `SEP2_ADMIN_LISTEN=127.0.0.1:8444` | `127.0.0.1:8444` (explicit, unchanged) |
+| `SEP2_ADMIN_LISTEN=0.0.0.0:8444` | `0.0.0.0:8444` (explicit public, unchanged) |
+| `SEP2_ADMIN_LISTEN=192.168.1.5:8444` | `192.168.1.5:8444` (explicit interface, unchanged) |
+| `SEP2_ADMIN_LISTEN=` (empty) | admin disabled |
+
+To expose admin off-box, name the bind explicitly: `SEP2_ADMIN_LISTEN=0.0.0.0:8444`
+(or a specific interface IP). The `make run`/`run-ccm`/`run-full` dev
+targets set `SEP2_ADMIN_ADDR=:8444` and now bind to loopback. To run
+those targets with a network-reachable admin, override:
+`SEP2_ADMIN_LISTEN=0.0.0.0:8444 make run-ccm`.
+
 ## TLS posture matrix
 
 | `SEP2_ADMIN_LISTEN` / `SEP2_ADMIN_ADDR` | `SEP2_ADMIN_TLS` | `SEP2_ADMIN_CERT` / `SEP2_ADMIN_KEY_FILE` | Behavior |

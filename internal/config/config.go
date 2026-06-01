@@ -47,6 +47,15 @@ type Config struct {
 	AdminCert    string // admin listener cert PEM path; empty + AdminTLS = self-signed
 	AdminKeyFile string // admin listener key PEM path; required when AdminCert is set
 
+	// IEEE-137: operator hint that the admin listener is fronted by an
+	// upstream reverse proxy that injects X-Forwarded-* / Forwarded
+	// headers. When the admin listener binds to a non-loopback address
+	// AND this is false, the server logs a startup WARNING explaining
+	// that without an upstream proxy, AdminAuthMiddleware Path 0 will
+	// admit ALL traffic as loopback-local (the proxy injects loopback
+	// XFF when relaying loopback-to-loopback). Env: SEP2_ADMIN_BEHIND_PROXY.
+	AdminBehindProxy bool
+
 	TZOffset    int32  // timezone offset from UTC in seconds
 	DSTOffset   int32  // DST offset in seconds
 	DSTStart    int64  // DST start (unix seconds)

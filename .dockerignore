@@ -1,0 +1,8 @@
+# Build artifacts and local-only material that must not enter the image.
+bin/
+certs/
+coverage.out
+coverage.html
+coverage-csip.out
+.git/
+e2e/node_modules/

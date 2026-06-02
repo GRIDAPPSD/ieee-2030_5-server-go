@@ -18,6 +18,10 @@ import (
 const version = "0.1.0"
 
 func main() {
+	// IEEE-172: route the stdlib log package through a slog JSON handler
+	// (stdout) so container logs are structured for the observability stack.
+	setupLogging(os.Stdout)
+
 	if len(os.Args) < 2 {
 		printUsage()
 		os.Exit(1)

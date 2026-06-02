@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/GRIDAPPSD/ieee-2030_5-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GRIDAPPSD/ieee-2030_5-go/actions/workflows/ci.yml) [![Go](https://img.shields.io/badge/go-1.26.3-blue)](https://go.dev/) [![License](https://img.shields.io/badge/License-BSD--3--Clause-blue)](LICENSE) [![IEEE 2030.5](https://img.shields.io/badge/IEEE%202030.5-CSIP%20V1.2-orange)](https://standards.ieee.org/ieee/2030.5/5897/)
 
-Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server, an inverter simulator client, and an admin dashboard.
+Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server and an admin dashboard.
 
 ## Documentation
 
@@ -25,8 +25,7 @@ The Go module path is `github.com/GRIDAPPSD/ieee-2030_5-go`.
 ## Build
 
 ```bash
-make build      # bin/sep2server only
-make build-all  # bin/sep2server and bin/inverterclient
+make build      # bin/sep2server
 ```
 
 Binaries land in `bin/`.
@@ -37,14 +36,11 @@ Binaries land in `bin/`.
 make run           # builds, generates certs, serves on :8443; admin on 127.0.0.1:8444 (loopback)
 make run-ccm       # same, with CCM-8 cipher suite (CSIP-conformant)
 make run-full      # CCM-8 plus mDNS plus admin dashboard
-make run-inverter  # inverter simulator against https://localhost:8443
 ```
 
-`make run-scenario SCENARIO=voltvar` runs the simulator with a specific scenario. `make list-scenarios` prints available scenarios.
-
-[CCM-8](docs/glossary.md) vs [GCM](docs/glossary.md), the run-inverter
-cipher caveat, and the operator profiles (`run-enphase`, `run-sunspec`)
-are all covered in [docs/csip.md](docs/csip.md). `make run` enables the
+[CCM-8](docs/glossary.md) vs [GCM](docs/glossary.md) and the operator
+profiles (`run-enphase`, `run-sunspec`) are covered in
+[docs/csip.md](docs/csip.md). `make run` enables the
 admin dashboard on `127.0.0.1:8444` (loopback) by default; for off-box
 access set `SEP2_ADMIN_LISTEN=0.0.0.0:8444`. See
 [docs/admin-listener.md](docs/admin-listener.md) for the bind matrix and
@@ -80,8 +76,7 @@ described in [docs/csip.md](docs/csip.md).
 ## Repository tour
 
 - `cmd/sep2server` — server binary entry point and cert subcommands (`serve`, `certs generate-*`, `version`)
-- `cmd/inverterclient` — inverter simulator CLI with scenarios and an HMI port
-- `internal/` — auth and tickets, cert generation, env config, mDNS discovery, XML codec, per-function-set handlers, simulator engine, paging, router and dashboard, subscription plumbing, and TLS bits
+- `internal/` — auth and tickets, cert generation, env config, mDNS discovery, XML codec, per-function-set handlers, paging, router and dashboard, subscription plumbing, and TLS bits
 - `pkg/sep2` — public Go types for every IEEE 2030.5 resource (DER, FSA, metering, mirror, subscription, etc.)
 - `pkg/store` — `Store` interface plus an in-memory implementation
 - `e2e/` — Playwright dashboard tests

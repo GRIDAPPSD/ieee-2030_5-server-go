@@ -52,7 +52,8 @@ func newRouterWithTokenAndStores(t *testing.T) (http.Handler, *server.Stores) {
 	t.Setenv(tmTokenEnv, tmTestToken)
 	stores := newTestStores()
 	cfg := &config.Config{}
-	return server.NewRouter(cfg, stores, nil, "", "", nil), stores
+	h, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", nil)
+	return h, stores
 }
 
 func postJSON(t *testing.T, h http.Handler, path string, token string, body any) *httptest.ResponseRecorder {
@@ -97,7 +98,7 @@ func TestMutationSurface_EmptyEnvDisablesSurface(t *testing.T) {
 	t.Setenv(tmTokenEnv, "")
 	stores := newTestStores()
 	cfg := &config.Config{}
-	h := server.NewRouter(cfg, stores, nil, "", "", nil)
+	h, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", nil)
 	rr := postJSON(t, h, tmEdevDelete, "anything", map[string]string{"end_device_id": "edev-1"})
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (surface should be off)", rr.Code)
@@ -387,7 +388,8 @@ func newRouterWithNotifier(t *testing.T) (http.Handler, *server.Stores, *recordi
 	stores := newTestStores()
 	cfg := &config.Config{}
 	n := &recordingNotifier{}
-	return server.NewRouter(cfg, stores, nil, "", "", n), stores, n
+	h, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", n)
+	return h, stores, n
 }
 
 // TestDERControlAdd_FiresNotification — IEEE-093. On successful Create
@@ -968,7 +970,7 @@ func TestFSASwap_NilFSAStore_InternalError(t *testing.T) {
 	stores := newTestStores()
 	stores.FSAs = nil
 	cfg := &config.Config{}
-	h := server.NewRouter(cfg, stores, nil, "", "", nil)
+	h, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", nil)
 
 	seedEndDevice(t, stores, "edev-1")
 	rr := postJSON(t, h, tmFSASwap, tmTestToken, map[string]any{
@@ -1164,7 +1166,7 @@ func TestSubscriptionCancel_StoreNil_InternalError(t *testing.T) {
 	stores := newTestStores()
 	stores.Subscriptions = nil
 	cfg := &config.Config{}
-	h := server.NewRouter(cfg, stores, nil, "", "", nil)
+	h, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", nil)
 
 	rr := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
 		"subscription_id": "sub-A",

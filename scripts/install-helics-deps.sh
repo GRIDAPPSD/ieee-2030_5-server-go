@@ -128,6 +128,8 @@ install_helics() {
     if [[ ! -d "${HELICS_DIR}/.git" ]]; then
         git clone "${HELICS_REPO_URL}" "${HELICS_DIR}"
     fi
+    local helics_old_head helics_new_head
+    helics_old_head="$(git -C "${HELICS_DIR}" rev-parse HEAD 2>/dev/null || echo "")"
     (
         cd "${HELICS_DIR}"
         git fetch --tags origin
@@ -136,6 +138,14 @@ install_helics() {
         # asio / zmq / fmtlib / spdlog / etc. as submodules.
         git submodule update --init --recursive
     )
+    helics_new_head="$(git -C "${HELICS_DIR}" rev-parse HEAD)"
+    # If the source tree advanced (or this is a re-run after a mid-build
+    # failure where the install guard didn't trip), nuke the build dir so
+    # cmake doesn't incrementally rebuild against mixed old/new sources.
+    if [[ -n "${helics_old_head}" && "${helics_old_head}" != "${helics_new_head}" && -d "${HELICS_DIR}/build" ]]; then
+        log "HELICS source advanced from ${helics_old_head:0:12}..${helics_new_head:0:12}; removing stale build dir"
+        rm -rf "${HELICS_DIR}/build"
+    fi
 
     log "Configuring HELICS build (prefix=${INSTALL_PREFIX})"
     (
@@ -184,6 +194,8 @@ install_gridlabd() {
     if [[ ! -d "${GRIDLABD_DIR}/.git" ]]; then
         git clone --branch "${GRIDLABD_BRANCH}" "${GRIDLABD_REPO_URL}" "${GRIDLABD_DIR}"
     fi
+    local gridlabd_old_head gridlabd_new_head
+    gridlabd_old_head="$(git -C "${GRIDLABD_DIR}" rev-parse HEAD 2>/dev/null || echo "")"
     (
         cd "${GRIDLABD_DIR}"
         git fetch origin "${GRIDLABD_BRANCH}"
@@ -192,6 +204,15 @@ install_gridlabd() {
         # Mandatory per the IEEE-170 constraint update.
         git submodule update --init --recursive
     )
+    gridlabd_new_head="$(git -C "${GRIDLABD_DIR}" rev-parse HEAD)"
+    # The script tracks feature/1478 (not a fixed SHA), so a re-pull may
+    # advance the tip. If the install guard failed (e.g. mid-cmake death
+    # on a prior run) AND the source advanced, blow away cmake-build/ so
+    # the configure step starts clean against the new source tree.
+    if [[ -n "${gridlabd_old_head}" && "${gridlabd_old_head}" != "${gridlabd_new_head}" && -d "${GRIDLABD_DIR}/cmake-build" ]]; then
+        log "GridLAB-D source advanced from ${gridlabd_old_head:0:12}..${gridlabd_new_head:0:12}; removing stale cmake-build dir"
+        rm -rf "${GRIDLABD_DIR}/cmake-build"
+    fi
 
     log "Configuring GridLAB-D build (prefix=${INSTALL_PREFIX}, HELICS=ON)"
     (
@@ -232,6 +253,13 @@ main() {
     log "  helics_broker --version        : $(helics_broker --version 2>&1 | head -1)"
     log "  gridlabd --version             : $(gridlabd --version 2>&1 | grep -v '^[[:space:]]*$' | head -1)"
     log "  gridlabd -L connection (HELICS): $(gridlabd -L connection 2>&1 | grep -i 'classes' | head -1)"
+    # Print resolved upstream SHAs so a re-run against a moved branch is
+    # visible. The header documents 5aef1a5f as the GridLAB-D feature/1478
+    # tip on 2026-06-02; the script tracks the branch (not the SHA), so
+    # this line is the operator's check that the installed code matches
+    # the documented snapshot.
+    log "  HELICS HEAD                    : $(git -C "${HELICS_DIR}" rev-parse HEAD 2>/dev/null || echo "(repo missing)")"
+    log "  GridLAB-D HEAD                 : $(git -C "${GRIDLABD_DIR}" rev-parse HEAD 2>/dev/null || echo "(repo missing)")"
 }
 
 main "$@"

@@ -19,7 +19,7 @@ import (
 func TestAdminRouterLoginPagePublic(t *testing.T) {
 	stores := newTestStores()
 	tickets := auth.NewTicketStore(5 * time.Minute)
-	r := server.NewAdminRouter("the-key", nil, stores, "GCM", tickets)
+	r, _ := server.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, nil)
 
 	srv := httptest.NewServer(r)
 	defer srv.Close()
@@ -38,7 +38,7 @@ func TestAdminRouterLoginPagePublic(t *testing.T) {
 func TestAdminRouterLoginCookieGrantsAccess(t *testing.T) {
 	stores := newTestStores()
 	tickets := auth.NewTicketStore(5 * time.Minute)
-	r := server.NewAdminRouter("the-key", nil, stores, "GCM", tickets)
+	r, _ := server.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, nil)
 
 	srv := httptest.NewServer(r)
 	defer srv.Close()
@@ -89,7 +89,7 @@ func TestAdminRouterLoginCookieGrantsAccess(t *testing.T) {
 func TestAdminRouterApiCertsInfoBehindAuth(t *testing.T) {
 	stores := newTestStores()
 	tickets := auth.NewTicketStore(5 * time.Minute)
-	r := server.NewAdminRouter("the-key", nil, stores, "GCM", tickets)
+	r, _ := server.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, nil)
 
 	srv := httptest.NewServer(r)
 	defer srv.Close()

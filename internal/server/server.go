@@ -218,7 +218,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	notifier := subscription.NewManager(stores.Subscriptions, subscriptionWorkers, subscriptionQueueSize)
 	go notifier.Start(ctx)
 
-	router := NewRouter(cfg, stores, svc, serverSFDI, serverLFDI, notifier)
+	router, protocolRoutes := BuildProtocolRouter(cfg, stores, svc, serverSFDI, serverLFDI, notifier)
 
 	if cfg.EnableCCM {
 		// Bridge: inject gotls connection state into request context
@@ -272,18 +272,28 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	var (
 		adminSrv     *http.Server
 		adminTLSDesc string
+		adminAddr    string
+		adminRoutes  []string
 	)
 	tlsModeName := "GCM"
 	if cfg.EnableCCM {
 		tlsModeName = "CCM-8"
 	}
 	if cfg.EffectiveAdminListen() != "" && svc != nil {
-		adminSrv, adminTLSDesc, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh)
+		adminSrv, adminTLSDesc, adminAddr, adminRoutes, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh)
 		if err != nil {
 			_ = protocolSrv.Close()
 			return fmt.Errorf("admin server: %w", err)
 		}
 	}
+
+	// IEEE-140: enumerate routes mounted on each listener at boot. The
+	// /api/certs/* mis-mount that became Leon CRITICAL on PR #246 was
+	// hard to spot by reading router.go; surfacing every route here at
+	// startup means a duplicate / cross-listener mount lands in the
+	// boot log on first run. Defense-in-depth observability companion
+	// to the routing-scope test pinned by router_certs_scope_test.go.
+	log.Print("\n" + RenderRoutesLog(cfg.Addr, protocolRoutes, adminAddr, adminRoutes))
 
 	// IEEE-112: print the operator-facing connection-details banner once
 	// after both listeners are up. Banner is log output only — it does not
@@ -320,15 +330,48 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 // Path A still works for cert-bearing operators while Bearer/cookie clients
 // can connect without presenting a cert. The SEP2 protocol listener keeps
 // its own RequireAnyClientCert + manual-verify posture untouched.
-func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error) (*http.Server, string, error) {
-	addr := cfg.EffectiveAdminListen()
+func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error) (*http.Server, string, string, []string, error) {
+	// IEEE-136: resolve the operator-supplied env value into the actual
+	// bind string. A bare ":<port>" gets a loopback default so the admin
+	// listener is safe-by-default; any explicit host (0.0.0.0, an LAN IP,
+	// [::]) is honored verbatim. The banner still surfaces the env value
+	// (see buildBannerInput) — only the net.Listen site uses the resolved.
+	addr := config.ResolveAdminBind(cfg.EffectiveAdminListen())
+
+	// IEEE-137: warn loudly when the admin listener is bound to a non-
+	// loopback address WITHOUT a proxy hint. Without an upstream proxy
+	// injecting X-Forwarded-For/Forwarded, AdminAuthMiddleware Path 0
+	// admits ALL traffic as loopback-local (the SEP2 protocol listener
+	// uses RequireAnyClientCert and the loopback bypass admits any
+	// request that arrives over loopback with no XFF). nginx's stock
+	// config does NOT inject XFF; an operator who fronts the admin
+	// listener with stock-nginx would silently expose the admin surface
+	// to public traffic. The warning is doc-and-startup defense in depth;
+	// IEEE-136 is the structural fix.
+	if msg := adminProxyWarning(addr, cfg.AdminBehindProxy); msg != "" {
+		log.Print(msg)
+	}
+
+	// IEEE-137 follow-up (Wren MED-4): when the operator silences the
+	// non-loopback warning by setting SEP2_ADMIN_BEHIND_PROXY=true, drop
+	// a one-shot INFO line in the boot log so the operator-trust signal
+	// is recorded for incident-response triage. The warning itself is
+	// suppressed unconditionally (operator-trust signal); this INFO is
+	// the audit trail.
+	if cfg.AdminBehindProxy {
+		log.Printf("admin: SEP2_ADMIN_BEHIND_PROXY=true on %s; trusting upstream proxy to inject X-Forwarded-For/Forwarded for AdminAuthMiddleware Path 0",
+			addr)
+	}
 
 	tickets := auth.NewTicketStore(30 * time.Second)
-	adminRouter := NewAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets)
+	// IEEE-138: resolve the admin host-header allowlist from the static
+	// defaults plus operator-supplied SEP2_ADMIN_ALLOWED_HOSTS extras.
+	allowedHosts := ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
+	adminRouter, adminRoutes := BuildAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets, allowedHosts)
 
 	adminListener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, "", fmt.Errorf("admin listen: %w", err)
+		return nil, "", "", nil, fmt.Errorf("admin listen: %w", err)
 	}
 
 	serveListener := adminListener
@@ -337,7 +380,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		tlsCfg, desc, err := buildAdminTLSConfig(cfg)
 		if err != nil {
 			_ = adminListener.Close()
-			return nil, "", fmt.Errorf("admin TLS config: %w", err)
+			return nil, "", "", nil, fmt.Errorf("admin TLS config: %w", err)
 		}
 		serveListener = tls.NewListener(adminListener, tlsCfg)
 		tlsModeDescription = desc
@@ -355,7 +398,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		errCh <- adminSrv.Serve(serveListener)
 	}()
 
-	return adminSrv, tlsModeDescription, nil
+	return adminSrv, tlsModeDescription, addr, adminRoutes, nil
 }
 
 // buildBannerInput projects the runtime config + derived identity into the
@@ -452,6 +495,56 @@ func parsePort(addr string) int {
 		}
 	}
 	return 443
+}
+
+// adminProxyWarning returns the IEEE-137 startup-warning text when the
+// admin listener is bound to a non-loopback address AND the operator
+// has not declared an upstream proxy. Returns empty string when no
+// warning is warranted (loopback bind, or proxy hint set, or empty
+// addr — caller already gates the disabled case).
+//
+// The warning explains the failure mode in operator-facing terms: an
+// upstream proxy MUST inject X-Forwarded-For (or RFC 7239 Forwarded)
+// for AdminAuthMiddleware Path 0's loopback-bypass decline to function.
+// Pure function so tests can assert content directly without intercepting
+// log output.
+func adminProxyWarning(addr string, behindProxy bool) string {
+	if addr == "" || behindProxy {
+		return ""
+	}
+	if isLoopbackBind(addr) {
+		return ""
+	}
+	return "WARNING: admin listener bound to non-loopback address " + addr +
+		" without SEP2_ADMIN_BEHIND_PROXY=true. " +
+		"AdminAuthMiddleware Path 0 declines requests that carry " +
+		"X-Forwarded-For/Forwarded headers, but stock nginx does NOT " +
+		"inject those headers by default — an unconfigured nginx in " +
+		"front of this listener would let all relayed traffic look " +
+		"loopback-local and bypass admin auth. Configure your upstream " +
+		"proxy to inject X-Forwarded-For (or Forwarded per RFC 7239), " +
+		"then set SEP2_ADMIN_BEHIND_PROXY=true to silence this warning. " +
+		"For loopback-only admin, leave SEP2_ADMIN_LISTEN as :<port> " +
+		"(IEEE-136 default)."
+}
+
+// isLoopbackBind reports whether addr is bound to a loopback host.
+// Used by IEEE-137's warning gate. Accepts a "host:port" string; treats
+// the empty host as non-loopback (caller already resolves bare
+// ":<port>" via ResolveAdminBind to "127.0.0.1:<port>" so this case
+// should not arise in production). Hostnames are NOT resolved — a name
+// like "admin.internal" is treated as non-loopback so the warning
+// fires. The hostname might be loopback but we will not gamble on it
+// without DNS, and a false-positive warning is harmless.
+func isLoopbackBind(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || host == "" {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // deriveServerIdentity parses the leaf certificate from a raw DER chain

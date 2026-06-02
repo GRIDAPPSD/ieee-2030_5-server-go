@@ -97,6 +97,45 @@ at its default `1`. Pick `2` only when the device physically moves
 between territories, and `3` only when issuing certs after the
 manufacturing line.
 
+### Hardware type — the manufacturer PEN (`--hw-type`)
+
+CSIP V1.2 §6.2 mandates that every device cert carry a critical Subject
+Alternative Name `otherName` of type `id-on-hardwareModuleName`
+(RFC 4108, OID `1.3.6.1.5.5.7.8.4`). The SAN value is an ASN.1 SEQUENCE
+of two fields:
+
+```
+HardwareModuleName ::= SEQUENCE {
+    hwType   OBJECT IDENTIFIER,   -- the manufacturer PEN
+    hwSerial OCTET STRING          -- the per-unit serial number
+}
+```
+
+`--hw-type` supplies the first field: the manufacturer's
+**IANA Private Enterprise Number (PEN)** as a dotted-decimal OID under
+the arc `1.3.6.1.4.1.<PEN>`. Every organization that issues device
+certificates registers its own PEN with IANA; registration is free and
+permanent. The PEN is the equivalent of "vendor namespace" for ASN.1
+OIDs — two devices from different vendors with the same serial number
+get distinct identities because their hwType OIDs differ.
+
+The SFDI and LFDI are SHA-256 hashes over the entire DER-encoded
+certificate (§6.3), so the PEN bytes are part of the input. The PEN
+does not appear in the SFDI/LFDI directly — it just makes the inputs
+distinct, so a serial-number collision across vendors does not collide
+on the wire.
+
+| Setting | Value | When to use |
+|---|---|---|
+| **Default** | `1.3.6.1.4.1.40732.99` | Simulator, development, interop tests, PR demos. The `.99` suffix under the IEEE 2030.5 PEN is a project convention for "test/dev" certs — no IANA reservation, just a marker that the PEN is not a real vendor. `make certs` and `make new-device` both use it. |
+| **Production** | Your organization's IANA-assigned PEN | Required for any cert that ships on real hardware. Look up at <https://www.iana.org/assignments/enterprise-numbers/> or apply for a new one (free, processed within ~1 week). Most large vendors registered theirs decades ago for SNMP. |
+| **Multi-vendor fleet** | Each vendor uses its own PEN | The server treats all PENs identically — no per-vendor wiring, no allowlist. CSIP only requires the SAN exists and is well-formed. |
+
+The server does NOT branch on the PEN at runtime: no validation against
+an allowlist, no per-vendor handling. CSIP §6.2 mandates the SAN is
+present and well-formed; that's it. The PEN is metadata, parallel to
+the device-type policy OID above.
+
 Inspect with:
 
 ```bash

@@ -77,42 +77,24 @@ certs:                    ## Generate CA, server, and device certificates
 #
 # DEVICE_NAME (rather than the more natural NAME) avoids collision with the
 # NAME env var that some desktop environments and shells set automatically.
+#
+# Implementation: the target is a thin dispatcher to scripts/new-device.sh.
+# All input validation (regex allowlists for DEVICE_NAME / SERIAL / HW_TYPE,
+# device-type enum, FORCE check, CA pre-flight) lives in the script. Make
+# does pure text substitution before the shell parses, so anything Make-
+# substituted into a shell line is an injection vector. Pushing the values
+# through `target-specific export` and reading them in bash with `[[ =~ ]]`
+# rejects shell-metachar / path-traversal payloads BEFORE any value reaches
+# a command substitution.
+new-device: export DEVICE_NAME := $(DEVICE_NAME)
+new-device: export SERIAL      := $(SERIAL)
+new-device: export HW_TYPE     := $(HW_TYPE)
+new-device: export DEVICE_TYPE := $(DEVICE_TYPE)
+new-device: export FORCE       := $(FORCE)
+new-device: export CERT_DIR    := $(CERT_DIR)
+new-device: export SERVER_BIN  := $(SERVER)
 new-device:                ## Mint a new device cert (DEVICE_NAME= SERIAL= required); prints PEM for the admin dashboard
-	@if [ -z "$(DEVICE_NAME)" ]; then \
-		echo "ERROR: DEVICE_NAME=<slug> is required (output prefix; creates $(CERT_DIR)/<DEVICE_NAME>.crt + .key)" >&2; \
-		echo "  example: make new-device DEVICE_NAME=inverter-2 SERIAL=INV-002" >&2; \
-		exit 2; \
-	fi
-	@if [ -z "$(SERIAL)" ]; then \
-		echo "ERROR: SERIAL=<hw-serial> is required (CSIP §6.2 HardwareModuleName SAN)" >&2; \
-		echo "  example: make new-device DEVICE_NAME=inverter-2 SERIAL=INV-002" >&2; \
-		exit 2; \
-	fi
-	@if [ ! -f $(CERT_DIR)/ca.crt ] || [ ! -f $(CERT_DIR)/ca.key ]; then \
-		echo "ERROR: CA missing under $(CERT_DIR)/ — run 'make certs' first to bootstrap the CA" >&2; \
-		exit 2; \
-	fi
-	@if [ -e $(CERT_DIR)/$(DEVICE_NAME).crt ] && [ "$(FORCE)" != "1" ]; then \
-		echo "ERROR: $(CERT_DIR)/$(DEVICE_NAME).crt already exists." >&2; \
-		echo "  Pick a different DEVICE_NAME, or pass FORCE=1 to overwrite (this destroys the old key — any deployed device using it loses access)." >&2; \
-		exit 1; \
-	fi
-	@$(SERVER) certs generate-device \
-		--ca $(CERT_DIR)/ca.crt --ca-key $(CERT_DIR)/ca.key \
-		--hw-serial '$(SERIAL)' \
-		--hw-type '$(if $(HW_TYPE),$(HW_TYPE),1.3.6.1.4.1.40732.99)' \
-		--device-type '$(if $(DEVICE_TYPE),$(DEVICE_TYPE),1)' \
-		--name '$(DEVICE_NAME)' --out $(CERT_DIR)
-	@echo
-	@echo "═══════════════════════════════════════════════════════════════════════════════"
-	@echo " Paste the PEM block below into the admin dashboard's \"Add End Device\" textarea"
-	@echo " (http://localhost:8444/ — Path 0 loopback bypass admits without creds)."
-	@echo " Then fill in Description and PIN, and click Add Device."
-	@echo "═══════════════════════════════════════════════════════════════════════════════"
-	@cat $(CERT_DIR)/$(DEVICE_NAME).crt
-	@echo "═══════════════════════════════════════════════════════════════════════════════"
-	@echo " Private key kept LOCAL: $(CERT_DIR)/$(DEVICE_NAME).key (do NOT paste; do NOT commit)"
-	@echo "═══════════════════════════════════════════════════════════════════════════════"
+	@./scripts/new-device.sh
 
 # ─── Run ──────────────────────────────────────────────────────────
 

@@ -1,21 +1,16 @@
-.PHONY: build build-all test test-cover test-race test-verbose test-e2e \
+.PHONY: build test test-cover test-race test-verbose test-e2e \
        test-csip-server test-csip-client \
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
        lint vet clean run run-ccm run-enphase run-sunspec certs new-device \
-       serve help verify-run-inverter-url
+       serve help
 
 SERVER   := bin/sep2server
-CLIENT   := bin/inverterclient
 CERT_DIR := certs
 
 # ─── Build ────────────────────────────────────────────────────────
 
 build:                    ## Build the server binary
 	go build -o $(SERVER) ./cmd/sep2server/
-
-build-all:                ## Build server and inverter client
-	go build -o $(SERVER) ./cmd/sep2server/
-	go build -o $(CLIENT) ./cmd/inverterclient/
 
 # ─── Test ─────────────────────────────────────────────────────────
 
@@ -186,8 +181,7 @@ run-enphase: build certs   ## Start server with Enphase root + EndDevice pre-see
 #
 # Device side (manual): point the inverter at https://localhost:8443 with
 # its SunSpec-issued client cert/key (e.g. sunspec/cert.pem + sunspec/key.pem
-# from the same test PKI bundle). For our own inverter simulator, prefer
-# `make run-inverter` against the locally-generated device cert instead.
+# from the same test PKI bundle).
 SUNSPEC_ROOTS ?= $(HOME)/knowledge/projects/ieee-2030_5-go/artifacts/inputs/csip-test-pki/sunspec/roots.pem
 
 run-sunspec: build certs   ## Start server trusting SunSpec CSIP test PKI roots (override SUNSPEC_ROOTS to relocate)
@@ -210,36 +204,6 @@ run-sunspec: build certs   ## Start server trusting SunSpec CSIP test PKI roots 
 	./$(SERVER) serve
 
 serve: run                 ## Alias for run
-
-# ─── Inverter Simulator ──────────────────────────────────────────
-
-SERVER_URL ?= https://localhost:8443
-
-run-inverter: build-all    ## Run inverter simulator (override target with SERVER_URL=...)
-	./$(CLIENT) \
-		--server $(SERVER_URL) \
-		--cert $(CERT_DIR)/device.crt \
-		--key $(CERT_DIR)/device.key \
-		--ca $(CERT_DIR)/ca.crt \
-		--scenario normal \
-		--timescale 120 \
-		--hmi-port 8080
-
-run-scenario: build-all    ## Run a specific scenario (use SCENARIO=voltvar)
-	./$(CLIENT) \
-		--server https://localhost:8443 \
-		--cert $(CERT_DIR)/device.crt \
-		--key $(CERT_DIR)/device.key \
-		--ca $(CERT_DIR)/ca.crt \
-		--scenario $(or $(SCENARIO),normal) \
-		--timescale 120 \
-		--hmi-port 8080
-
-list-scenarios: build-all  ## List available inverter test scenarios
-	./$(CLIENT) --list-scenarios
-
-verify-run-inverter-url:   ## Smoke-check that run-inverter honors SERVER_URL env override (IEEE-026)
-	bash scripts/test-run-inverter-url.sh
 
 # ─── EPRI Client Interop ──────────────────────────────────────────
 
@@ -292,7 +256,7 @@ test-csip-race:           ## Race detector on the CSIP suite with csip_test_hook
 # Achieved threshold at IEEE-106 merge: 79.1% scoped. Gate floored at
 # 78% (1pp below for measurement noise) per Phase 8 doc (IEEE-107).
 # Ratcheted to 80% at IEEE-121 merge (post-interop, per workspace TDD rule).
-CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/encoding/...,./internal/handler/...,./internal/inverter/...,./internal/paging/...,./internal/server/...,./internal/subscription/...,./internal/tls,./internal/tls/ccm
+CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/encoding/...,./internal/handler/...,./internal/paging/...,./internal/server/...,./internal/subscription/...,./internal/tls,./internal/tls/ccm
 CSIP_COVER_THRESHOLD ?= 80
 
 test-csip-cover:          ## Run CSIP suite with scoped coverage profile (writes coverage-csip.out)

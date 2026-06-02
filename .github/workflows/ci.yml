@@ -90,7 +90,7 @@ jobs:
         run: make vet
 
       - name: Build
-        run: make build-all
+        run: make build
 
       - name: Lint
         # golangci-lint v2.9.0 is the first v2.x release built with go1.26 and

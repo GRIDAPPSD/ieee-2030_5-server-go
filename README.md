@@ -34,7 +34,7 @@ Binaries land in `bin/`.
 ## Run
 
 ```bash
-make run           # builds, generates certs, serves on :8443; admin on :8444
+make run           # builds, generates certs, serves on :8443; admin on 127.0.0.1:8444 (loopback)
 make run-ccm       # same, with CCM-8 cipher suite (CSIP-conformant)
 make run-full      # CCM-8 plus mDNS plus admin dashboard
 make run-inverter  # inverter simulator against https://localhost:8443
@@ -45,7 +45,10 @@ make run-inverter  # inverter simulator against https://localhost:8443
 [CCM-8](docs/glossary.md) vs [GCM](docs/glossary.md), the run-inverter
 cipher caveat, and the operator profiles (`run-enphase`, `run-sunspec`)
 are all covered in [docs/csip.md](docs/csip.md). `make run` enables the
-admin dashboard on `:8444` by default; see [docs/admin.md](docs/admin.md).
+admin dashboard on `127.0.0.1:8444` (loopback) by default; for off-box
+access set `SEP2_ADMIN_LISTEN=0.0.0.0:8444`. See
+[docs/admin-listener.md](docs/admin-listener.md) for the bind matrix and
+[docs/admin.md](docs/admin.md) for the dashboard.
 
 ## Test
 

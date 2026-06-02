@@ -25,10 +25,26 @@
 name: ci
 
 on:
+  # paths-ignore: doc-only changes do not affect build artifacts in this repo
+  # (godoc is consumed externally, not embedded into a release artifact). See
+  # .claude/rules/devops.md "Documentation-only changes should not trigger a
+  # full CI rebuild" — invert this list if docs ever become part of the build.
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'CHANGELOG.md'
+      - '.gitignore'
+      - 'LICENSE'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'CHANGELOG.md'
+      - '.gitignore'
+      - 'LICENSE'
   workflow_dispatch:
     inputs:
       reason:

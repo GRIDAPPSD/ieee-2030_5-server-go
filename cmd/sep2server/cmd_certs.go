@@ -5,10 +5,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
 )
+
+// validDeviceNamePattern is the strict allowlist for the --name flag on
+// generate-device. The result is joined into an output filesystem path
+// (filepath.Join does not reject `..`), so we constrain the input to
+// ASCII alnum + `.`, `-`, `_` with no leading dot. Defense-in-depth:
+// callers (the make new-device script) also validate, but anyone calling
+// the binary directly is protected here too.
+var validDeviceNamePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$`)
 
 func runCerts(args []string) error {
 	if len(args) < 1 {
@@ -166,6 +175,9 @@ func runGenerateDevice(args []string) error {
 	}
 	if *hwType == "" {
 		return fmt.Errorf("-hw-type is required: pass your manufacturer's PEN OID (e.g. 1.3.6.1.4.1.<PEN>)")
+	}
+	if !validDeviceNamePattern.MatchString(*name) {
+		return fmt.Errorf("-name must match %s (got %q): allowed characters are ASCII letters, digits, '.', '-', '_'; no leading dot, no path separators, max 64 chars", validDeviceNamePattern, *name)
 	}
 	hwTypeOID, err := certs.ParseOID(*hwType)
 	if err != nil {

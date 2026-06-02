@@ -171,10 +171,6 @@ Client-side stacks (paired with a running `run-ccm` server):
 | Target | TLS stack | CSIP-conformant on the wire? |
 |---|---|---|
 | `make test-epri` | EPRI C client (CCM-capable) | Yes (negotiates CCM-8) |
-| `make run-inverter` | Go stdlib | No (silently lands on GCM fallback) |
-
-The `run-inverter` simulator does not yet negotiate CCM-8; moving it
-onto the vendored `gotls` stack is tracked but not done.
 
 The cipher list is built in
 [`internal/tls/ccmserver.go`](../internal/tls/ccmserver.go); the cipher

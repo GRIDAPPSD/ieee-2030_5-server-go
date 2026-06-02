@@ -39,7 +39,7 @@ FORCE="${FORCE:-}"
 
 err() { printf 'ERROR: %s\n' "$*" >&2; }
 example() {
-  printf '  example: make new-device DEVICE_NAME=inverter-2 SERIAL=INV-002\n' >&2
+  printf '  example: make new-device DEVICE_NAME=device-2 SERIAL=DEV-002\n' >&2
 }
 
 # ─── Required ──────────────────────────────────────────────────────────────

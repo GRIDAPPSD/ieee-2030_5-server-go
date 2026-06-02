@@ -77,6 +77,26 @@ Resulting profile:
 - Empty Subject (LFDI is the first 160 bits of `SHA-256(DER-cert)`;
   SFDI is derived from LFDI per §6.3)
 
+### Device-type policy OID (§6.11.7.2)
+
+The `certificatePolicies` extension carries one of three IEEE 2030.5
+device-type OIDs under the arc `1.3.6.1.4.1.40732.1`. The value is pure
+spec metadata identifying the device class — no server code in this
+implementation branches on it at runtime. Pick at issuance time and live
+with it for the cert's lifetime.
+
+| `--device-type` | OID | Constant | Meaning |
+|---|---|---|---|
+| `1` (default) | `1.3.6.1.4.1.40732.1.1` | `OIDDeviceTypeGeneric` | Fixed-install equipment provisioned at manufacture or commissioning (inverters, meters, gateways, EV chargers). The catch-all for assets that stay with one unit for its operating life. |
+| `2` | `1.3.6.1.4.1.40732.1.2` | `OIDDeviceTypeMobile` | Equipment that may roam between utility service territories (mobile EVs, portable test rigs). The policy signals revocation/renewal handling may differ from a fixed asset. |
+| `3` | `1.3.6.1.4.1.40732.1.3` | `OIDDeviceTypePostMfg` | Cert provisioned AFTER the device left the factory floor (field-installed certs, retrofits, replacements). Distinguishes "made it with this cert baked in" from "shipped without one and added later." |
+
+For the typical operator workflow (issue a cert for a fixed inverter or
+meter and register it through the admin dashboard), leave `--device-type`
+at its default `1`. Pick `2` only when the device physically moves
+between territories, and `3` only when issuing certs after the
+manufacturing line.
+
 Inspect with:
 
 ```bash

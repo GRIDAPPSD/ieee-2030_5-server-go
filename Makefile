@@ -1,8 +1,8 @@
 .PHONY: build build-all test test-cover test-race test-verbose test-e2e \
        test-csip-server test-csip-client \
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
-       lint vet clean run run-ccm run-enphase run-sunspec certs serve help \
-       verify-run-inverter-url
+       lint vet clean run run-ccm run-enphase run-sunspec certs new-device \
+       serve help verify-run-inverter-url
 
 SERVER   := bin/sep2server
 CLIENT   := bin/inverterclient
@@ -51,6 +51,50 @@ certs:                    ## Generate CA, server, and device certificates
 		--ca $(CERT_DIR)/ca.crt --ca-key $(CERT_DIR)/ca.key \
 		--hw-serial INV-001 --hw-type 1.3.6.1.4.1.40732.99 \
 		--name device --out $(CERT_DIR)
+
+# new-device: mint an additional CSIP-conformant device certificate signed by the
+# existing CA and print the certificate PEM ready to paste into the admin
+# dashboard's "Add End Device" textarea. The server derives SFDI/LFDI from the
+# pasted PEM; the operator separately supplies PIN and description in the form.
+#
+# Required:
+#   DEVICE_NAME=<slug>  output filename prefix (creates $(CERT_DIR)/<slug>.crt and .key)
+#   SERIAL=<string>     hardware serial number for the CSIP §6.2 HardwareModuleName SAN
+#
+# Optional:
+#   HW_TYPE=<oid>       manufacturer PEN OID (default 1.3.6.1.4.1.40732.99 — same as `make certs`)
+#   DEVICE_TYPE=<n>     1=generic (default), 2=mobile, 3=postMfg
+#   FORCE=1             overwrite an existing cert/key with the same DEVICE_NAME (default: refuse)
+#
+# Examples:
+#   make new-device DEVICE_NAME=inverter-2 SERIAL=INV-002
+#   make new-device DEVICE_NAME=mobile-1 SERIAL=PHONE-XYZ DEVICE_TYPE=2
+#   make new-device DEVICE_NAME=device SERIAL=INV-RESPIN FORCE=1
+#
+# Pre-flight: refuses to overwrite an existing $(CERT_DIR)/<DEVICE_NAME>.crt
+# unless FORCE=1 is set, so a typo cannot stomp the device whose key the
+# deployed inverter is already running with.
+#
+# DEVICE_NAME (rather than the more natural NAME) avoids collision with the
+# NAME env var that some desktop environments and shells set automatically.
+#
+# Implementation: the target is a thin dispatcher to scripts/new-device.sh.
+# All input validation (regex allowlists for DEVICE_NAME / SERIAL / HW_TYPE,
+# device-type enum, FORCE check, CA pre-flight) lives in the script. Make
+# does pure text substitution before the shell parses, so anything Make-
+# substituted into a shell line is an injection vector. Pushing the values
+# through `target-specific export` and reading them in bash with `[[ =~ ]]`
+# rejects shell-metachar / path-traversal payloads BEFORE any value reaches
+# a command substitution.
+new-device: export DEVICE_NAME := $(DEVICE_NAME)
+new-device: export SERIAL      := $(SERIAL)
+new-device: export HW_TYPE     := $(HW_TYPE)
+new-device: export DEVICE_TYPE := $(DEVICE_TYPE)
+new-device: export FORCE       := $(FORCE)
+new-device: export CERT_DIR    := $(CERT_DIR)
+new-device: export SERVER_BIN  := $(SERVER)
+new-device:                ## Mint a new device cert (DEVICE_NAME= SERIAL= required); prints PEM for the admin dashboard
+	@./scripts/new-device.sh
 
 # ─── Run ──────────────────────────────────────────────────────────
 

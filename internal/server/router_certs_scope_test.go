@@ -27,14 +27,14 @@ import (
 // co-resident process could mint a throwaway cert, hit
 // https://127.0.0.1:443/api/certs/server with no XFF, and Path 0 would
 // admit. The fix: /api/certs/* is mounted ONLY on the admin listener's
-// router (NewAdminRouter), never on the protocol listener's router
-// (NewRouter). This test pins that routing decision.
+// router (BuildAdminRouter), never on the protocol listener's router
+// (BuildProtocolRouter). This test pins that routing decision.
 func TestProtocolListenerDoesNotMountCertAPI(t *testing.T) {
 	svc := newScopeTestCertService(t)
 	cfg := &config.Config{AdminKey: "test-admin-key"}
 	stores := newTestStores()
 
-	router := server.NewRouter(cfg, stores, svc, "", "", nil)
+	router, _ := server.BuildProtocolRouter(cfg, stores, svc, "", "", nil)
 
 	cases := []struct {
 		name   string
@@ -83,7 +83,7 @@ func TestAdminListenerStillMountsCertAPI(t *testing.T) {
 	svc := newScopeTestCertService(t)
 	stores := newTestStores()
 
-	adminRouter := server.NewAdminRouter("test-admin-key", svc, stores, "", nil)
+	adminRouter, _ := server.BuildAdminRouter("test-admin-key", svc, stores, "", nil, nil)
 
 	cases := []struct {
 		name   string

@@ -1,6 +1,10 @@
 package config
 
-import "path/filepath"
+import (
+	"net"
+	"path/filepath"
+	"strings"
+)
 
 // Config holds server configuration.
 type Config struct {
@@ -43,6 +47,22 @@ type Config struct {
 	AdminCert    string // admin listener cert PEM path; empty + AdminTLS = self-signed
 	AdminKeyFile string // admin listener key PEM path; required when AdminCert is set
 
+	// IEEE-137: operator hint that the admin listener is fronted by an
+	// upstream reverse proxy that injects X-Forwarded-* / Forwarded
+	// headers. When the admin listener binds to a non-loopback address
+	// AND this is false, the server logs a startup WARNING explaining
+	// that without an upstream proxy, AdminAuthMiddleware Path 0 will
+	// admit ALL traffic as loopback-local (the proxy injects loopback
+	// XFF when relaying loopback-to-loopback). Env: SEP2_ADMIN_BEHIND_PROXY.
+	AdminBehindProxy bool
+
+	// IEEE-138: extra Host-header values appended to the static admin
+	// allowlist (defaults: localhost, 127.0.0.1, ::1, ieee2030-5.local).
+	// Loaded from SEP2_ADMIN_ALLOWED_HOSTS as a CSV. Defense-in-depth
+	// against DNS rebinding at the admin listener boundary; the static
+	// defaults are NEVER opted out by setting this var.
+	AdminAllowedHosts []string // env SEP2_ADMIN_ALLOWED_HOSTS
+
 	TZOffset    int32  // timezone offset from UTC in seconds
 	DSTOffset   int32  // DST offset in seconds
 	DSTStart    int64  // DST start (unix seconds)
@@ -53,14 +73,54 @@ type Config struct {
 	MDNSHost    string // mDNS hostname
 }
 
-// EffectiveAdminListen returns the admin listener address, falling back to
-// the deprecated AdminAddr when AdminListen is empty. An empty return value
-// means the admin listener is disabled.
+// EffectiveAdminListen returns the admin listener address as supplied by
+// the operator (AdminListen wins; falls back to the deprecated AdminAddr).
+// An empty return value means the admin listener is disabled.
+//
+// This returns the env value verbatim — the loopback default applied to a
+// bare-port input is layered on top via ResolveAdminBind at the actual
+// net.Listen site. Keeping the env value pristine here means the banner
+// surface and back-compat consumers see exactly what the operator set.
 func (c *Config) EffectiveAdminListen() string {
 	if c.AdminListen != "" {
 		return c.AdminListen
 	}
 	return c.AdminAddr
+}
+
+// ResolveAdminBind applies the IEEE-136 loopback default to a raw admin
+// listen string. The contract:
+//
+//	""              → ""              (admin disabled — caller gates this)
+//	":<port>"       → "127.0.0.1:<port>"  (bare port → loopback by default)
+//	"<host>:<port>" → unchanged       (any explicit host is honored verbatim)
+//	"<port>"        → unchanged       (malformed input passed through; net.Listen will reject)
+//
+// Rationale: the SEP2 protocol listener (cfg.Addr) admits any self-signed
+// client cert via tls.RequireAnyClientCert + manual verify, and the admin
+// auth middleware's Path 0 admits loopback requests with no proxy headers.
+// Pre-IEEE-136, a bare ":<port>" admin listen bound 0.0.0.0, so any
+// network neighbor (or any co-resident process on a multi-tenant host
+// where the kernel routes loopback liberally) could reach the admin
+// surface with no creds. Defaulting bare ports to 127.0.0.1 makes the
+// network-exposure case opt-in: operators who want public bind must say
+// so explicitly with "0.0.0.0:<port>" or "<ip>:<port>".
+func ResolveAdminBind(listen string) string {
+	if listen == "" {
+		return ""
+	}
+	if strings.HasPrefix(listen, ":") {
+		// Bare port. net.SplitHostPort accepts ":8444"; the host portion
+		// comes back empty — that's the case we rewrite. Any non-empty
+		// host (including 0.0.0.0, [::], 192.168.x.y, hostnames) is
+		// passed through verbatim.
+		host, port, err := net.SplitHostPort(listen)
+		if err != nil || host != "" {
+			return listen
+		}
+		return net.JoinHostPort("127.0.0.1", port)
+	}
+	return listen
 }
 
 // EffectiveStorePath resolves the on-disk JSON snapshot path for a named

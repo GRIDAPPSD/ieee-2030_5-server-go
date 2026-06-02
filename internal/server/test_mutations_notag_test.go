@@ -24,7 +24,7 @@ func TestMutationSurface_AbsentWithoutBuildTag(t *testing.T) {
 	t.Setenv("SEP2_TEST_MUTATION_TOKEN", "anything")
 	stores := newTestStores()
 	cfg := &config.Config{}
-	h := server.NewRouter(cfg, stores, nil, "", "", nil)
+	h, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", nil)
 
 	paths := []string{
 		"/test/mutations/edev-delete-oob",

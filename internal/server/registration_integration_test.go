@@ -100,7 +100,7 @@ func TestIntegrationRegistrationGet(t *testing.T) {
 	defer func() { _ = listener.Close() }()
 
 	tlsListener := tls.NewListener(listener, serverTLSCfg)
-	router := server.NewRouter(cfg, stores, nil, "", "", nil)
+	router, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", nil)
 	srv := &http.Server{Handler: router}
 	go func() { _ = srv.Serve(tlsListener) }()
 	defer func() { _ = srv.Close() }()

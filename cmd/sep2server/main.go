@@ -57,12 +57,17 @@ func runServe() error {
 		// HTTP (Caddy mode, default) and HTTPS. SEP2_ADMIN_CERT +
 		// SEP2_ADMIN_KEY_FILE point at an operator-supplied cert/key; when
 		// HTTPS is on and they are empty, a self-signed cert is generated.
-		AdminListen:  os.Getenv("SEP2_ADMIN_LISTEN"),
-		AdminAddr:    os.Getenv("SEP2_ADMIN_ADDR"),
-		AdminKey:     os.Getenv("SEP2_ADMIN_KEY"),
-		AdminTLS:     os.Getenv("SEP2_ADMIN_TLS") == "true",
-		AdminCert:    os.Getenv("SEP2_ADMIN_CERT"),
-		AdminKeyFile: os.Getenv("SEP2_ADMIN_KEY_FILE"),
+		AdminListen:      os.Getenv("SEP2_ADMIN_LISTEN"),
+		AdminAddr:        os.Getenv("SEP2_ADMIN_ADDR"),
+		AdminKey:         os.Getenv("SEP2_ADMIN_KEY"),
+		AdminTLS:         os.Getenv("SEP2_ADMIN_TLS") == "true",
+		AdminCert:        os.Getenv("SEP2_ADMIN_CERT"),
+		AdminKeyFile:     os.Getenv("SEP2_ADMIN_KEY_FILE"),
+		AdminBehindProxy: os.Getenv("SEP2_ADMIN_BEHIND_PROXY") == "true",
+
+		// IEEE-138: extra Host-header allowlist entries (defense-in-depth
+		// against DNS rebinding). CSV; appended to the static defaults.
+		AdminAllowedHosts: parseCSV(os.Getenv("SEP2_ADMIN_ALLOWED_HOSTS")),
 
 		// IEEE-097: single-knob persistence. Empty SEP2_DATA_DIR keeps the
 		// historical pure in-memory behavior. SEP2_SUBSCRIPTION_STORE_PATH

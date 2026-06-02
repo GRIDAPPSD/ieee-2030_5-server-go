@@ -69,14 +69,24 @@ type Stores struct {
 	Responses                *memory.ScopedStore[sep2.Response]
 }
 
-// NewRouter creates the HTTP router for the protocol listener. The notifier
-// is invoked on resource state changes that drive subscription fan-out
-// (e.g. CSIP V1.2 MAINT-002 EndDevice DELETE). Pass nil to disable
-// notification — tests that don't care about subscriptions can do this.
-func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService, serverSFDI, serverLFDI string, notifier handler.ResourceNotifier) http.Handler {
+// BuildProtocolRouter creates the HTTP router for the protocol listener
+// AND returns the canonical pattern list mounted on its protocol mux.
+// The notifier is invoked on resource state changes that drive
+// subscription fan-out (e.g. CSIP V1.2 MAINT-002 EndDevice DELETE).
+// Pass nil to disable notification — tests that don't care about
+// subscriptions can do this.
+//
+// The pattern list is pre-sorted and deduplicated (see
+// recordingMux.Patterns). The /test/mutations/* surface
+// (csip_test_hooks tag) is intentionally NOT reflected — it is
+// out-of-band by design and only present in non-production builds.
+//
+// Test callers that don't need the pattern list discard the second
+// return value with `_`.
+func BuildProtocolRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService, serverSFDI, serverLFDI string, notifier handler.ResourceNotifier) (http.Handler, []string) {
 	top := http.NewServeMux()
 
-	protocolMux := http.NewServeMux()
+	protocolMux := newRecordingMux()
 	protocolMux.HandleFunc("GET /dcap", handler.HandleDeviceCapability())
 	protocolMux.HandleFunc("GET /tm", handler.HandleTime(cfg))
 	protocolMux.HandleFunc("GET /sdev", handler.HandleSelfDevice(serverSFDI, serverLFDI))
@@ -112,7 +122,7 @@ func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService
 	// with the loopback bypass in AdminAuthMiddleware (Path 0), exposing
 	// the cert API here would let any co-resident process mint server
 	// certs from the CA. The cert API is mounted on the admin listener
-	// only (NewAdminRouter), where AdminAuthMiddleware is the intended
+	// only (BuildAdminRouter), where AdminAuthMiddleware is the intended
 	// guard and the bind address is operator-controlled.
 
 	// IEEE-024: test-only mutation surface for the CSIP V1.2 conformance
@@ -126,10 +136,10 @@ func NewRouter(cfg *config.Config, stores *Stores, svc *handler.AdminCertService
 
 	// Wrap entire router with namespace detection — rewrites XML output
 	// for 2013 clients (EPRI reference client) automatically
-	return encoding.NamespaceMiddleware(top)
+	return encoding.NamespaceMiddleware(top), protocolMux.Patterns()
 }
 
-func registerEndDeviceRoutes(mux *http.ServeMux, stores *Stores, notifier handler.ResourceNotifier) {
+func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, notifier handler.ResourceNotifier) {
 	mux.HandleFunc("GET /edev", handler.ListHandler[sep2.EndDevice, sep2.EndDeviceList](
 		stores.EndDevices, handler.BuildEndDeviceList, 900,
 	))
@@ -188,7 +198,7 @@ func asSubscriberNotifier(n handler.ResourceNotifier) handler.SubscriberNotifier
 	return nil
 }
 
-func registerMirrorRoutes(mux *http.ServeMux, stores *Stores) {
+func registerMirrorRoutes(mux routeRegistrar, stores *Stores) {
 	if stores.MirrorUsagePoints == nil {
 		return
 	}
@@ -202,7 +212,7 @@ func registerMirrorRoutes(mux *http.ServeMux, stores *Stores) {
 	))
 }
 
-func registerDERRoutes(mux *http.ServeMux, stores *Stores) {
+func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	if stores.DERs == nil {
 		return
 	}
@@ -281,7 +291,7 @@ func scopedListHandlerDeep[T store.Copier[T], L any](
 	}
 }
 
-func registerMeteringRoutes(mux *http.ServeMux, stores *Stores) {
+func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	if stores.UsagePoints == nil {
 		return
 	}
@@ -311,7 +321,7 @@ func registerMeteringRoutes(mux *http.ServeMux, stores *Stores) {
 	mux.HandleFunc("GET /rt/{id}", handler.HandleReadingType(stores.ReadingTypes))
 }
 
-func registerNewFunctionSetRoutes(mux *http.ServeMux, stores *Stores) {
+func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
 	// Device sub-resources (all scoped under /edev/{id})
 	if stores.Configurations != nil {
 		mux.HandleFunc("GET /edev/{id}/cfg", handler.HandleConfiguration(stores.Configurations))

@@ -71,6 +71,68 @@ func TestRunGenerateDeviceHWTypeFlag(t *testing.T) {
 	}
 }
 
+// TestRunGenerateDeviceNameValidation pins the strict allowlist on the
+// -name flag. The flag is joined into a filesystem path via filepath.Join
+// (which normalizes but does NOT reject `..`), so unsanitized input would
+// permit path traversal — defense-in-depth for any caller that bypasses
+// scripts/new-device.sh and invokes the binary directly.
+func TestRunGenerateDeviceNameValidation(t *testing.T) {
+	dir := setupTestCertDir(t)
+
+	tests := []struct {
+		name      string
+		nameValue string
+		wantErr   bool
+	}{
+		{"plain ascii accepted", "device", false},
+		{"alnum + hyphen accepted", "inverter-2", false},
+		{"alnum + underscore accepted", "test_unit_42", false},
+		{"alnum + dot accepted", "site.alpha.gw", false},
+		{"max length accepted", "a234567890123456789012345678901234567890123456789012345678901234", false},
+		{"path traversal rejected", "../../tmp/owned", true},
+		{"forward slash rejected", "tmp/owned", true},
+		{"backslash rejected", `tmp\owned`, true},
+		{"shell semicolon rejected", "foo;rm", true},
+		{"shell pipe rejected", "foo|rm", true},
+		{"shell ampersand rejected", "foo&rm", true},
+		{"shell dollar rejected", "foo$BAR", true},
+		{"backtick rejected", "foo`id`", true},
+		{"single quote rejected", "foo'bar", true},
+		{"double quote rejected", `foo"bar`, true},
+		{"space rejected", "foo bar", true},
+		{"newline rejected", "foo\nbar", true},
+		{"empty rejected", "", true},
+		{"leading dot rejected", ".hidden", true},
+		{"leading hyphen rejected", "-flag", true},
+		{"too long rejected", "a23456789012345678901234567890123456789012345678901234567890123456789", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := runGenerateDevice([]string{
+				"-ca", filepath.Join(dir, "ca.crt"),
+				"-ca-key", filepath.Join(dir, "ca.key"),
+				"-out", dir,
+				"-hw-serial", "CLI-TEST-SN",
+				"-hw-type", "1.3.6.1.4.1.55555.42",
+				"-name", tc.nameValue,
+			})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("runGenerateDevice with -name=%q: want error, got nil", tc.nameValue)
+				}
+				if !strings.Contains(err.Error(), "-name must match") {
+					t.Errorf("error did not name the rule: %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("runGenerateDevice with -name=%q: unexpected error: %v", tc.nameValue, err)
+				}
+			}
+		})
+	}
+}
+
 // setupTestCertDir provisions a temp directory pre-populated with a CA
 // cert + key, returning the directory path.
 func setupTestCertDir(t *testing.T) string {

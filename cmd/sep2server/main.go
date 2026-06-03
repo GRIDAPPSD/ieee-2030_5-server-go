@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -35,6 +36,13 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
+	case "serve-init":
+		// IEEE-177: container ENTRYPOINT. Bootstrap certs into the /certs
+		// volume (gen-only-if-empty seam) as the nonroot user, then serve.
+		if err := runServeInit(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	case "certs":
 		if err := runCerts(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -47,11 +55,18 @@ func main() {
 }
 
 func runServe() error {
+	// IEEE-177: SEP2_CERT_DIR is a convenience knob for the container path —
+	// it supplies the default directory for the four cert-path vars when they
+	// are not set individually. An explicitly-set SEP2_CERT/SEP2_KEY/SEP2_CA/
+	// SEP2_CA_KEY always wins (back-compat with every pre-IEEE-177 invocation).
+	// Default "certs" preserves the historical relative-path behavior.
+	certDir := envOr("SEP2_CERT_DIR", "certs")
+
 	cfg := &config.Config{
 		Addr:            envOr("SEP2_ADDR", ":443"),
-		CertFile:        envOr("SEP2_CERT", "certs/server.crt"),
-		KeyFile:         envOr("SEP2_KEY", "certs/server.key"),
-		CAFile:          envOr("SEP2_CA", "certs/ca.crt"),
+		CertFile:        envOr("SEP2_CERT", filepath.Join(certDir, "server.crt")),
+		KeyFile:         envOr("SEP2_KEY", filepath.Join(certDir, "server.key")),
+		CAFile:          envOr("SEP2_CA", filepath.Join(certDir, "ca.crt")),
 		ExtraClientCAs:  parseCSV(os.Getenv("SEP2_EXTRA_CLIENT_CAS")),
 		BootFixtureFile: os.Getenv("SEP2_BOOT_FIXTURE"),
 
@@ -89,8 +104,8 @@ func runServe() error {
 
 	// Load CA for admin cert service
 	var svc *handler.AdminCertService
-	caFile := envOr("SEP2_CA", "certs/ca.crt")
-	caKeyFile := envOr("SEP2_CA_KEY", "certs/ca.key")
+	caFile := envOr("SEP2_CA", filepath.Join(certDir, "ca.crt"))
+	caKeyFile := envOr("SEP2_CA_KEY", filepath.Join(certDir, "ca.key"))
 	caCert, caKey, err := certs.LoadCA(caFile, caKeyFile)
 	if err != nil {
 		log.Printf("CA not loaded (%v) — admin cert API disabled", err)
@@ -139,7 +154,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: sep2server <command>")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
-	fmt.Fprintln(os.Stderr, "  serve    Start the IEEE 2030.5 server")
-	fmt.Fprintln(os.Stderr, "  certs    Certificate management")
-	fmt.Fprintln(os.Stderr, "  version  Print version")
+	fmt.Fprintln(os.Stderr, "  serve       Start the IEEE 2030.5 server")
+	fmt.Fprintln(os.Stderr, "  serve-init  Bootstrap certs into SEP2_CERT_DIR if empty, then serve (container entrypoint)")
+	fmt.Fprintln(os.Stderr, "  certs       Certificate management")
+	fmt.Fprintln(os.Stderr, "  version     Print version")
 }

@@ -1,7 +1,8 @@
 .PHONY: build test test-cover test-race test-verbose test-e2e \
        test-csip-server test-csip-client \
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
-       lint vet clean run run-ccm run-enphase run-sunspec certs new-device \
+       lint vet clean run run-ccm run-journald run-ccm-journald \
+       run-enphase run-sunspec certs new-device \
        serve help
 
 SERVER   := bin/sep2server
@@ -116,6 +117,43 @@ run-ccm: build certs       ## Start server with CCM-8 cipher (spec-compliant; ad
 	SEP2_ADMIN_KEY=admin \
 	SEP2_CCM=true \
 	./$(SERVER) serve
+
+# ─── journald log shipping (IEEE-179) ─────────────────────────────
+#
+# run-journald / run-ccm-journald mirror run / run-ccm but route the
+# server's stdout AND stderr (the slog JSON stream) into the systemd
+# journal under SYSLOG_IDENTIFIER=sep2server via systemd-cat. The
+# observability stack's Promtail journal scrape then ships those entries
+# to Loki tagged service=sep2server. The default run / run-ccm targets are
+# unchanged and still log to the terminal for interactive dev.
+#
+# We use the command form `systemd-cat -t <tag> <cmd...>` rather than a
+# shell pipe (`<cmd> | systemd-cat`): the command form preserves the
+# server's exit status (no pipe masking it), captures both stdout and
+# stderr, and avoids a SIGPIPE race on shutdown. The SEP2_* env vars are
+# inherited by systemd-cat and passed through to the server child.
+#
+# Inspect the captured JSON with:   journalctl -t sep2server -o json -f
+run-journald: build certs  ## Like run, but ship stdout+stderr to journald as SYSLOG_IDENTIFIER=sep2server
+	SEP2_ADDR=:8443 \
+	SEP2_CERT=$(CERT_DIR)/server.crt \
+	SEP2_KEY=$(CERT_DIR)/server.key \
+	SEP2_CA=$(CERT_DIR)/ca.crt \
+	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
+	SEP2_ADMIN_ADDR=:8444 \
+	SEP2_ADMIN_KEY=admin \
+	systemd-cat -t sep2server ./$(SERVER) serve
+
+run-ccm-journald: build certs  ## Like run-ccm, but ship stdout+stderr to journald as SYSLOG_IDENTIFIER=sep2server
+	SEP2_ADDR=:8443 \
+	SEP2_CERT=$(CERT_DIR)/server.crt \
+	SEP2_KEY=$(CERT_DIR)/server.key \
+	SEP2_CA=$(CERT_DIR)/ca.crt \
+	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
+	SEP2_ADMIN_ADDR=:8444 \
+	SEP2_ADMIN_KEY=admin \
+	SEP2_CCM=true \
+	systemd-cat -t sep2server ./$(SERVER) serve
 
 run-full: build certs      ## Start with CCM + mDNS + admin dashboard (admin on loopback :8444)
 	SEP2_ADDR=:8443 \

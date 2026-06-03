@@ -6,3 +6,11 @@ coverage.html
 coverage-csip.out
 .git/
 e2e/node_modules/
+
+# Test fixtures and secret-shaped files: keep out of the builder layer/cache.
+# The compiled binary only needs internal/tls/gotls/ source, not testdata/.
+testdata/
+*.pem
+*.key
+*.crt
+.env*

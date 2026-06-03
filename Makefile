@@ -135,6 +135,7 @@ run-ccm: build certs       ## Start server with CCM-8 cipher (spec-compliant; ad
 #
 # Inspect the captured JSON with:   journalctl -t sep2server -o json -f
 run-journald: build certs  ## Like run, but ship stdout+stderr to journald as SYSLOG_IDENTIFIER=sep2server
+	@# SEP2_ADMIN_KEY=admin is a local-dev default; MUST be overridden for any non-dev/bare-metal deployment
 	SEP2_ADDR=:8443 \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
@@ -145,6 +146,7 @@ run-journald: build certs  ## Like run, but ship stdout+stderr to journald as SY
 	systemd-cat -t sep2server ./$(SERVER) serve
 
 run-ccm-journald: build certs  ## Like run-ccm, but ship stdout+stderr to journald as SYSLOG_IDENTIFIER=sep2server
+	@# SEP2_ADMIN_KEY=admin is a local-dev default; MUST be overridden for any non-dev/bare-metal deployment
 	SEP2_ADDR=:8443 \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \

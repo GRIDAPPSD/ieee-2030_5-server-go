@@ -63,6 +63,14 @@ type Config struct {
 	// defaults are NEVER opted out by setting this var.
 	AdminAllowedHosts []string // env SEP2_ADMIN_ALLOWED_HOSTS
 
+	// MetricsAddr is the bind address for the dedicated plain-HTTP Prometheus
+	// metrics listener (env SEP2_METRICS_ADDR, e.g. ":9100"). Empty disables
+	// the metrics listener entirely (default OFF). The listener serves ONLY
+	// GET /metrics; it is NEVER mounted on the mTLS protocol listener or the
+	// auth-gated admin listener, so exposition data has no client-cert or
+	// Bearer gate and must be reached on a host-local / trusted-network port.
+	MetricsAddr string // env SEP2_METRICS_ADDR
+
 	TZOffset    int32  // timezone offset from UTC in seconds
 	DSTOffset   int32  // DST offset in seconds
 	DSTStart    int64  // DST start (unix seconds)

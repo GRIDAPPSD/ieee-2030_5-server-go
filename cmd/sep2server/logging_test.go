@@ -15,12 +15,13 @@ import (
 // the data-invariants rule, this asserts the wire shape of the emitted
 // line, not merely that the call did not panic.
 func TestSetupLogging_EmitsValidJSON(t *testing.T) {
+	// Capture the default handler installed by the test binary so we can
+	// restore it after this test, preventing handler leak into sibling tests.
+	prev := slog.Default()
 	var buf bytes.Buffer
 	setupLogging(&buf)
-	// Restore the test binary's default handler so this test does not
-	// leak its buffer-backed handler into sibling tests.
 	t.Cleanup(func() {
-		slog.SetDefault(slog.Default())
+		slog.SetDefault(prev)
 	})
 
 	const sample = "CA loaded — admin cert API enabled"

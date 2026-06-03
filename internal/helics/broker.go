@@ -22,6 +22,8 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"sync"
 	"unsafe"
 )
@@ -32,9 +34,29 @@ import (
 // in-process unit test exercises without external setup.
 const defaultBrokerType = "zmq"
 
+// helicsAnomalousCode marks a failure that crossed the C boundary but for
+// which HELICS did not populate an error code, as well as wrapper-side
+// boundary-input rejections that we surface in *HelicsError shape for
+// consistency with the cgo-boundary lane. Distinct from any
+// HelicsErrorTypes value (HELICS error codes occupy -8..-1 and small
+// positive sentinels; math.MinInt32 is well outside that range).
+const helicsAnomalousCode = math.MinInt32
+
 // ErrBrokerClosed is returned by Broker.Close on the second and subsequent
 // calls so that idempotent teardown is verifiable via errors.Is.
 var ErrBrokerClosed = errors.New("helics: broker already closed")
+
+// ErrEmptyParentAddress is returned by NewSubBroker when the caller passes
+// an empty parentAddress. Recoverable via errors.Is. Distinct from any
+// *HelicsError because the failure is wrapper-side validation that never
+// reached the C boundary.
+var ErrEmptyParentAddress = errors.New("helics: parentAddress is required")
+
+// ErrUninitializedBroker is returned by Broker methods when invoked on a
+// zero-value *Broker (one that did not come from NewInProcess or
+// NewSubBroker). Without this guard the C calls would dereference a nil
+// HelicsBroker handle and SIGSEGV across the cgo boundary.
+var ErrUninitializedBroker = errors.New("helics: broker not initialized via NewInProcess or NewSubBroker")
 
 // HelicsError captures a non-zero HELICS C error code plus its message,
 // translated across the cgo boundary into a Go-native error. Callers can
@@ -45,7 +67,9 @@ type HelicsError struct {
 	// point that produced it.
 	Op string
 	// Code is the HELICS error_code field (matches HelicsErrorTypes in
-	// helics_enums.h; non-zero means error).
+	// helics_enums.h) when the failure originated from a C call. For
+	// wrapper-side anomalies that crossed the C boundary without a
+	// populated HELICS code, see helicsAnomalousCode.
 	Code int32
 	// Message is the HELICS-side message string, copied into Go memory.
 	Message string
@@ -73,7 +97,18 @@ type Broker struct {
 //
 // initString is passed verbatim to HELICS; pass an empty string to accept
 // the v3 defaults (the in-process tests rely on this).
+//
+// Embedded NUL bytes in name or initString are rejected at the boundary
+// before crossing into C: C.CString silently truncates at the first NUL,
+// which would let a caller-supplied "sub\x00malicious" register as "sub"
+// (see secure-coding rule 5).
 func NewInProcess(name, initString string) (*Broker, error) {
+	if err := rejectNUL("NewInProcess", "name", name); err != nil {
+		return nil, err
+	}
+	if err := rejectNUL("NewInProcess", "initString", initString); err != nil {
+		return nil, err
+	}
 	return createBroker(defaultBrokerType, name, initString)
 }
 
@@ -82,16 +117,54 @@ func NewInProcess(name, initString string) (*Broker, error) {
 // sub-broker pattern: the same helicsCreateBroker entry point with an
 // init string of "--broker=<parentAddress>". v3.6.1 has no broker-side
 // Connect entry point (see ADR-004's 2026-06-03 correction).
+//
+// An empty parentAddress is wrapper-side validation and returns
+// ErrEmptyParentAddress (recoverable via errors.Is). Embedded NUL bytes,
+// ASCII whitespace, or a leading dash in parentAddress are rejected
+// because the constructed init string "--broker=<parentAddress>" feeds a
+// CLI-style argument parser on the HELICS side; whitespace would
+// re-tokenize and a leading dash would shadow as a separate flag.
 func NewSubBroker(name, parentAddress string) (*Broker, error) {
 	if parentAddress == "" {
+		return nil, ErrEmptyParentAddress
+	}
+	if err := rejectNUL("NewSubBroker", "name", name); err != nil {
+		return nil, err
+	}
+	if err := rejectNUL("NewSubBroker", "parentAddress", parentAddress); err != nil {
+		return nil, err
+	}
+	if strings.ContainsAny(parentAddress, " \t\n\r") {
 		return nil, &HelicsError{
 			Op:      "NewSubBroker",
-			Code:    -1,
-			Message: "parentAddress is required",
+			Code:    helicsAnomalousCode,
+			Message: "parentAddress: contains whitespace",
+		}
+	}
+	if strings.HasPrefix(parentAddress, "-") {
+		return nil, &HelicsError{
+			Op:      "NewSubBroker",
+			Code:    helicsAnomalousCode,
+			Message: "parentAddress: leading dash forbidden",
 		}
 	}
 	initString := fmt.Sprintf("--broker=%s", parentAddress)
 	return createBroker(defaultBrokerType, name, initString)
+}
+
+// rejectNUL returns a *HelicsError when s contains an embedded NUL byte.
+// We use the structured-error shape with helicsAnomalousCode so callers
+// in the cgo-boundary lane can errors.As uniformly; the dedicated sentinel
+// code keeps it distinct from any genuine HelicsErrorTypes value.
+func rejectNUL(op, field, s string) error {
+	if strings.IndexByte(s, 0) != -1 {
+		return &HelicsError{
+			Op:      op,
+			Code:    helicsAnomalousCode,
+			Message: fmt.Sprintf("%s: contains NUL byte", field),
+		}
+	}
+	return nil
 }
 
 // createBroker is the shared cgo entry point for both shapes. It owns the
@@ -131,7 +204,7 @@ func createBroker(brokerType, name, initString string) (*Broker, error) {
 	if handle == nil {
 		return nil, &HelicsError{
 			Op:      "helicsCreateBroker",
-			Code:    -1,
+			Code:    helicsAnomalousCode,
 			Message: "HELICS returned nil handle with no error code",
 		}
 	}
@@ -140,8 +213,9 @@ func createBroker(brokerType, name, initString string) (*Broker, error) {
 }
 
 // Address returns the broker's network address (e.g. "tcp://127.0.0.1:23404"
-// for zmq). Returns an empty string if the broker has been closed; callers
-// that need to distinguish should check IsConnected first.
+// for zmq). Returns an empty string if the broker has been closed or is
+// uninitialized (zero-value *Broker); callers that need to distinguish
+// should check IsConnected first.
 //
 // The returned string is copied into Go memory; HELICS retains ownership
 // of the underlying C buffer.
@@ -149,6 +223,8 @@ func (b *Broker) Address() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed || b.handle == nil {
+		// Zero-value or post-close: never reach the C call. A nil
+		// HelicsBroker handle would SIGSEGV across cgo.
 		return ""
 	}
 	cStr := C.helicsBrokerGetAddress(b.handle)
@@ -158,11 +234,12 @@ func (b *Broker) Address() string {
 }
 
 // IsConnected reports whether the broker considers itself connected. It
-// returns false after Close.
+// returns false after Close and on a zero-value *Broker.
 func (b *Broker) IsConnected() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed || b.handle == nil {
+		// Zero-value or post-close: never reach the C call.
 		return false
 	}
 	return C.helicsBrokerIsConnected(b.handle) == C.HELICS_TRUE
@@ -172,11 +249,23 @@ func (b *Broker) IsConnected() bool {
 // idempotent: the first call performs the teardown and returns any
 // HELICS-side disconnect error; subsequent calls return ErrBrokerClosed
 // (recoverable via errors.Is).
+//
+// On a zero-value *Broker (one not produced by NewInProcess or
+// NewSubBroker), Close marks the broker closed and returns
+// ErrUninitializedBroker without touching the cgo boundary; subsequent
+// calls then return ErrBrokerClosed per the idempotency contract.
 func (b *Broker) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
 		return ErrBrokerClosed
+	}
+	if b.handle == nil {
+		// Zero-value *Broker: never constructed. Mark closed so the
+		// idempotency contract still holds, and refuse without making
+		// any C call against a nil HelicsBroker.
+		b.closed = true
+		return ErrUninitializedBroker
 	}
 	b.closed = true
 

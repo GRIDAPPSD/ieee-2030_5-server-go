@@ -80,6 +80,12 @@ func runServe() error {
 		DataDir:               os.Getenv("SEP2_DATA_DIR"),
 		SubscriptionStorePath: os.Getenv("SEP2_SUBSCRIPTION_STORE_PATH"),
 
+		// Observability: dedicated plain-HTTP Prometheus metrics listener.
+		// Empty SEP2_METRICS_ADDR (default) leaves it OFF; set e.g. ":9100"
+		// to expose GET /metrics on a separate port. Never mounted on the
+		// protocol or admin listeners.
+		MetricsAddr: os.Getenv("SEP2_METRICS_ADDR"),
+
 		TZOffset:    -28800,
 		TimeQuality: 7,
 		EnableCCM:   os.Getenv("SEP2_CCM") == "true",

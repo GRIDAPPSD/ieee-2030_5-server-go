@@ -1,0 +1,68 @@
+# IEEE-177: run sep2server as a container in the observability stack.
+#
+# What this gives you:
+#   * The server's JSON-on-stdout logs (IEEE-172) flow into Loki continuously
+#     via Promtail, which keeps only containers carrying the obs.service label
+#     and maps that label to the Loki `service` label.
+#   * Certs are bootstrapped on first start by the in-binary `serve-init`
+#     entrypoint (IEEE-177) into the `certs` named volume — gen-only-if-empty.
+#     A restart reuses the persisted cert, so the server's derived LFDI/SFDI
+#     identity is stable. No secrets live in this file or in any image layer.
+#
+# Network: the observability stack owns `observability-stack_obs`. It is
+# declared `external` here so this compose project joins the pre-existing
+# network rather than creating its own. Bring up the observability stack
+# first (its compose project creates the network).
+#
+# Dev vs prod cert path: this file is the DEV path (in-container self-signed
+# generation). For the prod path — externally-managed certs via Docker/compose
+# secrets mounted at /certs — see docs/container-runtime.md. Switching dev→prod
+# is a mount change only; no image or code change (the /certs-empty seam).
+
+services:
+  sep2server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gridappsd/sep2server:dev
+    # Promtail keeps containers with this label and maps it to Loki `service`.
+    labels:
+      - "obs.service=sep2server"
+    environment:
+      # Protocol listener on :8443 (8443 avoids needing CAP_NET_BIND_SERVICE
+      # for the :443 default under the nonroot uid).
+      SEP2_ADDR: ":8443"
+      # Cert dir is the named volume; serve-init bootstraps into it if empty.
+      SEP2_CERT_DIR: "/certs"
+      # CCM-8 cipher (spec-compliant) per the run-ccm profile.
+      SEP2_CCM: "true"
+      # Admin listener stays on loopback inside the container (IEEE-136
+      # default); not published. Bearer token is intentionally NOT set here —
+      # set it via an env_file or secret in a real deployment, never inline.
+      SEP2_ADMIN_LISTEN: ":8444"
+    volumes:
+      # Persist the generated (or operator-mounted) cert material so identity
+      # survives restarts. The volume is root-owned by default, but the image
+      # pre-creates /certs owned by uid 65532, so the fresh volume inherits
+      # that ownership and the nonroot process can write on first start.
+      - certs:/certs
+    networks:
+      - obs
+    # Run as the distroless nonroot user explicitly (defense-in-depth; the
+    # image already defaults to it).
+    user: "65532:65532"
+    restart: unless-stopped
+    # Drop all Linux capabilities and forbid privilege escalation: the server
+    # binds an unprivileged port and writes only to /certs.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  certs:
+
+networks:
+  obs:
+    external: true
+    name: observability-stack_obs

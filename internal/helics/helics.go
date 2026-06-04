@@ -47,6 +47,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"sync"
@@ -228,22 +229,14 @@ func createBroker(brokerType, name, initString string) (*Broker, error) {
 	handle := C.helicsCreateBroker(cType, cName, cInit, &cErr)
 
 	if cErr.error_code != 0 {
-		// HELICS allocates the message string; copy it into Go memory
-		// before clearing the error to avoid dangling pointers.
-		msg := C.GoString(cErr.message)
-		code := int32(cErr.error_code)
-		C.helicsErrorClear(&cErr)
 		// If HELICS returned a handle alongside the error, free it so we
 		// don't leak. The C API documents this as "may return null on
-		// error", but defensive cleanup is cheap.
+		// error", but defensive cleanup is cheap. Free BEFORE consuming
+		// the error since consumeHelicsError clears cErr.
 		if handle != nil {
 			C.helicsBrokerFree(handle)
 		}
-		return nil, &HelicsError{
-			Op:      "helicsCreateBroker",
-			Code:    code,
-			Message: msg,
-		}
+		return nil, consumeHelicsError("helicsCreateBroker", &cErr)
 	}
 
 	if handle == nil {
@@ -321,12 +314,7 @@ func (b *Broker) Close() error {
 	C.helicsBrokerDisconnect(b.handle, &cErr)
 	var disconnectErr error
 	if cErr.error_code != 0 {
-		disconnectErr = &HelicsError{
-			Op:      "helicsBrokerDisconnect",
-			Code:    int32(cErr.error_code),
-			Message: C.GoString(cErr.message),
-		}
-		C.helicsErrorClear(&cErr)
+		disconnectErr = consumeHelicsError("helicsBrokerDisconnect", &cErr)
 	}
 
 	C.helicsBrokerFree(b.handle)
@@ -411,6 +399,14 @@ type Federate struct {
 	// via pumpWG before any cgo handle is freed.
 	pumpDone chan struct{}
 	pumpWG   sync.WaitGroup
+	// inFlight tracks Step calls that have released f.mu but are still
+	// inside a blocking cgo call against the handle. Close drains it
+	// before freeing the handle so a stuck peer in helicsFederateRequestTime
+	// cannot wedge teardown via the mutex AND a freed handle cannot be
+	// dereferenced by a still-running Step. New Step calls are gated by
+	// the f.closed check under f.mu, so once Close marks closed nothing
+	// else can increment inFlight.
+	inFlight sync.WaitGroup
 	// pumpTrigger fires once per Step so the pump only checks for
 	// updates when the federate has advanced time. Buffer of 1 with
 	// drop-on-full keeps Step non-blocking; the pump catches up on its
@@ -490,12 +486,16 @@ func NewFederate(ctx context.Context, cfg FederateConfig) (*Federate, error) {
 // validateBrokerAddress runs the same CLI-injection guards
 // Broker.NewSubBroker uses, since the federate's HELICS init string is
 // constructed verbatim from cfg.BrokerAddress (no quoting on the
-// HELICS side).
+// HELICS side). Rejects the full ASCII whitespace class
+// (space/tab/CR/LF/VT/FF) so a CLI-style argument parser on the HELICS
+// side cannot re-tokenize the init string. CLI11/boost isspace(3) treats
+// \v and \f as whitespace too, so omitting them would be a
+// re-tokenization bypass (see secure-coding rule 1+5).
 func validateBrokerAddress(op, addr string) error {
 	if err := rejectNUL(op, "BrokerAddress", addr); err != nil {
 		return err
 	}
-	if strings.ContainsAny(addr, " \t\n\r") {
+	if strings.ContainsAny(addr, " \t\n\r\v\f") {
 		return &HelicsError{
 			Op:      op,
 			Code:    helicsAnomalousCode,
@@ -593,11 +593,14 @@ func (f *Federate) RegisterPublication(topic, units string) error {
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.handle == nil {
-		return ErrUninitializedFederate
-	}
+	// closed first, handle nil second: post-Close paths nil the handle
+	// as part of teardown, so the handle-nil check would otherwise mask
+	// a closed federate as zero-value.
 	if f.closed {
 		return ErrFederateClosed
+	}
+	if f.handle == nil {
+		return ErrUninitializedFederate
 	}
 	if _, exists := f.publications[topic]; exists {
 		// Idempotent: re-registering the same topic returns nil rather
@@ -647,11 +650,11 @@ func (f *Federate) Subscribe(topic string) (<-chan Value, error) {
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.handle == nil {
-		return nil, ErrUninitializedFederate
-	}
 	if f.closed {
 		return nil, ErrFederateClosed
+	}
+	if f.handle == nil {
+		return nil, ErrUninitializedFederate
 	}
 	if existing, ok := f.subscriptions[topic]; ok {
 		// Idempotent: hand back the existing channel rather than
@@ -680,7 +683,10 @@ func (f *Federate) Subscribe(topic string) (<-chan Value, error) {
 
 	// Buffered to 1 so a slow consumer cannot wedge the pump goroutine
 	// or the Step caller; on full we drop+replace, which is the
-	// latest-value semantics HELICS values represent.
+	// latest-value semantics HELICS values represent. The drop-and-replace
+	// pattern in drainUpdates is race-free ONLY because the pump goroutine
+	// is the sole sender on this channel; do not move sends elsewhere
+	// without re-thinking the invariant.
 	ch := make(chan Value, 1)
 	f.subscriptions[topic] = subscription{input: input, ch: ch, topic: topic}
 	return ch, nil
@@ -692,11 +698,11 @@ func (f *Federate) Subscribe(topic string) (<-chan Value, error) {
 func (f *Federate) EnterExecutingMode() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.handle == nil {
-		return ErrUninitializedFederate
-	}
 	if f.closed {
 		return ErrFederateClosed
+	}
+	if f.handle == nil {
+		return ErrUninitializedFederate
 	}
 	cErr := C.helicsErrorInitialize()
 	C.helicsFederateEnterExecutingMode(f.handle, &cErr)
@@ -717,11 +723,11 @@ func (f *Federate) Publish(topic string, value float64) error {
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.handle == nil {
-		return ErrUninitializedFederate
-	}
 	if f.closed {
 		return ErrFederateClosed
+	}
+	if f.handle == nil {
+		return ErrUninitializedFederate
 	}
 	pub, ok := f.publications[topic]
 	if !ok {
@@ -739,44 +745,59 @@ func (f *Federate) Publish(topic string, value float64) error {
 	return nil
 }
 
-// Step requests time advance by dt. HELICS returns the granted time
-// (which may be less than the requested time if a federate was forced
-// to a smaller step). The granted time is converted from HELICS' double
-// seconds back to time.Duration.
+// Step requests time advance by dt and returns the granted ABSOLUTE
+// HELICS time. HELICS' helicsFederateRequestTime takes and returns
+// absolute simulation time, not a delta — Step preserves that semantics
+// so callers can compare granted vs. requested without an extra
+// bookkeeping layer. Example: after Step(100ms) on a fresh federate the
+// granted return is 100ms (granted_absolute), not 100ms (delta).
+//
+// The granted time may be less than current+dt if HELICS forced the
+// federate to a smaller step.
+//
+// Lock discipline: Step holds f.mu only long enough to validate state
+// and snapshot the handle, then releases the mutex BEFORE the blocking
+// helicsFederateGetCurrentTime / helicsFederateRequestTime calls. A
+// stuck peer in HELICS would otherwise wedge Close (which also takes
+// f.mu) indefinitely. The handle remains valid for the duration of the
+// in-flight cgo call because Close drains f.inFlight before calling
+// helicsFederateFree (see Close).
 //
 // After every successful Step the wrapper signals the subscription
 // pump goroutine to drain any updated inputs into their channels.
 func (f *Federate) Step(dt time.Duration) (time.Duration, error) {
 	f.mu.Lock()
-	if f.handle == nil {
-		f.mu.Unlock()
-		return 0, ErrUninitializedFederate
-	}
 	if f.closed {
 		f.mu.Unlock()
 		return 0, ErrFederateClosed
 	}
+	if f.handle == nil {
+		f.mu.Unlock()
+		return 0, ErrUninitializedFederate
+	}
 	handle := f.handle
+	// Increment inFlight UNDER the lock and BEFORE releasing it. This
+	// pairs with Close's "mark closed under lock, then inFlight.Wait":
+	// once Close has the lock and observes f.closed=false, this Step
+	// has already incremented inFlight, so Close will wait for it. Once
+	// Close sets f.closed=true, no further Step can pass the gate above
+	// to increment inFlight.
+	f.inFlight.Add(1)
+	f.mu.Unlock()
+	defer f.inFlight.Done()
 
 	cErr := C.helicsErrorInitialize()
 	// HelicsFederateRequestTime takes an absolute time, not a delta.
-	// Read the current time under the lock so concurrent callers
-	// cannot interleave granted-time observations.
 	currentSeconds := float64(C.helicsFederateGetCurrentTime(handle, &cErr))
 	if cErr.error_code != 0 {
-		err := consumeHelicsError("helicsFederateGetCurrentTime", &cErr)
-		f.mu.Unlock()
-		return 0, err
+		return 0, consumeHelicsError("helicsFederateGetCurrentTime", &cErr)
 	}
 	requestSeconds := currentSeconds + dt.Seconds()
 
 	granted := C.helicsFederateRequestTime(handle, C.HelicsTime(requestSeconds), &cErr)
 	if cErr.error_code != 0 {
-		err := consumeHelicsError("helicsFederateRequestTime", &cErr)
-		f.mu.Unlock()
-		return 0, err
+		return 0, consumeHelicsError("helicsFederateRequestTime", &cErr)
 	}
-	f.mu.Unlock()
 
 	// Wake the pump so it drains updated inputs. Non-blocking: a
 	// pending trigger means the pump has not caught up yet, which is
@@ -790,11 +811,24 @@ func (f *Federate) Step(dt time.Duration) (time.Duration, error) {
 }
 
 // secondsToDuration converts HELICS' double-precision seconds to a
-// time.Duration. Capped at math.MaxInt64 nanoseconds; HELICS_TIME_MAXTIME
-// is far larger than what fits, but realistic granted times in seconds
-// fit comfortably.
+// time.Duration. Saturates at math.MaxInt64 / math.MinInt64 nanoseconds
+// rather than relying on the implementation-defined float64->int64
+// conversion, which is undefined for values that do not fit (HELICS
+// signals out-of-band times via cHelicsBigNumber ~ 9.22e18 sec, far
+// above what time.Duration nanoseconds can represent). NaN saturates
+// to 0.
 func secondsToDuration(s float64) time.Duration {
-	return time.Duration(s * float64(time.Second))
+	if math.IsNaN(s) {
+		return 0
+	}
+	ns := s * float64(time.Second)
+	if ns >= float64(math.MaxInt64) {
+		return time.Duration(math.MaxInt64)
+	}
+	if ns <= float64(math.MinInt64) {
+		return time.Duration(math.MinInt64)
+	}
+	return time.Duration(ns)
 }
 
 // pumpUpdates is the goroutine that drains updated subscriptions into
@@ -817,7 +851,20 @@ func (f *Federate) pumpUpdates() {
 
 // drainUpdates inspects every subscription under the lock; for each
 // updated input it pulls the latest value and pushes a Value onto the
-// channel. The channel send is non-blocking with drop-on-full to give
+// channel.
+//
+// Error policy (no in-process error surface yet — IEEE-181 will add a
+// Federate.Errors() channel):
+//
+//   - helicsFederateGetCurrentTime failure: skip the entire drain pass
+//     and log via slog. We do NOT publish Value{Time:0} for failed
+//     timestamps because that is indistinguishable from a legitimate
+//     t=0 update (data-invariants rule 1 — silent wrong data).
+//   - helicsInputGetDouble failure: skip that one input, log via slog
+//     with the topic name, and continue draining the rest. We do NOT
+//     publish a sentinel value for the same reason.
+//
+// The channel send is non-blocking with drop-on-full to give
 // latest-value semantics.
 func (f *Federate) drainUpdates() {
 	f.mu.Lock()
@@ -831,16 +878,20 @@ func (f *Federate) drainUpdates() {
 	for _, s := range f.subscriptions {
 		subs = append(subs, s)
 	}
+	f.mu.Unlock()
 
 	cErr := C.helicsErrorInitialize()
 	currentSeconds := float64(C.helicsFederateGetCurrentTime(handle, &cErr))
 	if cErr.error_code != 0 {
-		// Best-effort: clear and continue. We surface CGet errors via
-		// Step's return; the pump cannot return them to the caller.
-		C.helicsErrorClear(&cErr)
-		currentSeconds = 0
+		err := consumeHelicsError("helicsFederateGetCurrentTime", &cErr)
+		// Skip the entire pass: with no reliable timestamp we cannot
+		// stamp Value.Time without forging data. Step's own
+		// helicsFederateGetCurrentTime call surfaces the same error
+		// to the caller; the pump just silently skips this round.
+		slog.Warn("helics: drainUpdates: skipping drain pass",
+			"err", err)
+		return
 	}
-	f.mu.Unlock()
 
 	for _, s := range subs {
 		if C.helicsInputIsUpdated(s.input) != C.HELICS_TRUE {
@@ -849,10 +900,9 @@ func (f *Federate) drainUpdates() {
 		cErr := C.helicsErrorInitialize()
 		v := float64(C.helicsInputGetDouble(s.input, &cErr))
 		if cErr.error_code != 0 {
-			// Drop the update silently and clear; the pump cannot
-			// surface this to the caller. A future enhancement could
-			// expose a per-federate error channel.
-			C.helicsErrorClear(&cErr)
+			err := consumeHelicsError("helicsInputGetDouble", &cErr)
+			slog.Warn("helics: drainUpdates: dropping update",
+				"topic", s.topic, "err", err)
 			continue
 		}
 		val := Value{
@@ -898,6 +948,18 @@ func (f *Federate) closeSubscriptionChannels() {
 // ErrFederateClosed (recoverable via errors.Is). On a zero-value
 // *Federate, Close marks the federate closed and returns
 // ErrUninitializedFederate without touching the cgo boundary.
+//
+// Teardown ordering:
+//  1. Mark f.closed=true under f.mu so future Step calls bail with
+//     ErrFederateClosed (and cannot increment f.inFlight).
+//  2. f.inFlight.Wait — drain any Step calls that already passed the
+//     gate and are inside a blocking cgo call against the handle. This
+//     is what makes the H1 "release mu before cgo" pattern safe: the
+//     handle is not freed until in-flight callers complete.
+//  3. close(f.pumpDone); f.pumpWG.Wait — stop and join the pump
+//     goroutine so its drainUpdates cgo calls have completed.
+//  4. helicsFederateFinalize, helicsFederateFree.
+//  5. Close the owned broker (if any).
 func (f *Federate) Close() error {
 	f.mu.Lock()
 	if f.closed {
@@ -917,9 +979,14 @@ func (f *Federate) Close() error {
 	owned := f.ownedBroker
 	f.mu.Unlock()
 
+	// Drain in-flight Step calls before freeing the handle. New Step
+	// calls cannot increment inFlight because they read f.closed under
+	// f.mu and bail; only callers that already passed the gate remain.
+	f.inFlight.Wait()
+
 	// Signal the pump to exit and wait for it before freeing the
-	// HELICS handle: the pump touches f.handle under the lock, but
-	// freeing while it is mid-call would race the cgo boundary.
+	// HELICS handle: drainUpdates makes cgo calls without holding f.mu,
+	// so freeing while it is mid-call would race the cgo boundary.
 	close(pumpDone)
 	f.pumpWG.Wait()
 
@@ -941,21 +1008,31 @@ func (f *Federate) Close() error {
 
 	var brokerErr error
 	if owned != nil {
-		brokerErr = owned.Close()
-		// On a healthy in-process broker, Close returns nil; an
-		// ErrBrokerClosed here would be a wrapper bug.
-		if errors.Is(brokerErr, ErrBrokerClosed) {
-			brokerErr = nil
+		rawErr := owned.Close()
+		switch {
+		case rawErr == nil:
+			// Healthy path.
+		case errors.Is(rawErr, ErrBrokerClosed):
+			// Owned-broker double-close indicates a wrapper bug
+			// (the federate is the only owner). Wrap and surface
+			// rather than coerce to nil so the bug is visible.
+			brokerErr = fmt.Errorf("owned broker close: %w", rawErr)
+		case errors.Is(rawErr, ErrUninitializedBroker):
+			// Same: an owned broker is by construction initialized
+			// (NewInProcess produced it). Surface as a wrapper bug.
+			brokerErr = fmt.Errorf("owned broker close: %w", rawErr)
+		default:
+			brokerErr = fmt.Errorf("owned broker close: %w", rawErr)
 		}
 	}
 
 	switch {
 	case finalizeErr != nil && brokerErr != nil:
-		return fmt.Errorf("helics federate close: %w (also broker close: %v)", finalizeErr, brokerErr)
+		return fmt.Errorf("helics federate close: %w (also %v)", finalizeErr, brokerErr)
 	case finalizeErr != nil:
 		return fmt.Errorf("helics federate close: %w", finalizeErr)
 	case brokerErr != nil:
-		return fmt.Errorf("helics federate close: broker: %w", brokerErr)
+		return fmt.Errorf("helics federate close: %w", brokerErr)
 	default:
 		return nil
 	}

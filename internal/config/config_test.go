@@ -63,6 +63,50 @@ func TestResolveAdminBind(t *testing.T) {
 	}
 }
 
+// ResolveMetricsBind mirrors ResolveAdminBind's loopback-default contract for
+// the UNAUTHENTICATED /metrics listener (no client cert, no Bearer). A bare
+// ":9100" pre-fix bound 0.0.0.0/[::] and exposed exposition data network-wide
+// (Leon HIGH); the fix defaults bare ports to loopback so wide-open bind is
+// explicit opt-in. The two resolvers share an implementation, so this test
+// pins the metrics-facing contract independently and guards against drift.
+func TestResolveMetricsBind(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty (metrics disabled)", "", ""},
+
+		// HIGH fix core: bare port → loopback default.
+		{"bare port :9100 → loopback", ":9100", "127.0.0.1:9100"},
+		{"bare port :0 (ephemeral) → loopback", ":0", "127.0.0.1:0"},
+
+		// Explicit routable forms pass through (the documented
+		// host.docker.internal scrape path). No silent rewrite.
+		{"explicit 0.0.0.0:port unchanged", "0.0.0.0:9100", "0.0.0.0:9100"},
+		{"explicit [::]:port unchanged", "[::]:9100", "[::]:9100"},
+		{"explicit LAN IP unchanged", "192.168.1.5:9100", "192.168.1.5:9100"},
+
+		// Explicit loopback stays explicit.
+		{"explicit 127.0.0.1:port unchanged", "127.0.0.1:9100", "127.0.0.1:9100"},
+
+		// Malformed passes through; net.Listen rejects.
+		{"malformed (no port) unchanged", "9100", "9100"},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ResolveMetricsBind(tc.in); got != tc.want {
+				t.Errorf("ResolveMetricsBind(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // IEEE-097: EffectiveStorePath resolves a per-store on-disk path with the
 // precedence rule:
 //

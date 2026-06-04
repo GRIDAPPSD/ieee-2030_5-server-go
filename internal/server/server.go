@@ -19,6 +19,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/discovery"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/obs"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/subscription"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls/gotls"
@@ -223,12 +224,27 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	if cfg.EnableCCM {
 		// Bridge: inject gotls connection state into request context
 		sepTLS.SetupCCMServer(protocolSrv)
-		protocolSrv.Handler = sepTLS.CCMIdentityMiddleware(router)
+		protocolSrv.Handler = obs.Middleware(sepTLS.CCMIdentityMiddleware(router))
 	} else {
-		protocolSrv.Handler = router
+		protocolSrv.Handler = obs.Middleware(router)
 	}
 
-	errCh := make(chan error, 2)
+	// Observability: record protocol-listener TLS connection-state
+	// transitions. SetupCCMServer (CCM branch) installs its own ConnState
+	// hook to thread gotls state into the request context; chain through it
+	// rather than clobbering it so both the CCM bridge and the metric fire.
+	prevConnState := protocolSrv.ConnState
+	protocolSrv.ConnState = func(c net.Conn, state http.ConnState) {
+		obs.RecordConnState(state.String())
+		if prevConnState != nil {
+			prevConnState(c, state)
+		}
+	}
+
+	// errCh capacity covers the protocol listener, the admin listener, and
+	// the optional metrics listener so a fast-failing Serve never blocks on
+	// an unbuffered send during startup.
+	errCh := make(chan error, 3)
 
 	go func() {
 		errCh <- protocolSrv.Serve(tlsListener)
@@ -287,6 +303,30 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		}
 	}
 
+	// Observability: dedicated plain-HTTP metrics listener (SEP2_METRICS_ADDR).
+	// Empty addr leaves it disabled. Serves ONLY GET /metrics; never carries
+	// the protocol mTLS posture or the admin auth gate. Shares errCh and the
+	// shutdown path with the other listeners.
+	var metricsSrv *http.Server
+	if cfg.MetricsAddr != "" {
+		// IEEE-136 parity with the admin listener: a bare ":<port>" resolves
+		// to loopback so the UNAUTHENTICATED /metrics surface is not exposed
+		// network-wide by default. Any explicit host (0.0.0.0, an LAN IP,
+		// [::]) is honored verbatim and warned about below.
+		metricsAddr := config.ResolveMetricsBind(cfg.MetricsAddr)
+		if msg := metricsExposureWarning(metricsAddr); msg != "" {
+			log.Print(msg)
+		}
+		metricsSrv, err = startMetricsServer(metricsAddr, errCh)
+		if err != nil {
+			_ = protocolSrv.Close()
+			if adminSrv != nil {
+				_ = adminSrv.Close()
+			}
+			return fmt.Errorf("metrics server: %w", err)
+		}
+	}
+
 	// IEEE-140: enumerate routes mounted on each listener at boot. The
 	// /api/certs/* mis-mount that became Leon CRITICAL on PR #246 was
 	// hard to spot by reading router.go; surfacing every route here at
@@ -310,6 +350,11 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		if adminSrv != nil {
 			if err := adminSrv.Shutdown(context.Background()); err != nil {
 				log.Printf("admin server shutdown error: %v", err)
+			}
+		}
+		if metricsSrv != nil {
+			if err := metricsSrv.Shutdown(context.Background()); err != nil {
+				log.Printf("metrics server shutdown error: %v", err)
 			}
 		}
 		return nil
@@ -399,6 +444,38 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	}()
 
 	return adminSrv, tlsModeDescription, addr, adminRoutes, nil
+}
+
+// startMetricsServer brings up the dedicated plain-HTTP Prometheus metrics
+// listener. It serves ONLY GET /metrics → obs.Handler(); no other route is
+// mounted, and it is deliberately NOT the mTLS protocol mux nor the
+// auth-gated admin mux (exposing /metrics there would either require a
+// client cert per scrape or leak through the admin auth surface). The
+// server runs on the shared errCh and is shut down cleanly by Run's
+// ctx.Done branch.
+func startMetricsServer(addr string, errCh chan error) (*http.Server, error) {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("metrics listen: %w", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", obs.Handler())
+
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
+		ReadTimeout:       serverReadTimeout,
+		WriteTimeout:      serverWriteTimeout,
+		IdleTimeout:       serverIdleTimeout,
+	}
+
+	go func() {
+		log.Printf("Metrics server listening on %s (plain HTTP, GET /metrics only)", addr)
+		errCh <- srv.Serve(listener)
+	}()
+
+	return srv, nil
 }
 
 // buildBannerInput projects the runtime config + derived identity into the
@@ -526,6 +603,30 @@ func adminProxyWarning(addr string, behindProxy bool) string {
 		"then set SEP2_ADMIN_BEHIND_PROXY=true to silence this warning. " +
 		"For loopback-only admin, leave SEP2_ADMIN_LISTEN as :<port> " +
 		"(IEEE-136 default)."
+}
+
+// metricsExposureWarning returns a startup-warning string when the resolved
+// metrics bind address is non-loopback, and empty otherwise (loopback bind or
+// empty addr — caller gates the disabled case). The /metrics surface is
+// UNAUTHENTICATED (no client cert, no Bearer), so a non-loopback bind exposes
+// raw exposition data network-wide; the warning makes that exposure visible at
+// boot. Mirrors adminProxyWarning; pure function so tests assert content
+// without intercepting log output.
+func metricsExposureWarning(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	if isLoopbackBind(addr) {
+		return ""
+	}
+	return "WARNING: metrics listener bound to non-loopback address " + addr +
+		". The /metrics endpoint is UNAUTHENTICATED (no client cert, no " +
+		"Bearer gate) and now exposes Prometheus exposition data on all " +
+		"reachable interfaces. This is required for a containerized " +
+		"Prometheus that scrapes via host.docker.internal (the docker " +
+		"bridge gateway is NOT loopback), but it MUST sit behind a host " +
+		"firewall / trusted network. For loopback-only metrics, set " +
+		"SEP2_METRICS_ADDR=:<port> (IEEE-136 default)."
 }
 
 // isLoopbackBind reports whether addr is bound to a loopback host.

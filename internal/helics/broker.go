@@ -12,8 +12,7 @@
 package helics
 
 /*
-#cgo CFLAGS: -I/usr/local/include
-#cgo LDFLAGS: -L/usr/local/lib -lhelics
+#cgo pkg-config: helics
 #include <stdlib.h>
 #include <helics/helics.h>
 */

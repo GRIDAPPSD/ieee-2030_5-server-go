@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/obs"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 )
@@ -194,6 +195,7 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 		select {
 		case m.queue <- task:
 		default:
+			obs.RecordNotification(obs.OutcomeQueueFull)
 			log.Printf("notification: queue full, dropping for %s", sub.NotificationURI)
 		}
 	}
@@ -205,8 +207,9 @@ func (m *Manager) worker(ctx context.Context) {
 		err := m.deliver(ctx, task)
 		switch {
 		case err == nil:
-			// success
+			obs.RecordNotification(obs.OutcomeSuccess)
 		case errors.Is(err, errDeleteAfter4xx):
+			obs.RecordNotification(obs.OutcomeClientError)
 			log.Printf("notification: %s receiver returned 4xx, subscription %q deleted",
 				task.notificationURI, task.subscriptionID)
 		default:

@@ -94,6 +94,37 @@ func TestNotifyQueueFullIncrementsCounter(t *testing.T) {
 	waitFor(t, func() bool { return metricByOutcome(t, obs.OutcomeQueueFull) >= before+1 })
 }
 
+// TestNotifyClientErrorIncrementsCounter asserts a receiver that returns a 4xx
+// drives the OutcomeClientError counter (Dutch M2: the 4xx outcome was
+// previously untested). A httptest receiver returns 400; Notify sets the
+// record ID via the store's ListByResource, so deliver's 4xx branch fires
+// errDeleteAfter4xx and the worker records OutcomeClientError.
+func TestNotifyClientErrorIncrementsCounter(t *testing.T) {
+	before := metricByOutcome(t, obs.OutcomeClientError)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest) // 400 → receiver rejects subscription
+	}))
+	defer srv.Close()
+
+	store := &mockSubStore{subs: []sep2.Subscription{{
+		SubscribableResource: sep2.SubscribableResource{
+			Resource: sep2.Resource{Href: "/edev/7/sub/1"},
+		},
+		SubscribedResource: "/edev/7",
+		NotificationURI:    srv.URL + "/notify",
+	}}}
+
+	mgr := subscription.NewManager(store, 2, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	go mgr.Start(ctx)
+	defer cancel()
+
+	mgr.Notify(ctx, "/edev/7", sep2.NotificationStatusChanged)
+
+	waitFor(t, func() bool { return metricByOutcome(t, obs.OutcomeClientError) >= before+1 })
+}
+
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)

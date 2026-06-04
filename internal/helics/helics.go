@@ -1,22 +1,43 @@
 //go:build helics
 
+// Package helics is an in-house cgo wrapper over the HELICS v3 C API
+// (libhelics, system-installed; resolved via pkg-config). It is built
+// only under the `helics` build tag so that the default `go build` of
+// the sep2 server stays CGO-free (per ADR-002 / ADR-004).
+//
+// # File layout: single cgo translation unit
+//
+// All cgo-touching code in this package lives in this single file. The
+// HELICS C header (`helics/helics.h`) declares several externally-linked
+// `const` values with initializers at file scope (e.g. HELICS_TRUE,
+// HELICS_FALSE, HELICS_TIME_ZERO, HELICS_INVALID_OPTION_INDEX,
+// HELICS_INVALID_PROPERTY_VALUE, cHelicsBigNumber, etc.; see
+// helics.h:297, 345, 463, 557-560, 569-570). Each cgo translation unit
+// that includes the header emits its own definition of those symbols,
+// so as soon as two cgo `.go` files in the same Go package both
+// `#include <helics/helics.h>` the package-level link fails with
+// "multiple definition".
+//
+// The portable resolution is to keep all `import "C"` (and therefore all
+// C calls) in one Go file. A GNU-ld linker workaround (the
+// allow-duplicate-definition flag) was considered and rejected because
+// that flag is GNU-ld specific and is silently missing from macOS's
+// ld64; ADR-004's second 2026-06-03 correction locked the wrapper to
+// portable-prefix builds (Homebrew on macOS, Spack/Easybuild, distro
+// packages), so a GNU-ld-only flag would break the very portability
+// that ADR enshrined. We also considered an extern-shim .c file, but
+// `helics.h`, `helics_api.h`, and `helics_enums.h` all carry the same
+// file-scope const definitions, so no header subset avoids the
+// duplicates.
+//
+// The file is therefore organized by exported type (Broker first, then
+// Federate), with shared error sentinels and HelicsError at the top.
+// Tests live in the external `helics_test` package and exercise only
+// the exported API.
 package helics
-
-// The HELICS C header (helics.h) defines several externally-linked
-// initialized `const` values (HELICS_TRUE, HELICS_TIME_ZERO, etc.) at
-// file scope. Each cgo translation unit that includes the header emits
-// its own definition of those symbols, and once two cgo files
-// (broker.go and federate.go) sit in the same Go package the
-// package-level link fails with "multiple definition". The header
-// is provided by HELICS upstream; we cannot rewrite it.
-// `-Wl,--allow-multiple-definition` instructs the linker to keep the
-// first definition and drop the rest. The values are identical across
-// translation units (same header, same literals), so the resolution
-// is correct. Scoped to this package via the cgo preamble.
 
 /*
 #cgo pkg-config: helics
-#cgo LDFLAGS: -Wl,--allow-multiple-definition
 #include <stdlib.h>
 #include <helics/helics.h>
 */
@@ -26,11 +47,300 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
 	"unsafe"
 )
+
+// -----------------------------------------------------------------------------
+// Shared package-wide types and sentinels
+// -----------------------------------------------------------------------------
+
+// defaultBrokerType is the HELICS core type used when callers don't
+// override. HELICS v3's conventional default is "zmq" (used by the
+// helics_broker CLI and the v3 docs); it is also the transport that the
+// in-process unit test exercises without external setup.
+const defaultBrokerType = "zmq"
+
+// helicsAnomalousCode marks a failure that crossed the C boundary but for
+// which HELICS did not populate an error code, as well as wrapper-side
+// boundary-input rejections that we surface in *HelicsError shape for
+// consistency with the cgo-boundary lane. Distinct from any
+// HelicsErrorTypes value (HELICS error codes occupy -8..-1 and small
+// positive sentinels; math.MinInt32 is well outside that range).
+const helicsAnomalousCode = math.MinInt32
+
+// HelicsError captures a non-zero HELICS C error code plus its message,
+// translated across the cgo boundary into a Go-native error. Callers can
+// recover the structured form with errors.As.
+type HelicsError struct {
+	// Op is the wrapper-level operation that triggered the error
+	// (e.g. "helicsCreateBroker"). It anchors the error to the C entry
+	// point that produced it.
+	Op string
+	// Code is the HELICS error_code field (matches HelicsErrorTypes in
+	// helics_enums.h) when the failure originated from a C call. For
+	// wrapper-side anomalies that crossed the C boundary without a
+	// populated HELICS code, see helicsAnomalousCode.
+	Code int32
+	// Message is the HELICS-side message string, copied into Go memory.
+	Message string
+}
+
+// Error renders the HELICS error in the conventional "op: code N: message"
+// shape so log lines stay greppable.
+func (e *HelicsError) Error() string {
+	return fmt.Sprintf("helics: %s: code %d: %s", e.Op, e.Code, e.Message)
+}
+
+// rejectNUL returns a *HelicsError when s contains an embedded NUL byte.
+// We use the structured-error shape with helicsAnomalousCode so callers
+// in the cgo-boundary lane can errors.As uniformly; the dedicated sentinel
+// code keeps it distinct from any genuine HelicsErrorTypes value.
+func rejectNUL(op, field, s string) error {
+	if strings.IndexByte(s, 0) != -1 {
+		return &HelicsError{
+			Op:      op,
+			Code:    helicsAnomalousCode,
+			Message: fmt.Sprintf("%s: contains NUL byte", field),
+		}
+	}
+	return nil
+}
+
+// consumeHelicsError copies the HELICS error message into Go memory,
+// clears the C-side struct (so subsequent reuse of cErr is clean), and
+// returns the structured Go-side error. Centralizing this avoids the
+// "remember to copy then clear" footgun on every call site.
+func consumeHelicsError(op string, cErr *C.HelicsError) error {
+	msg := C.GoString(cErr.message)
+	code := int32(cErr.error_code)
+	C.helicsErrorClear(cErr)
+	return &HelicsError{Op: op, Code: code, Message: msg}
+}
+
+// -----------------------------------------------------------------------------
+// Broker (IEEE-144)
+// -----------------------------------------------------------------------------
+
+// ErrBrokerClosed is returned by Broker.Close on the second and subsequent
+// calls so that idempotent teardown is verifiable via errors.Is.
+var ErrBrokerClosed = errors.New("helics: broker already closed")
+
+// ErrEmptyParentAddress is returned by NewSubBroker when the caller passes
+// an empty parentAddress. Recoverable via errors.Is. Distinct from any
+// *HelicsError because the failure is wrapper-side validation that never
+// reached the C boundary.
+var ErrEmptyParentAddress = errors.New("helics: parentAddress is required")
+
+// ErrUninitializedBroker is returned by Broker methods when invoked on a
+// zero-value *Broker (one that did not come from NewInProcess or
+// NewSubBroker). Without this guard the C calls would dereference a nil
+// HelicsBroker handle and SIGSEGV across the cgo boundary.
+var ErrUninitializedBroker = errors.New("helics: broker not initialized via NewInProcess or NewSubBroker")
+
+// Broker wraps a HelicsBroker handle and tracks lifecycle state so that
+// Close is idempotent and post-close inspectors don't dereference a freed
+// handle.
+type Broker struct {
+	mu     sync.Mutex
+	handle C.HelicsBroker
+	name   string
+	closed bool
+}
+
+// NewInProcess creates a root broker that runs in-process inside the
+// caller's process via helicsCreateBroker. It is suitable for unit tests
+// and for the server-owned root broker shape described in ADR-004.
+//
+// initString is passed verbatim to HELICS; pass an empty string to accept
+// the v3 defaults (the in-process tests rely on this).
+//
+// Embedded NUL bytes in name or initString are rejected at the boundary
+// before crossing into C: C.CString silently truncates at the first NUL,
+// which would let a caller-supplied "sub\x00malicious" register as "sub"
+// (see secure-coding rule 5).
+func NewInProcess(name, initString string) (*Broker, error) {
+	if err := rejectNUL("NewInProcess", "name", name); err != nil {
+		return nil, err
+	}
+	if err := rejectNUL("NewInProcess", "initString", initString); err != nil {
+		return nil, err
+	}
+	return createBroker(defaultBrokerType, name, initString)
+}
+
+// NewSubBroker creates a local broker that registers as a child of an
+// existing root broker reachable at parentAddress. It maps to the HELICS 3
+// sub-broker pattern: the same helicsCreateBroker entry point with an
+// init string of "--broker=<parentAddress>". v3.6.1 has no broker-side
+// Connect entry point (see ADR-004's 2026-06-03 correction).
+//
+// An empty parentAddress is wrapper-side validation and returns
+// ErrEmptyParentAddress (recoverable via errors.Is). Embedded NUL bytes,
+// ASCII whitespace, or a leading dash in parentAddress are rejected
+// because the constructed init string "--broker=<parentAddress>" feeds a
+// CLI-style argument parser on the HELICS side; whitespace would
+// re-tokenize and a leading dash would shadow as a separate flag.
+func NewSubBroker(name, parentAddress string) (*Broker, error) {
+	if parentAddress == "" {
+		return nil, ErrEmptyParentAddress
+	}
+	if err := rejectNUL("NewSubBroker", "name", name); err != nil {
+		return nil, err
+	}
+	if err := rejectNUL("NewSubBroker", "parentAddress", parentAddress); err != nil {
+		return nil, err
+	}
+	if strings.ContainsAny(parentAddress, " \t\n\r") {
+		return nil, &HelicsError{
+			Op:      "NewSubBroker",
+			Code:    helicsAnomalousCode,
+			Message: "parentAddress: contains whitespace",
+		}
+	}
+	if strings.HasPrefix(parentAddress, "-") {
+		return nil, &HelicsError{
+			Op:      "NewSubBroker",
+			Code:    helicsAnomalousCode,
+			Message: "parentAddress: leading dash forbidden",
+		}
+	}
+	initString := fmt.Sprintf("--broker=%s", parentAddress)
+	return createBroker(defaultBrokerType, name, initString)
+}
+
+// createBroker is the shared cgo entry point for both shapes. It owns the
+// C-string lifetimes and the HelicsError translation.
+func createBroker(brokerType, name, initString string) (*Broker, error) {
+	cType := C.CString(brokerType)
+	defer C.free(unsafe.Pointer(cType))
+
+	cName := C.CString(name)
+	defer C.free(unsafe.Pointer(cName))
+
+	cInit := C.CString(initString)
+	defer C.free(unsafe.Pointer(cInit))
+
+	cErr := C.helicsErrorInitialize()
+	handle := C.helicsCreateBroker(cType, cName, cInit, &cErr)
+
+	if cErr.error_code != 0 {
+		// HELICS allocates the message string; copy it into Go memory
+		// before clearing the error to avoid dangling pointers.
+		msg := C.GoString(cErr.message)
+		code := int32(cErr.error_code)
+		C.helicsErrorClear(&cErr)
+		// If HELICS returned a handle alongside the error, free it so we
+		// don't leak. The C API documents this as "may return null on
+		// error", but defensive cleanup is cheap.
+		if handle != nil {
+			C.helicsBrokerFree(handle)
+		}
+		return nil, &HelicsError{
+			Op:      "helicsCreateBroker",
+			Code:    code,
+			Message: msg,
+		}
+	}
+
+	if handle == nil {
+		return nil, &HelicsError{
+			Op:      "helicsCreateBroker",
+			Code:    helicsAnomalousCode,
+			Message: "HELICS returned nil handle with no error code",
+		}
+	}
+
+	return &Broker{handle: handle, name: name}, nil
+}
+
+// Address returns the broker's network address (e.g. "tcp://127.0.0.1:23404"
+// for zmq). Returns an empty string if the broker has been closed or is
+// uninitialized (zero-value *Broker); callers that need to distinguish
+// should check IsConnected first.
+//
+// The returned string is copied into Go memory; HELICS retains ownership
+// of the underlying C buffer.
+func (b *Broker) Address() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed || b.handle == nil {
+		// Zero-value or post-close: never reach the C call. A nil
+		// HelicsBroker handle would SIGSEGV across cgo.
+		return ""
+	}
+	cStr := C.helicsBrokerGetAddress(b.handle)
+	// HELICS owns cStr; do NOT free it. C.GoString copies it into a
+	// Go-managed string.
+	return C.GoString(cStr)
+}
+
+// IsConnected reports whether the broker considers itself connected. It
+// returns false after Close and on a zero-value *Broker.
+func (b *Broker) IsConnected() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed || b.handle == nil {
+		// Zero-value or post-close: never reach the C call.
+		return false
+	}
+	return C.helicsBrokerIsConnected(b.handle) == C.HELICS_TRUE
+}
+
+// Close disconnects and frees the underlying HELICS broker. It is
+// idempotent: the first call performs the teardown and returns any
+// HELICS-side disconnect error; subsequent calls return ErrBrokerClosed
+// (recoverable via errors.Is).
+//
+// On a zero-value *Broker (one not produced by NewInProcess or
+// NewSubBroker), Close marks the broker closed and returns
+// ErrUninitializedBroker without touching the cgo boundary; subsequent
+// calls then return ErrBrokerClosed per the idempotency contract.
+func (b *Broker) Close() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return ErrBrokerClosed
+	}
+	if b.handle == nil {
+		// Zero-value *Broker: never constructed. Mark closed so the
+		// idempotency contract still holds, and refuse without making
+		// any C call against a nil HelicsBroker.
+		b.closed = true
+		return ErrUninitializedBroker
+	}
+	b.closed = true
+
+	// Best-effort: call Disconnect first, then Free regardless of the
+	// disconnect outcome. Free has no err out-param, so any failure is
+	// confined to the disconnect step.
+	cErr := C.helicsErrorInitialize()
+	C.helicsBrokerDisconnect(b.handle, &cErr)
+	var disconnectErr error
+	if cErr.error_code != 0 {
+		disconnectErr = &HelicsError{
+			Op:      "helicsBrokerDisconnect",
+			Code:    int32(cErr.error_code),
+			Message: C.GoString(cErr.message),
+		}
+		C.helicsErrorClear(&cErr)
+	}
+
+	C.helicsBrokerFree(b.handle)
+	b.handle = nil
+
+	if disconnectErr != nil {
+		return fmt.Errorf("helics close: %w", disconnectErr)
+	}
+	return nil
+}
+
+// -----------------------------------------------------------------------------
+// Federate (IEEE-145)
+// -----------------------------------------------------------------------------
 
 // ErrFederateClosed is returned by Federate.Close on the second and
 // subsequent calls so that idempotent teardown is verifiable via
@@ -264,17 +574,6 @@ func createValueFederate(name, address string, stepSize time.Duration) (C.Helics
 		}
 	}
 	return handle, nil
-}
-
-// consumeHelicsError copies the HELICS error message into Go memory,
-// clears the C-side struct (so subsequent reuse of cErr is clean), and
-// returns the structured Go-side error. Centralizing this avoids the
-// "remember to copy then clear" footgun on every call site.
-func consumeHelicsError(op string, cErr *C.HelicsError) error {
-	msg := C.GoString(cErr.message)
-	code := int32(cErr.error_code)
-	C.helicsErrorClear(cErr)
-	return &HelicsError{Op: op, Code: code, Message: msg}
 }
 
 // RegisterPublication registers a typed double publication on the

@@ -309,7 +309,15 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// shutdown path with the other listeners.
 	var metricsSrv *http.Server
 	if cfg.MetricsAddr != "" {
-		metricsSrv, err = startMetricsServer(cfg.MetricsAddr, errCh)
+		// IEEE-136 parity with the admin listener: a bare ":<port>" resolves
+		// to loopback so the UNAUTHENTICATED /metrics surface is not exposed
+		// network-wide by default. Any explicit host (0.0.0.0, an LAN IP,
+		// [::]) is honored verbatim and warned about below.
+		metricsAddr := config.ResolveMetricsBind(cfg.MetricsAddr)
+		if msg := metricsExposureWarning(metricsAddr); msg != "" {
+			log.Print(msg)
+		}
+		metricsSrv, err = startMetricsServer(metricsAddr, errCh)
 		if err != nil {
 			_ = protocolSrv.Close()
 			if adminSrv != nil {
@@ -595,6 +603,30 @@ func adminProxyWarning(addr string, behindProxy bool) string {
 		"then set SEP2_ADMIN_BEHIND_PROXY=true to silence this warning. " +
 		"For loopback-only admin, leave SEP2_ADMIN_LISTEN as :<port> " +
 		"(IEEE-136 default)."
+}
+
+// metricsExposureWarning returns a startup-warning string when the resolved
+// metrics bind address is non-loopback, and empty otherwise (loopback bind or
+// empty addr — caller gates the disabled case). The /metrics surface is
+// UNAUTHENTICATED (no client cert, no Bearer), so a non-loopback bind exposes
+// raw exposition data network-wide; the warning makes that exposure visible at
+// boot. Mirrors adminProxyWarning; pure function so tests assert content
+// without intercepting log output.
+func metricsExposureWarning(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	if isLoopbackBind(addr) {
+		return ""
+	}
+	return "WARNING: metrics listener bound to non-loopback address " + addr +
+		". The /metrics endpoint is UNAUTHENTICATED (no client cert, no " +
+		"Bearer gate) and now exposes Prometheus exposition data on all " +
+		"reachable interfaces. This is required for a containerized " +
+		"Prometheus that scrapes via host.docker.internal (the docker " +
+		"bridge gateway is NOT loopback), but it MUST sit behind a host " +
+		"firewall / trusted network. For loopback-only metrics, set " +
+		"SEP2_METRICS_ADDR=:<port> (IEEE-136 default)."
 }
 
 // isLoopbackBind reports whether addr is bound to a loopback host.

@@ -68,7 +68,16 @@ type Config struct {
 	// the metrics listener entirely (default OFF). The listener serves ONLY
 	// GET /metrics; it is NEVER mounted on the mTLS protocol listener or the
 	// auth-gated admin listener, so exposition data has no client-cert or
-	// Bearer gate and must be reached on a host-local / trusted-network port.
+	// Bearer gate.
+	//
+	// IEEE-136 loopback default (see ResolveMetricsBind): a bare ":<port>"
+	// resolves to 127.0.0.1:<port> so the unauthenticated /metrics surface is
+	// loopback-only by default; any explicit host (0.0.0.0, an LAN IP, [::])
+	// is honored verbatim and triggers a non-loopback startup warning. A
+	// containerized Prometheus that scrapes via host.docker.internal (the
+	// docker bridge gateway, NOT loopback) must use the explicit routable form
+	// SEP2_METRICS_ADDR=0.0.0.0:9100, which exposes /metrics on all interfaces
+	// and so MUST sit behind a host firewall / trusted network.
 	MetricsAddr string // env SEP2_METRICS_ADDR
 
 	TZOffset    int32  // timezone offset from UTC in seconds
@@ -129,6 +138,29 @@ func ResolveAdminBind(listen string) string {
 		return net.JoinHostPort("127.0.0.1", port)
 	}
 	return listen
+}
+
+// ResolveMetricsBind applies the IEEE-136 loopback default to a raw metrics
+// listen string, with the same contract as ResolveAdminBind:
+//
+//	""              → ""              (metrics disabled — caller gates this)
+//	":<port>"       → "127.0.0.1:<port>"  (bare port → loopback by default)
+//	"<host>:<port>" → unchanged       (any explicit host is honored verbatim)
+//	"<port>"        → unchanged       (malformed input passed through; net.Listen rejects)
+//
+// Rationale: the metrics listener serves an UNAUTHENTICATED /metrics surface
+// (no client cert, no Bearer — see Config.MetricsAddr). Pre-this-fix, a bare
+// ":9100" bound 0.0.0.0/[::], so /metrics was reachable network-wide by any
+// neighbor. Defaulting bare ports to loopback makes network exposure opt-in:
+// an operator who wants a routable bind (e.g. for a containerized Prometheus
+// scraping host.docker.internal) must say so explicitly with
+// "0.0.0.0:<port>" or "<ip>:<port>", which also fires a startup warning
+// (see metricsExposureWarning).
+//
+// Implemented as a thin alias over ResolveAdminBind so the two listeners can
+// never drift in their loopback-default semantics — the rule is identical.
+func ResolveMetricsBind(listen string) string {
+	return ResolveAdminBind(listen)
 }
 
 // EffectiveStorePath resolves the on-disk JSON snapshot path for a named

@@ -97,7 +97,15 @@ new-device:                ## Mint a new device cert (DEVICE_NAME= SERIAL= requi
 # IEEE-136: SEP2_ADMIN_ADDR=:8444 binds admin to 127.0.0.1:8444 by default
 # (loopback). To make admin reachable off-box, override:
 #   SEP2_ADMIN_LISTEN=0.0.0.0:8444 make run-ccm
-run: build certs           ## Build, generate certs, and start server (GCM mode; admin on loopback :8444, metrics on :9100)
+# IEEE-136 / PR #264: a bare SEP2_METRICS_ADDR=:9100 now resolves to loopback
+# (127.0.0.1:9100), so the UNAUTHENTICATED /metrics surface is not exposed
+# network-wide by default. A containerized Prometheus scrapes the host via
+# host.docker.internal (the docker bridge gateway IP), which is NOT loopback
+# and cannot reach a loopback-only bind. The dev run target therefore binds
+# the EXPLICIT routable form 0.0.0.0:9100 so the scrape works. This exposes
+# /metrics on ALL interfaces and MUST sit behind a host firewall / trusted
+# network; the server logs a non-loopback startup WARNING to make that visible.
+run: build certs           ## Build, generate certs, and start server (GCM mode; admin on loopback :8444, metrics on 0.0.0.0:9100)
 	SEP2_ADDR=:8443 \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
@@ -105,7 +113,7 @@ run: build certs           ## Build, generate certs, and start server (GCM mode;
 	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
 	SEP2_ADMIN_ADDR=:8444 \
 	SEP2_ADMIN_KEY=admin \
-	SEP2_METRICS_ADDR=:9100 \
+	SEP2_METRICS_ADDR=0.0.0.0:9100 \
 	./$(SERVER) serve
 
 run-ccm: build certs       ## Start server with CCM-8 cipher (spec-compliant; admin on loopback :8444)

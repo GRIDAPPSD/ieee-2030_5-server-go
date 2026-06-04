@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
 )
 
 // TestStartMetricsServerServesMetrics asserts the dedicated metrics listener
@@ -64,5 +66,16 @@ func TestStartMetricsServerBadAddr(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "metrics listen") {
 		t.Errorf("error not wrapped with context: %v", err)
+	}
+}
+
+// L1: the metrics listener is default-OFF. Run starts it only when
+// cfg.MetricsAddr != "" (after resolution). This pins the gate signal:
+// an empty SEP2_METRICS_ADDR resolves to "" so Run skips startMetricsServer
+// entirely — no listener, no unauthenticated /metrics surface by default.
+func TestMetricsListenerDefaultOff(t *testing.T) {
+	t.Parallel()
+	if got := config.ResolveMetricsBind(""); got != "" {
+		t.Errorf("ResolveMetricsBind(\"\") = %q, want \"\" (empty addr must leave the listener disabled)", got)
 	}
 }

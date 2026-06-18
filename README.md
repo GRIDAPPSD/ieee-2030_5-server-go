@@ -4,6 +4,8 @@
 
 Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server and an admin dashboard.
 
+> **Active development happens on the GitLab mirror at `gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server` (private). This GitHub repo remains accessible for legacy reference; new commits land on GitLab.**
+
 ## Documentation
 
 - **[docs/2030_5.md](docs/2030_5.md)** — full IEEE 2030.5 (SEP2) reference and function-set support table.

@@ -13,7 +13,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
+	sepTLS "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2tls"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 )
 

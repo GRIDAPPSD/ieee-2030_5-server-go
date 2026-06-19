@@ -1,14 +1,16 @@
 package server
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2/encoding"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/paging"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2/encoding"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/paging"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
@@ -170,30 +172,36 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, notifier handle
 		// the EndDevice {id}, not the cross-EndDevice union. The earlier
 		// wiring used the generic ListHandler against the underlying
 		// Store, which leaked subscriptions across EndDevices.
-		mux.HandleFunc("GET /edev/{id}/sub", handler.HandleListSubscriptionsByDevice(stores.Subscriptions, 900))
-		mux.HandleFunc("POST /edev/{id}/sub", handler.HandleCreateSubscription(stores.Subscriptions))
+		mux.HandleFunc("GET /edev/{id}/sub", coresub.HandleListSubscriptionsByDevice(stores.Subscriptions, 900))
+		mux.HandleFunc("POST /edev/{id}/sub", coresub.HandleCreateSubscription(stores.Subscriptions))
 		// IEEE-100 / CSIP V1.2 §11.6: DELETE fires a best-effort final
 		// Removed Notification to the just-deleted subscriber. The
-		// router-level notifier (a *subscription.Manager) satisfies
-		// both handler.ResourceNotifier (used by HandleDeleteEndDevice)
-		// and handler.SubscriberNotifier; a nil notifier disables the
+		// router-level notifier (a *subscription.Manager from core) satisfies
+		// both handler.ResourceNotifier (Notify, used by HandleDeleteEndDevice)
+		// and has NotifyRemoved used here; nil notifier disables the
 		// final Notification.
-		mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", handler.HandleDeleteSubscription(stores.Subscriptions, asSubscriberNotifier(notifier)))
+		mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", coresub.HandleDeleteSubscription(stores.Subscriptions, asNotifyRemoved(notifier)))
 	}
 }
 
-// asSubscriberNotifier returns the supplied notifier as a
-// handler.SubscriberNotifier if it implements that interface, or nil
-// otherwise. The double-interface dance keeps the router free of
-// subscription-package coupling — handler.ResourceNotifier remains the
-// published parameter surface and the production *subscription.Manager
-// happens to satisfy both interfaces.
-func asSubscriberNotifier(n handler.ResourceNotifier) handler.SubscriberNotifier {
+// notifyRemover is a local interface for the type assertion in
+// asNotifyRemoved. core's *subscription.Manager satisfies it.
+// Defined here at the consumer (Pike rule: interfaces at the consumer).
+type notifyRemover interface {
+	NotifyRemoved(ctx context.Context, sub sep2.Subscription) error
+}
+
+// asNotifyRemoved extracts NotifyRemoved as a function value if n
+// implements notifyRemover, or returns nil. This keeps the router free
+// of a hard import on the subscription package: handler.ResourceNotifier
+// remains the published parameter surface and the production
+// *subscription.Manager from core satisfies both interfaces.
+func asNotifyRemoved(n handler.ResourceNotifier) func(context.Context, sep2.Subscription) error {
 	if n == nil {
 		return nil
 	}
-	if sn, ok := n.(handler.SubscriberNotifier); ok {
-		return sn
+	if nr, ok := n.(notifyRemover); ok {
+		return nr.NotifyRemoved
 	}
 	return nil
 }

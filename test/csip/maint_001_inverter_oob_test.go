@@ -40,9 +40,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/subscription"
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
 )
 
 const (
@@ -58,7 +58,7 @@ func TestMAINT_001_InverterMaintenanceOOB(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	mgr := subscription.NewManager(srv.Stores.Subscriptions, 2, 16)
+	mgr := coresub.NewManager(srv.Stores.Subscriptions, 2, 16)
 	go mgr.Start(ctx)
 
 	// Step 1a: seed EndDevice the OOB mutation will delete.

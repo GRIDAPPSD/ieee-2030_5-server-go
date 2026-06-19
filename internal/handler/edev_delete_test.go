@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/subscription"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
@@ -204,7 +204,7 @@ func TestHandleDeleteEndDevice_TriggersNotification(t *testing.T) {
 	}
 
 	// Notification dispatcher.
-	mgr := subscription.NewManager(subStore, 2, 16)
+	mgr := coresub.NewManager(subStore, 2, 16)
 	mgrCtx, mgrCancel := context.WithCancel(context.Background())
 	mgrDone := make(chan struct{})
 	go func() {
@@ -280,7 +280,7 @@ func TestHandleDeleteEndDevice_NoNotificationOnNotFound(t *testing.T) {
 		t.Fatalf("seed sub: %v", err)
 	}
 
-	mgr := subscription.NewManager(subStore, 1, 8)
+	mgr := coresub.NewManager(subStore, 1, 8)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { mgr.Start(ctx); close(done) }()

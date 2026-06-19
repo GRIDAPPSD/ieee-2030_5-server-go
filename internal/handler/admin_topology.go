@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 // IEEE-096: GET /api/topology returns the SY -> FD -> SP -> DEV tree for

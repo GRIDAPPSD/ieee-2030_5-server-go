@@ -13,7 +13,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/subscription"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 )

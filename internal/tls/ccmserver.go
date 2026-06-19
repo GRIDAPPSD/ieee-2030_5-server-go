@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 
-	gotls "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls/gotls"
+	gotls "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2tls/gotls"
 )
 
 type ccmStateKey struct{}

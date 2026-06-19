@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
 )
 
 // DashboardData is the payload sent to the dashboard via SSE.

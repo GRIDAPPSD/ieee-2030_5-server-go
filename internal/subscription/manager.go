@@ -13,7 +13,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/obs"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 const notificationContentType = "application/sep+xml"

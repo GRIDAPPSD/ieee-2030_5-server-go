@@ -12,7 +12,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/subscription"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 // IEEE-100 / CSIP V1.2 §11.6 — final Removed-Notification on subscription

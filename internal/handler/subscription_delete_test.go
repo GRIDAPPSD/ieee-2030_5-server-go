@@ -10,7 +10,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 // IEEE-100 / CSIP V1.2 §11.6 — DELETE /edev/{id}/sub/{subId} fires a

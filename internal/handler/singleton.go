@@ -7,7 +7,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/encoding"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2/encoding"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )

@@ -18,8 +18,8 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 // IEEE-095 admin-registration handler tests.

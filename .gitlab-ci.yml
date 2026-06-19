@@ -1,6 +1,10 @@
 # Runner-tag discipline: all jobs run on the forge runner pool.
 # Runners visible to arista/ieee-2030_5/ have run_untagged: false,
 # so every job MUST carry tags: [forge] to be claimed.
+#
+# The go.mod replace directive points the core dependency at
+# /home/debian/repos/ieee-2030_5-core for local development.
+# In CI we clone core into that path so the replace resolves.
 
 stages: [verify]
 
@@ -8,6 +12,10 @@ verify:
   stage: verify
   image: golang:1.26
   tags: [forge]
+  before_script:
+    - git clone --depth 1
+        https://oauth2:${GITLAB_PNNL_KEY}@gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core.git
+        /home/debian/repos/ieee-2030_5-core
   script:
     - go vet ./...
     - go build ./...

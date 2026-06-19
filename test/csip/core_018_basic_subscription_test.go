@@ -64,9 +64,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/subscription"
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
 )
 
 const (
@@ -88,7 +88,7 @@ func TestCORE_018_BasicSubscription(t *testing.T) {
 	// type with the production wiring; only its caller — Notify — is
 	// driven from the test. Worker pool sized small: one POST per
 	// subscriber, this test has one subscriber.
-	mgr := subscription.NewManager(srv.Stores.Subscriptions, 2, 16)
+	mgr := coresub.NewManager(srv.Stores.Subscriptions, 2, 16)
 	go mgr.Start(ctx)
 
 	// Step 1: client POSTs a Subscription naming the FSAList as

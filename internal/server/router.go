@@ -9,8 +9,18 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2/encoding"
+	coreconfiguration "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/configuration"
+	coredcap "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/dcap"
+	coredevinfo "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/device_info"
+	coreflowrsv "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/flow_reservation"
+	corelisthandler "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/listhandler"
 	corelogevent "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/logevent"
+	coremessaging "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/messaging"
 	coremetering "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/metering"
+	corepowerstatus "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/power_status"
+	coresdev "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/sdev"
+	coresep2time "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/sep2time"
+	coresingleton "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/singleton"
 	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/paging"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
@@ -91,10 +101,16 @@ func BuildProtocolRouter(cfg *config.Config, stores *Stores, svc *handler.AdminC
 	top := http.NewServeMux()
 
 	protocolMux := newRecordingMux()
-	protocolMux.HandleFunc("GET /dcap", handler.HandleDeviceCapability())
-	protocolMux.HandleFunc("GET /tm", handler.HandleTime(cfg))
-	protocolMux.HandleFunc("GET /sdev", handler.HandleSelfDevice(serverSFDI, serverLFDI))
-	protocolMux.HandleFunc("GET /sdev/sdi", handler.HandleDeviceInformation(serverLFDI))
+	protocolMux.HandleFunc("GET /dcap", coredcap.HandleDeviceCapability())
+	protocolMux.HandleFunc("GET /tm", coresep2time.HandleTime(coresep2time.TimeParams{
+		TZOffset:    cfg.TZOffset,
+		DSTOffset:   cfg.DSTOffset,
+		DSTStart:    cfg.DSTStart,
+		DSTEnd:      cfg.DSTEnd,
+		TimeQuality: cfg.TimeQuality,
+	}))
+	protocolMux.HandleFunc("GET /sdev", coresdev.HandleSelfDevice(serverSFDI, serverLFDI))
+	protocolMux.HandleFunc("GET /sdev/sdi", coredevinfo.HandleDeviceInformation(serverLFDI))
 
 	if stores != nil {
 		registerEndDeviceRoutes(protocolMux, stores, notifier)
@@ -144,7 +160,7 @@ func BuildProtocolRouter(cfg *config.Config, stores *Stores, svc *handler.AdminC
 }
 
 func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, notifier handler.ResourceNotifier) {
-	mux.HandleFunc("GET /edev", handler.ListHandler[sep2.EndDevice, sep2.EndDeviceList](
+	mux.HandleFunc("GET /edev", corelisthandler.ListHandler[sep2.EndDevice, sep2.EndDeviceList](
 		stores.EndDevices, handler.BuildEndDeviceList, 900,
 	))
 	mux.HandleFunc("POST /edev", handler.HandleCreateEndDevice(stores.EndDevices))
@@ -220,7 +236,7 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores) {
 		id, ok := auth.GetIdentity(ctx)
 		return id.LFDI, ok
 	})
-	mux.HandleFunc("GET /mup", handler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
+	mux.HandleFunc("GET /mup", corelisthandler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
 		stores.MirrorUsagePoints, coremetering.BuildMirrorUsagePointList, 300,
 	))
 	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(stores.MirrorUsagePoints, lfdiProvider))
@@ -274,7 +290,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 		handler.DefaultDERControlHandler(stores.DefaultDERControls))
 
 	// Global DERCurve
-	mux.HandleFunc("GET /dc", handler.ListHandler[sep2.DERCurve, sep2.DERCurveList](
+	mux.HandleFunc("GET /dc", corelisthandler.ListHandler[sep2.DERCurve, sep2.DERCurveList](
 		stores.DERCurves, handler.BuildDERCurveList, 900,
 	))
 }
@@ -289,7 +305,7 @@ func scopedListHandler[T store.Copier[T], L any](
 		parentID := r.PathValue("id")
 		st := scopedStore.ForParent(parentID)
 
-		h := handler.ListHandler[T, L](st, buildList, pollRate)
+		h := corelisthandler.ListHandler[T, L](st, buildList, pollRate)
 		h.ServeHTTP(w, r)
 	}
 }
@@ -304,7 +320,7 @@ func scopedListHandlerDeep[T store.Copier[T], L any](
 		key := r.PathValue("id") + "/" + r.PathValue("fsaId") + "/" + r.PathValue("derpId")
 		st := scopedStore.ForParent(key)
 
-		h := handler.ListHandler[T, L](st, buildList, pollRate)
+		h := corelisthandler.ListHandler[T, L](st, buildList, pollRate)
 		h.ServeHTTP(w, r)
 	}
 }
@@ -313,7 +329,7 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	if stores.UsagePoints == nil {
 		return
 	}
-	mux.HandleFunc("GET /upt", handler.ListHandler[sep2.UsagePoint, sep2.UsagePointList](
+	mux.HandleFunc("GET /upt", corelisthandler.ListHandler[sep2.UsagePoint, sep2.UsagePointList](
 		stores.UsagePoints, coremetering.BuildUsagePointList, 900,
 	))
 	mux.HandleFunc("POST /upt", coremetering.HandleCreateUsagePoint(stores.UsagePoints))
@@ -328,12 +344,12 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/r", func(w http.ResponseWriter, r *http.Request) {
 		key := r.PathValue("uptId") + "/" + r.PathValue("mrId")
 		st := stores.Readings.ForParent(key)
-		h := handler.ListHandler[sep2.Reading, sep2.ReadingList](st, coremetering.BuildReadingList, 900)
+		h := corelisthandler.ListHandler[sep2.Reading, sep2.ReadingList](st, coremetering.BuildReadingList, 900)
 		h.ServeHTTP(w, r)
 	})
 
 	// ReadingTypes (global)
-	mux.HandleFunc("GET /rt", handler.ListHandler[sep2.ReadingType, sep2.ReadingTypeList](
+	mux.HandleFunc("GET /rt", corelisthandler.ListHandler[sep2.ReadingType, sep2.ReadingTypeList](
 		stores.ReadingTypes, coremetering.BuildReadingTypeList, 900,
 	))
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(stores.ReadingTypes))
@@ -342,11 +358,11 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
 	// Device sub-resources (all scoped under /edev/{id})
 	if stores.Configurations != nil {
-		mux.HandleFunc("GET /edev/{id}/cfg", handler.HandleConfiguration(stores.Configurations))
-		mux.HandleFunc("PUT /edev/{id}/cfg", handler.HandleConfiguration(stores.Configurations))
+		mux.HandleFunc("GET /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
+		mux.HandleFunc("PUT /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 	}
 	if stores.DeviceStatuses != nil {
-		mux.HandleFunc("GET /edev/{id}/dstat", handler.HandleSingletonGetPut[sep2.DeviceStatus](
+		mux.HandleFunc("GET /edev/{id}/dstat", coresingleton.HandleSingletonGetPut[sep2.DeviceStatus](
 			stores.DeviceStatuses,
 			func(r *http.Request) string { return r.PathValue("id") },
 			func(r *http.Request) sep2.DeviceStatus {
@@ -355,7 +371,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
 				return ds
 			},
 		))
-		mux.HandleFunc("PUT /edev/{id}/dstat", handler.HandleSingletonGetPut[sep2.DeviceStatus](
+		mux.HandleFunc("PUT /edev/{id}/dstat", coresingleton.HandleSingletonGetPut[sep2.DeviceStatus](
 			stores.DeviceStatuses,
 			func(r *http.Request) string { return r.PathValue("id") },
 			func(r *http.Request) sep2.DeviceStatus {
@@ -372,39 +388,39 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
 		mux.HandleFunc("POST /edev/{id}/log", corelogevent.HandlePostLogEvent(stores.LogEvents))
 	}
 	if stores.PowerStatuses != nil {
-		mux.HandleFunc("GET /edev/{id}/ps", handler.HandlePowerStatus(stores.PowerStatuses))
-		mux.HandleFunc("PUT /edev/{id}/ps", handler.HandlePowerStatus(stores.PowerStatuses))
+		mux.HandleFunc("GET /edev/{id}/ps", corepowerstatus.HandlePowerStatus(stores.PowerStatuses))
+		mux.HandleFunc("PUT /edev/{id}/ps", corepowerstatus.HandlePowerStatus(stores.PowerStatuses))
 	}
 
 	// Messaging (global)
 	if stores.MessagingPrograms != nil {
-		mux.HandleFunc("GET /msg", handler.ListHandler[sep2.MessagingProgram, sep2.MessagingProgramList](
-			stores.MessagingPrograms, handler.BuildMessagingProgramList, 900,
+		mux.HandleFunc("GET /msg", corelisthandler.ListHandler[sep2.MessagingProgram, sep2.MessagingProgramList](
+			stores.MessagingPrograms, coremessaging.BuildMessagingProgramList, 900,
 		))
-		mux.HandleFunc("GET /msg/{msgId}", handler.HandleMessagingProgram(stores.MessagingPrograms))
+		mux.HandleFunc("GET /msg/{msgId}", coremessaging.HandleMessagingProgram(stores.MessagingPrograms))
 		mux.HandleFunc("GET /msg/{msgId}/tm", scopedListHandler[sep2.TextMessage, sep2.TextMessageList](
-			stores.TextMessages, handler.BuildTextMessageList, 900,
+			stores.TextMessages, coremessaging.BuildTextMessageList, 900,
 		))
-		mux.HandleFunc("POST /msg/{msgId}/tm", handler.HandlePostTextMessage(stores.TextMessages))
+		mux.HandleFunc("POST /msg/{msgId}/tm", coremessaging.HandlePostTextMessage(stores.TextMessages))
 	}
 
 	// Flow Reservation (scoped under device)
 	if stores.FlowReservationRequests != nil {
 		mux.HandleFunc("GET /edev/{id}/frq", scopedListHandler[sep2.FlowReservationRequest, sep2.FlowReservationRequestList](
-			stores.FlowReservationRequests, handler.BuildFlowReservationRequestList, 900,
+			stores.FlowReservationRequests, coreflowrsv.BuildFlowReservationRequestList, 900,
 		))
-		mux.HandleFunc("POST /edev/{id}/frq", handler.HandlePostFlowReservationRequest(
+		mux.HandleFunc("POST /edev/{id}/frq", coreflowrsv.HandlePostFlowReservationRequest(
 			stores.FlowReservationRequests, stores.FlowReservationResponses,
 		))
 		mux.HandleFunc("GET /edev/{id}/frp", scopedListHandler[sep2.FlowReservationResponse, sep2.FlowReservationResponseList](
-			stores.FlowReservationResponses, handler.BuildFlowReservationResponseList, 900,
+			stores.FlowReservationResponses, coreflowrsv.BuildFlowReservationResponseList, 900,
 		))
 	}
 
 	// Response Sets (global)
 	if stores.ResponseSets != nil {
-		mux.HandleFunc("GET /rsps", handler.ListHandler[sep2.ResponseSet, sep2.ResponseSetList](
-			stores.ResponseSets, handler.BuildResponseSetList, 900,
+		mux.HandleFunc("GET /rsps", corelisthandler.ListHandler[sep2.ResponseSet, sep2.ResponseSetList](
+			stores.ResponseSets, coreflowrsv.BuildResponseSetList, 900,
 		))
 		// IEEE-066: scopedListHandler keys on PathValue("id"), which is
 		// empty under the {rspsId} placeholder — the POST writes under
@@ -416,11 +432,11 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
 		mux.HandleFunc("GET /rsps/{rspsId}/rsp", func(w http.ResponseWriter, r *http.Request) {
 			rspsID := r.PathValue("rspsId")
 			inner := stores.Responses.ForParent(rspsID)
-			handler.ListHandler[sep2.Response, sep2.ResponseList](
-				inner, handler.BuildResponseList, 900,
+			corelisthandler.ListHandler[sep2.Response, sep2.ResponseList](
+				inner, coreflowrsv.BuildResponseList, 900,
 			)(w, r)
 		})
-		mux.HandleFunc("POST /rsps/{rspsId}/rsp", handler.HandlePostResponse(stores.Responses))
+		mux.HandleFunc("POST /rsps/{rspsId}/rsp", coreflowrsv.HandlePostResponse(stores.Responses))
 	}
 }
 

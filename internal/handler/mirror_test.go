@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	corelisthandler "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/listhandler"
 	coremetering "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/metering"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
@@ -136,10 +136,10 @@ func TestHandleMirrorListHandler(t *testing.T) {
 	_ = s.Create(context.Background(), "a", sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/a"}, MRID: "A"})
 	_ = s.Create(context.Background(), "b", sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/b"}, MRID: "B"})
 
-	// ListHandler is still in internal/handler (it is not in D2 scope).
-	// Verify BuildMirrorUsagePointList from coremetering works with it.
-	// This test exercises the wiring: server ListHandler + core list-builder.
-	h := handler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
+	// ListHandler moved to core in Phase D3a. Verify BuildMirrorUsagePointList
+	// from coremetering works with it. This test exercises the wiring:
+	// corelisthandler.ListHandler + core list-builder.
+	h := corelisthandler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
 		s, coremetering.BuildMirrorUsagePointList, 300,
 	)
 

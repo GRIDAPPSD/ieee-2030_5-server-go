@@ -5,6 +5,7 @@ go 1.26.3
 require (
 	github.com/hashicorp/mdns v1.0.6
 	github.com/prometheus/client_golang v1.23.2
+	gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core v0.0.0-00010101000000-000000000000
 	golang.org/x/crypto v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
 	pgregory.net/rapid v1.3.0

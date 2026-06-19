@@ -23,6 +23,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coremetering "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/metering"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
@@ -140,7 +141,8 @@ func TestHandleCreateEndDeviceRaceLoss(t *testing.T) {
 func TestHandleCreateMirrorUsagePointRaceLoss(t *testing.T) {
 	t.Parallel()
 
-	h := handler.HandleCreateMirrorUsagePoint(raceLossMUPStore{})
+	// authLFDIProvider is defined in mirror_test.go (same handler_test package).
+	h := coremetering.HandleCreateMirrorUsagePoint(raceLossMUPStore{}, authLFDIProvider)
 
 	mup := sep2.MirrorUsagePoint{MRID: "INV-RACE", Description: "race-loss probe"}
 	body, _ := xml.Marshal(&mup)
@@ -207,7 +209,8 @@ func TestHandleCreateMirrorUsagePointInvalidXML(t *testing.T) {
 	t.Parallel()
 
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
-	h := handler.HandleCreateMirrorUsagePoint(s)
+	// authLFDIProvider is defined in mirror_test.go (same handler_test package).
+	h := coremetering.HandleCreateMirrorUsagePoint(s, authLFDIProvider)
 
 	req := httptest.NewRequest(http.MethodPost, "/mup", bytes.NewBufferString("<not-xml"))
 	req = addIdentity(req, "TEST_SFDI_12", "TEST_LFDI_40CHARS_AABBCCDD00112233445566")
@@ -225,7 +228,8 @@ func TestHandleCreateMirrorUsagePointMethodNotPost(t *testing.T) {
 	t.Parallel()
 
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
-	h := handler.HandleCreateMirrorUsagePoint(s)
+	// authLFDIProvider is defined in mirror_test.go (same handler_test package).
+	h := coremetering.HandleCreateMirrorUsagePoint(s, authLFDIProvider)
 
 	req := httptest.NewRequest(http.MethodGet, "/mup", nil)
 	w := httptest.NewRecorder()
@@ -241,7 +245,7 @@ func TestHandleCreateMirrorUsagePointNoIdentity(t *testing.T) {
 	t.Parallel()
 
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
-	h := handler.HandleCreateMirrorUsagePoint(s)
+	h := coremetering.HandleCreateMirrorUsagePoint(s, authLFDIProvider)
 
 	req := httptest.NewRequest(http.MethodPost, "/mup", bytes.NewBufferString("<MirrorUsagePoint/>"))
 	w := httptest.NewRecorder()
@@ -257,7 +261,7 @@ func TestHandleCreateMirrorUsagePointEmptyMRID(t *testing.T) {
 	t.Parallel()
 
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
-	h := handler.HandleCreateMirrorUsagePoint(s)
+	h := coremetering.HandleCreateMirrorUsagePoint(s, authLFDIProvider)
 
 	mup := sep2.MirrorUsagePoint{Description: "no mrid"}
 	body, _ := xml.Marshal(&mup)
@@ -285,7 +289,7 @@ func TestHandleCreateMirrorUsagePointDuplicate(t *testing.T) {
 	t.Parallel()
 
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
-	h := handler.HandleCreateMirrorUsagePoint(s)
+	h := coremetering.HandleCreateMirrorUsagePoint(s, authLFDIProvider)
 
 	mup := sep2.MirrorUsagePoint{MRID: "INV-DUP", Description: "duplicate probe"}
 	body, _ := xml.Marshal(&mup)

@@ -11,6 +11,8 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	corelogevent "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/logevent"
+	coremetering "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/metering"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
@@ -74,7 +76,7 @@ func TestHandleConfiguration(t *testing.T) {
 
 func TestHandlePostLogEvent(t *testing.T) {
 	logStore := memory.NewScopedStore[sep2.LogEvent]()
-	h := handler.HandlePostLogEvent(logStore)
+	h := corelogevent.HandlePostLogEvent(logStore)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /edev/{id}/log", h)
@@ -100,7 +102,7 @@ func TestHandlePostLogEvent(t *testing.T) {
 
 func TestBuildLogEventList(t *testing.T) {
 	result := store.ListResult[sep2.LogEvent]{All: 2, Results: 2, Items: []sep2.LogEvent{{}, {}}}
-	list := handler.BuildLogEventList("/edev/1/log", result, 900)
+	list := corelogevent.BuildLogEventList("/edev/1/log", result, 900)
 	if list.All != 2 || len(list.LogEvent) != 2 {
 		t.Errorf("list All=%d Items=%d", list.All, len(list.LogEvent))
 	}
@@ -252,7 +254,7 @@ func TestBuildResponseSetList(t *testing.T) {
 
 func TestHandleCreateUsagePoint(t *testing.T) {
 	uptStore := memory.NewStore[sep2.UsagePoint]()
-	h := handler.HandleCreateUsagePoint(uptStore)
+	h := coremetering.HandleCreateUsagePoint(uptStore)
 
 	upt := sep2.UsagePoint{
 		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{}},
@@ -278,7 +280,7 @@ func TestHandleUsagePoint(t *testing.T) {
 	upt.Href = "/upt/upt1"
 	_ = uptStore.Create(context.Background(), "upt1", upt)
 
-	h := handler.HandleUsagePoint(uptStore)
+	h := coremetering.HandleUsagePoint(uptStore)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /upt/{uptId}", h)
 
@@ -291,7 +293,7 @@ func TestHandleUsagePoint(t *testing.T) {
 
 func TestHandleUsagePointNotFound(t *testing.T) {
 	uptStore := memory.NewStore[sep2.UsagePoint]()
-	h := handler.HandleUsagePoint(uptStore)
+	h := coremetering.HandleUsagePoint(uptStore)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /upt/{uptId}", h)
 
@@ -304,7 +306,7 @@ func TestHandleUsagePointNotFound(t *testing.T) {
 
 func TestBuildUsagePointList(t *testing.T) {
 	result := store.ListResult[sep2.UsagePoint]{All: 3, Results: 2, Items: []sep2.UsagePoint{{}, {}}}
-	list := handler.BuildUsagePointList("/upt", result, 900)
+	list := coremetering.BuildUsagePointList("/upt", result, 900)
 	if list.All != 3 || list.Results != 2 {
 		t.Errorf("All=%d Results=%d", list.All, list.Results)
 	}
@@ -312,7 +314,7 @@ func TestBuildUsagePointList(t *testing.T) {
 
 func TestBuildMeterReadingList(t *testing.T) {
 	result := store.ListResult[sep2.MeterReading]{All: 1, Results: 1}
-	list := handler.BuildMeterReadingList("/mr", result, 900)
+	list := coremetering.BuildMeterReadingList("/mr", result, 900)
 	if list.All != 1 {
 		t.Errorf("All = %d", list.All)
 	}
@@ -320,7 +322,7 @@ func TestBuildMeterReadingList(t *testing.T) {
 
 func TestBuildReadingList(t *testing.T) {
 	result := store.ListResult[sep2.Reading]{All: 5, Results: 5}
-	list := handler.BuildReadingList("/r", result, 900)
+	list := coremetering.BuildReadingList("/r", result, 900)
 	if list.All != 5 {
 		t.Errorf("All = %d", list.All)
 	}
@@ -328,7 +330,7 @@ func TestBuildReadingList(t *testing.T) {
 
 func TestBuildReadingTypeList(t *testing.T) {
 	result := store.ListResult[sep2.ReadingType]{All: 2, Results: 2}
-	list := handler.BuildReadingTypeList("/rt", result, 900)
+	list := coremetering.BuildReadingTypeList("/rt", result, 900)
 	if list.All != 2 {
 		t.Errorf("All = %d", list.All)
 	}

@@ -9,6 +9,8 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2/encoding"
+	corelogevent "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/logevent"
+	coremetering "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/metering"
 	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/paging"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
@@ -210,12 +212,20 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores) {
 	if stores.MirrorUsagePoints == nil {
 		return
 	}
+	// LFDIProvider extracts the device LFDI from the request context via
+	// the server-side auth package. Passed to the core handler constructor
+	// so that internal/auth stays out of core (same pattern as the
+	// NotificationObserver callback in Phase D1).
+	lfdiProvider := coremetering.LFDIProvider(func(ctx context.Context) (string, bool) {
+		id, ok := auth.GetIdentity(ctx)
+		return id.LFDI, ok
+	})
 	mux.HandleFunc("GET /mup", handler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
-		stores.MirrorUsagePoints, handler.BuildMirrorUsagePointList, 300,
+		stores.MirrorUsagePoints, coremetering.BuildMirrorUsagePointList, 300,
 	))
-	mux.HandleFunc("POST /mup", handler.HandleCreateMirrorUsagePoint(stores.MirrorUsagePoints))
-	mux.HandleFunc("GET /mup/{id}", handler.HandleMirrorUsagePoint(stores.MirrorUsagePoints))
-	mux.HandleFunc("POST /mup/{id}/mr", handler.HandlePostMirrorMeterReading(
+	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(stores.MirrorUsagePoints, lfdiProvider))
+	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(stores.MirrorUsagePoints))
+	mux.HandleFunc("POST /mup/{id}/mr", coremetering.HandlePostMirrorMeterReading(
 		stores.MirrorUsagePoints, stores.MirrorMeterReadings,
 	))
 }
@@ -304,29 +314,29 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 		return
 	}
 	mux.HandleFunc("GET /upt", handler.ListHandler[sep2.UsagePoint, sep2.UsagePointList](
-		stores.UsagePoints, handler.BuildUsagePointList, 900,
+		stores.UsagePoints, coremetering.BuildUsagePointList, 900,
 	))
-	mux.HandleFunc("POST /upt", handler.HandleCreateUsagePoint(stores.UsagePoints))
-	mux.HandleFunc("GET /upt/{uptId}", handler.HandleUsagePoint(stores.UsagePoints))
+	mux.HandleFunc("POST /upt", coremetering.HandleCreateUsagePoint(stores.UsagePoints))
+	mux.HandleFunc("GET /upt/{uptId}", coremetering.HandleUsagePoint(stores.UsagePoints))
 
 	// MeterReadings scoped under UsagePoint
 	mux.HandleFunc("GET /upt/{uptId}/mr", scopedListHandler[sep2.MeterReading, sep2.MeterReadingList](
-		stores.MeterReadings, handler.BuildMeterReadingList, 900,
+		stores.MeterReadings, coremetering.BuildMeterReadingList, 900,
 	))
 
 	// Readings scoped under MeterReading (deep: uptId/mrId)
 	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/r", func(w http.ResponseWriter, r *http.Request) {
 		key := r.PathValue("uptId") + "/" + r.PathValue("mrId")
 		st := stores.Readings.ForParent(key)
-		h := handler.ListHandler[sep2.Reading, sep2.ReadingList](st, handler.BuildReadingList, 900)
+		h := handler.ListHandler[sep2.Reading, sep2.ReadingList](st, coremetering.BuildReadingList, 900)
 		h.ServeHTTP(w, r)
 	})
 
 	// ReadingTypes (global)
 	mux.HandleFunc("GET /rt", handler.ListHandler[sep2.ReadingType, sep2.ReadingTypeList](
-		stores.ReadingTypes, handler.BuildReadingTypeList, 900,
+		stores.ReadingTypes, coremetering.BuildReadingTypeList, 900,
 	))
-	mux.HandleFunc("GET /rt/{id}", handler.HandleReadingType(stores.ReadingTypes))
+	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(stores.ReadingTypes))
 }
 
 func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
@@ -357,9 +367,9 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
 	}
 	if stores.LogEvents != nil {
 		mux.HandleFunc("GET /edev/{id}/log", scopedListHandler[sep2.LogEvent, sep2.LogEventList](
-			stores.LogEvents, handler.BuildLogEventList, 900,
+			stores.LogEvents, corelogevent.BuildLogEventList, 900,
 		))
-		mux.HandleFunc("POST /edev/{id}/log", handler.HandlePostLogEvent(stores.LogEvents))
+		mux.HandleFunc("POST /edev/{id}/log", corelogevent.HandlePostLogEvent(stores.LogEvents))
 	}
 	if stores.PowerStatuses != nil {
 		mux.HandleFunc("GET /edev/{id}/ps", handler.HandlePowerStatus(stores.PowerStatuses))

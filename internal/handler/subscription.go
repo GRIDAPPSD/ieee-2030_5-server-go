@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -10,23 +9,12 @@ import (
 	"net/http"
 	"time"
 
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2/encoding"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/paging"
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
-
-// SubscriberNotifier sends a single "Removed" Notification to one
-// subscriber. Defined here at the consumer (Pike rule: interfaces at the
-// consumer) so the handler can take nil from tests that don't exercise
-// the notification pipeline. Production wiring passes
-// *subscription.Manager.
-//
-// IEEE-100 / CSIP V1.2 §11.6.
-type SubscriberNotifier interface {
-	NotifyRemoved(ctx context.Context, sub sep2.Subscription) error
-}
 
 // subscriptionIDOverride is a test-only seam: when non-nil, the create
 // path calls it with the incoming request and uses the returned non-empty

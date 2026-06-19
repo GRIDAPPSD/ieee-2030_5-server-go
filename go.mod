@@ -30,4 +30,4 @@ require (
 	google.golang.org/protobuf v1.36.8 // indirect
 )
 
-replace gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core => /home/debian/repos/ieee-2030_5-core
+replace gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core => ../ieee-2030_5-core

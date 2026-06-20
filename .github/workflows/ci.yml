@@ -86,6 +86,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Clone core dependency
+        # go.mod uses a relative replace directive (../ieee-2030_5-core) so
+        # the core library must be checked out adjacent to this repo before
+        # any Go build step runs. The core repo lives on PNNL GitLab; auth
+        # uses the GITLAB_PNNL_KEY PAT stored as a repo secret.
+        run: |
+          git clone \
+            "https://oauth2:${{ secrets.GITLAB_PNNL_KEY }}@gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core.git" \
+            "${{ github.workspace }}/../ieee-2030_5-core"
+
       - name: Vet
         run: make vet
 
@@ -179,6 +189,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Clone core dependency
+        # go.mod uses a relative replace directive (../ieee-2030_5-core) so
+        # the core library must be checked out adjacent to this repo before
+        # any Go build step runs. The core repo lives on PNNL GitLab; auth
+        # uses the GITLAB_PNNL_KEY PAT stored as a repo secret.
+        run: |
+          git clone \
+            "https://oauth2:${{ secrets.GITLAB_PNNL_KEY }}@gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core.git" \
+            "${{ github.workspace }}/../ieee-2030_5-core"
 
       - name: Prepare log directory
         run: mkdir -p ci-logs

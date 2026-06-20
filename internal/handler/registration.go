@@ -5,9 +5,9 @@ import (
 	"net/http"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/encoding"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2/encoding"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 // IEEE-101: SEP2-protocol GET handler for the Registration resource at

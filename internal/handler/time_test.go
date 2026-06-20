@@ -1,3 +1,8 @@
+// Wiring tests for HandleTime: verifies that the server correctly maps
+// *config.Config fields onto coresep2time.TimeParams and that the core
+// handler returns the expected IEEE 2030.5 Time resource.
+// time.go moved to core (Phase D3a); internal/config is server-stay.
+// This test stays server-side and exercises the wiring, not the internals.
 package handler_test
 
 import (
@@ -9,9 +14,21 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
+	coresep2time "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/sep2time"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 )
+
+// buildTimeHandlerFromConfig mirrors the wiring in server/router.go:
+// map *config.Config fields onto coresep2time.TimeParams.
+func buildTimeHandlerFromConfig(cfg *config.Config) http.HandlerFunc {
+	return coresep2time.HandleTime(coresep2time.TimeParams{
+		TZOffset:    cfg.TZOffset,
+		DSTOffset:   cfg.DSTOffset,
+		DSTStart:    cfg.DSTStart,
+		DSTEnd:      cfg.DSTEnd,
+		TimeQuality: cfg.TimeQuality,
+	})
+}
 
 func TestHandleTimeGET(t *testing.T) {
 	cfg := &config.Config{
@@ -22,7 +39,7 @@ func TestHandleTimeGET(t *testing.T) {
 		TimeQuality: sep2.TimeQualityNTP,
 	}
 
-	h := handler.HandleTime(cfg)
+	h := buildTimeHandlerFromConfig(cfg)
 	req := httptest.NewRequest(http.MethodGet, "/tm", nil)
 	w := httptest.NewRecorder()
 
@@ -49,10 +66,10 @@ func TestHandleTimeGET(t *testing.T) {
 	}
 
 	if tm.TzOffset != -28800 {
-		t.Errorf("TzOffset = %d, want %d", tm.TzOffset, -28800)
+		t.Errorf("TzOffset = %d, want %d (config wiring)", tm.TzOffset, -28800)
 	}
 	if tm.Quality != sep2.TimeQualityNTP {
-		t.Errorf("Quality = %d, want %d", tm.Quality, sep2.TimeQualityNTP)
+		t.Errorf("Quality = %d, want %d (config wiring)", tm.Quality, sep2.TimeQualityNTP)
 	}
 	if tm.Href != "/tm" {
 		t.Errorf("Href = %q, want %q", tm.Href, "/tm")
@@ -61,7 +78,7 @@ func TestHandleTimeGET(t *testing.T) {
 
 func TestHandleTimePOST(t *testing.T) {
 	cfg := &config.Config{}
-	h := handler.HandleTime(cfg)
+	h := buildTimeHandlerFromConfig(cfg)
 	req := httptest.NewRequest(http.MethodPost, "/tm", nil)
 	w := httptest.NewRecorder()
 

@@ -22,12 +22,12 @@
 //	Step 1: build Manager A on Store A, create a subscription whose
 //	        NotificationURI points at a NotificationReceiver returning
 //	        HTTP 400 (WithStatusCode option).
-//	                                          ──► storeA.Create + subscription.NewManager
+//	                                          ──► storeA.Create + coresub.NewManager
 //	                                          ──► snapshot via SnapshotForTesting
 //	Step 2: simulate restart — cancel Manager A, build Store B by
 //	        restoring the snapshot, build Manager B on Store B.
 //	                                          ──► storeB.RestoreForTesting(snapshot)
-//	                                          ──► subscription.NewManager(storeB)
+//	                                          ──► coresub.NewManager(storeB)
 //	                                          ──► sanity: storeB.Get(subID) succeeds
 //	Step 3: Notify on Manager B; the receiver gets the Notification
 //	        and returns 400. Manager B deletes the subscription from
@@ -58,11 +58,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/subscription"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 const (
@@ -96,7 +96,7 @@ func TestERR_002_SubscriptionSurvivalAndDeleteOn400(t *testing.T) {
 		t.Fatalf("ERR-002 Step 1: Create on Store A: %v", err)
 	}
 
-	mgrA := subscription.NewManager(storeA, 2, 16)
+	mgrA := coresub.NewManager(storeA, 2, 16)
 	doneA := make(chan struct{})
 	go func() {
 		mgrA.Start(ctxA)
@@ -125,7 +125,7 @@ func TestERR_002_SubscriptionSurvivalAndDeleteOn400(t *testing.T) {
 
 	ctxB, cancelB := context.WithCancel(context.Background())
 	t.Cleanup(cancelB)
-	mgrB := subscription.NewManager(storeB, 2, 16)
+	mgrB := coresub.NewManager(storeB, 2, 16)
 	doneB := make(chan struct{})
 	go func() {
 		mgrB.Start(ctxB)

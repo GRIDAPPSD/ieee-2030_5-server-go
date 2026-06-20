@@ -49,11 +49,11 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/subscription"
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
-	gotls "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls/gotls"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
+	sepTLS "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2tls"
+	gotls "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2tls/gotls"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 // deriveServerIdentity parses the leaf cert from a raw DER chain (as
@@ -319,7 +319,7 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 	// The Manager's worker pool drains before BootServer's listener closes.
 	notifier := cfg.notifier
 	if notifier == nil && cfg.stores != nil && cfg.stores.Subscriptions != nil {
-		mgr := subscription.NewManager(cfg.stores.Subscriptions, 2, 64)
+		mgr := coresub.NewManager(cfg.stores.Subscriptions, 2, 64)
 		notifierCtx, cancel := context.WithCancel(context.Background())
 		mgrDone := make(chan struct{})
 		go func() {

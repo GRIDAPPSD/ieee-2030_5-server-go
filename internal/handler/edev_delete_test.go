@@ -12,10 +12,11 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/subscription"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	corelisthandler "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/listhandler"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 // errBoom is a sentinel returned by deleteFailEndDeviceStore.Delete so the
@@ -130,7 +131,7 @@ func TestHandleDeleteEndDevice_RemovedFromList(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("DELETE /edev/{id}", handler.HandleDeleteEndDevice(s, nil))
-	mux.HandleFunc("GET /edev", handler.ListHandler[sep2.EndDevice, sep2.EndDeviceList](
+	mux.HandleFunc("GET /edev", corelisthandler.ListHandler[sep2.EndDevice, sep2.EndDeviceList](
 		s, handler.BuildEndDeviceList, 900,
 	))
 
@@ -204,7 +205,7 @@ func TestHandleDeleteEndDevice_TriggersNotification(t *testing.T) {
 	}
 
 	// Notification dispatcher.
-	mgr := subscription.NewManager(subStore, 2, 16)
+	mgr := coresub.NewManager(subStore, 2, 16)
 	mgrCtx, mgrCancel := context.WithCancel(context.Background())
 	mgrDone := make(chan struct{})
 	go func() {
@@ -280,7 +281,7 @@ func TestHandleDeleteEndDevice_NoNotificationOnNotFound(t *testing.T) {
 		t.Fatalf("seed sub: %v", err)
 	}
 
-	mgr := subscription.NewManager(subStore, 1, 8)
+	mgr := coresub.NewManager(subStore, 1, 8)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { mgr.Start(ctx); close(done) }()

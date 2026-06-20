@@ -24,9 +24,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	coreflowrsv "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/flow_reservation"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 // TestHandlePostFlowReservationRequest_SuccessPathAssertions strengthens
@@ -39,7 +39,7 @@ func TestHandlePostFlowReservationRequest_SuccessPathAssertions(t *testing.T) {
 
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	h := handler.HandlePostFlowReservationRequest(frqStore, frpStore)
+	h := coreflowrsv.HandlePostFlowReservationRequest(frqStore, frpStore)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /edev/{id}/frq", h)
@@ -100,7 +100,7 @@ func TestHandlePostFlowReservationRequest_InvalidXMLReturns400(t *testing.T) {
 
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	h := handler.HandlePostFlowReservationRequest(frqStore, frpStore)
+	h := coreflowrsv.HandlePostFlowReservationRequest(frqStore, frpStore)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /edev/{id}/frq", h)
@@ -118,7 +118,7 @@ func TestHandlePostFlowReservationRequest_InvalidXMLReturns400(t *testing.T) {
 	}
 }
 
-// failingFRPStore is a fake that satisfies handler.FRPCreator and always
+// failingFRPStore is a fake that satisfies coreflowrsv.FRPCreator and always
 // returns errFRPCreate from Create. Used to exercise the
 // 500-on-frpStore-failure branch in HandlePostFlowReservationRequest.
 type failingFRPStore struct {
@@ -145,7 +145,7 @@ func TestHandlePostFlowReservationRequest_StoreCreateFailureReturns500(t *testin
 
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := &failingFRPStore{}
-	h := handler.HandlePostFlowReservationRequest(frqStore, frpStore)
+	h := coreflowrsv.HandlePostFlowReservationRequest(frqStore, frpStore)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /edev/{id}/frq", h)
@@ -202,7 +202,7 @@ func TestHandlePostFlowReservationRequest_NonPostReturns405(t *testing.T) {
 
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	h := handler.HandlePostFlowReservationRequest(frqStore, frpStore)
+	h := coreflowrsv.HandlePostFlowReservationRequest(frqStore, frpStore)
 
 	// Bypass the mux's method routing by calling the HandlerFunc directly
 	// with a non-POST request. This exercises the in-handler guard.

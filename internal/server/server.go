@@ -20,11 +20,11 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/discovery"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/obs"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/subscription"
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls"
-	gotls "github.com/GRIDAPPSD/ieee-2030_5-go/internal/tls/gotls"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
+	sepTLS "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2tls"
+	gotls "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2tls/gotls"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 const (
@@ -216,7 +216,8 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// router takes it as a handler.ResourceNotifier so DELETE/UPDATE
 	// handlers can fan out notifications without depending on the
 	// subscription package directly.
-	notifier := subscription.NewManager(stores.Subscriptions, subscriptionWorkers, subscriptionQueueSize)
+	notifier := coresub.NewManager(stores.Subscriptions, subscriptionWorkers, subscriptionQueueSize)
+	notifier.SetObserver(obs.RecordNotification)
 	go notifier.Start(ctx)
 
 	router, protocolRoutes := BuildProtocolRouter(cfg, stores, svc, serverSFDI, serverLFDI, notifier)

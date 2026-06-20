@@ -24,10 +24,11 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coresep2time "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/sep2time"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
 )
 
 const (
@@ -485,19 +486,19 @@ func TestDERControlAdd_NoNotificationOnDuplicate(t *testing.T) {
 // in parallel (they share package state in handler.clockOffsetNanos).
 func setupTimeAdvance(t *testing.T) (http.Handler, *server.Stores) {
 	t.Helper()
-	handler.ResetClockOffset()
-	t.Cleanup(handler.ResetClockOffset)
+	coresep2time.ResetClockOffset()
+	t.Cleanup(coresep2time.ResetClockOffset)
 	return newRouterWithTokenAndStores(t)
 }
 
 func TestTimeAdvance_ForwardShiftsClock(t *testing.T) {
 	h, _ := setupTimeAdvance(t)
-	before := time.Now().Add(handler.ClockOffset())
+	before := time.Now().Add(coresep2time.ClockOffset())
 	rr := postJSON(t, h, tmTimeAdvance, tmTestToken, map[string]any{"seconds": 3600})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rr.Code, rr.Body.String())
 	}
-	after := time.Now().Add(handler.ClockOffset())
+	after := time.Now().Add(coresep2time.ClockOffset())
 	delta := after.Sub(before)
 	// Allow a small wall-clock fudge for the postJSON call itself.
 	if delta < 59*time.Minute+59*time.Second || delta > 1*time.Hour+1*time.Second {
@@ -505,14 +506,14 @@ func TestTimeAdvance_ForwardShiftsClock(t *testing.T) {
 	}
 }
 
-// readTmDirect invokes handler.HandleTime against an httptest recorder,
+// readTmDirect invokes coresep2time.HandleTime against an httptest recorder,
 // bypassing the production /tm route's TLS-client-cert auth chain. We're
 // asserting that the package-level nowFunc seam reflects the mutation
 // handler's offset; the auth chain is exercised by its own tests
 // (internal/auth/...).
 func readTmDirect(t *testing.T) sep2.Time {
 	t.Helper()
-	h := handler.HandleTime(&config.Config{})
+	h := coresep2time.HandleTime(coresep2time.TimeParams{})
 	req := httptest.NewRequest(http.MethodGet, "/tm", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -612,7 +613,7 @@ func TestTimeAdvance_CumulativeShifts(t *testing.T) {
 	if rr := postJSON(t, h, tmTimeAdvance, tmTestToken, map[string]any{"seconds": 200}); rr.Code != http.StatusOK {
 		t.Fatalf("second advance status = %d", rr.Code)
 	}
-	got := handler.ClockOffset()
+	got := coresep2time.ClockOffset()
 	want := 300 * time.Second
 	if got < want-1*time.Millisecond || got > want+1*time.Millisecond {
 		t.Fatalf("cumulative offset = %v, want %v", got, want)
@@ -626,7 +627,7 @@ func TestTimeAdvance_MissingSeconds_BadRequest(t *testing.T) {
 		t.Fatalf("status = %d, want 400", rr.Code)
 	}
 	// And the clock must not have moved.
-	if got := handler.ClockOffset(); got != 0 {
+	if got := coresep2time.ClockOffset(); got != 0 {
 		t.Fatalf("clock advanced on bad request: offset = %v", got)
 	}
 }
@@ -640,7 +641,7 @@ func TestTimeAdvance_MalformedJSON_BadRequest(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rr.Code)
 	}
-	if got := handler.ClockOffset(); got != 0 {
+	if got := coresep2time.ClockOffset(); got != 0 {
 		t.Fatalf("clock advanced on malformed body: offset = %v", got)
 	}
 }
@@ -662,7 +663,7 @@ func TestTimeAdvance_MissingToken_Unauthorized(t *testing.T) {
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rr.Code)
 	}
-	if got := handler.ClockOffset(); got != 0 {
+	if got := coresep2time.ClockOffset(); got != 0 {
 		t.Fatalf("clock advanced without token: offset = %v", got)
 	}
 }
@@ -673,7 +674,7 @@ func TestTimeAdvance_WrongToken_Unauthorized(t *testing.T) {
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rr.Code)
 	}
-	if got := handler.ClockOffset(); got != 0 {
+	if got := coresep2time.ClockOffset(); got != 0 {
 		t.Fatalf("clock advanced on wrong token: offset = %v", got)
 	}
 }
@@ -1055,7 +1056,7 @@ func getWithClientCert(t *testing.T, h http.Handler, path string) *httptest.Resp
 }
 
 func TestSubscriptionCancel_Success(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, stores := newRouterWithTokenAndStores(t)
 	seedSubscription(t, stores, "edev-1", "sub-A")
 
@@ -1070,13 +1071,13 @@ func TestSubscriptionCancel_Success(t *testing.T) {
 		t.Fatalf("post-cancel Get: err = %v, want ErrNotFound", err)
 	}
 	// Subscription ID is now tombstoned.
-	if !handler.IsSubscriptionCanceled("sub-A") {
+	if !coresub.IsSubscriptionCanceled("sub-A") {
 		t.Fatal("sub-A not in canceled set after cancel")
 	}
 }
 
 func TestSubscriptionCancel_MissingToken_Unauthorized(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, stores := newRouterWithTokenAndStores(t)
 	seedSubscription(t, stores, "edev-1", "sub-A")
 
@@ -1091,7 +1092,7 @@ func TestSubscriptionCancel_MissingToken_Unauthorized(t *testing.T) {
 }
 
 func TestSubscriptionCancel_WrongToken_Unauthorized(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, _ := newRouterWithTokenAndStores(t)
 	rr := postJSON(t, h, tmSubCancel, "not-the-token", map[string]string{"subscription_id": "sub-A"})
 	if rr.Code != http.StatusUnauthorized {
@@ -1100,7 +1101,7 @@ func TestSubscriptionCancel_WrongToken_Unauthorized(t *testing.T) {
 }
 
 func TestSubscriptionCancel_UnknownID_NotFound(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, _ := newRouterWithTokenAndStores(t)
 	rr := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
 		"subscription_id": "sub-missing",
@@ -1110,13 +1111,13 @@ func TestSubscriptionCancel_UnknownID_NotFound(t *testing.T) {
 	}
 	// A 404 must NOT poison the tombstone — a never-existing ID being
 	// recorded as canceled would block legitimate future creates.
-	if handler.IsSubscriptionCanceled("sub-missing") {
+	if coresub.IsSubscriptionCanceled("sub-missing") {
 		t.Fatal("unknown id tombstoned on 404; tombstone must only follow a successful delete")
 	}
 }
 
 func TestSubscriptionCancel_MissingID_BadRequest(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, _ := newRouterWithTokenAndStores(t)
 	rr := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{})
 	if rr.Code != http.StatusBadRequest {
@@ -1125,7 +1126,7 @@ func TestSubscriptionCancel_MissingID_BadRequest(t *testing.T) {
 }
 
 func TestSubscriptionCancel_MalformedBody_BadRequest(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, _ := newRouterWithTokenAndStores(t)
 	req := httptest.NewRequest(http.MethodPost, tmSubCancel, strings.NewReader("{not json"))
 	req.Header.Set(tmTokenHdr, tmTestToken)
@@ -1137,7 +1138,7 @@ func TestSubscriptionCancel_MalformedBody_BadRequest(t *testing.T) {
 }
 
 func TestSubscriptionCancel_EmptyBody_BadRequest(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, _ := newRouterWithTokenAndStores(t)
 	req := httptest.NewRequest(http.MethodPost, tmSubCancel, nil)
 	req.Header.Set(tmTokenHdr, tmTestToken)
@@ -1149,7 +1150,7 @@ func TestSubscriptionCancel_EmptyBody_BadRequest(t *testing.T) {
 }
 
 func TestSubscriptionCancel_UnknownField_Rejected(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, _ := newRouterWithTokenAndStores(t)
 	rr := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
 		"subscription_id": "sub-A",
@@ -1161,7 +1162,7 @@ func TestSubscriptionCancel_UnknownField_Rejected(t *testing.T) {
 }
 
 func TestSubscriptionCancel_StoreNil_InternalError(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	t.Setenv(tmTokenEnv, tmTestToken)
 	stores := newTestStores()
 	stores.Subscriptions = nil
@@ -1177,7 +1178,7 @@ func TestSubscriptionCancel_StoreNil_InternalError(t *testing.T) {
 }
 
 func TestSubscriptionCancel_ReSubscribeRefused_Conflict(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, stores := newRouterWithTokenAndStores(t)
 	seedEndDevice(t, stores, "edev-1")
 	seedSubscription(t, stores, "edev-1", "sub-A")
@@ -1204,7 +1205,7 @@ func TestSubscriptionCancel_ReSubscribeRefused_Conflict(t *testing.T) {
 }
 
 func TestSubscriptionCancel_DifferentIDAfterCancel_Allowed(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, stores := newRouterWithTokenAndStores(t)
 	seedEndDevice(t, stores, "edev-1")
 	seedSubscription(t, stores, "edev-1", "sub-A")
@@ -1231,13 +1232,13 @@ func TestSubscriptionCancel_DifferentIDAfterCancel_Allowed(t *testing.T) {
 	}
 	// Sanity: the original ID stays refused even after a different ID
 	// succeeds.
-	if !handler.IsSubscriptionCanceled("sub-A") {
+	if !coresub.IsSubscriptionCanceled("sub-A") {
 		t.Fatal("sub-A tombstone cleared by unrelated successful create")
 	}
 }
 
 func TestSubscriptionCancel_DoubleCancel_SecondIsNotFound(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, stores := newRouterWithTokenAndStores(t)
 	seedSubscription(t, stores, "edev-1", "sub-A")
 
@@ -1256,7 +1257,7 @@ func TestSubscriptionCancel_DoubleCancel_SecondIsNotFound(t *testing.T) {
 		t.Fatalf("second cancel status = %d, want 404", second.Code)
 	}
 	// Tombstone still in place.
-	if !handler.IsSubscriptionCanceled("sub-A") {
+	if !coresub.IsSubscriptionCanceled("sub-A") {
 		t.Fatal("tombstone cleared between first and second cancel")
 	}
 }
@@ -1267,10 +1268,10 @@ func TestSubscriptionCancel_DoubleCancel_SecondIsNotFound(t *testing.T) {
 // the new id is not in it. Ensures the override hook does not regress
 // the default path.
 func TestSubscriptionCancel_NoOverrideHeader_AutoIDStillWorks(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, stores := newRouterWithTokenAndStores(t)
 	seedEndDevice(t, stores, "edev-1")
-	handler.MarkSubscriptionCanceled("sub-tombstoned")
+	coresub.MarkSubscriptionCanceled("sub-tombstoned")
 
 	// No X-CSIP-Test-Subscription-ID header: the create path generates
 	// "sub-<unixnano>" which will not collide with "sub-tombstoned".
@@ -1284,7 +1285,7 @@ func TestSubscriptionCancel_NoOverrideHeader_AutoIDStillWorks(t *testing.T) {
 // list excludes the canceled subscription so the harness can confirm
 // removal via the public read path, not just the store API.
 func TestSubscriptionCancel_ListGet_Excludes(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, stores := newRouterWithTokenAndStores(t)
 	seedEndDevice(t, stores, "edev-1")
 	seedSubscription(t, stores, "edev-1", "sub-A")
@@ -1327,7 +1328,7 @@ func TestSubscriptionCancel_ListGet_Excludes(t *testing.T) {
 // mutation path. Mirrors TestMutationSurface_GET_NotAllowed but scoped
 // to the new endpoint.
 func TestSubscriptionCancel_GET_NotAllowed(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, _ := newRouterWithTokenAndStores(t)
 	req := httptest.NewRequest(http.MethodGet, tmSubCancel, nil)
 	req.Header.Set(tmTokenHdr, tmTestToken)
@@ -1342,7 +1343,7 @@ func TestSubscriptionCancel_GET_NotAllowed(t *testing.T) {
 // distinct IDs. Run with -race to assert the canceled-id set's mutex is
 // honored. Distinct IDs avoid cross-test ordering noise.
 func TestSubscriptionCancel_Race(t *testing.T) {
-	defer handler.ResetCanceledSubscriptions()
+	defer coresub.ResetCanceledSubscriptions()
 	h, stores := newRouterWithTokenAndStores(t)
 	seedEndDevice(t, stores, "edev-1")
 	const n = 32
@@ -1376,7 +1377,7 @@ func TestSubscriptionCancel_Race(t *testing.T) {
 	for i := 0; i < n; i++ {
 		id := "sub-race-" + strconv.Itoa(i)
 		// Re-resolve the value separately for the post-race assertion.
-		if !handler.IsSubscriptionCanceled(id) {
+		if !coresub.IsSubscriptionCanceled(id) {
 			t.Fatalf("%s not tombstoned after race", id)
 		}
 	}

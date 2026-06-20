@@ -29,9 +29,10 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coremetering "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/metering"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 // captureLog redirects the standard logger to a buffer for the duration of f,
@@ -240,7 +241,7 @@ func TestHandleMirror5xxLogged(t *testing.T) {
 			mupErr: fmt.Errorf("mirror get I/O: simulate 5xx"),
 			handler: func(s *errMUPStore) http.Handler {
 				mux := http.NewServeMux()
-				mux.HandleFunc("GET /mup/{id}", handler.HandleMirrorUsagePoint(s))
+				mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(s))
 				return mux
 			},
 			makeReq: func() *http.Request {
@@ -251,7 +252,8 @@ func TestHandleMirror5xxLogged(t *testing.T) {
 			name:   "HandleCreateMirrorUsagePoint/store.Create fails",
 			mupErr: fmt.Errorf("mirror create I/O: simulate 5xx"),
 			handler: func(s *errMUPStore) http.Handler {
-				return handler.HandleCreateMirrorUsagePoint(s)
+				// authLFDIProvider is defined in mirror_test.go (same handler_test package).
+				return coremetering.HandleCreateMirrorUsagePoint(s, authLFDIProvider)
 			},
 			makeReq: func() *http.Request {
 				body := bytes.NewReader([]byte(`<MirrorUsagePoint xmlns="urn:ieee:std:2030.5:ns"><mRID>test-mrid</mRID></MirrorUsagePoint>`))

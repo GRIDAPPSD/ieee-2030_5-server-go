@@ -1,16 +1,30 @@
 package server
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/encoding"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/paging"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2/encoding"
+	coreconfiguration "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/configuration"
+	coredcap "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/dcap"
+	coredevinfo "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/device_info"
+	coreflowrsv "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/flow_reservation"
+	corelisthandler "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/listhandler"
+	corelogevent "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/logevent"
+	coremessaging "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/messaging"
+	coremetering "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/metering"
+	corepowerstatus "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/power_status"
+	coresdev "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/sdev"
+	coresep2time "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/sep2time"
+	coresingleton "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/singleton"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/paging"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 // Stores holds all resource stores for the server.
@@ -87,10 +101,16 @@ func BuildProtocolRouter(cfg *config.Config, stores *Stores, svc *handler.AdminC
 	top := http.NewServeMux()
 
 	protocolMux := newRecordingMux()
-	protocolMux.HandleFunc("GET /dcap", handler.HandleDeviceCapability())
-	protocolMux.HandleFunc("GET /tm", handler.HandleTime(cfg))
-	protocolMux.HandleFunc("GET /sdev", handler.HandleSelfDevice(serverSFDI, serverLFDI))
-	protocolMux.HandleFunc("GET /sdev/sdi", handler.HandleDeviceInformation(serverLFDI))
+	protocolMux.HandleFunc("GET /dcap", coredcap.HandleDeviceCapability())
+	protocolMux.HandleFunc("GET /tm", coresep2time.HandleTime(coresep2time.TimeParams{
+		TZOffset:    cfg.TZOffset,
+		DSTOffset:   cfg.DSTOffset,
+		DSTStart:    cfg.DSTStart,
+		DSTEnd:      cfg.DSTEnd,
+		TimeQuality: cfg.TimeQuality,
+	}))
+	protocolMux.HandleFunc("GET /sdev", coresdev.HandleSelfDevice(serverSFDI, serverLFDI))
+	protocolMux.HandleFunc("GET /sdev/sdi", coredevinfo.HandleDeviceInformation(serverLFDI))
 
 	if stores != nil {
 		registerEndDeviceRoutes(protocolMux, stores, notifier)
@@ -140,7 +160,7 @@ func BuildProtocolRouter(cfg *config.Config, stores *Stores, svc *handler.AdminC
 }
 
 func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, notifier handler.ResourceNotifier) {
-	mux.HandleFunc("GET /edev", handler.ListHandler[sep2.EndDevice, sep2.EndDeviceList](
+	mux.HandleFunc("GET /edev", corelisthandler.ListHandler[sep2.EndDevice, sep2.EndDeviceList](
 		stores.EndDevices, handler.BuildEndDeviceList, 900,
 	))
 	mux.HandleFunc("POST /edev", handler.HandleCreateEndDevice(stores.EndDevices))
@@ -170,30 +190,36 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, notifier handle
 		// the EndDevice {id}, not the cross-EndDevice union. The earlier
 		// wiring used the generic ListHandler against the underlying
 		// Store, which leaked subscriptions across EndDevices.
-		mux.HandleFunc("GET /edev/{id}/sub", handler.HandleListSubscriptionsByDevice(stores.Subscriptions, 900))
-		mux.HandleFunc("POST /edev/{id}/sub", handler.HandleCreateSubscription(stores.Subscriptions))
+		mux.HandleFunc("GET /edev/{id}/sub", coresub.HandleListSubscriptionsByDevice(stores.Subscriptions, 900))
+		mux.HandleFunc("POST /edev/{id}/sub", coresub.HandleCreateSubscription(stores.Subscriptions))
 		// IEEE-100 / CSIP V1.2 §11.6: DELETE fires a best-effort final
 		// Removed Notification to the just-deleted subscriber. The
-		// router-level notifier (a *subscription.Manager) satisfies
-		// both handler.ResourceNotifier (used by HandleDeleteEndDevice)
-		// and handler.SubscriberNotifier; a nil notifier disables the
+		// router-level notifier (a *subscription.Manager from core) satisfies
+		// both handler.ResourceNotifier (Notify, used by HandleDeleteEndDevice)
+		// and has NotifyRemoved used here; nil notifier disables the
 		// final Notification.
-		mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", handler.HandleDeleteSubscription(stores.Subscriptions, asSubscriberNotifier(notifier)))
+		mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", coresub.HandleDeleteSubscription(stores.Subscriptions, asNotifyRemoved(notifier)))
 	}
 }
 
-// asSubscriberNotifier returns the supplied notifier as a
-// handler.SubscriberNotifier if it implements that interface, or nil
-// otherwise. The double-interface dance keeps the router free of
-// subscription-package coupling — handler.ResourceNotifier remains the
-// published parameter surface and the production *subscription.Manager
-// happens to satisfy both interfaces.
-func asSubscriberNotifier(n handler.ResourceNotifier) handler.SubscriberNotifier {
+// notifyRemover is a local interface for the type assertion in
+// asNotifyRemoved. core's *subscription.Manager satisfies it.
+// Defined here at the consumer (Pike rule: interfaces at the consumer).
+type notifyRemover interface {
+	NotifyRemoved(ctx context.Context, sub sep2.Subscription) error
+}
+
+// asNotifyRemoved extracts NotifyRemoved as a function value if n
+// implements notifyRemover, or returns nil. This keeps the router free
+// of a hard import on the subscription package: handler.ResourceNotifier
+// remains the published parameter surface and the production
+// *subscription.Manager from core satisfies both interfaces.
+func asNotifyRemoved(n handler.ResourceNotifier) func(context.Context, sep2.Subscription) error {
 	if n == nil {
 		return nil
 	}
-	if sn, ok := n.(handler.SubscriberNotifier); ok {
-		return sn
+	if nr, ok := n.(notifyRemover); ok {
+		return nr.NotifyRemoved
 	}
 	return nil
 }
@@ -202,12 +228,20 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores) {
 	if stores.MirrorUsagePoints == nil {
 		return
 	}
-	mux.HandleFunc("GET /mup", handler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
-		stores.MirrorUsagePoints, handler.BuildMirrorUsagePointList, 300,
+	// LFDIProvider extracts the device LFDI from the request context via
+	// the server-side auth package. Passed to the core handler constructor
+	// so that internal/auth stays out of core (same pattern as the
+	// NotificationObserver callback in Phase D1).
+	lfdiProvider := coremetering.LFDIProvider(func(ctx context.Context) (string, bool) {
+		id, ok := auth.GetIdentity(ctx)
+		return id.LFDI, ok
+	})
+	mux.HandleFunc("GET /mup", corelisthandler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
+		stores.MirrorUsagePoints, coremetering.BuildMirrorUsagePointList, 300,
 	))
-	mux.HandleFunc("POST /mup", handler.HandleCreateMirrorUsagePoint(stores.MirrorUsagePoints))
-	mux.HandleFunc("GET /mup/{id}", handler.HandleMirrorUsagePoint(stores.MirrorUsagePoints))
-	mux.HandleFunc("POST /mup/{id}/mr", handler.HandlePostMirrorMeterReading(
+	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(stores.MirrorUsagePoints, lfdiProvider))
+	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(stores.MirrorUsagePoints))
+	mux.HandleFunc("POST /mup/{id}/mr", coremetering.HandlePostMirrorMeterReading(
 		stores.MirrorUsagePoints, stores.MirrorMeterReadings,
 	))
 }
@@ -256,7 +290,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 		handler.DefaultDERControlHandler(stores.DefaultDERControls))
 
 	// Global DERCurve
-	mux.HandleFunc("GET /dc", handler.ListHandler[sep2.DERCurve, sep2.DERCurveList](
+	mux.HandleFunc("GET /dc", corelisthandler.ListHandler[sep2.DERCurve, sep2.DERCurveList](
 		stores.DERCurves, handler.BuildDERCurveList, 900,
 	))
 }
@@ -271,7 +305,7 @@ func scopedListHandler[T store.Copier[T], L any](
 		parentID := r.PathValue("id")
 		st := scopedStore.ForParent(parentID)
 
-		h := handler.ListHandler[T, L](st, buildList, pollRate)
+		h := corelisthandler.ListHandler[T, L](st, buildList, pollRate)
 		h.ServeHTTP(w, r)
 	}
 }
@@ -286,7 +320,7 @@ func scopedListHandlerDeep[T store.Copier[T], L any](
 		key := r.PathValue("id") + "/" + r.PathValue("fsaId") + "/" + r.PathValue("derpId")
 		st := scopedStore.ForParent(key)
 
-		h := handler.ListHandler[T, L](st, buildList, pollRate)
+		h := corelisthandler.ListHandler[T, L](st, buildList, pollRate)
 		h.ServeHTTP(w, r)
 	}
 }
@@ -295,40 +329,40 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	if stores.UsagePoints == nil {
 		return
 	}
-	mux.HandleFunc("GET /upt", handler.ListHandler[sep2.UsagePoint, sep2.UsagePointList](
-		stores.UsagePoints, handler.BuildUsagePointList, 900,
+	mux.HandleFunc("GET /upt", corelisthandler.ListHandler[sep2.UsagePoint, sep2.UsagePointList](
+		stores.UsagePoints, coremetering.BuildUsagePointList, 900,
 	))
-	mux.HandleFunc("POST /upt", handler.HandleCreateUsagePoint(stores.UsagePoints))
-	mux.HandleFunc("GET /upt/{uptId}", handler.HandleUsagePoint(stores.UsagePoints))
+	mux.HandleFunc("POST /upt", coremetering.HandleCreateUsagePoint(stores.UsagePoints))
+	mux.HandleFunc("GET /upt/{uptId}", coremetering.HandleUsagePoint(stores.UsagePoints))
 
 	// MeterReadings scoped under UsagePoint
 	mux.HandleFunc("GET /upt/{uptId}/mr", scopedListHandler[sep2.MeterReading, sep2.MeterReadingList](
-		stores.MeterReadings, handler.BuildMeterReadingList, 900,
+		stores.MeterReadings, coremetering.BuildMeterReadingList, 900,
 	))
 
 	// Readings scoped under MeterReading (deep: uptId/mrId)
 	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/r", func(w http.ResponseWriter, r *http.Request) {
 		key := r.PathValue("uptId") + "/" + r.PathValue("mrId")
 		st := stores.Readings.ForParent(key)
-		h := handler.ListHandler[sep2.Reading, sep2.ReadingList](st, handler.BuildReadingList, 900)
+		h := corelisthandler.ListHandler[sep2.Reading, sep2.ReadingList](st, coremetering.BuildReadingList, 900)
 		h.ServeHTTP(w, r)
 	})
 
 	// ReadingTypes (global)
-	mux.HandleFunc("GET /rt", handler.ListHandler[sep2.ReadingType, sep2.ReadingTypeList](
-		stores.ReadingTypes, handler.BuildReadingTypeList, 900,
+	mux.HandleFunc("GET /rt", corelisthandler.ListHandler[sep2.ReadingType, sep2.ReadingTypeList](
+		stores.ReadingTypes, coremetering.BuildReadingTypeList, 900,
 	))
-	mux.HandleFunc("GET /rt/{id}", handler.HandleReadingType(stores.ReadingTypes))
+	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(stores.ReadingTypes))
 }
 
 func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
 	// Device sub-resources (all scoped under /edev/{id})
 	if stores.Configurations != nil {
-		mux.HandleFunc("GET /edev/{id}/cfg", handler.HandleConfiguration(stores.Configurations))
-		mux.HandleFunc("PUT /edev/{id}/cfg", handler.HandleConfiguration(stores.Configurations))
+		mux.HandleFunc("GET /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
+		mux.HandleFunc("PUT /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 	}
 	if stores.DeviceStatuses != nil {
-		mux.HandleFunc("GET /edev/{id}/dstat", handler.HandleSingletonGetPut[sep2.DeviceStatus](
+		mux.HandleFunc("GET /edev/{id}/dstat", coresingleton.HandleSingletonGetPut[sep2.DeviceStatus](
 			stores.DeviceStatuses,
 			func(r *http.Request) string { return r.PathValue("id") },
 			func(r *http.Request) sep2.DeviceStatus {
@@ -337,7 +371,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
 				return ds
 			},
 		))
-		mux.HandleFunc("PUT /edev/{id}/dstat", handler.HandleSingletonGetPut[sep2.DeviceStatus](
+		mux.HandleFunc("PUT /edev/{id}/dstat", coresingleton.HandleSingletonGetPut[sep2.DeviceStatus](
 			stores.DeviceStatuses,
 			func(r *http.Request) string { return r.PathValue("id") },
 			func(r *http.Request) sep2.DeviceStatus {
@@ -349,44 +383,44 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
 	}
 	if stores.LogEvents != nil {
 		mux.HandleFunc("GET /edev/{id}/log", scopedListHandler[sep2.LogEvent, sep2.LogEventList](
-			stores.LogEvents, handler.BuildLogEventList, 900,
+			stores.LogEvents, corelogevent.BuildLogEventList, 900,
 		))
-		mux.HandleFunc("POST /edev/{id}/log", handler.HandlePostLogEvent(stores.LogEvents))
+		mux.HandleFunc("POST /edev/{id}/log", corelogevent.HandlePostLogEvent(stores.LogEvents))
 	}
 	if stores.PowerStatuses != nil {
-		mux.HandleFunc("GET /edev/{id}/ps", handler.HandlePowerStatus(stores.PowerStatuses))
-		mux.HandleFunc("PUT /edev/{id}/ps", handler.HandlePowerStatus(stores.PowerStatuses))
+		mux.HandleFunc("GET /edev/{id}/ps", corepowerstatus.HandlePowerStatus(stores.PowerStatuses))
+		mux.HandleFunc("PUT /edev/{id}/ps", corepowerstatus.HandlePowerStatus(stores.PowerStatuses))
 	}
 
 	// Messaging (global)
 	if stores.MessagingPrograms != nil {
-		mux.HandleFunc("GET /msg", handler.ListHandler[sep2.MessagingProgram, sep2.MessagingProgramList](
-			stores.MessagingPrograms, handler.BuildMessagingProgramList, 900,
+		mux.HandleFunc("GET /msg", corelisthandler.ListHandler[sep2.MessagingProgram, sep2.MessagingProgramList](
+			stores.MessagingPrograms, coremessaging.BuildMessagingProgramList, 900,
 		))
-		mux.HandleFunc("GET /msg/{msgId}", handler.HandleMessagingProgram(stores.MessagingPrograms))
+		mux.HandleFunc("GET /msg/{msgId}", coremessaging.HandleMessagingProgram(stores.MessagingPrograms))
 		mux.HandleFunc("GET /msg/{msgId}/tm", scopedListHandler[sep2.TextMessage, sep2.TextMessageList](
-			stores.TextMessages, handler.BuildTextMessageList, 900,
+			stores.TextMessages, coremessaging.BuildTextMessageList, 900,
 		))
-		mux.HandleFunc("POST /msg/{msgId}/tm", handler.HandlePostTextMessage(stores.TextMessages))
+		mux.HandleFunc("POST /msg/{msgId}/tm", coremessaging.HandlePostTextMessage(stores.TextMessages))
 	}
 
 	// Flow Reservation (scoped under device)
 	if stores.FlowReservationRequests != nil {
 		mux.HandleFunc("GET /edev/{id}/frq", scopedListHandler[sep2.FlowReservationRequest, sep2.FlowReservationRequestList](
-			stores.FlowReservationRequests, handler.BuildFlowReservationRequestList, 900,
+			stores.FlowReservationRequests, coreflowrsv.BuildFlowReservationRequestList, 900,
 		))
-		mux.HandleFunc("POST /edev/{id}/frq", handler.HandlePostFlowReservationRequest(
+		mux.HandleFunc("POST /edev/{id}/frq", coreflowrsv.HandlePostFlowReservationRequest(
 			stores.FlowReservationRequests, stores.FlowReservationResponses,
 		))
 		mux.HandleFunc("GET /edev/{id}/frp", scopedListHandler[sep2.FlowReservationResponse, sep2.FlowReservationResponseList](
-			stores.FlowReservationResponses, handler.BuildFlowReservationResponseList, 900,
+			stores.FlowReservationResponses, coreflowrsv.BuildFlowReservationResponseList, 900,
 		))
 	}
 
 	// Response Sets (global)
 	if stores.ResponseSets != nil {
-		mux.HandleFunc("GET /rsps", handler.ListHandler[sep2.ResponseSet, sep2.ResponseSetList](
-			stores.ResponseSets, handler.BuildResponseSetList, 900,
+		mux.HandleFunc("GET /rsps", corelisthandler.ListHandler[sep2.ResponseSet, sep2.ResponseSetList](
+			stores.ResponseSets, coreflowrsv.BuildResponseSetList, 900,
 		))
 		// IEEE-066: scopedListHandler keys on PathValue("id"), which is
 		// empty under the {rspsId} placeholder — the POST writes under
@@ -398,11 +432,11 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
 		mux.HandleFunc("GET /rsps/{rspsId}/rsp", func(w http.ResponseWriter, r *http.Request) {
 			rspsID := r.PathValue("rspsId")
 			inner := stores.Responses.ForParent(rspsID)
-			handler.ListHandler[sep2.Response, sep2.ResponseList](
-				inner, handler.BuildResponseList, 900,
+			corelisthandler.ListHandler[sep2.Response, sep2.ResponseList](
+				inner, coreflowrsv.BuildResponseList, 900,
 			)(w, r)
 		})
-		mux.HandleFunc("POST /rsps/{rspsId}/rsp", handler.HandlePostResponse(stores.Responses))
+		mux.HandleFunc("POST /rsps/{rspsId}/rsp", coreflowrsv.HandlePostResponse(stores.Responses))
 	}
 }
 

@@ -1,7 +1,8 @@
-package subscription_test
+package server_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -10,9 +11,30 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/obs"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/subscription"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
+
+// obsSubStore is a minimal SubscriptionLister for the obs counter tests.
+// Using the real memory store avoids interface drift when SubscriptionLister
+// gains methods.
+type obsSubStore struct {
+	subs []sep2.Subscription
+}
+
+func (s *obsSubStore) ListByResource(_ context.Context, href string) ([]memory.SubscriptionRecord, error) {
+	var out []memory.SubscriptionRecord
+	for i, sub := range s.subs {
+		if sub.SubscribedResource == href {
+			out = append(out, memory.SubscriptionRecord{
+				ID:           fmt.Sprintf("obs-sub-%d", i),
+				Subscription: sub,
+			})
+		}
+	}
+	return out, nil
+}
 
 // metricByOutcome reads the current sep2_subscription_notifications_total
 // value for one outcome label via the exposition handler. The obs counters
@@ -23,12 +45,12 @@ func metricByOutcome(t *testing.T, outcome string) float64 {
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	rec := httptest.NewRecorder()
 	obs.Handler().ServeHTTP(rec, req)
-	return parseCounter(t, rec.Body.String(),
+	return parseObsCounter(t, rec.Body.String(),
 		`sep2_subscription_notifications_total{outcome="`+outcome+`"}`)
 }
 
 // TestNotifySuccessIncrementsCounter asserts a delivered notification moves
-// the success counter (value assertion, not non-panic) — data-invariants.
+// the success counter (value assertion, not non-panic) per data-invariants.
 func TestNotifySuccessIncrementsCounter(t *testing.T) {
 	before := metricByOutcome(t, obs.OutcomeSuccess)
 
@@ -37,7 +59,7 @@ func TestNotifySuccessIncrementsCounter(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	store := &mockSubStore{subs: []sep2.Subscription{{
+	store := &obsSubStore{subs: []sep2.Subscription{{
 		SubscribableResource: sep2.SubscribableResource{
 			Resource: sep2.Resource{Href: "/edev/9/sub/1"},
 		},
@@ -45,14 +67,15 @@ func TestNotifySuccessIncrementsCounter(t *testing.T) {
 		NotificationURI:    srv.URL + "/notify",
 	}}}
 
-	mgr := subscription.NewManager(store, 2, 10)
+	mgr := coresub.NewManager(store, 2, 10)
+	mgr.SetObserver(obs.RecordNotification)
 	ctx, cancel := context.WithCancel(context.Background())
 	go mgr.Start(ctx)
 	defer cancel()
 
 	mgr.Notify(ctx, "/edev/9", sep2.NotificationStatusChanged)
 
-	waitFor(t, func() bool { return metricByOutcome(t, obs.OutcomeSuccess) >= before+1 })
+	obsWaitFor(t, func() bool { return metricByOutcome(t, obs.OutcomeSuccess) >= before+1 })
 }
 
 // TestNotifyQueueFullIncrementsCounter asserts the queue-full drop path
@@ -71,7 +94,7 @@ func TestNotifyQueueFullIncrementsCounter(t *testing.T) {
 
 	// Three subscriptions on the same resource, one worker, queue size 1:
 	// worker grabs #1 and blocks on the receiver, #2 fills the queue, #3 is
-	// dropped → queue_full increments at least once.
+	// dropped => queue_full increments at least once.
 	subs := make([]sep2.Subscription, 3)
 	for i := range subs {
 		subs[i] = sep2.Subscription{
@@ -82,32 +105,33 @@ func TestNotifyQueueFullIncrementsCounter(t *testing.T) {
 			NotificationURI:    srv.URL + "/notify",
 		}
 	}
-	store := &mockSubStore{subs: subs}
+	store := &obsSubStore{subs: subs}
 
-	mgr := subscription.NewManager(store, 1, 1)
+	mgr := coresub.NewManager(store, 1, 1)
+	mgr.SetObserver(obs.RecordNotification)
 	ctx, cancel := context.WithCancel(context.Background())
 	go mgr.Start(ctx)
 	defer cancel()
 
 	mgr.Notify(ctx, "/edev/8", sep2.NotificationStatusChanged)
 
-	waitFor(t, func() bool { return metricByOutcome(t, obs.OutcomeQueueFull) >= before+1 })
+	obsWaitFor(t, func() bool { return metricByOutcome(t, obs.OutcomeQueueFull) >= before+1 })
 }
 
-// TestNotifyClientErrorIncrementsCounter asserts a receiver that returns a 4xx
-// drives the OutcomeClientError counter (Dutch M2: the 4xx outcome was
-// previously untested). A httptest receiver returns 400; Notify sets the
-// record ID via the store's ListByResource, so deliver's 4xx branch fires
-// errDeleteAfter4xx and the worker records OutcomeClientError.
+// TestNotifyClientErrorIncrementsCounter asserts a receiver that returns a
+// 4xx drives the OutcomeClientError counter. A httptest receiver returns
+// 400; Notify sets the record ID via the store's ListByResource, so
+// deliver's 4xx branch fires errDeleteAfter4xx and the worker records
+// OutcomeClientError.
 func TestNotifyClientErrorIncrementsCounter(t *testing.T) {
 	before := metricByOutcome(t, obs.OutcomeClientError)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadRequest) // 400 → receiver rejects subscription
+		w.WriteHeader(http.StatusBadRequest) // 400 => receiver rejects subscription
 	}))
 	defer srv.Close()
 
-	store := &mockSubStore{subs: []sep2.Subscription{{
+	store := &obsSubStore{subs: []sep2.Subscription{{
 		SubscribableResource: sep2.SubscribableResource{
 			Resource: sep2.Resource{Href: "/edev/7/sub/1"},
 		},
@@ -115,17 +139,18 @@ func TestNotifyClientErrorIncrementsCounter(t *testing.T) {
 		NotificationURI:    srv.URL + "/notify",
 	}}}
 
-	mgr := subscription.NewManager(store, 2, 10)
+	mgr := coresub.NewManager(store, 2, 10)
+	mgr.SetObserver(obs.RecordNotification)
 	ctx, cancel := context.WithCancel(context.Background())
 	go mgr.Start(ctx)
 	defer cancel()
 
 	mgr.Notify(ctx, "/edev/7", sep2.NotificationStatusChanged)
 
-	waitFor(t, func() bool { return metricByOutcome(t, obs.OutcomeClientError) >= before+1 })
+	obsWaitFor(t, func() bool { return metricByOutcome(t, obs.OutcomeClientError) >= before+1 })
 }
 
-func waitFor(t *testing.T, cond func() bool) {
+func obsWaitFor(t *testing.T, cond func() bool) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
 	for {
@@ -141,9 +166,9 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 }
 
-// parseCounter pulls a single counter sample matching the given metric+label
-// prefix out of Prometheus exposition text. Returns 0 if absent.
-func parseCounter(t *testing.T, exposition, prefix string) float64 {
+// parseObsCounter pulls a single counter sample matching the given
+// metric+label prefix out of Prometheus exposition text. Returns 0 if absent.
+func parseObsCounter(t *testing.T, exposition, prefix string) float64 {
 	t.Helper()
 	for _, line := range strings.Split(exposition, "\n") {
 		if line == "" || line[0] == '#' || !strings.HasPrefix(line, prefix) {

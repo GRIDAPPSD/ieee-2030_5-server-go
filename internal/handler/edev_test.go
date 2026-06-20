@@ -9,8 +9,9 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coresdev "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/sdev"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 func TestHandleEndDeviceGet(t *testing.T) {
@@ -188,7 +189,7 @@ func TestHandleDeleteEndDeviceNotFound(t *testing.T) {
 }
 
 func TestHandleSelfDevice(t *testing.T) {
-	h := handler.HandleSelfDevice("123456789012", "AABBCCDD00112233445566778899AABBCCDDEEFF")
+	h := coresdev.HandleSelfDevice("123456789012", "AABBCCDD00112233445566778899AABBCCDDEEFF")
 
 	req := httptest.NewRequest(http.MethodGet, "/sdev", nil)
 	w := httptest.NewRecorder()
@@ -209,7 +210,7 @@ func TestHandleSelfDevice(t *testing.T) {
 }
 
 func TestHandleSelfDeviceMethodNotAllowed(t *testing.T) {
-	h := handler.HandleSelfDevice("", "")
+	h := coresdev.HandleSelfDevice("", "")
 
 	req := httptest.NewRequest(http.MethodPost, "/sdev", nil)
 	w := httptest.NewRecorder()

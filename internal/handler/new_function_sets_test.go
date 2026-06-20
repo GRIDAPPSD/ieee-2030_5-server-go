@@ -9,16 +9,22 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	coreconfiguration "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/configuration"
+	coredevinfo "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/device_info"
+	coreflowrsv "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/flow_reservation"
+	corelogevent "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/logevent"
+	coremessaging "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/messaging"
+	coremetering "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/metering"
+	corepowerstatus "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/power_status"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 // --- DeviceInformation ---
 
 func TestHandleDeviceInformation(t *testing.T) {
-	h := handler.HandleDeviceInformation("AABBCCDD")
+	h := coredevinfo.HandleDeviceInformation("AABBCCDD")
 	req := httptest.NewRequest(http.MethodGet, "/sdev/sdi", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -38,7 +44,7 @@ func TestHandleDeviceInformation(t *testing.T) {
 
 func TestHandleConfiguration(t *testing.T) {
 	store := memory.NewScopedStore[sep2.Configuration]()
-	h := handler.HandleConfiguration(store)
+	h := coreconfiguration.HandleConfiguration(store)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /edev/{id}/cfg", h)
@@ -74,7 +80,7 @@ func TestHandleConfiguration(t *testing.T) {
 
 func TestHandlePostLogEvent(t *testing.T) {
 	logStore := memory.NewScopedStore[sep2.LogEvent]()
-	h := handler.HandlePostLogEvent(logStore)
+	h := corelogevent.HandlePostLogEvent(logStore)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /edev/{id}/log", h)
@@ -100,7 +106,7 @@ func TestHandlePostLogEvent(t *testing.T) {
 
 func TestBuildLogEventList(t *testing.T) {
 	result := store.ListResult[sep2.LogEvent]{All: 2, Results: 2, Items: []sep2.LogEvent{{}, {}}}
-	list := handler.BuildLogEventList("/edev/1/log", result, 900)
+	list := corelogevent.BuildLogEventList("/edev/1/log", result, 900)
 	if list.All != 2 || len(list.LogEvent) != 2 {
 		t.Errorf("list All=%d Items=%d", list.All, len(list.LogEvent))
 	}
@@ -110,7 +116,7 @@ func TestBuildLogEventList(t *testing.T) {
 
 func TestHandlePowerStatus(t *testing.T) {
 	psStore := memory.NewScopedStore[sep2.PowerStatus]()
-	h := handler.HandlePowerStatus(psStore)
+	h := corepowerstatus.HandlePowerStatus(psStore)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /edev/{id}/ps", h)
@@ -144,7 +150,7 @@ func TestHandleMessagingProgram(t *testing.T) {
 		MRID:                 "msg1", Primacy: 1,
 	})
 
-	h := handler.HandleMessagingProgram(msgStore)
+	h := coremessaging.HandleMessagingProgram(msgStore)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /msg/{msgId}", h)
 
@@ -157,7 +163,7 @@ func TestHandleMessagingProgram(t *testing.T) {
 
 func TestHandlePostTextMessage(t *testing.T) {
 	tmStore := memory.NewScopedStore[sep2.TextMessage]()
-	h := handler.HandlePostTextMessage(tmStore)
+	h := coremessaging.HandlePostTextMessage(tmStore)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /msg/{msgId}/tm", h)
@@ -174,7 +180,7 @@ func TestHandlePostTextMessage(t *testing.T) {
 
 func TestBuildMessagingProgramList(t *testing.T) {
 	result := store.ListResult[sep2.MessagingProgram]{All: 1, Results: 1, Items: []sep2.MessagingProgram{{}}}
-	list := handler.BuildMessagingProgramList("/msg", result, 900)
+	list := coremessaging.BuildMessagingProgramList("/msg", result, 900)
 	if list.All != 1 {
 		t.Errorf("All = %d", list.All)
 	}
@@ -185,7 +191,7 @@ func TestBuildMessagingProgramList(t *testing.T) {
 func TestHandlePostFlowReservationRequest(t *testing.T) {
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	h := handler.HandlePostFlowReservationRequest(frqStore, frpStore)
+	h := coreflowrsv.HandlePostFlowReservationRequest(frqStore, frpStore)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /edev/{id}/frq", h)
@@ -214,7 +220,7 @@ func TestHandlePostFlowReservationRequest(t *testing.T) {
 
 func TestBuildFlowReservationRequestList(t *testing.T) {
 	result := store.ListResult[sep2.FlowReservationRequest]{All: 1, Results: 1}
-	list := handler.BuildFlowReservationRequestList("/frq", result, 900)
+	list := coreflowrsv.BuildFlowReservationRequestList("/frq", result, 900)
 	if list.All != 1 {
 		t.Errorf("All = %d", list.All)
 	}
@@ -224,7 +230,7 @@ func TestBuildFlowReservationRequestList(t *testing.T) {
 
 func TestHandlePostResponse(t *testing.T) {
 	rspStore := memory.NewScopedStore[sep2.Response]()
-	h := handler.HandlePostResponse(rspStore)
+	h := coreflowrsv.HandlePostResponse(rspStore)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /rsps/{rspsId}/rsp", h)
@@ -242,7 +248,7 @@ func TestHandlePostResponse(t *testing.T) {
 
 func TestBuildResponseSetList(t *testing.T) {
 	result := store.ListResult[sep2.ResponseSet]{All: 2, Results: 2}
-	list := handler.BuildResponseSetList("/rsps", result, 900)
+	list := coreflowrsv.BuildResponseSetList("/rsps", result, 900)
 	if list.All != 2 {
 		t.Errorf("All = %d", list.All)
 	}
@@ -252,7 +258,7 @@ func TestBuildResponseSetList(t *testing.T) {
 
 func TestHandleCreateUsagePoint(t *testing.T) {
 	uptStore := memory.NewStore[sep2.UsagePoint]()
-	h := handler.HandleCreateUsagePoint(uptStore)
+	h := coremetering.HandleCreateUsagePoint(uptStore)
 
 	upt := sep2.UsagePoint{
 		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{}},
@@ -278,7 +284,7 @@ func TestHandleUsagePoint(t *testing.T) {
 	upt.Href = "/upt/upt1"
 	_ = uptStore.Create(context.Background(), "upt1", upt)
 
-	h := handler.HandleUsagePoint(uptStore)
+	h := coremetering.HandleUsagePoint(uptStore)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /upt/{uptId}", h)
 
@@ -291,7 +297,7 @@ func TestHandleUsagePoint(t *testing.T) {
 
 func TestHandleUsagePointNotFound(t *testing.T) {
 	uptStore := memory.NewStore[sep2.UsagePoint]()
-	h := handler.HandleUsagePoint(uptStore)
+	h := coremetering.HandleUsagePoint(uptStore)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /upt/{uptId}", h)
 
@@ -304,7 +310,7 @@ func TestHandleUsagePointNotFound(t *testing.T) {
 
 func TestBuildUsagePointList(t *testing.T) {
 	result := store.ListResult[sep2.UsagePoint]{All: 3, Results: 2, Items: []sep2.UsagePoint{{}, {}}}
-	list := handler.BuildUsagePointList("/upt", result, 900)
+	list := coremetering.BuildUsagePointList("/upt", result, 900)
 	if list.All != 3 || list.Results != 2 {
 		t.Errorf("All=%d Results=%d", list.All, list.Results)
 	}
@@ -312,7 +318,7 @@ func TestBuildUsagePointList(t *testing.T) {
 
 func TestBuildMeterReadingList(t *testing.T) {
 	result := store.ListResult[sep2.MeterReading]{All: 1, Results: 1}
-	list := handler.BuildMeterReadingList("/mr", result, 900)
+	list := coremetering.BuildMeterReadingList("/mr", result, 900)
 	if list.All != 1 {
 		t.Errorf("All = %d", list.All)
 	}
@@ -320,7 +326,7 @@ func TestBuildMeterReadingList(t *testing.T) {
 
 func TestBuildReadingList(t *testing.T) {
 	result := store.ListResult[sep2.Reading]{All: 5, Results: 5}
-	list := handler.BuildReadingList("/r", result, 900)
+	list := coremetering.BuildReadingList("/r", result, 900)
 	if list.All != 5 {
 		t.Errorf("All = %d", list.All)
 	}
@@ -328,7 +334,7 @@ func TestBuildReadingList(t *testing.T) {
 
 func TestBuildReadingTypeList(t *testing.T) {
 	result := store.ListResult[sep2.ReadingType]{All: 2, Results: 2}
-	list := handler.BuildReadingTypeList("/rt", result, 900)
+	list := coremetering.BuildReadingTypeList("/rt", result, 900)
 	if list.All != 2 {
 		t.Errorf("All = %d", list.All)
 	}

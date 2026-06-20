@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	coresingleton "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/singleton"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
 
 // BuildDERList constructs a DERList from store results.
@@ -82,28 +83,28 @@ func DERSingletonHandlers(
 		return r.PathValue("id") + "/" + r.PathValue("derId")
 	}
 
-	dercap = HandleSingletonGetPut[sep2.DERCapability](caps, derParentKey,
+	dercap = coresingleton.HandleSingletonGetPut[sep2.DERCapability](caps, derParentKey,
 		func(r *http.Request) sep2.DERCapability {
 			return sep2.DERCapability{Resource: sep2.Resource{
 				Href: fmt.Sprintf("/edev/%s/der/%s/dercap", r.PathValue("id"), r.PathValue("derId")),
 			}}
 		})
 
-	derg = HandleSingletonGetPut[sep2.DERSettings](settings, derParentKey,
+	derg = coresingleton.HandleSingletonGetPut[sep2.DERSettings](settings, derParentKey,
 		func(r *http.Request) sep2.DERSettings {
 			s := sep2.DERSettings{}
 			s.Href = fmt.Sprintf("/edev/%s/der/%s/derg", r.PathValue("id"), r.PathValue("derId"))
 			return s
 		})
 
-	ders = HandleSingletonGetPut[sep2.DERStatus](statuses, derParentKey,
+	ders = coresingleton.HandleSingletonGetPut[sep2.DERStatus](statuses, derParentKey,
 		func(r *http.Request) sep2.DERStatus {
 			s := sep2.DERStatus{}
 			s.Href = fmt.Sprintf("/edev/%s/der/%s/ders", r.PathValue("id"), r.PathValue("derId"))
 			return s
 		})
 
-	dera = HandleSingletonGetPut[sep2.DERAvailability](avails, derParentKey,
+	dera = coresingleton.HandleSingletonGetPut[sep2.DERAvailability](avails, derParentKey,
 		func(r *http.Request) sep2.DERAvailability {
 			s := sep2.DERAvailability{}
 			s.Href = fmt.Sprintf("/edev/%s/der/%s/dera", r.PathValue("id"), r.PathValue("derId"))
@@ -115,7 +116,7 @@ func DERSingletonHandlers(
 
 // DefaultDERControlHandler creates a handler for GET/PUT on DefaultDERControl.
 func DefaultDERControlHandler(store *memory.ScopedStore[sep2.DefaultDERControl]) http.HandlerFunc {
-	return HandleSingletonGetPut[sep2.DefaultDERControl](store,
+	return coresingleton.HandleSingletonGetPut[sep2.DefaultDERControl](store,
 		func(r *http.Request) string {
 			return r.PathValue("id") + "/" + r.PathValue("fsaId") + "/" + r.PathValue("derpId")
 		},

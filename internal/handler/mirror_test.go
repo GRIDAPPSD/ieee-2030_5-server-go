@@ -10,14 +10,23 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/pkg/store/memory"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	corelisthandler "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/listhandler"
+	coremetering "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/metering"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
 )
+
+// authLFDIProvider wraps auth.GetIdentity as a coremetering.LFDIProvider.
+// Stays server-side because the auth package is server-stay; this wiring
+// is exactly what the test exercises (server auth context -> core handler).
+func authLFDIProvider(ctx context.Context) (string, bool) {
+	id, ok := auth.GetIdentity(ctx)
+	return id.LFDI, ok
+}
 
 func TestHandleCreateMirrorUsagePoint(t *testing.T) {
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
-	h := handler.HandleCreateMirrorUsagePoint(s)
+	h := coremetering.HandleCreateMirrorUsagePoint(s, authLFDIProvider)
 
 	mup := sep2.MirrorUsagePoint{
 		MRID:                "INV001",
@@ -42,7 +51,7 @@ func TestHandleCreateMirrorUsagePoint(t *testing.T) {
 		t.Errorf("Location = %q, want /mup/...", loc)
 	}
 
-	// Verify DeviceLFDI was set from cert identity
+	// Verify DeviceLFDI was set from cert identity (wiring assertion)
 	var result sep2.MirrorUsagePoint
 	_ = xml.Unmarshal(w.Body.Bytes(), &result)
 	if result.DeviceLFDI != "TEST_LFDI_40CHARS_AABBCCDD00112233445566" {
@@ -58,7 +67,7 @@ func TestHandleMirrorUsagePointGet(t *testing.T) {
 	})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /mup/{id}", handler.HandleMirrorUsagePoint(s))
+	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(s))
 
 	req := httptest.NewRequest(http.MethodGet, "/mup/test1", nil)
 	w := httptest.NewRecorder()
@@ -89,7 +98,7 @@ func TestHandlePostMirrorMeterReading(t *testing.T) {
 	body, _ := xml.Marshal(&mmr)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup/{id}/mr", handler.HandlePostMirrorMeterReading(mupStore, mmrStore))
+	mux.HandleFunc("POST /mup/{id}/mr", coremetering.HandlePostMirrorMeterReading(mupStore, mmrStore))
 
 	req := httptest.NewRequest(http.MethodPost, "/mup/inv1/mr", bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -111,7 +120,7 @@ func TestHandlePostMirrorMeterReadingNotFoundParent(t *testing.T) {
 	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup/{id}/mr", handler.HandlePostMirrorMeterReading(mupStore, mmrStore))
+	mux.HandleFunc("POST /mup/{id}/mr", coremetering.HandlePostMirrorMeterReading(mupStore, mmrStore))
 
 	req := httptest.NewRequest(http.MethodPost, "/mup/nonexistent/mr", bytes.NewBufferString("<MirrorMeterReading/>"))
 	w := httptest.NewRecorder()
@@ -127,8 +136,11 @@ func TestHandleMirrorListHandler(t *testing.T) {
 	_ = s.Create(context.Background(), "a", sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/a"}, MRID: "A"})
 	_ = s.Create(context.Background(), "b", sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/b"}, MRID: "B"})
 
-	h := handler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
-		s, handler.BuildMirrorUsagePointList, 300,
+	// ListHandler moved to core in Phase D3a. Verify BuildMirrorUsagePointList
+	// from coremetering works with it. This test exercises the wiring:
+	// corelisthandler.ListHandler + core list-builder.
+	h := corelisthandler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
+		s, coremetering.BuildMirrorUsagePointList, 300,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/mup", nil)
@@ -146,8 +158,9 @@ func TestHandleMirrorListHandler(t *testing.T) {
 // helpers
 
 func addIdentity(req *http.Request, sfdi, lfdi string) *http.Request {
-	// Simulate identity middleware by adding TLS state and using the middleware
-	// For unit tests, we inject directly into context
+	// Inject device identity into context, simulating the IdentityMiddleware.
+	// Stays server-side because auth.IdentityContextKey and auth.DeviceIdentity
+	// are server-stay types (internal/auth).
 	identity := auth.DeviceIdentity{SFDI: sfdi, LFDI: lfdi}
 	ctx := context.WithValue(req.Context(), auth.IdentityContextKey(), identity)
 	return req.WithContext(ctx)

@@ -1,18 +1,18 @@
+// Package server_test: assembly seam tests for IEEESRV-001.
+//
+// TestCoreRouterPatternEquivalence is the Phase 1 proof: both routers
+// produce the same sorted pattern list (58 patterns, confirmed identical).
+//
+// TestCoreRouterEnabled pins the toggle logic for coreRouterEnabled().
+//
+// TestSelectRouterToggle exercises selectRouter() under both env states,
+// confirming a non-nil handler and the expected 58-pattern list are
+// returned regardless of which router is selected. This also exercises
+// adaptNotifier and notifierAdapter so no symbols are unused.
 package server_test
 
-// TestCoreRouterPatternEquivalence is the Phase 1 proof for IEEESRV-001.
-// It calls both the in-tree BuildProtocolRouter and assembly.BuildProtocolRouter
-// with identical stores, config, and a nil notifier, then asserts that the
-// two sorted pattern lists are set-equal.
-//
-// A pattern-list difference here would be a real wire-level divergence:
-// a route present in one router but absent in the other, which means the
-// two implementations are NOT equivalent. This test must stay green until
-// Phase 2 (IEEESRV-002) deletes the in-tree router.
-//
-// Per the workspace data-invariants rule, the test asserts the actual
-// pattern VALUES (not just that both calls return without error).
 import (
+	"context"
 	"sort"
 	"strings"
 	"testing"
@@ -104,3 +104,105 @@ func TestCoreRouterPatternEquivalence(t *testing.T) {
 		t.Logf("  %s", p)
 	}
 }
+
+// TestCoreRouterEnabled pins the toggle logic via t.Setenv. Subtests must
+// not be parallel because t.Setenv is incompatible with t.Parallel.
+func TestCoreRouterEnabled(t *testing.T) {
+	cases := []struct {
+		envVal string
+		want   bool
+	}{
+		{"1", true},
+		{"true", true},
+		{"yes", true},
+		{"", false},
+		{"0", false},
+		{"no", false},
+		{"false", false},
+		{"garbage", false},
+		{"TRUE", false}, // case-sensitive by design: only lowercase accepted
+		{"YES", false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run("SEP2_USE_CORE_ROUTER="+tc.envVal, func(t *testing.T) {
+			t.Setenv("SEP2_USE_CORE_ROUTER", tc.envVal)
+			if got := server.CoreRouterEnabled(); got != tc.want {
+				t.Errorf("CoreRouterEnabled() = %v, want %v (env=%q)", got, tc.want, tc.envVal)
+			}
+		})
+	}
+}
+
+// TestSelectRouterToggle calls SelectRouter under both env states and
+// asserts: (1) handler is non-nil, (2) pattern count is 58 (the proven
+// equivalent set), (3) a representative set of canonical patterns is
+// present. This exercises SelectRouter, adaptNotifier, and
+// notifierAdapter so they are not unused symbols. Subtests must not be
+// parallel because t.Setenv is incompatible with t.Parallel.
+func TestSelectRouterToggle(t *testing.T) {
+	svc := newScopeTestCertService(t)
+	cfg := &config.Config{AdminKey: "test-admin-key"}
+	stores := newTestStores()
+
+	// Canonical patterns that must be present under BOTH router selections.
+	canonicalPatterns := []string{
+		"GET /dcap",
+		"GET /tm",
+		"GET /edev",
+		"POST /edev",
+		"DELETE /edev/{id}",
+		"GET /edev/{id}/rg",
+		"GET /edev/{id}/sub",
+		"POST /mup",
+	}
+
+	// nop is a no-op ResourceNotifier so adaptNotifier and notifierAdapter
+	// are exercised through the non-nil notifier path.
+	nop := &nopNotifier{}
+
+	for _, tc := range []struct {
+		name   string
+		envVal string
+	}{
+		{"in-tree (default)", ""},
+		{"core (SEP2_USE_CORE_ROUTER=1)", "1"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SEP2_USE_CORE_ROUTER", tc.envVal)
+
+			h, patterns := server.SelectRouter(cfg, stores, svc, "test-sfdi", "test-lfdi", nop)
+
+			if h == nil {
+				t.Fatal("selectRouter returned nil handler")
+			}
+			if len(patterns) != 58 {
+				t.Errorf("pattern count = %d, want 58\n--- patterns ---\n%s",
+					len(patterns), strings.Join(patterns, "\n"))
+			}
+			if !sort.StringsAreSorted(patterns) {
+				t.Error("pattern list is not sorted")
+			}
+			for _, want := range canonicalPatterns {
+				found := false
+				for _, p := range patterns {
+					if p == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("canonical pattern %q missing from pattern list", want)
+				}
+			}
+		})
+	}
+}
+
+// nopNotifier satisfies handler.ResourceNotifier with a no-op Notify so
+// TestSelectRouterToggle can pass a non-nil notifier and exercise the
+// adaptNotifier/notifierAdapter path without importing handler directly.
+type nopNotifier struct{}
+
+func (n *nopNotifier) Notify(_ context.Context, _ string, _ uint8) {}

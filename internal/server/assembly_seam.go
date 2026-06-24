@@ -20,10 +20,11 @@ import (
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/assembly"
 )
 
-// coreRouterEnabled reports whether the SEP2_USE_CORE_ROUTER environment
+// CoreRouterEnabled reports whether the SEP2_USE_CORE_ROUTER environment
 // variable is set to a truthy value ("1", "true", "yes"). The default is
 // false: the in-tree BuildProtocolRouter remains live until Phase 2.
-func coreRouterEnabled() bool {
+// Exported so the toggle test can verify the mapping table via t.Setenv.
+func CoreRouterEnabled() bool {
 	v := os.Getenv("SEP2_USE_CORE_ROUTER")
 	return v == "1" || v == "true" || v == "yes"
 }
@@ -143,19 +144,20 @@ func adaptNotifier(n handler.ResourceNotifier) assembly.ResourceNotifier {
 	return &notifierAdapter{inner: n}
 }
 
-// selectRouter is the toggle seam: it chooses between the core router and
+// SelectRouter is the toggle seam: it chooses between the core router and
 // the in-tree router based on SEP2_USE_CORE_ROUTER. Both paths return
 // (http.Handler, []string) so the call site in server.go is unchanged.
 // The in-tree router is the default (SEP2_USE_CORE_ROUTER not set or
 // set to any value other than "1", "true", or "yes").
-func selectRouter(
+// Exported so the toggle test can call it under both env states.
+func SelectRouter(
 	cfg *config.Config,
 	stores *Stores,
 	svc *handler.AdminCertService,
 	serverSFDI, serverLFDI string,
 	notifier handler.ResourceNotifier,
 ) (http.Handler, []string) {
-	if coreRouterEnabled() {
+	if CoreRouterEnabled() {
 		return assembly.BuildProtocolRouter(
 			NewCoreRouterConfig(cfg),
 			NewCoreStores(stores),

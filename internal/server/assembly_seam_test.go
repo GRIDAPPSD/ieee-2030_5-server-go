@@ -3,12 +3,18 @@
 // TestCoreRouterPatternEquivalence is the Phase 1 proof: both routers
 // produce the same sorted pattern list (58 patterns, confirmed identical).
 //
-// TestCoreRouterEnabled pins the toggle logic for coreRouterEnabled().
+// TestNewCoreRouterConfig pins the five-field mapping from *config.Config
+// to assembly.RouterConfig so a transposed field is caught immediately.
 //
-// TestSelectRouterToggle exercises selectRouter() under both env states,
-// confirming a non-nil handler and the expected 58-pattern list are
-// returned regardless of which router is selected. This also exercises
-// adaptNotifier and notifierAdapter so no symbols are unused.
+// TestNewCoreAuthPolicyIdentity pins the Identity closure field order and
+// asserts Wrap and SFDIPrefix are non-nil.
+//
+// TestCoreRouterEnabled pins the toggle logic for CoreRouterEnabled().
+//
+// TestSelectRouterToggle exercises SelectRouter() under both env states,
+// confirming a non-nil handler and a non-empty pattern list are returned
+// regardless of which router is selected. This also exercises adaptNotifier
+// and notifierAdapter so no symbols are unused.
 package server_test
 
 import (
@@ -17,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/assembly"
@@ -105,6 +112,99 @@ func TestCoreRouterPatternEquivalence(t *testing.T) {
 	}
 }
 
+// TestNewCoreRouterConfig asserts that each of the five scalar fields maps
+// to the correct destination field in assembly.RouterConfig. Distinct
+// non-zero values are used so a transposed assignment (e.g. TZOffset
+// written to DSTOffset) produces a test failure rather than passing on
+// zero-value coincidence.
+func TestNewCoreRouterConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		TZOffset:    -28800, // UTC-8 in seconds
+		DSTOffset:   3600,   // +1 hour DST
+		DSTStart:    1711868400,
+		DSTEnd:      1730617200,
+		TimeQuality: 7,
+	}
+
+	got := server.NewCoreRouterConfig(cfg)
+
+	if got.TZOffset != cfg.TZOffset {
+		t.Errorf("TZOffset: got %d, want %d", got.TZOffset, cfg.TZOffset)
+	}
+	if got.DSTOffset != cfg.DSTOffset {
+		t.Errorf("DSTOffset: got %d, want %d", got.DSTOffset, cfg.DSTOffset)
+	}
+	if got.DSTStart != cfg.DSTStart {
+		t.Errorf("DSTStart: got %d, want %d", got.DSTStart, cfg.DSTStart)
+	}
+	if got.DSTEnd != cfg.DSTEnd {
+		t.Errorf("DSTEnd: got %d, want %d", got.DSTEnd, cfg.DSTEnd)
+	}
+	if got.TimeQuality != cfg.TimeQuality {
+		t.Errorf("TimeQuality: got %d, want %d", got.TimeQuality, cfg.TimeQuality)
+	}
+}
+
+// TestNewCoreAuthPolicyIdentity asserts that the Identity closure returns
+// (lfdi, sfdi, true) in the correct field order when the context carries a
+// known DeviceIdentity, and that Wrap and SFDIPrefix are non-nil.
+//
+// A full request-level integration test (real authenticated request through
+// the core router asserting middleware, ACL execution, and notifier fan-out)
+// is deferred to Phase 2 (IEEESRV-002), where the core router becomes the
+// live one and end-to-end integration tests cover the wired path.
+func TestNewCoreAuthPolicyIdentity(t *testing.T) {
+	t.Parallel()
+
+	const wantLFDI = "aabbcc001122ddeeff"
+	const wantSFDI = "112233445566"
+
+	policy := server.NewCoreAuthPolicy()
+
+	// Wrap and SFDIPrefix must be non-nil: a nil Wrap disables ALL ACL
+	// enforcement (core logs a warning but does not fail); a nil SFDIPrefix
+	// causes 500 on the edev POST path (fail-closed per assembly contract).
+	if policy.Wrap == nil {
+		t.Error("AuthPolicy.Wrap is nil: no ACL enforcement would be applied")
+	}
+	if policy.SFDIPrefix == nil {
+		t.Error("AuthPolicy.SFDIPrefix is nil: edev POST would return 500")
+	}
+
+	// Inject a known DeviceIdentity into a context using the exported key so
+	// the Identity closure can retrieve it. The key type (auth.contextKey) is
+	// unexported, but auth.IdentityContextKey() provides the value.
+	ctx := context.WithValue(
+		context.Background(),
+		auth.IdentityContextKey(),
+		auth.DeviceIdentity{LFDI: wantLFDI, SFDI: wantSFDI},
+	)
+
+	gotLFDI, gotSFDI, ok := policy.Identity(ctx)
+
+	if !ok {
+		t.Fatal("Identity returned ok=false; expected ok=true for a context with DeviceIdentity")
+	}
+	// Field order is load-bearing: assembly.AuthPolicy.Identity returns
+	// (lfdi, sfdi, ok). The edev POST path feeds the second return (SFDI)
+	// into SFDIPrefix. A swap here would route IEEE-014 guard to the wrong
+	// value silently.
+	if gotLFDI != wantLFDI {
+		t.Errorf("Identity first return (lfdi): got %q, want %q", gotLFDI, wantLFDI)
+	}
+	if gotSFDI != wantSFDI {
+		t.Errorf("Identity second return (sfdi): got %q, want %q", gotSFDI, wantSFDI)
+	}
+
+	// Also verify the empty-context path returns ok=false (no panic).
+	_, _, okEmpty := policy.Identity(context.Background())
+	if okEmpty {
+		t.Error("Identity returned ok=true on an empty context; expected ok=false")
+	}
+}
+
 // TestCoreRouterEnabled pins the toggle logic via t.Setenv. Subtests must
 // not be parallel because t.Setenv is incompatible with t.Parallel.
 func TestCoreRouterEnabled(t *testing.T) {
@@ -135,11 +235,11 @@ func TestCoreRouterEnabled(t *testing.T) {
 }
 
 // TestSelectRouterToggle calls SelectRouter under both env states and
-// asserts: (1) handler is non-nil, (2) pattern count is 58 (the proven
-// equivalent set), (3) a representative set of canonical patterns is
-// present. This exercises SelectRouter, adaptNotifier, and
-// notifierAdapter so they are not unused symbols. Subtests must not be
-// parallel because t.Setenv is incompatible with t.Parallel.
+// asserts: (1) handler is non-nil, (2) the pattern list is non-empty,
+// (3) a representative set of canonical patterns is present. This
+// exercises SelectRouter, adaptNotifier, and notifierAdapter so they are
+// not unused symbols. The exact count is owned by TestCoreRouterPatternEquivalence.
+// Subtests must not be parallel because t.Setenv is incompatible with t.Parallel.
 func TestSelectRouterToggle(t *testing.T) {
 	svc := newScopeTestCertService(t)
 	cfg := &config.Config{AdminKey: "test-admin-key"}
@@ -177,9 +277,8 @@ func TestSelectRouterToggle(t *testing.T) {
 			if h == nil {
 				t.Fatal("selectRouter returned nil handler")
 			}
-			if len(patterns) != 58 {
-				t.Errorf("pattern count = %d, want 58\n--- patterns ---\n%s",
-					len(patterns), strings.Join(patterns, "\n"))
+			if len(patterns) == 0 {
+				t.Errorf("pattern list is empty; SelectRouter returned no routes")
 			}
 			if !sort.StringsAreSorted(patterns) {
 				t.Error("pattern list is not sorted")

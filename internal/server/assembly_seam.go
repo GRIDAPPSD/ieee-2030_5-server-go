@@ -1,6 +1,6 @@
-// Package server: assembly_seam.go builds the inputs to
-// assembly.BuildProtocolRouter from the server's concrete types and
-// selects between the in-tree router and the core router at boot time.
+// assembly_seam.go builds the inputs to assembly.BuildProtocolRouter from
+// the server's concrete types and selects between the in-tree router and
+// the core router at boot time.
 //
 // Phase 1 (IEEESRV-001): the core router is constructed and testable
 // but is NOT the live router unless SEP2_USE_CORE_ROUTER=1 is set in
@@ -11,6 +11,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"os"
 
@@ -130,6 +131,8 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 type notifierAdapter struct{ inner handler.ResourceNotifier }
 
 func (a *notifierAdapter) Notify(ctx context.Context, resourceHref string, status uint8) {
+	// inner is guaranteed non-nil by adaptNotifier; a nil handler.ResourceNotifier
+	// produces a nil *notifierAdapter, not a non-nil adapter wrapping nil.
 	a.inner.Notify(ctx, resourceHref, status)
 }
 
@@ -157,7 +160,12 @@ func SelectRouter(
 	serverSFDI, serverLFDI string,
 	notifier handler.ResourceNotifier,
 ) (http.Handler, []string) {
-	if CoreRouterEnabled() {
+	coreEnabled := CoreRouterEnabled()
+	// Log the raw env value and resolved selection at boot so a fat-fingered
+	// flag value ("True", "YES", etc.) is immediately visible in the startup
+	// log rather than silently falling back to the in-tree router.
+	log.Printf("assembly: SEP2_USE_CORE_ROUTER=%q, core router=%v", os.Getenv("SEP2_USE_CORE_ROUTER"), coreEnabled)
+	if coreEnabled {
 		return assembly.BuildProtocolRouter(
 			NewCoreRouterConfig(cfg),
 			NewCoreStores(stores),

@@ -22,6 +22,7 @@ func newTestStores() *server.Stores {
 		DefaultDERControls:       memory.NewScopedStore[sep2.DefaultDERControl](),
 		DERCurves:                memory.NewStore[sep2.DERCurve](),
 		FSAs:                     memory.NewScopedStore[sep2.FunctionSetAssignments](),
+		AdminFSAs:                memory.NewAdminFSAStore(),
 		Subscriptions:            memory.NewSubscriptionStore(),
 		UsagePoints:              memory.NewStore[sep2.UsagePoint](),
 		MeterReadings:            memory.NewScopedStore[sep2.MeterReading](),

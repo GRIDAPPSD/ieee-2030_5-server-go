@@ -312,7 +312,7 @@ func TestSelectRouterToggle(t *testing.T) {
 			h, patterns := server.SelectRouter(cfg, stores, svc, "test-sfdi", "test-lfdi", nop)
 
 			if h == nil {
-				t.Fatal("selectRouter returned nil handler")
+				t.Fatal("SelectRouter returned nil handler")
 			}
 			if len(patterns) == 0 {
 				t.Errorf("pattern list is empty; SelectRouter returned no routes")

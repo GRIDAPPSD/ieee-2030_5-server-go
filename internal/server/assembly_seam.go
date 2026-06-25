@@ -146,7 +146,7 @@ func (a *notifierAdapter) Notify(ctx context.Context, resourceHref string, statu
 // pass the n == nil guard and panic when Notify is dispatched. The reflect
 // check below rejects that case. The Kind guard is required: reflect.Value.IsNil
 // panics on non-nilable kinds (struct, int, etc.), so we only call it for the
-// seven nilable kinds.
+// six nilable kinds.
 func adaptNotifier(n handler.ResourceNotifier) assembly.ResourceNotifier {
 	if n == nil {
 		return nil
@@ -178,7 +178,7 @@ func SelectRouter(
 	// value so a fat-fingered flag ("True", "YES", etc.) is immediately visible
 	// in the startup log rather than silently falling back to the in-tree router.
 	rawEnv := os.Getenv("SEP2_USE_CORE_ROUTER")
-	coreEnabled := rawEnv == "1" || rawEnv == "true" || rawEnv == "yes"
+	coreEnabled := CoreRouterEnabled()
 	log.Printf("assembly: SEP2_USE_CORE_ROUTER=%q, core router=%v", rawEnv, coreEnabled)
 	if coreEnabled {
 		// svc (*handler.AdminCertService) is intentionally not forwarded: the

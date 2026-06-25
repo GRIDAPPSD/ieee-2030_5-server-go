@@ -14,6 +14,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"reflect"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
@@ -140,9 +141,22 @@ func (a *notifierAdapter) Notify(ctx context.Context, resourceHref string, statu
 // assembly.ResourceNotifier. Returns nil when n is nil so
 // assembly.BuildProtocolRouter can skip fan-out safely (nil notifier
 // is the documented "disable notification" sentinel).
+//
+// A typed nil (e.g. a nil *subscription.Manager stored in the interface) would
+// pass the n == nil guard and panic when Notify is dispatched. The reflect
+// check below rejects that case. The Kind guard is required: reflect.Value.IsNil
+// panics on non-nilable kinds (struct, int, etc.), so we only call it for the
+// seven nilable kinds.
 func adaptNotifier(n handler.ResourceNotifier) assembly.ResourceNotifier {
 	if n == nil {
 		return nil
+	}
+	v := reflect.ValueOf(n)
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
+		if v.IsNil() {
+			return nil
+		}
 	}
 	return &notifierAdapter{inner: n}
 }
@@ -160,12 +174,16 @@ func SelectRouter(
 	serverSFDI, serverLFDI string,
 	notifier handler.ResourceNotifier,
 ) (http.Handler, []string) {
-	coreEnabled := CoreRouterEnabled()
-	// Log the raw env value and resolved selection at boot so a fat-fingered
-	// flag value ("True", "YES", etc.) is immediately visible in the startup
-	// log rather than silently falling back to the in-tree router.
-	log.Printf("assembly: SEP2_USE_CORE_ROUTER=%q, core router=%v", os.Getenv("SEP2_USE_CORE_ROUTER"), coreEnabled)
+	// Read the raw env value once, derive the bool from it, and log the raw
+	// value so a fat-fingered flag ("True", "YES", etc.) is immediately visible
+	// in the startup log rather than silently falling back to the in-tree router.
+	rawEnv := os.Getenv("SEP2_USE_CORE_ROUTER")
+	coreEnabled := rawEnv == "1" || rawEnv == "true" || rawEnv == "yes"
+	log.Printf("assembly: SEP2_USE_CORE_ROUTER=%q, core router=%v", rawEnv, coreEnabled)
 	if coreEnabled {
+		// svc (*handler.AdminCertService) is intentionally not forwarded: the
+		// core router provides its own admin-cert routes and does not use the
+		// in-tree AdminCertService. This is by design, not an oversight.
 		return assembly.BuildProtocolRouter(
 			NewCoreRouterConfig(cfg),
 			NewCoreStores(stores),

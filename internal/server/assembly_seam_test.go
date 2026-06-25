@@ -19,6 +19,7 @@ package server_test
 
 import (
 	"context"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -144,6 +145,42 @@ func TestNewCoreRouterConfig(t *testing.T) {
 	}
 	if got.TimeQuality != cfg.TimeQuality {
 		t.Errorf("TimeQuality: got %d, want %d", got.TimeQuality, cfg.TimeQuality)
+	}
+}
+
+// TestNewCoreStoresCopiesAllFields asserts that every field in the
+// assembly.Stores destination is non-nil after NewCoreStores. Reflection is
+// used so a field added in Phase 2 that the copy forgets will fail this test
+// rather than nil-panicking at request time. All fields in assembly.Stores are
+// pointers or interfaces, so nil is the only dangerous zero value here.
+func TestNewCoreStoresCopiesAllFields(t *testing.T) {
+	t.Parallel()
+
+	src := newTestStores()
+	dst := server.NewCoreStores(src)
+
+	if dst == nil {
+		t.Fatal("NewCoreStores returned nil for a non-nil source")
+	}
+
+	dstVal := reflect.ValueOf(dst).Elem()
+	dstType := dstVal.Type()
+	for i := 0; i < dstVal.NumField(); i++ {
+		f := dstVal.Field(i)
+		name := dstType.Field(i).Name
+		switch f.Kind() {
+		case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
+			if f.IsNil() {
+				t.Errorf("assembly.Stores.%s is nil after NewCoreStores: field was not copied", name)
+			}
+		default:
+			// Scalar fields (int, bool, string, etc.) are not expected in
+			// assembly.Stores today, but if one appears and the copy is missing
+			// we catch the zero value here.
+			if f.IsZero() {
+				t.Errorf("assembly.Stores.%s is zero after NewCoreStores: field was not copied", name)
+			}
+		}
 	}
 }
 
@@ -283,15 +320,12 @@ func TestSelectRouterToggle(t *testing.T) {
 			if !sort.StringsAreSorted(patterns) {
 				t.Error("pattern list is not sorted")
 			}
+			patternSet := make(map[string]struct{}, len(patterns))
+			for _, p := range patterns {
+				patternSet[p] = struct{}{}
+			}
 			for _, want := range canonicalPatterns {
-				found := false
-				for _, p := range patterns {
-					if p == want {
-						found = true
-						break
-					}
-				}
-				if !found {
+				if _, ok := patternSet[want]; !ok {
 					t.Errorf("canonical pattern %q missing from pattern list", want)
 				}
 			}

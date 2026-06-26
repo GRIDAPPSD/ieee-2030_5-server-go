@@ -200,11 +200,10 @@ IEEE-121).
 
 Two ready-made CSIP-flavored boot profiles ship under Make targets:
 
-- `make run-enphase` — server bound to `10.0.0.101:8888` with the
-  Enphase test root appended to `ClientCAs` and a pre-seeded EndDevice
-  matching the inverter's LFDI/SFDI. Non-strict cert mode (the Enphase
-  test leaf does not satisfy CSIP §6.11). `ENPHASE_ADDR=host:port`
-  overrides the bind for local smoke runs.
+- `make run-testdevice` — server bound to `127.0.0.1:8888` with the
+  self-minted test device root appended to `ClientCAs` and a pre-seeded
+  EndDevice matching the test device's LFDI/SFDI. The test device cert is
+  CSIP §6.11-compliant. `TESTDEVICE_ADDR=host:port` overrides the bind.
 - `make run-sunspec` — CCM-8 server trusting the SunSpec CSIP test PKI
   roots via `SEP2_EXTRA_CLIENT_CAS`. Override `SUNSPEC_ROOTS=...` to
   relocate the trust bundle (default points at the operator's Knowledge

@@ -2,7 +2,7 @@ package server
 
 // IEEE-112 — structured connection-details banner printed once at server
 // boot. Operators run any of `make run`, `make run-ccm`, `make run-full`,
-// `make run-enphase`, `make run-sunspec` and need a single, copy-pasteable
+// `make run-testdevice`, `make run-sunspec` and need a single, copy-pasteable
 // block that says exactly where to point a device and which trust roots are
 // in play. The banner is operator-facing log output ONLY — it does not
 // change server behavior and it never prints secrets (admin keys, private
@@ -123,7 +123,7 @@ func RenderConnectionBanner(in BannerInput) string {
 // for the banner. Bare ":<port>" binds → "localhost:<port>" because that's
 // what the operator will actually curl against; a wildcard "0.0.0.0:<port>"
 // is normalized the same way. Any other host:port is preserved verbatim so
-// non-loopback profiles (Enphase: 10.0.0.101:8888) surface the real target.
+// non-loopback profiles (e.g. 10.0.0.101:8888) surface the real target.
 func displayHost(addr string) string {
 	if addr == "" {
 		return "localhost"

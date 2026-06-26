@@ -105,12 +105,11 @@ locally rooted (workstation-generated SERCA).
 
 - `test/csip/handshake_test.go` covers the SunSpec V1.2 self-rooted
   PKI happy path (CCM-8 cipher negotiation under env-gated fixtures).
-- `test/csip/enphase_handshake_test.go` covers the Enphase factory
-  PKI variant (committed under `testdata/csip-pki/enphase/`) and
-  documents the §6.11 non-conformance (missing
-  HardwareModuleName SAN, missing Key Usage, missing Basic
-  Constraints) as a deliberate "test of how the server handles a
-  non-conformant cert" scenario rather than a CSIP-compliant cert.
+- `test/csip/testdevice_handshake_test.go` covers the self-minted test
+  device PKI variant (committed under `testdata/csip-pki/testdevice/`)
+  with a CSIP §6.11-compliant device cert (HardwareModuleName SAN,
+  empty Subject, KeyUsage, BasicConstraints). Exercises the server
+  handling a compliant cert in default (non-strict) mode.
 
 The four broken-variant negatives (invalid MICA ext-key, invalid MICA
 name, invalid MICA policy mapping, self-signed device) are **NOT**
@@ -128,7 +127,7 @@ generating all six fixtures now and discovering the server quietly
 accepts some.
 
 **Implemented in.** `test/csip/handshake_test.go`,
-`test/csip/enphase_handshake_test.go` (IEEE-018, IEEE-068).
+`test/csip/testdevice_handshake_test.go` (IEEE-018, IEEE-068).
 COMM-004 row in the matrix is DOCUMENTED-EXCEPTION pointing here.
 
 **Decision lineage.** Phase 5 PR review (IEEE-068 thread),

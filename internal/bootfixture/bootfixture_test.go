@@ -25,7 +25,7 @@ func freshTarget() *bootfixture.Target {
 	}
 }
 
-func TestLoadEnphaseFixture(t *testing.T) {
+func TestLoadTestDeviceFixture(t *testing.T) {
 	t.Parallel()
 
 	// Resolve fixture path relative to repo root. tests run from the
@@ -34,7 +34,7 @@ func TestLoadEnphaseFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve repo root: %v", err)
 	}
-	path := filepath.Join(repoRoot, "test", "csip", "fixtures", "enphase-edev.yaml")
+	path := filepath.Join(repoRoot, "test", "csip", "fixtures", "testdevice-edev.yaml")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("fixture missing at %s: %v", path, err)
 	}
@@ -55,16 +55,16 @@ func TestLoadEnphaseFixture(t *testing.T) {
 		t.Fatalf("expected exactly 1 EndDevice returned, got %d", got)
 	}
 	dev := list.Items[0]
-	if want := "9711948EBF52B988A39728F756AEAA763EFF5540"; dev.LFDI != want {
+	if want := "93E795AE91F5F493813E3B39C8BC49F06FCA6258"; dev.LFDI != want {
 		t.Errorf("LFDI = %q, want %q", dev.LFDI, want)
 	}
-	if want := "405521881394"; dev.SFDI != want {
+	if want := "397028461857"; dev.SFDI != want {
 		t.Errorf("SFDI = %q, want %q", dev.SFDI, want)
 	}
 	if dev.Enabled == nil || !*dev.Enabled {
 		t.Errorf("Enabled = %v, want true", dev.Enabled)
 	}
-	if want := "/edev/enphase"; dev.Href != want {
+	if want := "/edev/testdevice"; dev.Href != want {
 		t.Errorf("Href = %q, want %q", dev.Href, want)
 	}
 }

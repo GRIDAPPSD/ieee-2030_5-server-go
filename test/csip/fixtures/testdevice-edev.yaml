@@ -1,0 +1,27 @@
+# IEEE-068 fixture: pre-seeded EndDevice for the CSIP test device that
+# mTLS-connects via `make run-testdevice`.
+#
+# Identity values are derived from the self-minted test device cert
+# (testdata/csip-pki/testdevice/device_chain.pem leaf); see
+# testdata/csip-pki/testdevice/README.md for the derivation method and
+# regeneration commands.
+#
+#   LFDI = 93E795AE91F5F493813E3B39C8BC49F06FCA6258
+#   SFDI = 397028461857   (display 397-028-461-857)
+#
+# Loaded at boot via SEP2_BOOT_FIXTURE. Schema matches
+# internal/bootfixture.Spec (same shape as test/csip/csiptest.Spec).
+
+end_devices:
+  - id: "testdevice"
+    sfdi: "397028461857"
+    lfdi: "93E795AE91F5F493813E3B39C8BC49F06FCA6258"
+    enabled: true
+    changed_time: 1747006800
+    registration_link: "/edev/testdevice/rg"
+    function_set_assignments_list_link:
+      href: "/edev/testdevice/fsa"
+      all: 0
+    der_list_link:
+      href: "/edev/testdevice/der"
+      all: 0

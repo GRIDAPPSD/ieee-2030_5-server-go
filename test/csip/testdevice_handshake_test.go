@@ -26,11 +26,22 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
+	sepTLS "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2tls"
 )
 
 // testdevicePKIRel is the path (relative to test/csip/) at which the
 // self-minted test device PKI lives.
 const testdevicePKIRel = "../../testdata/csip-pki/testdevice"
+
+// testdeviceLFDI and testdeviceSFDI are the IEEE 2030.5 device identity
+// values derived from the committed device_chain.pem leaf cert. They are
+// pinned here so any PKI regeneration (which changes the key and therefore
+// the hash) causes an explicit test failure and a forced README/fixture
+// update rather than a silent drift.
+const (
+	testdeviceLFDI = "93E795AE91F5F493813E3B39C8BC49F06FCA6258"
+	testdeviceSFDI = "397028461857"
+)
 
 // TestDeviceHandshake exercises the IEEE-068 cert-trust + handshake path
 // against the self-minted test device PKI.
@@ -57,6 +68,26 @@ func TestDeviceHandshake(t *testing.T) {
 	clientCert, err := tls.X509KeyPair(clientCertPEM, clientKeyPEM)
 	if err != nil {
 		t.Fatalf("parse device chain+key: %v", err)
+	}
+
+	// Derive and assert device identity from the committed leaf cert.
+	// This pins the LFDI/SFDI so any unintended key regeneration is caught
+	// here rather than surfacing as a subtler test drift downstream.
+	if len(clientCert.Certificate) == 0 {
+		t.Fatal("device cert chain is empty after parse")
+	}
+	leafDER := clientCert.Certificate[0]
+	leaf, err := x509.ParseCertificate(leafDER)
+	if err != nil {
+		t.Fatalf("parse leaf cert DER: %v", err)
+	}
+	gotLFDI := sepTLS.LFDI(leaf)
+	gotSFDI := sepTLS.SFDI(leaf)
+	if gotLFDI != testdeviceLFDI {
+		t.Errorf("device LFDI = %q, want %q (was the PKI regenerated without updating the fixture?)", gotLFDI, testdeviceLFDI)
+	}
+	if gotSFDI != testdeviceSFDI {
+		t.Errorf("device SFDI = %q, want %q (was the PKI regenerated without updating the fixture?)", gotSFDI, testdeviceSFDI)
 	}
 
 	// Boot the spec server in CCM mode with the test root CA in
@@ -89,8 +120,9 @@ func TestDeviceHandshake(t *testing.T) {
 		_ = rawConn.Close()
 		t.Fatal("HandshakeComplete = false")
 	}
-	t.Logf("test device mTLS handshake OK: version=0x%04x cipher=0x%04x (%s) peerCerts=%d",
-		state.Version, state.CipherSuite, tls.CipherSuiteName(state.CipherSuite), len(state.PeerCertificates))
+	t.Logf("test device mTLS handshake OK: version=0x%04x cipher=0x%04x (%s) peerCerts=%d LFDI=%s SFDI=%s",
+		state.Version, state.CipherSuite, tls.CipherSuiteName(state.CipherSuite),
+		len(state.PeerCertificates), gotLFDI, gotSFDI)
 	_ = rawConn.Close()
 
 	// Application fetch: /dcap must return a parseable DeviceCapability.

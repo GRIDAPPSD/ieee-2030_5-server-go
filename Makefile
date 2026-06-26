@@ -2,7 +2,7 @@
        test-csip-server test-csip-client \
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
        lint vet clean run run-ccm run-journald run-ccm-journald \
-       run-enphase run-sunspec certs new-device \
+       run-testdevice run-sunspec certs new-device \
        serve help
 
 SERVER   := bin/sep2server
@@ -178,42 +178,38 @@ run-full: build certs      ## Start with CCM + mDNS + admin dashboard (admin on 
 	SEP2_MDNS=true \
 	./$(SERVER) serve
 
-# Enphase microinverter demo (IEEE-068).
+# CSIP test device demo (IEEE-068).
 #
-# Boots the server bound to 10.0.0.101:8888 with the Enphase test root
-# appended to ClientCAs and a pre-seeded EndDevice matching the device's
-# LFDI/SFDI. Server still presents its own SunSpec-CA-signed leaf — the
-# Enphase root only authenticates the inverter's client cert.
+# Boots the server bound to 127.0.0.1:8888 (default) with the self-minted
+# test device root appended to ClientCAs and a pre-seeded EndDevice
+# matching the device's LFDI/SFDI. Server still presents its own
+# CA-signed leaf; the test device root only authenticates the test device
+# client cert.
 #
-# CSIP §6.11 compliance: the Enphase test leaf is NOT compliant
-# (no HardwareModuleName SAN, no Key Usage, no Basic Constraints,
-# non-empty Subject). The server must run in non-strict cert verification
-# mode (the default). SEP2_CSIP_STRICT=true (IEEE-020) is incompatible
-# with this device.
+# The test device cert is CSIP §6.11-compliant (HardwareModuleName SAN,
+# empty Subject, KeyUsage, BasicConstraints). The server may run in
+# default (non-strict) or strict mode.
 #
-# Manual prerequisite: the host's network must reach 10.0.0.101.
-# Switching to the Enphase LAN is a manual step performed before running
-# this target. Override the bind via ENPHASE_ADDR=host:port for local
-# smoke runs (e.g. ENPHASE_ADDR=127.0.0.1:8888).
-ENPHASE_ADDR ?= 10.0.0.101:8888
+# Override the bind via TESTDEVICE_ADDR=host:port.
+TESTDEVICE_ADDR ?= 127.0.0.1:8888
 
-run-enphase: build certs   ## Start server with Enphase root + EndDevice pre-seed (override ENPHASE_ADDR for local smoke)
-	@echo "# Enphase profile: binding $(ENPHASE_ADDR) (override with ENPHASE_ADDR=...)"
-	@echo "# Trusted extra client CAs: testdata/csip-pki/enphase/Enph_root.pem"
-	@echo "# Pre-seeded EndDevice fixture: test/csip/fixtures/enphase-edev.yaml"
-	@echo "# Non-strict cert mode (Enphase leaf is CSIP §6.11 non-compliant)"
-	@echo "# Device-side cert (Enphase microinverter ships its own client cert):"
-	@echo "#   --cert <enphase-device>.crt   (device's vendor-issued client cert)"
-	@echo "#   --key  <enphase-device>.key   (device's private key)"
-	@echo "#   --ca   $(CERT_DIR)/ca.crt     (server CA — what the device must trust)"
+run-testdevice: build certs   ## Start server with test device root + EndDevice pre-seed (override TESTDEVICE_ADDR for alternate bind)
+	@echo "# Test device profile: binding $(TESTDEVICE_ADDR) (override with TESTDEVICE_ADDR=...)"
+	@echo "# Trusted extra client CAs: testdata/csip-pki/testdevice/root_ca.pem"
+	@echo "# Pre-seeded EndDevice fixture: test/csip/fixtures/testdevice-edev.yaml"
+	@echo "# CSIP §6.11-compliant cert mode."
+	@echo "# Device-side cert (from testdata/csip-pki/testdevice/):"
+	@echo "#   --cert testdata/csip-pki/testdevice/device_chain.pem"
+	@echo "#   --key  testdata/csip-pki/testdevice/device_key.pem"
+	@echo "#   --ca   $(CERT_DIR)/ca.crt     (server CA: what the device must trust)"
 	@echo "# Server prints a full connection-details banner at boot (IEEE-112)."
-	SEP2_ADDR=$(ENPHASE_ADDR) \
+	SEP2_ADDR=$(TESTDEVICE_ADDR) \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
 	SEP2_CA=$(CERT_DIR)/ca.crt \
 	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
-	SEP2_EXTRA_CLIENT_CAS=testdata/csip-pki/enphase/Enph_root.pem \
-	SEP2_BOOT_FIXTURE=test/csip/fixtures/enphase-edev.yaml \
+	SEP2_EXTRA_CLIENT_CAS=testdata/csip-pki/testdevice/root_ca.pem \
+	SEP2_BOOT_FIXTURE=test/csip/fixtures/testdevice-edev.yaml \
 	SEP2_CCM=true \
 	./$(SERVER) serve
 

@@ -1,10 +1,10 @@
-# ieee-2030_5-go
+# ieee-2030_5-server
 
-[![CI](https://github.com/GRIDAPPSD/ieee-2030_5-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GRIDAPPSD/ieee-2030_5-go/actions/workflows/ci.yml) [![Go](https://img.shields.io/badge/go-1.26.3-blue)](https://go.dev/) [![License](https://img.shields.io/badge/License-BSD--3--Clause-blue)](LICENSE) [![IEEE 2030.5](https://img.shields.io/badge/IEEE%202030.5-CSIP%20V1.2-orange)](https://standards.ieee.org/ieee/2030.5/5897/)
+[![Pipeline](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/badges/main/pipeline.svg)](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/-/commits/main) [![Coverage](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/badges/main/coverage.svg)](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/-/commits/main) [![Go](https://img.shields.io/badge/go-1.26.3-blue)](https://go.dev/) [![License](https://img.shields.io/badge/License-BSD--3--Clause-blue)](LICENSE)
 
-Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server and an admin dashboard.
+Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server binary (`sep2server`) with TLS/mTLS, CSIP V1.2 cipher-suite support (GCM and CCM-8), an admin dashboard, and cert-generation subcommands.
 
-> **This is the active development line for the IEEE 2030.5 (SEP2) Go server. The original public reference is at `github.com/GRIDAPPSD/ieee-2030_5-go`; that GitHub repo remains accessible but new commits land here.**
+> **Server of record for the IEEE 2030.5 (SEP2) Go implementation.** The original public reference is at `github.com/GRIDAPPSD/ieee-2030_5-go`; that GitHub repo remains accessible but active development lands here on GitLab. The `ieee-2030_5-core` library is consumed via a local-path `replace` directive in `go.mod` during the pre-1.0 window; CI clones core into the expected path before building.
 
 ## Documentation
 
@@ -47,6 +47,11 @@ admin dashboard on `127.0.0.1:8444` (loopback) by default; for off-box
 access set `SEP2_ADMIN_LISTEN=0.0.0.0:8444`. See
 [docs/admin-listener.md](docs/admin-listener.md) for the bind matrix and
 [docs/admin.md](docs/admin.md) for the dashboard.
+
+The `SEP2_USE_CORE_ROUTER` env var selects the router at boot time. The
+default (unset) uses the in-tree protocol router. Set `SEP2_USE_CORE_ROUTER=1`
+to opt into the router provided by `ieee-2030_5-core`; the startup log records
+which value was read and which path was taken.
 
 ## Test
 

@@ -1,6 +1,6 @@
 # ieee-2030_5-server
 
-[![Pipeline](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/badges/main/pipeline.svg)](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/-/commits/main) [![Coverage](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/badges/main/coverage.svg)](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/-/commits/main) [![Go](https://img.shields.io/badge/go-1.26.3-blue)](https://go.dev/) [![License](https://img.shields.io/badge/License-BSD--3--Clause-blue)](LICENSE)
+[![Pipeline](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/badges/main/pipeline.svg)](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/-/commits/main) [![Coverage](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/badges/main/coverage.svg)](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/-/commits/main) [![Go](https://img.shields.io/badge/go-1.26.3-blue)](https://go.dev/) [![License](https://img.shields.io/badge/License-Battelle%20BSD-blue)](LICENSE)
 
 Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server binary (`sep2server`) with TLS/mTLS, CSIP V1.2 cipher-suite support (GCM and CCM-8), an admin dashboard, and cert-generation subcommands.
 

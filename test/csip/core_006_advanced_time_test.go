@@ -11,9 +11,9 @@
 //	POST /test/mutations/time-advance  {"seconds": 3600}
 //
 // The mutation:
-//   1. Shifts the package-level offset added by `handler.nowFunc` (set up
-//      in `internal/handler/time_test_hook.go` under the same build tag),
-//      so the next GET /tm returns wallclock + offset.
+//   1. Shifts the package-level offset added by `coresep2time.nowFunc` (set up
+//      in `coresep2time` (`pkg/sep2srv/handlers/sep2time/time_test_hook.go`)
+//      under the same build tag), so the next GET /tm returns wallclock + offset.
 //   2. Appends a TM_TIME_ADJUSTED LogEvent to `stores.LogEvents` under
 //      the SelfDevice sentinel scope ("sdev"). The production server
 //      does not expose /sdev/log over HTTP today; the LogEvent is
@@ -40,7 +40,7 @@
 //
 // Race / hermeticity notes:
 // The clock offset is a package-global atomic.Int64 in
-// `internal/handler/time_test_hook.go` — every CORE-006 invocation
+// `coresep2time` (`pkg/sep2srv/handlers/sep2time/time_test_hook.go`); every CORE-006 invocation
 // must reset it before and after to keep parallel-test independence.
 // `coresep2time.ResetClockOffset()` does both via t.Cleanup. `t.Parallel()`
 // is intentionally NOT called: this test mutates that package global,
@@ -110,7 +110,7 @@ func TestCORE_006_AdvancedTime(t *testing.T) {
 	// pollution from any prior tagged test that didn't clean up; after-
 	// reset is t.Cleanup, restoring the global for the next test.
 	coresep2time.ResetClockOffset()
-	t.Cleanup(handler.ResetClockOffset)
+	t.Cleanup(coresep2time.ResetClockOffset)
 
 	// Step 1: boot a CSIP server with our own PKI so the test's
 	// *http.Client can present a device cert and authenticate the

@@ -335,10 +335,10 @@ type timeAdvanceRequest struct {
 // signed `seconds` value and appends a TM_TIME_ADJUSTED LogEvent to the
 // SelfDevice LogEventList. Used by CSIP V1.2 CORE-006.
 //
-// The actual clock mutation is delegated to handler.AdvanceClock, which
-// updates an atomic offset added to time.Now() by handler.HandleTime's
-// nowFunc seam (see internal/handler/time_test_hook.go). The shift is
-// additive (cumulative across calls) by design — the harness drives
+// The actual clock mutation is delegated to coresep2time.AdvanceClock, which
+// updates an atomic offset added to time.Now() by coresep2time.HandleTime's
+// nowFunc seam (see pkg/sep2srv/handlers/sep2time/time_test_hook.go in core).
+// The shift is additive (cumulative across calls) by design: the harness drives
 // CORE-006 with a single +3600s advance and then teardown via -<offset>.
 func handleTimeAdvance(stores *Stores) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -534,8 +534,8 @@ type subscriptionCancelRequest struct {
 //     harness pin a deterministic ID instead of the auto-generated
 //     "sub-<unixnano>" — needed so the harness can drive the same ID
 //     into the create path and observe the refusal.
-//   - handler.MarkSubscriptionCanceled / IsSubscriptionCanceled /
-//     ResetCanceledSubscriptions: package-level helpers backing the set.
+//   - coresub.MarkSubscriptionCanceled / IsSubscriptionCanceled /
+//     ResetCanceledSubscriptions: package-level helpers backing the set (in core).
 //
 // HTTP status codes: 204 success; 400 missing/malformed body; 401
 // missing/wrong token (handled by tokenAuthMiddleware); 404 unknown
@@ -577,4 +577,19 @@ func handleSubscriptionCancel(stores *Stores) http.HandlerFunc {
 
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// wrapMutationHandlers registers the test-only mutation surface on an
+// outer http.ServeMux and falls through to h for all other paths.
+// It is called from BuildProtocolRouter in assembly_seam.go so that
+// tests which construct the server via server.BuildProtocolRouter get
+// the mutation routes on the same handler (mirroring the call that
+// lived in the deleted in-tree router.go before IEEESRV-002).
+// In production builds the non-tagged companion in test_mutations_notest.go
+// returns h unchanged; see IEEE-024.
+func wrapMutationHandlers(h http.Handler, stores *Stores, notifier handler.ResourceNotifier) http.Handler {
+	top := http.NewServeMux()
+	RegisterMutationHandlers(top, stores, notifier)
+	top.Handle("/", h)
+	return top
 }

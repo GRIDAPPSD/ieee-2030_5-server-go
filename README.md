@@ -98,4 +98,4 @@ mode. It expects the EPRI client checked out at
 
 ## License
 
-BSD-3-Clause (PNNL/Battelle). See `LICENSE`.
+Battelle BSD (modified BSD with a Battelle name-use clause and DOE disclaimer). Copyright Battelle Memorial Institute, operated by Battelle for the U.S. Department of Energy under Contract DE-AC05-76RL01830. See `LICENSE`.

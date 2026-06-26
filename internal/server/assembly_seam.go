@@ -23,6 +23,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/assembly"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
 )
 
 // BuildProtocolRouter constructs the SEP2 protocol router via
@@ -142,6 +143,14 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 type notifyRemover interface {
 	NotifyRemoved(ctx context.Context, sub sep2.Subscription) error
 }
+
+// Compile-time guard: *coresub.Manager is the production notifier type
+// that MUST implement notifyRemover. If a future refactor of core drops
+// NotifyRemoved from *coresub.Manager, this line fails to compile
+// instead of silently regressing to the swallowed-notification path that
+// caused the original CORE-019 failure. The blank-var pattern avoids
+// allocating at runtime; the compiler discards it entirely.
+var _ notifyRemover = (*coresub.Manager)(nil)
 
 // notifierAdapter wraps handler.ResourceNotifier so its value satisfies
 // assembly.ResourceNotifier (which is coreedev.ResourceNotifier). Both

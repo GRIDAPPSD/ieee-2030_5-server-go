@@ -245,7 +245,8 @@ func handleDERControlAdd(stores *Stores, notifier handler.ResourceNotifier) http
 
 		ctx := r.Context()
 		// Verify the parent DERProgram exists. DERPrograms are scoped by
-		// EndDeviceID alone (see router.go: scopedListHandler for derp).
+		// EndDeviceID alone (key = EndDeviceID; this is the contract that
+		// core's DER-program handlers and bootfixture both follow).
 		if _, err := stores.DERPrograms.Get(ctx, req.EndDeviceID, req.DERProgramID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, "parent der program not found", http.StatusNotFound)
@@ -255,9 +256,9 @@ func handleDERControlAdd(stores *Stores, notifier handler.ResourceNotifier) http
 			return
 		}
 
-		// DERControls are stored under the composite key edev/fsa/derp
-		// (see internal/bootfixture/bootfixture.go and router.go's
-		// scopedListHandlerDeep). Match that contract.
+		// DERControls are stored under the composite key (EndDeviceID,
+		// FSAID, DERProgramID). This three-level scope is the contract
+		// that core's DER-control handlers and bootfixture both follow.
 		key := derControlScope(req.EndDeviceID, req.FSAID, req.DERProgramID)
 		if err := stores.DERControls.Create(ctx, key, req.ControlID, req.Control); err != nil {
 			if errors.Is(err, store.ErrAlreadyExists) {

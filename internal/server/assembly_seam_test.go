@@ -1,7 +1,15 @@
-// Package server_test: assembly seam tests for IEEESRV-001.
+// Package server_test: assembly seam tests for IEEESRV-001 and IEEESRV-002.
 //
-// TestCoreRouterPatternEquivalence is the Phase 1 proof: both routers
-// produce the same sorted pattern list (58 patterns, confirmed identical).
+// Phase 1 (IEEESRV-001) added TestCoreRouterPatternEquivalence, which compared
+// the in-tree BuildProtocolRouter against assembly.BuildProtocolRouter and
+// confirmed 58 patterns matched. That test is removed in Phase 2: the in-tree
+// router is gone, so there is no comparand.
+//
+// Phase 2 (IEEESRV-002) replaces the equivalence test with
+// TestProtocolRouteSurface, which pins the 58-route canonical surface against
+// the live BuildProtocolRouter (which now delegates unconditionally to
+// assembly.BuildProtocolRouter). Route-surface coverage is preserved: any
+// addition or deletion from the 58 canonical patterns fails this test.
 //
 // TestNewCoreRouterConfig pins the five-field mapping from *config.Config
 // to assembly.RouterConfig so a transposed field is caught immediately.
@@ -9,12 +17,10 @@
 // TestNewCoreAuthPolicyIdentity pins the Identity closure field order and
 // asserts Wrap and SFDIPrefix are non-nil.
 //
-// TestCoreRouterEnabled pins the toggle logic for CoreRouterEnabled().
-//
-// TestSelectRouterToggle exercises SelectRouter() under both env states,
-// confirming a non-nil handler and a non-empty pattern list are returned
-// regardless of which router is selected. This also exercises adaptNotifier
-// and notifierAdapter so no symbols are unused.
+// TestNewCoreStoresCopiesAllFields asserts every field in assembly.Stores
+// is non-nil after NewCoreStores. Reflection-driven so a new field added
+// to assembly.Stores that NewCoreStores forgets fails here rather than
+// nil-panicking at request time.
 package server_test
 
 import (
@@ -27,90 +33,136 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/assembly"
 )
 
-// TestCoreRouterPatternEquivalence calls the in-tree and core routers with
-// identical inputs and asserts their pattern lists match exactly.
-func TestCoreRouterPatternEquivalence(t *testing.T) {
+// canonicalProtocolRoutes is the pinned list of 58 SEP2 protocol-listener
+// patterns that assembly.BuildProtocolRouter must mount. Confirmed
+// identical to the in-tree BuildProtocolRouter output by Phase 1
+// (IEEESRV-001 TestCoreRouterPatternEquivalence). Any addition or
+// deletion from this set is a wire-level change and must be deliberate.
+var canonicalProtocolRoutes = []string{
+	"DELETE /edev/{id}",
+	"DELETE /edev/{id}/sub/{subId}",
+	"GET /dc",
+	"GET /dcap",
+	"GET /edev",
+	"GET /edev/{id}",
+	"GET /edev/{id}/cfg",
+	"GET /edev/{id}/der",
+	"GET /edev/{id}/der/{derId}/dera",
+	"GET /edev/{id}/der/{derId}/dercap",
+	"GET /edev/{id}/der/{derId}/derg",
+	"GET /edev/{id}/der/{derId}/ders",
+	"GET /edev/{id}/dstat",
+	"GET /edev/{id}/frp",
+	"GET /edev/{id}/frq",
+	"GET /edev/{id}/fsa",
+	"GET /edev/{id}/fsa/{fsaId}",
+	"GET /edev/{id}/fsa/{fsaId}/derp",
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc",
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc",
+	"GET /edev/{id}/log",
+	"GET /edev/{id}/ps",
+	"GET /edev/{id}/rg",
+	"GET /edev/{id}/sub",
+	"GET /msg",
+	"GET /msg/{msgId}",
+	"GET /msg/{msgId}/tm",
+	"GET /mup",
+	"GET /mup/{id}",
+	"GET /rsps",
+	"GET /rsps/{rspsId}/rsp",
+	"GET /rt",
+	"GET /rt/{id}",
+	"GET /sdev",
+	"GET /sdev/sdi",
+	"GET /tm",
+	"GET /upt",
+	"GET /upt/{uptId}",
+	"GET /upt/{uptId}/mr",
+	"GET /upt/{uptId}/mr/{mrId}/r",
+	"POST /edev",
+	"POST /edev/{id}/frq",
+	"POST /edev/{id}/log",
+	"POST /edev/{id}/sub",
+	"POST /msg/{msgId}/tm",
+	"POST /mup",
+	"POST /mup/{id}/mr",
+	"POST /rsps/{rspsId}/rsp",
+	"POST /upt",
+	"PUT /edev/{id}",
+	"PUT /edev/{id}/cfg",
+	"PUT /edev/{id}/der/{derId}/dera",
+	"PUT /edev/{id}/der/{derId}/dercap",
+	"PUT /edev/{id}/der/{derId}/derg",
+	"PUT /edev/{id}/der/{derId}/ders",
+	"PUT /edev/{id}/dstat",
+	"PUT /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc",
+	"PUT /edev/{id}/ps",
+}
+
+// TestProtocolRouteSurface asserts that BuildProtocolRouter (which now
+// delegates unconditionally to assembly.BuildProtocolRouter) produces
+// exactly the 58 canonical SEP2 protocol routes, sorted, with no
+// additions or deletions. This replaces TestCoreRouterPatternEquivalence
+// from Phase 1: there is no longer an in-tree router to compare against,
+// so we pin the live surface directly.
+func TestProtocolRouteSurface(t *testing.T) {
 	t.Parallel()
 
-	svc := newScopeTestCertService(t)
-	cfg := &config.Config{AdminKey: "test-admin-key"}
+	cfg := &config.Config{}
 	stores := newTestStores()
 
-	// In-tree router (the live default).
-	_, inTreePatterns := server.BuildProtocolRouter(cfg, stores, svc, "test-sfdi", "test-lfdi", nil)
+	_, got := server.BuildProtocolRouter(cfg, stores, nil, "test-sfdi", "test-lfdi", nil)
 
-	// Core router (the Phase 1 parallel path).
-	coreStores := server.NewCoreStores(stores)
-	authPolicy := server.NewCoreAuthPolicy()
-	routerCfg := server.NewCoreRouterConfig(cfg)
-	_, corePatterns := assembly.BuildProtocolRouter(routerCfg, coreStores, authPolicy, "test-sfdi", "test-lfdi", nil)
-
-	// Both lists must be sorted (the contracts guarantee this). Verify
-	// they are so the element-by-element comparison below is valid.
-	if !sort.StringsAreSorted(inTreePatterns) {
-		t.Fatal("in-tree pattern list is not sorted (contract violated)")
+	if !sort.StringsAreSorted(got) {
+		t.Fatal("BuildProtocolRouter returned an unsorted pattern list (contract violated)")
 	}
-	if !sort.StringsAreSorted(corePatterns) {
-		t.Fatal("core pattern list is not sorted (contract violated)")
+	if !sort.StringsAreSorted(canonicalProtocolRoutes) {
+		t.Fatal("canonicalProtocolRoutes is not sorted (test bug)")
 	}
 
-	// Build lookup maps for clear differential reporting.
-	inTreeSet := make(map[string]struct{}, len(inTreePatterns))
-	for _, p := range inTreePatterns {
-		inTreeSet[p] = struct{}{}
+	gotSet := make(map[string]struct{}, len(got))
+	for _, p := range got {
+		gotSet[p] = struct{}{}
 	}
-	coreSet := make(map[string]struct{}, len(corePatterns))
-	for _, p := range corePatterns {
-		coreSet[p] = struct{}{}
+	wantSet := make(map[string]struct{}, len(canonicalProtocolRoutes))
+	for _, p := range canonicalProtocolRoutes {
+		wantSet[p] = struct{}{}
 	}
 
-	// Patterns in in-tree but missing from core are wire-level regressions:
-	// the core router would fail to serve those routes.
-	var missingFromCore []string
-	for p := range inTreeSet {
-		if _, ok := coreSet[p]; !ok {
-			missingFromCore = append(missingFromCore, p)
+	var missing []string
+	for p := range wantSet {
+		if _, ok := gotSet[p]; !ok {
+			missing = append(missing, p)
 		}
 	}
-	// Patterns in core but absent from in-tree are unexpected additions.
-	var extraInCore []string
-	for p := range coreSet {
-		if _, ok := inTreeSet[p]; !ok {
-			extraInCore = append(extraInCore, p)
+	var extra []string
+	for p := range gotSet {
+		if _, ok := wantSet[p]; !ok {
+			extra = append(extra, p)
 		}
 	}
 
-	if len(missingFromCore) > 0 || len(extraInCore) > 0 {
-		sort.Strings(missingFromCore)
-		sort.Strings(extraInCore)
+	if len(missing) > 0 || len(extra) > 0 {
+		sort.Strings(missing)
+		sort.Strings(extra)
 		t.Errorf(
-			"router pattern lists diverge (WIRE-LEVEL MISMATCH):\n"+
-				"  missing from core (%d): %s\n"+
-				"  extra in core (%d):     %s\n"+
-				"--- in-tree (%d patterns) ---\n%s\n"+
-				"--- core (%d patterns) ---\n%s",
-			len(missingFromCore), strings.Join(missingFromCore, ", "),
-			len(extraInCore), strings.Join(extraInCore, ", "),
-			len(inTreePatterns), strings.Join(inTreePatterns, "\n"),
-			len(corePatterns), strings.Join(corePatterns, "\n"),
+			"protocol route surface diverges from canonical set:\n"+
+				"  missing (%d): %s\n"+
+				"  extra (%d):   %s\n"+
+				"--- got (%d patterns) ---\n%s",
+			len(missing), strings.Join(missing, ", "),
+			len(extra), strings.Join(extra, ", "),
+			len(got), strings.Join(got, "\n"),
 		)
 	}
 
-	// Also assert the count matches for a fast diagnostic.
-	if len(inTreePatterns) != len(corePatterns) {
-		t.Errorf("pattern count: in-tree=%d core=%d (set diff above identifies specifics)",
-			len(inTreePatterns), len(corePatterns))
+	if len(got) != len(canonicalProtocolRoutes) {
+		t.Errorf("pattern count: got=%d want=%d", len(got), len(canonicalProtocolRoutes))
 	}
 
-	// Log the full matched list at verbose level so `go test -v` shows
-	// the actual pattern values for review.
-	t.Logf("equivalence confirmed: %d patterns", len(inTreePatterns))
-	for _, p := range inTreePatterns {
-		t.Logf("  %s", p)
-	}
+	t.Logf("protocol route surface confirmed: %d patterns", len(got))
 }
 
 // TestNewCoreRouterConfig asserts that each of the five scalar fields maps
@@ -150,9 +202,9 @@ func TestNewCoreRouterConfig(t *testing.T) {
 
 // TestNewCoreStoresCopiesAllFields asserts that every field in the
 // assembly.Stores destination is non-nil after NewCoreStores. Reflection is
-// used so a field added in Phase 2 that the copy forgets will fail this test
-// rather than nil-panicking at request time. All fields in assembly.Stores are
-// pointers or interfaces, so nil is the only dangerous zero value here.
+// used so a field added in a future phase that the copy forgets will fail this
+// test rather than nil-panicking at request time. All fields in assembly.Stores
+// are pointers or interfaces, so nil is the only dangerous zero value here.
 func TestNewCoreStoresCopiesAllFields(t *testing.T) {
 	t.Parallel()
 
@@ -187,11 +239,6 @@ func TestNewCoreStoresCopiesAllFields(t *testing.T) {
 // TestNewCoreAuthPolicyIdentity asserts that the Identity closure returns
 // (lfdi, sfdi, true) in the correct field order when the context carries a
 // known DeviceIdentity, and that Wrap and SFDIPrefix are non-nil.
-//
-// A full request-level integration test (real authenticated request through
-// the core router asserting middleware, ACL execution, and notifier fan-out)
-// is deferred to Phase 2 (IEEESRV-002), where the core router becomes the
-// live one and end-to-end integration tests cover the wired path.
 func TestNewCoreAuthPolicyIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -241,101 +288,3 @@ func TestNewCoreAuthPolicyIdentity(t *testing.T) {
 		t.Error("Identity returned ok=true on an empty context; expected ok=false")
 	}
 }
-
-// TestCoreRouterEnabled pins the toggle logic via t.Setenv. Subtests must
-// not be parallel because t.Setenv is incompatible with t.Parallel.
-func TestCoreRouterEnabled(t *testing.T) {
-	cases := []struct {
-		envVal string
-		want   bool
-	}{
-		{"1", true},
-		{"true", true},
-		{"yes", true},
-		{"", false},
-		{"0", false},
-		{"no", false},
-		{"false", false},
-		{"garbage", false},
-		{"TRUE", false}, // case-sensitive by design: only lowercase accepted
-		{"YES", false},
-	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run("SEP2_USE_CORE_ROUTER="+tc.envVal, func(t *testing.T) {
-			t.Setenv("SEP2_USE_CORE_ROUTER", tc.envVal)
-			if got := server.CoreRouterEnabled(); got != tc.want {
-				t.Errorf("CoreRouterEnabled() = %v, want %v (env=%q)", got, tc.want, tc.envVal)
-			}
-		})
-	}
-}
-
-// TestSelectRouterToggle calls SelectRouter under both env states and
-// asserts: (1) handler is non-nil, (2) the pattern list is non-empty,
-// (3) a representative set of canonical patterns is present. This
-// exercises SelectRouter, adaptNotifier, and notifierAdapter so they are
-// not unused symbols. The exact count is owned by TestCoreRouterPatternEquivalence.
-// Subtests must not be parallel because t.Setenv is incompatible with t.Parallel.
-func TestSelectRouterToggle(t *testing.T) {
-	svc := newScopeTestCertService(t)
-	cfg := &config.Config{AdminKey: "test-admin-key"}
-	stores := newTestStores()
-
-	// Canonical patterns that must be present under BOTH router selections.
-	canonicalPatterns := []string{
-		"GET /dcap",
-		"GET /tm",
-		"GET /edev",
-		"POST /edev",
-		"DELETE /edev/{id}",
-		"GET /edev/{id}/rg",
-		"GET /edev/{id}/sub",
-		"POST /mup",
-	}
-
-	// nop is a no-op ResourceNotifier so adaptNotifier and notifierAdapter
-	// are exercised through the non-nil notifier path.
-	nop := &nopNotifier{}
-
-	for _, tc := range []struct {
-		name   string
-		envVal string
-	}{
-		{"in-tree (default)", ""},
-		{"core (SEP2_USE_CORE_ROUTER=1)", "1"},
-	} {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("SEP2_USE_CORE_ROUTER", tc.envVal)
-
-			h, patterns := server.SelectRouter(cfg, stores, svc, "test-sfdi", "test-lfdi", nop)
-
-			if h == nil {
-				t.Fatal("SelectRouter returned nil handler")
-			}
-			if len(patterns) == 0 {
-				t.Errorf("pattern list is empty; SelectRouter returned no routes")
-			}
-			if !sort.StringsAreSorted(patterns) {
-				t.Error("pattern list is not sorted")
-			}
-			patternSet := make(map[string]struct{}, len(patterns))
-			for _, p := range patterns {
-				patternSet[p] = struct{}{}
-			}
-			for _, want := range canonicalPatterns {
-				if _, ok := patternSet[want]; !ok {
-					t.Errorf("canonical pattern %q missing from pattern list", want)
-				}
-			}
-		})
-	}
-}
-
-// nopNotifier satisfies handler.ResourceNotifier with a no-op Notify so
-// TestSelectRouterToggle can pass a non-nil notifier and exercise the
-// adaptNotifier/notifierAdapter path without importing handler directly.
-type nopNotifier struct{}
-
-func (n *nopNotifier) Notify(_ context.Context, _ string, _ uint8) {}

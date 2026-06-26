@@ -220,7 +220,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	notifier.SetObserver(obs.RecordNotification)
 	go notifier.Start(ctx)
 
-	router, protocolRoutes := SelectRouter(cfg, stores, svc, serverSFDI, serverLFDI, notifier)
+	router, protocolRoutes := BuildProtocolRouter(cfg, stores, svc, serverSFDI, serverLFDI, notifier)
 
 	if cfg.EnableCCM {
 		// Bridge: inject gotls connection state into request context

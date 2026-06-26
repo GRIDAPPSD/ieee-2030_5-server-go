@@ -1,34 +1,51 @@
 // assembly_seam.go builds the inputs to assembly.BuildProtocolRouter from
-// the server's concrete types and selects between the in-tree router and
-// the core router at boot time.
+// the server's concrete types and provides the thin BuildProtocolRouter
+// adapter that wraps them into a single call.
 //
-// Phase 1 (IEEESRV-001): the core router is constructed and testable
-// but is NOT the live router unless SEP2_USE_CORE_ROUTER=1 is set in
-// the environment. The in-tree BuildProtocolRouter remains the default.
-// Phase 2 (IEEESRV-002) will flip the default once equivalence is
-// proven in production and the duplicate router internals are deleted.
+// Phase 1 (IEEESRV-001): the core router was constructed and testable
+// behind a SEP2_USE_CORE_ROUTER env toggle. The in-tree BuildProtocolRouter
+// remained the boot default.
+//
+// Phase 2 (IEEESRV-002): core is now the ONLY protocol router. The toggle
+// (CoreRouterEnabled / SEP2_USE_CORE_ROUTER) and the SelectRouter indirection
+// are deleted. BuildProtocolRouter below is a thin adapter that converts the
+// server's concrete types and delegates unconditionally to
+// assembly.BuildProtocolRouter.
 package server
 
 import (
 	"context"
-	"log"
 	"net/http"
-	"os"
 	"reflect"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/assembly"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
 )
 
-// CoreRouterEnabled reports whether the SEP2_USE_CORE_ROUTER environment
-// variable is set to a truthy value ("1", "true", "yes"). The default is
-// false: the in-tree BuildProtocolRouter remains live until Phase 2.
-// Exported so the toggle test can verify the mapping table via t.Setenv.
-func CoreRouterEnabled() bool {
-	v := os.Getenv("SEP2_USE_CORE_ROUTER")
-	return v == "1" || v == "true" || v == "yes"
+// BuildProtocolRouter constructs the SEP2 protocol router via
+// assembly.BuildProtocolRouter using the server-side seam adapters
+// (NewCoreRouterConfig, NewCoreStores, NewCoreAuthPolicy, adaptNotifier).
+//
+// The svc parameter is intentionally ignored: certificate management lives
+// on the admin listener only (PR #246 Leon CRITICAL) and is never forwarded
+// to the protocol router. Call sites that previously passed svc may continue
+// to do so; it is dropped before core sees it.
+//
+// Replaces the in-tree BuildProtocolRouter deleted in Phase 2 (IEEESRV-002).
+// Core's assembly.BuildProtocolRouter is now the sole protocol router; there
+// is no longer a toggle or an in-tree alternative.
+func BuildProtocolRouter(cfg *config.Config, stores *Stores, _ *handler.AdminCertService, serverSFDI, serverLFDI string, notifier handler.ResourceNotifier) (http.Handler, []string) {
+	return assembly.BuildProtocolRouter(
+		NewCoreRouterConfig(cfg),
+		NewCoreStores(stores),
+		NewCoreAuthPolicy(),
+		serverSFDI, serverLFDI,
+		adaptNotifier(notifier),
+	)
 }
 
 // NewCoreRouterConfig maps the five scalar fields from *config.Config to
@@ -49,7 +66,7 @@ func NewCoreRouterConfig(cfg *config.Config) assembly.RouterConfig {
 // assembly.AuthPolicy using REAL production funcs, not test stubs.
 //
 // AuthPolicy.Wrap: composes IdentityMiddleware and ACLMiddleware around
-// the protocol mux, preserving the same chain as the in-tree router
+// the protocol mux, preserving the same chain as the deleted in-tree router
 // (router.go: auth.IdentityMiddleware(auth.ACLMiddleware(...)(...mux))).
 //
 // AuthPolicy.Identity: adapts auth.GetIdentity's (DeviceIdentity, bool)
@@ -61,8 +78,7 @@ func NewCoreRouterConfig(cfg *config.Config) assembly.RouterConfig {
 // AuthPolicy.SFDIPrefix: wires auth.ExtractSFDIPrefix directly; its
 // signature func(string) (string, error) matches core's expectation.
 //
-// Exported so the equivalence test can verify the policy compiles with
-// real auth types (not just that the toggle path builds).
+// Exported so tests can verify the policy compiles with real auth types.
 func NewCoreAuthPolicy() assembly.AuthPolicy {
 	return assembly.AuthPolicy{
 		Wrap: func(next http.Handler) http.Handler {
@@ -80,8 +96,8 @@ func NewCoreAuthPolicy() assembly.AuthPolicy {
 // assembly.Stores is a verbatim field-for-field lift of the server's own
 // Stores type (same pkg/store and pkg/store/memory field types, confirmed
 // in IEEECORE-001). The conversion is a direct field copy; no allocation
-// of inner objects. Exported so the equivalence test can call both
-// routers with the same underlying store instances.
+// of inner objects. Exported so tests can call both the adapter and the
+// route surface with the same underlying store instances.
 func NewCoreStores(s *Stores) *assembly.Stores {
 	if s == nil {
 		return nil
@@ -120,21 +136,53 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 	}
 }
 
+// notifyRemover mirrors the unexported interface core uses to detect and
+// extract NotifyRemoved from the notifier. Defined here at the consumer
+// per the interface-at-consumer discipline. core's *subscription.Manager
+// satisfies it.
+type notifyRemover interface {
+	NotifyRemoved(ctx context.Context, sub sep2.Subscription) error
+}
+
+// Compile-time guard: *coresub.Manager is the production notifier type
+// that MUST implement notifyRemover. If a future refactor of core drops
+// NotifyRemoved from *coresub.Manager, this line fails to compile
+// instead of silently regressing to the swallowed-notification path that
+// caused the original CORE-019 failure. The blank-var pattern avoids
+// allocating at runtime; the compiler discards it entirely.
+var _ notifyRemover = (*coresub.Manager)(nil)
+
 // notifierAdapter wraps handler.ResourceNotifier so its value satisfies
 // assembly.ResourceNotifier (which is coreedev.ResourceNotifier). Both
-// interfaces have the identical method set:
+// interfaces have the identical Notify method set:
 //
 //	Notify(ctx context.Context, resourceHref string, status uint8)
 //
-// The adapter avoids a runtime type assertion and is safe when notifier
-// is nil (the adapter is nil in that case, not a non-nil interface wrapping
-// a nil concrete value).
+// The adapter also forwards NotifyRemoved when the inner notifier supports
+// it. Core's subscription DELETE handler calls NotifyRemoved (via type
+// assertion) to dispatch the final Removed Notification (CSIP V1.2 §11.6);
+// without this forwarding the notification is silently dropped.
+//
+// The adapter is safe when notifier is nil (the adapter is nil in that
+// case, not a non-nil interface wrapping a nil concrete value).
 type notifierAdapter struct{ inner handler.ResourceNotifier }
 
 func (a *notifierAdapter) Notify(ctx context.Context, resourceHref string, status uint8) {
 	// inner is guaranteed non-nil by adaptNotifier; a nil handler.ResourceNotifier
 	// produces a nil *notifierAdapter, not a non-nil adapter wrapping nil.
 	a.inner.Notify(ctx, resourceHref, status)
+}
+
+// NotifyRemoved forwards to the inner notifier when it satisfies the
+// notifyRemover interface (i.e. the inner is *coresub.Manager or any
+// other concrete type that implements the method). Returns nil when the
+// inner does not implement NotifyRemoved; this is safe for core which
+// treats a nil return as "no final notification."
+func (a *notifierAdapter) NotifyRemoved(ctx context.Context, sub sep2.Subscription) error {
+	if nr, ok := a.inner.(notifyRemover); ok {
+		return nr.NotifyRemoved(ctx, sub)
+	}
+	return nil
 }
 
 // adaptNotifier wraps a handler.ResourceNotifier as an
@@ -159,38 +207,4 @@ func adaptNotifier(n handler.ResourceNotifier) assembly.ResourceNotifier {
 		}
 	}
 	return &notifierAdapter{inner: n}
-}
-
-// SelectRouter is the toggle seam: it chooses between the core router and
-// the in-tree router based on SEP2_USE_CORE_ROUTER. Both paths return
-// (http.Handler, []string) so the call site in server.go is unchanged.
-// The in-tree router is the default (SEP2_USE_CORE_ROUTER not set or
-// set to any value other than "1", "true", or "yes").
-// Exported so the toggle test can call it under both env states.
-func SelectRouter(
-	cfg *config.Config,
-	stores *Stores,
-	svc *handler.AdminCertService,
-	serverSFDI, serverLFDI string,
-	notifier handler.ResourceNotifier,
-) (http.Handler, []string) {
-	// Read the raw env value once, derive the bool from it, and log the raw
-	// value so a fat-fingered flag ("True", "YES", etc.) is immediately visible
-	// in the startup log rather than silently falling back to the in-tree router.
-	rawEnv := os.Getenv("SEP2_USE_CORE_ROUTER")
-	coreEnabled := CoreRouterEnabled()
-	log.Printf("assembly: SEP2_USE_CORE_ROUTER=%q, core router=%v", rawEnv, coreEnabled)
-	if coreEnabled {
-		// svc (*handler.AdminCertService) is intentionally not forwarded: the
-		// core router provides its own admin-cert routes and does not use the
-		// in-tree AdminCertService. This is by design, not an oversight.
-		return assembly.BuildProtocolRouter(
-			NewCoreRouterConfig(cfg),
-			NewCoreStores(stores),
-			NewCoreAuthPolicy(),
-			serverSFDI, serverLFDI,
-			adaptNotifier(notifier),
-		)
-	}
-	return BuildProtocolRouter(cfg, stores, svc, serverSFDI, serverLFDI, notifier)
 }

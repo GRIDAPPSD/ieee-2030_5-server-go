@@ -5,13 +5,10 @@ import (
 	"sort"
 )
 
-// routeRegistrar is the surface every register*Routes helper needs from
-// a mux: the ability to attach an http.HandlerFunc against a (method-
-// prefixed) pattern. *http.ServeMux satisfies it; *recordingMux below
-// satisfies it AND captures the patterns for IEEE-140 boot logging.
-// Keeping the surface thin (just HandleFunc) means new routes added
-// via the helpers participate in the route enumeration without further
-// plumbing.
+// routeRegistrar is the minimal mux surface that route helpers accept.
+// Keeping the surface to HandleFunc lets any mux that also captures
+// patterns (such as *recordingMux below) participate in the IEEE-140
+// boot-time route enumeration without changing the helper signatures.
 type routeRegistrar interface {
 	HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request))
 }
@@ -74,9 +71,9 @@ func (r *recordingMux) Patterns() []string {
 }
 
 // sortDedupePatterns sorts in place and de-duplicates adjacent equal
-// entries. Centralized so the protocol-listener and admin-listener
-// route enumerators (BuildProtocolRouter and BuildAdminRouter) and
-// recordingMux.Patterns produce byte-identical output shapes.
+// entries. Centralized so the admin-listener route enumerator
+// (BuildAdminRouter) and recordingMux.Patterns produce byte-identical
+// output shapes.
 func sortDedupePatterns(p *[]string) {
 	if len(*p) == 0 {
 		return

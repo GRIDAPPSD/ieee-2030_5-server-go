@@ -42,7 +42,7 @@
 // The clock offset is a package-global atomic.Int64 in
 // `internal/handler/time_test_hook.go` — every CORE-006 invocation
 // must reset it before and after to keep parallel-test independence.
-// `handler.ResetClockOffset()` does both via t.Cleanup. `t.Parallel()`
+// `coresep2time.ResetClockOffset()` does both via t.Cleanup. `t.Parallel()`
 // is intentionally NOT called: this test mutates that package global,
 // so running it serial-against-other-tagged-tests is the safe choice.
 // Other tests in this file's package do not touch the offset, so they
@@ -66,8 +66,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coresep2time "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/sep2time"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
 )
@@ -109,7 +109,7 @@ func TestCORE_006_AdvancedTime(t *testing.T) {
 	// Reset the clock offset on both ends. Before-reset guards against
 	// pollution from any prior tagged test that didn't clean up; after-
 	// reset is t.Cleanup, restoring the global for the next test.
-	handler.ResetClockOffset()
+	coresep2time.ResetClockOffset()
 	t.Cleanup(handler.ResetClockOffset)
 
 	// Step 1: boot a CSIP server with our own PKI so the test's

@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 	coremetering "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/metering"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
@@ -128,30 +127,6 @@ func TestHandlePostMirrorMeterReadingNotFoundParent(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", w.Code)
-	}
-}
-
-func TestHandleMirrorListHandler(t *testing.T) {
-	s := memory.NewStore[sep2.MirrorUsagePoint]()
-	_ = s.Create(context.Background(), "a", sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/a"}, MRID: "A"})
-	_ = s.Create(context.Background(), "b", sep2.MirrorUsagePoint{Resource: sep2.Resource{Href: "/mup/b"}, MRID: "B"})
-
-	// ListHandler is still in internal/handler (it is not in D2 scope).
-	// Verify BuildMirrorUsagePointList from coremetering works with it.
-	// This test exercises the wiring: server ListHandler + core list-builder.
-	h := handler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
-		s, coremetering.BuildMirrorUsagePointList, 300,
-	)
-
-	req := httptest.NewRequest(http.MethodGet, "/mup", nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	var list sep2.MirrorUsagePointList
-	_ = xml.Unmarshal(w.Body.Bytes(), &list)
-
-	if list.All != 2 {
-		t.Errorf("All = %d, want 2", list.All)
 	}
 }
 

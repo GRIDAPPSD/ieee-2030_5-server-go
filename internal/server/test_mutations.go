@@ -35,6 +35,8 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coresep2time "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/sep2time"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
 )
 
@@ -362,8 +364,8 @@ func handleTimeAdvance(stores *Stores) http.HandlerFunc {
 		// Shift the clock first; the LogEvent records the post-shift wall
 		// time. Read the offset once after the shift to stamp both the
 		// LogEvent body and the response envelope from the same snapshot.
-		handler.AdvanceClock(time.Duration(*req.Seconds) * time.Second)
-		offset := handler.ClockOffset()
+		coresep2time.AdvanceClock(time.Duration(*req.Seconds) * time.Second)
+		offset := coresep2time.ClockOffset()
 		now := time.Now().Add(offset)
 
 		id := fmt.Sprintf("%020d", now.UnixNano())
@@ -571,7 +573,7 @@ func handleSubscriptionCancel(stores *Stores) http.HandlerFunc {
 		// Idempotent — second cancel of the same ID is a 404 above, never
 		// reaches here, which keeps the tombstone reflective of the
 		// server's authoritative delete history.
-		handler.MarkSubscriptionCanceled(req.SubscriptionID)
+		coresub.MarkSubscriptionCanceled(req.SubscriptionID)
 
 		w.WriteHeader(http.StatusNoContent)
 	}

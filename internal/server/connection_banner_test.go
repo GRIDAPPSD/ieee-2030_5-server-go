@@ -23,7 +23,7 @@ func TestRenderConnectionBanner_FullProfile(t *testing.T) {
 		ServerLFDI: "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
 		CAFile:     "certs/ca.crt",
 		ExtraClientCAs: []string{
-			"testdata/csip-pki/enphase/Enph_root.pem",
+			"testdata/csip-pki/testdevice/root_ca.pem",
 			"testdata/csip-pki/sunspec/roots.pem",
 		},
 		AdminListen:    ":8444",
@@ -46,7 +46,7 @@ func TestRenderConnectionBanner_FullProfile(t *testing.T) {
 		"Server CA:    certs/ca.crt",
 		"Trusted client CAs:",
 		"- certs/ca.crt",
-		"- testdata/csip-pki/enphase/Enph_root.pem",
+		"- testdata/csip-pki/testdevice/root_ca.pem",
 		"- testdata/csip-pki/sunspec/roots.pem",
 		"Admin URL:    http://localhost:8444/login",
 		"Admin TLS:    plain HTTP (Caddy mode)",

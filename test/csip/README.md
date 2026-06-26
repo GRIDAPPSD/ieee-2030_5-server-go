@@ -14,7 +14,7 @@ base repo as an opt-in profile.
 test/csip/
 ├── README.md                   this file
 ├── handshake_test.go           smoke: in-process spec server + SunSpec V1.2 client
-├── enphase_handshake_test.go   smoke: in-process spec server + Enphase factory PKI (IEEE-068)
+├── testdevice_handshake_test.go  smoke: in-process spec server + self-minted test device PKI (IEEE-068)
 ├── comm_*, core_*, basic_*     named CSIP conformance tests
 ├── csiptest/                   helper: BootServer + Client + Load (IEEE-056..058)
 └── fixtures/
@@ -25,9 +25,9 @@ test/csip/
         └── roots.pem
 ```
 
-The Enphase factory PKI is vendored under `testdata/csip-pki/enphase/`
-(committed) — see that directory's `README.md` for device LFDI/SFDI/PIN
-and the CSIP §6.11 non-conformance caveats.
+The self-minted test device PKI lives under `testdata/csip-pki/testdevice/`
+(committed) — see that directory's `README.md` for device LFDI/SFDI and
+regeneration commands. The test device cert is CSIP §6.11-compliant.
 
 ## Running the harness
 

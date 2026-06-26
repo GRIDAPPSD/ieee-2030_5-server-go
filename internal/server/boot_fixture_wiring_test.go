@@ -79,14 +79,14 @@ func TestBootFixtureWiringGCM(t *testing.T) {
 		t.Fatalf("write server key: %v", err)
 	}
 
-	// Use the real Enphase fixture vendored in the repo. The fixture
+	// Use the test device fixture committed in the repo. The fixture
 	// path is resolved relative to the repo root; tests run from the
 	// internal/server package dir, so go up two levels.
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatalf("resolve repo root: %v", err)
 	}
-	fixturePath := filepath.Join(repoRoot, "test", "csip", "fixtures", "enphase-edev.yaml")
+	fixturePath := filepath.Join(repoRoot, "test", "csip", "fixtures", "testdevice-edev.yaml")
 	if _, err := os.Stat(fixturePath); err != nil {
 		t.Fatalf("fixture missing at %s: %v", fixturePath, err)
 	}
@@ -182,10 +182,10 @@ startLoop:
 		t.Fatalf("EndDeviceList.EndDevice count = %d, want 1; body=%s", len(list.EndDevice), body)
 	}
 	dev := list.EndDevice[0]
-	if want := "9711948EBF52B988A39728F756AEAA763EFF5540"; dev.LFDI != want {
+	if want := "93E795AE91F5F493813E3B39C8BC49F06FCA6258"; dev.LFDI != want {
 		t.Errorf("EndDevice.LFDI = %q, want %q", dev.LFDI, want)
 	}
-	if want := "405521881394"; dev.SFDI != want {
+	if want := "397028461857"; dev.SFDI != want {
 		t.Errorf("EndDevice.SFDI = %q, want %q", dev.SFDI, want)
 	}
 

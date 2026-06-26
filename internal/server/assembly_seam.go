@@ -39,13 +39,19 @@ import (
 // Core's assembly.BuildProtocolRouter is now the sole protocol router; there
 // is no longer a toggle or an in-tree alternative.
 func BuildProtocolRouter(cfg *config.Config, stores *Stores, _ *handler.AdminCertService, serverSFDI, serverLFDI string, notifier handler.ResourceNotifier) (http.Handler, []string) {
-	return assembly.BuildProtocolRouter(
+	coreHandler, patterns := assembly.BuildProtocolRouter(
 		NewCoreRouterConfig(cfg),
 		NewCoreStores(stores),
 		NewCoreAuthPolicy(),
 		serverSFDI, serverLFDI,
 		adaptNotifier(notifier),
 	)
+	// wrapMutationHandlers is a no-op in production builds (see
+	// test_mutations_notest.go). Under csip_test_hooks it wraps
+	// coreHandler with an outer mux that serves /test/mutations/* and
+	// falls through to coreHandler for all other paths, restoring the
+	// call that lived in the deleted in-tree router.go before IEEESRV-002.
+	return wrapMutationHandlers(coreHandler, stores, notifier), patterns
 }
 
 // NewCoreRouterConfig maps the five scalar fields from *config.Config to

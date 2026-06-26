@@ -20,3 +20,11 @@ import (
 // notifier parameter (added by IEEE-093 so the tagged build can fan
 // out Notifications from mutation hooks) is ignored here.
 func RegisterMutationHandlers(_ *http.ServeMux, _ *Stores, _ handler.ResourceNotifier) {}
+
+// wrapMutationHandlers returns h unchanged in production builds.
+// Under csip_test_hooks the companion in test_mutations.go wraps h
+// with an outer mux that serves /test/mutations/* and falls through
+// to h for all other paths.
+func wrapMutationHandlers(h http.Handler, _ *Stores, _ handler.ResourceNotifier) http.Handler {
+	return h
+}

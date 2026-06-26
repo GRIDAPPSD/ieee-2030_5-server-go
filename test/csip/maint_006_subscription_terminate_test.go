@@ -34,7 +34,7 @@
 // filed as a follow-up rather than fixing in scope. See journal entry.
 //
 // Build-tag: csip_test_hooks for the subscription-cancel mutation AND
-// the X-CSIP-Test-Subscription-ID + tombstone hooks in handler.
+// the X-CSIP-Test-Subscription-ID + tombstone hooks in coresub.
 //
 // IEEE-091 / Phase 6.
 
@@ -48,8 +48,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
 	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
 )
@@ -64,19 +64,19 @@ const (
 // TestMAINT_006_SubscriptionTerminate implements CSIP V1.2 §11.6.
 func TestMAINT_006_SubscriptionTerminate(t *testing.T) {
 	// Note: cannot t.Parallel — this test mutates the process-global
-	// handler.canceledSubs tombstone set via MarkSubscriptionCanceled.
+	// coresub canceled set via MarkSubscriptionCanceled.
 	// Running in parallel with another tagged test that pins a colliding
 	// subscription ID would cross-contaminate the set. We compensate
 	// with ResetCanceledSubscriptions at teardown so subsequent
 	// serial tests start with a fresh tombstone set.
-	t.Cleanup(handler.ResetCanceledSubscriptions)
+	t.Cleanup(coresub.ResetCanceledSubscriptions)
 
 	srv := csiptest.BootServer(t)
 
 	// Step 1: POST /edev/{id}/sub with pinned ID header. The
 	// production handler honors the X-CSIP-Test-Subscription-ID
 	// header only when the csip_test_hooks build tag is set; the
-	// override is wired in internal/handler/subscription_test_hook.go.
+	// override is wired in core's pkg/sep2srv/handlers/subscription/subscription_test_hook.go.
 	sub := sep2.Subscription{
 		SubscribedResource: maint006SubscribedResource,
 		NotificationURI:    "http://example.test/notify",
@@ -109,7 +109,7 @@ func TestMAINT_006_SubscriptionTerminate(t *testing.T) {
 	}
 
 	// Tombstone set contains the id (visible via the test-only helper).
-	if !handler.IsSubscriptionCanceled(maint006SubscriptionID) {
+	if !coresub.IsSubscriptionCanceled(maint006SubscriptionID) {
 		t.Errorf("MAINT-006 Step 2: tombstone set does not contain %q", maint006SubscriptionID)
 	}
 

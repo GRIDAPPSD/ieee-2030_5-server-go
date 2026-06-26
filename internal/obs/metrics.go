@@ -152,8 +152,8 @@ func RecordNotification(outcome string) {
 
 // knownFunctionSets is the closed set of IEEE 2030.5 protocol-listener
 // first-path-segments derived from the routes mounted on the protocol mux
-// (internal/server/router.go BuildProtocolRouter — the top.Handle prefix
-// list). functionSet folds anything outside this set to "other" so an
+// (assembly.BuildProtocolRouter via internal/server/assembly_seam.go).
+// functionSet folds anything outside this set to "other" so an
 // arbitrary or malicious path cannot expand the function_set label's
 // cardinality. Sub-resources (der, fsa, sub, frq, frp, cfg, ...) live under
 // /edev/{id}/... and never surface as a first segment, so they are NOT in

@@ -19,6 +19,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -140,6 +141,13 @@ func runRegister(pkiDir, serverURL string, count int) error {
 		return fmt.Errorf("no certs in ca.crt")
 	}
 
+	// Derive the server hostname from the URL so non-loopback runs do not
+	// spuriously fail TLS verification due to a hardcoded "127.0.0.1" ServerName.
+	serverHost, err := hostFromURL(serverURL)
+	if err != nil {
+		return fmt.Errorf("parse server URL: %w", err)
+	}
+
 	log.Printf("registering %d clients at %s/edev...", count, serverURL)
 	ok, failed := 0, 0
 	for i := 0; i < count; i++ {
@@ -169,7 +177,7 @@ func runRegister(pkiDir, serverURL string, count int) error {
 				TLSClientConfig: &tls.Config{
 					Certificates: []tls.Certificate{tlsCert},
 					RootCAs:      rootPool,
-					ServerName:   "127.0.0.1",
+					ServerName:   serverHost, // derived from -server flag, not hardcoded
 					MinVersion:   tls.VersionTLS12,
 					MaxVersion:   tls.VersionTLS12,
 				},
@@ -202,4 +210,14 @@ func runRegister(pkiDir, serverURL string, count int) error {
 		return fmt.Errorf("%d registrations failed", failed)
 	}
 	return nil
+}
+
+// hostFromURL extracts the hostname (without port) from a URL string.
+// Used to derive the TLS ServerName from the -server flag value.
+func hostFromURL(rawURL string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	return u.Hostname(), nil
 }

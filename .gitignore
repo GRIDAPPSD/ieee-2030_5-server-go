@@ -57,3 +57,9 @@ tmp/
 # IEEE-116: failures reproduce from the seed logged in test output, not
 # from committed files. See plan-4-property-based-testing/plan.md.
 testdata/rapid/
+
+# Stress test run artifacts (generated per run; not source)
+test/stress/results/
+
+# Stale root-level binary (built during development, now lives in bin/)
+/sep2loadgen

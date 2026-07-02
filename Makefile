@@ -312,7 +312,53 @@ test-csip-cover:          ## Run CSIP suite with scoped coverage profile (writes
 coverage-gate:            ## Enforce CSIP coverage floor on coverage-csip.out
 	./scripts/coverage-gate.sh coverage-csip.out $(CSIP_COVER_THRESHOLD)
 
-# ─── Code Quality ────────────────────────────────────────────────
+# --- Stress Test (IEEESRV-007) ---
+#
+# Usage examples:
+#   make stress-test                            # smoke: 5 clients, 30s, throughput
+#   make stress-test CLIENTS=100 DURATION=300   # throughput ramp
+#   make stress-test DIM=fanout CLIENTS=50      # subscription fan-out
+#   make stress-test DIM=soak DURATION=7200     # 2h soak
+#   make stress-test DIM=tls CCM=true           # TLS/CCM exhaustion
+#
+# Sweep subscription workers/queue (requires IEEESRV-008 on the server):
+#   SEP2_SUBSCRIPTION_WORKERS=8 SEP2_SUBSCRIPTION_QUEUE_SIZE=512 \
+#     make stress-test DIM=fanout CLIENTS=50
+#
+# Parameters (all optional, defaults shown):
+#   DIM=throughput      dimension: throughput|fanout|soak|tls
+#   CLIENTS=5           virtual client count (0=open-ended ramp)
+#   RAMP_RATE=5         clients added per second
+#   DURATION=30         run duration in seconds (0=unlimited, break only)
+#   TARGET_HOST=127.0.0.1
+#   TARGET_PORT=8443
+#   CCM=false           enable CCM-8 cipher
+#   SEED=42             deterministic RNG seed
+#   SCRAPE=5            Prometheus scrape interval in seconds
+#
+STRESS_DIM      ?= throughput
+STRESS_CLIENTS  ?= 5
+STRESS_RAMP     ?= 5
+STRESS_DURATION ?= 30
+STRESS_HOST     ?= 127.0.0.1
+STRESS_PORT     ?= 8443
+STRESS_CCM      ?= false
+STRESS_SEED     ?= 42
+STRESS_SCRAPE   ?= 5
+
+stress-test: ## Run stress test (smoke: 5 clients, 30s, throughput). See comment above for full usage.
+	DIM=$(STRESS_DIM) \
+	CLIENTS=$(STRESS_CLIENTS) \
+	RAMP_RATE=$(STRESS_RAMP) \
+	DURATION=$(STRESS_DURATION) \
+	TARGET_HOST=$(STRESS_HOST) \
+	TARGET_PORT=$(STRESS_PORT) \
+	CCM=$(STRESS_CCM) \
+	SEED=$(STRESS_SEED) \
+	SCRAPE_INTERVAL=$(STRESS_SCRAPE) \
+	bash test/stress/scripts/stress.sh
+
+# --- Code Quality ---
 
 lint:                     ## Run golangci-lint + gofmt drift check
 	golangci-lint run ./...

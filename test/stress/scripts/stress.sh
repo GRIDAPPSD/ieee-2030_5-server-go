@@ -1,0 +1,315 @@
+#!/usr/bin/env bash
+# scripts/stress.sh: IEEE 2030.5 stress test harness for IEEESRV-007.
+#
+# Usage: DIM=throughput CLIENTS=5 DURATION=30 bash scripts/stress.sh
+#
+# All parameters are env vars; see DESIGN.md for the full table.
+# This script:
+#  1. Warns if kernel parameters are under-tuned.
+#  2. Generates a run-scoped PKI (CA + N device certs).
+#  3. Builds the server and load generator binaries.
+#  4. Launches sep2server out-of-process (fresh data dir per run).
+#  5. Registers all virtual clients via POST /edev.
+#  6. Runs sep2loadgen for the load phase.
+#  7. Tears down the server and preserves results/.
+
+set -euo pipefail
+
+# ---- parameter defaults ---------------------------------------------------
+DIM="${DIM:-throughput}"
+CLIENTS="${CLIENTS:-50}"
+RAMP_RATE="${RAMP_RATE:-5}"
+DURATION="${DURATION:-0}"
+TARGET_HOST="${TARGET_HOST:-127.0.0.1}"
+TARGET_PORT="${TARGET_PORT:-8443}"
+METRICS_PORT="${METRICS_PORT:-9100}"
+CCM="${CCM:-false}"
+SEED="${SEED:-42}"
+REAL_SIMS="${REAL_SIMS:-0}"
+SCRAPE_INTERVAL="${SCRAPE_INTERVAL:-5}"
+
+# IEEESRV-008 sweep support: pass through when set; leave unset for defaults.
+# These are forwarded to sep2server if present in the environment.
+SEP2_SUBSCRIPTION_WORKERS="${SEP2_SUBSCRIPTION_WORKERS:-}"
+SEP2_SUBSCRIPTION_QUEUE_SIZE="${SEP2_SUBSCRIPTION_QUEUE_SIZE:-}"
+
+# ---- paths ----------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+RESULTS_ROOT="${REPO_ROOT}/test/stress/results"
+SCRAPE_PID=""
+SERVER_PID=""
+TS="$(date +%Y%m%d-%H%M%S)"
+RUN_ID="${TS}-${DIM}-${CLIENTS}"
+RUN_DIR="${RESULTS_ROOT}/${RUN_ID}"
+PKI_DIR="${RUN_DIR}/pki"
+DATA_DIR="${RUN_DIR}/server-data"
+ATBP_DIR="${RUN_DIR}/at-breaking-point"
+
+SERVER_BIN="${REPO_ROOT}/bin/sep2server"
+LOADGEN_BIN="${REPO_ROOT}/bin/sep2loadgen"
+SETUP_BIN="${REPO_ROOT}/bin/sep2stress-setup"
+
+# ---- helpers ---------------------------------------------------------------
+log() { echo "[stress] $*"; }
+die() { echo "[stress] ERROR: $*" >&2; exit 1; }
+
+warn_not_applied() {
+    echo "[stress] WARNING: $1 not applied. Results may reflect host limit, not server limit."
+    echo "[stress]   To apply: $2"
+}
+
+# ---- pre-run kernel checks -------------------------------------------------
+log "checking kernel parameters..."
+
+FD_LIMIT_RAW=$(ulimit -n 2>/dev/null || echo "1024")
+# Guard against the "unlimited" string that some shells return; treat it as
+# a large number so the integer comparison below does not error under set -e.
+if [ "${FD_LIMIT_RAW}" = "unlimited" ]; then
+    FD_LIMIT=65536
+else
+    FD_LIMIT="${FD_LIMIT_RAW}"
+fi
+if [ "$FD_LIMIT" -lt 16384 ]; then
+    warn_not_applied "ulimit -n ${FD_LIMIT} (need >=16384)" "ulimit -n 65536"
+    HOST_LIMITED="true"
+    HOST_LIMIT_REASON="fd_ulimit=${FD_LIMIT}"
+else
+    HOST_LIMITED="false"
+    HOST_LIMIT_REASON=""
+fi
+
+PORT_RANGE=$(cat /proc/sys/net/ipv4/ip_local_port_range 2>/dev/null || echo "32768 60999")
+PORT_MIN=$(echo "$PORT_RANGE" | awk '{print $1}')
+PORT_MAX=$(echo "$PORT_RANGE" | awk '{print $2}')
+PORT_COUNT=$(( PORT_MAX - PORT_MIN ))
+if [ "$DIM" = "tls" ] && [ "$PORT_COUNT" -lt 40000 ]; then
+    warn_not_applied "ip_local_port_range=${PORT_RANGE} (need >=40000 range for TLS dim)" \
+        "sysctl -w net.ipv4.ip_local_port_range='10000 65535' && sysctl -w net.ipv4.tcp_tw_reuse=1"
+    HOST_LIMITED="true"
+    HOST_LIMIT_REASON="${HOST_LIMIT_REASON} port_range=${PORT_COUNT}"
+fi
+
+# Goroutine and memory pressure detection: on a single-host run the load
+# generator goroutine pool saturates before the server does. CLIENTS > 500
+# on a box with <4 cores is a likely driver-side bottleneck.
+NPROC=$(nproc 2>/dev/null || echo 4)
+if [ "${CLIENTS}" -gt 500 ] && [ "${NPROC}" -lt 4 ]; then
+    warn_not_applied "CLIENTS=${CLIENTS} > 500 on ${NPROC}-core host (goroutine saturation likely)" \
+        "run on a host with >=4 cores or reduce CLIENTS"
+    HOST_LIMITED="true"
+    HOST_LIMIT_REASON="${HOST_LIMIT_REASON} goroutine_saturation_likely"
+fi
+
+# ---- build binaries --------------------------------------------------------
+log "building binaries..."
+cd "$REPO_ROOT"
+go build -o "${SERVER_BIN}" ./cmd/sep2server 2>&1 | tee /dev/stderr
+go build -o "${LOADGEN_BIN}" ./cmd/sep2loadgen 2>&1 | tee /dev/stderr
+go build -o "${SETUP_BIN}" ./test/stress/cmd/sep2stress-setup 2>&1 | tee /dev/stderr
+log "binaries built"
+
+# ---- create result directories --------------------------------------------
+mkdir -p "${PKI_DIR}" "${DATA_DIR}" "${ATBP_DIR}"
+
+# ---- write params.json ----------------------------------------------------
+cat > "${RUN_DIR}/params.json" <<PARAMS
+{
+  "run_id": "${RUN_ID}",
+  "dim": "${DIM}",
+  "clients": ${CLIENTS},
+  "ramp_rate": ${RAMP_RATE},
+  "duration_sec": ${DURATION},
+  "target_host": "${TARGET_HOST}",
+  "target_port": ${TARGET_PORT},
+  "ccm": ${CCM},
+  "seed": ${SEED},
+  "real_sims": ${REAL_SIMS},
+  "scrape_interval_sec": ${SCRAPE_INTERVAL},
+  "sub_workers": "${SEP2_SUBSCRIPTION_WORKERS:-default}",
+  "sub_queue_size": "${SEP2_SUBSCRIPTION_QUEUE_SIZE:-default}",
+  "host_limited": ${HOST_LIMITED},
+  "host_limit_reason": "${HOST_LIMIT_REASON}"
+}
+PARAMS
+log "params.json written to ${RUN_DIR}"
+
+# ---- generate PKI ---------------------------------------------------------
+log "generating PKI for ${CLIENTS} virtual clients (seed=${SEED})..."
+"${SETUP_BIN}" \
+    -seed "${SEED}" \
+    -count "${CLIENTS}" \
+    -out-dir "${PKI_DIR}" \
+    -server-cn "SEP2StressServer"
+log "PKI generated"
+
+# ---- pre-launch port check -------------------------------------------------
+# If a sep2server is still bound to TARGET_PORT from a prior run, kill it now.
+# A stale server would receive our new-PKI clients and fail TLS verification
+# because the CA cert changes each run.
+# Safety: only kill the process if it matches the binary name "sep2server".
+# Refusing to kill an unknown process avoids accidentally terminating unrelated
+# services on a shared box.
+STALE_LINE="$(ss -tlnp 2>/dev/null | awk -v port=":${TARGET_PORT}" '$4 == port {print}')"
+if [ -n "${STALE_LINE}" ]; then
+    if echo "${STALE_LINE}" | grep -q "sep2server"; then
+        STALE_PID="$(echo "${STALE_LINE}" | grep -oP 'pid=\K[0-9]+')"
+        log "stale sep2server on port ${TARGET_PORT} (pid=${STALE_PID}); sending SIGTERM..."
+        kill -TERM "${STALE_PID}" 2>/dev/null || true
+        stale_waited=0
+        while ss -tlnp 2>/dev/null | grep -q ":${TARGET_PORT}" && [ "$stale_waited" -lt 5 ]; do
+            sleep 1
+            stale_waited=$(( stale_waited + 1 ))
+        done
+        if ss -tlnp 2>/dev/null | grep -q ":${TARGET_PORT}"; then
+            log "sep2server did not exit in 5s; sending SIGKILL (pid=${STALE_PID})"
+            kill -KILL "${STALE_PID}" 2>/dev/null || true
+            sleep 1
+        fi
+    else
+        die "port ${TARGET_PORT} is bound by a non-sep2server process: ${STALE_LINE}; refusing to kill it. Change TARGET_PORT or stop the process manually."
+    fi
+fi
+
+# ---- launch sep2server ----------------------------------------------------
+log "launching sep2server on :${TARGET_PORT}, metrics on :${METRICS_PORT}..."
+
+SERVER_ENV=(
+    "SEP2_ADDR=:${TARGET_PORT}"
+    "SEP2_CERT=${PKI_DIR}/server.crt"
+    "SEP2_KEY=${PKI_DIR}/server.key"
+    "SEP2_CA=${PKI_DIR}/ca.crt"
+    "SEP2_EXTRA_CLIENT_CAS=${PKI_DIR}/ca.crt"
+    "SEP2_METRICS_ADDR=127.0.0.1:${METRICS_PORT}"
+    "SEP2_DATA_DIR=${DATA_DIR}"
+)
+if [ "${CCM}" = "true" ]; then
+    SERVER_ENV+=("SEP2_CCM=true")
+fi
+if [ -n "${SEP2_SUBSCRIPTION_WORKERS}" ]; then
+    SERVER_ENV+=("SEP2_SUBSCRIPTION_WORKERS=${SEP2_SUBSCRIPTION_WORKERS}")
+fi
+if [ -n "${SEP2_SUBSCRIPTION_QUEUE_SIZE}" ]; then
+    SERVER_ENV+=("SEP2_SUBSCRIPTION_QUEUE_SIZE=${SEP2_SUBSCRIPTION_QUEUE_SIZE}")
+fi
+
+env "${SERVER_ENV[@]}" "${SERVER_BIN}" serve \
+    > "${RUN_DIR}/server.log" 2>&1 &
+SERVER_PID=$!
+log "sep2server started (pid=${SERVER_PID})"
+
+# Trap: teardown server and capture pprof on exit.
+cleanup() {
+    local exit_code=$?
+    # Stop the metrics scrape loop if it is still running.
+    kill "${SCRAPE_PID}" 2>/dev/null || true
+    log "teardown: sending SIGTERM to sep2server (pid=${SERVER_PID})"
+    kill -TERM "${SERVER_PID}" 2>/dev/null || true
+    local waited=0
+    while kill -0 "${SERVER_PID}" 2>/dev/null && [ "$waited" -lt 10 ]; do
+        sleep 1
+        waited=$(( waited + 1 ))
+    done
+    if kill -0 "${SERVER_PID}" 2>/dev/null; then
+        log "sep2server did not exit in 10s; sending SIGKILL"
+        kill -KILL "${SERVER_PID}" 2>/dev/null || true
+    fi
+    log "server.log preserved at ${RUN_DIR}/server.log"
+    log "server-data preserved at ${DATA_DIR}"
+    exit "${exit_code}"
+}
+trap cleanup EXIT
+
+# ---- health probe /metrics -------------------------------------------------
+log "waiting for sep2server health probe..."
+for i in $(seq 1 20); do
+    if curl -sf "http://127.0.0.1:${METRICS_PORT}/metrics" > /dev/null 2>&1; then
+        log "server healthy after ${i}s"
+        break
+    fi
+    if [ "$i" -eq 20 ]; then
+        die "sep2server did not become healthy within 20s; check ${RUN_DIR}/server.log"
+    fi
+    sleep 1
+done
+
+# ---- register virtual clients via POST /edev --------------------------------
+log "registering ${CLIENTS} virtual clients via POST /edev..."
+"${SETUP_BIN}" \
+    -register \
+    -pki-dir "${PKI_DIR}" \
+    -count "${CLIENTS}" \
+    -server "https://${TARGET_HOST}:${TARGET_PORT}"
+log "all clients registered"
+
+# ---- metrics scrape loop (started AFTER registration to avoid registration
+#      traffic contaminating the load-phase scrape series) --------------------
+METRICS_URL="http://127.0.0.1:${METRICS_PORT}/metrics"
+METRICS_FILE="${RUN_DIR}/metrics-series.jsonl"
+scrape_metrics() {
+    while sleep "${SCRAPE_INTERVAL}"; do
+        RAW="$(curl -sf "${METRICS_URL}" 2>/dev/null || true)"
+        if [ -n "$RAW" ]; then
+            TS_NOW="$(date +%s%3N)"
+            echo "{\"ts_ms\":${TS_NOW},\"raw\":$(echo "$RAW" | python3 -c '
+import sys, json
+lines = [l for l in sys.stdin.read().splitlines() if l and not l.startswith("#")]
+print(json.dumps("\n".join(lines)))
+')}" >> "${METRICS_FILE}"
+        fi
+    done
+}
+scrape_metrics &
+SCRAPE_PID=$!
+
+# ---- load phase ------------------------------------------------------------
+log "starting load phase: dim=${DIM} clients=${CLIENTS} duration=${DURATION}s"
+
+"${LOADGEN_BIN}" \
+    -host "${TARGET_HOST}" \
+    -port "${TARGET_PORT}" \
+    -clients "${CLIENTS}" \
+    -ramp-rate "${RAMP_RATE}" \
+    -duration "${DURATION}" \
+    -dim "${DIM}" \
+    -ccm="${CCM}" \
+    -results-dir "${RUN_DIR}" \
+    -ca "${PKI_DIR}/ca.crt" \
+    -metrics-url "${METRICS_URL}"
+
+log "load phase complete"
+
+# ---- at-breaking-point capture --------------------------------------------
+BP_FILE="${RUN_DIR}/breaking-point.json"
+if [ -f "${BP_FILE}" ]; then
+    CRITERION="$(python3 -c "import json,sys; d=json.load(open('${BP_FILE}')); print(d.get('criterion','none'))")"
+    if [ "${CRITERION}" != "none" ] && [ "${CRITERION}" != "duration_elapsed" ]; then
+        log "breaking point detected (${CRITERION}): capturing pprof..."
+        # pprof is served on the protocol listener via net/http/pprof if registered,
+        # but the server currently does not register pprof. Capture goroutine count
+        # from /metrics and heap stats instead.
+        curl -sf "http://127.0.0.1:${METRICS_PORT}/metrics" \
+            > "${ATBP_DIR}/metrics-final.txt" 2>/dev/null || true
+        log "at-breaking-point metrics captured"
+    fi
+fi
+
+# Apply host_limited flag from params to breaking-point.json if set.
+if [ "${HOST_LIMITED}" = "true" ] && [ -f "${BP_FILE}" ]; then
+    python3 - "${BP_FILE}" "${HOST_LIMIT_REASON}" <<'PY'
+import sys, json
+path, reason = sys.argv[1], sys.argv[2]
+d = json.load(open(path))
+d["host_limited"] = True
+d["host_limit_reason"] = reason
+json.dump(d, open(path, "w"), indent=2)
+PY
+fi
+
+kill "${SCRAPE_PID}" 2>/dev/null || true
+
+log "run complete: results in ${RUN_DIR}"
+log "breaking-point.json:"
+cat "${BP_FILE}" 2>/dev/null || echo "(not written)"
+# Explicitly exit 0 so the cleanup trap inherits success.
+exit 0

@@ -387,6 +387,29 @@ fi
 
 log "load phase complete"
 
+# ---- fanout validity gate (IEEESRV-013 review, Pike HIGH) -----------------
+# The loadgen binary stamps partial_subscription=true and exits with code 2
+# when the delivered-per-mutation ratio is below 0.9 x client count. Catch
+# that here so the harness exits with a loud error rather than silently
+# continuing to the results summary. The check reads breaking-point.json
+# (written by loadgen before it exits) rather than the loadgen exit code
+# because the fanout run uses 'wait ... || true' above and drops the exit code.
+if [ "${DIM}" = "fanout" ] && [ -f "${RUN_DIR}/breaking-point.json" ]; then
+    PARTIAL="$(python3 -c "
+import json, sys
+d = json.load(open('${RUN_DIR}/breaking-point.json'))
+print('true' if d.get('partial_subscription') else 'false')
+")"
+    if [ "${PARTIAL}" = "true" ]; then
+        DPM="$(python3 -c "
+import json, sys
+d = json.load(open('${RUN_DIR}/breaking-point.json'))
+print(d.get('delivered_per_mutation', 0))
+")"
+        die "FANOUT VALIDITY GATE FAILED: partial_subscription=true, delivered_per_mutation=${DPM}; run is not a valid N-wide data point. Check ${RUN_DIR}/loadgen.log."
+    fi
+fi
+
 # ---- at-breaking-point capture --------------------------------------------
 BP_FILE="${RUN_DIR}/breaking-point.json"
 if [ -f "${BP_FILE}" ]; then

@@ -222,8 +222,8 @@ func main() {
 					if err != nil {
 						return fmt.Errorf("POST sub: %w", err)
 					}
+					defer resp.Body.Close()
 					_, _ = io.Copy(io.Discard, resp.Body)
-					resp.Body.Close()
 					if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 						return fmt.Errorf("POST sub: unexpected status %d", resp.StatusCode)
 					}
@@ -266,14 +266,45 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Fanout validity gate (IEEESRV-013 review, Pike HIGH).
+	// After a fanout run, verify that notification deliveries scaled with the
+	// active client count (true N-wide fan-out). If delivered_per_mutation is
+	// substantially below client count (threshold: 0.9 x clients), some
+	// per-client subscriptions must have failed via the log-and-continue path
+	// and the run is NOT a valid N-wide data point.
+	//
+	// mutation_count = mutationRateHz * elapsed_sec (approximate; integer Hz
+	// times elapsed seconds in float gives the expected mutation call count).
+	// A zero mutation count (e.g. dim != fanout, or elapsed < 1s) skips
+	// the gate so non-fanout dims are unaffected.
+	if dim == "fanout" && clientSubscribeFunc != nil && mutationRateHz > 0 && br.TimeElapsedSec >= 1 {
+		mutationCount := float64(mutationRateHz) * br.TimeElapsedSec
+		dpm := float64(br.NotifyDelivered) / mutationCount
+		br.DeliveredPerMutation = dpm
+		threshold := 0.9 * float64(br.AtClients)
+		logBoth("fanout validity: delivered_per_mutation=%.2f threshold=%.2f (0.9 x %d clients)",
+			dpm, threshold, br.AtClients)
+		if dpm < threshold {
+			br.PartialSubscription = true
+			logBoth("FANOUT VALIDITY GATE FAILED: delivered_per_mutation=%.2f < threshold=%.2f; "+
+				"some subscriptions failed; this run is NOT a valid N-wide data point", dpm, threshold)
+		} else {
+			logBoth("fanout validity gate passed")
+		}
+	}
+
 	// Write breaking-point.json.
 	bpPath := filepath.Join(resultsDir, "breaking-point.json")
 	bpData, _ := json.MarshalIndent(br, "", "  ")
 	if writeErr := os.WriteFile(bpPath, bpData, 0o644); writeErr != nil {
 		logBoth("write breaking-point.json: %v", writeErr)
 	}
-	logBoth("done: criterion=%s clients=%d elapsed=%.1fs notifyDelivered=%d notifyQueueFull=%d",
-		br.Criterion, br.AtClients, br.TimeElapsedSec, br.NotifyDelivered, br.NotifyQueueFull)
+	logBoth("done: criterion=%s clients=%d elapsed=%.1fs notifyDelivered=%d notifyQueueFull=%d deliveredPerMutation=%.2f partialSubscription=%v",
+		br.Criterion, br.AtClients, br.TimeElapsedSec, br.NotifyDelivered, br.NotifyQueueFull,
+		br.DeliveredPerMutation, br.PartialSubscription)
+	if br.PartialSubscription {
+		os.Exit(2)
+	}
 }
 
 func strEnv(key, def string) string {

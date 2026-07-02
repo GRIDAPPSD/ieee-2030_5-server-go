@@ -123,6 +123,13 @@ type BreakResult struct {
 	// Fanout-specific counters at break time.
 	NotifyDelivered int64 `json:"notify_delivered,omitempty"`
 	NotifyQueueFull int64 `json:"notify_queue_full,omitempty"`
+	// PartialSubscription is stamped true by the fanout validity gate in
+	// cmd/sep2loadgen/main.go when DeliveredPerMutation is substantially
+	// below AtClients. It means some per-client subscriptions failed via
+	// the log-and-continue path and the run is NOT a valid N-wide data
+	// point. stress.sh treats this as a hard run failure. IEEESRV-013.
+	PartialSubscription  bool    `json:"partial_subscription,omitempty"`
+	DeliveredPerMutation float64 `json:"delivered_per_mutation,omitempty"`
 }
 
 // latencyRecord is one line in client-latency.jsonl.

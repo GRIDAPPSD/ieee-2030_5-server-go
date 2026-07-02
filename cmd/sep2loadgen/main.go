@@ -16,11 +16,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -28,6 +32,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/test/stress/loadgen"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 )
 
 func main() {
@@ -167,27 +172,91 @@ func main() {
 		logBoth("notify receiver started at %s", notifyURL)
 	}
 
+	// Fanout: build the per-client subscribe func. Each virtual client
+	// subscribes to the shared /dcap resource using its own edev ID from
+	// the manifest and the notification receiver URL. This unifies subscriber
+	// count with active client count: CLIENTS=N means N devices that each
+	// drive GET traffic AND hold an active subscription. IEEESRV-013.
+	var clientSubscribeFunc func(idx int, client *http.Client) error
+	if dim == "fanout" && notifyURL != "" {
+		// Read edev manifest written by the register step.
+		manifestPath := filepath.Join(resultsDir, "pki", "edev-manifest.json")
+		manifestData, merr := os.ReadFile(manifestPath)
+		if merr != nil {
+			logBoth("fanout: read edev-manifest.json: %v (subscriber-per-client disabled)", merr)
+		} else {
+			var manifest struct {
+				EdevIDs []string `json:"edev_ids"`
+			}
+			if jerr := json.Unmarshal(manifestData, &manifest); jerr != nil {
+				logBoth("fanout: parse edev-manifest.json: %v (subscriber-per-client disabled)", jerr)
+			} else {
+				edevIDs := manifest.EdevIDs
+				subURL := fmt.Sprintf("https://%s:%d", targetHost, targetPort)
+				subResource := mutationHref
+				if subResource == "" {
+					subResource = "/dcap"
+				}
+				capturedNotifyURL := notifyURL
+				clientSubscribeFunc = func(idx int, client *http.Client) error {
+					if idx >= len(edevIDs) || edevIDs[idx] == "" {
+						return fmt.Errorf("no edev ID for client %d in manifest", idx)
+					}
+					sub := sep2.Subscription{
+						SubscribedResource: subResource,
+						NotificationURI:    capturedNotifyURL,
+						Encoding:           sep2.EncodingXML,
+					}
+					body, err := xml.Marshal(sub)
+					if err != nil {
+						return fmt.Errorf("marshal subscription: %w", err)
+					}
+					req, err := http.NewRequest(http.MethodPost,
+						subURL+"/edev/"+edevIDs[idx]+"/sub",
+						bytes.NewReader(body))
+					if err != nil {
+						return fmt.Errorf("build request: %w", err)
+					}
+					req.Header.Set("Content-Type", "application/sep+xml")
+					resp, err := client.Do(req)
+					if err != nil {
+						return fmt.Errorf("POST sub: %w", err)
+					}
+					_, _ = io.Copy(io.Discard, resp.Body)
+					resp.Body.Close()
+					if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+						return fmt.Errorf("POST sub: unexpected status %d", resp.StatusCode)
+					}
+					return nil
+				}
+				logBoth("fanout: per-client subscribe enabled (edev manifest: %d IDs, subResource=%s)",
+					len(edevIDs), subResource)
+			}
+		}
+	}
+
 	cfg := loadgen.Config{
-		TargetHost:     targetHost,
-		TargetPort:     targetPort,
-		MaxClients:     clients,
-		RampRate:       rampRate,
-		Duration:       duration,
-		Dim:            dim,
-		ThinkMs:        thinkMs,
-		Seed:           seed,
-		RootCA:         caCertPEM,
-		ClientCCM:      ccm,
-		NoKeepalive:    dim == "tls",
-		ClientCert:     clientCertFunc,
-		LatencyFile:    latFile,
-		LogFile:        lf,
-		QueueFullOnset: dim == "fanout" && metricsURL != "",
-		MetricsURL:     metricsURL,
-		MutationToken:  mutationToken,
-		MutationHref:   mutationHref,
-		MutationRateHz: mutationRateHz,
-		NotifyReceiver: notifyReceiver,
+		TargetHost:      targetHost,
+		TargetPort:      targetPort,
+		MaxClients:      clients,
+		RampRate:        rampRate,
+		Duration:        duration,
+		Dim:             dim,
+		ThinkMs:         thinkMs,
+		Seed:            seed,
+		RootCA:          caCertPEM,
+		ClientCCM:       ccm,
+		NoKeepalive:     dim == "tls",
+		ClientCert:      clientCertFunc,
+		LatencyFile:     latFile,
+		LogFile:         lf,
+		QueueFullOnset:  dim == "fanout" && metricsURL != "",
+		MetricsURL:      metricsURL,
+		MutationToken:   mutationToken,
+		MutationHref:    mutationHref,
+		MutationRateHz:  mutationRateHz,
+		NotifyReceiver:  notifyReceiver,
+		ClientSubscribe: clientSubscribeFunc,
 	}
 
 	logBoth("load phase starting")

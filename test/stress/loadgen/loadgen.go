@@ -96,6 +96,19 @@ type Config struct {
 	// successful delivery POSTs from the server back to the loadgen side.
 	// Set by StartNotifyReceiver before Run is called.
 	NotifyReceiver *NotifyReceiver
+
+	// ClientSubscribe, when non-nil, is called once per virtual client
+	// immediately after the client's *http.Client is built and before the
+	// GET workload loop starts. It is used in the fanout dimension to make
+	// each ramped client also a subscriber: the client registers its own
+	// subscription to the shared /dcap resource using its own mTLS cert.
+	// This unifies subscriber count with active client count (1:1) so
+	// CLIENTS=N means N active-and-subscribed devices. IEEESRV-013.
+	//
+	// A non-nil error is logged but does not abort the client; the client
+	// still drives GET traffic. This lets a partial subscribe failure
+	// produce a valid (if lower fan-out) data point rather than a crash.
+	ClientSubscribe func(idx int, client *http.Client) error
 }
 
 // BreakResult carries the breaking-point verdict.
@@ -444,6 +457,15 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 		client := &http.Client{
 			Timeout:   10 * time.Second,
 			Transport: transport,
+		}
+
+		// Fanout: subscribe this client before starting the GET workload.
+		// Each ramped client becomes both an active driver and a subscriber,
+		// so CLIENTS=N means N active-and-subscribed devices. IEEESRV-013.
+		if cfg.ClientSubscribe != nil {
+			if err := cfg.ClientSubscribe(idx, client); err != nil {
+				logger.Printf("client %d: subscribe: %v (continuing without subscription)", idx, err)
+			}
 		}
 
 		// Per-client seeded RNG for deterministic endpoint selection.

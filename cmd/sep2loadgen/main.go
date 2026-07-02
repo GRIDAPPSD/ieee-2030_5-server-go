@@ -16,11 +16,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -28,6 +32,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/test/stress/loadgen"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 )
 
 func main() {
@@ -167,27 +172,91 @@ func main() {
 		logBoth("notify receiver started at %s", notifyURL)
 	}
 
+	// Fanout: build the per-client subscribe func. Each virtual client
+	// subscribes to the shared /dcap resource using its own edev ID from
+	// the manifest and the notification receiver URL. This unifies subscriber
+	// count with active client count: CLIENTS=N means N devices that each
+	// drive GET traffic AND hold an active subscription. IEEESRV-013.
+	var clientSubscribeFunc func(idx int, client *http.Client) error
+	if dim == "fanout" && notifyURL != "" {
+		// Read edev manifest written by the register step.
+		manifestPath := filepath.Join(resultsDir, "pki", "edev-manifest.json")
+		manifestData, merr := os.ReadFile(manifestPath)
+		if merr != nil {
+			logBoth("fanout: read edev-manifest.json: %v (subscriber-per-client disabled)", merr)
+		} else {
+			var manifest struct {
+				EdevIDs []string `json:"edev_ids"`
+			}
+			if jerr := json.Unmarshal(manifestData, &manifest); jerr != nil {
+				logBoth("fanout: parse edev-manifest.json: %v (subscriber-per-client disabled)", jerr)
+			} else {
+				edevIDs := manifest.EdevIDs
+				subURL := fmt.Sprintf("https://%s:%d", targetHost, targetPort)
+				subResource := mutationHref
+				if subResource == "" {
+					subResource = "/dcap"
+				}
+				capturedNotifyURL := notifyURL
+				clientSubscribeFunc = func(idx int, client *http.Client) error {
+					if idx >= len(edevIDs) || edevIDs[idx] == "" {
+						return fmt.Errorf("no edev ID for client %d in manifest", idx)
+					}
+					sub := sep2.Subscription{
+						SubscribedResource: subResource,
+						NotificationURI:    capturedNotifyURL,
+						Encoding:           sep2.EncodingXML,
+					}
+					body, err := xml.Marshal(sub)
+					if err != nil {
+						return fmt.Errorf("marshal subscription: %w", err)
+					}
+					req, err := http.NewRequest(http.MethodPost,
+						subURL+"/edev/"+edevIDs[idx]+"/sub",
+						bytes.NewReader(body))
+					if err != nil {
+						return fmt.Errorf("build request: %w", err)
+					}
+					req.Header.Set("Content-Type", "application/sep+xml")
+					resp, err := client.Do(req)
+					if err != nil {
+						return fmt.Errorf("POST sub: %w", err)
+					}
+					defer resp.Body.Close()
+					_, _ = io.Copy(io.Discard, resp.Body)
+					if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+						return fmt.Errorf("POST sub: unexpected status %d", resp.StatusCode)
+					}
+					return nil
+				}
+				logBoth("fanout: per-client subscribe enabled (edev manifest: %d IDs, subResource=%s)",
+					len(edevIDs), subResource)
+			}
+		}
+	}
+
 	cfg := loadgen.Config{
-		TargetHost:     targetHost,
-		TargetPort:     targetPort,
-		MaxClients:     clients,
-		RampRate:       rampRate,
-		Duration:       duration,
-		Dim:            dim,
-		ThinkMs:        thinkMs,
-		Seed:           seed,
-		RootCA:         caCertPEM,
-		ClientCCM:      ccm,
-		NoKeepalive:    dim == "tls",
-		ClientCert:     clientCertFunc,
-		LatencyFile:    latFile,
-		LogFile:        lf,
-		QueueFullOnset: dim == "fanout" && metricsURL != "",
-		MetricsURL:     metricsURL,
-		MutationToken:  mutationToken,
-		MutationHref:   mutationHref,
-		MutationRateHz: mutationRateHz,
-		NotifyReceiver: notifyReceiver,
+		TargetHost:      targetHost,
+		TargetPort:      targetPort,
+		MaxClients:      clients,
+		RampRate:        rampRate,
+		Duration:        duration,
+		Dim:             dim,
+		ThinkMs:         thinkMs,
+		Seed:            seed,
+		RootCA:          caCertPEM,
+		ClientCCM:       ccm,
+		NoKeepalive:     dim == "tls",
+		ClientCert:      clientCertFunc,
+		LatencyFile:     latFile,
+		LogFile:         lf,
+		QueueFullOnset:  dim == "fanout" && metricsURL != "",
+		MetricsURL:      metricsURL,
+		MutationToken:   mutationToken,
+		MutationHref:    mutationHref,
+		MutationRateHz:  mutationRateHz,
+		NotifyReceiver:  notifyReceiver,
+		ClientSubscribe: clientSubscribeFunc,
 	}
 
 	logBoth("load phase starting")
@@ -197,14 +266,45 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Fanout validity gate (IEEESRV-013 review, Pike HIGH).
+	// After a fanout run, verify that notification deliveries scaled with the
+	// active client count (true N-wide fan-out). If delivered_per_mutation is
+	// substantially below client count (threshold: 0.9 x clients), some
+	// per-client subscriptions must have failed via the log-and-continue path
+	// and the run is NOT a valid N-wide data point.
+	//
+	// mutation_count = mutationRateHz * elapsed_sec (approximate; integer Hz
+	// times elapsed seconds in float gives the expected mutation call count).
+	// A zero mutation count (e.g. dim != fanout, or elapsed < 1s) skips
+	// the gate so non-fanout dims are unaffected.
+	if dim == "fanout" && clientSubscribeFunc != nil && mutationRateHz > 0 && br.TimeElapsedSec >= 1 {
+		mutationCount := float64(mutationRateHz) * br.TimeElapsedSec
+		dpm := float64(br.NotifyDelivered) / mutationCount
+		br.DeliveredPerMutation = dpm
+		threshold := 0.9 * float64(br.AtClients)
+		logBoth("fanout validity: delivered_per_mutation=%.2f threshold=%.2f (0.9 x %d clients)",
+			dpm, threshold, br.AtClients)
+		if dpm < threshold {
+			br.PartialSubscription = true
+			logBoth("FANOUT VALIDITY GATE FAILED: delivered_per_mutation=%.2f < threshold=%.2f; "+
+				"some subscriptions failed; this run is NOT a valid N-wide data point", dpm, threshold)
+		} else {
+			logBoth("fanout validity gate passed")
+		}
+	}
+
 	// Write breaking-point.json.
 	bpPath := filepath.Join(resultsDir, "breaking-point.json")
 	bpData, _ := json.MarshalIndent(br, "", "  ")
 	if writeErr := os.WriteFile(bpPath, bpData, 0o644); writeErr != nil {
 		logBoth("write breaking-point.json: %v", writeErr)
 	}
-	logBoth("done: criterion=%s clients=%d elapsed=%.1fs notifyDelivered=%d notifyQueueFull=%d",
-		br.Criterion, br.AtClients, br.TimeElapsedSec, br.NotifyDelivered, br.NotifyQueueFull)
+	logBoth("done: criterion=%s clients=%d elapsed=%.1fs notifyDelivered=%d notifyQueueFull=%d deliveredPerMutation=%.2f partialSubscription=%v",
+		br.Criterion, br.AtClients, br.TimeElapsedSec, br.NotifyDelivered, br.NotifyQueueFull,
+		br.DeliveredPerMutation, br.PartialSubscription)
+	if br.PartialSubscription {
+		os.Exit(2)
+	}
 }
 
 func strEnv(key, def string) string {

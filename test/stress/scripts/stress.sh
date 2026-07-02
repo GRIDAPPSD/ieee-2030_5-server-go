@@ -328,19 +328,24 @@ LOADGEN_COMMON_ARGS=(
 )
 
 if [ "${DIM}" = "fanout" ]; then
-    # Fanout sequence (IEEESRV-010):
-    # All N subscribers watch a SINGLE shared resource (/dcap by default),
-    # so a single stress-notify mutation fans out to ALL N subscribers in
-    # one server call. This drives the 4-worker/256-queue by subscriber
-    # count, not injection rate. With S subscribers and M mutations fired,
-    # expected deliveries are approximately S * M.
+    # Fanout sequence (IEEESRV-013 unified model):
+    # Each of the N virtual clients is both an active GET driver and a
+    # subscriber. The loadgen ramps clients at RAMP_RATE/s; as each client
+    # starts, it subscribes to /dcap using its own mTLS cert and edev ID
+    # (from edev-manifest.json), then immediately starts driving GET traffic.
+    # Subscriber count equals active client count (1:1).
+    #
+    # The notification receiver is started inside loadgen before the ramp
+    # begins; its URL is written to notify-receiver-url.txt and printed to
+    # stderr. The per-client subscribe func reads edev-manifest.json and
+    # issues POST /edev/{id}/sub for each client as it is ramped.
     #
     # Sequence:
-    # a) Start loadgen in background; it starts the notification receiver
-    #    and writes notify-receiver-url.txt to RUN_DIR.
-    # b) Wait for the URL file (up to 10s).
-    # c) Run the subscribe step (all devices subscribe to the shared href).
-    # d) Wait for loadgen to finish (duration or criterion).
+    # a) Start loadgen in background; it starts the receiver, writes
+    #    notify-receiver-url.txt, and begins ramping+subscribing clients.
+    # b) Wait for loadgen to finish (duration or criterion).
+    # No separate subscribe step needed: subscriptions happen per-client
+    # inside the loadgen ramp.
 
     FANOUT_EXTRA_ARGS=(
         -mutation-token "${MUTATION_TOKEN}"
@@ -357,28 +362,19 @@ if [ "${DIM}" = "fanout" ]; then
         > "${RUN_DIR}/loadgen-stdout.txt" 2>&1 &
     LOADGEN_PID=$!
 
-    # Wait for the receiver URL file.
+    # Wait for the receiver URL file so we can log it, then let loadgen run.
     NOTIFY_URL_FILE="${RUN_DIR}/notify-receiver-url.txt"
     notify_wait=0
     while [ ! -f "${NOTIFY_URL_FILE}" ] && [ "$notify_wait" -lt 10 ]; do
         sleep 1
         notify_wait=$(( notify_wait + 1 ))
     done
-    if [ ! -f "${NOTIFY_URL_FILE}" ]; then
-        die "loadgen did not write notify-receiver-url.txt within 10s; check ${RUN_DIR}/loadgen-stdout.txt"
+    if [ -f "${NOTIFY_URL_FILE}" ]; then
+        NOTIFY_URL="$(tr -d '\n' < "${NOTIFY_URL_FILE}")"
+        log "fanout: notification receiver at ${NOTIFY_URL}"
+    else
+        log "fanout: WARNING: notify-receiver-url.txt not found within 10s; loadgen may have failed"
     fi
-    NOTIFY_URL="$(tr -d '\n' < "${NOTIFY_URL_FILE}")"
-    log "fanout: notification receiver at ${NOTIFY_URL}"
-
-    # Subscribe all registered devices.
-    log "fanout: subscribing ${CLIENTS} devices (notifyURL=${NOTIFY_URL})..."
-    "${SETUP_BIN}" \
-        -subscribe \
-        -pki-dir "${PKI_DIR}" \
-        -count "${CLIENTS}" \
-        -server "https://${TARGET_HOST}:${TARGET_PORT}" \
-        -notify-url "${NOTIFY_URL}"
-    log "fanout: subscription registration complete"
 
     # Wait for loadgen to finish.
     wait "${LOADGEN_PID}" || true
@@ -390,6 +386,29 @@ else
 fi
 
 log "load phase complete"
+
+# ---- fanout validity gate (IEEESRV-013 review, Pike HIGH) -----------------
+# The loadgen binary stamps partial_subscription=true and exits with code 2
+# when the delivered-per-mutation ratio is below 0.9 x client count. Catch
+# that here so the harness exits with a loud error rather than silently
+# continuing to the results summary. The check reads breaking-point.json
+# (written by loadgen before it exits) rather than the loadgen exit code
+# because the fanout run uses 'wait ... || true' above and drops the exit code.
+if [ "${DIM}" = "fanout" ] && [ -f "${RUN_DIR}/breaking-point.json" ]; then
+    PARTIAL="$(python3 -c "
+import json, sys
+d = json.load(open('${RUN_DIR}/breaking-point.json'))
+print('true' if d.get('partial_subscription') else 'false')
+")"
+    if [ "${PARTIAL}" = "true" ]; then
+        DPM="$(python3 -c "
+import json, sys
+d = json.load(open('${RUN_DIR}/breaking-point.json'))
+print(d.get('delivered_per_mutation', 0))
+")"
+        die "FANOUT VALIDITY GATE FAILED: partial_subscription=true, delivered_per_mutation=${DPM}; run is not a valid N-wide data point. Check ${RUN_DIR}/loadgen.log."
+    fi
+fi
 
 # ---- at-breaking-point capture --------------------------------------------
 BP_FILE="${RUN_DIR}/breaking-point.json"

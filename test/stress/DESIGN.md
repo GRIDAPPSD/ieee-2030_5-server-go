@@ -149,28 +149,32 @@ Ramp controller: spawns `RAMP_RATE` clients per second until `CLIENTS` is reache
 (or until a breaking-point criterion fires). With `CLIENTS=0` (open-ended), ramp
 continues until criterion fires.
 
-### Subscription fan-out (IEEESRV-010)
+### Subscription fan-out (IEEESRV-010, unified per-client model IEEESRV-013)
 
 For the fan-out dimension, the harness exercises the full subscription/notification
 round trip using only the lean load generator (no separate inverterclient binary is
-needed or launched). The sequence is:
+needed or launched). IEEESRV-013 unified subscriber count with active client count:
+CLIENTS=N means N devices that each drive GET traffic AND hold an active subscription.
+
+The sequence is:
 
 1. **Notification receiver**: `sep2loadgen` starts a plain-HTTP listener on an
-   auto-assigned port. The server POSTs outbound notifications here. The URL is
-   written to `<run-dir>/notify-receiver-url.txt`.
+   auto-assigned port before the ramp begins. The server POSTs outbound notifications
+   here. The URL is written to `<run-dir>/notify-receiver-url.txt`.
 
-2. **Subscription registration**: after the receiver URL is known, the setup binary
-   (`sep2stress-setup -subscribe`) POSTs to `POST /edev/{id}/sub` for each
-   registered device, setting `notificationURI` to the receiver URL and
-   `subscribedResource` to `/dcap` (the server-wide DeviceCapability resource,
-   accessible to every device cert). All N subscribers watch this single shared
-   resource so one mutation call fans to all N in a single `notifier.Notify()` call.
+2. **Per-client subscribe-then-drive**: as each virtual client is ramped up (at
+   RAMP_RATE/s), `sep2loadgen` first issues `POST /edev/{id}/sub` for that client
+   using its own mTLS cert and edev ID (from `edev-manifest.json`), targeting
+   `/dcap` (the server-wide DeviceCapability resource). After subscribing, the
+   client immediately starts its GET workload ({/dcap, /tm, /edev} round-robin).
+   Subscriber count equals active client count (1:1). No separate `sep2stress-setup
+   -subscribe` step is needed.
 
 3. **Notification injection**: a goroutine inside `sep2loadgen` fires
    `POST /test/mutations/stress-notify` at `MUTATION_RATE_HZ` calls/second (default
    20 Hz). The mutation token authenticates via `X-CSIP-Test-Token`. Each call
    invokes `notifier.Notify(ctx, href, Changed)` inside the server, which enqueues
-   work onto the 4-worker/256-queue pool and dispatches notification POSTs to all
+   work onto the worker/queue pool and dispatches notification POSTs to all
    subscribers of that href.
 
 4. **Measurement**: the criteria goroutine scrapes
@@ -179,14 +183,17 @@ needed or launched). The sequence is:
    (`notify_delivered`) and queue-full count are both stamped into
    `breaking-point.json` at break time.
 
-5. **Validity**: a valid fanout result requires `notify_delivered` to be roughly
-   `S * mutation_count` at break time (where S is the subscriber count and
-   `mutation_count = mutation_rate_hz * elapsed_seconds`). This is the N-wide
-   fan-out invariant: each mutation call fans to all S subscribers, so total
-   deliveries scale linearly with subscriber count. A `notify_delivered` near zero
-   at break time means a misconfigured subscription (wrong href or receiver URL).
-   A `notify_delivered` near `mutation_count` (not `S * mutation_count`) means
-   subscriptions were on per-device hrefs rather than the shared `/dcap` resource.
+5. **Validity**: a valid fanout result requires:
+   - `notify_delivered` roughly equal to `S * mutation_count` (where S is the
+     active client count and `mutation_count = mutation_rate_hz * elapsed_seconds`).
+     Deliveries scale linearly with client count because each mutation fans to all S.
+   - A non-zero per-client GET request rate (`sendRate > 0` in loadgen logs) in the
+     same window, confirming clients actively drive protocol traffic (not just passive
+     subscribers).
+   - `host_limited: false`.
+   A `notify_delivered` near zero means a misconfigured subscription. A
+   `notify_delivered` near `mutation_count` (not `S * mutation_count`) means
+   fan-out is not reaching all active clients.
 
 **Build tag discipline**: only the fanout run builds and uses the
 `csip_test_hooks`-tagged binary. All other dimensions use the standard (untagged)
@@ -204,7 +211,7 @@ fidelity cohort is wanted in the future, that belongs in a separate card.
 | DIM | Description |
 |---|---|
 | `throughput` | GET /dcap+/tm+/edev round-robin, zero think time, GCM. Ramp until p99 > 500ms or error rate > 1%. |
-| `fanout` | Ramp subscribers. Inject notifications at 20 Hz via stress-notify mutation. Break: queue_full counter goes non-zero. |
+| `fanout` | Ramp N active+subscribed clients. Each client drives GET traffic and holds a /dcap subscription. Inject notifications at 20 Hz; one mutation fans to all N. Break: queue_full counter goes non-zero (IEEESRV-013). |
 | `soak` | Fixed load 2h (CI: 10min). Break: monotonic growth in heap/goroutine/fd across 3 windows. |
 | `tls` | CCM-8 mode, new connection per request (no keepalive). Break: handshake error rate > 0.1% or p99 > 1s. |
 

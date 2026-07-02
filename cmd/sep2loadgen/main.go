@@ -144,7 +144,9 @@ func main() {
 	var notifyReceiver *loadgen.NotifyReceiver
 	notifyURL := ""
 	if dim == "fanout" {
-		addr := fmt.Sprintf(":%d", receiverPort)
+		// Bind to loopback only: a 0.0.0.0 bind would let stray off-box
+		// POSTs inflate notify_delivered and skew the break verdict.
+		addr := fmt.Sprintf("127.0.0.1:%d", receiverPort)
 		rcv, url, err := loadgen.StartNotifyReceiver(addr)
 		if err != nil {
 			logBoth("start notify receiver: %v", err)
@@ -187,15 +189,6 @@ func main() {
 		MutationRateHz: mutationRateHz,
 		NotifyReceiver: notifyReceiver,
 	}
-
-	// For the fanout dimension, the notification receiver is started above but
-	// subscriptions are registered by stress.sh AFTER the server starts, BEFORE
-	// the load generator is launched. The subscribe step reads notify-receiver-url.txt
-	// from the run dir. Stress.sh runs the setup binary in subscribe mode first,
-	// then launches this binary, so by the time mutation injection begins, subs
-	// are already in place. (The receiver is started early so the URL is known;
-	// it accepts inbound POSTs from the server once the load phase begins.)
-	_ = notifyURL // used indirectly via the file write above
 
 	logBoth("load phase starting")
 	br, err := loadgen.Run(ctx, cfg)

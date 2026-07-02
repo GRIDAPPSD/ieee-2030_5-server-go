@@ -110,7 +110,9 @@ needed or launched). The sequence is:
 2. **Subscription registration**: after the receiver URL is known, the setup binary
    (`sep2stress-setup -subscribe`) POSTs to `POST /edev/{id}/sub` for each
    registered device, setting `notificationURI` to the receiver URL and
-   `subscribedResource` to `/edev/{id}/fsa`.
+   `subscribedResource` to `/dcap` (the server-wide DeviceCapability resource,
+   accessible to every device cert). All N subscribers watch this single shared
+   resource so one mutation call fans to all N in a single `notifier.Notify()` call.
 
 3. **Notification injection**: a goroutine inside `sep2loadgen` fires
    `POST /test/mutations/stress-notify` at `MUTATION_RATE_HZ` calls/second (default
@@ -125,16 +127,20 @@ needed or launched). The sequence is:
    (`notify_delivered`) and queue-full count are both stamped into
    `breaking-point.json` at break time.
 
-5. **Validity**: a valid fanout result requires `notify_delivered > 0` at break time,
-   confirming the notification delivery path was genuinely exercised (not a false
-   break from a missing subscription or receiver). A `duration_elapsed` result with
-   `notify_delivered == 0` is a harness misconfiguration.
+5. **Validity**: a valid fanout result requires `notify_delivered` to be roughly
+   `S * mutation_count` at break time (where S is the subscriber count and
+   `mutation_count = mutation_rate_hz * elapsed_seconds`). This is the N-wide
+   fan-out invariant: each mutation call fans to all S subscribers, so total
+   deliveries scale linearly with subscriber count. A `notify_delivered` near zero
+   at break time means a misconfigured subscription (wrong href or receiver URL).
+   A `notify_delivered` near `mutation_count` (not `S * mutation_count`) means
+   subscriptions were on per-device hrefs rather than the shared `/dcap` resource.
 
 **Build tag discipline**: only the fanout run builds and uses the
 `csip_test_hooks`-tagged binary. All other dimensions use the standard (untagged)
 binary. The `Makefile` `stress-test` target passes the tag only when `DIM=fanout`.
-The token is generated fresh each run (`python3 -c 'import secrets; ...'`) and is
-not committed anywhere.
+The token is generated fresh each run via `openssl rand -hex 24` (fallback:
+`/dev/urandom + od`) and is never committed anywhere.
 
 **REAL_SIMS removed**: an earlier design planned a real `inverterclient` binary
 cohort controlled by `REAL_SIMS`. That parameter was accepted by the script but

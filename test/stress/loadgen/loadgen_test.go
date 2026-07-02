@@ -141,7 +141,7 @@ func min(a, b int) int {
 // successfully, returns a valid URL, and increments its counter for each
 // inbound POST.
 func TestStartNotifyReceiver_CountsPosts(t *testing.T) {
-	rcv, url, err := StartNotifyReceiver(":0")
+	rcv, url, err := StartNotifyReceiver("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("StartNotifyReceiver: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestStartNotifyReceiver_CountsPosts(t *testing.T) {
 
 // TestStartNotifyReceiver_RejectsNonPOST verifies that GET requests return 405.
 func TestStartNotifyReceiver_RejectsNonPOST(t *testing.T) {
-	rcv, url, err := StartNotifyReceiver(":0")
+	rcv, url, err := StartNotifyReceiver("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("StartNotifyReceiver: %v", err)
 	}

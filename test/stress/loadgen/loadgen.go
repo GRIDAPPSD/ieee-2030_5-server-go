@@ -178,15 +178,16 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 		if cfg.MutationRateHz <= 0 {
 			cfg.MutationRateHz = 20
 		}
-		// MutationHref MUST match a href that registered subscriptions are
-		// watching; stress.sh derives it from edev-manifest.json after
-		// registration and passes it via -mutation-href. The fallback here
-		// is intentionally an obviously-synthetic path so a misconfigured
-		// run (stress.sh not setting the flag) produces notifyDelivered=0
-		// in breaking-point.json, which is an observable signal rather
-		// than a silent no-op against a real but unmatched href.
+		// MutationHref is the SHARED subscribable resource all N subscribers
+		// watch. A single stress-notify call fans out to every subscription
+		// whose SubscribedResource matches this href, so one mutation event
+		// produces S notification tasks (one per subscriber). The shared
+		// resource must be server-wide and accessible by all device certs.
+		// /dcap (DeviceCapabilityResource) is the natural choice: it is a
+		// singleton readable by every device, independent of edev-IDs.
+		// stress.sh sets this via -mutation-href when overriding.
 		if cfg.MutationHref == "" {
-			cfg.MutationHref = "/edev/stress-fanout-unconfigured/fsa"
+			cfg.MutationHref = "/dcap"
 		}
 	}
 
@@ -371,10 +372,14 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 				case <-stopCh:
 					return
 				case <-ticker.C:
-					payload, _ := json.Marshal(map[string]interface{}{
+					payload, err := json.Marshal(map[string]interface{}{
 						"href":   mutHref,
 						"status": 2, // NotificationStatusChanged
 					})
+					if err != nil {
+						logger.Printf("mutation: marshal payload: %v", err)
+						continue
+					}
 					req, err := http.NewRequestWithContext(ctx, http.MethodPost, mutURL, bytes.NewReader(payload))
 					if err != nil {
 						logger.Printf("mutation: build request: %v", err)
@@ -673,20 +678,20 @@ func rollingP99(buf []int64) int64 {
 // "notifications delivered" from "notifications queued_full-dropped".
 //
 // Lifecycle: call StartNotifyReceiver before Run; call Close after Run.
-// The listener binds on the given port on 0.0.0.0; only loopback runs
-// are expected in the stress harness (loopback bind is equally reachable
-// from the server on the same host).
+// The listener binds on 127.0.0.1 so only loopback traffic reaches it:
+// binding on 0.0.0.0 would let stray off-box POSTs inflate notify_delivered
+// and skew the break verdict.
 type NotifyReceiver struct {
 	srv  *http.Server
 	ln   net.Listener
 	port int
-	mu   sync.Mutex
-	recv atomic.Int64 // total POSTs received
+	recv atomic.Int64 // total POSTs received; atomic.Int64 is the sync
 }
 
-// StartNotifyReceiver starts a plain-HTTP notification receiver on addr
-// (e.g. ":18081"). Returns the receiver and its public URL for use in
-// subscription NotificationURI fields.
+// StartNotifyReceiver starts a plain-HTTP notification receiver. The addr
+// argument is passed to net.Listen (e.g. "127.0.0.1:0" for auto-assign).
+// Returns the receiver and its public URL for use in subscription
+// NotificationURI fields.
 func StartNotifyReceiver(addr string) (*NotifyReceiver, string, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {

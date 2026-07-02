@@ -52,11 +52,12 @@ func main() {
 		// The server POSTs outbound Notifications here; it does not need mTLS
 		// because the receiver is a plain HTTP listener owned by the harness.
 		notifyURL = flag.String("notify-url", "", "notification receiver URL (subscribe mode, e.g. http://127.0.0.1:18081)")
-		// subscribedResource is the href the subscriptions point at. Each device's
-		// own /edev/{id}/fsa list is the natural choice for the fanout path:
-		// stress-notify fires against that href and the server fans out to all
-		// subscribers of that resource.
-		subscribedResource = flag.String("subscribed-resource", "", "subscribed-resource href per device (subscribe mode; default: /edev/{id}/fsa)")
+		// subscribedResource is the SHARED href all N subscriptions target.
+		// Must be a server-wide resource all device certs can access. /dcap
+		// is the default: a SEP2 singleton that a single stress-notify mutation
+		// fans out to all N subscribers simultaneously, driving the subscription
+		// worker pool by subscriber count rather than injection rate.
+		subscribedResource = flag.String("subscribed-resource", "", "shared subscribed-resource href (subscribe mode; default: /dcap)")
 	)
 	flag.Parse()
 
@@ -284,9 +285,10 @@ func runRegister(pkiDir, serverURL string, count int) error {
 }
 
 // runSubscribe POSTs a Subscription for each registered device, pointing
-// the notificationURI at notifyURL. The subscribed-resource for each device
-// defaults to /edev/{id}/fsa (the device's FSAList), which is what the
-// stress-notify mutation fans out against. IEEESRV-010.
+// the notificationURI at notifyURL. All subscriptions share the same
+// subscribedResource (default: /dcap) so a single stress-notify mutation
+// fans out to ALL N subscribers, driving the 4-worker/256-queue by
+// subscriber count. IEEESRV-010.
 func runSubscribe(pkiDir, serverURL string, count int, notifyURL, subscribedResource string) error {
 	if pkiDir == "" {
 		return fmt.Errorf("-pki-dir required for subscription registration")
@@ -365,13 +367,17 @@ func runSubscribe(pkiDir, serverURL string, count int, notifyURL, subscribedReso
 			},
 		}
 
-		// Each subscription subscribes to the device's own FSAList.
-		// When stress-notify fires Notify on /edev/{id}/fsa the server
-		// looks up all subscriptions with SubscribedResource == that href
-		// and dispatches a notification POST to notifyURL for each one.
+		// All subscriptions target the SAME shared resource (/dcap by
+		// default) so a single stress-notify mutation fans out to ALL N
+		// subscribers, driving the 4-worker/256-queue by subscriber count.
+		// Using a per-device resource (/edev/{id}/fsa) would mean one
+		// mutation reaches exactly ONE subscriber; that measures injection
+		// rate, not fan-out capacity. The shared resource must be
+		// server-wide and readable by all device certs; /dcap satisfies
+		// both constraints. The -subscribed-resource flag overrides.
 		subResource := subscribedResource
 		if subResource == "" {
-			subResource = "/edev/" + edevID + "/fsa"
+			subResource = "/dcap"
 		}
 
 		sub := sep2.Subscription{
@@ -430,16 +436,24 @@ func readManifest(pkiDir string) (*edevManifest, error) {
 	return &m, nil
 }
 
-// edevIDFromLocation extracts the edev ID from a Location header value
-// of the form "/edev/{id}" (with or without a leading slash).
-// Returns "" when the header is blank or unrecognised.
+// edevIDFromLocation extracts the edev ID from a Location header value.
+// Handles both relative form ("/edev/{id}") and absolute form
+// ("https://host/edev/{id}"). Returns "" when the header is blank or
+// the path does not match the /edev/{id} shape.
 func edevIDFromLocation(loc string) string {
 	if loc == "" {
 		return ""
 	}
-	// Strip leading slash for consistent splitting.
-	loc = strings.TrimPrefix(loc, "/")
-	parts := strings.SplitN(loc, "/", 3)
+	// Parse as a URL so absolute form (https://host/edev/42) is handled
+	// correctly. A plain path (/edev/42) parses fine too: url.Parse
+	// treats it as a relative URL with Path="/edev/42".
+	u, err := url.Parse(loc)
+	if err != nil {
+		return ""
+	}
+	// Strip leading slash for consistent splitting on the path component.
+	path := strings.TrimPrefix(u.Path, "/")
+	parts := strings.SplitN(path, "/", 3)
 	// parts[0]="edev", parts[1]="{id}"
 	if len(parts) >= 2 && parts[0] == "edev" && parts[1] != "" {
 		return parts[1]

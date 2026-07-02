@@ -117,8 +117,21 @@ if [ "${CLIENTS}" -gt 500 ] && [ "${NPROC}" -lt 4 ]; then
 fi
 
 # ---- fanout: generate mutation token if not provided ----------------------
+# Use openssl rand (standard on all Linux/macOS with OpenSSL). If openssl is
+# absent, fall back to /dev/urandom + od. Either way, an empty token means
+# the csip_test_hooks surface silently disables; we FAIL loudly here rather
+# than proceeding with a disabled mutation surface.
 if [ "${DIM}" = "fanout" ] && [ -z "${MUTATION_TOKEN}" ]; then
-    MUTATION_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
+    if command -v openssl > /dev/null 2>&1; then
+        MUTATION_TOKEN="$(openssl rand -hex 24)"
+    elif [ -r /dev/urandom ]; then
+        MUTATION_TOKEN="$(od -vAn -N24 -tx1 /dev/urandom | tr -d ' \n')"
+    else
+        die "cannot generate MUTATION_TOKEN: openssl and /dev/urandom are both unavailable. Set MUTATION_TOKEN explicitly."
+    fi
+    if [ -z "${MUTATION_TOKEN}" ]; then
+        die "MUTATION_TOKEN generation produced an empty string; aborting fanout run."
+    fi
     log "fanout: generated mutation token (not committed)"
 fi
 
@@ -278,29 +291,6 @@ log "registering ${CLIENTS} virtual clients via POST /edev..."
     -server "https://${TARGET_HOST}:${TARGET_PORT}"
 log "all clients registered (edev-manifest.json written)"
 
-# For the fanout dimension, derive MUTATION_HREF from the first edev ID in the
-# manifest so the stress-notify mutation fires against a href that real
-# subscriptions are watching. Each subscriber registers /edev/{id}/fsa;
-# the mutation must target one of those hrefs to trigger delivery.
-# Using the first registered device is sufficient for queue_full
-# characterization: every subscriber of that href gets a notification task
-# enqueued on each mutation call.
-if [ "${DIM}" = "fanout" ] && [ -z "${MUTATION_HREF:-}" ]; then
-    FIRST_EDEV_ID="$(python3 -c "
-import json, sys
-m = json.load(open('${PKI_DIR}/edev-manifest.json'))
-ids = [x for x in m.get('edev_ids', []) if x]
-if ids:
-    print(ids[0])
-")"
-    if [ -n "${FIRST_EDEV_ID}" ]; then
-        MUTATION_HREF="/edev/${FIRST_EDEV_ID}/fsa"
-        log "fanout: mutation href set to ${MUTATION_HREF}"
-    else
-        log "WARNING: could not derive mutation href from manifest; using default"
-    fi
-fi
-
 # ---- metrics scrape loop (started AFTER registration to avoid registration
 #      traffic contaminating the load-phase scrape series) --------------------
 METRICS_URL="http://127.0.0.1:${METRICS_PORT}/metrics"
@@ -339,19 +329,18 @@ LOADGEN_COMMON_ARGS=(
 
 if [ "${DIM}" = "fanout" ]; then
     # Fanout sequence (IEEESRV-010):
+    # All N subscribers watch a SINGLE shared resource (/dcap by default),
+    # so a single stress-notify mutation fans out to ALL N subscribers in
+    # one server call. This drives the 4-worker/256-queue by subscriber
+    # count, not injection rate. With S subscribers and M mutations fired,
+    # expected deliveries are approximately S * M.
+    #
+    # Sequence:
     # a) Start loadgen in background; it starts the notification receiver
     #    and writes notify-receiver-url.txt to RUN_DIR.
     # b) Wait for the URL file (up to 10s).
-    # c) Run the subscribe step so subs are in place before mutation begins.
+    # c) Run the subscribe step (all devices subscribe to the shared href).
     # d) Wait for loadgen to finish (duration or criterion).
-    #
-    # The loadgen starts mutation injection in Run() on the first rampTicker
-    # tick (~1s after start), so we have at most 1s to get subs registered.
-    # The subscribe step is fast (N sequential HTTP POSTs); it completes well
-    # within 1s for small CLIENTS values and typically within a few seconds
-    # for large ones. For very large client counts the first mutations may
-    # fire before all subs are registered; this is acceptable because the
-    # queue_full criterion is measured over many events, not just the first.
 
     FANOUT_EXTRA_ARGS=(
         -mutation-token "${MUTATION_TOKEN}"

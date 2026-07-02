@@ -54,6 +54,19 @@ func TestEdevIDFromLocation(t *testing.T) {
 			input: "/",
 			want:  "",
 		},
+		{
+			// Absolute-form Location (RFC 7231 compliant server that returns
+			// an absolute URI). Previously parsed to "" because the scheme+host
+			// prefix caused the path split to fail.
+			name:  "absolute-form location with host",
+			input: "https://127.0.0.1:8443/edev/42",
+			want:  "42",
+		},
+		{
+			name:  "absolute-form with trailing path component",
+			input: "https://127.0.0.1:8443/edev/99/sub",
+			want:  "99",
+		},
 	}
 
 	for _, tc := range tests {

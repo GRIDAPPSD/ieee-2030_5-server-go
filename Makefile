@@ -3,7 +3,7 @@
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
        lint vet clean run run-ccm run-journald run-ccm-journald \
        run-testdevice run-sunspec certs new-device \
-       serve help
+       serve help stress-pretest
 
 SERVER   := bin/sep2server
 CERT_DIR := certs
@@ -357,6 +357,16 @@ stress-test: ## Run stress test (smoke: 5 clients, 30s, throughput). See comment
 	SEED=$(STRESS_SEED) \
 	SCRAPE_INTERVAL=$(STRESS_SCRAPE) \
 	bash test/stress/scripts/stress.sh
+
+# stress-pretest applies the opt-in kernel tuning the connection-heavy
+# dimensions need (throughput and tls/ccm). REQUIRED before those two;
+# NOT needed for fanout or soak. See test/stress/DESIGN.md.
+# NOTE: a make target runs in a child process and cannot set the parent
+# shell's ulimit. This target applies the sysctls and PRINTS the exact
+# 'ulimit -n 65536' line; run that line in the shell you launch the
+# harness from (or 'source test/stress/scripts/pretest-tune.sh' there).
+stress-pretest: ## Apply opt-in kernel tuning for stress (sysctls now; run the printed ulimit line in your own shell)
+	bash test/stress/scripts/pretest-tune.sh
 
 # --- Code Quality ---
 

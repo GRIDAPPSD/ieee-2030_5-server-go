@@ -51,6 +51,58 @@ The following is a true server architectural limit, regardless of host:
   counter is a server-side limit that distributed load generation would not
   change. This is the headline finding the fan-out dimension targets.
 
+## Pre-Test Kernel Tuning (opt-in)
+
+`scripts/stress.sh` never mutates system state; it only warns when kernel
+parameters are under-tuned and labels affected runs `host_limited: true`.
+`scripts/pretest-tune.sh` (card IEEESRV-009) is the explicit, operator-invoked
+escape hatch that applies the tuning the connection-heavy dimensions need. Run it
+via `make stress-pretest` or by invoking the script directly.
+
+It applies exactly three tunings and nothing else:
+
+1. `net.ipv4.ip_local_port_range = "10000 65535"` (widens the ephemeral port pool
+   so the tls dimension does not exhaust ports on new-connection-per-request load).
+2. `net.ipv4.tcp_tw_reuse = 1` (lets the kernel reuse sockets in TIME_WAIT for new
+   outbound connections, which the same connection-churn pattern needs).
+3. fd soft limit raised to at least `65536` (so the server and load generator can
+   hold enough concurrent sockets).
+
+The two sysctls are applied with `sudo sysctl -w`, are system-wide until the next
+reboot, and re-running is a no-op. If `sudo` is unavailable or a write fails, the
+script fails loudly and names what could not be applied; it does not leave a
+half-applied state ambiguous.
+
+### When it is REQUIRED vs not needed
+
+REQUIRED before the `throughput` and `tls` (CCM) dimensions: both are
+connection-heavy and hit the port-range, TIME_WAIT, and fd ceilings directly.
+
+NOT needed for `fanout` or `soak`: the fan-out breaking point is the server's
+subscription queue (a true server limit, not a host limit), and soak runs at a
+fixed sub-knee load where the default host limits are not the constraint.
+
+### The ulimit source-vs-execute distinction
+
+`ulimit -n` only affects the invoking shell and its children; a child process
+cannot raise its parent's limit. The script handles both modes:
+
+- SOURCED (`. scripts/pretest-tune.sh`): applies the sysctls AND raises `ulimit -n`
+  in the caller's shell, so the harness launched from that shell inherits it.
+- EXECUTED (`bash scripts/pretest-tune.sh`, including `make stress-pretest`):
+  applies the sysctls, then PRINTS the exact `ulimit -n 65536` line for the
+  operator to run in their own run shell, plus an optional
+  `/etc/security/limits.conf` snippet for a persistent hard-limit bump (which
+  needs a re-login to take effect).
+
+A make target runs in a child process, so `make stress-pretest` cannot set the
+parent shell's ulimit; run the printed line in the shell you launch the harness
+from, or `source` the script there.
+
+When sourced, the script snapshots your shell options up front and restores them
+on every exit path, so sourcing it does not leave your shell in `set -euo pipefail`
+(where the next non-zero command could otherwise kill an interactive session).
+
 ## Architecture
 
 ### Server lifecycle (out of process)

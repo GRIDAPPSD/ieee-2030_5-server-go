@@ -10,9 +10,10 @@ Reason: the load generator imports `internal/certs` directly to pre-generate per
 device certificates without shelling out. Placing it in the client repo would require
 publishing the certs package or duplicating the ECDSA/HardwareModuleName SAN logic.
 A `test/` subdirectory in the server repo is the existing pattern for harness code that
-needs server internals. The `test/stress/` tree is not part of the production module
-surface (it contains its own `go.mod`-less package under the module root, or in the
-`cmd/sep2loadgen` position; see build section below).
+needs server internals. The `test/stress/` tree lives under the module root
+(`github.com/GRIDAPPSD/ieee-2030_5-go`) with no separate `go.mod`; the load generator
+binary is at `cmd/sep2loadgen` and the loadgen library is at `test/stress/loadgen`,
+both within the same module (see build section below).
 
 ## Scope
 

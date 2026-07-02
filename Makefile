@@ -312,7 +312,7 @@ test-csip-cover:          ## Run CSIP suite with scoped coverage profile (writes
 coverage-gate:            ## Enforce CSIP coverage floor on coverage-csip.out
 	./scripts/coverage-gate.sh coverage-csip.out $(CSIP_COVER_THRESHOLD)
 
-# ─── Stress Test (IEEESRV-007) ───────────────────────────────────
+# --- Stress Test (IEEESRV-007) ---
 #
 # Usage examples:
 #   make stress-test                            # smoke: 5 clients, 30s, throughput
@@ -326,15 +326,15 @@ coverage-gate:            ## Enforce CSIP coverage floor on coverage-csip.out
 #     make stress-test DIM=fanout CLIENTS=50
 #
 # Parameters (all optional, defaults shown):
-#   DIM=throughput    dimension: throughput|fanout|soak|tls
-#   CLIENTS=5         virtual client count (0=open-ended ramp)
-#   RAMP_RATE=5       clients added per second
-#   DURATION=30       run duration in seconds (0=unlimited, break only)
+#   DIM=throughput      dimension: throughput|fanout|soak|tls
+#   CLIENTS=5           virtual client count (0=open-ended ramp)
+#   RAMP_RATE=5         clients added per second
+#   DURATION=30         run duration in seconds (0=unlimited, break only)
 #   TARGET_HOST=127.0.0.1
 #   TARGET_PORT=8443
-#   CCM=false         enable CCM-8 cipher
-#   SEED=42           deterministic RNG seed
-#   SCRAPE_INTERVAL=5 Prometheus scrape interval in seconds
+#   CCM=false           enable CCM-8 cipher
+#   SEED=42             deterministic RNG seed
+#   SCRAPE=5            Prometheus scrape interval in seconds
 #
 STRESS_DIM      ?= throughput
 STRESS_CLIENTS  ?= 5
@@ -344,6 +344,7 @@ STRESS_HOST     ?= 127.0.0.1
 STRESS_PORT     ?= 8443
 STRESS_CCM      ?= false
 STRESS_SEED     ?= 42
+STRESS_SCRAPE   ?= 5
 
 stress-test: ## Run stress test (smoke: 5 clients, 30s, throughput). See comment above for full usage.
 	DIM=$(STRESS_DIM) \
@@ -354,9 +355,10 @@ stress-test: ## Run stress test (smoke: 5 clients, 30s, throughput). See comment
 	TARGET_PORT=$(STRESS_PORT) \
 	CCM=$(STRESS_CCM) \
 	SEED=$(STRESS_SEED) \
+	SCRAPE_INTERVAL=$(STRESS_SCRAPE) \
 	bash test/stress/scripts/stress.sh
 
-# ─── Code Quality ────────────────────────────────────────────────
+# --- Code Quality ---
 
 lint:                     ## Run golangci-lint + gofmt drift check
 	golangci-lint run ./...

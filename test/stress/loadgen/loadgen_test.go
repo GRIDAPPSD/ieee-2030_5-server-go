@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // TestRollingP99_KnownInput exercises the corrected percentile formula with
@@ -134,4 +135,64 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestStartNotifyReceiver_CountsPosts verifies that StartNotifyReceiver binds
+// successfully, returns a valid URL, and increments its counter for each
+// inbound POST.
+func TestStartNotifyReceiver_CountsPosts(t *testing.T) {
+	rcv, url, err := StartNotifyReceiver("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("StartNotifyReceiver: %v", err)
+	}
+	defer rcv.Close()
+
+	if url == "" {
+		t.Fatal("StartNotifyReceiver returned empty URL")
+	}
+
+	// Count starts at zero.
+	if got := rcv.Count(); got != 0 {
+		t.Errorf("initial Count() = %d, want 0", got)
+	}
+
+	// Send three POST requests; each should be counted.
+	client := &http.Client{Timeout: 2 * time.Second}
+	for i := range 3 {
+		resp, err := client.Post(url, "application/sep+xml", nil)
+		if err != nil {
+			t.Fatalf("POST %d: %v", i, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("POST %d: status = %d, want 200", i, resp.StatusCode)
+		}
+	}
+
+	if got := rcv.Count(); got != 3 {
+		t.Errorf("Count() after 3 POSTs = %d, want 3", got)
+	}
+}
+
+// TestStartNotifyReceiver_RejectsNonPOST verifies that GET requests return 405.
+func TestStartNotifyReceiver_RejectsNonPOST(t *testing.T) {
+	rcv, url, err := StartNotifyReceiver("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("StartNotifyReceiver: %v", err)
+	}
+	defer rcv.Close()
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("GET status = %d, want 405", resp.StatusCode)
+	}
+	// GET must not increment the counter.
+	if got := rcv.Count(); got != 0 {
+		t.Errorf("Count() after GET = %d, want 0", got)
+	}
 }

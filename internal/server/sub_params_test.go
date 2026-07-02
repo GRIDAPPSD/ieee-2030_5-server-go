@@ -64,6 +64,17 @@ func TestResolveSubParam_FallbackOnNegative(t *testing.T) {
 	}
 }
 
+func TestResolveSubParam_WhitespacePaddedValue(t *testing.T) {
+	// A value with leading/trailing whitespace (easy to produce from a shell
+	// export or a sweep script) must resolve to the integer, not fall back to
+	// the default. Covers the Pike LOW finding on IEEESRV-008.
+	t.Setenv("SEP2_SUBSCRIPTION_WORKERS", " 8 ")
+	got := resolveSubParam("SEP2_SUBSCRIPTION_WORKERS", 4)
+	if got != 8 {
+		t.Errorf("resolveSubParam (whitespace-padded) = %d, want 8", got)
+	}
+}
+
 func TestResolveSubParam_DefaultsMatchHardcodedConstants(t *testing.T) {
 	// When both env vars are unset the constants stay at the original values,
 	// confirming the default behavior is byte-for-byte unchanged.

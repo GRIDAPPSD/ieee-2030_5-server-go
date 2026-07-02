@@ -581,7 +581,7 @@ func buildAdminTLSConfig(cfg *config.Config) (*tls.Config, string, error) {
 // the bad value, and the defaultVal is returned. This function never panics or
 // calls os.Exit. IEEESRV-008.
 func resolveSubParam(envKey string, defaultVal int) int {
-	raw := os.Getenv(envKey)
+	raw := strings.TrimSpace(os.Getenv(envKey))
 	if raw == "" {
 		return defaultVal
 	}

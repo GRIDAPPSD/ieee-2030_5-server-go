@@ -8,7 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
-
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -216,7 +216,14 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// router takes it as a handler.ResourceNotifier so DELETE/UPDATE
 	// handlers can fan out notifications without depending on the
 	// subscription package directly.
-	notifier := coresub.NewManager(stores.Subscriptions, subscriptionWorkers, subscriptionQueueSize)
+	//
+	// IEEESRV-008: worker count and queue size are tunable at startup via
+	// SEP2_SUBSCRIPTION_WORKERS and SEP2_SUBSCRIPTION_QUEUE_SIZE; both fall
+	// back to the compile-time defaults when the env var is unset, empty, or
+	// not a positive integer (no crash: warn and use the default).
+	subWorkers := resolveSubParam("SEP2_SUBSCRIPTION_WORKERS", subscriptionWorkers)
+	subQueueSize := resolveSubParam("SEP2_SUBSCRIPTION_QUEUE_SIZE", subscriptionQueueSize)
+	notifier := coresub.NewManager(stores.Subscriptions, subWorkers, subQueueSize)
 	notifier.SetObserver(obs.RecordNotification)
 	go notifier.Start(ctx)
 
@@ -564,6 +571,26 @@ func buildAdminTLSConfig(cfg *config.Config) (*tls.Config, string, error) {
 		MinVersion:   tls.VersionTLS12,
 		ClientAuth:   tls.VerifyClientCertIfGiven,
 	}, desc, nil
+}
+
+// resolveSubParam reads the named environment variable and parses it as a
+// positive integer. When the variable is unset or empty the defaultVal is
+// returned without any log output (default behavior is byte-for-byte
+// unchanged). When the variable is set but its value is not a positive integer
+// (non-numeric, zero, or negative) a warning is logged naming the variable and
+// the bad value, and the defaultVal is returned. This function never panics or
+// calls os.Exit. IEEESRV-008.
+func resolveSubParam(envKey string, defaultVal int) int {
+	raw := strings.TrimSpace(os.Getenv(envKey))
+	if raw == "" {
+		return defaultVal
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v <= 0 {
+		log.Printf("WARNING: %s=%q is not a positive integer; using default %d", envKey, raw, defaultVal)
+		return defaultVal
+	}
+	return v
 }
 
 func parsePort(addr string) int {

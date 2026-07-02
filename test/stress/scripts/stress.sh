@@ -62,7 +62,14 @@ warn_not_applied() {
 # ---- pre-run kernel checks -------------------------------------------------
 log "checking kernel parameters..."
 
-FD_LIMIT=$(ulimit -n 2>/dev/null || echo 1024)
+FD_LIMIT_RAW=$(ulimit -n 2>/dev/null || echo "1024")
+# Guard against the "unlimited" string that some shells return; treat it as
+# a large number so the integer comparison below does not error under set -e.
+if [ "${FD_LIMIT_RAW}" = "unlimited" ]; then
+    FD_LIMIT=65536
+else
+    FD_LIMIT="${FD_LIMIT_RAW}"
+fi
 if [ "$FD_LIMIT" -lt 16384 ]; then
     warn_not_applied "ulimit -n ${FD_LIMIT} (need >=16384)" "ulimit -n 65536"
     HOST_LIMITED="true"
@@ -81,6 +88,17 @@ if [ "$DIM" = "tls" ] && [ "$PORT_COUNT" -lt 40000 ]; then
         "sysctl -w net.ipv4.ip_local_port_range='10000 65535' && sysctl -w net.ipv4.tcp_tw_reuse=1"
     HOST_LIMITED="true"
     HOST_LIMIT_REASON="${HOST_LIMIT_REASON} port_range=${PORT_COUNT}"
+fi
+
+# Goroutine and memory pressure detection: on a single-host run the load
+# generator goroutine pool saturates before the server does. CLIENTS > 500
+# on a box with <4 cores is a likely driver-side bottleneck.
+NPROC=$(nproc 2>/dev/null || echo 4)
+if [ "${CLIENTS}" -gt 500 ] && [ "${NPROC}" -lt 4 ]; then
+    warn_not_applied "CLIENTS=${CLIENTS} > 500 on ${NPROC}-core host (goroutine saturation likely)" \
+        "run on a host with >=4 cores or reduce CLIENTS"
+    HOST_LIMITED="true"
+    HOST_LIMIT_REASON="${HOST_LIMIT_REASON} goroutine_saturation_likely"
 fi
 
 # ---- build binaries --------------------------------------------------------
@@ -126,21 +144,30 @@ log "generating PKI for ${CLIENTS} virtual clients (seed=${SEED})..."
 log "PKI generated"
 
 # ---- pre-launch port check -------------------------------------------------
-# If anything is still bound to TARGET_PORT from a prior run, kill it now.
-# A stale server from a previous run would otherwise receive our new-PKI clients
-# and fail TLS verification because the CA cert has changed.
-STALE_PID="$(ss -tlnp 2>/dev/null | awk -v port=":${TARGET_PORT}" '$4 == port {match($0,/pid=([0-9]+)/,a); print a[1]}')"
-if [ -n "${STALE_PID}" ]; then
-    log "stale process on port ${TARGET_PORT} (pid=${STALE_PID}); sending SIGTERM..."
-    kill -TERM "${STALE_PID}" 2>/dev/null || true
-    stale_waited=0
-    while ss -tlnp 2>/dev/null | grep -q ":${TARGET_PORT}" && [ "$stale_waited" -lt 5 ]; do
-        sleep 1
-        stale_waited=$(( stale_waited + 1 ))
-    done
-    if ss -tlnp 2>/dev/null | grep -q ":${TARGET_PORT}"; then
-        kill -KILL "${STALE_PID}" 2>/dev/null || true
-        sleep 1
+# If a sep2server is still bound to TARGET_PORT from a prior run, kill it now.
+# A stale server would receive our new-PKI clients and fail TLS verification
+# because the CA cert changes each run.
+# Safety: only kill the process if it matches the binary name "sep2server".
+# Refusing to kill an unknown process avoids accidentally terminating unrelated
+# services on a shared box.
+STALE_LINE="$(ss -tlnp 2>/dev/null | awk -v port=":${TARGET_PORT}" '$4 == port {print}')"
+if [ -n "${STALE_LINE}" ]; then
+    if echo "${STALE_LINE}" | grep -q "sep2server"; then
+        STALE_PID="$(echo "${STALE_LINE}" | grep -oP 'pid=\K[0-9]+')"
+        log "stale sep2server on port ${TARGET_PORT} (pid=${STALE_PID}); sending SIGTERM..."
+        kill -TERM "${STALE_PID}" 2>/dev/null || true
+        stale_waited=0
+        while ss -tlnp 2>/dev/null | grep -q ":${TARGET_PORT}" && [ "$stale_waited" -lt 5 ]; do
+            sleep 1
+            stale_waited=$(( stale_waited + 1 ))
+        done
+        if ss -tlnp 2>/dev/null | grep -q ":${TARGET_PORT}"; then
+            log "sep2server did not exit in 5s; sending SIGKILL (pid=${STALE_PID})"
+            kill -KILL "${STALE_PID}" 2>/dev/null || true
+            sleep 1
+        fi
+    else
+        die "port ${TARGET_PORT} is bound by a non-sep2server process: ${STALE_LINE}; refusing to kill it. Change TARGET_PORT or stop the process manually."
     fi
 fi
 
@@ -215,11 +242,13 @@ log "registering ${CLIENTS} virtual clients via POST /edev..."
     -server "https://${TARGET_HOST}:${TARGET_PORT}"
 log "all clients registered"
 
-# ---- metrics scrape loop ---------------------------------------------------
+# ---- metrics scrape loop (started AFTER registration to avoid registration
+#      traffic contaminating the load-phase scrape series) --------------------
+METRICS_URL="http://127.0.0.1:${METRICS_PORT}/metrics"
 METRICS_FILE="${RUN_DIR}/metrics-series.jsonl"
-scrape_loop() {
+scrape_metrics() {
     while sleep "${SCRAPE_INTERVAL}"; do
-        RAW="$(curl -sf "http://127.0.0.1:${METRICS_PORT}/metrics" 2>/dev/null || true)"
+        RAW="$(curl -sf "${METRICS_URL}" 2>/dev/null || true)"
         if [ -n "$RAW" ]; then
             TS_NOW="$(date +%s%3N)"
             echo "{\"ts_ms\":${TS_NOW},\"raw\":$(echo "$RAW" | python3 -c '
@@ -230,15 +259,11 @@ print(json.dumps("\n".join(lines)))
         fi
     done
 }
-scrape_loop &
+scrape_metrics &
 SCRAPE_PID=$!
 
 # ---- load phase ------------------------------------------------------------
 log "starting load phase: dim=${DIM} clients=${CLIENTS} duration=${DURATION}s"
-
-export TARGET_HOST TARGET_PORT CLIENTS RAMP_RATE DURATION DIM CCM SEED
-export RESULTS_DIR="${RUN_DIR}"
-export CA_FILE="${PKI_DIR}/ca.crt"
 
 "${LOADGEN_BIN}" \
     -host "${TARGET_HOST}" \
@@ -247,9 +272,10 @@ export CA_FILE="${PKI_DIR}/ca.crt"
     -ramp-rate "${RAMP_RATE}" \
     -duration "${DURATION}" \
     -dim "${DIM}" \
-    -ccm "${CCM}" \
+    -ccm="${CCM}" \
     -results-dir "${RUN_DIR}" \
-    -ca "${PKI_DIR}/ca.crt"
+    -ca "${PKI_DIR}/ca.crt" \
+    -metrics-url "${METRICS_URL}"
 
 log "load phase complete"
 

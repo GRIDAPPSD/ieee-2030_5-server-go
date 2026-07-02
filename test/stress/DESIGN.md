@@ -99,6 +99,10 @@ A make target runs in a child process, so `make stress-pretest` cannot set the
 parent shell's ulimit; run the printed line in the shell you launch the harness
 from, or `source` the script there.
 
+When sourced, the script snapshots your shell options up front and restores them
+on every exit path, so sourcing it does not leave your shell in `set -euo pipefail`
+(where the next non-zero command could otherwise kill an interactive session).
+
 ## Architecture
 
 ### Server lifecycle (out of process)

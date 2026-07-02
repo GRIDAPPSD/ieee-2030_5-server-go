@@ -5,9 +5,18 @@
 // machine. Deterministic from SEED via per-client math/rand instances.
 // Self-metrics (send rate, goroutine count) are emitted so the
 // driver-vs-server disambiguation is computable from the result artifacts.
+//
+// For the fanout dimension (IEEESRV-010), the package also:
+//   - Runs a plain-HTTP notification receiver (NotifyReceiver) that counts
+//     inbound server-to-client POSTs, so success delivery can be measured
+//     alongside queue_full drops.
+//   - Drives a mutation-injection goroutine that POSTs
+//     POST /test/mutations/stress-notify at a controlled rate, exercising the
+//     server's subscription worker pool via the csip_test_hooks surface.
 package loadgen
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -17,6 +26,7 @@ import (
 	"log"
 	"math"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -69,6 +79,23 @@ type Config struct {
 	// (e.g. "http://127.0.0.1:9100/metrics"). Required when QueueFullOnset is
 	// true; ignored otherwise.
 	MetricsURL string
+
+	// Fanout-specific: notification injection via /test/mutations/stress-notify.
+	// MutationToken is the SEP2_TEST_MUTATION_TOKEN value that the server
+	// requires in X-CSIP-Test-Token. Required for the fanout dimension.
+	MutationToken string
+	// MutationHref is the href passed to stress-notify. The server fans out
+	// a Notification to every subscriber of this resource. Defaults to
+	// "/edev/stress-fanout/fsa" when empty in fanout dim.
+	MutationHref string
+	// MutationRateHz is the number of stress-notify calls per second.
+	// Defaults to 20 when zero in fanout dim.
+	MutationRateHz int
+
+	// NotifyReceiver, when non-nil, is the in-process receiver that counts
+	// successful delivery POSTs from the server back to the loadgen side.
+	// Set by StartNotifyReceiver before Run is called.
+	NotifyReceiver *NotifyReceiver
 }
 
 // BreakResult carries the breaking-point verdict.
@@ -80,6 +107,9 @@ type BreakResult struct {
 	AtClients       int     `json:"at_clients"`
 	HostLimited     bool    `json:"host_limited"`
 	HostLimitReason string  `json:"host_limit_reason,omitempty"`
+	// Fanout-specific counters at break time.
+	NotifyDelivered int64 `json:"notify_delivered,omitempty"`
+	NotifyQueueFull int64 `json:"notify_queue_full,omitempty"`
 }
 
 // latencyRecord is one line in client-latency.jsonl.
@@ -141,6 +171,23 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 	}
 	if cfg.HandshakeErrRate == 0 {
 		cfg.HandshakeErrRate = 0.001
+	}
+
+	// Fanout dimension defaults.
+	if cfg.Dim == "fanout" {
+		if cfg.MutationRateHz <= 0 {
+			cfg.MutationRateHz = 20
+		}
+		// MutationHref MUST match a href that registered subscriptions are
+		// watching; stress.sh derives it from edev-manifest.json after
+		// registration and passes it via -mutation-href. The fallback here
+		// is intentionally an obviously-synthetic path so a misconfigured
+		// run (stress.sh not setting the flag) produces notifyDelivered=0
+		// in breaking-point.json, which is an observable signal rather
+		// than a silent no-op against a real but unmatched href.
+		if cfg.MutationHref == "" {
+			cfg.MutationHref = "/edev/stress-fanout-unconfigured/fsa"
+		}
 	}
 
 	// Latency ring buffer: last 2000 samples.
@@ -233,8 +280,18 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 
 				// Write self-metric log line.
 				sm.gorCount.Store(int64(runtime.NumGoroutine()))
-				logger.Printf("t=%.0fs clients=%d p99=%dms errRate=%.4f sendRate=%.1frps goroutines=%d",
-					elapsed, clientCount.Load(), p99ms, errRate, sendRate, sm.gorCount.Load())
+
+				var notifyDelivered, notifyQueueFull int64
+				if cfg.NotifyReceiver != nil {
+					notifyDelivered = cfg.NotifyReceiver.Count()
+				}
+				if cfg.MetricsURL != "" {
+					notifyQueueFull, _ = scrapeQueueFullInt(cfg.MetricsURL)
+				}
+
+				logger.Printf("t=%.0fs clients=%d p99=%dms errRate=%.4f sendRate=%.1frps goroutines=%d notifyDelivered=%d notifyQueueFull=%d",
+					elapsed, clientCount.Load(), p99ms, errRate, sendRate, sm.gorCount.Load(),
+					notifyDelivered, notifyQueueFull)
 
 				atClients := int(clientCount.Load())
 
@@ -243,6 +300,7 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 					fireStop(&BreakResult{
 						Dimension: cfg.Dim, Criterion: "p99_latency_ms",
 						ValueAtBreak: float64(p99ms), TimeElapsedSec: elapsed, AtClients: atClients,
+						NotifyDelivered: notifyDelivered, NotifyQueueFull: notifyQueueFull,
 					})
 					return
 				}
@@ -251,6 +309,7 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 					fireStop(&BreakResult{
 						Dimension: cfg.Dim, Criterion: "error_rate",
 						ValueAtBreak: errRate, TimeElapsedSec: elapsed, AtClients: atClients,
+						NotifyDelivered: notifyDelivered, NotifyQueueFull: notifyQueueFull,
 					})
 					return
 				}
@@ -265,6 +324,7 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 						fireStop(&BreakResult{
 							Dimension: cfg.Dim, Criterion: "queue_full",
 							ValueAtBreak: float64(qf), TimeElapsedSec: elapsed, AtClients: atClients,
+							NotifyDelivered: notifyDelivered, NotifyQueueFull: int64(qf),
 						})
 						return
 					}
@@ -272,6 +332,70 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 			}
 		}
 	}()
+
+	// Fanout: mutation-injection goroutine.
+	// Fires POST /test/mutations/stress-notify at MutationRateHz to exercise
+	// the server's subscription worker pool. Uses device-0's cert for mTLS.
+	if cfg.Dim == "fanout" && cfg.MutationToken != "" {
+		certPEM, keyPEM, err := cfg.ClientCert(0)
+		if err != nil {
+			return nil, fmt.Errorf("fanout: get client-0 cert for mutation injection: %w", err)
+		}
+		tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err != nil {
+			return nil, fmt.Errorf("fanout: parse client-0 cert: %w", err)
+		}
+		mutationClient := &http.Client{
+			Timeout: 5 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					Certificates: []tls.Certificate{tlsCert},
+					RootCAs:      rootPool,
+					ServerName:   cfg.TargetHost,
+					MinVersion:   tls.VersionTLS12,
+					MaxVersion:   tls.VersionTLS12,
+				},
+			},
+		}
+		mutURL := baseURL + "/test/mutations/stress-notify"
+		mutToken := cfg.MutationToken
+		mutHref := cfg.MutationHref
+		mutInterval := time.Duration(float64(time.Second) / float64(cfg.MutationRateHz))
+		go func() {
+			ticker := time.NewTicker(mutInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-stopCh:
+					return
+				case <-ticker.C:
+					payload, _ := json.Marshal(map[string]interface{}{
+						"href":   mutHref,
+						"status": 2, // NotificationStatusChanged
+					})
+					req, err := http.NewRequestWithContext(ctx, http.MethodPost, mutURL, bytes.NewReader(payload))
+					if err != nil {
+						logger.Printf("mutation: build request: %v", err)
+						continue
+					}
+					req.Header.Set("Content-Type", "application/json")
+					req.Header.Set("X-CSIP-Test-Token", mutToken)
+					resp, err := mutationClient.Do(req)
+					if err != nil {
+						logger.Printf("mutation: POST stress-notify: %v", err)
+						continue
+					}
+					_, _ = io.Copy(io.Discard, resp.Body)
+					resp.Body.Close()
+					if resp.StatusCode != http.StatusNoContent {
+						logger.Printf("mutation: stress-notify returned %d", resp.StatusCode)
+					}
+				}
+			}
+		}()
+	}
 
 	// rampTicker fires once per second; each tick launches RampRate clients.
 	rampTicker := time.NewTicker(time.Second)
@@ -392,9 +516,17 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 	for {
 		select {
 		case <-ctx.Done():
+			var notifyDel, notifyQF int64
+			if cfg.NotifyReceiver != nil {
+				notifyDel = cfg.NotifyReceiver.Count()
+			}
+			if cfg.MetricsURL != "" {
+				notifyQF, _ = scrapeQueueFullInt(cfg.MetricsURL)
+			}
 			fireStop(&BreakResult{
 				Dimension: cfg.Dim, Criterion: "none",
 				TimeElapsedSec: time.Since(start).Seconds(), AtClients: int(clientCount.Load()),
+				NotifyDelivered: notifyDel, NotifyQueueFull: notifyQF,
 			})
 			wg.Wait()
 			return breakResult.Load(), nil
@@ -403,9 +535,17 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 			// Use clientCount.Load() (active) not clientIdx (launched), to
 			// match the ctx.Done branch and accurately represent the active
 			// cohort at break time.
+			var notifyDel, notifyQF int64
+			if cfg.NotifyReceiver != nil {
+				notifyDel = cfg.NotifyReceiver.Count()
+			}
+			if cfg.MetricsURL != "" {
+				notifyQF, _ = scrapeQueueFullInt(cfg.MetricsURL)
+			}
 			fireStop(&BreakResult{
 				Dimension: cfg.Dim, Criterion: "duration_elapsed",
 				TimeElapsedSec: time.Since(start).Seconds(), AtClients: int(clientCount.Load()),
+				NotifyDelivered: notifyDel, NotifyQueueFull: notifyQF,
 			})
 			wg.Wait()
 			return breakResult.Load(), nil
@@ -470,6 +610,12 @@ func scrapeQueueFull(metricsURL string) (float64, error) {
 	return 0, nil
 }
 
+// scrapeQueueFullInt is a convenience wrapper that returns int64 for logging.
+func scrapeQueueFullInt(metricsURL string) (int64, error) {
+	v, err := scrapeQueueFull(metricsURL)
+	return int64(v), err
+}
+
 // splitLines splits a byte slice on newline characters.
 func splitLines(b []byte) []string {
 	var lines []string
@@ -517,4 +663,62 @@ func rollingP99(buf []int64) int64 {
 		idx = n - 1
 	}
 	return vals[idx]
+}
+
+// NotifyReceiver is a plain-HTTP listener that counts inbound notification
+// POSTs from the sep2server. It is the loadgen-side counterpart to the
+// server's outbound notification worker: the server POSTs a Notification
+// to NotificationURI (which resolves to this listener), and the receiver
+// counts each successful receipt. This lets the harness distinguish
+// "notifications delivered" from "notifications queued_full-dropped".
+//
+// Lifecycle: call StartNotifyReceiver before Run; call Close after Run.
+// The listener binds on the given port on 0.0.0.0; only loopback runs
+// are expected in the stress harness (loopback bind is equally reachable
+// from the server on the same host).
+type NotifyReceiver struct {
+	srv  *http.Server
+	ln   net.Listener
+	port int
+	mu   sync.Mutex
+	recv atomic.Int64 // total POSTs received
+}
+
+// StartNotifyReceiver starts a plain-HTTP notification receiver on addr
+// (e.g. ":18081"). Returns the receiver and its public URL for use in
+// subscription NotificationURI fields.
+func StartNotifyReceiver(addr string) (*NotifyReceiver, string, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, "", fmt.Errorf("notify receiver listen %s: %w", addr, err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	r := &NotifyReceiver{ln: ln, port: port}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
+		_, _ = io.Copy(io.Discard, req.Body)
+		r.recv.Add(1)
+		w.WriteHeader(http.StatusOK)
+	})
+	r.srv = &http.Server{Handler: mux}
+	go func() {
+		// Serve returns when Close is called; discard the error.
+		_ = r.srv.Serve(ln)
+	}()
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+	return r, url, nil
+}
+
+// Count returns the number of notification POSTs received so far.
+func (r *NotifyReceiver) Count() int64 {
+	return r.recv.Load()
+}
+
+// Close shuts down the receiver.
+func (r *NotifyReceiver) Close() {
+	_ = r.srv.Close()
 }

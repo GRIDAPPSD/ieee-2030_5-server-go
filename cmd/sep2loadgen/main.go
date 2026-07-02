@@ -7,6 +7,12 @@
 //
 // The binary is used by scripts/stress.sh; it is NOT intended to run standalone
 // without the harness (no server lifecycle management here).
+//
+// For the fanout dimension (IEEESRV-010), the binary also:
+//   - Starts a plain-HTTP notification receiver and prints its URL to stderr
+//     so stress.sh can pass it to the subscribe step.
+//   - Drives mutation injection via POST /test/mutations/stress-notify using
+//     the mutation token from MUTATION_TOKEN / -mutation-token.
 package main
 
 import (
@@ -26,17 +32,24 @@ import (
 
 func main() {
 	var (
-		targetHost  = strEnv("TARGET_HOST", "127.0.0.1")
-		targetPort  = intEnv("TARGET_PORT", 8443)
-		clients     = intEnv("CLIENTS", 0)
-		rampRate    = intEnv("RAMP_RATE", 5)
-		durationSec = intEnv("DURATION", 0)
-		dim         = strEnv("DIM", "throughput")
-		ccm         = boolEnv("CCM", false)
-		seed        = uint64Env("SEED", 42)
-		resultsDir  = strEnv("RESULTS_DIR", "results/current")
-		caFile      = strEnv("CA_FILE", "")
-		metricsURL  = strEnv("METRICS_URL", "")
+		targetHost     = strEnv("TARGET_HOST", "127.0.0.1")
+		targetPort     = intEnv("TARGET_PORT", 8443)
+		clients        = intEnv("CLIENTS", 0)
+		rampRate       = intEnv("RAMP_RATE", 5)
+		durationSec    = intEnv("DURATION", 0)
+		dim            = strEnv("DIM", "throughput")
+		ccm            = boolEnv("CCM", false)
+		seed           = uint64Env("SEED", 42)
+		resultsDir     = strEnv("RESULTS_DIR", "results/current")
+		caFile         = strEnv("CA_FILE", "")
+		metricsURL     = strEnv("METRICS_URL", "")
+		mutationToken  = strEnv("MUTATION_TOKEN", "")
+		mutationHref   = strEnv("MUTATION_HREF", "")
+		mutationRateHz = intEnv("MUTATION_RATE_HZ", 0)
+		// RECEIVER_PORT overrides the default port the notification receiver
+		// binds on. 0 = pick a free port (default). The harness reads the
+		// URL from the loadgen's stderr line "notify-receiver-url: <url>".
+		receiverPort = intEnv("RECEIVER_PORT", 0)
 	)
 
 	flag.StringVar(&targetHost, "host", targetHost, "server host")
@@ -49,6 +62,10 @@ func main() {
 	flag.StringVar(&resultsDir, "results-dir", resultsDir, "results output directory")
 	flag.StringVar(&caFile, "ca", caFile, "CA cert PEM file for server trust")
 	flag.StringVar(&metricsURL, "metrics-url", metricsURL, "server Prometheus metrics URL for queue_full criterion (fanout dim)")
+	flag.StringVar(&mutationToken, "mutation-token", mutationToken, "X-CSIP-Test-Token value for stress-notify injection (fanout dim)")
+	flag.StringVar(&mutationHref, "mutation-href", mutationHref, "href for stress-notify mutation (fanout dim; default /edev/stress-fanout/fsa)")
+	flag.IntVar(&mutationRateHz, "mutation-rate-hz", mutationRateHz, "stress-notify calls per second (fanout dim; default 20)")
+	flag.IntVar(&receiverPort, "receiver-port", receiverPort, "notification receiver port (fanout dim; 0=auto)")
 	flag.Parse()
 
 	// Set up logging to loadgen.log in the results dir.
@@ -119,6 +136,35 @@ func main() {
 		thinkMs = 1000
 	}
 
+	// Fanout: start notification receiver so the server has somewhere to
+	// deliver notifications. The receiver URL is printed to stderr as
+	// "notify-receiver-url: <url>" so stress.sh can read it before the
+	// subscribe step (stress.sh runs the setup binary AFTER the load phase
+	// in a sub-shell, so the URL is conveyed via a temp file).
+	var notifyReceiver *loadgen.NotifyReceiver
+	notifyURL := ""
+	if dim == "fanout" {
+		addr := fmt.Sprintf(":%d", receiverPort)
+		rcv, url, err := loadgen.StartNotifyReceiver(addr)
+		if err != nil {
+			logBoth("start notify receiver: %v", err)
+			os.Exit(1)
+		}
+		defer rcv.Close()
+		notifyReceiver = rcv
+		notifyURL = url
+		// Write URL to a file so stress.sh can read it before the subscribe
+		// step. File name is stable per run dir; stress.sh reads it after
+		// the binary prints the "notify-receiver-url" line below.
+		urlFile := filepath.Join(resultsDir, "notify-receiver-url.txt")
+		if werr := os.WriteFile(urlFile, []byte(notifyURL+"\n"), 0o644); werr != nil {
+			logBoth("write notify-receiver-url.txt: %v", werr)
+		}
+		// Print to stderr in a parseable form so the harness can grep it.
+		_, _ = fmt.Fprintln(os.Stderr, "notify-receiver-url: "+notifyURL)
+		logBoth("notify receiver started at %s", notifyURL)
+	}
+
 	cfg := loadgen.Config{
 		TargetHost:     targetHost,
 		TargetPort:     targetPort,
@@ -136,7 +182,20 @@ func main() {
 		LogFile:        lf,
 		QueueFullOnset: dim == "fanout" && metricsURL != "",
 		MetricsURL:     metricsURL,
+		MutationToken:  mutationToken,
+		MutationHref:   mutationHref,
+		MutationRateHz: mutationRateHz,
+		NotifyReceiver: notifyReceiver,
 	}
+
+	// For the fanout dimension, the notification receiver is started above but
+	// subscriptions are registered by stress.sh AFTER the server starts, BEFORE
+	// the load generator is launched. The subscribe step reads notify-receiver-url.txt
+	// from the run dir. Stress.sh runs the setup binary in subscribe mode first,
+	// then launches this binary, so by the time mutation injection begins, subs
+	// are already in place. (The receiver is started early so the URL is known;
+	// it accepts inbound POSTs from the server once the load phase begins.)
+	_ = notifyURL // used indirectly via the file write above
 
 	logBoth("load phase starting")
 	br, err := loadgen.Run(ctx, cfg)
@@ -151,7 +210,8 @@ func main() {
 	if writeErr := os.WriteFile(bpPath, bpData, 0o644); writeErr != nil {
 		logBoth("write breaking-point.json: %v", writeErr)
 	}
-	logBoth("done: criterion=%s clients=%d elapsed=%.1fs", br.Criterion, br.AtClients, br.TimeElapsedSec)
+	logBoth("done: criterion=%s clients=%d elapsed=%.1fs notifyDelivered=%d notifyQueueFull=%d",
+		br.Criterion, br.AtClients, br.TimeElapsedSec, br.NotifyDelivered, br.NotifyQueueFull)
 }
 
 func strEnv(key, def string) string {

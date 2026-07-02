@@ -1,19 +1,28 @@
 // cmd/sep2stress-setup generates PKI and registers virtual clients for
 // the IEEESRV-007 stress harness.
 //
-// Two modes:
+// Three modes:
 //
 //  1. PKI generation (default): generates a CA + N device certs and writes
 //     them under -out-dir.
 //
 //  2. Client registration (-register): reads device certs from -pki-dir and
 //     POSTs to POST /edev on the server to register each device before load.
+//     Writes edev-manifest.json to -pki-dir listing the assigned edev IDs
+//     so the subscribe mode can read them.
+//
+//  3. Subscription registration (-subscribe): reads edev-manifest.json and
+//     device certs from -pki-dir, then POSTs a Subscription for each device
+//     pointing at -notify-url. Used by the fanout dimension to seed the
+//     subscription worker pool with real subscribers. IEEESRV-010.
 package main
 
 import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
+	"encoding/xml"
 	"flag"
 	"fmt"
 	"io"
@@ -22,22 +31,41 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
+	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
 )
 
 func main() {
 	var (
 		register  = flag.Bool("register", false, "register mode: POST /edev for each device cert")
+		subscribe = flag.Bool("subscribe", false, "subscribe mode: POST /edev/{id}/sub for each registered device")
 		seed      = flag.Uint64("seed", 42, "RNG seed for PKI generation")
 		count     = flag.Int("count", 5, "number of device certs to generate")
 		outDir    = flag.String("out-dir", "", "PKI output directory (PKI mode)")
-		pkiDir    = flag.String("pki-dir", "", "PKI directory to read certs from (register mode)")
-		serverURL = flag.String("server", "https://127.0.0.1:8443", "server base URL (register mode)")
+		pkiDir    = flag.String("pki-dir", "", "PKI directory to read certs from (register/subscribe mode)")
+		serverURL = flag.String("server", "https://127.0.0.1:8443", "server base URL (register/subscribe mode)")
 		serverCN  = flag.String("server-cn", "SEP2StressServer", "server cert CommonName (PKI mode)")
+		// notifyURL is the plain-HTTP URL where the loadgen receiver listens.
+		// The server POSTs outbound Notifications here; it does not need mTLS
+		// because the receiver is a plain HTTP listener owned by the harness.
+		notifyURL = flag.String("notify-url", "", "notification receiver URL (subscribe mode, e.g. http://127.0.0.1:18081)")
+		// subscribedResource is the href the subscriptions point at. Each device's
+		// own /edev/{id}/fsa list is the natural choice for the fanout path:
+		// stress-notify fires against that href and the server fans out to all
+		// subscribers of that resource.
+		subscribedResource = flag.String("subscribed-resource", "", "subscribed-resource href per device (subscribe mode; default: /edev/{id}/fsa)")
 	)
 	flag.Parse()
+
+	if *subscribe {
+		if err := runSubscribe(*pkiDir, *serverURL, *count, *notifyURL, *subscribedResource); err != nil {
+			log.Fatalf("subscribe: %v", err)
+		}
+		return
+	}
 
 	if *register {
 		if err := runRegister(*pkiDir, *serverURL, *count); err != nil {
@@ -49,6 +77,17 @@ func main() {
 	if err := runGenPKI(*outDir, *serverCN, *seed, *count); err != nil {
 		log.Fatalf("gen pki: %v", err)
 	}
+}
+
+// edevManifest is the JSON file written by runRegister so runSubscribe can
+// read back the assigned edev IDs without re-registering.
+type edevManifest struct {
+	EdevIDs []string `json:"edev_ids"`
+}
+
+// manifestPath returns the canonical path for edev-manifest.json in pkiDir.
+func manifestPath(pkiDir string) string {
+	return filepath.Join(pkiDir, "edev-manifest.json")
 }
 
 // runGenPKI generates a CA, a server cert, and count device certs under outDir.
@@ -126,6 +165,8 @@ func runGenPKI(outDir, serverCN string, seed uint64, count int) error {
 }
 
 // runRegister POSTs to /edev for each device cert to register it with the server.
+// It captures the assigned edev ID from the Location header and writes
+// edev-manifest.json so the subscribe mode can read back IDs without re-registering.
 func runRegister(pkiDir, serverURL string, count int) error {
 	if pkiDir == "" {
 		return fmt.Errorf("-pki-dir required for registration")
@@ -150,7 +191,147 @@ func runRegister(pkiDir, serverURL string, count int) error {
 
 	log.Printf("registering %d clients at %s/edev...", count, serverURL)
 	ok, failed := 0, 0
+	var edevIDs []string
+
 	for i := 0; i < count; i++ {
+		certPath := filepath.Join(pkiDir, fmt.Sprintf("device-%05d.crt", i))
+		keyPath := filepath.Join(pkiDir, fmt.Sprintf("device-%05d.key", i))
+		certPEM, err := os.ReadFile(certPath)
+		if err != nil {
+			log.Printf("  [%d] read cert: %v", i, err)
+			failed++
+			edevIDs = append(edevIDs, "")
+			continue
+		}
+		keyPEM, err := os.ReadFile(keyPath)
+		if err != nil {
+			log.Printf("  [%d] read key: %v", i, err)
+			failed++
+			edevIDs = append(edevIDs, "")
+			continue
+		}
+		tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err != nil {
+			log.Printf("  [%d] key pair: %v", i, err)
+			failed++
+			edevIDs = append(edevIDs, "")
+			continue
+		}
+		client := &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					Certificates: []tls.Certificate{tlsCert},
+					RootCAs:      rootPool,
+					ServerName:   serverHost, // derived from -server flag, not hardcoded
+					MinVersion:   tls.VersionTLS12,
+					MaxVersion:   tls.VersionTLS12,
+				},
+			},
+		}
+		req, err := http.NewRequest(http.MethodPost, serverURL+"/edev", bytes.NewReader(nil))
+		if err != nil {
+			log.Printf("  [%d] build request: %v", i, err)
+			failed++
+			edevIDs = append(edevIDs, "")
+			continue
+		}
+		req.Header.Set("Content-Type", "application/sep+xml")
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("  [%d] POST /edev: %v", i, err)
+			failed++
+			edevIDs = append(edevIDs, "")
+			continue
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+			log.Printf("  [%d] POST /edev: unexpected status %d", i, resp.StatusCode)
+			failed++
+			edevIDs = append(edevIDs, "")
+			continue
+		}
+		// Capture the assigned edev ID from Location: /edev/{id}
+		loc := resp.Header.Get("Location")
+		edevID := edevIDFromLocation(loc)
+		if edevID == "" {
+			log.Printf("  [%d] POST /edev: no Location or unrecognised format %q", i, loc)
+			edevIDs = append(edevIDs, "")
+		} else {
+			edevIDs = append(edevIDs, edevID)
+		}
+		ok++
+	}
+	log.Printf("registration complete: %d ok, %d failed", ok, failed)
+
+	// Write the manifest regardless of partial failure so subscribe mode can
+	// skip blank IDs gracefully.
+	m := edevManifest{EdevIDs: edevIDs}
+	mb, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal manifest: %w", err)
+	}
+	if werr := os.WriteFile(manifestPath(pkiDir), mb, 0o644); werr != nil {
+		return fmt.Errorf("write manifest: %w", werr)
+	}
+	log.Printf("edev-manifest.json written (%d IDs)", len(edevIDs))
+
+	if failed > 0 {
+		return fmt.Errorf("%d registrations failed", failed)
+	}
+	return nil
+}
+
+// runSubscribe POSTs a Subscription for each registered device, pointing
+// the notificationURI at notifyURL. The subscribed-resource for each device
+// defaults to /edev/{id}/fsa (the device's FSAList), which is what the
+// stress-notify mutation fans out against. IEEESRV-010.
+func runSubscribe(pkiDir, serverURL string, count int, notifyURL, subscribedResource string) error {
+	if pkiDir == "" {
+		return fmt.Errorf("-pki-dir required for subscription registration")
+	}
+	if notifyURL == "" {
+		return fmt.Errorf("-notify-url required for subscription registration")
+	}
+
+	// Read the edev manifest written by runRegister.
+	mf, err := readManifest(pkiDir)
+	if err != nil {
+		return fmt.Errorf("read edev manifest: %w", err)
+	}
+
+	// Read CA for server trust.
+	caCertPEM, err := os.ReadFile(filepath.Join(pkiDir, "ca.crt"))
+	if err != nil {
+		return fmt.Errorf("read ca.crt: %w", err)
+	}
+	rootPool := x509.NewCertPool()
+	if !rootPool.AppendCertsFromPEM(caCertPEM) {
+		return fmt.Errorf("no certs in ca.crt")
+	}
+	serverHost, err := hostFromURL(serverURL)
+	if err != nil {
+		return fmt.Errorf("parse server URL: %w", err)
+	}
+
+	// cap to min(count, len(mf.EdevIDs))
+	n := count
+	if n > len(mf.EdevIDs) {
+		n = len(mf.EdevIDs)
+	}
+
+	log.Printf("subscribing %d devices (notifyURL=%s)...", n, notifyURL)
+	ok, failed, skipped := 0, 0, 0
+
+	for i := 0; i < n; i++ {
+		edevID := mf.EdevIDs[i]
+		if edevID == "" {
+			log.Printf("  [%d] skipping: no edev ID in manifest (registration failed)", i)
+			skipped++
+			continue
+		}
+
 		certPath := filepath.Join(pkiDir, fmt.Sprintf("device-%05d.crt", i))
 		keyPath := filepath.Join(pkiDir, fmt.Sprintf("device-%05d.key", i))
 		certPEM, err := os.ReadFile(certPath)
@@ -177,13 +358,36 @@ func runRegister(pkiDir, serverURL string, count int) error {
 				TLSClientConfig: &tls.Config{
 					Certificates: []tls.Certificate{tlsCert},
 					RootCAs:      rootPool,
-					ServerName:   serverHost, // derived from -server flag, not hardcoded
+					ServerName:   serverHost,
 					MinVersion:   tls.VersionTLS12,
 					MaxVersion:   tls.VersionTLS12,
 				},
 			},
 		}
-		req, err := http.NewRequest(http.MethodPost, serverURL+"/edev", bytes.NewReader(nil))
+
+		// Each subscription subscribes to the device's own FSAList.
+		// When stress-notify fires Notify on /edev/{id}/fsa the server
+		// looks up all subscriptions with SubscribedResource == that href
+		// and dispatches a notification POST to notifyURL for each one.
+		subResource := subscribedResource
+		if subResource == "" {
+			subResource = "/edev/" + edevID + "/fsa"
+		}
+
+		sub := sep2.Subscription{
+			SubscribedResource: subResource,
+			NotificationURI:    notifyURL,
+			Encoding:           sep2.EncodingXML,
+		}
+		body, err := xml.Marshal(sub)
+		if err != nil {
+			log.Printf("  [%d] marshal subscription: %v", i, err)
+			failed++
+			continue
+		}
+
+		subURL := serverURL + "/edev/" + edevID + "/sub"
+		req, err := http.NewRequest(http.MethodPost, subURL, bytes.NewReader(body))
 		if err != nil {
 			log.Printf("  [%d] build request: %v", i, err)
 			failed++
@@ -192,24 +396,55 @@ func runRegister(pkiDir, serverURL string, count int) error {
 		req.Header.Set("Content-Type", "application/sep+xml")
 		resp, err := client.Do(req)
 		if err != nil {
-			log.Printf("  [%d] POST /edev: %v", i, err)
+			log.Printf("  [%d] POST %s: %v", i, subURL, err)
 			failed++
 			continue
 		}
 		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-			log.Printf("  [%d] POST /edev: unexpected status %d", i, resp.StatusCode)
+			log.Printf("  [%d] POST %s: unexpected status %d", i, subURL, resp.StatusCode)
 			failed++
 			continue
 		}
 		ok++
 	}
-	log.Printf("registration complete: %d ok, %d failed", ok, failed)
+
+	log.Printf("subscription complete: %d ok, %d failed, %d skipped", ok, failed, skipped)
 	if failed > 0 {
-		return fmt.Errorf("%d registrations failed", failed)
+		return fmt.Errorf("%d subscriptions failed", failed)
 	}
 	return nil
+}
+
+// readManifest reads edev-manifest.json from pkiDir.
+func readManifest(pkiDir string) (*edevManifest, error) {
+	b, err := os.ReadFile(manifestPath(pkiDir))
+	if err != nil {
+		return nil, err
+	}
+	var m edevManifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// edevIDFromLocation extracts the edev ID from a Location header value
+// of the form "/edev/{id}" (with or without a leading slash).
+// Returns "" when the header is blank or unrecognised.
+func edevIDFromLocation(loc string) string {
+	if loc == "" {
+		return ""
+	}
+	// Strip leading slash for consistent splitting.
+	loc = strings.TrimPrefix(loc, "/")
+	parts := strings.SplitN(loc, "/", 3)
+	// parts[0]="edev", parts[1]="{id}"
+	if len(parts) >= 2 && parts[0] == "edev" && parts[1] != "" {
+		return parts[1]
+	}
+	return ""
 }
 
 // hostFromURL extracts the hostname (without port) from a URL string.

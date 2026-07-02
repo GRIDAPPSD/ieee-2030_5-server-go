@@ -1,6 +1,6 @@
 # IEEE 2030.5 Stress Test Harness: Design of Record
 
-Card: IEEESRV-007
+Cards: IEEESRV-007, IEEESRV-010
 Author: Devi (interoperability/conformance)
 
 ## Placement Rationale
@@ -59,6 +59,11 @@ Every run launches the real `sep2server` binary (built from the current worktree
 This is mandatory: in-process sharing (via `csiptest.BootServer`) contaminates
 CPU and memory attribution between driver and server.
 
+For the **fanout dimension**, the server is built with `-tags csip_test_hooks` so
+the `/test/mutations/stress-notify` endpoint is compiled in. This tagged binary is
+written to `bin/sep2server-fanout` and is not committed. The token
+(`SEP2_TEST_MUTATION_TOKEN`) is generated fresh per fanout run and is never committed.
+
 The harness:
 1. Generates a run-scoped CA + N device certs in `<run-dir>/pki/` at startup.
 2. Writes server cert/key/CA files to `<run-dir>/pki/server.*`.
@@ -76,7 +81,9 @@ client. Each cert has a unique `HWSerialNum` of the form `STRESS-<seed>-<index>`
 The CA and device certs are written to `<run-dir>/pki/` before the server starts.
 The server is given `SEP2_EXTRA_CLIENT_CAS=<ca.crt path>` so it trusts the generated
 device certs. For each virtual client, the harness also registers the device with the
-server (POST /edev) before the load phase; this ensures routes resolve.
+server (POST /edev) before the load phase; this ensures routes resolve. The setup binary
+writes `edev-manifest.json` recording the assigned edev IDs (extracted from the Location
+header of each POST /edev response) for use in the subscribe step.
 
 ### Load driver
 
@@ -90,19 +97,56 @@ Ramp controller: spawns `RAMP_RATE` clients per second until `CLIENTS` is reache
 (or until a breaking-point criterion fires). With `CLIENTS=0` (open-ended), ramp
 continues until criterion fires.
 
-### Subscription fan-out (real sim cohort)
+### Subscription fan-out (IEEESRV-010)
 
-For the fan-out dimension, a small cohort of real `inverterclient` binaries (5 per
-run, configurable via `REAL_SIMS`) run alongside the lean load driver. They exercise
-the full subscription/notification round trip. The lean driver drives throughput;
-the real sims drive subscription churn.
+For the fan-out dimension, the harness exercises the full subscription/notification
+round trip using only the lean load generator (no separate inverterclient binary is
+needed or launched). The sequence is:
+
+1. **Notification receiver**: `sep2loadgen` starts a plain-HTTP listener on an
+   auto-assigned port. The server POSTs outbound notifications here. The URL is
+   written to `<run-dir>/notify-receiver-url.txt`.
+
+2. **Subscription registration**: after the receiver URL is known, the setup binary
+   (`sep2stress-setup -subscribe`) POSTs to `POST /edev/{id}/sub` for each
+   registered device, setting `notificationURI` to the receiver URL and
+   `subscribedResource` to `/edev/{id}/fsa`.
+
+3. **Notification injection**: a goroutine inside `sep2loadgen` fires
+   `POST /test/mutations/stress-notify` at `MUTATION_RATE_HZ` calls/second (default
+   20 Hz). The mutation token authenticates via `X-CSIP-Test-Token`. Each call
+   invokes `notifier.Notify(ctx, href, Changed)` inside the server, which enqueues
+   work onto the 4-worker/256-queue pool and dispatches notification POSTs to all
+   subscribers of that href.
+
+4. **Measurement**: the criteria goroutine scrapes
+   `sep2_subscription_notifications_total{outcome="queue_full"}` every 2 seconds.
+   When that counter goes non-zero, the break criterion fires. The receiver count
+   (`notify_delivered`) and queue-full count are both stamped into
+   `breaking-point.json` at break time.
+
+5. **Validity**: a valid fanout result requires `notify_delivered > 0` at break time,
+   confirming the notification delivery path was genuinely exercised (not a false
+   break from a missing subscription or receiver). A `duration_elapsed` result with
+   `notify_delivered == 0` is a harness misconfiguration.
+
+**Build tag discipline**: only the fanout run builds and uses the
+`csip_test_hooks`-tagged binary. All other dimensions use the standard (untagged)
+binary. The `Makefile` `stress-test` target passes the tag only when `DIM=fanout`.
+The token is generated fresh each run (`python3 -c 'import secrets; ...'`) and is
+not committed anywhere.
+
+**REAL_SIMS removed**: an earlier design planned a real `inverterclient` binary
+cohort controlled by `REAL_SIMS`. That parameter was accepted by the script but
+never wired to any binary invocation. It has been removed. If a real-world client
+fidelity cohort is wanted in the future, that belongs in a separate card.
 
 ## Per-Dimension Parameters
 
 | DIM | Description |
 |---|---|
 | `throughput` | GET /dcap+/tm+/edev round-robin, zero think time, GCM. Ramp until p99 > 500ms or error rate > 1%. |
-| `fanout` | Fix HTTP load at 50% of throughput knee. Ramp subscriptions. Break: queue_full rate > 0. |
+| `fanout` | Ramp subscribers. Inject notifications at 20 Hz via stress-notify mutation. Break: queue_full counter goes non-zero. |
 | `soak` | Fixed load 2h (CI: 10min). Break: monotonic growth in heap/goroutine/fd across 3 windows. |
 | `tls` | CCM-8 mode, new connection per request (no keepalive). Break: handshake error rate > 0.1% or p99 > 1s. |
 
@@ -127,15 +171,20 @@ results/<YYYYMMDD-HHMMSS>-<dim>-<clients>/
   params.json               # all run parameters including SEED, host limits applied
   server.log                # sep2server stdout+stderr
   loadgen.log               # load generator stdout
+  loadgen-stdout.txt        # raw loadgen stdout (fanout only; appended to loadgen.log)
+  notify-receiver-url.txt   # notification receiver URL (fanout only)
   metrics-series.jsonl      # one JSON line per /metrics scrape (5s interval)
   client-latency.jsonl      # one JSON line per request: {t_send,t_recv_ms,status,endpoint,client_id}
   breaking-point.json       # verdict: dimension, criterion, value_at_break, time_elapsed_s,
-                            #          host_limited (bool), at_clients
+                            #          host_limited (bool), at_clients,
+                            #          notify_delivered, notify_queue_full (fanout only)
   at-breaking-point/        # captured at first criterion breach
-    heap.prof
-    goroutines.txt
     metrics-final.txt
-  pki/                      # generated CA + per-client certs (for re-use / audit)
+  pki/
+    edev-manifest.json      # assigned edev IDs from POST /edev Location headers
+    ca.crt, ca.key
+    server.crt, server.key
+    device-00000.crt, ...   # per-client certs
   server-data/              # sep2server data dir preserved post-teardown
 ```
 
@@ -151,8 +200,10 @@ results/<YYYYMMDD-HHMMSS>-<dim>-<clients>/
 | `TARGET_PORT` | harness | server port (default 8443) |
 | `CCM` | harness | enable CCM-8 on server and clients (default false) |
 | `SEED` | harness | deterministic RNG seed (default 42) |
-| `REAL_SIMS` | harness | count of real inverterclient instances for fan-out (default 0) |
 | `SCRAPE_INTERVAL` | harness | seconds between /metrics scrapes (default 5) |
+| `MUTATION_RATE_HZ` | fanout | stress-notify calls per second (default 20) |
+| `MUTATION_TOKEN` | fanout | pre-set token; auto-generated when empty |
+| `RECEIVER_PORT` | fanout | notification receiver port (0 = auto-assign) |
 | `SEP2_SUBSCRIPTION_WORKERS` | IEEESRV-008 | forwarded to server; unset = server default (4) |
 | `SEP2_SUBSCRIPTION_QUEUE_SIZE` | IEEESRV-008 | forwarded to server; unset = server default (256) |
 
@@ -164,5 +215,9 @@ results/<YYYYMMDD-HHMMSS>-<dim>-<clients>/
    load starts, so the server has a valid EndDevice for each virtual client.
    Without registration, /edev/{id} routes 404 and the load would not exercise
    real handler paths.
-3. The `REAL_SIMS` cohort is wired at the fan-out dimension only, not throughput
-   or soak, to avoid the fan-out from confounding the throughput baseline.
+3. The `REAL_SIMS` variable (planned cohort of real inverterclient binaries) was
+   never implemented and has been removed. IEEESRV-010 closes the fanout workload
+   gap using the lean loadgen itself: subscription registration, a notification
+   receiver, and mutation injection via the csip_test_hooks surface.
+4. The fanout dimension now builds sep2server with `-tags csip_test_hooks` for the
+   `/test/mutations/stress-notify` endpoint. The token is ephemeral per run.

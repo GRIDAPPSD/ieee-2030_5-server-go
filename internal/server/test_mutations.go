@@ -2,7 +2,7 @@
 
 // Build-tag-gated test-only mutation HTTP surface for the CSIP V1.2
 // conformance harness. These endpoints simulate utility-side topology and
-// program edits that the spec models as out-of-band — they exist solely
+// program edits that the spec models as out-of-band: they exist solely
 // to drive BASIC-003 and MAINT-001/MAINT-003..006 and CORE-006 tests and
 // are NOT compiled into production binaries.
 //
@@ -84,6 +84,7 @@ func RegisterMutationHandlers(top *http.ServeMux, stores *Stores, notifier handl
 	mux.HandleFunc("POST /test/mutations/time-advance", handleTimeAdvance(stores))
 	mux.HandleFunc("POST /test/mutations/fsa-swap", handleFSASwap(stores))
 	mux.HandleFunc("POST /test/mutations/subscription-cancel", handleSubscriptionCancel(stores))
+	mux.HandleFunc("POST /test/mutations/stress-notify", handleStressNotify(notifier))
 
 	top.Handle("/test/mutations/", tokenAuthMiddleware(token, mux))
 	log.Printf("csip_test_hooks: test mutation surface enabled at /test/mutations/ (token auth)")
@@ -575,6 +576,50 @@ func handleSubscriptionCancel(stores *Stores) http.HandlerFunc {
 		// server's authoritative delete history.
 		coresub.MarkSubscriptionCanceled(req.SubscriptionID)
 
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// --- /test/mutations/stress-notify (IEEESRV-010) ---
+
+// stressNotifyRequest is the JSON body for /test/mutations/stress-notify.
+// Href is the subscribable-resource href to fan notifications to; Status
+// is the sep2.NotificationStatus* value (default 2 = Changed). The
+// endpoint exists solely to drive the subscription worker pool from the
+// stress harness without requiring any pre-existing store object (unlike
+// derctl-add which requires a DERProgram parent). Production builds never
+// compile this code path.
+type stressNotifyRequest struct {
+	Href   string `json:"href"`
+	Status *uint8 `json:"status,omitempty"`
+}
+
+// handleStressNotify calls notifier.Notify for the given href and status.
+// Returns 204 on success and 400 on a missing or malformed body. When
+// the notifier is nil (e.g. a unit test that passes nil), the endpoint
+// is a no-op and returns 204 so callers do not need to guard separately.
+//
+// The queue is bounded (subscriptionQueueSize=256 by default); the endpoint
+// is intentionally non-blocking so the caller can fire at a rate higher than
+// the worker pool drains and naturally drive the queue_full counter.
+func handleStressNotify(notifier handler.ResourceNotifier) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req stressNotifyRequest
+		if err := readJSON(r, &req); err != nil {
+			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Href == "" {
+			http.Error(w, "bad request: href required", http.StatusBadRequest)
+			return
+		}
+		status := sep2.NotificationStatusChanged
+		if req.Status != nil {
+			status = *req.Status
+		}
+		if notifier != nil {
+			notifier.Notify(r.Context(), req.Href, status)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

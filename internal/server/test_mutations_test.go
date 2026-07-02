@@ -1382,3 +1382,110 @@ func TestSubscriptionCancel_Race(t *testing.T) {
 		}
 	}
 }
+
+// --- /test/mutations/stress-notify (IEEESRV-010) ---
+
+const tmStressNotify = "/test/mutations/stress-notify"
+
+// TestStressNotify_CallsNotifier verifies that a well-formed request causes
+// the handler to call notifier.Notify with the supplied href and status.
+// This is the wire-level gate: the subscription worker pool is exercised
+// by whatever Notify implementation is wired in (here a recordingNotifier
+// stub); the fanout count appears in sep2_subscription_notifications_total
+// under a real server.
+func TestStressNotify_CallsNotifier(t *testing.T) {
+	h, _, n := newRouterWithNotifier(t)
+
+	rr := postJSON(t, h, tmStressNotify, tmTestToken, map[string]any{
+		"href": "/edev/42/fsa",
+	})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rr.Code, rr.Body.String())
+	}
+
+	calls := n.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("Notify calls = %d, want 1: %+v", len(calls), calls)
+	}
+	if calls[0].resourceHref != "/edev/42/fsa" {
+		t.Errorf("Notify href = %q, want /edev/42/fsa", calls[0].resourceHref)
+	}
+	if calls[0].status != sep2.NotificationStatusChanged {
+		t.Errorf("Notify status = %d, want %d (Changed)", calls[0].status, sep2.NotificationStatusChanged)
+	}
+}
+
+// TestStressNotify_CustomStatus verifies that an explicit status field in
+// the request body is passed through to Notify unchanged.
+// Uses NotificationStatusRemoved (3) to confirm the value is not silently
+// clamped to the default (Changed=2).
+func TestStressNotify_CustomStatus(t *testing.T) {
+	h, _, n := newRouterWithNotifier(t)
+
+	customStatus := sep2.NotificationStatusRemoved
+	rr := postJSON(t, h, tmStressNotify, tmTestToken, map[string]any{
+		"href":   "/edev/7/fsa",
+		"status": customStatus,
+	})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204: %s", rr.Code, rr.Body.String())
+	}
+
+	calls := n.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("Notify calls = %d, want 1", len(calls))
+	}
+	if calls[0].status != customStatus {
+		t.Errorf("Notify status = %d, want %d (NotificationStatusRemoved)", calls[0].status, customStatus)
+	}
+}
+
+// TestStressNotify_NilNotifier verifies that a nil notifier is a no-op:
+// the endpoint returns 204 (not a panic or 500) so the injection goroutine
+// can fire safely even before subscriptions are registered.
+func TestStressNotify_NilNotifier(t *testing.T) {
+	// Build router with no notifier (nil passed through).
+	t.Setenv(tmTokenEnv, tmTestToken)
+	stores := newTestStores()
+	cfg := &config.Config{}
+	h, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", nil)
+
+	rr := postJSON(t, h, tmStressNotify, tmTestToken, map[string]any{
+		"href": "/edev/99/fsa",
+	})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (nil notifier must not panic): %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestStressNotify_MissingHref verifies that a request without an href
+// field returns 400.
+func TestStressNotify_MissingHref(t *testing.T) {
+	h, _, _ := newRouterWithNotifier(t)
+	rr := postJSON(t, h, tmStressNotify, tmTestToken, map[string]any{})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+// TestStressNotify_EmptyBody verifies that a request with no body returns 400.
+func TestStressNotify_EmptyBody(t *testing.T) {
+	h, _, _ := newRouterWithNotifier(t)
+	req := httptest.NewRequest(http.MethodPost, tmStressNotify, nil)
+	req.Header.Set(tmTokenHdr, tmTestToken)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+// TestStressNotify_Unauthorized verifies that a missing token returns 401,
+// consistent with the rest of the mutation surface.
+func TestStressNotify_Unauthorized(t *testing.T) {
+	h, _, _ := newRouterWithNotifier(t)
+	rr := postJSON(t, h, tmStressNotify, "", map[string]any{"href": "/edev/1/fsa"})
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+}

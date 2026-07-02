@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/stress.sh: IEEE 2030.5 stress test harness for IEEESRV-007.
+# scripts/stress.sh: IEEE 2030.5 stress test harness for IEEESRV-007/010.
 #
 # Usage: DIM=throughput CLIENTS=5 DURATION=30 bash scripts/stress.sh
 #
@@ -8,10 +8,12 @@
 #  1. Warns if kernel parameters are under-tuned.
 #  2. Generates a run-scoped PKI (CA + N device certs).
 #  3. Builds the server and load generator binaries.
+#     For DIM=fanout, builds sep2server with -tags csip_test_hooks.
 #  4. Launches sep2server out-of-process (fresh data dir per run).
 #  5. Registers all virtual clients via POST /edev.
-#  6. Runs sep2loadgen for the load phase.
-#  7. Tears down the server and preserves results/.
+#  6. For DIM=fanout: subscribes each client via POST /edev/{id}/sub.
+#  7. Runs sep2loadgen for the load phase.
+#  8. Tears down the server and preserves results/.
 
 set -euo pipefail
 
@@ -25,8 +27,17 @@ TARGET_PORT="${TARGET_PORT:-8443}"
 METRICS_PORT="${METRICS_PORT:-9100}"
 CCM="${CCM:-false}"
 SEED="${SEED:-42}"
-REAL_SIMS="${REAL_SIMS:-0}"
 SCRAPE_INTERVAL="${SCRAPE_INTERVAL:-5}"
+
+# Fanout-specific parameters (IEEESRV-010).
+# MUTATION_TOKEN is the shared secret for /test/mutations/stress-notify.
+# It is generated fresh per fanout run when not set (do not commit a value).
+MUTATION_TOKEN="${MUTATION_TOKEN:-}"
+MUTATION_RATE_HZ="${MUTATION_RATE_HZ:-20}"
+RECEIVER_PORT="${RECEIVER_PORT:-0}"
+# MUTATION_HREF: derived from edev-manifest.json after registration when not
+# explicitly set. Set this to override (e.g. MUTATION_HREF=/edev/some-id/fsa).
+MUTATION_HREF="${MUTATION_HREF:-}"
 
 # IEEESRV-008 sweep support: pass through when set; leave unset for defaults.
 # These are forwarded to sep2server if present in the environment.
@@ -39,6 +50,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 RESULTS_ROOT="${REPO_ROOT}/test/stress/results"
 SCRAPE_PID=""
 SERVER_PID=""
+LOADGEN_PID=""
 TS="$(date +%Y%m%d-%H%M%S)"
 RUN_ID="${TS}-${DIM}-${CLIENTS}"
 RUN_DIR="${RESULTS_ROOT}/${RUN_ID}"
@@ -47,6 +59,9 @@ DATA_DIR="${RUN_DIR}/server-data"
 ATBP_DIR="${RUN_DIR}/at-breaking-point"
 
 SERVER_BIN="${REPO_ROOT}/bin/sep2server"
+# For the fanout dimension we need a server built with -tags csip_test_hooks
+# so the /test/mutations/stress-notify endpoint is compiled in.
+SERVER_BIN_FANOUT="${REPO_ROOT}/bin/sep2server-fanout"
 LOADGEN_BIN="${REPO_ROOT}/bin/sep2loadgen"
 SETUP_BIN="${REPO_ROOT}/bin/sep2stress-setup"
 
@@ -101,12 +116,26 @@ if [ "${CLIENTS}" -gt 500 ] && [ "${NPROC}" -lt 4 ]; then
     HOST_LIMIT_REASON="${HOST_LIMIT_REASON} goroutine_saturation_likely"
 fi
 
+# ---- fanout: generate mutation token if not provided ----------------------
+if [ "${DIM}" = "fanout" ] && [ -z "${MUTATION_TOKEN}" ]; then
+    MUTATION_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
+    log "fanout: generated mutation token (not committed)"
+fi
+
 # ---- build binaries --------------------------------------------------------
 log "building binaries..."
 cd "$REPO_ROOT"
-go build -o "${SERVER_BIN}" ./cmd/sep2server 2>&1 | tee /dev/stderr
 go build -o "${LOADGEN_BIN}" ./cmd/sep2loadgen 2>&1 | tee /dev/stderr
 go build -o "${SETUP_BIN}" ./test/stress/cmd/sep2stress-setup 2>&1 | tee /dev/stderr
+
+if [ "${DIM}" = "fanout" ]; then
+    log "fanout: building sep2server with -tags csip_test_hooks..."
+    go build -tags csip_test_hooks -o "${SERVER_BIN_FANOUT}" ./cmd/sep2server 2>&1 | tee /dev/stderr
+    ACTIVE_SERVER_BIN="${SERVER_BIN_FANOUT}"
+else
+    go build -o "${SERVER_BIN}" ./cmd/sep2server 2>&1 | tee /dev/stderr
+    ACTIVE_SERVER_BIN="${SERVER_BIN}"
+fi
 log "binaries built"
 
 # ---- create result directories --------------------------------------------
@@ -124,10 +153,10 @@ cat > "${RUN_DIR}/params.json" <<PARAMS
   "target_port": ${TARGET_PORT},
   "ccm": ${CCM},
   "seed": ${SEED},
-  "real_sims": ${REAL_SIMS},
   "scrape_interval_sec": ${SCRAPE_INTERVAL},
   "sub_workers": "${SEP2_SUBSCRIPTION_WORKERS:-default}",
   "sub_queue_size": "${SEP2_SUBSCRIPTION_QUEUE_SIZE:-default}",
+  "mutation_rate_hz": ${MUTATION_RATE_HZ},
   "host_limited": ${HOST_LIMITED},
   "host_limit_reason": "${HOST_LIMIT_REASON}"
 }
@@ -192,8 +221,13 @@ fi
 if [ -n "${SEP2_SUBSCRIPTION_QUEUE_SIZE}" ]; then
     SERVER_ENV+=("SEP2_SUBSCRIPTION_QUEUE_SIZE=${SEP2_SUBSCRIPTION_QUEUE_SIZE}")
 fi
+# For the fanout dim: supply the mutation token so the server enables
+# /test/mutations/stress-notify (csip_test_hooks build).
+if [ "${DIM}" = "fanout" ]; then
+    SERVER_ENV+=("SEP2_TEST_MUTATION_TOKEN=${MUTATION_TOKEN}")
+fi
 
-env "${SERVER_ENV[@]}" "${SERVER_BIN}" serve \
+env "${SERVER_ENV[@]}" "${ACTIVE_SERVER_BIN}" serve \
     > "${RUN_DIR}/server.log" 2>&1 &
 SERVER_PID=$!
 log "sep2server started (pid=${SERVER_PID})"
@@ -203,6 +237,8 @@ cleanup() {
     local exit_code=$?
     # Stop the metrics scrape loop if it is still running.
     kill "${SCRAPE_PID}" 2>/dev/null || true
+    # Stop the background loadgen if it is still running (fanout only).
+    kill "${LOADGEN_PID}" 2>/dev/null || true
     log "teardown: sending SIGTERM to sep2server (pid=${SERVER_PID})"
     kill -TERM "${SERVER_PID}" 2>/dev/null || true
     local waited=0
@@ -240,7 +276,30 @@ log "registering ${CLIENTS} virtual clients via POST /edev..."
     -pki-dir "${PKI_DIR}" \
     -count "${CLIENTS}" \
     -server "https://${TARGET_HOST}:${TARGET_PORT}"
-log "all clients registered"
+log "all clients registered (edev-manifest.json written)"
+
+# For the fanout dimension, derive MUTATION_HREF from the first edev ID in the
+# manifest so the stress-notify mutation fires against a href that real
+# subscriptions are watching. Each subscriber registers /edev/{id}/fsa;
+# the mutation must target one of those hrefs to trigger delivery.
+# Using the first registered device is sufficient for queue_full
+# characterization: every subscriber of that href gets a notification task
+# enqueued on each mutation call.
+if [ "${DIM}" = "fanout" ] && [ -z "${MUTATION_HREF:-}" ]; then
+    FIRST_EDEV_ID="$(python3 -c "
+import json, sys
+m = json.load(open('${PKI_DIR}/edev-manifest.json'))
+ids = [x for x in m.get('edev_ids', []) if x]
+if ids:
+    print(ids[0])
+")"
+    if [ -n "${FIRST_EDEV_ID}" ]; then
+        MUTATION_HREF="/edev/${FIRST_EDEV_ID}/fsa"
+        log "fanout: mutation href set to ${MUTATION_HREF}"
+    else
+        log "WARNING: could not derive mutation href from manifest; using default"
+    fi
+fi
 
 # ---- metrics scrape loop (started AFTER registration to avoid registration
 #      traffic contaminating the load-phase scrape series) --------------------
@@ -265,17 +324,81 @@ SCRAPE_PID=$!
 # ---- load phase ------------------------------------------------------------
 log "starting load phase: dim=${DIM} clients=${CLIENTS} duration=${DURATION}s"
 
-"${LOADGEN_BIN}" \
-    -host "${TARGET_HOST}" \
-    -port "${TARGET_PORT}" \
-    -clients "${CLIENTS}" \
-    -ramp-rate "${RAMP_RATE}" \
-    -duration "${DURATION}" \
-    -dim "${DIM}" \
-    -ccm="${CCM}" \
-    -results-dir "${RUN_DIR}" \
-    -ca "${PKI_DIR}/ca.crt" \
+LOADGEN_COMMON_ARGS=(
+    -host "${TARGET_HOST}"
+    -port "${TARGET_PORT}"
+    -clients "${CLIENTS}"
+    -ramp-rate "${RAMP_RATE}"
+    -duration "${DURATION}"
+    -dim "${DIM}"
+    -ccm="${CCM}"
+    -results-dir "${RUN_DIR}"
+    -ca "${PKI_DIR}/ca.crt"
     -metrics-url "${METRICS_URL}"
+)
+
+if [ "${DIM}" = "fanout" ]; then
+    # Fanout sequence (IEEESRV-010):
+    # a) Start loadgen in background; it starts the notification receiver
+    #    and writes notify-receiver-url.txt to RUN_DIR.
+    # b) Wait for the URL file (up to 10s).
+    # c) Run the subscribe step so subs are in place before mutation begins.
+    # d) Wait for loadgen to finish (duration or criterion).
+    #
+    # The loadgen starts mutation injection in Run() on the first rampTicker
+    # tick (~1s after start), so we have at most 1s to get subs registered.
+    # The subscribe step is fast (N sequential HTTP POSTs); it completes well
+    # within 1s for small CLIENTS values and typically within a few seconds
+    # for large ones. For very large client counts the first mutations may
+    # fire before all subs are registered; this is acceptable because the
+    # queue_full criterion is measured over many events, not just the first.
+
+    FANOUT_EXTRA_ARGS=(
+        -mutation-token "${MUTATION_TOKEN}"
+        -mutation-rate-hz "${MUTATION_RATE_HZ}"
+        -receiver-port "${RECEIVER_PORT}"
+    )
+    if [ -n "${MUTATION_HREF:-}" ]; then
+        FANOUT_EXTRA_ARGS+=(-mutation-href "${MUTATION_HREF}")
+    fi
+
+    "${LOADGEN_BIN}" \
+        "${LOADGEN_COMMON_ARGS[@]}" \
+        "${FANOUT_EXTRA_ARGS[@]}" \
+        > "${RUN_DIR}/loadgen-stdout.txt" 2>&1 &
+    LOADGEN_PID=$!
+
+    # Wait for the receiver URL file.
+    NOTIFY_URL_FILE="${RUN_DIR}/notify-receiver-url.txt"
+    notify_wait=0
+    while [ ! -f "${NOTIFY_URL_FILE}" ] && [ "$notify_wait" -lt 10 ]; do
+        sleep 1
+        notify_wait=$(( notify_wait + 1 ))
+    done
+    if [ ! -f "${NOTIFY_URL_FILE}" ]; then
+        die "loadgen did not write notify-receiver-url.txt within 10s; check ${RUN_DIR}/loadgen-stdout.txt"
+    fi
+    NOTIFY_URL="$(tr -d '\n' < "${NOTIFY_URL_FILE}")"
+    log "fanout: notification receiver at ${NOTIFY_URL}"
+
+    # Subscribe all registered devices.
+    log "fanout: subscribing ${CLIENTS} devices (notifyURL=${NOTIFY_URL})..."
+    "${SETUP_BIN}" \
+        -subscribe \
+        -pki-dir "${PKI_DIR}" \
+        -count "${CLIENTS}" \
+        -server "https://${TARGET_HOST}:${TARGET_PORT}" \
+        -notify-url "${NOTIFY_URL}"
+    log "fanout: subscription registration complete"
+
+    # Wait for loadgen to finish.
+    wait "${LOADGEN_PID}" || true
+    LOADGEN_PID=""
+    # Append loadgen stdout to the standard log location.
+    cat "${RUN_DIR}/loadgen-stdout.txt" >> "${RUN_DIR}/loadgen.log" 2>/dev/null || true
+else
+    "${LOADGEN_BIN}" "${LOADGEN_COMMON_ARGS[@]}"
+fi
 
 log "load phase complete"
 

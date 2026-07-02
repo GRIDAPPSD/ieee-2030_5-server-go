@@ -312,39 +312,45 @@ test-csip-cover:          ## Run CSIP suite with scoped coverage profile (writes
 coverage-gate:            ## Enforce CSIP coverage floor on coverage-csip.out
 	./scripts/coverage-gate.sh coverage-csip.out $(CSIP_COVER_THRESHOLD)
 
-# --- Stress Test (IEEESRV-007) ---
+# --- Stress Test (IEEESRV-007/010) ---
 #
 # Usage examples:
-#   make stress-test                            # smoke: 5 clients, 30s, throughput
-#   make stress-test CLIENTS=100 DURATION=300   # throughput ramp
-#   make stress-test DIM=fanout CLIENTS=50      # subscription fan-out
-#   make stress-test DIM=soak DURATION=7200     # 2h soak
-#   make stress-test DIM=tls CCM=true           # TLS/CCM exhaustion
+#   make stress-test                              # smoke: 5 clients, 30s, throughput
+#   make stress-test CLIENTS=100 DURATION=300     # throughput ramp
+#   make stress-test DIM=fanout CLIENTS=10 DURATION=60  # fanout smoke (10 subs, 60s)
+#   make stress-test DIM=fanout CLIENTS=0 DURATION=1800 # fanout break-point run (open-ended)
+#   make stress-test DIM=soak DURATION=7200       # 2h soak
+#   make stress-test DIM=tls CCM=true             # TLS/CCM exhaustion
 #
-# Sweep subscription workers/queue (requires IEEESRV-008 on the server):
+# Sweep subscription workers/queue (IEEESRV-008):
 #   SEP2_SUBSCRIPTION_WORKERS=8 SEP2_SUBSCRIPTION_QUEUE_SIZE=512 \
 #     make stress-test DIM=fanout CLIENTS=50
 #
 # Parameters (all optional, defaults shown):
-#   DIM=throughput      dimension: throughput|fanout|soak|tls
-#   CLIENTS=5           virtual client count (0=open-ended ramp)
-#   RAMP_RATE=5         clients added per second
-#   DURATION=30         run duration in seconds (0=unlimited, break only)
+#   DIM=throughput        dimension: throughput|fanout|soak|tls
+#   CLIENTS=5             virtual client count (0=open-ended ramp)
+#   RAMP_RATE=5           clients added per second
+#   DURATION=30           run duration in seconds (0=unlimited, break only)
 #   TARGET_HOST=127.0.0.1
 #   TARGET_PORT=8443
-#   CCM=false           enable CCM-8 cipher
-#   SEED=42             deterministic RNG seed
-#   SCRAPE=5            Prometheus scrape interval in seconds
+#   CCM=false             enable CCM-8 cipher
+#   SEED=42               deterministic RNG seed
+#   SCRAPE=5              Prometheus scrape interval in seconds
 #
-STRESS_DIM      ?= throughput
-STRESS_CLIENTS  ?= 5
-STRESS_RAMP     ?= 5
-STRESS_DURATION ?= 30
-STRESS_HOST     ?= 127.0.0.1
-STRESS_PORT     ?= 8443
-STRESS_CCM      ?= false
-STRESS_SEED     ?= 42
-STRESS_SCRAPE   ?= 5
+# Fanout-only parameters (IEEESRV-010):
+#   MUTATION_RATE_HZ=20   stress-notify injections per second
+#   MUTATION_TOKEN=       pre-set token (auto-generated per run when empty)
+#
+STRESS_DIM          ?= throughput
+STRESS_CLIENTS      ?= 5
+STRESS_RAMP         ?= 5
+STRESS_DURATION     ?= 30
+STRESS_HOST         ?= 127.0.0.1
+STRESS_PORT         ?= 8443
+STRESS_CCM          ?= false
+STRESS_SEED         ?= 42
+STRESS_SCRAPE       ?= 5
+STRESS_MUTATION_HZ  ?= 20
 
 stress-test: ## Run stress test (smoke: 5 clients, 30s, throughput). See comment above for full usage.
 	DIM=$(STRESS_DIM) \
@@ -356,6 +362,7 @@ stress-test: ## Run stress test (smoke: 5 clients, 30s, throughput). See comment
 	CCM=$(STRESS_CCM) \
 	SEED=$(STRESS_SEED) \
 	SCRAPE_INTERVAL=$(STRESS_SCRAPE) \
+	MUTATION_RATE_HZ=$(STRESS_MUTATION_HZ) \
 	bash test/stress/scripts/stress.sh
 
 # --- Code Quality ---

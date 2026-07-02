@@ -8,7 +8,6 @@
 package loadgen
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -16,10 +15,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"math/rand/v2"
 	"net/http"
 	"os"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,14 +39,14 @@ type Config struct {
 	Duration   time.Duration // 0 = unlimited (run until criterion or ctx cancelled)
 
 	// Behaviour
-	Dim      string  // "throughput" | "fanout" | "soak" | "tls"
-	ThinkMs  int     // per-request think time in ms (0 = no think, 1000 for soak)
-	Seed     uint64  // RNG seed for deterministic per-client behaviour
+	Dim     string // "throughput" | "fanout" | "soak" | "tls"
+	ThinkMs int    // per-request think time in ms (0 = no think, 1000 for soak)
+	Seed    uint64 // RNG seed for deterministic per-client behaviour
 
 	// TLS
-	RootCA     []byte // PEM CA cert trusted by clients
-	ClientCCM  bool   // true = CCM-8 mode on client side (GCM by default)
-	NoKeepalive bool  // disable keepalive (forces fresh handshake per request, TLS dim)
+	RootCA      []byte // PEM CA cert trusted by clients
+	ClientCCM   bool   // true = CCM-8 mode on client side (GCM by default)
+	NoKeepalive bool   // disable keepalive (forces fresh handshake per request, TLS dim)
 
 	// Per-client cert accessor. Called once per virtual client index at setup.
 	// Returns (certPEM, keyPEM, err).
@@ -58,8 +59,16 @@ type Config struct {
 	// Breaking-point criteria (populated from dimension defaults by Run)
 	P99ThresholdMs   int     // p99 latency threshold in ms
 	ErrRateThreshold float64 // error rate threshold [0,1]
-	QueueFullOnset   bool    // stop when queue_full counter becomes non-zero
+	// QueueFullOnset: when true, scrape sep2_subscription_notifications_total
+	// {outcome="queue_full"} from the server metrics endpoint and fire the
+	// fan-out break the moment the counter becomes non-zero.
+	QueueFullOnset   bool    // stop when queue_full counter goes non-zero
 	HandshakeErrRate float64 // handshake error rate threshold (TLS dim)
+
+	// MetricsURL is the plain-HTTP Prometheus metrics endpoint on the server
+	// (e.g. "http://127.0.0.1:9100/metrics"). Required when QueueFullOnset is
+	// true; ignored otherwise.
+	MetricsURL string
 }
 
 // BreakResult carries the breaking-point verdict.
@@ -134,13 +143,20 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 		cfg.HandshakeErrRate = 0.001
 	}
 
-	// Latency ring buffer: last 2000 samples for rolling p99.
+	// Latency ring buffer: last 2000 samples.
+	// Slots are int64 NANOSECONDS; sentinel -1 means "empty" so genuine
+	// sub-millisecond loopback responses are not discarded (they store as
+	// small positive values, not zero).
 	const ringSize = 2000
 	var (
-		ring     [ringSize]int64 // latency in ms
+		ring     [ringSize]int64 // latency in nanoseconds; -1 = empty slot
 		ringHead int
 		ringMu   sync.Mutex
 	)
+	// Initialise all slots to the empty sentinel.
+	for i := range ring {
+		ring[i] = -1
+	}
 
 	sm := &selfMetrics{}
 
@@ -197,12 +213,13 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 				totalErrs := sm.errors.Load()
 				elapsed := time.Since(start).Seconds()
 
-				// Rolling p99 from ring buffer.
+				// Rolling p99 from ring buffer (nanoseconds, converted to ms for display/criteria).
 				ringMu.Lock()
 				samples := make([]int64, ringSize)
 				copy(samples, ring[:])
 				ringMu.Unlock()
-				p99 := rollingP99(samples)
+				p99ns := rollingP99(samples)
+				p99ms := p99ns / 1e6
 
 				// Error rate over total requests.
 				var errRate float64
@@ -217,24 +234,40 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 				// Write self-metric log line.
 				sm.gorCount.Store(int64(runtime.NumGoroutine()))
 				logger.Printf("t=%.0fs clients=%d p99=%dms errRate=%.4f sendRate=%.1frps goroutines=%d",
-					elapsed, clientCount.Load(), p99, errRate, sendRate, sm.gorCount.Load())
+					elapsed, clientCount.Load(), p99ms, errRate, sendRate, sm.gorCount.Load())
 
 				atClients := int(clientCount.Load())
 
-				// Check criteria.
-				if p99 > int64(cfg.P99ThresholdMs) && totalSent > 100 {
+				// Check p99 latency criterion.
+				if p99ms > int64(cfg.P99ThresholdMs) && totalSent > 100 {
 					fireStop(&BreakResult{
 						Dimension: cfg.Dim, Criterion: "p99_latency_ms",
-						ValueAtBreak: float64(p99), TimeElapsedSec: elapsed, AtClients: atClients,
+						ValueAtBreak: float64(p99ms), TimeElapsedSec: elapsed, AtClients: atClients,
 					})
 					return
 				}
+				// Check error rate criterion.
 				if errRate > cfg.ErrRateThreshold && totalSent > 100 {
 					fireStop(&BreakResult{
 						Dimension: cfg.Dim, Criterion: "error_rate",
 						ValueAtBreak: errRate, TimeElapsedSec: elapsed, AtClients: atClients,
 					})
 					return
+				}
+				// Check queue_full criterion (fan-out dimension headline break).
+				// Scrape sep2_subscription_notifications_total{outcome="queue_full"}
+				// from the server Prometheus endpoint; fire when the counter is non-zero.
+				if cfg.QueueFullOnset && cfg.MetricsURL != "" {
+					qf, err := scrapeQueueFull(cfg.MetricsURL)
+					if err != nil {
+						logger.Printf("queue_full scrape error: %v", err)
+					} else if qf > 0 {
+						fireStop(&BreakResult{
+							Dimension: cfg.Dim, Criterion: "queue_full",
+							ValueAtBreak: float64(qf), TimeElapsedSec: elapsed, AtClients: atClients,
+						})
+						return
+					}
 				}
 			}
 		}
@@ -302,16 +335,17 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 				default:
 				}
 
-				// Endpoint selection: round-robin with RNG jitter.
+				// Endpoint selection: round-robin. RNG is available for future
+				// weighted or randomised selection; use epIdx for now.
 				ep := endpoints[epIdx%len(endpoints)]
-				_ = rng.IntN(100) // consume RNG for future jitter use
+				_ = rng // silence unused-variable check; rng ready for future jitter
 				epIdx++
 
 				url := baseURL + ep
 				tSend := time.Now()
 				resp, doErr := client.Get(url)
 				tRecv := time.Now()
-				latMs := tRecv.Sub(tSend).Milliseconds()
+				latNs := tRecv.Sub(tSend).Nanoseconds()
 
 				sm.sent.Add(1)
 
@@ -328,15 +362,17 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 					}
 				}
 
-				// Update ring buffer.
+				// Update ring buffer (store nanoseconds; never stores -1 because
+				// nanoseconds for a real request is always >= 0; genuine 0ns would
+				// be stored as 0, which is valid).
 				ringMu.Lock()
-				ring[ringHead%ringSize] = latMs
+				ring[ringHead%ringSize] = latNs
 				ringHead++
 				ringMu.Unlock()
 
 				writeLatency(latencyRecord{
 					TSendUnix:  float64(tSend.UnixNano()) / 1e9,
-					TRecvMs:    float64(latMs),
+					TRecvMs:    float64(latNs) / 1e6,
 					StatusCode: statusCode,
 					Endpoint:   ep,
 					ClientID:   idx,
@@ -364,9 +400,12 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 			return breakResult.Load(), nil
 
 		case <-doneTimer:
+			// Use clientCount.Load() (active) not clientIdx (launched), to
+			// match the ctx.Done branch and accurately represent the active
+			// cohort at break time.
 			fireStop(&BreakResult{
 				Dimension: cfg.Dim, Criterion: "duration_elapsed",
-				TimeElapsedSec: time.Since(start).Seconds(), AtClients: clientIdx,
+				TimeElapsedSec: time.Since(start).Seconds(), AtClients: int(clientCount.Load()),
 			})
 			wg.Wait()
 			return breakResult.Load(), nil
@@ -398,73 +437,84 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 	}
 }
 
-// RegisterClients sends POST /edev using each client's cert to register
-// the device before the load phase. Returns on first error.
-func RegisterClients(ctx context.Context, baseURL string, count int, rootCA []byte, clientCert func(int) ([]byte, []byte, error)) error {
-	rootPool := x509.NewCertPool()
-	if !rootPool.AppendCertsFromPEM(rootCA) {
-		return fmt.Errorf("register: no CA certs")
+// scrapeQueueFull reads the server's Prometheus /metrics endpoint and returns
+// the current value of sep2_subscription_notifications_total{outcome="queue_full"}.
+// Returns 0 if the metric is absent or the endpoint is unreachable.
+func scrapeQueueFull(metricsURL string) (float64, error) {
+	resp, err := http.Get(metricsURL) //nolint:gosec // plain HTTP to localhost metrics
+	if err != nil {
+		return 0, err
 	}
-
-	for i := 0; i < count; i++ {
-		certPEM, keyPEM, err := clientCert(i)
-		if err != nil {
-			return fmt.Errorf("register client %d cert: %w", i, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+	// Parse the Prometheus text format line by line looking for:
+	// sep2_subscription_notifications_total{outcome="queue_full"} <value>
+	for _, line := range splitLines(body) {
+		if len(line) == 0 || line[0] == '#' {
+			continue
 		}
-		tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
-		if err != nil {
-			return fmt.Errorf("register client %d key pair: %w", i, err)
-		}
-		tlsCfg := &tls.Config{
-			Certificates: []tls.Certificate{tlsCert},
-			RootCAs:      rootPool,
-			ServerName:   "127.0.0.1",
-			MinVersion:   tls.VersionTLS12,
-			MaxVersion:   tls.VersionTLS12,
-		}
-		client := &http.Client{
-			Timeout:   10 * time.Second,
-			Transport: &http.Transport{TLSClientConfig: tlsCfg},
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/edev", bytes.NewReader(nil))
-		if err != nil {
-			return fmt.Errorf("register client %d req: %w", i, err)
-		}
-		req.Header.Set("Content-Type", "application/sep+xml")
-		resp, err := client.Do(req)
-		if err != nil {
-			return fmt.Errorf("register client %d: %w", i, err)
-		}
-		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("register client %d: unexpected status %d", i, resp.StatusCode)
+		// Match the specific label combination.
+		const target = `sep2_subscription_notifications_total{outcome="queue_full"}`
+		if len(line) > len(target) && line[:len(target)] == target {
+			rest := line[len(target):]
+			// rest is " <value>" or " <value> <timestamp>".
+			var val float64
+			if _, err := fmt.Sscanf(rest, " %f", &val); err == nil {
+				return val, nil
+			}
 		}
 	}
-	return nil
+	return 0, nil
 }
 
-// rollingP99 returns the 99th-percentile of the non-zero samples in buf.
+// splitLines splits a byte slice on newline characters.
+func splitLines(b []byte) []string {
+	var lines []string
+	start := 0
+	for i, c := range b {
+		if c == '\n' {
+			lines = append(lines, string(b[start:i]))
+			start = i + 1
+		}
+	}
+	if start < len(b) {
+		lines = append(lines, string(b[start:]))
+	}
+	return lines
+}
+
+// rollingP99 returns the 99th-percentile latency in nanoseconds from buf.
+//
+// Semantics:
+//   - Slots initialised to -1 (the empty sentinel) are excluded.
+//   - Genuine 0ns entries are included (sub-millisecond loopback is valid data).
+//   - Index formula: ceil(n * 0.99) - 1, clamped to [0, n-1].
+//     This is the standard "nearest rank" method: for n=100 it returns element
+//     at index 98 (the 99th value in a 1-indexed sort), not element 99 which
+//     underestimates by one rank during ramp.
+//   - Uses slices.Sort (O(n log n)) rather than insertion sort (O(n^2)) so the
+//     criteria goroutine is not itself a CPU sink under load.
 func rollingP99(buf []int64) int64 {
 	var vals []int64
 	for _, v := range buf {
-		if v > 0 {
+		if v >= 0 { // exclude empty sentinel (-1)
 			vals = append(vals, v)
 		}
 	}
-	if len(vals) == 0 {
+	n := len(vals)
+	if n == 0 {
 		return 0
 	}
-	// Simple insertion-sort on small slice.
-	for i := 1; i < len(vals); i++ {
-		for j := i; j > 0 && vals[j] < vals[j-1]; j-- {
-			vals[j], vals[j-1] = vals[j-1], vals[j]
-		}
+	slices.Sort(vals)
+	idx := int(math.Ceil(float64(n)*0.99)) - 1
+	if idx < 0 {
+		idx = 0
 	}
-	idx := int(float64(len(vals)) * 0.99)
-	if idx >= len(vals) {
-		idx = len(vals) - 1
+	if idx >= n {
+		idx = n - 1
 	}
 	return vals[idx]
 }
-

@@ -36,6 +36,7 @@ func main() {
 		seed        = uint64Env("SEED", 42)
 		resultsDir  = strEnv("RESULTS_DIR", "results/current")
 		caFile      = strEnv("CA_FILE", "")
+		metricsURL  = strEnv("METRICS_URL", "")
 	)
 
 	flag.StringVar(&targetHost, "host", targetHost, "server host")
@@ -47,6 +48,7 @@ func main() {
 	flag.BoolVar(&ccm, "ccm", ccm, "use CCM-8 cipher")
 	flag.StringVar(&resultsDir, "results-dir", resultsDir, "results output directory")
 	flag.StringVar(&caFile, "ca", caFile, "CA cert PEM file for server trust")
+	flag.StringVar(&metricsURL, "metrics-url", metricsURL, "server Prometheus metrics URL for queue_full criterion (fanout dim)")
 	flag.Parse()
 
 	// Set up logging to loadgen.log in the results dir.
@@ -118,20 +120,22 @@ func main() {
 	}
 
 	cfg := loadgen.Config{
-		TargetHost:  targetHost,
-		TargetPort:  targetPort,
-		MaxClients:  clients,
-		RampRate:    rampRate,
-		Duration:    duration,
-		Dim:         dim,
-		ThinkMs:     thinkMs,
-		Seed:        seed,
-		RootCA:      caCertPEM,
-		ClientCCM:   ccm,
-		NoKeepalive: dim == "tls",
-		ClientCert:  clientCertFunc,
-		LatencyFile: latFile,
-		LogFile:     lf,
+		TargetHost:     targetHost,
+		TargetPort:     targetPort,
+		MaxClients:     clients,
+		RampRate:       rampRate,
+		Duration:       duration,
+		Dim:            dim,
+		ThinkMs:        thinkMs,
+		Seed:           seed,
+		RootCA:         caCertPEM,
+		ClientCCM:      ccm,
+		NoKeepalive:    dim == "tls",
+		ClientCert:     clientCertFunc,
+		LatencyFile:    latFile,
+		LogFile:        lf,
+		QueueFullOnset: dim == "fanout" && metricsURL != "",
+		MetricsURL:     metricsURL,
 	}
 
 	logBoth("load phase starting")

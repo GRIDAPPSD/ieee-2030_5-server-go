@@ -36,7 +36,9 @@ Columns report when the queue first saturated and what fraction of notifications
 were dropped over the 60-second run.
 
 **"Best":** the smallest worker count that carries the load within an acceptable
-drop tolerance. Queue depth is not the effective lever here.
+drop tolerance (here, roughly a 1% drop rate: 16 workers at 0.78% is the practical
+knee, 32 workers at 0.08% the best available). Queue depth is not the effective
+lever here.
 
 ---
 
@@ -52,6 +54,10 @@ drop tolerance. Queue depth is not the effective lever here.
 | 4 | 4096 | 8.0 s | 32.6% |
 | 8 | 1024 | 6.0 s | 13.0% |
 | 16 | 1024 | 22.1 s | 0.66% |
+
+Seven of the eight configurations trip the harness validity gate during the ramp;
+those verdicts are not real subscription failures. See "Validity Gate Caveat" below
+before reading the gate verdict in any breaking-point.json artifact.
 
 ---
 

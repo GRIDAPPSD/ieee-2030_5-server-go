@@ -410,7 +410,7 @@ func TestStartNotifyReceiver_CountsPosts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("POST %d: %v", i, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("POST %d: status = %d, want 200", i, resp.StatusCode)
 		}
@@ -434,7 +434,7 @@ func TestStartNotifyReceiver_RejectsNonPOST(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("GET status = %d, want 405", resp.StatusCode)
 	}

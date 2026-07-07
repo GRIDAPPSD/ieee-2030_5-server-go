@@ -79,7 +79,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("open loadgen log: %v", err)
 	}
-	defer lf.Close()
+	defer func() { _ = lf.Close() }()
 	log.SetOutput(lf)
 	log.SetFlags(log.LstdFlags)
 	// Also write to stderr so the harness can capture progress.
@@ -125,7 +125,7 @@ func main() {
 		logBoth("open latency file: %v", err)
 		os.Exit(1)
 	}
-	defer latFile.Close()
+	defer func() { _ = latFile.Close() }()
 
 	// Signal handling.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -222,7 +222,7 @@ func main() {
 					if err != nil {
 						return fmt.Errorf("POST sub: %w", err)
 					}
-					defer resp.Body.Close()
+					defer func() { _ = resp.Body.Close() }()
 					_, _ = io.Copy(io.Discard, resp.Body)
 					if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 						return fmt.Errorf("POST sub: unexpected status %d", resp.StatusCode)

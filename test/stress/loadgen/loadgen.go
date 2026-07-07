@@ -413,7 +413,7 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 						continue
 					}
 					_, _ = io.Copy(io.Discard, resp.Body)
-					resp.Body.Close()
+					_ = resp.Body.Close()
 					if resp.StatusCode != http.StatusNoContent {
 						logger.Printf("mutation: stress-notify returned %d", resp.StatusCode)
 					}
@@ -514,7 +514,7 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 				} else {
 					statusCode = resp.StatusCode
 					_, _ = io.Copy(io.Discard, resp.Body)
-					resp.Body.Close()
+					_ = resp.Body.Close()
 					if resp.StatusCode >= 400 {
 						sm.errors.Add(1)
 					}
@@ -619,7 +619,7 @@ func scrapeQueueFull(metricsURL string) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return 0, err

@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/obs"
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
-	coresub "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/subscription"
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	coresub "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv/handlers/subscription"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
 )
 
 // obsSubStore is a minimal SubscriptionLister for the obs counter tests.

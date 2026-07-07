@@ -12,7 +12,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 )
 
 // RegisterMutationHandlers is the production no-op. Build with

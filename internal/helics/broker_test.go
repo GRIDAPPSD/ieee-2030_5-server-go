@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/helics"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/helics"
 )
 
 // TestBroker_NewInProcess_Lifecycle exercises the full happy-path

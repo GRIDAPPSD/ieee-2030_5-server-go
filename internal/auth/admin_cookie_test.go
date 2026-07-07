@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 )
 
 // IEEE-095: cookie-based ticket auth (Path D in AdminAuthMiddleware).

@@ -41,7 +41,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
 // TestCOMM_002_OOBDiscovery proves the CSIP V1.2 §5.2 Out-of-Band

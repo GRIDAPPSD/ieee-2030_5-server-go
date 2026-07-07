@@ -29,7 +29,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
 // Fixture resolution: env first, then default to test/csip/fixtures/sunspec/.

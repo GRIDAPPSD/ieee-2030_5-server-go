@@ -13,8 +13,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 func TestMutationSurface_AbsentWithoutBuildTag(t *testing.T) {

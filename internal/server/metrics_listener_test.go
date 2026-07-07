@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 )
 
 // TestStartMetricsServerServesMetrics asserts the dedicated metrics listener

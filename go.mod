@@ -1,11 +1,11 @@
-module github.com/GRIDAPPSD/ieee-2030_5-go
+module github.com/GRIDAPPSD/ieee-2030_5-server-go
 
 go 1.26.3
 
 require (
+	github.com/GRIDAPPSD/ieee-2030_5-core-go v0.6.0
 	github.com/hashicorp/mdns v1.0.6
 	github.com/prometheus/client_golang v1.23.2
-	gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core v0.0.0-00010101000000-000000000000
 	gopkg.in/yaml.v3 v3.0.1
 	pgregory.net/rapid v1.3.0
 )
@@ -29,5 +29,3 @@ require (
 	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 )
-
-replace gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core => /home/debian/repos/ieee-2030_5-core

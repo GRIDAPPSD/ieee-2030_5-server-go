@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/helics"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/helics"
 )
 
 // TestFederate_PublishSubscribeLifecycle exercises the full happy-path

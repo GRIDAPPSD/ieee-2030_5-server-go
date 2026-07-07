@@ -9,10 +9,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/config"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 const version = "0.1.0"

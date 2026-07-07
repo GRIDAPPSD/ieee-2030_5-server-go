@@ -42,9 +42,9 @@ import (
 	"os"
 	"testing"
 
-	sepTLS "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2tls"
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
 // SunSpec V1.2 test cert (sanity check; helpers compute live):

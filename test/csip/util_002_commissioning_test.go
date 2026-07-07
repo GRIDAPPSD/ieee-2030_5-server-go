@@ -43,7 +43,7 @@ import (
 	"net/http"
 	"testing"
 
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 )
 
 // utilDERID is the DER index the test PUTs against on each managed

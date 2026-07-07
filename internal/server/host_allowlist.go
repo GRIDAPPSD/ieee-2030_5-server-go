@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/discovery"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
 )
 
 // IEEE-138: Host-header allowlist for the admin listener.

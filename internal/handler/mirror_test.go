@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
-	coremetering "gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2srv/handlers/metering"
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	coremetering "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv/handlers/metering"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 )
 
 // authLFDIProvider wraps auth.GetIdentity as a coremetering.LFDIProvider.

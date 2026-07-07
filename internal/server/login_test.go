@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 // IEEE-095 login flow tests.

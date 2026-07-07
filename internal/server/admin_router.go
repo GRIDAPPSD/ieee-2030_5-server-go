@@ -4,8 +4,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 )
 
 // BuildAdminRouter creates the admin router AND returns the canonical

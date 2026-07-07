@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 )
 
 // forwardedHeaders lists the proxy-injected headers that, when present on a

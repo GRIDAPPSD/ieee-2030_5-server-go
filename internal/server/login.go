@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 )
 
 // IEEE-095: browser login flow for the admin surface.

@@ -56,7 +56,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
 // TestCORE_002_HTTPResponse implements CSIP V1.2 §5.5.

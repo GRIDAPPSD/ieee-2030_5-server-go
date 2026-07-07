@@ -7,7 +7,7 @@
 //
 // The package is co-located under test/csip/ on purpose: it is harness
 // scaffolding, not production code, and should not appear in the
-// `github.com/GRIDAPPSD/ieee-2030_5-go/...` public import surface used
+// `github.com/GRIDAPPSD/ieee-2030_5-server-go/...` public import surface used
 // by consumers of the server.
 //
 // Scope today:
@@ -36,7 +36,7 @@ import (
 	"io"
 	"net/http"
 
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 )
 
 // ErrEmptyLink is returned by WalkLink when the advertised link has no

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 )
 
 // TestRunGenerateDeviceRequiresHWSerial verifies that the generate-device

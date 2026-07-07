@@ -18,7 +18,7 @@ import (
 	"net/http"
 	"testing"
 
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store"
 )
 
 // TestWrappedErrAlreadyExistsNotEqualButIs demonstrates that a wrapped

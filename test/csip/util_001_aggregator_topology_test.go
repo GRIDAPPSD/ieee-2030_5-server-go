@@ -41,7 +41,7 @@ import (
 	"context"
 	"testing"
 
-	"gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-core/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 )
 
 // TestUTIL_001_AggregatorTopology implements CSIP V1.2 §9.1.

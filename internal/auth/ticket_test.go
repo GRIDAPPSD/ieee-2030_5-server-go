@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 )
 
 func TestTicketIssueAndRedeem(t *testing.T) {

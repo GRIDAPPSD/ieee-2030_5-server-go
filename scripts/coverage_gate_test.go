@@ -57,7 +57,7 @@ func writeProfile(t *testing.T, dir string, pctCovered int) string {
 		// Use distinct end columns to keep ranges unique.
 		startLine := i + 1
 		endLine := startLine + 1
-		row := "github.com/GRIDAPPSD/ieee-2030_5-go/_synth.go:" +
+		row := "github.com/GRIDAPPSD/ieee-2030_5-server-go/_synth.go:" +
 			strconv.Itoa(startLine) + ".1," + strconv.Itoa(endLine) + ".2 1 " + strconv.Itoa(count) + "\n"
 		sb.WriteString(row)
 	}

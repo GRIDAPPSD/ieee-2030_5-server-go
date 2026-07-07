@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 )
 
 func TestACLAllowedMethod(t *testing.T) {

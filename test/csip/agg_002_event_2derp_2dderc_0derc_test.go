@@ -31,7 +31,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-go/test/csip/csiptest"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
 // TestAGG_002_Event2DERP2DDERC0DERC implements CSIP V1.2 §10.2.

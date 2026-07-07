@@ -246,7 +246,7 @@ func runRegister(pkiDir, serverURL string, count int) error {
 			continue
 		}
 		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 			log.Printf("  [%d] POST /edev: unexpected status %d", i, resp.StatusCode)
 			failed++
@@ -407,7 +407,7 @@ func runSubscribe(pkiDir, serverURL string, count int, notifyURL, subscribedReso
 			continue
 		}
 		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 			log.Printf("  [%d] POST %s: unexpected status %d", i, subURL, resp.StatusCode)
 			failed++

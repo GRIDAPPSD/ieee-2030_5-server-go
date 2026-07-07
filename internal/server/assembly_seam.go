@@ -207,7 +207,7 @@ func adaptNotifier(n handler.ResourceNotifier) assembly.ResourceNotifier {
 	}
 	v := reflect.ValueOf(n)
 	switch v.Kind() {
-	case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
 		if v.IsNil() {
 			return nil
 		}

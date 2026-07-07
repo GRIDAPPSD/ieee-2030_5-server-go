@@ -221,7 +221,7 @@ func TestNewCoreStoresCopiesAllFields(t *testing.T) {
 		f := dstVal.Field(i)
 		name := dstType.Field(i).Name
 		switch f.Kind() {
-		case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
+		case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
 			if f.IsNil() {
 				t.Errorf("assembly.Stores.%s is nil after NewCoreStores: field was not copied", name)
 			}

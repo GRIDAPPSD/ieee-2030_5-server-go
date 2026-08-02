@@ -1,6 +1,13 @@
 # ieee-2030_5-server
 
-[![Pipeline](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/badges/main/pipeline.svg)](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/-/commits/main) [![Coverage](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/badges/main/coverage.svg)](https://gitlab.pnnl.gov/arista/ieee-2030_5/ieee-2030_5-server/-/commits/main) [![Go](https://img.shields.io/badge/go-1.26.3-blue)](https://go.dev/) [![License](https://img.shields.io/badge/License-Battelle%20BSD-blue)](LICENSE)
+[![ci](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/actions/workflows/codeql.yml)
+[![Go](https://img.shields.io/badge/go-1.26.3-blue)](https://go.dev/)
+[![License](https://img.shields.io/badge/License-Battelle%20BSD-blue)](LICENSE)
+
+This repo is private: the workflow badges above render for viewers with
+repository access and show nothing for anonymous visitors. No release
+badge yet; this repo has not cut a tagged release.
 
 Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server binary (`sep2server`) with TLS/mTLS, CSIP V1.2 cipher-suite support (GCM and CCM-8), an admin dashboard, and cert-generation subcommands.
 
@@ -8,12 +15,12 @@ Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utili
 
 ## Documentation
 
-- **[docs/2030_5.md](docs/2030_5.md)** — full IEEE 2030.5 (SEP2) reference and function-set support table.
-- **[docs/csip.md](docs/csip.md)** — CSIP V1.2 profile: cert profile, cipher, conformance harness, operator profiles.
-- **[docs/admin.md](docs/admin.md)** — admin surface: dashboard, login flow, auth model, mTLS cert flow, admin features.
-- **[docs/admin-listener.md](docs/admin-listener.md)** — admin listener TLS posture matrix (plain HTTP behind Caddy, direct HTTPS, self-signed fallback).
-- **[docs/glossary.md](docs/glossary.md)** — acronyms and protocol terms (GCM, CCM-8, SFDI/LFDI, FSA, PEN, etc.).
-- **[VENDORED.md](VENDORED.md)** — provenance for the vendored CCM AEAD and the `crypto/tls` fork that registers the CCM-8 cipher.
+- **[docs/2030_5.md](docs/2030_5.md)**: full IEEE 2030.5 (SEP2) reference and function-set support table.
+- **[docs/csip.md](docs/csip.md)**: CSIP V1.2 profile: cert profile, cipher, conformance harness, operator profiles.
+- **[docs/admin.md](docs/admin.md)**: admin surface: dashboard, login flow, auth model, mTLS cert flow, admin features.
+- **[docs/admin-listener.md](docs/admin-listener.md)**: admin listener TLS posture matrix (plain HTTP behind Caddy, direct HTTPS, self-signed fallback).
+- **[docs/glossary.md](docs/glossary.md)**: acronyms and protocol terms (GCM, CCM-8, SFDI/LFDI, FSA, PEN, etc.).
+- **[VENDORED.md](VENDORED.md)**: provenance for the vendored CCM AEAD and the `crypto/tls` fork that registers the CCM-8 cipher.
 
 ## Prerequisites
 
@@ -82,12 +89,12 @@ described in [docs/csip.md](docs/csip.md).
 
 ## Repository tour
 
-- `cmd/sep2server` — server binary entry point and cert subcommands (`serve`, `certs generate-*`, `version`)
-- `internal/` — auth and tickets, cert generation, env config, mDNS discovery, XML codec, per-function-set handlers, paging, router and dashboard, subscription plumbing, and TLS bits
-- `pkg/sep2` — public Go types for every IEEE 2030.5 resource (DER, FSA, metering, mirror, subscription, etc.)
-- `pkg/store` — `Store` interface plus an in-memory implementation
-- `e2e/` — Playwright dashboard tests
-- `docs/` — protocol, CSIP, admin, and listener references (see above)
+- `cmd/sep2server`: server binary entry point and cert subcommands (`serve`, `certs generate-*`, `version`)
+- `internal/`: auth and tickets, cert generation, env config, mDNS discovery, XML codec, per-function-set handlers, paging, router and dashboard, subscription plumbing, and TLS bits
+- `pkg/sep2`: public Go types for every IEEE 2030.5 resource (DER, FSA, metering, mirror, subscription, etc.)
+- `pkg/store`: `Store` interface plus an in-memory implementation
+- `e2e/`: Playwright dashboard tests
+- `docs/`: protocol, CSIP, admin, and listener references (see above)
 
 ## Interop
 

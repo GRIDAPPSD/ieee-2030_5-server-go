@@ -299,14 +299,14 @@ func TestRun_ClientSubscribe_WiredPerClient(t *testing.T) {
 	defer cancel()
 
 	cfg := Config{
-		TargetHost:  host,
-		TargetPort:  port,
-		MaxClients:  maxClients,
-		RampRate:    maxClients, // launch all at once
-		Dim:         "throughput",
-		Seed:        42,
-		RootCA:      caCertPEM,
-		ClientCert:  realClientCertFunc,
+		TargetHost:      host,
+		TargetPort:      port,
+		MaxClients:      maxClients,
+		RampRate:        maxClients, // launch all at once
+		Dim:             "throughput",
+		Seed:            42,
+		RootCA:          caCertPEM,
+		ClientCert:      realClientCertFunc,
 		ClientSubscribe: subscribeFn,
 		// ErrRateThreshold: let it fire quickly so the test finishes.
 		ErrRateThreshold: 0.01,

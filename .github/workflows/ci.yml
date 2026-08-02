@@ -81,7 +81,7 @@ jobs:
     steps:
       - name: Checkout
         # IEEE-124: bumped v4→v6 for Node.js 24 runtime.
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Mint GitHub App installation token
         # IEEESRV-018 — private-core CI token wiring. Mints a short-lived
@@ -198,7 +198,7 @@ jobs:
     steps:
       - name: Checkout
         # IEEE-124: bumped v4→v6 for Node.js 24 runtime.
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Mint GitHub App installation token
         # IEEESRV-018 — private-core CI token wiring. Mints a short-lived

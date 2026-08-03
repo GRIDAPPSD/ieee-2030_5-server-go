@@ -35,7 +35,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// canonicalProtocolRoutes is the pinned list of 60 SEP2 protocol-listener
+// canonicalProtocolRoutes is the pinned list of 65 SEP2 protocol-listener
 // patterns that assembly.BuildProtocolRouter must mount. Confirmed
 // identical to the in-tree BuildProtocolRouter output by Phase 1
 // (IEEESRV-001 TestCoreRouterPatternEquivalence). Any addition or
@@ -55,6 +55,23 @@ import (
 //     and internal/handler/mirror_test.go still need the matching consumer
 //     update for that rework; tracked as a follow-up, out of scope for this
 //     route-surface pin.
+//
+// core v0.12.0 added five more routes, verified the same way:
+//   - "GET /edev/{id}/der/{derId}" and "PUT /edev/{id}/der/{derId}"
+//     (IEEECORE-052): the DER instance itself. Every DERList member
+//     already carried this href; before this route existed, following it
+//     404'd. PUT is on the SunSpec CTP CORE-014/CORE-016 certified path.
+//   - "GET /edev/{id}/fsa/{fsaId}/derp/{derpId}" (IEEECORE-082): a
+//     DERProgram's own href, so the FSA-to-DERProgramList-to-member link
+//     walk CSIP v2.0 s5.2.3.1 requires actually resolves. Not called out
+//     in the IEEECORE-067/IEEECORE-052 bump notes but present in the same
+//     v0.12.0 assembly.go diff; verified directly against core's source.
+//   - "GET /rsps/{rspsId}" and "GET /rsps/{rspsId}/rsp/{rspId}"
+//     (IEEECORE-067): the ResponseSet and single Response read routes.
+//     Every served DERControl now carries a replyTo into this set,
+//     alongside a new responseRequired field on DERControl itself; both
+//     fields are wire-visible and covered by
+//     TestSingleDERControlBytesMatchListMember below.
 var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}",
 	"DELETE /edev/{id}/sub/{subId}",
@@ -64,6 +81,7 @@ var canonicalProtocolRoutes = []string{
 	"GET /edev/{id}",
 	"GET /edev/{id}/cfg",
 	"GET /edev/{id}/der",
+	"GET /edev/{id}/der/{derId}",
 	"GET /edev/{id}/der/{derId}/dera",
 	"GET /edev/{id}/der/{derId}/dercap",
 	"GET /edev/{id}/der/{derId}/derg",
@@ -74,6 +92,7 @@ var canonicalProtocolRoutes = []string{
 	"GET /edev/{id}/fsa",
 	"GET /edev/{id}/fsa/{fsaId}",
 	"GET /edev/{id}/fsa/{fsaId}/derp",
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}",
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc",
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc",
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc/{dercId}",
@@ -87,7 +106,9 @@ var canonicalProtocolRoutes = []string{
 	"GET /mup",
 	"GET /mup/{id}",
 	"GET /rsps",
+	"GET /rsps/{rspsId}",
 	"GET /rsps/{rspsId}/rsp",
+	"GET /rsps/{rspsId}/rsp/{rspId}",
 	"GET /rt",
 	"GET /rt/{id}",
 	"GET /sdev",
@@ -109,6 +130,7 @@ var canonicalProtocolRoutes = []string{
 	"POST /upt",
 	"PUT /edev/{id}",
 	"PUT /edev/{id}/cfg",
+	"PUT /edev/{id}/der/{derId}",
 	"PUT /edev/{id}/der/{derId}/dera",
 	"PUT /edev/{id}/der/{derId}/dercap",
 	"PUT /edev/{id}/der/{derId}/derg",
@@ -120,7 +142,7 @@ var canonicalProtocolRoutes = []string{
 
 // TestProtocolRouteSurface asserts that BuildProtocolRouter (which now
 // delegates unconditionally to assembly.BuildProtocolRouter) produces
-// exactly the 58 canonical SEP2 protocol routes, sorted, with no
+// exactly the 65 canonical SEP2 protocol routes, sorted, with no
 // additions or deletions. This replaces TestCoreRouterPatternEquivalence
 // from Phase 1: there is no longer an in-tree router to compare against,
 // so we pin the live surface directly.

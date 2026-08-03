@@ -31,7 +31,18 @@ type Stores struct {
 	// Store[sep2.Registration]. The embedded *Store gives back-compat
 	// method promotion (Get/List/Count) for call sites that don't need
 	// the persistence flush.
-	Registrations       *memory.RegistrationStore
+	Registrations *memory.RegistrationStore
+	// RegistrationPolicy supplies the pIN and pollRate for the Registration
+	// core creates alongside every EndDevice (IEEECORE-083). core v0.13.0
+	// added this field to assembly.Stores. The zero value provisions
+	// nothing, and that is fail-closed rather than degraded, matching this
+	// repo's behavior before the field existed: no self-registration pIN
+	// resolver is wired today, so a device gets no Registration and no
+	// RegistrationLink, the same as before this field was plumbed through.
+	// Wiring a real PIN resolver (e.g. sourced from the admin UI's existing
+	// manual PIN entry at POST /api/devices) is a follow-up feature
+	// decision, not forced by copying the field.
+	RegistrationPolicy  memory.RegistrationPolicy
 	MirrorUsagePoints   *memory.Store[sep2.MirrorUsagePoint]
 	MirrorMeterReadings *memory.ScopedStore[sep2.MirrorMeterReading]
 

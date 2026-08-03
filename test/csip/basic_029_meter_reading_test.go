@@ -1,14 +1,14 @@
-// CSIP V1.2 §8.29 — Meter Reading (MirrorUsagePoint + MirrorMeterReading).
+// CSIP V1.2 Section 8.29 - Meter Reading (MirrorUsagePoint + MirrorMeterReading).
 //
 // BASIC-029 exercises the device-side metering mirror end-to-end.
 // The test POSTs a MirrorUsagePoint to /mup, then POSTs four
-// MirrorMeterReading instances to /mup/{id}/mr — one per V1.2 §8.29
+// MirrorMeterReading instances to /mup/{id}/mr - one per V1.2 Section 8.29
 // required ReadingType: Real Power (W), Reactive Power (var),
 // Frequency (Hz), and Voltage (V). Each reading carries its own
 // embedded ReadingType describing units, kind, accumulation
 // behaviour, and flow direction.
 //
-// PARALLEL POLICY (READ BEFORE FLIPPING — depends on IEEE-010):
+// PARALLEL POLICY (READ BEFORE FLIPPING - depends on IEEE-010):
 //
 //	BASIC-029 runs sequentially (no t.Parallel()) until IEEE-010
 //	(race-loss /edev /mup) lands. Flip on after Phase 4 IEEE-010
@@ -22,34 +22,34 @@
 // Under -race + t.Parallel two concurrent CSIP tests racing on /mup
 // can interleave such that the parent Get returns ErrNotFound after
 // it was just created. IEEE-010 makes both transitions atomic; until
-// then BASIC-029 stays serial. The phase doc Section §3 (BASIC-029
+// then BASIC-029 stays serial. The phase doc Section Section 3 (BASIC-029
 // IEEE-010 dependency) is the canonical citation.
 //
-// V1.2 procedure step → assertion mapping:
+// V1.2 procedure step -> assertion mapping:
 //
-//	Step 1 (boot CSIP server)                            ────► csiptest.BootServer
+//	Step 1 (boot CSIP server)                            -> csiptest.BootServer
 //	Step 2 (POST a MirrorUsagePoint with serviceCategory
-//	        and roleFlags set for an inverter)            ────► POST /mup
+//	        and roleFlags set for an inverter)            -> POST /mup
 //	Step 3 (POST returns 201 + Location header pointing
-//	        at the new /mup/{id})                          ────► resp.StatusCode == 201
+//	        at the new /mup/{id})                          -> resp.StatusCode == 201
 //	                                                            && Location prefix /mup/
 //	Step 4 (GET /mup/{id} returns the created MUP with
-//	        deviceLFDI overridden from the cert identity)  ────► GET, parse, asserts
+//	        deviceLFDI overridden from the cert identity)  -> GET, parse, asserts
 //	Step 5 (POST 4 MirrorMeterReading instances to
 //	        /mup/{id}/mr, one per required ReadingType:
-//	        Real P, Reactive P, Frequency, Voltage)        ────► POST /mup/{id}/mr (×4)
-//	Step 6 (each POST returns 201 + Location header)     ─────► assert per-POST status
+//	        Real P, Reactive P, Frequency, Voltage)        -> POST /mup/{id}/mr (x4)
+//	Step 6 (each POST returns 201 + Location header)     -> assert per-POST status
 //	Step 7 (all four readings + their parent MUP are
 //	        persisted in the server's stores under the
-//	        expected key shape — /mup/{id} for the parent
-//	        and /mup/{id}/mr/{ts} for each child)          ────► srv.Stores assertions
+//	        expected key shape - /mup/{id} for the parent
+//	        and /mup/{id}/mr/{ts} for each child)          -> srv.Stores assertions
 //
 // Why step 7 asserts via srv.Stores instead of a GET:
 // The current router (internal/server/router.go) wires POST /mup/{id}/mr
 // but does NOT advertise a GET /mup/{id}/mr list endpoint. There is
 // therefore no over-the-wire post-condition check available today.
 // Asserting through srv.Stores still proves the full POST path
-// (TLS handshake → ACL middleware → handler → store) executed
+// (TLS handshake -> ACL middleware -> handler -> store) executed
 // correctly. The missing list endpoint is flagged in the IEEE-062 PR
 // description as a follow-up; once a GET handler ships this step is
 // promoted to a wire-level check.
@@ -69,17 +69,17 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// UoM values per IEC 61968 / V1.2 §10.4 ReadingType.uom enumeration.
+// UoM values per IEC 61968 / V1.2 Section 10.4 ReadingType.uom enumeration.
 // pkg/sep2/metering.go already exposes UomWatts, UomVars, UomVolts,
-// UomAmps — Frequency (Hz) is not in that constant set, so it is
+// UomAmps - Frequency (Hz) is not in that constant set, so it is
 // declared here as a test-local constant (V1.2 maps Hz to 33). Same
 // scope-discipline rationale as leGenSoftware in basic_027.
 const uomHertz uint8 = 33
 
-// ReadingType.kind enum values per V1.2 §10.4.
-//   - kindPower (37) — instantaneous active or reactive power.
-//   - kindFrequency (12) — frequency.
-//   - kindVoltage (54) — voltage.
+// ReadingType.kind enum values per V1.2 Section 10.4.
+//   - kindPower (37) - instantaneous active or reactive power.
+//   - kindFrequency (12) - frequency.
+//   - kindVoltage (54) - voltage.
 //
 // Replicated test-local for the same scope reasons above.
 const (
@@ -88,7 +88,7 @@ const (
 	kindVoltage   uint8 = 54
 )
 
-// TestBASIC_029_MeterReading implements CSIP V1.2 §8.29.
+// TestBASIC_029_MeterReading implements CSIP V1.2 Section 8.29.
 //
 // NOTE: this test deliberately does NOT call t.Parallel(). See the
 // PARALLEL POLICY section at the top of this file for why.
@@ -113,9 +113,9 @@ func TestBASIC_029_MeterReading(t *testing.T) {
 	mupIn := sep2.MirrorUsagePoint{
 		MRID:                mupMRID,
 		Description:         "BASIC-029 four-reading inverter mirror",
-		ServiceCategoryKind: 0,         // 0 == "electricity" per V1.2 §10.4 ServiceKind
-		Status:              1,         // 1 == "on" per V1.2 §10.4 UsagePointStatus
-		RoleFlags:           uint16(1), // 0x01 == "isPremisesAggregationPoint"
+		ServiceCategoryKind: 0,                      // 0 == "electricity" per V1.2 Section 10.4 ServiceKind
+		Status:              1,                      // 1 == "on" per V1.2 Section 10.4 UsagePointStatus
+		RoleFlags:           sep2.RoleFlagsValue(1), // 0x01 == "isPremisesAggregationPoint"
 	}
 	mupBody, err := xml.Marshal(&mupIn)
 	if err != nil {
@@ -185,7 +185,7 @@ func TestBASIC_029_MeterReading(t *testing.T) {
 		t.Errorf("step 4: MirrorUsagePoint.MirrorMeterReadingListLink missing or empty href")
 	}
 
-	// Step 5 + 6: POST 4 MirrorMeterReadings, one per V1.2 §8.29
+	// Step 5 + 6: POST 4 MirrorMeterReadings, one per V1.2 Section 8.29
 	// required ReadingType. flowDirection = 1 (forward, "delivered
 	// to customer"). powerOfTenMultiplier = 0 (no scaling) for
 	// readability; the type allows scaling but the procedure does
@@ -259,7 +259,7 @@ func TestBASIC_029_MeterReading(t *testing.T) {
 
 		// Same nanosecond-key issue as BASIC-027: HandlePostMirrorMeterReading
 		// keys MMR records under fmt.Sprintf("%020d", time.Now().UnixNano())
-		// — sub-nanosecond consecutive POSTs collide on store.ErrAlreadyExists.
+		// - sub-nanosecond consecutive POSTs collide on store.ErrAlreadyExists.
 		// 1ms gap is safe and trivial.
 		time.Sleep(time.Millisecond)
 	}

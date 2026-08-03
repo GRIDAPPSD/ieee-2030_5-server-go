@@ -1,0 +1,128 @@
+name: "Supply the IEEE 2030.5 WADL"
+description: >
+  Reassemble a licensed sep_wadl.xml from a repository secret into a file
+  outside the checkout and export SEP2_WADL_PATH plus SEP2_WADL_REQUIRED, so the
+  WADL-gated conformance tests RUN instead of skipping.
+
+  Factored out of ci.yml so the digest constants and the reassembly logic have
+  exactly one home. Two copies would drift the moment the secret is resealed,
+  and a stale copy fails open: the gated tests skip and the run still reports
+  green, which is the failure this whole gate exists to prevent (IEEESRV-031).
+
+inputs:
+  wadl-xz-b64:
+    description: >
+      Base64-encoded xz stream holding sep_wadl.xml. Pass
+      secrets.SEP2_WADL_XZ_B64; a composite action cannot read the secrets
+      context itself.
+    required: false
+    default: ""
+  required:
+    description: >
+      "true" makes an absent secret a HARD FAILURE rather than a skip. Set it on
+      every trigger that always runs in the base-repository context (schedule,
+      workflow_dispatch, push), because there absence means a deleted, empty, or
+      half-rotated secret, not legitimate withholding. Leave it "false" only
+      where GitHub genuinely withholds secrets, which today is exactly one case:
+      a pull request from a fork.
+    required: false
+    default: "false"
+
+outputs:
+  armed:
+    description: >
+      "true" when a digest-verified WADL is on disk and SEP2_WADL_REQUIRED has
+      been exported. Callers gate their TestWADLGateArmed assertion on this.
+    value: ${{ steps.supply.outputs.armed }}
+
+runs:
+  using: composite
+  steps:
+    - id: supply
+      shell: bash
+      # Nothing below echoes the secret or the decoded file, and printf is a
+      # shell builtin, so no part of the document reaches a process argument
+      # list either. The values are bound to env: rather than interpolated into
+      # the script body, so a value carrying shell metacharacters is never
+      # expanded before execution.
+      env:
+        WADL_XZ_B64: ${{ inputs.wadl-xz-b64 }}
+        WADL_REQUIRED: ${{ inputs.required }}
+      run: |
+        set -euo pipefail
+
+        # Transport check on the reassembly only: these describe the bytes
+        # sealed into the secret (IEEE 2030.5-2018 Model Build 20180301
+        # sep_wadl.xml). The document's identity is pinned independently and
+        # more strongly by the Go loader, over a normalized sha256 (see
+        # test/conformance/wadl/wadl.go). If the secret is ever resealed from a
+        # copy with different line endings, update these two values; the Go-side
+        # digest is unaffected.
+        want_md5=949b3f54ddf3252c4500807c77009bc9
+        want_bytes=220733
+
+        case "$WADL_REQUIRED" in
+          true|false) ;;
+          *)
+            echo "::error::The supply-wadl action's 'required' input must be exactly \"true\" or \"false\", got \"$WADL_REQUIRED\". Refusing to guess: guessing false here is how a gate goes dark."
+            exit 1
+            ;;
+        esac
+
+        if [ -z "${WADL_XZ_B64:-}" ]; then
+          if [ "$WADL_REQUIRED" = "true" ]; then
+            echo "::error::No WADL secret in scope, but this run requires one. SEP2_WADL_XZ_B64 is empty or unset. This trigger always runs in the base-repository context, so GitHub is not withholding the secret: it is missing, empty, or half-rotated. Failing instead of skipping, because a skip here means the conformance sweep measures nothing while reporting green."
+            exit 1
+          fi
+          echo "No WADL secret in scope for this run (fork pull request, or secret withheld)."
+          echo "Leaving SEP2_WADL_REQUIRED unset: the WADL-gated tests SKIP and the run stays green."
+          echo "armed=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        if ! command -v xz > /dev/null; then
+          echo "::error::xz is not installed on this runner, so the WADL cannot be decompressed."
+          exit 1
+        fi
+
+        # Written outside the checkout on purpose. RUNNER_TEMP is not the repo
+        # working tree, so the file cannot be committed, is not visible to
+        # anything that globs the tree, and is not part of any path a later step
+        # would upload as an artifact. The runner deletes it when the job ends.
+        dest_dir="${RUNNER_TEMP:?RUNNER_TEMP is unset}/sep2-wadl"
+        case "$dest_dir" in
+          "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is unset}"/*)
+            echo "::error::Refusing to write the WADL inside the repository working tree."
+            exit 1
+            ;;
+        esac
+        umask 077
+        mkdir -p "$dest_dir"
+        dest="$dest_dir/sep_wadl.xml"
+
+        if ! printf '%s' "$WADL_XZ_B64" \
+          | tr -d '[:space:]' \
+          | base64 -d \
+          | xz -d > "$dest"; then
+          rm -f "$dest"
+          echo "::error::Could not reassemble sep_wadl.xml from SEP2_WADL_XZ_B64. The value must be one base64 string holding an xz stream."
+          exit 1
+        fi
+
+        got_bytes=$(wc -c < "$dest")
+        got_md5=$(md5sum < "$dest" | cut -d ' ' -f 1)
+        if [ "$got_bytes" != "$want_bytes" ] || [ "$got_md5" != "$want_md5" ]; then
+          rm -f "$dest"
+          echo "::error::Reassembled WADL is not the expected document: $got_bytes bytes, md5 $got_md5; want $want_bytes bytes, md5 $want_md5. A truncated or half-rotated secret is the likely cause; reseal from one copy."
+          exit 1
+        fi
+        echo "Reassembled sep_wadl.xml: $got_bytes bytes, md5 matches."
+
+        # Only reached once the file on disk is verified, so no path gets to
+        # go test with a WADL configured but unchecked, and none gets there with
+        # the secret present but REQUIRED unset.
+        {
+          echo "SEP2_WADL_PATH=$dest"
+          echo "SEP2_WADL_REQUIRED=1"
+        } >> "$GITHUB_ENV"
+        echo "armed=true" >> "$GITHUB_OUTPUT"

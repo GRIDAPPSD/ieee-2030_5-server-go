@@ -35,7 +35,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// canonicalProtocolRoutes is the pinned list of 65 SEP2 protocol-listener
+// canonicalProtocolRoutes is the pinned list of 67 SEP2 protocol-listener
 // patterns that assembly.BuildProtocolRouter must mount. Confirmed
 // identical to the in-tree BuildProtocolRouter output by Phase 1
 // (IEEESRV-001 TestCoreRouterPatternEquivalence). Any addition or
@@ -72,8 +72,22 @@ import (
 //     alongside a new responseRequired field on DERControl itself; both
 //     fields are wire-visible and covered by
 //     TestSingleDERControlBytesMatchListMember below.
+//
+// core's IEEECORE-084 bump (IEEESRV-034) moved the LogEvent function set:
+//   - "GET /edev/{id}/log" and "POST /edev/{id}/log" are REMOVED. The
+//     WADL declares the list at /edev/{id}/lel (sep_wadl.xml:1358, 2018
+//     A.3.5.1), not /log; core served the data at an address no
+//     conforming client looked for, and nothing advertised /log at all
+//     (no production path assigned LogEventListLink before this card).
+//   - "GET /edev/{id}/lel" and "POST /edev/{id}/lel" (the list, mode M
+//     both methods) plus "GET /edev/{id}/lel/{lelId}" and
+//     "DELETE /edev/{id}/lel/{lelId}" (the instance, mode M both
+//     methods; 2018 A.3.5.2) are ADDED. Net +2 routes: four added, two
+//     removed. Verified directly against core's assembly.go at
+//     IEEECORE-084 (commit bd8d0e3).
 var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}",
+	"DELETE /edev/{id}/lel/{lelId}",
 	"DELETE /edev/{id}/sub/{subId}",
 	"GET /dc",
 	"GET /dcap",
@@ -96,7 +110,8 @@ var canonicalProtocolRoutes = []string{
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc",
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc",
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc/{dercId}",
-	"GET /edev/{id}/log",
+	"GET /edev/{id}/lel",
+	"GET /edev/{id}/lel/{lelId}",
 	"GET /edev/{id}/ps",
 	"GET /edev/{id}/rg",
 	"GET /edev/{id}/sub",
@@ -120,7 +135,7 @@ var canonicalProtocolRoutes = []string{
 	"GET /upt/{uptId}/mr/{mrId}/r",
 	"POST /edev",
 	"POST /edev/{id}/frq",
-	"POST /edev/{id}/log",
+	"POST /edev/{id}/lel",
 	"POST /edev/{id}/sub",
 	"POST /msg/{msgId}/tm",
 	"POST /mup",
@@ -142,7 +157,7 @@ var canonicalProtocolRoutes = []string{
 
 // TestProtocolRouteSurface asserts that BuildProtocolRouter (which now
 // delegates unconditionally to assembly.BuildProtocolRouter) produces
-// exactly the 65 canonical SEP2 protocol routes, sorted, with no
+// exactly the 67 canonical SEP2 protocol routes, sorted, with no
 // additions or deletions. This replaces TestCoreRouterPatternEquivalence
 // from Phase 1: there is no longer an in-tree router to compare against,
 // so we pin the live surface directly.

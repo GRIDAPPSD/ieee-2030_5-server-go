@@ -1,4 +1,4 @@
-// CSIP V1.2 §8.2 — Group Management (Basic).
+// CSIP V1.2 Section 8.2 - Group Management (Basic).
 //
 // BASIC-002 proves that a CSIP server seeded with a 7-level FSA group
 // management topology renders the priority chain end-to-end AND that
@@ -7,9 +7,9 @@
 // levels (L0..L5) advertise their links but carry empty/missing
 // DERControl payloads.
 //
-// CSIP V1.2 §8.2 wording: "the Service Point closest to inverter has
+// CSIP V1.2 Section 8.2 wording: "the Service Point closest to inverter has
 // highest priority DERProgram + DefaultDERControl." On the server side
-// "highest priority" is decorative in today's implementation — the
+// "highest priority" is decorative in today's implementation - the
 // store keys DERPrograms by EndDevice id only (router.go
 // scopedListHandler) so every FSA's walk returns all 7 programs in
 // primacy order. The procedural assertion CORE-010 already pins down
@@ -22,18 +22,18 @@
 //  2. A single active DERControl on L6 carrying opModFixedW = 3 kW.
 //     L0..L5 each render an empty DERControlList (all=0).
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.2):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.2):
 //
-//	Step 1 (server has 7 FSAs, primacy 0..6)        ──► assertSevenLevelPriorityChain
-//	Step 2 (client walks /dcap → /edev → /fsa)      ──► walkAllFSAsBasic002
-//	Step 3 (client follows each FSA's program list) ──► assertProgramsScopedByEDev
+//	Step 1 (server has 7 FSAs, primacy 0..6)        -> assertSevenLevelPriorityChain
+//	Step 2 (client walks /dcap -> /edev -> /fsa)      -> walkAllFSAsBasic002
+//	Step 3 (client follows each FSA's program list) -> assertProgramsScopedByEDev
 //	Step 4 (L6 DefaultDERControl carries opModMaxLimW = 4 kW)
-//	                                                 ──► assertL6DefaultControlPopulated
+//	                                                 -> assertL6DefaultControlPopulated
 //	Step 5 (L0..L5 DefaultDERControl is the empty
-//	         default — DERControlBase == nil)        ──► assertOtherLevelsDefaultEmpty
+//	         default - DERControlBase == nil)        -> assertOtherLevelsDefaultEmpty
 //	Step 6 (L6 DERControlList has exactly 1 active
-//	         DERControl with opModFixedW = 3 kW)    ──► assertL6ActiveControlPresent
-//	Step 7 (L0..L5 DERControlList is empty, all=0)  ──► assertOtherLevelsControlListEmpty
+//	         DERControl with opModFixedW = 3 kW)    -> assertL6ActiveControlPresent
+//	Step 7 (L0..L5 DERControlList is empty, all=0)  -> assertOtherLevelsControlListEmpty
 //
 // Run under both GCM and CCM cipher modes so the spec cipher path is
 // exercised end-to-end on the same multi-level walk procedure.
@@ -58,13 +58,13 @@ const basic002ClosestLevelID = "6"
 
 // basic002DDERCLimitValue is the opModMaxLimW value carried by L6's
 // DefaultDERControl per the fixture (4 kW, multiplier 0).
-const basic002DDERCLimitValue int64 = 4000
+const basic002DDERCLimitValue int16 = 4000
 
 // basic002DERCFixedW is the opModFixedW target operating point
 // carried by the L6 DERControl per the fixture (3 kW, multiplier 0).
-const basic002DERCFixedW int64 = 3000
+const basic002DERCFixedW int16 = 3000
 
-// TestBASIC_002_GroupManagement implements CSIP V1.2 §8.2.
+// TestBASIC_002_GroupManagement implements CSIP V1.2 Section 8.2.
 func TestBASIC_002_GroupManagement(t *testing.T) {
 	t.Parallel()
 
@@ -83,7 +83,7 @@ func TestBASIC_002_GroupManagement(t *testing.T) {
 	}
 }
 
-// runBASIC002 executes the §8.2 procedure once against a freshly
+// runBASIC002 executes the Section 8.2 procedure once against a freshly
 // booted server seeded with basic-002-group-management.yaml.
 func runBASIC002(t *testing.T, extraOpts []csiptest.BootOption) {
 	t.Helper()
@@ -103,7 +103,7 @@ func runBASIC002(t *testing.T, extraOpts []csiptest.BootOption) {
 	}
 
 	// Step 3: every FSA's DERProgramList renders the full 7-program
-	// chain (store is scoped by EndDevice id only — see CORE-010 doc).
+	// chain (store is scoped by EndDevice id only - see CORE-010 doc).
 	// Asserts the priority chain is intact across all FSA paths.
 	for i, fsa := range fsaList.FunctionSetAssignments {
 		if fsa.DERProgramListLink == nil {
@@ -116,7 +116,7 @@ func runBASIC002(t *testing.T, extraOpts []csiptest.BootOption) {
 	// Step 4: L6 DefaultDERControl carries opModMaxLimW = 4 kW.
 	assertL6DefaultControlPopulated(t, ctx, client)
 
-	// Step 5: L0..L5 DefaultDERControl is the empty default — handler
+	// Step 5: L0..L5 DefaultDERControl is the empty default - handler
 	// returns 200 OK with DERControlBase == nil per
 	// HandleSingletonGetPut's "Return empty default" branch.
 	assertOtherLevelsDefaultEmpty(t, ctx, client)
@@ -129,9 +129,9 @@ func runBASIC002(t *testing.T, extraOpts []csiptest.BootOption) {
 	assertOtherLevelsControlListEmpty(t, ctx, client)
 }
 
-// walkAllFSAsBasic002 walks /dcap → /edev → first EndDevice → /fsa,
+// walkAllFSAsBasic002 walks /dcap -> /edev -> first EndDevice -> /fsa,
 // returning the FSA list. Mirrors CORE-013's helper of the same shape
-// — kept local to the BASIC-002 test rather than dedup'd into a shared
+// - kept local to the BASIC-002 test rather than dedup'd into a shared
 // helper because BASIC-002 needs a stronger pre-condition assertion
 // (7 levels, primacy chain intact) than CORE-013's "non-empty list"
 // check; folding both into one helper would obscure the per-test
@@ -156,7 +156,7 @@ func walkAllFSAsBasic002(
 		t.Fatalf("walk EndDeviceList: %v", err)
 	}
 	if len(edevList.EndDevice) == 0 {
-		t.Fatal("EndDeviceList empty — fixture not loaded?")
+		t.Fatal("EndDeviceList empty - fixture not loaded?")
 	}
 	edev := edevList.EndDevice[0]
 	if edev.FunctionSetAssignmentsListLink == nil {
@@ -199,7 +199,7 @@ func assertSevenLevelPriorityChain(t *testing.T, fsaIdx int, programs []sep2.DER
 
 	if got := len(programs); got != basic002LevelCount {
 		t.Fatalf("FSA[%d] DERProgram count = %d, want %d "+
-			"(store scopes by EndDevice id only — every FSA path returns all 7)",
+			"(store scopes by EndDevice id only - every FSA path returns all 7)",
 			fsaIdx, got, basic002LevelCount)
 	}
 	for i, prog := range programs {
@@ -230,7 +230,7 @@ func assertL6DefaultControlPopulated(
 		t.Errorf("L6 DefaultDERControl.MRID = %q, want BASIC-002-L6-DDERC", dderc.MRID)
 	}
 	if dderc.DERControlBase == nil {
-		t.Fatalf("L6 DefaultDERControl.DERControlBase is nil — fixture dropped on the wire")
+		t.Fatalf("L6 DefaultDERControl.DERControlBase is nil - fixture dropped on the wire")
 	}
 	if dderc.DERControlBase.OpModMaxLimW == nil {
 		t.Fatalf("L6 DefaultDERControl.OpModMaxLimW is nil")
@@ -247,7 +247,7 @@ func assertL6DefaultControlPopulated(
 // for i in 0..5 and asserts each returns 200 OK with DERControlBase ==
 // nil (the handler's "Return empty default" branch). This pins down
 // the procedure assertion that ONLY the closest-to-inverter program
-// carries a populated default — the other six levels have empty
+// carries a populated default - the other six levels have empty
 // defaults under the same fixture.
 func assertOtherLevelsDefaultEmpty(
 	t *testing.T,
@@ -294,7 +294,7 @@ func assertL6ActiveControlPresent(
 	}
 	dc := list.DERControl[0]
 	if dc.DERControlBase == nil || dc.DERControlBase.OpModFixedW == nil {
-		t.Fatalf("L6 DERControl[0].OpModFixedW is nil — fixture dropped")
+		t.Fatalf("L6 DERControl[0].OpModFixedW is nil - fixture dropped")
 	}
 	if got := dc.DERControlBase.OpModFixedW.Value; got != basic002DERCFixedW {
 		t.Errorf("L6 DERControl[0].OpModFixedW.Value = %d, want %d",
@@ -303,7 +303,7 @@ func assertL6ActiveControlPresent(
 }
 
 // assertOtherLevelsControlListEmpty walks each L0..L5 DERControlList
-// and asserts All=0 / empty slice — confirming the "only the
+// and asserts All=0 / empty slice - confirming the "only the
 // closest-level program has active events" leg of the procedure.
 func assertOtherLevelsControlListEmpty(
 	t *testing.T,
@@ -337,7 +337,7 @@ func intToID(i int) string {
 
 // bootWithBasicFixture loads the named fixture under fixtures/ into a
 // fresh store set and boots an in-process server. Shared across the
-// BASIC-002..012 tests — every BASIC-NNN test in IEEE-082 has the
+// BASIC-002..012 tests - every BASIC-NNN test in IEEE-082 has the
 // same boot shape (load YAML, then walk via TLS client). Centralizing
 // the 12-line boot pattern keeps each procedure test focused on its
 // per-mode assertions.

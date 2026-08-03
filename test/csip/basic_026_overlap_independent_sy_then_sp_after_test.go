@@ -1,21 +1,21 @@
-// CSIP V1.2 §8.26 — Overlap event prioritization, independent opMod, SP fully inside SY.
+// CSIP V1.2 Section 8.26 - Overlap event prioritization, independent opMod, SP fully inside SY.
 //
 // BASIC-026 is the independent-opMod counterpart of BASIC-023. SY's
 // window fully spans SP's window, but the two DERControls drive
-// DIFFERENT opMod* fields (SP→opModFixedW, SY→opModMaxLimW). Per
-// §10.10 different opMod families do not conflict — both events
+// DIFFERENT opMod* fields (SP->opModFixedW, SY->opModMaxLimW). Per
+// Section 10.10 different opMod families do not conflict - both events
 // apply simultaneously across the overlap. The overlap-resolution
 // helper still verifies the windows intersect but does NOT pick a
 // winner.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.26):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.26):
 //
-//	Step 1 (server has 2 DERP + 2 DDERC + 2 DERC, SP nested in SY indep) ──► fixture load
-//	Step 2 (walk /dcap → /edev → /fsa list, expect 2 FSAs)               ──► walkToFirstEDevFSAList
-//	Step 3 (each FSA renders its DERProgram in primacy order)            ──► assertBASIC026ProgramList
-//	Step 4 (SP DDERC carries opModFixedW; SY carries opModMaxLimW)       ──► assertBASIC026DDERCs
-//	Step 5 (SP renders FixedW event; SY renders MaxLimW event)           ──► assertBASIC026Events
-//	Step 6 (SP window contained in SY; no §10.10 winner)                 ──► assertOverlapResolution
+//	Step 1 (server has 2 DERP + 2 DDERC + 2 DERC, SP nested in SY indep) --> fixture load
+//	Step 2 (walk /dcap -> /edev -> /fsa list, expect 2 FSAs)               --> walkToFirstEDevFSAList
+//	Step 3 (each FSA renders its DERProgram in primacy order)            --> assertBASIC026ProgramList
+//	Step 4 (SP DDERC carries opModFixedW; SY carries opModMaxLimW)       --> assertBASIC026DDERCs
+//	Step 5 (SP renders FixedW event; SY renders MaxLimW event)           --> assertBASIC026Events
+//	Step 6 (SP window contained in SY; no Section 10.10 winner)                 --> assertOverlapResolution
 //
 // Run under both GCM and CCM cipher modes.
 package csip_test
@@ -41,26 +41,26 @@ var basic026Programs = []struct {
 var basic026DDERCs = map[string]struct {
 	mrid  string
 	field string
-	value int64
+	value int16
 }{
 	"sp": {mrid: "BASIC-026-DDERC-SP", field: "fixedW", value: 4000},
 	"sy": {mrid: "BASIC-026-DDERC-SY", field: "maxLimW", value: 6000},
 }
 
-// basic026Events — SY=MaxLimW spans [60, 360); SP=FixedW nested [180, 240).
+// basic026Events - SY=MaxLimW spans [60, 360); SP=FixedW nested [180, 240).
 var basic026Events = map[string]struct {
 	mrid     string
 	primacy  uint8
 	start    int64
 	duration uint32
 	field    string
-	value    int64
+	value    int16
 }{
 	"sp": {mrid: "BASIC-026-DERC-SP-A", primacy: 0, start: 1700000180, duration: 60, field: "fixedW", value: 4500},
 	"sy": {mrid: "BASIC-026-DERC-SY-A", primacy: 1, start: 1700000060, duration: 300, field: "maxLimW", value: 5500},
 }
 
-// TestBASIC_026_OverlapIndependentSYThenSPAfter implements CSIP V1.2 §8.26.
+// TestBASIC_026_OverlapIndependentSYThenSPAfter implements CSIP V1.2 Section 8.26.
 func TestBASIC_026_OverlapIndependentSYThenSPAfter(t *testing.T) {
 	t.Parallel()
 	runUnderBothCiphers(t, runBASIC026)

@@ -1,20 +1,20 @@
-// CSIP V1.2 §8.17 — Non-overlap event prioritization, 1 DERP / 0 DDERC / 1 DERC.
+// CSIP V1.2 Section 8.17 - Non-overlap event prioritization, 1 DERP / 0 DDERC / 1 DERC.
 //
 // BASIC-017 proves that a CSIP server seeded with one DERProgram
 // carrying NO DefaultDERControl and exactly one active DERControl
-// renders the lone event correctly over chained GETs. Per V1.2 §8.17
+// renders the lone event correctly over chained GETs. Per V1.2 Section 8.17
 // the procedure asserts that the client transitions into the event
 // at Interval.Start and out at Interval.Start+Duration; server-side
 // just asserts the fixture's MRID + Interval + EventStatus + opMod*
 // round-trip on the wire.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.17):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.17):
 //
-//	Step 1 (server has 1 DERProgram, 0 DDERC, 1 DERC active)  ──► fixture load
-//	Step 2 (client walks /dcap → /edev → /fsa → DERProgram)   ──► walkToFirstEDevFSAList + walkProgramListByHref
-//	Step 3 (DDERC link MAY be absent / DDERC renders empty)   ──► assertBASIC017DDERCEmpty
-//	Step 4 (DERControlList has exactly 1 event)                ──► walkDERControlListByHref
-//	Step 5 (Event MRID, Interval, EventStatus, opModFixedW)    ──► assertBASIC017ActiveControl
+//	Step 1 (server has 1 DERProgram, 0 DDERC, 1 DERC active)  -> fixture load
+//	Step 2 (client walks /dcap -> /edev -> /fsa -> DERProgram)   -> walkToFirstEDevFSAList + walkProgramListByHref
+//	Step 3 (DDERC link MAY be absent / DDERC renders empty)   -> assertBASIC017DDERCEmpty
+//	Step 4 (DERControlList has exactly 1 event)                -> walkDERControlListByHref
+//	Step 5 (Event MRID, Interval, EventStatus, opModFixedW)    -> assertBASIC017ActiveControl
 //
 // Step 3 note: this fixture deliberately omits the
 // default_der_control_link off the DERProgram, AND seeds no
@@ -22,7 +22,7 @@
 // the singleton store and, when no record exists, renders the empty
 // default response (200 OK with DERControlBase == nil). The test
 // asserts that empty-default behavior regardless of whether the
-// program's DefaultDERControlLink is advertised — the procedure
+// program's DefaultDERControlLink is advertised - the procedure
 // concern is "no operating envelope outside the active event".
 //
 // Run under both GCM and CCM cipher modes.
@@ -48,9 +48,9 @@ const basic017EventDuration uint32 = 120
 
 // basic017DERCFixedW is the opModFixedW value seeded on the lone
 // DERControl (3.5 kW, multiplier 0).
-const basic017DERCFixedW int64 = 3500
+const basic017DERCFixedW int16 = 3500
 
-// TestBASIC_017_OneDERPZeroDDERCOneDERC implements CSIP V1.2 §8.17.
+// TestBASIC_017_OneDERPZeroDDERCOneDERC implements CSIP V1.2 Section 8.17.
 func TestBASIC_017_OneDERPZeroDDERCOneDERC(t *testing.T) {
 	t.Parallel()
 	runUnderBothCiphers(t, runBASIC017)
@@ -84,13 +84,13 @@ func runBASIC017(t *testing.T, extraOpts []csiptest.BootOption) {
 		t.Fatal("DERProgram.DERControlListLink is nil")
 	}
 
-	// Step 3: DDERC absence — fixture omits both the singleton entry
+	// Step 3: DDERC absence - fixture omits both the singleton entry
 	// AND the default_der_control_link on the program. The handler's
 	// singleton GET returns 200 + empty (DERControlBase == nil) when
 	// hit directly; we use the canonical path to assert that branch.
 	assertBASIC017DDERCEmpty(t, ctx, client)
 
-	// Step 4: walk the DERControlList — must carry exactly the one
+	// Step 4: walk the DERControlList - must carry exactly the one
 	// active event.
 	ctrlList := walkDERControlListByHref(t, ctx, client, prog.DERControlListLink.Href)
 	if got := int(ctrlList.All); got != 1 {
@@ -130,7 +130,7 @@ func assertBASIC017ActiveControl(t *testing.T, dc sep2.DERControl) {
 	assertEventInterval(t, "BASIC-017-DERC-A", dc.Interval,
 		basic017EventStart, basic017EventDuration)
 	if dc.DERControlBase == nil || dc.DERControlBase.OpModFixedW == nil {
-		t.Fatal("DERControl.DERControlBase.OpModFixedW is nil — fixture dropped on the wire")
+		t.Fatal("DERControl.DERControlBase.OpModFixedW is nil - fixture dropped on the wire")
 	}
 	if got := dc.DERControlBase.OpModFixedW.Value; got != basic017DERCFixedW {
 		t.Errorf("DERControl.OpModFixedW.Value = %d, want %d",

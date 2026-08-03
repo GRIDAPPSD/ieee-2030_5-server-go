@@ -1,16 +1,16 @@
-// CSIP V1.2 §8.10 — Inverter Control: Limit Max Active Power Mode.
+// CSIP V1.2 Section 8.10 - Inverter Control: Limit Max Active Power Mode.
 //
 // BASIC-010 proves the server renders an immediate-control DERControl
 // carrying opModMaxLimW = 5 kW per Figure 10. No DERCurve reference.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.10):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.10):
 //
 //	Step 1 (server has DERProgram + 1 DERControl with
-//	         opModMaxLimW = 5 kW)                              ──► fixture load
-//	Step 2 (client walks /dcap → /edev → /fsa → DERProgram → DERControl)
-//	                                                            ──► basicModeWalk
+//	         opModMaxLimW = 5 kW)                              -> fixture load
+//	Step 2 (client walks /dcap -> /edev -> /fsa -> DERProgram -> DERControl)
+//	                                                            -> basicModeWalk
 //	Step 3 (DERControl.OpModMaxLimW.Value = 5000,
-//	         Multiplier = 0)                                    ──► assertMaxLimW
+//	         Multiplier = 0)                                    -> assertMaxLimW
 //
 // Run under both GCM and CCM cipher modes.
 //
@@ -28,9 +28,9 @@ import (
 )
 
 // basic010LimitValue is the opModMaxLimW value the fixture seeds (5 kW).
-const basic010LimitValue int64 = 5000
+const basic010LimitValue int16 = 5000
 
-// TestBASIC_010_LimitMaxActiveP implements CSIP V1.2 §8.10.
+// TestBASIC_010_LimitMaxActiveP implements CSIP V1.2 Section 8.10.
 func TestBASIC_010_LimitMaxActiveP(t *testing.T) {
 	t.Parallel()
 	basicModeWalk(t, "basic-010-limit-max-active-p.yaml",
@@ -48,7 +48,7 @@ func TestBASIC_010_LimitMaxActiveP(t *testing.T) {
 				t.Fatalf("[%s] DERControl.DERControlBase is nil", cipher)
 			}
 			if dc.DERControlBase.OpModMaxLimW == nil {
-				t.Fatalf("[%s] DERControl.OpModMaxLimW is nil — fixture dropped", cipher)
+				t.Fatalf("[%s] DERControl.OpModMaxLimW is nil - fixture dropped", cipher)
 			}
 			if got := dc.DERControlBase.OpModMaxLimW.Value; got != basic010LimitValue {
 				t.Errorf("[%s] OpModMaxLimW.Value = %d, want %d",

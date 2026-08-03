@@ -1,4 +1,4 @@
-// CSIP V1.2 §6.2 — Advanced End Device.
+// CSIP V1.2 Section 6.2 - Advanced End Device.
 //
 // CORE-009 proves that a CSIP server stores and returns the four
 // per-DER singleton resources advertised under
@@ -16,17 +16,17 @@
 // The DER singleton handlers in internal/handler/der.go key by the
 // (edev, derId) tuple from path values, so an EndDevice must exist for
 // the path to be reachable through the ACL chain. We seed it from the
-// single-edev.yaml fixture (IEEE-057) — same fixture BASIC-001 and the
-// other §6.x tests share.
+// single-edev.yaml fixture (IEEE-057) - same fixture BASIC-001 and the
+// other Section 6.x tests share.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §6.2 procedure):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 6.2 procedure):
 //
-//	Step 1 (server registers EndDevice) ──────► fixture load: edev id "0"
-//	Step 2 (PUT DERCapability)          ──────► putAndGetCapability subtest
-//	Step 3 (PUT DERSettings)            ──────► putAndGetSettings subtest
-//	Step 4 (PUT DERStatus)              ──────► putAndGetStatus subtest
-//	Step 5 (PUT DERAvailability)        ──────► putAndGetAvailability subtest
-//	Step 6 (GET each, assert roundtrip) ──────► assertions inside each subtest
+//	Step 1 (server registers EndDevice) ------> fixture load: edev id "0"
+//	Step 2 (PUT DERCapability)          ------> putAndGetCapability subtest
+//	Step 3 (PUT DERSettings)            ------> putAndGetSettings subtest
+//	Step 4 (PUT DERStatus)              ------> putAndGetStatus subtest
+//	Step 5 (PUT DERAvailability)        ------> putAndGetAvailability subtest
+//	Step 6 (GET each, assert roundtrip) ------> assertions inside each subtest
 //
 // Run under both GCM and CCM cipher modes. IEEE-001 (server identity
 // derivation under both modes) is the standing regression guard for
@@ -35,7 +35,7 @@
 //
 // Router fix bundled in this PR: PUT /edev/{id}/der/{derId}/dera was
 // missing from internal/server/router.go (only the GET was wired). The
-// singleton handler already supports PUT — this was a router wiring
+// singleton handler already supports PUT - this was a router wiring
 // oversight, not a handler gap. See PR description for details.
 package csip_test
 
@@ -52,7 +52,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// TestCORE_009_AdvancedEndDevice implements CSIP V1.2 §6.2.
+// TestCORE_009_AdvancedEndDevice implements CSIP V1.2 Section 6.2.
 func TestCORE_009_AdvancedEndDevice(t *testing.T) {
 	t.Parallel()
 
@@ -81,7 +81,7 @@ func TestCORE_009_AdvancedEndDevice(t *testing.T) {
 // single-edev fixture and exercises PUT-then-GET on each of the four
 // DER singleton resources advertised under /edev/0/der/0/.
 //
-// The derId path segment is "0" — the fixture does not seed a DER
+// The derId path segment is "0" - the fixture does not seed a DER
 // record (single-edev.yaml carries der_list_link metadata but no DER
 // children), and the singleton handler does not require one: it keys
 // only on the path values `{id}/{derId}`. Tests that walk the DER
@@ -115,7 +115,7 @@ func runRoundtripAllFourResources(t *testing.T, extraOpts []csiptest.BootOption)
 // applied, plus an *http.Client wired with a device cert the test
 // controls. The csiptest.Client returned by srv.Client() handles GETs
 // for chained-link walks, but we PUT raw XML payloads outside that
-// helper's surface — so we bring our own http.Client. This is the same
+// helper's surface - so we bring our own http.Client. This is the same
 // pattern CORE-001 uses (see core_001_http_request_test.go).
 func bootWithSingleEdev(t *testing.T, extraOpts []csiptest.BootOption) (*csiptest.BootedServer, *http.Client) {
 	t.Helper()
@@ -153,12 +153,15 @@ func bootWithSingleEdev(t *testing.T, extraOpts []csiptest.BootOption) (*csiptes
 // putAndGetCapability PUTs a DERCapability with three populated fields
 // (modesSupported, rtgMaxW, type), GETs it back, and asserts every
 // populated field round-tripped. The test does not assert empty fields
-// — encoding/xml elides omitempty pointer fields on the wire, and the
+// - encoding/xml elides omitempty pointer fields on the wire, and the
 // handler injects a non-empty Href on GET; equality against the put
 // payload would therefore fail on those fields.
 func putAndGetCapability(t *testing.T, ctx context.Context, srv *csiptest.BootedServer, client *http.Client, edevID, derID string) {
 	t.Helper()
-	modes := uint32(0x0000_0F00)
+	// modesSupported is DERControlType, a hexBinary32 bitmap in sep.xsd
+	// (sep.xsd:3952), not a plain integer; core made that a named type so
+	// the hexBinary encoding lives in one place for the whole family.
+	modes := sep2.DERControlType(0x0000_0F00)
 	rtg := sep2.ActivePower{Multiplier: 0, Value: 5000}
 	dtype := uint8(83) // PV per IEC 61970-301 DERType (informational only)
 
@@ -189,7 +192,9 @@ func putAndGetCapability(t *testing.T, ctx context.Context, srv *csiptest.Booted
 // (modesEnabled, setMaxW, updatedTime).
 func putAndGetSettings(t *testing.T, ctx context.Context, srv *csiptest.BootedServer, client *http.Client, edevID, derID string) {
 	t.Helper()
-	modes := uint32(0x0000_0500)
+	// modesEnabled is the same DERControlType bitmap as modesSupported
+	// above; see that comment.
+	modes := sep2.DERControlType(0x0000_0500)
 	maxW := sep2.ActivePower{Multiplier: 0, Value: 4500}
 	const updatedTime int64 = 1_700_000_000
 
@@ -256,7 +261,7 @@ func putAndGetStatus(t *testing.T, ctx context.Context, srv *csiptest.BootedServ
 // putAndGetAvailability PUTs a DERAvailability with three populated
 // fields (availabilityDuration, statWAvail, readingTime). The PUT
 // route for /dera was missing from internal/server/router.go until
-// this PR; the singleton handler already supported PUT — this was a
+// this PR; the singleton handler already supported PUT - this was a
 // router wiring oversight.
 func putAndGetAvailability(t *testing.T, ctx context.Context, srv *csiptest.BootedServer, client *http.Client, edevID, derID string) {
 	t.Helper()

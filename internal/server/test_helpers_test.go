@@ -9,6 +9,7 @@ import (
 func newTestStores() *server.Stores {
 	return &server.Stores{
 		EndDevices:               memory.NewEndDeviceStore(),
+		EndDeviceIndexes:         memory.NewEndDeviceIndex(),
 		Registrations:            memory.NewRegistrationStore(),
 		MirrorUsagePoints:        memory.NewStore[sep2.MirrorUsagePoint](),
 		MirrorMeterReadings:      memory.NewScopedStore[sep2.MirrorMeterReading](),

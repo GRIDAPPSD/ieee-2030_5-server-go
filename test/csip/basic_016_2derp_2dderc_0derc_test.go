@@ -1,23 +1,23 @@
-// CSIP V1.2 §8.16 — Non-overlap event prioritization, 2 DERP / 2 DDERC / 0 DERC.
+// CSIP V1.2 Section 8.16 - Non-overlap event prioritization, 2 DERP / 2 DDERC / 0 DERC.
 //
 // BASIC-016 proves that a CSIP server seeded with two DERPrograms
 // (Service Point at primacy 0, Smart Inverter Yard at primacy 1),
 // each carrying its own DefaultDERControl (no DERControl events at
 // all), renders the full priority chain correctly over chained GETs.
-// Per V1.2 §8.16 the procedure asserts that the client applies the
-// highest-primacy DDERC outside any event window — server-side
+// Per V1.2 Section 8.16 the procedure asserts that the client applies the
+// highest-primacy DDERC outside any event window - server-side
 // here we just assert the topology + primacy + DDERC payloads
 // round-trip exactly as the fixture seeded them.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.16):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.16):
 //
-//	Step 1 (server has 2 DERPrograms SP@0, SY@1)         ──► fixture load
-//	Step 2 (client walks /dcap → /edev → /fsa list)      ──► walkToFirstEDevFSAList
-//	Step 3 (each FSA's DERProgramList renders both       ──► assertBASIC016ProgramList
+//	Step 1 (server has 2 DERPrograms SP@0, SY@1)         -> fixture load
+//	Step 2 (client walks /dcap -> /edev -> /fsa list)      -> walkToFirstEDevFSAList
+//	Step 3 (each FSA's DERProgramList renders both       -> assertBASIC016ProgramList
 //	         programs in primacy order)
-//	Step 4 (SP DDERC carries opModFixedW = 4 kW)         ──► assertBASIC016DDERCPayload (SP)
-//	Step 5 (SY DDERC carries opModFixedW = 2 kW)         ──► assertBASIC016DDERCPayload (SY)
-//	Step 6 (no DERControl events on either program)      ──► assertBASIC016NoEvents
+//	Step 4 (SP DDERC carries opModFixedW = 4 kW)         -> assertBASIC016DDERCPayload (SP)
+//	Step 5 (SY DDERC carries opModFixedW = 2 kW)         -> assertBASIC016DDERCPayload (SY)
+//	Step 6 (no DERControl events on either program)      -> assertBASIC016NoEvents
 //
 // Run under both GCM and CCM cipher modes so the spec cipher path
 // (CCM-8) is exercised end-to-end on the multi-program walk.
@@ -44,13 +44,13 @@ const basic016ProgramCount = 2
 
 // basic016SPFixedW is the opModFixedW value seeded by the SP DDERC
 // per the fixture (4 kW, multiplier 0).
-const basic016SPFixedW int64 = 4000
+const basic016SPFixedW int16 = 4000
 
 // basic016SYFixedW is the opModFixedW value seeded by the SY DDERC
 // per the fixture (2 kW, multiplier 0).
-const basic016SYFixedW int64 = 2000
+const basic016SYFixedW int16 = 2000
 
-// TestBASIC_016_TwoDERPTwoDDERCZeroDERC implements CSIP V1.2 §8.16.
+// TestBASIC_016_TwoDERPTwoDDERCZeroDERC implements CSIP V1.2 Section 8.16.
 func TestBASIC_016_TwoDERPTwoDDERCZeroDERC(t *testing.T) {
 	t.Parallel()
 	runUnderBothCiphers(t, runBASIC016)
@@ -66,7 +66,7 @@ func runBASIC016(t *testing.T, extraOpts []csiptest.BootOption) {
 	// Step 1 verified by fixture load (boot would fail loudly on a
 	// malformed fixture); no separate assertion needed.
 
-	// Step 2: walk /dcap → /edev → /edev/0/fsa. Expect 2 FSAs (SP, SY)
+	// Step 2: walk /dcap -> /edev -> /edev/0/fsa. Expect 2 FSAs (SP, SY)
 	// in lex-sorted order: "sp" then "sy".
 	fsaList := walkToFirstEDevFSAList(t, ctx, client)
 	if got := int(fsaList.All); got != 2 {
@@ -75,7 +75,7 @@ func runBASIC016(t *testing.T, extraOpts []csiptest.BootOption) {
 	if got := len(fsaList.FunctionSetAssignments); got != 2 {
 		t.Fatalf("len(FSAList.FunctionSetAssignments) = %d, want 2", got)
 	}
-	// FSA store sorts keys lexically — "sp" sorts before "sy".
+	// FSA store sorts keys lexically - "sp" sorts before "sy".
 	wantFSAOrder := []string{"BASIC-016-FSA-SP", "BASIC-016-FSA-SY"}
 	for i, want := range wantFSAOrder {
 		if got := fsaList.FunctionSetAssignments[i].MRID; got != want {
@@ -101,7 +101,7 @@ func runBASIC016(t *testing.T, extraOpts []csiptest.BootOption) {
 	syDDERC := walkDefaultDERControlByHref(t, ctx, client, "/edev/0/fsa/sy/derp/sy/dderc")
 	assertBASIC016DDERCPayload(t, "SY", syDDERC, "BASIC-016-DDERC-SY", basic016SYFixedW)
 
-	// Step 6: no DERControl events on either program — both lists
+	// Step 6: no DERControl events on either program - both lists
 	// render All=0 / empty slice.
 	for _, prog := range []string{"sp", "sy"} {
 		href := "/edev/0/fsa/" + prog + "/derp/" + prog + "/derc"
@@ -163,7 +163,7 @@ func assertBASIC016DDERCPayload(
 	label string,
 	dderc sep2.DefaultDERControl,
 	wantMRID string,
-	wantFixedW int64,
+	wantFixedW int16,
 ) {
 	t.Helper()
 
@@ -171,7 +171,7 @@ func assertBASIC016DDERCPayload(
 		t.Errorf("%s DDERC.MRID = %q, want %q", label, dderc.MRID, wantMRID)
 	}
 	if dderc.DERControlBase == nil {
-		t.Fatalf("%s DDERC.DERControlBase is nil — fixture dropped on the wire", label)
+		t.Fatalf("%s DDERC.DERControlBase is nil - fixture dropped on the wire", label)
 	}
 	if dderc.DERControlBase.OpModFixedW == nil {
 		t.Fatalf("%s DDERC.OpModFixedW is nil", label)

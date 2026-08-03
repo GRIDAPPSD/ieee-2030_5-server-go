@@ -35,11 +35,26 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// canonicalProtocolRoutes is the pinned list of 58 SEP2 protocol-listener
+// canonicalProtocolRoutes is the pinned list of 60 SEP2 protocol-listener
 // patterns that assembly.BuildProtocolRouter must mount. Confirmed
 // identical to the in-tree BuildProtocolRouter output by Phase 1
 // (IEEESRV-001 TestCoreRouterPatternEquivalence). Any addition or
 // deletion from this set is a wire-level change and must be deliberate.
+//
+// core v0.10.0 (the ieee-2030_5-core-go bump that closed the four-release
+// gap since v0.6.0) added two routes, verified against
+// pkg/sep2srv/assembly/assembly.go before pinning here:
+//   - "GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc/{dercId}": a
+//     per-DERControl item GET. Core's comment there explains the CSIP gap
+//     it closes: a client polling a single control by id 404s without
+//     this route and tears the event down, capping delivery at one event.
+//   - "POST /mup/{id}": wired to the same coremetering.HandlePostMirrorMeterReading
+//     handler as the existing "POST /mup/{id}/mr", alongside core's
+//     MirrorUsagePoint rework (MirrorMeterReadingListLink replaced by an
+//     inline MirrorMeterReading list). test/csip/basic_029_meter_reading_test.go
+//     and internal/handler/mirror_test.go still need the matching consumer
+//     update for that rework; tracked as a follow-up, out of scope for this
+//     route-surface pin.
 var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}",
 	"DELETE /edev/{id}/sub/{subId}",
@@ -61,6 +76,7 @@ var canonicalProtocolRoutes = []string{
 	"GET /edev/{id}/fsa/{fsaId}/derp",
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc",
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc",
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc/{dercId}",
 	"GET /edev/{id}/log",
 	"GET /edev/{id}/ps",
 	"GET /edev/{id}/rg",
@@ -87,6 +103,7 @@ var canonicalProtocolRoutes = []string{
 	"POST /edev/{id}/sub",
 	"POST /msg/{msgId}/tm",
 	"POST /mup",
+	"POST /mup/{id}",
 	"POST /mup/{id}/mr",
 	"POST /rsps/{rspsId}/rsp",
 	"POST /upt",

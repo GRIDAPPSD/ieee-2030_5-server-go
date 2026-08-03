@@ -7,7 +7,7 @@
 //	        DefaultDERControl, + optional DERControl) topology where
 //	        the DERControl events occupy disjoint [start, start+duration)
 //	        windows.
-//	Step 2: client walks /dcap → /edev → /fsa → DERProgramList,
+//	Step 2: client walks /dcap -> /edev -> /fsa -> DERProgramList,
 //	        asserting the program count + primacy ordering per fixture.
 //	Step 3: per-program, client walks DefaultDERControlLink and
 //	        DERControlListLink, asserting payloads round-trip exactly
@@ -15,7 +15,7 @@
 //	        opMod*).
 //
 // IEEE-084 wires the server-side wire-fidelity tests against this
-// shape — the server just renders the seeded fixture; scheduler
+// shape - the server just renders the seeded fixture; scheduler
 // runtime prioritization is the DER client's problem (plan-1's scope).
 //
 // IEEE-085 (overlapping variants) reuses `bootWithEventPrioFixture`
@@ -35,13 +35,13 @@ import (
 
 // bootWithEventPrioFixture loads the named fixture under fixtures/ into
 // a fresh store set and boots an in-process server. Shared across the
-// BASIC-016..020 tests — each test in IEEE-084 has the same boot shape
+// BASIC-016..020 tests - each test in IEEE-084 has the same boot shape
 // (load YAML, walk via TLS client). Mirrors the same pattern used by
 // CORE-012's bootWithDERProgramFixture; centralizing this 12-line
 // boot keeps each procedure test focused on its per-fixture
 // assertions.
 //
-// IEEE-085 will call this same helper for BASIC-021..026 — non-overlap
+// IEEE-085 will call this same helper for BASIC-021..026 - non-overlap
 // vs overlap is a fixture-content distinction, not a topology-shape
 // distinction, so the boot path is identical.
 func bootWithEventPrioFixture(
@@ -72,7 +72,7 @@ func bootWithEventPrioFixture(
 // runUnderBothCiphers invokes inner under each of GCM and CCM cipher
 // modes as t.Run subtests, marking each subtest t.Parallel. Mirrors
 // the per-mode harness used by CORE-012/013 and IEEE-082's
-// basic_002 — every BASIC-NNN test in this package runs under both
+// basic_002 - every BASIC-NNN test in this package runs under both
 // ciphers so the spec cipher path (CCM-8) is exercised on the same
 // procedure walk.
 func runUnderBothCiphers(t *testing.T, inner func(t *testing.T, extraOpts []csiptest.BootOption)) {
@@ -93,12 +93,12 @@ func runUnderBothCiphers(t *testing.T, inner func(t *testing.T, extraOpts []csip
 	}
 }
 
-// walkToFirstEDevFSAList walks /dcap → /edev (list) → first EndDevice
-// → /edev/{id}/fsa (list, l=255) and returns the parsed FSA list. Used
+// walkToFirstEDevFSAList walks /dcap -> /edev (list) -> first EndDevice
+// -> /edev/{id}/fsa (list, l=255) and returns the parsed FSA list. Used
 // by every BASIC-016..020 test that pivots through the FSA hierarchy.
-// Local to IEEE-084 — CORE-012's walkToFirstFSA returns only the
+// Local to IEEE-084 - CORE-012's walkToFirstFSA returns only the
 // first FSA, whereas BASIC-020 needs the full list to walk both FSAs
-// (2 DERPrograms → 2 FSAs in the canonical fixture shape).
+// (2 DERPrograms -> 2 FSAs in the canonical fixture shape).
 func walkToFirstEDevFSAList(
 	t *testing.T,
 	ctx context.Context,
@@ -111,7 +111,7 @@ func walkToFirstEDevFSAList(
 		t.Fatalf("GET /dcap: %v", err)
 	}
 	if dcap.EndDeviceListLink == nil {
-		t.Fatal("DeviceCapability.EndDeviceListLink is nil — server did not advertise /edev")
+		t.Fatal("DeviceCapability.EndDeviceListLink is nil - server did not advertise /edev")
 	}
 
 	var edevList sep2.EndDeviceList
@@ -119,12 +119,12 @@ func walkToFirstEDevFSAList(
 		t.Fatalf("walk EndDeviceListLink %s: %v", dcap.EndDeviceListLink.Href, err)
 	}
 	if len(edevList.EndDevice) == 0 {
-		t.Fatal("EndDeviceList carries zero entries — fixture not loaded?")
+		t.Fatal("EndDeviceList carries zero entries - fixture not loaded?")
 	}
 	edev := edevList.EndDevice[0]
 
 	if edev.FunctionSetAssignmentsListLink == nil {
-		t.Fatal("EndDevice.FunctionSetAssignmentsListLink is nil — fixture topology drift")
+		t.Fatal("EndDevice.FunctionSetAssignmentsListLink is nil - fixture topology drift")
 	}
 
 	var fsaList sep2.FunctionSetAssignmentsList
@@ -207,7 +207,7 @@ func assertEventInterval(
 ) {
 	t.Helper()
 	if got == nil {
-		t.Errorf("%s Interval is nil — fixture interval dropped on the wire", label)
+		t.Errorf("%s Interval is nil - fixture interval dropped on the wire", label)
 		return
 	}
 	if got.Start != wantStart {
@@ -220,12 +220,12 @@ func assertEventInterval(
 
 // assertEventStatus asserts the rendered EventStatus.CurrentStatus
 // matches the expected status code. The other EventStatus fields are
-// asserted inline where they matter — most BASIC-016..020 events
+// asserted inline where they matter - most BASIC-016..020 events
 // ship CurrentStatus = Scheduled (0).
 func assertEventStatus(t *testing.T, label string, got *sep2.EventStatus, wantStatus uint8) {
 	t.Helper()
 	if got == nil {
-		t.Errorf("%s EventStatus is nil — fixture event status dropped on the wire", label)
+		t.Errorf("%s EventStatus is nil - fixture event status dropped on the wire", label)
 		return
 	}
 	if got.CurrentStatus != wantStatus {
@@ -235,10 +235,10 @@ func assertEventStatus(t *testing.T, label string, got *sep2.EventStatus, wantSt
 }
 
 // assertDisjointIntervals asserts that the rendered DERControls
-// occupy pairwise-disjoint [Start, Start+Duration) windows — the
+// occupy pairwise-disjoint [Start, Start+Duration) windows - the
 // defining property of BASIC-016..020 vs IEEE-085's BASIC-021..026.
 // Caller passes the controls in any order; this helper checks every
-// (i, j) pair (the list is small — max 2 per the fixture set).
+// (i, j) pair (the list is small - max 2 per the fixture set).
 func assertDisjointIntervals(t *testing.T, controls []sep2.DERControl) {
 	t.Helper()
 
@@ -256,7 +256,7 @@ func assertDisjointIntervals(t *testing.T, controls []sep2.DERControl) {
 				continue
 			}
 			bEnd := b.Start + int64(b.Duration)
-			// Disjoint iff a.End ≤ b.Start  OR  b.End ≤ a.Start.
+			// Disjoint iff a.End <= b.Start  OR  b.End <= a.Start.
 			if !(aEnd <= b.Start || bEnd <= a.Start) {
 				t.Errorf("DERControls %q and %q intervals overlap: [%d,%d) vs [%d,%d)",
 					controls[i].MRID, controls[j].MRID,
@@ -268,18 +268,21 @@ func assertDisjointIntervals(t *testing.T, controls []sep2.DERControl) {
 
 // assertOpModValue asserts that base carries the named opMod* field
 // and that its scalar Value matches want. The field string is one of
-// "fixedW", "maxLimW", "targetW" — extend as new fixtures introduce
+// "fixedW", "maxLimW", "targetW" - extend as new fixtures introduce
 // other opMod families.
 //
 // IEEE-085 BASIC-024..026 exercise multiple opMod families per
-// fixture (SP→fixedW, SY→maxLimW), so a single per-field assertion
+// fixture (SP->fixedW, SY->maxLimW), so a single per-field assertion
 // helper keeps the test bodies linear instead of branching by string
 // at each call site.
-func assertOpModValue(t *testing.T, label string, base *sep2.DERControlBase, field string, want int64) {
+// want is int16 to match sep2.ActivePower.Value, which core narrowed from
+// int64 to xs:short per sep.xsd. Every fixture value here is well inside the
+// int16 range, so this is a type match, not a range change.
+func assertOpModValue(t *testing.T, label string, base *sep2.DERControlBase, field string, want int16) {
 	t.Helper()
 
 	if base == nil {
-		t.Errorf("%s DERControlBase is nil — fixture dropped on the wire", label)
+		t.Errorf("%s DERControlBase is nil - fixture dropped on the wire", label)
 		return
 	}
 	var got *sep2.ActivePower
@@ -294,7 +297,7 @@ func assertOpModValue(t *testing.T, label string, base *sep2.DERControlBase, fie
 		t.Fatalf("%s: unknown opMod field %q (extend assertOpModValue)", label, field)
 	}
 	if got == nil {
-		t.Errorf("%s opMod field %q is nil — fixture dropped", label, field)
+		t.Errorf("%s opMod field %q is nil - fixture dropped", label, field)
 		return
 	}
 	if got.Value != want {
@@ -306,12 +309,12 @@ func assertOpModValue(t *testing.T, label string, base *sep2.DERControlBase, fie
 // consumes. Programs are identified by their primacy + a stable label
 // (the MRID is the usual choice). Each entry carries the rendered
 // DERControl whose [Start, Start+Duration) window participates in the
-// overlap and a tag describing which opMod* family the event drives —
+// overlap and a tag describing which opMod* family the event drives -
 // "similar" vs "independent" is the BASIC-021..023 vs BASIC-024..026
 // distinction.
 //
 // IEEE-085 keeps the tuple flat (one DERControl per program) because
-// the V1.2 §8.21-§8.26 procedures specify exactly one scheduled event
+// the V1.2 Section 8.21-Section 8.26 procedures specify exactly one scheduled event
 // per program. The helper signature could be generalized to a slice
 // per program, but that would invite over-abstraction the procedures
 // do not justify.
@@ -319,28 +322,28 @@ type overlapEntry struct {
 	programLabel string // for failure messages (typically the DERProgram MRID)
 	primacy      uint8
 	control      sep2.DERControl
-	opModFamily  string // "fixedW", "maxLimW", "voltVar" etc — anything stable
+	opModFamily  string // "fixedW", "maxLimW", "voltVar" etc - anything stable
 }
 
 // assertOverlapResolution is the IEEE-085 analog of
-// assertDisjointIntervals. It asserts the inverse invariant — at
+// assertDisjointIntervals. It asserts the inverse invariant - at
 // least one pair of rendered DERControls occupies INTERSECTING
-// [Start, Start+Duration) windows — and additionally surfaces the
-// IEEE 2030.5 §10.10 expected-winner per overlap region so a future
+// [Start, Start+Duration) windows - and additionally surfaces the
+// IEEE 2030.5 Section 10.10 expected-winner per overlap region so a future
 // scheduler-side test (or DER client conformance suite) can pin the
 // resolution rule without re-deriving it.
 //
 // Resolution rule (server-side renders both events; scheduler resolves):
 //
-//  1. Same opMod* family ("similar")    → lower Primacy wins.
-//  2. Tie on Primacy                    → earlier Interval.Start wins.
-//  3. Tie on (Primacy, Start)           → MRID lex order wins (mRID per §10.10).
-//  4. Different opMod* family ("independent") → both events apply
+//  1. Same opMod* family ("similar")    -> lower Primacy wins.
+//  2. Tie on Primacy                    -> earlier Interval.Start wins.
+//  3. Tie on (Primacy, Start)           -> MRID lex order wins (mRID per Section 10.10).
+//  4. Different opMod* family ("independent") -> both events apply
 //     simultaneously; resolution is per-mode, not per-event. The
 //     helper still verifies the overlap exists but does NOT pick a
 //     single winner.
 //
-// Server-side IEEE-085 wires only the overlap-detection arm — clients
+// Server-side IEEE-085 wires only the overlap-detection arm - clients
 // and the scheduler test (plan-1 scope) consume the returned winners
 // when present. Returns (winners-by-pair) keyed by a stable
 // "<a>|<b>" label so callers can spot-check without duplicating the
@@ -350,7 +353,7 @@ func assertOverlapResolution(t *testing.T, entries []overlapEntry) map[string]st
 
 	winners := make(map[string]string)
 	if len(entries) < 2 {
-		t.Errorf("assertOverlapResolution: need ≥2 entries, got %d", len(entries))
+		t.Errorf("assertOverlapResolution: need >=2 entries, got %d", len(entries))
 		return winners
 	}
 
@@ -371,7 +374,7 @@ func assertOverlapResolution(t *testing.T, entries []overlapEntry) map[string]st
 				continue
 			}
 			bEnd := b.Start + int64(b.Duration)
-			// Overlap iff NOT (a.End ≤ b.Start OR b.End ≤ a.Start).
+			// Overlap iff NOT (a.End <= b.Start OR b.End <= a.Start).
 			if aEnd <= b.Start || bEnd <= a.Start {
 				t.Errorf("DERControls %q and %q intervals are disjoint, want overlap: [%d,%d) vs [%d,%d)",
 					entries[i].control.MRID, entries[j].control.MRID,
@@ -387,12 +390,12 @@ func assertOverlapResolution(t *testing.T, entries []overlapEntry) map[string]st
 		}
 	}
 	if !overlapFound {
-		t.Error("assertOverlapResolution: no overlapping pairs found — fixture is fully disjoint")
+		t.Error("assertOverlapResolution: no overlapping pairs found - fixture is fully disjoint")
 	}
 	return winners
 }
 
-// pickSimilarWinner applies the §10.10 tie-break ladder for two
+// pickSimilarWinner applies the Section 10.10 tie-break ladder for two
 // same-opMod-family events: lower Primacy, then earlier Start, then
 // MRID lex. Returns the winner's MRID.
 func pickSimilarWinner(a, b overlapEntry) string {

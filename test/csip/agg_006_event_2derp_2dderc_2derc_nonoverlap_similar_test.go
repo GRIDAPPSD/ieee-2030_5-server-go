@@ -1,14 +1,14 @@
-// CSIP V1.2 §10.6 — AGG-006 Aggregator Event
+// CSIP V1.2 Section 10.6 - AGG-006 Aggregator Event
 // (2 DERP, 2 DDERC, 2 Non-overlap Similar DERC).
 //
 // Mirror of BASIC-020 at the aggregator topology level. Per managed
 // inverter, inject one DDERC + one DERControl on the SY-level
 // DERProgram AND one DDERC + one DERControl on the FDx-level
-// DERProgram. Both DERControls use the same opMod (OpModFixedW —
+// DERProgram. Both DERControls use the same opMod (OpModFixedW -
 // "similar"). The procedure asserts each managed inverter surfaces the
 // full SY/FDx pair.
 //
-// Procedure step → assertion mapping (per V1.2 §10.6):
+// Procedure step -> assertion mapping (per V1.2 Section 10.6):
 //
 //	Step 1: bootAggregatorTopology + injectEventSpec.
 //	Step 2 (SY): walk /dderc + /derc at SY; assert MRID and counts.
@@ -22,7 +22,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// TestAGG_006_Event2DERP2DDERC2DERCNonOverlapSimilar implements CSIP V1.2 §10.6.
+// TestAGG_006_Event2DERP2DDERC2DERCNonOverlapSimilar implements CSIP V1.2 Section 10.6.
 func TestAGG_006_Event2DERP2DDERC2DERCNonOverlapSimilar(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -32,7 +32,7 @@ func TestAGG_006_Event2DERP2DDERC2DERCNonOverlapSimilar(t *testing.T) {
 
 	type nodeSpec struct {
 		fsaID string
-		val   int64
+		val   int16
 	}
 	nodes := []nodeSpec{
 		{aggFSAIDSY, 4000},

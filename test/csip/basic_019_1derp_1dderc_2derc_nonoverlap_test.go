@@ -1,24 +1,24 @@
-// CSIP V1.2 §8.19 — Non-overlap event prioritization, 1 DERP / 1 DDERC / 2 DERC.
+// CSIP V1.2 Section 8.19 - Non-overlap event prioritization, 1 DERP / 1 DDERC / 2 DERC.
 //
 // BASIC-019 proves that a CSIP server seeded with one DERProgram
 // carrying a DefaultDERControl AND two scheduled DERControls that
 // share the same opMod* type but occupy non-overlapping intervals
-// renders both events in the priority list. Per V1.2 §8.19 the
-// procedure asserts the client transitions through DDERC →
-// DERControl[a] (in-window) → DDERC (gap) → DERControl[b]
-// (in-window) → DDERC. Server-side just asserts both events render
+// renders both events in the priority list. Per V1.2 Section 8.19 the
+// procedure asserts the client transitions through DDERC ->
+// DERControl[a] (in-window) -> DDERC (gap) -> DERControl[b]
+// (in-window) -> DDERC. Server-side just asserts both events render
 // AND that the intervals are pairwise disjoint (the test-specific
 // invariant that defines "non-overlap").
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.19):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.19):
 //
-//	Step 1 (server has 1 DERP + 1 DDERC + 2 DERC non-overlap)  ──► fixture load
-//	Step 2 (walk to the single DERProgram)                      ──► standard walk
-//	Step 3 (DDERC carries opModFixedW = 1.5 kW)                 ──► assertBASIC019DDERC
-//	Step 4 (DERControlList has 2 events in lex-id order)        ──► walkDERControlListByHref
-//	Step 5 (Each event renders its MRID + Interval + Status     ──► assertBASIC019DERCAt
+//	Step 1 (server has 1 DERP + 1 DDERC + 2 DERC non-overlap)  -> fixture load
+//	Step 2 (walk to the single DERProgram)                      -> standard walk
+//	Step 3 (DDERC carries opModFixedW = 1.5 kW)                 -> assertBASIC019DDERC
+//	Step 4 (DERControlList has 2 events in lex-id order)        -> walkDERControlListByHref
+//	Step 5 (Each event renders its MRID + Interval + Status     -> assertBASIC019DERCAt
 //	        + opModFixedW)
-//	Step 6 (Intervals are pairwise disjoint)                    ──► assertDisjointIntervals
+//	Step 6 (Intervals are pairwise disjoint)                    -> assertDisjointIntervals
 //
 // Run under both GCM and CCM cipher modes.
 package csip_test
@@ -34,7 +34,7 @@ import (
 const basic019FixtureName = "basic-019-1derp-1dderc-2derc-nonoverlap.yaml"
 
 // basic019DDERCFixedW is the DDERC fallback (1.5 kW).
-const basic019DDERCFixedW int64 = 1500
+const basic019DDERCFixedW int16 = 1500
 
 // basic019Events is the expected wire shape of the DERControlList,
 // in lex-id order ("a" then "b") which the memory store sorts on.
@@ -42,13 +42,13 @@ var basic019Events = []struct {
 	mrid     string
 	start    int64
 	duration uint32
-	fixedW   int64
+	fixedW   int16
 }{
 	{mrid: "BASIC-019-DERC-A", start: 1700000060, duration: 60, fixedW: 3000},
 	{mrid: "BASIC-019-DERC-B", start: 1700000180, duration: 60, fixedW: 3500},
 }
 
-// TestBASIC_019_OneDERPOneDDERCTwoDERCNonOverlap implements CSIP V1.2 §8.19.
+// TestBASIC_019_OneDERPOneDDERCTwoDERCNonOverlap implements CSIP V1.2 Section 8.19.
 func TestBASIC_019_OneDERPOneDDERCTwoDERCNonOverlap(t *testing.T) {
 	t.Parallel()
 	runUnderBothCiphers(t, runBASIC019)
@@ -76,7 +76,7 @@ func runBASIC019(t *testing.T, extraOpts []csiptest.BootOption) {
 	// Step 3: DDERC payload.
 	dderc := walkDefaultDERControlByHref(t, ctx, client, prog.DefaultDERControlLink.Href)
 	if dderc.DERControlBase == nil || dderc.DERControlBase.OpModFixedW == nil {
-		t.Fatal("DDERC.DERControlBase.OpModFixedW is nil — fixture dropped")
+		t.Fatal("DDERC.DERControlBase.OpModFixedW is nil - fixture dropped")
 	}
 	if got := dderc.DERControlBase.OpModFixedW.Value; got != basic019DDERCFixedW {
 		t.Errorf("DDERC.OpModFixedW.Value = %d, want %d", got, basic019DDERCFixedW)
@@ -99,7 +99,7 @@ func runBASIC019(t *testing.T, extraOpts []csiptest.BootOption) {
 	}
 
 	// Step 6: assert the [Start, Start+Duration) windows are pairwise
-	// disjoint — the defining property of BASIC-019 vs IEEE-085's
+	// disjoint - the defining property of BASIC-019 vs IEEE-085's
 	// BASIC-021..026.
 	assertDisjointIntervals(t, ctrlList.DERControl)
 }
@@ -112,7 +112,7 @@ func assertBASIC019DERCAt(
 	wantMRID string,
 	wantStart int64,
 	wantDuration uint32,
-	wantFixedW int64,
+	wantFixedW int16,
 ) {
 	t.Helper()
 
@@ -122,7 +122,7 @@ func assertBASIC019DERCAt(
 	assertEventStatus(t, wantMRID, dc.EventStatus, sep2.EventStatusScheduled)
 	assertEventInterval(t, wantMRID, dc.Interval, wantStart, wantDuration)
 	if dc.DERControlBase == nil || dc.DERControlBase.OpModFixedW == nil {
-		t.Fatalf("%s DERControlBase.OpModFixedW is nil — fixture dropped", wantMRID)
+		t.Fatalf("%s DERControlBase.OpModFixedW is nil - fixture dropped", wantMRID)
 	}
 	if got := dc.DERControlBase.OpModFixedW.Value; got != wantFixedW {
 		t.Errorf("%s OpModFixedW.Value = %d, want %d", wantMRID, got, wantFixedW)

@@ -110,6 +110,7 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 	}
 	return &assembly.Stores{
 		EndDevices:               s.EndDevices,
+		EndDeviceIndexes:         s.EndDeviceIndexes,
 		Registrations:            s.Registrations,
 		MirrorUsagePoints:        s.MirrorUsagePoints,
 		MirrorMeterReadings:      s.MirrorMeterReadings,
@@ -166,7 +167,7 @@ var _ notifyRemover = (*coresub.Manager)(nil)
 //
 // The adapter also forwards NotifyRemoved when the inner notifier supports
 // it. Core's subscription DELETE handler calls NotifyRemoved (via type
-// assertion) to dispatch the final Removed Notification (CSIP V1.2 §11.6);
+// assertion) to dispatch the final Removed Notification (CSIP V1.2 Section 11.6);
 // without this forwarding the notification is silently dropped.
 //
 // The adapter is safe when notifier is nil (the adapter is nil in that

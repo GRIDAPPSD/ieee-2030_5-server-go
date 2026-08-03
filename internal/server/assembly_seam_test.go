@@ -30,6 +30,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store/memory"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
@@ -263,6 +264,21 @@ func TestNewCoreStoresCopiesAllFields(t *testing.T) {
 	t.Parallel()
 
 	src := newTestStores()
+	// RegistrationPolicy (core v0.13.0) is the first non-pointer,
+	// non-interface field on assembly.Stores: its zero value is a
+	// legitimate, fail-closed production state (see the doc comment on
+	// Stores.RegistrationPolicy in router.go), not a sign the copy was
+	// forgotten. newTestStores() deliberately leaves it at the zero value
+	// because that fixture is shared by every test in this package, and a
+	// non-nil PIN resolver there would start minting Registrations for
+	// every EndDevice every other test creates. Overriding it on this
+	// src alone, after newTestStores() returns, keeps that blast radius
+	// at zero while still giving THIS test a non-zero value to prove the
+	// copy itself works.
+	src.RegistrationPolicy = memory.RegistrationPolicy{
+		PIN:      func(lfdi string) (uint32, bool) { return 1, true },
+		PollRate: 900,
+	}
 	dst := server.NewCoreStores(src)
 
 	if dst == nil {
@@ -280,9 +296,10 @@ func TestNewCoreStoresCopiesAllFields(t *testing.T) {
 				t.Errorf("assembly.Stores.%s is nil after NewCoreStores: field was not copied", name)
 			}
 		default:
-			// Scalar fields (int, bool, string, etc.) are not expected in
-			// assembly.Stores today, but if one appears and the copy is missing
-			// we catch the zero value here.
+			// Scalar and struct-valued fields: RegistrationPolicy today.
+			// src sets it to a non-zero value above specifically so this
+			// check is meaningful; a zero value here means NewCoreStores
+			// dropped the field on the way to the destination struct.
 			if f.IsZero() {
 				t.Errorf("assembly.Stores.%s is zero after NewCoreStores: field was not copied", name)
 			}

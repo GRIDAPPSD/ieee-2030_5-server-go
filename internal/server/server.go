@@ -167,6 +167,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		EndDevices:               endDevices,
 		EndDeviceIndexes:         memory.NewEndDeviceIndex(),
 		Registrations:            registrations,
+		RegistrationPolicy:       memory.RegistrationPolicy{}, // fail-closed: no self-registration pIN resolver wired yet
 		MirrorUsagePoints:        memory.NewStore[sep2.MirrorUsagePoint](),
 		MirrorMeterReadings:      memory.NewScopedStore[sep2.MirrorMeterReading](),
 		DERs:                     memory.NewScopedStore[sep2.DER](),

@@ -112,6 +112,7 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 		EndDevices:               s.EndDevices,
 		EndDeviceIndexes:         s.EndDeviceIndexes,
 		Registrations:            s.Registrations,
+		RegistrationPolicy:       s.RegistrationPolicy,
 		MirrorUsagePoints:        s.MirrorUsagePoints,
 		MirrorMeterReadings:      s.MirrorMeterReadings,
 		DERs:                     s.DERs,

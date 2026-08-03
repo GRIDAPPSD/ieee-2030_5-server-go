@@ -31,6 +31,15 @@ name: "Core freshness"
 # infrastructure: see test/csip/README.md and the `csip` job in ci.yml
 # for what these targets already cover.
 #
+# conformance-vs-core-main also supplies the licensed IEEE WADL and sets
+# SEP2_WADL_REQUIRED, so `make test` drives the WADL conformance sweep in
+# test/conformance/wadl against core main rather than skipping it. Until
+# IEEESRV-031 that arming was missing: the gated tests skipped, `go test`
+# exited 0, and this job reported green every single run while measuring
+# nothing. A scheduled job that cannot fail is worse than no job, because it
+# occupies the slot where a real signal would go and everyone downstream
+# reasons as though core main is being watched.
+#
 # The bump PR is expected to open RED while core is ahead of what this
 # server has been verified against: that is the point, converting
 # invisible drift into a red PR someone has to look at. The fix for a
@@ -295,11 +304,55 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Supply the IEEE 2030.5 WADL
+        # IEEESRV-031: without this step the WADL-gated conformance tests
+        # SKIPPED on every run of this job, `go test` exited 0, and the job
+        # reported green while measuring nothing against the standard. The
+        # instrument was armed at PR time against a frozen core (ci.yml) and
+        # disarmed daily against a moving one (here), which is inverted from
+        # where it is needed: core main is exactly the thing whose wire-format
+        # drift no compile check catches.
+        #
+        # required: true, unlike ci.yml. This workflow runs only on `schedule`
+        # and `workflow_dispatch`, both of which always execute in the base
+        # repository with secrets in scope. There is no fork-pull-request case
+        # here, so an absent secret is never legitimate withholding: it is a
+        # deleted, empty, or half-rotated secret, and it must fail the job
+        # rather than quietly reinstating the skip this card removed.
+        uses: ./.github/actions/supply-wadl
+        with:
+          wadl-xz-b64: ${{ secrets.SEP2_WADL_XZ_B64 }}
+          required: 'true'
+
       - name: Bump core to latest main (in-memory only, never committed)
         run: go get github.com/GRIDAPPSD/ieee-2030_5-core-go@main
 
       - name: Report resolved core version
         run: go list -m github.com/GRIDAPPSD/ieee-2030_5-core-go
+
+      - name: Confirm the WADL gate is armed
+        # Deliberately unconditional, where ci.yml's equivalent is gated on
+        # `armed == 'true'`: this job passes required: true above, so there is
+        # no legitimate path to reaching this step disarmed. Runs AFTER the core
+        # bump so the assertion itself compiles against core main, and BEFORE
+        # the long test steps so a disarmed gate fails in seconds.
+        #
+        # SEP2_WADL_REQUIRED=1 already turns an absent or unreadable WADL into a
+        # failure. This adds the positive assertion: TestWADLGateArmed has to
+        # PASS, not SKIP and not vanish into "no tests to run", so a green run
+        # cannot mean a conformance sweep that measured nothing.
+        run: |
+          set -euo pipefail
+          output=$(go test -run '^TestWADLGateArmed$' -v ./test/conformance/wadl/)
+          echo "$output"
+          case "$output" in
+            *"--- PASS: TestWADLGateArmed"*)
+              ;;
+            *)
+              echo "::error::TestWADLGateArmed did not pass, so the conformance sweep measured nothing against the standard."
+              exit 1
+              ;;
+          esac
 
       - name: Vet
         run: make vet
@@ -308,6 +361,10 @@ jobs:
         run: make build
 
       - name: Test
+        # `go test ./...`, which includes ./test/conformance/wadl. SEP2_WADL_PATH
+        # and SEP2_WADL_REQUIRED reach this step through GITHUB_ENV from the WADL
+        # step above, so the conformance sweep runs against core main instead of
+        # skipping.
         run: make test
 
       - name: CSIP harness (default tag)

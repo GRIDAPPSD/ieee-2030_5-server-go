@@ -1,15 +1,15 @@
-// CSIP V1.2 §6.7 — DER Settings (advanced).
+// CSIP V1.2 Section 6.7 - DER Settings (advanced).
 //
 // CORE-014 proves that a server stores and returns DERCapability and
 // DERSettings with full per-field fidelity on the V1.2 advanced
 // payload shape:
 //
 //   - DERCapability.modesSupported includes the opModMaxLimW bit
-//     of the DERControlType bitfield (V1.2 §10.10 Table — bit 18).
+//     of the DERControlType bitfield (V1.2 Section 10.10 Table - bit 18).
 //   - DERCapability.rtgMaxW is populated.
 //   - DERSettings round-trips its reactive-power (setMaxVar) and
 //     power-factor (setMaxChargeRateW used as a stand-in for the
-//     PF-rate ceiling — DERSettings does not carry a dedicated PF
+//     PF-rate ceiling - DERSettings does not carry a dedicated PF
 //     field; the V1.2 procedure asserts the PF-related rates are
 //     wire-clean after a PUT).
 //
@@ -20,16 +20,16 @@
 // pkg/sep2/ would let this file reference them by name; flagged in
 // the PR description for follow-up triage rather than fixed in scope.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §6.7 procedure):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 6.7 procedure):
 //
-//	Step 1 (server has EndDevice)                ──► fixture load single-edev.yaml
+//	Step 1 (server has EndDevice)                --> fixture load single-edev.yaml
 //	Step 2 (PUT DERCapability with modesSupported
-//	        including opModMaxLimW, rtgMaxW)     ──► putAndGetCapabilityAdvanced
-//	Step 3 (GET DERCapability, assert modes bit) ──► assertModesSupportedHasMaxLimW
+//	        including opModMaxLimW, rtgMaxW)     --> putAndGetCapabilityAdvanced
+//	Step 3 (GET DERCapability, assert modes bit) --> assertModesSupportedHasMaxLimW
 //	Step 4 (PUT DERSettings with setMaxVar
-//	        reactive-power)                      ──► putAndGetSettingsReactivePower
+//	        reactive-power)                      --> putAndGetSettingsReactivePower
 //	Step 5 (PUT DERSettings with setMaxChargeRateW
-//	        as the PF-rate ceiling)              ──► putAndGetSettingsPFRate
+//	        as the PF-rate ceiling)              --> putAndGetSettingsPFRate
 //
 // Run under both GCM and CCM cipher modes to keep the spec-cipher
 // path covered (IEEE-001 regression guard surface).
@@ -46,17 +46,22 @@ import (
 )
 
 // V1.2 DERControlType bitfield positions used by CORE-014. Mirrors
-// IEEE 2030.5 V1.2 Table (DERControlType) — these are NOT exported
+// IEEE 2030.5 V1.2 Table (DERControlType) - these are NOT exported
 // from pkg/sep2 today and a follow-up should add them so callers
 // stop hardcoding. See PR description.
+//
+// Typed as sep2.DERControlType rather than uint32: core made the
+// modesSupported/modesEnabled bitmap a named hexBinary32 type
+// (sep.xsd:3952) so the hexBinary encoding lives in one place, and these
+// constants have to be assignable to it.
 const (
-	derControlTypeOpModFixedPFInjectW uint32 = 1 << 3  // bit 3
-	derControlTypeOpModFixedW         uint32 = 1 << 5  // bit 5
-	derControlTypeOpModMaxLimW        uint32 = 1 << 18 // bit 18
-	derControlTypeOpModTargetW        uint32 = 1 << 20 // bit 20
+	derControlTypeOpModFixedPFInjectW sep2.DERControlType = 1 << 3  // bit 3
+	derControlTypeOpModFixedW         sep2.DERControlType = 1 << 5  // bit 5
+	derControlTypeOpModMaxLimW        sep2.DERControlType = 1 << 18 // bit 18
+	derControlTypeOpModTargetW        sep2.DERControlType = 1 << 20 // bit 20
 )
 
-// TestCORE_014_DERSettingsAdvanced implements CSIP V1.2 §6.7.
+// TestCORE_014_DERSettingsAdvanced implements CSIP V1.2 Section 6.7.
 func TestCORE_014_DERSettingsAdvanced(t *testing.T) {
 	t.Parallel()
 
@@ -75,7 +80,7 @@ func TestCORE_014_DERSettingsAdvanced(t *testing.T) {
 	}
 }
 
-// runCORE014 executes the §6.7 procedure once against a freshly booted
+// runCORE014 executes the Section 6.7 procedure once against a freshly booted
 // server seeded with the single-edev.yaml fixture.
 func runCORE014(t *testing.T, extraOpts []csiptest.BootOption) {
 	t.Helper()
@@ -102,9 +107,9 @@ func runCORE014(t *testing.T, extraOpts []csiptest.BootOption) {
 	})
 
 	// Step 5: PUT DERSettings with a populated setMaxChargeRateW (the
-	// PF-rate ceiling per V1.2 §6.7) and assert it round-trips. We
+	// PF-rate ceiling per V1.2 Section 6.7) and assert it round-trips. We
 	// PUT the full payload (including the bits from Step 4) because
-	// the singleton-PUT handler replaces the resource — partial PUT
+	// the singleton-PUT handler replaces the resource - partial PUT
 	// would zero out the Step 4 fields.
 	t.Run("SettingsPFRate", func(t *testing.T) {
 		putAndGetSettingsPFRate(t, ctx, srv, client, edevID, derID)
@@ -182,7 +187,7 @@ func putAndGetSettingsReactivePower(t *testing.T, ctx context.Context, srv *csip
 		t.Errorf("DERSettings.ModesEnabled = %v, want %#x", got.ModesEnabled, modes)
 	}
 	if got.SetMaxVar == nil {
-		t.Fatal("DERSettings.SetMaxVar is nil — reactive power dropped on the wire")
+		t.Fatal("DERSettings.SetMaxVar is nil - reactive power dropped on the wire")
 	}
 	if got.SetMaxVar.Value != maxVar.Value || got.SetMaxVar.Multiplier != maxVar.Multiplier {
 		t.Errorf("DERSettings.SetMaxVar = %+v, want %+v", got.SetMaxVar, maxVar)
@@ -193,9 +198,9 @@ func putAndGetSettingsReactivePower(t *testing.T, ctx context.Context, srv *csip
 }
 
 // putAndGetSettingsPFRate PUTs a DERSettings with setMaxChargeRateW
-// (the PF-rate ceiling per V1.2 §6.7) and setMaxDischargeRateW
+// (the PF-rate ceiling per V1.2 Section 6.7) and setMaxDischargeRateW
 // populated, and verifies both round-trip. The handler replaces the
-// resource on PUT, so we re-include the Step 4 fields here — the
+// resource on PUT, so we re-include the Step 4 fields here - the
 // procedure proves the PUT does not silently corrupt orthogonal fields.
 func putAndGetSettingsPFRate(t *testing.T, ctx context.Context, srv *csiptest.BootedServer, client *http.Client, edevID, derID string) {
 	t.Helper()
@@ -221,7 +226,7 @@ func putAndGetSettingsPFRate(t *testing.T, ctx context.Context, srv *csiptest.Bo
 	getXML(t, ctx, client, srv.BaseURL+path, &got)
 
 	if got.SetMaxChargeRateW == nil {
-		t.Fatal("DERSettings.SetMaxChargeRateW is nil — PF-rate ceiling dropped on the wire")
+		t.Fatal("DERSettings.SetMaxChargeRateW is nil - PF-rate ceiling dropped on the wire")
 	}
 	if got.SetMaxChargeRateW.Value != chargeRate.Value || got.SetMaxChargeRateW.Multiplier != chargeRate.Multiplier {
 		t.Errorf("DERSettings.SetMaxChargeRateW = %+v, want %+v", got.SetMaxChargeRateW, chargeRate)

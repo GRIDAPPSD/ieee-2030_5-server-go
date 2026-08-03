@@ -6,13 +6,11 @@ import (
 	"time"
 )
 
-// TestProtocolServerTimeoutsSet asserts that the protocol server (SEP2 wire)
-// has all four timeout fields set to non-zero values. A zero timeout means
-// "no limit" — infinite — which is a Slowloris / slow-body attack surface.
-func TestProtocolServerTimeoutsSet(t *testing.T) {
-	srv := newProtocolServer(nil)
-	assertServerTimeouts(t, "protocolSrv", srv)
-}
+// The protocol server (SEP2 wire) is constructed in pkg/sep2server as of
+// IEEESRV-025, so the equivalent assertion lives there, in
+// TestProtocolServerTimeoutsSet. The guarantee is unchanged: all four timeout
+// fields non-zero, because a zero timeout means no limit, which is a Slowloris
+// and slow-body attack surface.
 
 // TestAdminServerTimeoutsSet asserts that the admin server has all four
 // timeout fields set to non-zero values.

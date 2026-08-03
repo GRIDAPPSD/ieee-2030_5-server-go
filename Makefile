@@ -282,10 +282,10 @@ test-csip-client:         ## CSIP client-side conformance harness (blocked on IE
 # AND `./internal/...` so the standard library code reached by the CSIP
 # tests participates in the coverage signal CI captures.
 test-csip:                ## Run CSIP suite under the default (production) build tag
-	go test ./test/csip/... ./internal/...
+	go test ./test/csip/... ./internal/... ./pkg/...
 
-test-csip-hooks:          ## Run CSIP suite + internal with csip_test_hooks build tag
-	go test -tags csip_test_hooks ./test/csip/... ./internal/...
+test-csip-hooks:          ## Run CSIP suite + internal + pkg with csip_test_hooks build tag
+	go test -tags csip_test_hooks ./test/csip/... ./internal/... ./pkg/...
 
 test-csip-race:           ## Race detector on the CSIP suite with csip_test_hooks tag
 	go test -race -tags csip_test_hooks ./test/csip/...
@@ -301,12 +301,16 @@ test-csip-race:           ## Race detector on the CSIP suite with csip_test_hook
 # Achieved threshold at IEEE-106 merge: 79.1% scoped. Gate floored at
 # 78% (1pp below for measurement noise) per Phase 8 doc (IEEE-107).
 # Ratcheted to 80% at IEEE-121 merge (post-interop, per workspace TDD rule).
-CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/encoding/...,./internal/handler/...,./internal/paging/...,./internal/server/...,./internal/subscription/...,./internal/tls,./internal/tls/ccm
+# IEEESRV-025 added ./pkg/sep2server/..., the embeddable surface. It is listed
+# because the protocol listener, the handler assembly and the graceful drain
+# MOVED there out of ./internal/server/...; leaving it off would have quietly
+# shrunk what the floor measures while the percentage went up.
+CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/encoding/...,./internal/handler/...,./internal/paging/...,./internal/server/...,./internal/subscription/...,./internal/tls,./internal/tls/ccm,./pkg/sep2server/...
 CSIP_COVER_THRESHOLD ?= 80
 
 test-csip-cover:          ## Run CSIP suite with scoped coverage profile (writes coverage-csip.out)
 	go test -coverprofile=coverage-csip.out -coverpkg='$(CSIP_COVERPKG)' \
-	       -tags csip_test_hooks ./test/csip/... ./internal/...
+	       -tags csip_test_hooks ./test/csip/... ./internal/... ./pkg/...
 	@echo "Coverage profile: coverage-csip.out"
 
 coverage-gate:            ## Enforce CSIP coverage floor on coverage-csip.out

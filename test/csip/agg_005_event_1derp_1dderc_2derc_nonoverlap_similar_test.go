@@ -1,16 +1,16 @@
-// CSIP V1.2 §10.5 — AGG-005 Aggregator Event
+// CSIP V1.2 Section 10.5 - AGG-005 Aggregator Event
 // (1 DERP, 1 DDERC, 2 Non-overlap Similar DERC).
 //
 // Mirror of BASIC-019 at the aggregator topology level. Per managed
 // inverter, inject one DDERC and two DERControls on the SY-level
 // DERProgram. "Non-overlap similar" means the two DERCs use the SAME
-// opMod* (similar) and do not overlap in time — but the loader does
+// opMod* (similar) and do not overlap in time - but the loader does
 // not encode interval timing, so the wire-shape assertion verifies
 // both events surface in the DERControlList with the expected
 // opMod* (OpModFixedW) values. Timing-resolution is a client-side
 // concern beyond the scope of the server conformance harness.
 //
-// Procedure step → assertion mapping (per V1.2 §10.5):
+// Procedure step -> assertion mapping (per V1.2 Section 10.5):
 //
 //	Step 1: bootAggregatorTopology + injectEventSpec.
 //	Step 2: Walk /edev/{id}/fsa/0/derp/0/dderc per inverter; assert DDERC.
@@ -25,7 +25,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// TestAGG_005_Event1DERP1DDERC2DERCNonOverlapSimilar implements CSIP V1.2 §10.5.
+// TestAGG_005_Event1DERP1DDERC2DERCNonOverlapSimilar implements CSIP V1.2 Section 10.5.
 func TestAGG_005_Event1DERP1DDERC2DERCNonOverlapSimilar(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -46,7 +46,7 @@ func TestAGG_005_Event1DERP1DDERC2DERCNonOverlapSimilar(t *testing.T) {
 				},
 			},
 		)
-		for i, val := range []int64{2000, 3000} {
+		for i, val := range []int16{2000, 3000} {
 			spec.DERControls = append(spec.DERControls,
 				csiptest.DERControlSpec{
 					EndDeviceID:  edevID,

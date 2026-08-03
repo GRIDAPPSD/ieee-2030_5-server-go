@@ -1,19 +1,19 @@
-// IEEE-090 — shared aggregator-operation helpers for AGG-001..AGG-012
-// (CSIP V1.2 §10.1-§10.12).
+// IEEE-090 - shared aggregator-operation helpers for AGG-001..AGG-012
+// (CSIP V1.2 Section 10.1-Section 10.12).
 //
 // These helpers sit on top of the IEEE-089 aggregator-topology fixture
 // (bootAggregatorTopology + the aggInverter* constants in
 // util_topology_test.go). They cover the two shapes the AGG cluster
 // shares:
 //
-//  1. injectEventSpec — overlay a Spec of DDERCs/DERControls onto an
+//  1. injectEventSpec - overlay a Spec of DDERCs/DERControls onto an
 //     already-booted topology. AGG-002..AGG-012 each declare what
 //     events to inject across the topology nodes and then walk
 //     /edev/{id}/fsa/{fsaId}/derp/{derpId}/{dderc,derc} on every
 //     managed inverter to assert the wire shape.
 //
 //  2. walkAggregatorDERControlListAcrossInverters / walkAggregator-
-//     DefaultDERControlAcrossInverters — verify that the injected
+//     DefaultDERControlAcrossInverters - verify that the injected
 //     events surface on each of the 4 managed inverters at the named
 //     FSA level (SY/FDx/SPxx/DEV).
 //
@@ -99,7 +99,7 @@ func walkAggregatorDefaultDERControl(t *testing.T, ctx context.Context, c *csipt
 }
 
 // aggSubscribableResource lists one of the 6 subscribable resources the
-// V1.2 §10.1 AGG-001 procedure exercises against each managed inverter.
+// V1.2 Section 10.1 AGG-001 procedure exercises against each managed inverter.
 // Field names match the relative href the per-inverter aggregator
 // subscription targets.
 type aggSubscribableResource struct {
@@ -111,7 +111,7 @@ type aggSubscribableResource struct {
 // AGG-001 subscribes to per managed inverter. Each is a top-of-chain
 // list URL because the aggregator subscription notifies on additions /
 // deletions to that list. SY-level FSA ("0") is used as the entry
-// point — the server scopes DERPrograms by EndDevice so any FSA's
+// point - the server scopes DERPrograms by EndDevice so any FSA's
 // DERProgramList href reaches all 4 programs (CORE-010 documented this).
 func aggSubscribableResourcesForInverter(edevID string) []aggSubscribableResource {
 	return []aggSubscribableResource{
@@ -126,7 +126,7 @@ func aggSubscribableResourcesForInverter(edevID string) []aggSubscribableResourc
 
 // aggregatorNotificationURI is the per-test aggregator callback URL for
 // AGG-001 subscriptions. The procedure exercises subscription acceptance
-// only — delivery is gated on IEEE-013 follow-ups outside IEEE-090 scope.
+// only - delivery is gated on IEEE-013 follow-ups outside IEEE-090 scope.
 const aggregatorNotificationURI = "https://aggregator.example/notify/agg"
 
 // postAggregatorSubscription is the AGG-001 variant of UTIL-003's
@@ -136,7 +136,7 @@ const aggregatorNotificationURI = "https://aggregator.example/notify/agg"
 // per-inverter subscription list.
 //
 // AGG-001 calls this 6 times per managed inverter (one per subscribable
-// resource) across 4 inverters — 24 POSTs total. We run the per-inverter
+// resource) across 4 inverters - 24 POSTs total. We run the per-inverter
 // loop in parallel under t.Run subtests so the SubscriptionStore is
 // hammered concurrently (race-detector gate).
 func postAggregatorSubscription(t *testing.T, ctx context.Context, client *http.Client, baseURL, edevID, resource string) {
@@ -172,7 +172,7 @@ func postAggregatorSubscription(t *testing.T, ctx context.Context, client *http.
 	}
 
 	// GET /edev/{id}/sub and assert the new sub is present with the
-	// expected SubscribedResource — pins down both persistence and
+	// expected SubscribedResource - pins down both persistence and
 	// scope. Per-inverter subtests run in parallel, so this is also
 	// the race-detector probe surface.
 	listURL := fmt.Sprintf("%s/edev/%s/sub?l=255", baseURL, edevID)
@@ -220,7 +220,7 @@ func postAggregatorSubscription(t *testing.T, ctx context.Context, client *http.
 // the union as long as each wanted href was present (24 entries for
 // each of the 4 inverters after a 24-POST burst). IEEE-099 scoped
 // GET /edev/{id}/sub to the EndDevice {id}, so this helper now enforces
-// the strict membership the V1.2 §10.1 procedure implies.
+// the strict membership the V1.2 Section 10.1 procedure implies.
 func assertAggregatorSubscriptionsPresent(t *testing.T, ctx context.Context, client *http.Client, baseURL, edevID string, wantResources []string) {
 	t.Helper()
 	listURL := fmt.Sprintf("%s/edev/%s/sub?l=255", baseURL, edevID)
@@ -276,7 +276,7 @@ func assertAggregatorSubscriptionsPresent(t *testing.T, ctx context.Context, cli
 		}
 	}
 	// Exact count: this inverter's list must contain exactly the wanted
-	// 6 aggregator subscriptions — no extras, no foreign-edev bleed.
+	// 6 aggregator subscriptions - no extras, no foreign-edev bleed.
 	if list.All != uint32(len(wantResources)) {
 		t.Errorf("inverter=%q SubscriptionList.All = %d, want %d (per-EndDevice scope)",
 			edevID, list.All, len(wantResources))
@@ -290,14 +290,14 @@ func assertAggregatorSubscriptionsPresent(t *testing.T, ctx context.Context, cli
 // aggOverlapPlan is the per-test value plan for AGG-007..012. SYValue
 // goes into the SY-level DERControl's opMod; XfmrValue goes into the
 // FDx-level DERControl's opMod (similar variants) or is ignored
-// (independent variants — FDx uses OpModConnect=true regardless).
+// (independent variants - FDx uses OpModConnect=true regardless).
 //
 // Each named AGG-* test supplies a unique aggOverlapPlan so wire-side
 // regressions stay test-scoped: a stomped runner that only matched
 // AGG-008's values would leave AGG-007 and AGG-009 untouched.
 type aggOverlapPlan struct {
-	SYValue   int64
-	XfmrValue int64
+	SYValue   int16
+	XfmrValue int16
 }
 
 // runAggregatorOverlapSimilar is the shared body for AGG-007..009. Each
@@ -309,8 +309,8 @@ type aggOverlapPlan struct {
 //
 // Anti-abstraction note: this is setup + assertion plumbing only. The
 // 3 AGG-* test functions in agg_00{7,8,9}_*.go remain named, distinct
-// Go tests — a conformance reviewer sees TestAGG_007_..., TestAGG_008_...,
-// TestAGG_009_... each with its own V1.2 §10.X doc comment.
+// Go tests - a conformance reviewer sees TestAGG_007_..., TestAGG_008_...,
+// TestAGG_009_... each with its own V1.2 Section 10.X doc comment.
 func runAggregatorOverlapSimilar(t *testing.T, testID string, plan aggOverlapPlan) {
 	t.Helper()
 	ctx := context.Background()
@@ -369,7 +369,7 @@ func runAggregatorOverlapSimilar(t *testing.T, testID string, plan aggOverlapPla
 			t.Parallel()
 			for _, n := range []struct {
 				fsaID    string
-				wantVal  int64
+				wantVal  int16
 				ddercTag string
 			}{
 				{aggFSAIDSY, plan.SYValue, "SY"},
@@ -409,7 +409,7 @@ func runAggregatorOverlapSimilar(t *testing.T, testID string, plan aggOverlapPla
 // Same fixture shape as runAggregatorOverlapSimilar except the FDx-node
 // DERControl uses OpModConnect (a different control axis) instead of
 // OpModFixedW. AGG-010..012 assert each node carries ONLY its own
-// opMod — a regression that bled OpModConnect into the SY DERControl
+// opMod - a regression that bled OpModConnect into the SY DERControl
 // would surface as a missing OpModFixedW assertion.
 func runAggregatorOverlapIndependent(t *testing.T, testID string, plan aggOverlapPlan) {
 	t.Helper()

@@ -1,29 +1,29 @@
-// CSIP V1.2 §8.21 — Overlap event prioritization, similar opMod, SP starts before SY.
+// CSIP V1.2 Section 8.21 - Overlap event prioritization, similar opMod, SP starts before SY.
 //
 // BASIC-021 is the entry case for the BASIC-021..026 overlapping-event
 // family (the dual of IEEE-084's BASIC-016..020 non-overlap family).
 // Topology: 2 DERPrograms (SP primacy=0, SY primacy=1), each with a
 // DefaultDERControl and one scheduled DERControl. Both DERControls
-// drive the SAME opMod* (opModFixedW — "similar") and their
+// drive the SAME opMod* (opModFixedW - "similar") and their
 // [Start, Start+Duration) windows OVERLAP: SP starts first, SY starts
 // while SP is still active.
 //
-// Per V1.2 §8.21 the procedure asserts the client transitions through
-// the §10.10 primacy ladder during the overlap region. Server-side
+// Per V1.2 Section 8.21 the procedure asserts the client transitions through
+// the Section 10.10 primacy ladder during the overlap region. Server-side
 // just asserts: (a) both events render with the expected wire shape,
 // (b) the windows intersect (the inverse of BASIC-019's disjoint
-// invariant), and (c) the expected §10.10 winner (SP) is reachable
+// invariant), and (c) the expected Section 10.10 winner (SP) is reachable
 // from the rendered metadata. Scheduler-side enforcement is the DER
 // client's problem (plan-1 scope).
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.21):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.21):
 //
-//	Step 1 (server has 2 DERP + 2 DDERC + 2 DERC overlap similar)  ──► fixture load
-//	Step 2 (walk /dcap → /edev → /fsa list, expect 2 FSAs)         ──► walkToFirstEDevFSAList
-//	Step 3 (each FSA renders its DERProgram in primacy order)      ──► assertBASIC021ProgramList
-//	Step 4 (SP DDERC + SY DDERC carry expected opModFixedW)        ──► assertBASIC021DDERCs
-//	Step 5 (SP and SY DERControlLists each have 1 event)           ──► assertBASIC021Events
-//	Step 6 (Rendered event intervals overlap; SP wins §10.10)      ──► assertOverlapResolution
+//	Step 1 (server has 2 DERP + 2 DDERC + 2 DERC overlap similar)  -> fixture load
+//	Step 2 (walk /dcap -> /edev -> /fsa list, expect 2 FSAs)         -> walkToFirstEDevFSAList
+//	Step 3 (each FSA renders its DERProgram in primacy order)      -> assertBASIC021ProgramList
+//	Step 4 (SP DDERC + SY DDERC carry expected opModFixedW)        -> assertBASIC021DDERCs
+//	Step 5 (SP and SY DERControlLists each have 1 event)           -> assertBASIC021Events
+//	Step 6 (Rendered event intervals overlap; SP wins Section 10.10)      -> assertOverlapResolution
 //
 // Run under both GCM and CCM cipher modes.
 package csip_test
@@ -52,7 +52,7 @@ var basic021Programs = []struct {
 // basic021DDERCs is the expected DDERC payload per program key.
 var basic021DDERCs = map[string]struct {
 	mrid   string
-	fixedW int64
+	fixedW int16
 }{
 	"sp": {mrid: "BASIC-021-DDERC-SP", fixedW: 4000},
 	"sy": {mrid: "BASIC-021-DDERC-SY", fixedW: 2000},
@@ -65,13 +65,13 @@ var basic021Events = map[string]struct {
 	primacy  uint8
 	start    int64
 	duration uint32
-	fixedW   int64
+	fixedW   int16
 }{
 	"sp": {mrid: "BASIC-021-DERC-SP-A", primacy: 0, start: 1700000060, duration: 120, fixedW: 4500},
 	"sy": {mrid: "BASIC-021-DERC-SY-A", primacy: 1, start: 1700000100, duration: 120, fixedW: 2500},
 }
 
-// TestBASIC_021_OverlapSimilarSPThenSYBefore implements CSIP V1.2 §8.21.
+// TestBASIC_021_OverlapSimilarSPThenSYBefore implements CSIP V1.2 Section 8.21.
 func TestBASIC_021_OverlapSimilarSPThenSYBefore(t *testing.T) {
 	t.Parallel()
 	runUnderBothCiphers(t, runBASIC021)
@@ -115,14 +115,14 @@ func runBASIC021(t *testing.T, extraOpts []csiptest.BootOption) {
 	// collect them so Step 6 can verify the overlap invariant.
 	entries := assertBASIC021Events(t, ctx, client)
 
-	// Step 6: the rendered events overlap, and per §10.10 SP wins on
+	// Step 6: the rendered events overlap, and per Section 10.10 SP wins on
 	// primacy (both events share opMod*).
 	winners := assertOverlapResolution(t, entries)
 	pairKey := "BASIC-021-DERC-SP-A|BASIC-021-DERC-SY-A"
 	if got, ok := winners[pairKey]; !ok {
 		t.Errorf("assertOverlapResolution returned no winner for pair %q", pairKey)
 	} else if got != "BASIC-021-DERC-SP-A" {
-		t.Errorf("§10.10 winner for %q = %q, want %q",
+		t.Errorf("Section 10.10 winner for %q = %q, want %q",
 			pairKey, got, "BASIC-021-DERC-SP-A")
 	}
 }
@@ -162,7 +162,7 @@ func assertBASIC021DDERCs(t *testing.T, ctx context.Context, c *csiptest.Client)
 			t.Errorf("[%s] DDERC.MRID = %q, want %q", prog, dderc.MRID, want.mrid)
 		}
 		if dderc.DERControlBase == nil || dderc.DERControlBase.OpModFixedW == nil {
-			t.Errorf("[%s] DDERC.OpModFixedW is nil — fixture dropped", prog)
+			t.Errorf("[%s] DDERC.OpModFixedW is nil - fixture dropped", prog)
 			continue
 		}
 		if got := dderc.DERControlBase.OpModFixedW.Value; got != want.fixedW {
@@ -174,7 +174,7 @@ func assertBASIC021DDERCs(t *testing.T, ctx context.Context, c *csiptest.Client)
 
 // assertBASIC021Events walks each program's DERControlList, asserts
 // exactly one event with the expected payload, and returns the
-// overlapEntry slice for the §10.10 resolution check.
+// overlapEntry slice for the Section 10.10 resolution check.
 func assertBASIC021Events(t *testing.T, ctx context.Context, c *csiptest.Client) []overlapEntry {
 	t.Helper()
 
@@ -198,7 +198,7 @@ func assertBASIC021Events(t *testing.T, ctx context.Context, c *csiptest.Client)
 		assertEventStatus(t, want.mrid, dc.EventStatus, sep2.EventStatusScheduled)
 		assertEventInterval(t, want.mrid, dc.Interval, want.start, want.duration)
 		if dc.DERControlBase == nil || dc.DERControlBase.OpModFixedW == nil {
-			t.Errorf("[%s] DERControl.OpModFixedW is nil — fixture dropped", prog)
+			t.Errorf("[%s] DERControl.OpModFixedW is nil - fixture dropped", prog)
 			continue
 		}
 		if got := dc.DERControlBase.OpModFixedW.Value; got != want.fixedW {

@@ -1,22 +1,22 @@
-// CSIP V1.2 §8.20 — Non-overlap event prioritization, 2 DERP / 2 DDERC / 2 DERC.
+// CSIP V1.2 Section 8.20 - Non-overlap event prioritization, 2 DERP / 2 DDERC / 2 DERC.
 //
 // BASIC-020 is the most procedural-heavy non-overlap case: two
 // DERPrograms (Service Point primacy 0, Smart Inverter Yard primacy
 // 1), each with its own DDERC AND its own scheduled DERControl, with
 // the two DERControls occupying non-overlapping intervals and sharing
-// the same opMod* type (opModFixedW). Per V1.2 §8.20 the procedure
+// the same opMod* type (opModFixedW). Per V1.2 Section 8.20 the procedure
 // asserts the client resolves "highest-primacy program wins" outside
 // events, then transitions into each event during its window;
 // server-side just asserts the full topology renders.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.20):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.20):
 //
-//	Step 1 (server has 2 DERP + 2 DDERC + 2 DERC non-overlap)  ──► fixture load
-//	Step 2 (walk /dcap → /edev → /fsa list, expect 2 FSAs)     ──► walkToFirstEDevFSAList
-//	Step 3 (each FSA's DERProgramList renders both programs)   ──► assertBASIC020ProgramList
-//	Step 4 (SP DDERC + SY DDERC carry expected opModFixedW)    ──► assertBASIC020DDERCs
-//	Step 5 (SP and SY DERControlLists each have 1 event)       ──► assertBASIC020Events
-//	Step 6 (Concatenated event intervals are pairwise disjoint) ──► assertDisjointIntervals
+//	Step 1 (server has 2 DERP + 2 DDERC + 2 DERC non-overlap)  -> fixture load
+//	Step 2 (walk /dcap -> /edev -> /fsa list, expect 2 FSAs)     -> walkToFirstEDevFSAList
+//	Step 3 (each FSA's DERProgramList renders both programs)   -> assertBASIC020ProgramList
+//	Step 4 (SP DDERC + SY DDERC carry expected opModFixedW)    -> assertBASIC020DDERCs
+//	Step 5 (SP and SY DERControlLists each have 1 event)       -> assertBASIC020Events
+//	Step 6 (Concatenated event intervals are pairwise disjoint) -> assertDisjointIntervals
 //
 // Run under both GCM and CCM cipher modes.
 package csip_test
@@ -47,7 +47,7 @@ var basic020Programs = []struct {
 // duplicating the URL template.
 var basic020DDERCs = map[string]struct {
 	mrid   string
-	fixedW int64
+	fixedW int16
 }{
 	"sp": {mrid: "BASIC-020-DDERC-SP", fixedW: 4000},
 	"sy": {mrid: "BASIC-020-DDERC-SY", fixedW: 2000},
@@ -58,13 +58,13 @@ var basic020Events = map[string]struct {
 	mrid     string
 	start    int64
 	duration uint32
-	fixedW   int64
+	fixedW   int16
 }{
 	"sp": {mrid: "BASIC-020-DERC-SP-A", start: 1700000060, duration: 60, fixedW: 4500},
 	"sy": {mrid: "BASIC-020-DERC-SY-A", start: 1700000180, duration: 60, fixedW: 2500},
 }
 
-// TestBASIC_020_TwoDERPTwoDDERCTwoDERCNonOverlap implements CSIP V1.2 §8.20.
+// TestBASIC_020_TwoDERPTwoDDERCTwoDERCNonOverlap implements CSIP V1.2 Section 8.20.
 func TestBASIC_020_TwoDERPTwoDDERCTwoDERCNonOverlap(t *testing.T) {
 	t.Parallel()
 	runUnderBothCiphers(t, runBASIC020)
@@ -111,7 +111,7 @@ func runBASIC020(t *testing.T, extraOpts []csiptest.BootOption) {
 	allEvents := assertBASIC020Events(t, ctx, client)
 
 	// Step 6: every pair of DERControls across the full set is
-	// time-disjoint — the BASIC-020 non-overlap invariant.
+	// time-disjoint - the BASIC-020 non-overlap invariant.
 	assertDisjointIntervals(t, allEvents)
 }
 
@@ -150,7 +150,7 @@ func assertBASIC020DDERCs(t *testing.T, ctx context.Context, c *csiptest.Client)
 			t.Errorf("[%s] DDERC.MRID = %q, want %q", prog, dderc.MRID, want.mrid)
 		}
 		if dderc.DERControlBase == nil || dderc.DERControlBase.OpModFixedW == nil {
-			t.Errorf("[%s] DDERC.OpModFixedW is nil — fixture dropped", prog)
+			t.Errorf("[%s] DDERC.OpModFixedW is nil - fixture dropped", prog)
 			continue
 		}
 		if got := dderc.DERControlBase.OpModFixedW.Value; got != want.fixedW {
@@ -187,7 +187,7 @@ func assertBASIC020Events(t *testing.T, ctx context.Context, c *csiptest.Client)
 		assertEventStatus(t, want.mrid, dc.EventStatus, sep2.EventStatusScheduled)
 		assertEventInterval(t, want.mrid, dc.Interval, want.start, want.duration)
 		if dc.DERControlBase == nil || dc.DERControlBase.OpModFixedW == nil {
-			t.Errorf("[%s] DERControl.OpModFixedW is nil — fixture dropped", prog)
+			t.Errorf("[%s] DERControl.OpModFixedW is nil - fixture dropped", prog)
 			continue
 		}
 		if got := dc.DERControlBase.OpModFixedW.Value; got != want.fixedW {

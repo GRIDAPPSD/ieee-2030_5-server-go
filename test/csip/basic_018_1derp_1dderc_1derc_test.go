@@ -1,19 +1,19 @@
-// CSIP V1.2 §8.18 — Non-overlap event prioritization, 1 DERP / 1 DDERC / 1 DERC.
+// CSIP V1.2 Section 8.18 - Non-overlap event prioritization, 1 DERP / 1 DDERC / 1 DERC.
 //
 // BASIC-018 proves that a CSIP server seeded with one DERProgram
 // carrying both a DefaultDERControl AND one scheduled DERControl
-// renders the full priority chain over chained GETs. Per V1.2 §8.18
+// renders the full priority chain over chained GETs. Per V1.2 Section 8.18
 // the procedure asserts the client applies the DDERC outside the
 // event window and transitions to the DERControl inside the window;
 // server-side just asserts the fixture renders.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.18):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.18):
 //
-//	Step 1 (server has 1 DERP + 1 DDERC + 1 DERC scheduled)    ──► fixture load
-//	Step 2 (walk /dcap → /edev → /fsa → DERProgram)            ──► walkToFirstEDevFSAList + walkProgramListByHref
-//	Step 3 (DDERC carries opModFixedW = 2 kW)                   ──► assertBASIC018DDERC
-//	Step 4 (DERControlList has 1 scheduled event)               ──► walkDERControlListByHref
-//	Step 5 (DERControl Interval [t0+60, t0+180), Status=0,      ──► assertBASIC018DERControl
+//	Step 1 (server has 1 DERP + 1 DDERC + 1 DERC scheduled)    -> fixture load
+//	Step 2 (walk /dcap -> /edev -> /fsa -> DERProgram)            -> walkToFirstEDevFSAList + walkProgramListByHref
+//	Step 3 (DDERC carries opModFixedW = 2 kW)                   -> assertBASIC018DDERC
+//	Step 4 (DERControlList has 1 scheduled event)               -> walkDERControlListByHref
+//	Step 5 (DERControl Interval [t0+60, t0+180), Status=0,      -> assertBASIC018DERControl
 //	         opModFixedW = 3 kW)
 //
 // Run under both GCM and CCM cipher modes.
@@ -30,7 +30,7 @@ import (
 const basic018FixtureName = "basic-018-1derp-1dderc-1derc.yaml"
 
 // basic018DDERCFixedW is the DDERC fallback value the fixture seeds (2 kW).
-const basic018DDERCFixedW int64 = 2000
+const basic018DDERCFixedW int16 = 2000
 
 // basic018EventStart is the Interval.Start the fixture seeds for the
 // scheduled DERControl (t0+60s).
@@ -40,9 +40,9 @@ const basic018EventStart int64 = 1700000060
 const basic018EventDuration uint32 = 120
 
 // basic018DERCFixedW is the in-event value the fixture seeds (3 kW).
-const basic018DERCFixedW int64 = 3000
+const basic018DERCFixedW int16 = 3000
 
-// TestBASIC_018_OneDERPOneDDERCOneDERC implements CSIP V1.2 §8.18.
+// TestBASIC_018_OneDERPOneDDERCOneDERC implements CSIP V1.2 Section 8.18.
 func TestBASIC_018_OneDERPOneDDERCOneDERC(t *testing.T) {
 	t.Parallel()
 	runUnderBothCiphers(t, runBASIC018)
@@ -67,10 +67,10 @@ func runBASIC018(t *testing.T, extraOpts []csiptest.BootOption) {
 	}
 	prog := progList.DERProgram[0]
 	if prog.DefaultDERControlLink == nil {
-		t.Fatal("DERProgram.DefaultDERControlLink is nil — fixture topology drift")
+		t.Fatal("DERProgram.DefaultDERControlLink is nil - fixture topology drift")
 	}
 	if prog.DERControlListLink == nil {
-		t.Fatal("DERProgram.DERControlListLink is nil — fixture topology drift")
+		t.Fatal("DERProgram.DERControlListLink is nil - fixture topology drift")
 	}
 
 	// Step 3: DDERC carries the fallback opModFixedW.
@@ -97,7 +97,7 @@ func assertBASIC018DDERC(t *testing.T, dderc sep2.DefaultDERControl) {
 		t.Errorf("DDERC.MRID = %q, want BASIC-018-DDERC", dderc.MRID)
 	}
 	if dderc.DERControlBase == nil || dderc.DERControlBase.OpModFixedW == nil {
-		t.Fatal("DDERC.DERControlBase.OpModFixedW is nil — fixture dropped")
+		t.Fatal("DDERC.DERControlBase.OpModFixedW is nil - fixture dropped")
 	}
 	if got := dderc.DERControlBase.OpModFixedW.Value; got != basic018DDERCFixedW {
 		t.Errorf("DDERC.OpModFixedW.Value = %d, want %d", got, basic018DDERCFixedW)
@@ -114,7 +114,7 @@ func assertBASIC018DERControl(t *testing.T, dc sep2.DERControl) {
 	assertEventInterval(t, "BASIC-018-DERC-A", dc.Interval,
 		basic018EventStart, basic018EventDuration)
 	if dc.DERControlBase == nil || dc.DERControlBase.OpModFixedW == nil {
-		t.Fatal("DERControl.DERControlBase.OpModFixedW is nil — fixture dropped")
+		t.Fatal("DERControl.DERControlBase.OpModFixedW is nil - fixture dropped")
 	}
 	if got := dc.DERControlBase.OpModFixedW.Value; got != basic018DERCFixedW {
 		t.Errorf("DERControl.OpModFixedW.Value = %d, want %d", got, basic018DERCFixedW)

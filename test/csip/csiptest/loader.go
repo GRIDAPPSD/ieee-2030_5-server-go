@@ -1,7 +1,7 @@
 // IEEE-057 fixture loader for the CSIP conformance harness.
 //
-// Test authors describe their topology as YAML — EndDevices, FSAs,
-// DERPrograms, DefaultDERControls, DERControls, DERCurves — and Load
+// Test authors describe their topology as YAML - EndDevices, FSAs,
+// DERPrograms, DefaultDERControls, DERControls, DERCurves - and Load
 // seeds the spec server's stores accordingly. Phase 3 tests then
 // assert the wire shape and downstream behavior without re-encoding
 // the topology inline in Go.
@@ -13,11 +13,11 @@
 //     Same fixtures stay valid against a future SQL-backed store
 //     (per phase doc IEEE-057 hard constraint).
 //   - Loader does not depend on internal/server. The consumer adapts
-//     its server.Stores to Target at the call site — Phase 3 tests
+//     its server.Stores to Target at the call site - Phase 3 tests
 //     own that 8-line adapter.
-//   - Loader is idempotent on a fresh Target: Load → reset Target →
+//   - Loader is idempotent on a fresh Target: Load -> reset Target ->
 //     Load yields the same state. Loading twice without resetting
-//     errors with store.ErrAlreadyExists, by design — the harness
+//     errors with store.ErrAlreadyExists, by design - the harness
 //     test isolation rule is "one Target per test" (paired with
 //     IEEE-058's BootServer).
 //   - Errors wrap with %w at every boundary (read, unmarshal, store
@@ -58,7 +58,7 @@ const singletonKey = "default"
 // in test/csip/ and is consumed both by Phase 3 server tests AND by
 // the loader's own _test.go below. The latter must run without
 // pulling in internal/server. Target is the narrow interface that
-// decouples them — and a SQL-backed Store implementation slots in
+// decouples them - and a SQL-backed Store implementation slots in
 // without the loader caring.
 type Target struct {
 	EndDevices         store.EndDeviceStore
@@ -144,7 +144,7 @@ type DERProgramSpec struct {
 // inner id "default" (handler.SingletonKey).
 //
 // SetGradW / SetSoftGradW live on the DefaultDERControl directly (per
-// IEEE 2030.5 §10.11), not on DERControlBase — they are device-level
+// IEEE 2030.5 Section 10.11), not on DERControlBase - they are device-level
 // default ramp rates, not per-event overrides. IEEE-092 wired these
 // through after IEEE-082's BASIC-007 skip-flip.
 type DefaultDERControlSpec struct {
@@ -163,9 +163,9 @@ type DefaultDERControlSpec struct {
 //
 // IEEE-084 (BASIC-016..020 non-overlap event-prioritization) extended
 // this with Interval, EventStatus, and Description so fixtures can
-// express the per-event timing windows the V1.2 §8.16-§8.20 procedures
+// express the per-event timing windows the V1.2 Section 8.16 to Section 8.20 procedures
 // assert. MRID was previously declared but never copied to the
-// rendered DERControl — IEEE-084 plumbs that through buildDERControl
+// rendered DERControl - IEEE-084 plumbs that through buildDERControl
 // too (latent bug fix in scope).
 type DERControlSpec struct {
 	EndDeviceID    string              `yaml:"end_device_id"`
@@ -183,7 +183,7 @@ type DERControlSpec struct {
 // CSIP V1.2 event-prioritization procedures (BASIC-016..026) drive
 // CurrentStatus through Scheduled (0), Active (1), Cancelled (2),
 // Superseded (4), Complete (5). DateTime is the timestamp the status
-// transition occurred — fixtures set this to the same epoch the
+// transition occurred - fixtures set this to the same epoch the
 // containing Interval references so the wire-rendered event looks
 // internally consistent.
 type EventStatusSpec struct {
@@ -220,7 +220,7 @@ type CurveDataSpec struct {
 
 // DERControlBaseSpec captures the subset of DERControlBase fields the
 // CSIP V1.2 fixture set needs today. Add fields incrementally as new
-// tests require them — keeping the surface narrow makes each fixture
+// tests require them - keeping the surface narrow makes each fixture
 // readable.
 //
 // IEEE-082 (BASIC-002 + BASIC-004..012) extended this with
@@ -228,7 +228,7 @@ type CurveDataSpec struct {
 // curve-reference fields (LVRT/HVRT/LFRT/HFRT, VoltWatt, FreqWatt) and
 // flipped the BASIC-004/005/007/011/012 skips to active assertions.
 // SetGradW/SetSoftGradW live on DefaultDERControlSpec, not here, per
-// IEEE 2030.5 §10.11.
+// IEEE 2030.5 Section 10.11.
 type DERControlBaseSpec struct {
 	OpModConnect                *bool                 `yaml:"op_mod_connect,omitempty"`
 	OpModEnergize               *bool                 `yaml:"op_mod_energize,omitempty"`
@@ -249,10 +249,13 @@ type DERControlBaseSpec struct {
 	RampTms                     *uint16               `yaml:"ramp_tms,omitempty"`
 }
 
-// ActivePowerSpec is the YAML shape of sep2.ActivePower.
+// ActivePowerSpec is the YAML shape of sep2.ActivePower. Value is int16
+// (not int64) because sep2.ActivePower.Value is xs:short (XSD Int16,
+// -32768..32767) per sep.xsd: see ieee-2030_5-core-go's ActivePower doc
+// comment for the rationale.
 type ActivePowerSpec struct {
 	Multiplier int8  `yaml:"multiplier"`
-	Value      int64 `yaml:"value"`
+	Value      int16 `yaml:"value"`
 }
 
 // FixedPowerFactorSpec is the YAML shape of sep2.FixedPowerFactor.
@@ -297,7 +300,7 @@ func Load(ctx context.Context, target *Target, path string) error {
 
 	var spec Spec
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
-	dec.KnownFields(true) // reject unknown keys → typos fail loud
+	dec.KnownFields(true) // reject unknown keys -> typos fail loud
 	if err := dec.Decode(&spec); err != nil {
 		return fmt.Errorf("csiptest: decode fixture %s: %w", path, err)
 	}
@@ -310,7 +313,7 @@ func Load(ctx context.Context, target *Target, path string) error {
 
 // LoadSpec applies an already-decoded Spec to target. Exposed so
 // tests can construct a Spec in-memory without round-tripping
-// through YAML — useful for property-based fixture variants.
+// through YAML - useful for property-based fixture variants.
 func LoadSpec(ctx context.Context, target *Target, spec *Spec) error {
 	if target == nil {
 		return errors.New("csiptest: LoadSpec: target is nil")
@@ -325,7 +328,7 @@ func LoadSpec(ctx context.Context, target *Target, spec *Spec) error {
 }
 
 func applySpec(ctx context.Context, target *Target, spec *Spec) error {
-	// EndDevices first — FSA/DERProgram inserts assume the EndDevice
+	// EndDevices first - FSA/DERProgram inserts assume the EndDevice
 	// store carries the parent record. The store interface itself does
 	// not enforce parent existence (ScopedStore.ForParent auto-creates
 	// the inner store), but a sane fixture lists the parent so a

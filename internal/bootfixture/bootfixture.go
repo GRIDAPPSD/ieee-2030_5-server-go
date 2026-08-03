@@ -21,7 +21,7 @@
 // package (production code under internal/ cannot import test/). The two
 // schemas are kept in sync by convention; flagged as future-work in the
 // IEEE-068 journal entry. Either both move into bootfixture (csiptest
-// re-exports) or stay duplicated — that decision belongs to a follow-up
+// re-exports) or stay duplicated - that decision belongs to a follow-up
 // ticket once a third consumer appears.
 package bootfixture
 
@@ -39,7 +39,7 @@ import (
 )
 
 // singletonKey mirrors internal/handler.SingletonKey for the same reason
-// csiptest.singletonKey does — the production handlers store
+// csiptest.singletonKey does - the production handlers store
 // DefaultDERControl under inner id "default" inside its composite scope.
 const singletonKey = "default"
 
@@ -154,10 +154,13 @@ type DERControlBaseSpec struct {
 	RampTms        *uint16          `yaml:"ramp_tms,omitempty"`
 }
 
-// ActivePowerSpec is the YAML shape of sep2.ActivePower.
+// ActivePowerSpec is the YAML shape of sep2.ActivePower. Value is int16
+// (not int64) because sep2.ActivePower.Value is xs:short (XSD Int16,
+// -32768..32767) per sep.xsd: see ieee-2030_5-core-go's ActivePower doc
+// comment for the rationale.
 type ActivePowerSpec struct {
 	Multiplier int8  `yaml:"multiplier"`
-	Value      int64 `yaml:"value"`
+	Value      int16 `yaml:"value"`
 }
 
 // ListRef is the YAML shape of sep2.ListLink (href + advertised count).

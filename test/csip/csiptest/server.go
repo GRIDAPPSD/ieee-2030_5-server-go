@@ -17,11 +17,11 @@ package csiptest
 //
 // Two cipher modes are supported:
 //
-//  1. GCM (default) — uses stdlib crypto/tls. Fast, no fixture deps.
+//  1. GCM (default) uses stdlib crypto/tls. Fast, no fixture deps.
 //     Use this for everything that does not specifically assert CCM-8
 //     wire behavior. The default keeps Phase 3 tests cheap.
 //
-//  2. CCM-8 — uses the vendored internal/tls/gotls fork that registers
+//  2. CCM-8 uses the vendored internal/tls/gotls fork that registers
 //     TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 (0xC0AE). Opt in via
 //     WithCCMMode(). Tests that prove spec-cipher conformance should
 //     opt in; everything else should not pay the cost.
@@ -61,7 +61,7 @@ import (
 // and returns the server SFDI and LFDI. Mirrors the unexported helper
 // of the same name in internal/server/server.go (IEEE-001) so the
 // in-process harness populates /sdev and /sdev/sdi the same way the
-// production Run() flow does. Mode-agnostic — same code path for both
+// production Run() flow does. Mode-agnostic: same code path for both
 // GCM (stdlib crypto/tls) and CCM-8 (vendored gotls). t.Fatal on any
 // failure; an empty chain means the caller fed BootServer a broken
 // PKI and the test should surface that loudly.
@@ -86,7 +86,7 @@ const (
 )
 
 // bootCfg is the resolved configuration assembled from BootOptions
-// before the listener is opened. Internal — not exported.
+// before the listener is opened. Internal, not exported.
 type bootCfg struct {
 	cipher        cipherMode
 	stores        *server.Stores
@@ -140,7 +140,7 @@ func WithClientCert(cert tls.Certificate) BootOption {
 // explicit value (including a stub) to override.
 //
 // The default Manager runs its worker pool on a background context that
-// BootServer cancels at test teardown — workers drain and exit before
+// BootServer cancels at test teardown: workers drain and exit before
 // the listener is closed.
 func WithNotifier(n handler.ResourceNotifier) BootOption {
 	return func(c *bootCfg) { c.notifier = n }
@@ -150,7 +150,7 @@ func WithNotifier(n handler.ResourceNotifier) BootOption {
 // validate incoming client certs at handshake. Default: the helper
 // generates an ephemeral CA and puts that in ClientCAs (so the
 // helper-supplied device cert validates). Override when the test
-// drives the server with an external cert chain — e.g. handshake_test
+// drives the server with an external cert chain, e.g. handshake_test
 // drives with a SunSpec V1.2 leaf and must put the SunSpec roots in
 // ClientCAs. The path is read at boot time by the underlying
 // internal/tls.NewCCMServerConfig / NewServerTLSConfig.
@@ -174,10 +174,23 @@ type BootedServer struct {
 	// Tests building their own client config trust this via RootCAs.
 	RootCA []byte
 
+	// MountedPatterns is the protocol router's own enumeration of every
+	// pattern it registered, as returned by server.BuildProtocolRouter.
+	//
+	// It is captured from the SAME router instance that serves this
+	// server's requests, not rebuilt alongside it: a second router built
+	// from the same inputs could drift from the one under test, and a
+	// route-coverage claim backed by a different object than the one
+	// answering the requests is not evidence. The WADL conformance sweep
+	// (test/conformance/wadl) uses it as an independent cross-check on
+	// what the wire reports, so a 404 can be attributed to a missing route
+	// or to an empty store two separate ways rather than one.
+	MountedPatterns []string
+
 	// Stores is the live *server.Stores backing this booted server.
 	// Tests can read/write through this handle to assert post-conditions
 	// (e.g. side-effects of a PUT on /edev). Mutating the stores after
-	// the server is serving has the same race-rules as in production —
+	// the server is serving has the same race-rules as in production:
 	// callers are responsible for synchronization if they need it.
 	Stores *server.Stores
 
@@ -202,7 +215,7 @@ func (b *BootedServer) Client() *Client {
 // already wired with the server's ephemeral CA in RootCAs and the
 // configured device cert in Certificates. Use this for direct PUT /
 // POST / DELETE flows that the csiptest.Client (read-only at present)
-// does not cover — UTIL-002 commissioning, UTIL-003 subscription POST,
+// does not cover: UTIL-002 commissioning, UTIL-003 subscription POST,
 // UTIL-004 Response POST. The returned client is safe to use across
 // concurrent goroutines per net/http semantics.
 func (b *BootedServer) HTTPClient() *http.Client {
@@ -285,7 +298,7 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 	// leaf cert BEFORE constructing the router. Mirrors the production
 	// Run() flow fixed by IEEE-001 so /sdev and /sdev/sdi see populated
 	// identity under both cipher modes. Without this, NewRouter is fed
-	// empty strings and the SelfDevice handler closes over them — exactly
+	// empty strings and the SelfDevice handler closes over them: exactly
 	// the regression IEEE-001 fixed in production but which this harness
 	// did not previously replicate.
 	var (
@@ -314,7 +327,7 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 
 	// IEEE-093: wire a notifier so the test surface fans out Notifications.
 	// The default is a real subscription.Manager bound to Stores.Subscriptions
-	// — same dispatcher production uses. Manager.Start blocks on ctx.Done,
+	// Same dispatcher production uses. Manager.Start blocks on ctx.Done,
 	// so we own a context tied to test teardown and cancel it from Cleanup.
 	// The Manager's worker pool drains before BootServer's listener closes.
 	notifier := cfg.notifier
@@ -337,7 +350,7 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 		notifier = mgr
 	}
 
-	router, _ := server.BuildProtocolRouter(cfg.serverConfig, cfg.stores, nil, serverSFDI, serverLFDI, notifier)
+	router, mountedPatterns := server.BuildProtocolRouter(cfg.serverConfig, cfg.stores, nil, serverSFDI, serverLFDI, notifier)
 
 	if cfg.cipher == cipherCCM {
 		sepTLS.SetupCCMServer(httpSrv)
@@ -352,11 +365,12 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 	baseURL := "https://" + listener.Addr().String()
 
 	booted := &BootedServer{
-		BaseURL:    baseURL,
-		ServerCert: serverCertPEM,
-		RootCA:     caCertPEM,
-		Stores:     cfg.stores,
-		listener:   listener,
+		BaseURL:         baseURL,
+		ServerCert:      serverCertPEM,
+		RootCA:          caCertPEM,
+		Stores:          cfg.stores,
+		MountedPatterns: mountedPatterns,
+		listener:        listener,
 	}
 	booted.srv = httpSrv
 
@@ -503,7 +517,7 @@ func newCCMConfig(t *testing.T, serverCertPEM, serverKeyPEM, caCertPEM []byte) (
 
 // NewFreshStores returns a fully-populated in-memory store set
 // suitable as the default backing state for a BootServer. Each call
-// returns a new, independent set — concurrent BootServer callers do
+// returns a new, independent set: concurrent BootServer callers do
 // not share store state.
 //
 // Exported because the fixture loader (IEEE-057) builds on top of

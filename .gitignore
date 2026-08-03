@@ -63,3 +63,14 @@ test/stress/results/
 
 # Stale root-level binary (built during development, now lives in bin/)
 /sep2loadgen
+
+# IEEE 2030.5 normative WADL. sep_wadl.xml is copyrighted by IEEE and is NOT
+# distributed with this project (see NOTICE). Drop a licensed copy at
+# test/conformance/wadl/sep_wadl.xml, or point SEP2_WADL_PATH at one, to run
+# the WADL conformance sweep. It must never be committed.
+/test/conformance/wadl/*.xml
+sep_wadl.xml
+
+# Conformance sweep output (generated per run; a record of a server run, not
+# source, and verbose). Written only when SEP2_WADL_SWEEP_OUT is set.
+*.jsonl

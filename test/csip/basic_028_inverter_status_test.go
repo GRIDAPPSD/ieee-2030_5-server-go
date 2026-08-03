@@ -1,4 +1,4 @@
-// CSIP V1.2 §8.28 — Inverter Status (DERStatus).
+// CSIP V1.2 Section 8.28 - Inverter Status (DERStatus).
 //
 // BASIC-028 exercises the DERStatus singleton end-to-end. The test
 // PUTs a populated DERStatus payload to
@@ -6,22 +6,23 @@
 // every field on the payload round-trips exactly (no silent drops at
 // the XML codec, the store, or the singleton GET/PUT handler).
 //
-// V1.2 procedure step → assertion mapping:
+// V1.2 procedure step -> assertion mapping:
 //
-//	Step 1 (boot CSIP server)                                ────► csiptest.BootServer
+//	Step 1 (boot CSIP server)                                -> csiptest.BootServer
 //	Step 2 (PUT a DERStatus carrying genConnectStatus,
 //	        inverterStatus, operationalModeStatus,
-//	        readingTime, alarmStatus, stateOfChargeStatus)   ────► PUT /edev/{id}/der/{derId}/ders
-//	Step 3 (PUT returns 204 No Content)                      ────► resp.StatusCode == 204
+//	        readingTime, alarmStatus, stateOfChargeStatus,
+//	        storageModeStatus)                                -> PUT /edev/{id}/der/{derId}/ders
+//	Step 3 (PUT returns 204 No Content)                      -> resp.StatusCode == 204
 //	Step 4 (GET /edev/{id}/der/{derId}/ders returns 200
-//	        with the previously-PUT DERStatus)               ────► GET, parse
+//	        with the previously-PUT DERStatus)               -> GET, parse
 //	Step 5 (every field round-trips exactly: outer fields
 //	        compared by value, sub-status structs compared
-//	        by both dateTime and value)                       ───► per-field assertions
+//	        by both dateTime and value)                       -> per-field assertions
 //
 // SPEC GAP NOTE (do not "fix" by editing pkg/sep2.DERStatus):
 //
-// V1.2 §8.28 names six DERStatus sub-fields procedurally:
+// V1.2 Section 8.28 names six DERStatus sub-fields procedurally:
 // genConnectStatus, inverterStatus, localControlModeStatus,
 // manufacturerStatus, operationalModeStatus, and readingTime.
 // pkg/sep2/der.go's DERStatus type carries only four of those
@@ -32,13 +33,23 @@
 //
 // Per Pike's hard rule #1 (stay in scope), this test does NOT extend
 // pkg/sep2 to add the missing fields. It instead round-trips every
-// DERStatus field the type currently exposes, plus alarmStatus and
-// stateOfChargeStatus for full coverage of what the server can carry.
-// The two unmodelled fields are flagged in the PR description as a
-// follow-up so the gap surfaces in a dedicated ticket rather than
-// silently expanding this one. When that ticket lands, add lines for
-// the two fields to the post-PUT payload below and the round-trip
-// assertions in step 5; no other code path changes.
+// DERStatus field the type currently exposes, plus alarmStatus,
+// stateOfChargeStatus, and storageModeStatus for full coverage of what
+// the server can carry. The two unmodelled fields are flagged in the
+// PR description as a follow-up so the gap surfaces in a dedicated
+// ticket rather than silently expanding this one. When that ticket
+// lands, add lines for the two fields to the post-PUT payload below
+// and the round-trip assertions in step 5; no other code path changes.
+//
+// IEEE-191 (core v0.10.0): StateOfChargeStatus changed from a bare
+// *uint16 to *sep2.StateOfChargeStatusType, a complexType with a
+// required dateTime (sep.xsd:4189) alongside the required PerCent
+// value (sep.xsd:4566-4582, UInt16 in hundredths of a percent,
+// 0-10000). The old scalar modelling permitted a PUT with no dateTime,
+// which contradicts sep.xsd; core's fix makes that a compile-time
+// requirement, not a 400 discovered at runtime. AlarmStatus moved from
+// *uint32 to *sep2.HexBinary32 in the same release: same underlying
+// width, a named hexBinary wire type instead of a bare integer.
 //
 // Race notes:
 //
@@ -65,7 +76,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// TestBASIC_028_InverterStatus implements CSIP V1.2 §8.28.
+// TestBASIC_028_InverterStatus implements CSIP V1.2 Section 8.28.
 func TestBASIC_028_InverterStatus(t *testing.T) {
 	t.Parallel()
 
@@ -86,21 +97,23 @@ func TestBASIC_028_InverterStatus(t *testing.T) {
 
 	// Step 2: PUT a populated DERStatus. Values are deterministic so
 	// the step-5 round-trip assertions are byte-exact:
-	//   genConnectStatus.value = 7  → 0x07 == "connected, available, operating"
-	//                                (V1.2 §10.10 ConnectStatusType bitfield;
+	//   genConnectStatus.value = 7  -> 0x07 == "connected, available, operating"
+	//                                (V1.2 Section 10.10 ConnectStatusType bitfield;
 	//                                bits set: 0 connected, 1 available, 2 operating).
-	//   inverterStatus.value   = 3  → "Following / Synchronized" per InverterStatusType
-	//                                (V1.2 §10.10 enum; 3 is the spec value for
+	//   inverterStatus.value   = 3  -> "Following / Synchronized" per InverterStatusType
+	//                                (V1.2 Section 10.10 enum; 3 is the spec value for
 	//                                "tracking grid voltage and synchronized").
-	//   operationalModeStatus.value = 2 → "OperationalMode" per V1.2 §10.10
+	//   operationalModeStatus.value = 2 -> "OperationalMode" per V1.2 Section 10.10
 	//                                    (2 == "Operational").
-	//   alarmStatus            = 0  → no alarms set.
-	//   stateOfChargeStatus    = 5000 → 50.00% SoC (units: hundredths-of-a-percent
+	//   alarmStatus            = 0  -> no alarms set.
+	//   stateOfChargeStatus.value = 5000 -> 50.00% SoC (units: hundredths-of-a-percent
 	//                                  per V1.2; out of range [0, 10000]).
+	//   storageModeStatus.value = 1 -> "discharging" per StorageModeStatusType
+	//                                (sep.xsd:4583-4602; 0 charging, 1
+	//                                discharging, 2 holding).
 	//   readingTime            = now (unix seconds, deterministic per t.Parallel test).
 	now := time.Now().Unix()
-	alarm := uint32(0)
-	soc := uint16(5000)
+	alarm := sep2.HexBinary32(0)
 	want := sep2.DERStatus{
 		// Pre-set Href on the PUT body. HandleSingletonGetPut at
 		// internal/handler/singleton.go round-trips whatever Href the
@@ -123,9 +136,16 @@ func TestBASIC_028_InverterStatus(t *testing.T) {
 			DateTime: now,
 			Value:    2,
 		},
-		ReadingTime:         now,
-		AlarmStatus:         &alarm,
-		StateOfChargeStatus: &soc,
+		ReadingTime: now,
+		AlarmStatus: &alarm,
+		StateOfChargeStatus: &sep2.StateOfChargeStatusType{
+			DateTime: now,
+			Value:    5000,
+		},
+		StorageModeStatus: &sep2.StorageModeStatusType{
+			DateTime: now,
+			Value:    1,
+		},
 	}
 
 	body, err := xml.Marshal(&want)
@@ -194,11 +214,8 @@ func TestBASIC_028_InverterStatus(t *testing.T) {
 	} else if *got.AlarmStatus != *want.AlarmStatus {
 		t.Errorf("step 5: AlarmStatus = %d, want %d", *got.AlarmStatus, *want.AlarmStatus)
 	}
-	if got.StateOfChargeStatus == nil {
-		t.Errorf("step 5: StateOfChargeStatus = nil, want non-nil")
-	} else if *got.StateOfChargeStatus != *want.StateOfChargeStatus {
-		t.Errorf("step 5: StateOfChargeStatus = %d, want %d", *got.StateOfChargeStatus, *want.StateOfChargeStatus)
-	}
+	assertStateOfChargeStatus(t, "StateOfChargeStatus", got.StateOfChargeStatus, want.StateOfChargeStatus)
+	assertStorageModeStatus(t, "StorageModeStatus", got.StorageModeStatus, want.StorageModeStatus)
 
 	// Href is server-assigned (defaultFactory in singleton handler
 	// builds it as /edev/{id}/der/{derId}/ders). Confirm it matches
@@ -249,6 +266,43 @@ func assertInverterStatus(t *testing.T, name string, got, want *sep2.InverterSta
 // assertOperationalModeStatus mirrors the above for
 // OperationalModeStatusType. Same rationale.
 func assertOperationalModeStatus(t *testing.T, name string, got, want *sep2.OperationalModeStatusType) {
+	t.Helper()
+	if got == nil {
+		t.Errorf("step 5: %s = nil, want non-nil", name)
+		return
+	}
+	if got.DateTime != want.DateTime {
+		t.Errorf("step 5: %s.DateTime = %d, want %d", name, got.DateTime, want.DateTime)
+	}
+	if got.Value != want.Value {
+		t.Errorf("step 5: %s.Value = %d, want %d", name, got.Value, want.Value)
+	}
+}
+
+// assertStateOfChargeStatus mirrors assertConnectStatus for
+// StateOfChargeStatusType. IEEE-191 turned StateOfChargeStatus from a
+// bare *uint16 into this complexType (required dateTime + PerCent
+// value); this helper is the round-trip check that a scalar dereference
+// can no longer express.
+func assertStateOfChargeStatus(t *testing.T, name string, got, want *sep2.StateOfChargeStatusType) {
+	t.Helper()
+	if got == nil {
+		t.Errorf("step 5: %s = nil, want non-nil", name)
+		return
+	}
+	if got.DateTime != want.DateTime {
+		t.Errorf("step 5: %s.DateTime = %d, want %d", name, got.DateTime, want.DateTime)
+	}
+	if got.Value != want.Value {
+		t.Errorf("step 5: %s.Value = %d, want %d", name, got.Value, want.Value)
+	}
+}
+
+// assertStorageModeStatus mirrors assertConnectStatus for
+// StorageModeStatusType, the field core v0.10.0 added to DERStatus
+// alongside the IEEE-191 fix (sep.xsd:4195). Additive, not part of the
+// IEEE-191 break, but the same round-trip shape.
+func assertStorageModeStatus(t *testing.T, name string, got, want *sep2.StorageModeStatusType) {
 	t.Helper()
 	if got == nil {
 		t.Errorf("step 5: %s = nil, want non-nil", name)

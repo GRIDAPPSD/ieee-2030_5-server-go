@@ -11,6 +11,14 @@
 // are deleted. BuildProtocolRouter below is a thin adapter that converts the
 // server's concrete types and delegates unconditionally to
 // assembly.BuildProtocolRouter.
+//
+// IEEESRV-025: the assembly itself now lives in pkg/sep2server, which is the
+// importable surface an in-process consumer grafts onto. This file keeps the
+// projection from the server's own concrete types (*config.Config, *Stores,
+// handler.ResourceNotifier) into that surface's Config, and keeps
+// BuildProtocolRouter's signature so the CSIP harness and the seam tests are
+// untouched. There is exactly one assembly, and both the standalone binary and
+// an embedder reach it through the same call.
 package server
 
 import (
@@ -19,15 +27,35 @@ import (
 	"reflect"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv/assembly"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv/handlers/subscription"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
 )
 
+// NewEmbedConfig projects the server's own concrete types onto the router-level
+// half of the embeddable surface's Config: the time and rate policy, the
+// stores, the auth policy and the notifier.
+//
+// It deliberately leaves the SERVING half (Addr, the TLS material, EnableCCM,
+// Middleware, ConnState) at its zero value. Those are decisions Run makes when
+// it binds a listener, and leaving them out here is what keeps
+// BuildProtocolRouter returning the bare protocol router that the CSIP harness
+// and the route-surface test expect, regardless of the cipher mode the
+// surrounding config names.
+func NewEmbedConfig(cfg *config.Config, stores *Stores, notifier handler.ResourceNotifier) sep2server.Config {
+	return sep2server.Config{
+		Router:   NewCoreRouterConfig(cfg),
+		Stores:   NewCoreStores(stores),
+		Auth:     NewCoreAuthPolicy(),
+		Notifier: adaptNotifier(notifier),
+	}
+}
+
 // BuildProtocolRouter constructs the SEP2 protocol router via
-// assembly.BuildProtocolRouter using the server-side seam adapters
+// sep2server.BuildHandler using the server-side seam adapters
 // (NewCoreRouterConfig, NewCoreStores, NewCoreAuthPolicy, adaptNotifier).
 //
 // The svc parameter is intentionally ignored: certificate management lives
@@ -39,12 +67,9 @@ import (
 // Core's assembly.BuildProtocolRouter is now the sole protocol router; there
 // is no longer a toggle or an in-tree alternative.
 func BuildProtocolRouter(cfg *config.Config, stores *Stores, _ *handler.AdminCertService, serverSFDI, serverLFDI string, notifier handler.ResourceNotifier) (http.Handler, []string) {
-	coreHandler, patterns := assembly.BuildProtocolRouter(
-		NewCoreRouterConfig(cfg),
-		NewCoreStores(stores),
-		NewCoreAuthPolicy(),
-		serverSFDI, serverLFDI,
-		adaptNotifier(notifier),
+	coreHandler, patterns := sep2server.BuildHandler(
+		NewEmbedConfig(cfg, stores, notifier),
+		sep2srv.Identity{SFDI: serverSFDI, LFDI: serverLFDI},
 	)
 	// wrapMutationHandlers is a no-op in production builds (see
 	// test_mutations_notest.go). Under csip_test_hooks it wraps
@@ -84,18 +109,14 @@ func NewCoreRouterConfig(cfg *config.Config) assembly.RouterConfig {
 // AuthPolicy.SFDIPrefix: wires auth.ExtractSFDIPrefix directly; its
 // signature func(string) (string, error) matches core's expectation.
 //
+// IEEESRV-025: the composition itself moved to sep2server.DefaultAuthPolicy,
+// which is the one door an embedder has onto this server's enforcement. This
+// stays as the in-tree name so every existing call site and test is unchanged,
+// and so there is still exactly one composition behind both.
+//
 // Exported so tests can verify the policy compiles with real auth types.
 func NewCoreAuthPolicy() assembly.AuthPolicy {
-	return assembly.AuthPolicy{
-		Wrap: func(next http.Handler) http.Handler {
-			return auth.IdentityMiddleware(auth.ACLMiddleware(auth.DefaultACLRules())(next))
-		},
-		Identity: func(ctx context.Context) (lfdi, sfdi string, ok bool) {
-			id, ok := auth.GetIdentity(ctx)
-			return id.LFDI, id.SFDI, ok
-		},
-		SFDIPrefix: auth.ExtractSFDIPrefix,
-	}
+	return sep2server.DefaultAuthPolicy()
 }
 
 // NewCoreStores converts the server-local *Stores to *assembly.Stores.

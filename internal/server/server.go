@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"log"
 	"net"
@@ -15,8 +14,6 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv/handlers/subscription"
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
-	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store/memory"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
@@ -25,35 +22,30 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
 )
 
 const (
 	subscriptionWorkers   = 4
 	subscriptionQueueSize = 256
 
-	// HTTP server timeout defaults. All servers (protocol, admin, HMI) share
-	// these values unless a caller overrides them. Zero means "no limit";
+	// HTTP server timeout defaults for the listeners this package still owns:
+	// the admin listener and the metrics listener. Zero means "no limit";
 	// these non-zero values defend against Slowloris and slow-body exhaustion.
 	// ReadHeaderTimeout < ReadTimeout: header parsing has a tighter deadline
 	// than the full body read.
+	//
+	// The protocol listener moved to pkg/sep2server (IEEESRV-025) and takes
+	// the same four durations from core's sep2srv.Default*Timeout, which core
+	// lifted from THIS block verbatim. The values are identical today; they
+	// are named in two places because the two listeners now live in two
+	// packages, and a future change to one is a deliberate choice about that
+	// listener rather than an accidental change to both.
 	serverReadHeaderTimeout = 10 * time.Second
 	serverReadTimeout       = 30 * time.Second
 	serverWriteTimeout      = 30 * time.Second
 	serverIdleTimeout       = 120 * time.Second
 )
-
-// newProtocolServer constructs the SEP2 protocol http.Server with the
-// standard timeout values. handler may be nil; callers assign Server.Handler
-// after choosing the CCM/GCM middleware chain.
-func newProtocolServer(handler http.Handler) *http.Server {
-	return &http.Server{
-		Handler:           handler,
-		ReadHeaderTimeout: serverReadHeaderTimeout,
-		ReadTimeout:       serverReadTimeout,
-		WriteTimeout:      serverWriteTimeout,
-		IdleTimeout:       serverIdleTimeout,
-	}
-}
 
 // newAdminServer constructs the admin http.Server with the standard timeout
 // values. handler may be nil; callers assign Server.Handler after building
@@ -70,53 +62,19 @@ func newAdminServer(handler http.Handler) *http.Server {
 
 // Run starts the IEEE 2030.5 server with mutual TLS and optionally
 // an admin HTTPS server on a separate port.
+//
+// IEEESRV-025: the protocol half (listener, mutual TLS, server-identity
+// derivation, the assembled routes and the graceful drain) is now the
+// embeddable surface in pkg/sep2server, and this function is its first
+// consumer. What remains here is what an embedder does NOT get: the admin
+// listener, the dashboard, the metrics listener, mDNS and the operator banner.
+//
+// One consequence of that split is visible in the ordering below: the stores
+// and the notifier are now built BEFORE the listener is bound, because the
+// surface takes them as construction inputs. A deployment whose store path and
+// whose bind address are BOTH bad now reports the store path first. Nothing
+// else about the sequence changed, and no port is held while a store fails.
 func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService) error {
-	// Build TLS config and derive server identity (SFDI/LFDI) from the leaf
-	// cert BEFORE constructing the router, so /sdev and /sdev/sdi see
-	// non-empty values under both GCM and CCM modes (IEEE-001).
-	var (
-		tlsListener net.Listener
-		serverSFDI  string
-		serverLFDI  string
-	)
-	protocolSrv := newProtocolServer(nil)
-
-	listener, err := net.Listen("tcp", cfg.Addr)
-	if err != nil {
-		return fmt.Errorf("listen: %w", err)
-	}
-	defer func() { _ = listener.Close() }()
-
-	if cfg.EnableCCM {
-		// CCM-8 mode: use forked crypto/tls with IEEE 2030.5 mandatory cipher
-		ccmCfg, err := sepTLS.NewCCMServerConfigWithExtraCAs(cfg.CertFile, cfg.KeyFile, cfg.CAFile, cfg.ExtraClientCAs)
-		if err != nil {
-			return fmt.Errorf("CCM TLS config: %w", err)
-		}
-		serverSFDI, serverLFDI, err = deriveServerIdentity(ccmCfg.Certificates[0].Certificate)
-		if err != nil {
-			return fmt.Errorf("derive server identity (CCM): %w", err)
-		}
-		tlsListener = gotls.NewListener(listener, ccmCfg)
-		log.Printf("IEEE 2030.5 server listening on %s (mTLS, CCM-8 primary)", cfg.Addr)
-	} else {
-		// GCM fallback mode: standard crypto/tls
-		tlsCfg, err := sepTLS.NewServerTLSConfigWithExtraCAs(cfg.CertFile, cfg.KeyFile, cfg.CAFile, cfg.ExtraClientCAs)
-		if err != nil {
-			return fmt.Errorf("TLS config: %w", err)
-		}
-		serverSFDI, serverLFDI, err = deriveServerIdentity(tlsCfg.Certificates[0].Certificate)
-		if err != nil {
-			return fmt.Errorf("derive server identity (GCM): %w", err)
-		}
-		tlsListener = tls.NewListener(listener, tlsCfg)
-		log.Printf("IEEE 2030.5 server listening on %s (mTLS, GCM)", cfg.Addr)
-	}
-
-	if len(cfg.ExtraClientCAs) > 0 {
-		log.Printf("trusted extra client CAs: %v", cfg.ExtraClientCAs)
-	}
-
 	// IEEE-097: build the admin-mutated stores honoring SEP2_DATA_DIR.
 	// Empty DataDir + empty per-store dedicated paths = pure in-memory
 	// (back-compat). The constructors return non-persistent stores in
@@ -229,36 +187,73 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	notifier.SetObserver(obs.RecordNotification)
 	go notifier.Start(ctx)
 
-	router, protocolRoutes := BuildProtocolRouter(cfg, stores, svc, serverSFDI, serverLFDI, notifier)
+	// Build the embeddable protocol server: it binds the listener, derives
+	// the server identity (SFDI/LFDI) from the leaf cert BEFORE assembling the
+	// routes so /sdev and /sdev/sdi see non-empty values under both cipher
+	// modes (IEEE-001), and owns the graceful drain.
+	//
+	// Middleware carries the two wrappers that are this deployment's own
+	// concern rather than an embedder's: the Prometheus request middleware,
+	// and the build-tagged CSIP mutation mux, which is a no-op in production
+	// builds. ShutdownTimeout is left at zero, which drains without a bound,
+	// as this server has always done.
+	embedCfg := NewEmbedConfig(cfg, stores, notifier)
+	embedCfg.Addr = cfg.Addr
+	embedCfg.CertFile = cfg.CertFile
+	embedCfg.KeyFile = cfg.KeyFile
+	embedCfg.CAFile = cfg.CAFile
+	embedCfg.ExtraClientCAs = cfg.ExtraClientCAs
+	embedCfg.EnableCCM = cfg.EnableCCM
+	embedCfg.Middleware = func(h http.Handler) http.Handler {
+		return obs.Middleware(wrapMutationHandlers(h, stores, notifier))
+	}
+	embedCfg.ConnState = func(_ net.Conn, state http.ConnState) {
+		obs.RecordConnState(state.String())
+	}
+
+	protocolSrv, err := sep2server.New(embedCfg)
+	if err != nil {
+		return err
+	}
+	serverSFDI, serverLFDI := protocolSrv.Identity().SFDI, protocolSrv.Identity().LFDI
+	protocolRoutes := protocolSrv.Patterns()
 
 	if cfg.EnableCCM {
-		// Bridge: inject gotls connection state into request context
-		sepTLS.SetupCCMServer(protocolSrv)
-		protocolSrv.Handler = obs.Middleware(sepTLS.CCMIdentityMiddleware(router))
+		log.Printf("IEEE 2030.5 server listening on %s (mTLS, CCM-8 primary)", cfg.Addr)
 	} else {
-		protocolSrv.Handler = obs.Middleware(router)
+		log.Printf("IEEE 2030.5 server listening on %s (mTLS, GCM)", cfg.Addr)
+	}
+	if len(cfg.ExtraClientCAs) > 0 {
+		log.Printf("trusted extra client CAs: %v", cfg.ExtraClientCAs)
 	}
 
-	// Observability: record protocol-listener TLS connection-state
-	// transitions. SetupCCMServer (CCM branch) installs its own ConnState
-	// hook to thread gotls state into the request context; chain through it
-	// rather than clobbering it so both the CCM bridge and the metric fire.
-	prevConnState := protocolSrv.ConnState
-	protocolSrv.ConnState = func(c net.Conn, state http.ConnState) {
-		obs.RecordConnState(state.String())
-		if prevConnState != nil {
-			prevConnState(c, state)
+	// errCh capacity covers the admin listener and the optional metrics
+	// listener so a fast-failing Serve never blocks on an unbuffered send
+	// during startup. The protocol listener has its own channel, because its
+	// shutdown is driven by cancelling protocolCtx rather than by a Close.
+	errCh := make(chan error, 2)
+
+	// protocolCtx is deliberately NOT derived from ctx. Every exit path below
+	// stops the protocol listener explicitly, and keeping it independent means
+	// the drain is ordered the same way whether the shutdown was requested or
+	// was forced by an admin or metrics listener failing to come up.
+	protocolCtx, stopProtocol := context.WithCancel(context.Background())
+	defer stopProtocol()
+
+	protocolDone := make(chan error, 1)
+	go func() {
+		protocolDone <- protocolSrv.Run(protocolCtx)
+	}()
+
+	// stopProtocolServer drains the protocol listener and reports, without
+	// returning, any error the drain produced. Used by the startup-abort paths
+	// below and by the shutdown branch, so all three drain the same way.
+	stopProtocolServer := func() {
+		stopProtocol()
+		if err := <-protocolDone; err != nil {
+			log.Printf("protocol server shutdown error: %v", err)
 		}
 	}
-
-	// errCh capacity covers the protocol listener, the admin listener, and
-	// the optional metrics listener so a fast-failing Serve never blocks on
-	// an unbuffered send during startup.
-	errCh := make(chan error, 3)
-
-	go func() {
-		errCh <- protocolSrv.Serve(tlsListener)
-	}()
 
 	// Start mDNS if configured
 	if cfg.EnableMDNS {
@@ -308,7 +303,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	if cfg.EffectiveAdminListen() != "" && svc != nil {
 		adminSrv, adminTLSDesc, adminAddr, adminRoutes, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh)
 		if err != nil {
-			_ = protocolSrv.Close()
+			stopProtocolServer()
 			return fmt.Errorf("admin server: %w", err)
 		}
 	}
@@ -329,7 +324,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		}
 		metricsSrv, err = startMetricsServer(metricsAddr, errCh)
 		if err != nil {
-			_ = protocolSrv.Close()
+			stopProtocolServer()
 			if adminSrv != nil {
 				_ = adminSrv.Close()
 			}
@@ -354,9 +349,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	select {
 	case <-ctx.Done():
 		log.Println("shutting down servers...")
-		if err := protocolSrv.Shutdown(context.Background()); err != nil {
-			log.Printf("protocol server shutdown error: %v", err)
-		}
+		stopProtocolServer()
 		if adminSrv != nil {
 			if err := adminSrv.Shutdown(context.Background()); err != nil {
 				log.Printf("admin server shutdown error: %v", err)
@@ -368,6 +361,12 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 			}
 		}
 		return nil
+	case err := <-protocolDone:
+		// The protocol listener failed on its own; protocolCtx was never
+		// cancelled, so this is a real failure and not a drain. Surface it
+		// rather than logging it, exactly as the pre-IEEESRV-025 shared
+		// error channel did.
+		return err
 	case err := <-errCh:
 		return err
 	}
@@ -678,17 +677,7 @@ func isLoopbackBind(addr string) bool {
 	return false
 }
 
-// deriveServerIdentity parses the leaf certificate from a raw DER chain
-// (as found in tls.Certificate.Certificate / gotls.Certificate.Certificate)
-// and returns the server SFDI and LFDI. Mode-agnostic - works for both
-// the stdlib crypto/tls path (GCM) and the forked gotls path (CCM).
-func deriveServerIdentity(rawChain [][]byte) (sfdi, lfdi string, err error) {
-	if len(rawChain) == 0 {
-		return "", "", fmt.Errorf("empty certificate chain")
-	}
-	leaf, err := x509.ParseCertificate(rawChain[0])
-	if err != nil {
-		return "", "", fmt.Errorf("parse server leaf: %w", err)
-	}
-	return sepTLS.SFDI(leaf), sepTLS.LFDI(leaf), nil
-}
+// Server-identity derivation from the leaf certificate moved to
+// pkg/sep2server alongside the TLS listener it belongs to (IEEESRV-025). It is
+// read back here through sep2server.Server.Identity; the IEEE-001 regression
+// guards in server_identity_test.go still drive it through the full Run flow.

@@ -36,7 +36,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// canonicalProtocolRoutes is the pinned list of 67 SEP2 protocol-listener
+// canonicalProtocolRoutes is the pinned list of 72 SEP2 protocol-listener
 // patterns that assembly.BuildProtocolRouter must mount. Confirmed
 // identical to the in-tree BuildProtocolRouter output by Phase 1
 // (IEEESRV-001 TestCoreRouterPatternEquivalence). Any addition or
@@ -86,10 +86,33 @@ import (
 //     methods; 2018 A.3.5.2) are ADDED. Net +2 routes: four added, two
 //     removed. Verified directly against core's assembly.go at
 //     IEEECORE-084 (commit bd8d0e3).
+//
+// IEEESRV-034 also folds in two catch-up items surfaced by pinning core
+// v0.13.0 (tag dereferences to fecafbe), both confirmed pre-existing (on
+// core main before IEEECORE-084, and before the v0.12.0 pin's other
+// unbumped commits) rather than introduced by this card:
+//   - "GET /edev/{id}/frp/{frpId}" and "GET /edev/{id}/frq/{frqId}"
+//     (FlowReservationResponse and FlowReservationRequest instance
+//     routes) and "GET /msg/{msgId}/tm/{tmId}" (TextMessage instance
+//     route) are ADDED. core commit c407a1e, "mount the FlowReservation
+//     and TextMessage instance routes", mounted these before
+//     IEEECORE-084; this repo's canonical set had not caught up.
+//
+// v0.13.0 itself also carries IEEECORE-066, mounting PUT and DELETE on
+// the MirrorUsagePoint instance:
+//   - "PUT /mup/{id}" and "DELETE /mup/{id}" are ADDED. These are
+//     genuinely new with this bump, not pre-existing drift; confirmed by
+//     running TestProtocolRouteSurface against the bumped go.mod and
+//     reading the diverges-from-canonical report, not assumed from the
+//     core changelog.
+//
+// Net across both catch-up items plus IEEECORE-066: five routes added,
+// none removed. 67 -> 72.
 var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}",
 	"DELETE /edev/{id}/lel/{lelId}",
 	"DELETE /edev/{id}/sub/{subId}",
+	"DELETE /mup/{id}",
 	"GET /dc",
 	"GET /dcap",
 	"GET /edev",
@@ -103,7 +126,9 @@ var canonicalProtocolRoutes = []string{
 	"GET /edev/{id}/der/{derId}/ders",
 	"GET /edev/{id}/dstat",
 	"GET /edev/{id}/frp",
+	"GET /edev/{id}/frp/{frpId}",
 	"GET /edev/{id}/frq",
+	"GET /edev/{id}/frq/{frqId}",
 	"GET /edev/{id}/fsa",
 	"GET /edev/{id}/fsa/{fsaId}",
 	"GET /edev/{id}/fsa/{fsaId}/derp",
@@ -119,6 +144,7 @@ var canonicalProtocolRoutes = []string{
 	"GET /msg",
 	"GET /msg/{msgId}",
 	"GET /msg/{msgId}/tm",
+	"GET /msg/{msgId}/tm/{tmId}",
 	"GET /mup",
 	"GET /mup/{id}",
 	"GET /rsps",
@@ -154,11 +180,12 @@ var canonicalProtocolRoutes = []string{
 	"PUT /edev/{id}/dstat",
 	"PUT /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc",
 	"PUT /edev/{id}/ps",
+	"PUT /mup/{id}",
 }
 
 // TestProtocolRouteSurface asserts that BuildProtocolRouter (which now
 // delegates unconditionally to assembly.BuildProtocolRouter) produces
-// exactly the 67 canonical SEP2 protocol routes, sorted, with no
+// exactly the 72 canonical SEP2 protocol routes, sorted, with no
 // additions or deletions. This replaces TestCoreRouterPatternEquivalence
 // from Phase 1: there is no longer an in-tree router to compare against,
 // so we pin the live surface directly.

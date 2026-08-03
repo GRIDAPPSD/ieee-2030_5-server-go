@@ -198,7 +198,14 @@ func TestSurfaceIsReachableFromOutsideTheModule(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(dir, "go.sum"), string(sum))
 
-	cmd := exec.Command("go", "run", ".")
+	// -p 2 caps the nested build's parallelism. This test is the only one in
+	// the repository that spawns a compiler, and the suite around it runs
+	// under the race detector with several servers doing timed readiness
+	// probes. An uncapped nested build saturates every core for the length of
+	// a cold compile, which is enough to push those probes past their
+	// deadlines. Capping costs this test a little wall time and keeps it from
+	// destabilising its neighbours.
+	cmd := exec.Command("go", "run", "-p", "2", ".")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		// -mod=mod lets the throwaway module settle its own requirements.

@@ -1,0 +1,114 @@
+NOTICE
+======
+
+This project (ieee-2030_5-server-go) is licensed under the terms in the
+LICENSE file at the root of this repository. This NOTICE covers third-party
+material the project refers to but does not distribute.
+
+
+IEEE 2030.5 and the normative WADL (sep_wadl.xml)
+--------------------------------------------------
+
+IEEE 2030.5, "IEEE Standard for Smart Energy Profile Application Protocol",
+and the artifacts published with it, including the application description
+document sep_wadl.xml and the XML Schema sep.xsd, are copyright (c) The
+Institute of Electrical and Electronics Engineers, Inc. (IEEE). All rights
+reserved. IEEE, the IEEE Standards Association, and the standard's authors are
+not affiliated with this project and do not endorse it.
+
+THE WADL IS NOT DISTRIBUTED WITH THIS PROJECT.
+
+No copy of sep_wadl.xml is contained in this repository, in any release
+artifact, or in any binary built from this module. Neither is any derived
+transcription of it: the conformance harness parses an operator-supplied copy
+at test time and asserts aggregate counts and hand-authored, individually
+cited statements about named resources. It does not commit a generated mirror
+of the document's contents in another file format.
+
+The WADL is used only as a test fixture, read at test time from a copy you
+supply, by the conformance harness in test/conformance/wadl. Nothing outside a
+test reads it.
+
+
+A note on the absence of a copyright notice in the file
+-------------------------------------------------------
+
+Recorded here as a fact for anyone assessing this project's position, not as
+a legal conclusion:
+
+sep_wadl.xml, unlike sep.xsd, carries NO copyright notice within the file
+itself. sep.xsd carries a full IEEE terms block in a leading comment;
+sep_wadl.xml carries none.
+
+This is NOT to be read as permission. Copyright attaches without notice under
+the Berne Convention and current U.S. law, and the WADL is published as part
+of the same IEEE distribution as the schema: it even incorporates the schema
+directly, via <include href="sep.xsd"/> in its <grammars> block. This project
+therefore treats sep_wadl.xml as carrying exactly the same restrictions as
+sep.xsd, and does not distribute it.
+
+The distinction is recorded only because it is a real difference between the
+two files that a reviewer may notice, and it is better documented than
+rediscovered.
+
+
+Obtaining a copy
+----------------
+
+IEEE 2030.5 is available at no charge through the IEEE GET Program:
+
+    https://standards.ieee.org/products-programs/ieee-get-program/
+
+Accept IEEE's terms and download the standard. Both artifacts are distributed
+with the standard's XML artifacts (the XML/xmlspy model release), where they
+appear as sep_wadl.xml and sep.xsd. Your use of those files is governed by
+IEEE's terms, not by this project's license.
+
+This module drives its conformance sweep from one specific document: IEEE
+2030.5-2018, Model Build 20180301, sep_wadl.xml. See test/conformance/README.md
+for its identity, the digest the tests verify, and how to point the build at a
+copy you have obtained.
+
+
+Pointing the build at your copy
+-------------------------------
+
+Either place the file at the conventional location, which is gitignored so it
+cannot be committed by accident:
+
+    test/conformance/wadl/sep_wadl.xml
+
+or set an environment variable to any path you like:
+
+    export SEP2_WADL_PATH=/path/to/sep_wadl.xml
+
+SEP2_WADL_PATH wins over the conventional location. Then:
+
+    go test ./test/conformance/...
+
+Without a copy, the WADL-gated tests SKIP and the rest of the suite runs
+normally, so a contributor who has not obtained the standard still gets a
+green build. The skip is reported by go test as a skip, never as a pass, and
+each skipped test names SEP2_WADL_PATH and this file.
+
+A skip is not a conformance verdict. To require that a WADL really was found,
+so that a missing or misconfigured copy fails the run instead of quietly
+skipping the gate, set:
+
+    export SEP2_WADL_REQUIRED=1
+
+Continuous integration that supplies the WADL should set it. With it set, an
+absent WADL is a hard failure; the value must be a boolean that Go's
+strconv.ParseBool accepts, and anything else is itself an error, so a typo
+cannot silently disarm the gate.
+
+
+The schema (sep.xsd)
+--------------------
+
+The schema gate is implemented in the core module, ieee-2030_5-core-go, in
+packages schema and internal/xsdgate, and is configured there by
+SEP2_SCHEMA_PATH and SEP2_SCHEMA_REQUIRED. Its NOTICE covers the schema's
+attribution. The contract is identical in shape to the WADL contract described
+above, deliberately, so that one convention covers both artifacts. See
+test/conformance/README.md.

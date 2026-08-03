@@ -351,7 +351,7 @@ jobs:
           set -o pipefail
           make test-csip 2>&1 | tee ci-logs/csip-tag-off.log
 
-      - name: CSIP harness: scripts/test-csip-server.sh wrapper smoke
+      - name: CSIP harness wrapper smoke (scripts/test-csip-server.sh)
         if: matrix.hooks == 'off'
         # Validates the CLAUDE.md-referenced `make test-csip-server` entry
         # point keeps working alongside the new make targets. The script
@@ -369,7 +369,7 @@ jobs:
           set -o pipefail
           make test-csip-hooks 2>&1 | tee ci-logs/csip-tag-on.log
 
-      - name: CSIP harness: race detector (csip_test_hooks tag)
+      - name: CSIP harness race detector (csip_test_hooks tag)
         if: matrix.hooks == 'on'
         # Race only runs on the hooks-on axis (per Phase 7 doc): the
         # mutation + time-advance hooks are the surface most likely to

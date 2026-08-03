@@ -17,6 +17,16 @@ import (
 // reference it directly. Deleting it is Phase 3 (IEEESRV-003) scope.
 type Stores struct {
 	EndDevices store.EndDeviceStore
+	// EndDeviceIndexes allocates the opaque, server-chosen index that
+	// addresses an EndDevice in resource URLs ("/edev/3/rg"). core v0.10.0
+	// added this field to assembly.Stores; a nil value degrades to a
+	// process-local substitute (URL indices do not survive restart) rather
+	// than failing, but every field here is wired so the degraded path
+	// never fires in practice. In-memory only for now, matching this
+	// field's pre-bump behavior (there was no persisted index before);
+	// wiring memory.NewEndDeviceIndexWithPersistence via cfg.DataDir,
+	// the way Registrations does, is a follow-up, not forced by this bump.
+	EndDeviceIndexes *memory.EndDeviceIndex
 	// Registrations is the persistent-aware wrapper around the in-memory
 	// Store[sep2.Registration]. The embedded *Store gives back-compat
 	// method promotion (Get/List/Count) for call sites that don't need

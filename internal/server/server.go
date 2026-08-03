@@ -151,8 +151,8 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// cfg.EffectiveStorePath so the precedence is:
 	//
 	//  1. SEP2_SUBSCRIPTION_STORE_PATH wins (back-compat for IEEE-077).
-	//  2. Else SEP2_DATA_DIR set → <datadir>/subscriptions.json.
-	//  3. Else "" → pure in-memory (historical default).
+	//  2. Else SEP2_DATA_DIR set -> <datadir>/subscriptions.json.
+	//  3. Else "" -> pure in-memory (historical default).
 	subPath := cfg.EffectiveStorePath("subscriptions", cfg.SubscriptionStorePath)
 	subStore, subErr := memory.NewSubscriptionStoreWithPersistence(subPath)
 	if subErr != nil {
@@ -165,6 +165,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// Initialize stores
 	stores := &Stores{
 		EndDevices:               endDevices,
+		EndDeviceIndexes:         memory.NewEndDeviceIndex(),
 		Registrations:            registrations,
 		MirrorUsagePoints:        memory.NewStore[sep2.MirrorUsagePoint](),
 		MirrorMeterReadings:      memory.NewScopedStore[sep2.MirrorMeterReading](),
@@ -274,7 +275,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		// IEEE-133: also advertise the admin surface as ieee2030-5.local
 		// when an admin listener is configured. RegisterAdmin returns
 		// (nil, nil) when the admin listen is loopback (the published
-		// address would be unreachable off-box) — that's a skip, not a
+		// address would be unreachable off-box) - that's a skip, not a
 		// failure, so the server keeps coming up.
 		if listen := cfg.EffectiveAdminListen(); listen != "" {
 			adminMdnsReg, err := discovery.RegisterAdmin(discovery.AdminConfig{Listen: listen})
@@ -344,7 +345,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	log.Print("\n" + RenderRoutesLog(cfg.Addr, protocolRoutes, adminAddr, adminRoutes))
 
 	// IEEE-112: print the operator-facing connection-details banner once
-	// after both listeners are up. Banner is log output only — it does not
+	// after both listeners are up. Banner is log output only - it does not
 	// change behavior and intentionally suppresses secrets (admin key,
 	// private keys). Format is pinned by TestRenderConnectionBanner_*.
 	log.Print("\n" + RenderConnectionBanner(buildBannerInput(cfg, tlsModeName, serverSFDI, serverLFDI, adminTLSDesc)))
@@ -374,9 +375,9 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 // startAdminServer brings up the admin listener on its own port. IEEE-094:
 // the listener selection matrix is
 //
-//	AdminListen empty  → admin disabled (caller gates this case)
-//	AdminTLS = false   → plain HTTP (Caddy reverse-proxy mode)
-//	AdminTLS = true    → HTTPS with operator cert (AdminCert/AdminKeyFile)
+//	AdminListen empty  -> admin disabled (caller gates this case)
+//	AdminTLS = false   -> plain HTTP (Caddy reverse-proxy mode)
+//	AdminTLS = true    -> HTTPS with operator cert (AdminCert/AdminKeyFile)
 //	                     or self-signed fallback if neither is set
 //
 // HTTPS modes use VerifyClientCertIfGiven so AdminAuthMiddleware's mTLS
@@ -388,7 +389,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	// bind string. A bare ":<port>" gets a loopback default so the admin
 	// listener is safe-by-default; any explicit host (0.0.0.0, an LAN IP,
 	// [::]) is honored verbatim. The banner still surfaces the env value
-	// (see buildBannerInput) — only the net.Listen site uses the resolved.
+	// (see buildBannerInput) - only the net.Listen site uses the resolved.
 	addr := config.ResolveAdminBind(cfg.EffectiveAdminListen())
 
 	// IEEE-137: warn loudly when the admin listener is bound to a non-
@@ -455,7 +456,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 }
 
 // startMetricsServer brings up the dedicated plain-HTTP Prometheus metrics
-// listener. It serves ONLY GET /metrics → obs.Handler(); no other route is
+// listener. It serves ONLY GET /metrics -> obs.Handler(); no other route is
 // mounted, and it is deliberately NOT the mTLS protocol mux nor the
 // auth-gated admin mux (exposing /metrics there would either require a
 // client cert per scrape or leak through the admin auth surface). The
@@ -491,9 +492,9 @@ func startMetricsServer(addr string, errCh chan error) (*http.Server, error) {
 // renderer means tests can pin the formatting independently from changes
 // to the config struct or the admin-listener wiring.
 //
-// Admin URL: empty AdminListen ⇒ banner shows "(disabled)". Admin auth:
-// AdminKey present ⇒ "Bearer key set"; empty + no AdminTLS ⇒ "disabled"
-// (the only auth path is Bearer at this listener — IEEE-094 admin runs on
+// Admin URL: empty AdminListen => banner shows "(disabled)". Admin auth:
+// AdminKey present => "Bearer key set"; empty + no AdminTLS => "disabled"
+// (the only auth path is Bearer at this listener - IEEE-094 admin runs on
 // its own port and does not require client certs). The key itself is NEVER
 // printed.
 func buildBannerInput(cfg *config.Config, tlsMode, serverSFDI, serverLFDI, adminTLSDesc string) BannerInput {
@@ -606,7 +607,7 @@ func parsePort(addr string) int {
 // admin listener is bound to a non-loopback address AND the operator
 // has not declared an upstream proxy. Returns empty string when no
 // warning is warranted (loopback bind, or proxy hint set, or empty
-// addr — caller already gates the disabled case).
+// addr - caller already gates the disabled case).
 //
 // The warning explains the failure mode in operator-facing terms: an
 // upstream proxy MUST inject X-Forwarded-For (or RFC 7239 Forwarded)
@@ -624,7 +625,7 @@ func adminProxyWarning(addr string, behindProxy bool) string {
 		" without SEP2_ADMIN_BEHIND_PROXY=true. " +
 		"AdminAuthMiddleware Path 0 declines requests that carry " +
 		"X-Forwarded-For/Forwarded headers, but stock nginx does NOT " +
-		"inject those headers by default — an unconfigured nginx in " +
+		"inject those headers by default - an unconfigured nginx in " +
 		"front of this listener would let all relayed traffic look " +
 		"loopback-local and bypass admin auth. Configure your upstream " +
 		"proxy to inject X-Forwarded-For (or Forwarded per RFC 7239), " +
@@ -635,7 +636,7 @@ func adminProxyWarning(addr string, behindProxy bool) string {
 
 // metricsExposureWarning returns a startup-warning string when the resolved
 // metrics bind address is non-loopback, and empty otherwise (loopback bind or
-// empty addr — caller gates the disabled case). The /metrics surface is
+// empty addr - caller gates the disabled case). The /metrics surface is
 // UNAUTHENTICATED (no client cert, no Bearer), so a non-loopback bind exposes
 // raw exposition data network-wide; the warning makes that exposure visible at
 // boot. Mirrors adminProxyWarning; pure function so tests assert content
@@ -661,7 +662,7 @@ func metricsExposureWarning(addr string) string {
 // Used by IEEE-137's warning gate. Accepts a "host:port" string; treats
 // the empty host as non-loopback (caller already resolves bare
 // ":<port>" via ResolveAdminBind to "127.0.0.1:<port>" so this case
-// should not arise in production). Hostnames are NOT resolved — a name
+// should not arise in production). Hostnames are NOT resolved - a name
 // like "admin.internal" is treated as non-loopback so the warning
 // fires. The hostname might be loopback but we will not gamble on it
 // without DNS, and a false-positive warning is harmless.
@@ -678,7 +679,7 @@ func isLoopbackBind(addr string) bool {
 
 // deriveServerIdentity parses the leaf certificate from a raw DER chain
 // (as found in tls.Certificate.Certificate / gotls.Certificate.Certificate)
-// and returns the server SFDI and LFDI. Mode-agnostic — works for both
+// and returns the server SFDI and LFDI. Mode-agnostic - works for both
 // the stdlib crypto/tls path (GCM) and the forked gotls path (CCM).
 func deriveServerIdentity(rawChain [][]byte) (sfdi, lfdi string, err error) {
 	if len(rawChain) == 0 {

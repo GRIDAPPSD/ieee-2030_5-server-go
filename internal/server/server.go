@@ -160,7 +160,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		target := &bootfixture.Target{
 			EndDevices:         stores.EndDevices,
 			FSAs:               stores.FSAs,
-			DERPrograms:        stores.DERPrograms.ScopedStore,
+			DERPrograms:        stores.DERPrograms,
 			DERControls:        stores.DERControls,
 			DefaultDERControls: stores.DefaultDERControls,
 			DERCurves:          stores.DERCurves,

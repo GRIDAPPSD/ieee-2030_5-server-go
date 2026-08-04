@@ -59,13 +59,13 @@ const maxMutationBody = 1 << 16 // 64 KiB
 //
 // The notifier is optional. When non-nil, mutation handlers that change
 // a subscribable resource fan a Notification out to subscribed receivers
-// after the store mutation commits (IEEE-093: derctl-add → DERProgramList
-// notification, matching CSIP V1.2 §11.4 / UTIL-004 step 3). nil disables
-// the fan-out — production builds never compile this code path, and the
+// after the store mutation commits (IEEE-093: derctl-add -> DERProgramList
+// notification, matching CSIP V1.2 section 11.4 / UTIL-004 step 3). nil disables
+// the fan-out : production builds never compile this code path, and the
 // existing unit tests that pass nil keep working unchanged.
 //
 // All routes live under /test/mutations/ and bypass the protocol ACL
-// chain — mutations are out-of-band by design.
+// chain : mutations are out-of-band by design.
 func RegisterMutationHandlers(top *http.ServeMux, stores *Stores, notifier handler.ResourceNotifier) {
 	if stores == nil {
 		return
@@ -188,8 +188,13 @@ func handleDERProgPrimacy(stores *Stores) http.HandlerFunc {
 		}
 
 		ctx := r.Context()
-		inner := stores.DERPrograms.ForParent(req.EndDeviceID)
-		existing, err := inner.Get(ctx, req.ProgramID)
+		// IEEESRV-038: address the program by (parent, id) on the store
+		// itself. This used to take a per-parent handle via ForParent,
+		// which core IEEECORE-085 withdrew: that method was promoted by
+		// an embedded field and was never part of the store.ScopedStore
+		// contract, so reaching for it bypassed the persistence wrapper.
+		programs := stores.DERPrograms
+		existing, err := programs.Get(ctx, req.EndDeviceID, req.ProgramID)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				http.Error(w, "der program not found", http.StatusNotFound)
@@ -199,7 +204,7 @@ func handleDERProgPrimacy(stores *Stores) http.HandlerFunc {
 			return
 		}
 		existing.Primacy = *req.Primacy
-		if err := inner.Update(ctx, req.ProgramID, existing); err != nil {
+		if err := programs.Update(ctx, req.EndDeviceID, req.ProgramID, existing); err != nil {
 			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -221,14 +226,14 @@ type derControlAddRequest struct {
 
 // handleDERControlAdd appends a new DERControl under an existing
 // DERProgram. The parent DERProgram must already exist. Used by CSIP
-// MAINT-004 (DERControl add to live program) and CSIP V1.2 §9.4 /
+// MAINT-004 (DERControl add to live program) and CSIP V1.2 section 9.4 /
 // UTIL-004 (Utility-Aggregator DER retrieval).
 //
 // On successful Create the handler fires a Notification on the parent
 // DERProgramList href with NotificationStatusChanged. The DERProgramList
 // is the resource aggregators subscribe to (see UTIL-003 procedure), so
 // fanning out at that href reaches every subscribed aggregator. nil
-// notifier disables the fan-out — used by the existing unit tests that
+// notifier disables the fan-out : used by the existing unit tests that
 // exercise only the store-mutation side of the hook.
 func handleDERControlAdd(stores *Stores, notifier handler.ResourceNotifier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -315,7 +320,7 @@ const selfDeviceLogScope = "sdev"
 // is the standard sep2 Time function set (6); logEventID is project-local
 // (the spec leaves vendor-defined numbering inside each function set), so
 // we pin a small constant the harness can recognize without ambiguity.
-// Reference: IEEE 2030.5 §10.10, CSIP V1.2 §4 CORE-006 sentinel
+// Reference: IEEE 2030.5 section 10.10, CSIP V1.2 section 4 CORE-006 sentinel
 // "TM_TIME_ADJUSTED".
 const (
 	logEventCodeTimeAdjusted uint8  = 1
@@ -354,7 +359,7 @@ func handleTimeAdvance(stores *Stores) http.HandlerFunc {
 		}
 
 		// Reject the request before any state mutation if the LogEvent
-		// store is missing — CORE-006 requires both the clock shift AND
+		// store is missing : CORE-006 requires both the clock shift AND
 		// the LogEvent emission, and we'd rather fail the entire op than
 		// half-apply it.
 		if stores.LogEvents == nil {
@@ -389,7 +394,7 @@ func handleTimeAdvance(stores *Stores) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 		// Encode after WriteHeader: status line already on the wire, no
 		// way to convert a downstream write failure into an HTTP error.
-		// The payload is small and primitive — encoding itself cannot
+		// The payload is small and primitive : encoding itself cannot
 		// fail, only the underlying writer can.
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"log_event_href": evt.Href,
@@ -415,12 +420,12 @@ type fsaSwapRequest struct {
 // the FSA record stored at (end_device_id, from_fsa) to (end_device_id,
 // to_fsa). The FSA content (mRID, description, list links) is preserved;
 // only Href and the DERProgramListLink.Href are re-stamped to reflect the
-// new path. Used by CSIP BASIC-003 (feeder swap) and MAINT-003 (EndDevice→
+// new path. Used by CSIP BASIC-003 (feeder swap) and MAINT-003 (EndDevice->
 // FSA reassignment).
 //
 // Reassignment shape chosen: re-key the FSA list entry under the EndDevice
-// scope (option (a) in the IEEE-078 ticket). The other materialization
-// — re-keying DERControls under the composite edev/fsa/derp scope — is
+// scope (option (a) in the IEEE-078 ticket). The other materialization,
+// re-keying DERControls under the composite edev/fsa/derp scope, is
 // intentionally not performed here: DERPrograms are keyed by EndDevice
 // alone (not by FSA), and BASIC-003's feeder-swap procedure is satisfied
 // by the FSA list rescoping alone. A harness needing fresh controls under
@@ -452,7 +457,7 @@ func handleFSASwap(stores *Stores) http.HandlerFunc {
 
 		// Verify the parent EndDevice exists. Without this, a swap under
 		// an unknown EndDevice would silently create empty per-parent
-		// FSA buckets via ForParent and report success — BASIC-003 needs
+		// FSA buckets via ForParent and report success : BASIC-003 needs
 		// the explicit 404.
 		if _, err := stores.EndDevices.Get(ctx, req.EndDeviceID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
@@ -500,7 +505,7 @@ func handleFSASwap(stores *Stores) http.HandlerFunc {
 		if err := fsas.Delete(ctx, req.FromFSA); err != nil {
 			// Best-effort rollback of the new entry. ErrNotFound on the
 			// source between Get and Delete would be a race against a
-			// concurrent mutation — surface it instead of swallowing.
+			// concurrent mutation : surface it instead of swallowing.
 			_ = fsas.Delete(ctx, req.ToFSA)
 			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -522,18 +527,18 @@ type subscriptionCancelRequest struct {
 // with 409 Conflict. Used by CSIP V1.2 MAINT-006 (server-side
 // subscription terminate, refuses retry).
 //
-// Tombstone shape chosen: option (a) — a small canceled-id set scoped to
+// Tombstone shape chosen: option (a) : a small canceled-id set scoped to
 // the test surface, lives in internal/handler/subscription_test_hook.go
 // (csip_test_hooks gated). The production HandleCreateSubscription
 // consults the set via a nil-checked package-var hook; under no-tag
 // builds the hook is never registered and the create path's nil-compare
-// is the entire cost. No new field on SubscriptionStore — the
+// is the entire cost. No new field on SubscriptionStore : the
 // canceled-id set is process-local test state, not subscription state.
 //
 // Companion knobs (csip_test_hooks only):
 //   - X-CSIP-Test-Subscription-ID header on POST /edev/{id}/sub: lets the
 //     harness pin a deterministic ID instead of the auto-generated
-//     "sub-<unixnano>" — needed so the harness can drive the same ID
+//     "sub-<unixnano>" : needed so the harness can drive the same ID
 //     into the create path and observe the refusal.
 //   - coresub.MarkSubscriptionCanceled / IsSubscriptionCanceled /
 //     ResetCanceledSubscriptions: package-level helpers backing the set (in core).
@@ -571,7 +576,7 @@ func handleSubscriptionCancel(stores *Stores) http.HandlerFunc {
 
 		// Tombstone the ID so a subsequent POST /edev/{id}/sub that
 		// resolves to it (via X-CSIP-Test-Subscription-ID) is refused.
-		// Idempotent — second cancel of the same ID is a 404 above, never
+		// Idempotent : second cancel of the same ID is a 404 above, never
 		// reaches here, which keeps the tombstone reflective of the
 		// server's authoritative delete history.
 		coresub.MarkSubscriptionCanceled(req.SubscriptionID)

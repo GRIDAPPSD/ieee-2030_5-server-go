@@ -5,26 +5,33 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 )
 
 // IEEE-096 wiring: build the *handler.AdminFSAHandler from the server's
 // stores plus a tiny adapter that turns the existing DERProgram scoped
 // store into a DERProgramHrefValidator (the program href shape is
-// `/edev/{id}/fsa/{fsaId}/derp/{derpId}` — we parse to (edev, derp) and
+// `/edev/{id}/fsa/{fsaId}/derp/{derpId}`: we parse to (edev, derp) and
 // probe the store).
 
-// derProgramHrefValidator adapts *memory.ScopedStore[sep2.DERProgram] to
+// derProgramHrefValidator adapts a scoped DERProgram store to
 // handler.DERProgramHrefValidator. It is defined at the consumer (server
 // package) per the Pike rule rather than baked into the handler package.
+//
+// IEEESRV-038: programs is declared as the store.ScopedStore contract
+// rather than a concrete *memory.ScopedStore. The validator needs Get and
+// nothing else, and core IEEECORE-085 made *memory.DERProgramStore hold
+// its collection instead of embedding it, so there is no longer a concrete
+// inner store to reach for. Holding the contract is the shape that change
+// was for.
 type derProgramHrefValidator struct {
-	programs *memory.ScopedStore[sep2.DERProgram]
+	programs store.ScopedStore[sep2.DERProgram]
 }
 
 // HasProgram returns true if href resolves to an existing DERProgram.
 // Spec-shape href: /edev/{id}/fsa/{fsaId}/derp/{derpId}. Anything else
-// falls through as "not found" — the admin endpoint will surface 404.
+// falls through as "not found": the admin endpoint will surface 404.
 func (v *derProgramHrefValidator) HasProgram(ctx context.Context, href string) bool {
 	if v == nil || v.programs == nil {
 		return false
@@ -41,7 +48,7 @@ func (v *derProgramHrefValidator) HasProgram(ctx context.Context, href string) b
 
 // parseProgramHref pulls (edevID, derpID) out of
 // /edev/{id}/fsa/{fsaId}/derp/{derpId}. Returns ok=false on any malformed
-// input — no partial matches.
+// input: no partial matches.
 func parseProgramHref(href string) (string, string, bool) {
 	href = strings.TrimSpace(href)
 	parts := strings.Split(strings.TrimPrefix(href, "/"), "/")
@@ -69,6 +76,6 @@ func newAdminFSAHandler(stores *Stores) *handler.AdminFSAHandler {
 		AdminFSAs:   stores.AdminFSAs,
 		DeviceFSAs:  stores.FSAs,
 		EndDevices:  stores.EndDevices,
-		DERPrograms: &derProgramHrefValidator{programs: stores.DERPrograms.ScopedStore},
+		DERPrograms: &derProgramHrefValidator{programs: stores.DERPrograms},
 	}
 }

@@ -52,10 +52,15 @@ type Stores struct {
 	DERSettings       *memory.ScopedStore[sep2.DERSettings]
 	DERStatuses       *memory.ScopedStore[sep2.DERStatus]
 	DERAvailabilities *memory.ScopedStore[sep2.DERAvailability]
-	// DERPrograms is the persistent-aware wrapper. It embeds
-	// *ScopedStore[sep2.DERProgram] so existing handlers that call
-	// .ForParent(...) keep working unchanged; the shadowed
-	// Create/Delete add the disk flush.
+	// DERPrograms is the persistence-aware wrapper. It satisfies
+	// store.ScopedStore[sep2.DERProgram] and its Create/Delete add the
+	// disk flush.
+	//
+	// It no longer embeds the collection: core IEEECORE-085 made the inner
+	// store an unexported field, so neither the promoted ForParent nor the
+	// old .ScopedStore reach-through exists. Consumers that want a scoped
+	// DERProgram surface take the store.ScopedStore contract and address
+	// resources by (parent, id). See IEEESRV-038.
 	DERPrograms        *memory.DERProgramStore
 	DERControls        *memory.ScopedStore[sep2.DERControl]
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]

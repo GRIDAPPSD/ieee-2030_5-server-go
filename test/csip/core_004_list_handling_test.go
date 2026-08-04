@@ -48,7 +48,7 @@ func TestCORE_004_ListHandling(t *testing.T) {
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
 		FSAs:               stores.FSAs,
-		DERPrograms:        stores.DERPrograms.ScopedStore,
+		DERPrograms:        stores.DERPrograms,
 		DERControls:        stores.DERControls,
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,

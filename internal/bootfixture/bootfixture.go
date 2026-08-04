@@ -51,9 +51,14 @@ const singletonKey = "default"
 // today, but the indirection lets bootfixture stay free of an
 // internal/server import (which would otherwise create a cycle).
 type Target struct {
-	EndDevices         store.EndDeviceStore
-	FSAs               *memory.ScopedStore[sep2.FunctionSetAssignments]
-	DERPrograms        *memory.ScopedStore[sep2.DERProgram]
+	EndDevices store.EndDeviceStore
+	FSAs       *memory.ScopedStore[sep2.FunctionSetAssignments]
+	// DERPrograms is the store.ScopedStore contract, not a concrete
+	// *memory.ScopedStore. The loader only Creates, and the server hands
+	// over *memory.DERProgramStore, whose collection stopped being an
+	// exported embedded field in core IEEECORE-085. The contract is what
+	// both shapes have in common and all this loader ever needed.
+	DERPrograms        store.ScopedStore[sep2.DERProgram]
 	DERControls        *memory.ScopedStore[sep2.DERControl]
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]
 	DERCurves          *memory.Store[sep2.DERCurve]

@@ -96,7 +96,7 @@ func bootAggregatorTopology(t *testing.T, opts ...csiptest.BootOption) *csiptest
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
 		FSAs:               stores.FSAs,
-		DERPrograms:        stores.DERPrograms.ScopedStore, // IEEE-097 wrapper; IEEE-104.
+		DERPrograms:        stores.DERPrograms, // IEEE-097 wrapper; IEEE-104.
 		DERControls:        stores.DERControls,
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,

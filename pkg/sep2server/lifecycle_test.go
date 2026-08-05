@@ -14,7 +14,7 @@ import (
 //
 // The identity assertion is the point. CCM runs through core's forked
 // crypto/tls, which is a separate config-building path with its own
-// certificate plumbing, and IEEE-001 was exactly a case where one cipher mode
+// certificate plumbing, and #1 was exactly a case where one cipher mode
 // served empty SFDI/LFDI while the other did not. Deriving the same values
 // from the same leaf under both modes is what makes that regression
 // impossible to reintroduce on one path only.

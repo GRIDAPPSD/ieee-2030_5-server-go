@@ -277,7 +277,7 @@ func TestServerLifecycle(t *testing.T) {
 
 	// Identity is derived from the leaf, and both halves must be populated:
 	// /sdev and /sdev/sdi close over them, and an empty value there is the
-	// IEEE-001 regression.
+	// #1 regression.
 	if got := srv.Identity(); got.SFDI == "" || got.LFDI == "" {
 		t.Errorf("Identity is not fully populated: %+v", got)
 	}

@@ -1,6 +1,5 @@
 # IEEE 2030.5 Stress Test Harness: Design of Record
 
-Cards: IEEESRV-007, IEEESRV-010
 Author: Devi (interoperability/conformance)
 
 ## Placement Rationale
@@ -55,9 +54,9 @@ The following is a true server architectural limit, regardless of host:
 
 `scripts/stress.sh` never mutates system state; it only warns when kernel
 parameters are under-tuned and labels affected runs `host_limited: true`.
-`scripts/pretest-tune.sh` (card IEEESRV-009) is the explicit, operator-invoked
-escape hatch that applies the tuning the connection-heavy dimensions need. Run it
-via `make stress-pretest` or by invoking the script directly.
+`scripts/pretest-tune.sh` is the explicit, operator-invoked escape hatch that
+applies the tuning the connection-heavy dimensions need. Run it via
+`make stress-pretest` or by invoking the script directly.
 
 It applies exactly three tunings and nothing else:
 
@@ -149,11 +148,11 @@ Ramp controller: spawns `RAMP_RATE` clients per second until `CLIENTS` is reache
 (or until a breaking-point criterion fires). With `CLIENTS=0` (open-ended), ramp
 continues until criterion fires.
 
-### Subscription fan-out (IEEESRV-010, unified per-client model IEEESRV-013)
+### Subscription fan-out (unified per-client model)
 
 For the fan-out dimension, the harness exercises the full subscription/notification
 round trip using only the lean load generator (no separate inverterclient binary is
-needed or launched). IEEESRV-013 unified subscriber count with active client count:
+needed or launched). Subscriber count is unified with active client count:
 CLIENTS=N means N devices that each drive GET traffic AND hold an active subscription.
 
 The sequence is:
@@ -211,11 +210,11 @@ fidelity cohort is wanted in the future, that belongs in a separate card.
 | DIM | Description |
 |---|---|
 | `throughput` | GET /dcap+/tm+/edev round-robin, zero think time, GCM. Ramp until p99 > 500ms or error rate > 1%. |
-| `fanout` | Ramp N active+subscribed clients. Each client drives GET traffic and holds a /dcap subscription. Inject notifications at 20 Hz; one mutation fans to all N. Break: queue_full counter goes non-zero (IEEESRV-013). |
+| `fanout` | Ramp N active+subscribed clients. Each client drives GET traffic and holds a /dcap subscription. Inject notifications at 20 Hz; one mutation fans to all N. Break: queue_full counter goes non-zero. |
 | `soak` | Fixed load 2h (CI: 10min). Break: monotonic growth in heap/goroutine/fd across 3 windows. |
 | `tls` | CCM-8 mode, new connection per request (no keepalive). Break: handshake error rate > 0.1% or p99 > 1s. |
 
-## Subscription Worker Sweep (IEEESRV-008 dependency)
+## Subscription Worker Sweep
 
 When `SEP2_SUBSCRIPTION_WORKERS` and `SEP2_SUBSCRIPTION_QUEUE_SIZE` are set in the
 harness environment, they are passed through to the `sep2server` process. The harness
@@ -225,9 +224,8 @@ does not set them by default (characterize the shipped 4/256 defaults first). To
 SEP2_SUBSCRIPTION_WORKERS=8 SEP2_SUBSCRIPTION_QUEUE_SIZE=512 make stress-test DIM=fanout
 ```
 
-IEEESRV-008 must land and deploy before the sweep runs. The harness wire-up is in
-`scripts/stress.sh` (the env vars are forwarded to the server process unconditionally
-when present).
+The harness wire-up is in `scripts/stress.sh` (the env vars are forwarded to
+the server process unconditionally when present).
 
 ## Result Artifacts
 
@@ -269,8 +267,8 @@ results/<YYYYMMDD-HHMMSS>-<dim>-<clients>/
 | `MUTATION_RATE_HZ` | fanout | stress-notify calls per second (default 20) |
 | `MUTATION_TOKEN` | fanout | pre-set token; auto-generated when empty |
 | `RECEIVER_PORT` | fanout | notification receiver port (0 = auto-assign) |
-| `SEP2_SUBSCRIPTION_WORKERS` | IEEESRV-008 | forwarded to server; unset = server default (4) |
-| `SEP2_SUBSCRIPTION_QUEUE_SIZE` | IEEESRV-008 | forwarded to server; unset = server default (256) |
+| `SEP2_SUBSCRIPTION_WORKERS` | sweep | forwarded to server; unset = server default (4) |
+| `SEP2_SUBSCRIPTION_QUEUE_SIZE` | sweep | forwarded to server; unset = server default (256) |
 
 ## Changes from Initial Design
 
@@ -281,8 +279,8 @@ results/<YYYYMMDD-HHMMSS>-<dim>-<clients>/
    Without registration, /edev/{id} routes 404 and the load would not exercise
    real handler paths.
 3. The `REAL_SIMS` variable (planned cohort of real inverterclient binaries) was
-   never implemented and has been removed. IEEESRV-010 closes the fanout workload
-   gap using the lean loadgen itself: subscription registration, a notification
+   never implemented and has been removed. The fanout workload gap is closed
+   using the lean loadgen itself: subscription registration, a notification
    receiver, and mutation injection via the csip_test_hooks surface.
 4. The fanout dimension now builds sep2server with `-tags csip_test_hooks` for the
    `/test/mutations/stress-notify` endpoint. The token is ephemeral per run.

@@ -1,4 +1,4 @@
-// Package loadgen is the lean IEEE 2030.5 stress load generator for IEEESRV-007.
+// Package loadgen is the lean IEEE 2030.5 stress load generator.
 //
 // Design: one *http.Client per virtual client (pre-built from a unique device
 // cert), driven from a semaphore-gated goroutine pool. No inverter state
@@ -6,7 +6,7 @@
 // Self-metrics (send rate, goroutine count) are emitted so the
 // driver-vs-server disambiguation is computable from the result artifacts.
 //
-// For the fanout dimension (IEEESRV-010), the package also:
+// For the fanout dimension, the package also:
 //   - Runs a plain-HTTP notification receiver (NotifyReceiver) that counts
 //     inbound server-to-client POSTs, so success delivery can be measured
 //     alongside queue_full drops.
@@ -103,7 +103,7 @@ type Config struct {
 	// each ramped client also a subscriber: the client registers its own
 	// subscription to the shared /dcap resource using its own mTLS cert.
 	// This unifies subscriber count with active client count (1:1) so
-	// CLIENTS=N means N active-and-subscribed devices. IEEESRV-013.
+	// CLIENTS=N means N active-and-subscribed devices.
 	//
 	// A non-nil error is logged but does not abort the client; the client
 	// still drives GET traffic. This lets a partial subscribe failure
@@ -127,7 +127,7 @@ type BreakResult struct {
 	// cmd/sep2loadgen/main.go when DeliveredPerMutation is substantially
 	// below AtClients. It means some per-client subscriptions failed via
 	// the log-and-continue path and the run is NOT a valid N-wide data
-	// point. stress.sh treats this as a hard run failure. IEEESRV-013.
+	// point. stress.sh treats this as a hard run failure.
 	PartialSubscription  bool    `json:"partial_subscription,omitempty"`
 	DeliveredPerMutation float64 `json:"delivered_per_mutation,omitempty"`
 }
@@ -468,7 +468,7 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 
 		// Fanout: subscribe this client before starting the GET workload.
 		// Each ramped client becomes both an active driver and a subscriber,
-		// so CLIENTS=N means N active-and-subscribed devices. IEEESRV-013.
+		// so CLIENTS=N means N active-and-subscribed devices.
 		if cfg.ClientSubscribe != nil {
 			if err := cfg.ClientSubscribe(idx, client); err != nil {
 				logger.Printf("client %d: subscribe: %v (continuing without subscription)", idx, err)

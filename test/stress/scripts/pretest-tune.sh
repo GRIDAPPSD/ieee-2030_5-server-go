@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # scripts/pretest-tune.sh: opt-in kernel tuning for the IEEE 2030.5 stress harness.
-# Card: IEEESRV-009.
 #
 # The stress harness (scripts/stress.sh) deliberately never mutates system state;
 # it only warns when kernel parameters are under-tuned. This script is the explicit,

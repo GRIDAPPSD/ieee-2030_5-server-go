@@ -3,7 +3,7 @@
 // BASIC-007 is the only V1.2 BASIC procedure that targets
 // DefaultDERControl directly (no DERControl event). The spec calls for
 // setGradW and setSoftGradW on the DefaultDERControl per Figure 7.
-// IEEE-092 added both fields to pkg/sep2.DefaultDERControl per
+// #140 added both fields to pkg/sep2.DefaultDERControl per
 // IEEE 2030.5 §10.11 (Unsigned16, hundredths of percent per second).
 //
 // V1.2 procedure step → assertion mapping (per V1.2 §8.7):

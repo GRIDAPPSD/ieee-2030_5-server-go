@@ -12,7 +12,7 @@
 //	        Subscribe to the DERProgram href.
 //	                                          ──► EndDevices.Create + DERPrograms.Create
 //	                                          ──► POST /edev/{id}/sub
-//	Step 2: add a new DERControl via the IEEE-024 mutation hook.
+//	Step 2: add a new DERControl via the #27 mutation hook.
 //	                                          ──► POST /test/mutations/derctl-add
 //	                                          ──► 201 Created
 //	                                          ──► DERControls.Get on composite key succeeds
@@ -23,7 +23,7 @@
 //
 // Build-tag: csip_test_hooks for the derctl-add mutation.
 //
-// IEEE-091 / Phase 6.
+// #155 / Phase 6.
 
 package csip_test
 

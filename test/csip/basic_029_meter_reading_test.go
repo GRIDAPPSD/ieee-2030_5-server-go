@@ -8,10 +8,10 @@
 // embedded ReadingType describing units, kind, accumulation
 // behaviour, and flow direction.
 //
-// PARALLEL POLICY (READ BEFORE FLIPPING - depends on IEEE-010):
+// PARALLEL POLICY (READ BEFORE FLIPPING - depends on #9):
 //
-//	BASIC-029 runs sequentially (no t.Parallel()) until IEEE-010
-//	(race-loss /edev /mup) lands. Flip on after Phase 4 IEEE-010
+//	BASIC-029 runs sequentially (no t.Parallel()) until #9
+//	(race-loss /edev /mup) lands. Flip on after Phase 4 #9
 //	merges.
 //
 // Why this matters: HandleCreateMirrorUsagePoint (now in core, at
@@ -21,9 +21,9 @@
 // does a non-atomic "verify parent exists, then create child" pair.
 // Under -race + t.Parallel two concurrent CSIP tests racing on /mup
 // can interleave such that the parent Get returns ErrNotFound after
-// it was just created. IEEE-010 makes both transitions atomic; until
+// it was just created. #9 makes both transitions atomic; until
 // then BASIC-029 stays serial. The phase doc Section Section 3 (BASIC-029
-// IEEE-010 dependency) is the canonical citation.
+// #9 dependency) is the canonical citation.
 //
 // V1.2 procedure step -> assertion mapping:
 //
@@ -78,7 +78,7 @@
 // post-condition check available for reading CONTENT today. Asserting
 // through srv.Stores proves the full POST path (TLS handshake -> ACL
 // middleware -> handler -> store) executed and recorded the values sent.
-// The missing list endpoint is flagged in the IEEE-062 PR description as a
+// The missing list endpoint is flagged in the #57 PR description as a
 // follow-up; once a GET handler ships this step is promoted to a wire-level
 // check.
 //

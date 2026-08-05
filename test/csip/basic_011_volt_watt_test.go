@@ -12,7 +12,7 @@
 //	Step 3 (DERControl carries opModVoltWatt curve ref)            ──► per-field assertion
 //	Step 4 (global /dc carries 1 Volt/Watt curve, curveType = 3)   ──► walkSingleCurveBasic
 //
-// IEEE-092 added opModVoltWatt to pkg/sep2.DERControlBase and flipped
+// #140 added opModVoltWatt to pkg/sep2.DERControlBase and flipped
 // this test from SKIP to active.
 package csip_test
 

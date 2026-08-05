@@ -4,7 +4,7 @@
 //
 // MAINT-001 asserts the server-side topology shape when an EndDevice
 // is removed from the aggregator's EDList via an out-of-band path
-// (the IEEE-024 /test/mutations/edev-delete-oob hook, NOT the
+// (the #27 /test/mutations/edev-delete-oob hook, NOT the
 // client-driven DELETE on /edev/{id} which is MAINT-002's territory).
 //
 // V1.2 procedure step → assertion mapping:
@@ -21,7 +21,7 @@
 //	        GETs the deleted href and gets 404. The OOB mutation does
 //	        NOT itself emit a Notification (by design — see the
 //	        handleEdevDeleteOOB comment); we drive the Notify in-test
-//	        as IEEE-087 does, then assert delivery.
+//	        as #151 does, then assert delivery.
 //	                                          ──► mgr.Notify(/edev, Removed)
 //	                                          ──► receiver.Wait(1)
 //	                                          ──► GET /edev/{id} → 404
@@ -29,7 +29,7 @@
 // Build-tag: csip_test_hooks is required because Step 2 drives the test-
 // only mutation surface. Untagged builds skip this file entirely.
 //
-// IEEE-091 / Phase 6.
+// #155 / Phase 6.
 
 package csip_test
 
@@ -104,9 +104,9 @@ func TestMAINT_001_InverterMaintenanceOOB(t *testing.T) {
 
 	// Step 3a: server fires Notification on /edev. The OOB mutation
 	// handler does not emit notifications (its scope is the
-	// authoritative-store rewrite); the IEEE-091 contract layered on
+	// authoritative-store rewrite); the #155 contract layered on
 	// top is to fan out a Removed Notification from the test, the
-	// same way IEEE-087 layers Notify on top of the IEEE-024 mutation
+	// same way #151 layers Notify on top of the #27 mutation
 	// shape. The shape under test is the manager + receiver fan-out,
 	// not the bridge from mutation to Notify (that bridge is the
 	// in-band DELETE path's job, exercised in MAINT-002).

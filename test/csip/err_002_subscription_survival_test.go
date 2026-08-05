@@ -3,7 +3,7 @@
 // ERR-002 asserts the full two-leg error handling contract for the
 // subscription subsystem:
 //
-//  (a) Subscription survives a server power-reset. Uses IEEE-077's
+//  (a) Subscription survives a server power-reset. Uses #224's
 //      SubscriptionRecord snapshot/restore round-trip on the in-process
 //      memory store to simulate the restart. After restore, the new
 //      Manager delivers Notifications for the surviving subscription.
@@ -39,14 +39,14 @@
 // No build-tag — ERR-002 exercises the production subscription.Manager
 // directly against the in-memory store, no mutation hooks involved.
 //
-// IEEE-091 / Phase 6. Depends on IEEE-077 (persistence types) + IEEE-080
+// #155 / Phase 6. Depends on #224 (persistence types) + #225
 // (delete-on-400 in Manager) — both cherry-picked onto this branch
 // pending #131 + #132 merge.
 //
 // Note: a unit-level version of the same flow lives in
 // internal/subscription/restart_test.go (TestERR002RestartReceiverReturns400).
 // This file is the CSIP harness equivalent, exercising the same
-// behavior through the csiptest.NotificationReceiver helper (IEEE-087)
+// behavior through the csiptest.NotificationReceiver helper (#151)
 // to keep the conformance contract observable from the harness layer
 // rather than only the package unit-test layer.
 
@@ -76,7 +76,7 @@ func TestERR_002_SubscriptionSurvivalAndDeleteOn400(t *testing.T) {
 	t.Parallel()
 
 	// Receiver that returns HTTP 400 on every POST. The
-	// NotificationReceiver helper (IEEE-087) supports a WithStatusCode
+	// NotificationReceiver helper (#151) supports a WithStatusCode
 	// option specifically for this kind of fault-injection test.
 	receiver := csiptest.NewNotificationReceiver(t, csiptest.WithStatusCode(400))
 

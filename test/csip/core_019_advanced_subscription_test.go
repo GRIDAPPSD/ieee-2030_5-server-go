@@ -35,11 +35,11 @@
 // is observable as a Notify fan-out that hits only the survivors. We
 // assert that shape here. Production support for emitting a Removed-
 // status Notification to the just-deleted subscriber, if needed, is
-// IEEE-091's territory (MAINT-006 server-side subscription terminate);
+// #155's territory (MAINT-006 server-side subscription terminate);
 // CORE-019's procedure is satisfied by observing that the survivor is
 // the only delivery.
 //
-// IEEE-087 / Phase 6.
+// #151 / Phase 6.
 
 package csip_test
 
@@ -152,7 +152,7 @@ func TestCORE_019_AdvancedSubscription(t *testing.T) {
 	if len(gotB) != 1 {
 		t.Errorf("CORE-019 (b): survivor receiver got %d, want 1", len(gotB))
 	}
-	// IEEE-100 / CSIP V1.2 §11.6: the DELETE itself fires a final
+	// #169 / CSIP V1.2 §11.6: the DELETE itself fires a final
 	// Removed Notification (Status=3) to the deleted subscriber so it
 	// can flush local state. So receiverA must have exactly one
 	// Notification — the Removed — and a subsequent Notify on the

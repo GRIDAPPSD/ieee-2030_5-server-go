@@ -5,7 +5,7 @@
 // DefaultDERControls. The procedure asserts each managed inverter sees
 // exactly one DERControl at the SY node and zero DDERCs.
 //
-// Per the IEEE-090 anti-abstraction rule: dedicated named test, even
+// Per the #147 anti-abstraction rule: dedicated named test, even
 // where the procedure shape repeats neighbouring AGG-* tests.
 //
 // Procedure step → assertion mapping (per V1.2 §10.3):
@@ -15,12 +15,12 @@
 //	Step 2: For each managed inverter, walk /edev/{id}/fsa/0/derp/0/derc
 //	        and assert exactly 1 entry whose Href matches the injection.
 //
-// Loader gap (out of IEEE-090 scope): csiptest.buildDERControl
+// Loader gap (out of #147 scope): csiptest.buildDERControl
 // (test/csip/csiptest/loader.go) drops DERControlSpec.MRID — it sets
 // only Href and DERControlBase. AGG-003..012 therefore identify
 // injected DERControls by Href, not MRID. DefaultDERControl is
 // unaffected (buildDefaultDERControl honors MRID). Filing as a
-// follow-up against IEEE-057. See IEEE-090 PR description.
+// follow-up against #52. See #147 PR description.
 package csip_test
 
 import (

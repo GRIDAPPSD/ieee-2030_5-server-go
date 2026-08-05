@@ -1,7 +1,7 @@
 // CSIP V1.2 §11.2 — Inverter Maintenance (In-Band).
 //
 // MAINT-002 asserts the client-driven DELETE /edev/{id} flow shipped
-// by IEEE-023: server processes the delete, emits a Notification to
+// by #26: server processes the delete, emits a Notification to
 // every EndDeviceList subscriber, and a subsequent GET returns 404.
 //
 // V1.2 procedure step → assertion mapping:
@@ -16,10 +16,10 @@
 //	Step 3: server fan-outs a Notification on EndDeviceList. The
 //	        BootServer wires the router with nil notifier (no
 //	        production Manager attached), so we wire our own here and
-//	        drive Notify the same way IEEE-087 does. The shape under
+//	        drive Notify the same way #151 does. The shape under
 //	        test is the manager + receiver fan-out + the DELETE path's
 //	        in-store removal; the production code calls Notify from
-//	        HandleDeleteEndDevice (verified in IEEE-023 PR #118), so
+//	        HandleDeleteEndDevice (verified in #26 PR #118), so
 //	        wiring it from the test preserves the conformance contract
 //	        without coupling the test to BootServer's wiring choice.
 //	                                          ──► mgr.Notify(/edev, Removed)
@@ -28,7 +28,7 @@
 //
 // No build-tag — MAINT-002 exclusively uses production HTTP routes.
 //
-// IEEE-091 / Phase 6.
+// #155 / Phase 6.
 
 package csip_test
 
@@ -84,7 +84,7 @@ func TestMAINT_002_InverterMaintenanceInband(t *testing.T) {
 		t.Fatalf("MAINT-002 Step 1b: ListByResource(/edev) returned %d, want 1", len(listed))
 	}
 
-	// Step 2: aggregator issues HTTP DELETE /edev/{id} (IEEE-023 route).
+	// Step 2: aggregator issues HTTP DELETE /edev/{id} (#26 route).
 	deleteURL := srv.BaseURL + "/edev/" + maint002EndDeviceID
 	delResp := doSubRequest(t, srv, http.MethodDelete, deleteURL, "", nil)
 	_ = delResp.Body.Close()

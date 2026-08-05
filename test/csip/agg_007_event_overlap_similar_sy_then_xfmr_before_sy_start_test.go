@@ -12,8 +12,8 @@
 //     — "similar" mode, same opMod*).
 //
 // "Overlap similar" timing semantics live in the event interval fields,
-// which the IEEE-057 loader does not surface (DERControlSpec carries
-// only ID + MRID + DERControlBase). Per the IEEE-090 Pike-rule
+// which the #52 loader does not surface (DERControlSpec carries
+// only ID + MRID + DERControlBase). Per the #147 Pike-rule
 // discipline, AGG-007 asserts the wire-shape invariant — both nodes
 // expose the expected DDERC + DERControl carrying the same opMod —
 // rather than client-side priority resolution.

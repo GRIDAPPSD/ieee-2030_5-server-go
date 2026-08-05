@@ -1,4 +1,4 @@
-# IEEE-065 fixture — 7 DERPrograms hung off 7 FSAs for CORE-013.
+# #60 fixture — 7 DERPrograms hung off 7 FSAs for CORE-013.
 #
 # CSIP V1.2 §6.6 — DER Program advanced. One EndDevice; seven
 # FunctionSetAssignments, each pointing at a DERProgramList carrying
@@ -22,10 +22,10 @@
 #   5       | T+5  min          | 30 s     | opModFixedPFInjectW
 #   6       | T+6  min          | 30 s     | opModFixedPFInjectW
 #
-# Why no default_der_controls in the YAML: the IEEE-057 loader's
+# Why no default_der_controls in the YAML: the #52 loader's
 # DERControlBaseSpec covers opModConnect/Energize/FixedW/MaxLimW/
 # TargetW/VoltVar/FreqDroop only — opModFixedPFInjectW (FixedPowerFactor
-# shape) is not in the schema today. Per the IEEE-065 ticket Pike does
+# shape) is not in the schema today. Per the #60 ticket Pike does
 # not touch csiptest internals, so the test seeds DefaultDERControls
 # via the public store API in-test, then asserts wire fidelity via the
 # server's GET handler.

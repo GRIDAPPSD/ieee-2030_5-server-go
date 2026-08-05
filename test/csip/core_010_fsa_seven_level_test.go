@@ -7,7 +7,7 @@
 // (DERProgram.Primacy ascending 0..6, lower = higher priority per spec
 // §10.2) is discoverable from the wire response.
 //
-// The fixture is seven-level-fsa.yaml (shipped by IEEE-057): one
+// The fixture is seven-level-fsa.yaml (shipped by #52): one
 // EndDevice, seven FSAs scoped under it, one DERProgram per FSA with
 // primacy 0..6 in ID order.
 //

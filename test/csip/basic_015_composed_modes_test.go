@@ -24,12 +24,12 @@
 //	Step 5 (global /dc carries 3 curves spanning curveType 0,
 //	         1, 3 - V-Var, F-Watt, V-Watt)                    -> /dc walk
 //
-// Standalone ticket (not folded into IEEE-082 per backlog) because
+// Standalone ticket (not folded into #135 per backlog) because
 // BASIC-015 is the first composed-mode procedure: any DERControl
 // store-schema bug that surfaces around multi-mode payload encoding
 // shows up here in isolation rather than masking a whole per-mode
 // batch. Run under both GCM and CCM cipher modes - same shape as
-// every IEEE-082 sibling.
+// every #135 sibling.
 package csip_test
 
 import (

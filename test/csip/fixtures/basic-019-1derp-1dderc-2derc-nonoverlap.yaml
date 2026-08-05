@@ -1,4 +1,4 @@
-# IEEE-084 / BASIC-019 fixture — CSIP V1.2 §8.19.
+# #143 / BASIC-019 fixture — CSIP V1.2 §8.19.
 #
 # Topology: 1 DERProgram, 1 DefaultDERControl, 2 DERControls with
 # the same opMod* type (opModFixedW), non-overlapping intervals. Per

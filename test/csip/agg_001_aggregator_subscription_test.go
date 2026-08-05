@@ -48,7 +48,7 @@
 //	            parallel inverter subtests.
 //
 // Per-inverter scoping gate.
-// IEEE-099 scoped GET /edev/{id}/sub to the EndDevice {id}: the
+// #168 scoped GET /edev/{id}/sub to the EndDevice {id}: the
 // SubscriptionStore now indexes by EndDevice and the handler returns
 // only that EndDevice's subscriptions. AGG-001 asserts strict per-
 // inverter membership (exactly the 6 aggregator subscriptions for the
@@ -56,7 +56,7 @@
 // assertAggregatorSubscriptionsPresent.
 //
 // Step 4 (deliver-side) — notification *delivery* on resource change is
-// gated on IEEE-013 follow-ups (the IEEE-024 mutation hook does not yet
+// gated on #12 follow-ups (the #27 mutation hook does not yet
 // call into the subscription manager — documented in UTIL-004's scope
 // note). AGG-001 itself only exercises subscription *acceptance*;
 // AGG-002..012 exercise the wire shape of events the aggregator would
@@ -96,7 +96,7 @@ func TestAGG_001_AggregatorSubscription(t *testing.T) {
 
 	// After the parallel inverter subtests join, assert each managed
 	// inverter's /sub list surfaces all 6 of its subscribed resources
-	// AND nothing else (strict per-EndDevice scoping per IEEE-099).
+	// AND nothing else (strict per-EndDevice scoping per #168).
 	t.Run("scope_gate", func(t *testing.T) {
 		for _, edevID := range aggManagedInverters {
 			edevID := edevID

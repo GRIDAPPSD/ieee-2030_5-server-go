@@ -12,18 +12,18 @@
 //	        roundtrip; for curve-based modes, walks /dc and asserts
 //	        the curve renders.
 //
-// IEEE-082 wires server-side wire-fidelity tests against this shape.
+// #135 wires server-side wire-fidelity tests against this shape.
 // The procedure's "act (advance time / FSA-swap / drive state)" and
 // "assert Response POST back" legs are NOT in scope for these
 // server-side tests — server just renders the seeded fixture; Response
-// POST is exercised by IEEE-044/045, and time/state are exercised by
-// IEEE-040/078 in their own tests.
+// POST is exercised by #112/045, and time/state are exercised by
+// #92/078 in their own tests.
 //
 // Five of the procedures (BASIC-004, 005, 007, 011, 012) reference
 // opMod* / set* fields that do NOT exist in pkg/sep2.DERControlBase
-// today. Per IEEE-082 scope ("Do not change public API of
+// today. Per #135 scope ("Do not change public API of
 // internal/handler or pkg/sep2"), those tests run the procedure walk
-// up to the field assertion and t.Skip with a // Pinned by IEEE-092
+// up to the field assertion and t.Skip with a // Pinned by #140
 // — implementation gap comment referencing the follow-up ticket. The
 // DERCurveList walk leg still runs for curve-based modes — DERCurve
 // IS in pkg/sep2 today and renders correctly via /dc.
@@ -237,17 +237,17 @@ func walkSingleCurveBasic(
 }
 
 // formatGap is a small string-builder so each gap-skipped test prints
-// a consistent message format pointing at IEEE-092 — the follow-up
+// a consistent message format pointing at #140 — the follow-up
 // ticket gathering all BASIC-NNN sep2 implementation gaps.
 //
-// IEEE-092 closed all five gaps formatGap used to flag. Kept here so
+// #140 closed all five gaps formatGap used to flag. Kept here so
 // any future gap re-opens land at the same call site.
 //
 //nolint:unused // retained per comment above for future BASIC-NNN gap re-opens
 func formatGap(test, missingField string) string {
 	return fmt.Sprintf(
-		"%s wire-fidelity assertion pinned by IEEE-092 — pkg/sep2.DERControlBase carries no %s field today; "+
-			"adding it changes the public API and is out of scope per IEEE-082. "+
+		"%s wire-fidelity assertion pinned by #140 — pkg/sep2.DERControlBase carries no %s field today; "+
+			"adding it changes the public API and is out of scope per #135. "+
 			"Procedure walk up to this point succeeded (program + control list rendered correctly).",
 		test, missingField)
 }

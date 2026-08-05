@@ -8,13 +8,13 @@
 // The CSIP-named conformance counterparts for V1.2 §5.2 Out-of-Band
 // Discovery and V1.2 §5.3 Basic Security live alongside this file:
 //
-//   - comm_002_oob_discovery_test.go (IEEE-067) — V1.2 §5.2, runs
+//   - comm_002_oob_discovery_test.go (#62) — V1.2 §5.2, runs
 //     unconditionally against an ephemeral PKI booted by
 //     csiptest.BootServer. Satisfies the COMM-002 line item in the
 //     Phase 3 V1.2 coverage matrix.
-//   - comm_003_basic_security_test.go (IEEE-067) — V1.2 §5.3,
+//   - comm_003_basic_security_test.go (#62) — V1.2 §5.3,
 //     skeleton in lax mode (accepts CCM-8 or GCM). Tightens to
-//     CCM-8 only once IEEE-020 lands.
+//     CCM-8 only once #22 lands.
 //
 // This SunSpec smoke is kept on top of those two because it is the
 // only test in the package that exercises the real external CSIP test
@@ -54,12 +54,12 @@ const (
 // What this test DOES NOT assert (deferred):
 //   - Negotiated cipher suite. The test logs it but does not require CCM-8.
 //     The stdlib http.Client used here cannot offer CCM-8; tightening this
-//     assertion is gated on IEEE-019 (move the client onto vendored gotls)
-//     and IEEE-020 (SEP2_CSIP_STRICT=true server mode that drops the GCM
+//     assertion is gated on #21 (move the client onto vendored gotls)
+//     and #22 (SEP2_CSIP_STRICT=true server mode that drops the GCM
 //     fallback). When both land, this test (or a sibling) asserts CCM-8.
 //
-// This test consumes csiptest.BootServer (IEEE-058) for the server boot
-// and csiptest.Client.GetDeviceCapability (IEEE-056) for the application
+// This test consumes csiptest.BootServer (#53) for the server boot
+// and csiptest.Client.GetDeviceCapability (#51) for the application
 // fetch. Together they prove both helpers are wired into a real
 // integration test, not just defined in isolation.
 func TestCSIPHandshakeWithSunSpecDeviceCert(t *testing.T) {
@@ -123,7 +123,7 @@ func TestCSIPHandshakeWithSunSpecDeviceCert(t *testing.T) {
 	_ = rawConn.Close()
 
 	// Application fetch via the csiptest Client. This proves the
-	// chained-GET helper (IEEE-056) and BootServer (IEEE-058) compose
+	// chained-GET helper (#51) and BootServer (#53) compose
 	// — future Phase 3 tests use Client.WalkLink to chain further
 	// (dcap → /edev → /edev/0/rg, etc.).
 	dcap, err := srv.Client().GetDeviceCapability(context.Background())

@@ -1,5 +1,5 @@
 // Shared helpers for the BASIC-016..020 non-overlap event-prioritization
-// tests, plus a forward-compatible seam for IEEE-085 (BASIC-021..026
+// tests, plus a forward-compatible seam for #145 (BASIC-021..026
 // overlapping variants). The procedural shape across all five
 // non-overlap tests is:
 //
@@ -14,11 +14,11 @@
 //	        as the fixture seeded them (MRID, Interval, EventStatus,
 //	        opMod*).
 //
-// IEEE-084 wires the server-side wire-fidelity tests against this
+// #143 wires the server-side wire-fidelity tests against this
 // shape - the server just renders the seeded fixture; scheduler
 // runtime prioritization is the DER client's problem (plan-1's scope).
 //
-// IEEE-085 (overlapping variants) reuses `bootWithEventPrioFixture`
+// #145 (overlapping variants) reuses `bootWithEventPrioFixture`
 // and the per-program walk helpers; its overlap-aware invariant
 // (`assertOverlapResolution`) lives below as the dual of
 // `assertDisjointIntervals` so both families share one home.
@@ -35,13 +35,13 @@ import (
 
 // bootWithEventPrioFixture loads the named fixture under fixtures/ into
 // a fresh store set and boots an in-process server. Shared across the
-// BASIC-016..020 tests - each test in IEEE-084 has the same boot shape
+// BASIC-016..020 tests - each test in #143 has the same boot shape
 // (load YAML, walk via TLS client). Mirrors the same pattern used by
 // CORE-012's bootWithDERProgramFixture; centralizing this 12-line
 // boot keeps each procedure test focused on its per-fixture
 // assertions.
 //
-// IEEE-085 will call this same helper for BASIC-021..026 - non-overlap
+// #145 will call this same helper for BASIC-021..026 - non-overlap
 // vs overlap is a fixture-content distinction, not a topology-shape
 // distinction, so the boot path is identical.
 func bootWithEventPrioFixture(
@@ -55,7 +55,7 @@ func bootWithEventPrioFixture(
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
 		FSAs:               stores.FSAs,
-		DERPrograms:        stores.DERPrograms, // IEEE-097 wrapper; IEEE-104.
+		DERPrograms:        stores.DERPrograms, // #165 wrapper; #175.
 		DERControls:        stores.DERControls,
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,
@@ -71,7 +71,7 @@ func bootWithEventPrioFixture(
 
 // runUnderBothCiphers invokes inner under each of GCM and CCM cipher
 // modes as t.Run subtests, marking each subtest t.Parallel. Mirrors
-// the per-mode harness used by CORE-012/013 and IEEE-082's
+// the per-mode harness used by CORE-012/013 and #135's
 // basic_002 - every BASIC-NNN test in this package runs under both
 // ciphers so the spec cipher path (CCM-8) is exercised on the same
 // procedure walk.
@@ -96,7 +96,7 @@ func runUnderBothCiphers(t *testing.T, inner func(t *testing.T, extraOpts []csip
 // walkToFirstEDevFSAList walks /dcap -> /edev (list) -> first EndDevice
 // -> /edev/{id}/fsa (list, l=255) and returns the parsed FSA list. Used
 // by every BASIC-016..020 test that pivots through the FSA hierarchy.
-// Local to IEEE-084 - CORE-012's walkToFirstFSA returns only the
+// Local to #143 - CORE-012's walkToFirstFSA returns only the
 // first FSA, whereas BASIC-020 needs the full list to walk both FSAs
 // (2 DERPrograms -> 2 FSAs in the canonical fixture shape).
 func walkToFirstEDevFSAList(
@@ -236,7 +236,7 @@ func assertEventStatus(t *testing.T, label string, got *sep2.EventStatus, wantSt
 
 // assertDisjointIntervals asserts that the rendered DERControls
 // occupy pairwise-disjoint [Start, Start+Duration) windows - the
-// defining property of BASIC-016..020 vs IEEE-085's BASIC-021..026.
+// defining property of BASIC-016..020 vs #145's BASIC-021..026.
 // Caller passes the controls in any order; this helper checks every
 // (i, j) pair (the list is small - max 2 per the fixture set).
 func assertDisjointIntervals(t *testing.T, controls []sep2.DERControl) {
@@ -271,7 +271,7 @@ func assertDisjointIntervals(t *testing.T, controls []sep2.DERControl) {
 // "fixedW", "maxLimW", "targetW" - extend as new fixtures introduce
 // other opMod families.
 //
-// IEEE-085 BASIC-024..026 exercise multiple opMod families per
+// #145 BASIC-024..026 exercise multiple opMod families per
 // fixture (SP->fixedW, SY->maxLimW), so a single per-field assertion
 // helper keeps the test bodies linear instead of branching by string
 // at each call site.
@@ -313,7 +313,7 @@ func assertOpModValue(t *testing.T, label string, base *sep2.DERControlBase, fie
 // "similar" vs "independent" is the BASIC-021..023 vs BASIC-024..026
 // distinction.
 //
-// IEEE-085 keeps the tuple flat (one DERControl per program) because
+// #145 keeps the tuple flat (one DERControl per program) because
 // the V1.2 Section 8.21-Section 8.26 procedures specify exactly one scheduled event
 // per program. The helper signature could be generalized to a slice
 // per program, but that would invite over-abstraction the procedures
@@ -325,7 +325,7 @@ type overlapEntry struct {
 	opModFamily  string // "fixedW", "maxLimW", "voltVar" etc - anything stable
 }
 
-// assertOverlapResolution is the IEEE-085 analog of
+// assertOverlapResolution is the #145 analog of
 // assertDisjointIntervals. It asserts the inverse invariant - at
 // least one pair of rendered DERControls occupies INTERSECTING
 // [Start, Start+Duration) windows - and additionally surfaces the
@@ -343,7 +343,7 @@ type overlapEntry struct {
 //     helper still verifies the overlap exists but does NOT pick a
 //     single winner.
 //
-// Server-side IEEE-085 wires only the overlap-detection arm - clients
+// Server-side #145 wires only the overlap-detection arm - clients
 // and the scheduler test (plan-1 scope) consume the returned winners
 // when present. Returns (winners-by-pair) keyed by a stable
 // "<a>|<b>" label so callers can spot-check without duplicating the

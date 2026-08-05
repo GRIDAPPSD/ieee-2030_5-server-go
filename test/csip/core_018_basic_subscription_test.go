@@ -14,7 +14,7 @@
 //	                                          ──► postSubscription, expects 201 Created
 //	                                          ──► GET /edev/{id}/sub returns the new sub
 //	Step 2: server-side state change on a resource under the subscribed
-//	        href. We drive this via the IEEE-024 mutation-shape directly
+//	        href. We drive this via the #27 mutation-shape directly
 //	        on the in-process store (we live in the same module as the
 //	        server, so we can mutate the store the booted server reads
 //	        from) — adding a DERControl under the EndDevice's FSA.
@@ -34,9 +34,9 @@
 // Why drive the Notify directly rather than asking the server to
 // observe the store mutation: today's server emits notifications only
 // from explicit handler call sites (the DELETE-EndDevice route was the
-// first; IEEE-091 will add MAINT-004's add-DERControl call site).
-// Plumbing notify into the IEEE-024 mutation handlers is out of scope
-// for IEEE-087 — it lands with IEEE-091 (MAINT-004). For §6.18 the
+// first; #155 will add MAINT-004's add-DERControl call site).
+// Plumbing notify into the #27 mutation handlers is out of scope
+// for #151 — it lands with #155 (MAINT-004). For §6.18 the
 // procedure care-abouts are "server accepts a subscription" and
 // "server delivers a Notification matching the subscribed resource";
 // driving Notify from the test still exercises the full server-side
@@ -50,7 +50,7 @@
 // per-test ctx means `go test -race` is non-negotiable here. See
 // internal/subscription/manager_test.go for the race-passing baseline.
 //
-// IEEE-087 / Phase 6.
+// #151 / Phase 6.
 
 package csip_test
 
@@ -126,7 +126,7 @@ func TestCORE_018_BasicSubscription(t *testing.T) {
 	// store, so a subsequent GET /edev/{id}/fsa would observe the
 	// new entry. The mutation itself is not asserted here; the
 	// assertion is on the notification fan-out in Step 3. This
-	// mirrors the IEEE-024 mutation shape (FSA-keyed Create on the
+	// mirrors the #27 mutation shape (FSA-keyed Create on the
 	// ScopedStore) without going through the test-tag HTTP route —
 	// the test-tag route is the wire-level surface for cross-process
 	// drivers; in-process tests can call the same store API.

@@ -1,4 +1,4 @@
-# IEEE-082 fixture — BASIC-002 Group Management (CSIP V1.2 §8.2).
+# #135 fixture — BASIC-002 Group Management (CSIP V1.2 §8.2).
 #
 # Same 7-level FSA topology as CORE-010's seven-level-fsa.yaml, plus
 # a DefaultDERControl and a single active DERControl seeded at the

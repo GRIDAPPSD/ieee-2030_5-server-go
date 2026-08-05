@@ -14,9 +14,9 @@
 // The IEEE-2030.5 wire model exposes the per-EndDevice FSA list at
 // /edev/{id}/fsa as the harness-observable surface for that change.
 // There is no production endpoint for the utility-side edit itself, so
-// the harness drives the swap through the IEEE-078 mutation hook at
+// the harness drives the swap through the #123 mutation hook at
 // POST /test/mutations/fsa-swap (build-tag-gated under csip_test_hooks,
-// token-authenticated). IEEE-078 chose reassignment shape (a): re-key
+// token-authenticated). #123 chose reassignment shape (a): re-key
 // the FSA list entry under the EndDevice scope, preserving content and
 // re-stamping Href + DERProgramListLink.Href. DERPrograms are scoped by
 // EndDevice only — they ride along untouched.
@@ -26,7 +26,7 @@
 //	Step 1: server has an EndDevice with the seven-level FSA chain
 //	        (system, substation, feeder, transformer, service-point,
 //	        meter, device). The fixture seven-level-fsa.yaml seeds
-//	        exactly this — see IEEE-057 / CORE-010.
+//	        exactly this — see #52 / CORE-010.
 //	        ──► load fixture, BootServer, GET /dcap → EndDeviceList →
 //	            FunctionSetAssignmentsListLink. Assert all=7.
 //	Step 2: client GETs the FSA list pre-swap; the feeder-level entry
@@ -57,7 +57,7 @@
 //	            non-feeder FSAs match the pre-swap snapshot byte-for-
 //	            byte on (mRID, Description, Href).
 //	Step 6: the underlying DERProgram references re-key correctly per
-//	        IEEE-078's resolution. IEEE-078 chose option (a): DER-
+//	        #123's resolution: option (a), DER-
 //	        Programs are scoped by EndDevice only (not by FSA), so
 //	        every FSA's DERProgramListLink returns the same full set.
 //	        The swap leaves DERPrograms untouched.
@@ -111,7 +111,7 @@ func TestBASIC_003_AdvancedGroupManagement(t *testing.T) {
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
 		FSAs:               stores.FSAs,
-		DERPrograms:        stores.DERPrograms, // IEEE-097 wrapper; IEEE-104.
+		DERPrograms:        stores.DERPrograms, // #165 wrapper; #175.
 		DERControls:        stores.DERControls,
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,
@@ -172,7 +172,7 @@ func TestBASIC_003_AdvancedGroupManagement(t *testing.T) {
 			preFeeder.DERProgramListLink.Href, "/edev/0/fsa/2/derp")
 	}
 
-	// Step 3: drive the utility-side reassignment via the IEEE-078
+	// Step 3: drive the utility-side reassignment via the #123
 	// mutation hook. End-device id "0", from "2", to "2-new". Body is
 	// strict JSON; the handler disallows unknown fields.
 	swapBody := map[string]string{
@@ -199,7 +199,7 @@ func TestBASIC_003_AdvancedGroupManagement(t *testing.T) {
 	}
 	if postFeeder.Href != "/edev/0/fsa/2-new" {
 		t.Errorf("post-swap feeder Href = %q, want %q "+
-			"(IEEE-078 must re-stamp Href to the new id)",
+			"(#123 must re-stamp Href to the new id)",
 			postFeeder.Href, "/edev/0/fsa/2-new")
 	}
 	if postFeeder.DERProgramListLink == nil {
@@ -262,7 +262,7 @@ func TestBASIC_003_AdvancedGroupManagement(t *testing.T) {
 
 	// Step 6: the priority chain is intact. WalkLink the new feeder's
 	// DERProgramListLink and assert it returns all 7 DERPrograms with
-	// primacy 0..6 — IEEE-078 leaves DERPrograms untouched because
+	// primacy 0..6 — #123 leaves DERPrograms untouched because
 	// they're scoped by EndDevice only. This mirrors CORE-010's chain
 	// assertion to make the "DERProgram references re-key correctly"
 	// exit criterion concrete.
@@ -320,13 +320,13 @@ func findFSAByMRID(fsas []sep2.FunctionSetAssignments, want string) (sep2.Functi
 // postFSASwap issues POST /test/mutations/fsa-swap against the booted
 // server with the configured X-CSIP-Test-Token header. The body is JSON-
 // encoded; the handler disallows unknown fields, so the caller must
-// pass a map matching IEEE-078's request schema {end_device_id,
+// pass a map matching #123's request schema {end_device_id,
 // from_fsa, to_fsa}. Asserts the response status matches wantStatus.
 //
 // Single-use helper kept local to this file. Promotion to csiptest is
 // deferred until a second tagged test drives the same mutation surface —
 // no point shipping an API for one caller (Pike's anti-extension rule,
-// also documented in IEEE-078's "harness can chain a derctl-add" note).
+// also documented in #123's "harness can chain a derctl-add" note).
 func postFSASwap(ctx context.Context, t *testing.T, srv *csiptest.BootedServer, body map[string]string, wantStatus int) {
 	t.Helper()
 	buf, err := json.Marshal(body)

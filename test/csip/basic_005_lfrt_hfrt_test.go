@@ -13,7 +13,7 @@
 //	         opModHFRTMustTrip curve refs)                        ──► per-field assertions
 //	Step 4 (global /dc carries 2 ride-through curves)             ──► curve-list walk
 //
-// IEEE-092 added the two ride-through curve-ref fields and flipped
+// #140 added the two ride-through curve-ref fields and flipped
 // this test from SKIP to active.
 package csip_test
 

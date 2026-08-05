@@ -1,6 +1,6 @@
-# IEEE-082/IEEE-092 fixture — BASIC-005 LFRT/HFRT (CSIP V1.2 §8.5).
+# #135/#140 fixture — BASIC-005 LFRT/HFRT (CSIP V1.2 §8.5).
 #
-# IEEE-092 added the opModLFRTMustTrip and opModHFRTMustTrip
+# #140 added the opModLFRTMustTrip and opModHFRTMustTrip
 # curve-reference fields to pkg/sep2.DERControlBase. The fixture
 # now seeds both, each pointing at the corresponding DERCurve id
 # below (Figure 5 LFRT left side, HFRT right side).

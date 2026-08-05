@@ -1,5 +1,5 @@
-// IEEE-089 — shared aggregator-topology helpers for UTIL-001..UTIL-004
-// (CSIP V1.2 §9.1-§9.4) and the future AGG-001..012 wiring (IEEE-090).
+// #139 — shared aggregator-topology helpers for UTIL-001..UTIL-004
+// (CSIP V1.2 §9.1-§9.4) and the future AGG-001..012 wiring (#147).
 //
 // The fixture at test/csip/fixtures/aggregator-topology.yaml is "the
 // heaviest fixture in the matrix" per Noor's V1.2 coverage matrix
@@ -96,7 +96,7 @@ func bootAggregatorTopology(t *testing.T, opts ...csiptest.BootOption) *csiptest
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
 		FSAs:               stores.FSAs,
-		DERPrograms:        stores.DERPrograms, // IEEE-097 wrapper; IEEE-104.
+		DERPrograms:        stores.DERPrograms, // #165 wrapper; #175.
 		DERControls:        stores.DERControls,
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,

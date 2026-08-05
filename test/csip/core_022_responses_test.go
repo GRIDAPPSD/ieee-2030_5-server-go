@@ -19,10 +19,10 @@
 //	Step 5 (GET /rsps/{rspsId}/rsp and assert all four are present)
 //	                                             ──► assertAllStatusesPresent
 //
-// Constant-vs-wire-value alignment: prior to IEEE-044a the sep2
+// Constant-vs-wire-value alignment: prior to #109 the sep2
 // ResponseStatus* constants were off-by-one against IEEE 2030.5-2023
 // §10.10 Table 31, so this test used raw uint8 literals 1/2/3/6.
-// IEEE-044a renumbered the constants to match Table 31 wire values
+// #109 renumbered the constants to match Table 31 wire values
 // (EventReceived=1, EventStarted=2, EventCompleted=3, EventCancelled=6)
 // so this test now references the named constants directly. The
 // CSIP V1.2 procedure step 4 says "Acknowledged" in prose; the wire
@@ -60,7 +60,7 @@ import (
 
 // V1.2 §7.2 status wire values exercised by CORE-022.
 //
-// IEEE-044a aligned the sep2.ResponseStatus* Go constants with Table 31
+// #109 aligned the sep2.ResponseStatus* Go constants with Table 31
 // wire values (Received=1, Started=2, Completed=3, Cancelled=6) so the
 // procedure-required statuses are now expressed via the named
 // constants directly.

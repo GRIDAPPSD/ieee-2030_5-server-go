@@ -1,4 +1,4 @@
-# IEEE-082 fixture — BASIC-009 Connect/Disconnect (CSIP V1.2 §8.9).
+# #135 fixture — BASIC-009 Connect/Disconnect (CSIP V1.2 §8.9).
 #
 # Minimal topology: 1 EndDevice, 1 FSA, 1 DERProgram, 1 DERControl
 # carrying opModConnect=true and opModEnergize=true per Figure 9

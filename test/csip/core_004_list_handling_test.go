@@ -43,7 +43,7 @@ func TestCORE_004_ListHandling(t *testing.T) {
 	// Boot a fresh server and adapt its Stores into a csiptest.Target so
 	// the fixture loader writes through the same store the booted server
 	// reads from. The adapter is the canonical pattern for Phase 3 tests
-	// per IEEE-057's loader docs.
+	// per #52's loader docs.
 	stores := csiptest.NewFreshStores()
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,

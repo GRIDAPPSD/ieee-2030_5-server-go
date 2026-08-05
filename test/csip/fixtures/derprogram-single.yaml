@@ -1,4 +1,4 @@
-# IEEE-057 fixture — one DERProgram with one DefaultDERControl,
+# #52 fixture — one DERProgram with one DefaultDERControl,
 # zero DERControls, zero DERCurves. Targets CORE-012 (Basic DER
 # Program/Control) per Noor's V1.2 matrix.
 #

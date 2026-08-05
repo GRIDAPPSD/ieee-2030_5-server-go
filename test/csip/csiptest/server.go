@@ -3,7 +3,7 @@ package csiptest
 // server.go: BootServer helper for the CSIP conformance harness.
 //
 // Lifts the inline boot-an-in-process-server pattern out of
-// test/csip/handshake_test.go (IEEE-021) so Phase 3 tests can express
+// test/csip/handshake_test.go (#23) so Phase 3 tests can express
 // the canonical "run one CSIP test against a fresh server" flow in
 // three lines:
 //
@@ -59,7 +59,7 @@ import (
 // deriveServerIdentity parses the leaf cert from a raw DER chain (as
 // found in tls.Certificate.Certificate / gotls.Certificate.Certificate)
 // and returns the server SFDI and LFDI. Mirrors the unexported helper
-// of the same name in internal/server/server.go (IEEE-001) so the
+// of the same name in internal/server/server.go (#1) so the
 // in-process harness populates /sdev and /sdev/sdi the same way the
 // production Run() flow does. Mode-agnostic: same code path for both
 // GCM (stdlib crypto/tls) and CCM-8 (vendored gotls). t.Fatal on any
@@ -93,7 +93,7 @@ type bootCfg struct {
 	serverConfig  *config.Config
 	clientCert    *tls.Certificate         // if nil, helper generates an ephemeral device cert
 	clientCAsPath string                   // if non-empty, overrides the ClientCAs file fed to the server-side TLS config
-	notifier      handler.ResourceNotifier // if nil, BootServer wires a default subscription.Manager bound to Stores.Subscriptions (IEEE-093)
+	notifier      handler.ResourceNotifier // if nil, BootServer wires a default subscription.Manager bound to Stores.Subscriptions (#157)
 }
 
 // BootOption configures BootServer. Apply via the functional-options
@@ -110,7 +110,7 @@ func WithCCMMode() BootOption {
 
 // WithStores supplies a caller-built *server.Stores. The helper takes
 // ownership and does not mutate the slice. Use this with the fixture
-// loader (IEEE-057) to seed topology-specific state. When omitted, the
+// loader (#52) to seed topology-specific state. When omitted, the
 // helper installs a fresh in-memory store set so the server boots into
 // a working /dcap that returns an empty resource graph.
 func WithStores(s *server.Stores) BootOption {
@@ -136,7 +136,7 @@ func WithClientCert(cert tls.Certificate) BootOption {
 
 // WithNotifier supplies a caller-built handler.ResourceNotifier. The
 // default is a fresh subscription.Manager wired to Stores.Subscriptions
-// and started on a t.Cleanup-cancelled context (IEEE-093); pass an
+// and started on a t.Cleanup-cancelled context (#157); pass an
 // explicit value (including a stub) to override.
 //
 // The default Manager runs its worker pool on a background context that
@@ -296,10 +296,10 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 
 	// Build the TLS listener AND derive the server's SFDI/LFDI from its
 	// leaf cert BEFORE constructing the router. Mirrors the production
-	// Run() flow fixed by IEEE-001 so /sdev and /sdev/sdi see populated
+	// Run() flow fixed by #1 so /sdev and /sdev/sdi see populated
 	// identity under both cipher modes. Without this, NewRouter is fed
 	// empty strings and the SelfDevice handler closes over them: exactly
-	// the regression IEEE-001 fixed in production but which this harness
+	// the regression #1 fixed in production but which this harness
 	// did not previously replicate.
 	var (
 		tlsListener net.Listener
@@ -325,7 +325,7 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 		tlsListener = tls.NewListener(listener, stdCfg)
 	}
 
-	// IEEE-093: wire a notifier so the test surface fans out Notifications.
+	// #157: wire a notifier so the test surface fans out Notifications.
 	// The default is a real subscription.Manager bound to Stores.Subscriptions
 	// Same dispatcher production uses. Manager.Start blocks on ctx.Done,
 	// so we own a context tied to test teardown and cancel it from Cleanup.
@@ -520,7 +520,7 @@ func newCCMConfig(t *testing.T, serverCertPEM, serverKeyPEM, caCertPEM []byte) (
 // returns a new, independent set: concurrent BootServer callers do
 // not share store state.
 //
-// Exported because the fixture loader (IEEE-057) builds on top of
+// Exported because the fixture loader (#52) builds on top of
 // this to seed topology-specific state, and Phase 3 tests that want
 // to mutate stores before booting can call this themselves and pass
 // the result via WithStores.

@@ -24,7 +24,7 @@
 // Why the test augments the DERControl after fixture load: the
 // csiptest fixture loader's YAML schema (test/csip/csiptest/loader.go)
 // is intentionally narrow and does not carry RandomizeStart or
-// RandomizeDuration today. Per IEEE-066 scope, csiptest internals are
+// RandomizeDuration today. Per #61 scope, csiptest internals are
 // off-limits. We seed the topology via the loader and then write the
 // randomization fields onto the loaded DERControl via the public store
 // API. The fixture's comments document the values for cross-reference.
@@ -72,7 +72,7 @@ func TestCORE_021_RandomizedEvents(t *testing.T) {
 	// Augment the seeded DERControl with the randomization fields.
 	// The fixture loader's schema does not carry RandomizeStart or
 	// RandomizeDuration today (and loader internals are off-limits per
-	// IEEE-058). We read the just-loaded DERControl from the inner
+	// #53). We read the just-loaded DERControl from the inner
 	// store, mutate the two pointer fields, and write it back through
 	// Update. This keeps the production code untouched and the test's
 	// mutation path narrow and explicit.
@@ -114,7 +114,7 @@ func TestCORE_021_RandomizedEvents(t *testing.T) {
 	// for §7.1 — randomization emission is wire-shape, not cipher,
 	// and CORE-022 already covers POST flow under the default cipher
 	// too. CCM-mode coverage for DERControl emission lives in
-	// CORE-012/013 (IEEE-065).
+	// CORE-012/013 (#60).
 	srv := csiptest.BootServer(t, csiptest.WithStores(stores))
 
 	// Walk DERProgram list to confirm topology is reachable end-to-end,

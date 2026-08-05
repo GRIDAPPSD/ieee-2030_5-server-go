@@ -12,7 +12,7 @@
 //	Step 3 (DERControl carries opModFreqWatt curve ref)            ──► per-field assertion
 //	Step 4 (global /dc carries 1 Freq/Watt curve, curveType = 1)   ──► walkSingleCurveBasic
 //
-// IEEE-092 added opModFreqWatt to pkg/sep2.DERControlBase and flipped
+// #140 added opModFreqWatt to pkg/sep2.DERControlBase and flipped
 // this test from SKIP to active. Note opModFreqDroop (§8.5 LFRT/HFRT
 // droop coefficient) is unrelated to the curve-based §8.12 mode.
 package csip_test

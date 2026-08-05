@@ -1,7 +1,7 @@
-// IEEE-090 - shared aggregator-operation helpers for AGG-001..AGG-012
+// #147 - shared aggregator-operation helpers for AGG-001..AGG-012
 // (CSIP V1.2 Section 10.1-Section 10.12).
 //
-// These helpers sit on top of the IEEE-089 aggregator-topology fixture
+// These helpers sit on top of the #139 aggregator-topology fixture
 // (bootAggregatorTopology + the aggInverter* constants in
 // util_topology_test.go). They cover the two shapes the AGG cluster
 // shares:
@@ -17,7 +17,7 @@
 //     events surface on each of the 4 managed inverters at the named
 //     FSA level (SY/FDx/SPxx/DEV).
 //
-// Anti-abstraction rule (per IEEE-090 ticket): every AGG-* procedure
+// Anti-abstraction rule (per #147 ticket): every AGG-* procedure
 // gets its own named Go test function. These helpers are setup +
 // assertion plumbing, not a parametric "run AGG-N" loop.
 package csip_test
@@ -50,17 +50,17 @@ func aggMRIDPrefix(test string) string {
 //
 // The spec must reference (end_device_id, fsa_id, der_program_id)
 // triples that exist on the aggregator topology. fsa_id == der_program_id
-// in the IEEE-089 fixture (SY="0" / FDx="1" / SPxx="2" / DEV="3").
+// in the #139 fixture (SY="0" / FDx="1" / SPxx="2" / DEV="3").
 func injectEventSpec(t *testing.T, srv *csiptest.BootedServer, spec *csiptest.Spec) {
 	t.Helper()
 	target := &csiptest.Target{
 		EndDevices: srv.Stores.EndDevices,
 		FSAs:       srv.Stores.FSAs,
-		// IEEE-097 wrapped the scoped DERProgram store in
+		// #165 wrapped the scoped DERProgram store in
 		// *memory.DERProgramStore for disk persistence. The loader Target
 		// keys on the store.ScopedStore contract, which the wrapper
 		// satisfies directly, so the wrapper goes in whole rather than
-		// being unwrapped. See IEEE-104.
+		// being unwrapped. See #175.
 		DERPrograms:        srv.Stores.DERPrograms,
 		DERControls:        srv.Stores.DERControls,
 		DefaultDERControls: srv.Stores.DefaultDERControls,
@@ -125,7 +125,7 @@ func aggSubscribableResourcesForInverter(edevID string) []aggSubscribableResourc
 
 // aggregatorNotificationURI is the per-test aggregator callback URL for
 // AGG-001 subscriptions. The procedure exercises subscription acceptance
-// only - delivery is gated on IEEE-013 follow-ups outside IEEE-090 scope.
+// only - delivery is gated on #12 follow-ups outside #147 scope.
 const aggregatorNotificationURI = "https://aggregator.example/notify/agg"
 
 // postAggregatorSubscription is the AGG-001 variant of UTIL-003's
@@ -214,10 +214,10 @@ func postAggregatorSubscription(t *testing.T, ctx context.Context, client *http.
 // leakage. Used by AGG-001 after the parallel per-inverter subscription
 // burst joins.
 //
-// Pre-IEEE-099, the SubscriptionStore returned the union of all POSTed
+// Pre-#168, the SubscriptionStore returned the union of all POSTed
 // subscriptions for every /edev/{id}/sub GET, and this helper accepted
 // the union as long as each wanted href was present (24 entries for
-// each of the 4 inverters after a 24-POST burst). IEEE-099 scoped
+// each of the 4 inverters after a 24-POST burst). #168 scoped
 // GET /edev/{id}/sub to the EndDevice {id}, so this helper now enforces
 // the strict membership the V1.2 Section 10.1 procedure implies.
 func assertAggregatorSubscriptionsPresent(t *testing.T, ctx context.Context, client *http.Client, baseURL, edevID string, wantResources []string) {
@@ -244,7 +244,7 @@ func assertAggregatorSubscriptionsPresent(t *testing.T, ctx context.Context, cli
 		t.Fatalf("count_gate unmarshal %s: %v", listURL, err)
 	}
 
-	// IEEE-099: strict per-inverter scoping. Every entry the server
+	// #168: strict per-inverter scoping. Every entry the server
 	// returns must belong to this inverter (Href prefix /edev/{edevID}/sub/)
 	// and must be one of this inverter's aggregator subscriptions
 	// (NotificationURI matches aggregatorNotificationURI). Anything

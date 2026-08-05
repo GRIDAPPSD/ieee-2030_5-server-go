@@ -32,7 +32,7 @@
 //	        as the PF-rate ceiling)              --> putAndGetSettingsPFRate
 //
 // Run under both GCM and CCM cipher modes to keep the spec-cipher
-// path covered (IEEE-001 regression guard surface).
+// path covered (#1 regression guard surface).
 package csip_test
 
 import (

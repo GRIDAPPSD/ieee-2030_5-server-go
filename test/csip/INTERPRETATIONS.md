@@ -13,9 +13,9 @@ Each entry covers:
 - **Decision lineage** — date and where the decision was recorded
   (journal entry, PR review thread, phase doc).
 
-Imported into IEEE-108 (self-attestation letter) Section 3 (Spec
+Imported into #194 (self-attestation letter) Section 3 (Spec
 Interpretations) at attestation time. Reviewed by Dutch + Leon as the
-test gate for IEEE-107.
+test gate for #193.
 
 ---
 
@@ -56,12 +56,12 @@ The server already supports CCM-8 under `make run-ccm` (vendored
 `internal/tls/gotls/` fork registers 0xC0AE). The default
 `csiptest.BootServer()` path uses the stdlib `crypto/tls` GCM path —
 no CCM-8 registration — because the CCM build is opt-in via
-`SEP2_CSIP_STRICT=true` (IEEE-020 work-in-progress; tracked at
+`SEP2_CSIP_STRICT=true` (#22 work-in-progress; tracked at
 GRIDAPPSD/ieee-2030_5-go#20).
 
 **Interpretation.** COMM-003's assertion accepts CCM-8 (0xC0AE) OR
 GCM (0xC02B / 0xC02C) under default boot. The test prose explicitly
-flags this as a skeleton-pending-IEEE-020 condition. Once IEEE-020
+flags this as a skeleton-pending-#22 condition. Once it
 lands and `SEP2_CSIP_STRICT=true` propagates through `BootServer`,
 the assertion tightens to CCM-8-only.
 
@@ -69,15 +69,15 @@ The conformance claim under this interpretation is: "the server
 binary negotiates CCM-8 end-to-end under `make run-ccm` (verified in
 `test/csip/handshake_test.go`); the unit-level CSIP harness asserts
 the negotiated cipher is in the CSIP-permitted set, with strict-mode
-tightening pending IEEE-020." See INTERPRETATIONS.md §3 for the
+tightening pending #22." See INTERPRETATIONS.md §3 for the
 COMM-004 cert-variant scope this depends on.
 
 **Implemented in.** `test/csip/comm_003_basic_security_test.go`
-(IEEE-020 escalation; landed as test skeleton under Phase 5).
+(#22 escalation; landed as test skeleton under Phase 5).
 
-**Decision lineage.** Phase 5 ticket IEEE-020 file note, journal
-2026-05-08. PR review thread on the IEEE-020 follow-up confirmed
-"land skeleton, tighten in IEEE-020" by Dutch + Leon. Decision-maker:
+**Decision lineage.** Phase 5 ticket #22 file note, journal
+2026-05-08. PR review thread on the #22 follow-up confirmed
+"land skeleton, tighten in #22" by Dutch + Leon. Decision-maker:
 Pike.
 
 ---
@@ -120,17 +120,17 @@ under this interpretation is: "TLS-layer cert verification is exercised
 via two PKI variants; full negative-variant matrix is acknowledged as
 an out-of-scope cert-fixture exposure documented here."
 
-**Recommended follow-up.** IEEE-020 strict mode landing will surface
+**Recommended follow-up.** #22 strict mode landing will surface
 which broken-variants the server rejects loudly versus silently —
 filing per-variant negative tickets at that point is cheaper than
 generating all six fixtures now and discovering the server quietly
 accepts some.
 
 **Implemented in.** `test/csip/handshake_test.go`,
-`test/csip/testdevice_handshake_test.go` (IEEE-018, IEEE-068).
+`test/csip/testdevice_handshake_test.go` (#19, #75).
 COMM-004 row in the matrix is DOCUMENTED-EXCEPTION pointing here.
 
-**Decision lineage.** Phase 5 PR review (IEEE-068 thread),
+**Decision lineage.** Phase 5 PR review (#75 thread),
 2026-05-09. Re-confirmed at Phase 8 walk. Decision-maker: Pike, sign-
 off Craig.
 
@@ -168,9 +168,9 @@ The skeleton is **not** a silent pass: it logs the gap reason and
 points at the spec-typo + this INTERPRETATIONS entry.
 
 **Implemented in.** `test/csip/core_002_http_response_test.go`
-(IEEE-059).
+(#54).
 
-**Decision lineage.** Phase 3 closure note (IEEE-059 PR review),
+**Decision lineage.** Phase 3 closure note (#54 PR review),
 2026-05-04. Spec-typo flagged in Phase 1 baseline matrix
 (`artifacts/outputs/noor-csip-v1.2-coverage-matrix.md` §5).
 Decision-maker: Pike, validated by Dutch.
@@ -198,20 +198,20 @@ conformantly.
 
 Noor flagged this in the Phase 1 baseline matrix (Section 5, last
 bullet) as an item to confirm with the loader API design. Pike's
-loader implementation (IEEE-082 / IEEE-092) explicitly supports the
+loader implementation (#135 / #140) explicitly supports the
 default-only shape.
 
 **Implemented in.** `test/csip/basic_007_ramp_rates_test.go`
-(IEEE-082, IEEE-092). Helper:
+(#135, #140). Helper:
 `test/csip/basic_mode_helpers_test.go` — default-only branch.
 
-**Decision lineage.** Phase 4 PR review (IEEE-082 thread), 2026-05-06.
+**Decision lineage.** Phase 4 PR review (#135 thread), 2026-05-06.
 Phase 1 baseline matrix flag. Decision-maker: Pike.
 
 ---
 
 ## §6. BASIC inverter-control modes — DERControl response-field
-   assertions pinned by IEEE-092
+   assertions pinned by #140
 
 **Ambiguity.** CSIP V1.2 §8.4-§8.12 procedures step through "Server
 exposes opMod`X` field on the DERControl; client reads it and applies
@@ -225,13 +225,13 @@ wiring.
 
 **Interpretation.** Each BASIC-* test that hits a missing-field gap
 runs the procedure walk up to the field-assertion step, then
-`t.Skip`s with a `// Pinned by IEEE-092 — implementation gap`
+`t.Skip`s with a `// Pinned by #140 — implementation gap`
 comment referencing the follow-up ticket. The DERCurveList walk leg
 (curve-based modes) still runs unconditionally — DERCurve is
 present in `pkg/sep2` and renders correctly via `/dc`. This was a
-deliberate scope-boundary call: Phase 4 (IEEE-082) added the test
+deliberate scope-boundary call: Phase 4 (#135) added the test
 files without modifying `pkg/sep2`; field additions ride on
-IEEE-092.
+#140.
 
 **Implemented in.** Helpers in
 `test/csip/basic_mode_helpers_test.go` (the gating logic).
@@ -239,8 +239,8 @@ Per-mode files: `basic_004_lvrt_hvrt_test.go`,
 `basic_005_lfrt_hfrt_test.go`, `basic_007_ramp_rates_test.go`,
 `basic_011_volt_watt_test.go`, `basic_012_freq_watt_test.go`.
 
-**Decision lineage.** Phase 4 closure note (IEEE-082 PR review),
-2026-05-06. IEEE-092 backlog entry. Decision-maker: Pike, validated
+**Decision lineage.** Phase 4 closure note (#135 PR review),
+2026-05-06. #140 backlog entry. Decision-maker: Pike, validated
 by Dutch.
 
 ---
@@ -268,16 +268,16 @@ V1.2 conformance gate.
 
 This was Noor's Path A recommendation in the Phase 1 matrix
 (Section 4, ERR-002 subsection). Path B (persistent subscription
-store) remains on the future backlog under IEEE-022.
+store) remains on the future backlog under #25.
 
 **Implemented in.** `test/csip/err_002_subscription_survival_test.go`
-(IEEE-077). The fake-restart hook lives in
+(#224). The fake-restart hook lives in
 `test/csip/csiptest/server.go` via a "soft restart" helper that
 preserves the subscription manager across an HTTP listener
 re-bind.
 
 **Decision lineage.** Phase 1 matrix recommendation (Noor),
-2026-05-11. Phase 5 IEEE-077 PR review confirmed Path A.
+2026-05-11. Phase 5 #224 PR review confirmed Path A.
 Decision-maker: Craig (sign-off), Pike (implementation).
 
 ---
@@ -292,14 +292,14 @@ These are inherently administrative operations not exposed by the
 default CSIP-mode HTTP surface.
 
 **Interpretation.** A `csip_test_hooks` build-tag-gated mutation HTTP
-surface (IEEE-024) hosts the mid-flight mutation endpoints. The
+surface (#27) hosts the mid-flight mutation endpoints. The
 surface compiles into the binary only under
 `go build -tags csip_test_hooks`; production builds have zero
-mutation surface. CI's IEEE-106 `csip` job runs the matrix axis with
+mutation surface. CI's #192 `csip` job runs the matrix axis with
 `[off, on]` for the build tag — both axes must pass.
 
 The mutation surface listens on the in-process test server and is
-gated by `SEP2_TEST_MUTATION_TOKEN`. Per IEEE-024's design note
+gated by `SEP2_TEST_MUTATION_TOKEN`. Per #27's design note
 (reviewed by Leon), the token is not a secret — the surface only
 exists in test builds and only listens on the in-process test
 server bound by `csiptest.BootServer`.
@@ -312,9 +312,9 @@ that consume the surface: `test/csip/basic_003_advanced_group_mgmt_test.go`,
 `test/csip/maint_005_primacy_swap_test.go`.
 
 **Decision lineage.** Phase 1 baseline matrix recommendation
-(Noor, Section 4 IEEE-024). Phase 5 IEEE-024 PR review (Leon
-security-cleared the token rationale), 2026-05-09. Decision-maker:
-Pike, security sign-off Leon.
+(Noor, Section 4), carried through the Phase 5 PR review (Leon
+security-cleared the token rationale), 2026-05-09, tracked under #27.
+Decision-maker: Pike, security sign-off Leon.
 
 ---
 
@@ -322,7 +322,7 @@ Pike, security sign-off Leon.
 
 - Phase 1 baseline coverage matrix:
   `projects/ieee-2030_5-go/artifacts/outputs/noor-csip-v1.2-coverage-matrix.md`
-- Final coverage matrix (IEEE-107 output):
+- Final coverage matrix (#193 output):
   `projects/ieee-2030_5-go/artifacts/outputs/csip-v1.2-final-coverage-matrix.md`
 - Phase 8 doc:
   `projects/ieee-2030_5-go/plans/plan-2-csip-server-conformance/phase-8-coverage-gap-analysis.md`

@@ -6,7 +6,7 @@
 // FunctionSetAssignmentsListLink → each FSA → DERProgramListLink → full
 // primacy chain — with primacy values ascending 0..14.
 //
-// The fixture is fifteen-level-fsa.yaml (ships in IEEE-064): one
+// The fixture is fifteen-level-fsa.yaml (ships in #59): one
 // EndDevice, fifteen FSAs scoped under it, one DERProgram per FSA with
 // primacy 0..14 in ID order. FSA IDs are two-digit zero-padded
 // ("00".."14") so lexicographic store-key sort matches numeric order

@@ -23,7 +23,7 @@
 // Companion to: csiptest.BootServer (server side), subscription.Manager
 // (notification fan-out).
 //
-// IEEE-087.
+// #151.
 
 package csiptest
 

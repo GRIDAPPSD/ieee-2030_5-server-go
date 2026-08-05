@@ -23,7 +23,7 @@
 //	Step 3: For each managed inverter, walk /edev/{id}/fsa/0/derp/0/derc
 //	        and assert the list is empty (All=0). No DERControls injected.
 //
-// Per the IEEE-090 anti-abstraction rule: this test is one named Go
+// Per the #147 anti-abstraction rule: this test is one named Go
 // function, not a parameterized table entry. AGG-003..012 follow.
 package csip_test
 

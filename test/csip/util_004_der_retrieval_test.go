@@ -8,7 +8,7 @@
 //  1. Aggregator has open Subscriptions on each managed inverter's
 //     DERProgramList (UTIL-003 pattern, replayed inline here).
 //  2. Server creates a DERControl on each topology node (SY/FDx/SPxx/DEV)
-//     for each managed inverter, via the IEEE-024 test mutation hook
+//     for each managed inverter, via the #27 test mutation hook
 //     `/test/mutations/derctl-add` (build tag csip_test_hooks required).
 //  3. (Spec)  Server fires Notifications to the aggregator's open
 //     subscriptions.
@@ -16,8 +16,8 @@
 //     managed inverter against /rsps/{rspsId}/rsp.
 //  5. Server's response list reflects the POSTs.
 //
-// IEEE-093 update — Step 3 notification fan-out is now wired. The
-// IEEE-024 derctl-add mutation hook calls ResourceNotifier.Notify on
+// #157 update — Step 3 notification fan-out is now wired. The
+// #27 derctl-add mutation hook calls ResourceNotifier.Notify on
 // the parent DERProgramList href after a successful Create, and the
 // csiptest.BootServer wires a real subscription.Manager into the test
 // surface. Step 3 below stands up a small in-process HTTP receiver
@@ -27,7 +27,7 @@
 // inverter per derctl-add on the subscribed (SY-level) DERProgramList
 // href — 4 inverters × 1 SY-level DERControl = 4 Notifications.
 //
-// Out-of-scope for IEEE-093 (and future Pike tickets):
+// Out-of-scope for #157 (and future Pike tickets):
 //   - Receiver-side TLS verification — the receiver is plain HTTP.
 //     UTIL-004 asserts the server emitted the Notification, not that
 //     the spec's mTLS hop survives. A separate ticket can drive that.
@@ -89,12 +89,12 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 	client := srv.Client()
 	rawClient := srv.HTTPClient()
 
-	// IEEE-093: stand up a notification receiver before the
+	// #157: stand up a notification receiver before the
 	// subscriptions are POSTed. The receiver's URL becomes each
 	// Subscription's NotificationURI so the BootServer's Manager
 	// fan-out path (step 3) lands here. The receiver is plain HTTP
 	// (httptest.NewServer) — UTIL-004 asserts the server emitted the
-	// Notification, not the spec's mTLS hop. Drop in IEEE-087's
+	// Notification, not the spec's mTLS hop. Drop in #151's
 	// csiptest.NotificationReceiver once #152 lands.
 	receiver := newUTILNotificationReceiver(t)
 
@@ -115,14 +115,14 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 		if progLink == nil {
 			t.Fatalf("step 1: edev=%q SY-FSA missing DERProgramListLink", edevID)
 		}
-		// IEEE-093: POST the subscription with the receiver's URL so
+		// #157: POST the subscription with the receiver's URL so
 		// Manager.Notify fan-out reaches an in-test recorder.
 		postSubscriptionToURI(t, ctx, rawClient, srv.BaseURL, edevID, progLink.Href, receiver.URL())
 		subscribedHrefs[edevID] = progLink.Href
 	}
 
 	// Step 2: create a DERControl on each FSA node for each managed
-	// inverter via the IEEE-024 mutation hook. 16 controls total
+	// inverter via the #27 mutation hook. 16 controls total
 	// (4 inverters × 4 FSA levels SY/FDx/SPxx/DEV).
 	mutationURL := srv.BaseURL + "/test/mutations/derctl-add"
 	for _, edevID := range aggManagedInverters {
@@ -165,7 +165,7 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 		}
 	}
 
-	// Step 3 (IEEE-093): assert the notification fan-out reached the
+	// Step 3 (#157): assert the notification fan-out reached the
 	// receiver. One Notification per managed inverter is expected —
 	// the SY-level derctl-add fires Notify on the subscribed
 	// DERProgramList href; the other three FSA levels have no
@@ -345,12 +345,12 @@ func postResponseAck(t *testing.T, ctx context.Context, client *http.Client, bas
 	}
 }
 
-// --- IEEE-093 step-3 helpers ----------------------------------------------
+// --- #157 step-3 helpers ----------------------------------------------
 //
 // utilReceivedNotification, utilNotificationReceiver, postSubscriptionToURI
 // are local to UTIL-004. They cover exactly the step-3 surface — record
 // POSTed Notifications, expose Wait/Snapshot, and POST a Subscription
-// with a caller-supplied NotificationURI. When IEEE-087 lands the
+// with a caller-supplied NotificationURI. When #151 lands the
 // general csiptest.NotificationReceiver helper, delete this block and
 // switch UTIL-004 to that. The local version is deliberately minimal
 // (no WithStatusCode option, no Reset) — anything beyond step-3 verify

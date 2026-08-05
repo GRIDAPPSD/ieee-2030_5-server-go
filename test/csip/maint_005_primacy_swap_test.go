@@ -3,7 +3,7 @@
 // CSIP V1.2 §11.5 — Primacy Swap.
 //
 // MAINT-005 asserts that updating a DERProgram's primacy field via the
-// IEEE-024 mutation hook produces a Notification, and the underlying
+// #27 mutation hook produces a Notification, and the underlying
 // store reflects the new value.
 //
 // V1.2 procedure step → assertion mapping:
@@ -23,7 +23,7 @@
 //
 // Build-tag: csip_test_hooks for the derprog-primacy mutation.
 //
-// IEEE-091 / Phase 6.
+// #155 / Phase 6.
 
 package csip_test
 

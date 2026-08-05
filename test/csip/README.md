@@ -16,7 +16,7 @@ test/csip/
 ├── handshake_test.go           smoke: in-process spec server + SunSpec V1.2 client
 ├── testdevice_handshake_test.go  smoke: in-process spec server + self-minted test device PKI (#75)
 ├── comm_*, core_*, basic_*     named CSIP conformance tests
-├── csiptest/                   helper: BootServer + Client + Load (#51..058)
+├── csiptest/                   helper: BootServer + Client + Load (#51, #52, #53)
 └── fixtures/
     ├── *.yaml                  topology fixtures (committed)
     └── sunspec/                (gitignored) CSIP §6.11-compliant SunSpec PKI

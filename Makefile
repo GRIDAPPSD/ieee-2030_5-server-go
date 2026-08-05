@@ -277,7 +277,7 @@ test-csip-client:         ## CSIP client-side conformance harness (blocked on #2
 
 # #192 — CSIP harness CI integration. The two targets below shape the
 # build-tag matrix axis: `test-csip` runs the suite under the production
-# code path (no tag), `test-csip-hooks` runs it with the #27/025
+# code path (no tag), `test-csip-hooks` runs it with the #27/#28
 # mutation + time-advance hooks compiled in. Both target the CSIP harness
 # AND `./internal/...` so the standard library code reached by the CSIP
 # tests participates in the coverage signal CI captures.

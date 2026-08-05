@@ -242,7 +242,7 @@ func walkToFirstFSA(t *testing.T, ctx context.Context, c *csiptest.Client) sep2.
 // so no separate client-PKI dance is needed for read-only walks. The
 // CCM-mode subtest still uses the same Client; the stdlib http.Client
 // inside it negotiates GCM against the gotls server which accepts
-// either GCM or CCM-8 (tightening is gated on #21/020 per the
+// either GCM or CCM-8 (tightening is gated on #21/#22 per the
 // BASIC-001 doc-comment).
 func bootWithDERProgramFixture(t *testing.T, fixture string, extraOpts []csiptest.BootOption) *csiptest.BootedServer {
 	t.Helper()

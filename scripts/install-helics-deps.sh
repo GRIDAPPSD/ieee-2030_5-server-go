@@ -2,7 +2,7 @@
 # install-helics-deps.sh
 #
 # Provision HELICS 3 and GridLAB-D (with HELICS support) on a fresh Debian/Ubuntu
-# host so the IEEE 2030.5 plan-5 co-simulation work (#265..169) can build.
+# host so the IEEE 2030.5 plan-5 HELICS/GridLAB-D co-simulation work can build.
 #
 # Owner: #251 (Plan-5, Phase 1 prerequisite).
 #

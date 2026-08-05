@@ -16,8 +16,8 @@
 // The procedure's "act (advance time / FSA-swap / drive state)" and
 // "assert Response POST back" legs are NOT in scope for these
 // server-side tests — server just renders the seeded fixture; Response
-// POST is exercised by #112/045, and time/state are exercised by
-// #92/078 in their own tests.
+// POST is exercised by #112/#116, and time/state are exercised by
+// #92/#123 in their own tests.
 //
 // Five of the procedures (BASIC-004, 005, 007, 011, 012) reference
 // opMod* / set* fields that do NOT exist in pkg/sep2.DERControlBase

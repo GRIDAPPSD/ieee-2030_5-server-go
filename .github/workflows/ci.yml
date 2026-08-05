@@ -203,7 +203,7 @@ jobs:
   # #192: CSIP V1.2 harness with the csip_test_hooks build-tag matrix.
   #
   # Two parallel jobs: tag `off` exercises the production code path, tag
-  # `on` exercises the #27/025 mutation + time-advance hooks. Both
+  # `on` exercises the #27/#28 mutation + time-advance hooks. Both
   # must pass for the workflow to be green.
   #
   # The harness covers `./test/csip/...` and `./internal/...` so production

@@ -1,6 +1,6 @@
 // Package bootfixture loads a YAML topology fixture into the server's
 // stores at boot time. It is the production-side counterpart to the
-// in-test loader at test/csip/csiptest (IEEE-057), and shares the same
+// in-test loader at test/csip/csiptest (#52), and shares the same
 // YAML schema so a fixture authored for the harness can be reused as a
 // `SEP2_BOOT_FIXTURE` knob in deployment.
 //
@@ -20,7 +20,7 @@
 // from test/csip/csiptest/loader.go rather than depending on the test
 // package (production code under internal/ cannot import test/). The two
 // schemas are kept in sync by convention; flagged as future-work in the
-// IEEE-068 journal entry. Either both move into bootfixture (csiptest
+// #75 journal entry. Either both move into bootfixture (csiptest
 // re-exports) or stay duplicated - that decision belongs to a follow-up
 // ticket once a third consumer appears.
 package bootfixture

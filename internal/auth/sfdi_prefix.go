@@ -9,7 +9,7 @@ import "fmt"
 // Both AutoRegistrationMiddleware (registration.go) and HandleCreateEndDevice
 // (handler/edev.go) need this slice. Centralising the bounds check here
 // prevents a panic at `sfdi[:8]` on any truncated or synthetic SFDI value
-// (test fixture, future format change). See IEEE-014.
+// (test fixture, future format change). See #13.
 func ExtractSFDIPrefix(sfdi string) (string, error) {
 	if len(sfdi) < 8 {
 		return "", fmt.Errorf("SFDI %q too short: need ≥8 chars, got %d", sfdi, len(sfdi))

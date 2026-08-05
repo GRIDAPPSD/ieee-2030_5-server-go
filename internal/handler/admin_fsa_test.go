@@ -16,7 +16,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 )
 
-// IEEE-096 handler tests. Each endpoint covers the happy path, validation,
+// #163 handler tests. Each endpoint covers the happy path, validation,
 // 404, and 409 (where applicable).
 
 // --- stubs ------------------------------------------------------------------

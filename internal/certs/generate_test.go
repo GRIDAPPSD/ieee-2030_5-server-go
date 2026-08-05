@@ -192,7 +192,7 @@ func TestGenerateDeviceTestCert(t *testing.T) {
 // refuses to produce a device cert without a hardware serial number.
 // Per CSIP §6.2 / IEEE 2030.5 §6.11, every device cert participating in
 // CSIP registration MUST carry a HardwareModuleName SAN — silently
-// omitting the SAN is non-compliant. (IEEE-017)
+// omitting the SAN is non-compliant. (#17)
 func TestGenerateDeviceCertRejectsEmptyHWSerial(t *testing.T) {
 	caCert, caKey := generateTestCA(t)
 
@@ -209,7 +209,7 @@ func TestGenerateDeviceCertRejectsEmptyHWSerial(t *testing.T) {
 
 // TestGenerateDeviceCertSANIsCritical verifies the HardwareModuleName SAN
 // extension is marked critical, as required by RFC 5280 §4.2.1.6 for
-// certificates with an empty Subject. (IEEE-017)
+// certificates with an empty Subject. (#17)
 func TestGenerateDeviceCertSANIsCritical(t *testing.T) {
 	caCert, caKey := generateTestCA(t)
 
@@ -241,7 +241,7 @@ func TestGenerateDeviceCertSANIsCritical(t *testing.T) {
 
 // TestGenerateDeviceCertSANEncodesHardwareModuleName verifies the SAN
 // otherName carries the configured HWType OID and HWSerialNum bytes so
-// that downstream CSIP verification can extract them. (IEEE-017)
+// that downstream CSIP verification can extract them. (#17)
 func TestGenerateDeviceCertSANEncodesHardwareModuleName(t *testing.T) {
 	caCert, caKey := generateTestCA(t)
 

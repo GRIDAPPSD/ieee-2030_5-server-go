@@ -16,7 +16,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store/memory"
 )
 
-// IEEE-096: admin FSA hierarchy management.
+// #163: admin FSA hierarchy management.
 //
 // Endpoint matrix (all behind AdminAuthMiddleware via the admin router):
 //

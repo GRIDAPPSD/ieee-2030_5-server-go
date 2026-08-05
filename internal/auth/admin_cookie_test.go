@@ -9,7 +9,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 )
 
-// IEEE-095: cookie-based ticket auth (Path D in AdminAuthMiddleware).
+// #159: cookie-based ticket auth (Path D in AdminAuthMiddleware).
 //
 // The login form sets an HttpOnly + Secure + SameSite=Strict cookie named
 // admin_ticket whose value is a TicketStore ticket. Each request through the

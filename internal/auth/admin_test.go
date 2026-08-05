@@ -184,7 +184,7 @@ func TestAdminAuthQueryTokenNoLongerAccepted(t *testing.T) {
 	}
 }
 
-// IEEE-132: loopback bypass tests. Path 0 of AdminAuthMiddleware admits any
+// #246: loopback bypass tests. Path 0 of AdminAuthMiddleware admits any
 // request whose RemoteAddr is a loopback address AND carries no reverse-proxy
 // forwarded header. Caddy in front injects X-Forwarded-* by default, so the
 // bypass declines and the normal Bearer/cookie/mTLS chain runs.

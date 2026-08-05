@@ -123,7 +123,7 @@ func consumeHelicsError(op string, cErr *C.HelicsError) error {
 }
 
 // -----------------------------------------------------------------------------
-// Broker (IEEE-144)
+// Broker (#265)
 // -----------------------------------------------------------------------------
 
 // ErrBrokerClosed is returned by Broker.Close on the second and subsequent
@@ -327,7 +327,7 @@ func (b *Broker) Close() error {
 }
 
 // -----------------------------------------------------------------------------
-// Federate (IEEE-145)
+// Federate (#266)
 // -----------------------------------------------------------------------------
 
 // ErrFederateClosed is returned by Federate.Close on the second and
@@ -853,7 +853,7 @@ func (f *Federate) pumpUpdates() {
 // updated input it pulls the latest value and pushes a Value onto the
 // channel.
 //
-// Error policy (no in-process error surface yet — IEEE-181 will add a
+// Error policy (no in-process error surface yet — #303 will add a
 // Federate.Errors() channel):
 //
 //   - helicsFederateGetCurrentTime failure: skip the entire drain pass

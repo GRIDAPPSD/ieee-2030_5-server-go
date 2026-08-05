@@ -106,7 +106,7 @@ func TestManualModeDoesNotAutoRegister(t *testing.T) {
 }
 
 // TestAutoRegistrationShortSFDI covers the extractSFDIPrefix error path
-// introduced by IEEE-014: when a device identity carries a SFDI shorter
+// introduced by #13: when a device identity carries a SFDI shorter
 // than 8 characters the middleware must return 500 and not panic.
 func TestAutoRegistrationShortSFDI(t *testing.T) {
 	store := memory.NewEndDeviceStore()

@@ -15,19 +15,19 @@ type Config struct {
 	ExtraClientCAs  []string // additional PEM paths appended to the ClientCAs pool (additive to CAFile)
 	BootFixtureFile string   // optional YAML topology fixture loaded at startup; empty = no fixture
 
-	// IEEE-097: persistence root for admin-mutated stores. Empty = pure
-	// in-memory (back-compat with every test path that predates IEEE-097).
+	// #165: persistence root for admin-mutated stores. Empty = pure
+	// in-memory (back-compat with every test path that predates #165).
 	// When set, each persistent store auto-files under <DataDir>/<name>.json
 	// unless a store-specific dedicated path env var overrides it (see
 	// EffectiveStorePath for the precedence rule).
 	DataDir string // env SEP2_DATA_DIR
 
-	// IEEE-097: dedicated path for the subscription store. Predates DataDir;
-	// preserved for back-compat with IEEE-077-era deployments. When both are
+	// #165: dedicated path for the subscription store. Predates DataDir;
+	// preserved for back-compat with #224-era deployments. When both are
 	// set, the dedicated path wins.
 	SubscriptionStorePath string // env SEP2_SUBSCRIPTION_STORE_PATH
 
-	// IEEE-094: admin listener configuration.
+	// #161: admin listener configuration.
 	//
 	// The SEP2 protocol listener is RequireAnyClientCert + manual verify per
 	// CSIP V1.2 (every device presents a cert). The admin listener
@@ -37,7 +37,7 @@ type Config struct {
 	// wire.
 	//
 	// AdminListen is the canonical knob (env SEP2_ADMIN_LISTEN). For
-	// back-compat with pre-IEEE-094 deployments, an empty AdminListen falls
+	// back-compat with pre-#161 deployments, an empty AdminListen falls
 	// back to AdminAddr (env SEP2_ADMIN_ADDR). Use EffectiveAdminListen() to
 	// resolve which value the server should bind to.
 	AdminListen  string // admin listener address (e.g., ":9443"); empty = falls back to AdminAddr
@@ -47,7 +47,7 @@ type Config struct {
 	AdminCert    string // admin listener cert PEM path; empty + AdminTLS = self-signed
 	AdminKeyFile string // admin listener key PEM path; required when AdminCert is set
 
-	// IEEE-137: operator hint that the admin listener is fronted by an
+	// #269: operator hint that the admin listener is fronted by an
 	// upstream reverse proxy that injects X-Forwarded-* / Forwarded
 	// headers. When the admin listener binds to a non-loopback address
 	// AND this is false, the server logs a startup WARNING explaining
@@ -56,7 +56,7 @@ type Config struct {
 	// XFF when relaying loopback-to-loopback). Env: SEP2_ADMIN_BEHIND_PROXY.
 	AdminBehindProxy bool
 
-	// IEEE-138: extra Host-header values appended to the static admin
+	// #270: extra Host-header values appended to the static admin
 	// allowlist (defaults: localhost, 127.0.0.1, ::1, ieee2030-5.local).
 	// Loaded from SEP2_ADMIN_ALLOWED_HOSTS as a CSV. Defense-in-depth
 	// against DNS rebinding at the admin listener boundary; the static
@@ -70,7 +70,7 @@ type Config struct {
 	// auth-gated admin listener, so exposition data has no client-cert or
 	// Bearer gate.
 	//
-	// IEEE-136 loopback default (see ResolveMetricsBind): a bare ":<port>"
+	// #268 loopback default (see ResolveMetricsBind): a bare ":<port>"
 	// resolves to 127.0.0.1:<port> so the unauthenticated /metrics surface is
 	// loopback-only by default; any explicit host (0.0.0.0, an LAN IP, [::])
 	// is honored verbatim and triggers a non-loopback startup warning. A
@@ -105,7 +105,7 @@ func (c *Config) EffectiveAdminListen() string {
 	return c.AdminAddr
 }
 
-// ResolveAdminBind applies the IEEE-136 loopback default to a raw admin
+// ResolveAdminBind applies the #268 loopback default to a raw admin
 // listen string. The contract:
 //
 //	""              → ""              (admin disabled — caller gates this)
@@ -116,7 +116,7 @@ func (c *Config) EffectiveAdminListen() string {
 // Rationale: the SEP2 protocol listener (cfg.Addr) admits any self-signed
 // client cert via tls.RequireAnyClientCert + manual verify, and the admin
 // auth middleware's Path 0 admits loopback requests with no proxy headers.
-// Pre-IEEE-136, a bare ":<port>" admin listen bound 0.0.0.0, so any
+// Pre-#268, a bare ":<port>" admin listen bound 0.0.0.0, so any
 // network neighbor (or any co-resident process on a multi-tenant host
 // where the kernel routes loopback liberally) could reach the admin
 // surface with no creds. Defaulting bare ports to 127.0.0.1 makes the
@@ -140,7 +140,7 @@ func ResolveAdminBind(listen string) string {
 	return listen
 }
 
-// ResolveMetricsBind applies the IEEE-136 loopback default to a raw metrics
+// ResolveMetricsBind applies the #268 loopback default to a raw metrics
 // listen string, with the same contract as ResolveAdminBind:
 //
 //	""              → ""              (metrics disabled — caller gates this)
@@ -164,7 +164,7 @@ func ResolveMetricsBind(listen string) string {
 }
 
 // EffectiveStorePath resolves the on-disk JSON snapshot path for a named
-// store under the IEEE-097 single-knob shape:
+// store under the #165 single-knob shape:
 //
 //  1. dedicatedPath wins if non-empty (back-compat for
 //     SEP2_SUBSCRIPTION_STORE_PATH and any future per-store overrides).

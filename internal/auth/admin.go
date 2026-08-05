@@ -12,7 +12,7 @@ import (
 
 // forwardedHeaders lists the proxy-injected headers that, when present on a
 // request, indicate the request was routed through a reverse proxy (e.g.
-// Caddy). The IEEE-132 loopback bypass declines for any such request so the
+// Caddy). The #246 loopback bypass declines for any such request so the
 // existing Bearer/cookie/mTLS auth chain runs against operator traffic.
 var forwardedHeaders = []string{
 	"X-Forwarded-For",
@@ -22,7 +22,7 @@ var forwardedHeaders = []string{
 }
 
 // AdminTicketCookieName is the cookie name used by the browser login flow
-// (IEEE-095). The cookie carries a TicketStore ticket; the middleware redeems
+// (#159). The cookie carries a TicketStore ticket; the middleware redeems
 // the ticket on each request and re-issues a fresh ticket cookie so multi-
 // request page navigation works under the one-time-use semantics.
 const AdminTicketCookieName = "admin_ticket"
@@ -30,7 +30,7 @@ const AdminTicketCookieName = "admin_ticket"
 // AdminAuthMiddleware returns middleware that checks for admin authorization.
 // Five paths are supported (checked in order):
 //
-//  0. Loopback bypass (IEEE-132): the request originated from a loopback
+//  0. Loopback bypass (#246): the request originated from a loopback
 //     address (127.0.0.0/8 or ::1) AND no reverse-proxy forwarded header is
 //     present. This is the local-developer ergonomic path: `make run` on
 //     localhost has no working credentials by default, and Caddy in front
@@ -42,14 +42,14 @@ const AdminTicketCookieName = "admin_ticket"
 //     (short-lived, one-time-use — for browser SSE/EventSource clients)
 //  4. Cookie ticket: admin_ticket cookie redeemed via TicketStore, then a
 //     fresh ticket cookie is re-set on the response (browser login flow,
-//     IEEE-095).
+//     #159).
 //
 // If adminKey is empty, Bearer auth is disabled (mTLS only).
 // If tickets is nil, ticket auth is disabled.
 func AdminAuthMiddleware(adminKey string, tickets *TicketStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Path 0: loopback bypass (IEEE-132). Declines automatically
+			// Path 0: loopback bypass (#246). Declines automatically
 			// when ANY proxy-forwarded header is present so Caddy-fronted
 			// deployments still run the full auth chain.
 			if isLoopbackRemote(r) && !hasForwardedHeader(r) {
@@ -89,7 +89,7 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore) func(http.Handle
 				}
 			}
 
-			// Path D: Cookie ticket (browser login flow, IEEE-095). Same
+			// Path D: Cookie ticket (browser login flow, #159). Same
 			// one-time-use semantics as Path C, but on success we re-issue
 			// a fresh ticket and re-set the cookie so page navigation works.
 			if tickets != nil {

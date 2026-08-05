@@ -20,7 +20,7 @@ export async function startServer(): Promise<string> {
   const projectRoot = join(__dirname, '..');
   const sep2server = join(projectRoot, 'sep2server');
 
-  // IEEE-114: the binary is built once in globalSetup (e2e/global-setup.ts)
+  // #209: the binary is built once in globalSetup (e2e/global-setup.ts)
   // before any worker starts, eliminating the ETXTBSY race that occurred when
   // multiple workers raced to `go build -o sep2server` against the same path.
   // Fail fast here so a misconfigured run surfaces immediately instead of
@@ -59,7 +59,7 @@ export async function startServer(): Promise<string> {
       SEP2_CA_KEY: join(certDir, 'ca.key'),
       SEP2_ADMIN_ADDR: `:${adminPort}`,
       SEP2_ADMIN_KEY: 'e2e-test-key',
-      // IEEE-094: admin listener defaults to plain HTTP. Force HTTPS with
+      // #161: admin listener defaults to plain HTTP. Force HTTPS with
       // self-signed cert so the e2e dashboard URL keeps the `https://...`
       // shape it used pre-split.
       SEP2_ADMIN_TLS: 'true',

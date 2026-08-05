@@ -60,7 +60,7 @@ func injectEventSpec(t *testing.T, srv *csiptest.BootedServer, spec *csiptest.Sp
 		// *memory.DERProgramStore for disk persistence. The loader Target
 		// keys on the store.ScopedStore contract, which the wrapper
 		// satisfies directly, so the wrapper goes in whole rather than
-		// being unwrapped. See IEEE-104 and IEEESRV-038.
+		// being unwrapped. See IEEE-104.
 		DERPrograms:        srv.Stores.DERPrograms,
 		DERControls:        srv.Stores.DERControls,
 		DefaultDERControls: srv.Stores.DefaultDERControls,

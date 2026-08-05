@@ -9,7 +9,7 @@
 // exact-match round-trip on each posted LogEvent's identifying fields, and
 // ascending-by-createdDateTime ordering across the result set.
 //
-// Link-walk note (IEEESRV-034):
+// Link-walk note:
 // No step in this file hardcodes the LogEvent list address. V1.2 section
 // 8.27 step 2 of the BASIC-027 procedure is "Using the EndDevice instance,
 // find the LogEventListLink", with pass criteria "Client was able to
@@ -17,8 +17,8 @@
 // revisions of this test built the address as fmt.Sprintf("/edev/%s/log",
 // edevID): a literal that happened to match wherever the server served the
 // list at the time. That is precisely the shape of test that cannot detect
-// a server advertising a different address than it serves (IEEECORE-084:
-// the WADL-declared address was /lel, the server served /log, and nothing
+// a server advertising a different address than it serves (the
+// WADL-declared address was /lel, the server served /log, and nothing
 // advertised either). This test now registers an EndDevice, re-reads it,
 // and reads LogEventListLink.Href off the response -- the same discipline
 // as the core-side walk in

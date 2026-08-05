@@ -65,8 +65,8 @@ type Target struct {
 	FSAs       *memory.ScopedStore[sep2.FunctionSetAssignments]
 	// DERPrograms is the store.ScopedStore contract, so a booted server's
 	// *memory.DERProgramStore and a bare *memory.ScopedStore both satisfy
-	// it. Core IEEECORE-085 unexported the wrapper's inner collection, so
-	// the contract is the only surface the two share. See IEEESRV-038.
+	// it. Core unexported the wrapper's inner collection, so the contract
+	// is the only surface the two share.
 	DERPrograms        store.ScopedStore[sep2.DERProgram]
 	DERControls        *memory.ScopedStore[sep2.DERControl]
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]

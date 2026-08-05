@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# IEEE-110 — Run the SunSpec CSIP conformance-test driver against the
-# `ieee-2030_5-go` server and emit a populated copy of the IEEE-110 report
+# #196 — Run the SunSpec CSIP conformance-test driver against the
+# `ieee-2030_5-go` server and emit a populated copy of the #196 report
 # template into a structured output directory.
 #
 # Why:
 #   Plan-2 Phase 9 (CSIP V1.2 conformance attestation) bundles three
-#   deliverables. IEEE-108 is the self-attestation letter, IEEE-109 is the
-#   internal-CI log archive, and IEEE-110 is the independent SunSpec-driver
+#   deliverables. #194 is the self-attestation letter, #195 is the
+#   internal-CI log archive, and #196 is the independent SunSpec-driver
 #   execution record. This script is the harness that turns a one-off
 #   driver invocation into a reproducible, archived artifact pinned to a
 #   specific `main` SHA.
@@ -31,7 +31,7 @@
 #                                (useful for harness smoke tests)
 #
 # Output layout (--out <DIR>):
-#   report.md            populated copy of the IEEE-110 template with
+#   report.md            populated copy of the #196 template with
 #                        placeholders filled from driver output
 #   driver-stdout.log    captured driver stdout
 #   driver-stderr.log    captured driver stderr
@@ -45,7 +45,7 @@
 #   The SunSpec driver itself (vendor-supplied) when --dry-run is not set.
 #
 # Reproduction:
-#   See IEEE-110 report §6 "Reproducing This Report" in
+#   See #196 report §6 "Reproducing This Report" in
 #   <knowledge>/projects/ieee-2030_5-go/artifacts/outputs/csip-v1.2-sunspec-execution-report.md.
 #
 # Exit codes:
@@ -77,7 +77,7 @@ Usage: $(basename "$0") --driver <PATH> --target <URL> --out <DIR> --sha <SHA>
                        [--report-template <PATH>] [--dry-run] [--force]
 
 Run the SunSpec CSIP conformance-test driver against the ieee-2030_5-go
-server and populate the IEEE-110 report template.
+server and populate the #196 report template.
 
 Required arguments:
   --driver <PATH>          Path to the SunSpec driver executable.
@@ -198,7 +198,7 @@ DURATION_HMS="$(printf "%02d:%02d:%02d" $(( DURATION / 3600 )) $(( (DURATION % 3
 
 cat > "$OUT_DIR/metadata.json" <<EOF
 {
-  "ticket": "IEEE-110",
+  "ticket": "#196",
   "attest_sha": "$SHA",
   "target": "$TARGET",
   "driver_path": "$DRIVER",
@@ -243,7 +243,7 @@ substitute "<RUN-DATE>" "$RUN_DATE"
 # ---------- final summary --------------------------------------------------
 
 cat <<EOF
-[IEEE-110] SunSpec driver run complete.
+[#196] SunSpec driver run complete.
   attest SHA:     $SHA
   target:         $TARGET
   driver:         $DRIVER$([[ "$DRY_RUN" -eq 1 ]] && echo " (dry-run; not invoked)")
@@ -255,11 +255,11 @@ cat <<EOF
 Next steps (per Phase 9 bundle-assembly procedure):
   1. Populate the per-procedure <RESULT> placeholders in report.md by
      parsing driver-stdout.log row-by-row.
-  2. Cross-walk §5 reconciliation table against the IEEE-109 archive run
+  2. Cross-walk §5 reconciliation table against the #195 archive run
      pinned to the same SHA.
   3. Copy report.md into the Knowledge bundle path:
      <knowledge>/projects/ieee-2030_5-go/artifacts/outputs/csip-v1.2-sunspec-execution-report.md
-  4. Update IEEE-108 letter to cite this report's run timestamp.
+  4. Update #194 letter to cite this report's run timestamp.
 EOF
 
 # Forward the driver's exit code, biased into the >=10 range so callers can

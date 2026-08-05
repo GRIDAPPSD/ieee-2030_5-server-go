@@ -11,7 +11,7 @@ import (
 
 // TestRunGenerateDeviceRequiresHWSerial verifies that the generate-device
 // CLI rejects an invocation without -hw-serial. Silently producing a cert
-// with no HardwareModuleName SAN is non-compliant under CSIP §6.2. (IEEE-017)
+// with no HardwareModuleName SAN is non-compliant under CSIP §6.2. (#17)
 func TestRunGenerateDeviceRequiresHWSerial(t *testing.T) {
 	dir := setupTestCertDir(t)
 
@@ -32,7 +32,7 @@ func TestRunGenerateDeviceRequiresHWSerial(t *testing.T) {
 
 // TestRunGenerateDeviceHWTypeFlag verifies that the new -hw-type flag is
 // honored: the resulting cert SAN must encode the provided manufacturer
-// PEN OID, not a hardcoded placeholder. (IEEE-017)
+// PEN OID, not a hardcoded placeholder. (#17)
 func TestRunGenerateDeviceHWTypeFlag(t *testing.T) {
 	dir := setupTestCertDir(t)
 

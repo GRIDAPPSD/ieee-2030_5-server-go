@@ -18,7 +18,7 @@ import (
 const version = "0.1.0"
 
 func main() {
-	// IEEE-172: route the stdlib log package through a slog JSON handler
+	// #253: route the stdlib log package through a slog JSON handler
 	// (stdout) so container logs are structured for the observability stack.
 	setupLogging(os.Stdout)
 
@@ -55,9 +55,9 @@ func runServe() error {
 		ExtraClientCAs:  parseCSV(os.Getenv("SEP2_EXTRA_CLIENT_CAS")),
 		BootFixtureFile: os.Getenv("SEP2_BOOT_FIXTURE"),
 
-		// IEEE-094: admin listener configuration. SEP2_ADMIN_LISTEN is the
+		// #161: admin listener configuration. SEP2_ADMIN_LISTEN is the
 		// canonical knob; SEP2_ADMIN_ADDR is preserved as a deprecated alias
-		// for pre-IEEE-094 deployments. SEP2_ADMIN_TLS toggles between plain
+		// for pre-#161 deployments. SEP2_ADMIN_TLS toggles between plain
 		// HTTP (Caddy mode, default) and HTTPS. SEP2_ADMIN_CERT +
 		// SEP2_ADMIN_KEY_FILE point at an operator-supplied cert/key; when
 		// HTTPS is on and they are empty, a self-signed cert is generated.
@@ -69,11 +69,11 @@ func runServe() error {
 		AdminKeyFile:     os.Getenv("SEP2_ADMIN_KEY_FILE"),
 		AdminBehindProxy: os.Getenv("SEP2_ADMIN_BEHIND_PROXY") == "true",
 
-		// IEEE-138: extra Host-header allowlist entries (defense-in-depth
+		// #270: extra Host-header allowlist entries (defense-in-depth
 		// against DNS rebinding). CSV; appended to the static defaults.
 		AdminAllowedHosts: parseCSV(os.Getenv("SEP2_ADMIN_ALLOWED_HOSTS")),
 
-		// IEEE-097: single-knob persistence. Empty SEP2_DATA_DIR keeps the
+		// #165: single-knob persistence. Empty SEP2_DATA_DIR keeps the
 		// historical pure in-memory behavior. SEP2_SUBSCRIPTION_STORE_PATH
 		// is preserved for back-compat and wins over the derived datadir
 		// path when both are set.

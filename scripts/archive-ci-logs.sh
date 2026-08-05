@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# IEEE-109 — Mirror CI artifacts from a GitHub Actions workflow run into the
+# #195 — Mirror CI artifacts from a GitHub Actions workflow run into the
 # Knowledge workspace for long-term retention.
 #
 # Why:

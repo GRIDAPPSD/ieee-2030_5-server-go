@@ -350,7 +350,7 @@ func TestDERControlAdd_MissingControlID(t *testing.T) {
 }
 
 // recordingNotifier is a handler.ResourceNotifier stub that captures every
-// Notify call. Used by IEEE-093 to verify the derctl-add hook fans out
+// Notify call. Used by #157 to verify the derctl-add hook fans out
 // on success and stays silent on failure paths.
 //
 // The mutex protects the slice; the production code path calls Notify
@@ -393,7 +393,7 @@ func newRouterWithNotifier(t *testing.T) (http.Handler, *server.Stores, *recordi
 	return h, stores, n
 }
 
-// TestDERControlAdd_FiresNotification — IEEE-093. On successful Create
+// TestDERControlAdd_FiresNotification — #157. On successful Create
 // the derctl-add hook calls notifier.Notify with the DERProgramList
 // href and NotificationStatusChanged. Aggregators subscribe to the
 // DERProgramList href (UTIL-003 pattern); a new DERControl under one
@@ -426,7 +426,7 @@ func TestDERControlAdd_FiresNotification(t *testing.T) {
 	}
 }
 
-// TestDERControlAdd_NoNotificationOnParentMissing — IEEE-093. A 404
+// TestDERControlAdd_NoNotificationOnParentMissing — #157. A 404
 // from the parent-program lookup must NOT fan out. Notification fires
 // only when the store Create commits.
 func TestDERControlAdd_NoNotificationOnParentMissing(t *testing.T) {
@@ -446,7 +446,7 @@ func TestDERControlAdd_NoNotificationOnParentMissing(t *testing.T) {
 	}
 }
 
-// TestDERControlAdd_NoNotificationOnDuplicate — IEEE-093. A 409 from
+// TestDERControlAdd_NoNotificationOnDuplicate — #157. A 409 from
 // the Create path must NOT fan out — the store was not changed on the
 // second call.
 func TestDERControlAdd_NoNotificationOnDuplicate(t *testing.T) {
@@ -478,7 +478,7 @@ func TestDERControlAdd_NoNotificationOnDuplicate(t *testing.T) {
 	}
 }
 
-// --- /test/mutations/time-advance (IEEE-025, CORE-006) ---
+// --- /test/mutations/time-advance (#28, CORE-006) ---
 
 // setupTimeAdvance resets the coresep2time clock offset, builds a tag-enabled
 // router, and registers a cleanup that re-zeroes the offset so the next
@@ -718,7 +718,7 @@ func TestMutationSurface_GET_NotAllowed(t *testing.T) {
 	}
 }
 
-// --- /test/mutations/fsa-swap (IEEE-078) ---
+// --- /test/mutations/fsa-swap (#123) ---
 
 // seedFSA installs an FSA under (edevID, fsaID) with Href and a
 // DERProgramListLink stamped at the canonical path so the swap's re-stamp
@@ -999,7 +999,7 @@ func TestFSASwap_UnknownField_Rejected(t *testing.T) {
 	}
 }
 
-// --- /test/mutations/subscription-cancel (IEEE-079, MAINT-006) ---
+// --- /test/mutations/subscription-cancel (#126, MAINT-006) ---
 
 // seedSubscription installs a subscription with the given id into the
 // store. The tombstone set is independent of the store, so this leaves it

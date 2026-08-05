@@ -9,7 +9,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 )
 
-// IEEE-095: browser login flow for the admin surface.
+// #159: browser login flow for the admin surface.
 //
 // The login form is served at GET /login (unauthenticated) and posts to
 // POST /auth/login (also unauthenticated). On a successful key match the

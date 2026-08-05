@@ -9,7 +9,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 )
 
-// IEEE-096 wiring: build the *handler.AdminFSAHandler from the server's
+// #163 wiring: build the *handler.AdminFSAHandler from the server's
 // stores plus a tiny adapter that turns the existing DERProgram scoped
 // store into a DERProgramHrefValidator (the program href shape is
 // `/edev/{id}/fsa/{fsaId}/derp/{derpId}`: we parse to (edev, derp) and

@@ -11,17 +11,17 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 )
 
-// IEEE-102: pin the server-side subscription-store wiring. server.Run
+// #171: pin the server-side subscription-store wiring. server.Run
 // constructs the subscription store via
 //
 //	memory.NewSubscriptionStoreWithPersistence(
 //	    cfg.EffectiveStorePath("subscriptions", cfg.SubscriptionStorePath))
 //
-// IEEE-097 already unit-tests Config.EffectiveStorePath in isolation
+// #165 already unit-tests Config.EffectiveStorePath in isolation
 // (config_test.go::TestEffectiveStorePath). This test pins the *callsite*:
 // the exact call shape server.go uses, end-to-end, with the file actually
 // written to disk at the expected path. Catches accidental regressions
-// such as reverting to the IEEE-077 direct-path form
+// such as reverting to the #224 direct-path form
 // (NewSubscriptionStoreWithPersistence(cfg.SubscriptionStorePath)) or
 // passing the wrong store name.
 func TestSubscriptionStoreWiring_DataDirDerivedPath(t *testing.T) {
@@ -59,9 +59,9 @@ func TestSubscriptionStoreWiring_DataDirDerivedPath(t *testing.T) {
 	}
 }
 
-// IEEE-102 regression: SEP2_SUBSCRIPTION_STORE_PATH (the IEEE-077-era
+// #171 regression: SEP2_SUBSCRIPTION_STORE_PATH (the #224-era
 // dedicated knob) must keep winning over SEP2_DATA_DIR. Same precedence
-// IEEE-097's TestEffectiveStorePath asserts at the helper level, but
+// #165's TestEffectiveStorePath asserts at the helper level, but
 // here we drive it through the exact server.go callsite plus a real
 // file write so the wiring is the thing under test.
 func TestSubscriptionStoreWiring_DedicatedPathOverridesDataDir(t *testing.T) {
@@ -103,7 +103,7 @@ func TestSubscriptionStoreWiring_DedicatedPathOverridesDataDir(t *testing.T) {
 	}
 }
 
-// IEEE-102 regression: both knobs empty → in-memory mode (path "")
+// #171 regression: both knobs empty → in-memory mode (path "")
 // produces a usable store with no on-disk artifact.
 func TestSubscriptionStoreWiring_InMemoryWhenBothEmpty(t *testing.T) {
 	t.Parallel()

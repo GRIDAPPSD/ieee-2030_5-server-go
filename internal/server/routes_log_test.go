@@ -8,7 +8,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// TestRoutesEnumerationConfirmsCertAPIAdminOnly is the IEEE-140
+// TestRoutesEnumerationConfirmsCertAPIAdminOnly is the #272
 // defense-in-depth backstop for the Leon CRITICAL on PR #246. The
 // route-enumeration helpers (BuildProtocolRouter, BuildAdminRouter)
 // MUST report /api/certs/* patterns ONLY in the admin route list. A
@@ -111,7 +111,7 @@ func TestProtocolRoutesContainsCanonicalSEP2(t *testing.T) {
 // TestAdminRoutesContainsLoginAndDashboard pins the public outer mux
 // and the dashboard registration so the boot log reflects every
 // admin-listener route, including the unauth login surface that
-// IEEE-138 (bundle B) will later host-allowlist.
+// #270 (bundle B) will later host-allowlist.
 func TestAdminRoutesContainsLoginAndDashboard(t *testing.T) {
 	t.Parallel()
 

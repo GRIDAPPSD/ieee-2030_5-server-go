@@ -14,7 +14,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// IEEE-138: Host-header allowlist (DNS-rebinding defense).
+// #270: Host-header allowlist (DNS-rebinding defense).
 //
 // The middleware MUST run before the auth chain, so wrong-Host requests
 // never reach Path 0 / A / B / C / D in internal/auth/admin.go. This file
@@ -88,7 +88,7 @@ func TestHostAllowlistMiddleware(t *testing.T) {
 			wantBodyContain: "Misdirected Request",
 		},
 		{
-			name:       "allowed mDNS hostname (IEEE-133)",
+			name:       "allowed mDNS hostname (#246)",
 			allowed:    []string{discovery.AdminHostname},
 			host:       discovery.AdminHostname,
 			wantStatus: http.StatusOK,
@@ -224,7 +224,7 @@ func TestDefaultAdminAllowedHosts(t *testing.T) {
 		t.Errorf("DefaultAdminAllowedHosts: got %v, want (any order) %v", got, want)
 	}
 
-	// IEEE-138: the mDNS hostname MUST come from discovery.AdminHostname
+	// #270: the mDNS hostname MUST come from discovery.AdminHostname
 	// (not a hand-typed duplicate), so a future rename in the discovery
 	// package propagates here automatically. We can't test "they share a
 	// constant" directly, but we CAN assert the value matches.

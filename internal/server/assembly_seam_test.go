@@ -366,7 +366,7 @@ func TestNewCoreAuthPolicyIdentity(t *testing.T) {
 	}
 	// Field order is load-bearing: assembly.AuthPolicy.Identity returns
 	// (lfdi, sfdi, ok). The edev POST path feeds the second return (SFDI)
-	// into SFDIPrefix. A swap here would route IEEE-014 guard to the wrong
+	// into SFDIPrefix. A swap here would route #13 guard to the wrong
 	// value silently.
 	if gotLFDI != wantLFDI {
 		t.Errorf("Identity first return (lfdi): got %q, want %q", gotLFDI, wantLFDI)

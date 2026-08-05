@@ -16,13 +16,13 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// IEEE-101: end-to-end GET /edev/{id}/rg through the SEP2 protocol mux
+// #170: end-to-end GET /edev/{id}/rg through the SEP2 protocol mux
 // (router + ACL + IdentityMiddleware + NamespaceMiddleware). Verifies the
 // admin-write / device-read round trip with a real mTLS client whose LFDI
 // matches the seeded EndDevice.
 func TestIntegrationRegistrationGet(t *testing.T) {
 	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{
-		CommonName: "IEEE-101 Test CA",
+		CommonName: "registration-integration Test CA",
 		ValidYears: 1,
 	})
 	if err != nil {
@@ -35,7 +35,7 @@ func TestIntegrationRegistrationGet(t *testing.T) {
 
 	serverCertPEM, serverKeyPEM, err := certs.GenerateServerCert(caCert, caKey, certs.ServerCertOptions{
 		Hosts:      []string{"127.0.0.1", "localhost"},
-		CommonName: "IEEE-101 Test Server",
+		CommonName: "registration-integration Test Server",
 		ValidYears: 1,
 	})
 	if err != nil {
@@ -44,7 +44,7 @@ func TestIntegrationRegistrationGet(t *testing.T) {
 
 	deviceCertPEM, deviceKeyPEM, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
 		DeviceType:  certs.DeviceTypeGeneric,
-		HWSerialNum: "IEEE-101-DEV-1",
+		HWSerialNum: "registration-integration-DEV-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestIntegrationRegistrationGet(t *testing.T) {
 
 	stores := newTestStores()
 
-	// Seed the EndDevice + Registration the same way IEEE-095's admin
+	// Seed the EndDevice + Registration the same way #159's admin
 	// POST /api/devices flow would.
 	dev := sep2.EndDevice{
 		SubscribableResource: sep2.SubscribableResource{

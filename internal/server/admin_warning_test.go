@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// IEEE-137: when the admin listener is bound to a non-loopback address
+// #269: when the admin listener is bound to a non-loopback address
 // and the operator has not declared an upstream reverse proxy via
 // SEP2_ADMIN_BEHIND_PROXY=true, the server logs a startup WARNING
 // explaining that without an upstream proxy injecting X-Forwarded-For
@@ -25,7 +25,7 @@ func TestAdminProxyWarning(t *testing.T) {
 		behindProxy bool
 		wantWarn    bool // true = non-empty warning expected
 	}{
-		// Loopback bind (IEEE-136 default). No warning regardless of
+		// Loopback bind (#268 default). No warning regardless of
 		// the proxy hint — Path 0 admit-decline is moot when only the
 		// host can reach the listener.
 		{"loopback 127.0.0.1, no proxy hint → no warn", "127.0.0.1:8444", false, false},
@@ -33,7 +33,7 @@ func TestAdminProxyWarning(t *testing.T) {
 		{"loopback IPv6 [::1], no proxy hint → no warn", "[::1]:8444", false, false},
 
 		// Non-loopback bind without proxy hint — fire the warning.
-		// This is the structural fix IEEE-137 codifies.
+		// This is the structural fix #269 codifies.
 		{"public 0.0.0.0, no proxy hint → WARN", "0.0.0.0:8444", false, true},
 		{"public IPv6 [::], no proxy hint → WARN", "[::]:8444", false, true},
 		{"LAN IP 192.168.1.5, no proxy hint → WARN", "192.168.1.5:8444", false, true},

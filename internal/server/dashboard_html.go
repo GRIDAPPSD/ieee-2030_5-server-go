@@ -93,7 +93,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="result" id="controlResult"></div>
   </div>
 
-  <!-- IEEE-095: Add EndDevice from cert -->
+  <!-- #159: Add EndDevice from cert -->
   <div class="card full-width">
     <h2>Add End Device</h2>
     <p style="font-size: 12px; color: var(--dim); margin-bottom: 8px;">
@@ -119,7 +119,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="result" id="addDevResult"></div>
   </div>
 
-  <!-- IEEE-095: Lookup device by LFDI -->
+  <!-- #159: Lookup device by LFDI -->
   <div class="card full-width">
     <h2>Lookup Device by LFDI</h2>
     <div class="form-row">
@@ -129,7 +129,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="result" id="lookupResult"></div>
   </div>
 
-  <!-- IEEE-096: Create FSA -->
+  <!-- #163: Create FSA -->
   <div class="card full-width">
     <h2>Create FSA Template</h2>
     <p style="font-size: 12px; color: var(--dim); margin-bottom: 8px;">
@@ -144,7 +144,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="result" id="createFSAResult"></div>
   </div>
 
-  <!-- IEEE-096: FSA Tree -->
+  <!-- #163: FSA Tree -->
   <div class="card full-width">
     <h2>FSA Tree (SY &rarr; FD &rarr; SP &rarr; DEV)</h2>
     <div style="font-size: 12px; color: var(--dim); margin-bottom: 8px;">
@@ -201,7 +201,7 @@ try {
 }
 
 var history = [];
-// IEEE-096: in-memory state for FSA tree + per-device assignment dropdown.
+// #163: in-memory state for FSA tree + per-device assignment dropdown.
 var fsaCatalog = []; // [{mRID, description, href, programs:[], devices:[]}]
 var topologyState = { collapsed: {} };
 
@@ -251,7 +251,7 @@ function onSSEMessage(event) {
       appendCell(tr, (dev.lfdi || '').substring(0, 16) + '...', 'mono');
       appendCell(tr, dev.enabled ? 'ONLINE' : 'OFFLINE', dev.enabled ? 'online' : 'offline');
       appendCell(tr, dev.href, 'mono');
-      // IEEE-096: assign-FSA cell.
+      // #163: assign-FSA cell.
       var assignTd = document.createElement('td');
       var deviceId = pathTail(dev.href);
       var sel = document.createElement('select');
@@ -347,7 +347,7 @@ function sendControl() {
   // TODO: POST to /api/der/controls when admin DER API is wired
 }
 
-// IEEE-095: parse PEM cert via /api/certs/info and auto-fill SFDI + LFDI.
+// #159: parse PEM cert via /api/certs/info and auto-fill SFDI + LFDI.
 function parseCert() {
   var pem = document.getElementById('addDevCert').value;
   var resultEl = document.getElementById('addDevResult');
@@ -380,7 +380,7 @@ function parseCert() {
   });
 }
 
-// IEEE-095: POST /api/devices to create EndDevice + Registration with PIN.
+// #159: POST /api/devices to create EndDevice + Registration with PIN.
 function addDevice() {
   var sfdi = document.getElementById('addDevSFDI').value;
   var lfdi = document.getElementById('addDevLFDI').value;
@@ -423,7 +423,7 @@ function addDevice() {
   });
 }
 
-// IEEE-096: helpers + create / attach / assign / topology UI.
+// #163: helpers + create / attach / assign / topology UI.
 
 function pathTail(href) {
   if (!href) return '';
@@ -686,7 +686,7 @@ function nodeColor(kind) {
 // Kick off initial loads.
 refreshFSACatalog().then(refreshTopology);
 
-// IEEE-095: GET /api/devices/by-lfdi/{lfdi}
+// #159: GET /api/devices/by-lfdi/{lfdi}
 function lookupLFDI() {
   var lfdi = document.getElementById('lookupLFDI').value;
   var resultEl = document.getElementById('lookupResult');

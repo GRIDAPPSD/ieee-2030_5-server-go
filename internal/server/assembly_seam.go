@@ -104,7 +104,7 @@ func NewCoreRouterConfig(cfg *config.Config) assembly.RouterConfig {
 // return to the (lfdi, sfdi string, ok bool) signature core expects.
 // Field order: LFDI first, SFDI second. The edev POST path feeds the
 // second return (SFDI) into SFDIPrefix. Getting the order wrong here
-// would silently misroute short-SFDI guard (IEEE-014).
+// would silently misroute short-SFDI guard (#13).
 //
 // AuthPolicy.SFDIPrefix: wires auth.ExtractSFDIPrefix directly; its
 // signature func(string) (string, error) matches core's expectation.

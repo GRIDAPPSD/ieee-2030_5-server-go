@@ -5,7 +5,7 @@
 // none of the mutation handler code from test_mutations.go is compiled
 // into the binary.
 //
-// See test_mutations.go for the gated implementation. IEEE-024.
+// See test_mutations.go for the gated implementation. #27.
 
 package server
 
@@ -17,7 +17,7 @@ import (
 
 // RegisterMutationHandlers is the production no-op. Build with
 // `-tags csip_test_hooks` to compile the real implementation. The
-// notifier parameter (added by IEEE-093 so the tagged build can fan
+// notifier parameter (added by #157 so the tagged build can fan
 // out Notifications from mutation hooks) is ignored here.
 func RegisterMutationHandlers(_ *http.ServeMux, _ *Stores, _ handler.ResourceNotifier) {}
 

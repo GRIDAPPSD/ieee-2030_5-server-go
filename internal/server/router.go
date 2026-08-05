@@ -69,7 +69,7 @@ type Stores struct {
 	// FSA store
 	FSAs *memory.ScopedStore[sep2.FunctionSetAssignments]
 
-	// IEEE-096: admin FSA management plane (operator-authored templates,
+	// #163: admin FSA management plane (operator-authored templates,
 	// program links, device assignments). Distinct from FSAs above which is
 	// the spec-facing scoped surface.
 	AdminFSAs *memory.AdminFSAStore

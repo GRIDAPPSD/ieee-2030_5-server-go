@@ -17,7 +17,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// IEEE-096 integration tests. Exercise the admin router end-to-end with the
+// #163 integration tests. Exercise the admin router end-to-end with the
 // real stores wired up, including the topology shape after a create-attach-
 // assign sequence.
 

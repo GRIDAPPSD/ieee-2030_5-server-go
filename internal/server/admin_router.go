@@ -10,9 +10,9 @@ import (
 
 // BuildAdminRouter creates the admin router AND returns the canonical
 // pattern list mounted under it. Three layers, outermost first:
-//  1. Host-header allowlist (IEEE-138) — rejects any request whose Host
+//  1. Host-header allowlist (#270) — rejects any request whose Host
 //     header isn't a hostname this server claims (loopback, localhost, the
-//     IEEE-133 mDNS hostname, plus operator-extended entries from
+//     #246 mDNS hostname, plus operator-extended entries from
 //     SEP2_ADMIN_ALLOWED_HOSTS). DNS-rebinding defense-in-depth at the
 //     admin boundary; runs BEFORE auth so a wrong-Host request never
 //     reaches the auth chain. allowedHosts nil/empty disables the gate
@@ -24,12 +24,12 @@ import (
 //     dashboard without first hitting them.
 //  3. Authenticated inner mux — everything else (dashboard, /api/*, SSE,
 //     ticket exchange). Guarded by AdminAuthMiddleware which supports mTLS,
-//     Bearer, query-param ticket, and the IEEE-095 admin_ticket cookie.
+//     Bearer, query-param ticket, and the #159 admin_ticket cookie.
 //
 // Patterns from BOTH the public outer mux (login routes) and the authed
 // inner mux are merged into one sorted, deduplicated list — callers
 // (the boot-time route enumerator) want a single flat view of every
-// admin-listener route. The IEEE-138 host-header allowlist wraps the
+// admin-listener route. The #270 host-header allowlist wraps the
 // outer mux when allowedHosts is non-empty; the returned pattern list
 // reflects routes mounted under the listener regardless of host gating.
 //
@@ -45,7 +45,7 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 		authed.HandleFunc("POST /api/certs/device", svc.HandleCreateDeviceCert())
 	}
 
-	// IEEE-095 registration-assistant API
+	// #159 registration-assistant API
 	authed.HandleFunc("POST /api/certs/info", handler.HandleCertInfo())
 	if stores != nil {
 		authed.HandleFunc("GET /api/devices/by-lfdi/{lfdi}", handler.HandleDeviceLookupByLFDI(stores.EndDevices))
@@ -54,7 +54,7 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 		}
 	}
 
-	// IEEE-096 FSA hierarchy management API.
+	// #163 FSA hierarchy management API.
 	if fsaH := newAdminFSAHandler(stores); fsaH != nil {
 		authed.HandleFunc("POST /api/fsas", fsaH.HandleCreateAdminFSA())
 		authed.HandleFunc("GET /api/fsas", fsaH.HandleListAdminFSAs())
@@ -81,7 +81,7 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets)(authed)
 
 	// Outer mux: login routes are public; everything else is authed.
-	// IEEE-138 (bundle B) wraps authedWithMiddleware with a Host-allowlist
+	// #270 (bundle B) wraps authedWithMiddleware with a Host-allowlist
 	// middleware at the `outer.Handle("/", ...)` line — leave that wrap
 	// point clean.
 	outer := http.NewServeMux()
@@ -89,7 +89,7 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 	outer.HandleFunc("POST /auth/login", HandleLoginSubmit(adminKey, tickets))
 	outer.Handle("/", authedWithMiddleware)
 
-	// IEEE-140: assemble the final pattern list. The two public outer
+	// #272: assemble the final pattern list. The two public outer
 	// routes (login form + login submit) join the inner authed routes
 	// so the boot-time enumerator sees a single flat list per listener.
 	// Sort + dedup runs through sortDedupePatterns at the end of the
@@ -100,7 +100,7 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 	}, authed.Patterns()...)
 	sortDedupePatterns(&merged)
 
-	// IEEE-138: wrap the entire outer mux in the host-header allowlist
+	// #270: wrap the entire outer mux in the host-header allowlist
 	// when the caller supplied one. The gate runs BEFORE login routes so
 	// /login and /auth/login are protected from DNS-rebinding too. The
 	// returned route list reflects what is mounted under the listener

@@ -7,7 +7,7 @@ import (
 
 // routeRegistrar is the minimal mux surface that route helpers accept.
 // Keeping the surface to HandleFunc lets any mux that also captures
-// patterns (such as *recordingMux below) participate in the IEEE-140
+// patterns (such as *recordingMux below) participate in the #272
 // boot-time route enumeration without changing the helper signatures.
 type routeRegistrar interface {
 	HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request))
@@ -16,7 +16,7 @@ type routeRegistrar interface {
 // recordingMux is a thin wrapper around *http.ServeMux that captures
 // every pattern handed to HandleFunc / Handle. The Patterns method
 // returns a sorted, de-duplicated copy of the captured strings — used
-// by IEEE-140 to enumerate routes-per-listener at startup so a future
+// by #272 to enumerate routes-per-listener at startup so a future
 // /api/certs/* mis-mount surfaces in the boot log instead of becoming
 // the next Leon CRITICAL.
 //

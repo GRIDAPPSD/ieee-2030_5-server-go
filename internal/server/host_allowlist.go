@@ -10,9 +10,9 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
 )
 
-// IEEE-138: Host-header allowlist for the admin listener.
+// #270: Host-header allowlist for the admin listener.
 //
-// The admin surface defaults to a loopback bind, and the IEEE-132 loopback
+// The admin surface defaults to a loopback bind, and the #246 loopback
 // bypass admits any request whose RemoteAddr is loopback when no proxy
 // forwarded headers are present. A DNS-rebinding attacker can lure a
 // browser to a page hosted at attacker-controlled DNS that resolves to
@@ -97,7 +97,7 @@ func HostAllowlistMiddleware(allowed []string) func(http.Handler) http.Handler {
 
 // DefaultAdminAllowedHosts returns the local-development default allowlist
 // for the admin listener: loopback (v4 + v6), `localhost`, and the mDNS
-// hostname (IEEE-133). The mDNS entry is derived from
+// hostname (#246). The mDNS entry is derived from
 // discovery.AdminHostname so a future rename of the mDNS hostname does not
 // silently break the allowlist.
 //

@@ -188,11 +188,11 @@ func handleDERProgPrimacy(stores *Stores) http.HandlerFunc {
 		}
 
 		ctx := r.Context()
-		// IEEESRV-038: address the program by (parent, id) on the store
-		// itself. This used to take a per-parent handle via ForParent,
-		// which core IEEECORE-085 withdrew: that method was promoted by
-		// an embedded field and was never part of the store.ScopedStore
-		// contract, so reaching for it bypassed the persistence wrapper.
+		// Address the program by (parent, id) on the store itself. This
+		// used to take a per-parent handle via ForParent, which core
+		// withdrew: that method was promoted by an embedded field and was
+		// never part of the store.ScopedStore contract, so reaching for
+		// it bypassed the persistence wrapper.
 		programs := stores.DERPrograms
 		existing, err := programs.Get(ctx, req.EndDeviceID, req.ProgramID)
 		if err != nil {
@@ -585,7 +585,7 @@ func handleSubscriptionCancel(stores *Stores) http.HandlerFunc {
 	}
 }
 
-// --- /test/mutations/stress-notify (IEEESRV-010) ---
+// --- /test/mutations/stress-notify ---
 
 // stressNotifyRequest is the JSON body for /test/mutations/stress-notify.
 // Href is the subscribable-resource href to fan notifications to; Status
@@ -634,7 +634,7 @@ func handleStressNotify(notifier handler.ResourceNotifier) http.HandlerFunc {
 // It is called from BuildProtocolRouter in assembly_seam.go so that
 // tests which construct the server via server.BuildProtocolRouter get
 // the mutation routes on the same handler (mirroring the call that
-// lived in the deleted in-tree router.go before IEEESRV-002).
+// lived in the deleted in-tree router.go).
 // In production builds the non-tagged companion in test_mutations_notest.go
 // returns h unchanged; see IEEE-024.
 func wrapMutationHandlers(h http.Handler, stores *Stores, notifier handler.ResourceNotifier) http.Handler {

@@ -35,8 +35,8 @@ const (
 	// ReadHeaderTimeout < ReadTimeout: header parsing has a tighter deadline
 	// than the full body read.
 	//
-	// The protocol listener moved to pkg/sep2server (IEEESRV-025) and takes
-	// the same four durations from core's sep2srv.Default*Timeout, which core
+	// The protocol listener moved to pkg/sep2server and takes the same
+	// four durations from core's sep2srv.Default*Timeout, which core
 	// lifted from THIS block verbatim. The values are identical today; they
 	// are named in two places because the two listeners now live in two
 	// packages, and a future change to one is a deliberate choice about that
@@ -63,10 +63,10 @@ func newAdminServer(handler http.Handler) *http.Server {
 // Run starts the IEEE 2030.5 server with mutual TLS and optionally
 // an admin HTTPS server on a separate port.
 //
-// IEEESRV-025: the protocol half (listener, mutual TLS, server-identity
-// derivation, the assembled routes and the graceful drain) is now the
-// embeddable surface in pkg/sep2server, and this function is its first
-// consumer. What remains here is what an embedder does NOT get: the admin
+// The protocol half (listener, mutual TLS, server-identity derivation,
+// the assembled routes and the graceful drain) is now the embeddable
+// surface in pkg/sep2server, and this function is its first consumer.
+// What remains here is what an embedder does NOT get: the admin
 // listener, the dashboard, the metrics listener, mDNS and the operator banner.
 //
 // One consequence of that split is visible in the ordering below: the stores
@@ -177,7 +177,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// handlers can fan out notifications without depending on the
 	// subscription package directly.
 	//
-	// IEEESRV-008: worker count and queue size are tunable at startup via
+	// Worker count and queue size are tunable at startup via
 	// SEP2_SUBSCRIPTION_WORKERS and SEP2_SUBSCRIPTION_QUEUE_SIZE; both fall
 	// back to the compile-time defaults when the env var is unset, empty, or
 	// not a positive integer (no crash: warn and use the default).
@@ -364,8 +364,8 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	case err := <-protocolDone:
 		// The protocol listener failed on its own; protocolCtx was never
 		// cancelled, so this is a real failure and not a drain. Surface it
-		// rather than logging it, exactly as the pre-IEEESRV-025 shared
-		// error channel did.
+		// rather than logging it, exactly as the shared error channel did
+		// before the protocol listener moved to pkg/sep2server.
 		return err
 	case err := <-errCh:
 		return err
@@ -580,7 +580,7 @@ func buildAdminTLSConfig(cfg *config.Config) (*tls.Config, string, error) {
 // unchanged). When the variable is set but its value is not a positive integer
 // (non-numeric, zero, or negative) a warning is logged naming the variable and
 // the bad value, and the defaultVal is returned. This function never panics or
-// calls os.Exit. IEEESRV-008.
+// calls os.Exit.
 func resolveSubParam(envKey string, defaultVal int) int {
 	raw := strings.TrimSpace(os.Getenv(envKey))
 	if raw == "" {
@@ -678,6 +678,6 @@ func isLoopbackBind(addr string) bool {
 }
 
 // Server-identity derivation from the leaf certificate moved to
-// pkg/sep2server alongside the TLS listener it belongs to (IEEESRV-025). It is
-// read back here through sep2server.Server.Identity; the IEEE-001 regression
+// pkg/sep2server alongside the TLS listener it belongs to. It is read
+// back here through sep2server.Server.Identity; the IEEE-001 regression
 // guards in server_identity_test.go still drive it through the full Run flow.

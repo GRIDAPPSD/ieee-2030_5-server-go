@@ -1383,7 +1383,7 @@ func TestSubscriptionCancel_Race(t *testing.T) {
 	}
 }
 
-// --- /test/mutations/stress-notify (IEEESRV-010) ---
+// --- /test/mutations/stress-notify ---
 
 const tmStressNotify = "/test/mutations/stress-notify"
 

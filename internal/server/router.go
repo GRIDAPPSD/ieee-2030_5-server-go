@@ -8,13 +8,13 @@ import (
 
 // Stores holds all resource stores for the server.
 //
-// Phase 2 (IEEESRV-002): the protocol-router half of this file
-// (BuildProtocolRouter and all register*Routes helpers) has been deleted.
-// assembly.BuildProtocolRouter in the core module is now the sole protocol
-// router; see assembly_seam.go for the thin BuildProtocolRouter adapter.
-// The Stores type itself stays: the admin surface (BuildAdminRouter,
+// Phase 2: the protocol-router half of this file (BuildProtocolRouter
+// and all register*Routes helpers) has been deleted. assembly.BuildProtocolRouter
+// in the core module is now the sole protocol router; see
+// assembly_seam.go for the thin BuildProtocolRouter adapter. The Stores
+// type itself stays: the admin surface (BuildAdminRouter,
 // newAdminFSAHandler, DashboardHandler) and the CSIP test harness all
-// reference it directly. Deleting it is Phase 3 (IEEESRV-003) scope.
+// reference it directly. Deleting it is Phase 3 scope.
 type Stores struct {
 	EndDevices store.EndDeviceStore
 	// EndDeviceIndexes allocates the opaque, server-chosen index that
@@ -33,8 +33,8 @@ type Stores struct {
 	// the persistence flush.
 	Registrations *memory.RegistrationStore
 	// RegistrationPolicy supplies the pIN and pollRate for the Registration
-	// core creates alongside every EndDevice (IEEECORE-083). core v0.13.0
-	// added this field to assembly.Stores. The zero value provisions
+	// core creates alongside every EndDevice. core v0.13.0 added this
+	// field to assembly.Stores. The zero value provisions
 	// nothing, and that is fail-closed rather than degraded, matching this
 	// repo's behavior before the field existed: no self-registration pIN
 	// resolver is wired today, so a device gets no Registration and no
@@ -56,11 +56,11 @@ type Stores struct {
 	// store.ScopedStore[sep2.DERProgram] and its Create/Delete add the
 	// disk flush.
 	//
-	// It no longer embeds the collection: core IEEECORE-085 made the inner
-	// store an unexported field, so neither the promoted ForParent nor the
-	// old .ScopedStore reach-through exists. Consumers that want a scoped
+	// It no longer embeds the collection: core made the inner store an
+	// unexported field, so neither the promoted ForParent nor the old
+	// .ScopedStore reach-through exists. Consumers that want a scoped
 	// DERProgram surface take the store.ScopedStore contract and address
-	// resources by (parent, id). See IEEESRV-038.
+	// resources by (parent, id).
 	DERPrograms        *memory.DERProgramStore
 	DERControls        *memory.ScopedStore[sep2.DERControl]
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]

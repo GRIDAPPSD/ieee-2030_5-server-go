@@ -94,10 +94,10 @@ new-device:                ## Mint a new device cert (DEVICE_NAME= SERIAL= requi
 
 # ─── Run ──────────────────────────────────────────────────────────
 
-# IEEE-136: SEP2_ADMIN_ADDR=:8444 binds admin to 127.0.0.1:8444 by default
+# #268: SEP2_ADMIN_ADDR=:8444 binds admin to 127.0.0.1:8444 by default
 # (loopback). To make admin reachable off-box, override:
 #   SEP2_ADMIN_LISTEN=0.0.0.0:8444 make run-ccm
-# IEEE-136 / PR #264: a bare SEP2_METRICS_ADDR=:9100 now resolves to loopback
+# #268 / PR #264: a bare SEP2_METRICS_ADDR=:9100 now resolves to loopback
 # (127.0.0.1:9100), so the UNAUTHENTICATED /metrics surface is not exposed
 # network-wide by default. A containerized Prometheus scrapes the host via
 # host.docker.internal (the docker bridge gateway IP), which is NOT loopback
@@ -178,7 +178,7 @@ run-full: build certs      ## Start with CCM + mDNS + admin dashboard (admin on 
 	SEP2_MDNS=true \
 	./$(SERVER) serve
 
-# CSIP test device demo (IEEE-068).
+# CSIP test device demo (#75).
 #
 # Boots the server bound to 127.0.0.1:8888 (default) with the self-minted
 # test device root appended to ClientCAs and a pre-seeded EndDevice
@@ -202,7 +202,7 @@ run-testdevice: build certs   ## Start server with test device root + EndDevice 
 	@echo "#   --cert testdata/csip-pki/testdevice/device_chain.pem"
 	@echo "#   --key  testdata/csip-pki/testdevice/device_key.pem"
 	@echo "#   --ca   $(CERT_DIR)/ca.crt     (server CA: what the device must trust)"
-	@echo "# Server prints a full connection-details banner at boot (IEEE-112)."
+	@echo "# Server prints a full connection-details banner at boot (#206)."
 	SEP2_ADDR=$(TESTDEVICE_ADDR) \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
@@ -213,7 +213,7 @@ run-testdevice: build certs   ## Start server with test device root + EndDevice 
 	SEP2_CCM=true \
 	./$(SERVER) serve
 
-# SunSpec CSIP test PKI profile (IEEE-111).
+# SunSpec CSIP test PKI profile (#204).
 #
 # Boots the server in CCM-8 mode on :8443 with the SunSpec CSIP test PKI's
 # trust roots loaded as extra client CAs via SEP2_EXTRA_CLIENT_CAS. The
@@ -238,7 +238,7 @@ run-sunspec: build certs   ## Start server trusting SunSpec CSIP test PKI roots 
 	@echo "#   --cert $(subst roots.pem,cert.pem,$(SUNSPEC_ROOTS))"
 	@echo "#   --key  $(subst roots.pem,key.pem,$(SUNSPEC_ROOTS))"
 	@echo "#   --ca   $(CERT_DIR)/ca.crt   (server's CA — what the device must trust)"
-	@echo "# Server prints a full connection-details banner at boot (IEEE-112)."
+	@echo "# Server prints a full connection-details banner at boot (#206)."
 	SEP2_ADDR=:8443 \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
@@ -270,14 +270,14 @@ test-epri: build certs    ## Run EPRI C client against our server (CCM mode, ser
 test-csip-server:         ## Run CSIP server-side conformance harness (requires fixtures, see test/csip/README.md)
 	./scripts/test-csip-server.sh
 
-test-csip-client:         ## CSIP client-side conformance harness (blocked on IEEE-019)
-	@echo "# IEEE-019 blocks this target: inverter client must move onto vendored gotls"
-	@echo "# stack to negotiate CCM-8 before client-side conformance can be exercised."
+test-csip-client:         ## CSIP client-side conformance harness (blocked on #21)
+	@echo "# Blocked: inverter client must move onto vendored gotls stack to"
+	@echo "# negotiate CCM-8 before client-side conformance can be exercised."
 	@echo "# See GRIDAPPSD/ieee-2030_5-go#21."
 
-# IEEE-106 — CSIP harness CI integration. The two targets below shape the
+# #192 — CSIP harness CI integration. The two targets below shape the
 # build-tag matrix axis: `test-csip` runs the suite under the production
-# code path (no tag), `test-csip-hooks` runs it with the IEEE-024/025
+# code path (no tag), `test-csip-hooks` runs it with the #27/025
 # mutation + time-advance hooks compiled in. Both target the CSIP harness
 # AND `./internal/...` so the standard library code reached by the CSIP
 # tests participates in the coverage signal CI captures.
@@ -290,7 +290,7 @@ test-csip-hooks:          ## Run CSIP suite + internal + pkg with csip_test_hook
 test-csip-race:           ## Race detector on the CSIP suite with csip_test_hooks tag
 	go test -race -tags csip_test_hooks ./test/csip/...
 
-# IEEE-107 — CSIP-scoped coverage profile + gate.
+# #193 — CSIP-scoped coverage profile + gate.
 #
 # Phase 8 Deliverable 3: the coverage gate operates on production code
 # reachable from CSIP-mode execution, not on raw ./... (which includes
@@ -298,9 +298,9 @@ test-csip-race:           ## Race detector on the CSIP suite with csip_test_hook
 # aggregate below policy). The -coverpkg list below pins the in-scope
 # packages; the gate floor is enforced by scripts/coverage-gate.sh.
 #
-# Achieved threshold at IEEE-106 merge: 79.1% scoped. Gate floored at
-# 78% (1pp below for measurement noise) per Phase 8 doc (IEEE-107).
-# Ratcheted to 80% at IEEE-121 merge (post-interop, per workspace TDD rule).
+# Achieved threshold at #192 merge: 79.1% scoped. Gate floored at
+# 78% (1pp below for measurement noise) per Phase 8 doc (#193).
+# Ratcheted to 80% at #212 merge (post-interop, per workspace TDD rule).
 # ./pkg/sep2server/..., the embeddable surface, is listed because the
 # protocol listener, the handler assembly and the graceful drain MOVED
 # there out of ./internal/server/...; leaving it off would have quietly

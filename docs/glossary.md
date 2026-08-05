@@ -68,7 +68,7 @@ references. Linked from the docs on first use.
 
 - **EXI** — *Efficient XML Interchange*. Binary XML codec the IEEE
   2030.5 spec lists as an optional alternative to plain XML. Removed
-  from this server in IEEE-002; XML is the only supported wire
+  from this server in #2; XML is the only supported wire
   encoding.
 - **mDNS** — *Multicast DNS*. Zero-config service discovery
   (`_smartenergy._tcp`). Opt-in via `SEP2_MDNS=true`.

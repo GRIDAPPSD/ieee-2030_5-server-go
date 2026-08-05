@@ -36,7 +36,7 @@ The Make targets above leave `SEP2_ADMIN_TLS` unset, so the admin
 listener serves **plain HTTP** on `:8444` (Caddy mode). Two browser
 entry points are supported, depending on which posture you want:
 
-- **HTTP, default — IEEE-132 loopback bypass.** Hit
+- **HTTP, default — #246 loopback bypass.** Hit
   `http://localhost:8444/` directly. No `/login`, no Bearer token, no
   client cert needed: `AdminAuthMiddleware` admits any request from a
   loopback address that carries no reverse-proxy forwarded header.
@@ -60,7 +60,7 @@ behind the login routes. Five paths are checked in order; **any single
 path that succeeds admits the request** (this is fallback ordering, not
 defense in depth):
 
-0. **Loopback bypass (IEEE-132)** — RemoteAddr is a loopback address
+0. **Loopback bypass (#246)** — RemoteAddr is a loopback address
    (127.0.0.0/8 or `::1`) AND the request carries no reverse-proxy
    forwarded header (`X-Forwarded-For`, `X-Forwarded-Host`,
    `X-Forwarded-Proto`, RFC 7239 `Forwarded`). Local-developer
@@ -107,8 +107,8 @@ the dashboard form (where one exists) submits to it.
 | Auth ticket exchange | Complete | `POST /auth/ticket` exchanges a valid admin session for a one-time-use ticket. Used by SSE clients. | [`internal/server/admin_router.go`](../internal/server/admin_router.go), [`internal/auth/ticket.go`](../internal/auth/ticket.go) |
 | Cert management API | Complete | `GET /api/certs/ca` (download CA), `POST /api/certs/server`, `POST /api/certs/device`. The dashboard's "Certificate Management" form posts to `/api/certs/device`. | [`internal/handler/admin_certs.go`](../internal/handler/admin_certs.go) |
 | Cert info parser | Complete | `POST /api/certs/info` parses a pasted PEM cert and returns SFDI + LFDI. Used by the "Add End Device" form to auto-fill identity. | [`internal/handler/admin_register.go`](../internal/handler/admin_register.go) |
-| EndDevice registration | Complete | `POST /api/devices` creates an EndDevice + Registration with a PIN (IEEE-095). `GET /api/devices/by-lfdi/{lfdi}` looks up by LFDI. Both wired into the dashboard. | [`internal/handler/admin_register.go`](../internal/handler/admin_register.go) |
-| FSA management | Complete | Create/list/get/delete admin FSA templates, attach/detach DERPrograms, assign/unassign devices, plus a topology endpoint for the dashboard tree (IEEE-096). | [`internal/handler/admin_fsa.go`](../internal/handler/admin_fsa.go), [`internal/server/admin_fsa_wiring.go`](../internal/server/admin_fsa_wiring.go) |
+| EndDevice registration | Complete | `POST /api/devices` creates an EndDevice + Registration with a PIN (#159). `GET /api/devices/by-lfdi/{lfdi}` looks up by LFDI. Both wired into the dashboard. | [`internal/handler/admin_register.go`](../internal/handler/admin_register.go) |
+| FSA management | Complete | Create/list/get/delete admin FSA templates, attach/detach DERPrograms, assign/unassign devices, plus a topology endpoint for the dashboard tree (#163). | [`internal/handler/admin_fsa.go`](../internal/handler/admin_fsa.go), [`internal/server/admin_fsa_wiring.go`](../internal/server/admin_fsa_wiring.go) |
 | Topology view | Complete | `GET /api/topology` returns the SY → FD → SP → DEV tree the dashboard renders. | [`internal/handler/admin_topology.go`](../internal/handler/admin_topology.go) |
 | DER control submit form | In Progress | The "Send DER Control" form is rendered in [`dashboard_html.go`](../internal/server/dashboard_html.go), but the JS submit is currently a stub (`// TODO: POST to /api/der/controls when admin DER API is wired`). The admin DER API itself is not implemented. | [`internal/server/dashboard_html.go`](../internal/server/dashboard_html.go) |
 
@@ -128,7 +128,7 @@ your listener posture:
 
 ```bash
 # Plain-HTTP admin listener (default for `make run` / `make run-full`).
-# IEEE-132 loopback bypass admits the request — no Bearer needed.
+# #246 loopback bypass admits the request — no Bearer needed.
 curl http://localhost:8444/api/certs/ca
 
 # HTTPS admin listener (after `SEP2_ADMIN_TLS=true`). The bypass still
@@ -168,7 +168,7 @@ or cookie.
 The Playwright suite under [`e2e/`](../e2e/) drives the dashboard.
 `make test-e2e` runs it (requires `npm install` in `e2e/` first).
 Putting the suite under CI is tracked under
-[#211 (IEEE-115)](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/211).
+[#211](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/211).
 
 ## Cross-references
 

@@ -56,8 +56,8 @@ type Target struct {
 	// DERPrograms is the store.ScopedStore contract, not a concrete
 	// *memory.ScopedStore. The loader only Creates, and the server hands
 	// over *memory.DERProgramStore, whose collection stopped being an
-	// exported embedded field in core IEEECORE-085. The contract is what
-	// both shapes have in common and all this loader ever needed.
+	// exported embedded field in core. The contract is what both shapes
+	// have in common and all this loader ever needed.
 	DERPrograms        store.ScopedStore[sep2.DERProgram]
 	DERControls        *memory.ScopedStore[sep2.DERControl]
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]

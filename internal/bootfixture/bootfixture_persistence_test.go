@@ -13,8 +13,6 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 )
 
-// IEEESRV-038.
-//
 // Target.DERPrograms is declared as the store.ScopedStore contract. The type
 // the server actually owns and passes is *memory.DERProgramStore, the disk
 // persistence wrapper, and the assertion below is what keeps that assignment
@@ -22,11 +20,11 @@ import (
 // *memory.ScopedStore fails to compile here rather than at the one call site
 // in server.Run.
 //
-// This is not a hypothetical. Until IEEESRV-038, server.Run reached past the
-// wrapper for its embedded collection and handed the loader the inner store,
-// so every program a boot fixture created went in behind the wrapper's back
-// and was never flushed. Core IEEECORE-085 withdrew that reach-through, and
-// IEEECORE-106 recorded the dropped flush it had been hiding.
+// This is not a hypothetical. server.Run used to reach past the wrapper for
+// its embedded collection and hand the loader the inner store, so every
+// program a boot fixture created went in behind the wrapper's back and was
+// never flushed. Core withdrew that reach-through and the dropped flush it
+// had been hiding.
 var _ store.ScopedStore[sep2.DERProgram] = (*memory.DERProgramStore)(nil)
 
 // derProgramSnapshotEnvelope and derProgramSnapshotRecord mirror the
@@ -116,7 +114,7 @@ func TestBootFixtureDERProgramsReachDiskThroughWrapper(t *testing.T) {
 	raw, err := os.ReadFile(snapshot)
 	if err != nil {
 		t.Fatalf("read snapshot %s: %v (a fixture-loaded program that never "+
-			"reaches disk is the IEEECORE-106 failure this test exists for)", snapshot, err)
+			"reaches disk is the failure this test exists for)", snapshot, err)
 	}
 
 	var env derProgramSnapshotEnvelope

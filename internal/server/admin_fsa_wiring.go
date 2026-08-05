@@ -9,7 +9,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 )
 
-// IEEE-096 wiring: build the *handler.AdminFSAHandler from the server's
+// #163 wiring: build the *handler.AdminFSAHandler from the server's
 // stores plus a tiny adapter that turns the existing DERProgram scoped
 // store into a DERProgramHrefValidator (the program href shape is
 // `/edev/{id}/fsa/{fsaId}/derp/{derpId}`: we parse to (edev, derp) and
@@ -19,12 +19,11 @@ import (
 // handler.DERProgramHrefValidator. It is defined at the consumer (server
 // package) per the Pike rule rather than baked into the handler package.
 //
-// IEEESRV-038: programs is declared as the store.ScopedStore contract
-// rather than a concrete *memory.ScopedStore. The validator needs Get and
-// nothing else, and core IEEECORE-085 made *memory.DERProgramStore hold
-// its collection instead of embedding it, so there is no longer a concrete
-// inner store to reach for. Holding the contract is the shape that change
-// was for.
+// programs is declared as the store.ScopedStore contract rather than a
+// concrete *memory.ScopedStore. The validator needs Get and nothing else,
+// and core made *memory.DERProgramStore hold its collection instead of
+// embedding it, so there is no longer a concrete inner store to reach
+// for. Holding the contract is the shape that change was for.
 type derProgramHrefValidator struct {
 	programs store.ScopedStore[sep2.DERProgram]
 }

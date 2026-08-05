@@ -17,7 +17,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 )
 
-// IEEE-095: admin registration assistant.
+// #159: admin registration assistant.
 //
 // Three operator-facing endpoints, all under the admin auth surface:
 //

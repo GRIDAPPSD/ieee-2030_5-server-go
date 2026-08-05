@@ -21,7 +21,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// TestServerIdentityPopulatedUnderGCM is the regression test for IEEE-001.
+// TestServerIdentityPopulatedUnderGCM is the regression test for #1.
 //
 // Before the fix, server.Run() constructed the router with empty SFDI/LFDI
 // strings and derived them from the cert only after — so /sdev returned
@@ -34,7 +34,7 @@ func TestServerIdentityPopulatedUnderGCM(t *testing.T) {
 
 // TestServerIdentityPopulatedUnderCCM is the parallel regression guard for
 // the CCM-8 path. internal/tls/ccmserver.go has no parallel server-identity
-// derivation, so the same pre-fix bug also affected CCM; the IEEE-001 fix
+// derivation, so the same pre-fix bug also affected CCM; the #1 fix
 // lands both modes in one shot.
 func TestServerIdentityPopulatedUnderCCM(t *testing.T) {
 	runServerIdentityTest(t, true /* CCM enabled */)
@@ -48,7 +48,7 @@ func runServerIdentityTest(t *testing.T, enableCCM bool) {
 	dir := t.TempDir()
 
 	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{
-		CommonName: "IEEE-001 Test CA",
+		CommonName: "server-identity Test CA",
 		ValidYears: 1,
 	})
 	if err != nil {
@@ -66,7 +66,7 @@ func runServerIdentityTest(t *testing.T, enableCCM bool) {
 
 	serverCertPEM, serverKeyPEM, err := certs.GenerateServerCert(caCert, caKey, certs.ServerCertOptions{
 		Hosts:      []string{"127.0.0.1", "localhost"},
-		CommonName: "IEEE-001 Test Server",
+		CommonName: "server-identity Test Server",
 		ValidYears: 1,
 	})
 	if err != nil {
@@ -75,7 +75,7 @@ func runServerIdentityTest(t *testing.T, enableCCM bool) {
 
 	deviceCertPEM, deviceKeyPEM, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
 		DeviceType:  certs.DeviceTypeGeneric,
-		HWSerialNum: "IEEE-001-TEST",
+		HWSerialNum: "server-identity-TEST",
 	})
 	if err != nil {
 		t.Fatalf("GenerateDeviceCert: %v", err)
@@ -209,13 +209,13 @@ startLoop:
 		t.Fatalf("unmarshal SelfDevice: %v\nbody: %s", err, body)
 	}
 
-	// The core assertions for IEEE-001: SFDI and LFDI must be present and
+	// The core assertions for #1: SFDI and LFDI must be present and
 	// match the values derived from the server's own leaf cert.
 	if sdev.SFDI == "" {
-		t.Errorf("SelfDevice.SFDI is empty — IEEE-001 regression")
+		t.Errorf("SelfDevice.SFDI is empty — #1 regression")
 	}
 	if sdev.LFDI == "" {
-		t.Errorf("SelfDevice.LFDI is empty — IEEE-001 regression")
+		t.Errorf("SelfDevice.LFDI is empty — #1 regression")
 	}
 	if sdev.SFDI != wantSFDI {
 		t.Errorf("SelfDevice.SFDI = %q, want %q (derived from server leaf cert)", sdev.SFDI, wantSFDI)

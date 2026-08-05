@@ -1,11 +1,11 @@
 package server_test
 
-// IEEE-094 admin-listener split tests.
+// #161 admin-listener split tests.
 //
 // The SEP2 protocol listener is RequireAnyClientCert + manual verify per
 // CSIP V1.2. A non-cert client (typical browser) must fail to handshake on
 // that port. The admin listener, when configured, must accept non-cert
-// clients via Bearer/cookie so the IEEE-095 dashboard works. Both listeners
+// clients via Bearer/cookie so the #159 dashboard works. Both listeners
 // must come up under a single server.Run() and shut down on the same
 // signal.
 //
@@ -17,7 +17,7 @@ package server_test
 // Plus a back-compat test:
 //
 //	TestAdminListenerBackCompatAdminAddr — empty AdminListen + AdminAddr set
-//	                                       (pre-IEEE-094 env layout)
+//	                                       (pre-#161 env layout)
 
 import (
 	"context"
@@ -44,7 +44,7 @@ import (
 //   - SEP2 listener rejects a TLS-cert-less client (handshake failure).
 //   - Admin listener accepts a plain-HTTP request and 401s without a Bearer
 //     (i.e., AdminAuthMiddleware is wired through).
-//   - Admin Bearer request to an IEEE-095 endpoint (POST /api/certs/info)
+//   - Admin Bearer request to an #159 endpoint (POST /api/certs/info)
 //     returns 200 — smoke check that the dashboard endpoints work on the
 //     new listener.
 func TestAdminListenerSplit_PlainHTTP(t *testing.T) {
@@ -61,7 +61,7 @@ func TestAdminListenerSplit_PlainHTTP(t *testing.T) {
 		t.Fatal("SEP2 listener accepted a cert-less client; want handshake failure")
 	}
 
-	// 2. Admin listener (plain HTTP): no Bearer → 401. IEEE-132: this test
+	// 2. Admin listener (plain HTTP): no Bearer → 401. #246: this test
 	//    binds 127.0.0.1, so we set X-Forwarded-For to simulate the
 	//    Caddy-fronted production case and force the loopback bypass to
 	//    decline so AdminAuthMiddleware actually runs.
@@ -77,7 +77,7 @@ func TestAdminListenerSplit_PlainHTTP(t *testing.T) {
 		t.Errorf("no-Bearer status = %d, want 401", resp.StatusCode)
 	}
 
-	// 3. Admin listener: Bearer → 200 on an IEEE-095 endpoint.
+	// 3. Admin listener: Bearer → 200 on an #159 endpoint.
 	req, _ := http.NewRequest(http.MethodPost, "http://"+env.adminAddr+"/api/certs/info", nil)
 	req.Header.Set("Authorization", "Bearer "+adminTestKey)
 	req.Header.Set("X-Forwarded-For", "203.0.113.5")
@@ -94,7 +94,7 @@ func TestAdminListenerSplit_PlainHTTP(t *testing.T) {
 		t.Errorf("Bearer was rejected: status=%d body=%s", resp.StatusCode, body)
 	}
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
-		t.Errorf("IEEE-095 endpoint not mounted on admin listener: status=%d body=%s", resp.StatusCode, body)
+		t.Errorf("#159 endpoint not mounted on admin listener: status=%d body=%s", resp.StatusCode, body)
 	}
 }
 
@@ -116,7 +116,7 @@ func TestAdminListenerSplit_HTTPS(t *testing.T) {
 	}
 
 	// 2. Admin listener: TLS handshake succeeds without a client cert
-	//    (VerifyClientCertIfGiven), and no Bearer → 401. IEEE-132: XFF
+	//    (VerifyClientCertIfGiven), and no Bearer → 401. #246: XFF
 	//    forces the loopback bypass to decline so the auth chain runs.
 	adminClient := &http.Client{
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
@@ -133,7 +133,7 @@ func TestAdminListenerSplit_HTTPS(t *testing.T) {
 		t.Errorf("no-Bearer status on HTTPS admin = %d, want 401", resp.StatusCode)
 	}
 
-	// 3. Admin listener: Bearer → IEEE-095 endpoint reachable.
+	// 3. Admin listener: Bearer → #159 endpoint reachable.
 	req, _ := http.NewRequest(http.MethodPost, "https://"+env.adminAddr+"/api/certs/info", nil)
 	req.Header.Set("Authorization", "Bearer "+adminTestKey)
 	req.Header.Set("X-Forwarded-For", "203.0.113.5")
@@ -143,16 +143,16 @@ func TestAdminListenerSplit_HTTPS(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusNotFound {
-		t.Errorf("IEEE-095 endpoint not reachable: status=%d", resp.StatusCode)
+		t.Errorf("#159 endpoint not reachable: status=%d", resp.StatusCode)
 	}
 }
 
 // TestAdminListenerBackCompatAdminAddr asserts that empty AdminListen +
-// non-empty AdminAddr (pre-IEEE-094 env layout: SEP2_ADMIN_ADDR=...)
-// still works. The pre-IEEE-094 deployment used HTTPS self-signed on
+// non-empty AdminAddr (pre-#161 env layout: SEP2_ADMIN_ADDR=...)
+// still works. The pre-#161 deployment used HTTPS self-signed on
 // AdminAddr; the back-compat path matches that posture when AdminTLS is
-// also set (Craig's IEEE-094 brief defaults AdminTLS=false, so the
-// migration story for pre-IEEE-094 deployments is "flip AdminTLS=true to
+// also set (Craig's #161 brief defaults AdminTLS=false, so the
+// migration story for pre-#161 deployments is "flip AdminTLS=true to
 // keep HTTPS, or front with Caddy and keep AdminTLS=false").
 func TestAdminListenerBackCompatAdminAddr(t *testing.T) {
 	t.Parallel()
@@ -221,7 +221,7 @@ func TestAdminListenerOperatorCert(t *testing.T) {
 	}
 	adminCertPEM, adminKeyPEM, err := certs.GenerateServerCert(caCert, caKey, certs.ServerCertOptions{
 		Hosts:      []string{"127.0.0.1", "localhost"},
-		CommonName: "IEEE-094 Admin Cert",
+		CommonName: "server-split Admin Cert",
 		ValidYears: 1,
 	})
 	if err != nil {
@@ -373,7 +373,7 @@ func bootSplitListener(t *testing.T, opts splitListenerOpts) *splitListenerEnv {
 	}
 	deviceCertPEM, deviceKeyPEM, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
 		DeviceType:  certs.DeviceTypeGeneric,
-		HWSerialNum: "IEEE-094-PROBE",
+		HWSerialNum: "server-split-PROBE",
 	})
 	if err != nil {
 		t.Fatalf("GenerateDeviceCert: %v", err)
@@ -471,7 +471,7 @@ func newSplitListenerCerts(t *testing.T) *splitListenerCerts {
 	dir := t.TempDir()
 
 	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{
-		CommonName: "IEEE-094 Split Listener CA",
+		CommonName: "server-split Listener CA",
 		ValidYears: 1,
 	})
 	if err != nil {
@@ -487,7 +487,7 @@ func newSplitListenerCerts(t *testing.T) *splitListenerCerts {
 	}
 	serverCertPEM, serverKeyPEM, err := certs.GenerateServerCert(caCert, caKey, certs.ServerCertOptions{
 		Hosts:      []string{"127.0.0.1", "localhost"},
-		CommonName: "IEEE-094 Split Listener Server",
+		CommonName: "server-split Listener Server",
 		ValidYears: 1,
 	})
 	if err != nil {

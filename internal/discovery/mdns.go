@@ -22,7 +22,7 @@ const ServiceType = "_smartenergy._tcp"
 const AdminServiceType = "_http._tcp"
 
 // AdminHostname is the LAN-discovery hostname for the admin surface
-// (IEEE-133). It is intentionally not configurable: a stable hostname is
+// (#246). It is intentionally not configurable: a stable hostname is
 // the whole point. Hyphenated form because `2030.5.local` is invalid DNS
 // (a label may not begin with a digit-dot-digit sequence mid-label).
 const AdminHostname = "ieee2030-5.local"
@@ -134,7 +134,7 @@ type AdminConfig struct {
 
 // RegisterAdmin advertises the admin listener as `ieee2030-5.local` on
 // the LAN, gated on the caller already having decided to enable mDNS
-// (config.EnableMDNS). The hostname is fixed (IEEE-133); LAN discovery
+// (config.EnableMDNS). The hostname is fixed (#246); LAN discovery
 // needs a stable name, not a configurable one.
 //
 // The advertisement is skipped — without an error — when the admin

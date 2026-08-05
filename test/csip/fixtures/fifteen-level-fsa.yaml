@@ -1,6 +1,6 @@
-# IEEE-064 fixture — 15-level FSA priority chain for CORE-011.
+# #59 fixture — 15-level FSA priority chain for CORE-011.
 #
-# Extends IEEE-057's seven-level-fsa.yaml pattern from 7 levels to 15
+# Extends #52's seven-level-fsa.yaml pattern from 7 levels to 15
 # levels. One EndDevice; fifteen FunctionSetAssignments hung off it,
 # each pointing at a DERProgramList that contains exactly one
 # DERProgram. DERProgram primacy values ascend 0..14 (lower primacy =
@@ -9,7 +9,7 @@
 #
 # CSIP V1.2 does not mandate a vocabulary for the 15-level hierarchy
 # beyond what Noor's V1.2 matrix Section 4 documents. The level names
-# below are chosen by IEEE-064 for descriptive value; the assertions
+# below are chosen by #59 for descriptive value; the assertions
 # in core_011_fsa_fifteen_level_test.go key on primacy ordering and
 # the deterministic ID-as-zero-padded-int ordering produced by the
 # FSA store's key sort. They do NOT key on the descriptions.

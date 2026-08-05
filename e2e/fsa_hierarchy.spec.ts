@@ -1,4 +1,4 @@
-// IEEE-096: FSA hierarchy management dashboard tests.
+// #163: FSA hierarchy management dashboard tests.
 //
 // Each test creates its own admin FSA (UI or API) and cleans up after
 // itself via the API. No reliance on prior fixture state.
@@ -31,7 +31,7 @@ const apiDelete = (page: Page, url: string) =>
   page.request.delete(url, { headers: authHeaders });
 
 // 1) Panels render.
-test('IEEE-096: FSA Tree panel and Create FSA form render', async ({ page }) => {
+test('#163: FSA Tree panel and Create FSA form render', async ({ page }) => {
   await page.goto(baseUrl + '/?token=' + adminKey);
   await page.waitForLoadState('domcontentloaded');
 
@@ -42,7 +42,7 @@ test('IEEE-096: FSA Tree panel and Create FSA form render', async ({ page }) => 
 });
 
 // 2) Topology API smoke: SY -> FD -> SP root.
-test('IEEE-096: GET /api/topology returns SY -> FD -> SP root', async ({ page }) => {
+test('#163: GET /api/topology returns SY -> FD -> SP root', async ({ page }) => {
   await page.goto(baseUrl + '/?token=' + adminKey);
   const r = await apiGet(page, baseUrl + '/api/topology');
   expect(r.status()).toBe(200);
@@ -56,7 +56,7 @@ test('IEEE-096: GET /api/topology returns SY -> FD -> SP root', async ({ page })
 });
 
 // 3) Full UI: create FSA via the form, confirm it appears in the tree.
-test('IEEE-096: creating an FSA via the dashboard populates the tree', async ({ page }) => {
+test('#163: creating an FSA via the dashboard populates the tree', async ({ page }) => {
   const mRID = 'e2e-fsa-' + Date.now();
 
   await page.goto(baseUrl + '/?token=' + adminKey);
@@ -84,7 +84,7 @@ test('IEEE-096: creating an FSA via the dashboard populates the tree', async ({ 
 });
 
 // 4) Per-FSA Attach + Delete controls render in the tree.
-test('IEEE-096: per-FSA controls render in the tree', async ({ page }) => {
+test('#163: per-FSA controls render in the tree', async ({ page }) => {
   const mRID = 'e2e-ctrl-' + Date.now();
 
   await page.goto(baseUrl + '/?token=' + adminKey);
@@ -106,7 +106,7 @@ test('IEEE-096: per-FSA controls render in the tree', async ({ page }) => {
 
 // 5) Full lifecycle: API create + topology shows FSA as unassigned
 //    template at the SY root.
-test('IEEE-096: created FSA appears as unassigned template in topology', async ({ page }) => {
+test('#163: created FSA appears as unassigned template in topology', async ({ page }) => {
   const mRID = 'e2e-life-' + Date.now();
 
   await page.goto(baseUrl + '/?token=' + adminKey);

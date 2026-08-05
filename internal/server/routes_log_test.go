@@ -8,7 +8,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// TestRoutesEnumerationConfirmsCertAPIAdminOnly is the IEEE-140
+// TestRoutesEnumerationConfirmsCertAPIAdminOnly is the #272
 // defense-in-depth backstop for the Leon CRITICAL on PR #246. The
 // route-enumeration helpers (BuildProtocolRouter, BuildAdminRouter)
 // MUST report /api/certs/* patterns ONLY in the admin route list. A
@@ -30,8 +30,8 @@ func TestRoutesEnumerationConfirmsCertAPIAdminOnly(t *testing.T) {
 	_, protoRoutes := server.BuildProtocolRouter(cfg, stores, svc, "", "", nil)
 	_, adminRoutes := server.BuildAdminRouter("test-admin-key", svc, stores, "", nil, nil)
 
-	// Protocol routes MUST NOT contain any /api/certs/* pattern. A hit
-	// here is the regression IEEE-134 tried to prevent — surface it
+	// Protocol routes MUST NOT contain any /api/certs/* pattern: a hit
+	// here is the regression this test exists to prevent. Surface it
 	// loudly with the offending pattern echoed back.
 	for _, p := range protoRoutes {
 		if strings.Contains(p, "/api/certs") {
@@ -111,7 +111,7 @@ func TestProtocolRoutesContainsCanonicalSEP2(t *testing.T) {
 // TestAdminRoutesContainsLoginAndDashboard pins the public outer mux
 // and the dashboard registration so the boot log reflects every
 // admin-listener route, including the unauth login surface that
-// IEEE-138 (bundle B) will later host-allowlist.
+// #270 (bundle B) will later host-allowlist.
 func TestAdminRoutesContainsLoginAndDashboard(t *testing.T) {
 	t.Parallel()
 

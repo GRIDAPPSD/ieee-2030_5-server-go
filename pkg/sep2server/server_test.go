@@ -22,8 +22,8 @@ import (
 // TestProtocolServerTimeoutsSet asserts every timeout on the protocol
 // http.Server is non-zero. A zero timeout means no limit, which is a Slowloris
 // and slow-body exhaustion surface. This is the assertion that lived in
-// internal/server's timeout_test.go before IEEESRV-025 moved the protocol
-// server here; the guarantee is unchanged.
+// internal/server's timeout_test.go before the protocol server moved
+// here; the guarantee is unchanged.
 func TestProtocolServerTimeoutsSet(t *testing.T) {
 	t.Parallel()
 
@@ -277,7 +277,7 @@ func TestServerLifecycle(t *testing.T) {
 
 	// Identity is derived from the leaf, and both halves must be populated:
 	// /sdev and /sdev/sdi close over them, and an empty value there is the
-	// IEEE-001 regression.
+	// #1 regression.
 	if got := srv.Identity(); got.SFDI == "" || got.LFDI == "" {
 		t.Errorf("Identity is not fully populated: %+v", got)
 	}
@@ -421,7 +421,7 @@ func writeTLSMaterial(t *testing.T) tlsMaterial {
 	dir := t.TempDir()
 
 	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{
-		CommonName: "IEEESRV-025 Test CA",
+		CommonName: "sep2server Test CA",
 		ValidYears: 1,
 	})
 	if err != nil {
@@ -438,7 +438,7 @@ func writeTLSMaterial(t *testing.T) tlsMaterial {
 
 	serverCertPEM, serverKeyPEM, err := certs.GenerateServerCert(caCert, caKey, certs.ServerCertOptions{
 		Hosts:      []string{"127.0.0.1", "localhost"},
-		CommonName: "IEEESRV-025 Test Server",
+		CommonName: "sep2server Test Server",
 		ValidYears: 1,
 	})
 	if err != nil {
@@ -446,7 +446,7 @@ func writeTLSMaterial(t *testing.T) tlsMaterial {
 	}
 	deviceCertPEM, deviceKeyPEM, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
 		DeviceType:  certs.DeviceTypeGeneric,
-		HWSerialNum: "IEEESRV-025",
+		HWSerialNum: "sep2server-test",
 	})
 	if err != nil {
 		t.Fatalf("GenerateDeviceCert: %v", err)

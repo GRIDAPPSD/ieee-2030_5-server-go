@@ -1,4 +1,4 @@
-# IEEE-083 fixture — BASIC-015 Advanced Inverter Control composed modes (CSIP V1.2 §8.15).
+# #149 fixture — BASIC-015 Advanced Inverter Control composed modes (CSIP V1.2 §8.15).
 #
 # Per matrix Section 2 line 152: "Composition of modes; DERControl
 # uses multiple opMod* simultaneously" — first procedure that stacks

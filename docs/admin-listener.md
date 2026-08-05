@@ -20,12 +20,12 @@ default, so the admin listener can't share the SEP2 posture. The admin
 listener is therefore split off entirely. It runs on its own port and
 selects its TLS posture independently. `AdminAuthMiddleware` still gates the
 auth model — mTLS (operator cert), Bearer token, query-param ticket, and
-the IEEE-095 cookie all keep working.
+the #159 cookie all keep working.
 
-The `SEP2_ADMIN_ADDR` env var from the pre-IEEE-094 deployment is preserved
+The `SEP2_ADMIN_ADDR` env var from the pre-#161 deployment is preserved
 as a deprecated alias: empty `SEP2_ADMIN_LISTEN` falls back to it.
 
-### Loopback by default (IEEE-136)
+### Loopback by default (#268)
 
 A bare-port value (`:8444`, `:9443`) binds the admin listener to `127.0.0.1`
 by default, NOT `0.0.0.0`. This makes the admin surface safe-by-default —
@@ -73,13 +73,13 @@ at `docs/caddy-admin.example.conf`. Bind the admin port to localhost only
 (`SEP2_ADMIN_LISTEN=127.0.0.1:9443`) so the plain-HTTP socket is never
 exposed off-box.
 
-Caddy injects `X-Forwarded-For` by default, so the IEEE-132 loopback
+Caddy injects `X-Forwarded-For` by default, so the #246 loopback
 bypass declines automatically and normal Bearer / cookie / mTLS auth
 runs against operator requests routed through Caddy. Proxies that strip
 `X-Forwarded-*` would defeat this safety; verify your proxy preserves
 the `Forwarded-*` headers (or `Forwarded` per RFC 7239).
 
-### Reverse-proxy XFF requirement (IEEE-137)
+### Reverse-proxy XFF requirement (#269)
 
 `AdminAuthMiddleware` Path 0 admits requests that arrive over loopback
 with no proxy headers. That bypass is intentional — it makes a local
@@ -102,7 +102,7 @@ When the admin listener is bound to a non-loopback address
 WARNING explaining the requirement. Set `SEP2_ADMIN_BEHIND_PROXY=true`
 once the upstream proxy is verified to inject the headers.
 
-For loopback-only admin (the IEEE-136 default for bare-port input),
+For loopback-only admin (the #268 default for bare-port input),
 the warning does not fire — there is no proxy gap to mind because no
 public traffic can reach the listener.
 
@@ -110,14 +110,14 @@ If you hit `error:0A0000C6:SSL routines::packet length too long`, the
 admin listener is in plain-HTTP mode and you sent it TLS bytes — drop
 the `https://` or set `SEP2_ADMIN_TLS=true`.
 
-## Host-header allowlist (DNS-rebinding defense, IEEE-138)
+## Host-header allowlist (DNS-rebinding defense, #270)
 
 The admin listener wraps every request in a Host-header allowlist before
 the auth chain runs. The threat: with `ieee2030-5.local` advertised over
-mDNS (IEEE-133) and a loopback admin bind, a DNS-rebinding attacker can
+mDNS (#246) and a loopback admin bind, a DNS-rebinding attacker can
 resolve a malicious domain to `127.0.0.1`, lure a browser to a page
 hosted at that domain, and have the browser's same-origin requests hit
-the admin port. The IEEE-132 loopback bypass admits because RemoteAddr
+the admin port. The #246 loopback bypass admits because RemoteAddr
 is loopback. The host gate is the defense-in-depth.
 
 A request whose `Host` header is not on the allowlist receives HTTP 421
@@ -129,7 +129,7 @@ The static defaults — always installed — are:
 - `localhost`
 - `127.0.0.1`
 - `::1`
-- `ieee2030-5.local` (the IEEE-133 mDNS hostname)
+- `ieee2030-5.local` (the #246 mDNS hostname)
 
 Allowlist entries match BOTH the bare host and the host-with-port form,
 so an entry of `localhost` matches a `Host: localhost:8444` header from

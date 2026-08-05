@@ -1,7 +1,7 @@
 // CSIP V1.2 §6.6 — DER Program (advanced; multi-program priority chain).
 //
 // CORE-013 proves that a server seeded with the 7-program fixture
-// (derprogram-7.yaml — IEEE-065 ships this fixture) renders the
+// (derprogram-7.yaml — #60 ships this fixture) renders the
 // priority chain correctly:
 //
 //	/dcap → /edev → /edev/0 → /edev/0/fsa (list, all=7)
@@ -28,7 +28,7 @@
 // the per-program DERControlList (scoped by edev/fsa/derp tuple at
 // the handler) still routes correctly to the seeded controls.
 //
-// Procedure note on seeding: the IEEE-057 fixture loader's
+// Procedure note on seeding: the #52 fixture loader's
 // DERControlBaseSpec does not currently carry opModFixedPFInjectW
 // (FixedPowerFactor shape), and the server's router exposes only
 // `GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc` — no PUT/POST path

@@ -1,4 +1,4 @@
-# IEEE-057 fixture — 7-level FSA priority chain for CORE-010.
+# #52 fixture — 7-level FSA priority chain for CORE-010.
 #
 # One EndDevice; seven FunctionSetAssignments hung off it, each
 # pointing at a DERProgramList that contains exactly one DERProgram.
@@ -6,7 +6,7 @@
 # priority per spec §10.2; L0 is the system-level top).
 #
 # Priority chain (utility-down-to-inverter granularity; level names
-# chosen by IEEE-057 since CSIP V1.2 does not mandate a vocabulary —
+# chosen by #52 since CSIP V1.2 does not mandate a vocabulary —
 # Noor's V1.2 matrix Section 4 makes no fixed naming claim):
 #
 #   primacy 0  L0-system          System operator / RTO top of stack.

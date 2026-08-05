@@ -1,6 +1,6 @@
 // CSIP V1.2 §6.5 — DER Program (basic).
 //
-// CORE-012 proves that a server seeded with the IEEE-057
+// CORE-012 proves that a server seeded with the #52
 // `derprogram-single.yaml` fixture renders the full DERProgram
 // resource chain correctly over chained GETs:
 //
@@ -44,7 +44,7 @@
 //
 // Run under both GCM and CCM cipher modes so the spec cipher path
 // is exercised end-to-end on the same chained-walk procedure. CCM
-// is the IEEE-001 regression guard surface for the in-process
+// is the #1 regression guard surface for the in-process
 // harness.
 package csip_test
 
@@ -168,7 +168,7 @@ func runCORE012(t *testing.T, extraOpts []csiptest.BootOption) {
 
 // assertSingleProgramShape asserts that the lone DERProgram emitted by
 // the derprogram-single.yaml fixture carries the expected MRID, primacy,
-// and three downstream resource links. Per IEEE-057 the loader sets
+// and three downstream resource links. Per #52 the loader sets
 // every link from the fixture YAML — a nil link here means the loader
 // dropped the field or the server-side build path drifted.
 func assertSingleProgramShape(t *testing.T, prog sep2.DERProgram) {
@@ -196,7 +196,7 @@ func assertSingleProgramShape(t *testing.T, prog sep2.DERProgram) {
 // by every CORE-012/013 procedural test that pivots through the FSA
 // hierarchy.
 //
-// Lives in this file (not csiptest/) per IEEE-065 scope: the chained-
+// Lives in this file (not csiptest/) per #60 scope: the chained-
 // walk pattern is procedural test logic, not harness scaffolding.
 func walkToFirstFSA(t *testing.T, ctx context.Context, c *csiptest.Client) sep2.FunctionSetAssignments {
 	t.Helper()
@@ -242,7 +242,7 @@ func walkToFirstFSA(t *testing.T, ctx context.Context, c *csiptest.Client) sep2.
 // so no separate client-PKI dance is needed for read-only walks. The
 // CCM-mode subtest still uses the same Client; the stdlib http.Client
 // inside it negotiates GCM against the gotls server which accepts
-// either GCM or CCM-8 (tightening is gated on IEEE-019/020 per the
+// either GCM or CCM-8 (tightening is gated on #21/#22 per the
 // BASIC-001 doc-comment).
 func bootWithDERProgramFixture(t *testing.T, fixture string, extraOpts []csiptest.BootOption) *csiptest.BootedServer {
 	t.Helper()

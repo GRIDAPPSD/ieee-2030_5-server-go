@@ -1,6 +1,6 @@
-# IEEE-082/IEEE-092 fixture — BASIC-004 LVRT/HVRT (CSIP V1.2 §8.4).
+# #135/#140 fixture — BASIC-004 LVRT/HVRT (CSIP V1.2 §8.4).
 #
-# IEEE-092 added the four LVRT/HVRT curve-ref fields to
+# #140 added the four LVRT/HVRT curve-ref fields to
 # pkg/sep2.DERControlBase. The fixture now seeds all four, each
 # pointing at the corresponding DERCurve id in /dc; the procedure
 # walk asserts each ref round-trips on the wire and the curve-list
@@ -47,7 +47,7 @@ der_controls:
     id: "0"
     mrid: "BASIC-004-DERC"
     der_control_base:
-      # Curve IDs reference der_curves[].id below. IEEE-092 fields.
+      # Curve IDs reference der_curves[].id below. #140 fields.
       op_mod_lvrt_must_trip: 0
       op_mod_lvrt_momentary_cessation: 1
       op_mod_hvrt_must_trip: 2
@@ -58,7 +58,7 @@ der_controls:
 # carry a "ride-through mode" sub-classifier; curveType=0 (VoltVar) is
 # the closest existing tag. The procedure walk renders these as
 # generic curves; the per-mode assertion that would discriminate them
-# by sub-type is pinned by IEEE-092.
+# by sub-type is pinned by #140.
 der_curves:
   - id: "0"
     mrid: "BASIC-004-LVRT-MUST-TRIP"

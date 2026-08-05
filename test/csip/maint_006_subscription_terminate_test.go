@@ -3,19 +3,19 @@
 // CSIP V1.2 §11.6 — Subscription Terminate (Server Refuses Retry).
 //
 // MAINT-006 asserts that after the server cancels a subscription (via
-// the IEEE-079 /test/mutations/subscription-cancel mutation), a
+// the #126 /test/mutations/subscription-cancel mutation), a
 // subsequent client POST /edev/{id}/sub that resolves to the same
 // subscription ID is refused with HTTP 409 Conflict.
 //
 // Scope boundary: the V1.2 spec also calls out a client-side polling
 // fallback when subscriptions are refused. That behavior is plan-1's
 // problem (client-side conformance). MAINT-006 here asserts only the
-// server-side refusal semantics. See IEEE-091 ticket "Scope boundary".
+// server-side refusal semantics. See #155 ticket "Scope boundary".
 //
 // V1.2 procedure step → assertion mapping:
 //
 //	Step 1: client POSTs a Subscription with X-CSIP-Test-Subscription-ID
-//	        header to pin a deterministic ID (the IEEE-079 hook). 201
+//	        header to pin a deterministic ID (the #126 hook). 201
 //	        Created; sub lives in the store.
 //	                                          ──► POST /edev/{id}/sub + hdr
 //	Step 2: server cancels via the mutation hook.
@@ -28,7 +28,7 @@
 //	                                          ──► POST /edev/{id}/sub + hdr (same id)
 //	                                          ──► 409 Conflict
 //
-// Pike-back from IEEE-087 flagged that HandleDeleteSubscription doesn't
+// Pike-back from #151 flagged that HandleDeleteSubscription doesn't
 // POST a final Removed-Notification. That gap is unrelated to MAINT-006
 // (the spec's care-about is refusal of retry, not a removal notice);
 // filed as a follow-up rather than fixing in scope. See journal entry.
@@ -36,7 +36,7 @@
 // Build-tag: csip_test_hooks for the subscription-cancel mutation AND
 // the X-CSIP-Test-Subscription-ID + tombstone hooks in coresub.
 //
-// IEEE-091 / Phase 6.
+// #155 / Phase 6.
 
 package csip_test
 

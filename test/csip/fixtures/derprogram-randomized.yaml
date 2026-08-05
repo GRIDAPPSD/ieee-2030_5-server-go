@@ -1,4 +1,4 @@
-# IEEE-066 fixture — one DERProgram with one DERControl that the test
+# #61 fixture — one DERProgram with one DERControl that the test
 # augments with RandomizeStart/RandomizeDuration. Targets CORE-021
 # (Randomized Events, server-side emission) per V1.2 §7.1.
 #
@@ -9,7 +9,7 @@
 # The DERControl seeded here carries an opModFixedW value so the test
 # has a concrete control to walk to. The RandomizeStart and
 # RandomizeDuration fields are NOT settable through csiptest's fixture
-# loader (loader internals are off-limits per IEEE-058 — fixture schema
+# loader (loader internals are off-limits per #53 — fixture schema
 # is frozen). The test writes them onto the loaded DERControl directly
 # via the public store API before booting the server. The values the
 # test sets are documented here for cross-reference:

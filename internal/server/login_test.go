@@ -12,7 +12,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// IEEE-095 login flow tests.
+// #159 login flow tests.
 
 func TestLoginPageRendersForm(t *testing.T) {
 	h := server.HandleLoginPage("")

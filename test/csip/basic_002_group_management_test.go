@@ -337,7 +337,7 @@ func intToID(i int) string {
 
 // bootWithBasicFixture loads the named fixture under fixtures/ into a
 // fresh store set and boots an in-process server. Shared across the
-// BASIC-002..012 tests - every BASIC-NNN test in IEEE-082 has the
+// BASIC-002..012 tests - every BASIC-NNN test in #135 has the
 // same boot shape (load YAML, then walk via TLS client). Centralizing
 // the 12-line boot pattern keeps each procedure test focused on its
 // per-mode assertions.
@@ -352,7 +352,7 @@ func bootWithBasicFixture(
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
 		FSAs:               stores.FSAs,
-		DERPrograms:        stores.DERPrograms, // IEEE-097 wrapper; IEEE-104.
+		DERPrograms:        stores.DERPrograms, // #165 wrapper; #175.
 		DERControls:        stores.DERControls,
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,

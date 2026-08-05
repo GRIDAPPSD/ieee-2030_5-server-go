@@ -1,6 +1,6 @@
 package server
 
-// IEEE-112 — boot connection-details banner.
+// #206 — boot connection-details banner.
 //
 // The format test pins the rendered banner shape so future log changes are
 // deliberate. The banner is operator-facing: a human reads it once at boot

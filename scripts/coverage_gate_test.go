@@ -1,4 +1,4 @@
-// IEEE-107 — Coverage-gate script unit tests.
+// #193 — Coverage-gate script unit tests.
 //
 // The gate is a shell script (scripts/coverage-gate.sh); we test it
 // from Go because the rest of the test suite is `go test` and CI

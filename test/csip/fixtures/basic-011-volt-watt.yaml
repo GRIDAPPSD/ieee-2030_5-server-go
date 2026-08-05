@@ -1,6 +1,6 @@
-# IEEE-082/IEEE-092 fixture — BASIC-011 Volt/Watt (CSIP V1.2 §8.11).
+# #135/#140 fixture — BASIC-011 Volt/Watt (CSIP V1.2 §8.11).
 #
-# IEEE-092 added opModVoltWatt to pkg/sep2.DERControlBase. The
+# #140 added opModVoltWatt to pkg/sep2.DERControlBase. The
 # fixture seeds it pointing at DERCurve id "0" (curveType =
 # CurveTypeOpModVoltWatt = 3).
 

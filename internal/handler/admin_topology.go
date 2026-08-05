@@ -9,7 +9,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store/memory"
 )
 
-// IEEE-096: GET /api/topology returns the SY -> FD -> SP -> DEV tree for
+// #163: GET /api/topology returns the SY -> FD -> SP -> DEV tree for
 // the dashboard. SY and FD/SP are stubs (single root, single feeder, single
 // service-point) until the spec exposes them as first-class resources; the
 // useful information is the DEV layer with FSAs and programs hanging off.

@@ -3,7 +3,7 @@
 // CSIP V1.2 §11.3 — Group Maintenance (EndDevice → FSA reassignment).
 //
 // MAINT-003 asserts the FSA-swap flow: the server moves an EndDevice's
-// FunctionSetAssignment from one FSA id to another (the IEEE-078
+// FunctionSetAssignment from one FSA id to another (the #123
 // /test/mutations/fsa-swap hook), and the aggregator observes a
 // Notification on the FSAList href so it can update its subscription
 // topology.
@@ -21,7 +21,7 @@
 //	                                          ──► store: GET fsa-new succeeds, fsa-old gone
 //	Step 3: server emits FSAList Notification. The mutation handler
 //	        is intentionally store-only; we drive Notify in-test the
-//	        same way IEEE-087 does. The aggregator (test receiver)
+//	        same way #151 does. The aggregator (test receiver)
 //	        observes the Notification and reacts (in production it
 //	        would re-subscribe to the new FSA's DERProgramList; that
 //	        re-subscribe step is plan-1's concern. Server-side scope
@@ -31,7 +31,7 @@
 //
 // Build-tag: csip_test_hooks is required for the fsa-swap mutation.
 //
-// IEEE-091 / Phase 6.
+// #155 / Phase 6.
 
 package csip_test
 

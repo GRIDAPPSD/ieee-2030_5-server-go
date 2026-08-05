@@ -1,7 +1,7 @@
-# IEEE-082/IEEE-092 fixture — BASIC-007 Ramp Rates (CSIP V1.2 §8.7).
+# #135/#140 fixture — BASIC-007 Ramp Rates (CSIP V1.2 §8.7).
 #
 # CSIP §8.7 is the only V1.2 BASIC procedure that targets
-# DefaultDERControl directly (no DERControl event). IEEE-092 added
+# DefaultDERControl directly (no DERControl event). #140 added
 # setGradW and setSoftGradW to pkg/sep2.DefaultDERControl per
 # IEEE 2030.5 §10.11 (Unsigned16, hundredths of percent per second).
 # The fixture seeds both, plus RampTms on DERControlBase for the

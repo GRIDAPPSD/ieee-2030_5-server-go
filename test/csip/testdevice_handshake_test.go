@@ -1,4 +1,4 @@
-// IEEE-068 CSIP device server runtime profile: smoke test.
+// #75 CSIP device server runtime profile: smoke test.
 //
 // Proves the end-to-end runtime story works against self-minted test PKI
 // under testdata/csip-pki/testdevice/. Boots an in-process server in CCM
@@ -10,7 +10,7 @@
 // HardwareModuleName SAN, an empty Subject, proper Key Usage, and Basic
 // Constraints. The server runs in its default (non-strict) mode, which
 // accepts both compliant and non-compliant device certs. Strict mode
-// (SEP2_CSIP_STRICT=true, gated on IEEE-020) would also accept this cert.
+// (SEP2_CSIP_STRICT=true, gated on #22) would also accept this cert.
 //
 // This test runs unconditionally: the PKI material is committed to
 // testdata/ and has no external dependency.
@@ -43,7 +43,7 @@ const (
 	testdeviceSFDI = "397028461857"
 )
 
-// TestDeviceHandshake exercises the IEEE-068 cert-trust + handshake path
+// TestDeviceHandshake exercises the #75 cert-trust + handshake path
 // against the self-minted test device PKI.
 func TestDeviceHandshake(t *testing.T) {
 	// Resolve the PKI paths up-front so a clean-clone failure surfaces

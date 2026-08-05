@@ -1,4 +1,4 @@
-// IEEE-057 fixture loader for the CSIP conformance harness.
+// #52 fixture loader for the CSIP conformance harness.
 //
 // Test authors describe their topology as YAML - EndDevices, FSAs,
 // DERPrograms, DefaultDERControls, DERControls, DERCurves - and Load
@@ -11,7 +11,7 @@
 //   - Loader writes through the public pkg/store/ + pkg/store/memory/
 //     types only. It does NOT reach into any private package state.
 //     Same fixtures stay valid against a future SQL-backed store
-//     (per phase doc IEEE-057 hard constraint).
+//     (per phase doc #52 hard constraint).
 //   - Loader does not depend on internal/server. The consumer adapts
 //     its server.Stores to Target at the call site - Phase 3 tests
 //     own that 8-line adapter.
@@ -19,7 +19,7 @@
 //     Load yields the same state. Loading twice without resetting
 //     errors with store.ErrAlreadyExists, by design - the harness
 //     test isolation rule is "one Target per test" (paired with
-//     IEEE-058's BootServer).
+//     #53's BootServer).
 //   - Errors wrap with %w at every boundary (read, unmarshal, store
 //     write), and every error message cites the fixture path so a
 //     malformed file surfaces in test logs without ambiguity.
@@ -65,8 +65,8 @@ type Target struct {
 	FSAs       *memory.ScopedStore[sep2.FunctionSetAssignments]
 	// DERPrograms is the store.ScopedStore contract, so a booted server's
 	// *memory.DERProgramStore and a bare *memory.ScopedStore both satisfy
-	// it. Core IEEECORE-085 unexported the wrapper's inner collection, so
-	// the contract is the only surface the two share. See IEEESRV-038.
+	// it. Core unexported the wrapper's inner collection, so the contract
+	// is the only surface the two share.
 	DERPrograms        store.ScopedStore[sep2.DERProgram]
 	DERControls        *memory.ScopedStore[sep2.DERControl]
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]
@@ -149,8 +149,8 @@ type DERProgramSpec struct {
 //
 // SetGradW / SetSoftGradW live on the DefaultDERControl directly (per
 // IEEE 2030.5 Section 10.11), not on DERControlBase - they are device-level
-// default ramp rates, not per-event overrides. IEEE-092 wired these
-// through after IEEE-082's BASIC-007 skip-flip.
+// default ramp rates, not per-event overrides. #140 wired these
+// through after #135's BASIC-007 skip-flip.
 type DefaultDERControlSpec struct {
 	EndDeviceID    string              `yaml:"end_device_id"`
 	FSAID          string              `yaml:"fsa_id"`
@@ -165,11 +165,11 @@ type DefaultDERControlSpec struct {
 // (EndDevice, FSA, DERProgram). Same composite scope key as
 // DefaultDERControl; ID is the per-event key.
 //
-// IEEE-084 (BASIC-016..020 non-overlap event-prioritization) extended
+// #143 (BASIC-016..020 non-overlap event-prioritization) extended
 // this with Interval, EventStatus, and Description so fixtures can
 // express the per-event timing windows the V1.2 Section 8.16 to Section 8.20 procedures
 // assert. MRID was previously declared but never copied to the
-// rendered DERControl - IEEE-084 plumbs that through buildDERControl
+// rendered DERControl - #143 plumbs that through buildDERControl
 // too (latent bug fix in scope).
 type DERControlSpec struct {
 	EndDeviceID    string              `yaml:"end_device_id"`
@@ -200,7 +200,7 @@ type EventStatusSpec struct {
 // IntervalSpec is the YAML shape of sep2.DateTimeInterval. Start is
 // the epoch seconds the event becomes Active; Duration is its length
 // in seconds. The BASIC-016..020 non-overlap fixtures place events on
-// disjoint [Start, Start+Duration) windows; IEEE-085 (overlapping)
+// disjoint [Start, Start+Duration) windows; #145 (overlapping)
 // will reuse the same spec with intersecting windows.
 type IntervalSpec struct {
 	Start    int64  `yaml:"start"`
@@ -227,8 +227,8 @@ type CurveDataSpec struct {
 // tests require them - keeping the surface narrow makes each fixture
 // readable.
 //
-// IEEE-082 (BASIC-002 + BASIC-004..012) extended this with
-// op_mod_fixed_pf_inject_w. IEEE-092 wired the remaining per-mode
+// #135 (BASIC-002 + BASIC-004..012) extended this with
+// op_mod_fixed_pf_inject_w. #140 wired the remaining per-mode
 // curve-reference fields (LVRT/HVRT/LFRT/HFRT, VoltWatt, FreqWatt) and
 // flipped the BASIC-004/005/007/011/012 skips to active assertions.
 // SetGradW/SetSoftGradW live on DefaultDERControlSpec, not here, per

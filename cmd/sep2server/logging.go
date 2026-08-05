@@ -7,7 +7,7 @@ import (
 
 // setupLogging routes the stdlib log package through a slog JSON handler.
 //
-// IEEE-172: the observability stack ingests container stdout via Promtail,
+// #253: the observability stack ingests container stdout via Promtail,
 // which keeps the line opaque and relies on read-time LogQL. JSON on stdout
 // is therefore the right wire shape: Promtail forwards the raw line to Loki,
 // and Grafana/LogQL parse the fields at query time.

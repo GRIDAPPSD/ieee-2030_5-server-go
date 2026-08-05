@@ -114,7 +114,7 @@ func TestACLNoMatchingRule(t *testing.T) {
 	}
 }
 
-// TestDefaultACLRulesAllowDeleteOnEdev guards the IEEE-023 / CSIP V1.2
+// TestDefaultACLRulesAllowDeleteOnEdev guards the #26 / CSIP V1.2
 // MAINT-002 requirement that HTTP DELETE be permitted on /edev/{id}.
 // Without DELETE in the bitmap the ACL middleware short-circuits with 405
 // before the handler runs.

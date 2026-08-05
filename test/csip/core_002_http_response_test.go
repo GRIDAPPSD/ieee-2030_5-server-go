@@ -12,7 +12,7 @@
 // failed) and 501 for "Not Implemented" (the server does not support
 // the functionality required to fulfill the request), which is the
 // CSIP-intended meaning here. Match the procedure step, not the
-// summary line. The PR description for IEEE-059 calls this out at top.
+// summary line. The PR description for #54 calls this out at top.
 //
 // V1.2 procedure step → assertion mapping (per V1.2 §5.5 procedure):
 //
@@ -21,12 +21,12 @@
 //	        the server does not implement)     ────► GET <BaseURL>/<probe>
 //	Step 3 (assert response status code = 501) ────► resp.StatusCode == 501
 //
-// STATUS TODAY (PHASE 3, IEEE-059):
+// STATUS TODAY (PHASE 3, #54):
 //
 // The ieee-2030_5-go server does not currently emit 501 from any
 // handler. Unmatched paths fall through to Go's net/http.ServeMux and
 // return 404. There is no production code path that returns
-// http.StatusNotImplemented — verified at IEEE-059 ship time by:
+// http.StatusNotImplemented — verified at #54 ship time by:
 //
 //	$ grep -rn "StatusNotImplemented" internal/ pkg/ cmd/
 //	(0 hits)
@@ -34,7 +34,7 @@
 // CORE-002's procedure therefore has no satisfying production behavior
 // to assert against today.
 //
-// Following the precedent set by IEEE-067's COMM-003 skeleton (Phase 3
+// Following the precedent set by #62's COMM-003 skeleton (Phase 3
 // exit criterion #5 — "No silent passes; TODO-skeleton with explicit
 // blocker citation"), this test is shipped as a documented skeleton
 // that t.Skip's when no 501-producing endpoint is found. The skeleton

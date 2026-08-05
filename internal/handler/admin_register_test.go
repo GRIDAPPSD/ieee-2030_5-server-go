@@ -22,7 +22,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 )
 
-// IEEE-095 admin-registration handler tests.
+// #159 admin-registration handler tests.
 
 // --- /api/certs/info -------------------------------------------------------
 
@@ -55,8 +55,8 @@ func TestCertInfoRawBody(t *testing.T) {
 	if got["fingerprint"] == "" || len(got["fingerprint"]) != 64 {
 		t.Errorf("fingerprint must be 64 hex chars, got %q", got["fingerprint"])
 	}
-	if !strings.Contains(got["hardwareModuleName"], "TEST-IEEE-095") {
-		t.Errorf("expected hardwareModuleName carrying TEST-IEEE-095, got %q", got["hardwareModuleName"])
+	if !strings.Contains(got["hardwareModuleName"], "TEST-admin-register") {
+		t.Errorf("expected hardwareModuleName carrying TEST-admin-register, got %q", got["hardwareModuleName"])
 	}
 }
 
@@ -392,7 +392,7 @@ func TestAddEndDeviceRequiresRegsStore(t *testing.T) {
 
 func freshDeviceCert(t *testing.T) ([]byte, *x509.Certificate) {
 	t.Helper()
-	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{CommonName: "IEEE-095 CA", ValidYears: 1})
+	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{CommonName: "admin-register Test CA", ValidYears: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +402,7 @@ func freshDeviceCert(t *testing.T) ([]byte, *x509.Certificate) {
 	}
 	certPEM, _, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
 		DeviceType:  certs.DeviceTypeGeneric,
-		HWSerialNum: "TEST-IEEE-095",
+		HWSerialNum: "TEST-admin-register",
 	})
 	if err != nil {
 		t.Fatal(err)

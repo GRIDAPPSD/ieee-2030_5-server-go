@@ -8,7 +8,7 @@ import { join } from 'path';
  * the output path. Each worker still creates its own certDir and spawns
  * its own server instance; only the build step is hoisted here.
  *
- * Fixes IEEE-114: concurrent workers calling `go build -o sep2server` to the
+ * Fixes #209: concurrent workers calling `go build -o sep2server` to the
  * same shared path caused ETXTBSY on exec (one worker writing while another
  * exec'd the partial binary).
  */

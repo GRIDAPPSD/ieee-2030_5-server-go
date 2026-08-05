@@ -35,8 +35,8 @@ for protocol conformance, but operators usually do.
 |---|---|---|---|---|
 | DeviceCapability (DCAP) | Supported | n/a (static) | — | [`handler/dcap.go`](../internal/handler/dcap.go) |
 | Time | Supported | n/a (clock) | — | [`handler/time.go`](../internal/handler/time.go) |
-| EndDevice + Registration | Supported | Supported (`SEP2_DATA_DIR`, IEEE-097) | Supported (`POST /api/devices`, IEEE-095; dashboard "Add End Device" form) | [`handler/edev.go`](../internal/handler/edev.go), [`handler/registration.go`](../internal/handler/registration.go) |
-| FunctionSetAssignments | Supported | Supported | Supported (FSA management API + dashboard tree, IEEE-096) | [`handler/fsa.go`](../internal/handler/fsa.go), [`handler/admin_fsa.go`](../internal/handler/admin_fsa.go) |
+| EndDevice + Registration | Supported | Supported (`SEP2_DATA_DIR`, #165) | Supported (`POST /api/devices`, #159; dashboard "Add End Device" form) | [`handler/edev.go`](../internal/handler/edev.go), [`handler/registration.go`](../internal/handler/registration.go) |
+| FunctionSetAssignments | Supported | Supported | Supported (FSA management API + dashboard tree, #163) | [`handler/fsa.go`](../internal/handler/fsa.go), [`handler/admin_fsa.go`](../internal/handler/admin_fsa.go) |
 | DER (DER, DERCapability, DERSettings, DERStatus, DERAvailability) | Supported | Supported | Partial (DER list visible on dashboard via the EndDevice rollup; no per-DER edit UI) | [`handler/der.go`](../internal/handler/der.go) |
 | DERProgram + DERControl + DefaultDERControl | Supported | Supported (DERProgram disk-backed) | Partial (Send-DER-Control form is wired in HTML but the POST is a stub — see `dashboard_html.go` "TODO: POST to /api/der/controls") | [`handler/der.go`](../internal/handler/der.go) |
 | DERCurve | Supported | In-memory only | — | [`handler/der.go`](../internal/handler/der.go) |
@@ -47,7 +47,7 @@ for protocol conformance, but operators usually do.
 | Response | Supported | In-memory | — | [`handler/messaging.go`](../internal/handler/messaging.go) |
 | FlowReservation | Supported | In-memory | — | [`handler/flow_reservation.go`](../internal/handler/flow_reservation.go) |
 | DRLC | Planned | — | — | No handler wired. `FunctionSetDRLC` constant exists in [`pkg/sep2/log_event.go`](../pkg/sep2/log_event.go); no open ticket yet. |
-| Mode coverage gap (LVRT / HVRT / LFRT / HFRT, VoltWatt, FreqWatt, setGradW / setSoftGradW) | Partial | Partial | — | Tracked in [#140 (IEEE-092)](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/140). Affects DERSettings + DefaultDERControl. |
+| Mode coverage gap (LVRT / HVRT / LFRT / HFRT, VoltWatt, FreqWatt, setGradW / setSoftGradW) | Partial | Partial | — | Tracked in [#140](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/140). Affects DERSettings + DefaultDERControl. |
 
 ## Cert profile (CSIP §6.11 / IEEE 2030.5 §6.11)
 
@@ -162,7 +162,7 @@ Server-side TLS stacks:
 > **GCM-fallback footnote:** under `run-ccm` the server still accepts a
 > non-CSIP client that lands on GCM. Strict-mode (handshake fails when
 > the peer can't negotiate CCM-8) is tracked under
-> [#22 (IEEE-020)](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/22).
+> [#22](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/22).
 > Until that lands, conformance must be confirmed in the server's
 > handshake log, not assumed from the target name.
 
@@ -185,7 +185,7 @@ Two run modes:
 
 - `make test-csip` — production code path (no build tag).
 - `make test-csip-hooks` — same suite under the `csip_test_hooks` build
-  tag, which compiles in the IEEE-024 mutation surface and IEEE-025
+  tag, which compiles in the #27 mutation surface and #28
   time-advance hook. The mutation surface is an `httptest`-only mux
   registered by `RegisterMutationHandlers` in
   [`internal/server/test_mutations.go`](../internal/server/test_mutations.go);
@@ -194,7 +194,7 @@ Two run modes:
 Coverage gate: `make test-csip-cover` writes `coverage-csip.out` over a
 pinned `-coverpkg` list (the `CSIP_COVERPKG` Make variable);
 `make coverage-gate` enforces the floor (currently 80%, ratcheted at
-IEEE-121).
+#212).
 
 ## Operator profiles
 
@@ -209,7 +209,7 @@ Two ready-made CSIP-flavored boot profiles ship under Make targets:
   relocate the trust bundle (default points at the operator's Knowledge
   workspace, which is gitignored).
 
-Both targets print a connection-details banner at boot (IEEE-112).
+Both targets print a connection-details banner at boot (#206).
 
 ## Cross-references
 

@@ -41,7 +41,7 @@
 // lands, add lines for the two fields to the post-PUT payload below
 // and the round-trip assertions in step 5; no other code path changes.
 //
-// IEEE-191 (core v0.10.0): StateOfChargeStatus changed from a bare
+// core v0.10.0: StateOfChargeStatus changed from a bare
 // *uint16 to *sep2.StateOfChargeStatusType, a complexType with a
 // required dateTime (sep.xsd:4189) alongside the required PerCent
 // value (sep.xsd:4566-4582, UInt16 in hundredths of a percent,
@@ -280,8 +280,8 @@ func assertOperationalModeStatus(t *testing.T, name string, got, want *sep2.Oper
 }
 
 // assertStateOfChargeStatus mirrors assertConnectStatus for
-// StateOfChargeStatusType. IEEE-191 turned StateOfChargeStatus from a
-// bare *uint16 into this complexType (required dateTime + PerCent
+// StateOfChargeStatusType. core v0.10.0 turned StateOfChargeStatus from
+// a bare *uint16 into this complexType (required dateTime + PerCent
 // value); this helper is the round-trip check that a scalar dereference
 // can no longer express.
 func assertStateOfChargeStatus(t *testing.T, name string, got, want *sep2.StateOfChargeStatusType) {
@@ -300,8 +300,8 @@ func assertStateOfChargeStatus(t *testing.T, name string, got, want *sep2.StateO
 
 // assertStorageModeStatus mirrors assertConnectStatus for
 // StorageModeStatusType, the field core v0.10.0 added to DERStatus
-// alongside the IEEE-191 fix (sep.xsd:4195). Additive, not part of the
-// IEEE-191 break, but the same round-trip shape.
+// alongside the StateOfChargeStatus fix above (sep.xsd:4195). Additive,
+// not part of that break, but the same round-trip shape.
 func assertStorageModeStatus(t *testing.T, name string, got, want *sep2.StorageModeStatusType) {
 	t.Helper()
 	if got == nil {

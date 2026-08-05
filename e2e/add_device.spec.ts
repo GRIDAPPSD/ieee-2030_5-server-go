@@ -4,7 +4,7 @@ import { join } from 'path';
 import { readFileSync } from 'fs';
 import { startServer, stopServer, getCertDir } from './setup';
 
-// IEEE-095: Add EndDevice flow.
+// #159: Add EndDevice flow.
 // Paste a freshly generated device cert → Parse Cert auto-fills SFDI/LFDI →
 // fill PIN + description → click Add Device → device appears in the list.
 //
@@ -39,7 +39,7 @@ test('add device from pasted certificate', async ({ page }) => {
     'certs', 'generate-device',
     '--ca', join(certDir, 'ca.crt'),
     '--ca-key', join(certDir, 'ca.key'),
-    '--hw-serial', 'IEEE-095-E2E',
+    '--hw-serial', 'add-device-E2E',
     '--hw-type', '1.3.6.1.4.1.40732.99',
     '--out', certDir,
     '--name', 'e2e-test-device',
@@ -62,7 +62,7 @@ test('add device from pasted certificate', async ({ page }) => {
   expect(lfdi).toMatch(/^[0-9A-Fa-f]{40}$/);
 
   // 3) Fill description + PIN, leave Enabled checked.
-  await page.locator('#addDevDesc').fill('IEEE-095 E2E test device');
+  await page.locator('#addDevDesc').fill('add-device E2E test device');
   await page.locator('#addDevPIN').fill('424242');
 
   // 4) Submit.

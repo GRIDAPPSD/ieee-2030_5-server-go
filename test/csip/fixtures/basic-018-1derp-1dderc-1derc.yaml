@@ -1,4 +1,4 @@
-# IEEE-084 / BASIC-018 fixture — CSIP V1.2 §8.18.
+# #143 / BASIC-018 fixture — CSIP V1.2 §8.18.
 #
 # Topology: 1 DERProgram, 1 DefaultDERControl, 1 DERControl. The
 # DDERC carries opModFixedW = 2 kW (the fallback when no event is

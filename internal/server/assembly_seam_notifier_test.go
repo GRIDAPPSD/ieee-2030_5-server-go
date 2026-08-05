@@ -43,7 +43,7 @@ func (n *noopNotifierBasic) Notify(_ context.Context, _ string, _ uint8) {}
 // notifier implements notifyRemover, the adapter calls through to it and
 // returns its error. This is the load-bearing path for CSIP V1.2 sec 11.6
 // (subscription DELETE final Removed Notification) that was silently dropped
-// before IEEESRV-002 fixed the adapter.
+// before the adapter was fixed.
 func TestNotifierAdapterNotifyRemovedForwards(t *testing.T) {
 	t.Parallel()
 

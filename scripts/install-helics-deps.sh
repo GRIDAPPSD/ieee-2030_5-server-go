@@ -2,9 +2,9 @@
 # install-helics-deps.sh
 #
 # Provision HELICS 3 and GridLAB-D (with HELICS support) on a fresh Debian/Ubuntu
-# host so the IEEE 2030.5 plan-5 co-simulation work (IEEE-144..169) can build.
+# host so the IEEE 2030.5 plan-5 HELICS/GridLAB-D co-simulation work can build.
 #
-# Owner: IEEE-170 (Plan-5, Phase 1 prerequisite).
+# Owner: #251 (Plan-5, Phase 1 prerequisite).
 #
 # What this installs:
 #   * HELICS 3 (https://github.com/GMLC-TDC/HELICS) at the pinned tag below,
@@ -19,8 +19,6 @@
 # Idempotent: re-running after a clean install short-circuits both halves.
 #
 # References:
-#   * Recon: knowledge/projects/ieee-2030_5-go/artifacts/outputs/IEEE-plan5-gridlabd-recon.md
-#   * Plan: knowledge/projects/ieee-2030_5-go/plans/plan-5-gridlabd-helics-der/plan.md
 #   * ADR-002, ADR-004 (in-house cgo wrapper against system libhelics)
 #
 # Constraint update from Craig (2026-06-02):
@@ -134,7 +132,7 @@ install_helics() {
         cd "${HELICS_DIR}"
         git fetch --tags origin
         git checkout "${HELICS_TAG}"
-        # Mandatory per the IEEE-170 constraint update: HELICS pulls
+        # Mandatory per the #251 constraint update: HELICS pulls
         # asio / zmq / fmtlib / spdlog / etc. as submodules.
         git submodule update --init --recursive
     )
@@ -201,7 +199,7 @@ install_gridlabd() {
         git fetch origin "${GRIDLABD_BRANCH}"
         git checkout "${GRIDLABD_BRANCH}"
         git pull --ff-only origin "${GRIDLABD_BRANCH}"
-        # Mandatory per the IEEE-170 constraint update.
+        # Mandatory per the #251 constraint update.
         git submodule update --init --recursive
     )
     gridlabd_new_head="$(git -C "${GRIDLABD_DIR}" rev-parse HEAD)"

@@ -1,6 +1,6 @@
-// package server (white-box): tests for resolveSubParam, the IEEESRV-008
-// helper that reads SEP2_SUBSCRIPTION_WORKERS and SEP2_SUBSCRIPTION_QUEUE_SIZE
-// from the environment and falls back to the compile-time defaults on bad input.
+// package server (white-box): tests for resolveSubParam, the helper that
+// reads SEP2_SUBSCRIPTION_WORKERS and SEP2_SUBSCRIPTION_QUEUE_SIZE from
+// the environment and falls back to the compile-time defaults on bad input.
 package server
 
 import (
@@ -67,7 +67,7 @@ func TestResolveSubParam_FallbackOnNegative(t *testing.T) {
 func TestResolveSubParam_WhitespacePaddedValue(t *testing.T) {
 	// A value with leading/trailing whitespace (easy to produce from a shell
 	// export or a sweep script) must resolve to the integer, not fall back to
-	// the default. Covers the Pike LOW finding on IEEESRV-008.
+	// the default. Covers a Pike LOW finding.
 	t.Setenv("SEP2_SUBSCRIPTION_WORKERS", " 8 ")
 	got := resolveSubParam("SEP2_SUBSCRIPTION_WORKERS", 4)
 	if got != 8 {

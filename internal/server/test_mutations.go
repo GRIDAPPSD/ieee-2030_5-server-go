@@ -16,8 +16,8 @@
 // a belt-and-suspenders against a misconfigured production-with-tag build
 // exposing mutation endpoints unauthenticated.
 //
-// IEEE-024 (BASIC/MAINT mutations) / IEEE-025 (time-advance) /
-// IEEE-078 (FSA swap) / plan-2 Phase 5.
+// #27 (BASIC/MAINT mutations) / #28 (time-advance) /
+// #123 (FSA swap) / plan-2 Phase 5.
 
 package server
 
@@ -59,7 +59,7 @@ const maxMutationBody = 1 << 16 // 64 KiB
 //
 // The notifier is optional. When non-nil, mutation handlers that change
 // a subscribable resource fan a Notification out to subscribed receivers
-// after the store mutation commits (IEEE-093: derctl-add -> DERProgramList
+// after the store mutation commits (#157: derctl-add -> DERProgramList
 // notification, matching CSIP V1.2 section 11.4 / UTIL-004 step 3). nil disables
 // the fan-out : production builds never compile this code path, and the
 // existing unit tests that pass nil keep working unchanged.
@@ -188,11 +188,11 @@ func handleDERProgPrimacy(stores *Stores) http.HandlerFunc {
 		}
 
 		ctx := r.Context()
-		// IEEESRV-038: address the program by (parent, id) on the store
-		// itself. This used to take a per-parent handle via ForParent,
-		// which core IEEECORE-085 withdrew: that method was promoted by
-		// an embedded field and was never part of the store.ScopedStore
-		// contract, so reaching for it bypassed the persistence wrapper.
+		// Address the program by (parent, id) on the store itself. This
+		// used to take a per-parent handle via ForParent, which core
+		// withdrew: that method was promoted by an embedded field and was
+		// never part of the store.ScopedStore contract, so reaching for
+		// it bypassed the persistence wrapper.
 		programs := stores.DERPrograms
 		existing, err := programs.Get(ctx, req.EndDeviceID, req.ProgramID)
 		if err != nil {
@@ -277,7 +277,7 @@ func handleDERControlAdd(stores *Stores, notifier handler.ResourceNotifier) http
 			return
 		}
 
-		// IEEE-093: fan out a "Changed" Notification to subscribers of
+		// #157: fan out a "Changed" Notification to subscribers of
 		// the parent DERProgramList. Aggregators subscribe to this href
 		// in UTIL-003; the new DERControl appearing under one of the
 		// programs in that list is the change event. The Manager.Notify
@@ -306,7 +306,7 @@ func derControlScope(edev, fsa, derp string) string {
 	return edev + "/" + fsa + "/" + derp
 }
 
-// --- /test/mutations/time-advance (IEEE-025, CORE-006) ---
+// --- /test/mutations/time-advance (#28, CORE-006) ---
 
 // selfDeviceLogScope is the sentinel parent key under which TM_TIME_ADJUSTED
 // LogEvents are persisted. The existing LogEventList store is scoped per
@@ -404,7 +404,7 @@ func handleTimeAdvance(stores *Stores) http.HandlerFunc {
 	}
 }
 
-// --- /test/mutations/fsa-swap (IEEE-078, BASIC-003 / MAINT-003) ---
+// --- /test/mutations/fsa-swap (#123, BASIC-003 / MAINT-003) ---
 
 // fsaSwapRequest is the JSON body for /test/mutations/fsa-swap.
 //
@@ -424,7 +424,7 @@ type fsaSwapRequest struct {
 // FSA reassignment).
 //
 // Reassignment shape chosen: re-key the FSA list entry under the EndDevice
-// scope (option (a) in the IEEE-078 ticket). The other materialization,
+// scope (option (a) in the #123 ticket). The other materialization,
 // re-keying DERControls under the composite edev/fsa/derp scope, is
 // intentionally not performed here: DERPrograms are keyed by EndDevice
 // alone (not by FSA), and BASIC-003's feeder-swap procedure is satisfied
@@ -514,7 +514,7 @@ func handleFSASwap(stores *Stores) http.HandlerFunc {
 	}
 }
 
-// --- /test/mutations/subscription-cancel (IEEE-079, MAINT-006) ---
+// --- /test/mutations/subscription-cancel (#126, MAINT-006) ---
 
 // subscriptionCancelRequest is the JSON body for /test/mutations/subscription-cancel.
 type subscriptionCancelRequest struct {
@@ -585,7 +585,7 @@ func handleSubscriptionCancel(stores *Stores) http.HandlerFunc {
 	}
 }
 
-// --- /test/mutations/stress-notify (IEEESRV-010) ---
+// --- /test/mutations/stress-notify ---
 
 // stressNotifyRequest is the JSON body for /test/mutations/stress-notify.
 // Href is the subscribable-resource href to fan notifications to; Status
@@ -634,9 +634,9 @@ func handleStressNotify(notifier handler.ResourceNotifier) http.HandlerFunc {
 // It is called from BuildProtocolRouter in assembly_seam.go so that
 // tests which construct the server via server.BuildProtocolRouter get
 // the mutation routes on the same handler (mirroring the call that
-// lived in the deleted in-tree router.go before IEEESRV-002).
+// lived in the deleted in-tree router.go).
 // In production builds the non-tagged companion in test_mutations_notest.go
-// returns h unchanged; see IEEE-024.
+// returns h unchanged; see #27.
 func wrapMutationHandlers(h http.Handler, stores *Stores, notifier handler.ResourceNotifier) http.Handler {
 	top := http.NewServeMux()
 	RegisterMutationHandlers(top, stores, notifier)

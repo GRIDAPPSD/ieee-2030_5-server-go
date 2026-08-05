@@ -1,6 +1,6 @@
 package auth
 
-// Tests for extractSFDIPrefix (IEEE-014).
+// Tests for extractSFDIPrefix (#13).
 //
 // Test pattern: PBT (pgregory.net/rapid) — plan-4 pilot precedent.
 //

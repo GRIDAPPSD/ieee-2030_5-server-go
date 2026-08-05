@@ -1,4 +1,4 @@
-# IEEE-084 / BASIC-020 fixture — CSIP V1.2 §8.20.
+# #143 / BASIC-020 fixture — CSIP V1.2 §8.20.
 #
 # Topology: 2 DERPrograms (SP primacy=0, SY primacy=1), each with one
 # DefaultDERControl and one DERControl. The two DERControls occupy

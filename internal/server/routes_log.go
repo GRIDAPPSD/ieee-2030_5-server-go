@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// RenderRoutesLog produces the IEEE-140 boot-time route enumeration
+// RenderRoutesLog produces the #272 boot-time route enumeration
 // block. One line per listener with its bind address, then each
 // pattern indented underneath. The admin section is omitted entirely
 // when the listener is disabled (empty addr / nil routes). Pure

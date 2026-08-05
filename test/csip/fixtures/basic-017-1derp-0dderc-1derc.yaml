@@ -1,4 +1,4 @@
-# IEEE-084 / BASIC-017 fixture — CSIP V1.2 §8.17.
+# #143 / BASIC-017 fixture — CSIP V1.2 §8.17.
 #
 # Topology: 1 DERProgram, NO DefaultDERControl, 1 DERControl active
 # for 2 minutes carrying opModFixedW. Per §8.17 the procedure asserts

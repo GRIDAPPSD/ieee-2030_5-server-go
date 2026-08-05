@@ -51,7 +51,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 	}
 	adminURL := "https://" + adminListener.Addr().String()
 
-	// IEEE-132: these tests bind on 127.0.0.1, which would now trigger the
+	// #246: these tests bind on 127.0.0.1, which would now trigger the
 	// loopback bypass and admit every request. To exercise the actual
 	// Bearer-auth path, every request below carries X-Forwarded-For, which
 	// simulates the production case (Caddy in front injects it) and forces

@@ -29,7 +29,7 @@ func TestBroker_NewInProcess_Lifecycle(t *testing.T) {
 		t.Fatalf("Address: expected non-empty broker address")
 	}
 	// HELICS zmq brokers report a tcp:// network address. Asserting on
-	// the prefix locks the contract IEEE-145 will sit behind, per the
+	// the prefix locks the contract #266 will sit behind, per the
 	// data-invariants rule that tests check field values, not just
 	// non-crash.
 	if !strings.HasPrefix(addr, "tcp://") {

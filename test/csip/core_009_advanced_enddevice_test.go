@@ -16,7 +16,7 @@
 // The DER singleton handlers in internal/handler/der.go key by the
 // (edev, derId) tuple from path values, so an EndDevice must exist for
 // the path to be reachable through the ACL chain. We seed it from the
-// single-edev.yaml fixture (IEEE-057) - same fixture BASIC-001 and the
+// single-edev.yaml fixture (#52) - same fixture BASIC-001 and the
 // other Section 6.x tests share.
 //
 // V1.2 procedure step -> assertion mapping (per V1.2 Section 6.2 procedure):
@@ -28,7 +28,7 @@
 //	Step 5 (PUT DERAvailability)        ------> putAndGetAvailability subtest
 //	Step 6 (GET each, assert roundtrip) ------> assertions inside each subtest
 //
-// Run under both GCM and CCM cipher modes. IEEE-001 (server identity
+// Run under both GCM and CCM cipher modes. #1 (server identity
 // derivation under both modes) is the standing regression guard for
 // the CCM path: a regression that perturbed routing or body
 // serialization under CCM would surface here as a roundtrip miss.

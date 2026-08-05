@@ -1,4 +1,4 @@
-# IEEE-084 / BASIC-016 fixture — CSIP V1.2 §8.16.
+# #143 / BASIC-016 fixture — CSIP V1.2 §8.16.
 #
 # Topology: 2 DERPrograms (SP + SY), each carrying its own
 # DefaultDERControl, zero DERControls. The server renders both DDERCs;

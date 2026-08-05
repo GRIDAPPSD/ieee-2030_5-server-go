@@ -1,6 +1,6 @@
 package server_test
 
-// IEEE-068 boot-fixture wiring test.
+// #75 boot-fixture wiring test.
 //
 // Drives the full server.Run() flow with SEP2_BOOT_FIXTURE-equivalent
 // config (cfg.BootFixtureFile) and asserts the pre-seeded EndDevice is
@@ -31,12 +31,12 @@ import (
 // TestBootFixtureWiringGCM asserts the Enphase fixture is loaded into
 // stores under GCM mode. The CCM path uses the same Load() call, so we
 // only need to cover one cipher mode here — the multi-mode coverage is
-// in TestServerIdentityPopulatedUnderCCM (IEEE-001).
+// in TestServerIdentityPopulatedUnderCCM (#1).
 func TestBootFixtureWiringGCM(t *testing.T) {
 	dir := t.TempDir()
 
 	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{
-		CommonName: "IEEE-068 Test CA",
+		CommonName: "boot-fixture Test CA",
 		ValidYears: 1,
 	})
 	if err != nil {
@@ -52,7 +52,7 @@ func TestBootFixtureWiringGCM(t *testing.T) {
 	}
 	serverCertPEM, serverKeyPEM, err := certs.GenerateServerCert(caCert, caKey, certs.ServerCertOptions{
 		Hosts:      []string{"127.0.0.1", "localhost"},
-		CommonName: "IEEE-068 Test Server",
+		CommonName: "boot-fixture Test Server",
 		ValidYears: 1,
 	})
 	if err != nil {
@@ -60,7 +60,7 @@ func TestBootFixtureWiringGCM(t *testing.T) {
 	}
 	deviceCertPEM, deviceKeyPEM, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
 		DeviceType:  certs.DeviceTypeGeneric,
-		HWSerialNum: "IEEE-068-TEST",
+		HWSerialNum: "boot-fixture-TEST",
 	})
 	if err != nil {
 		t.Fatalf("GenerateDeviceCert: %v", err)
@@ -207,7 +207,7 @@ startLoop:
 func TestBootFixtureMissingFileFailsRun(t *testing.T) {
 	dir := t.TempDir()
 	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{
-		CommonName: "IEEE-068 Missing-Fixture CA",
+		CommonName: "boot-fixture Missing-Fixture CA",
 		ValidYears: 1,
 	})
 	if err != nil {
@@ -223,7 +223,7 @@ func TestBootFixtureMissingFileFailsRun(t *testing.T) {
 	}
 	serverCertPEM, serverKeyPEM, err := certs.GenerateServerCert(caCert, caKey, certs.ServerCertOptions{
 		Hosts:      []string{"127.0.0.1", "localhost"},
-		CommonName: "IEEE-068 Missing-Fixture Server",
+		CommonName: "boot-fixture Missing-Fixture Server",
 		ValidYears: 1,
 	})
 	if err != nil {

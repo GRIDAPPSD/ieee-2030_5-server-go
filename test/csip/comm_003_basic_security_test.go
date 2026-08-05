@@ -1,11 +1,11 @@
 // CSIP V1.2 §5.3 — Basic Security (TLS cipher negotiation).
 //
 // SKELETON: This test runs under lax mode today and accepts CCM-8 (0xC0AE)
-// OR GCM (0xC02B / 0xC02C). Once IEEE-020 (CSIP strict mode) lands and
+// OR GCM (0xC02B / 0xC02C). Once #22 (CSIP strict mode) lands and
 // propagates SEP2_CSIP_STRICT=true through BootServer, this assertion
 // tightens to CCM-8 only.
 //
-// TODO: tighten to CCM-8-only once SEP2_CSIP_STRICT lands (IEEE-020)
+// TODO: tighten to CCM-8-only once SEP2_CSIP_STRICT lands (#22)
 //
 // Procedure (V1.2 §5.3 — Basic Security):
 //  1. Client opens a TCP connection to the server and starts a TLS
@@ -17,7 +17,7 @@
 //
 // Under default BootServer() (GCM path, stdlib crypto/tls) the server
 // is restricted to TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 (0xC02B);
-// see internal/tls/config.go. Once IEEE-019 / IEEE-020 land, the
+// see internal/tls/config.go. Once #21 / #22 land, the
 // strict-mode BootServer will restrict to CCM-8 only and this test
 // gains a strict-mode subtest.
 //
@@ -48,7 +48,7 @@ import (
 
 // laxAcceptedCiphers is the lax-mode accepted set per the comment
 // above: CCM-8 plus the two ECDHE-ECDSA GCM ciphers stdlib offers.
-// IEEE-020 will narrow this to {CCM-8} only.
+// #22 will narrow this to {CCM-8} only.
 var laxAcceptedCiphers = map[uint16]string{
 	sepTLS.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8:   "TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8",
 	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
@@ -104,7 +104,7 @@ func TestCOMM_003_BasicSecurity_LaxSkeleton(t *testing.T) {
 		t.Fatal("HandshakeComplete = false")
 	}
 
-	// TODO: tighten to CCM-8-only once SEP2_CSIP_STRICT lands (IEEE-020)
+	// TODO: tighten to CCM-8-only once SEP2_CSIP_STRICT lands (#22)
 	if _, ok := laxAcceptedCiphers[state.CipherSuite]; !ok {
 		t.Errorf("negotiated cipher = 0x%04X (%s); want one of CCM-8 (0xC0AE), GCM-128 (0xC02B), GCM-256 (0xC02C)",
 			state.CipherSuite, tls.CipherSuiteName(state.CipherSuite))

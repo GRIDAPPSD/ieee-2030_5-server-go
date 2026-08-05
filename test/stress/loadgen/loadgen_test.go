@@ -147,8 +147,8 @@ func min(a, b int) int {
 // set in Config, Run calls it exactly once per virtual client that is launched,
 // passing the client index and a non-nil *http.Client. The test uses a minimal
 // in-process server (plain HTTP) so no real TLS cert infrastructure is needed.
-// This covers the IEEESRV-013 invariant that subscriber count == active client
-// count: each client subscribes at launch time, before its GET loop starts.
+// This covers the invariant that subscriber count == active client count:
+// each client subscribes at launch time, before its GET loop starts.
 func TestClientSubscribe_CalledOncePerClient(t *testing.T) {
 	// A minimal server that returns 200 for all requests.
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -202,7 +202,7 @@ func TestClientSubscribe_CalledOncePerClient(t *testing.T) {
 // TestClientSubscribe_ErrorLogged verifies that a non-nil error from
 // ClientSubscribe does not prevent the client from being launched (it is
 // logged and the GET loop continues). This is the "log and continue" contract
-// from the IEEESRV-013 design: a single subscription failure is not fatal.
+// from the fanout design: a single subscription failure is not fatal.
 func TestClientSubscribe_ErrorLogged(t *testing.T) {
 	called := false
 	cfg := Config{
@@ -224,7 +224,7 @@ func TestClientSubscribe_ErrorLogged(t *testing.T) {
 
 // TestRun_ClientSubscribe_WiredPerClient is an integration-level test that
 // exercises the Run->ClientSubscribe wiring through an actual loadgen.Run call
-// against an in-process TLS test server. Dutch LOW, IEEESRV-013.
+// against an in-process TLS test server. Dutch LOW.
 //
 // It verifies that:
 //  1. ClientSubscribe is called exactly once per virtual client that is ramped.

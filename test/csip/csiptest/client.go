@@ -1,6 +1,6 @@
 // Package csiptest provides reusable helpers for the CSIP conformance
 // harness under test/csip/. It lifts the inline HTTP plumbing patterns
-// established by test/csip/handshake_test.go (IEEE-021) so downstream
+// established by test/csip/handshake_test.go (#23) so downstream
 // Phase 3 tests can express the canonical "boot a server, GET /dcap,
 // walk advertised links, parse the body" flow without re-implementing
 // each step.
@@ -11,13 +11,13 @@
 // by consumers of the server.
 //
 // Scope today:
-//   - Client.GetDeviceCapability — GET <baseURL>/dcap and parse (IEEE-056).
-//   - Client.WalkLink            — GET <baseURL>+link.Href and parse (IEEE-056).
+//   - Client.GetDeviceCapability — GET <baseURL>/dcap and parse (#51).
+//   - Client.WalkLink            — GET <baseURL>+link.Href and parse (#51).
 //   - BootServer                 — boot an in-process spec server on a
-//     random port with t.Cleanup teardown (IEEE-058). See server.go.
+//     random port with t.Cleanup teardown (#53). See server.go.
 //
 // Out of scope (separate tickets):
-//   - Fixture loader             — IEEE-057.
+//   - Fixture loader             — #52.
 //
 // The Client deliberately accepts a pre-built *http.Client + base URL.
 // BootServer constructs one wired to its ephemeral CA and exposes it

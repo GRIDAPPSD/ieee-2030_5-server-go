@@ -1,4 +1,4 @@
-// cmd/sep2loadgen is the IEEE 2030.5 stress load generator for IEEESRV-007.
+// cmd/sep2loadgen is the IEEE 2030.5 stress load generator.
 //
 // Usage: sep2loadgen [flags]
 //
@@ -8,7 +8,7 @@
 // The binary is used by scripts/stress.sh; it is NOT intended to run standalone
 // without the harness (no server lifecycle management here).
 //
-// For the fanout dimension (IEEESRV-010), the binary also:
+// For the fanout dimension, the binary also:
 //   - Starts a plain-HTTP notification receiver and prints its URL to stderr
 //     so stress.sh can pass it to the subscribe step.
 //   - Drives mutation injection via POST /test/mutations/stress-notify using
@@ -176,7 +176,7 @@ func main() {
 	// subscribes to the shared /dcap resource using its own edev ID from
 	// the manifest and the notification receiver URL. This unifies subscriber
 	// count with active client count: CLIENTS=N means N devices that each
-	// drive GET traffic AND hold an active subscription. IEEESRV-013.
+	// drive GET traffic AND hold an active subscription.
 	var clientSubscribeFunc func(idx int, client *http.Client) error
 	if dim == "fanout" && notifyURL != "" {
 		// Read edev manifest written by the register step.
@@ -266,7 +266,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Fanout validity gate (IEEESRV-013 review, Pike HIGH).
+	// Fanout validity gate.
 	// After a fanout run, verify that notification deliveries scaled with the
 	// active client count (true N-wide fan-out). If delivered_per_mutation is
 	// substantially below client count (threshold: 0.9 x clients), some

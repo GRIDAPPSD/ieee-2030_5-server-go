@@ -18,7 +18,7 @@ import (
 // a value, the other subscribes, both step time forward, and the
 // subscribed value arrives on the channel with the published payload.
 //
-// This is the IEEE-145 contract from phase-1 exit criterion 4: the test
+// This is the #266 contract from phase-1 exit criterion 4: the test
 // stands up the broker shape itself, so no external helics_broker
 // process is required.
 func TestFederate_PublishSubscribeLifecycle(t *testing.T) {

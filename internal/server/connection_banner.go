@@ -1,6 +1,6 @@
 package server
 
-// IEEE-112 — structured connection-details banner printed once at server
+// #206 — structured connection-details banner printed once at server
 // boot. Operators run any of `make run`, `make run-ccm`, `make run-full`,
 // `make run-testdevice`, `make run-sunspec` and need a single, copy-pasteable
 // block that says exactly where to point a device and which trust roots are

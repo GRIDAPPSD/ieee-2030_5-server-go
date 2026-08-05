@@ -1,4 +1,4 @@
-# IEEE-085 / BASIC-025 fixture — CSIP V1.2 §8.25.
+# #145 / BASIC-025 fixture — CSIP V1.2 §8.25.
 #
 # Topology: 2 DERPrograms (SP primacy=0, SY primacy=1), each with one
 # DefaultDERControl and one DERControl. The two DERControls drive

@@ -6,7 +6,7 @@
 // after an out-of-band time-management event (e.g. an NTP step). The
 // production server has no public endpoint that mutates wall clock —
 // adding one would be wrong — so the conformance harness drives the
-// shift through the IEEE-025 build-tag-gated mutation surface:
+// shift through the #28 build-tag-gated mutation surface:
 //
 //	POST /test/mutations/time-advance  {"seconds": 3600}
 //
@@ -79,7 +79,7 @@ const (
 	core006TestToken = "core-006-mutation-token"
 
 	// core006SelfDeviceScope is the sentinel parent key under which the
-	// IEEE-025 hook stores SelfDevice-scoped LogEvents. Mirrors
+	// #28 hook stores SelfDevice-scoped LogEvents. Mirrors
 	// internal/server/test_mutations.go's selfDeviceLogScope constant.
 	core006SelfDeviceScope = "sdev"
 
@@ -96,7 +96,7 @@ const (
 
 // TestCORE_006_AdvancedTime exercises CSIP V1.2 §5.8.
 //
-// Build tag: csip_test_hooks (required for the IEEE-025 time-advance
+// Build tag: csip_test_hooks (required for the #28 time-advance
 // hook to compile and for the mutation surface to be registered).
 func TestCORE_006_AdvancedTime(t *testing.T) {
 	// No t.Parallel: this test mutates the handler-package's global

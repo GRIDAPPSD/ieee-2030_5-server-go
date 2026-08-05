@@ -99,7 +99,7 @@ func runBASIC019(t *testing.T, extraOpts []csiptest.BootOption) {
 	}
 
 	// Step 6: assert the [Start, Start+Duration) windows are pairwise
-	// disjoint - the defining property of BASIC-019 vs IEEE-085's
+	// disjoint - the defining property of BASIC-019 vs #145's
 	// BASIC-021..026.
 	assertDisjointIntervals(t, ctrlList.DERControl)
 }

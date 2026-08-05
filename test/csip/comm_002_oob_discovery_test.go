@@ -13,7 +13,7 @@
 // drives the server with the external SunSpec test PKI fixtures
 // (CCM-8 path, fixtures gated behind env vars + t.Skip), this test
 // runs unconditionally against an ephemeral PKI booted by
-// csiptest.BootServer. It is the test that satisfies the IEEE-067
+// csiptest.BootServer. It is the test that satisfies the #62
 // COMM-002 line item in the Phase 3 V1.2 coverage matrix.
 //
 // Procedure (V1.2 §5.2 — Out-of-Band Discovery):
@@ -30,7 +30,7 @@
 //   - TimeLink          — required for time-quality validation
 //     (chained-GET pattern, see CORE-005).
 //   - SelfDeviceLink    — server's own identity surface (required
-//     once IEEE-001 lands SFDI/LFDI in GCM mode).
+//     once #1 lands SFDI/LFDI in GCM mode).
 //
 // We use t.Errorf rather than t.Fatalf at each link so that a single
 // run surfaces every gap; a future server regression that drops two

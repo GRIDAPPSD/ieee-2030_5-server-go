@@ -33,12 +33,12 @@ name: "Core freshness"
 #
 # conformance-vs-core-main also supplies the licensed IEEE WADL and sets
 # SEP2_WADL_REQUIRED, so `make test` drives the WADL conformance sweep in
-# test/conformance/wadl against core main rather than skipping it. Until
-# IEEESRV-031 that arming was missing: the gated tests skipped, `go test`
-# exited 0, and this job reported green every single run while measuring
-# nothing. A scheduled job that cannot fail is worse than no job, because it
-# occupies the slot where a real signal would go and everyone downstream
-# reasons as though core main is being watched.
+# test/conformance/wadl against core main rather than skipping it. Before
+# this arming was added, the gated tests skipped, `go test` exited 0, and
+# this job reported green every single run while measuring nothing. A
+# scheduled job that cannot fail is worse than no job, because it occupies
+# the slot where a real signal would go and everyone downstream reasons as
+# though core main is being watched.
 #
 # The bump PR is expected to open RED while core is ahead of what this
 # server has been verified against: that is the point, converting
@@ -305,13 +305,13 @@ jobs:
           go-version-file: go.mod
 
       - name: Supply the IEEE 2030.5 WADL
-        # IEEESRV-031: without this step the WADL-gated conformance tests
-        # SKIPPED on every run of this job, `go test` exited 0, and the job
-        # reported green while measuring nothing against the standard. The
-        # instrument was armed at PR time against a frozen core (ci.yml) and
-        # disarmed daily against a moving one (here), which is inverted from
-        # where it is needed: core main is exactly the thing whose wire-format
-        # drift no compile check catches.
+        # Without this step the WADL-gated conformance tests SKIPPED on
+        # every run of this job, `go test` exited 0, and the job reported
+        # green while measuring nothing against the standard. The instrument
+        # was armed at PR time against a frozen core (ci.yml) and disarmed
+        # daily against a moving one (here), which is inverted from where it
+        # is needed: core main is exactly the thing whose wire-format drift
+        # no compile check catches.
         #
         # required: true, unlike ci.yml. This workflow runs only on `schedule`
         # and `workflow_dispatch`, both of which always execute in the base

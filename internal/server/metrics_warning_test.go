@@ -21,7 +21,7 @@ func TestMetricsExposureWarning(t *testing.T) {
 		addr     string
 		wantWarn bool
 	}{
-		// Loopback bind (the IEEE-136 default once ResolveMetricsBind runs):
+		// Loopback bind (the #268 default once ResolveMetricsBind runs):
 		// only the host can scrape, so no warning.
 		{"loopback 127.0.0.1 → no warn", "127.0.0.1:9100", false},
 		{"loopback IPv6 [::1] → no warn", "[::1]:9100", false},

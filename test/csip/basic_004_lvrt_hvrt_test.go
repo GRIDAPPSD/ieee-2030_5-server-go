@@ -15,7 +15,7 @@
 //	         opModHVRT*MomentaryCessation curve refs)             ──► per-field assertions
 //	Step 4 (global /dc carries 4 ride-through curves)             ──► curve-list walk
 //
-// IEEE-092 added the four ride-through curve-ref fields to
+// #140 added the four ride-through curve-ref fields to
 // pkg/sep2.DERControlBase and flipped this test from SKIP to active.
 package csip_test
 

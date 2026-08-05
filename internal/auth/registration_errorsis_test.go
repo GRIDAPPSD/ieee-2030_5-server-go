@@ -1,6 +1,6 @@
 package auth_test
 
-// Tests for IEEE-011: errors.Is sentinel checks.
+// Tests for #10: errors.Is sentinel checks.
 //
 // Site 1: internal/auth/registration.go:71 — store.ErrAlreadyExists
 // Site 2: cmd/inverterclient/main.go (HMI goroutine) — http.ErrServerClosed

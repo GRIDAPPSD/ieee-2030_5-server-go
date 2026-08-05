@@ -3,7 +3,7 @@
 // UTIL-001 proves that an aggregator topology seeded into the CSIP
 // server is discoverable end-to-end via the standard /dcap → /edev →
 // FSA → DERProgram walk. The fixture is aggregator-topology.yaml
-// (IEEE-089): 5 EndDevices (aggregator EDFI + 4 managed inverters
+// (#139): 5 EndDevices (aggregator EDFI + 4 managed inverters
 // EDA1/EDA2/EDB1/EDB2), a 4-level FSA chain per managed inverter
 // (SY → FDx → SPxx → DEV), 4 DERPrograms per inverter at primacy
 // 0..3 in priority-chain order.

@@ -1,4 +1,4 @@
-# IEEE-068 fixture: pre-seeded EndDevice for the CSIP test device that
+# #75 fixture: pre-seeded EndDevice for the CSIP test device that
 # mTLS-connects via `make run-testdevice`.
 #
 # Identity values are derived from the self-minted test device cert

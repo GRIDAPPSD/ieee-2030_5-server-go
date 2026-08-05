@@ -35,8 +35,8 @@ const (
 	// ReadHeaderTimeout < ReadTimeout: header parsing has a tighter deadline
 	// than the full body read.
 	//
-	// The protocol listener moved to pkg/sep2server (IEEESRV-025) and takes
-	// the same four durations from core's sep2srv.Default*Timeout, which core
+	// The protocol listener moved to pkg/sep2server and takes the same
+	// four durations from core's sep2srv.Default*Timeout, which core
 	// lifted from THIS block verbatim. The values are identical today; they
 	// are named in two places because the two listeners now live in two
 	// packages, and a future change to one is a deliberate choice about that
@@ -63,10 +63,10 @@ func newAdminServer(handler http.Handler) *http.Server {
 // Run starts the IEEE 2030.5 server with mutual TLS and optionally
 // an admin HTTPS server on a separate port.
 //
-// IEEESRV-025: the protocol half (listener, mutual TLS, server-identity
-// derivation, the assembled routes and the graceful drain) is now the
-// embeddable surface in pkg/sep2server, and this function is its first
-// consumer. What remains here is what an embedder does NOT get: the admin
+// The protocol half (listener, mutual TLS, server-identity derivation,
+// the assembled routes and the graceful drain) is now the embeddable
+// surface in pkg/sep2server, and this function is its first consumer.
+// What remains here is what an embedder does NOT get: the admin
 // listener, the dashboard, the metrics listener, mDNS and the operator banner.
 //
 // One consequence of that split is visible in the ordering below: the stores
@@ -75,7 +75,7 @@ func newAdminServer(handler http.Handler) *http.Server {
 // whose bind address are BOTH bad now reports the store path first. Nothing
 // else about the sequence changed, and no port is held while a store fails.
 func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService) error {
-	// IEEE-097: build the admin-mutated stores honoring SEP2_DATA_DIR.
+	// #165: build the admin-mutated stores honoring SEP2_DATA_DIR.
 	// Empty DataDir + empty per-store dedicated paths = pure in-memory
 	// (back-compat). The constructors return non-persistent stores in
 	// that case, so every existing test path keeps the same semantics.
@@ -104,11 +104,11 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		return fmt.Errorf("DERProgram persistence: %w", err)
 	}
 
-	// IEEE-077: build the subscription store with optional durable
-	// persistence. IEEE-102 routes the path through
+	// #224: build the subscription store with optional durable
+	// persistence. #171 routes the path through
 	// cfg.EffectiveStorePath so the precedence is:
 	//
-	//  1. SEP2_SUBSCRIPTION_STORE_PATH wins (back-compat for IEEE-077).
+	//  1. SEP2_SUBSCRIPTION_STORE_PATH wins (back-compat for #224).
 	//  2. Else SEP2_DATA_DIR set -> <datadir>/subscriptions.json.
 	//  3. Else "" -> pure in-memory (historical default).
 	subPath := cfg.EffectiveStorePath("subscriptions", cfg.SubscriptionStorePath)
@@ -177,7 +177,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// handlers can fan out notifications without depending on the
 	// subscription package directly.
 	//
-	// IEEESRV-008: worker count and queue size are tunable at startup via
+	// Worker count and queue size are tunable at startup via
 	// SEP2_SUBSCRIPTION_WORKERS and SEP2_SUBSCRIPTION_QUEUE_SIZE; both fall
 	// back to the compile-time defaults when the env var is unset, empty, or
 	// not a positive integer (no crash: warn and use the default).
@@ -190,7 +190,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// Build the embeddable protocol server: it binds the listener, derives
 	// the server identity (SFDI/LFDI) from the leaf cert BEFORE assembling the
 	// routes so /sdev and /sdev/sdi see non-empty values under both cipher
-	// modes (IEEE-001), and owns the graceful drain.
+	// modes (#1), and owns the graceful drain.
 	//
 	// Middleware carries the two wrappers that are this deployment's own
 	// concern rather than an embedder's: the Prometheus request middleware,
@@ -268,7 +268,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 			defer mdnsReg.Close()
 		}
 
-		// IEEE-133: also advertise the admin surface as ieee2030-5.local
+		// #246: also advertise the admin surface as ieee2030-5.local
 		// when an admin listener is configured. RegisterAdmin returns
 		// (nil, nil) when the admin listen is loopback (the published
 		// address would be unreachable off-box) - that's a skip, not a
@@ -283,7 +283,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		}
 	}
 
-	// Start admin server if configured. IEEE-094: admin runs on its own
+	// Start admin server if configured. #161: admin runs on its own
 	// listener (SEP2_ADMIN_LISTEN, falling back to SEP2_ADMIN_ADDR for
 	// back-compat) with a weaker TLS posture than the SEP2 wire, so the
 	// browser login + cert-paste flows can use Bearer/cookie auth without
@@ -314,7 +314,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// shutdown path with the other listeners.
 	var metricsSrv *http.Server
 	if cfg.MetricsAddr != "" {
-		// IEEE-136 parity with the admin listener: a bare ":<port>" resolves
+		// #268 parity with the admin listener: a bare ":<port>" resolves
 		// to loopback so the UNAUTHENTICATED /metrics surface is not exposed
 		// network-wide by default. Any explicit host (0.0.0.0, an LAN IP,
 		// [::]) is honored verbatim and warned about below.
@@ -332,7 +332,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		}
 	}
 
-	// IEEE-140: enumerate routes mounted on each listener at boot. The
+	// #272: enumerate routes mounted on each listener at boot. The
 	// /api/certs/* mis-mount that became Leon CRITICAL on PR #246 was
 	// hard to spot by reading router.go; surfacing every route here at
 	// startup means a duplicate / cross-listener mount lands in the
@@ -340,7 +340,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// to the routing-scope test pinned by router_certs_scope_test.go.
 	log.Print("\n" + RenderRoutesLog(cfg.Addr, protocolRoutes, adminAddr, adminRoutes))
 
-	// IEEE-112: print the operator-facing connection-details banner once
+	// #206: print the operator-facing connection-details banner once
 	// after both listeners are up. Banner is log output only - it does not
 	// change behavior and intentionally suppresses secrets (admin key,
 	// private keys). Format is pinned by TestRenderConnectionBanner_*.
@@ -364,15 +364,15 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	case err := <-protocolDone:
 		// The protocol listener failed on its own; protocolCtx was never
 		// cancelled, so this is a real failure and not a drain. Surface it
-		// rather than logging it, exactly as the pre-IEEESRV-025 shared
-		// error channel did.
+		// rather than logging it, exactly as the shared error channel did
+		// before the protocol listener moved to pkg/sep2server.
 		return err
 	case err := <-errCh:
 		return err
 	}
 }
 
-// startAdminServer brings up the admin listener on its own port. IEEE-094:
+// startAdminServer brings up the admin listener on its own port. #161:
 // the listener selection matrix is
 //
 //	AdminListen empty  -> admin disabled (caller gates this case)
@@ -385,14 +385,14 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 // can connect without presenting a cert. The SEP2 protocol listener keeps
 // its own RequireAnyClientCert + manual-verify posture untouched.
 func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error) (*http.Server, string, string, []string, error) {
-	// IEEE-136: resolve the operator-supplied env value into the actual
+	// #268: resolve the operator-supplied env value into the actual
 	// bind string. A bare ":<port>" gets a loopback default so the admin
 	// listener is safe-by-default; any explicit host (0.0.0.0, an LAN IP,
 	// [::]) is honored verbatim. The banner still surfaces the env value
 	// (see buildBannerInput) - only the net.Listen site uses the resolved.
 	addr := config.ResolveAdminBind(cfg.EffectiveAdminListen())
 
-	// IEEE-137: warn loudly when the admin listener is bound to a non-
+	// #269: warn loudly when the admin listener is bound to a non-
 	// loopback address WITHOUT a proxy hint. Without an upstream proxy
 	// injecting X-Forwarded-For/Forwarded, AdminAuthMiddleware Path 0
 	// admits ALL traffic as loopback-local (the SEP2 protocol listener
@@ -401,12 +401,12 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	// config does NOT inject XFF; an operator who fronts the admin
 	// listener with stock-nginx would silently expose the admin surface
 	// to public traffic. The warning is doc-and-startup defense in depth;
-	// IEEE-136 is the structural fix.
+	// #268 is the structural fix.
 	if msg := adminProxyWarning(addr, cfg.AdminBehindProxy); msg != "" {
 		log.Print(msg)
 	}
 
-	// IEEE-137 follow-up (Wren MED-4): when the operator silences the
+	// #269 follow-up (Wren MED-4): when the operator silences the
 	// non-loopback warning by setting SEP2_ADMIN_BEHIND_PROXY=true, drop
 	// a one-shot INFO line in the boot log so the operator-trust signal
 	// is recorded for incident-response triage. The warning itself is
@@ -418,7 +418,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	}
 
 	tickets := auth.NewTicketStore(30 * time.Second)
-	// IEEE-138: resolve the admin host-header allowlist from the static
+	// #270: resolve the admin host-header allowlist from the static
 	// defaults plus operator-supplied SEP2_ADMIN_ALLOWED_HOSTS extras.
 	allowedHosts := ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
 	adminRouter, adminRoutes := BuildAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets, allowedHosts)
@@ -494,7 +494,7 @@ func startMetricsServer(addr string, errCh chan error) (*http.Server, error) {
 //
 // Admin URL: empty AdminListen => banner shows "(disabled)". Admin auth:
 // AdminKey present => "Bearer key set"; empty + no AdminTLS => "disabled"
-// (the only auth path is Bearer at this listener - IEEE-094 admin runs on
+// (the only auth path is Bearer at this listener - #161 admin runs on
 // its own port and does not require client certs). The key itself is NEVER
 // printed.
 func buildBannerInput(cfg *config.Config, tlsMode, serverSFDI, serverLFDI, adminTLSDesc string) BannerInput {
@@ -508,7 +508,7 @@ func buildBannerInput(cfg *config.Config, tlsMode, serverSFDI, serverLFDI, admin
 		dataDir = cfg.DataDir
 	}
 	// SEP2_SUBSCRIPTION_STORE_PATH takes precedence over the DataDir-derived
-	// path for the subscription store (back-compat from IEEE-077). Surface
+	// path for the subscription store (back-compat from #224). Surface
 	// it on the banner so the operator can see exactly which file the
 	// subscription store is persisting to.
 	if cfg.SubscriptionStorePath != "" {
@@ -580,7 +580,7 @@ func buildAdminTLSConfig(cfg *config.Config) (*tls.Config, string, error) {
 // unchanged). When the variable is set but its value is not a positive integer
 // (non-numeric, zero, or negative) a warning is logged naming the variable and
 // the bad value, and the defaultVal is returned. This function never panics or
-// calls os.Exit. IEEESRV-008.
+// calls os.Exit.
 func resolveSubParam(envKey string, defaultVal int) int {
 	raw := strings.TrimSpace(os.Getenv(envKey))
 	if raw == "" {
@@ -603,7 +603,7 @@ func parsePort(addr string) int {
 	return 443
 }
 
-// adminProxyWarning returns the IEEE-137 startup-warning text when the
+// adminProxyWarning returns the #269 startup-warning text when the
 // admin listener is bound to a non-loopback address AND the operator
 // has not declared an upstream proxy. Returns empty string when no
 // warning is warranted (loopback bind, or proxy hint set, or empty
@@ -631,7 +631,7 @@ func adminProxyWarning(addr string, behindProxy bool) string {
 		"proxy to inject X-Forwarded-For (or Forwarded per RFC 7239), " +
 		"then set SEP2_ADMIN_BEHIND_PROXY=true to silence this warning. " +
 		"For loopback-only admin, leave SEP2_ADMIN_LISTEN as :<port> " +
-		"(IEEE-136 default)."
+		"(#268 default)."
 }
 
 // metricsExposureWarning returns a startup-warning string when the resolved
@@ -655,11 +655,11 @@ func metricsExposureWarning(addr string) string {
 		"Prometheus that scrapes via host.docker.internal (the docker " +
 		"bridge gateway is NOT loopback), but it MUST sit behind a host " +
 		"firewall / trusted network. For loopback-only metrics, set " +
-		"SEP2_METRICS_ADDR=:<port> (IEEE-136 default)."
+		"SEP2_METRICS_ADDR=:<port> (#268 default)."
 }
 
 // isLoopbackBind reports whether addr is bound to a loopback host.
-// Used by IEEE-137's warning gate. Accepts a "host:port" string; treats
+// Used by #269's warning gate. Accepts a "host:port" string; treats
 // the empty host as non-loopback (caller already resolves bare
 // ":<port>" via ResolveAdminBind to "127.0.0.1:<port>" so this case
 // should not arise in production). Hostnames are NOT resolved - a name
@@ -678,6 +678,6 @@ func isLoopbackBind(addr string) bool {
 }
 
 // Server-identity derivation from the leaf certificate moved to
-// pkg/sep2server alongside the TLS listener it belongs to (IEEESRV-025). It is
-// read back here through sep2server.Server.Identity; the IEEE-001 regression
+// pkg/sep2server alongside the TLS listener it belongs to. It is read
+// back here through sep2server.Server.Identity; the #1 regression
 // guards in server_identity_test.go still drive it through the full Run flow.

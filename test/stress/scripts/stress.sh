@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/stress.sh: IEEE 2030.5 stress test harness for IEEESRV-007/010.
+# scripts/stress.sh: IEEE 2030.5 stress test harness.
 #
 # Usage: DIM=throughput CLIENTS=5 DURATION=30 bash scripts/stress.sh
 #
@@ -29,7 +29,7 @@ CCM="${CCM:-false}"
 SEED="${SEED:-42}"
 SCRAPE_INTERVAL="${SCRAPE_INTERVAL:-5}"
 
-# Fanout-specific parameters (IEEESRV-010).
+# Fanout-specific parameters.
 # MUTATION_TOKEN is the shared secret for /test/mutations/stress-notify.
 # It is generated fresh per fanout run when not set (do not commit a value).
 MUTATION_TOKEN="${MUTATION_TOKEN:-}"
@@ -39,7 +39,7 @@ RECEIVER_PORT="${RECEIVER_PORT:-0}"
 # explicitly set. Set this to override (e.g. MUTATION_HREF=/edev/some-id/fsa).
 MUTATION_HREF="${MUTATION_HREF:-}"
 
-# IEEESRV-008 sweep support: pass through when set; leave unset for defaults.
+# Subscription-worker sweep support: pass through when set; leave unset for defaults.
 # These are forwarded to sep2server if present in the environment.
 SEP2_SUBSCRIPTION_WORKERS="${SEP2_SUBSCRIPTION_WORKERS:-}"
 SEP2_SUBSCRIPTION_QUEUE_SIZE="${SEP2_SUBSCRIPTION_QUEUE_SIZE:-}"
@@ -328,7 +328,7 @@ LOADGEN_COMMON_ARGS=(
 )
 
 if [ "${DIM}" = "fanout" ]; then
-    # Fanout sequence (IEEESRV-013 unified model):
+    # Fanout sequence (unified subscriber/client model):
     # Each of the N virtual clients is both an active GET driver and a
     # subscriber. The loadgen ramps clients at RAMP_RATE/s; as each client
     # starts, it subscribes to /dcap using its own mTLS cert and edev ID
@@ -387,7 +387,7 @@ fi
 
 log "load phase complete"
 
-# ---- fanout validity gate (IEEESRV-013 review, Pike HIGH) -----------------
+# ---- fanout validity gate (Pike HIGH) --------------------------------------
 # The loadgen binary stamps partial_subscription=true and exits with code 2
 # when the delivered-per-mutation ratio is below 0.9 x client count. Catch
 # that here so the harness exits with a loud error rather than silently

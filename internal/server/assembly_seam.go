@@ -2,18 +2,18 @@
 // the server's concrete types and provides the thin BuildProtocolRouter
 // adapter that wraps them into a single call.
 //
-// Phase 1 (IEEESRV-001): the core router was constructed and testable
-// behind a SEP2_USE_CORE_ROUTER env toggle. The in-tree BuildProtocolRouter
+// Phase 1: the core router was constructed and testable behind a
+// SEP2_USE_CORE_ROUTER env toggle. The in-tree BuildProtocolRouter
 // remained the boot default.
 //
-// Phase 2 (IEEESRV-002): core is now the ONLY protocol router. The toggle
+// Phase 2: core is now the ONLY protocol router. The toggle
 // (CoreRouterEnabled / SEP2_USE_CORE_ROUTER) and the SelectRouter indirection
 // are deleted. BuildProtocolRouter below is a thin adapter that converts the
 // server's concrete types and delegates unconditionally to
 // assembly.BuildProtocolRouter.
 //
-// IEEESRV-025: the assembly itself now lives in pkg/sep2server, which is the
-// importable surface an in-process consumer grafts onto. This file keeps the
+// The assembly itself now lives in pkg/sep2server, which is the importable
+// surface an in-process consumer grafts onto. This file keeps the
 // projection from the server's own concrete types (*config.Config, *Stores,
 // handler.ResourceNotifier) into that surface's Config, and keeps
 // BuildProtocolRouter's signature so the CSIP harness and the seam tests are
@@ -63,9 +63,9 @@ func NewEmbedConfig(cfg *config.Config, stores *Stores, notifier handler.Resourc
 // to the protocol router. Call sites that previously passed svc may continue
 // to do so; it is dropped before core sees it.
 //
-// Replaces the in-tree BuildProtocolRouter deleted in Phase 2 (IEEESRV-002).
-// Core's assembly.BuildProtocolRouter is now the sole protocol router; there
-// is no longer a toggle or an in-tree alternative.
+// Replaces the in-tree BuildProtocolRouter deleted in Phase 2. Core's
+// assembly.BuildProtocolRouter is now the sole protocol router; there is
+// no longer a toggle or an in-tree alternative.
 func BuildProtocolRouter(cfg *config.Config, stores *Stores, _ *handler.AdminCertService, serverSFDI, serverLFDI string, notifier handler.ResourceNotifier) (http.Handler, []string) {
 	coreHandler, patterns := sep2server.BuildHandler(
 		NewEmbedConfig(cfg, stores, notifier),
@@ -75,7 +75,7 @@ func BuildProtocolRouter(cfg *config.Config, stores *Stores, _ *handler.AdminCer
 	// test_mutations_notest.go). Under csip_test_hooks it wraps
 	// coreHandler with an outer mux that serves /test/mutations/* and
 	// falls through to coreHandler for all other paths, restoring the
-	// call that lived in the deleted in-tree router.go before IEEESRV-002.
+	// call that lived in the deleted in-tree router.go.
 	return wrapMutationHandlers(coreHandler, stores, notifier), patterns
 }
 
@@ -104,14 +104,14 @@ func NewCoreRouterConfig(cfg *config.Config) assembly.RouterConfig {
 // return to the (lfdi, sfdi string, ok bool) signature core expects.
 // Field order: LFDI first, SFDI second. The edev POST path feeds the
 // second return (SFDI) into SFDIPrefix. Getting the order wrong here
-// would silently misroute short-SFDI guard (IEEE-014).
+// would silently misroute short-SFDI guard (#13).
 //
 // AuthPolicy.SFDIPrefix: wires auth.ExtractSFDIPrefix directly; its
 // signature func(string) (string, error) matches core's expectation.
 //
-// IEEESRV-025: the composition itself moved to sep2server.DefaultAuthPolicy,
-// which is the one door an embedder has onto this server's enforcement. This
-// stays as the in-tree name so every existing call site and test is unchanged,
+// The composition itself moved to sep2server.DefaultAuthPolicy, which is
+// the one door an embedder has onto this server's enforcement. This stays
+// as the in-tree name so every existing call site and test is unchanged,
 // and so there is still exactly one composition behind both.
 //
 // Exported so tests can verify the policy compiles with real auth types.
@@ -121,8 +121,8 @@ func NewCoreAuthPolicy() assembly.AuthPolicy {
 
 // NewCoreStores converts the server-local *Stores to *assembly.Stores.
 // assembly.Stores is a verbatim field-for-field lift of the server's own
-// Stores type (same pkg/store and pkg/store/memory field types, confirmed
-// in IEEECORE-001). The conversion is a direct field copy; no allocation
+// Stores type (same pkg/store and pkg/store/memory field types). The
+// conversion is a direct field copy; no allocation
 // of inner objects. Exported so tests can call both the adapter and the
 // route surface with the same underlying store instances.
 func NewCoreStores(s *Stores) *assembly.Stores {

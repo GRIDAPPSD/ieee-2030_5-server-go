@@ -12,7 +12,7 @@
 //	        CurrentTime within ±5s of the test wallclock.
 //	Step 5: Assert Quality is a well-known TimeQualityType value.
 //
-// Spec/code quality-metric note: the IEEE-060 ticket says "assert
+// Spec/code quality-metric note: the #55 ticket says "assert
 // qualityMetric == 7 (NTP-synchronized)". The codebase's
 // pkg/sep2/time.go uses TimeQualityNTP = 4 (per spec §9.2 table —
 // lower numbers indicate better synchronization), and the helper's
@@ -68,7 +68,7 @@ func TestCORE_005_BasicTime(t *testing.T) {
 	// envelope is measured against the closest possible reference.
 	before := time.Now().Unix()
 
-	// Step 3: GET /tm via the chained-GET helper (Phase 1 IEEE-056).
+	// Step 3: GET /tm via the chained-GET helper (Phase 1 #51).
 	var tm sep2.Time
 	if err := srv.Client().WalkLink(ctx, *dcap.TimeLink, &tm); err != nil {
 		t.Fatalf("WalkLink(dcap.TimeLink=%q): %v", dcap.TimeLink.Href, err)

@@ -1,5 +1,5 @@
 // cmd/sep2stress-setup generates PKI and registers virtual clients for
-// the IEEESRV-007 stress harness.
+// the stress harness.
 //
 // Three modes:
 //
@@ -14,7 +14,7 @@
 //  3. Subscription registration (-subscribe): reads edev-manifest.json and
 //     device certs from -pki-dir, then POSTs a Subscription for each device
 //     pointing at -notify-url. Used by the fanout dimension to seed the
-//     subscription worker pool with real subscribers. IEEESRV-010.
+//     subscription worker pool with real subscribers.
 package main
 
 import (
@@ -288,7 +288,7 @@ func runRegister(pkiDir, serverURL string, count int) error {
 // the notificationURI at notifyURL. All subscriptions share the same
 // subscribedResource (default: /dcap) so a single stress-notify mutation
 // fans out to ALL N subscribers, driving the 4-worker/256-queue by
-// subscriber count. IEEESRV-010.
+// subscriber count.
 func runSubscribe(pkiDir, serverURL string, count int, notifyURL, subscribedResource string) error {
 	if pkiDir == "" {
 		return fmt.Errorf("-pki-dir required for subscription registration")

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# IEEE-107 — CSIP coverage-gate ratchet.
+# #193 — CSIP coverage-gate ratchet.
 #
-# Phase 7 (IEEE-105) shipped CI coverage as warn-not-fail. Phase 8
-# (IEEE-107) ratchets it to fail-at-achieved-threshold. The gate
+# Phase 7 (#191) shipped CI coverage as warn-not-fail. Phase 8
+# (#193) ratchets it to fail-at-achieved-threshold. The gate
 # operates on a Go coverage profile (`go test -coverprofile=...`) and
 # computes the total-statement percentage by parsing the profile
 # directly (no `go tool cover` invocation — keeps the gate runnable
@@ -26,7 +26,7 @@
 # Floor rationale: Phase 8 matrix walk identified the CSIP-reachable
 # production code as `./test/csip/...` + `./internal/...` minus the
 # vendored `internal/tls/gotls/` fork and its stubs. The achieved
-# threshold under that scope at IEEE-106 merge was 79.1%; this script
+# threshold under that scope at #192 merge was 79.1%; this script
 # floors at 78% (1pp below for measurement noise) per Phase 8 doc
 # Deliverable 3.
 #

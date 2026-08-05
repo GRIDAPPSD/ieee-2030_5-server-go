@@ -1,7 +1,7 @@
 // CSIP V1.2 Section 8.21 - Overlap event prioritization, similar opMod, SP starts before SY.
 //
 // BASIC-021 is the entry case for the BASIC-021..026 overlapping-event
-// family (the dual of IEEE-084's BASIC-016..020 non-overlap family).
+// family (the dual of #143's BASIC-016..020 non-overlap family).
 // Topology: 2 DERPrograms (SP primacy=0, SY primacy=1), each with a
 // DefaultDERControl and one scheduled DERControl. Both DERControls
 // drive the SAME opMod* (opModFixedW - "similar") and their

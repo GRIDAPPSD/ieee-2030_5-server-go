@@ -1,13 +1,13 @@
-// Package server_test: assembly seam tests for IEEESRV-001 and IEEESRV-002.
+// Package server_test: assembly seam tests.
 //
-// Phase 1 (IEEESRV-001) added TestCoreRouterPatternEquivalence, which compared
-// the in-tree BuildProtocolRouter against assembly.BuildProtocolRouter and
-// confirmed 58 patterns matched. That test is removed in Phase 2: the in-tree
-// router is gone, so there is no comparand.
+// Phase 1 added TestCoreRouterPatternEquivalence, which compared the
+// in-tree BuildProtocolRouter against assembly.BuildProtocolRouter and
+// confirmed 58 patterns matched. That test is removed in Phase 2: the
+// in-tree router is gone, so there is no comparand.
 //
-// Phase 2 (IEEESRV-002) replaces the equivalence test with
-// TestProtocolRouteSurface, which pins the 58-route canonical surface against
-// the live BuildProtocolRouter (which now delegates unconditionally to
+// Phase 2 replaces the equivalence test with TestProtocolRouteSurface,
+// which pins the 58-route canonical surface against the live
+// BuildProtocolRouter (which now delegates unconditionally to
 // assembly.BuildProtocolRouter). Route-surface coverage is preserved: any
 // addition or deletion from the 58 canonical patterns fails this test.
 //
@@ -39,8 +39,8 @@ import (
 // canonicalProtocolRoutes is the pinned list of 72 SEP2 protocol-listener
 // patterns that assembly.BuildProtocolRouter must mount. Confirmed
 // identical to the in-tree BuildProtocolRouter output by Phase 1
-// (IEEESRV-001 TestCoreRouterPatternEquivalence). Any addition or
-// deletion from this set is a wire-level change and must be deliberate.
+// (TestCoreRouterPatternEquivalence). Any addition or deletion from this
+// set is a wire-level change and must be deliberate.
 //
 // core v0.10.0 (the ieee-2030_5-core-go bump that closed the four-release
 // gap since v0.6.0) added two routes, verified against
@@ -58,56 +58,51 @@ import (
 //     route-surface pin.
 //
 // core v0.12.0 added five more routes, verified the same way:
-//   - "GET /edev/{id}/der/{derId}" and "PUT /edev/{id}/der/{derId}"
-//     (IEEECORE-052): the DER instance itself. Every DERList member
-//     already carried this href; before this route existed, following it
-//     404'd. PUT is on the SunSpec CTP CORE-014/CORE-016 certified path.
-//   - "GET /edev/{id}/fsa/{fsaId}/derp/{derpId}" (IEEECORE-082): a
-//     DERProgram's own href, so the FSA-to-DERProgramList-to-member link
-//     walk CSIP v2.0 s5.2.3.1 requires actually resolves. Not called out
-//     in the IEEECORE-067/IEEECORE-052 bump notes but present in the same
-//     v0.12.0 assembly.go diff; verified directly against core's source.
-//   - "GET /rsps/{rspsId}" and "GET /rsps/{rspsId}/rsp/{rspId}"
-//     (IEEECORE-067): the ResponseSet and single Response read routes.
-//     Every served DERControl now carries a replyTo into this set,
-//     alongside a new responseRequired field on DERControl itself; both
-//     fields are wire-visible and covered by
-//     TestSingleDERControlBytesMatchListMember below.
+//   - "GET /edev/{id}/der/{derId}" and "PUT /edev/{id}/der/{derId}": the
+//     DER instance itself. Every DERList member already carried this
+//     href; before this route existed, following it 404'd. PUT is on the
+//     SunSpec CTP CORE-014/CORE-016 certified path.
+//   - "GET /edev/{id}/fsa/{fsaId}/derp/{derpId}": a DERProgram's own
+//     href, so the FSA-to-DERProgramList-to-member link walk CSIP v2.0
+//     s5.2.3.1 requires actually resolves. Present in the same v0.12.0
+//     assembly.go diff; verified directly against core's source.
+//   - "GET /rsps/{rspsId}" and "GET /rsps/{rspsId}/rsp/{rspId}": the
+//     ResponseSet and single Response read routes. Every served
+//     DERControl now carries a replyTo into this set, alongside a new
+//     responseRequired field on DERControl itself; both fields are
+//     wire-visible and covered by TestSingleDERControlBytesMatchListMember
+//     below.
 //
-// core's IEEECORE-084 bump (IEEESRV-034) moved the LogEvent function set:
+// A later core bump moved the LogEvent function set:
 //   - "GET /edev/{id}/log" and "POST /edev/{id}/log" are REMOVED. The
 //     WADL declares the list at /edev/{id}/lel (sep_wadl.xml:1358, 2018
 //     A.3.5.1), not /log; core served the data at an address no
-//     conforming client looked for, and nothing advertised /log at all
-//     (no production path assigned LogEventListLink before this card).
+//     conforming client looked for, and nothing advertised /log at all.
 //   - "GET /edev/{id}/lel" and "POST /edev/{id}/lel" (the list, mode M
 //     both methods) plus "GET /edev/{id}/lel/{lelId}" and
 //     "DELETE /edev/{id}/lel/{lelId}" (the instance, mode M both
 //     methods; 2018 A.3.5.2) are ADDED. Net +2 routes: four added, two
-//     removed. Verified directly against core's assembly.go at
-//     IEEECORE-084 (commit bd8d0e3).
+//     removed. Verified directly against core's assembly.go at commit
+//     bd8d0e3.
 //
-// IEEESRV-034 also folds in two catch-up items surfaced by pinning core
-// v0.13.0 (tag dereferences to fecafbe), both confirmed pre-existing (on
-// core main before IEEECORE-084, and before the v0.12.0 pin's other
-// unbumped commits) rather than introduced by this card:
+// Pinning core v0.13.0 (tag dereferences to fecafbe) surfaced two more
+// catch-up items, confirmed pre-existing on core main rather than
+// introduced by the LogEvent bump above:
 //   - "GET /edev/{id}/frp/{frpId}" and "GET /edev/{id}/frq/{frqId}"
 //     (FlowReservationResponse and FlowReservationRequest instance
 //     routes) and "GET /msg/{msgId}/tm/{tmId}" (TextMessage instance
 //     route) are ADDED. core commit c407a1e, "mount the FlowReservation
-//     and TextMessage instance routes", mounted these before
-//     IEEECORE-084; this repo's canonical set had not caught up.
+//     and TextMessage instance routes", mounted these earlier; this
+//     repo's canonical set had not caught up.
 //
-// v0.13.0 itself also carries IEEECORE-066, mounting PUT and DELETE on
-// the MirrorUsagePoint instance:
-//   - "PUT /mup/{id}" and "DELETE /mup/{id}" are ADDED. These are
-//     genuinely new with this bump, not pre-existing drift; confirmed by
-//     running TestProtocolRouteSurface against the bumped go.mod and
-//     reading the diverges-from-canonical report, not assumed from the
-//     core changelog.
+// v0.13.0 itself also mounts PUT and DELETE on the MirrorUsagePoint
+// instance:
+//   - "PUT /mup/{id}" and "DELETE /mup/{id}" are ADDED. Genuinely new
+//     with this bump, not pre-existing drift; confirmed by running
+//     TestProtocolRouteSurface against the bumped go.mod and reading the
+//     diverges-from-canonical report, not assumed from the core changelog.
 //
-// Net across both catch-up items plus IEEECORE-066: five routes added,
-// none removed. 67 -> 72.
+// Net across both catch-up items: five routes added, none removed. 67 -> 72.
 var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}",
 	"DELETE /edev/{id}/lel/{lelId}",
@@ -371,7 +366,7 @@ func TestNewCoreAuthPolicyIdentity(t *testing.T) {
 	}
 	// Field order is load-bearing: assembly.AuthPolicy.Identity returns
 	// (lfdi, sfdi, ok). The edev POST path feeds the second return (SFDI)
-	// into SFDIPrefix. A swap here would route IEEE-014 guard to the wrong
+	// into SFDIPrefix. A swap here would route #13 guard to the wrong
 	// value silently.
 	if gotLFDI != wantLFDI {
 		t.Errorf("Identity first return (lfdi): got %q, want %q", gotLFDI, wantLFDI)

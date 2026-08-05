@@ -23,7 +23,7 @@
 //     t.Parallel() to surface any race in the SubscriptionStore).
 //   - The server preserves the subscribedResource URI on the wire.
 //
-// IEEE-013 (subscription deliver context) is the hard prerequisite for
+// #12 (subscription deliver context) is the hard prerequisite for
 // the *delivery* side; UTIL-003 itself does not assert delivery, only
 // that subscriptions are accepted. UTIL-004 exercises the deliver-then-
 // notify path end-to-end.

@@ -12,7 +12,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// IEEE-095: ensure the admin router exposes /login + /auth/login outside the
+// #159: ensure the admin router exposes /login + /auth/login outside the
 // auth middleware and that the cookie issued by /auth/login unlocks an
 // authenticated GET / on the next request.
 
@@ -94,7 +94,7 @@ func TestAdminRouterApiCertsInfoBehindAuth(t *testing.T) {
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 
-	// Unauthenticated must 401. IEEE-132: the test server binds 127.0.0.1
+	// Unauthenticated must 401. #246: the test server binds 127.0.0.1
 	// which would trigger the loopback bypass; XFF simulates the
 	// production-fronted-by-Caddy case so the bypass declines.
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/certs/info", strings.NewReader("not-a-cert"))

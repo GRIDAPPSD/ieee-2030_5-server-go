@@ -11,7 +11,7 @@
 // Only compiled under -tags csip_test_hooks. Untagged builds have no
 // TestMain in this package and fall back to the stdlib default.
 //
-// IEEE-091 / Phase 6.
+// #155 / Phase 6.
 
 package csip_test
 

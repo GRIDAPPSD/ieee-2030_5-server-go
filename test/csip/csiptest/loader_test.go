@@ -1,4 +1,4 @@
-// Tests for the IEEE-057 fixture loader. These run against the
+// Tests for the #52 fixture loader. These run against the
 // in-memory store implementations (pkg/store/memory) only — no
 // internal/server, no internal/handler. The loader's contract is
 // that it writes through the public store API, so these tests are
@@ -214,7 +214,7 @@ func TestLoad_IdempotentReload(t *testing.T) {
 	}
 
 	// "Clear" = use a fresh Target (the harness rule: one Target
-	// per test, see IEEE-058 BootServer). This proves the loader
+	// per test, see #53 BootServer). This proves the loader
 	// produces deterministic state across independent fresh targets.
 	b := csiptest.NewTarget()
 	if err := csiptest.Load(ctx, b, fixturePath("seven-level-fsa.yaml")); err != nil {

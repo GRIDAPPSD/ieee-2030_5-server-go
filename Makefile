@@ -127,7 +127,7 @@ run-ccm: build certs       ## Start server with CCM-8 cipher (spec-compliant; ad
 	SEP2_CCM=true \
 	./$(SERVER) serve
 
-# ─── journald log shipping (IEEE-179) ─────────────────────────────
+# ─── journald log shipping ─────────────────────────────
 #
 # run-journald / run-ccm-journald mirror run / run-ccm but route the
 # server's stdout AND stderr (the slog JSON stream) into the systemd

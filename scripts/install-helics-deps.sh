@@ -19,8 +19,6 @@
 # Idempotent: re-running after a clean install short-circuits both halves.
 #
 # References:
-#   * Recon: knowledge/projects/ieee-2030_5-go/artifacts/outputs/IEEE-plan5-gridlabd-recon.md
-#   * Plan: knowledge/projects/ieee-2030_5-go/plans/plan-5-gridlabd-helics-der/plan.md
 #   * ADR-002, ADR-004 (in-house cgo wrapper against system libhelics)
 #
 # Constraint update from Craig (2026-06-02):

@@ -30,8 +30,8 @@ func TestRoutesEnumerationConfirmsCertAPIAdminOnly(t *testing.T) {
 	_, protoRoutes := server.BuildProtocolRouter(cfg, stores, svc, "", "", nil)
 	_, adminRoutes := server.BuildAdminRouter("test-admin-key", svc, stores, "", nil, nil)
 
-	// Protocol routes MUST NOT contain any /api/certs/* pattern. A hit
-	// here is the regression IEEE-134 tried to prevent — surface it
+	// Protocol routes MUST NOT contain any /api/certs/* pattern: a hit
+	// here is the regression this test exists to prevent. Surface it
 	// loudly with the offending pattern echoed back.
 	for _, p := range protoRoutes {
 		if strings.Contains(p, "/api/certs") {

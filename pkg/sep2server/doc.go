@@ -14,8 +14,8 @@
 //  1. Construction. [Config] carries the stores, the auth policy, the rate
 //     providers, the TLS material and the subscription notifier.
 //  2. Store handles. [Server.Stores] hands back the handle a consumer seeds
-//     through and injects control through. The read-only half of the
-//     privilege split is IEEESRV-026's; see the note on [Server.Stores].
+//     through and injects control through. See the note on [Server.Stores]
+//     for the read-only half of the privilege split.
 //  3. The router as an [net/http.Handler]. [Server.Handler] and
 //     [BuildHandler] let a consumer compose alongside the protocol surface
 //     without reaching inside it.

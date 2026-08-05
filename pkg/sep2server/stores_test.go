@@ -76,28 +76,27 @@ func TestNewStoresAreIndependent(t *testing.T) {
 	}
 }
 
-// TestReadOnlyNarrowingIsAvailable is the separability proof for IEEESRV-026,
-// which owns the privilege split itself.
+// TestReadOnlyNarrowingIsAvailable is the separability proof for the
+// read-only privilege split: a future narrowed accessor beside
+// Server.Stores, which hands back the write handle. The claim that the
+// two are separable is only worth anything if the narrowing actually
+// type-checks against the handle this package ships, so this asserts it
+// does rather than asserting it in a comment.
 //
-// This card exposes the seam (Server.Stores hands back the write handle); 026
-// adds the narrowed read-only accessor beside it. The claim that the two are
-// separable is only worth anything if the narrowing actually type-checks
-// against the handle this card ships, so this asserts it does rather than
-// asserting it in a comment.
-//
-// It also pins the shape 026 lands: reader interfaces from core's store
-// package, taken from the same underlying stores, so the read view cannot
-// drift from what the protocol handlers are writing. Nothing is exported here,
-// so 026 stays free to choose the accessor's name and grouping.
+// It also pins the shape that narrowing lands as: reader interfaces from
+// core's store package, taken from the same underlying stores, so the
+// read view cannot drift from what the protocol handlers are writing.
+// Nothing is exported here, so the accessor's name and grouping stay open.
 func TestReadOnlyNarrowingIsAvailable(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	stores := NewStores()
 
-	// The narrowing IEEESRV-026 performs: concrete write-capable stores
-	// assigned to read-only interfaces. This assignment failing to compile is
-	// the signal that 026 needs a different shape.
+	// The narrowing a future read-only accessor performs: concrete
+	// write-capable stores assigned to read-only interfaces. This
+	// assignment failing to compile is the signal that the accessor
+	// needs a different shape.
 	var (
 		devices store.ResourceReader[sep2.EndDevice]        = stores.EndDevices
 		status  store.ScopedReader[sep2.DERStatus]          = stores.DERStatuses

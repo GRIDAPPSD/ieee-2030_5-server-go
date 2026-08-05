@@ -161,9 +161,9 @@ func (s *Server) Patterns() []string { return s.patterns }
 //
 // This is the WRITE handle. The read-only half of the privilege split, the
 // narrowed view a telemetry reader or an administrative read surface should
-// hold, is IEEESRV-026's work. It lands as a second accessor returning reader
-// interfaces from core's store package; core's ResourceReader and ScopedReader
-// already exist, so nothing here has to change to admit it, and no consumer of
+// hold, is a follow-up: a second accessor returning reader interfaces from
+// core's store package. core's ResourceReader and ScopedReader already
+// exist, so nothing here has to change to admit it, and no consumer of
 // this accessor breaks when it does.
 func (s *Server) Stores() *assembly.Stores { return s.stores }
 

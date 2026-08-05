@@ -1,13 +1,13 @@
 package sep2server_test
 
-// The external-consumer proof for IEEESRV-025.
+// The external-consumer proof for the embeddable surface.
 //
 // Every package inside this module can import internal/, so no test that lives
 // here can demonstrate that the embeddable surface is genuinely reachable from
 // outside. A surface that named an internal type anywhere in an exported
 // signature would compile perfectly in-tree and fail for the one consumer it
-// was built for, with "use of internal package not allowed", which is the exact
-// failure this card exists to retire.
+// was built for, with "use of internal package not allowed", which is the
+// exact failure this test exists to catch.
 //
 // So the proof is a real second module: built in a temp directory, requiring
 // this one through a replace directive, importing ONLY pkg/sep2server and
@@ -85,8 +85,8 @@ var _ identitySource = (*sep2server.Server)(nil)
 // through its own snapshot projections: List and Get over EndDevices, DERs,
 // DERPrograms, DefaultDERControls and DERControls. Every one of those is a
 // pure read, so all five narrow to core's reader interfaces. Asserting the
-// narrowing from OUTSIDE the module is what shows IEEESRV-026's privilege
-// split needs nothing from this surface that it does not already have.
+// narrowing from OUTSIDE the module is what shows the privilege split
+// needs nothing from this surface that it does not already have.
 func assertAdminUIReadNeedsNarrow(stores *assembly.Stores) {
 	var (
 		_ store.ResourceReader[sep2.EndDevice]         = stores.EndDevices

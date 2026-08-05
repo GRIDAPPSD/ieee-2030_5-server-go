@@ -5,9 +5,7 @@
 [![Go](https://img.shields.io/badge/go-1.26.3-blue)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-Battelle%20BSD-blue)](LICENSE)
 
-This repo is private: the workflow badges above render for viewers with
-repository access and show nothing for anonymous visitors. No release
-badge yet; this repo has not cut a tagged release.
+No release badge yet; this repo has not cut a tagged release.
 
 Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server binary (`sep2server`) with TLS/mTLS, CSIP V1.2 cipher-suite support (GCM and CCM-8), an admin dashboard, and cert-generation subcommands.
 

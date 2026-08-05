@@ -12,10 +12,11 @@ name: "CodeQL"
 #
 # Requires GitHub Advanced Security to be enabled for this repository:
 # Settings > Code security and analysis > "GitHub Advanced Security".
-# This repo is private, so code scanning does not run without it; the
-# analyze step's SARIF upload fails closed with "Advanced Security must
-# be enabled for this repository to use code scanning" if it is off.
-# Verified 2026-08-02 via
+# Code scanning does not run without it; the analyze step's SARIF
+# upload fails closed with "Advanced Security must be enabled for this
+# repository to use code scanning" if it is off. See the GATED ON
+# REPOSITORY VISIBILITY note below for why GHAS is not currently
+# enabled here. Verified 2026-08-02 via
 # `gh api repos/GRIDAPPSD/ieee-2030_5-server-go/code-scanning/alerts`: Advanced
 # Security is NOT currently enabled on this repo (403, that exact
 # message). A human must turn it on in Settings before this workflow's
@@ -23,7 +24,8 @@ name: "CodeQL"
 #
 # permissions carries `actions: read` in addition to the
 # `contents: read` and `security-events: write` the CodeQL Action's own
-# README documents as the minimum for a private repo. The analyze
+# README documents as the minimum outside GHAS's public-repo free tier.
+# The analyze
 # step's SARIF post-processing (fingerprinting alerts before upload)
 # calls `GET /repos/:owner/:repo/actions/runs/:run_id` to resolve the
 # workflow's relative path; without `actions: read` that call fails
@@ -38,7 +40,7 @@ name: "CodeQL"
 # failed, so nothing was ever uploaded on that run despite the earlier
 # steps going green.
 #
-# This module depends on the private
+# This module depends on the
 # github.com/GRIDAPPSD/ieee-2030_5-core-go module, so CodeQL's
 # Autobuild step needs the same GitHub App installation token wiring
 # ci.yml already carries to resolve it. The token minted here is scoped
@@ -145,7 +147,7 @@ jobs:
           app-id: ${{ secrets.GRIDAPPSD_CI_APP_ID }}
           private-key: ${{ secrets.GRIDAPPSD_CI_APP_PRIVATE_KEY }}
           owner: GRIDAPPSD
-          # Narrowed to exactly the one private module this repo
+          # Narrowed to exactly the one GRIDAPPSD module this repo
           # imports (see go.mod). A leaked token can read this repo's
           # contents and nothing else in the App installation's
           # selected set.
@@ -153,7 +155,7 @@ jobs:
             ieee-2030_5-core-go
           permission-contents: read
 
-      - name: Configure private module access
+      - name: Configure module access
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -165,7 +167,7 @@ jobs:
         # Guards against the "shallow file has changed since we read
         # it" race documented in the sibling gridappsd-ieee-2030_5-go
         # repo's ci.yml: resolving a pseudo-version or tag pin on a
-        # private module can trigger a shallow-then-unshallow fetch
+        # GRIDAPPSD module can trigger a shallow-then-unshallow fetch
         # sequence that races git's detached background maintenance.
         run: |
           git config --global maintenance.auto false

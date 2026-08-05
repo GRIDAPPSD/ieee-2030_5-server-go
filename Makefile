@@ -301,9 +301,9 @@ test-csip-race:           ## Race detector on the CSIP suite with csip_test_hook
 # Achieved threshold at IEEE-106 merge: 79.1% scoped. Gate floored at
 # 78% (1pp below for measurement noise) per Phase 8 doc (IEEE-107).
 # Ratcheted to 80% at IEEE-121 merge (post-interop, per workspace TDD rule).
-# IEEESRV-025 added ./pkg/sep2server/..., the embeddable surface. It is listed
-# because the protocol listener, the handler assembly and the graceful drain
-# MOVED there out of ./internal/server/...; leaving it off would have quietly
+# ./pkg/sep2server/..., the embeddable surface, is listed because the
+# protocol listener, the handler assembly and the graceful drain MOVED
+# there out of ./internal/server/...; leaving it off would have quietly
 # shrunk what the floor measures while the percentage went up.
 CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/encoding/...,./internal/handler/...,./internal/paging/...,./internal/server/...,./internal/subscription/...,./internal/tls,./internal/tls/ccm,./pkg/sep2server/...
 CSIP_COVER_THRESHOLD ?= 80
@@ -316,7 +316,7 @@ test-csip-cover:          ## Run CSIP suite with scoped coverage profile (writes
 coverage-gate:            ## Enforce CSIP coverage floor on coverage-csip.out
 	./scripts/coverage-gate.sh coverage-csip.out $(CSIP_COVER_THRESHOLD)
 
-# --- Stress Test (IEEESRV-007/010) ---
+# --- Stress Test ---
 #
 # Usage examples:
 #   make stress-test                              # smoke: 5 clients, 30s, throughput
@@ -326,7 +326,7 @@ coverage-gate:            ## Enforce CSIP coverage floor on coverage-csip.out
 #   make stress-test DIM=soak DURATION=7200       # 2h soak
 #   make stress-test DIM=tls CCM=true             # TLS/CCM exhaustion
 #
-# Sweep subscription workers/queue (IEEESRV-008):
+# Sweep subscription workers/queue:
 #   SEP2_SUBSCRIPTION_WORKERS=8 SEP2_SUBSCRIPTION_QUEUE_SIZE=512 \
 #     make stress-test DIM=fanout CLIENTS=50
 #
@@ -341,7 +341,7 @@ coverage-gate:            ## Enforce CSIP coverage floor on coverage-csip.out
 #   SEED=42               deterministic RNG seed
 #   SCRAPE=5              Prometheus scrape interval in seconds
 #
-# Fanout-only parameters (IEEESRV-010):
+# Fanout-only parameters:
 #   MUTATION_RATE_HZ=20   stress-notify injections per second
 #   MUTATION_TOKEN=       pre-set token (auto-generated per run when empty)
 #

@@ -7,7 +7,7 @@ description: >
   Factored out of ci.yml so the digest constants and the reassembly logic have
   exactly one home. Two copies would drift the moment the secret is resealed,
   and a stale copy fails open: the gated tests skip and the run still reports
-  green, which is the failure this whole gate exists to prevent (IEEESRV-031).
+  green, which is the failure this whole gate exists to prevent.
 
 inputs:
   wadl-xz-b64:

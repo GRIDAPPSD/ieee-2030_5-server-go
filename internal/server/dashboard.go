@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
 // DashboardData is the payload sent to the dashboard via SSE.

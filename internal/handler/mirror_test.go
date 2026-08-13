@@ -10,9 +10,9 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	coremetering "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv/handlers/metering"
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store/memory"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	coremetering "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/metering"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // Identity the mirror tests present at the TLS seam. Shared so the record a

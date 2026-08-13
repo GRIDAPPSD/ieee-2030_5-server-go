@@ -67,8 +67,8 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	coresep2time "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv/handlers/sep2time"
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store"
+	coresep2time "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 

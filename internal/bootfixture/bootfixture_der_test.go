@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
 // dderControlSingletonKey mirrors the unexported bootfixture.singletonKey. The

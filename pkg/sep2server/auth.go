@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 )
 
 // DefaultAuthPolicy returns this server's own identity and ACL enforcement,

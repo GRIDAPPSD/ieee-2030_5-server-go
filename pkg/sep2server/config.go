@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 )
 
 // Config configures an embedded IEEE 2030.5 protocol server.

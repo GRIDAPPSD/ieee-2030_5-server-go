@@ -87,7 +87,7 @@ func getDER(t *testing.T, srv *httptest.Server, path string) sep2.DER {
 		t.Fatalf("GET %s: %v", path, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("GET %s: status = %d, want 200", path, resp.StatusCode)
 	}
 	var d sep2.DER
@@ -187,7 +187,7 @@ func TestDERInstance_UnknownIDIsACleanNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
@@ -218,7 +218,7 @@ func TestDERInstance_ScopeBindsTheResourceToTheDeviceInThePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404: device A must not reach device B's DER", resp.StatusCode)
 	}
@@ -253,7 +253,7 @@ func TestDERInstance_UnservedMethodsGet405WithAnAccurateAllow(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", method, err)
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if resp.StatusCode != http.StatusMethodNotAllowed {
 				t.Errorf("status = %d, want 405", resp.StatusCode)
@@ -284,7 +284,7 @@ func TestDERInstance_HEADIsServedByTheGETPattern(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HEAD: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -321,7 +321,7 @@ func TestDERInstance_PUTStoresTheServersOwnHrefAndDropsUnservedLinks(t *testing.
 	if err != nil {
 		t.Fatalf("PUT: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("PUT status = %d, want 204", resp.StatusCode)
 	}
@@ -356,7 +356,7 @@ func TestDERInstance_PUTCreatesAtTheIDThePathNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PUT: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("PUT status = %d, want 204", resp.StatusCode)
 	}
@@ -423,7 +423,7 @@ func TestDERInstance_MultipleDERsUnderOneEndDeviceStayIndependent(t *testing.T) 
 		if err != nil {
 			t.Fatalf("PUT %s: %v", put, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
 	for _, tc := range ratings {
@@ -483,7 +483,7 @@ func TestDERList_SeededOutputIsByteIdenticalToTheUnfilledBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET %s: %v", listPath, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	served, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read body: %v", err)

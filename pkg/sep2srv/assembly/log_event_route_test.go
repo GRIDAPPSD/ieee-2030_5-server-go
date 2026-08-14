@@ -91,7 +91,7 @@ func postLogEvent(t *testing.T, srv *httptest.Server, edevID string, evt sep2.Lo
 	if err != nil {
 		t.Fatalf("POST /edev/%s/lel: %v", edevID, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /edev/%s/lel status = %d, want 201", edevID, resp.StatusCode)
@@ -113,7 +113,7 @@ func getBytes(t *testing.T, srv *httptest.Server, path string) (int, []byte) {
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read body for GET %s: %v", path, err)
@@ -360,7 +360,7 @@ func TestLogEvent_InstanceUnservedMethodsGet405WithAnAccurateAllow(t *testing.T)
 			if err != nil {
 				t.Fatalf("%s: %v", method, err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusMethodNotAllowed {
 				t.Errorf("status = %d, want 405", resp.StatusCode)
@@ -398,7 +398,7 @@ func TestLogEvent_ListEModeMethodsAreRefusedExplicitly(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", method, err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode == http.StatusNotFound {
 				t.Fatalf("%s /edev/d1/lel returned 404: a mode E method needs an explicit refusal, "+
@@ -433,7 +433,7 @@ func TestLogEvent_HEADIsServedOnListAndInstance(t *testing.T) {
 			t.Fatalf("HEAD %s: %v", path, err)
 		}
 		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if err != nil {
 			t.Fatalf("read body: %v", err)
 		}
@@ -555,7 +555,7 @@ func TestLogEvent_UndeclaredLogAddressIsGone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST /edev/d1/log: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("POST /edev/d1/log status = %d, want 404", resp.StatusCode)
 	}
@@ -579,7 +579,7 @@ func TestEndDevice_AdvertisesLogEventListLinkWhenTheFunctionSetIsServed(t *testi
 	if err != nil {
 		t.Fatalf("POST /edev: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /edev status = %d, want 201", resp.StatusCode)
 	}
@@ -659,7 +659,7 @@ func TestEndDevice_LogEventListLinkIsAbsentWhenTheFunctionSetIsNot(t *testing.T)
 	if err != nil {
 		t.Fatalf("POST /edev: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /edev status = %d, want 201", resp.StatusCode)
 	}
@@ -705,7 +705,7 @@ func TestLogEventListLink_IsNotClientForgeable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PUT %s: %v", created.Href, err)
 	}
-	put.Body.Close()
+	_ = put.Body.Close()
 	if put.StatusCode != http.StatusNoContent {
 		t.Fatalf("PUT %s status = %d, want 204", created.Href, put.StatusCode)
 	}
@@ -748,6 +748,6 @@ func statusOf(t *testing.T, method, url string) int {
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	return resp.StatusCode
 }

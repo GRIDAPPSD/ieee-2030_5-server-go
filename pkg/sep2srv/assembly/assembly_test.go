@@ -115,7 +115,7 @@ func testAuthPolicy() assembly.AuthPolicy {
 func decodeXML(t *testing.T, resp *http.Response, dst any) {
 	t.Helper()
 	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if err != nil {
 		t.Fatalf("read body: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestAssembly_DCAPWired(t *testing.T) {
 		t.Fatalf("GET /dcap: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("GET /dcap: want 200, got %d", resp.StatusCode)
 	}
 
@@ -268,7 +268,7 @@ func TestAssembly_DeviceCapabilityLinkContract(t *testing.T) {
 		t.Fatalf("GET /dcap: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("GET /dcap: want 200, got %d", resp.StatusCode)
 	}
 	var dc sep2.DeviceCapability
@@ -287,7 +287,7 @@ func TestAssembly_DeviceCapabilityLinkContract(t *testing.T) {
 			t.Fatalf("%s: GET %s: %v", tc.name, href, err)
 		}
 		body, err := io.ReadAll(linkResp.Body)
-		linkResp.Body.Close()
+		_ = linkResp.Body.Close()
 		if err != nil {
 			t.Fatalf("%s: GET %s: read body: %v", tc.name, href, err)
 		}
@@ -335,7 +335,7 @@ func TestAssembly_EndDeviceCreateRoundTrip(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("POST /edev: want 201/200, got %d: %s", resp.StatusCode, body)
 	}
 
@@ -357,7 +357,7 @@ func TestAssembly_EndDeviceCreateRoundTrip(t *testing.T) {
 		t.Fatalf("GET /edev: %v", err)
 	}
 	if resp2.StatusCode != http.StatusOK {
-		resp2.Body.Close()
+		_ = resp2.Body.Close()
 		t.Fatalf("GET /edev: want 200, got %d", resp2.StatusCode)
 	}
 
@@ -404,7 +404,7 @@ func TestAssembly_DERSingletonRoundTrip(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("POST /edev: want 201/200, got %d: %s", resp.StatusCode, body)
 	}
 	var edev sep2.EndDevice
@@ -427,7 +427,7 @@ func TestAssembly_DERSingletonRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PUT %s: %v", dercapURL, err)
 	}
-	putResp.Body.Close()
+	_ = putResp.Body.Close()
 	if putResp.StatusCode != http.StatusNoContent && putResp.StatusCode != http.StatusOK {
 		t.Fatalf("PUT dercap: want 204/200, got %d", putResp.StatusCode)
 	}
@@ -438,7 +438,7 @@ func TestAssembly_DERSingletonRoundTrip(t *testing.T) {
 		t.Fatalf("GET %s: %v", dercapURL, err)
 	}
 	if getResp.StatusCode != http.StatusOK {
-		getResp.Body.Close()
+		_ = getResp.Body.Close()
 		t.Fatalf("GET dercap: want 200, got %d", getResp.StatusCode)
 	}
 
@@ -475,7 +475,7 @@ func TestAssembly_TimeScalarsFlowThroughRouterConfig(t *testing.T) {
 		t.Fatalf("GET /tm: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("GET /tm: want 200, got %d", resp.StatusCode)
 	}
 
@@ -561,7 +561,7 @@ func TestAssembly_ScopedListRoutesMounted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /edev/e1/fsa: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET /edev/e1/fsa status = %d, want 200", resp.StatusCode)
 	}
@@ -571,7 +571,7 @@ func TestAssembly_ScopedListRoutesMounted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /edev/e1/der: %v", err)
 	}
-	resp2.Body.Close()
+	_ = resp2.Body.Close()
 	if resp2.StatusCode != http.StatusOK {
 		t.Errorf("GET /edev/e1/der status = %d, want 200", resp2.StatusCode)
 	}
@@ -581,7 +581,7 @@ func TestAssembly_ScopedListRoutesMounted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /edev/e1/fsa/f1/derp/p1/derc: %v", err)
 	}
-	resp3.Body.Close()
+	_ = resp3.Body.Close()
 	if resp3.StatusCode != http.StatusOK {
 		t.Errorf("GET /edev/e1/fsa/f1/derp/p1/derc status = %d, want 200", resp3.StatusCode)
 	}
@@ -591,7 +591,7 @@ func TestAssembly_ScopedListRoutesMounted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /mup: %v", err)
 	}
-	resp4.Body.Close()
+	_ = resp4.Body.Close()
 	if resp4.StatusCode != http.StatusOK {
 		t.Errorf("GET /mup status = %d, want 200", resp4.StatusCode)
 	}
@@ -601,7 +601,7 @@ func TestAssembly_ScopedListRoutesMounted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /upt: %v", err)
 	}
-	resp5.Body.Close()
+	_ = resp5.Body.Close()
 	if resp5.StatusCode != http.StatusOK {
 		t.Errorf("GET /upt status = %d, want 200", resp5.StatusCode)
 	}
@@ -638,7 +638,7 @@ func TestAssembly_DERProgramMemberHrefResolves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET DERProgramList: %v", err)
 	}
-	defer listResp.Body.Close()
+	defer func() { _ = listResp.Body.Close() }()
 	if listResp.StatusCode != http.StatusOK {
 		t.Fatalf("GET DERProgramList status = %d, want 200", listResp.StatusCode)
 	}
@@ -662,7 +662,7 @@ func TestAssembly_DERProgramMemberHrefResolves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET member href %q: %v", memberHref, err)
 	}
-	defer memberResp.Body.Close()
+	defer func() { _ = memberResp.Body.Close() }()
 	if memberResp.StatusCode != http.StatusOK {
 		t.Errorf("GET member href %q status = %d, want 200: the FSA-to-DERProgram link walk must resolve", memberHref, memberResp.StatusCode)
 	}
@@ -718,7 +718,7 @@ func TestAssembly_DERProgramMemberStaysReadOnly(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s %s: %v", method, href, err)
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if resp.StatusCode != http.StatusMethodNotAllowed {
 				t.Errorf("status = %d, want 405: core exposes no write route for a single DERProgram", resp.StatusCode)
@@ -734,7 +734,7 @@ func TestAssembly_DERProgramMemberStaysReadOnly(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GET %s: %v", href, err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d, want 200", resp.StatusCode)
 		}
@@ -798,7 +798,7 @@ func TestAssembly_AsNotifyRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DELETE /edev/e1/sub/s1: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Errorf("DELETE /edev/e1/sub/s1 status = %d, want 204", resp.StatusCode)
 	}
@@ -846,7 +846,7 @@ func TestAssembly_PostMirrorUsagePointReading_ViaLocationHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST /mup: %v", err)
 	}
-	createResp.Body.Close()
+	_ = createResp.Body.Close()
 	if createResp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /mup status = %d, want 201", createResp.StatusCode)
 	}
@@ -874,7 +874,7 @@ func TestAssembly_PostMirrorUsagePointReading_ViaLocationHeader(t *testing.T) {
 		t.Fatalf("POST %s: %v", loc, err)
 	}
 	postBody, _ := io.ReadAll(postResp.Body)
-	postResp.Body.Close()
+	_ = postResp.Body.Close()
 
 	if postResp.StatusCode == http.StatusMethodNotAllowed {
 		t.Fatalf("POST %s returned 405: server's own Location header rejected; body=%s", loc, postBody)
@@ -917,7 +917,7 @@ func TestAssembly_PostMirrorUsagePointReading_ViaLocationHeader(t *testing.T) {
 		t.Fatalf("GET %s: %v", loc, err)
 	}
 	getBody, _ := io.ReadAll(getResp.Body)
-	getResp.Body.Close()
+	_ = getResp.Body.Close()
 	if getResp.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s status = %d, want 200", loc, getResp.StatusCode)
 	}
@@ -971,7 +971,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST /mup: %v", err)
 	}
-	createResp.Body.Close()
+	_ = createResp.Body.Close()
 	if createResp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /mup status = %d, want 201", createResp.StatusCode)
 	}
@@ -999,7 +999,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 			t.Fatalf("POST %s: %v", path, err)
 		}
 		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusForbidden {
 			t.Errorf("POST %s as a non-creator: status = %d, want 403; body = %s", path, resp.StatusCode, respBody)
 		}
@@ -1013,7 +1013,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 		t.Fatalf("GET %s: %v", ownedPath, err)
 	}
 	getBody, _ := io.ReadAll(getResp.Body)
-	getResp.Body.Close()
+	_ = getResp.Body.Close()
 	if getResp.StatusCode != http.StatusForbidden {
 		t.Errorf("GET %s as a non-creator: status = %d, want 403; body = %s", ownedPath, getResp.StatusCode, getBody)
 	}
@@ -1045,7 +1045,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 			t.Fatalf("%s %s: %v", m.method, ownedPath, err)
 		}
 		mBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusForbidden {
 			t.Errorf("%s %s as a non-creator: status = %d, want 403; body = %s",
 				m.method, ownedPath, resp.StatusCode, mBody)
@@ -1081,7 +1081,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("owner POST %s: %v", ownedPath, err)
 	}
-	okResp.Body.Close()
+	_ = okResp.Body.Close()
 	if okResp.StatusCode != http.StatusCreated {
 		t.Errorf("owner POST %s status = %d, want 201", ownedPath, okResp.StatusCode)
 	}
@@ -1090,7 +1090,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 		t.Fatalf("owner GET %s: %v", ownedPath, err)
 	}
 	ownerGetBody, _ := io.ReadAll(ownerGet.Body)
-	ownerGet.Body.Close()
+	_ = ownerGet.Body.Close()
 	if ownerGet.StatusCode != http.StatusOK {
 		t.Errorf("owner GET %s status = %d, want 200", ownedPath, ownerGet.StatusCode)
 	}
@@ -1109,7 +1109,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 		t.Fatalf("GET /mup: %v", err)
 	}
 	listBody, _ := io.ReadAll(listResp.Body)
-	listResp.Body.Close()
+	_ = listResp.Body.Close()
 	if listResp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /mup status = %d, want 200 (list is intentionally unscoped)", listResp.StatusCode)
 	}
@@ -1164,7 +1164,7 @@ func TestAssembly_SameMRIDFromTwoDevicesStaysIsolated(t *testing.T) {
 			t.Fatalf("%s POST /mup: %v", who, err)
 		}
 		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusCreated {
 			t.Fatalf("%s POST /mup: status = %d, want 201 (its own mirror); body = %s", who, resp.StatusCode, respBody)
 		}
@@ -1223,7 +1223,7 @@ func TestAssembly_SameMRIDFromTwoDevicesStaysIsolated(t *testing.T) {
 			t.Fatalf("device A POST %s: %v", path, err)
 		}
 		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusForbidden {
 			t.Errorf("device A POST %s (device B's mirror): status = %d, want 403; body = %s", path, resp.StatusCode, respBody)
 		}
@@ -1233,7 +1233,7 @@ func TestAssembly_SameMRIDFromTwoDevicesStaysIsolated(t *testing.T) {
 		t.Fatalf("device A GET %s: %v", locB, err)
 	}
 	getBody, _ := io.ReadAll(getResp.Body)
-	getResp.Body.Close()
+	_ = getResp.Body.Close()
 	if getResp.StatusCode != http.StatusForbidden {
 		t.Errorf("device A GET %s (device B's mirror): status = %d, want 403; body = %s", locB, getResp.StatusCode, getBody)
 	}

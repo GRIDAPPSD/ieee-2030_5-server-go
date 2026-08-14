@@ -42,7 +42,7 @@ import (
 func readBody(t *testing.T, resp *http.Response) []byte {
 	t.Helper()
 	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if err != nil {
 		t.Fatalf("read body: %v", err)
 	}

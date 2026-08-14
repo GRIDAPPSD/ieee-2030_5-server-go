@@ -155,7 +155,7 @@ func TestPartialFamilyRefusesRatherThanPanicking(t *testing.T) {
 				t.Fatalf("%s %s over an unwired Stores.%s: %v (a panicking handler, not a refusal)",
 					tc.method, tc.path, tc.field, err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusInternalServerError {
 				t.Errorf("%s %s over an unwired Stores.%s = %d, want 500: a mis-wired server must say so, not answer as though the resource is simply absent",
@@ -215,7 +215,7 @@ func TestPartialMirrorFamilyRefusesRatherThanPanicking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST /mup: %v", err)
 	}
-	created.Body.Close()
+	_ = created.Body.Close()
 	if created.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /mup = %d, want 201", created.StatusCode)
 	}
@@ -228,7 +228,7 @@ func TestPartialMirrorFamilyRefusesRatherThanPanicking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST %s/mr over an unwired Stores.MirrorMeterReadings: %v (a panicking handler, not a refusal)", location, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("POST %s/mr over an unwired Stores.MirrorMeterReadings = %d, want 500", location, resp.StatusCode)

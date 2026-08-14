@@ -368,7 +368,7 @@ func TestEveryMountedRouteReportsAStoreFailureAsAServerError(t *testing.T) {
 			continue
 		}
 		status := resp.StatusCode
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		probed++
 
 		if status < 500 || status > 599 {
@@ -501,7 +501,7 @@ func TestFaultProbeRoutesAreServedWhileHealthy(t *testing.T) {
 			continue
 		}
 		status := resp.StatusCode
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if status >= 500 {
 			t.Errorf("%s answered %d against a HEALTHY store; the fault probe for this route proves nothing, "+

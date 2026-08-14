@@ -101,7 +101,7 @@ func postFixtureDevice(t *testing.T, base string) {
 		t.Fatalf("POST /edev: %v", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /edev = %d, want 201; body: %s", resp.StatusCode, body)
 	}
@@ -127,7 +127,7 @@ func TestListReportsARegistrationsStoreFailureAsAServerError(t *testing.T) {
 		t.Fatalf("GET /edev: %v", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	if resp.StatusCode < 500 || resp.StatusCode > 599 {
 		t.Fatalf("GET /edev = %d with only the Registrations store failing; want 5xx. "+
@@ -157,7 +157,7 @@ func TestListServesAGenuinelyUnregisteredDeviceAs200WithTheLinkAbsent(t *testing
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("GET /edev = %d, want 200 for a healthy store; body: %s", resp.StatusCode, body)
 	}
 

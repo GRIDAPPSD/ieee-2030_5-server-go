@@ -64,7 +64,7 @@ func TestTextMessageList_ScopeBindsToTheMessagingProgramInThePath(t *testing.T) 
 				t.Fatalf("GET /msg/%s/tm: %v", tc.msgID, err)
 			}
 			if resp.StatusCode != http.StatusOK {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				t.Fatalf("GET /msg/%s/tm status = %d, want 200", tc.msgID, resp.StatusCode)
 			}
 
@@ -113,7 +113,7 @@ func TestTextMessageList_EmptyProgramIsAnEmptyList(t *testing.T) {
 		t.Fatalf("GET /msg/m-empty/tm: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("status = %d, want 200: an empty list is a valid answer, not an error", resp.StatusCode)
 	}
 
@@ -176,7 +176,7 @@ func TestMeterReadingList_ScopeBindsToTheUsagePointInThePath(t *testing.T) {
 				t.Fatalf("GET /upt/%s/mr: %v", tc.uptID, err)
 			}
 			if resp.StatusCode != http.StatusOK {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				t.Fatalf("GET /upt/%s/mr status = %d, want 200", tc.uptID, resp.StatusCode)
 			}
 
@@ -220,7 +220,7 @@ func TestMeterReadingList_EmptyUsagePointIsAnEmptyList(t *testing.T) {
 		t.Fatalf("GET /upt/u-empty/mr: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("status = %d, want 200: an empty list is a valid answer, not an error", resp.StatusCode)
 	}
 

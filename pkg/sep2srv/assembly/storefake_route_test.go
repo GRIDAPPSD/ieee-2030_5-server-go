@@ -178,7 +178,7 @@ func TestSecondImplementation_FlatStoreServesPostAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST /upt: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /upt status = %d, want %d", resp.StatusCode, http.StatusCreated)
 	}
@@ -194,7 +194,7 @@ func TestSecondImplementation_FlatStoreServesPostAndGet(t *testing.T) {
 		t.Fatalf("GET %s: %v", location, err)
 	}
 	if got.StatusCode != http.StatusOK {
-		got.Body.Close()
+		_ = got.Body.Close()
 		t.Fatalf("GET %s status = %d, want 200", location, got.StatusCode)
 	}
 	var upt sep2.UsagePoint
@@ -265,7 +265,7 @@ func TestSecondImplementation_ScopedStoreServesPostAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST /edev/%s/lel: %v", deviceID, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /edev/%s/lel status = %d, want %d", deviceID, resp.StatusCode, http.StatusCreated)
 	}
@@ -279,7 +279,7 @@ func TestSecondImplementation_ScopedStoreServesPostAndGet(t *testing.T) {
 		t.Fatalf("GET %s: %v", location, err)
 	}
 	if got.StatusCode != http.StatusOK {
-		got.Body.Close()
+		_ = got.Body.Close()
 		t.Fatalf("GET %s status = %d, want 200", location, got.StatusCode)
 	}
 	var event sep2.LogEvent
@@ -362,7 +362,7 @@ func TestSecondImplementation_SingletonPutThenGet(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PUT %s: %v", path, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusNoContent {
 			t.Fatalf("PUT %s status = %d, want 204", path, resp.StatusCode)
 		}
@@ -420,7 +420,7 @@ func TestSecondImplementation_MirrorDeleteFailsClosedWithoutCascade(t *testing.T
 	if err != nil {
 		t.Fatalf("POST /mup: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /mup status = %d, want 201", resp.StatusCode)
 	}
@@ -437,7 +437,7 @@ func TestSecondImplementation_MirrorDeleteFailsClosedWithoutCascade(t *testing.T
 	if err != nil {
 		t.Fatalf("DELETE %s: %v", location, err)
 	}
-	del.Body.Close()
+	_ = del.Body.Close()
 	if del.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("DELETE %s status = %d, want 500: a store that cannot cascade must not complete the delete",
 			location, del.StatusCode)
@@ -451,7 +451,7 @@ func TestSecondImplementation_MirrorDeleteFailsClosedWithoutCascade(t *testing.T
 	if err != nil {
 		t.Fatalf("GET %s: %v", location, err)
 	}
-	still.Body.Close()
+	_ = still.Body.Close()
 	if still.StatusCode != http.StatusOK {
 		t.Errorf("GET %s after the refused delete = %d, want 200", location, still.StatusCode)
 	}

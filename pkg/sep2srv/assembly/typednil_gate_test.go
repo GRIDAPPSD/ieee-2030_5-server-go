@@ -71,7 +71,7 @@ func TestTypedNilStoreHandleReadsAsUnwired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /edev/0/lel: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("GET /edev/0/lel = %d, want 404 from an unmounted route", resp.StatusCode)
 	}
@@ -80,7 +80,7 @@ func TestTypedNilStoreHandleReadsAsUnwired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /edev: %v", err)
 	}
-	defer list.Body.Close()
+	defer func() { _ = list.Body.Close() }()
 	if list.StatusCode != http.StatusOK {
 		t.Fatalf("GET /edev = %d, want 200: clearing one function set must not break the EndDevice list",
 			list.StatusCode)

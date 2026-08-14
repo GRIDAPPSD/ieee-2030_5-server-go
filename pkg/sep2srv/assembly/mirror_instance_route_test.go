@@ -46,7 +46,7 @@ func createMirror(t *testing.T, srv *httptest.Server, mrid string) string {
 	if err != nil {
 		t.Fatalf("POST /mup: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /mup status = %d, want 201", resp.StatusCode)
 	}
@@ -75,7 +75,7 @@ func doRequest(t *testing.T, method, url, body string) (*http.Response, []byte) 
 		t.Fatalf("%s %s: %v", method, url, err)
 	}
 	payload, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	return resp, payload
 }
 

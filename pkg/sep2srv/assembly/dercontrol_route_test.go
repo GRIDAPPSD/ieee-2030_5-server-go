@@ -100,7 +100,7 @@ func TestSingleDERControlRouteServesActivatedEventHref(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("GET %s: want 200, got %d (body: %s)", want.Href, resp.StatusCode, body)
 	}
 
@@ -223,7 +223,7 @@ func TestSingleDERControlRouteScopesByPathNotJustID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET owner path: %v", err)
 	}
-	ownerResp.Body.Close()
+	_ = ownerResp.Body.Close()
 	if ownerResp.StatusCode != http.StatusOK {
 		t.Fatalf("owner path returned %d, want 200; seed or scope is wrong", ownerResp.StatusCode)
 	}
@@ -235,7 +235,7 @@ func TestSingleDERControlRouteScopesByPathNotJustID(t *testing.T) {
 		t.Fatalf("GET cross-device path: %v", err)
 	}
 	body, _ := io.ReadAll(crossResp.Body)
-	crossResp.Body.Close()
+	_ = crossResp.Body.Close()
 
 	if crossResp.StatusCode != http.StatusNotFound {
 		t.Errorf("cross-device GET %s returned %d, want 404; device B must not read device A's control\nbody: %s",
@@ -269,7 +269,7 @@ func TestSingleDERControlRouteReturnsNotFoundForAbsentID(t *testing.T) {
 		t.Fatalf("GET absent: %v", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("GET %s returned %d, want 404\nbody: %s", absent, resp.StatusCode, body)
@@ -300,7 +300,7 @@ func TestSingleDERControlRouteRejectsNonGET(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", method, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
 			t.Errorf("%s %s returned 200; the route must be read-only", method, want.Href)
 		}

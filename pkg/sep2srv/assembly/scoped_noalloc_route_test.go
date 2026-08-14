@@ -64,7 +64,7 @@ func scopedStoresIn(s *assembly.Stores) map[string]parentEnumerator {
 			continue
 		}
 		switch f.Kind() {
-		case reflect.Interface, reflect.Ptr, reflect.Map, reflect.Slice, reflect.Func:
+		case reflect.Interface, reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func:
 			if f.IsNil() {
 				continue
 			}
@@ -181,7 +181,7 @@ func TestGetsForUnknownParentsCreateNoStoreState(t *testing.T) {
 				t.Errorf("%s: %v", pattern, err)
 				break
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			probed++
 			routeProbed = true
 		}
@@ -234,7 +234,7 @@ func TestListOfAnExistingButEmptyParentStillServesAnEmptyList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DELETE %s: %v", loc, err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		t.Fatalf("DELETE %s status = %d, want 204 or 200", loc, resp.StatusCode)
 	}

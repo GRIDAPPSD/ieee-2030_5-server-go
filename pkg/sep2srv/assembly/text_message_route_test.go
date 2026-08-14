@@ -63,7 +63,7 @@ func postTextMessage(t *testing.T, srv *httptest.Server, msgID, text string) str
 	if err != nil {
 		t.Fatalf("POST /msg/%s/tm: %v", msgID, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /msg/%s/tm status = %d, want 201", msgID, resp.StatusCode)
@@ -89,7 +89,7 @@ func TestTextMessage_LocationHeaderResolves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET %s: %v", loc, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s status = %d, want 200: the server minted this href itself", loc, resp.StatusCode)
@@ -138,7 +138,7 @@ func TestTextMessage_ScopeBindsToTheMessagingProgramInThePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET %s: %v", foreign, err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("GET %s status = %d, want 404: a message must not be reachable under a program it was not posted to", foreign, resp.StatusCode)
 	}
@@ -147,7 +147,7 @@ func TestTextMessage_ScopeBindsToTheMessagingProgramInThePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET %s: %v", loc, err)
 	}
-	own.Body.Close()
+	_ = own.Body.Close()
 	if own.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s status = %d, want 200", loc, own.StatusCode)
 	}
@@ -169,7 +169,7 @@ func TestTextMessage_UnknownIDIsACleanNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET %s: %v", loc, err)
 	}
-	present.Body.Close()
+	_ = present.Body.Close()
 	if present.StatusCode != http.StatusOK {
 		t.Fatalf("GET %s status = %d, want 200: without a served sibling the 404 below proves nothing",
 			loc, present.StatusCode)
@@ -179,7 +179,7 @@ func TestTextMessage_UnknownIDIsACleanNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
@@ -217,7 +217,7 @@ func TestTextMessage_UnservedMethodsGet405WithAnAccurateAllow(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", method, err)
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if resp.StatusCode != http.StatusMethodNotAllowed {
 				t.Errorf("status = %d, want 405", resp.StatusCode)
@@ -245,7 +245,7 @@ func TestTextMessage_HEADIsServedByTheGETPattern(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HEAD: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)

@@ -286,7 +286,7 @@ func TestRegistrationBinding_ClientCannotForgeTheLinkByPUT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PUT /edev/1: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("PUT /edev/1: status %d, want 204", resp.StatusCode)
 	}

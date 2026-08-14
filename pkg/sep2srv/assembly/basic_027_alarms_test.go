@@ -68,7 +68,7 @@ func TestBASIC_027_Alarms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST %s: %v", dcap.EndDeviceListLink.Href, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST %s status = %d, want 201", dcap.EndDeviceListLink.Href, resp.StatusCode)
 	}
@@ -106,7 +106,7 @@ func TestBASIC_027_Alarms(t *testing.T) {
 		if err != nil {
 			t.Fatalf("POST %s [%d]: %v", logListHref, i, err)
 		}
-		post.Body.Close()
+		_ = post.Body.Close()
 		if post.StatusCode != http.StatusCreated {
 			t.Fatalf("POST %s [%d] status = %d, want 201 (sep_wadl.xml:1385 declares POST mode M)",
 				logListHref, i, post.StatusCode)
@@ -219,7 +219,7 @@ func TestBASIC_027_ListPUTIsOutOfScopeAndRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PUT /edev/d1/lel: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound {
 		t.Fatal("PUT /edev/d1/lel returned 404: an unmounted path is not a conformant mode E refusal")

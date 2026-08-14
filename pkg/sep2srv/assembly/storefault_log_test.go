@@ -147,7 +147,7 @@ func TestEveryStoreFailureFiveHundredIsLoggedWithItsRoute(t *testing.T) {
 			continue
 		}
 		status := resp.StatusCode
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		captured := buf.String()
 
 		if status != http.StatusInternalServerError {

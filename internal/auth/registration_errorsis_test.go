@@ -18,7 +18,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
 // TestWrappedErrAlreadyExistsNotEqualButIs demonstrates that a wrapped

@@ -30,10 +30,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store/memory"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // canonicalProtocolRoutes is the pinned list of 72 SEP2 protocol-listener

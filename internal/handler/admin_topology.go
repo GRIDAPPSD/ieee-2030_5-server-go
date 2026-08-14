@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store"
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // #163: GET /api/topology returns the SY -> FD -> SP -> DEV tree for

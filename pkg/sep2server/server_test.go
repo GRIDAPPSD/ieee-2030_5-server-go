@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv"
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv/assembly"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 )
 
 // TestProtocolServerTimeoutsSet asserts every timeout on the protocol

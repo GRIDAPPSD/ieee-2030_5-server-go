@@ -27,8 +27,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
 )
 
 // externalConsumerSource is the second module's program. It is a Go source
@@ -46,9 +46,9 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv"
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv/assembly"
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
 )
 

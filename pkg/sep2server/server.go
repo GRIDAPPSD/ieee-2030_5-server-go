@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv"
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2srv/assembly"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 )
 
 // BuildHandler assembles the protocol handler and returns it alongside the

@@ -83,6 +83,16 @@ jobs:
             ieee-2030_5-core-go
           permission-contents: read
 
+      - name: Annotate infra failure (read-token mint)
+        # Explicit `if:` so this runs even though the mint step above
+        # failed; without one, GitHub Actions skips every later step
+        # by default once a step fails. Titled distinctly from the
+        # real-drift error at the bottom of this job, so the checks
+        # summary shows an infra failure without anyone opening logs.
+        if: steps.read-token.outcome == 'failure'
+        run: |
+          echo "::error title=INFRA FAILURE (staleness-check)::Failed to mint the read-only GitHub App installation token for github.com/GRIDAPPSD/ieee-2030_5-core-go. See the mint step's log above for the underlying error."
+
       - name: Mint write-scoped GitHub App installation token
         # Separate token, separate purpose: pushing the chore/bump-core
         # branch and opening/updating its PR on THIS repo only. Scoped
@@ -102,6 +112,11 @@ jobs:
             ieee-2030_5-server-go
           permission-contents: write
           permission-pull-requests: write
+
+      - name: Annotate infra failure (write-token mint)
+        if: steps.write-token.outcome == 'failure'
+        run: |
+          echo "::error title=INFRA FAILURE (staleness-check)::Failed to mint the write-scoped GitHub App installation token for this repository. See the mint step's log above for the underlying error."
 
       - name: Configure private module access
         # Mirrors the conformance-vs-core-main job's step of the same
@@ -147,14 +162,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          git clone --quiet \
+          if ! git clone --quiet \
             "https://x-access-token:${APP_TOKEN}@github.com/GRIDAPPSD/ieee-2030_5-core-go.git" \
-            /tmp/core-freshness-check
+            /tmp/core-freshness-check; then
+            echo "::error title=INFRA FAILURE (staleness-check)::Failed to clone github.com/GRIDAPPSD/ieee-2030_5-core-go. See the log above for the underlying git error."
+            exit 1
+          fi
           TARGET_SHA=$(git -C /tmp/core-freshness-check rev-parse origin/main)
           TARGET_LABEL="core main ($TARGET_SHA)"
           echo "core origin/main: $TARGET_SHA"
 
-          PIN_VERSION=$(go list -m -f '{{.Version}}' github.com/GRIDAPPSD/ieee-2030_5-core-go)
+          if ! PIN_VERSION=$(go list -m -f '{{.Version}}' github.com/GRIDAPPSD/ieee-2030_5-core-go); then
+            echo "::error title=INFRA FAILURE (staleness-check)::Failed to resolve the pinned github.com/GRIDAPPSD/ieee-2030_5-core-go module version via go list -m. See the log above for the underlying go error."
+            exit 1
+          fi
           echo "Pinned version: $PIN_VERSION"
 
           # A Go pseudo-version ends in a 14-digit timestamp and a
@@ -169,7 +190,10 @@ jobs:
           fi
           echo "Pinned commit: $PIN_SHA"
 
-          BEHIND=$(git -C /tmp/core-freshness-check rev-list --count "${PIN_SHA}..${TARGET_SHA}")
+          if ! BEHIND=$(git -C /tmp/core-freshness-check rev-list --count "${PIN_SHA}..${TARGET_SHA}"); then
+            echo "::error title=INFRA FAILURE (staleness-check)::Failed to count commits between the pinned commit and ${TARGET_LABEL} via git rev-list. See the log above for the underlying git error."
+            exit 1
+          fi
           echo "Commits behind target: $BEHIND"
 
           {

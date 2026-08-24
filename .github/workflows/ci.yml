@@ -380,15 +380,12 @@ jobs:
 
       - name: Check formatting
         run: |
-          # One violation was found and fixed in the same change that
-          # added this check (test/stress/loadgen/loadgen_test.go, a
-          # struct-literal alignment fix with no semantic change; not
-          # vendored). No exclusion is needed here as a result: the
-          # check is unconditionally blocking. If a future vendored or
-          # generated file needs a carve-out, add it here narrowly and
-          # comment why, matching the pattern in
-          # ieee-2030_5-core-go's ci.yml gofmt job.
-          unformatted=$(gofmt -l .)
+          # gofmt -l walks the whole tree; vendor/ holds go.mod-managed
+          # copies of third-party source we do not author, so it is
+          # excluded by path prefix. `|| true` guards grep -v's exit 1
+          # when nothing outside vendor/ is unformatted (mirrors the
+          # Makefile gofmt-check target).
+          unformatted=$(gofmt -l . | grep -vE '^vendor/' || true)
           if [ -n "$unformatted" ]; then
             echo "The following files are not gofmt-formatted:"
             echo "$unformatted"

@@ -385,9 +385,11 @@ lint:                     ## Run golangci-lint + gofmt drift check
 	golangci-lint run ./...
 	$(MAKE) gofmt-check
 
-gofmt-check:              ## Verify gofmt drift (excludes vendored paths)
-	@# Vendored paths excluded per VENDORED.md (also listed in .golangci.yml exclusions).
-	@drift=`gofmt -l . | grep -vE '^(internal/tls/gotls/|internal/tls/ccm/|vendor/)' || true`; \
+gofmt-check:              ## Verify gofmt drift (excludes vendor/)
+	@# vendor/ holds go.mod-managed third-party source. internal/tls no
+	@# longer exists: its hand-copied crypto/tls fork was replaced by the
+	@# sep2tls package consumed from ieee-2030_5-core-go.
+	@drift=`gofmt -l . | grep -vE '^vendor/' || true`; \
 		if [ -n "$$drift" ]; then \
 			echo "gofmt drift detected (run: gofmt -w <files>):"; \
 			echo "$$drift"; \

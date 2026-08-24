@@ -202,9 +202,20 @@ jobs:
             echo "::error title=INFRA FAILURE (staleness-check)::Failed to generate a random GITHUB_OUTPUT delimiter via openssl rand. Refusing to emit the commit list under a guessable delimiter."
             exit 1
           fi
+          if ! COMMITS=$(git -C /tmp/core-freshness-check log --oneline "${PIN_SHA}..${TARGET_SHA}"); then
+            echo "::error title=INFRA FAILURE (staleness-check)::Failed to list the commits between the pinned commit and ${TARGET_LABEL} via git log. See the log above for the underlying git error."
+            exit 1
+          fi
+
+          # Echoed to the run log, not just handed to the step output: the drift
+          # annotation can fire on a run where the bump PR was never opened, and
+          # the log is then the only place the list can be read.
+          echo "Commits between the pin and the target:"
+          echo "$COMMITS"
+
           {
             echo "commits<<${COMMITS_DELIM}"
-            git -C /tmp/core-freshness-check log --oneline "${PIN_SHA}..${TARGET_SHA}"
+            echo "$COMMITS"
             echo "${COMMITS_DELIM}"
           } >> "$GITHUB_OUTPUT"
 
@@ -263,6 +274,7 @@ jobs:
             HEAD:refs/heads/chore/bump-core
 
       - name: Open or update the bump PR (only when behind)
+        id: bump-pr
         if: steps.compare.outputs.behind != '0'
         env:
           GH_TOKEN: ${{ steps.write-token.outputs.token }}
@@ -312,8 +324,19 @@ jobs:
           PIN_VERSION: ${{ steps.compare.outputs.pin_version }}
           BEHIND: ${{ steps.compare.outputs.behind }}
           TARGET_LABEL: ${{ steps.compare.outputs.target_label }}
+          PR_OUTCOME: ${{ steps.bump-pr.outcome }}
         run: |
-          echo "::error::Pinned github.com/GRIDAPPSD/ieee-2030_5-core-go (${PIN_VERSION}) is ${BEHIND} commit(s) behind ${TARGET_LABEL}. See the chore/bump-core PR for the commit list."
+          set -euo pipefail
+
+          # This step fires on real drift even when the bump chain failed, so it
+          # must not send the reader to a PR that was never opened or updated.
+          if [ "$PR_OUTCOME" = "success" ]; then
+            WHERE="The chore/bump-core PR carries the commit list and the bump diff."
+          else
+            WHERE="No bump PR was opened or updated on this run (that step reported '${PR_OUTCOME}'), so the commit list is readable only in this job's log, under the pin-comparison step."
+          fi
+
+          echo "::error::Pinned github.com/GRIDAPPSD/ieee-2030_5-core-go (${PIN_VERSION}) is ${BEHIND} commit(s) behind ${TARGET_LABEL}. ${WHERE}"
           exit 1
 
   conformance-vs-core-main:
@@ -394,26 +417,38 @@ jobs:
         # cannot mean a conformance sweep that measured nothing.
         run: |
           set -euo pipefail
-          # go test explains itself on stdout, so capturing it under set -e used
-          # to abort at the assignment and discard the whole diagnostic, log and
-          # annotation both, on the one path that needed it; this gate takes the
-          # licensed WADL to reproduce locally. 2>&1 keeps build and toolchain
-          # errors, which never reach stdout at all.
+          # go test explains itself on stdout, so the output is captured and
+          # echoed on every path: this gate needs the licensed WADL to reproduce
+          # locally, and 2>&1 folds in build errors that never reach stdout. A
+          # plain FAIL and a package that never built both exit 1, so only the
+          # PASS/FAIL line separates "the gate ran and failed" from "the gate
+          # never ran", which is the distinction the reader acts on.
           status=0
           output=$(go test -run '^TestWADLGateArmed$' -v ./test/conformance/wadl/ 2>&1) || status=$?
           echo "$output"
-          if [ "$status" -ne 0 ]; then
-            echo "::error::TestWADLGateArmed did not run to completion (go test exited ${status}), so the conformance sweep measured nothing against the standard."
-            exit 1
-          fi
+
           case "$output" in
-            *"--- PASS: TestWADLGateArmed"*)
+            *"--- PASS: TestWADLGateArmed"*) verdict=pass ;;
+            *"--- FAIL: TestWADLGateArmed"*) verdict=fail ;;
+            *) verdict=none ;;
+          esac
+
+          if [ "$verdict" = pass ] && [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+
+          case "$verdict" in
+            fail)
+              echo "::error::TestWADLGateArmed ran and FAILED (go test exited ${status}): the WADL gate is not armed, so the conformance sweep measured nothing against the standard."
               ;;
-            *)
-              echo "::error::TestWADLGateArmed did not pass, so the conformance sweep measured nothing against the standard."
-              exit 1
+            pass)
+              echo "::error::TestWADLGateArmed reported PASS but go test exited ${status}, so something else in the package failed and this run's conformance result cannot be trusted."
+              ;;
+            none)
+              echo "::error::TestWADLGateArmed reached no verdict: its output carries neither a PASS nor a FAIL line (go test exited ${status}). A build failure, a skip, or a renamed test all look like this, and the conformance sweep measured nothing against the standard."
               ;;
           esac
+          exit 1
 
       - name: Vet
         run: make vet

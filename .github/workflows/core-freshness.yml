@@ -84,12 +84,10 @@ jobs:
           permission-contents: read
 
       - name: Annotate infra failure (read-token mint)
-        # Explicit `if:` so this runs even though the mint step above
-        # failed; without one, GitHub Actions skips every later step
-        # by default once a step fails. Titled distinctly from the
-        # real-drift error at the bottom of this job, so the checks
-        # summary shows an infra failure without anyone opening logs.
-        if: steps.read-token.outcome == 'failure'
+        # failure() is load-bearing: with no status-check function in a
+        # step `if:`, GitHub applies an implicit success(), which would
+        # skip this step in exactly the case it exists for.
+        if: failure() && steps.read-token.outcome == 'failure'
         run: |
           echo "::error title=INFRA FAILURE (staleness-check)::Failed to mint the read-only GitHub App installation token for github.com/GRIDAPPSD/ieee-2030_5-core-go. See the mint step's log above for the underlying error."
 
@@ -114,25 +112,18 @@ jobs:
           permission-pull-requests: write
 
       - name: Annotate infra failure (write-token mint)
-        if: steps.write-token.outcome == 'failure'
+        if: failure() && steps.write-token.outcome == 'failure'
         run: |
           echo "::error title=INFRA FAILURE (staleness-check)::Failed to mint the write-scoped GitHub App installation token for this repository. See the mint step's log above for the underlying error."
 
       - name: Configure private module access
-        # Mirrors the conformance-vs-core-main job's step of the same
-        # name (below): both need git and `go list`/`go get` to reach
-        # the private github.com/GRIDAPPSD/ieee-2030_5-core-go module
-        # without an interactive prompt. Without this, go list -m
-        # below fails with "could not read Username for
-        # https://github.com: terminal prompts disabled" before the
-        # staleness comparison ever runs. Duplicated here rather than
-        # shared, deliberately: this workflow has exactly two jobs,
-        # each minting a differently-scoped token under a different
-        # step id (read-token here, app-token there), so a shared
+        # Without this, `go list -m` below cannot reach the private core
+        # module and dies on "could not read Username for
+        # https://github.com" before the staleness comparison runs.
+        # Duplicated from the conformance job rather than shared: each job
+        # mints a differently-scoped token under a different step id, so a
         # composite action would need a token input just to plumb the
-        # value through, at which point it buys less than the three
-        # lines it replaces. Uses the read-token this job already
-        # mints; no new credential, no widened permission.
+        # value through. Uses this job's existing read-only token.
         env:
           APP_TOKEN: ${{ steps.read-token.outputs.token }}
         run: |

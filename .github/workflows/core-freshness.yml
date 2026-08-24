@@ -394,8 +394,18 @@ jobs:
         # cannot mean a conformance sweep that measured nothing.
         run: |
           set -euo pipefail
-          output=$(go test -run '^TestWADLGateArmed$' -v ./test/conformance/wadl/)
+          # go test explains itself on stdout, so capturing it under set -e used
+          # to abort at the assignment and discard the whole diagnostic, log and
+          # annotation both, on the one path that needed it; this gate takes the
+          # licensed WADL to reproduce locally. 2>&1 keeps build and toolchain
+          # errors, which never reach stdout at all.
+          status=0
+          output=$(go test -run '^TestWADLGateArmed$' -v ./test/conformance/wadl/ 2>&1) || status=$?
           echo "$output"
+          if [ "$status" -ne 0 ]; then
+            echo "::error::TestWADLGateArmed did not run to completion (go test exited ${status}), so the conformance sweep measured nothing against the standard."
+            exit 1
+          fi
           case "$output" in
             *"--- PASS: TestWADLGateArmed"*)
               ;;

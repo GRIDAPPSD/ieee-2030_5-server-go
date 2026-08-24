@@ -191,10 +191,21 @@ jobs:
           fi
           echo "Commits behind target: $BEHIND"
 
+          # The block carries core's commit subjects, which this repo does not
+          # control: under a fixed delimiter a subject equal to it closes the
+          # block early and every later line is read as a GITHUB_OUTPUT
+          # directive. Drawn fresh per run, it cannot be guessed by a commit
+          # authored beforehand; the length check refuses an empty delimiter
+          # rather than silently reinstating a predictable one.
+          COMMITS_DELIM=$(openssl rand -hex 16)
+          if [ ${#COMMITS_DELIM} -ne 32 ]; then
+            echo "::error title=INFRA FAILURE (staleness-check)::Failed to generate a random GITHUB_OUTPUT delimiter via openssl rand. Refusing to emit the commit list under a guessable delimiter."
+            exit 1
+          fi
           {
-            echo "commits<<COMMITS_EOF"
+            echo "commits<<${COMMITS_DELIM}"
             git -C /tmp/core-freshness-check log --oneline "${PIN_SHA}..${TARGET_SHA}"
-            echo "COMMITS_EOF"
+            echo "${COMMITS_DELIM}"
           } >> "$GITHUB_OUTPUT"
 
           echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"

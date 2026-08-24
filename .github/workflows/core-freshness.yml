@@ -46,6 +46,10 @@ name: "Core freshness"
 # red bump PR belongs in this server (or, if core made an unintentional
 # breaking change, in core), never by reverting the bump.
 #
+# The INFRA FAILURE annotations are staleness-check-only by design: only
+# that job has an expected-red state (real drift), so only there is an
+# untitled failure ambiguous.
+#
 # GitHub-hosted runners are appropriate: staleness-check reads (clone,
 # rev-list) plus one force-push to a bot branch and a PR API call,
 # never anything a human owns; conformance-vs-core-main never commits
@@ -289,11 +293,10 @@ jobs:
           fi
 
       - name: Fail when the pin is behind
-        # Runs last, after the bump/push/PR steps above, so the PR is
-        # always opened or updated before this job's own status turns
-        # red. Keeps the drift visible in the checks list even for
-        # someone who never opens the PR list.
-        if: steps.compare.outputs.behind != '0'
+        # Both clauses are load-bearing: the implicit success() hides real
+        # drift whenever a bump/push/PR step above failed, and an unset
+        # `behind` from a failed compare would annotate drift never measured.
+        if: ${{ !cancelled() && steps.compare.outcome == 'success' && steps.compare.outputs.behind != '0' }}
         env:
           PIN_VERSION: ${{ steps.compare.outputs.pin_version }}
           BEHIND: ${{ steps.compare.outputs.behind }}

@@ -397,6 +397,9 @@ gofmt-check:              ## Verify gofmt drift (excludes vendor/)
 		fi
 
 vet:                      ## Run go vet
+	@# ./... excludes vendor/ and vet suppresses dependency diagnostics, so no
+	@# vendor analyzer finding can reach this output. A vendor path here is a
+	@# type-check error that also fails 'make build': never filter it out.
 	go vet ./...
 
 # ─── Cleanup ─────────────────────────────────────────────────────

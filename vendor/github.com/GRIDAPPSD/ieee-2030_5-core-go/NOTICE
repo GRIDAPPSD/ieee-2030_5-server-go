@@ -1,0 +1,73 @@
+NOTICE
+======
+
+This project (ieee-2030_5-core-go) is licensed under the terms in the LICENSE
+file at the root of this repository. This NOTICE covers third-party material
+the project refers to but does not distribute.
+
+
+IEEE 2030.5 and the normative XML Schema (sep.xsd)
+--------------------------------------------------
+
+IEEE 2030.5, "IEEE Standard for Smart Energy Profile Application Protocol",
+and the normative XML Schema published with it, sep.xsd, are copyright (c)
+The Institute of Electrical and Electronics Engineers, Inc. (IEEE). All
+rights reserved. IEEE, the IEEE Standards Association, and the standard's
+authors are not affiliated with this project and do not endorse it.
+
+THE SCHEMA IS NOT DISTRIBUTED WITH THIS PROJECT.
+
+No copy of sep.xsd is contained in this repository, in any release artifact,
+or in any binary built from this module. The schema is used only as a test
+fixture: it is read at test time, from a copy you supply, by the wire-format
+gate in internal/xsdgate. Nothing outside a _test.go file reads it.
+
+
+Obtaining a copy
+----------------
+
+IEEE 2030.5 is available at no charge through the IEEE GET Program:
+
+    https://standards.ieee.org/products-programs/ieee-get-program/
+
+Accept IEEE's terms and download the standard. The normative schema is
+distributed with the standard's XML artifacts (the XML/xmlspy model release),
+where it appears as sep.xsd. Your use of that file is governed by IEEE's
+terms, not by this project's license.
+
+This module gates against one specific document: IEEE 2030.5-2018, Model
+Build 20180301, sep.xsd. See schema/PROVENANCE.md for its identity, the
+digest the tests verify, and how to check a copy you have obtained.
+
+
+Pointing the build at your copy
+-------------------------------
+
+Either place the file at the conventional location, which is gitignored so it
+cannot be committed by accident:
+
+    schema/sep.xsd
+
+or set an environment variable to any path you like:
+
+    export SEP2_SCHEMA_PATH=/path/to/sep.xsd
+
+SEP2_SCHEMA_PATH wins over the conventional location. Then:
+
+    go test ./...
+
+Without a copy, the schema-gated tests SKIP and the rest of the suite runs
+normally, so a contributor who has not obtained the standard still gets a
+green build. The skip is reported by go test as a skip, never as a pass, and
+each skipped test names SEP2_SCHEMA_PATH and this file.
+
+A skip is not a validation. To require that a schema really was found, so
+that a missing or misconfigured copy fails the run instead of quietly
+skipping the gate, set:
+
+    export SEP2_SCHEMA_REQUIRED=1
+
+Continuous integration that supplies the schema should set it. With it set,
+an absent schema is a hard failure; the value must be a boolean that Go's
+strconv.ParseBool accepts, and anything else is itself an error, so a typo
+cannot silently disarm the gate.

@@ -12,11 +12,17 @@ from ieee-2030_5-core-go instead.
 ## Quality gates and a `go mod vendor` tree
 
 A `go mod vendor` tree is not listed above: it is generated from `go.mod`, not
-hand-copied. How each gate behaves when a top-level `vendor/` is present, all
-confirmed by observation against a real generated tree on Go 1.26.3:
+hand-copied. This section covers only the three `ci.yml` gates below (gofmt,
+golangci-lint, go vet); `codeql.yml` and `core-freshness.yml` are out of scope
+here and their vendor-tree behavior is unmeasured (tracked as IEEESRV-090). How
+each covered gate behaves when a top-level `vendor/` is present, all confirmed
+by observation against a real generated tree on Go 1.26.3:
 
 - `gofmt -l .` walks `vendor/`, so `make gofmt-check` and the CI formatting
-  step filter results by the `^vendor/` path prefix.
+  step filter its drift results by the `^vendor/` path prefix. That filter
+  applies to drift only: a gofmt run that fails outright (a file it cannot
+  parse, exit 2; the binary missing, exit 127; killed by a signal, exit 137)
+  fails the gate regardless of whether the file sits inside `vendor/`.
 - `golangci-lint run ./...` reports nothing from `vendor/`: its built-in
   default directory exclusions already skip it.
 - `go vet ./...` prints no diagnostics for a `vendor/` package's own code, but

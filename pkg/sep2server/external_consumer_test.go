@@ -249,9 +249,9 @@ func TestSurfaceIsReachableFromOutsideTheModule(t *testing.T) {
 	}
 }
 
-// setUpConsumerModule writes the throwaway module's go.mod and, when this
-// module carries a vendor tree, a vendor tree of its own. It returns the -mod
-// value the nested build has to run under.
+// setUpConsumerModule writes the throwaway module's go.mod and, when the nested
+// build will run in vendor mode, a vendor tree of its own. It returns the -mod
+// value that build has to run under.
 func setUpConsumerModule(t *testing.T, moduleRoot, dir string) string {
 	t.Helper()
 
@@ -262,7 +262,15 @@ func setUpConsumerModule(t *testing.T, moduleRoot, dir string) string {
 	goVersion := goDirective(t, string(parentMod))
 
 	vendorDir := filepath.Join(moduleRoot, "vendor")
-	if _, err := os.Stat(filepath.Join(vendorDir, "modules.txt")); err != nil {
+	_, vendorStatErr := os.Stat(filepath.Join(vendorDir, "modules.txt"))
+
+	// A caller that forces module mode on this module is declaring that go.mod has
+	// moved off whatever the committed vendor tree describes, which is exactly what
+	// core-freshness.yml's conformance job does when it repins core to main. Copying
+	// an inconsistent tree into the consumer would fail the nested build on
+	// vendoring rather than on the exported surface this test measures, so the
+	// ambient mode wins over the tree's mere presence.
+	if vendorStatErr != nil || ambientModFlag(t) == "mod" {
 		writeFile(t, filepath.Join(dir, "go.mod"),
 			"module "+consumerModulePath+"\n\ngo "+goVersion+"\n\n"+
 				"require "+serverModulePath+" v0.0.0\n\n"+
@@ -297,6 +305,25 @@ func setUpConsumerModule(t *testing.T, moduleRoot, dir string) string {
 	pkgs := copyModuleSource(t, moduleRoot, filepath.Join(dstVendor, filepath.FromSlash(serverModulePath)))
 	appendVendoredModule(t, filepath.Join(dstVendor, "modules.txt"), goVersion, pkgs)
 	return "vendor"
+}
+
+// ambientModFlag reports the -mod value the surrounding environment imposes on
+// this module's builds, or "" when it imposes none. `go env GOFLAGS` is read
+// rather than the GOFLAGS variable directly, because a `go env -w` default sets
+// the mode just as effectively and os.Getenv would not see it.
+func ambientModFlag(t *testing.T) string {
+	t.Helper()
+
+	out, err := exec.Command("go", "env", "GOFLAGS").Output()
+	if err != nil {
+		t.Fatalf("read GOFLAGS via go env: %v", err)
+	}
+	for _, field := range strings.Fields(string(out)) {
+		if mode, ok := strings.CutPrefix(field, "-mod="); ok {
+			return mode
+		}
+	}
+	return ""
 }
 
 // copyModuleSource copies this module into dst as a vendor entry and returns

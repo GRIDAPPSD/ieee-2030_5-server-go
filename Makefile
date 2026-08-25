@@ -385,11 +385,17 @@ lint:                     ## Run golangci-lint + gofmt drift check
 	golangci-lint run ./...
 	$(MAKE) gofmt-check
 
-gofmt-check:              ## Verify gofmt drift (excludes vendor/)
+gofmt-check:              ## Verify gofmt drift (excludes vendor/); a file gofmt cannot parse still fails
 	@# vendor/ holds go.mod-managed third-party source. internal/tls no
 	@# longer exists: its hand-copied crypto/tls fork was replaced by the
 	@# sep2tls package consumed from ieee-2030_5-core-go.
-	@drift=`gofmt -l . | grep -vE '^vendor/' || true`; \
+	@out=`gofmt -l . 2>&1` && status=0 || status=$$?; \
+		if [ "$$status" -ne 0 ]; then \
+			echo "gofmt failed to run (exit $$status):"; \
+			echo "$$out"; \
+			exit "$$status"; \
+		fi; \
+		drift=`printf '%s\n' "$$out" | grep -vE '^vendor/' || true`; \
 		if [ -n "$$drift" ]; then \
 			echo "gofmt drift detected (run: gofmt -w <files>):"; \
 			echo "$$drift"; \
@@ -397,9 +403,11 @@ gofmt-check:              ## Verify gofmt drift (excludes vendor/)
 		fi
 
 vet:                      ## Run go vet
-	@# ./... excludes vendor/ and vet suppresses dependency diagnostics, so no
-	@# vendor analyzer finding can reach this output. A vendor path here is a
-	@# type-check error that also fails 'make build': never filter it out.
+	@# ./... excludes vendor/, and vet only prints diagnostics for the
+	@# requested package set (true of any unrequested dependency, not a
+	@# vendor-specific rule); it still uses facts from vendor/ packages when
+	@# analyzing first-party callers. A vendor path here is a type-check
+	@# error that also fails 'make build': never filter it out.
 	go vet ./...
 
 # ─── Cleanup ─────────────────────────────────────────────────────

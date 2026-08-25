@@ -19,12 +19,25 @@ confirmed by observation against a real generated tree on Go 1.26.3:
   step filter results by the `^vendor/` path prefix.
 - `golangci-lint run ./...` reports nothing from `vendor/`: its built-in
   default directory exclusions already skip it.
-- `go vet ./...` reports no analyzer findings from `vendor/`. The `./...`
-  pattern resolves to first-party packages only (measured: 0 of 42 under
-  `vendor/`), and vet suppresses analyzer diagnostics for packages it loads
-  only as dependencies. Four planted baits (printf, copylocks, structtag,
-  unusedresult) each fired from a first-party package and none fired from
-  identical source placed in a vendored one.
+- `go vet ./...` prints no diagnostics for a `vendor/` package's own code, but
+  this is a general property of the analysis driver, not a vendor-specific
+  exclusion: vet computes type and fact information for every package in the
+  import closure, and prints diagnostics only for packages matching the
+  requested pattern (`./...` resolves to first-party packages only; measured:
+  0 of 42 under `vendor/`). Facts derived from a non-requested package still
+  feed analysis of requested callers: a printf-style wrapper defined in a
+  vendored package, called with a mismatched argument from `internal/config`,
+  was flagged at the first-party call site. Four planted baits (printf,
+  copylocks, structtag, unusedresult) were tested; printf, copylocks, and
+  unusedresult each fired from a first-party package and none fired from
+  identical source placed in a vendored one. structtag is bait-form
+  dependent: a duplicate-key struct tag did not trip it in either location,
+  while a malformed tag (`json:name`, missing quotes) fired from the
+  first-party package and not the vendored one, matching the other three.
+- Narrowing a red `go vet ./...` gate to a single package by hand
+  (`go vet <pkg>`) can read a stale warm-cache result and report exit 0 when
+  the full cold run reports exit 1; pass `-a` to force a fresh analysis. CI
+  is unaffected: it runs the single `./...` gate cold.
 
 A `vendor/` path in `go vet` output is therefore a type-check error rather than
 a lint finding, and `go build ./...` fails on the same input. Do not filter it

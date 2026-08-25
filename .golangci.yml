@@ -3,8 +3,7 @@ version: "2"
 # vendor/ (when present) needs no entry here: golangci-lint's built-in
 # default directory exclusions already skip it, confirmed by running this
 # config against a real go mod vendor tree (0 issues reported from vendor/).
-# The internal/tls/gotls and internal/tls/ccm exclusions once listed below
-# this were removed with those directories; see VENDORED.md history.
+# See VENDORED.md for the entries once excluded here and why they are gone.
 run:
   build-tags: []
 

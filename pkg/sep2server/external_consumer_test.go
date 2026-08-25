@@ -9,10 +9,10 @@ package sep2server_test
 // was built for, with "use of internal package not allowed", which is the
 // exact failure this test exists to catch.
 //
-// So the proof is a real second module: built in a temp directory, requiring
-// this one through a replace directive, importing ONLY pkg/sep2server and
-// core's public packages. If any exported symbol leaks an internal type, that
-// module does not compile and this test fails.
+// So the proof is a real second module: built in a temp directory under a
+// module path outside this one, importing ONLY pkg/sep2server and core's
+// public packages. If any exported symbol leaks an internal type, that module
+// does not compile and this test fails.
 //
 // It exercises rather than only compiles: it assembles the protocol handler,
 // serves a request through it, reads the body, and reports the route count back
@@ -20,9 +20,11 @@ package sep2server_test
 // check would prove importability without proving the surface does anything.
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -174,6 +176,15 @@ func main() {
 }
 `
 
+const (
+	// The consumer's module path sits outside this module's on purpose: Go
+	// enforces internal/ visibility by module path prefix, so a consumer under
+	// github.com/GRIDAPPSD/ieee-2030_5-server-go/... could import internal/
+	// legally and this check would pass while detecting nothing.
+	consumerModulePath = "externalconsumer"
+	serverModulePath   = "github.com/GRIDAPPSD/ieee-2030_5-server-go"
+)
+
 func TestSurfaceIsReachableFromOutsideTheModule(t *testing.T) {
 	moduleRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -181,22 +192,8 @@ func TestSurfaceIsReachableFromOutsideTheModule(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-
-	goMod := "module externalconsumer\n\n" +
-		"go 1.26.3\n\n" +
-		"require github.com/GRIDAPPSD/ieee-2030_5-server-go v0.0.0\n\n" +
-		"replace github.com/GRIDAPPSD/ieee-2030_5-server-go => " + moduleRoot + "\n"
-	writeFile(t, filepath.Join(dir, "go.mod"), goMod)
 	writeFile(t, filepath.Join(dir, "main.go"), externalConsumerSource)
-
-	// Reuse this module's go.sum so the transitive hashes are already present
-	// and current. Copying rather than pinning a second copy means a core bump
-	// never leaves a stale checksum file behind to go red for the wrong reason.
-	sum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
-	if err != nil {
-		t.Fatalf("read go.sum: %v", err)
-	}
-	writeFile(t, filepath.Join(dir, "go.sum"), string(sum))
+	modMode := setUpConsumerModule(t, moduleRoot, dir)
 
 	// -p 2 caps the nested build's parallelism. This test is the only one in
 	// the repository that spawns a compiler, and the suite around it runs
@@ -208,11 +205,11 @@ func TestSurfaceIsReachableFromOutsideTheModule(t *testing.T) {
 	cmd := exec.Command("go", "run", "-p", "2", ".")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
-		// -mod=mod lets the throwaway module settle its own requirements.
-		"GOFLAGS=-mod=mod",
-		// Everything needed is already in the module cache, because this
-		// module built. Refusing the network keeps the test hermetic and
-		// keeps a proxy outage from looking like a surface regression.
+		"GOFLAGS=-mod="+modMode,
+		// The consumer resolves every dependency locally, from its own vendor
+		// tree or from the module cache this module's build populated, so
+		// refusing the network costs nothing and keeps a proxy outage from
+		// looking like a surface regression.
 		"GOPROXY=off",
 		"GOTOOLCHAIN=local",
 	)
@@ -250,6 +247,156 @@ func TestSurfaceIsReachableFromOutsideTheModule(t *testing.T) {
 		t.Errorf("route surface differs by vantage point: external consumer sees %d patterns, this module sees %d",
 			externalPatterns, len(inTree))
 	}
+}
+
+// setUpConsumerModule writes the throwaway module's go.mod and, when this
+// module carries a vendor tree, a vendor tree of its own. It returns the -mod
+// value the nested build has to run under.
+func setUpConsumerModule(t *testing.T, moduleRoot, dir string) string {
+	t.Helper()
+
+	parentMod, err := os.ReadFile(filepath.Join(moduleRoot, "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	goVersion := goDirective(t, string(parentMod))
+
+	vendorDir := filepath.Join(moduleRoot, "vendor")
+	if _, err := os.Stat(filepath.Join(vendorDir, "modules.txt")); err != nil {
+		writeFile(t, filepath.Join(dir, "go.mod"),
+			"module "+consumerModulePath+"\n\ngo "+goVersion+"\n\n"+
+				"require "+serverModulePath+" v0.0.0\n\n"+
+				"replace "+serverModulePath+" => "+moduleRoot+"\n")
+
+		// Reuse this module's go.sum so the transitive hashes are already
+		// present and current. Copying rather than pinning a second copy means
+		// a core bump never leaves a stale checksum file behind to go red for
+		// the wrong reason.
+		sum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+		if err != nil {
+			t.Fatalf("read go.sum: %v", err)
+		}
+		writeFile(t, filepath.Join(dir, "go.sum"), string(sum))
+		return "mod"
+	}
+
+	// A vendor-mode build never populates the module cache, and the consumer
+	// lives outside this tree so it cannot see this module's vendor/ either.
+	// Giving it a copy with this module vendored in under its real import path
+	// leaves it needing neither. Carrying this module's requirements verbatim
+	// is what keeps the copied modules.txt consistent with the consumer's
+	// go.mod, which vendor mode checks.
+	writeFile(t, filepath.Join(dir, "go.mod"),
+		rewriteModuleLine(string(parentMod), consumerModulePath)+
+			"\nrequire "+serverModulePath+" v0.0.0\n")
+
+	dstVendor := filepath.Join(dir, "vendor")
+	if err := os.CopyFS(dstVendor, os.DirFS(vendorDir)); err != nil {
+		t.Fatalf("copy vendor tree: %v", err)
+	}
+	pkgs := copyModuleSource(t, moduleRoot, filepath.Join(dstVendor, filepath.FromSlash(serverModulePath)))
+	appendVendoredModule(t, filepath.Join(dstVendor, "modules.txt"), goVersion, pkgs)
+	return "vendor"
+}
+
+// copyModuleSource copies this module into dst as a vendor entry and returns
+// the import paths of the packages it copied.
+func copyModuleSource(t *testing.T, src, dst string) []string {
+	t.Helper()
+
+	pkgDirs := map[string]struct{}{}
+	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			// A vendor entry carries no nested vendor tree and no VCS or
+			// tooling directories.
+			if rel != "." && (d.Name() == "vendor" || strings.HasPrefix(d.Name(), ".")) {
+				return fs.SkipDir
+			}
+			return os.MkdirAll(filepath.Join(dst, rel), 0o750)
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		// go mod vendor omits go.mod, go.sum and test files from a vendored
+		// module; a nested go.mod in particular would cut the copied packages
+		// out of this module.
+		name := d.Name()
+		if name == "go.mod" || name == "go.sum" || strings.HasSuffix(name, "_test.go") {
+			return nil
+		}
+		if strings.HasSuffix(name, ".go") {
+			pkgDirs[filepath.ToSlash(filepath.Dir(rel))] = struct{}{}
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dst, rel), content, 0o600)
+	})
+	if err != nil {
+		t.Fatalf("vendor this module into the consumer: %v", err)
+	}
+
+	pkgs := make([]string, 0, len(pkgDirs))
+	for d := range pkgDirs {
+		if d == "." {
+			pkgs = append(pkgs, serverModulePath)
+			continue
+		}
+		pkgs = append(pkgs, serverModulePath+"/"+d)
+	}
+	slices.Sort(pkgs)
+	return pkgs
+}
+
+// appendVendoredModule records this module in the consumer's modules.txt.
+// Vendor mode resolves imports through that file, so a package missing from it
+// is a package the consumer cannot import.
+func appendVendoredModule(t *testing.T, path, goVersion string, pkgs []string) {
+	t.Helper()
+
+	var entry strings.Builder
+	entry.WriteString("# " + serverModulePath + " v0.0.0\n")
+	entry.WriteString("## explicit; go " + goVersion + "\n")
+	for _, p := range pkgs {
+		entry.WriteString(p + "\n")
+	}
+
+	existing, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read modules.txt: %v", err)
+	}
+	writeFile(t, path, string(existing)+entry.String())
+}
+
+func goDirective(t *testing.T, goMod string) string {
+	t.Helper()
+	for line := range strings.Lines(goMod) {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "go "); ok {
+			return strings.TrimSpace(rest)
+		}
+	}
+	t.Fatal("no go directive in go.mod")
+	return ""
+}
+
+func rewriteModuleLine(goMod, path string) string {
+	var out strings.Builder
+	for line := range strings.Lines(goMod) {
+		if strings.HasPrefix(line, "module ") {
+			out.WriteString("module " + path + "\n")
+			continue
+		}
+		out.WriteString(line)
+	}
+	return out.String()
 }
 
 func writeFile(t *testing.T, path, content string) {

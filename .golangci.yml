@@ -1,7 +1,9 @@
 version: "2"
 
-# Exclude vendored Go stdlib crypto/tls fork and vendored pion CCM code from lint.
-# These are intentionally kept close to upstream — see VENDORED.md.
+# vendor/ (when present) needs no entry here: golangci-lint's built-in
+# default directory exclusions already skip it, confirmed by running this
+# config against a real go mod vendor tree (0 issues reported from vendor/).
+# See VENDORED.md for the entries once excluded here and why they are gone.
 run:
   build-tags: []
 
@@ -21,7 +23,3 @@ linters:
         - -QF1003  # tagged switch (style preference)
         - -QF1006  # lift into loop condition (style preference)
         - -QF1008  # remove embedded field from selector (explicit is safer)
-  exclusions:
-    paths:
-      - internal/tls/gotls
-      - internal/tls/ccm

@@ -3,7 +3,7 @@
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
        lint vet clean run run-ccm run-journald run-ccm-journald \
        run-testdevice run-sunspec certs new-device \
-       serve help stress-pretest vendor bump-core
+       serve help stress-pretest vendor bump-core ui-build ui-check
 
 SERVER   := bin/sep2server
 CERT_DIR := certs
@@ -17,6 +17,50 @@ build:                    ## Build the server binary
 
 test:                     ## Run all Go tests
 	go test ./...
+
+# ui-build builds the admin UI's Svelte frontend
+# (internal/server/web/frontend/) and writes the static assets into
+# internal/server/web/dist/, then rebuilds the Go binary so the freshly
+# built assets are embedded via internal/server/web/embed.go's
+# "//go:embed all:dist" directive.
+#
+# Node and npm are needed to RUN this target, but not to run the
+# resulting binary: the embedded bundle in dist/ is committed to the
+# repo, so `go build ./...` alone (with no Node toolchain at all)
+# already succeeds on a fresh checkout using whatever dist/ content is
+# currently committed. Run this target only when the frontend source
+# under frontend/ has changed and dist/ needs regenerating.
+ui-build:                 ## Rebuild the admin UI frontend and re-embed it into the server binary
+	cd internal/server/web/frontend && npm ci && npm run build
+	go build -o $(SERVER) ./cmd/sep2server/
+
+# ui-check rebuilds the frontend into internal/server/web/dist/ and then
+# checks that directory for any difference against what is committed, so
+# a frontend source change landed WITHOUT a matching `make ui-build` (a
+# stale embedded bundle) fails loudly instead of shipping silently.
+# `go build ./...` alone cannot catch this: it succeeds against whatever
+# dist/ content is on disk, committed or not.
+#
+# `git status --porcelain`, not `git diff`: Vite content-hashes asset
+# filenames, so a source change produces a NEW hashed file under
+# dist/assets/ rather than a modified line in an existing tracked file.
+# `git diff` only reports changes to already-tracked paths, so a new
+# hashed asset would be invisible to it.
+#
+# Scoped to internal/server/web/dist/ only, so an unrelated dirty file
+# elsewhere in the working tree does not produce a false positive. Meant
+# to run against a clean checkout (CI's default); running it locally on
+# a dirty tree may report drift caused by unrelated uncommitted changes.
+ui-check:                 ## Fail if the committed admin UI bundle is stale relative to its source
+	cd internal/server/web/frontend && npm ci && npm run build
+	@if [ -n "$$(git status --porcelain -- internal/server/web/dist/)" ]; then \
+	  echo "ui-check: internal/server/web/dist/ is stale."; \
+	  echo "The committed build output does not match what the frontend source in"; \
+	  echo "internal/server/web/frontend/ currently builds. Run 'make ui-build'"; \
+	  echo "and commit the updated dist/ directory."; \
+	  git status --porcelain -- internal/server/web/dist/; \
+	  exit 1; \
+	fi
 
 test-cover:               ## Run tests with coverage report
 	go test -coverprofile=coverage.out ./...

@@ -357,6 +357,10 @@ jobs:
     timeout-minutes: 30
     env:
       GOPRIVATE: github.com/GRIDAPPSD/*
+      # Module mode, scoped to this job: this job repins core off the
+      # vendored tree on purpose, so vendor mode would abort every `go`
+      # command with "inconsistent vendoring" before any assertion runs.
+      GOFLAGS: -mod=mod
     steps:
       - name: Checkout
         uses: actions/checkout@v7

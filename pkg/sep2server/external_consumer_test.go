@@ -206,19 +206,23 @@ func TestSurfaceIsReachableFromOutsideTheModule(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GOFLAGS=-mod="+modMode,
-		// The consumer resolves every dependency locally, from its own vendor
-		// tree or from the module cache this module's build populated, so
-		// refusing the network costs nothing and keeps a proxy outage from
-		// looking like a surface regression.
+		// GOPROXY=off does not fail closed here: an inherited GOPRIVATE
+		// implies GONOPROXY, so github.com/GRIDAPPSD/* still resolves over
+		// the network. Everything else resolves locally from vendor or the
+		// module cache this module's build already populated.
 		"GOPROXY=off",
 		"GOTOOLCHAIN=local",
 	)
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("the external consumer module failed to build or run: %v\n%s\n"+
-			"An import error naming an internal package means the exported surface leaks an internal type.",
-			err, out)
+		if strings.Contains(string(out), "use of internal package") {
+			t.Fatalf("the external consumer module failed to build: %v\n%s\n"+
+				"An import naming an internal package means the exported surface leaks an internal type.",
+				err, out)
+		}
+		t.Fatalf("the external consumer module failed to build or run (not a confirmed surface leak; "+
+			"check module resolution and vendoring first): %v\n%s", err, out)
 	}
 
 	text := string(out)
@@ -249,9 +253,9 @@ func TestSurfaceIsReachableFromOutsideTheModule(t *testing.T) {
 	}
 }
 
-// setUpConsumerModule writes the throwaway module's go.mod and, when this
-// module carries a vendor tree, a vendor tree of its own. It returns the -mod
-// value the nested build has to run under.
+// setUpConsumerModule writes the throwaway module's go.mod and, when the nested
+// build will run in vendor mode, a vendor tree of its own. It returns the -mod
+// value that build has to run under.
 func setUpConsumerModule(t *testing.T, moduleRoot, dir string) string {
 	t.Helper()
 
@@ -262,7 +266,12 @@ func setUpConsumerModule(t *testing.T, moduleRoot, dir string) string {
 	goVersion := goDirective(t, string(parentMod))
 
 	vendorDir := filepath.Join(moduleRoot, "vendor")
-	if _, err := os.Stat(filepath.Join(vendorDir, "modules.txt")); err != nil {
+	_, vendorStatErr := os.Stat(filepath.Join(vendorDir, "modules.txt"))
+
+	// An ambient -mod=mod (set by core-freshness.yml's conformance job) means
+	// go.mod has moved off the vendored tree; copying it anyway would fail the
+	// nested build on vendoring, not on the surface this test measures.
+	if vendorStatErr != nil || ambientModFlag(t) == "mod" {
 		writeFile(t, filepath.Join(dir, "go.mod"),
 			"module "+consumerModulePath+"\n\ngo "+goVersion+"\n\n"+
 				"require "+serverModulePath+" v0.0.0\n\n"+
@@ -297,6 +306,36 @@ func setUpConsumerModule(t *testing.T, moduleRoot, dir string) string {
 	pkgs := copyModuleSource(t, moduleRoot, filepath.Join(dstVendor, filepath.FromSlash(serverModulePath)))
 	appendVendoredModule(t, filepath.Join(dstVendor, "modules.txt"), goVersion, pkgs)
 	return "vendor"
+}
+
+// ambientModFlag reports the -mod value the surrounding environment imposes on
+// this module's builds, or "" when it imposes none. `go env GOFLAGS` is read
+// rather than the GOFLAGS variable directly, because a `go env -w` default sets
+// the mode just as effectively and os.Getenv would not see it.
+func ambientModFlag(t *testing.T) string {
+	t.Helper()
+
+	out, err := exec.Command("go", "env", "GOFLAGS").Output()
+	if err != nil {
+		t.Fatalf("read GOFLAGS via go env: %v", err)
+	}
+	var mode string
+	for _, field := range strings.Fields(string(out)) {
+		if m, ok := strings.CutPrefix(field, "-mod="); ok {
+			mode = m
+		}
+	}
+	return mode
+}
+
+// TestAmbientModFlagTakesTheLastValue locks in that ambientModFlag matches
+// go's own flag parsing: the last -mod= field wins, not the first.
+func TestAmbientModFlagTakesTheLastValue(t *testing.T) {
+	t.Setenv("GOFLAGS", "-mod=vendor -mod=mod")
+
+	if got := ambientModFlag(t); got != "mod" {
+		t.Fatalf("ambientModFlag() = %q, want %q", got, "mod")
+	}
 }
 
 // copyModuleSource copies this module into dst as a vendor entry and returns

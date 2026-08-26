@@ -51,3 +51,22 @@ out and do not narrow the vet package list to suppress it: an explicit
 first-party package list still surfaces it, because it arrives through the
 dependency closure rather than the requested set. Filtering reports a green
 gate over a broken build.
+
+## Bumping the core-go pin
+
+`make bump-core` (default `TARGET=main`, or `make bump-core TARGET=vX.Y.Z` for an
+explicit tag) is the supported path for moving the `ieee-2030_5-core-go` pin by
+hand: it runs `go get`, `go mod tidy`, and `go mod vendor` in that order, so a
+human doing the bump manually cannot skip the vendor step. `core-freshness.yml`
+follows the same order in its automated `chore/bump-core` PR.
+
+## Toolchain caveat: vendoring removes the module fetch, not the toolchain fetch
+
+Vendoring `ieee-2030_5-core-go` and its dependencies removes the need to fetch
+those MODULES from the network on a fresh `GOMODCACHE`. It does not remove the
+Go toolchain fetch: `go.mod` pins `go 1.26.3` with no `toolchain` line, so a
+host whose installed `go` is older (e.g. 1.24.4) and whose `GOMODCACHE` has
+never cached a 1.26.x toolchain will still try to download one under
+`GOTOOLCHAIN=auto`, and that download fails closed under `GOPROXY=off`. An
+air-gapped host needs a matching 1.26.x toolchain provisioned separately from
+vendoring.

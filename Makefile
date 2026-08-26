@@ -3,7 +3,7 @@
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
        lint vet clean run run-ccm run-journald run-ccm-journald \
        run-testdevice run-sunspec certs new-device \
-       serve help stress-pretest
+       serve help stress-pretest vendor bump-core
 
 SERVER   := bin/sep2server
 CERT_DIR := certs
@@ -409,6 +409,21 @@ vet:                      ## Run go vet
 	@# analyzing first-party callers. A vendor path here is a type-check
 	@# error that also fails 'make build': never filter it out.
 	go vet ./...
+
+# --- Dependencies -----------------------------------------------
+
+vendor:                   ## Regenerate vendor/ from go.mod (VENDORED.md)
+	go mod vendor
+
+# bump-core: the one supported path for moving the core-go pin by hand, so
+# a human doing it manually cannot skip the vendor step the way
+# core-freshness.yml itself once could. Vendoring only when vendor/
+# already exists mirrors that workflow's own guard: a repo with no vendor
+# tree yet must not gain one as a side effect of an unrelated bump.
+bump-core:                ## Bump the pinned core-go module, tidy, and re-vendor. Usage: make bump-core [TARGET=v0.15.1] (default: main)
+	go get github.com/GRIDAPPSD/ieee-2030_5-core-go@$(if $(TARGET),$(TARGET),main)
+	go mod tidy
+	@if [ -f vendor/modules.txt ]; then $(MAKE) vendor; fi
 
 # ─── Cleanup ─────────────────────────────────────────────────────
 

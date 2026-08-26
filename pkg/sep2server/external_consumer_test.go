@@ -206,19 +206,23 @@ func TestSurfaceIsReachableFromOutsideTheModule(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GOFLAGS=-mod="+modMode,
-		// The consumer resolves every dependency locally, from its own vendor
-		// tree or from the module cache this module's build populated, so
-		// refusing the network costs nothing and keeps a proxy outage from
-		// looking like a surface regression.
+		// GOPROXY=off does not fail closed here: an inherited GOPRIVATE
+		// implies GONOPROXY, so github.com/GRIDAPPSD/* still resolves over
+		// the network. Everything else resolves locally from vendor or the
+		// module cache this module's build already populated.
 		"GOPROXY=off",
 		"GOTOOLCHAIN=local",
 	)
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("the external consumer module failed to build or run: %v\n%s\n"+
-			"An import error naming an internal package means the exported surface leaks an internal type.",
-			err, out)
+		if strings.Contains(string(out), "use of internal package") {
+			t.Fatalf("the external consumer module failed to build: %v\n%s\n"+
+				"An import naming an internal package means the exported surface leaks an internal type.",
+				err, out)
+		}
+		t.Fatalf("the external consumer module failed to build or run (not a confirmed surface leak; "+
+			"check module resolution and vendoring first): %v\n%s", err, out)
 	}
 
 	text := string(out)
@@ -264,12 +268,9 @@ func setUpConsumerModule(t *testing.T, moduleRoot, dir string) string {
 	vendorDir := filepath.Join(moduleRoot, "vendor")
 	_, vendorStatErr := os.Stat(filepath.Join(vendorDir, "modules.txt"))
 
-	// A caller that forces module mode on this module is declaring that go.mod has
-	// moved off whatever the committed vendor tree describes, which is exactly what
-	// core-freshness.yml's conformance job does when it repins core to main. Copying
-	// an inconsistent tree into the consumer would fail the nested build on
-	// vendoring rather than on the exported surface this test measures, so the
-	// ambient mode wins over the tree's mere presence.
+	// An ambient -mod=mod (set by core-freshness.yml's conformance job) means
+	// go.mod has moved off the vendored tree; copying it anyway would fail the
+	// nested build on vendoring, not on the surface this test measures.
 	if vendorStatErr != nil || ambientModFlag(t) == "mod" {
 		writeFile(t, filepath.Join(dir, "go.mod"),
 			"module "+consumerModulePath+"\n\ngo "+goVersion+"\n\n"+
@@ -318,12 +319,23 @@ func ambientModFlag(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("read GOFLAGS via go env: %v", err)
 	}
+	var mode string
 	for _, field := range strings.Fields(string(out)) {
-		if mode, ok := strings.CutPrefix(field, "-mod="); ok {
-			return mode
+		if m, ok := strings.CutPrefix(field, "-mod="); ok {
+			mode = m
 		}
 	}
-	return ""
+	return mode
+}
+
+// TestAmbientModFlagTakesTheLastValue locks in that ambientModFlag matches
+// go's own flag parsing: the last -mod= field wins, not the first.
+func TestAmbientModFlagTakesTheLastValue(t *testing.T) {
+	t.Setenv("GOFLAGS", "-mod=vendor -mod=mod")
+
+	if got := ambientModFlag(t); got != "mod" {
+		t.Fatalf("ambientModFlag() = %q, want %q", got, "mod")
+	}
 }
 
 // copyModuleSource copies this module into dst as a vendor entry and returns

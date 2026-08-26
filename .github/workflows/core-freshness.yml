@@ -357,17 +357,9 @@ jobs:
     timeout-minutes: 30
     env:
       GOPRIVATE: github.com/GRIDAPPSD/*
-      # Module mode, scoped to this job. This job moves the core pin off
-      # whatever the committed vendor/ tree describes, on purpose, so vendor
-      # mode aborts every later `go` command with "inconsistent vendoring"
-      # before a single conformance assertion runs: core essentially never
-      # sits exactly at the vendored version, which is the premise of the job.
-      # Re-vendoring after the bump was the rejected alternative: it rewrites
-      # tracked files in a job whose contract is to change nothing, and it
-      # needs a vendor-tree-exists guard where this setting is correct either
-      # way. Job-level, not workflow-level, so the build, test, lint and bump
-      # paths keep vendor mode; staleness-check above reads the pin and
-      # regenerates its vendor tree in vendor mode, which is what it wants.
+      # Module mode, scoped to this job: this job repins core off the
+      # vendored tree on purpose, so vendor mode would abort every `go`
+      # command with "inconsistent vendoring" before any assertion runs.
       GOFLAGS: -mod=mod
     steps:
       - name: Checkout

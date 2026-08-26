@@ -46,10 +46,9 @@ func TestSPAHandlerFallsBackToIndexHTMLForUnknownClientRoute(t *testing.T) {
 	}
 }
 
-// TestSPAHandlerDoesNotShadowUnmatchedAPIPath is acceptance item 4, the
-// REFUSAL: an unmatched /api path must 404, and the body must not be the
-// index.html shell. Status alone would not prove the fallback was
-// withheld, so the assertion is on the body.
+// TestSPAHandlerDoesNotShadowUnmatchedAPIPath asserts an unmatched /api path
+// 404s with a JSON error rather than the SPA shell. The assertion is on the
+// body because a 404 status alone does not prove index.html was withheld.
 func TestSPAHandlerDoesNotShadowUnmatchedAPIPath(t *testing.T) {
 	rec := httptest.NewRecorder()
 	spaHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/does-not-exist", nil))

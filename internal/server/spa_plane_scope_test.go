@@ -10,12 +10,12 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// TestProtocolListenerDoesNotMountAdminUIShell is acceptance item 7's
-// REFUSAL, mirroring TestProtocolListenerDoesNotMountCertAPI's shape: the
-// SEP2 protocol listener's router must not serve the admin UI shell or
-// its assets at all. RemoteAddr is loopback with no proxy headers (the
-// Path 0 bypass shape); if the shell were mounted here, it would serve
-// regardless of auth.
+// TestProtocolListenerDoesNotMountAdminUIShell mirrors
+// TestProtocolListenerDoesNotMountCertAPI's shape: the SEP2 protocol
+// listener's router must not serve the admin UI shell or its assets at
+// all. RemoteAddr is loopback with no proxy headers (the Path 0 bypass
+// shape); if the shell were mounted here, it would serve regardless of
+// auth.
 func TestProtocolListenerDoesNotMountAdminUIShell(t *testing.T) {
 	cfg := &config.Config{}
 	stores := newTestStores()

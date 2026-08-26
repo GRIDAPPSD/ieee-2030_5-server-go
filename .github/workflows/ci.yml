@@ -66,6 +66,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      # No GOPRIVATE here (dropped with the App-token mint): safe only
+      # because this job builds from vendor/. GOPRIVATE also fed
+      # GONOSUMDB, so a future non-vendor build needs it back or
+      # github.com/GRIDAPPSD/* leaks to sum.golang.org.
+      #
       # #214: Plan-4 decision 2: PR-gate runs property tests with a
       # pinned RAPID_SEED for deterministic, reproducible failures.
       # Reproduction: re-run with the same seed to get the same shrunk
@@ -203,6 +208,9 @@ jobs:
       matrix:
         hooks: [off, on]
     env:
+      # No GOPRIVATE here either; same vendor-mode assumption and
+      # GONOSUMDB caveat as the `ci` job's env block above.
+      #
       # `SEP2_TEST_MUTATION_TOKEN` gates the #27 mutation surface in
       # hooks-on builds; without it, those endpoints stay disabled and the
       # binary logs a warning. The csip_test_hooks suite tolerates an

@@ -66,6 +66,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      # No GOPRIVATE here (dropped with the App-token mint): safe only
+      # because this job builds from vendor/. GOPRIVATE also fed
+      # GONOSUMDB, so a future non-vendor build needs it back or
+      # github.com/GRIDAPPSD/* leaks to sum.golang.org.
+      #
       # #214: Plan-4 decision 2: PR-gate runs property tests with a
       # pinned RAPID_SEED for deterministic, reproducible failures.
       # Reproduction: re-run with the same seed to get the same shrunk
@@ -74,34 +79,10 @@ jobs:
       # Seed is a non-zero integer; value 1747227600 derived from plan-4
       # approval timestamp 2026-05-14T15:00:00Z.
       RAPID_SEED: 1747227600
-      # Required so `go` resolves github.com/GRIDAPPSD/* over the
-      # token-authenticated git insteadOf rewrite instead of trying (and
-      # failing) an anonymous proxy/checksum-db lookup.
-      GOPRIVATE: github.com/GRIDAPPSD/*
     steps:
       - name: Checkout
         # #219: bumped v4->v6 for Node.js 24 runtime.
         uses: actions/checkout@v7
-
-      - name: Mint GitHub App installation token
-        # Mints a short-lived installation token for the GRIDAPPSD App
-        # (referenced by App ID via secret, not by slug) so `go
-        # build`/`go vet`/`go test` below can resolve the
-        # github.com/GRIDAPPSD/ieee-2030_5-core-go module. Pinned to v3
-        # (current stable major as of 2026-07-07). The action masks the
-        # token in logs; it is never echoed.
-        id: app-token
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ secrets.GRIDAPPSD_CI_APP_ID }}
-          private-key: ${{ secrets.GRIDAPPSD_CI_APP_PRIVATE_KEY }}
-          owner: GRIDAPPSD
-
-      - name: Configure module access
-        # Rewrites HTTPS clones/fetches of github.com/GRIDAPPSD/* to carry
-        # the minted installation token, scoped to this org only. Runs
-        # before Setup Go so `go build`'s module resolution can see it.
-        run: git config --global url."https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/GRIDAPPSD/".insteadOf "https://github.com/GRIDAPPSD/"
 
       - name: Setup Go
         # #219: bumped v5->v6 for Node.js 24 runtime.
@@ -227,6 +208,9 @@ jobs:
       matrix:
         hooks: [off, on]
     env:
+      # No GOPRIVATE here either; same vendor-mode assumption and
+      # GONOSUMDB caveat as the `ci` job's env block above.
+      #
       # `SEP2_TEST_MUTATION_TOKEN` gates the #27 mutation surface in
       # hooks-on builds; without it, those endpoints stay disabled and the
       # binary logs a warning. The csip_test_hooks suite tolerates an
@@ -235,33 +219,10 @@ jobs:
       # mutation surface only exists in -tags csip_test_hooks builds and
       # only listens on the in-process test server.
       SEP2_TEST_MUTATION_TOKEN: ci-${{ github.run_id }}
-      # Same module-resolution requirement as the ci job above; each job
-      # runs on a fresh runner.
-      GOPRIVATE: github.com/GRIDAPPSD/*
     steps:
       - name: Checkout
         # #219: bumped v4->v6 for Node.js 24 runtime.
         uses: actions/checkout@v7
-
-      - name: Mint GitHub App installation token
-        # Mints a short-lived installation token for the GRIDAPPSD App
-        # (referenced by App ID via secret, not by slug) so `go
-        # build`/`go vet`/`go test` below can resolve the
-        # github.com/GRIDAPPSD/ieee-2030_5-core-go module. Pinned to v3
-        # (current stable major as of 2026-07-07). The action masks the
-        # token in logs; it is never echoed.
-        id: app-token
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ secrets.GRIDAPPSD_CI_APP_ID }}
-          private-key: ${{ secrets.GRIDAPPSD_CI_APP_PRIVATE_KEY }}
-          owner: GRIDAPPSD
-
-      - name: Configure module access
-        # Rewrites HTTPS clones/fetches of github.com/GRIDAPPSD/* to carry
-        # the minted installation token, scoped to this org only. Runs
-        # before Setup Go so `go build`'s module resolution can see it.
-        run: git config --global url."https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/GRIDAPPSD/".insteadOf "https://github.com/GRIDAPPSD/"
 
       - name: Setup Go
         # #219: bumped v5->v6 for Node.js 24 runtime.

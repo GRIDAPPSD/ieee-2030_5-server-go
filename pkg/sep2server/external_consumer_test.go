@@ -206,10 +206,9 @@ func TestSurfaceIsReachableFromOutsideTheModule(t *testing.T) {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GOFLAGS=-mod="+modMode,
-		// GOPROXY=off does not fail closed here: an inherited GOPRIVATE
-		// implies GONOPROXY, so github.com/GRIDAPPSD/* still resolves over
-		// the network. Everything else resolves locally from vendor or the
-		// module cache this module's build already populated.
+		// GOPROXY=off fails closed for github.com/GRIDAPPSD/* wherever no
+		// ambient GOPRIVATE is inherited: true in CI since #335 dropped it
+		// from ci.yml, false here since this host's GOENV sets one globally.
 		"GOPROXY=off",
 		"GOTOOLCHAIN=local",
 	)

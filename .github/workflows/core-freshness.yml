@@ -309,7 +309,7 @@ jobs:
             echo
             echo "**A red build on this PR is expected when the failure traces to a core change this repo has not adapted to yet, not a sign the bump itself is wrong.** The staleness-check job that opened this PR also fails on its own scheduled run, independent of this PR, so the drift is visible even before anyone looks here. If CI fails on this PR for that reason, the fix belongs in this repo (or, if core made an unintended breaking change, in core), never by closing or reverting this PR."
             echo
-            echo "This does NOT cover an \"inconsistent vendoring\" failure. That always means the bump path itself is broken (the pin moved without regenerating vendor/), never ordinary core drift, and must be fixed in the bump path rather than waited out. See VENDORED.md and the bump-core Makefile target."
+            echo "This does NOT cover an \"inconsistent vendoring\" failure. That means the pin moved without regenerating vendor/, whether from the bump path itself or from a later commit pushed onto this PR, never ordinary core drift, and must be fixed by re-vendoring rather than waited out. See VENDORED.md and the bump-core Makefile target."
           } > /tmp/bump-core-pr-body.md
 
           existing=$(gh pr list -R GRIDAPPSD/ieee-2030_5-server-go --head chore/bump-core --state open --json number --jq '.[0].number // empty')

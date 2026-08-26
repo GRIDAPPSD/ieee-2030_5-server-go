@@ -410,7 +410,7 @@ vet:                      ## Run go vet
 	@# error that also fails 'make build': never filter it out.
 	go vet ./...
 
-# ─── Dependencies ────────────────────────────────────────────────
+# --- Dependencies -----------------------------------------------
 
 vendor:                   ## Regenerate vendor/ from go.mod (VENDORED.md)
 	go mod vendor

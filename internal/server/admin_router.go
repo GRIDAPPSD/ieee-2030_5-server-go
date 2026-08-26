@@ -73,6 +73,12 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 		dashboard.RegisterRoutes(authed)
 	}
 
+	// Admin UI shell (embedded Svelte SPA, internal/server/web). Mounted at
+	// "/ui/", a more specific pattern than the dashboard's catch-all "GET
+	// /" above, so the two coexist: this phase adds the shell alongside
+	// the existing dashboard rather than replacing it.
+	authed.Handle("GET /ui/", http.StripPrefix("/ui", spaHandler()))
+
 	// Auth ticket endpoint — exchanges valid admin auth for a short-lived ticket
 	if tickets != nil {
 		authed.HandleFunc("POST /auth/ticket", handleIssueTicket(tickets))

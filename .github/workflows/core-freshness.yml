@@ -414,6 +414,23 @@ jobs:
           wadl-xz-b64: ${{ secrets.SEP2_WADL_XZ_B64 }}
           required: 'true'
 
+      - name: Supply the SunSpec CSIP test PKI
+        id: csip_pki
+        # #348: this job runs `make test-csip`, whose SunSpec-backed procedures
+        # skip unless the material reaches the runner.
+        #
+        # Same shape as ci.yml, including the same derived `required` expression
+        # rather than a hardcoded 'true'. This workflow has no fork-pull-request
+        # trigger today, so the expression evaluates to true here; deriving it
+        # means a trigger added later cannot silently start tolerating an absent
+        # secret. The `if` remains the separate arming switch.
+        if: vars.CSIP_SUNSPEC_PKI_PROVISIONED == 'true'
+        uses: ./.github/actions/supply-csip-pki
+        with:
+          pki-tar-xz-b64: ${{ secrets.CSIP_SUNSPEC_PKI_TAR_XZ_B64 }}
+          pki-sha256: ${{ vars.CSIP_SUNSPEC_PKI_SHA256 }}
+          required: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+
       - name: Bump core to latest main (in-memory only, never committed)
         run: go get github.com/GRIDAPPSD/ieee-2030_5-core-go@main
 
@@ -478,6 +495,32 @@ jobs:
         # step above, so the conformance sweep runs against core main instead of
         # skipping.
         run: make test
+
+      - name: Confirm the CSIP fixture gate is armed
+        if: steps.csip_pki.outputs.armed == 'true'
+        # Runs AFTER the core bump so the assertion compiles against core main,
+        # and BEFORE the CSIP harness so a disarmed gate fails in seconds. PASS
+        # is the only outcome that means the SunSpec-backed procedures ran; a
+        # skip, a build failure, and a renamed test are indistinguishable from
+        # the exit code alone.
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          output=$(go test -run '^TestCSIPFixtureGateArmed$' -v ./test/csip/ 2>&1) || status=$?
+          echo "$output"
+
+          case "$output" in
+            *"--- PASS: TestCSIPFixtureGateArmed"*) verdict=pass ;;
+            *"--- FAIL: TestCSIPFixtureGateArmed"*) verdict=fail ;;
+            *) verdict=none ;;
+          esac
+
+          if [ "$verdict" = pass ] && [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          echo "::error::TestCSIPFixtureGateArmed reached verdict '${verdict}' with go test exiting ${status}, so this run's SunSpec-backed CSIP result cannot be trusted."
+          exit 1
 
       - name: CSIP harness (default tag)
         # Reuses the repo's own conformance target rather than

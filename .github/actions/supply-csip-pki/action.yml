@@ -1,0 +1,193 @@
+name: "Supply the SunSpec CSIP test PKI"
+description: >
+  Reassemble the SunSpec V1.2 test PKI (cert.pem, key.pem, roots.pem) from a
+  repository secret into a directory outside the checkout and export
+  CSIP_SUNSPEC_CERT, CSIP_SUNSPEC_KEY, CSIP_SUNSPEC_ROOTS plus
+  CSIP_SUNSPEC_REQUIRED, so the SunSpec-backed CSIP procedures RUN instead of
+  skipping.
+
+  Sibling of supply-wadl. Same reasoning: one home for the reassembly and the
+  integrity check, because a second copy drifts the moment the secret is
+  resealed and a stale copy fails OPEN, with the gated tests skipping while the
+  run reports green.
+
+inputs:
+  pki-tar-xz-b64:
+    description: >
+      Base64-encoded xz stream holding a tar of exactly cert.pem, key.pem and
+      roots.pem at the archive root. Pass
+      secrets.CSIP_SUNSPEC_PKI_TAR_XZ_B64; a composite action cannot read the
+      secrets context itself.
+    required: false
+    default: ""
+  pki-sha256:
+    description: >
+      Optional sha256 of the decoded tar (the bytes after base64, before xz).
+      Set it once the secret is sealed and this action refuses any other
+      material. Left empty the coherence checks below still run, but nothing
+      pins WHICH PKI arrived.
+    required: false
+    default: ""
+  required:
+    description: >
+      "true" makes an absent secret a HARD FAILURE rather than a skip. Callers
+      derive it from the trigger rather than asserting it, so a workflow that
+      gains a trigger later cannot silently start accepting an absent secret.
+    required: false
+    default: "false"
+
+outputs:
+  armed:
+    description: >
+      "true" when a verified PKI is on disk and CSIP_SUNSPEC_REQUIRED has been
+      exported. Callers gate their TestCSIPFixtureGateArmed assertion on this.
+    value: ${{ steps.supply.outputs.armed }}
+
+runs:
+  using: composite
+  steps:
+    - id: supply
+      shell: bash
+      # Nothing below echoes the secret or any private key. printf is a shell
+      # builtin, so the payload never reaches a process argument list, and the
+      # values are bound to env: rather than interpolated into the script body,
+      # so a value carrying shell metacharacters is never expanded before
+      # execution. openssl is only ever asked for PUBLIC halves.
+      env:
+        PKI_TAR_XZ_B64: ${{ inputs.pki-tar-xz-b64 }}
+        PKI_SHA256: ${{ inputs.pki-sha256 }}
+        PKI_REQUIRED: ${{ inputs.required }}
+      run: |
+        set -euo pipefail
+
+        case "$PKI_REQUIRED" in
+          true|false) ;;
+          *)
+            echo "::error::The supply-csip-pki action's 'required' input must be exactly \"true\" or \"false\", got \"$PKI_REQUIRED\". Refusing to guess: guessing false here is how a gate goes dark."
+            exit 1
+            ;;
+        esac
+
+        if [ -z "${PKI_TAR_XZ_B64:-}" ]; then
+          if [ "$PKI_REQUIRED" = "true" ]; then
+            echo "::error::No SunSpec PKI secret in scope, but this run requires one. CSIP_SUNSPEC_PKI_TAR_XZ_B64 is empty or unset. This trigger always runs in the base-repository context, so GitHub is not withholding the secret: it is missing, empty, or half-rotated. Failing instead of skipping, because a skip here means the SunSpec-backed CSIP procedures measured nothing while reporting green."
+            exit 1
+          fi
+          echo "No SunSpec PKI secret in scope for this run (fork pull request, or secret withheld)."
+          echo "Leaving CSIP_SUNSPEC_REQUIRED unset: the SunSpec-backed CSIP procedures SKIP and the run stays green."
+          echo "armed=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        for tool in xz tar openssl; do
+          if ! command -v "$tool" > /dev/null; then
+            echo "::error::$tool is not installed on this runner, so the SunSpec PKI cannot be reassembled or checked."
+            exit 1
+          fi
+        done
+
+        # Written outside the checkout on purpose. RUNNER_TEMP is not the repo
+        # working tree, so nothing here can be committed, globbed by the tree, or
+        # picked up by a later upload-artifact step. The runner deletes it when
+        # the job ends.
+        dest_dir="${RUNNER_TEMP:?RUNNER_TEMP is unset}/csip-sunspec-pki"
+        case "$dest_dir" in
+          "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is unset}"/*)
+            echo "::error::Refusing to write the SunSpec PKI inside the repository working tree."
+            exit 1
+            ;;
+        esac
+        umask 077
+        rm -rf "$dest_dir"
+        mkdir -p "$dest_dir"
+        archive="$dest_dir/pki.tar"
+
+        if ! printf '%s' "$PKI_TAR_XZ_B64" \
+          | tr -d '[:space:]' \
+          | base64 -d \
+          | xz -d > "$archive"; then
+          rm -rf "$dest_dir"
+          echo "::error::Could not reassemble the SunSpec PKI from CSIP_SUNSPEC_PKI_TAR_XZ_B64. The value must be one base64 string holding an xz stream of a tar."
+          exit 1
+        fi
+
+        # Digest the exact bytes that will be extracted, then extract those same
+        # bytes: checking a re-decode would leave a window where the two differ.
+        got_sha=$(sha256sum < "$archive" | cut -d ' ' -f 1)
+        if [ -n "${PKI_SHA256:-}" ]; then
+          if [ "$got_sha" != "$PKI_SHA256" ]; then
+            rm -rf "$dest_dir"
+            echo "::error::Reassembled SunSpec PKI is not the pinned material: sha256 $got_sha, want $PKI_SHA256. A truncated or half-rotated secret is the likely cause; reseal from one copy."
+            exit 1
+          fi
+          echo "SunSpec PKI archive sha256 matches the pin."
+        else
+          echo "::notice::No pki-sha256 pin supplied, so this run trusts whatever the secret held. Recording the observed digest so it can be pinned: $got_sha"
+        fi
+
+        # An archive member naming an absolute path or a parent traversal would
+        # write outside dest_dir, so the member list is checked BEFORE extraction
+        # and anything unexpected is refused rather than filtered.
+        members=$(tar -tf "$archive" | sed 's#^\./##' | grep -v '^$' | LC_ALL=C sort)
+        expected=$(printf 'cert.pem\nkey.pem\nroots.pem\n' | LC_ALL=C sort)
+        if [ "$members" != "$expected" ]; then
+          rm -rf "$dest_dir"
+          echo "::error::The SunSpec PKI archive must hold exactly cert.pem, key.pem and roots.pem at its root. Got: $(echo "$members" | tr '\n' ' ')"
+          exit 1
+        fi
+
+        tar -xf "$archive" -C "$dest_dir" --no-same-owner --no-same-permissions
+        rm -f "$archive"
+
+        cert="$dest_dir/cert.pem"
+        key="$dest_dir/key.pem"
+        roots="$dest_dir/roots.pem"
+        for f in "$cert" "$key" "$roots"; do
+          if [ ! -s "$f" ]; then
+            rm -rf "$dest_dir"
+            echo "::error::$(basename "$f") is missing or empty after extraction, so the secret does not hold a usable PKI."
+            exit 1
+          fi
+        done
+        chmod 600 "$cert" "$key" "$roots"
+
+        # Coherence rather than a content pin: the material is not in this repo,
+        # so there is no digest to compare against until pki-sha256 is set. A
+        # cert whose key does not match it is the half-rotation this catches, and
+        # it would otherwise surface as a handshake failure blamed on the server.
+        # -passin pass: keeps openssl from prompting on an encrypted key.
+        if ! openssl x509 -in "$cert" -noout > /dev/null 2>&1; then
+          rm -rf "$dest_dir"
+          echo "::error::cert.pem from the secret is not a parseable X.509 certificate."
+          exit 1
+        fi
+        if ! openssl pkey -in "$key" -passin pass: -noout > /dev/null 2>&1; then
+          rm -rf "$dest_dir"
+          echo "::error::key.pem from the secret is not a parseable, unencrypted private key."
+          exit 1
+        fi
+        cert_pub=$(openssl x509 -in "$cert" -noout -pubkey 2>/dev/null)
+        key_pub=$(openssl pkey -in "$key" -passin pass: -pubout 2>/dev/null)
+        if [ -z "$cert_pub" ] || [ "$cert_pub" != "$key_pub" ]; then
+          rm -rf "$dest_dir"
+          echo "::error::cert.pem and key.pem from the secret do not describe the same key pair. Reseal both halves from one copy."
+          exit 1
+        fi
+        root_count=$(grep -c 'BEGIN CERTIFICATE' "$roots" || true)
+        if [ "${root_count:-0}" -lt 1 ] || ! openssl x509 -in "$roots" -noout > /dev/null 2>&1; then
+          rm -rf "$dest_dir"
+          echo "::error::roots.pem from the secret carries no parseable PEM certificate, so no chain could validate against it."
+          exit 1
+        fi
+        echo "Reassembled the SunSpec PKI: cert and key agree, $root_count certificate(s) in the trust bundle."
+
+        # Only reached once the material on disk is verified, so no path gets to
+        # go test with the PKI configured but unchecked, and none gets there with
+        # the secret present but REQUIRED unset.
+        {
+          echo "CSIP_SUNSPEC_CERT=$cert"
+          echo "CSIP_SUNSPEC_KEY=$key"
+          echo "CSIP_SUNSPEC_ROOTS=$roots"
+          echo "CSIP_SUNSPEC_REQUIRED=1"
+        } >> "$GITHUB_ENV"
+        echo "armed=true" >> "$GITHUB_OUTPUT"

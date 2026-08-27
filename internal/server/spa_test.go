@@ -46,10 +46,13 @@ func TestSPAHandlerFallsBackToIndexHTMLForUnknownClientRoute(t *testing.T) {
 	}
 }
 
-// TestSPAHandlerDoesNotShadowUnmatchedAPIPath asserts an unmatched /api path
-// 404s with a JSON error rather than the SPA shell. The assertion is on the
-// body because a 404 status alone does not prove index.html was withheld.
-func TestSPAHandlerDoesNotShadowUnmatchedAPIPath(t *testing.T) {
+// TestSPAHandlerRefusesUnmatchedUIAPIPath asserts an unmatched path under
+// /ui/api/ 404s with a JSON error rather than the SPA shell. The
+// assertion is on the body because a 404 status alone does not prove
+// index.html was withheld. This exercises the bare handler only; the
+// real /api/* surface is pinned separately through the full router in
+// spa_plane_scope_test.go.
+func TestSPAHandlerRefusesUnmatchedUIAPIPath(t *testing.T) {
 	rec := httptest.NewRecorder()
 	spaHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/does-not-exist", nil))
 
@@ -57,7 +60,7 @@ func TestSPAHandlerDoesNotShadowUnmatchedAPIPath(t *testing.T) {
 		t.Fatalf("GET /api/does-not-exist status = %d, want 404; body = %s", rec.Code, rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), `<div id="app">`) {
-		t.Errorf("GET /api/does-not-exist body looks like index.html; the SPA fallback must never shadow /api: body = %s", rec.Body.String())
+		t.Errorf("GET /api/does-not-exist body looks like index.html; the SPA fallback must never shadow /ui/api/: body = %s", rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), `"error":"not found"`) {
 		t.Errorf("GET /api/does-not-exist body = %q, want a not-found JSON error", rec.Body.String())

@@ -36,10 +36,12 @@ func mustSubFS(f fs.FS, dir string) fs.FS {
 // client side routing (internal/server/web/frontend/src/lib/router.ts)
 // still works on a hard reload of a client side route.
 //
-// An /api path that reaches this handler unmatched 404s explicitly rather
-// than falling through to index.html: a status code alone would not prove
-// the SPA fallback was withheld, so the guard runs before the
-// static-asset check, ahead of isStaticAsset.
+// A path under /ui/api/ (this handler's own mount point plus "/api")
+// that reaches here unmatched 404s explicitly rather than falling
+// through to index.html: a status code alone would not prove the SPA
+// fallback was withheld, so the guard runs ahead of isStaticAsset. The
+// real /api/* surface is registered separately on the same mux and
+// never reaches this handler.
 func spaHandler() http.Handler {
 	fileServer := http.FileServerFS(distFS)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

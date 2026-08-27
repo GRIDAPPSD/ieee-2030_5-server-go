@@ -81,6 +81,32 @@ func TestAdminListenerMountsAdminUIShell(t *testing.T) {
 	}
 }
 
+// TestAdminListenerRealUnmatchedAPIPathIsNotShadowedBySPA is the
+// integration-level pin for the boundary the /ui/api/ guard in
+// spaHandler cannot prove by itself: a real /api/* request that no
+// handler matches falls through to the dashboard's catch-all "GET /"
+// (which 404s on any path but "/"), never to the SPA mounted at /ui/.
+func TestAdminListenerRealUnmatchedAPIPathIsNotShadowedBySPA(t *testing.T) {
+	stores := newTestStores()
+
+	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/does-not-exist", nil)
+	req.RemoteAddr = "127.0.0.1:54321"
+	rec := httptest.NewRecorder()
+	adminRouter.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /api/does-not-exist status = %d, want 404; body = %q", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `<div id="app">`) {
+		t.Fatalf("GET /api/does-not-exist body looks like the SPA shell; the real /api surface must never fall to the /ui/ handler: body = %q", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Connected Devices") {
+		t.Fatalf("GET /api/does-not-exist body looks like the dashboard page; body = %q", rec.Body.String())
+	}
+}
+
 // TestAdminListenerDashboardStillServedAtRoot pins that mounting the
 // shell at "/ui/" left the existing dashboard's "GET /" untouched: the
 // dashboard is not rewritten or removed by this change.

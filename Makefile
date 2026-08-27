@@ -31,7 +31,7 @@ test:                     ## Run all Go tests
 # currently committed. Run this target only when the frontend source
 # under frontend/ has changed and dist/ needs regenerating.
 ui-build:                 ## Rebuild the admin UI frontend and re-embed it into the server binary
-	cd internal/server/web/frontend && npm ci && npm run build
+	cd internal/server/web/frontend && npm ci --ignore-scripts && npm run build
 	go build -o $(SERVER) ./cmd/sep2server/
 
 # ui-check rebuilds the frontend into internal/server/web/dist/ and then
@@ -52,7 +52,7 @@ ui-build:                 ## Rebuild the admin UI frontend and re-embed it into 
 # to run against a clean checkout (CI's default); running it locally on
 # a dirty tree may report drift caused by unrelated uncommitted changes.
 ui-check:                 ## Fail if the committed admin UI bundle is stale relative to its source
-	cd internal/server/web/frontend && npm ci && npm run build
+	cd internal/server/web/frontend && npm ci --ignore-scripts && npm run build
 	@if [ -n "$$(git status --porcelain -- internal/server/web/dist/)" ]; then \
 	  echo "ui-check: internal/server/web/dist/ is stale."; \
 	  echo "The committed build output does not match what the frontend source in"; \

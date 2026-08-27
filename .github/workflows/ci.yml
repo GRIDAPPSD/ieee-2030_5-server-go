@@ -336,9 +336,12 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Node
+        # Pinned to the exact version resolved by node-version: '24' in
+        # run 33093474876 (2026-08-27), since ui-check compares built
+        # bytes and a floating major can change output on a patch bump.
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: npm
           cache-dependency-path: internal/server/web/frontend/package-lock.json
 

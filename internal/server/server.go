@@ -400,6 +400,14 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	// (see buildBannerInput) - only the net.Listen site uses the resolved.
 	addr := config.ResolveAdminBind(cfg.EffectiveAdminListen())
 
+	// #365: fail closed on the exposure posture before anything opens a
+	// socket. A warning that the admin plane is reachable from the network
+	// is only useful to an operator who reads the boot log; a refusal is
+	// useful to the one who does not.
+	if err := validateAdminExposure(addr, cfg.AdminAllowNonLoopback); err != nil {
+		return nil, "", "", nil, err
+	}
+
 	// #269: warn loudly when the admin listener is bound to a non-
 	// loopback address WITHOUT a proxy hint. Without an upstream proxy
 	// injecting X-Forwarded-For/Forwarded, AdminAuthMiddleware Path 0
@@ -610,6 +618,27 @@ func parsePort(addr string) int {
 		}
 	}
 	return 443
+}
+
+// validateAdminExposure refuses an admin bind that is reachable from outside
+// this host unless the operator has opted in. It runs before net.Listen so a
+// refused configuration opens no socket at all.
+//
+// The boundary is itself a candidate for the condition it rejects, so anything
+// isLoopbackBind cannot positively establish as loopback counts as
+// non-loopback: the unspecified addresses 0.0.0.0 and [::] (which bind every
+// interface), an unresolved hostname, and a malformed or host-less address.
+// An empty addr means the admin listener is disabled and the caller already
+// gates that case.
+func validateAdminExposure(addr string, allowNonLoopback bool) error {
+	if addr == "" || allowNonLoopback || isLoopbackBind(addr) {
+		return nil
+	}
+	return fmt.Errorf("admin listener refuses to bind non-loopback address %q, "+
+		"which is reachable from outside this host: set "+
+		"SEP2_ADMIN_ALLOW_NON_LOOPBACK=true to allow it, or set "+
+		"SEP2_ADMIN_LISTEN to a bare :<port> for a loopback-only admin plane",
+		addr)
 }
 
 // adminProxyWarning returns the #269 startup-warning text when the

@@ -69,6 +69,10 @@ func runServe() error {
 		AdminKeyFile:     os.Getenv("SEP2_ADMIN_KEY_FILE"),
 		AdminBehindProxy: os.Getenv("SEP2_ADMIN_BEHIND_PROXY") == "true",
 
+		// #365: opt-in for an admin bind reachable from outside this host.
+		// Without it a non-loopback admin address refuses to start.
+		AdminAllowNonLoopback: os.Getenv("SEP2_ADMIN_ALLOW_NON_LOOPBACK") == "true",
+
 		// #270: extra Host-header allowlist entries (defense-in-depth
 		// against DNS rebinding). CSV; appended to the static defaults.
 		AdminAllowedHosts: parseCSV(os.Getenv("SEP2_ADMIN_ALLOWED_HOSTS")),

@@ -40,15 +40,40 @@ bare ports to loopback closes that compound vulnerability.
 |---|---|
 | `SEP2_ADMIN_LISTEN=:8444` | `127.0.0.1:8444` (loopback default) |
 | `SEP2_ADMIN_LISTEN=127.0.0.1:8444` | `127.0.0.1:8444` (explicit, unchanged) |
-| `SEP2_ADMIN_LISTEN=0.0.0.0:8444` | `0.0.0.0:8444` (explicit public, unchanged) |
-| `SEP2_ADMIN_LISTEN=192.168.1.5:8444` | `192.168.1.5:8444` (explicit interface, unchanged) |
+| `SEP2_ADMIN_LISTEN=0.0.0.0:8444` | `0.0.0.0:8444`, and startup REFUSES without the opt-in below |
+| `SEP2_ADMIN_LISTEN=192.168.1.5:8444` | `192.168.1.5:8444`, and startup REFUSES without the opt-in below |
 | `SEP2_ADMIN_LISTEN=` (empty) | admin disabled |
 
-To expose admin off-box, name the bind explicitly: `SEP2_ADMIN_LISTEN=0.0.0.0:8444`
-(or a specific interface IP). The `make run`/`run-ccm`/`run-full` dev
-targets set `SEP2_ADMIN_ADDR=:8444` and now bind to loopback. To run
-those targets with a network-reachable admin, override:
-`SEP2_ADMIN_LISTEN=0.0.0.0:8444 make run-ccm`.
+### Non-loopback bind is refused, not warned (#365)
+
+Naming an explicit non-loopback bind is not on its own enough. Startup
+FAILS with an error and opens no socket unless
+`SEP2_ADMIN_ALLOW_NON_LOOPBACK=true` is also set:
+
+```
+admin listener refuses to bind non-loopback address "0.0.0.0:8444", which is
+reachable from outside this host: set SEP2_ADMIN_ALLOW_NON_LOOPBACK=true to
+allow it, or set SEP2_ADMIN_LISTEN to a bare :<port> for a loopback-only
+admin plane
+```
+
+Anything that is not positively a loopback address counts as non-loopback,
+including the unspecified addresses `0.0.0.0` and `[::]` (they bind every
+interface), an unresolved hostname, and a malformed address. The check is
+answered before `net.Listen` runs, so a refused configuration never has a
+listening socket even briefly.
+
+To expose admin off-box, name the bind explicitly AND opt in:
+
+```bash
+export SEP2_ADMIN_LISTEN=0.0.0.0:8444
+export SEP2_ADMIN_ALLOW_NON_LOOPBACK=true
+```
+
+The `make run`/`run-ccm`/`run-full` dev targets set `SEP2_ADMIN_ADDR=:8444`
+and bind to loopback, so they are unaffected. To run those targets with a
+network-reachable admin, override both:
+`SEP2_ADMIN_LISTEN=0.0.0.0:8444 SEP2_ADMIN_ALLOW_NON_LOOPBACK=true make run-ccm`.
 
 ## TLS posture matrix
 
@@ -97,7 +122,8 @@ HAProxy needs `option forwardfor`; AWS ALB injects automatically;
 Traefik injects by default. Verify your proxy.
 
 When the admin listener is bound to a non-loopback address
-(`SEP2_ADMIN_LISTEN=0.0.0.0:8444` or any specific interface IP) and
+(`SEP2_ADMIN_LISTEN=0.0.0.0:8444` or any specific interface IP, which also
+requires `SEP2_ADMIN_ALLOW_NON_LOOPBACK=true` to start at all) and
 `SEP2_ADMIN_BEHIND_PROXY=true` is NOT set, the server logs a startup
 WARNING explaining the requirement. Set `SEP2_ADMIN_BEHIND_PROXY=true`
 once the upstream proxy is verified to inject the headers.

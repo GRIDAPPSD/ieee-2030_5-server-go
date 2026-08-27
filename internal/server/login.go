@@ -39,8 +39,11 @@ func HandleLoginPage(errMsg string) http.HandlerFunc {
 // admin_ticket cookie with HttpOnly + Secure + SameSite=Strict, then
 // redirects to /. On wrong key, re-renders /login with an error message.
 //
-// If adminKey is empty the server is in mTLS-only mode and the login form is
-// not a valid auth path; the handler returns 503.
+// If adminKey is blank the server is in mTLS-only mode and the login form is
+// not a valid auth path; the handler returns 503. Blank is the same predicate
+// the middleware's Bearer path uses (auth.IsBlankCredential), so a key of a
+// single space cannot be refused on one credential path and accepted on this
+// one.
 func HandleLoginSubmit(adminKey string, sessions *auth.SessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -48,7 +51,7 @@ func HandleLoginSubmit(adminKey string, sessions *auth.SessionStore) http.Handle
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if adminKey == "" || sessions == nil {
+		if auth.IsBlankCredential(adminKey) || sessions == nil {
 			http.Error(w, "browser login not available (no admin key configured)", http.StatusServiceUnavailable)
 			return
 		}
@@ -57,8 +60,11 @@ func HandleLoginSubmit(adminKey string, sessions *auth.SessionStore) http.Handle
 			HandleLoginPage("Could not read form data.")(w, r)
 			return
 		}
+		// A blank submission is refused before the compare, and a non-blank
+		// one is compared byte-for-byte: the form value is never trimmed, so
+		// a key whose own whitespace is part of the secret still matches.
 		submitted := r.PostFormValue("key")
-		if submitted == "" || !constantTimeEqual(submitted, adminKey) {
+		if auth.IsBlankCredential(submitted) || !constantTimeEqual(submitted, adminKey) {
 			w.WriteHeader(http.StatusOK)
 			HandleLoginPage("Invalid admin key.")(w, r)
 			return

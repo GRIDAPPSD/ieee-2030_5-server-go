@@ -136,6 +136,24 @@ If you hit `error:0A0000C6:SSL routines::packet length too long`, the
 admin listener is in plain-HTTP mode and you sent it TLS bytes — drop
 the `https://` or set `SEP2_ADMIN_TLS=true`.
 
+### Plain HTTP plus the Secure session cookie (#365)
+
+The browser login flow sets `admin_ticket` with the `Secure` attribute, and a
+browser discards a `Secure` cookie that arrives over plain HTTP from a
+non-loopback origin. A plain-HTTP admin listener reached directly from another
+host therefore cannot complete a login: the POST appears to succeed and every
+request after it is unauthenticated.
+
+Startup warns when all three hold: `SEP2_ADMIN_TLS` is false, the bind is
+non-loopback, and `SEP2_ADMIN_BEHIND_PROXY` is not set. Either serve HTTPS
+directly with `SEP2_ADMIN_TLS=true`, or terminate TLS in an upstream proxy and
+set `SEP2_ADMIN_BEHIND_PROXY=true`. Bearer and mTLS clients are unaffected;
+only the cookie flow is.
+
+Loopback is exempt: a browser treats a loopback origin as
+potentially-trustworthy and keeps the cookie, which is why `make run` works
+over plain HTTP.
+
 ## Admin Bearer key (`SEP2_ADMIN_KEY`, #365)
 
 Three states, deliberately distinguished:

@@ -430,6 +430,13 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		log.Print(msg)
 	}
 
+	// #365: surface the plain-HTTP-plus-Secure-cookie dead end at boot.
+	// Serving a real SPA makes it far more visible than a single page did,
+	// and an operator who cannot log in has no way to reach this fact.
+	if msg := adminSecureCookieWarning(addr, cfg.AdminTLS, cfg.AdminBehindProxy); msg != "" {
+		log.Print(msg)
+	}
+
 	// #269 follow-up (Wren MED-4): when the operator silences the
 	// non-loopback warning by setting SEP2_ADMIN_BEHIND_PROXY=true, drop
 	// a one-shot INFO line in the boot log so the operator-trust signal
@@ -694,6 +701,34 @@ func adminProxyWarning(addr string, behindProxy bool) string {
 		"then set SEP2_ADMIN_BEHIND_PROXY=true to silence this warning. " +
 		"For loopback-only admin, leave SEP2_ADMIN_LISTEN as :<port> " +
 		"(#268 default)."
+}
+
+// adminSecureCookieWarning returns a startup-warning string when a plain-HTTP
+// admin listener is bound where the browser login flow cannot work: the
+// admin_ticket cookie is minted Secure (see auth.NewAdminTicketCookie), and a
+// browser discards a Secure cookie that arrives over plain HTTP from a
+// non-loopback origin. The login POST then appears to succeed while every
+// following request is unauthenticated, which reads as a server bug.
+//
+// Loopback is exempt because browsers treat a loopback origin as a
+// potentially-trustworthy context and keep the cookie. AdminBehindProxy is
+// exempt because the operator has declared a proxy that terminates TLS at the
+// browser-facing origin, which is the supported Caddy-mode deployment.
+//
+// Pure function so tests assert content without intercepting log output.
+func adminSecureCookieWarning(addr string, adminTLS, behindProxy bool) string {
+	if addr == "" || adminTLS || behindProxy || isLoopbackBind(addr) {
+		return ""
+	}
+	return "WARNING: admin listener is plain HTTP on non-loopback address " + addr +
+		" with no upstream TLS proxy declared. The admin_ticket session cookie " +
+		"is set Secure, and a browser discards a Secure cookie delivered over " +
+		"plain HTTP from a non-loopback origin, so the browser login flow " +
+		"CANNOT complete from another host: the login will appear to succeed " +
+		"and every request after it will be unauthenticated. Set " +
+		"SEP2_ADMIN_TLS=true to serve HTTPS directly, or terminate TLS in an " +
+		"upstream proxy and set SEP2_ADMIN_BEHIND_PROXY=true. Bearer and mTLS " +
+		"clients are unaffected."
 }
 
 // metricsExposureWarning returns a startup-warning string when the resolved

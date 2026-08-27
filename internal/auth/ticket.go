@@ -1,8 +1,6 @@
 package auth
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"sync"
 	"time"
 )
@@ -33,11 +31,10 @@ func NewTicketStore(ttl time.Duration) *TicketStore {
 // Issue creates a new ticket and returns it. The ticket is valid for the
 // store's configured TTL and can only be redeemed once.
 func (s *TicketStore) Issue() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
+	ticket, err := newRandomID(32)
+	if err != nil {
 		return "", err
 	}
-	ticket := hex.EncodeToString(b)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

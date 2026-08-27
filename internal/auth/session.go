@@ -1,20 +1,20 @@
 package auth
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"errors"
 	"sync"
 	"time"
 )
 
-// ErrSessionStoreFull reports that the session table is at capacity. Issue
-// fails closed rather than evicting a live operator session, so a caller
-// that hits this refuses the login instead of silently displacing someone.
-var ErrSessionStoreFull = errors.New("auth: admin session store full")
-
-// maxSessions bounds the table. Only a successful admin-key login mints a
-// session, so the cap guards against a leaked key, not ordinary use.
+// maxSessions bounds the table's memory, and that is all it does. At the cap
+// Issue evicts the oldest session rather than refusing, because refusing turns
+// the cap into a lockout: a browser that discards the Secure cookie makes
+// every retry a successful mint that is never validated, so it holds a slot
+// for the whole idle window and, with no logout route, the operator's next
+// login fails until entries age out.
+//
+// Eviction cannot be abused to displace an operator. Reaching Issue requires
+// passing the constant-time key compare, so anyone who can drive it already
+// holds the admin key and already has full access.
 const maxSessions = 64
 
 // SessionStore holds browser admin sessions for the admin_ticket cookie.
@@ -32,6 +32,10 @@ type SessionStore struct {
 }
 
 type session struct {
+	// issuedAt is the eviction order. Deriving it from absDeadline would work
+	// only while every session shares one absolute lifetime, which is a
+	// coincidence of the current construction rather than a property.
+	issuedAt     time.Time
 	idleDeadline time.Time
 	absDeadline  time.Time
 }
@@ -48,26 +52,42 @@ func NewSessionStore(idle, absolute time.Duration) *SessionStore {
 	}
 }
 
-// Issue mints a new session id.
+// Issue mints a new session id. The only error it can return is a failure of
+// the system random source; capacity is handled by eviction, so a caller that
+// gets an error has a broken host rather than a full table.
 func (s *SessionStore) Issue() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
+	id, err := newRandomID(32)
+	if err != nil {
 		return "", err
 	}
-	id := hex.EncodeToString(b)
 
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.purgeExpiredLocked(now)
-	if len(s.sessions) >= maxSessions {
-		return "", ErrSessionStoreFull
+	for len(s.sessions) >= maxSessions {
+		s.evictOldestLocked()
 	}
 	s.sessions[id] = session{
+		issuedAt:     now,
 		idleDeadline: now.Add(s.idle),
 		absDeadline:  now.Add(s.absolute),
 	}
 	return id, nil
+}
+
+// evictOldestLocked removes the session minted longest ago. The loop in Issue
+// calls it until there is room, so an empty table cannot spin here: the caller
+// only enters the loop when at least maxSessions entries exist.
+func (s *SessionStore) evictOldestLocked() {
+	var oldestID string
+	var oldestAt time.Time
+	for id, sess := range s.sessions {
+		if oldestID == "" || sess.issuedAt.Before(oldestAt) {
+			oldestID, oldestAt = id, sess.issuedAt
+		}
+	}
+	delete(s.sessions, oldestID)
 }
 
 // Validate reports whether id names a live session, WITHOUT consuming it,

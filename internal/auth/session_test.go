@@ -1,7 +1,6 @@
 package auth_test
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -176,34 +175,91 @@ func TestSessionUniqueness(t *testing.T) {
 	}
 }
 
-// TestSessionStoreIsBounded asserts the table is capped and that Issue fails
-// closed at the cap instead of evicting a live session.
-func TestSessionStoreIsBounded(t *testing.T) {
+// TestSessionStoreEvictsOldestAtCapacity asserts the cap bounds memory without
+// becoming a lockout. Issue keeps succeeding at the cap, the table stops
+// growing, and it is the OLDEST session that goes: the newest mint, which is
+// the one an operator just made, always survives.
+//
+// The failure this replaces is not hypothetical. A browser that discards the
+// Secure cookie makes every login retry a successful mint that is never
+// validated, so each retry held a slot for the whole idle window and, with no
+// logout route, further logins failed until entries aged out.
+func TestSessionStoreEvictsOldestAtCapacity(t *testing.T) {
 	store := auth.NewSessionStore(30*time.Second, 5*time.Minute)
 
-	first, err := store.Issue()
+	// Mint enough to reach the cap and then well past it, recording order.
+	// The count is deliberately larger than any plausible cap so the test
+	// does not encode the cap's value.
+	const mints = 300
+	ids := make([]string, 0, mints)
+	for i := 0; i < mints; i++ {
+		id, err := store.Issue()
+		if err != nil {
+			t.Fatalf("Issue #%d failed: %v (capacity must not refuse)", i, err)
+		}
+		ids = append(ids, id)
+	}
+
+	capacity := store.Len()
+	if capacity == 0 || capacity >= mints {
+		t.Fatalf("session count = %d after %d mints: want a bound strictly between 0 and %d",
+			capacity, mints, mints)
+	}
+
+	// The newest session must be live: that is the operator who just logged in.
+	newest := ids[len(ids)-1]
+	if !store.Validate(newest) {
+		t.Error("the newest session is not live, so a login at the cap does not work")
+	}
+
+	// The oldest must be gone, and so must everything evicted before it.
+	if store.Validate(ids[0]) {
+		t.Error("the oldest session survived past the cap, so eviction is not by age")
+	}
+	evicted := mints - capacity
+	for i := 0; i < evicted; i++ {
+		if store.Validate(ids[i]) {
+			t.Errorf("session %d of %d survived; eviction must take the oldest first", i, mints)
+		}
+	}
+
+	// And the surviving window is exactly the newest `capacity` ids. Validate
+	// slides deadlines but never mints, so the count cannot move here.
+	for i := evicted; i < mints; i++ {
+		if !store.Validate(ids[i]) {
+			t.Errorf("session %d of %d was evicted while older ones remain", i, mints)
+		}
+	}
+	if got := store.Len(); got != capacity {
+		t.Errorf("session count = %d after validating every survivor, want %d", got, capacity)
+	}
+}
+
+// TestSessionStoreEvictionPrefersExpiredOverLive pins the ordering between the
+// two ways a slot is freed: an expired entry is swept first, so a live session
+// is never evicted while a dead one occupies a slot.
+func TestSessionStoreEvictionPrefersExpiredOverLive(t *testing.T) {
+	// A very short idle window so the first batch expires on its own.
+	store := auth.NewSessionStore(20*time.Millisecond, 5*time.Minute)
+
+	stale, err := store.Issue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(40 * time.Millisecond)
+
+	fresh, err := store.Issue()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	issued := 1
-	for {
-		if _, err := store.Issue(); err != nil {
-			if !errors.Is(err, auth.ErrSessionStoreFull) {
-				t.Fatalf("Issue at capacity returned %v, want ErrSessionStoreFull", err)
-			}
-			break
-		}
-		issued++
-		if issued > 10000 {
-			t.Fatal("Issue never reported a full store: the table is unbounded")
-		}
+	if store.Validate(stale) {
+		t.Error("an expired session validated; the sweep did not run")
 	}
-
-	if store.Len() != issued {
-		t.Errorf("session count = %d, want %d (a refused Issue must not evict)", store.Len(), issued)
+	if !store.Validate(fresh) {
+		t.Error("the fresh session was swept or evicted")
 	}
-	if !store.Validate(first) {
-		t.Error("the oldest session was evicted by a refused Issue")
+	if got := store.Len(); got != 1 {
+		t.Errorf("session count = %d, want 1 (the expired entry is gone)", got)
 	}
 }

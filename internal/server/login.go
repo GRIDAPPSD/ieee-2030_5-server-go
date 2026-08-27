@@ -70,9 +70,12 @@ func HandleLoginSubmit(adminKey string, sessions *auth.SessionStore) http.Handle
 			return
 		}
 
+		// Issue's only failure mode is the system random source: capacity is
+		// handled by eviction inside the store, so there is no
+		// bounded-out case for this branch to be confused with.
 		id, err := sessions.Issue()
 		if err != nil {
-			log.Printf("login: issue admin session: %v", err)
+			log.Printf("login: could not read the system random source to mint an admin session: %v", err)
 			http.Error(w, "could not issue session ticket", http.StatusInternalServerError)
 			return
 		}

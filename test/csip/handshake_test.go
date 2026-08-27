@@ -37,8 +37,12 @@ import (
 // the SunSpec V1.2 test device cert as the external client.
 //
 // What this test asserts today:
-//   - The server's verifier hook (verifyClientCertWithHardwareModuleSAN)
-//     accepts the SunSpec leaf's critical HardwareModuleName SAN.
+//   - The SunSpec leaf carries a critical, otherName-only
+//     HardwareModuleName SAN, per IEEE 2030.5 6.11 / CSIP 6.2. That is
+//     this test's own requirement, not the handshake's: the server hook
+//     sep2tls.VerifyPeerCertWithHardwareModuleSAN acknowledges such a SAN
+//     when one is present but never requires one, so a leaf with no SAN
+//     at all still completes every other step below.
 //   - The chain validates to the SunSpec Test 2030.5 Root (loaded into
 //     ClientCAs via roots.pem).
 //   - The mTLS handshake completes.
@@ -73,6 +77,17 @@ func TestCSIPHandshakeWithSunSpecDeviceCert(t *testing.T) {
 	clientCert, err := tls.X509KeyPair(clientCertPEM, clientKeyPEM)
 	if err != nil {
 		t.Fatalf("parse SunSpec cert+key: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(clientCert.Certificate[0])
+	if err != nil {
+		t.Fatalf("parse SunSpec leaf: %v", err)
+	}
+
+	// Checked here rather than left to the handshake: the hook below
+	// acknowledges a HardwareModuleName SAN without requiring one, so
+	// nothing further in this test would notice its absence.
+	if err := csipDeviceCertSAN(leaf); err != nil {
+		t.Fatalf("SunSpec leaf at %s: %v", certPath, err)
 	}
 
 	// Boot the spec server in CCM mode with SunSpec roots in ClientCAs

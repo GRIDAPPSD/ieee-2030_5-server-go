@@ -139,8 +139,9 @@ new-device:                ## Mint a new device cert (DEVICE_NAME= SERIAL= requi
 # ─── Run ──────────────────────────────────────────────────────────
 
 # #268: SEP2_ADMIN_ADDR=:8444 binds admin to 127.0.0.1:8444 by default
-# (loopback). To make admin reachable off-box, override:
-#   SEP2_ADMIN_LISTEN=0.0.0.0:8444 make run-ccm
+# (loopback). #365: an off-box bind ALSO needs an explicit opt-in or
+# startup refuses; see docs/admin-listener.md. To reach admin off-box:
+#   SEP2_ADMIN_LISTEN=0.0.0.0:8444 SEP2_ADMIN_ALLOW_NON_LOOPBACK=true make run-ccm
 # #268 / PR #264: a bare SEP2_METRICS_ADDR=:9100 now resolves to loopback
 # (127.0.0.1:9100), so the UNAUTHENTICATED /metrics surface is not exposed
 # network-wide by default. A containerized Prometheus scrapes the host via

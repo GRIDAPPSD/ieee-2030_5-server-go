@@ -54,8 +54,59 @@ The harness resolves fixture paths in this order, per file:
 1. Env var (`CSIP_SUNSPEC_CERT`, `CSIP_SUNSPEC_KEY`, `CSIP_SUNSPEC_ROOTS`).
 2. Default — `test/csip/fixtures/sunspec/{cert,key,roots}.pem`.
 
-If a path resolves to a non-existent file, the smoke test **skips
-cleanly** with a pointer back to this README. Fresh clones never fail.
+If a path resolves to nothing, the SunSpec-backed tests **skip cleanly**
+with a pointer back to this README. Fresh clones never fail.
+
+Absence is the only fault that skips. A path that resolves to an empty
+file, a directory, or a file carrying no complete PEM block is material
+that is present and wrong, and that **fails** whether or not the gate
+below is armed: a truncated download must not be able to report the same
+green as a clean checkout.
+
+### Demanding the fixtures: `CSIP_SUNSPEC_REQUIRED`
+
+A skip is the right default for a fresh clone and the wrong default for a
+run that is supposed to supply the material: absent fixtures would skip
+and the run would still report green. Set `CSIP_SUNSPEC_REQUIRED=1` and
+absence becomes a hard failure instead:
+
+```sh
+CSIP_SUNSPEC_REQUIRED=1 make test-csip
+```
+
+Unset and empty are the only values that disarm it. Anything that is not
+a boolean is an error rather than a false, so `CSIP_SUNSPEC_REQUIRED=ture`
+cannot silently disarm the gate. This is the same contract as
+`SEP2_WADL_REQUIRED` (see `test/conformance/README.md`).
+
+`TestCSIPFixtureGateArmed` is the canary to look for in a log: PASS means
+the cert and key agree, the leaf is unexpired, every certificate in
+`roots.pem` parses, and the leaf verifies against that bundle through the
+same hook the server applies, so the SunSpec-backed procedures ran
+against material a handshake could use. It scopes that material only;
+`TestDeviceHandshake` proves mTLS against the committed test-device PKI
+either way.
+
+In CI the material arrives through `.github/actions/supply-csip-pki`,
+which reassembles it from a repository secret into `RUNNER_TEMP` outside
+the checkout, streams each archive member to a path it names itself so no
+member can be a symlink, checks the archive against a pinned digest,
+verifies that the cert and key agree, and then exports the three path
+variables plus `CSIP_SUNSPEC_REQUIRED=1`.
+
+Arming needs three repository settings and no code change:
+
+| Setting | Kind | Purpose |
+| --- | --- | --- |
+| `CSIP_SUNSPEC_PKI_TAR_XZ_B64` | secret | `base64(xz(tar of cert.pem key.pem roots.pem))` |
+| `CSIP_SUNSPEC_PKI_PROVISIONED` | variable | `true` once the secret exists |
+| `CSIP_SUNSPEC_PKI_SHA256` | variable | sha256 of the decoded tar |
+
+The digest is not knowable before the first run, so a run armed without it
+fails and reports the digest it observed in the job's step summary; set the
+variable to that value and re-run. A secret present while
+`CSIP_SUNSPEC_PKI_PROVISIONED` is not `true` is a contradiction and also
+fails, which is what keeps the switch from being a silent off-ramp.
 
 ### Option A — environment variables
 

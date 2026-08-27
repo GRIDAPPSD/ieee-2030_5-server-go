@@ -3,7 +3,8 @@
 // against real CSIP §6.11 external materials (SunSpec V1.2 test PKI),
 // in CCM-8 cipher mode. Its fixtures are provisioned out of band (see
 // test/csip/README.md); the test t.Skip's cleanly when they are missing
-// so fresh clones never fail.
+// so fresh clones never fail. CSIP_SUNSPEC_REQUIRED turns that skip into a
+// failure; see fixture_gate_test.go.
 //
 // The CSIP-named conformance counterparts for V1.2 §5.2 Out-of-Band
 // Discovery and V1.2 §5.3 Basic Security live alongside this file:
@@ -26,17 +27,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
-)
-
-// Fixture resolution: env first, then default to test/csip/fixtures/sunspec/.
-const (
-	envCert  = "CSIP_SUNSPEC_CERT"
-	envKey   = "CSIP_SUNSPEC_KEY"
-	envRoots = "CSIP_SUNSPEC_ROOTS"
 )
 
 // TestCSIPHandshakeWithSunSpecDeviceCert exercises the full CSIP-cipher-aware
@@ -63,10 +56,7 @@ const (
 // fetch. Together they prove both helpers are wired into a real
 // integration test, not just defined in isolation.
 func TestCSIPHandshakeWithSunSpecDeviceCert(t *testing.T) {
-	certPath, keyPath, rootsPath, ok := resolveFixtures()
-	if !ok {
-		t.Skip("CSIP fixtures not provisioned; see test/csip/README.md")
-	}
+	certPath, keyPath, rootsPath := mustResolveFixtures(t)
 
 	// Load the SunSpec device cert + key as a tls.Certificate. The
 	// helper presents this on every request via WithClientCert; the
@@ -133,26 +123,4 @@ func TestCSIPHandshakeWithSunSpecDeviceCert(t *testing.T) {
 	if dcap.Href != "/dcap" {
 		t.Errorf("DeviceCapability.Href = %q, want /dcap", dcap.Href)
 	}
-}
-
-// resolveFixtures returns (cert, key, roots, ok). ok is false when none of
-// the three paths resolve to an existing file. Env vars override the default
-// test/csip/fixtures/sunspec/ paths, evaluated per-variable.
-func resolveFixtures() (certPath, keyPath, rootsPath string, ok bool) {
-	cert := fixturePath(envCert, "cert.pem")
-	key := fixturePath(envKey, "key.pem")
-	roots := fixturePath(envRoots, "roots.pem")
-	for _, p := range []string{cert, key, roots} {
-		if _, err := os.Stat(p); err != nil {
-			return "", "", "", false
-		}
-	}
-	return cert, key, roots, true
-}
-
-func fixturePath(env, leaf string) string {
-	if v := os.Getenv(env); v != "" {
-		return v
-	}
-	return filepath.Join("fixtures", "sunspec", leaf)
 }

@@ -73,10 +73,7 @@ const expectedSunSpecLFDI = "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
 func TestBASIC_001_DERIdentification(t *testing.T) {
 	t.Parallel()
 
-	certPath, keyPath, rootsPath, ok := resolveFixtures()
-	if !ok {
-		t.Skip("CSIP fixtures not provisioned; see test/csip/README.md")
-	}
+	certPath, keyPath, rootsPath := mustResolveFixtures(t)
 
 	clientCert := loadSunSpecCert(t, certPath, keyPath)
 

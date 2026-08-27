@@ -54,7 +54,7 @@ func TestProtocolListenerDoesNotMountAdminUIShell(t *testing.T) {
 func TestAdminListenerMountsAdminUIShell(t *testing.T) {
 	stores := newTestStores()
 
-	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil)
+	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
@@ -89,7 +89,7 @@ func TestAdminListenerMountsAdminUIShell(t *testing.T) {
 func TestAdminListenerRealUnmatchedAPIPathIsNotShadowedBySPA(t *testing.T) {
 	stores := newTestStores()
 
-	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil)
+	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/does-not-exist", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
@@ -113,7 +113,7 @@ func TestAdminListenerRealUnmatchedAPIPathIsNotShadowedBySPA(t *testing.T) {
 func TestAdminListenerDashboardStillServedAtRoot(t *testing.T) {
 	stores := newTestStores()
 
-	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil)
+	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.RemoteAddr = "127.0.0.1:54321"

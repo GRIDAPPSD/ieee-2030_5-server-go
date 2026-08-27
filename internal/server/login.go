@@ -13,9 +13,10 @@ import (
 //
 // The login form is served at GET /login (unauthenticated) and posts to
 // POST /auth/login (also unauthenticated). On a successful key match the
-// server issues a TicketStore ticket and sets it as the admin_ticket cookie,
-// then redirects to /. The middleware's Path D consumes the cookie and
-// re-issues a fresh one on every authenticated request.
+// server mints a SessionStore id and sets it as the admin_ticket cookie,
+// then redirects to /. The middleware's Path D validates that cookie on
+// each request without consuming it. This handler is the only place the
+// cookie is set, so a client-supplied id is never adopted as a session.
 //
 // Only the admin key + cookie path is touched here. mTLS, Bearer, and
 // query-param ticket auth keep their behavior.
@@ -34,20 +35,20 @@ func HandleLoginPage(errMsg string) http.HandlerFunc {
 
 // HandleLoginSubmit returns a handler for POST /auth/login. Validates the
 // posted "key" form field against adminKey with a constant-time compare. On
-// success, issues a ticket via the supplied TicketStore and sets the
+// success, mints a session via the supplied SessionStore and sets the
 // admin_ticket cookie with HttpOnly + Secure + SameSite=Strict, then
 // redirects to /. On wrong key, re-renders /login with an error message.
 //
 // If adminKey is empty the server is in mTLS-only mode and the login form is
 // not a valid auth path; the handler returns 503.
-func HandleLoginSubmit(adminKey string, tickets *auth.TicketStore) http.HandlerFunc {
+func HandleLoginSubmit(adminKey string, sessions *auth.SessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", "POST")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if adminKey == "" || tickets == nil {
+		if adminKey == "" || sessions == nil {
 			http.Error(w, "browser login not available (no admin key configured)", http.StatusServiceUnavailable)
 			return
 		}
@@ -63,13 +64,13 @@ func HandleLoginSubmit(adminKey string, tickets *auth.TicketStore) http.HandlerF
 			return
 		}
 
-		ticket, err := tickets.Issue()
+		id, err := sessions.Issue()
 		if err != nil {
-			log.Printf("login: issue ticket: %v", err)
+			log.Printf("login: issue admin session: %v", err)
 			http.Error(w, "could not issue session ticket", http.StatusInternalServerError)
 			return
 		}
-		http.SetCookie(w, auth.NewAdminTicketCookie(ticket))
+		http.SetCookie(w, auth.NewAdminTicketCookie(id))
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	}
 }

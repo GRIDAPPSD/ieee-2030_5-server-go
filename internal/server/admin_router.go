@@ -24,7 +24,9 @@ import (
 //     dashboard without first hitting them.
 //  3. Authenticated inner mux — everything else (dashboard, /api/*, SSE,
 //     ticket exchange). Guarded by AdminAuthMiddleware which supports mTLS,
-//     Bearer, query-param ticket, and the #159 admin_ticket cookie.
+//     Bearer, the query-param ticket from tickets, and the #159
+//     admin_ticket cookie session from sessions. Those last two are
+//     separate stores: see AdminAuthMiddleware for why.
 //
 // Patterns from BOTH the public outer mux (login routes) and the authed
 // inner mux are merged into one sorted, deduplicated list — callers
@@ -35,7 +37,7 @@ import (
 //
 // Test callers that don't need the pattern list discard the second
 // return value with `_`.
-func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, allowedHosts []string) (http.Handler, []string) {
+func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, allowedHosts []string) (http.Handler, []string) {
 	authed := newRecordingMux()
 
 	// Certificate management API
@@ -84,7 +86,7 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 		authed.HandleFunc("POST /auth/ticket", handleIssueTicket(tickets))
 	}
 
-	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets)(authed)
+	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets, sessions)(authed)
 
 	// Outer mux: login routes are public; everything else is authed.
 	// #270 (bundle B) wraps authedWithMiddleware with a Host-allowlist
@@ -92,7 +94,7 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 	// point clean.
 	outer := http.NewServeMux()
 	outer.HandleFunc("GET /login", HandleLoginPage(""))
-	outer.HandleFunc("POST /auth/login", HandleLoginSubmit(adminKey, tickets))
+	outer.HandleFunc("POST /auth/login", HandleLoginSubmit(adminKey, sessions))
 	outer.Handle("/", authedWithMiddleware)
 
 	// #272: assemble the final pattern list. The two public outer

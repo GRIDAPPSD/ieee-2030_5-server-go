@@ -46,6 +46,8 @@ func spaHandler() http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/api") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
+			// Best-effort write: headers are already sent, so a failure here
+			// has nothing actionable to do beyond what the client already sees.
 			_, _ = w.Write([]byte(`{"error":"not found"}`))
 			return
 		}

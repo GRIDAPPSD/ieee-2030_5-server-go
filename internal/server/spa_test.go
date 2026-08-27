@@ -25,9 +25,9 @@ func TestSPAHandlerServesIndexHTMLAtRoot(t *testing.T) {
 	}
 }
 
-// TestSPAHandlerFallsBackToIndexHTMLForUnknownClientRoute is acceptance
-// item 5: an unknown non-/api path serves the same index.html body as
-// "/", so a hard reload on a client side route still works.
+// TestSPAHandlerFallsBackToIndexHTMLForUnknownClientRoute asserts an unknown
+// non-/api path serves the same index.html body as "/", so a hard reload on a
+// client side route still works.
 func TestSPAHandlerFallsBackToIndexHTMLForUnknownClientRoute(t *testing.T) {
 	rootRec := httptest.NewRecorder()
 	spaHandler().ServeHTTP(rootRec, httptest.NewRequest(http.MethodGet, "/", nil))

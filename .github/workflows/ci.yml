@@ -240,25 +240,30 @@ jobs:
         # TestBASIC_001_DERIdentification) skip unless this material reaches the
         # runner, and nothing could previously demand it.
         #
-        # The `if` is the arming switch: set the repository variable once the
-        # secret exists. It is deliberately separate from `required` below,
-        # because "this repository has been provisioned" and "this run may see
-        # the secret" are different questions, and collapsing them is what lets a
-        # deleted secret read as a legitimately absent one.
-        if: vars.CSIP_SUNSPEC_PKI_PROVISIONED == 'true'
+        # The step runs on every trigger and the arming switch is passed IN, so
+        # deleting or renaming the variable cannot skip the step silently: the
+        # action annotates the disarmed state, and a secret present with the
+        # switch off is a contradiction it fails on. `provisioned` and `required`
+        # stay separate because "this repository has been provisioned" and "this
+        # run may see the secret" are different questions.
         uses: ./.github/actions/supply-csip-pki
         with:
           pki-tar-xz-b64: ${{ secrets.CSIP_SUNSPEC_PKI_TAR_XZ_B64 }}
           pki-sha256: ${{ vars.CSIP_SUNSPEC_PKI_SHA256 }}
+          provisioned: ${{ vars.CSIP_SUNSPEC_PKI_PROVISIONED }}
           # Derived from the trigger rather than hardcoded: false ONLY where
           # GitHub genuinely withholds secrets, which is a fork pull request.
           # Every other context reaches the base repository, so an absent secret
           # there is a deleted or half-rotated one and must fail. Hardcoding
           # 'false' cannot tell those two apart.
-          required: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+          required: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
 
       - name: Confirm the CSIP fixture gate is armed
         if: steps.csip_pki.outputs.armed == 'true'
+        # Conditional because the PKI is not provisioned yet, so a disarmed run is
+        # still the expected state; the supply step annotates it. Drop this `if`
+        # once the PKI is provisioned.
+        #
         # CSIP_SUNSPEC_REQUIRED=1 already turns absent material into a failure.
         # This adds the positive assertion: TestCSIPFixtureGateArmed has to PASS,
         # not SKIP and not vanish into "no tests to run", so a green run cannot

@@ -423,13 +423,15 @@ jobs:
         # rather than a hardcoded 'true'. This workflow has no fork-pull-request
         # trigger today, so the expression evaluates to true here; deriving it
         # means a trigger added later cannot silently start tolerating an absent
-        # secret. The `if` remains the separate arming switch.
-        if: vars.CSIP_SUNSPEC_PKI_PROVISIONED == 'true'
+        # secret. Comparing head.repo.full_name rather than reading head.repo.fork
+        # avoids a null head.repo, left by a fork deleted mid-PR, coercing to
+        # "not a fork" and demanding a secret the run cannot have.
         uses: ./.github/actions/supply-csip-pki
         with:
           pki-tar-xz-b64: ${{ secrets.CSIP_SUNSPEC_PKI_TAR_XZ_B64 }}
           pki-sha256: ${{ vars.CSIP_SUNSPEC_PKI_SHA256 }}
-          required: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+          provisioned: ${{ vars.CSIP_SUNSPEC_PKI_PROVISIONED }}
+          required: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
 
       - name: Bump core to latest main (in-memory only, never committed)
         run: go get github.com/GRIDAPPSD/ieee-2030_5-core-go@main
@@ -498,6 +500,12 @@ jobs:
 
       - name: Confirm the CSIP fixture gate is armed
         if: steps.csip_pki.outputs.armed == 'true'
+        # Conditional, where the WADL assertion above is deliberately
+        # unconditional: the WADL secret exists, so a disarmed WADL run is always
+        # a fault. The SunSpec PKI is not provisioned yet, so "disarmed" is still
+        # the expected state here and the action annotates it rather than failing.
+        # Drop this `if` once the PKI is provisioned, matching the WADL step.
+        #
         # Runs AFTER the core bump so the assertion compiles against core main,
         # and BEFORE the CSIP harness so a disarmed gate fails in seconds. PASS
         # is the only outcome that means the SunSpec-backed procedures ran; a

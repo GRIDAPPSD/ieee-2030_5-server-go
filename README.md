@@ -48,8 +48,10 @@ make run-full      # CCM-8 plus mDNS plus admin dashboard
 [CCM-8](docs/glossary.md) vs [GCM](docs/glossary.md) and the operator
 profiles (`run-testdevice`, `run-sunspec`) are covered in
 [docs/csip.md](docs/csip.md). `make run` enables the
-admin dashboard on `127.0.0.1:8444` (loopback) by default; for off-box
-access set `SEP2_ADMIN_LISTEN=0.0.0.0:8444`. See
+admin dashboard on `127.0.0.1:8444` (loopback) by default. Off-box access
+needs both `SEP2_ADMIN_LISTEN=0.0.0.0:8444` and
+`SEP2_ADMIN_ALLOW_NON_LOOPBACK=true`; the listen address alone is refused at
+startup. See
 [docs/admin-listener.md](docs/admin-listener.md) for the bind matrix and
 [docs/admin.md](docs/admin.md) for the dashboard.
 

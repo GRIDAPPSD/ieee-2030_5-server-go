@@ -16,6 +16,12 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
+// This file holds the boot-level wiring assertions for all three startup gates
+// on the admin listener: the non-loopback refusal, the whitespace-key refusal,
+// and the Secure-cookie warning. The gates' pure functions are unit-tested in
+// their own files; what is shared here is the cost of standing up a real
+// server.Run, which is why they sit together.
+
 // exposureBootCfg builds a Run-ready config whose admin listener binds the
 // unspecified IPv4 address on a port the caller can probe over loopback.
 func exposureBootCfg(t *testing.T, adminPort string, allow bool) (*config.Config, *splitListenerCerts) {

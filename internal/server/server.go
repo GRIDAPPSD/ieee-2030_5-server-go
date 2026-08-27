@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -372,6 +373,14 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	}
 }
 
+// Browser admin session lifetimes. The idle window is what an operator
+// notices; the absolute cap is what a stolen cookie runs into, and it is
+// never extended by use.
+const (
+	adminSessionIdleTimeout     = 30 * time.Minute
+	adminSessionAbsoluteTimeout = 8 * time.Hour
+)
+
 // startAdminServer brings up the admin listener on its own port. #161:
 // the listener selection matrix is
 //
@@ -392,6 +401,21 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	// (see buildBannerInput) - only the net.Listen site uses the resolved.
 	addr := config.ResolveAdminBind(cfg.EffectiveAdminListen())
 
+	// #365: fail closed on the exposure posture before anything opens a
+	// socket. A warning that the admin plane is reachable from the network
+	// is only useful to an operator who reads the boot log; a refusal is
+	// useful to the one who does not.
+	if err := validateAdminExposure(addr, cfg.AdminAllowNonLoopback); err != nil {
+		return nil, "", "", nil, err
+	}
+
+	// #365: an operator who typed whitespace into the admin key was trying
+	// to set one. Silently disabling Bearer auth hides the typo behind a
+	// later connection refusal; a startup error names the variable to fix.
+	if err := validateAdminKey(cfg.AdminKey); err != nil {
+		return nil, "", "", nil, err
+	}
+
 	// #269: warn loudly when the admin listener is bound to a non-
 	// loopback address WITHOUT a proxy hint. Without an upstream proxy
 	// injecting X-Forwarded-For/Forwarded, AdminAuthMiddleware Path 0
@@ -403,6 +427,13 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	// to public traffic. The warning is doc-and-startup defense in depth;
 	// #268 is the structural fix.
 	if msg := adminProxyWarning(addr, cfg.AdminBehindProxy); msg != "" {
+		log.Print(msg)
+	}
+
+	// #365: surface the plain-HTTP-plus-Secure-cookie dead end at boot.
+	// Serving a real SPA makes it far more visible than a single page did,
+	// and an operator who cannot log in has no way to reach this fact.
+	if msg := adminSecureCookieWarning(addr, cfg.AdminTLS, cfg.AdminBehindProxy); msg != "" {
 		log.Print(msg)
 	}
 
@@ -418,10 +449,11 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	}
 
 	tickets := auth.NewTicketStore(30 * time.Second)
+	sessions := auth.NewSessionStore(adminSessionIdleTimeout, adminSessionAbsoluteTimeout)
 	// #270: resolve the admin host-header allowlist from the static
 	// defaults plus operator-supplied SEP2_ADMIN_ALLOWED_HOSTS extras.
 	allowedHosts := ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
-	adminRouter, adminRoutes := BuildAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets, allowedHosts)
+	adminRouter, adminRoutes := BuildAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets, sessions, allowedHosts)
 
 	adminListener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -603,6 +635,43 @@ func parsePort(addr string) int {
 	return 443
 }
 
+// validateAdminExposure refuses an admin bind that is reachable from outside
+// this host unless the operator has opted in. It runs before net.Listen so a
+// refused configuration opens no socket at all.
+//
+// The boundary is itself a candidate for the condition it rejects, so anything
+// isLoopbackBind cannot positively establish as loopback counts as
+// non-loopback: the unspecified addresses 0.0.0.0 and [::] (which bind every
+// interface), an unresolved hostname, and a malformed or host-less address.
+// An empty addr means the admin listener is disabled and the caller already
+// gates that case.
+func validateAdminExposure(addr string, allowNonLoopback bool) error {
+	if addr == "" || allowNonLoopback || isLoopbackBind(addr) {
+		return nil
+	}
+	return fmt.Errorf("admin listener refuses to bind non-loopback address %q, "+
+		"which is reachable from outside this host: set "+
+		"SEP2_ADMIN_ALLOW_NON_LOOPBACK=true to allow it, or set "+
+		"SEP2_ADMIN_LISTEN to a bare :<port> for a loopback-only admin plane",
+		addr)
+}
+
+// validateAdminKey refuses a configured admin key that carries no credential
+// material. An unset key is the deliberate "Bearer auth disabled" state and is
+// left alone; whitespace-only is a typo, and it is distinguished from unset
+// rather than folded into it.
+//
+// The error describes the value without echoing it, so no configured
+// credential can reach a log line by way of a startup failure.
+func validateAdminKey(adminKey string) error {
+	if adminKey == "" || !auth.IsBlankCredential(adminKey) {
+		return nil
+	}
+	return errors.New("SEP2_ADMIN_KEY is set to whitespace only, which is not " +
+		"a usable credential: set it to a non-blank token, or leave " +
+		"SEP2_ADMIN_KEY unset to disable Bearer auth deliberately")
+}
+
 // adminProxyWarning returns the #269 startup-warning text when the
 // admin listener is bound to a non-loopback address AND the operator
 // has not declared an upstream proxy. Returns empty string when no
@@ -632,6 +701,34 @@ func adminProxyWarning(addr string, behindProxy bool) string {
 		"then set SEP2_ADMIN_BEHIND_PROXY=true to silence this warning. " +
 		"For loopback-only admin, leave SEP2_ADMIN_LISTEN as :<port> " +
 		"(#268 default)."
+}
+
+// adminSecureCookieWarning returns a startup-warning string when a plain-HTTP
+// admin listener is bound where the browser login flow cannot work: the
+// admin_ticket cookie is minted Secure (see auth.NewAdminTicketCookie), and a
+// browser discards a Secure cookie that arrives over plain HTTP from a
+// non-loopback origin. The login POST then appears to succeed while every
+// following request is unauthenticated, which reads as a server bug.
+//
+// Loopback is exempt because browsers treat a loopback origin as a
+// potentially-trustworthy context and keep the cookie. AdminBehindProxy is
+// exempt because the operator has declared a proxy that terminates TLS at the
+// browser-facing origin, which is the supported Caddy-mode deployment.
+//
+// Pure function so tests assert content without intercepting log output.
+func adminSecureCookieWarning(addr string, adminTLS, behindProxy bool) string {
+	if addr == "" || adminTLS || behindProxy || isLoopbackBind(addr) {
+		return ""
+	}
+	return "WARNING: admin listener is plain HTTP on non-loopback address " + addr +
+		" with no upstream TLS proxy declared. The admin_ticket session cookie " +
+		"is set Secure, and a browser discards a Secure cookie delivered over " +
+		"plain HTTP from a non-loopback origin, so the browser login flow " +
+		"CANNOT complete from another host: the login will appear to succeed " +
+		"and every request after it will be unauthenticated. Set " +
+		"SEP2_ADMIN_TLS=true to serve HTTPS directly, or terminate TLS in an " +
+		"upstream proxy and set SEP2_ADMIN_BEHIND_PROXY=true. Bearer and mTLS " +
+		"clients are unaffected."
 }
 
 // metricsExposureWarning returns a startup-warning string when the resolved

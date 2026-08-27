@@ -285,7 +285,7 @@ func TestAdminRouterHostAllowlistGatesLogin(t *testing.T) {
 	stores := newTestStores()
 	tickets := auth.NewTicketStore(5 * time.Minute)
 	allowed := []string{"localhost", "127.0.0.1"}
-	r, _ := server.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, allowed)
+	r, _ := server.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, nil, allowed)
 
 	srv := httptest.NewServer(r)
 	defer srv.Close()

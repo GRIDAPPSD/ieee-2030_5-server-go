@@ -56,6 +56,13 @@ type Config struct {
 	// XFF when relaying loopback-to-loopback). Env: SEP2_ADMIN_BEHIND_PROXY.
 	AdminBehindProxy bool
 
+	// #365: explicit operator opt-in required before the admin listener may
+	// bind an address reachable from outside this host. Absent, a resolved
+	// non-loopback admin bind is a hard startup error and no socket opens:
+	// the admin plane fails closed on its exposure posture rather than
+	// warning and serving anyway. Env: SEP2_ADMIN_ALLOW_NON_LOOPBACK.
+	AdminAllowNonLoopback bool
+
 	// #270: extra Host-header values appended to the static admin
 	// allowlist (defaults: localhost, 127.0.0.1, ::1, ieee2030-5.local).
 	// Loaded from SEP2_ADMIN_ALLOWED_HOSTS as a CSV. Defense-in-depth

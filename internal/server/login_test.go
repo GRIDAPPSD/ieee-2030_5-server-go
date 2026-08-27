@@ -43,8 +43,8 @@ func TestLoginPageInjectsError(t *testing.T) {
 }
 
 func TestLoginSubmitSuccessSetsCookieAndRedirects(t *testing.T) {
-	tickets := auth.NewTicketStore(5 * time.Minute)
-	h := server.HandleLoginSubmit("the-secret", tickets)
+	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
+	h := server.HandleLoginSubmit("the-secret", sessions)
 
 	form := url.Values{"key": []string{"the-secret"}}
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
@@ -84,8 +84,8 @@ func TestLoginSubmitSuccessSetsCookieAndRedirects(t *testing.T) {
 }
 
 func TestLoginSubmitWrongKey(t *testing.T) {
-	tickets := auth.NewTicketStore(5 * time.Minute)
-	h := server.HandleLoginSubmit("the-secret", tickets)
+	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
+	h := server.HandleLoginSubmit("the-secret", sessions)
 
 	form := url.Values{"key": []string{"wrong"}}
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
@@ -108,10 +108,10 @@ func TestLoginSubmitWrongKey(t *testing.T) {
 }
 
 func TestLoginSubmitEmptyKeyDisabled(t *testing.T) {
-	tickets := auth.NewTicketStore(5 * time.Minute)
+	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
 	// Server started with no admin key — login submission must be refused
 	// (mTLS-only mode; no browser login possible).
-	h := server.HandleLoginSubmit("", tickets)
+	h := server.HandleLoginSubmit("", sessions)
 
 	form := url.Values{"key": []string{"anything"}}
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
@@ -125,8 +125,8 @@ func TestLoginSubmitEmptyKeyDisabled(t *testing.T) {
 }
 
 func TestLoginSubmitFormParseError(t *testing.T) {
-	tickets := auth.NewTicketStore(5 * time.Minute)
-	h := server.HandleLoginSubmit("secret", tickets)
+	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
+	h := server.HandleLoginSubmit("secret", sessions)
 	// Body with broken urlencoded form (invalid percent escape) — ParseForm
 	// returns an error and the handler must surface the login page rather
 	// than a 5xx.
@@ -140,8 +140,8 @@ func TestLoginSubmitFormParseError(t *testing.T) {
 }
 
 func TestLoginSubmitMethodNotAllowed(t *testing.T) {
-	tickets := auth.NewTicketStore(5 * time.Minute)
-	h := server.HandleLoginSubmit("secret", tickets)
+	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
+	h := server.HandleLoginSubmit("secret", sessions)
 	req := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
 	w := httptest.NewRecorder()
 	h(w, req)

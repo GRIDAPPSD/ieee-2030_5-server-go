@@ -107,3 +107,23 @@ func TestTicketUniqueness(t *testing.T) {
 		seen[ticket] = true
 	}
 }
+
+// TestExpiredQueryTicketIsNotConsumedAsIfRedeemed pins the expiry compare
+// ahead of the delete: an expired ticket is refused and left for the sweep,
+// so a refusal is never recorded as a redemption that happened.
+func TestExpiredQueryTicketIsNotConsumedAsIfRedeemed(t *testing.T) {
+	tickets := auth.NewTicketStore(1 * time.Millisecond)
+
+	ticket, err := tickets.Issue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(5 * time.Millisecond)
+
+	if tickets.Redeem(ticket) {
+		t.Fatal("expired ticket should not be redeemable")
+	}
+	if tickets.Len() != 1 {
+		t.Errorf("ticket count after a refused expired redemption = %d, want 1 (the expiry compare must precede the delete)", tickets.Len())
+	}
+}

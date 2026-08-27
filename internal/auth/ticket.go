@@ -1,8 +1,6 @@
 package auth
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"sync"
 	"time"
 )
@@ -11,6 +9,11 @@ import (
 // Tickets are used by browser SSE clients (EventSource) that cannot send
 // Authorization headers. A valid admin session exchanges its Bearer token
 // for a ticket, then passes the ticket as a query parameter.
+//
+// One-time use is load-bearing here and must not be relaxed: the value
+// travels in a URL, so it also lands in browser history, autocomplete, any
+// outbound Referer and the access log. Cookie sessions are a different
+// credential kind and live in SessionStore.
 type TicketStore struct {
 	mu      sync.Mutex
 	tickets map[string]time.Time
@@ -28,11 +31,10 @@ func NewTicketStore(ttl time.Duration) *TicketStore {
 // Issue creates a new ticket and returns it. The ticket is valid for the
 // store's configured TTL and can only be redeemed once.
 func (s *TicketStore) Issue() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
+	ticket, err := newRandomID(32)
+	if err != nil {
 		return "", err
 	}
-	ticket := hex.EncodeToString(b)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -42,7 +44,9 @@ func (s *TicketStore) Issue() (string, error) {
 }
 
 // Redeem validates and consumes a ticket. Returns true if the ticket was
-// valid and not expired. The ticket is deleted regardless of outcome.
+// valid and not expired. Only a valid ticket is consumed: the expiry compare
+// runs before the delete so an already-expired entry is left for the sweep
+// rather than being reported as a redemption that happened.
 func (s *TicketStore) Redeem(ticket string) bool {
 	if ticket == "" {
 		return false
@@ -53,8 +57,11 @@ func (s *TicketStore) Redeem(ticket string) bool {
 	if !ok {
 		return false
 	}
+	if !time.Now().Before(exp) {
+		return false
+	}
 	delete(s.tickets, ticket)
-	return time.Now().Before(exp)
+	return true
 }
 
 // Len returns the number of outstanding tickets (for testing).

@@ -22,9 +22,10 @@ var forwardedHeaders = []string{
 }
 
 // AdminTicketCookieName is the cookie name used by the browser login flow
-// (#159). The cookie carries a TicketStore ticket; the middleware redeems
-// the ticket on each request and re-issues a fresh ticket cookie so multi-
-// request page navigation works under the one-time-use semantics.
+// (#159). The cookie carries a SessionStore id, which the middleware
+// validates without consuming: one page load authenticates the document and
+// every subresource it pulls separately, so a consuming check admits the
+// first of them and refuses the rest.
 const AdminTicketCookieName = "admin_ticket"
 
 // AdminAuthMiddleware returns middleware that checks for admin authorization.
@@ -40,13 +41,19 @@ const AdminTicketCookieName = "admin_ticket"
 //  2. Bearer token: Authorization header matches adminKey
 //  3. Auth ticket: ?ticket= query param validated against the TicketStore
 //     (short-lived, one-time-use — for browser SSE/EventSource clients)
-//  4. Cookie ticket: admin_ticket cookie redeemed via TicketStore, then a
-//     fresh ticket cookie is re-set on the response (browser login flow,
-//     #159).
+//  4. Cookie session: admin_ticket cookie validated against the
+//     SessionStore without being consumed (browser login flow, #159).
 //
-// If adminKey is empty, Bearer auth is disabled (mTLS only).
-// If tickets is nil, ticket auth is disabled.
-func AdminAuthMiddleware(adminKey string, tickets *TicketStore) func(http.Handler) http.Handler {
+// Paths 3 and 4 take separate stores on purpose. A ticket value is URL-borne
+// and single-use; a session value is cookie-borne and reusable until it
+// expires. Handing both to one store would make the values interchangeable
+// and force one lifetime rule onto both.
+//
+// If adminKey is blank, Bearer auth is disabled (mTLS only). Blank means
+// unset, empty, or whitespace-only: see IsBlankCredential.
+// If tickets is nil, query-ticket auth is disabled; if sessions is nil,
+// cookie auth is disabled.
+func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *SessionStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Path 0: loopback bypass (#246). Declines automatically
@@ -67,12 +74,13 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore) func(http.Handle
 				}
 			}
 
-			// Path B: Bearer token
-			if adminKey != "" {
-				authHeader := r.Header.Get("Authorization")
-				if strings.HasPrefix(authHeader, "Bearer ") {
-					token := authHeader[7:]
-					if token != "" && constantTimeEqual(token, adminKey) {
+			// Path B: Bearer token. A blank configured key disables
+			// the path outright, so an operator who set only
+			// whitespace cannot be authenticated by presenting the
+			// same whitespace.
+			if !IsBlankCredential(adminKey) {
+				if token, ok := bearerToken(r.Header.Get("Authorization")); ok {
+					if !IsBlankCredential(token) && constantTimeEqual(token, adminKey) {
 						next.ServeHTTP(w, r)
 						return
 					}
@@ -89,20 +97,13 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore) func(http.Handle
 				}
 			}
 
-			// Path D: Cookie ticket (browser login flow, #159). Same
-			// one-time-use semantics as Path C, but on success we re-issue
-			// a fresh ticket and re-set the cookie so page navigation works.
-			if tickets != nil {
+			// Path D: Cookie session (browser login flow, #159).
+			// Validation slides the idle deadline but does not consume the
+			// session, and no cookie is re-set here: a per-request rotation
+			// cannot survive the parallel subresource loads of one page.
+			if sessions != nil {
 				if c, err := r.Cookie(AdminTicketCookieName); err == nil && c.Value != "" {
-					if tickets.Redeem(c.Value) {
-						if fresh, ierr := tickets.Issue(); ierr == nil {
-							http.SetCookie(w, NewAdminTicketCookie(fresh))
-						} else {
-							// Cookie absent on next request will force a
-							// 401 → redirect to /login. Log so operators
-							// can diagnose a degraded ticket store.
-							log.Printf("auth: reissue admin ticket cookie: %v", ierr)
-						}
+					if sessions.Validate(c.Value) {
 						next.ServeHTTP(w, r)
 						return
 					}
@@ -116,11 +117,10 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore) func(http.Handle
 	}
 }
 
-// NewAdminTicketCookie returns a Cookie carrying the given ticket value,
+// NewAdminTicketCookie returns a Cookie carrying the given session id,
 // configured with the security flags required for the browser login flow
-// (HttpOnly, Secure, SameSite=Strict, Path=/). Centralizing the cookie
-// construction keeps the login handler and the middleware re-issue path in
-// agreement on the security posture.
+// (HttpOnly, Secure, SameSite=Strict, Path=/). Only the login handler sets
+// this cookie; the middleware never re-issues it.
 func NewAdminTicketCookie(ticket string) *http.Cookie {
 	return &http.Cookie{
 		Name:     AdminTicketCookieName,
@@ -130,6 +130,40 @@ func NewAdminTicketCookie(ticket string) *http.Cookie {
 		Secure:   true,
 		SameSite: http.SameSiteStrictMode,
 	}
+}
+
+// IsBlankCredential reports whether s carries no credential material.
+// Unset, empty and whitespace-only are three distinct operator mistakes with
+// one correct answer, so the boundary itself is a candidate for the condition
+// it rejects: a key of " " must not authenticate a caller who presents " ".
+//
+// It is a blank/non-blank predicate only. It never returns a trimmed value,
+// because trimming a non-blank key would change the secret the server accepts
+// without telling the operator (#365).
+func IsBlankCredential(s string) bool {
+	return strings.TrimSpace(s) == ""
+}
+
+// bearerToken splits an Authorization header into the token68 payload that
+// follows the "Bearer" scheme, reporting whether the header carried that
+// scheme at all. The scheme token is compared case-insensitively per RFC 7235
+// section 2.1, so "bearer" and "BEARER" reach the same comparison as "Bearer".
+//
+// Exactly one space separates the scheme from the payload and the payload is
+// returned verbatim, never trimmed: a configured key whose value genuinely
+// ends in whitespace is then matched byte-for-byte rather than silently
+// mutated. HTTP header parsing strips surrounding whitespace from a field
+// value on the wire, so such a key is effectively unpresentable over a real
+// connection - configure a key with no leading or trailing whitespace.
+func bearerToken(header string) (string, bool) {
+	const scheme = "Bearer"
+	if len(header) <= len(scheme) || header[len(scheme)] != ' ' {
+		return "", false
+	}
+	if !strings.EqualFold(header[:len(scheme)], scheme) {
+		return "", false
+	}
+	return header[len(scheme)+1:], true
 }
 
 func constantTimeEqual(a, b string) bool {

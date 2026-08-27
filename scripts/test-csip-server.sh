@@ -16,9 +16,12 @@
 #   CSIP_SUNSPEC_CERT   path to the SunSpec device leaf cert (PEM)
 #   CSIP_SUNSPEC_KEY    path to the SunSpec device private key (PEM)
 #   CSIP_SUNSPEC_ROOTS  path to the SunSpec trust root bundle (PEM)
+#   CSIP_SUNSPEC_REQUIRED  set to 1 to make absent fixtures a FAILURE
+#                          instead of a skip
 #
 # When all three are unset AND test/csip/fixtures/sunspec/ is empty, the
-# harness skips cleanly with a pointer to test/csip/README.md. This is by
+# harness skips cleanly with a pointer to test/csip/README.md, unless
+# CSIP_SUNSPEC_REQUIRED says the material must be there. This is by
 # design — fresh clones must not fail.
 #
 # Usage:

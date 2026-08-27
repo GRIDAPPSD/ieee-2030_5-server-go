@@ -54,8 +54,37 @@ The harness resolves fixture paths in this order, per file:
 1. Env var (`CSIP_SUNSPEC_CERT`, `CSIP_SUNSPEC_KEY`, `CSIP_SUNSPEC_ROOTS`).
 2. Default — `test/csip/fixtures/sunspec/{cert,key,roots}.pem`.
 
-If a path resolves to a non-existent file, the smoke test **skips
-cleanly** with a pointer back to this README. Fresh clones never fail.
+If a path resolves to a non-existent, empty, or non-file target, the
+SunSpec-backed tests **skip cleanly** with a pointer back to this README.
+Fresh clones never fail.
+
+### Demanding the fixtures: `CSIP_SUNSPEC_REQUIRED`
+
+A skip is the right default for a fresh clone and the wrong default for a
+run that is supposed to supply the material: absent fixtures would skip
+and the run would still report green. Set `CSIP_SUNSPEC_REQUIRED=1` and
+absence becomes a hard failure instead:
+
+```sh
+CSIP_SUNSPEC_REQUIRED=1 make test-csip
+```
+
+Unset and empty are the only values that disarm it. Anything that is not
+a boolean is an error rather than a false, so `CSIP_SUNSPEC_REQUIRED=ture`
+cannot silently disarm the gate. This is the same contract as
+`SEP2_WADL_REQUIRED` (see `test/conformance/README.md`).
+
+`TestCSIPFixtureGateArmed` is the canary to look for in a log: PASS means
+the material was located and loads, so the SunSpec-backed procedures
+really ran. It scopes that material only; `TestDeviceHandshake` proves
+mTLS against the committed test-device PKI either way.
+
+In CI the material arrives through `.github/actions/supply-csip-pki`,
+which reassembles it from a repository secret into `RUNNER_TEMP` outside
+the checkout, verifies that the cert and key agree, and then exports the
+three path variables plus `CSIP_SUNSPEC_REQUIRED=1`. Arming is one
+repository variable (`CSIP_SUNSPEC_PKI_PROVISIONED=true`) plus the secret;
+no code change.
 
 ### Option A — environment variables
 

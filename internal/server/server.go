@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -408,6 +409,13 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		return nil, "", "", nil, err
 	}
 
+	// #365: an operator who typed whitespace into the admin key was trying
+	// to set one. Silently disabling Bearer auth hides the typo behind a
+	// later connection refusal; a startup error names the variable to fix.
+	if err := validateAdminKey(cfg.AdminKey); err != nil {
+		return nil, "", "", nil, err
+	}
+
 	// #269: warn loudly when the admin listener is bound to a non-
 	// loopback address WITHOUT a proxy hint. Without an upstream proxy
 	// injecting X-Forwarded-For/Forwarded, AdminAuthMiddleware Path 0
@@ -639,6 +647,22 @@ func validateAdminExposure(addr string, allowNonLoopback bool) error {
 		"SEP2_ADMIN_ALLOW_NON_LOOPBACK=true to allow it, or set "+
 		"SEP2_ADMIN_LISTEN to a bare :<port> for a loopback-only admin plane",
 		addr)
+}
+
+// validateAdminKey refuses a configured admin key that carries no credential
+// material. An unset key is the deliberate "Bearer auth disabled" state and is
+// left alone; whitespace-only is a typo, and it is distinguished from unset
+// rather than folded into it.
+//
+// The error describes the value without echoing it, so no configured
+// credential can reach a log line by way of a startup failure.
+func validateAdminKey(adminKey string) error {
+	if adminKey == "" || !auth.IsBlankCredential(adminKey) {
+		return nil
+	}
+	return errors.New("SEP2_ADMIN_KEY is set to whitespace only, which is not " +
+		"a usable credential: set it to a non-blank token, or leave " +
+		"SEP2_ADMIN_KEY unset to disable Bearer auth deliberately")
 }
 
 // adminProxyWarning returns the #269 startup-warning text when the

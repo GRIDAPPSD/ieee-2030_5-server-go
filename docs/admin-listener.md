@@ -136,6 +136,38 @@ If you hit `error:0A0000C6:SSL routines::packet length too long`, the
 admin listener is in plain-HTTP mode and you sent it TLS bytes — drop
 the `https://` or set `SEP2_ADMIN_TLS=true`.
 
+## Admin Bearer key (`SEP2_ADMIN_KEY`, #365)
+
+Three states, deliberately distinguished:
+
+| `SEP2_ADMIN_KEY` | Behavior |
+|---|---|
+| unset | Bearer auth disabled; mTLS, ticket and cookie paths still work |
+| whitespace only (a space, tab, newline, or any mix) | HARD startup error, no socket opens |
+| anything with a non-whitespace character | Bearer auth enabled with that value |
+
+Whitespace-only is a startup failure rather than a silent disable. An operator
+who typed a space was trying to set a key, and silently disabling Bearer auth
+turns that typo into a connection refusal much later, in a place that does not
+name the cause. The error names `SEP2_ADMIN_KEY` and never echoes the value.
+
+### The key is matched byte-for-byte
+
+A non-blank key is never trimmed. `SEP2_ADMIN_KEY="s3cret "` is the seven-byte
+value including the trailing space, and only a caller presenting those exact
+bytes is admitted. Trimming it would change the secret the server accepts
+without saying so.
+
+**Do not configure a key with leading or trailing whitespace.** HTTP header
+parsing strips surrounding whitespace from a field value, so such a key cannot
+be presented byte-for-byte over a real connection and every request will be
+refused. Quote your value in shell exports and check it: a trailing space that
+survived a copy and paste looks identical to a working key.
+
+The `Bearer` scheme token itself is matched case-insensitively per RFC 7235
+section 2.1, so `bearer`, `Bearer` and `BEARER` are equivalent. The key that
+follows it is not.
+
 ## Host-header allowlist (DNS-rebinding defense, #270)
 
 The admin listener wraps every request in a Host-header allowlist before

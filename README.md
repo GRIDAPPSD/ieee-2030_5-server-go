@@ -74,6 +74,36 @@ conformance harness (`make test-csip`, `make test-csip-hooks`,
 `make test-csip-cover`, `make coverage-gate`) is described in
 [docs/csip.md](docs/csip.md).
 
+## Local CI gate
+
+```bash
+make ci-local                # run the same make targets ci.yml invokes, in order
+make ci-local-drift-check    # fail if ci.yml invokes a make target ci-local does not run
+```
+
+`make ci-local` runs vet, build, lint, the test suite, and the CSIP
+conformance harness from one entry point, exiting non-zero and naming the
+first gate that fails. A prerequisite-dependent gate (the CSIP suite needs
+a SunSpec V1.2 test PKI that is gitignored and provisioned out of band, see
+[test/csip/README.md](test/csip/README.md); the frontend drift check needs
+a Node toolchain) reports `SKIPPED` rather than running against an absent
+prerequisite, and the run exits `2` (not `0`) whenever any gate skipped, so
+partial coverage is never indistinguishable from a clean pass by exit code
+alone. `make ci-local-drift-check` extracts the `make` targets
+`.github/workflows/ci.yml` invokes and fails if any of them is not in
+`scripts/ci-local/lib/ci-local-targets.sh`, the same list `ci-local` runs;
+`ci-local` runs this check first and refuses to proceed if it fails.
+
+**A passing local run is not equivalent to a passing CI run.** Every run
+prints what it does not cover: CodeQL static analysis
+([.github/workflows/codeql.yml](.github/workflows/codeql.yml)) has no local
+CLI wired into this repo; `core-freshness.yml` tests against
+`ieee-2030_5-core-go`'s main branch on a schedule, not against your change;
+this runs against the current working tree, not a clean-room checkout from
+`actions/checkout`; and the CI runner's network isolation is not
+reproduced. Treat a clean `ci-local` run as a strong pre-push check, not as
+proof CI will also pass.
+
 ## Cert generation
 
 ```bash

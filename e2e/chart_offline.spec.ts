@@ -46,6 +46,9 @@ test.describe('admin UI with the chart library bundled', () => {
     stopServer();
   });
 
+  // The Bearer header is what authenticates these page loads. No credential
+  // goes in a query string: the middleware does not read one there, and a
+  // URL-borne secret lands in logs and history.
   test.beforeEach(async ({ page }) => {
     await page.setExtraHTTPHeaders({ Authorization: 'Bearer e2e-test-key' });
   });
@@ -53,7 +56,7 @@ test.describe('admin UI with the chart library bundled', () => {
   test('the activity chart draws with every external origin blocked', async ({ page }) => {
     const attempted = await blockExternalOrigins(page);
 
-    await page.goto(baseUrl + '/?token=e2e-test-key');
+    await page.goto(baseUrl + '/');
     await page.waitForLoadState('domcontentloaded');
 
     const canvas = page.locator('#activityChart canvas').first();
@@ -144,7 +147,7 @@ test.describe('legacy dashboard behind the rollback flag', () => {
   test('serves the pre-Svelte page, which draws no chart and fetches no CDN', async ({ page }) => {
     const attempted = await blockExternalOrigins(page);
 
-    await page.goto(baseUrl + '/?token=e2e-test-key');
+    await page.goto(baseUrl + '/');
     await page.waitForLoadState('domcontentloaded');
 
     // The rollback really is the old page.

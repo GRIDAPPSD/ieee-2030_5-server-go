@@ -34,7 +34,7 @@ line-based extraction of them is complete.
 All 24 `id` selectors the suite addresses keep the same `id`. No element
 needed a `data-testid` substitute, because none disappeared. The table
 also lists the 7 ids the previous markup carried that the suite does not
-address; they are preserved too, so a future spec can use them.
+address, which are preserved too, plus one id this work added.
 
 | Selector | Rendered by | Addressed by the suite | Status |
 |---|---|---|---|
@@ -46,6 +46,7 @@ address; they are preserved too, so a future spec can use them.
 | `#tlsCipher` | `panels/ServerInfo.svelte` | no | same id |
 | `#uptimeDetail` | `panels/ServerInfo.svelte` | no | same id |
 | `#hwSerial` | `panels/CertPanel.svelte` | yes | same id |
+| `#hwType` | `panels/CertPanel.svelte` | no | new: the route rejects a device cert request without the PEN OID |
 | `#certResult` | `panels/CertPanel.svelte` | yes | same id |
 | `#controlType` | `panels/DerControl.svelte` | yes | same id |
 | `#controlValue` | `panels/DerControl.svelte` | no | same id |
@@ -70,8 +71,9 @@ address; they are preserved too, so a future spec can use them.
 | `#attachResult-{mRID}` | `panels/FsaNode.svelte` | no | same id pattern |
 | `#activityChart` | `panels/ActivityChart.svelte` | yes | same id |
 
-24 rows are marked yes, which is the suite's `id` selector count; the
-other 7 are preserved ids the suite does not currently use.
+24 rows are marked yes, which is the suite's `id` selector count. Of the
+8 marked no, 7 are preserved ids the suite does not currently use and one
+(`#hwType`) is new.
 
 ## Non-`id` selectors
 
@@ -89,9 +91,11 @@ Send, Parse Cert, Add Device, Lookup, Create FSA, Refresh. So are the
 `getByText` strings, including the uppercase card headings, which are
 still `h2` elements uppercased by CSS rather than in the markup.
 
-New controls that had no previous equivalent use `data-testid`, not new
-ids: Generate Server Cert, Download CA, Detach (per program), Unassign
-(per assigned device), and the FSA template table.
+New controls that had no previous equivalent carry `data-testid`: Download
+CA, Save certificate, Save private key, Detach (per program), Unassign
+(per assigned device), and the FSA template table. One new form input,
+`#hwType`, carries an id instead, matching the convention every other
+input in that card already uses.
 
 ## Verified
 

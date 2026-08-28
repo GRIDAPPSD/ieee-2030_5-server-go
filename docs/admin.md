@@ -105,7 +105,7 @@ the dashboard form (where one exists) submits to it.
 | Dashboard page | Complete | `GET /` renders the operator dashboard: the embedded Svelte admin UI, or the pre-Svelte page with `SEP2_ADMIN_LEGACY_DASHBOARD=true`. | [`internal/server/dashboard.go`](../internal/server/dashboard.go), [`frontend/src/routes/Dashboard.svelte`](../internal/server/web/frontend/src/routes/Dashboard.svelte) |
 | Live dashboard data | Complete | `GET /dashboard/data` returns JSON; `GET /dashboard/events` is the SSE stream pushing 5-second updates. | [`internal/server/dashboard.go`](../internal/server/dashboard.go), [`frontend/src/lib/dashboard.ts`](../internal/server/web/frontend/src/lib/dashboard.ts) |
 | Auth ticket exchange | Complete | `POST /auth/ticket` exchanges a valid admin session for a one-time-use ticket. Used by SSE clients. | [`internal/server/admin_router.go`](../internal/server/admin_router.go), [`internal/auth/ticket.go`](../internal/auth/ticket.go), [`frontend/src/lib/dashboard.ts`](../internal/server/web/frontend/src/lib/dashboard.ts) |
-| Cert management API | Complete | `GET /api/certs/ca` (download CA), `POST /api/certs/server`, `POST /api/certs/device`. All three are reachable from the dashboard's "Certificate Management" card. | [`internal/handler/admin_certs.go`](../internal/handler/admin_certs.go), [`frontend/src/panels/CertPanel.svelte`](../internal/server/web/frontend/src/panels/CertPanel.svelte) |
+| Cert management API | Complete | `GET /api/certs/ca` (download CA), `POST /api/certs/server`, `POST /api/certs/device`. The dashboard's "Certificate Management" card reaches the CA download and the device cert. `POST /api/certs/server` is CLI and curl only by design: it returns a server private key, which a browser panel has no business receiving. | [`internal/handler/admin_certs.go`](../internal/handler/admin_certs.go), [`frontend/src/panels/CertPanel.svelte`](../internal/server/web/frontend/src/panels/CertPanel.svelte) |
 | Cert info parser | Complete | `POST /api/certs/info` parses a pasted PEM cert and returns SFDI + LFDI. Used by the "Add End Device" form to auto-fill identity. | [`internal/handler/admin_register.go`](../internal/handler/admin_register.go), [`frontend/src/panels/AddDevice.svelte`](../internal/server/web/frontend/src/panels/AddDevice.svelte) |
 | EndDevice registration | Complete | `POST /api/devices` creates an EndDevice + Registration with a PIN (#159). `GET /api/devices/by-lfdi/{lfdi}` looks up by LFDI. Both wired into the dashboard. | [`internal/handler/admin_register.go`](../internal/handler/admin_register.go), [`frontend/src/panels/AddDevice.svelte`](../internal/server/web/frontend/src/panels/AddDevice.svelte), [`frontend/src/panels/LookupDevice.svelte`](../internal/server/web/frontend/src/panels/LookupDevice.svelte) |
 | FSA management | Complete | Create/list/get/delete admin FSA templates, attach/detach DERPrograms, assign/unassign devices, plus a topology endpoint for the dashboard tree (#163). Create is the Create FSA card, attach/detach and delete are the tree's per-FSA controls, assign is the device table, unassign is the FSA template table. | [`internal/handler/admin_fsa.go`](../internal/handler/admin_fsa.go), [`internal/server/admin_fsa_wiring.go`](../internal/server/admin_fsa_wiring.go), [`frontend/src/panels/CreateFsa.svelte`](../internal/server/web/frontend/src/panels/CreateFsa.svelte), [`frontend/src/panels/FsaNode.svelte`](../internal/server/web/frontend/src/panels/FsaNode.svelte), [`frontend/src/panels/FsaCatalog.svelte`](../internal/server/web/frontend/src/panels/FsaCatalog.svelte) |
@@ -131,6 +131,25 @@ Panels live in `frontend/src/panels/`, one per dashboard card, each with a
 sibling `*.svelte.test.ts`. `frontend/src/lib/api.ts` is the only place
 that calls `fetch`. Element ids from the previous markup are preserved:
 see [`admin-ui-selectors.md`](admin-ui-selectors.md).
+
+### Certificate downloads
+
+`GET /api/certs/ca` answers with JSON carrying the PEM in a `certPEM`
+field, not with a PEM body, so the panel extracts that field and saves the
+file. A plain link to the route would save the JSON envelope under a
+`.crt` name and a device trust store would reject it.
+
+A device cert request needs the manufacturer PEN OID (`hwType`) as well as
+the hardware serial: the route rejects a request without it, since the OID
+is part of the CSIP HardwareModuleName SAN and the server cannot invent
+one. The issued certificate and key are offered as file downloads and are
+not stored on the server; the key is never rendered into the page.
+
+`POST /api/certs/server` has no button. It mints a server private key, and
+a panel that receives one without delivering it would put key material
+through the devtools network log, the JS heap, and any HAR attached to a
+bug report, for no benefit. Use the CLI (`sep2server certs
+generate-server`) or curl, where the key is written to a file.
 
 ### Rolling back to the previous page
 

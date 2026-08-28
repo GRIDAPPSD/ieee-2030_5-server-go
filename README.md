@@ -74,6 +74,55 @@ conformance harness (`make test-csip`, `make test-csip-hooks`,
 `make test-csip-cover`, `make coverage-gate`) is described in
 [docs/csip.md](docs/csip.md).
 
+## Local CI gate
+
+```bash
+make ci-local                # human entry point: run the gates, in order
+scripts/ci-local/ci-local.sh # same thing, invoked directly (see below)
+make ci-local-drift-check    # fail if a workflow invokes a make target ci-local does not run
+```
+
+`scripts/ci-local/ci-local.sh` runs vet, build, lint, the test suite, and
+the CSIP conformance harness from one entry point, in a tri-state exit
+contract: `0` every gate passed with nothing skipped, `1` a precondition
+refused to run or a gate failed (fail-fast: stops at the first failure and
+names it), `2` every gate passed or skipped but at least one skipped
+(partial coverage). A prerequisite-dependent gate (the CSIP suite resolves
+its SunSpec V1.2 test PKI env-var-first, then from
+`test/csip/fixtures/sunspec/`, gitignored and provisioned out of band; see
+[test/csip/README.md](test/csip/README.md); the frontend drift check needs
+a Node toolchain; `golangci-lint` is optional) reports `SKIPPED` rather
+than running against an absent prerequisite.
+
+**`make ci-local` cannot carry that tri-state.** GNU Make maps any
+non-zero recipe exit to make's own exit `2`, so a real gate failure and a
+routine skip both surface to `make` as the same code; `make ci-local exit
+2` does not tell you which happened. `make ci-local` stays the convenient
+human entry point, but a script or CI job that needs the real tri-state
+either invokes `scripts/ci-local/ci-local.sh` directly, or reads the final
+`CI_LOCAL_RESULT=PASS|FAIL|PARTIAL` line the script prints on every path,
+which `make` passes through on stdout unchanged regardless of which exit
+code it maps to.
+
+`make ci-local-drift-check` extracts the `make` targets every workflow file
+under `.github/workflows/` invokes and fails if any of them is not in
+`scripts/ci-local/lib/ci-local-targets.sh`, the same list `ci-local` runs;
+`ci-local` runs this check first and refuses to proceed if it fails. A
+second cross-check compares the anchored extraction against an unanchored
+sweep and refuses (exit `3`) if they disagree, so a form the anchor cannot
+structurally parse (chained after `&&`, a quoted `run:` scalar, a
+flow-mapping one-liner) is a detected gap, not a silent one.
+
+**A passing local run is not equivalent to a passing CI run.** Every run
+prints what it does not cover: CodeQL static analysis
+([.github/workflows/codeql.yml](.github/workflows/codeql.yml)) has no local
+CLI wired into this repo; `core-freshness.yml` tests against
+`ieee-2030_5-core-go`'s main branch on a schedule, not against your change;
+this runs against the current working tree, not a clean-room checkout from
+`actions/checkout`; and the CI runner's network isolation is not
+reproduced. Treat a clean `ci-local` run as a strong pre-push check, not as
+proof CI will also pass.
+
 ## Cert generation
 
 ```bash

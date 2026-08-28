@@ -1,9 +1,10 @@
 .PHONY: build test test-cover test-race test-verbose test-e2e \
        test-csip-server test-csip-client \
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
-       lint vet clean run run-ccm run-journald run-ccm-journald \
+       lint gofmt-check vet clean run run-ccm run-journald run-ccm-journald \
        run-testdevice run-sunspec certs new-device \
-       serve help stress-pretest vendor bump-core ui-build ui-check
+       serve help stress-pretest vendor bump-core ui-build ui-check \
+       ci-local ci-local-drift-check
 
 SERVER   := bin/sep2server
 CERT_DIR := certs
@@ -454,6 +455,14 @@ vet:                      ## Run go vet
 	@# analyzing first-party callers. A vendor path here is a type-check
 	@# error that also fails 'make build': never filter it out.
 	go vet ./...
+
+# --- Local CI Gate (#410) ------------------------------------------
+
+ci-local:                 ## Run the same gates ci.yml runs, locally (see #410)
+	scripts/ci-local/ci-local.sh
+
+ci-local-drift-check:     ## Fail if ci.yml invokes a make target ci-local.sh does not run
+	scripts/ci-local/ci-local-drift-check.sh
 
 # --- Dependencies -----------------------------------------------
 

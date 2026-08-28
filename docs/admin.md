@@ -52,6 +52,115 @@ entry points are supported, depending on which posture you want:
   [`admin-listener.md`](admin-listener.md) for the full TLS posture
   matrix.
 
+Both entry points above assume the browser is on the machine running the
+server. To reach the UI from a different machine, follow
+[Opening the admin UI in a browser from another machine](#opening-the-admin-ui-in-a-browser-from-another-machine)
+below: that path is refused by default and needs three settings the two
+above do not.
+
+## Opening the admin UI in a browser from another machine
+
+This is the whole path from a running server to a rendered dashboard, for
+an operator whose only tool is a browser. Steps 1 to 5 need no terminal,
+no `curl`, no browser extension, no proxy and no devtools override. The
+commands in "Server-side configuration" start the server; nothing after
+that runs on a command line.
+
+### Server-side configuration
+
+A default admin listener is loopback-only, so it is unreachable from
+another machine and the server refuses a non-loopback bind unless you
+opt in. Four settings make the browser path work, and the fifth is the
+credential:
+
+```bash
+export SEP2_ADMIN_LISTEN=0.0.0.0:8444        # or a specific interface IP
+export SEP2_ADMIN_ALLOW_NON_LOOPBACK=true    # without this the server does NOT start
+export SEP2_ADMIN_TLS=true                   # the session cookie is Secure; see below
+export SEP2_ADMIN_ALLOWED_HOSTS=admin.example.com,192.168.1.10
+export SEP2_ADMIN_KEY="$(openssl rand -hex 32)"
+sep2server serve
+```
+
+- `SEP2_ADMIN_ALLOW_NON_LOOPBACK=true` is mandatory for any bind that is
+  not loopback. Without it startup fails with an error and opens no
+  socket at all, so a missing opt-in looks like a server that will not
+  run rather than a UI that will not load. See
+  [`admin-listener.md`](admin-listener.md#non-loopback-bind-is-refused-not-warned-365).
+- `SEP2_ADMIN_TLS=true` matters because the login cookie is set `Secure`
+  and a browser discards a `Secure` cookie that arrives over plain HTTP
+  from a non-loopback origin. Serving plain HTTP here breaks the login
+  in a way that looks like a server bug; the server warns about it at
+  startup. The supported alternative is to terminate TLS in a reverse
+  proxy and set `SEP2_ADMIN_BEHIND_PROXY=true`, and that proxy must
+  inject `X-Forwarded-For` (or RFC 7239 `Forwarded`): stock nginx does
+  not, and without those headers every relayed request looks
+  loopback-local and is admitted with no credential at all.
+- `SEP2_ADMIN_ALLOWED_HOSTS` must contain the hostname or IP the
+  operator types in the address bar. The built-in allowlist covers
+  `localhost`, `127.0.0.1`, `::1` and `ieee2030-5.local` only, so a
+  request that arrives with `Host: 192.168.1.10:8444` is rejected before
+  the login form is reached.
+- `SEP2_ADMIN_KEY` is what the operator types into the form. Use a
+  high-entropy value: this listener is now reachable from the network.
+
+With `SEP2_ADMIN_TLS=true` and no `SEP2_ADMIN_CERT` / `SEP2_ADMIN_KEY_FILE`,
+the server generates a self-signed certificate at startup, and the browser
+shows a certificate warning on first visit (step 1 below). Supply an
+operator-issued cert to avoid it.
+
+### The five steps in the browser
+
+1. **Open `https://<host>:8444/`**: the address of the admin listener,
+   using a hostname or IP that is in `SEP2_ADMIN_ALLOWED_HOSTS`. With a
+   self-signed certificate the browser interrupts with a certificate
+   warning; accept it for this host and continue. Accepting that warning
+   means the server's identity is unverified for this visit, so anyone
+   positioned on the network path can read the key you type at step 3:
+   use self-signed only on a network you trust, and an operator-issued
+   cert everywhere else.
+2. **The sign-in page appears.** The server answers an unauthenticated
+   page request with a redirect to `/login`, so this is what loads even
+   though you typed `/`. The page is a single dark card headed
+   **IEEE 2030.5 Admin**, with the line "Sign in to access the server
+   dashboard.", one masked field labelled **ADMIN KEY**, and a **Sign in**
+   button.
+3. **Type the `SEP2_ADMIN_KEY` value into the Admin Key field** and press
+   **Sign in**. Nothing else is entered anywhere: there is no username,
+   and no header or token to paste.
+4. **The dashboard renders.** A successful sign-in returns you to `/` and
+   the admin UI loads: a top bar reading **IEEE 2030.5 Server Admin** with
+   live TLS / Uptime / Devices readouts, then the panel grid (Overview,
+   Server Info, Certificate Management, Send DER Control, Add End Device,
+   Lookup Device, Create FSA, FSA templates, the topology tree, the device
+   table, and the activity chart). The Uptime and Devices readouts tick,
+   which is the stream working as well as the page.
+5. **Keep navigating.** The session is a cookie the browser holds, and it
+   is not consumed by use, so moving between views and reloading the page
+   do not ask for the key again. The session ends on an idle timeout or at
+   its absolute lifetime, whichever comes first, and then step 2 appears
+   again.
+
+A wrong key re-renders the same page with **Invalid admin key.** below the
+button and issues no session, so pressing Sign in again with the correct
+value is all that is needed.
+
+### When it does not work
+
+The two failures worth knowing before you start are the first and third
+rows: both look like a broken server rather than a configuration gap.
+
+| What you see | Cause | Fix |
+|---|---|---|
+| The server exits at startup: `admin listener refuses to bind non-loopback address "0.0.0.0:8444"` | Non-loopback bind with no opt-in. No socket was opened. | Set `SEP2_ADMIN_ALLOW_NON_LOOPBACK=true`, or use a bare `:8444` for a loopback-only admin plane. |
+| The server exits at startup: `SEP2_ADMIN_KEY is set to whitespace only` | The key is a space, tab or newline. Whitespace is a typo, not a way to disable Bearer auth. | Set a non-blank key, or leave `SEP2_ADMIN_KEY` unset to disable Bearer auth deliberately. |
+| Sign in appears to succeed, then every page shows the sign-in form again | The admin listener is plain HTTP on a non-loopback address, so the browser discarded the `Secure` session cookie. The server logged `WARNING: admin listener is plain HTTP on non-loopback address ...` at startup: check the boot log before suspecting the login. | Set `SEP2_ADMIN_TLS=true`, or terminate TLS in a proxy and set `SEP2_ADMIN_BEHIND_PROXY=true`. |
+| `421 Misdirected Request` | The `Host` header is not on the allowlist. The gate runs before authentication, so this is not a credential problem and the sign-in page is never reached. The boot log names the allowlist it compared against. | Add the hostname or IP you typed to `SEP2_ADMIN_ALLOWED_HOSTS`. |
+| `400 Bad Request: missing Host header` | An HTTP/1.1 request arrived with no `Host`. No browser does this; a hand-built client or a misconfigured proxy does. | Send a `Host` header. |
+| The browser reports the connection is not private, with no way past it | A self-signed certificate the browser will not accept for this host. | Accept the exception for this host, or supply an operator-issued cert via `SEP2_ADMIN_CERT` / `SEP2_ADMIN_KEY_FILE`. |
+| `error:0A0000C6:SSL routines::packet length too long` in the server log | TLS bytes reached a plain-HTTP listener: the URL says `https://` and `SEP2_ADMIN_TLS` is false. | Set `SEP2_ADMIN_TLS=true`, or use `http://`. |
+| A raw `{"error":"admin authentication required"}` page | You navigated straight to an `/api/...` or `/dashboard/...` URL. Those are answered for code, not for a browser, so they return the status rather than the sign-in page. | Open `/` and sign in first. |
+
 ## Auth model
 
 `AdminAuthMiddleware`
@@ -76,12 +185,15 @@ defense in depth):
 3. **Query-param ticket** — `?ticket=<value>` redeemed against the
    `TicketStore`. One-time use. Used by browser SSE / EventSource
    clients that cannot send `Authorization` headers.
-4. **Cookie ticket** — the `admin_ticket` cookie redeemed against the
-   `TicketStore`. On success the middleware issues a fresh ticket and
-   re-sets the cookie so multi-request page navigation works under the
-   one-time-use semantics. Cookie is `HttpOnly`, `Secure`,
-   `SameSite=Strict`, `Path=/` — see `NewAdminTicketCookie` in
-   `admin.go`.
+4. **Cookie session**: the `admin_ticket` cookie validated against the
+   `SessionStore`, a store separate from the query-ticket one. Validation
+   slides the session's idle deadline but does NOT consume it, and no
+   response re-sets the cookie: one page load is four independent
+   authentications (document, script, stylesheet, icon) arriving in
+   parallel, so a consuming check or a per-request rotation admits the
+   first and refuses the rest. The absolute lifetime is not extendable.
+   Cookie is `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`; see
+   `NewAdminTicketCookie` in `admin.go`.
 
 Tickets are random 32-byte hex strings issued by
 [`internal/auth/ticket.go`](../internal/auth/ticket.go). The store is

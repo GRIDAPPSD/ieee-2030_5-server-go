@@ -22,7 +22,18 @@ import (
 // credential. These tests drive the real admin router from a non-loopback
 // address, which is the only shape where the credential is actually checked.
 
-const testUIHost = "example.com"
+const (
+	testUIHost = "example.com"
+
+	// spaMountPoint is the element the built bundle mounts into. Its presence
+	// in a body is what distinguishes the shell from anything else served with
+	// the same status.
+	spaMountPoint = `<div id="app">`
+
+	// browserNavigationAccept is the Accept header a current browser sends on a
+	// top-level document request.
+	browserNavigationAccept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+)
 
 func isLoopbackRemoteAddr(remoteAddr string) bool {
 	host, _, err := net.SplitHostPort(remoteAddr)
@@ -165,10 +176,10 @@ func TestAdminUIShellPageLoadUnderOneCookieSession(t *testing.T) {
 				if got, want := rec.Body.Bytes(), mustReadDist(t, tc.path); string(got) != string(want) {
 					t.Errorf("GET %s returned %d bytes, want the %d bytes of the committed asset", tc.path, len(got), len(want))
 				}
-				if strings.Contains(rec.Body.String(), `<div id="app">`) {
+				if strings.Contains(rec.Body.String(), spaMountPoint) {
 					t.Errorf("GET %s returned the SPA document instead of the asset", tc.path)
 				}
-			} else if !strings.Contains(rec.Body.String(), `<div id="app">`) {
+			} else if !strings.Contains(rec.Body.String(), spaMountPoint) {
 				t.Errorf("GET %s does not look like the built index.html; body = %q", tc.path, rec.Body.String())
 			}
 		})
@@ -178,26 +189,65 @@ func TestAdminUIShellPageLoadUnderOneCookieSession(t *testing.T) {
 // TestAdminUIShellRefusedWithoutCredential is the control for the test above.
 // Without it, a fixture that had slipped back onto the loopback bypass would
 // pass identically, which is how this defect stayed hidden.
+//
+// The property under test is that the shell is never served without a
+// credential. What a refusal LOOKS like depends on who asked: a browser
+// navigating to the document is redirected to the login form, and the
+// subresources that document pulls keep the JSON status they can read. Both
+// answers are asserted on the body, because neither status proves the bundle
+// was withheld.
 func TestAdminUIShellRefusedWithoutCredential(t *testing.T) {
 	router, _ := newUIRouter(t)
 	jsPath, cssPath := builtAssetPaths(t)
 
-	// "/" is in the list because the dashboard at the bare root is now the
-	// SPA, so it is served from the same embedded bundle as the paths below
-	// and needs the same credential. newUIRequest fails the test outright if
-	// the fixture address is loopback, which would take the Path 0 bypass
-	// and assert nothing.
-	for _, p := range []string{"/", "/ui/", jsPath, cssPath, "/ui/favicon.svg"} {
-		t.Run(p, func(t *testing.T) {
+	// "/" is in the navigation list because the dashboard at the bare root is
+	// now the SPA, served from the same embedded bundle as the paths below and
+	// needing the same credential. newUIRequest fails the test outright if the
+	// fixture address is loopback, which would take the Path 0 bypass and
+	// assert nothing.
+	navigations := []string{"/", "/ui/"}
+	subresources := []string{jsPath, cssPath, "/ui/favicon.svg"}
+
+	for _, p := range navigations {
+		t.Run("navigation "+p, func(t *testing.T) {
 			req := newUIRequest(t, http.MethodGet, p, "")
+			req.Header.Set("Sec-Fetch-Dest", "document")
+			req.Header.Set("Sec-Fetch-Mode", "navigate")
+			req.Header.Set("Accept", browserNavigationAccept)
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req)
 
-			if rec.Code != http.StatusUnauthorized {
-				t.Fatalf("unauthenticated non-loopback GET %s: status = %d, want 401; body = %q", p, rec.Code, rec.Body.String())
+			// The body is checked first and on its own: a leak that carried
+			// the right status would otherwise be masked by the status check
+			// failing the subtest before this ran.
+			if strings.Contains(rec.Body.String(), spaMountPoint) {
+				t.Errorf("unauthenticated navigation to %s returned the shell: body contains %s", p, spaMountPoint)
+			}
+			if rec.Code != http.StatusSeeOther {
+				t.Errorf("unauthenticated non-loopback navigation to %s: status = %d, want 303; body = %q", p, rec.Code, rec.Body.String())
+			}
+			if got := rec.Header().Get("Location"); got != "/login" {
+				t.Errorf("unauthenticated navigation to %s: Location = %q, want %q", p, got, "/login")
+			}
+		})
+	}
+
+	for _, p := range subresources {
+		t.Run("subresource "+p, func(t *testing.T) {
+			req := newUIRequest(t, http.MethodGet, p, "")
+			req.Header.Set("Sec-Fetch-Dest", "script")
+			req.Header.Set("Accept", "*/*")
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if strings.Contains(rec.Body.String(), spaMountPoint) {
+				t.Errorf("unauthenticated GET %s returned the shell: body contains %s", p, spaMountPoint)
 			}
 			if got, want := rec.Body.String(), `{"error":"admin authentication required"}`; got != want {
 				t.Errorf("unauthenticated GET %s body = %q, want %q", p, got, want)
+			}
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("unauthenticated non-loopback GET %s: status = %d, want 401; body = %q", p, rec.Code, rec.Body.String())
 			}
 		})
 	}

@@ -128,7 +128,24 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 		// the boot log.
 		log.Printf("WARNING: admin: host-allowlist gate DISABLED (BuildAdminRouter called with empty allowedHosts) — DNS-rebinding defense is OFF for this admin router")
 	}
-	return h, merged
+	// no-store wraps everything, including the host-gate and login-route
+	// refusals. A cookie-authenticated GET gets none of the shared-cache
+	// suppression RFC 9111 gives an Authorization-bearing one, so without this
+	// an intermediary fronting the listener may store the admin shell or a
+	// topology response and serve it to a client that presented no credential.
+	// Admin plane only: the protocol listener's bytes are a conformance
+	// surface and are built elsewhere (BuildProtocolRouter).
+	return adminNoStore(h), merged
+}
+
+// adminNoStore sets Cache-Control: no-store on every admin response. The header
+// is written before the wrapped handler runs, so a handler that calls
+// WriteHeader before setting its own headers still emits it.
+func adminNoStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func handleIssueTicket(tickets *auth.TicketStore) http.HandlerFunc {

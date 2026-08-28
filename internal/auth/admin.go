@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
@@ -27,6 +28,15 @@ var forwardedHeaders = []string{
 // every subresource it pulls separately, so a consuming check admits the
 // first of them and refuses the rest.
 const AdminTicketCookieName = "admin_ticket"
+
+// AdminLoginPath is where an unauthenticated browser navigation is sent. The
+// route is mounted on the public outer mux, outside this middleware, so the
+// redirect cannot loop back into another refusal.
+const AdminLoginPath = "/login"
+
+// AdminRefusalVary lists the request headers wantsLoginPage reads. It is the
+// Vary value on every refusal, in the order the decision consults them.
+const AdminRefusalVary = "Sec-Fetch-Dest, Accept"
 
 // AdminAuthMiddleware returns middleware that checks for admin authorization.
 // Five paths are supported (checked in order):
@@ -53,6 +63,10 @@ const AdminTicketCookieName = "admin_ticket"
 // unset, empty, or whitespace-only: see IsBlankCredential.
 // If tickets is nil, query-ticket auth is disabled; if sessions is nil,
 // cookie auth is disabled.
+//
+// A refused request is answered by consumer: a browser navigating to a page is
+// redirected to AdminLoginPath, and everything else gets a JSON 401 it can
+// read. See wantsLoginPage.
 func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *SessionStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -110,11 +124,81 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *Sessio
 				}
 			}
 
+			// The refusal is negotiated: the same URL answers a navigation
+			// and a subresource differently, so a cache that stored one and
+			// replayed it to the other would deliver a login redirect into a
+			// script tag. Vary names the request headers that decided it.
+			w.Header().Set("Vary", AdminRefusalVary)
+
+			// A browser has nothing to do with a 401 here: no current
+			// browser prompts for a Bearer challenge, so a navigation that
+			// receives one shows the operator a dead end. Send a navigation
+			// to the login form and leave every other consumer the status it
+			// reads.
+			if wantsLoginPage(r) {
+				http.Redirect(w, r, AdminLoginPath, http.StatusSeeOther)
+				return
+			}
+
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":"admin authentication required"}`))
 		})
 	}
+}
+
+// wantsLoginPage reports whether a refused request came from a browser
+// navigating to a page, which is the only consumer that can act on a redirect.
+// A script tag or a fetch() handed an HTML login page treats it as its own
+// content type, so misreading a subresource as a navigation puts a login form
+// inside a <script> and renders the shell blank.
+func wantsLoginPage(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	// The JSON and SSE surface is called by code that reads the status, never
+	// navigated to, and the SPA's own session probe depends on seeing the 401.
+	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/dashboard/") {
+		return false
+	}
+	// Sec-Fetch-Dest is the browser's own statement of what the response is
+	// for, and it separates a top-level document from the script, stylesheet
+	// and icon the same page pulls. Current browsers send it on every request.
+	if dest := r.Header.Get("Sec-Fetch-Dest"); dest != "" {
+		return strings.EqualFold(dest, "document")
+	}
+	// A client that sends no Sec-Fetch-Dest falls back to Accept, where only an
+	// explicit HTML media type counts: a script tag and fetch() both send */*.
+	return acceptsHTML(r.Header.Get("Accept"))
+}
+
+// acceptsHTML reports whether an Accept header names an HTML media type
+// explicitly. A wildcard does not count, and q=0 on the HTML type refuses it
+// rather than asking for it.
+func acceptsHTML(accept string) bool {
+	for _, entry := range strings.Split(accept, ",") {
+		params := strings.Split(entry, ";")
+		switch strings.ToLower(strings.TrimSpace(params[0])) {
+		case "text/html", "application/xhtml+xml":
+			if !refusedByQuality(params[1:]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// refusedByQuality reports whether a media type's parameters carry q=0.
+func refusedByQuality(params []string) bool {
+	for _, p := range params {
+		name, value, ok := strings.Cut(p, "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(name), "q") {
+			continue
+		}
+		q, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		return err == nil && q == 0
+	}
+	return false
 }
 
 // NewAdminTicketCookie returns a Cookie carrying the given session id,

@@ -75,6 +75,11 @@ and bind to loopback, so they are unaffected. To run those targets with a
 network-reachable admin, override both:
 `SEP2_ADMIN_LISTEN=0.0.0.0:8444 SEP2_ADMIN_ALLOW_NON_LOOPBACK=true make run-ccm`.
 
+The opt-in is one of the settings a browser on another machine needs. For the
+full operator path from a running server to a rendered dashboard, including the
+Host allowlist and the `Secure` cookie requirement, see
+[Opening the admin UI in a browser from another machine](admin.md#opening-the-admin-ui-in-a-browser-from-another-machine).
+
 ## TLS posture matrix
 
 | `SEP2_ADMIN_LISTEN` / `SEP2_ADMIN_ADDR` | `SEP2_ADMIN_TLS` | `SEP2_ADMIN_CERT` / `SEP2_ADMIN_KEY_FILE` | Behavior |
@@ -153,6 +158,11 @@ only the cookie flow is.
 Loopback is exempt: a browser treats a loopback origin as
 potentially-trustworthy and keeps the cookie, which is why `make run` works
 over plain HTTP.
+
+This failure and the `Host`-allowlist rejection are the two that read as a
+server bug rather than a configuration gap; both are in the troubleshooting
+table under
+[Opening the admin UI in a browser from another machine](admin.md#opening-the-admin-ui-in-a-browser-from-another-machine).
 
 ## Admin Bearer key (`SEP2_ADMIN_KEY`, #365)
 

@@ -101,16 +101,49 @@ the dashboard form (where one exists) submits to it.
 
 | Feature | Status | Description | Source |
 |---|---|---|---|
-| Login form | Complete | `GET /login` renders the form; `POST /auth/login` validates the key and issues the cookie. | [`internal/server/login.go`](../internal/server/login.go), [`internal/server/login_html.go`](../internal/server/login_html.go) |
-| Dashboard page | Complete | `GET /` renders the operator dashboard. | [`internal/server/dashboard.go`](../internal/server/dashboard.go), [`internal/server/dashboard_html.go`](../internal/server/dashboard_html.go) |
-| Live dashboard data | Complete | `GET /dashboard/data` returns JSON; `GET /dashboard/events` is the SSE stream pushing 5-second updates. | [`internal/server/dashboard.go`](../internal/server/dashboard.go) |
-| Auth ticket exchange | Complete | `POST /auth/ticket` exchanges a valid admin session for a one-time-use ticket. Used by SSE clients. | [`internal/server/admin_router.go`](../internal/server/admin_router.go), [`internal/auth/ticket.go`](../internal/auth/ticket.go) |
-| Cert management API | Complete | `GET /api/certs/ca` (download CA), `POST /api/certs/server`, `POST /api/certs/device`. The dashboard's "Certificate Management" form posts to `/api/certs/device`. | [`internal/handler/admin_certs.go`](../internal/handler/admin_certs.go) |
-| Cert info parser | Complete | `POST /api/certs/info` parses a pasted PEM cert and returns SFDI + LFDI. Used by the "Add End Device" form to auto-fill identity. | [`internal/handler/admin_register.go`](../internal/handler/admin_register.go) |
-| EndDevice registration | Complete | `POST /api/devices` creates an EndDevice + Registration with a PIN (#159). `GET /api/devices/by-lfdi/{lfdi}` looks up by LFDI. Both wired into the dashboard. | [`internal/handler/admin_register.go`](../internal/handler/admin_register.go) |
-| FSA management | Complete | Create/list/get/delete admin FSA templates, attach/detach DERPrograms, assign/unassign devices, plus a topology endpoint for the dashboard tree (#163). | [`internal/handler/admin_fsa.go`](../internal/handler/admin_fsa.go), [`internal/server/admin_fsa_wiring.go`](../internal/server/admin_fsa_wiring.go) |
-| Topology view | Complete | `GET /api/topology` returns the SY → FD → SP → DEV tree the dashboard renders. | [`internal/handler/admin_topology.go`](../internal/handler/admin_topology.go) |
-| DER control submit form | In Progress | The "Send DER Control" form is rendered in [`dashboard_html.go`](../internal/server/dashboard_html.go), but the JS submit is currently a stub (`// TODO: POST to /api/der/controls when admin DER API is wired`). The admin DER API itself is not implemented. | [`internal/server/dashboard_html.go`](../internal/server/dashboard_html.go) |
+| Login form | Complete | `GET /login` renders the form; `POST /auth/login` validates the key and issues the cookie. The dashboard shows the same form in place of the panels when its first authenticated read returns 401, so an expired session does not present an empty page. | [`internal/server/login.go`](../internal/server/login.go), [`internal/server/login_html.go`](../internal/server/login_html.go), [`frontend/src/panels/LoginPanel.svelte`](../internal/server/web/frontend/src/panels/LoginPanel.svelte) |
+| Dashboard page | Complete | `GET /` renders the operator dashboard: the embedded Svelte admin UI, or the pre-Svelte page with `SEP2_ADMIN_LEGACY_DASHBOARD=true`. | [`internal/server/dashboard.go`](../internal/server/dashboard.go), [`frontend/src/routes/Dashboard.svelte`](../internal/server/web/frontend/src/routes/Dashboard.svelte) |
+| Live dashboard data | Complete | `GET /dashboard/data` returns JSON; `GET /dashboard/events` is the SSE stream pushing 5-second updates. | [`internal/server/dashboard.go`](../internal/server/dashboard.go), [`frontend/src/lib/dashboard.ts`](../internal/server/web/frontend/src/lib/dashboard.ts) |
+| Auth ticket exchange | Complete | `POST /auth/ticket` exchanges a valid admin session for a one-time-use ticket. Used by SSE clients. | [`internal/server/admin_router.go`](../internal/server/admin_router.go), [`internal/auth/ticket.go`](../internal/auth/ticket.go), [`frontend/src/lib/dashboard.ts`](../internal/server/web/frontend/src/lib/dashboard.ts) |
+| Cert management API | Complete | `GET /api/certs/ca` (download CA), `POST /api/certs/server`, `POST /api/certs/device`. All three are reachable from the dashboard's "Certificate Management" card. | [`internal/handler/admin_certs.go`](../internal/handler/admin_certs.go), [`frontend/src/panels/CertPanel.svelte`](../internal/server/web/frontend/src/panels/CertPanel.svelte) |
+| Cert info parser | Complete | `POST /api/certs/info` parses a pasted PEM cert and returns SFDI + LFDI. Used by the "Add End Device" form to auto-fill identity. | [`internal/handler/admin_register.go`](../internal/handler/admin_register.go), [`frontend/src/panels/AddDevice.svelte`](../internal/server/web/frontend/src/panels/AddDevice.svelte) |
+| EndDevice registration | Complete | `POST /api/devices` creates an EndDevice + Registration with a PIN (#159). `GET /api/devices/by-lfdi/{lfdi}` looks up by LFDI. Both wired into the dashboard. | [`internal/handler/admin_register.go`](../internal/handler/admin_register.go), [`frontend/src/panels/AddDevice.svelte`](../internal/server/web/frontend/src/panels/AddDevice.svelte), [`frontend/src/panels/LookupDevice.svelte`](../internal/server/web/frontend/src/panels/LookupDevice.svelte) |
+| FSA management | Complete | Create/list/get/delete admin FSA templates, attach/detach DERPrograms, assign/unassign devices, plus a topology endpoint for the dashboard tree (#163). Create is the Create FSA card, attach/detach and delete are the tree's per-FSA controls, assign is the device table, unassign is the FSA template table. | [`internal/handler/admin_fsa.go`](../internal/handler/admin_fsa.go), [`internal/server/admin_fsa_wiring.go`](../internal/server/admin_fsa_wiring.go), [`frontend/src/panels/CreateFsa.svelte`](../internal/server/web/frontend/src/panels/CreateFsa.svelte), [`frontend/src/panels/FsaNode.svelte`](../internal/server/web/frontend/src/panels/FsaNode.svelte), [`frontend/src/panels/FsaCatalog.svelte`](../internal/server/web/frontend/src/panels/FsaCatalog.svelte) |
+| Topology view | Complete | `GET /api/topology` returns the SY / FD / SP / DEV tree the dashboard renders. | [`internal/handler/admin_topology.go`](../internal/handler/admin_topology.go), [`frontend/src/panels/TopologyTree.svelte`](../internal/server/web/frontend/src/panels/TopologyTree.svelte) |
+| DER control submit form | In Progress | The "Send DER Control" form renders and validates, but its submit is still a stub: it echoes the selection and sends nothing. The blocker is a missing backend route (`POST /api/der/controls`), not the UI. | [`frontend/src/panels/DerControl.svelte`](../internal/server/web/frontend/src/panels/DerControl.svelte) |
+
+## The dashboard is an embedded Svelte app
+
+`GET /` serves a Svelte single-page app compiled into the binary
+(`internal/server/web/frontend/` builds into `internal/server/web/dist/`,
+embedded by `internal/server/web/embed.go`). It is also served at `/ui/`.
+Node and npm are build-time-only: a fresh `go build` uses the committed
+bundle. Rebuild with `make ui-build` after any change under `frontend/`;
+`make ui-check` fails the build if the committed bundle is stale.
+
+The chart library is bundled, not fetched. The previous page pulled it
+from a public CDN, which failed silently on any deployment without
+outbound internet access: an authenticated admin page, a blank panel, and
+no server-side signal. `e2e/chart_offline.spec.ts` asserts the chart still
+draws with every external origin blocked.
+
+Panels live in `frontend/src/panels/`, one per dashboard card, each with a
+sibling `*.svelte.test.ts`. `frontend/src/lib/api.ts` is the only place
+that calls `fetch`. Element ids from the previous markup are preserved:
+see [`admin-ui-selectors.md`](admin-ui-selectors.md).
+
+### Rolling back to the previous page
+
+```bash
+SEP2_ADMIN_LEGACY_DASHBOARD=true   # GET / serves the pre-Svelte page
+```
+
+The pre-Svelte dashboard is still compiled in
+(`internal/server/dashboard_html.go`) and this flag serves it at `GET /`,
+so a page that breaks an operator's workflow does not need a binary
+downgrade. That page no longer loads a chart library at all, so it renders
+every panel except the activity chart. `/ui/` always serves the Svelte UI
+regardless of the flag.
 
 ## mTLS cert flow for the admin path
 
@@ -173,6 +206,7 @@ Putting the suite under CI is tracked under
 ## Cross-references
 
 - [README](../README.md)
+- [`admin-ui-selectors.md`](admin-ui-selectors.md) - dashboard selector map
 - [`2030_5.md`](2030_5.md) — protocol surface
 - [`csip.md`](csip.md) — CSIP V1.2 profile
 - [`admin-listener.md`](admin-listener.md) — admin listener TLS posture

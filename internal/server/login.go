@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
 )
 
 // #159: browser login flow for the admin surface.
@@ -44,6 +45,10 @@ func HandleLoginPage(errMsg string) http.HandlerFunc {
 // the middleware's Bearer path uses (auth.IsBlankCredential), so a key of a
 // single space cannot be refused on one credential path and accepted on this
 // one.
+//
+// A presented-and-wrong key is logged at WARN via auth.LogFailedAdminCredential
+// (never the key itself); a blank submission is not, since that is this
+// path's own credential-free case (#413).
 func HandleLoginSubmit(adminKey string, sessions *auth.SessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -64,11 +69,19 @@ func HandleLoginSubmit(adminKey string, sessions *auth.SessionStore) http.Handle
 		// one is compared byte-for-byte: the form value is never trimmed, so
 		// a key whose own whitespace is part of the secret still matches.
 		submitted := r.PostFormValue("key")
-		if auth.IsBlankCredential(submitted) || !constantTimeEqual(submitted, adminKey) {
-			w.WriteHeader(http.StatusOK)
+		if auth.IsBlankCredential(submitted) {
 			HandleLoginPage("Invalid admin key.")(w, r)
 			return
 		}
+		if !constantTimeEqual(submitted, adminKey) {
+			// Logged after the compare has already returned, never from a
+			// branch keyed on how much of the key matched, so the log write
+			// itself carries no timing signal (#413).
+			auth.LogFailedAdminCredential(r, obs.AdminAdmissionPathForm)
+			HandleLoginPage("Invalid admin key.")(w, r)
+			return
+		}
+		auth.LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathForm)
 
 		// Issue's only failure mode is the system random source: capacity is
 		// handled by eviction inside the store, so there is no

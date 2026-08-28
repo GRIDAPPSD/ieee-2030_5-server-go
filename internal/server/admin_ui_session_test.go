@@ -182,7 +182,12 @@ func TestAdminUIShellRefusedWithoutCredential(t *testing.T) {
 	router, _ := newUIRouter(t)
 	jsPath, cssPath := builtAssetPaths(t)
 
-	for _, p := range []string{"/ui/", jsPath, cssPath, "/ui/favicon.svg"} {
+	// "/" is in the list because the dashboard at the bare root is now the
+	// SPA, so it is served from the same embedded bundle as the paths below
+	// and needs the same credential. newUIRequest fails the test outright if
+	// the fixture address is loopback, which would take the Path 0 bypass
+	// and assert nothing.
+	for _, p := range []string{"/", "/ui/", jsPath, cssPath, "/ui/favicon.svg"} {
 		t.Run(p, func(t *testing.T) {
 			req := newUIRequest(t, http.MethodGet, p, "")
 			rec := httptest.NewRecorder()

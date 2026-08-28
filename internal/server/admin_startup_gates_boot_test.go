@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -294,14 +295,31 @@ func TestAdminSecureCookieWarningIsWiredIntoBoot(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			runErrCh := make(chan error, 1)
 			go func() { runErrCh <- server.Run(ctx, cfg, c.svc) }()
-			t.Cleanup(func() {
-				cancel()
-				select {
-				case <-runErrCh:
-				case <-time.After(5 * time.Second):
-					t.Error("server.Run did not exit within 5s after cancel")
-				}
-			})
+
+			// stop cancels the server and waits for server.Run to return,
+			// exactly once. The receive on runErrCh is what makes reading
+			// buf below safe: server.Run's own goroutine writes to buf (via
+			// the teed logger) only before it sends on runErrCh, and that
+			// send happens-before this receive, so no write is still in
+			// flight once stop returns. Cheaper than synchronising buf
+			// itself: the warning this test reads is logged during
+			// startAdminServer, before the listener even accepts a
+			// connection (server.go), so stopping first loses nothing - the
+			// line is already in buf well before the readiness probe below
+			// succeeds. sync.Once guards the t.Cleanup fallback for a test
+			// that fails before reaching the deliberate stop() call.
+			var stopOnce sync.Once
+			stop := func() {
+				stopOnce.Do(func() {
+					cancel()
+					select {
+					case <-runErrCh:
+					case <-time.After(5 * time.Second):
+						t.Error("server.Run did not exit within 5s after cancel")
+					}
+				})
+			}
+			t.Cleanup(stop)
 
 			probe := &http.Client{Timeout: 500 * time.Millisecond}
 			deadline := time.Now().Add(5 * time.Second)
@@ -323,6 +341,7 @@ func TestAdminSecureCookieWarningIsWiredIntoBoot(t *testing.T) {
 				t.Fatalf("admin listener never became ready on %s", readyProbe)
 			}
 
+			stop()
 			warned := strings.Contains(buf.String(), "admin_ticket session cookie")
 			if warned != tc.wantWarn {
 				t.Errorf("Secure-cookie warning present in the boot log = %v, want %v\n---log---\n%s",

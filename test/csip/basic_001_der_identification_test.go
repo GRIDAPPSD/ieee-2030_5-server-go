@@ -88,13 +88,14 @@ func TestBASIC_001_DERIdentification(t *testing.T) {
 	// construction and would assert nothing.
 	wantSFDI, wantLFDI := deriveDeviceIdentity(clientCert.Certificate[0])
 
-	// Two independent implementations over the same bytes on disk, so a
-	// disagreement here is a helper-logic regression and cannot be a roll.
+	// Two implementations over the same bytes on disk, so a disagreement here
+	// is a logic fault in one of them and cannot be a certificate roll. Which
+	// one is not knowable from the values, so the message says so.
 	if got := sepTLS.SFDI(leaf); got != wantSFDI {
-		t.Fatalf("sepTLS.SFDI = %q but the 6.3.3 derivation of the same DER = %q: helper-logic regression, not a certificate roll", got, wantSFDI)
+		t.Fatalf("sepTLS.SFDI = %q but deriveDeviceIdentity = %q on the same DER: not a certificate roll, so one of those two is wrong; check both", got, wantSFDI)
 	}
 	if got := sepTLS.LFDI(leaf); got != wantLFDI {
-		t.Fatalf("sepTLS.LFDI = %q but the 6.3.3 derivation of the same DER = %q: helper-logic regression, not a certificate roll", got, wantLFDI)
+		t.Fatalf("sepTLS.LFDI = %q but deriveDeviceIdentity = %q on the same DER: not a certificate roll, so one of those two is wrong; check both", got, wantLFDI)
 	}
 
 	// The fixture is the recorded identity rather than a second computation of
@@ -296,8 +297,9 @@ func loadDeviceCert(t *testing.T, chainPath, keyPath string) tls.Certificate {
 // SFDI is the top 36 bits of that hash as 11 zero-padded decimal digits plus a
 // sum-of-digits mod-10 check digit.
 //
-// Spelled out here rather than called from sepTLS so each side of the
-// comparison above comes from a different implementation.
+// Spelled out here rather than called from sepTLS so the comparison above has a
+// separate copy on each side: that catches a later edit to either one, but not a
+// misreading of the spec shared by both from the start.
 func deriveDeviceIdentity(der []byte) (sfdi, lfdi string) {
 	sum := sha256.Sum256(der)
 	lfdi = strings.ToUpper(hex.EncodeToString(sum[:20]))

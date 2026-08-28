@@ -77,22 +77,41 @@ conformance harness (`make test-csip`, `make test-csip-hooks`,
 ## Local CI gate
 
 ```bash
-make ci-local                # run the same make targets ci.yml invokes, in order
-make ci-local-drift-check    # fail if ci.yml invokes a make target ci-local does not run
+make ci-local                # human entry point: run the gates, in order
+scripts/ci-local/ci-local.sh # same thing, invoked directly (see below)
+make ci-local-drift-check    # fail if a workflow invokes a make target ci-local does not run
 ```
 
-`make ci-local` runs vet, build, lint, the test suite, and the CSIP
-conformance harness from one entry point, exiting non-zero and naming the
-first gate that fails. A prerequisite-dependent gate (the CSIP suite needs
-a SunSpec V1.2 test PKI that is gitignored and provisioned out of band, see
+`scripts/ci-local/ci-local.sh` runs vet, build, lint, the test suite, and
+the CSIP conformance harness from one entry point, in a tri-state exit
+contract: `0` every gate passed with nothing skipped, `1` a precondition
+refused to run or a gate failed (fail-fast: stops at the first failure and
+names it), `2` every gate passed or skipped but at least one skipped
+(partial coverage). A prerequisite-dependent gate (the CSIP suite resolves
+its SunSpec V1.2 test PKI env-var-first, then from
+`test/csip/fixtures/sunspec/`, gitignored and provisioned out of band; see
 [test/csip/README.md](test/csip/README.md); the frontend drift check needs
-a Node toolchain) reports `SKIPPED` rather than running against an absent
-prerequisite, and the run exits `2` (not `0`) whenever any gate skipped, so
-partial coverage is never indistinguishable from a clean pass by exit code
-alone. `make ci-local-drift-check` extracts the `make` targets
-`.github/workflows/ci.yml` invokes and fails if any of them is not in
+a Node toolchain; `golangci-lint` is optional) reports `SKIPPED` rather
+than running against an absent prerequisite.
+
+**`make ci-local` cannot carry that tri-state.** GNU Make maps any
+non-zero recipe exit to make's own exit `2`, so a real gate failure and a
+routine skip both surface to `make` as the same code; `make ci-local exit
+2` does not tell you which happened. `make ci-local` stays the convenient
+human entry point, but a script or CI job that needs the real tri-state
+either invokes `scripts/ci-local/ci-local.sh` directly, or reads the final
+`CI_LOCAL_RESULT=PASS|FAIL|PARTIAL` line the script prints on every path,
+which `make` passes through on stdout unchanged regardless of which exit
+code it maps to.
+
+`make ci-local-drift-check` extracts the `make` targets every workflow file
+under `.github/workflows/` invokes and fails if any of them is not in
 `scripts/ci-local/lib/ci-local-targets.sh`, the same list `ci-local` runs;
-`ci-local` runs this check first and refuses to proceed if it fails.
+`ci-local` runs this check first and refuses to proceed if it fails. A
+second cross-check compares the anchored extraction against an unanchored
+sweep and refuses (exit `3`) if they disagree, so a form the anchor cannot
+structurally parse (chained after `&&`, a quoted `run:` scalar, a
+flow-mapping one-liner) is a detected gap, not a silent one.
 
 **A passing local run is not equivalent to a passing CI run.** Every run
 prints what it does not cover: CodeQL static analysis

@@ -1,7 +1,7 @@
 .PHONY: build test test-cover test-race test-verbose test-e2e \
        test-csip-server test-csip-client \
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
-       lint vet clean run run-ccm run-journald run-ccm-journald \
+       lint gofmt-check vet clean run run-ccm run-journald run-ccm-journald \
        run-testdevice run-sunspec certs new-device \
        serve help stress-pretest vendor bump-core ui-build ui-check \
        ci-local ci-local-drift-check

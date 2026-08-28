@@ -1,13 +1,12 @@
 // #410 -- local gate entry point: lightweight wiring tests.
 //
-// scripts/ci-local/ci-local.sh's happy path runs the real gates (go build, go test,
-// an npm rebuild for ui-check) and takes over a minute with network access
-// for npm. Paying that cost inside `go test ./...` would make the very gate
-// this script belongs to slower and network-dependent every run, so the
-// full end-to-end path is verified manually (see the PR/card record) rather
-// than automated here. What IS cheap and worth asserting automatically:
-// the scripts parse as valid bash, and the shared target list they both
-// depend on has not silently changed shape.
+// The tri-state exit contract and fail-fast/skip behaviour are exercised
+// end to end against a disposable scratch repo in ci_local_e2e_test.go
+// (CRITICAL-1: an earlier version of this file ran only against the
+// real Makefile, which nothing but a manual smoke test ever executed).
+// This file stays scoped to the cheap checks: the scripts parse as valid
+// bash, both entry points are executable, and the shared target list
+// both scripts depend on has not silently changed shape.
 package cilocal_test
 
 import (

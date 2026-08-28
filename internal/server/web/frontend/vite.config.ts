@@ -23,6 +23,11 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test-setup.ts'],
     globals: false,
+    // Spies on the api module are created per test with vi.spyOn; without
+    // this, one test's mocked fetch stays installed for the next file in
+    // the same worker and a "was never called" assertion sees the
+    // previous test's calls.
+    restoreMocks: true,
   },
   resolve: process.env.VITEST
     ? {

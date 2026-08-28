@@ -6,7 +6,6 @@ const dashboardHTML = `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>IEEE 2030.5 Server Admin</title>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
   :root { --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #e2e8f0; --dim: #94a3b8; --accent: #3b82f6; --green: #22c55e; --red: #ef4444; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -167,13 +166,15 @@ const dashboardHTML = `<!DOCTYPE html>
   <div class="card full-width">
     <h2>Device Activity</h2>
     <div class="chart-container" id="activityChart"></div>
+    <div class="result" id="chartNote">The activity chart is drawn on the admin UI at /ui/ (this page loads no chart library).</div>
   </div>
 </div>
 
 <script>
-// ECharts loads from CDN. If the CDN is unreachable (offline / restricted
-// network), keep the rest of the dashboard alive by guarding the chart
-// init — the FSA topology tree must render with or without the chart.
+// No chart library is loaded on this page: it used to come from a public
+// CDN, which failed silently on any network without egress. The library is
+// now bundled into the admin UI served at /ui/, which is where the chart
+// lives. This page keeps the guard so the rest of it renders regardless.
 var chart = null;
 try {
   if (typeof echarts !== 'undefined') {

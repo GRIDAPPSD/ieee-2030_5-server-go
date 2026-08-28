@@ -12,7 +12,9 @@ const tree: TopologyNode = {
   kind: 'SY',
   id: 'sy',
   label: 'System',
-  fsas: [{ id: 'fsa-a', mRID: 'fsa-a', description: 'roof fleet', programs: ['/derp/1'] }],
+  // id and mRID deliberately differ: every request keyed off this FSA must
+  // use the mRID, and a test where the two match cannot tell them apart.
+  fsas: [{ id: 'internal-7', mRID: 'fsa-a', description: 'roof fleet', programs: ['/derp/1'] }],
   children: [
     {
       kind: 'FD',
@@ -94,6 +96,47 @@ describe('TopologyTree', () => {
 
     await waitFor(() => expect(del).toHaveBeenCalledTimes(1))
     expect(del).toHaveBeenCalledWith('/api/fsas/fsa-a/programs?href=%2Fderp%2F1')
+  })
+
+  it('deletes the FSA template with a DELETE to its own mRID, and refreshes', async () => {
+    // Asserted at the fetch boundary rather than on api.deleteJSON: the
+    // METHOD is only visible here, and a destructive route sent with the
+    // wrong verb or the wrong mRID is the failure this test exists for.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 204,
+      json: () => Promise.reject(new Error('204 carries no body')),
+    } as unknown as Response)
+    const onRefresh = vi.fn()
+
+    render(TopologyTree, { props: { tree, error: '', onRefresh } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/fsas/fsa-a')
+    expect(init.method).toBe('DELETE')
+    expect(init.credentials).toBe('same-origin')
+    expect(onRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('surfaces a failed delete and does NOT report a refresh', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: () => Promise.resolve({ error: 'fsa still assigned to a device' }),
+    } as unknown as Response)
+    const onRefresh = vi.fn()
+
+    const { container } = render(TopologyTree, { props: { tree, error: '', onRefresh } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => {
+      expect(container.querySelector('#attachResult-fsa-a')).toHaveTextContent(
+        'Delete failed (409): fsa still assigned to a device',
+      )
+    })
+    expect(onRefresh).not.toHaveBeenCalled()
   })
 
   it('collapses and re-expands a branch without refetching the topology', async () => {

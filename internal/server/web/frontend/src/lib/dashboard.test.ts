@@ -1,7 +1,11 @@
 // The SSE stream is authorized by a one-time ticket in the query string,
 // so the assertion is on the URL the EventSource was opened with: a
-// reconnect that reuses a spent ticket authenticates nothing.
+// reconnect that reuses a spent ticket authenticates nothing. The
+// exchange is mocked at api.postJSON, the client every caller goes
+// through; the credential mode and decode behaviour of that client are
+// asserted in api.test.ts rather than duplicated here.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as api from './api'
 import { appendHistory, connectDashboard, HISTORY_LIMIT, type DashboardData } from './dashboard'
 
 const sample = (timestamp: string, devices: number, mups: number): DashboardData => ({
@@ -61,23 +65,35 @@ describe('connectDashboard', () => {
   })
 
   it('exchanges a ticket and opens the stream with it', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      json: () => Promise.resolve({ ticket: 'tok en/1' }),
-    } as Response)
+    const post = vi.spyOn(api, 'postJSON').mockResolvedValue({
+      ok: true,
+      data: { ticket: 'tok en/1' },
+    })
 
     const stop = connectDashboard(() => {})
     await vi.waitFor(() => expect(FakeEventSource.opened).toHaveLength(1))
 
-    expect(fetchSpy).toHaveBeenCalledWith('/auth/ticket', {
-      method: 'POST',
-      credentials: 'same-origin',
-    })
+    expect(post).toHaveBeenCalledWith('/auth/ticket', {})
     expect(FakeEventSource.opened[0]).toBe('/dashboard/events?ticket=tok%20en%2F1')
     stop()
   })
 
   it('still opens the stream without a ticket when the exchange fails', async () => {
-    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('401'))
+    vi.spyOn(api, 'postJSON').mockResolvedValue({
+      ok: false,
+      error: 'admin authentication required',
+      status: 401,
+    })
+
+    const stop = connectDashboard(() => {})
+    await vi.waitFor(() => expect(FakeEventSource.opened).toHaveLength(1))
+
+    expect(FakeEventSource.opened[0]).toBe('/dashboard/events')
+    stop()
+  })
+
+  it('opens the stream without a ticket when the exchange succeeds but carries none', async () => {
+    vi.spyOn(api, 'postJSON').mockResolvedValue({ ok: true, data: {} })
 
     const stop = connectDashboard(() => {})
     await vi.waitFor(() => expect(FakeEventSource.opened).toHaveLength(1))
@@ -87,9 +103,7 @@ describe('connectDashboard', () => {
   })
 
   it('hands each parsed frame to the caller and discards an unparseable one', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      json: () => Promise.resolve({ ticket: 't' }),
-    } as Response)
+    vi.spyOn(api, 'postJSON').mockResolvedValue({ ok: true, data: { ticket: 't' } })
     const seen: DashboardData[] = []
 
     const stop = connectDashboard((d) => seen.push(d))
@@ -104,9 +118,7 @@ describe('connectDashboard', () => {
   })
 
   it('closes the stream when the caller disposes it', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-      json: () => Promise.resolve({ ticket: 't' }),
-    } as Response)
+    vi.spyOn(api, 'postJSON').mockResolvedValue({ ok: true, data: { ticket: 't' } })
 
     const stop = connectDashboard(() => {})
     await vi.waitFor(() => expect(FakeEventSource.last).not.toBeNull())

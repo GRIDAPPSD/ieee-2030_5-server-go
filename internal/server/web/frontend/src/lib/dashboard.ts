@@ -4,6 +4,8 @@
 // EventSource on /dashboard/events, which pushes an update every 5
 // seconds.
 
+import { postJSON } from './api'
+
 export interface DashboardDevice {
   sfdi: string
   lfdi: string
@@ -69,10 +71,13 @@ export function connectDashboard(onData: (data: DashboardData) => void): () => v
 
   const exchangeAndOpen = () => {
     if (closed) return
-    fetch('/auth/ticket', { method: 'POST', credentials: 'same-origin' })
-      .then((r) => r.json() as Promise<{ ticket?: string }>)
-      .then((d) => open(d.ticket ?? ''))
-      .catch(() => open(''))
+    // Through api.ts's helper rather than fetch: the same-origin
+    // credential mode, the transport-failure case and the JSON decode all
+    // belong to that one client. The endpoint reads no request body, so
+    // the empty object is only there to satisfy the helper's shape.
+    void postJSON<{ ticket?: string }>('/auth/ticket', {}).then((res) => {
+      open(res.ok ? (res.data.ticket ?? '') : '')
+    })
   }
 
   exchangeAndOpen()

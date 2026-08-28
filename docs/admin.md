@@ -92,7 +92,10 @@ sep2server serve
   from a non-loopback origin. Serving plain HTTP here breaks the login
   in a way that looks like a server bug; the server warns about it at
   startup. The supported alternative is to terminate TLS in a reverse
-  proxy and set `SEP2_ADMIN_BEHIND_PROXY=true`.
+  proxy and set `SEP2_ADMIN_BEHIND_PROXY=true`, and that proxy must
+  inject `X-Forwarded-For` (or RFC 7239 `Forwarded`): stock nginx does
+  not, and without those headers every relayed request looks
+  loopback-local and is admitted with no credential at all.
 - `SEP2_ADMIN_ALLOWED_HOSTS` must contain the hostname or IP the
   operator types in the address bar. The built-in allowlist covers
   `localhost`, `127.0.0.1`, `::1` and `ieee2030-5.local` only, so a
@@ -111,7 +114,11 @@ operator-issued cert to avoid it.
 1. **Open `https://<host>:8444/`**: the address of the admin listener,
    using a hostname or IP that is in `SEP2_ADMIN_ALLOWED_HOSTS`. With a
    self-signed certificate the browser interrupts with a certificate
-   warning; accept it for this host and continue.
+   warning; accept it for this host and continue. Accepting that warning
+   means the server's identity is unverified for this visit, so anyone
+   positioned on the network path can read the key you type at step 3:
+   use self-signed only on a network you trust, and an operator-issued
+   cert everywhere else.
 2. **The sign-in page appears.** The server answers an unauthenticated
    page request with a redirect to `/login`, so this is what loads even
    though you typed `/`. The page is a single dark card headed

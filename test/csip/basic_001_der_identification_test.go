@@ -4,7 +4,7 @@
 //
 // V1.2 procedure step → assertion mapping (per V1.2 §8.1):
 //
-//	Step 1 (Boot server with a known device cert) ──────────► csiptest.BootServer with SunSpec V1.2 client cert
+//	Step 1 (Boot server with a known device cert) ──────────► csiptest.BootServer with the committed test device cert
 //	Step 2 (Client POSTs an EndDevice to /edev) ────────────► postEndDevice; assert 201 + Location header
 //	Step 3 (GET the returned EndDevice; assert sFDI/lFDI) ──► assertEndDeviceIdentityFromCert
 //	Step 4 (GET /sdev; assert non-empty sFDI/lFDI) ─────────► assertSelfDeviceIdentityNonEmpty
@@ -22,9 +22,11 @@
 //     in-process harness). Without that, /sdev returns empty identity
 //     under both modes and Step 4 fails — which IS the regression this
 //     test guards against.
-//   - The SunSpec V1.2 test PKI under test/csip/fixtures/sunspec/.
-//     Provisioned out of band per test/csip/README.md; skip cleanly
-//     when fixtures are missing so fresh clones never fail.
+//   - The committed, self-minted test device PKI under
+//     testdata/csip-pki/testdevice/. Certificate provenance is
+//     irrelevant to this procedure: the identity asserted is derived
+//     from whatever leaf is presented, so this runs on every build
+//     with no external material and no environment variable (403).
 //
 // The CCM-mode subtest still drives the server-side gotls listener;
 // the stdlib http.Client offers GCM ciphers and the gotls server
@@ -35,63 +37,74 @@ package csip_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	"gopkg.in/yaml.v3"
+
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// SunSpec V1.2 test cert (sanity check; helpers compute live):
-//
-//	SFDI = 273448359951
-//	LFDI = 65DE1159BA8C8897D5A7F94997D22544EB90A2B7
-//
-// See test/csip/fixtures/single-edev.yaml — same values, computed
-// offline by #52. The test below derives expected values
-// from the cert at runtime via sepTLS.SFDI/LFDI rather than
-// hardcoding, so a cert roll surfaces as a derived-value diff
-// instead of a stale-constant assertion failure.
+// basic001IdentityFixture records the committed test device PKI's SFDI and
+// LFDI. The expected identity is derived from the certificate at test time and
+// compared against this file, so a regenerated PKI surfaces as a named fixture
+// to update rather than as a stale constant in Go source.
+const basic001IdentityFixture = "basic-001-testdevice-edev.yaml"
 
-// expectedSunSpecSFDI is the SunSpec V1.2 test cert's SFDI per
-// #52's single-edev.yaml fixture. Kept as a constant so the
-// sanity check below catches a cert roll separately from a
-// helper-logic regression.
-const expectedSunSpecSFDI = "273448359951"
-
-// expectedSunSpecLFDI is the SunSpec V1.2 test cert's LFDI per
-// #52's single-edev.yaml fixture. Same rationale as the SFDI
-// constant.
-const expectedSunSpecLFDI = "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"
-
-// TestBASIC_001_DERIdentification implements CSIP V1.2 §8.1.
+// TestBASIC_001_DERIdentification implements CSIP V1.2 8.1.
 func TestBASIC_001_DERIdentification(t *testing.T) {
 	t.Parallel()
 
-	certPath, keyPath, rootsPath := mustResolveFixtures(t)
+	chainPath := filepath.Join(testdevicePKIRel, "device_chain.pem")
+	keyPath := filepath.Join(testdevicePKIRel, "device_key.pem")
+	rootsPath := filepath.Join(testdevicePKIRel, "root_ca.pem")
 
-	clientCert := loadSunSpecCert(t, certPath, keyPath)
+	clientCert := loadDeviceCert(t, chainPath, keyPath)
 
-	// Derive expected identity from the cert. The test asserts against
-	// these so the procedure does not depend on hardcoded values beyond
-	// the sanity-check constants above.
 	leaf, err := x509.ParseCertificate(clientCert.Certificate[0])
 	if err != nil {
-		t.Fatalf("parse SunSpec leaf: %v", err)
+		t.Fatalf("parse test device leaf: %v", err)
 	}
-	wantSFDI := sepTLS.SFDI(leaf)
-	wantLFDI := sepTLS.LFDI(leaf)
 
-	if wantSFDI != expectedSunSpecSFDI {
-		t.Fatalf("sanity: SunSpec cert SFDI = %q, want %q (cert may have rolled; update constant + fixture)", wantSFDI, expectedSunSpecSFDI)
+	// Asserted here because nothing downstream would notice its absence: the
+	// server hook acknowledges a HardwareModuleName SAN without requiring one.
+	if err := csipDeviceCertSAN(leaf); err != nil {
+		t.Fatalf("test device leaf at %s: %v", chainPath, err)
 	}
-	if wantLFDI != expectedSunSpecLFDI {
-		t.Fatalf("sanity: SunSpec cert LFDI = %q, want %q (cert may have rolled; update constant + fixture)", wantLFDI, expectedSunSpecLFDI)
+
+	// The expectation comes from the in-test 6.3.3 derivation and never from
+	// sepTLS: a value produced by the helper under test agrees with it by
+	// construction and would assert nothing.
+	wantSFDI, wantLFDI := deriveDeviceIdentity(clientCert.Certificate[0])
+
+	// Two independent implementations over the same bytes on disk, so a
+	// disagreement here is a helper-logic regression and cannot be a roll.
+	if got := sepTLS.SFDI(leaf); got != wantSFDI {
+		t.Fatalf("sepTLS.SFDI = %q but the 6.3.3 derivation of the same DER = %q: helper-logic regression, not a certificate roll", got, wantSFDI)
+	}
+	if got := sepTLS.LFDI(leaf); got != wantLFDI {
+		t.Fatalf("sepTLS.LFDI = %q but the 6.3.3 derivation of the same DER = %q: helper-logic regression, not a certificate roll", got, wantLFDI)
+	}
+
+	// The fixture is the recorded identity rather than a second computation of
+	// it, so a disagreement here is a roll and cannot be a helper regression.
+	pinned := readIdentityPin(t, filepath.Join("fixtures", basic001IdentityFixture))
+	if pinned.SFDI != wantSFDI {
+		t.Fatalf("fixture %s pins SFDI %q but %s derives %q: the PKI was regenerated; update the fixture and testdata/csip-pki/testdevice/README.md", basic001IdentityFixture, pinned.SFDI, chainPath, wantSFDI)
+	}
+	if pinned.LFDI != wantLFDI {
+		t.Fatalf("fixture %s pins LFDI %q but %s derives %q: the PKI was regenerated; update the fixture and testdata/csip-pki/testdevice/README.md", basic001IdentityFixture, pinned.LFDI, chainPath, wantLFDI)
 	}
 
 	cases := []struct {
@@ -254,24 +267,68 @@ func assertSelfDeviceIdentityNonEmpty(t *testing.T, ctx context.Context, c *csip
 	}
 }
 
-// loadSunSpecCert reads the SunSpec V1.2 test PKI from disk and returns
-// a parsed tls.Certificate. Fails the test if either PEM is malformed
-// — by the time this runs, resolveFixtures has already confirmed both
-// paths exist.
-func loadSunSpecCert(t *testing.T, certPath, keyPath string) tls.Certificate {
+// loadDeviceCert reads a device chain and key from disk and returns the parsed
+// pair. A missing file is a failure rather than a skip: this material is
+// committed, so its absence means a damaged checkout.
+func loadDeviceCert(t *testing.T, chainPath, keyPath string) tls.Certificate {
 	t.Helper()
 
-	certPEM, err := os.ReadFile(certPath)
+	chainPEM, err := os.ReadFile(chainPath)
 	if err != nil {
-		t.Fatalf("read SunSpec cert %s: %v", certPath, err)
+		t.Fatalf("read device chain %s: %v", chainPath, err)
 	}
 	keyPEM, err := os.ReadFile(keyPath)
 	if err != nil {
-		t.Fatalf("read SunSpec key %s: %v", keyPath, err)
+		t.Fatalf("read device key %s: %v", keyPath, err)
 	}
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	cert, err := tls.X509KeyPair(chainPEM, keyPEM)
 	if err != nil {
-		t.Fatalf("parse SunSpec cert+key: %v", err)
+		t.Fatalf("parse device chain+key: %v", err)
+	}
+	if len(cert.Certificate) == 0 {
+		t.Fatalf("device chain %s parsed to an empty certificate list", chainPath)
 	}
 	return cert
+}
+
+// deriveDeviceIdentity computes the IEEE 2030.5 6.3.3 identity from a leaf's
+// DER: the LFDI is the first 20 bytes of SHA-256(DER) hex-uppercase, and the
+// SFDI is the top 36 bits of that hash as 11 zero-padded decimal digits plus a
+// sum-of-digits mod-10 check digit.
+//
+// Spelled out here rather than called from sepTLS so each side of the
+// comparison above comes from a different implementation.
+func deriveDeviceIdentity(der []byte) (sfdi, lfdi string) {
+	sum := sha256.Sum256(der)
+	lfdi = strings.ToUpper(hex.EncodeToString(sum[:20]))
+
+	top36 := uint64(sum[0])<<28 | uint64(sum[1])<<20 | uint64(sum[2])<<12 | uint64(sum[3])<<4 | uint64(sum[4])>>4
+	digits := fmt.Sprintf("%011d", top36)
+	total := 0
+	for _, d := range digits {
+		total += int(d - '0')
+	}
+	return fmt.Sprintf("%s%d", digits, (10-total%10)%10), lfdi
+}
+
+// readIdentityPin returns the single EndDevice recorded in a harness fixture.
+// Strict-field decoding through csiptest.Spec means a mistyped key fails loudly
+// instead of reading as an empty identity that no assertion could catch.
+func readIdentityPin(t *testing.T, path string) csiptest.EndDeviceSpec {
+	t.Helper()
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read identity fixture %s: %v", path, err)
+	}
+	var spec csiptest.Spec
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true)
+	if err := dec.Decode(&spec); err != nil {
+		t.Fatalf("decode identity fixture %s: %v", path, err)
+	}
+	if len(spec.EndDevices) != 1 {
+		t.Fatalf("identity fixture %s carries %d EndDevices, want exactly one", path, len(spec.EndDevices))
+	}
+	return spec.EndDevices[0]
 }

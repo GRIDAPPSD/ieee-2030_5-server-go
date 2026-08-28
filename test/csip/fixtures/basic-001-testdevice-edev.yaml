@@ -1,0 +1,36 @@
+# Identity pin for the CSIP V1.2 8.1 DER identification procedure
+# (issue 403). The values below belong to the committed, self-minted
+# test device PKI at testdata/csip-pki/testdevice/, NOT to the
+# externally issued SunSpec V1.2 material that single-edev.yaml carries.
+#
+# BASIC-001 derives the identity from device_chain.pem at test time and
+# compares it against this file. That comparison is the roll detector: a
+# regenerated PKI produces different values, and the mismatch names this
+# fixture as the thing to update rather than failing somewhere subtler.
+#
+# Derivation (IEEE 2030.5 6.3.3, same as testdata/csip-pki/testdevice/README.md):
+#
+#   LFDI = first 20 bytes of SHA-256(leaf.DER), hex-uppercase.
+#   SFDI = top 36 bits of that hash as 11 zero-padded decimal digits
+#          plus a sum-of-digits mod-10 check digit.
+#
+# Consumed only by basic_001_der_identification_test.go. The schema
+# matches csiptest.Spec so the file stays loadable by the harness loader.
+#
+# The same identity is also recorded in testdevice-edev.yaml, which serves the
+# `make run-testdevice` boot profile and has its own consumers. Kept separate so
+# this procedure's roll detector is not coupled to a runtime-profile fixture.
+
+end_devices:
+  - id: "testdevice"
+    sfdi: "397028461857"
+    lfdi: "93E795AE91F5F493813E3B39C8BC49F06FCA6258"
+    enabled: true
+    changed_time: 1747006800
+    registration_link: "/edev/testdevice/rg"
+    function_set_assignments_list_link:
+      href: "/edev/testdevice/fsa"
+      all: 0
+    der_list_link:
+      href: "/edev/testdevice/der"
+      all: 0

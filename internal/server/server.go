@@ -453,7 +453,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	// #270: resolve the admin host-header allowlist from the static
 	// defaults plus operator-supplied SEP2_ADMIN_ALLOWED_HOSTS extras.
 	allowedHosts := ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
-	adminRouter, adminRoutes := BuildAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets, sessions, allowedHosts)
+	adminRouter, adminRoutes := BuildAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets, sessions, allowedHosts, cfg.AdminLegacyDashboard)
 
 	adminListener, err := net.Listen("tcp", addr)
 	if err != nil {

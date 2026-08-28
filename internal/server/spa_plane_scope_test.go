@@ -54,7 +54,7 @@ func TestProtocolListenerDoesNotMountAdminUIShell(t *testing.T) {
 func TestAdminListenerMountsAdminUIShell(t *testing.T) {
 	stores := newTestStores()
 
-	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil)
+	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
@@ -89,7 +89,7 @@ func TestAdminListenerMountsAdminUIShell(t *testing.T) {
 func TestAdminListenerRealUnmatchedAPIPathIsNotShadowedBySPA(t *testing.T) {
 	stores := newTestStores()
 
-	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil)
+	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/does-not-exist", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
@@ -107,26 +107,87 @@ func TestAdminListenerRealUnmatchedAPIPathIsNotShadowedBySPA(t *testing.T) {
 	}
 }
 
-// TestAdminListenerDashboardStillServedAtRoot pins that mounting the
-// shell at "/ui/" left the existing dashboard's "GET /" untouched: the
-// dashboard is not rewritten or removed by this change.
-func TestAdminListenerDashboardStillServedAtRoot(t *testing.T) {
+// TestAdminListenerDashboardFlagServesBothBranches pins the rollback
+// path: GET / answers with the embedded admin UI by default, and with the
+// pre-Svelte string-constant dashboard when the legacy flag is set. Both
+// branches are exercised in one test because either assertion alone would
+// pass against a handler that ignores the flag and always serves the
+// other page.
+//
+// The two bodies are also asserted to be different pages, not just
+// non-empty: "#app is present" and "Connected Devices is present" would
+// both hold for a single page that happened to contain both strings.
+func TestAdminListenerDashboardFlagServesBothBranches(t *testing.T) {
 	stores := newTestStores()
 
-	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil)
+	getRoot := func(t *testing.T, legacy bool) string {
+		t.Helper()
+		adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil, legacy)
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = "127.0.0.1:54321"
-	rec := httptest.NewRecorder()
-	adminRouter.ServeHTTP(rec, req)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "127.0.0.1:54321"
+		rec := httptest.NewRecorder()
+		adminRouter.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET / status = %d, want 200; body = %q", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET / (legacyDashboard=%v) status = %d, want 200; body = %q", legacy, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
 	}
-	if strings.Contains(rec.Body.String(), `<div id="app">`) {
-		t.Fatalf("GET / served the admin UI shell instead of the dashboard")
+
+	t.Run("flag off serves the embedded admin UI", func(t *testing.T) {
+		body := getRoot(t, false)
+
+		if !strings.Contains(body, `<div id="app">`) {
+			t.Fatalf("GET / did not serve the SPA index (missing #app mount point); body = %q", body)
+		}
+		if strings.Contains(body, "Connected Devices") {
+			t.Fatalf("GET / served the legacy string-constant dashboard with the flag off; body = %q", body)
+		}
+	})
+
+	t.Run("flag on serves the legacy string-constant dashboard", func(t *testing.T) {
+		body := getRoot(t, true)
+
+		if !strings.Contains(body, "Connected Devices") {
+			t.Fatalf("GET / did not serve the legacy dashboard with the flag on; body = %q", body)
+		}
+		if strings.Contains(body, `<div id="app">`) {
+			t.Fatalf("GET / served the SPA index with the legacy flag on; body = %q", body)
+		}
+	})
+
+	t.Run("the legacy page is still the string constant in this binary", func(t *testing.T) {
+		// Guards the rollback being a rollback: the flag must reach the
+		// dashboard_html.go content itself. The inline handler attribute is
+		// the discriminator, since the SPA index.html carries no inline
+		// script at all and renders every panel client side.
+		body := getRoot(t, true)
+		if !strings.Contains(body, `onclick="sendControl()"`) {
+			t.Fatalf("legacy body does not look like the pre-Svelte dashboard; body = %q", body)
+		}
+	})
+}
+
+// TestAdminListenerSPAIsReachableAtBothRoots asserts the SPA is served at
+// "/" and at "/ui/" with the same bytes, so the operator reaches the admin
+// UI at the address they typed and a bookmark of either path works.
+func TestAdminListenerSPAIsReachableAtBothRoots(t *testing.T) {
+	stores := newTestStores()
+	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil, false)
+
+	get := func(path string) string {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "127.0.0.1:54321"
+		rec := httptest.NewRecorder()
+		adminRouter.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want 200; body = %q", path, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
 	}
-	if !strings.Contains(rec.Body.String(), "Connected Devices") {
-		t.Fatalf("GET / body does not look like the dashboard page; body = %q", rec.Body.String())
+
+	if root, ui := get("/"), get("/ui/"); root != ui {
+		t.Fatalf("GET / and GET /ui/ served different bodies:\n/ = %q\n/ui/ = %q", root, ui)
 	}
 }

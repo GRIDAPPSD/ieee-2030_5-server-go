@@ -77,6 +77,10 @@ func runServe() error {
 		// against DNS rebinding). CSV; appended to the static defaults.
 		AdminAllowedHosts: parseCSV(os.Getenv("SEP2_ADMIN_ALLOWED_HOSTS")),
 
+		// #364: rollback knob for the dashboard rewrite. True serves the
+		// pre-Svelte string-constant page at GET / instead of the SPA.
+		AdminLegacyDashboard: os.Getenv("SEP2_ADMIN_LEGACY_DASHBOARD") == "true",
+
 		// #165: single-knob persistence. Empty SEP2_DATA_DIR keeps the
 		// historical pure in-memory behavior. SEP2_SUBSCRIPTION_STORE_PATH
 		// is preserved for back-compat and wins over the derived datadir

@@ -34,6 +34,10 @@ const AdminTicketCookieName = "admin_ticket"
 // redirect cannot loop back into another refusal.
 const AdminLoginPath = "/login"
 
+// AdminRefusalVary lists the request headers wantsLoginPage reads. It is the
+// Vary value on every refusal, in the order the decision consults them.
+const AdminRefusalVary = "Sec-Fetch-Dest, Accept"
+
 // AdminAuthMiddleware returns middleware that checks for admin authorization.
 // Five paths are supported (checked in order):
 //
@@ -119,6 +123,12 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *Sessio
 					}
 				}
 			}
+
+			// The refusal is negotiated: the same URL answers a navigation
+			// and a subresource differently, so a cache that stored one and
+			// replayed it to the other would deliver a login redirect into a
+			// script tag. Vary names the request headers that decided it.
+			w.Header().Set("Vary", AdminRefusalVary)
 
 			// A browser has nothing to do with a 401 here: no current
 			// browser prompts for a Bearer challenge, so a navigation that

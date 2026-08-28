@@ -92,6 +92,62 @@ func TestDriftCheck_CatchesAnInjectedTarget(t *testing.T) {
 	}
 }
 
+// TestDriftCheck_CatchesAnInjectedTarget_ListItemForm locks in the fix for
+// the list-item step form `- run: make X` (no separate `name:` line), which
+// the original anchor missed: it accepted an optional `run:` prefix but not
+// the leading `- ` a step can carry on the same line. ci.yml does not use
+// this form today, but it is idiomatic GitHub Actions and the guard must
+// not go blind the day someone adds a step without a name.
+func TestDriftCheck_CatchesAnInjectedTarget_ListItemForm(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	original, err := os.ReadFile(realWorkflowPath(t))
+	if err != nil {
+		t.Fatalf("read real ci.yml: %v", err)
+	}
+	scratch := filepath.Join(dir, "scratch-ci-listitem.yml")
+	injected := string(original) + "\n      - run: make totally-fake-listitem-target\n"
+	if err := os.WriteFile(scratch, []byte(injected), 0o644); err != nil {
+		t.Fatalf("write scratch workflow: %v", err)
+	}
+
+	exit, out := run(t, scratch)
+	if exit != 1 {
+		t.Fatalf("exit code: got %d, want 1; output=%q", exit, out)
+	}
+	if !strings.Contains(out, "make totally-fake-listitem-target") {
+		t.Fatalf("output missing the injected target name; got=%q", out)
+	}
+	if !strings.Contains(out, "DRIFT: 1 of 13") {
+		t.Fatalf("output missing the expected 1-of-13 drift count; got=%q", out)
+	}
+}
+
+// TestDriftCheck_CommentMentionIsNotAnInvocation is the control for the
+// exclusion the anchor exists to preserve: ci.yml already comments on a
+// make target by name in prose (the CLAUDE.md-referenced remark near its
+// test-csip-server step). That comment must never be counted as a second
+// invocation; the real ci.yml already reports exactly 12 targets, and this
+// test would fail if a future edit to the anchor started counting it.
+func TestDriftCheck_CommentMentionIsNotAnInvocation(t *testing.T) {
+	t.Parallel()
+	original, err := os.ReadFile(realWorkflowPath(t))
+	if err != nil {
+		t.Fatalf("read real ci.yml: %v", err)
+	}
+	if !strings.Contains(string(original), "CLAUDE.md-referenced `make test-csip-server`") {
+		t.Fatal("ci.yml no longer carries the comment this control relies on; update the control")
+	}
+
+	exit, out := run(t, realWorkflowPath(t))
+	if exit != 0 {
+		t.Fatalf("exit code: got %d, want 0; output=%q", exit, out)
+	}
+	if !strings.Contains(out, "OK: all 12 make target(s)") {
+		t.Fatalf("output missing the expected 12-target OK line (comment mention miscounted?); got=%q", out)
+	}
+}
+
 func TestDriftCheck_MissingWorkflowFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -36,15 +36,31 @@ if [[ ! -f "${WORKFLOW_FILE}" ]]; then
   exit 2
 fi
 
-# Real invocations only: the whole value of a single-line `run: make X`
-# step, or a bare `make X` line inside a `run: |` block. Anchored at the
-# start of the line (after leading whitespace) so a comment line whose
+# Real invocations only, anchored at the start of the line (after leading
+# whitespace and an optional YAML list-item dash) so a comment line whose
 # first non-blank character is `#` never matches, even when the comment
 # names a make target in prose (ci.yml does this, e.g. near its
 # "CLAUDE.md-referenced `make test-csip-server`" remark).
+#
+# Covered forms:
+#   - a single-line `run: make X` step, with or without the `- ` list-item
+#     dash on the same line (`- run: make X`)
+#   - a bare `make X` line inside a `run: |` block, with or without a
+#     leading dash (a block body line is never itself a list item, so the
+#     dash only matters for the single-line step form above)
+#
+# Knowingly NOT covered (report a false negative if used, and would need a
+# real YAML parser to handle correctly): a quoted `run:` scalar
+# (`run: "make X"` or `run: 'make X'`), a folded or literal block scalar
+# introduced any other way than `run: |` (`run: >`, `run: |-`, `run: |2`),
+# a flow-mapping one-liner (`- { run: make X }`), and `make` invoked as
+# anything other than the first token on its line (chained after `&&` or
+# `;`, or via a variable). ci.yml uses none of these today; if it starts
+# to, this guard's silence on that line is exactly the gap this comment
+# flags for the next reader.
 extract_targets() {
-  grep -oE '^[[:space:]]*(run:[[:space:]]*)?make[[:space:]]+[A-Za-z0-9_-]+' "$1" \
-    | sed -E 's/^[[:space:]]*(run:[[:space:]]*)?make[[:space:]]+//' \
+  grep -oE '^[[:space:]]*(-[[:space:]]+)?(run:[[:space:]]*)?make[[:space:]]+[A-Za-z0-9_-]+' "$1" \
+    | sed -E 's/^[[:space:]]*(-[[:space:]]+)?(run:[[:space:]]*)?make[[:space:]]+//' \
     | sort -u
 }
 

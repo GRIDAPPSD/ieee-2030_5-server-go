@@ -15,7 +15,11 @@ export function getCertDir(): string {
   return certDir;
 }
 
-export async function startServer(): Promise<string> {
+// extraEnv is merged over the harness defaults below, so a spec can boot
+// the server in a non-default posture (for example
+// SEP2_ADMIN_LEGACY_DASHBOARD=true) without duplicating the cert and port
+// setup. Omitted, the harness behaves exactly as before.
+export async function startServer(extraEnv: Record<string, string> = {}): Promise<string> {
   certDir = mkdtempSync(join(tmpdir(), 'sep2-e2e-'));
   const projectRoot = join(__dirname, '..');
   const sep2server = join(projectRoot, 'sep2server');
@@ -63,6 +67,7 @@ export async function startServer(): Promise<string> {
       // self-signed cert so the e2e dashboard URL keeps the `https://...`
       // shape it used pre-split.
       SEP2_ADMIN_TLS: 'true',
+      ...extraEnv,
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });

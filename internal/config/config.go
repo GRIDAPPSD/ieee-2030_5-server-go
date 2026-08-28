@@ -70,6 +70,13 @@ type Config struct {
 	// defaults are NEVER opted out by setting this var.
 	AdminAllowedHosts []string // env SEP2_ADMIN_ALLOWED_HOSTS
 
+	// AdminLegacyDashboard serves the pre-Svelte string-constant dashboard
+	// at GET / instead of the embedded admin UI. The rollback path for the
+	// dashboard rewrite: an operator whose workflow the new page breaks
+	// sets this and gets the old page back without a downgrade. Env:
+	// SEP2_ADMIN_LEGACY_DASHBOARD.
+	AdminLegacyDashboard bool
+
 	// MetricsAddr is the bind address for the dedicated plain-HTTP Prometheus
 	// metrics listener (env SEP2_METRICS_ADDR, e.g. ":9100"). Empty disables
 	// the metrics listener entirely (default OFF). The listener serves ONLY

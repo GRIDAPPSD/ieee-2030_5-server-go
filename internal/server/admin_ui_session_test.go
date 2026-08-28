@@ -55,7 +55,7 @@ func newUIRouter(t *testing.T) (http.Handler, *auth.SessionStore) {
 	router, _ := server.BuildAdminRouter(
 		"the-key", nil, newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), sessions,
-		[]string{testUIHost},
+		[]string{testUIHost}, false,
 	)
 	return router, sessions
 }
@@ -182,7 +182,12 @@ func TestAdminUIShellRefusedWithoutCredential(t *testing.T) {
 	router, _ := newUIRouter(t)
 	jsPath, cssPath := builtAssetPaths(t)
 
-	for _, p := range []string{"/ui/", jsPath, cssPath, "/ui/favicon.svg"} {
+	// "/" is in the list because the dashboard at the bare root is now the
+	// SPA, so it is served from the same embedded bundle as the paths below
+	// and needs the same credential. newUIRequest fails the test outright if
+	// the fixture address is loopback, which would take the Path 0 bypass
+	// and assert nothing.
+	for _, p := range []string{"/", "/ui/", jsPath, cssPath, "/ui/favicon.svg"} {
 		t.Run(p, func(t *testing.T) {
 			req := newUIRequest(t, http.MethodGet, p, "")
 			rec := httptest.NewRecorder()

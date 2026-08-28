@@ -1,41 +1,252 @@
+/* Global styles for the admin dashboard. The palette and the layout
+   classes below are shared by every panel under src/panels/, so they live
+   here rather than in per-component <style> blocks: Svelte scopes
+   component styles, and .card / .btn / .form-row / table are used across
+   a dozen panels. They also carry the dark palette the operator
+   dashboard has always used, so the page looks the same served from the
+   SPA as it did served as a string constant. */
+
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-
-  font: 16px/145% var(--sans);
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --bg: #0f172a;
+  --card: #1e293b;
+  --border: #334155;
+  --text: #e2e8f0;
+  --text-h: #e2e8f0;
+  --dim: #94a3b8;
+  --accent: #3b82f6;
+  --green: #22c55e;
+  --red: #ef4444;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-  }
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 body {
-  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
 }
 
-h1,
-h2 {
-  font-family: var(--sans);
+.navbar {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.navbar h1 {
+  font-size: 16px;
+  color: var(--accent);
+}
+
+.navbar .status {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #1e3a5f;
+  color: #93c5fd;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  padding: 16px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.card h2 {
+  font-size: 14px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+}
+
+.big-number {
+  font-size: 36px;
+  font-weight: 700;
+  font-family: 'Courier New', monospace;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.stat-row:last-child {
+  border-bottom: none;
+}
+
+.stat-label {
+  color: var(--dim);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th {
+  text-align: left;
+  padding: 8px;
+  color: var(--dim);
+  border-bottom: 1px solid var(--border);
   font-weight: 500;
-  color: var(--text-h);
 }
 
-p {
-  margin: 0.5em 0;
+td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mono {
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.online {
+  color: var(--green);
+}
+
+.offline {
+  color: var(--red);
+}
+
+.chart-container {
+  height: 200px;
+}
+
+.full-width {
+  grid-column: 1 / -1;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--dim);
+  margin-bottom: 8px;
+}
+
+.form-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.form-row input,
+.form-row select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  flex: 1;
+}
+
+.form-row input[type='checkbox'] {
+  flex: none;
+}
+
+.form-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+textarea {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.btn:hover {
+  background: #2563eb;
+}
+
+.btn-red {
+  background: var(--red);
+}
+
+.btn-red:hover {
+  background: #dc2626;
+}
+
+.btn-green {
+  background: var(--green);
+}
+
+.btn-green:hover {
+  background: #16a34a;
+}
+
+.btn-small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.result {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.result.ok {
+  color: var(--green);
+}
+
+.result.err {
+  color: var(--red);
+}
+
+.tree {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+a {
+  color: var(--accent);
 }

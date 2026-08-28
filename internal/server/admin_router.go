@@ -37,7 +37,7 @@ import (
 //
 // Test callers that don't need the pattern list discard the second
 // return value with `_`.
-func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, allowedHosts []string) (http.Handler, []string) {
+func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, allowedHosts []string, legacyDashboard bool) (http.Handler, []string) {
 	authed := newRecordingMux()
 
 	// Certificate management API
@@ -69,16 +69,18 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 		authed.HandleFunc("GET /api/topology", handler.HandleTopology(stores.AdminFSAs, stores.EndDevices))
 	}
 
-	// Admin dashboard
+	// Admin dashboard. legacyDashboard decides which page GET / returns
+	// (see handleDashboardPage); the route pattern is the same either way,
+	// so the boot-time route list does not change with the flag.
 	if stores != nil {
-		dashboard := NewDashboardHandler(stores, tlsMode)
+		dashboard := NewDashboardHandler(stores, tlsMode, legacyDashboard)
 		dashboard.RegisterRoutes(authed)
 	}
 
-	// Admin UI shell (embedded Svelte SPA, internal/server/web). Mounted at
+	// Admin UI (embedded Svelte SPA, internal/server/web). Mounted at
 	// "/ui/", a more specific pattern than the dashboard's catch-all "GET
-	// /" above, so the two coexist: this phase adds the shell alongside
-	// the existing dashboard rather than replacing it.
+	// /" above. The SPA is reachable at both paths: "/ui/" always, and "/"
+	// unless the legacy flag routes that one to the old page.
 	authed.Handle("GET /ui/", http.StripPrefix("/ui", spaHandler()))
 
 	// Auth ticket endpoint — exchanges valid admin auth for a short-lived ticket

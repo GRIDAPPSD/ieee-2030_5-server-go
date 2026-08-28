@@ -43,7 +43,7 @@ func mustSubFS(f fs.FS, dir string) fs.FS {
 // real /api/* surface is registered separately on the same mux and
 // never reaches this handler.
 func spaHandler() http.Handler {
-	fileServer := http.FileServerFS(distFS)
+	fileServer := distFileServer()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api") {
 			w.Header().Set("Content-Type", "application/json")
@@ -59,10 +59,33 @@ func spaHandler() http.Handler {
 			return
 		}
 
-		indexReq := r.Clone(r.Context())
-		indexReq.URL.Path = "/"
-		fileServer.ServeHTTP(w, indexReq)
+		serveSPAIndexWith(fileServer, w, r)
 	})
+}
+
+// distFileServer serves the embedded SPA tree. Constructed per caller
+// rather than shared in a package var so nothing can swap it at runtime.
+func distFileServer() http.Handler {
+	return http.FileServerFS(distFS)
+}
+
+// serveSPAIndex writes the built index.html for a request whose path is
+// not itself an asset. The dashboard route at "/" uses this to serve the
+// admin UI, so the SPA is reachable at the address an operator types
+// without a redirect, and the SPA's own /ui/ mount keeps working because
+// every built asset URL in index.html is absolute (/ui/assets/...).
+func serveSPAIndex(w http.ResponseWriter, r *http.Request) {
+	serveSPAIndexWith(distFileServer(), w, r)
+}
+
+// serveSPAIndexWith rewrites the request path to the dist root so the
+// file server answers with index.html rather than 404ing on a client side
+// route. The request is cloned: mutating the caller's URL would corrupt
+// any later handler or log line that reads the original path.
+func serveSPAIndexWith(fileServer http.Handler, w http.ResponseWriter, r *http.Request) {
+	indexReq := r.Clone(r.Context())
+	indexReq.URL.Path = "/"
+	fileServer.ServeHTTP(w, indexReq)
 }
 
 // isStaticAsset reports whether reqPath names a real, non-directory file

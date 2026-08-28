@@ -33,14 +33,19 @@ type DashboardHandler struct {
 	stores    *Stores
 	startTime time.Time
 	tlsMode   string
+	legacyUI  bool
 }
 
-// NewDashboardHandler creates a dashboard handler backed by the server's stores.
-func NewDashboardHandler(stores *Stores, tlsMode string) *DashboardHandler {
+// NewDashboardHandler creates a dashboard handler backed by the server's
+// stores. legacyUI selects which page GET / answers with: false serves the
+// embedded admin UI, true serves the pre-Svelte string-constant dashboard
+// (see handleDashboardPage).
+func NewDashboardHandler(stores *Stores, tlsMode string, legacyUI bool) *DashboardHandler {
 	return &DashboardHandler{
 		stores:    stores,
 		startTime: time.Now(),
 		tlsMode:   tlsMode,
+		legacyUI:  legacyUI,
 	}
 }
 
@@ -124,11 +129,23 @@ func (d *DashboardHandler) collectData() DashboardData {
 	}
 }
 
+// handleDashboardPage answers GET / with one of two pages. By default it
+// serves the embedded admin UI (internal/server/web). With the legacy
+// flag set (SEP2_ADMIN_LEGACY_DASHBOARD) it serves the string-constant
+// dashboard in dashboard_html.go instead, so an operator can fall back to
+// the previous page without downgrading the binary.
+//
+// The JSON and SSE routes below are shared: both pages read the same
+// /dashboard/data and /dashboard/events.
 func (d *DashboardHandler) handleDashboardPage(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(dashboardHTML))
+	if d.legacyUI {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(dashboardHTML))
+		return
+	}
+	serveSPAIndex(w, r)
 }

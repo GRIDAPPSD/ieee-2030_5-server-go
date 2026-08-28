@@ -83,9 +83,11 @@ cannot silently disarm the gate. This is the same contract as
 the cert and key agree, the leaf is unexpired, every certificate in
 `roots.pem` parses, and the leaf verifies against that bundle through the
 same hook the server applies, so the SunSpec-backed procedures ran
-against material a handshake could use. It scopes that material only;
+against material a handshake could use. It scopes that material only:
 `TestDeviceHandshake` proves mTLS against the committed test-device PKI
-either way.
+either way, and `TestBASIC_001_DERIdentification` (CSIP V1.2 8.1 DER
+identification) runs against that same committed PKI, so neither depends
+on the SunSpec secret.
 
 In CI the material arrives through `.github/actions/supply-csip-pki`,
 which reassembles it from a repository secret into `RUNNER_TEMP` outside

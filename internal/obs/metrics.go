@@ -84,6 +84,20 @@ var (
 		},
 		[]string{"outcome"},
 	)
+
+	// adminAuthFailures counts presented-and-wrong admin credentials, labeled
+	// by admission path. Closes the asymmetry where a benign loopback
+	// admission was logged on every request but a remote key guess left no
+	// record anywhere (#413).
+	adminAuthFailures = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: "admin",
+			Name:      "auth_failures_total",
+			Help:      "Failed admin credential presentations by admission path.",
+		},
+		[]string{"admission_path"},
+	)
 )
 
 // Notification outcome label values. Exported so the subscription manager
@@ -107,6 +121,28 @@ var validOutcomes = map[string]struct{}{
 	OutcomeClientError: {},
 	OutcomeQueueFull:   {},
 	OutcomeOther:       {},
+}
+
+// Admin credential admission-path label values. Exported so auth and server
+// record the same strings the collector declares, avoiding stringly-typed drift.
+const (
+	AdminAdmissionPathForm   = "form"
+	AdminAdmissionPathBearer = "bearer"
+	AdminAdmissionPathMTLS   = "mtls"
+
+	// AdminAdmissionPathOther is the bounded catch-all for an admission-path
+	// string outside the known set above. RecordAdminAuthFailure folds
+	// unknown input here so a caller mistake can never mint a new series.
+	AdminAdmissionPathOther = "other"
+)
+
+// validAdminAdmissionPaths is the closed set of admission-path labels.
+// Anything outside it is folded to AdminAdmissionPathOther.
+var validAdminAdmissionPaths = map[string]struct{}{
+	AdminAdmissionPathForm:   {},
+	AdminAdmissionPathBearer: {},
+	AdminAdmissionPathMTLS:   {},
+	AdminAdmissionPathOther:  {},
 }
 
 // Handler returns the Prometheus exposition handler. Mount it on the
@@ -148,6 +184,18 @@ func RecordNotification(outcome string) {
 		outcome = OutcomeOther
 	}
 	notifications.WithLabelValues(outcome).Inc()
+}
+
+// RecordAdminAuthFailure records a presented-and-wrong admin credential,
+// labeled by admission path. admissionPath SHOULD be one of the
+// AdminAdmissionPath* constants; any value outside the known set is folded
+// to AdminAdmissionPathOther so an arbitrary string cannot expand the
+// label's cardinality.
+func RecordAdminAuthFailure(admissionPath string) {
+	if _, ok := validAdminAdmissionPaths[admissionPath]; !ok {
+		admissionPath = AdminAdmissionPathOther
+	}
+	adminAuthFailures.WithLabelValues(admissionPath).Inc()
 }
 
 // knownFunctionSets is the closed set of IEEE 2030.5 protocol-listener

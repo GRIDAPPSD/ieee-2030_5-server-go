@@ -3,12 +3,14 @@ package auth
 import (
 	"crypto/subtle"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
 )
 
 // forwardedHeaders lists the proxy-injected headers that, when present on a
@@ -83,6 +85,7 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *Sessio
 			if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 				cert := r.TLS.PeerCertificates[0]
 				if certs.HasPolicyOID(cert, certs.OIDPolicyAdmin) {
+					LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathMTLS)
 					next.ServeHTTP(w, r)
 					return
 				}
@@ -91,13 +94,17 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *Sessio
 			// Path B: Bearer token. A blank configured key disables
 			// the path outright, so an operator who set only
 			// whitespace cannot be authenticated by presenting the
-			// same whitespace.
+			// same whitespace. A blank presented token is the same
+			// credential-free case as no Authorization header at all, so
+			// only a non-blank mismatch logs a failure (#413).
 			if !IsBlankCredential(adminKey) {
-				if token, ok := bearerToken(r.Header.Get("Authorization")); ok {
-					if !IsBlankCredential(token) && constantTimeEqual(token, adminKey) {
+				if token, ok := bearerToken(r.Header.Get("Authorization")); ok && !IsBlankCredential(token) {
+					if constantTimeEqual(token, adminKey) {
+						LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathBearer)
 						next.ServeHTTP(w, r)
 						return
 					}
+					LogFailedAdminCredential(r, obs.AdminAdmissionPathBearer)
 				}
 			}
 
@@ -145,6 +152,41 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *Sessio
 			_, _ = w.Write([]byte(`{"error":"admin authentication required"}`))
 		})
 	}
+}
+
+// LogFailedAdminCredential records a presented-and-wrong admin credential at
+// WARN, labeled by admissionPath (an obs.AdminAdmissionPath* constant). The
+// signature takes no credential value, so there is nothing here a call site
+// could log by mistake; callers must call this only after their own
+// constant-time compare has already returned, never from inside a branch
+// keyed on how much of the credential matched, so the log write itself
+// carries no timing signal (#413).
+func LogFailedAdminCredential(r *http.Request, admissionPath string) {
+	slog.Warn("admin: credential presented and rejected",
+		"event", "admin_auth_failure",
+		"outcome", "wrong_credential",
+		"admission_path", admissionPath,
+		"method", r.Method,
+		"path", r.URL.Path,
+		"remote_addr", r.RemoteAddr,
+	)
+	obs.RecordAdminAuthFailure(admissionPath)
+}
+
+// LogSuccessfulAdminCredential records a successful credential PRESENTATION
+// at INFO: the login form, a Bearer match, or an mTLS admission. Path D (the
+// cookie session) is deliberately excluded from every caller: one page load
+// validates the cookie four times for four independent subresources, so
+// per-request success logging there would recreate the noise problem this
+// closes on the failure side (#413).
+func LogSuccessfulAdminCredential(r *http.Request, admissionPath string) {
+	slog.Info("admin: credential presented and accepted",
+		"event", "admin_auth_success",
+		"admission_path", admissionPath,
+		"method", r.Method,
+		"path", r.URL.Path,
+		"remote_addr", r.RemoteAddr,
+	)
 }
 
 // wantsLoginPage reports whether a refused request came from a browser

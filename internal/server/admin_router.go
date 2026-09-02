@@ -133,9 +133,11 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 	// suppression RFC 9111 gives an Authorization-bearing one, so without this
 	// an intermediary fronting the listener may store the admin shell or a
 	// topology response and serve it to a client that presented no credential.
-	// Admin plane only: the protocol listener's bytes are a conformance
-	// surface and are built elsewhere (BuildProtocolRouter).
-	return adminNoStore(h), merged
+	// adminSecurityHeaders wraps it, adding the framing/sniff/referrer
+	// refusal to the same everything. Admin plane only: the protocol
+	// listener's bytes are a conformance surface and are built elsewhere
+	// (BuildProtocolRouter).
+	return adminSecurityHeaders(adminNoStore(h)), merged
 }
 
 // adminNoStore sets Cache-Control: no-store on every admin response. The header
@@ -144,6 +146,30 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 func adminNoStore(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// adminSecurityHeaders sets the admin plane's browser-facing response
+// headers: a framing refusal, a MIME-sniff refusal, and a referrer policy
+// that stops a URL-borne credential (the SSE ticket) from reaching a
+// cross-origin Referer. Composed around adminNoStore rather than folded into
+// it, since the no-store wrapper's own comment is about caching and this is
+// a different concern; both set their headers before the wrapped handler
+// runs, for the same reason adminNoStore does (#413).
+//
+// Both a CSP frame-ancestors and X-Frame-Options are set for the framing
+// refusal: CSP is the normative control and the only one a future
+// per-origin relaxation could target, but X-Frame-Options: ALLOW-FROM was
+// never interoperably implemented, so X-Frame-Options stays DENY-or-nothing.
+// A relaxation must edit both, or the second header keeps silently refusing.
+func adminSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
 	})
 }

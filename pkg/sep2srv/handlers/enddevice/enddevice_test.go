@@ -450,7 +450,7 @@ func TestHandleDeleteEndDevice_TriggersNotification(t *testing.T) {
 		t.Fatalf("seed sub: %v", err)
 	}
 
-	mgr := coresub.NewManager(subStore, 2, 16)
+	mgr := coresub.NewManager(subStore, 2, 16, coresub.WithDestinationPolicy(coresub.DestinationPolicy{AllowLoopback: true}))
 	mgrCtx, mgrCancel := context.WithCancel(context.Background())
 	mgrDone := make(chan struct{})
 	go func() {
@@ -520,7 +520,7 @@ func TestHandleDeleteEndDevice_NoNotificationOnNotFound(t *testing.T) {
 		t.Fatalf("seed sub: %v", err)
 	}
 
-	mgr := coresub.NewManager(subStore, 1, 8)
+	mgr := coresub.NewManager(subStore, 1, 8, coresub.WithDestinationPolicy(coresub.DestinationPolicy{AllowLoopback: true}))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { mgr.Start(ctx); close(done) }()

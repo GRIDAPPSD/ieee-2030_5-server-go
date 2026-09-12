@@ -79,7 +79,7 @@ func TestMAINT_006_SubscriptionTerminate(t *testing.T) {
 	// override is wired in core's pkg/sep2srv/handlers/subscription/subscription_test_hook.go.
 	sub := sep2.Subscription{
 		SubscribedResource: maint006SubscribedResource,
-		NotificationURI:    "http://example.test/notify",
+		NotificationURI:    "http://192.0.2.1/notify",
 		Encoding:           sep2.EncodingXML,
 	}
 	location := postSubscriptionWithPinnedID(t, srv, maint006EndDeviceID, &sub, maint006SubscriptionID, http.StatusCreated)

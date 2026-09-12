@@ -56,7 +56,7 @@ func TestERR002RealRestartViaDiskPersistence(t *testing.T) {
 		t.Fatalf("Create on Store A: %v", err)
 	}
 
-	mgrA := subscription.NewManager(storeA, 2, 10)
+	mgrA := subscription.NewManager(storeA, 2, 10, loopbackReceivers)
 	doneA := make(chan struct{})
 	go func() {
 		mgrA.Start(ctxA)
@@ -86,7 +86,7 @@ func TestERR002RealRestartViaDiskPersistence(t *testing.T) {
 
 	ctxB, cancelB := context.WithCancel(context.Background())
 	defer cancelB()
-	mgrB := subscription.NewManager(storeB, 2, 10)
+	mgrB := subscription.NewManager(storeB, 2, 10, loopbackReceivers)
 	doneB := make(chan struct{})
 	go func() {
 		mgrB.Start(ctxB)
@@ -168,7 +168,7 @@ func TestERR002RealRestartDeletePersistsAcrossRestart(t *testing.T) {
 	// callback for the deleted subscription.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mgr := subscription.NewManager(storeB, 2, 10)
+	mgr := subscription.NewManager(storeB, 2, 10, loopbackReceivers)
 	done := make(chan struct{})
 	go func() {
 		mgr.Start(ctx)

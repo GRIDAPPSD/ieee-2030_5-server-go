@@ -54,7 +54,7 @@ func TestMAINT_005_PrimacySwap(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	mgr := coresub.NewManager(srv.Stores.Subscriptions, 2, 16)
+	mgr := coresub.NewManager(srv.Stores.Subscriptions, 2, 16, csiptest.AllowLoopbackReceivers())
 	go mgr.Start(ctx)
 
 	// Step 1a: seed EndDevice + DERProgram with primacy=1.

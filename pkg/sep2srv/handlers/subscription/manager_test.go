@@ -59,7 +59,7 @@ func TestManagerNotifiesSubscribers(t *testing.T) {
 		},
 	}
 
-	mgr := subscription.NewManager(store, 2, 10)
+	mgr := subscription.NewManager(store, 2, 10, loopbackReceivers)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go mgr.Start(ctx)

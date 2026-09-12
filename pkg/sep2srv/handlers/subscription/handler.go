@@ -132,7 +132,14 @@ func pageSubscriptionRecords(records []memory.SubscriptionRecord, opts store.Lis
 }
 
 // HandleCreateSubscription returns a handler for POST /edev/{id}/sub.
-func HandleCreateSubscription(subStore *memory.SubscriptionStore) http.HandlerFunc {
+//
+// validate vets the notificationURI before anything is stored. Pass
+// (*Manager).ValidateNotificationURI so creation and delivery apply the same
+// DestinationPolicy; nil applies the default policy.
+func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(ctx context.Context, uri string) error) http.HandlerFunc {
+	if validate == nil {
+		validate = DestinationPolicy{}.ValidateNotificationURI
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			encoding.MethodNotAllowed(w, "POST")
@@ -150,6 +157,16 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore) http.HandlerFu
 		var sub sep2.Subscription
 		if err := xml.Unmarshal(body, &sub); err != nil {
 			http.Error(w, "invalid XML: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if err := validate(r.Context(), sub.NotificationURI); err != nil {
+			log.Printf("subscription: refused notificationURI %q for /edev/%q/sub: %v", sub.NotificationURI, edevID, err)
+			if !errors.Is(err, ErrRefusedDestination) {
+				srverr.Internal(w, r, err)
+				return
+			}
+			http.Error(w, "notificationURI refused", http.StatusBadRequest)
 			return
 		}
 

@@ -126,7 +126,7 @@ func aggSubscribableResourcesForInverter(edevID string) []aggSubscribableResourc
 // aggregatorNotificationURI is the per-test aggregator callback URL for
 // AGG-001 subscriptions. The procedure exercises subscription acceptance
 // only - delivery is gated on #12 follow-ups outside #147 scope.
-const aggregatorNotificationURI = "https://aggregator.example/notify/agg"
+const aggregatorNotificationURI = "https://192.0.2.1/notify/agg"
 
 // postAggregatorSubscription is the AGG-001 variant of UTIL-003's
 // postAndVerifySubscription: it POSTs a Subscription to

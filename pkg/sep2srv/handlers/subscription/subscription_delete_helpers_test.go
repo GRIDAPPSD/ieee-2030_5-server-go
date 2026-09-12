@@ -23,7 +23,7 @@ var errNotifyBoom = errors.New("synthetic notifier failure")
 // a context whose cancel runs on t.Cleanup — no leaks across tests.
 func newRealManager(t *testing.T, store subscription.SubscriptionLister) *subscription.Manager {
 	t.Helper()
-	mgr := subscription.NewManager(store, 1, 4)
+	mgr := subscription.NewManager(store, 1, 4, loopbackReceivers)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {

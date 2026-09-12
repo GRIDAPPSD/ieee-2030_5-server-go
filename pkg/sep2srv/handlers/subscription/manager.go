@@ -78,28 +78,45 @@ type Manager struct {
 	// "success", "client_error", "queue_full". Server wires
 	// obs.RecordNotification here; core has no prometheus dependency.
 	observer func(outcome string)
+	guard    *destinationGuard
 }
 
-// newNotificationClient returns an http.Client with a bounded Timeout so
-// worker goroutines cannot block indefinitely on slow subscribers.
-func newNotificationClient() *http.Client {
-	return &http.Client{Timeout: notificationClientTimeout}
+// ManagerOption configures a Manager at construction.
+type ManagerOption func(*Manager)
+
+// WithDestinationPolicy sets the policy for both delivery and
+// ValidateNotificationURI. Without it the zero-value DestinationPolicy applies.
+func WithDestinationPolicy(p DestinationPolicy) ManagerOption {
+	return func(m *Manager) { m.guard.policy = p }
 }
 
 // NewManager creates a NotificationManager with the given worker pool size.
-func NewManager(store SubscriptionLister, workerCount, queueSize int) *Manager {
+func NewManager(store SubscriptionLister, workerCount, queueSize int, opts ...ManagerOption) *Manager {
 	if workerCount < 1 {
 		workerCount = 2
 	}
 	if queueSize < 1 {
 		queueSize = 100
 	}
-	return &Manager{
+	guard := newDestinationGuard(DestinationPolicy{})
+	m := &Manager{
 		store:       store,
-		client:      newNotificationClient(),
+		client:      newNotificationClient(guard),
 		queue:       make(chan notificationTask, queueSize),
 		workerCount: workerCount,
+		guard:       guard,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// ValidateNotificationURI reports whether uri is an acceptable notification
+// destination under the Manager's DestinationPolicy. Pass it to
+// HandleCreateSubscription so creation and delivery apply the same policy.
+func (m *Manager) ValidateNotificationURI(ctx context.Context, uri string) error {
+	return m.guard.validateURI(ctx, uri)
 }
 
 // SetObserver wires an outcome callback into the Manager. fn is called
@@ -232,6 +249,9 @@ func (m *Manager) worker(ctx context.Context) {
 			}
 			log.Printf("notification: %s receiver returned 4xx, subscription %q deleted",
 				task.notificationURI, task.subscriptionID)
+		case errors.Is(err, ErrRefusedDestination):
+			log.Printf("notification: refused destination %q for subscription %q: %v",
+				task.notificationURI, task.subscriptionID, err)
 		default:
 			log.Printf("notification: deliver to %s: %v", task.notificationURI, err)
 		}

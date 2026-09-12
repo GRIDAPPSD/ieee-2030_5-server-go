@@ -67,7 +67,7 @@ func TestNotifySuccessIncrementsCounter(t *testing.T) {
 		NotificationURI:    srv.URL + "/notify",
 	}}}
 
-	mgr := coresub.NewManager(store, 2, 10)
+	mgr := coresub.NewManager(store, 2, 10, coresub.WithDestinationPolicy(coresub.DestinationPolicy{AllowLoopback: true}))
 	mgr.SetObserver(obs.RecordNotification)
 	ctx, cancel := context.WithCancel(context.Background())
 	go mgr.Start(ctx)
@@ -139,7 +139,7 @@ func TestNotifyClientErrorIncrementsCounter(t *testing.T) {
 		NotificationURI:    srv.URL + "/notify",
 	}}}
 
-	mgr := coresub.NewManager(store, 2, 10)
+	mgr := coresub.NewManager(store, 2, 10, coresub.WithDestinationPolicy(coresub.DestinationPolicy{AllowLoopback: true}))
 	mgr.SetObserver(obs.RecordNotification)
 	ctx, cancel := context.WithCancel(context.Background())
 	go mgr.Start(ctx)

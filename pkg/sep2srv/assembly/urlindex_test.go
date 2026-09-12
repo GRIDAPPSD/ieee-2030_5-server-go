@@ -197,31 +197,26 @@ func TestURLIndex_EndDeviceListEntryHrefsAreIndexForm(t *testing.T) {
 	register(t, srv, deviceLFDIA)
 	register(t, srv, deviceLFDIB)
 
-	status, body := do(t, srv, http.MethodGet, "/edev", deviceLFDIA)
-	if status != http.StatusOK {
-		t.Fatalf("GET /edev: status %d, want 200; body=%s", status, body)
-	}
-	var list sep2.EndDeviceList
-	if err := xml.Unmarshal([]byte(body), &list); err != nil {
-		t.Fatalf("decode EndDeviceList: %v; body=%s", err, body)
-	}
-	if len(list.EndDevice) != 2 {
-		t.Fatalf("EndDeviceList carries %d devices, want 2; body=%s", len(list.EndDevice), body)
-	}
-
-	// The list is key-ordered, and keys are the indices "1" and "2".
-	byLFDI := map[string]sep2.EndDevice{}
-	for _, d := range list.EndDevice {
-		byLFDI[d.LFDI] = d
-	}
+	// GET /edev lists only the caller's own device, so each device reads its
+	// own entry. Indices follow registration order: "1" then "2".
 	for _, tc := range []struct{ lfdi, wantHref string }{
 		{deviceLFDIA, "/edev/1"},
 		{deviceLFDIB, "/edev/2"},
 	} {
-		got, ok := byLFDI[tc.lfdi]
-		if !ok {
-			t.Errorf("device %s absent from EndDeviceList", tc.lfdi)
-			continue
+		status, body := do(t, srv, http.MethodGet, "/edev", tc.lfdi)
+		if status != http.StatusOK {
+			t.Fatalf("GET /edev as %s: status %d, want 200; body=%s", tc.lfdi, status, body)
+		}
+		var list sep2.EndDeviceList
+		if err := xml.Unmarshal([]byte(body), &list); err != nil {
+			t.Fatalf("decode EndDeviceList: %v; body=%s", err, body)
+		}
+		if len(list.EndDevice) != 1 {
+			t.Fatalf("EndDeviceList for %s carries %d devices, want 1; body=%s", tc.lfdi, len(list.EndDevice), body)
+		}
+		got := list.EndDevice[0]
+		if got.LFDI != tc.lfdi {
+			t.Errorf("EndDeviceList for %s lists LFDI %q", tc.lfdi, got.LFDI)
 		}
 		if got.Href != tc.wantHref {
 			t.Errorf("device %s href = %q, want %q", tc.lfdi, got.Href, tc.wantHref)

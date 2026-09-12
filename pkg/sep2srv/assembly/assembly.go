@@ -557,9 +557,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	// to its own gate.
 	edevs := logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores)
 
-	mux.HandleFunc("GET /edev", corelisthandler.ListHandler[sep2.EndDevice, sep2.EndDeviceList](
-		edevs, coreedev.BuildEndDeviceList, 900,
-	))
+	mux.HandleFunc("GET /edev", coreedev.HandleEndDeviceListForCaller(edevs, authPolicy.Identity, 900))
 	mux.HandleFunc("POST /edev", coreedev.HandleCreateEndDevice(edevs, edevIndexes, authPolicy.Identity, authPolicy.SFDIPrefix))
 	mux.HandleFunc("GET /edev/{id}", coreedev.HandleEndDevice(edevs))
 	mux.HandleFunc("PUT /edev/{id}", coreedev.HandleUpdateEndDevice(edevs))

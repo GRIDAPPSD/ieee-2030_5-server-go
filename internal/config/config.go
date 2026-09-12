@@ -102,6 +102,11 @@ type Config struct {
 	EnableCCM   bool   // use CCM-8 cipher suite (spec-compliant) vs GCM fallback
 	EnableMDNS  bool   // enable mDNS service advertisement
 	MDNSHost    string // mDNS hostname
+
+	// NotificationAllowLoopback lets subscriptions name loopback
+	// notificationURIs. Off by default because the admin listener is on
+	// loopback. Env: SEP2_NOTIFICATION_ALLOW_LOOPBACK.
+	NotificationAllowLoopback bool
 }
 
 // EffectiveAdminListen returns the admin listener address as supplied by

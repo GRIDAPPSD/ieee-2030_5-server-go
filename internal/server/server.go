@@ -22,7 +22,6 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
-	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -184,7 +183,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// not a positive integer (no crash: warn and use the default).
 	subWorkers := resolveSubParam("SEP2_SUBSCRIPTION_WORKERS", subscriptionWorkers)
 	subQueueSize := resolveSubParam("SEP2_SUBSCRIPTION_QUEUE_SIZE", subscriptionQueueSize)
-	notifier := coresub.NewManager(stores.Subscriptions, subWorkers, subQueueSize)
+	notifier := newSubscriptionNotifier(cfg, stores.Subscriptions, subWorkers, subQueueSize)
 	notifier.SetObserver(obs.RecordNotification)
 	go notifier.Start(ctx)
 

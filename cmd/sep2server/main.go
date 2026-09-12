@@ -99,6 +99,10 @@ func runServe() error {
 		EnableCCM:   os.Getenv("SEP2_CCM") == "true",
 		EnableMDNS:  os.Getenv("SEP2_MDNS") == "true",
 		MDNSHost:    envOr("SEP2_MDNS_HOST", "localhost"),
+
+		// Refused by default: the admin listener is on loopback. For test
+		// harnesses whose notification receivers listen there.
+		NotificationAllowLoopback: os.Getenv("SEP2_NOTIFICATION_ALLOW_LOOPBACK") == "true",
 	}
 
 	// Load CA for admin cert service

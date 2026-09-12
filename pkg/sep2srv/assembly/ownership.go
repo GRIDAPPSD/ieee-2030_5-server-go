@@ -22,9 +22,11 @@ import (
 // is checked after the mux matched, through r.PathValue, so the request path
 // is never re-parsed.
 //
-// Ownership is decided on the STORED EndDevice record: the record at {id} must
-// carry the caller's LFDI. The path segment is never compared to the LFDI,
-// because {id} is an opaque server-chosen index, not an identity.
+// Access is decided on the STORED EndDevice record, never on the path segment,
+// because {id} is an opaque server-chosen index, not an identity. The caller
+// is admitted when the record carries the caller's LFDI, or, on a delegable
+// pattern, when the management store names the caller as the record's
+// manager.
 type ownershipGate struct {
 	next           routeRegistrar
 	devices        store.EndDeviceStore
@@ -40,7 +42,8 @@ var ownershipExempt = map[string]bool{
 	// No {id} exists before registration. The handler requires an identity
 	// and takes SFDI and LFDI from the certificate, never from the body.
 	"POST /edev": true,
-	// The collection. Its handler lists only the caller's own EndDevice.
+	// The collection. Its handler lists only the caller's own EndDevice and
+	// those it manages.
 	"GET /edev": true,
 }
 
@@ -65,7 +68,7 @@ func newOwnershipGate(next routeRegistrar, devices store.EndDeviceStore, manager
 
 func (g *ownershipGate) HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request)) {
 	if requiresOwnership(pattern) {
-		h = g.wrap(h)
+		h = g.wrap(h, delegable(pattern))
 	}
 	g.next.HandleFunc(pattern, h)
 }
@@ -85,6 +88,29 @@ func requiresOwnership(pattern string) bool {
 	return path == "/edev" || strings.HasPrefix(path, "/edev/")
 }
 
+// delegable reports whether a manager may use pattern on a device it manages:
+// GET on the record, which also serves HEAD, and every pattern strictly below
+// it except the Registration. A manager never rewrites or deletes the record
+// itself, and a record pattern that names no method is not delegated.
+func delegable(pattern string) bool {
+	i := strings.IndexByte(pattern, '/')
+	if i < 0 {
+		return false
+	}
+	method, _, _ := strings.Cut(pattern[:i], " ")
+	segments := strings.Split(pattern[i+1:], "/")
+	if len(segments) < 2 || segments[0] != "edev" || segments[1] != "{id}" {
+		return false
+	}
+	if len(segments) == 2 {
+		return method == http.MethodGet
+	}
+	// The resource segment must be a literal other than the Registration: a
+	// wildcard or an empty segment there would also match the Registration.
+	resource := segments[2]
+	return resource != "" && resource != "rg" && !strings.HasPrefix(resource, "{")
+}
+
 type ownershipDecision int
 
 const (
@@ -95,16 +121,16 @@ const (
 	ownershipAllowed
 )
 
-func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
+func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request), delegated bool) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		decision, err := g.decide(r)
+		decision, err := g.decide(r, delegated)
 		switch decision {
 		case ownershipAllowed:
 			next(w, r)
 		case ownershipDeviceAbsent:
 			http.Error(w, "not found", http.StatusNotFound)
 		case ownershipStoreFailed:
-			// A 500, not a 403: the gate could not establish ownership, and a
+			// A 500, not a 403: the gate could not establish access, and a
 			// 403 would tell the client it is not authorized. The handler
 			// still never runs.
 			srverr.Internal(w, r, err)
@@ -114,7 +140,7 @@ func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request)) func
 	}
 }
 
-func (g *ownershipGate) decide(r *http.Request) (ownershipDecision, error) {
+func (g *ownershipGate) decide(r *http.Request, delegated bool) (ownershipDecision, error) {
 	if g.identityAbsent {
 		return ownershipDenied, nil
 	}
@@ -133,7 +159,22 @@ func (g *ownershipGate) decide(r *http.Request) (ownershipDecision, error) {
 		return ownershipDeviceAbsent, nil
 	case err != nil:
 		return ownershipStoreFailed, fmt.Errorf("ownership check could not read the EndDevice: %w", err)
-	case !coreedev.OwnedBy(dev.LFDI, callerLFDI):
+	case coreedev.OwnedBy(dev.LFDI, callerLFDI):
+		return ownershipAllowed, nil
+	}
+
+	// Management is consulted only after self fails and only on a delegable
+	// pattern, so a management store outage never blocks a device's own access.
+	if !delegated || g.managersAbsent || dev.LFDI == "" {
+		return ownershipDenied, nil
+	}
+	manager, err := g.managers.ManagerOf(r.Context(), dev.LFDI)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return ownershipDenied, nil
+	case err != nil:
+		return ownershipStoreFailed, fmt.Errorf("ownership check could not read the EndDevice's manager: %w", err)
+	case !coreedev.OwnedBy(manager, callerLFDI):
 		return ownershipDenied, nil
 	}
 	return ownershipAllowed, nil

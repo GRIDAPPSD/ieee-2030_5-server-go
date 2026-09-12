@@ -3,6 +3,7 @@ package enddevice_test
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -99,6 +100,47 @@ func TestHandleEndDeviceListForCaller_Edges(t *testing.T) {
 		coreedev.HandleEndDeviceListForCaller(memory.NewEndDeviceStore(), nil, identity, 900)(rec, httptest.NewRequest(http.MethodPut, "/edev", nil))
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("status %d, want 405", rec.Code)
+		}
+	})
+}
+
+// managedByStub reports fixed managed LFDIs, or err.
+type managedByStub struct {
+	store.EndDeviceManagementStore
+	managed []string
+	err     error
+}
+
+func (m managedByStub) ManagedBy(context.Context, string) ([]string, error) {
+	return m.managed, m.err
+}
+
+func TestHandleEndDeviceListForCaller_ManagedEdges(t *testing.T) {
+	t.Parallel()
+	identity := func(context.Context) (string, string, bool) { return "CALLER", "", true }
+
+	t.Run("management lookup failure is 500", func(t *testing.T) {
+		t.Parallel()
+		h := coreedev.HandleEndDeviceListForCaller(memory.NewEndDeviceStore(), managedByStub{err: errors.New("management backend down")}, identity, 900)
+		status, body := serveList(t, h)
+		if status != http.StatusInternalServerError || strings.Contains(body, "EndDeviceList") || strings.Contains(body, "backend down") {
+			t.Errorf("status %d body %q, want a 500 carrying neither a list nor the cause", status, body)
+		}
+	})
+
+	t.Run("managed LFDI resolving to another record is not listed", func(t *testing.T) {
+		t.Parallel()
+		h := coreedev.HandleEndDeviceListForCaller(staleIndexStore{memory.NewEndDeviceStore()}, managedByStub{managed: []string{"MANAGED"}}, identity, 900)
+		status, body := serveList(t, h)
+		if status != http.StatusOK {
+			t.Fatalf("status %d, want 200; body=%s", status, body)
+		}
+		var list sep2.EndDeviceList
+		if err := xml.Unmarshal([]byte(body), &list); err != nil {
+			t.Fatalf("decode: %v; body=%s", err, body)
+		}
+		if list.All != 0 || len(list.EndDevice) != 0 || strings.Contains(body, "SOMEONE-ELSE") {
+			t.Errorf("all=%d items=%d body=%s, want an empty list with no foreign LFDI", list.All, len(list.EndDevice), body)
 		}
 	})
 }

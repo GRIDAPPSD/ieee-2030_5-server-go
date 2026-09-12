@@ -50,7 +50,7 @@ func serveGated(t *testing.T, g *ownershipGate, pathID string) (int, bool) {
 	h := g.wrap(func(w http.ResponseWriter, _ *http.Request) {
 		ran = true
 		w.WriteHeader(http.StatusTeapot)
-	})
+	}, false)
 	req := httptest.NewRequest(http.MethodGet, "/edev/x", nil)
 	if pathID != "" {
 		req.SetPathValue("id", pathID)
@@ -159,5 +159,34 @@ func TestOwnershipGate_PatternListIsUnchanged(t *testing.T) {
 	}
 	if !slices.Equal(bare.Patterns(), gatedMux.Patterns()) {
 		t.Errorf("gate changed Patterns():\nbare:  %v\ngated: %v", bare.Patterns(), gatedMux.Patterns())
+	}
+}
+
+func TestDelegable(t *testing.T) {
+	t.Parallel()
+	cases := map[string]bool{
+		"GET /edev/{id}":                  true,
+		"GET example.test/edev/{id}":      true,
+		"GET /edev/{id}/der":              true,
+		"PUT /edev/{id}/der/{derId}/derg": true,
+		"POST /edev/{id}/sub":             true,
+		"DELETE /edev/{id}/sub/{subId}":   true,
+		"DELETE /edev/{id}/lel/{lelId}":   true,
+		"PUT /edev/{id}":                  false,
+		"DELETE /edev/{id}":               false,
+		"GET /edev/{id}/rg":               false,
+		"GET /edev/{id}/{name}":           false,
+		"GET /edev/{id}/":                 false,
+		"GET /edevx/{id}/der":             false,
+		"GET /edev":                       false,
+		"POST /edev":                      false,
+		"/edev/{id}":                      false,
+		"GET /edev/{other}/der":           false,
+		"GET /mup/{id}":                   false,
+	}
+	for pattern, want := range cases {
+		if got := delegable(pattern); got != want {
+			t.Errorf("delegable(%q) = %v, want %v", pattern, got, want)
+		}
 	}
 }

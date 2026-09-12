@@ -15,6 +15,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/storetest"
@@ -401,13 +402,13 @@ func TestOwnershipGate_DenyMatrix(t *testing.T) {
 			seedDevice(t, s.EndDevices, victimID, strings.ToLower(victimLFDI), victimSFDI)
 			return s
 		}, gateTestPolicy, asCaller(victimLFDI), probe}, http.StatusForbidden},
-		{"store error is refused", setup{func(t *testing.T) *assembly.Stores {
+		{"store error is 500", setup{func(t *testing.T) *assembly.Stores {
 			s := seededGateStores(t)
 			fault := &storetest.Fault{}
 			s.EndDevices = storetest.NewFaultyEndDeviceStore(s.EndDevices, fault)
 			fault.Arm(storetest.ErrBackendUnavailable)
 			return s
-		}, gateTestPolicy, asCaller(victimLFDI), probe}, http.StatusForbidden},
+		}, gateTestPolicy, asCaller(victimLFDI), probe}, http.StatusInternalServerError},
 		{"nil EndDevices is refused", setup{func(t *testing.T) *assembly.Stores {
 			s := testStores()
 			s.EndDevices = nil
@@ -444,20 +445,29 @@ func TestOwnershipGate_DenyMatrix(t *testing.T) {
 }
 
 // TestOwnershipGate_RegistrationRouteIsWrapped distinguishes the outer gate
-// from the in-handler check on /rg: with the EndDevice store failing, the
-// handler's own check answers 500, the gate answers 403 first.
+// from the in-handler check on /rg. A record stored with no LFDI, read by a
+// caller whose identity carries an empty LFDI, passes the handler's own
+// comparison; only the gate refuses it.
 func TestOwnershipGate_RegistrationRouteIsWrapped(t *testing.T) {
 	t.Parallel()
-	stores := seededGateStores(t)
-	fault := &storetest.Fault{}
-	stores.EndDevices = storetest.NewFaultyEndDeviceStore(stores.EndDevices, fault)
+	stores := testStores()
+	seedDevice(t, stores.EndDevices, victimID, "", victimSFDI)
+	if err := stores.Registrations.Create(context.Background(), victimID, sep2.Registration{PIN: testFixturePIN, DateTimeRegistered: 1600000000}); err != nil {
+		t.Fatalf("seed Registration: %v", err)
+	}
 	srv := gateServer(t, stores, gateTestPolicy())
 
-	fault.Arm(storetest.ErrBackendUnavailable)
-	status, raw := gateRequest(t, srv, http.MethodGet, "/edev/"+victimID+"/rg", victimLFDI, "")
-	if status != http.StatusForbidden {
-		t.Errorf("GET /edev/%s/rg with a failing EndDevice store: status %d, want 403 from the gate; body=%q", victimID, status, raw)
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/edev/"+victimID+"/rg", nil)
+	if err != nil {
+		t.Fatal(err)
 	}
+	req.Header.Set(gateEmptyIdentityHeader, "1")
+	status, raw := sendGateRequest(t, req)
+	if status != http.StatusForbidden {
+		t.Errorf("GET /edev/%s/rg with an empty caller LFDI over a record with no LFDI: status %d, want 403 from the gate; body=%q", victimID, status, raw)
+	}
+	assertDenialLeaksNothing(t, "empty-identity /rg", raw)
+	assertNoRegistrationLeak(t, string(raw), testFixturePIN)
 }
 
 // TestOwnershipGate_StoreErrorIsLogged cannot run in parallel: it swaps the
@@ -470,6 +480,7 @@ func TestOwnershipGate_StoreErrorIsLogged(t *testing.T) {
 
 	buf := &logProbeSafeBuffer{}
 	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
 	log.SetOutput(buf)
 	t.Cleanup(func() {
 		log.SetOutput(prevOut)
@@ -478,12 +489,13 @@ func TestOwnershipGate_StoreErrorIsLogged(t *testing.T) {
 
 	fault.Arm(storetest.ErrBackendUnavailable)
 	status, raw := gateRequest(t, srv, http.MethodGet, "/edev/"+victimID+"/fsa", victimLFDI, "")
-	if status != http.StatusForbidden {
-		t.Fatalf("status %d, want 403; body=%q", status, raw)
+	if status != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500; body=%q", status, raw)
 	}
+	assertDenialLeaksNothing(t, "gate store failure", raw)
 	captured := buf.String()
-	if !strings.Contains(captured, "GET /edev/{id}/fsa") || !strings.Contains(captured, storetest.ErrBackendUnavailable.Error()) {
-		t.Errorf("store failure behind a 403 was not logged with its route and cause; log=%q", captured)
+	if !containsLineWith(captured, srverr.LogLinePrefix("GET /edev/{id}/fsa"), storetest.ErrBackendUnavailable.Error()) {
+		t.Errorf("store failure behind the gate's 500 was not logged with its route and cause; log=%q", captured)
 	}
 	if strings.Contains(string(raw), storetest.ErrBackendUnavailable.Error()) {
 		t.Errorf("store error text reached the client; body=%q", raw)

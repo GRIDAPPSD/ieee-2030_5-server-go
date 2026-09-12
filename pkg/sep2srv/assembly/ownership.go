@@ -3,6 +3,7 @@ package assembly
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -83,46 +84,50 @@ const (
 	// ownershipDenied is the zero value, so an undecided request is refused.
 	ownershipDenied ownershipDecision = iota
 	ownershipDeviceAbsent
+	ownershipStoreFailed
 	ownershipAllowed
 )
 
 func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		switch g.decide(r) {
+		decision, err := g.decide(r)
+		switch decision {
 		case ownershipAllowed:
 			next(w, r)
 		case ownershipDeviceAbsent:
 			http.Error(w, "not found", http.StatusNotFound)
+		case ownershipStoreFailed:
+			// A 500, not a 403: the gate could not establish ownership, and a
+			// 403 would tell the client it is not authorized. The handler
+			// still never runs.
+			srverr.Internal(w, r, err)
 		default:
 			http.Error(w, "forbidden", http.StatusForbidden)
 		}
 	}
 }
 
-func (g *ownershipGate) decide(r *http.Request) ownershipDecision {
+func (g *ownershipGate) decide(r *http.Request) (ownershipDecision, error) {
 	if g.identityAbsent {
-		return ownershipDenied
+		return ownershipDenied, nil
 	}
 	callerLFDI, _, ok := g.identity(r.Context())
 	if !ok || callerLFDI == "" {
-		return ownershipDenied
+		return ownershipDenied, nil
 	}
 	id := r.PathValue("id")
 	if id == "" || g.devicesAbsent {
-		return ownershipDenied
+		return ownershipDenied, nil
 	}
 
 	dev, err := g.devices.Get(r.Context(), id)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		return ownershipDeviceAbsent
+		return ownershipDeviceAbsent, nil
 	case err != nil:
-		// Refused rather than a 500: without the record the gate cannot say
-		// yes, and the client learns nothing either way. The cause is logged.
-		log.Printf("assembly: ownership check on %s could not read the EndDevice, refusing: %v", srverr.Route(r), err)
-		return ownershipDenied
+		return ownershipStoreFailed, fmt.Errorf("ownership check could not read the EndDevice: %w", err)
 	case !coreedev.OwnedBy(dev.LFDI, callerLFDI):
-		return ownershipDenied
+		return ownershipDenied, nil
 	}
-	return ownershipAllowed
+	return ownershipAllowed, nil
 }

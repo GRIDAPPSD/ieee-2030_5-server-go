@@ -401,9 +401,9 @@ func TestEveryMountedRouteReportsAStoreFailureAsAServerError(t *testing.T) {
 		t.Errorf("drove %d of %d probed routes; the table did not cover what it claimed", probed, len(part.Probed))
 	}
 
-	// Now the EndDevice store fails as well. The two ungated /edev routes still
-	// owe a 5xx. Every other /edev route is refused by the ownership gate first,
-	// with 403: a refusal, not a claim that the resource is absent.
+	// Now the EndDevice store fails as well. Every /edev route owes a 5xx: the
+	// ungated two from their handlers, the rest from the ownership gate, which
+	// cannot establish ownership and must not answer as though it had refused.
 	device.fault.Arm(storetest.ErrBackendUnavailable)
 	edevProbed := 0
 	for _, pattern := range part.Probed {
@@ -419,12 +419,8 @@ func TestEveryMountedRouteReportsAStoreFailureAsAServerError(t *testing.T) {
 		}
 		edevProbed++
 
-		ungated := pattern == "GET /edev" || pattern == "POST /edev"
-		switch {
-		case ungated && (status < 500 || status > 599):
+		if status < 500 || status > 599 {
 			t.Errorf("%s answered %d with the EndDevice store failing; want 5xx", pattern, status)
-		case !ungated && status != http.StatusForbidden:
-			t.Errorf("%s answered %d with the EndDevice store failing; want 403 from the ownership gate", pattern, status)
 		}
 	}
 	if edevProbed == 0 {

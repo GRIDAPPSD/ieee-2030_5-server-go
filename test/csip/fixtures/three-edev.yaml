@@ -18,6 +18,8 @@
 # EndDevice ID), not the href. /edev?a=0 returns items strictly
 # greater than "0" -> IDs "1" and "2".
 
+# managed_by: ids "1" and "2" are managed by id "0", which CORE-004 binds
+# to its client, so that one caller's filtered list holds all three.
 end_devices:
   - id: "0"
     sfdi: "111100000001"
@@ -34,6 +36,7 @@ end_devices:
   - id: "1"
     sfdi: "222200000002"
     lfdi: "2222000000000000000000000000000000000002"
+    managed_by: "0"
     enabled: true
     changed_time: 1700000001
     registration_link: "/edev/1/rg"
@@ -46,6 +49,7 @@ end_devices:
   - id: "2"
     sfdi: "333300000003"
     lfdi: "3333000000000000000000000000000000000003"
+    managed_by: "0"
     enabled: true
     changed_time: 1700000002
     registration_link: "/edev/2/rg"

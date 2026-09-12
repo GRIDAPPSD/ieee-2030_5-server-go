@@ -54,6 +54,9 @@
 # UTIL-004-specific DERControls here - those are created at test time
 # by the procedure step.
 
+# managed_by: the utility provisions the Aggregator (id "0") as the manager
+# of each inverter. The pair is keyed by LFDI after the harness binds id "0"
+# to the certificate it presents.
 end_devices:
   - id: "0"
     sfdi: "100000000001"
@@ -70,6 +73,7 @@ end_devices:
   - id: "1"
     sfdi: "200000000001"
     lfdi: "2000000000000000000000000000000000000001"
+    managed_by: "0"
     enabled: true
     changed_time: 1700000001
     registration_link: "/edev/1/rg"
@@ -82,6 +86,7 @@ end_devices:
   - id: "2"
     sfdi: "200000000002"
     lfdi: "2000000000000000000000000000000000000002"
+    managed_by: "0"
     enabled: true
     changed_time: 1700000002
     registration_link: "/edev/2/rg"
@@ -94,6 +99,7 @@ end_devices:
   - id: "3"
     sfdi: "300000000001"
     lfdi: "3000000000000000000000000000000000000001"
+    managed_by: "0"
     enabled: true
     changed_time: 1700000003
     registration_link: "/edev/3/rg"
@@ -106,6 +112,7 @@ end_devices:
   - id: "4"
     sfdi: "300000000002"
     lfdi: "3000000000000000000000000000000000000002"
+    managed_by: "0"
     enabled: true
     changed_time: 1700000004
     registration_link: "/edev/4/rg"

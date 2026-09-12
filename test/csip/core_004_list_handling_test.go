@@ -44,6 +44,9 @@ func TestCORE_004_ListHandling(t *testing.T) {
 	// the fixture loader writes through the same store the booted server
 	// reads from. The adapter is the canonical pattern for Phase 3 tests
 	// per #52's loader docs.
+	// One caller sees three EndDevices only as the manager of the other two:
+	// the list is filtered to the caller's own and managed devices.
+	caller := csiptest.NewDeviceIdentity(t, "CORE-004-DEVICE")
 	stores := csiptest.NewFreshStores()
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
@@ -52,12 +55,13 @@ func TestCORE_004_ListHandling(t *testing.T) {
 		DERControls:        stores.DERControls,
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,
+		EndDeviceManagers:  stores.EndDeviceManagers,
 	}
-	if err := csiptest.Load(ctx, target, "fixtures/three-edev.yaml"); err != nil {
+	if err := csiptest.Load(ctx, target, "fixtures/three-edev.yaml", csiptest.Bind("0", caller)); err != nil {
 		t.Fatalf("Load three-edev.yaml: %v", err)
 	}
 
-	srv := csiptest.BootServer(t, csiptest.WithStores(stores))
+	srv := csiptest.BootServer(t, csiptest.WithStores(stores), csiptest.WithDeviceIdentity(caller))
 
 	// Sanity-check the seeded state via the chained-GET helper before
 	// exercising paging. If /edev returns anything other than 3 items

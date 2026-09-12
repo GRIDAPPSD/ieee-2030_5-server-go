@@ -92,6 +92,9 @@ func bootAggregatorTopology(t *testing.T, opts ...csiptest.BootOption) *csiptest
 	t.Helper()
 	ctx := context.Background()
 
+	// The client presents the aggregator's certificate, bound to EDFI; the
+	// fixture's managed_by pairs give it the four inverters.
+	aggregator := csiptest.NewDeviceIdentity(t, "AGGREGATOR-EDFI")
 	stores := csiptest.NewFreshStores()
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
@@ -100,11 +103,12 @@ func bootAggregatorTopology(t *testing.T, opts ...csiptest.BootOption) *csiptest
 		DERControls:        stores.DERControls,
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,
+		EndDeviceManagers:  stores.EndDeviceManagers,
 	}
-	if err := csiptest.Load(ctx, target, aggregatorTopologyFixture); err != nil {
+	if err := csiptest.Load(ctx, target, aggregatorTopologyFixture, csiptest.Bind(aggEDFI, aggregator)); err != nil {
 		t.Fatalf("load aggregator topology fixture %s: %v", aggregatorTopologyFixture, err)
 	}
 
-	allOpts := append([]csiptest.BootOption{csiptest.WithStores(stores)}, opts...)
+	allOpts := append([]csiptest.BootOption{csiptest.WithStores(stores), csiptest.WithDeviceIdentity(aggregator)}, opts...)
 	return csiptest.BootServer(t, allOpts...)
 }

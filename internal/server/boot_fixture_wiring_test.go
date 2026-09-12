@@ -30,7 +30,7 @@ import (
 
 // TestBootFixtureWiringGCM asserts the Enphase fixture is loaded into
 // stores under GCM mode. The CCM path uses the same Load() call, so we
-// only need to cover one cipher mode here — the multi-mode coverage is
+// only need to cover one cipher mode here - the multi-mode coverage is
 // in TestServerIdentityPopulatedUnderCCM (#1).
 func TestBootFixtureWiringGCM(t *testing.T) {
 	dir := t.TempDir()
@@ -58,14 +58,6 @@ func TestBootFixtureWiringGCM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateServerCert: %v", err)
 	}
-	deviceCertPEM, deviceKeyPEM, err := certs.GenerateDeviceCert(caCert, caKey, certs.DeviceCertOptions{
-		DeviceType:  certs.DeviceTypeGeneric,
-		HWSerialNum: "boot-fixture-TEST",
-	})
-	if err != nil {
-		t.Fatalf("GenerateDeviceCert: %v", err)
-	}
-
 	caFile := filepath.Join(dir, "ca.pem")
 	certFile := filepath.Join(dir, "server.pem")
 	keyFile := filepath.Join(dir, "server-key.pem")
@@ -91,6 +83,19 @@ func TestBootFixtureWiringGCM(t *testing.T) {
 		t.Fatalf("fixture missing at %s: %v", fixturePath, err)
 	}
 
+	// The client presents the committed test device certificate, whose
+	// identity is the one the fixture records, so GET /edev lists that
+	// device to its owner. The server trusts the certificate's root in
+	// addition to its own CA.
+	pkiDir := filepath.Join(repoRoot, "testdata", "csip-pki", "testdevice")
+	deviceCertPEM, err := os.ReadFile(filepath.Join(pkiDir, "device_chain.pem"))
+	if err != nil {
+		t.Fatalf("read test device chain: %v", err)
+	}
+	deviceKeyPEM, err := os.ReadFile(filepath.Join(pkiDir, "device_key.pem"))
+	if err != nil {
+		t.Fatalf("read test device key: %v", err)
+	}
 	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, caCertPEM)
 	if err != nil {
 		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
@@ -119,6 +124,7 @@ startLoop:
 			CertFile:        certFile,
 			KeyFile:         keyFile,
 			CAFile:          caFile,
+			ExtraClientCAs:  []string{filepath.Join(pkiDir, "root_ca.pem")},
 			BootFixtureFile: fixturePath,
 			TZOffset:        -28800,
 			DSTOffset:       3600,

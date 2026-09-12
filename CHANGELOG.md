@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `subscription.HandleCreateSubscription` takes a notificationURI validator as
+  its second argument: pass `(*subscription.Manager).ValidateNotificationURI`,
+  or nil for the default policy. `subscription.NewManager` accepts
+  `ManagerOption`s, including `WithDestinationPolicy`.
+  ([#427](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/427))
+
 ### Deprecated
 
 ### Removed
@@ -24,3 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#4](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/4))
 
 ### Security
+
+- Subscription `notificationURI` destinations are validated.
+  `POST /edev/{id}/sub` refuses non-http(s) URIs, hosts that do not resolve,
+  and loopback, link-local, and unspecified addresses (including their
+  IPv4-mapped, IPv4-compatible, and NAT64 forms) with `400 Bad Request`.
+  Delivery re-checks the address at connect time, does not follow redirects,
+  and ignores proxy environment variables. `SEP2_NOTIFICATION_ALLOW_LOOPBACK=true`
+  allows loopback for test harnesses.
+  ([#427](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/427))

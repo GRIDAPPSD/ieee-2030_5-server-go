@@ -196,6 +196,42 @@ pinned `-coverpkg` list (the `CSIP_COVERPKG` Make variable);
 `make coverage-gate` enforces the floor (currently 80%, ratcheted at
 #212).
 
+## Notification destinations
+
+A Subscription's `notificationURI` names a destination the server POSTs to,
+so the server checks it when the Subscription is created and again for every
+delivery.
+
+- The URI must be absolute `http` or `https` with a host. Anything else is
+  refused with `400 Bad Request` and nothing is stored.
+- The host is resolved, and every address it resolves to must be allowed. A
+  host that cannot be resolved at creation is refused.
+- Refused by default: loopback (`127.0.0.0/8`, `::1`), link-local
+  (`169.254.0.0/16`, which includes cloud metadata at `169.254.169.254`, and
+  `fe80::/10` with or without a zone), and unspecified (`0.0.0.0/8`, `::`).
+  Those IPv4 ranges are also refused in IPv4-mapped (`::ffff:a.b.c.d`),
+  IPv4-compatible (`::a.b.c.d`), and NAT64 (`64:ff9b::a.b.c.d`) form.
+- Allowed: every other address, including the RFC 1918 and ULA (`fc00::/7`)
+  private ranges, because 2030.5 devices commonly sit on private networks.
+- Delivery resolves the host again and checks the address it is about to
+  connect to, so a name re-pointed at a refused address after creation is
+  never contacted. The subscription is kept.
+- Delivery does not follow redirects, and it ignores `HTTP_PROXY`,
+  `HTTPS_PROXY`, and `NO_PROXY`, because through a proxy the checked address
+  would be the proxy rather than the subscriber.
+- Refused creations and refused deliveries are logged.
+
+`SEP2_NOTIFICATION_ALLOW_LOOPBACK=true` allows loopback destinations, and
+only loopback. It exists for test harnesses whose receivers listen on the same
+host, and the server logs a warning at startup when it is set. Do not set it in
+production: the admin listener is on loopback, and with this set any client
+that can create a Subscription can make the server POST to it.
+
+In Go tests, opt a `subscription.Manager` in with
+`subscription.WithDestinationPolicy(subscription.DestinationPolicy{AllowLoopback: true})`.
+The CSIP harness wraps that as `csiptest.AllowLoopbackReceivers()`, and
+`csiptest.BootServer` uses it for its default Manager.
+
 ## Operator profiles
 
 Two ready-made CSIP-flavored boot profiles ship under Make targets:

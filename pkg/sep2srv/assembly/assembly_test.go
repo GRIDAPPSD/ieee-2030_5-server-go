@@ -546,9 +546,11 @@ func (s *notifyRemoverStub) NotifyRemoved(_ context.Context, sub sep2.Subscripti
 func TestAssembly_ScopedListRoutesMounted(t *testing.T) {
 	t.Parallel()
 
+	stores := testStores()
+	seedOwnedDevices(t, stores.EndDevices, "e1")
 	handler, _ := assembly.BuildProtocolRouter(
 		assembly.RouterConfig{},
-		testStores(),
+		stores,
 		testAuthPolicy(),
 		"serverSFDI", "serverLFDI",
 		nil,
@@ -618,6 +620,7 @@ func TestAssembly_DERProgramMemberHrefResolves(t *testing.T) {
 
 	stores := testStores()
 	edevID, fsaID, derpID := "e1", "f1", "p1"
+	seedOwnedDevices(t, stores.EndDevices, edevID)
 	wantHref := coreder.DERProgramHref(edevID, fsaID, derpID)
 	program := sep2.DERProgram{SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: wantHref}}}
 	if err := stores.DERPrograms.Create(context.Background(), edevID, derpID, program); err != nil {
@@ -691,6 +694,7 @@ func TestAssembly_DERProgramMemberStaysReadOnly(t *testing.T) {
 
 	stores := testStores()
 	edevID, fsaID, derpID := "e1", "f1", "p1"
+	seedOwnedDevices(t, stores.EndDevices, edevID)
 	href := coreder.DERProgramHref(edevID, fsaID, derpID)
 	program := sep2.DERProgram{SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: href}}}
 	if err := stores.DERPrograms.Create(context.Background(), edevID, derpID, program); err != nil {
@@ -758,6 +762,7 @@ func TestAssembly_AsNotifyRemoved(t *testing.T) {
 	t.Parallel()
 
 	stores := testStores()
+	seedOwnedDevices(t, stores.EndDevices, "e1")
 	stub := &notifyRemoverStub{}
 	handler, patterns := assembly.BuildProtocolRouter(
 		assembly.RouterConfig{},

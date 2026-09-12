@@ -169,11 +169,19 @@ func sep2Doc(root, children string) string {
 // are on Stores: EndDeviceIndexes is an index allocator, Subscriptions is
 // queried by href and by device, and AdminFSAs is a management plane. Their
 // routes are named in storeFreeRoutes with that reason.
-func faultyStores() (*assembly.Stores, *storetest.Fault) {
+//
+// The EndDevice store is the exception: it sits on its own switch and holds a
+// device the test identity owns at faultProbePathValue. The ownership gate reads
+// that store before any /edev/{id} handler runs, so with it failing no such
+// handler could be reached; [faultProbeDevice] says how to fail it too.
+func faultyStores(t *testing.T) (*assembly.Stores, *storetest.Fault, faultProbeDevice) {
+	t.Helper()
 	fault := &storetest.Fault{}
+	device := faultProbeDevice{fault: &storetest.Fault{}, raw: memory.NewEndDeviceStore()}
+	device.ensure(t)
 
 	return &assembly.Stores{
-		EndDevices:          storetest.NewFaultyEndDeviceStore(memory.NewEndDeviceStore(), fault),
+		EndDevices:          storetest.NewFaultyEndDeviceStore(device.raw, device.fault),
 		Registrations:       storetest.NewFaultyResourceStore[sep2.Registration](memory.NewRegistrationStore(), fault),
 		RegistrationPolicy:  testRegistrationPolicy(),
 		MirrorUsagePoints:   storetest.NewFaultyResourceStore[sep2.MirrorUsagePoint](memory.NewStore[sep2.MirrorUsagePoint](), fault),
@@ -207,7 +215,21 @@ func faultyStores() (*assembly.Stores, *storetest.Fault) {
 		FlowReservationResponses: storetest.NewFaultyScopedStore[sep2.FlowReservationResponse](memory.NewScopedStore[sep2.FlowReservationResponse](), fault),
 		ResponseSets:             storetest.NewFaultyResourceStore[sep2.ResponseSet](memory.NewStore[sep2.ResponseSet](), fault),
 		Responses:                storetest.NewFaultyScopedStore[sep2.Response](memory.NewScopedStore[sep2.Response](), fault),
-	}, fault
+	}, fault, device
+}
+
+// faultProbeDevice is the EndDevice every fault probe addresses, with its own
+// fault switch.
+type faultProbeDevice struct {
+	fault *storetest.Fault
+	raw   *memory.EndDeviceStore
+}
+
+// ensure re-seeds the device when a probe removed it. A DELETE /edev/{id}
+// probe can delete the record before a later store write fails.
+func (d faultProbeDevice) ensure(t *testing.T) {
+	t.Helper()
+	seedOwnedDevices(t, d.raw, faultProbePathValue)
 }
 
 // routePartition is the split of the router's own pattern enumeration into the
@@ -333,7 +355,7 @@ func probeRequestFor(base, pattern string) (*http.Request, error) {
 func TestEveryMountedRouteReportsAStoreFailureAsAServerError(t *testing.T) {
 	t.Parallel()
 
-	stores, fault := faultyStores()
+	stores, fault, device := faultyStores(t)
 
 	// The router is built while the stores are HEALTHY: assembly seeds the
 	// default ResponseSet at build time, and a router assembled against an
@@ -356,19 +378,12 @@ func TestEveryMountedRouteReportsAStoreFailureAsAServerError(t *testing.T) {
 
 	probed := 0
 	for _, pattern := range part.Probed {
-		req, err := probeRequestFor(srv.URL, pattern)
+		device.ensure(t)
+		status, err := probeStatus(srv.URL, pattern)
 		if err != nil {
 			t.Errorf("%s: %v", pattern, err)
 			continue
 		}
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Errorf("%s: %v", pattern, err)
-			continue
-		}
-		status := resp.StatusCode
-		_ = resp.Body.Close()
 		probed++
 
 		if status < 500 || status > 599 {
@@ -385,6 +400,51 @@ func TestEveryMountedRouteReportsAStoreFailureAsAServerError(t *testing.T) {
 	if probed != len(part.Probed) {
 		t.Errorf("drove %d of %d probed routes; the table did not cover what it claimed", probed, len(part.Probed))
 	}
+
+	// Now the EndDevice store fails as well. The two ungated /edev routes still
+	// owe a 5xx. Every other /edev route is refused by the ownership gate first,
+	// with 403: a refusal, not a claim that the resource is absent.
+	device.fault.Arm(storetest.ErrBackendUnavailable)
+	edevProbed := 0
+	for _, pattern := range part.Probed {
+		_, shape, _ := strings.Cut(pattern, " ")
+		if shape != "/edev" && !strings.HasPrefix(shape, "/edev/") {
+			continue
+		}
+		device.ensure(t)
+		status, err := probeStatus(srv.URL, pattern)
+		if err != nil {
+			t.Errorf("%s: %v", pattern, err)
+			continue
+		}
+		edevProbed++
+
+		ungated := pattern == "GET /edev" || pattern == "POST /edev"
+		switch {
+		case ungated && (status < 500 || status > 599):
+			t.Errorf("%s answered %d with the EndDevice store failing; want 5xx", pattern, status)
+		case !ungated && status != http.StatusForbidden:
+			t.Errorf("%s answered %d with the EndDevice store failing; want 403 from the ownership gate", pattern, status)
+		}
+	}
+	if edevProbed == 0 {
+		t.Error("no /edev route was probed with the EndDevice store failing; that phase asserted nothing")
+	}
+	t.Logf("probed %d /edev route(s) with the EndDevice store failing", edevProbed)
+}
+
+// probeStatus drives one probe request and returns its status.
+func probeStatus(base, pattern string) (int, error) {
+	req, err := probeRequestFor(base, pattern)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode, nil
 }
 
 // TestPartitionMountedRoutesRefusesAVacuousTable exercises the vacuity guard
@@ -475,7 +535,7 @@ func TestPartitionMountedRoutesRefusesAVacuousTable(t *testing.T) {
 func TestFaultProbeRoutesAreServedWhileHealthy(t *testing.T) {
 	t.Parallel()
 
-	stores, fault := faultyStores()
+	stores, fault, device := faultyStores(t)
 	handler, patterns := assembly.BuildProtocolRouter(
 		assembly.RouterConfig{}, stores, testAuthPolicy(), "serverSFDI", "serverLFDI", nil,
 	)
@@ -490,6 +550,7 @@ func TestFaultProbeRoutesAreServedWhileHealthy(t *testing.T) {
 	fault.Disarm()
 
 	for _, pattern := range part.Probed {
+		device.ensure(t)
 		req, err := probeRequestFor(srv.URL, pattern)
 		if err != nil {
 			t.Errorf("%s: %v", pattern, err)

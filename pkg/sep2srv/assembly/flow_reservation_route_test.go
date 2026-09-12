@@ -28,11 +28,13 @@ import (
 // only; the Mandatory PUT on FlowReservationRequest is a write surface and is
 // reported rather than added here.
 
-// frqServer builds a fully wired router and returns it with its stores.
+// frqServer builds a fully wired router and returns it with its stores. The
+// device ids this file addresses are seeded as the test identity's own.
 func frqServer(t *testing.T) (*httptest.Server, *assembly.Stores) {
 	t.Helper()
 
 	stores := testStores()
+	seedOwnedDevices(t, stores.EndDevices, "e1", "deviceA", "deviceB")
 	handler, _ := assembly.BuildProtocolRouter(
 		assembly.RouterConfig{},
 		stores,

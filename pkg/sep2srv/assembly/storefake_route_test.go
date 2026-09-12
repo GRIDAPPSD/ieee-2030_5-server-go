@@ -147,6 +147,7 @@ func fakeStores() *assembly.Stores {
 // fakeBackedServer boots the real router over the second implementation.
 func fakeBackedServer(t *testing.T, stores *assembly.Stores) *httptest.Server {
 	t.Helper()
+	seedOwnedDevices(t, stores.EndDevices, "3", "7", "999")
 	handler, _ := assembly.BuildProtocolRouter(
 		assembly.RouterConfig{}, stores, testAuthPolicy(), "serverSFDI", "serverLFDI", nil,
 	)

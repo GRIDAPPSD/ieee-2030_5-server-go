@@ -58,8 +58,9 @@ type callerIdentity struct{ lfdi, sfdi string }
 // the ownership gate honestly.
 func indexTestPolicy() assembly.AuthPolicy {
 	known := map[string]callerIdentity{
-		deviceLFDIA: {deviceLFDIA, deviceSFDIA},
-		deviceLFDIB: {deviceLFDIB, deviceSFDIB},
+		deviceLFDIA:       {deviceLFDIA, deviceSFDIA},
+		deviceLFDIB:       {deviceLFDIB, deviceSFDIB},
+		unprovisionedLFDI: {unprovisionedLFDI, "0000000000000000"},
 	}
 	return assembly.AuthPolicy{
 		Wrap: func(h http.Handler) http.Handler {

@@ -124,6 +124,7 @@ func TestPartialFamilyRefusesRatherThanPanicking(t *testing.T) {
 
 			stores := testStores()
 			tc.clear(stores)
+			seedOwnedDevices(t, stores.EndDevices, "1")
 
 			handler, patterns := assembly.BuildProtocolRouter(
 				assembly.RouterConfig{}, stores, testAuthPolicy(), "serverSFDI", "serverLFDI", nil,

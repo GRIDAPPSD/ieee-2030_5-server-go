@@ -105,7 +105,7 @@ func clientSuppliedText(body string) []string {
 // did not cause, which is the "green because it measured nothing" failure the
 // vacuity guard exists to refuse elsewhere.
 func TestEveryStoreFailureFiveHundredIsLoggedWithItsRoute(t *testing.T) {
-	stores, fault := faultyStores()
+	stores, fault, device := faultyStores(t)
 
 	handler, patterns := assembly.BuildProtocolRouter(
 		assembly.RouterConfig{}, stores, testAuthPolicy(), "serverSFDI", "serverLFDI", nil,
@@ -132,6 +132,7 @@ func TestEveryStoreFailureFiveHundredIsLoggedWithItsRoute(t *testing.T) {
 		// Unique per route, so a line this request did not produce can
 		// never satisfy this route's assertion.
 		token := fmt.Sprintf("faultprobe-%03d", i)
+		device.ensure(t)
 		fault.Arm(fmt.Errorf("%w [%s]", storetest.ErrBackendUnavailable, token))
 
 		req, err := probeRequestFor(srv.URL, pattern)

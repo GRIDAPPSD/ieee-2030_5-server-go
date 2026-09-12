@@ -1,6 +1,6 @@
 //go:build csip_test_hooks
 
-// CSIP V1.2 §11.3 — Group Maintenance (EndDevice → FSA reassignment).
+// CSIP V1.2 section 11.3 - Group Maintenance (EndDevice -> FSA reassignment).
 //
 // MAINT-003 asserts the FSA-swap flow: the server moves an EndDevice's
 // FunctionSetAssignment from one FSA id to another (the #123
@@ -8,17 +8,17 @@
 // Notification on the FSAList href so it can update its subscription
 // topology.
 //
-// V1.2 procedure step → assertion mapping:
+// V1.2 procedure step -> assertion mapping:
 //
 //	Step 1: seed an EndDevice with a FSA at id "fsa-old"; subscribe
 //	        to the EndDevice's FSAList (/edev/{id}/fsa).
-//	                                          ──► EndDevices.Create + FSAs.ForParent.Create
-//	                                          ──► POST /edev/{id}/sub on the FSA list href
+//	                                          -> EndDevices.Create + FSAs.ForParent.Create
+//	                                          -> POST /edev/{id}/sub on the FSA list href
 //	Step 2: drive the FSA-swap mutation to move the FSA from "fsa-old"
 //	        to "fsa-new".
-//	                                          ──► POST /test/mutations/fsa-swap
-//	                                          ──► 204 No Content
-//	                                          ──► store: GET fsa-new succeeds, fsa-old gone
+//	                                          -> POST /test/mutations/fsa-swap
+//	                                          -> 204 No Content
+//	                                          -> store: GET fsa-new succeeds, fsa-old gone
 //	Step 3: server emits FSAList Notification. The mutation handler
 //	        is intentionally store-only; we drive Notify in-test the
 //	        same way #151 does. The aggregator (test receiver)
@@ -26,8 +26,8 @@
 //	        would re-subscribe to the new FSA's DERProgramList; that
 //	        re-subscribe step is plan-1's concern. Server-side scope
 //	        ends at the Notification delivery).
-//	                                          ──► mgr.Notify(/edev/{id}/fsa, Changed)
-//	                                          ──► receiver.Wait(1)
+//	                                          -> mgr.Notify(/edev/{id}/fsa, Changed)
+//	                                          -> receiver.Wait(1)
 //
 // Build-tag: csip_test_hooks is required for the fsa-swap mutation.
 //
@@ -54,11 +54,12 @@ const (
 	maint003ToFSA       = "fsa-new"
 )
 
-// TestMAINT_003_GroupMaintenanceFSAReassignment implements CSIP V1.2 §11.3.
+// TestMAINT_003_GroupMaintenanceFSAReassignment implements CSIP V1.2 section 11.3.
 func TestMAINT_003_GroupMaintenanceFSAReassignment(t *testing.T) {
 	t.Parallel()
 
-	srv := csiptest.BootServer(t)
+	owner := csiptest.NewDeviceIdentity(t, "MAINT-003-DEVICE")
+	srv := csiptest.BootServer(t, csiptest.WithDeviceIdentity(owner))
 	receiver := csiptest.NewNotificationReceiver(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -67,7 +68,7 @@ func TestMAINT_003_GroupMaintenanceFSAReassignment(t *testing.T) {
 	go mgr.Start(ctx)
 
 	// Step 1a: seed EndDevice + initial FSA at id "fsa-old".
-	seedEndDevice(t, srv, maint003EndDeviceID)
+	seedOwnedEndDevice(t, srv.Stores.EndDevices, maint003EndDeviceID, owner)
 	fromHref := "/edev/" + maint003EndDeviceID + "/fsa/" + maint003FromFSA
 	fsa := sep2.FunctionSetAssignments{
 		Resource: sep2.Resource{Href: fromHref},

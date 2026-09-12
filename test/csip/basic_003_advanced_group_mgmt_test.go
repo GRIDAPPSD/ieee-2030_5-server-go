@@ -1,13 +1,13 @@
 //go:build csip_test_hooks
 
-// CSIP V1.2 §8.3 — BASIC-003 Advanced Group Management.
+// CSIP V1.2 section 8.3 - BASIC-003 Advanced Group Management.
 //
 // BASIC-003 exercises a mid-flight topology change: a DER's group
 // assignment (its FunctionSetAssignment hookup) is reassigned at runtime
 // by a utility-side edit, and the DER's published view of its FSA chain
 // must reflect the new assignment without the client retrying handshake
 // or registration. In the spec's hierarchy vocabulary, the canonical
-// procedure is a "feeder swap" — one level of the FSA priority chain is
+// procedure is a "feeder swap" - one level of the FSA priority chain is
 // re-pointed at a different group while every other level (system,
 // substation, transformer, ...) is unchanged.
 //
@@ -19,27 +19,27 @@
 // token-authenticated). #123 chose reassignment shape (a): re-key
 // the FSA list entry under the EndDevice scope, preserving content and
 // re-stamping Href + DERProgramListLink.Href. DERPrograms are scoped by
-// EndDevice only — they ride along untouched.
+// EndDevice only - they ride along untouched.
 //
-// Procedure step → assertion mapping (V1.2 §8.3):
+// Procedure step -> assertion mapping (V1.2 section 8.3):
 //
 //	Step 1: server has an EndDevice with the seven-level FSA chain
 //	        (system, substation, feeder, transformer, service-point,
 //	        meter, device). The fixture seven-level-fsa.yaml seeds
-//	        exactly this — see #52 / CORE-010.
-//	        ──► load fixture, BootServer, GET /dcap → EndDeviceList →
+//	        exactly this - see #52 / CORE-010.
+//	        -> load fixture, BootServer, GET /dcap -> EndDeviceList ->
 //	            FunctionSetAssignmentsListLink. Assert all=7.
 //	Step 2: client GETs the FSA list pre-swap; the feeder-level entry
 //	        ("L2-feeder", primacy 2 in this fixture's chain, fixture id
 //	        "2") is present with its original Href and DERProgramList-
 //	        Link.Href.
-//	        ──► WalkLink the FSAList with l=255 (single page).
+//	        -> WalkLink the FSAList with l=255 (single page).
 //	            Locate by mRID "L2-FEEDER-FSA"; assert Href is
 //	            "/edev/0/fsa/2" and DERProgramListLink.Href is
 //	            "/edev/0/fsa/2/derp".
 //	Step 3: utility-side edit (out-of-band): reassign the feeder
 //	        FSA's id from "2" to "2-new".
-//	        ──► POST /test/mutations/fsa-swap with
+//	        -> POST /test/mutations/fsa-swap with
 //	            {end_device_id: "0", from_fsa: "2", to_fsa: "2-new"}.
 //	            Assert 204.
 //	Step 4: client re-GETs the FSA list post-swap. The feeder entry
@@ -47,13 +47,13 @@
 //	        gone. The feeder entry's content (mRID, description) must
 //	        be preserved; its Href and DERProgramListLink.Href must be
 //	        re-stamped to the new path.
-//	        ──► WalkLink again, find by mRID, assert the new Href,
+//	        -> WalkLink again, find by mRID, assert the new Href,
 //	            new DERProgramListLink.Href, preserved mRID,
 //	            description. Assert no FSA carries the old id "2"
 //	            anywhere in its Href.
-//	Step 5: the priority chain is still intact — every other FSA in
+//	Step 5: the priority chain is still intact - every other FSA in
 //	        the chain is unchanged, total count is still 7.
-//	        ──► Assert post-swap len(FSAList) == 7 and the six
+//	        -> Assert post-swap len(FSAList) == 7 and the six
 //	            non-feeder FSAs match the pre-swap snapshot byte-for-
 //	            byte on (mRID, Description, Href).
 //	Step 6: the underlying DERProgram references re-key correctly per
@@ -61,7 +61,7 @@
 //	        Programs are scoped by EndDevice only (not by FSA), so
 //	        every FSA's DERProgramListLink returns the same full set.
 //	        The swap leaves DERPrograms untouched.
-//	        ──► WalkLink the new feeder FSA's DERProgramListLink and
+//	        -> WalkLink the new feeder FSA's DERProgramListLink and
 //	            assert it returns all 7 DERPrograms with primacy 0..6
 //	            (mirrors CORE-010's chain assertion).
 //
@@ -94,13 +94,13 @@ const basic003TestToken = "ieee-088-basic-003-mutation-token"
 // procedure to a different chain level.
 const basic003FeederMRID = "L2-FEEDER-FSA"
 
-// TestBASIC_003_AdvancedGroupManagement implements CSIP V1.2 §8.3.
-// See file-level doc comment for the procedure-step → assertion map.
+// TestBASIC_003_AdvancedGroupManagement implements CSIP V1.2 section 8.3.
+// See file-level doc comment for the procedure-step -> assertion map.
 func TestBASIC_003_AdvancedGroupManagement(t *testing.T) {
 	// Mutation surface reads its token env at router-construct time
 	// (RegisterMutationHandlers in internal/server/test_mutations.go).
 	// t.Setenv must run before BootServer; t.Parallel is therefore not
-	// safe here — t.Setenv panics on a parallel test. The procedure is
+	// safe here - t.Setenv panics on a parallel test. The procedure is
 	// short and self-contained so serial execution is the correct
 	// trade.
 	t.Setenv("SEP2_TEST_MUTATION_TOKEN", basic003TestToken)
@@ -116,12 +116,13 @@ func TestBASIC_003_AdvancedGroupManagement(t *testing.T) {
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,
 	}
+	owner := csiptest.NewDeviceIdentity(t, "BASIC-003-DEVICE")
 	fixture := filepath.Join("fixtures", "seven-level-fsa.yaml")
-	if err := csiptest.Load(ctx, target, fixture); err != nil {
+	if err := csiptest.Load(ctx, target, fixture, csiptest.Bind(fixtureEndDeviceID, owner)); err != nil {
 		t.Fatalf("Load %s: %v", fixture, err)
 	}
 
-	srv := csiptest.BootServer(t, csiptest.WithStores(stores))
+	srv := csiptest.BootServer(t, csiptest.WithStores(stores), csiptest.WithDeviceIdentity(owner))
 	client := srv.Client()
 
 	// Step 1: assert the EndDevice is wired with all 7 FSAs advertised.
@@ -238,7 +239,7 @@ func TestBASIC_003_AdvancedGroupManagement(t *testing.T) {
 	// "3" (the "-" byte 0x2D is between digits 0x30 and "0"..."9", and
 	// "2-new" sorts before "20" or "3"). So the non-feeder slots align
 	// at the same store-key positions in both lists. Compare by mRID
-	// for cross-list identification — robust against any future fixture
+	// for cross-list identification - robust against any future fixture
 	// id renumber.
 	for i, want := range preList.FunctionSetAssignments {
 		if want.MRID == basic003FeederMRID {
@@ -262,7 +263,7 @@ func TestBASIC_003_AdvancedGroupManagement(t *testing.T) {
 
 	// Step 6: the priority chain is intact. WalkLink the new feeder's
 	// DERProgramListLink and assert it returns all 7 DERPrograms with
-	// primacy 0..6 — #123 leaves DERPrograms untouched because
+	// primacy 0..6 - #123 leaves DERPrograms untouched because
 	// they're scoped by EndDevice only. This mirrors CORE-010's chain
 	// assertion to make the "DERProgram references re-key correctly"
 	// exit criterion concrete.
@@ -289,7 +290,7 @@ func TestBASIC_003_AdvancedGroupManagement(t *testing.T) {
 }
 
 // walkBasic003FSAList GETs the FSA list with l=255 so all 7 entries
-// come back in one response. Sibling of CORE-010's walkFSAList — kept
+// come back in one response. Sibling of CORE-010's walkFSAList - kept
 // local to the file because the helper there isn't exported and BASIC-
 // 003 is the only build-tag-gated test currently exercising the FSA
 // list. Promoting to csiptest is premature until a second tagged test
@@ -324,7 +325,7 @@ func findFSAByMRID(fsas []sep2.FunctionSetAssignments, want string) (sep2.Functi
 // from_fsa, to_fsa}. Asserts the response status matches wantStatus.
 //
 // Single-use helper kept local to this file. Promotion to csiptest is
-// deferred until a second tagged test drives the same mutation surface —
+// deferred until a second tagged test drives the same mutation surface -
 // no point shipping an API for one caller (Pike's anti-extension rule,
 // also documented in #123's "harness can chain a derctl-add" note).
 func postFSASwap(ctx context.Context, t *testing.T, srv *csiptest.BootedServer, body map[string]string, wantStatus int) {

@@ -61,7 +61,7 @@ func TestHandleEndDeviceListForCaller_Edges(t *testing.T) {
 
 	t.Run("nil identity func is refused", func(t *testing.T) {
 		t.Parallel()
-		status, _ := serveList(t, coreedev.HandleEndDeviceListForCaller(memory.NewEndDeviceStore(), nil, 900))
+		status, _ := serveList(t, coreedev.HandleEndDeviceListForCaller(memory.NewEndDeviceStore(), nil, nil, 900))
 		if status != http.StatusForbidden {
 			t.Errorf("status %d, want 403", status)
 		}
@@ -71,7 +71,7 @@ func TestHandleEndDeviceListForCaller_Edges(t *testing.T) {
 		t.Parallel()
 		var typedNil *memory.EndDeviceStore
 		for name, s := range map[string]store.EndDeviceStore{"nil": nil, "typed nil": typedNil} {
-			status, body := serveList(t, coreedev.HandleEndDeviceListForCaller(s, identity, 900))
+			status, body := serveList(t, coreedev.HandleEndDeviceListForCaller(s, nil, identity, 900))
 			if status != http.StatusInternalServerError || strings.Contains(body, "EndDeviceList") {
 				t.Errorf("%s store: status %d body %q, want a 500 and no list", name, status, body)
 			}
@@ -80,7 +80,7 @@ func TestHandleEndDeviceListForCaller_Edges(t *testing.T) {
 
 	t.Run("index returning another device lists nothing", func(t *testing.T) {
 		t.Parallel()
-		status, body := serveList(t, coreedev.HandleEndDeviceListForCaller(staleIndexStore{memory.NewEndDeviceStore()}, identity, 900))
+		status, body := serveList(t, coreedev.HandleEndDeviceListForCaller(staleIndexStore{memory.NewEndDeviceStore()}, nil, identity, 900))
 		if status != http.StatusOK {
 			t.Fatalf("status %d, want 200; body=%s", status, body)
 		}
@@ -96,7 +96,7 @@ func TestHandleEndDeviceListForCaller_Edges(t *testing.T) {
 	t.Run("non-GET is 405", func(t *testing.T) {
 		t.Parallel()
 		rec := httptest.NewRecorder()
-		coreedev.HandleEndDeviceListForCaller(memory.NewEndDeviceStore(), identity, 900)(rec, httptest.NewRequest(http.MethodPut, "/edev", nil))
+		coreedev.HandleEndDeviceListForCaller(memory.NewEndDeviceStore(), nil, identity, 900)(rec, httptest.NewRequest(http.MethodPut, "/edev", nil))
 		if rec.Code != http.StatusMethodNotAllowed {
 			t.Errorf("status %d, want 405", rec.Code)
 		}

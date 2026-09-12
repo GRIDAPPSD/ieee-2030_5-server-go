@@ -151,6 +151,11 @@ import (
 type Stores struct {
 	EndDevices store.EndDeviceStore
 
+	// EndDeviceManagers holds the provisioned (manager, managed) LFDI pairs
+	// the ownership gate and GET /edev consult. Absent means no delegation:
+	// every caller reaches only the EndDevice whose stored LFDI is its own.
+	EndDeviceManagers store.EndDeviceManagementStore
+
 	// EndDeviceIndexes allocates the opaque, server-chosen index that
 	// addresses an EndDevice in resource URLs ("/edev/3/rg"). It is an
 	// ADDRESSING mechanism only: device identity remains the
@@ -376,7 +381,7 @@ func BuildProtocolRouter(
 	if stores != nil {
 		// Every helper registers through the ownership gate, so each
 		// /edev/{id}-scoped route is bound to the caller wherever it is mounted.
-		gated := newOwnershipGate(protocolMux, stores.EndDevices, authPolicy.Identity)
+		gated := newOwnershipGate(protocolMux, stores.EndDevices, stores.EndDeviceManagers, authPolicy.Identity)
 		registerEndDeviceRoutes(gated, stores, authPolicy, notifier)
 		registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
 		registerDERRoutes(gated, stores)
@@ -557,7 +562,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	// to its own gate.
 	edevs := logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores)
 
-	mux.HandleFunc("GET /edev", coreedev.HandleEndDeviceListForCaller(edevs, authPolicy.Identity, 900))
+	mux.HandleFunc("GET /edev", coreedev.HandleEndDeviceListForCaller(edevs, stores.EndDeviceManagers, authPolicy.Identity, 900))
 	mux.HandleFunc("POST /edev", coreedev.HandleCreateEndDevice(edevs, edevIndexes, authPolicy.Identity, authPolicy.SFDIPrefix))
 	mux.HandleFunc("GET /edev/{id}", coreedev.HandleEndDevice(edevs))
 	mux.HandleFunc("PUT /edev/{id}", coreedev.HandleUpdateEndDevice(edevs))

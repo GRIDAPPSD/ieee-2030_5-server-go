@@ -68,7 +68,7 @@ func TestOwnershipGate_EmptyPathIDIsRefused(t *testing.T) {
 	if err := devs.Create(context.Background(), "", sep2.EndDevice{LFDI: "OWNER"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	g := newOwnershipGate(newRecordingMux(), devs, ownerIdentity("OWNER"))
+	g := newOwnershipGate(newRecordingMux(), devs, nil, ownerIdentity("OWNER"))
 
 	status, ran := serveGated(t, g, "")
 	if status != http.StatusForbidden || ran {
@@ -82,14 +82,14 @@ func TestOwnershipGate_NilIdentityIsRefused(t *testing.T) {
 	if err := devs.Create(context.Background(), "1", sep2.EndDevice{LFDI: "OWNER"}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	g := newOwnershipGate(newRecordingMux(), devs, nil)
+	g := newOwnershipGate(newRecordingMux(), devs, nil, nil)
 
 	status, ran := serveGated(t, g, "1")
 	if status != http.StatusForbidden || ran {
 		t.Errorf("nil identity: status %d, handler ran %v; want 403 and not run", status, ran)
 	}
 
-	g = newOwnershipGate(newRecordingMux(), devs, ownerIdentity("OWNER"))
+	g = newOwnershipGate(newRecordingMux(), devs, nil, ownerIdentity("OWNER"))
 	if status, ran := serveGated(t, g, "1"); status != http.StatusTeapot || !ran {
 		t.Errorf("owner control: status %d, handler ran %v; want the handler to run", status, ran)
 	}
@@ -149,7 +149,7 @@ func TestOwnershipGate_PatternListIsUnchanged(t *testing.T) {
 	registerAll(bare, stores, policy)
 
 	gatedMux := newRecordingMux()
-	registerAll(newOwnershipGate(gatedMux, stores.EndDevices, policy.Identity), stores, policy)
+	registerAll(newOwnershipGate(gatedMux, stores.EndDevices, stores.EndDeviceManagers, policy.Identity), stores, policy)
 
 	if len(bare.patterns) == 0 {
 		t.Fatal("no patterns registered; the comparison would pass vacuously")

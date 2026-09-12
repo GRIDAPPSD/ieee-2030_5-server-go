@@ -40,7 +40,7 @@ func OwnedBy(storedLFDI, callerLFDI string) bool {
 // where one certificate is authorized for several devices, generalizes it by
 // resolving "the devices this certificate is authorized for" in place of the
 // single lookup; the paging and counting below stay as they are.
-func HandleEndDeviceListForCaller(s store.EndDeviceStore, identity IdentityFunc, pollRate uint32) http.HandlerFunc {
+func HandleEndDeviceListForCaller(s store.EndDeviceStore, managers store.EndDeviceManagementStore, identity IdentityFunc, pollRate uint32) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			encoding.MethodNotAllowed(w, "GET, HEAD")

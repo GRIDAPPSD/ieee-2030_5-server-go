@@ -29,6 +29,8 @@ type ownershipGate struct {
 	next           routeRegistrar
 	devices        store.EndDeviceStore
 	devicesAbsent  bool
+	managers       store.EndDeviceManagementStore
+	managersAbsent bool
 	identity       func(ctx context.Context) (lfdi, sfdi string, ok bool)
 	identityAbsent bool
 }
@@ -42,16 +44,21 @@ var ownershipExempt = map[string]bool{
 	"GET /edev": true,
 }
 
-func newOwnershipGate(next routeRegistrar, devices store.EndDeviceStore, identity func(ctx context.Context) (lfdi, sfdi string, ok bool)) *ownershipGate {
+func newOwnershipGate(next routeRegistrar, devices store.EndDeviceStore, managers store.EndDeviceManagementStore, identity func(ctx context.Context) (lfdi, sfdi string, ok bool)) *ownershipGate {
 	g := &ownershipGate{
 		next:           next,
 		devices:        devices,
 		devicesAbsent:  store.IsAbsent(devices),
+		managers:       managers,
+		managersAbsent: store.IsAbsent(managers),
 		identity:       identity,
 		identityAbsent: identity == nil,
 	}
 	if g.devicesAbsent {
 		log.Print("assembly: Stores.EndDevices is not wired: every /edev/{id} route will answer 403")
+	}
+	if g.managersAbsent {
+		log.Print("assembly: Stores.EndDeviceManagers is not wired: no EndDevice access is delegated to a manager")
 	}
 	return g
 }

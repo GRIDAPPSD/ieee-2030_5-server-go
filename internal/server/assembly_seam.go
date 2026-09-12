@@ -23,6 +23,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"reflect"
 
@@ -250,6 +251,9 @@ func adaptNotifier(n handler.ResourceNotifier) assembly.ResourceNotifier {
 		if v.IsNil() {
 			return nil
 		}
+	}
+	if _, ok := n.(notificationURIValidator); !ok {
+		log.Printf("server: notifier has no notificationURI validator (%T); subscription creation applies the default DestinationPolicy", n)
 	}
 	return &notifierAdapter{inner: n}
 }

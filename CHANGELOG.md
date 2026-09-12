@@ -33,9 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Subscription `notificationURI` destinations are validated.
   `POST /edev/{id}/sub` refuses non-http(s) URIs, hosts that do not resolve,
-  and loopback, link-local, and unspecified addresses (including their
-  IPv4-mapped, IPv4-compatible, and NAT64 forms) with `400 Bad Request`.
-  Delivery re-checks the address at connect time, does not follow redirects,
-  and ignores proxy environment variables. `SEP2_NOTIFICATION_ALLOW_LOOPBACK=true`
-  allows loopback for test harnesses.
+  and loopback, link-local, unspecified, local multicast, and known cloud
+  metadata addresses (including their IPv4-mapped, IPv4-compatible, and NAT64
+  forms) with `400 Bad Request`. Delivery re-checks the address at connect
+  time, shares its connect time across a host's addresses, does not follow
+  redirects, ignores proxy environment variables, and redacts userinfo from
+  logs. `SEP2_NOTIFICATION_ALLOW_LOOPBACK=true` allows loopback for test
+  harnesses.
   ([#427](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/427))

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -158,6 +159,9 @@ type fakeNet struct {
 	hang      map[string]bool
 	budgets   map[string]time.Duration // time left on the dial context, per address
 	dialed    []string
+
+	hangLookup    map[string]bool
+	lookupEntered chan string
 }
 
 func newFakeNet() *fakeNet {
@@ -167,7 +171,18 @@ func newFakeNet() *fakeNet {
 		routes:    map[string]string{},
 		hang:      map[string]bool{},
 		budgets:   map[string]time.Duration{},
+
+		hangLookup:    map[string]bool{},
+		lookupEntered: make(chan string, 16),
 	}
+}
+
+// hangLookupOn makes lookups of name block until their context ends, like a
+// resolver that never answers. Each such lookup is announced on lookupEntered.
+func (f *fakeNet) hangLookupOn(name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hangLookup[name] = true
 }
 
 func (f *fakeNet) setLookupErr(name string, err error) {
@@ -224,8 +239,20 @@ func (f *fakeNet) route(ip, port string, rs *recordingServer) {
 	f.routes[net.JoinHostPort(netip.MustParseAddr(ip).String(), port)] = rs.srv.Listener.Addr().String()
 }
 
-func (f *fakeNet) lookup(_ context.Context, host string) ([]netip.Addr, error) {
+func (f *fakeNet) lookup(ctx context.Context, host string) ([]netip.Addr, error) {
 	f.mu.Lock()
+	if f.hangLookup[host] {
+		f.mu.Unlock()
+		select {
+		case f.lookupEntered <- host:
+		default:
+		}
+		<-ctx.Done()
+		return nil, &net.DNSError{
+			Err: ctx.Err().Error(), Name: host,
+			IsTimeout: errors.Is(ctx.Err(), context.DeadlineExceeded), UnwrapErr: ctx.Err(),
+		}
+	}
 	defer f.mu.Unlock()
 	if err, ok := f.lookupErr[host]; ok {
 		return nil, err
@@ -292,8 +319,11 @@ func runManager(t *testing.T, mgr *subscription.Manager) {
 // way the protocol router registers it.
 func postSubscription(t *testing.T, h http.HandlerFunc, edevID, resource, uri string) *httptest.ResponseRecorder {
 	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /edev/{id}/sub", h)
+	return serveSubscription(h, newSubscriptionRequest(t, context.Background(), edevID, resource, uri))
+}
+
+func newSubscriptionRequest(t *testing.T, ctx context.Context, edevID, resource, uri string) *http.Request {
+	t.Helper()
 	body, err := xml.Marshal(&sep2.Subscription{
 		SubscribedResource: resource,
 		NotificationURI:    uri,
@@ -302,8 +332,14 @@ func postSubscription(t *testing.T, h http.HandlerFunc, edevID, resource, uri st
 	if err != nil {
 		t.Fatalf("marshal Subscription: %v", err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/edev/"+edevID+"/sub", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/edev/"+edevID+"/sub", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/sep+xml")
+	return req
+}
+
+func serveSubscription(h http.HandlerFunc, req *http.Request) *httptest.ResponseRecorder {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /edev/{id}/sub", h)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec

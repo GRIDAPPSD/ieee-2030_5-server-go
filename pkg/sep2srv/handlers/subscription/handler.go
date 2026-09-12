@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -163,9 +164,14 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 
 		if err := validate(r.Context(), sub.NotificationURI); err != nil {
 			target := redactURI(sub.NotificationURI)
+			var dnsErr *net.DNSError
 			switch {
 			case errors.Is(err, ErrRefusedDestination):
 				log.Printf("subscription: refused notificationURI %q for EndDevice %q: %v", target, edevID, err)
+			case errors.Is(err, ErrDestinationUnresolved) && r.Context().Err() != nil:
+				log.Printf("subscription: request ended while resolving notificationURI %q for EndDevice %q, refusing: %v", target, edevID, err)
+			case errors.Is(err, ErrDestinationUnresolved) && errors.As(err, &dnsErr) && dnsErr.IsNotFound:
+				log.Printf("subscription: no such host for notificationURI %q for EndDevice %q, refusing: %v", target, edevID, err)
 			case errors.Is(err, ErrDestinationUnresolved):
 				log.Printf("subscription: could not resolve notificationURI %q for EndDevice %q, refusing: %v", target, edevID, err)
 			default:

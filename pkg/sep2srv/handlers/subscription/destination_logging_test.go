@@ -26,12 +26,16 @@ func captureLog(t *testing.T) *syncBuffer {
 }
 
 // Not parallel: it swaps the process-wide log output.
-func TestLogsRedactNotificationURIUserinfo(t *testing.T) {
+func TestLogsRedactNotificationURICredentials(t *testing.T) {
 	logs := captureLog(t)
 
-	const user, pass = "alice-user", "s3cret-pw"
-	withUser := func(host string) string {
-		return "http://" + user + ":" + pass + "@" + host + ":" + destPort + "/n"
+	const (
+		user, pass = "alice-user", "s3cret-pw"
+		queryToken = "q-s3cret-token"
+		fragment   = "frag-s3cret"
+	)
+	withSecrets := func(host string) string {
+		return "http://" + user + ":" + pass + "@" + host + ":" + destPort + "/n?token=" + queryToken + "&site=north#" + fragment
 	}
 
 	sink := newRecordingServer(t, nil)
@@ -52,23 +56,25 @@ func TestLogsRedactNotificationURIUserinfo(t *testing.T) {
 	h := subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI)
 
 	for _, uri := range []string{
-		withUser("loopback.test"),
-		withUser("nxdomain.test"),
+		withSecrets("loopback.test"),
+		withSecrets("timeout.test"),
 		"http://" + user + ":" + pass + "@[::1",
+		"http://" + user + ":%zzescape-s3cret@allowed.test/n",
 	} {
 		if rec := postSubscription(t, h, "1", "/edev/1/fsa", uri); rec.Code != http.StatusBadRequest {
 			t.Fatalf("create %q: status = %d, want 400", uri, rec.Code)
 		}
 	}
 
-	seedStored(t, store, "refused", "2", "/edev/2/fsa", withUser("loopback.test"))
-	seedStored(t, store, "unresolved", "3", "/edev/3/fsa", withUser("nxdomain.test"))
-	seedStored(t, store, "unavailable", "4", "/edev/4/fsa", withUser("unavailable.test"))
-	seedStored(t, store, "gone", "5", "/edev/5/fsa", withUser("gone.test"))
+	seedStored(t, store, "refused", "2", "/edev/2/fsa", withSecrets("loopback.test"))
+	seedStored(t, store, "unresolved", "3", "/edev/3/fsa", withSecrets("nxdomain.test"))
+	seedStored(t, store, "unavailable", "4", "/edev/4/fsa", withSecrets("unavailable.test"))
+	seedStored(t, store, "gone", "5", "/edev/5/fsa", withSecrets("gone.test"))
+	seedStored(t, store, "badescape", "8", "/edev/8/fsa", "http://"+user+":%zzescape-s3cret@allowed.test/n")
 	seedStored(t, store, "control", "6", "/edev/6/fsa", destURI("allowed.test"))
 	runManager(t, mgr)
 	ctx := context.Background()
-	for _, res := range []string{"/edev/2/fsa", "/edev/3/fsa", "/edev/4/fsa", "/edev/5/fsa", "/edev/6/fsa"} {
+	for _, res := range []string{"/edev/2/fsa", "/edev/3/fsa", "/edev/4/fsa", "/edev/5/fsa", "/edev/8/fsa", "/edev/6/fsa"} {
 		mgr.Notify(ctx, res, sep2.NotificationStatusChanged)
 	}
 	waitUntil(t, "control delivery", func() bool { return len(control.received()) == 1 })
@@ -78,7 +84,7 @@ func TestLogsRedactNotificationURIUserinfo(t *testing.T) {
 	full.Notify(ctx, "/edev/4/fsa", sep2.NotificationStatusChanged)
 	full.Notify(ctx, "/edev/4/fsa", sep2.NotificationStatusChanged)
 
-	seedStored(t, store, "removed", "7", "/edev/7/fsa", withUser("allowed.test"))
+	seedStored(t, store, "removed", "7", "/edev/7/fsa", withSecrets("allowed.test"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", subscription.HandleDeleteSubscription(store,
 		func(context.Context, sep2.Subscription) error { return errors.New("synthetic notify failure") }))
@@ -98,16 +104,18 @@ func TestLogsRedactNotificationURIUserinfo(t *testing.T) {
 		"receiver returned 4xx",
 		"notification: queue full",
 		"subscription: notify removed for",
-		"loopback.test:" + destPort + "/n",
-		"unavailable.test:" + destPort + "/n",
+		"loopback.test:" + destPort + "/n?",
+		"unavailable.test:" + destPort + "/n?",
+		"token=",
+		"site=",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("log missing %q; got:\n%s", want, got)
 		}
 	}
-	for _, secret := range []string{pass, user} {
+	for _, secret := range []string{pass, user, queryToken, fragment, "north", "escape-s3cret", "%zz"} {
 		if strings.Contains(got, secret) {
-			t.Errorf("log contains notificationURI userinfo %q:\n%s", secret, got)
+			t.Errorf("log contains notificationURI secret %q:\n%s", secret, got)
 		}
 	}
 }

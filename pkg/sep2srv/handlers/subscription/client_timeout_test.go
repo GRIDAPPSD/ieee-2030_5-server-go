@@ -1,6 +1,7 @@
 package subscription
 
 import (
+	"net/http"
 	"testing"
 	"time"
 )
@@ -10,7 +11,7 @@ import (
 // client will wait forever for a slow/unresponsive subscriber, leaking the
 // worker goroutine for the lifetime of the blocked POST.
 func TestNotificationClientTimeoutSet(t *testing.T) {
-	client := newNotificationClient(newDestinationGuard(DestinationPolicy{}))
+	client := newNotificationClient(newDestinationGuard(DestinationPolicy{}), http.DefaultTransport)
 	if client.Timeout == 0 {
 		t.Fatal("notification client Timeout is 0 (no limit); worker goroutines may block forever on slow subscribers")
 	}

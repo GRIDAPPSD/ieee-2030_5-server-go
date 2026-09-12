@@ -111,8 +111,9 @@ func embeddedIPv4(ip netip.Addr) (netip.Addr, bool) {
 	return netip.AddrFrom4([4]byte(b[12:])), true
 }
 
-// redactURI renders a notificationURI for logs and errors with any userinfo
-// replaced, since a URI can carry credentials.
+// redactURI renders a notificationURI for logs and errors with the parts that
+// can carry credentials replaced: userinfo, query values (names are kept), and
+// the fragment.
 func redactURI(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -123,6 +124,20 @@ func redactURI(raw string) string {
 	}
 	if u.User != nil {
 		u.User = url.User("redacted")
+	}
+	if u.RawQuery != "" {
+		q, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			u.RawQuery = "redacted"
+		} else {
+			for name := range q {
+				q[name] = []string{"redacted"}
+			}
+			u.RawQuery = q.Encode()
+		}
+	}
+	if u.Fragment != "" || u.RawFragment != "" {
+		u.Fragment, u.RawFragment = "redacted", ""
 	}
 	return u.String()
 }
@@ -144,10 +159,12 @@ type destinationGuard struct {
 	lookup      func(ctx context.Context, host string) ([]netip.Addr, error)
 	dial        func(ctx context.Context, network, address string) (net.Conn, error)
 	dialTimeout time.Duration
+	// resolveTimeout bounds the lookup performed at creation.
+	resolveTimeout time.Duration
 }
 
 func newDestinationGuard(p DestinationPolicy) *destinationGuard {
-	g := &destinationGuard{policy: p, lookup: systemLookup, dialTimeout: notificationClientTimeout}
+	g := &destinationGuard{policy: p, lookup: systemLookup, dialTimeout: notificationClientTimeout, resolveTimeout: creationResolveTimeout}
 	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: g.control}
 	g.dial = d.DialContext
 	return g
@@ -162,7 +179,8 @@ func systemLookup(ctx context.Context, host string) ([]netip.Addr, error) {
 func (g *destinationGuard) validateURI(ctx context.Context, raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrRefusedDestination, withoutURL(err))
+		// The parse error can quote part of the URI, so it is not included.
+		return fmt.Errorf("%w: unparseable URI", ErrRefusedDestination)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("%w: scheme %q is not http or https", ErrRefusedDestination, u.Scheme)
@@ -171,7 +189,7 @@ func (g *destinationGuard) validateURI(ctx context.Context, raw string) error {
 	if host == "" {
 		return fmt.Errorf("%w: no host", ErrRefusedDestination)
 	}
-	ctx, cancel := context.WithTimeout(ctx, creationResolveTimeout)
+	ctx, cancel := context.WithTimeout(ctx, g.resolveTimeout)
 	defer cancel()
 	_, err = g.checkHost(ctx, host)
 	return err
@@ -205,20 +223,25 @@ func (g *destinationGuard) checkHost(ctx context.Context, host string) ([]netip.
 // cannot later be pointed at a refused one. It dials only the checked IPs.
 //
 // The transport detaches dial contexts from the request deadline, so the
-// connect budget is dialTimeout, split across the addresses as net.Dialer
-// splits it: an address that never answers cannot starve the ones after it.
+// budget is dialTimeout, starting before resolution as net.Dialer.Timeout
+// does. The lookup gets at most half of it, so a resolver that never answers
+// ends the attempt as a resolution failure while the request still waits. The
+// rest is split across the addresses as net.Dialer splits it, so an address
+// that never answers cannot starve the ones after it.
 func (g *destinationGuard) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrRefusedDestination, err)
 	}
-	addrs, err := g.checkHost(ctx, host)
-	if err != nil {
-		return nil, err
-	}
 	deadline := time.Now().Add(g.dialTimeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
+	}
+	lookupCtx, cancelLookup := context.WithDeadline(ctx, time.Now().Add(time.Until(deadline)/2))
+	addrs, err := g.checkHost(lookupCtx, host)
+	cancelLookup()
+	if err != nil {
+		return nil, err
 	}
 	var errs []error
 	for i, a := range addrs {
@@ -260,12 +283,23 @@ func (g *destinationGuard) control(_, address string, _ syscall.RawConn) error {
 // subscriber from pinning a worker. Proxy is nil because a proxy would make
 // the proxy, not the subscriber, the address dialContext checks. Redirects
 // are refused so a receiver cannot steer the POST to a second destination.
-func newNotificationClient(g *destinationGuard) *http.Client {
+func newNotificationClient(g *destinationGuard, base http.RoundTripper) *http.Client {
 	tr := &http.Transport{}
-	if base, ok := http.DefaultTransport.(*http.Transport); ok {
-		tr = base.Clone()
+	if b, ok := base.(*http.Transport); ok {
+		tr = b.Clone()
 	}
+	// Clone copies every exported field. Clear the ones that decide where or
+	// how a connection is made or verified, so changes an embedder made to the
+	// base transport cannot route a connection around dialContext.
 	tr.Proxy = nil
+	tr.OnProxyConnectResponse = nil
+	tr.ProxyConnectHeader = nil
+	tr.GetProxyConnectHeader = nil
+	tr.Dial = nil
+	tr.DialTLS = nil
+	tr.DialTLSContext = nil
+	tr.TLSClientConfig = nil
+	tr.TLSNextProto = nil
 	tr.DialContext = g.dialContext
 	return &http.Client{
 		Timeout:   notificationClientTimeout,

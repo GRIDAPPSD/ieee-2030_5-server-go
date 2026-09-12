@@ -101,7 +101,7 @@ func NewManager(store SubscriptionLister, workerCount, queueSize int, opts ...Ma
 	guard := newDestinationGuard(DestinationPolicy{})
 	m := &Manager{
 		store:       store,
-		client:      newNotificationClient(guard),
+		client:      newNotificationClient(guard, http.DefaultTransport),
 		queue:       make(chan notificationTask, queueSize),
 		workerCount: workerCount,
 		guard:       guard,
@@ -275,7 +275,8 @@ func (m *Manager) deliver(ctx context.Context, task notificationTask) error {
 	target := redactURI(task.notificationURI)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, task.notificationURI, bytes.NewReader(task.payload))
 	if err != nil {
-		return fmt.Errorf("build notification request for %s: %w", target, withoutURL(err))
+		// The parse error can quote part of the URI, so it is not included.
+		return fmt.Errorf("build notification request for %s: unparseable URI", target)
 	}
 	req.Header.Set("Content-Type", notificationContentType)
 

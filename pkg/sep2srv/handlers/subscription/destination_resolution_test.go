@@ -3,6 +3,7 @@ package subscription_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -42,34 +43,75 @@ func TestCreateSubscriptionUnresolvedAndRefusedResponsesMatch(t *testing.T) {
 }
 
 // Not parallel: it swaps the process-wide log output.
-func TestCreationLogSeparatesUnresolvedFromRefused(t *testing.T) {
+//
+// Every unresolvable outcome answers exactly like a policy refusal, and only
+// the server log says which one happened.
+func TestCreationLogNamesTheResolutionOutcome(t *testing.T) {
 	logs := captureLog(t)
 
 	sink := newRecordingServer(t, nil)
 	fn := standardNet(sink, sink)
+	fn.hangLookupOn("hang.test")
 	store := memory.NewSubscriptionStore()
 	mgr := newSeamedManager(t, store, fn)
+	subscription.SetCreationResolveTimeout(mgr, 200*time.Millisecond)
 	h := subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI)
 
-	for _, host := range []string{"loopback.test", "nxdomain.test", "timeout.test"} {
-		if rec := postSubscription(t, h, "1", "/edev/1/fsa", destURI(host)); rec.Code != http.StatusBadRequest {
-			t.Fatalf("%s: status = %d, want 400", host, rec.Code)
-		}
+	refused := postSubscription(t, h, "refused", "/edev/1/fsa", destURI("loopback.test"))
+	if refused.Code != http.StatusBadRequest {
+		t.Fatalf("policy refusal status = %d, want 400", refused.Code)
 	}
 
-	got := logs.String()
-	for _, want := range []string{
-		`subscription: refused notificationURI "` + destURI("loopback.test") + `"`,
-		`subscription: could not resolve notificationURI "` + destURI("nxdomain.test") + `"`,
-		`subscription: could not resolve notificationURI "` + destURI("timeout.test") + `"`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("log missing %q; got:\n%s", want, got)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := newSubscriptionRequest(t, ctx, "canceled", "/edev/1/fsa", destURI("hang.test"))
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- serveSubscription(h, req) }()
+	select {
+	case <-fn.lookupEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the canceled request never reached the lookup")
+	}
+	cancel()
+	var canceled *httptest.ResponseRecorder
+	select {
+	case canceled = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the canceled request did not finish")
+	}
+
+	responses := map[string]*httptest.ResponseRecorder{
+		"canceled":      canceled,
+		"lookuptimeout": postSubscription(t, h, "lookuptimeout", "/edev/1/fsa", destURI("hang.test")),
+		"nxdomain":      postSubscription(t, h, "nxdomain", "/edev/1/fsa", destURI("nxdomain.test")),
+		"resolverfail":  postSubscription(t, h, "resolverfail", "/edev/1/fsa", destURI("timeout.test")),
+	}
+	for name, rec := range responses {
+		if rec.Code != refused.Code || rec.Body.String() != refused.Body.String() {
+			t.Errorf("%s: response %d %q, want the refusal response %d %q",
+				name, rec.Code, rec.Body.String(), refused.Code, refused.Body.String())
 		}
 	}
-	for _, host := range []string{"nxdomain.test", "timeout.test"} {
-		if bad := `refused notificationURI "` + destURI(host) + `"`; strings.Contains(got, bad) {
-			t.Errorf("resolution failure logged as a policy refusal: %q", bad)
+	assertNothingStored(t, store, "canceled", "/edev/1/fsa")
+
+	got := logs.String()
+	line := func(edev string) string {
+		for _, l := range strings.Split(got, "\n") {
+			if strings.Contains(l, `EndDevice "`+edev+`"`) {
+				return l
+			}
+		}
+		return ""
+	}
+	for edev, want := range map[string]string{
+		"refused":       `subscription: refused notificationURI "` + destURI("loopback.test") + `"`,
+		"canceled":      `subscription: request ended while resolving notificationURI "` + destURI("hang.test") + `"`,
+		"lookuptimeout": `subscription: could not resolve notificationURI "` + destURI("hang.test") + `"`,
+		"nxdomain":      `subscription: no such host for notificationURI "` + destURI("nxdomain.test") + `"`,
+		"resolverfail":  `subscription: could not resolve notificationURI "` + destURI("timeout.test") + `"`,
+	} {
+		if l := line(edev); !strings.Contains(l, want) {
+			t.Errorf("EndDevice %q: log line %q, want it to contain %q", edev, l, want)
 		}
 	}
 }

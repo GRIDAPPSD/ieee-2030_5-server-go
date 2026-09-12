@@ -27,6 +27,12 @@ func SetDeliveryTimeout(m *Manager, d time.Duration) {
 	m.guard.dialTimeout = d
 }
 
+// SetCreationResolveTimeout bounds the lookup ValidateNotificationURI
+// performs. Call before any request.
+func SetCreationResolveTimeout(m *Manager, d time.Duration) {
+	m.guard.resolveTimeout = d
+}
+
 // CountTransportDials counts every connection the delivery transport asks
 // for, before the destination policy decides. Call before Start.
 func CountTransportDials(m *Manager) *atomic.Int32 {

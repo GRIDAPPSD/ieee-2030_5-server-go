@@ -79,43 +79,58 @@ func TestNotifySuccessIncrementsCounter(t *testing.T) {
 }
 
 // TestNotifyQueueFullIncrementsCounter asserts the queue-full drop path
-// moves the queue_full counter. A zero-capacity-effective queue (size 1)
-// plus a never-draining receiver guarantees the second enqueue drops.
+// moves the queue_full counter. The single worker is parked inside the
+// receiver before the queue (size 1) is filled, so the drop cannot depend on
+// how fast the worker drains.
 func TestNotifyQueueFullIncrementsCounter(t *testing.T) {
 	before := metricByOutcome(t, obs.OutcomeQueueFull)
 
+	entered := make(chan struct{}, 1)
 	block := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		<-block // hold the single worker so the queue fills
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-block
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 	defer close(block)
 
-	// Three subscriptions on the same resource, one worker, queue size 1:
-	// worker grabs #1 and blocks on the receiver, #2 fills the queue, #3 is
-	// dropped => queue_full increments at least once.
-	subs := make([]sep2.Subscription, 3)
-	for i := range subs {
-		subs[i] = sep2.Subscription{
+	sub := func(resource string) sep2.Subscription {
+		return sep2.Subscription{
 			SubscribableResource: sep2.SubscribableResource{
-				Resource: sep2.Resource{Href: "/edev/8/sub"},
+				Resource: sep2.Resource{Href: resource + "/sub"},
 			},
-			SubscribedResource: "/edev/8",
+			SubscribedResource: resource,
 			NotificationURI:    srv.URL + "/notify",
 		}
 	}
-	store := &obsSubStore{subs: subs}
+	store := &obsSubStore{subs: []sep2.Subscription{sub("/edev/8/hold"), sub("/edev/8"), sub("/edev/8")}}
 
-	mgr := coresub.NewManager(store, 1, 1)
+	// httptest listens on 127.0.0.1; without the opt-in the worker refuses
+	// the destination at once instead of blocking in the receiver.
+	mgr := coresub.NewManager(store, 1, 1, coresub.WithDestinationPolicy(coresub.DestinationPolicy{AllowLoopback: true}))
 	mgr.SetObserver(obs.RecordNotification)
 	ctx, cancel := context.WithCancel(context.Background())
 	go mgr.Start(ctx)
 	defer cancel()
 
+	mgr.Notify(ctx, "/edev/8/hold", sep2.NotificationStatusChanged)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the worker never reached the receiver, so it is not blocked and the queue cannot be shown full")
+	}
+
+	// The worker holds the first task in the receiver and the queue is empty:
+	// the first of these two tasks fills it and the second is dropped.
 	mgr.Notify(ctx, "/edev/8", sep2.NotificationStatusChanged)
 
-	obsWaitFor(t, func() bool { return metricByOutcome(t, obs.OutcomeQueueFull) >= before+1 })
+	if got := metricByOutcome(t, obs.OutcomeQueueFull); got < before+1 {
+		t.Fatalf("queue_full = %v, want at least %v", got, before+1)
+	}
 }
 
 // TestNotifyClientErrorIncrementsCounter asserts a receiver that returns a

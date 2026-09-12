@@ -256,7 +256,7 @@ func putAndGetSettingsPFRate(t *testing.T, ctx context.Context, srv *csiptest.Bo
 func bootCORE014(t *testing.T, extraOpts []csiptest.BootOption) (*csiptest.BootedServer, *http.Client) {
 	t.Helper()
 
-	_, caCertFile, clientCert := mustBuildClientPKI(t)
+	owner := csiptest.NewDeviceIdentity(t, "CORE-014-DEVICE")
 
 	stores := csiptest.NewFreshStores()
 	target := &csiptest.Target{
@@ -268,16 +268,15 @@ func bootCORE014(t *testing.T, extraOpts []csiptest.BootOption) (*csiptest.Boote
 		DERCurves:          stores.DERCurves,
 	}
 	fixture := filepath.Join("fixtures", "single-edev.yaml")
-	if err := csiptest.Load(context.Background(), target, fixture); err != nil {
+	if err := csiptest.Load(context.Background(), target, fixture, csiptest.Bind(fixtureEndDeviceID, owner)); err != nil {
 		t.Fatalf("load %s: %v", fixture, err)
 	}
 
 	allOpts := append([]csiptest.BootOption{
 		csiptest.WithStores(stores),
-		csiptest.WithClientCAsFile(caCertFile),
-		csiptest.WithClientCert(clientCert),
+		csiptest.WithDeviceIdentity(owner),
 	}, extraOpts...)
 	srv := csiptest.BootServer(t, allOpts...)
 
-	return srv, buildClient(t, srv.RootCA, clientCert)
+	return srv, buildClient(t, srv.RootCA, owner.Cert)
 }

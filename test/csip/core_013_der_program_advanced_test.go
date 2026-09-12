@@ -1,20 +1,20 @@
-// CSIP V1.2 §6.6 — DER Program (advanced; multi-program priority chain).
+// CSIP V1.2 section 6.6 - DER Program (advanced; multi-program priority chain).
 //
 // CORE-013 proves that a server seeded with the 7-program fixture
-// (derprogram-7.yaml — #60 ships this fixture) renders the
+// (derprogram-7.yaml - #60 ships this fixture) renders the
 // priority chain correctly:
 //
-//	/dcap → /edev → /edev/0 → /edev/0/fsa (list, all=7)
-//	  └─► each FSA → DERProgramListLink (the 7 programs are
-//	        scoped by EndDevice id only in this implementation —
-//	        see internal/server/router.go scopedListHandler — so
+//	/dcap -> /edev -> /edev/0 -> /edev/0/fsa (list, all=7)
+//	  `-> each FSA -> DERProgramListLink (the 7 programs are
+//	        scoped by EndDevice id only in this implementation -
+//	        see internal/server/router.go scopedListHandler - so
 //	        every FSA's DERProgramList returns all 7 programs in
 //	        primacy order)
-//	        └─► for each program → DERControlListLink → single
+//	        `-> for each program -> DERControlListLink -> single
 //	              DERControl with
-//	                ├─► Interval.Start = T0 + N minutes
-//	                ├─► Interval.Duration = 30 s
-//	                └─► DERControlBase.OpModFixedPFInjectW populated
+//	                |-> Interval.Start = T0 + N minutes
+//	                |-> Interval.Duration = 30 s
+//	                `-> DERControlBase.OpModFixedPFInjectW populated
 //
 // The primacy chain is ascending: program N has primacy N. The test
 // asserts both the chain ordering and the per-program DERControl
@@ -23,29 +23,29 @@
 // Procedure note on store scoping: the in-memory DERProgram store
 // keys by EndDevice id only (see loader.go DERProgramSpec doc-comment
 // and router.go scopedListHandler). FSA position is decorative in
-// today's server; the test asserts the actual server semantic — every
-// FSA's DERProgramList returns the full 7-program set — and proves
+// today's server; the test asserts the actual server semantic - every
+// FSA's DERProgramList returns the full 7-program set - and proves
 // the per-program DERControlList (scoped by edev/fsa/derp tuple at
 // the handler) still routes correctly to the seeded controls.
 //
 // Procedure note on seeding: the #52 fixture loader's
 // DERControlBaseSpec does not currently carry opModFixedPFInjectW
 // (FixedPowerFactor shape), and the server's router exposes only
-// `GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc` — no PUT/POST path
+// `GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc` - no PUT/POST path
 // for individual DERControls today. The test therefore seeds the 7
 // DERControls programmatically via the public store API (one Create
 // per program, scoped by the same edev/fsa/derp tuple the handler
 // reads) before booting the server, then drives the procedure over
 // chained GETs end-to-end.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §6.6 procedure):
+// V1.2 procedure step -> assertion mapping (per V1.2 section 6.6 procedure):
 //
-//	Step 1 (server has 7 DERPrograms, primacy 0..6) ──► fixture + store seed
-//	Step 2 (client walks /dcap → /edev → /fsa)      ──► walkAllFSAs
-//	Step 3 (client follows DERProgramListLink)      ──► walkProgramListForFirstFSA
-//	Step 4 (assert primacy chain ascending 0..6)    ──► assertPrimacyChain
-//	Step 5 (for each program, follow DERControlList) ──► walkAndAssertControl
-//	Step 6 (each DERControl carries FixedPFInjectW)  ──► assertFixedPFInjectW
+//	Step 1 (server has 7 DERPrograms, primacy 0..6) -> fixture + store seed
+//	Step 2 (client walks /dcap -> /edev -> /fsa)      -> walkAllFSAs
+//	Step 3 (client follows DERProgramListLink)      -> walkProgramListForFirstFSA
+//	Step 4 (assert primacy chain ascending 0..6)    -> assertPrimacyChain
+//	Step 5 (for each program, follow DERControlList) -> walkAndAssertControl
+//	Step 6 (each DERControl carries FixedPFInjectW)  -> assertFixedPFInjectW
 //
 // Run under both GCM and CCM cipher modes so the spec cipher path is
 // exercised end-to-end on the same multi-program walk procedure.
@@ -67,16 +67,16 @@ import (
 const core013ProgramCount = 7
 
 // core013ControlDuration is the per-DERControl duration in seconds
-// (§6.6 procedure: 30 s).
+// (section 6.6 procedure: 30 s).
 const core013ControlDuration uint32 = 30
 
 // core013T0 is the synthetic base time for the 7 staggered DERControl
 // start offsets (T0 + N*60s for primacy N). Picked to be a fixed
-// in-test constant so the assertions are deterministic — the wall
+// in-test constant so the assertions are deterministic - the wall
 // clock plays no role.
 const core013T0 int64 = 1_700_000_000
 
-// TestCORE_013_DERProgramAdvanced implements CSIP V1.2 §6.6.
+// TestCORE_013_DERProgramAdvanced implements CSIP V1.2 section 6.6.
 func TestCORE_013_DERProgramAdvanced(t *testing.T) {
 	t.Parallel()
 
@@ -115,7 +115,7 @@ func runCORE013(t *testing.T, extraOpts []csiptest.BootOption) {
 			len(fsaList.FunctionSetAssignments), core013ProgramCount)
 	}
 
-	// Step 3 + 4: follow the first FSA's DERProgramListLink — in this
+	// Step 3 + 4: follow the first FSA's DERProgramListLink - in this
 	// implementation the DERProgram store is scoped by EndDevice id
 	// only, so every FSA's list returns the full 7-program set. We
 	// also assert every FSA advertises an equivalent link to catch a
@@ -137,7 +137,7 @@ func runCORE013(t *testing.T, extraOpts []csiptest.BootOption) {
 	}
 }
 
-// walkAllFSAs walks /dcap → /edev → first EndDevice → /fsa, returning
+// walkAllFSAs walks /dcap -> /edev -> first EndDevice -> /fsa, returning
 // the FSA list. CORE-013 expects 7 FSAs in the list.
 func walkAllFSAs(t *testing.T, ctx context.Context, c *csiptest.Client) sep2.FunctionSetAssignmentsList {
 	t.Helper()
@@ -155,7 +155,7 @@ func walkAllFSAs(t *testing.T, ctx context.Context, c *csiptest.Client) sep2.Fun
 		t.Fatalf("walk /edev: %v", err)
 	}
 	if len(edevList.EndDevice) == 0 {
-		t.Fatal("EndDeviceList empty — fixture not loaded?")
+		t.Fatal("EndDeviceList empty - fixture not loaded?")
 	}
 	edev := edevList.EndDevice[0]
 	if edev.FunctionSetAssignmentsListLink == nil {
@@ -172,7 +172,7 @@ func walkAllFSAs(t *testing.T, ctx context.Context, c *csiptest.Client) sep2.Fun
 // walkProgramListForFirstFSA follows the first FSA's DERProgramListLink
 // and returns the resulting list of DERPrograms. The store-scope quirk
 // described in the package-level doc-comment means this list carries
-// all 7 programs for this EndDevice — that is the actual server
+// all 7 programs for this EndDevice - that is the actual server
 // semantic and the test asserts it directly.
 func walkProgramListForFirstFSA(
 	t *testing.T,
@@ -199,10 +199,10 @@ func walkProgramListForFirstFSA(
 }
 
 // assertPrimacyChain asserts the 7 programs ascend strictly in primacy
-// (0, 1, 2, ..., 6). Per §10.2, primacy is the priority key — a lower
+// (0, 1, 2, ..., 6). Per section 10.2, primacy is the priority key - a lower
 // number is higher priority. The fixture deliberately ships an
 // ascending sequence so the test surfaces any sort-order regression
-// in the FSA → DERProgramList chain.
+// in the FSA -> DERProgramList chain.
 func assertPrimacyChain(t *testing.T, programs []sep2.DERProgram) {
 	t.Helper()
 
@@ -223,7 +223,7 @@ func assertPrimacyChain(t *testing.T, programs []sep2.DERProgram) {
 }
 
 // walkAndAssertControl follows the program's DERControlListLink and
-// asserts the lone DERControl matches the §6.6 procedure: Interval
+// asserts the lone DERControl matches the section 6.6 procedure: Interval
 // starts at T0 + N*60s, duration 30s, DERControlBase carries
 // opModFixedPFInjectW with deterministic per-program displacement so
 // each program is distinguishable on the wire.
@@ -280,7 +280,7 @@ func walkAndAssertControl(
 
 // bootWithSevenProgramsAndControls loads derprogram-7.yaml into a
 // fresh store set, seeds 7 DERControls (one per program) programmatically
-// — covering the FixedPFInjectW field the loader does not carry today —
+// - covering the FixedPFInjectW field the loader does not carry today -
 // and boots an in-process server backed by those stores. Returns the
 // booted server; cleanup is handled by csiptest.BootServer.
 func bootWithSevenProgramsAndControls(t *testing.T, extraOpts []csiptest.BootOption) *csiptest.BootedServer {
@@ -295,13 +295,14 @@ func bootWithSevenProgramsAndControls(t *testing.T, extraOpts []csiptest.BootOpt
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,
 	}
+	owner := csiptest.NewDeviceIdentity(t, "CORE-013-DEVICE")
 	fixture := filepath.Join("fixtures", "derprogram-7.yaml")
-	if err := csiptest.Load(context.Background(), target, fixture); err != nil {
+	if err := csiptest.Load(context.Background(), target, fixture, csiptest.Bind(fixtureEndDeviceID, owner)); err != nil {
 		t.Fatalf("load %s: %v", fixture, err)
 	}
 
 	// Seed one DERControl per program. The scope key matches the server's
-	// composite key for DERControls under (edev, fsa, derp) — see
+	// composite key for DERControls under (edev, fsa, derp) - see
 	// internal/server/router.go scopedListHandlerDeep. EndDevice id is "0"
 	// across the fixture; FSA id and DERProgram id both equal primacy N.
 	ctx := context.Background()
@@ -314,11 +315,11 @@ func bootWithSevenProgramsAndControls(t *testing.T, extraOpts []csiptest.BootOpt
 		}
 	}
 
-	opts := append([]csiptest.BootOption{csiptest.WithStores(stores)}, extraOpts...)
+	opts := append([]csiptest.BootOption{csiptest.WithStores(stores), csiptest.WithDeviceIdentity(owner)}, extraOpts...)
 	return csiptest.BootServer(t, opts...)
 }
 
-// buildCORE013Control constructs the §6.6 DERControl for primacy N:
+// buildCORE013Control constructs the section 6.6 DERControl for primacy N:
 // Interval starts at T0 + N*60s with duration 30s; the DERControlBase
 // carries opModFixedPFInjectW with a deterministic per-program
 // displacement so each program is distinguishable on the wire.

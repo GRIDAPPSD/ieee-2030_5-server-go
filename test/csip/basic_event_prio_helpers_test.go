@@ -60,12 +60,13 @@ func bootWithEventPrioFixture(
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,
 	}
+	owner := csiptest.NewDeviceIdentity(t, "BASIC-EVENT-DEVICE")
 	path := filepath.Join("fixtures", fixture)
-	if err := csiptest.Load(context.Background(), target, path); err != nil {
+	if err := csiptest.Load(context.Background(), target, path, csiptest.Bind(fixtureEndDeviceID, owner)); err != nil {
 		t.Fatalf("load %s: %v", path, err)
 	}
 
-	opts := append([]csiptest.BootOption{csiptest.WithStores(stores)}, extraOpts...)
+	opts := append([]csiptest.BootOption{csiptest.WithStores(stores), csiptest.WithDeviceIdentity(owner)}, extraOpts...)
 	return csiptest.BootServer(t, opts...)
 }
 

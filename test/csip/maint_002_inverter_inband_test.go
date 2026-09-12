@@ -1,18 +1,18 @@
-// CSIP V1.2 §11.2 — Inverter Maintenance (In-Band).
+// CSIP V1.2 section 11.2 - Inverter Maintenance (In-Band).
 //
 // MAINT-002 asserts the client-driven DELETE /edev/{id} flow shipped
 // by #26: server processes the delete, emits a Notification to
 // every EndDeviceList subscriber, and a subsequent GET returns 404.
 //
-// V1.2 procedure step → assertion mapping:
+// V1.2 procedure step -> assertion mapping:
 //
 //	Step 1: pre-seed an EndDevice and a Subscription that names the
 //	        EndDeviceList href (/edev) as the SubscribedResource.
-//	                                          ──► EndDevices.Create + POST /edev/{id}/sub
-//	                                          ──► sanity: ListByResource("/edev") returns the sub
+//	                                          -> EndDevices.Create + POST /edev/{id}/sub
+//	                                          -> sanity: ListByResource("/edev") returns the sub
 //	Step 2: aggregator DELETEs /edev/{id} (the production route).
-//	                                          ──► HTTP DELETE
-//	                                          ──► 204 No Content
+//	                                          -> HTTP DELETE
+//	                                          -> 204 No Content
 //	Step 3: server fan-outs a Notification on EndDeviceList. The
 //	        BootServer wires the router with nil notifier (no
 //	        production Manager attached), so we wire our own here and
@@ -22,11 +22,11 @@
 //	        HandleDeleteEndDevice (verified in #26 PR #118), so
 //	        wiring it from the test preserves the conformance contract
 //	        without coupling the test to BootServer's wiring choice.
-//	                                          ──► mgr.Notify(/edev, Removed)
-//	                                          ──► receiver.Wait(1)
-//	                                          ──► GET /edev/{id} → 404
+//	                                          -> mgr.Notify(/edev, Removed)
+//	                                          -> receiver.Wait(1)
+//	                                          -> GET /edev/{id} -> 404
 //
-// No build-tag — MAINT-002 exclusively uses production HTTP routes.
+// No build-tag - MAINT-002 exclusively uses production HTTP routes.
 //
 // #155 / Phase 6.
 
@@ -47,11 +47,12 @@ const (
 	maint002EndDeviceID = "edev-maint002"
 )
 
-// TestMAINT_002_InverterMaintenanceInband implements CSIP V1.2 §11.2.
+// TestMAINT_002_InverterMaintenanceInband implements CSIP V1.2 section 11.2.
 func TestMAINT_002_InverterMaintenanceInband(t *testing.T) {
 	t.Parallel()
 
-	srv := csiptest.BootServer(t)
+	owner := csiptest.NewDeviceIdentity(t, "MAINT-002-DEVICE")
+	srv := csiptest.BootServer(t, csiptest.WithDeviceIdentity(owner))
 	receiver := csiptest.NewNotificationReceiver(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -60,8 +61,11 @@ func TestMAINT_002_InverterMaintenanceInband(t *testing.T) {
 	go mgr.Start(ctx)
 
 	// Step 1a: seed EndDevice the DELETE will target.
+	// The device deletes its own record; a record with no LFDI is owned by
+	// nobody.
 	var dev sep2.EndDevice
 	dev.Href = "/edev/" + maint002EndDeviceID
+	dev.LFDI, dev.SFDI = owner.LFDI, owner.SFDI
 	if err := srv.Stores.EndDevices.Create(ctx, maint002EndDeviceID, dev); err != nil {
 		t.Fatalf("MAINT-002 Step 1a: seed EndDevice: %v", err)
 	}

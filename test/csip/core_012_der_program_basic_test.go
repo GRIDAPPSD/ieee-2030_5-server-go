@@ -1,39 +1,39 @@
-// CSIP V1.2 §6.5 — DER Program (basic).
+// CSIP V1.2 section 6.5 - DER Program (basic).
 //
 // CORE-012 proves that a server seeded with the #52
 // `derprogram-single.yaml` fixture renders the full DERProgram
 // resource chain correctly over chained GETs:
 //
 //	/dcap
-//	  └─► /edev (list, all=1)
-//	        └─► /edev/0 (the single EndDevice)
-//	              └─► /edev/0/fsa (list, all=1) — via FSA list link
-//	                    └─► /edev/0/fsa/0   (the single FSA)
-//	                          └─► /edev/0/fsa/0/derp (list, all=1)
-//	                                └─► single DERProgram (primacy 0)
-//	                                      ├─► DefaultDERControlLink ─► dderc (opModMaxLimW)
-//	                                      ├─► DERControlListLink    ─► derc (all=0, empty)
-//	                                      └─► DERCurveListLink      ─► dc   (all=0, empty)
+//	  `-> /edev (list, all=1)
+//	        `-> /edev/0 (the single EndDevice)
+//	              `-> /edev/0/fsa (list, all=1) - via FSA list link
+//	                    `-> /edev/0/fsa/0   (the single FSA)
+//	                          `-> /edev/0/fsa/0/derp (list, all=1)
+//	                                `-> single DERProgram (primacy 0)
+//	                                      |-> DefaultDERControlLink -> dderc (opModMaxLimW)
+//	                                      |-> DERControlListLink    -> derc (all=0, empty)
+//	                                      `-> DERCurveListLink      -> dc   (all=0, empty)
 //
 // The fixture's documented shape is intentionally minimal: one
 // DERProgram carrying one DefaultDERControl, zero DERControls, and
 // zero DERCurves. The procedural assertion sequence verifies BOTH
-// the per-resource fields and the empty-list endpoints — silent
+// the per-resource fields and the empty-list endpoints - silent
 // breakage of an "empty list" path is a regression class CORE-012
 // must guard against (Phase 3 hardening goal).
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §6.5 procedure):
+// V1.2 procedure step -> assertion mapping (per V1.2 section 6.5 procedure):
 //
-//	Step 1 (server has 1 DERProgram available)        ──► fixture load
-//	Step 2 (client follows /dcap → /edev → first FSA) ──► walkToFirstFSA
-//	Step 3 (client follows FSA → DERProgramList)      ──► walkDERProgramList
-//	Step 4 (client GETs the single DERProgram)        ──► assertSingleProgramShape
-//	Step 5 (client follows DefaultDERControlLink)     ──► walkDefaultDERControl
-//	Step 6 (client follows DERControlListLink, empty) ──► assertEmptyDERControlList
-//	Step 7 (curves: global /dc empty, link advertised) ──► assertEmptyGlobalDERCurveList
+//	Step 1 (server has 1 DERProgram available)        -> fixture load
+//	Step 2 (client follows /dcap -> /edev -> first FSA) -> walkToFirstFSA
+//	Step 3 (client follows FSA -> DERProgramList)      -> walkDERProgramList
+//	Step 4 (client GETs the single DERProgram)        -> assertSingleProgramShape
+//	Step 5 (client follows DefaultDERControlLink)     -> walkDefaultDERControl
+//	Step 6 (client follows DERControlListLink, empty) -> assertEmptyDERControlList
+//	Step 7 (curves: global /dc empty, link advertised) -> assertEmptyGlobalDERCurveList
 //
 // Step 7 note: the spec models DERCurve as a global resource at /dc
-// (the DERCurve store in this implementation is unscoped — see
+// (the DERCurve store in this implementation is unscoped - see
 // internal/server/router.go which routes "GET /dc" only). The
 // fixture advertises a per-program DERCurveListLink with all=0 so
 // the client side surfaces that the program has no associated curves;
@@ -57,7 +57,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// TestCORE_012_DERProgramBasic implements CSIP V1.2 §6.5.
+// TestCORE_012_DERProgramBasic implements CSIP V1.2 section 6.5.
 func TestCORE_012_DERProgramBasic(t *testing.T) {
 	t.Parallel()
 
@@ -76,7 +76,7 @@ func TestCORE_012_DERProgramBasic(t *testing.T) {
 	}
 }
 
-// runCORE012 executes the §6.5 chained-walk procedure once against a
+// runCORE012 executes the section 6.5 chained-walk procedure once against a
 // freshly booted server seeded with derprogram-single.yaml.
 func runCORE012(t *testing.T, extraOpts []csiptest.BootOption) {
 	t.Helper()
@@ -88,10 +88,10 @@ func runCORE012(t *testing.T, extraOpts []csiptest.BootOption) {
 	// Step 1 verified by fixture load (boot would fail loudly on a
 	// malformed fixture); no separate assertion needed.
 
-	// Step 2: walk /dcap → /edev (list, all=1) → first EndDevice → /edev/0/fsa.
+	// Step 2: walk /dcap -> /edev (list, all=1) -> first EndDevice -> /edev/0/fsa.
 	fsa := walkToFirstFSA(t, ctx, client)
 	if fsa.DERProgramListLink == nil {
-		t.Fatal("first FSA has no DERProgramListLink — fixture topology drift")
+		t.Fatal("first FSA has no DERProgramListLink - fixture topology drift")
 	}
 
 	// Step 3: walk the DERProgramList. Expect exactly one program.
@@ -106,7 +106,7 @@ func runCORE012(t *testing.T, extraOpts []csiptest.BootOption) {
 		t.Fatalf("len(DERProgramList.DERProgram) = %d, want 1", len(progList.DERProgram))
 	}
 
-	// Step 4: assert the single DERProgram's shape — primacy 0, the
+	// Step 4: assert the single DERProgram's shape - primacy 0, the
 	// three downstream links present, MRID matches the fixture.
 	prog := progList.DERProgram[0]
 	assertSingleProgramShape(t, prog)
@@ -146,13 +146,13 @@ func runCORE012(t *testing.T, extraOpts []csiptest.BootOption) {
 
 	// Step 7: the program advertises a per-program DERCurveListLink
 	// (the fixture sets it for client-side discoverability), but the
-	// server routes DERCurves only as a global resource at /dc — see
+	// server routes DERCurves only as a global resource at /dc - see
 	// internal/server/router.go. Assert the link is advertised on the
 	// wire (catches a regression that drops the link entirely), then
 	// walk /dc directly to prove the global curve list renders empty
 	// under this fixture.
 	if prog.DERCurveListLink.Href == "" {
-		t.Error("DERProgram.DERCurveListLink.Href is empty — server dropped the advertised link")
+		t.Error("DERProgram.DERCurveListLink.Href is empty - server dropped the advertised link")
 	}
 	var globalCurves sep2.DERCurveList
 	if err := client.WalkLink(ctx, sep2.Link{Href: "/dc"}, &globalCurves); err != nil {
@@ -169,7 +169,7 @@ func runCORE012(t *testing.T, extraOpts []csiptest.BootOption) {
 // assertSingleProgramShape asserts that the lone DERProgram emitted by
 // the derprogram-single.yaml fixture carries the expected MRID, primacy,
 // and three downstream resource links. Per #52 the loader sets
-// every link from the fixture YAML — a nil link here means the loader
+// every link from the fixture YAML - a nil link here means the loader
 // dropped the field or the server-side build path drifted.
 func assertSingleProgramShape(t *testing.T, prog sep2.DERProgram) {
 	t.Helper()
@@ -191,8 +191,8 @@ func assertSingleProgramShape(t *testing.T, prog sep2.DERProgram) {
 	}
 }
 
-// walkToFirstFSA walks /dcap → /edev (list) → first EndDevice →
-// /edev/{id}/fsa (list) → first FSA, returning the parsed FSA. Used
+// walkToFirstFSA walks /dcap -> /edev (list) -> first EndDevice ->
+// /edev/{id}/fsa (list) -> first FSA, returning the parsed FSA. Used
 // by every CORE-012/013 procedural test that pivots through the FSA
 // hierarchy.
 //
@@ -206,7 +206,7 @@ func walkToFirstFSA(t *testing.T, ctx context.Context, c *csiptest.Client) sep2.
 		t.Fatalf("GET /dcap: %v", err)
 	}
 	if dcap.EndDeviceListLink == nil {
-		t.Fatal("DeviceCapability.EndDeviceListLink is nil — server did not advertise /edev")
+		t.Fatal("DeviceCapability.EndDeviceListLink is nil - server did not advertise /edev")
 	}
 
 	var edevList sep2.EndDeviceList
@@ -214,12 +214,12 @@ func walkToFirstFSA(t *testing.T, ctx context.Context, c *csiptest.Client) sep2.
 		t.Fatalf("walk EndDeviceListLink %s: %v", dcap.EndDeviceListLink.Href, err)
 	}
 	if len(edevList.EndDevice) == 0 {
-		t.Fatal("EndDeviceList carries zero entries — fixture not loaded?")
+		t.Fatal("EndDeviceList carries zero entries - fixture not loaded?")
 	}
 	edev := edevList.EndDevice[0]
 
 	if edev.FunctionSetAssignmentsListLink == nil {
-		t.Fatal("EndDevice.FunctionSetAssignmentsListLink is nil — fixture topology drift")
+		t.Fatal("EndDevice.FunctionSetAssignmentsListLink is nil - fixture topology drift")
 	}
 
 	var fsaList sep2.FunctionSetAssignmentsList
@@ -227,7 +227,7 @@ func walkToFirstFSA(t *testing.T, ctx context.Context, c *csiptest.Client) sep2.
 		t.Fatalf("walk FunctionSetAssignmentsListLink %s: %v", edev.FunctionSetAssignmentsListLink.Href, err)
 	}
 	if len(fsaList.FunctionSetAssignments) == 0 {
-		t.Fatal("FunctionSetAssignmentsList carries zero entries — fixture missing FSAs?")
+		t.Fatal("FunctionSetAssignmentsList carries zero entries - fixture missing FSAs?")
 	}
 	return fsaList.FunctionSetAssignments[0]
 }
@@ -256,11 +256,12 @@ func bootWithDERProgramFixture(t *testing.T, fixture string, extraOpts []csiptes
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,
 	}
+	owner := csiptest.NewDeviceIdentity(t, "CORE-012-DEVICE")
 	path := filepath.Join("fixtures", fixture)
-	if err := csiptest.Load(context.Background(), target, path); err != nil {
+	if err := csiptest.Load(context.Background(), target, path, csiptest.Bind(fixtureEndDeviceID, owner)); err != nil {
 		t.Fatalf("load %s: %v", path, err)
 	}
 
-	opts := append([]csiptest.BootOption{csiptest.WithStores(stores)}, extraOpts...)
+	opts := append([]csiptest.BootOption{csiptest.WithStores(stores), csiptest.WithDeviceIdentity(owner)}, extraOpts...)
 	return csiptest.BootServer(t, opts...)
 }

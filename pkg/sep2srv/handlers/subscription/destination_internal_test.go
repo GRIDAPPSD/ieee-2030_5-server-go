@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"testing"
 	"time"
@@ -38,6 +40,21 @@ func TestDestinationPolicyCheckAddr(t *testing.T) {
 		{"febf::1", false, false},
 		{"224.0.0.251", false, false},
 		{"ff02::1", false, false},
+		{"ff01::1", false, false},
+		{"ff01::fb", false, false},
+
+		{"fd00:ec2::254", false, false},
+		{"fd20:ce::254", false, false},
+		{"100.100.100.200", false, false},
+		{"::ffff:100.100.100.200", false, false},
+		{"64:ff9b::100.100.100.200", false, false},
+		{"fd00:ec2::253", true, true},
+		{"100.100.100.201", true, true},
+
+		{"64:ff9b:1::127.0.0.1", false, true},
+		{"64:ff9b:1::169.254.169.254", false, false},
+		{"64:ff9b:1::", false, false},
+		{"64:ff9b:1::192.0.2.10", true, true},
 
 		{"0.0.0.0", false, false},
 		{"0.255.255.255", false, false},
@@ -131,5 +148,60 @@ func TestGuardDialerControlChecksConnectedAddress(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("listener accepted nothing")
+	}
+}
+
+func TestDeliverClassifiesUnresolvedApartFromRefused(t *testing.T) {
+	t.Parallel()
+
+	m := NewManager(&mockSubStore{}, 1, 1)
+	m.guard.lookup = func(_ context.Context, host string) ([]netip.Addr, error) {
+		switch host {
+		case "loopback.test":
+			return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+		case "empty.test":
+			return nil, nil
+		case "timeout.test":
+			return nil, &net.DNSError{Err: "i/o timeout", Name: host, IsTimeout: true}
+		}
+		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+	}
+	m.guard.dial = func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("dial must not be reached")
+	}
+
+	for _, tc := range []struct {
+		uri        string
+		unresolved bool
+	}{
+		{"http://loopback.test:8080/n", false},
+		{"http://127.0.0.1:8080/n", false},
+		{"http://nxdomain.test:8080/n", true},
+		{"http://timeout.test:8080/n", true},
+		{"http://empty.test:8080/n", true},
+	} {
+		err := m.deliver(context.Background(), notificationTask{notificationURI: tc.uri, payload: []byte("<Notification/>")})
+		refused, unresolved := errors.Is(err, ErrRefusedDestination), errors.Is(err, ErrDestinationUnresolved)
+		if tc.unresolved && (!unresolved || refused) {
+			t.Errorf("%s: err = %v; want ErrDestinationUnresolved and not ErrRefusedDestination", tc.uri, err)
+		}
+		if !tc.unresolved && (!refused || unresolved) {
+			t.Errorf("%s: err = %v; want ErrRefusedDestination and not ErrDestinationUnresolved", tc.uri, err)
+		}
+	}
+}
+
+func TestDeliverRedirectIsARefusal(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://192.0.2.10/elsewhere", http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+
+	m := NewManager(&mockSubStore{}, 1, 1, loopbackReceivers)
+	err := m.deliver(context.Background(), notificationTask{notificationURI: srv.URL, payload: []byte("<Notification/>")})
+	if !errors.Is(err, ErrRefusedDestination) {
+		t.Fatalf("deliver to a redirecting receiver: err = %v, want ErrRefusedDestination", err)
 	}
 }

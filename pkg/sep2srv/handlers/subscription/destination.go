@@ -13,25 +13,47 @@ import (
 )
 
 // ErrRefusedDestination reports a notificationURI whose scheme, host, or
-// resolved address the DestinationPolicy does not permit, including a host
-// that could not be resolved.
+// resolved address the DestinationPolicy does not permit.
 var ErrRefusedDestination = errors.New("notification destination refused")
 
+// ErrDestinationUnresolved reports a notificationURI host that could not be
+// resolved. It is kept apart from ErrRefusedDestination so a resolver outage
+// is not mistaken for a policy refusal; both fail closed.
+var ErrDestinationUnresolved = errors.New("notification destination could not be resolved")
+
 // errRedirectRefused is returned for a 3xx from a notification receiver.
-var errRedirectRefused = errors.New("notification receiver redirected; redirects are not followed")
+var errRedirectRefused = fmt.Errorf("%w: receiver redirected; redirects are not followed", ErrRefusedDestination)
 
 // creationResolveTimeout bounds the lookup a Subscription POST performs
 // before anything is stored.
 const creationResolveTimeout = 5 * time.Second
 
-var nat64Prefix = netip.MustParsePrefix("64:ff9b::/96")
+// minAddressDialTimeout is the least connect time one resolved address gets
+// while that much time remains, matching net.Dialer.
+const minAddressDialTimeout = 2 * time.Second
+
+// nat64Prefixes are the well-known (RFC 6052) and local-use (RFC 8215) NAT64
+// prefixes. Network-specific prefixes cannot be listed statically.
+var nat64Prefixes = []netip.Prefix{
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+}
+
+// metadataAddrs are cloud metadata services outside the link-local ranges:
+// the AWS and GCP IPv6 endpoints and Alibaba Cloud.
+var metadataAddrs = map[netip.Addr]bool{
+	netip.MustParseAddr("fd00:ec2::254"):   true,
+	netip.MustParseAddr("fd20:ce::254"):    true,
+	netip.MustParseAddr("100.100.100.200"): true,
+}
 
 // DestinationPolicy decides which addresses the server may send a
 // notification to. The zero value is the production default: it refuses
 // loopback, link-local (which includes cloud metadata at 169.254.169.254),
-// and unspecified or 0.0.0.0/8 addresses, including their IPv4-mapped,
-// IPv4-compatible, and NAT64 (64:ff9b::/96) IPv6 forms. RFC 1918 and ULA
-// private ranges are allowed because 2030.5 devices commonly sit on them.
+// unspecified or 0.0.0.0/8, link-local and interface-local multicast, and the
+// cloud metadata addresses in metadataAddrs, including the IPv4-mapped,
+// IPv4-compatible, and NAT64 IPv6 forms of those IPv4 addresses. RFC 1918 and
+// ULA private ranges are allowed because 2030.5 devices commonly sit on them.
 type DestinationPolicy struct {
 	// AllowLoopback permits 127.0.0.0/8 and ::1 for test harnesses whose
 	// receivers listen on loopback. The server's admin listener is also on
@@ -61,36 +83,71 @@ func (p DestinationPolicy) checkAddr(ip netip.Addr) error {
 		return fmt.Errorf("%w: %s is loopback", ErrRefusedDestination, ip)
 	case ip.IsUnspecified() || (ip.Is4() && ip.As4()[0] == 0):
 		return fmt.Errorf("%w: %s is unspecified", ErrRefusedDestination, ip)
-	case ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast():
+	case ip.IsLinkLocalUnicast():
 		return fmt.Errorf("%w: %s is link-local", ErrRefusedDestination, ip)
+	case ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast():
+		return fmt.Errorf("%w: %s is link-local or interface-local multicast", ErrRefusedDestination, ip)
+	case metadataAddrs[ip]:
+		return fmt.Errorf("%w: %s is a cloud metadata address", ErrRefusedDestination, ip)
 	}
 	return nil
 }
 
-// embeddedIPv4 returns the IPv4 address inside an IPv4-compatible
-// (::a.b.c.d) or NAT64 (64:ff9b::a.b.c.d) address. :: and ::1 are native
-// IPv6 addresses, not embeddings of 0.0.0.0 and 0.0.0.1.
+// embeddedIPv4 returns the IPv4 address in the low 32 bits of an
+// IPv4-compatible (::a.b.c.d) or NAT64 address. :: and ::1 are native IPv6
+// addresses, not embeddings of 0.0.0.0 and 0.0.0.1.
 func embeddedIPv4(ip netip.Addr) (netip.Addr, bool) {
 	if !ip.Is6() || ip == netip.IPv6Unspecified() || ip == netip.IPv6Loopback() {
 		return netip.Addr{}, false
 	}
 	b := ip.As16()
-	if nat64Prefix.Contains(ip) || [12]byte(b[:12]) == [12]byte{} {
-		return netip.AddrFrom4([4]byte(b[12:])), true
+	embedded := [12]byte(b[:12]) == [12]byte{}
+	for _, p := range nat64Prefixes {
+		embedded = embedded || p.Contains(ip)
 	}
-	return netip.Addr{}, false
+	if !embedded {
+		return netip.Addr{}, false
+	}
+	return netip.AddrFrom4([4]byte(b[12:])), true
+}
+
+// redactURI renders a notificationURI for logs and errors with any userinfo
+// replaced, since a URI can carry credentials.
+func redactURI(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "(unparseable URI)"
+	}
+	if u.Opaque != "" {
+		return u.Scheme + ":(opaque)"
+	}
+	if u.User != nil {
+		u.User = url.User("redacted")
+	}
+	return u.String()
+}
+
+// withoutURL drops a *url.Error wrapper, whose message repeats the URL and
+// any userinfo in it.
+func withoutURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Err
+	}
+	return err
 }
 
 // destinationGuard applies a DestinationPolicy to creation-time URIs and to
 // every outbound delivery connection.
 type destinationGuard struct {
-	policy DestinationPolicy
-	lookup func(ctx context.Context, host string) ([]netip.Addr, error)
-	dial   func(ctx context.Context, network, address string) (net.Conn, error)
+	policy      DestinationPolicy
+	lookup      func(ctx context.Context, host string) ([]netip.Addr, error)
+	dial        func(ctx context.Context, network, address string) (net.Conn, error)
+	dialTimeout time.Duration
 }
 
 func newDestinationGuard(p DestinationPolicy) *destinationGuard {
-	g := &destinationGuard{policy: p, lookup: systemLookup}
+	g := &destinationGuard{policy: p, lookup: systemLookup, dialTimeout: notificationClientTimeout}
 	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: g.control}
 	g.dial = d.DialContext
 	return g
@@ -105,7 +162,7 @@ func systemLookup(ctx context.Context, host string) ([]netip.Addr, error) {
 func (g *destinationGuard) validateURI(ctx context.Context, raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrRefusedDestination, err)
+		return fmt.Errorf("%w: %w", ErrRefusedDestination, withoutURL(err))
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("%w: scheme %q is not http or https", ErrRefusedDestination, u.Scheme)
@@ -129,10 +186,10 @@ func (g *destinationGuard) checkHost(ctx context.Context, host string) ([]netip.
 	} else {
 		addrs, err = g.lookup(ctx, host)
 		if err != nil {
-			return nil, fmt.Errorf("%w: resolve %q: %w", ErrRefusedDestination, host, err)
+			return nil, fmt.Errorf("%w: resolve %q: %w", ErrDestinationUnresolved, host, err)
 		}
 		if len(addrs) == 0 {
-			return nil, fmt.Errorf("%w: %q resolved to no addresses", ErrRefusedDestination, host)
+			return nil, fmt.Errorf("%w: %q resolved to no addresses", ErrDestinationUnresolved, host)
 		}
 	}
 	for _, a := range addrs {
@@ -146,6 +203,10 @@ func (g *destinationGuard) checkHost(ctx context.Context, host string) ([]netip.
 // dialContext resolves and checks the destination at connect time, so a name
 // that resolved to an allowed address when the subscription was created
 // cannot later be pointed at a refused one. It dials only the checked IPs.
+//
+// The transport detaches dial contexts from the request deadline, so the
+// connect budget is dialTimeout, split across the addresses as net.Dialer
+// splits it: an address that never answers cannot starve the ones after it.
 func (g *destinationGuard) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
@@ -155,15 +216,35 @@ func (g *destinationGuard) dialContext(ctx context.Context, network, address str
 	if err != nil {
 		return nil, err
 	}
+	deadline := time.Now().Add(g.dialTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
 	var errs []error
-	for _, a := range addrs {
-		conn, err := g.dial(ctx, network, net.JoinHostPort(a.String(), port))
+	for i, a := range addrs {
+		addrCtx, cancel := context.WithDeadline(ctx, addressDeadline(time.Now(), deadline, len(addrs)-i))
+		conn, err := g.dial(addrCtx, network, net.JoinHostPort(a.String(), port))
+		cancel()
 		if err == nil {
 			return conn, nil
 		}
 		errs = append(errs, err)
+		if ctx.Err() != nil || !time.Now().Before(deadline) {
+			break
+		}
 	}
 	return nil, errors.Join(errs...)
+}
+
+// addressDeadline gives each remaining address an equal share of the time
+// left, but at least minAddressDialTimeout while that much remains.
+func addressDeadline(now, deadline time.Time, remaining int) time.Time {
+	left := deadline.Sub(now)
+	share := left / time.Duration(remaining)
+	if share < minAddressDialTimeout {
+		share = min(left, minAddressDialTimeout)
+	}
+	return now.Add(share)
 }
 
 // control re-checks the socket's peer address immediately before connect.
@@ -180,17 +261,15 @@ func (g *destinationGuard) control(_, address string, _ syscall.RawConn) error {
 // the proxy, not the subscriber, the address dialContext checks. Redirects
 // are refused so a receiver cannot steer the POST to a second destination.
 func newNotificationClient(g *destinationGuard) *http.Client {
+	tr := &http.Transport{}
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr = base.Clone()
+	}
+	tr.Proxy = nil
+	tr.DialContext = g.dialContext
 	return &http.Client{
-		Timeout: notificationClientTimeout,
-		Transport: &http.Transport{
-			Proxy:                 nil,
-			DialContext:           g.dialContext,
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		},
+		Timeout:   notificationClientTimeout,
+		Transport: tr,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return errRedirectRefused
 		},

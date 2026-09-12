@@ -213,7 +213,7 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 
 		payload, err := xml.Marshal(&notification)
 		if err != nil {
-			log.Printf("notification: marshal for %s: %v", sub.NotificationURI, err)
+			log.Printf("notification: marshal for %s: %v", redactURI(sub.NotificationURI), err)
 			continue
 		}
 
@@ -229,7 +229,7 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 			if m.observer != nil {
 				m.observer("queue_full")
 			}
-			log.Printf("notification: queue full, dropping for %s", sub.NotificationURI)
+			log.Printf("notification: queue full, dropping for %s", redactURI(sub.NotificationURI))
 		}
 	}
 }
@@ -248,12 +248,15 @@ func (m *Manager) worker(ctx context.Context) {
 				m.observer("client_error")
 			}
 			log.Printf("notification: %s receiver returned 4xx, subscription %q deleted",
-				task.notificationURI, task.subscriptionID)
+				redactURI(task.notificationURI), task.subscriptionID)
+		case errors.Is(err, ErrDestinationUnresolved):
+			log.Printf("notification: cannot resolve destination %q for subscription %q: %v",
+				redactURI(task.notificationURI), task.subscriptionID, err)
 		case errors.Is(err, ErrRefusedDestination):
 			log.Printf("notification: refused destination %q for subscription %q: %v",
-				task.notificationURI, task.subscriptionID, err)
+				redactURI(task.notificationURI), task.subscriptionID, err)
 		default:
-			log.Printf("notification: deliver to %s: %v", task.notificationURI, err)
+			log.Printf("notification: deliver to %s: %v", redactURI(task.notificationURI), err)
 		}
 	}
 }
@@ -269,15 +272,16 @@ func (m *Manager) worker(ctx context.Context) {
 // appropriate level. 5xx responses are left in place: that's transient
 // receiver failure, not a subscription-level signal (CSIP V1.2 ERR-002).
 func (m *Manager) deliver(ctx context.Context, task notificationTask) error {
+	target := redactURI(task.notificationURI)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, task.notificationURI, bytes.NewReader(task.payload))
 	if err != nil {
-		return fmt.Errorf("build notification request for %s: %w", task.notificationURI, err)
+		return fmt.Errorf("build notification request for %s: %w", target, withoutURL(err))
 	}
 	req.Header.Set("Content-Type", notificationContentType)
 
 	resp, err := m.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("POST notification to %s: %w", task.notificationURI, err)
+		return fmt.Errorf("POST notification to %s: %w", target, withoutURL(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -288,16 +292,16 @@ func (m *Manager) deliver(ctx context.Context, task notificationTask) error {
 		if writer, ok := m.store.(SubscriptionWriter); ok && task.subscriptionID != "" {
 			if delErr := writer.Delete(ctx, task.subscriptionID); delErr != nil {
 				log.Printf("notification: delete subscription %q after 4xx from %s: %v",
-					task.subscriptionID, task.notificationURI, delErr)
+					task.subscriptionID, target, delErr)
 			}
 		}
 		return fmt.Errorf("POST notification to %s: status %d: %w",
-			task.notificationURI, resp.StatusCode, errDeleteAfter4xx)
+			target, resp.StatusCode, errDeleteAfter4xx)
 	}
 
 	if resp.StatusCode >= 500 {
 		return fmt.Errorf("POST notification to %s: status %d (transient)",
-			task.notificationURI, resp.StatusCode)
+			target, resp.StatusCode)
 	}
 	return nil
 }

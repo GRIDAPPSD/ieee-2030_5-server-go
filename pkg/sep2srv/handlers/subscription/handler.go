@@ -138,6 +138,7 @@ func pageSubscriptionRecords(records []memory.SubscriptionRecord, opts store.Lis
 // DestinationPolicy; nil applies the default policy.
 func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(ctx context.Context, uri string) error) http.HandlerFunc {
 	if validate == nil {
+		log.Print("subscription: no notificationURI validator wired; POST /edev/{id}/sub applies the default DestinationPolicy")
 		validate = DestinationPolicy{}.ValidateNotificationURI
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -161,11 +162,19 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 		}
 
 		if err := validate(r.Context(), sub.NotificationURI); err != nil {
-			log.Printf("subscription: refused notificationURI %q for /edev/%q/sub: %v", sub.NotificationURI, edevID, err)
-			if !errors.Is(err, ErrRefusedDestination) {
+			target := redactURI(sub.NotificationURI)
+			switch {
+			case errors.Is(err, ErrRefusedDestination):
+				log.Printf("subscription: refused notificationURI %q for EndDevice %q: %v", target, edevID, err)
+			case errors.Is(err, ErrDestinationUnresolved):
+				log.Printf("subscription: could not resolve notificationURI %q for EndDevice %q, refusing: %v", target, edevID, err)
+			default:
+				log.Printf("subscription: validating notificationURI %q for EndDevice %q: %v", target, edevID, err)
 				srverr.Internal(w, r, err)
 				return
 			}
+			// One response for both: a distinct one for an unresolvable name
+			// would tell the client whether an internal name resolves.
 			http.Error(w, "notificationURI refused", http.StatusBadRequest)
 			return
 		}
@@ -260,7 +269,7 @@ func HandleDeleteSubscription(subStore *memory.SubscriptionStore, notifyRemoved 
 		if notifyRemoved != nil {
 			if err := notifyRemoved(r.Context(), sub); err != nil {
 				log.Printf("subscription: notify removed for %q to %q: %v",
-					sub.Href, sub.NotificationURI, err)
+					sub.Href, redactURI(sub.NotificationURI), err)
 			}
 		}
 

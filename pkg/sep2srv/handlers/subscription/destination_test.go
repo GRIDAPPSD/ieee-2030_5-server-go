@@ -49,6 +49,17 @@ var refusedDestinations = []struct{ name, host string }{
 	{"ipv4-mapped unspecified", "::ffff:0.0.0.0"},
 	{"ipv4-compatible this-network", "::0.1.2.3"},
 	{"nat64 unspecified", "64:ff9b::"},
+	{"ipv4 link-local multicast", "224.0.0.251"},
+	{"ipv6 link-local multicast", "ff02::1"},
+	{"ipv6 interface-local multicast", "ff01::1"},
+	{"aws ipv6 metadata", "fd00:ec2::254"},
+	{"gcp ipv6 metadata", "fd20:ce::254"},
+	{"alibaba metadata", "100.100.100.200"},
+	{"ipv4-mapped alibaba metadata", "::ffff:100.100.100.200"},
+	{"nat64 alibaba metadata", "64:ff9b::100.100.100.200"},
+	{"local-use nat64 loopback", "64:ff9b:1::127.0.0.1"},
+	{"local-use nat64 link-local", "64:ff9b:1::169.254.169.254"},
+	{"local-use nat64 unspecified", "64:ff9b:1::"},
 	{"hostname resolving to loopback", "loopback.test"},
 	{"hostname resolving to link-local", "metadata.test"},
 	{"hostname with one refused address", "mixed.test"},
@@ -60,7 +71,9 @@ var refusedIPs = []string{
 	"127.0.0.1", "127.9.9.9", "::1", "::ffff:127.0.0.1", "::127.0.0.1", "64:ff9b::127.0.0.1",
 	"169.254.169.254", "::ffff:169.254.169.254", "::169.254.169.254", "64:ff9b::169.254.169.254",
 	"fe80::1", "fe80::1%lo", "0.0.0.0", "0.1.2.3", "::", "::ffff:0.0.0.0", "::0.1.2.3", "64:ff9b::",
-	"192.0.2.11",
+	"224.0.0.251", "ff02::1", "ff01::1", "fd00:ec2::254", "fd20:ce::254", "100.100.100.200",
+	"::ffff:100.100.100.200", "64:ff9b::100.100.100.200", "64:ff9b:1::127.0.0.1", "64:ff9b:1::169.254.169.254",
+	"64:ff9b:1::", "192.0.2.11",
 }
 
 const allowedDial = "192.0.2.10:" + destPort
@@ -138,14 +151,44 @@ func (rs *recordingServer) received() []recordedRequest {
 // hosts. A dial to an address in routes connects to that local server;
 // any other address is dialed for real with a short timeout.
 type fakeNet struct {
-	mu     sync.Mutex
-	hosts  map[string][]netip.Addr
-	routes map[string]string
-	dialed []string
+	mu        sync.Mutex
+	hosts     map[string][]netip.Addr
+	lookupErr map[string]error
+	routes    map[string]string
+	hang      map[string]bool
+	budgets   map[string]time.Duration // time left on the dial context, per address
+	dialed    []string
 }
 
 func newFakeNet() *fakeNet {
-	return &fakeNet{hosts: map[string][]netip.Addr{}, routes: map[string]string{}}
+	return &fakeNet{
+		hosts:     map[string][]netip.Addr{},
+		lookupErr: map[string]error{},
+		routes:    map[string]string{},
+		hang:      map[string]bool{},
+		budgets:   map[string]time.Duration{},
+	}
+}
+
+func (f *fakeNet) setLookupErr(name string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lookupErr[name] = err
+}
+
+// hangOn makes a dial to ip:port block until its context ends, like a
+// blackholed address that drops SYNs.
+func (f *fakeNet) hangOn(ip, port string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hang[net.JoinHostPort(netip.MustParseAddr(ip).String(), port)] = true
+}
+
+func (f *fakeNet) budget(address string) (time.Duration, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.budgets[address]
+	return b, ok
 }
 
 // standardNet resolves the shared test names, sends every refused address
@@ -156,6 +199,8 @@ func standardNet(sink, receiver *recordingServer) *fakeNet {
 	f.setHost("loopback.test", "127.0.0.1")
 	f.setHost("metadata.test", "169.254.169.254")
 	f.setHost("mixed.test", "192.0.2.11", "127.0.0.1")
+	f.setHost("empty.test")
+	f.setLookupErr("timeout.test", &net.DNSError{Err: "i/o timeout", Name: "timeout.test", IsTimeout: true})
 	for _, ip := range refusedIPs {
 		f.route(ip, destPort, sink)
 	}
@@ -182,6 +227,9 @@ func (f *fakeNet) route(ip, port string, rs *recordingServer) {
 func (f *fakeNet) lookup(_ context.Context, host string) ([]netip.Addr, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err, ok := f.lookupErr[host]; ok {
+		return nil, err
+	}
 	addrs, ok := f.hosts[host]
 	if !ok {
 		return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
@@ -192,8 +240,16 @@ func (f *fakeNet) lookup(_ context.Context, host string) ([]netip.Addr, error) {
 func (f *fakeNet) dial(ctx context.Context, network, address string) (net.Conn, error) {
 	f.mu.Lock()
 	f.dialed = append(f.dialed, address)
+	if deadline, ok := ctx.Deadline(); ok {
+		f.budgets[address] = time.Until(deadline)
+	}
+	hang := f.hang[address]
 	target, ok := f.routes[address]
 	f.mu.Unlock()
+	if hang {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if !ok {
 		target = address
 	}
@@ -304,6 +360,8 @@ func TestCreateSubscriptionRefusesDestination(t *testing.T) {
 	}
 	cases = append(cases,
 		tcase{"unresolvable hostname fails closed", "http://nxdomain.test:8080/n"},
+		tcase{"resolver timeout fails closed", "http://timeout.test:8080/n"},
+		tcase{"hostname with no addresses fails closed", "http://empty.test:8080/n"},
 		tcase{"ftp scheme", "ftp://allowed.test:8080/n"},
 		tcase{"file scheme", "file:///etc/passwd"},
 		tcase{"javascript scheme", "javascript:alert(1)"},
@@ -317,9 +375,11 @@ func TestCreateSubscriptionRefusesDestination(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			sink := newRecordingServer(t, nil)
-			fn := standardNet(sink, sink)
+			receiver := newRecordingServer(t, nil)
+			fn := standardNet(sink, receiver)
 			store := memory.NewSubscriptionStore()
 			mgr := newSeamedManager(t, store, fn)
+			transportDials := subscription.CountTransportDials(mgr)
 
 			rec := postSubscription(t, subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI), "1", "/edev/1/fsa", tc.uri)
 
@@ -330,8 +390,25 @@ func TestCreateSubscriptionRefusesDestination(t *testing.T) {
 				t.Errorf("Location = %q, want none", loc)
 			}
 			assertNothingStored(t, store, "1", "/edev/1/fsa")
-			if d := fn.dials(); len(d) != 0 {
-				t.Errorf("dialed %v during creation, want no connection attempt", d)
+
+			// Notify the refused resource, then a control. Dials are counted at
+			// the transport, before the delivery-time check, so a subscription
+			// creation wrongly stored is caught here even though delivery would
+			// still refuse to connect.
+			seedStored(t, store, "control", "9", "/edev/9/fsa", destURI("allowed.test"))
+			runManager(t, mgr)
+			ctx := context.Background()
+			mgr.Notify(ctx, "/edev/1/fsa", sep2.NotificationStatusChanged)
+			mgr.Notify(ctx, "/edev/9/fsa", sep2.NotificationStatusChanged)
+			waitUntil(t, "control delivery", func() bool { return len(receiver.received()) == 1 })
+
+			if n := transportDials.Load(); n != 1 {
+				t.Errorf("transport dial attempts = %d, want 1 (the control only)", n)
+			}
+			for _, a := range fn.dials() {
+				if a != allowedDial {
+					t.Errorf("dialed %s, want only %s", a, allowedDial)
+				}
 			}
 			if n := sink.accepts.Load(); n != 0 {
 				t.Errorf("sink accepted %d connections, want 0", n)
@@ -636,15 +713,37 @@ func TestRefusalsAreLogged(t *testing.T) {
 		t.Errorf("log missing %q; got:\n%s", want, logs.String())
 	}
 
+	origin := newRecordingServer(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://127.0.0.1:8080/n", http.StatusTemporaryRedirect)
+	})
+	fn.setHost("origin.test", "192.0.2.30")
+	fn.route("192.0.2.30", destPort, origin)
+	unresolvedURI := destURI("nxdomain.test")
+	redirectURI := "http://origin.test:8080/r"
+
 	seedStored(t, store, "refused", "1", "/edev/1/fsa", uri)
+	seedStored(t, store, "unresolved", "3", "/edev/3/fsa", unresolvedURI)
+	seedStored(t, store, "redirect", "4", "/edev/4/fsa", redirectURI)
 	seedStored(t, store, "control", "2", "/edev/2/fsa", destURI("allowed.test"))
 	runManager(t, mgr)
-	mgr.Notify(context.Background(), "/edev/1/fsa", sep2.NotificationStatusChanged)
-	mgr.Notify(context.Background(), "/edev/2/fsa", sep2.NotificationStatusChanged)
+	ctx := context.Background()
+	for _, res := range []string{"/edev/1/fsa", "/edev/3/fsa", "/edev/4/fsa", "/edev/2/fsa"} {
+		mgr.Notify(ctx, res, sep2.NotificationStatusChanged)
+	}
 	waitUntil(t, "control delivery", func() bool { return len(receiver.received()) == 1 })
 
-	if want := `notification: refused destination "` + uri + `" for subscription "refused"`; !strings.Contains(logs.String(), want) {
-		t.Errorf("log missing %q; got:\n%s", want, logs.String())
+	got := logs.String()
+	for _, want := range []string{
+		`notification: refused destination "` + uri + `" for subscription "refused"`,
+		`notification: cannot resolve destination "` + unresolvedURI + `" for subscription "unresolved"`,
+		`notification: refused destination "` + redirectURI + `" for subscription "redirect"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log missing %q; got:\n%s", want, got)
+		}
+	}
+	if bad := `refused destination "` + unresolvedURI + `"`; strings.Contains(got, bad) {
+		t.Errorf("resolution failure logged as a policy refusal: %q", bad)
 	}
 }
 

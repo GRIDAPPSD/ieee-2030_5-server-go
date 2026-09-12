@@ -93,7 +93,7 @@ func TestMutationSurface_WrongToken_Unauthorized(t *testing.T) {
 }
 
 func TestMutationSurface_EmptyEnvDisablesSurface(t *testing.T) {
-	// Tag is set but the env is empty — RegisterMutationHandlers should
+	// Tag is set but the env is empty - RegisterMutationHandlers should
 	// log a warning and register no routes. A request to a mutation path
 	// must miss the mux and return 404.
 	t.Setenv(tmTokenEnv, "")
@@ -393,7 +393,7 @@ func newRouterWithNotifier(t *testing.T) (http.Handler, *server.Stores, *recordi
 	return h, stores, n
 }
 
-// TestDERControlAdd_FiresNotification — #157. On successful Create
+// TestDERControlAdd_FiresNotification - #157. On successful Create
 // the derctl-add hook calls notifier.Notify with the DERProgramList
 // href and NotificationStatusChanged. Aggregators subscribe to the
 // DERProgramList href (UTIL-003 pattern); a new DERControl under one
@@ -426,7 +426,7 @@ func TestDERControlAdd_FiresNotification(t *testing.T) {
 	}
 }
 
-// TestDERControlAdd_NoNotificationOnParentMissing — #157. A 404
+// TestDERControlAdd_NoNotificationOnParentMissing - #157. A 404
 // from the parent-program lookup must NOT fan out. Notification fires
 // only when the store Create commits.
 func TestDERControlAdd_NoNotificationOnParentMissing(t *testing.T) {
@@ -446,8 +446,8 @@ func TestDERControlAdd_NoNotificationOnParentMissing(t *testing.T) {
 	}
 }
 
-// TestDERControlAdd_NoNotificationOnDuplicate — #157. A 409 from
-// the Create path must NOT fan out — the store was not changed on the
+// TestDERControlAdd_NoNotificationOnDuplicate - #157. A 409 from
+// the Create path must NOT fan out - the store was not changed on the
 // second call.
 func TestDERControlAdd_NoNotificationOnDuplicate(t *testing.T) {
 	h, stores, n := newRouterWithNotifier(t)
@@ -740,7 +740,7 @@ func seedFSA(t *testing.T, stores *server.Stores, edevID, fsaID string) sep2.Fun
 }
 
 // seedEndDevice installs an EndDevice id so the FSA-swap parent-check
-// passes. Body shape doesn't matter — only the existence of the record.
+// passes. Body shape doesn't matter - only the existence of the record.
 func seedEndDevice(t *testing.T, stores *server.Stores, edevID string) {
 	t.Helper()
 	if err := stores.EndDevices.Create(context.Background(), edevID, sep2.EndDevice{}); err != nil {
@@ -798,7 +798,7 @@ func TestFSASwap_Success(t *testing.T) {
 // observable behavior at the store layer that drives GET /edev/{id}/fsa:
 // after the swap, the per-EndDevice FSA list contains only the new id
 // (with the seeded content) and no entry for the old id. This is the
-// data side of what the handler then renders to the harness — the GET
+// data side of what the handler then renders to the harness - the GET
 // path itself is exercised by the integration-level admin tests under
 // real TLS chains.
 func TestFSASwap_ListReflectsNewAssociation(t *testing.T) {
@@ -899,7 +899,7 @@ func TestFSASwap_TargetExists_Conflict(t *testing.T) {
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409: %s", rr.Code, rr.Body.String())
 	}
-	// Source must still resolve — Create-before-Delete preserved it.
+	// Source must still resolve - Create-before-Delete preserved it.
 	if _, err := stores.FSAs.Get(context.Background(), "edev-1", "fsa-old"); err != nil {
 		t.Errorf("source fsa wiped after conflict: %v", err)
 	}
@@ -965,7 +965,7 @@ func TestFSASwap_NoBody_BadRequest(t *testing.T) {
 // TestFSASwap_NilFSAStore_InternalError exercises the defensive guard
 // against an unconfigured FSA store. The production Stores always wires
 // stores.FSAs, but a misconfigured test setup or future deployment shape
-// could omit it — the handler must refuse instead of NPE'ing.
+// could omit it - the handler must refuse instead of NPE'ing.
 func TestFSASwap_NilFSAStore_InternalError(t *testing.T) {
 	t.Setenv(tmTokenEnv, tmTestToken)
 	stores := newTestStores()
@@ -1109,7 +1109,7 @@ func TestSubscriptionCancel_UnknownID_NotFound(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rr.Code)
 	}
-	// A 404 must NOT poison the tombstone — a never-existing ID being
+	// A 404 must NOT poison the tombstone - a never-existing ID being
 	// recorded as canceled would block legitimate future creates.
 	if coresub.IsSubscriptionCanceled("sub-missing") {
 		t.Fatal("unknown id tombstoned on 404; tombstone must only follow a successful delete")
@@ -1248,7 +1248,7 @@ func TestSubscriptionCancel_DoubleCancel_SecondIsNotFound(t *testing.T) {
 	if first.Code != http.StatusNoContent {
 		t.Fatalf("first cancel status = %d, want 204", first.Code)
 	}
-	// Second cancel: store no longer has it, so 404 — the tombstone is
+	// Second cancel: store no longer has it, so 404 - the tombstone is
 	// already set from the first call and is not re-marked.
 	second := postJSON(t, h, tmSubCancel, tmTestToken, map[string]any{
 		"subscription_id": "sub-A",

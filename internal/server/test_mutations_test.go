@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	coresep2time "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
@@ -741,9 +742,15 @@ func seedFSA(t *testing.T, stores *server.Stores, edevID, fsaID string) sep2.Fun
 
 // seedEndDevice installs an EndDevice id so the FSA-swap parent-check
 // passes. Body shape doesn't matter - only the existence of the record.
+// stubPeerCert is the client certificate the protocol-request helpers below
+// present. Seeded EndDevices carry its identity so the ownership gate admits
+// those requests as the device's owner.
+var stubPeerCert = &x509.Certificate{}
+
 func seedEndDevice(t *testing.T, stores *server.Stores, edevID string) {
 	t.Helper()
-	if err := stores.EndDevices.Create(context.Background(), edevID, sep2.EndDevice{}); err != nil {
+	dev := sep2.EndDevice{LFDI: sepTLS.LFDI(stubPeerCert), SFDI: sepTLS.SFDI(stubPeerCert)}
+	if err := stores.EndDevices.Create(context.Background(), edevID, dev); err != nil {
 		t.Fatalf("seed end device %s: %v", edevID, err)
 	}
 }
@@ -1035,7 +1042,7 @@ func createSubscriptionViaAPI(t *testing.T, h http.Handler, edevID, subID string
 		`<encoding>0</encoding>` +
 		`</Subscription>`)
 	req := httptest.NewRequest(http.MethodPost, "/edev/"+edevID+"/sub", bytes.NewReader(body))
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{{}}}
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{stubPeerCert}}
 	if subID != "" {
 		req.Header.Set(tmSubIDHdr, subID)
 	}
@@ -1049,7 +1056,7 @@ func createSubscriptionViaAPI(t *testing.T, h http.Handler, edevID, subID string
 func getWithClientCert(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{{}}}
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{stubPeerCert}}
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr

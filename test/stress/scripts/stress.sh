@@ -238,6 +238,9 @@ fi
 # /test/mutations/stress-notify (csip_test_hooks build).
 if [ "${DIM}" = "fanout" ]; then
     SERVER_ENV+=("SEP2_TEST_MUTATION_TOKEN=${MUTATION_TOKEN}")
+    # The loadgen notification receiver listens on 127.0.0.1, which the
+    # server refuses as a notification destination unless this is set.
+    SERVER_ENV+=("SEP2_NOTIFICATION_ALLOW_LOOPBACK=true")
 fi
 
 env "${SERVER_ENV[@]}" "${ACTIVE_SERVER_BIN}" serve \

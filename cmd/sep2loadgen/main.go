@@ -224,6 +224,9 @@ func main() {
 					}
 					defer func() { _ = resp.Body.Close() }()
 					_, _ = io.Copy(io.Discard, resp.Body)
+					if resp.StatusCode == http.StatusBadRequest {
+						return fmt.Errorf("POST sub: status 400; the notification receiver is on loopback, so the server must run with SEP2_NOTIFICATION_ALLOW_LOOPBACK=true")
+					}
 					if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 						return fmt.Errorf("POST sub: unexpected status %d", resp.StatusCode)
 					}

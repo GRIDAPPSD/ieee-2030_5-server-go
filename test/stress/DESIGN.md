@@ -114,6 +114,10 @@ For the **fanout dimension**, the server is built with `-tags csip_test_hooks` s
 the `/test/mutations/stress-notify` endpoint is compiled in. This tagged binary is
 written to `bin/sep2server-fanout` and is not committed. The token
 (`SEP2_TEST_MUTATION_TOKEN`) is generated fresh per fanout run and is never committed.
+The fanout server also gets `SEP2_NOTIFICATION_ALLOW_LOOPBACK=true`: the notification
+receiver listens on `127.0.0.1`, and the server refuses loopback notification
+destinations without it. This opt-in is for the harness only; see
+`docs/csip.md` (Notification destinations).
 
 The harness:
 1. Generates a run-scoped CA + N device certs in `<run-dir>/pki/` at startup.

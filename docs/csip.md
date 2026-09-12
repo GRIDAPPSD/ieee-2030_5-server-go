@@ -224,14 +224,19 @@ delivery.
 At creation, a refused URI and a host that cannot be resolved get the same
 `400 Bad Request` with the same body, and nothing is stored. The responses
 are identical on purpose: a different one for an unresolvable name would tell
-a client whether an internal name resolves. The server log records which of
-the two happened.
+a client whether an internal name resolves. The server log records which
+happened: a policy refusal, a host with no such DNS name, another resolution
+failure such as a timeout, or a request that ended while its host was being
+resolved.
 
 At delivery:
 
 - The host is resolved again and the address about to be connected to is
   checked, so a name re-pointed at a refused address after creation is never
   contacted. The subscription is kept.
+- The delivery timeout covers resolution and connecting. The lookup gets at
+  most half of it, so a resolver that never answers ends the attempt as a
+  resolution failure instead of holding a connection attempt open.
 - When a host has several addresses, the connect time is shared across them,
   so an address that never answers does not starve the rest.
 - Redirects are not followed, and `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`
@@ -240,8 +245,9 @@ At delivery:
 - A refused destination and a host that cannot be resolved are logged
   separately.
 
-Logged notificationURIs have any userinfo replaced, since a URI can carry
-credentials.
+Logged notificationURIs have their userinfo, query parameter values, and
+fragment replaced, since a URI can carry credentials; query parameter names are
+kept. A token placed in the path is not redacted.
 
 ### Allowing loopback for test harnesses
 

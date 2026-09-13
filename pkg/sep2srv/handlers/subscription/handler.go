@@ -35,6 +35,13 @@ var subscriptionIDOverride func(r *http.Request) string
 // csip_test_hooks build tag is present. Nil in production builds.
 var subscriptionRefuseCreate func(id string) bool
 
+// subscriptionHref builds the href a subscription created under EndDevice
+// edevID with storage id id carries on the wire. The create and delete
+// paths below both call this so the two can't drift apart (#435).
+func subscriptionHref(edevID, id string) string {
+	return fmt.Sprintf("/edev/%s/sub/%s", edevID, id)
+}
+
 // BuildSubscriptionList constructs a SubscriptionList from store results.
 func BuildSubscriptionList(href string, result store.ListResult[sep2.Subscription], pollRate uint32) sep2.SubscriptionList {
 	return sep2.SubscriptionList{
@@ -206,7 +213,7 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 			return
 		}
 
-		sub.Href = fmt.Sprintf("/edev/%s/sub/%s", edevID, id)
+		sub.Href = subscriptionHref(edevID, id)
 
 		if err := subStore.Create(r.Context(), id, sub); err != nil {
 			srverr.Internal(w, r, err)
@@ -266,7 +273,10 @@ func HandleDeleteSubscription(subStore *memory.SubscriptionStore, notifyRemoved 
 		// any caller who could reach this route (#435). 404, not 403,
 		// so the response can't be used to probe another device's
 		// subscription IDs.
-		if sub.Href != fmt.Sprintf("/edev/%s/sub/%s", edevID, subID) {
+		if sub.Href != subscriptionHref(edevID, subID) {
+			// Path id and subId only: sub.Href would name the other
+			// EndDevice this subId actually belongs to.
+			log.Printf("subscription: refused cross-device delete for EndDevice %q subId %q", edevID, subID)
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}

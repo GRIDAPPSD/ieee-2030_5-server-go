@@ -132,6 +132,7 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 	}
 	return &assembly.Stores{
 		EndDevices:               s.EndDevices,
+		EndDeviceManagers:        s.EndDeviceManagers,
 		EndDeviceIndexes:         s.EndDeviceIndexes,
 		Registrations:            s.Registrations,
 		RegistrationPolicy:       s.RegistrationPolicy,

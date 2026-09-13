@@ -1,30 +1,30 @@
 //go:build csip_test_hooks
 
-// CSIP V1.2 §11.1 — Inverter Maintenance (Out-Of-Band).
+// CSIP V1.2 section 11.1 - Inverter Maintenance (Out-Of-Band).
 //
 // MAINT-001 asserts the server-side topology shape when an EndDevice
 // is removed from the aggregator's EDList via an out-of-band path
 // (the #27 /test/mutations/edev-delete-oob hook, NOT the
 // client-driven DELETE on /edev/{id} which is MAINT-002's territory).
 //
-// V1.2 procedure step → assertion mapping:
+// V1.2 procedure step -> assertion mapping:
 //
 //	Step 1: pre-seed an EndDevice and a Subscription that names
 //	        the EndDeviceList href (/edev) as the SubscribedResource.
-//	                                          ──► EndDevices.Create + POST /edev/{id}/sub
-//	                                          ──► sanity: ListByResource("/edev") returns the sub
+//	                                          -> EndDevices.Create + POST /edev/{id}/sub
+//	                                          -> sanity: ListByResource("/edev") returns the sub
 //	Step 2: drive the OOB delete via the test mutation hook.
-//	                                          ──► POST /test/mutations/edev-delete-oob
-//	                                          ──► 204 No Content
-//	                                          ──► server's store no longer contains the EndDevice
+//	                                          -> POST /test/mutations/edev-delete-oob
+//	                                          -> 204 No Content
+//	                                          -> server's store no longer contains the EndDevice
 //	Step 3: server fires a Notification on EndDeviceList; aggregator
 //	        GETs the deleted href and gets 404. The OOB mutation does
-//	        NOT itself emit a Notification (by design — see the
+//	        NOT itself emit a Notification (by design - see the
 //	        handleEdevDeleteOOB comment); we drive the Notify in-test
 //	        as #151 does, then assert delivery.
-//	                                          ──► mgr.Notify(/edev, Removed)
-//	                                          ──► receiver.Wait(1)
-//	                                          ──► GET /edev/{id} → 404
+//	                                          -> mgr.Notify(/edev, Removed)
+//	                                          -> receiver.Wait(1)
+//	                                          -> GET /edev/{id} -> 404
 //
 // Build-tag: csip_test_hooks is required because Step 2 drives the test-
 // only mutation surface. Untagged builds skip this file entirely.
@@ -49,11 +49,12 @@ const (
 	maint001EndDeviceID = "edev-maint001"
 )
 
-// TestMAINT_001_InverterMaintenanceOOB implements CSIP V1.2 §11.1.
+// TestMAINT_001_InverterMaintenanceOOB implements CSIP V1.2 section 11.1.
 func TestMAINT_001_InverterMaintenanceOOB(t *testing.T) {
 	t.Parallel()
 
-	srv := csiptest.BootServer(t)
+	owner := csiptest.NewDeviceIdentity(t, "MAINT-001-DEVICE")
+	srv := csiptest.BootServer(t, csiptest.WithDeviceIdentity(owner))
 	receiver := csiptest.NewNotificationReceiver(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -62,7 +63,7 @@ func TestMAINT_001_InverterMaintenanceOOB(t *testing.T) {
 	go mgr.Start(ctx)
 
 	// Step 1a: seed EndDevice the OOB mutation will delete.
-	seedEndDevice(t, srv, maint001EndDeviceID)
+	seedOwnedEndDevice(t, srv.Stores.EndDevices, maint001EndDeviceID, owner)
 
 	// Step 1b: aggregator subscribes to /edev (EndDeviceList).
 	sub := sep2.Subscription{
@@ -75,7 +76,7 @@ func TestMAINT_001_InverterMaintenanceOOB(t *testing.T) {
 		t.Fatalf("MAINT-001 Step 1b: empty Location header")
 	}
 
-	// Sanity: Manager's ListByResource("/edev") sees this sub —
+	// Sanity: Manager's ListByResource("/edev") sees this sub -
 	// otherwise Step 3's Notify would fan out to zero receivers.
 	listed, err := srv.Stores.Subscriptions.ListByResource(ctx, "/edev")
 	if err != nil {

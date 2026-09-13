@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -47,6 +50,19 @@ func bootRunForNotificationPolicy(t *testing.T, allowLoopback bool) (string, *ht
 		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
 	}
 
+	// Every /edev/{id} route admits only the EndDevice's owner, so the boot
+	// fixture seeds edev-1 with this client certificate's identity.
+	deviceCert, err := certs.ParseCertificatePEM(deviceCertPEM)
+	if err != nil {
+		t.Fatalf("ParseCertificatePEM(device): %v", err)
+	}
+	fixture := filepath.Join(t.TempDir(), "notification-policy-edev.yaml")
+	fixtureYAML := fmt.Sprintf("end_devices:\n  - id: %q\n    sfdi: %q\n    lfdi: %q\n",
+		"edev-1", sepTLS.SFDI(deviceCert), sepTLS.LFDI(deviceCert))
+	if err := os.WriteFile(fixture, []byte(fixtureYAML), 0o600); err != nil {
+		t.Fatalf("write boot fixture: %v", err)
+	}
+
 	// The port is probed and released before Run binds it, so another process
 	// can take it in between; retry with a fresh port when that happens.
 	const startAttempts = 8
@@ -60,6 +76,7 @@ func bootRunForNotificationPolicy(t *testing.T, allowLoopback bool) (string, *ht
 			TZOffset:                  -28800,
 			TimeQuality:               sep2.TimeQualityNTP,
 			NotificationAllowLoopback: allowLoopback,
+			BootFixtureFile:           fixture,
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		runErrCh := make(chan error, 1)

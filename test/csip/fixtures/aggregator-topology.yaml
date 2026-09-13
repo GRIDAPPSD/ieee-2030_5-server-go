@@ -1,49 +1,49 @@
-# #139 fixture — Utility-Aggregator topology for UTIL-001..UTIL-004
-# (CSIP V1.2 §9.1-§9.4). Per Noor's V1.2 coverage matrix Section 2 this is
-# "the heaviest fixture in the matrix" — bigger than #52's
+# #139 fixture - Utility-Aggregator topology for UTIL-001..UTIL-004
+# (CSIP V1.2 section 9.1-section 9.4). It is the largest fixture in this
+# suite, bigger than #52's
 # seven-level-fsa.yaml (1 EndDevice, 7 FSAs, 7 DERPrograms).
 #
 # Topology shape:
 #
 #   5 EndDevices:
-#     - EDFI  (id="0") — the Aggregator itself (Utility-side end device).
-#     - EDA1  (id="1") — managed inverter A1.
-#     - EDA2  (id="2") — managed inverter A2.
-#     - EDB1  (id="3") — managed inverter B1.
-#     - EDB2  (id="4") — managed inverter B2.
+#     - EDFI  (id="0") - the Aggregator itself (Utility-side end device).
+#     - EDA1  (id="1") - managed inverter A1.
+#     - EDA2  (id="2") - managed inverter A2.
+#     - EDB1  (id="3") - managed inverter B1.
+#     - EDB2  (id="4") - managed inverter B2.
 #
 #   4-level FSA chain per managed inverter:
 #
 #     SY (system, primacy 0)
-#       ├── FDA (feeder A, primacy 1)
-#       │     ├── SPA1 (service point A1, primacy 2)
-#       │     │     └── DEV-EDA1 (device, primacy 3)  → EDA1
-#       │     └── SPA2 (service point A2, primacy 2)
-#       │           └── DEV-EDA2 (device, primacy 3)  → EDA2
-#       └── FDB (feeder B, primacy 1)
-#             ├── SPB1 (service point B1, primacy 2)
-#             │     └── DEV-EDB1 (device, primacy 3)  → EDB1
-#             └── SPB2 (service point B2, primacy 2)
-#                   └── DEV-EDB2 (device, primacy 3)  → EDB2
+#       |-- FDA (feeder A, primacy 1)
+#       |     |-- SPA1 (service point A1, primacy 2)
+#       |     |     `-- DEV-EDA1 (device, primacy 3)  -> EDA1
+#       |     `-- SPA2 (service point A2, primacy 2)
+#       |           `-- DEV-EDA2 (device, primacy 3)  -> EDA2
+#       `-- FDB (feeder B, primacy 1)
+#             |-- SPB1 (service point B1, primacy 2)
+#             |     `-- DEV-EDB1 (device, primacy 3)  -> EDB1
+#             `-- SPB2 (service point B2, primacy 2)
+#                   `-- DEV-EDB2 (device, primacy 3)  -> EDB2
 #
 #   Per managed inverter the 4 FSAs (SY/FDx/SPxx/DEV) are hung off that
 #   inverter's EndDevice. Each FSA points to ONE DERProgram. The total
 #   distinct DERPrograms across the topology is 7:
 #     SY (1), FDA + FDB (2), SPA1 + SPA2 + SPB1 + SPB2 (4) = 7 nodes.
 #   Per-inverter device-level DERPrograms are 4 additional (DEV-EDA1..B2)
-#   but they are scoped under each inverter's EndDevice — the spec models
+#   but they are scoped under each inverter's EndDevice - the spec models
 #   the "node" tree above as the shared utility/feeder/service-point
 #   hierarchy, while the device program is per-inverter. Total DERPrograms
-#   stored = 7 shared nodes × 4 inverters (each inverter sees the chain
-#   from its perspective via FSA→DERProgramList) + 4 device-level
+#   stored = 7 shared nodes x 4 inverters (each inverter sees the chain
+#   from its perspective via FSA->DERProgramList) + 4 device-level
 #   programs. The loader keys DERPrograms by EndDevice (see csiptest
 #   loader doc); we replicate the per-inverter chain so each managed
-#   inverter's FSA→DERProgram walk surfaces the full SY→FDx→SPxx→DEV
+#   inverter's FSA->DERProgram walk surfaces the full SY->FDx->SPxx->DEV
 #   priority chain.
 #
-# The Aggregator EDFI (id="0") gets a single FSA → its own DERProgram so
+# The Aggregator EDFI (id="0") gets a single FSA -> its own DERProgram so
 # UTIL-002's "find own EDFI" step has something coherent to discover.
-# It does NOT carry the full inverter topology — it is the management
+# It does NOT carry the full inverter topology - it is the management
 # endpoint, not a managed inverter.
 #
 # SFDI/LFDI are fabricated test values per the same convention as
@@ -51,9 +51,12 @@
 # that don't drive against a SunSpec V1.2 leaf).
 #
 # #147 (AGG-001..012) will reuse this fixture wholesale. Do not add
-# UTIL-004-specific DERControls here — those are created at test time
+# UTIL-004-specific DERControls here - those are created at test time
 # by the procedure step.
 
+# managed_by: the utility provisions the Aggregator (id "0") as the manager
+# of each inverter. The pair is keyed by LFDI after the harness binds id "0"
+# to the certificate it presents.
 end_devices:
   - id: "0"
     sfdi: "100000000001"
@@ -70,6 +73,7 @@ end_devices:
   - id: "1"
     sfdi: "200000000001"
     lfdi: "2000000000000000000000000000000000000001"
+    managed_by: "0"
     enabled: true
     changed_time: 1700000001
     registration_link: "/edev/1/rg"
@@ -82,6 +86,7 @@ end_devices:
   - id: "2"
     sfdi: "200000000002"
     lfdi: "2000000000000000000000000000000000000002"
+    managed_by: "0"
     enabled: true
     changed_time: 1700000002
     registration_link: "/edev/2/rg"
@@ -94,6 +99,7 @@ end_devices:
   - id: "3"
     sfdi: "300000000001"
     lfdi: "3000000000000000000000000000000000000001"
+    managed_by: "0"
     enabled: true
     changed_time: 1700000003
     registration_link: "/edev/3/rg"
@@ -106,6 +112,7 @@ end_devices:
   - id: "4"
     sfdi: "300000000002"
     lfdi: "3000000000000000000000000000000000000002"
+    managed_by: "0"
     enabled: true
     changed_time: 1700000004
     registration_link: "/edev/4/rg"
@@ -116,12 +123,12 @@ end_devices:
       href: "/edev/4/der"
       all: 1
 
-# FSAs — the Aggregator gets one; each managed inverter gets four
+# FSAs - the Aggregator gets one; each managed inverter gets four
 # (SY/FDx/SPxx/DEV). FSA store keys sort lexicographically; the IDs
 # below are chosen so the priority chain is store-key-ordered (0=SY,
 # 1=FDx, 2=SPxx, 3=DEV per inverter).
 fsas:
-  # EDFI (aggregator) — single FSA for its own management.
+  # EDFI (aggregator) - single FSA for its own management.
   - end_device_id: "0"
     id: "0"
     mrid: "EDFI-SELF-FSA"
@@ -130,7 +137,7 @@ fsas:
       href: "/edev/0/fsa/0/derp"
       all: 1
 
-  # EDA1 — SY → FDA → SPA1 → DEV
+  # EDA1 - SY -> FDA -> SPA1 -> DEV
   - end_device_id: "1"
     id: "0"
     mrid: "EDA1-SY-FSA"
@@ -160,7 +167,7 @@ fsas:
       href: "/edev/1/fsa/3/derp"
       all: 1
 
-  # EDA2 — SY → FDA → SPA2 → DEV
+  # EDA2 - SY -> FDA -> SPA2 -> DEV
   - end_device_id: "2"
     id: "0"
     mrid: "EDA2-SY-FSA"
@@ -190,7 +197,7 @@ fsas:
       href: "/edev/2/fsa/3/derp"
       all: 1
 
-  # EDB1 — SY → FDB → SPB1 → DEV
+  # EDB1 - SY -> FDB -> SPB1 -> DEV
   - end_device_id: "3"
     id: "0"
     mrid: "EDB1-SY-FSA"
@@ -220,7 +227,7 @@ fsas:
       href: "/edev/3/fsa/3/derp"
       all: 1
 
-  # EDB2 — SY → FDB → SPB2 → DEV
+  # EDB2 - SY -> FDB -> SPB2 -> DEV
   - end_device_id: "4"
     id: "0"
     mrid: "EDB2-SY-FSA"
@@ -250,12 +257,12 @@ fsas:
       href: "/edev/4/fsa/3/derp"
       all: 1
 
-# DERPrograms — one per FSA above. DERProgram store is scoped by
+# DERPrograms - one per FSA above. DERProgram store is scoped by
 # EndDevice; the FSA-id position is fixture metadata for the priority
 # chain assertion. IDs are zero-padded by inverter so they sort
 # alphabetically within an EndDevice in priority-chain order.
 der_programs:
-  # EDFI (aggregator) — single program.
+  # EDFI (aggregator) - single program.
   - end_device_id: "0"
     fsa_id: "0"
     id: "0"

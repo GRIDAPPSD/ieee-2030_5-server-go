@@ -37,11 +37,13 @@ import (
 // which derives Allow from the registered method set, so the Allow header
 // cannot disagree with what is served.
 
-// lelServer builds a fully wired router and returns it with its stores.
+// lelServer builds a fully wired router and returns it with its stores. The
+// device ids this file addresses are seeded as the test identity's own.
 func lelServer(t *testing.T) (*httptest.Server, *assembly.Stores) {
 	t.Helper()
 
 	stores := testStores()
+	seedOwnedDevices(t, stores.EndDevices, "d1", "d2", "7")
 	handler, _ := assembly.BuildProtocolRouter(
 		assembly.RouterConfig{},
 		stores,

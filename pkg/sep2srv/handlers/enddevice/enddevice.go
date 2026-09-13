@@ -270,6 +270,14 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 }
 
 // HandleUpdateEndDevice returns a handler for PUT /edev/{id}.
+//
+// The body replaces the record except for its identity: the stored LFDI and
+// SFDI are kept whatever the body carries, whether present, empty, absent or
+// different. Identity is the certificate's, fixed at registration, and the
+// ownership gate, GET /edev and the store's LFDI and SFDI indexes all resolve
+// by it, so a client body must not move it. A differing value is ignored
+// rather than refused, so a client that omits the optional lFDI, or PUTs back
+// the document it fetched, is not turned away.
 func HandleUpdateEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
@@ -295,7 +303,18 @@ func HandleUpdateEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 			return
 		}
 
+		current, err := s.Get(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			srverr.Internal(w, r, err)
+			return
+		}
+
 		dev.Href = "/edev/" + id
+		dev.LFDI, dev.SFDI = current.LFDI, current.SFDI
 		dev.ChangedTime = time.Now().Unix()
 
 		if err := s.Update(r.Context(), id, dev); err != nil {

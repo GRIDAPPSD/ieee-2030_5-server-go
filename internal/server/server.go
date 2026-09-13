@@ -123,6 +123,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// Initialize stores
 	stores := &Stores{
 		EndDevices:               endDevices,
+		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
 		EndDeviceIndexes:         memory.NewEndDeviceIndex(),
 		Registrations:            registrations,
 		RegistrationPolicy:       memory.RegistrationPolicy{}, // fail-closed: no self-registration pIN resolver wired yet

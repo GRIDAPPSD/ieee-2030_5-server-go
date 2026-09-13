@@ -13,11 +13,12 @@ import (
 // when armed: the backend did not answer, which is neither "the resource is
 // absent" nor "the collection is empty".
 //
-// It is deliberately NOT one of the four sentinels in pkg/store, and
+// It is deliberately NOT one of the sentinels in pkg/store, and
 // [TestErrBackendUnavailableIsNotASentinel] pins that. A caller matching with
 // errors.Is sees neither ErrNotFound nor ErrAlreadyExists nor
-// ErrUnsupportedSort nor ErrInvalidListOptions, which is what makes it the
-// right probe for the contract's "ANY other non-nil error" clause: a route
+// ErrUnsupportedSort nor ErrInvalidListOptions nor ErrInvalidManagementPair,
+// which is what makes it the right probe for the contract's "ANY other
+// non-nil error" clause: a route
 // that renders it as 404, as an empty list, or as a synthesized default is
 // conflating a broken backend with a missing resource.
 var ErrBackendUnavailable = errors.New("storetest: backend unavailable")

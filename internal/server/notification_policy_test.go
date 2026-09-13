@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
@@ -45,8 +46,21 @@ func newLoopbackReceiver(t *testing.T) *loopbackReceiver {
 	return rcv
 }
 
-// postSubscriptionThroughRouter stubs a client certificate so the protocol
-// router's identity and ACL middleware admit the POST.
+// policyPeerCert is the client certificate the router tests present. The
+// EndDevice they post under must carry its identity, or the ownership gate
+// refuses the request before the subscription handler sees it.
+var policyPeerCert = &x509.Certificate{}
+
+func seedPolicyEndDevice(t *testing.T, stores *server.Stores, edevID string) {
+	t.Helper()
+	dev := sep2.EndDevice{LFDI: sepTLS.LFDI(policyPeerCert), SFDI: sepTLS.SFDI(policyPeerCert)}
+	if err := stores.EndDevices.Create(context.Background(), edevID, dev); err != nil {
+		t.Fatalf("seed end device %s: %v", edevID, err)
+	}
+}
+
+// postSubscriptionThroughRouter presents policyPeerCert so the protocol
+// router's identity, ACL, and ownership middleware admit the POST.
 func postSubscriptionThroughRouter(t *testing.T, h http.Handler, edevID, uri string) *httptest.ResponseRecorder {
 	t.Helper()
 	body := []byte(`<Subscription xmlns="urn:ieee:std:2030.5:ns">` +
@@ -55,7 +69,7 @@ func postSubscriptionThroughRouter(t *testing.T, h http.Handler, edevID, uri str
 		`<encoding>0</encoding>` +
 		`</Subscription>`)
 	req := httptest.NewRequest(http.MethodPost, "/edev/"+edevID+"/sub", bytes.NewReader(body))
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{{}}}
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{policyPeerCert}}
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr
@@ -133,6 +147,7 @@ func TestProtocolRouterDefaultConfigRefusesMulticastAndMetadata(t *testing.T) {
 			t.Parallel()
 			cfg := &config.Config{}
 			stores := newTestStores()
+			seedPolicyEndDevice(t, stores, "edev-1")
 			mgr := server.NewSubscriptionNotifier(cfg, stores.Subscriptions, 1, 4)
 			h, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", mgr)
 
@@ -199,6 +214,7 @@ func TestProtocolRouterLogsValidatorFallbackOnce(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			logs := captureServerLog(t)
 			stores := newTestStores()
+			seedPolicyEndDevice(t, stores, "edev-1")
 			h, _ := server.BuildProtocolRouter(&config.Config{}, stores, nil, "", "", tc.notifier(stores))
 			for range 2 {
 				_ = postSubscriptionThroughRouter(t, h, "edev-1", "http://127.0.0.1:8080/notify")
@@ -222,6 +238,7 @@ func TestProtocolRouterDefaultConfigRefusesLoopbackNotificationURI(t *testing.T)
 	rcv := newLoopbackReceiver(t)
 	cfg := &config.Config{}
 	stores := newTestStores()
+	seedPolicyEndDevice(t, stores, "edev-1")
 	mgr := server.NewSubscriptionNotifier(cfg, stores.Subscriptions, 1, 4)
 	h, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", mgr)
 
@@ -247,6 +264,7 @@ func TestProtocolRouterWithoutManagerPolicyRefusesLoopback(t *testing.T) {
 			t.Parallel()
 			rcv := newLoopbackReceiver(t)
 			stores := newTestStores()
+			seedPolicyEndDevice(t, stores, "edev-1")
 			h, _ := server.BuildProtocolRouter(&config.Config{}, stores, nil, "", "", tc.notifier)
 
 			rr := postSubscriptionThroughRouter(t, h, "edev-1", rcv.uri)
@@ -261,6 +279,7 @@ func TestProtocolRouterLoopbackOptInFromConfig(t *testing.T) {
 	rcv := newLoopbackReceiver(t)
 	cfg := &config.Config{NotificationAllowLoopback: true}
 	stores := newTestStores()
+	seedPolicyEndDevice(t, stores, "edev-1")
 	mgr := server.NewSubscriptionNotifier(cfg, stores.Subscriptions, 1, 4)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

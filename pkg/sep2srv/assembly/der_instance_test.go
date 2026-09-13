@@ -25,10 +25,12 @@ import (
 // carrying the wrong links, which is the failure the route exists to prevent.
 
 // derInstanceServer builds a fully wired router over stores the caller can seed.
+// The device ids this file addresses are seeded as the test identity's own.
 func derInstanceServer(t *testing.T) (*httptest.Server, *assembly.Stores) {
 	t.Helper()
 
 	stores := testStores()
+	seedOwnedDevices(t, stores.EndDevices, "1", "7", "deviceA", "deviceB")
 	handler, _ := assembly.BuildProtocolRouter(
 		assembly.RouterConfig{},
 		stores,

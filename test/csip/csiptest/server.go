@@ -527,6 +527,7 @@ func newCCMConfig(t *testing.T, serverCertPEM, serverKeyPEM, caCertPEM []byte) (
 func NewFreshStores() *server.Stores {
 	return &server.Stores{
 		EndDevices:               memory.NewEndDeviceStore(),
+		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
 		MirrorUsagePoints:        memory.NewStore[sep2.MirrorUsagePoint](),
 		MirrorMeterReadings:      memory.NewScopedStore[sep2.MirrorMeterReading](),
 		DERs:                     memory.NewScopedStore[sep2.DER](),

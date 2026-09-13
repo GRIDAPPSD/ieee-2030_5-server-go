@@ -27,6 +27,7 @@ func TestErrBackendUnavailableIsNotASentinel(t *testing.T) {
 		{"ErrAlreadyExists", store.ErrAlreadyExists},
 		{"ErrUnsupportedSort", store.ErrUnsupportedSort},
 		{"ErrInvalidListOptions", store.ErrInvalidListOptions},
+		{"ErrInvalidManagementPair", store.ErrInvalidManagementPair},
 	} {
 		if errors.Is(storetest.ErrBackendUnavailable, sentinel.err) {
 			t.Errorf("ErrBackendUnavailable matches store.%s; a transient failure must match no sentinel", sentinel.name)

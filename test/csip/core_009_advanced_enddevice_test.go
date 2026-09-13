@@ -120,11 +120,9 @@ func runRoundtripAllFourResources(t *testing.T, extraOpts []csiptest.BootOption)
 func bootWithSingleEdev(t *testing.T, extraOpts []csiptest.BootOption) (*csiptest.BootedServer, *http.Client) {
 	t.Helper()
 
-	// Build a CA + device cert under our control. We hand the CA path
-	// to BootServer via WithClientCAsFile and the cert to WithClientCert
-	// so the http.Client we build below presents an identity the server
-	// validates.
-	_, caCertFile, clientCert := mustBuildClientPKI(t)
+	// The http.Client built below presents owner's certificate, which owns
+	// the fixture's EndDevice.
+	owner := csiptest.NewDeviceIdentity(t, "CORE-009-DEVICE")
 
 	stores := csiptest.NewFreshStores()
 	target := &csiptest.Target{
@@ -136,18 +134,17 @@ func bootWithSingleEdev(t *testing.T, extraOpts []csiptest.BootOption) (*csiptes
 		DERCurves:          stores.DERCurves,
 	}
 	fixture := filepath.Join("fixtures", "single-edev.yaml")
-	if err := csiptest.Load(context.Background(), target, fixture); err != nil {
+	if err := csiptest.Load(context.Background(), target, fixture, csiptest.Bind(fixtureEndDeviceID, owner)); err != nil {
 		t.Fatalf("load %s: %v", fixture, err)
 	}
 
 	allOpts := append([]csiptest.BootOption{
 		csiptest.WithStores(stores),
-		csiptest.WithClientCAsFile(caCertFile),
-		csiptest.WithClientCert(clientCert),
+		csiptest.WithDeviceIdentity(owner),
 	}, extraOpts...)
 	srv := csiptest.BootServer(t, allOpts...)
 
-	return srv, buildClient(t, srv.RootCA, clientCert)
+	return srv, buildClient(t, srv.RootCA, owner.Cert)
 }
 
 // putAndGetCapability PUTs a DERCapability with three populated fields

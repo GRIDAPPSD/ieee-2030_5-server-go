@@ -1,4 +1,4 @@
-// CSIP V1.2 §6.18 — Basic Subscription.
+// CSIP V1.2 section 6.18 - Basic Subscription.
 //
 // CORE-018 asserts the minimum server-side subscription/notification
 // flow: a client may POST a Subscription on a subscribable resource,
@@ -6,29 +6,29 @@
 // the client-supplied notificationURI carrying the resource href and
 // the SubscribedResource the client subscribed to.
 //
-// V1.2 procedure step → assertion mapping:
+// V1.2 procedure step -> assertion mapping:
 //
 //	Step 1: client POSTs a Subscription to /edev/{id}/sub naming the
 //	        FSAList href as SubscribedResource and the test receiver's
 //	        URL as NotificationURI.
-//	                                          ──► postSubscription, expects 201 Created
-//	                                          ──► GET /edev/{id}/sub returns the new sub
+//	                                          -> postSubscription, expects 201 Created
+//	                                          -> GET /edev/{id}/sub returns the new sub
 //	Step 2: server-side state change on a resource under the subscribed
 //	        href. We drive this via the #27 mutation-shape directly
 //	        on the in-process store (we live in the same module as the
 //	        server, so we can mutate the store the booted server reads
-//	        from) — adding a DERControl under the EndDevice's FSA.
-//	                                          ──► direct store mutation
+//	        from) - adding a DERControl under the EndDevice's FSA.
+//	                                          -> direct store mutation
 //	Step 3: server fan-outs a Notification to the receiver. We invoke
 //	        subscription.Manager.Notify directly with the subscribed
 //	        resource href; that is the same call the production
 //	        DELETE-EndDevice handler makes (see internal/handler/edev.go
 //	        HandleDeleteEndDevice). The Manager performs ListByResource
 //	        against the live SubscriptionStore and POSTs to every
-//	        subscriber's NotificationURI — exactly the V1.2 §6.18
+//	        subscriber's NotificationURI - exactly the V1.2 section 6.18
 //	        Step 3 expectation.
-//	                                          ──► receiver.Wait(1)
-//	                                          ──► assert Notification.SubscribedResource
+//	                                          -> receiver.Wait(1)
+//	                                          -> assert Notification.SubscribedResource
 //	                                              == fsa href
 //
 // Why drive the Notify directly rather than asking the server to
@@ -36,7 +36,7 @@
 // from explicit handler call sites (the DELETE-EndDevice route was the
 // first; #155 will add MAINT-004's add-DERControl call site).
 // Plumbing notify into the #27 mutation handlers is out of scope
-// for #151 — it lands with #155 (MAINT-004). For §6.18 the
+// for #151 - it lands with #155 (MAINT-004). For section 6.18 the
 // procedure care-abouts are "server accepts a subscription" and
 // "server delivers a Notification matching the subscribed resource";
 // driving Notify from the test still exercises the full server-side
@@ -74,27 +74,27 @@ const (
 	core018FSAHref     = "/edev/" + core018EndDeviceID + "/fsa"
 )
 
-// TestCORE_018_BasicSubscription implements CSIP V1.2 §6.18.
+// TestCORE_018_BasicSubscription implements CSIP V1.2 section 6.18.
 func TestCORE_018_BasicSubscription(t *testing.T) {
 	t.Parallel()
 
-	srv := csiptest.BootServer(t)
+	owner := csiptest.NewDeviceIdentity(t, "CORE-018-DEVICE")
+	srv := csiptest.BootServer(t, csiptest.WithDeviceIdentity(owner))
+	seedOwnedEndDevice(t, srv.Stores.EndDevices, core018EndDeviceID, owner)
 	receiver := csiptest.NewNotificationReceiver(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
 	// Stand up a real subscription.Manager wired to the booted
 	// server's authoritative SubscriptionStore. This is the production
-	// type with the production wiring; only its caller — Notify — is
+	// type with the production wiring; only its caller - Notify - is
 	// driven from the test. Worker pool sized small: one POST per
 	// subscriber, this test has one subscriber.
 	mgr := coresub.NewManager(srv.Stores.Subscriptions, 2, 16, csiptest.AllowLoopbackReceivers())
 	go mgr.Start(ctx)
 
 	// Step 1: client POSTs a Subscription naming the FSAList as
-	// SubscribedResource. The csip subscription create handler does not
-	// require the parent EndDevice to pre-exist (see
-	// internal/handler/subscription.go), so we don't pre-seed /edev.
+	// SubscribedResource, under the EndDevice it owns.
 	sub := sep2.Subscription{
 		SubscribedResource: core018FSAHref,
 		NotificationURI:    receiver.URL(),
@@ -109,7 +109,7 @@ func TestCORE_018_BasicSubscription(t *testing.T) {
 	}
 
 	// Sanity-check the subscription is in the store reachable by the
-	// Manager's ListByResource — if this fails, the Notify in Step 3
+	// Manager's ListByResource - if this fails, the Notify in Step 3
 	// would fan out to zero subscribers and Step 3's wait would time
 	// out with a confusing "no notifications" rather than the actual
 	// "create did not persist" failure.
@@ -122,12 +122,12 @@ func TestCORE_018_BasicSubscription(t *testing.T) {
 	}
 
 	// Step 2: server-side state change. We mutate the FSA store
-	// directly — the booted server's handler reads from the same
+	// directly - the booted server's handler reads from the same
 	// store, so a subsequent GET /edev/{id}/fsa would observe the
 	// new entry. The mutation itself is not asserted here; the
 	// assertion is on the notification fan-out in Step 3. This
 	// mirrors the #27 mutation shape (FSA-keyed Create on the
-	// ScopedStore) without going through the test-tag HTTP route —
+	// ScopedStore) without going through the test-tag HTTP route -
 	// the test-tag route is the wire-level surface for cross-process
 	// drivers; in-process tests can call the same store API.
 	fsas := srv.Stores.FSAs.ForParent(core018EndDeviceID)
@@ -156,7 +156,7 @@ func TestCORE_018_BasicSubscription(t *testing.T) {
 	// Wire-shape assertions: Content-Type, namespace, parsed body
 	// fields. The production manager.deliver sets
 	// Content-Type: application/sep+xml and posts a sep2.Notification
-	// XML body — a regression on either is a wire-level conformance
+	// XML body - a regression on either is a wire-level conformance
 	// failure that this test should catch in isolation.
 	rec := got[0]
 	const wantCT = "application/sep+xml"
@@ -202,10 +202,10 @@ func postSubscriptionExpect201(t *testing.T, srv *csiptest.BootedServer, edevID 
 }
 
 // doSubRequest issues a verbed request with the given body against the
-// booted server's TLS stack — reusing the device cert and root CA
+// booted server's TLS stack - reusing the device cert and root CA
 // already wired by csiptest.BootServer. Failure to build the request
 // or to dial the server is fatal; HTTP status interpretation is the
-// caller's job (so 4xx is not auto-fatal — CORE-019's malformed body
+// caller's job (so 4xx is not auto-fatal - CORE-019's malformed body
 // leg specifically wants the 400 reply).
 //
 // Lives in the test file (not csiptest) so it doesn't grow the helper

@@ -22,6 +22,7 @@ import (
 func NewStores() *assembly.Stores {
 	return &assembly.Stores{
 		EndDevices:               memory.NewEndDeviceStore(),
+		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
 		EndDeviceIndexes:         memory.NewEndDeviceIndex(),
 		Registrations:            memory.NewRegistrationStore(),
 		MirrorUsagePoints:        memory.NewStore[sep2.MirrorUsagePoint](),

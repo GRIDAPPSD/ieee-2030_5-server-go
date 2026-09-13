@@ -17,6 +17,10 @@ import (
 // reference it directly. Deleting it is Phase 3 scope.
 type Stores struct {
 	EndDevices store.EndDeviceStore
+	// EndDeviceManagers holds the (manager, managed) LFDI pairs the ownership
+	// gate consults. Run wires an empty store until the admin plane can
+	// provision pairs, so aggregators reach only their own EndDevice.
+	EndDeviceManagers store.EndDeviceManagementStore
 	// EndDeviceIndexes allocates the opaque, server-chosen index that
 	// addresses an EndDevice in resource URLs ("/edev/3/rg"). core v0.10.0
 	// added this field to assembly.Stores; a nil value degrades to a

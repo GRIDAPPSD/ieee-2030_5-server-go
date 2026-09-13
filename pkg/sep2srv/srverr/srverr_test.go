@@ -165,6 +165,98 @@ func TestRouteReportsAPlaceholderForAnUnroutedRequest(t *testing.T) {
 	}
 }
 
+// TestBadRequestLogsTheRouteAndTheError is [BadRequest]'s half of the
+// TestInternalLogsTheRouteAndTheError obligation: a 400 that leaves no
+// server-side record of the decoder's complaint is as uninvestigable as an
+// unlogged 500.
+func TestBadRequestLogsTheRouteAndTheError(t *testing.T) {
+	buf := captureLog(t)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /edev/{id}/der/{derId}", func(w http.ResponseWriter, r *http.Request) {
+		srverr.BadRequest(w, r, errors.New("XML syntax error on line 1: unexpected EOF"))
+	})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/edev/77/der/9", nil))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != srverr.DefaultBadRequestMessage {
+		t.Errorf("body = %q, want %q", got, srverr.DefaultBadRequestMessage)
+	}
+
+	line := buf.String()
+	if !strings.HasPrefix(line, "sep2srv: 400 on GET /edev/{id}/der/{derId}") &&
+		!strings.HasPrefix(line, "sep2srv: 400 on PUT /edev/{id}/der/{derId}") {
+		t.Fatalf("log = %q, want it to start with the route", line)
+	}
+	if !strings.Contains(line, "unexpected EOF") {
+		t.Errorf("log = %q, want it to carry the error", line)
+	}
+}
+
+// TestBadRequestMessageKeepsTheDecoderDetailOffTheWire is the 400 mirror of
+// TestInternalMessageKeepsTheDetailOffTheWire: the decoder's own text goes to
+// the operator, never to the client that supplied the input that produced it.
+func TestBadRequestMessageKeepsTheDecoderDetailOffTheWire(t *testing.T) {
+	buf := captureLog(t)
+
+	const decoderDetail = "XML syntax error on line 1: element <foo> closed by </MARKERXYZ360LEAK>"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /mup", func(w http.ResponseWriter, r *http.Request) {
+		srverr.BadRequestMessage(w, r, "invalid XML", errors.New(decoderDetail))
+	})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mup", nil))
+
+	if got := strings.TrimSpace(rec.Body.String()); got != "invalid XML" {
+		t.Errorf("body = %q, want the caller-chosen message", got)
+	}
+	if strings.Contains(rec.Body.String(), "MARKERXYZ360LEAK") {
+		t.Errorf("body = %q; the decoder detail reached the client", rec.Body.String())
+	}
+	if !strings.Contains(buf.String(), "MARKERXYZ360LEAK") {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", buf.String())
+	}
+}
+
+// TestLogBadRequestWritesNoResponse pins the seam the admin plane's JSON error
+// envelope needs: logging and responding are separable, so a caller whose
+// client-visible body is not plain text still logs through this package's one
+// convention.
+func TestLogBadRequestWritesNoResponse(t *testing.T) {
+	buf := captureLog(t)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/certs/server", func(w http.ResponseWriter, r *http.Request) {
+		srverr.LogBadRequest(r, errors.New("json: cannot unmarshal number 999999999999999999999999999999 into Go struct field createServerCertRequest.validYears of type int"))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid JSON"}`))
+	})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/certs/server", nil))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"error":"invalid JSON"}` {
+		t.Errorf("body = %q, want the caller's own JSON envelope untouched", got)
+	}
+	line := buf.String()
+	if !strings.HasPrefix(line, "sep2srv: 400 on POST /api/certs/server") {
+		t.Fatalf("log = %q, want it to start with the route", line)
+	}
+	if !strings.Contains(line, "999999999999999999999999999999") {
+		t.Errorf("log = %q, want it to carry the decoder detail LogBadRequest was given", line)
+	}
+}
+
 // TestInternalNamesAMissingError keeps a call site that had no error value
 // from producing a line that reads like a bug in the logging itself.
 func TestInternalNamesAMissingError(t *testing.T) {

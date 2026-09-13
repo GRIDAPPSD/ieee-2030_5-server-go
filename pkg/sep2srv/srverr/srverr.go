@@ -85,10 +85,26 @@ const DefaultMessage = "internal error"
 // and keeps the field count of the line stable.
 const UnroutedPattern = "(no route pattern)"
 
-// logPrefix begins every line this package writes. It is a stable, greppable
-// anchor: an operator filtering a mixed log for server-side failures, and the
-// route-coverage test that asserts every 500 emits a line, both key off it.
+// logPrefix begins every line this package writes for a 500. It is a stable,
+// greppable anchor: an operator filtering a mixed log for server-side
+// failures, and the route-coverage test that asserts every 500 emits a line,
+// both key off it.
 const logPrefix = "sep2srv: 500 on "
+
+// logPrefix400 is [logPrefix]'s 400 counterpart, so a decoder failure and a
+// store failure are distinguishable in a mixed log without inspecting the
+// status line that went with them.
+const logPrefix400 = "sep2srv: 400 on "
+
+// DefaultBadRequestMessage is the response body written to the client for a
+// 400 whose call site does not choose its own.
+//
+// Like [DefaultMessage], it deliberately withholds the decoder's own error
+// text: an XML or JSON syntax error can quote the byte or element name that
+// tripped it, which is attacker-supplied content the client is not entitled
+// to see reflected back, and the operator does not need it in the response
+// because the log line carries it instead.
+const DefaultBadRequestMessage = "invalid request"
 
 // LogLinePrefix returns the leading portion of the line [Internal] writes for
 // a 500 on route, up to and including the separator before the error.
@@ -131,13 +147,50 @@ func Internal(w http.ResponseWriter, r *http.Request, err error) {
 // clientMessage is written to the client and MUST NOT carry internal detail;
 // err is written to the log and never to the client.
 func InternalMessage(w http.ResponseWriter, r *http.Request, clientMessage string, err error) {
-	// A nil err would render as "<nil>", which reads like a bug in the
-	// logging rather than like a call site that had no error value to
-	// report, so it is named instead.
-	detail := any("(no error reported)")
-	if err != nil {
-		detail = err
-	}
-	log.Printf("%s%s: %v", logPrefix, Route(r), detail)
+	log.Printf("%s%s: %v", logPrefix, Route(r), errDetail(err))
 	http.Error(w, clientMessage, http.StatusInternalServerError)
+}
+
+// BadRequest records err against the matched route and answers the request
+// with a 400 carrying [DefaultBadRequestMessage].
+//
+// Call it instead of writing http.Error with http.StatusBadRequest and the
+// decoder's own err.Error() directly. A decoder error can quote the input
+// that failed to parse, and this package's doc says that content never
+// reaches a client body; routing every 400 through this function is what
+// keeps that a property of the code rather than a habit each new handler has
+// to be reminded of.
+func BadRequest(w http.ResponseWriter, r *http.Request, err error) {
+	BadRequestMessage(w, r, DefaultBadRequestMessage, err)
+}
+
+// BadRequestMessage is [BadRequest] for call sites whose client-visible body
+// is not [DefaultBadRequestMessage].
+//
+// clientMessage is written to the client and MUST NOT carry decoder detail;
+// err is written to the log and never to the client.
+func BadRequestMessage(w http.ResponseWriter, r *http.Request, clientMessage string, err error) {
+	LogBadRequest(r, err)
+	http.Error(w, clientMessage, http.StatusBadRequest)
+}
+
+// LogBadRequest records err against the matched route for a 400, without
+// writing a response.
+//
+// It exists for the call sites [BadRequest] and [BadRequestMessage] cannot
+// serve directly: a caller whose client-visible body is not plain text (the
+// admin plane's JSON error envelope) still logs through this package's one
+// convention, then writes its own response with its own fixed message.
+func LogBadRequest(r *http.Request, err error) {
+	log.Printf("%s%s: %v", logPrefix400, Route(r), errDetail(err))
+}
+
+// errDetail names a nil err rather than rendering it as "<nil>", which reads
+// like a bug in the logging rather than like a call site that had no error
+// value to report.
+func errDetail(err error) any {
+	if err != nil {
+		return err
+	}
+	return "(no error reported)"
 }

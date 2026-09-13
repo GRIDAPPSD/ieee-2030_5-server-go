@@ -281,6 +281,7 @@ jobs:
           git commit -m "$MSG"
 
       - name: Push chore/bump-core (only when behind)
+        id: push
         if: steps.compare.outputs.behind != '0'
         env:
           WRITE_TOKEN: ${{ steps.write-token.outputs.token }}
@@ -289,6 +290,11 @@ jobs:
           git push --force \
             "https://x-access-token:${WRITE_TOKEN}@github.com/GRIDAPPSD/ieee-2030_5-server-go.git" \
             HEAD:refs/heads/chore/bump-core
+
+      - name: Annotate infra failure (push chore/bump-core)
+        if: failure() && steps.push.outcome == 'failure'
+        run: |
+          echo "::error title=INFRA FAILURE (staleness-check)::The write-scoped GitHub App installation token was refused when pushing chore/bump-core. See the push step's log above for the underlying error."
 
       - name: Open or update the bump PR (only when behind)
         id: bump-pr
@@ -333,6 +339,11 @@ jobs:
               --body-file /tmp/bump-core-pr-body.md
             echo "Opened new PR"
           fi
+
+      - name: Annotate infra failure (bump PR)
+        if: failure() && steps.bump-pr.outcome == 'failure'
+        run: |
+          echo "::error title=INFRA FAILURE (staleness-check)::The write-scoped GitHub App installation token was refused when opening or updating the chore/bump-core pull request. See the bump PR step's log above for the underlying error."
 
       - name: Fail when the pin is behind
         # Both clauses are load-bearing: the implicit success() hides real

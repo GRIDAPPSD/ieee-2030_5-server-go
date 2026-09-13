@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
@@ -378,6 +379,61 @@ func TestLoadSpec_DuplicateEndDevice_Errors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "duplicate id") {
 		t.Errorf("LoadSpec(dup EndDevice): error = %v, want 'duplicate id'", err)
+	}
+}
+
+// TestLoadSpec_PerCentOutOfRange_Errors pins that a percent the XML encoder
+// would refuse fails the load and stores no control, on both control paths.
+func TestLoadSpec_PerCentOutOfRange_Errors(t *testing.T) {
+	t.Parallel()
+
+	over := sep2.PerCent(10001)
+	under := sep2.SignedPerCent(-10001)
+	cases := []struct {
+		name    string
+		dderc   bool
+		base    csiptest.DERControlBaseSpec
+		wantMsg string
+	}{
+		{"default control op_mod_max_lim_w above 10000", true, csiptest.DERControlBaseSpec{OpModMaxLimW: &over}, "default_der_controls[0]: op_mod_max_lim_w"},
+		{"control op_mod_max_lim_w above 10000", false, csiptest.DERControlBaseSpec{OpModMaxLimW: &over}, `der_controls[0] (id="a"): op_mod_max_lim_w`},
+		{"control op_mod_fixed_w below -10000", false, csiptest.DERControlBaseSpec{OpModFixedW: &under}, `der_controls[0] (id="a"): op_mod_fixed_w`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			base := tc.base
+			spec := &csiptest.Spec{}
+			if tc.dderc {
+				spec.DefaultDERControls = []csiptest.DefaultDERControlSpec{
+					{EndDeviceID: "0", FSAID: "0", DERProgramID: "0", DERControlBase: &base},
+				}
+			} else {
+				spec.DERControls = []csiptest.DERControlSpec{
+					{EndDeviceID: "0", FSAID: "0", DERProgramID: "0", ID: "a", DERControlBase: &base},
+				}
+			}
+			target := csiptest.NewTarget()
+			ctx := context.Background()
+			err := csiptest.LoadSpec(ctx, target, spec)
+			if err == nil {
+				t.Fatal("LoadSpec: want error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("LoadSpec: error = %v, want it to contain %q", err, tc.wantMsg)
+			}
+			ddercCount, err := target.DefaultDERControls.Count(ctx, "0/0/0")
+			if err != nil {
+				t.Fatalf("DefaultDERControls.Count: %v", err)
+			}
+			dercCount, err := target.DERControls.Count(ctx, "0/0/0")
+			if err != nil {
+				t.Fatalf("DERControls.Count: %v", err)
+			}
+			if ddercCount != 0 || dercCount != 0 {
+				t.Errorf("stored %d default and %d event controls after a rejected load, want 0 and 0", ddercCount, dercCount)
+			}
+		})
 	}
 }
 

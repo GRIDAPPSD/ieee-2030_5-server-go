@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -93,6 +94,20 @@ func requireResource[T store.Copier[T]](handle store.ResourceStore[T], field str
 	return miswiredResourceStore[T]{field: field}
 }
 
+// requireEndDevices is [requireResource] for the anchor of every /edev route.
+// EndDevices has no family gate above it, because /edev is the root of the
+// discovery walk and mounts whenever Stores does, so an absent handle refuses
+// here instead: POST /edev and GET /edev are exempt from the ownership gate and
+// would otherwise reach the handle unguarded.
+func requireEndDevices(handle store.EndDeviceStore) store.EndDeviceStore {
+	if !store.IsAbsent(handle) {
+		return handle
+	}
+	log.Print("assembly: Stores.EndDevices is not wired: every /edev route, POST /edev included, " +
+		"will answer 500 until the handle is supplied")
+	return miswiredEndDeviceStore{miswiredResourceStore[sep2.EndDevice]{field: "EndDevices"}}
+}
+
 // miswiredErr is the error every refusing store returns.
 //
 // It wraps nothing: in particular it is not store.ErrNotFound, because a
@@ -165,4 +180,17 @@ func (s miswiredResourceStore[T]) Update(_ context.Context, _ string, _ T) error
 
 func (s miswiredResourceStore[T]) Delete(_ context.Context, _ string) error {
 	return miswiredErr(s.field)
+}
+
+// miswiredEndDeviceStore refuses every operation of [store.EndDeviceStore].
+type miswiredEndDeviceStore struct {
+	miswiredResourceStore[sep2.EndDevice]
+}
+
+func (s miswiredEndDeviceStore) GetBySFDI(_ context.Context, _ string) (sep2.EndDevice, error) {
+	return sep2.EndDevice{}, miswiredErr(s.field)
+}
+
+func (s miswiredEndDeviceStore) GetByLFDI(_ context.Context, _ string) (sep2.EndDevice, error) {
+	return sep2.EndDevice{}, miswiredErr(s.field)
 }

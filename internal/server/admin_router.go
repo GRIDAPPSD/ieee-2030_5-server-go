@@ -9,7 +9,7 @@ import (
 )
 
 // BuildAdminRouter creates the admin router AND returns the canonical
-// pattern list mounted under it. Three layers, outermost first:
+// pattern list mounted under it. Layers, outermost first:
 //  1. Host-header allowlist (#270) - rejects any request whose Host
 //     header isn't a hostname this server claims (loopback, localhost, the
 //     #246 mDNS hostname, plus operator-extended entries from
@@ -19,10 +19,12 @@ import (
 //     (test paths only - the production caller in startAdminServer
 //     always supplies the resolved defaults; an empty allowlist logs a
 //     loud WARNING at construction time).
-//  2. Public outer mux - /login, /auth/login (login form + submit). These
+//  2. Cross-origin refusal (#416): a state-changing request a browser marks
+//     as from another origin is refused before any credential is consulted.
+//  3. Public outer mux - /login, /auth/login (login form + submit). These
 //     routes are unauthenticated by design: the operator cannot reach the
 //     dashboard without first hitting them.
-//  3. Authenticated inner mux - everything else (dashboard, /api/*, SSE,
+//  4. Authenticated inner mux - everything else (dashboard, /api/*, SSE,
 //     ticket exchange). Guarded by AdminAuthMiddleware which supports mTLS,
 //     Bearer, the query-param ticket from tickets, and the #159
 //     admin_ticket cookie session from sessions. Those last two are
@@ -116,9 +118,11 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 	// returned route list reflects what is mounted under the listener
 	// regardless of host gating - boot-log enumeration is independent
 	// of which Host headers reach the handlers.
-	var h http.Handler = outer
+	// Outside both muxes so the login submit is covered too; inside the Host
+	// gate so a misdirected request is still answered 421.
+	var h http.Handler = auth.AdminCrossOriginMiddleware()(outer)
 	if len(allowedHosts) > 0 {
-		h = HostAllowlistMiddleware(allowedHosts)(outer)
+		h = HostAllowlistMiddleware(allowedHosts)(h)
 	} else {
 		// Wren MED-5: empty allowlist disables the DNS-rebinding gate.
 		// The production caller in startAdminServer always supplies the

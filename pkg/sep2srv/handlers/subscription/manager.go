@@ -59,6 +59,12 @@ var ErrQueueFull = errors.New("notification queue full")
 // failure log later on the worker.
 var ErrInvalidNotificationURI = errors.New("subscription has no notificationURI")
 
+// ErrManagerClosed is returned by NotifyRemoved when Close has already run.
+// A send on the closed queue would panic (#460); this is the documented
+// alternative. The spec doesn't require the final Notification, so callers
+// treat it the same as ErrQueueFull: best-effort, not fatal to the caller.
+var ErrManagerClosed = errors.New("notification manager closed")
+
 type notificationTask struct {
 	subscriptionID  string
 	notificationURI string
@@ -79,6 +85,14 @@ type Manager struct {
 	// obs.RecordNotification here; core has no prometheus dependency.
 	observer func(outcome string)
 	guard    *destinationGuard
+
+	// closeMu guards closed and the close(queue) call. An enqueue holds the
+	// read lock across its check-then-send so Close (the write lock) cannot
+	// close the channel between the check and the send: that ordering is
+	// what turns "send after close panics" into "send after close returns
+	// ErrManagerClosed" (#460).
+	closeMu sync.RWMutex
+	closed  bool
 }
 
 // ManagerOption configures a Manager at construction.
@@ -129,6 +143,14 @@ func (m *Manager) SetObserver(fn func(outcome string)) {
 }
 
 // Start launches worker goroutines. Blocks until ctx is cancelled.
+//
+// Shutdown order: internal/server/server.go passes the SAME ctx to both
+// this call and, independently, to the HTTP server's graceful drain
+// (server.go around the ctx.Done() select that runs stopProtocolServer).
+// Neither goroutine waits on the other, so a DELETE handler's NotifyRemoved
+// call can race Close below at any point during the drain; Close and
+// enqueue are written to make that race safe rather than to make it not
+// happen (#460).
 func (m *Manager) Start(ctx context.Context) {
 	for i := 0; i < m.workerCount; i++ {
 		m.wg.Add(1)
@@ -136,8 +158,41 @@ func (m *Manager) Start(ctx context.Context) {
 	}
 
 	<-ctx.Done()
-	close(m.queue)
+	m.Close()
 	m.wg.Wait()
+}
+
+// Close closes the queue so workers drain any buffered tasks and exit. Safe
+// to call more than once (idempotent) and safe to call concurrently with
+// NotifyRemoved/Notify: closeMu excludes an in-progress enqueue from
+// observing closed as false and then losing the race to the close(m.queue)
+// below (#460).
+func (m *Manager) Close() {
+	m.closeMu.Lock()
+	defer m.closeMu.Unlock()
+	if m.closed {
+		return
+	}
+	m.closed = true
+	close(m.queue)
+}
+
+// enqueue attempts a non-blocking send of task, returning ErrManagerClosed
+// once Close has run and ErrQueueFull when the buffer is full. Holding the
+// read lock for the whole check-then-send is what prevents the send-after-
+// close panic: see the closeMu field comment.
+func (m *Manager) enqueue(task notificationTask) error {
+	m.closeMu.RLock()
+	defer m.closeMu.RUnlock()
+	if m.closed {
+		return ErrManagerClosed
+	}
+	select {
+	case m.queue <- task:
+		return nil
+	default:
+		return ErrQueueFull
+	}
 }
 
 // NotifyRemoved enqueues a final "Removed" Notification (Status=3) targeted
@@ -154,10 +209,11 @@ func (m *Manager) Start(ctx context.Context) {
 // would miss it.
 //
 // Returns ErrInvalidNotificationURI synchronously if the supplied
-// subscription has no NotificationURI, or ErrQueueFull when the worker
-// pool's bounded queue cannot accept the task. Both errors are
-// recoverable from the caller's perspective: the spec does not require
-// the final Notification, so the deletion proceeds either way.
+// subscription has no NotificationURI, ErrQueueFull when the worker
+// pool's bounded queue cannot accept the task, or ErrManagerClosed once
+// Close has run. All three are recoverable from the caller's perspective:
+// the spec does not require the final Notification, so the deletion
+// proceeds either way.
 //
 // Per CSIP V1.2 section 11.6 (GRIDAPPSD/ieee-2030_5-server-go#169).
 func (m *Manager) NotifyRemoved(_ context.Context, sub sep2.Subscription) error {
@@ -185,12 +241,10 @@ func (m *Manager) NotifyRemoved(_ context.Context, sub sep2.Subscription) error 
 		payload:         payload,
 	}
 
-	select {
-	case m.queue <- task:
-		return nil
-	default:
-		return fmt.Errorf("notify removed for %q: %w", sub.Href, ErrQueueFull)
+	if err := m.enqueue(task); err != nil {
+		return fmt.Errorf("notify removed for %q: %w", sub.Href, err)
 	}
+	return nil
 }
 
 // Notify looks up all subscriptions for the given resource and enqueues
@@ -223,9 +277,11 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 			payload:         payload,
 		}
 
-		select {
-		case m.queue <- task:
-		default:
+		if err := m.enqueue(task); err != nil {
+			if errors.Is(err, ErrManagerClosed) {
+				log.Printf("notification: manager closed, dropping for %s", redactURI(sub.NotificationURI))
+				continue
+			}
 			if m.observer != nil {
 				m.observer("queue_full")
 			}

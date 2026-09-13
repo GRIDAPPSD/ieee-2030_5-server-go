@@ -9,27 +9,30 @@ import (
 )
 
 // BuildAdminRouter creates the admin router AND returns the canonical
-// pattern list mounted under it. Three layers, outermost first:
-//  1. Host-header allowlist (#270) — rejects any request whose Host
+// pattern list mounted under it. Layers, outermost first:
+//  1. Host-header allowlist (#270) - rejects any request whose Host
 //     header isn't a hostname this server claims (loopback, localhost, the
 //     #246 mDNS hostname, plus operator-extended entries from
 //     SEP2_ADMIN_ALLOWED_HOSTS). DNS-rebinding defense-in-depth at the
 //     admin boundary; runs BEFORE auth so a wrong-Host request never
 //     reaches the auth chain. allowedHosts nil/empty disables the gate
-//     (test paths only — the production caller in startAdminServer
+//     (test paths only - the production caller in startAdminServer
 //     always supplies the resolved defaults; an empty allowlist logs a
 //     loud WARNING at construction time).
-//  2. Public outer mux — /login, /auth/login (login form + submit). These
+//  2. Cross-origin refusal (#416): a state-changing request a browser marks
+//     as from another origin is refused before any credential is consulted.
+//  3. Public outer mux - /login, /auth/login (login form + submit). These
 //     routes are unauthenticated by design: the operator cannot reach the
 //     dashboard without first hitting them.
-//  3. Authenticated inner mux — everything else (dashboard, /api/*, SSE,
+//  4. Authenticated inner mux - everything else (dashboard, /api/*, SSE,
 //     ticket exchange). Guarded by AdminAuthMiddleware which supports mTLS,
 //     Bearer, the query-param ticket from tickets, and the #159
 //     admin_ticket cookie session from sessions. Those last two are
-//     separate stores: see AdminAuthMiddleware for why.
+//     separate stores: see AdminAuthMiddleware for why. After auth, a write
+//     whose Content-Type its route does not decode is refused (adminBodyTypes).
 //
 // Patterns from BOTH the public outer mux (login routes) and the authed
-// inner mux are merged into one sorted, deduplicated list — callers
+// inner mux are merged into one sorted, deduplicated list - callers
 // (the boot-time route enumerator) want a single flat view of every
 // admin-listener route. The #270 host-header allowlist wraps the
 // outer mux when allowedHosts is non-empty; the returned pattern list
@@ -83,42 +86,47 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 	// unless the legacy flag routes that one to the old page.
 	authed.Handle("GET /ui/", http.StripPrefix("/ui", spaHandler()))
 
-	// Auth ticket endpoint — exchanges valid admin auth for a short-lived ticket
+	// Auth ticket endpoint - exchanges valid admin auth for a short-lived ticket
 	if tickets != nil {
 		authed.HandleFunc("POST /auth/ticket", handleIssueTicket(tickets))
 	}
 
-	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets, sessions)(authed)
+	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets, sessions)(requireAdminBodyTypes(authed))
 
 	// Outer mux: login routes are public; everything else is authed.
 	// #270 (bundle B) wraps authedWithMiddleware with a Host-allowlist
-	// middleware at the `outer.Handle("/", ...)` line — leave that wrap
-	// point clean.
-	outer := http.NewServeMux()
+	// middleware at the `outer.Handle("/", ...)` line - leave that wrap
+	// point clean. A recordingMux, not a plain ServeMux, so a write route
+	// registered here directly (bypassing authed and its body-type check)
+	// still shows up in the pattern list below instead of going uncounted
+	// (#416).
+	outer := newRecordingMux()
 	outer.HandleFunc("GET /login", HandleLoginPage(""))
 	outer.HandleFunc("POST /auth/login", HandleLoginSubmit(adminKey, sessions))
 	outer.Handle("/", authedWithMiddleware)
 
-	// #272: assemble the final pattern list. The two public outer
-	// routes (login form + login submit) join the inner authed routes
-	// so the boot-time enumerator sees a single flat list per listener.
-	// Sort + dedup runs through sortDedupePatterns at the end of the
-	// merge.
-	merged := append([]string{
-		"GET /login",
-		"POST /auth/login",
-	}, authed.Patterns()...)
+	// #272: assemble the final pattern list from both muxes' own records,
+	// not a fixed outer list, so a route added to either mux changes this
+	// list (#416). "/" is the authed mount point, not a route of its own.
+	merged := authed.Patterns()
+	for _, p := range outer.Patterns() {
+		if p != "/" {
+			merged = append(merged, p)
+		}
+	}
 	sortDedupePatterns(&merged)
 
 	// #270: wrap the entire outer mux in the host-header allowlist
 	// when the caller supplied one. The gate runs BEFORE login routes so
 	// /login and /auth/login are protected from DNS-rebinding too. The
 	// returned route list reflects what is mounted under the listener
-	// regardless of host gating — boot-log enumeration is independent
+	// regardless of host gating - boot-log enumeration is independent
 	// of which Host headers reach the handlers.
-	var h http.Handler = outer
+	// Outside both muxes so the login submit is covered too; inside the Host
+	// gate so a misdirected request is still answered 421.
+	var h http.Handler = auth.AdminCrossOriginMiddleware()(outer)
 	if len(allowedHosts) > 0 {
-		h = HostAllowlistMiddleware(allowedHosts)(outer)
+		h = HostAllowlistMiddleware(allowedHosts)(h)
 	} else {
 		// Wren MED-5: empty allowlist disables the DNS-rebinding gate.
 		// The production caller in startAdminServer always supplies the
@@ -126,7 +134,7 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 		// callers (test fixtures, future unscoped callers). Log loudly
 		// at construction so the only opt-out path leaves a tripwire in
 		// the boot log.
-		log.Printf("WARNING: admin: host-allowlist gate DISABLED (BuildAdminRouter called with empty allowedHosts) — DNS-rebinding defense is OFF for this admin router")
+		log.Printf("WARNING: admin: host-allowlist gate DISABLED (BuildAdminRouter called with empty allowedHosts) - DNS-rebinding defense is OFF for this admin router")
 	}
 	// no-store wraps everything, including the host-gate and login-route
 	// refusals. A cookie-authenticated GET gets none of the shared-cache

@@ -348,6 +348,7 @@ func BuildProtocolRouter(
 	// F1: substitute deny-all stubs for nil func fields so zero-value
 	// AuthPolicy is safe and fail-closed, never a nil-panic at request time.
 	if authPolicy.Identity == nil {
+		log.Print("assembly: AuthPolicy.Identity is nil: every request is treated as unauthenticated and refused")
 		authPolicy.Identity = func(_ context.Context) (string, string, bool) {
 			return "", "", false // deny: handlers return 403
 		}

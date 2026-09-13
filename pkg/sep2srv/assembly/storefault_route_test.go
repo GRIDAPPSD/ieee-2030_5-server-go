@@ -423,6 +423,31 @@ func TestEveryMountedRouteReportsAStoreFailureAsAServerError(t *testing.T) {
 			t.Errorf("%s answered %d with the EndDevice store failing; want 5xx", pattern, status)
 		}
 	}
+	// The store-free /edev routes still pass the gate, which reads the
+	// EndDevice store before their handlers run.
+	for _, pattern := range part.Excluded {
+		_, shape, _ := strings.Cut(pattern, " ")
+		if !strings.HasPrefix(shape, "/edev/") {
+			continue
+		}
+		device.ensure(t)
+		method, path := concreteGatePath(pattern)
+		req, err := http.NewRequest(method, srv.URL+path, nil)
+		if err != nil {
+			t.Errorf("%s: %v", pattern, err)
+			continue
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Errorf("%s: %v", pattern, err)
+			continue
+		}
+		_ = resp.Body.Close()
+		edevProbed++
+		if resp.StatusCode < 500 || resp.StatusCode > 599 {
+			t.Errorf("store-free %s answered %d with the EndDevice store failing; want 5xx from the ownership gate", pattern, resp.StatusCode)
+		}
+	}
 	if edevProbed == 0 {
 		t.Error("no /edev route was probed with the EndDevice store failing; that phase asserted nothing")
 	}

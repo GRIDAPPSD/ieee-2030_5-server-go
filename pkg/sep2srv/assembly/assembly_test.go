@@ -51,6 +51,7 @@ func testRegistrationPolicy() memory.RegistrationPolicy {
 func testStores() *assembly.Stores {
 	return &assembly.Stores{
 		EndDevices:          memory.NewEndDeviceStore(),
+		EndDeviceManagers:   memory.NewEndDeviceManagementStore(),
 		Registrations:       memory.NewRegistrationStore(),
 		RegistrationPolicy:  testRegistrationPolicy(),
 		MirrorUsagePoints:   memory.NewStore[sep2.MirrorUsagePoint](),

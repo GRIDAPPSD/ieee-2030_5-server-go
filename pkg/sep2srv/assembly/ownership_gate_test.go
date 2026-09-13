@@ -164,7 +164,14 @@ func sendGateRequest(t *testing.T, req *http.Request) (int, []byte) {
 func assertDenialLeaksNothing(t *testing.T, label string, raw []byte) {
 	t.Helper()
 	body := string(raw)
-	for _, forbidden := range []string{victimLFDI, victimSFDI, "urn:ieee:std:2030.5:ns", "<EndDevice", "<?xml"} {
+	// A refusal carries one of the fixed bodies, so no stored field can reach
+	// the client, including those no other assertion names.
+	switch body {
+	case "forbidden\n", "not found\n", srverr.DefaultMessage + "\n":
+	default:
+		t.Errorf("%s: denial body is not one of the fixed refusal bodies; body=%q", label, body)
+	}
+	for _, forbidden := range []string{victimLFDI, victimSFDI, "1600000000", "urn:ieee:std:2030.5:ns", "<EndDevice", "<?xml"} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("%s: denial body carries %q; body=%q", label, forbidden, body)
 		}
@@ -409,16 +416,24 @@ func TestOwnershipGate_DenyMatrix(t *testing.T) {
 			fault.Arm(storetest.ErrBackendUnavailable)
 			return s
 		}, gateTestPolicy, asCaller(victimLFDI), probe}, http.StatusInternalServerError},
-		{"nil EndDevices is refused", setup{func(t *testing.T) *assembly.Stores {
+		{"nil EndDevices is 500", setup{func(t *testing.T) *assembly.Stores {
 			s := testStores()
 			s.EndDevices = nil
 			return s
-		}, gateTestPolicy, asCaller(victimLFDI), probe}, http.StatusForbidden},
-		{"typed-nil EndDevices is refused", setup{func(t *testing.T) *assembly.Stores {
+		}, gateTestPolicy, asCaller(victimLFDI), probe}, http.StatusInternalServerError},
+		{"typed-nil EndDevices is 500", setup{func(t *testing.T) *assembly.Stores {
 			s := testStores()
 			s.EndDevices = typedNil
 			return s
+		}, gateTestPolicy, asCaller(victimLFDI), probe}, http.StatusInternalServerError},
+		{"no identity on an absent device is 403", setup{seeded, gateTestPolicy, func(*http.Request) {}, "/edev/404/fsa"}, http.StatusForbidden},
+		{"empty LFDI on an absent device is 403", setup{seeded, gateTestPolicy, func(r *http.Request) { r.Header.Set(gateEmptyIdentityHeader, "1") }, "/edev/404/fsa"}, http.StatusForbidden},
+		{"stored LFDI a prefix of the caller's is refused", setup{func(t *testing.T) *assembly.Stores {
+			s := testStores()
+			seedDevice(t, s.EndDevices, victimID, victimLFDI[:20], victimSFDI)
+			return s
 		}, gateTestPolicy, asCaller(victimLFDI), probe}, http.StatusForbidden},
+		{"caller LFDI a prefix of the stored is refused", setup{seeded, gateTestPolicy, asCaller(victimLFDI[:20]), probe}, http.StatusForbidden},
 	}
 
 	for _, tc := range cases {

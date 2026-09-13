@@ -2,10 +2,14 @@ package assembly
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -99,6 +103,7 @@ func TestOwnershipGate_NilIdentityIsRefused(t *testing.T) {
 func fullStores() *Stores {
 	return &Stores{
 		EndDevices:               memory.NewEndDeviceStore(),
+		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
 		Registrations:            memory.NewRegistrationStore(),
 		MirrorUsagePoints:        memory.NewStore[sep2.MirrorUsagePoint](),
 		MirrorMeterReadings:      memory.NewScopedStore[sep2.MirrorMeterReading](),
@@ -188,5 +193,69 @@ func TestDelegable(t *testing.T) {
 		if got := delegable(pattern); got != want {
 			t.Errorf("delegable(%q) = %v, want %v", pattern, got, want)
 		}
+	}
+}
+
+// TestFullStoresWiresEveryStoresField fails when a Stores field is added and
+// fullStores neither sets it nor states why it is left unset.
+func TestFullStoresWiresEveryStoresField(t *testing.T) {
+	t.Parallel()
+	unset := map[string]string{
+		"EndDeviceIndexes":   "nil selects the process-local index",
+		"AdminFSAs":          "the admin plane is not mounted on the protocol router",
+		"RegistrationPolicy": "the pattern-list comparison provisions no Registration",
+	}
+	v := reflect.ValueOf(fullStores()).Elem()
+	seen := map[string]bool{}
+	for i := 0; i < v.NumField(); i++ {
+		name := v.Type().Field(i).Name
+		seen[name] = true
+		reason, allowed := unset[name]
+		switch zero := v.Field(i).IsZero(); {
+		case zero && !allowed:
+			t.Errorf("fullStores leaves Stores.%s unset; set it or state why not", name)
+		case !zero && allowed:
+			t.Errorf("fullStores sets Stores.%s, which is listed as unset (%s)", name, reason)
+		}
+	}
+	for name := range unset {
+		if !seen[name] {
+			t.Errorf("the unset list names Stores.%s, which does not exist", name)
+		}
+	}
+}
+
+func TestDenialLog_BoundsVolumeAndReportsWhatItSuppressed(t *testing.T) {
+	t.Parallel()
+	var lines []string
+	now := time.Unix(1700000000, 0)
+	d := &denialLog{
+		logf: func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) },
+		now:  func() time.Time { return now },
+	}
+	req := httptest.NewRequest(http.MethodGet, "/edev/1", nil)
+	req.SetPathValue("id", "1")
+	v := ownershipVerdict{caller: "CALLER", reason: reasonNotOwner}
+
+	const probes = 1000
+	for i := 0; i < probes; i++ {
+		d.record(req, v)
+	}
+	if len(lines) != denialLogLimit {
+		t.Fatalf("%d denials in one window wrote %d lines, want %d", probes, len(lines), denialLogLimit)
+	}
+
+	now = now.Add(denialLogWindow)
+	d.record(req, v)
+	want := fmt.Sprintf("suppressed %d denial log lines", probes-denialLogLimit)
+	if len(lines) != denialLogLimit+2 || !strings.Contains(lines[denialLogLimit], want) {
+		t.Fatalf("after the window closed: lines %q, want a line reporting %q then the new denial", lines[denialLogLimit:], want)
+	}
+
+	lines = nil
+	req.SetPathValue("id", "x\nforged "+strings.Repeat("A", 200))
+	d.record(req, v)
+	if len(lines) != 1 || strings.Contains(lines[0], "\n") || strings.Contains(lines[0], strings.Repeat("A", maxLoggedIDLen)) {
+		t.Errorf("a hostile id was not quoted and truncated: %q", lines)
 	}
 }

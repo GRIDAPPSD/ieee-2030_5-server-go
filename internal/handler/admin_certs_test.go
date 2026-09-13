@@ -6,14 +6,52 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 )
+
+// TestHandleCreateServerCertInvalidJSONDoesNotLeakDecoderDetail pins the 400
+// path convention (#360) for the admin plane's JSON envelope: a fixed body,
+// decoder detail (which can quote attacker-supplied content, e.g. an
+// oversized numeric literal echoed verbatim in a json.UnmarshalTypeError)
+// left to the operator-facing log.
+func TestHandleCreateServerCertInvalidJSONDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "13370360913370360913370360"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	svc := newTestCertService(t)
+	h := svc.HandleCreateServerCert()
+
+	body := `{"hosts":["localhost"],"validYears":` + marker + `}`
+	req := httptest.NewRequest(http.MethodPost, "/api/certs/server", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if got := w.Body.String(); strings.Contains(got, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", got)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
+	}
+}
 
 func TestHandleGetCA(t *testing.T) {
 	svc := newTestCertService(t)

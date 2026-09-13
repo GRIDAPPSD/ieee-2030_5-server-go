@@ -96,6 +96,30 @@ func TestOwnershipGate_DenialLogVolumeIsBounded(t *testing.T) {
 	t.Logf("%d denials wrote %d denial lines", probes, lines)
 }
 
+func TestOwnershipGate_OneCallerCannotHideAnotherCallersDenials(t *testing.T) {
+	srv := gateServer(t, seededGateStores(t), gateTestPolicy())
+	buf := captureLog(t)
+
+	const probes = 500
+	for i := 0; i < probes; i++ {
+		if status, raw := gateRequest(t, srv, http.MethodGet, "/edev/"+victimID, callerLFDI, ""); status != http.StatusForbidden {
+			t.Fatalf("noisy probe %d: status %d, want 403; body=%q", i, status, raw)
+		}
+	}
+	noisy := strings.Count(buf.String(), `caller="`+callerLFDI+`"`)
+	if noisy == 0 || noisy >= probes {
+		t.Fatalf("control: the noisy caller wrote %d of %d denial lines; want some written and some suppressed", noisy, probes)
+	}
+
+	status, raw := gateRequest(t, srv, http.MethodGet, "/edev/"+callerID, victimLFDI, "")
+	if status != http.StatusForbidden {
+		t.Fatalf("second caller: status %d, want 403; body=%q", status, raw)
+	}
+	if !lineWith(buf.String(), denialLogMarker, `caller="`+victimLFDI+`"`, `id="`+callerID+`"`, "reason=not-owner-or-manager") {
+		t.Errorf("the second caller's refusal line is missing after another caller's burst; log=%q", buf.String())
+	}
+}
+
 // TestManagement_RegistrationIsRefusedByTheGate distinguishes the gate from
 // the Registration handler's own check: both refuse a manager, and only the
 // gate writes a denial line.

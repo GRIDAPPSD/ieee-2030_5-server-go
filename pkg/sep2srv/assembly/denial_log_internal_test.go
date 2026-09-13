@@ -479,7 +479,7 @@ func TestDenialLog_RecordUnlocksOnPanic(t *testing.T) {
 	}
 
 	func() {
-		defer func() { recover() }()
+		defer func() { _ = recover() }() // only suppressing the panic; the value is unused
 		d.record(denialRequest("1"), ownershipVerdict{caller: "CALLER", reason: reasonNotOwner})
 	}()
 

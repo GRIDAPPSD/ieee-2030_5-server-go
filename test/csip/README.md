@@ -151,8 +151,7 @@ Either path works; pick whichever fits your workflow.
 - **Cipher suite.** The test logs the negotiated cipher but does not
   require CCM-8. The stdlib `http.Client` used here cannot offer the
   CSIP-mandatory cipher; tightening this assertion is gated on:
-  - [#21](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/21)
-    - move the inverter client onto vendored `gotls` for CCM-8.
+  - [#459](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/459) - require CCM-8 in this test.
   - [#22](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/22)
     — `SEP2_CSIP_STRICT=true` server mode that drops the GCM fallback.
 - The 25 SunSpec V1.2 conformance requirements. Those will be added as

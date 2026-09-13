@@ -5,6 +5,7 @@ package der_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
@@ -193,46 +194,73 @@ func TestDERSingletonHandlersAvailability(t *testing.T) {
 	}
 }
 
-// TestDefaultDERControlHandler: PUT then GET round-trips OpModConnect.
-func TestDefaultDERControlHandler(t *testing.T) {
+// TestDefaultDERControlHandler_GETServesTheStoredValue: the store is seeded
+// directly (the utility-side path), and GET serves exactly what was seeded.
+func TestDefaultDERControlHandler_GETServesTheStoredValue(t *testing.T) {
 	t.Parallel()
 
 	s := memory.NewScopedStore[sep2.DefaultDERControl]()
+	connected := true
+	seeded := sep2.DefaultDERControl{DERControlBase: &sep2.DERControlBase{OpModConnect: &connected}}
+	if err := s.Create(context.Background(), "e1/f1/p1", "default", seeded); err != nil {
+		t.Fatalf("seed DefaultDERControl: %v", err)
+	}
+	h := coredel.DefaultDERControlHandler(s)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc", h)
+
+	getW := httptest.NewRecorder()
+	mux.ServeHTTP(getW, httptest.NewRequest(http.MethodGet, "/edev/e1/fsa/f1/derp/p1/dderc", nil))
+	if getW.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200", getW.Code)
+	}
+	var got sep2.DefaultDERControl
+	if err := xml.Unmarshal(getW.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal DefaultDERControl: %v", err)
+	}
+	if got.DERControlBase == nil || got.DERControlBase.OpModConnect == nil || !*got.DERControlBase.OpModConnect {
+		t.Error("OpModConnect should be true, as seeded")
+	}
+}
+
+// TestDefaultDERControlHandler_PUTIsRefusedAndLeavesTheStoreUntouched covers
+// #456: DefaultDERControl is utility-set, so PUT is refused with 405 and the
+// documented Allow set, and the store is never written even when a route
+// mounts PUT to this handler directly.
+func TestDefaultDERControlHandler_PUTIsRefusedAndLeavesTheStoreUntouched(t *testing.T) {
+	t.Parallel()
+
+	s := memory.NewScopedStore[sep2.DefaultDERControl]()
+	connected := true
+	original := sep2.DefaultDERControl{DERControlBase: &sep2.DERControlBase{OpModConnect: &connected}}
+	if err := s.Create(context.Background(), "e1/f1/p1", "default", original); err != nil {
+		t.Fatalf("seed DefaultDERControl: %v", err)
+	}
 	h := coredel.DefaultDERControlHandler(s)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc", h)
 	mux.HandleFunc("PUT /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc", h)
 
-	// GET returns default.
-	getW := httptest.NewRecorder()
-	mux.ServeHTTP(getW, httptest.NewRequest(http.MethodGet, "/edev/e1/fsa/f1/derp/p1/dderc", nil))
-	if getW.Code != http.StatusOK {
-		t.Fatalf("GET default status = %d, want 200", getW.Code)
-	}
-
-	// PUT with OpModConnect=true.
-	connected := true
-	dderc := sep2.DefaultDERControl{
-		DERControlBase: &sep2.DERControlBase{OpModConnect: &connected},
-	}
-	body, _ := xml.Marshal(&dderc)
+	forged := false
+	body, _ := xml.Marshal(&sep2.DefaultDERControl{DERControlBase: &sep2.DERControlBase{OpModConnect: &forged}})
 
 	putW := httptest.NewRecorder()
 	mux.ServeHTTP(putW, httptest.NewRequest(http.MethodPut, "/edev/e1/fsa/f1/derp/p1/dderc", bytes.NewReader(body)))
-	if putW.Code != http.StatusNoContent {
-		t.Fatalf("PUT status = %d, want 204", putW.Code)
+	if putW.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("PUT status = %d, want 405", putW.Code)
+	}
+	if allow := putW.Header().Get("Allow"); allow != "GET, HEAD" {
+		t.Errorf("Allow = %q, want %q", allow, "GET, HEAD")
 	}
 
-	// GET returns stored value.
-	getW2 := httptest.NewRecorder()
-	mux.ServeHTTP(getW2, httptest.NewRequest(http.MethodGet, "/edev/e1/fsa/f1/derp/p1/dderc", nil))
-	var got sep2.DefaultDERControl
-	if err := xml.Unmarshal(getW2.Body.Bytes(), &got); err != nil {
-		t.Fatalf("unmarshal DefaultDERControl: %v", err)
+	stored, err := s.Get(context.Background(), "e1/f1/p1", "default")
+	if err != nil {
+		t.Fatalf("read back DefaultDERControl: %v", err)
 	}
-	if got.DERControlBase == nil || got.DERControlBase.OpModConnect == nil || !*got.DERControlBase.OpModConnect {
-		t.Error("OpModConnect should be true after PUT")
+	if stored.DERControlBase == nil || stored.DERControlBase.OpModConnect == nil || !*stored.DERControlBase.OpModConnect {
+		t.Errorf("PUT changed the stored value: %+v, want OpModConnect still true", stored.DERControlBase)
 	}
 }
 

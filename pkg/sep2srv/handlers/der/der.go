@@ -11,6 +11,7 @@ import (
 	"net/http"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
 	coreresponse "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/response"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -183,9 +184,17 @@ func DERSingletonHandlers(
 	return
 }
 
-// DefaultDERControlHandler creates a handler for GET/PUT on DefaultDERControl.
+// DefaultDERControlHandler creates a handler for GET/HEAD on DefaultDERControl.
+//
+// PUT is refused with 405 rather than routed to the generic singleton upsert:
+// unlike DERCapability/DERSettings/DERStatus/DERAvailability, which a device
+// reports about itself, DefaultDERControl is utility-set (CSIP: the server
+// sets it, clients monitor it), so no protocol caller (owner, manager, or
+// anyone else) may write it (#456). The refusal is enforced here rather
+// than only by which methods assembly.go mounts, so re-mounting PUT later
+// cannot silently reopen the write.
 func DefaultDERControlHandler(ddercStore store.ScopedStore[sep2.DefaultDERControl]) http.HandlerFunc {
-	return coresingleton.HandleSingletonGetPut[sep2.DefaultDERControl](ddercStore,
+	readOnly := coresingleton.HandleSingletonGetPut[sep2.DefaultDERControl](ddercStore,
 		func(r *http.Request) string {
 			return r.PathValue("id") + "/" + r.PathValue("fsaId") + "/" + r.PathValue("derpId")
 		},
@@ -195,4 +204,12 @@ func DefaultDERControlHandler(ddercStore store.ScopedStore[sep2.DefaultDERContro
 				r.PathValue("id"), r.PathValue("fsaId"), r.PathValue("derpId"))
 			return s
 		})
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			readOnly(w, r)
+			return
+		}
+		encoding.MethodNotAllowed(w, "GET, HEAD")
+	}
 }

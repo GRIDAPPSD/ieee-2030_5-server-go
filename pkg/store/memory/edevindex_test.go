@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -561,5 +563,26 @@ func TestEndDeviceIndexFromStoreLogsNothingWhenNothingSkipped(t *testing.T) {
 
 	if buf.Len() != 0 {
 		t.Errorf("log = %q, want empty: nothing was skipped", buf.String())
+	}
+}
+
+// TestEndDeviceIndexRefusesToAllocatePastMaxUint64 pins that a seeded floor
+// at math.MaxUint64 fails Allocate closed rather than wrapping x.next to 0,
+// which would be below firstIndex and would eventually walk back into ids
+// already occupied.
+func TestEndDeviceIndexRefusesToAllocatePastMaxUint64(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := memory.NewEndDeviceStore()
+	maxID := strconv.FormatUint(math.MaxUint64, 10)
+	if err := s.Create(ctx, maxID, sep2.EndDevice{SFDI: "9999999999999999", LFDI: "lfdi-max"}); err != nil {
+		t.Fatalf("create device at max uint64 id: %v", err)
+	}
+
+	idx := memory.NewEndDeviceIndexFromStore(s)
+
+	got, err := idx.Allocate("lfdi-new")
+	if err == nil {
+		t.Fatalf("Allocate after a max-uint64 seed = (%q, nil), want a refusal rather than a wrapped id", got)
 	}
 }

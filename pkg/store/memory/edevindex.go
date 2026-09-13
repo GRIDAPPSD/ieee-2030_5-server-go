@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"math"
 	"strconv"
 	"sync"
 )
@@ -243,6 +244,13 @@ func (x *EndDeviceIndex) Allocate(deviceKey string) (string, error) {
 		return idx, nil
 	}
 
+	// x.next is a uint64; incrementing it at MaxUint64 wraps to 0, which is
+	// below firstIndex and would eventually walk back into ids already
+	// occupied. Refuse rather than hand out a number that silently wraps.
+	if x.next == math.MaxUint64 {
+		return "", fmt.Errorf("enddevice index: allocator exhausted at max uint64")
+	}
+
 	idx := strconv.FormatUint(x.next, 10)
 	x.next++
 	x.byKey[deviceKey] = idx
@@ -368,6 +376,13 @@ func NewEndDeviceIndexFromStore(s *EndDeviceStore) *EndDeviceIndex {
 	if skipped > 0 {
 		log.Printf("enddevice index: seeding from the store skipped %d record(s): non-canonical id, blank LFDI, or LFDI shared with another record", skipped)
 	}
-	x.next = highest + 1
+	// highest+1 wraps to 0 when a stored id is math.MaxUint64. Pin x.next at
+	// MaxUint64 instead, so Allocate's own overflow guard refuses cleanly
+	// rather than the wrap happening here, silently, before Allocate ever runs.
+	if highest == math.MaxUint64 {
+		x.next = math.MaxUint64
+	} else {
+		x.next = highest + 1
+	}
 	return x
 }

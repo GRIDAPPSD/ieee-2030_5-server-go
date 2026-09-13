@@ -42,9 +42,9 @@ for protocol conformance, but operators usually do.
 | DERCurve | Supported | In-memory only | - | [`der/der.go`](../pkg/sep2srv/handlers/der/der.go) |
 | Mirror UsagePoint | Supported | In-memory | Supported (dashboard MUP count) | [`metering/mirror.go`](../pkg/sep2srv/handlers/metering/mirror.go) |
 | Metering (UsagePoint, MeterReading, Reading, ReadingType) | Supported | In-memory | - | [`metering/metering.go`](../pkg/sep2srv/handlers/metering/metering.go) |
-| Subscription / Notification | Supported | Supported (`SEP2_SUBSCRIPTION_STORE_PATH` or `SEP2_DATA_DIR`) | - | [`subscription/handler.go`](../pkg/sep2srv/handlers/subscription/handler.go), [`pkg/store/memory/subscription_persistence.go`](../pkg/store/memory/subscription_persistence.go) |
+| Subscription / Notification | Supported | Supported (`SEP2_SUBSCRIPTION_STORE_PATH` or `SEP2_DATA_DIR`) | - | [`subscription/handler.go`](../pkg/sep2srv/handlers/subscription/handler.go) (routes), [`subscription/manager.go`](../pkg/sep2srv/handlers/subscription/manager.go) (delivery), [`pkg/store/memory/subscription_persistence.go`](../pkg/store/memory/subscription_persistence.go) (persistence) |
 | LogEvent | Supported | In-memory | - | [`logevent/log_event.go`](../pkg/sep2srv/handlers/logevent/log_event.go) |
-| Response | Supported | In-memory | - | [`messaging/messaging.go`](../pkg/sep2srv/handlers/messaging/messaging.go) |
+| Response | Supported | In-memory | - | [`response/response.go`](../pkg/sep2srv/handlers/response/response.go) |
 | FlowReservation | Supported | In-memory | - | [`flow_reservation/flow_reservation.go`](../pkg/sep2srv/handlers/flow_reservation/flow_reservation.go) |
 | DRLC | Planned | - | - | No handler wired. `FunctionSetDRLC` constant exists in `pkg/sep2/log_event.go` in the GRIDAPPSD/ieee-2030_5-core-go module; no open ticket yet. |
 | Mode coverage gap (LVRT / HVRT / LFRT / HFRT, VoltWatt, FreqWatt, setGradW / setSoftGradW) | Partial | Partial | - | Tracked in [#140](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/140). Affects DERSettings + DefaultDERControl. |

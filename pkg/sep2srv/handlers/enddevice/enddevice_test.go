@@ -279,15 +279,18 @@ func TestHandleCreateEndDevicePanicsOnTypedNilIndexer(t *testing.T) {
 func TestHandleUpdateEndDevice(t *testing.T) {
 	t.Parallel()
 
+	ctx := context.Background()
 	s := memory.NewEndDeviceStore()
-	dev := sep2.EndDevice{SFDI: "old-sfdi", LFDI: "old-lfdi"}
+	enabled := true
+	dev := sep2.EndDevice{SFDI: "old-sfdi", LFDI: "old-lfdi", Enabled: &enabled}
 	dev.Href = "/edev/1"
-	_ = s.Create(context.Background(), "1", dev)
+	_ = s.Create(ctx, "1", dev)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /edev/{id}", coreedev.HandleUpdateEndDevice(s))
 
-	updated := sep2.EndDevice{SFDI: "new-sfdi", LFDI: "new-lfdi"}
+	disabled := false
+	updated := sep2.EndDevice{SFDI: "new-sfdi", LFDI: "new-lfdi", Enabled: &disabled}
 	body, _ := xml.Marshal(&updated)
 
 	req := httptest.NewRequest(http.MethodPut, "/edev/1", bytes.NewReader(body))
@@ -301,8 +304,22 @@ func TestHandleUpdateEndDevice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post-update Get: %v", err)
 	}
-	if got.SFDI != "new-sfdi" {
-		t.Errorf("SFDI after update = %q, want new-sfdi", got.SFDI)
+	if got.LFDI != "old-lfdi" || got.SFDI != "old-sfdi" {
+		t.Errorf("identity after update = LFDI %q SFDI %q, want old-lfdi and old-sfdi: a body never changes identity", got.LFDI, got.SFDI)
+	}
+	if got.Enabled == nil || *got.Enabled {
+		t.Errorf("enabled after update = %v, want false", got.Enabled)
+	}
+	if byLFDI, err := s.GetByLFDI(ctx, "old-lfdi"); err != nil || byLFDI.Href != "/edev/1" {
+		t.Errorf("GetByLFDI(old-lfdi) = href %q, err %v; want /edev/1", byLFDI.Href, err)
+	}
+	for _, lookup := range []func() (sep2.EndDevice, error){
+		func() (sep2.EndDevice, error) { return s.GetByLFDI(ctx, "new-lfdi") },
+		func() (sep2.EndDevice, error) { return s.GetBySFDI(ctx, "new-sfdi") },
+	} {
+		if dev, err := lookup(); err == nil {
+			t.Errorf("the index maps the body's identity to %q", dev.Href)
+		}
 	}
 }
 

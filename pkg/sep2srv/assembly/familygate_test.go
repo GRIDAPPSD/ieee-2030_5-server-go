@@ -1,6 +1,8 @@
 package assembly_test
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -9,6 +11,8 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -233,5 +237,153 @@ func TestPartialMirrorFamilyRefusesRatherThanPanicking(t *testing.T) {
 
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("POST %s/mr over an unwired Stores.MirrorMeterReadings = %d, want 500", location, resp.StatusCode)
+	}
+}
+
+// refusal is what a client receives from one request.
+type refusal struct {
+	status      int
+	contentType string
+	body        string
+}
+
+// sendForRefusal issues one request and fails the test on a transport error,
+// which is how a handler panic reaches the client.
+func sendForRefusal(t *testing.T, srvURL, method, path, body string) refusal {
+	t.Helper()
+	req, err := http.NewRequest(method, srvURL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v (a panicking handler, not a refusal)", method, path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("%s %s: read body: %v", method, path, err)
+	}
+	return refusal{status: resp.StatusCode, contentType: resp.Header.Get("Content-Type"), body: string(raw)}
+}
+
+// riderRefusal is the answer an unwired family member gives, taken from the
+// router rather than written out, so the anchor is held to whatever the rider
+// substitutes actually produce.
+func riderRefusal(t *testing.T) refusal {
+	t.Helper()
+	stores := testStores()
+	var noPrograms *memory.DERProgramStore
+	stores.DERPrograms = noPrograms
+	seedOwnedDevices(t, stores.EndDevices, "1")
+	handler, _ := assembly.BuildProtocolRouter(
+		assembly.RouterConfig{}, stores, testAuthPolicy(), "serverSFDI", "serverLFDI", nil,
+	)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+	got := sendForRefusal(t, srv.URL, http.MethodGet, "/edev/1/fsa/1/derp", "")
+	if got.status != http.StatusInternalServerError || got.body != srverr.DefaultMessage+"\n" {
+		t.Fatalf("rider refusal = %d %q, want 500 %q", got.status, got.body, srverr.DefaultMessage+"\n")
+	}
+	return got
+}
+
+const endDevicePutDoc = `<EndDevice xmlns="urn:ieee:std:2030.5:ns"><changedTime>0</changedTime></EndDevice>`
+
+// endDeviceRoutes is every route the EndDevice family mounts over
+// Stores.EndDevices. POST /edev and GET /edev are exempt from the ownership
+// gate, so their handlers are the only thing between the request and the store.
+var endDeviceRoutes = []struct{ method, path, body string }{
+	{http.MethodGet, "/edev", ""},
+	{http.MethodPost, "/edev", ""},
+	{http.MethodGet, "/edev/1", ""},
+	{http.MethodPut, "/edev/1", endDevicePutDoc},
+	{http.MethodDelete, "/edev/1", ""},
+	{http.MethodGet, "/edev/1/rg", ""},
+}
+
+// EndDevices is the anchor every /edev route hangs off. Absent, it must refuse
+// like any unwired member: the same 500, and no index allocated nor
+// Registration written by a POST /edev that could not look the caller up.
+func TestAbsentEndDevicesRefusesRatherThanPanicking(t *testing.T) {
+	t.Parallel()
+
+	want := riderRefusal(t)
+	var typedNil *memory.EndDeviceStore
+	shapes := []struct {
+		name   string
+		handle store.EndDeviceStore
+	}{
+		{"nil interface", nil},
+		{"typed nil", typedNil},
+	}
+
+	for _, shape := range shapes {
+		for _, route := range endDeviceRoutes {
+			t.Run(shape.name+" "+route.method+" "+route.path, func(t *testing.T) {
+				t.Parallel()
+
+				stores := testStores()
+				stores.EndDevices = shape.handle
+				indexes := memory.NewEndDeviceIndex()
+				stores.EndDeviceIndexes = indexes
+
+				handler, _ := assembly.BuildProtocolRouter(
+					assembly.RouterConfig{}, stores, testAuthPolicy(), "serverSFDI", "serverLFDI", nil,
+				)
+				srv := httptest.NewServer(handler)
+				defer srv.Close()
+
+				got := sendForRefusal(t, srv.URL, route.method, route.path, route.body)
+				if got != want {
+					t.Errorf("%s %s over an absent Stores.EndDevices = %+v, want the rider refusal %+v",
+						route.method, route.path, got, want)
+				}
+				if assigned := indexes.Assignments(); len(assigned) != 0 {
+					t.Errorf("%s %s allocated EndDevice indexes %v with no EndDevice store to record them in",
+						route.method, route.path, assigned)
+				}
+				if n, err := stores.Registrations.Count(context.Background()); err != nil || n != 0 {
+					t.Errorf("%s %s left %d Registrations (err %v), want 0", route.method, route.path, n, err)
+				}
+			})
+		}
+	}
+}
+
+// The refusal and its assembly-time notice name the field, never the caller:
+// no LFDI, no SFDI and no request path reaches the log. Not parallel, because
+// it swaps the process-wide log output.
+func TestAbsentEndDevicesRefusalLogsNoCallerIdentity(t *testing.T) {
+	buf := captureLog(t)
+
+	stores := testStores()
+	stores.EndDevices = nil
+	handler, _ := assembly.BuildProtocolRouter(
+		assembly.RouterConfig{}, stores, testAuthPolicy(), "serverSFDI", "serverLFDI", nil,
+	)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	const clientPath = "/edev/7331"
+	for _, route := range []struct{ method, path, body string }{
+		{http.MethodPost, "/edev", ""},
+		{http.MethodGet, "/edev", ""},
+		{http.MethodGet, clientPath, ""},
+		{http.MethodPut, clientPath, endDevicePutDoc},
+	} {
+		if got := sendForRefusal(t, srv.URL, route.method, route.path, route.body); got.status != http.StatusInternalServerError {
+			t.Fatalf("%s %s = %d, want 500", route.method, route.path, got.status)
+		}
+	}
+
+	captured := buf.String()
+	if !strings.Contains(captured, "Stores.EndDevices") {
+		t.Fatalf("no log line names Stores.EndDevices; the check below would pass vacuously:\n%s", captured)
+	}
+	for _, leak := range []string{testLFDI, testSFDI, clientPath} {
+		if strings.Contains(captured, leak) {
+			t.Errorf("log carries caller-derived %q:\n%s", leak, captured)
+		}
 	}
 }

@@ -77,7 +77,7 @@ func HandleCertInfo() http.HandlerFunc {
 }
 
 // readCertPEM extracts the cert PEM from either a multipart "cert" field or
-// the raw request body. Limit is 1 MiB — operator-pasted certs are tiny.
+// the raw request body. Limit is 1 MiB - operator-pasted certs are tiny.
 func readCertPEM(r *http.Request) ([]byte, error) {
 	const limit = 1 << 20
 
@@ -233,7 +233,7 @@ func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter) http.Ha
 		if err := s.Create(r.Context(), id, dev); err != nil {
 			if errors.Is(err, store.ErrAlreadyExists) {
 				// SFDI prefix collision with a different LFDI. Surface as 409
-				// rather than 500 — operator can pick a different SFDI.
+				// rather than 500 - operator can pick a different SFDI.
 				writeError(w, http.StatusConflict, "device with this sfdi prefix already registered")
 				return
 			}
@@ -264,7 +264,7 @@ func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter) http.Ha
 }
 
 // validLFDI reports whether s is exactly 40 hex characters (case-insensitive).
-// Per IEEE 2030.5 §6.3.4 the LFDI is the leading 20 bytes of a SHA-256
+// Per IEEE 2030.5 section 6.3.4 the LFDI is the leading 20 bytes of a SHA-256
 // fingerprint, so 40 hex chars is the canonical representation.
 func validLFDI(s string) bool {
 	if len(s) != 40 {

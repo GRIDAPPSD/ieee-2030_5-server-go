@@ -381,7 +381,7 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 			// Best-effort cleanup of the scoped materialization.
 			if h.DeviceFSAs != nil {
 				if delErr := h.DeviceFSAs.Delete(r.Context(), deviceID, fsaID); delErr != nil && !errors.Is(delErr, store.ErrNotFound) {
-					// Logging only — the link record is already gone.
+					// Logging only - the link record is already gone.
 					_ = delErr
 				}
 			}

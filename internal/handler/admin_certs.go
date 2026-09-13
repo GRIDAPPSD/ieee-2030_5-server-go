@@ -146,7 +146,7 @@ func (s *AdminCertService) HandleCreateDeviceCert() http.HandlerFunc {
 			req.DeviceType = 1
 		}
 		if req.HWSerialNum == "" {
-			writeError(w, http.StatusBadRequest, "hwSerialNum is required (CSIP §6.2 HardwareModuleName SAN)")
+			writeError(w, http.StatusBadRequest, "hwSerialNum is required (CSIP section 6.2 HardwareModuleName SAN)")
 			return
 		}
 		if req.HWType == "" {

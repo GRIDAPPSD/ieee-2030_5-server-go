@@ -3,7 +3,7 @@
 // Package helics is an in-house cgo wrapper over the HELICS v3 C API
 // (libhelics, system-installed; resolved via pkg-config). It is built
 // only under the `helics` build tag so that the default `go build` of
-// the sep2 server stays CGO-free (per ADR-002 / ADR-004).
+// the sep2 server stays CGO-free.
 //
 // # File layout: single cgo translation unit
 //
@@ -22,10 +22,9 @@
 // C calls) in one Go file. A GNU-ld linker workaround (the
 // allow-duplicate-definition flag) was considered and rejected because
 // that flag is GNU-ld specific and is silently missing from macOS's
-// ld64; ADR-004's second 2026-06-03 correction locked the wrapper to
-// portable-prefix builds (Homebrew on macOS, Spack/Easybuild, distro
-// packages), so a GNU-ld-only flag would break the very portability
-// that ADR enshrined. We also considered an extern-shim .c file, but
+// ld64, and this wrapper targets portable-prefix builds (Homebrew on
+// macOS, Spack/Easybuild, distro packages), so a GNU-ld-only flag would
+// break that portability. We also considered an extern-shim .c file, but
 // `helics.h`, `helics_api.h`, and `helics_enums.h` all carry the same
 // file-scope const definitions, so no header subset avoids the
 // duplicates.
@@ -154,7 +153,7 @@ type Broker struct {
 
 // NewInProcess creates a root broker that runs in-process inside the
 // caller's process via helicsCreateBroker. It is suitable for unit tests
-// and for the server-owned root broker shape described in ADR-004.
+// and for a server-owned root broker.
 //
 // initString is passed verbatim to HELICS; pass an empty string to accept
 // the v3 defaults (the in-process tests rely on this).
@@ -177,7 +176,7 @@ func NewInProcess(name, initString string) (*Broker, error) {
 // existing root broker reachable at parentAddress. It maps to the HELICS 3
 // sub-broker pattern: the same helicsCreateBroker entry point with an
 // init string of "--broker=<parentAddress>". v3.6.1 has no broker-side
-// Connect entry point (see ADR-004's 2026-06-03 correction).
+// Connect entry point.
 //
 // An empty parentAddress is wrapper-side validation and returns
 // ErrEmptyParentAddress (recoverable via errors.Is). Embedded NUL bytes,

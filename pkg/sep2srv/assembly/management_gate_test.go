@@ -96,9 +96,9 @@ func TestManagement_ManagerReadsTheManagedEndDevice(t *testing.T) {
 	}
 }
 
-// delegatedPatterns selects, from the router's own pattern list, what ADR-007
-// grants a manager: GET on the record and every pattern strictly below it
-// except the Registration.
+// delegatedPatterns selects, from the router's own pattern list, what a
+// manager is granted: GET on the record and every pattern strictly below
+// it except the Registration.
 func delegatedPatterns(patterns []string) []string {
 	var out []string
 	for _, p := range patterns {

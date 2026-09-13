@@ -288,9 +288,9 @@ func TestLogEvent_UnknownIDIsACleanNotFound(t *testing.T) {
 //
 // DELETE is a WRITE, and this mount carries no ownership binding: any
 // authenticated caller that knows a path can delete the event under it. That
-// is a separate cross-cutting gap (retargeted to server-go by ADR-002), not
-// something this route invented; the store scoping asserted below is what
-// this layer does enforce, and it is not the same property.
+// is a separate cross-cutting gap, not something this route invented; the
+// store scoping asserted below is what this layer does enforce, and it is
+// not the same property.
 func TestLogEvent_DeleteIsServedAndScoped(t *testing.T) {
 	t.Parallel()
 

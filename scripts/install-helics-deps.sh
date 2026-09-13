@@ -18,9 +18,6 @@
 #
 # Idempotent: re-running after a clean install short-circuits both halves.
 #
-# References:
-#   * ADR-002, ADR-004 (in-house cgo wrapper against system libhelics)
-#
 # Constraint update from Craig (2026-06-02):
 #   1. GridLAB-D branch is feature/1478 (NOT develop).
 #   2. `git submodule update --init --recursive` is mandatory before each

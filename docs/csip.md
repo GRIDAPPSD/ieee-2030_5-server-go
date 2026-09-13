@@ -33,20 +33,20 @@ for protocol conformance, but operators usually do.
 
 | Function set | Wire | Persistence | Admin visibility | Source |
 |---|---|---|---|---|
-| DeviceCapability (DCAP) | Supported | n/a (static) | - | [`handler/dcap.go`](../internal/handler/dcap.go) |
-| Time | Supported | n/a (clock) | - | [`handler/time.go`](../internal/handler/time.go) |
-| EndDevice + Registration | Supported | Supported (`SEP2_DATA_DIR`, #165) | Supported (`POST /api/devices`, #159; dashboard "Add End Device" form) | [`handler/edev.go`](../internal/handler/edev.go), [`handler/registration.go`](../internal/handler/registration.go) |
-| FunctionSetAssignments | Supported | Supported | Supported (FSA management API + dashboard tree, #163) | [`handler/fsa.go`](../internal/handler/fsa.go), [`handler/admin_fsa.go`](../internal/handler/admin_fsa.go) |
-| DER (DER, DERCapability, DERSettings, DERStatus, DERAvailability) | Supported | Supported | Partial (DER list visible on dashboard via the EndDevice rollup; no per-DER edit UI) | [`handler/der.go`](../internal/handler/der.go) |
-| DERProgram + DERControl + DefaultDERControl | Supported | Supported (DERProgram disk-backed) | Partial (Send-DER-Control form is wired in HTML but the POST is a stub - see `dashboard_html.go` "TODO: POST to /api/der/controls") | [`handler/der.go`](../internal/handler/der.go) |
-| DERCurve | Supported | In-memory only | - | [`handler/der.go`](../internal/handler/der.go) |
-| Mirror UsagePoint | Supported | In-memory | Supported (dashboard MUP count) | [`handler/mirror.go`](../internal/handler/mirror.go) |
-| Metering (UsagePoint, MeterReading, Reading, ReadingType) | Supported | In-memory | - | [`handler/metering.go`](../internal/handler/metering.go) |
-| Subscription / Notification | Supported | Supported (`SEP2_SUBSCRIPTION_STORE_PATH` or `SEP2_DATA_DIR`) | - | [`handler/subscription.go`](../internal/handler/subscription.go), [`internal/subscription/`](../internal/subscription/) |
-| LogEvent | Supported | In-memory | - | [`handler/log_event.go`](../internal/handler/log_event.go) |
-| Response | Supported | In-memory | - | [`handler/messaging.go`](../internal/handler/messaging.go) |
-| FlowReservation | Supported | In-memory | - | [`handler/flow_reservation.go`](../internal/handler/flow_reservation.go) |
-| DRLC | Planned | - | - | No handler wired. `FunctionSetDRLC` constant exists in [`pkg/sep2/log_event.go`](../pkg/sep2/log_event.go); no open ticket yet. |
+| DeviceCapability (DCAP) | Supported | n/a (static) | - | [`dcap/dcap.go`](../pkg/sep2srv/handlers/dcap/dcap.go) |
+| Time | Supported | n/a (clock) | - | [`sep2time/time.go`](../pkg/sep2srv/handlers/sep2time/time.go) |
+| EndDevice + Registration | Supported | Supported (`SEP2_DATA_DIR`, #165) | Supported (`POST /api/devices`, #159; dashboard "Add End Device" form) | [`enddevice/enddevice.go`](../pkg/sep2srv/handlers/enddevice/enddevice.go), [`registration/registration.go`](../pkg/sep2srv/handlers/registration/registration.go) |
+| FunctionSetAssignments | Supported | Supported | Supported (FSA management API + dashboard tree, #163) | [`fsa/fsa.go`](../pkg/sep2srv/handlers/fsa/fsa.go), [`internal/handler/admin_fsa.go`](../internal/handler/admin_fsa.go) |
+| DER (DER, DERCapability, DERSettings, DERStatus, DERAvailability) | Supported | Supported | Partial (DER list visible on dashboard via the EndDevice rollup; no per-DER edit UI) | [`der/der.go`](../pkg/sep2srv/handlers/der/der.go) |
+| DERProgram + DERControl + DefaultDERControl | Supported | Supported (DERProgram disk-backed) | Partial (Send-DER-Control form is wired in HTML but the POST is a stub - see `internal/server/dashboard_html.go` "TODO: POST to /api/der/controls") | [`der/der.go`](../pkg/sep2srv/handlers/der/der.go) |
+| DERCurve | Supported | In-memory only | - | [`der/der.go`](../pkg/sep2srv/handlers/der/der.go) |
+| Mirror UsagePoint | Supported | In-memory | Supported (dashboard MUP count) | [`metering/mirror.go`](../pkg/sep2srv/handlers/metering/mirror.go) |
+| Metering (UsagePoint, MeterReading, Reading, ReadingType) | Supported | In-memory | - | [`metering/metering.go`](../pkg/sep2srv/handlers/metering/metering.go) |
+| Subscription / Notification | Supported | Supported (`SEP2_SUBSCRIPTION_STORE_PATH` or `SEP2_DATA_DIR`) | - | [`subscription/handler.go`](../pkg/sep2srv/handlers/subscription/handler.go), [`pkg/store/memory/subscription_persistence.go`](../pkg/store/memory/subscription_persistence.go) |
+| LogEvent | Supported | In-memory | - | [`logevent/log_event.go`](../pkg/sep2srv/handlers/logevent/log_event.go) |
+| Response | Supported | In-memory | - | [`messaging/messaging.go`](../pkg/sep2srv/handlers/messaging/messaging.go) |
+| FlowReservation | Supported | In-memory | - | [`flow_reservation/flow_reservation.go`](../pkg/sep2srv/handlers/flow_reservation/flow_reservation.go) |
+| DRLC | Planned | - | - | No handler wired. `FunctionSetDRLC` constant exists in `pkg/sep2/log_event.go` in the GRIDAPPSD/ieee-2030_5-core-go module; no open ticket yet. |
 | Mode coverage gap (LVRT / HVRT / LFRT / HFRT, VoltWatt, FreqWatt, setGradW / setSoftGradW) | Partial | Partial | - | Tracked in [#140](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/140). Affects DERSettings + DefaultDERControl. |
 
 ## Cert profile (CSIP section 6.11 / IEEE 2030.5 section 6.11)
@@ -146,9 +146,9 @@ OpenSSL 3 prints the inner serial as `<unsupported>` - that is cosmetic;
 the otherName OID is the RFC 4108 `1.3.6.1.5.5.7.8.4`.
 
 Cert generation lives in [`internal/certs/`](../internal/certs/). The
-LFDI/SFDI derivation and the CCM-8 cipher registration live in
-[`internal/tls/`](../internal/tls/) (see also
-[`VENDORED.md`](../VENDORED.md)).
+LFDI/SFDI derivation and the CCM-8 cipher registration live in the
+`pkg/sep2tls` package of the GRIDAPPSD/ieee-2030_5-core-go module (see
+[`VENDORED.md`](../VENDORED.md) for why they moved out of this repo).
 
 ## Cipher
 
@@ -157,7 +157,7 @@ Server-side TLS stacks:
 | Target | TLS stack | Cipher list | CSIP-conformant on the wire? |
 |---|---|---|---|
 | `make run` | Go stdlib | [GCM](glossary.md) only | No |
-| `make run-ccm`, `make run-full` | Vendored `internal/tls/gotls` | [CCM-8](glossary.md) first, GCM fallback (see footnote) | Conditional |
+| `make run-ccm`, `make run-full` | `pkg/sep2tls/gotls` from GRIDAPPSD/ieee-2030_5-core-go | [CCM-8](glossary.md) first, GCM fallback (see footnote) | Conditional |
 
 > **GCM-fallback footnote:** under `run-ccm` the server still accepts a
 > non-CSIP client that lands on GCM. Strict-mode (handshake fails when
@@ -172,11 +172,10 @@ Client-side stacks (paired with a running `run-ccm` server):
 |---|---|---|
 | `make test-epri` | EPRI C client (CCM-capable) | Yes (negotiates CCM-8) |
 
-The cipher list is built in
-[`internal/tls/ccmserver.go`](../internal/tls/ccmserver.go); the cipher
-itself is registered in [`internal/tls/gotls/`](../internal/tls/gotls/),
-with the diff against upstream Go documented in
-[`internal/tls/gotls/DIFF.md`](../internal/tls/gotls/DIFF.md).
+The cipher list is built in `pkg/sep2tls/ccmserver.go`, and the cipher
+itself is registered in `pkg/sep2tls/gotls/`, both in the
+GRIDAPPSD/ieee-2030_5-core-go module. No current file documents the diff
+against upstream Go.
 
 ## Conformance harness
 

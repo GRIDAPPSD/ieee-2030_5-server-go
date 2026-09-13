@@ -84,8 +84,8 @@ func RunEndDeviceManagementSuite(t *testing.T, newStore func(*testing.T) store.E
 		for name, pair := range cases {
 			s := newStore(t)
 			err := s.Assign(ctx, pair[0], pair[1])
-			if err == nil || errors.Is(err, store.ErrAlreadyExists) || errors.Is(err, store.ErrNotFound) {
-				t.Errorf("%s: Assign(%q, %q) = %v; want a refusal that is neither sentinel", name, pair[0], pair[1], err)
+			if !errors.Is(err, store.ErrInvalidManagementPair) || errors.Is(err, store.ErrAlreadyExists) || errors.Is(err, store.ErrNotFound) {
+				t.Errorf("%s: Assign(%q, %q) = %v; want ErrInvalidManagementPair and no other sentinel", name, pair[0], pair[1], err)
 			}
 			for _, lfdi := range []string{pair[0], pair[1], managerLFDIA, childLFDI1} {
 				if got, err := s.ManagerOf(ctx, lfdi); !errors.Is(err, store.ErrNotFound) {

@@ -1,6 +1,15 @@
 package store
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrInvalidManagementPair means Assign was given a pair it will not record:
+// an empty or non-canonical LFDI, or a device named as its own manager. It is
+// a caller error, never a backend condition, so an admin surface answers it
+// with 400.
+var ErrInvalidManagementPair = errors.New("invalid EndDevice management pair")
 
 // EndDeviceManagementStore records which LFDI manages which EndDevice.
 //
@@ -27,8 +36,8 @@ type EndDeviceManagementStore interface {
 
 	// Assign records managerLFDI as the manager of managedLFDI. Assigning the
 	// same pair again succeeds. It returns ErrAlreadyExists when another
-	// manager holds the device, and refuses an empty or non-canonical LFDI
-	// and a device managing itself.
+	// manager holds the device, and ErrInvalidManagementPair for an empty or
+	// non-canonical LFDI or a device managing itself.
 	Assign(ctx context.Context, managerLFDI, managedLFDI string) error
 
 	// Unassign removes the manager of managedLFDI, or returns ErrNotFound

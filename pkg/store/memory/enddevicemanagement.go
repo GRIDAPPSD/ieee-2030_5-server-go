@@ -58,7 +58,7 @@ func (s *EndDeviceManagementStore) Assign(_ context.Context, managerLFDI, manage
 		return err
 	}
 	if managerLFDI == managedLFDI {
-		return fmt.Errorf("enddevice management: %s cannot manage itself", managedLFDI)
+		return fmt.Errorf("enddevice management: %s cannot manage itself: %w", managedLFDI, store.ErrInvalidManagementPair)
 	}
 
 	s.mu.Lock()
@@ -97,7 +97,7 @@ func (s *EndDeviceManagementStore) Unassign(_ context.Context, managedLFDI strin
 // no comparison ever needs to fold case or trim.
 func checkCanonicalLFDI(role, lfdi string) error {
 	if lfdi == "" || lfdi != strings.TrimSpace(lfdi) || lfdi != strings.ToUpper(lfdi) {
-		return fmt.Errorf("enddevice management: %s LFDI %q is not in canonical form", role, lfdi)
+		return fmt.Errorf("enddevice management: %s LFDI %q is not in canonical form: %w", role, lfdi, store.ErrInvalidManagementPair)
 	}
 	return nil
 }

@@ -1,11 +1,11 @@
 // Tests for the #52 fixture loader. These run against the
-// in-memory store implementations (pkg/store/memory) only — no
+// in-memory store implementations (pkg/store/memory) only - no
 // internal/server, no internal/handler. The loader's contract is
 // that it writes through the public store API, so these tests are
 // the canonical proof.
 //
 // The three fixture YAMLs are loaded by relative path
-// (../fixtures/<name>.yaml) — `go test` runs with the package
+// (../fixtures/<name>.yaml) - `go test` runs with the package
 // directory as cwd, and the fixtures live one level up.
 package csiptest_test
 
@@ -119,7 +119,7 @@ func TestLoad_SevenLevelFSA_BuildsPriorityChain(t *testing.T) {
 	}
 
 	// Walk the DERProgram store. Same EndDevice scope; expect
-	// seven entries with primacy 0..6 — the priority chain.
+	// seven entries with primacy 0..6 - the priority chain.
 	progList, err := target.DERPrograms.List(ctx, "0", store.ListOptions{Start: 0, Limit: 100})
 	if err != nil {
 		t.Fatalf("DERPrograms.List(edev=0): %v", err)
@@ -184,7 +184,7 @@ func TestLoad_DERProgramSingle_BuildsStoreState(t *testing.T) {
 		t.Errorf("OpModMaxLimW = %d, want 5000", got)
 	}
 
-	// Zero DERControls — the "C in CORE-012" assertion.
+	// Zero DERControls - the "C in CORE-012" assertion.
 	dcCount, err := target.DERControls.Count(ctx, "0/0/0")
 	if err != nil {
 		t.Fatalf("DERControls.Count: %v", err)
@@ -279,7 +279,7 @@ func TestLoad_IdempotentReload(t *testing.T) {
 
 	// And: reload onto the SAME target rejects because Create
 	// enforces ErrAlreadyExists. This is the loader's documented
-	// contract — "one Target per test".
+	// contract - "one Target per test".
 	err = csiptest.Load(ctx, a, fixturePath("seven-level-fsa.yaml"))
 	if err == nil {
 		t.Fatal("Load on already-loaded target: want error, got nil")
@@ -345,7 +345,7 @@ func TestLoad_NilTarget_Errors(t *testing.T) {
 func TestLoadSpec_OrphanFSA_Errors(t *testing.T) {
 	t.Parallel()
 
-	// Hand-crafted Spec referencing a missing EndDevice — proves
+	// Hand-crafted Spec referencing a missing EndDevice - proves
 	// the orphan-check fires inside applySpec, not just at
 	// decode-time.
 	spec := &csiptest.Spec{

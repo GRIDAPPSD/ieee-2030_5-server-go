@@ -11,9 +11,12 @@ Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utili
 
 > **Server of record for the IEEE 2030.5 (SEP2) Go implementation.** The original public reference is at `github.com/GRIDAPPSD/ieee-2030_5-go`; that GitHub repo remains accessible but active development lands here on GitLab. The `ieee-2030_5-core` library is consumed via a local-path `replace` directive in `go.mod` during the pre-1.0 window; CI clones core into the expected path before building.
 
+> **EndDevice access control.** Every `/edev/{id}` route answers only the device whose certificate LFDI is stored on that EndDevice, or an aggregator provisioned to manage it, and `GET /edev` lists only those devices. Manager pairs are provisioned on the utility side; the server binary wires none yet, so aggregators have self access only until admin-plane provisioning lands ([#440](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/440)). Embedders that relied on any certificate reaching any EndDevice must change. See [docs/enddevice-access.md](docs/enddevice-access.md).
+
 ## Documentation
 
 - **[docs/2030_5.md](docs/2030_5.md)**: full IEEE 2030.5 (SEP2) reference and function-set support table.
+- **[docs/enddevice-access.md](docs/enddevice-access.md)**: who may reach an EndDevice, what an aggregator's manager pair grants, denial statuses, and wiring `Stores.EndDeviceManagers`.
 - **[docs/csip.md](docs/csip.md)**: CSIP V1.2 profile: cert profile, cipher, conformance harness, operator profiles.
 - **[docs/admin.md](docs/admin.md)**: admin surface: dashboard, the browser procedure for reaching the admin UI from another machine, login flow, auth model, mTLS cert flow, admin features.
 - **[docs/admin-listener.md](docs/admin-listener.md)**: admin listener TLS posture matrix (plain HTTP behind Caddy, direct HTTPS, self-signed fallback).

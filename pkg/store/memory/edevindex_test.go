@@ -388,3 +388,121 @@ func TestEndDeviceIndexFromStoreSkipsOccupiedIndexesAfterRestart(t *testing.T) {
 		t.Errorf("Allocate after restart = %q, want %q (first free index)", got, "3")
 	}
 }
+
+// TestEndDeviceIndexFromStoreSeedsOneEntryPerDevice pins the ordinary case:
+// every canonical-id device with a non-blank LFDI gets its own byKey entry,
+// addressed by its stored id.
+func TestEndDeviceIndexFromStoreSeedsOneEntryPerDevice(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := memory.NewEndDeviceStore()
+	if err := s.Create(ctx, "1", sep2.EndDevice{SFDI: "1111111111111111", LFDI: "lfdi-1"}); err != nil {
+		t.Fatalf("create device 1: %v", err)
+	}
+	if err := s.Create(ctx, "2", sep2.EndDevice{SFDI: "2222222222222222", LFDI: "lfdi-2"}); err != nil {
+		t.Fatalf("create device 2: %v", err)
+	}
+
+	idx := memory.NewEndDeviceIndexFromStore(s)
+
+	if got, ok := idx.IndexFor("lfdi-1"); !ok || got != "1" {
+		t.Errorf("IndexFor(lfdi-1) = (%q, %v), want (\"1\", true)", got, ok)
+	}
+	if got, ok := idx.IndexFor("lfdi-2"); !ok || got != "2" {
+		t.Errorf("IndexFor(lfdi-2) = (%q, %v), want (\"2\", true)", got, ok)
+	}
+	if got, err := idx.Allocate("lfdi-3"); err != nil || got != "3" {
+		t.Errorf("Allocate(lfdi-3) = (%q, %v), want (\"3\", nil)", got, err)
+	}
+}
+
+// TestEndDeviceIndexFromStoreSkipsBlankLFDI pins that a record with a blank
+// LFDI raises the counter floor (its numeric id is never reissued) but gets
+// no byKey entry, since Allocate never assigns a blank key to look it up by.
+func TestEndDeviceIndexFromStoreSkipsBlankLFDI(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := memory.NewEndDeviceStore()
+	if err := s.Create(ctx, "1", sep2.EndDevice{SFDI: "1111111111111111", LFDI: ""}); err != nil {
+		t.Fatalf("create device 1: %v", err)
+	}
+
+	idx := memory.NewEndDeviceIndexFromStore(s)
+
+	if _, ok := idx.IndexFor(""); ok {
+		t.Error("IndexFor(\"\") reported present; a blank LFDI must never be a lookup key")
+	}
+	if got, err := idx.Allocate("lfdi-new"); err != nil || got != "2" {
+		t.Errorf("Allocate(lfdi-new) = (%q, %v), want (\"2\", nil): id 1 must still raise the counter floor", got, err)
+	}
+}
+
+// TestEndDeviceIndexFromStoreSkipsMalformedAndNonCanonicalIDs pins that
+// non-numeric, non-canonical (leading zero), and negative-range ids neither
+// raise the counter floor nor get a byKey entry.
+func TestEndDeviceIndexFromStoreSkipsMalformedAndNonCanonicalIDs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := memory.NewEndDeviceStore()
+	for id, lfdi := range map[string]string{
+		"abc": "lfdi-abc",
+		"007": "lfdi-007",
+		"0":   "lfdi-0",
+	} {
+		if err := s.Create(ctx, id, sep2.EndDevice{SFDI: "1111111111111111", LFDI: lfdi}); err != nil {
+			t.Fatalf("create device %q: %v", id, err)
+		}
+	}
+	if err := s.Create(ctx, "3", sep2.EndDevice{SFDI: "3333333333333333", LFDI: "lfdi-3"}); err != nil {
+		t.Fatalf("create device 3: %v", err)
+	}
+
+	idx := memory.NewEndDeviceIndexFromStore(s)
+
+	for _, lfdi := range []string{"lfdi-abc", "lfdi-007", "lfdi-0"} {
+		if _, ok := idx.IndexFor(lfdi); ok {
+			t.Errorf("IndexFor(%q) reported present; a malformed/non-canonical id must not seed byKey", lfdi)
+		}
+	}
+	if got, ok := idx.IndexFor("lfdi-3"); !ok || got != "3" {
+		t.Errorf("IndexFor(lfdi-3) = (%q, %v), want (\"3\", true)", got, ok)
+	}
+	// Only "3" ever raised the floor: "007" is non-canonical and "0" is
+	// below firstIndex, so neither counts.
+	if got, err := idx.Allocate("lfdi-new"); err != nil || got != "4" {
+		t.Errorf("Allocate(lfdi-new) = (%q, %v), want (\"4\", nil)", got, err)
+	}
+}
+
+// TestEndDeviceIndexFromStoreDuplicateLFDIKeepsSnapshotOrderNotCreationOrder
+// pins the #446 duplicate-LFDI rule stated on NewEndDeviceIndexFromStore's
+// doc comment: the record entered into byKey is the first one reached in
+// the store's own snapshot order (sorted lexicographically on the id
+// string), not the one created first. "10" sorts before "9", so creating
+// "9" first and "10" second still resolves the shared LFDI to "10".
+func TestEndDeviceIndexFromStoreDuplicateLFDIKeepsSnapshotOrderNotCreationOrder(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := memory.NewEndDeviceStore()
+	const sharedLFDI = "lfdi-shared"
+	if err := s.Create(ctx, "9", sep2.EndDevice{SFDI: "9999999999999999", LFDI: sharedLFDI}); err != nil {
+		t.Fatalf("create device 9 (created first): %v", err)
+	}
+	if err := s.Create(ctx, "10", sep2.EndDevice{SFDI: "1010101010101010", LFDI: sharedLFDI}); err != nil {
+		t.Fatalf("create device 10 (created second): %v", err)
+	}
+
+	idx := memory.NewEndDeviceIndexFromStore(s)
+
+	got, ok := idx.IndexFor(sharedLFDI)
+	if !ok {
+		t.Fatal("IndexFor(sharedLFDI) reported absent; one of the two records must win")
+	}
+	if got != "10" {
+		t.Errorf("IndexFor(sharedLFDI) = %q, want %q: snapshot order is lexicographic on the id string (\"10\" < \"9\"), not creation order", got, "10")
+	}
+	// Both ids raise the floor regardless of which one won byKey.
+	if next, err := idx.Allocate("lfdi-new"); err != nil || next != "11" {
+		t.Errorf("Allocate(lfdi-new) = (%q, %v), want (\"11\", nil)", next, err)
+	}
+}

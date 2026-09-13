@@ -324,10 +324,18 @@ func (x *EndDeviceIndex) persistLocked() error {
 // is also configured with a persistence path.
 //
 // A record whose id is not one of this allocator's own canonical decimal
-// ids, whose LFDI is blank, or whose LFDI is shared with another record
-// (GRIDAPPSD/ieee-2030_5-server-go#446) is not entered into byKey: Allocate
-// could never look it up by that key regardless. Its numeric id, if it has
-// one, still raises the counter floor, so the slot is never reissued.
+// ids, or whose LFDI is blank, is not entered into byKey: Allocate could
+// never look it up by that key regardless. Its numeric id, if it has one,
+// still raises the counter floor, so the slot is never reissued.
+//
+// When two records share one LFDI (GRIDAPPSD/ieee-2030_5-server-go#446),
+// only the FIRST one reached in the store's own snapshot order is entered
+// into byKey; every later one with that LFDI is skipped. Snapshot order is
+// the store's sorted key order (lexicographic on the id STRING, not
+// creation order or numeric value: "10" sorts before "9"), so which of the
+// two records the LFDI resolves to is not the one that registered first.
+// Both records carry the caller's own LFDI regardless of which wins, so no
+// cross-identity record becomes reachable this way.
 func NewEndDeviceIndexFromStore(s *EndDeviceStore) *EndDeviceIndex {
 	x := NewEndDeviceIndex()
 	highest := uint64(firstIndex - 1)

@@ -55,11 +55,11 @@ func runServe() error {
 	caKeyFile := envOr("SEP2_CA_KEY", "certs/ca.key")
 	caCert, caKey, err := certs.LoadCA(caFile, caKeyFile)
 	if err != nil {
-		log.Printf("CA not loaded (%v) — admin cert API disabled", err)
+		log.Printf("CA not loaded (%v): admin cert API disabled", err)
 	} else {
 		caCertPEM, _ := os.ReadFile(caFile)
 		svc = handler.NewAdminCertService(caCert, caKey, caCertPEM)
-		log.Println("CA loaded — admin cert API enabled")
+		log.Println("CA loaded: admin cert API enabled")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

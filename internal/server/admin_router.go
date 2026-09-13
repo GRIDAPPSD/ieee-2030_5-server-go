@@ -28,7 +28,8 @@ import (
 //     ticket exchange). Guarded by AdminAuthMiddleware which supports mTLS,
 //     Bearer, the query-param ticket from tickets, and the #159
 //     admin_ticket cookie session from sessions. Those last two are
-//     separate stores: see AdminAuthMiddleware for why.
+//     separate stores: see AdminAuthMiddleware for why. After auth, a write
+//     whose Content-Type its route does not decode is refused (adminBodyTypes).
 //
 // Patterns from BOTH the public outer mux (login routes) and the authed
 // inner mux are merged into one sorted, deduplicated list - callers
@@ -90,7 +91,7 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 		authed.HandleFunc("POST /auth/ticket", handleIssueTicket(tickets))
 	}
 
-	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets, sessions)(authed)
+	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets, sessions)(requireAdminBodyTypes(authed))
 
 	// Outer mux: login routes are public; everything else is authed.
 	// #270 (bundle B) wraps authedWithMiddleware with a Host-allowlist

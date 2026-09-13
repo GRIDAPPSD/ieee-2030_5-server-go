@@ -77,8 +77,8 @@ func TestNotifyAfterShutdownDoesNotPanic(t *testing.T) {
 	}
 }
 
-// TestManagerCloseIdempotent covers property 5: a second Close must not
-// panic (double close(m.queue) would).
+// TestManagerCloseIdempotent asserts a second Close does not panic (a double
+// close(m.queue) would).
 func TestManagerCloseIdempotent(t *testing.T) {
 	mgr := subscription.NewManager(&staticLister{}, 1, 4, loopbackReceivers)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -104,7 +104,7 @@ func TestManagerCloseIdempotent(t *testing.T) {
 // TestManagerCloseRacesEnqueue is the concurrency property from the issue:
 // concurrent NotifyRemoved and Notify calls racing against Close must never
 // panic, and every call after the observed close must return
-// ErrManagerClosed. Run with -race -count=20 (see the dispatch brief).
+// ErrManagerClosed. Run with -race.
 func TestManagerCloseRacesEnqueue(t *testing.T) {
 	store := &mockSubStore{subs: []sep2.Subscription{closedSub("/edev/1/sub/1")}}
 	mgr := subscription.NewManager(store, 2, 4, loopbackReceivers)

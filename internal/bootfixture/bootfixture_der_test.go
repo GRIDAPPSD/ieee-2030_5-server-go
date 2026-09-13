@@ -332,9 +332,7 @@ default_der_controls:
     der_program_id: "p1"
     mrid: "DDERC-MRID-1"
     der_control_base:
-      op_mod_fixed_w:
-        multiplier: 0
-        value: 2000
+      op_mod_fixed_w: 2000
       op_mod_connect: true
 `)
 	ctx := context.Background()
@@ -352,14 +350,10 @@ default_der_controls:
 		t.Errorf("DefaultDERControl.MRID = %q, want %q", dc.MRID, want)
 	}
 	base := deref(t, dc.DERControlBase, "DefaultDERControl.DERControlBase")
-	// This is the value a client falls back to when no event is active,
-	// so the magnitude and multiplier both have to survive the load.
-	fixedW := deref(t, base.OpModFixedW, "DefaultDERControl.DERControlBase.OpModFixedW")
-	if fixedW.Value != 2000 {
-		t.Errorf("OpModFixedW.Value = %d, want 2000", fixedW.Value)
-	}
-	if fixedW.Multiplier != 0 {
-		t.Errorf("OpModFixedW.Multiplier = %d, want 0", fixedW.Multiplier)
+	// This is the value a client falls back to when no event is active, so
+	// it has to survive the load unchanged (2000 = 20.00%).
+	if got := deref(t, base.OpModFixedW, "DefaultDERControl.DERControlBase.OpModFixedW"); got != 2000 {
+		t.Errorf("OpModFixedW = %d, want 2000", got)
 	}
 	if got := deref(t, base.OpModConnect, "OpModConnect"); !got {
 		t.Errorf("OpModConnect = %v, want true", got)
@@ -463,9 +457,7 @@ der_controls:
     id: "a"
     mrid: "DERC-MRID-A"
     der_control_base:
-      op_mod_fixed_w:
-        multiplier: 3
-        value: 5
+      op_mod_fixed_w: 5000
       ramp_tms: 20
 `)
 	ctx := context.Background()
@@ -478,14 +470,8 @@ der_controls:
 		t.Errorf("DERControl.Href = %q, want %q", dc.Href, want)
 	}
 	base := deref(t, dc.DERControlBase, "DERControl.DERControlBase")
-	fixedW := deref(t, base.OpModFixedW, "OpModFixedW")
-	// multiplier 3 with value 5 is 5000 W; dropping the multiplier is a
-	// three-orders-of-magnitude setpoint error, so assert both.
-	if fixedW.Value != 5 {
-		t.Errorf("OpModFixedW.Value = %d, want 5", fixedW.Value)
-	}
-	if fixedW.Multiplier != 3 {
-		t.Errorf("OpModFixedW.Multiplier = %d, want 3", fixedW.Multiplier)
+	if got := deref(t, base.OpModFixedW, "OpModFixedW"); got != 5000 {
+		t.Errorf("OpModFixedW = %d, want 5000", got)
 	}
 	if got := deref(t, base.RampTms, "RampTms"); got != 20 {
 		t.Errorf("RampTms = %d, want 20", got)
@@ -647,12 +633,8 @@ der_controls:
     der_control_base:
       op_mod_connect: false
       op_mod_energize: true
-      op_mod_fixed_w:
-        multiplier: 1
-        value: 100
-      op_mod_max_lim_w:
-        multiplier: 2
-        value: 200
+      op_mod_fixed_w: -10000
+      op_mod_max_lim_w: 10000
       op_mod_target_w:
         multiplier: -1
         value: -300
@@ -675,11 +657,12 @@ der_controls:
 	if got := deref(t, base.OpModEnergize, "OpModEnergize"); !got {
 		t.Errorf("OpModEnergize = %v, want true", got)
 	}
-	if got := deref(t, base.OpModFixedW, "OpModFixedW"); got.Multiplier != 1 || got.Value != 100 {
-		t.Errorf("OpModFixedW = %+v, want {Multiplier:1 Value:100}", got)
+	// The range bounds themselves must load: SignedPerCent's floor, PerCent's ceiling.
+	if got := deref(t, base.OpModFixedW, "OpModFixedW"); got != -10000 {
+		t.Errorf("OpModFixedW = %d, want -10000", got)
 	}
-	if got := deref(t, base.OpModMaxLimW, "OpModMaxLimW"); got.Multiplier != 2 || got.Value != 200 {
-		t.Errorf("OpModMaxLimW = %+v, want {Multiplier:2 Value:200}", got)
+	if got := deref(t, base.OpModMaxLimW, "OpModMaxLimW"); got != 10000 {
+		t.Errorf("OpModMaxLimW = %d, want 10000", got)
 	}
 	// Negative multiplier and negative value together: sign handling on
 	// an int8 multiplier and an int64 value are separate failure modes.
@@ -715,6 +698,54 @@ der_controls:
 		if isSet {
 			t.Errorf("%s is set, want nil (not expressible in this schema)", name)
 		}
+	}
+}
+
+// TestPerCentFieldsRefuseInvalidValues pins that an out-of-range percent, a
+// negative PerCent, and the old multiplier/value mapping each fail the load
+// and store no DERControl, rather than loading as some other setpoint.
+func TestPerCentFieldsRefuseInvalidValues(t *testing.T) {
+	t.Parallel()
+
+	const head = `
+end_devices:
+  - id: "e1"
+    sfdi: "1"
+    lfdi: "AA"
+    changed_time: 0
+der_controls:
+  - end_device_id: "e1"
+    fsa_id: "f1"
+    der_program_id: "p1"
+    id: "a"
+    der_control_base:
+`
+	cases := []struct {
+		name    string
+		body    string
+		wantMsg string
+	}{
+		{"op_mod_fixed_w above 10000", "      op_mod_fixed_w: 10001\n", `der_controls[0] (id="a"): op_mod_fixed_w`},
+		{"op_mod_fixed_w below -10000", "      op_mod_fixed_w: -10001\n", `der_controls[0] (id="a"): op_mod_fixed_w`},
+		{"op_mod_max_lim_w above 10000", "      op_mod_max_lim_w: 10001\n", `der_controls[0] (id="a"): op_mod_max_lim_w`},
+		{"negative op_mod_max_lim_w", "      op_mod_max_lim_w: -1\n", "decode fixture"},
+		{"op_mod_fixed_w as multiplier and value", "      op_mod_fixed_w:\n        multiplier: 0\n        value: 2000\n", "decode fixture"},
+		{"op_mod_max_lim_w as multiplier and value", "      op_mod_max_lim_w:\n        multiplier: 0\n        value: 2000\n", "decode fixture"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			target, err := loadYAML(t, head+tc.body)
+			if err == nil {
+				t.Fatal("expected rejection, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("error %q does not contain %q", err, tc.wantMsg)
+			}
+			if _, getErr := target.DERControls.Get(context.Background(), "e1/f1/p1", "a"); !errors.Is(getErr, store.ErrNotFound) {
+				t.Errorf("DERControls.Get(e1/f1/p1, a) error = %v, want store.ErrNotFound: the rejected control was stored", getErr)
+			}
+		})
 	}
 }
 
@@ -1023,6 +1054,11 @@ end_devices:
 `,
 			wantMsg:  `default_der_controls[1] (scope="e1/f1/p1")`,
 			wantDupe: true,
+		},
+		{
+			name:    "default der control op_mod_max_lim_w above 10000",
+			yaml:    edev + "default_der_controls:\n  - end_device_id: \"e1\"\n    fsa_id: \"f1\"\n    der_program_id: \"p1\"\n    der_control_base:\n      op_mod_max_lim_w: 10001\n",
+			wantMsg: "default_der_controls[0]: op_mod_max_lim_w",
 		},
 		{
 			name:    "der control missing id",

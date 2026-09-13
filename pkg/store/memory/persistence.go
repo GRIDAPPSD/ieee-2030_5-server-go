@@ -97,8 +97,8 @@ func writeSnapshotEnvelope(path string, records any) error {
 	if err != nil {
 		return fmt.Errorf("marshal envelope: %w", err)
 	}
-	if err := atomicfile.Write(path, payload); err != nil {
-		return fmt.Errorf("subscription persistence: %w", err)
-	}
-	return nil
+	// Each caller already wraps this with its own store label
+	// (e.g. "derprogram persistence: %w"); adding one here would
+	// double-label every caller but the one it was copied from.
+	return atomicfile.Write(path, payload)
 }

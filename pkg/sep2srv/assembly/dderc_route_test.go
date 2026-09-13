@@ -16,8 +16,8 @@ import (
 //
 // DefaultDERControl is set by the utility (CSIP: the server sets it, clients
 // monitor it). PUT is not mounted for this route, so every caller class a
-// protocol client can be here -- the device the record belongs to, a device
-// managing it, and an unrelated device -- is refused by the router itself
+// protocol client can be here (the device the record belongs to, a device
+// managing it, and an unrelated device) is refused by the router itself
 // before the ownership gate or the handler ever sees the request; GET stays
 // open to the owner and its manager exactly as before (#456).
 
@@ -52,9 +52,9 @@ func storedDefaultDERControlMRID(t *testing.T, stores *assembly.Stores, edevID s
 	return dc.MRID
 }
 
-// TestDefaultDERControl_PUTIsRefusedForEveryCallerClass covers property 1 and
-// property 5: the owner, its manager, and an unrelated device each attempt
-// the write and each leaves the stored value untouched.
+// TestDefaultDERControl_PUTIsRefusedForEveryCallerClass asserts that the
+// owner, its manager, and an unrelated device each get PUT refused and each
+// leaves the stored value untouched.
 func TestDefaultDERControl_PUTIsRefusedForEveryCallerClass(t *testing.T) {
 	t.Parallel()
 
@@ -117,9 +117,9 @@ func TestDefaultDERControl_PUTRefusalNamesTheServedMethods(t *testing.T) {
 	}
 }
 
-// TestDefaultDERControl_GETStillServesOwnerAndManager covers property 2:
-// the refusal is scoped to PUT, and the owner and its manager still read the
-// same stored value they always did.
+// TestDefaultDERControl_GETStillServesOwnerAndManager asserts that the PUT
+// refusal is scoped to PUT: the owner and its manager still read the same
+// stored value they always did.
 func TestDefaultDERControl_GETStillServesOwnerAndManager(t *testing.T) {
 	t.Parallel()
 	const mrid = "READBACK000000000000000000000000000003"

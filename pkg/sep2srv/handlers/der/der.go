@@ -189,8 +189,8 @@ func DERSingletonHandlers(
 // PUT is refused with 405 rather than routed to the generic singleton upsert:
 // unlike DERCapability/DERSettings/DERStatus/DERAvailability, which a device
 // reports about itself, DefaultDERControl is utility-set (CSIP: the server
-// sets it, clients monitor it), so no protocol caller -- owner, manager, or
-// anyone else -- may write it (#456). The refusal is enforced here rather
+// sets it, clients monitor it), so no protocol caller (owner, manager, or
+// anyone else) may write it (#456). The refusal is enforced here rather
 // than only by which methods assembly.go mounts, so re-mounting PUT later
 // cannot silently reopen the write.
 func DefaultDERControlHandler(ddercStore store.ScopedStore[sep2.DefaultDERControl]) http.HandlerFunc {

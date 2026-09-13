@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+	"log/slog"
 	"mime"
 	"net/http"
 	"slices"
@@ -24,6 +26,15 @@ var adminBodyTypes = map[string][]string{
 	"POST /auth/ticket":                       nil,
 }
 
+// unsupportedContentTypeBody is the 415 refusal shape. Accepted names the
+// route's declared type(s) so a caller sees what to send instead of guessing
+// from a bare refusal; it is omitted (via omitempty) for a route missing
+// from adminBodyTypes, which has no declared type to report (#416).
+type unsupportedContentTypeBody struct {
+	Error    string   `json:"error"`
+	Accepted []string `json:"accepted,omitempty"`
+}
+
 // requireAdminBodyTypes refuses a state-changing request whose Content-Type
 // is not declared for the route mux matched. A write route missing from
 // adminBodyTypes is refused as well, so a new route cannot skip the check.
@@ -45,10 +56,32 @@ func requireAdminBodyTypes(mux *recordingMux) http.Handler {
 			mux.ServeHTTP(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnsupportedMediaType)
-		_, _ = w.Write([]byte(`{"error":"unsupported content type"}`))
+		// The prior line on this path was the auth chain's own admission
+		// event, identical whether the write then succeeded or (as here)
+		// was refused for its content type; this refusal needs its own
+		// line, not just headers or the credential (#416).
+		slog.Warn("admin: content type refused",
+			"event", "admin_body_type_refused",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"pattern", pattern,
+			"remote_addr", r.RemoteAddr,
+		)
+		writeUnsupportedContentType(w, types)
 	})
+}
+
+// writeUnsupportedContentType writes the 415 refusal body. json.Marshal
+// cannot fail on this fixed shape of strings; the fallback keeps the
+// refusal itself from being lost to an unchecked encode error.
+func writeUnsupportedContentType(w http.ResponseWriter, accepted []string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnsupportedMediaType)
+	body, err := json.Marshal(unsupportedContentTypeBody{Error: "unsupported content type", Accepted: accepted})
+	if err != nil {
+		body = []byte(`{"error":"unsupported content type"}`)
+	}
+	_, _ = w.Write(body)
 }
 
 // declaresMediaType reports whether a Content-Type header names one of types,

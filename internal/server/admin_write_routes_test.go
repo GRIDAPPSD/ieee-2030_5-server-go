@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -34,6 +35,24 @@ var wantAdminWriteRoutes = []string{
 // loginPattern decodes only form-encoded bodies (ParseForm ignores any other
 // type), so it is covered by the cross-origin refusal but not the body table.
 const loginPattern = "POST /auth/login"
+
+// wantAdminBodyTypes is what each handler actually decodes, read from the
+// handler source rather than from adminBodyTypes (the table under test): a
+// wrong entry in that table must fail this test rather than pass because the
+// test asked the table what it expected of itself (#416).
+var wantAdminBodyTypes = map[string][]string{
+	"POST /api/certs/server":                  {"application/json"},
+	"POST /api/certs/device":                  {"application/json"},
+	"POST /api/certs/info":                    {"application/x-pem-file", "multipart/form-data"},
+	"POST /api/devices":                       {"application/json"},
+	"POST /api/fsas":                          {"application/json"},
+	"POST /api/fsas/{id}/programs":            {"application/json"},
+	"POST /api/devices/{id}/fsa-assignment":   {"application/json"},
+	"DELETE /api/fsas/{id}":                   nil,
+	"DELETE /api/fsas/{id}/programs":          nil,
+	"DELETE /api/devices/{id}/fsa-assignment": nil,
+	"POST /auth/ticket":                       nil,
+}
 
 // TestEveryAdminWriteRouteIsCovered walks the routes BuildAdminRouter reports
 // and drives each one from a loopback address, where the auth chain admits
@@ -71,12 +90,29 @@ func TestEveryAdminWriteRouteIsCovered(t *testing.T) {
 			t.Errorf("body-type table names %s, which is not a registered admin write route", p)
 		}
 	}
+	for _, p := range writes {
+		if p == loginPattern {
+			continue
+		}
+		want, ok := wantAdminBodyTypes[p]
+		if !ok {
+			t.Fatalf("%s has no independent expectation; wantAdminBodyTypes is out of date", p)
+		}
+		if got := server.AdminBodyTypes[p]; !slices.Equal(got, want) {
+			t.Errorf("%s: adminBodyTypes = %v, want %v (from the handler, not the table under test)", p, got, want)
+		}
+	}
 
 	for _, p := range writes {
 		method, path, _ := strings.Cut(p, " ")
 		target := strings.ReplaceAll(path, "{id}", "x")
+		// goodType and the expected refusals below come from
+		// wantAdminBodyTypes, the independent source, not the production
+		// table: a wrong table entry must make this subtest fail rather
+		// than silently agree with itself (#416).
+		types := wantAdminBodyTypes[p]
 		goodType := "application/x-www-form-urlencoded"
-		if types := server.AdminBodyTypes[p]; len(types) > 0 {
+		if len(types) > 0 {
 			goodType = types[0]
 		}
 
@@ -101,15 +137,40 @@ func TestEveryAdminWriteRouteIsCovered(t *testing.T) {
 			if p == loginPattern {
 				return
 			}
-			types := server.AdminBodyTypes[p]
+
+			assertUnsupportedMediaType := func(rec *httptest.ResponseRecorder, label string) {
+				t.Helper()
+				if rec.Code != http.StatusUnsupportedMediaType {
+					t.Errorf("%s %s: status = %d body = %q, want 415", label, p, rec.Code, rec.Body.String())
+					return
+				}
+				var got unsupportedMediaTypeResponse
+				if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+					t.Fatalf("%s %s: 415 body not JSON: %v (%q)", label, p, err, rec.Body.String())
+				}
+				if got.Error != "unsupported content type" {
+					t.Errorf("%s %s: error = %q, want %q", label, p, got.Error, "unsupported content type")
+				}
+				if !slices.Equal(got.Accepted, types) {
+					t.Errorf("%s %s: accepted = %v, want %v", label, p, got.Accepted, types)
+				}
+			}
 
 			rec = serveLoopbackWrite(router, method, target, map[string]string{"Content-Type": "text/plain;charset=UTF-8"})
 			if len(types) > 0 {
-				if rec.Code != http.StatusUnsupportedMediaType || rec.Body.String() != unsupportedMediaTypeBody {
-					t.Errorf("text/plain %s: status = %d body = %q, want 415 %q", p, rec.Code, rec.Body.String(), unsupportedMediaTypeBody)
-				}
+				assertUnsupportedMediaType(rec, "text/plain")
 			} else if rec.Code == http.StatusUnsupportedMediaType || rec.Code == http.StatusForbidden {
 				t.Errorf("text/plain %s reads no body but was refused: status = %d body = %q", p, rec.Code, rec.Body.String())
+			}
+
+			// A client that sends no Content-Type at all (a plain curl -d, or
+			// a tool that never sets one) must be refused the same way as a
+			// mislabelled one, not admitted by default (#416).
+			rec = serveLoopbackWrite(router, method, target, map[string]string{})
+			if len(types) > 0 {
+				assertUnsupportedMediaType(rec, "no Content-Type")
+			} else if rec.Code == http.StatusUnsupportedMediaType || rec.Code == http.StatusForbidden {
+				t.Errorf("no-Content-Type %s reads no body but was refused: status = %d body = %q", p, rec.Code, rec.Body.String())
 			}
 
 			for _, ct := range types {

@@ -263,6 +263,24 @@ through the devtools network log, the JS heap, and any HAR attached to a
 bug report, for no benefit. Use the CLI (`sep2server certs
 generate-server`) or curl, where the key is written to a file.
 
+Both cert-creation routes decode JSON, so a curl call needs an explicit
+`Content-Type` header (#416); a missing or mismatched one is refused with
+a 415 naming the type the route accepts:
+
+```bash
+curl -X POST http://localhost:8444/api/certs/server \
+     -H "Content-Type: application/json" \
+     -d '{"hosts":["sep2.example.org"],"commonName":"sep2.example.org"}'
+
+curl -X POST http://localhost:8444/api/certs/device \
+     -H "Content-Type: application/json" \
+     -d '{"hwSerialNum":"0123456789AB","hwType":"1.3.6.1.4.1.40732.99"}'
+```
+
+Each returns `certPEM` and `keyPEM` as JSON string fields; extract them
+(for example with `jq -r .keyPEM`) rather than saving the response
+envelope itself as a `.crt` or `.key` file.
+
 ### Rolling back to the previous page
 
 ```bash

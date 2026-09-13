@@ -14,9 +14,19 @@ import (
 )
 
 const (
-	crossOriginRefusalBody   = `{"error":"cross-origin admin request refused"}`
-	unsupportedMediaTypeBody = `{"error":"unsupported content type"}`
+	crossOriginRefusalBody = `{"error":"cross-origin admin request refused"}`
+	// unsupportedMediaTypeBody is /api/fsas's refusal body specifically: the
+	// accepted list names that route's one declared type (#416).
+	unsupportedMediaTypeBody = `{"error":"unsupported content type","accepted":["application/json"]}`
 )
+
+// unsupportedMediaTypeResponse decodes a 415 refusal body so tests can assert
+// its fields directly instead of matching one fixed string across routes
+// that accept different types (#416).
+type unsupportedMediaTypeResponse struct {
+	Error    string   `json:"error"`
+	Accepted []string `json:"accepted"`
+}
 
 // newLoopbackAdminServer serves the production admin router over a real
 // loopback socket, which is the position a browser on the host is in: the

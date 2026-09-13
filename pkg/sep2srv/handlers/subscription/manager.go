@@ -59,6 +59,12 @@ var ErrQueueFull = errors.New("notification queue full")
 // failure log later on the worker.
 var ErrInvalidNotificationURI = errors.New("subscription has no notificationURI")
 
+// ErrManagerClosed is returned by NotifyRemoved when Close has already run.
+// A send on the closed queue would panic (#460); this is the documented
+// alternative. The spec doesn't require the final Notification, so callers
+// treat it the same as ErrQueueFull: best-effort, not fatal to the caller.
+var ErrManagerClosed = errors.New("notification manager closed")
+
 type notificationTask struct {
 	subscriptionID  string
 	notificationURI string
@@ -75,10 +81,18 @@ type Manager struct {
 	workerCount int
 	// observer is an optional callback invoked on each notification
 	// delivery outcome. nil means no-op. The outcome strings are:
-	// "success", "client_error", "queue_full". Server wires
+	// "success", "client_error", "queue_full", "manager_closed". Server wires
 	// obs.RecordNotification here; core has no prometheus dependency.
 	observer func(outcome string)
 	guard    *destinationGuard
+
+	// closeMu guards closed and the close(queue) call. An enqueue holds the
+	// read lock across its check-then-send so Close (the write lock) cannot
+	// close the channel between the check and the send: that ordering is
+	// what turns "send after close panics" into "send after close returns
+	// ErrManagerClosed" (#460).
+	closeMu sync.RWMutex
+	closed  bool
 }
 
 // ManagerOption configures a Manager at construction.
@@ -121,14 +135,20 @@ func (m *Manager) ValidateNotificationURI(ctx context.Context, uri string) error
 
 // SetObserver wires an outcome callback into the Manager. fn is called
 // with one of the outcome strings ("success", "client_error",
-// "queue_full") after each notification delivery attempt. Pass nil to
+// "queue_full", "manager_closed") after each delivery attempt and each
+// dropped notification. Pass nil to
 // disable. Server passes obs.RecordNotification to feed Prometheus
 // counters without pulling prometheus/client_golang into core.
 func (m *Manager) SetObserver(fn func(outcome string)) {
 	m.observer = fn
 }
 
-// Start launches worker goroutines. Blocks until ctx is cancelled.
+// Start launches worker goroutines, blocks until ctx is cancelled, then
+// closes the queue and returns once every worker has exited.
+//
+// internal/server starts its HTTP drain on the same cancellation, and neither
+// waits on the other, so an enqueue from a draining request can race Close;
+// Close and enqueue make that race safe rather than impossible (#460).
 func (m *Manager) Start(ctx context.Context) {
 	for i := 0; i < m.workerCount; i++ {
 		m.wg.Add(1)
@@ -136,8 +156,63 @@ func (m *Manager) Start(ctx context.Context) {
 	}
 
 	<-ctx.Done()
-	close(m.queue)
+	m.Close()
 	m.wg.Wait()
+}
+
+// Close closes the queue and does not wait for the workers, which exit once
+// it is empty. Tasks a worker takes after Start's ctx is cancelled are
+// dropped, counted and logged, not delivered. Safe to call more than once and
+// concurrently with enqueues: see the closeMu field comment.
+func (m *Manager) Close() {
+	m.closeMu.Lock()
+	defer m.closeMu.Unlock()
+	if m.closed {
+		return
+	}
+	m.closed = true
+	close(m.queue)
+}
+
+// outcomeManagerClosed is the observer outcome for a notification dropped
+// because the manager is shutting down.
+const outcomeManagerClosed = "manager_closed"
+
+func (m *Manager) observe(outcome string) {
+	if m.observer != nil {
+		m.observer(outcome)
+	}
+}
+
+// enqueue attempts a non-blocking send of task, returning ErrManagerClosed
+// once Close has run and ErrQueueFull when the buffer is full. Every refusal
+// is a dropped notification, so it reaches the observer; that happens after
+// trySend releases closeMu, so Close never waits on the callback.
+func (m *Manager) enqueue(task notificationTask) error {
+	err := m.trySend(task)
+	switch {
+	case errors.Is(err, ErrManagerClosed):
+		m.observe(outcomeManagerClosed)
+	case errors.Is(err, ErrQueueFull):
+		m.observe("queue_full")
+	}
+	return err
+}
+
+// trySend holds the read lock for the whole check-then-send, which is what
+// prevents the send-after-close panic: see the closeMu field comment.
+func (m *Manager) trySend(task notificationTask) error {
+	m.closeMu.RLock()
+	defer m.closeMu.RUnlock()
+	if m.closed {
+		return ErrManagerClosed
+	}
+	select {
+	case m.queue <- task:
+		return nil
+	default:
+		return ErrQueueFull
+	}
 }
 
 // NotifyRemoved enqueues a final "Removed" Notification (Status=3) targeted
@@ -154,10 +229,11 @@ func (m *Manager) Start(ctx context.Context) {
 // would miss it.
 //
 // Returns ErrInvalidNotificationURI synchronously if the supplied
-// subscription has no NotificationURI, or ErrQueueFull when the worker
-// pool's bounded queue cannot accept the task. Both errors are
-// recoverable from the caller's perspective: the spec does not require
-// the final Notification, so the deletion proceeds either way.
+// subscription has no NotificationURI, ErrQueueFull when the worker
+// pool's bounded queue cannot accept the task, or ErrManagerClosed once
+// Close has run. All three are recoverable from the caller's perspective:
+// the spec does not require the final Notification, so the deletion
+// proceeds either way.
 //
 // Per CSIP V1.2 section 11.6 (GRIDAPPSD/ieee-2030_5-server-go#169).
 func (m *Manager) NotifyRemoved(_ context.Context, sub sep2.Subscription) error {
@@ -185,12 +261,10 @@ func (m *Manager) NotifyRemoved(_ context.Context, sub sep2.Subscription) error 
 		payload:         payload,
 	}
 
-	select {
-	case m.queue <- task:
-		return nil
-	default:
-		return fmt.Errorf("notify removed for %q: %w", sub.Href, ErrQueueFull)
+	if err := m.enqueue(task); err != nil {
+		return fmt.Errorf("notify removed for %q: %w", sub.Href, err)
 	}
+	return nil
 }
 
 // Notify looks up all subscriptions for the given resource and enqueues
@@ -223,11 +297,10 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 			payload:         payload,
 		}
 
-		select {
-		case m.queue <- task:
-		default:
-			if m.observer != nil {
-				m.observer("queue_full")
+		if err := m.enqueue(task); err != nil {
+			if errors.Is(err, ErrManagerClosed) {
+				log.Printf("notification: manager closed, dropping for %s", redactURI(sub.NotificationURI))
+				continue
 			}
 			log.Printf("notification: queue full, dropping for %s", redactURI(sub.NotificationURI))
 		}
@@ -237,16 +310,19 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 func (m *Manager) worker(ctx context.Context) {
 	defer m.wg.Done()
 	for task := range m.queue {
+		// A cancelled ctx fails every delivery, so a task still buffered at
+		// shutdown is counted as dropped instead of attempted.
+		if ctx.Err() != nil {
+			m.observe(outcomeManagerClosed)
+			log.Printf("notification: manager shutting down, dropping for %s", redactURI(task.notificationURI))
+			continue
+		}
 		err := m.deliver(ctx, task)
 		switch {
 		case err == nil:
-			if m.observer != nil {
-				m.observer("success")
-			}
+			m.observe("success")
 		case errors.Is(err, errDeleteAfter4xx):
-			if m.observer != nil {
-				m.observer("client_error")
-			}
+			m.observe("client_error")
 			log.Printf("notification: %s receiver returned 4xx, subscription %q deleted",
 				redactURI(task.notificationURI), task.subscriptionID)
 		case errors.Is(err, ErrDestinationUnresolved):

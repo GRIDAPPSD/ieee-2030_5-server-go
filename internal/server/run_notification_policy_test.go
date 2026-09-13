@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -20,13 +21,32 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
+	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 )
 
 const loopbackOptInWarning = "WARNING: SEP2_NOTIFICATION_ALLOW_LOOPBACK=true"
 
 // bootRunForNotificationPolicy runs server.Run with only the protocol
-// listener and returns its address and an mTLS client for it.
+// listener and returns its address and an mTLS client for it. Run is
+// cancelled and awaited when t ends.
 func bootRunForNotificationPolicy(t *testing.T, allowLoopback bool) (string, *http.Client) {
+	t.Helper()
+	addr, client, cancel, runErr := startRunForNotificationPolicy(t, allowLoopback)
+	t.Cleanup(func() {
+		client.CloseIdleConnections()
+		cancel()
+		select {
+		case <-runErr:
+		case <-time.After(5 * time.Second):
+			t.Error("server.Run did not exit within 5s after cancel")
+		}
+	})
+	return addr, client
+}
+
+// startRunForNotificationPolicy is bootRunForNotificationPolicy without the
+// cleanup: the caller cancels Run and reads its result.
+func startRunForNotificationPolicy(t *testing.T, allowLoopback bool) (string, *http.Client, context.CancelFunc, <-chan error) {
 	t.Helper()
 
 	c := newSplitListenerCerts(t)
@@ -91,16 +111,7 @@ func bootRunForNotificationPolicy(t *testing.T, allowLoopback bool) (string, *ht
 				t.Fatalf("protocol listener never became ready on %s", addr)
 			}
 			client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSCfg}, Timeout: 5 * time.Second}
-			t.Cleanup(func() {
-				client.CloseIdleConnections()
-				cancel()
-				select {
-				case <-runErrCh:
-				case <-time.After(5 * time.Second):
-					t.Error("server.Run did not exit within 5s after cancel")
-				}
-			})
-			return addr, client
+			return addr, client, cancel, runErrCh
 		case err := <-runErrCh:
 			cancel()
 			go func() { <-readyCh }()
@@ -111,7 +122,7 @@ func bootRunForNotificationPolicy(t *testing.T, allowLoopback bool) (string, *ht
 		}
 	}
 	t.Fatalf("server.Run could not bind a free port in %d attempts", startAttempts)
-	return "", nil
+	return "", nil, nil, nil
 }
 
 // Not parallel: it swaps the process-wide log output.
@@ -170,5 +181,49 @@ func TestRunAppliesNotificationLoopbackPolicy(t *testing.T) {
 				t.Errorf("startup warning logged = %v, want %v", got, tc.wantWarning)
 			}
 		})
+	}
+}
+
+// Run must not return while the notification manager is still shutting
+// down: the drops it counts and logs then could be lost when the process
+// exits right after Run.
+//
+// Not parallel: it replaces how Run starts the notification manager.
+func TestRunWaitsForNotificationManager(t *testing.T) {
+	managerReturned := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseManager := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseManager)
+	server.SetStartNotifier(t, func(m *coresub.Manager, ctx context.Context) {
+		m.Start(ctx)
+		close(managerReturned)
+		<-release
+	})
+
+	_, client, cancel, runErr := startRunForNotificationPolicy(t, false)
+	t.Cleanup(cancel)
+	client.CloseIdleConnections()
+	cancel()
+
+	select {
+	case <-managerReturned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the notification manager did not return within 5s of cancel")
+	}
+	select {
+	case err := <-runErr:
+		t.Fatalf("server.Run returned (err %v) while the notification manager was still shutting down", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	releaseManager()
+	select {
+	case err := <-runErr:
+		if err != nil {
+			t.Fatalf("server.Run: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server.Run did not return within 5s after the notification manager finished")
 	}
 }

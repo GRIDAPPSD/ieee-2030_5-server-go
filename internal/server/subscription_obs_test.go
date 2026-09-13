@@ -201,3 +201,41 @@ func parseObsCounter(t *testing.T, exposition, prefix string) float64 {
 	}
 	return 0
 }
+
+// TestNotifyAfterShutdownCountsDrop asserts a notification a closed manager
+// drops still reaches the exposed counter. obs has no label for
+// "manager_closed", so RecordNotification folds it into OutcomeOther.
+func TestNotifyAfterShutdownCountsDrop(t *testing.T) {
+	before := metricByOutcome(t, obs.OutcomeOther)
+
+	sub := func(href string) sep2.Subscription {
+		return sep2.Subscription{
+			SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: href}},
+			SubscribedResource:   "/edev/6",
+			NotificationURI:      "http://127.0.0.1:1/notify",
+		}
+	}
+	store := &obsSubStore{subs: []sep2.Subscription{sub("/edev/6/sub/1"), sub("/edev/6/sub/2")}}
+
+	mgr := coresub.NewManager(store, 1, 4, coresub.WithDestinationPolicy(coresub.DestinationPolicy{AllowLoopback: true}))
+	mgr.SetObserver(obs.RecordNotification)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		mgr.Start(ctx)
+		close(done)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("manager did not shut down within 2s")
+	}
+
+	mgr.Notify(context.Background(), "/edev/6", sep2.NotificationStatusChanged)
+
+	// At least, not exactly: another test's manager may also fold into other.
+	if got := metricByOutcome(t, obs.OutcomeOther); got < before+2 {
+		t.Fatalf("other = %v, want at least %v after 2 closed-manager drops", got, before+2)
+	}
+}

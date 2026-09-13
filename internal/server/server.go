@@ -22,6 +22,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
+	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -46,6 +47,10 @@ const (
 	serverWriteTimeout      = 30 * time.Second
 	serverIdleTimeout       = 120 * time.Second
 )
+
+// startNotifier runs the notification manager until its ctx is cancelled. A
+// test replaces it to hold the manager's shutdown open.
+var startNotifier = (*coresub.Manager).Start
 
 // newAdminServer constructs the admin http.Server with the standard timeout
 // values. handler may be nil; callers assign Server.Handler after building
@@ -195,7 +200,11 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	subQueueSize := resolveSubParam("SEP2_SUBSCRIPTION_QUEUE_SIZE", subscriptionQueueSize)
 	notifier := newSubscriptionNotifier(cfg, stores.Subscriptions, subWorkers, subQueueSize)
 	notifier.SetObserver(obs.RecordNotification)
-	go notifier.Start(ctx)
+	notifierDone := make(chan struct{})
+	go func() {
+		defer close(notifierDone)
+		startNotifier(notifier, ctx)
+	}()
 
 	// Build the embeddable protocol server: it binds the listener, derives
 	// the server identity (SFDI/LFDI) from the leaf cert BEFORE assembling the
@@ -370,6 +379,9 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 				log.Printf("metrics server shutdown error: %v", err)
 			}
 		}
+		// The manager counts and logs the notifications it drops at shutdown;
+		// returning first could let the process exit before it has.
+		<-notifierDone
 		return nil
 	case err := <-protocolDone:
 		// The protocol listener failed on its own; protocolCtx was never

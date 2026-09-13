@@ -7,6 +7,7 @@ package enddevice_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/xml"
 	"errors"
 	"io"
@@ -467,7 +468,7 @@ func TestHandleDeleteEndDevice_TriggersNotification(t *testing.T) {
 		t.Fatalf("seed sub: %v", err)
 	}
 
-	mgr := coresub.NewManager(subStore, 2, 16)
+	mgr := coresub.NewManager(subStore, 2, 16, coresub.WithDestinationPolicy(coresub.DestinationPolicy{AllowLoopback: true}))
 	mgrCtx, mgrCancel := context.WithCancel(context.Background())
 	mgrDone := make(chan struct{})
 	go func() {
@@ -517,9 +518,14 @@ func TestHandleDeleteEndDevice_TriggersNotification(t *testing.T) {
 func TestHandleDeleteEndDevice_NoNotificationOnNotFound(t *testing.T) {
 	t.Parallel()
 
+	// Count only requests to this test's random path: other traffic reaching
+	// the loopback port must not fail the zero-notification check.
+	notifyPath := "/notify/" + rand.Text()
 	var received atomic.Int32
 	callbackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		received.Add(1)
+		if r.URL.Path == notifyPath {
+			received.Add(1)
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer callbackSrv.Close()
@@ -531,13 +537,13 @@ func TestHandleDeleteEndDevice_NoNotificationOnNotFound(t *testing.T) {
 			Resource: sep2.Resource{Href: "/edev/1/sub/s1"},
 		},
 		SubscribedResource: coreedev.EndDeviceListHref,
-		NotificationURI:    callbackSrv.URL,
+		NotificationURI:    callbackSrv.URL + notifyPath,
 	}
 	if err := subStore.Create(context.Background(), "s1", sub); err != nil {
 		t.Fatalf("seed sub: %v", err)
 	}
 
-	mgr := coresub.NewManager(subStore, 1, 8)
+	mgr := coresub.NewManager(subStore, 1, 8, coresub.WithDestinationPolicy(coresub.DestinationPolicy{AllowLoopback: true}))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { mgr.Start(ctx); close(done) }()

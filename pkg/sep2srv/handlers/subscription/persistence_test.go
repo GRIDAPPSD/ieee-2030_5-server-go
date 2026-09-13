@@ -56,7 +56,7 @@ func TestERR002RealRestartViaDiskPersistence(t *testing.T) {
 		t.Fatalf("Create on Store A: %v", err)
 	}
 
-	mgrA := subscription.NewManager(storeA, 2, 10)
+	mgrA := subscription.NewManager(storeA, 2, 10, loopbackReceivers)
 	doneA := make(chan struct{})
 	go func() {
 		mgrA.Start(ctxA)
@@ -86,7 +86,7 @@ func TestERR002RealRestartViaDiskPersistence(t *testing.T) {
 
 	ctxB, cancelB := context.WithCancel(context.Background())
 	defer cancelB()
-	mgrB := subscription.NewManager(storeB, 2, 10)
+	mgrB := subscription.NewManager(storeB, 2, 10, loopbackReceivers)
 	doneB := make(chan struct{})
 	go func() {
 		mgrB.Start(ctxB)
@@ -124,9 +124,14 @@ func TestERR002RealRestartViaDiskPersistence(t *testing.T) {
 func TestERR002RealRestartDeletePersistsAcrossRestart(t *testing.T) {
 	t.Parallel()
 
+	// Count only requests to this test's random path: other traffic reaching
+	// the loopback port must not fail the zero-notification check.
+	notifyPath := randomPath()
 	var received atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		received.Add(1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == notifyPath {
+			received.Add(1)
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -138,7 +143,7 @@ func TestERR002RealRestartDeletePersistsAcrossRestart(t *testing.T) {
 			Resource: sep2.Resource{Href: "/edev/2/sub/1"},
 		},
 		SubscribedResource: resourceHref,
-		NotificationURI:    srv.URL + "/notify",
+		NotificationURI:    srv.URL + notifyPath,
 		Encoding:           sep2.EncodingXML,
 	}
 
@@ -168,7 +173,7 @@ func TestERR002RealRestartDeletePersistsAcrossRestart(t *testing.T) {
 	// callback for the deleted subscription.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mgr := subscription.NewManager(storeB, 2, 10)
+	mgr := subscription.NewManager(storeB, 2, 10, loopbackReceivers)
 	done := make(chan struct{})
 	go func() {
 		mgr.Start(ctx)

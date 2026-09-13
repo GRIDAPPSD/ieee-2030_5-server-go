@@ -488,6 +488,21 @@ func asNotifyRemoved(n ResourceNotifier) func(context.Context, sep2.Subscription
 	return nil
 }
 
+// notificationURIValidator is satisfied by *subscription.Manager, so the
+// create route vets a notificationURI under the same policy delivery uses.
+type notificationURIValidator interface {
+	ValidateNotificationURI(ctx context.Context, uri string) error
+}
+
+// asNotificationURIValidator returns n's validator, or nil so the create
+// handler falls back to the default DestinationPolicy.
+func asNotificationURIValidator(n ResourceNotifier) func(context.Context, string) error {
+	if v, ok := n.(notificationURIValidator); ok {
+		return v.ValidateNotificationURI
+	}
+	return nil
+}
+
 // registrationBoundEndDevices returns the EndDevice store the /edev routes
 // must use: one that writes an EndDevice and its Registration as a single
 // act and serves a RegistrationLink only when the record behind it exists.
@@ -586,7 +601,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	// Subscription endpoints
 	if !store.IsAbsent(stores.Subscriptions) {
 		mux.HandleFunc("GET /edev/{id}/sub", coresub.HandleListSubscriptionsByDevice(stores.Subscriptions, 900))
-		mux.HandleFunc("POST /edev/{id}/sub", coresub.HandleCreateSubscription(stores.Subscriptions))
+		mux.HandleFunc("POST /edev/{id}/sub", coresub.HandleCreateSubscription(stores.Subscriptions, asNotificationURIValidator(notifier)))
 		mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", coresub.HandleDeleteSubscription(stores.Subscriptions, asNotifyRemoved(notifier)))
 	}
 }

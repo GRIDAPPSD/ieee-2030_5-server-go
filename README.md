@@ -63,6 +63,12 @@ default (unset) uses the in-tree protocol router. Set `SEP2_USE_CORE_ROUTER=1`
 to opt into the router provided by `ieee-2030_5-core`; the startup log records
 which value was read and which path was taken.
 
+Subscription `notificationURI`s are checked when a Subscription is created and
+again on every delivery. Loopback, link-local, unspecified, local multicast, and
+cloud metadata destinations are refused; private ranges are allowed. `SEP2_NOTIFICATION_ALLOW_LOOPBACK=true`
+allows loopback for a test receiver on the same host and must not be set in
+production. See [docs/csip.md](docs/csip.md#notification-destinations).
+
 ## Test
 
 ```bash

@@ -61,7 +61,7 @@ func TestManagerNotifyRemovedPostsToSubscriber(t *testing.T) {
 		NotificationURI:    srv.URL + "/notify-target",
 	}
 
-	mgr := subscription.NewManager(&staticLister{}, 1, 4)
+	mgr := subscription.NewManager(&staticLister{}, 1, 4, loopbackReceivers)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go mgr.Start(ctx)
@@ -172,7 +172,7 @@ func TestManagerNotifyRemovedHonorsBackgroundDelivery(t *testing.T) {
 		NotificationURI:    srv.URL,
 	}
 
-	mgr := subscription.NewManager(&staticLister{}, 1, 4)
+	mgr := subscription.NewManager(&staticLister{}, 1, 4, loopbackReceivers)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go mgr.Start(ctx)

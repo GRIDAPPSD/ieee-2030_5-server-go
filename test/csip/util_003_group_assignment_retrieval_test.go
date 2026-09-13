@@ -48,7 +48,7 @@ import (
 // utilSubscriptionNotificationURI is the aggregator-supplied callback
 // URL. UTIL-003 does not exercise delivery; the URI is recorded as
 // part of Subscription state and asserted on the GET round-trip.
-const utilSubscriptionNotificationURI = "https://aggregator.example/notify"
+const utilSubscriptionNotificationURI = "https://192.0.2.1/notify"
 
 // TestUTIL_003_GroupAssignmentRetrieval implements CSIP V1.2 §9.3.
 func TestUTIL_003_GroupAssignmentRetrieval(t *testing.T) {

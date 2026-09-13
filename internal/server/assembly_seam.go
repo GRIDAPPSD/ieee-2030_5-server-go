@@ -23,6 +23,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"reflect"
 
@@ -215,6 +216,22 @@ func (a *notifierAdapter) NotifyRemoved(ctx context.Context, sub sep2.Subscripti
 	return nil
 }
 
+type notificationURIValidator interface {
+	ValidateNotificationURI(ctx context.Context, uri string) error
+}
+
+var _ notificationURIValidator = (*coresub.Manager)(nil)
+
+// ValidateNotificationURI forwards to the inner notifier's destination
+// policy. An inner notifier without one gets the default policy, so wrapping
+// never relaxes creation-time validation.
+func (a *notifierAdapter) ValidateNotificationURI(ctx context.Context, uri string) error {
+	if v, ok := a.inner.(notificationURIValidator); ok {
+		return v.ValidateNotificationURI(ctx, uri)
+	}
+	return coresub.DestinationPolicy{}.ValidateNotificationURI(ctx, uri)
+}
+
 // adaptNotifier wraps a handler.ResourceNotifier as an
 // assembly.ResourceNotifier. Returns nil when n is nil so
 // assembly.BuildProtocolRouter can skip fan-out safely (nil notifier
@@ -235,6 +252,9 @@ func adaptNotifier(n handler.ResourceNotifier) assembly.ResourceNotifier {
 		if v.IsNil() {
 			return nil
 		}
+	}
+	if _, ok := n.(notificationURIValidator); !ok {
+		log.Printf("server: notifier has no notificationURI validator (%T); subscription creation applies the default DestinationPolicy", n)
 	}
 	return &notifierAdapter{inner: n}
 }

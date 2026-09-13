@@ -96,7 +96,7 @@ func TestERR_002_SubscriptionSurvivalAndDeleteOn400(t *testing.T) {
 		t.Fatalf("ERR-002 Step 1: Create on Store A: %v", err)
 	}
 
-	mgrA := coresub.NewManager(storeA, 2, 16)
+	mgrA := coresub.NewManager(storeA, 2, 16, csiptest.AllowLoopbackReceivers())
 	doneA := make(chan struct{})
 	go func() {
 		mgrA.Start(ctxA)
@@ -125,7 +125,7 @@ func TestERR_002_SubscriptionSurvivalAndDeleteOn400(t *testing.T) {
 
 	ctxB, cancelB := context.WithCancel(context.Background())
 	t.Cleanup(cancelB)
-	mgrB := coresub.NewManager(storeB, 2, 16)
+	mgrB := coresub.NewManager(storeB, 2, 16, csiptest.AllowLoopbackReceivers())
 	doneB := make(chan struct{})
 	go func() {
 		mgrB.Start(ctxB)

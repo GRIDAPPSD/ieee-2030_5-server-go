@@ -76,7 +76,7 @@ func TestCORE_019_AdvancedSubscription(t *testing.T) {
 	// Real subscription.Manager wired to the booted server's store, as
 	// CORE-018. Production type, production wiring; only the caller -
 	// Notify - is driven from the test.
-	mgr := coresub.NewManager(srv.Stores.Subscriptions, 2, 16)
+	mgr := coresub.NewManager(srv.Stores.Subscriptions, 2, 16, csiptest.AllowLoopbackReceivers())
 	go mgr.Start(ctx)
 
 	// --- (a) Parallel subscriptions on the same resource. ----------

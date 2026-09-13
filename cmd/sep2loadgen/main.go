@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -197,38 +198,7 @@ func main() {
 				if subResource == "" {
 					subResource = "/dcap"
 				}
-				capturedNotifyURL := notifyURL
-				clientSubscribeFunc = func(idx int, client *http.Client) error {
-					if idx >= len(edevIDs) || edevIDs[idx] == "" {
-						return fmt.Errorf("no edev ID for client %d in manifest", idx)
-					}
-					sub := sep2.Subscription{
-						SubscribedResource: subResource,
-						NotificationURI:    capturedNotifyURL,
-						Encoding:           sep2.EncodingXML,
-					}
-					body, err := xml.Marshal(sub)
-					if err != nil {
-						return fmt.Errorf("marshal subscription: %w", err)
-					}
-					req, err := http.NewRequest(http.MethodPost,
-						subURL+"/edev/"+edevIDs[idx]+"/sub",
-						bytes.NewReader(body))
-					if err != nil {
-						return fmt.Errorf("build request: %w", err)
-					}
-					req.Header.Set("Content-Type", "application/sep+xml")
-					resp, err := client.Do(req)
-					if err != nil {
-						return fmt.Errorf("POST sub: %w", err)
-					}
-					defer func() { _ = resp.Body.Close() }()
-					_, _ = io.Copy(io.Discard, resp.Body)
-					if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-						return fmt.Errorf("POST sub: unexpected status %d", resp.StatusCode)
-					}
-					return nil
-				}
+				clientSubscribeFunc = newClientSubscribeFunc(edevIDs, subURL, subResource, notifyURL)
 				logBoth("fanout: per-client subscribe enabled (edev manifest: %d IDs, subResource=%s)",
 					len(edevIDs), subResource)
 			}
@@ -344,4 +314,50 @@ func uint64Env(key string, def uint64) uint64 {
 		return def
 	}
 	return n
+}
+
+// subscribeStatusError maps a subscribe response status to an error, or nil
+// on success.
+func subscribeStatusError(code int) error {
+	switch code {
+	case http.StatusCreated, http.StatusOK:
+		return nil
+	case http.StatusBadRequest:
+		return errors.New("POST sub: status 400 (one possible cause: the notification receiver is on loopback and the server was started without SEP2_NOTIFICATION_ALLOW_LOOPBACK=true)")
+	default:
+		return fmt.Errorf("POST sub: unexpected status %d", code)
+	}
+}
+
+// newClientSubscribeFunc returns the per-client subscribe step: POST a
+// Subscription for the client's EndDevice that names notifyURL.
+func newClientSubscribeFunc(edevIDs []string, subURL, subResource, notifyURL string) func(idx int, client *http.Client) error {
+	return func(idx int, client *http.Client) error {
+		if idx >= len(edevIDs) || edevIDs[idx] == "" {
+			return fmt.Errorf("no edev ID for client %d in manifest", idx)
+		}
+		sub := sep2.Subscription{
+			SubscribedResource: subResource,
+			NotificationURI:    notifyURL,
+			Encoding:           sep2.EncodingXML,
+		}
+		body, err := xml.Marshal(sub)
+		if err != nil {
+			return fmt.Errorf("marshal subscription: %w", err)
+		}
+		req, err := http.NewRequest(http.MethodPost,
+			subURL+"/edev/"+edevIDs[idx]+"/sub",
+			bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/sep+xml")
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("POST sub: %w", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return subscribeStatusError(resp.StatusCode)
+	}
 }

@@ -47,7 +47,31 @@ func main() {
 }
 
 func runServe() error {
-	cfg := &config.Config{
+	cfg := configFromEnv()
+
+	// Load CA for admin cert service
+	var svc *handler.AdminCertService
+	caFile := envOr("SEP2_CA", "certs/ca.crt")
+	caKeyFile := envOr("SEP2_CA_KEY", "certs/ca.key")
+	caCert, caKey, err := certs.LoadCA(caFile, caKeyFile)
+	if err != nil {
+		log.Printf("CA not loaded (%v): admin cert API disabled", err)
+	} else {
+		caCertPEM, _ := os.ReadFile(caFile)
+		svc = handler.NewAdminCertService(caCert, caKey, caCertPEM)
+		log.Println("CA loaded: admin cert API enabled")
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	return server.Run(ctx, cfg, svc)
+}
+
+// configFromEnv builds the server configuration from SEP2_* environment
+// variables.
+func configFromEnv() *config.Config {
+	return &config.Config{
 		Addr:            envOr("SEP2_ADDR", ":443"),
 		CertFile:        envOr("SEP2_CERT", "certs/server.crt"),
 		KeyFile:         envOr("SEP2_KEY", "certs/server.key"),
@@ -99,25 +123,11 @@ func runServe() error {
 		EnableCCM:   os.Getenv("SEP2_CCM") == "true",
 		EnableMDNS:  os.Getenv("SEP2_MDNS") == "true",
 		MDNSHost:    envOr("SEP2_MDNS_HOST", "localhost"),
+
+		// Refused by default: the admin listener is on loopback. For test
+		// harnesses whose notification receivers listen there.
+		NotificationAllowLoopback: os.Getenv("SEP2_NOTIFICATION_ALLOW_LOOPBACK") == "true",
 	}
-
-	// Load CA for admin cert service
-	var svc *handler.AdminCertService
-	caFile := envOr("SEP2_CA", "certs/ca.crt")
-	caKeyFile := envOr("SEP2_CA_KEY", "certs/ca.key")
-	caCert, caKey, err := certs.LoadCA(caFile, caKeyFile)
-	if err != nil {
-		log.Printf("CA not loaded (%v) — admin cert API disabled", err)
-	} else {
-		caCertPEM, _ := os.ReadFile(caFile)
-		svc = handler.NewAdminCertService(caCert, caKey, caCertPEM)
-		log.Println("CA loaded — admin cert API enabled")
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	return server.Run(ctx, cfg, svc)
 }
 
 func envOr(key, fallback string) string {

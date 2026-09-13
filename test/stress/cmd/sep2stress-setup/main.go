@@ -51,7 +51,7 @@ func main() {
 		// notifyURL is the plain-HTTP URL where the loadgen receiver listens.
 		// The server POSTs outbound Notifications here; it does not need mTLS
 		// because the receiver is a plain HTTP listener owned by the harness.
-		notifyURL = flag.String("notify-url", "", "notification receiver URL (subscribe mode, e.g. http://127.0.0.1:18081)")
+		notifyURL = flag.String("notify-url", "", "notification receiver URL (subscribe mode, e.g. http://127.0.0.1:18081; a loopback URL needs the server run with SEP2_NOTIFICATION_ALLOW_LOOPBACK=true)")
 		// subscribedResource is the SHARED href all N subscriptions target.
 		// Must be a server-wide resource all device certs can access. /dcap
 		// is the default: a SEP2 singleton that a single stress-notify mutation

@@ -196,6 +196,77 @@ pinned `-coverpkg` list (the `CSIP_COVERPKG` Make variable);
 `make coverage-gate` enforces the floor (currently 80%, ratcheted at
 #212).
 
+## Notification destinations
+
+A Subscription's `notificationURI` names a destination the server POSTs to,
+so the server checks it when the Subscription is created and again for every
+delivery.
+
+- The URI must be absolute `http` or `https` with a host.
+- The host is resolved, and every address it resolves to must be allowed.
+- Refused by default:
+  - loopback: `127.0.0.0/8`, `::1`
+  - link-local: `169.254.0.0/16` (which includes cloud metadata at
+    `169.254.169.254`) and `fe80::/10`, with or without a zone
+  - unspecified: `0.0.0.0/8`, `::`
+  - link-local and interface-local multicast: `224.0.0.0/24`, `ff02::/16`,
+    `ff01::/16`
+  - cloud metadata services outside link-local: `fd00:ec2::254` (AWS),
+    `fd20:ce::254` (Google Cloud), `100.100.100.200` (Alibaba Cloud)
+  - every refused IPv4 address in its IPv4-mapped (`::ffff:a.b.c.d`),
+    IPv4-compatible (`::a.b.c.d`), and NAT64 form, for the well-known prefix
+    `64:ff9b::/96` and the local-use prefix `64:ff9b:1::/48`, with the IPv4
+    address in the low 32 bits. Network-specific NAT64 prefixes are not
+    covered.
+- Allowed: every other address, including the RFC 1918 and ULA (`fc00::/7`)
+  private ranges, because 2030.5 devices commonly sit on private networks.
+
+At creation, a refused URI and a host that cannot be resolved get the same
+`400 Bad Request` with the same body, and nothing is stored. The responses
+are identical on purpose: a different one for an unresolvable name would tell
+a client whether an internal name resolves. The server log records which
+happened: a policy refusal, a host with no such DNS name, another resolution
+failure such as a timeout, or a request that ended while its host was being
+resolved.
+
+At delivery:
+
+- The host is resolved again and the address about to be connected to is
+  checked, so a name re-pointed at a refused address after creation is never
+  contacted. The subscription is kept.
+- The delivery timeout covers resolution and connecting. The lookup gets at
+  most half of it, so a resolver that never answers ends the attempt as a
+  resolution failure instead of holding a connection attempt open.
+- When a host has several addresses, the connect time is shared across them,
+  so an address that never answers does not starve the rest.
+- Redirects are not followed, and `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`
+  are ignored, because through a proxy the checked address would be the proxy
+  rather than the subscriber. A redirect is logged as a refusal.
+- A refused destination and a host that cannot be resolved are logged
+  separately.
+
+Logged notificationURIs have their userinfo, query parameter values, and
+fragment replaced, since a URI can carry credentials; query parameter names are
+kept. A token placed in the path is not redacted.
+
+### Allowing loopback for test harnesses
+
+`SEP2_NOTIFICATION_ALLOW_LOOPBACK=true` allows loopback destinations and
+nothing else; every other refused class stays refused. It exists for test
+harnesses whose notification receivers listen on the same host, and the
+server logs a warning at startup when it is set.
+
+With it set, notifications can reach any service listening on loopback,
+including the admin listener, at a destination chosen by any client that can
+create a Subscription. Never set it in production.
+
+In Go tests, opt a `subscription.Manager` in with
+`subscription.WithDestinationPolicy(subscription.DestinationPolicy{AllowLoopback: true})`.
+The CSIP harness wraps that as `csiptest.AllowLoopbackReceivers()`, and
+`csiptest.BootServer` uses it for its default Manager. The stress harness
+starts the server with the opt-in for `DIM=fanout`, whose notification
+receiver listens on `127.0.0.1`.
+
 ## Operator profiles
 
 Two ready-made CSIP-flavored boot profiles ship under Make targets:

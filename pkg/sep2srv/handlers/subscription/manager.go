@@ -78,28 +78,45 @@ type Manager struct {
 	// "success", "client_error", "queue_full". Server wires
 	// obs.RecordNotification here; core has no prometheus dependency.
 	observer func(outcome string)
+	guard    *destinationGuard
 }
 
-// newNotificationClient returns an http.Client with a bounded Timeout so
-// worker goroutines cannot block indefinitely on slow subscribers.
-func newNotificationClient() *http.Client {
-	return &http.Client{Timeout: notificationClientTimeout}
+// ManagerOption configures a Manager at construction.
+type ManagerOption func(*Manager)
+
+// WithDestinationPolicy sets the policy for both delivery and
+// ValidateNotificationURI. Without it the zero-value DestinationPolicy applies.
+func WithDestinationPolicy(p DestinationPolicy) ManagerOption {
+	return func(m *Manager) { m.guard.policy = p }
 }
 
 // NewManager creates a NotificationManager with the given worker pool size.
-func NewManager(store SubscriptionLister, workerCount, queueSize int) *Manager {
+func NewManager(store SubscriptionLister, workerCount, queueSize int, opts ...ManagerOption) *Manager {
 	if workerCount < 1 {
 		workerCount = 2
 	}
 	if queueSize < 1 {
 		queueSize = 100
 	}
-	return &Manager{
+	guard := newDestinationGuard(DestinationPolicy{})
+	m := &Manager{
 		store:       store,
-		client:      newNotificationClient(),
+		client:      newNotificationClient(guard, http.DefaultTransport),
 		queue:       make(chan notificationTask, queueSize),
 		workerCount: workerCount,
+		guard:       guard,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// ValidateNotificationURI reports whether uri is an acceptable notification
+// destination under the Manager's DestinationPolicy. Pass it to
+// HandleCreateSubscription so creation and delivery apply the same policy.
+func (m *Manager) ValidateNotificationURI(ctx context.Context, uri string) error {
+	return m.guard.validateURI(ctx, uri)
 }
 
 // SetObserver wires an outcome callback into the Manager. fn is called
@@ -196,7 +213,7 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 
 		payload, err := xml.Marshal(&notification)
 		if err != nil {
-			log.Printf("notification: marshal for %s: %v", sub.NotificationURI, err)
+			log.Printf("notification: marshal for %s: %v", redactURI(sub.NotificationURI), err)
 			continue
 		}
 
@@ -212,7 +229,7 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 			if m.observer != nil {
 				m.observer("queue_full")
 			}
-			log.Printf("notification: queue full, dropping for %s", sub.NotificationURI)
+			log.Printf("notification: queue full, dropping for %s", redactURI(sub.NotificationURI))
 		}
 	}
 }
@@ -231,9 +248,15 @@ func (m *Manager) worker(ctx context.Context) {
 				m.observer("client_error")
 			}
 			log.Printf("notification: %s receiver returned 4xx, subscription %q deleted",
-				task.notificationURI, task.subscriptionID)
+				redactURI(task.notificationURI), task.subscriptionID)
+		case errors.Is(err, ErrDestinationUnresolved):
+			log.Printf("notification: cannot resolve destination %q for subscription %q: %v",
+				redactURI(task.notificationURI), task.subscriptionID, err)
+		case errors.Is(err, ErrRefusedDestination):
+			log.Printf("notification: refused destination %q for subscription %q: %v",
+				redactURI(task.notificationURI), task.subscriptionID, err)
 		default:
-			log.Printf("notification: deliver to %s: %v", task.notificationURI, err)
+			log.Printf("notification: deliver to %s: %v", redactURI(task.notificationURI), err)
 		}
 	}
 }
@@ -249,15 +272,17 @@ func (m *Manager) worker(ctx context.Context) {
 // appropriate level. 5xx responses are left in place: that's transient
 // receiver failure, not a subscription-level signal (CSIP V1.2 ERR-002).
 func (m *Manager) deliver(ctx context.Context, task notificationTask) error {
+	target := redactURI(task.notificationURI)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, task.notificationURI, bytes.NewReader(task.payload))
 	if err != nil {
-		return fmt.Errorf("build notification request for %s: %w", task.notificationURI, err)
+		// The parse error can quote part of the URI, so it is not included.
+		return fmt.Errorf("build notification request for %s: unparseable URI", target)
 	}
 	req.Header.Set("Content-Type", notificationContentType)
 
 	resp, err := m.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("POST notification to %s: %w", task.notificationURI, err)
+		return fmt.Errorf("POST notification to %s: %w", target, withoutURL(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -268,16 +293,16 @@ func (m *Manager) deliver(ctx context.Context, task notificationTask) error {
 		if writer, ok := m.store.(SubscriptionWriter); ok && task.subscriptionID != "" {
 			if delErr := writer.Delete(ctx, task.subscriptionID); delErr != nil {
 				log.Printf("notification: delete subscription %q after 4xx from %s: %v",
-					task.subscriptionID, task.notificationURI, delErr)
+					task.subscriptionID, target, delErr)
 			}
 		}
 		return fmt.Errorf("POST notification to %s: status %d: %w",
-			task.notificationURI, resp.StatusCode, errDeleteAfter4xx)
+			target, resp.StatusCode, errDeleteAfter4xx)
 	}
 
 	if resp.StatusCode >= 500 {
 		return fmt.Errorf("POST notification to %s: status %d (transient)",
-			task.notificationURI, resp.StatusCode)
+			target, resp.StatusCode)
 	}
 	return nil
 }

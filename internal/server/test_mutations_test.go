@@ -1038,7 +1038,7 @@ func createSubscriptionViaAPI(t *testing.T, h http.Handler, edevID, subID string
 	t.Helper()
 	body := []byte(`<Subscription xmlns="urn:ieee:std:2030.5:ns">` +
 		`<subscribedResource>/edev/` + edevID + `</subscribedResource>` +
-		`<notificationURI>https://example.test/notify</notificationURI>` +
+		`<notificationURI>https://192.0.2.1/notify</notificationURI>` +
 		`<encoding>0</encoding>` +
 		`</Subscription>`)
 	req := httptest.NewRequest(http.MethodPost, "/edev/"+edevID+"/sub", bytes.NewReader(body))

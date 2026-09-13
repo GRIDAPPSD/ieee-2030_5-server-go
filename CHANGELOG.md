@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#354](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/354))
 - `BuildProtocolRouter` logs when it substitutes a deny-all stub for a nil `AuthPolicy.Identity`.
   ([#354](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/354))
+- `subscription.HandleCreateSubscription` takes a notificationURI validator as
+  its second argument: pass `(*subscription.Manager).ValidateNotificationURI`,
+  or nil for the default policy. `subscription.NewManager` accepts
+  `ManagerOption`s, including `WithDestinationPolicy`.
+  ([#427](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/427))
 
 ### Deprecated
 
@@ -65,3 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own record with another device's identity, redirecting that device's `GET /edev` and `POST /edev`
   and its manager's access to the rewritten record, or erase its own identity and lock itself out.
   ([#434](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/434))
+- Subscription `notificationURI` destinations are validated.
+  `POST /edev/{id}/sub` refuses non-http(s) URIs, hosts that do not resolve,
+  and loopback, link-local, unspecified, local multicast, and known cloud
+  metadata addresses (including their IPv4-mapped, IPv4-compatible, and NAT64
+  forms) with `400 Bad Request`. Delivery re-checks the address at connect
+  time, bounds the lookup and shares its connect time across a host's
+  addresses, does not follow redirects, ignores proxy environment variables,
+  and redacts userinfo, query values, and fragments from logs. `SEP2_NOTIFICATION_ALLOW_LOOPBACK=true` allows loopback for test
+  harnesses.
+  ([#427](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/427))

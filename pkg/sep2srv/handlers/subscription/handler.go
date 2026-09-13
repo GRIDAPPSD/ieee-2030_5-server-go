@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -132,7 +133,15 @@ func pageSubscriptionRecords(records []memory.SubscriptionRecord, opts store.Lis
 }
 
 // HandleCreateSubscription returns a handler for POST /edev/{id}/sub.
-func HandleCreateSubscription(subStore *memory.SubscriptionStore) http.HandlerFunc {
+//
+// validate vets the notificationURI before anything is stored. Pass
+// (*Manager).ValidateNotificationURI so creation and delivery apply the same
+// DestinationPolicy; nil applies the default policy.
+func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(ctx context.Context, uri string) error) http.HandlerFunc {
+	if validate == nil {
+		log.Print("subscription: no notificationURI validator wired; POST /edev/{id}/sub applies the default DestinationPolicy")
+		validate = DestinationPolicy{}.ValidateNotificationURI
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			encoding.MethodNotAllowed(w, "POST")
@@ -150,6 +159,29 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore) http.HandlerFu
 		var sub sep2.Subscription
 		if err := xml.Unmarshal(body, &sub); err != nil {
 			http.Error(w, "invalid XML: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if err := validate(r.Context(), sub.NotificationURI); err != nil {
+			target := redactURI(sub.NotificationURI)
+			var dnsErr *net.DNSError
+			switch {
+			case errors.Is(err, ErrRefusedDestination):
+				log.Printf("subscription: refused notificationURI %q for EndDevice %q: %v", target, edevID, err)
+			case errors.Is(err, ErrDestinationUnresolved) && r.Context().Err() != nil:
+				log.Printf("subscription: request ended while resolving notificationURI %q for EndDevice %q, refusing: %v", target, edevID, err)
+			case errors.Is(err, ErrDestinationUnresolved) && errors.As(err, &dnsErr) && dnsErr.IsNotFound:
+				log.Printf("subscription: no such host for notificationURI %q for EndDevice %q, refusing: %v", target, edevID, err)
+			case errors.Is(err, ErrDestinationUnresolved):
+				log.Printf("subscription: could not resolve notificationURI %q for EndDevice %q, refusing: %v", target, edevID, err)
+			default:
+				log.Printf("subscription: validating notificationURI %q for EndDevice %q: %v", target, edevID, err)
+				srverr.Internal(w, r, err)
+				return
+			}
+			// One response for both: a distinct one for an unresolvable name
+			// would tell the client whether an internal name resolves.
+			http.Error(w, "notificationURI refused", http.StatusBadRequest)
 			return
 		}
 
@@ -243,7 +275,7 @@ func HandleDeleteSubscription(subStore *memory.SubscriptionStore, notifyRemoved 
 		if notifyRemoved != nil {
 			if err := notifyRemoved(r.Context(), sub); err != nil {
 				log.Printf("subscription: notify removed for %q to %q: %v",
-					sub.Href, sub.NotificationURI, err)
+					sub.Href, redactURI(sub.NotificationURI), err)
 			}
 		}
 

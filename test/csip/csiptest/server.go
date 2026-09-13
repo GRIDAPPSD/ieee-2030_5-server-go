@@ -332,7 +332,7 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 	// The Manager's worker pool drains before BootServer's listener closes.
 	notifier := cfg.notifier
 	if notifier == nil && cfg.stores != nil && cfg.stores.Subscriptions != nil {
-		mgr := coresub.NewManager(cfg.stores.Subscriptions, 2, 64)
+		mgr := coresub.NewManager(cfg.stores.Subscriptions, 2, 64, AllowLoopbackReceivers())
 		notifierCtx, cancel := context.WithCancel(context.Background())
 		mgrDone := make(chan struct{})
 		go func() {

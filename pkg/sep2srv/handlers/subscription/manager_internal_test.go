@@ -36,7 +36,7 @@ func TestDeliverHappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewManager(&mockSubStore{}, 1, 1)
+	m := NewManager(&mockSubStore{}, 1, 1, loopbackReceivers)
 
 	payload := []byte("<Notification/>")
 	task := notificationTask{notificationURI: srv.URL, payload: payload}
@@ -69,7 +69,7 @@ func TestDeliverContextCanceled(t *testing.T) {
 	defer srv.Close()
 	defer close(released)
 
-	m := NewManager(&mockSubStore{}, 1, 1)
+	m := NewManager(&mockSubStore{}, 1, 1, loopbackReceivers)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	task := notificationTask{notificationURI: srv.URL, payload: []byte("<Notification/>")}
@@ -105,7 +105,7 @@ func TestDeliverNon200(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewManager(&mockSubStore{}, 1, 1)
+	m := NewManager(&mockSubStore{}, 1, 1, loopbackReceivers)
 	task := notificationTask{notificationURI: srv.URL, payload: []byte("<Notification/>")}
 
 	err := m.deliver(context.Background(), task)
@@ -136,7 +136,7 @@ func TestWorkerShutdownCancelsInFlightDeliver(t *testing.T) {
 	defer srv.Close()
 	defer close(released)
 
-	m := NewManager(&mockSubStore{}, 1, 1)
+	m := NewManager(&mockSubStore{}, 1, 1, loopbackReceivers)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {

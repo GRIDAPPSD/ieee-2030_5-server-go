@@ -972,6 +972,44 @@ func TestHandleUpdateEndDeviceInvalidXML(t *testing.T) {
 	}
 }
 
+// TestHandleUpdateEndDeviceInvalidXMLDoesNotLeakDecoderDetail pins the 400
+// path convention (#360) for PUT /edev/{id}: the decoder's own complaint can
+// quote attacker-supplied content, so the body must carry a fixed message
+// while the operator-facing log carries the detail.
+func TestHandleUpdateEndDeviceInvalidXMLDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "MARKERXYZ360LEAK"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	s := memory.NewEndDeviceStore()
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /edev/{id}", coreedev.HandleUpdateEndDevice(s))
+
+	req := httptest.NewRequest(http.MethodPut, "/edev/1", strings.NewReader("<"+marker+">bar</"+marker+">"))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != "invalid XML" {
+		t.Errorf("body = %q, want the fixed message", got)
+	}
+	if body := w.Body.String(); strings.Contains(body, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", body)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
+	}
+}
+
 // ----- BuildEndDeviceList -----
 
 func TestBuildEndDeviceList(t *testing.T) {

@@ -53,6 +53,78 @@ func TestHandleCreateServerCertInvalidJSONDoesNotLeakDecoderDetail(t *testing.T)
 	}
 }
 
+// TestHandleCreateDeviceCertInvalidJSONDoesNotLeakDecoderDetail pins the 400
+// path convention (#360) for HandleCreateDeviceCert's JSON decode site: an
+// oversized numeric literal is echoed verbatim in a json.UnmarshalTypeError,
+// which is attacker-supplied content the client-visible body must not carry.
+func TestHandleCreateDeviceCertInvalidJSONDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "13370360913370360913370360913370360913370360"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	svc := newTestCertService(t)
+	h := svc.HandleCreateDeviceCert()
+
+	body := `{"deviceType":` + marker + `}`
+	req := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if got := w.Body.String(); strings.Contains(got, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", got)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
+	}
+}
+
+// TestHandleCreateDeviceCertInvalidHWTypeDoesNotLeakDecoderDetail pins the 400
+// path convention (#360) for HandleCreateDeviceCert's hwType OID parse site,
+// which certs.ParseOID's error quotes verbatim.
+func TestHandleCreateDeviceCertInvalidHWTypeDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "MARKERXYZ360LEAK"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	svc := newTestCertService(t)
+	h := svc.HandleCreateDeviceCert()
+
+	body := `{"hwSerialNum":"HW1","hwType":"` + marker + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body: %s", w.Code, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"invalid hwType"}` {
+		t.Errorf("body = %q, want the fixed message envelope", got)
+	}
+	if got := w.Body.String(); strings.Contains(got, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", got)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
+	}
+}
+
 func TestHandleGetCA(t *testing.T) {
 	svc := newTestCertService(t)
 	h := svc.HandleGetCA()

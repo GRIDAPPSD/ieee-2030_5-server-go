@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -237,6 +238,46 @@ func TestHandlePutMirrorUsagePoint_MissingMRIDIsRejectedAndTheStoreIsUntouched(t
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("PUT /mup/%s with no mRID: status = %d, want 400; body = %s", idA, w.Code, w.Body.String())
+	}
+	assertMirrorUnchanged(t, mupStore, idA, "MUP_A", putOwnerLFDI, "original A")
+}
+
+// TestHandlePutMirrorUsagePoint_InvalidXMLDoesNotLeakDecoderDetail pins the
+// 400 path convention (#360): the decoder's own complaint can quote attacker-
+// supplied content, so the body must carry a fixed message while the
+// operator-facing log carries the detail.
+func TestHandlePutMirrorUsagePoint_InvalidXMLDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "MARKERXYZ360LEAK"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
+	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
+	idA := seedDerivedMirror(t, mupStore, putOwnerLFDI, "MUP_A", "original A")
+
+	mux := mirrorInstanceMux(mupStore, mmrStore, putOwnerLFDI)
+	req := httptest.NewRequest(http.MethodPut, "/mup/"+idA, strings.NewReader("<"+marker+">bar</"+marker+">"))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("PUT /mup/%s with invalid XML: status = %d, want 400; body = %s", idA, w.Code, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != "invalid XML" {
+		t.Errorf("body = %q, want the fixed message", got)
+	}
+	if body := w.Body.String(); strings.Contains(body, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", body)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
 	}
 	assertMirrorUnchanged(t, mupStore, idA, "MUP_A", putOwnerLFDI, "original A")
 }

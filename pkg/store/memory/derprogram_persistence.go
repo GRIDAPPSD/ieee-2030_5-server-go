@@ -227,16 +227,12 @@ func (s *DERProgramStore) Create(ctx context.Context, parentID, id string, progr
 	return s.persist(ctx)
 }
 
-// Update replaces a program.
-//
-// It does NOT flush a snapshot, which is what this wrapper did before it was
-// re-expressed against the contract: Update was promoted off the embedded store
-// and never reached the persistence path, so an updated program reverted to its
-// pre-update form on restart. Preserved verbatim here rather than corrected,
-// because this fix is a type-level conversion and changing what is written
-// to disk is a behaviour change. Reported separately as a finding.
+// Update replaces a program and flushes a snapshot.
 func (s *DERProgramStore) Update(ctx context.Context, parentID, id string, program sep2.DERProgram) error {
-	return s.inner.Update(ctx, parentID, id, program)
+	if err := s.inner.Update(ctx, parentID, id, program); err != nil {
+		return err
+	}
+	return s.persist(ctx)
 }
 
 // Delete removes a program and flushes a snapshot.

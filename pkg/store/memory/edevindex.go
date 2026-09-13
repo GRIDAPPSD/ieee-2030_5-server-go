@@ -354,10 +354,6 @@ func NewEndDeviceIndexFromStore(s *EndDeviceStore) *EndDeviceIndex {
 		if n > highest {
 			highest = n
 		}
-		if _, dup := x.byIndex[r.ID]; dup {
-			skipped++
-			continue
-		}
 		if r.Device.LFDI == "" {
 			skipped++
 			continue

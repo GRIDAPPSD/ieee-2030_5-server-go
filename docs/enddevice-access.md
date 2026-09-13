@@ -85,6 +85,12 @@ another. Refusals with no identity share one caller budget. Refusals past
 either budget are counted by reason, not written, and a window tracks at most
 100 callers however many are refused.
 
+The 100-line cap is 20 caller budgets of 5, so 20 distinct authenticated
+callers each spending their own budget in one window still fill it, and a
+21st caller's lines are then suppressed the same as an over-budget caller's
+would be. Every refusal is still enforced and still counted by reason in that
+window's summary; only which caller a line names can be lost.
+
 When a window that counted anything closes, one line reports the count, the
 time from the window's first refusal to the report, and the count per reason,
 for example `assembly: ownership gate suppressed 495 denial log lines in the

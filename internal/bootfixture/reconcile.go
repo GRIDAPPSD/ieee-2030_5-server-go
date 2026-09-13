@@ -115,8 +115,7 @@ func (p *reconcilePlan) skip(format string, args ...any) {
 	p.skips = append(p.skips, fmt.Sprintf(format, args...))
 }
 
-// planReconcile decides every record's action without writing. Rule names
-// (EA1 to EA7, DA0 to DA3) follow the #352 decision.
+// planReconcile decides every record's action without writing.
 func planReconcile(ctx context.Context, target *Target, spec *Spec, seeded map[seedKey]struct{}) (*reconcilePlan, error) {
 	p := &reconcilePlan{seeded: seeded}
 	skippedEndDevices := make(map[string]struct{})
@@ -129,30 +128,30 @@ func planReconcile(ctx context.Context, target *Target, spec *Spec, seeded map[s
 		switch {
 		case err == nil:
 			switch {
-			case strings.EqualFold(stored.LFDI, e.LFDI): // EA1, EA2: keep or adopt
+			case strings.EqualFold(stored.LFDI, e.LFDI): // same identity: keep, or adopt if unseeded
 				if !wasSeeded {
 					if err := checkIdentifiersFree(ctx, target.EndDevices, i, e, &stored); err != nil {
 						return nil, err
 					}
 				}
 				p.record(key)
-			case wasSeeded: // EA3: deleted, then the id was reallocated
+			case wasSeeded: // deleted, then the id was reallocated
 				skippedEndDevices[e.ID] = struct{}{}
 				p.skip("EndDevice id=%q: id now held by another identity", e.ID)
-			default: // EA4
+			default:
 				return nil, fmt.Errorf("end_devices[%d] (id=%q): %w: a persisted EndDevice with a different LFDI holds this id",
 					i, e.ID, ErrIdentityConflict)
 			}
 		case errors.Is(err, store.ErrNotFound):
-			if wasSeeded { // EA5
+			if wasSeeded {
 				skippedEndDevices[e.ID] = struct{}{}
 				p.skip("EndDevice id=%q: deleted since seeded", e.ID)
 				continue
 			}
-			if err := checkIdentifiersFree(ctx, target.EndDevices, i, e, nil); err != nil { // EA6
+			if err := checkIdentifiersFree(ctx, target.EndDevices, i, e, nil); err != nil {
 				return nil, err
 			}
-			p.endDevices = append(p.endDevices, indexed[EndDeviceSpec]{i, e}) // EA7
+			p.endDevices = append(p.endDevices, indexed[EndDeviceSpec]{i, e})
 			p.record(key)
 		default:
 			return nil, fmt.Errorf("end_devices[%d] (id=%q): read persisted EndDevice: %w", i, e.ID, err)
@@ -161,7 +160,7 @@ func planReconcile(ctx context.Context, target *Target, spec *Spec, seeded map[s
 
 	for i, d := range spec.DERPrograms {
 		key := seedKey{Kind: kindDERProgram, Parent: d.EndDeviceID, ID: d.ID}
-		if _, skipped := skippedEndDevices[d.EndDeviceID]; skipped { // DA0
+		if _, skipped := skippedEndDevices[d.EndDeviceID]; skipped {
 			// Recorded so a reused parent id never receives this program later.
 			p.record(key)
 			skippedPrograms[[2]string{d.EndDeviceID, d.ID}] = struct{}{}
@@ -171,14 +170,14 @@ func planReconcile(ctx context.Context, target *Target, spec *Spec, seeded map[s
 		_, wasSeeded := seeded[key]
 		_, err := target.DERPrograms.Get(ctx, d.EndDeviceID, d.ID)
 		switch {
-		case err == nil: // DA1, DA2: keep or adopt
+		case err == nil: // keep, or adopt if unseeded
 			p.record(key)
 		case !errors.Is(err, store.ErrNotFound):
 			return nil, fmt.Errorf("der_programs[%d] (id=%q): read persisted DERProgram: %w", i, d.ID, err)
-		case wasSeeded: // DA1b
+		case wasSeeded:
 			skippedPrograms[[2]string{d.EndDeviceID, d.ID}] = struct{}{}
 			p.skip("DERProgram edev=%q id=%q: deleted since seeded", d.EndDeviceID, d.ID)
-		default: // DA3
+		default:
 			p.derPrograms = append(p.derPrograms, indexed[DERProgramSpec]{i, d})
 			p.record(key)
 		}

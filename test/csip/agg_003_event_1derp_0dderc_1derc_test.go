@@ -27,6 +27,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -48,7 +49,7 @@ func TestAGG_003_Event1DERP0DDERC1DERC(t *testing.T) {
 				ID:           "agg003-" + edevID,
 				MRID:         aggMRIDPrefix("003-DERC-SY-") + edevID,
 				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModMaxLimW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: 3000},
+					OpModMaxLimW: ptrTo[sep2.PerCent](3000),
 				},
 			},
 		)
@@ -74,7 +75,7 @@ func TestAGG_003_Event1DERP0DDERC1DERC(t *testing.T) {
 			}
 			if list.DERControl[0].DERControlBase == nil ||
 				list.DERControl[0].DERControlBase.OpModMaxLimW == nil ||
-				list.DERControl[0].DERControlBase.OpModMaxLimW.Value != 3000 {
+				*list.DERControl[0].DERControlBase.OpModMaxLimW != 3000 {
 				t.Errorf("DERControl[0] OpModMaxLimW dropped on the wire")
 			}
 		})

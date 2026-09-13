@@ -72,9 +72,7 @@ der_controls:
         displacement: 950
         excitation: true
         multiplier: 0
-      op_mod_max_lim_w:
-        multiplier: 0
-        value: 5000
+      op_mod_max_lim_w: 5000
 
 der_curves:
   - id: "0"

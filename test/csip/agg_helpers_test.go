@@ -295,8 +295,8 @@ func assertAggregatorSubscriptionsPresent(t *testing.T, ctx context.Context, cli
 // regressions stay test-scoped: a stomped runner that only matched
 // AGG-008's values would leave AGG-007 and AGG-009 untouched.
 type aggOverlapPlan struct {
-	SYValue   int16
-	XfmrValue int16
+	SYValue   sep2.SignedPerCent
+	XfmrValue sep2.SignedPerCent
 }
 
 // runAggregatorOverlapSimilar is the shared body for AGG-007..009. Each
@@ -326,7 +326,7 @@ func runAggregatorOverlapSimilar(t *testing.T, testID string, plan aggOverlapPla
 				DERProgramID: aggFSAIDSY,
 				MRID:         aggMRIDPrefix(testID+"-DDERC-SY-") + edevID,
 				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModFixedW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: plan.SYValue + 500},
+					OpModFixedW: ptrTo(plan.SYValue + 500),
 				},
 			},
 			csiptest.DefaultDERControlSpec{
@@ -335,7 +335,7 @@ func runAggregatorOverlapSimilar(t *testing.T, testID string, plan aggOverlapPla
 				DERProgramID: aggFSAIDFD,
 				MRID:         aggMRIDPrefix(testID+"-DDERC-FD-") + edevID,
 				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModFixedW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: plan.XfmrValue + 500},
+					OpModFixedW: ptrTo(plan.XfmrValue + 500),
 				},
 			},
 		)
@@ -346,7 +346,7 @@ func runAggregatorOverlapSimilar(t *testing.T, testID string, plan aggOverlapPla
 				DERProgramID: aggFSAIDSY,
 				ID:           "agg" + testID + "-" + edevID + "-sy",
 				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModFixedW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: plan.SYValue},
+					OpModFixedW: ptrTo(plan.SYValue),
 				},
 			},
 			csiptest.DERControlSpec{
@@ -355,7 +355,7 @@ func runAggregatorOverlapSimilar(t *testing.T, testID string, plan aggOverlapPla
 				DERProgramID: aggFSAIDFD,
 				ID:           "agg" + testID + "-" + edevID + "-fd",
 				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModFixedW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: plan.XfmrValue},
+					OpModFixedW: ptrTo(plan.XfmrValue),
 				},
 			},
 		)
@@ -368,7 +368,7 @@ func runAggregatorOverlapSimilar(t *testing.T, testID string, plan aggOverlapPla
 			t.Parallel()
 			for _, n := range []struct {
 				fsaID    string
-				wantVal  int16
+				wantVal  sep2.SignedPerCent
 				ddercTag string
 			}{
 				{aggFSAIDSY, plan.SYValue, "SY"},
@@ -395,9 +395,9 @@ func runAggregatorOverlapSimilar(t *testing.T, testID string, plan aggOverlapPla
 					t.Errorf("node=%s DERControl[0] missing OpModFixedW (similar invariant)", n.fsaID)
 					continue
 				}
-				if dc.DERControlBase.OpModFixedW.Value != n.wantVal {
-					t.Errorf("node=%s DERControl[0].OpModFixedW.Value = %d, want %d",
-						n.fsaID, dc.DERControlBase.OpModFixedW.Value, n.wantVal)
+				if *dc.DERControlBase.OpModFixedW != n.wantVal {
+					t.Errorf("node=%s DERControl[0].OpModFixedW = %d, want %d",
+						n.fsaID, *dc.DERControlBase.OpModFixedW, n.wantVal)
 				}
 			}
 		})
@@ -428,7 +428,7 @@ func runAggregatorOverlapIndependent(t *testing.T, testID string, plan aggOverla
 				DERProgramID: aggFSAIDSY,
 				MRID:         aggMRIDPrefix(testID+"-DDERC-SY-") + edevID,
 				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModFixedW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: plan.SYValue + 1000},
+					OpModFixedW: ptrTo(plan.SYValue + 1000),
 				},
 			},
 		)
@@ -439,7 +439,7 @@ func runAggregatorOverlapIndependent(t *testing.T, testID string, plan aggOverla
 				DERProgramID: aggFSAIDSY,
 				ID:           "agg" + testID + "-" + edevID + "-sy",
 				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModFixedW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: plan.SYValue},
+					OpModFixedW: ptrTo(plan.SYValue),
 				},
 			},
 		)
@@ -492,7 +492,7 @@ func runAggregatorOverlapIndependent(t *testing.T, testID string, plan aggOverla
 			}
 			if listSY.DERControl[0].DERControlBase == nil ||
 				listSY.DERControl[0].DERControlBase.OpModFixedW == nil ||
-				listSY.DERControl[0].DERControlBase.OpModFixedW.Value != plan.SYValue {
+				*listSY.DERControl[0].DERControlBase.OpModFixedW != plan.SYValue {
 				t.Errorf("SY DERControl[0] OpModFixedW dropped or wrong value")
 			}
 			if listSY.DERControl[0].DERControlBase != nil &&
@@ -529,3 +529,6 @@ func runAggregatorOverlapIndependent(t *testing.T, testID string, plan aggOverla
 		})
 	}
 }
+
+// ptrTo returns a pointer to v, for optional fields of a fixture spec built in Go.
+func ptrTo[T any](v T) *T { return &v }

@@ -179,8 +179,8 @@ func TestLoad_DERProgramSingle_BuildsStoreState(t *testing.T) {
 	if dderc.DERControlBase == nil || dderc.DERControlBase.OpModMaxLimW == nil {
 		t.Fatalf("DefaultDERControl.DERControlBase.OpModMaxLimW is nil; loader dropped the limit")
 	}
-	if got := dderc.DERControlBase.OpModMaxLimW.Value; got != 5000 {
-		t.Errorf("OpModMaxLimW.Value = %d, want 5000", got)
+	if got := *dderc.DERControlBase.OpModMaxLimW; got != 5000 {
+		t.Errorf("OpModMaxLimW = %d, want 5000", got)
 	}
 
 	// Zero DERControls — the "C in CORE-012" assertion.

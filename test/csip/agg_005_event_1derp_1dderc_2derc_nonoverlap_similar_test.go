@@ -22,6 +22,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -42,11 +43,11 @@ func TestAGG_005_Event1DERP1DDERC2DERCNonOverlapSimilar(t *testing.T) {
 				DERProgramID: aggFSAIDSY,
 				MRID:         aggMRIDPrefix("005-DDERC-") + edevID,
 				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModMaxLimW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: 6000},
+					OpModMaxLimW: ptrTo[sep2.PerCent](6000),
 				},
 			},
 		)
-		for i, val := range []int16{2000, 3000} {
+		for i, val := range []sep2.SignedPerCent{2000, 3000} {
 			spec.DERControls = append(spec.DERControls,
 				csiptest.DERControlSpec{
 					EndDeviceID:  edevID,
@@ -55,7 +56,7 @@ func TestAGG_005_Event1DERP1DDERC2DERCNonOverlapSimilar(t *testing.T) {
 					ID:           "agg005-" + edevID + "-" + string(rune('a'+i)),
 					MRID:         aggMRIDPrefix("005-DERC-") + edevID + "-" + string(rune('a'+i)),
 					DERControlBase: &csiptest.DERControlBaseSpec{
-						OpModFixedW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: val},
+						OpModFixedW: ptrTo(val),
 					},
 				},
 			)

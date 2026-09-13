@@ -31,6 +31,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -51,7 +52,7 @@ func TestAGG_002_Event2DERP2DDERC0DERC(t *testing.T) {
 				DERProgramID: aggFSAIDSY,
 				MRID:         aggMRIDPrefix("002-DDERC-SY-") + edevID,
 				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModMaxLimW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: 5000},
+					OpModMaxLimW: ptrTo[sep2.PerCent](5000),
 				},
 			},
 			csiptest.DefaultDERControlSpec{
@@ -60,7 +61,7 @@ func TestAGG_002_Event2DERP2DDERC0DERC(t *testing.T) {
 				DERProgramID: aggFSAIDFD,
 				MRID:         aggMRIDPrefix("002-DDERC-FD-") + edevID,
 				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModMaxLimW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: 4000},
+					OpModMaxLimW: ptrTo[sep2.PerCent](4000),
 				},
 			},
 		)
@@ -81,8 +82,8 @@ func TestAGG_002_Event2DERP2DDERC0DERC(t *testing.T) {
 			if ddercSY.DERControlBase == nil || ddercSY.DERControlBase.OpModMaxLimW == nil {
 				t.Fatalf("SY DDERC missing OpModMaxLimW")
 			}
-			if got := ddercSY.DERControlBase.OpModMaxLimW.Value; got != 5000 {
-				t.Errorf("SY DDERC OpModMaxLimW.Value = %d, want 5000", got)
+			if got := *ddercSY.DERControlBase.OpModMaxLimW; got != 5000 {
+				t.Errorf("SY DDERC OpModMaxLimW = %d, want 5000", got)
 			}
 
 			// Step 2 (cont): FDx-level DDERC at lower priority.
@@ -94,8 +95,8 @@ func TestAGG_002_Event2DERP2DDERC0DERC(t *testing.T) {
 			if ddercFD.DERControlBase == nil || ddercFD.DERControlBase.OpModMaxLimW == nil {
 				t.Fatalf("FDx DDERC missing OpModMaxLimW")
 			}
-			if got := ddercFD.DERControlBase.OpModMaxLimW.Value; got != 4000 {
-				t.Errorf("FDx DDERC OpModMaxLimW.Value = %d, want 4000", got)
+			if got := *ddercFD.DERControlBase.OpModMaxLimW; got != 4000 {
+				t.Errorf("FDx DDERC OpModMaxLimW = %d, want 4000", got)
 			}
 
 			// Step 3: SY-level DERControlList must be empty (no events injected).

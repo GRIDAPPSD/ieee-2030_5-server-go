@@ -19,6 +19,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -31,12 +32,13 @@ func TestAGG_006_Event2DERP2DDERC2DERCNonOverlapSimilar(t *testing.T) {
 	client := srv.Client()
 
 	type nodeSpec struct {
-		fsaID string
-		val   int16
+		fsaID   string
+		fixedW  sep2.SignedPerCent
+		maxLimW sep2.PerCent
 	}
 	nodes := []nodeSpec{
-		{aggFSAIDSY, 4000},
-		{aggFSAIDFD, 3000},
+		{aggFSAIDSY, 4000, 5000},
+		{aggFSAIDFD, 3000, 4000},
 	}
 
 	spec := &csiptest.Spec{}
@@ -49,7 +51,7 @@ func TestAGG_006_Event2DERP2DDERC2DERCNonOverlapSimilar(t *testing.T) {
 					DERProgramID: n.fsaID,
 					MRID:         aggMRIDPrefix("006-DDERC-") + n.fsaID + "-" + edevID,
 					DERControlBase: &csiptest.DERControlBaseSpec{
-						OpModMaxLimW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: n.val + 1000},
+						OpModMaxLimW: ptrTo(n.maxLimW),
 					},
 				},
 			)
@@ -61,7 +63,7 @@ func TestAGG_006_Event2DERP2DDERC2DERCNonOverlapSimilar(t *testing.T) {
 					ID:           "agg006-" + edevID + "-" + n.fsaID,
 					MRID:         aggMRIDPrefix("006-DERC-") + n.fsaID + "-" + edevID,
 					DERControlBase: &csiptest.DERControlBaseSpec{
-						OpModFixedW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: n.val},
+						OpModFixedW: ptrTo(n.fixedW),
 					},
 				},
 			)

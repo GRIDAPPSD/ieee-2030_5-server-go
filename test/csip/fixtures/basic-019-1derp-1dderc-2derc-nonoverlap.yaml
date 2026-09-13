@@ -52,9 +52,7 @@ default_der_controls:
     der_program_id: "0"
     mrid: "BASIC-019-DDERC"
     der_control_base:
-      op_mod_fixed_w:
-        multiplier: 0
-        value: 1500
+      op_mod_fixed_w: 1500
 
 der_controls:
   - end_device_id: "0"
@@ -70,9 +68,7 @@ der_controls:
       start: 1700000060
       duration: 60
     der_control_base:
-      op_mod_fixed_w:
-        multiplier: 0
-        value: 3000
+      op_mod_fixed_w: 3000
   - end_device_id: "0"
     fsa_id: "0"
     der_program_id: "0"
@@ -86,6 +82,4 @@ der_controls:
       start: 1700000180
       duration: 60
     der_control_base:
-      op_mod_fixed_w:
-        multiplier: 0
-        value: 3500
+      op_mod_fixed_w: 3500

@@ -14,7 +14,7 @@
 //
 //	Step 1 (server has 1 DERP + 1 DDERC + 2 DERC non-overlap)  -> fixture load
 //	Step 2 (walk to the single DERProgram)                      -> standard walk
-//	Step 3 (DDERC carries opModFixedW = 1.5 kW)                 -> assertBASIC019DDERC
+//	Step 3 (DDERC carries opModFixedW = 1500 (15.00%))                 -> assertBASIC019DDERC
 //	Step 4 (DERControlList has 2 events in lex-id order)        -> walkDERControlListByHref
 //	Step 5 (Each event renders its MRID + Interval + Status     -> assertBASIC019DERCAt
 //	        + opModFixedW)
@@ -33,8 +33,8 @@ import (
 
 const basic019FixtureName = "basic-019-1derp-1dderc-2derc-nonoverlap.yaml"
 
-// basic019DDERCFixedW is the DDERC fallback (1.5 kW).
-const basic019DDERCFixedW int16 = 1500
+// basic019DDERCFixedW is the DDERC fallback (15.00%).
+const basic019DDERCFixedW sep2.SignedPerCent = 1500
 
 // basic019Events is the expected wire shape of the DERControlList,
 // in lex-id order ("a" then "b") which the memory store sorts on.
@@ -42,7 +42,7 @@ var basic019Events = []struct {
 	mrid     string
 	start    int64
 	duration uint32
-	fixedW   int16
+	fixedW   sep2.SignedPerCent
 }{
 	{mrid: "BASIC-019-DERC-A", start: 1700000060, duration: 60, fixedW: 3000},
 	{mrid: "BASIC-019-DERC-B", start: 1700000180, duration: 60, fixedW: 3500},
@@ -78,8 +78,8 @@ func runBASIC019(t *testing.T, extraOpts []csiptest.BootOption) {
 	if dderc.DERControlBase == nil || dderc.DERControlBase.OpModFixedW == nil {
 		t.Fatal("DDERC.DERControlBase.OpModFixedW is nil - fixture dropped")
 	}
-	if got := dderc.DERControlBase.OpModFixedW.Value; got != basic019DDERCFixedW {
-		t.Errorf("DDERC.OpModFixedW.Value = %d, want %d", got, basic019DDERCFixedW)
+	if got := *dderc.DERControlBase.OpModFixedW; got != basic019DDERCFixedW {
+		t.Errorf("DDERC.OpModFixedW = %d, want %d", got, basic019DDERCFixedW)
 	}
 
 	// Step 4: DERControlList has both events.
@@ -112,7 +112,7 @@ func assertBASIC019DERCAt(
 	wantMRID string,
 	wantStart int64,
 	wantDuration uint32,
-	wantFixedW int16,
+	wantFixedW sep2.SignedPerCent,
 ) {
 	t.Helper()
 
@@ -124,7 +124,7 @@ func assertBASIC019DERCAt(
 	if dc.DERControlBase == nil || dc.DERControlBase.OpModFixedW == nil {
 		t.Fatalf("%s DERControlBase.OpModFixedW is nil - fixture dropped", wantMRID)
 	}
-	if got := dc.DERControlBase.OpModFixedW.Value; got != wantFixedW {
-		t.Errorf("%s OpModFixedW.Value = %d, want %d", wantMRID, got, wantFixedW)
+	if got := *dc.DERControlBase.OpModFixedW; got != wantFixedW {
+		t.Errorf("%s OpModFixedW = %d, want %d", wantMRID, got, wantFixedW)
 	}
 }

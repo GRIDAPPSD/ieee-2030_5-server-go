@@ -82,7 +82,7 @@ func HandlePostTextMessage(tmStore store.ScopedStore[sep2.TextMessage]) http.Han
 
 		var tm sep2.TextMessage
 		if err := xml.Unmarshal(body, &tm); err != nil {
-			http.Error(w, "invalid XML: "+err.Error(), http.StatusBadRequest)
+			srverr.BadRequestMessage(w, r, "invalid XML", err)
 			return
 		}
 

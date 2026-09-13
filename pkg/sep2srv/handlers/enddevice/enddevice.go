@@ -198,7 +198,7 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 		}
 		if len(body) > 0 {
 			if err := xml.Unmarshal(body, &dev); err != nil {
-				http.Error(w, "invalid XML: "+err.Error(), http.StatusBadRequest)
+				srverr.BadRequestMessage(w, r, "invalid XML", err)
 				return
 			}
 		}
@@ -349,7 +349,7 @@ func HandleUpdateEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 
 		var dev sep2.EndDevice
 		if err := xml.Unmarshal(body, &dev); err != nil {
-			http.Error(w, "invalid XML: "+err.Error(), http.StatusBadRequest)
+			srverr.BadRequestMessage(w, r, "invalid XML", err)
 			return
 		}
 

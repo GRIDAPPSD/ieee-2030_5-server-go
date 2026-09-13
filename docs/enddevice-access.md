@@ -33,15 +33,17 @@ A manager may use:
 
 A manager may not:
 
-- `PUT` or `DELETE /edev/{id}`: the utility changes or removes a managed
-  device's record, not its aggregator;
+- `PUT` or `DELETE /edev/{id}`: a manager never rewrites or removes the
+  managed device's record;
 - `GET /edev/{id}/rg`: the Registration, including its pIN, is the device's
   own.
 
 ## GET /edev and PUT /edev/{id}
 
 `GET /edev` lists the caller's own EndDevice and every EndDevice it manages,
-ordered by store key. `all` and `results` count that set and the page, and
+ordered by store key. A managed LFDI with no record, a record the LFDI index
+returned for a different LFDI, and a record whose href names no store key are
+left out and logged. `all` and `results` count the listed set and the page, and
 `s`, `l` and `a` page over it. A caller with nothing to list gets an empty
 list, not a 404. `POST /edev` and `GET /edev` are the only routes under
 `/edev` outside the gate; `POST /edev` takes the LFDI and SFDI from the
@@ -68,14 +70,20 @@ no route serves.
 A denial body is a fixed string (`forbidden` or `not found`) and carries no
 field of the record.
 
-Each refusal writes a log line naming the route pattern, the caller's LFDI,
-the requested id (quoted, truncated to 64 bytes) and a reason class:
+A refusal by the gate writes a log line naming the route pattern, the caller's
+LFDI, the requested id (truncated to 64 bytes, then quoted) and a reason class:
 `no-identity`, `no-device-id`, `absent`, `record-has-no-lfdi`, `not-owner` (a
 route management never grants, or no management store), or
 `not-owner-or-manager` (a delegated route where the caller is not the
-record's manager either). At most 20 such lines are written per minute per router; the
-number suppressed past that is reported once the minute has passed. A 500 is
-logged through the usual server error line.
+record's manager either).
+
+These lines share one budget per router, across all callers: at most 20 in a
+one-minute window, which opens at the first refusal after the previous window
+has closed. Refusals past the budget are counted, not written. The count is
+written only when a later refusal arrives after the window has closed, in a
+line that always says "in the last 1m0s" whatever time has actually passed; if
+no refusal follows, the count is never written. A 500 is logged through the
+usual server error line.
 
 ## Wiring the management store
 
@@ -97,8 +105,9 @@ The server binary and `sep2server.NewStores` wire an empty store.
 
 ## Who provisions pairs
 
-Management is utility data. It is established only on the utility side: by an
-embedder seeding the store before `BuildProtocolRouter`, or by the operator.
+Management is utility data, established only on the utility side: by an
+embedder writing pairs to the store it passes as `Stores.EndDeviceManagers`,
+which the gate and `GET /edev` read on every request.
 No IEEE 2030.5 request, registration included, creates, changes, or removes a
 pair. Admin-plane provisioning and persistence of pairs are not implemented
 yet and are tracked in

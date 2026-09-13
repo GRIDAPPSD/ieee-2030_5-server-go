@@ -7,8 +7,7 @@ import (
 
 // ErrInvalidManagementPair means Assign was given a pair it will not record:
 // an empty or non-canonical LFDI, or a device named as its own manager. It is
-// a caller error, never a backend condition, so an admin surface answers it
-// with 400.
+// a caller error, never a backend condition.
 var ErrInvalidManagementPair = errors.New("invalid EndDevice management pair")
 
 // EndDeviceManagementStore records which LFDI manages which EndDevice.

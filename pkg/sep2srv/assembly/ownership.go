@@ -28,7 +28,7 @@ import (
 // because {id} is an opaque server-chosen index, not an identity. The caller
 // is admitted when the record carries the caller's LFDI, or, on a delegable
 // pattern, when the management store names the caller as the record's
-// manager. Every refusal is written to a bounded denial log.
+// manager. Refusals are logged within a bounded budget; see denialLog.
 type ownershipGate struct {
 	next           routeRegistrar
 	devices        store.EndDeviceStore
@@ -198,7 +198,8 @@ func (g *ownershipGate) decide(r *http.Request, delegated bool) ownershipVerdict
 	}
 
 	// Management is consulted only after self fails and only on a delegable
-	// pattern, so a management store outage never blocks a device's own access.
+	// pattern, so a management store outage never blocks a device's own
+	// /edev/{id} routes.
 	if !delegated || g.managersAbsent {
 		return refuse(reasonNotOwner)
 	}
@@ -214,16 +215,17 @@ func (g *ownershipGate) decide(r *http.Request, delegated bool) ownershipVerdict
 	return ownershipVerdict{decision: ownershipAllowed}
 }
 
-// Denial log bounds: at most denialLogLimit lines in any denialLogWindow, so a
-// mass probe cannot flood the log.
+// Denial log bounds: at most denialLogLimit refusal lines per window, shared by
+// every caller of the router, so a mass probe cannot flood the log.
 const (
 	denialLogLimit  = 20
 	denialLogWindow = time.Minute
 	maxLoggedIDLen  = 64
 )
 
-// denialLog writes one line per refusal until the window's limit is reached,
-// then counts the rest and reports the count when the window has closed.
+// denialLog writes one line per refusal until a window's limit is reached and
+// counts the rest. The count is reported by the first refusal after the window
+// closes, which also opens the next window.
 type denialLog struct {
 	mu         sync.Mutex
 	logf       func(format string, args ...any)

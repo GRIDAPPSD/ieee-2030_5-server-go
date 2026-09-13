@@ -25,6 +25,8 @@ func AdminCrossOriginMiddleware() func(http.Handler) http.Handler {
 					"path", r.URL.Path,
 					"remote_addr", r.RemoteAddr,
 					"sec_fetch_site", r.Header.Get("Sec-Fetch-Site"),
+					"origin", r.Header.Get("Origin"),
+					"err", err.Error(),
 				)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusForbidden)

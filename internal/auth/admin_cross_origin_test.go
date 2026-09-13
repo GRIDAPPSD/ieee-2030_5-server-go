@@ -137,3 +137,36 @@ func TestAdminCrossOriginRefusalLogsNoCredentialOrBody(t *testing.T) {
 		}
 	}
 }
+
+// TestAdminCrossOriginRefusalLogsErrorAndOrigin covers the refusal line's
+// diagnostic fields: without them, an operator sees that a request was
+// refused but not what check failed or where it claimed to come from (#416).
+func TestAdminCrossOriginRefusalLogsErrorAndOrigin(t *testing.T) {
+	buf := captureSlog(t)
+	req := loopbackAdminRequest(http.MethodPost, map[string]string{
+		"Sec-Fetch-Site": "cross-site",
+		"Origin":         "http://attacker.example",
+	})
+
+	rec, reached := crossOriginResponse(t, req)
+	if reached || rec.Code != http.StatusForbidden {
+		t.Fatalf("reached = %v, status = %d; want a 403 refusal", reached, rec.Code)
+	}
+
+	found := false
+	for _, line := range logLines(t, buf) {
+		if line["event"] != "admin_cross_origin_refused" {
+			continue
+		}
+		found = true
+		if line["origin"] != "http://attacker.example" {
+			t.Errorf("origin = %v, want the refused request's Origin header", line["origin"])
+		}
+		if errVal, _ := line["err"].(string); errVal == "" {
+			t.Errorf("err missing or empty on the refusal line: %v", line)
+		}
+	}
+	if !found {
+		t.Fatalf("no admin_cross_origin_refused line was captured: %s", buf.String())
+	}
+}

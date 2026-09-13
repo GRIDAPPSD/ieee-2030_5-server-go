@@ -143,15 +143,12 @@ func (m *Manager) SetObserver(fn func(outcome string)) {
 	m.observer = fn
 }
 
-// Start launches worker goroutines. Blocks until ctx is cancelled.
+// Start launches worker goroutines, blocks until ctx is cancelled, then
+// closes the queue and returns once every worker has exited.
 //
-// Shutdown order: internal/server/server.go passes the SAME ctx to both
-// this call and, independently, to the HTTP server's graceful drain
-// (server.go around the ctx.Done() select that runs stopProtocolServer).
-// Neither goroutine waits on the other, so a DELETE handler's NotifyRemoved
-// call can race Close below at any point during the drain; Close and
-// enqueue are written to make that race safe rather than to make it not
-// happen (#460).
+// internal/server starts its HTTP drain on the same cancellation, and neither
+// waits on the other, so an enqueue from a draining request can race Close;
+// Close and enqueue make that race safe rather than impossible (#460).
 func (m *Manager) Start(ctx context.Context) {
 	for i := 0; i < m.workerCount; i++ {
 		m.wg.Add(1)
@@ -163,11 +160,10 @@ func (m *Manager) Start(ctx context.Context) {
 	m.wg.Wait()
 }
 
-// Close closes the queue so workers drain any buffered tasks and exit. Safe
-// to call more than once (idempotent) and safe to call concurrently with
-// NotifyRemoved/Notify: closeMu excludes an in-progress enqueue from
-// observing closed as false and then losing the race to the close(m.queue)
-// below (#460).
+// Close closes the queue and does not wait for the workers, which exit once
+// it is empty. Tasks a worker takes after Start's ctx is cancelled are
+// dropped, counted and logged, not delivered. Safe to call more than once and
+// concurrently with enqueues: see the closeMu field comment.
 func (m *Manager) Close() {
 	m.closeMu.Lock()
 	defer m.closeMu.Unlock()
@@ -314,16 +310,19 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 func (m *Manager) worker(ctx context.Context) {
 	defer m.wg.Done()
 	for task := range m.queue {
+		// A cancelled ctx fails every delivery, so a task still buffered at
+		// shutdown is counted as dropped instead of attempted.
+		if ctx.Err() != nil {
+			m.observe(outcomeManagerClosed)
+			log.Printf("notification: manager shutting down, dropping for %s", redactURI(task.notificationURI))
+			continue
+		}
 		err := m.deliver(ctx, task)
 		switch {
 		case err == nil:
-			if m.observer != nil {
-				m.observer("success")
-			}
+			m.observe("success")
 		case errors.Is(err, errDeleteAfter4xx):
-			if m.observer != nil {
-				m.observer("client_error")
-			}
+			m.observe("client_error")
 			log.Printf("notification: %s receiver returned 4xx, subscription %q deleted",
 				redactURI(task.notificationURI), task.subscriptionID)
 		case errors.Is(err, ErrDestinationUnresolved):

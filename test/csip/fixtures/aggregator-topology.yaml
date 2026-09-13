@@ -1,6 +1,6 @@
 # #139 fixture - Utility-Aggregator topology for UTIL-001..UTIL-004
-# (CSIP V1.2 section 9.1-section 9.4). Per Noor's V1.2 coverage matrix Section 2 this is
-# "the heaviest fixture in the matrix" - bigger than #52's
+# (CSIP V1.2 section 9.1-section 9.4). It is the largest fixture in this
+# suite, bigger than #52's
 # seven-level-fsa.yaml (1 EndDevice, 7 FSAs, 7 DERPrograms).
 #
 # Topology shape:

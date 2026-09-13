@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -45,38 +47,54 @@ func bootRunForNotificationPolicy(t *testing.T, allowLoopback bool) (string, *ht
 		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
 	}
 
-	cfg := &config.Config{
-		Addr:                      c.sep2Probe,
-		CertFile:                  c.certFile,
-		KeyFile:                   c.keyFile,
-		CAFile:                    c.caFile,
-		TZOffset:                  -28800,
-		TimeQuality:               sep2.TimeQualityNTP,
-		NotificationAllowLoopback: allowLoopback,
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	runErrCh := make(chan error, 1)
-	go func() { runErrCh <- server.Run(ctx, cfg, c.svc) }()
+	// The port is probed and released before Run binds it, so another process
+	// can take it in between; retry with a fresh port when that happens.
+	const startAttempts = 8
+	for attempt := 1; attempt <= startAttempts; attempt++ {
+		addr := mustProbePort(t)
+		cfg := &config.Config{
+			Addr:                      addr,
+			CertFile:                  c.certFile,
+			KeyFile:                   c.keyFile,
+			CAFile:                    c.caFile,
+			TZOffset:                  -28800,
+			TimeQuality:               sep2.TimeQualityNTP,
+			NotificationAllowLoopback: allowLoopback,
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		runErrCh := make(chan error, 1)
+		go func() { runErrCh <- server.Run(ctx, cfg, c.svc) }()
+		readyCh := make(chan bool, 1)
+		go func() { readyCh <- waitForServerReady(addr, 5*time.Second, clientTLSCfg) }()
 
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSCfg}, Timeout: 5 * time.Second}
-	t.Cleanup(func() {
-		client.CloseIdleConnections()
-		cancel()
 		select {
-		case <-runErrCh:
-		case <-time.After(5 * time.Second):
-			t.Error("server.Run did not exit within 5s after cancel")
-		}
-	})
-	if !waitForServerReady(c.sep2Probe, 5*time.Second, clientTLSCfg) {
-		select {
+		case ready := <-readyCh:
+			if !ready {
+				cancel()
+				t.Fatalf("protocol listener never became ready on %s", addr)
+			}
+			client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSCfg}, Timeout: 5 * time.Second}
+			t.Cleanup(func() {
+				client.CloseIdleConnections()
+				cancel()
+				select {
+				case <-runErrCh:
+				case <-time.After(5 * time.Second):
+					t.Error("server.Run did not exit within 5s after cancel")
+				}
+			})
+			return addr, client
 		case err := <-runErrCh:
-			t.Fatalf("server.Run exited before the protocol listener was ready: %v", err)
-		default:
-			t.Fatalf("protocol listener never became ready on %s", c.sep2Probe)
+			cancel()
+			go func() { <-readyCh }()
+			if !errors.Is(err, syscall.EADDRINUSE) && !strings.Contains(err.Error(), "address already in use") {
+				t.Fatalf("server.Run exited before the protocol listener was ready: %v", err)
+			}
+			t.Logf("server.Run attempt %d could not bind %s (%v); retrying with a new port", attempt, addr, err)
 		}
 	}
-	return c.sep2Probe, client
+	t.Fatalf("server.Run could not bind a free port in %d attempts", startAttempts)
+	return "", nil
 }
 
 // Not parallel: it swaps the process-wide log output.

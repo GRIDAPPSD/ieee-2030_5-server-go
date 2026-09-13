@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/atomicfile"
 )
 
 // Path B: durable subscription persistence
@@ -109,17 +110,10 @@ func (s *SubscriptionStore) LoadFromFile(path string) error {
 }
 
 // persistSnapshot flushes a fresh JSON snapshot to disk under an atomic
-// rename. No-op when persistPath is empty (in-memory mode).
-//
-// The atomic-write recipe:
-//  1. Marshal the current snapshot under the store's read lock so we
-//     capture a consistent point-in-time view.
-//  2. Write to <path>.tmp; fsync the tmp file.
-//  3. os.Rename(<path>.tmp, <path>).
-//  4. Best-effort fsync the parent directory so the rename is durable.
-//
-// A crash between steps 2 and 3 leaves the previously committed <path>
-// intact; the stale .tmp is overwritten on the next successful write.
+// rename. No-op when persistPath is empty (in-memory mode). The snapshot is
+// marshalled under the store's read lock for a consistent point-in-time view,
+// then written through atomicfile.Write, so a crash leaves the previously
+// committed <path> intact.
 func (s *SubscriptionStore) persistSnapshot() error {
 	if s.persistPath == "" {
 		return nil
@@ -142,52 +136,8 @@ func (s *SubscriptionStore) persistSnapshot() error {
 		return fmt.Errorf("subscription persistence: marshal: %w", err)
 	}
 
-	return writeFileAtomic(s.persistPath, payload)
-}
-
-// writeFileAtomic writes payload to path via a sibling .tmp file and
-// os.Rename. Best-effort directory fsync improves durability without
-// being load-bearing on platforms where Sync is a no-op.
-func writeFileAtomic(path string, payload []byte) error {
-	dir := filepath.Dir(path)
-	tmp := path + ".tmp"
-
-	// O_TRUNC so a stale .tmp from a prior crashed write is overwritten,
-	// not appended to. 0o600: subscription state is operator-sensitive
-	// (notification URIs, device hrefs).
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fmt.Errorf("subscription persistence: open tmp: %w", err)
-	}
-	// On any error path below, remove the tmp file so we don't leak it.
-	defer func() {
-		// If rename succeeded the tmp file no longer exists; Remove
-		// will return ENOENT, which we ignore.
-		_ = os.Remove(tmp)
-	}()
-
-	if _, err := f.Write(payload); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("subscription persistence: write tmp: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("subscription persistence: fsync tmp: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("subscription persistence: close tmp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("subscription persistence: rename: %w", err)
-	}
-
-	// Directory fsync: ensures the rename is durable on POSIX
-	// filesystems. Errors here are non-fatal: the data is already
-	// on disk via the file fsync; this just hardens the directory
-	// entry. We swallow ENOTSUP / EISDIR-on-Windows quietly.
-	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
-		_ = d.Close()
+	if err := atomicfile.Write(s.persistPath, payload); err != nil {
+		return fmt.Errorf("subscription persistence: %w", err)
 	}
 	return nil
 }

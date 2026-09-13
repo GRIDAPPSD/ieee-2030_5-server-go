@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/atomicfile"
 )
 
 // Shared persistence machinery for admin-mutated stores
@@ -14,17 +16,9 @@ import (
 //
 //	{"version": 1, "records": [...]}
 //
-// to a configured path. Writes go through writeFileAtomic which:
-//
-//  1. Serializes the snapshot.
-//  2. Writes to <path>.tmp with O_CREATE|O_TRUNC, fsyncs the file.
-//  3. os.Renames <path>.tmp onto <path> (atomic on POSIX, atomic on Windows
-//     when the target already exists).
-//  4. Best-effort fsyncs the parent directory so the rename is durable
-//     across power loss.
-//
-// A crash between steps 2 and 3 leaves the previously committed <path>
-// intact; the stale .tmp is overwritten on the next successful write.
+// to a configured path. Writes go through atomicfile.Write: a synced
+// <path>.tmp renamed onto <path>, so a crash leaves the previously committed
+// <path> intact.
 //
 // The on-disk version number is the contract between writers and readers.
 // Bump persistenceVersion on a schema-breaking change; readers reject
@@ -103,10 +97,8 @@ func writeSnapshotEnvelope(path string, records any) error {
 	if err != nil {
 		return fmt.Errorf("marshal envelope: %w", err)
 	}
-	// writeFileAtomic lives in subscription_persistence.go
-	// (GRIDAPPSD/ieee-2030_5-server-go#224). It is package-scoped and
-	// shared across all persistent stores in this
-	// package; we deliberately keep a single implementation here so the
-	// atomic-rename / parent-fsync contract has one home to test against.
-	return writeFileAtomic(path, payload)
+	if err := atomicfile.Write(path, payload); err != nil {
+		return fmt.Errorf("subscription persistence: %w", err)
+	}
+	return nil
 }

@@ -6,8 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/atomicfile"
 )
 
 const (
@@ -96,34 +97,8 @@ func writeSeedRecord(path string, seeded map[seedKey]struct{}) error {
 		return fmt.Errorf("encode seed record: %w", err)
 	}
 
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
+	if err := atomicfile.Write(path, payload); err != nil {
 		return fmt.Errorf("write seed record %s: %w", path, err)
-	}
-	// After a successful rename the temporary file is gone and Remove fails
-	// with not-exist, which is the expected outcome.
-	defer func() { _ = os.Remove(tmp) }()
-
-	if _, err := f.Write(payload); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("write seed record %s: %w", path, err)
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("sync seed record %s: %w", path, err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close seed record %s: %w", path, err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("rename seed record %s: %w", path, err)
-	}
-	// Best effort, as the store snapshots do: the file contents are already
-	// synced, and this only hardens the directory entry.
-	if d, err := os.Open(filepath.Dir(path)); err == nil {
-		_ = d.Sync()
-		_ = d.Close()
 	}
 	return nil
 }

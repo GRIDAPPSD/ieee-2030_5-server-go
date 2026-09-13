@@ -11,8 +11,11 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -148,6 +151,284 @@ func TestHandleCreateEndDeviceDuplicate(t *testing.T) {
 	}
 	if loc := w2.Header().Get("Location"); loc == "" {
 		t.Error("duplicate POST missing Location header")
+	}
+	var got sep2.EndDevice
+	if err := xml.Unmarshal(w2.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal duplicate POST body: %v", err)
+	}
+	if got.LFDI != testLFDI || got.SFDI != testSFDI {
+		t.Errorf("duplicate POST body = %+v, want the caller's own identity %s/%s", got, testLFDI, testSFDI)
+	}
+}
+
+// createRaceEndDevices simulates another goroutine completing the SAME
+// identity's registration between this request's GetBySFDI miss and its own
+// Create: GetBySFDI still reports ErrNotFound (the SFDI index has not caught
+// up), and Create reports ErrAlreadyExists for the id the concurrent
+// goroutine already claimed. Distinct from fixedIndexer's cross-identity
+// collision above: here the record Create collides with is the CALLER's own.
+type createRaceEndDevices struct {
+	store.EndDeviceStore
+}
+
+func (createRaceEndDevices) GetBySFDI(_ context.Context, _ string) (sep2.EndDevice, error) {
+	return sep2.EndDevice{}, store.ErrNotFound
+}
+
+func (createRaceEndDevices) Create(_ context.Context, _ string, _ sep2.EndDevice) error {
+	return store.ErrAlreadyExists
+}
+
+// TestHandleCreateEndDeviceSameIdentityRaceReturnsOwnRecord pins the other
+// side of the ErrAlreadyExists branch from
+// TestHandleCreateEndDeviceIndexCollisionDoesNotLeak: when the record the
+// race collided with belongs to the SAME identity as the caller, the
+// handler must serve it with 200, not refuse it with 409.
+func TestHandleCreateEndDeviceSameIdentityRaceReturnsOwnRecord(t *testing.T) {
+	t.Parallel()
+
+	backend := memory.NewEndDeviceStore()
+	winner := sep2.EndDevice{SFDI: testSFDI, LFDI: testLFDI}
+	winner.Href = "/edev/1"
+	if err := backend.Create(context.Background(), "1", winner); err != nil {
+		t.Fatalf("seed the concurrent goroutine's own record: %v", err)
+	}
+	s := createRaceEndDevices{EndDeviceStore: backend}
+	idx := fixedIndexer{id: "1"}
+	h := coreedev.HandleCreateEndDevice(s, idx, identityOK(testLFDI, testSFDI), sfdiFirst8)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/edev", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: a same-identity race must serve the existing record, not refuse it", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "/edev/1" {
+		t.Errorf("Location = %q, want %q", loc, "/edev/1")
+	}
+	var got sep2.EndDevice
+	if err := xml.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if got.LFDI != testLFDI || got.SFDI != testSFDI {
+		t.Errorf("body = %+v, want the caller's own identity %s/%s", got, testLFDI, testSFDI)
+	}
+}
+
+// TestHandleCreateEndDeviceSameIdentityAfterRestartReturnsOwnRecord pins
+// property 3 across a restart: a persisted store reloaded and re-seeded the
+// way internal/server.Run wires the two together must still answer a
+// same-identity re-POST with 200 and the caller's own record.
+func TestHandleCreateEndDeviceSameIdentityAfterRestartReturnsOwnRecord(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "enddevices.json")
+	first, err := memory.NewEndDeviceStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("NewEndDeviceStoreWithPersistence: %v", err)
+	}
+	h1 := coreedev.HandleCreateEndDevice(first, memory.NewEndDeviceIndex(), identityOK(testLFDI, testSFDI), sfdiFirst8)
+	w1 := httptest.NewRecorder()
+	h1.ServeHTTP(w1, httptest.NewRequest(http.MethodPost, "/edev", nil))
+	if w1.Code != http.StatusCreated {
+		t.Fatalf("first POST status = %d, want 201; body=%s", w1.Code, w1.Body.String())
+	}
+	firstLocation := w1.Header().Get("Location")
+
+	restarted, err := memory.NewEndDeviceStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("reload after restart: %v", err)
+	}
+	idx := memory.NewEndDeviceIndexFromStore(restarted)
+	h2 := coreedev.HandleCreateEndDevice(restarted, idx, identityOK(testLFDI, testSFDI), sfdiFirst8)
+
+	w2 := httptest.NewRecorder()
+	h2.ServeHTTP(w2, httptest.NewRequest(http.MethodPost, "/edev", nil))
+	if w2.Code != http.StatusOK {
+		t.Fatalf("second POST after restart status = %d, want 200; body=%s", w2.Code, w2.Body.String())
+	}
+	if got := w2.Header().Get("Location"); got != firstLocation {
+		t.Errorf("Location after restart = %q, want the same %q", got, firstLocation)
+	}
+	var got sep2.EndDevice
+	if err := xml.Unmarshal(w2.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if got.LFDI != testLFDI || got.SFDI != testSFDI {
+		t.Errorf("body after restart = %+v, want the caller's own identity %s/%s", got, testLFDI, testSFDI)
+	}
+}
+
+// fixedIndexer always allocates the same index, whatever deviceKey it is
+// asked for. The production allocator (memory.EndDeviceIndex) hands out a
+// fresh, unused index to every new key, so it cannot itself force the
+// collision this test drives; fixedIndexer is the seam that puts two
+// different identities on one index deterministically, without depending on
+// the allocator's internal state.
+type fixedIndexer struct{ id string }
+
+func (f fixedIndexer) Allocate(string) (string, error) { return f.id, nil }
+
+const (
+	otherLFDI = "1111111111111111111111111111111111111111111111"
+	otherSFDI = "1111111111111111"
+)
+
+// TestHandleCreateEndDeviceIndexCollisionDoesNotLeak is acceptance criterion
+// 3 for GRIDAPPSD/ieee-2030_5-server-go#443: when two different certificate
+// identities are allocated the same index, the second caller must receive
+// neither the first record's fields nor its Location.
+func TestHandleCreateEndDeviceIndexCollisionDoesNotLeak(t *testing.T) {
+	t.Parallel()
+
+	s := memory.NewEndDeviceStore()
+	idx := fixedIndexer{id: "1"}
+
+	first := httptest.NewRecorder()
+	h1 := coreedev.HandleCreateEndDevice(s, idx, identityOK(otherLFDI, otherSFDI), sfdiFirst8)
+	h1.ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/edev", nil))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first POST status = %d, want 201; body=%s", first.Code, first.Body.String())
+	}
+	firstLocation := first.Header().Get("Location")
+
+	second := httptest.NewRecorder()
+	h2 := coreedev.HandleCreateEndDevice(s, idx, identityOK(testLFDI, testSFDI), sfdiFirst8)
+	h2.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/edev", nil))
+
+	if second.Code != http.StatusConflict {
+		t.Fatalf("second POST status = %d, want 409", second.Code)
+	}
+	body := second.Body.String()
+	if got := strings.TrimSpace(body); got != "device index conflict" {
+		t.Errorf("second POST body = %q, want the index-conflict message, distinct from the SFDI-branch message", got)
+	}
+	if strings.Contains(body, otherLFDI) {
+		t.Errorf("second POST body leaked the first identity's LFDI: %s", body)
+	}
+	if strings.Contains(body, otherSFDI) {
+		t.Errorf("second POST body leaked the first identity's SFDI: %s", body)
+	}
+	if loc := second.Header().Get("Location"); loc != "" {
+		t.Errorf("second POST Location = %q, want empty: must not point at the first identity's record", loc)
+	}
+	if loc := second.Header().Get("Location"); loc == firstLocation && loc != "" {
+		t.Errorf("second POST Location reused the first identity's Location %q", firstLocation)
+	}
+}
+
+// TestHandleCreateEndDeviceSFDICollisionDoesNotLeak is the twin of the index
+// collision above, on the store's other existing-record lookup: GetBySFDI.
+// IEEE 2030.5's SFDI is a short checksum-including derivative, not a
+// collision-safe hash, so two different certificates can end up sharing one
+// even though their LFDIs differ. The same disclosure rule has to hold here
+// too, or fixing only the index path leaves this path as the untested twin.
+func TestHandleCreateEndDeviceSFDICollisionDoesNotLeak(t *testing.T) {
+	t.Parallel()
+
+	s := memory.NewEndDeviceStore()
+	// Simulates a pre-existing record that shares testSFDI with a different
+	// LFDI: the store keys GetBySFDI purely on the SFDI field.
+	colliding := sep2.EndDevice{SFDI: testSFDI, LFDI: otherLFDI}
+	colliding.Href = "/edev/1"
+	if err := s.Create(context.Background(), "1", colliding); err != nil {
+		t.Fatalf("seed colliding record: %v", err)
+	}
+
+	h := coreedev.HandleCreateEndDevice(s, memory.NewEndDeviceIndex(), identityOK(testLFDI, testSFDI), sfdiFirst8)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/edev", nil))
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", w.Code)
+	}
+	body := w.Body.String()
+	if got := strings.TrimSpace(body); got != "device SFDI conflict" {
+		t.Errorf("body = %q, want the SFDI-conflict message, distinct from the index-branch message", got)
+	}
+	if strings.Contains(body, otherLFDI) {
+		t.Errorf("body leaked the colliding record's LFDI: %s", body)
+	}
+	if loc := w.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want empty: must not point at the colliding record", loc)
+	}
+}
+
+// TestHandleCreateEndDeviceIndexCollisionLogsOneLine cannot run in parallel:
+// it swaps the process-wide log output. It pins the operator-visible side of
+// the index-conflict 409: exactly one log line, naming the route and the
+// conflict kind, and neither identity's LFDI or SFDI.
+func TestHandleCreateEndDeviceIndexCollisionLogsOneLine(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	s := memory.NewEndDeviceStore()
+	idx := fixedIndexer{id: "1"}
+	h1 := coreedev.HandleCreateEndDevice(s, idx, identityOK(otherLFDI, otherSFDI), sfdiFirst8)
+	h1.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/edev", nil))
+
+	w := httptest.NewRecorder()
+	h2 := coreedev.HandleCreateEndDevice(s, idx, identityOK(testLFDI, testSFDI), sfdiFirst8)
+	h2.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/edev", nil))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", w.Code)
+	}
+
+	logged := buf.String()
+	lines := strings.Split(strings.TrimRight(logged, "\n"), "\n")
+	if len(lines) != 1 || lines[0] == "" {
+		t.Fatalf("logged %d line(s), want exactly 1: %q", len(lines), logged)
+	}
+	if !strings.Contains(logged, "409 on") || !strings.Contains(logged, "index conflict") {
+		t.Errorf("log line = %q, want it to name the route and \"index conflict\"", logged)
+	}
+	if strings.Contains(logged, otherLFDI) || strings.Contains(logged, otherSFDI) || strings.Contains(logged, testLFDI) || strings.Contains(logged, testSFDI) {
+		t.Errorf("log line leaked an identity: %q", logged)
+	}
+}
+
+// TestHandleCreateEndDeviceSFDICollisionLogsOneLine is the SFDI-branch twin
+// of the index-collision log test above; same non-parallel reason.
+func TestHandleCreateEndDeviceSFDICollisionLogsOneLine(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	s := memory.NewEndDeviceStore()
+	colliding := sep2.EndDevice{SFDI: testSFDI, LFDI: otherLFDI}
+	colliding.Href = "/edev/1"
+	if err := s.Create(context.Background(), "1", colliding); err != nil {
+		t.Fatalf("seed colliding record: %v", err)
+	}
+
+	h := coreedev.HandleCreateEndDevice(s, memory.NewEndDeviceIndex(), identityOK(testLFDI, testSFDI), sfdiFirst8)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/edev", nil))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", w.Code)
+	}
+
+	logged := buf.String()
+	lines := strings.Split(strings.TrimRight(logged, "\n"), "\n")
+	if len(lines) != 1 || lines[0] == "" {
+		t.Fatalf("logged %d line(s), want exactly 1: %q", len(lines), logged)
+	}
+	if !strings.Contains(logged, "409 on") || !strings.Contains(logged, "sfdi conflict") {
+		t.Errorf("log line = %q, want it to name the route and \"sfdi conflict\"", logged)
+	}
+	if strings.Contains(logged, otherLFDI) || strings.Contains(logged, testLFDI) || strings.Contains(logged, testSFDI) {
+		t.Errorf("log line leaked an identity: %q", logged)
 	}
 }
 

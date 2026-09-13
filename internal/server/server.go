@@ -122,9 +122,11 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 
 	// Initialize stores
 	stores := &Stores{
-		EndDevices:               endDevices,
-		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
-		EndDeviceIndexes:         memory.NewEndDeviceIndex(),
+		EndDevices:        endDevices,
+		EndDeviceManagers: memory.NewEndDeviceManagementStore(),
+		// EndDeviceIndexes is seeded below, once every startup writer of
+		// EndDevice records (the persisted reload above, and the boot
+		// fixture that follows) has run; see the comment there.
 		Registrations:            registrations,
 		RegistrationPolicy:       memory.RegistrationPolicy{}, // fail-closed: no self-registration pIN resolver wired yet
 		MirrorUsagePoints:        memory.NewStore[sep2.MirrorUsagePoint](),
@@ -171,6 +173,13 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		}
 		log.Printf("boot fixture loaded: %s", cfg.BootFixtureFile)
 	}
+
+	// Seed the index only now: endDevices can hold both the reload above and
+	// boot-fixture records, neither of which is known to the allocator's own
+	// in-memory state. Seeding any earlier would leave a fixture record's id
+	// invisible to Allocate, so a self-registering device could be handed
+	// that same id and get a permanent 409 on every retry (#443).
+	stores.EndDeviceIndexes = memory.NewEndDeviceIndexFromStore(endDevices)
 
 	// Subscription notification dispatcher. Owns its own bounded worker pool
 	// and exits when ctx is cancelled (see shutdown branch below). The

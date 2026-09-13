@@ -3,7 +3,9 @@ package memory
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"maps"
+	"math"
 	"strconv"
 	"sync"
 )
@@ -242,6 +244,13 @@ func (x *EndDeviceIndex) Allocate(deviceKey string) (string, error) {
 		return idx, nil
 	}
 
+	// x.next is a uint64; incrementing it at MaxUint64 wraps to 0, which is
+	// below firstIndex and would eventually walk back into ids already
+	// occupied. Refuse rather than hand out a number that silently wraps.
+	if x.next == math.MaxUint64 {
+		return "", fmt.Errorf("enddevice index: allocator exhausted at max uint64")
+	}
+
 	idx := strconv.FormatUint(x.next, 10)
 	x.next++
 	x.byKey[deviceKey] = idx
@@ -308,4 +317,72 @@ func (x *EndDeviceIndex) persistLocked() error {
 		return fmt.Errorf("enddevice index persistence: %w", err)
 	}
 	return nil
+}
+
+// NewEndDeviceIndexFromStore returns an in-memory index pre-seeded with an
+// assignment for every device already in s, keyed by each device's LFDI and
+// addressed by the id it is already stored under, with the counter resumed
+// above the highest id found.
+//
+// This is what keeps allocation from colliding with a persisted
+// EndDeviceStore after a restart (GRIDAPPSD/ieee-2030_5-server-go#443): the
+// store's records outlive this type's own in-memory state, so an unseeded
+// NewEndDeviceIndex would reissue an id a persisted device already occupies.
+// Call this in place of NewEndDeviceIndex wherever the index sits in front
+// of a store that may already hold records, whether or not the index itself
+// is also configured with a persistence path.
+//
+// A record whose id is not one of this allocator's own canonical decimal
+// ids, or whose LFDI is blank, is not entered into byKey: Allocate could
+// never look it up by that key regardless. Its numeric id, if it has one,
+// still raises the counter floor, so the slot is never reissued.
+//
+// When two records share one LFDI (GRIDAPPSD/ieee-2030_5-server-go#446),
+// only the FIRST one reached in the store's own snapshot order is entered
+// into byKey; every later one with that LFDI is skipped. Snapshot order is
+// the store's sorted key order (lexicographic on the id STRING, not
+// creation order or numeric value: "10" sorts before "9"), so which of the
+// two records the LFDI resolves to is not the one that registered first.
+// Both records carry the caller's own LFDI regardless of which wins, so no
+// cross-identity record becomes reachable this way.
+//
+// A skipped record is logged, once, as a count rather than by id or LFDI:
+// this is a boot-time summary for an operator, and it must not put a device
+// identifier in the log any more than the request-time paths do.
+func NewEndDeviceIndexFromStore(s *EndDeviceStore) *EndDeviceIndex {
+	x := NewEndDeviceIndex()
+	highest := uint64(firstIndex - 1)
+	skipped := 0
+	for _, r := range s.snapshotEndDevices() {
+		n, err := strconv.ParseUint(r.ID, 10, 64)
+		if err != nil || strconv.FormatUint(n, 10) != r.ID || n < firstIndex {
+			skipped++
+			continue
+		}
+		if n > highest {
+			highest = n
+		}
+		if r.Device.LFDI == "" {
+			skipped++
+			continue
+		}
+		if _, dup := x.byKey[r.Device.LFDI]; dup {
+			skipped++
+			continue
+		}
+		x.byKey[r.Device.LFDI] = r.ID
+		x.byIndex[r.ID] = r.Device.LFDI
+	}
+	if skipped > 0 {
+		log.Printf("enddevice index: seeding from the store skipped %d record(s): non-canonical id, blank LFDI, or LFDI shared with another record", skipped)
+	}
+	// highest+1 wraps to 0 when a stored id is math.MaxUint64. Pin x.next at
+	// MaxUint64 instead, so Allocate's own overflow guard refuses cleanly
+	// rather than the wrap happening here, silently, before Allocate ever runs.
+	if highest == math.MaxUint64 {
+		x.next = math.MaxUint64
+	} else {
+		x.next = highest + 1
+	}
+	return x
 }

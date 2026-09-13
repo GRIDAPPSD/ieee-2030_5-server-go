@@ -82,7 +82,7 @@ func TestCreationLogNamesTheResolutionOutcome(t *testing.T) {
 
 	responses := map[string]*httptest.ResponseRecorder{
 		"canceled":      canceled,
-		"lookuptimeout": postSubscription(t, h, "lookuptimeout", "/edev/1/fsa", destURI("hang.test")),
+		"lookuptimeout": postSubscriptionWithin(t, h, "lookuptimeout", "/edev/1/fsa", destURI("hang.test"), 5*time.Second),
 		"nxdomain":      postSubscription(t, h, "nxdomain", "/edev/1/fsa", destURI("nxdomain.test")),
 		"resolverfail":  postSubscription(t, h, "resolverfail", "/edev/1/fsa", destURI("timeout.test")),
 	}

@@ -209,8 +209,12 @@ func TestDeliverBoundsHungLookup(t *testing.T) {
 	m := NewManager(&mockSubStore{}, 1, 1)
 	m.client.Timeout = deliveryTimeout
 	m.guard.dialTimeout = deliveryTimeout
+	var lookupBudget atomic.Int64
 	m.guard.lookup = func(ctx context.Context, host string) ([]netip.Addr, error) {
 		defer once.Do(func() { close(returned) })
+		if d, ok := ctx.Deadline(); ok {
+			lookupBudget.Store(int64(time.Until(d)))
+		}
 		select {
 		case <-ctx.Done():
 			return nil, &net.DNSError{Err: ctx.Err().Error(), Name: host, IsTimeout: true, UnwrapErr: ctx.Err()}
@@ -236,6 +240,10 @@ func TestDeliverBoundsHungLookup(t *testing.T) {
 	case <-returned:
 	default:
 		t.Errorf("the lookup was still running when the delivery attempt returned after %v", elapsed)
+	}
+	// The lookup gets half the delivery timeout, leaving the rest to connect.
+	if b := time.Duration(lookupBudget.Load()); b < 300*time.Millisecond || b > deliveryTimeout/2+50*time.Millisecond {
+		t.Errorf("lookup budget = %v, want about half of the %v delivery timeout", b, deliveryTimeout)
 	}
 }
 
@@ -283,6 +291,9 @@ func TestDeliveryClientIgnoresInheritedDialHooks(t *testing.T) {
 		return net.Dial(network, addr)
 	}
 	standIn.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	standIn.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{
+		"inherited-proto": func(string, *tls.Conn) http.RoundTripper { return nil },
+	}
 
 	m := NewManager(&mockSubStore{}, 1, 1)
 	m.client = newNotificationClient(m.guard, standIn)
@@ -307,8 +318,50 @@ func TestDeliveryClientIgnoresInheritedDialHooks(t *testing.T) {
 	if tr.TLSClientConfig != nil && tr.TLSClientConfig.InsecureSkipVerify {
 		t.Error("delivery client inherited InsecureSkipVerify from the base transport")
 	}
+	if _, ok := tr.TLSNextProto["inherited-proto"]; ok {
+		t.Error("delivery client inherited a TLSNextProto handler from the base transport")
+	}
 
 	if base := http.DefaultTransport.(*http.Transport); base.DialTLSContext != nil || base.DialTLS != nil {
 		t.Error("the test must not modify the process-wide http.DefaultTransport")
+	}
+}
+
+// Creation resolves under creationResolveTimeout in the production wiring. The
+// bound keeps a Subscription POST from holding its client for long.
+func TestManagerCreationLookupUsesResolveTimeout(t *testing.T) {
+	t.Parallel()
+
+	if creationResolveTimeout <= 0 || creationResolveTimeout > 10*time.Second {
+		t.Fatalf("creationResolveTimeout = %v, want a positive bound of at most 10s", creationResolveTimeout)
+	}
+	m := NewManager(&mockSubStore{}, 1, 1)
+	var budget time.Duration
+	var hasDeadline bool
+	m.guard.lookup = func(ctx context.Context, _ string) ([]netip.Addr, error) {
+		d, ok := ctx.Deadline()
+		budget, hasDeadline = time.Until(d), ok
+		return []netip.Addr{netip.MustParseAddr("192.0.2.10")}, nil
+	}
+	if err := m.ValidateNotificationURI(context.Background(), "http://allowed.test/n"); err != nil {
+		t.Fatalf("ValidateNotificationURI: %v", err)
+	}
+	if !hasDeadline || budget <= creationResolveTimeout-time.Second || budget > creationResolveTimeout {
+		t.Errorf("creation lookup budget = %v (deadline set: %v), want just under %v", budget, hasDeadline, creationResolveTimeout)
+	}
+}
+
+// A query that url.ParseQuery rejects is replaced whole: its values cannot be
+// told apart from its names.
+func TestRedactURIUnparseableQuery(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		"http://allowed.test/n?token=%zzs3cret",
+		"http://allowed.test/n?token=s3cret;site=north",
+	} {
+		if got, want := redactURI(raw), "http://allowed.test/n?redacted"; got != want {
+			t.Errorf("redactURI(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }

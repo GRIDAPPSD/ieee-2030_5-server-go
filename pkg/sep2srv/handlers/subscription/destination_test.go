@@ -384,6 +384,22 @@ func runManager(t *testing.T, mgr *subscription.Manager) {
 
 // postSubscription drives POST /edev/{id}/sub through a mux registered the
 // way the protocol router registers it.
+// postSubscriptionWithin posts like postSubscription but fails the test after
+// d, so a request that blocks fails fast instead of at the package timeout.
+func postSubscriptionWithin(t *testing.T, h http.HandlerFunc, edevID, resource, uri string, d time.Duration) *httptest.ResponseRecorder {
+	t.Helper()
+	req := newSubscriptionRequest(t, context.Background(), edevID, resource, uri)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- serveSubscription(h, req) }()
+	select {
+	case rec := <-done:
+		return rec
+	case <-time.After(d):
+		t.Fatalf("POST for EndDevice %q did not finish within %v", edevID, d)
+		return nil
+	}
+}
+
 func postSubscription(t *testing.T, h http.HandlerFunc, edevID, resource, uri string) *httptest.ResponseRecorder {
 	t.Helper()
 	return serveSubscription(h, newSubscriptionRequest(t, context.Background(), edevID, resource, uri))

@@ -31,8 +31,10 @@ type seedRecord struct {
 }
 
 // readSeedRecord returns the seeded set. A missing file is an empty set. Any
-// other content it cannot trust fails, an empty file included: reading that
-// as an empty set would recreate every record deleted since it was seeded.
+// other content it cannot trust fails: an unreadable or empty file, an unknown
+// version, no records, or a key whose shape does not fit its kind. The writer
+// produces none of these, and reading one as an empty or partial set would
+// recreate records deleted since they were seeded.
 func readSeedRecord(path string) (map[seedKey]struct{}, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -48,14 +50,35 @@ func readSeedRecord(path string) (map[seedKey]struct{}, error) {
 	if rec.Version != seedRecordVersion {
 		return nil, fmt.Errorf("seed record %s: unsupported version %d (want %d)", path, rec.Version, seedRecordVersion)
 	}
+	// Absent, null and [] all decode to an empty slice. The seed record is
+	// written only after a key is added, so it always holds one.
+	if len(rec.Records) == 0 {
+		return nil, fmt.Errorf("seed record %s: no records", path)
+	}
 	seeded := make(map[seedKey]struct{}, len(rec.Records))
 	for i, k := range rec.Records {
-		if (k.Kind != kindEndDevice && k.Kind != kindDERProgram) || k.ID == "" {
-			return nil, fmt.Errorf("seed record %s: records[%d]: invalid key kind=%q id=%q", path, i, k.Kind, k.ID)
+		if !k.wellFormed() {
+			return nil, fmt.Errorf("seed record %s: records[%d]: invalid key kind=%q parent=%q id=%q", path, i, k.Kind, k.Parent, k.ID)
 		}
 		seeded[k] = struct{}{}
 	}
 	return seeded, nil
+}
+
+// wellFormed reports whether the key has the shape its kind is written with:
+// an EndDevice has no parent and a DERProgram always has one.
+func (k seedKey) wellFormed() bool {
+	if k.ID == "" {
+		return false
+	}
+	switch k.Kind {
+	case kindEndDevice:
+		return k.Parent == ""
+	case kindDERProgram:
+		return k.Parent != ""
+	default:
+		return false
+	}
 }
 
 // writeSeedRecord replaces the seed record through a synced temporary file

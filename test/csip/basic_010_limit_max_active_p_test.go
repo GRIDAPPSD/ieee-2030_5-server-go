@@ -1,7 +1,7 @@
 // CSIP V1.2 Section 8.10 - Inverter Control: Limit Max Active Power Mode.
 //
 // BASIC-010 proves the server renders an immediate-control DERControl
-// carrying opModMaxLimW = 5000 (50.00%; Figure 10 states the limit as 5 kW). No DERCurve reference.
+// carrying opModMaxLimW = 5000 (50.00%; Figure 10: Default 5000 (50%), Test 6000). No DERCurve reference.
 //
 // V1.2 procedure step -> assertion mapping (per V1.2 Section 8.10):
 //

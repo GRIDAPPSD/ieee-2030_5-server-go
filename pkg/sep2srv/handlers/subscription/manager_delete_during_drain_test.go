@@ -2,6 +2,7 @@ package subscription_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -61,13 +62,10 @@ func TestHandleDeleteSubscription_ManagerClosedLogsAndReturns204(t *testing.T) {
 	}
 }
 
-// TestDeleteDuringDrainDoesNotPanic covers acceptance criterion 4: the
-// shutdown order between the HTTP server drain and the manager close is
-// not synchronized (see the Start doc comment in manager.go, and
-// internal/server/server.go:198 vs :360, where both select on the SAME
-// ctx.Done() independently). This test drives a DELETE through the full
-// handler concurrently with Manager.Close, standing in for a DELETE
-// arriving while the HTTP server is draining in-flight requests.
+// TestDeleteDuringDrainDoesNotPanic runs DELETEs concurrently with Close so
+// the race detector sees enqueue and Close interleave. Whether any DELETE
+// lands after Close is left to scheduling; TestDeleteHeldAcrossCloseSeesClosedError
+// forces that overlap and asserts the closed error.
 func TestDeleteDuringDrainDoesNotPanic(t *testing.T) {
 	s := memory.NewSubscriptionStore()
 	for i := range 50 {
@@ -123,5 +121,156 @@ func TestDeleteDuringDrainDoesNotPanic(t *testing.T) {
 		if _, err := s.Store.Get(context.Background(), id); err == nil {
 			t.Errorf("sub-%d still present in store after DELETE", i)
 		}
+	}
+}
+
+// TestDeleteHeldAcrossCloseSeesClosedError fixes the overlap instead of
+// hoping for it: a first batch of DELETEs completes before shutdown, and a
+// second batch is held inside the handler, after the store delete, until
+// Close has run and a real http.Server drain is waiting on those requests.
+//
+// Not parallel: it swaps the process-wide log output (captureLog).
+func TestDeleteHeldAcrossCloseSeesClosedError(t *testing.T) {
+	logs := captureLog(t)
+
+	const perBatch = 4
+	s := memory.NewSubscriptionStore()
+	ids := make([]string, 0, 2*perBatch)
+	for _, batch := range []string{"before", "held"} {
+		for i := range perBatch {
+			id := batch + "-" + strconv.Itoa(i)
+			sub := sep2.Subscription{
+				SubscribableResource: sep2.SubscribableResource{
+					Resource: sep2.Resource{Href: "/edev/edev-1/sub/" + id},
+				},
+				SubscribedResource: "/edev/edev-1",
+				NotificationURI:    "http://127.0.0.1:1/never",
+			}
+			if err := s.Create(context.Background(), id, sub); err != nil {
+				t.Fatalf("seed %s: %v", id, err)
+			}
+			ids = append(ids, id)
+		}
+	}
+
+	mgr := subscription.NewManager(&staticLister{}, 1, 2*perBatch, loopbackReceivers)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startDone := make(chan struct{})
+	go func() {
+		mgr.Start(ctx)
+		close(startDone)
+	}()
+
+	entered := make(chan struct{}, perBatch)
+	release := make(chan struct{})
+	var mu sync.Mutex
+	notifyErrs := map[string]error{}
+	notify := func(ctx context.Context, sub sep2.Subscription) error {
+		if strings.Contains(sub.Href, "/held-") {
+			entered <- struct{}{}
+			<-release
+		}
+		err := mgr.NotifyRemoved(ctx, sub)
+		mu.Lock()
+		notifyErrs[sub.Href] = err
+		mu.Unlock()
+		return err
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", subscription.HandleDeleteSubscription(s, notify))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	client := srv.Client()
+
+	del := func(id string) (int, error) {
+		req, err := http.NewRequest(http.MethodDelete, srv.URL+"/edev/edev-1/sub/"+id, nil)
+		if err != nil {
+			return 0, err
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return 0, err
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode, nil
+	}
+
+	for i := range perBatch {
+		id := "before-" + strconv.Itoa(i)
+		if code, err := del(id); err != nil || code != http.StatusNoContent {
+			t.Fatalf("DELETE %s before shutdown: status %d, err %v; want 204", id, code, err)
+		}
+	}
+
+	statuses := make([]int, perBatch)
+	reqErrs := make([]error, perBatch)
+	var wg sync.WaitGroup
+	for i := range perBatch {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			statuses[i], reqErrs[i] = del("held-" + strconv.Itoa(i))
+		}(i)
+	}
+	for range perBatch {
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("held DELETEs never reached the notify step")
+		}
+	}
+
+	cancel()
+	select {
+	case <-startDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("manager did not shut down within 2s")
+	}
+
+	shutdownDone := make(chan error, 1)
+	go func() { shutdownDone <- srv.Config.Shutdown(context.Background()) }()
+	select {
+	case err := <-shutdownDone:
+		t.Fatalf("server drain finished (err %v) while %d DELETEs were still in flight", err, perBatch)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	wg.Wait()
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Fatalf("server drain: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server drain did not finish after the held DELETEs were released")
+	}
+
+	for i := range perBatch {
+		if reqErrs[i] != nil || statuses[i] != http.StatusNoContent {
+			t.Errorf("DELETE held-%d during drain: status %d, err %v; want 204", i, statuses[i], reqErrs[i])
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, id := range ids {
+		href := "/edev/edev-1/sub/" + id
+		err, ok := notifyErrs[href]
+		switch {
+		case !ok:
+			t.Errorf("%s: notify was never called", href)
+		case strings.HasPrefix(id, "held-") && !errors.Is(err, subscription.ErrManagerClosed):
+			t.Errorf("%s: NotifyRemoved after Close returned %v, want ErrManagerClosed", href, err)
+		case strings.HasPrefix(id, "before-") && err != nil:
+			t.Errorf("%s: NotifyRemoved before Close returned %v, want nil", href, err)
+		}
+		if _, err := s.Store.Get(context.Background(), id); err == nil {
+			t.Errorf("%s still present in store after DELETE", id)
+		}
+	}
+	if got := strings.Count(logs.String(), "notification manager closed"); got != perBatch {
+		t.Errorf("handler log lines naming the closed manager = %d, want %d; log:\n%s", got, perBatch, logs.String())
 	}
 }

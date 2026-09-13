@@ -1,5 +1,5 @@
 .PHONY: build test test-cover test-race test-verbose test-e2e \
-       test-csip-server test-csip-client \
+       test-csip-server \
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
        lint gofmt-check vet clean run run-ccm run-journald run-ccm-journald \
        run-testdevice run-sunspec certs new-device \
@@ -316,10 +316,9 @@ test-epri: build certs    ## Run EPRI C client against our server (CCM mode, ser
 test-csip-server:         ## Run CSIP server-side conformance harness (requires fixtures, see test/csip/README.md)
 	./scripts/test-csip-server.sh
 
-test-csip-client:         ## CSIP client-side conformance harness (blocked on #21)
-	@echo "# Blocked: inverter client must move onto vendored gotls stack to"
-	@echo "# negotiate CCM-8 before client-side conformance can be exercised."
-	@echo "# See GRIDAPPSD/ieee-2030_5-go#21."
+# Client-side CSIP conformance moved with the inverter client to
+# ieee-2030_5-client-go; its gate is tracked there (ieee-2030_5-client-go#31),
+# not in this repository's Makefile.
 
 # #192 - CSIP harness CI integration. The two targets below shape the
 # build-tag matrix axis: `test-csip` runs the suite under the production

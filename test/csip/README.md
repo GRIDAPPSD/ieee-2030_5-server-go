@@ -38,9 +38,9 @@ server in CCM mode and runs the smoke against it:
 make test-csip-server
 ```
 
-A companion `make test-csip-client` target exists but is a stub today -
-the inverter client cannot yet negotiate `TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8`
-(see [#21](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/21)).
+Client-side CSIP conformance moved with the inverter client to the
+ieee-2030_5-client-go repository; this repository has no
+`make test-csip-client` target.
 
 ## Fixture provisioning
 

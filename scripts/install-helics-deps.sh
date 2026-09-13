@@ -18,9 +18,6 @@
 #
 # Idempotent: re-running after a clean install short-circuits both halves.
 #
-# References:
-#   * ADR-002, ADR-004 (in-house cgo wrapper against system libhelics)
-#
 # Constraint update from Craig (2026-06-02):
 #   1. GridLAB-D branch is feature/1478 (NOT develop).
 #   2. `git submodule update --init --recursive` is mandatory before each
@@ -95,7 +92,7 @@ gridlabd_already_installed_with_helics() {
     fi
     # GridLAB-D ships HELICS as the `helics_msg` class inside the `connection`
     # module. `gridlabd --version` is module-agnostic, so probe the connection
-    # module for the helics_msg class — present iff -DGLD_USE_HELICS=ON found
+    # module for the helics_msg class - present iff -DGLD_USE_HELICS=ON found
     # libhelics at configure time. Both the `gridlabd -L connection` output
     # and the linker reference to libhelics on connection.so must agree, so
     # also confirm the .so links against libhelics.

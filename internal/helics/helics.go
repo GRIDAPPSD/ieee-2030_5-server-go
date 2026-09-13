@@ -3,7 +3,7 @@
 // Package helics is an in-house cgo wrapper over the HELICS v3 C API
 // (libhelics, system-installed; resolved via pkg-config). It is built
 // only under the `helics` build tag so that the default `go build` of
-// the sep2 server stays CGO-free (per ADR-002 / ADR-004).
+// the sep2 server stays CGO-free.
 //
 // # File layout: single cgo translation unit
 //
@@ -22,10 +22,9 @@
 // C calls) in one Go file. A GNU-ld linker workaround (the
 // allow-duplicate-definition flag) was considered and rejected because
 // that flag is GNU-ld specific and is silently missing from macOS's
-// ld64; ADR-004's second 2026-06-03 correction locked the wrapper to
-// portable-prefix builds (Homebrew on macOS, Spack/Easybuild, distro
-// packages), so a GNU-ld-only flag would break the very portability
-// that ADR enshrined. We also considered an extern-shim .c file, but
+// ld64, and this wrapper targets portable-prefix builds (Homebrew on
+// macOS, Spack/Easybuild, distro packages), so a GNU-ld-only flag would
+// break that portability. We also considered an extern-shim .c file, but
 // `helics.h`, `helics_api.h`, and `helics_enums.h` all carry the same
 // file-scope const definitions, so no header subset avoids the
 // duplicates.
@@ -154,7 +153,7 @@ type Broker struct {
 
 // NewInProcess creates a root broker that runs in-process inside the
 // caller's process via helicsCreateBroker. It is suitable for unit tests
-// and for the server-owned root broker shape described in ADR-004.
+// and for a server-owned root broker.
 //
 // initString is passed verbatim to HELICS; pass an empty string to accept
 // the v3 defaults (the in-process tests rely on this).
@@ -177,7 +176,7 @@ func NewInProcess(name, initString string) (*Broker, error) {
 // existing root broker reachable at parentAddress. It maps to the HELICS 3
 // sub-broker pattern: the same helicsCreateBroker entry point with an
 // init string of "--broker=<parentAddress>". v3.6.1 has no broker-side
-// Connect entry point (see ADR-004's 2026-06-03 correction).
+// Connect entry point.
 //
 // An empty parentAddress is wrapper-side validation and returns
 // ErrEmptyParentAddress (recoverable via errors.Is). Embedded NUL bytes,
@@ -747,7 +746,7 @@ func (f *Federate) Publish(topic string, value float64) error {
 
 // Step requests time advance by dt and returns the granted ABSOLUTE
 // HELICS time. HELICS' helicsFederateRequestTime takes and returns
-// absolute simulation time, not a delta — Step preserves that semantics
+// absolute simulation time, not a delta - Step preserves that semantics
 // so callers can compare granted vs. requested without an extra
 // bookkeeping layer. Example: after Step(100ms) on a fresh federate the
 // granted return is 100ms (granted_absolute), not 100ms (delta).
@@ -801,7 +800,7 @@ func (f *Federate) Step(dt time.Duration) (time.Duration, error) {
 
 	// Wake the pump so it drains updated inputs. Non-blocking: a
 	// pending trigger means the pump has not caught up yet, which is
-	// fine — it will see this Step's updates on its next pass.
+	// fine - it will see this Step's updates on its next pass.
 	select {
 	case f.pumpTrigger <- struct{}{}:
 	default:
@@ -853,13 +852,13 @@ func (f *Federate) pumpUpdates() {
 // updated input it pulls the latest value and pushes a Value onto the
 // channel.
 //
-// Error policy (no in-process error surface yet — #303 will add a
+// Error policy (no in-process error surface yet - #303 will add a
 // Federate.Errors() channel):
 //
 //   - helicsFederateGetCurrentTime failure: skip the entire drain pass
 //     and log via slog. We do NOT publish Value{Time:0} for failed
 //     timestamps because that is indistinguishable from a legitimate
-//     t=0 update (data-invariants rule 1 — silent wrong data).
+//     t=0 update (data-invariants rule 1 - silent wrong data).
 //   - helicsInputGetDouble failure: skip that one input, log via slog
 //     with the topic name, and continue draining the rest. We do NOT
 //     publish a sentinel value for the same reason.
@@ -952,11 +951,11 @@ func (f *Federate) closeSubscriptionChannels() {
 // Teardown ordering:
 //  1. Mark f.closed=true under f.mu so future Step calls bail with
 //     ErrFederateClosed (and cannot increment f.inFlight).
-//  2. f.inFlight.Wait — drain any Step calls that already passed the
+//  2. f.inFlight.Wait - drain any Step calls that already passed the
 //     gate and are inside a blocking cgo call against the handle. This
 //     is what makes the H1 "release mu before cgo" pattern safe: the
 //     handle is not freed until in-flight callers complete.
-//  3. close(f.pumpDone); f.pumpWG.Wait — stop and join the pump
+//  3. close(f.pumpDone); f.pumpWG.Wait - stop and join the pump
 //     goroutine so its drainUpdates cgo calls have completed.
 //  4. helicsFederateFinalize, helicsFederateFree.
 //  5. Close the owned broker (if any).

@@ -1,11 +1,13 @@
 package memory_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -340,5 +342,49 @@ func TestEndDeviceIndexAssignmentsIsACopy(t *testing.T) {
 
 	if got, ok := x.IndexFor("device-a"); !ok || got != idx {
 		t.Errorf("mutating the Assignments copy changed the allocator: got %q ok=%v, want %q", got, ok, idx)
+	}
+}
+
+// TestEndDeviceIndexFromStoreSkipsOccupiedIndexesAfterRestart is acceptance
+// criterion 2 for GRIDAPPSD/ieee-2030_5-server-go#443. EndDeviceStore
+// persists its records across a restart while a plain NewEndDeviceIndex()
+// does not, so a freshly booted, unseeded index handing out "1", "2", ...
+// reissues an id a persisted device already occupies. Seeding the new index
+// from the reloaded store's own contents closes that gap without adding a
+// second on-disk file for the index to fall out of sync with.
+func TestEndDeviceIndexFromStoreSkipsOccupiedIndexesAfterRestart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "enddevices.json")
+
+	first, err := memory.NewEndDeviceStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("NewEndDeviceStoreWithPersistence: %v", err)
+	}
+	if err := first.Create(ctx, "1", sep2.EndDevice{SFDI: "1111111111111111", LFDI: "lfdi-1"}); err != nil {
+		t.Fatalf("create device 1: %v", err)
+	}
+	if err := first.Create(ctx, "2", sep2.EndDevice{SFDI: "2222222222222222", LFDI: "lfdi-2"}); err != nil {
+		t.Fatalf("create device 2: %v", err)
+	}
+
+	// Restart: a new process reloads the persisted store from disk and
+	// builds a fresh index seeded from it, the way internal/server/server.go
+	// wires the two together.
+	restarted, err := memory.NewEndDeviceStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("reload after restart: %v", err)
+	}
+	idx := memory.NewEndDeviceIndexFromStore(restarted)
+
+	got, err := idx.Allocate("lfdi-3")
+	if err != nil {
+		t.Fatalf("Allocate after restart: %v", err)
+	}
+	if got == "1" || got == "2" {
+		t.Fatalf("Allocate after restart returned %q, which is already occupied by a persisted device", got)
+	}
+	if got != "3" {
+		t.Errorf("Allocate after restart = %q, want %q (first free index)", got, "3")
 	}
 }

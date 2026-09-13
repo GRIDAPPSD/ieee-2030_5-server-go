@@ -309,3 +309,48 @@ func (x *EndDeviceIndex) persistLocked() error {
 	}
 	return nil
 }
+
+// NewEndDeviceIndexFromStore returns an in-memory index pre-seeded with an
+// assignment for every device already in s, keyed by each device's LFDI and
+// addressed by the id it is already stored under, with the counter resumed
+// above the highest id found.
+//
+// This is what keeps allocation from colliding with a persisted
+// EndDeviceStore after a restart (GRIDAPPSD/ieee-2030_5-server-go#443): the
+// store's records outlive this type's own in-memory state, so an unseeded
+// NewEndDeviceIndex would reissue an id a persisted device already occupies.
+// Call this in place of NewEndDeviceIndex wherever the index sits in front
+// of a store that may already hold records, whether or not the index itself
+// is also configured with a persistence path.
+//
+// A record whose id is not one of this allocator's own canonical decimal
+// ids, whose LFDI is blank, or whose LFDI is shared with another record
+// (GRIDAPPSD/ieee-2030_5-server-go#446) is not entered into byKey: Allocate
+// could never look it up by that key regardless. Its numeric id, if it has
+// one, still raises the counter floor, so the slot is never reissued.
+func NewEndDeviceIndexFromStore(s *EndDeviceStore) *EndDeviceIndex {
+	x := NewEndDeviceIndex()
+	highest := uint64(firstIndex - 1)
+	for _, r := range s.snapshotEndDevices() {
+		n, err := strconv.ParseUint(r.ID, 10, 64)
+		if err != nil || strconv.FormatUint(n, 10) != r.ID || n < firstIndex {
+			continue
+		}
+		if n > highest {
+			highest = n
+		}
+		if _, dup := x.byIndex[r.ID]; dup {
+			continue
+		}
+		if r.Device.LFDI == "" {
+			continue
+		}
+		if _, dup := x.byKey[r.Device.LFDI]; dup {
+			continue
+		}
+		x.byKey[r.Device.LFDI] = r.ID
+		x.byIndex[r.ID] = r.Device.LFDI
+	}
+	x.next = highest + 1
+	return x
+}

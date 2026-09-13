@@ -122,9 +122,13 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 
 	// Initialize stores
 	stores := &Stores{
-		EndDevices:               endDevices,
-		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
-		EndDeviceIndexes:         memory.NewEndDeviceIndex(),
+		EndDevices:        endDevices,
+		EndDeviceManagers: memory.NewEndDeviceManagementStore(),
+		// Seeded from endDevices, not a bare NewEndDeviceIndex: endDevices can
+		// be persisted while this allocator's own assignments are not, so an
+		// unseeded index would reissue an id a restart-reloaded device already
+		// occupies (#443).
+		EndDeviceIndexes:         memory.NewEndDeviceIndexFromStore(endDevices),
 		Registrations:            registrations,
 		RegistrationPolicy:       memory.RegistrationPolicy{}, // fail-closed: no self-registration pIN resolver wired yet
 		MirrorUsagePoints:        memory.NewStore[sep2.MirrorUsagePoint](),

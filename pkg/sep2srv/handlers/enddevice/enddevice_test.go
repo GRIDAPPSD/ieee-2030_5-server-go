@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -148,6 +149,95 @@ func TestHandleCreateEndDeviceDuplicate(t *testing.T) {
 	}
 	if loc := w2.Header().Get("Location"); loc == "" {
 		t.Error("duplicate POST missing Location header")
+	}
+}
+
+// fixedIndexer always allocates the same index, whatever deviceKey it is
+// asked for. The production allocator (memory.EndDeviceIndex) hands out a
+// fresh, unused index to every new key, so it cannot itself force the
+// collision this test drives; fixedIndexer is the seam that puts two
+// different identities on one index deterministically, without depending on
+// the allocator's internal state.
+type fixedIndexer struct{ id string }
+
+func (f fixedIndexer) Allocate(string) (string, error) { return f.id, nil }
+
+const (
+	otherLFDI = "1111111111111111111111111111111111111111111111"
+	otherSFDI = "1111111111111111"
+)
+
+// TestHandleCreateEndDeviceIndexCollisionDoesNotLeak is acceptance criterion
+// 3 for GRIDAPPSD/ieee-2030_5-server-go#443: when two different certificate
+// identities are allocated the same index, the second caller must receive
+// neither the first record's fields nor its Location.
+func TestHandleCreateEndDeviceIndexCollisionDoesNotLeak(t *testing.T) {
+	t.Parallel()
+
+	s := memory.NewEndDeviceStore()
+	idx := fixedIndexer{id: "1"}
+
+	first := httptest.NewRecorder()
+	h1 := coreedev.HandleCreateEndDevice(s, idx, identityOK(otherLFDI, otherSFDI), sfdiFirst8)
+	h1.ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/edev", nil))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first POST status = %d, want 201; body=%s", first.Code, first.Body.String())
+	}
+	firstLocation := first.Header().Get("Location")
+
+	second := httptest.NewRecorder()
+	h2 := coreedev.HandleCreateEndDevice(s, idx, identityOK(testLFDI, testSFDI), sfdiFirst8)
+	h2.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/edev", nil))
+
+	if second.Code == http.StatusOK || second.Code == http.StatusCreated {
+		t.Fatalf("second POST status = %d, want a refusal: a second identity colliding on an occupied index must never be served a 200 or 201", second.Code)
+	}
+	body := second.Body.String()
+	if strings.Contains(body, otherLFDI) {
+		t.Errorf("second POST body leaked the first identity's LFDI: %s", body)
+	}
+	if strings.Contains(body, otherSFDI) {
+		t.Errorf("second POST body leaked the first identity's SFDI: %s", body)
+	}
+	if loc := second.Header().Get("Location"); loc != "" {
+		t.Errorf("second POST Location = %q, want empty: must not point at the first identity's record", loc)
+	}
+	if loc := second.Header().Get("Location"); loc == firstLocation && loc != "" {
+		t.Errorf("second POST Location reused the first identity's Location %q", firstLocation)
+	}
+}
+
+// TestHandleCreateEndDeviceSFDICollisionDoesNotLeak is the twin of the index
+// collision above, on the store's other existing-record lookup: GetBySFDI.
+// IEEE 2030.5's SFDI is a short checksum-including derivative, not a
+// collision-safe hash, so two different certificates can end up sharing one
+// even though their LFDIs differ. The same disclosure rule has to hold here
+// too, or fixing only the index path leaves this path as the untested twin.
+func TestHandleCreateEndDeviceSFDICollisionDoesNotLeak(t *testing.T) {
+	t.Parallel()
+
+	s := memory.NewEndDeviceStore()
+	// Simulates a pre-existing record that shares testSFDI with a different
+	// LFDI: the store keys GetBySFDI purely on the SFDI field.
+	colliding := sep2.EndDevice{SFDI: testSFDI, LFDI: otherLFDI}
+	colliding.Href = "/edev/1"
+	if err := s.Create(context.Background(), "1", colliding); err != nil {
+		t.Fatalf("seed colliding record: %v", err)
+	}
+
+	h := coreedev.HandleCreateEndDevice(s, memory.NewEndDeviceIndex(), identityOK(testLFDI, testSFDI), sfdiFirst8)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/edev", nil))
+
+	if w.Code == http.StatusOK || w.Code == http.StatusCreated {
+		t.Fatalf("status = %d, want a refusal: an SFDI collision with a different LFDI must never be served a 200 or 201", w.Code)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, otherLFDI) {
+		t.Errorf("body leaked the colliding record's LFDI: %s", body)
+	}
+	if loc := w.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want empty: must not point at the colliding record", loc)
 	}
 }
 

@@ -25,6 +25,11 @@ import (
 // (CSIP V1.2 MAINT-002 step 5).
 const EndDeviceListHref = "/edev"
 
+// deviceIndexConflictMessage is the client-visible body for the 409 answered
+// when the record already occupying an address belongs to a different
+// certificate identity than the caller's (GRIDAPPSD/ieee-2030_5-server-go#443).
+const deviceIndexConflictMessage = "device index conflict"
+
 // ResourceNotifier dispatches subscription notifications for a resource
 // href. It is the minimal surface HandleDeleteEndDevice needs from the
 // subscription package and is defined here at the consumer (Pike rule:
@@ -197,7 +202,16 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 		existing, err := s.GetBySFDI(r.Context(), sfdi)
 		switch {
 		case err == nil:
-			// Already exists: return 200 with existing device
+			if existing.LFDI != lfdi {
+				// SFDI collision: IEEE 2030.5's SFDI is a short
+				// checksum-including derivative, not a collision-safe hash,
+				// so two different certificates can share one even though
+				// their LFDIs differ. Same disclosure rule as the index
+				// collision below: answer without the other identity's record.
+				http.Error(w, deviceIndexConflictMessage, http.StatusConflict)
+				return
+			}
+			// Already exists under this identity: return 200 with existing device
 			w.Header().Set("Location", existing.Href)
 			encoding.WriteXML(w, http.StatusOK, &existing)
 			return
@@ -235,14 +249,26 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 
 		if err := s.Create(r.Context(), id, dev); err != nil {
 			if errors.Is(err, store.ErrAlreadyExists) {
-				// Race condition: another goroutine registered this device.
-				// If the record was deleted between Create and Get, return 5xx
-				// rather than a zero-value 200 (silent data loss).
+				// Race condition: another goroutine registered something at
+				// this id. If the record was deleted between Create and Get,
+				// return 5xx rather than a zero-value 200 (silent data loss).
 				existing, getErr := s.Get(r.Context(), id)
 				if getErr != nil {
 					srverr.InternalMessage(w, r, "registration race", fmt.Errorf("re-read after ErrAlreadyExists: %w", getErr))
 					return
 				}
+				if existing.LFDI != lfdi {
+					// idx.Allocate gave this caller an id another identity
+					// already holds (GRIDAPPSD/ieee-2030_5-server-go#443).
+					// idx.Allocate is idempotent per key, so retrying under
+					// the same certificate reproduces this every time; 409
+					// tells the client that, unlike a 500, which reads as
+					// transient. Never disclose the occupying record.
+					http.Error(w, deviceIndexConflictMessage, http.StatusConflict)
+					return
+				}
+				// Same identity raced its own registration: serve the record
+				// it already has.
 				w.Header().Set("Location", existing.Href)
 				encoding.WriteXML(w, http.StatusOK, &existing)
 				return

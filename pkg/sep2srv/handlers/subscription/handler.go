@@ -242,6 +242,7 @@ func HandleDeleteSubscription(subStore *memory.SubscriptionStore, notifyRemoved 
 			return
 		}
 
+		edevID := r.PathValue("id")
 		subID := r.PathValue("subId")
 
 		// Look up the subscription record before Delete so we can hand
@@ -256,6 +257,17 @@ func HandleDeleteSubscription(subStore *memory.SubscriptionStore, notifyRemoved 
 				return
 			}
 			srverr.Internal(w, r, fmt.Errorf("the lookup before delete failed: %w", getErr))
+			return
+		}
+
+		// ownershipGate already confirmed the caller owns or manages
+		// {id}; it never sees {subId}. Without this check, a subId
+		// created under a different EndDevice was still deletable by
+		// any caller who could reach this route (#435). 404, not 403,
+		// so the response can't be used to probe another device's
+		// subscription IDs.
+		if sub.Href != fmt.Sprintf("/edev/%s/sub/%s", edevID, subID) {
+			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 

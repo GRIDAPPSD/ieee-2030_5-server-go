@@ -45,10 +45,11 @@ type MessagingProgramList struct {
 }
 
 // TextMessage is a text message event.
-// Extends Event (RandomizableEvent base).
+// Extends Event, not RandomizableEvent: sep.xsd derives it from Event
+// directly, so it carries no randomizeStart/randomizeDuration (#107).
 type TextMessage struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns TextMessage"`
-	RandomizableEvent
+	Event
 
 	// XSD element order:
 	Originator string `xml:"originator,omitempty"`
@@ -70,14 +71,6 @@ func (t TextMessage) Copy() TextMessage {
 	if t.Interval != nil {
 		i := *t.Interval
 		c.Interval = &i
-	}
-	if t.RandomizeDuration != nil {
-		v := *t.RandomizeDuration
-		c.RandomizeDuration = &v
-	}
-	if t.RandomizeStart != nil {
-		v := *t.RandomizeStart
-		c.RandomizeStart = &v
 	}
 	return c
 }

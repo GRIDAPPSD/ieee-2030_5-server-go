@@ -5,9 +5,12 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
+	"sync"
+	"time"
 
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 )
@@ -49,52 +52,34 @@ func NewCCMServerConfigWithExtraCAs(certFile, keyFile, caFile string, extraCAFil
 	return &gotls.Config{
 		Certificates: []gotls.Certificate{cert},
 		ClientCAs:    caPool,
-		// IEEE 2030.5 §6.11 / CSIP §6.2 device certs carry a critical
+		// IEEE 2030.5 section 6.11 / CSIP section 6.2 device certs carry a critical
 		// HardwareModuleName SAN that stdlib x509 leaves in
 		// UnhandledCriticalExtensions, which would cause RequireAndVerify
 		// to fail closed at handshake. RequireAnyClientCert is intentional,
 		// not a weakening: the full chain walk (signature, expiry, basic
 		// constraints, key usage, trust anchor) runs in VerifyPeerCertificate
 		// below via VerifyPeerCertWithHardwareModuleSAN, after the HMN OID
-		// is acknowledged. See internal/tls/verify.go and tests
+		// is acknowledged. See pkg/sep2tls/verify.go and tests
 		// TestVerifyRejectsCertSignedByDifferentCA, TestMutualTLSHandshake.
 		ClientAuth: gotls.RequireAnyClientCert,
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			return VerifyPeerCertWithHardwareModuleSAN(rawCerts, caPool)
 		},
-		// MinVersion stays at the IEEE 2030.5 §6.7 spec floor (TLS 1.2),
-		// so a spec-strict CCM-8 client still negotiates exactly as
-		// before. MaxVersion is raised to 1.3 to accept clients that
-		// offer only TLS 1.3 (observed with the EPRI reference client).
-		// gotls is a vendored fork of Go's crypto/tls that implements
-		// TLS 1.3 (see handshake_server_tls13.go); its 1.3 handshake path
-		// calls the same processCertsFromClient used by the 1.2 path, so
-		// ClientAuth and VerifyPeerCertificate above are enforced
-		// identically under 1.3. CipherSuites below still governs 1.2
-		// only: gotls, like stdlib crypto/tls, selects TLS 1.3 cipher
-		// suites from its own fixed list and ignores CipherSuites for a
-		// 1.3 connection, so CCM-8 is never offered or negotiated under
-		// 1.3 and no additional 1.3 suite needs to be listed here.
+		// IEEE 2030.5-2018 clauses 6.1 and 6.4 (and IEEE 2030.5-2023) specify
+		// TLS 1.2; no server configuration accepts TLS 1.3. No exported
+		// field, option, or environment variable raises MaxVersion. CCM-8 is
+		// ranked ahead of GCM in the fork's preference order (cipher_suites_ccm.go),
+		// so it wins when a client offers both.
 		MinVersion: gotls.VersionTLS12,
-		MaxVersion: gotls.VersionTLS13,
+		MaxVersion: gotls.VersionTLS12,
 		CipherSuites: []uint16{
 			gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8,
 			0xC02B, // TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 (fallback)
 		},
 		CurvePreferences: []gotls.CurveID{gotls.CurveP256},
-		// This is a low-frequency device-control listener, not a high-volume
-		// web endpoint: session resumption buys almost nothing here, and a
-		// resumed TLS 1.3 session restores the peer cert from the ticket
-		// without re-running VerifyPeerCertificate above, so the CSIP
-		// HardwareModuleName SAN check would be skipped on resumption.
-		// Disabling tickets forces a full mutual-auth handshake, with a
-		// fresh SAN verification, on every connection.
+		// Tickets off: a resumed session skips VerifyPeerCertificate above,
+		// bypassing the HardwareModuleName SAN check.
 		SessionTicketsDisabled: true,
-		// Safe only because callers use net/http or Conn.Read (via
-		// SetupCCMServer/CCMIdentityMiddleware below), both of which finish
-		// Handshake (and any client-cert rejection) before dispatching data;
-		// a raw handler writing before Handshake would leak the server's
-		// first flight to an unauthenticated TLS 1.3 peer.
 	}, nil
 }
 
@@ -141,4 +126,139 @@ func CCMIdentityMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// ccmHandshakeTimeout bounds the per-connection handshake WrapCCMListener
+// runs, so a peer that opens the TCP connection and never speaks TLS cannot
+// hold a goroutine indefinitely. A var, not a const, so export_test.go can
+// shrink it for a test; production code never assigns to it.
+var ccmHandshakeTimeout = 10 * time.Second
+
+// WrapCCMListener wraps a gotls listener so a handshake failure is logged
+// the way net/http logs one for *tls.Conn (net/http's own "TLS handshake
+// error" case in its Serve dispatch). That case never fires for *gotls.Conn:
+// it is a different concrete type, so net/http leaves the handshake to run
+// lazily on the connection's first Read, and a failure there reaches no log
+// line. Pass the serving http.Server's ErrorLog and serve the returned
+// listener in place of inner. A nil errorLog logs through the standard
+// logger, as net/http does when ErrorLog is nil.
+//
+// A temporary Accept error is returned to the caller and accepting continues,
+// so net/http's retry works. Close cancels handshakes in flight and returns
+// once every goroutine the listener started has exited.
+func WrapCCMListener(inner net.Listener, errorLog *log.Logger) net.Listener {
+	if errorLog == nil {
+		errorLog = log.Default()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	l := &ccmLoggingListener{
+		Listener: inner,
+		errorLog: errorLog,
+		conns:    make(chan net.Conn),
+		errs:     make(chan error),
+		stopped:  make(chan struct{}),
+		done:     ctx.Done(),
+		cancel:   cancel,
+	}
+	l.wg.Add(1)
+	go l.acceptLoop(ctx)
+	return l
+}
+
+type ccmLoggingListener struct {
+	net.Listener
+	errorLog *log.Logger
+
+	conns chan net.Conn
+	errs  chan error // temporary Accept errors, for the caller to retry
+
+	// stopped is closed when acceptLoop returns; acceptErr is written before.
+	stopped   chan struct{}
+	acceptErr error
+
+	done   <-chan struct{}
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+}
+
+func (l *ccmLoggingListener) acceptLoop(ctx context.Context) {
+	defer l.wg.Done()
+	defer close(l.stopped)
+	for {
+		c, err := l.Listener.Accept()
+		if err == nil {
+			l.wg.Add(1)
+			go l.handshake(ctx, c)
+			continue
+		}
+		if ctx.Err() == nil && isTemporary(err) {
+			select {
+			case l.errs <- err:
+				continue
+			case <-ctx.Done():
+			}
+		}
+		if ctx.Err() != nil {
+			err = net.ErrClosed
+		}
+		l.acceptErr = err
+		return
+	}
+}
+
+// isTemporary matches the errors net/http's Serve loop retries, such as
+// EMFILE, using the same non-unwrapping check.
+func isTemporary(err error) bool {
+	te, ok := err.(interface{ Temporary() bool })
+	return ok && te.Temporary()
+}
+
+func (l *ccmLoggingListener) handshake(ctx context.Context, c net.Conn) {
+	defer l.wg.Done()
+	if gc, ok := c.(*gotls.Conn); ok {
+		hsCtx, cancel := context.WithTimeout(ctx, ccmHandshakeTimeout)
+		err := gc.HandshakeContext(hsCtx)
+		cancel()
+		if err != nil {
+			// A handshake cut short by Close is not the peer's failure.
+			if ctx.Err() == nil {
+				l.errorLog.Printf("http: TLS handshake error from %s: %v", c.RemoteAddr(), err)
+			}
+			_ = c.Close()
+			return
+		}
+	}
+	select {
+	case l.conns <- c:
+	case <-ctx.Done():
+		_ = c.Close()
+	}
+}
+
+func (l *ccmLoggingListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.conns:
+		// Both select cases can be ready after Close; never hand out a
+		// connection once the listener is closed.
+		select {
+		case <-l.done:
+			_ = c.Close()
+			return nil, net.ErrClosed
+		default:
+			return c, nil
+		}
+	case err := <-l.errs:
+		return nil, err
+	case <-l.stopped:
+		return nil, l.acceptErr
+	}
+}
+
+// Close stops accepting, cancels handshakes in flight, closes connections
+// not yet returned by Accept, and waits for the listener's goroutines.
+func (l *ccmLoggingListener) Close() error {
+	l.cancel()
+	err := l.Listener.Close()
+	l.wg.Wait()
+	return err
 }

@@ -1,0 +1,38 @@
+# Manifest for pkg/sep2tls/gotls files that check-upstream.sh cannot verify
+# by diffing against upstream crypto/tls, because they have no upstream
+# counterpart (fork-only) or have deliberately diverged from it (patched).
+#
+# Format: type<TAB>path<TAB>sha256<TAB>upstream_sha256<TAB>note
+#   type: fork-only | patched
+#   path: relative to pkg/sep2tls/gotls
+#   sha256: sha256sum of the file's current raw content
+#   upstream_sha256: sha256sum of the upstream file at UPSTREAM_TAG in
+#     check-upstream.sh, at the time the patch was recorded; "-" for
+#     fork-only entries, which have no upstream file to compare. For a
+#     "patched" entry this is what lets the check keep watching the
+#     upstream side after the fork has deliberately diverged: if the
+#     pinned upstream's copy no longer hashes to this value,
+#     UPSTREAM_TAG moved past what this entry was recorded against, and
+#     the run reports drift so the patch gets re-reviewed against the
+#     new pin. A crypto/tls security release published while the pin
+#     stays put is not caught this way; see UPSTREAM.md's manual
+#     procedure.
+#   note: why the file exists or diverges (free text, no tabs)
+#
+# To add or update a fork-only entry after changing its file:
+#   sha256sum pkg/sep2tls/gotls/<path>
+# and replace the sha256 column on its line (or add a new line, keeping
+# the tab-separated columns; upstream_sha256 stays "-").
+#
+# To add or update a patched entry:
+#   sha256sum pkg/sep2tls/gotls/<path>                          # -> sha256
+#   sha256sum <upstream checkout>/src/crypto/tls/<path>          # -> upstream_sha256
+# See UPSTREAM.md, "Recording a deliberate change".
+fork-only	cipher_suites_ccm.go	ef88d036575376dd6ec10d5a43ad8d32541e76209a0ab81d58ffa89d76e44788	-	CCM-8 cipher suite registration; no upstream file
+fork-only	cipher_suites_ccm_order_test.go	57813e475c8d62e2779ec353137229a3dc68326d9c3f72e5e007fe2ea8a726c1	-	fork-only test, asserts CCM-8 ranks above GCM in both preference orders
+fork-only	ccm_check_test.go	c03c4467e9ce78e696910f02175e9826c33a9c5364d40255647237ec66b38436	-	fork-only test, asserts CCM-8 is registered
+fork-only	ccm_raw_test.go	25109d9a487b9caa889c8afcfd64f7e171c56107cba50a19bcd036a56283997b	-	fork-only test, raw handshake using CCM-8
+fork-only	stubs/boring/boring.go	91b92ebe231b874fc628713111aceb90f226d1bf4f11a1db6eb4a107295a610d	-	stand-in for crypto/internal/boring
+fork-only	stubs/cpu/cpu.go	c09a4ea57efdf8996c733ce647a4cbaaa1dafb0ee4b5f0b8e72919a815de4f74	-	stand-in for internal/cpu
+fork-only	stubs/fipstls/fipstls.go	65e84ade9026ef59cfd49d65d248366ebbd64579aff9e7112b820ebf363fadfc	-	stand-in for crypto/internal/boring/fipstls
+fork-only	stubs/godebug/godebug.go	97cbd3567dced246328a9e5a456d086779d6f7d0f2ef83b9442032e80397ce5a	-	stand-in for internal/godebug

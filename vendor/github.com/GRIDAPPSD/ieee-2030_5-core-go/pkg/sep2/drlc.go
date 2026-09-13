@@ -61,6 +61,14 @@ func (e EndDeviceControl) Copy() EndDeviceControl {
 		i := *e.Interval
 		c.Interval = &i
 	}
+	if e.RandomizeDuration != nil {
+		v := *e.RandomizeDuration
+		c.RandomizeDuration = &v
+	}
+	if e.RandomizeStart != nil {
+		v := *e.RandomizeStart
+		c.RandomizeStart = &v
+	}
 	return c
 }
 

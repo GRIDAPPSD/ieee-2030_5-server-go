@@ -3,7 +3,10 @@ NOTICE
 
 This project (ieee-2030_5-core-go) is licensed under the terms in the LICENSE
 file at the root of this repository. This NOTICE covers third-party material
-the project refers to but does not distribute.
+the project incorporates or refers to. Some of that material is not
+distributed with this repository (see "IEEE 2030.5..." below); other material
+is vendored or forked source that is distributed as part of this repository
+(see "The Go Programming Language..." and "pion/dtls CCM..." below).
 
 
 IEEE 2030.5 and the normative XML Schema (sep.xsd)
@@ -71,3 +74,72 @@ Continuous integration that supplies the schema should set it. With it set,
 an absent schema is a hard failure; the value must be a boolean that Go's
 strconv.ParseBool accepts, and anything else is itself an error, so a typo
 cannot silently disarm the gate.
+
+
+The Go Programming Language (pkg/sep2tls/gotls)
+------------------------------------------------
+
+pkg/sep2tls/gotls is a fork of the Go standard library's crypto/tls package,
+carrying the mandatory IEEE 2030.5 CCM-8 cipher suite that upstream does not
+implement. See pkg/sep2tls/gotls/UPSTREAM.md for the exact upstream release,
+commit, and the list of deliberate changes.
+
+Copyright (c) 2009 The Go Authors. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google Inc. nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+pion/dtls CCM (pkg/sep2tls/ccm)
+--------------------------------
+
+pkg/sep2tls/ccm is vendored from github.com/pion/dtls/v3/pkg/crypto/ccm
+(MIT License), which itself credits github.com/bocajim/dtls as the original
+source. See pkg/sep2tls/ccm/LICENSE for the full license text. No specific
+upstream commit or version is pinned in this repository; the vendoring
+statement in pkg/sep2tls/ccm/ccm.go names the source module.
+
+MIT License
+
+Copyright (c) The Pion community <https://pion.ly>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -1,4 +1,4 @@
-// CSIP V1.2 §6.19 — Advanced Subscription.
+// CSIP V1.2 section 6.19 - Advanced Subscription.
 //
 // CORE-019 asserts three behaviors layered on top of CORE-018's basic
 // subscription flow:
@@ -6,32 +6,32 @@
 //	(a) the server accepts >= 2 parallel Subscriptions against the same
 //	    SubscribedResource;
 //	(b) DELETE /edev/{id}/sub/{subId} on one of the parallel
-//	    subscriptions removes it — verified by Notify-after-delete
+//	    subscriptions removes it - verified by Notify-after-delete
 //	    delivering only to the survivor;
 //	(c) POST /edev/{id}/sub with a malformed XML body returns HTTP 400
 //	    Bad Request.
 //
-// V1.2 procedure step → assertion mapping:
+// V1.2 procedure step -> assertion mapping:
 //
 //	Step 1: POST sub-A and sub-B, both naming the FSAList href.
-//	                                          ──► postSubscriptionExpect201 ×2
-//	                                          ──► GET /edev/{id}/sub.All == 2
+//	                                          -> postSubscriptionExpect201 x2
+//	                                          -> GET /edev/{id}/sub.All == 2
 //	Step 2: DELETE one subscription via /edev/{id}/sub/{subId}.
-//	                                          ──► deleteSubscriptionExpect204
-//	                                          ──► GET /edev/{id}/sub.All == 1
-//	                                          ──► Notify on the subscribed href
+//	                                          -> deleteSubscriptionExpect204
+//	                                          -> GET /edev/{id}/sub.All == 1
+//	                                          -> Notify on the subscribed href
 //	                                              delivers to exactly the
 //	                                              survivor's NotificationURI
 //	Step 3: POST malformed XML to /edev/{id}/sub.
-//	                                          ──► expect 400 Bad Request
+//	                                          -> expect 400 Bad Request
 //
-// Cancellation semantics interpretation: V1.2 §6.19 says "deleting one
+// Cancellation semantics interpretation: V1.2 section 6.19 says "deleting one
 // fires a cancellation Notification." The server's authoritative
 // delete path (HandleDeleteSubscription) returns 204 No Content and
 // removes the subscription from the store; it does not on its own
 // emit a final Notification to the deleted subscriber. The functional
 // shape the procedure cares about is "after delete, the deleted
-// subscriber no longer receives Notifications" — i.e. the cancellation
+// subscriber no longer receives Notifications" - i.e. the cancellation
 // is observable as a Notify fan-out that hits only the survivors. We
 // assert that shape here. Production support for emitting a Removed-
 // status Notification to the just-deleted subscriber, if needed, is
@@ -61,19 +61,21 @@ const (
 	core019FSAHref     = "/edev/" + core019EndDeviceID + "/fsa"
 )
 
-// TestCORE_019_AdvancedSubscription implements CSIP V1.2 §6.19.
+// TestCORE_019_AdvancedSubscription implements CSIP V1.2 section 6.19.
 func TestCORE_019_AdvancedSubscription(t *testing.T) {
 	t.Parallel()
 
-	srv := csiptest.BootServer(t)
+	owner := csiptest.NewDeviceIdentity(t, "CORE-019-DEVICE")
+	srv := csiptest.BootServer(t, csiptest.WithDeviceIdentity(owner))
+	seedOwnedEndDevice(t, srv.Stores.EndDevices, core019EndDeviceID, owner)
 	receiverA := csiptest.NewNotificationReceiver(t)
 	receiverB := csiptest.NewNotificationReceiver(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
 	// Real subscription.Manager wired to the booted server's store, as
-	// CORE-018. Production type, production wiring; only the caller —
-	// Notify — is driven from the test.
+	// CORE-018. Production type, production wiring; only the caller -
+	// Notify - is driven from the test.
 	mgr := coresub.NewManager(srv.Stores.Subscriptions, 2, 16)
 	go mgr.Start(ctx)
 
@@ -95,7 +97,7 @@ func TestCORE_019_AdvancedSubscription(t *testing.T) {
 		t.Fatalf("CORE-019 (a): empty Location: A=%q B=%q", locationA, locationB)
 	}
 	if locationA == locationB {
-		t.Fatalf("CORE-019 (a): A and B got the same Location %q — distinct subs expected", locationA)
+		t.Fatalf("CORE-019 (a): A and B got the same Location %q - distinct subs expected", locationA)
 	}
 
 	listURL := srv.BaseURL + "/edev/" + core019EndDeviceID + "/sub"
@@ -108,7 +110,7 @@ func TestCORE_019_AdvancedSubscription(t *testing.T) {
 	}
 
 	// Sanity: both subs must be discoverable via the Manager's
-	// ListByResource path — otherwise the survivor assertion in (b)
+	// ListByResource path - otherwise the survivor assertion in (b)
 	// would be vacuous.
 	listed, err := srv.Stores.Subscriptions.ListByResource(ctx, core019FSAHref)
 	if err != nil {
@@ -152,10 +154,10 @@ func TestCORE_019_AdvancedSubscription(t *testing.T) {
 	if len(gotB) != 1 {
 		t.Errorf("CORE-019 (b): survivor receiver got %d, want 1", len(gotB))
 	}
-	// #169 / CSIP V1.2 §11.6: the DELETE itself fires a final
+	// #169 / CSIP V1.2 section 11.6: the DELETE itself fires a final
 	// Removed Notification (Status=3) to the deleted subscriber so it
 	// can flush local state. So receiverA must have exactly one
-	// Notification — the Removed — and a subsequent Notify on the
+	// Notification - the Removed - and a subsequent Notify on the
 	// resource must NOT add a second (the sub is gone from
 	// ListByResource).
 	gotA, okA := receiverA.Wait(1, 2*time.Second)
@@ -179,12 +181,12 @@ func TestCORE_019_AdvancedSubscription(t *testing.T) {
 		t.Errorf("CORE-019 (b): deleted-sub receiver got %d Notifications after post-delete Notify, want 1 (Removed only)", got)
 	}
 
-	// --- (c) Malformed Notification body → HTTP 400. ---------------
+	// --- (c) Malformed Notification body -> HTTP 400. ---------------
 	//
-	// V1.2 §6.19 prose: "submitting a malformed Notification body
+	// V1.2 section 6.19 prose: "submitting a malformed Notification body
 	// returns HTTP 400." The wire-level expression in the CSIP server
 	// surface is a POST to the subscription endpoint with an
-	// undecodable XML payload — the create-subscription handler does
+	// undecodable XML payload - the create-subscription handler does
 	// the body parse, so this is the same surface CORE-019 (a)
 	// exercised, driven with a broken body.
 	malformedURL := srv.BaseURL + "/edev/" + core019EndDeviceID + "/sub"

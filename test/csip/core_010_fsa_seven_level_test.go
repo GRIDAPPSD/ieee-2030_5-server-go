@@ -1,32 +1,32 @@
-// CSIP V1.2 §6.3 — FSA Hierarchies, 7-level.
+// CSIP V1.2 section 6.3 - FSA Hierarchies, 7-level.
 //
 // CORE-010 proves that a CSIP server seeded with a 7-level FSA priority
 // chain advertises and serves the chain end-to-end: the client walks
 // from /dcap to /edev to the first EndDevice's FunctionSetAssignments-
 // ListLink to each FSA's DERProgramListLink, and the priority ordering
 // (DERProgram.Primacy ascending 0..6, lower = higher priority per spec
-// §10.2) is discoverable from the wire response.
+// section 10.2) is discoverable from the wire response.
 //
 // The fixture is seven-level-fsa.yaml (shipped by #52): one
 // EndDevice, seven FSAs scoped under it, one DERProgram per FSA with
 // primacy 0..6 in ID order.
 //
-// Procedure step → assertion mapping (per V1.2 §6.3):
+// Procedure step -> assertion mapping (per V1.2 section 6.3):
 //
 //	Step 1: server has an EndDevice with 7 FSAs advertised.
-//	        ──► fixture load + assertion: /dcap returns
+//	        -> fixture load + assertion: /dcap returns
 //	            EndDeviceListLink, /edev returns one EndDevice with
 //	            FunctionSetAssignmentsListLink advertised All=7.
 //	Step 2: client GETs the FSA list.
-//	        ──► WalkLink against FunctionSetAssignmentsListLink with
+//	        -> WalkLink against FunctionSetAssignmentsListLink with
 //	            a paging limit large enough to include all 7 in one
 //	            response. Asserts len() == 7 and per-FSA Href shape.
 //	Step 3: client GETs each FSA's DERProgramListLink.
-//	        ──► For each of the 7 FSAs, WalkLink the DERProgramList-
+//	        -> For each of the 7 FSAs, WalkLink the DERProgramList-
 //	            Link and assert the response carries DERPrograms whose
 //	            primacy values cover the full 0..6 chain.
 //	Step 4: priority chain matches fixture spec.
-//	        ──► Asserts the primacy values 0..6 are present exactly
+//	        -> Asserts the primacy values 0..6 are present exactly
 //	            once and the descriptions match the fixture's L0..L6
 //	            labels in store-key order.
 //
@@ -38,12 +38,12 @@
 //     numerically (single digits), so the wire order matches the
 //     fixture's primacy chain 0..6.
 //   - The DERProgramListLink at /edev/{id}/fsa/{fsaId}/derp is scoped
-//     by EndDevice only (not by FSA — see scopedListHandler in
+//     by EndDevice only (not by FSA - see scopedListHandler in
 //     internal/server/router.go and the loader's note on DERProgram
 //     scoping). So every FSA's DERProgramListLink returns all 7
 //     DERPrograms for this fixture. The fixture's `all: 1` per-FSA
 //     advertisement is fixture metadata; the wire response carries
-//     the full 7. The test asserts both shapes — the discovered
+//     the full 7. The test asserts both shapes - the discovered
 //     priority chain is what the procedure cares about, and the
 //     scoping behavior is documented as the current server contract.
 package csip_test
@@ -61,7 +61,7 @@ import (
 // sevenLevelDescriptions is the in-order list of FSA descriptions the
 // seven-level-fsa.yaml fixture assigns to its 7 FSAs. The test asserts
 // FSAList[i].Description == sevenLevelDescriptions[i] for every i, so
-// any fixture edit that renames a level forces a matching test edit —
+// any fixture edit that renames a level forces a matching test edit -
 // exactly the coupling the procedure demands.
 var sevenLevelDescriptions = []string{
 	"L0-system",
@@ -73,7 +73,7 @@ var sevenLevelDescriptions = []string{
 	"L6-device",
 }
 
-// TestCORE_010_FSAHierarchy7Level implements CSIP V1.2 §6.3.
+// TestCORE_010_FSAHierarchy7Level implements CSIP V1.2 section 6.3.
 func TestCORE_010_FSAHierarchy7Level(t *testing.T) {
 	t.Parallel()
 	runFSAHierarchy(t, fsaHierarchyParams{
@@ -92,14 +92,14 @@ type fsaHierarchyParams struct {
 }
 
 // runFSAHierarchy boots a server seeded with the fixture at p.fixture and
-// drives the V1.2 §6.3 / §6.4 procedure end-to-end: /dcap → /edev →
-// first EndDevice → FunctionSetAssignmentsListLink → each FSA →
-// DERProgramListLink → assertions on the priority chain.
+// drives the V1.2 section 6.3 / section 6.4 procedure end-to-end: /dcap -> /edev ->
+// first EndDevice -> FunctionSetAssignmentsListLink -> each FSA ->
+// DERProgramListLink -> assertions on the priority chain.
 //
 // The function is shared by CORE-010 (7-level) and CORE-011 (15-level)
 // because the procedures are identical apart from the level count and
 // the per-level description labels. Duplicating the walk in two files
-// would obscure that — and a future procedure change (e.g. priority
+// would obscure that - and a future procedure change (e.g. priority
 // ordering must come back in a header) would otherwise have to land in
 // two places. Per Pike's dedup rule, shared logic that exercises
 // identical behavior lives in one helper.
@@ -117,11 +117,12 @@ func runFSAHierarchy(t *testing.T, p fsaHierarchyParams) {
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,
 	}
-	if err := csiptest.Load(ctx, target, p.fixture); err != nil {
+	owner := csiptest.NewDeviceIdentity(t, "CORE-FSA-DEVICE")
+	if err := csiptest.Load(ctx, target, p.fixture, csiptest.Bind(fixtureEndDeviceID, owner)); err != nil {
 		t.Fatalf("Load %s: %v", p.fixture, err)
 	}
 
-	srv := csiptest.BootServer(t, csiptest.WithStores(stores))
+	srv := csiptest.BootServer(t, csiptest.WithStores(stores), csiptest.WithDeviceIdentity(owner))
 	client := srv.Client()
 
 	// Step 1: GET /dcap; expect an EndDeviceListLink.
@@ -152,7 +153,7 @@ func runFSAHierarchy(t *testing.T, p fsaHierarchyParams) {
 
 	// Step 2: walk the FSA list with a paging limit large enough to
 	// fit all advertised entries in one response. Default limit is 10
-	// (paging.DefaultLimit), which is fine for 7 but not 15 — using an
+	// (paging.DefaultLimit), which is fine for 7 but not 15 - using an
 	// explicit `l=` always works.
 	fsaList := walkFSAList(ctx, t, srv, edev.FunctionSetAssignmentsListLink.Href)
 	if int(fsaList.All) != levels {
@@ -214,7 +215,7 @@ func runFSAHierarchy(t *testing.T, p fsaHierarchyParams) {
 	// Step 4 (cont.): wire order assertion. The FSA list is emitted in
 	// sorted store-key order. The fixtures encode IDs that sort to
 	// match the priority chain (single-digit "0".."6" for 7-level;
-	// zero-padded "00".."14" for 15-level — both lex-sort = numeric
+	// zero-padded "00".."14" for 15-level - both lex-sort = numeric
 	// sort across the 10-boundary). So FSAList[i].Description must
 	// match p.descriptions[i].
 	for i, fsa := range fsaList.FunctionSetAssignments {
@@ -250,7 +251,7 @@ func walkDERProgramList(ctx context.Context, t *testing.T, srv *csiptest.BootedS
 	return list
 }
 
-// sortedPrimacy returns the keys of seen as a sorted []uint8 — purely
+// sortedPrimacy returns the keys of seen as a sorted []uint8 - purely
 // for readable test failure output.
 func sortedPrimacy(seen map[uint8]bool) []uint8 {
 	out := make([]uint8, 0, len(seen))

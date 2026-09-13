@@ -27,3 +27,10 @@ func TestMemoryScopedStoreSatisfiesScopedStoreContract(t *testing.T) {
 		return memory.NewScopedStore[storetest.Resource]()
 	})
 }
+
+func TestMemoryEndDeviceManagementStoreSatisfiesContract(t *testing.T) {
+	t.Parallel()
+	storetest.RunEndDeviceManagementSuite(t, func(*testing.T) store.EndDeviceManagementStore {
+		return memory.NewEndDeviceManagementStore()
+	})
+}

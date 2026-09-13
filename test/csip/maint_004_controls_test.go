@@ -1,25 +1,25 @@
 //go:build csip_test_hooks
 
-// CSIP V1.2 §11.4 — Maintenance of Controls.
+// CSIP V1.2 section 11.4 - Maintenance of Controls.
 //
 // MAINT-004 asserts that adding a DERControl to a live DERProgram
 // produces a Notification on subscribers of that program's control
 // list, and the aggregator's subsequent GET sees the new control.
 //
-// V1.2 procedure step → assertion mapping:
+// V1.2 procedure step -> assertion mapping:
 //
 //	Step 1: seed an EndDevice with one DERProgram (prog-tfa).
 //	        Subscribe to the DERProgram href.
-//	                                          ──► EndDevices.Create + DERPrograms.Create
-//	                                          ──► POST /edev/{id}/sub
+//	                                          -> EndDevices.Create + DERPrograms.Create
+//	                                          -> POST /edev/{id}/sub
 //	Step 2: add a new DERControl via the #27 mutation hook.
-//	                                          ──► POST /test/mutations/derctl-add
-//	                                          ──► 201 Created
-//	                                          ──► DERControls.Get on composite key succeeds
+//	                                          -> POST /test/mutations/derctl-add
+//	                                          -> 201 Created
+//	                                          -> DERControls.Get on composite key succeeds
 //	Step 3: Notify on the DERProgram href; receiver gets one
 //	        Changed-status Notification carrying the program's href.
-//	                                          ──► mgr.Notify(derp href, Changed)
-//	                                          ──► receiver.Wait(1)
+//	                                          -> mgr.Notify(derp href, Changed)
+//	                                          -> receiver.Wait(1)
 //
 // Build-tag: csip_test_hooks for the derctl-add mutation.
 //
@@ -45,11 +45,12 @@ const (
 	maint004ControlID   = "ctl-1"
 )
 
-// TestMAINT_004_MaintenanceOfControls implements CSIP V1.2 §11.4.
+// TestMAINT_004_MaintenanceOfControls implements CSIP V1.2 section 11.4.
 func TestMAINT_004_MaintenanceOfControls(t *testing.T) {
 	t.Parallel()
 
-	srv := csiptest.BootServer(t)
+	owner := csiptest.NewDeviceIdentity(t, "MAINT-004-DEVICE")
+	srv := csiptest.BootServer(t, csiptest.WithDeviceIdentity(owner))
 	receiver := csiptest.NewNotificationReceiver(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -58,7 +59,7 @@ func TestMAINT_004_MaintenanceOfControls(t *testing.T) {
 	go mgr.Start(ctx)
 
 	// Step 1a: seed EndDevice + DERProgram.
-	seedEndDevice(t, srv, maint004EndDeviceID)
+	seedOwnedEndDevice(t, srv.Stores.EndDevices, maint004EndDeviceID, owner)
 	derpHref := "/edev/" + maint004EndDeviceID + "/derp/" + maint004ProgramID
 	var prog sep2.DERProgram
 	prog.Href = derpHref
@@ -78,7 +79,7 @@ func TestMAINT_004_MaintenanceOfControls(t *testing.T) {
 	}
 
 	// Step 2: add a DERControl via the mutation hook. We pass an
-	// empty control body — the mutation handler only requires the
+	// empty control body - the mutation handler only requires the
 	// scope keys; the parent's existing tests pin the same shape
 	// (internal/server/test_mutations_test.go TestDERControlAdd_Success
 	// posts sep2.DERControl{} directly).

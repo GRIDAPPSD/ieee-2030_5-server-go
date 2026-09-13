@@ -142,6 +142,12 @@ func TestGetsForUnknownParentsCreateNoStoreState(t *testing.T) {
 	t.Parallel()
 
 	stores := testStores()
+	// Each probe's {id} is seeded as the caller's own EndDevice. Without it the
+	// ownership gate answers every /edev probe before the handler whose
+	// allocation this test measures ever runs.
+	for i := 0; i < noallocProbeRepeats; i++ {
+		seedOwnedDevices(t, stores.EndDevices, "noalloc"+strconv.Itoa(i)+"x1")
+	}
 	handler, patterns := assembly.BuildProtocolRouter(
 		assembly.RouterConfig{}, stores, testAuthPolicy(), testSFDI, testLFDI, nil,
 	)
@@ -222,7 +228,8 @@ func TestGetsForUnknownParentsCreateNoStoreState(t *testing.T) {
 func TestListOfAnExistingButEmptyParentStillServesAnEmptyList(t *testing.T) {
 	t.Parallel()
 
-	srv, _ := lelServer(t)
+	srv, stores := lelServer(t)
+	seedOwnedDevices(t, stores.EndDevices, "edev-with-no-events-left")
 
 	loc := postLogEvent(t, srv, "edev-with-no-events-left", sampleLogEvent(1, 3))
 

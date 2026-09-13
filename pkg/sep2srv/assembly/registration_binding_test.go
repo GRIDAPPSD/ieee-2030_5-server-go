@@ -250,7 +250,7 @@ func TestRegistrationBinding_UnprovisionedDeviceAdvertisesNothing(t *testing.T) 
 		}
 	})
 
-	status, body := do(t, srv, http.MethodGet, "/edev/4", deviceLFDIA)
+	status, body := do(t, srv, http.MethodGet, "/edev/4", unprovisionedLFDI)
 	if status != http.StatusOK {
 		t.Fatalf("GET /edev/4: status %d, want 200; body=%s", status, body)
 	}
@@ -273,8 +273,11 @@ func TestRegistrationBinding_ClientCannotForgeTheLinkByPUT(t *testing.T) {
 		t.Fatalf("remove the Registration directly from the store: %v", err)
 	}
 
+	// The owner's lFDI is sent because PUT stores the body's lFDI as given;
+	// without it the record would no longer be the caller's to read back.
 	forged := `<EndDevice xmlns="urn:ieee:std:2030.5:ns">` +
 		`<RegistrationLink href="/edev/1/rg"/>` +
+		`<lFDI>` + deviceLFDIA + `</lFDI>` +
 		`<sFDI>` + deviceSFDIA + `</sFDI>` +
 		`</EndDevice>`
 	req, err := http.NewRequest(http.MethodPut, srv.URL+"/edev/1", strings.NewReader(forged))

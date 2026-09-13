@@ -80,19 +80,16 @@ import (
 func TestBASIC_028_InverterStatus(t *testing.T) {
 	t.Parallel()
 
-	// Step 1: boot a CSIP server with a CA + device cert under our
-	// control so PUT + GET both pass the ACL device-cert check on
-	// the /edev prefix.
-	_, caCertFile, deviceCert := mustBuildClientPKI(t)
-	srv := csiptest.BootServer(t,
-		csiptest.WithClientCAsFile(caCertFile),
-		csiptest.WithClientCert(deviceCert),
-	)
-	httpClient := buildClient(t, srv.RootCA, deviceCert)
+	// Step 1: boot a CSIP server whose client owns the EndDevice the PUT
+	// and GET address.
+	owner := csiptest.NewDeviceIdentity(t, "BASIC-028-DEVICE")
+	srv := csiptest.BootServer(t, csiptest.WithDeviceIdentity(owner))
+	httpClient := buildClient(t, srv.RootCA, owner.Cert)
 	ctx := context.Background()
 
 	const edevID = "statusdev"
 	const derID = "der1"
+	seedOwnedEndDevice(t, srv.Stores.EndDevices, edevID, owner)
 	dersPath := fmt.Sprintf("/edev/%s/der/%s/ders", edevID, derID)
 
 	// Step 2: PUT a populated DERStatus. Values are deterministic so

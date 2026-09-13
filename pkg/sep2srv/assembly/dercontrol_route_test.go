@@ -63,6 +63,7 @@ func seedDERControl(t *testing.T, stores *assembly.Stores, edevID, dercID string
 
 func derControlRouter(t *testing.T, stores *assembly.Stores) *httptest.Server {
 	t.Helper()
+	seedOwnedDevices(t, stores.EndDevices, testLFDI)
 	handler, _ := assembly.BuildProtocolRouter(
 		assembly.RouterConfig{},
 		stores,
@@ -215,6 +216,9 @@ func TestSingleDERControlRouteScopesByPathNotJustID(t *testing.T) {
 
 	stores := testStores()
 	victim := seedDERControl(t, stores, deviceA, "active-0", 7194, 1785430000)
+	// Both paths belong to the caller, so a miss here is store scoping and not
+	// the ownership gate.
+	seedOwnedDevices(t, stores.EndDevices, deviceA, deviceB)
 	srv := derControlRouter(t, stores)
 
 	// Sanity: the control IS readable on its owner's path, so a 404 on

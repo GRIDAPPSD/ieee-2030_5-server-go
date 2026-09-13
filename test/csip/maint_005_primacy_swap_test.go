@@ -1,25 +1,25 @@
 //go:build csip_test_hooks
 
-// CSIP V1.2 §11.5 — Primacy Swap.
+// CSIP V1.2 section 11.5 - Primacy Swap.
 //
 // MAINT-005 asserts that updating a DERProgram's primacy field via the
 // #27 mutation hook produces a Notification, and the underlying
 // store reflects the new value.
 //
-// V1.2 procedure step → assertion mapping:
+// V1.2 procedure step -> assertion mapping:
 //
 //	Step 1: seed an EndDevice + DERProgram with primacy=1.
 //	        Subscribe to the DERProgram href.
-//	                                          ──► EndDevices.Create + DERPrograms.Create
-//	                                          ──► POST /edev/{id}/sub
+//	                                          -> EndDevices.Create + DERPrograms.Create
+//	                                          -> POST /edev/{id}/sub
 //	Step 2: drive the primacy swap to primacy=7.
-//	                                          ──► POST /test/mutations/derprog-primacy
-//	                                          ──► 204 No Content
-//	                                          ──► store: program.Primacy == 7
+//	                                          -> POST /test/mutations/derprog-primacy
+//	                                          -> 204 No Content
+//	                                          -> store: program.Primacy == 7
 //	Step 3: Notify on the DERProgram href; receiver gets one
 //	        Changed-status Notification.
-//	                                          ──► mgr.Notify(derp href, Changed)
-//	                                          ──► receiver.Wait(1)
+//	                                          -> mgr.Notify(derp href, Changed)
+//	                                          -> receiver.Wait(1)
 //
 // Build-tag: csip_test_hooks for the derprog-primacy mutation.
 //
@@ -45,11 +45,12 @@ const (
 	maint005ToPrimacy   = uint8(7)
 )
 
-// TestMAINT_005_PrimacySwap implements CSIP V1.2 §11.5.
+// TestMAINT_005_PrimacySwap implements CSIP V1.2 section 11.5.
 func TestMAINT_005_PrimacySwap(t *testing.T) {
 	t.Parallel()
 
-	srv := csiptest.BootServer(t)
+	owner := csiptest.NewDeviceIdentity(t, "MAINT-005-DEVICE")
+	srv := csiptest.BootServer(t, csiptest.WithDeviceIdentity(owner))
 	receiver := csiptest.NewNotificationReceiver(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -58,7 +59,7 @@ func TestMAINT_005_PrimacySwap(t *testing.T) {
 	go mgr.Start(ctx)
 
 	// Step 1a: seed EndDevice + DERProgram with primacy=1.
-	seedEndDevice(t, srv, maint005EndDeviceID)
+	seedOwnedEndDevice(t, srv.Stores.EndDevices, maint005EndDeviceID, owner)
 	derpHref := "/edev/" + maint005EndDeviceID + "/derp/" + maint005ProgramID
 	var prog sep2.DERProgram
 	prog.Href = derpHref

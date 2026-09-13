@@ -1,4 +1,4 @@
-// CSIP V1.2 §7.1 — Randomized Events (server-side emission).
+// CSIP V1.2 section 7.1 - Randomized Events (server-side emission).
 //
 // CORE-021 asserts that when a DERControl carries randomizeStart and
 // randomizeDuration, the server emits both fields on GET with the same
@@ -6,19 +6,19 @@
 // (i.e. a DER that delays event start by the advertised window) is
 // plan-1's problem; this test only proves the server's wire emission.
 //
-// V1.2 §7.1 defines randomizeStart and randomizeDuration as signed
+// V1.2 section 7.1 defines randomizeStart and randomizeDuration as signed
 // 32-bit integers in seconds. The values seeded here (30 and 60) are
-// small positive numbers — large enough to be visibly non-zero on
+// small positive numbers - large enough to be visibly non-zero on
 // the wire, small enough that a sloppy truncation regression
 // (int16/uint8) would not silently pass.
 //
-// V1.2 procedure step → assertion mapping:
+// V1.2 procedure step -> assertion mapping:
 //
 //	Step 1 (server hosts a DERProgram with a randomized DERControl)
-//	    ──► fixture load + in-test augmentation of DERControl with
+//	    -> fixture load + in-test augmentation of DERControl with
 //	        RandomizeStart=30, RandomizeDuration=60.
 //	Step 2 (client GETs the DERControl list, observes randomization)
-//	    ──► assertRandomizedFields walks /edev/0/fsa/0/derp/0/derc
+//	    -> assertRandomizedFields walks /edev/0/fsa/0/derp/0/derc
 //	        and asserts both fields survive the wire roundtrip.
 //
 // Why the test augments the DERControl after fixture load: the
@@ -48,7 +48,7 @@ const (
 	core021RandomizeDuration int32 = 60
 )
 
-// TestCORE_021_RandomizedEvents implements CSIP V1.2 §7.1
+// TestCORE_021_RandomizedEvents implements CSIP V1.2 section 7.1
 // (server-side emission of randomizeStart / randomizeDuration).
 func TestCORE_021_RandomizedEvents(t *testing.T) {
 	t.Parallel()
@@ -63,9 +63,10 @@ func TestCORE_021_RandomizedEvents(t *testing.T) {
 		DefaultDERControls: stores.DefaultDERControls,
 		DERCurves:          stores.DERCurves,
 	}
+	owner := csiptest.NewDeviceIdentity(t, "CORE-021-DEVICE")
 	fixture := filepath.Join("fixtures", "derprogram-randomized.yaml")
 	ctx := context.Background()
-	if err := csiptest.Load(ctx, target, fixture); err != nil {
+	if err := csiptest.Load(ctx, target, fixture, csiptest.Bind(fixtureEndDeviceID, owner)); err != nil {
 		t.Fatalf("load %s: %v", fixture, err)
 	}
 
@@ -96,7 +97,7 @@ func TestCORE_021_RandomizedEvents(t *testing.T) {
 		t.Fatalf("update DERControl %q with randomization: %v", dercID, err)
 	}
 
-	// Sanity check the store carries what we just wrote — guards
+	// Sanity check the store carries what we just wrote - guards
 	// against a future store-API change that drops the pointer fields
 	// without anyone noticing at the harness layer.
 	stored, err := dercStore.Get(ctx, dercID)
@@ -111,11 +112,11 @@ func TestCORE_021_RandomizedEvents(t *testing.T) {
 	}
 
 	// Boot the server against the seeded stores. GCM cipher is fine
-	// for §7.1 — randomization emission is wire-shape, not cipher,
+	// for section 7.1 - randomization emission is wire-shape, not cipher,
 	// and CORE-022 already covers POST flow under the default cipher
 	// too. CCM-mode coverage for DERControl emission lives in
 	// CORE-012/013 (#60).
-	srv := csiptest.BootServer(t, csiptest.WithStores(stores))
+	srv := csiptest.BootServer(t, csiptest.WithStores(stores), csiptest.WithDeviceIdentity(owner))
 
 	// Walk DERProgram list to confirm topology is reachable end-to-end,
 	// then GET the DERControl list and assert both randomization fields
@@ -149,13 +150,13 @@ func TestCORE_021_RandomizedEvents(t *testing.T) {
 // one DERControl with the expected RandomizeStart and RandomizeDuration
 // values from the fixture, both emitted on the wire as non-nil pointer
 // fields. Spelled out as a helper so a reviewer can map the assertions
-// to the V1.2 §7.1 conformance criteria without scrolling through
+// to the V1.2 section 7.1 conformance criteria without scrolling through
 // fixture-loading boilerplate.
 func assertRandomizedFields(t *testing.T, list sep2.DERControlList) {
 	t.Helper()
 
 	// Fixture seeds exactly one DERControl. Assert the list shape
-	// before indexing — a server that drops the control entirely is a
+	// before indexing - a server that drops the control entirely is a
 	// different failure mode than one that drops the randomization
 	// fields, and we want the test log to discriminate.
 	if list.All != 1 {

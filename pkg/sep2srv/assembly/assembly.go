@@ -151,6 +151,11 @@ import (
 type Stores struct {
 	EndDevices store.EndDeviceStore
 
+	// EndDeviceManagers holds the provisioned (manager, managed) LFDI pairs
+	// the ownership gate and GET /edev consult. Absent means no delegation:
+	// every caller reaches only the EndDevice whose stored LFDI is its own.
+	EndDeviceManagers store.EndDeviceManagementStore
+
 	// EndDeviceIndexes allocates the opaque, server-chosen index that
 	// addresses an EndDevice in resource URLs ("/edev/3/rg"). It is an
 	// ADDRESSING mechanism only: device identity remains the
@@ -343,6 +348,7 @@ func BuildProtocolRouter(
 	// F1: substitute deny-all stubs for nil func fields so zero-value
 	// AuthPolicy is safe and fail-closed, never a nil-panic at request time.
 	if authPolicy.Identity == nil {
+		log.Print("assembly: AuthPolicy.Identity is nil: every request is treated as unauthenticated and refused")
 		authPolicy.Identity = func(_ context.Context) (string, string, bool) {
 			return "", "", false // deny: handlers return 403
 		}
@@ -374,11 +380,14 @@ func BuildProtocolRouter(
 	protocolMux.HandleFunc("GET /sdev/sdi", coredevinfo.HandleDeviceInformation(serverLFDI))
 
 	if stores != nil {
-		registerEndDeviceRoutes(protocolMux, stores, authPolicy, notifier)
-		registerMirrorRoutes(protocolMux, stores, authPolicy, cfg.PostRateProvider)
-		registerDERRoutes(protocolMux, stores)
-		registerMeteringRoutes(protocolMux, stores)
-		registerNewFunctionSetRoutes(protocolMux, stores)
+		// Every helper registers through the ownership gate, so each
+		// /edev/{id}-scoped route is bound to the caller wherever it is mounted.
+		gated := newOwnershipGate(protocolMux, stores.EndDevices, stores.EndDeviceManagers, authPolicy.Identity)
+		registerEndDeviceRoutes(gated, stores, authPolicy, notifier)
+		registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
+		registerDERRoutes(gated, stores)
+		registerMeteringRoutes(gated, stores)
+		registerNewFunctionSetRoutes(gated, stores)
 	}
 
 	var protocolChain http.Handler
@@ -554,9 +563,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	// to its own gate.
 	edevs := logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores)
 
-	mux.HandleFunc("GET /edev", corelisthandler.ListHandler[sep2.EndDevice, sep2.EndDeviceList](
-		edevs, coreedev.BuildEndDeviceList, 900,
-	))
+	mux.HandleFunc("GET /edev", coreedev.HandleEndDeviceListForCaller(edevs, stores.EndDeviceManagers, authPolicy.Identity, 900))
 	mux.HandleFunc("POST /edev", coreedev.HandleCreateEndDevice(edevs, edevIndexes, authPolicy.Identity, authPolicy.SFDIPrefix))
 	mux.HandleFunc("GET /edev/{id}", coreedev.HandleEndDevice(edevs))
 	mux.HandleFunc("PUT /edev/{id}", coreedev.HandleUpdateEndDevice(edevs))
@@ -838,15 +845,9 @@ func scopedListHandlerDeep[T store.Copier[T], L any](
 // would widen what a store lookup can return.
 //
 // This key binds a RESOURCE to the path it was stored under. It does NOT
-// bind a CALLER to that path: nothing here checks that the authenticated
-// caller is the device named by {id}. A caller who supplies its own {id}
-// alongside another device's dercId gets a scope miss (404), but a caller
-// who supplies another device's {id} directly is not rejected by this
-// function at all; store scoping and caller ownership are different
-// properties, and this function implements only the former. Ownership
-// enforcement is a cross-cutting fix not yet present here.
-// Do not read the absence of a panic or a wrong result from this function as
-// evidence that unauthorized cross-device reads are blocked.
+// bind a CALLER to that path; store scoping and caller ownership are different
+// properties, and this function implements only the former. Caller ownership
+// of {id} is enforced before any handler runs, by ownershipGate.
 func deepScopeKey(r *http.Request) string {
 	return r.PathValue("id") + "/" + r.PathValue("fsaId") + "/" + r.PathValue("derpId")
 }
@@ -925,9 +926,9 @@ type itemMethods struct {
 	Put bool
 
 	// Delete mounts DELETE on the resource, removing the record the path
-	// names. It is a WRITE, and this helper carries no ownership binding: it
-	// constrains WHERE a record may be reached from, not WHO may reach it.
-	// Set it only for a shape whose DELETE the WADL declares Mandatory, and
+	// names. It is a WRITE, and this helper carries no ownership binding of its
+	// own: it constrains WHERE a record may be reached from, not WHO may reach
+	// it. Set it only for a shape whose DELETE the WADL declares Mandatory, and
 	// read the caveat at [scopedResourceHandler] before setting it for a new
 	// one.
 	Delete bool
@@ -988,14 +989,11 @@ func (m itemMethods) allow() string {
 //
 // WRITE SURFACE, stated plainly because it is easy to read the scoping above as
 // more than it is. Both write methods this handler can mount, PUT and DELETE,
-// are constrained by the store scope and by NOTHING ELSE. The scope binds a
+// are constrained here by the store scope and by NOTHING ELSE. The scope binds a
 // record to the parent path it was stored under; it does not bind the CALLER to
-// that parent. A caller who supplies another device's parent id directly is not
-// rejected here at all, so with DELETE mounted any authenticated caller that can
-// name a path can remove the record under it. Ownership enforcement is a
-// cross-cutting sweep, retargeted to server-go by ADR-002, and it is not
-// present in this package. Do not read a passing scope test as evidence
-// that unauthorized cross-device writes are blocked.
+// that parent. That binding exists only for parents under /edev/{id}, where
+// ownershipGate refuses a caller who does not own {id} before this handler runs.
+// Mounted under any other parent, this handler has no ownership check at all.
 func scopedResourceHandler[T store.Copier[T]](
 	scopedStore store.ScopedStore[T],
 	parentParam string,
@@ -1153,10 +1151,9 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
 		// the instance, are not, and each answers 405 from http.ServeMux with
 		// an Allow derived from the registered method set.
 		//
-		// DELETE on the instance is a WRITE with no ownership binding; see the
-		// caveat on scopedResourceHandler. It is mounted because the WADL
-		// declares it Mandatory; the ownership gap is a tracked follow-up
-		// rather than papered over by leaving a Mandatory method unserved.
+		// DELETE on the instance is a WRITE; the caller's ownership of {id} is
+		// enforced by ownershipGate, and scopedResourceHandler adds none of its
+		// own. It is mounted because the WADL declares it Mandatory.
 		mux.HandleFunc("GET /edev/{id}/lel", scopedListHandler[sep2.LogEvent, sep2.LogEventList](
 			stores.LogEvents, "id", corelogevent.BuildLogEventList, 900,
 		))
@@ -1230,12 +1227,9 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
 		// answers 405 rather than 404, from http.ServeMux, which derives Allow
 		// from the registered method set.
 		//
-		// Read-only here, deliberately. PUT on FlowReservationRequest is mode M
-		// (sep_wadl.xml:3963) and is NOT mounted: it is a write surface, and a
-		// write with no ownership binding lets any authenticated device rewrite
-		// another device's reservation. Ownership is a separate cross-cutting
-		// sweep, and the missing Mandatory PUT is carried as a finding rather
-		// than mounted dark here.
+		// Read-only here. PUT on FlowReservationRequest is mode M
+		// (sep_wadl.xml:3963) and is NOT mounted; the missing Mandatory PUT is
+		// carried as a finding rather than mounted here.
 		frqInstance := scopedResourceHandler[sep2.FlowReservationRequest](
 			stores.FlowReservationRequests, "id", "frqId", itemMethods{}, nil)
 		mux.HandleFunc("GET /edev/{id}/frq/{frqId}", frqInstance)

@@ -71,6 +71,9 @@ type Target struct {
 	DERControls        *memory.ScopedStore[sep2.DERControl]
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]
 	DERCurves          *memory.Store[sep2.DERCurve]
+	// EndDeviceManagers receives the pairs fixtures declare with managed_by.
+	// A fixture that declares one fails to load while this is unset.
+	EndDeviceManagers store.EndDeviceManagementStore
 }
 
 // NewTarget returns a Target whose stores are fresh in-memory
@@ -111,6 +114,9 @@ type EndDeviceSpec struct {
 	RegistrationLink               string   `yaml:"registration_link,omitempty"`
 	FunctionSetAssignmentsListLink *ListRef `yaml:"function_set_assignments_list_link,omitempty"`
 	DERListLink                    *ListRef `yaml:"der_list_link,omitempty"`
+	// ManagedBy names the id of the EndDevice in this fixture that manages
+	// this one. The pair is recorded by LFDI, after any Bind has applied.
+	ManagedBy string `yaml:"managed_by,omitempty"`
 }
 
 // FSASpec describes one FunctionSetAssignments scoped under an
@@ -292,7 +298,7 @@ type ListRef struct {
 //     iteration uses a fresh Target. Backing out partial writes
 //     would double the loader's surface area for no benefit in the
 //     scoped use-case.
-func Load(ctx context.Context, target *Target, path string) error {
+func Load(ctx context.Context, target *Target, path string, opts ...LoadOption) error {
 	if target == nil {
 		return fmt.Errorf("csiptest: load %s: target is nil", path)
 	}
@@ -309,7 +315,7 @@ func Load(ctx context.Context, target *Target, path string) error {
 		return fmt.Errorf("csiptest: decode fixture %s: %w", path, err)
 	}
 
-	if err := applySpec(ctx, target, &spec); err != nil {
+	if err := applySpec(ctx, target, &spec, opts); err != nil {
 		return fmt.Errorf("csiptest: apply fixture %s: %w", path, err)
 	}
 	return nil
@@ -318,26 +324,57 @@ func Load(ctx context.Context, target *Target, path string) error {
 // LoadSpec applies an already-decoded Spec to target. Exposed so
 // tests can construct a Spec in-memory without round-tripping
 // through YAML - useful for property-based fixture variants.
-func LoadSpec(ctx context.Context, target *Target, spec *Spec) error {
+func LoadSpec(ctx context.Context, target *Target, spec *Spec, opts ...LoadOption) error {
 	if target == nil {
 		return errors.New("csiptest: LoadSpec: target is nil")
 	}
 	if spec == nil {
 		return errors.New("csiptest: LoadSpec: spec is nil")
 	}
-	if err := applySpec(ctx, target, spec); err != nil {
+	if err := applySpec(ctx, target, spec, opts); err != nil {
 		return fmt.Errorf("csiptest: apply spec: %w", err)
 	}
 	return nil
 }
 
-func applySpec(ctx context.Context, target *Target, spec *Spec) error {
+// LoadOption adjusts how a fixture is applied.
+type LoadOption func(*loadConfig)
+
+type loadConfig struct {
+	binds []binding
+}
+
+type binding struct {
+	endDeviceID string
+	identity    DeviceIdentity
+}
+
+// Bind overwrites the LFDI and SFDI of the fixture EndDevice endDeviceID with
+// those of id, so the certificate a test presents owns that record. Loading
+// fails if the EndDevice is not in the fixture or is bound twice.
+func Bind(endDeviceID string, id DeviceIdentity) LoadOption {
+	return func(c *loadConfig) {
+		c.binds = append(c.binds, binding{endDeviceID: endDeviceID, identity: id})
+	}
+}
+
+func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOption) error {
 	// EndDevices first - FSA/DERProgram inserts assume the EndDevice
 	// store carries the parent record. The store interface itself does
 	// not enforce parent existence (ScopedStore.ForParent auto-creates
 	// the inner store), but a sane fixture lists the parent so a
 	// future SQL-backed store with FK constraints just works.
+	var cfg loadConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	bound, err := resolveBindings(spec, cfg.binds)
+	if err != nil {
+		return err
+	}
+
 	edevIDs := make(map[string]struct{}, len(spec.EndDevices))
+	lfdiOf := make(map[string]string, len(spec.EndDevices))
 	for i, e := range spec.EndDevices {
 		if e.ID == "" {
 			return fmt.Errorf("end_devices[%d]: id is required", i)
@@ -348,9 +385,16 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		edevIDs[e.ID] = struct{}{}
 
 		dev := buildEndDevice(e)
+		if id, ok := bound[e.ID]; ok {
+			dev.LFDI, dev.SFDI = id.LFDI, id.SFDI
+		}
+		lfdiOf[e.ID] = dev.LFDI
 		if err := target.EndDevices.Create(ctx, e.ID, dev); err != nil {
 			return fmt.Errorf("end_devices[%d] (id=%q): create: %w", i, e.ID, err)
 		}
+	}
+	if err := assignManagers(ctx, target, spec, lfdiOf); err != nil {
+		return err
 	}
 
 	for i, f := range spec.FSAs {
@@ -422,6 +466,58 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		}
 	}
 
+	return nil
+}
+
+// resolveBindings maps each bound EndDevice id to its identity. It refuses a
+// binding the fixture cannot honor before anything is written.
+func resolveBindings(spec *Spec, binds []binding) (map[string]DeviceIdentity, error) {
+	if len(binds) == 0 {
+		return nil, nil
+	}
+	inFixture := make(map[string]bool, len(spec.EndDevices))
+	for _, e := range spec.EndDevices {
+		inFixture[e.ID] = true
+	}
+	bound := make(map[string]DeviceIdentity, len(binds))
+	boundTo := make(map[string]string, len(binds))
+	for _, b := range binds {
+		if !inFixture[b.endDeviceID] {
+			return nil, fmt.Errorf("bind: end device %q is not in the fixture", b.endDeviceID)
+		}
+		if b.identity.LFDI == "" || b.identity.SFDI == "" {
+			return nil, fmt.Errorf("bind: end device %q: the identity has no LFDI or SFDI", b.endDeviceID)
+		}
+		if _, dup := bound[b.endDeviceID]; dup {
+			return nil, fmt.Errorf("bind: end device %q is bound twice", b.endDeviceID)
+		}
+		if other, dup := boundTo[b.identity.LFDI]; dup {
+			return nil, fmt.Errorf("bind: LFDI %s is bound to both %q and %q", b.identity.LFDI, other, b.endDeviceID)
+		}
+		bound[b.endDeviceID] = b.identity
+		boundTo[b.identity.LFDI] = b.endDeviceID
+	}
+	return bound, nil
+}
+
+// assignManagers records every managed_by pair, by the LFDIs the EndDevices
+// were created with.
+func assignManagers(ctx context.Context, target *Target, spec *Spec, lfdiOf map[string]string) error {
+	for i, e := range spec.EndDevices {
+		if e.ManagedBy == "" {
+			continue
+		}
+		manager, ok := lfdiOf[e.ManagedBy]
+		if !ok {
+			return fmt.Errorf("end_devices[%d] (id=%q): managed_by %q is not an end device in this fixture", i, e.ID, e.ManagedBy)
+		}
+		if store.IsAbsent(target.EndDeviceManagers) {
+			return fmt.Errorf("end_devices[%d] (id=%q): managed_by is set but the target has no EndDeviceManagers store", i, e.ID)
+		}
+		if err := target.EndDeviceManagers.Assign(ctx, manager, lfdiOf[e.ID]); err != nil {
+			return fmt.Errorf("end_devices[%d] (id=%q): managed_by %q: %w", i, e.ID, e.ManagedBy, err)
+		}
+	}
 	return nil
 }
 

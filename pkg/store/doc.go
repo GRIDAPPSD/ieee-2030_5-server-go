@@ -81,7 +81,7 @@
 // implementation essentially cannot fail, so callers written against it have
 // never met a fallible backend.
 //
-// Exactly four errors carry defined meaning:
+// These errors carry defined meaning:
 //
 //   - [ErrNotFound] means the addressed resource, or its parent, is absent.
 //     On a request path this is a 404.
@@ -93,6 +93,9 @@
 //   - [ErrInvalidListOptions] means the [ListOptions] contradict themselves,
 //     which is a caller bug rather than a backend condition. No client
 //     request can produce it, so on a request path it is a 500.
+//   - [ErrInvalidManagementPair] means [EndDeviceManagementStore.Assign] was
+//     given a pair it will not record. It too is a caller error rather than a
+//     backend condition.
 //
 // Match them with [errors.Is]: an implementation may wrap them with context.
 //
@@ -108,7 +111,7 @@
 // A caller that cannot complete a check MUST fail closed.
 //
 // The obligation runs in both directions, and neither half is optional. An
-// IMPLEMENTATION must not report a failure as one of the four sentinels, or as
+// IMPLEMENTATION must not report a failure as one of these sentinels, or as
 // a nil error, because the value channel cannot carry the difference: a failed
 // Get, a failed List and a failed Count each return exactly what the
 // successful-and-empty case returns. A CONSUMER must not flatten a

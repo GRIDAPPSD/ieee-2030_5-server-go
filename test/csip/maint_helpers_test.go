@@ -1,18 +1,18 @@
 //go:build csip_test_hooks
 
-// CSIP V1.2 MAINT-* helpers — shared HTTP poster and seeding utilities
+// CSIP V1.2 MAINT-* helpers - shared HTTP poster and seeding utilities
 // for the mutation-driven maintenance tests (MAINT-001/003/004/005/006).
 //
 // MAINT-002 does NOT use this file; it drives the production DELETE
 // /edev/{id} surface and lives in an untagged test file. ERR-002 also
-// does not use this file — it builds its own subscription.Manager and
+// does not use this file - it builds its own subscription.Manager and
 // receives via NotificationReceiver(WithStatusCode(400)).
 //
 // All helpers in this file assume the server was booted with
 // SEP2_TEST_MUTATION_TOKEN set in env (see TestMain in
 // maint_testmain_test.go) AND the binary was built with
 // `-tags csip_test_hooks`. Without those, RegisterMutationHandlers is a
-// no-op and every mutation POST returns 404 — surfaced as a t.Fatal at
+// no-op and every mutation POST returns 404 - surfaced as a t.Fatal at
 // the call site.
 //
 // #155 / Phase 6.
@@ -27,7 +27,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -73,18 +72,4 @@ func postMutationJSON(t *testing.T, srv *csiptest.BootedServer, path string, bod
 		t.Fatalf("mutation %s: read body: %v", path, err)
 	}
 	return resp.StatusCode, body2
-}
-
-// seedEndDevice creates a minimal EndDevice in the booted server's store.
-// The MAINT-* tests need an EndDevice present before exercising the
-// delete / FSA-swap / derctl-add / primacy / subscription-cancel paths.
-// Test failure on Create is fatal — without a seeded device the test
-// can't reach the assertion under examination.
-func seedEndDevice(t *testing.T, srv *csiptest.BootedServer, edevID string) {
-	t.Helper()
-	var dev sep2.EndDevice
-	dev.Href = "/edev/" + edevID
-	if err := srv.Stores.EndDevices.Create(context.Background(), edevID, dev); err != nil {
-		t.Fatalf("seed EndDevice %q: %v", edevID, err)
-	}
 }

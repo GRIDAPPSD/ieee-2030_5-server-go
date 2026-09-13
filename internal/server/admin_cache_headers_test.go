@@ -18,10 +18,13 @@ import (
 // "no-cache" still permits storage.
 
 const (
-	wantAdminVary      = "Sec-Fetch-Dest, Accept"
-	wantAdminNoStore   = "no-store"
-	protocolPatternsAt = 72
+	wantAdminVary    = "Sec-Fetch-Dest, Accept"
+	wantAdminNoStore = "no-store"
 )
+
+// protocolPatternsAt derives from canonicalProtocolRoutes (assembly_seam_test.go,
+// same package), so a route added or removed there updates this count too.
+var protocolPatternsAt = len(canonicalProtocolRoutes)
 
 // TestAdminRefusalCarriesVary covers both refusal branches: the negotiated
 // answer names what it negotiated on.

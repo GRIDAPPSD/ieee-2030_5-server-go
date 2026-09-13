@@ -36,7 +36,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
-// canonicalProtocolRoutes is the pinned list of 72 SEP2 protocol-listener
+// canonicalProtocolRoutes is the pinned list of 71 SEP2 protocol-listener
 // patterns that assembly.BuildProtocolRouter must mount. Confirmed
 // identical to the in-tree BuildProtocolRouter output by Phase 1
 // (TestCoreRouterPatternEquivalence). Any addition or deletion from this
@@ -103,6 +103,10 @@ import (
 //     diverges-from-canonical report, not assumed from the core changelog.
 //
 // Net across both catch-up items: five routes added, none removed. 67 -> 72.
+//
+// PUT on the DefaultDERControl route is REMOVED (#456): the field is
+// utility-set, and the route let a protocol client overwrite its own copy.
+// 72 -> 71.
 var canonicalProtocolRoutes = []string{
 	"DELETE /edev/{id}",
 	"DELETE /edev/{id}/lel/{lelId}",
@@ -173,14 +177,13 @@ var canonicalProtocolRoutes = []string{
 	"PUT /edev/{id}/der/{derId}/derg",
 	"PUT /edev/{id}/der/{derId}/ders",
 	"PUT /edev/{id}/dstat",
-	"PUT /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc",
 	"PUT /edev/{id}/ps",
 	"PUT /mup/{id}",
 }
 
 // TestProtocolRouteSurface asserts that BuildProtocolRouter (which now
 // delegates unconditionally to assembly.BuildProtocolRouter) produces
-// exactly the 72 canonical SEP2 protocol routes, sorted, with no
+// exactly the 71 canonical SEP2 protocol routes, sorted, with no
 // additions or deletions. This replaces TestCoreRouterPatternEquivalence
 // from Phase 1: there is no longer an in-tree router to compare against,
 // so we pin the live surface directly.

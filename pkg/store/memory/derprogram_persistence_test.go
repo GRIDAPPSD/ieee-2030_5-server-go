@@ -121,6 +121,81 @@ func TestDERProgramPersistence_MultiDeviceRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDERProgramPersistence_UpdateThenReload(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, path := newPersistedDERProgramStore(t)
+
+	if err := store.Create(ctx, "dev-1", "prog-A", mkProgram("M1", "first", 1)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.Update(ctx, "dev-1", "prog-A", mkProgram("M1", "updated", 9)); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	revived, err := memory.NewDERProgramStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("revive: %v", err)
+	}
+	got, err := revived.Get(ctx, "dev-1", "prog-A")
+	if err != nil {
+		t.Fatalf("Get after revive: %v", err)
+	}
+	if got.Description != "updated" || got.Primacy != 9 {
+		t.Errorf("revived after Update = %+v, want Description=updated/Primacy=9", got)
+	}
+}
+
+func TestDERProgramPersistence_UpdateFailedFlushKeepsMemoryAndStaleDisk(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission checks do not apply when running as root")
+	}
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "derprograms.json")
+	store, err := memory.NewDERProgramStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("NewDERProgramStoreWithPersistence: %v", err)
+	}
+	if err := store.Create(ctx, "dev-1", "prog-A", mkProgram("M1", "first", 1)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read snapshot after Create: %v", err)
+	}
+
+	// writeFileAtomic opens <path>.tmp for write in dir; a read-only dir
+	// makes that open fail without touching the file already committed.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod dir read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if err := store.Update(ctx, "dev-1", "prog-A", mkProgram("M1", "updated", 9)); err == nil {
+		t.Fatal("expected Update to return an error when the snapshot write fails")
+	}
+
+	// Same contract as Create/Delete: a failed persist does not roll back
+	// the in-memory mutation that already succeeded.
+	got, err := store.Get(ctx, "dev-1", "prog-A")
+	if err != nil {
+		t.Fatalf("Get after failed persist: %v", err)
+	}
+	if got.Description != "updated" || got.Primacy != 9 {
+		t.Errorf("in-memory after failed persist = %+v, want the updated value", got)
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read snapshot after failed Update: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Error("disk snapshot changed despite the write failing")
+	}
+}
+
 func TestDERProgramPersistence_DeleteThenReload(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

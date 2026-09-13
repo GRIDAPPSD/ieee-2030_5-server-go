@@ -265,6 +265,35 @@ func TestDenialLog_SummaryNamesTheIntervalItCovers(t *testing.T) {
 			t.Errorf("intervals %q, want [1m0s]", intervals)
 		}
 	})
+
+	// A suppression that arrives some time after the window opened, rather
+	// than at the same instant, is the only case that distinguishes arming
+	// from the real clock reading from arming with the window's start time:
+	// both give the same duration when the two times coincide.
+	t.Run("first suppression arrives mid-window", func(t *testing.T) {
+		t.Parallel()
+		clock := newFakeDenialClock()
+		d, out := newTestDenialLog(clock)
+
+		for i := 0; i < denialLogPerCaller; i++ {
+			d.record(denialRequest("1"), ownershipVerdict{caller: "NOISY", reason: reasonNotOwner})
+		}
+		if counts, _, _ := summaries(t, out.snapshot()); len(counts) != 0 {
+			t.Fatalf("control: the per-caller budget is not yet spent, got a report %v", counts)
+		}
+
+		clock.Advance(40 * time.Second)
+		d.record(denialRequest("1"), ownershipVerdict{caller: "NOISY", reason: reasonNotOwner})
+		if got := clock.Pending(); got != 1 {
+			t.Fatalf("the first suppression armed %d timers, want 1", got)
+		}
+
+		clock.Advance(20 * time.Second) // start+1m0s: the window's real end
+		counts, intervals, _ := summaries(t, out.snapshot())
+		if len(counts) != 1 || counts[0] != 1 || intervals[0] != "1m0s" {
+			t.Errorf("at the window's real end: reports %v over %q, want one report of 1 over 1m0s", counts, intervals)
+		}
+	})
 }
 
 func TestDenialLog_OneCallerCannotSpendAnothersBudget(t *testing.T) {
@@ -317,6 +346,32 @@ func TestDenialLog_StateIsBoundedUnderDistinctCallers(t *testing.T) {
 	defer d.mu.Unlock()
 	if d.perCaller != nil || d.suppressed != nil {
 		t.Errorf("a reported window kept its state: %d callers, %d reasons", len(d.perCaller), len(d.suppressed))
+	}
+}
+
+// TestDenialLog_ResetsTheAcrossCallerCountAtWindowClose drives the global cap
+// to its limit, closes the window, and requires the very next refusal, from a
+// caller with no budget spent, to be written rather than suppressed. A count
+// left over from the closed window would suppress it instead.
+func TestDenialLog_ResetsTheAcrossCallerCountAtWindowClose(t *testing.T) {
+	t.Parallel()
+	clock := newFakeDenialClock()
+	d, out := newTestDenialLog(clock)
+
+	const callers = denialLogLimit + 1
+	for i := 0; i < callers; i++ {
+		d.record(denialRequest("1"), ownershipVerdict{caller: fmt.Sprintf("CALLER-%05d", i), reason: reasonNotOwner})
+	}
+	if got := clock.Pending(); got != 1 {
+		t.Fatalf("control: the cap was not exceeded, %d timers armed, want 1", got)
+	}
+
+	clock.Advance(denialLogWindow)
+	out.reset()
+
+	d.record(denialRequest("1"), ownershipVerdict{caller: "NEXT-WINDOW", reason: reasonNotOwner})
+	if lines := out.snapshot(); len(lines) != 1 || !strings.Contains(lines[0], `caller="NEXT-WINDOW"`) {
+		t.Errorf("the first refusal of a new window: %q, want one denial line for NEXT-WINDOW", lines)
 	}
 }
 

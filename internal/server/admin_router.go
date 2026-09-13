@@ -96,21 +96,24 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 	// Outer mux: login routes are public; everything else is authed.
 	// #270 (bundle B) wraps authedWithMiddleware with a Host-allowlist
 	// middleware at the `outer.Handle("/", ...)` line - leave that wrap
-	// point clean.
-	outer := http.NewServeMux()
+	// point clean. A recordingMux, not a plain ServeMux, so a write route
+	// registered here directly (bypassing authed and its body-type check)
+	// still shows up in the pattern list below instead of going uncounted
+	// (#416).
+	outer := newRecordingMux()
 	outer.HandleFunc("GET /login", HandleLoginPage(""))
 	outer.HandleFunc("POST /auth/login", HandleLoginSubmit(adminKey, sessions))
 	outer.Handle("/", authedWithMiddleware)
 
-	// #272: assemble the final pattern list. The two public outer
-	// routes (login form + login submit) join the inner authed routes
-	// so the boot-time enumerator sees a single flat list per listener.
-	// Sort + dedup runs through sortDedupePatterns at the end of the
-	// merge.
-	merged := append([]string{
-		"GET /login",
-		"POST /auth/login",
-	}, authed.Patterns()...)
+	// #272: assemble the final pattern list from both muxes' own records,
+	// not a fixed outer list, so a route added to either mux changes this
+	// list (#416). "/" is the authed mount point, not a route of its own.
+	merged := authed.Patterns()
+	for _, p := range outer.Patterns() {
+		if p != "/" {
+			merged = append(merged, p)
+		}
+	}
 	sortDedupePatterns(&merged)
 
 	// #270: wrap the entire outer mux in the host-header allowlist

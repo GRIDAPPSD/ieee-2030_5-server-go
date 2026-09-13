@@ -11,6 +11,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -189,10 +190,13 @@ func TestHandleCreateEndDeviceIndexCollisionDoesNotLeak(t *testing.T) {
 	h2 := coreedev.HandleCreateEndDevice(s, idx, identityOK(testLFDI, testSFDI), sfdiFirst8)
 	h2.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/edev", nil))
 
-	if second.Code == http.StatusOK || second.Code == http.StatusCreated {
-		t.Fatalf("second POST status = %d, want a refusal: a second identity colliding on an occupied index must never be served a 200 or 201", second.Code)
+	if second.Code != http.StatusConflict {
+		t.Fatalf("second POST status = %d, want 409", second.Code)
 	}
 	body := second.Body.String()
+	if got := strings.TrimSpace(body); got != "device index conflict" {
+		t.Errorf("second POST body = %q, want the index-conflict message, distinct from the SFDI-branch message", got)
+	}
 	if strings.Contains(body, otherLFDI) {
 		t.Errorf("second POST body leaked the first identity's LFDI: %s", body)
 	}
@@ -229,15 +233,96 @@ func TestHandleCreateEndDeviceSFDICollisionDoesNotLeak(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/edev", nil))
 
-	if w.Code == http.StatusOK || w.Code == http.StatusCreated {
-		t.Fatalf("status = %d, want a refusal: an SFDI collision with a different LFDI must never be served a 200 or 201", w.Code)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", w.Code)
 	}
 	body := w.Body.String()
+	if got := strings.TrimSpace(body); got != "device SFDI conflict" {
+		t.Errorf("body = %q, want the SFDI-conflict message, distinct from the index-branch message", got)
+	}
 	if strings.Contains(body, otherLFDI) {
 		t.Errorf("body leaked the colliding record's LFDI: %s", body)
 	}
 	if loc := w.Header().Get("Location"); loc != "" {
 		t.Errorf("Location = %q, want empty: must not point at the colliding record", loc)
+	}
+}
+
+// TestHandleCreateEndDeviceIndexCollisionLogsOneLine cannot run in parallel:
+// it swaps the process-wide log output. It pins the operator-visible side of
+// the index-conflict 409: exactly one log line, naming the route and the
+// conflict kind, and neither identity's LFDI or SFDI.
+func TestHandleCreateEndDeviceIndexCollisionLogsOneLine(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	s := memory.NewEndDeviceStore()
+	idx := fixedIndexer{id: "1"}
+	h1 := coreedev.HandleCreateEndDevice(s, idx, identityOK(otherLFDI, otherSFDI), sfdiFirst8)
+	h1.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/edev", nil))
+
+	w := httptest.NewRecorder()
+	h2 := coreedev.HandleCreateEndDevice(s, idx, identityOK(testLFDI, testSFDI), sfdiFirst8)
+	h2.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/edev", nil))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", w.Code)
+	}
+
+	logged := buf.String()
+	lines := strings.Split(strings.TrimRight(logged, "\n"), "\n")
+	if len(lines) != 1 || lines[0] == "" {
+		t.Fatalf("logged %d line(s), want exactly 1: %q", len(lines), logged)
+	}
+	if !strings.Contains(logged, "409 on") || !strings.Contains(logged, "index conflict") {
+		t.Errorf("log line = %q, want it to name the route and \"index conflict\"", logged)
+	}
+	if strings.Contains(logged, otherLFDI) || strings.Contains(logged, otherSFDI) || strings.Contains(logged, testLFDI) || strings.Contains(logged, testSFDI) {
+		t.Errorf("log line leaked an identity: %q", logged)
+	}
+}
+
+// TestHandleCreateEndDeviceSFDICollisionLogsOneLine is the SFDI-branch twin
+// of the index-collision log test above; same non-parallel reason.
+func TestHandleCreateEndDeviceSFDICollisionLogsOneLine(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	s := memory.NewEndDeviceStore()
+	colliding := sep2.EndDevice{SFDI: testSFDI, LFDI: otherLFDI}
+	colliding.Href = "/edev/1"
+	if err := s.Create(context.Background(), "1", colliding); err != nil {
+		t.Fatalf("seed colliding record: %v", err)
+	}
+
+	h := coreedev.HandleCreateEndDevice(s, memory.NewEndDeviceIndex(), identityOK(testLFDI, testSFDI), sfdiFirst8)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/edev", nil))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", w.Code)
+	}
+
+	logged := buf.String()
+	lines := strings.Split(strings.TrimRight(logged, "\n"), "\n")
+	if len(lines) != 1 || lines[0] == "" {
+		t.Fatalf("logged %d line(s), want exactly 1: %q", len(lines), logged)
+	}
+	if !strings.Contains(logged, "409 on") || !strings.Contains(logged, "sfdi conflict") {
+		t.Errorf("log line = %q, want it to name the route and \"sfdi conflict\"", logged)
+	}
+	if strings.Contains(logged, otherLFDI) || strings.Contains(logged, testLFDI) || strings.Contains(logged, testSFDI) {
+		t.Errorf("log line leaked an identity: %q", logged)
 	}
 }
 

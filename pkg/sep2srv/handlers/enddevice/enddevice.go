@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -26,9 +27,30 @@ import (
 const EndDeviceListHref = "/edev"
 
 // deviceIndexConflictMessage is the client-visible body for the 409 answered
-// when the record already occupying an address belongs to a different
-// certificate identity than the caller's (GRIDAPPSD/ieee-2030_5-server-go#443).
+// when the record already occupying an ALLOCATED INDEX belongs to a
+// different certificate identity than the caller's
+// (GRIDAPPSD/ieee-2030_5-server-go#443).
 const deviceIndexConflictMessage = "device index conflict"
+
+// deviceSFDIConflictMessage is the client-visible body for the 409 answered
+// when a record found by SFDI belongs to a different certificate identity
+// than the caller's. Kept distinct from deviceIndexConflictMessage: the two
+// refusals are raised by different lookups (GetBySFDI versus the index
+// allocator) and an operator grepping logs or client-support tickets needs to
+// tell them apart.
+const deviceSFDIConflictMessage = "device SFDI conflict"
+
+// conflictLogPrefix begins every line logged when POST /edev refuses a
+// request rather than disclose another identity's EndDevice. It mirrors
+// srverr's "route + reason" log shape without importing srverr's 500-only
+// semantics into this 409 path.
+const conflictLogPrefix = "sep2srv: 409 on "
+
+// logConflict records that a POST /edev was refused, naming the route and
+// the kind of conflict, and nothing about either identity involved.
+func logConflict(r *http.Request, kind string) {
+	log.Printf("%s%s: %s", conflictLogPrefix, srverr.Route(r), kind)
+}
 
 // ResourceNotifier dispatches subscription notifications for a resource
 // href. It is the minimal surface HandleDeleteEndDevice needs from the
@@ -208,7 +230,8 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 				// so two different certificates can share one even though
 				// their LFDIs differ. Same disclosure rule as the index
 				// collision below: answer without the other identity's record.
-				http.Error(w, deviceIndexConflictMessage, http.StatusConflict)
+				logConflict(r, "sfdi conflict")
+				http.Error(w, deviceSFDIConflictMessage, http.StatusConflict)
 				return
 			}
 			// Already exists under this identity: return 200 with existing device
@@ -264,6 +287,7 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 					// the same certificate reproduces this every time; 409
 					// tells the client that, unlike a 500, which reads as
 					// transient. Never disclose the occupying record.
+					logConflict(r, "index conflict")
 					http.Error(w, deviceIndexConflictMessage, http.StatusConflict)
 					return
 				}

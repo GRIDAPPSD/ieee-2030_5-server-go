@@ -14,6 +14,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -53,12 +54,14 @@ func HandleCertInfo() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pemBytes, err := readCertPEM(r)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			srverr.LogBadRequest(r, err)
+			writeError(w, http.StatusBadRequest, "invalid request")
 			return
 		}
 		cert, err := certs.ParseCertificatePEM(pemBytes)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "parse cert: "+err.Error())
+			srverr.LogBadRequest(r, err)
+			writeError(w, http.StatusBadRequest, "invalid certificate")
 			return
 		}
 
@@ -188,7 +191,8 @@ func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter) http.Ha
 		dec := json.NewDecoder(io.LimitReader(r.Body, 1<<16))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			srverr.LogBadRequest(r, err)
+			writeError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
 

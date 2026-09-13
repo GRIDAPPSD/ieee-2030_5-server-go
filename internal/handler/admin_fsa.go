@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -90,7 +91,8 @@ func (h *AdminFSAHandler) HandleCreateAdminFSA() http.HandlerFunc {
 		dec := json.NewDecoder(io.LimitReader(r.Body, 1<<16))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			srverr.LogBadRequest(r, err)
+			writeError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
 		if strings.TrimSpace(req.Description) == "" {
@@ -214,7 +216,8 @@ func (h *AdminFSAHandler) HandleAttachProgram() http.HandlerFunc {
 		dec := json.NewDecoder(io.LimitReader(r.Body, 1<<16))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			srverr.LogBadRequest(r, err)
+			writeError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
 		if strings.TrimSpace(req.ProgramHref) == "" {
@@ -292,7 +295,8 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 		dec := json.NewDecoder(io.LimitReader(r.Body, 1<<16))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			srverr.LogBadRequest(r, err)
+			writeError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
 		fsaID := extractFSAID(req.FSAHref)

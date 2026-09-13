@@ -138,6 +138,18 @@ func LogLinePrefix(route string) string {
 	return logPrefix + route + ": "
 }
 
+// LogLinePrefix400 is [LogLinePrefix]'s 400 counterpart: the leading portion
+// of the line [BadRequest], [BadRequestMessage], and [LogBadRequest] write for
+// a 400 on route, up to and including the separator before the error.
+//
+// A test asserting a 400 log line's route used to copy the literal
+// "sep2srv: 400 on " plus the route by hand, stopping short of the separator.
+// That copy stayed green through a change to the separator itself, which is
+// the same failure LogLinePrefix exists to avoid on the 500 side.
+func LogLinePrefix400(route string) string {
+	return logPrefix400 + route + ": "
+}
+
 // Route returns the mounted pattern that matched the request.
 //
 // It reads [http.Request.Pattern], which Go's ServeMux sets to the

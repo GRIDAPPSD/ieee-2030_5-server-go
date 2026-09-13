@@ -188,9 +188,9 @@ func TestBadRequestLogsTheRouteAndTheError(t *testing.T) {
 	}
 
 	line := buf.String()
-	if !strings.HasPrefix(line, "sep2srv: 400 on GET /edev/{id}/der/{derId}") &&
-		!strings.HasPrefix(line, "sep2srv: 400 on PUT /edev/{id}/der/{derId}") {
-		t.Fatalf("log = %q, want it to start with the route", line)
+	wantPrefix := srverr.LogLinePrefix400("PUT /edev/{id}/der/{derId}")
+	if !strings.HasPrefix(line, wantPrefix) {
+		t.Fatalf("log = %q, want it to start with %q", line, wantPrefix)
 	}
 	if !strings.Contains(line, "unexpected EOF") {
 		t.Errorf("log = %q, want it to carry the error", line)
@@ -249,8 +249,9 @@ func TestLogBadRequestWritesNoResponse(t *testing.T) {
 		t.Errorf("body = %q, want the caller's own JSON envelope untouched", got)
 	}
 	line := buf.String()
-	if !strings.HasPrefix(line, "sep2srv: 400 on POST /api/certs/server") {
-		t.Fatalf("log = %q, want it to start with the route", line)
+	wantPrefix := srverr.LogLinePrefix400("POST /api/certs/server")
+	if !strings.HasPrefix(line, wantPrefix) {
+		t.Fatalf("log = %q, want it to start with %q", line, wantPrefix)
 	}
 	if !strings.Contains(line, "999999999999999999999999999999") {
 		t.Errorf("log = %q, want it to carry the decoder detail LogBadRequest was given", line)

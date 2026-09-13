@@ -1,12 +1,12 @@
 # CSIP Conformance Harness
 
 This directory holds the CSIP (SunSpec Common Smart Inverter Profile V1.2)
-conformance test suite for `ieee-2030_5-go`. Today the suite is one
+conformance test suite for `ieee-2030_5-server-go`. Today the suite is one
 end-to-end smoke test; the 25 SunSpec V1.2 conformance requirements land
 incrementally on top of this scaffold.
 
-Placement decision: see [ADR-001](../../README.md) - CSIP lives in the
-base repo as an opt-in profile.
+CSIP lives in this repository as an opt-in profile, not a separate module;
+see [`docs/csip.md`](../../docs/csip.md) for how to run in CSIP mode.
 
 ## Layout
 
@@ -160,7 +160,6 @@ Either path works; pick whichever fits your workflow.
 
 ## Related
 
-- ADR-001 - CSIP lives in the base repo as an opt-in profile.
 - #7 (PR #16) - cert nil-deref guard + redundant-read removal.
 - #17 (PR #18) - CSIP section 6.11 cert generator + TLS verify hook.
 - #19 (PR #20) - README "Running in CSIP mode" docs.

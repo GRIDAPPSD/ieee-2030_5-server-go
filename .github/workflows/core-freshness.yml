@@ -75,6 +75,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # A persisted checkout credential is an HTTP auth header that
+          # git prefers over a token embedded in a push URL, so the
+          # read-only GITHUB_TOKEN this checkout would otherwise persist
+          # silently wins over the write-scoped token the Push step below
+          # supplies. Off, so that step's URL token is the one git sends.
+          persist-credentials: false
 
       - name: Mint read-only GitHub App installation token
         id: read-token

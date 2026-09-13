@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
@@ -30,9 +31,12 @@ func OwnedBy(storedLFDI, callerLFDI string) bool {
 //
 // Each device is found with one GetByLFDI lookup: the caller's LFDI, then each
 // LFDI managers.ManagedBy returns. An absent managers store lists the caller's
-// own device only. A managed LFDI with no record grants nothing and is logged
-// and skipped; any other store failure is a 500, because a list that cannot be
-// built truthfully must not be served as though it were complete.
+// own device only. A record that grants nothing is skipped and logged: a
+// managed LFDI with no record (logged once until it resolves again), a record
+// the LFDI index returned for a different LFDI, and a record whose href names
+// no store key, which no client could address. A failing store is a 500,
+// because a list that cannot be built truthfully must not be served as though
+// it were complete.
 //
 // The set is ordered by store key, the segment after /edev/ in each record's
 // href, and s, l and a page over it. All counts the whole set and Results the
@@ -45,6 +49,7 @@ func OwnedBy(storedLFDI, callerLFDI string) bool {
 // answer the /edev/{id} ownership gate gives it. An empty list would instead
 // assert "you have no EndDevice" about an identity the server never received.
 func HandleEndDeviceListForCaller(s store.EndDeviceStore, managers store.EndDeviceManagementStore, identity IdentityFunc, pollRate uint32) http.HandlerFunc {
+	reported := &onceLog{}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			encoding.MethodNotAllowed(w, "GET, HEAD")
@@ -66,7 +71,7 @@ func HandleEndDeviceListForCaller(s store.EndDeviceStore, managers store.EndDevi
 			return
 		}
 
-		devices, err := callerDevices(r, s, managers, callerLFDI)
+		devices, err := callerDevices(r, s, managers, callerLFDI, reported)
 		if err != nil {
 			srverr.Internal(w, r, err)
 			return
@@ -74,6 +79,33 @@ func HandleEndDeviceListForCaller(s store.EndDeviceStore, managers store.EndDevi
 		result := page(devices, paging.ParseQuery(r.URL.Query()))
 		encoding.WriteXML(w, http.StatusOK, BuildEndDeviceList(r.URL.Path, result, pollRate))
 	}
+}
+
+// onceLog writes a line for a key only the first time the key is seen, so a
+// list a manager polls does not repeat the same skip on every request.
+type onceLog struct {
+	mu   sync.Mutex
+	seen map[string]bool
+}
+
+func (o *onceLog) printf(key, format string, args ...any) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.seen[key] {
+		return
+	}
+	if o.seen == nil {
+		o.seen = make(map[string]bool)
+	}
+	o.seen[key] = true
+	log.Printf(format, args...)
+}
+
+// forget lets key be logged again once the condition it reported has cleared.
+func (o *onceLog) forget(key string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	delete(o.seen, key)
 }
 
 // listedDevice is one EndDevice in a caller's list with the store key it is
@@ -85,7 +117,7 @@ type listedDevice struct {
 
 // callerDevices resolves the caller's own EndDevice and those it manages,
 // sorted by store key.
-func callerDevices(r *http.Request, s store.EndDeviceStore, managers store.EndDeviceManagementStore, callerLFDI string) ([]listedDevice, error) {
+func callerDevices(r *http.Request, s store.EndDeviceStore, managers store.EndDeviceManagementStore, callerLFDI string, reported *onceLog) ([]listedDevice, error) {
 	lfdis := []string{callerLFDI}
 	if !store.IsAbsent(managers) {
 		managed, err := managers.ManagedBy(r.Context(), callerLFDI)
@@ -97,11 +129,12 @@ func callerDevices(r *http.Request, s store.EndDeviceStore, managers store.EndDe
 
 	var devices []listedDevice
 	for i, lfdi := range lfdis {
+		noRecord := "no-record:" + lfdi
 		dev, err := s.GetByLFDI(r.Context(), lfdi)
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			if i > 0 {
-				log.Printf("enddevice: %s: managed LFDI %s has no EndDevice record; not listed", srverr.Route(r), lfdi)
+				reported.printf(noRecord, "enddevice: %s: managed LFDI %s has no EndDevice record; not listed", srverr.Route(r), lfdi)
 			}
 			continue
 		case err != nil:
@@ -109,12 +142,18 @@ func callerDevices(r *http.Request, s store.EndDeviceStore, managers store.EndDe
 		case !OwnedBy(dev.LFDI, lfdi):
 			// An index that drifted from its records lists nothing rather
 			// than another device.
-			log.Printf("enddevice: %s: the LFDI index returned a record with a different stored LFDI; not listed", srverr.Route(r))
+			key, _ := strings.CutPrefix(dev.Href, "/edev/")
+			log.Printf("enddevice: %s: the LFDI index returned the record at store key %q, whose stored LFDI differs; not listed", srverr.Route(r), key)
 			continue
 		}
+		reported.forget(noRecord)
+
 		key, ok := strings.CutPrefix(dev.Href, "/edev/")
 		if !ok || key == "" || strings.Contains(key, "/") {
-			return nil, fmt.Errorf("the EndDevice for LFDI %s has href %q, which names no store key", lfdi, dev.Href)
+			// Left out rather than failing the list: no client could address
+			// it, and one bad record must not cost a manager its other devices.
+			reported.printf("malformed:"+dev.Href, "enddevice: %s: an EndDevice in the caller's list has href %q, which names no store key; not listed", srverr.Route(r), dev.Href)
+			continue
 		}
 		devices = append(devices, listedDevice{key: key, dev: dev})
 	}

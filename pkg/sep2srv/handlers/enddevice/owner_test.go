@@ -1,9 +1,11 @@
 package enddevice_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -45,7 +47,9 @@ type staleIndexStore struct {
 }
 
 func (staleIndexStore) GetByLFDI(context.Context, string) (sep2.EndDevice, error) {
-	return sep2.EndDevice{LFDI: "SOMEONE-ELSE", SFDI: "123"}, nil
+	dev := sep2.EndDevice{LFDI: "SOMEONE-ELSE", SFDI: "123"}
+	dev.Href = "/edev/77"
+	return dev, nil
 }
 
 func serveList(t *testing.T, h http.HandlerFunc) (int, string) {
@@ -143,4 +147,26 @@ func TestHandleEndDeviceListForCaller_ManagedEdges(t *testing.T) {
 			t.Errorf("all=%d items=%d body=%s, want an empty list with no foreign LFDI", list.All, len(list.EndDevice), body)
 		}
 	})
+}
+
+// TestHandleEndDeviceListForCaller_IndexDriftLogNamesTheStoreKey cannot run in
+// parallel: it swaps the process-wide log output.
+func TestHandleEndDeviceListForCaller_IndexDriftLogNamesTheStoreKey(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	identity := func(context.Context) (string, string, bool) { return "CALLER", "", true }
+	status, body := serveList(t, coreedev.HandleEndDeviceListForCaller(staleIndexStore{memory.NewEndDeviceStore()}, nil, identity, 900))
+	if status != http.StatusOK || strings.Contains(body, "SOMEONE-ELSE") {
+		t.Fatalf("status %d body %q, want 200 with the drifted record not listed", status, body)
+	}
+	if !strings.Contains(buf.String(), `"77"`) {
+		t.Errorf("index drift was logged without the drifted record's store key; log=%q", buf.String())
+	}
 }

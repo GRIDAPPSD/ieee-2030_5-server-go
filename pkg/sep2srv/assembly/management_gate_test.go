@@ -215,6 +215,8 @@ func TestManagement_ManagementReachesOnlyTheManagedDevices(t *testing.T) {
 		{"other manager on this manager's device", http.MethodGet, "/edev/" + victimID, otherManagerLFDI, ""},
 		{"managed device reaching its manager", http.MethodGet, "/edev/" + managerID, victimLFDI, ""},
 		{"managed device reaching its sibling", http.MethodGet, "/edev/" + secondChildID, victimLFDI, ""},
+		{"caller LFDI a prefix of the manager's", http.MethodGet, "/edev/" + victimID, managerLFDI[:20], ""},
+		{"manager LFDI a prefix of the caller's", http.MethodGet, "/edev/" + victimID, managerLFDI + "00", ""},
 	} {
 		status, raw := gateRequest(t, srv, tc.method, tc.path, tc.asLFDI, tc.body)
 		if status != http.StatusForbidden {
@@ -465,15 +467,48 @@ func TestManagement_ListSkipsAManagedLFDIWithNoRecord(t *testing.T) {
 		log.SetFlags(prevFlags)
 	})
 
+	const requests = 3
+	for i := 0; i < requests; i++ {
+		status, raw := gateRequest(t, srv, http.MethodGet, "/edev", managerLFDI, "")
+		if status != http.StatusOK {
+			t.Fatalf("GET /edev: status %d, want 200; body=%s", status, raw)
+		}
+		list := decodeEndDeviceList(t, raw)
+		if list.All != 3 || list.Results != 3 || strings.Contains(string(raw), recordlessLFDI) {
+			t.Errorf("list all=%d results=%d; want 3 and 3 with the record-less LFDI neither counted nor present; body=%s", list.All, list.Results, raw)
+		}
+	}
+	if n := strings.Count(buf.String(), recordlessLFDI); n != 1 {
+		t.Errorf("a managed LFDI with no EndDevice record was logged %d times over %d list requests, want once; log=%q", n, requests, buf.String())
+	}
+}
+
+// TestManagement_ListSkipsAManagedRecordWithAMalformedHref cannot run in
+// parallel: it swaps the process-wide log output.
+func TestManagement_ListSkipsAManagedRecordWithAMalformedHref(t *testing.T) {
+	const malformedLFDI = "C500000000000000000000000000000000000005"
+	ctx := context.Background()
+	fleet := newManagementFleet(t)
+	dev := sep2.EndDevice{LFDI: malformedLFDI}
+	dev.Href = "not-an-edev-href"
+	if err := fleet.stores.EndDevices.Create(ctx, "5", dev); err != nil {
+		t.Fatalf("seed malformed record: %v", err)
+	}
+	if err := fleet.managers.Assign(ctx, managerLFDI, malformedLFDI); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+	srv := gateServer(t, fleet.stores, gateTestPolicy())
+	buf := captureLog(t)
+
 	status, raw := gateRequest(t, srv, http.MethodGet, "/edev", managerLFDI, "")
 	if status != http.StatusOK {
-		t.Fatalf("GET /edev: status %d, want 200; body=%s", status, raw)
+		t.Fatalf("GET /edev with one malformed managed record: status %d, want 200 listing the rest; body=%s", status, raw)
 	}
 	list := decodeEndDeviceList(t, raw)
-	if list.All != 3 || list.Results != 3 || strings.Contains(string(raw), recordlessLFDI) {
-		t.Errorf("list all=%d results=%d; want 3 and 3 with the record-less LFDI neither counted nor present; body=%s", list.All, list.Results, raw)
+	if list.All != 3 || list.Results != 3 || strings.Contains(string(raw), malformedLFDI) {
+		t.Errorf("list all=%d results=%d; want 3 and 3 with the malformed record neither counted nor present; body=%s", list.All, list.Results, raw)
 	}
-	if !strings.Contains(buf.String(), recordlessLFDI) {
-		t.Errorf("a managed LFDI with no EndDevice record was skipped without a log line naming it; log=%q", buf.String())
+	if !lineWith(buf.String(), "not-an-edev-href") {
+		t.Errorf("the malformed record was skipped without a log line naming its href; log=%q", buf.String())
 	}
 }

@@ -95,7 +95,7 @@ gridlabd_already_installed_with_helics() {
     fi
     # GridLAB-D ships HELICS as the `helics_msg` class inside the `connection`
     # module. `gridlabd --version` is module-agnostic, so probe the connection
-    # module for the helics_msg class — present iff -DGLD_USE_HELICS=ON found
+    # module for the helics_msg class - present iff -DGLD_USE_HELICS=ON found
     # libhelics at configure time. Both the `gridlabd -L connection` output
     # and the linker reference to libhelics on connection.so must agree, so
     # also confirm the .so links against libhelics.

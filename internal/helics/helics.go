@@ -747,7 +747,7 @@ func (f *Federate) Publish(topic string, value float64) error {
 
 // Step requests time advance by dt and returns the granted ABSOLUTE
 // HELICS time. HELICS' helicsFederateRequestTime takes and returns
-// absolute simulation time, not a delta — Step preserves that semantics
+// absolute simulation time, not a delta - Step preserves that semantics
 // so callers can compare granted vs. requested without an extra
 // bookkeeping layer. Example: after Step(100ms) on a fresh federate the
 // granted return is 100ms (granted_absolute), not 100ms (delta).
@@ -801,7 +801,7 @@ func (f *Federate) Step(dt time.Duration) (time.Duration, error) {
 
 	// Wake the pump so it drains updated inputs. Non-blocking: a
 	// pending trigger means the pump has not caught up yet, which is
-	// fine — it will see this Step's updates on its next pass.
+	// fine - it will see this Step's updates on its next pass.
 	select {
 	case f.pumpTrigger <- struct{}{}:
 	default:
@@ -853,13 +853,13 @@ func (f *Federate) pumpUpdates() {
 // updated input it pulls the latest value and pushes a Value onto the
 // channel.
 //
-// Error policy (no in-process error surface yet — #303 will add a
+// Error policy (no in-process error surface yet - #303 will add a
 // Federate.Errors() channel):
 //
 //   - helicsFederateGetCurrentTime failure: skip the entire drain pass
 //     and log via slog. We do NOT publish Value{Time:0} for failed
 //     timestamps because that is indistinguishable from a legitimate
-//     t=0 update (data-invariants rule 1 — silent wrong data).
+//     t=0 update (data-invariants rule 1 - silent wrong data).
 //   - helicsInputGetDouble failure: skip that one input, log via slog
 //     with the topic name, and continue draining the rest. We do NOT
 //     publish a sentinel value for the same reason.
@@ -952,11 +952,11 @@ func (f *Federate) closeSubscriptionChannels() {
 // Teardown ordering:
 //  1. Mark f.closed=true under f.mu so future Step calls bail with
 //     ErrFederateClosed (and cannot increment f.inFlight).
-//  2. f.inFlight.Wait — drain any Step calls that already passed the
+//  2. f.inFlight.Wait - drain any Step calls that already passed the
 //     gate and are inside a blocking cgo call against the handle. This
 //     is what makes the H1 "release mu before cgo" pattern safe: the
 //     handle is not freed until in-flight callers complete.
-//  3. close(f.pumpDone); f.pumpWG.Wait — stop and join the pump
+//  3. close(f.pumpDone); f.pumpWG.Wait - stop and join the pump
 //     goroutine so its drainUpdates cgo calls have completed.
 //  4. helicsFederateFinalize, helicsFederateFree.
 //  5. Close the owned broker (if any).

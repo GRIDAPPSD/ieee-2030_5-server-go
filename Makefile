@@ -9,12 +9,12 @@
 SERVER   := bin/sep2server
 CERT_DIR := certs
 
-# ─── Build ────────────────────────────────────────────────────────
+# --- Build --------------------------------------------------------
 
 build:                    ## Build the server binary
 	go build -o $(SERVER) ./cmd/sep2server/
 
-# ─── Test ─────────────────────────────────────────────────────────
+# --- Test ---------------------------------------------------------
 
 test:                     ## Run all Go tests
 	go test ./...
@@ -77,7 +77,7 @@ test-verbose:             ## Run tests with verbose output
 test-e2e:                 ## Run Playwright E2E tests (requires npm install in e2e/)
 	cd e2e && NODE_TLS_REJECT_UNAUTHORIZED=0 npx playwright test --reporter=list
 
-# ─── Certificates ────────────────────────────────────────────────
+# --- Certificates ------------------------------------------------
 
 certs:                    ## Generate CA, server, and device certificates
 	@mkdir -p $(CERT_DIR)
@@ -100,10 +100,10 @@ certs:                    ## Generate CA, server, and device certificates
 #
 # Required:
 #   DEVICE_NAME=<slug>  output filename prefix (creates $(CERT_DIR)/<slug>.crt and .key)
-#   SERIAL=<string>     hardware serial number for the CSIP §6.2 HardwareModuleName SAN
+#   SERIAL=<string>     hardware serial number for the CSIP section 6.2 HardwareModuleName SAN
 #
 # Optional:
-#   HW_TYPE=<oid>       manufacturer PEN OID (default 1.3.6.1.4.1.40732.99 — same as `make certs`)
+#   HW_TYPE=<oid>       manufacturer PEN OID (default 1.3.6.1.4.1.40732.99 - same as `make certs`)
 #   DEVICE_TYPE=<n>     1=generic (default), 2=mobile, 3=postMfg
 #   FORCE=1             overwrite an existing cert/key with the same DEVICE_NAME (default: refuse)
 #
@@ -137,7 +137,7 @@ new-device: export SERVER_BIN  := $(SERVER)
 new-device:                ## Mint a new device cert (DEVICE_NAME= SERIAL= required); prints PEM for the admin dashboard
 	@./scripts/new-device.sh
 
-# ─── Run ──────────────────────────────────────────────────────────
+# --- Run ----------------------------------------------------------
 
 # #268: SEP2_ADMIN_ADDR=:8444 binds admin to 127.0.0.1:8444 by default
 # (loopback). #365: an off-box bind ALSO needs an explicit opt-in or
@@ -173,7 +173,7 @@ run-ccm: build certs       ## Start server with CCM-8 cipher (spec-compliant; ad
 	SEP2_CCM=true \
 	./$(SERVER) serve
 
-# ─── journald log shipping ─────────────────────────────
+# --- journald log shipping -----------------------------
 #
 # run-journald / run-ccm-journald mirror run / run-ccm but route the
 # server's stdout AND stderr (the slog JSON stream) into the systemd
@@ -232,7 +232,7 @@ run-full: build certs      ## Start with CCM + mDNS + admin dashboard (admin on 
 # CA-signed leaf; the test device root only authenticates the test device
 # client cert.
 #
-# The test device cert is CSIP §6.11-compliant (HardwareModuleName SAN,
+# The test device cert is CSIP section 6.11-compliant (HardwareModuleName SAN,
 # empty Subject, KeyUsage, BasicConstraints). The server may run in
 # default (non-strict) or strict mode.
 #
@@ -243,7 +243,7 @@ run-testdevice: build certs   ## Start server with test device root + EndDevice 
 	@echo "# Test device profile: binding $(TESTDEVICE_ADDR) (override with TESTDEVICE_ADDR=...)"
 	@echo "# Trusted extra client CAs: testdata/csip-pki/testdevice/root_ca.pem"
 	@echo "# Pre-seeded EndDevice fixture: test/csip/fixtures/testdevice-edev.yaml"
-	@echo "# CSIP §6.11-compliant cert mode."
+	@echo "# CSIP section 6.11-compliant cert mode."
 	@echo "# Device-side cert (from testdata/csip-pki/testdevice/):"
 	@echo "#   --cert testdata/csip-pki/testdevice/device_chain.pem"
 	@echo "#   --key  testdata/csip-pki/testdevice/device_key.pem"
@@ -263,7 +263,7 @@ run-testdevice: build certs   ## Start server with test device root + EndDevice 
 #
 # Boots the server in CCM-8 mode on :8443 with the SunSpec CSIP test PKI's
 # trust roots loaded as extra client CAs via SEP2_EXTRA_CLIENT_CAS. The
-# server still presents its own local-CA-signed leaf — the SunSpec roots
+# server still presents its own local-CA-signed leaf - the SunSpec roots
 # only authenticate inverter client certs issued under that test PKI.
 #
 # The default SUNSPEC_ROOTS path lives in the operator's Knowledge
@@ -283,7 +283,7 @@ run-sunspec: build certs   ## Start server trusting SunSpec CSIP test PKI roots 
 	@echo "# Device-side cert (CSIP V1.2 SunSpec test PKI):"
 	@echo "#   --cert $(subst roots.pem,cert.pem,$(SUNSPEC_ROOTS))"
 	@echo "#   --key  $(subst roots.pem,key.pem,$(SUNSPEC_ROOTS))"
-	@echo "#   --ca   $(CERT_DIR)/ca.crt   (server's CA — what the device must trust)"
+	@echo "#   --ca   $(CERT_DIR)/ca.crt   (server's CA - what the device must trust)"
 	@echo "# Server prints a full connection-details banner at boot (#206)."
 	SEP2_ADDR=:8443 \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
@@ -296,7 +296,7 @@ run-sunspec: build certs   ## Start server trusting SunSpec CSIP test PKI roots 
 
 serve: run                 ## Alias for run
 
-# ─── EPRI Client Interop ──────────────────────────────────────────
+# --- EPRI Client Interop ------------------------------------------
 
 EPRI_CLIENT := $(HOME)/repos/IEEE-2030.5-Client
 
@@ -311,7 +311,7 @@ test-epri: build certs    ## Run EPRI C client against our server (CCM mode, ser
 		$(CERT_DIR)/device.crt $(CERT_DIR)/ca.crt \
 		https://localhost:8443/dcap edev time
 
-# ─── CSIP Conformance Harness ────────────────────────────────────
+# --- CSIP Conformance Harness ------------------------------------
 
 test-csip-server:         ## Run CSIP server-side conformance harness (requires fixtures, see test/csip/README.md)
 	./scripts/test-csip-server.sh
@@ -321,7 +321,7 @@ test-csip-client:         ## CSIP client-side conformance harness (blocked on #2
 	@echo "# negotiate CCM-8 before client-side conformance can be exercised."
 	@echo "# See GRIDAPPSD/ieee-2030_5-go#21."
 
-# #192 — CSIP harness CI integration. The two targets below shape the
+# #192 - CSIP harness CI integration. The two targets below shape the
 # build-tag matrix axis: `test-csip` runs the suite under the production
 # code path (no tag), `test-csip-hooks` runs it with the #27/#28
 # mutation + time-advance hooks compiled in. Both target the CSIP harness
@@ -336,7 +336,7 @@ test-csip-hooks:          ## Run CSIP suite + internal + pkg with csip_test_hook
 test-csip-race:           ## Race detector on the CSIP suite with csip_test_hooks tag
 	go test -race -tags csip_test_hooks ./test/csip/...
 
-# #193 — CSIP-scoped coverage profile + gate.
+# #193 - CSIP-scoped coverage profile + gate.
 #
 # Phase 8 Deliverable 3: the coverage gate operates on production code
 # reachable from CSIP-mode execution, not on raw ./... (which includes
@@ -479,12 +479,12 @@ bump-core:                ## Bump the pinned core-go module, tidy, and re-vendor
 	go mod tidy
 	@if [ -f vendor/modules.txt ]; then $(MAKE) vendor; fi
 
-# ─── Cleanup ─────────────────────────────────────────────────────
+# --- Cleanup -----------------------------------------------------
 
 clean:                    ## Remove build artifacts and generated certs
 	rm -rf bin/ coverage.out coverage.html coverage-csip.out $(CERT_DIR)/ sep2server
 
-# ─── Help ────────────────────────────────────────────────────────
+# --- Help --------------------------------------------------------
 
 help:                     ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | sort | \

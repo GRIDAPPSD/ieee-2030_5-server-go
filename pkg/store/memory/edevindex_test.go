@@ -1,7 +1,9 @@
 package memory_test
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -504,5 +506,60 @@ func TestEndDeviceIndexFromStoreDuplicateLFDIKeepsSnapshotOrderNotCreationOrder(
 	// Both ids raise the floor regardless of which one won byKey.
 	if next, err := idx.Allocate("lfdi-new"); err != nil || next != "11" {
 		t.Errorf("Allocate(lfdi-new) = (%q, %v), want (\"11\", nil)", next, err)
+	}
+}
+
+// TestEndDeviceIndexFromStoreLogsSkippedRecordCount cannot run in parallel:
+// it swaps the process-wide log output. It pins the operator-visible side of
+// seeding: a skipped record is not silent, and the log carries only a count,
+// never a device id or LFDI.
+func TestEndDeviceIndexFromStoreLogsSkippedRecordCount(t *testing.T) {
+	ctx := context.Background()
+	s := memory.NewEndDeviceStore()
+	if err := s.Create(ctx, "abc", sep2.EndDevice{SFDI: "1111111111111111", LFDI: "lfdi-abc"}); err != nil {
+		t.Fatalf("create malformed-id device: %v", err)
+	}
+	if err := s.Create(ctx, "1", sep2.EndDevice{SFDI: "2222222222222222", LFDI: ""}); err != nil {
+		t.Fatalf("create blank-LFDI device: %v", err)
+	}
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	memory.NewEndDeviceIndexFromStore(s)
+
+	logged := buf.String()
+	if !strings.Contains(logged, "skipped 2 record") {
+		t.Errorf("log = %q, want it to report skipping 2 records", logged)
+	}
+	if strings.Contains(logged, "abc") || strings.Contains(logged, "lfdi-abc") {
+		t.Errorf("log = %q, leaked a skipped record's id or LFDI", logged)
+	}
+}
+
+// TestEndDeviceIndexFromStoreLogsNothingWhenNothingSkipped is the control:
+// a seed with no skips must not log a skip line at all.
+func TestEndDeviceIndexFromStoreLogsNothingWhenNothingSkipped(t *testing.T) {
+	ctx := context.Background()
+	s := memory.NewEndDeviceStore()
+	if err := s.Create(ctx, "1", sep2.EndDevice{SFDI: "1111111111111111", LFDI: "lfdi-1"}); err != nil {
+		t.Fatalf("create device 1: %v", err)
+	}
+
+	var buf bytes.Buffer
+	prevOut := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prevOut) })
+
+	memory.NewEndDeviceIndexFromStore(s)
+
+	if buf.Len() != 0 {
+		t.Errorf("log = %q, want empty: nothing was skipped", buf.String())
 	}
 }

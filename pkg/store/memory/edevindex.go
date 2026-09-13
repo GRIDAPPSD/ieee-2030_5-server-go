@@ -3,6 +3,7 @@ package memory
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"maps"
 	"strconv"
 	"sync"
@@ -336,28 +337,40 @@ func (x *EndDeviceIndex) persistLocked() error {
 // two records the LFDI resolves to is not the one that registered first.
 // Both records carry the caller's own LFDI regardless of which wins, so no
 // cross-identity record becomes reachable this way.
+//
+// A skipped record is logged, once, as a count rather than by id or LFDI:
+// this is a boot-time summary for an operator, and it must not put a device
+// identifier in the log any more than the request-time paths do.
 func NewEndDeviceIndexFromStore(s *EndDeviceStore) *EndDeviceIndex {
 	x := NewEndDeviceIndex()
 	highest := uint64(firstIndex - 1)
+	skipped := 0
 	for _, r := range s.snapshotEndDevices() {
 		n, err := strconv.ParseUint(r.ID, 10, 64)
 		if err != nil || strconv.FormatUint(n, 10) != r.ID || n < firstIndex {
+			skipped++
 			continue
 		}
 		if n > highest {
 			highest = n
 		}
 		if _, dup := x.byIndex[r.ID]; dup {
+			skipped++
 			continue
 		}
 		if r.Device.LFDI == "" {
+			skipped++
 			continue
 		}
 		if _, dup := x.byKey[r.Device.LFDI]; dup {
+			skipped++
 			continue
 		}
 		x.byKey[r.Device.LFDI] = r.ID
 		x.byIndex[r.ID] = r.Device.LFDI
+	}
+	if skipped > 0 {
+		log.Printf("enddevice index: seeding from the store skipped %d record(s): non-canonical id, blank LFDI, or LFDI shared with another record", skipped)
 	}
 	x.next = highest + 1
 	return x

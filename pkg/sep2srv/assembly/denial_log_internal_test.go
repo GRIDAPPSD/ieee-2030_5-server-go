@@ -461,6 +461,40 @@ func TestOwnershipGate_ReportsSuppressedCountThroughTheGate(t *testing.T) {
 	}
 }
 
+// TestDenialLog_RecordUnlocksOnPanic requires the critical section to release
+// the mutex on every path, a panic included: a lock held past a panic blocks
+// every later refusal, forever, with no log line.
+func TestDenialLog_RecordUnlocksOnPanic(t *testing.T) {
+	t.Parallel()
+	clock := newFakeDenialClock()
+	d, out := newTestDenialLog(clock)
+
+	panicking := true
+	real := d.now
+	d.now = func() time.Time {
+		if panicking {
+			panic("boom")
+		}
+		return real()
+	}
+
+	func() {
+		defer func() { recover() }()
+		d.record(denialRequest("1"), ownershipVerdict{caller: "CALLER", reason: reasonNotOwner})
+	}()
+
+	if !d.mu.TryLock() {
+		t.Fatal("a panic inside record left the mutex held")
+	}
+	d.mu.Unlock()
+
+	panicking = false
+	d.record(denialRequest("1"), ownershipVerdict{caller: "CALLER", reason: reasonNotOwner})
+	if lines := out.snapshot(); len(lines) != 1 || !strings.Contains(lines[0], `caller="CALLER"`) {
+		t.Errorf("the refusal after the panic: %q, want one denial line for CALLER", lines)
+	}
+}
+
 // denialLogGoroutines counts goroutines with a denialLog method on their stack.
 func denialLogGoroutines() int {
 	buf := make([]byte, 1<<20)

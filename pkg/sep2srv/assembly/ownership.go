@@ -258,15 +258,7 @@ func newDenialLog(logf func(format string, args ...any)) *denialLog {
 }
 
 func (d *denialLog) record(r *http.Request, v ownershipVerdict) {
-	d.mu.Lock()
-	now := d.now()
-	summary := d.closeExpiredLocked(now)
-	if d.windowEnds.IsZero() {
-		d.windowStart, d.windowEnds = now, now.Add(d.window)
-		d.generation++
-	}
-	admitted := d.admitLocked(now, v)
-	d.mu.Unlock()
+	summary, admitted := d.admit(v)
 
 	if summary != "" {
 		d.logf("%s", summary)
@@ -281,6 +273,22 @@ func (d *denialLog) record(r *http.Request, v ownershipVerdict) {
 		id = id[:maxLoggedIDLen]
 	}
 	d.logf("assembly: ownership gate denied %s: caller=%q id=%q reason=%s", srverr.Route(r), v.caller, id, v.reason)
+}
+
+// admit runs the critical section under the mutex, released on every path
+// including a panic, so a panic here cannot leave every later refusal
+// blocked on the lock.
+func (d *denialLog) admit(v ownershipVerdict) (summary string, admitted bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := d.now()
+	summary = d.closeExpiredLocked(now)
+	if d.windowEnds.IsZero() {
+		d.windowStart, d.windowEnds = now, now.Add(d.window)
+		d.generation++
+	}
+	admitted = d.admitLocked(now, v)
+	return summary, admitted
 }
 
 func (d *denialLog) admitLocked(now time.Time, v ownershipVerdict) bool {

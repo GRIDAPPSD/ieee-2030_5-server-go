@@ -14,6 +14,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -150,6 +151,111 @@ func TestHandleCreateEndDeviceDuplicate(t *testing.T) {
 	}
 	if loc := w2.Header().Get("Location"); loc == "" {
 		t.Error("duplicate POST missing Location header")
+	}
+	var got sep2.EndDevice
+	if err := xml.Unmarshal(w2.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal duplicate POST body: %v", err)
+	}
+	if got.LFDI != testLFDI || got.SFDI != testSFDI {
+		t.Errorf("duplicate POST body = %+v, want the caller's own identity %s/%s", got, testLFDI, testSFDI)
+	}
+}
+
+// createRaceEndDevices simulates another goroutine completing the SAME
+// identity's registration between this request's GetBySFDI miss and its own
+// Create: GetBySFDI still reports ErrNotFound (the SFDI index has not caught
+// up), and Create reports ErrAlreadyExists for the id the concurrent
+// goroutine already claimed. Distinct from fixedIndexer's cross-identity
+// collision above: here the record Create collides with is the CALLER's own.
+type createRaceEndDevices struct {
+	store.EndDeviceStore
+}
+
+func (createRaceEndDevices) GetBySFDI(_ context.Context, _ string) (sep2.EndDevice, error) {
+	return sep2.EndDevice{}, store.ErrNotFound
+}
+
+func (createRaceEndDevices) Create(_ context.Context, _ string, _ sep2.EndDevice) error {
+	return store.ErrAlreadyExists
+}
+
+// TestHandleCreateEndDeviceSameIdentityRaceReturnsOwnRecord pins the other
+// side of the ErrAlreadyExists branch from
+// TestHandleCreateEndDeviceIndexCollisionDoesNotLeak: when the record the
+// race collided with belongs to the SAME identity as the caller, the
+// handler must serve it with 200, not refuse it with 409.
+func TestHandleCreateEndDeviceSameIdentityRaceReturnsOwnRecord(t *testing.T) {
+	t.Parallel()
+
+	backend := memory.NewEndDeviceStore()
+	winner := sep2.EndDevice{SFDI: testSFDI, LFDI: testLFDI}
+	winner.Href = "/edev/1"
+	if err := backend.Create(context.Background(), "1", winner); err != nil {
+		t.Fatalf("seed the concurrent goroutine's own record: %v", err)
+	}
+	s := createRaceEndDevices{EndDeviceStore: backend}
+	idx := fixedIndexer{id: "1"}
+	h := coreedev.HandleCreateEndDevice(s, idx, identityOK(testLFDI, testSFDI), sfdiFirst8)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/edev", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: a same-identity race must serve the existing record, not refuse it", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "/edev/1" {
+		t.Errorf("Location = %q, want %q", loc, "/edev/1")
+	}
+	var got sep2.EndDevice
+	if err := xml.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if got.LFDI != testLFDI || got.SFDI != testSFDI {
+		t.Errorf("body = %+v, want the caller's own identity %s/%s", got, testLFDI, testSFDI)
+	}
+}
+
+// TestHandleCreateEndDeviceSameIdentityAfterRestartReturnsOwnRecord pins
+// property 3 across a restart: a persisted store reloaded and re-seeded the
+// way internal/server.Run wires the two together must still answer a
+// same-identity re-POST with 200 and the caller's own record.
+func TestHandleCreateEndDeviceSameIdentityAfterRestartReturnsOwnRecord(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "enddevices.json")
+	first, err := memory.NewEndDeviceStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("NewEndDeviceStoreWithPersistence: %v", err)
+	}
+	h1 := coreedev.HandleCreateEndDevice(first, memory.NewEndDeviceIndex(), identityOK(testLFDI, testSFDI), sfdiFirst8)
+	w1 := httptest.NewRecorder()
+	h1.ServeHTTP(w1, httptest.NewRequest(http.MethodPost, "/edev", nil))
+	if w1.Code != http.StatusCreated {
+		t.Fatalf("first POST status = %d, want 201; body=%s", w1.Code, w1.Body.String())
+	}
+	firstLocation := w1.Header().Get("Location")
+
+	restarted, err := memory.NewEndDeviceStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("reload after restart: %v", err)
+	}
+	idx := memory.NewEndDeviceIndexFromStore(restarted)
+	h2 := coreedev.HandleCreateEndDevice(restarted, idx, identityOK(testLFDI, testSFDI), sfdiFirst8)
+
+	w2 := httptest.NewRecorder()
+	h2.ServeHTTP(w2, httptest.NewRequest(http.MethodPost, "/edev", nil))
+	if w2.Code != http.StatusOK {
+		t.Fatalf("second POST after restart status = %d, want 200; body=%s", w2.Code, w2.Body.String())
+	}
+	if got := w2.Header().Get("Location"); got != firstLocation {
+		t.Errorf("Location after restart = %q, want the same %q", got, firstLocation)
+	}
+	var got sep2.EndDevice
+	if err := xml.Unmarshal(w2.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	if got.LFDI != testLFDI || got.SFDI != testSFDI {
+		t.Errorf("body after restart = %+v, want the caller's own identity %s/%s", got, testLFDI, testSFDI)
 	}
 }
 

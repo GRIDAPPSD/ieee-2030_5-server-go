@@ -81,7 +81,7 @@ type Manager struct {
 	workerCount int
 	// observer is an optional callback invoked on each notification
 	// delivery outcome. nil means no-op. The outcome strings are:
-	// "success", "client_error", "queue_full". Server wires
+	// "success", "client_error", "queue_full", "manager_closed". Server wires
 	// obs.RecordNotification here; core has no prometheus dependency.
 	observer func(outcome string)
 	guard    *destinationGuard
@@ -135,7 +135,8 @@ func (m *Manager) ValidateNotificationURI(ctx context.Context, uri string) error
 
 // SetObserver wires an outcome callback into the Manager. fn is called
 // with one of the outcome strings ("success", "client_error",
-// "queue_full") after each notification delivery attempt. Pass nil to
+// "queue_full", "manager_closed") after each delivery attempt and each
+// dropped notification. Pass nil to
 // disable. Server passes obs.RecordNotification to feed Prometheus
 // counters without pulling prometheus/client_golang into core.
 func (m *Manager) SetObserver(fn func(outcome string)) {
@@ -177,11 +178,34 @@ func (m *Manager) Close() {
 	close(m.queue)
 }
 
+// outcomeManagerClosed is the observer outcome for a notification dropped
+// because the manager is shutting down.
+const outcomeManagerClosed = "manager_closed"
+
+func (m *Manager) observe(outcome string) {
+	if m.observer != nil {
+		m.observer(outcome)
+	}
+}
+
 // enqueue attempts a non-blocking send of task, returning ErrManagerClosed
-// once Close has run and ErrQueueFull when the buffer is full. Holding the
-// read lock for the whole check-then-send is what prevents the send-after-
-// close panic: see the closeMu field comment.
+// once Close has run and ErrQueueFull when the buffer is full. Every refusal
+// is a dropped notification, so it reaches the observer; that happens after
+// trySend releases closeMu, so Close never waits on the callback.
 func (m *Manager) enqueue(task notificationTask) error {
+	err := m.trySend(task)
+	switch {
+	case errors.Is(err, ErrManagerClosed):
+		m.observe(outcomeManagerClosed)
+	case errors.Is(err, ErrQueueFull):
+		m.observe("queue_full")
+	}
+	return err
+}
+
+// trySend holds the read lock for the whole check-then-send, which is what
+// prevents the send-after-close panic: see the closeMu field comment.
+func (m *Manager) trySend(task notificationTask) error {
 	m.closeMu.RLock()
 	defer m.closeMu.RUnlock()
 	if m.closed {
@@ -281,9 +305,6 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 			if errors.Is(err, ErrManagerClosed) {
 				log.Printf("notification: manager closed, dropping for %s", redactURI(sub.NotificationURI))
 				continue
-			}
-			if m.observer != nil {
-				m.observer("queue_full")
 			}
 			log.Printf("notification: queue full, dropping for %s", redactURI(sub.NotificationURI))
 		}

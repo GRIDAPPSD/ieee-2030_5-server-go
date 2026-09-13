@@ -797,10 +797,11 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 		scopedResourceHandlerDeep[sep2.DERControl](derControls, "dercId",
 			func(_ *http.Request, ctrl *sep2.DERControl) { coreder.StampResponseRequest(ctrl) }))
 
-	// DefaultDERControl
+	// DefaultDERControl is utility-set, not device-written: only GET is
+	// mounted for protocol clients. The handler itself also refuses PUT with
+	// 405 (GET, HEAD), so this stays true even if a PUT mount is added back
+	// here without reading why it was removed (#456).
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc",
-		coreder.DefaultDERControlHandler(defaultDERControls))
-	mux.HandleFunc("PUT /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc",
 		coreder.DefaultDERControlHandler(defaultDERControls))
 
 	// Global DERCurve

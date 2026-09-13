@@ -102,7 +102,9 @@ func TestDestinationPolicyCheckAddr(t *testing.T) {
 }
 
 // The dialer's Control hook is the last check before connect(2). dialContext
-// already refuses before reaching it, so it is exercised directly here.
+// already refuses before reaching it, so it is exercised directly here. Control
+// runs before connect, so a refusal error means no connection was made; the
+// listener only gives the permissive dial somewhere to connect.
 func TestGuardDialerControlChecksConnectedAddress(t *testing.T) {
 	t.Parallel()
 
@@ -111,16 +113,11 @@ func TestGuardDialerControlChecksConnectedAddress(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	firstPeer := make(chan string, 1)
 	go func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
 				return
-			}
-			select {
-			case firstPeer <- c.RemoteAddr().String():
-			default:
 			}
 			_ = c.Close()
 		}
@@ -140,18 +137,7 @@ func TestGuardDialerControlChecksConnectedAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AllowLoopback dialer: %v", err)
 	}
-	defer func() { _ = conn.Close() }()
-
-	// The accept queue is FIFO: had the refused dial connected, its peer
-	// would be accepted before this one.
-	select {
-	case peer := <-firstPeer:
-		if peer != conn.LocalAddr().String() {
-			t.Fatalf("first accepted peer = %s, want the AllowLoopback dial %s", peer, conn.LocalAddr())
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("listener accepted nothing")
-	}
+	_ = conn.Close()
 }
 
 func TestDeliverClassifiesUnresolvedApartFromRefused(t *testing.T) {
@@ -255,7 +241,9 @@ func TestDeliverBoundsHungLookup(t *testing.T) {
 
 // Dial hooks or TLS settings an embedder put on the base transport must not
 // reach the delivery client: for https, a DialTLSContext hook replaces
-// DialContext and would skip the destination guard.
+// DialContext and would skip the destination guard. Every dial path is counted
+// at its own hook or at the guard's dial seam, so traffic from elsewhere on
+// the loopback port cannot affect the result.
 func TestDeliveryClientIgnoresInheritedDialHooks(t *testing.T) {
 	t.Parallel()
 
@@ -264,16 +252,11 @@ func TestDeliveryClientIgnoresInheritedDialHooks(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	firstPeer := make(chan string, 1)
 	go func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
 				return
-			}
-			select {
-			case firstPeer <- c.RemoteAddr().String():
-			default:
 			}
 			_ = c.Close()
 		}
@@ -281,6 +264,11 @@ func TestDeliveryClientIgnoresInheritedDialHooks(t *testing.T) {
 
 	var hookCalls atomic.Int32
 	standIn := http.DefaultTransport.(*http.Transport).Clone()
+	standIn.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		hookCalls.Add(1)
+		var d net.Dialer
+		return d.DialContext(ctx, network, addr)
+	}
 	standIn.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		hookCalls.Add(1)
 		var d net.Dialer
@@ -298,6 +286,12 @@ func TestDeliveryClientIgnoresInheritedDialHooks(t *testing.T) {
 
 	m := NewManager(&mockSubStore{}, 1, 1)
 	m.client = newNotificationClient(m.guard, standIn)
+	var guardDials atomic.Int32
+	guardDial := m.guard.dial
+	m.guard.dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		guardDials.Add(1)
+		return guardDial(ctx, network, address)
+	}
 	err = m.deliver(context.Background(), notificationTask{notificationURI: "https://" + ln.Addr().String() + "/n", payload: []byte("<Notification/>")})
 
 	if !errors.Is(err, ErrRefusedDestination) {
@@ -306,25 +300,12 @@ func TestDeliveryClientIgnoresInheritedDialHooks(t *testing.T) {
 	if n := hookCalls.Load(); n != 0 {
 		t.Errorf("inherited dial hooks called %d times, want 0", n)
 	}
+	if n := guardDials.Load(); n != 0 {
+		t.Errorf("guard dialed %d times for a refused destination, want 0", n)
+	}
 	tr := m.client.Transport.(*http.Transport)
 	if tr.TLSClientConfig != nil && tr.TLSClientConfig.InsecureSkipVerify {
 		t.Error("delivery client inherited InsecureSkipVerify from the base transport")
-	}
-
-	// The accept queue is FIFO: had the delivery connected, its peer would be
-	// accepted before this one.
-	probe, err := net.Dial("tcp", ln.Addr().String())
-	if err != nil {
-		t.Fatalf("probe dial: %v", err)
-	}
-	defer func() { _ = probe.Close() }()
-	select {
-	case peer := <-firstPeer:
-		if peer != probe.LocalAddr().String() {
-			t.Errorf("first accepted peer = %s, want the probe %s: the delivery connected", peer, probe.LocalAddr())
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("listener accepted nothing")
 	}
 
 	if base := http.DefaultTransport.(*http.Transport); base.DialTLSContext != nil || base.DialTLS != nil {

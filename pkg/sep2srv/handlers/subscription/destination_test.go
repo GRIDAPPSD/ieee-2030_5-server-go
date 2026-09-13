@@ -3,6 +3,7 @@ package subscription_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/xml"
 	"errors"
 	"io"
@@ -90,12 +91,14 @@ func destURI(host string) string {
 	return "http://" + host + ":" + destPort + "/n"
 }
 
-// recordingServer is an HTTP server on 127.0.0.1 that counts TCP accepts
-// separately from requests, so a refused destination can be shown to have
-// received no connection at all.
+// recordingServer is an HTTP server that records the requests it serves. It
+// listens on an in-memory pipe that only fakeNet can dial, so it has no
+// loopback port: other processes and tests cannot reach it, and it takes no
+// port another test might be about to bind.
 type recordingServer struct {
 	srv      *httptest.Server
-	accepts  atomic.Int32
+	pipe     *pipeListener
+	accepted atomic.Int32
 	mu       sync.Mutex
 	requests []recordedRequest
 }
@@ -103,6 +106,39 @@ type recordingServer struct {
 type recordedRequest struct {
 	requestURI string // origin-form when sent directly, absolute-form via a proxy
 	body       []byte
+}
+
+func newRecordingServer(t *testing.T, respond http.HandlerFunc) *recordingServer {
+	t.Helper()
+	rs := &recordingServer{pipe: newPipeListener()}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			http.Error(w, "read body", http.StatusBadRequest)
+			return
+		}
+		rs.mu.Lock()
+		rs.requests = append(rs.requests, recordedRequest{requestURI: r.RequestURI, body: body})
+		rs.mu.Unlock()
+		if respond != nil {
+			respond(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	rs.srv = &httptest.Server{
+		Listener: countingListener{Listener: rs.pipe, n: &rs.accepted},
+		Config:   &http.Server{Handler: handler},
+	}
+	rs.srv.Start()
+	t.Cleanup(rs.srv.Close)
+	return rs
+}
+
+// acceptedConns counts connections the server accepted. Only fakeNet can
+// connect, so every one was opened by the code under test.
+func (rs *recordingServer) acceptedConns() int {
+	return int(rs.accepted.Load())
 }
 
 type countingListener struct {
@@ -118,28 +154,59 @@ func (l countingListener) Accept() (net.Conn, error) {
 	return c, err
 }
 
-func newRecordingServer(t *testing.T, respond http.HandlerFunc) *recordingServer {
-	t.Helper()
-	rs := &recordingServer{}
-	rs.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-		if err != nil {
-			http.Error(w, "read body", http.StatusBadRequest)
-			return
-		}
-		rs.mu.Lock()
-		rs.requests = append(rs.requests, recordedRequest{requestURI: r.RequestURI, body: body})
-		rs.mu.Unlock()
-		if respond != nil {
-			respond(w, r)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	rs.srv.Listener = countingListener{Listener: rs.srv.Listener, n: &rs.accepts}
-	rs.srv.Start()
-	t.Cleanup(rs.srv.Close)
-	return rs
+// pipeListener is an in-memory net.Listener whose connections come only from
+// its dial method.
+type pipeListener struct {
+	conns  chan net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newPipeListener() *pipeListener {
+	return &pipeListener{conns: make(chan net.Conn), closed: make(chan struct{})}
+}
+
+func (l *pipeListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.conns:
+		return c, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *pipeListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+	return nil
+}
+
+func (l *pipeListener) Addr() net.Addr { return pipeAddr{} }
+
+// dial returns the client end of a new in-memory connection to l.
+func (l *pipeListener) dial(ctx context.Context) (net.Conn, error) {
+	client, server := net.Pipe()
+	select {
+	case l.conns <- server:
+		return client, nil
+	case <-l.closed:
+	case <-ctx.Done():
+	}
+	_ = client.Close()
+	_ = server.Close()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return nil, net.ErrClosed
+}
+
+type pipeAddr struct{}
+
+func (pipeAddr) Network() string { return "pipe" }
+func (pipeAddr) String() string  { return "pipe" }
+
+// randomPath returns a notification path no other process can guess.
+func randomPath() string {
+	return "/notify/" + rand.Text()
 }
 
 func (rs *recordingServer) received() []recordedRequest {
@@ -149,13 +216,13 @@ func (rs *recordingServer) received() []recordedRequest {
 }
 
 // fakeNet stands in for DNS and the socket layer. Names resolve only from
-// hosts. A dial to an address in routes connects to that local server;
-// any other address is dialed for real with a short timeout.
+// hosts. A dial to an address in routes gets an in-memory connection to that
+// server; any other address is dialed for real with a short timeout.
 type fakeNet struct {
 	mu        sync.Mutex
 	hosts     map[string][]netip.Addr
 	lookupErr map[string]error
-	routes    map[string]string
+	routes    map[string]*recordingServer
 	hang      map[string]bool
 	budgets   map[string]time.Duration // time left on the dial context, per address
 	dialed    []string
@@ -168,7 +235,7 @@ func newFakeNet() *fakeNet {
 	return &fakeNet{
 		hosts:     map[string][]netip.Addr{},
 		lookupErr: map[string]error{},
-		routes:    map[string]string{},
+		routes:    map[string]*recordingServer{},
 		hang:      map[string]bool{},
 		budgets:   map[string]time.Duration{},
 
@@ -236,7 +303,7 @@ func (f *fakeNet) setHost(name string, addrs ...string) {
 func (f *fakeNet) route(ip, port string, rs *recordingServer) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.routes[net.JoinHostPort(netip.MustParseAddr(ip).String(), port)] = rs.srv.Listener.Addr().String()
+	f.routes[net.JoinHostPort(netip.MustParseAddr(ip).String(), port)] = rs
 }
 
 func (f *fakeNet) lookup(ctx context.Context, host string) ([]netip.Addr, error) {
@@ -271,17 +338,17 @@ func (f *fakeNet) dial(ctx context.Context, network, address string) (net.Conn, 
 		f.budgets[address] = time.Until(deadline)
 	}
 	hang := f.hang[address]
-	target, ok := f.routes[address]
+	rs, routed := f.routes[address]
 	f.mu.Unlock()
 	if hang {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	if !ok {
-		target = address
+	if routed {
+		return rs.pipe.dial(ctx)
 	}
 	d := net.Dialer{Timeout: 500 * time.Millisecond}
-	return d.DialContext(ctx, network, target)
+	return d.DialContext(ctx, network, address)
 }
 
 func (f *fakeNet) dials() []string {
@@ -446,7 +513,7 @@ func TestCreateSubscriptionRefusesDestination(t *testing.T) {
 					t.Errorf("dialed %s, want only %s", a, allowedDial)
 				}
 			}
-			if n := sink.accepts.Load(); n != 0 {
+			if n := sink.acceptedConns(); n != 0 {
 				t.Errorf("sink accepted %d connections, want 0", n)
 			}
 		})
@@ -554,7 +621,7 @@ func TestDeliveryRefusesDestination(t *testing.T) {
 			// finished once the control arrives.
 			waitUntil(t, "control delivery", func() bool { return len(receiver.received()) == 1 })
 
-			if n := sink.accepts.Load(); n != 0 {
+			if n := sink.acceptedConns(); n != 0 {
 				t.Errorf("refused destination accepted %d connections, want 0", n)
 			}
 			for _, a := range fn.dials() {
@@ -592,7 +659,7 @@ func TestDeliveryRechecksHostnameResolvedAfterCreation(t *testing.T) {
 	mgr.Notify(ctx, "/edev/2/fsa", sep2.NotificationStatusChanged)
 	waitUntil(t, "control delivery", func() bool { return len(receiver.received()) == 1 })
 
-	if n := sink.accepts.Load(); n != 0 {
+	if n := sink.acceptedConns(); n != 0 {
 		t.Errorf("rebound loopback destination accepted %d connections, want 0", n)
 	}
 	for _, a := range fn.dials() {
@@ -641,10 +708,10 @@ func TestDeliveryDoesNotFollowRedirects(t *testing.T) {
 	if n := len(origin.received()); n != 2 {
 		t.Errorf("origin received %d requests, want 2", n)
 	}
-	if n := loopbackSink.accepts.Load(); n != 0 {
+	if n := loopbackSink.acceptedConns(); n != 0 {
 		t.Errorf("redirect to loopback accepted %d connections, want 0", n)
 	}
-	if n := secondHop.accepts.Load(); n != 0 {
+	if n := secondHop.acceptedConns(); n != 0 {
 		t.Errorf("redirect to an allowed host accepted %d connections, want 0 (redirects are not followed)", n)
 	}
 	for _, id := range []string{"to-loopback", "to-allowed"} {
@@ -699,10 +766,10 @@ func TestDeliveryIgnoresProxyEnvironment(t *testing.T) {
 	mgr.Notify(ctx, "/edev/2/fsa", sep2.NotificationStatusChanged)
 	waitUntil(t, "direct control delivery", func() bool { return len(receiver.received()) == 1 })
 
-	if n := proxy.accepts.Load(); n != 0 {
+	if n := proxy.acceptedConns(); n != 0 {
 		t.Errorf("proxy accepted %d connections, want 0", n)
 	}
-	if n := sink.accepts.Load(); n != 0 {
+	if n := sink.acceptedConns(); n != 0 {
 		t.Errorf("loopback destination accepted %d connections, want 0", n)
 	}
 	if got := receiver.received()[0].requestURI; got != "/n" {

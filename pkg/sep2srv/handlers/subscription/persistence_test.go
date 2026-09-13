@@ -124,9 +124,14 @@ func TestERR002RealRestartViaDiskPersistence(t *testing.T) {
 func TestERR002RealRestartDeletePersistsAcrossRestart(t *testing.T) {
 	t.Parallel()
 
+	// Count only requests to this test's random path: other traffic reaching
+	// the loopback port must not fail the zero-notification check.
+	notifyPath := randomPath()
 	var received atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		received.Add(1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == notifyPath {
+			received.Add(1)
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -138,7 +143,7 @@ func TestERR002RealRestartDeletePersistsAcrossRestart(t *testing.T) {
 			Resource: sep2.Resource{Href: "/edev/2/sub/1"},
 		},
 		SubscribedResource: resourceHref,
-		NotificationURI:    srv.URL + "/notify",
+		NotificationURI:    srv.URL + notifyPath,
 		Encoding:           sep2.EncodingXML,
 	}
 

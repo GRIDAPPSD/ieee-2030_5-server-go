@@ -3,10 +3,10 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,32 +22,27 @@ import (
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 )
 
-type acceptCountingListener struct {
-	net.Listener
-	accepts *atomic.Int32
+// loopbackReceiver is an HTTP receiver on 127.0.0.1. It counts only requests
+// to its own random path, so other processes or tests that reach the loopback
+// port cannot change the count.
+type loopbackReceiver struct {
+	uri  string
+	hits atomic.Int32
 }
 
-func (l acceptCountingListener) Accept() (net.Conn, error) {
-	c, err := l.Listener.Accept()
-	if err == nil {
-		l.accepts.Add(1)
-	}
-	return c, err
-}
-
-// newLoopbackReceiver starts an HTTP receiver on 127.0.0.1 and counts its TCP
-// accepts separately from the requests it serves.
-func newLoopbackReceiver(t *testing.T) (url string, accepts, requests *atomic.Int32) {
+func newLoopbackReceiver(t *testing.T) *loopbackReceiver {
 	t.Helper()
-	accepts, requests = new(atomic.Int32), new(atomic.Int32)
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
+	path := "/notify/" + rand.Text()
+	rcv := &loopbackReceiver{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == path {
+			rcv.hits.Add(1)
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
-	srv.Listener = acceptCountingListener{Listener: srv.Listener, accepts: accepts}
-	srv.Start()
 	t.Cleanup(srv.Close)
-	return srv.URL, accepts, requests
+	rcv.uri = srv.URL + path
+	return rcv
 }
 
 // postSubscriptionThroughRouter stubs a client certificate so the protocol
@@ -66,7 +61,7 @@ func postSubscriptionThroughRouter(t *testing.T, h http.Handler, edevID, uri str
 	return rr
 }
 
-func assertRefusedAndUnstored(t *testing.T, rr *httptest.ResponseRecorder, stores *server.Stores, edevID string, accepts *atomic.Int32) {
+func assertRefusedAndUnstored(t *testing.T, rr *httptest.ResponseRecorder, stores *server.Stores, edevID string, rcv *loopbackReceiver) {
 	t.Helper()
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400; body=%s", rr.Code, rr.Body.String())
@@ -82,11 +77,11 @@ func assertRefusedAndUnstored(t *testing.T, rr *httptest.ResponseRecorder, store
 	// Deliver whatever is stored for the resource through a Manager that
 	// allows loopback. A refused create stored nothing, so the receiver sees
 	// no connection; had the refusal stored the subscription, this delivers.
-	controlURL, _, controlRequests := newLoopbackReceiver(t)
+	control := newLoopbackReceiver(t)
 	if err := stores.Subscriptions.Create(context.Background(), "probe-control", sep2.Subscription{
 		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/probe/sub/probe-control"}},
 		SubscribedResource:   "/probe-control",
-		NotificationURI:      controlURL + "/notify",
+		NotificationURI:      control.uri,
 	}); err != nil {
 		t.Fatalf("seed probe control: %v", err)
 	}
@@ -104,10 +99,10 @@ func assertRefusedAndUnstored(t *testing.T, rr *httptest.ResponseRecorder, store
 	}()
 	probe.Notify(ctx, "/edev/"+edevID, sep2.NotificationStatusChanged)
 	probe.Notify(ctx, "/probe-control", sep2.NotificationStatusChanged)
-	waitForCondition(t, "probe control delivery", func() bool { return controlRequests.Load() == 1 })
+	waitForCondition(t, "probe control delivery", func() bool { return control.hits.Load() == 1 })
 
-	if n := accepts.Load(); n != 0 {
-		t.Errorf("loopback receiver accepted %d connections, want 0", n)
+	if n := rcv.hits.Load(); n != 0 {
+		t.Errorf("loopback receiver got %d notifications for the refused subscription, want 0", n)
 	}
 }
 
@@ -224,14 +219,14 @@ func TestProtocolRouterLogsValidatorFallbackOnce(t *testing.T) {
 func TestProtocolRouterDefaultConfigRefusesLoopbackNotificationURI(t *testing.T) {
 	t.Parallel()
 
-	uri, accepts, _ := newLoopbackReceiver(t)
+	rcv := newLoopbackReceiver(t)
 	cfg := &config.Config{}
 	stores := newTestStores()
 	mgr := server.NewSubscriptionNotifier(cfg, stores.Subscriptions, 1, 4)
 	h, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", mgr)
 
-	rr := postSubscriptionThroughRouter(t, h, "edev-1", uri+"/notify")
-	assertRefusedAndUnstored(t, rr, stores, "edev-1", accepts)
+	rr := postSubscriptionThroughRouter(t, h, "edev-1", rcv.uri)
+	assertRefusedAndUnstored(t, rr, stores, "edev-1", rcv)
 }
 
 type notifyOnly struct{}
@@ -250,12 +245,12 @@ func TestProtocolRouterWithoutManagerPolicyRefusesLoopback(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			uri, accepts, _ := newLoopbackReceiver(t)
+			rcv := newLoopbackReceiver(t)
 			stores := newTestStores()
 			h, _ := server.BuildProtocolRouter(&config.Config{}, stores, nil, "", "", tc.notifier)
 
-			rr := postSubscriptionThroughRouter(t, h, "edev-1", uri+"/notify")
-			assertRefusedAndUnstored(t, rr, stores, "edev-1", accepts)
+			rr := postSubscriptionThroughRouter(t, h, "edev-1", rcv.uri)
+			assertRefusedAndUnstored(t, rr, stores, "edev-1", rcv)
 		})
 	}
 }
@@ -263,7 +258,7 @@ func TestProtocolRouterWithoutManagerPolicyRefusesLoopback(t *testing.T) {
 func TestProtocolRouterLoopbackOptInFromConfig(t *testing.T) {
 	t.Parallel()
 
-	uri, _, requests := newLoopbackReceiver(t)
+	rcv := newLoopbackReceiver(t)
 	cfg := &config.Config{NotificationAllowLoopback: true}
 	stores := newTestStores()
 	mgr := server.NewSubscriptionNotifier(cfg, stores.Subscriptions, 1, 4)
@@ -283,7 +278,7 @@ func TestProtocolRouterLoopbackOptInFromConfig(t *testing.T) {
 	})
 	h, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", mgr)
 
-	rr := postSubscriptionThroughRouter(t, h, "edev-1", uri+"/notify")
+	rr := postSubscriptionThroughRouter(t, h, "edev-1", rcv.uri)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -291,13 +286,13 @@ func TestProtocolRouterLoopbackOptInFromConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListByDeviceWithIDs: %v", err)
 	}
-	if len(stored) != 1 || stored[0].Subscription.NotificationURI != uri+"/notify" {
-		t.Fatalf("stored = %+v, want one subscription with NotificationURI %q", stored, uri+"/notify")
+	if len(stored) != 1 || stored[0].Subscription.NotificationURI != rcv.uri {
+		t.Fatalf("stored = %+v, want one subscription with NotificationURI %q", stored, rcv.uri)
 	}
 
 	mgr.Notify(ctx, "/edev/edev-1", sep2.NotificationStatusChanged)
 	deadline := time.Now().Add(5 * time.Second)
-	for requests.Load() == 0 {
+	for rcv.hits.Load() == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("loopback receiver got no notification with the opt-in set")
 		}

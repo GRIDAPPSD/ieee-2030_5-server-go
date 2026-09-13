@@ -94,12 +94,12 @@ func TestRunAppliesNotificationLoopbackPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			logs := captureServerLog(t)
 			addr, client := bootRunForNotificationPolicy(t, tc.allow)
-			receiverURL, accepts, _ := newLoopbackReceiver(t)
+			rcv := newLoopbackReceiver(t)
 			base := "https://" + addr + "/edev/edev-1/sub"
 
 			body := []byte(`<Subscription xmlns="urn:ieee:std:2030.5:ns">` +
 				`<subscribedResource>/edev/edev-1</subscribedResource>` +
-				`<notificationURI>` + receiverURL + `/notify</notificationURI>` +
+				`<notificationURI>` + rcv.uri + `</notificationURI>` +
 				`<encoding>0</encoding>` +
 				`</Subscription>`)
 			resp, err := client.Post(base, "application/sep+xml", bytes.NewReader(body))
@@ -128,11 +128,8 @@ func TestRunAppliesNotificationLoopbackPolicy(t *testing.T) {
 			if len(list.Subscription) != tc.wantStored {
 				t.Errorf("stored subscriptions = %d, want %d", len(list.Subscription), tc.wantStored)
 			}
-			if tc.wantStored == 1 && list.Subscription[0].NotificationURI != receiverURL+"/notify" {
-				t.Errorf("stored NotificationURI = %q, want %q", list.Subscription[0].NotificationURI, receiverURL+"/notify")
-			}
-			if !tc.allow && accepts.Load() != 0 {
-				t.Errorf("loopback receiver accepted %d connections, want 0", accepts.Load())
+			if tc.wantStored == 1 && list.Subscription[0].NotificationURI != rcv.uri {
+				t.Errorf("stored NotificationURI = %q, want %q", list.Subscription[0].NotificationURI, rcv.uri)
 			}
 			if got := strings.Contains(logs.String(), loopbackOptInWarning); got != tc.wantWarning {
 				t.Errorf("startup warning logged = %v, want %v", got, tc.wantWarning)

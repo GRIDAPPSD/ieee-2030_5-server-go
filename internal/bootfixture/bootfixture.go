@@ -13,8 +13,10 @@
 //     uses).
 //   - Errors wrap with %w and cite the fixture path at every boundary so
 //     a malformed file surfaces in server logs without ambiguity.
-//   - Idempotent on a fresh Target. Loading twice without reset errors
-//     with store.ErrAlreadyExists.
+//   - Load is strict: loading twice without reset errors with
+//     store.ErrAlreadyExists. Reconcile is the server's boot path; with a
+//     data_dir it seeds each persisted record once and yields to persisted
+//     state (#352).
 //
 // Schema duplication: bootfixture intentionally duplicates the YAML schema
 // from test/csip/csiptest/loader.go rather than depending on the test
@@ -54,8 +56,8 @@ type Target struct {
 	EndDevices store.EndDeviceStore
 	FSAs       *memory.ScopedStore[sep2.FunctionSetAssignments]
 	// DERPrograms is the store.ScopedStore contract, not a concrete
-	// *memory.ScopedStore. The loader only Creates, and the server hands
-	// over *memory.DERProgramStore, whose collection stopped being an
+	// *memory.ScopedStore. The loader only reads and Creates, and the server
+	// hands over *memory.DERProgramStore, whose collection stopped being an
 	// exported embedded field in core. The contract is what both shapes
 	// have in common and all this loader ever needed.
 	DERPrograms        store.ScopedStore[sep2.DERProgram]
@@ -186,29 +188,36 @@ type ListRef struct {
 //     store sentinels so callers can errors.Is them.
 //   - On any failure mid-load the target may be partially populated.
 func Load(ctx context.Context, target *Target, path string) error {
+	spec, err := readSpec(target, path)
+	if err != nil {
+		return err
+	}
+	if err := applySpec(ctx, target, spec); err != nil {
+		return fmt.Errorf("bootfixture: apply fixture %s: %w", path, err)
+	}
+	return nil
+}
+
+func readSpec(target *Target, path string) (*Spec, error) {
 	if target == nil {
-		return fmt.Errorf("bootfixture: load %s: target is nil", path)
+		return nil, fmt.Errorf("bootfixture: load %s: target is nil", path)
 	}
 	if path == "" {
-		return errors.New("bootfixture: load: path is empty")
+		return nil, errors.New("bootfixture: load: path is empty")
 	}
 
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("bootfixture: read fixture %s: %w", path, err)
+		return nil, fmt.Errorf("bootfixture: read fixture %s: %w", path, err)
 	}
 
 	var spec Spec
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true)
 	if err := dec.Decode(&spec); err != nil {
-		return fmt.Errorf("bootfixture: decode fixture %s: %w", path, err)
+		return nil, fmt.Errorf("bootfixture: decode fixture %s: %w", path, err)
 	}
-
-	if err := applySpec(ctx, target, &spec); err != nil {
-		return fmt.Errorf("bootfixture: apply fixture %s: %w", path, err)
-	}
-	return nil
+	return &spec, nil
 }
 
 func applySpec(ctx context.Context, target *Target, spec *Spec) error {
@@ -222,9 +231,8 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		}
 		edevIDs[e.ID] = struct{}{}
 
-		dev := buildEndDevice(e)
-		if err := target.EndDevices.Create(ctx, e.ID, dev); err != nil {
-			return fmt.Errorf("end_devices[%d] (id=%q): create: %w", i, e.ID, err)
+		if err := createEndDevice(ctx, target, i, e); err != nil {
+			return err
 		}
 	}
 
@@ -238,9 +246,8 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		if _, ok := edevIDs[f.EndDeviceID]; !ok {
 			return fmt.Errorf("fsas[%d] (id=%q): unknown end_device_id %q", i, f.ID, f.EndDeviceID)
 		}
-		fsa := buildFSA(f)
-		if err := target.FSAs.Create(ctx, f.EndDeviceID, f.ID, fsa); err != nil {
-			return fmt.Errorf("fsas[%d] (id=%q, edev=%q): create: %w", i, f.ID, f.EndDeviceID, err)
+		if err := createFSA(ctx, target, i, f); err != nil {
+			return err
 		}
 	}
 
@@ -254,9 +261,8 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		if _, ok := edevIDs[p.EndDeviceID]; !ok {
 			return fmt.Errorf("der_programs[%d] (id=%q): unknown end_device_id %q", i, p.ID, p.EndDeviceID)
 		}
-		prog := buildDERProgram(p)
-		if err := target.DERPrograms.Create(ctx, p.EndDeviceID, p.ID, prog); err != nil {
-			return fmt.Errorf("der_programs[%d] (id=%q): create: %w", i, p.ID, err)
+		if err := createDERProgram(ctx, target, i, p); err != nil {
+			return err
 		}
 	}
 
@@ -264,10 +270,8 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		if d.EndDeviceID == "" || d.FSAID == "" || d.DERProgramID == "" {
 			return fmt.Errorf("default_der_controls[%d]: end_device_id, fsa_id, der_program_id all required", i)
 		}
-		key := compositeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
-		dc := buildDefaultDERControl(d)
-		if err := target.DefaultDERControls.Create(ctx, key, singletonKey, dc); err != nil {
-			return fmt.Errorf("default_der_controls[%d] (scope=%q): create: %w", i, key, err)
+		if err := createDefaultDERControl(ctx, target, i, d); err != nil {
+			return err
 		}
 	}
 
@@ -278,10 +282,8 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		if c.EndDeviceID == "" || c.FSAID == "" || c.DERProgramID == "" {
 			return fmt.Errorf("der_controls[%d] (id=%q): end_device_id, fsa_id, der_program_id all required", i, c.ID)
 		}
-		key := compositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
-		dc := buildDERControl(c)
-		if err := target.DERControls.Create(ctx, key, c.ID, dc); err != nil {
-			return fmt.Errorf("der_controls[%d] (id=%q, scope=%q): create: %w", i, c.ID, key, err)
+		if err := createDERControl(ctx, target, i, c); err != nil {
+			return err
 		}
 	}
 
@@ -289,12 +291,58 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		if c.ID == "" {
 			return fmt.Errorf("der_curves[%d]: id is required", i)
 		}
-		cur := buildDERCurve(c)
-		if err := target.DERCurves.Create(ctx, c.ID, cur); err != nil {
-			return fmt.Errorf("der_curves[%d] (id=%q): create: %w", i, c.ID, err)
+		if err := createDERCurve(ctx, target, i, c); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+// The create helpers are shared by Load and Reconcile so both name a failing
+// fixture entry the same way.
+
+func createEndDevice(ctx context.Context, target *Target, i int, e EndDeviceSpec) error {
+	if err := target.EndDevices.Create(ctx, e.ID, buildEndDevice(e)); err != nil {
+		return fmt.Errorf("end_devices[%d] (id=%q): create: %w", i, e.ID, err)
+	}
+	return nil
+}
+
+func createFSA(ctx context.Context, target *Target, i int, f FSASpec) error {
+	if err := target.FSAs.Create(ctx, f.EndDeviceID, f.ID, buildFSA(f)); err != nil {
+		return fmt.Errorf("fsas[%d] (id=%q, edev=%q): create: %w", i, f.ID, f.EndDeviceID, err)
+	}
+	return nil
+}
+
+func createDERProgram(ctx context.Context, target *Target, i int, p DERProgramSpec) error {
+	if err := target.DERPrograms.Create(ctx, p.EndDeviceID, p.ID, buildDERProgram(p)); err != nil {
+		return fmt.Errorf("der_programs[%d] (id=%q): create: %w", i, p.ID, err)
+	}
+	return nil
+}
+
+func createDefaultDERControl(ctx context.Context, target *Target, i int, d DefaultDERControlSpec) error {
+	key := compositeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
+	if err := target.DefaultDERControls.Create(ctx, key, singletonKey, buildDefaultDERControl(d)); err != nil {
+		return fmt.Errorf("default_der_controls[%d] (scope=%q): create: %w", i, key, err)
+	}
+	return nil
+}
+
+func createDERControl(ctx context.Context, target *Target, i int, c DERControlSpec) error {
+	key := compositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
+	if err := target.DERControls.Create(ctx, key, c.ID, buildDERControl(c)); err != nil {
+		return fmt.Errorf("der_controls[%d] (id=%q, scope=%q): create: %w", i, c.ID, key, err)
+	}
+	return nil
+}
+
+func createDERCurve(ctx context.Context, target *Target, i int, c DERCurveSpec) error {
+	if err := target.DERCurves.Create(ctx, c.ID, buildDERCurve(c)); err != nil {
+		return fmt.Errorf("der_curves[%d] (id=%q): create: %w", i, c.ID, err)
+	}
 	return nil
 }
 

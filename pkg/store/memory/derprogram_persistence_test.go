@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -166,15 +167,25 @@ func TestDERProgramPersistence_UpdateFailedFlushKeepsMemoryAndStaleDisk(t *testi
 		t.Fatalf("read snapshot after Create: %v", err)
 	}
 
-	// writeFileAtomic opens <path>.tmp for write in dir; a read-only dir
+	// atomicfile.Write opens <path>.tmp for write in dir; a read-only dir
 	// makes that open fail without touching the file already committed.
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatalf("chmod dir read-only: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	if err := store.Update(ctx, "dev-1", "prog-A", mkProgram("M1", "updated", 9)); err == nil {
+	err = store.Update(ctx, "dev-1", "prog-A", mkProgram("M1", "updated", 9))
+	if err == nil {
 		t.Fatal("expected Update to return an error when the snapshot write fails")
+	}
+	// The shared snapshot writer must not carry subscription_persistence.go's
+	// own label: this is a DERProgram write, and derprogram_persistence.go
+	// already supplies "derprogram persistence:".
+	if !strings.HasPrefix(err.Error(), "derprogram persistence: open tmp:") {
+		t.Errorf("Update error = %q, want prefix %q", err.Error(), "derprogram persistence: open tmp:")
+	}
+	if strings.Contains(err.Error(), "subscription persistence") {
+		t.Errorf("Update error = %q, must not mention subscription persistence", err.Error())
 	}
 
 	// Same contract as Create/Delete: a failed persist does not roll back

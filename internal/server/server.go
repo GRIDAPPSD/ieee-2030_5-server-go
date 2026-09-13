@@ -173,7 +173,11 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 			DefaultDERControls: stores.DefaultDERControls,
 			DERCurves:          stores.DERCurves,
 		}
-		if err := bootfixture.Load(ctx, target, cfg.BootFixtureFile); err != nil {
+		// With a data_dir the fixture seeds once and yields to persisted
+		// state; without one the seed path is empty and every record is
+		// created, as before (#352).
+		seedPath := cfg.EffectiveStorePath("bootfixture-seed", "")
+		if err := bootfixture.Reconcile(ctx, target, cfg.BootFixtureFile, seedPath, log.Printf); err != nil {
 			return fmt.Errorf("load boot fixture %q: %w", cfg.BootFixtureFile, err)
 		}
 		log.Printf("boot fixture loaded: %s", cfg.BootFixtureFile)

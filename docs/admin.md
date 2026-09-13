@@ -21,7 +21,7 @@ SEP2_ADMIN_KEY="$(openssl rand -hex 32)"   # bearer secret; do NOT ship "admin"
 
 `SEP2_ADMIN_KEY` is the Bearer token the login form validates against
 (constant-time compare). It is distinct from `SEP2_ADMIN_KEY_FILE`,
-which is the admin listener's TLS private key path — see
+which is the admin listener's TLS private key path - see
 [`admin-listener.md`](admin-listener.md). Any non-loopback deployment
 MUST set `SEP2_ADMIN_KEY` to a high-entropy value; the literal string
 `admin` is fine for `make run` on localhost only.
@@ -36,7 +36,7 @@ The Make targets above leave `SEP2_ADMIN_TLS` unset, so the admin
 listener serves **plain HTTP** on `:8444` (Caddy mode). Two browser
 entry points are supported, depending on which posture you want:
 
-- **HTTP, default — #246 loopback bypass.** Hit
+- **HTTP, default - #246 loopback bypass.** Hit
   `http://localhost:8444/` directly. No `/login`, no Bearer token, no
   client cert needed: `AdminAuthMiddleware` admits any request from a
   loopback address that carries no reverse-proxy forwarded header.
@@ -169,7 +169,7 @@ behind the login routes. Five paths are checked in order; **any single
 path that succeeds admits the request** (this is fallback ordering, not
 defense in depth):
 
-0. **Loopback bypass (#246)** — RemoteAddr is a loopback address
+0. **Loopback bypass (#246)** - RemoteAddr is a loopback address
    (127.0.0.0/8 or `::1`) AND the request carries no reverse-proxy
    forwarded header (`X-Forwarded-For`, `X-Forwarded-Host`,
    `X-Forwarded-Proto`, RFC 7239 `Forwarded`). Local-developer
@@ -177,12 +177,12 @@ defense in depth):
    by default, and a reverse proxy in front injects `X-Forwarded-*` so
    the bypass declines automatically for production traffic. Every
    admission is logged.
-1. **[mTLS](glossary.md)** — peer cert with the IEEE 2030.5 admin policy OID
+1. **[mTLS](glossary.md)** - peer cert with the IEEE 2030.5 admin policy OID
    `1.3.6.1.4.1.40732.2.5` (matched by
    [`certs.HasPolicyOID`](../internal/certs/oids.go)).
-2. **Bearer** — `Authorization: Bearer <SEP2_ADMIN_KEY>`. Disabled when
+2. **Bearer** - `Authorization: Bearer <SEP2_ADMIN_KEY>`. Disabled when
    `SEP2_ADMIN_KEY` is empty.
-3. **Query-param ticket** — `?ticket=<value>` redeemed against the
+3. **Query-param ticket** - `?ticket=<value>` redeemed against the
    `TicketStore`. One-time use. Used by browser SSE / EventSource
    clients that cannot send `Authorization` headers.
 4. **Cookie session**: the `admin_ticket` cookie validated against the
@@ -292,7 +292,7 @@ your listener posture:
 
 ```bash
 # Plain-HTTP admin listener (default for `make run` / `make run-full`).
-# #246 loopback bypass admits the request — no Bearer needed.
+# #246 loopback bypass admits the request - no Bearer needed.
 curl http://localhost:8444/api/certs/ca
 
 # HTTPS admin listener (after `SEP2_ADMIN_TLS=true`). The bypass still
@@ -309,7 +309,7 @@ curl https://localhost:8444/api/certs/ca \
 ```
 
 If you hit `error:0A0000C6:SSL routines::packet length too long`, the
-listener is in plain-HTTP mode and you sent it TLS bytes — drop the
+listener is in plain-HTTP mode and you sent it TLS bytes - drop the
 `https://` or set `SEP2_ADMIN_TLS=true`.
 
 The cert generation entry points live in
@@ -338,9 +338,9 @@ Putting the suite under CI is tracked under
 
 - [README](../README.md)
 - [`admin-ui-selectors.md`](admin-ui-selectors.md) - dashboard selector map
-- [`2030_5.md`](2030_5.md) — protocol surface
-- [`csip.md`](csip.md) — CSIP V1.2 profile
-- [`admin-listener.md`](admin-listener.md) — admin listener TLS posture
-- [`glossary.md`](glossary.md) — acronyms and protocol terms
-- [`caddy-admin.example.conf`](caddy-admin.example.conf) — example
+- [`2030_5.md`](2030_5.md) - protocol surface
+- [`csip.md`](csip.md) - CSIP V1.2 profile
+- [`admin-listener.md`](admin-listener.md) - admin listener TLS posture
+- [`glossary.md`](glossary.md) - acronyms and protocol terms
+- [`caddy-admin.example.conf`](caddy-admin.example.conf) - example
   Caddy fronting config

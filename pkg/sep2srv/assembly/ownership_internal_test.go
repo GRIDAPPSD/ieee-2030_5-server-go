@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -227,12 +226,8 @@ func TestFullStoresWiresEveryStoresField(t *testing.T) {
 
 func TestDenialLog_BoundsVolumeAndReportsWhatItSuppressed(t *testing.T) {
 	t.Parallel()
-	var lines []string
-	now := time.Unix(1700000000, 0)
-	d := &denialLog{
-		logf: func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) },
-		now:  func() time.Time { return now },
-	}
+	clock := newFakeDenialClock()
+	d, out := newTestDenialLog(clock)
 	req := httptest.NewRequest(http.MethodGet, "/edev/1", nil)
 	req.SetPathValue("id", "1")
 	v := ownershipVerdict{caller: "CALLER", reason: reasonNotOwner}
@@ -241,21 +236,20 @@ func TestDenialLog_BoundsVolumeAndReportsWhatItSuppressed(t *testing.T) {
 	for i := 0; i < probes; i++ {
 		d.record(req, v)
 	}
-	if len(lines) != denialLogLimit {
-		t.Fatalf("%d denials in one window wrote %d lines, want %d", probes, len(lines), denialLogLimit)
+	if lines := out.snapshot(); len(lines) != denialLogPerCaller {
+		t.Fatalf("%d denials from one caller in one window wrote %d lines, want %d", probes, len(lines), denialLogPerCaller)
 	}
 
-	now = now.Add(denialLogWindow)
-	d.record(req, v)
-	want := fmt.Sprintf("suppressed %d denial log lines", probes-denialLogLimit)
-	if len(lines) != denialLogLimit+2 || !strings.Contains(lines[denialLogLimit], want) {
-		t.Fatalf("after the window closed: lines %q, want a line reporting %q then the new denial", lines[denialLogLimit:], want)
+	clock.Advance(denialLogWindow)
+	want := fmt.Sprintf("suppressed %d denial log lines in the last 1m0s: not-owner=%d", probes-denialLogPerCaller, probes-denialLogPerCaller)
+	if lines := out.snapshot(); len(lines) != denialLogPerCaller+1 || !strings.HasSuffix(lines[denialLogPerCaller], want) {
+		t.Fatalf("after the window closed: lines %q, want a line ending %q", lines[denialLogPerCaller:], want)
 	}
 
-	lines = nil
+	out.reset()
 	req.SetPathValue("id", "x\nforged "+strings.Repeat("A", 200))
 	d.record(req, v)
-	if len(lines) != 1 || strings.Contains(lines[0], "\n") || strings.Contains(lines[0], strings.Repeat("A", maxLoggedIDLen)) {
+	if lines := out.snapshot(); len(lines) != 1 || strings.Contains(lines[0], "\n") || strings.Contains(lines[0], strings.Repeat("A", maxLoggedIDLen)) {
 		t.Errorf("a hostile id was not quoted and truncated: %q", lines)
 	}
 }

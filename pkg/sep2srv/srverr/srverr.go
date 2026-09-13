@@ -1,6 +1,8 @@
-// Package srverr is where every 500 and 400 a sep2srv handler raises is
-// answered, so that every handler-raised failure of either kind carries a
-// server-side record of why. The encoding layer (pkg/sep2/encoding) has its
+// Package srverr is where every 500 a sep2srv handler raises is answered, and
+// where a 400 raised by a request-body decoder, or explicitly routed here by
+// its handler, is answered too, so each carries a server-side record of why.
+// It does not see every 400: see "What the 400 side covers, and what it does
+// not" below for the boundary. The encoding layer (pkg/sep2/encoding) has its
 // own 500 path for an XML encode failure, and that path does not carry this
 // package's log prefix.
 //
@@ -30,13 +32,15 @@
 // backend health, but its error text can quote the byte or element name that
 // tripped it, which is client-supplied content this package's contract never
 // lets reach a response body. [BadRequest] and [BadRequestMessage] hold every
-// 400 to the same rule [Internal] holds every 500 to: the detail goes to the
-// log, never to the client.
+// 400 that calls them to the same rule [Internal] holds every 500 to: the
+// detail goes to the log, never to the client. Not every 400 a handler raises
+// calls them; see the accounting below.
 //
 // # What is logged, and what is deliberately not
 //
-// One line per 500 or 400, carrying exactly two things: the ROUTE PATTERN
-// that matched, and the error.
+// One line per 500, and one line per 400 that reaches [BadRequest],
+// [BadRequestMessage], or [LogBadRequest], carrying exactly two things: the
+// ROUTE PATTERN that matched, and the error.
 //
 // The route pattern is [http.Request.Pattern], the registration string this
 // server handed to its own ServeMux ("GET /edev/{id}/der/{derId}"). It is a
@@ -44,14 +48,31 @@
 // names the failing route precisely enough to correlate a client-visible 500
 // against the handler that emitted it.
 //
-// Nothing a client supplied is logged: not the request body, not a header,
-// not the URL path, not a path value, not an identifier parsed out of a
-// document. A log line is a place secrets leak, it is usually the least
-// access-controlled artifact a server produces, and this codebase handles a
-// registration pIN, device LFDIs and SFDIs, and client certificates. The
-// concrete path is also the least useful of the options: it identifies one
-// request, whereas the pattern identifies the route, and a store outage is a
-// property of the route rather than of any one request.
+// # What the 400 side covers, and what it does not
+//
+// A 400 produced by a request-body decoder (XML or JSON) reaches this
+// package, and so does a 400 whose handler chooses to log it explicitly via
+// [LogBadRequest] before writing its own response body. A 400 produced by a
+// body-read failure (an oversized or truncated request) or by a plain
+// request-shape refusal ahead of any decode (a missing path value, an empty
+// required field, a malformed query parameter) does not: the handler writes
+// its own fixed message directly and nothing is logged. At this package's
+// last count, 21 such call sites in pkg/sep2srv answer a 400 this way; a
+// change that routes one of them through this package updates that count.
+//
+// Nothing a client supplied is logged, with one bounded exception: not the
+// request body, not a header, not the URL path, not a path value, not an
+// identifier parsed out of a document. The exception is the 400 side's
+// decoder error itself, which [BadRequest] and [BadRequestMessage] log as
+// part of the record and which can quote a byte or element name the decoder
+// rejected (see the 400 paragraph above); nothing beyond what the decoder
+// itself echoes into its own error text is logged. A log line is a place
+// secrets leak, it is usually the least access-controlled artifact a server
+// produces, and this codebase handles a registration pIN, device LFDIs and
+// SFDIs, and client certificates. The concrete path is also the least useful
+// of the options: it identifies one request, whereas the pattern identifies
+// the route, and a store outage is a property of the route rather than of any
+// one request.
 //
 // This costs something real and it is worth stating rather than glossing:
 // the log usually does not say WHICH resource id failed. That is the trade
@@ -157,9 +178,10 @@ func InternalMessage(w http.ResponseWriter, r *http.Request, clientMessage strin
 // Call it instead of writing http.Error with http.StatusBadRequest and the
 // decoder's own err.Error() directly. A decoder error can quote the input
 // that failed to parse, and this package's doc says that content never
-// reaches a client body; routing every 400 through this function is what
-// keeps that a property of the code rather than a habit each new handler has
-// to be reminded of.
+// reaches a client body; routing a decoder's 400 through this function is
+// what keeps that a property of the code rather than a habit each new decode
+// call site has to be reminded of. It does not cover every 400 a handler can
+// raise; see the package doc's "What the 400 side covers" section.
 func BadRequest(w http.ResponseWriter, r *http.Request, err error) {
 	BadRequestMessage(w, r, DefaultBadRequestMessage, err)
 }

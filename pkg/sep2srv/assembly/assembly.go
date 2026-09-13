@@ -137,17 +137,12 @@ import (
 // why the routes stay mounted, why the answer is a 500 and not an empty list,
 // and why per-field gating was rejected.
 //
-// EndDevices is on NEITHER side of that table, and the omission is recorded
-// here rather than quietly implied. It has no gate at all: the /edev routes are
-// mounted whenever stores is non-nil, so an absent EndDevices handle is
-// dereferenced on the first request exactly as a co-gated member used to be.
-// A prior fix addressed the co-gated members and left this one, because /edev
-// is the root of the discovery walk and refusing it is a different decision from
-// refusing a leaf function set: a server with no EndDevice store is arguably
-// not a 2030.5 server at all, and whether that should be a boot-time panic, a
-// refusal, or an unmounted family is a design question rather than a bug fix.
-// Do not read the absence of a substitute here as evidence that a nil
-// EndDevices is handled.
+// EndDevices is on NEITHER side of that table: it has no gate, because /edev is
+// the root of the discovery walk and its routes mount whenever stores is
+// non-nil. An absent EndDevices handle is refused like a mis-wired member
+// instead: the ownership gate answers 500 on every /edev/{id} route, and the
+// routes themselves, POST /edev and GET /edev included, are served over the
+// refusing substitute requireEndDevices returns.
 type Stores struct {
 	EndDevices store.EndDeviceStore
 
@@ -576,7 +571,10 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	// the registration derivation first and the LogEventListLink derivation
 	// second, and a device carries both links or neither of them according
 	// to its own gate.
-	edevs := logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores)
+	//
+	// Both decorators return an absent handle unchanged, so the substitute is
+	// applied exactly when Stores.EndDevices is absent and is never decorated.
+	edevs := requireEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores))
 
 	mux.HandleFunc("GET /edev", coreedev.HandleEndDeviceListForCaller(edevs, stores.EndDeviceManagers, authPolicy.Identity, 900))
 	mux.HandleFunc("POST /edev", coreedev.HandleCreateEndDevice(edevs, edevIndexes, authPolicy.Identity, authPolicy.SFDIPrefix))

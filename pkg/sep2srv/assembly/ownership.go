@@ -61,9 +61,6 @@ func newOwnershipGate(next routeRegistrar, devices store.EndDeviceStore, manager
 		identityAbsent: identity == nil,
 		denials:        &denialLog{logf: log.Printf, now: time.Now},
 	}
-	if g.devicesAbsent {
-		log.Print("assembly: Stores.EndDevices is not wired: every /edev/{id} route will answer 500")
-	}
 	if g.managersAbsent {
 		log.Print("assembly: Stores.EndDeviceManagers is not wired: no EndDevice access is delegated to a manager")
 	}

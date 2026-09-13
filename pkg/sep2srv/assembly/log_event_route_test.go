@@ -286,11 +286,10 @@ func TestLogEvent_UnknownIDIsACleanNotFound(t *testing.T) {
 // TestLogEvent_DeleteIsServedAndScoped covers DELETE on the instance, which is
 // mode M at sep_wadl.xml:1430.
 //
-// DELETE is a WRITE, and this mount carries no ownership binding: any
-// authenticated caller that knows a path can delete the event under it. That
-// is a separate cross-cutting gap, not something this route invented; the
-// store scoping asserted below is what this layer does enforce, and it is
-// not the same property.
+// DELETE is a WRITE. The caller's ownership of {id} is enforced by
+// ownershipGate (#354) before this handler runs; the store scoping asserted
+// below is a separate property this layer also enforces, not a substitute
+// for it.
 func TestLogEvent_DeleteIsServedAndScoped(t *testing.T) {
 	t.Parallel()
 

@@ -1,28 +1,42 @@
-// Package srverr is where every 500 a sep2srv handler raises is answered,
-// so that every handler-raised 500 carries a server-side record of why. The
-// encoding layer (pkg/sep2/encoding) has its own 500 path for an XML encode
-// failure, and that path does not carry this package's log prefix.
+// Package srverr is where every 500 and 400 a sep2srv handler raises is
+// answered, so that every handler-raised failure of either kind carries a
+// server-side record of why. The encoding layer (pkg/sep2/encoding) has its
+// own 500 path for an XML encode failure, and that path does not carry this
+// package's log prefix.
 //
 // # The operational problem this exists for
 //
-// A 500 with no log line tells an operator that something failed and nothing
-// about what. Before this package the handlers were uneven about it: some
-// store failures logged and some did not, with no rule an operator or a
+// A failure with no log line tells an operator that something went wrong and
+// nothing about what. Before this package the handlers were uneven about it:
+// some store failures logged and some did not, with no rule an operator or a
 // reviewer could apply, so the presence of a log line said more about which
 // afternoon a handler was written than about how serious the failure was.
 //
-// That unevenness is cheap today only because every store in this repository
-// is in-memory and essentially cannot fail. The moment a durable backend is
-// attached a backend outage produces 500s across the whole surface at once,
-// and the operator's first symptom is a wall of identical
-// 500 bodies. Whether that wall is a store outage or one client provoking
-// errors on one route is answerable only from the server-side log, and only
-// if every 500 is in it.
+// A durable backend attached behind these stores makes a 500 wall a real
+// operational event: an outage produces 500s across the whole surface at
+// once, and the operator's first symptom is a wall of identical 500 bodies.
+// Whether that wall is a store outage or one client provoking errors on one
+// route is answerable only from the server-side log, and only if every 500 is
+// in it. This is not a someday concern about the in-memory stores this
+// repository ships today: pkg/sep2srv/assembly/miswired.go's
+// miswiredScopedStore and miswiredResourceStore already return a failure from
+// every method they implement, reachable right now from any route wired to
+// one, and familygate_test.go exercises exactly that path. A store that is
+// merely wired to the wrong field is a reachable in-memory 500 with no
+// backend involved at all.
+//
+// The 400 side has a different cause but the same operational shape. A
+// decoder rejecting a malformed body is routine rather than a symptom of
+// backend health, but its error text can quote the byte or element name that
+// tripped it, which is client-supplied content this package's contract never
+// lets reach a response body. [BadRequest] and [BadRequestMessage] hold every
+// 400 to the same rule [Internal] holds every 500 to: the detail goes to the
+// log, never to the client.
 //
 // # What is logged, and what is deliberately not
 //
-// One line per 500, carrying exactly two things: the ROUTE PATTERN that
-// matched, and the error.
+// One line per 500 or 400, carrying exactly two things: the ROUTE PATTERN
+// that matched, and the error.
 //
 // The route pattern is [http.Request.Pattern], the registration string this
 // server handed to its own ServeMux ("GET /edev/{id}/der/{derId}"). It is a

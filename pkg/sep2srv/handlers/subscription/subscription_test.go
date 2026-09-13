@@ -4,15 +4,52 @@ import (
 	"context"
 	"encoding/xml"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
+
+// TestHandleCreateSubscriptionInvalidXMLDoesNotLeakDecoderDetail pins the 400
+// path convention (#360): a fixed body, decoder detail (which can quote
+// attacker-supplied content) left to the operator-facing log.
+func TestHandleCreateSubscriptionInvalidXMLDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "MARKERXYZ360LEAK"
+
+	var buf strings.Builder
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	store := memory.NewSubscriptionStore()
+	h := subscription.HandleCreateSubscription(store, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /edev/{id}/sub", h)
+	req := httptest.NewRequest(http.MethodPost, "/edev/1/sub", strings.NewReader("<"+marker+">bar</"+marker+">"))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", body)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
+	}
+}
 
 // GET /edev/{id}/sub must return only subscriptions scoped to EndDevice
 // {id} (GRIDAPPSD/ieee-2030_5-server-go#168). The handler used to be

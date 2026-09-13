@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -138,5 +139,42 @@ func TestHandlePostResponse_CarriesCreatedDateTime(t *testing.T) {
 	}
 	if ct := stored.Items[0].CreatedDateTime; ct < before || ct > after {
 		t.Errorf("stored Response CreatedDateTime = %d, want server clock in [%d, %d]", ct, before, after)
+	}
+}
+
+// TestHandlePostFlowReservationRequest_InvalidXMLDoesNotLeakDecoderDetail pins
+// the 400 path convention (#360): the body is a fixed message and the
+// decoder's own complaint, which can quote attacker-supplied content, goes to
+// the operator-facing log only.
+func TestHandlePostFlowReservationRequest_InvalidXMLDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "MARKERXYZ360LEAK"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore))
+
+	req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", strings.NewReader("<"+marker+">bar</"+marker+">"))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if body := w.Body.String(); strings.Contains(body, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", body)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
 	}
 }

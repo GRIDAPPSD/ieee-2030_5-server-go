@@ -13,8 +13,8 @@ import (
 )
 
 // ErrIdentityConflict reports a fixture EndDevice, not yet in the seed record,
-// that collides with a persisted EndDevice of a different LFDI by id or by
-// LFDI.
+// whose id a persisted EndDevice of a different LFDI holds, or whose LFDI or
+// SFDI another persisted EndDevice holds.
 var ErrIdentityConflict = errors.New("boot fixture EndDevice conflicts with a persisted EndDevice")
 
 // Logf receives the line logged for each fixture record Reconcile skips.
@@ -130,6 +130,11 @@ func planReconcile(ctx context.Context, target *Target, spec *Spec, seeded map[s
 		case err == nil:
 			switch {
 			case strings.EqualFold(stored.LFDI, e.LFDI): // EA1, EA2: keep or adopt
+				if !wasSeeded {
+					if err := checkIdentifiersFree(ctx, target.EndDevices, i, e, &stored); err != nil {
+						return nil, err
+					}
+				}
 				p.record(key)
 			case wasSeeded: // EA3: deleted, then the id was reallocated
 				skippedEndDevices[e.ID] = struct{}{}
@@ -144,13 +149,8 @@ func planReconcile(ctx context.Context, target *Target, spec *Spec, seeded map[s
 				p.skip("EndDevice id=%q: deleted since seeded", e.ID)
 				continue
 			}
-			holder, found, err := endDeviceHoldingLFDI(ctx, target.EndDevices, e.LFDI)
-			if err != nil {
-				return nil, fmt.Errorf("end_devices[%d] (id=%q): look up persisted LFDI: %w", i, e.ID, err)
-			}
-			if found { // EA6
-				return nil, fmt.Errorf("end_devices[%d] (id=%q): %w: its LFDI is held by persisted EndDevice %q",
-					i, e.ID, ErrIdentityConflict, holder.Href)
+			if err := checkIdentifiersFree(ctx, target.EndDevices, i, e, nil); err != nil { // EA6
+				return nil, err
 			}
 			p.endDevices = append(p.endDevices, indexed[EndDeviceSpec]{i, e}) // EA7
 			p.record(key)
@@ -212,22 +212,51 @@ func planReconcile(ctx context.Context, target *Target, spec *Spec, seeded map[s
 	return p, nil
 }
 
-// endDeviceHoldingLFDI scans rather than calling GetByLFDI, which matches the
-// exact string, because the identity match ignores case.
-func endDeviceHoldingLFDI(ctx context.Context, s store.EndDeviceStore, lfdi string) (sep2.EndDevice, bool, error) {
-	if lfdi == "" {
-		return sep2.EndDevice{}, false, nil
+// checkIdentifiersFree fails when a persisted EndDevice other than self holds
+// the fixture record's LFDI or SFDI. Creating the record would repoint the
+// store's LFDI or SFDI index at it, and adopting it would leave two records
+// with one identity. self is the stored record under the fixture id, or nil.
+func checkIdentifiersFree(ctx context.Context, s store.EndDeviceStore, i int, e EndDeviceSpec, self *sep2.EndDevice) error {
+	holder, which, err := endDeviceHoldingIdentifier(ctx, s, e, self)
+	if err != nil {
+		return fmt.Errorf("end_devices[%d] (id=%q): look up persisted identifiers: %w", i, e.ID, err)
+	}
+	if which != "" {
+		return fmt.Errorf("end_devices[%d] (id=%q): %w: its %s is held by persisted EndDevice %q",
+			i, e.ID, ErrIdentityConflict, which, holder.Href)
+	}
+	return nil
+}
+
+// endDeviceHoldingIdentifier returns the first persisted EndDevice other than
+// self whose LFDI matches e's ignoring case, or whose SFDI equals e's, and
+// names which matched. It scans rather than calling GetByLFDI or GetBySFDI:
+// the LFDI match ignores case, and each index keeps one id per value, so it
+// can hide a second holder. List returns no store ids, so self is skipped by
+// matching it once on href, LFDI and SFDI; when nothing matches self, every
+// holder counts.
+func endDeviceHoldingIdentifier(ctx context.Context, s store.EndDeviceStore, e EndDeviceSpec, self *sep2.EndDevice) (sep2.EndDevice, string, error) {
+	if e.LFDI == "" && e.SFDI == "" {
+		return sep2.EndDevice{}, "", nil
 	}
 	list, err := s.List(ctx, store.ListOptions{Unbounded: true})
 	if err != nil {
-		return sep2.EndDevice{}, false, err
+		return sep2.EndDevice{}, "", err
 	}
+	selfSkipped := self == nil
 	for _, dev := range list.Items {
-		if strings.EqualFold(dev.LFDI, lfdi) {
-			return dev, true, nil
+		if !selfSkipped && dev.Href == self.Href && dev.LFDI == self.LFDI && dev.SFDI == self.SFDI {
+			selfSkipped = true
+			continue
+		}
+		switch {
+		case e.LFDI != "" && strings.EqualFold(dev.LFDI, e.LFDI):
+			return dev, "LFDI", nil
+		case e.SFDI != "" && dev.SFDI == e.SFDI:
+			return dev, "SFDI", nil
 		}
 	}
-	return sep2.EndDevice{}, false, nil
+	return sep2.EndDevice{}, "", nil
 }
 
 func (p *reconcilePlan) apply(ctx context.Context, target *Target) error {

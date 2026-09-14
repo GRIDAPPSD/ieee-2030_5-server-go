@@ -77,13 +77,28 @@ route management never grants, or no management store), or
 `not-owner-or-manager` (a delegated route where the caller is not the
 record's manager either).
 
-These lines share one budget per router, across all callers: at most 20 in a
-one-minute window, which opens at the first refusal after the previous window
-has closed. Refusals past the budget are counted, not written. The count is
-written only when a later refusal arrives after the window has closed, in a
-line that always says "in the last 1m0s" whatever time has actually passed; if
-no refusal follows, the count is never written. A 500 is logged through the
-usual server error line.
+These lines are budgeted per router in one-minute windows. A window opens at
+the first refusal after the previous window has closed. Within a window each
+caller, keyed by the LFDI its line names, gets at most 5 lines, and all callers
+together get at most 100, so one caller's refusals cannot use up the lines of
+another. Refusals with no identity share one caller budget. Refusals past
+either budget are counted by reason, not written, and a window tracks at most
+100 callers however many are refused.
+
+The 100-line cap is 20 caller budgets of 5, so 20 distinct authenticated
+callers each spending their own budget in one window still fill it, and a
+21st caller's lines are then suppressed the same as an over-budget caller's
+would be. Every refusal is still enforced and still counted by reason in that
+window's summary; only which caller a line names can be lost.
+
+When a window that counted anything closes, one line reports the count, the
+time from the window's first refusal to the report, and the count per reason,
+for example `assembly: ownership gate suppressed 495 denial log lines in the
+last 1m0s: not-owner=495`. The line is written when the window closes, whether
+or not another refusal arrives, and names no caller or id. The router has no
+shutdown hook, so a report still pending when the server stops is written once
+when its window closes, if the process is still running. A 500 is logged
+through the usual server error line.
 
 ## Wiring the management store
 

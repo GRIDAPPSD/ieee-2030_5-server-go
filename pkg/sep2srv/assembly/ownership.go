@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -59,7 +61,7 @@ func newOwnershipGate(next routeRegistrar, devices store.EndDeviceStore, manager
 		managersAbsent: store.IsAbsent(managers),
 		identity:       identity,
 		identityAbsent: identity == nil,
-		denials:        &denialLog{logf: log.Printf, now: time.Now},
+		denials:        newDenialLog(log.Printf),
 	}
 	if g.managersAbsent {
 		log.Print("assembly: Stores.EndDeviceManagers is not wired: no EndDevice access is delegated to a manager")
@@ -212,43 +214,58 @@ func (g *ownershipGate) decide(r *http.Request, delegated bool) ownershipVerdict
 	return ownershipVerdict{decision: ownershipAllowed}
 }
 
-// Denial log bounds: at most denialLogLimit refusal lines per window, shared by
-// every caller of the router, so a mass probe cannot flood the log.
+// Denial log bounds per window. The per-caller budget stops one caller from
+// spending another's lines; the limit across callers stops a probe from many
+// identities flooding the log.
 const (
-	denialLogLimit  = 20
-	denialLogWindow = time.Minute
-	maxLoggedIDLen  = 64
+	denialLogPerCaller = 5
+	denialLogLimit     = 100
+	denialLogWindow    = time.Minute
+	maxLoggedIDLen     = 64
 )
 
-// denialLog writes one line per refusal until a window's limit is reached and
-// counts the rest. The count is reported by the first refusal after the window
-// closes, which also opens the next window.
+// denialLog writes refusal lines within the bounds above and counts the rest
+// by reason. A window opens at the first refusal after the previous one closed.
+// A caller is tracked only once it has a line written, so a window holds at
+// most denialLogLimit callers. A window that suppressed anything arms a
+// one-shot timer that reports the count when the window closes, so the count
+// does not wait for another refusal and no goroutine waits for the timer.
 type denialLog struct {
-	mu         sync.Mutex
-	logf       func(format string, args ...any)
-	now        func() time.Time
-	windowEnds time.Time
-	written    int
-	suppressed int
+	mu        sync.Mutex
+	logf      func(format string, args ...any)
+	now       func() time.Time
+	afterFunc func(d time.Duration, f func()) (stop func() bool)
+	window    time.Duration
+
+	windowStart time.Time
+	windowEnds  time.Time // zero when no window is open
+	generation  uint64
+	written     int
+	perCaller   map[string]int
+	suppressed  map[string]int
+	stopTimer   func() bool
+}
+
+func newDenialLog(logf func(format string, args ...any)) *denialLog {
+	return &denialLog{
+		logf: logf,
+		now:  time.Now,
+		afterFunc: func(d time.Duration, f func()) func() bool {
+			return time.AfterFunc(d, f).Stop
+		},
+		window: denialLogWindow,
+	}
 }
 
 func (d *denialLog) record(r *http.Request, v ownershipVerdict) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	summary, admitted := d.admit(v)
 
-	if now := d.now(); !now.Before(d.windowEnds) {
-		if d.suppressed > 0 {
-			d.logf("assembly: ownership gate suppressed %d denial log lines in the last %s", d.suppressed, denialLogWindow)
-		}
-		d.windowEnds = now.Add(denialLogWindow)
-		d.written, d.suppressed = 0, 0
+	if summary != "" {
+		d.logf("%s", summary)
 	}
-	if d.written >= denialLogLimit {
-		d.suppressed++
+	if !admitted {
 		return
 	}
-	d.written++
-
 	// The id is client-chosen: it is truncated and quoted so it cannot forge a
 	// log line. No field of the stored record is written.
 	id := r.PathValue("id")
@@ -256,4 +273,93 @@ func (d *denialLog) record(r *http.Request, v ownershipVerdict) {
 		id = id[:maxLoggedIDLen]
 	}
 	d.logf("assembly: ownership gate denied %s: caller=%q id=%q reason=%s", srverr.Route(r), v.caller, id, v.reason)
+}
+
+// admit runs the critical section under the mutex, released on every path
+// including a panic, so a panic here cannot leave every later refusal
+// blocked on the lock.
+func (d *denialLog) admit(v ownershipVerdict) (summary string, admitted bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := d.now()
+	summary = d.closeExpiredLocked(now)
+	if d.windowEnds.IsZero() {
+		d.windowStart, d.windowEnds = now, now.Add(d.window)
+		d.generation++
+	}
+	admitted = d.admitLocked(now, v)
+	return summary, admitted
+}
+
+func (d *denialLog) admitLocked(now time.Time, v ownershipVerdict) bool {
+	if d.written < denialLogLimit && d.perCaller[v.caller] < denialLogPerCaller {
+		if d.perCaller == nil {
+			d.perCaller = make(map[string]int)
+		}
+		d.perCaller[v.caller]++
+		d.written++
+		return true
+	}
+	if d.suppressed == nil {
+		d.suppressed = make(map[string]int)
+	}
+	d.suppressed[v.reason]++
+	if d.stopTimer == nil {
+		d.armLocked(now)
+	}
+	return false
+}
+
+func (d *denialLog) armLocked(now time.Time) {
+	gen := d.generation
+	d.stopTimer = d.afterFunc(d.windowEnds.Sub(now), func() { d.flush(gen) })
+}
+
+// flush reports the window armed as generation gen, unless a refusal already
+// closed it.
+func (d *denialLog) flush(gen uint64) {
+	d.mu.Lock()
+	if gen != d.generation || d.windowEnds.IsZero() {
+		d.mu.Unlock()
+		return
+	}
+	now := d.now()
+	if now.Before(d.windowEnds) {
+		d.armLocked(now)
+		d.mu.Unlock()
+		return
+	}
+	summary := d.closeExpiredLocked(now)
+	d.mu.Unlock()
+
+	if summary != "" {
+		d.logf("%s", summary)
+	}
+}
+
+// closeExpiredLocked closes the open window if it has ended and returns its
+// suppression summary, or "" when there is nothing to report. The interval is
+// measured from the window's first refusal to now, not assumed to be the window
+// length, because the close can come later than the window's end.
+func (d *denialLog) closeExpiredLocked(now time.Time) string {
+	if d.windowEnds.IsZero() || now.Before(d.windowEnds) {
+		return ""
+	}
+	var summary string
+	if len(d.suppressed) > 0 {
+		total := 0
+		reasons := make([]string, 0, len(d.suppressed))
+		for _, reason := range slices.Sorted(maps.Keys(d.suppressed)) {
+			total += d.suppressed[reason]
+			reasons = append(reasons, fmt.Sprintf("%s=%d", reason, d.suppressed[reason]))
+		}
+		summary = fmt.Sprintf("assembly: ownership gate suppressed %d denial log lines in the last %s: %s",
+			total, now.Sub(d.windowStart).Round(time.Millisecond), strings.Join(reasons, " "))
+	}
+	if d.stopTimer != nil {
+		d.stopTimer()
+	}
+	d.windowStart, d.windowEnds = time.Time{}, time.Time{}
+	d.written, d.perCaller, d.suppressed, d.stopTimer = 0, nil, nil, nil
+	return summary
 }

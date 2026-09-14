@@ -7,10 +7,9 @@
 // plan-1's problem; this test only proves the server's wire emission.
 //
 // V1.2 section 7.1 defines randomizeStart and randomizeDuration as signed
-// 32-bit integers in seconds. The values seeded here (30 and 60) are
-// small positive numbers - large enough to be visibly non-zero on
-// the wire, small enough that a sloppy truncation regression
-// (int16/uint8) would not silently pass.
+// 32-bit integers in seconds; core types them as OneHourRange, which
+// refuses values outside [-3600, 3600]. The values seeded here (30 and
+// 60) are visibly non-zero on the wire and inside that range.
 //
 // V1.2 procedure step -> assertion mapping:
 //
@@ -32,7 +31,10 @@ package csip_test
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -44,8 +46,8 @@ import (
 // regression that perturbs the values fails with a value-mismatch
 // rather than a magic-number diff.
 const (
-	core021RandomizeStart    int32 = 30
-	core021RandomizeDuration int32 = 60
+	core021RandomizeStart    sep2.OneHourRange = 30
+	core021RandomizeDuration sep2.OneHourRange = 60
 )
 
 // TestCORE_021_RandomizedEvents implements CSIP V1.2 section 7.1
@@ -144,6 +146,46 @@ func TestCORE_021_RandomizedEvents(t *testing.T) {
 		t.Fatalf("GET %s: %v", dercListHref, err)
 	}
 	assertRandomizedFields(t, dercList)
+
+	// A decoded struct cannot show how a value was encoded, so read the bytes:
+	// OneHourRange and SignedPerCent are bare element text, with no multiplier.
+	body := getServedXML(t, ctx, srv, dercListHref)
+	for _, want := range []string{
+		"<randomizeStart>30</randomizeStart>",
+		"<randomizeDuration>60</randomizeDuration>",
+		"<opModFixedW>3000</opModFixedW>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET %s body lacks %s\nbody: %s", dercListHref, want, body)
+		}
+	}
+	if strings.Contains(body, "<multiplier>") {
+		t.Errorf("GET %s body carries a <multiplier> element; the fixture sets no multiplied field\nbody: %s", dercListHref, body)
+	}
+}
+
+// getServedXML GETs href from srv with the booted device identity and returns
+// the response body as served, failing the test on a transport error or a
+// non-200 status.
+func getServedXML(t *testing.T, ctx context.Context, srv *csiptest.BootedServer, href string) string {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.BaseURL+href, nil)
+	if err != nil {
+		t.Fatalf("build GET %s: %v", href, err)
+	}
+	resp, err := srv.HTTPClient().Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", href, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: status %d, want 200", href, resp.StatusCode)
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read GET %s: %v", href, err)
+	}
+	return string(raw)
 }
 
 // assertRandomizedFields verifies the DERControlList contains exactly

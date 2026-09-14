@@ -13,26 +13,33 @@ import "encoding/xml"
 // schema element is a DERCurveLink (Link to a DERCurve); the project
 // trades wire fidelity for an integer ref keyed off the same /dc store.
 type DERControlBase struct {
-	OpModConnect                *bool             `xml:"opModConnect,omitempty"`
-	OpModEnergize               *bool             `xml:"opModEnergize,omitempty"`
-	OpModFixedPFAbsorbW         *FixedPowerFactor `xml:"opModFixedPFAbsorbW,omitempty"`
-	OpModFixedPFInjectW         *FixedPowerFactor `xml:"opModFixedPFInjectW,omitempty"`
-	OpModFixedVar               *ReactivePower    `xml:"opModFixedVar,omitempty"`
-	OpModFixedW                 *ActivePower      `xml:"opModFixedW,omitempty"`
-	OpModFreqDroop              *uint16           `xml:"opModFreqDroop,omitempty"`
-	OpModFreqWatt               *int32            `xml:"opModFreqWatt,omitempty"`
-	OpModHFRTMustTrip           *int32            `xml:"opModHFRTMustTrip,omitempty"`
-	OpModHVRTMomentaryCessation *int32            `xml:"opModHVRTMomentaryCessation,omitempty"`
-	OpModHVRTMustTrip           *int32            `xml:"opModHVRTMustTrip,omitempty"`
-	OpModLFRTMustTrip           *int32            `xml:"opModLFRTMustTrip,omitempty"`
-	OpModLVRTMomentaryCessation *int32            `xml:"opModLVRTMomentaryCessation,omitempty"`
-	OpModLVRTMustTrip           *int32            `xml:"opModLVRTMustTrip,omitempty"`
-	OpModMaxLimW                *ActivePower      `xml:"opModMaxLimW,omitempty"`
-	OpModTargetVar              *ReactivePower    `xml:"opModTargetVar,omitempty"`
-	OpModTargetW                *ActivePower      `xml:"opModTargetW,omitempty"`
-	OpModVoltVar                *int32            `xml:"opModVoltVar,omitempty"`
-	OpModVoltWatt               *int32            `xml:"opModVoltWatt,omitempty"`
-	RampTms                     *uint16           `xml:"rampTms,omitempty"`
+	OpModConnect        *bool             `xml:"opModConnect,omitempty"`
+	OpModEnergize       *bool             `xml:"opModEnergize,omitempty"`
+	OpModFixedPFAbsorbW *FixedPowerFactor `xml:"opModFixedPFAbsorbW,omitempty"`
+	OpModFixedPFInjectW *FixedPowerFactor `xml:"opModFixedPFInjectW,omitempty"`
+	OpModFixedVar       *ReactivePower    `xml:"opModFixedVar,omitempty"`
+	// OpModFixedW is a signed percentage of %setMaxChargeRateW when
+	// negative, or %setMaxW / %setMaxDischargeRateW when positive, in
+	// hundredths of a percent. IEEE 2030.5-2018 Annex B.2.22, opModFixedW
+	// attribute (SignedPerCent).
+	OpModFixedW                 *SignedPerCent `xml:"opModFixedW,omitempty"`
+	OpModFreqDroop              *uint16        `xml:"opModFreqDroop,omitempty"`
+	OpModFreqWatt               *int32         `xml:"opModFreqWatt,omitempty"`
+	OpModHFRTMustTrip           *int32         `xml:"opModHFRTMustTrip,omitempty"`
+	OpModHVRTMomentaryCessation *int32         `xml:"opModHVRTMomentaryCessation,omitempty"`
+	OpModHVRTMustTrip           *int32         `xml:"opModHVRTMustTrip,omitempty"`
+	OpModLFRTMustTrip           *int32         `xml:"opModLFRTMustTrip,omitempty"`
+	OpModLVRTMomentaryCessation *int32         `xml:"opModLVRTMomentaryCessation,omitempty"`
+	OpModLVRTMustTrip           *int32         `xml:"opModLVRTMustTrip,omitempty"`
+	// OpModMaxLimW is a percentage of %setMaxW, in hundredths of a
+	// percent, capping active power generation at the coupling point.
+	// IEEE 2030.5-2018 Annex B.2.22, opModMaxLimW attribute (PerCent).
+	OpModMaxLimW   *PerCent       `xml:"opModMaxLimW,omitempty"`
+	OpModTargetVar *ReactivePower `xml:"opModTargetVar,omitempty"`
+	OpModTargetW   *ActivePower   `xml:"opModTargetW,omitempty"`
+	OpModVoltVar   *int32         `xml:"opModVoltVar,omitempty"`
+	OpModVoltWatt  *int32         `xml:"opModVoltWatt,omitempty"`
+	RampTms        *uint16        `xml:"rampTms,omitempty"`
 }
 
 // Copy returns an independent copy.

@@ -11,10 +11,10 @@
 //
 //	Step 1 (server has 1 DERP + 1 DDERC + 1 DERC scheduled)    -> fixture load
 //	Step 2 (walk /dcap -> /edev -> /fsa -> DERProgram)            -> walkToFirstEDevFSAList + walkProgramListByHref
-//	Step 3 (DDERC carries opModFixedW = 2 kW)                   -> assertBASIC018DDERC
+//	Step 3 (DDERC carries opModFixedW = 2000 (20.00%))                   -> assertBASIC018DDERC
 //	Step 4 (DERControlList has 1 scheduled event)               -> walkDERControlListByHref
 //	Step 5 (DERControl Interval [t0+60, t0+180), Status=0,      -> assertBASIC018DERControl
-//	         opModFixedW = 3 kW)
+//	         opModFixedW = 3000 (30.00%))
 //
 // Run under both GCM and CCM cipher modes.
 package csip_test
@@ -29,8 +29,8 @@ import (
 
 const basic018FixtureName = "basic-018-1derp-1dderc-1derc.yaml"
 
-// basic018DDERCFixedW is the DDERC fallback value the fixture seeds (2 kW).
-const basic018DDERCFixedW int16 = 2000
+// basic018DDERCFixedW is the DDERC fallback value the fixture seeds (20.00%).
+const basic018DDERCFixedW sep2.SignedPerCent = 2000
 
 // basic018EventStart is the Interval.Start the fixture seeds for the
 // scheduled DERControl (t0+60s).
@@ -39,8 +39,8 @@ const basic018EventStart int64 = 1700000060
 // basic018EventDuration is the Interval.Duration the fixture seeds (2 min).
 const basic018EventDuration uint32 = 120
 
-// basic018DERCFixedW is the in-event value the fixture seeds (3 kW).
-const basic018DERCFixedW int16 = 3000
+// basic018DERCFixedW is the in-event value the fixture seeds (30.00%).
+const basic018DERCFixedW sep2.SignedPerCent = 3000
 
 // TestBASIC_018_OneDERPOneDDERCOneDERC implements CSIP V1.2 Section 8.18.
 func TestBASIC_018_OneDERPOneDDERCOneDERC(t *testing.T) {
@@ -99,8 +99,8 @@ func assertBASIC018DDERC(t *testing.T, dderc sep2.DefaultDERControl) {
 	if dderc.DERControlBase == nil || dderc.DERControlBase.OpModFixedW == nil {
 		t.Fatal("DDERC.DERControlBase.OpModFixedW is nil - fixture dropped")
 	}
-	if got := dderc.DERControlBase.OpModFixedW.Value; got != basic018DDERCFixedW {
-		t.Errorf("DDERC.OpModFixedW.Value = %d, want %d", got, basic018DDERCFixedW)
+	if got := *dderc.DERControlBase.OpModFixedW; got != basic018DDERCFixedW {
+		t.Errorf("DDERC.OpModFixedW = %d, want %d", got, basic018DDERCFixedW)
 	}
 }
 
@@ -116,7 +116,7 @@ func assertBASIC018DERControl(t *testing.T, dc sep2.DERControl) {
 	if dc.DERControlBase == nil || dc.DERControlBase.OpModFixedW == nil {
 		t.Fatal("DERControl.DERControlBase.OpModFixedW is nil - fixture dropped")
 	}
-	if got := dc.DERControlBase.OpModFixedW.Value; got != basic018DERCFixedW {
-		t.Errorf("DERControl.OpModFixedW.Value = %d, want %d", got, basic018DERCFixedW)
+	if got := *dc.DERControlBase.OpModFixedW; got != basic018DERCFixedW {
+		t.Errorf("DERControl.OpModFixedW = %d, want %d", got, basic018DERCFixedW)
 	}
 }

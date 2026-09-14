@@ -23,9 +23,12 @@ func init() {
 		aead:   aeadAES128CCM8,
 	})
 
-	// Add to BOTH preference orders (with and without AES hardware)
-	cipherSuitesPreferenceOrder = append(cipherSuitesPreferenceOrder, TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8)
-	cipherSuitesPreferenceOrderNoAES = append(cipherSuitesPreferenceOrderNoAES, TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8)
+	// Prepend to BOTH preference orders (with and without AES hardware):
+	// IEEE 2030.5-2018 clause 6.7 makes CCM_8 mandatory, so pickCipherSuite
+	// (handshake_server.go) must reach it before the GCM suite a dual-suite
+	// client also offers. Appending ranked it last (GRIDAPPSD/ieee-2030_5-core-go#136).
+	cipherSuitesPreferenceOrder = append([]uint16{TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8}, cipherSuitesPreferenceOrder...)
+	cipherSuitesPreferenceOrderNoAES = append([]uint16{TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8}, cipherSuitesPreferenceOrderNoAES...)
 }
 
 // aeadAES128CCM8 creates an AES-128-CCM AEAD with 8-byte authentication tag.

@@ -51,6 +51,7 @@ package csip_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -112,7 +113,7 @@ func runCORE012(t *testing.T, extraOpts []csiptest.BootOption) {
 	assertSingleProgramShape(t, prog)
 
 	// Step 5: walk the DefaultDERControlLink. Must carry opModMaxLimW
-	// = {multiplier: 0, value: 5000} per the fixture.
+	// = 5000 (50.00%) per the fixture.
 	var dderc sep2.DefaultDERControl
 	if err := client.WalkLink(ctx, sep2.Link{Href: prog.DefaultDERControlLink.Href}, &dderc); err != nil {
 		t.Fatalf("walk DefaultDERControlLink %s: %v", prog.DefaultDERControlLink.Href, err)
@@ -123,11 +124,17 @@ func runCORE012(t *testing.T, extraOpts []csiptest.BootOption) {
 	if dderc.DERControlBase == nil || dderc.DERControlBase.OpModMaxLimW == nil {
 		t.Fatalf("DefaultDERControl.DERControlBase.OpModMaxLimW = nil; fixture dropped on the wire")
 	}
-	if got := dderc.DERControlBase.OpModMaxLimW.Value; got != 5000 {
-		t.Errorf("DefaultDERControl.OpModMaxLimW.Value = %d, want 5000", got)
+	if got := *dderc.DERControlBase.OpModMaxLimW; got != 5000 {
+		t.Errorf("DefaultDERControl.OpModMaxLimW = %d, want 5000", got)
 	}
-	if got := dderc.DERControlBase.OpModMaxLimW.Multiplier; got != 0 {
-		t.Errorf("DefaultDERControl.OpModMaxLimW.Multiplier = %d, want 0", got)
+	// PerCent is bare element text on the wire; the decoded struct above
+	// cannot tell that apart from a multiplier+value pair, the bytes can.
+	ddercBody := getServedXML(t, ctx, srv, prog.DefaultDERControlLink.Href)
+	if !strings.Contains(ddercBody, "<opModMaxLimW>5000</opModMaxLimW>") {
+		t.Errorf("GET %s body lacks <opModMaxLimW>5000</opModMaxLimW>\nbody: %s", prog.DefaultDERControlLink.Href, ddercBody)
+	}
+	if strings.Contains(ddercBody, "<multiplier>") {
+		t.Errorf("GET %s body carries a <multiplier> element; the fixture sets no multiplied field\nbody: %s", prog.DefaultDERControlLink.Href, ddercBody)
 	}
 
 	// Step 6: walk the DERControlListLink. Must be empty (all=0). The

@@ -52,6 +52,4 @@ der_controls:
       start: 1700000000
       duration: 120
     der_control_base:
-      op_mod_fixed_w:
-        multiplier: 0
-        value: 3500
+      op_mod_fixed_w: 3500

@@ -9,14 +9,14 @@ type LogEvent struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns LogEvent"`
 	Resource
 
-	CreatedDateTime int64  `xml:"createdDateTime"`
-	Details         string `xml:"details,omitempty"` // 2023: NEW
-	ExtendedData    *int64 `xml:"extendedData,omitempty"`
-	FunctionSet     uint8  `xml:"functionSet"` // FunctionSetID enum
-	LogEventCode    uint8  `xml:"logEventCode"`
-	LogEventID      uint16 `xml:"logEventID"`
-	LogEventPEN     uint32 `xml:"logEventPEN"`
-	ProfileID       uint8  `xml:"profileID"`
+	CreatedDateTime int64   `xml:"createdDateTime"`
+	Details         string  `xml:"details,omitempty"` // 2023: NEW
+	ExtendedData    *uint32 `xml:"extendedData,omitempty"`
+	FunctionSet     uint8   `xml:"functionSet"` // FunctionSetID enum
+	LogEventCode    uint8   `xml:"logEventCode"`
+	LogEventID      uint16  `xml:"logEventID"`
+	LogEventPEN     uint32  `xml:"logEventPEN"`
+	ProfileID       uint8   `xml:"profileID"`
 }
 
 // Copy returns an independent copy.

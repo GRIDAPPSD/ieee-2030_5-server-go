@@ -59,10 +59,11 @@ type FlowReservationRequestList struct {
 }
 
 // FlowReservationResponse is the server's response to a FlowReservationRequest.
-// Extends Event (scheduled activation).
+// Extends Event, not RandomizableEvent: sep.xsd derives it from Event
+// directly, so it carries no randomizeStart/randomizeDuration (#107).
 type FlowReservationResponse struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns FlowReservationResponse"`
-	RandomizableEvent
+	Event
 
 	// XSD element order:
 	EnergyAvailable *SignedRealEnergy `xml:"energyAvailable,omitempty"` // 2023: changed from RealEnergy

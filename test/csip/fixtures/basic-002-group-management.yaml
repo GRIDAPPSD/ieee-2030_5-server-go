@@ -9,7 +9,7 @@
 #   - The closest-to-inverter program (L6, primacy 6 in this chain;
 #     "highest specificity" per CSIP §8.2 procedure — see test
 #     doc-comment for the wording-vs-implementation rationale) carries
-#     a DefaultDERControl with opModMaxLimW (a 4 kW limit) AND a single
+#     a DefaultDERControl with opModMaxLimW (a 40.00% limit) AND a single
 #     active DERControl with opModFixedW (target operating point) so
 #     the procedure's "highest-specificity program carries actual
 #     control" leg is wire-asserted.
@@ -172,7 +172,7 @@ der_programs:
       all: 1
 
 # Only the L6 (closest-to-inverter) DERProgram carries a DefaultDERControl.
-# Limit = 4 kW (multiplier 0, value 4000). The other six levels (L0..L5)
+# Limit = 4000 (40.00%). The other six levels (L0..L5)
 # advertise their default_der_control_link but the server returns 404
 # when walked — by design, the procedure asserts both shapes.
 default_der_controls:
@@ -181,11 +181,9 @@ default_der_controls:
     der_program_id: "6"
     mrid: "BASIC-002-L6-DDERC"
     der_control_base:
-      op_mod_max_lim_w:
-        multiplier: 0
-        value: 4000
+      op_mod_max_lim_w: 4000
 
-# One active DERControl on L6 (target operating point = 3 kW). Asserts
+# One active DERControl on L6 (target operating point = 3000 (30.00%)). Asserts
 # the closest-to-inverter program's active event is the one the
 # inverter follows after priority resolution. Other levels carry no
 # DERControl events.
@@ -196,6 +194,4 @@ der_controls:
     id: "0"
     mrid: "BASIC-002-L6-DERC"
     der_control_base:
-      op_mod_fixed_w:
-        multiplier: 0
-        value: 3000
+      op_mod_fixed_w: 3000

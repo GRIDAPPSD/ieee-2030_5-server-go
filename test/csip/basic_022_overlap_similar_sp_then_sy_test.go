@@ -39,7 +39,7 @@ var basic022Programs = []struct {
 
 var basic022DDERCs = map[string]struct {
 	mrid   string
-	fixedW int16
+	fixedW sep2.SignedPerCent
 }{
 	"sp": {mrid: "BASIC-022-DDERC-SP", fixedW: 4000},
 	"sy": {mrid: "BASIC-022-DDERC-SY", fixedW: 2000},
@@ -51,7 +51,7 @@ var basic022Events = map[string]struct {
 	primacy  uint8
 	start    int64
 	duration uint32
-	fixedW   int16
+	fixedW   sep2.SignedPerCent
 }{
 	"sp": {mrid: "BASIC-022-DERC-SP-A", primacy: 0, start: 1700000100, duration: 120, fixedW: 4500},
 	"sy": {mrid: "BASIC-022-DERC-SY-A", primacy: 1, start: 1700000060, duration: 120, fixedW: 2500},
@@ -141,8 +141,8 @@ func assertBASIC022DDERCs(t *testing.T, ctx context.Context, c *csiptest.Client)
 			t.Errorf("[%s] DDERC.OpModFixedW is nil - fixture dropped", prog)
 			continue
 		}
-		if got := dderc.DERControlBase.OpModFixedW.Value; got != want.fixedW {
-			t.Errorf("[%s] DDERC.OpModFixedW.Value = %d, want %d",
+		if got := *dderc.DERControlBase.OpModFixedW; got != want.fixedW {
+			t.Errorf("[%s] DDERC.OpModFixedW = %d, want %d",
 				prog, got, want.fixedW)
 		}
 	}
@@ -174,8 +174,8 @@ func assertBASIC022Events(t *testing.T, ctx context.Context, c *csiptest.Client)
 			t.Errorf("[%s] DERControl.OpModFixedW is nil - fixture dropped", prog)
 			continue
 		}
-		if got := dc.DERControlBase.OpModFixedW.Value; got != want.fixedW {
-			t.Errorf("[%s] DERControl.OpModFixedW.Value = %d, want %d",
+		if got := *dc.DERControlBase.OpModFixedW; got != want.fixedW {
+			t.Errorf("[%s] DERControl.OpModFixedW = %d, want %d",
 				prog, got, want.fixedW)
 		}
 		out = append(out, overlapEntry{

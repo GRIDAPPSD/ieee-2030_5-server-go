@@ -1,16 +1,15 @@
 // CSIP V1.2 Section 8.10 - Inverter Control: Limit Max Active Power Mode.
 //
 // BASIC-010 proves the server renders an immediate-control DERControl
-// carrying opModMaxLimW = 5 kW per Figure 10. No DERCurve reference.
+// carrying opModMaxLimW = 5000 (50.00%; Figure 10: Default 5000 (50%), Test 6000). No DERCurve reference.
 //
 // V1.2 procedure step -> assertion mapping (per V1.2 Section 8.10):
 //
 //	Step 1 (server has DERProgram + 1 DERControl with
-//	         opModMaxLimW = 5 kW)                              -> fixture load
+//	         opModMaxLimW = 5000 (50.00%))                              -> fixture load
 //	Step 2 (client walks /dcap -> /edev -> /fsa -> DERProgram -> DERControl)
 //	                                                            -> basicModeWalk
-//	Step 3 (DERControl.OpModMaxLimW.Value = 5000,
-//	         Multiplier = 0)                                    -> assertMaxLimW
+//	Step 3 (DERControl.OpModMaxLimW = 5000)                    -> assertMaxLimW
 //
 // Run under both GCM and CCM cipher modes.
 //
@@ -27,8 +26,8 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// basic010LimitValue is the opModMaxLimW value the fixture seeds (5 kW).
-const basic010LimitValue int16 = 5000
+// basic010LimitValue is the opModMaxLimW value the fixture seeds (50.00%).
+const basic010LimitValue sep2.PerCent = 5000
 
 // TestBASIC_010_LimitMaxActiveP implements CSIP V1.2 Section 8.10.
 func TestBASIC_010_LimitMaxActiveP(t *testing.T) {
@@ -50,12 +49,9 @@ func TestBASIC_010_LimitMaxActiveP(t *testing.T) {
 			if dc.DERControlBase.OpModMaxLimW == nil {
 				t.Fatalf("[%s] DERControl.OpModMaxLimW is nil - fixture dropped", cipher)
 			}
-			if got := dc.DERControlBase.OpModMaxLimW.Value; got != basic010LimitValue {
-				t.Errorf("[%s] OpModMaxLimW.Value = %d, want %d",
+			if got := *dc.DERControlBase.OpModMaxLimW; got != basic010LimitValue {
+				t.Errorf("[%s] OpModMaxLimW = %d, want %d",
 					cipher, got, basic010LimitValue)
-			}
-			if got := dc.DERControlBase.OpModMaxLimW.Multiplier; got != 0 {
-				t.Errorf("[%s] OpModMaxLimW.Multiplier = %d, want 0", cipher, got)
 			}
 		})
 }

@@ -54,8 +54,8 @@ const (
 
 // basic015 immediate-control values per the fixture.
 const (
-	basic015FixedPFDisplacement uint16 = 950
-	basic015MaxLimWValue        int16  = 5000
+	basic015FixedPFDisplacement uint16       = 950
+	basic015MaxLimWValue        sep2.PerCent = 5000
 )
 
 // basic015ExpectedCurveCount is the count of curves the fixture
@@ -117,8 +117,8 @@ func TestBASIC_015_ComposedModes(t *testing.T) {
 			if base.OpModMaxLimW == nil {
 				t.Fatalf("[%s] DERControlBase.OpModMaxLimW is nil - composed payload lost max-lim", cipher)
 			}
-			if got := base.OpModMaxLimW.Value; got != basic015MaxLimWValue {
-				t.Errorf("[%s] OpModMaxLimW.Value = %d, want %d",
+			if got := *base.OpModMaxLimW; got != basic015MaxLimWValue {
+				t.Errorf("[%s] OpModMaxLimW = %d, want %d",
 					cipher, got, basic015MaxLimWValue)
 			}
 

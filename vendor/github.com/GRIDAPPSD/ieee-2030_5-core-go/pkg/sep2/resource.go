@@ -4,12 +4,13 @@ const (
 	// Namespace is the IEEE 2030.5-2018 XML namespace (also used by 2023).
 	Namespace = "urn:ieee:std:2030.5:ns"
 
-	// Namespace2013 is the IEEE 2030.5-2013 XML namespace
-	// used by older clients (e.g., EPRI reference client).
-	Namespace2013 = "http://ieee.org/2030.5"
+	// Namespace2013 is the IEEE 2030.5-2013 XML namespace: the 2013 text's
+	// XML examples and XSD declare xmlns="http://zigbee.org/sep", not a
+	// 2030.5-branded URI.
+	Namespace2013 = "http://zigbee.org/sep"
 
 	// Namespace2023 is the IEEE 2030.5-2023 XML namespace.
-	// Same as 2018 — the namespace didn't change in the 2023 revision.
+	// Same as 2018 - the namespace didn't change in the 2023 revision.
 	Namespace2023 = Namespace
 )
 

@@ -1,8 +1,8 @@
 # #143 / BASIC-018 fixture — CSIP V1.2 §8.18.
 #
 # Topology: 1 DERProgram, 1 DefaultDERControl, 1 DERControl. The
-# DDERC carries opModFixedW = 2 kW (the fallback when no event is
-# active); the DERControl carries opModFixedW = 3 kW with Interval
+# DDERC carries opModFixedW = 2000 (20.00%) (the fallback when no event is
+# active); the DERControl carries opModFixedW = 3000 (30.00%) with Interval
 # [t0+60, t0+180) and EventStatus = Scheduled. Per §8.18 the client
 # applies DDERC while the event is scheduled, then transitions to
 # DERControl when active. Server-side just asserts the fixture renders.
@@ -45,9 +45,7 @@ default_der_controls:
     der_program_id: "0"
     mrid: "BASIC-018-DDERC"
     der_control_base:
-      op_mod_fixed_w:
-        multiplier: 0
-        value: 2000
+      op_mod_fixed_w: 2000
 
 der_controls:
   - end_device_id: "0"
@@ -63,6 +61,4 @@ der_controls:
       start: 1700000060
       duration: 120
     der_control_base:
-      op_mod_fixed_w:
-        multiplier: 0
-        value: 3000
+      op_mod_fixed_w: 3000

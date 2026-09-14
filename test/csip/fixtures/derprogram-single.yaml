@@ -8,7 +8,7 @@
 #
 # DefaultDERControl carries an opModMaxLimW limit so CORE-012's
 # "default-only operating envelope" assertion has a concrete value
-# to walk to. Multiplier 0, value 5000 = 5 kW.
+# to walk to. Value 5000 = 50.00%.
 
 end_devices:
   - id: "0"
@@ -51,6 +51,4 @@ default_der_controls:
     der_program_id: "0"
     mrid: "CORE-012-DDERC"
     der_control_base:
-      op_mod_max_lim_w:
-        multiplier: 0
-        value: 5000
+      op_mod_max_lim_w: 5000

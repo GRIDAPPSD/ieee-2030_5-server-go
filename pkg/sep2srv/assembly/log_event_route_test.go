@@ -61,7 +61,7 @@ func lelServer(t *testing.T) (*httptest.Server, *assembly.Stores) {
 // cannot tell a served field from a dropped one; that blind spot is how the
 // v0.12.0 wire regression stayed invisible.
 func sampleLogEvent(id uint16, code uint8) sep2.LogEvent {
-	extended := int64(9000 + int64(id))
+	extended := 9000 + uint32(id)
 	return sep2.LogEvent{
 		CreatedDateTime: 1604963587 + int64(id),
 		// 18 characters. sep.xsd types details as String32, and the wire-format

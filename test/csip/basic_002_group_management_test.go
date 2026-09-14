@@ -15,11 +15,11 @@
 // primacy order. The procedural assertion CORE-010 already pins down
 // is re-asserted here as a regression guard; what BASIC-002 adds is:
 //
-//  1. A populated DefaultDERControl on L6 (opModMaxLimW = 4 kW) and
+//  1. A populated DefaultDERControl on L6 (opModMaxLimW = 4000 (40.00%)) and
 //     an empty DefaultDERControl on each of L0..L5 (the handler
 //     returns 200 OK with an empty body when the resource is missing,
 //     per HandleSingletonGetPut's "Return empty default" branch).
-//  2. A single active DERControl on L6 carrying opModFixedW = 3 kW.
+//  2. A single active DERControl on L6 carrying opModFixedW = 3000 (30.00%).
 //     L0..L5 each render an empty DERControlList (all=0).
 //
 // V1.2 procedure step -> assertion mapping (per V1.2 Section 8.2):
@@ -27,12 +27,12 @@
 //	Step 1 (server has 7 FSAs, primacy 0..6)        -> assertSevenLevelPriorityChain
 //	Step 2 (client walks /dcap -> /edev -> /fsa)      -> walkAllFSAsBasic002
 //	Step 3 (client follows each FSA's program list) -> assertProgramsScopedByEDev
-//	Step 4 (L6 DefaultDERControl carries opModMaxLimW = 4 kW)
+//	Step 4 (L6 DefaultDERControl carries opModMaxLimW = 4000 (40.00%))
 //	                                                 -> assertL6DefaultControlPopulated
 //	Step 5 (L0..L5 DefaultDERControl is the empty
 //	         default - DERControlBase == nil)        -> assertOtherLevelsDefaultEmpty
 //	Step 6 (L6 DERControlList has exactly 1 active
-//	         DERControl with opModFixedW = 3 kW)    -> assertL6ActiveControlPresent
+//	         DERControl with opModFixedW = 3000 (30.00%))    -> assertL6ActiveControlPresent
 //	Step 7 (L0..L5 DERControlList is empty, all=0)  -> assertOtherLevelsControlListEmpty
 //
 // Run under both GCM and CCM cipher modes so the spec cipher path is
@@ -57,12 +57,12 @@ const basic002LevelCount = 7
 const basic002ClosestLevelID = "6"
 
 // basic002DDERCLimitValue is the opModMaxLimW value carried by L6's
-// DefaultDERControl per the fixture (4 kW, multiplier 0).
-const basic002DDERCLimitValue int16 = 4000
+// DefaultDERControl per the fixture (4000, 40.00%).
+const basic002DDERCLimitValue sep2.PerCent = 4000
 
 // basic002DERCFixedW is the opModFixedW target operating point
-// carried by the L6 DERControl per the fixture (3 kW, multiplier 0).
-const basic002DERCFixedW int16 = 3000
+// carried by the L6 DERControl per the fixture (3000, 30.00%).
+const basic002DERCFixedW sep2.SignedPerCent = 3000
 
 // TestBASIC_002_GroupManagement implements CSIP V1.2 Section 8.2.
 func TestBASIC_002_GroupManagement(t *testing.T) {
@@ -113,7 +113,7 @@ func runBASIC002(t *testing.T, extraOpts []csiptest.BootOption) {
 		assertSevenLevelPriorityChain(t, i, progs)
 	}
 
-	// Step 4: L6 DefaultDERControl carries opModMaxLimW = 4 kW.
+	// Step 4: L6 DefaultDERControl carries opModMaxLimW = 4000 (40.00%).
 	assertL6DefaultControlPopulated(t, ctx, client)
 
 	// Step 5: L0..L5 DefaultDERControl is the empty default - handler
@@ -122,7 +122,7 @@ func runBASIC002(t *testing.T, extraOpts []csiptest.BootOption) {
 	assertOtherLevelsDefaultEmpty(t, ctx, client)
 
 	// Step 6: L6 DERControlList carries exactly one active DERControl
-	// with opModFixedW = 3 kW.
+	// with opModFixedW = 3000 (30.00%).
 	assertL6ActiveControlPresent(t, ctx, client)
 
 	// Step 7: L0..L5 DERControlList is empty (all=0, no items).
@@ -211,7 +211,7 @@ func assertSevenLevelPriorityChain(t *testing.T, fsaIdx int, programs []sep2.DER
 }
 
 // assertL6DefaultControlPopulated walks the L6 DefaultDERControl link
-// and asserts opModMaxLimW.Value = basic002DDERCLimitValue (4 kW). The
+// and asserts opModMaxLimW = basic002DDERCLimitValue (40.00%). The
 // "closest-to-inverter program carries the active operating envelope"
 // leg of the procedure.
 func assertL6DefaultControlPopulated(
@@ -235,11 +235,8 @@ func assertL6DefaultControlPopulated(
 	if dderc.DERControlBase.OpModMaxLimW == nil {
 		t.Fatalf("L6 DefaultDERControl.OpModMaxLimW is nil")
 	}
-	if got := dderc.DERControlBase.OpModMaxLimW.Value; got != basic002DDERCLimitValue {
-		t.Errorf("L6 OpModMaxLimW.Value = %d, want %d", got, basic002DDERCLimitValue)
-	}
-	if got := dderc.DERControlBase.OpModMaxLimW.Multiplier; got != 0 {
-		t.Errorf("L6 OpModMaxLimW.Multiplier = %d, want 0", got)
+	if got := *dderc.DERControlBase.OpModMaxLimW; got != basic002DDERCLimitValue {
+		t.Errorf("L6 OpModMaxLimW = %d, want %d", got, basic002DDERCLimitValue)
 	}
 }
 
@@ -273,7 +270,7 @@ func assertOtherLevelsDefaultEmpty(
 }
 
 // assertL6ActiveControlPresent walks the L6 DERControlList and asserts
-// exactly one active DERControl carrying opModFixedW = 3 kW.
+// exactly one active DERControl carrying opModFixedW = 3000 (30.00%).
 func assertL6ActiveControlPresent(
 	t *testing.T,
 	ctx context.Context,
@@ -296,8 +293,8 @@ func assertL6ActiveControlPresent(
 	if dc.DERControlBase == nil || dc.DERControlBase.OpModFixedW == nil {
 		t.Fatalf("L6 DERControl[0].OpModFixedW is nil - fixture dropped")
 	}
-	if got := dc.DERControlBase.OpModFixedW.Value; got != basic002DERCFixedW {
-		t.Errorf("L6 DERControl[0].OpModFixedW.Value = %d, want %d",
+	if got := *dc.DERControlBase.OpModFixedW; got != basic002DERCFixedW {
+		t.Errorf("L6 DERControl[0].OpModFixedW = %d, want %d",
 			got, basic002DERCFixedW)
 	}
 }

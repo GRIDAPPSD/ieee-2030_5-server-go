@@ -1,5 +1,13 @@
 package sep2
 
+import (
+	"encoding/json"
+	"encoding/xml"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
 // EventStatus describes the current state of an event.
 type EventStatus struct {
 	CurrentStatus             uint8  `xml:"currentStatus"`
@@ -98,8 +106,81 @@ type Event struct {
 // RandomizableEvent extends Event with randomization parameters.
 type RandomizableEvent struct {
 	Event
-	RandomizeDuration *int32 `xml:"randomizeDuration,omitempty"`
-	RandomizeStart    *int32 `xml:"randomizeStart,omitempty"`
+	RandomizeDuration *OneHourRange `xml:"randomizeDuration,omitempty"`
+	RandomizeStart    *OneHourRange `xml:"randomizeStart,omitempty"`
+}
+
+// OneHourRange is IEEE 2030.5-2018 Annex B.2.3.4 "OneHourRangeType (Int16)":
+// a count of seconds bounded to +/-3600, used by RandomizeDuration and
+// RandomizeStart. sep.xsd restricts OneHourRangeType to [-3600, 3600], a
+// tighter range than Int16 (xs:short, -32768..32767) alone would permit, so
+// the type's own Marshal/Unmarshal enforce the schema's facet rather than
+// relying on the field's storage width.
+type OneHourRange int16
+
+const (
+	minOneHourRange = -3600
+	maxOneHourRange = 3600
+)
+
+// UnmarshalXML refuses element text outside OneHourRangeType's range.
+func (o *OneHourRange) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	var text string
+	if err := d.DecodeElement(&text, &start); err != nil {
+		return fmt.Errorf("sep2: OneHourRange: %w", err)
+	}
+	v, err := parseOneHourRange(text)
+	if err != nil {
+		return err
+	}
+	*o = v
+	return nil
+}
+
+func parseOneHourRange(text string) (OneHourRange, error) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return 0, fmt.Errorf("sep2: OneHourRange: empty or non-scalar element")
+	}
+	n, err := strconv.ParseInt(trimmed, 10, 16)
+	if err != nil {
+		return 0, fmt.Errorf("sep2: OneHourRange: %q: %w", trimmed, err)
+	}
+	if n < minOneHourRange || n > maxOneHourRange {
+		return 0, fmt.Errorf("sep2: OneHourRange %d out of range [%d, %d]", n, minOneHourRange, maxOneHourRange)
+	}
+	return OneHourRange(n), nil
+}
+
+// MarshalXML rejects a value outside OneHourRangeType's range rather than
+// serializing an illegal wire value, mirroring SignedPerCent's guard.
+func (o OneHourRange) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	if o < minOneHourRange || o > maxOneHourRange {
+		return fmt.Errorf("sep2: OneHourRange %d out of range [%d, %d]", int16(o), minOneHourRange, maxOneHourRange)
+	}
+	return e.EncodeElement(int16(o), start)
+}
+
+// UnmarshalJSON applies the same range refusal as UnmarshalXML; server-go
+// ingests JSON fixtures for this package's types.
+func (o *OneHourRange) UnmarshalJSON(data []byte) error {
+	var n int64
+	if err := json.Unmarshal(data, &n); err != nil {
+		return fmt.Errorf("sep2: OneHourRange: %w", err)
+	}
+	if n < minOneHourRange || n > maxOneHourRange {
+		return fmt.Errorf("sep2: OneHourRange %d out of range [%d, %d]", n, minOneHourRange, maxOneHourRange)
+	}
+	*o = OneHourRange(n)
+	return nil
+}
+
+// MarshalJSON mirrors MarshalXML's range guard.
+func (o OneHourRange) MarshalJSON() ([]byte, error) {
+	if o < minOneHourRange || o > maxOneHourRange {
+		return nil, fmt.Errorf("sep2: OneHourRange %d out of range [%d, %d]", int16(o), minOneHourRange, maxOneHourRange)
+	}
+	return json.Marshal(int16(o))
 }
 
 // EventStatus current status values per spec.

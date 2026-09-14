@@ -28,6 +28,7 @@ package csiptest
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"os"
@@ -242,7 +243,7 @@ type CurveDataSpec struct {
 type DERControlBaseSpec struct {
 	OpModConnect                *bool                 `yaml:"op_mod_connect,omitempty"`
 	OpModEnergize               *bool                 `yaml:"op_mod_energize,omitempty"`
-	OpModFixedW                 *ActivePowerSpec      `yaml:"op_mod_fixed_w,omitempty"`
+	OpModFixedW                 *sep2.SignedPerCent   `yaml:"op_mod_fixed_w,omitempty"`
 	OpModFixedPFInjectW         *FixedPowerFactorSpec `yaml:"op_mod_fixed_pf_inject_w,omitempty"`
 	OpModFreqDroop              *uint16               `yaml:"op_mod_freq_droop,omitempty"`
 	OpModFreqWatt               *int32                `yaml:"op_mod_freq_watt,omitempty"`
@@ -252,11 +253,31 @@ type DERControlBaseSpec struct {
 	OpModLFRTMustTrip           *int32                `yaml:"op_mod_lfrt_must_trip,omitempty"`
 	OpModLVRTMomentaryCessation *int32                `yaml:"op_mod_lvrt_momentary_cessation,omitempty"`
 	OpModLVRTMustTrip           *int32                `yaml:"op_mod_lvrt_must_trip,omitempty"`
-	OpModMaxLimW                *ActivePowerSpec      `yaml:"op_mod_max_lim_w,omitempty"`
+	OpModMaxLimW                *sep2.PerCent         `yaml:"op_mod_max_lim_w,omitempty"`
 	OpModTargetW                *ActivePowerSpec      `yaml:"op_mod_target_w,omitempty"`
 	OpModVoltVar                *int32                `yaml:"op_mod_volt_var,omitempty"`
 	OpModVoltWatt               *int32                `yaml:"op_mod_volt_watt,omitempty"`
 	RampTms                     *uint16               `yaml:"ramp_tms,omitempty"`
+}
+
+// validatePerCents refuses a percent the XML encoder would refuse, so an
+// out-of-range fixture fails at load instead of when the control is served.
+// OpModFixedW and OpModMaxLimW are hundredths of a percent (4000 = 40.00%).
+func (s *DERControlBaseSpec) validatePerCents() error {
+	if s == nil {
+		return nil
+	}
+	if s.OpModFixedW != nil {
+		if _, err := xml.Marshal(*s.OpModFixedW); err != nil {
+			return fmt.Errorf("op_mod_fixed_w: %w", err)
+		}
+	}
+	if s.OpModMaxLimW != nil {
+		if _, err := xml.Marshal(*s.OpModMaxLimW); err != nil {
+			return fmt.Errorf("op_mod_max_lim_w: %w", err)
+		}
+	}
+	return nil
 }
 
 // ActivePowerSpec is the YAML shape of sep2.ActivePower. Value is int16
@@ -435,6 +456,9 @@ func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOptio
 		if d.EndDeviceID == "" || d.FSAID == "" || d.DERProgramID == "" {
 			return fmt.Errorf("default_der_controls[%d]: end_device_id, fsa_id, der_program_id all required", i)
 		}
+		if err := d.DERControlBase.validatePerCents(); err != nil {
+			return fmt.Errorf("default_der_controls[%d]: %w", i, err)
+		}
 		key := compositeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
 		dc := buildDefaultDERControl(d)
 		if err := target.DefaultDERControls.Create(ctx, key, singletonKey, dc); err != nil {
@@ -448,6 +472,9 @@ func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOptio
 		}
 		if c.EndDeviceID == "" || c.FSAID == "" || c.DERProgramID == "" {
 			return fmt.Errorf("der_controls[%d] (id=%q): end_device_id, fsa_id, der_program_id all required", i, c.ID)
+		}
+		if err := c.DERControlBase.validatePerCents(); err != nil {
+			return fmt.Errorf("der_controls[%d] (id=%q): %w", i, c.ID, err)
 		}
 		key := compositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
 		dc := buildDERControl(c)
@@ -645,7 +672,8 @@ func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
 		base.OpModEnergize = &v
 	}
 	if s.OpModFixedW != nil {
-		base.OpModFixedW = &sep2.ActivePower{Multiplier: s.OpModFixedW.Multiplier, Value: s.OpModFixedW.Value}
+		v := *s.OpModFixedW
+		base.OpModFixedW = &v
 	}
 	if s.OpModFixedPFInjectW != nil {
 		base.OpModFixedPFInjectW = &sep2.FixedPowerFactor{
@@ -655,7 +683,8 @@ func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
 		}
 	}
 	if s.OpModMaxLimW != nil {
-		base.OpModMaxLimW = &sep2.ActivePower{Multiplier: s.OpModMaxLimW.Multiplier, Value: s.OpModMaxLimW.Value}
+		v := *s.OpModMaxLimW
+		base.OpModMaxLimW = &v
 	}
 	if s.OpModTargetW != nil {
 		base.OpModTargetW = &sep2.ActivePower{Multiplier: s.OpModTargetW.Multiplier, Value: s.OpModTargetW.Value}

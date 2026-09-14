@@ -47,7 +47,7 @@ var basic020Programs = []struct {
 // duplicating the URL template.
 var basic020DDERCs = map[string]struct {
 	mrid   string
-	fixedW int16
+	fixedW sep2.SignedPerCent
 }{
 	"sp": {mrid: "BASIC-020-DDERC-SP", fixedW: 4000},
 	"sy": {mrid: "BASIC-020-DDERC-SY", fixedW: 2000},
@@ -58,7 +58,7 @@ var basic020Events = map[string]struct {
 	mrid     string
 	start    int64
 	duration uint32
-	fixedW   int16
+	fixedW   sep2.SignedPerCent
 }{
 	"sp": {mrid: "BASIC-020-DERC-SP-A", start: 1700000060, duration: 60, fixedW: 4500},
 	"sy": {mrid: "BASIC-020-DERC-SY-A", start: 1700000180, duration: 60, fixedW: 2500},
@@ -153,8 +153,8 @@ func assertBASIC020DDERCs(t *testing.T, ctx context.Context, c *csiptest.Client)
 			t.Errorf("[%s] DDERC.OpModFixedW is nil - fixture dropped", prog)
 			continue
 		}
-		if got := dderc.DERControlBase.OpModFixedW.Value; got != want.fixedW {
-			t.Errorf("[%s] DDERC.OpModFixedW.Value = %d, want %d",
+		if got := *dderc.DERControlBase.OpModFixedW; got != want.fixedW {
+			t.Errorf("[%s] DDERC.OpModFixedW = %d, want %d",
 				prog, got, want.fixedW)
 		}
 	}
@@ -190,8 +190,8 @@ func assertBASIC020Events(t *testing.T, ctx context.Context, c *csiptest.Client)
 			t.Errorf("[%s] DERControl.OpModFixedW is nil - fixture dropped", prog)
 			continue
 		}
-		if got := dc.DERControlBase.OpModFixedW.Value; got != want.fixedW {
-			t.Errorf("[%s] DERControl.OpModFixedW.Value = %d, want %d",
+		if got := *dc.DERControlBase.OpModFixedW; got != want.fixedW {
+			t.Errorf("[%s] DERControl.OpModFixedW = %d, want %d",
 				prog, got, want.fixedW)
 		}
 		out = append(out, dc)

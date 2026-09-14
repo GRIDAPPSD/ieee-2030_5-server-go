@@ -72,17 +72,13 @@ default_der_controls:
     der_program_id: "sp"
     mrid: "BASIC-025-DDERC-SP"
     der_control_base:
-      op_mod_fixed_w:
-        multiplier: 0
-        value: 4000
+      op_mod_fixed_w: 4000
   - end_device_id: "0"
     fsa_id: "sy"
     der_program_id: "sy"
     mrid: "BASIC-025-DDERC-SY"
     der_control_base:
-      op_mod_max_lim_w:
-        multiplier: 0
-        value: 6000
+      op_mod_max_lim_w: 6000
 
 der_controls:
   - end_device_id: "0"
@@ -98,9 +94,7 @@ der_controls:
       start: 1700000100
       duration: 120
     der_control_base:
-      op_mod_fixed_w:
-        multiplier: 0
-        value: 4500
+      op_mod_fixed_w: 4500
   - end_device_id: "0"
     fsa_id: "sy"
     der_program_id: "sy"
@@ -114,6 +108,4 @@ der_controls:
       start: 1700000060
       duration: 120
     der_control_base:
-      op_mod_max_lim_w:
-        multiplier: 0
-        value: 5500
+      op_mod_max_lim_w: 5500

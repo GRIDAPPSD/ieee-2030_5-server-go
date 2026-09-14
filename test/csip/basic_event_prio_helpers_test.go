@@ -268,17 +268,15 @@ func assertDisjointIntervals(t *testing.T, controls []sep2.DERControl) {
 }
 
 // assertOpModValue asserts that base carries the named opMod* field
-// and that its scalar Value matches want. The field string is one of
-// "fixedW", "maxLimW", "targetW" - extend as new fixtures introduce
-// other opMod families.
+// and that its value matches want, in hundredths of a percent. The
+// field string is "fixedW" or "maxLimW" - extend as new fixtures
+// introduce other opMod families.
 //
 // #145 BASIC-024..026 exercise multiple opMod families per
 // fixture (SP->fixedW, SY->maxLimW), so a single per-field assertion
 // helper keeps the test bodies linear instead of branching by string
 // at each call site.
-// want is int16 to match sep2.ActivePower.Value, which core narrowed from
-// int64 to xs:short per sep.xsd. Every fixture value here is well inside the
-// int16 range, so this is a type match, not a range change.
+// want is int16, which holds both SignedPerCent and PerCent's [0, 10000].
 func assertOpModValue(t *testing.T, label string, base *sep2.DERControlBase, field string, want int16) {
 	t.Helper()
 
@@ -286,14 +284,18 @@ func assertOpModValue(t *testing.T, label string, base *sep2.DERControlBase, fie
 		t.Errorf("%s DERControlBase is nil - fixture dropped on the wire", label)
 		return
 	}
-	var got *sep2.ActivePower
+	var got *int64
 	switch field {
 	case "fixedW":
-		got = base.OpModFixedW
+		if base.OpModFixedW != nil {
+			v := int64(*base.OpModFixedW)
+			got = &v
+		}
 	case "maxLimW":
-		got = base.OpModMaxLimW
-	case "targetW":
-		got = base.OpModTargetW
+		if base.OpModMaxLimW != nil {
+			v := int64(*base.OpModMaxLimW)
+			got = &v
+		}
 	default:
 		t.Fatalf("%s: unknown opMod field %q (extend assertOpModValue)", label, field)
 	}
@@ -301,8 +303,8 @@ func assertOpModValue(t *testing.T, label string, base *sep2.DERControlBase, fie
 		t.Errorf("%s opMod field %q is nil - fixture dropped", label, field)
 		return
 	}
-	if got.Value != want {
-		t.Errorf("%s opMod[%s].Value = %d, want %d", label, field, got.Value, want)
+	if *got != int64(want) {
+		t.Errorf("%s opMod[%s] = %d, want %d", label, field, *got, want)
 	}
 }
 

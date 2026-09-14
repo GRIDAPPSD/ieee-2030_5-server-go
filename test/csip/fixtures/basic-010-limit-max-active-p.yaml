@@ -1,8 +1,8 @@
-# #135 fixture — BASIC-010 Limit Max Active Power Mode (CSIP V1.2 §8.10).
+# #135 fixture - BASIC-010 Limit Max Active Power Mode (CSIP V1.2 Section 8.10).
 #
 # Minimal topology: 1 EndDevice, 1 FSA, 1 DERProgram, 1 DERControl
-# carrying opModMaxLimW = 5 kW per Figure 10. Immediate control mode
-# — no DERCurve reference.
+# carrying opModMaxLimW = 5000 (50.00%; Figure 10: Default 5000 (50%), Test 6000). Immediate control mode
+# - no DERCurve reference.
 #
 # Per matrix: "Set Active Power %" and "Set Active Power Watts"
 # (BASIC-013/014) are DER-Client-only and skipped from the Server
@@ -47,6 +47,4 @@ der_controls:
     id: "0"
     mrid: "BASIC-010-DERC"
     der_control_base:
-      op_mod_max_lim_w:
-        multiplier: 0
-        value: 5000
+      op_mod_max_lim_w: 5000

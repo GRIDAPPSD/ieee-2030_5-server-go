@@ -30,6 +30,7 @@ package bootfixture
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"os"
@@ -150,15 +151,37 @@ type CurveDataSpec struct {
 
 // DERControlBaseSpec captures the subset of DERControlBase fields the
 // bootfixture set needs today. Add fields incrementally.
+//
+// OpModFixedW and OpModMaxLimW are bare integers in hundredths of a percent
+// (4000 = 40.00%), not watts; a multiplier/value mapping fails to decode.
 type DERControlBaseSpec struct {
-	OpModConnect   *bool            `yaml:"op_mod_connect,omitempty"`
-	OpModEnergize  *bool            `yaml:"op_mod_energize,omitempty"`
-	OpModFixedW    *ActivePowerSpec `yaml:"op_mod_fixed_w,omitempty"`
-	OpModMaxLimW   *ActivePowerSpec `yaml:"op_mod_max_lim_w,omitempty"`
-	OpModTargetW   *ActivePowerSpec `yaml:"op_mod_target_w,omitempty"`
-	OpModVoltVar   *int32           `yaml:"op_mod_volt_var,omitempty"`
-	OpModFreqDroop *uint16          `yaml:"op_mod_freq_droop,omitempty"`
-	RampTms        *uint16          `yaml:"ramp_tms,omitempty"`
+	OpModConnect   *bool               `yaml:"op_mod_connect,omitempty"`
+	OpModEnergize  *bool               `yaml:"op_mod_energize,omitempty"`
+	OpModFixedW    *sep2.SignedPerCent `yaml:"op_mod_fixed_w,omitempty"`
+	OpModMaxLimW   *sep2.PerCent       `yaml:"op_mod_max_lim_w,omitempty"`
+	OpModTargetW   *ActivePowerSpec    `yaml:"op_mod_target_w,omitempty"`
+	OpModVoltVar   *int32              `yaml:"op_mod_volt_var,omitempty"`
+	OpModFreqDroop *uint16             `yaml:"op_mod_freq_droop,omitempty"`
+	RampTms        *uint16             `yaml:"ramp_tms,omitempty"`
+}
+
+// validatePerCents refuses a percent the XML encoder would refuse, so an
+// out-of-range fixture fails at load instead of when the control is served.
+func (s *DERControlBaseSpec) validatePerCents() error {
+	if s == nil {
+		return nil
+	}
+	if s.OpModFixedW != nil {
+		if _, err := xml.Marshal(*s.OpModFixedW); err != nil {
+			return fmt.Errorf("op_mod_fixed_w: %w", err)
+		}
+	}
+	if s.OpModMaxLimW != nil {
+		if _, err := xml.Marshal(*s.OpModMaxLimW); err != nil {
+			return fmt.Errorf("op_mod_max_lim_w: %w", err)
+		}
+	}
+	return nil
 }
 
 // ActivePowerSpec is the YAML shape of sep2.ActivePower. Value is int16
@@ -270,6 +293,9 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		if d.EndDeviceID == "" || d.FSAID == "" || d.DERProgramID == "" {
 			return fmt.Errorf("default_der_controls[%d]: end_device_id, fsa_id, der_program_id all required", i)
 		}
+		if err := d.DERControlBase.validatePerCents(); err != nil {
+			return fmt.Errorf("default_der_controls[%d]: %w", i, err)
+		}
 		if err := createDefaultDERControl(ctx, target, i, d); err != nil {
 			return err
 		}
@@ -281,6 +307,9 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		}
 		if c.EndDeviceID == "" || c.FSAID == "" || c.DERProgramID == "" {
 			return fmt.Errorf("der_controls[%d] (id=%q): end_device_id, fsa_id, der_program_id all required", i, c.ID)
+		}
+		if err := c.DERControlBase.validatePerCents(); err != nil {
+			return fmt.Errorf("der_controls[%d] (id=%q): %w", i, c.ID, err)
 		}
 		if err := createDERControl(ctx, target, i, c); err != nil {
 			return err
@@ -447,10 +476,12 @@ func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
 		base.OpModEnergize = &v
 	}
 	if s.OpModFixedW != nil {
-		base.OpModFixedW = &sep2.ActivePower{Multiplier: s.OpModFixedW.Multiplier, Value: s.OpModFixedW.Value}
+		v := *s.OpModFixedW
+		base.OpModFixedW = &v
 	}
 	if s.OpModMaxLimW != nil {
-		base.OpModMaxLimW = &sep2.ActivePower{Multiplier: s.OpModMaxLimW.Multiplier, Value: s.OpModMaxLimW.Value}
+		v := *s.OpModMaxLimW
+		base.OpModMaxLimW = &v
 	}
 	if s.OpModTargetW != nil {
 		base.OpModTargetW = &sep2.ActivePower{Multiplier: s.OpModTargetW.Multiplier, Value: s.OpModTargetW.Value}

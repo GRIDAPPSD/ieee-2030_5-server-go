@@ -47,8 +47,8 @@ const basic017EventStart int64 = 1700000000
 const basic017EventDuration uint32 = 120
 
 // basic017DERCFixedW is the opModFixedW value seeded on the lone
-// DERControl (3.5 kW, multiplier 0).
-const basic017DERCFixedW int16 = 3500
+// DERControl (3500, 35.00%).
+const basic017DERCFixedW sep2.SignedPerCent = 3500
 
 // TestBASIC_017_OneDERPZeroDDERCOneDERC implements CSIP V1.2 Section 8.17.
 func TestBASIC_017_OneDERPZeroDDERCOneDERC(t *testing.T) {
@@ -132,8 +132,8 @@ func assertBASIC017ActiveControl(t *testing.T, dc sep2.DERControl) {
 	if dc.DERControlBase == nil || dc.DERControlBase.OpModFixedW == nil {
 		t.Fatal("DERControl.DERControlBase.OpModFixedW is nil - fixture dropped on the wire")
 	}
-	if got := dc.DERControlBase.OpModFixedW.Value; got != basic017DERCFixedW {
-		t.Errorf("DERControl.OpModFixedW.Value = %d, want %d",
+	if got := *dc.DERControlBase.OpModFixedW; got != basic017DERCFixedW {
+		t.Errorf("DERControl.OpModFixedW = %d, want %d",
 			got, basic017DERCFixedW)
 	}
 }

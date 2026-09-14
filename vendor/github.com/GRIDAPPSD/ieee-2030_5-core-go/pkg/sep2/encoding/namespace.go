@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -17,16 +19,83 @@ type NamespaceMode int
 
 const (
 	Namespace2018 NamespaceMode = iota // urn:ieee:std:2030.5:ns (2018/2023)
-	Namespace2013                      // http://ieee.org/2030.5 (2013)
+	Namespace2013                      // http://zigbee.org/sep (2013)
 )
 
-// DetectNamespace checks the request for hints about which namespace.
+// maxMediaRanges bounds per-request parsing cost against an oversized
+// Accept header: ranges beyond this are ignored and cannot affect the
+// result.
+const maxMediaRanges = 32
+
+// DetectNamespace selects the response namespace from the request's Accept
+// header line(s). IEEE 2030.5-2018 clause 5.7.2 defines level=-S1/+S1 as
+// the 2018 schema and -S0/+S0 (2013) as legacy; -S2/+S2 (2023) is not S1
+// but still resolves to 2018, since only an S1 signal suppresses S0. level
+// is honored case-insensitively on sep+xml and sep-exi ranges with q!=0
+// (the standard requires it only for sep-exi). Unparseable ranges are
+// skipped without logging, to avoid a client-controlled log-flood surface.
 func DetectNamespace(r *http.Request) NamespaceMode {
-	accept := r.Header.Get("Accept")
-	if strings.Contains(accept, "level=-S1") || strings.Contains(accept, "S1") {
+	sawS1, sawS0 := false, false
+	count := 0
+
+	for _, line := range r.Header.Values("Accept") {
+		rest := line
+		for rest != "" && count < maxMediaRanges {
+			var part string
+			part, rest = nextMediaRange(rest)
+			count++
+
+			mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(part))
+			if err != nil || !isSepMediaType(mediaType) {
+				continue
+			}
+			if q, ok := params["q"]; ok && isZeroQuality(q) {
+				continue
+			}
+
+			level := params["level"]
+			switch {
+			case strings.EqualFold(level, "-S1"), strings.EqualFold(level, "+S1"):
+				sawS1 = true
+			case strings.EqualFold(level, "-S0"), strings.EqualFold(level, "+S0"):
+				sawS0 = true
+			}
+		}
+	}
+
+	if sawS0 && !sawS1 {
 		return Namespace2013
 	}
 	return Namespace2018
+}
+
+// nextMediaRange returns the next media range from s and the unparsed
+// remainder, splitting on a comma unless it falls inside a quoted
+// parameter value.
+func nextMediaRange(s string) (part, rest string) {
+	inQuotes := false
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '"':
+			inQuotes = !inQuotes
+		case ',':
+			if !inQuotes {
+				return s[:i], s[i+1:]
+			}
+		}
+	}
+	return s, ""
+}
+
+func isSepMediaType(mediaType string) bool {
+	return mediaType == "application/sep+xml" || mediaType == "application/sep-exi"
+}
+
+// isZeroQuality reports whether q marks a range "not acceptable" per RFC
+// 9110 12.4.2. A malformed q value is treated as acceptable.
+func isZeroQuality(q string) bool {
+	v, err := strconv.ParseFloat(q, 64)
+	return err == nil && v == 0
 }
 
 // nsBufferedWriter buffers the response, rewrites namespace, then flushes.

@@ -15,8 +15,8 @@
 //	Step 2 (client walks /dcap -> /edev -> /fsa list)      -> walkToFirstEDevFSAList
 //	Step 3 (each FSA's DERProgramList renders both       -> assertBASIC016ProgramList
 //	         programs in primacy order)
-//	Step 4 (SP DDERC carries opModFixedW = 4 kW)         -> assertBASIC016DDERCPayload (SP)
-//	Step 5 (SY DDERC carries opModFixedW = 2 kW)         -> assertBASIC016DDERCPayload (SY)
+//	Step 4 (SP DDERC carries opModFixedW = 4000 (40.00%))         -> assertBASIC016DDERCPayload (SP)
+//	Step 5 (SY DDERC carries opModFixedW = 2000 (20.00%))         -> assertBASIC016DDERCPayload (SY)
 //	Step 6 (no DERControl events on either program)      -> assertBASIC016NoEvents
 //
 // Run under both GCM and CCM cipher modes so the spec cipher path
@@ -43,12 +43,12 @@ const basic016FixtureName = "basic-016-2derp-2dderc-0derc.yaml"
 const basic016ProgramCount = 2
 
 // basic016SPFixedW is the opModFixedW value seeded by the SP DDERC
-// per the fixture (4 kW, multiplier 0).
-const basic016SPFixedW int16 = 4000
+// per the fixture (4000, 40.00%).
+const basic016SPFixedW sep2.SignedPerCent = 4000
 
 // basic016SYFixedW is the opModFixedW value seeded by the SY DDERC
-// per the fixture (2 kW, multiplier 0).
-const basic016SYFixedW int16 = 2000
+// per the fixture (2000, 20.00%).
+const basic016SYFixedW sep2.SignedPerCent = 2000
 
 // TestBASIC_016_TwoDERPTwoDDERCZeroDERC implements CSIP V1.2 Section 8.16.
 func TestBASIC_016_TwoDERPTwoDDERCZeroDERC(t *testing.T) {
@@ -163,7 +163,7 @@ func assertBASIC016DDERCPayload(
 	label string,
 	dderc sep2.DefaultDERControl,
 	wantMRID string,
-	wantFixedW int16,
+	wantFixedW sep2.SignedPerCent,
 ) {
 	t.Helper()
 
@@ -176,11 +176,8 @@ func assertBASIC016DDERCPayload(
 	if dderc.DERControlBase.OpModFixedW == nil {
 		t.Fatalf("%s DDERC.OpModFixedW is nil", label)
 	}
-	if got := dderc.DERControlBase.OpModFixedW.Value; got != wantFixedW {
-		t.Errorf("%s DDERC.OpModFixedW.Value = %d, want %d",
+	if got := *dderc.DERControlBase.OpModFixedW; got != wantFixedW {
+		t.Errorf("%s DDERC.OpModFixedW = %d, want %d",
 			label, got, wantFixedW)
-	}
-	if got := dderc.DERControlBase.OpModFixedW.Multiplier; got != 0 {
-		t.Errorf("%s DDERC.OpModFixedW.Multiplier = %d, want 0", label, got)
 	}
 }

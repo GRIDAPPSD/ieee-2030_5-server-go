@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -38,7 +39,7 @@ func TestAGG_004_Event1DERP1DDERC1DERC(t *testing.T) {
 				DERProgramID: aggFSAIDSY,
 				MRID:         aggMRIDPrefix("004-DDERC-") + edevID,
 				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModMaxLimW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: 5000},
+					OpModMaxLimW: ptrTo[sep2.PerCent](5000),
 				},
 			},
 		)
@@ -50,7 +51,7 @@ func TestAGG_004_Event1DERP1DDERC1DERC(t *testing.T) {
 				ID:           "agg004-" + edevID,
 				MRID:         aggMRIDPrefix("004-DERC-") + edevID,
 				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModFixedW: &csiptest.ActivePowerSpec{Multiplier: 0, Value: 2500},
+					OpModFixedW: ptrTo[sep2.SignedPerCent](2500),
 				},
 			},
 		)
@@ -69,7 +70,7 @@ func TestAGG_004_Event1DERP1DDERC1DERC(t *testing.T) {
 				t.Errorf("DDERC.MRID = %q, want %q", dderc.MRID, wantDDERC)
 			}
 			if dderc.DERControlBase == nil || dderc.DERControlBase.OpModMaxLimW == nil ||
-				dderc.DERControlBase.OpModMaxLimW.Value != 5000 {
+				*dderc.DERControlBase.OpModMaxLimW != 5000 {
 				t.Errorf("DDERC OpModMaxLimW dropped on the wire")
 			}
 
@@ -89,7 +90,7 @@ func TestAGG_004_Event1DERP1DDERC1DERC(t *testing.T) {
 			}
 			if list.DERControl[0].DERControlBase == nil ||
 				list.DERControl[0].DERControlBase.OpModFixedW == nil ||
-				list.DERControl[0].DERControlBase.OpModFixedW.Value != 2500 {
+				*list.DERControl[0].DERControlBase.OpModFixedW != 2500 {
 				t.Errorf("DERControl[0] OpModFixedW dropped on the wire")
 			}
 		})

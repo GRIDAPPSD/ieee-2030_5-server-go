@@ -1,11 +1,11 @@
 // Tests for the #52 fixture loader. These run against the
-// in-memory store implementations (pkg/store/memory) only — no
+// in-memory store implementations (pkg/store/memory) only - no
 // internal/server, no internal/handler. The loader's contract is
 // that it writes through the public store API, so these tests are
 // the canonical proof.
 //
 // The three fixture YAMLs are loaded by relative path
-// (../fixtures/<name>.yaml) — `go test` runs with the package
+// (../fixtures/<name>.yaml) - `go test` runs with the package
 // directory as cwd, and the fixtures live one level up.
 package csiptest_test
 
@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
@@ -118,7 +119,7 @@ func TestLoad_SevenLevelFSA_BuildsPriorityChain(t *testing.T) {
 	}
 
 	// Walk the DERProgram store. Same EndDevice scope; expect
-	// seven entries with primacy 0..6 — the priority chain.
+	// seven entries with primacy 0..6 - the priority chain.
 	progList, err := target.DERPrograms.List(ctx, "0", store.ListOptions{Start: 0, Limit: 100})
 	if err != nil {
 		t.Fatalf("DERPrograms.List(edev=0): %v", err)
@@ -179,11 +180,11 @@ func TestLoad_DERProgramSingle_BuildsStoreState(t *testing.T) {
 	if dderc.DERControlBase == nil || dderc.DERControlBase.OpModMaxLimW == nil {
 		t.Fatalf("DefaultDERControl.DERControlBase.OpModMaxLimW is nil; loader dropped the limit")
 	}
-	if got := dderc.DERControlBase.OpModMaxLimW.Value; got != 5000 {
-		t.Errorf("OpModMaxLimW.Value = %d, want 5000", got)
+	if got := *dderc.DERControlBase.OpModMaxLimW; got != 5000 {
+		t.Errorf("OpModMaxLimW = %d, want 5000", got)
 	}
 
-	// Zero DERControls — the "C in CORE-012" assertion.
+	// Zero DERControls - the "C in CORE-012" assertion.
 	dcCount, err := target.DERControls.Count(ctx, "0/0/0")
 	if err != nil {
 		t.Fatalf("DERControls.Count: %v", err)
@@ -278,7 +279,7 @@ func TestLoad_IdempotentReload(t *testing.T) {
 
 	// And: reload onto the SAME target rejects because Create
 	// enforces ErrAlreadyExists. This is the loader's documented
-	// contract — "one Target per test".
+	// contract - "one Target per test".
 	err = csiptest.Load(ctx, a, fixturePath("seven-level-fsa.yaml"))
 	if err == nil {
 		t.Fatal("Load on already-loaded target: want error, got nil")
@@ -344,7 +345,7 @@ func TestLoad_NilTarget_Errors(t *testing.T) {
 func TestLoadSpec_OrphanFSA_Errors(t *testing.T) {
 	t.Parallel()
 
-	// Hand-crafted Spec referencing a missing EndDevice — proves
+	// Hand-crafted Spec referencing a missing EndDevice - proves
 	// the orphan-check fires inside applySpec, not just at
 	// decode-time.
 	spec := &csiptest.Spec{
@@ -378,6 +379,61 @@ func TestLoadSpec_DuplicateEndDevice_Errors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "duplicate id") {
 		t.Errorf("LoadSpec(dup EndDevice): error = %v, want 'duplicate id'", err)
+	}
+}
+
+// TestLoadSpec_PerCentOutOfRange_Errors pins that a percent the XML encoder
+// would refuse fails the load and stores no control, on both control paths.
+func TestLoadSpec_PerCentOutOfRange_Errors(t *testing.T) {
+	t.Parallel()
+
+	over := sep2.PerCent(10001)
+	under := sep2.SignedPerCent(-10001)
+	cases := []struct {
+		name    string
+		dderc   bool
+		base    csiptest.DERControlBaseSpec
+		wantMsg string
+	}{
+		{"default control op_mod_max_lim_w above 10000", true, csiptest.DERControlBaseSpec{OpModMaxLimW: &over}, "default_der_controls[0]: op_mod_max_lim_w"},
+		{"control op_mod_max_lim_w above 10000", false, csiptest.DERControlBaseSpec{OpModMaxLimW: &over}, `der_controls[0] (id="a"): op_mod_max_lim_w`},
+		{"control op_mod_fixed_w below -10000", false, csiptest.DERControlBaseSpec{OpModFixedW: &under}, `der_controls[0] (id="a"): op_mod_fixed_w`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			base := tc.base
+			spec := &csiptest.Spec{}
+			if tc.dderc {
+				spec.DefaultDERControls = []csiptest.DefaultDERControlSpec{
+					{EndDeviceID: "0", FSAID: "0", DERProgramID: "0", DERControlBase: &base},
+				}
+			} else {
+				spec.DERControls = []csiptest.DERControlSpec{
+					{EndDeviceID: "0", FSAID: "0", DERProgramID: "0", ID: "a", DERControlBase: &base},
+				}
+			}
+			target := csiptest.NewTarget()
+			ctx := context.Background()
+			err := csiptest.LoadSpec(ctx, target, spec)
+			if err == nil {
+				t.Fatal("LoadSpec: want error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("LoadSpec: error = %v, want it to contain %q", err, tc.wantMsg)
+			}
+			ddercCount, err := target.DefaultDERControls.Count(ctx, "0/0/0")
+			if err != nil {
+				t.Fatalf("DefaultDERControls.Count: %v", err)
+			}
+			dercCount, err := target.DERControls.Count(ctx, "0/0/0")
+			if err != nil {
+				t.Fatalf("DERControls.Count: %v", err)
+			}
+			if ddercCount != 0 || dercCount != 0 {
+				t.Errorf("stored %d default and %d event controls after a rejected load, want 0 and 0", ddercCount, dercCount)
+			}
+		})
 	}
 }
 

@@ -1,4 +1,4 @@
-# #135/#140 fixture — BASIC-005 LFRT/HFRT (CSIP V1.2 §8.5).
+# #135/#140 fixture - BASIC-005 LFRT/HFRT (CSIP V1.2 Section 8.5).
 #
 # #140 added the opModLFRTMustTrip and opModHFRTMustTrip
 # curve-reference fields to pkg/sep2.DERControlBase. The fixture

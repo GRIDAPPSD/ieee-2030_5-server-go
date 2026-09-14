@@ -1,8 +1,8 @@
-# #135/#140 fixture — BASIC-012 Freq/Watt (CSIP V1.2 §8.12).
+# #135/#140 fixture - BASIC-012 Freq/Watt (CSIP V1.2 Section 8.12).
 #
 # #140 added opModFreqWatt to pkg/sep2.DERControlBase. The
 # fixture seeds it pointing at DERCurve id "0" (curveType =
-# CurveTypeOpModFreqWatt = 1). opModFreqDroop is the §8.5 LFRT/HFRT
+# CurveTypeOpModFreqWatt = 1). opModFreqDroop is the Section 8.5 LFRT/HFRT
 # droop coefficient and is not used here.
 
 end_devices:
@@ -46,7 +46,7 @@ der_controls:
     id: "0"
     mrid: "BASIC-012-DERC"
     der_control_base:
-      op_mod_freq_watt: 0  # → der_curves[0].id
+      op_mod_freq_watt: 0  # -> der_curves[0].id
 
 der_curves:
   - id: "0"

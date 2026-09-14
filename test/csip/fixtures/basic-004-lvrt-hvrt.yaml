@@ -1,4 +1,4 @@
-# #135/#140 fixture — BASIC-004 LVRT/HVRT (CSIP V1.2 §8.4).
+# #135/#140 fixture - BASIC-004 LVRT/HVRT (CSIP V1.2 Section 8.4).
 #
 # #140 added the four LVRT/HVRT curve-ref fields to
 # pkg/sep2.DERControlBase. The fixture now seeds all four, each

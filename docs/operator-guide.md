@@ -354,8 +354,9 @@ mechanism, and it is unrelated to device identity (SFDI/LFDI). Mutating:
 ## Known limitations
 
 - **The admin listener's mTLS path has no supported way to trust a private
-  certificate authority today.** `buildAdminTLSConfig`
-  (`internal/server/server.go:597-609`) never sets `ClientCAs`, so a
+  certificate authority today.** `buildAdminTLSConfig`'s returned
+  `tls.Config` literal (`internal/server/server.go:627-631`) never sets
+  `ClientCAs`, so a
   client certificate presented to the admin listener is verified against
   the system's default trust store, not any CA you generate yourself. A
   certificate signed by a CA you control, including one produced by

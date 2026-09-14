@@ -1,7 +1,6 @@
 # ieee-2030_5-server
 
 [![ci](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/actions/workflows/codeql.yml)
 [![Go](https://img.shields.io/badge/go-1.26.3-blue)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-Battelle%20BSD-blue)](LICENSE)
 
@@ -123,9 +122,9 @@ structurally parse (chained after `&&`, a quoted `run:` scalar, a
 flow-mapping one-liner) is a detected gap, not a silent one.
 
 **A passing local run is not equivalent to a passing CI run.** Every run
-prints what it does not cover: CodeQL static analysis
-([.github/workflows/codeql.yml](.github/workflows/codeql.yml)) has no local
-CLI wired into this repo; `core-freshness.yml` tests against
+prints what it does not cover: static analysis comes from the GRIDAPPSD
+organization's default code scanning setup, not a repository workflow, and
+has no local CLI wired into this repo; `core-freshness.yml` tests against
 `ieee-2030_5-core-go`'s main branch on a schedule, not against your change;
 this runs against the current working tree, not a clean-room checkout from
 `actions/checkout`; and the CI runner's network isolation is not

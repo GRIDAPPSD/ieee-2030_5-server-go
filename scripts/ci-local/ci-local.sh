@@ -238,8 +238,9 @@ check_toolchain() {
 print_not_covered() {
   cat <<'EOF'
 NOT COVERED by this local run (documented gaps, not silent ones):
-  - CodeQL static analysis (.github/workflows/codeql.yml): a GitHub-hosted
-    analysis service; there is no local CodeQL CLI wired into this repo.
+  - Static analysis: comes from the GRIDAPPSD organization's default code
+    scanning setup, not a repository workflow; there is no local CLI wired
+    into this repo for it.
   - core-freshness.yml: tests this server against ieee-2030_5-core-go's
     main branch on a daily schedule, not against this change; it is not
     part of the per-change gate this script mirrors.

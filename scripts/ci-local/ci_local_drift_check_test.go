@@ -77,8 +77,8 @@ func TestDriftCheck_DefaultArgumentScansTheRealWorkflowDirectory(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("exit code: got %d, want 0; output=%q", exit, out)
 	}
-	if !strings.Contains(out, "across 3 workflow file(s)") {
-		t.Fatalf("output missing 'across 3 workflow file(s)' (expected ci.yml, codeql.yml, core-freshness.yml); got=%q", out)
+	if !strings.Contains(out, "across 2 workflow file(s)") {
+		t.Fatalf("output missing 'across 2 workflow file(s)' (expected ci.yml, core-freshness.yml); got=%q", out)
 	}
 }
 

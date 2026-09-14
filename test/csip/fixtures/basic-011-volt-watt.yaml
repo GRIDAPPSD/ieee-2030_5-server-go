@@ -2,7 +2,7 @@
 #
 # #140 added opModVoltWatt to pkg/sep2.DERControlBase. The
 # fixture seeds it pointing at DERCurve id "0" (curveType =
-# CurveTypeOpModVoltWatt = 3).
+# CurveTypeOpModVoltWatt = 12).
 
 end_devices:
   - id: "0"
@@ -51,7 +51,7 @@ der_curves:
   - id: "0"
     mrid: "BASIC-011-CURVE"
     description: "Volt/Watt envelope (Figure 11)"
-    curve_type: 3  # CurveTypeOpModVoltWatt
+    curve_type: 12  # CurveTypeOpModVoltWatt
     curve_data:
       - x: 10500
         y: 10000

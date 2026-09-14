@@ -2,7 +2,7 @@
 //
 // BASIC-006 proves the server renders a Volt/Var DERControl carrying
 // an opModVoltVar curve reference plus the corresponding DERCurve
-// (curveType = CurveTypeOpModVoltVar = 0) end-to-end over chained GETs.
+// (curveType = CurveTypeOpModVoltVar = 11) end-to-end over chained GETs.
 //
 // V1.2 procedure step -> assertion mapping (per V1.2 Section 8.6):
 //

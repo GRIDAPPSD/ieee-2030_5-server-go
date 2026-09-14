@@ -21,8 +21,8 @@
 //	Step 4 (DERControl carries opModConnect, opModEnergize,
 //	         opModFixedPFInjectW, opModMaxLimW inline values
 //	         simultaneously)                                  -> immediate-mode block
-//	Step 5 (global /dc carries 3 curves spanning curveType 0,
-//	         1, 3 - V-Var, F-Watt, V-Watt)                    -> /dc walk
+//	Step 5 (global /dc carries 3 curves spanning curveType 11,
+//	         0, 12 - V-Var, F-Watt, V-Watt)                   -> /dc walk
 //
 // Standalone ticket (not folded into #135 per backlog) because
 // BASIC-015 is the first composed-mode procedure: any DERControl
@@ -43,9 +43,9 @@ import (
 // basic015 curve-ref values the fixture seeds; each must survive
 // the wire roundtrip exactly. The mapping is:
 //
-//	opModVoltVar  -> der_curves[0] (curveType 0, V-Var)
-//	opModVoltWatt -> der_curves[1] (curveType 3, V-Watt)
-//	opModFreqWatt -> der_curves[2] (curveType 1, F-Watt)
+//	opModVoltVar  -> der_curves[0] (curveType 11, V-Var)
+//	opModVoltWatt -> der_curves[1] (curveType 12, V-Watt)
+//	opModFreqWatt -> der_curves[2] (curveType 0, F-Watt)
 const (
 	basic015VoltVarRef  int32 = 0
 	basic015VoltWattRef int32 = 1
@@ -139,9 +139,9 @@ func TestBASIC_015_ComposedModes(t *testing.T) {
 			// curves. The /dc handler is not type-sorted, so check by
 			// counting hits rather than positional indexing.
 			wantTypes := map[uint8]bool{
-				sep2.CurveTypeOpModVoltVar:  false, // 0
-				sep2.CurveTypeOpModFreqWatt: false, // 1
-				sep2.CurveTypeOpModVoltWatt: false, // 3
+				sep2.CurveTypeOpModVoltVar:  false, // 11
+				sep2.CurveTypeOpModFreqWatt: false, // 0
+				sep2.CurveTypeOpModVoltWatt: false, // 12
 			}
 			for _, cv := range curves.DERCurve {
 				if _, ok := wantTypes[cv.CurveType]; !ok {

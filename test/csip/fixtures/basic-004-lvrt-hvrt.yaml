@@ -54,16 +54,14 @@ der_controls:
       op_mod_hvrt_momentary_cessation: 3
 
 # Four curves: LVRT-must-trip, LVRT-momentary-cessation, HVRT-must-trip,
-# HVRT-momentary-cessation. The sep2 DERCurve type today does not
-# carry a "ride-through mode" sub-classifier; curveType=0 (VoltVar) is
-# the closest existing tag. The procedure walk renders these as
-# generic curves; the per-mode assertion that would discriminate them
-# by sub-type is pinned by #140.
+# HVRT-momentary-cessation. Each now uses its own DERCurveType constant
+# from the IEEE 2030.5-2018 table (pkg/sep2/der.go); the per-mode
+# assertion that would discriminate them by sub-type is pinned by #140.
 der_curves:
   - id: "0"
     mrid: "BASIC-004-LVRT-MUST-TRIP"
     description: "LVRT must trip envelope"
-    curve_type: 0
+    curve_type: 10
     curve_data:
       - x: 5000
         y: 100
@@ -72,7 +70,7 @@ der_curves:
   - id: "1"
     mrid: "BASIC-004-LVRT-MOMENTARY"
     description: "LVRT momentary cessation"
-    curve_type: 0
+    curve_type: 9
     curve_data:
       - x: 8000
         y: 0
@@ -81,7 +79,7 @@ der_curves:
   - id: "2"
     mrid: "BASIC-004-HVRT-MUST-TRIP"
     description: "HVRT must trip envelope"
-    curve_type: 0
+    curve_type: 5
     curve_data:
       - x: 11000
         y: 100
@@ -90,7 +88,7 @@ der_curves:
   - id: "3"
     mrid: "BASIC-004-HVRT-MOMENTARY"
     description: "HVRT momentary cessation"
-    curve_type: 0
+    curve_type: 4
     curve_data:
       - x: 11000
         y: 0

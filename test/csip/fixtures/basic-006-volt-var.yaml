@@ -2,7 +2,7 @@
 #
 # Minimal topology: 1 EndDevice, 1 FSA, 1 DERProgram, 1 DERControl
 # carrying opModVoltVar (an int32 reference into a Volt/Var DERCurve).
-# The global DERCurve store carries one Volt/Var curve (curveType=0
+# The global DERCurve store carries one Volt/Var curve (curveType=11
 # per sep2.CurveTypeOpModVoltVar) so the assertion includes the
 # field-on-DERControl AND a sanity walk of /dc to confirm the curve
 # is renderable.
@@ -60,7 +60,7 @@ der_curves:
   - id: "0"
     mrid: "BASIC-006-CURVE"
     description: "Volt/Var (Figure 6 deadband 92/96/104/108)"
-    curve_type: 0  # CurveTypeOpModVoltVar
+    curve_type: 11  # CurveTypeOpModVoltVar
     curve_data:
       - x: 9200
         y: 3000

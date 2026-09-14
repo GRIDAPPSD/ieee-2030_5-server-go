@@ -9,7 +9,7 @@
 #
 #   - Curve-reference modes (opModVoltVar, opModVoltWatt,
 #     opModFreqWatt) - each a *int32 reference into /dc with distinct
-#     curveType (0, 3, 1 respectively).
+#     curveType (11, 12, 0 respectively).
 #   - Immediate-control modes (opModConnect, opModEnergize,
 #     opModFixedPFInjectW, opModMaxLimW) - each carries an inline
 #     value, no curve.
@@ -62,9 +62,9 @@ der_controls:
     mrid: "BASIC-015-DERC"
     der_control_base:
       # Curve-ref modes - each int32 references der_curves[].id below.
-      op_mod_volt_var: 0   # -> der_curves[0]  (curveType=0, V-Var)
-      op_mod_volt_watt: 1  # -> der_curves[1]  (curveType=3, V-Watt)
-      op_mod_freq_watt: 2  # -> der_curves[2]  (curveType=1, F-Watt)
+      op_mod_volt_var: 0   # -> der_curves[0]  (curveType=11, V-Var)
+      op_mod_volt_watt: 1  # -> der_curves[1]  (curveType=12, V-Watt)
+      op_mod_freq_watt: 2  # -> der_curves[2]  (curveType=0, F-Watt)
       # Immediate-control modes - inline scalar payloads.
       op_mod_connect: true
       op_mod_energize: true
@@ -78,7 +78,7 @@ der_curves:
   - id: "0"
     mrid: "BASIC-015-CURVE-VV"
     description: "Volt/Var (Section 8.6 deadband 92/96/104/108)"
-    curve_type: 0  # CurveTypeOpModVoltVar
+    curve_type: 11  # CurveTypeOpModVoltVar
     curve_data:
       - x: 9200
         y: 3000
@@ -91,7 +91,7 @@ der_curves:
   - id: "1"
     mrid: "BASIC-015-CURVE-VW"
     description: "Volt/Watt (Section 8.11 4-point envelope)"
-    curve_type: 3  # CurveTypeOpModVoltWatt
+    curve_type: 12  # CurveTypeOpModVoltWatt
     curve_data:
       - x: 10500
         y: 10000
@@ -104,7 +104,7 @@ der_curves:
   - id: "2"
     mrid: "BASIC-015-CURVE-FW"
     description: "Freq/Watt (Section 8.12 4-point envelope)"
-    curve_type: 1  # CurveTypeOpModFreqWatt
+    curve_type: 0  # CurveTypeOpModFreqWatt
     curve_data:
       - x: 5970
         y: 10000

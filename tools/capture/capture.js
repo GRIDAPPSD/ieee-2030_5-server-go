@@ -228,8 +228,8 @@ async function main() {
   // the one just added live).
   await shootCard(page, 'End Devices', 'admin-ui-end-devices-table.png');
 
-  // 13. Device Activity chart: capture immediately (predicted: near-empty),
-  // then wait through several SSE ticks and capture again.
+  // 13. Device Activity chart: capture immediately (near-empty at this
+  // point), then wait through several SSE ticks and capture again.
   await shootCard(page, 'Device Activity', 'admin-ui-device-activity-early.png');
   const waitStart = Date.now();
   const scratchDir = path.join(__dirname, 'scratch');
@@ -259,10 +259,10 @@ async function main() {
   await loginPage.close();
 
   // 16. Admin Login, state (b) diagnostic: clear cookies and reload the
-  // dashboard tab to see whether the SPA-embedded LoginPanel appears.
-  // Prediction: it will not, because the loopback bypass admits the
-  // request before any cookie is consulted, so no 401 is ever produced
-  // for the SPA's mount-time probe to react to.
+  // dashboard tab to check whether the SPA-embedded LoginPanel appears.
+  // The loopback bypass admits the request before any cookie is
+  // consulted, so no 401 is ever produced for the SPA's mount-time probe
+  // to react to.
   await context.clearCookies();
   await page.reload({ waitUntil: 'networkidle' });
   const loginPanelVisible = await page.locator('[data-testid="login-panel"]').count();

@@ -25,7 +25,10 @@ You need:
   section: `http://127.0.0.1:8444/`, admitted with no login step by the
   `#246` loopback bypass. If you already run the admin listener behind
   TLS or a login, everything past "enroll the device" still applies; only
-  the URL and the login step change.
+  the URL and the login step change. If a reverse proxy fronts this same
+  host, the loopback bypass admits any relayed request unless the proxy
+  injects `X-Forwarded-For`; see admin-listener.md's
+  [Reverse-proxy XFF requirement](admin-listener.md#reverse-proxy-xff-requirement-269).
 
 Two different certificate mechanisms live in this server, and this guide
 covers only the first one:

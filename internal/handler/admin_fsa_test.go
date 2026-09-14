@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -143,6 +144,39 @@ func TestCreateAdminFSA_UnknownField_400(t *testing.T) {
 	h.HandleCreateAdminFSA()(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+// TestCreateAdminFSA_InvalidJSONDoesNotLeakDecoderDetail pins the 400 path
+// convention (#360): an oversized numeric literal on the uint8 primacy field
+// is echoed verbatim in a json.UnmarshalTypeError, which is attacker-supplied
+// content the client-visible body must not carry.
+func TestCreateAdminFSA_InvalidJSONDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "13370360913370360913370360913370360913370360"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	h := newAdminFSAHandler(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/fsas", strings.NewReader(
+		`{"description":"x","primacy":`+marker+`}`))
+	w := httptest.NewRecorder()
+	h.HandleCreateAdminFSA()(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if got := w.Body.String(); strings.Contains(got, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", got)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
 	}
 }
 
@@ -352,6 +386,42 @@ func TestAttachProgram_EmptyHref_400(t *testing.T) {
 	}
 }
 
+// TestAttachProgram_InvalidJSONDoesNotLeakDecoderDetail pins the 400 path
+// convention (#360): DisallowUnknownFields quotes the offending field name
+// verbatim, which is attacker-supplied content the client-visible body must
+// not carry.
+func TestAttachProgram_InvalidJSONDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "MARKERXYZ360LEAK"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	h := newAdminFSAHandler(t)
+	_ = h.AdminFSAs.Create(context.Background(), "fsa-1", sep2.FunctionSetAssignments{MRID: "fsa-1"})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/fsas/fsa-1/programs", strings.NewReader(
+		`{"programHref":"/p/1","`+marker+`":1}`))
+	req.SetPathValue("id", "fsa-1")
+	w := httptest.NewRecorder()
+	h.HandleAttachProgram()(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if got := w.Body.String(); strings.Contains(got, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", got)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
+	}
+}
+
 // --- DELETE /api/fsas/{id}/programs -----------------------------------------
 
 func TestDetachProgram_Happy(t *testing.T) {
@@ -502,6 +572,42 @@ func TestAssignDeviceFSA_BadFSAHref_400(t *testing.T) {
 	h.HandleAssignDeviceFSA()(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+// TestAssignDeviceFSA_InvalidJSONDoesNotLeakDecoderDetail pins the 400 path
+// convention (#360): DisallowUnknownFields quotes the offending field name
+// verbatim, which is attacker-supplied content the client-visible body must
+// not carry.
+func TestAssignDeviceFSA_InvalidJSONDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "MARKERXYZ360LEAK"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	h := newAdminFSAHandler(t)
+	h.EndDevices.(*stubEndDevices).devs["dev-A"] = sep2.EndDevice{}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/devices/dev-A/fsa-assignment", strings.NewReader(
+		`{"fsaHref":"/api/fsas/fsa-1","`+marker+`":1}`))
+	req.SetPathValue("id", "dev-A")
+	w := httptest.NewRecorder()
+	h.HandleAssignDeviceFSA()(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if got := w.Body.String(); strings.Contains(got, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", got)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
 	}
 }
 

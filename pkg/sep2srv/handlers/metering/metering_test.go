@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -146,6 +147,44 @@ func TestHandleCreateUsagePoint_MethodNotAllowed(t *testing.T) {
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want 405", w.Code)
+	}
+}
+
+// TestHandleCreateUsagePoint_InvalidXMLDoesNotLeakDecoderDetail pins the 400
+// path convention (#360): the decoder's own complaint can quote attacker-
+// supplied content, so the body must carry a fixed message while the
+// operator-facing log carries the detail.
+func TestHandleCreateUsagePoint_InvalidXMLDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "MARKERXYZ360LEAK"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	s := memory.NewStore[sep2.UsagePoint]()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /upt", metering.HandleCreateUsagePoint(s))
+
+	req := httptest.NewRequest(http.MethodPost, "/upt", strings.NewReader("<"+marker+">bar</"+marker+">"))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != "invalid XML" {
+		t.Errorf("body = %q, want the fixed message", got)
+	}
+	if body := w.Body.String(); strings.Contains(body, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", body)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
 	}
 }
 
@@ -457,6 +496,53 @@ func TestHandlePostMirrorMeterReading_Created(t *testing.T) {
 	}
 	if stored.Reading == nil || stored.Reading.Value == nil || *stored.Reading.Value != val {
 		t.Errorf("stored Reading value not preserved: %+v", stored.Reading)
+	}
+}
+
+// TestHandlePostMirrorMeterReading_InvalidXMLDoesNotLeakDecoderDetail pins the
+// 400 path convention (#360) at mirror.go:1020, the bare site issue 360 names
+// directly: decodeMirrorMeterReadings' own complaint can quote attacker-
+// supplied content, so the body must carry a fixed message while the
+// operator-facing log carries the detail.
+func TestHandlePostMirrorMeterReading_InvalidXMLDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "MARKERXYZ360LEAK"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
+	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
+	_ = mupStore.Create(context.Background(), "inv1", sep2.MirrorUsagePoint{
+		Resource:   sep2.Resource{Href: "/mup/inv1"},
+		MRID:       "INV1",
+		DeviceLFDI: "DEVICE_A_LFDI",
+	})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /mup/{id}/mr", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, identityProvider("DEVICE_A_LFDI")))
+
+	body := `<MirrorMeterReading xmlns="urn:ieee:std:2030.5:ns"><foo>bar</` + marker + `></MirrorMeterReading>`
+	req := httptest.NewRequest(http.MethodPost, "/mup/inv1/mr", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body: %s", w.Code, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != "invalid XML" {
+		t.Errorf("body = %q, want the fixed message", got)
+	}
+	if respBody := w.Body.String(); strings.Contains(respBody, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", respBody)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
 	}
 }
 
@@ -1559,6 +1645,76 @@ func TestHandleCreateMirrorUsagePoint_NoMRID_Rejected(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("stored MirrorUsagePoint count = %d, want 0: a rejected POST must not store anything", count)
+	}
+}
+
+// TestHandleCreateMirrorUsagePoint_InvalidXMLDoesNotLeakDecoderDetail pins the
+// 400 path convention (#360): a fixed body, decoder detail (which can quote
+// attacker-supplied content) left to the operator-facing log.
+func TestHandleCreateMirrorUsagePoint_InvalidXMLDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "MARKERXYZ360LEAK"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	s := memory.NewStore[sep2.MirrorUsagePoint]()
+	mux := createMirrorMux(s, mupKeyLFDIA)
+
+	req := httptest.NewRequest(http.MethodPost, "/mup", strings.NewReader("<"+marker+">bar</"+marker+">"))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if body := w.Body.String(); strings.Contains(body, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", body)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
+	}
+}
+
+// TestHandleMirrorUsagePoint_NilLFDIProviderLogsRouteNotPath pins criterion 2
+// of #360: a nil LFDIProvider is a wiring bug this handler refuses rather than
+// panics on, and the resulting log line names the mounted route pattern, never
+// the client-controlled request path (matching the contract srverr's package
+// doc states for every other log line this package writes).
+func TestHandleMirrorUsagePoint_NilLFDIProviderLogsRouteNotPath(t *testing.T) {
+	const pathMarker = "MARKERXYZ360LEAK"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	s := memory.NewStore[sep2.MirrorUsagePoint]()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, nil))
+
+	req := httptest.NewRequest(http.MethodGet, "/mup/"+pathMarker, nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", w.Code)
+	}
+	logged := buf.String()
+	if strings.Contains(logged, pathMarker) {
+		t.Errorf("log = %q; it carries the client-supplied request path", logged)
+	}
+	if !strings.Contains(logged, "GET /mup/{id}") {
+		t.Errorf("log = %q, want it to name the mounted route pattern GET /mup/{id}", logged)
 	}
 }
 

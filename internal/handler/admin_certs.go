@@ -10,6 +10,7 @@ import (
 
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 )
 
 // AdminCertService holds the CA state for certificate management.
@@ -97,7 +98,8 @@ func (s *AdminCertService) HandleCreateServerCert() http.HandlerFunc {
 
 		var req createServerCertRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			srverr.LogBadRequest(r, err)
+			writeError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
 		if len(req.Hosts) == 0 {
@@ -139,14 +141,15 @@ func (s *AdminCertService) HandleCreateDeviceCert() http.HandlerFunc {
 
 		var req createDeviceCertRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			srverr.LogBadRequest(r, err)
+			writeError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
 		if req.DeviceType < 1 || req.DeviceType > 3 {
 			req.DeviceType = 1
 		}
 		if req.HWSerialNum == "" {
-			writeError(w, http.StatusBadRequest, "hwSerialNum is required (CSIP §6.2 HardwareModuleName SAN)")
+			writeError(w, http.StatusBadRequest, "hwSerialNum is required (CSIP section 6.2 HardwareModuleName SAN)")
 			return
 		}
 		if req.HWType == "" {
@@ -155,7 +158,8 @@ func (s *AdminCertService) HandleCreateDeviceCert() http.HandlerFunc {
 		}
 		hwTypeOID, err := certs.ParseOID(req.HWType)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "hwType: "+err.Error())
+			srverr.LogBadRequest(r, err)
+			writeError(w, http.StatusBadRequest, "invalid hwType")
 			return
 		}
 

@@ -72,7 +72,7 @@ func HandlePostFlowReservationRequest(
 
 		var frq sep2.FlowReservationRequest
 		if err := xml.Unmarshal(body, &frq); err != nil {
-			http.Error(w, "invalid XML: "+err.Error(), http.StatusBadRequest)
+			srverr.BadRequestMessage(w, r, "invalid XML", err)
 			return
 		}
 
@@ -154,7 +154,7 @@ func HandlePostResponse(rspStore store.ScopedStore[sep2.Response]) http.HandlerF
 
 		rsp, err := sep2.DecodeResponse(body)
 		if err != nil {
-			http.Error(w, "invalid XML: "+err.Error(), http.StatusBadRequest)
+			srverr.BadRequestMessage(w, r, "invalid XML", err)
 			return
 		}
 

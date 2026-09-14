@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,5 +98,39 @@ func TestHandlePostTextMessage_CarriesCreationTime(t *testing.T) {
 	}
 	if strings.Contains(string(served), "<creationTime>0</creationTime>") {
 		t.Errorf("served TextMessage carries <creationTime>0</creationTime>:\n%s", served)
+	}
+}
+
+// TestHandlePostTextMessage_InvalidXMLDoesNotLeakDecoderDetail pins the 400
+// path convention (#360): a fixed body, decoder detail (which can quote
+// attacker-supplied content) left to the operator-facing log.
+func TestHandlePostTextMessage_InvalidXMLDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "MARKERXYZ360LEAK"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	tmStore := memory.NewScopedStore[sep2.TextMessage]()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /msg/{msgId}/tm", messaging.HandlePostTextMessage(tmStore))
+
+	req := httptest.NewRequest(http.MethodPost, "/msg/msg1/tm", strings.NewReader("<"+marker+">bar</"+marker+">"))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if body := w.Body.String(); strings.Contains(body, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", body)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
 	}
 }

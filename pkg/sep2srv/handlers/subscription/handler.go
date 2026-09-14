@@ -165,7 +165,7 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 
 		var sub sep2.Subscription
 		if err := xml.Unmarshal(body, &sub); err != nil {
-			http.Error(w, "invalid XML: "+err.Error(), http.StatusBadRequest)
+			srverr.BadRequestMessage(w, r, "invalid XML", err)
 			return
 		}
 

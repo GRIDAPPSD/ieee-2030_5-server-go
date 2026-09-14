@@ -52,7 +52,7 @@ func HandleSingletonGetPut[T store.Copier[T]](
 
 			var resource T
 			if err := xml.Unmarshal(body, &resource); err != nil {
-				http.Error(w, "invalid XML: "+err.Error(), http.StatusBadRequest)
+				srverr.BadRequestMessage(w, r, "invalid XML", err)
 				return
 			}
 

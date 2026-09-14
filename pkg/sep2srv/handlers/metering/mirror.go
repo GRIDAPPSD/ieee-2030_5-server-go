@@ -260,7 +260,7 @@ func authorizeMirrorOwner(
 	if lfdiProvider == nil {
 		// A consumer that wired no identity source gets a closed door, not a
 		// nil-func panic and not an open one.
-		log.Printf("mup: nil LFDIProvider, denying (path=%s)", r.URL.Path)
+		log.Printf("mup: nil LFDIProvider, denying (route=%s)", srverr.Route(r))
 		http.Error(w, "identity required", http.StatusForbidden)
 		return zero, "", false
 	}
@@ -427,7 +427,7 @@ func HandleCreateMirrorUsagePoint(s store.ResourceStore[sep2.MirrorUsagePoint], 
 
 		var mup sep2.MirrorUsagePoint
 		if err := xml.Unmarshal(body, &mup); err != nil {
-			http.Error(w, "invalid XML: "+err.Error(), http.StatusBadRequest)
+			srverr.BadRequestMessage(w, r, "invalid XML", err)
 			return
 		}
 
@@ -664,7 +664,7 @@ func HandlePutMirrorUsagePoint(
 
 		var mup sep2.MirrorUsagePoint
 		if err := xml.Unmarshal(body, &mup); err != nil {
-			http.Error(w, "invalid XML: "+err.Error(), http.StatusBadRequest)
+			srverr.BadRequestMessage(w, r, "invalid XML", err)
 			return
 		}
 
@@ -1017,7 +1017,7 @@ func HandlePostMirrorMeterReading(
 
 		readings, err := decodeMirrorMeterReadings(body)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			srverr.BadRequestMessage(w, r, "invalid XML", err)
 			return
 		}
 

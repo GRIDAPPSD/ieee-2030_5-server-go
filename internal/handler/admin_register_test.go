@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,7 +48,7 @@ func TestCertInfoRawBody(t *testing.T) {
 	if got["sfdi"] != sepTLS.SFDI(cert) {
 		t.Errorf("sfdi mismatch: got %q want %q", got["sfdi"], sepTLS.SFDI(cert))
 	}
-	// IEEE 2030.5 §6.11.7 device certs have empty Subject; subject field is
+	// IEEE 2030.5 section 6.11.7 device certs have empty Subject; subject field is
 	// still emitted (an empty string), so we just assert it's a string key.
 	if _, ok := got["subject"]; !ok {
 		t.Error("subject field missing from response")
@@ -91,6 +92,22 @@ func TestCertInfoEmptyBody(t *testing.T) {
 	handler.HandleCertInfo()(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for empty body, got %d", w.Code)
+	}
+}
+
+// TestCertInfoEmptyBodyDoesNotLeakDecoderDetail pins the 400 path convention
+// (#360) at readCertPEM's error path: the body must carry the fixed message
+// regardless of what readCertPEM's own error text says.
+func TestCertInfoEmptyBodyDoesNotLeakDecoderDetail(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/certs/info", bytes.NewReader(nil))
+	w := httptest.NewRecorder()
+	handler.HandleCertInfo()(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"invalid request"}` {
+		t.Errorf("body = %q, want the fixed message envelope", got)
 	}
 }
 
@@ -145,6 +162,23 @@ func TestCertInfoInvalidPEM(t *testing.T) {
 	handler.HandleCertInfo()(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for malformed PEM, got %d", w.Code)
+	}
+}
+
+// TestCertInfoInvalidPEMDoesNotLeakDecoderDetail pins the 400 path convention
+// (#360) at ParseCertificatePEM's error path: the body must carry the fixed
+// message regardless of what the PEM/x509 parse error text says.
+func TestCertInfoInvalidPEMDoesNotLeakDecoderDetail(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/certs/info",
+		bytes.NewReader([]byte("-----BEGIN CERTIFICATE-----\nnot-base64\n-----END CERTIFICATE-----\n")))
+	w := httptest.NewRecorder()
+	handler.HandleCertInfo()(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"invalid certificate"}` {
+		t.Errorf("body = %q, want the fixed message envelope", got)
 	}
 }
 
@@ -352,6 +386,40 @@ func TestAddEndDeviceValidation(t *testing.T) {
 				t.Errorf("case %s: expected %d, got %d body=%s", c.name, c.code, w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+// TestAddEndDeviceInvalidJSONDoesNotLeakDecoderDetail pins the 400 path
+// convention (#360): DisallowUnknownFields quotes the offending field name
+// verbatim, which is attacker-supplied content the client-visible body must
+// not carry.
+func TestAddEndDeviceInvalidJSONDoesNotLeakDecoderDetail(t *testing.T) {
+	const marker = "MARKERXYZ360LEAK"
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	validSFDI, validLFDI := freshAddDeviceCert(t)
+	body := `{"sfdi":"` + validSFDI + `","lfdi":"` + validLFDI + `","` + marker + `":1}`
+	req := httptest.NewRequest(http.MethodPost, "/api/devices", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.HandleAddEndDevice(memory.NewEndDeviceStore(), &stubRegs{})(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if got := w.Body.String(); strings.Contains(got, marker) {
+		t.Errorf("body = %q; the decoder detail reached the client", got)
+	}
+	if logged := buf.String(); !strings.Contains(logged, marker) {
+		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
 	}
 }
 

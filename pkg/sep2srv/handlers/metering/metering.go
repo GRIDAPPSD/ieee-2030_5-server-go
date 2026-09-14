@@ -191,7 +191,7 @@ func HandleCreateUsagePoint(uptStore store.ResourceStore[sep2.UsagePoint]) http.
 
 		var upt sep2.UsagePoint
 		if err := xml.Unmarshal(body, &upt); err != nil {
-			http.Error(w, "invalid XML: "+err.Error(), http.StatusBadRequest)
+			srverr.BadRequestMessage(w, r, "invalid XML", err)
 			return
 		}
 

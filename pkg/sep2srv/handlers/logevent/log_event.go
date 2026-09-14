@@ -55,7 +55,7 @@ func HandlePostLogEvent(logStore store.ScopedStore[sep2.LogEvent]) http.HandlerF
 
 		var logEvent sep2.LogEvent
 		if err := xml.Unmarshal(body, &logEvent); err != nil {
-			http.Error(w, "invalid XML: "+err.Error(), http.StatusBadRequest)
+			srverr.BadRequestMessage(w, r, "invalid XML", err)
 			return
 		}
 

@@ -69,7 +69,7 @@ func TestDriftCheck_RealWorkflowHasNoDrift(t *testing.T) {
 // named. A guard observed only ever passing is not evidence.
 // TestDriftCheck_DefaultArgumentScansTheRealWorkflowDirectory calls the
 // script with no argument at all, exercising its own default (the real
-// repo's .github/workflows/ directory, all 3 files), not a test-supplied
+// repo's .github/workflows/ directory, both files), not a test-supplied
 // single file. This is the exact invocation ci-local.sh itself makes.
 func TestDriftCheck_DefaultArgumentScansTheRealWorkflowDirectory(t *testing.T) {
 	t.Parallel()
@@ -77,8 +77,8 @@ func TestDriftCheck_DefaultArgumentScansTheRealWorkflowDirectory(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("exit code: got %d, want 0; output=%q", exit, out)
 	}
-	if !strings.Contains(out, "across 3 workflow file(s)") {
-		t.Fatalf("output missing 'across 3 workflow file(s)' (expected ci.yml, codeql.yml, core-freshness.yml); got=%q", out)
+	if !strings.Contains(out, "across 2 workflow file(s)") {
+		t.Fatalf("output missing 'across 2 workflow file(s)' (expected ci.yml, core-freshness.yml); got=%q", out)
 	}
 }
 

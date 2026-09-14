@@ -13,9 +13,9 @@ from ieee-2030_5-core-go instead.
 
 A `go mod vendor` tree is not listed above: it is generated from `go.mod`, not
 hand-copied. This section covers only the three `ci.yml` gates below (gofmt,
-golangci-lint, go vet); `codeql.yml` and `core-freshness.yml` are out of scope
-here and their vendor-tree behavior is unmeasured (tracked as IEEESRV-090). How
-each covered gate behaves when a top-level `vendor/` is present, all confirmed
+golangci-lint, go vet); `core-freshness.yml` is out of scope here and its
+vendor-tree behavior is unmeasured. How each covered gate behaves when a
+top-level `vendor/` is present, all confirmed
 by observation against a real generated tree on Go 1.26.3:
 
 - `gofmt -l .` walks `vendor/`, so `make gofmt-check` and the CI formatting

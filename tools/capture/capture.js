@@ -1,5 +1,9 @@
-// Admin UI screenshot capture script. Scratch tooling for the docs/images
-// set on branch docs/admin-ui-capture; not shipped as part of the server.
+// Admin UI screenshot capture script (not shipped as part of the server).
+// Usage: start the server on 127.0.0.1:38080; set CAPTURE_CHROME_PATH to a
+// Playwright Chromium executable; provision the device cert this script
+// reads with `make certs CERT_DIR=testrun/certs` then `make new-device
+// DEVICE_NAME=parse-demo-device SERIAL=<serial> CERT_DIR=testrun/certs`;
+// set CAPTURE_NO_SANDBOX=1 to add --no-sandbox (sandboxless containers only).
 'use strict';
 
 const fs = require('fs');
@@ -8,12 +12,12 @@ const { chromium } = require('playwright-core');
 
 const BASE = 'http://127.0.0.1:38080';
 const IMG_DIR = path.join(__dirname, '..', '..', 'docs', 'images');
-// Set CAPTURE_CHROME_PATH to the Playwright Chromium executable to use.
 const CHROME_PATH = process.env.CAPTURE_CHROME_PATH;
 if (!CHROME_PATH) {
   console.error('CAPTURE_CHROME_PATH is not set: point it at a Playwright chromium executable.');
   process.exit(1);
 }
+const NO_SANDBOX = process.env.CAPTURE_NO_SANDBOX === '1';
 const DEVICE_PEM_PATH = path.join(
   __dirname, '..', '..', 'testrun', 'certs', 'parse-demo-device.crt',
 );
@@ -32,12 +36,9 @@ async function shootCard(page, h2Text, filename, opts = {}) {
 }
 
 async function main() {
-  const predicted = fs.readFileSync('/tmp/predictions.txt', 'utf8');
-  log('--- predictions on record ---\n' + predicted);
-
   const browser = await chromium.launch({
     executablePath: CHROME_PATH,
-    args: ['--no-sandbox'],
+    args: NO_SANDBOX ? ['--no-sandbox'] : [],
   });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
@@ -265,7 +266,7 @@ async function main() {
   await context.clearCookies();
   await page.reload({ waitUntil: 'networkidle' });
   const loginPanelVisible = await page.locator('[data-testid="login-panel"]').count();
-  report.loginPanelAfterCookieClear = loginPanelVisible > 0 ? 'VISIBLE (prediction wrong)' : 'NOT VISIBLE (prediction confirmed)';
+  report.loginPanelAfterCookieClear = loginPanelVisible > 0 ? 'VISIBLE' : 'NOT VISIBLE';
   log('SPA-embedded LoginPanel after cookie clear + reload:', report.loginPanelAfterCookieClear);
 
   fs.writeFileSync(path.join(__dirname, 'capture-report.json'), JSON.stringify(report, null, 2));

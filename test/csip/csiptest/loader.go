@@ -32,6 +32,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -215,12 +216,19 @@ type IntervalSpec struct {
 }
 
 // DERCurveSpec describes one DERCurve in the global curve store.
+//
+// CreationTime is optional. When the spec omits it, the served curve
+// carries the time the fixture was loaded rather than 0: DERCurve's
+// creationTime is a required element, and an unset one round-trips as a
+// schema-valid but wrong claim that the curve was created at the Unix
+// epoch (#539).
 type DERCurveSpec struct {
-	ID          string          `yaml:"id"`
-	MRID        string          `yaml:"mrid,omitempty"`
-	Description string          `yaml:"description,omitempty"`
-	CurveType   uint8           `yaml:"curve_type"`
-	CurveData   []CurveDataSpec `yaml:"curve_data,omitempty"`
+	ID           string          `yaml:"id"`
+	MRID         string          `yaml:"mrid,omitempty"`
+	Description  string          `yaml:"description,omitempty"`
+	CurveType    uint8           `yaml:"curve_type"`
+	CreationTime *int64          `yaml:"creation_time,omitempty"`
+	CurveData    []CurveDataSpec `yaml:"curve_data,omitempty"`
 }
 
 // CurveDataSpec is one (x, y) point on a DERCurve.
@@ -483,11 +491,12 @@ func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOptio
 		}
 	}
 
+	loadTime := time.Now().Unix()
 	for i, c := range spec.DERCurves {
 		if c.ID == "" {
 			return fmt.Errorf("der_curves[%d]: id is required", i)
 		}
-		cur := buildDERCurve(c)
+		cur := buildDERCurve(c, loadTime)
 		if err := target.DERCurves.Create(ctx, c.ID, cur); err != nil {
 			return fmt.Errorf("der_curves[%d] (id=%q): create: %w", i, c.ID, err)
 		}
@@ -736,11 +745,20 @@ func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
 	return base
 }
 
-func buildDERCurve(s DERCurveSpec) sep2.DERCurve {
+// buildDERCurve maps a DERCurveSpec onto sep2.DERCurve. CreationTime
+// follows the spec's value when given; otherwise it is loadTime, the time
+// the enclosing fixture was loaded, so a served curve never claims the
+// Unix epoch (#539).
+func buildDERCurve(s DERCurveSpec, loadTime int64) sep2.DERCurve {
+	creationTime := loadTime
+	if s.CreationTime != nil {
+		creationTime = *s.CreationTime
+	}
 	curve := sep2.DERCurve{
-		MRID:        s.MRID,
-		Description: s.Description,
-		CurveType:   s.CurveType,
+		MRID:         s.MRID,
+		Description:  s.Description,
+		CurveType:    s.CurveType,
+		CreationTime: creationTime,
 	}
 	curve.Href = fmt.Sprintf("/dc/%s", s.ID)
 	if len(s.CurveData) > 0 {

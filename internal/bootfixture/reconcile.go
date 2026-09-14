@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -61,7 +62,7 @@ func Reconcile(ctx context.Context, target *Target, fixturePath, seedPath string
 	for _, line := range plan.skips {
 		logf("boot fixture: skipping %s", line)
 	}
-	if err := plan.apply(ctx, target); err != nil {
+	if err := plan.apply(ctx, target, time.Now().Unix()); err != nil {
 		return fmt.Errorf("bootfixture: apply fixture %s: %w", fixturePath, err)
 	}
 	if plan.seedChanged {
@@ -258,7 +259,7 @@ func endDeviceHoldingIdentifier(ctx context.Context, s store.EndDeviceStore, e E
 	return sep2.EndDevice{}, "", nil
 }
 
-func (p *reconcilePlan) apply(ctx context.Context, target *Target) error {
+func (p *reconcilePlan) apply(ctx context.Context, target *Target, loadTime int64) error {
 	for _, r := range p.endDevices {
 		if err := createEndDevice(ctx, target, r.i, r.spec); err != nil {
 			return err
@@ -285,7 +286,7 @@ func (p *reconcilePlan) apply(ctx context.Context, target *Target) error {
 		}
 	}
 	for _, r := range p.derCurves {
-		if err := createDERCurve(ctx, target, r.i, r.spec); err != nil {
+		if err := createDERCurve(ctx, target, r.i, r.spec, loadTime); err != nil {
 			return err
 		}
 	}

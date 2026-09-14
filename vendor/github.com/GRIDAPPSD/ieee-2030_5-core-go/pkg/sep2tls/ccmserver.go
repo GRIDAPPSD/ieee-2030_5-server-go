@@ -120,9 +120,7 @@ func CCMIdentityMiddleware(next http.Handler) http.Handler {
 			ServerName:        state.ServerName,
 		}
 
-		for _, pc := range state.PeerCertificates {
-			r.TLS.PeerCertificates = append(r.TLS.PeerCertificates, pc)
-		}
+		r.TLS.PeerCertificates = append(r.TLS.PeerCertificates, state.PeerCertificates...)
 
 		next.ServeHTTP(w, r)
 	})

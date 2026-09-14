@@ -303,9 +303,9 @@ type DERList struct {
 //
 // Field order matches the sep.xsd DERCapability sequence (subset present
 // here): modesSupported, rtgMaxA, rtgMaxChargeRateW, rtgMaxDischargeRateW,
-// rtgMaxVar, rtgMaxW, type. rtgMaxW is required (minOccurs=1) and sorts
-// near the end of the full XSD sequence, not immediately after
-// modesSupported.
+// rtgMaxV, rtgMaxVA, rtgMaxVar, rtgMaxW, type. rtgMaxW is required
+// (minOccurs=1) and sorts near the end of the full XSD sequence, not
+// immediately after modesSupported.
 type DERCapability struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERCapability"`
 	Resource
@@ -313,6 +313,8 @@ type DERCapability struct {
 	RTGMaxA              *int32          `xml:"rtgMaxA,omitempty"`
 	RTGMaxChargeRateW    *ActivePower    `xml:"rtgMaxChargeRateW,omitempty"`
 	RTGMaxDischargeRateW *ActivePower    `xml:"rtgMaxDischargeRateW,omitempty"`
+	RTGMaxV              *VoltageRMS     `xml:"rtgMaxV,omitempty"`
+	RTGMaxVA             *ApparentPower  `xml:"rtgMaxVA,omitempty"`
 	RTGMaxVar            *ReactivePower  `xml:"rtgMaxVar,omitempty"`
 	RTGMaxW              *ActivePower    `xml:"rtgMaxW,omitempty"`
 	Type                 *uint8          `xml:"type,omitempty"`
@@ -344,6 +346,14 @@ func (d DERCapability) Copy() DERCapability {
 	if d.RTGMaxDischargeRateW != nil {
 		v := *d.RTGMaxDischargeRateW
 		c.RTGMaxDischargeRateW = &v
+	}
+	if d.RTGMaxV != nil {
+		v := *d.RTGMaxV
+		c.RTGMaxV = &v
+	}
+	if d.RTGMaxVA != nil {
+		v := *d.RTGMaxVA
+		c.RTGMaxVA = &v
 	}
 	if d.Type != nil {
 		v := *d.Type
@@ -521,16 +531,25 @@ type CurveData struct {
 }
 
 // DERCurve defines volt-var, freq-watt, etc. curves.
+//
+// Fields follow the sep.xsd sequence, which encoding/xml emits in declaration
+// order. Required elements carry no omitempty, so an unset one serializes as
+// an empty element or 0 rather than vanishing; CurveData still emits nothing
+// when the curve has no points. yRefType is a DERUnitRefType (UInt8).
 type DERCurve struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERCurve"`
 	Resource
-	MRID        string      `xml:"mRID,omitempty"`
-	Description string      `xml:"description,omitempty"`
-	CurveType   uint8       `xml:"curveType"`
-	CurveData   []CurveData `xml:"CurveData,omitempty"`
-	RampDecTms  *uint16     `xml:"rampDecTms,omitempty"`
-	RampIncTms  *uint16     `xml:"rampIncTms,omitempty"`
-	RampPT1Tms  *uint16     `xml:"rampPT1Tms,omitempty"`
+	MRID         string      `xml:"mRID"`
+	Description  string      `xml:"description,omitempty"`
+	CreationTime int64       `xml:"creationTime"`
+	CurveData    []CurveData `xml:"CurveData"`
+	CurveType    uint8       `xml:"curveType"`
+	RampDecTms   *uint16     `xml:"rampDecTms,omitempty"`
+	RampIncTms   *uint16     `xml:"rampIncTms,omitempty"`
+	RampPT1Tms   *uint16     `xml:"rampPT1Tms,omitempty"`
+	XMultiplier  int8        `xml:"xMultiplier"`
+	YMultiplier  int8        `xml:"yMultiplier"`
+	YRefType     uint8       `xml:"yRefType"`
 }
 
 // Copy returns an independent copy.

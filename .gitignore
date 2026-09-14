@@ -74,3 +74,10 @@ sep_wadl.xml
 # Conformance sweep output (generated per run; a record of a server run, not
 # source, and verbose). Written only when SEP2_WADL_SWEEP_OUT is set.
 *.jsonl
+
+# Admin UI screenshot capture tooling (tools/capture/capture.js): its
+# npm install and generated run outputs, not source.
+/tools/capture/node_modules/
+/tools/capture/capture-report.json
+/tools/capture/scratch/
+/testrun/server.log

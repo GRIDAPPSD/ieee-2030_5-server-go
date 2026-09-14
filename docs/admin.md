@@ -355,6 +355,7 @@ Putting the suite under CI is tracked under
 ## Cross-references
 
 - [README](../README.md)
+- [`operator-guide.md`](operator-guide.md) - operator walkthrough of the admin dashboard
 - [`admin-ui-selectors.md`](admin-ui-selectors.md) - dashboard selector map
 - [`2030_5.md`](2030_5.md) - protocol surface
 - [`csip.md`](csip.md) - CSIP V1.2 profile

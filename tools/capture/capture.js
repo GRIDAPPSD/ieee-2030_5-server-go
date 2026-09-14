@@ -173,7 +173,7 @@ async function main() {
   }
 
   // 8. Attach a program to the FSA (via the topology tree's inline FsaNode
-  // form for that FSA at the SY "templates" level -- it is unassigned so
+  // form for that FSA at the SY "templates" level; it is unassigned so
   // far, which is exactly where FsaNode renders it).
   await page.waitForSelector(`#attachInp-${fsaMRID}`, { timeout: 10000 });
   await page.fill(`#attachInp-${fsaMRID}`, `/edev/seed-dev-1/fsa/seed-fsa-1/derp/derp-1`);
@@ -233,9 +233,9 @@ async function main() {
   await shootCard(page, 'Device Activity', 'admin-ui-device-activity-early.png');
   const waitStart = Date.now();
   const scratchDir = path.join(__dirname, 'scratch');
-  // Poll intermediate states into scratch/ (not docs/images -- these are
-  // for my own observation of the growth curve, not deliverables) so I
-  // can pick the point where the line is legible rather than guessing.
+  // Poll intermediate states into scratch/, not docs/images: these frames
+  // track the growth curve rather than serving as deliverables, so the
+  // legible-line shot for docs/images can be chosen deliberately.
   const card = page.locator('.card', { has: page.locator('h2', { hasText: 'Device Activity' }) }).first();
   for (let i = 0; i < 8; i++) {
     await page.waitForTimeout(5000);

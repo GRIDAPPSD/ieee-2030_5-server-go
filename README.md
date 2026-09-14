@@ -19,6 +19,7 @@ Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utili
 - **[docs/enddevice-access.md](docs/enddevice-access.md)**: who may reach an EndDevice, what an aggregator's manager pair grants, denial statuses, and wiring `Stores.EndDeviceManagers`.
 - **[docs/csip.md](docs/csip.md)**: CSIP V1.2 profile: cert profile, cipher, conformance harness, operator profiles.
 - **[docs/admin.md](docs/admin.md)**: admin surface: dashboard, the browser procedure for reaching the admin UI from another machine, login flow, auth model, mTLS cert flow, admin features.
+- **[docs/operator-guide.md](docs/operator-guide.md)**: operator walkthrough of the admin dashboard: screenshots of each screen and the steps to reach them.
 - **[docs/admin-listener.md](docs/admin-listener.md)**: admin listener TLS posture matrix (plain HTTP behind Caddy, direct HTTPS, self-signed fallback).
 - **[docs/glossary.md](docs/glossary.md)**: acronyms and protocol terms (GCM, CCM-8, SFDI/LFDI, FSA, PEN, etc.).
 - **[VENDORED.md](VENDORED.md)**: provenance for the vendored CCM AEAD and the `crypto/tls` fork that registers the CCM-8 cipher.

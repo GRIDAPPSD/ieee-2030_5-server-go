@@ -9,8 +9,7 @@ const idBase = 100_000_000_000
 
 // sortableID builds a store id whose ascending byte order equals IEEE
 // 2030.5-2018 Table 50's DERControl order: interval.start ascending, then
-// creationTime descending, then mRID descending (design section 3, "store
-// id and href"; acceptance criterion 6).
+// creationTime descending, then mRID descending (acceptance criterion 6).
 //
 // The scheme: an 11-digit zero-padded start, then an 11-digit zero-padded
 // complement of creationTime (so ascending order of the complement is

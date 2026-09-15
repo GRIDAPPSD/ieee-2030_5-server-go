@@ -25,6 +25,15 @@ type Issuer struct {
 	// scope, so creationTime ordering and the supersede scan (both of which
 	// read the scope's controls and then write) see a consistent snapshot.
 	// A single mutex guards the map itself, never the per-scope work.
+	//
+	// Never evicted: an entry is added on first use and kept for the
+	// Issuer's lifetime, so the map grows by one *sync.Mutex per distinct
+	// scope ever issued to. That bound is the number of DERProgram scopes
+	// an operator creates, not the number of controls issued, since
+	// entries key on scope and nothing here creates or deletes programs.
+	// Add eviction if a later admin route makes DERProgram scopes churn at
+	// fleet scale (#563; safe eviction would need to prove no lock is
+	// dropped while a concurrent Issue or Cancel still holds it).
 	mu         sync.Mutex
 	scopeLocks map[string]*sync.Mutex
 }

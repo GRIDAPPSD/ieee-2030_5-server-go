@@ -32,11 +32,16 @@ describe('AdminShell', () => {
     })
     const connect = vi.spyOn(dash, 'connectDashboard')
 
-    render(AdminShell)
+    const { container } = render(AdminShell)
 
     await screen.findByTestId('login-panel')
     expect(connect).not.toHaveBeenCalled()
-    expect(screen.queryByText('Send DER Control')).toBeNull()
+    // The 401 path renders only the header and the login form: the
+    // panel grid holds exactly the login panel, not the login panel
+    // beside a dashboard card.
+    const grid = container.querySelector('.grid')
+    expect(grid?.children).toHaveLength(1)
+    expect(grid?.firstElementChild).toBe(screen.getByTestId('login-panel'))
   })
 
   it('renders the first authenticated payload values and opens the stream', async () => {
@@ -57,6 +62,42 @@ describe('AdminShell', () => {
     expect(container.querySelector('#uptime')).toHaveTextContent('3m21s')
     expect(screen.getAllByTestId('device-sfdi')[0]).toHaveTextContent('167261211635')
     expect(connect).toHaveBeenCalledTimes(1)
+    // The eleven panels render in their fixed order; each has a unique
+    // heading, so the grid's h2 sequence is the card order.
+    const headings = Array.from(container.querySelectorAll('.grid h2')).map((h) => h.textContent)
+    expect(headings).toEqual([
+      'Connected Devices',
+      'Server Info',
+      'Certificate Management',
+      'Send DER Control',
+      'Add End Device',
+      'Lookup Device by LFDI',
+      'Create FSA Template',
+      'FSA Templates',
+      'FSA Tree (SY -> FD -> SP -> DEV)',
+      'End Devices',
+      'Device Activity',
+    ])
+  })
+
+  it('closes the stream when the shell is unmounted', async () => {
+    vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string) => {
+      if (path === '/dashboard/data') return { ok: true, data } as never
+      if (path === '/api/fsas') return { ok: true, data: { fsas: [] } } as never
+      return { ok: true, data: { kind: 'SY', id: 'sy', label: 'System' } } as never
+    })
+    const disconnect = vi.fn()
+    vi.spyOn(dash, 'connectDashboard').mockReturnValue(disconnect)
+
+    const { container, unmount } = render(AdminShell)
+
+    await waitFor(() => {
+      expect(container.querySelector('#bigDeviceCount')).toHaveTextContent('2')
+    })
+
+    unmount()
+
+    expect(disconnect).toHaveBeenCalledTimes(1)
   })
 
   it('never opens the stream if unmounted while the first authenticated read is still pending', async () => {

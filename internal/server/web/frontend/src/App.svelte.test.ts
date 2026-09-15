@@ -5,6 +5,7 @@
 // (App.svelte) does not destroy and recreate it. #560's shell hoist
 // depends on this holding, since a swap would close the SSE stream.
 import { describe, expect, it, vi } from 'vitest'
+import { tick } from 'svelte'
 import { render, waitFor } from '@testing-library/svelte'
 import App from './App.svelte'
 import * as api from './lib/api'
@@ -41,8 +42,18 @@ describe('App', () => {
       expect(container.querySelector('#bigDeviceCount')).toHaveTextContent('1')
     })
 
+    // A remount destroys the old instance in the same DOM update as
+    // mounting the new one, and both onDestroy and the new onMount's
+    // first await settle within Svelte's reactive flush, so a tick()
+    // after each navigate is what a remount's extra connect/disconnect
+    // calls would show up in.
     navigate('/ui/')
+    await tick()
+    // "/ui/" must resolve to the same shell content as "/", not to
+    // whatever component the route table happens to map it to.
+    expect(container.querySelector('#bigDeviceCount')).toHaveTextContent('1')
     navigate('/')
+    await tick()
 
     expect(connect).toHaveBeenCalledTimes(1)
     expect(disconnect).not.toHaveBeenCalled()

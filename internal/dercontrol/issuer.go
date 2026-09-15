@@ -159,7 +159,7 @@ func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 	// Candidates are computed before either store is written, so the marks
 	// applySupersedes writes always name an mRID that is already stored: no
 	// write below can leave a mark referring to a control this call failed
-	// to create (Wren HIGH-1, Tess T3).
+	// to create.
 	candidates, err := i.computeSupersedes(ctx, scopeKey, existing.Items, base, start, start+durationSeconds)
 	if err != nil {
 		return Result{}, err
@@ -169,8 +169,8 @@ func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 		return Result{}, fmt.Errorf("dercontrol: store control: %w", err)
 	}
 	if err := i.lifecycles.Create(ctx, scopeKey, id, LifecycleRecord{}); err != nil {
-		// The control must never be left without its lifecycle record
-		// (Wren HIGH-2): undo the store it already committed.
+		// The control must never be left without its lifecycle record:
+		// undo the store it already committed.
 		if derr := i.controls.Delete(ctx, scopeKey, id); derr != nil {
 			return Result{}, fmt.Errorf("dercontrol: store lifecycle: %w (rollback: delete control failed: %w)", err, derr)
 		}

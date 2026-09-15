@@ -282,9 +282,9 @@ func TestIssue_Supersede_AlreadySupersededAtEarlierTimeStaysIneligible(t *testin
 // proves a control this package did not create (a boot-fixture or
 // embedder-issued control, with no lifecycle record in this scope) is
 // skipped by the overlap scan, not treated as an error, and that Issue
-// never creates a lifecycle record for it (Tess T18): turning
-// computeSupersedes' store.ErrNotFound skip into an error would fail
-// Issue outright instead of ignoring the seeded control.
+// never creates a lifecycle record for it: turning computeSupersedes'
+// store.ErrNotFound skip into an error would fail Issue outright instead
+// of ignoring the seeded control.
 func TestIssue_BootFixtureControlWithoutLifecycleRecord_NeitherSupersededNorCounted(t *testing.T) {
 	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))

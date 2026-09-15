@@ -80,4 +80,6 @@ sep_wadl.xml
 /tools/capture/node_modules/
 /tools/capture/capture-report.json
 /tools/capture/scratch/
-/testrun/server.log
+
+# Log files (superseded /testrun/server.log, now covered by this rule).
+*.log

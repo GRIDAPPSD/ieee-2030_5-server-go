@@ -265,3 +265,30 @@ func assertCurveRef(t *testing.T, cipher, field string, got *int32, want int32) 
 		t.Errorf("[%s] DERControlBase.%s = %d, want %d", cipher, field, *got, want)
 	}
 }
+
+// assertCurveTypesByMRID checks that curves holds exactly the mRIDs in
+// want, each rendering the paired CurveType constant. Matching by mRID
+// rather than list position is required: the /dc handler is not
+// type-sorted, so a fixture-side swap between two curves of the
+// renumbered set would pass a position- or set-membership-only check.
+// Shared by BASIC-004 (4 curves) and BASIC-005 (2 curves).
+func assertCurveTypesByMRID(t *testing.T, cipher string, curves []sep2.DERCurve, want map[string]uint8) {
+	t.Helper()
+	seen := make(map[string]bool, len(want))
+	for _, cv := range curves {
+		wantType, ok := want[cv.MRID]
+		if !ok {
+			t.Errorf("[%s] DERCurve MRID = %q, not one of the expected curves", cipher, cv.MRID)
+			continue
+		}
+		if cv.CurveType != wantType {
+			t.Errorf("[%s] DERCurve %s CurveType = %d, want %d", cipher, cv.MRID, cv.CurveType, wantType)
+		}
+		seen[cv.MRID] = true
+	}
+	for mrid := range want {
+		if !seen[mrid] {
+			t.Errorf("[%s] DERCurveList missing curve %s", cipher, mrid)
+		}
+	}
+}

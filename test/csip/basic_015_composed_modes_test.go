@@ -34,6 +34,7 @@ package csip_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -159,6 +160,35 @@ func TestBASIC_015_ComposedModes(t *testing.T) {
 			for ct, seen := range wantTypes {
 				if !seen {
 					t.Errorf("[%s] DERCurveList missing curveType %d", cipher, ct)
+				}
+			}
+
+			// The type set alone does not prove which curve each opMod
+			// field points at: a fixture-side type swap between two of
+			// the three curves leaves the set unchanged (#555). Resolve
+			// each ref (its href is "/dc/{ref}") to the curve it names
+			// and check that curve's own type.
+			byHref := make(map[string]uint8, len(curves.DERCurve))
+			for _, cv := range curves.DERCurve {
+				byHref[cv.Href] = cv.CurveType
+			}
+			for _, ref := range []struct {
+				field     string
+				id        int32
+				curveType uint8
+			}{
+				{"opModVoltVar", basic015VoltVarRef, sep2.CurveTypeOpModVoltVar},
+				{"opModVoltWatt", basic015VoltWattRef, sep2.CurveTypeOpModVoltWatt},
+				{"opModFreqWatt", basic015FreqWattRef, sep2.CurveTypeOpModFreqWatt},
+			} {
+				href := fmt.Sprintf("/dc/%d", ref.id)
+				got, ok := byHref[href]
+				if !ok {
+					t.Errorf("[%s] %s references %s, not present in DERCurveList", cipher, ref.field, href)
+					continue
+				}
+				if got != ref.curveType {
+					t.Errorf("[%s] %s -> %s CurveType = %d, want %d", cipher, ref.field, href, got, ref.curveType)
 				}
 			}
 		})

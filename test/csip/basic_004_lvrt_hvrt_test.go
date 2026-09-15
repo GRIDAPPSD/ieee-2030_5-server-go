@@ -66,7 +66,9 @@ func TestBASIC_004_LVRTHVRT(t *testing.T) {
 			assertCurveRef(t, cipher, "opModHVRTMomentaryCessation",
 				dc.DERControlBase.OpModHVRTMomentaryCessation, basic004HVRTMomentaryCessation)
 
-			// Step 4: global /dc carries the 4 ride-through curves.
+			// Step 4: global /dc carries the 4 ride-through curves, each
+			// with its own renumbered CurveType (#555): matched by mRID,
+			// not position, since the /dc handler is not type-sorted.
 			var curveList sep2.DERCurveList
 			if err := c.WalkLink(context.Background(), sep2.Link{Href: "/dc?l=255"}, &curveList); err != nil {
 				t.Fatalf("[%s] walk /dc: %v", cipher, err)
@@ -75,5 +77,11 @@ func TestBASIC_004_LVRTHVRT(t *testing.T) {
 				t.Fatalf("[%s] DERCurveList len = %d, want 4 (LVRT-must-trip, LVRT-momentary, HVRT-must-trip, HVRT-momentary)",
 					cipher, got)
 			}
+			assertCurveTypesByMRID(t, cipher, curveList.DERCurve, map[string]uint8{
+				"BASIC-004-LVRT-MUST-TRIP": sep2.CurveTypeOpModLVRTMustTrip,
+				"BASIC-004-LVRT-MOMENTARY": sep2.CurveTypeOpModLVRTMomentaryCessation,
+				"BASIC-004-HVRT-MUST-TRIP": sep2.CurveTypeOpModHVRTMustTrip,
+				"BASIC-004-HVRT-MOMENTARY": sep2.CurveTypeOpModHVRTMomentaryCessation,
+			})
 		})
 }

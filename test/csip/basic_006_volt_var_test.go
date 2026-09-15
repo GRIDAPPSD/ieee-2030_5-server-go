@@ -77,5 +77,11 @@ func TestBASIC_006_VoltVar(t *testing.T) {
 				t.Errorf("[%s] CurveData[2] = (%d,%d), want (10400,0)",
 					cipher, curve.CurveData[2].XValue, curve.CurveData[2].YValue)
 			}
+			// The fixture sets no creation_time, so the client-visible
+			// creationTime must be the boot's load time, never the Unix
+			// epoch (#539, read the way a client does: from the /dc GET).
+			if curve.CreationTime == 0 {
+				t.Errorf("[%s] DERCurve.CreationTime = 0, want the boot's load time", cipher)
+			}
 		})
 }

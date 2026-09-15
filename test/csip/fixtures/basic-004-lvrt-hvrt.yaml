@@ -54,9 +54,9 @@ der_controls:
       op_mod_hvrt_momentary_cessation: 3
 
 # Four curves: LVRT-must-trip, LVRT-momentary-cessation, HVRT-must-trip,
-# HVRT-momentary-cessation. Each now uses its own DERCurveType constant
-# from the IEEE 2030.5-2018 table (pkg/sep2/der.go); the per-mode
-# assertion that would discriminate them by sub-type is pinned by #140.
+# HVRT-momentary-cessation. Each uses its own DERCurveType constant from
+# the IEEE 2030.5-2018 table (pkg/sep2/der.go); TestBASIC_004_LVRTHVRT
+# asserts each curve's type against that constant, matched by mRID (#555).
 der_curves:
   - id: "0"
     mrid: "BASIC-004-LVRT-MUST-TRIP"

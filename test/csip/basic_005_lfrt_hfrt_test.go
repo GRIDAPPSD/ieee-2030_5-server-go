@@ -55,6 +55,8 @@ func TestBASIC_005_LFRTHFRT(t *testing.T) {
 			assertCurveRef(t, cipher, "opModHFRTMustTrip",
 				dc.DERControlBase.OpModHFRTMustTrip, basic005HFRTMustTrip)
 
+			// Step 4: each ride-through curve carries its own renumbered
+			// CurveType (#555), matched by mRID, not position.
 			var curveList sep2.DERCurveList
 			if err := c.WalkLink(context.Background(), sep2.Link{Href: "/dc?l=255"}, &curveList); err != nil {
 				t.Fatalf("[%s] walk /dc: %v", cipher, err)
@@ -63,5 +65,9 @@ func TestBASIC_005_LFRTHFRT(t *testing.T) {
 				t.Fatalf("[%s] DERCurveList len = %d, want 2 (LFRT-must-trip, HFRT-must-trip)",
 					cipher, got)
 			}
+			assertCurveTypesByMRID(t, cipher, curveList.DERCurve, map[string]uint8{
+				"BASIC-005-LFRT-MUST-TRIP": sep2.CurveTypeOpModLFRTMustTrip,
+				"BASIC-005-HFRT-MUST-TRIP": sep2.CurveTypeOpModHFRTMustTrip,
+			})
 		})
 }

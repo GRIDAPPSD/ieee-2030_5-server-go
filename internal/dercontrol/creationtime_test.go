@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 )
 
@@ -27,6 +28,68 @@ func TestIssue_CreationTime_NearServerClock(t *testing.T) {
 	}
 	if res.Control.CreationTime < before || res.Control.CreationTime > after {
 		t.Fatalf("CreationTime = %d, want between %d and %d", res.Control.CreationTime, before, after)
+	}
+}
+
+// TestIssue_CreationTime_OneSecondAfterNewestInScope proves creationTime is
+// exactly the newest existing control's CreationTime + 1 when that is
+// later than the server clock: asserting only "distinct" or "one of the
+// two candidates" would let a mutant changing "+ 1" to any other constant
+// survive.
+func TestIssue_CreationTime_OneSecondAfterNewestInScope(t *testing.T) {
+	h := newHarness(t, Config{PEN: testPEN(1)})
+	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+
+	future := sep2time.Now().Unix() + 100
+	// No Interval or Href: computeSupersedes skips it on Interval == nil,
+	// so this seeds only the creationTime-scan input, not the supersede
+	// path (covered separately in supersede_test.go).
+	seeded := sep2.DERControl{}
+	seeded.CreationTime = future
+	if err := h.controls.Create(context.Background(), "dev1/0/p1", "seeded", seeded); err != nil {
+		t.Fatalf("seed control: %v", err)
+	}
+
+	res, err := h.issuer.Issue(context.Background(), CreateRequest{
+		DERProgramHref:  programHref("dev1", "0", "p1"),
+		Type:            Connect,
+		DurationSeconds: 3600,
+	})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	if res.Control.CreationTime != future+1 {
+		t.Fatalf("CreationTime = %d, want exactly %d (the scope's newest + 1)", res.Control.CreationTime, future+1)
+	}
+}
+
+// TestIssue_CreationTime_NewestOlderThanNowUsesServerClock is the converse
+// of the above: when every existing control's CreationTime is already
+// older than the server clock, creationTime is the clock reading, not a
+// stale existing value plus one.
+func TestIssue_CreationTime_NewestOlderThanNowUsesServerClock(t *testing.T) {
+	h := newHarness(t, Config{PEN: testPEN(1)})
+	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+
+	past := sep2time.Now().Unix() - 100
+	seeded := sep2.DERControl{}
+	seeded.CreationTime = past
+	if err := h.controls.Create(context.Background(), "dev1/0/p1", "seeded", seeded); err != nil {
+		t.Fatalf("seed control: %v", err)
+	}
+
+	before := sep2time.Now().Unix()
+	res, err := h.issuer.Issue(context.Background(), CreateRequest{
+		DERProgramHref:  programHref("dev1", "0", "p1"),
+		Type:            Connect,
+		DurationSeconds: 3600,
+	})
+	after := sep2time.Now().Unix()
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	if res.Control.CreationTime < before || res.Control.CreationTime > after {
+		t.Fatalf("CreationTime = %d, want between %d and %d (the server clock, not %d + 1)", res.Control.CreationTime, before, after, past)
 	}
 }
 

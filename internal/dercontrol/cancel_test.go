@@ -137,6 +137,105 @@ func TestCancel_RefusesUnknownControl(t *testing.T) {
 	assertRefusal(t, err, RefusalControlNotFound)
 }
 
+// TestCancel_RefusesAtExactSupersedeInstant proves the supersede refusal
+// boundary is inclusive (Tess T16): the existing already-superseded test
+// uses now-10, never the exact instant, so a mutant changing
+// supersededAsOf's ">=" to ">" would survive without this.
+func TestCancel_RefusesAtExactSupersedeInstant(t *testing.T) {
+	h := newHarness(t, Config{PEN: testPEN(1)})
+	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+	res := mustIssueScheduled(t, h, [3]string{"dev1", "0", "p1"})
+
+	scopeKey := "dev1/0/p1"
+	at := sep2time.Now().Unix()
+	seeded := LifecycleRecord{SupersededAt: &at, SupersededBy: "DEADBEEF00000000000000000000001"}
+	if err := h.lifecycles.Update(context.Background(), scopeKey, res.ID, seeded); err != nil {
+		t.Fatalf("seed superseded-at-now lifecycle: %v", err)
+	}
+
+	_, err := h.issuer.Cancel(context.Background(), res.Scope, res.ID, "")
+	assertRefusal(t, err, RefusalAlreadySuperseded)
+
+	after, err := h.lifecycles.Get(context.Background(), scopeKey, res.ID)
+	if err != nil {
+		t.Fatalf("load lifecycle after refused Cancel: %v", err)
+	}
+	if after.SupersededAt == nil || *after.SupersededAt != at || after.SupersededBy != seeded.SupersededBy {
+		t.Fatalf("lifecycle changed after refused Cancel: got %+v, want SupersededAt=%d SupersededBy=%q", after, at, seeded.SupersededBy)
+	}
+}
+
+// TestCancel_RefusesAtExactEndInstant proves the "ended" refusal boundary
+// is inclusive (Tess T16): the existing refused-ended test sets an end
+// 1000 seconds in the past, never the exact instant, so a mutant changing
+// the end comparison's ">=" to ">" would survive without this.
+func TestCancel_RefusesAtExactEndInstant(t *testing.T) {
+	h := newHarness(t, Config{PEN: testPEN(1)})
+	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+	res := mustIssueScheduled(t, h, [3]string{"dev1", "0", "p1"})
+
+	scopeKey := "dev1/0/p1"
+	now := sep2time.Now().Unix()
+	ended := res.Control
+	ended.Interval = &sep2.DateTimeInterval{Start: now - 500, Duration: 500} // ends exactly now
+	if err := h.controls.Update(context.Background(), scopeKey, res.ID, ended); err != nil {
+		t.Fatalf("seed exact-end interval: %v", err)
+	}
+
+	_, err := h.issuer.Cancel(context.Background(), res.Scope, res.ID, "")
+	assertRefusal(t, err, RefusalEnded)
+
+	afterLC, err := h.lifecycles.Get(context.Background(), scopeKey, res.ID)
+	if err != nil {
+		t.Fatalf("load lifecycle after refused Cancel: %v", err)
+	}
+	if afterLC.CancelledAt != nil {
+		t.Fatalf("lifecycle CancelledAt = %v after refused Cancel, want nil", afterLC.CancelledAt)
+	}
+}
+
+// TestCancel_RefusalLeavesControlAndLifecycleUnchanged proves a refused
+// Cancel call writes nothing (Tess T17): a mutant that writes CancelledAt
+// to the lifecycle store before the already-cancelled check runs would
+// silently overwrite the first cancellation's recorded time and reason.
+func TestCancel_RefusalLeavesControlAndLifecycleUnchanged(t *testing.T) {
+	h := newHarness(t, Config{PEN: testPEN(1)})
+	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+	res := mustIssueScheduled(t, h, [3]string{"dev1", "0", "p1"})
+
+	if _, err := h.issuer.Cancel(context.Background(), res.Scope, res.ID, "first"); err != nil {
+		t.Fatalf("first Cancel() error = %v", err)
+	}
+
+	scopeKey := "dev1/0/p1"
+	beforeLC, err := h.lifecycles.Get(context.Background(), scopeKey, res.ID)
+	if err != nil {
+		t.Fatalf("load lifecycle after first Cancel: %v", err)
+	}
+	beforeCtrl, err := h.controls.Get(context.Background(), scopeKey, res.ID)
+	if err != nil {
+		t.Fatalf("load control after first Cancel: %v", err)
+	}
+
+	_, err = h.issuer.Cancel(context.Background(), res.Scope, res.ID, "second")
+	assertRefusal(t, err, RefusalAlreadyCancelled)
+
+	afterLC, err := h.lifecycles.Get(context.Background(), scopeKey, res.ID)
+	if err != nil {
+		t.Fatalf("load lifecycle after refused Cancel: %v", err)
+	}
+	if afterLC.CancelledAt == nil || *afterLC.CancelledAt != *beforeLC.CancelledAt || afterLC.CancelReason != beforeLC.CancelReason {
+		t.Fatalf("lifecycle changed after refused Cancel: before = %+v, after = %+v", beforeLC, afterLC)
+	}
+	afterCtrl, err := h.controls.Get(context.Background(), scopeKey, res.ID)
+	if err != nil {
+		t.Fatalf("load control after refused Cancel: %v", err)
+	}
+	if afterCtrl.MRID != beforeCtrl.MRID {
+		t.Fatalf("control changed after refused Cancel: before MRID = %q, after = %q", beforeCtrl.MRID, afterCtrl.MRID)
+	}
+}
+
 func TestCancel_DoesNotReinstateSupersededControl(t *testing.T) {
 	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))

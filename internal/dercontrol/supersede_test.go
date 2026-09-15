@@ -2,9 +2,12 @@ package dercontrol
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
 // Acceptance criterion 7: issuing a control whose control set equals an
@@ -272,6 +275,55 @@ func TestIssue_Supersede_AlreadySupersededAtEarlierTimeStaysIneligible(t *testin
 	}
 	if lc.SupersededBy != n1.Control.MRID {
 		t.Fatalf("C.SupersededBy = %q, want still %q", lc.SupersededBy, n1.Control.MRID)
+	}
+}
+
+// TestIssue_BootFixtureControlWithoutLifecycleRecord_NeitherSupersededNorCounted
+// proves a control this package did not create (a boot-fixture or
+// embedder-issued control, with no lifecycle record in this scope) is
+// skipped by the overlap scan, not treated as an error, and that Issue
+// never creates a lifecycle record for it (Tess T18): turning
+// computeSupersedes' store.ErrNotFound skip into an error would fail
+// Issue outright instead of ignoring the seeded control.
+func TestIssue_BootFixtureControlWithoutLifecycleRecord_NeitherSupersededNorCounted(t *testing.T) {
+	h := newHarness(t, Config{PEN: testPEN(1)})
+	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+
+	scopeKey := "dev1/0/p1"
+	start := sep2time.Now().Unix() + 1000
+	seededHref := "/edev/dev1/fsa/0/derp/p1/derc/boot-fixture-1"
+	on := true
+	seeded := sep2.DERControl{}
+	seeded.Href = seededHref
+	seeded.Interval = &sep2.DateTimeInterval{Start: start, Duration: 1000}
+	seeded.DERControlBase = &sep2.DERControlBase{OpModConnect: &on, OpModEnergize: &on}
+	if err := h.controls.Create(context.Background(), scopeKey, "boot-fixture-1", seeded); err != nil {
+		t.Fatalf("seed boot-fixture control: %v", err)
+	}
+	// Deliberately no lifecycle record: that absence is exactly the "not
+	// admin-issued through this package" shape computeSupersedes must skip.
+
+	n, err := issueWith(t, h, func(r *CreateRequest) {
+		r.Type = Connect // same control set as the seeded control
+		r.Start = &start
+		r.DurationSeconds = 1000
+	})
+	if err != nil {
+		t.Fatalf("Issue() error = %v, want the boot-fixture control skipped, not an error", err)
+	}
+	if len(n.Supersedes) != 0 {
+		t.Fatalf("N.Supersedes = %v, want none (the boot-fixture control has no lifecycle record)", n.Supersedes)
+	}
+
+	if _, err := h.lifecycles.Get(context.Background(), scopeKey, "boot-fixture-1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("lifecycle record created for the boot-fixture control, err = %v, want store.ErrNotFound", err)
+	}
+	stillSeeded, err := h.controls.Get(context.Background(), scopeKey, "boot-fixture-1")
+	if err != nil {
+		t.Fatalf("boot-fixture control removed: %v", err)
+	}
+	if stillSeeded.Href != seededHref {
+		t.Fatalf("boot-fixture control changed: Href = %q, want %q", stillSeeded.Href, seededHref)
 	}
 }
 

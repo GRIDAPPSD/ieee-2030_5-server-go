@@ -1,31 +1,33 @@
 <script lang="ts">
-  // The operator dashboard. This route owns the three pieces of shared
-  // state the panels read (the SSE payload, the FSA catalog, the topology
-  // tree) and the one refresh path that reloads the last two, so a
-  // create/attach/assign in any panel updates every panel that shows the
-  // result.
+  // The admin UI's shell: mounted once by App.svelte for every admin
+  // path, and never swapped, so a future client-side route change
+  // (tabs) cannot remount it and close the stream or drop history. It
+  // owns the three pieces of shared state the panels read (the SSE
+  // payload, the FSA catalog, the topology tree) and the one refresh
+  // path that reloads the last two, so a create/attach/assign in any
+  // panel updates every panel that shows the result.
   import { onDestroy, onMount } from 'svelte'
-  import { fetchJSON } from '../lib/api'
+  import { fetchJSON } from './lib/api'
   import {
     appendHistory,
     connectDashboard,
     type DashboardData,
     type HistoryPoint,
-  } from '../lib/dashboard'
-  import type { AdminFSA, AdminFSAList, TopologyNode } from '../lib/fsa'
-  import NavBar from '../panels/NavBar.svelte'
-  import Overview from '../panels/Overview.svelte'
-  import ServerInfo from '../panels/ServerInfo.svelte'
-  import CertPanel from '../panels/CertPanel.svelte'
-  import DerControl from '../panels/DerControl.svelte'
-  import AddDevice from '../panels/AddDevice.svelte'
-  import LookupDevice from '../panels/LookupDevice.svelte'
-  import CreateFsa from '../panels/CreateFsa.svelte'
-  import FsaCatalog from '../panels/FsaCatalog.svelte'
-  import TopologyTree from '../panels/TopologyTree.svelte'
-  import DeviceTable from '../panels/DeviceTable.svelte'
-  import ActivityChart from '../panels/ActivityChart.svelte'
-  import LoginPanel from '../panels/LoginPanel.svelte'
+  } from './lib/dashboard'
+  import type { AdminFSA, AdminFSAList, TopologyNode } from './lib/fsa'
+  import NavBar from './panels/NavBar.svelte'
+  import Overview from './panels/Overview.svelte'
+  import ServerInfo from './panels/ServerInfo.svelte'
+  import CertPanel from './panels/CertPanel.svelte'
+  import DerControl from './panels/DerControl.svelte'
+  import AddDevice from './panels/AddDevice.svelte'
+  import LookupDevice from './panels/LookupDevice.svelte'
+  import CreateFsa from './panels/CreateFsa.svelte'
+  import FsaCatalog from './panels/FsaCatalog.svelte'
+  import TopologyTree from './panels/TopologyTree.svelte'
+  import DeviceTable from './panels/DeviceTable.svelte'
+  import ActivityChart from './panels/ActivityChart.svelte'
+  import LoginPanel from './panels/LoginPanel.svelte'
 
   let data = $state<DashboardData | null>(null)
   let history = $state<HistoryPoint[]>([])
@@ -34,6 +36,7 @@
   let topologyError = $state('')
   let unauthorized = $state('')
   let disconnect: (() => void) | null = null
+  let destroyed = false
 
   async function refresh() {
     const list = await fetchJSON<AdminFSAList>('/api/fsas')
@@ -55,6 +58,10 @@
     // 401 discovered here is the only way to tell "not logged in" from
     // "stream dropped" and show the login form instead of an empty page.
     const probe = await fetchJSON<DashboardData>('/dashboard/data')
+    // A component destroyed while this await was pending must not open a
+    // stream nobody can close: onDestroy already ran, so a disconnect
+    // assigned after it would never be called.
+    if (destroyed) return
     if (!probe.ok && probe.status === 401) {
       unauthorized = 'Admin session required.'
       return
@@ -72,6 +79,7 @@
   })
 
   onDestroy(() => {
+    destroyed = true
     disconnect?.()
     disconnect = null
   })

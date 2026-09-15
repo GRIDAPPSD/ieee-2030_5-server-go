@@ -9,13 +9,13 @@
 
 import type { Component } from 'svelte'
 import type { Route } from '../lib/router'
-import Dashboard from './Dashboard.svelte'
+import AdminShell from '../AdminShell.svelte'
 
 export const routeList: Route[] = [{ path: '/', label: 'Dashboard' }]
 
 export const routes: Record<string, Component> = {
-  '/': Dashboard,
-  '/ui/': Dashboard,
+  '/': AdminShell,
+  '/ui/': AdminShell,
 }
 
-export const defaultRoute: Component = Dashboard
+export const defaultRoute: Component = AdminShell

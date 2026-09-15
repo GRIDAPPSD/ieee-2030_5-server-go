@@ -2,9 +2,9 @@ package server
 
 import (
 	"context"
-	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -35,7 +35,7 @@ func (v *derProgramHrefValidator) HasProgram(ctx context.Context, href string) b
 	if v == nil || v.programs == nil {
 		return false
 	}
-	edevID, derpID, ok := parseProgramHref(href)
+	edevID, _, derpID, ok := derhref.Program(href)
 	if !ok {
 		return false
 	}
@@ -43,25 +43,6 @@ func (v *derProgramHrefValidator) HasProgram(ctx context.Context, href string) b
 		return false
 	}
 	return true
-}
-
-// parseProgramHref pulls (edevID, derpID) out of
-// /edev/{id}/fsa/{fsaId}/derp/{derpId}. Returns ok=false on any malformed
-// input: no partial matches.
-func parseProgramHref(href string) (string, string, bool) {
-	href = strings.TrimSpace(href)
-	parts := strings.Split(strings.TrimPrefix(href, "/"), "/")
-	// Expect: edev / {id} / fsa / {fsaId} / derp / {derpId}
-	if len(parts) != 6 {
-		return "", "", false
-	}
-	if parts[0] != "edev" || parts[2] != "fsa" || parts[4] != "derp" {
-		return "", "", false
-	}
-	if parts[1] == "" || parts[5] == "" {
-		return "", "", false
-	}
-	return parts[1], parts[5], true
 }
 
 // newAdminFSAHandler builds the handler from the server's stores. Returns

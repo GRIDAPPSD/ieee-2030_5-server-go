@@ -78,8 +78,39 @@ func TestIssue_RefusesControlListLinkNamingAnotherDevice(t *testing.T) {
 	assertNoNewControl(t, h)
 }
 
+func TestIssue_RefusesControlListLinkNamingAnotherProgram(t *testing.T) {
+	h := newHarness(t, Config{PEN: testPEN(1)})
+	// The link claims a different DERProgram than the one it was loaded from.
+	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p2"))
+
+	req := CreateRequest{
+		DERProgramHref:  programHref("dev1", "0", "p1"),
+		Type:            Connect,
+		DurationSeconds: 3600,
+	}
+	_, err := h.issuer.Issue(context.Background(), req)
+	assertRefusal(t, err, RefusalNoControlListLink)
+	assertNoNewControl(t, h)
+}
+
+func TestIssue_RefusesControlListLinkWithoutDercSuffix(t *testing.T) {
+	h := newHarness(t, Config{PEN: testPEN(1)})
+	// No device ever reaches a control list at the program's own href: the
+	// link must end in "/derc".
+	h.seedProgram(t, "dev1", "p1", programHref("dev1", "0", "p1"))
+
+	req := CreateRequest{
+		DERProgramHref:  programHref("dev1", "0", "p1"),
+		Type:            Connect,
+		DurationSeconds: 3600,
+	}
+	_, err := h.issuer.Issue(context.Background(), req)
+	assertRefusal(t, err, RefusalNoControlListLink)
+	assertNoNewControl(t, h)
+}
+
 func TestIssue_RefusesProgramNotFound(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	req := CreateRequest{
 		DERProgramHref:  programHref("dev1", "0", "nope"),
 		Type:            Connect,

@@ -19,10 +19,15 @@ func parseProgramHref(href string) (edev, fsa, derp string, ok bool) {
 }
 
 // parseControlListHref pulls (edev, fsa, derp) out of
-// "/edev/{id}/fsa/{fsaId}/derp/{derpId}/derc".
+// "/edev/{id}/fsa/{fsaId}/derp/{derpId}/derc". A href missing the "/derc"
+// suffix is not a control list link and is refused: it may be the program's
+// own href, which no device could have followed to reach a control list.
 func parseControlListHref(href string) (edev, fsa, derp string, ok bool) {
-	href = strings.TrimSuffix(strings.TrimSpace(href), "/derc")
-	return parseProgramHref(href)
+	trimmed, ok := strings.CutSuffix(strings.TrimSpace(href), "/derc")
+	if !ok {
+		return "", "", "", false
+	}
+	return parseProgramHref(trimmed)
 }
 
 // splitHref matches "/seg0/{v0}/seg1/{v1}/seg2/{v2}" against the given

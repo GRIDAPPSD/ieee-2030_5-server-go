@@ -103,6 +103,7 @@ func TestIssue_Mapping_MaxLimW_RefusesMissingValue(t *testing.T) {
 }
 
 func TestIssue_Mapping_FixedPFInjectW_Boundaries(t *testing.T) {
+	trueVal := true
 	cases := []struct {
 		name    string
 		disp    uint16
@@ -115,9 +116,9 @@ func TestIssue_Mapping_FixedPFInjectW_Boundaries(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newHarness(Config{PEN: testPEN(1)})
+			h := newHarness(t, Config{PEN: testPEN(1)})
 			h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
-			pf := PowerFactorValue{Displacement: tc.disp, Excitation: true}
+			pf := PowerFactorValue{Displacement: tc.disp, Excitation: &trueVal}
 			res, err := issueWith(t, h, func(r *CreateRequest) {
 				r.Type = FixedPFInjectW
 				r.PowerFactor = &pf
@@ -148,8 +149,46 @@ func TestIssue_Mapping_FixedPFInjectW_RefusesMissingValue(t *testing.T) {
 	assertNoNewControl(t, h)
 }
 
+// Acceptance criterion 5: excitation false (over-excited, the DER injects
+// reactive power) must pass through unchanged, exactly as excitation true
+// does. CSIP Figure 8's example values.
+func TestIssue_Mapping_FixedPFInjectW_ExcitationFalsePassesThroughUnchanged(t *testing.T) {
+	h := newHarness(t, Config{PEN: testPEN(1)})
+	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+
+	falseVal := false
+	pf := PowerFactorValue{Displacement: 900, Excitation: &falseVal}
+	res, err := issueWith(t, h, func(r *CreateRequest) {
+		r.Type = FixedPFInjectW
+		r.PowerFactor = &pf
+	})
+	if err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	got := res.Control.DERControlBase.OpModFixedPFInjectW
+	if got == nil || got.Excitation != false || got.Displacement != 900 || got.Multiplier != -3 {
+		t.Fatalf("OpModFixedPFInjectW = %+v, want {Displacement:900 Excitation:false Multiplier:-3}", got)
+	}
+	assertNoServerOwnedFieldsLeaked(t, res)
+}
+
+// A request that omits Excitation must be refused, the same as an omitted
+// Displacement: there is no safe default direction for reactive power.
+func TestIssue_Mapping_FixedPFInjectW_RefusesMissingExcitation(t *testing.T) {
+	h := newHarness(t, Config{PEN: testPEN(1)})
+	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+
+	pf := PowerFactorValue{Displacement: 500}
+	_, err := issueWith(t, h, func(r *CreateRequest) {
+		r.Type = FixedPFInjectW
+		r.PowerFactor = &pf
+	})
+	assertRefusal(t, err, RefusalMissingValue)
+	assertNoNewControl(t, h)
+}
+
 func TestIssue_Mapping_RefusesUnknownType(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	_, err := issueWith(t, h, func(r *CreateRequest) { r.Type = ControlType("opModFixedW") })

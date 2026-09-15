@@ -37,10 +37,12 @@ const (
 // PowerFactorValue is the value object required for FixedPFInjectW.
 // Displacement is thousandths of cos(theta) (1 to 1000); Excitation is
 // true when the DER absorbs reactive power (under-excited), false when it
-// injects (over-excited). IEEE 2030.5-2018 lines 16516-16522.
+// injects (over-excited). IEEE 2030.5-2018 lines 16516-16522. Excitation is
+// a pointer because it has no safe default: a request that omits it is
+// refused with RefusalMissingValue rather than silently taken as false.
 type PowerFactorValue struct {
 	Displacement uint16
-	Excitation   bool
+	Excitation   *bool
 }
 
 // CreateRequest is the operator's input. The issuer owns every DERControl

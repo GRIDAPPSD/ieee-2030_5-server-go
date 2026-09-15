@@ -352,12 +352,18 @@ func buildBase(req CreateRequest) (*sep2.DERControlBase, error) {
 		if req.PowerFactor == nil {
 			return nil, refuse(RefusalMissingValue)
 		}
+		if req.PowerFactor.Excitation == nil {
+			// A missing excitation must be refused like a missing
+			// displacement, not silently taken as false (over-excited):
+			// the two directions inject and absorb reactive power.
+			return nil, refuse(RefusalMissingValue)
+		}
 		if req.PowerFactor.Displacement < 1 || req.PowerFactor.Displacement > 1000 {
 			return nil, refuse(RefusalValueOutOfRange)
 		}
 		return &sep2.DERControlBase{OpModFixedPFInjectW: &sep2.FixedPowerFactor{
 			Displacement: req.PowerFactor.Displacement,
-			Excitation:   req.PowerFactor.Excitation,
+			Excitation:   *req.PowerFactor.Excitation,
 			Multiplier:   -3,
 		}}, nil
 	default:

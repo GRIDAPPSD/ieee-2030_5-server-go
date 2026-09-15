@@ -156,7 +156,11 @@ func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 	ctrl.CreationTime = creationTime
 	ctrl.Interval = &sep2.DateTimeInterval{Start: start, Duration: uint32(req.DurationSeconds)}
 
-	supersedes, err := i.supersede(ctx, scopeKey, existing.Items, base, mrid, start, start+durationSeconds)
+	// Candidates are computed before either store is written, so the marks
+	// applySupersedes writes always name an mRID that is already stored: no
+	// write below can leave a mark referring to a control this call failed
+	// to create (Wren HIGH-1, Tess T3).
+	candidates, err := i.computeSupersedes(ctx, scopeKey, existing.Items, base, start, start+durationSeconds)
 	if err != nil {
 		return Result{}, err
 	}
@@ -165,7 +169,17 @@ func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 		return Result{}, fmt.Errorf("dercontrol: store control: %w", err)
 	}
 	if err := i.lifecycles.Create(ctx, scopeKey, id, LifecycleRecord{}); err != nil {
+		// The control must never be left without its lifecycle record
+		// (Wren HIGH-2): undo the store it already committed.
+		if derr := i.controls.Delete(ctx, scopeKey, id); derr != nil {
+			return Result{}, fmt.Errorf("dercontrol: store lifecycle: %w (rollback: delete control failed: %w)", err, derr)
+		}
 		return Result{}, fmt.Errorf("dercontrol: store lifecycle: %w", err)
+	}
+
+	supersedes, err := i.applySupersedes(ctx, scopeKey, candidates, start, mrid)
+	if err != nil {
+		return Result{}, err
 	}
 
 	return Result{
@@ -177,17 +191,28 @@ func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 	}, nil
 }
 
-// supersede marks, in the lifecycle store, every control among existing
-// that N's control set equals and whose interval overlaps [newStart,
-// newEnd). It returns the mRIDs it marked. Acceptance criterion 7.
+// supersedeCandidate is an existing control eligible to be marked
+// superseded by a new one, found by computeSupersedes before either store
+// write Issue makes. before is the lifecycle record as read, so
+// applySupersedes can restore it exactly if a later candidate's write
+// fails.
+type supersedeCandidate struct {
+	id     string
+	mrid   string
+	before LifecycleRecord
+}
+
+// computeSupersedes finds every control among existing whose control set
+// equals newBase's and whose interval overlaps [newStart, newEnd), without
+// writing anything. Acceptance criterion 7.
 //
 // A control with no lifecycle record was not issued through this package
 // (a boot-fixture or embedder control) and is skipped: this package derives
 // no status for it, so it cannot be superseded by way of a status this
-// package never asserts (design section 5, "accepted gap").
-func (i *Issuer) supersede(ctx context.Context, scopeKey string, existing []sep2.DERControl, newBase *sep2.DERControlBase, newMRID string, newStart, newEnd int64) ([]string, error) {
+// package never asserts.
+func (i *Issuer) computeSupersedes(ctx context.Context, scopeKey string, existing []sep2.DERControl, newBase *sep2.DERControlBase, newStart, newEnd int64) ([]supersedeCandidate, error) {
 	newShape := controlShape(newBase)
-	var supersedes []string
+	var candidates []supersedeCandidate
 	for _, c := range existing {
 		if c.Interval == nil {
 			continue
@@ -203,7 +228,7 @@ func (i *Issuer) supersede(ctx context.Context, scopeKey string, existing []sep2
 			}
 			return nil, fmt.Errorf("dercontrol: load lifecycle: %w", err)
 		}
-		if !lc.supersedeEligible() {
+		if !lc.supersedeEligible(newStart) {
 			continue
 		}
 		if controlShape(c.DERControlBase) != newShape {
@@ -213,12 +238,32 @@ func (i *Issuer) supersede(ctx context.Context, scopeKey string, existing []sep2
 		if !(c.Interval.Start < newEnd && newStart < cEnd) {
 			continue // no overlap; adjacent (cEnd == newStart) excluded by strict '<'
 		}
+		candidates = append(candidates, supersedeCandidate{id: id, mrid: c.MRID, before: lc})
+	}
+	return candidates, nil
+}
+
+// applySupersedes marks every candidate superseded by newMRID at newStart,
+// in order. If a candidate's Update fails, every candidate already marked
+// in this call is restored to its pre-call state before the error is
+// returned, so a partial failure here never leaves some candidates marked
+// by a control whose Issue call is about to report failure to its caller.
+// It returns the mRIDs it marked.
+func (i *Issuer) applySupersedes(ctx context.Context, scopeKey string, candidates []supersedeCandidate, newStart int64, newMRID string) ([]string, error) {
+	var supersedes []string
+	for n, cand := range candidates {
+		lc := cand.before
 		lc.SupersededAt = ptrInt64(newStart)
 		lc.SupersededBy = newMRID
-		if err := i.lifecycles.Update(ctx, scopeKey, id, lc); err != nil {
+		if err := i.lifecycles.Update(ctx, scopeKey, cand.id, lc); err != nil {
+			for _, applied := range candidates[:n] {
+				if rerr := i.lifecycles.Update(ctx, scopeKey, applied.id, applied.before); rerr != nil {
+					return nil, fmt.Errorf("dercontrol: mark superseded: %w (revert of %s failed: %w)", err, applied.id, rerr)
+				}
+			}
 			return nil, fmt.Errorf("dercontrol: mark superseded: %w", err)
 		}
-		supersedes = append(supersedes, c.MRID)
+		supersedes = append(supersedes, cand.mrid)
 	}
 	return supersedes, nil
 }

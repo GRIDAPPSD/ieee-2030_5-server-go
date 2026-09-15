@@ -40,16 +40,24 @@ func (r LifecycleRecord) cancelled() bool {
 }
 
 // supersedeEligible reports whether a control with this record may still be
-// superseded by a new one: it must not already be cancelled or superseded.
-// Used by Issue's overlap scan (acceptance criterion 7).
-func (r LifecycleRecord) supersedeEligible() bool {
-	return r.CancelledAt == nil && r.SupersededAt == nil
+// superseded by a new one whose interval starts at newStart. A cancelled
+// control is never eligible. An unsuperseded control is always eligible. An
+// already-superseded control is eligible only when newStart is earlier than
+// its recorded SupersededAt: IEEE 2030.5-2018 marks a control Superseded at
+// the earliest Effective Start Time of any overlapping event, so a
+// later-discovered earlier overlap must move the mark backward rather than
+// be skipped. Used by Issue's overlap scan (acceptance criterion 7).
+func (r LifecycleRecord) supersedeEligible(newStart int64) bool {
+	if r.CancelledAt != nil {
+		return false
+	}
+	return r.SupersededAt == nil || newStart < *r.SupersededAt
 }
 
 // supersededAsOf reports whether now has reached the recorded supersede
-// time. Before that instant the control still reads Scheduled or Active
-// (design section 3); a cancel refusal for "already superseded" checks
-// this, not merely that SupersededAt is set.
+// time. Before that instant the control still reads Scheduled or Active; a
+// cancel refusal for "already superseded" checks this, not merely that
+// SupersededAt is set.
 func (r LifecycleRecord) supersededAsOf(now int64) bool {
 	return r.SupersededAt != nil && now >= *r.SupersededAt
 }

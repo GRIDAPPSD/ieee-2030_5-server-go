@@ -139,11 +139,14 @@ type programStore interface {
 }
 
 // controlStore is the subset of store.ScopedStore[sep2.DERControl] the
-// issuer needs.
+// issuer needs. Delete is used only to undo a Create when the paired
+// lifecycle record then fails to store (Issue must never leave a control
+// without one).
 type controlStore interface {
 	Get(ctx context.Context, parentID, id string) (sep2.DERControl, error)
 	List(ctx context.Context, parentID string, opts store.ListOptions) (store.ListResult[sep2.DERControl], error)
 	Create(ctx context.Context, parentID, id string, resource sep2.DERControl) error
+	Delete(ctx context.Context, parentID, id string) error
 }
 
 // lifecycleStore is the subset of store.ScopedStore[LifecycleRecord] the

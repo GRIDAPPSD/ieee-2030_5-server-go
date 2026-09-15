@@ -7,6 +7,7 @@ package dercontrol
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -133,6 +134,64 @@ func refuse(code RefusalCode) error {
 	return &RefusalError{Code: code}
 }
 
+// UndoStep names the forward write an UndoError reports on: which write in
+// Issue's or Cancel's sequence failed and triggered the undo that follows.
+type UndoStep string
+
+const (
+	UndoStepStoreLifecycle UndoStep = "store lifecycle"
+	UndoStepStoreControl   UndoStep = "store control"
+	UndoStepMarkSuperseded UndoStep = "mark superseded"
+	UndoStepCancel         UndoStep = "cancel"
+)
+
+// UndoError is returned when a forward write inside Issue or Cancel fails
+// and the undo that follows cannot fully restore the prior state. The
+// remainder it reports is always a state a successful call could have
+// passed through: every SupersededBy still names a stored control, and
+// every stored control still has its lifecycle record. A caller
+// finds it with errors.As, checking for *RefusalError first. Error() may
+// carry a wrapped store's own diagnostic text (a file path, for example),
+// but never a request-derived identifier; a caller must not put it in a
+// response body and should log the typed fields instead.
+type UndoError struct {
+	Step UndoStep
+
+	// ControlKept and LifecycleKept report whether the new control, or its
+	// lifecycle record, may still be stored. Both are false for a Cancel
+	// failure, which creates neither.
+	ControlKept, LifecycleKept bool
+
+	// ID is the store id of the new control (Issue) or of the control
+	// Cancel targeted.
+	ID string
+
+	// UnrevertedIDs holds the ids of older candidates whose revert failed
+	// during Issue's undo.
+	UnrevertedIDs []string
+
+	cause   error
+	reverts []error
+}
+
+func (e *UndoError) Error() string {
+	texts := make([]string, 0, 1+len(e.reverts))
+	texts = append(texts, e.cause.Error())
+	for _, r := range e.reverts {
+		texts = append(texts, r.Error())
+	}
+	return "dercontrol: " + string(e.Step) + ": undo incomplete: " + strings.Join(texts, "; ")
+}
+
+// Unwrap returns the forward cause first, then every undo failure, so
+// errors.Is finds each one.
+func (e *UndoError) Unwrap() []error {
+	out := make([]error, 0, 1+len(e.reverts))
+	out = append(out, e.cause)
+	out = append(out, e.reverts...)
+	return out
+}
+
 // programStore is the subset of store.ScopedReader[sep2.DERProgram] the
 // issuer needs. Defined at this consumer per the project's Go standard.
 type programStore interface {
@@ -151,11 +210,14 @@ type controlStore interface {
 }
 
 // lifecycleStore is the subset of store.ScopedStore[LifecycleRecord] the
-// issuer needs.
+// issuer needs. Delete undoes a Create when a later write in the same
+// Issue call fails (Issue must never leave a stored mark naming a control
+// whose lifecycle record it could not keep).
 type lifecycleStore interface {
 	Get(ctx context.Context, parentID, id string) (LifecycleRecord, error)
 	Create(ctx context.Context, parentID, id string, resource LifecycleRecord) error
 	Update(ctx context.Context, parentID, id string, resource LifecycleRecord) error
+	Delete(ctx context.Context, parentID, id string) error
 }
 
 // Config holds the issuer's tunables. A zero StartLead, MinDuration or

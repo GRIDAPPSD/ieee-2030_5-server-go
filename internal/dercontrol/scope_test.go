@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -51,6 +52,26 @@ func TestIssue_ScopeFromControlListLink_NotRequestFSAID(t *testing.T) {
 func TestIssue_RefusesNoControlListLink(t *testing.T) {
 	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", "") // Href empty -> parses as invalid
+
+	req := CreateRequest{
+		DERProgramHref:  programHref("dev1", "0", "p1"),
+		Type:            Connect,
+		DurationSeconds: 3600,
+	}
+	_, err := h.issuer.Issue(context.Background(), req)
+	assertRefusal(t, err, RefusalNoControlListLink)
+	assertNoNewControl(t, h)
+}
+
+// seedProgram always sets a non-nil *ListLink, even with an empty Href,
+// so no other test exercises the nil-link check itself: only the parse
+// that follows it. A program with a literally nil DERControlListLink
+// proves the check guards that next line's dereference.
+func TestIssue_RefusesNilControlListLink(t *testing.T) {
+	h := newHarness(t, Config{PEN: testPEN(1)})
+	if err := h.programs.Create(context.Background(), "dev1", "p1", sep2.DERProgram{}); err != nil {
+		t.Fatalf("seed program: %v", err)
+	}
 
 	req := CreateRequest{
 		DERProgramHref:  programHref("dev1", "0", "p1"),

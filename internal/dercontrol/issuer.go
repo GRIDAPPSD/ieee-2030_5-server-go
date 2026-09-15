@@ -63,6 +63,28 @@ func scopeKeyOf(s Scope) string {
 	return s.EndDeviceID + "/" + s.FSAID + "/" + s.DERProgramID
 }
 
+// undoTimeout bounds the whole undo sequence following one failed forward
+// write, however many stores it touches: one budget per call, not one
+// per write.
+const undoTimeout = 5 * time.Second
+
+// undoContext derives a context for an undo sequence from the caller's
+// ctx: it keeps ctx's values but drops its cancellation, so a caller that
+// already cancelled or timed out cannot defeat the rollback of a write it
+// caused, and it carries its own bounded deadline so a hung backend
+// cannot hold the scope lock during undo indefinitely.
+func undoContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), undoTimeout)
+}
+
+// undoWriteOK reports whether an undo write (Delete or Update) restored
+// the state it targeted. store.ErrNotFound counts as already done: the
+// store contract forbids a failed write from returning it, so ErrNotFound
+// here can only mean there was nothing left to undo.
+func undoWriteOK(err error) bool {
+	return err == nil || errors.Is(err, store.ErrNotFound)
+}
+
 // lockScope returns an unlock func for scopeKey, taken after this call
 // returns. Callers must defer the returned func.
 func (i *Issuer) lockScope(scopeKey string) func() {
@@ -81,6 +103,15 @@ func (i *Issuer) lockScope(scopeKey string) func() {
 // Issue validates req, builds a conformant DERControl, resolves any
 // supersede against controls already in the target scope, and stores both
 // the control and its lifecycle record.
+//
+// On a nil error every write took effect. On a *RefusalError nothing was
+// written. On any other plain error every write this call attempted has
+// been undone: the stores are exactly as they were before the call. When
+// the undo itself cannot finish, Issue returns a *UndoError instead,
+// naming what may remain; that remainder is always a state a successful
+// call could have passed through. Result is zero on every error;
+// a partial result travels only inside *UndoError. Callers branch on the
+// outcome with errors.As, checking *RefusalError before *UndoError.
 func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 	if i.cfg.PEN == nil {
 		return Result{}, refuse(RefusalPENNotConfigured)
@@ -174,21 +205,25 @@ func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 		return Result{}, err
 	}
 
-	if err := i.controls.Create(ctx, scopeKey, id, ctrl); err != nil {
-		return Result{}, fmt.Errorf("dercontrol: store control: %w", err)
-	}
-	if err := i.lifecycles.Create(ctx, scopeKey, id, LifecycleRecord{}); err != nil {
-		// The control must never be left without its lifecycle record:
-		// undo the store it already committed.
-		if derr := i.controls.Delete(ctx, scopeKey, id); derr != nil {
-			return Result{}, fmt.Errorf("dercontrol: store lifecycle: %w (rollback: delete control failed: %w)", err, derr)
-		}
-		return Result{}, fmt.Errorf("dercontrol: store lifecycle: %w", err)
+	if err := ctx.Err(); err != nil {
+		// Nothing has been written yet, so nothing needs undoing.
+		return Result{}, err
 	}
 
-	supersedes, err := i.applySupersedes(ctx, scopeKey, candidates, start, mrid)
+	// Forward order: lifecycle record, then control, then marks. Every
+	// prefix of this sequence stays legal: an orphan lifecycle record is
+	// legal and unreachable, and once the control is stored, every
+	// stored control has its lifecycle record for the rest of the call.
+	if err := i.lifecycles.Create(ctx, scopeKey, id, LifecycleRecord{}); err != nil {
+		return i.undoLifecycleCreateFailure(ctx, scopeKey, id, err)
+	}
+	if err := i.controls.Create(ctx, scopeKey, id, ctrl); err != nil {
+		return i.undoControlCreateFailure(ctx, scopeKey, id, err)
+	}
+
+	supersedes, attempted, err := i.applySupersedes(ctx, scopeKey, candidates, start, mrid)
 	if err != nil {
-		return Result{}, err
+		return i.undoMarkFailure(ctx, scopeKey, id, attempted, err)
 	}
 
 	return Result{
@@ -253,33 +288,94 @@ func (i *Issuer) computeSupersedes(ctx context.Context, scopeKey string, existin
 }
 
 // applySupersedes marks every candidate superseded by newMRID at newStart,
-// in order. If a candidate's Update fails, every candidate already marked
-// in this call is restored to its pre-call state before the error is
-// returned, so a partial failure here never leaves some candidates marked
-// by a control whose Issue call is about to report failure to its caller.
-// It returns the mRIDs it marked.
-func (i *Issuer) applySupersedes(ctx context.Context, scopeKey string, candidates []supersedeCandidate, newStart int64, newMRID string) ([]string, error) {
-	var supersedes []string
+// in order, under ctx (forward writes use the caller's context). On the
+// first failure it stops and returns the mRIDs marked so far and the
+// candidates from index 0 through the failing one, inclusive: the failing
+// write may have taken effect despite its error, so the caller's undo
+// must attempt to revert it too, not only the candidates marked before
+// it.
+func (i *Issuer) applySupersedes(ctx context.Context, scopeKey string, candidates []supersedeCandidate, newStart int64, newMRID string) (marked []string, attempted []supersedeCandidate, err error) {
 	for n, cand := range candidates {
 		lc := cand.before
 		lc.SupersededAt = ptrInt64(newStart)
 		lc.SupersededBy = newMRID
 		if err := i.lifecycles.Update(ctx, scopeKey, cand.id, lc); err != nil {
-			for _, applied := range candidates[:n] {
-				if rerr := i.lifecycles.Update(ctx, scopeKey, applied.id, applied.before); rerr != nil {
-					return nil, fmt.Errorf("dercontrol: mark superseded: %w (revert of %s failed: %w)", err, applied.id, rerr)
-				}
-			}
-			return nil, fmt.Errorf("dercontrol: mark superseded: %w", err)
+			return marked, candidates[:n+1], err
 		}
-		supersedes = append(supersedes, cand.mrid)
+		marked = append(marked, cand.mrid)
 	}
-	return supersedes, nil
+	return marked, nil, nil
+}
+
+// undoLifecycleCreateFailure undoes a failed lifecycle Create. The write
+// may have taken effect despite the error, so it is always deleted; a
+// store.ErrNotFound from that delete means it never took effect.
+func (i *Issuer) undoLifecycleCreateFailure(ctx context.Context, scopeKey, id string, cause error) (Result, error) {
+	uctx, cancel := undoContext(ctx)
+	defer cancel()
+	if derr := i.lifecycles.Delete(uctx, scopeKey, id); !undoWriteOK(derr) {
+		return Result{}, &UndoError{Step: UndoStepStoreLifecycle, LifecycleKept: true, ID: id, cause: cause, reverts: []error{derr}}
+	}
+	return Result{}, fmt.Errorf("dercontrol: store lifecycle: %w", cause)
+}
+
+// undoControlCreateFailure undoes a failed control Create. The lifecycle
+// record already exists at this point, so it is deleted too, unless
+// deleting the control itself fails: the lifecycle record must not be
+// removed while the control it backs might still be stored.
+func (i *Issuer) undoControlCreateFailure(ctx context.Context, scopeKey, id string, cause error) (Result, error) {
+	uctx, cancel := undoContext(ctx)
+	defer cancel()
+	if derr := i.controls.Delete(uctx, scopeKey, id); !undoWriteOK(derr) {
+		return Result{}, &UndoError{Step: UndoStepStoreControl, ControlKept: true, LifecycleKept: true, ID: id, cause: cause, reverts: []error{derr}}
+	}
+	if derr := i.lifecycles.Delete(uctx, scopeKey, id); !undoWriteOK(derr) {
+		return Result{}, &UndoError{Step: UndoStepStoreControl, LifecycleKept: true, ID: id, cause: cause, reverts: []error{derr}}
+	}
+	return Result{}, fmt.Errorf("dercontrol: store control: %w", cause)
+}
+
+// undoMarkFailure undoes a failed supersede mark: every candidate
+// applySupersedes attempted in this call, the failing one included, is
+// restored to its exact prior record, attempting every one, before the
+// new control and its lifecycle record are deleted. A restore that fails
+// keeps the new control and its record regardless of what follows,
+// because deleting them would leave a stored mark naming a control that
+// no longer exists.
+func (i *Issuer) undoMarkFailure(ctx context.Context, scopeKey, id string, attempted []supersedeCandidate, cause error) (Result, error) {
+	uctx, cancel := undoContext(ctx)
+	defer cancel()
+
+	var unrevertedIDs []string
+	var reverts []error
+	for _, cand := range attempted {
+		if rerr := i.lifecycles.Update(uctx, scopeKey, cand.id, cand.before); !undoWriteOK(rerr) {
+			unrevertedIDs = append(unrevertedIDs, cand.id)
+			reverts = append(reverts, rerr)
+		}
+	}
+	if len(unrevertedIDs) > 0 {
+		return Result{}, &UndoError{Step: UndoStepMarkSuperseded, ControlKept: true, LifecycleKept: true, ID: id, UnrevertedIDs: unrevertedIDs, cause: cause, reverts: reverts}
+	}
+
+	if derr := i.controls.Delete(uctx, scopeKey, id); !undoWriteOK(derr) {
+		return Result{}, &UndoError{Step: UndoStepMarkSuperseded, ControlKept: true, LifecycleKept: true, ID: id, cause: cause, reverts: []error{derr}}
+	}
+	if derr := i.lifecycles.Delete(uctx, scopeKey, id); !undoWriteOK(derr) {
+		return Result{}, &UndoError{Step: UndoStepMarkSuperseded, LifecycleKept: true, ID: id, cause: cause, reverts: []error{derr}}
+	}
+	return Result{}, fmt.Errorf("dercontrol: mark superseded: %w", cause)
 }
 
 // Cancel records cancellation of the control at (scope, id). It refuses a
 // control that is unknown, already cancelled, already superseded, or whose
 // interval has ended (acceptance criterion 8).
+//
+// On a nil error CancelledAt and CancelReason are stored. On a
+// *RefusalError nothing was written. On any other plain error the record
+// equals what Cancel read: the write's effect has been undone. When the
+// restore itself fails, Cancel returns a *UndoError naming the control;
+// the record may or may not carry the cancellation.
 func (i *Issuer) Cancel(ctx context.Context, scope Scope, id string, reason string) (LifecycleRecord, error) {
 	scopeKey := scopeKeyOf(scope)
 
@@ -293,7 +389,7 @@ func (i *Issuer) Cancel(ctx context.Context, scope Scope, id string, reason stri
 		}
 		return LifecycleRecord{}, fmt.Errorf("dercontrol: load control: %w", err)
 	}
-	lc, err := i.lifecycles.Get(ctx, scopeKey, id)
+	before, err := i.lifecycles.Get(ctx, scopeKey, id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return LifecycleRecord{}, refuse(RefusalControlNotFound)
@@ -302,10 +398,10 @@ func (i *Issuer) Cancel(ctx context.Context, scope Scope, id string, reason stri
 	}
 
 	now := sep2time.Now().Unix()
-	if lc.cancelled() {
+	if before.cancelled() {
 		return LifecycleRecord{}, refuse(RefusalAlreadyCancelled)
 	}
-	if lc.supersededAsOf(now) {
+	if before.supersededAsOf(now) {
 		return LifecycleRecord{}, refuse(RefusalAlreadySuperseded)
 	}
 	if ctrl.Interval == nil {
@@ -315,12 +411,29 @@ func (i *Issuer) Cancel(ctx context.Context, scope Scope, id string, reason stri
 		return LifecycleRecord{}, refuse(RefusalEnded)
 	}
 
+	if err := ctx.Err(); err != nil {
+		// Nothing has been written yet, so nothing needs undoing.
+		return LifecycleRecord{}, err
+	}
+
+	lc := before
 	lc.CancelledAt = ptrInt64(now)
 	lc.CancelReason = reason
 	if err := i.lifecycles.Update(ctx, scopeKey, id, lc); err != nil {
-		return LifecycleRecord{}, fmt.Errorf("dercontrol: update lifecycle: %w", err)
+		return i.undoCancelFailure(ctx, scopeKey, id, before, err)
 	}
 	return lc, nil
+}
+
+// undoCancelFailure restores the record Cancel read before its Update
+// failed.
+func (i *Issuer) undoCancelFailure(ctx context.Context, scopeKey, id string, before LifecycleRecord, cause error) (LifecycleRecord, error) {
+	uctx, cancel := undoContext(ctx)
+	defer cancel()
+	if rerr := i.lifecycles.Update(uctx, scopeKey, id, before); !undoWriteOK(rerr) {
+		return LifecycleRecord{}, &UndoError{Step: UndoStepCancel, ID: id, cause: cause, reverts: []error{rerr}}
+	}
+	return LifecycleRecord{}, fmt.Errorf("dercontrol: cancel: %w", cause)
 }
 
 // buildBase maps a request's type and value to the closed set of

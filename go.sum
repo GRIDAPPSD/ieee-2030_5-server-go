@@ -1,5 +1,5 @@
-github.com/GRIDAPPSD/ieee-2030_5-core-go v0.17.0 h1:6cPKPOopckeLmSIZ+QLx7Yme9h6wWl7aOAP/BQ/GZ0o=
-github.com/GRIDAPPSD/ieee-2030_5-core-go v0.17.0/go.mod h1:dP7sIUCVceNoLz5cP1fMWzSc7y/888RpdPx9CU010Dw=
+github.com/GRIDAPPSD/ieee-2030_5-core-go v0.17.1-0.20260914223208-b345fa119c36 h1:FX1Yu66GaQ1FApdYQe7WtxHJDC1vP6CzhwW0MNMxm+0=
+github.com/GRIDAPPSD/ieee-2030_5-core-go v0.17.1-0.20260914223208-b345fa119c36/go.mod h1:dP7sIUCVceNoLz5cP1fMWzSc7y/888RpdPx9CU010Dw=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=

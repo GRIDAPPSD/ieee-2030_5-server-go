@@ -81,5 +81,5 @@ sep_wadl.xml
 /tools/capture/capture-report.json
 /tools/capture/scratch/
 
-# Log files (superseded /testrun/server.log, now covered by this rule).
+# Log files
 *.log

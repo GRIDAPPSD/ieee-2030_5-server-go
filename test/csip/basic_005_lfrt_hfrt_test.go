@@ -1,17 +1,17 @@
-// CSIP V1.2 §8.5 — Inverter Control: LFRT/HFRT.
+// CSIP V1.2 Section 8.5 - Inverter Control: LFRT/HFRT.
 //
 // BASIC-005 proves the server renders a DERControl carrying
 // opModLFRTMustTrip and opModHFRTMustTrip curve references per Figure
 // 5, plus the two matching DERCurves in the global /dc store.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.5):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.5):
 //
-//	Step 1 (server has DERProgram + 1 DERControl + 2 DERCurves)  ──► fixture load
-//	Step 2 (client walks /dcap → /edev → /fsa → DERProgram → DERControl)
-//	                                                              ──► basicModeWalk
+//	Step 1 (server has DERProgram + 1 DERControl + 2 DERCurves)  -> fixture load
+//	Step 2 (client walks /dcap -> /edev -> /fsa -> DERProgram -> DERControl)
+//	                                                              -> basicModeWalk
 //	Step 3 (DERControl carries opModLFRTMustTrip and
-//	         opModHFRTMustTrip curve refs)                        ──► per-field assertions
-//	Step 4 (global /dc carries 2 ride-through curves)             ──► curve-list walk
+//	         opModHFRTMustTrip curve refs)                        -> per-field assertions
+//	Step 4 (global /dc carries 2 ride-through curves)             -> curve-list walk
 //
 // #140 added the two ride-through curve-ref fields and flipped
 // this test from SKIP to active.
@@ -32,7 +32,7 @@ const (
 	basic005HFRTMustTrip int32 = 1
 )
 
-// TestBASIC_005_LFRTHFRT implements CSIP V1.2 §8.5.
+// TestBASIC_005_LFRTHFRT implements CSIP V1.2 Section 8.5.
 func TestBASIC_005_LFRTHFRT(t *testing.T) {
 	t.Parallel()
 	basicModeWalk(t, "basic-005-lfrt-hfrt.yaml",
@@ -55,6 +55,8 @@ func TestBASIC_005_LFRTHFRT(t *testing.T) {
 			assertCurveRef(t, cipher, "opModHFRTMustTrip",
 				dc.DERControlBase.OpModHFRTMustTrip, basic005HFRTMustTrip)
 
+			// Step 4: each ride-through curve carries its own renumbered
+			// CurveType (#555), matched by mRID, not position.
 			var curveList sep2.DERCurveList
 			if err := c.WalkLink(context.Background(), sep2.Link{Href: "/dc?l=255"}, &curveList); err != nil {
 				t.Fatalf("[%s] walk /dc: %v", cipher, err)
@@ -63,5 +65,9 @@ func TestBASIC_005_LFRTHFRT(t *testing.T) {
 				t.Fatalf("[%s] DERCurveList len = %d, want 2 (LFRT-must-trip, HFRT-must-trip)",
 					cipher, got)
 			}
+			assertCurveTypesByMRID(t, cipher, curveList.DERCurve, map[string]uint8{
+				"BASIC-005-LFRT-MUST-TRIP": sep2.CurveTypeOpModLFRTMustTrip,
+				"BASIC-005-HFRT-MUST-TRIP": sep2.CurveTypeOpModHFRTMustTrip,
+			})
 		})
 }

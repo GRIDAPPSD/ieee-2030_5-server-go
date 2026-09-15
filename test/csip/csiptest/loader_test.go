@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -432,6 +433,88 @@ func TestLoadSpec_PerCentOutOfRange_Errors(t *testing.T) {
 			}
 			if ddercCount != 0 || dercCount != 0 {
 				t.Errorf("stored %d default and %d event controls after a rejected load, want 0 and 0", ddercCount, dercCount)
+			}
+		})
+	}
+}
+
+// TestLoadSpec_DERCurveCreationTime covers #539: a curve whose spec gives
+// a CreationTime is served with exactly that value, and a curve whose
+// spec gives none is served with the time the fixture was loaded, never 0.
+func TestLoadSpec_DERCurveCreationTime(t *testing.T) {
+	t.Parallel()
+
+	given := int64(1700000000)
+	before := time.Now().Unix()
+	spec := &csiptest.Spec{
+		DERCurves: []csiptest.DERCurveSpec{
+			{ID: "with-time", CurveType: 11, CreationTime: &given},
+			{ID: "no-time", CurveType: 0},
+		},
+	}
+	target := csiptest.NewTarget()
+	ctx := context.Background()
+	if err := csiptest.LoadSpec(ctx, target, spec); err != nil {
+		t.Fatalf("LoadSpec: %v", err)
+	}
+	after := time.Now().Unix()
+
+	withTime, err := target.DERCurves.Get(ctx, "with-time")
+	if err != nil {
+		t.Fatalf("DERCurves.Get(with-time): %v", err)
+	}
+	if withTime.CreationTime != given {
+		t.Errorf("DERCurve(with-time).CreationTime = %d, want %d (spec value)",
+			withTime.CreationTime, given)
+	}
+
+	unset, err := target.DERCurves.Get(ctx, "no-time")
+	if err != nil {
+		t.Fatalf("DERCurves.Get(no-time): %v", err)
+	}
+	if unset.CreationTime == 0 {
+		t.Errorf("DERCurve(no-time).CreationTime = 0, want the fixture load time")
+	}
+	if unset.CreationTime < before || unset.CreationTime > after {
+		t.Errorf("DERCurve(no-time).CreationTime = %d, want within [%d, %d] (the fixture load window)",
+			unset.CreationTime, before, after)
+	}
+}
+
+// TestLoadSpec_DERCurveCreationTimeRejectsNonPositive covers #555: a
+// creation_time of zero or negative is refused at load, the same way
+// other invalid fixture values fail the load.
+func TestLoadSpec_DERCurveCreationTimeRejectsNonPositive(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		time    int64
+		wantMsg string
+	}{
+		{"zero", 0, `der_curves[0] (id="c1"): creation_time must be positive, got 0`},
+		{"negative", -5, `der_curves[0] (id="c1"): creation_time must be positive, got -5`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			given := tc.time
+			spec := &csiptest.Spec{
+				DERCurves: []csiptest.DERCurveSpec{
+					{ID: "c1", CurveType: 0, CreationTime: &given},
+				},
+			}
+			target := csiptest.NewTarget()
+			ctx := context.Background()
+			err := csiptest.LoadSpec(ctx, target, spec)
+			if err == nil {
+				t.Fatal("LoadSpec: want error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("LoadSpec: error = %v, want it to contain %q", err, tc.wantMsg)
+			}
+			if n, err := target.DERCurves.Count(ctx); err != nil || n != 0 {
+				t.Errorf("DERCurves.Count = %d, %v, want 0, nil", n, err)
 			}
 		})
 	}

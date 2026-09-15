@@ -1,16 +1,16 @@
-// CSIP V1.2 §8.11 — Inverter Control: Volt/Watt.
+// CSIP V1.2 Section 8.11 - Inverter Control: Volt/Watt.
 //
 // BASIC-011 proves the server renders a DERControl carrying
 // opModVoltWatt referencing a Volt/Watt DERCurve (curveType =
-// CurveTypeOpModVoltWatt = 3) per Figure 11.
+// CurveTypeOpModVoltWatt = 12) per Figure 11.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.11):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.11):
 //
-//	Step 1 (server has DERProgram + 1 DERControl + 1 DERCurve)    ──► fixture load
-//	Step 2 (client walks /dcap → /edev → /fsa → DERProgram → DERControl)
-//	                                                               ──► basicModeWalk
-//	Step 3 (DERControl carries opModVoltWatt curve ref)            ──► per-field assertion
-//	Step 4 (global /dc carries 1 Volt/Watt curve, curveType = 3)   ──► walkSingleCurveBasic
+//	Step 1 (server has DERProgram + 1 DERControl + 1 DERCurve)    -> fixture load
+//	Step 2 (client walks /dcap -> /edev -> /fsa -> DERProgram -> DERControl)
+//	                                                               -> basicModeWalk
+//	Step 3 (DERControl carries opModVoltWatt curve ref)            -> per-field assertion
+//	Step 4 (global /dc carries 1 Volt/Watt curve, curveType = 12)  -> walkSingleCurveBasic
 //
 // #140 added opModVoltWatt to pkg/sep2.DERControlBase and flipped
 // this test from SKIP to active.
@@ -27,7 +27,7 @@ import (
 // basic011VoltWattRef is the opModVoltWatt curve ref the fixture seeds.
 const basic011VoltWattRef int32 = 0
 
-// TestBASIC_011_VoltWatt implements CSIP V1.2 §8.11.
+// TestBASIC_011_VoltWatt implements CSIP V1.2 Section 8.11.
 func TestBASIC_011_VoltWatt(t *testing.T) {
 	t.Parallel()
 	basicModeWalk(t, "basic-011-volt-watt.yaml",

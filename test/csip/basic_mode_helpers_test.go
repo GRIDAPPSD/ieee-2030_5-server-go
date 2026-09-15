@@ -1,13 +1,13 @@
 // Shared helpers for the BASIC-004..012 per-mode procedure tests.
 //
-// CSIP V1.2 §8.4-§8.12 share a near-identical procedure shape:
+// CSIP V1.2 Section 8.4-8.12 share a near-identical procedure shape:
 //
-//	Step 1: server has a DERProgram with one DERControl (or for §8.7,
+//	Step 1: server has a DERProgram with one DERControl (or for Section 8.7,
 //	        a DefaultDERControl) carrying the per-mode opMod*
 //	        parameter, plus the global /dc store carries the per-mode
 //	        DERCurve when the mode is curve-based.
-//	Step 2: client walks /dcap → /edev → /fsa → DERProgram → DERControl
-//	        (or DefaultDERControl for §8.7).
+//	Step 2: client walks /dcap -> /edev -> /fsa -> DERProgram -> DERControl
+//	        (or DefaultDERControl for Section 8.7).
 //	Step 3: client asserts the seeded opMod* survives the wire
 //	        roundtrip; for curve-based modes, walks /dc and asserts
 //	        the curve renders.
@@ -15,7 +15,7 @@
 // #135 wires server-side wire-fidelity tests against this shape.
 // The procedure's "act (advance time / FSA-swap / drive state)" and
 // "assert Response POST back" legs are NOT in scope for these
-// server-side tests — server just renders the seeded fixture; Response
+// server-side tests - server just renders the seeded fixture; Response
 // POST is exercised by #112/#116, and time/state are exercised by
 // #92/#123 in their own tests.
 //
@@ -24,8 +24,8 @@
 // today. Per #135 scope ("Do not change public API of
 // internal/handler or pkg/sep2"), those tests run the procedure walk
 // up to the field assertion and t.Skip with a // Pinned by #140
-// — implementation gap comment referencing the follow-up ticket. The
-// DERCurveList walk leg still runs for curve-based modes — DERCurve
+// - implementation gap comment referencing the follow-up ticket. The
+// DERCurveList walk leg still runs for curve-based modes - DERCurve
 // IS in pkg/sep2 today and renders correctly via /dc.
 package csip_test
 
@@ -39,12 +39,12 @@ import (
 )
 
 // basicModeWalk drives the chained-walk procedure shape shared by
-// BASIC-004..012: load the named fixture, walk /dcap → /edev → /fsa →
+// BASIC-004..012: load the named fixture, walk /dcap -> /edev -> /fsa ->
 // DERProgram, then invoke the per-mode assert callback with the
 // resulting program, the walked DERControlList, and the booted server's
 // client so the callback can issue mode-specific follow-up GETs.
 //
-// Boots under both GCM and CCM cipher modes — same shape as
+// Boots under both GCM and CCM cipher modes - same shape as
 // CORE-012/013. The callback receives the cipher mode label for
 // failure-message diagnosability.
 func basicModeWalk(
@@ -76,7 +76,7 @@ func basicModeWalk(
 	}
 }
 
-// basicModeWalkDefault is the variant for §8.7 — Ramp Rates is the
+// basicModeWalkDefault is the variant for Section 8.7 - Ramp Rates is the
 // only V1.2 BASIC procedure that targets DefaultDERControl directly
 // (no DERControl event). The callback receives the DefaultDERControl.
 func basicModeWalkDefault(
@@ -108,7 +108,7 @@ func basicModeWalkDefault(
 	}
 }
 
-// walkSingleProgramBasic walks /dcap → /edev → /fsa → first FSA's
+// walkSingleProgramBasic walks /dcap -> /edev -> /fsa -> first FSA's
 // DERProgramList and returns the lone DERProgram. The BASIC-004..012
 // fixtures all ship exactly one program; this helper fatals if the
 // fixture topology drifts.
@@ -186,7 +186,7 @@ func walkSingleControlListBasic(
 
 // walkDefaultDERControlBasic follows the program's
 // DefaultDERControlLink and returns the resulting resource. Used by
-// the §8.7 (Ramp Rates) helper variant.
+// the Section 8.7 (Ramp Rates) helper variant.
 func walkDefaultDERControlBasic(
 	t *testing.T,
 	ctx context.Context,
@@ -237,7 +237,7 @@ func walkSingleCurveBasic(
 }
 
 // formatGap is a small string-builder so each gap-skipped test prints
-// a consistent message format pointing at #140 — the follow-up
+// a consistent message format pointing at #140 - the follow-up
 // ticket gathering all BASIC-NNN sep2 implementation gaps.
 //
 // #140 closed all five gaps formatGap used to flag. Kept here so
@@ -246,7 +246,7 @@ func walkSingleCurveBasic(
 //nolint:unused // retained per comment above for future BASIC-NNN gap re-opens
 func formatGap(test, missingField string) string {
 	return fmt.Sprintf(
-		"%s wire-fidelity assertion pinned by #140 — pkg/sep2.DERControlBase carries no %s field today; "+
+		"%s wire-fidelity assertion pinned by #140 - pkg/sep2.DERControlBase carries no %s field today; "+
 			"adding it changes the public API and is out of scope per #135. "+
 			"Procedure walk up to this point succeeded (program + control list rendered correctly).",
 		test, missingField)
@@ -259,9 +259,36 @@ func formatGap(test, missingField string) string {
 func assertCurveRef(t *testing.T, cipher, field string, got *int32, want int32) {
 	t.Helper()
 	if got == nil {
-		t.Fatalf("[%s] DERControlBase.%s is nil — fixture dropped or wire-decode lost field", cipher, field)
+		t.Fatalf("[%s] DERControlBase.%s is nil - fixture dropped or wire-decode lost field", cipher, field)
 	}
 	if *got != want {
 		t.Errorf("[%s] DERControlBase.%s = %d, want %d", cipher, field, *got, want)
+	}
+}
+
+// assertCurveTypesByMRID checks that curves holds exactly the mRIDs in
+// want, each rendering the paired CurveType constant. Matching by mRID
+// rather than list position is required: the /dc handler is not
+// type-sorted, so a fixture-side swap between two curves of the
+// renumbered set would pass a position- or set-membership-only check.
+// Shared by BASIC-004 (4 curves) and BASIC-005 (2 curves).
+func assertCurveTypesByMRID(t *testing.T, cipher string, curves []sep2.DERCurve, want map[string]uint8) {
+	t.Helper()
+	seen := make(map[string]bool, len(want))
+	for _, cv := range curves {
+		wantType, ok := want[cv.MRID]
+		if !ok {
+			t.Errorf("[%s] DERCurve MRID = %q, not one of the expected curves", cipher, cv.MRID)
+			continue
+		}
+		if cv.CurveType != wantType {
+			t.Errorf("[%s] DERCurve %s CurveType = %d, want %d", cipher, cv.MRID, cv.CurveType, wantType)
+		}
+		seen[cv.MRID] = true
+	}
+	for mrid := range want {
+		if !seen[mrid] {
+			t.Errorf("[%s] DERCurveList missing curve %s", cipher, mrid)
+		}
 	}
 }

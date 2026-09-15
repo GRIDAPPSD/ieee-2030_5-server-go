@@ -21,8 +21,8 @@
 //	Step 4 (DERControl carries opModConnect, opModEnergize,
 //	         opModFixedPFInjectW, opModMaxLimW inline values
 //	         simultaneously)                                  -> immediate-mode block
-//	Step 5 (global /dc carries 3 curves spanning curveType 0,
-//	         1, 3 - V-Var, F-Watt, V-Watt)                    -> /dc walk
+//	Step 5 (global /dc carries 3 curves spanning curveType 11,
+//	         0, 12 - V-Var, F-Watt, V-Watt)                   -> /dc walk
 //
 // Standalone ticket (not folded into #135 per backlog) because
 // BASIC-015 is the first composed-mode procedure: any DERControl
@@ -34,6 +34,7 @@ package csip_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -43,9 +44,9 @@ import (
 // basic015 curve-ref values the fixture seeds; each must survive
 // the wire roundtrip exactly. The mapping is:
 //
-//	opModVoltVar  -> der_curves[0] (curveType 0, V-Var)
-//	opModVoltWatt -> der_curves[1] (curveType 3, V-Watt)
-//	opModFreqWatt -> der_curves[2] (curveType 1, F-Watt)
+//	opModVoltVar  -> der_curves[0] (curveType 11, V-Var)
+//	opModVoltWatt -> der_curves[1] (curveType 12, V-Watt)
+//	opModFreqWatt -> der_curves[2] (curveType 0, F-Watt)
 const (
 	basic015VoltVarRef  int32 = 0
 	basic015VoltWattRef int32 = 1
@@ -139,9 +140,9 @@ func TestBASIC_015_ComposedModes(t *testing.T) {
 			// curves. The /dc handler is not type-sorted, so check by
 			// counting hits rather than positional indexing.
 			wantTypes := map[uint8]bool{
-				sep2.CurveTypeOpModVoltVar:  false, // 0
-				sep2.CurveTypeOpModFreqWatt: false, // 1
-				sep2.CurveTypeOpModVoltWatt: false, // 3
+				sep2.CurveTypeOpModVoltVar:  false, // 11
+				sep2.CurveTypeOpModFreqWatt: false, // 0
+				sep2.CurveTypeOpModVoltWatt: false, // 12
 			}
 			for _, cv := range curves.DERCurve {
 				if _, ok := wantTypes[cv.CurveType]; !ok {
@@ -159,6 +160,35 @@ func TestBASIC_015_ComposedModes(t *testing.T) {
 			for ct, seen := range wantTypes {
 				if !seen {
 					t.Errorf("[%s] DERCurveList missing curveType %d", cipher, ct)
+				}
+			}
+
+			// The type set alone does not prove which curve each opMod
+			// field points at: a fixture-side type swap between two of
+			// the three curves leaves the set unchanged (#555). Resolve
+			// each ref (its href is "/dc/{ref}") to the curve it names
+			// and check that curve's own type.
+			byHref := make(map[string]uint8, len(curves.DERCurve))
+			for _, cv := range curves.DERCurve {
+				byHref[cv.Href] = cv.CurveType
+			}
+			for _, ref := range []struct {
+				field     string
+				id        int32
+				curveType uint8
+			}{
+				{"opModVoltVar", basic015VoltVarRef, sep2.CurveTypeOpModVoltVar},
+				{"opModVoltWatt", basic015VoltWattRef, sep2.CurveTypeOpModVoltWatt},
+				{"opModFreqWatt", basic015FreqWattRef, sep2.CurveTypeOpModFreqWatt},
+			} {
+				href := fmt.Sprintf("/dc/%d", ref.id)
+				got, ok := byHref[href]
+				if !ok {
+					t.Errorf("[%s] %s references %s, not present in DERCurveList", cipher, ref.field, href)
+					continue
+				}
+				if got != ref.curveType {
+					t.Errorf("[%s] %s -> %s CurveType = %d, want %d", cipher, ref.field, href, got, ref.curveType)
 				}
 			}
 		})

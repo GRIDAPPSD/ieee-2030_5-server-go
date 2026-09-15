@@ -1,20 +1,20 @@
-// CSIP V1.2 §8.12 — Inverter Control: Frequency/Watt.
+// CSIP V1.2 Section 8.12 - Inverter Control: Frequency/Watt.
 //
 // BASIC-012 proves the server renders a DERControl carrying
 // opModFreqWatt referencing a Freq/Watt DERCurve (curveType =
-// CurveTypeOpModFreqWatt = 1) per Figure 12.
+// CurveTypeOpModFreqWatt = 0) per Figure 12.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.12):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.12):
 //
-//	Step 1 (server has DERProgram + 1 DERControl + 1 DERCurve)    ──► fixture load
-//	Step 2 (client walks /dcap → /edev → /fsa → DERProgram → DERControl)
-//	                                                               ──► basicModeWalk
-//	Step 3 (DERControl carries opModFreqWatt curve ref)            ──► per-field assertion
-//	Step 4 (global /dc carries 1 Freq/Watt curve, curveType = 1)   ──► walkSingleCurveBasic
+//	Step 1 (server has DERProgram + 1 DERControl + 1 DERCurve)    -> fixture load
+//	Step 2 (client walks /dcap -> /edev -> /fsa -> DERProgram -> DERControl)
+//	                                                               -> basicModeWalk
+//	Step 3 (DERControl carries opModFreqWatt curve ref)            -> per-field assertion
+//	Step 4 (global /dc carries 1 Freq/Watt curve, curveType = 0)   -> walkSingleCurveBasic
 //
 // #140 added opModFreqWatt to pkg/sep2.DERControlBase and flipped
-// this test from SKIP to active. Note opModFreqDroop (§8.5 LFRT/HFRT
-// droop coefficient) is unrelated to the curve-based §8.12 mode.
+// this test from SKIP to active. Note opModFreqDroop (Section 8.5 LFRT/HFRT
+// droop coefficient) is unrelated to the curve-based Section 8.12 mode.
 package csip_test
 
 import (
@@ -28,7 +28,7 @@ import (
 // basic012FreqWattRef is the opModFreqWatt curve ref the fixture seeds.
 const basic012FreqWattRef int32 = 0
 
-// TestBASIC_012_FreqWatt implements CSIP V1.2 §8.12.
+// TestBASIC_012_FreqWatt implements CSIP V1.2 Section 8.12.
 func TestBASIC_012_FreqWatt(t *testing.T) {
 	t.Parallel()
 	basicModeWalk(t, "basic-012-freq-watt.yaml",

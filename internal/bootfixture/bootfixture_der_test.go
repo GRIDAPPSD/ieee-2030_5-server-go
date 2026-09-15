@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -865,6 +866,46 @@ der_curves:
 	}
 }
 
+// TestBuildDERCurveCreationTime covers #539: a curve whose spec gives a
+// creation_time is served with exactly that value, and a curve whose spec
+// gives none is served with the time the fixture was loaded, never 0.
+func TestBuildDERCurveCreationTime(t *testing.T) {
+	t.Parallel()
+
+	before := time.Now().Unix()
+	target := mustLoadYAML(t, `
+der_curves:
+  - id: "c1"
+    curve_type: 11
+    creation_time: 1700000000
+  - id: "c2"
+    curve_type: 0
+`)
+	after := time.Now().Unix()
+	ctx := context.Background()
+
+	withTime, err := target.DERCurves.Get(ctx, "c1")
+	if err != nil {
+		t.Fatalf("DERCurves.Get(c1): %v", err)
+	}
+	if want := int64(1700000000); withTime.CreationTime != want {
+		t.Errorf("DERCurve(c1).CreationTime = %d, want %d (spec value)",
+			withTime.CreationTime, want)
+	}
+
+	unset, err := target.DERCurves.Get(ctx, "c2")
+	if err != nil {
+		t.Fatalf("DERCurves.Get(c2): %v", err)
+	}
+	if unset.CreationTime == 0 {
+		t.Errorf("DERCurve(c2).CreationTime = 0, want the fixture load time")
+	}
+	if unset.CreationTime < before || unset.CreationTime > after {
+		t.Errorf("DERCurve(c2).CreationTime = %d, want within [%d, %d] (the fixture load window)",
+			unset.CreationTime, before, after)
+	}
+}
+
 // --- compositeKey ---------------------------------------------------
 
 // TestCompositeKeyDistinctness asserts what makes two scoped entries
@@ -1095,6 +1136,16 @@ end_devices:
 			yaml:     "der_curves:\n  - id: \"c1\"\n    curve_type: 0\n  - id: \"c1\"\n    curve_type: 0\n",
 			wantMsg:  `der_curves[1] (id="c1")`,
 			wantDupe: true,
+		},
+		{
+			name:    "der curve creation_time zero",
+			yaml:    "der_curves:\n  - id: \"c1\"\n    curve_type: 0\n    creation_time: 0\n",
+			wantMsg: `der_curves[0] (id="c1"): creation_time must be positive, got 0`,
+		},
+		{
+			name:    "der curve creation_time negative",
+			yaml:    "der_curves:\n  - id: \"c1\"\n    curve_type: 0\n    creation_time: -5\n",
+			wantMsg: `der_curves[0] (id="c1"): creation_time must be positive, got -5`,
 		},
 	}
 

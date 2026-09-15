@@ -26,6 +26,20 @@ type ReactivePower struct {
 	Value      int16 `xml:"value"`
 }
 
+// ApparentPower represents apparent power in volt-amperes. Unlike
+// ActivePower, sep.xsd types its value UInt16.
+type ApparentPower struct {
+	Multiplier int8   `xml:"multiplier"`
+	Value      uint16 `xml:"value"`
+}
+
+// VoltageRMS represents an rms voltage in volts. sep.xsd types its value
+// UInt16.
+type VoltageRMS struct {
+	Multiplier int8   `xml:"multiplier"`
+	Value      uint16 `xml:"value"`
+}
+
 // PerCent is a percentage in hundredths of a percent (10000 = 100%).
 // IEEE 2030.5-2018 Annex B.2.3.4 "Types package", "PerCent object
 // (UInt16)": range 0 to 10000. Unlike ActivePower/ReactivePower, PerCent

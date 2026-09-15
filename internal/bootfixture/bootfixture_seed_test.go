@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
@@ -881,5 +882,49 @@ func TestReconcileWithoutDataDirCreatesEveryRecord(t *testing.T) {
 		if !errors.Is(err, store.ErrAlreadyExists) {
 			t.Errorf("%s: second pass into the same stores: err = %v, want store.ErrAlreadyExists", bootName, err)
 		}
+	}
+}
+
+const fixtureWithCurves = `
+der_curves:
+  - id: c1
+    curve_type: 11
+    creation_time: 1700000000
+  - id: c2
+    curve_type: 0
+`
+
+// TestReconcileServesFixtureCurveCreationTime covers #539 on the
+// production boot path: with a data_dir, Reconcile validates the spec
+// with applySpec and then writes DERCurves through reconcilePlan.apply,
+// not through Load, so a curve's served creationTime must be checked
+// there directly rather than inferred from Load's own tests.
+func TestReconcileServesFixtureCurveCreationTime(t *testing.T) {
+	t.Parallel()
+	h := newSeedHarness(t)
+	ctx := context.Background()
+
+	before := time.Now().Unix()
+	target := h.mustBoot(fixtureWithCurves)
+	after := time.Now().Unix()
+
+	withTime, err := target.DERCurves.Get(ctx, "c1")
+	if err != nil {
+		t.Fatalf("DERCurves.Get(c1): %v", err)
+	}
+	if want := int64(1700000000); withTime.CreationTime != want {
+		t.Errorf("DERCurve(c1).CreationTime = %d, want %d (spec value)", withTime.CreationTime, want)
+	}
+
+	unset, err := target.DERCurves.Get(ctx, "c2")
+	if err != nil {
+		t.Fatalf("DERCurves.Get(c2): %v", err)
+	}
+	if unset.CreationTime == 0 {
+		t.Errorf("DERCurve(c2).CreationTime = 0, want the boot's load time")
+	}
+	if unset.CreationTime < before || unset.CreationTime > after {
+		t.Errorf("DERCurve(c2).CreationTime = %d, want within [%d, %d] (the boot window)",
+			unset.CreationTime, before, after)
 	}
 }

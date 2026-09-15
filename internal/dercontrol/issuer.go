@@ -29,16 +29,25 @@ type Issuer struct {
 	scopeLocks map[string]*sync.Mutex
 }
 
-// NewIssuer builds an Issuer. cfg's zero fields take the package defaults
-// (see Config.withDefaults); a nil cfg.PEN means every Issue call refuses.
-func NewIssuer(programs programStore, controls controlStore, lifecycles lifecycleStore, cfg Config) *Issuer {
+// NewIssuer builds an Issuer, or returns an error if cfg's bounds are
+// invalid (see Config.validate). cfg's zero StartLead, MinDuration and
+// MaxDuration fields take the package defaults; a nil or zero cfg.PEN means
+// every Issue call refuses with RefusalPENNotConfigured.
+func NewIssuer(programs programStore, controls controlStore, lifecycles lifecycleStore, cfg Config) (*Issuer, error) {
+	cfg = cfg.withDefaults()
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	if cfg.PEN != nil && *cfg.PEN == 0 {
+		cfg.PEN = nil
+	}
 	return &Issuer{
 		programs:   programs,
 		controls:   controls,
 		lifecycles: lifecycles,
-		cfg:        cfg.withDefaults(),
+		cfg:        cfg,
 		scopeLocks: make(map[string]*sync.Mutex),
-	}
+	}, nil
 }
 
 func scopeKeyOf(s Scope) string {

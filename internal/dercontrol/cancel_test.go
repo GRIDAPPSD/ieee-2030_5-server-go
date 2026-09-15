@@ -138,9 +138,9 @@ func TestCancel_RefusesUnknownControl(t *testing.T) {
 }
 
 // TestCancel_RefusesAtExactSupersedeInstant proves the supersede refusal
-// boundary is inclusive (Tess T16): the existing already-superseded test
-// uses now-10, never the exact instant, so a mutant changing
-// supersededAsOf's ">=" to ">" would survive without this.
+// boundary is inclusive: the existing already-superseded test uses
+// now-10, never the exact instant, so a mutant changing supersededAsOf's
+// ">=" to ">" would survive without this.
 func TestCancel_RefusesAtExactSupersedeInstant(t *testing.T) {
 	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
@@ -166,9 +166,9 @@ func TestCancel_RefusesAtExactSupersedeInstant(t *testing.T) {
 }
 
 // TestCancel_RefusesAtExactEndInstant proves the "ended" refusal boundary
-// is inclusive (Tess T16): the existing refused-ended test sets an end
-// 1000 seconds in the past, never the exact instant, so a mutant changing
-// the end comparison's ">=" to ">" would survive without this.
+// is inclusive: the existing refused-ended test sets an end 1000 seconds
+// in the past, never the exact instant, so a mutant changing the end
+// comparison's ">=" to ">" would survive without this.
 func TestCancel_RefusesAtExactEndInstant(t *testing.T) {
 	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
@@ -195,9 +195,9 @@ func TestCancel_RefusesAtExactEndInstant(t *testing.T) {
 }
 
 // TestCancel_RefusalLeavesControlAndLifecycleUnchanged proves a refused
-// Cancel call writes nothing (Tess T17): a mutant that writes CancelledAt
-// to the lifecycle store before the already-cancelled check runs would
-// silently overwrite the first cancellation's recorded time and reason.
+// Cancel call writes nothing: a mutant that writes CancelledAt to the
+// lifecycle store before the already-cancelled check runs would silently
+// overwrite the first cancellation's recorded time and reason.
 func TestCancel_RefusalLeavesControlAndLifecycleUnchanged(t *testing.T) {
 	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))

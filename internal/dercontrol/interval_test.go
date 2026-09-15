@@ -25,7 +25,7 @@ func issueWith(t *testing.T, h *testHarness, mutate func(*CreateRequest)) (Resul
 }
 
 func TestIssue_Interval_StartOmittedEqualsCreationTime(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	res, err := issueWith(t, h, func(r *CreateRequest) { r.Start = nil })
@@ -38,7 +38,7 @@ func TestIssue_Interval_StartOmittedEqualsCreationTime(t *testing.T) {
 }
 
 func TestIssue_Interval_StartAtNowAccepted(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	now := sep2time.Now().Unix()
@@ -52,7 +52,7 @@ func TestIssue_Interval_StartAtNowAccepted(t *testing.T) {
 }
 
 func TestIssue_Interval_StartBeforeNowRefused(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	past := sep2time.Now().Unix() - 1
@@ -62,7 +62,7 @@ func TestIssue_Interval_StartBeforeNowRefused(t *testing.T) {
 }
 
 func TestIssue_Interval_StartAtLeadBoundaryAccepted(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	atLead := sep2time.Now().Unix() + int64(DefaultStartLead.Seconds())
@@ -73,7 +73,7 @@ func TestIssue_Interval_StartAtLeadBoundaryAccepted(t *testing.T) {
 }
 
 func TestIssue_Interval_StartPastLeadBoundaryRefused(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	pastLead := sep2time.Now().Unix() + int64(DefaultStartLead.Seconds()) + 1
@@ -83,7 +83,7 @@ func TestIssue_Interval_StartPastLeadBoundaryRefused(t *testing.T) {
 }
 
 func TestIssue_Interval_DurationAtMinBoundaryAccepted(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	_, err := issueWith(t, h, func(r *CreateRequest) { r.DurationSeconds = uint32(DefaultMinDuration.Seconds()) })
@@ -93,7 +93,7 @@ func TestIssue_Interval_DurationAtMinBoundaryAccepted(t *testing.T) {
 }
 
 func TestIssue_Interval_DurationBelowMinRefused(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	_, err := issueWith(t, h, func(r *CreateRequest) { r.DurationSeconds = uint32(DefaultMinDuration.Seconds()) - 1 })
@@ -102,7 +102,7 @@ func TestIssue_Interval_DurationBelowMinRefused(t *testing.T) {
 }
 
 func TestIssue_Interval_DurationAtMaxBoundaryAccepted(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	_, err := issueWith(t, h, func(r *CreateRequest) { r.DurationSeconds = uint32(DefaultMaxDuration.Seconds()) })
@@ -112,7 +112,7 @@ func TestIssue_Interval_DurationAtMaxBoundaryAccepted(t *testing.T) {
 }
 
 func TestIssue_Interval_DurationAboveMaxRefused(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	_, err := issueWith(t, h, func(r *CreateRequest) { r.DurationSeconds = uint32(DefaultMaxDuration.Seconds()) + 1 })

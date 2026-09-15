@@ -29,7 +29,7 @@ func mustIssueScheduled(t *testing.T, h *testHarness, scope [3]string) Result {
 }
 
 func TestCancel_RecordsTimeAndReason_KeepsControlStored(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 	res := mustIssueScheduled(t, h, [3]string{"dev1", "0", "p1"})
 
@@ -56,7 +56,7 @@ func TestCancel_RecordsTimeAndReason_KeepsControlStored(t *testing.T) {
 }
 
 func TestCancel_RefusesAlreadyCancelled(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 	res := mustIssueScheduled(t, h, [3]string{"dev1", "0", "p1"})
 
@@ -68,7 +68,7 @@ func TestCancel_RefusesAlreadyCancelled(t *testing.T) {
 }
 
 func TestCancel_RefusesAlreadySuperseded(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 	res := mustIssueScheduled(t, h, [3]string{"dev1", "0", "p1"})
 
@@ -90,7 +90,7 @@ func TestCancel_RefusesAlreadySuperseded(t *testing.T) {
 }
 
 func TestCancel_AllowedBeforeSupersedeTakesEffect(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 	res := mustIssueScheduled(t, h, [3]string{"dev1", "0", "p1"})
 
@@ -112,7 +112,7 @@ func TestCancel_AllowedBeforeSupersedeTakesEffect(t *testing.T) {
 }
 
 func TestCancel_RefusesEnded(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 	res := mustIssueScheduled(t, h, [3]string{"dev1", "0", "p1"})
 
@@ -130,7 +130,7 @@ func TestCancel_RefusesEnded(t *testing.T) {
 }
 
 func TestCancel_RefusesUnknownControl(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	_, err := h.issuer.Cancel(context.Background(), Scope{EndDeviceID: "dev1", FSAID: "0", DERProgramID: "p1"}, "no-such-id", "")
@@ -138,7 +138,7 @@ func TestCancel_RefusesUnknownControl(t *testing.T) {
 }
 
 func TestCancel_DoesNotReinstateSupersededControl(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	start := sep2time.Now().Unix() + 1000

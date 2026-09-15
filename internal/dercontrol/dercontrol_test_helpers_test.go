@@ -19,13 +19,18 @@ type testHarness struct {
 	lifecycles *memory.ScopedStore[LifecycleRecord]
 }
 
-func newHarness(cfg Config) *testHarness {
+func newHarness(t *testing.T, cfg Config) *testHarness {
+	t.Helper()
 	h := &testHarness{
 		programs:   memory.NewScopedStore[sep2.DERProgram](),
 		controls:   memory.NewScopedStore[sep2.DERControl](),
 		lifecycles: memory.NewScopedStore[LifecycleRecord](),
 	}
-	h.issuer = NewIssuer(h.programs, h.controls, h.lifecycles, cfg)
+	issuer, err := NewIssuer(h.programs, h.controls, h.lifecycles, cfg)
+	if err != nil {
+		t.Fatalf("NewIssuer() error = %v", err)
+	}
+	h.issuer = issuer
 	return h
 }
 

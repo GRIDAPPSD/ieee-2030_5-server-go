@@ -12,7 +12,7 @@ import (
 // after the newest creationTime in the same scope, whichever is later.
 
 func TestIssue_CreationTime_NearServerClock(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	before := sep2time.Now().Unix()
@@ -35,7 +35,7 @@ func TestIssue_CreationTime_NearServerClock(t *testing.T) {
 // creationTime is distinct, proving the per-scope lock actually serializes
 // the read-max-then-write step it exists for.
 func TestIssue_CreationTime_ConcurrentIssuesAreDistinctAndOrdered(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	const n = 50

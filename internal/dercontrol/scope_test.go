@@ -13,7 +13,7 @@ import (
 // stored DERProgram's DERControlListLink href, never from the fsaId in the
 // request's program href.
 func TestIssue_ScopeFromControlListLink_NotRequestFSAID(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	// Two FSAs under one device: the program is reachable at both, but its
 	// own DERControlListLink names fsa "0".
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
@@ -49,7 +49,7 @@ func TestIssue_ScopeFromControlListLink_NotRequestFSAID(t *testing.T) {
 }
 
 func TestIssue_RefusesNoControlListLink(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", "") // Href empty -> parses as invalid
 
 	req := CreateRequest{
@@ -63,7 +63,7 @@ func TestIssue_RefusesNoControlListLink(t *testing.T) {
 }
 
 func TestIssue_RefusesControlListLinkNamingAnotherDevice(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	// The link claims a different device than the one the program was
 	// loaded under.
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev2", "0", "p1"))
@@ -121,7 +121,7 @@ func TestIssue_RefusesProgramNotFound(t *testing.T) {
 }
 
 func TestIssue_RefusesInvalidProgramHref(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	req := CreateRequest{
 		DERProgramHref:  "/not/a/program/href",
 		Type:            Connect,

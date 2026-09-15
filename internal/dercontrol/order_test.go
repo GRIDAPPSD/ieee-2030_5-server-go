@@ -62,7 +62,7 @@ func TestSortableID_OrdersByStartThenCreationTimeDescThenMRIDDesc(t *testing.T) 
 // and asserts newest-creationTime-first, exercising Issue's real id
 // assignment rather than sortableID in isolation.
 func TestIssue_TableFiftyOrder_ThreeAdminControls(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	start := sep2time.Now().Unix() + 100

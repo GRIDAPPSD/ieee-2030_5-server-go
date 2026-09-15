@@ -14,7 +14,7 @@ import (
 // are not superseded.
 
 func TestIssue_Supersede_SameSetOverlapping(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	start := sep2time.Now().Unix() + 1000
@@ -53,7 +53,7 @@ func TestIssue_Supersede_SameSetOverlapping(t *testing.T) {
 }
 
 func TestIssue_Supersede_SameSetAdjacentNotSuperseded(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	start := sep2time.Now().Unix() + 1000
@@ -89,7 +89,7 @@ func TestIssue_Supersede_SameSetAdjacentNotSuperseded(t *testing.T) {
 }
 
 func TestIssue_Supersede_DisjointSetsNotSuperseded(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	start := sep2time.Now().Unix() + 1000
@@ -127,7 +127,7 @@ func TestIssue_Supersede_DisjointSetsNotSuperseded(t *testing.T) {
 }
 
 func TestIssue_Supersede_OtherProgramNotSuperseded(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 	h.seedProgram(t, "dev1", "p2", controlListHref("dev1", "0", "p2"))
 

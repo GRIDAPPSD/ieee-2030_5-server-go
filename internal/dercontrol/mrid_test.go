@@ -14,7 +14,7 @@ import (
 
 func TestIssue_MRID_LowBitsArePEN(t *testing.T) {
 	pen := uint32(0xABCD1234)
-	h := newHarness(Config{PEN: &pen})
+	h := newHarness(t, Config{PEN: &pen})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	res, err := h.issuer.Issue(context.Background(), CreateRequest{
@@ -43,7 +43,7 @@ func TestIssue_MRID_LowBitsArePEN(t *testing.T) {
 }
 
 func TestIssue_MRID_1000DistinctValues(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	seen := make(map[string]bool, 1000)
@@ -64,7 +64,7 @@ func TestIssue_MRID_1000DistinctValues(t *testing.T) {
 }
 
 func TestIssue_RefusesWhenPENNotConfigured(t *testing.T) {
-	h := newHarness(Config{}) // no PEN
+	h := newHarness(t, Config{}) // no PEN
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	_, err := h.issuer.Issue(context.Background(), CreateRequest{

@@ -53,7 +53,7 @@ func TestRefusalError_CodesAreDistinctMessages(t *testing.T) {
 func TestIssue_RefusalTextNeverContainsRequestValue(t *testing.T) {
 	const poison = "><script>evil-mrid-forgery-attempt"
 
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	_, err := h.issuer.Issue(context.Background(), CreateRequest{

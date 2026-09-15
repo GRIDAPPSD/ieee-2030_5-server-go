@@ -11,7 +11,7 @@ import (
 // creationTime.
 
 func TestIssue_Mapping_Connect(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	res, err := issueWith(t, h, func(r *CreateRequest) { r.Type = Connect })
@@ -29,7 +29,7 @@ func TestIssue_Mapping_Connect(t *testing.T) {
 }
 
 func TestIssue_Mapping_Disconnect(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	res, err := issueWith(t, h, func(r *CreateRequest) { r.Type = Disconnect })
@@ -47,7 +47,7 @@ func TestIssue_Mapping_Disconnect(t *testing.T) {
 }
 
 func TestIssue_Mapping_ConnectRefusesAValue(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	_, err := issueWith(t, h, func(r *CreateRequest) {
@@ -70,7 +70,7 @@ func TestIssue_Mapping_MaxLimW_Boundaries(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newHarness(Config{PEN: testPEN(1)})
+			h := newHarness(t, Config{PEN: testPEN(1)})
 			h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 			v := tc.value
 			res, err := issueWith(t, h, func(r *CreateRequest) {
@@ -94,7 +94,7 @@ func TestIssue_Mapping_MaxLimW_Boundaries(t *testing.T) {
 }
 
 func TestIssue_Mapping_MaxLimW_RefusesMissingValue(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	_, err := issueWith(t, h, func(r *CreateRequest) { r.Type = MaxLimW })
@@ -141,7 +141,7 @@ func TestIssue_Mapping_FixedPFInjectW_Boundaries(t *testing.T) {
 }
 
 func TestIssue_Mapping_FixedPFInjectW_RefusesMissingValue(t *testing.T) {
-	h := newHarness(Config{PEN: testPEN(1)})
+	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	_, err := issueWith(t, h, func(r *CreateRequest) { r.Type = FixedPFInjectW })

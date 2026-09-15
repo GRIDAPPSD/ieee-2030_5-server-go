@@ -16,6 +16,15 @@ import (
 // per GRIDAPPSD/ieee-2030_5-server-go#27 and #28.
 var nowFunc = time.Now
 
+// Now returns the current time from the same clock HandleTime serves,
+// including the csip_test_hooks build's AdvanceClock offset. Exported so
+// other packages can share the one clock the server presents to a device
+// via /tm, rather than reading time.Now() directly and drifting from it
+// under the test hook (#563).
+func Now() time.Time {
+	return nowFunc()
+}
+
 // TimeParams holds the time-resource configuration values supplied by the
 // server at construction. Callers build this from their config struct; the
 // handler closes over it so core never imports the server-side config

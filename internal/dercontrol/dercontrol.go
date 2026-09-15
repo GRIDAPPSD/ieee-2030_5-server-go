@@ -6,6 +6,7 @@ package dercontrol
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -154,9 +155,13 @@ type lifecycleStore interface {
 }
 
 // Config holds the issuer's tunables. A zero StartLead, MinDuration or
-// MaxDuration takes the package default; PEN has no default, so a nil PEN
-// makes every Issue call refuse with RefusalPENNotConfigured. Wiring these
-// from server configuration is a later issue.
+// MaxDuration takes the package default. A configured (non-zero) bound must
+// be a positive whole number of seconds, and MinDuration must not exceed
+// MaxDuration; NewIssuer rejects a Config that violates either. PEN has no
+// default: a nil PEN, or a PEN of 0 (IANA-reserved and therefore treated as
+// not configured), makes every Issue call refuse with
+// RefusalPENNotConfigured. Wiring these from server configuration is a
+// later issue.
 type Config struct {
 	PEN         *uint32
 	StartLead   time.Duration
@@ -175,4 +180,36 @@ func (c Config) withDefaults() Config {
 		c.MaxDuration = DefaultMaxDuration
 	}
 	return c
+}
+
+// validate reports an error if a bound (already defaulted by withDefaults,
+// so a zero here means the field was left unset) is not a positive whole
+// number of seconds, or if MinDuration exceeds MaxDuration. A sub-second
+// bound is rejected rather than silently truncated: Issue compares against
+// int64(d/time.Second), so a 500ms MinDuration would otherwise become 0 and
+// accept a zero-length request.
+func (c Config) validate() error {
+	if err := validatePositiveWholeSeconds("StartLead", c.StartLead); err != nil {
+		return err
+	}
+	if err := validatePositiveWholeSeconds("MinDuration", c.MinDuration); err != nil {
+		return err
+	}
+	if err := validatePositiveWholeSeconds("MaxDuration", c.MaxDuration); err != nil {
+		return err
+	}
+	if c.MinDuration > c.MaxDuration {
+		return fmt.Errorf("dercontrol: MinDuration (%s) exceeds MaxDuration (%s)", c.MinDuration, c.MaxDuration)
+	}
+	return nil
+}
+
+func validatePositiveWholeSeconds(name string, d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("dercontrol: %s must be positive, got %s", name, d)
+	}
+	if d%time.Second != 0 {
+		return fmt.Errorf("dercontrol: %s must be a whole number of seconds, got %s", name, d)
+	}
+	return nil
 }

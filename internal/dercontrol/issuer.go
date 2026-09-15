@@ -372,9 +372,8 @@ func buildBase(req CreateRequest) (*sep2.DERControlBase, error) {
 }
 
 // controlShape reduces a DERControlBase to the closed set of shapes v1's
-// four request types produce, for supersede's control-set equality test
-// (design section 5: "the set of non-nil DERControlBase fields is equal").
-// A switch over the four shapes is enough because only controls this
+// four request types produce, for the supersede scan's control-set equality
+// test. A switch over the four shapes is enough because only controls this
 // package created ever carry a lifecycle record, and buildBase produces
 // only these four.
 func controlShape(b *sep2.DERControlBase) string {

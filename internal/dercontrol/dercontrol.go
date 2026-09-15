@@ -23,8 +23,7 @@ const (
 
 // ControlType selects which DERControlBase shape Issue builds. The set is
 // closed: IEEE 2030.5-2018 defines other opMod fields, but v1 supports only
-// these four (design decision D1/D2, der-control-route-design-2026-09-14.md
-// section 4).
+// these four.
 type ControlType string
 
 const (
@@ -92,7 +91,7 @@ type Result struct {
 
 	// Supersedes lists the mRIDs of controls this one fully superseded
 	// (same control set, overlapping interval), so a caller can report the
-	// effect back to the operator (design section 3, the 201 response).
+	// effect back to the operator.
 	Supersedes []string
 }
 

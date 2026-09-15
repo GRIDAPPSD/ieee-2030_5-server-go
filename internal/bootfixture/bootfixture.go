@@ -141,7 +141,9 @@ type DERControlSpec struct {
 // carries the time the fixture was loaded rather than 0: DERCurve's
 // creationTime is a required element, and an unset one round-trips as a
 // schema-valid but wrong claim that the curve was created at the Unix
-// epoch (#539).
+// epoch (#539). When given, it must be positive: zero or negative values
+// are refused at load, the same as any other invalid fixture value
+// (#555).
 type DERCurveSpec struct {
 	ID           string          `yaml:"id"`
 	MRID         string          `yaml:"mrid,omitempty"`
@@ -328,6 +330,9 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 	for i, c := range spec.DERCurves {
 		if c.ID == "" {
 			return fmt.Errorf("der_curves[%d]: id is required", i)
+		}
+		if c.CreationTime != nil && *c.CreationTime <= 0 {
+			return fmt.Errorf("der_curves[%d] (id=%q): creation_time must be positive, got %d", i, c.ID, *c.CreationTime)
 		}
 		if err := createDERCurve(ctx, target, i, c, loadTime); err != nil {
 			return err

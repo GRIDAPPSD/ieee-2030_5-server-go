@@ -481,6 +481,45 @@ func TestLoadSpec_DERCurveCreationTime(t *testing.T) {
 	}
 }
 
+// TestLoadSpec_DERCurveCreationTimeRejectsNonPositive covers #555: a
+// creation_time of zero or negative is refused at load, the same way
+// other invalid fixture values fail the load.
+func TestLoadSpec_DERCurveCreationTimeRejectsNonPositive(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		time    int64
+		wantMsg string
+	}{
+		{"zero", 0, `der_curves[0] (id="c1"): creation_time must be positive, got 0`},
+		{"negative", -5, `der_curves[0] (id="c1"): creation_time must be positive, got -5`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			given := tc.time
+			spec := &csiptest.Spec{
+				DERCurves: []csiptest.DERCurveSpec{
+					{ID: "c1", CurveType: 0, CreationTime: &given},
+				},
+			}
+			target := csiptest.NewTarget()
+			ctx := context.Background()
+			err := csiptest.LoadSpec(ctx, target, spec)
+			if err == nil {
+				t.Fatal("LoadSpec: want error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("LoadSpec: error = %v, want it to contain %q", err, tc.wantMsg)
+			}
+			if n, err := target.DERCurves.Count(ctx); err != nil || n != 0 {
+				t.Errorf("DERCurves.Count = %d, %v, want 0, nil", n, err)
+			}
+		})
+	}
+}
+
 func TestLoad_UnknownYAMLKey_Errors(t *testing.T) {
 	t.Parallel()
 

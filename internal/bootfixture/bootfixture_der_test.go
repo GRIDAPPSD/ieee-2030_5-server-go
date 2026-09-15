@@ -1137,6 +1137,16 @@ end_devices:
 			wantMsg:  `der_curves[1] (id="c1")`,
 			wantDupe: true,
 		},
+		{
+			name:    "der curve creation_time zero",
+			yaml:    "der_curves:\n  - id: \"c1\"\n    curve_type: 0\n    creation_time: 0\n",
+			wantMsg: `der_curves[0] (id="c1"): creation_time must be positive, got 0`,
+		},
+		{
+			name:    "der curve creation_time negative",
+			yaml:    "der_curves:\n  - id: \"c1\"\n    curve_type: 0\n    creation_time: -5\n",
+			wantMsg: `der_curves[0] (id="c1"): creation_time must be positive, got -5`,
+		},
 	}
 
 	for _, tc := range cases {

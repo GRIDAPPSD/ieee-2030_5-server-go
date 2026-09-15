@@ -1,19 +1,19 @@
-// CSIP V1.2 §8.4 — Inverter Control: LVRT/HVRT.
+// CSIP V1.2 Section 8.4 - Inverter Control: LVRT/HVRT.
 //
 // BASIC-004 proves the server renders a DERControl carrying the four
 // LVRT/HVRT curve references per Figure 4, plus the four matching
 // DERCurves in the global /dc store, end-to-end over chained GETs.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.4):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.4):
 //
-//	Step 1 (server has DERProgram + 1 DERControl + 4 DERCurves)  ──► fixture load
-//	Step 2 (client walks /dcap → /edev → /fsa → DERProgram → DERControl)
-//	                                                              ──► basicModeWalk
+//	Step 1 (server has DERProgram + 1 DERControl + 4 DERCurves)  -> fixture load
+//	Step 2 (client walks /dcap -> /edev -> /fsa -> DERProgram -> DERControl)
+//	                                                              -> basicModeWalk
 //	Step 3 (DERControl carries opModLVRT*MustTrip /
 //	         opModLVRT*MomentaryCessation /
 //	         opModHVRT*MustTrip /
-//	         opModHVRT*MomentaryCessation curve refs)             ──► per-field assertions
-//	Step 4 (global /dc carries 4 ride-through curves)             ──► curve-list walk
+//	         opModHVRT*MomentaryCessation curve refs)             -> per-field assertions
+//	Step 4 (global /dc carries 4 ride-through curves)             -> curve-list walk
 //
 // #140 added the four ride-through curve-ref fields to
 // pkg/sep2.DERControlBase and flipped this test from SKIP to active.
@@ -37,7 +37,7 @@ const (
 	basic004HVRTMomentaryCessation int32 = 3
 )
 
-// TestBASIC_004_LVRTHVRT implements CSIP V1.2 §8.4.
+// TestBASIC_004_LVRTHVRT implements CSIP V1.2 Section 8.4.
 func TestBASIC_004_LVRTHVRT(t *testing.T) {
 	t.Parallel()
 	basicModeWalk(t, "basic-004-lvrt-hvrt.yaml",

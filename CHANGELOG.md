@@ -81,9 +81,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-extendable absolute cap. An integration that assumed the cookie was consumed per request, or
   reused a query ticket across requests, must move to the cookie.
   ([#365](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/365))
-- **Breaking.** The operator dashboard's nine working capabilities are rewritten as Svelte panels
-  served at `GET /ui/`; the previous single-string-constant page stays available behind a rollback
-  flag.
+- The operator dashboard's nine working capabilities are rewritten as Svelte panels served at
+  `GET /ui/`; the previous single-string-constant page stays available behind a rollback flag.
+  **Corrected during verification: not breaking.** `GET /` is unchanged and the prior placeholder
+  page remains reachable behind the rollback flag; no protocol client or wire contract is affected.
   ([#364](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/364))
 - The admin dashboard's shared state (SSE connection, activity history, FSA list, topology tree) moved
   into a shell component rendered once for every admin UI path, so a client-side route change no
@@ -118,11 +119,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `flow_reservation` handler: `POST /edev/{id}/frq` now returns `500 Internal Server Error`
-  when the underlying store fails to create the auto-generated `FlowReservationResponse`.
-  Previously the handler returned `201 Created` regardless of the store outcome, silently
-  dropping the reservation response while reporting success to the client.
-  ([#4](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/4))
 - The subscription notifier returns an error instead of panicking when a notification is attempted
   after the notifier has shut down.
   ([#460](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/460))
@@ -149,19 +145,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [#435](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/435)), and `POST /edev` refuses
   with `409` instead of returning another device's record on an index or SFDI collision (see Fixed,
   [#443](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/443)).
-- `DELETE /edev/{id}/sub/{subId}` now compares the subscription's stored `href` against the path, so a
-  `subId` belonging to a different EndDevice returns `404` and the subscription is left in place,
-  instead of being deleted with a `204`.
+- **Breaking, corrected during verification (was unmarked).** `DELETE /edev/{id}/sub/{subId}` now
+  compares the subscription's stored `href` against the path, so a `subId` belonging to a different
+  EndDevice returns `404` and the subscription is left in place, instead of being deleted with a
+  `204`.
   ([#435](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/435))
-- `POST /edev` now answers `409 Conflict`, instead of returning the existing record, when the
-  allocated index or the computed SFDI is already held by a different EndDevice; the in-memory index
-  is seeded from the store on startup so a restart cannot hand out an already-occupied index.
+- **Breaking, corrected during verification (was unmarked).** `POST /edev` now answers `409 Conflict`,
+  instead of returning the existing record, when the allocated index or the computed SFDI is already
+  held by a different EndDevice; the in-memory index is seeded from the store on startup so a restart
+  cannot hand out an already-occupied index.
   ([#443](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/443))
 - `PUT /edev/{id}` no longer takes the LFDI or SFDI from the request body. A device could rewrite its
   own record with another device's identity, redirecting that device's `GET /edev` and `POST /edev`
   and its manager's access to the rewritten record, or erase its own identity and lock itself out.
   ([#434](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/434))
-- Subscription `notificationURI` destinations are validated.
+- **Breaking, corrected during verification (was unmarked).** Subscription `notificationURI`
+  destinations are validated.
   `POST /edev/{id}/sub` refuses non-http(s) URIs, hosts that do not resolve,
   and loopback, link-local, unspecified, local multicast, and known cloud
   metadata addresses (including their IPv4-mapped, IPv4-compatible, and NAT64

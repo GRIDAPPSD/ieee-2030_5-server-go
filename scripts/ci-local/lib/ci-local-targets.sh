@@ -22,6 +22,16 @@
 #                     (gitignored, provisioned out of band; see
 #                     test/csip/README.md)
 #   node-toolchain  - needs npm and node on PATH
+#   e2e-toolchain   - needs npm and node on PATH, plus e2e/'s own
+#                     dependencies already installed (the make target
+#                     itself does not run `npm ci`, unlike ui-check; see
+#                     the test-e2e recipe's own comment in the Makefile).
+#                     Does not check for the Playwright chromium browser
+#                     binary: an absent browser fails the gate with
+#                     Playwright's own actionable error rather than a
+#                     silent SKIP, the same way a broken lint config
+#                     fails rather than skips once golangci-lint itself
+#                     is present.
 #   golangci-lint   - needs the golangci-lint binary on PATH (README.md
 #                     lists it as optional, so its absence is a SKIP,
 #                     not a failure)
@@ -44,6 +54,7 @@ CI_LOCAL_MAKE_TARGETS=(
   test-csip-cover
   coverage-gate
   ui-check
+  test-e2e
 )
 
 declare -A CI_LOCAL_TARGET_PREREQ=(
@@ -60,6 +71,7 @@ declare -A CI_LOCAL_TARGET_PREREQ=(
   [test-csip-cover]=csip-fixtures
   [coverage-gate]=csip-fixtures
   [ui-check]=node-toolchain
+  [test-e2e]=e2e-toolchain
 )
 
 declare -A CI_LOCAL_ONLY_TARGETS=(

@@ -78,7 +78,7 @@ func TestSharedTargetList_MatchesWhatCILocalRuns(t *testing.T) {
 	want := []string{
 		"vet", "build", "lint", "test", "test-race", "test-cover",
 		"test-csip", "test-csip-server", "test-csip-hooks", "test-csip-race",
-		"test-csip-cover", "coverage-gate", "ui-check",
+		"test-csip-cover", "coverage-gate", "ui-check", "test-e2e",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("target count: got %d %v, want %d %v", len(got), got, len(want), want)

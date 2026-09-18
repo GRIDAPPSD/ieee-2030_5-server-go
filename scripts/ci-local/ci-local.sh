@@ -16,7 +16,9 @@
 # conformance suite needs a SunSpec V1.2 test PKI resolved env-var-first
 # then from test/csip/fixtures/sunspec/ (gitignored, provisioned out of
 # band; see test/csip/README.md); the frontend drift check needs a Node
-# toolchain; golangci-lint is documented as optional in README.md.
+# toolchain; the Playwright e2e suite needs a Node toolchain plus its own
+# e2e/ dependencies already installed; golangci-lint is documented as
+# optional in README.md.
 #
 # Exit codes:
 #   0 - every gate PASSED, zero SKIPPED: a genuinely clean run
@@ -107,6 +109,15 @@ csip_fixtures_present() {
 
 node_toolchain_present() {
   command -v npm >/dev/null 2>&1 && command -v node >/dev/null 2>&1
+}
+
+# e2e_toolchain_present adds one check on top of node_toolchain_present:
+# e2e/'s own dependencies must already be installed. Unlike ui-check's
+# recipe, test-e2e's does not run `npm ci` itself (its Makefile comment
+# says so), so npm/node on PATH alone is not enough to tell a real SKIP
+# from a run that is about to fail on a missing e2e/node_modules/.
+e2e_toolchain_present() {
+  node_toolchain_present && [[ -x "${REPO_ROOT}/e2e/node_modules/.bin/playwright" ]]
 }
 
 golangci_lint_present() {
@@ -336,6 +347,9 @@ main() {
       ;;
     node-toolchain)
       node_toolchain_present || skip_reason="npm/node not found on PATH"
+      ;;
+    e2e-toolchain)
+      e2e_toolchain_present || skip_reason="npm/node not found on PATH, or e2e/'s dependencies are not installed (run 'cd e2e && npm ci')"
       ;;
     golangci-lint)
       golangci_lint_present || skip_reason="golangci-lint not found on PATH (README.md lists it as optional)"

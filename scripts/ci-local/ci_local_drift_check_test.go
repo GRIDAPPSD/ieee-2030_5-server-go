@@ -58,8 +58,8 @@ func TestDriftCheck_RealWorkflowHasNoDrift(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("exit code: got %d, want 0; output=%q", exit, out)
 	}
-	if !strings.Contains(out, "OK: all 12 make target(s)") {
-		t.Fatalf("output missing the expected 12-target OK line; got=%q", out)
+	if !strings.Contains(out, "OK: all 13 make target(s)") {
+		t.Fatalf("output missing the expected 13-target OK line; got=%q", out)
 	}
 }
 
@@ -102,8 +102,8 @@ func TestDriftCheck_CatchesAnInjectedTarget(t *testing.T) {
 	if !strings.Contains(out, "make totally-fake-drift-target") {
 		t.Fatalf("output missing the injected target name; got=%q", out)
 	}
-	if !strings.Contains(out, "DRIFT: 1 of 13") {
-		t.Fatalf("output missing the expected 1-of-13 drift count; got=%q", out)
+	if !strings.Contains(out, "DRIFT: 1 of 14") {
+		t.Fatalf("output missing the expected 1-of-14 drift count; got=%q", out)
 	}
 }
 
@@ -133,8 +133,8 @@ func TestDriftCheck_CatchesAnInjectedTarget_ListItemForm(t *testing.T) {
 	if !strings.Contains(out, "make totally-fake-listitem-target") {
 		t.Fatalf("output missing the injected target name; got=%q", out)
 	}
-	if !strings.Contains(out, "DRIFT: 1 of 13") {
-		t.Fatalf("output missing the expected 1-of-13 drift count; got=%q", out)
+	if !strings.Contains(out, "DRIFT: 1 of 14") {
+		t.Fatalf("output missing the expected 1-of-14 drift count; got=%q", out)
 	}
 }
 
@@ -142,7 +142,7 @@ func TestDriftCheck_CatchesAnInjectedTarget_ListItemForm(t *testing.T) {
 // exclusion the anchor exists to preserve: ci.yml already comments on a
 // make target by name in prose (the CLAUDE.md-referenced remark near its
 // test-csip-server step). That comment must never be counted as a second
-// invocation; the real ci.yml already reports exactly 12 targets, and this
+// invocation; the real ci.yml already reports exactly 13 targets, and this
 // test would fail if a future edit to the anchor started counting it.
 // TestDriftCheck_CommentMentionIsNotAnInvocation uses a dedicated fixture
 // rather than the real ci.yml. An earlier version of this test read

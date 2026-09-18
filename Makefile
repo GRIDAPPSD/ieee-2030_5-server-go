@@ -1,6 +1,7 @@
 .PHONY: build test test-cover test-race test-verbose test-e2e \
        test-csip-server \
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
+       coverage-scope-check \
        lint gofmt-check vet clean run run-ccm run-journald run-ccm-journald \
        run-testdevice run-sunspec certs new-device \
        serve help stress-pretest vendor bump-core ui-build ui-check \
@@ -354,10 +355,27 @@ test-csip-race:           ## Race detector on the CSIP suite with csip_test_hook
 # protocol listener, the handler assembly and the graceful drain MOVED
 # there out of ./internal/server/...; leaving it off would have quietly
 # shrunk what the floor measures while the percentage went up.
-CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/encoding/...,./internal/handler/...,./internal/paging/...,./internal/server/...,./internal/subscription/...,./internal/tls,./internal/tls/ccm,./pkg/sep2server/...
+#
+# #357 - scope correction. pkg/sep2srv (the router assembly and every
+# protocol handler) and pkg/store (the resource-state contract and its
+# in-memory implementation) arrived after Phase 8 and were never added
+# here, so the floor stopped measuring most of the module's production
+# code while staying green. Both are hand-maintained wildcards, guarded
+# by the `coverage-scope-check` target (#387) against silently
+# resolving to nothing again. pkg/store/storetest is deliberately left
+# out: its own package doc says it exists for testing only and nothing
+# in the production path imports it, so it is not production code the
+# CSIP suite is meant to cover.
+CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/handler/...,./internal/server/...,./pkg/sep2server/...,./pkg/sep2srv/...,./pkg/store,./pkg/store/memory
 CSIP_COVER_THRESHOLD ?= 80
 
-test-csip-cover:          ## Run CSIP suite with scoped coverage profile (writes coverage-csip.out)
+# #387 - the -coverpkg list above is hand-maintained; a pattern that stops
+# resolving (a package renamed or moved out) is a silent Go warning, not a
+# build error, so it is checked here before every profile run.
+coverage-scope-check:     ## Fail if any CSIP_COVERPKG entry resolves to zero packages
+	./scripts/coverage-scope-check.sh '$(CSIP_COVERPKG)'
+
+test-csip-cover: coverage-scope-check ## Run CSIP suite with scoped coverage profile (writes coverage-csip.out)
 	go test -coverprofile=coverage-csip.out -coverpkg='$(CSIP_COVERPKG)' \
 	       -tags csip_test_hooks ./test/csip/... ./internal/... ./pkg/...
 	@echo "Coverage profile: coverage-csip.out"

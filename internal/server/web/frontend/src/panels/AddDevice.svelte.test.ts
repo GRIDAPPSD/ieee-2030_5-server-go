@@ -7,10 +7,20 @@ import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import AddDevice from './AddDevice.svelte'
 import * as api from '../lib/api'
+import * as dl from '../lib/download'
+import type { MintedCert } from '../lib/deviceCert'
 
 const PEM = '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n'
 const SFDI = '167261211635'
 const LFDI = '3E4F45AB31EDFE5B67E343E5E4562E31984E23E5'
+
+const MINTED: MintedCert = {
+  certPEM: '-----BEGIN CERTIFICATE-----\nMIIBmint\n-----END CERTIFICATE-----\n',
+  keyPEM: '-----BEGIN EC PRIVATE KEY-----\nMHcCmint\n-----END EC PRIVATE KEY-----\n',
+  sfdi: '211635167261',
+  lfdi: '5B67E343E5E4562E31984E23E3E4F45AB31EDFE',
+  serial: 'PW-INV-003',
+}
 
 describe('AddDevice', () => {
   it('fills the readonly SFDI and LFDI fields with exactly the values the cert parser returned', async () => {
@@ -126,5 +136,83 @@ describe('AddDevice', () => {
       expect(container.querySelector('#addDevResult')).toHaveTextContent('Paste a PEM certificate first.')
     })
     expect(parse).not.toHaveBeenCalled()
+  })
+
+  it('pre-fills the readonly SFDI and LFDI fields from a carried mint, with no Parse Cert click', async () => {
+    const { container } = render(AddDevice, { props: { pending: MINTED } })
+
+    await waitFor(() => {
+      expect((container.querySelector('#addDevSFDI') as HTMLInputElement).value).toBe(MINTED.sfdi)
+    })
+    expect((container.querySelector('#addDevLFDI') as HTMLInputElement).value).toBe(MINTED.lfdi)
+  })
+
+  it('registers a carried mint with exactly the identifiers it arrived with', async () => {
+    const post = vi.spyOn(api, 'postJSON').mockResolvedValue({
+      ok: true,
+      data: { href: '/edev/9', sfdi: MINTED.sfdi, lfdi: MINTED.lfdi },
+    })
+
+    const { container } = render(AddDevice, { props: { pending: MINTED } })
+    await waitFor(() => {
+      expect((container.querySelector('#addDevSFDI') as HTMLInputElement).value).toBe(MINTED.sfdi)
+    })
+
+    await fireEvent.input(container.querySelector('#addDevPIN') as HTMLInputElement, {
+      target: { value: '9000' },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Add Device' }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    expect(post).toHaveBeenCalledWith('/api/devices', {
+      sfdi: MINTED.sfdi,
+      lfdi: MINTED.lfdi,
+      description: '',
+      pin: 9000,
+      enabled: true,
+    })
+  })
+
+  it('keeps a carried mint visible and downloadable after a failed registration, so the credential is not lost track of', async () => {
+    vi.spyOn(api, 'postJSON').mockResolvedValue({ ok: false, error: 'pin already in use', status: 409 })
+    const save = vi.spyOn(dl, 'downloadText').mockImplementation(() => {})
+
+    const { container } = render(AddDevice, { props: { pending: MINTED } })
+    await waitFor(() => {
+      expect((container.querySelector('#addDevSFDI') as HTMLInputElement).value).toBe(MINTED.sfdi)
+    })
+
+    await fireEvent.input(container.querySelector('#addDevPIN') as HTMLInputElement, {
+      target: { value: '9000' },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Add Device' }))
+
+    await waitFor(() => {
+      expect(container.querySelector('#addDevResult')).toHaveTextContent('Error: pin already in use')
+    })
+    // The identifiers and the download affordance both survive the
+    // failure: the operator can fix the PIN and retry without the minted
+    // key becoming unreachable.
+    expect((container.querySelector('#addDevSFDI') as HTMLInputElement).value).toBe(MINTED.sfdi)
+    await fireEvent.click(screen.getByTestId('download-pending-key'))
+    expect(save).toHaveBeenCalledWith('PW-INV-003.key', MINTED.keyPEM, 'application/x-pem-file')
+  })
+
+  it('offers no pending-mint download until a mint has been carried', () => {
+    render(AddDevice)
+
+    expect(screen.queryByTestId('pending-mint')).toBeNull()
+  })
+
+  it('delivers the carried certificate and key as files, named for the serial', async () => {
+    const save = vi.spyOn(dl, 'downloadText').mockImplementation(() => {})
+
+    render(AddDevice, { props: { pending: MINTED } })
+
+    await fireEvent.click(await screen.findByTestId('download-pending-cert'))
+    expect(save).toHaveBeenCalledWith('PW-INV-003.crt', MINTED.certPEM, 'application/x-pem-file')
+
+    await fireEvent.click(screen.getByTestId('download-pending-key'))
+    expect(save).toHaveBeenCalledWith('PW-INV-003.key', MINTED.keyPEM, 'application/x-pem-file')
   })
 })

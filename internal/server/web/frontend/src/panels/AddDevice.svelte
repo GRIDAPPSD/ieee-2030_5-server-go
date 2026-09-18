@@ -6,6 +6,8 @@
   // certificate, never an operator-typed value that could disagree with
   // the cert the device will present.
   import { postBody, postJSON } from '../lib/api'
+  import { downloadText, PEM_MIME } from '../lib/download'
+  import type { MintedCert } from '../lib/deviceCert'
 
   interface CertInfoResponse {
     sfdi: string
@@ -19,7 +21,10 @@
     lfdi: string
   }
 
-  let { onAdded }: { onAdded?: () => void } = $props()
+  // pending is a mint carried from the Certificates tab (issue 594),
+  // through AdminShell's hoisted state. undefined/null means no mint is
+  // waiting, and the paste path below is unaffected.
+  let { onAdded, pending }: { onAdded?: () => void; pending?: MintedCert | null } = $props()
 
   let pem = $state('')
   let sfdi = $state('')
@@ -29,6 +34,28 @@
   let enabled = $state(true)
   let result = $state('')
   let ok = $state(false)
+
+  // A tab switch to here unmounts and remounts this component ({#if} in
+  // AdminShell.svelte), so a mint that happened on the Certificates tab
+  // cannot have been held in this component's own state; it arrives only
+  // through the pending prop, on mount or when a later mint replaces it.
+  // Pre-fills the same readonly fields parseCert() fills, without
+  // re-deriving anything: the identifiers already came from the server.
+  $effect(() => {
+    if (pending) {
+      sfdi = pending.sfdi
+      lfdi = pending.lfdi
+    }
+  })
+
+  function downloadPending(kind: 'crt' | 'key') {
+    if (!pending) return
+    downloadText(
+      `${pending.serial}.${kind}`,
+      kind === 'crt' ? pending.certPEM : pending.keyPEM,
+      PEM_MIME,
+    )
+  }
 
   async function parseCert() {
     if (!pem || !pem.includes('BEGIN CERTIFICATE')) {
@@ -82,6 +109,17 @@
   <p class="hint">
     Paste the device certificate (PEM). The server derives SFDI and LFDI; you supply PIN and description.
   </p>
+  {#if pending}
+    <div class="form-row" data-testid="pending-mint">
+      <p class="hint">A minted certificate is loaded below; SFDI and LFDI are pre-filled.</p>
+      <button class="btn btn-small" data-testid="download-pending-cert" onclick={() => downloadPending('crt')}>
+        Save certificate
+      </button>
+      <button class="btn btn-small" data-testid="download-pending-key" onclick={() => downloadPending('key')}>
+        Save private key
+      </button>
+    </div>
+  {/if}
   <textarea
     id="addDevCert"
     rows="6"

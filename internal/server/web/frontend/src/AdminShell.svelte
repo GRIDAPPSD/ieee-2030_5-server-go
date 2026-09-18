@@ -1,11 +1,11 @@
 <script lang="ts">
   // The admin UI's shell: mounted once by App.svelte for every admin
   // path, and never swapped, so the tab switch below cannot remount it
-  // and close the stream or drop history. It owns the three pieces of
+  // and close the stream or drop history. It owns the four pieces of
   // shared state the panels read (the SSE payload, the FSA catalog, the
-  // topology tree) and the one refresh path that reloads the last two,
-  // so a create/attach/assign in any panel updates every panel that
-  // shows the result.
+  // topology tree, and the most recent minted device certificate) and the
+  // one refresh path that reloads the first three, so a create/attach/
+  // assign/mint in any panel updates every panel that shows the result.
   import { onDestroy, onMount } from 'svelte'
   import { fetchJSON } from './lib/api'
   import {
@@ -15,6 +15,7 @@
     type HistoryPoint,
   } from './lib/dashboard'
   import type { AdminFSA, AdminFSAList, TopologyNode } from './lib/fsa'
+  import type { MintedCert } from './lib/deviceCert'
   import { currentPath, navigate, replace } from './lib/router'
   import NavBar from './panels/NavBar.svelte'
   import Overview from './panels/Overview.svelte'
@@ -90,6 +91,12 @@
   let disconnect: (() => void) | null = null
   let destroyed = false
 
+  // Set by CertPanel's onMinted after a successful mint, read by AddDevice
+  // (issue 594). Hoisted here, rather than held by either panel, because
+  // the two sit on different tabs and a tab switch unmounts and remounts
+  // whichever panel is not active.
+  let mintedCert = $state<MintedCert | null>(null)
+
   async function refresh() {
     const list = await fetchJSON<AdminFSAList>('/api/fsas')
     fsas = list.ok ? (list.data.fsas ?? []) : []
@@ -161,7 +168,7 @@
       <ActivityChart {history} />
     {:else if activeTab === 'devices'}
       <DeviceTable devices={data?.devices ?? []} {fsas} onChanged={refresh} />
-      <AddDevice onAdded={refresh} />
+      <AddDevice onAdded={refresh} pending={mintedCert} />
       <LookupDevice />
     {:else if activeTab === 'fsas'}
       <CreateFsa onCreated={refresh} />
@@ -170,7 +177,7 @@
     {:else if activeTab === 'control'}
       <DerControl />
     {:else if activeTab === 'certificates'}
-      <CertPanel />
+      <CertPanel onMinted={(cert) => (mintedCert = cert)} />
     {:else if activeTab === 'not-found'}
       <div class="card" data-testid="not-found">
         <h2>Not Found</h2>

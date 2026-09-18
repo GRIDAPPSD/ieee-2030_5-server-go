@@ -13,8 +13,10 @@
   // delivering it puts key material through the devtools network log, the
   // JS heap and any HAR attached to a bug report, for nothing. That route
   // stays available to the CLI and to curl, where the key is the point.
+  import { onMount } from 'svelte'
   import { fetchJSON, postJSON } from '../lib/api'
   import { downloadText, PEM_MIME } from '../lib/download'
+  import type { MintedCert } from '../lib/deviceCert'
 
   interface DeviceCertResponse {
     certPEM: string
@@ -27,6 +29,33 @@
     certPEM: string
   }
 
+  // The shape GET /api/certs/device-types returns (internal/certs/oids.go's
+  // DeviceTypeInfo): value is what a mint request's deviceType field
+  // expects, name is the stable machine-readable identifier used to find
+  // the default, label is what the select shows.
+  interface DeviceTypeInfo {
+    value: number
+    name: string
+    label: string
+  }
+
+  interface DeviceTypesResponse {
+    deviceTypes: DeviceTypeInfo[]
+  }
+
+  // onMinted carries a successful mint to Add End Device (issue 594),
+  // through AdminShell's hoisted state: this panel and AddDevice sit on
+  // different tabs, so neither can hold the value in its own local state
+  // across the switch.
+  let { onMinted }: { onMinted?: (cert: MintedCert) => void } = $props()
+
+  let deviceTypes = $state<DeviceTypeInfo[]>([])
+  let deviceTypesStatus = $state<'loading' | 'ready' | 'error'>('loading')
+  let deviceTypesError = $state('')
+  // null until the fetch below resolves; Generate stays disabled until then
+  // (see deviceTypesStatus in the template) so a mint never goes out with a
+  // guessed or stale type.
+  let deviceType = $state<number | null>(null)
   let hwSerial = $state('')
   // The route rejects a device-cert request with no hwType: the OID is part
   // of the CSIP HardwareModuleName SAN and the server cannot invent it.
@@ -42,10 +71,30 @@
   // button that now refers to a different device.
   let issued: { certPEM: string; keyPEM: string; serial: string } | null = $state(null)
 
+  // The endpoint exists precisely so this component carries no copy of the
+  // values (issue 594); "generic" is preferred over deviceTypes[0] so the
+  // default does not depend on response order.
+  async function loadDeviceTypes() {
+    const res = await fetchJSON<DeviceTypesResponse>('/api/certs/device-types')
+    if (!res.ok) {
+      deviceTypesStatus = 'error'
+      deviceTypesError = res.error
+      return
+    }
+    deviceTypes = res.data.deviceTypes
+    deviceType = deviceTypes.find((dt) => dt.name === 'generic')?.value ?? deviceTypes[0]?.value ?? null
+    deviceTypesStatus = 'ready'
+  }
+
+  onMount(() => {
+    loadDeviceTypes()
+  })
+
   async function generateDeviceCert() {
+    if (deviceType === null) return
     issued = null
     const res = await postJSON<DeviceCertResponse>('/api/certs/device', {
-      deviceType: 1,
+      deviceType,
       hwSerialNum: hwSerial,
       hwType,
     })
@@ -54,13 +103,21 @@
       certResult = `Error: ${res.error}`
       return
     }
+    const serial = hwSerial || 'device'
     issued = {
       certPEM: res.data.certPEM,
       keyPEM: res.data.keyPEM,
-      serial: hwSerial || 'device',
+      serial,
     }
     certOk = true
     certResult = `Generated! SFDI: ${res.data.sfdi}`
+    onMinted?.({
+      certPEM: res.data.certPEM,
+      keyPEM: res.data.keyPEM,
+      sfdi: res.data.sfdi,
+      lfdi: res.data.lfdi,
+      serial,
+    })
   }
 
   async function downloadCA() {
@@ -93,6 +150,11 @@
 <div class="card">
   <h2>Certificate Management</h2>
   <div class="form-row">
+    <select id="deviceType" bind:value={deviceType} disabled={deviceTypesStatus !== 'ready'}>
+      {#each deviceTypes as dt (dt.value)}
+        <option value={dt.value}>{dt.label}</option>
+      {/each}
+    </select>
     <input type="text" id="hwSerial" placeholder="Hardware Serial (e.g., INV-001)" bind:value={hwSerial} />
     <input
       type="text"
@@ -100,8 +162,17 @@
       placeholder="Manufacturer PEN OID (e.g., 1.3.6.1.4.1.40732.99)"
       bind:value={hwType}
     />
-    <button class="btn" onclick={generateDeviceCert}>Generate Device Cert</button>
+    <button class="btn" onclick={generateDeviceCert} disabled={deviceTypesStatus !== 'ready'}>
+      Generate Device Cert
+    </button>
   </div>
+  {#if deviceTypesStatus === 'loading'}
+    <p class="hint" data-testid="device-types-loading">Loading device types...</p>
+  {:else if deviceTypesStatus === 'error'}
+    <div class="result err" data-testid="device-types-error">
+      Could not load device types: {deviceTypesError}. Reload the page to try again.
+    </div>
+  {/if}
   <div class="result" class:ok={certOk} class:err={certResult !== '' && !certOk} id="certResult">{certResult}</div>
 
   {#if issued !== null}

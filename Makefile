@@ -354,7 +354,18 @@ test-csip-race:           ## Race detector on the CSIP suite with csip_test_hook
 # protocol listener, the handler assembly and the graceful drain MOVED
 # there out of ./internal/server/...; leaving it off would have quietly
 # shrunk what the floor measures while the percentage went up.
-CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/handler/...,./pkg/sep2srv/paging/...,./internal/server/...,./pkg/sep2srv/handlers/subscription/...,./pkg/sep2server/...
+#
+# #357 - scope correction. pkg/sep2srv (the router assembly and every
+# protocol handler) and pkg/store (the resource-state contract and its
+# in-memory implementation) arrived after Phase 8 and were never added
+# here, so the floor stopped measuring most of the module's production
+# code while staying green. Both are hand-maintained wildcards, guarded
+# by the `coverage-scope-check` target (#387) against silently
+# resolving to nothing again. pkg/store/storetest is deliberately left
+# out: its own package doc says it exists for testing only and nothing
+# in the production path imports it, so it is not production code the
+# CSIP suite is meant to cover.
+CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/handler/...,./internal/server/...,./pkg/sep2server/...,./pkg/sep2srv/...,./pkg/store,./pkg/store/memory
 CSIP_COVER_THRESHOLD ?= 80
 
 test-csip-cover:          ## Run CSIP suite with scoped coverage profile (writes coverage-csip.out)

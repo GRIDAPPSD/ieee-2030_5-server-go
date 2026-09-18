@@ -56,53 +56,70 @@ type ReaderStores struct {
 	Responses                store.ScopedReader[sep2.Response]
 }
 
-// NewReaderStores narrows s to its read-only half: every field is assigned
-// from the matching field on s, to a reader interface rather than the
-// write-capable one s declares. Nothing is allocated and nothing is
-// materialized; a write made through s is visible through the result,
+// NewReaderStores narrows s to its read-only half. Every field is WRAPPED,
+// not assigned: [store.AsReader], [store.AsScopedReader],
+// [store.AsEndDeviceReader] and [store.AsEndDeviceManagementReader] each
+// return a private type declaring only the reader methods, following the
+// [store.UnderReader] idiom ("narrowing scope must not widen privilege")
+// for privilege rather than scope. A plain field-to-field assignment would
+// leave the write handle's concrete value, and its write methods, reachable
+// through a type assertion or reflection; wrapping does not.
+//
+// Nothing is allocated beyond the wrappers themselves and nothing is
+// materialized: a write made through s is visible through the result,
 // because both are views onto the same underlying stores, not two stores.
 //
-// This is the follow-up sep2server.Server.Stores's own doc comment
-// promised: a second accessor returning reader interfaces, needing no
-// change here. Every field below is a plain interface narrowing, proven to
-// type-check by pkg/sep2server.TestReadOnlyNarrowingIsAvailable before this
-// type existed.
+// EndDevices gets the same substitutions and decorations
+// BuildProtocolRouter gives the write-side route handlers
+// (registrationBoundEndDevices, logEventLinkedEndDevices, requireEndDevices),
+// so the read handle's device records carry the same RegistrationLink and
+// LogEventListLink derivations the serve path advertises, and an absent
+// handle refuses descriptively rather than panicking. Every other field
+// gets requireScoped or requireResource directly: unlike the router, which
+// gates a family's siblings only when the family's own anchor field is
+// present (because an unmounted family's routes never read them),
+// ReaderStores has no route mounting to rely on and every field is always
+// reachable through direct struct access, so every field is guarded on its
+// own. EndDeviceManagers is passed through unguarded, matching the one
+// place the router itself reads it raw.
 func NewReaderStores(s *Stores) *ReaderStores {
+	edevs := requireEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(s), s))
+
 	return &ReaderStores{
-		EndDevices:        s.EndDevices,
-		EndDeviceManagers: s.EndDeviceManagers,
+		EndDevices:        store.AsEndDeviceReader(edevs),
+		EndDeviceManagers: store.AsEndDeviceManagementReader(s.EndDeviceManagers),
 
-		Registrations: s.Registrations,
+		Registrations: store.AsReader(requireResource(s.Registrations, "Registrations")),
 
-		MirrorUsagePoints:   s.MirrorUsagePoints,
-		MirrorMeterReadings: s.MirrorMeterReadings,
+		MirrorUsagePoints:   store.AsReader(requireResource(s.MirrorUsagePoints, "MirrorUsagePoints")),
+		MirrorMeterReadings: store.AsScopedReader(requireScoped(s.MirrorMeterReadings, "MirrorMeterReadings")),
 
-		DERs:               s.DERs,
-		DERCapabilities:    s.DERCapabilities,
-		DERSettings:        s.DERSettings,
-		DERStatuses:        s.DERStatuses,
-		DERAvailabilities:  s.DERAvailabilities,
-		DERPrograms:        s.DERPrograms,
-		DERControls:        s.DERControls,
-		DefaultDERControls: s.DefaultDERControls,
-		DERCurves:          s.DERCurves,
+		DERs:               store.AsScopedReader(requireScoped(s.DERs, "DERs")),
+		DERCapabilities:    store.AsScopedReader(requireScoped(s.DERCapabilities, "DERCapabilities")),
+		DERSettings:        store.AsScopedReader(requireScoped(s.DERSettings, "DERSettings")),
+		DERStatuses:        store.AsScopedReader(requireScoped(s.DERStatuses, "DERStatuses")),
+		DERAvailabilities:  store.AsScopedReader(requireScoped(s.DERAvailabilities, "DERAvailabilities")),
+		DERPrograms:        store.AsScopedReader(requireScoped(s.DERPrograms, "DERPrograms")),
+		DERControls:        store.AsScopedReader(requireScoped(s.DERControls, "DERControls")),
+		DefaultDERControls: store.AsScopedReader(requireScoped(s.DefaultDERControls, "DefaultDERControls")),
+		DERCurves:          store.AsReader(requireResource(s.DERCurves, "DERCurves")),
 
-		FSAs: s.FSAs,
+		FSAs: store.AsScopedReader(requireScoped(s.FSAs, "FSAs")),
 
-		UsagePoints:   s.UsagePoints,
-		MeterReadings: s.MeterReadings,
-		Readings:      s.Readings,
-		ReadingTypes:  s.ReadingTypes,
+		UsagePoints:   store.AsReader(requireResource(s.UsagePoints, "UsagePoints")),
+		MeterReadings: store.AsScopedReader(requireScoped(s.MeterReadings, "MeterReadings")),
+		Readings:      store.AsScopedReader(requireScoped(s.Readings, "Readings")),
+		ReadingTypes:  store.AsReader(requireResource(s.ReadingTypes, "ReadingTypes")),
 
-		Configurations:           s.Configurations,
-		DeviceStatuses:           s.DeviceStatuses,
-		LogEvents:                s.LogEvents,
-		PowerStatuses:            s.PowerStatuses,
-		MessagingPrograms:        s.MessagingPrograms,
-		TextMessages:             s.TextMessages,
-		FlowReservationRequests:  s.FlowReservationRequests,
-		FlowReservationResponses: s.FlowReservationResponses,
-		ResponseSets:             s.ResponseSets,
-		Responses:                s.Responses,
+		Configurations:           store.AsScopedReader(requireScoped(s.Configurations, "Configurations")),
+		DeviceStatuses:           store.AsScopedReader(requireScoped(s.DeviceStatuses, "DeviceStatuses")),
+		LogEvents:                store.AsScopedReader(requireScoped(s.LogEvents, "LogEvents")),
+		PowerStatuses:            store.AsScopedReader(requireScoped(s.PowerStatuses, "PowerStatuses")),
+		MessagingPrograms:        store.AsReader(requireResource(s.MessagingPrograms, "MessagingPrograms")),
+		TextMessages:             store.AsScopedReader(requireScoped(s.TextMessages, "TextMessages")),
+		FlowReservationRequests:  store.AsScopedReader(requireScoped(s.FlowReservationRequests, "FlowReservationRequests")),
+		FlowReservationResponses: store.AsScopedReader(requireScoped(s.FlowReservationResponses, "FlowReservationResponses")),
+		ResponseSets:             store.AsReader(requireResource(s.ResponseSets, "ResponseSets")),
+		Responses:                store.AsScopedReader(requireScoped(s.Responses, "Responses")),
 	}
 }

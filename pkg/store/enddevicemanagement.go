@@ -51,3 +51,26 @@ type EndDeviceManagementStore interface {
 	// when the device is unmanaged.
 	Unassign(ctx context.Context, managedLFDI string) error
 }
+
+// AsEndDeviceManagementReader narrows an [EndDeviceManagementStore] to an
+// [EndDeviceManagementReader] by wrapping, following the same rule as
+// [AsReader]: a plain assignment leaves Assign and Unassign reachable
+// through the wrapped value's unchanged dynamic type.
+func AsEndDeviceManagementReader(s EndDeviceManagementReader) EndDeviceManagementReader {
+	return endDeviceManagementReaderOnly{reader: s}
+}
+
+// endDeviceManagementReaderOnly forwards only the
+// [EndDeviceManagementReader] methods of the reader it wraps, which may in
+// fact satisfy the wider [EndDeviceManagementStore].
+type endDeviceManagementReaderOnly struct {
+	reader EndDeviceManagementReader
+}
+
+func (v endDeviceManagementReaderOnly) ManagerOf(ctx context.Context, managedLFDI string) (string, error) {
+	return v.reader.ManagerOf(ctx, managedLFDI)
+}
+
+func (v endDeviceManagementReaderOnly) ManagedBy(ctx context.Context, managerLFDI string) ([]string, error) {
+	return v.reader.ManagedBy(ctx, managerLFDI)
+}

@@ -20,3 +20,29 @@ type EndDeviceStore interface {
 	EndDeviceReader
 	ResourceStore[sep2.EndDevice]
 }
+
+// AsEndDeviceReader narrows an [EndDeviceStore] to an [EndDeviceReader] by
+// wrapping, following the same rule as [AsReader]: a plain assignment
+// leaves the write methods reachable through the wrapped value's unchanged
+// dynamic type.
+func AsEndDeviceReader(s EndDeviceReader) EndDeviceReader {
+	return endDeviceReaderOnly{
+		resourceReaderOnly: resourceReaderOnly[sep2.EndDevice]{reader: s},
+		reader:             s,
+	}
+}
+
+// endDeviceReaderOnly forwards only the [EndDeviceReader] methods of the
+// reader it wraps, which may in fact satisfy the wider [EndDeviceStore].
+type endDeviceReaderOnly struct {
+	resourceReaderOnly[sep2.EndDevice]
+	reader EndDeviceReader
+}
+
+func (v endDeviceReaderOnly) GetBySFDI(ctx context.Context, sfdi string) (sep2.EndDevice, error) {
+	return v.reader.GetBySFDI(ctx, sfdi)
+}
+
+func (v endDeviceReaderOnly) GetByLFDI(ctx context.Context, lfdi string) (sep2.EndDevice, error) {
+	return v.reader.GetByLFDI(ctx, lfdi)
+}

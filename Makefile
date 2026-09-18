@@ -12,9 +12,11 @@ SERVER   := bin/sep2server
 # #598: certificates, private keys included, are never written into the
 # working tree. This matches the server's own default (SEP2_CERT_DIR, or
 # ~/tls) so `make run`/`make certs` and a bare `sep2server serve` agree on
-# where the local dev CA and keys live. Override for a non-default
-# SEP2_CERT_DIR: make certs CERT_DIR=/other/dir.
-CERT_DIR ?= $(HOME)/tls
+# where the local dev CA and keys live: read SEP2_CERT_DIR when the
+# operator set it, the same setting the server itself reads, rather than
+# letting the two disagree. Override for a one-off location without
+# touching SEP2_CERT_DIR: make certs CERT_DIR=/other/dir.
+CERT_DIR ?= $(if $(SEP2_CERT_DIR),$(SEP2_CERT_DIR),$(HOME)/tls)
 
 # --- Build --------------------------------------------------------
 

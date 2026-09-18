@@ -16,7 +16,8 @@
 #   HW_TYPE        manufacturer PEN OID (default 1.3.6.1.4.1.40732.99)
 #   DEVICE_TYPE    1=Generic (default), 2=Mobile, 3=PostMfg
 #   FORCE          when "1", overwrite an existing cert/key with the same name
-#   CERT_DIR       output directory (default "certs")
+#   CERT_DIR       output directory (default: SEP2_CERT_DIR, or $HOME/tls -
+#                  the same default the server and `make certs` use, #598)
 #   SERVER_BIN     server binary path (default "bin/sep2server")
 #
 # Exit codes:
@@ -28,7 +29,25 @@
 
 set -euo pipefail
 
-CERT_DIR="${CERT_DIR:-certs}"
+err() { printf 'ERROR: %s\n' "$*" >&2; }
+example() {
+  printf '  example: make new-device DEVICE_NAME=device-2 SERIAL=DEV-002\n' >&2
+}
+
+# Default matches the server and `make certs` (#598): SEP2_CERT_DIR if the
+# operator set it, else $HOME/tls. Invoked directly (not through `make
+# new-device`, which always exports CERT_DIR), this used to fall back to
+# "certs" in the working directory and write a device private key there.
+if [[ -z "${CERT_DIR:-}" ]]; then
+  if [[ -n "${SEP2_CERT_DIR:-}" ]]; then
+    CERT_DIR="$SEP2_CERT_DIR"
+  elif [[ -n "${HOME:-}" ]]; then
+    CERT_DIR="$HOME/tls"
+  else
+    err "CERT_DIR is unset, SEP2_CERT_DIR is unset, and HOME could not be determined: set one of them explicitly"
+    exit 2
+  fi
+fi
 SERVER_BIN="${SERVER_BIN:-bin/sep2server}"
 
 DEVICE_NAME="${DEVICE_NAME:-}"
@@ -36,11 +55,6 @@ SERIAL="${SERIAL:-}"
 HW_TYPE="${HW_TYPE:-1.3.6.1.4.1.40732.99}"
 DEVICE_TYPE="${DEVICE_TYPE:-1}"
 FORCE="${FORCE:-}"
-
-err() { printf 'ERROR: %s\n' "$*" >&2; }
-example() {
-  printf '  example: make new-device DEVICE_NAME=device-2 SERIAL=DEV-002\n' >&2
-}
 
 # --- Required ---------------------------------------------------------------
 if [[ -z "$DEVICE_NAME" ]]; then

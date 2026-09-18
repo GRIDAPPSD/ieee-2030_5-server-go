@@ -377,18 +377,23 @@ not evaporate, and silence does not satisfy it. Do this instead:
    configuration is a downstream impact and is named the same way.
 ## 10. Who consumes this module
 
-No repository in this family imports `ieee-2030_5-server-go`. Nothing in it is
-depended on by the core library, the client or the bridge.
+One repository imports `ieee-2030_5-server-go`: `gridappsd-ieee-2030_5-go`,
+the bridge to the GridAPPS-D platform. Its `go.mod` requires
+`github.com/GRIDAPPSD/ieee-2030_5-server-go v0.3.0`, and its Go files import
+`pkg/sep2srv`, `pkg/sep2srv/assembly`, `pkg/sep2srv/handlers/subscription`,
+`pkg/store` and `pkg/store/memory`. Neither the core library nor the client
+imports this module.
 
-Section 9's no-established-consumers path therefore applies to every server-go
-release, and applies in full rather than as an excuse to skip the section:
-state plainly in the notes that there are no known external consumers, say how
-that was checked, and describe the impact on a hypothetical adopter anyway.
+Section 9's known-consumer path therefore applies to the bridge on every
+server-go release: state whether the bridge references the changed surface,
+at a named file and line, or that it was built and tested against the new
+version and passed. The no-established-consumers path in section 9 does not
+apply while this consumer exists.
 
 Verify rather than assume, each release:
 
 ```
-gh api "repos/GRIDAPPSD/<repo>/contents/go.mod" --jq .content \
+gh api "repos/GRIDAPPSD/gridappsd-ieee-2030_5-go/contents/go.mod" --jq .content \
   | base64 -d | grep ieee-2030_5-server-go
 ```
 

@@ -21,8 +21,9 @@ package csiptest
 //     Use this for everything that does not specifically assert CCM-8
 //     wire behavior. The default keeps Phase 3 tests cheap.
 //
-//  2. CCM-8 uses the vendored internal/tls/gotls fork that registers
-//     TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 (0xC0AE). Opt in via
+//  2. CCM-8 uses the fork vendored at
+//     vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls
+//     that registers TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 (0xC0AE). Opt in via
 //     WithCCMMode(). Tests that prove spec-cipher conformance should
 //     opt in; everything else should not pay the cost.
 //
@@ -152,8 +153,8 @@ func WithNotifier(n handler.ResourceNotifier) BootOption {
 // helper-supplied device cert validates). Override when the test
 // drives the server with an external cert chain, e.g. handshake_test
 // drives with a SunSpec V1.2 leaf and must put the SunSpec roots in
-// ClientCAs. The path is read at boot time by the underlying
-// internal/tls.NewCCMServerConfig / NewServerTLSConfig.
+// ClientCAs. The path is read at boot time by the underlying core
+// pkg/sep2tls.NewCCMServerConfig / NewServerTLSConfig.
 func WithClientCAsFile(path string) BootOption {
 	return func(c *bootCfg) { c.clientCAsPath = path }
 }
@@ -491,7 +492,7 @@ func mustGenerateDeviceCert(t *testing.T, caCertPEM, caKeyPEM []byte) tls.Certif
 	return cert
 }
 
-// newCCMConfig wraps internal/tls.NewCCMServerConfig, which reads PEM
+// newCCMConfig wraps core's pkg/sep2tls.NewCCMServerConfig, which reads PEM
 // material from disk. We write the in-memory PEMs into t.TempDir so
 // the OS reaps them automatically when the test exits.
 func newCCMConfig(t *testing.T, serverCertPEM, serverKeyPEM, caCertPEM []byte) (*gotls.Config, error) {

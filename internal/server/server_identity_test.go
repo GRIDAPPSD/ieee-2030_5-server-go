@@ -24,7 +24,7 @@ import (
 // TestServerIdentityPopulatedUnderGCM is the regression test for #1.
 //
 // Before the fix, server.Run() constructed the router with empty SFDI/LFDI
-// strings and derived them from the cert only after — so /sdev returned
+// strings and derived them from the cert only after - so /sdev returned
 // empty <sFDI/> and <lFDI/> elements under GCM mode. This test drives the
 // full Run() flow end-to-end and asserts that /sdev returns the expected
 // 12-digit SFDI and 40-hex-char LFDI computed from the server cert.
@@ -33,9 +33,9 @@ func TestServerIdentityPopulatedUnderGCM(t *testing.T) {
 }
 
 // TestServerIdentityPopulatedUnderCCM is the parallel regression guard for
-// the CCM-8 path. internal/tls/ccmserver.go has no parallel server-identity
-// derivation, so the same pre-fix bug also affected CCM; the #1 fix
-// lands both modes in one shot.
+// the CCM-8 path. Core's pkg/sep2tls/ccmserver.go has no parallel
+// server-identity derivation, so the same pre-fix bug also affected CCM;
+// the #1 fix lands both modes in one shot.
 func TestServerIdentityPopulatedUnderCCM(t *testing.T) {
 	runServerIdentityTest(t, true /* CCM enabled */)
 }
@@ -94,7 +94,7 @@ func runServerIdentityTest(t *testing.T, enableCCM bool) {
 		t.Fatalf("write server key: %v", err)
 	}
 
-	// Compute the expected SFDI/LFDI from the server leaf — this is what /sdev
+	// Compute the expected SFDI/LFDI from the server leaf - this is what /sdev
 	// MUST return when the fix is in place.
 	leafBlock, _ := pem.Decode(serverCertPEM)
 	if leafBlock == nil {
@@ -180,9 +180,9 @@ startLoop:
 	}
 
 	// Build a client. Both modes use stdlib crypto/tls on the client because
-	// the fork only adds CCM-8 cipher support — stdlib already knows GCM,
-	// and CCM mode also negotiates GCM as a fallback (see
-	// internal/tls/ccmserver.go), so a stdlib client can interop with
+	// the fork only adds CCM-8 cipher support - stdlib already knows GCM,
+	// and CCM mode also negotiates GCM as a fallback (see core's
+	// pkg/sep2tls/ccmserver.go), so a stdlib client can interop with
 	// either server config.
 	client := &http.Client{
 		Transport: &http.Transport{TLSClientConfig: clientTLSCfg},
@@ -212,10 +212,10 @@ startLoop:
 	// The core assertions for #1: SFDI and LFDI must be present and
 	// match the values derived from the server's own leaf cert.
 	if sdev.SFDI == "" {
-		t.Errorf("SelfDevice.SFDI is empty — #1 regression")
+		t.Errorf("SelfDevice.SFDI is empty - #1 regression")
 	}
 	if sdev.LFDI == "" {
-		t.Errorf("SelfDevice.LFDI is empty — #1 regression")
+		t.Errorf("SelfDevice.LFDI is empty - #1 regression")
 	}
 	if sdev.SFDI != wantSFDI {
 		t.Errorf("SelfDevice.SFDI = %q, want %q (derived from server leaf cert)", sdev.SFDI, wantSFDI)
@@ -231,7 +231,7 @@ startLoop:
 	}
 	if enableCCM {
 		// CCM-preferred mode advertises CCM-8 first but falls back to GCM
-		// for stdlib clients. Either is fine for this test — we only care
+		// for stdlib clients. Either is fine for this test - we only care
 		// that the server identity flowed into the router.
 		switch resp.TLS.CipherSuite {
 		case sepTLS.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8, tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:

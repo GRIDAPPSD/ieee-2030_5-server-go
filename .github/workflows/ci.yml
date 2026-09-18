@@ -163,8 +163,11 @@ jobs:
       - name: Test (coverage)
         # Aggregate `./...` coverage profile for the upload artifact.
         # The fail-gate operates on the CSIP-scoped profile in the
-        # `csip` job below (#193): this step stays informational
-        # because the vendored internal/tls/gotls/ fork drags the
+        # `csip` job below (#193): this step stays informational because
+        # raw ./... aggregates every first-party package (cmd/
+        # entrypoints, test/stress tooling, handler packages whose
+        # coverage comes only from the CSIP suite's cross-package
+        # -coverpkg attribution and read 0% here), which drags the
         # aggregate well below policy and is not in the conformance
         # scope.
         run: make test-cover

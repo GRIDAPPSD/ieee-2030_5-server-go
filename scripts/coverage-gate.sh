@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# #193 — CSIP coverage-gate ratchet.
+# #193 - CSIP coverage-gate ratchet.
 #
 # Phase 7 (#191) shipped CI coverage as warn-not-fail. Phase 8
 # (#193) ratchets it to fail-at-achieved-threshold. The gate
 # operates on a Go coverage profile (`go test -coverprofile=...`) and
 # computes the total-statement percentage by parsing the profile
-# directly (no `go tool cover` invocation — keeps the gate runnable
+# directly (no `go tool cover` invocation - keeps the gate runnable
 # without a working Go toolchain and without needing the module
 # source on disk).
 #
@@ -20,15 +20,17 @@
 # matrix in CI and consumes the produced `coverage.out` artifact. It
 # is intentionally minimal, dependency-free, and inspectable. The
 # package-list scoping (CSIP-reachable production code) is encoded in
-# the `make test-cover` target that produced the profile — this
+# the `make test-cover` target that produced the profile - this
 # script just enforces the floor.
 #
 # Floor rationale: Phase 8 matrix walk identified the CSIP-reachable
-# production code as `./test/csip/...` + `./internal/...` minus the
-# vendored `internal/tls/gotls/` fork and its stubs. The achieved
-# threshold under that scope at #192 merge was 79.1%; this script
-# floors at 78% (1pp below for measurement noise) per Phase 8 doc
-# Deliverable 3.
+# production code as `./test/csip/...` + `./internal/...`. The
+# hand-copied TLS fork this scope once excluded is gone from this
+# module entirely (moved to ieee-2030_5-core-go, and go.mod-managed
+# vendor/ is never part of `./...` to begin with); nothing is excluded
+# from that scope today. The achieved threshold under that scope at
+# #192 merge was 79.1%; this script floors at 78% (1pp below for
+# measurement noise) per Phase 8 doc Deliverable 3.
 #
 # Usage:
 #   scripts/coverage-gate.sh <profile-path> [threshold-percent]
@@ -38,9 +40,9 @@
 #   threshold-percent:   78
 #
 # Exit codes:
-#   0  — coverage at or above threshold
-#   1  — coverage below threshold
-#   2  — usage / IO / parse error
+#   0  - coverage at or above threshold
+#   1  - coverage below threshold
+#   2  - usage / IO / parse error
 #
 # Output: prints the parsed total and threshold to stdout in a stable
 # format suitable for CI log greps:

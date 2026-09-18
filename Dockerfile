@@ -2,15 +2,16 @@
 #
 # The binary is built statically (CGO_ENABLED=0) so it can run in a
 # distroless/static final stage with no libc. The vendored crypto/tls fork
-# under internal/tls/gotls/ is pure Go and compiles with a normal go build;
-# no special build flags are required for it.
+# under vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls/
+# is pure Go and compiles with a normal go build; no special build flags
+# are required for it.
 #
 # Logs: the server routes the stdlib log package through a slog JSON handler
 # to stdout (see cmd/sep2server/logging.go). Run the container under the
 # Docker label obs.service=sep2server so Promtail keeps it and maps the
 # label to the Loki "service" label.
 
-# ─── Builder ──────────────────────────────────────────────────────
+# --- Builder ------------------------------------------------------
 FROM golang:1.26.3 AS builder
 
 WORKDIR /src
@@ -27,7 +28,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
         -trimpath -ldflags="-s -w" \
         -o /out/sep2server ./cmd/sep2server/
 
-# ─── Final ────────────────────────────────────────────────────────
+# --- Final --------------------------------------------------------
 # distroless static: no shell, no package manager, runs as nonroot by
 # default. Carries CA roots and /etc/passwd for the nonroot user.
 FROM gcr.io/distroless/static-debian12:nonroot

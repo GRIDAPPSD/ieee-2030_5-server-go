@@ -4,10 +4,11 @@ Code copied directly into this repo rather than imported as Go modules.
 Each entry includes the source, version, license, and rationale.
 
 No hand-copied dependencies are currently vendored this way. The two entries
-that once lived here, internal/tls/ccm/ (a pion CCM AEAD primitive) and
-internal/tls/gotls/ (a crypto/tls fork adding the CCM cipher suite), were
-removed when the server started consuming the equivalent sep2tls package
-from ieee-2030_5-core-go instead.
+that once lived here, a pion CCM AEAD primitive and a crypto/tls fork adding
+the CCM cipher suite, were removed when the server started consuming the
+equivalent sep2tls package from ieee-2030_5-core-go instead: `pkg/sep2tls/ccm`
+and `pkg/sep2tls/gotls`, mod-vendored at
+`vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/{ccm,gotls}`.
 
 ## Quality gates and a `go mod vendor` tree
 

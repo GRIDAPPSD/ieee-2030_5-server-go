@@ -5,8 +5,8 @@ import { readFileSync } from 'fs';
 import { startServer, stopServer, getCertDir } from './setup';
 
 // #159: Add EndDevice flow.
-// Paste a freshly generated device cert → Parse Cert auto-fills SFDI/LFDI →
-// fill PIN + description → click Add Device → device appears in the list.
+// Paste a freshly generated device cert -> Parse Cert auto-fills SFDI/LFDI ->
+// fill PIN + description -> click Add Device -> device appears in the list.
 //
 // We auth via Bearer (the e2e harness's standard path) so this exercises
 // the new /api/certs/info, /api/devices, and /api/devices/by-lfdi endpoints
@@ -52,7 +52,7 @@ test('add device from pasted certificate', async ({ page }) => {
   // 1) Paste cert.
   await page.locator('#addDevCert').fill(devicePEM);
 
-  // 2) Parse → SFDI/LFDI auto-fill.
+  // 2) Parse -> SFDI/LFDI auto-fill.
   await page.getByRole('button', { name: 'Parse Cert' }).click();
   await expect(page.locator('#addDevSFDI')).not.toHaveValue('', { timeout: 5000 });
   await expect(page.locator('#addDevLFDI')).not.toHaveValue('');

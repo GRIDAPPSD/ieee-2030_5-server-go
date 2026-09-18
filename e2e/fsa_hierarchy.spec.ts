@@ -32,7 +32,7 @@ const apiDelete = (page: Page, url: string) =>
 
 // 1) Panels render.
 test('#163: FSA Tree panel and Create FSA form render', async ({ page }) => {
-  await page.goto(baseUrl + '/?token=' + adminKey);
+  await page.goto(baseUrl + '/ui/fsas?token=' + adminKey);
   await page.waitForLoadState('domcontentloaded');
 
   await expect(page.getByText('Create FSA Template')).toBeVisible();
@@ -59,7 +59,7 @@ test('#163: GET /api/topology returns SY -> FD -> SP root', async ({ page }) => 
 test('#163: creating an FSA via the dashboard populates the tree', async ({ page }) => {
   const mRID = 'e2e-fsa-' + Date.now();
 
-  await page.goto(baseUrl + '/?token=' + adminKey);
+  await page.goto(baseUrl + '/ui/fsas?token=' + adminKey);
   await page.waitForLoadState('domcontentloaded');
 
   await page.locator('#newFSADesc').fill('E2E created FSA');
@@ -87,7 +87,7 @@ test('#163: creating an FSA via the dashboard populates the tree', async ({ page
 test('#163: per-FSA controls render in the tree', async ({ page }) => {
   const mRID = 'e2e-ctrl-' + Date.now();
 
-  await page.goto(baseUrl + '/?token=' + adminKey);
+  await page.goto(baseUrl + '/ui/fsas?token=' + adminKey);
   await page.waitForLoadState('domcontentloaded');
 
   const created = await apiPost(page, baseUrl + '/api/fsas', {

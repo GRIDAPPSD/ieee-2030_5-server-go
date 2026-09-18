@@ -131,6 +131,62 @@ describe('CertPanel', () => {
     })
   })
 
+  it('sends the selected device type, not the Generic default, once the operator changes it', async () => {
+    const post = vi.spyOn(api, 'postJSON').mockResolvedValue({
+      ok: true,
+      data: { certPEM: CERT_PEM, keyPEM: KEY_PEM, sfdi: '167261211635', lfdi: 'ABC' },
+    })
+
+    const { container } = render(CertPanel)
+    await fireEvent.change(container.querySelector('#deviceType') as HTMLSelectElement, {
+      target: { value: '2' },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate Device Cert' }))
+
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    expect(post).toHaveBeenCalledWith('/api/certs/device', {
+      deviceType: 2,
+      hwSerialNum: '',
+      hwType: '',
+    })
+  })
+
+  it('carries a successful mint to Add End Device with the identifiers the server derived', async () => {
+    vi.spyOn(api, 'postJSON').mockResolvedValue({
+      ok: true,
+      data: { certPEM: CERT_PEM, keyPEM: KEY_PEM, sfdi: '167261211635', lfdi: 'ABCDEF' },
+    })
+    const onMinted = vi.fn()
+
+    const { container } = render(CertPanel, { props: { onMinted } })
+    await fireEvent.input(container.querySelector('#hwSerial') as HTMLInputElement, {
+      target: { value: 'PW-INV-002' },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate Device Cert' }))
+
+    await waitFor(() => expect(onMinted).toHaveBeenCalledTimes(1))
+    expect(onMinted).toHaveBeenCalledWith({
+      certPEM: CERT_PEM,
+      keyPEM: KEY_PEM,
+      sfdi: '167261211635',
+      lfdi: 'ABCDEF',
+      serial: 'PW-INV-002',
+    })
+  })
+
+  it('does not carry a failed mint: onMinted is not called on error', async () => {
+    vi.spyOn(api, 'postJSON').mockResolvedValue({ ok: false, error: 'no CA loaded', status: 503 })
+    const onMinted = vi.fn()
+
+    const { container } = render(CertPanel, { props: { onMinted } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate Device Cert' }))
+
+    await waitFor(() => {
+      expect(container.querySelector('#certResult')).toHaveTextContent('Error: no CA loaded')
+    })
+    expect(onMinted).not.toHaveBeenCalled()
+  })
+
   it('never posts to the server-cert route: that key would arrive undelivered', async () => {
     const post = vi.spyOn(api, 'postJSON').mockResolvedValue({
       ok: true,

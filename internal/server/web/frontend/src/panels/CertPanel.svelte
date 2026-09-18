@@ -15,6 +15,7 @@
   // stays available to the CLI and to curl, where the key is the point.
   import { fetchJSON, postJSON } from '../lib/api'
   import { downloadText, PEM_MIME } from '../lib/download'
+  import { DEFAULT_DEVICE_TYPE, DEVICE_TYPES, type MintedCert } from '../lib/deviceCert'
 
   interface DeviceCertResponse {
     certPEM: string
@@ -27,6 +28,13 @@
     certPEM: string
   }
 
+  // onMinted carries a successful mint to Add End Device (issue 594),
+  // through AdminShell's hoisted state: this panel and AddDevice sit on
+  // different tabs, so neither can hold the value in its own local state
+  // across the switch.
+  let { onMinted }: { onMinted?: (cert: MintedCert) => void } = $props()
+
+  let deviceType = $state(DEFAULT_DEVICE_TYPE)
   let hwSerial = $state('')
   // The route rejects a device-cert request with no hwType: the OID is part
   // of the CSIP HardwareModuleName SAN and the server cannot invent it.
@@ -45,7 +53,7 @@
   async function generateDeviceCert() {
     issued = null
     const res = await postJSON<DeviceCertResponse>('/api/certs/device', {
-      deviceType: 1,
+      deviceType,
       hwSerialNum: hwSerial,
       hwType,
     })
@@ -54,13 +62,21 @@
       certResult = `Error: ${res.error}`
       return
     }
+    const serial = hwSerial || 'device'
     issued = {
       certPEM: res.data.certPEM,
       keyPEM: res.data.keyPEM,
-      serial: hwSerial || 'device',
+      serial,
     }
     certOk = true
     certResult = `Generated! SFDI: ${res.data.sfdi}`
+    onMinted?.({
+      certPEM: res.data.certPEM,
+      keyPEM: res.data.keyPEM,
+      sfdi: res.data.sfdi,
+      lfdi: res.data.lfdi,
+      serial,
+    })
   }
 
   async function downloadCA() {
@@ -93,6 +109,11 @@
 <div class="card">
   <h2>Certificate Management</h2>
   <div class="form-row">
+    <select id="deviceType" bind:value={deviceType}>
+      {#each DEVICE_TYPES as dt (dt.value)}
+        <option value={dt.value}>{dt.label}</option>
+      {/each}
+    </select>
     <input type="text" id="hwSerial" placeholder="Hardware Serial (e.g., INV-001)" bind:value={hwSerial} />
     <input
       type="text"

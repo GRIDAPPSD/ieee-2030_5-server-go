@@ -3,8 +3,13 @@ CLAUDE.md
 .claude/
 *.claude
 
-# Local TLS material (dev/test PKI - never commit private keys)
-certs/
+# Local TLS material (dev/test PKI - never commit private keys). The
+# default location moved outside the repository (#598: make certs and the
+# server both default to SEP2_CERT_DIR, or ~/tls); this entry is a
+# defense-in-depth net for a manual override that still targets a
+# repo-relative certs/ directory at the repository root. Anchored so it
+# cannot also match internal/certs/, a source package.
+/certs/
 
 # CSIP conformance fixtures. The SunSpec V1.2 test PKI is gitignored
 # per workspace policy and provisioned out of band (see

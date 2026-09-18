@@ -50,13 +50,13 @@ const (
 // "1.3.6.1.4.1.40732.99") into an asn1.ObjectIdentifier and validates the
 // basic ASN.1 / X.660 well-formedness constraints:
 //
-//   - at least two arcs (X.660 §3.5.1)
-//   - arc[0] ∈ {0, 1, 2}
-//   - if arc[0] < 2, then arc[1] ∈ [0, 39]
+//   - at least two arcs (X.660 section 3.5.1)
+//   - arc[0] in {0, 1, 2}
+//   - if arc[0] < 2, then arc[1] in [0, 39]
 //
 // Without these checks, syntactically numeric but semantically invalid OIDs
 // would surface much later as ASN.1 marshaling failures during certificate
-// generation — i.e. as a 500 from the admin API instead of a clean 400
+// generation - i.e. as a 500 from the admin API instead of a clean 400
 // validation error.
 func ParseOID(s string) (asn1.ObjectIdentifier, error) {
 	if s == "" {
@@ -89,7 +89,7 @@ func ParseOID(s string) (asn1.ObjectIdentifier, error) {
 	return oid, nil
 }
 
-// HardwareModuleName carries the parsed contents of an RFC 4108 §5
+// HardwareModuleName carries the parsed contents of an RFC 4108 section 5
 // HardwareModuleName otherName entry, as embedded in a SubjectAlternativeName
 // extension on an IEEE 2030.5 / CSIP device certificate.
 type HardwareModuleName struct {
@@ -99,7 +99,7 @@ type HardwareModuleName struct {
 
 // ExtractHardwareModuleName walks a parsed certificate's SubjectAlternativeName
 // extension looking for an otherName with TypeID == OIDHardwareModuleName
-// (RFC 4108 §5). It returns the parsed HardwareModuleName and ok=true on the
+// (RFC 4108 section 5). It returns the parsed HardwareModuleName and ok=true on the
 // first match.
 //
 // The function is intentionally conservative: any ASN.1 parse failure or a
@@ -161,16 +161,16 @@ func ExtractHardwareModuleName(cert *x509.Certificate) (HardwareModuleName, bool
 
 // SANAllOtherNamesAreHardwareModuleName reports whether the cert's
 // SubjectAlternativeName extension is a well-formed GeneralNames SEQUENCE
-// AND every otherName entry inside is a well-formed RFC 4108 §5
+// AND every otherName entry inside is a well-formed RFC 4108 section 5
 // HardwareModuleName (TypeID == OIDHardwareModuleName, inner value parses as
 // the HMN SEQUENCE).
 //
 // Returns:
-//   - (true, true)  — SAN present, well-formed, every otherName is HMN.
-//   - (false, true) — SAN present but malformed, OR contains an otherName
+//   - (true, true)  - SAN present, well-formed, every otherName is HMN.
+//   - (false, true) - SAN present but malformed, OR contains an otherName
 //     that is NOT HMN, OR has zero otherName entries. The caller MUST treat
 //     the SAN as unacknowledged.
-//   - (false, false) — no SAN extension on the cert at all.
+//   - (false, false) - no SAN extension on the cert at all.
 //
 // Non-otherName GeneralName forms (dNSName, iPAddress, etc.) cause this to
 // return false: a CSIP device cert SAN is otherName-only, and the verifier
@@ -185,7 +185,7 @@ func SANAllOtherNamesAreHardwareModuleName(cert *x509.Certificate) (allHMN bool,
 		if !ext.Id.Equal(OIDSubjectAltName) {
 			continue
 		}
-		// SAN extension found — every return below is (_, true).
+		// SAN extension found - every return below is (_, true).
 
 		var seq asn1.RawValue
 		if _, err := asn1.Unmarshal(ext.Value, &seq); err != nil {

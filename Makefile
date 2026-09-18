@@ -338,11 +338,13 @@ test-csip-race:           ## Race detector on the CSIP suite with csip_test_hook
 # #193 - CSIP-scoped coverage profile + gate.
 #
 # Phase 8 Deliverable 3: the coverage gate operates on production code
-# reachable from CSIP-mode execution, not on raw ./... (which includes
-# the vendored fork at
-# vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls/ and
-# would always drag the aggregate below policy). The -coverpkg list below
-# pins the in-scope packages; the gate floor is enforced by
+# reachable from CSIP-mode execution, not on raw ./... (which aggregates
+# every first-party package in the module: cmd/ entrypoints, test/stress
+# tooling, and handler packages under pkg/sep2srv/handlers/... whose
+# coverage comes only from the CSIP suite's cross-package -coverpkg
+# attribution and read 0% under a plain per-package `go test ./...` run;
+# that mix would always drag the aggregate below policy). The -coverpkg
+# list below pins the in-scope packages; the gate floor is enforced by
 # scripts/coverage-gate.sh.
 #
 # Achieved threshold at #192 merge: 79.1% scoped. Gate floored at

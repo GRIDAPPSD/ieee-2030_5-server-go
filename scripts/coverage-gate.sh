@@ -24,12 +24,13 @@
 # script just enforces the floor.
 #
 # Floor rationale: Phase 8 matrix walk identified the CSIP-reachable
-# production code as `./test/csip/...` + `./internal/...` minus the
-# vendored fork at
-# vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls/ and
-# its stubs. The achieved threshold under that scope at #192 merge was
-# 79.1%; this script floors at 78% (1pp below for measurement noise)
-# per Phase 8 doc Deliverable 3.
+# production code as `./test/csip/...` + `./internal/...`. The
+# hand-copied TLS fork this scope once excluded is gone from this
+# module entirely (moved to ieee-2030_5-core-go, and go.mod-managed
+# vendor/ is never part of `./...` to begin with); nothing is excluded
+# from that scope today. The achieved threshold under that scope at
+# #192 merge was 79.1%; this script floors at 78% (1pp below for
+# measurement noise) per Phase 8 doc Deliverable 3.
 #
 # Usage:
 #   scripts/coverage-gate.sh <profile-path> [threshold-percent]

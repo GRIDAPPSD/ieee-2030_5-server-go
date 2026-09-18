@@ -15,7 +15,7 @@
     type HistoryPoint,
   } from './lib/dashboard'
   import type { AdminFSA, AdminFSAList, TopologyNode } from './lib/fsa'
-  import { currentPath, navigate } from './lib/router'
+  import { currentPath, navigate, replace } from './lib/router'
   import NavBar from './panels/NavBar.svelte'
   import Overview from './panels/Overview.svelte'
   import ServerInfo from './panels/ServerInfo.svelte'
@@ -41,15 +41,35 @@
     { slug: 'certificates', label: 'Certificates' },
   ]
 
-  // An unrecognized /ui/ path falls back to overview rather than a
-  // dedicated not-found tab; the not-found view is issue 561 criterion 6,
-  // owned by a later step.
-  function tabForPath(path: string): TabSlug {
-    const match = TABS.find((tab) => path === `/ui/${tab.slug}`)
-    return match ? match.slug : 'overview'
+  // 'not-found' is issue 561 criterion 6: any /ui/ path that names no tab
+  // and no trailing-slash form of one. A path outside /ui/ and outside "/"
+  // is not this issue's concern (the server's SPA fallback only ever sends
+  // an admin UI path here), so it keeps the old default of overview.
+  type ActiveTab = TabSlug | 'not-found'
+
+  function tabForPath(path: string): ActiveTab {
+    if (path === '/' || path === '/ui/') return 'overview'
+    if (!path.startsWith('/ui/')) return 'overview'
+    const exact = TABS.find((tab) => path === `/ui/${tab.slug}`)
+    if (exact) return exact.slug
+    const trailingSlug = path.endsWith('/') ? path.slice('/ui/'.length, -1) : null
+    const trailing = trailingSlug ? TABS.find((tab) => tab.slug === trailingSlug) : undefined
+    return trailing ? trailing.slug : 'not-found'
   }
 
   let activeTab = $derived(tabForPath($currentPath))
+
+  // Renders the correct tab immediately from tabForPath above; this effect
+  // only fixes the address bar afterward, as a replace so a trailing-slash
+  // entry never lands in history for back to stop on. "/ui/" itself is the
+  // overview alias (criterion 2), not a trailing-slash tab, so it is left
+  // alone.
+  $effect(() => {
+    const path = $currentPath
+    if (path === '/ui/' || !path.startsWith('/ui/') || !path.endsWith('/')) return
+    const slug = path.slice('/ui/'.length, -1)
+    if (TABS.some((tab) => tab.slug === slug)) replace(`/ui/${slug}`)
+  })
 
   function onTabClick(event: MouseEvent, slug: TabSlug) {
     // A modifier key or a non-primary button asks the browser for its own
@@ -151,6 +171,16 @@
       <DerControl />
     {:else if activeTab === 'certificates'}
       <CertPanel />
+    {:else if activeTab === 'not-found'}
+      <div class="card" data-testid="not-found">
+        <h2>Not Found</h2>
+        <p>No tab matches <span class="mono">{$currentPath}</span>.</p>
+        <a
+          href="/ui/overview"
+          data-testid="not-found-overview-link"
+          onclick={(event) => onTabClick(event, 'overview')}
+        >Return to Overview</a>
+      </div>
     {/if}
   </div>
 {/if}

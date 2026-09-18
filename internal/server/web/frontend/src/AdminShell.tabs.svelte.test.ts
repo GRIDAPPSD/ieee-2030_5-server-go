@@ -202,3 +202,59 @@ describe('AdminShell header on every path, with no admin session (criterion 7)',
     expect(connect).not.toHaveBeenCalled()
   })
 })
+
+describe('AdminShell trailing slash on a tab path (criterion 6)', () => {
+  it('renders the tab and replaces the URL with the slash-free path, without pushing a history entry', async () => {
+    // The navigation to the trailing-slash URL itself (simulating a hard
+    // reload landing there) has to happen before the spy is installed, or
+    // the spy would also catch that setup call and not just anything the
+    // component does in response to it.
+    window.history.pushState({}, '', '/ui/devices/')
+    mockAuthenticated()
+    const pushSpy = vi.spyOn(window.history, 'pushState')
+    const { container } = render(AdminShell)
+    await waitFor(() => expect(container.querySelector('.grid h2')).toBeTruthy())
+
+    expect(screen.getByTestId('tab-devices')).toHaveAttribute('aria-current', 'page')
+    const headings = Array.from(container.querySelectorAll('.grid h2')).map((h) => h.textContent)
+    expect(headings.slice().sort()).toEqual(TAB_HEADINGS.devices.slice().sort())
+
+    await waitFor(() => expect(window.location.pathname).toBe('/ui/devices'))
+    expect(pushSpy).not.toHaveBeenCalled()
+  })
+
+  it('leaves "/ui/" itself alone: it is the overview alias, not a trailing-slash tab', async () => {
+    await renderOnPath('/ui/')
+    expect(window.location.pathname).toBe('/ui/')
+  })
+})
+
+describe('AdminShell not-found view for an unmatched /ui/ path (criterion 6)', () => {
+  it('renders the header, a tab bar with no tab current, and a not-found card naming the path, never a tab\'s cards', async () => {
+    const { container } = await renderOnPath('/ui/frobulate')
+
+    expect(container.querySelector('.navbar')).toBeTruthy()
+    const tabBar = container.querySelector('.tab-bar')
+    expect(tabBar).toBeTruthy()
+    for (const slug of Object.keys(TAB_HEADINGS)) {
+      expect(screen.getByTestId(`tab-${slug}`)).not.toHaveAttribute('aria-current')
+    }
+
+    const headings = Array.from(container.querySelectorAll('.grid h2')).map((h) => h.textContent)
+    expect(headings).toEqual(['Not Found'])
+    expect(screen.getByTestId('not-found')).toHaveTextContent('/ui/frobulate')
+
+    const link = screen.getByTestId('not-found-overview-link')
+    expect(link).toHaveAttribute('href', '/ui/overview')
+  })
+
+  it('navigates to overview client-side on a plain click of the not-found link', async () => {
+    await renderOnPath('/ui/frobulate')
+    const navigate = vi.spyOn(router, 'navigate')
+
+    const notCancelled = await fireEvent.click(screen.getByTestId('not-found-overview-link'))
+
+    expect(notCancelled).toBe(false)
+    expect(navigate).toHaveBeenCalledWith('/ui/overview')
+  })
+})

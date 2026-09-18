@@ -35,6 +35,15 @@ export function navigate(path: string): void {
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
+// replace swaps the current history entry's URL instead of adding a new
+// one, for normalizing a canonical redirect (a tab path's trailing slash,
+// issue 561 criterion 6) so the back button does not have to skip past it.
+export function replace(path: string): void {
+  if (path === window.location.pathname) return
+  window.history.replaceState({}, '', path)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
 // Route describes one client side route: the exact pathname it matches and
 // a human label for the nav link. Panels register their own Route entries
 // in src/routes/index.ts as they land; this file stays generic.

@@ -159,13 +159,20 @@ func (s *Server) Patterns() []string { return s.patterns }
 // Stores returns the resource-store handle: the one a consumer seeds a fleet
 // through, and injects control through.
 //
-// This is the WRITE handle. The read-only half of the privilege split, the
-// narrowed view a telemetry reader or an administrative read surface should
-// hold, is a follow-up: a second accessor returning reader interfaces from
-// core's store package. core's ResourceReader and ScopedReader already
-// exist, so nothing here has to change to admit it, and no consumer of
-// this accessor breaks when it does.
+// This is the WRITE handle. For the read-only half, see [Server.ReadStores].
 func (s *Server) Stores() *assembly.Stores { return s.stores }
+
+// ReadStores returns the read-only half of the privilege split: the
+// narrowed view a telemetry reader or an administrative read surface should
+// hold. It is read-only by TYPE, not by convention: every field is a
+// reader interface, and a caller holding it cannot compile a call that
+// mutates the store (see the compile-failure test at
+// testdata/readstorescannotmutate, the same pattern pkg/sep2admin uses).
+//
+// It narrows the SAME stores [Server.Stores] returns, so a write made
+// through the write handle is visible through this one; they are two views
+// of one store set, not two store sets.
+func (s *Server) ReadStores() *assembly.ReaderStores { return assembly.NewReaderStores(s.stores) }
 
 // Identity returns the server's SFDI and LFDI, derived from the leaf
 // certificate during [New].

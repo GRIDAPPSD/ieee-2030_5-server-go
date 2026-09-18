@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
@@ -294,6 +295,18 @@ func TestServerLifecycle(t *testing.T) {
 	if srv.Stores() != stores {
 		t.Error("Stores() returned a different handle than Config.Stores")
 	}
+
+	// Criterion 3: a seeding path holding srv.Stores() (the write handle)
+	// and a telemetry path holding srv.ReadStores() (the read handle) both
+	// compile against the same, real, running server, and the telemetry
+	// path sees what the seeding path wrote.
+	if err := srv.Stores().EndDevices.Create(context.Background(), "seeded-1", sep2.EndDevice{}); err != nil {
+		t.Fatalf("seed through the write handle: %v", err)
+	}
+	if _, err := srv.ReadStores().EndDevices.Get(context.Background(), "seeded-1"); err != nil {
+		t.Errorf("telemetry path (ReadStores) does not see a device seeded through the write handle: %v", err)
+	}
+
 	if len(srv.Patterns()) == 0 {
 		t.Error("Patterns() is empty")
 	}

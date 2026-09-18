@@ -1,5 +1,5 @@
 // Step A of issue 561: the tab bar and the per-tab card partition
-// (criteria 1, 2 and 3). AdminShell is rendered directly, not through
+// (criteria 1, 2, 3 and 7). AdminShell is rendered directly, not through
 // App, since it now reads the active tab from currentPath itself; the
 // component-identity guarantee that a route change does not remount it is
 // App.svelte.test.ts's concern, not this file's.
@@ -33,6 +33,14 @@ function mockAuthenticated() {
     return { ok: true, data: { kind: 'SY', id: 'sy', label: 'System' } } as never
   })
   vi.spyOn(dash, 'connectDashboard').mockReturnValue(() => {})
+}
+
+function mockUnauthorized() {
+  vi.spyOn(api, 'fetchJSON').mockResolvedValue({
+    ok: false,
+    error: 'admin authentication required',
+    status: 401,
+  })
 }
 
 async function renderOnPath(path: string) {
@@ -162,5 +170,35 @@ describe('AdminShell tab bar (criterion 3)', () => {
 
     expect(notCancelled).toBe(true)
     expect(navigate).not.toHaveBeenCalled()
+  })
+})
+
+describe('AdminShell header on every path, with no admin session (criterion 7)', () => {
+  it('shows only the header and the login form at "/"', async () => {
+    window.history.pushState({}, '', '/')
+    mockUnauthorized()
+    const { container } = render(AdminShell)
+
+    await screen.findByTestId('login-panel')
+    expect(container.querySelector('.navbar')).toBeTruthy()
+    expect(container.querySelector('.tab-bar')).toBeNull()
+    const grid = container.querySelector('.grid')
+    expect(grid?.children).toHaveLength(1)
+    expect(grid?.firstElementChild).toBe(screen.getByTestId('login-panel'))
+  })
+
+  it('shows only the header and the login form on a tab path, with no stream opened', async () => {
+    window.history.pushState({}, '', '/ui/devices')
+    mockUnauthorized()
+    const connect = vi.spyOn(dash, 'connectDashboard')
+    const { container } = render(AdminShell)
+
+    await screen.findByTestId('login-panel')
+    expect(container.querySelector('.navbar')).toBeTruthy()
+    expect(container.querySelector('.tab-bar')).toBeNull()
+    const grid = container.querySelector('.grid')
+    expect(grid?.children).toHaveLength(1)
+    expect(grid?.firstElementChild).toBe(screen.getByTestId('login-panel'))
+    expect(connect).not.toHaveBeenCalled()
   })
 })

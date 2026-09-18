@@ -356,3 +356,48 @@ func setupTestCertDir(t *testing.T) string {
 	}
 	return dir
 }
+
+// TestGitignoreKeyMaterialRules pins item 3's ignore rule (#601 review
+// finding 3) against regression, without shelling out to git: it reads the
+// repository's own .gitignore and checks its literal lines rather than
+// git's resolved ignore decision, so it has no dependency on running
+// inside a real git checkout. Two things must hold together: the
+// extension-based rules and the CSIP fixture exemption exist, and no line
+// excludes testdata/ (or any ancestor of testdata/csip-pki/) ahead of the
+// exemption, since git cannot re-include a file under an already-excluded
+// directory and such a line would silently swallow the exemption below it.
+func TestGitignoreKeyMaterialRules(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	lines := strings.Split(string(raw), "\n")
+
+	has := func(want string) bool {
+		for _, l := range lines {
+			if strings.TrimSpace(l) == want {
+				return true
+			}
+		}
+		return false
+	}
+	for _, want := range []string{"*.key", "*.pem", "!testdata/csip-pki/**"} {
+		if !has(want) {
+			t.Errorf(".gitignore is missing the line %q", want)
+		}
+	}
+
+	// A line naming testdata/ (in any of the forms git accepts for a
+	// directory-anchored ignore) ahead of the exemption would exclude the
+	// exemption's ancestor and silently re-ignore the CSIP fixtures. None
+	// of these forms may appear anywhere in the file.
+	ancestorForms := []string{"testdata/", "/testdata/", "testdata", "/testdata"}
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		for _, form := range ancestorForms {
+			if trimmed == form {
+				t.Fatalf(".gitignore excludes %q, an ancestor of testdata/csip-pki/; this silently re-ignores the CSIP fixtures the !testdata/csip-pki/** line exempts", trimmed)
+			}
+		}
+	}
+}

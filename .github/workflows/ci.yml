@@ -407,6 +407,53 @@ jobs:
       - name: Run frontend component tests
         run: cd internal/server/web/frontend && npm run test
 
+  e2e:
+    name: Playwright e2e suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # No `needs: ci`: e2e/global-setup.ts builds sep2server itself with a
+    # direct `go build`, not through the `ci` job's `make build`, so
+    # serializing behind `ci` would only add wait time. Independent, like
+    # ui-drift-check and gofmt.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24.19.0'
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install e2e dependencies
+        run: cd e2e && npm ci
+
+      - name: Cache Playwright browsers
+        # Keyed on the lockfile: it pins @playwright/test's exact version,
+        # which is what determines the browser revision to download, so a
+        # version bump invalidates the cache and anything else is a hit.
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json') }}
+
+      - name: Install Playwright browsers
+        # --with-deps installs chromium's OS-level shared libraries, which
+        # the cache above does not cover and which a fresh runner VM needs
+        # every run; the browser binary download itself is a no-op once
+        # the cache step restores a matching revision.
+        run: cd e2e && npx playwright install --with-deps chromium
+
+      - name: Run Playwright e2e suite
+        run: make test-e2e
+
   gofmt:
     name: gofmt check
     runs-on: ubuntu-latest

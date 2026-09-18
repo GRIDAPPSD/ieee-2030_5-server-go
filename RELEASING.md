@@ -13,9 +13,9 @@ this repository's own facts, as does subsection 17.6 inside the shared section
 Module path: `github.com/GRIDAPPSD/ieee-2030_5-server-go`
 
 The standalone IEEE 2030.5 server. It CONSUMES `ieee-2030_5-core-go` and is
-consumed by no other repository in this family (section 10). It sits in the
-middle of the dependency graph in position only: in release terms it is a
-downstream repository, not an upstream one.
+in turn consumed by the bridge, the one other repository in this family that
+imports it (section 10). It sits in the middle of the dependency graph in
+both position and release terms: downstream of core, upstream of the bridge.
 
 Release shape: a Go module that also ships a server binary under `cmd/` and a
 `Dockerfile`, but has no tag-driven release workflow. A release is a tag plus

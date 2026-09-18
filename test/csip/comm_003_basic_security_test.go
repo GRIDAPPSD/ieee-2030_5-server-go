@@ -1,4 +1,4 @@
-// CSIP V1.2 §5.3 — Basic Security (TLS cipher negotiation).
+// CSIP V1.2 section 5.3 - Basic Security (TLS cipher negotiation).
 //
 // SKELETON: This test runs under lax mode today and accepts CCM-8 (0xC0AE)
 // OR GCM (0xC02B / 0xC02C). Once #22 (CSIP strict mode) lands and
@@ -7,7 +7,7 @@
 //
 // TODO: tighten to CCM-8-only once SEP2_CSIP_STRICT lands (#22)
 //
-// Procedure (V1.2 §5.3 — Basic Security):
+// Procedure (V1.2 section 5.3 - Basic Security):
 //  1. Client opens a TCP connection to the server and starts a TLS
 //     handshake offering the cipher suites it supports.
 //  2. Server selects a cipher suite from the offered set, completes
@@ -109,7 +109,7 @@ func TestCOMM_003_BasicSecurity_LaxSkeleton(t *testing.T) {
 		t.Errorf("negotiated cipher = 0x%04X (%s); want one of CCM-8 (0xC0AE), GCM-128 (0xC02B), GCM-256 (0xC02C)",
 			state.CipherSuite, tls.CipherSuiteName(state.CipherSuite))
 	}
-	t.Logf("CSIP V1.2 §5.3 lax check: negotiated cipher 0x%04X (%s)",
+	t.Logf("CSIP V1.2 section 5.3 lax check: negotiated cipher 0x%04X (%s)",
 		state.CipherSuite, tls.CipherSuiteName(state.CipherSuite))
 
 	// Silence unused: caKeyPEM is retained intentionally so a future

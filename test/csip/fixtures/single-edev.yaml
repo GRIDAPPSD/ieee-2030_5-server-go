@@ -1,7 +1,7 @@
-# #52 fixture — one EndDevice matching the SunSpec V1.2 test
+# #52 fixture - one EndDevice matching the SunSpec V1.2 test
 # device certificate.
 #
-# Identity derivation (matches internal/tls/identity.go, spec §6.3):
+# Identity derivation (matches internal/tls/identity.go, spec section 6.3):
 #
 #   LFDI = first 20 bytes of SHA-256(cert.DER), hex-uppercase (40 chars).
 #   SFDI = top 36 bits of the same hash, formatted as 11 zero-padded

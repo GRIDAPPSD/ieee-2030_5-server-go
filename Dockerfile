@@ -10,7 +10,7 @@
 # Docker label obs.service=sep2server so Promtail keeps it and maps the
 # label to the Loki "service" label.
 
-# ─── Builder ──────────────────────────────────────────────────────
+# --- Builder ------------------------------------------------------
 FROM golang:1.26.3 AS builder
 
 WORKDIR /src
@@ -27,7 +27,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
         -trimpath -ldflags="-s -w" \
         -o /out/sep2server ./cmd/sep2server/
 
-# ─── Final ────────────────────────────────────────────────────────
+# --- Final --------------------------------------------------------
 # distroless static: no shell, no package manager, runs as nonroot by
 # default. Carries CA roots and /etc/passwd for the nonroot user.
 FROM gcr.io/distroless/static-debian12:nonroot

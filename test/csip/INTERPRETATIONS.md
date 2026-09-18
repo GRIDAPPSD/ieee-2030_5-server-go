@@ -1,16 +1,16 @@
 # CSIP V1.2 Spec Interpretations
 
 This file documents every spec-interpretation call surfaced during the
-Plan-2 wiring of `test/csip/` against SunSpec CSIP V1.2 (`§` references
-are to `SunSpecCSIPConformanceTestProceduresV1.2.pdf`, 2019-07-24).
+Plan-2 wiring of `test/csip/` against SunSpec CSIP V1.2. Section references
+below are to `SunSpecCSIPConformanceTestProceduresV1.2.pdf`, 2019-07-24.
 
 Each entry covers:
 
-- **The ambiguity** — the spec wording or §4 marking that was not
+- **The ambiguity** - the spec wording or section 4 marking that was not
   unambiguous against the server profile we ship.
-- **The interpretation** — the call we made.
-- **Where implemented** — file + ticket that landed the call.
-- **Decision lineage** — date and where the decision was recorded
+- **The interpretation** - the call we made.
+- **Where implemented** - file + ticket that landed the call.
+- **Decision lineage** - date and where the decision was recorded
   (journal entry, PR review thread, phase doc).
 
 Imported into #194 (self-attestation letter) Section 3 (Spec
@@ -19,16 +19,16 @@ test gate for #193.
 
 ---
 
-## §1. COMM-001 (xmDNS Discovery) treated as SKIPPED-OPTIONAL
+## 1. COMM-001 (xmDNS Discovery) treated as SKIPPED-OPTIONAL
 
-**Ambiguity.** CSIP V1.2 §4 Profile Test Conformance (pp 19-20) marks
-COMM-001 unmarked in the Server column — the §4 matrix marks Server-
+**Ambiguity.** CSIP V1.2 section 4 Profile Test Conformance (pp 19-20) marks
+COMM-001 unmarked in the Server column - the section 4 matrix marks Server-
 required rows with an explicit indicator, and COMM-001's row is blank
 under Server. This contrasts with COMM-002, COMM-003, COMM-004 which
-are marked. The §5.1 procedure body does not restate the §4 marking.
+are marked. The section 5.1 procedure body does not restate the section 4 marking.
 
 **Interpretation.** COMM-001 is **optional** for the Server profile.
-The §4 marking is authoritative; an unmarked Server cell is read as
+The section 4 marking is authoritative; an unmarked Server cell is read as
 "not required." The server still publishes `_smartenergy._tcp` via
 `internal/discovery/` (already in production), but no `test/csip/`
 file asserts the discovery semantics end-to-end. xmDNS multicast on
@@ -36,7 +36,7 @@ CI runners is finicky (self-hosted runner network may not allow
 multicast loopback), and the cost-benefit of wiring a multicast
 sniffer for an optional row exceeded the budget for Phase 5.
 
-**Implemented in.** (n/a — intentionally absent from `test/csip/`.)
+**Implemented in.** (n/a - intentionally absent from `test/csip/`.)
 
 **Decision lineage.** Phase 5 closure note, journal 2026-05-08 (see
 `projects/ieee-2030_5-go/journal.md` for that date). Re-confirmed at
@@ -44,9 +44,9 @@ Phase 8 walk on 2026-05-13. Decision-maker: Pike.
 
 ---
 
-## §2. COMM-003 (Basic Security) lax-mode cipher assertion
+## 2. COMM-003 (Basic Security) lax-mode cipher assertion
 
-**Ambiguity.** CSIP V1.2 §5.3 step 2 requires:
+**Ambiguity.** CSIP V1.2 section 5.3 step 2 requires:
 
 > "The server selects a cipher suite from the offered set, completes
 > the handshake, and the negotiated cipher suite is
@@ -54,8 +54,8 @@ Phase 8 walk on 2026-05-13. Decision-maker: Pike.
 
 The server already supports CCM-8 under `make run-ccm` (vendored
 `internal/tls/gotls/` fork registers 0xC0AE). The default
-`csiptest.BootServer()` path uses the stdlib `crypto/tls` GCM path —
-no CCM-8 registration — because the CCM build is opt-in via
+`csiptest.BootServer()` path uses the stdlib `crypto/tls` GCM path -
+no CCM-8 registration - because the CCM build is opt-in via
 `SEP2_CSIP_STRICT=true` (#22 work-in-progress; tracked at
 GRIDAPPSD/ieee-2030_5-go#20).
 
@@ -69,7 +69,7 @@ The conformance claim under this interpretation is: "the server
 binary negotiates CCM-8 end-to-end under `make run-ccm` (verified in
 `test/csip/handshake_test.go`); the unit-level CSIP harness asserts
 the negotiated cipher is in the CSIP-permitted set, with strict-mode
-tightening pending #22." See INTERPRETATIONS.md §3 for the
+tightening pending #22." See INTERPRETATIONS.md section 3 for the
 COMM-004 cert-variant scope this depends on.
 
 **Implemented in.** `test/csip/comm_003_basic_security_test.go`
@@ -82,17 +82,17 @@ Pike.
 
 ---
 
-## §3. COMM-004 (Advanced Security) minimum-viable cert variants
+## 3. COMM-004 (Advanced Security) minimum-viable cert variants
 
-**Ambiguity.** CSIP V1.2 §5.4 requires the server reject:
+**Ambiguity.** CSIP V1.2 section 5.4 requires the server reject:
 
 - Invalid MICA Extended Key Usage
 - Invalid MICA Name (Non-Critical)
 - Invalid MICA Policy Mapping (Non-Critical)
 - Self-signed device cert
 
-Across chain lengths: 2-link (SERCA → Device), 3-link
-(SERCA → MICA → Device), 4-link (SERCA → MCA → MICA → Device). That is
+Across chain lengths: 2-link (SERCA -> Device), 3-link
+(SERCA -> MICA -> Device), 4-link (SERCA -> MCA -> MICA -> Device). That is
 six cert-fixture variants for the happy paths, plus four
 broken-variant negatives.
 
@@ -107,13 +107,13 @@ locally rooted (workstation-generated SERCA).
   PKI happy path (CCM-8 cipher negotiation under env-gated fixtures).
 - `test/csip/testdevice_handshake_test.go` covers the self-minted test
   device PKI variant (committed under `testdata/csip-pki/testdevice/`)
-  with a CSIP §6.11-compliant device cert (HardwareModuleName SAN,
+  with a CSIP section 6.11-compliant device cert (HardwareModuleName SAN,
   empty Subject, KeyUsage, BasicConstraints). Exercises the server
   handling a compliant cert in default (non-strict) mode.
 
 The four broken-variant negatives (invalid MICA ext-key, invalid MICA
 name, invalid MICA policy mapping, self-signed device) are **NOT**
-wired today. The full 6-cert-chain × broken-variant matrix is half a
+wired today. The full 6-cert-chain x broken-variant matrix is half a
 day of crypto-fixture work and was descoped from Phase 5 by mutual
 agreement (Pike + Frank + Craig) on 2026-05-09. The conformance claim
 under this interpretation is: "TLS-layer cert verification is exercised
@@ -121,7 +121,7 @@ via two PKI variants; full negative-variant matrix is acknowledged as
 an out-of-scope cert-fixture exposure documented here."
 
 **Recommended follow-up.** #22 strict mode landing will surface
-which broken-variants the server rejects loudly versus silently —
+which broken-variants the server rejects loudly versus silently -
 filing per-variant negative tickets at that point is cheaper than
 generating all six fixtures now and discovering the server quietly
 accepts some.
@@ -136,15 +136,15 @@ off Craig.
 
 ---
 
-## §4. CORE-002 (HTTP Response) "500 vs 501" + 501-fallback skeleton
+## 4. CORE-002 (HTTP Response) "500 vs 501" + 501-fallback skeleton
 
-**Ambiguity.** CSIP V1.2 §5.5 step 7 says:
+**Ambiguity.** CSIP V1.2 section 5.5 step 7 says:
 
 > "Client issues GET on an advertised function-set the server does
 > not implement. Server responds HTTP 501 Not Implemented."
 
-The pass criteria line in the PDF (§5.5, last paragraph) reads "HTTP
-500 Not Implemented" — this is a **PDF typo**. The step body
+The pass criteria line in the PDF (section 5.5, last paragraph) reads "HTTP
+500 Not Implemented" - this is a **PDF typo**. The step body
 consistently says 501. Reason code 501 is the HTTP semantic match.
 
 Independent of the typo: today's server router (`internal/server/`)
@@ -172,20 +172,20 @@ points at the spec-typo + this INTERPRETATIONS entry.
 
 **Decision lineage.** Phase 3 closure note (#54 PR review),
 2026-05-04. Spec-typo flagged in Phase 1 baseline matrix
-(`artifacts/outputs/noor-csip-v1.2-coverage-matrix.md` §5).
+(`artifacts/outputs/noor-csip-v1.2-coverage-matrix.md` section 5).
 Decision-maker: Pike, validated by Dutch.
 
 ---
 
-## §5. BASIC-007 (Ramp Rates) DefaultDERControl-only fixture handling
+## 5. BASIC-007 (Ramp Rates) DefaultDERControl-only fixture handling
 
-**Ambiguity.** CSIP V1.2 §8.7 specifies the inverter ramp-rate
+**Ambiguity.** CSIP V1.2 section 8.7 specifies the inverter ramp-rate
 control via `setGradW` and `setSoftGradW`. Unlike the other inverter-
-mode tests (§8.4 LVRT/HVRT, §8.6 Volt/Var, §8.8 Fixed PF, etc.) which
+mode tests (section 8.4 LVRT/HVRT, section 8.6 Volt/Var, section 8.8 Fixed PF, etc.) which
 exercise both `DefaultDERControl` and `DERControl`-attached events,
-BASIC-007 ramp rates is **DefaultDERControl-only** — there is no
+BASIC-007 ramp rates is **DefaultDERControl-only** - there is no
 event-driven ramp-rate DERControl in the procedure. This is not
-flagged loudly in the §8.7 prose; it surfaces when wiring the test
+flagged loudly in the section 8.7 prose; it surfaces when wiring the test
 and finding no DERControl shape applies.
 
 **Interpretation.** The shared fixture loader (`basic_mode_helpers_test.go`)
@@ -203,17 +203,17 @@ default-only shape.
 
 **Implemented in.** `test/csip/basic_007_ramp_rates_test.go`
 (#135, #140). Helper:
-`test/csip/basic_mode_helpers_test.go` — default-only branch.
+`test/csip/basic_mode_helpers_test.go` - default-only branch.
 
 **Decision lineage.** Phase 4 PR review (#135 thread), 2026-05-06.
 Phase 1 baseline matrix flag. Decision-maker: Pike.
 
 ---
 
-## §6. BASIC inverter-control modes — DERControl response-field
+## 6. BASIC inverter-control modes - DERControl response-field
    assertions pinned by #140
 
-**Ambiguity.** CSIP V1.2 §8.4-§8.12 procedures step through "Server
+**Ambiguity.** CSIP V1.2 sections 8.4-8.12 procedures step through "Server
 exposes opMod`X` field on the DERControl; client reads it and applies
 the mode." The opMod field set in `pkg/sep2` today covers the
 mainstream modes (opModFixedPFInjectW, opModVoltVar, opModVoltWatt,
@@ -225,9 +225,9 @@ wiring.
 
 **Interpretation.** Each BASIC-* test that hits a missing-field gap
 runs the procedure walk up to the field-assertion step, then
-`t.Skip`s with a `// Pinned by #140 — implementation gap`
+`t.Skip`s with a `// Pinned by #140 - implementation gap`
 comment referencing the follow-up ticket. The DERCurveList walk leg
-(curve-based modes) still runs unconditionally — DERCurve is
+(curve-based modes) still runs unconditionally - DERCurve is
 present in `pkg/sep2` and renders correctly via `/dc`. This was a
 deliberate scope-boundary call: Phase 4 (#135) added the test
 files without modifying `pkg/sep2`; field additions ride on
@@ -245,9 +245,9 @@ by Dutch.
 
 ---
 
-## §7. ERR-002 (Subscription Survival) — in-memory fake-restart
+## 7. ERR-002 (Subscription Survival) - in-memory fake-restart
 
-**Ambiguity.** CSIP V1.2 §11 ERR-002 step 4 specifies:
+**Ambiguity.** CSIP V1.2 section 11 ERR-002 step 4 specifies:
 
 > "Server experiences a power-reset event. After server restart,
 > subscriptions are still active."
@@ -282,9 +282,9 @@ Decision-maker: Craig (sign-off), Pike (implementation).
 
 ---
 
-## §8. MAINT mutation surface — `csip_test_hooks` build tag
+## 8. MAINT mutation surface - `csip_test_hooks` build tag
 
-**Ambiguity.** CSIP V1.2 §11 MAINT-* procedures (BASIC-003, MAINT-003,
+**Ambiguity.** CSIP V1.2 section 11 MAINT-* procedures (BASIC-003, MAINT-003,
 MAINT-004, MAINT-005) require the server to perform mid-flight
 mutations (swap FSA assignments, change DERProgram primacy, add a
 DERControl to an existing DERProgram, etc.) on behalf of the test.
@@ -296,11 +296,11 @@ surface (#27) hosts the mid-flight mutation endpoints. The
 surface compiles into the binary only under
 `go build -tags csip_test_hooks`; production builds have zero
 mutation surface. CI's #192 `csip` job runs the matrix axis with
-`[off, on]` for the build tag — both axes must pass.
+`[off, on]` for the build tag - both axes must pass.
 
 The mutation surface listens on the in-process test server and is
 gated by `SEP2_TEST_MUTATION_TOKEN`. Per #27's design note
-(reviewed by Leon), the token is not a secret — the surface only
+(reviewed by Leon), the token is not a secret - the surface only
 exists in test builds and only listens on the in-process test
 server bound by `csiptest.BootServer`.
 

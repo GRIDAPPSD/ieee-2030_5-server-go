@@ -112,6 +112,32 @@ func TestAdminRouterApiCertsInfoBehindAuth(t *testing.T) {
 	}
 }
 
+// TestAdminRouterApiCertsDeviceTypesReachableWithoutCertService proves
+// GET /api/certs/device-types is registered outside the `svc != nil` guard
+// (#594): the device type vocabulary is fixed, not tied to whether a CA is
+// configured on this server instance. A 401 (not 404) confirms the route
+// exists and requires the same auth as its neighbours.
+func TestAdminRouterApiCertsDeviceTypesReachableWithoutCertService(t *testing.T) {
+	stores := newTestStores()
+	tickets := auth.NewTicketStore(5 * time.Minute)
+	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
+	r, _ := server.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, sessions, nil, false)
+
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/certs/device-types", nil)
+	req.Header.Set("X-Forwarded-For", "203.0.113.5")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("/api/certs/device-types unauthenticated expected 401, got %d", resp.StatusCode)
+	}
+}
+
 // minimal cookie jar; httptest.Server is HTTP not HTTPS, so the Secure flag
 // would block the real net/http/cookiejar. We capture cookies eagerly and
 // resend them on every request.

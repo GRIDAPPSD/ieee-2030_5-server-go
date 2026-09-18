@@ -50,6 +50,10 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 		authed.HandleFunc("POST /api/certs/device", svc.HandleCreateDeviceCert())
 	}
 
+	// #594: the device type vocabulary a device cert is minted against.
+	// Needs no CA state, so it stays reachable even when svc is nil.
+	authed.HandleFunc("GET /api/certs/device-types", handler.HandleCertDeviceTypes())
+
 	// #159 registration-assistant API
 	authed.HandleFunc("POST /api/certs/info", handler.HandleCertInfo())
 	if stores != nil {

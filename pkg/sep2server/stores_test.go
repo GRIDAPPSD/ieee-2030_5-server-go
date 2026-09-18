@@ -133,11 +133,15 @@ func TestNewReaderStoresSeesWritesThroughTheWriteHandle(t *testing.T) {
 	writeHandle := NewStores()
 	readHandle := assembly.NewReaderStores(writeHandle)
 
-	if err := writeHandle.EndDevices.Create(ctx, "dev-1", sep2.EndDevice{}); err != nil {
+	// SFDI is the distinguishing field: a Get that returned a zero-valued
+	// EndDevice for a present id would leave a bare err == nil check green,
+	// per data-invariants.md ("tests must assert field values, not just
+	// non-crash"). The ManagerOf assertion below is the model this follows.
+	if err := writeHandle.EndDevices.Create(ctx, "dev-1", sep2.EndDevice{SFDI: "seeded-sfdi-1"}); err != nil {
 		t.Fatalf("seed through the write handle: %v", err)
 	}
-	if _, err := readHandle.EndDevices.Get(ctx, "dev-1"); err != nil {
-		t.Errorf("the read handle does not see a device seeded through the write handle: %v", err)
+	if got, err := readHandle.EndDevices.Get(ctx, "dev-1"); err != nil || got.SFDI != "seeded-sfdi-1" {
+		t.Errorf("the read handle does not see a device seeded through the write handle: got SFDI %q, err %v", got.SFDI, err)
 	}
 
 	if err := writeHandle.EndDeviceManagers.Assign(ctx, "MGR", "DEV"); err != nil {

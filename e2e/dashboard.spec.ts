@@ -46,16 +46,18 @@ test('device table shows data', async ({ page }) => {
   const countText = await deviceCount.textContent();
   expect(countText).toMatch(/^\d+$/);
 
+  await page.getByTestId('tab-devices').click();
   const deviceTable = page.locator('#deviceTable');
   await expect(deviceTable).toBeVisible();
 
+  await page.getByTestId('tab-overview').click();
   const mupCount = page.locator('#mupCount');
   await expect(mupCount).toBeVisible();
 });
 
 // 3. Certificate generation form works
 test('certificate generation form works', async ({ page }) => {
-  await page.goto(baseUrl + '/?token=e2e-test-key');
+  await page.goto(baseUrl + '/ui/certificates?token=e2e-test-key');
   await page.waitForLoadState('domcontentloaded');
 
   const serialInput = page.locator('#hwSerial');
@@ -72,7 +74,7 @@ test('certificate generation form works', async ({ page }) => {
 
 // 4. DER control panel accepts input
 test('DER control panel sends commands', async ({ page }) => {
-  await page.goto(baseUrl + '/?token=e2e-test-key');
+  await page.goto(baseUrl + '/ui/control?token=e2e-test-key');
   await page.waitForLoadState('domcontentloaded');
 
   const controlSelect = page.locator('#controlType');
@@ -102,19 +104,23 @@ test('dashboard renders all UI sections', async ({ page }) => {
   await expect(page.getByText('IEEE 2030.5-2018')).toBeVisible();
 
   // Certificate management card
+  await page.getByTestId('tab-certificates').click();
   await expect(page.getByText('CERTIFICATE MANAGEMENT')).toBeVisible();
   await expect(page.locator('#hwSerial')).toBeVisible();
 
   // DER control card
+  await page.getByTestId('tab-control').click();
   await expect(page.getByText('SEND DER CONTROL')).toBeVisible();
   await expect(page.locator('#controlType')).toBeVisible();
 
   // Device table
+  await page.getByTestId('tab-devices').click();
   await expect(page.getByText('END DEVICES')).toBeVisible();
   await expect(page.locator('th:has-text("SFDI")')).toBeVisible();
   await expect(page.locator('th:has-text("LFDI")')).toBeVisible();
 
   // Activity chart
+  await page.getByTestId('tab-overview').click();
   await expect(page.getByText('DEVICE ACTIVITY')).toBeVisible();
   await expect(page.locator('#activityChart')).toBeVisible();
 });

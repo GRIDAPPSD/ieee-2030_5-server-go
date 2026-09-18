@@ -25,7 +25,9 @@
 //
 // The ACL internals, the admin dashboard, the operator login surface and the
 // build-tagged test-mutation hooks are this server's own deployment concerns,
-// not a contract for embedders. They stay in internal/. [DefaultAuthPolicy]
+// not a contract for embedders. They stay in internal/. The admin dashboard's
+// extension contract lives in the sibling package pkg/sep2admin, which
+// carries a weaker stability promise than this one. [DefaultAuthPolicy]
 // is the one door onto the ACL, and it is a composed policy value rather than
 // the rules behind it: an embedder can adopt this server's enforcement, but it
 // cannot reach in and reshape it.

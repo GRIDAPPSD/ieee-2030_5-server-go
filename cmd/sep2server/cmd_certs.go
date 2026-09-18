@@ -44,9 +44,14 @@ func runGenerateCA(args []string) error {
 	fs := flag.NewFlagSet("generate-ca", flag.ExitOnError)
 	org := fs.String("org", "IEEE 2030.5", "Organization name")
 	cn := fs.String("cn", "IEEE 2030.5 Root CA", "Common name")
-	outDir := fs.String("out", "./certs", "Output directory")
+	outDir := fs.String("out", "", "Output directory (default: SEP2_CERT_DIR, or ~/tls)")
 	years := fs.Int("years", 10, "Validity in years (0 = indefinite)")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	resolvedOut, err := resolveDir(*outDir)
+	if err != nil {
 		return err
 	}
 
@@ -59,35 +64,40 @@ func runGenerateCA(args []string) error {
 		return err
 	}
 
-	if err := os.MkdirAll(*outDir, 0700); err != nil {
+	if err := os.MkdirAll(resolvedOut, 0700); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(filepath.Join(*outDir, "ca.crt"), certPEM, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(resolvedOut, "ca.crt"), certPEM, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(*outDir, "ca.key"), keyPEM, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(resolvedOut, "ca.key"), keyPEM, 0600); err != nil {
 		return err
 	}
 
-	fmt.Printf("CA certificate: %s/ca.crt\n", *outDir)
-	fmt.Printf("CA private key: %s/ca.key\n", *outDir)
+	fmt.Printf("CA certificate: %s/ca.crt\n", resolvedOut)
+	fmt.Printf("CA private key: %s/ca.key\n", resolvedOut)
 	return nil
 }
 
 func runGenerateServer(args []string) error {
 	fs := flag.NewFlagSet("generate-server", flag.ExitOnError)
-	caFile := fs.String("ca", "./certs/ca.crt", "CA certificate PEM")
-	caKeyFile := fs.String("ca-key", "./certs/ca.key", "CA private key PEM")
+	caFile := fs.String("ca", "", "CA certificate PEM (default: SEP2_CERT_DIR, or ~/tls, plus ca.crt)")
+	caKeyFile := fs.String("ca-key", "", "CA private key PEM (default: SEP2_CERT_DIR, or ~/tls, plus ca.key)")
 	hosts := fs.String("hosts", "localhost,127.0.0.1", "Comma-separated hosts (DNS/IP)")
 	cn := fs.String("cn", "IEEE 2030.5 Server", "Common name")
-	outDir := fs.String("out", "./certs", "Output directory")
+	outDir := fs.String("out", "", "Output directory (default: SEP2_CERT_DIR, or ~/tls)")
 	years := fs.Int("years", 1, "Validity in years")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	caCert, caKey, err := certs.LoadCA(*caFile, *caKeyFile)
+	resolvedOut, resolvedCA, resolvedCAKey, err := resolveOutAndCA(*outDir, *caFile, *caKeyFile)
+	if err != nil {
+		return err
+	}
+
+	caCert, caKey, err := certs.LoadCA(resolvedCA, resolvedCAKey)
 	if err != nil {
 		return err
 	}
@@ -108,30 +118,35 @@ func runGenerateServer(args []string) error {
 		return err
 	}
 
-	if err := os.WriteFile(filepath.Join(*outDir, "server.crt"), certPEM, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(resolvedOut, "server.crt"), certPEM, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(*outDir, "server.key"), keyPEM, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(resolvedOut, "server.key"), keyPEM, 0600); err != nil {
 		return err
 	}
 
-	fmt.Printf("Server certificate: %s/server.crt\n", *outDir)
-	fmt.Printf("Server private key: %s/server.key\n", *outDir)
+	fmt.Printf("Server certificate: %s/server.crt\n", resolvedOut)
+	fmt.Printf("Server private key: %s/server.key\n", resolvedOut)
 	return nil
 }
 
 func runGenerateAdmin(args []string) error {
 	fs := flag.NewFlagSet("generate-admin", flag.ExitOnError)
-	caFile := fs.String("ca", "./certs/ca.crt", "CA certificate PEM")
-	caKeyFile := fs.String("ca-key", "./certs/ca.key", "CA private key PEM")
+	caFile := fs.String("ca", "", "CA certificate PEM (default: SEP2_CERT_DIR, or ~/tls, plus ca.crt)")
+	caKeyFile := fs.String("ca-key", "", "CA private key PEM (default: SEP2_CERT_DIR, or ~/tls, plus ca.key)")
 	cn := fs.String("cn", "IEEE 2030.5 Admin", "Common name")
-	outDir := fs.String("out", "./certs", "Output directory")
+	outDir := fs.String("out", "", "Output directory (default: SEP2_CERT_DIR, or ~/tls)")
 	years := fs.Int("years", 1, "Validity in years")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	caCert, caKey, err := certs.LoadCA(*caFile, *caKeyFile)
+	resolvedOut, resolvedCA, resolvedCAKey, err := resolveOutAndCA(*outDir, *caFile, *caKeyFile)
+	if err != nil {
+		return err
+	}
+
+	caCert, caKey, err := certs.LoadCA(resolvedCA, resolvedCAKey)
 	if err != nil {
 		return err
 	}
@@ -144,27 +159,27 @@ func runGenerateAdmin(args []string) error {
 		return err
 	}
 
-	if err := os.WriteFile(filepath.Join(*outDir, "admin.crt"), certPEM, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(resolvedOut, "admin.crt"), certPEM, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(*outDir, "admin.key"), keyPEM, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(resolvedOut, "admin.key"), keyPEM, 0600); err != nil {
 		return err
 	}
 
-	fmt.Printf("Admin certificate: %s/admin.crt\n", *outDir)
-	fmt.Printf("Admin private key: %s/admin.key\n", *outDir)
+	fmt.Printf("Admin certificate: %s/admin.crt\n", resolvedOut)
+	fmt.Printf("Admin private key: %s/admin.key\n", resolvedOut)
 	return nil
 }
 
 func runGenerateDevice(args []string) error {
 	fs := flag.NewFlagSet("generate-device", flag.ContinueOnError)
-	caFile := fs.String("ca", "./certs/ca.crt", "CA certificate PEM")
-	caKeyFile := fs.String("ca-key", "./certs/ca.key", "CA private key PEM")
+	caFile := fs.String("ca", "", "CA certificate PEM (default: SEP2_CERT_DIR, or ~/tls, plus ca.crt)")
+	caKeyFile := fs.String("ca-key", "", "CA private key PEM (default: SEP2_CERT_DIR, or ~/tls, plus ca.key)")
 	deviceType := fs.Int("device-type", 1, "Device type (1=generic, 2=mobile, 3=postMfg)")
 	hwSerial := fs.String("hw-serial", "", "Hardware serial number (required for CSIP section 6.2 HardwareModuleName SAN)")
 	hwType := fs.String("hw-type", "", "manufacturer PEN OID (e.g. 1.3.6.1.4.1.<PEN>) - required for CSIP HardwareModuleName SAN")
 	name := fs.String("name", "device", "Output filename prefix")
-	outDir := fs.String("out", "./certs", "Output directory")
+	outDir := fs.String("out", "", "Output directory (default: SEP2_CERT_DIR, or ~/tls)")
 	isTest := fs.Bool("test", false, "Generate test certificate")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -184,7 +199,12 @@ func runGenerateDevice(args []string) error {
 		return fmt.Errorf("-hw-type: %w", err)
 	}
 
-	caCert, caKey, err := certs.LoadCA(*caFile, *caKeyFile)
+	resolvedOut, resolvedCA, resolvedCAKey, err := resolveOutAndCA(*outDir, *caFile, *caKeyFile)
+	if err != nil {
+		return err
+	}
+
+	caCert, caKey, err := certs.LoadCA(resolvedCA, resolvedCAKey)
 	if err != nil {
 		return err
 	}
@@ -199,8 +219,8 @@ func runGenerateDevice(args []string) error {
 		return err
 	}
 
-	certFile := filepath.Join(*outDir, *name+".crt")
-	keyFile := filepath.Join(*outDir, *name+".key")
+	certFile := filepath.Join(resolvedOut, *name+".crt")
+	keyFile := filepath.Join(resolvedOut, *name+".key")
 
 	if err := os.WriteFile(certFile, certPEM, 0644); err != nil {
 		return err

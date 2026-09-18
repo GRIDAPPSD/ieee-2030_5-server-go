@@ -32,7 +32,11 @@ func TestConfigFromEnvNotificationAllowLoopback(t *testing.T) {
 				t.Setenv(key, *tc.value)
 			}
 
-			if got := configFromEnv().NotificationAllowLoopback; got != tc.want {
+			cfg, err := configFromEnv("/test/certdir")
+			if err != nil {
+				t.Fatalf("configFromEnv: %v", err)
+			}
+			if got := cfg.NotificationAllowLoopback; got != tc.want {
 				t.Errorf("NotificationAllowLoopback = %v, want %v", got, tc.want)
 			}
 		})

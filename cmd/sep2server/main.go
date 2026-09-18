@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -47,17 +48,27 @@ func main() {
 }
 
 func runServe() error {
-	cfg := configFromEnv()
-
-	// Load CA for admin cert service
-	var svc *handler.AdminCertService
-	caFile := envOr("SEP2_CA", "certs/ca.crt")
-	caKeyFile := envOr("SEP2_CA_KEY", "certs/ca.key")
-	caCert, caKey, err := certs.LoadCA(caFile, caKeyFile)
+	certDir, err := resolveCertDir()
 	if err != nil {
-		log.Printf("CA not loaded (%v): admin cert API disabled", err)
+		return err
+	}
+	cfg, err := configFromEnv(certDir)
+	if err != nil {
+		return err
+	}
+
+	// Load CA for admin cert service. Reuses cfg.CAFile rather than
+	// re-reading SEP2_CA, since both name the same setting.
+	var svc *handler.AdminCertService
+	caKeyFile, err := envPathOr("SEP2_CA_KEY", filepath.Join(certDir, "ca.key"))
+	if err != nil {
+		return err
+	}
+	caCert, caKey, loadErr := certs.LoadCA(cfg.CAFile, caKeyFile)
+	if loadErr != nil {
+		log.Printf("CA not loaded (%v): admin cert API disabled", loadErr)
 	} else {
-		caCertPEM, _ := os.ReadFile(caFile)
+		caCertPEM, _ := os.ReadFile(cfg.CAFile)
 		svc = handler.NewAdminCertService(caCert, caKey, caCertPEM)
 		log.Println("CA loaded: admin cert API enabled")
 	}
@@ -69,15 +80,59 @@ func runServe() error {
 }
 
 // configFromEnv builds the server configuration from SEP2_* environment
-// variables.
-func configFromEnv() *config.Config {
+// variables. certDir is the resolved base certificate directory
+// (resolveCertDir): CertFile, KeyFile and CAFile default under it unless
+// individually overridden. Every setting naming a filesystem path is
+// routed through envPathOr or expandCSVPaths so a value given in tilde
+// form is expanded the same way a shell would expand it on a command
+// line (#598); settings naming a network address, hostname, or token are
+// read with the plain envOr/os.Getenv they always used, since a tilde has
+// no meaning there.
+func configFromEnv(certDir string) (*config.Config, error) {
+	certFile, err := envPathOr("SEP2_CERT", filepath.Join(certDir, "server.crt"))
+	if err != nil {
+		return nil, err
+	}
+	keyFile, err := envPathOr("SEP2_KEY", filepath.Join(certDir, "server.key"))
+	if err != nil {
+		return nil, err
+	}
+	caFile, err := envPathOr("SEP2_CA", filepath.Join(certDir, "ca.crt"))
+	if err != nil {
+		return nil, err
+	}
+	extraClientCAs, err := expandCSVPaths(os.Getenv("SEP2_EXTRA_CLIENT_CAS"))
+	if err != nil {
+		return nil, err
+	}
+	bootFixtureFile, err := envPathOr("SEP2_BOOT_FIXTURE", "")
+	if err != nil {
+		return nil, err
+	}
+	adminCert, err := envPathOr("SEP2_ADMIN_CERT", "")
+	if err != nil {
+		return nil, err
+	}
+	adminKeyFile, err := envPathOr("SEP2_ADMIN_KEY_FILE", "")
+	if err != nil {
+		return nil, err
+	}
+	dataDir, err := envPathOr("SEP2_DATA_DIR", "")
+	if err != nil {
+		return nil, err
+	}
+	subscriptionStorePath, err := envPathOr("SEP2_SUBSCRIPTION_STORE_PATH", "")
+	if err != nil {
+		return nil, err
+	}
+
 	return &config.Config{
 		Addr:            envOr("SEP2_ADDR", ":443"),
-		CertFile:        envOr("SEP2_CERT", "certs/server.crt"),
-		KeyFile:         envOr("SEP2_KEY", "certs/server.key"),
-		CAFile:          envOr("SEP2_CA", "certs/ca.crt"),
-		ExtraClientCAs:  parseCSV(os.Getenv("SEP2_EXTRA_CLIENT_CAS")),
-		BootFixtureFile: os.Getenv("SEP2_BOOT_FIXTURE"),
+		CertFile:        certFile,
+		KeyFile:         keyFile,
+		CAFile:          caFile,
+		ExtraClientCAs:  extraClientCAs,
+		BootFixtureFile: bootFixtureFile,
 
 		// #161: admin listener configuration. SEP2_ADMIN_LISTEN is the
 		// canonical knob; SEP2_ADMIN_ADDR is preserved as a deprecated alias
@@ -89,8 +144,8 @@ func configFromEnv() *config.Config {
 		AdminAddr:        os.Getenv("SEP2_ADMIN_ADDR"),
 		AdminKey:         os.Getenv("SEP2_ADMIN_KEY"),
 		AdminTLS:         os.Getenv("SEP2_ADMIN_TLS") == "true",
-		AdminCert:        os.Getenv("SEP2_ADMIN_CERT"),
-		AdminKeyFile:     os.Getenv("SEP2_ADMIN_KEY_FILE"),
+		AdminCert:        adminCert,
+		AdminKeyFile:     adminKeyFile,
 		AdminBehindProxy: os.Getenv("SEP2_ADMIN_BEHIND_PROXY") == "true",
 
 		// #365: opt-in for an admin bind reachable from outside this host.
@@ -109,8 +164,8 @@ func configFromEnv() *config.Config {
 		// historical pure in-memory behavior. SEP2_SUBSCRIPTION_STORE_PATH
 		// is preserved for back-compat and wins over the derived datadir
 		// path when both are set.
-		DataDir:               os.Getenv("SEP2_DATA_DIR"),
-		SubscriptionStorePath: os.Getenv("SEP2_SUBSCRIPTION_STORE_PATH"),
+		DataDir:               dataDir,
+		SubscriptionStorePath: subscriptionStorePath,
 
 		// Observability: dedicated plain-HTTP Prometheus metrics listener.
 		// Empty SEP2_METRICS_ADDR (default) leaves it OFF; set e.g. ":9100"
@@ -127,7 +182,7 @@ func configFromEnv() *config.Config {
 		// Refused by default: the admin listener is on loopback. For test
 		// harnesses whose notification receivers listen there.
 		NotificationAllowLoopback: os.Getenv("SEP2_NOTIFICATION_ALLOW_LOOPBACK") == "true",
-	}
+	}, nil
 }
 
 func envOr(key, fallback string) string {

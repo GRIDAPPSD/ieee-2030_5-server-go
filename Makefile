@@ -1,6 +1,7 @@
 .PHONY: build test test-cover test-race test-verbose test-e2e \
        test-csip-server \
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
+       coverage-scope-check \
        lint gofmt-check vet clean run run-ccm run-journald run-ccm-journald \
        run-testdevice run-sunspec certs new-device \
        serve help stress-pretest vendor bump-core ui-build ui-check \
@@ -368,7 +369,13 @@ test-csip-race:           ## Race detector on the CSIP suite with csip_test_hook
 CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/handler/...,./internal/server/...,./pkg/sep2server/...,./pkg/sep2srv/...,./pkg/store,./pkg/store/memory
 CSIP_COVER_THRESHOLD ?= 80
 
-test-csip-cover:          ## Run CSIP suite with scoped coverage profile (writes coverage-csip.out)
+# #387 - the -coverpkg list above is hand-maintained; a pattern that stops
+# resolving (a package renamed or moved out) is a silent Go warning, not a
+# build error, so it is checked here before every profile run.
+coverage-scope-check:     ## Fail if any CSIP_COVERPKG entry resolves to zero packages
+	./scripts/coverage-scope-check.sh '$(CSIP_COVERPKG)'
+
+test-csip-cover: coverage-scope-check ## Run CSIP suite with scoped coverage profile (writes coverage-csip.out)
 	go test -coverprofile=coverage-csip.out -coverpkg='$(CSIP_COVERPKG)' \
 	       -tags csip_test_hooks ./test/csip/... ./internal/... ./pkg/...
 	@echo "Coverage profile: coverage-csip.out"

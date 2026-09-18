@@ -30,6 +30,9 @@ function mockAuthenticated() {
   vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string) => {
     if (path === '/dashboard/data') return { ok: true, data } as never
     if (path === '/api/fsas') return { ok: true, data: { fsas: [] } } as never
+    if (path === '/api/certs/device-types') {
+      return { ok: true, data: { deviceTypes: [{ value: 1, name: 'generic', label: 'Generic' }] } } as never
+    }
     return { ok: true, data: { kind: 'SY', id: 'sy', label: 'System' } } as never
   })
   vi.spyOn(dash, 'connectDashboard').mockReturnValue(() => {})

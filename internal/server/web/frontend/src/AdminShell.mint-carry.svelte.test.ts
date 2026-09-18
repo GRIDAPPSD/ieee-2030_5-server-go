@@ -31,6 +31,9 @@ function mockAuthenticated() {
   vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string) => {
     if (path === '/dashboard/data') return { ok: true, data } as never
     if (path === '/api/fsas') return { ok: true, data: { fsas: [] } } as never
+    if (path === '/api/certs/device-types') {
+      return { ok: true, data: { deviceTypes: [{ value: 1, name: 'generic', label: 'Generic' }] } } as never
+    }
     return { ok: true, data: { kind: 'SY', id: 'sy', label: 'System' } } as never
   })
   vi.spyOn(dash, 'connectDashboard').mockReturnValue(() => {})
@@ -57,6 +60,7 @@ describe('AdminShell carries a mint across the Certificates -> Devices tab switc
 
     const { container } = render(AdminShell)
     await waitFor(() => expect(container.querySelector('.grid h2')).toBeTruthy())
+    await waitFor(() => expect(container.querySelector('#deviceType')).not.toBeDisabled())
 
     await fireEvent.input(container.querySelector('#hwSerial') as HTMLInputElement, {
       target: { value: 'PW-CARRY-001' },

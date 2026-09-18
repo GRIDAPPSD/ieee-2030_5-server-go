@@ -60,6 +60,27 @@ body {
   color: #93c5fd;
 }
 
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  padding: 0 24px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-bar a {
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--dim);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+
+.tab-bar a[aria-current='page'] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));

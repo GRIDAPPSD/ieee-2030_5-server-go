@@ -11,8 +11,15 @@
 import { readable } from 'svelte/store'
 
 // currentPath is the current window.location.pathname, updated on
-// popstate (back/forward) and on every navigate() call below.
+// popstate (back/forward) and on every navigate() call below. The store
+// re-syncs to window.location on every (re)subscription, not only at
+// module load: a subscriber that attaches after something else moved
+// window.location (a test rendering a second component in the same
+// module instance; a hard reload landing past this module's first
+// evaluation) must see the current path, not the value frozen when this
+// module first ran.
 export const currentPath = readable(window.location.pathname, (set) => {
+  set(window.location.pathname)
   const onPopState = () => set(window.location.pathname)
   window.addEventListener('popstate', onPopState)
   return () => window.removeEventListener('popstate', onPopState)

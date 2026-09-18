@@ -188,3 +188,18 @@ func (s *AdminCertService) HandleCreateDeviceCert() http.HandlerFunc {
 		})
 	}
 }
+
+// deviceTypesResponse is the shape returned by GET /api/certs/device-types.
+type deviceTypesResponse struct {
+	DeviceTypes []certs.DeviceTypeInfo `json:"deviceTypes"`
+}
+
+// HandleCertDeviceTypes returns the IEEE 2030.5 certificate device types this
+// server mints (spec section 6.11.7.1), sourced from certs.AllDeviceTypes so a
+// client never carries its own copy of the values. Needs no CA state, so
+// BuildAdminRouter registers it even when no cert service is configured.
+func HandleCertDeviceTypes() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, deviceTypesResponse{DeviceTypes: certs.AllDeviceTypes()})
+	}
+}

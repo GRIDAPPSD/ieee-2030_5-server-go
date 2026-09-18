@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -232,6 +233,116 @@ func TestHandleCreateDeviceCertInvalidJSON(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+// TestHandleCertDeviceTypesReturnsAllThree asserts the field values the
+// endpoint returns, not just a 200: value, name and label for each of the
+// three types certs.AllDeviceTypes defines.
+func TestHandleCertDeviceTypesReturnsAllThree(t *testing.T) {
+	h := handler.HandleCertDeviceTypes()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/certs/device-types", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		DeviceTypes []struct {
+			Value int    `json:"value"`
+			Name  string `json:"name"`
+			Label string `json:"label"`
+		} `json:"deviceTypes"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	want := map[int]struct{ name, label string }{
+		1: {"generic", "Generic"},
+		2: {"mobile", "Mobile"},
+		3: {"post_manufacture", "Post-Manufacture"},
+	}
+	if len(resp.DeviceTypes) != len(want) {
+		t.Fatalf("got %d device types, want %d: %+v", len(resp.DeviceTypes), len(want), resp.DeviceTypes)
+	}
+	seen := make(map[int]bool, len(resp.DeviceTypes))
+	for _, dt := range resp.DeviceTypes {
+		w, ok := want[dt.Value]
+		if !ok {
+			t.Errorf("unexpected value %d in response", dt.Value)
+			continue
+		}
+		if dt.Name != w.name || dt.Label != w.label {
+			t.Errorf("value %d: got name=%q label=%q, want name=%q label=%q", dt.Value, dt.Name, dt.Label, w.name, w.label)
+		}
+		seen[dt.Value] = true
+	}
+	for v := range want {
+		if !seen[v] {
+			t.Errorf("value %d missing from response", v)
+		}
+	}
+}
+
+// TestHandleCertDeviceTypesValuesRoundTripThroughMint proves each value the
+// device-types endpoint returns is accepted by HandleCreateDeviceCert and
+// produces a certificate carrying that same type's OID, not a silently
+// clamped Generic (admin_certs.go's decode path clamps an out-of-range
+// deviceType to 1).
+func TestHandleCertDeviceTypesValuesRoundTripThroughMint(t *testing.T) {
+	listH := handler.HandleCertDeviceTypes()
+	listReq := httptest.NewRequest(http.MethodGet, "/api/certs/device-types", nil)
+	listW := httptest.NewRecorder()
+	listH.ServeHTTP(listW, listReq)
+
+	var listResp struct {
+		DeviceTypes []struct {
+			Value int `json:"value"`
+		} `json:"deviceTypes"`
+	}
+	if err := json.NewDecoder(listW.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode device-types response: %v", err)
+	}
+	if len(listResp.DeviceTypes) == 0 {
+		t.Fatal("device-types response listed no values to round-trip")
+	}
+
+	svc := newTestCertService(t)
+	mintH := svc.HandleCreateDeviceCert()
+
+	for _, dt := range listResp.DeviceTypes {
+		body := fmt.Sprintf(`{"deviceType":%d,"hwSerialNum":"RT-%d","hwType":"1.3.6.1.4.1.40732.99"}`, dt.Value, dt.Value)
+		req := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		mintH.ServeHTTP(w, req)
+
+		if w.Code != http.StatusCreated {
+			t.Fatalf("deviceType %d: status = %d, want 201, body: %s", dt.Value, w.Code, w.Body.String())
+		}
+
+		var mintResp struct {
+			CertPEM string `json:"certPEM"`
+		}
+		if err := json.NewDecoder(w.Body).Decode(&mintResp); err != nil {
+			t.Fatalf("deviceType %d: decode mint response: %v", dt.Value, err)
+		}
+
+		block, _ := pem.Decode([]byte(mintResp.CertPEM))
+		if block == nil {
+			t.Fatalf("deviceType %d: certPEM did not decode", dt.Value)
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			t.Fatalf("deviceType %d: parse cert: %v", dt.Value, err)
+		}
+		wantOID := certs.DeviceType(dt.Value).OID()
+		if !certs.HasPolicyOID(cert, wantOID) {
+			t.Errorf("deviceType %d: minted cert missing policy OID %v", dt.Value, wantOID)
+		}
 	}
 }
 

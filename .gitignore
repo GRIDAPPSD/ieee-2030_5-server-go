@@ -3,8 +3,28 @@ CLAUDE.md
 .claude/
 *.claude
 
-# Local TLS material (dev/test PKI - never commit private keys)
-certs/
+# Local TLS material (dev/test PKI - never commit private keys). The
+# default location moved outside the repository (#598: make certs and the
+# server both default to SEP2_CERT_DIR, or ~/tls). Ignored by what a file
+# IS, not by what directory it sits in: a directory-name rule is what
+# collided with internal/certs/, a source package, in the first place, and
+# a bare `certs/` or `tls/` entry would do it again for either name, at
+# any depth (test/certs/, e2e/certs/, deploy/certs/). *.key and *.pem
+# catch stray key material wherever it lands, including under the new
+# tls/ default, without needing to enumerate every directory name that
+# could hold one.
+*.key
+*.pem
+# The CSIP conformance test PKI is deliberately tracked (see
+# test/csip/README.md and the fixtures entry below): device_chain.pem,
+# device_key.pem and root_ca.pem under testdata/csip-pki/. Directory-scoped
+# rather than per-file so a fixture added later here is exempted without a
+# .gitignore edit. This only works while no ancestor of the path is itself
+# excluded: git cannot re-include a file under a directory that is already
+# ignored, so an entry like `testdata/` added anywhere in this file would
+# silently swallow the exemption below it and the fixture would go back to
+# ignored. Do not add one.
+!testdata/csip-pki/**
 
 # CSIP conformance fixtures. The SunSpec V1.2 test PKI is gitignored
 # per workspace policy and provisioned out of band (see

@@ -8,7 +8,15 @@
        ci-local ci-local-drift-check
 
 SERVER   := bin/sep2server
-CERT_DIR := certs
+
+# #598: certificates, private keys included, are never written into the
+# working tree. This matches the server's own default (SEP2_CERT_DIR, or
+# ~/tls) so `make run`/`make certs` and a bare `sep2server serve` agree on
+# where the local dev CA and keys live: read SEP2_CERT_DIR when the
+# operator set it, the same setting the server itself reads, rather than
+# letting the two disagree. Override for a one-off location without
+# touching SEP2_CERT_DIR: make certs CERT_DIR=/other/dir.
+CERT_DIR ?= $(if $(SEP2_CERT_DIR),$(SEP2_CERT_DIR),$(HOME)/tls)
 
 # --- Build --------------------------------------------------------
 
@@ -81,7 +89,11 @@ test-e2e:                 ## Run Playwright E2E tests (requires npm install in e
 # --- Certificates ------------------------------------------------
 
 certs:                    ## Generate CA, server, and device certificates
-	@mkdir -p $(CERT_DIR)
+	@# -m 700: CERT_DIR now lives outside the repo (default ~/tls) and
+	@# holds a CA private key; -m sets the mode on creation regardless of
+	@# umask, so a default umask of 022 cannot leave it world-readable.
+	@# A no-op if the directory already exists (#598).
+	@mkdir -p -m 700 $(CERT_DIR)
 	$(SERVER) certs generate-ca --out $(CERT_DIR)
 	$(SERVER) certs generate-server \
 		--ca $(CERT_DIR)/ca.crt --ca-key $(CERT_DIR)/ca.key \
@@ -504,8 +516,8 @@ bump-core:                ## Bump the pinned core-go module, tidy, and re-vendor
 
 # --- Cleanup -----------------------------------------------------
 
-clean:                    ## Remove build artifacts and generated certs
-	rm -rf bin/ coverage.out coverage.html coverage-csip.out $(CERT_DIR)/ sep2server
+clean:                    ## Remove build artifacts
+	rm -rf bin/ coverage.out coverage.html coverage-csip.out sep2server
 
 # --- Help --------------------------------------------------------
 

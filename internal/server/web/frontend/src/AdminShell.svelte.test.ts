@@ -60,24 +60,14 @@ describe('AdminShell', () => {
     expect(container.querySelector('#mupCount')).toHaveTextContent('5')
     expect(container.querySelector('#tlsMode')).toHaveTextContent('TLS_AES_256_GCM_SHA384')
     expect(container.querySelector('#uptime')).toHaveTextContent('3m21s')
-    expect(screen.getAllByTestId('device-sfdi')[0]).toHaveTextContent('167261211635')
     expect(connect).toHaveBeenCalledTimes(1)
-    // The eleven panels render in their fixed order; each has a unique
-    // heading, so the grid's h2 sequence is the card order.
+    // Issue 561 scopes the grid to the active tab; the default path ("/")
+    // is the overview tab, so its three cards are what renders here, not
+    // all eleven. The device table's sfdi cell (formerly asserted in this
+    // test) is on the devices tab, and is covered there, alongside the
+    // other eight cards' headings, by AdminShell.tabs.svelte.test.ts.
     const headings = Array.from(container.querySelectorAll('.grid h2')).map((h) => h.textContent)
-    expect(headings).toEqual([
-      'Connected Devices',
-      'Server Info',
-      'Certificate Management',
-      'Send DER Control',
-      'Add End Device',
-      'Lookup Device by LFDI',
-      'Create FSA Template',
-      'FSA Templates',
-      'FSA Tree (SY -> FD -> SP -> DEV)',
-      'End Devices',
-      'Device Activity',
-    ])
+    expect(headings).toEqual(['Connected Devices', 'Server Info', 'Device Activity'])
   })
 
   it('closes the stream when the shell is unmounted', async () => {

@@ -173,6 +173,31 @@ describe('AddDevice', () => {
     })
   })
 
+  it('keeps a carried mint visible and downloadable after a failed registration, so the credential is not lost track of', async () => {
+    vi.spyOn(api, 'postJSON').mockResolvedValue({ ok: false, error: 'pin already in use', status: 409 })
+    const save = vi.spyOn(dl, 'downloadText').mockImplementation(() => {})
+
+    const { container } = render(AddDevice, { props: { pending: MINTED } })
+    await waitFor(() => {
+      expect((container.querySelector('#addDevSFDI') as HTMLInputElement).value).toBe(MINTED.sfdi)
+    })
+
+    await fireEvent.input(container.querySelector('#addDevPIN') as HTMLInputElement, {
+      target: { value: '9000' },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Add Device' }))
+
+    await waitFor(() => {
+      expect(container.querySelector('#addDevResult')).toHaveTextContent('Error: pin already in use')
+    })
+    // The identifiers and the download affordance both survive the
+    // failure: the operator can fix the PIN and retry without the minted
+    // key becoming unreachable.
+    expect((container.querySelector('#addDevSFDI') as HTMLInputElement).value).toBe(MINTED.sfdi)
+    await fireEvent.click(screen.getByTestId('download-pending-key'))
+    expect(save).toHaveBeenCalledWith('PW-INV-003.key', MINTED.keyPEM, 'application/x-pem-file')
+  })
+
   it('offers no pending-mint download until a mint has been carried', () => {
     render(AddDevice)
 

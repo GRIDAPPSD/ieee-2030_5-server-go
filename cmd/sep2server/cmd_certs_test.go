@@ -141,7 +141,9 @@ func TestRunGenerateCANarrowsExistingKeyAndDir(t *testing.T) {
 		t.Fatal("ca.key still holds the placeholder content; the fresh key was not written")
 	}
 	if !strings.Contains(string(got), "PRIVATE KEY") {
-		t.Errorf("ca.key content = %q, want a PEM private key block", got)
+		// %q of the actual bytes is never printed here: a private key,
+		// even truncated, must not land in a test log.
+		t.Errorf("ca.key content (%d bytes) does not contain a PEM private key marker", len(got))
 	}
 }
 
@@ -191,7 +193,9 @@ func TestRunGenerateCAReplacesSymlinkedKey(t *testing.T) {
 		t.Fatalf("read ca.key: %v", err)
 	}
 	if !strings.Contains(string(keyContent), "PRIVATE KEY") {
-		t.Errorf("ca.key content = %q, want a PEM private key block", keyContent)
+		// %q of the actual bytes is never printed here: a private key,
+		// even truncated, must not land in a test log.
+		t.Errorf("ca.key content (%d bytes) does not contain a PEM private key marker", len(keyContent))
 	}
 
 	targetContent, err := os.ReadFile(target)

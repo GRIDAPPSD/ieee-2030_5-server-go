@@ -354,7 +354,7 @@ test-csip-race:           ## Race detector on the CSIP suite with csip_test_hook
 # protocol listener, the handler assembly and the graceful drain MOVED
 # there out of ./internal/server/...; leaving it off would have quietly
 # shrunk what the floor measures while the percentage went up.
-CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/encoding/...,./internal/handler/...,./internal/paging/...,./internal/server/...,./internal/subscription/...,./internal/tls,./internal/tls/ccm,./pkg/sep2server/...
+CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/handler/...,./pkg/sep2srv/paging/...,./internal/server/...,./pkg/sep2srv/handlers/subscription/...,./pkg/sep2server/...
 CSIP_COVER_THRESHOLD ?= 80
 
 test-csip-cover:          ## Run CSIP suite with scoped coverage profile (writes coverage-csip.out)

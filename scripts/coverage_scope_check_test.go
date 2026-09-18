@@ -187,16 +187,65 @@ func TestCoverageScopeCheck_RealEntriesPass(t *testing.T) {
 	t.Parallel()
 	root := moduleRoot(t)
 	coverpkg := readCSIPCoverpkg(t, root)
-	wantCount := strings.Count(coverpkg, ",") + 1
+	patterns := strings.Split(coverpkg, ",")
+	wantCount := len(patterns)
+
+	// Independently derived from `go list`, the same command the guard
+	// itself runs, so this checks the guard's arithmetic rather than
+	// restating it.
+	wantTotal := 0
+	for _, p := range patterns {
+		wantTotal += countResolvedPackages(t, root, p)
+	}
 
 	exit, out := runScopeCheck(t, root, coverpkg)
 
 	if exit != 0 {
 		t.Fatalf("exit code: got %d, want 0; output=%q", exit, out)
 	}
-	wantMsg := "coverage-scope-check: " + strconv.Itoa(wantCount) + " patterns all resolve"
+	wantMsg := "coverage-scope-check: " + strconv.Itoa(wantCount) + " patterns resolve to " + strconv.Itoa(wantTotal) + " packages"
 	if !strings.Contains(out, wantMsg) {
 		t.Fatalf("output missing %q; got=%q", wantMsg, out)
+	}
+}
+
+// countResolvedPackages returns the number of import paths `go list`
+// prints for pattern in root, the same measure the guard reports.
+func countResolvedPackages(t *testing.T, root, pattern string) int {
+	t.Helper()
+	cmd := exec.Command("go", "list", pattern)
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list %s: %v", pattern, err)
+	}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return 0
+	}
+	return len(lines)
+}
+
+// TestCoverageScopeCheck_ReportsResolvedPackageCount pins the resolved
+// package count the guard reports for a wildcard pattern, not just that the
+// pattern resolved at all. #589's failure shape is a `/...` pattern that
+// keeps resolving while the number of packages under it shrinks; a count
+// printed but never checked would not catch that, so this asserts the exact
+// number for a synthetic wildcard covering two packages.
+func TestCoverageScopeCheck_ReportsResolvedPackageCount(t *testing.T) {
+	t.Parallel()
+	dir := newSyntheticModule(t)
+	mustMkdir(t, filepath.Join(dir, "pkgs", "real", "sub"))
+	mustWrite(t, filepath.Join(dir, "pkgs", "real", "sub", "sub.go"), "package sub\n")
+
+	exit, out := runScopeCheck(t, dir, "./pkgs/real/...")
+
+	if exit != 0 {
+		t.Fatalf("exit code: got %d, want 0; output=%q", exit, out)
+	}
+	wantLine := "coverage-scope-check: ./pkgs/real/... -> 2 packages"
+	if !strings.Contains(out, wantLine) {
+		t.Fatalf("output missing %q; got=%q", wantLine, out)
 	}
 }
 

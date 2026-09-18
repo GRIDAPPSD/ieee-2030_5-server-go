@@ -12,6 +12,15 @@
 # when a resolved entry still fails for an unrelated reason (a broken
 # import elsewhere in the module, a vendor inconsistency).
 #
+# #589 - report the resolved package count per entry and in total, not just
+# that every entry resolved. A `/...` wildcard that keeps resolving while
+# shrinking (22 packages down to 3, say) used to pass silently; the count is
+# now in the log for a reader to notice. It does not fail the build on a
+# count change: pinning an exact number fails on every legitimate package
+# addition and trains people to bump the pin without reading it, which is
+# worse than the gap it would close. See scripts/coverage_scope_check_test.go
+# for the pinned-count regression test on the reported number itself.
+#
 # Usage:
 #   scripts/coverage-scope-check.sh <comma-separated-package-patterns>
 #
@@ -74,6 +83,7 @@ check_entries() {
     trap "rm -f '$outfile' '$errfile'" EXIT INT TERM
 
     local failed=0
+    local total_pkgs=0
     local entry
     for entry in "${entries[@]}"; do
         local rc=0
@@ -91,13 +101,21 @@ check_entries() {
         elif [[ "$rc" -ne 0 ]]; then
             printf 'coverage-scope-check: go list failed for %s: %s\n' "$entry" "$(cat "$errfile")" >&2
             failed=1
+        else
+            # Reported per entry, not only as a total, so a wildcard that
+            # quietly resolves to fewer packages than before (#589: a
+            # `/...` pattern still "resolves" at any nonzero count) names
+            # itself in the log instead of hiding inside one summary
+            # number.
+            printf 'coverage-scope-check: %s -> %d packages\n' "$entry" "${#pkgs[@]}"
+            total_pkgs=$(( total_pkgs + ${#pkgs[@]} ))
         fi
     done
 
     if [[ "$failed" -ne 0 ]]; then
         return 1
     fi
-    printf 'coverage-scope-check: %d patterns all resolve\n' "${#entries[@]}"
+    printf 'coverage-scope-check: %d patterns resolve to %d packages\n' "${#entries[@]}" "$total_pkgs"
 }
 
 main() {

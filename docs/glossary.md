@@ -37,7 +37,9 @@ references. Linked from the docs on first use.
 - **CCM-8** - *Counter with CBC-MAC, 8-byte authentication tag*.
   Specifically `TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8`, code point
   `0xc0ae`. The cipher CSIP V1.2 mandates. Registered in this server
-  by the vendored `internal/tls/gotls` fork. See [`csip.md`](csip.md).
+  by the fork vendored at
+  `vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls`. See
+  [`csip.md`](csip.md).
 - **AEAD** - *Authenticated Encryption with Associated Data*. A class
   of cipher modes (GCM, CCM, ChaCha20-Poly1305, etc.) that produce
   ciphertext and an authentication tag in one pass.

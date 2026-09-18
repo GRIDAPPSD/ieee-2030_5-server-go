@@ -339,9 +339,11 @@ test-csip-race:           ## Race detector on the CSIP suite with csip_test_hook
 #
 # Phase 8 Deliverable 3: the coverage gate operates on production code
 # reachable from CSIP-mode execution, not on raw ./... (which includes
-# the vendored internal/tls/gotls/ fork and would always drag the
-# aggregate below policy). The -coverpkg list below pins the in-scope
-# packages; the gate floor is enforced by scripts/coverage-gate.sh.
+# the vendored fork at
+# vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls/ and
+# would always drag the aggregate below policy). The -coverpkg list below
+# pins the in-scope packages; the gate floor is enforced by
+# scripts/coverage-gate.sh.
 #
 # Achieved threshold at #192 merge: 79.1% scoped. Gate floored at
 # 78% (1pp below for measurement noise) per Phase 8 doc (#193).
@@ -431,9 +433,11 @@ lint:                     ## Run golangci-lint + gofmt drift check
 	$(MAKE) gofmt-check
 
 gofmt-check:              ## Verify gofmt drift (excludes vendor/); a file gofmt cannot parse still fails
-	@# vendor/ holds go.mod-managed third-party source. internal/tls no
-	@# longer exists: its hand-copied crypto/tls fork was replaced by the
-	@# sep2tls package consumed from ieee-2030_5-core-go.
+	@# vendor/ holds go.mod-managed third-party source. The hand-copied
+	@# crypto/tls fork this repository once kept locally is gone: it was
+	@# replaced by the sep2tls package (pkg/sep2tls) consumed from
+	@# ieee-2030_5-core-go, mod-vendored at
+	@# vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls/.
 	@out=`gofmt -l . 2>&1` && status=0 || status=$$?; \
 		if [ "$$status" -ne 0 ]; then \
 			echo "gofmt failed to run (exit $$status):"; \

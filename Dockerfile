@@ -2,8 +2,9 @@
 #
 # The binary is built statically (CGO_ENABLED=0) so it can run in a
 # distroless/static final stage with no libc. The vendored crypto/tls fork
-# under internal/tls/gotls/ is pure Go and compiles with a normal go build;
-# no special build flags are required for it.
+# under vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls/
+# is pure Go and compiles with a normal go build; no special build flags
+# are required for it.
 #
 # Logs: the server routes the stdlib log package through a slog JSON handler
 # to stdout (see cmd/sep2server/logging.go). Run the container under the

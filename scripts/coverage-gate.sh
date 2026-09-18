@@ -25,10 +25,11 @@
 #
 # Floor rationale: Phase 8 matrix walk identified the CSIP-reachable
 # production code as `./test/csip/...` + `./internal/...` minus the
-# vendored `internal/tls/gotls/` fork and its stubs. The achieved
-# threshold under that scope at #192 merge was 79.1%; this script
-# floors at 78% (1pp below for measurement noise) per Phase 8 doc
-# Deliverable 3.
+# vendored fork at
+# vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls/ and
+# its stubs. The achieved threshold under that scope at #192 merge was
+# 79.1%; this script floors at 78% (1pp below for measurement noise)
+# per Phase 8 doc Deliverable 3.
 #
 # Usage:
 #   scripts/coverage-gate.sh <profile-path> [threshold-percent]

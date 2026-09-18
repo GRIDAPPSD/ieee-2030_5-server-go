@@ -26,7 +26,7 @@ import (
 //	GET  /api/devices/by-lfdi/{lfdi}  return EndDevice by LFDI (or found:false)
 //	POST /api/devices              create EndDevice + Registration with PIN
 //
-// SFDI/LFDI derivation reuses internal/tls/identity.go exclusively. No new
+// SFDI/LFDI derivation reuses core's pkg/sep2tls/identity.go exclusively. No new
 // Registration HTTP routes are wired by this file; the resource is persisted
 // via RegistrationWriter so the existing /edev/{id}/rg consumer can read it.
 

@@ -33,9 +33,9 @@ func TestServerIdentityPopulatedUnderGCM(t *testing.T) {
 }
 
 // TestServerIdentityPopulatedUnderCCM is the parallel regression guard for
-// the CCM-8 path. internal/tls/ccmserver.go has no parallel server-identity
-// derivation, so the same pre-fix bug also affected CCM; the #1 fix
-// lands both modes in one shot.
+// the CCM-8 path. Core's pkg/sep2tls/ccmserver.go has no parallel
+// server-identity derivation, so the same pre-fix bug also affected CCM;
+// the #1 fix lands both modes in one shot.
 func TestServerIdentityPopulatedUnderCCM(t *testing.T) {
 	runServerIdentityTest(t, true /* CCM enabled */)
 }
@@ -181,8 +181,8 @@ startLoop:
 
 	// Build a client. Both modes use stdlib crypto/tls on the client because
 	// the fork only adds CCM-8 cipher support - stdlib already knows GCM,
-	// and CCM mode also negotiates GCM as a fallback (see
-	// internal/tls/ccmserver.go), so a stdlib client can interop with
+	// and CCM mode also negotiates GCM as a fallback (see core's
+	// pkg/sep2tls/ccmserver.go), so a stdlib client can interop with
 	// either server config.
 	client := &http.Client{
 		Transport: &http.Transport{TLSClientConfig: clientTLSCfg},

@@ -17,7 +17,7 @@
 //
 // Under default BootServer() (GCM path, stdlib crypto/tls) the server
 // is restricted to TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 (0xC02B);
-// see internal/tls/config.go. Once #21 / #22 land, the
+// see core's pkg/sep2tls/config.go. Once #21 / #22 land, the
 // strict-mode BootServer will restrict to CCM-8 only and this test
 // gains a strict-mode subtest.
 //

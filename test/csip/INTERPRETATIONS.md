@@ -52,8 +52,9 @@ Phase 8 walk on 2026-05-13. Decision-maker: Pike.
 > the handshake, and the negotiated cipher suite is
 > TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 (0xC0AE)."
 
-The server already supports CCM-8 under `make run-ccm` (vendored
-`internal/tls/gotls/` fork registers 0xC0AE). The default
+The server already supports CCM-8 under `make run-ccm` (the fork vendored
+at `vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls/`
+registers 0xC0AE). The default
 `csiptest.BootServer()` path uses the stdlib `crypto/tls` GCM path -
 no CCM-8 registration - because the CCM build is opt-in via
 `SEP2_CSIP_STRICT=true` (#22 work-in-progress; tracked at

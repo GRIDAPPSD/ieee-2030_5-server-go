@@ -1,7 +1,7 @@
 # #52 fixture - one EndDevice matching the SunSpec V1.2 test
 # device certificate.
 #
-# Identity derivation (matches internal/tls/identity.go, spec section 6.3):
+# Identity derivation (matches core's pkg/sep2tls/identity.go, spec section 6.3):
 #
 #   LFDI = first 20 bytes of SHA-256(cert.DER), hex-uppercase (40 chars).
 #   SFDI = top 36 bits of the same hash, formatted as 11 zero-padded
@@ -10,7 +10,7 @@
 #
 # Values below are computed offline from the SunSpec V1.2 device leaf
 # distributed with this repo (see test/csip/README.md). Regenerate
-# with the SFDI/LFDI helpers in internal/tls if the cert ever rolls.
+# with the SFDI/LFDI helpers in core's pkg/sep2tls if the cert ever rolls.
 #
 #   LFDI prefix bytes:  65 DE 11 59 BA  -> top-36 = 0x65DE1159B
 #   = 27,344,835,995 -> "27344835995"  (digit sum 59) -> check 1

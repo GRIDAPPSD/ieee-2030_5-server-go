@@ -11,7 +11,7 @@ import (
 
 // TestRunGenerateDeviceRequiresHWSerial verifies that the generate-device
 // CLI rejects an invocation without -hw-serial. Silently producing a cert
-// with no HardwareModuleName SAN is non-compliant under CSIP §6.2. (#17)
+// with no HardwareModuleName SAN is non-compliant under CSIP section 6.2. (#17)
 func TestRunGenerateDeviceRequiresHWSerial(t *testing.T) {
 	dir := setupTestCertDir(t)
 
@@ -74,7 +74,7 @@ func TestRunGenerateDeviceHWTypeFlag(t *testing.T) {
 // TestRunGenerateDeviceNameValidation pins the strict allowlist on the
 // -name flag. The flag is joined into a filesystem path via filepath.Join
 // (which normalizes but does NOT reject `..`), so unsanitized input would
-// permit path traversal — defense-in-depth for any caller that bypasses
+// permit path traversal - defense-in-depth for any caller that bypasses
 // scripts/new-device.sh and invokes the binary directly.
 func TestRunGenerateDeviceNameValidation(t *testing.T) {
 	dir := setupTestCertDir(t)

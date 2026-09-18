@@ -173,7 +173,7 @@ points at the spec-typo + this INTERPRETATIONS entry.
 
 **Decision lineage.** Phase 3 closure note (#54 PR review),
 2026-05-04. Spec-typo flagged in Phase 1 baseline matrix
-(`artifacts/outputs/noor-csip-v1.2-coverage-matrix.md` section 5).
+(recorded internally).
 Decision-maker: Pike, validated by Dutch.
 
 ---
@@ -301,7 +301,7 @@ mutation surface. CI's #192 `csip` job runs the matrix axis with
 
 The mutation surface listens on the in-process test server and is
 gated by `SEP2_TEST_MUTATION_TOKEN`. Per #27's design note
-(reviewed by Leon), the token is not a secret - the surface only
+(security-reviewed), the token is not a secret - the surface only
 exists in test builds and only listens on the in-process test
 server bound by `csiptest.BootServer`.
 
@@ -321,8 +321,7 @@ Decision-maker: Pike, security sign-off Leon.
 
 ## Cross-references
 
-- Phase 1 baseline coverage matrix:
-  `projects/ieee-2030_5-go/artifacts/outputs/noor-csip-v1.2-coverage-matrix.md`
+- Phase 1 baseline coverage matrix: recorded internally.
 - Final coverage matrix (#193 output):
   `projects/ieee-2030_5-go/artifacts/outputs/csip-v1.2-final-coverage-matrix.md`
 - Phase 8 doc:

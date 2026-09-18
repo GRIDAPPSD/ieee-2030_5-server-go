@@ -25,9 +25,48 @@ func resolveCertDir() (string, error) {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("SEP2_CERT_DIR is not set and the home directory could not be determined: set SEP2_CERT_DIR (or SEP2_CERT, SEP2_KEY, SEP2_CA, SEP2_CA_KEY) explicitly: %w", err)
+		return "", fmt.Errorf("SEP2_CERT_DIR is not set and the home directory could not be determined: set SEP2_CERT_DIR explicitly, or set this path directly: %w", err)
 	}
 	return filepath.Join(home, "tls"), nil
+}
+
+// certDirResolver resolves the default certificate directory
+// (resolveCertDir) at most once, and only when a caller's own setting is
+// unset. A server started with every certificate path set explicitly
+// (SEP2_CERT, SEP2_KEY, SEP2_CA, SEP2_CA_KEY) must start even when $HOME
+// cannot be determined, since none of its defaults are then used (#601
+// review finding 2).
+type certDirResolver struct {
+	resolved bool
+	dir      string
+	err      error
+}
+
+func (r *certDirResolver) get() (string, error) {
+	if !r.resolved {
+		r.dir, r.err = resolveCertDir()
+		r.resolved = true
+	}
+	return r.dir, r.err
+}
+
+// envPathOrCertDir resolves key if set (tilde-expanded, like envPathOr),
+// otherwise joins name onto the default certificate directory. The
+// directory is resolved through r, which caches it, so it is computed at
+// most once per process and only on the first fallback actually taken.
+func (r *certDirResolver) envPathOrCertDir(key, name string) (string, error) {
+	if v := os.Getenv(key); v != "" {
+		expanded, err := config.ExpandHome(v)
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", key, err)
+		}
+		return expanded, nil
+	}
+	dir, err := r.get()
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", key, err)
+	}
+	return filepath.Join(dir, name), nil
 }
 
 // envPathOr resolves a filesystem-path setting: the env var if set, else

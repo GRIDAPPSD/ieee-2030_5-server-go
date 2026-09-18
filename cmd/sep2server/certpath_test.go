@@ -56,6 +56,81 @@ func TestResolveCertDir(t *testing.T) {
 	})
 }
 
+func TestCertDirResolverEnvPathOrCertDir(t *testing.T) {
+	t.Run("every setting present never resolves the default dir, even with no HOME", func(t *testing.T) {
+		t.Setenv("HOME", "")
+		t.Setenv("SEP2_CERT_DIR", "")
+		t.Setenv("SEP2_CERT", "/etc/tls/server.crt")
+		t.Setenv("SEP2_KEY", "/etc/tls/server.key")
+		t.Setenv("SEP2_CA", "/etc/tls/ca.crt")
+		t.Setenv("SEP2_CA_KEY", "/etc/tls/ca.key")
+
+		r := &certDirResolver{}
+		for _, tc := range []struct{ key, name, want string }{
+			{"SEP2_CERT", "server.crt", "/etc/tls/server.crt"},
+			{"SEP2_KEY", "server.key", "/etc/tls/server.key"},
+			{"SEP2_CA", "ca.crt", "/etc/tls/ca.crt"},
+			{"SEP2_CA_KEY", "ca.key", "/etc/tls/ca.key"},
+		} {
+			got, err := r.envPathOrCertDir(tc.key, tc.name)
+			if err != nil {
+				t.Fatalf("envPathOrCertDir(%s): unexpected error: %v", tc.key, err)
+			}
+			if got != tc.want {
+				t.Fatalf("envPathOrCertDir(%s) = %q, want %q", tc.key, got, tc.want)
+			}
+		}
+		if r.resolved {
+			t.Fatal("the default directory was resolved even though every setting was explicit")
+		}
+	})
+
+	t.Run("one setting missing resolves the default dir and fails naming it, with no HOME", func(t *testing.T) {
+		t.Setenv("HOME", "")
+		t.Setenv("SEP2_CERT_DIR", "")
+		t.Setenv("SEP2_CERT", "/etc/tls/server.crt")
+
+		r := &certDirResolver{}
+		_, err := r.envPathOrCertDir("SEP2_CERT", "server.crt")
+		if err != nil {
+			t.Fatalf("SEP2_CERT is set; unexpected error: %v", err)
+		}
+		_, err = r.envPathOrCertDir("SEP2_KEY", "server.key")
+		if err == nil {
+			t.Fatal("SEP2_KEY is unset and HOME is undetermined; want an error")
+		}
+		if !strings.Contains(err.Error(), "SEP2_KEY") {
+			t.Fatalf("error %q does not name SEP2_KEY as the setting that needed the default", err.Error())
+		}
+	})
+
+	t.Run("the default dir is resolved at most once across two fallbacks", func(t *testing.T) {
+		t.Setenv("HOME", "/home/op")
+		t.Setenv("SEP2_CERT_DIR", "")
+		t.Setenv("SEP2_CERT", "")
+		t.Setenv("SEP2_KEY", "")
+
+		r := &certDirResolver{}
+		cert, err := r.envPathOrCertDir("SEP2_CERT", "server.crt")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := filepath.Join("/home/op", "tls", "server.crt"); cert != want {
+			t.Fatalf("cert = %q, want %q", cert, want)
+		}
+		// A second lookup with a different HOME must still see the cached
+		// dir from the first call, proving get() resolves at most once.
+		t.Setenv("HOME", "/home/other")
+		key, err := r.envPathOrCertDir("SEP2_KEY", "server.key")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := filepath.Join("/home/op", "tls", "server.key"); key != want {
+			t.Fatalf("key = %q, want %q (cached dir, not re-resolved)", key, want)
+		}
+	})
+}
+
 func TestEnvPathOr(t *testing.T) {
 	t.Run("unset env returns the fallback unchanged", func(t *testing.T) {
 		t.Setenv("SEP2_TEST_PATH", "")

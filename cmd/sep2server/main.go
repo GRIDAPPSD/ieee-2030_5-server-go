@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -48,11 +47,8 @@ func main() {
 }
 
 func runServe() error {
-	certDir, err := resolveCertDir()
-	if err != nil {
-		return err
-	}
-	cfg, err := configFromEnv(certDir)
+	resolver := &certDirResolver{}
+	cfg, err := configFromEnv(resolver)
 	if err != nil {
 		return err
 	}
@@ -60,7 +56,7 @@ func runServe() error {
 	// Load CA for admin cert service. Reuses cfg.CAFile rather than
 	// re-reading SEP2_CA, since both name the same setting.
 	var svc *handler.AdminCertService
-	caKeyFile, err := envPathOr("SEP2_CA_KEY", filepath.Join(certDir, "ca.key"))
+	caKeyFile, err := resolver.envPathOrCertDir("SEP2_CA_KEY", "ca.key")
 	if err != nil {
 		return err
 	}
@@ -80,24 +76,26 @@ func runServe() error {
 }
 
 // configFromEnv builds the server configuration from SEP2_* environment
-// variables. certDir is the resolved base certificate directory
-// (resolveCertDir): CertFile, KeyFile and CAFile default under it unless
-// individually overridden. Every setting naming a filesystem path is
-// routed through envPathOr or expandCSVPaths so a value given in tilde
-// form is expanded the same way a shell would expand it on a command
-// line (#598); settings naming a network address, hostname, or token are
-// read with the plain envOr/os.Getenv they always used, since a tilde has
-// no meaning there.
-func configFromEnv(certDir string) (*config.Config, error) {
-	certFile, err := envPathOr("SEP2_CERT", filepath.Join(certDir, "server.crt"))
+// variables. r is the default certificate directory resolver
+// (certDirResolver): CertFile, KeyFile and CAFile default under it unless
+// individually overridden, and the directory itself (which needs a
+// determinable $HOME when SEP2_CERT_DIR is unset) is resolved only if one
+// of them actually falls back to it (#601 review finding 2). Every setting
+// naming a filesystem path is routed through envPathOr, envPathOrCertDir or
+// expandCSVPaths so a value given in tilde form is expanded the same way a
+// shell would expand it on a command line (#598); settings naming a
+// network address, hostname, or token are read with the plain
+// envOr/os.Getenv they always used, since a tilde has no meaning there.
+func configFromEnv(r *certDirResolver) (*config.Config, error) {
+	certFile, err := r.envPathOrCertDir("SEP2_CERT", "server.crt")
 	if err != nil {
 		return nil, err
 	}
-	keyFile, err := envPathOr("SEP2_KEY", filepath.Join(certDir, "server.key"))
+	keyFile, err := r.envPathOrCertDir("SEP2_KEY", "server.key")
 	if err != nil {
 		return nil, err
 	}
-	caFile, err := envPathOr("SEP2_CA", filepath.Join(certDir, "ca.crt"))
+	caFile, err := r.envPathOrCertDir("SEP2_CA", "ca.crt")
 	if err != nil {
 		return nil, err
 	}

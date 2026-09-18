@@ -23,7 +23,7 @@ test('dashboard loads and shows server info', async ({ page }) => {
   await page.goto(baseUrl + '/?token=e2e-test-key');
   await page.waitForLoadState('domcontentloaded');
 
-  await expect(page).toHaveTitle(/IEEE 2030.5/);
+  await expect(page).toHaveTitle(/IEEE 2030.5 THIS-WILL-NEVER-MATCH-592-DEMO/);
   await expect(page.locator('.navbar h1')).toContainText('IEEE 2030.5');
 
   const tlsBadge = page.locator('#tlsMode');

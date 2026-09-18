@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"regexp"
 
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/atomicfile"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 )
 
@@ -18,6 +20,38 @@ import (
 // callers (the make new-device script) also validate, but anyone calling
 // the binary directly is protected here too.
 var validDeviceNamePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$`)
+
+// secureDir ensures dir exists as an owner-only (0700) directory: created
+// fresh if absent, narrowed if it already exists with wider group/other
+// bits. It never widens an existing directory's permissions (a mode
+// stricter than 0700, however that came about, is left as the operator set
+// it, and a later write into it fails on its own rather than being made to
+// succeed by loosening the mode). dir itself is refused if it is a
+// symlink: MkdirAll or Chmod on a symlinked path acts on whatever it
+// points to, not the location the operator named, which is the same
+// boundary-of-the-boundary gap data-invariants Rule 3 names for a symlink
+// walk (#601 review finding 1).
+func secureDir(dir string) error {
+	info, err := os.Lstat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return os.MkdirAll(dir, 0700)
+	}
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", dir, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink; refusing to write key material through it", dir)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s exists and is not a directory", dir)
+	}
+	if narrowed := info.Mode().Perm() &^ 0077; narrowed != info.Mode().Perm() {
+		if err := os.Chmod(dir, narrowed); err != nil {
+			return fmt.Errorf("narrowing permissions on %s: %w", dir, err)
+		}
+	}
+	return nil
+}
 
 func runCerts(args []string) error {
 	if len(args) < 1 {
@@ -64,14 +98,14 @@ func runGenerateCA(args []string) error {
 		return err
 	}
 
-	if err := os.MkdirAll(resolvedOut, 0700); err != nil {
+	if err := secureDir(resolvedOut); err != nil {
 		return err
 	}
 
 	if err := os.WriteFile(filepath.Join(resolvedOut, "ca.crt"), certPEM, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(resolvedOut, "ca.key"), keyPEM, 0600); err != nil {
+	if err := atomicfile.Write(filepath.Join(resolvedOut, "ca.key"), keyPEM); err != nil {
 		return err
 	}
 
@@ -118,10 +152,14 @@ func runGenerateServer(args []string) error {
 		return err
 	}
 
+	if err := secureDir(resolvedOut); err != nil {
+		return err
+	}
+
 	if err := os.WriteFile(filepath.Join(resolvedOut, "server.crt"), certPEM, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(resolvedOut, "server.key"), keyPEM, 0600); err != nil {
+	if err := atomicfile.Write(filepath.Join(resolvedOut, "server.key"), keyPEM); err != nil {
 		return err
 	}
 
@@ -159,10 +197,14 @@ func runGenerateAdmin(args []string) error {
 		return err
 	}
 
+	if err := secureDir(resolvedOut); err != nil {
+		return err
+	}
+
 	if err := os.WriteFile(filepath.Join(resolvedOut, "admin.crt"), certPEM, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(resolvedOut, "admin.key"), keyPEM, 0600); err != nil {
+	if err := atomicfile.Write(filepath.Join(resolvedOut, "admin.key"), keyPEM); err != nil {
 		return err
 	}
 
@@ -219,13 +261,17 @@ func runGenerateDevice(args []string) error {
 		return err
 	}
 
+	if err := secureDir(resolvedOut); err != nil {
+		return err
+	}
+
 	certFile := filepath.Join(resolvedOut, *name+".crt")
 	keyFile := filepath.Join(resolvedOut, *name+".key")
 
 	if err := os.WriteFile(certFile, certPEM, 0644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(keyFile, keyPEM, 0600); err != nil {
+	if err := atomicfile.Write(keyFile, keyPEM); err != nil {
 		return err
 	}
 

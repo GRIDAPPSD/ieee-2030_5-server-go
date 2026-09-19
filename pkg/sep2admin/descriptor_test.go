@@ -288,3 +288,32 @@ func TestDescriptorMarshalJSONRefusesUnhandledBodyKind(t *testing.T) {
 		t.Errorf("error = %v, want errors.Is match for ErrUnhandledBodyKind", err)
 	}
 }
+
+// TestBodyMarshalErrorsAreDistinct is #368 fix round 3, item 4: the
+// package's other sentinels (registry_test.go's
+// TestErrDisabledIsDistinctFromEveryConfigurationRefusal) are pinned
+// against confusion with one another; these two joined no such test.
+func TestBodyMarshalErrorsAreDistinct(t *testing.T) {
+	if errors.Is(ErrBodyMarshalledDirectly, ErrUnhandledBodyKind) || errors.Is(ErrUnhandledBodyKind, ErrBodyMarshalledDirectly) {
+		t.Fatal("ErrBodyMarshalledDirectly and ErrUnhandledBodyKind must not match each other: a caller distinguishing a direct-marshal refusal from an unhandled-kind refusal must never conflate them")
+	}
+}
+
+// TestEmbeddingBodyRefusesTheWholeEmbedder is #368 fix round 3, item 4:
+// the promoted MarshalJSON takes the whole embedding struct down, naming
+// the embedder rather than Body, which is a loud refusal replacing the
+// previous silent one and had no test pinning it.
+func TestEmbeddingBodyRefusesTheWholeEmbedder(t *testing.T) {
+	type embedder struct {
+		Body
+		Name string `json:"name"`
+	}
+
+	_, err := json.Marshal(embedder{Name: "mine"})
+	if err == nil {
+		t.Fatal("Marshal of a type embedding Body succeeded, want ErrBodyMarshalledDirectly")
+	}
+	if !errors.Is(err, ErrBodyMarshalledDirectly) {
+		t.Errorf("error = %v, want errors.Is match for ErrBodyMarshalledDirectly", err)
+	}
+}

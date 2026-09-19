@@ -69,7 +69,10 @@ func NewDefinitionListBody(b DefinitionListBody) Body {
 }
 
 // MarshalJSON always fails with ErrBodyMarshalledDirectly. A Body is
-// rendered only as part of its containing Descriptor.
+// rendered only as part of its containing Descriptor. A type outside this
+// package that embeds Body inherits the promoted method, so marshalling
+// the embedder fails the same way, naming the embedder's own type rather
+// than Body.
 func (b Body) MarshalJSON() ([]byte, error) {
 	return nil, ErrBodyMarshalledDirectly
 }

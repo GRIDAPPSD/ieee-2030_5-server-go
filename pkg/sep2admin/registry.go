@@ -42,6 +42,14 @@ var (
 	// rather than serving a shell without them.
 	ErrCorePanelsMissing = errors.New("sep2admin: no core panel registered before Freeze")
 
+	// ErrNilView is returned by Register when a Panel's View is nil. A
+	// nil View registers cleanly today and then reports
+	// "ErrViewPanicked: nil pointer dereference" on its first request,
+	// which is exactly the rendering surprise CurrentDescriptorVersion's
+	// own boot-failure rule forbids: refusing it here makes a missing
+	// View a boot failure instead of a first-request one.
+	ErrNilView = errors.New("sep2admin: panel has a nil View")
+
 	// ErrAssetsNotImplemented is returned by Register when a Panel's
 	// Assets field is non-nil. Nothing in this package mounts an Assets
 	// filesystem yet; a graft that sets it is refused rather than
@@ -151,6 +159,9 @@ func (r *registry) Register(p Panel) error {
 	}
 	if _, exists := r.panels[p.ID]; exists {
 		return fmt.Errorf("%w: %q", ErrDuplicateID, p.ID)
+	}
+	if p.View == nil {
+		return ErrNilView
 	}
 	if p.Assets != nil {
 		return ErrAssetsNotImplemented

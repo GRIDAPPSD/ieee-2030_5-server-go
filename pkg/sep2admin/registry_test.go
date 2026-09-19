@@ -130,6 +130,20 @@ func TestValidateIDAcceptsAWellFormedSlug(t *testing.T) {
 	}
 }
 
+// TestRegisterRejectsNilView pins P3: a nil View registered cleanly and
+// then panicked on first invocation, the exact rendering surprise
+// CurrentDescriptorVersion's own boot-failure rule forbids. Refusing it at
+// Register makes a missing View a boot failure instead.
+func TestRegisterRejectsNilView(t *testing.T) {
+	r := NewRegistry()
+	p := graftPanel("no-view", 1)
+	p.View = nil
+
+	if err := r.Register(p); !errors.Is(err, ErrNilView) {
+		t.Fatalf("Register with a nil View: err = %v, want ErrNilView", err)
+	}
+}
+
 func TestRegisterRejectsNonNilAssets(t *testing.T) {
 	r := NewRegistry()
 	p := graftPanel("has-assets", 1)
@@ -241,7 +255,7 @@ func TestErrDisabledMatchesItself(t *testing.T) {
 func TestErrDisabledIsDistinctFromEveryConfigurationRefusal(t *testing.T) {
 	refusals := []error{
 		ErrZeroPlacement, ErrDuplicateID, ErrInvalidID, ErrRegistryFrozen,
-		ErrCorePanelsMissing, ErrAssetsNotImplemented, ErrUnsupportedDescriptorVersion,
+		ErrCorePanelsMissing, ErrNilView, ErrAssetsNotImplemented, ErrUnsupportedDescriptorVersion,
 	}
 	for _, err := range refusals {
 		if errors.Is(err, ErrDisabled) || errors.Is(ErrDisabled, err) {

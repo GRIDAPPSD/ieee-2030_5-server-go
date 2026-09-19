@@ -46,26 +46,43 @@ func TestGraftCannotNameTheCoreBand(t *testing.T) {
 	}
 }
 
-// TestGraftCannotSetBodyKind is the compile-failure proof that Body.kind
-// is unreachable from outside this package: the same mechanism as
-// TestGraftCannotNameTheCoreBand, applied to Body's own seal (#368 fix
-// round 1, item 1). testdata's graftcannotsetbodykind program textually
-// attempts to set kind directly. See unexportedFieldPhrase for why the
-// assertion is the phrase, not the field's own name.
-func TestGraftCannotSetBodyKind(t *testing.T) {
-	dir, err := filepath.Abs(filepath.Join("testdata", "graftcannotsetbodykind"))
-	if err != nil {
-		t.Fatalf("resolve testdata dir: %v", err)
+// TestGraftCannotSetAnyBodyField is the compile-failure proof that all
+// three of Body's unexported fields are sealed, not only kind (#368 fix
+// round 2, item 2): the guarantee at descriptor.go's doc comment, "no
+// second field to set," rests on all three, and a seal test pinning one
+// leaves the other two open to exactly the smuggling round 2 found by
+// mutation. The table means a fourth field added to Body later is
+// covered by one new case and one new testdata program, not by someone
+// remembering to write a fourth near-identical test function. See
+// unexportedFieldPhrase for why the assertion is the phrase, not the
+// field's own name.
+func TestGraftCannotSetAnyBodyField(t *testing.T) {
+	cases := []struct {
+		field string
+		dir   string
+	}{
+		{field: "kind", dir: "graftcannotsetbodykind"},
+		{field: "table", dir: "graftcannotsettable"},
+		{field: "definitionList", dir: "graftcannotsetdefinitionlist"},
 	}
 
-	cmd := exec.Command("go", "build", "-o", filepath.Join(t.TempDir(), "out"), ".")
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("graftcannotsetbodykind compiled; Body.kind is reachable from outside package sep2admin:\n%s", out)
-	}
-	if !strings.Contains(string(out), unexportedFieldPhrase) {
-		t.Fatalf("build failed for a reason unrelated to the unexported field (want %q): %v\n%s", unexportedFieldPhrase, err, out)
+	for _, c := range cases {
+		t.Run(c.field, func(t *testing.T) {
+			dir, err := filepath.Abs(filepath.Join("testdata", c.dir))
+			if err != nil {
+				t.Fatalf("resolve testdata dir: %v", err)
+			}
+
+			cmd := exec.Command("go", "build", "-o", filepath.Join(t.TempDir(), "out"), ".")
+			cmd.Dir = dir
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("%s compiled; Body.%s is reachable from outside package sep2admin:\n%s", c.dir, c.field, out)
+			}
+			if !strings.Contains(string(out), unexportedFieldPhrase) {
+				t.Fatalf("build failed for a reason unrelated to the unexported field (want %q): %v\n%s", unexportedFieldPhrase, err, out)
+			}
+		})
 	}
 }
 

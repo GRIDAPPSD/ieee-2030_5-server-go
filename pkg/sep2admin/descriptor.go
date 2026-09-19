@@ -77,8 +77,9 @@ type Row []Value
 // ConnectedClients panels each render more than one independent table on
 // a single route (2 and 3 respectively, verified against the bridge's
 // origin/main); a panel needing several tables is not expressible with
-// one TableBody, and that gap is reported to #368's criterion 2 list
-// rather than solved by this type.
+// one TableBody. That is 2 of the 4 table-bearing components measured,
+// not a remote edge case: see doc.go's "Known schema gaps", which this
+// gap is reported to rather than solved by this type.
 type TableBody struct {
 	// Columns is the header row, in display order.
 	Columns []string `json:"columns"`
@@ -95,7 +96,10 @@ type TableBody struct {
 // DefinitionGroup per section. This is why "groups", plural, is the
 // shape: criterion 4 names a definition list as "key-value groups", and
 // the bridge's own measured ControlFlow count (2 definition lists on one
-// route) is exactly one panel needing two.
+// route) is exactly one panel needing two. This covers ControlFlow's
+// headings and key-value entries only: its counters strip and its idle
+// message are neither, and are not expressible here either; see doc.go's
+// "Known schema gaps".
 type DefinitionListBody struct {
 	Groups []DefinitionGroup `json:"groups"`
 }

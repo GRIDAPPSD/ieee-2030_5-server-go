@@ -30,16 +30,16 @@ func TestGraftCannotNameTheCoreBand(t *testing.T) {
 	}
 }
 
-// TestGraftCannotImplementBody is the compile-failure proof for #368 item
-// 2: Body is sealed to this package by its unexported bodyKind method, so
-// a Descriptor can only ever carry a TableBody, a DefinitionListBody, or
-// nil, never a third shape a caller invented. testdata's
-// graftcannotimplementbody program declares a same-named bodyKind method
-// on a type in another package; if that ever started compiling, the seal
-// would be broken and a caller could smuggle an arbitrary shape into
-// Descriptor.Body.
-func TestGraftCannotImplementBody(t *testing.T) {
-	dir, err := filepath.Abs(filepath.Join("testdata", "graftcannotimplementbody"))
+// TestEmbeddingCannotSmuggleAFieldIntoBody is the compile-failure proof
+// for the finding that broke Body's previous seal: a type in another
+// package that embeds the exported TableBody used to get bodyKind()
+// promoted, satisfying the old Body interface while carrying a field the
+// schema never declared. NewTableBody now takes a TableBody by value, and
+// an embedding type is not itself a TableBody, so passing one is a type
+// mismatch caught at compile time. testdata's graftcannotembedintobody
+// program is exactly that reproduction.
+func TestEmbeddingCannotSmuggleAFieldIntoBody(t *testing.T) {
+	dir, err := filepath.Abs(filepath.Join("testdata", "graftcannotembedintobody"))
 	if err != nil {
 		t.Fatalf("resolve testdata dir: %v", err)
 	}
@@ -48,9 +48,10 @@ func TestGraftCannotImplementBody(t *testing.T) {
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err == nil {
-		t.Fatalf("graftcannotimplementbody compiled; Body is reachable from outside package sep2admin:\n%s", out)
+		t.Fatalf("graftcannotembedintobody compiled; a type embedding TableBody can smuggle a field into Body again:\n%s", out)
 	}
-	if !strings.Contains(string(out), "bodyKind") {
-		t.Fatalf("build failed for a reason unrelated to the unexported method (want a message naming bodyKind): %v\n%s", err, out)
+	const want = "as sep2admin.TableBody value in argument to sep2admin.NewTableBody"
+	if !strings.Contains(string(out), want) {
+		t.Fatalf("build failed for a reason unrelated to the TableBody argument type (want %q): %v\n%s", want, err, out)
 	}
 }

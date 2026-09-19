@@ -2,24 +2,56 @@ package sep2admin
 
 import "encoding/json"
 
+// bodyKind discriminates which shape a Body carries, if any.
+type bodyKind uint8
+
+const (
+	bodyKindNone bodyKind = iota
+	bodyKindTable
+	bodyKindDefinitionList
+)
+
 // Body is a Descriptor's rendering payload: a TableBody, a
-// DefinitionListBody, or nil for a Descriptor with no body. It is sealed
-// to this package's two shapes by an unexported method, the same pattern
-// Placement uses to keep its group unreachable from outside the package:
-// nothing outside sep2admin can implement Body, so the only types that
-// can ever reach Descriptor.Body are the two defined here.
+// DefinitionListBody, or the zero Body for none. NewTableBody and
+// NewDefinitionListBody are the only functions outside this package
+// that produce a non-zero Body, so "both a table and a definition list"
+// stays unconstructible: there is no second field to set.
 //
-// Descriptor holds Body in a single field rather than one optional field
-// per shape, so "both a table and a definition list" is not a state a
-// caller can construct: there is no second field to set. That is the
-// type-system refusal criterion 2 (#368) asks for; there is no
-// constructor and no runtime check, because none is needed to hold the
-// invariant.
-type Body interface {
-	// bodyKind names this Body's shape for the wire discriminator
-	// Descriptor.MarshalJSON writes. Unexported: it is the method that
-	// seals Body to this package.
-	bodyKind() string
+// The seal is an unexported field (kind), not an unexported interface
+// method, and that distinction is the whole fix: an unexported
+// interface method is promoted through embedding, so a type in another
+// package that embeds an already-implementing exported type (this
+// package's own TableBody, under the previous design) inherits the
+// promoted method and satisfies the interface without declaring
+// anything itself, carrying whatever extra fields it likes. An
+// unexported FIELD cannot be selected, or promoted through embedding,
+// from another package at any depth; that is the same mechanism
+// Placement.group already uses to keep a graft out of the core band
+// (placement.go). Embedding cannot smuggle a field into the wire
+// payload either: NewTableBody takes a TableBody by value, and a type
+// that embeds TableBody to add a field is not itself a TableBody, so
+// passing it does not compile.
+type Body struct {
+	kind           bodyKind
+	table          TableBody
+	definitionList DefinitionListBody
+}
+
+// NewTableBody returns a Body carrying the table shape.
+func NewTableBody(b TableBody) Body {
+	return Body{kind: bodyKindTable, table: b}
+}
+
+// NewDefinitionListBody returns a Body carrying the definition-list shape.
+func NewDefinitionListBody(b DefinitionListBody) Body {
+	return Body{kind: bodyKindDefinitionList, definitionList: b}
+}
+
+// isEmpty reports whether b carries no shape: the zero Body, the same
+// state a Descriptor built without ever calling NewTableBody or
+// NewDefinitionListBody is in.
+func (b Body) isEmpty() bool {
+	return b.kind == bodyKindNone
 }
 
 // Value is a single piece of rendered content: one TableBody cell or one
@@ -55,8 +87,6 @@ type TableBody struct {
 	Rows []Row `json:"rows"`
 }
 
-func (TableBody) bodyKind() string { return "table" }
-
 // DefinitionListBody is the definition-list shape: one or more key-value
 // groups. A panel whose list is a single flat set (the bridge's Health
 // panel) sends one DefinitionGroup with an empty Heading. A panel whose
@@ -69,8 +99,6 @@ func (TableBody) bodyKind() string { return "table" }
 type DefinitionListBody struct {
 	Groups []DefinitionGroup `json:"groups"`
 }
-
-func (DefinitionListBody) bodyKind() string { return "definitionList" }
 
 // DefinitionGroup is one key-value group within a DefinitionListBody.
 // Heading is empty when a body has exactly one group and nothing labels
@@ -90,28 +118,38 @@ type DefinitionEntry struct {
 // Kind is an explicit discriminator naming which Body shape follows,
 // so a renderer reads which shape it got by name rather than by
 // inferring it from which fields happen to be present. Kind and Body
-// are both omitted when a Descriptor carries no Body.
+// are both omitted when a Descriptor carries no Body. Body is typed any
+// rather than Body (the sealed struct) because the wire value is
+// TableBody's or DefinitionListBody's own fields, not Body's unexported
+// discriminant.
 type wireDescriptor struct {
 	Version int    `json:"version"`
 	Kind    string `json:"kind,omitempty"`
-	Body    Body   `json:"body,omitempty"`
+	Body    any    `json:"body,omitempty"`
 }
 
 // MarshalJSON writes Descriptor as {version, kind, body}: version always,
-// and kind plus body together, present only when Body is non-nil. Kind is
-// TableBody's or DefinitionListBody's bodyKind(); body is the shape's own
-// fields, marshalled by the standard library's normal struct encoding.
+// and kind plus body together, present only when Body carries a shape.
+// body is the shape's own fields, marshalled by the standard library's
+// normal struct encoding; there is no custom encoding on TableBody or
+// DefinitionListBody themselves, since Body's seal no longer depends on
+// either of them having a method.
 //
 // This is the rendering contract a renderer in another language reads by
 // field name. Nothing in this package unmarshals a Descriptor back from
-// JSON: Body's sealed interface means a naive decode into this shape
-// would produce a map, not a TableBody or a DefinitionListBody, and
-// nothing in this repository reads a Descriptor from the wire yet.
-// Decoding is out of scope until a consumer needs it.
+// JSON: Body's sealed fields mean a naive decode into this shape would
+// produce a map, not a TableBody or a DefinitionListBody, and nothing in
+// this repository reads a Descriptor from the wire yet. Decoding is out
+// of scope until a consumer needs it.
 func (d Descriptor) MarshalJSON() ([]byte, error) {
-	w := wireDescriptor{Version: d.Version, Body: d.Body}
-	if d.Body != nil {
-		w.Kind = d.Body.bodyKind()
+	w := wireDescriptor{Version: d.Version}
+	switch d.Body.kind {
+	case bodyKindTable:
+		w.Kind = "table"
+		w.Body = d.Body.table
+	case bodyKindDefinitionList:
+		w.Kind = "definitionList"
+		w.Body = d.Body.definitionList
 	}
 	return json.Marshal(w)
 }

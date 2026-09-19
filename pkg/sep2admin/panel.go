@@ -32,8 +32,9 @@ type Descriptor struct {
 	Version int
 
 	// Body is this Descriptor's rendering payload: a TableBody, a
-	// DefinitionListBody, or nil. See descriptor.go for why a Descriptor
-	// can never hold both at once.
+	// DefinitionListBody, or the zero Body for none. See descriptor.go
+	// for why a Descriptor can never hold both at once, and why the seal
+	// survives embedding.
 	Body Body
 }
 

@@ -12,13 +12,13 @@ import (
 func TestDescriptorMarshalsTableBody(t *testing.T) {
 	d := Descriptor{
 		Version: CurrentDescriptorVersion,
-		Body: TableBody{
+		Body: NewTableBody(TableBody{
 			Columns: []string{"mRID", "Name"},
 			Rows: []Row{
 				{"abc123", "device-1"},
 				{"def456", "device-2"},
 			},
-		},
+		}),
 	}
 
 	b, err := json.Marshal(d)
@@ -76,7 +76,7 @@ func TestDescriptorMarshalsTableBody(t *testing.T) {
 func TestDescriptorMarshalsDefinitionListBody(t *testing.T) {
 	d := Descriptor{
 		Version: CurrentDescriptorVersion,
-		Body: DefinitionListBody{
+		Body: NewDefinitionListBody(DefinitionListBody{
 			Groups: []DefinitionGroup{
 				{
 					Heading: "Connection topics",
@@ -92,7 +92,7 @@ func TestDescriptorMarshalsDefinitionListBody(t *testing.T) {
 					},
 				},
 			},
-		},
+		}),
 	}
 
 	b, err := json.Marshal(d)
@@ -191,10 +191,10 @@ func TestValueContainingMarkupMarshalsAsAnOrdinaryJSONString(t *testing.T) {
 	hostile := Value(`<script>alert(1)</script>"'&`)
 	d := Descriptor{
 		Version: CurrentDescriptorVersion,
-		Body: TableBody{
+		Body: NewTableBody(TableBody{
 			Columns: []string{"value"},
 			Rows:    []Row{{hostile}},
-		},
+		}),
 	}
 
 	b, err := json.Marshal(d)

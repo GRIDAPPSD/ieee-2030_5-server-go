@@ -300,3 +300,86 @@ func TestNewReaderStoresEndDeviceManagersRefusesInsteadOfPanicking(t *testing.T)
 		t.Errorf("ManagedBy error does not name the unwired field: %v", err)
 	}
 }
+
+// TestNewReaderStoresRefusesInsteadOfPanickingOnEveryMirroredField is the
+// PROPERTY-level counterpart to
+// TestNewReaderStoresEndDeviceManagersRefusesInsteadOfPanicking: absence
+// handling belongs to every field requireScoped or requireResource guards,
+// not only to the one field round 2 happened to fix. A field whose Stores
+// value is nil while NewReaderStores would otherwise wrap it directly
+// yields a non-nil wrapper around a nil store: IsZero on the wrapper is
+// false, so TestNewReaderStoresWiresEveryMirroredField cannot see it. Only
+// a call through the wrapper does, which is what this test makes on every
+// mirrored field.
+func TestNewReaderStoresRefusesInsteadOfPanickingOnEveryMirroredField(t *testing.T) {
+	t.Parallel()
+
+	writeType := reflect.TypeOf(assembly.Stores{})
+	checked := 0
+	for i := 0; i < writeType.NumField(); i++ {
+		field := writeType.Field(i)
+		name := field.Name
+		if name == "EndDevices" || name == "EndDeviceManagers" {
+			// Each carries its own decorator chain and its own dedicated
+			// test: TestNewReaderStoresEndDeviceManagersRefusesInsteadOfPanicking
+			// above, and TestNewReaderStoresEndDevicesCarriesTheSameDecoratorChainAsTheRouter
+			// below.
+			continue
+		}
+		if _, excluded := readerStoresExcludedFields[name]; excluded {
+			continue
+		}
+		checked++
+
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			full := testStores()
+			reflect.ValueOf(full).Elem().FieldByName(name).Set(reflect.Zero(field.Type))
+
+			reader := assembly.NewReaderStores(full)
+			readField := reflect.ValueOf(*reader).FieldByName(name)
+			if !readField.IsValid() {
+				t.Fatalf("ReaderStores has no %s field", name)
+			}
+			readDyn := reflect.ValueOf(readField.Interface())
+			get := readDyn.MethodByName("Get")
+			if !get.IsValid() {
+				t.Fatalf("ReaderStores.%s has no Get method", name)
+			}
+			args := []reflect.Value{reflect.ValueOf(context.Background())}
+			for a := 1; a < get.Type().NumIn(); a++ {
+				args = append(args, reflect.Zero(get.Type().In(a)))
+			}
+
+			results := callWithoutPanicking(t, get, args)
+			err, _ := results[len(results)-1].Interface().(error)
+			if err == nil {
+				t.Fatalf("Get on a nil-wired %s returned no error", name)
+			}
+			want := fmt.Sprintf("Stores.%s is not wired", name)
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("Get error does not name the unwired field: %v", err)
+			}
+		})
+	}
+	if checked == 0 {
+		t.Fatal("control failed: no fields were checked")
+	}
+}
+
+// callWithoutPanicking calls get and turns a panic into a t.Fatalf naming
+// it, instead of letting it crash the whole test binary: this test exists
+// specifically to catch the case where a field's decorator chain was
+// skipped and the nil store panics on first call, so the panic itself is
+// the finding this helper reports, not an uncontrolled crash that takes
+// down every parallel subtest sharing the process.
+func callWithoutPanicking(t *testing.T, get reflect.Value, args []reflect.Value) (results []reflect.Value) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Get panicked instead of refusing: %v", r)
+		}
+	}()
+	return get.Call(args)
+}

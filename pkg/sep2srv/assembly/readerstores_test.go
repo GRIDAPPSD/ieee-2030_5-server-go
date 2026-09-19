@@ -47,7 +47,8 @@ var errorType = reflect.TypeOf((*error)(nil)).Elem()
 // returning a concrete struct, pointer, slice or scalar is not followed
 // into its own fields or element type. Nothing on ReaderStores trips this
 // today, because every reader method returns a sep2 value, a scalar, a
-// slice, or an interface already covered by this allowlist.
+// slice, a store.ListResult[T] (List's return), or an interface already
+// covered by this allowlist.
 func assertReaderOnly(t *testing.T, typ reflect.Type, path string, visited map[reflect.Type]bool) {
 	t.Helper()
 	if typ.Kind() != reflect.Interface || typ == errorType || visited[typ] {

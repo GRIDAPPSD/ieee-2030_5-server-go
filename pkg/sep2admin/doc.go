@@ -56,7 +56,9 @@
 // # Known schema gaps (#368 criterion 2 REFUSAL)
 //
 // Measured against the bridge's 6 route components at
-// gridappsd-ieee-2030_5-go's b5f633f, recorded rather than worked around:
+// gridappsd-ieee-2030_5-go's b5f633f, recorded rather than worked around;
+// criterion 2 asks for this server's own inexpressible panels by name,
+// and closing #368 means resolving that scope gap, not this list:
 //
 //   - Multiple tables on one route. ServedResources (2 tables) and
 //     ConnectedClients (3) each need more than one table where a

@@ -1,8 +1,8 @@
-// Command graftcannotsetbodykind exists only so
-// TestGraftCannotSetBodyKind (../../compile_failure_test.go) can prove,
-// by running `go build` against it, that Body.kind is unreachable from
-// outside package sep2admin: the same mechanism proven for Placement.group
-// in graftcannotsetgroup, applied to Body's own seal.
+// Command graftcannotsetbodykind exists only so the table-driven compile
+// failure test (../../compile_failure_test.go) can prove, by running `go
+// build` against it, that Body.kind is unreachable from outside package
+// sep2admin: the same mechanism proven for Placement.group in
+// graftcannotsetgroup, applied to Body's own seal.
 // "testdata" directories are skipped by `go build ./...` and
 // `go vet ./...` by convention, so this file is never part of the
 // normal build.

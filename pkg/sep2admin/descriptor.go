@@ -1,6 +1,10 @@
 package sep2admin
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+)
 
 // bodyKind discriminates which shape a Body carries, if any.
 type bodyKind uint8
@@ -10,6 +14,24 @@ const (
 	bodyKindTable
 	bodyKindDefinitionList
 )
+
+// ErrBodyMarshalledDirectly is returned when a Body is marshalled outside
+// its containing Descriptor. json.Marshal would otherwise skip every
+// unexported field and silently emit "{}" with no error: byte-identical
+// to a Descriptor's own "no body" wire shape
+// (TestDescriptorWithNoBodyOmitsKindAndBody), so a caller could not tell
+// a mismarshalled Body from a real empty one. Descriptor.MarshalJSON
+// never triggers this: it reads Body's shape fields directly and never
+// calls json.Marshal on a Body value.
+var ErrBodyMarshalledDirectly = errors.New("sep2admin: Body must be marshalled through its containing Descriptor, not directly")
+
+// ErrUnhandledBodyKind is returned by Descriptor.MarshalJSON when Body's
+// kind is none of the three this package knows how to render.
+// Unreachable today, since kind is unexported and only two constructors
+// ever set it to a non-none value; kept as a named refusal rather than a
+// silent fall-through so a future body shape cannot degrade to the "no
+// body" wire shape by missing a switch case.
+var ErrUnhandledBodyKind = errors.New("sep2admin: Descriptor.Body has an unhandled kind")
 
 // Body is a Descriptor's rendering payload: a TableBody, a
 // DefinitionListBody, or the zero Body for none. NewTableBody and
@@ -45,6 +67,12 @@ func NewTableBody(b TableBody) Body {
 // NewDefinitionListBody returns a Body carrying the definition-list shape.
 func NewDefinitionListBody(b DefinitionListBody) Body {
 	return Body{kind: bodyKindDefinitionList, definitionList: b}
+}
+
+// MarshalJSON always fails with ErrBodyMarshalledDirectly. A Body is
+// rendered only as part of its containing Descriptor.
+func (b Body) MarshalJSON() ([]byte, error) {
+	return nil, ErrBodyMarshalledDirectly
 }
 
 // Value is a single piece of rendered content: one TableBody cell or one
@@ -141,12 +169,17 @@ type wireDescriptor struct {
 func (d Descriptor) MarshalJSON() ([]byte, error) {
 	w := wireDescriptor{Version: d.Version}
 	switch d.Body.kind {
+	case bodyKindNone:
+		// No shape: w.Kind and w.Body stay their zero values, and
+		// omitempty drops both from the wire.
 	case bodyKindTable:
 		w.Kind = "table"
 		w.Body = d.Body.table
 	case bodyKindDefinitionList:
 		w.Kind = "definitionList"
 		w.Body = d.Body.definitionList
+	default:
+		return nil, fmt.Errorf("%w: %d", ErrUnhandledBodyKind, d.Body.kind)
 	}
 	return json.Marshal(w)
 }

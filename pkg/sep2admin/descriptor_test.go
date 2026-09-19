@@ -2,6 +2,7 @@ package sep2admin
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -244,5 +245,45 @@ func TestCurrentDescriptorVersionWireValueIsPinned(t *testing.T) {
 	const wireVersion = 1
 	if got.Version != wireVersion {
 		t.Errorf("wire version = %d, want the literal %d: a renderer in another language hardcodes this number rather than reading the constant", got.Version, wireVersion)
+	}
+}
+
+// TestBodyMarshalledDirectlyRefuses is the field-by-field proof for #368
+// fix round 2, item 4: without Body.MarshalJSON, json.Marshal of a bare
+// Body silently produces "{}" with no error, byte-identical to a
+// Descriptor's own "no body" shape. Descriptor.MarshalJSON never calls
+// json.Marshal on a Body value (it reads the shape fields directly), so
+// this refusal never fires on the path every other test in this file
+// exercises.
+func TestBodyMarshalledDirectlyRefuses(t *testing.T) {
+	b := NewTableBody(TableBody{Columns: []string{"a"}, Rows: []Row{{"x"}}})
+
+	_, err := json.Marshal(b)
+	if err == nil {
+		t.Fatal("Marshal of a bare Body succeeded, want ErrBodyMarshalledDirectly")
+	}
+	if !errors.Is(err, ErrBodyMarshalledDirectly) {
+		t.Errorf("error = %v, want errors.Is match for ErrBodyMarshalledDirectly", err)
+	}
+}
+
+// TestDescriptorMarshalJSONRefusesUnhandledBodyKind is the proof for the
+// LOW carried from #368 fix round 2: MarshalJSON's switch on d.Body.kind
+// now has a default case. This test constructs the out-of-range kind
+// directly, same-package, since bodyKind is unexported and unreachable
+// from any real caller; that unreachability is exactly why the switch
+// needs a default rather than trusting every future case to be added.
+func TestDescriptorMarshalJSONRefusesUnhandledBodyKind(t *testing.T) {
+	d := Descriptor{
+		Version: CurrentDescriptorVersion,
+		Body:    Body{kind: bodyKind(99)},
+	}
+
+	_, err := json.Marshal(d)
+	if err == nil {
+		t.Fatal("Marshal succeeded with an unhandled bodyKind, want ErrUnhandledBodyKind")
+	}
+	if !errors.Is(err, ErrUnhandledBodyKind) {
+		t.Errorf("error = %v, want errors.Is match for ErrUnhandledBodyKind", err)
 	}
 }

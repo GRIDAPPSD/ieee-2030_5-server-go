@@ -47,13 +47,6 @@ func NewDefinitionListBody(b DefinitionListBody) Body {
 	return Body{kind: bodyKindDefinitionList, definitionList: b}
 }
 
-// isEmpty reports whether b carries no shape: the zero Body, the same
-// state a Descriptor built without ever calling NewTableBody or
-// NewDefinitionListBody is in.
-func (b Body) isEmpty() bool {
-	return b.kind == bodyKindNone
-}
-
 // Value is a single piece of rendered content: one TableBody cell or one
 // DefinitionEntry's value. Its only underlying type is string, and this
 // package gives it no method and no sibling type that would let a

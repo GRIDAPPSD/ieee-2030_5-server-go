@@ -12,9 +12,12 @@ import (
 // allowedReaderMethods names every method a reader interface on
 // ReaderStores may declare. This is an ALLOWLIST, not a denylist of write
 // names someone predicted: the property under test is "no method that
-// mutates, at any depth reachable from the field", so an unrecognized
-// method name fails the same way a known write method would. A denylist
-// only refuses the writes someone thought to name.
+// mutates is reachable through a chain of INTERFACE-typed return values",
+// so an unrecognized method name fails the same way a known write method
+// would. A denylist only refuses the writes someone thought to name. The
+// recursion stops at the first non-interface return type (see
+// assertReaderOnly): a field whose Get returns a concrete write-capable
+// type is outside this check's reach.
 var allowedReaderMethods = map[string]bool{
 	"Get": true, "List": true, "Count": true,
 	"HasParent": true, "Parents": true,
@@ -29,12 +32,19 @@ var allowedReaderMethods = map[string]bool{
 var errorType = reflect.TypeOf((*error)(nil)).Elem()
 
 // assertReaderOnly fails t for any method on typ not in
-// allowedReaderMethods, and recurses into every method's return types.
-// Return types count: a field whose otherwise-allowed method hands back a
-// write-capable value (a method returning a store.ResourceStore, say) is
-// the same defect as a field carrying a write method directly, one call
-// further away. visited stops the recursion revisiting a type already
-// checked, guarding against a self-referential return type.
+// allowedReaderMethods, and recurses into every method's INTERFACE-typed
+// return types. Return types count: a field whose otherwise-allowed method
+// hands back a write-capable interface (a method returning a
+// store.ResourceStore, say) is the same defect as a field carrying a write
+// method directly, one call further away. visited stops the recursion
+// revisiting a type already checked, guarding against a self-referential
+// return type.
+//
+// The recursion stops at typ.Kind() != reflect.Interface: a method
+// returning a concrete struct, pointer, slice or scalar is not followed
+// into its own fields or element type. Nothing on ReaderStores trips this
+// today, because every reader method returns a sep2 value, a scalar, a
+// slice, or an interface already covered by this allowlist.
 func assertReaderOnly(t *testing.T, typ reflect.Type, path string, visited map[reflect.Type]bool) {
 	t.Helper()
 	if typ.Kind() != reflect.Interface || typ == errorType || visited[typ] {

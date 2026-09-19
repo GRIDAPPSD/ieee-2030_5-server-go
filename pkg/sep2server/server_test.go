@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
@@ -294,6 +295,20 @@ func TestServerLifecycle(t *testing.T) {
 	if srv.Stores() != stores {
 		t.Error("Stores() returned a different handle than Config.Stores")
 	}
+
+	// Criterion 3: a seeding path holding srv.Stores() (the write handle)
+	// and a telemetry path holding srv.ReaderStores() (the read handle) both
+	// compile against the same, real, running server, and the telemetry
+	// path sees what the seeding path wrote. SFDI is the distinguishing
+	// field: a Get returning a zero-valued record for a present id would
+	// leave a bare err == nil check green.
+	if err := srv.Stores().EndDevices.Create(context.Background(), "seeded-1", sep2.EndDevice{SFDI: "seeded-sfdi-2"}); err != nil {
+		t.Fatalf("seed through the write handle: %v", err)
+	}
+	if got, err := srv.ReaderStores().EndDevices.Get(context.Background(), "seeded-1"); err != nil || got.SFDI != "seeded-sfdi-2" {
+		t.Errorf("telemetry path (ReaderStores) does not see a device seeded through the write handle: got SFDI %q, err %v", got.SFDI, err)
+	}
+
 	if len(srv.Patterns()) == 0 {
 		t.Error("Patterns() is empty")
 	}

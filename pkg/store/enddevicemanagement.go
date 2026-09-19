@@ -10,6 +10,20 @@ import (
 // a caller error, never a backend condition.
 var ErrInvalidManagementPair = errors.New("invalid EndDevice management pair")
 
+// EndDeviceManagementReader is the read-only half of
+// [EndDeviceManagementStore]: the two lookups, and nothing that writes a
+// pair. This is the handle a telemetry consumer or an administrative read
+// surface should hold.
+type EndDeviceManagementReader interface {
+	// ManagerOf returns the LFDI managing managedLFDI, or ErrNotFound when
+	// the device is unmanaged.
+	ManagerOf(ctx context.Context, managedLFDI string) (string, error)
+
+	// ManagedBy returns the LFDIs managerLFDI manages, sorted ascending, in a
+	// slice the caller owns. No pairs is an empty result, not ErrNotFound.
+	ManagedBy(ctx context.Context, managerLFDI string) ([]string, error)
+}
+
 // EndDeviceManagementStore records which LFDI manages which EndDevice.
 //
 // A pair (manager, managed) lets the manager reach the managed device's
@@ -25,13 +39,7 @@ var ErrInvalidManagementPair = errors.New("invalid EndDevice management pair")
 // surrounding space) rather than folding it, so a lookup with a non-canonical
 // LFDI misses.
 type EndDeviceManagementStore interface {
-	// ManagerOf returns the LFDI managing managedLFDI, or ErrNotFound when
-	// the device is unmanaged.
-	ManagerOf(ctx context.Context, managedLFDI string) (string, error)
-
-	// ManagedBy returns the LFDIs managerLFDI manages, sorted ascending, in a
-	// slice the caller owns. No pairs is an empty result, not ErrNotFound.
-	ManagedBy(ctx context.Context, managerLFDI string) ([]string, error)
+	EndDeviceManagementReader
 
 	// Assign records managerLFDI as the manager of managedLFDI. Assigning the
 	// same pair again succeeds. It returns ErrAlreadyExists when another
@@ -42,4 +50,27 @@ type EndDeviceManagementStore interface {
 	// Unassign removes the manager of managedLFDI, or returns ErrNotFound
 	// when the device is unmanaged.
 	Unassign(ctx context.Context, managedLFDI string) error
+}
+
+// AsEndDeviceManagementReader narrows an [EndDeviceManagementStore] to an
+// [EndDeviceManagementReader] by wrapping, following the same rule as
+// [AsReader]: a plain assignment leaves Assign and Unassign reachable
+// through the wrapped value's unchanged dynamic type.
+func AsEndDeviceManagementReader(s EndDeviceManagementReader) EndDeviceManagementReader {
+	return endDeviceManagementReaderOnly{reader: s}
+}
+
+// endDeviceManagementReaderOnly forwards only the
+// [EndDeviceManagementReader] methods of the reader it wraps, which may in
+// fact satisfy the wider [EndDeviceManagementStore].
+type endDeviceManagementReaderOnly struct {
+	reader EndDeviceManagementReader
+}
+
+func (v endDeviceManagementReaderOnly) ManagerOf(ctx context.Context, managedLFDI string) (string, error) {
+	return v.reader.ManagerOf(ctx, managedLFDI)
+}
+
+func (v endDeviceManagementReaderOnly) ManagedBy(ctx context.Context, managerLFDI string) ([]string, error) {
+	return v.reader.ManagedBy(ctx, managerLFDI)
 }

@@ -102,4 +102,7 @@ func checkCanonicalLFDI(role, lfdi string) error {
 	return nil
 }
 
-var _ store.EndDeviceManagementStore = (*EndDeviceManagementStore)(nil)
+var (
+	_ store.EndDeviceManagementReader = (*EndDeviceManagementStore)(nil)
+	_ store.EndDeviceManagementStore  = (*EndDeviceManagementStore)(nil)
+)

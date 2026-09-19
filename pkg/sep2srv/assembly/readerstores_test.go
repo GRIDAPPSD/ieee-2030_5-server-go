@@ -1,0 +1,508 @@
+package assembly_test
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
+)
+
+// allowedReaderMethods names every method a reader interface on
+// ReaderStores may declare. This is an ALLOWLIST, not a denylist of write
+// names someone predicted: the property under test is "no method that
+// mutates is reachable through a chain of INTERFACE-typed return values",
+// so an unrecognized method name fails the same way a known write method
+// would. A denylist only refuses the writes someone thought to name. The
+// recursion stops at the first non-interface return type (see
+// assertReaderOnly): a field whose Get returns a concrete write-capable
+// type is outside this check's reach.
+var allowedReaderMethods = map[string]bool{
+	"Get": true, "List": true, "Count": true,
+	"HasParent": true, "Parents": true,
+	"GetBySFDI": true, "GetByLFDI": true,
+	"ManagerOf": true, "ManagedBy": true,
+}
+
+// errorType is the built-in error interface: it is the return type of
+// every method here, and its own Error() string method carries no store
+// access, so it is exempt from the allowlist and from recursion rather
+// than requiring "Error" as an allowed method name.
+var errorType = reflect.TypeOf((*error)(nil)).Elem()
+
+// assertReaderOnly fails t for any method on typ not in
+// allowedReaderMethods, and recurses into every method's INTERFACE-typed
+// return types. Return types count: a field whose otherwise-allowed method
+// hands back a write-capable interface (a method returning a
+// store.ResourceStore, say) is the same defect as a field carrying a write
+// method directly, one call further away. visited stops the recursion
+// revisiting a type already checked, guarding against a self-referential
+// return type.
+//
+// The recursion stops at typ.Kind() != reflect.Interface: a method
+// returning a concrete struct, pointer, slice or scalar is not followed
+// into its own fields or element type. Nothing on ReaderStores trips this
+// today, because every reader method returns a sep2 value, a scalar, a
+// slice, a store.ListResult[T] (List's return), or an interface already
+// covered by this allowlist.
+func assertReaderOnly(t *testing.T, typ reflect.Type, path string, visited map[reflect.Type]bool) {
+	t.Helper()
+	if typ.Kind() != reflect.Interface || typ == errorType || visited[typ] {
+		return
+	}
+	visited[typ] = true
+
+	for m := 0; m < typ.NumMethod(); m++ {
+		method := typ.Method(m)
+		if !allowedReaderMethods[method.Name] {
+			t.Errorf("%s declares %s, not on the reader allowlist: a write or unexpected method is reachable", path, method.Name)
+			continue
+		}
+		for r := 0; r < method.Type.NumOut(); r++ {
+			out := method.Type.Out(r)
+			assertReaderOnly(t, out, fmt.Sprintf("%s.%s()'s return value (%s)", path, method.Name, out), visited)
+		}
+	}
+}
+
+// TestReaderStoresFieldsAreInterfacesWithOnlyAllowedReaderMethods is the
+// exported symbol set assertion criterion 6 asks for: every field is an
+// interface (so a caller cannot reach a concrete type's wider method set
+// without an explicit, visible type assertion), every method on it is on
+// allowedReaderMethods, and no method's return type reaches a mutating
+// method either.
+func TestReaderStoresFieldsAreInterfacesWithOnlyAllowedReaderMethods(t *testing.T) {
+	t.Parallel()
+
+	typ := reflect.TypeOf(assembly.ReaderStores{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		if f.Type.Kind() != reflect.Interface {
+			t.Errorf("ReaderStores.%s is a %s, not an interface: it can carry exported methods no reader interface declares", f.Name, f.Type.Kind())
+			continue
+		}
+		assertReaderOnly(t, f.Type, "ReaderStores."+f.Name, map[reflect.Type]bool{})
+	}
+}
+
+// TestNewReaderStoresOmitsAdminAndSubscriptionPlanes pins the exclusion
+// ReaderStores' own doc comment states: AdminFSAs and Subscriptions are not
+// mirrored, so their exported SnapshotForTesting/RestoreForTesting/
+// AttachProgram/etc. methods are not reachable through the read handle at
+// all, concrete type included. This is a struct literal, not a method
+// lookup: if a future field addition ever assigns one of those concrete
+// types to ReaderStores, this fails to compile before it fails to test.
+func TestNewReaderStoresOmitsAdminAndSubscriptionPlanes(t *testing.T) {
+	t.Parallel()
+
+	full := &assembly.Stores{
+		EndDevices:        memory.NewEndDeviceStore(),
+		EndDeviceManagers: memory.NewEndDeviceManagementStore(),
+		AdminFSAs:         memory.NewAdminFSAStore(),
+		Subscriptions:     memory.NewSubscriptionStore(),
+	}
+	reader := assembly.NewReaderStores(full)
+
+	rv := reflect.ValueOf(*reader)
+	rt := rv.Type()
+	for i := 0; i < rt.NumField(); i++ {
+		name := rt.Field(i).Name
+		if name == "AdminFSAs" || name == "Subscriptions" {
+			t.Errorf("ReaderStores unexpectedly carries a %s field; its own doc comment says this plane is not mirrored", name)
+		}
+	}
+
+	// Establish the assertion has teeth: the concrete types really do carry
+	// the forbidden methods, on the write handle, so their absence above is
+	// a narrowing and not an accident of an already-empty method set.
+	adminFSAsType := reflect.TypeOf(full.AdminFSAs)
+	if _, ok := adminFSAsType.MethodByName("AttachProgram"); !ok {
+		t.Fatal("control failed: *memory.AdminFSAStore no longer has AttachProgram; the exclusion this test proves has nothing to prove")
+	}
+	subsType := reflect.TypeOf(full.Subscriptions)
+	if _, ok := subsType.MethodByName("RestoreForTesting"); !ok {
+		t.Fatal("control failed: *memory.SubscriptionStore no longer has RestoreForTesting; the exclusion this test proves has nothing to prove")
+	}
+}
+
+// readerStoresExcludedFields names every Stores field with no counterpart
+// on ReaderStores, matching ReaderStores' own doc comment. A field named
+// here must NOT appear on ReaderStores; every other Stores field MUST.
+var readerStoresExcludedFields = map[string]string{
+	"EndDeviceIndexes":   "a URL addressing allocator, not resource data",
+	"RegistrationPolicy": "provisioning config, not a store",
+	"AdminFSAs":          "a bespoke admin plane with no reader/writer split",
+	"Subscriptions":      "a bespoke notification plane with no reader/writer split",
+}
+
+// TestNewReaderStoresWiresEveryMirroredField fails when a field is added to
+// Stores and NewReaderStores does not mirror it onto ReaderStores (or does
+// not carry a reason in readerStoresExcludedFields), and when a mirrored
+// field exists on ReaderStores but NewReaderStores leaves it unset. It is
+// the read-side counterpart to TestTestStoresWiresEveryStoresField
+// (stores_wiring_test.go), which only covers the write side.
+func TestNewReaderStoresWiresEveryMirroredField(t *testing.T) {
+	t.Parallel()
+
+	full := testStores()
+	reader := assembly.NewReaderStores(full)
+
+	writeType := reflect.TypeOf(*full)
+	readVal := reflect.ValueOf(*reader)
+	readType := readVal.Type()
+
+	onRead := map[string]bool{}
+	for i := 0; i < readType.NumField(); i++ {
+		onRead[readType.Field(i).Name] = true
+	}
+
+	for i := 0; i < writeType.NumField(); i++ {
+		name := writeType.Field(i).Name
+		if reason, excluded := readerStoresExcludedFields[name]; excluded {
+			if onRead[name] {
+				t.Errorf("ReaderStores carries a %s field, which readerStoresExcludedFields says is deliberately left out (%s)", name, reason)
+			}
+			continue
+		}
+		field := readVal.FieldByName(name)
+		if !field.IsValid() {
+			t.Errorf("Stores.%s has no counterpart on ReaderStores: mirror it in NewReaderStores, or add it to readerStoresExcludedFields with a reason", name)
+			continue
+		}
+		if field.IsZero() {
+			t.Errorf("ReaderStores.%s is nil after NewReaderStores: the field exists but NewReaderStores does not set it", name)
+		}
+	}
+
+	for name := range onRead {
+		if _, onWrite := writeType.FieldByName(name); !onWrite {
+			t.Errorf("ReaderStores.%s has no counterpart on Stores", name)
+		}
+	}
+
+	for name := range readerStoresExcludedFields {
+		if _, onWrite := writeType.FieldByName(name); !onWrite {
+			t.Errorf("readerStoresExcludedFields names Stores.%s, which does not exist", name)
+		}
+	}
+}
+
+// TestNewReaderStoresRefusesWriteMethodsOnEveryField is the DYNAMIC
+// counterpart to TestReaderStoresFieldsAreInterfacesWithOnlyAllowedReaderMethods.
+// That test reads ReaderStores' struct definition: the field's DECLARED
+// type, which stays a reader interface whether or not NewReaderStores
+// actually wraps the value it puts there. This test reads the VALUE
+// NewReaderStores returns: a caller holding it can attempt a type
+// assertion to the write interface, or find an unlisted method by
+// reflection, and both must fail on every field, not on the declared type.
+//
+// The property under test is "no method that mutates is reachable", not
+// "no method named Create, Update, Delete, Assign or Unassign": a wrapper
+// that forwards a cascading DeleteParent, or any other write-capable
+// method a future field adds, is the same escape one call further away
+// and a denylist of predicted names would miss it. So both the control
+// and the assertion walk the DYNAMIC method set and check every name
+// against allowedReaderMethods, the same allowlist assertReaderOnly
+// checks the declared type against.
+//
+// Stripping every AsReader/AsScopedReader/AsEndDeviceReader/
+// AsEndDeviceManagementReader wrap back to plain assignment leaves the
+// struct definition, and so the first test, unchanged; this one goes red,
+// because the dynamic value is now the write-capable store itself.
+//
+// The property extends to struct fields, not only methods: an EXPORTED
+// field on a wrapper struct would hand a caller the wrapped value directly,
+// no method call needed. Every wrapper in pkg/store keeps its field
+// unexported today, so this check has no in-repo mutation to demonstrate it
+// against; it was proven by hand-capitalizing resourceReaderOnly's field
+// during review and watching this test fail, then reverting.
+func TestNewReaderStoresRefusesWriteMethodsOnEveryField(t *testing.T) {
+	t.Parallel()
+
+	full := testStores()
+	reader := assembly.NewReaderStores(full)
+
+	writeVal := reflect.ValueOf(*full)
+	writeType := writeVal.Type()
+	readVal := reflect.ValueOf(*reader)
+	readType := readVal.Type()
+
+	checked := 0
+	for i := 0; i < readType.NumField(); i++ {
+		name := readType.Field(i).Name
+		writeField, ok := writeType.FieldByName(name)
+		if !ok {
+			t.Errorf("ReaderStores.%s has no Stores counterpart", name)
+			continue
+		}
+		writeFieldVal := writeVal.FieldByName(name)
+		if !writeFieldVal.IsValid() || writeFieldVal.IsZero() {
+			t.Errorf("Stores.%s is nil in testStores(): this field cannot serve as a control for its reader counterpart", name)
+			continue
+		}
+
+		// Control: the write side must both implement its own declared
+		// interface (trivially true) and expose at least one method
+		// outside the reader allowlist by reflection, or a field with no
+		// writer at all could pass the assertion below by accident.
+		writeDyn := reflect.ValueOf(writeFieldVal.Interface())
+		if !writeDyn.Type().Implements(writeField.Type) {
+			t.Fatalf("control failed: Stores.%s's dynamic type %s does not implement %s", name, writeDyn.Type(), writeField.Type)
+		}
+		foundWrite := ""
+		writeDynType := writeDyn.Type()
+		for m := 0; m < writeDynType.NumMethod(); m++ {
+			mName := writeDynType.Method(m).Name
+			if !allowedReaderMethods[mName] {
+				foundWrite = mName
+				break
+			}
+		}
+		if foundWrite == "" {
+			t.Fatalf("control failed: Stores.%s (dynamic type %s) exposes no method outside the reader allowlist; it cannot prove this check has teeth", name, writeDyn.Type())
+		}
+		checked++
+
+		// Assertion: the DYNAMIC value behind ReaderStores.<name> admits
+		// neither escape.
+		readDyn := reflect.ValueOf(readVal.Field(i).Interface())
+		if readDyn.Type().Implements(writeField.Type) {
+			t.Errorf("ReaderStores.%s's dynamic type %s implements %s: a type assertion to the write interface would succeed", name, readDyn.Type(), writeField.Type)
+		}
+		readDynType := readDyn.Type()
+		for m := 0; m < readDynType.NumMethod(); m++ {
+			mName := readDynType.Method(m).Name
+			if !allowedReaderMethods[mName] {
+				t.Errorf("ReaderStores.%s (dynamic type %s) exposes %s by reflection, not on the reader allowlist: the wrapping was dropped or bypassed", name, readDyn.Type(), mName)
+			}
+		}
+
+		// A method check alone misses a wrapper struct field: an EXPORTED
+		// field is reachable by any caller, in any package, without
+		// reflection at all, holding the wrapped value directly rather than
+		// through the interface's forwarding methods. A field is a route to
+		// the write-capable value as much as a method is.
+		if readDynType.Kind() == reflect.Struct {
+			for f := 0; f < readDynType.NumField(); f++ {
+				sf := readDynType.Field(f)
+				if sf.PkgPath != "" {
+					continue // unexported
+				}
+				t.Errorf("ReaderStores.%s's dynamic type %s has an exported field %s: a caller can reach the wrapped value directly, bypassing every method check above", name, readDynType, sf.Name)
+			}
+		}
+	}
+	if checked != readType.NumField() {
+		t.Fatalf("checked %d of %d ReaderStores fields; every field must go through the control and the assertion", checked, readType.NumField())
+	}
+}
+
+// TestNewReaderStoresEndDeviceManagersRefusesInsteadOfPanicking asserts
+// EndDeviceManagers gets the same refuse-and-log treatment on a half-wired
+// Stores as every other ReaderStores field: a descriptive error naming the
+// field, not a nil pointer dereference on first call.
+func TestNewReaderStoresEndDeviceManagersRefusesInsteadOfPanicking(t *testing.T) {
+	t.Parallel()
+
+	full := testStores()
+	full.EndDeviceManagers = nil
+	reader := assembly.NewReaderStores(full)
+
+	if _, err := reader.EndDeviceManagers.ManagerOf(context.Background(), "DEV"); err == nil {
+		t.Error("ManagerOf on an unwired EndDeviceManagers returned no error")
+	} else if !strings.Contains(err.Error(), "Stores.EndDeviceManagers is not wired") {
+		t.Errorf("ManagerOf error does not name the unwired field: %v", err)
+	}
+
+	if _, err := reader.EndDeviceManagers.ManagedBy(context.Background(), "MGR"); err == nil {
+		t.Error("ManagedBy on an unwired EndDeviceManagers returned no error")
+	} else if !strings.Contains(err.Error(), "Stores.EndDeviceManagers is not wired") {
+		t.Errorf("ManagedBy error does not name the unwired field: %v", err)
+	}
+}
+
+// TestNewReaderStoresRefusesInsteadOfPanickingOnEveryMirroredField is the
+// PROPERTY-level counterpart to
+// TestNewReaderStoresEndDeviceManagersRefusesInsteadOfPanicking: absence
+// handling belongs to every field requireScoped or requireResource guards,
+// not only to the one field round 2 happened to fix. A field whose Stores
+// value is nil while NewReaderStores would otherwise wrap it directly
+// yields a non-nil wrapper around a nil store: IsZero on the wrapper is
+// false, so TestNewReaderStoresWiresEveryMirroredField cannot see it. Only
+// a call through the wrapper does, which is what this test makes on every
+// mirrored field.
+func TestNewReaderStoresRefusesInsteadOfPanickingOnEveryMirroredField(t *testing.T) {
+	t.Parallel()
+
+	writeType := reflect.TypeOf(assembly.Stores{})
+	checked := 0
+	for i := 0; i < writeType.NumField(); i++ {
+		field := writeType.Field(i)
+		name := field.Name
+		if name == "EndDevices" || name == "EndDeviceManagers" {
+			// Each carries its own decorator chain and its own dedicated
+			// test for this property:
+			// TestNewReaderStoresEndDeviceManagersRefusesInsteadOfPanicking
+			// above, and TestNewReaderStoresEndDevicesRefusesInsteadOfPanickingWhenUnwired
+			// below.
+			continue
+		}
+		if _, excluded := readerStoresExcludedFields[name]; excluded {
+			continue
+		}
+		checked++
+
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			full := testStores()
+			reflect.ValueOf(full).Elem().FieldByName(name).Set(reflect.Zero(field.Type))
+
+			reader := assembly.NewReaderStores(full)
+			readField := reflect.ValueOf(*reader).FieldByName(name)
+			if !readField.IsValid() {
+				t.Fatalf("ReaderStores has no %s field", name)
+			}
+			readDyn := reflect.ValueOf(readField.Interface())
+			get := readDyn.MethodByName("Get")
+			if !get.IsValid() {
+				t.Fatalf("ReaderStores.%s has no Get method", name)
+			}
+			args := []reflect.Value{reflect.ValueOf(context.Background())}
+			for a := 1; a < get.Type().NumIn(); a++ {
+				args = append(args, reflect.Zero(get.Type().In(a)))
+			}
+
+			results := callWithoutPanicking(t, get, args)
+			err, _ := results[len(results)-1].Interface().(error)
+			if err == nil {
+				t.Fatalf("Get on a nil-wired %s returned no error", name)
+			}
+			want := fmt.Sprintf("Stores.%s is not wired", name)
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("Get error does not name the unwired field: %v", err)
+			}
+		})
+	}
+	// checked == 0 alone would not catch a single skip slipping past the
+	// name==EndDevices/EndDeviceManagers case above: a skip drops one field
+	// silently and the test stays green. want is derived, not a hardcoded
+	// count, so a future field addition to Stores does not require updating
+	// a literal here to keep this control meaningful.
+	want := writeType.NumField() - 2 - len(readerStoresExcludedFields)
+	if checked != want {
+		t.Fatalf("checked %d of %d fields; a field was skipped without a name in readerStoresExcludedFields or the EndDevices/EndDeviceManagers case above", checked, want)
+	}
+}
+
+// callWithoutPanicking calls get and turns a panic into a t.Fatalf naming
+// it, instead of letting it crash the whole test binary: this test exists
+// specifically to catch the case where a field's decorator chain was
+// skipped and the nil store panics on first call, so the panic itself is
+// the finding this helper reports, not an uncontrolled crash that takes
+// down every parallel subtest sharing the process.
+func callWithoutPanicking(t *testing.T, get reflect.Value, args []reflect.Value) (results []reflect.Value) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Get panicked instead of refusing: %v", r)
+		}
+	}()
+	return get.Call(args)
+}
+
+// TestNewReaderStoresEndDevicesCarriesTheSameDecoratorChainAsTheRouter pins
+// ownedEndDevices' own claim for the read side: EndDevices on the read
+// handle carries the same LogEventListLink derivation BuildProtocolRouter
+// gives the write-side route handlers, not a plain pass-through of the
+// undecorated store. A missing link is still a valid, non-panicking
+// EndDevice value, so no other assertion in this file would notice the
+// decorator being dropped; only reading the field does.
+func TestNewReaderStoresEndDevicesCarriesTheSameDecoratorChainAsTheRouter(t *testing.T) {
+	t.Parallel()
+
+	full := testStores()
+	enabled := true
+	if err := full.EndDevices.Create(context.Background(), "dev-1", sep2.EndDevice{LFDI: testLFDI, Enabled: &enabled}); err != nil {
+		t.Fatalf("seed EndDevice: %v", err)
+	}
+
+	reader := assembly.NewReaderStores(full)
+	got, err := reader.EndDevices.Get(context.Background(), "dev-1")
+	if err != nil {
+		t.Fatalf("Get(dev-1): %v", err)
+	}
+
+	want := memory.LogEventListHref("dev-1")
+	if got.LogEventListLink == nil || got.LogEventListLink.Href != want {
+		t.Errorf("EndDevices.Get(dev-1).LogEventListLink = %v, want href %q: the read handle is not going through ownedEndDevices' decorator chain", got.LogEventListLink, want)
+	}
+}
+
+// TestNewReaderStoresEndDevicesDerivesRegistrationLinkFromTheRegistrationStore
+// pins ownedEndDevices' other read-side claim: EndDevices on the read handle
+// carries the same RegistrationLink derivation registrationBoundEndDevices
+// gives the write-side route handlers, not a plain pass-through of whatever
+// link happens to be stored. A stale or forged link is still a valid,
+// non-panicking EndDevice value, so no other assertion in this file would
+// notice registrationBoundEndDevices being dropped; only reading a device
+// whose stored link outruns its Registration record does.
+func TestNewReaderStoresEndDevicesDerivesRegistrationLinkFromTheRegistrationStore(t *testing.T) {
+	t.Parallel()
+
+	full := testStores()
+	enabled := true
+	stale := &sep2.Link{Href: memory.RegistrationHref("dev-9")}
+	if err := full.EndDevices.Create(context.Background(), "dev-9", sep2.EndDevice{
+		LFDI: testLFDI, Enabled: &enabled, RegistrationLink: stale,
+	}); err != nil {
+		t.Fatalf("seed EndDevice: %v", err)
+	}
+
+	reader := assembly.NewReaderStores(full)
+
+	// Control: nothing wrote a Registration for dev-9, so a link served for
+	// it would advertise a resource GET /edev/dev-9/rg cannot answer.
+	if _, err := reader.Registrations.Get(context.Background(), "dev-9"); err == nil {
+		t.Fatal("control failed: a Registration exists for dev-9; the stale-link case this test proves has nothing to prove")
+	}
+
+	got, err := reader.EndDevices.Get(context.Background(), "dev-9")
+	if err != nil {
+		t.Fatalf("Get(dev-9): %v", err)
+	}
+	if got.RegistrationLink != nil {
+		t.Errorf("EndDevices.Get(dev-9).RegistrationLink = %v, want nil: the read handle is not going through registrationBoundEndDevices' derivation and is serving a link for a Registration that does not exist", got.RegistrationLink)
+	}
+}
+
+// TestNewReaderStoresEndDevicesRefusesInsteadOfPanickingWhenUnwired asserts
+// EndDevices gets the same refuse-and-log treatment as every other
+// ReaderStores field when Stores.EndDevices is nil. requireEndDevices sits
+// outermost in ownedEndDevices' chain; registrationBoundEndDevices and
+// logEventLinkedEndDevices both pass an absent handle through unchanged, so
+// dropping requireEndDevices would let a nil EndDeviceStore reach the
+// wrapper and panic on first call instead of refusing.
+func TestNewReaderStoresEndDevicesRefusesInsteadOfPanickingWhenUnwired(t *testing.T) {
+	t.Parallel()
+
+	full := testStores()
+	full.EndDevices = nil
+	reader := assembly.NewReaderStores(full)
+
+	get := reflect.ValueOf(reader.EndDevices).MethodByName("Get")
+	results := callWithoutPanicking(t, get, []reflect.Value{
+		reflect.ValueOf(context.Background()), reflect.ValueOf("dev-9"),
+	})
+	err, _ := results[len(results)-1].Interface().(error)
+	if err == nil {
+		t.Fatal("Get on a nil-wired EndDevices returned no error")
+	}
+	if !strings.Contains(err.Error(), "Stores.EndDevices is not wired") {
+		t.Errorf("Get error does not name the unwired field: %v", err)
+	}
+}

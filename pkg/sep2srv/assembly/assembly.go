@@ -548,6 +548,21 @@ func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.E
 	return memory.NewLogEventLinkedEndDeviceStore(devs)
 }
 
+// ownedEndDevices returns the fully-decorated EndDevice store the /edev
+// routes and the read handle serve from: registration-bound,
+// LogEventList-linked, and refusing rather than panicking when unwired.
+// registerEndDeviceRoutes and NewReaderStores both call it, so the
+// three-decorator chain is typed out in this one function rather than
+// twice, and the two callers cannot drift apart.
+//
+// Not every reader of EndDevices goes through it: BuildProtocolRouter's own
+// ownership gate reads stores.EndDevices directly, because it only compares
+// the stored LFDI and never serves the record to a client, so the
+// RegistrationLink and LogEventListLink derivations make no difference to it.
+func ownedEndDevices(stores *Stores) store.EndDeviceStore {
+	return requireEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores))
+}
+
 func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier) {
 	// A nil index allocator is substituted rather than rejected so a
 	// zero-value Stores stays usable, but the substitute is process-local:
@@ -574,7 +589,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	//
 	// Both decorators return an absent handle unchanged, so the substitute is
 	// applied exactly when Stores.EndDevices is absent and is never decorated.
-	edevs := requireEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores))
+	edevs := ownedEndDevices(stores)
 
 	mux.HandleFunc("GET /edev", coreedev.HandleEndDeviceListForCaller(edevs, stores.EndDeviceManagers, authPolicy.Identity, 900))
 	mux.HandleFunc("POST /edev", coreedev.HandleCreateEndDevice(edevs, edevIndexes, authPolicy.Identity, authPolicy.SFDIPrefix))

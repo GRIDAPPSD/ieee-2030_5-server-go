@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -117,5 +118,42 @@ func TestReadOnlyNarrowingIsAvailable(t *testing.T) {
 	}
 	if _, err := mups.Count(ctx); err != nil {
 		t.Errorf("resource reader Count: %v", err)
+	}
+}
+
+// TestNewReaderStoresSeesWritesThroughTheWriteHandle is criterion 1 and the
+// core of criterion 3: assembly.NewReaderStores hands back a second,
+// reader-typed accessor over the SAME stores, not a copy. A write made
+// through the write handle (the bridge's seeding path) must be visible
+// through the read handle (its telemetry path) without any further action.
+func TestNewReaderStoresSeesWritesThroughTheWriteHandle(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	writeHandle := NewStores()
+	readHandle := assembly.NewReaderStores(writeHandle)
+
+	// SFDI is the distinguishing field: a Get that returned a zero-valued
+	// EndDevice for a present id would leave a bare err == nil check green.
+	// The ManagerOf assertion below is the model this follows.
+	if err := writeHandle.EndDevices.Create(ctx, "dev-1", sep2.EndDevice{SFDI: "seeded-sfdi-1"}); err != nil {
+		t.Fatalf("seed through the write handle: %v", err)
+	}
+	if got, err := readHandle.EndDevices.Get(ctx, "dev-1"); err != nil || got.SFDI != "seeded-sfdi-1" {
+		t.Errorf("the read handle does not see a device seeded through the write handle: got SFDI %q, err %v", got.SFDI, err)
+	}
+
+	if err := writeHandle.EndDeviceManagers.Assign(ctx, "MGR", "DEV"); err != nil {
+		t.Fatalf("assign through the write handle: %v", err)
+	}
+	if got, err := readHandle.EndDeviceManagers.ManagerOf(ctx, "DEV"); err != nil || got != "MGR" {
+		t.Errorf("the read handle does not see a management pair assigned through the write handle: got %q, err %v", got, err)
+	}
+
+	if err := writeHandle.DERs.Create(ctx, "dev-1", "der-1", sep2.DER{}); err != nil {
+		t.Fatalf("create a scoped resource through the write handle: %v", err)
+	}
+	if count, err := readHandle.DERs.Count(ctx, "dev-1"); err != nil || count != 1 {
+		t.Errorf("the read handle does not see a scoped resource created through the write handle: count=%d, err=%v", count, err)
 	}
 }

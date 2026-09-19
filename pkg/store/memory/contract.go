@@ -84,4 +84,10 @@ var (
 	_ store.EndDeviceStore = (*EndDeviceStore)(nil)
 	_ store.EndDeviceStore = (*RegisteredEndDeviceStore)(nil)
 	_ store.EndDeviceStore = (*LogEventLinkedEndDeviceStore)(nil)
+
+	// The read-only half, proven against the same three so a narrowing that
+	// only needs EndDeviceReader is not aspirational either.
+	_ store.EndDeviceReader = (*EndDeviceStore)(nil)
+	_ store.EndDeviceReader = (*RegisteredEndDeviceStore)(nil)
+	_ store.EndDeviceReader = (*LogEventLinkedEndDeviceStore)(nil)
 )

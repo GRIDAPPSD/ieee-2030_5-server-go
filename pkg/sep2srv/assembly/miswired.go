@@ -108,6 +108,23 @@ func requireEndDevices(handle store.EndDeviceStore) store.EndDeviceStore {
 	return miswiredEndDeviceStore{miswiredResourceStore[sep2.EndDevice]{field: "EndDevices"}}
 }
 
+// requireEndDeviceManagers is [requireResource] for EndDeviceManagers as
+// ReaderStores exposes it: a public field any caller reaches directly, with
+// no per-call gate of its own to fall back on the way the router's
+// ownership gate does (ownership.go checks store.IsAbsent once and skips
+// every later ManagerOf call instead of substituting). Substituting here
+// gives NewReaderStores the same refuse-and-log answer every other field
+// already gets, instead of the nil pointer dereference a half-wired
+// EndDeviceManagers previously produced on first read.
+func requireEndDeviceManagers(handle store.EndDeviceManagementStore) store.EndDeviceManagementStore {
+	if !store.IsAbsent(handle) {
+		return handle
+	}
+	log.Print("assembly: Stores.EndDeviceManagers is not wired: ManagerOf and ManagedBy " +
+		"will answer refusingly until the handle is supplied")
+	return miswiredEndDeviceManagementStore{field: "EndDeviceManagers"}
+}
+
 // miswiredErr is the error every refusing store returns.
 //
 // It wraps nothing: in particular it is not store.ErrNotFound, because a
@@ -193,4 +210,24 @@ func (s miswiredEndDeviceStore) GetBySFDI(_ context.Context, _ string) (sep2.End
 
 func (s miswiredEndDeviceStore) GetByLFDI(_ context.Context, _ string) (sep2.EndDevice, error) {
 	return sep2.EndDevice{}, miswiredErr(s.field)
+}
+
+// miswiredEndDeviceManagementStore refuses every operation of
+// [store.EndDeviceManagementStore].
+type miswiredEndDeviceManagementStore struct{ field string }
+
+func (s miswiredEndDeviceManagementStore) ManagerOf(_ context.Context, _ string) (string, error) {
+	return "", miswiredErr(s.field)
+}
+
+func (s miswiredEndDeviceManagementStore) ManagedBy(_ context.Context, _ string) ([]string, error) {
+	return nil, miswiredErr(s.field)
+}
+
+func (s miswiredEndDeviceManagementStore) Assign(_ context.Context, _, _ string) error {
+	return miswiredErr(s.field)
+}
+
+func (s miswiredEndDeviceManagementStore) Unassign(_ context.Context, _ string) error {
+	return miswiredErr(s.field)
 }

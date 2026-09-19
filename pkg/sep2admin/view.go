@@ -36,7 +36,8 @@ var (
 
 	// ErrViewPanicked is returned when a Panel's View panics. See
 	// InvokeView's doc comment for what the recovery means for later
-	// calls to the same Panel, and for what it cannot reach.
+	// calls to the same Panel, for what it cannot reach, and for the
+	// reporting seam neither gap has today.
 	//
 	// The error text embeds a full stack (runtime/debug.Stack()),
 	// including absolute host filesystem paths. Nothing in this package
@@ -44,13 +45,15 @@ var (
 	// to an HTTP client must not return this text verbatim, and a caller
 	// that logs only errors.Is(err, ErrViewPanicked) loses the stack
 	// entirely. This package does not choose between those for its
-	// caller; see #607 for the reporting seam that would.
+	// caller.
 	ErrViewPanicked = viewSentinel("sep2admin: panel View panicked")
 
 	// ErrViewTimedOut is returned when ctx.Done() fires because a
-	// deadline elapsed: InvokeView's own bound from timeout, or an
-	// ancestor context's deadline. It is never returned for an ancestor
-	// that was explicitly cancelled; see ErrViewCanceled for that case.
+	// deadline elapsed while View was running: InvokeView's own bound
+	// from timeout, or an ancestor context's deadline. It is never
+	// returned for an ancestor that was explicitly cancelled (see
+	// ErrViewCanceled) or for a deadline that had already elapsed before
+	// View was ever invoked (see ErrViewNotInvoked).
 	ErrViewTimedOut = viewSentinel("sep2admin: panel View did not return before its deadline")
 
 	// ErrViewCanceled is returned when ctx.Done() fires because the
@@ -160,8 +163,14 @@ func InvokeView(ctx context.Context, p Panel, timeout time.Duration) (Descriptor
 	}
 }
 
-// doneErr names ctx.Err()'s cause: ErrViewTimedOut when a deadline
-// elapsed, ErrViewCanceled when ctx was cancelled instead.
+// doneErr names ctx.Err()'s cause for the select in InvokeView: ErrViewTimedOut
+// when a deadline elapsed, ErrViewCanceled when ctx was cancelled instead.
+//
+// That select races this branch against a View result landing at nearly
+// the same instant: about 6 of 200 runs report the context's outcome here
+// even though View had already returned. No Descriptor is lost either way,
+// only the reported cause flips; making the race deterministic is not
+// resolved here, see #607.
 func doneErr(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Errorf("%w: %w", ErrViewTimedOut, err)

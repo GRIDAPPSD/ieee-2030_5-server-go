@@ -94,3 +94,27 @@ func TestEmbeddingCannotSmuggleAFieldIntoBody(t *testing.T) {
 		t.Fatalf("build failed for a reason unrelated to the TableBody argument type (want %q): %v\n%s", want, err, out)
 	}
 }
+
+// TestBodyConstructorsRejectPointers is the compile-failure proof for
+// #368 item 3: under the previous design, both TableBody and *TableBody
+// implemented Body (bodyKind had a value receiver), and a nil *TableBody
+// assigned to Body panicked json.Marshal. NewTableBody takes a TableBody
+// by value, so there is no longer any way to construct a Body from a
+// pointer: the class of bug is structurally closed, not merely undefended.
+func TestBodyConstructorsRejectPointers(t *testing.T) {
+	dir, err := filepath.Abs(filepath.Join("testdata", "graftcannotpassbodypointer"))
+	if err != nil {
+		t.Fatalf("resolve testdata dir: %v", err)
+	}
+
+	cmd := exec.Command("go", "build", "-o", filepath.Join(t.TempDir(), "out"), ".")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("graftcannotpassbodypointer compiled; a *TableBody can reach Descriptor.Body again:\n%s", out)
+	}
+	const wantPtr = "as sep2admin.TableBody value in argument to sep2admin.NewTableBody"
+	if !strings.Contains(string(out), wantPtr) {
+		t.Fatalf("build failed for a reason unrelated to the TableBody argument type (want %q): %v\n%s", wantPtr, err, out)
+	}
+}

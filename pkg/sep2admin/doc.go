@@ -17,8 +17,8 @@
 // This package's promise is weaker than pkg/sep2server's, stated in terms
 // rather than as the word "weaker":
 //
-// MAY change without a major version: the Descriptor payload's rendering
-// fields as later issues fill them in, nav-ordering internals beyond the
+// MAY change without a major version: TableBody's and DefinitionListBody's
+// own fields as rendering needs grow, nav-ordering internals beyond the
 // stated (group, Rank, ID) sort key, theme token names and their
 // compiled-in defaults once a Theme carries any, and the reserved-ID list
 // as this repository adds routes of its own.
@@ -35,7 +35,8 @@
 // to grow a breaking field later, and Register refuses it when set (see
 // ErrAssetsNotImplemented): the custom-element mechanism a real
 // implementation would need is UNVERIFIED against this repository's
-// pinned Svelte version. Theme's parsed fields, the descriptor renderer,
-// and route mounting land in later issues; this package fixes their
-// contract, not their behavior.
+// pinned Svelte version. Theme's parsed fields, the shell's actual
+// renderer for TableBody and DefinitionListBody, and route mounting land
+// in later issues; this package fixes their contract, not their
+// behavior.
 package sep2admin

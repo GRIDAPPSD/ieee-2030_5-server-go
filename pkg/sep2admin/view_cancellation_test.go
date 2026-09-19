@@ -7,10 +7,10 @@ import (
 	"time"
 )
 
-// TestInvokeViewBoundsAViewThatIgnoresCancellation is the proof for item 2
-// (criterion 8): asserting that a well-behaved View honours cancellation
-// would prove nothing about enforcement, so this View never inspects ctx at
-// all and only returns once the test releases it well after the deadline.
+// TestInvokeViewBoundsAViewThatIgnoresCancellation is the proof that
+// asserting that a well-behaved View honours cancellation would prove
+// nothing about enforcement, so this View never inspects ctx at all and
+// only returns once the test releases it well after the deadline (#368).
 // InvokeView must still return by its own timeout.
 func TestInvokeViewBoundsAViewThatIgnoresCancellation(t *testing.T) {
 	release := make(chan struct{})

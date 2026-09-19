@@ -9,8 +9,8 @@ import (
 
 // blockingView returns a ViewFunc that ignores ctx entirely and blocks
 // until release is closed, then returns a valid Descriptor. It is the
-// hostile-timeout panel used across this package's InvokeView tests: item 2
-// requires a View that deliberately does not honour cancellation.
+// hostile-timeout panel used across this package's InvokeView tests (#368),
+// deliberately not honouring cancellation.
 func blockingView(release <-chan struct{}) ViewFunc {
 	return func(_ context.Context) (Descriptor, error) {
 		<-release
@@ -30,9 +30,9 @@ func TestInvokeViewReturnsTheDescriptorFromAWellBehavedView(t *testing.T) {
 	}
 }
 
-// TestInvokeViewDistinguishesFailureModes is the proof for item 4: the
-// three failure modes criterion 7 names must be told apart by the caller,
-// not folded into one generic failure.
+// TestInvokeViewDistinguishesFailureModes is the proof that the three
+// failure modes criterion 7 names must be told apart by the caller, not
+// folded into one generic failure (#368).
 func TestInvokeViewDistinguishesFailureModes(t *testing.T) {
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
@@ -59,10 +59,9 @@ func TestInvokeViewDistinguishesFailureModes(t *testing.T) {
 			want:    ErrViewPanicked,
 		},
 		{
-			// A hostile timeout panel that never even looks at ctx: this
-			// is item 2's own requirement (a View that ignores
-			// cancellation), reused here to prove the three modes stay
-			// distinguishable from each other too.
+			// A hostile timeout panel that never even looks at ctx,
+			// reused here to prove the three modes stay distinguishable
+			// from each other too.
 			name:    "timeout",
 			view:    blockingView(release),
 			timeout: 20 * time.Millisecond,
@@ -91,10 +90,10 @@ func TestInvokeViewDistinguishesFailureModes(t *testing.T) {
 	}
 }
 
-// TestInvokeViewRecoveredPanicDoesNotAffectSubsequentInvocations is the
-// proof for item 5: InvokeView's doc comment says a recovered panic leaves
-// no state behind, so the identical Panel is invoked twice here, panicking
-// only on the first call, and the second call must succeed normally.
+// TestInvokeViewRecoveredPanicDoesNotAffectSubsequentInvocations proves
+// InvokeView's doc comment claim that a recovered panic leaves no state
+// behind (#368): the identical Panel is invoked twice here, panicking only
+// on the first call, and the second call must succeed normally.
 func TestInvokeViewRecoveredPanicDoesNotAffectSubsequentInvocations(t *testing.T) {
 	var calls int
 	p := graftPanel("flaky", 1)

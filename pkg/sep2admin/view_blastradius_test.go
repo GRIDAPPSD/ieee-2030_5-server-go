@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// TestInvokeViewBlastRadiusIsOnePanel is the proof for item 3 (criterion
-// 7's isolation property): several panels are invoked concurrently, one
+// TestInvokeViewBlastRadiusIsOnePanel is the proof for criterion 7's
+// isolation property (#368): several panels are invoked concurrently, one
 // hostile in each of the three failure modes, and every well-behaved panel
 // must still produce its own result. A single hostile panel cannot show
 // this; the test needs the others alongside it.
@@ -48,6 +48,15 @@ func TestInvokeViewBlastRadiusIsOnePanel(t *testing.T) {
 	hostileTimeout.View = blockingView(release)
 	panels["hostile-timeout"] = hostileTimeout
 
+	// Only hostile-timeout needs a short deadline; it is the one panel
+	// that must actually hit it. The good panels and the error/panic
+	// panels do no waiting, so giving them the same 20ms bound ties their
+	// pass/fail to the scheduler rather than to the isolation property
+	// under test: a loaded runner would fail this test even though
+	// nothing about isolation had broken.
+	const hostileTimeoutDeadline = 20 * time.Millisecond
+	const generousDeadline = time.Second
+
 	type outcome struct {
 		d   Descriptor
 		err error
@@ -57,13 +66,17 @@ func TestInvokeViewBlastRadiusIsOnePanel(t *testing.T) {
 	var wg sync.WaitGroup
 	for id, p := range panels {
 		wg.Add(1)
-		go func(id string, p Panel) {
+		timeout := generousDeadline
+		if id == "hostile-timeout" {
+			timeout = hostileTimeoutDeadline
+		}
+		go func(id string, p Panel, timeout time.Duration) {
 			defer wg.Done()
-			d, err := InvokeView(context.Background(), p, 20*time.Millisecond)
+			d, err := InvokeView(context.Background(), p, timeout)
 			resMu.Lock()
 			results[id] = outcome{d, err}
 			resMu.Unlock()
-		}(id, p)
+		}(id, p, timeout)
 	}
 	wg.Wait()
 

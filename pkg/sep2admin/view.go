@@ -17,7 +17,15 @@ var (
 
 	// ErrViewPanicked is returned when a Panel's View panics. See
 	// InvokeView's doc comment for what the recovery means for later
-	// calls to the same Panel.
+	// calls to the same Panel, and for what it cannot reach.
+	//
+	// The error text embeds a full stack (runtime/debug.Stack()),
+	// including absolute host filesystem paths. Nothing in this package
+	// logs or serves it: whatever eventually surfaces InvokeView's error
+	// to an HTTP client must not return this text verbatim, and a caller
+	// that logs only errors.Is(err, ErrViewPanicked) loses the stack
+	// entirely. This package does not choose between those for its
+	// caller; see #607 for the reporting seam that would.
 	ErrViewPanicked = errors.New("sep2admin: panel View panicked")
 
 	// ErrViewTimedOut is returned when ctx.Done() fires because a
@@ -48,11 +56,19 @@ var (
 // ErrViewTimedOut, ErrViewCanceled) instead of letting any of the three
 // propagate.
 //
-// The panic is recovered inside the SAME goroutine that ran View: that is
+// The panic is recovered inside the SAME goroutine that ran View, which is
 // the only place a Go panic can be recovered before it kills the whole
-// process, panics in other goroutines included. Recovery touches no state
-// shared with any other call, so the same Panel is exactly as callable on
-// the next InvokeView call as one that never panicked.
+// process. That containment reaches only a panic raised on THAT goroutine:
+// a View that starts a goroutine of its own and panics there is outside
+// it, and takes the whole process down like any other unrecovered panic.
+// A panic recovered here after InvokeView has already returned via the
+// timeout branch is also outside what a caller ever sees: it is formatted
+// and sent into done, and nothing reads done again. Neither gap has a
+// reporting seam in this package today; see #607. Recovery itself touches
+// no state shared with any other call, so the same Panel is exactly as
+// callable on the next InvokeView call as one that never panicked: that is
+// a property of InvokeView's own machinery, not a claim about whether a
+// real View's internal state is safe to reuse after a panic mid-mutation.
 //
 // timeout bounds InvokeView regardless of what View does with ctx: a View
 // that never checks ctx.Done() is still bounded, because the bound comes
@@ -67,8 +83,8 @@ var (
 //
 // ctx.Done() firing is reported as ErrViewTimedOut only when a deadline
 // actually elapsed (InvokeView's own bound or an ancestor's). When ctx is
-// done because it, or an ancestor, was explicitly cancelled -- an HTTP
-// request context on client disconnect, for example -- InvokeView reports
+// done because it, or an ancestor, was explicitly cancelled (an HTTP
+// request context on client disconnect, for example), InvokeView reports
 // ErrViewCanceled instead, and never invokes View at all if ctx was
 // already done on entry: a caller that is already gone gets that told
 // back without paying for a View call.

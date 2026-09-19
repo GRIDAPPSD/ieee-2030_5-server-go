@@ -1,4 +1,4 @@
-# github.com/GRIDAPPSD/ieee-2030_5-core-go v0.17.0
+# github.com/GRIDAPPSD/ieee-2030_5-core-go v0.17.1-0.20260917235441-2a23748d6b55
 ## explicit; go 1.26.3
 github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2
 github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding

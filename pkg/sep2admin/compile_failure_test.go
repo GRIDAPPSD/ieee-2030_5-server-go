@@ -3,8 +3,11 @@ package sep2admin_test
 import (
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 )
 
 // unexportedFieldPhrase is the compiler message printed ONLY when a field
@@ -49,7 +52,10 @@ func TestGraftCannotNameTheCoreBand(t *testing.T) {
 // leaves the other two open to exactly the smuggling round 2 found by
 // mutation. The table means a fourth field added to Body later is
 // covered by one new case and one new testdata program, not by someone
-// remembering to write a fourth near-identical test function. See
+// remembering to write a fourth near-identical test function, and the
+// NumField guard below (#368 fix round 3, item 2) fails loudly if that
+// field arrives without its case, so the table is iterated against
+// Body's real shape rather than only enumerated. See
 // unexportedFieldPhrase for why the assertion is the phrase, not the
 // field's own name.
 func TestGraftCannotSetAnyBodyField(t *testing.T) {
@@ -60,6 +66,10 @@ func TestGraftCannotSetAnyBodyField(t *testing.T) {
 		{field: "kind", dir: "graftcannotsetbodykind"},
 		{field: "table", dir: "graftcannotsettable"},
 		{field: "definitionList", dir: "graftcannotsetdefinitionlist"},
+	}
+
+	if got, want := reflect.TypeOf(sep2admin.Body{}).NumField(), len(cases); got != want {
+		t.Fatalf("Body has %d fields but this table covers %d; add a testdata program and a case to TestGraftCannotSetAnyBodyField", got, want)
 	}
 
 	for _, c := range cases {

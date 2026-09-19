@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -382,4 +383,32 @@ func callWithoutPanicking(t *testing.T, get reflect.Value, args []reflect.Value)
 		}
 	}()
 	return get.Call(args)
+}
+
+// TestNewReaderStoresEndDevicesCarriesTheSameDecoratorChainAsTheRouter pins
+// ownedEndDevices' own claim for the read side: EndDevices on the read
+// handle carries the same LogEventListLink derivation BuildProtocolRouter
+// gives the write-side route handlers, not a plain pass-through of the
+// undecorated store. A missing link is still a valid, non-panicking
+// EndDevice value, so no other assertion in this file would notice the
+// decorator being dropped; only reading the field does.
+func TestNewReaderStoresEndDevicesCarriesTheSameDecoratorChainAsTheRouter(t *testing.T) {
+	t.Parallel()
+
+	full := testStores()
+	enabled := true
+	if err := full.EndDevices.Create(context.Background(), "dev-1", sep2.EndDevice{LFDI: testLFDI, Enabled: &enabled}); err != nil {
+		t.Fatalf("seed EndDevice: %v", err)
+	}
+
+	reader := assembly.NewReaderStores(full)
+	got, err := reader.EndDevices.Get(context.Background(), "dev-1")
+	if err != nil {
+		t.Fatalf("Get(dev-1): %v", err)
+	}
+
+	want := memory.LogEventListHref("dev-1")
+	if got.LogEventListLink == nil || got.LogEventListLink.Href != want {
+		t.Errorf("EndDevices.Get(dev-1).LogEventListLink = %v, want href %q: the read handle is not going through ownedEndDevices' decorator chain", got.LogEventListLink, want)
+	}
 }

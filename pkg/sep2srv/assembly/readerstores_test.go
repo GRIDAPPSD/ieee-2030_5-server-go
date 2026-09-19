@@ -189,20 +189,23 @@ func TestNewReaderStoresWiresEveryMirroredField(t *testing.T) {
 	}
 }
 
-// writeMutatingMethods names every mutating method any Stores field's
-// interface declares, across every family (Create/Update/Delete for
-// [store.ResourceStore] and [store.ScopedStore], Assign/Unassign for
-// [store.EndDeviceManagementStore]).
-var writeMutatingMethods = []string{"Create", "Update", "Delete", "Assign", "Unassign"}
-
 // TestNewReaderStoresRefusesWriteMethodsOnEveryField is the DYNAMIC
 // counterpart to TestReaderStoresFieldsAreInterfacesWithOnlyAllowedReaderMethods.
 // That test reads ReaderStores' struct definition: the field's DECLARED
 // type, which stays a reader interface whether or not NewReaderStores
 // actually wraps the value it puts there. This test reads the VALUE
 // NewReaderStores returns: a caller holding it can attempt a type
-// assertion to the write interface, or find a mutating method by
+// assertion to the write interface, or find an unlisted method by
 // reflection, and both must fail on every field, not on the declared type.
+//
+// The property under test is "no method that mutates is reachable", not
+// "no method named Create, Update, Delete, Assign or Unassign": a wrapper
+// that forwards a cascading DeleteParent, or any other write-capable
+// method a future field adds, is the same escape one call further away
+// and a denylist of predicted names would miss it. So both the control
+// and the assertion walk the DYNAMIC method set and check every name
+// against allowedReaderMethods, the same allowlist assertReaderOnly
+// checks the declared type against.
 //
 // Stripping every AsReader/AsScopedReader/AsEndDeviceReader/
 // AsEndDeviceManagementReader wrap back to plain assignment leaves the
@@ -234,22 +237,24 @@ func TestNewReaderStoresRefusesWriteMethodsOnEveryField(t *testing.T) {
 		}
 
 		// Control: the write side must both implement its own declared
-		// interface (trivially true) and expose at least one mutating
-		// method by reflection, or a field with no writer at all could pass
-		// the assertion below by accident.
+		// interface (trivially true) and expose at least one method
+		// outside the reader allowlist by reflection, or a field with no
+		// writer at all could pass the assertion below by accident.
 		writeDyn := reflect.ValueOf(writeFieldVal.Interface())
 		if !writeDyn.Type().Implements(writeField.Type) {
 			t.Fatalf("control failed: Stores.%s's dynamic type %s does not implement %s", name, writeDyn.Type(), writeField.Type)
 		}
 		foundWrite := ""
-		for _, m := range writeMutatingMethods {
-			if writeDyn.MethodByName(m).IsValid() {
-				foundWrite = m
+		writeDynType := writeDyn.Type()
+		for m := 0; m < writeDynType.NumMethod(); m++ {
+			mName := writeDynType.Method(m).Name
+			if !allowedReaderMethods[mName] {
+				foundWrite = mName
 				break
 			}
 		}
 		if foundWrite == "" {
-			t.Fatalf("control failed: Stores.%s (dynamic type %s) exposes none of %v; it cannot prove this check has teeth", name, writeDyn.Type(), writeMutatingMethods)
+			t.Fatalf("control failed: Stores.%s (dynamic type %s) exposes no method outside the reader allowlist; it cannot prove this check has teeth", name, writeDyn.Type())
 		}
 		checked++
 
@@ -259,9 +264,11 @@ func TestNewReaderStoresRefusesWriteMethodsOnEveryField(t *testing.T) {
 		if readDyn.Type().Implements(writeField.Type) {
 			t.Errorf("ReaderStores.%s's dynamic type %s implements %s: a type assertion to the write interface would succeed", name, readDyn.Type(), writeField.Type)
 		}
-		for _, m := range writeMutatingMethods {
-			if readDyn.MethodByName(m).IsValid() {
-				t.Errorf("ReaderStores.%s (dynamic type %s) exposes %s by reflection: the wrapping was dropped or bypassed", name, readDyn.Type(), m)
+		readDynType := readDyn.Type()
+		for m := 0; m < readDynType.NumMethod(); m++ {
+			mName := readDynType.Method(m).Name
+			if !allowedReaderMethods[mName] {
+				t.Errorf("ReaderStores.%s (dynamic type %s) exposes %s by reflection, not on the reader allowlist: the wrapping was dropped or bypassed", name, readDyn.Type(), mName)
 			}
 		}
 	}

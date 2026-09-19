@@ -32,13 +32,17 @@ func TestInvokeViewReturnsTheDescriptorFromAWellBehavedView(t *testing.T) {
 
 // TestInvokeViewDistinguishesFailureModes is the proof that the three
 // failure modes criterion 7 names must be told apart by the caller, not
-// folded into one generic failure (#368).
+// folded into one generic failure (#368). Each case is checked against
+// every OTHER package sentinel via viewSentinels, not a copied subset: the
+// round-2 review found aliasing ErrViewCanceled to ErrViewFailed, or
+// ErrInvalidTimeout to ErrViewTimedOut, passed the whole suite when this
+// list named only three of five.
 func TestInvokeViewDistinguishesFailureModes(t *testing.T) {
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 
 	viewErr := errors.New("boom")
-	all := []error{ErrViewFailed, ErrViewPanicked, ErrViewTimedOut}
+	all := viewSentinels
 
 	cases := []struct {
 		name    string
@@ -184,4 +188,27 @@ func TestInvokeViewDiscardsDescriptorOnFailurePaths(t *testing.T) {
 			t.Fatalf("InvokeView: Descriptor = %+v, want the zero value on the timeout path", d)
 		}
 	})
+}
+
+// TestViewSentinelsAreAllDistinct extends TestInvokeViewDistinguishesFailureModes
+// to every pair in viewSentinels, including ErrViewCanceled, ErrViewNotInvoked
+// and ErrInvalidTimeout, which no InvokeView call in this file returns as a
+// table-test "want" and so are never otherwise compared against each other.
+// A sentinel declared later through viewSentinel is covered the moment it
+// is declared, with no list here to remember to extend.
+func TestViewSentinelsAreAllDistinct(t *testing.T) {
+	const wantAtLeast = 6 // Failed, Panicked, TimedOut, Canceled, NotInvoked, InvalidTimeout.
+	if len(viewSentinels) < wantAtLeast {
+		t.Fatalf("viewSentinels has %d entries, want at least %d: every package-level sentinel in view.go must be declared through viewSentinel to be covered here", len(viewSentinels), wantAtLeast)
+	}
+	for i, a := range viewSentinels {
+		for j, b := range viewSentinels {
+			if i == j {
+				continue
+			}
+			if errors.Is(a, b) {
+				t.Fatalf("viewSentinels[%d] (%v) matches viewSentinels[%d] (%v), want every InvokeView sentinel distinguishable from every other", i, a, j, b)
+			}
+		}
+	}
 }

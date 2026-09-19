@@ -8,12 +8,31 @@ import (
 	"time"
 )
 
+// viewSentinels collects every sentinel below, in declaration order.
+// TestInvokeViewDistinguishesFailureModes and
+// TestViewSentinelsAreAllDistinct iterate it instead of a hand-copied
+// list, so a sentinel declared later is covered the moment it is
+// declared.
+var viewSentinels []error
+
+// viewSentinel creates a sentinel error and appends it to viewSentinels.
+// Declaring a new InvokeView sentinel through this function, rather than a
+// bare errors.New, is what keeps viewSentinels complete without anyone
+// having to remember to extend a separate list: the round-2 review found
+// that aliasing one sentinel to another passed the whole suite because the
+// old list named only three of five.
+func viewSentinel(msg string) error {
+	err := errors.New(msg)
+	viewSentinels = append(viewSentinels, err)
+	return err
+}
+
 // Sentinel errors for the failure modes InvokeView bounds. Every one is
 // meant to be checked with errors.Is, matching this package's existing
 // sentinel style, never by comparing strings.
 var (
 	// ErrViewFailed wraps an error a Panel's View itself returned.
-	ErrViewFailed = errors.New("sep2admin: panel View returned an error")
+	ErrViewFailed = viewSentinel("sep2admin: panel View returned an error")
 
 	// ErrViewPanicked is returned when a Panel's View panics. See
 	// InvokeView's doc comment for what the recovery means for later
@@ -26,13 +45,13 @@ var (
 	// that logs only errors.Is(err, ErrViewPanicked) loses the stack
 	// entirely. This package does not choose between those for its
 	// caller; see #607 for the reporting seam that would.
-	ErrViewPanicked = errors.New("sep2admin: panel View panicked")
+	ErrViewPanicked = viewSentinel("sep2admin: panel View panicked")
 
 	// ErrViewTimedOut is returned when ctx.Done() fires because a
 	// deadline elapsed: InvokeView's own bound from timeout, or an
 	// ancestor context's deadline. It is never returned for an ancestor
 	// that was explicitly cancelled; see ErrViewCanceled for that case.
-	ErrViewTimedOut = errors.New("sep2admin: panel View did not return before its deadline")
+	ErrViewTimedOut = viewSentinel("sep2admin: panel View did not return before its deadline")
 
 	// ErrViewCanceled is returned when ctx.Done() fires because the
 	// caller (or an ancestor context) was cancelled, not because a
@@ -40,21 +59,21 @@ var (
 	// not be reported as ErrViewTimedOut: that sentinel means the
 	// deadline itself elapsed, and conflating the two would blame the
 	// panel for a request nobody is waiting on any more.
-	ErrViewCanceled = errors.New("sep2admin: caller's context was cancelled before View returned")
+	ErrViewCanceled = viewSentinel("sep2admin: caller's context was cancelled before View returned")
 
 	// ErrViewNotInvoked is returned when InvokeView refuses to call View
 	// at all because an ancestor's deadline had already elapsed before
 	// the call began. It is distinct from ErrViewTimedOut: that sentinel
 	// means a running View missed its deadline, which cannot be true of
 	// a View that was never invoked.
-	ErrViewNotInvoked = errors.New("sep2admin: caller's context deadline had already elapsed; View was never invoked")
+	ErrViewNotInvoked = viewSentinel("sep2admin: caller's context deadline had already elapsed; View was never invoked")
 
 	// ErrInvalidTimeout is returned when timeout is not positive.
 	// InvokeView refuses it outright rather than passing it to
 	// context.WithTimeout: an unvalidated non-positive timeout still
 	// invokes View and still costs a full call and a goroutine, for a
 	// config field that was never set.
-	ErrInvalidTimeout = errors.New("sep2admin: InvokeView timeout must be positive")
+	ErrInvalidTimeout = viewSentinel("sep2admin: InvokeView timeout must be positive")
 )
 
 // InvokeView calls p.View and converts each way a View can take down its

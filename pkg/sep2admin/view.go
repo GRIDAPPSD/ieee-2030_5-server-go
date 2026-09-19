@@ -51,7 +51,7 @@ var (
 )
 
 // InvokeView calls p.View and converts each way a View can take down its
-// caller -- an error, a panic, or never returning before timeout elapses --
+// caller (an error, a panic, or never returning before timeout elapses)
 // into one of this package's own sentinels (ErrViewFailed, ErrViewPanicked,
 // ErrViewTimedOut, ErrViewCanceled) instead of letting any of the three
 // propagate.

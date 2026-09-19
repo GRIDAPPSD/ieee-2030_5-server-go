@@ -413,3 +413,67 @@ func TestNewReaderStoresEndDevicesCarriesTheSameDecoratorChainAsTheRouter(t *tes
 		t.Errorf("EndDevices.Get(dev-1).LogEventListLink = %v, want href %q: the read handle is not going through ownedEndDevices' decorator chain", got.LogEventListLink, want)
 	}
 }
+
+// TestNewReaderStoresEndDevicesDerivesRegistrationLinkFromTheRegistrationStore
+// pins ownedEndDevices' other read-side claim: EndDevices on the read handle
+// carries the same RegistrationLink derivation registrationBoundEndDevices
+// gives the write-side route handlers, not a plain pass-through of whatever
+// link happens to be stored. A stale or forged link is still a valid,
+// non-panicking EndDevice value, so no other assertion in this file would
+// notice registrationBoundEndDevices being dropped; only reading a device
+// whose stored link outruns its Registration record does.
+func TestNewReaderStoresEndDevicesDerivesRegistrationLinkFromTheRegistrationStore(t *testing.T) {
+	t.Parallel()
+
+	full := testStores()
+	enabled := true
+	stale := &sep2.Link{Href: memory.RegistrationHref("dev-9")}
+	if err := full.EndDevices.Create(context.Background(), "dev-9", sep2.EndDevice{
+		LFDI: testLFDI, Enabled: &enabled, RegistrationLink: stale,
+	}); err != nil {
+		t.Fatalf("seed EndDevice: %v", err)
+	}
+
+	reader := assembly.NewReaderStores(full)
+
+	// Control: nothing wrote a Registration for dev-9, so a link served for
+	// it would advertise a resource GET /edev/dev-9/rg cannot answer.
+	if _, err := reader.Registrations.Get(context.Background(), "dev-9"); err == nil {
+		t.Fatal("control failed: a Registration exists for dev-9; the stale-link case this test proves has nothing to prove")
+	}
+
+	got, err := reader.EndDevices.Get(context.Background(), "dev-9")
+	if err != nil {
+		t.Fatalf("Get(dev-9): %v", err)
+	}
+	if got.RegistrationLink != nil {
+		t.Errorf("EndDevices.Get(dev-9).RegistrationLink = %v, want nil: the read handle is not going through registrationBoundEndDevices' derivation and is serving a link for a Registration that does not exist", got.RegistrationLink)
+	}
+}
+
+// TestNewReaderStoresEndDevicesRefusesInsteadOfPanickingWhenUnwired asserts
+// EndDevices gets the same refuse-and-log treatment as every other
+// ReaderStores field when Stores.EndDevices is nil. requireEndDevices sits
+// outermost in ownedEndDevices' chain; registrationBoundEndDevices and
+// logEventLinkedEndDevices both pass an absent handle through unchanged, so
+// dropping requireEndDevices would let a nil EndDeviceStore reach the
+// wrapper and panic on first call instead of refusing.
+func TestNewReaderStoresEndDevicesRefusesInsteadOfPanickingWhenUnwired(t *testing.T) {
+	t.Parallel()
+
+	full := testStores()
+	full.EndDevices = nil
+	reader := assembly.NewReaderStores(full)
+
+	get := reflect.ValueOf(reader.EndDevices).MethodByName("Get")
+	results := callWithoutPanicking(t, get, []reflect.Value{
+		reflect.ValueOf(context.Background()), reflect.ValueOf("dev-9"),
+	})
+	err, _ := results[len(results)-1].Interface().(error)
+	if err == nil {
+		t.Fatal("Get on a nil-wired EndDevices returned no error")
+	}
+	if !strings.Contains(err.Error(), "Stores.EndDevices is not wired") {
+		t.Errorf("Get error does not name the unwired field: %v", err)
+	}
+}

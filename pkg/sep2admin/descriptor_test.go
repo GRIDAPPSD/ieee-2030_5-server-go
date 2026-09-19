@@ -250,11 +250,12 @@ func TestCurrentDescriptorVersionWireValueIsPinned(t *testing.T) {
 
 // TestBodyMarshalledDirectlyRefuses is the field-by-field proof for #368
 // fix round 2, item 4: without Body.MarshalJSON, json.Marshal of a bare
-// Body silently produces "{}" with no error, byte-identical to a
-// Descriptor's own "no body" shape. Descriptor.MarshalJSON never calls
-// json.Marshal on a Body value (it reads the shape fields directly), so
-// this refusal never fires on the path every other test in this file
-// exercises.
+// Body silently produces "{}" with no error, the same bytes whether the
+// Body carries a table or nothing at all, so a caller could not tell a
+// mismarshalled Body from an empty one. Descriptor.MarshalJSON never
+// calls json.Marshal on a Body value (it reads the shape fields
+// directly), so this refusal never fires on the path every other test
+// in this file exercises.
 func TestBodyMarshalledDirectlyRefuses(t *testing.T) {
 	b := NewTableBody(TableBody{Columns: []string{"a"}, Rows: []Row{{"x"}}})
 

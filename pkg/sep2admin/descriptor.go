@@ -17,10 +17,9 @@ const (
 
 // ErrBodyMarshalledDirectly is returned when a Body is marshalled outside
 // its containing Descriptor. json.Marshal would otherwise skip every
-// unexported field and silently emit "{}" with no error: byte-identical
-// to a Descriptor's own "no body" wire shape
-// (TestDescriptorWithNoBodyOmitsKindAndBody), so a caller could not tell
-// a mismarshalled Body from a real empty one. Descriptor.MarshalJSON
+// unexported field and silently emit "{}" with no error, the same bytes
+// whether the Body carries a table or nothing at all, so a caller could
+// not tell a mismarshalled Body from an empty one. Descriptor.MarshalJSON
 // never triggers this: it reads Body's shape fields directly and never
 // calls json.Marshal on a Body value.
 var ErrBodyMarshalledDirectly = errors.New("sep2admin: Body must be marshalled through its containing Descriptor, not directly")

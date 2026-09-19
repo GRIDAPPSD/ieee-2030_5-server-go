@@ -33,6 +33,13 @@ var (
 	// deadline itself elapsed, and conflating the two would blame the
 	// panel for a request nobody is waiting on any more.
 	ErrViewCanceled = errors.New("sep2admin: caller's context was cancelled before View returned")
+
+	// ErrInvalidTimeout is returned when timeout is not positive.
+	// InvokeView refuses it outright rather than passing it to
+	// context.WithTimeout: an unvalidated non-positive timeout still
+	// invokes View and still costs a full call and a goroutine, for a
+	// config field that was never set.
+	ErrInvalidTimeout = errors.New("sep2admin: InvokeView timeout must be positive")
 )
 
 // InvokeView calls p.View and converts each way a View can take down its
@@ -55,6 +62,9 @@ var (
 // View that never returns leaks that goroutine for as long as it keeps
 // running.
 //
+// timeout must be positive: InvokeView refuses it with ErrInvalidTimeout
+// rather than invoking View for a deadline that has already elapsed.
+//
 // ctx.Done() firing is reported as ErrViewTimedOut only when a deadline
 // actually elapsed (InvokeView's own bound or an ancestor's). When ctx is
 // done because it, or an ancestor, was explicitly cancelled -- an HTTP
@@ -63,6 +73,9 @@ var (
 // already done on entry: a caller that is already gone gets that told
 // back without paying for a View call.
 func InvokeView(ctx context.Context, p Panel, timeout time.Duration) (Descriptor, error) {
+	if timeout <= 0 {
+		return Descriptor{}, ErrInvalidTimeout
+	}
 	if err := ctx.Err(); err != nil {
 		return Descriptor{}, doneErr(err)
 	}

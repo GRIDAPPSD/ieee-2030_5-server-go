@@ -122,3 +122,29 @@ func TestInvokeViewRecoveredPanicDoesNotAffectSubsequentInvocations(t *testing.T
 		t.Fatalf("View invoked %d times, want 2", calls)
 	}
 }
+
+// TestInvokeViewRejectsNonPositiveTimeout pins the probe from the
+// silent-failure review: timeout <= 0 must be refused before View is ever
+// invoked, not passed through to context.WithTimeout to fire immediately.
+func TestInvokeViewRejectsNonPositiveTimeout(t *testing.T) {
+	for _, timeout := range []time.Duration{0, -time.Second} {
+		t.Run(timeout.String(), func(t *testing.T) {
+			p := graftPanel("non-positive-timeout", 1)
+			viewCalled := make(chan struct{}, 1)
+			p.View = func(_ context.Context) (Descriptor, error) {
+				viewCalled <- struct{}{}
+				return Descriptor{Version: CurrentDescriptorVersion}, nil
+			}
+
+			_, err := InvokeView(context.Background(), p, timeout)
+			if !errors.Is(err, ErrInvalidTimeout) {
+				t.Fatalf("InvokeView(timeout=%v): err = %v, want ErrInvalidTimeout", timeout, err)
+			}
+			select {
+			case <-viewCalled:
+				t.Fatalf("InvokeView(timeout=%v): View was invoked, want it never invoked for an invalid timeout", timeout)
+			case <-time.After(50 * time.Millisecond):
+			}
+		})
+	}
+}

@@ -9,17 +9,33 @@ import (
 // Panel's DescriptorVersion to equal. A mismatch is refused at Register
 // (ErrUnsupportedDescriptorVersion): a version drift is a boot failure,
 // not a rendering surprise discovered on the first request.
+//
+// Version 1 includes Descriptor's Body field and the two body shapes
+// (TableBody, DefinitionListBody) defined in descriptor.go. This is a
+// completion of version 1's shape, not a silent redefinition of a
+// shipped one: nothing in this repository calls a Panel's View yet (no
+// route mounts one, per #370), so no consumer has ever read a version-1
+// Descriptor that lacked a Body. A future incompatible change to the
+// body shapes bumps CurrentDescriptorVersion; adding this field did not
+// need to.
 const CurrentDescriptorVersion = 1
 
-// Descriptor is the versioned payload a Panel's View produces. Later
-// issues define the renderer-facing body (a table shape and a
-// definition-list shape); this package fixes only the version field the
-// boot-time check in Register depends on.
+// Descriptor is the versioned payload a Panel's View produces. Its Body
+// carries the renderer-facing content, defined in descriptor.go: a table
+// shape and a definition-list shape, sealed to this package so a
+// Descriptor can hold at most one of them by construction. This package
+// fixes the contract; rendering it is a later issue's job.
 type Descriptor struct {
 	// Version is the schema version this Descriptor was produced against.
 	// A renderer is expected to refuse anything other than
 	// CurrentDescriptorVersion rather than guess at an unknown shape.
 	Version int
+
+	// Body is this Descriptor's rendering payload: a TableBody, a
+	// DefinitionListBody, or the zero Body for none. See descriptor.go
+	// for why a Descriptor can never hold both at once, and why the seal
+	// survives embedding.
+	Body Body
 }
 
 // ViewFunc renders a Panel's content as a Descriptor. The server supplies

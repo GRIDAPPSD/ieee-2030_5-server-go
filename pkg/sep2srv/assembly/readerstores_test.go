@@ -213,6 +213,13 @@ func TestNewReaderStoresWiresEveryMirroredField(t *testing.T) {
 // AsEndDeviceManagementReader wrap back to plain assignment leaves the
 // struct definition, and so the first test, unchanged; this one goes red,
 // because the dynamic value is now the write-capable store itself.
+//
+// The property extends to struct fields, not only methods: an EXPORTED
+// field on a wrapper struct would hand a caller the wrapped value directly,
+// no method call needed. Every wrapper in pkg/store keeps its field
+// unexported today, so this check has no in-repo mutation to demonstrate it
+// against; it was proven by hand-capitalizing resourceReaderOnly's field
+// during review and watching this test fail, then reverting.
 func TestNewReaderStoresRefusesWriteMethodsOnEveryField(t *testing.T) {
 	t.Parallel()
 
@@ -271,6 +278,21 @@ func TestNewReaderStoresRefusesWriteMethodsOnEveryField(t *testing.T) {
 			mName := readDynType.Method(m).Name
 			if !allowedReaderMethods[mName] {
 				t.Errorf("ReaderStores.%s (dynamic type %s) exposes %s by reflection, not on the reader allowlist: the wrapping was dropped or bypassed", name, readDyn.Type(), mName)
+			}
+		}
+
+		// A method check alone misses a wrapper struct field: an EXPORTED
+		// field is reachable by any caller, in any package, without
+		// reflection at all, holding the wrapped value directly rather than
+		// through the interface's forwarding methods. A field is a route to
+		// the write-capable value as much as a method is.
+		if readDynType.Kind() == reflect.Struct {
+			for f := 0; f < readDynType.NumField(); f++ {
+				sf := readDynType.Field(f)
+				if sf.PkgPath != "" {
+					continue // unexported
+				}
+				t.Errorf("ReaderStores.%s's dynamic type %s has an exported field %s: a caller can reach the wrapped value directly, bypassing every method check above", name, readDynType, sf.Name)
 			}
 		}
 	}

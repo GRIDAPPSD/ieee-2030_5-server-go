@@ -176,3 +176,85 @@ func TestNewReaderStoresWiresEveryMirroredField(t *testing.T) {
 		}
 	}
 }
+
+// writeMutatingMethods names every mutating method any Stores field's
+// interface declares, across every family (Create/Update/Delete for
+// [store.ResourceStore] and [store.ScopedStore], Assign/Unassign for
+// [store.EndDeviceManagementStore]).
+var writeMutatingMethods = []string{"Create", "Update", "Delete", "Assign", "Unassign"}
+
+// TestNewReaderStoresRefusesWriteMethodsOnEveryField is the DYNAMIC
+// counterpart to TestReaderStoresFieldsAreInterfacesWithOnlyAllowedReaderMethods.
+// That test reads ReaderStores' struct definition: the field's DECLARED
+// type, which stays a reader interface whether or not NewReaderStores
+// actually wraps the value it puts there. This test reads the VALUE
+// NewReaderStores returns: a caller holding it can attempt a type
+// assertion to the write interface, or find a mutating method by
+// reflection, and both must fail on every field, not on the declared type.
+//
+// Stripping every AsReader/AsScopedReader/AsEndDeviceReader/
+// AsEndDeviceManagementReader wrap back to plain assignment leaves the
+// struct definition, and so the first test, unchanged; this one goes red,
+// because the dynamic value is now the write-capable store itself.
+func TestNewReaderStoresRefusesWriteMethodsOnEveryField(t *testing.T) {
+	t.Parallel()
+
+	full := testStores()
+	reader := assembly.NewReaderStores(full)
+
+	writeVal := reflect.ValueOf(*full)
+	writeType := writeVal.Type()
+	readVal := reflect.ValueOf(*reader)
+	readType := readVal.Type()
+
+	checked := 0
+	for i := 0; i < readType.NumField(); i++ {
+		name := readType.Field(i).Name
+		writeField, ok := writeType.FieldByName(name)
+		if !ok {
+			t.Errorf("ReaderStores.%s has no Stores counterpart", name)
+			continue
+		}
+		writeFieldVal := writeVal.FieldByName(name)
+		if !writeFieldVal.IsValid() || writeFieldVal.IsZero() {
+			t.Errorf("Stores.%s is nil in testStores(): this field cannot serve as a control for its reader counterpart", name)
+			continue
+		}
+
+		// Control: the write side must both implement its own declared
+		// interface (trivially true) and expose at least one mutating
+		// method by reflection, or a field with no writer at all could pass
+		// the assertion below by accident.
+		writeDyn := reflect.ValueOf(writeFieldVal.Interface())
+		if !writeDyn.Type().Implements(writeField.Type) {
+			t.Fatalf("control failed: Stores.%s's dynamic type %s does not implement %s", name, writeDyn.Type(), writeField.Type)
+		}
+		foundWrite := ""
+		for _, m := range writeMutatingMethods {
+			if writeDyn.MethodByName(m).IsValid() {
+				foundWrite = m
+				break
+			}
+		}
+		if foundWrite == "" {
+			t.Fatalf("control failed: Stores.%s (dynamic type %s) exposes none of %v; it cannot prove this check has teeth", name, writeDyn.Type(), writeMutatingMethods)
+		}
+		checked++
+
+		// Assertion: the DYNAMIC value behind ReaderStores.<name> admits
+		// neither escape.
+		readDyn := reflect.ValueOf(readVal.Field(i).Interface())
+		if readDyn.Type().Implements(writeField.Type) {
+			t.Errorf("ReaderStores.%s's dynamic type %s implements %s: a type assertion to the write interface would succeed", name, readDyn.Type(), writeField.Type)
+		}
+		for _, m := range writeMutatingMethods {
+			if readDyn.MethodByName(m).IsValid() {
+				t.Errorf("ReaderStores.%s (dynamic type %s) exposes %s by reflection: the wrapping was dropped or bypassed", name, readDyn.Type(), m)
+			}
+		}
+	}
+	if checked != readType.NumField() {
+		t.Fatalf("checked %d of %d ReaderStores fields; every field must go through the control and the assertion", checked, readType.NumField())
+	}
+}
+

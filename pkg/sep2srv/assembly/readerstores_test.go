@@ -366,8 +366,14 @@ func TestNewReaderStoresRefusesInsteadOfPanickingOnEveryMirroredField(t *testing
 			}
 		})
 	}
-	if checked == 0 {
-		t.Fatal("control failed: no fields were checked")
+	// checked == 0 alone would not catch a single skip slipping past the
+	// name==EndDevices/EndDeviceManagers case above: a skip drops one field
+	// silently and the test stays green. want is derived, not a hardcoded
+	// count, so a future field addition to Stores does not require updating
+	// a literal here to keep this control meaningful.
+	want := writeType.NumField() - 2 - len(readerStoresExcludedFields)
+	if checked != want {
+		t.Fatalf("checked %d of %d fields; a field was skipped without a name in readerStoresExcludedFields or the EndDevices/EndDeviceManagers case above", checked, want)
 	}
 }
 

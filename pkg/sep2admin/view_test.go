@@ -148,3 +148,41 @@ func TestInvokeViewRejectsNonPositiveTimeout(t *testing.T) {
 		})
 	}
 }
+
+// TestInvokeViewDiscardsDescriptorOnFailurePaths pins the two surviving
+// mutants the silent-failure review reported: today's behaviour on both
+// failure paths is a zero Descriptor, and nothing asserted it, so carrying
+// the View's partial result through on error, or a filled Descriptor
+// through on timeout, passed the whole suite.
+func TestInvokeViewDiscardsDescriptorOnFailurePaths(t *testing.T) {
+	t.Run("error path", func(t *testing.T) {
+		p := graftPanel("partial-descriptor-on-error", 1)
+		p.View = func(_ context.Context) (Descriptor, error) {
+			return Descriptor{Version: CurrentDescriptorVersion}, errors.New("boom")
+		}
+
+		d, err := InvokeView(context.Background(), p, time.Second)
+		if !errors.Is(err, ErrViewFailed) {
+			t.Fatalf("InvokeView: err = %v, want ErrViewFailed", err)
+		}
+		if d != (Descriptor{}) {
+			t.Fatalf("InvokeView: Descriptor = %+v, want the zero value: a caller must not see the View's partial result on error", d)
+		}
+	})
+
+	t.Run("timeout path", func(t *testing.T) {
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
+
+		p := graftPanel("descriptor-on-timeout", 1)
+		p.View = blockingView(release)
+
+		d, err := InvokeView(context.Background(), p, 20*time.Millisecond)
+		if !errors.Is(err, ErrViewTimedOut) {
+			t.Fatalf("InvokeView: err = %v, want ErrViewTimedOut", err)
+		}
+		if d != (Descriptor{}) {
+			t.Fatalf("InvokeView: Descriptor = %+v, want the zero value on the timeout path", d)
+		}
+	})
+}

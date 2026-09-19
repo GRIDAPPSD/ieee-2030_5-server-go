@@ -323,8 +323,9 @@ func TestNewReaderStoresRefusesInsteadOfPanickingOnEveryMirroredField(t *testing
 		name := field.Name
 		if name == "EndDevices" || name == "EndDeviceManagers" {
 			// Each carries its own decorator chain and its own dedicated
-			// test: TestNewReaderStoresEndDeviceManagersRefusesInsteadOfPanicking
-			// above, and TestNewReaderStoresEndDevicesCarriesTheSameDecoratorChainAsTheRouter
+			// test for this property:
+			// TestNewReaderStoresEndDeviceManagersRefusesInsteadOfPanicking
+			// above, and TestNewReaderStoresEndDevicesRefusesInsteadOfPanickingWhenUnwired
 			// below.
 			continue
 		}

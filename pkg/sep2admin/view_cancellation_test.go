@@ -84,3 +84,36 @@ func TestInvokeViewDoesNotInvokeViewWhenContextIsAlreadyDone(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 }
+
+// TestInvokeViewDoesNotInvokeViewWhenAnAncestorDeadlineHasAlreadyElapsed is
+// the deadline half of the same finding (round-2 review N1): a context
+// whose deadline had already elapsed before the call began must also never
+// reach View, and must be reported distinguishably from a View that
+// actually ran and missed its deadline. Narrowing the entry check in
+// InvokeView to fire only on errors.Is(err, context.Canceled) survived the
+// whole suite before this test existed, because nothing here checked the
+// deadline-already-elapsed half of ctx.Err() on entry.
+func TestInvokeViewDoesNotInvokeViewWhenAnAncestorDeadlineHasAlreadyElapsed(t *testing.T) {
+	parent, cancel := context.WithTimeout(context.Background(), -time.Second)
+	defer cancel()
+
+	p := graftPanel("deadline-already-elapsed-on-entry", 1)
+	viewCalled := make(chan struct{}, 1)
+	p.View = func(_ context.Context) (Descriptor, error) {
+		viewCalled <- struct{}{}
+		return Descriptor{Version: CurrentDescriptorVersion}, nil
+	}
+
+	_, err := InvokeView(parent, p, time.Hour)
+	if !errors.Is(err, ErrViewNotInvoked) {
+		t.Fatalf("InvokeView: err = %v, want ErrViewNotInvoked", err)
+	}
+	if errors.Is(err, ErrViewTimedOut) {
+		t.Fatalf("InvokeView: err = %v also matches ErrViewTimedOut, want an already-elapsed ancestor deadline distinguishable from a View that actually ran out of time", err)
+	}
+	select {
+	case <-viewCalled:
+		t.Fatal("View was invoked for a context whose deadline had already elapsed on entry, want it never invoked")
+	case <-time.After(50 * time.Millisecond):
+	}
+}

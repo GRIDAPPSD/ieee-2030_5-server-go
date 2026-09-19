@@ -42,6 +42,13 @@ var (
 	// panel for a request nobody is waiting on any more.
 	ErrViewCanceled = errors.New("sep2admin: caller's context was cancelled before View returned")
 
+	// ErrViewNotInvoked is returned when InvokeView refuses to call View
+	// at all because an ancestor's deadline had already elapsed before
+	// the call began. It is distinct from ErrViewTimedOut: that sentinel
+	// means a running View missed its deadline, which cannot be true of
+	// a View that was never invoked.
+	ErrViewNotInvoked = errors.New("sep2admin: caller's context deadline had already elapsed; View was never invoked")
+
 	// ErrInvalidTimeout is returned when timeout is not positive.
 	// InvokeView refuses it outright rather than passing it to
 	// context.WithTimeout: an unvalidated non-positive timeout still
@@ -81,19 +88,22 @@ var (
 // timeout must be positive: InvokeView refuses it with ErrInvalidTimeout
 // rather than invoking View for a deadline that has already elapsed.
 //
-// ctx.Done() firing is reported as ErrViewTimedOut only when a deadline
-// actually elapsed (InvokeView's own bound or an ancestor's). When ctx is
-// done because it, or an ancestor, was explicitly cancelled (an HTTP
-// request context on client disconnect, for example), InvokeView reports
-// ErrViewCanceled instead, and never invokes View at all if ctx was
-// already done on entry: a caller that is already gone gets that told
-// back without paying for a View call.
+// ctx.Done() firing while View is running is reported as ErrViewTimedOut
+// when a deadline actually elapsed (InvokeView's own bound or an
+// ancestor's), and as ErrViewCanceled when ctx, or an ancestor, was
+// explicitly cancelled instead (an HTTP request context on client
+// disconnect, for example). InvokeView never invokes View at all if ctx
+// was already done on entry: a caller that is already gone gets that told
+// back without paying for a View call, as ErrViewCanceled for
+// cancellation and as ErrViewNotInvoked, not ErrViewTimedOut, when an
+// ancestor's deadline had already elapsed before the call began, since no
+// View ever ran to have missed it.
 func InvokeView(ctx context.Context, p Panel, timeout time.Duration) (Descriptor, error) {
 	if timeout <= 0 {
 		return Descriptor{}, ErrInvalidTimeout
 	}
 	if err := ctx.Err(); err != nil {
-		return Descriptor{}, doneErr(err)
+		return Descriptor{}, entryRefusalErr(err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -136,6 +146,19 @@ func InvokeView(ctx context.Context, p Panel, timeout time.Duration) (Descriptor
 func doneErr(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Errorf("%w: %w", ErrViewTimedOut, err)
+	}
+	return fmt.Errorf("%w: %w", ErrViewCanceled, err)
+}
+
+// entryRefusalErr reports why InvokeView refuses to invoke View at all
+// because ctx was already done before the call began: ErrViewCanceled for
+// cancellation, and ErrViewNotInvoked, never ErrViewTimedOut, when an
+// ancestor's deadline had already elapsed. ErrViewTimedOut means a running
+// View missed its deadline, which is not what happened here: View was
+// never called.
+func entryRefusalErr(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %w", ErrViewNotInvoked, err)
 	}
 	return fmt.Errorf("%w: %w", ErrViewCanceled, err)
 }

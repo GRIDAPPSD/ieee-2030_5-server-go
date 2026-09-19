@@ -217,3 +217,32 @@ func TestValueContainingMarkupMarshalsAsAnOrdinaryJSONString(t *testing.T) {
 		t.Errorf("round-tripped cell = %q, want %q: a hostile Value must survive as data, not be altered or interpreted", got.Body.Rows[0][0], string(hostile))
 	}
 }
+
+// TestCurrentDescriptorVersionWireValueIsPinned pins the wire "version"
+// value to the literal 1 (#368 fix round 1, item 4). Every other test in
+// this package compares the marshalled version to CurrentDescriptorVersion
+// itself, so a change to the constant's value passed the whole suite
+// silently; a renderer in another language hardcodes the number instead.
+// No tag of this repository has ever shipped pkg/sep2admin/panel.go
+// (checked across all five tags), so version 1 has not shipped and
+// pinning it now costs nothing.
+func TestCurrentDescriptorVersionWireValueIsPinned(t *testing.T) {
+	d := Descriptor{Version: CurrentDescriptorVersion}
+
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var got struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("Unmarshal the marshalled bytes: %v\nbytes: %s", err, b)
+	}
+
+	const wireVersion = 1
+	if got.Version != wireVersion {
+		t.Errorf("wire version = %d, want the literal %d: a renderer in another language hardcodes this number rather than reading the constant", got.Version, wireVersion)
+	}
+}

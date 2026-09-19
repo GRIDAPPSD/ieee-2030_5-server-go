@@ -1,8 +1,10 @@
 package assembly_test
 
 import (
+	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
@@ -268,3 +270,26 @@ func TestNewReaderStoresRefusesWriteMethodsOnEveryField(t *testing.T) {
 	}
 }
 
+// TestNewReaderStoresEndDeviceManagersRefusesInsteadOfPanicking asserts
+// EndDeviceManagers gets the same refuse-and-log treatment on a half-wired
+// Stores as every other ReaderStores field: a descriptive error naming the
+// field, not a nil pointer dereference on first call.
+func TestNewReaderStoresEndDeviceManagersRefusesInsteadOfPanicking(t *testing.T) {
+	t.Parallel()
+
+	full := testStores()
+	full.EndDeviceManagers = nil
+	reader := assembly.NewReaderStores(full)
+
+	if _, err := reader.EndDeviceManagers.ManagerOf(context.Background(), "DEV"); err == nil {
+		t.Error("ManagerOf on an unwired EndDeviceManagers returned no error")
+	} else if !strings.Contains(err.Error(), "Stores.EndDeviceManagers is not wired") {
+		t.Errorf("ManagerOf error does not name the unwired field: %v", err)
+	}
+
+	if _, err := reader.EndDeviceManagers.ManagedBy(context.Background(), "MGR"); err == nil {
+		t.Error("ManagedBy on an unwired EndDeviceManagers returned no error")
+	} else if !strings.Contains(err.Error(), "Stores.EndDeviceManagers is not wired") {
+		t.Errorf("ManagedBy error does not name the unwired field: %v", err)
+	}
+}

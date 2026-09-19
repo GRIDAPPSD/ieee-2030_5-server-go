@@ -69,25 +69,33 @@ type ReaderStores struct {
 // materialized: a write made through s is visible through the result,
 // because both are views onto the same underlying stores, not two stores.
 //
-// EndDevices gets the same substitutions and decorations
-// BuildProtocolRouter gives the write-side route handlers
-// (registrationBoundEndDevices, logEventLinkedEndDevices, requireEndDevices),
-// so the read handle's device records carry the same RegistrationLink and
+// EndDevices gets [ownedEndDevices], the same decorator chain
+// BuildProtocolRouter gives the write-side route handlers, so the read
+// handle's device records carry the same RegistrationLink and
 // LogEventListLink derivations the serve path advertises, and an absent
-// handle refuses descriptively rather than panicking. Every other field
-// gets requireScoped or requireResource directly: unlike the router, which
-// gates a family's siblings only when the family's own anchor field is
-// present (because an unmounted family's routes never read them),
+// handle refuses descriptively rather than panicking. A single function
+// backs both callers, so the write and read chains cannot type the same
+// three decorators out separately and drift apart.
+//
+// Every other field, EndDeviceManagers included, gets requireScoped,
+// requireResource or requireEndDeviceManagers directly: unlike the router,
+// which gates a family's siblings only when the family's own anchor field
+// is present (because an unmounted family's routes never read them),
 // ReaderStores has no route mounting to rely on and every field is always
 // reachable through direct struct access, so every field is guarded on its
-// own. EndDeviceManagers is passed through unguarded, matching the one
-// place the router itself reads it raw.
+// own. EndDeviceManagers cannot use the router's own raw-read pattern
+// (ownership.go checks store.IsAbsent once and skips every later call
+// instead of substituting) because ReaderStores exposes the field directly
+// with no call site of its own to gate; requireEndDeviceManagers
+// substitutes a refusing store instead, so a half-wired manager store
+// answers descriptively on ManagerOf rather than panicking, matching every
+// sibling field.
 func NewReaderStores(s *Stores) *ReaderStores {
-	edevs := requireEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(s), s))
+	edevs := ownedEndDevices(s)
 
 	return &ReaderStores{
 		EndDevices:        store.AsEndDeviceReader(edevs),
-		EndDeviceManagers: store.AsEndDeviceManagementReader(s.EndDeviceManagers),
+		EndDeviceManagers: store.AsEndDeviceManagementReader(requireEndDeviceManagers(s.EndDeviceManagers)),
 
 		Registrations: store.AsReader(requireResource(s.Registrations, "Registrations")),
 

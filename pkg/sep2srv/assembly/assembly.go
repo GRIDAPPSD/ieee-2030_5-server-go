@@ -548,6 +548,16 @@ func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.E
 	return memory.NewLogEventLinkedEndDeviceStore(devs)
 }
 
+// ownedEndDevices returns the fully-decorated EndDevice store every reader
+// of EndDevices must use: registration-bound, LogEventList-linked, and
+// refusing rather than panicking when unwired. registerEndDeviceRoutes and
+// NewReaderStores both call it, so the write and read paths go through one
+// call site instead of typing the three-decorator chain out twice and
+// risking the two copies drifting apart.
+func ownedEndDevices(stores *Stores) store.EndDeviceStore {
+	return requireEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores))
+}
+
 func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier) {
 	// A nil index allocator is substituted rather than rejected so a
 	// zero-value Stores stays usable, but the substitute is process-local:
@@ -574,7 +584,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	//
 	// Both decorators return an absent handle unchanged, so the substitute is
 	// applied exactly when Stores.EndDevices is absent and is never decorated.
-	edevs := requireEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores))
+	edevs := ownedEndDevices(stores)
 
 	mux.HandleFunc("GET /edev", coreedev.HandleEndDeviceListForCaller(edevs, stores.EndDeviceManagers, authPolicy.Identity, 900))
 	mux.HandleFunc("POST /edev", coreedev.HandleCreateEndDevice(edevs, edevIndexes, authPolicy.Identity, authPolicy.SFDIPrefix))

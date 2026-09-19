@@ -7,17 +7,13 @@ import (
 	"testing"
 )
 
-// unexportedFieldPhrase is the phrase this Go toolchain prints ONLY when a
-// composite literal from outside the declaring package names a field that
-// is genuinely unexported: `cannot refer to unexported field <name> in
-// struct literal of type <pkg>.<Type>`. It is NOT the phrase to check for
-// a field that used to be unexported and was exported by mistake: that
-// state prints `unknown field <name> in struct literal ..., but does have
-// <Name>`, which still contains the field's lowercase name as a substring
-// (proven by mutation, #368 fix round 1), so a substring check for the
-// field's own name passes in both the sealed and the broken state and
-// cannot tell them apart. Checking for this phrase instead can: it
-// appears only when the field truly cannot be named from here.
+// unexportedFieldPhrase is the compiler message printed ONLY when a field
+// named in a composite literal from outside this package is genuinely
+// unexported. Checking for the field's own name instead is a false-green
+// trap: if the field is later exported by mistake, the near-miss message
+// still contains that name as a substring (proven by mutation, #368 fix
+// round 1), so a same-name check stays green through the break. This
+// phrase does not.
 const unexportedFieldPhrase = "cannot refer to unexported field"
 
 // TestGraftCannotNameTheCoreBand is the compile-failure proof for

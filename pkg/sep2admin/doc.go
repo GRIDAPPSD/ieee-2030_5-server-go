@@ -28,10 +28,14 @@
 // (Register, SetTheme, Freeze) and INV-1, the add-only guarantee those
 // three methods exist to hold; the Panel and Placement type signatures;
 // ExtensionSlot's signature, since a graft's call sites depend on it
-// directly; the Descriptor type and its exported field names (Version,
-// Body); every JSON field name on the wire (version, kind, body, columns,
-// rows, groups, heading, entries, key, value); and the two kind values a
-// Descriptor's body can ever carry, table and definitionList. A third
+// directly; NewTableBody's and NewDefinitionListBody's signatures, for
+// the same reason: they are the only functions outside this package that
+// produce a non-zero Body, so a graft's call sites depend on them exactly
+// as they depend on ExtensionSlot's; the Descriptor type and its exported
+// field names (Version, Body); every JSON field name on the wire (version,
+// kind, body, columns, rows, groups, heading, entries, key, value); and
+// the two kind values a Descriptor's body can ever carry, table and
+// definitionList. A third
 // Body shape is a major-version change even though NewTableBody and
 // NewDefinitionListBody would stay additive from a Go caller's side: a
 // renderer that switches exhaustively on kind, which is the whole point
@@ -76,4 +80,15 @@
 //     distinct from a zero-row table.
 //   - A caption above a table. DefinitionGroup has Heading;
 //     TableBody has no equivalent field.
+//   - Status badges. ConnectedClients.svelte (6) and Registry.svelte (2)
+//     render 8 `<span class="badge ...">` cells whose class carries the
+//     meaning (connected/never-connected, accepted/rejected,
+//     placeholder/certificate). A Value is plain text, so a renderer
+//     reading {"value":"rejected"} can only recover the variant by
+//     string-matching the text.
+//   - A cell with a machine value distinct from its display text.
+//     ConnectedClients.svelte:154 and :247 each render
+//     <time datetime={v}>{humanized}</time>: an ISO timestamp for
+//     machines and a humanized string for the eye, in one cell. Value is
+//     one string.
 package sep2admin

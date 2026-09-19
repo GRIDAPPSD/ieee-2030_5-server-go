@@ -3,7 +3,7 @@ module github.com/GRIDAPPSD/ieee-2030_5-server-go
 go 1.26.3
 
 require (
-	github.com/GRIDAPPSD/ieee-2030_5-core-go v0.17.0
+	github.com/GRIDAPPSD/ieee-2030_5-core-go v0.17.1-0.20260917235441-2a23748d6b55
 	github.com/hashicorp/mdns v1.0.6
 	github.com/prometheus/client_golang v1.23.2
 	gopkg.in/yaml.v3 v3.0.1

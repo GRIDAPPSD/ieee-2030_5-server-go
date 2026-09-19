@@ -1,7 +1,7 @@
-// Command readstorescannotmutate exists only so
-// TestReadStoresCannotMutate (../../compile_failure_test.go) can prove, by
+// Command readerstorescannotmutate exists only so
+// TestReaderStoresCannotMutate (../../compile_failure_test.go) can prove, by
 // running `go build` against it, that assembly.ReaderStores (returned by
-// Server.ReadStores) admits no method that writes. "testdata" directories
+// Server.ReaderStores) admits no method that writes. "testdata" directories
 // are skipped by `go build ./...` and `go vet ./...` by convention, so this
 // file is never part of the normal build.
 package main
@@ -15,7 +15,7 @@ import (
 
 func main() {
 	var srv *sep2server.Server
-	reader := srv.ReadStores()
+	reader := srv.ReaderStores()
 
 	// Create is a write; MirrorUsagePoints on ReaderStores is typed as
 	// store.ResourceReader, which has no such method. If this ever starts

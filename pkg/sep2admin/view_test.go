@@ -3,6 +3,7 @@ package sep2admin
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -168,7 +169,7 @@ func TestInvokeViewDiscardsDescriptorOnFailurePaths(t *testing.T) {
 		if !errors.Is(err, ErrViewFailed) {
 			t.Fatalf("InvokeView: err = %v, want ErrViewFailed", err)
 		}
-		if d != (Descriptor{}) {
+		if !reflect.DeepEqual(d, Descriptor{}) {
 			t.Fatalf("InvokeView: Descriptor = %+v, want the zero value: a caller must not see the View's partial result on error", d)
 		}
 	})
@@ -184,7 +185,7 @@ func TestInvokeViewDiscardsDescriptorOnFailurePaths(t *testing.T) {
 		if !errors.Is(err, ErrViewTimedOut) {
 			t.Fatalf("InvokeView: err = %v, want ErrViewTimedOut", err)
 		}
-		if d != (Descriptor{}) {
+		if !reflect.DeepEqual(d, Descriptor{}) {
 			t.Fatalf("InvokeView: Descriptor = %+v, want the zero value on the timeout path", d)
 		}
 	})

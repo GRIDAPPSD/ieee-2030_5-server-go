@@ -35,3 +35,52 @@ func TestInvokeViewBoundsAViewThatIgnoresCancellation(t *testing.T) {
 		t.Fatalf("InvokeView took %v to return after a %v deadline against a View that never checks ctx; want under %v: the server did not bound it", elapsed, timeout, max)
 	}
 }
+
+// TestInvokeViewDistinguishesCallerCancellationFromElapsedDeadline is the
+// probe from the idiom review, reproduced as a permanent test: a caller's
+// own context cancelled well before InvokeView's own (much longer) timeout
+// elapses must not be reported as ErrViewTimedOut. That sentinel means the
+// deadline itself elapsed; a cancelled caller is a different outcome.
+func TestInvokeViewDistinguishesCallerCancellationFromElapsedDeadline(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	time.AfterFunc(10*time.Millisecond, cancel)
+
+	p := graftPanel("caller-cancelled", 1)
+	p.View = blockingView(release)
+
+	_, err := InvokeView(parent, p, time.Hour)
+	if !errors.Is(err, ErrViewCanceled) {
+		t.Fatalf("InvokeView: err = %v, want ErrViewCanceled", err)
+	}
+	if errors.Is(err, ErrViewTimedOut) {
+		t.Fatalf("InvokeView: err = %v also matches ErrViewTimedOut, want a cancelled caller distinguishable from an elapsed deadline", err)
+	}
+}
+
+// TestInvokeViewDoesNotInvokeViewWhenContextIsAlreadyDone is the other half
+// of the same finding: a caller whose context is already cancelled on
+// entry gets that told back without InvokeView running the View at all, so
+// no backend work happens for a request nobody is waiting on.
+func TestInvokeViewDoesNotInvokeViewWhenContextIsAlreadyDone(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	p := graftPanel("already-done-on-entry", 1)
+	viewCalled := make(chan struct{}, 1)
+	p.View = func(_ context.Context) (Descriptor, error) {
+		viewCalled <- struct{}{}
+		return Descriptor{Version: CurrentDescriptorVersion}, nil
+	}
+
+	_, err := InvokeView(parent, p, time.Hour)
+	if !errors.Is(err, ErrViewCanceled) {
+		t.Fatalf("InvokeView: err = %v, want ErrViewCanceled", err)
+	}
+	select {
+	case <-viewCalled:
+		t.Fatal("View was invoked on a context already done on entry, want it never invoked")
+	case <-time.After(50 * time.Millisecond):
+	}
+}

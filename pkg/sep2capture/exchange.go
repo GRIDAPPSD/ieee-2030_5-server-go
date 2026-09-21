@@ -54,17 +54,25 @@ type Direction struct {
 // ConnState boundaries. Request and Response are the bytes as the wire
 // carried them: no reframing, no normalisation.
 type Exchange struct {
-	ID          uint64
-	ConnID      uint64
-	ClientLFDI  string
-	ClientSFDI  string
-	Started     time.Time
-	Ended       time.Time
-	Request     Direction
-	Response    Direction
-	Mark        Mark
-	Error       string // set for MarkNoResponse, MarkIncomplete, MarkConnectionError
-	HandlerRuns int    // >1 flags a pipelined exchange
+	ID         uint64
+	ConnID     uint64
+	ClientLFDI string
+	ClientSFDI string
+	Started    time.Time
+	Ended      time.Time
+	Request    Direction
+	Response   Direction
+	Mark       Mark
+	Error      string // set for MarkNoResponse, MarkIncomplete, MarkConnectionError
+	// HandlerRuns is how many times the annotate middleware saw a handler
+	// run while this exchange was open; normally 1. It is not a reliable
+	// pipelining flag: when two requests arrive in one read, net/http
+	// still runs each handler in its own turn, but StateIdle fires at
+	// most once for the pair, so the second request's bytes land on an
+	// exchange of their own with HandlerRuns still 1, not folded into
+	// this one. Pipelining is a known, undetected limitation of this
+	// package, not something any field here flags.
+	HandlerRuns int
 }
 
 // Sink receives each exchange once it closes. Attach hands exchanges to the

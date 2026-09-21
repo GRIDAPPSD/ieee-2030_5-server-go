@@ -904,3 +904,61 @@ func TestAttachTwiceDoesNotPanicOnConnectionClose(t *testing.T) {
 		t.Errorf("connection handling panicked (see server log): %s", logBuf.String())
 	}
 }
+
+// Operator decisions, 2026-09-21 (item 6).
+
+// TestKeepAliveClientClosingWhileIdleLeavesNoEmptyExchange: a keep-alive
+// client that closes while idle (the ordinary way a well-behaved client
+// ends a connection) must not leave a second, empty "no response" exchange
+// behind, which would show every normal client as a failing one.
+func TestKeepAliveClientClosingWhileIdleLeavesNoEmptyExchange(t *testing.T) {
+	m := newMaterial(t)
+	addr, sink := startCaptureServer(t, m, okHandler("ok"))
+	conn := rawDial(t, m, addr)
+
+	if _, err := conn.Write([]byte("GET /a HTTP/1.1\r\nHost: t\r\n\r\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_ = readRawHTTPMessage(t, conn)
+
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// waitForExchanges only proves a lower bound; poll for the full
+	// window instead, so a delayed empty exchange cannot sneak in after
+	// an early return.
+	deadline := time.Now().Add(2 * time.Second)
+	var exchanges []Exchange
+	for time.Now().Before(deadline) {
+		exchanges = sink.All()
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(exchanges) != 1 {
+		t.Fatalf("got %d exchanges, want exactly 1 (no empty idle-close exchange)", len(exchanges))
+	}
+}
+
+// TestFinishSkipsAnExchangeWithNoBytesEitherDirection is the unit-level
+// proof behind the acceptance test above: finish must never hand an empty
+// building to the sink at all.
+func TestFinishSkipsAnExchangeWithNoBytesEitherDirection(t *testing.T) {
+	sink := NewMemorySink()
+	rs := newRecorderSet(sink, nil)
+	rec := newTestConnRecorder(rs)
+
+	rec.finish(&building{id: 1})
+	rec.closeFinal()
+
+	// closeFinal only closes finished; the dispatch goroutine still drains
+	// it asynchronously, so give it a window before trusting a zero count.
+	deadline := time.Now().Add(300 * time.Millisecond)
+	var got int
+	for time.Now().Before(deadline) {
+		got = len(sink.All())
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got != 0 {
+		t.Errorf("got %d exchanges from an empty building, want 0", got)
+	}
+}

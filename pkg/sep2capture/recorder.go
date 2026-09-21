@@ -224,6 +224,12 @@ func (rec *connRecorder) closeFinal() {
 // goroutine and in the order exchanges actually closed: a slow or erroring
 // sink must never delay or break the connection it came from.
 //
+// An exchange with no bytes in either direction is dropped rather than
+// handed off at all: it is what a keep-alive client closing while idle
+// leaves behind (the rollover at StateIdle opens a next exchange that never
+// receives anything before StateClosed), and recording it would show every
+// normal client as a failing one.
+//
 // The hand-off itself never blocks. finished is generously buffered, but
 // once it is full (a stalled or slow Sink not keeping up) the exchange is
 // dropped and counted in rs.dropped instead of stalling this connection's
@@ -231,6 +237,9 @@ func (rec *connRecorder) closeFinal() {
 // write to the client.
 func (rec *connRecorder) finish(b *building) {
 	if b == nil {
+		return
+	}
+	if b.req.trueLen == 0 && b.resp.trueLen == 0 {
 		return
 	}
 	mark, errText := classify(b.handlerRuns, len(b.resp.bytes) > 0, b.lastErr)

@@ -48,23 +48,39 @@ func rawDial(t testing.TB, m material, addr string) *tls.Conn {
 	return conn
 }
 
-// waitForExchanges polls sink until it holds at least n exchanges. Attach
-// hands each exchange to the sink off the connection's own goroutine, so a
-// test cannot read sink.All() the instant its client read returns; it has
-// to wait for that handoff to land.
+// waitForExchangesSettle is how long waitForExchanges keeps watching after
+// it first sees n exchanges, to catch a further one landing late.
+const waitForExchangesSettle = 150 * time.Millisecond
+
+// waitForExchanges polls sink until it holds at least n exchanges, then
+// holds waitForExchangesSettle to check that exactly n eventually landed:
+// returning the instant n was reached let a further, unexpected exchange
+// arrive unseen (coverage review at 65d5d5c, recording_test.go:182, :219).
+// Attach hands each exchange to the sink off the connection's own goroutine,
+// so a test cannot read sink.All() the instant its client read returns; it
+// has to wait for that handoff to land.
 func waitForExchanges(t testing.TB, sink *MemorySink, n int) []Exchange {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		ex := sink.All()
 		if len(ex) >= n {
-			return ex
+			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("waitForExchanges: got %d exchanges, want %d, after 5s", len(ex), n)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+	settle := time.Now().Add(waitForExchangesSettle)
+	for time.Now().Before(settle) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	ex := sink.All()
+	if len(ex) != n {
+		t.Fatalf("waitForExchanges: got %d exchanges after settling, want exactly %d", len(ex), n)
+	}
+	return ex
 }
 
 func readByte(t testing.TB, conn net.Conn, buf *bytes.Buffer) byte {
@@ -383,8 +399,82 @@ func TestMessageOverCapIsTruncated(t *testing.T) {
 	}
 }
 
+// TestGrowBufferAppendExactlyAtCapIsNotTruncated and
+// TestGrowBufferAppendOneByteOverCapIsTruncated pin the cap boundary
+// itself: growBuffer.append compares len(b) against room with `>`, so a
+// message that exactly fills the remaining room must not be flagged
+// truncated. A `>=` swap would truncate a message that fit exactly.
+func TestGrowBufferAppendExactlyAtCapIsNotTruncated(t *testing.T) {
+	var g growBuffer
+	g.append(bytes.Repeat([]byte("A"), perDirectionCap))
+
+	if g.truncated {
+		t.Error("truncated: got true, want false (the message exactly filled the cap)")
+	}
+	if g.trueLen != perDirectionCap {
+		t.Errorf("trueLen: got %d, want %d", g.trueLen, perDirectionCap)
+	}
+	if len(g.bytes) != perDirectionCap {
+		t.Errorf("stored length: got %d, want %d", len(g.bytes), perDirectionCap)
+	}
+}
+
+func TestGrowBufferAppendOneByteOverCapIsTruncated(t *testing.T) {
+	var g growBuffer
+	g.append(bytes.Repeat([]byte("A"), perDirectionCap+1))
+
+	if !g.truncated {
+		t.Error("truncated: got false, want true (the message was one byte over the cap)")
+	}
+	if g.trueLen != perDirectionCap+1 {
+		t.Errorf("trueLen: got %d, want %d", g.trueLen, perDirectionCap+1)
+	}
+	if len(g.bytes) != perDirectionCap {
+		t.Errorf("stored length: got %d, want the cap (%d)", len(g.bytes), perDirectionCap)
+	}
+}
+
 func newTestConnRecorder(rs *recorderSet) *connRecorder {
 	return newConnRecorder(rs, 1, "test-conn:1")
+}
+
+// TestWaitForExchangesCatchesALateExtraExchange proves the settle window
+// added to waitForExchanges actually does something: it runs the helper
+// against a fresh *testing.T (never told to t.Run, so its own Fatalf cannot
+// abort or fail this test) on a sink that gets its (n+1)th exchange shortly
+// after the nth. A waitForExchanges that only checked "at least n" would
+// leave that fake T passing; this one must fail it, because len(sink.All())
+// is n+1 once the settle window closes. waitForExchanges calls t.FailNow
+// internally, which needs its own goroutine to unwind without killing this
+// test's.
+func TestWaitForExchangesCatchesALateExtraExchange(t *testing.T) {
+	sink := NewMemorySink()
+	rs := newRecorderSet(sink, nil)
+	rec := newTestConnRecorder(rs)
+
+	b1 := &building{id: 1, handlerRuns: 1}
+	b1.req.append([]byte("x"))
+	rec.finish(b1)
+
+	go func() {
+		time.Sleep(waitForExchangesSettle / 2)
+		b2 := &building{id: 2, handlerRuns: 1}
+		b2.req.append([]byte("y"))
+		rec.finish(b2)
+		rec.closeFinal()
+	}()
+
+	fakeT := &testing.T{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		waitForExchanges(fakeT, sink, 1)
+	}()
+	<-done
+
+	if !fakeT.Failed() {
+		t.Error("waitForExchanges(sink, 1) did not catch the second exchange arriving during its settle window")
+	}
 }
 
 // TestCarryOverMovesAnEarlyByteToTheNextExchange is the deterministic proof
@@ -422,24 +512,66 @@ func TestCarryOverMovesAnEarlyByteToTheNextExchange(t *testing.T) {
 	}
 }
 
-// TestCarryOverFoldsBackWhenTheSameExchangeKeepsReading proves the peeked
-// byte is not lost if a further read shows it was not, after all, the next
-// request's start: recordInbound folds it back into the still-open
-// exchange, in the order it arrived.
-func TestCarryOverFoldsBackWhenTheSameExchangeKeepsReading(t *testing.T) {
+// TestCloseFinalKeepsAPendingCarryByteOnTheClosingExchange: when the
+// connection closes right after a background peek captured a byte, there is
+// no next exchange for rollover to move it to. closeFinal must fold it into
+// the exchange that is actually closing instead of dropping it.
+func TestCloseFinalKeepsAPendingCarryByteOnTheClosingExchange(t *testing.T) {
 	sink := NewMemorySink()
 	rs := newRecorderSet(sink, nil)
 	rec := newTestConnRecorder(rs)
 
 	rec.open(1)
-	rec.recordInbound([]byte("x"), true)
-	rec.recordInbound([]byte("yz"), false)
+	rec.recordInbound([]byte("GET /a HTTP/1.1\r\n\r\n"), false)
+	rec.markHandlerRan()
+	rec.recordOutbound([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+	rec.recordInbound([]byte("G"), true) // the background peek, right before the client closes for good
 	rec.closeFinal()
 
 	exchanges := waitForExchanges(t, sink, 1)
-	if got, want := string(exchanges[0].Request.Bytes), "xyz"; got != want {
-		t.Errorf("request: got %q, want %q", got, want)
+	want := "GET /a HTTP/1.1\r\n\r\nG"
+	if got := string(exchanges[0].Request.Bytes); got != want {
+		t.Errorf("request: got %q, want %q (the pending carry byte must not be dropped at final close)", got, want)
 	}
+}
+
+// forget must drop the closing connection's own entry, but never a
+// different, newer connRecorder that has since taken its remote address (a
+// closing goroutine racing behind a port-reuse wrap).
+
+func TestForgetRemovesTheClosedConnectionsEntry(t *testing.T) {
+	sink := NewMemorySink()
+	rs := newRecorderSet(sink, nil)
+	rec := newConnRecorder(rs, 1, "test-conn:reuse")
+	rs.mu.Lock()
+	rs.byAddr[rec.remoteAddr] = rec
+	rs.mu.Unlock()
+
+	rs.forget(rec)
+
+	if got := rs.byRemoteAddr(rec.remoteAddr); got != nil {
+		t.Error("forget did not remove the closed connection's own entry")
+	}
+	rec.closeFinal()
+}
+
+func TestForgetLeavesANewerConnectionAtTheSameAddressAlone(t *testing.T) {
+	sink := NewMemorySink()
+	rs := newRecorderSet(sink, nil)
+	addr := "test-conn:reuse"
+	oldRec := newConnRecorder(rs, 1, addr)
+	newRec := newConnRecorder(rs, 2, addr)
+	rs.mu.Lock()
+	rs.byAddr[addr] = newRec // simulates port reuse: a new connection already claimed this address
+	rs.mu.Unlock()
+
+	rs.forget(oldRec) // the old connection's own close path, racing behind the new one's wrap
+
+	if got := rs.byRemoteAddr(addr); got != newRec {
+		t.Errorf("forget removed the newer connection's entry: got %v, want the newer recorder", got)
+	}
+	oldRec.closeFinal()
+	newRec.closeFinal()
 }
 
 // classify unit tests: direct, deterministic proof that a non-timeout
@@ -481,6 +613,51 @@ func TestClassifyStillPrefersIncompleteForATimeout(t *testing.T) {
 	}
 	if errText == "" {
 		t.Error("error text discarded")
+	}
+}
+
+// classify's connection-error case fires on handlerRuns>0 OR wroteAny, not
+// both at once: the two tests above always pass both flags true, which
+// would not catch an `||` to `&&` swap. These isolate each flag.
+
+func TestClassifyRecordsConnectionErrorFromHandlerRunAloneWithNoWrite(t *testing.T) {
+	err := errors.New("connection reset by peer")
+	mark, errText := classify(1, false, err)
+	if mark != MarkConnectionError {
+		t.Errorf("mark: got %v, want connection error", mark)
+	}
+	if errText != err.Error() {
+		t.Errorf("error text: got %q, want %q", errText, err.Error())
+	}
+}
+
+// TestClassifyRecordsConnectionErrorFromAWriteAloneWithNoHandlerRun is the
+// "write error" case: bytes were written to the client (net/http's own
+// automatic error reply, say) before any handler ran, and the write itself
+// then failed.
+func TestClassifyRecordsConnectionErrorFromAWriteAloneWithNoHandlerRun(t *testing.T) {
+	err := errors.New("write: broken pipe")
+	mark, errText := classify(0, true, err)
+	if mark != MarkConnectionError {
+		t.Errorf("mark: got %v, want connection error", mark)
+	}
+	if errText != err.Error() {
+		t.Errorf("error text: got %q, want %q", errText, err.Error())
+	}
+}
+
+// TestClassifyRecordsErrorTextOnNoResponse covers the remaining classify
+// branch: no handler ran, nothing was written, and the client is simply
+// gone. Mark is MarkNoResponse, and the error text must still be kept, not
+// swallowed the way MarkHandled's "" is for the no-error case.
+func TestClassifyRecordsErrorTextOnNoResponse(t *testing.T) {
+	err := errors.New("EOF")
+	mark, errText := classify(0, false, err)
+	if mark != MarkNoResponse {
+		t.Errorf("mark: got %v, want no response", mark)
+	}
+	if errText != err.Error() {
+		t.Errorf("error text: got %q, want %q", errText, err.Error())
 	}
 }
 
@@ -603,10 +780,13 @@ func TestClientResetDuringPOSTBodyIsRecordedAsConnectionError(t *testing.T) {
 // embedded interface.
 type stubConn struct {
 	net.Conn
-	read func(p []byte) (int, error)
+	read  func(p []byte) (int, error)
+	write func(p []byte) (int, error)
 }
 
 func (s *stubConn) Read(p []byte) (int, error) { return s.read(p) }
+
+func (s *stubConn) Write(p []byte) (int, error) { return s.write(p) }
 
 // TestRecordingConnReadIgnoresOnlyTheAbortedPeekTimeout and
 // TestRecordingConnReadRecordsANonTimeoutErrorOnAOneByteRead are the
@@ -654,6 +834,34 @@ func TestRecordingConnReadRecordsANonTimeoutErrorOnAOneByteRead(t *testing.T) {
 	exchanges := waitForExchanges(t, sink, 1)
 	if exchanges[0].Mark != MarkConnectionError {
 		t.Errorf("mark: got %v (error=%q), want connection error (a reset on a 1-byte read must not be silently dropped)", exchanges[0].Mark, exchanges[0].Error)
+	}
+}
+
+// TestRecordingConnWriteRecordsAWriteError is the write-side counterpart:
+// recordingConn.Write must pass a failed Write's error to noteError
+// unconditionally, the same as Read does for a real (non-peek) error.
+func TestRecordingConnWriteRecordsAWriteError(t *testing.T) {
+	sink := NewMemorySink()
+	rs := newRecorderSet(sink, nil)
+	rec := newTestConnRecorder(rs)
+	rec.open(1)
+	rec.recordInbound([]byte("GET / HTTP/1.1\r\n\r\n"), false)
+	rec.markHandlerRan()
+
+	stub := &stubConn{write: func(p []byte) (int, error) { return 0, errors.New("write: broken pipe") }}
+	rc := &recordingConn{Conn: stub, rec: rec}
+	if _, err := rc.Write([]byte("HTTP/1.1 200 OK\r\n\r\n")); err == nil {
+		t.Fatal("test setup: stub Write did not return an error")
+	}
+
+	rec.closeFinal()
+
+	exchanges := waitForExchanges(t, sink, 1)
+	if exchanges[0].Mark != MarkConnectionError {
+		t.Errorf("mark: got %v (error=%q), want connection error (a write error must not be silently dropped)", exchanges[0].Mark, exchanges[0].Error)
+	}
+	if exchanges[0].Error == "" {
+		t.Error("error text discarded")
 	}
 }
 
@@ -960,5 +1168,44 @@ func TestFinishSkipsAnExchangeWithNoBytesEitherDirection(t *testing.T) {
 	}
 	if got != 0 {
 		t.Errorf("got %d exchanges from an empty building, want 0", got)
+	}
+}
+
+// TestAttachWithNilHandlerFallsBackToDefaultServeMux: Attach wraps
+// srv.Handler unconditionally, so a nil Handler (a caller that has not set
+// one, relying on net/http's own DefaultServeMux fallback) must not turn
+// into a request-time panic. net/http itself substitutes DefaultServeMux
+// only when srv.Handler is nil at serve time (server.go's serverHandler);
+// annotate must do the same rather than calling ServeHTTP on a nil
+// http.Handler.
+func TestAttachWithNilHandlerFallsBackToDefaultServeMux(t *testing.T) {
+	m := newMaterial(t)
+	tcpLn := listenTCP(t)
+	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	ln := NewListener(tlsLn, nil)
+	srv := &http.Server{} // no Handler set
+	sink := NewMemorySink()
+	wrapped := Attach(srv, ln, sink)
+	go func() { _ = srv.Serve(wrapped) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	conn := rawDial(t, m, tcpLn.Addr().String())
+	if _, err := conn.Write([]byte("GET /nowhere HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	raw, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(raw) == 0 {
+		t.Fatal("got no response at all: a nil Handler panicked instead of falling back to DefaultServeMux")
+	}
+	if !bytes.Contains(raw, []byte(" 404 ")) {
+		t.Errorf("response: got %q, want DefaultServeMux's 404 (no route registered)", raw)
+	}
+
+	exchanges := waitForExchanges(t, sink, 1)
+	if exchanges[0].HandlerRuns != 1 {
+		t.Errorf("handler runs: got %d, want 1 (DefaultServeMux itself is the handler that ran)", exchanges[0].HandlerRuns)
 	}
 }

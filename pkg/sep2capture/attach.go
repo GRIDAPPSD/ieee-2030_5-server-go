@@ -60,17 +60,20 @@ func (c *recordingConn) Read(p []byte) (int, error) {
 	if n > 0 {
 		c.rec.recordInbound(p[:n], isPeek)
 	}
-	if !isPeek {
-		c.rec.noteError(err)
-	}
-	// A one-byte peek's own error is never the exchange's: net/http
+	// Only the aborted-peek's own timeout is not the exchange's: net/http
 	// deliberately times this read out on every exchange close
 	// (connReader.abortPendingRead, server.go) to reclaim it for the next
-	// request, and ignores that timeout itself. There is no read on this
-	// path net/http does not also abort this way, so an idle client that
-	// times out between keep-alive requests surfaces the same error and is
-	// not distinguishable from it here; PR 3's idle-timeout handling, if
-	// any, would need a different signal than this Read wrapper.
+	// request, and ignores that timeout itself (connReader.backgroundRead
+	// does the same check net/http/server.go, err.(net.Error) with
+	// Timeout()). Any other error on this read is real: a reset or a
+	// corrupt TLS record arriving while net/http is waiting on this
+	// background peek is exactly as much a connection failure as one on
+	// any other read, and net/http itself does not discard it either
+	// (handleReadErrorLocked runs for it). Only the timeout net/http
+	// itself manufactures is not.
+	if err != nil && !(isPeek && isTimeout(err)) {
+		c.rec.noteError(err)
+	}
 	return n, err
 }
 

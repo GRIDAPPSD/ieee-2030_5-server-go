@@ -3,6 +3,7 @@ package sep2capture
 import (
 	"bytes"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -427,5 +428,220 @@ func TestCarryOverFoldsBackWhenTheSameExchangeKeepsReading(t *testing.T) {
 	exchanges := waitForExchanges(t, sink, 1)
 	if got, want := string(exchanges[0].Request.Bytes), "xyz"; got != want {
 		t.Errorf("request: got %q, want %q", got, want)
+	}
+}
+
+// classify unit tests: direct, deterministic proof that a non-timeout
+// error is never discarded just because a handler already ran or a
+// response was already written, whatever the error's own text looks like.
+
+func TestClassifyRecordsAPlainResetAfterHandlerRan(t *testing.T) {
+	resetErr := &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset by peer")}
+	mark, errText := classify(1, true, resetErr)
+	if mark != MarkConnectionError {
+		t.Errorf("mark: got %v, want connection error", mark)
+	}
+	if errText == "" {
+		t.Error("error text discarded")
+	}
+}
+
+// The exact shape crypto/tls and core's gotls fork both produce for a
+// mid-stream decrypt failure (conn.go's sendAlertLocked): a net.OpError
+// whose Op is "local error" or "remote error" and whose Err is a TLS alert,
+// wrapped so Error() reads "local error: tls: bad record MAC". The old
+// isTLSError checked only for a literal "tls: " prefix on the whole string,
+// which this shape never has.
+func TestClassifyRecordsATLSAlertShapedErrorAfterHandlerRan(t *testing.T) {
+	tlsErr := &net.OpError{Op: "local error", Err: errors.New("tls: bad record MAC")}
+	mark, errText := classify(1, true, tlsErr)
+	if mark != MarkConnectionError {
+		t.Errorf("mark: got %v (error=%q), want connection error", mark, errText)
+	}
+	if errText == "" {
+		t.Error("error text discarded")
+	}
+}
+
+func TestClassifyStillPrefersIncompleteForATimeout(t *testing.T) {
+	mark, errText := classify(1, true, timeoutErr{})
+	if mark != MarkIncomplete {
+		t.Errorf("mark: got %v, want incomplete", mark)
+	}
+	if errText == "" {
+		t.Error("error text discarded")
+	}
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "test: i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+// TestCorruptTLSRecordDuringHandlerIsRecordedAsConnectionError is an
+// end-to-end reproduction: a real corrupt TLS record, arriving on the
+// background one-byte peek while the handler is still running, must be
+// recorded on the still-open exchange rather than discarded. Before the
+// fix, classify silently turned this into MarkHandled with no error, and
+// the isPeek branch in recordingConn.Read discarded the error before it
+// ever reached classify at all.
+func TestCorruptTLSRecordDuringHandlerIsRecordedAsConnectionError(t *testing.T) {
+	m := newMaterial(t)
+	proceed := make(chan struct{})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-proceed
+		w.WriteHeader(http.StatusOK)
+	})
+	addr, sink := startCaptureServer(t, m, handler)
+	conn := rawDial(t, m, addr)
+
+	if _, err := conn.Write([]byte("GET /a HTTP/1.1\r\nHost: t\r\n\r\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// Give the server time to parse the request and arm its background
+	// peek (startBackgroundRead, called before the handler runs for a
+	// bodyless request) before the corrupt record below arrives.
+	time.Sleep(50 * time.Millisecond)
+
+	// A TLS record header (type 23 application_data, version 0x0303, the
+	// compat value TLS 1.3 still uses) followed by ciphertext that will
+	// never authenticate under any key. Written on the raw connection,
+	// bypassing the client's own TLS framing, so the server's decrypt
+	// genuinely fails rather than the client refusing to send it.
+	garbage := []byte{0x17, 0x03, 0x03, 0x00, 0x10}
+	garbage = append(garbage, bytes.Repeat([]byte{0xAA}, 16)...)
+	if _, err := conn.NetConn().Write(garbage); err != nil {
+		t.Fatalf("write garbage record: %v", err)
+	}
+	// The background peek's decrypt failure and this goroutine unblocking
+	// the handler are otherwise unsynchronized: give the peek goroutine
+	// time to actually fail and call noteError before the handler
+	// finishes and the exchange rolls over.
+	time.Sleep(100 * time.Millisecond)
+	close(proceed)
+
+	exchanges := waitForExchanges(t, sink, 1)
+	ex := exchanges[0]
+	if ex.Mark != MarkConnectionError {
+		t.Errorf("mark: got %v (error=%q), want connection error", ex.Mark, ex.Error)
+	}
+	if ex.Error == "" {
+		t.Error("error text discarded")
+	}
+}
+
+// TestClientResetDuringPOSTBodyIsRecordedAsConnectionError is an
+// end-to-end reproduction for a reset arriving mid-request-body. handlerRuns
+// is already 1 by the time the handler starts reading the body (annotate
+// runs before the handler), so this also proves the fix does not depend on
+// the response having been written yet.
+func TestClientResetDuringPOSTBodyIsRecordedAsConnectionError(t *testing.T) {
+	m := newMaterial(t)
+	bodyErr := make(chan error, 1)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err := io.ReadAll(r.Body)
+		bodyErr <- err
+		w.WriteHeader(http.StatusOK)
+	})
+	addr, sink := startCaptureServer(t, m, handler)
+	conn := rawDial(t, m, addr)
+
+	req := "POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 1000000\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("write head: %v", err)
+	}
+	if _, err := conn.Write([]byte("partial body")); err != nil {
+		t.Fatalf("write partial body: %v", err)
+	}
+
+	tcp, ok := conn.NetConn().(*net.TCPConn)
+	if !ok {
+		t.Fatalf("underlying conn is %T, not *net.TCPConn", conn.NetConn())
+	}
+	if err := tcp.SetLinger(0); err != nil {
+		t.Fatalf("SetLinger: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	select {
+	case err := <-bodyErr:
+		if err == nil {
+			t.Fatal("test setup: handler's body read did not fail after the client reset")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler never observed the reset")
+	}
+
+	exchanges := waitForExchanges(t, sink, 1)
+	ex := exchanges[0]
+	if ex.Mark != MarkConnectionError {
+		t.Errorf("mark: got %v (error=%q), want connection error", ex.Mark, ex.Error)
+	}
+	if ex.Error == "" {
+		t.Error("error text discarded")
+	}
+}
+
+// stubConn is a net.Conn whose Read is entirely test-controlled, so
+// recordingConn.Read's own filtering (isPeek and isTimeout) can be tested
+// directly without needing a real timeout or a real reset to occur. Every
+// other net.Conn method is unused by these tests and left as a nil
+// embedded interface.
+type stubConn struct {
+	net.Conn
+	read func(p []byte) (int, error)
+}
+
+func (s *stubConn) Read(p []byte) (int, error) { return s.read(p) }
+
+// TestRecordingConnReadIgnoresOnlyTheAbortedPeekTimeout and
+// TestRecordingConnReadRecordsANonTimeoutErrorOnAOneByteRead are the
+// unit-level proof, exercising recordingConn.Read directly rather than
+// through classify: the filtering this fixes lives entirely in Read, since
+// noteError itself records whatever it is given unconditionally.
+func TestRecordingConnReadIgnoresOnlyTheAbortedPeekTimeout(t *testing.T) {
+	sink := NewMemorySink()
+	rs := newRecorderSet(sink)
+	rec := newTestConnRecorder(rs)
+	rec.open(1)
+
+	stub := &stubConn{read: func(p []byte) (int, error) { return 0, timeoutErr{} }}
+	rc := &recordingConn{Conn: stub, rec: rec}
+	if _, err := rc.Read(make([]byte, 1)); err == nil {
+		t.Fatal("test setup: stub Read did not return an error")
+	}
+
+	rec.markHandlerRan()
+	rec.recordOutbound([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+	rec.closeFinal()
+
+	exchanges := waitForExchanges(t, sink, 1)
+	if exchanges[0].Mark != MarkHandled {
+		t.Errorf("mark: got %v (error=%q), want handled (a peek timeout must stay silent)", exchanges[0].Mark, exchanges[0].Error)
+	}
+}
+
+func TestRecordingConnReadRecordsANonTimeoutErrorOnAOneByteRead(t *testing.T) {
+	sink := NewMemorySink()
+	rs := newRecorderSet(sink)
+	rec := newTestConnRecorder(rs)
+	rec.open(1)
+	rec.recordInbound([]byte("x"), false) // real bytes, so finish does not skip this exchange as empty
+
+	stub := &stubConn{read: func(p []byte) (int, error) { return 0, errors.New("read tcp: connection reset by peer") }}
+	rc := &recordingConn{Conn: stub, rec: rec}
+	if _, err := rc.Read(make([]byte, 1)); err == nil {
+		t.Fatal("test setup: stub Read did not return an error")
+	}
+
+	rec.markHandlerRan()
+	rec.closeFinal()
+
+	exchanges := waitForExchanges(t, sink, 1)
+	if exchanges[0].Mark != MarkConnectionError {
+		t.Errorf("mark: got %v (error=%q), want connection error (a reset on a 1-byte read must not be silently dropped)", exchanges[0].Mark, exchanges[0].Error)
 	}
 }

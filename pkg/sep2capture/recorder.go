@@ -1,9 +1,9 @@
 package sep2capture
 
 import (
+	"errors"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -223,18 +223,23 @@ func (rec *connRecorder) finish(b *building) {
 	}
 }
 
-// classify sorts a closed exchange into a Mark. A timeout or a TLS-level
-// error overrides the outcome regardless of whether the handler ran, since
-// both mean the exchange did not finish cleanly; otherwise a handler that
-// ran at all makes it MarkHandled (a malformed chunked request body stays
-// "handled" this way, since the handler still ran and answered), then a
-// written-but-unhandled response is MarkRejectedBeforeHandler, and no
+// classify sorts a closed exchange into a Mark. A read or write deadline
+// always makes it MarkIncomplete, whatever else happened. Otherwise, any
+// other error that arrived after the handler ran or a response was written
+// makes it MarkConnectionError: a reset, a corrupt or unauthenticated TLS
+// record, and any other transport-level failure all count, not only ones
+// whose text happens to start "tls: ". No failure recorded here is ever
+// reclassified as clean. With no error, a handler that ran at all makes it
+// MarkHandled (a malformed chunked request body stays "handled" this way,
+// since the handler still ran and answered: that failure is a parse error
+// inside net/http, never surfaced as a Read error on this connection), then
+// a written-but-unhandled response is MarkRejectedBeforeHandler, and no
 // response at all is MarkNoResponse.
 func classify(handlerRuns int, wroteAny bool, err error) (Mark, string) {
 	switch {
 	case err != nil && isTimeout(err):
 		return MarkIncomplete, err.Error()
-	case err != nil && isTLSError(err):
+	case err != nil && (handlerRuns > 0 || wroteAny):
 		return MarkConnectionError, err.Error()
 	case handlerRuns > 0:
 		return MarkHandled, ""
@@ -248,16 +253,8 @@ func classify(handlerRuns int, wroteAny bool, err error) (Mark, string) {
 }
 
 func isTimeout(err error) bool {
-	ne, ok := err.(net.Error)
-	return ok && ne.Timeout()
-}
-
-// isTLSError matches crypto/tls's and core's gotls fork's error strings,
-// which both prefix every error "tls: " (crypto/tls/conn.go's
-// RecordHeaderError.Error and the plain errors.New calls throughout both
-// packages; verified in the vendored gotls tree, GOROOT/src/crypto/tls).
-func isTLSError(err error) bool {
-	return strings.HasPrefix(err.Error(), "tls: ")
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // recorderSet is the state one Attach call shares between the listener (to

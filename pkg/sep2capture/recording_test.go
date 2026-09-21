@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,8 +24,9 @@ import (
 // startCaptureServer serves handler over a fresh TLS listener with Attach
 // installed, and returns the address to dial and the sink Attach was given.
 // The listener handshakes before Accept returns (this package's own
-// Listener over a bare tls.Listener): Attach requires that, and refuses
-// anything that has not (see attach.go's recordingListener.Accept).
+// Listener over a bare tls.Listener); Attach no longer requires that (round
+// 3, item 1), but most tests here still use the pre-handshaken shape since
+// it is what most of this file predates.
 func startCaptureServer(t testing.TB, m material, handler http.Handler) (addr string, sink *MemorySink) {
 	t.Helper()
 	tcpLn := listenTCP(t)
@@ -450,6 +452,7 @@ func newTestConnRecorder(rs *recorderSet) *connRecorder {
 func TestWaitForExchangesCatchesALateExtraExchange(t *testing.T) {
 	sink := NewMemorySink()
 	rs := newRecorderSet(sink, nil)
+	t.Cleanup(rs.stop)
 	rec := newTestConnRecorder(rs)
 
 	b1 := &building{id: 1, handlerRuns: 1}
@@ -490,6 +493,7 @@ func TestWaitForExchangesCatchesALateExtraExchange(t *testing.T) {
 func TestCarryOverMovesAnEarlyByteToTheNextExchange(t *testing.T) {
 	sink := NewMemorySink()
 	rs := newRecorderSet(sink, nil)
+	t.Cleanup(rs.stop)
 	rec := newTestConnRecorder(rs)
 
 	rec.open(1)
@@ -519,6 +523,7 @@ func TestCarryOverMovesAnEarlyByteToTheNextExchange(t *testing.T) {
 func TestCloseFinalKeepsAPendingCarryByteOnTheClosingExchange(t *testing.T) {
 	sink := NewMemorySink()
 	rs := newRecorderSet(sink, nil)
+	t.Cleanup(rs.stop)
 	rec := newTestConnRecorder(rs)
 
 	rec.open(1)
@@ -542,6 +547,7 @@ func TestCloseFinalKeepsAPendingCarryByteOnTheClosingExchange(t *testing.T) {
 func TestForgetRemovesTheClosedConnectionsEntry(t *testing.T) {
 	sink := NewMemorySink()
 	rs := newRecorderSet(sink, nil)
+	t.Cleanup(rs.stop)
 	rec := newConnRecorder(rs, 1, "test-conn:reuse")
 	rs.mu.Lock()
 	rs.byAddr[rec.remoteAddr] = rec
@@ -558,6 +564,7 @@ func TestForgetRemovesTheClosedConnectionsEntry(t *testing.T) {
 func TestForgetLeavesANewerConnectionAtTheSameAddressAlone(t *testing.T) {
 	sink := NewMemorySink()
 	rs := newRecorderSet(sink, nil)
+	t.Cleanup(rs.stop)
 	addr := "test-conn:reuse"
 	oldRec := newConnRecorder(rs, 1, addr)
 	newRec := newConnRecorder(rs, 2, addr)
@@ -796,6 +803,7 @@ func (s *stubConn) Write(p []byte) (int, error) { return s.write(p) }
 func TestRecordingConnReadIgnoresOnlyTheAbortedPeekTimeout(t *testing.T) {
 	sink := NewMemorySink()
 	rs := newRecorderSet(sink, nil)
+	t.Cleanup(rs.stop)
 	rec := newTestConnRecorder(rs)
 	rec.open(1)
 
@@ -818,6 +826,7 @@ func TestRecordingConnReadIgnoresOnlyTheAbortedPeekTimeout(t *testing.T) {
 func TestRecordingConnReadRecordsANonTimeoutErrorOnAOneByteRead(t *testing.T) {
 	sink := NewMemorySink()
 	rs := newRecorderSet(sink, nil)
+	t.Cleanup(rs.stop)
 	rec := newTestConnRecorder(rs)
 	rec.open(1)
 	rec.recordInbound([]byte("x"), false) // real bytes, so finish does not skip this exchange as empty
@@ -843,6 +852,7 @@ func TestRecordingConnReadRecordsANonTimeoutErrorOnAOneByteRead(t *testing.T) {
 func TestRecordingConnWriteRecordsAWriteError(t *testing.T) {
 	sink := NewMemorySink()
 	rs := newRecorderSet(sink, nil)
+	t.Cleanup(rs.stop)
 	rec := newTestConnRecorder(rs)
 	rec.open(1)
 	rec.recordInbound([]byte("GET / HTTP/1.1\r\n\r\n"), false)
@@ -865,6 +875,56 @@ func TestRecordingConnWriteRecordsAWriteError(t *testing.T) {
 	}
 }
 
+// handshakeFailingConn implements handshaker and fails its handshake
+// unconditionally, tracking how many times Close was called, so
+// completeHandshake's refusal path can be exercised directly without a
+// real TLS peer.
+type handshakeFailingConn struct {
+	net.Conn
+	closeCalls *int32
+}
+
+func (c *handshakeFailingConn) HandshakeContext(context.Context) error {
+	return errors.New("test: handshake always fails")
+}
+
+func (c *handshakeFailingConn) Close() error {
+	atomic.AddInt32(c.closeCalls, 1)
+	return c.Conn.Close()
+}
+
+var _ handshaker = (*handshakeFailingConn)(nil)
+
+// TestCompleteHandshakeClosesOnFailure is the unit-level proof for item 3:
+// completeHandshake must close the underlying connection when its handshake
+// fails. A black-box dial against a garbage TLS peer does not discriminate
+// this in the current design: net/http's own serve loop makes its next read
+// return the wrapped *tls.Conn's cached handshake error immediately and
+// tears the connection down through its own c.close(), whether or not this
+// method's own Close() call runs too (checked directly: the dial-based
+// TestAttachRefusesAHandshakeFailure still passed with this Close() call
+// removed, so it is not this item's proof). This test calls
+// completeHandshake directly against a stub that only fails its handshake,
+// so only this method's own Close() call can make it pass.
+func TestCompleteHandshakeClosesOnFailure(t *testing.T) {
+	sink := NewMemorySink()
+	rs := newRecorderSet(sink, log.New(io.Discard, "", 0))
+	t.Cleanup(rs.stop)
+	rec := newTestConnRecorder(rs)
+
+	server, client := net.Pipe()
+	t.Cleanup(func() { _ = client.Close() })
+	var closeCalls int32
+	fc := &handshakeFailingConn{Conn: server, closeCalls: &closeCalls}
+	rc := &recordingConn{Conn: fc, rec: rec}
+
+	rc.completeHandshake()
+
+	if got := atomic.LoadInt32(&closeCalls); got == 0 {
+		t.Error("Close: want the connection closed after a failed handshake, got 0 calls")
+	}
+}
+
 // A stalled or panicking Sink must never stall or crash the client.
 
 // gatedSink blocks every Record call until gate is closed, so a test can
@@ -874,11 +934,19 @@ type gatedSink struct {
 	gate chan struct{}
 	mu   sync.Mutex
 	got  []Exchange
+	// inFlight counts Record calls that have started but not yet returned
+	// (blocked on gate), so a test can prove the sink was actually entered
+	// without waiting for a call it deliberately never unblocks.
+	inFlight int
 }
 
 func (s *gatedSink) Record(ex Exchange) {
+	s.mu.Lock()
+	s.inFlight++
+	s.mu.Unlock()
 	<-s.gate
 	s.mu.Lock()
+	s.inFlight--
 	s.got = append(s.got, ex)
 	s.mu.Unlock()
 }
@@ -891,6 +959,14 @@ func (s *gatedSink) all() []Exchange {
 	return out
 }
 
+// callsSoFar reports how many times Record has been entered (including the
+// one currently blocked on the gate), without waiting for any to return.
+func (s *gatedSink) callsSoFar() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.got) + s.inFlight
+}
+
 // TestSinkStallDoesNotBlockTheConnectionGoroutine proves finish's hand-off
 // to the dispatch goroutine never blocks, even once a stalled Sink has let
 // the per-connection queue fill: the exchanges past the queue's capacity
@@ -900,6 +976,7 @@ func (s *gatedSink) all() []Exchange {
 func TestSinkStallDoesNotBlockTheConnectionGoroutine(t *testing.T) {
 	sink := &gatedSink{gate: make(chan struct{})}
 	rs := newRecorderSet(sink, nil)
+	t.Cleanup(rs.stop)
 	rec := newTestConnRecorder(rs)
 
 	const capacity = 256
@@ -966,6 +1043,7 @@ func (s *panicOnceSink) all() []Exchange {
 func TestPanickingSinkDoesNotStopTheDispatchGoroutine(t *testing.T) {
 	sink := &panicOnceSink{}
 	rs := newRecorderSet(sink, log.New(io.Discard, "", 0))
+	t.Cleanup(rs.stop)
 	rec := newTestConnRecorder(rs)
 
 	b1 := &building{id: 1, handlerRuns: 1}
@@ -994,9 +1072,14 @@ func TestPanickingSinkDoesNotStopTheDispatchGoroutine(t *testing.T) {
 	}
 }
 
-// Identity must be recorded through Attach, in both cipher modes, and
-// Attach must refuse a listener that has not handshaken rather than
-// recording an empty identity for it.
+// Identity must be recorded through Attach, in both cipher modes, on
+// every listener the server really uses (round 3, item 1): this package's
+// own pre-handshaking Listener (the first two subtests), core's
+// sepTLS.WrapCCMListener, a bare gotls.NewListener (P4: the server's real
+// CCM-8 listener, sep2server.wrapMTLS), and a bare crypto/tls.NewListener
+// (the GCM equivalent). Attach must refuse a connection whose handshake
+// genuinely fails rather than recording an empty identity for it (see
+// TestAttachRefusesAHandshakeFailure).
 
 func TestIdentityRecordedThroughAttach(t *testing.T) {
 	t.Run("GCM", func(t *testing.T) {
@@ -1047,32 +1130,174 @@ func TestIdentityRecordedThroughAttach(t *testing.T) {
 			t.Errorf("ClientSFDI: got %q, want %q", exchanges[0].ClientSFDI, wantSFDI)
 		}
 	})
+
+	t.Run("CCM WrapCCMListener", func(t *testing.T) {
+		m := newMaterial(t)
+		tcpLn := listenTCP(t)
+		inner := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
+		preHandshaken := sepTLS.WrapCCMListener(inner, log.New(io.Discard, "", 0))
+
+		var seen observedTLS
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			seen.set(r.TLS)
+			w.WriteHeader(http.StatusOK)
+		})
+		srv := &http.Server{Handler: handler}
+		sink := NewMemorySink()
+		served := Attach(srv, preHandshaken, sink)
+		go func() { _ = srv.Serve(served) }()
+		t.Cleanup(func() { _ = srv.Close() })
+
+		client := ccmHTTPClient(t, m)
+		resp, err := client.Get("https://" + tcpLn.Addr().String() + "/")
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		_ = resp.Body.Close()
+
+		assertPeerIsLeaf(t, seen.get(), m.deviceLeaf)
+		exchanges := waitForExchanges(t, sink, 1)
+		wantLFDI := sepTLS.LFDI(m.deviceLeaf)
+		wantSFDI := sepTLS.SFDI(m.deviceLeaf)
+		if exchanges[0].ClientLFDI != wantLFDI {
+			t.Errorf("ClientLFDI: got %q, want %q", exchanges[0].ClientLFDI, wantLFDI)
+		}
+		if exchanges[0].ClientSFDI != wantSFDI {
+			t.Errorf("ClientSFDI: got %q, want %q", exchanges[0].ClientSFDI, wantSFDI)
+		}
+	})
+
+	t.Run("CCM bare gotls.NewListener", func(t *testing.T) {
+		m := newMaterial(t)
+		tcpLn := listenTCP(t)
+		// Not pre-handshaken: P4, the server's real CCM-8 listener
+		// (sep2server.wrapMTLS) builds exactly this.
+		bare := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
+
+		var seen observedTLS
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			seen.set(r.TLS)
+			w.WriteHeader(http.StatusOK)
+		})
+		srv := &http.Server{Handler: handler}
+		sink := NewMemorySink()
+		served := Attach(srv, bare, sink)
+		go func() { _ = srv.Serve(served) }()
+		t.Cleanup(func() { _ = srv.Close() })
+
+		client := ccmHTTPClient(t, m)
+		resp, err := client.Get("https://" + tcpLn.Addr().String() + "/")
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		_ = resp.Body.Close()
+
+		assertPeerIsLeaf(t, seen.get(), m.deviceLeaf)
+		exchanges := waitForExchanges(t, sink, 1)
+		wantLFDI := sepTLS.LFDI(m.deviceLeaf)
+		wantSFDI := sepTLS.SFDI(m.deviceLeaf)
+		if exchanges[0].ClientLFDI != wantLFDI {
+			t.Errorf("ClientLFDI: got %q, want %q", exchanges[0].ClientLFDI, wantLFDI)
+		}
+		if exchanges[0].ClientSFDI != wantSFDI {
+			t.Errorf("ClientSFDI: got %q, want %q", exchanges[0].ClientSFDI, wantSFDI)
+		}
+	})
+
+	t.Run("GCM bare crypto/tls.NewListener", func(t *testing.T) {
+		m := newMaterial(t)
+		tcpLn := listenTCP(t)
+		bare := tls.NewListener(tcpLn, gcmServerConfig(t, m)) // not pre-handshaken
+
+		var seen observedTLS
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			seen.set(r.TLS)
+			w.WriteHeader(http.StatusOK)
+		})
+		srv := &http.Server{Handler: handler}
+		sink := NewMemorySink()
+		served := Attach(srv, bare, sink)
+		go func() { _ = srv.Serve(served) }()
+		t.Cleanup(func() { _ = srv.Close() })
+
+		conn := rawDial(t, m, tcpLn.Addr().String())
+		if _, err := conn.Write([]byte("GET / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		_ = readRawHTTPMessage(t, conn)
+
+		assertPeerIsLeaf(t, seen.get(), m.deviceLeaf)
+		exchanges := waitForExchanges(t, sink, 1)
+		wantLFDI := sepTLS.LFDI(m.deviceLeaf)
+		wantSFDI := sepTLS.SFDI(m.deviceLeaf)
+		if exchanges[0].ClientLFDI != wantLFDI {
+			t.Errorf("ClientLFDI: got %q, want %q", exchanges[0].ClientLFDI, wantLFDI)
+		}
+		if exchanges[0].ClientSFDI != wantSFDI {
+			t.Errorf("ClientSFDI: got %q, want %q", exchanges[0].ClientSFDI, wantSFDI)
+		}
+	})
 }
 
-// TestAttachRefusesAListenerThatHasNotHandshaken is the negative proof for
-// the design decision in attach.go: Attach does not drive a handshake
-// itself, it refuses a connection whose handshake is not already complete.
-// A bare tls.Listener handshakes lazily on first Read, so a client dialing
-// against one wrapped directly in Attach (skipping this package's own
-// Listener) must never complete its handshake at all.
-func TestAttachRefusesAListenerThatHasNotHandshaken(t *testing.T) {
+// TestAttachRefusesAHandshakeFailure is the acceptance-level proof that a
+// connection whose handshake fails never produces an exchange and gets
+// closed promptly end to end. It is not, on its own, item 3's proof that
+// completeHandshake's own Close() call is what does the closing: checked by
+// mutation, this test still passes with that Close() call removed, because
+// net/http's own next read on the wrapped *tls.Conn returns its cached
+// handshake error immediately and net/http's serve loop tears the
+// connection down through its own c.close() regardless. A dial that only
+// times out would not distinguish "closed" from "left hanging" either way
+// (item 3's explicit warning), so this still reads the raw TCP socket
+// directly and requires a prompt EOF or reset, not a timeout, as the
+// end-to-end behavior this package must keep.
+// TestCompleteHandshakeClosesOnFailure below is the test that is actually
+// RED without completeHandshake's own Close() call.
+func TestAttachRefusesAHandshakeFailure(t *testing.T) {
 	m := newMaterial(t)
 	tcpLn := listenTCP(t)
-	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m)) // bare: not pre-handshaken
+	bare := tls.NewListener(tcpLn, gcmServerConfig(t, m))
 	srv := &http.Server{Handler: okHandler("ok")}
+	var logBuf syncBuffer
+	srv.ErrorLog = log.New(&logBuf, "", 0)
 	sink := NewMemorySink()
-	wrapped := Attach(srv, tlsLn, sink)
+	wrapped := Attach(srv, bare, sink)
 	go func() { _ = srv.Serve(wrapped) }()
 	t.Cleanup(func() { _ = srv.Close() })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	d := tls.Dialer{Config: gcmClientConfig(t, m)}
-	if _, err := d.DialContext(ctx, "tcp", tcpLn.Addr().String()); err == nil {
-		t.Fatal("dial succeeded against a listener Attach should have refused before it ever handshook")
+	raw, err := net.Dial("tcp", tcpLn.Addr().String())
+	if err != nil {
+		t.Fatalf("net.Dial: %v", err)
 	}
+	t.Cleanup(func() { _ = raw.Close() })
+	// Not a TLS record at all: the server's handshake parse fails
+	// immediately rather than waiting out any handshake deadline.
+	if _, err := raw.Write([]byte("not a tls client hello\r\n\r\n")); err != nil {
+		t.Fatalf("write garbage: %v", err)
+	}
+
+	if err := raw.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+	buf := make([]byte, 16)
+	n, readErr := raw.Read(buf)
+	if readErr == nil {
+		t.Fatalf("read %d bytes, want the server to close after a failed handshake, not respond", n)
+	}
+	if ne, ok := readErr.(net.Error); ok && ne.Timeout() {
+		t.Fatal("read timed out instead of erroring: a dial that only times out does not prove the connection was closed (item 3)")
+	}
+
 	if len(sink.All()) != 0 {
 		t.Error("a refused connection must never produce a recorded exchange")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(logBuf.String(), "TLS handshake error") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(logBuf.String(), "TLS handshake error") {
+		t.Errorf("want a logged handshake-error refusal, got: %s", logBuf.String())
 	}
 }
 
@@ -1153,13 +1378,14 @@ func TestKeepAliveClientClosingWhileIdleLeavesNoEmptyExchange(t *testing.T) {
 func TestFinishSkipsAnExchangeWithNoBytesEitherDirection(t *testing.T) {
 	sink := NewMemorySink()
 	rs := newRecorderSet(sink, nil)
+	t.Cleanup(rs.stop)
 	rec := newTestConnRecorder(rs)
 
 	rec.finish(&building{id: 1})
 	rec.closeFinal()
 
-	// closeFinal only closes finished; the dispatch goroutine still drains
-	// it asynchronously, so give it a window before trusting a zero count.
+	// The shared dispatch goroutine drains rs.finished asynchronously, so
+	// give it a window before trusting a zero count.
 	deadline := time.Now().Add(300 * time.Millisecond)
 	var got int
 	for time.Now().Before(deadline) {
@@ -1208,4 +1434,99 @@ func TestAttachWithNilHandlerFallsBackToDefaultServeMux(t *testing.T) {
 	if exchanges[0].HandlerRuns != 1 {
 		t.Errorf("handler runs: got %d, want 1 (DefaultServeMux itself is the handler that ran)", exchanges[0].HandlerRuns)
 	}
+}
+
+// TestOptionsStarBypassesTheHandlerAndIsMarkedRejectedBeforeHandler is item
+// 5 (round 3, silent-failure finding D, read only): GOROOT
+// net/http/server.go's serverHandler.ServeHTTP swaps in globalOptionsHandler
+// for "OPTIONS *" before calling srv.Handler, which is Attach's own annotate
+// wrapper. annotate therefore never runs for this request, handlerRuns stays
+// 0, and classify already sorts a written-but-unhandled response into
+// MarkRejectedBeforeHandler like any other one net/http answers without
+// calling into srv.Handler. No production code changes for this item; this
+// test is the coverage that was missing.
+func TestOptionsStarBypassesTheHandlerAndIsMarkedRejectedBeforeHandler(t *testing.T) {
+	m := newMaterial(t)
+	addr, sink := startCaptureServer(t, m, okHandler("ok"))
+	conn := rawDial(t, m, addr)
+	if _, err := conn.Write([]byte("OPTIONS * HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_ = readRawHTTPMessage(t, conn)
+
+	exchanges := waitForExchanges(t, sink, 1)
+	if exchanges[0].HandlerRuns != 0 {
+		t.Errorf("HandlerRuns: got %d, want 0 (OPTIONS * never reaches srv.Handler, so annotate never runs)", exchanges[0].HandlerRuns)
+	}
+	if exchanges[0].Mark != MarkRejectedBeforeHandler {
+		t.Errorf("Mark: got %v, want %v", exchanges[0].Mark, MarkRejectedBeforeHandler)
+	}
+}
+
+// TestHungSinkKeepsGoroutinesBoundedAcrossManyConnections is the
+// reproduction for item 2 (P7, silent-failure finding B): a per-connection
+// sink queue let a hung Sink leak one dispatch goroutine per connection,
+// unbounded in the number of connections, with nothing counted in Dropped
+// until each connection's own queue happened to fill on its own. One shared
+// queue and a single dispatch goroutine per recorderSet means the goroutine
+// count stays flat regardless of how many connections stall behind the
+// hung Sink.
+func TestHungSinkKeepsGoroutinesBoundedAcrossManyConnections(t *testing.T) {
+	m := newMaterial(t)
+	sink := &gatedSink{gate: make(chan struct{})}
+
+	tcpLn := listenTCP(t)
+	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	ln := NewListener(tlsLn, nil)
+	srv := &http.Server{Handler: okHandler("ok")}
+	wrapped := Attach(srv, ln, sink)
+	go func() { _ = srv.Serve(wrapped) }()
+	t.Cleanup(func() {
+		_ = srv.Close()
+	})
+
+	// Let the server's own long-lived goroutines (Serve's accept loop,
+	// this package's own Listener.acceptLoop) settle before the baseline,
+	// the same way assertGoroutinesSettle does in listener_test.go.
+	deadlineSettle := time.Now().Add(2 * time.Second)
+	baseline := runtime.NumGoroutine()
+	for time.Now().Before(deadlineSettle) {
+		time.Sleep(20 * time.Millisecond)
+		baseline = runtime.NumGoroutine()
+	}
+
+	const connections = 30
+	for i := 0; i < connections; i++ {
+		conn := rawDial(t, m, tcpLn.Addr().String())
+		if _, err := conn.Write([]byte("GET / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")); err != nil {
+			t.Fatalf("write on connection %d: %v", i, err)
+		}
+		_ = readRawHTTPMessage(t, conn)
+	}
+
+	// Give every connection's ConnState hooks and finish() calls time to
+	// run and hand their one exchange each to the shared, gated queue.
+	time.Sleep(300 * time.Millisecond)
+
+	afterConnections := runtime.NumGoroutine()
+	// One dispatch goroutine total, however many connections stalled
+	// behind the hung Sink: a generous margin (not exact equality) keeps
+	// this robust to unrelated runtime goroutines, while still catching
+	// the old per-connection growth (it would add roughly `connections`
+	// goroutines here, not a handful).
+	if got, want := afterConnections-baseline, 10; got > want {
+		t.Errorf("goroutines grew by %d (baseline %d, after %d), want <= %d: a hung Sink must not leak one goroutine per connection", got, baseline, afterConnections, want)
+	}
+	if sink.callsSoFar() == 0 {
+		t.Fatal("sink never received the first stalled call; the test proves nothing")
+	}
+
+	close(sink.gate)
+	// Close explicitly, rather than waiting for t.Cleanup, so this
+	// settle check runs once Attach's own accept loop and dispatch
+	// goroutine (recordingListener.Close stops both) have actually
+	// stopped: nothing here should still be running afterward, per
+	// connection or otherwise.
+	_ = srv.Close()
+	assertGoroutinesSettle(t, baseline)
 }

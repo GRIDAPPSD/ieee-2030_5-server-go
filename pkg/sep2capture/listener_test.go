@@ -24,7 +24,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 )
 
-// --- test material: a CA, a server leaf, and a device leaf ---
+// test material: a CA, a server leaf, and a device leaf
 
 type material struct {
 	caCertPEM []byte
@@ -183,9 +183,9 @@ func listenTCP(t *testing.T) net.Listener {
 	return l
 }
 
-// --- the protocol route: internal/auth's real identity middleware, so the
+// the protocol route: internal/auth's real identity middleware, so the
 // control (naive wrapper) and the positive case exercise the same consumer
-// contract a protocol request goes through in production. ---
+// contract a protocol request goes through in production.
 
 type observedTLS struct {
 	mu    sync.Mutex
@@ -241,7 +241,7 @@ func assertPeerIsLeaf(t *testing.T, seen *tls.ConnectionState, leaf *x509.Certif
 	}
 }
 
-// --- item 2 and item 3: identity per mode, and the control that proves it ---
+// item 2 and item 3: identity per mode, and the control that proves it
 
 // TestIdentityPreservedThroughListener is item 2: a protocol route sees the
 // client's leaf certificate through the listener, in both cipher modes.
@@ -347,7 +347,7 @@ func TestNaiveWrapperLosesIdentity(t *testing.T) {
 	})
 }
 
-// --- item 4: a refused certificate is reported, not silently dropped ---
+// item 4: a refused certificate is reported, not silently dropped
 
 // syncBuffer guards a bytes.Buffer with a mutex. log.Logger serializes its
 // own Write calls but a test reading the buffer's contents from outside the
@@ -428,7 +428,7 @@ func TestRefusedCertificateIsReported(t *testing.T) {
 	}
 }
 
-// --- item 5: Close leaves no goroutine behind, proved by counting ---
+// item 5: Close leaves no goroutine behind, proved by counting
 
 func TestCloseLeavesNoGoroutineBehind(t *testing.T) {
 	m := newMaterial(t)
@@ -482,7 +482,7 @@ func assertGoroutinesSettle(t *testing.T, baseline int) {
 	}
 }
 
-// --- item 6: an already-handshaken input (core's WrapCCMListener) works ---
+// item 6: an already-handshaken input (core's WrapCCMListener) works
 
 func TestAcceptsAlreadyHandshakenInput(t *testing.T) {
 	t.Parallel()

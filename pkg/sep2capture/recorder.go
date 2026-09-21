@@ -71,9 +71,9 @@ type connRecorder struct {
 
 	// finished carries each closed exchange, in closing order, to its own
 	// goroutine (started by newConnRecorder) so Sink.Record never runs on
-	// the connection's own goroutine (design Q5). It is sized generously
-	// rather than bounded and non-blocking: PR 3's segment-log queue is the
-	// real bounded, drop-counted replacement this PR does not build.
+	// the connection's own goroutine. It is sized generously rather than
+	// bounded and non-blocking: PR 3's segment-log queue is the real
+	// bounded, drop-counted replacement this PR does not build.
 	// closeFinal closes it once the last exchange is sent, which is the
 	// dispatch goroutine's exit path.
 	finished chan Exchange
@@ -201,8 +201,8 @@ func (rec *connRecorder) closeFinal() {
 
 // finish marks one closed exchange and hands it to this connection's
 // dispatch goroutine, which calls Sink.Record off the connection's own
-// goroutine and in the order exchanges actually closed (design Q5: a slow
-// or erroring sink must never delay or break the connection it came from).
+// goroutine and in the order exchanges actually closed: a slow or erroring
+// sink must never delay or break the connection it came from.
 func (rec *connRecorder) finish(b *building) {
 	if b == nil {
 		return
@@ -223,13 +223,13 @@ func (rec *connRecorder) finish(b *building) {
 	}
 }
 
-// classify applies the design's Q2 table. A timeout or a TLS-level error
-// overrides the outcome regardless of whether the handler ran, since both
-// mean the exchange did not finish cleanly; otherwise a handler that ran at
-// all makes it MarkHandled (the malformed-chunked-body row stays "handled"
-// even though the body was malformed), then a written-but-unhandled
-// response is MarkRejectedBeforeHandler, and no response at all is
-// MarkNoResponse.
+// classify sorts a closed exchange into a Mark. A timeout or a TLS-level
+// error overrides the outcome regardless of whether the handler ran, since
+// both mean the exchange did not finish cleanly; otherwise a handler that
+// ran at all makes it MarkHandled (a malformed chunked request body stays
+// "handled" this way, since the handler still ran and answered), then a
+// written-but-unhandled response is MarkRejectedBeforeHandler, and no
+// response at all is MarkNoResponse.
 func classify(handlerRuns int, wroteAny bool, err error) (Mark, string) {
 	switch {
 	case err != nil && isTimeout(err):
@@ -280,9 +280,9 @@ func newRecorderSet(sink Sink) *recorderSet {
 }
 
 // wrap creates the connRecorder for a newly accepted connection, deriving
-// its client identity from ConnectionState if the conn already carries one
-// (design Q1 rule 3: every exchange inherits it, including ones no handler
-// saw).
+// its client identity from ConnectionState if the conn already carries one:
+// every exchange on the connection inherits it, including ones no handler
+// saw.
 func (rs *recorderSet) wrap(c net.Conn) *recordingConn {
 	rec := newConnRecorder(rs, rs.nextConnID.Add(1), c.RemoteAddr().String())
 	if lfdi, sfdi, ok := identityFrom(c); ok {
@@ -306,9 +306,9 @@ func (rs *recorderSet) forget(rec *connRecorder) {
 }
 
 // byRemoteAddr finds the recorder for a live connection. RemoteAddr is
-// unique among open connections on one listener (design Q1 rule 5); it is
-// only ever ambiguous once a connection has closed and its port has been
-// reused, and by then its recorder has already been forgotten.
+// unique among open connections on one listener; it is only ever ambiguous
+// once a connection has closed and its port has been reused, and by then
+// its recorder has already been forgotten.
 func (rs *recorderSet) byRemoteAddr(addr string) *connRecorder {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()

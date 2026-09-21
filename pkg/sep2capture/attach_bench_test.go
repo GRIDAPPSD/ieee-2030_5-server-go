@@ -10,9 +10,8 @@ import (
 
 // benchmarkListener serves the same handler over the same TLS listener
 // setup with and without Attach, so the two benchmarks below isolate what
-// Attach itself costs on the request path (design Q5: one pass-through
-// copy per Read and Write, one map lookup per request, one channel send
-// per exchange).
+// Attach itself costs on the request path: one pass-through copy per Read
+// and Write, one map lookup per request, one channel send per exchange.
 func benchmarkListener(b *testing.B, attach bool) {
 	m := newMaterial(b)
 	tcpLn := listenTCP(b)

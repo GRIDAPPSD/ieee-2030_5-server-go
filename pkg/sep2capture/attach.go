@@ -131,9 +131,8 @@ func Attach(srv *http.Server, ln net.Listener, sink Sink) net.Listener {
 
 // annotate marks the exchange open on the request's connection as
 // "a handler ran" before calling next. It reads no body and wraps nothing
-// else (design Q1 rule 5): a handler that never touches the body still
-// gets marked, and a handler that panics after this point still counts as
-// having run.
+// else: a handler that never touches the body still gets marked, and a
+// handler that panics after this point still counts as having run.
 func (rs *recorderSet) annotate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if rec := rs.byRemoteAddr(r.RemoteAddr); rec != nil {

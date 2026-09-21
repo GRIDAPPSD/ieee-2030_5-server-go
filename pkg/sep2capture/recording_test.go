@@ -38,9 +38,9 @@ func rawDial(t testing.TB, m material, addr string) *tls.Conn {
 }
 
 // waitForExchanges polls sink until it holds at least n exchanges. Attach
-// hands each exchange to the sink off the connection's own goroutine
-// (design Q5), so a test cannot read sink.All() the instant its client
-// read returns; it has to wait for that handoff to land.
+// hands each exchange to the sink off the connection's own goroutine, so a
+// test cannot read sink.All() the instant its client read returns; it has
+// to wait for that handoff to land.
 func waitForExchanges(t testing.TB, sink *MemorySink, n int) []Exchange {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

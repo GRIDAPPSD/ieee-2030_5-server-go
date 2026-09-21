@@ -2,9 +2,8 @@ package sep2capture
 
 import "time"
 
-// Mark classifies how an exchange ended, per the design's malformed-traffic
-// table (docs at artifacts/outputs/plans, Q2). A parser or protocol error
-// never suppresses capture: every exchange gets exactly one Mark.
+// Mark classifies how an exchange ended. A parser or protocol error never
+// suppresses capture: every exchange gets exactly one Mark.
 type Mark int
 
 const (
@@ -52,8 +51,8 @@ type Direction struct {
 }
 
 // Exchange is everything read and written on one connection between two
-// ConnState boundaries (design Q1). Request and Response are the bytes as
-// the wire carried them: no reframing, no normalisation.
+// ConnState boundaries. Request and Response are the bytes as the wire
+// carried them: no reframing, no normalisation.
 type Exchange struct {
 	ID          uint64
 	ConnID      uint64
@@ -65,14 +64,14 @@ type Exchange struct {
 	Response    Direction
 	Mark        Mark
 	Error       string // set for MarkNoResponse, MarkIncomplete, MarkConnectionError
-	HandlerRuns int    // >1 flags a pipelined exchange (design Q1 rule 6)
+	HandlerRuns int    // >1 flags a pipelined exchange
 }
 
 // Sink receives each exchange once it closes. Attach hands exchanges to the
 // sink off the connection's own goroutine (see recorder.go), so a slow or
-// erroring Sink never delays or breaks the client's read or write (design
-// Q5). PR 3 implements Sink with the segment log; MemorySink below is this
-// PR's implementation.
+// erroring Sink never delays or breaks the client's read or write. PR 3
+// implements Sink with the segment log; MemorySink below is this PR's
+// implementation.
 type Sink interface {
 	Record(Exchange)
 }

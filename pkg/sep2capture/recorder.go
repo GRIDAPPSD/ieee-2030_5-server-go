@@ -70,53 +70,17 @@ type connRecorder struct {
 	mu           sync.Mutex
 	current      *building
 	pendingCarry []byte
-
-	// finished carries each closed exchange, in closing order, to its own
-	// goroutine (started by newConnRecorder) so Sink.Record never runs on
-	// the connection's own goroutine. It is sized generously rather than
-	// bounded, but the hand-off itself is non-blocking (see finish): once
-	// it is full, further exchanges are dropped and counted in
-	// rs.dropped rather than stalling the connection. PR 3's segment-log
-	// queue is the real bounded, drop-counted replacement this PR does
-	// not build; this is the stopgap that keeps a stalled or crashed Sink
-	// from reaching the client in the meantime.
-	// closeFinal closes it once the last exchange is sent, which is the
-	// dispatch goroutine's exit path.
-	finished chan Exchange
 }
 
-// newConnRecorder starts the per-connection recorder and its dispatch
-// goroutine. Callers must eventually call closeFinal so that goroutine
-// exits.
+// newConnRecorder starts the per-connection recorder. Every exchange it
+// finishes hands off to rs's own shared dispatch goroutine (see
+// recorderSet.dispatch); this type starts nothing of its own.
 func newConnRecorder(rs *recorderSet, connID uint64, remoteAddr string) *connRecorder {
-	rec := &connRecorder{
+	return &connRecorder{
 		rs:         rs,
 		connID:     connID,
 		remoteAddr: remoteAddr,
-		finished:   make(chan Exchange, 256),
 	}
-	go rec.dispatch()
-	return rec
-}
-
-// dispatch calls Sink.Record for each exchange this connection finished, off
-// the connection's own goroutine. A panicking Sink must not take down the
-// server process: it is recovered, logged, and counted as a drop, and the
-// next exchange still reaches Record normally.
-func (rec *connRecorder) dispatch() {
-	for ex := range rec.finished {
-		rec.recordOne(ex)
-	}
-}
-
-func (rec *connRecorder) recordOne(ex Exchange) {
-	defer func() {
-		if r := recover(); r != nil {
-			rec.rs.dropped.Add(1)
-			rec.rs.errorLog.Printf("sep2capture: Sink.Record panicked on connection %d, exchange %d: %v\n%s", rec.connID, ex.ID, r, debug.Stack())
-		}
-	}()
-	rec.rs.sink.Record(ex)
 }
 
 // recordInbound appends a completed Read's bytes to the open exchange.
@@ -129,6 +93,15 @@ func (rec *connRecorder) recordOne(ex Exchange) {
 // one byte at a time, so that byte is held back rather than attributed to
 // the exchange that is still open: rollover moves it to the exchange that
 // opens next, which is what it belongs to.
+//
+// A further non-peek read never arrives on the still-open exchange while a
+// peek byte is pending: GOROOT net/http/server.go's connReader.Read serves
+// a buffered peek byte (cr.hasByte) directly from its own cr.byteBuf and
+// returns without ever calling this connection's Read again, and
+// connReader.startBackgroundRead refuses to arm a second background read
+// while cr.hasByte is still set. So there is no fold-back case to handle
+// here: coverage re-review at 65d5d5c found the branch that once did this
+// unreachable (item 4, round 3), and this comment is why.
 func (rec *connRecorder) recordInbound(b []byte, isPeek bool) {
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
@@ -138,13 +111,6 @@ func (rec *connRecorder) recordInbound(b []byte, isPeek bool) {
 	if isPeek {
 		rec.pendingCarry = append(rec.pendingCarry, b...)
 		return
-	}
-	if len(rec.pendingCarry) > 0 {
-		// A further read on the still-open exchange shows the held byte
-		// was not, after all, the pipelined peek: fold it back in first,
-		// in the order it arrived.
-		rec.current.req.append(rec.pendingCarry)
-		rec.pendingCarry = nil
 	}
 	rec.current.req.append(b)
 }
@@ -216,13 +182,12 @@ func (rec *connRecorder) closeFinal() {
 		b.req.append(carry)
 	}
 	rec.finish(b)
-	close(rec.finished)
 }
 
-// finish marks one closed exchange and hands it to this connection's
-// dispatch goroutine, which calls Sink.Record off the connection's own
-// goroutine and in the order exchanges actually closed: a slow or erroring
-// sink must never delay or break the connection it came from.
+// finish marks one closed exchange and hands it to rs's shared dispatch
+// goroutine, which calls Sink.Record off every connection's own goroutine
+// and in the order exchanges are handed off: a slow or erroring sink must
+// never delay or break the connection it came from.
 //
 // An exchange with no bytes in either direction is dropped rather than
 // handed off at all: it is what a keep-alive client closing while idle
@@ -230,11 +195,14 @@ func (rec *connRecorder) closeFinal() {
 // receives anything before StateClosed), and recording it would show every
 // normal client as a failing one.
 //
-// The hand-off itself never blocks. finished is generously buffered, but
-// once it is full (a stalled or slow Sink not keeping up) the exchange is
-// dropped and counted in rs.dropped instead of stalling this connection's
-// own goroutine, which is also the goroutine net/http uses to read from and
-// write to the client.
+// The hand-off itself never blocks. rs.finished is one bounded queue shared
+// by every connection this recorderSet owns, not one per connection (item
+// 2, round 3: a per-connection queue let a hung Sink leak one dispatch
+// goroutine per connection, unbounded in the number of connections, with
+// nothing counted in Dropped until each connection's own queue happened to
+// fill). Once the shared queue is full, the exchange is dropped and counted
+// in rs.dropped instead of stalling this connection's own goroutine, which
+// is also the goroutine net/http uses to read from and write to the client.
 func (rec *connRecorder) finish(b *building) {
 	if b == nil {
 		return
@@ -257,7 +225,7 @@ func (rec *connRecorder) finish(b *building) {
 		HandlerRuns: b.handlerRuns,
 	}
 	select {
-	case rec.finished <- ex:
+	case rec.rs.finished <- ex:
 	default:
 		rec.rs.dropped.Add(1)
 	}
@@ -297,6 +265,11 @@ func isTimeout(err error) bool {
 	return errors.As(err, &ne) && ne.Timeout()
 }
 
+// sinkQueueCapacity bounds how many closed exchanges can wait for Sink.Record
+// across the whole recorderSet, not per connection (item 2, round 3): see
+// finish's doc for why a shared bound replaced a per-connection one.
+const sinkQueueCapacity = 256
+
 // recorderSet is the state one Attach call shares between the listener (to
 // open and close exchanges), the annotation middleware (to mark a handler
 // ran), and the ConnState hook (to drive both). Exchange and connection IDs
@@ -312,30 +285,79 @@ type recorderSet struct {
 	nextExchangeID atomic.Uint64
 	nextConnID     atomic.Uint64
 
-	// dropped counts exchanges that never reached Sink.Record: the
-	// per-connection queue was full, or Record itself panicked. See
-	// Dropped.
+	// dropped counts exchanges that never reached Sink.Record: the shared
+	// queue was full, or Record itself panicked. See Dropped.
 	dropped atomic.Uint64
+
+	// finished carries every closed exchange, from every connection this
+	// recorderSet owns, to the single dispatch goroutine started below, so
+	// Sink.Record never runs on a connection's own goroutine and the
+	// goroutine count never grows with the number of connections.
+	finished chan Exchange
+	done     chan struct{}
+	stopOnce sync.Once
+	wg       sync.WaitGroup
 }
 
 func newRecorderSet(sink Sink, errorLog *log.Logger) *recorderSet {
 	if errorLog == nil {
 		errorLog = log.Default()
 	}
-	return &recorderSet{sink: sink, errorLog: errorLog, byAddr: make(map[string]*connRecorder)}
+	rs := &recorderSet{
+		sink:     sink,
+		errorLog: errorLog,
+		byAddr:   make(map[string]*connRecorder),
+		finished: make(chan Exchange, sinkQueueCapacity),
+		done:     make(chan struct{}),
+	}
+	rs.wg.Add(1)
+	go rs.dispatch()
+	return rs
 }
 
-// wrap creates the connRecorder for a newly accepted connection, deriving
-// its client identity from ConnectionState if the conn already carries one:
-// every exchange on the connection inherits it, including ones no handler
-// saw. Callers must not call wrap until c's TLS handshake, if any, is
-// already complete: see recordingListener.Accept.
+// dispatch calls Sink.Record for each exchange any connection this
+// recorderSet owns finished, off every connection's own goroutine, until
+// stop is called. A panicking Sink must not take down the server process:
+// it is recovered, logged, and counted as a drop, and the next exchange
+// still reaches Record normally.
+func (rs *recorderSet) dispatch() {
+	defer rs.wg.Done()
+	for {
+		select {
+		case ex := <-rs.finished:
+			rs.recordOne(ex)
+		case <-rs.done:
+			return
+		}
+	}
+}
+
+func (rs *recorderSet) recordOne(ex Exchange) {
+	defer func() {
+		if r := recover(); r != nil {
+			rs.dropped.Add(1)
+			rs.errorLog.Printf("sep2capture: Sink.Record panicked on connection %d, exchange %d: %v\n%s", ex.ConnID, ex.ID, r, debug.Stack())
+		}
+	}()
+	rs.sink.Record(ex)
+}
+
+// stop ends the dispatch goroutine and waits for it to exit. Safe to call
+// more than once or concurrently; only the first call has any effect. Any
+// exchange still in rs.finished when it runs is abandoned, uncounted: Close
+// is an abrupt shutdown, the same way http.Server.Close does not wait for
+// in-flight handlers either.
+func (rs *recorderSet) stop() {
+	rs.stopOnce.Do(func() { close(rs.done) })
+	rs.wg.Wait()
+}
+
+// wrap creates the connRecorder for a newly accepted connection. Identity is
+// derived lazily, from recordingConn.ConnectionState, the first time
+// net/http asks for it: wrap itself does not require c's TLS handshake, if
+// any, to be complete yet.
 func (rs *recorderSet) wrap(c net.Conn) *recordingConn {
 	rec := newConnRecorder(rs, rs.nextConnID.Add(1), c.RemoteAddr().String())
-	if lfdi, sfdi, ok := identityFrom(c); ok {
-		rec.clientLFDI = lfdi
-		rec.clientSFDI = sfdi
-	}
 
 	rs.mu.Lock()
 	rs.byAddr[rec.remoteAddr] = rec
@@ -370,8 +392,9 @@ func (rs *recorderSet) byRemoteAddr(addr string) *connRecorder {
 // server chains both ConnState hooks onto srv.ConnState, so every recorded
 // connection's hook fires here even when this recorderSet never wrapped it
 // (only the recorderSet whose listener is actually served does). Acting on
-// a connection this recorderSet does not own would double-close its
-// connRecorder's finished channel and panic.
+// a connection this recorderSet does not own would finish exchanges into
+// the wrong recorderSet's byAddr map, and clientLFDI/SFDI would come from
+// whichever recorderSet the type assertion below matched.
 func (rs *recorderSet) observe(c net.Conn, state http.ConnState) {
 	rc, ok := c.(*recordingConn)
 	if !ok || rc.rec.rs != rs {

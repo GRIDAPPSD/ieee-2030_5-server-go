@@ -11,9 +11,13 @@ export type DescriptorValue = string
 
 export type DescriptorRow = DescriptorValue[]
 
+// columns and rows are nullable, not just empty-array-capable: Go's
+// TableBody declares them as plain slices with no `omitempty`, so an
+// empty collection marshals as JSON null rather than []. A consumer
+// reads both as empty.
 export interface DescriptorTableBody {
-  columns: string[]
-  rows: DescriptorRow[]
+  columns: string[] | null
+  rows: DescriptorRow[] | null
 }
 
 export interface DescriptorDefinitionEntry {
@@ -26,8 +30,10 @@ export interface DescriptorDefinitionGroup {
   entries: DescriptorDefinitionEntry[]
 }
 
+// groups is nullable for the same reason columns and rows are: Groups
+// has no `omitempty` on the Go side, so an empty list marshals as null.
 export interface DescriptorDefinitionListBody {
-  groups: DescriptorDefinitionGroup[]
+  groups: DescriptorDefinitionGroup[] | null
 }
 
 export interface Descriptor {

@@ -16,6 +16,7 @@ func benchmarkListener(b *testing.B, attach bool) {
 	m := newMaterial(b)
 	tcpLn := listenTCP(b)
 	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(b, m))
+	ln := NewListener(tlsLn, nil)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "2")
@@ -24,9 +25,9 @@ func benchmarkListener(b *testing.B, attach bool) {
 	})
 	srv := &http.Server{Handler: handler}
 
-	var serveLn net.Listener = tlsLn
+	var serveLn net.Listener = ln
 	if attach {
-		serveLn = Attach(srv, tlsLn, NewMemorySink())
+		serveLn = Attach(srv, ln, NewMemorySink())
 	}
 	go func() { _ = srv.Serve(serveLn) }()
 	b.Cleanup(func() { _ = srv.Close() })

@@ -2,6 +2,7 @@ package sep2capture
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"errors"
 	"io"
@@ -14,17 +15,24 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 )
 
 // startCaptureServer serves handler over a fresh TLS listener with Attach
 // installed, and returns the address to dial and the sink Attach was given.
+// The listener handshakes before Accept returns (this package's own
+// Listener over a bare tls.Listener): Attach requires that, and refuses
+// anything that has not (see attach.go's recordingListener.Accept).
 func startCaptureServer(t testing.TB, m material, handler http.Handler) (addr string, sink *MemorySink) {
 	t.Helper()
 	tcpLn := listenTCP(t)
 	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	ln := NewListener(tlsLn, nil)
 	srv := &http.Server{Handler: handler}
 	sink = NewMemorySink()
-	wrapped := Attach(srv, tlsLn, sink)
+	wrapped := Attach(srv, ln, sink)
 	go func() { _ = srv.Serve(wrapped) }()
 	t.Cleanup(func() { _ = srv.Close() })
 	return tcpLn.Addr().String(), sink
@@ -321,13 +329,14 @@ func TestConnStateHookSetBeforeAttachStillFires(t *testing.T) {
 	m := newMaterial(t)
 	tcpLn := listenTCP(t)
 	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	ln := NewListener(tlsLn, nil)
 	srv := &http.Server{Handler: okHandler("ok")}
 
 	var previousCalls atomic.Int64
 	srv.ConnState = func(net.Conn, http.ConnState) { previousCalls.Add(1) }
 
 	sink := NewMemorySink()
-	wrapped := Attach(srv, tlsLn, sink)
+	wrapped := Attach(srv, ln, sink)
 	go func() { _ = srv.Serve(wrapped) }()
 	t.Cleanup(func() { _ = srv.Close() })
 
@@ -774,5 +783,124 @@ func TestPanickingSinkDoesNotStopTheDispatchGoroutine(t *testing.T) {
 	}
 	if rs.dropped.Load() == 0 {
 		t.Error("dropped: got 0, want > 0 for the panicking call")
+	}
+}
+
+// Identity must be recorded through Attach, in both cipher modes, and
+// Attach must refuse a listener that has not handshaken rather than
+// recording an empty identity for it.
+
+func TestIdentityRecordedThroughAttach(t *testing.T) {
+	t.Run("GCM", func(t *testing.T) {
+		m := newMaterial(t)
+		addr, sink := startCaptureServer(t, m, okHandler("ok"))
+		conn := rawDial(t, m, addr)
+		if _, err := conn.Write([]byte("GET / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		_ = readRawHTTPMessage(t, conn)
+
+		exchanges := waitForExchanges(t, sink, 1)
+		wantLFDI := sepTLS.LFDI(m.deviceLeaf)
+		wantSFDI := sepTLS.SFDI(m.deviceLeaf)
+		if exchanges[0].ClientLFDI != wantLFDI {
+			t.Errorf("ClientLFDI: got %q, want %q", exchanges[0].ClientLFDI, wantLFDI)
+		}
+		if exchanges[0].ClientSFDI != wantSFDI {
+			t.Errorf("ClientSFDI: got %q, want %q", exchanges[0].ClientSFDI, wantSFDI)
+		}
+	})
+
+	t.Run("CCM", func(t *testing.T) {
+		m := newMaterial(t)
+		tcpLn := listenTCP(t)
+		gotlsLn := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
+		ln := NewListener(gotlsLn, nil)
+		srv := &http.Server{Handler: okHandler("ok")}
+		sink := NewMemorySink()
+		wrapped := Attach(srv, ln, sink)
+		go func() { _ = srv.Serve(wrapped) }()
+		t.Cleanup(func() { _ = srv.Close() })
+
+		client := ccmHTTPClient(t, m)
+		resp, err := client.Get("https://" + tcpLn.Addr().String() + "/")
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		_ = resp.Body.Close()
+
+		exchanges := waitForExchanges(t, sink, 1)
+		wantLFDI := sepTLS.LFDI(m.deviceLeaf)
+		wantSFDI := sepTLS.SFDI(m.deviceLeaf)
+		if exchanges[0].ClientLFDI != wantLFDI {
+			t.Errorf("ClientLFDI: got %q, want %q", exchanges[0].ClientLFDI, wantLFDI)
+		}
+		if exchanges[0].ClientSFDI != wantSFDI {
+			t.Errorf("ClientSFDI: got %q, want %q", exchanges[0].ClientSFDI, wantSFDI)
+		}
+	})
+}
+
+// TestAttachRefusesAListenerThatHasNotHandshaken is the negative proof for
+// the design decision in attach.go: Attach does not drive a handshake
+// itself, it refuses a connection whose handshake is not already complete.
+// A bare tls.Listener handshakes lazily on first Read, so a client dialing
+// against one wrapped directly in Attach (skipping this package's own
+// Listener) must never complete its handshake at all.
+func TestAttachRefusesAListenerThatHasNotHandshaken(t *testing.T) {
+	m := newMaterial(t)
+	tcpLn := listenTCP(t)
+	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m)) // bare: not pre-handshaken
+	srv := &http.Server{Handler: okHandler("ok")}
+	sink := NewMemorySink()
+	wrapped := Attach(srv, tlsLn, sink)
+	go func() { _ = srv.Serve(wrapped) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	d := tls.Dialer{Config: gcmClientConfig(t, m)}
+	if _, err := d.DialContext(ctx, "tcp", tcpLn.Addr().String()); err == nil {
+		t.Fatal("dial succeeded against a listener Attach should have refused before it ever handshook")
+	}
+	if len(sink.All()) != 0 {
+		t.Error("a refused connection must never produce a recorded exchange")
+	}
+}
+
+// Calling Attach twice on the same server must not panic.
+
+func TestAttachTwiceDoesNotPanicOnConnectionClose(t *testing.T) {
+	m := newMaterial(t)
+	tcpLn := listenTCP(t)
+	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	ln := NewListener(tlsLn, nil)
+
+	var logBuf syncBuffer
+	srv := &http.Server{
+		Handler:  okHandler("ok"),
+		ErrorLog: log.New(&logBuf, "", 0),
+	}
+
+	sink1 := NewMemorySink()
+	_ = Attach(srv, ln, sink1) // chains onto srv.ConnState and srv.Handler; its own listener is never served
+
+	sink2 := NewMemorySink()
+	served := Attach(srv, ln, sink2)
+
+	go func() { _ = srv.Serve(served) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	conn := rawDial(t, m, tcpLn.Addr().String())
+	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_ = readRawHTTPMessage(t, conn)
+
+	waitForExchanges(t, sink2, 1)
+	// Give the panic-recovery log line time to land if the bug is present.
+	time.Sleep(100 * time.Millisecond)
+	if strings.Contains(logBuf.String(), "panic") {
+		t.Errorf("connection handling panicked (see server log): %s", logBuf.String())
 	}
 }

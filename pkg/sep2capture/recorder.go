@@ -319,7 +319,8 @@ func newRecorderSet(sink Sink, errorLog *log.Logger) *recorderSet {
 // wrap creates the connRecorder for a newly accepted connection, deriving
 // its client identity from ConnectionState if the conn already carries one:
 // every exchange on the connection inherits it, including ones no handler
-// saw.
+// saw. Callers must not call wrap until c's TLS handshake, if any, is
+// already complete: see recordingListener.Accept.
 func (rs *recorderSet) wrap(c net.Conn) *recordingConn {
 	rec := newConnRecorder(rs, rs.nextConnID.Add(1), c.RemoteAddr().String())
 	if lfdi, sfdi, ok := identityFrom(c); ok {
@@ -355,10 +356,16 @@ func (rs *recorderSet) byRemoteAddr(addr string) *connRecorder {
 // observe is Attach's ConnState hook. It opens the first exchange at
 // StateNew, rolls over at StateIdle, and closes the last exchange at
 // StateClosed or StateHijacked. Any net.Conn that is not one of ours (a
-// hijacked connection's replacement, for instance) is ignored.
+// hijacked connection's replacement, for instance) is ignored, and so is one
+// wrapped by a different recorderSet: Attach called twice on the same
+// server chains both ConnState hooks onto srv.ConnState, so every recorded
+// connection's hook fires here even when this recorderSet never wrapped it
+// (only the recorderSet whose listener is actually served does). Acting on
+// a connection this recorderSet does not own would double-close its
+// connRecorder's finished channel and panic.
 func (rs *recorderSet) observe(c net.Conn, state http.ConnState) {
 	rc, ok := c.(*recordingConn)
-	if !ok {
+	if !ok || rc.rec.rs != rs {
 		return
 	}
 	switch state {

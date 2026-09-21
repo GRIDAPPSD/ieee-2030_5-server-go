@@ -187,7 +187,15 @@ func Attach(srv *http.Server, ln net.Listener, sink Sink) net.Listener {
 // "a handler ran" before calling next. It reads no body and wraps nothing
 // else: a handler that never touches the body still gets marked, and a
 // handler that panics after this point still counts as having run.
+//
+// next is srv.Handler as Attach found it, nil included: a nil Handler is
+// ordinary net/http usage (server.go's serverHandler substitutes
+// DefaultServeMux at serve time), but Attach always replaces srv.Handler
+// with this wrapper, so that substitution must happen here instead.
 func (rs *recorderSet) annotate(next http.Handler) http.Handler {
+	if next == nil {
+		next = http.DefaultServeMux
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if rec := rs.byRemoteAddr(r.RemoteAddr); rec != nil {
 			rec.markHandlerRan()

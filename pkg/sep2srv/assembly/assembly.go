@@ -396,7 +396,7 @@ func BuildProtocolRouter(
 		top.Handle(prefix, protocolChain)
 	}
 
-	return encoding.NamespaceMiddleware(top), protocolMux.Patterns()
+	return bufferContentLength(encoding.NamespaceMiddleware(top)), protocolMux.Patterns()
 }
 
 // topLevelMounts are the prefixes under which the protocol mux is mounted on

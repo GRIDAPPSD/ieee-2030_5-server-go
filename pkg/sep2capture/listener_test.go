@@ -241,10 +241,10 @@ func assertPeerIsLeaf(t *testing.T, seen *tls.ConnectionState, leaf *x509.Certif
 	}
 }
 
-// item 2 and item 3: identity per mode, and the control that proves it
+// Identity per mode, and the control that proves it.
 
-// TestIdentityPreservedThroughListener is item 2: a protocol route sees the
-// client's leaf certificate through the listener, in both cipher modes.
+// TestIdentityPreservedThroughListener: a protocol route sees the client's
+// leaf certificate through the listener, in both cipher modes.
 func TestIdentityPreservedThroughListener(t *testing.T) {
 	t.Parallel()
 
@@ -314,9 +314,9 @@ func (l *naiveListener) Addr() net.Addr { return l.inner.Addr() }
 
 var _ net.Listener = (*naiveListener)(nil)
 
-// TestNaiveWrapperLosesIdentity is item 3, the control: without this, item
-// 2 above proves nothing, because a route that always answers 200
-// regardless of the listener would pass it too.
+// TestNaiveWrapperLosesIdentity is the control: without this, the test
+// above proves nothing, because a route that always answers 200 regardless
+// of the listener would pass it too.
 func TestNaiveWrapperLosesIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -347,7 +347,7 @@ func TestNaiveWrapperLosesIdentity(t *testing.T) {
 	})
 }
 
-// item 4: a refused certificate is reported, not silently dropped
+// A refused certificate is reported, not silently dropped.
 
 // syncBuffer guards a bytes.Buffer with a mutex. log.Logger serializes its
 // own Write calls but a test reading the buffer's contents from outside the
@@ -428,7 +428,7 @@ func TestRefusedCertificateIsReported(t *testing.T) {
 	}
 }
 
-// item 5: Close leaves no goroutine behind, proved by counting
+// Close leaves no goroutine behind, proved by counting.
 
 func TestCloseLeavesNoGoroutineBehind(t *testing.T) {
 	// Baseline is taken before NewListener, not after: NewListener itself
@@ -485,7 +485,7 @@ func assertGoroutinesSettle(t *testing.T, baseline int) {
 	}
 }
 
-// item 6: an already-handshaken input (core's WrapCCMListener) works
+// An already-handshaken input (core's WrapCCMListener) works.
 
 func TestAcceptsAlreadyHandshakenInput(t *testing.T) {
 	t.Parallel()

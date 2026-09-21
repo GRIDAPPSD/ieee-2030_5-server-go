@@ -15,6 +15,16 @@ import (
 // ConnectionState, so a plain embed promotes nothing for net/http to find,
 // no matter what the wrapped value's concrete type is. Conn forwards
 // every other net.Conn method by embedding.
+//
+// Against a bare *tls.Conn on the GCM path, this costs three things:
+// CloseWrite is hidden, so no close_notify is sent on a half-close; the
+// automatic 400 reply net/http sends a plaintext HTTP request on a TLS
+// port is lost, because that path type-asserts the connection to
+// *tls.Conn directly; and the server's error log names this package
+// instead of "http", since the concrete type is no longer *tls.Conn.
+// ConnectionState also drops NegotiatedProtocol: no config here sets ALPN
+// today, so this is latent, but an h2 client would be parsed as HTTP/1.1
+// if one ever connected.
 type Conn struct {
 	net.Conn
 }
@@ -29,6 +39,9 @@ func (c *Conn) ConnectionState() tls.ConnectionState {
 	case *gotls.Conn:
 		return convertGotlsState(inner.ConnectionState())
 	default:
+		// Unreachable given Listener's own contract (handshake only wraps a
+		// *tls.Conn or *gotls.Conn): fails closed with a zero-value state
+		// rather than panicking if that contract is ever broken.
 		return tls.ConnectionState{}
 	}
 }

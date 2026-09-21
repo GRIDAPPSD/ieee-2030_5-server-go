@@ -431,10 +431,13 @@ func TestRefusedCertificateIsReported(t *testing.T) {
 // item 5: Close leaves no goroutine behind, proved by counting
 
 func TestCloseLeavesNoGoroutineBehind(t *testing.T) {
+	// Baseline is taken before NewListener, not after: NewListener itself
+	// starts the accept loop goroutine, and a baseline taken later already
+	// counts it, which would let a one-goroutine leak in Close pass.
+	baseline := runtime.NumGoroutine()
+
 	m := newMaterial(t)
 	l := NewListener(tls.NewListener(listenTCP(t), gcmServerConfig(t, m)), log.New(io.Discard, "", 0))
-
-	baseline := runtime.NumGoroutine()
 
 	acceptDone := make(chan struct{})
 	go func() {
@@ -495,6 +498,190 @@ func TestAcceptsAlreadyHandshakenInput(t *testing.T) {
 	status, seen := getWithSeenTLS(t, l, ccmHTTPClient(t, m), "https://"+l.Addr().String()+"/dcap")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", status)
+	}
+	assertPeerIsLeaf(t, seen, m.deviceLeaf)
+}
+
+// The handshake deadline is the only defence against a slowloris peer: a
+// connection that opens TCP and never speaks TLS, or sends a truncated
+// record and stalls. Both must be closed at l.timeout, not left open.
+
+// TestHandshakeDeadlineClosesSilentAndPartialPeers is the security lane's
+// P1 mutant target: replacing context.WithTimeout with context.WithCancel
+// at listener.go's handshake bound leaves the suite green against
+// TestIdentityPreservedThroughListener and TestRefusedCertificateIsReported,
+// because both peers speak TLS immediately. A peer that never completes its
+// ClientHello is the only case that exercises the bound.
+//
+// The test uses the real defaultHandshakeTimeout rather than shrinking
+// l.timeout on the constructed Listener: NewListener's accept loop is
+// already running by the time it returns, so writing l.timeout afterward
+// races the handshake goroutine's unsynchronized read of the same field.
+func TestHandshakeDeadlineClosesSilentAndPartialPeers(t *testing.T) {
+	t.Parallel()
+
+	// The outer read deadline must exceed defaultHandshakeTimeout so a
+	// correctly bounded close is observed rather than mistaken for the
+	// read deadline firing; margin absorbs scheduling and -race overhead.
+	const margin = 4 * time.Second
+	outerDeadline := defaultHandshakeTimeout + margin
+
+	cases := []struct {
+		name  string
+		write []byte // nil: send nothing at all
+	}{
+		{name: "silent peer, no bytes sent", write: nil},
+		{name: "partial ClientHello, record header only", write: []byte{0x16, 0x03, 0x01, 0x00, 0x05, 0x01}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := newMaterial(t)
+			l := NewListener(tls.NewListener(listenTCP(t), gcmServerConfig(t, m)), log.New(io.Discard, "", 0))
+			t.Cleanup(func() { _ = l.Close() })
+
+			go func() {
+				for {
+					c, err := l.Accept()
+					if err != nil {
+						return
+					}
+					_ = c.Close()
+				}
+			}()
+
+			conn, err := net.DialTimeout("tcp", l.Addr().String(), 2*time.Second)
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+			if tc.write != nil {
+				if _, err := conn.Write(tc.write); err != nil {
+					t.Fatalf("write: %v", err)
+				}
+			}
+
+			if err := conn.SetReadDeadline(time.Now().Add(outerDeadline)); err != nil {
+				t.Fatalf("SetReadDeadline: %v", err)
+			}
+			start := time.Now()
+			buf := make([]byte, 1)
+			_, readErr := conn.Read(buf)
+			elapsed := time.Since(start)
+
+			if readErr == nil {
+				t.Fatalf("read returned data %q, want the peer closed at the handshake bound", buf)
+			}
+			// If the peer was never closed by the handshake bound, this
+			// read only returns once our own outer deadline fires, close
+			// to outerDeadline; a close at the real bound lands well
+			// short of that.
+			if elapsed > defaultHandshakeTimeout+margin/2 {
+				t.Fatalf("peer was not closed at the handshake bound: waited %s for bound %s (%v)", elapsed, defaultHandshakeTimeout, readErr)
+			}
+		})
+	}
+}
+
+// Close cancels a handshake still in flight; the Close doc comment promises
+// this, and it is what lets a stalled peer never block shutdown.
+
+// TestCloseDuringInFlightHandshake stalls a dial so its handshake goroutine
+// is blocked inside HandshakeContext, races Close against it, and requires
+// Close to return and every goroutine this Listener started to exit.
+func TestCloseDuringInFlightHandshake(t *testing.T) {
+	baseline := runtime.NumGoroutine()
+
+	m := newMaterial(t)
+	l := NewListener(tls.NewListener(listenTCP(t), gcmServerConfig(t, m)), log.New(io.Discard, "", 0))
+
+	conn, err := net.DialTimeout("tcp", l.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Wait for the handshake goroutine to actually start blocking on the
+	// stalled connection before racing Close against it, rather than a
+	// fixed sleep that could fire either before or after it starts.
+	deadline := time.Now().Add(2 * time.Second)
+	for runtime.NumGoroutine() <= baseline {
+		if time.Now().After(deadline) {
+			t.Fatal("handshake goroutine never started")
+		}
+		runtime.Gosched()
+	}
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- l.Close() }()
+
+	select {
+	case err := <-closeDone:
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close did not return while a handshake was in flight")
+	}
+
+	assertGoroutinesSettle(t, baseline)
+}
+
+// A temporary Accept error on the inner listener is handed to the caller
+// through Accept's error channel, and the accept loop keeps running.
+
+// tempAcceptErr satisfies the same interface{ Temporary() bool } shape
+// isTemporary checks for, without depending on any real transient OS error
+// (EMFILE and friends) being reproducible in a test.
+type tempAcceptErr struct{}
+
+func (tempAcceptErr) Error() string   { return "sep2capture test: temporary accept error" }
+func (tempAcceptErr) Timeout() bool   { return false }
+func (tempAcceptErr) Temporary() bool { return true }
+
+// onceTemporaryErrListener returns tempAcceptErr from its first Accept
+// call and delegates every later call to the wrapped listener. acceptLoop
+// calls Accept serially from a single goroutine, so no synchronization is
+// needed between the two states.
+type onceTemporaryErrListener struct {
+	net.Listener
+	fired bool
+}
+
+func (f *onceTemporaryErrListener) Accept() (net.Conn, error) {
+	if !f.fired {
+		f.fired = true
+		return nil, tempAcceptErr{}
+	}
+	return f.Listener.Accept()
+}
+
+// TestTemporaryAcceptErrorIsReturnedAndAcceptLoopContinues is the security
+// lane's P4 target: the temporary-error branch in acceptLoop has no test
+// today.
+func TestTemporaryAcceptErrorIsReturnedAndAcceptLoopContinues(t *testing.T) {
+	t.Parallel()
+	m := newMaterial(t)
+
+	flaky := &onceTemporaryErrListener{Listener: tls.NewListener(listenTCP(t), gcmServerConfig(t, m))}
+	l := NewListener(flaky, nil)
+	t.Cleanup(func() { _ = l.Close() })
+
+	_, err := l.Accept()
+	if err == nil {
+		t.Fatal("Accept returned a nil error, want the temporary error")
+	}
+	te, ok := err.(interface{ Temporary() bool })
+	if !ok || !te.Temporary() {
+		t.Fatalf("Accept error = %v, want a Temporary() == true error", err)
+	}
+
+	// The accept loop must still be running: a real client can now connect
+	// and complete a handshake through the same Listener.
+	status, seen := getWithSeenTLS(t, l, gcmHTTPClient(t, m), "https://"+l.Addr().String()+"/dcap")
+	if status != http.StatusOK {
+		t.Fatalf("status after the temporary error = %d, want 200", status)
 	}
 	assertPeerIsLeaf(t, seen, m.deviceLeaf)
 }

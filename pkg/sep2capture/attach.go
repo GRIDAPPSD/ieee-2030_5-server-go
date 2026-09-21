@@ -109,6 +109,18 @@ func (l *recordingListener) Addr() net.Addr { return l.inner.Addr() }
 
 var _ net.Listener = (*recordingListener)(nil)
 
+// Dropped returns how many exchanges Attach's listener ln has dropped
+// because a connection's queue to its Sink was full or Sink.Record
+// panicked (see exchange.go's Sink doc). It is 0 for any net.Listener
+// Attach did not return.
+func Dropped(ln net.Listener) uint64 {
+	rl, ok := ln.(*recordingListener)
+	if !ok {
+		return 0
+	}
+	return rl.rs.dropped.Load()
+}
+
 // Attach installs recording on srv and ln: every exchange on every
 // connection Accept returns is captured and handed to sink. It must run
 // after srv.Handler and any srv.ConnState are set and before Serve: it
@@ -116,8 +128,12 @@ var _ net.Listener = (*recordingListener)(nil)
 // wraps srv.Handler with the annotation middleware, outermost, so the
 // middleware sees every request before anything else in the chain. ln is
 // not modified; Attach returns the listener to serve instead.
+//
+// Errors this package logs on its own (currently, a panicking Sink) go to
+// srv.ErrorLog, or the standard logger if that is nil, matching net/http's
+// own default.
 func Attach(srv *http.Server, ln net.Listener, sink Sink) net.Listener {
-	rs := newRecorderSet(sink)
+	rs := newRecorderSet(sink, srv.ErrorLog)
 
 	previous := srv.ConnState
 	srv.ConnState = func(c net.Conn, state http.ConnState) {

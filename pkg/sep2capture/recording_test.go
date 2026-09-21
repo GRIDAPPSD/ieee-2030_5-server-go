@@ -5,10 +5,12 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -388,7 +390,7 @@ func newTestConnRecorder(rs *recorderSet) *connRecorder {
 // exchange 1's request instead of moving to exchange 2's.
 func TestCarryOverMovesAnEarlyByteToTheNextExchange(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink)
+	rs := newRecorderSet(sink, nil)
 	rec := newTestConnRecorder(rs)
 
 	rec.open(1)
@@ -417,7 +419,7 @@ func TestCarryOverMovesAnEarlyByteToTheNextExchange(t *testing.T) {
 // exchange, in the order it arrived.
 func TestCarryOverFoldsBackWhenTheSameExchangeKeepsReading(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink)
+	rs := newRecorderSet(sink, nil)
 	rec := newTestConnRecorder(rs)
 
 	rec.open(1)
@@ -604,7 +606,7 @@ func (s *stubConn) Read(p []byte) (int, error) { return s.read(p) }
 // noteError itself records whatever it is given unconditionally.
 func TestRecordingConnReadIgnoresOnlyTheAbortedPeekTimeout(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink)
+	rs := newRecorderSet(sink, nil)
 	rec := newTestConnRecorder(rs)
 	rec.open(1)
 
@@ -626,7 +628,7 @@ func TestRecordingConnReadIgnoresOnlyTheAbortedPeekTimeout(t *testing.T) {
 
 func TestRecordingConnReadRecordsANonTimeoutErrorOnAOneByteRead(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink)
+	rs := newRecorderSet(sink, nil)
 	rec := newTestConnRecorder(rs)
 	rec.open(1)
 	rec.recordInbound([]byte("x"), false) // real bytes, so finish does not skip this exchange as empty
@@ -643,5 +645,134 @@ func TestRecordingConnReadRecordsANonTimeoutErrorOnAOneByteRead(t *testing.T) {
 	exchanges := waitForExchanges(t, sink, 1)
 	if exchanges[0].Mark != MarkConnectionError {
 		t.Errorf("mark: got %v (error=%q), want connection error (a reset on a 1-byte read must not be silently dropped)", exchanges[0].Mark, exchanges[0].Error)
+	}
+}
+
+// A stalled or panicking Sink must never stall or crash the client.
+
+// gatedSink blocks every Record call until gate is closed, so a test can
+// prove the hand-off into finished is non-blocking regardless of how slow
+// or stuck the sink itself is.
+type gatedSink struct {
+	gate chan struct{}
+	mu   sync.Mutex
+	got  []Exchange
+}
+
+func (s *gatedSink) Record(ex Exchange) {
+	<-s.gate
+	s.mu.Lock()
+	s.got = append(s.got, ex)
+	s.mu.Unlock()
+}
+
+func (s *gatedSink) all() []Exchange {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Exchange, len(s.got))
+	copy(out, s.got)
+	return out
+}
+
+// TestSinkStallDoesNotBlockTheConnectionGoroutine proves finish's hand-off
+// to the dispatch goroutine never blocks, even once a stalled Sink has let
+// the per-connection queue fill: the exchanges past the queue's capacity
+// are dropped and counted, not queued without bound and not left to stall
+// the caller (recorder.go's finish is called from the same goroutine
+// net/http uses to read from and write to the client).
+func TestSinkStallDoesNotBlockTheConnectionGoroutine(t *testing.T) {
+	sink := &gatedSink{gate: make(chan struct{})}
+	rs := newRecorderSet(sink, nil)
+	rec := newTestConnRecorder(rs)
+
+	const capacity = 256
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < capacity+2; i++ {
+			b := &building{id: uint64(i), handlerRuns: 1}
+			b.req.append([]byte("x"))
+			rec.finish(b)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("finish blocked on a stalled sink; the hand-off must be non-blocking")
+	}
+
+	close(sink.gate)
+	rec.closeFinal()
+	// Let the dispatch goroutine drain whatever made it into the queue
+	// before it exits (closeFinal closes finished once the last exchange
+	// is handed off).
+	deadline := time.Now().Add(2 * time.Second)
+	for len(sink.all()) < capacity && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if got := rs.dropped.Load(); got == 0 {
+		t.Errorf("dropped: got 0, want > 0 after exceeding the %d-slot queue", capacity)
+	}
+}
+
+// panicOnceSink panics on its first Record call and records normally after
+// that, so a test can prove the dispatch goroutine survives a panic and
+// keeps handing later exchanges to Record.
+type panicOnceSink struct {
+	mu       sync.Mutex
+	calls    int
+	recorded []Exchange
+}
+
+func (s *panicOnceSink) Record(ex Exchange) {
+	s.mu.Lock()
+	s.calls++
+	n := s.calls
+	s.mu.Unlock()
+	if n == 1 {
+		panic("sep2capture test: sink panic")
+	}
+	s.mu.Lock()
+	s.recorded = append(s.recorded, ex)
+	s.mu.Unlock()
+}
+
+func (s *panicOnceSink) all() []Exchange {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Exchange, len(s.recorded))
+	copy(out, s.recorded)
+	return out
+}
+
+func TestPanickingSinkDoesNotStopTheDispatchGoroutine(t *testing.T) {
+	sink := &panicOnceSink{}
+	rs := newRecorderSet(sink, log.New(io.Discard, "", 0))
+	rec := newTestConnRecorder(rs)
+
+	b1 := &building{id: 1, handlerRuns: 1}
+	b1.req.append([]byte("x"))
+	rec.finish(b1)
+
+	b2 := &building{id: 2, handlerRuns: 1}
+	b2.req.append([]byte("y"))
+	rec.finish(b2)
+
+	rec.closeFinal()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for len(sink.all()) < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := sink.all()
+	if len(got) != 1 {
+		t.Fatalf("recorded after the panic: got %d, want 1 (the second exchange)", len(got))
+	}
+	if got[0].ID != 2 {
+		t.Errorf("recorded exchange ID: got %d, want 2", got[0].ID)
+	}
+	if rs.dropped.Load() == 0 {
+		t.Error("dropped: got 0, want > 0 for the panicking call")
 	}
 }

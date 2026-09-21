@@ -69,7 +69,11 @@ type Exchange struct {
 
 // Sink receives each exchange once it closes. Attach hands exchanges to the
 // sink off the connection's own goroutine (see recorder.go), so a slow or
-// erroring Sink never delays or breaks the client's read or write. PR 3
+// erroring Sink never delays or breaks the client's read or write: the
+// hand-off to Sink.Record is non-blocking, and a panic inside Record is
+// recovered. Under sustained backpressure (Record too slow, or panicking
+// repeatedly) exchanges are dropped rather than queued without bound or
+// allowed to stall the connection; Dropped reports how many. PR 3
 // implements Sink with the segment log; MemorySink below is this PR's
 // implementation.
 type Sink interface {

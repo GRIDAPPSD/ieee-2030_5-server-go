@@ -112,14 +112,7 @@ func (x *index) add(e exchangeEntry) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 
-	if _, exists := x.byID[e.ID]; exists {
-		// Overwriting byID would leave segIDs and approxBytes pointing at
-		// two different entries for the same id: the old one's bytes are
-		// never subtracted (approxBytes drifts up for good), and whichever
-		// segment is evicted first deletes the id from byID regardless of
-		// which entry it actually held. Refusing and counting keeps the
-		// first entry authoritative and the index exactly consistent.
-		x.duplicateIDs++
+	if x.refuseIfDuplicateLocked(e.ID) {
 		return
 	}
 
@@ -144,6 +137,30 @@ func (x *index) add(e exchangeEntry) {
 	}
 	c.ExchangeCount++
 	c.ids = insertSorted(c.ids, e.ID)
+}
+
+// refuseIfDuplicate reports whether id is already indexed and, if so,
+// counts it as add would. Called by writeOne (segment_writer.go) before
+// any disk work, so a duplicate exchange id costs no segment bytes and
+// reaches no subscriber, not only no second index entry.
+func (x *index) refuseIfDuplicate(id uint64) bool {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return x.refuseIfDuplicateLocked(id)
+}
+
+// refuseIfDuplicateLocked is refuseIfDuplicate's body; add shares it under
+// the lock add already holds. Overwriting byID would leave segIDs and
+// approxBytes pointing at two different entries for the same id (the old
+// one's bytes never subtracted, approxBytes drifting up for good), so
+// refusing keeps the first entry authoritative and the index exactly
+// consistent. Callers must hold mu.
+func (x *index) refuseIfDuplicateLocked(id uint64) bool {
+	if _, exists := x.byID[id]; exists {
+		x.duplicateIDs++
+		return true
+	}
+	return false
 }
 
 // approxMemBytes returns the index's current indexEntryBytes total, used by

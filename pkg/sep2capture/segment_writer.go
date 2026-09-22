@@ -31,6 +31,13 @@ func (s *Store) writeLoop() {
 // this; writeOne only ever runs after Record has already handed the bytes
 // off.
 func (s *Store) writeOne(ex Exchange) {
+	// A duplicate id is refused before any disk work, the write-error
+	// counters, or testBeforeWrite: two Recorders on one Store each start
+	// their own atomic id counter (recorder.go), so the same id can reach
+	// here twice, and only DuplicateIndexIDs counts it (index.go).
+	if s.idx.refuseIfDuplicate(ex.ID) {
+		return
+	}
 	if s.testBeforeWrite != nil {
 		s.testBeforeWrite()
 	}
@@ -134,7 +141,7 @@ func (s *Store) writeOne(ex Exchange) {
 // rollover would let the index grow past its budget by as much as one
 // whole segment's entries before anything is ever evicted. So when only
 // the active segment is left and the index is still over budget, this
-// rolls it early (rollForIndex), turning it into an ordinary evictable
+// rolls it early (rolledForIndex), turning it into an ordinary evictable
 // segment, and evicts it on the next pass. Rolling is attempted at most
 // once per call, and only when the active segment already holds an entry
 // to evict: otherwise a budget smaller than one entry's own estimate would

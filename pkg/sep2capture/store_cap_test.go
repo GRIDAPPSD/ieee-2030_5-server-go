@@ -63,6 +63,52 @@ func TestDirectoryStaysUnderCapAndEvictsOldestFirst(t *testing.T) {
 	}
 }
 
+// TestCapAccountingHasAFloorAndMatchesDisk is coverage-lane MEDIUM 1: the
+// test above only bounds dirSize from above, so a mutant that stops
+// decrementing totalOnDisk on eviction (throwing away nearly all retained
+// history, since ensureRoomFor then believes the directory is still
+// nearly full) still passes it. This adds the floor Q4 promises
+// (CapBytes - SegmentBytes) and checks BytesOnDisk against the
+// directory's own real size.
+//
+// Mutant (segment_writer.go, evictOldest): dropping
+// `s.totalOnDisk.Add(-size)` makes this RED: retained bytes fall far
+// below the floor, since the tracked total never reflects an eviction and
+// every write evicts down to the active segment again.
+func TestCapAccountingHasAFloorAndMatchesDisk(t *testing.T) {
+	const (
+		capBytes    = 2 * 1024 * 1024
+		segBytes    = 256 * 1024
+		recordBytes = 4 * 1024
+		volume      = 10 * capBytes
+	)
+
+	dir := t.TempDir()
+	st, err := NewStore(StoreConfig{Dir: dir, CapBytes: capBytes, SegmentBytes: segBytes})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	t.Cleanup(func() { closeStore(t, st) })
+
+	n := volume / recordBytes
+	for i := 0; i < n; i++ {
+		id := uint64(i + 1)
+		st.Record(makeExchange(id, id, "client-1", recordBytes/2, recordBytes/2))
+	}
+	waitQueueDrained(t, st)
+
+	realSize := dirSize(t, dir)
+	stats := st.Stats()
+	if stats.BytesOnDisk != realSize {
+		t.Errorf("Stats().BytesOnDisk: got %d, want %d (the directory's real size)", stats.BytesOnDisk, realSize)
+	}
+
+	floor := int64(capBytes - 2*segBytes)
+	if realSize < floor {
+		t.Errorf("dir size: got %d, want >= %d (cap minus two segments; retained history should not be thrown away)", realSize, floor)
+	}
+}
+
 // TestEvictionNeverDeletesTheActiveSegment is a narrower unit test of
 // ensureRoomFor's own boundary: with capBytes smaller than one segment,
 // eviction must stop rather than delete the segment still being written

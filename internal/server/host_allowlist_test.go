@@ -140,7 +140,7 @@ func TestHostAllowlistMiddleware(t *testing.T) {
 			// HIGH-2 (Tess): the 400 body fragment is load-bearing for
 			// operators triaging boot logs and clients differentiating
 			// "no Host" from "wrong Host".
-			name:            "empty Host on HTTP/1.1 → 400",
+			name:            "empty Host on HTTP/1.1 -> 400",
 			allowed:         []string{"localhost"},
 			host:            "",
 			proto:           "HTTP/1.1",
@@ -148,7 +148,7 @@ func TestHostAllowlistMiddleware(t *testing.T) {
 			wantBodyContain: "Bad Request: missing Host header",
 		},
 		{
-			name:            "empty Host on HTTP/1.0 → 421",
+			name:            "empty Host on HTTP/1.0 -> 421",
 			allowed:         []string{"localhost"},
 			host:            "",
 			proto:           "HTTP/1.0",
@@ -196,7 +196,7 @@ func TestHostAllowlistMiddleware(t *testing.T) {
 func TestHostAllowlistMiddleware_DisabledWhenEmpty(t *testing.T) {
 	// Length-0 allowlist short-circuits at the call site (BuildAdminRouter
 	// skips the wrap). But the middleware itself, when constructed with
-	// an empty list, MUST reject everything — there is no "open by
+	// an empty list, MUST reject everything - there is no "open by
 	// default" mode for the middleware itself. The router-level skip is
 	// the only opt-out.
 	h := server.HostAllowlistMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -279,7 +279,7 @@ func TestResolveAdminAllowedHosts(t *testing.T) {
 }
 
 // Integration: the admin login flow must respect the host gate. A wrong
-// Host header on /login must return 421 (defense-in-depth — DNS rebinding
+// Host header on /login must return 421 (defense-in-depth - DNS rebinding
 // can target the login page just as easily as the dashboard).
 func TestAdminRouterHostAllowlistGatesLogin(t *testing.T) {
 	stores := newTestStores()
@@ -340,7 +340,7 @@ func TestAdminRouterHostAllowlistGatesLogin(t *testing.T) {
 		}
 		defer func() { _ = resp.Body.Close() }()
 		// Without the host gate this would be 401 (auth chain rejects).
-		// With the gate it's 421 — proves the gate runs OUTSIDE auth.
+		// With the gate it's 421 - proves the gate runs OUTSIDE auth.
 		if resp.StatusCode != http.StatusMisdirectedRequest {
 			t.Errorf("got %d, want 421 (host gate must run before auth chain)", resp.StatusCode)
 		}

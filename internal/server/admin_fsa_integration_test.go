@@ -91,7 +91,7 @@ func TestAdminFSAIntegration_FullLifecycle(t *testing.T) {
 		t.Fatalf("attach: %d body=%s", w.Code, w.Body.String())
 	}
 
-	// 3) Attach to a non-existent program → 404.
+	// 3) Attach to a non-existent program -> 404.
 	w = authedDo(t, router, http.MethodPost, "/api/fsas/fsa-solar/programs",
 		`{"programHref":"/edev/dev-X/fsa/anyfsa/derp/ghost"}`)
 	if w.Code != http.StatusNotFound {

@@ -41,7 +41,7 @@ func TestRoutesEnumerationConfirmsCertAPIAdminOnly(t *testing.T) {
 
 	// Admin routes MUST contain the cert-API patterns the admin
 	// listener is responsible for. We don't pin every method:pattern
-	// shape here (the admin router gains routes over time) — we only
+	// shape here (the admin router gains routes over time) - we only
 	// pin the load-bearing presence.
 	wantAdminContains := []string{
 		"/api/certs/ca",
@@ -147,7 +147,7 @@ func TestAdminRoutesContainsLoginAndDashboard(t *testing.T) {
 	}
 }
 
-// TestRenderRoutesLogShape pins the boot-log block shape — header,
+// TestRenderRoutesLogShape pins the boot-log block shape - header,
 // per-listener sub-header with bind address, indented patterns. A
 // future edit that softens the format (e.g. drops the bind address)
 // or scrambles the ordering surfaces here.

@@ -79,6 +79,36 @@ func readSSEEvents(t testing.TB, r *bufio.Reader, n int, deadline time.Time) []s
 	return out
 }
 
+// readRawSSEEvent reads exactly one SSE event (skipping blank lines and
+// ":" comment/heartbeat lines) and returns its "id:" line unmodified,
+// unlike readSSEEvents above, which strips everything before the last
+// dash and so cannot see the epoch prefix a client actually receives.
+func readRawSSEEvent(t testing.TB, r *bufio.Reader, deadline time.Time) (id, data string) {
+	t.Helper()
+	haveID := false
+	for {
+		if time.Now().After(deadline) {
+			t.Fatalf("readRawSSEEvent: no event before deadline")
+		}
+		line, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatalf("readRawSSEEvent: ReadString: %v", err)
+		}
+		line = strings.TrimRight(line, "\r\n")
+		switch {
+		case strings.HasPrefix(line, ":"):
+			// heartbeat/comment line, not part of any event
+		case strings.HasPrefix(line, "id: "):
+			id = strings.TrimPrefix(line, "id: ")
+			haveID = true
+		case strings.HasPrefix(line, "data: "):
+			data = strings.TrimPrefix(line, "data: ")
+		case line == "" && haveID:
+			return id, data
+		}
+	}
+}
+
 // TestHandlerStreamSurvivesPastServerWriteTimeout is acceptance 1: a
 // stream held past a 10s WriteTimeout and a 30s one keeps delivering.
 // Scaled down 100x (100ms, 300ms) so the test runs in well under a
@@ -1094,4 +1124,61 @@ func TestSummaryJSONSeqFieldIsThePublishSequenceNotTheExchangeID(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestHandlerStreamIDLineCarriesTheStoreEpochPrefixEndToEnd is item 1's
+// acceptance (PR 620 review, coverage MEDIUM: the id: line's epoch prefix
+// is asserted nowhere, at either end). readSSEEvents strips everything
+// before the last dash (its own doc above), so no other test in this file
+// can see the prefix or echo back an id: line the server actually wrote.
+// This test reads the raw "id: <epoch>-<seq>" line as a client does,
+// keeps the whole value, and echoes it back as Last-Event-ID on a
+// reconnect, pinning both the write side and the resume side.
+//
+// Mutant (handler_sse.go:270): `fmt.Fprintf(w, "id: %d-%d\ndata: %s\n\n",
+// s.epoch, sum.Seq, body)` reduced to `"id: %d\n..."` with sum.Seq alone
+// makes the first assertion RED: the id: line no longer starts with the
+// store's own epoch.
+//
+// Mutant (handler_sse.go:245): `return &resumePoint{seq: seq}, nil`
+// changed to `return &resumePoint{seq: seq, foreignEpoch: true}, nil`
+// makes the second assertion RED: a client's own-incarnation resume is
+// treated as foreign and replays seq 1 again instead of resuming from
+// seq 2.
+func TestHandlerStreamIDLineCarriesTheStoreEpochPrefixEndToEnd(t *testing.T) {
+	st := newTestStore(t)
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/stream")
+	if err != nil {
+		t.Fatalf("GET /stream: %v", err)
+	}
+	r := bufio.NewReader(resp.Body)
+
+	st.Record(makeExchange(1, 1, "client-a", 32, 32))
+	rawID, _ := readRawSSEEvent(t, r, time.Now().Add(5*time.Second))
+	_ = resp.Body.Close()
+
+	if want := fmt.Sprintf("%d-%d", st.epoch, uint64(1)); rawID != want {
+		t.Fatalf("id: line: got %q, want %q (the store's own epoch prefix)", rawID, want)
+	}
+
+	st.Record(makeExchange(2, 1, "client-a", 32, 32))
+	waitQueueDrained(t, st)
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/stream", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Last-Event-ID", rawID)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /stream (resume): %v", err)
+	}
+	defer func() { _ = resp2.Body.Close() }()
+	events := readSSEEvents(t, bufio.NewReader(resp2.Body), 1, time.Now().Add(5*time.Second))
+	if events[0].id != 2 {
+		t.Fatalf("resumed event id: got %d, want 2 (a resume with the store's own id must replay only what follows it, not seq 1 again)", events[0].id)
+	}
 }

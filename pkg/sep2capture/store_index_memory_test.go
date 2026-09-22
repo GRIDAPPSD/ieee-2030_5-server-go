@@ -75,4 +75,17 @@ func TestIndexMemoryAtFullCap(t *testing.T) {
 	if perEntry > ceilingBytesPerEntry {
 		t.Errorf("index memory per entry: got %.1f bytes, want <= %d (sanity ceiling, not a tight bound)", perEntry, ceilingBytesPerEntry)
 	}
+
+	// indexEntryBytes (index.go) is what ensureRoomFor trusts to decide
+	// when the index memory budget is over; the ceiling above alone does
+	// not pin it, since indexFixedEntryBytes surviving at 24 or at 2400
+	// both still pass it. Band the estimate for this run's own entry shape
+	// against the real heap measured above: wide enough for -race's shadow
+	// memory to still pass at the real constant, tight enough that a 10x
+	// miss in either direction fails.
+	estimate := float64(indexEntryBytes("GET", "/edev/0/reg", "client-000", "client-000-sfdi", ""))
+	const bandLow, bandHigh = 0.5, 2.0
+	if ratio := estimate / perEntry; ratio < bandLow || ratio > bandHigh {
+		t.Errorf("indexEntryBytes estimate: got %.1f bytes (%.2fx the measured %.1f bytes/entry), want within [%.1f, %.1f]x", estimate, ratio, perEntry, bandLow, bandHigh)
+	}
 }

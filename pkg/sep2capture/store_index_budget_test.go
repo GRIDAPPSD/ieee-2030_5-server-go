@@ -1,7 +1,6 @@
 package sep2capture
 
 import (
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -44,10 +43,10 @@ func TestIndexMemoryBudgetEvictsEarly(t *testing.T) {
 		t.Errorf("EvictedSegments: got %d, want 0 (every eviction here is index-budget driven, the generous disk cap is never the cause)", stats.EvictedSegments)
 	}
 
-	// One segment's worth of entries is the documented transient
-	// allowance (ensureRoomFor's own doc: "the index still over its
-	// budget... by up to one record/entry on top of one segment"),
-	// since the active segment can never be evicted.
+	// This scenario's slack is roughly one live segment's worth of
+	// entries: segBytes is small enough that ordinary disk-size rollover
+	// reaches the budget before the early-roll path in ensureRoomFor ever
+	// has to trigger, unlike TestIndexBudgetHoldsWithoutSegmentRoll below.
 	oneEntry := indexEntryBytes("GET", "/x", "client-1", "client-1-sfdi", "")
 	slack := (segBytes/recordBytes + 2) * oneEntry
 	if stats.IndexApproxBytes > indexBudget+slack {
@@ -148,14 +147,16 @@ func TestParseRequestLineTruncatesMethodAtBoundary(t *testing.T) {
 // returns once approxBytes+entryEstimate <= indexMemBudget, so
 // IndexApproxBytes should never exceed the budget by more than a couple of
 // entries, nowhere near a whole segment's worth (tens of thousands of
-// entries at these sizes). The real heap is checked too, with a much
-// looser sanity ceiling, since Store carries fixed overhead (channels,
-// file handles) an estimate does not.
+// entries at these sizes).
 //
 // Mutant: reverting ensureRoomFor to break unconditionally when the oldest
 // live segment is the active one (the pre-fix behavior) makes this RED:
-// IndexApproxBytes and the measured heap both grow linearly with the
-// number of records, with zero evictions of any kind.
+// IndexApproxBytes grows linearly with the number of records, with zero
+// evictions of any kind. A real-heap check was tried here too and removed:
+// at n=2000 the estimate-bound entries measure far under any ceiling loose
+// enough to survive -race, so it never failed even with evictSegment
+// itself disabled (TestIndexMemoryAtFullCap bands the estimate against
+// real heap at a scale where that distinction shows).
 func TestIndexBudgetHoldsWithoutSegmentRoll(t *testing.T) {
 	const (
 		capBytes    = 8 * 1024 * 1024 // generous: disk must never be the trigger
@@ -167,10 +168,6 @@ func TestIndexBudgetHoldsWithoutSegmentRoll(t *testing.T) {
 	)
 
 	dir := t.TempDir()
-
-	runtime.GC()
-	var before runtime.MemStats
-	runtime.ReadMemStats(&before)
 
 	st, err := NewStore(StoreConfig{Dir: dir, CapBytes: capBytes, SegmentBytes: segBytes, IndexMemBudgetBytes: indexBudget})
 	if err != nil {
@@ -197,23 +194,63 @@ func TestIndexBudgetHoldsWithoutSegmentRoll(t *testing.T) {
 			stats.IndexApproxBytes, estimateCeiling, indexBudget, segBytes/(recordHeaderLen+reqLen+respLen))
 	}
 
-	runtime.GC()
-	var after runtime.MemStats
-	runtime.ReadMemStats(&after)
-	heapDelta := int64(after.HeapAlloc) - int64(before.HeapAlloc)
-
-	// A loose sanity ceiling on real heap: Store's own fixed overhead
-	// (channels, the segment files rolled along the way) is not part of
-	// the index estimate, and -race's shadow memory inflates every
-	// allocation, so this stays generous next to estimateCeiling. Leaving
-	// the index unbounded (the pre-fix behavior) fails IndexMemoryEvictions
-	// above long before this line is reached.
-	const heapCeiling = 16 * indexBudget
-	if heapDelta > heapCeiling {
-		t.Errorf("heap growth (runtime.MemStats.HeapAlloc): got %d bytes, want <= %d", heapDelta, int64(heapCeiling))
-	}
-
 	if got := dirSize(t, dir); got > capBytes {
 		t.Errorf("dir size: got %d, want <= %d (disk cap must still hold)", got, capBytes)
+	}
+}
+
+// TestNewStoreDefaultsIndexMemBudget pins defaultIndexMemBudgetBytes
+// (store.go): a zero IndexMemBudgetBytes in StoreConfig must fall back to
+// exactly the operator's 2026-09-22 256 MB default, not any other value.
+//
+// Mutant (store.go): changing defaultIndexMemBudgetBytes survives every
+// other test in this file, since none of them build a Store without
+// setting IndexMemBudgetBytes explicitly.
+func TestNewStoreDefaultsIndexMemBudget(t *testing.T) {
+	dir := t.TempDir()
+	st, err := NewStore(StoreConfig{Dir: dir})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	t.Cleanup(func() { closeStore(t, st) })
+
+	// The literal, not the defaultIndexMemBudgetBytes identifier: comparing
+	// against the constant it is itself assigned from would pass no matter
+	// what value that constant held (the coverage re-review's exact miss).
+	const wantDefault = 256 * 1024 * 1024
+	if st.indexMemBudget != wantDefault {
+		t.Errorf("indexMemBudget: got %d, want %d (the operator's 2026-09-22 256 MB default)", st.indexMemBudget, wantDefault)
+	}
+}
+
+// TestIndexMemoryBudgetSmallerThanOneEntryTerminates: a budget below what
+// one entry's own indexEntryBytes estimate costs must still make progress,
+// never spin ensureRoomFor forever trying to admit an entry it can never
+// fit under budget. ensureRoomFor's own two guards (rolledForIndex,
+// s.active.size==0) turn out redundant with each other on this call path,
+// since a fresh roll always leaves size==0 before ensureRoomFor's caller
+// ever writes to it; only dropping both hangs it. waitQueueDrained's own
+// 5s deadline is the RED signal: with both gone, ensureRoomFor never
+// returns and inFlightBytes never reaches 0.
+//
+// Mutant (segment_writer.go, ensureRoomFor): dropping both
+// `rolledForIndex ||` and `s.active.size == 0` from the break condition
+// hangs this test until waitQueueDrained's deadline fires.
+func TestIndexMemoryBudgetSmallerThanOneEntryTerminates(t *testing.T) {
+	dir := t.TempDir()
+	st, err := NewStore(StoreConfig{Dir: dir, IndexMemBudgetBytes: 1})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	t.Cleanup(func() { closeStore(t, st) })
+
+	for i := 1; i <= 20; i++ {
+		id := uint64(i)
+		st.Record(makeExchange(id, id, "client-1", 25, 25))
+	}
+	waitQueueDrained(t, st)
+
+	if got := st.Stats().IndexMemoryEvictions; got == 0 {
+		t.Error("IndexMemoryEvictions: got 0, want > 0 (a budget under one entry must still evict and make progress, not just wedge)")
 	}
 }

@@ -187,3 +187,51 @@ func TestEffectiveStorePath(t *testing.T) {
 		})
 	}
 }
+
+// TestEffectiveTrafficDir pins #611's directory precedence: TrafficDir wins,
+// else <DataDir>/traffic, else "" (capture off). Mutant: swap the two
+// EffectiveTrafficDir branches (return the DataDir join first) and this
+// test's "TrafficDir wins over DataDir" case goes red.
+func TestEffectiveTrafficDir(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		trafficDir string
+		dataDir    string
+		want       string
+	}{
+		{
+			name: "neither set returns empty (capture off)",
+			want: "",
+		},
+		{
+			name:    "DataDir only derives <DataDir>/traffic",
+			dataDir: "/var/lib/sep2",
+			want:    filepath.Join("/var/lib/sep2", "traffic"),
+		},
+		{
+			name:       "TrafficDir only returns verbatim",
+			trafficDir: "/custom/traffic",
+			want:       "/custom/traffic",
+		},
+		{
+			name:       "TrafficDir wins over DataDir",
+			trafficDir: "/custom/traffic",
+			dataDir:    "/var/lib/sep2",
+			want:       "/custom/traffic",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &Config{TrafficDir: tc.trafficDir, DataDir: tc.dataDir}
+			if got := cfg.EffectiveTrafficDir(); got != tc.want {
+				t.Errorf("EffectiveTrafficDir() with TrafficDir=%q DataDir=%q = %q, want %q",
+					tc.trafficDir, tc.dataDir, got, tc.want)
+			}
+		})
+	}
+}

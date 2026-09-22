@@ -3,7 +3,11 @@ package sep2capture
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -296,5 +300,364 @@ func TestReplaySetHasDistinguishesReplayedIDs(t *testing.T) {
 	}
 	if r.has(3) {
 		t.Error("has(3): got true, want false (3 was never added)")
+	}
+}
+
+// TestHandlerStreamClosesOnFirstDropSoResumeFillsTheGap is items 1 and 2's
+// acceptance together: a subscriber that cannot absorb one more event has
+// its stream ended, not left open to miss events silently (item 1), and
+// reconnecting with the id: value it last saw picks up exactly what it
+// missed even though the missed exchanges publish after the one already
+// delivered (item 2). sseSubscribedHook forces the overflow deterministically,
+// before handleStream's own goroutine ever reads from the channel, rather
+// than racing the scheduler for it.
+//
+// Mutant (segment_writer.go, publish): reverting to the bare `default:
+// s.slowSubscribers.Add(1)` with no closeSubscription call makes this RED:
+// resp.Body never reaches EOF, so the test times out waiting for it.
+func TestHandlerStreamClosesOnFirstDropSoResumeFillsTheGap(t *testing.T) {
+	old := subscriberBufferSize
+	subscriberBufferSize = 1
+	t.Cleanup(func() { subscriberBufferSize = old })
+
+	st := newTestStore(t)
+	sseSubscribedHook = func() {
+		for _, id := range []uint64{1, 2, 3} {
+			st.Record(makeExchange(id, id, "client-a", 32, 32))
+		}
+		waitQueueDrained(t, st)
+	}
+	t.Cleanup(func() { sseSubscribedHook = nil })
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/stream")
+	if err != nil {
+		t.Fatalf("GET /stream: %v", err)
+	}
+	r := bufio.NewReader(resp.Body)
+
+	// Buffer size 1: exactly one event lands before the second publish
+	// finds it full and ends the subscription, so exactly one event is
+	// delivered and the connection then closes instead of continuing.
+	got := readSSEEvents(t, r, 1, time.Now().Add(5*time.Second))
+	if _, err := r.ReadByte(); err != io.EOF {
+		t.Fatalf("stream after the drop: got err %v, want io.EOF (the connection must close, not continue)", err)
+	}
+	_ = resp.Body.Close()
+
+	if stats := st.Stats(); stats.SlowSubscribers != 1 {
+		t.Errorf("SlowSubscribers: got %d, want 1", stats.SlowSubscribers)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/stream", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Last-Event-ID", strconv.FormatUint(got[0].id, 10))
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /stream (resume): %v", err)
+	}
+	defer func() { _ = resp2.Body.Close() }()
+	r2 := bufio.NewReader(resp2.Body)
+	resumed := readSSEEvents(t, r2, 2, time.Now().Add(5*time.Second))
+
+	ids := make([]uint64, len(resumed))
+	for i, e := range resumed {
+		var body summaryJSON
+		if err := json.Unmarshal([]byte(e.data), &body); err != nil {
+			t.Fatalf("unmarshal resumed event: %v", err)
+		}
+		ids[i] = body.ID
+	}
+	if want := []uint64{2, 3}; !idsEqual(ids, want) {
+		t.Fatalf("resumed exchange ids: got %v, want %v (the two dropped by the buffer overflow, once each)", ids, want)
+	}
+}
+
+// TestHandlerStreamResumeSurvivesOutOfOrderConnections is item 2's
+// acceptance: exchange ids assigned at connection open can complete, and
+// so reach Record, in the opposite order (index.go's Summary.Seq doc);
+// resume must still deliver every exchange exactly once. Record simulates
+// the out-of-order arrival directly, the same way
+// TestExchangesAfterIDAndLimitSurviveOutOfOrderArrival does: what is under
+// test is summariesAfter's ordering, not id assignment upstream of Record.
+//
+// Mutant (store_reader.go, summariesAfter): reverting to filter and sort
+// by ID instead of Seq makes this RED: the reconnect misses exchange id 1,
+// whose Seq is higher than id 2's even though its own id is lower.
+func TestHandlerStreamResumeSurvivesOutOfOrderConnections(t *testing.T) {
+	st := newTestStore(t)
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	resp1, err := http.Get(ts.URL + "/stream")
+	if err != nil {
+		t.Fatalf("GET /stream: %v", err)
+	}
+	r1 := bufio.NewReader(resp1.Body)
+
+	// Exchange id 2 completes (reaches Record) before exchange id 1: the
+	// later-opened connection finished first.
+	st.Record(makeExchange(2, 2, "client-a", 32, 32))
+	first := readSSEEvents(t, r1, 1, time.Now().Add(5*time.Second))
+	lastSeen := first[0].id
+	_ = resp1.Body.Close()
+
+	st.Record(makeExchange(1, 1, "client-a", 32, 32))
+	waitQueueDrained(t, st)
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/stream", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Last-Event-ID", strconv.FormatUint(lastSeen, 10))
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /stream (resume): %v", err)
+	}
+	defer func() { _ = resp2.Body.Close() }()
+	r2 := bufio.NewReader(resp2.Body)
+	second := readSSEEvents(t, r2, 1, time.Now().Add(5*time.Second))
+
+	var body summaryJSON
+	if err := json.Unmarshal([]byte(second[0].data), &body); err != nil {
+		t.Fatalf("unmarshal resumed event: %v", err)
+	}
+	if body.ID != 1 {
+		t.Fatalf("resumed exchange id: got %d, want 1 (it completed after id 2 but must still be delivered, not skipped)", body.ID)
+	}
+}
+
+// TestHandlerStreamLogsWriteDeadlineFailureInsteadOfDiscardingIt is item
+// 3's acceptance: a ResponseWriter that cannot support a write deadline
+// (httptest.ResponseRecorder implements neither SetWriteDeadline nor
+// Unwrap, so http.ResponseController answers http.ErrNotSupported, per
+// GOROOT responsecontroller.go) must reach the error log, not be discarded
+// by `_ = rc.SetWriteDeadline(...)`.
+//
+// Mutant (handler_sse.go, handleStream): reverting the first
+// SetWriteDeadline call back to `_ = rc.SetWriteDeadline(...)` makes this
+// RED: logBuf never gets anything written to it, and the test times out.
+func TestHandlerStreamLogsWriteDeadlineFailureInsteadOfDiscardingIt(t *testing.T) {
+	var logBuf syncBuffer
+	st, err := NewStore(StoreConfig{Dir: t.TempDir(), ErrorLog: log.New(&logBuf, "", 0)})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	t.Cleanup(func() { closeStore(t, st) })
+
+	rec := httptest.NewRecorder()
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/stream", nil).WithContext(ctx)
+
+	done := make(chan struct{})
+	go func() {
+		st.handleStream(rec, req)
+		close(done)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for logBuf.Len() == 0 {
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatal("write-deadline failure never reached the error log")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	if got := logBuf.String(); !strings.Contains(got, "write-deadline") {
+		t.Fatalf("error log: got %q, want it to mention the write-deadline failure", got)
+	}
+}
+
+// TestHandlerStreamWithNoResumeParamIsLiveOnly is coverage-lane MEDIUM 4:
+// a plain GET /stream (no after=, no Last-Event-ID) must never replay
+// pre-existing history, only what publishes after the connection opens.
+//
+// Mutant (handler_sse.go, parseResume): returning &0 instead of nil when
+// v == "" makes this RED: the two exchanges recorded before the request
+// would be replayed, and the first event read would carry exchange id 1
+// instead of 3.
+func TestHandlerStreamWithNoResumeParamIsLiveOnly(t *testing.T) {
+	st := newTestStore(t)
+	for _, id := range []uint64{1, 2} {
+		st.Record(makeExchange(id, id, "client-a", 32, 32))
+	}
+	waitQueueDrained(t, st)
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/stream")
+	if err != nil {
+		t.Fatalf("GET /stream: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	r := bufio.NewReader(resp.Body)
+
+	st.Record(makeExchange(3, 3, "client-a", 32, 32))
+	events := readSSEEvents(t, r, 1, time.Now().Add(5*time.Second))
+
+	var body summaryJSON
+	if err := json.Unmarshal([]byte(events[0].data), &body); err != nil {
+		t.Fatalf("unmarshal event: %v", err)
+	}
+	if body.ID != 3 {
+		t.Fatalf("first event exchange id: got %d, want 3 (pre-existing ids 1 and 2 must not be replayed)", body.ID)
+	}
+}
+
+// TestHandlerStreamResumeAcrossEvictionDeliversSurvivors is coverage-lane
+// MEDIUM 5: a resume point whose own exchange has since been evicted must
+// still deliver every surviving exchange recorded after it, per the route
+// doc's "an evicted id is silently skipped" (handler.go).
+func TestHandlerStreamResumeAcrossEvictionDeliversSurvivors(t *testing.T) {
+	dir := t.TempDir()
+	st, err := NewStore(StoreConfig{Dir: dir, CapBytes: 64 * 1024, SegmentBytes: 8 * 1024})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	t.Cleanup(func() { closeStore(t, st) })
+
+	for i := uint64(1); i <= 200; i++ {
+		st.Record(makeExchange(i, i, "client-1", 512, 512))
+	}
+	waitQueueDrained(t, st)
+	if st.Stats().EvictedSegments == 0 {
+		t.Fatal("EvictedSegments: got 0, want > 0 (test setup needs eviction to have happened)")
+	}
+	if _, err := st.Exchange(1); err != ErrEvicted {
+		t.Fatalf("Store.Exchange(1): got %v, want ErrEvicted (test setup needs id 1 evicted)", err)
+	}
+	wantCount := st.Stats().IndexEntries
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	// Seq 1 (exchange id 1's, long since evicted): every surviving
+	// exchange must still come back, none silently lost because the
+	// resume point itself no longer exists in the index.
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/stream", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Last-Event-ID", "1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /stream (resume): %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	r := bufio.NewReader(resp.Body)
+
+	events := readSSEEvents(t, r, wantCount, time.Now().Add(5*time.Second))
+	if len(events) != wantCount {
+		t.Fatalf("replayed events: got %d, want %d (every surviving indexed exchange)", len(events), wantCount)
+	}
+}
+
+// TestHandlerStreamDuplicateGuardCoversTheRaceWithHistoryReplay is
+// coverage-lane MEDIUM 3: an id already delivered during history replay
+// must never be delivered again even when it also arrives on the live
+// subscribe channel, exactly the race handleStream's own comment on
+// replaySet describes (an exchange indexed in the window between
+// Subscribe and the history read reaches both). subscribeHook and
+// replayHook inject that race directly and in order, since forcing it
+// through real timing is not deterministic from outside the package.
+//
+// Mutant (handler_sse.go, handleStream): removing the
+// `if replayed.has(sum.Seq) { continue }` guard makes this RED: the
+// resumed stream delivers exchange 1's summary twice instead of once.
+func TestHandlerStreamDuplicateGuardCoversTheRaceWithHistoryReplay(t *testing.T) {
+	st := newTestStore(t)
+	st.Record(makeExchange(1, 1, "client-a", 32, 32))
+	waitQueueDrained(t, st)
+	firstSeq := st.summariesAfter(0)[0].Seq
+
+	subscribeHook = func(ch chan Summary) {
+		// The documented race: exchange 1's own summary also lands on
+		// the live channel, exactly as publish would, before the
+		// history read below has even run.
+		ch <- st.summariesAfter(0)[0]
+	}
+	t.Cleanup(func() { subscribeHook = nil })
+	replayHook = func() {
+		// Fires after `replayed` already holds firstSeq: exchange 2 is
+		// now genuinely new and only ever reaches the client live.
+		st.Record(makeExchange(2, 2, "client-a", 32, 32))
+		waitQueueDrained(t, st)
+	}
+	t.Cleanup(func() { replayHook = nil })
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/stream", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Last-Event-ID", "0")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /stream: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	r := bufio.NewReader(resp.Body)
+
+	events := readSSEEvents(t, r, 2, time.Now().Add(5*time.Second))
+	if events[0].id != firstSeq {
+		t.Fatalf("first event id: got %d, want %d (the history replay)", events[0].id, firstSeq)
+	}
+	var second summaryJSON
+	if err := json.Unmarshal([]byte(events[1].data), &second); err != nil {
+		t.Fatalf("unmarshal second event: %v", err)
+	}
+	if second.ID != 2 {
+		t.Fatalf("second event exchange id: got %d, want 2 (exchange 1's replay must not repeat: with the guard removed this is exchange 1's duplicate instead)", second.ID)
+	}
+}
+
+// TestHandlerStreamLastEventIDWinsOverAfterQueryParam is a coverage-lane
+// LOW: per the route doc, the Last-Event-ID header takes precedence over
+// after= when both are present.
+//
+// Mutant (handler_sse.go, parseResume): swapping the header and query
+// checks makes this RED: the resumed stream would replay from after=1
+// (missing nothing) instead of from Last-Event-ID's 2 (replaying only
+// exchange 3).
+func TestHandlerStreamLastEventIDWinsOverAfterQueryParam(t *testing.T) {
+	st := newTestStore(t)
+	for _, id := range []uint64{1, 2, 3} {
+		st.Record(makeExchange(id, id, "client-a", 32, 32))
+	}
+	waitQueueDrained(t, st)
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/stream?after=1", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Last-Event-ID", "2")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /stream: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	r := bufio.NewReader(resp.Body)
+
+	events := readSSEEvents(t, r, 1, time.Now().Add(5*time.Second))
+	var body summaryJSON
+	if err := json.Unmarshal([]byte(events[0].data), &body); err != nil {
+		t.Fatalf("unmarshal event: %v", err)
+	}
+	if body.ID != 3 {
+		t.Fatalf("resumed exchange id: got %d, want 3 (Last-Event-ID=2 must win over after=1)", body.ID)
 	}
 }

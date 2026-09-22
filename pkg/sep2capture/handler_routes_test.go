@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func newTestStore(t testing.TB) *Store {
@@ -258,4 +259,182 @@ func TestHandlerClientsAndStatsAndExchangeSummaryFieldValues(t *testing.T) {
 			t.Errorf("IndexEntries: got %d, want 1", stats.IndexEntries)
 		}
 	})
+}
+
+// TestHandlerExchangeListAfterFiltersToNewerIDs is a coverage-lane LOW:
+// after= must actually exclude ids at or below it, not just accept the
+// parameter.
+//
+// Mutant (handler.go, handleExchangeList): passing 0 instead of after to
+// Store.Exchanges makes this RED: all three ids come back instead of just
+// the one above after=2.
+func TestHandlerExchangeListAfterFiltersToNewerIDs(t *testing.T) {
+	st := newTestStore(t)
+	for _, id := range []uint64{1, 2, 3} {
+		st.Record(makeExchange(id, id, "client-1", 32, 32))
+	}
+	waitQueueDrained(t, st)
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/exchanges?client=client-1&after=2")
+	if err != nil {
+		t.Fatalf("GET /exchanges: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var body struct {
+		Exchanges []summaryJSON `json:"exchanges"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Exchanges) != 1 || body.Exchanges[0].ID != 3 {
+		t.Fatalf("exchanges after=2: got %v, want exactly id 3", body.Exchanges)
+	}
+}
+
+// TestHandlerExchangeListDefaultLimitIs200 is a coverage-lane LOW: the
+// unstated default (no limit= at all) must be defaultExchangesLimit, not
+// unbounded.
+//
+// Mutant (handler.go, parseLimit): returning 0 (Store.Exchanges' own
+// meaning of unbounded) instead of defaultExchangesLimit when v == "" makes
+// this RED: all 250 recorded exchanges come back instead of 200.
+func TestHandlerExchangeListDefaultLimitIs200(t *testing.T) {
+	st := newTestStore(t)
+	for i := uint64(1); i <= 250; i++ {
+		st.Record(makeExchange(i, i, "client-1", 32, 32))
+	}
+	waitQueueDrained(t, st)
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/exchanges?client=client-1")
+	if err != nil {
+		t.Fatalf("GET /exchanges: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var body struct {
+		Exchanges []summaryJSON `json:"exchanges"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Exchanges) != defaultExchangesLimit {
+		t.Fatalf("len(exchanges) with no limit=: got %d, want %d (defaultExchangesLimit)", len(body.Exchanges), defaultExchangesLimit)
+	}
+}
+
+// TestHandlerStatsDropCountersAndSummaryTruncationFlagsAreNotSwapped is a
+// coverage-lane LOW: droppedQueueFull/droppedWriteError and
+// reqTruncated/respTruncated are each asserted with different values on
+// their two sides, so a field swap in toStatsJSON or toSummaryJSON cannot
+// pass silently by both sides matching.
+//
+// Mutant (handler.go, toStatsJSON): swapping DroppedQueueFull and
+// DroppedWriteError makes this RED: droppedQueueFull reads 0 (the real
+// DroppedWriteError value) instead of > 0.
+func TestHandlerStatsDropCountersAndSummaryTruncationFlagsAreNotSwapped(t *testing.T) {
+	st := newTestStore(t)
+
+	// A request-only-truncated exchange next to a response-only-truncated
+	// one, so a flag swap cannot pass by both sides reading identically.
+	now := time.Now()
+	st.Record(Exchange{
+		ID: 1, ConnID: 1, ClientLFDI: "client-1", Started: now, Ended: now,
+		Request:  Direction{Bytes: []byte("GET /x HTTP/1.1\r\n\r\n"), TrueLen: 20, Truncated: true},
+		Response: Direction{Bytes: []byte("HTTP/1.1 200 OK\r\n\r\n"), TrueLen: 20},
+		Mark:     MarkHandled, HandlerRuns: 1,
+	})
+	waitQueueDrained(t, st)
+
+	// Stalls the writer (store_stall_test.go's pattern) so a burst of
+	// records overflows the byte-bounded queue: DroppedQueueFull moves,
+	// DroppedWriteError (a disk failure) never does here.
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	st.testBeforeWrite = func() {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+	}
+	t.Cleanup(func() { close(release) })
+
+	st.Record(makeExchange(2, 2, "client-1", 1000, 1000))
+	<-entered
+	const bigDirection = 3 * 1024 * 1024
+	for i := 3; i <= 40 && st.Stats().DroppedQueueFull == 0; i++ {
+		id := uint64(i)
+		st.Record(makeExchange(id, id, "client-1", bigDirection, bigDirection))
+	}
+	if st.Stats().DroppedQueueFull == 0 {
+		t.Fatal("DroppedQueueFull: got 0, want > 0 (test setup needs the queue to overflow)")
+	}
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	statsResp, err := http.Get(ts.URL + "/stats")
+	if err != nil {
+		t.Fatalf("GET /stats: %v", err)
+	}
+	defer func() { _ = statsResp.Body.Close() }()
+	var stats statsJSON
+	if err := json.NewDecoder(statsResp.Body).Decode(&stats); err != nil {
+		t.Fatalf("decode stats: %v", err)
+	}
+	if stats.DroppedQueueFull == 0 {
+		t.Error("droppedQueueFull: got 0, want > 0")
+	}
+	if stats.DroppedWriteError != 0 {
+		t.Errorf("droppedWriteError: got %d, want 0 (nothing here fails a disk write)", stats.DroppedWriteError)
+	}
+
+	sumResp, err := http.Get(ts.URL + "/exchanges/1")
+	if err != nil {
+		t.Fatalf("GET /exchanges/1: %v", err)
+	}
+	defer func() { _ = sumResp.Body.Close() }()
+	var sum summaryJSON
+	if err := json.NewDecoder(sumResp.Body).Decode(&sum); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if !sum.ReqTruncated {
+		t.Error("reqTruncated: got false, want true")
+	}
+	if sum.RespTruncated {
+		t.Error("respTruncated: got true, want false")
+	}
+}
+
+// TestHandlerSkippedIDBelowHighWaterMarkGives410NotFalse404 is a
+// coverage-lane LOW: an id below the highest ever seen but never indexed
+// (an idle keep-alive dropped upstream before Record, handler.go's own
+// 404/410 doc) reads as evicted (410), the same as a truly evicted one,
+// never as "never existed" (404).
+//
+// Mutant (handler.go, writeExchangeError): swapping the ErrEvicted case to
+// answer 404 makes this RED, same as TestHandlerEvictedExchangeIDGives410,
+// but for a skipped id rather than a capacity-evicted one.
+func TestHandlerSkippedIDBelowHighWaterMarkGives410NotFalse404(t *testing.T) {
+	st := newTestStore(t)
+	st.Record(makeExchange(1, 1, "client-1", 32, 32))
+	st.Record(makeExchange(3, 3, "client-1", 32, 32)) // id 2 never recorded
+	waitQueueDrained(t, st)
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/exchanges/2")
+	if err != nil {
+		t.Fatalf("GET /exchanges/2: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusGone {
+		t.Fatalf("status: got %d, want %d", resp.StatusCode, http.StatusGone)
+	}
 }

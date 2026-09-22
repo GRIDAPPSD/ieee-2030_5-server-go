@@ -1,0 +1,242 @@
+package sep2capture
+
+import (
+	"sort"
+	"sync"
+	"time"
+)
+
+// Summary is one exchange's index entry: everything Exchanges and the
+// exchange list need to render without reading its bytes off disk (Q4).
+type Summary struct {
+	ID            uint64
+	ConnID        uint64
+	ClientKey     string // ClientLFDI, or "" when the connection had none
+	Started       time.Time
+	Ended         time.Time
+	Mark          Mark
+	Error         string
+	HandlerRuns   int
+	Method        string // from the request's first line, capped at maxIndexedMethod bytes, "" if unparseable
+	Path          string // capped at maxIndexedPath bytes
+	Status        int    // from the response's first line, 0 if none
+	ReqTrueLen    int64
+	RespTrueLen   int64
+	ReqStored     int64 // bytes actually on disk for this direction
+	RespStored    int64
+	ReqTruncated  bool
+	RespTruncated bool
+}
+
+// ClientSummary is one client's row for Clients(): counts survive
+// eviction even after every exchange id behind them is gone (Q4).
+type ClientSummary struct {
+	Key           string
+	FirstSeen     time.Time
+	LastSeen      time.Time
+	ExchangeCount uint64
+}
+
+// exchangeEntry is Summary plus what Exchange needs to read the payload
+// back: which segment, and the byte offset of that record's header within
+// it. clientSFDI is kept here rather than on Summary because the reader
+// list methods (Q4) only ever describe an exchange by ClientKey (LFDI, or
+// remote host when there is none); SFDI is only needed to reconstruct a
+// full Exchange value.
+type exchangeEntry struct {
+	Summary
+	clientSFDI string
+	segment    int64
+	offset     int64
+	memBytes   int64
+}
+
+// indexFixedEntryBytes approximates the part of one index entry's memory
+// cost that does not depend on any string it holds: the exchangeEntry
+// struct itself plus its bookkeeping in byID, byClient and segIDs
+// (measured about 292 bytes for a 138-byte record with short strings).
+// indexEntryBytes adds the actual bytes of every string field on top, so a
+// caller with an oversized Method or ClientKey is charged for what it
+// really costs, not an average.
+const indexFixedEntryBytes = 240
+
+// indexEntryBytes estimates one entry's cost against the operator's
+// 2026-09-22 index memory budget. It is an estimate used only to decide
+// when to evict early, not a measurement of actual heap bytes.
+func indexEntryBytes(method, path, clientKey, clientSFDI, errText string) int64 {
+	return indexFixedEntryBytes + int64(len(method)+len(path)+len(clientKey)+len(clientSFDI)+len(errText))
+}
+
+// clientEntry is one client's row plus the exchange ids recorded for it,
+// kept sorted ascending by id (not append order) so Exchanges' binary
+// search on afterID is valid even when a client's connections finish out
+// of id order: a later-opened connection can complete, and so reach
+// Record, before an earlier one on the same client does.
+type clientEntry struct {
+	ClientSummary
+	ids []uint64
+}
+
+// index is the in-memory index Q4 describes: per-exchange, per-client, and
+// (via segIDs) per-segment, so evictSegment can find exactly what one
+// deleted file's entries were without scanning the whole map. Only the
+// writer goroutine ever calls add or evictSegment; the reader methods in
+// store_reader.go take mu for every access, including their own.
+// approxBytes is the running sum of every live entry's indexEntryBytes
+// estimate: the operator's 2026-09-22 index memory budget.
+type index struct {
+	mu           sync.Mutex
+	byID         map[uint64]*exchangeEntry
+	byClient     map[string]*clientEntry
+	segIDs       map[int64][]uint64
+	maxSeen      uint64
+	approxBytes  int64
+	duplicateIDs uint64
+}
+
+func newIndex() *index {
+	return &index{
+		byID:     make(map[uint64]*exchangeEntry),
+		byClient: make(map[string]*clientEntry),
+		segIDs:   make(map[int64][]uint64),
+	}
+}
+
+// add records one exchange written to segment/offset. Called only from the
+// writer goroutine, once per exchange, but NOT necessarily in Started/Ended
+// order: two connections on the same client can finish, and so reach
+// Record, in either order (insertSorted's own doc below). FirstSeen and
+// LastSeen therefore track the earliest Started and latest Ended seen so
+// far, not the first and most recent to arrive.
+func (x *index) add(e exchangeEntry) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+
+	if x.refuseIfDuplicateLocked(e.ID) {
+		return
+	}
+
+	x.byID[e.ID] = &e
+	if e.ID > x.maxSeen {
+		x.maxSeen = e.ID
+	}
+	x.segIDs[e.segment] = append(x.segIDs[e.segment], e.ID)
+	x.approxBytes += e.memBytes
+
+	c := x.byClient[e.ClientKey]
+	if c == nil {
+		c = &clientEntry{ClientSummary: ClientSummary{Key: e.ClientKey, FirstSeen: e.Started, LastSeen: e.Ended}}
+		x.byClient[e.ClientKey] = c
+	} else {
+		if e.Started.Before(c.FirstSeen) {
+			c.FirstSeen = e.Started
+		}
+		if e.Ended.After(c.LastSeen) {
+			c.LastSeen = e.Ended
+		}
+	}
+	c.ExchangeCount++
+	c.ids = insertSorted(c.ids, e.ID)
+}
+
+// refuseIfDuplicate reports whether id is already indexed and, if so,
+// counts it as add would. Called by writeOne (segment_writer.go) before
+// any disk work, so a duplicate exchange id costs no segment bytes and
+// reaches no subscriber, not only no second index entry.
+func (x *index) refuseIfDuplicate(id uint64) bool {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return x.refuseIfDuplicateLocked(id)
+}
+
+// refuseIfDuplicateLocked is refuseIfDuplicate's body; add shares it under
+// the lock add already holds. Overwriting byID would leave segIDs and
+// approxBytes pointing at two different entries for the same id (the old
+// one's bytes never subtracted, approxBytes drifting up for good), so
+// refusing keeps the first entry authoritative and the index exactly
+// consistent. Callers must hold mu.
+func (x *index) refuseIfDuplicateLocked(id uint64) bool {
+	if _, exists := x.byID[id]; exists {
+		x.duplicateIDs++
+		return true
+	}
+	return false
+}
+
+// approxMemBytes returns the index's current indexEntryBytes total, used by
+// ensureRoomFor (segment_writer.go) to decide whether an incoming entry
+// would cross the operator's 2026-09-22 index memory budget.
+func (x *index) approxMemBytes() int64 {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return x.approxBytes
+}
+
+// insertSorted inserts id into a slice already sorted ascending, keeping
+// it sorted. ids are assigned globally, not per client, so a client with
+// more than one live connection can hand Record two exchanges out of id
+// order; this keeps the per-client slice usable for a binary search
+// regardless.
+func insertSorted(ids []uint64, id uint64) []uint64 {
+	i := sort.Search(len(ids), func(i int) bool { return ids[i] >= id })
+	ids = append(ids, 0)
+	copy(ids[i+1:], ids[i:])
+	ids[i] = id
+	return ids
+}
+
+// removeIDs drops every id in remove from ids (sorted ascending) in a
+// single linear pass, preserving order, and returns the result reusing
+// ids' backing array. A removeSorted call per id, each an O(n) slice shift
+// under idx.mu, made evicting many ids from one client's slice quadratic
+// (10k of 100k ids took 338ms). Filtering once is O(n) regardless of how
+// many ids in remove belong to this client.
+func removeIDs(ids []uint64, remove map[uint64]struct{}) []uint64 {
+	if len(remove) == 0 {
+		return ids
+	}
+	out := ids[:0]
+	for _, id := range ids {
+		if _, drop := remove[id]; drop {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+// evictSegment removes every index entry that segment num held: called
+// only by the writer goroutine, only for the oldest live segment
+// (ensureRoomFor in segment_writer.go), right before that segment's file
+// is deleted. Exchange counts on the affected clients are left untouched:
+// per Q4, "counts survive eviction; ids do not." Ids are grouped by client
+// first so each client's slice is filtered with one removeIDs pass, not
+// one pass per id.
+func (x *index) evictSegment(num int64) {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+
+	ids := x.segIDs[num]
+	delete(x.segIDs, num)
+
+	byClient := make(map[string]map[uint64]struct{}, len(ids))
+	for _, id := range ids {
+		e, ok := x.byID[id]
+		if !ok {
+			continue
+		}
+		delete(x.byID, id)
+		x.approxBytes -= e.memBytes
+		set := byClient[e.ClientKey]
+		if set == nil {
+			set = make(map[uint64]struct{})
+			byClient[e.ClientKey] = set
+		}
+		set[id] = struct{}{}
+	}
+	for key, set := range byClient {
+		if c := x.byClient[key]; c != nil {
+			c.ids = removeIDs(c.ids, set)
+		}
+	}
+}

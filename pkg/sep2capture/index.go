@@ -146,26 +146,41 @@ func insertSorted(ids []uint64, id uint64) []uint64 {
 	return ids
 }
 
-// removeSorted removes id from a slice sorted ascending, if present.
-func removeSorted(ids []uint64, id uint64) []uint64 {
-	i := sort.Search(len(ids), func(i int) bool { return ids[i] >= id })
-	if i < len(ids) && ids[i] == id {
-		ids = append(ids[:i], ids[i+1:]...)
+// removeIDs drops every id in remove from ids (sorted ascending) in a
+// single linear pass, preserving order, and returns the result reusing
+// ids' backing array. Security lane M2: a removeSorted call per id, each
+// an O(n) slice shift under idx.mu, made evicting many ids from one
+// client's slice quadratic (10k of 100k ids took 338ms). Filtering once
+// is O(n) regardless of how many ids in remove belong to this client.
+func removeIDs(ids []uint64, remove map[uint64]struct{}) []uint64 {
+	if len(remove) == 0 {
+		return ids
 	}
-	return ids
+	out := ids[:0]
+	for _, id := range ids {
+		if _, drop := remove[id]; drop {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 // evictSegment removes every index entry that segment num held: called
 // only by the writer goroutine, only for the oldest live segment
 // (ensureRoomFor in segment_writer.go), right before that segment's file
 // is deleted. Exchange counts on the affected clients are left untouched:
-// per Q4, "counts survive eviction; ids do not."
+// per Q4, "counts survive eviction; ids do not." Ids are grouped by client
+// first so each client's slice is filtered with one removeIDs pass (P3),
+// not one pass per id.
 func (x *index) evictSegment(num int64) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 
 	ids := x.segIDs[num]
 	delete(x.segIDs, num)
+
+	byClient := make(map[string]map[uint64]struct{}, len(ids))
 	for _, id := range ids {
 		e, ok := x.byID[id]
 		if !ok {
@@ -173,8 +188,16 @@ func (x *index) evictSegment(num int64) {
 		}
 		delete(x.byID, id)
 		x.approxBytes -= e.memBytes
-		if c := x.byClient[e.ClientKey]; c != nil {
-			c.ids = removeSorted(c.ids, id)
+		set := byClient[e.ClientKey]
+		if set == nil {
+			set = make(map[uint64]struct{})
+			byClient[e.ClientKey] = set
+		}
+		set[id] = struct{}{}
+	}
+	for key, set := range byClient {
+		if c := x.byClient[key]; c != nil {
+			c.ids = removeIDs(c.ids, set)
 		}
 	}
 }

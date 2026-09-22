@@ -27,6 +27,11 @@ type Config struct {
 	// set, the dedicated path wins.
 	SubscriptionStorePath string // env SEP2_SUBSCRIPTION_STORE_PATH
 
+	// #611: dedicated directory for the traffic-capture segment log. Empty
+	// falls back to <DataDir>/traffic; both empty means capture is off. See
+	// EffectiveTrafficDir for the precedence rule.
+	TrafficDir string // env SEP2_TRAFFIC_DIR
+
 	// #161: admin listener configuration.
 	//
 	// The SEP2 protocol listener is RequireAnyClientCert + manual verify per
@@ -202,4 +207,18 @@ func (c *Config) EffectiveStorePath(storeName, dedicatedPath string) string {
 		return ""
 	}
 	return filepath.Join(c.DataDir, storeName+".json")
+}
+
+// EffectiveTrafficDir resolves the traffic-capture segment-log directory:
+// TrafficDir if set, else <DataDir>/traffic, else "" (capture off). Not
+// implemented as a call to EffectiveStorePath, which always appends
+// ".json": the capture store owns a whole directory, not one file (#611 Q4).
+func (c *Config) EffectiveTrafficDir() string {
+	if c.TrafficDir != "" {
+		return c.TrafficDir
+	}
+	if c.DataDir == "" {
+		return ""
+	}
+	return filepath.Join(c.DataDir, "traffic")
 }

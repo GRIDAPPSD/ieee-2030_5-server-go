@@ -100,7 +100,7 @@ func TestAdminSecurityHeadersOnEveryResponseShape(t *testing.T) {
 // must still refuse framing; a test that only covers a non-loopback origin
 // has not covered the finding (#413).
 func TestAdminSecurityHeadersOnLoopbackAdmittedRequest(t *testing.T) {
-	router, _ := server.BuildAdminRouter("", nil, newTestStores(), "GCM", nil, nil, server.DefaultAdminAllowedHosts(), false)
+	router, _ := server.BuildAdminRouter("", nil, newTestStores(), "GCM", nil, nil, server.DefaultAdminAllowedHosts(), false, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/", nil)
 	req.RemoteAddr = "127.0.0.1:54321"

@@ -130,6 +130,13 @@ func New(cfg Config) (*Server, error) {
 		}
 	}
 
+	// #611: Attach must run after httpSrv.Handler and httpSrv.ConnState are
+	// both set (it chains the latter and wraps the former) and before
+	// Server.Run calls Serve. Nil Capture leaves tlsListener untouched.
+	if cfg.Capture != nil {
+		tlsListener = cfg.Capture.Attach(httpSrv, tlsListener)
+	}
+
 	return &Server{
 		identity:        identity,
 		stores:          cfg.Stores,

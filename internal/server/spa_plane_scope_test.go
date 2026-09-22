@@ -54,7 +54,7 @@ func TestProtocolListenerDoesNotMountAdminUIShell(t *testing.T) {
 func TestAdminListenerMountsAdminUIShell(t *testing.T) {
 	stores := newTestStores()
 
-	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil, false)
+	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil, false, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/ui/", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
@@ -89,7 +89,7 @@ func TestAdminListenerMountsAdminUIShell(t *testing.T) {
 func TestAdminListenerRealUnmatchedAPIPathIsNotShadowedBySPA(t *testing.T) {
 	stores := newTestStores()
 
-	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil, false)
+	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil, false, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/does-not-exist", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
@@ -122,7 +122,7 @@ func TestAdminListenerDashboardFlagServesBothBranches(t *testing.T) {
 
 	getRoot := func(t *testing.T, legacy bool) string {
 		t.Helper()
-		adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil, legacy)
+		adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil, legacy, nil)
 
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.RemoteAddr = "127.0.0.1:54321"
@@ -174,7 +174,7 @@ func TestAdminListenerDashboardFlagServesBothBranches(t *testing.T) {
 // UI at the address they typed and a bookmark of either path works.
 func TestAdminListenerSPAIsReachableAtBothRoots(t *testing.T) {
 	stores := newTestStores()
-	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil, false)
+	adminRouter, _ := server.BuildAdminRouter("test-admin-key", nil, stores, "GCM", nil, nil, nil, false, nil)
 
 	get := func(path string) string {
 		req := httptest.NewRequest(http.MethodGet, path, nil)

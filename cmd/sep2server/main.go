@@ -123,6 +123,10 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	trafficDir, err := envPathOr("SEP2_TRAFFIC_DIR", "")
+	if err != nil {
+		return nil, err
+	}
 
 	return &config.Config{
 		Addr:            envOr("SEP2_ADDR", ":443"),
@@ -164,6 +168,7 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		// path when both are set.
 		DataDir:               dataDir,
 		SubscriptionStorePath: subscriptionStorePath,
+		TrafficDir:            trafficDir,
 
 		// Observability: dedicated plain-HTTP Prometheus metrics listener.
 		// Empty SEP2_METRICS_ADDR (default) leaves it OFF; set e.g. ":9100"

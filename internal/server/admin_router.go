@@ -38,10 +38,20 @@ import (
 // outer mux when allowedHosts is non-empty; the returned pattern list
 // reflects routes mounted under the listener regardless of host gating.
 //
+// trafficHandler, when non-nil, is the traffic-capture read API (#611):
+// mounted at "/api/traffic/" on the authenticated inner mux, so it gets the
+// same auth chain as every other admin API route, the one-time ticket path
+// included (Path C above covers GET /api/traffic/stream the same as any
+// other authed GET). Nil mounts nothing, which is what capture-off leaves.
+//
 // Test callers that don't need the pattern list discard the second
 // return value with `_`.
-func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, allowedHosts []string, legacyDashboard bool) (http.Handler, []string) {
+func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, allowedHosts []string, legacyDashboard bool, trafficHandler http.Handler) (http.Handler, []string) {
 	authed := newRecordingMux()
+
+	if trafficHandler != nil {
+		authed.Handle("GET /api/traffic/", http.StripPrefix("/api/traffic", trafficHandler))
+	}
 
 	// Certificate management API
 	if svc != nil {

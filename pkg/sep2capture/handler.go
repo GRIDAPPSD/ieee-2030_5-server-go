@@ -66,23 +66,42 @@ import (
 // GET /stream?after=<seq>
 //
 //	Server-Sent Events: one "data:" line of the JSON exchange-summary
-//	shape above per newly recorded exchange. Both "id:" and this route's
-//	after= (and the standard Last-Event-ID header, which wins when both
-//	are present) name the publish sequence, the same value as the JSON
-//	body's own "seq" field, never the exchange id in its "id" field:
-//	exchange ids are assigned when an exchange opens, so two connections
-//	on the same client can finish, and so publish, out of that order,
-//	and a resume keyed on id can skip or repeat one. The publish
-//	sequence never does, and it is one space across every client, unlike
-//	/exchanges' after= (that route's doc). A value above every sequence
-//	this Store has ever issued is a 400, not a silent empty replay: the
-//	two spaces are both plain uint64s, so a client that hands this route
-//	an exchange id instead of a "seq" would otherwise get a 200 that
-//	reads exactly like "nothing was missed" when it is really a mistake.
-//	A reconnect resumes with no gap and no duplicate as long as the
-//	exchange it names is still indexed (an evicted one is silently
-//	skipped, the same way an evicted exchange never appears in
-//	/exchanges).
+//	shape above per newly recorded exchange. "id:" is "<epoch>-<seq>":
+//	epoch identifies this process's incarnation of the store (it changes
+//	on every restart, since seq itself restarts at 1) and seq is the
+//	publish sequence, the same value as the JSON body's own "seq" field,
+//	never the exchange id in its "id" field: exchange ids are assigned
+//	when an exchange opens, so two connections on the same client can
+//	finish, and so publish, out of that order, and a resume keyed on id
+//	can skip or repeat one. The publish sequence never does, and it is
+//	one space across every client, unlike /exchanges' after= (that
+//	route's doc). This route's after= and the standard Last-Event-ID
+//	header (which wins when both are present) each accept either the
+//	full "<epoch>-<seq>" string or a bare seq: a bare value is a Seq
+//	within this incarnation, for a caller building its own resume point
+//	from a summary's "seq" field (the /exchanges handoff, below) rather
+//	than echoing an "id:" line; use the HIGHEST seq in hand, never one
+//	particular row's, since /exchanges orders by exchange id and the two
+//	orders can disagree.
+//	A bare seq above every sequence this incarnation has issued is a
+//	400, not a silent empty replay: the two spaces are both plain
+//	uint64s, so a client that hands this route an exchange id instead of
+//	a "seq" would otherwise get a 200 that reads exactly like "nothing
+//	was missed" when it is really a mistake. A value stamped with a
+//	different incarnation's epoch, as any resume across a restart is,
+//	is never that 400 and never a silent gap in the new incarnation's
+//	own early events either: since a restart resets seq to 1, neither
+//	"too high" nor "still in range" means what it would within one
+//	incarnation, so a foreign epoch instead gets a full replay of
+//	everything the current incarnation has indexed so far. A client is
+//	therefore guaranteed, across any restart, either the exchange it
+//	asked to resume from or (once that incarnation is gone) every
+//	exchange the new one has recorded: never a silent gap, and never a
+//	non-200 response that an EventSource gives up reconnecting to.
+//	Within one incarnation, a reconnect resumes with no gap and no
+//	duplicate as long as the exchange it names is still indexed (an
+//	evicted one is silently skipped, the same way an evicted exchange
+//	never appears in /exchanges).
 //	Neither present means live only, starting from this connection: the
 //	route never replays history on its own, so opening the tab for the
 //	first time does not have to hold the whole index in memory. after=0
@@ -94,8 +113,9 @@ import (
 //	shutdown does not wait out a stream's own write timeout, even with a
 //	write already blocked on a stalled client (subscription.forceExpire,
 //	store_reader.go).
-//	400 when after or Last-Event-ID does not parse as a uint64, or names
-//	a publish sequence this Store has never issued.
+//	400 when after or Last-Event-ID does not parse as a bare uint64 or
+//	"<epoch>-<seq>", or names a publish sequence this incarnation has
+//	never issued.
 //
 // GET /stats
 //

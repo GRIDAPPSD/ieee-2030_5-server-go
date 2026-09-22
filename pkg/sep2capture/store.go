@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"sync"
@@ -117,6 +118,19 @@ type Store struct {
 	indexMemBudget int64
 	errorLog       *log.Logger
 
+	// epoch identifies this process's incarnation of the store, drawn
+	// fresh on every NewStore: nextPublishSeq always restarts at 1 on a
+	// restart (the guarded reset in reset.go wipes every segment), so
+	// Seq alone cannot tell a resume point left over from a previous
+	// incarnation apart from a valid one in this one, and a fresh
+	// Store's small Seq range can coincidentally contain an old value
+	// (PR 620 review, MEDIUM: measured both a false 400 and a silent
+	// skip of this run's own early events against a fresh Store). GET
+	// /stream stamps every "id:" with it (handler_sse.go), and a resume
+	// naming a different epoch is treated as unresolvable within this
+	// incarnation rather than compared against maxPublishSeq at all.
+	epoch uint64
+
 	writeCh    chan Exchange
 	writerDone chan struct{}
 
@@ -198,6 +212,7 @@ func NewStore(cfg StoreConfig) (*Store, error) {
 		segBytes:       cfg.SegmentBytes,
 		indexMemBudget: cfg.IndexMemBudgetBytes,
 		errorLog:       cfg.ErrorLog,
+		epoch:          rand.Uint64(),
 		writeCh:        make(chan Exchange, writeChanCapacity),
 		writerDone:     make(chan struct{}),
 		idx:            newIndex(),

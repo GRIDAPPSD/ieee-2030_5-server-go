@@ -2,9 +2,11 @@ package sep2capture
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -39,13 +41,14 @@ var sseSubscribedHook func()
 var replayHook func()
 
 // handleStream is the Live stream route (Q7 item 4): one SSE "data:" line
-// per newly recorded exchange, "id:" set to the exchange's publish
-// sequence (Summary.Seq, not its exchange id: see that field's doc in
-// index.go), with a heartbeat comment line on sseHeartbeatInterval so an
-// idle stream still extends its own write deadline and survives any
-// intermediary's idle timeout. It extends the connection's write deadline
-// itself through http.ResponseController before every write, since the
-// server's own WriteTimeout (set once, before the handler runs, per
+// per newly recorded exchange, "id:" set to "<epoch>-<seq>" (Store.epoch's
+// doc, store.go; seq is the exchange's publish sequence, Summary.Seq, not
+// its exchange id: see that field's doc in index.go), with a heartbeat
+// comment line on sseHeartbeatInterval so an idle stream still extends its
+// own write deadline and survives any intermediary's idle timeout. It
+// extends the connection's write deadline itself through
+// http.ResponseController before every write, since the server's own
+// WriteTimeout (set once, before the handler runs, per
 // net/http/server.go) would otherwise cut the stream at that timeout
 // regardless of how live it still is.
 func (s *Store) handleStream(w http.ResponseWriter, r *http.Request) {
@@ -56,7 +59,7 @@ func (s *Store) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 	rc := http.NewResponseController(w)
 
-	resumeAfter, resumeErr := parseResume(r)
+	resume, resumeErr := parseResume(r, s.epoch)
 	if resumeErr != nil {
 		writeError(w, http.StatusBadRequest, "after or Last-Event-ID must be a non-negative integer")
 		return
@@ -68,8 +71,14 @@ func (s *Store) handleStream(w http.ResponseWriter, r *http.Request) {
 	// (PR 620 review, MEDIUM: a client that mixed up the two got a 200
 	// and an empty replay, indistinguishable from "nothing was missed").
 	// maxPublishSeq only grows, so a value valid here stays valid by the
-	// time summariesAfter runs.
-	if resumeAfter != nil && *resumeAfter > s.maxPublishSeq.Load() {
+	// time summariesAfter runs. A resume stamped with a different
+	// incarnation's epoch skips this check: a restart resets Seq to 1, so
+	// the same comparison against the new, small maxPublishSeq would
+	// either 400 a value that is really just old, or silently pass one
+	// that now coincides with this run's own early Seqs (PR 620 review,
+	// MEDIUM: measured both ways against a fresh Store). It is resolved
+	// to a full replay below instead, which is safe either way.
+	if resume != nil && !resume.foreignEpoch && resume.seq > s.maxPublishSeq.Load() {
 		writeError(w, http.StatusBadRequest, "after or Last-Event-ID names a publish sequence this stream has never issued")
 		return
 	}
@@ -102,8 +111,17 @@ func (s *Store) handleStream(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	var replayed replaySet
-	if resumeAfter != nil {
-		history := s.summariesAfter(*resumeAfter)
+	if resume != nil {
+		afterSeq := resume.seq
+		if resume.foreignEpoch {
+			// Recognised as a previous incarnation's resume point: this
+			// Store never issued it, so there is no position within it
+			// to resume from. Everything this incarnation has indexed
+			// so far is the only replay that can never silently miss
+			// its own early events (handleStream's doc above).
+			afterSeq = 0
+		}
+		history := s.summariesAfter(afterSeq)
 		replayed = make(replaySet, len(history))
 		for _, sum := range history {
 			if !s.writeSSEEvent(w, rc, flusher, sum) {
@@ -175,6 +193,23 @@ func (r replaySet) has(seq uint64) bool {
 	return ok
 }
 
+// resumePoint is what parseResume decodes from Last-Event-ID or after=.
+// seq is a publish sequence within THIS Store's own incarnation; when
+// foreignEpoch is true, the value was recognised as stamped with a
+// different incarnation's epoch (Store.epoch's doc, store.go), and seq is
+// meaningless: the position it names does not exist in this incarnation's
+// Seq space, not even coincidentally (a fresh Store's own Seq counter also
+// starts at 1 on every restart, so a small foreign value could otherwise
+// look like a valid, and wrong, resume point here).
+type resumePoint struct {
+	seq          uint64
+	foreignEpoch bool
+}
+
+// errMalformedResume is returned by parseResume for a Last-Event-ID or
+// after= value that parses as neither a bare uint64 nor "<epoch>-<seq>".
+var errMalformedResume = errors.New("sep2capture: malformed resume value")
+
 // parseResume reads the resume point a reconnecting client names, per Q7
 // item 3: the standard Last-Event-ID header when present, else this
 // route's own after= query parameter, else no resume (nil, a fresh
@@ -182,7 +217,15 @@ func (r replaySet) has(seq uint64) bool {
 // exchange id: see Summary.Seq's doc in index.go for why the two differ. A
 // value present but unparseable is reported to the caller rather than
 // silently treated as "no resume".
-func parseResume(r *http.Request) (*uint64, error) {
+//
+// The value handleStream itself sends is always "<epoch>-<seq>"
+// (Store.epoch's doc, store.go, and this Store's own epoch, the second
+// argument here): a client that echoes it back, as EventSource does via
+// Last-Event-ID, is compared against epoch by exact match. A bare uint64
+// is still accepted as a Seq within THIS incarnation, for a caller that
+// built its own resume point from a summary's "seq" JSON field (the
+// /exchanges handoff, handler.go's route doc) rather than an "id:" line.
+func parseResume(r *http.Request, epoch uint64) (*resumePoint, error) {
 	v := r.Header.Get("Last-Event-ID")
 	if v == "" {
 		v = r.URL.Query().Get("after")
@@ -190,20 +233,32 @@ func parseResume(r *http.Request) (*uint64, error) {
 	if v == "" {
 		return nil, nil
 	}
-	id, err := strconv.ParseUint(v, 10, 64)
+	if dash := strings.LastIndexByte(v, '-'); dash >= 0 {
+		gotEpoch, err1 := strconv.ParseUint(v[:dash], 10, 64)
+		seq, err2 := strconv.ParseUint(v[dash+1:], 10, 64)
+		if err1 != nil || err2 != nil {
+			return nil, errMalformedResume
+		}
+		if gotEpoch != epoch {
+			return &resumePoint{foreignEpoch: true}, nil
+		}
+		return &resumePoint{seq: seq}, nil
+	}
+	seq, err := strconv.ParseUint(v, 10, 64)
 	if err != nil {
 		return nil, err
 	}
-	return &id, nil
+	return &resumePoint{seq: seq}, nil
 }
 
 // writeSSEEvent writes one summary as an SSE event, extending the write
 // deadline first (see handleStream's doc). It reports whether the write
 // succeeded; the caller returns immediately on false; a write error means
 // the reader is gone or has fallen far enough behind that the connection
-// itself failed, not something to retry. "id:" carries sum.Seq: see
-// Summary.Seq's doc in index.go for why the stream resumes on it instead
-// of the exchange id carried in the JSON body's own "id" field.
+// itself failed, not something to retry. "id:" carries "<epoch>-<sum.Seq>"
+// (Store.epoch's doc, store.go): see Summary.Seq's doc in index.go for why
+// the stream resumes on Seq instead of the exchange id carried in the
+// JSON body's own "id" field.
 func (s *Store) writeSSEEvent(w http.ResponseWriter, rc *http.ResponseController, flusher http.Flusher, sum Summary) bool {
 	if err := rc.SetWriteDeadline(time.Now().Add(sseWriteDeadlineExtension)); err != nil {
 		s.logSSEDeadlineErr(err)
@@ -212,7 +267,7 @@ func (s *Store) writeSSEEvent(w http.ResponseWriter, rc *http.ResponseController
 	if err != nil {
 		return true // a marshal failure is not a connection failure; skip this event and keep the stream open
 	}
-	if _, err := fmt.Fprintf(w, "id: %d\ndata: %s\n\n", sum.Seq, body); err != nil {
+	if _, err := fmt.Fprintf(w, "id: %d-%d\ndata: %s\n\n", s.epoch, sum.Seq, body); err != nil {
 		return false
 	}
 	flusher.Flush()

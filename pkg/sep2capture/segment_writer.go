@@ -302,6 +302,9 @@ func (s *Store) publish(sum Summary) {
 	s.subMu.Unlock()
 
 	for _, sub := range dropped {
-		s.closeSubscription(sub)
+		// force=true: a write may genuinely be blocked on this stalled
+		// reader's own connection (closeSubscription's doc,
+		// store_reader.go).
+		s.closeSubscription(sub, true)
 	}
 }

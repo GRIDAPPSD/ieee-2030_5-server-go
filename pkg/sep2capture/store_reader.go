@@ -122,14 +122,23 @@ func (s *Store) Exchange(id uint64) (Exchange, error) {
 // lock the writer goroutine also needs), so a reconnect near the head of
 // a large index costs proportional to what it replays.
 func (s *Store) summariesAfter(afterSeq uint64) []Summary {
-	s.idx.mu.Lock()
-	var out []Summary
-	for _, e := range s.idx.byID {
-		if e.Seq > afterSeq {
-			out = append(out, e.Summary)
+	// Scanned in its own function so the deferred Unlock runs even if a
+	// panic interrupts the scan (PR 620 review, LOW: a bare Lock/Unlock
+	// pair left idx.mu locked for the life of the process on a panic
+	// between them), while still releasing the lock before the sort
+	// below runs, exactly as the round 2 fix intended (this doc's next
+	// paragraph).
+	out := func() []Summary {
+		s.idx.mu.Lock()
+		defer s.idx.mu.Unlock()
+		var out []Summary
+		for _, e := range s.idx.byID {
+			if e.Seq > afterSeq {
+				out = append(out, e.Summary)
+			}
 		}
-	}
-	s.idx.mu.Unlock()
+		return out
+	}()
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
 	return out
@@ -184,7 +193,10 @@ func (s *Store) Subscribe(ctx context.Context, forceExpire func()) <-chan Summar
 
 	go func() {
 		<-ctx.Done()
-		s.closeSubscription(sub)
+		// force=false: ctx ending already means the connection is going
+		// (closeSubscription's doc below), so nothing here needs
+		// forceExpire's own write-deadline override.
+		s.closeSubscription(sub, false)
 	}()
 
 	return sub.ch
@@ -192,10 +204,19 @@ func (s *Store) Subscribe(ctx context.Context, forceExpire func()) <-chan Summar
 
 // closeSubscription removes sub from the live set and closes its channel,
 // exactly once regardless of how many of Subscribe's three end paths call
-// it concurrently for the same sub.
-func (s *Store) closeSubscription(sub *subscription) {
+// it concurrently for the same sub. force is true only on the two paths
+// where a write may genuinely be blocked on a connection that is not
+// already closing on its own (publish's slow-reader drop, and
+// Store.Close): only those call forceExpire. The subscription's own
+// ctx.Done() path always passes force=false (PR 620 review, MEDIUM:
+// forceExpire's SetWriteDeadline(now) otherwise logged "use of closed
+// network connection" on every ordinary disconnect, once net/http had
+// already closed the connection that ended ctx, and could hold the
+// shared once-a-minute log throttle against the genuine case
+// forceExpire exists for).
+func (s *Store) closeSubscription(sub *subscription, force bool) {
 	sub.once.Do(func() {
-		if sub.forceExpire != nil {
+		if force && sub.forceExpire != nil {
 			sub.forceExpire()
 		}
 		s.subMu.Lock()
@@ -218,6 +239,8 @@ func (s *Store) closeAllSubscribers() {
 	s.subMu.Unlock()
 
 	for _, sub := range subs {
-		s.closeSubscription(sub)
+		// force=true: a shutdown must not wait out a write already
+		// blocked on a stalled client (closeSubscription's doc above).
+		s.closeSubscription(sub, true)
 	}
 }

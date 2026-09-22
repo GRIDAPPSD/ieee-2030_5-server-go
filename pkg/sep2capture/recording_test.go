@@ -1095,7 +1095,7 @@ func TestPanickingSinkDoesNotStopTheDispatchGoroutine(t *testing.T) {
 // Identity must be recorded through Attach, in both cipher modes, on
 // every listener the server really uses: this package's
 // own pre-handshaking Listener (the first two subtests), core's
-// sepTLS.WrapCCMListener, a bare gotls.NewListener (P4: the server's real
+// sepTLS.WrapCCMListener, a bare gotls.NewListener (the server's real
 // CCM-8 listener, sep2server.wrapMTLS), and a bare crypto/tls.NewListener
 // (the GCM equivalent). Attach must refuse a connection whose handshake
 // genuinely fails rather than recording an empty identity for it (see
@@ -1194,7 +1194,7 @@ func TestIdentityRecordedThroughAttach(t *testing.T) {
 	t.Run("CCM bare gotls.NewListener", func(t *testing.T) {
 		m := newMaterial(t)
 		tcpLn := listenTCP(t)
-		// Not pre-handshaken: P4, the server's real CCM-8 listener
+		// Not pre-handshaken: the server's real CCM-8 listener
 		// (sep2server.wrapMTLS) builds exactly this.
 		bare := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
 

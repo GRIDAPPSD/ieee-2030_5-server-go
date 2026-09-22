@@ -509,12 +509,12 @@ func TestAcceptsAlreadyHandshakenInput(t *testing.T) {
 // connection that opens TCP and never speaks TLS, or sends a truncated
 // record and stalls. Both must be closed at l.timeout, not left open.
 
-// TestHandshakeDeadlineClosesSilentAndPartialPeers is the security lane's
-// P1 mutant target: replacing context.WithTimeout with context.WithCancel
-// at listener.go's handshake bound leaves the suite green against
-// TestIdentityPreservedThroughListener and TestRefusedCertificateIsReported,
-// because both peers speak TLS immediately. A peer that never completes its
-// ClientHello is the only case that exercises the bound.
+// TestHandshakeDeadlineClosesSilentAndPartialPeers: replacing
+// context.WithTimeout with context.WithCancel at listener.go's handshake
+// bound leaves the suite green against TestIdentityPreservedThroughListener
+// and TestRefusedCertificateIsReported, because both peers speak TLS
+// immediately. A peer that never completes its ClientHello is the only
+// case that exercises the bound.
 //
 // The test uses the real defaultHandshakeTimeout rather than shrinking
 // l.timeout on the constructed Listener: NewListener's accept loop is
@@ -660,9 +660,8 @@ func (f *onceTemporaryErrListener) Accept() (net.Conn, error) {
 	return f.Listener.Accept()
 }
 
-// TestTemporaryAcceptErrorIsReturnedAndAcceptLoopContinues is the security
-// lane's P4 target: the temporary-error branch in acceptLoop has no test
-// today.
+// TestTemporaryAcceptErrorIsReturnedAndAcceptLoopContinues: the
+// temporary-error branch in acceptLoop had no test before this.
 func TestTemporaryAcceptErrorIsReturnedAndAcceptLoopContinues(t *testing.T) {
 	t.Parallel()
 	m := newMaterial(t)

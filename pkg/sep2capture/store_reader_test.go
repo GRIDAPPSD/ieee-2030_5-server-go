@@ -16,11 +16,10 @@ func summaryIDs(sums []Summary) []uint64 {
 	return out
 }
 
-// TestExchangesAfterIDAndLimitSurviveOutOfOrderArrival is P7's Store-level
-// half: the same out-of-order arrival sequence (3, 1, 2) as
-// TestIndexOutOfOrderArrivalKeepsExtremesAndOrdering, this time through
-// Record and Exchanges, covering afterID's boundary and limit (coverage
-// lane M3's other two named mutants).
+// TestExchangesAfterIDAndLimitSurviveOutOfOrderArrival is the Store-level
+// half of TestIndexOutOfOrderArrivalKeepsExtremesAndOrdering: the same
+// out-of-order arrival sequence (3, 1, 2), this time through Record and
+// Exchanges, covering afterID's boundary and limit.
 func TestExchangesAfterIDAndLimitSurviveOutOfOrderArrival(t *testing.T) {
 	dir := t.TempDir()
 	st, err := NewStore(StoreConfig{Dir: dir})
@@ -55,8 +54,8 @@ func TestExchangesAfterIDAndLimitSurviveOutOfOrderArrival(t *testing.T) {
 	}
 }
 
-// TestSubscribeReceivesRecordedSummary is coverage-lane M2's first
-// surviving mutant: dropping segment_writer.go's publish call.
+// TestSubscribeReceivesRecordedSummary: dropping segment_writer.go's
+// publish call.
 func TestSubscribeReceivesRecordedSummary(t *testing.T) {
 	dir := t.TempDir()
 	st, err := NewStore(StoreConfig{Dir: dir})
@@ -81,8 +80,8 @@ func TestSubscribeReceivesRecordedSummary(t *testing.T) {
 	}
 }
 
-// TestSubscribeChannelClosesOnContextCancel is coverage-lane M2's second
-// surviving mutant: the channel never closed on ctx cancel.
+// TestSubscribeChannelClosesOnContextCancel: the channel never closed on
+// ctx cancel.
 func TestSubscribeChannelClosesOnContextCancel(t *testing.T) {
 	dir := t.TempDir()
 	st, err := NewStore(StoreConfig{Dir: dir})
@@ -105,10 +104,9 @@ func TestSubscribeChannelClosesOnContextCancel(t *testing.T) {
 	}
 }
 
-// TestSubscribeCountsSlowSubscribers is coverage-lane M2's third surviving
-// mutant: SlowSubscribers never counted. The channel is left undrained
-// past subscriberBufferSize so publish's non-blocking send must fall back
-// to its default branch.
+// TestSubscribeCountsSlowSubscribers: SlowSubscribers never counted. The
+// channel is left undrained past subscriberBufferSize so publish's
+// non-blocking send must fall back to its default branch.
 func TestSubscribeCountsSlowSubscribers(t *testing.T) {
 	dir := t.TempDir()
 	st, err := NewStore(StoreConfig{Dir: dir})

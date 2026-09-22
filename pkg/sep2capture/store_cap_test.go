@@ -52,6 +52,9 @@ func TestDirectoryStaysUnderCapAndEvictsOldestFirst(t *testing.T) {
 	if stats.EvictedSegments == 0 {
 		t.Fatal("EvictedSegments: got 0, want > 0 after pushing 10x the cap")
 	}
+	if stats.IndexMemoryEvictions != 0 {
+		t.Errorf("IndexMemoryEvictions: got %d, want 0 (every eviction here is disk-cap driven, the default index budget is nowhere near this volume)", stats.IndexMemoryEvictions)
+	}
 
 	// Oldest-first: the very first exchange must be gone, and the very
 	// last one must still be readable.
@@ -63,13 +66,14 @@ func TestDirectoryStaysUnderCapAndEvictsOldestFirst(t *testing.T) {
 	}
 }
 
-// TestCapAccountingHasAFloorAndMatchesDisk is coverage-lane MEDIUM 1: the
-// test above only bounds dirSize from above, so a mutant that stops
-// decrementing totalOnDisk on eviction (throwing away nearly all retained
-// history, since ensureRoomFor then believes the directory is still
-// nearly full) still passes it. This adds the floor Q4 promises
-// (CapBytes - SegmentBytes) and checks BytesOnDisk against the
-// directory's own real size.
+// TestCapAccountingHasAFloorAndMatchesDisk: the test above only bounds
+// dirSize from above, so a mutant that stops decrementing totalOnDisk on
+// eviction (throwing away nearly all retained history, since ensureRoomFor
+// then believes the directory is still nearly full) still passes it. This
+// adds a floor of CapBytes minus two segments (one segment of margin below
+// the single-segment transient ensureRoomFor's own doc allows, since
+// eviction only runs between whole records and cannot land exactly on the
+// boundary) and checks BytesOnDisk against the directory's own real size.
 //
 // Mutant (segment_writer.go, evictOldest): dropping
 // `s.totalOnDisk.Add(-size)` makes this RED: retained bytes fall far

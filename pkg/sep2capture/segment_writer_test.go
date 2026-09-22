@@ -34,11 +34,11 @@ func deletedOpenFDs(t testing.TB) int {
 	return n
 }
 
-// TestRollSegmentClosesThePreviousHandle is P4 and security lane M3:
-// rollSegment must close the segment it is leaving before replacing
-// s.active, or a deleted segment's disk space is only freed whenever the
-// GC finalizer gets around to it. GC is disabled for the whole test so
-// nothing but this fix can close a handle.
+// TestRollSegmentClosesThePreviousHandle: rollSegment must close the
+// segment it is leaving before replacing s.active, or a deleted segment's
+// disk space is only freed whenever the GC finalizer gets around to it. GC
+// is disabled for the whole test so nothing but this fix can close a
+// handle.
 //
 // Mutant (segment_writer.go, rollSegment): dropping the prev.f.Close()
 // call makes this RED: /proc/self/fd holds "(deleted)" targets for the

@@ -382,9 +382,13 @@ func TestRunClosesCaptureAndEndsStreamOnShutdown(t *testing.T) {
 func TestRunLogsBootLineWhenTrafficDirUnset(t *testing.T) {
 	c := newSplitListenerCerts(t)
 
-	var buf bytes.Buffer
+	// server.Run logs from its own goroutine while this test polls the
+	// buffer from the main one; a bare bytes.Buffer is not safe for that
+	// (the race detector catches log.Print's concurrent Write racing this
+	// test's String() reads), so every access goes through buf's mutex.
+	buf := &syncBuffer{}
 	prev := log.Writer()
-	log.SetOutput(io.MultiWriter(prev, &buf))
+	log.SetOutput(io.MultiWriter(prev, buf))
 	t.Cleanup(func() { log.SetOutput(prev) })
 
 	cfg := &config.Config{
@@ -419,4 +423,25 @@ func TestRunLogsBootLineWhenTrafficDirUnset(t *testing.T) {
 	if !strings.Contains(got, "SEP2_TRAFFIC_DIR") || !strings.Contains(got, "SEP2_DATA_DIR") {
 		t.Errorf("boot log does not name both variables when neither is set:\n%s", got)
 	}
+}
+
+// syncBuffer wraps bytes.Buffer with a mutex so it is safe as a log.Logger
+// output target read concurrently by a test goroutine: log.Logger itself
+// serializes each Write, but that gives no ordering guarantee against a
+// reader's own String() call on the same buffer.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
 }

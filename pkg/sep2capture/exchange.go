@@ -54,8 +54,13 @@ type Direction struct {
 // ConnState boundaries. Request and Response are the bytes as the wire
 // carried them: no reframing, no normalisation.
 type Exchange struct {
-	ID         uint64
-	ConnID     uint64
+	ID     uint64
+	ConnID uint64
+	// Seq is the write-order publish sequence Store.Exchange fills in from
+	// the index (writeOne, segment_writer.go assigns it; see Summary.Seq's
+	// doc in index.go): 0 for an Exchange a caller builds to hand to
+	// Record, since nothing publishes it yet.
+	Seq        uint64
 	ClientLFDI string
 	ClientSFDI string
 	Started    time.Time

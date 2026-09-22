@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"sort"
+	"sync"
 )
 
 // Clients returns every client this Store has ever seen, sorted by key.
@@ -84,6 +85,7 @@ func (s *Store) Exchange(id uint64) (Exchange, error) {
 	return Exchange{
 		ID:         entry.ID,
 		ConnID:     entry.ConnID,
+		Seq:        entry.Seq,
 		ClientLFDI: entry.ClientKey,
 		ClientSFDI: entry.clientSFDI,
 		Started:    entry.Started,
@@ -104,25 +106,141 @@ func (s *Store) Exchange(id uint64) (Exchange, error) {
 	}, nil
 }
 
+// summariesAfter returns every indexed Summary with Seq > afterSeq, sorted
+// by Seq, across every client. It backs the SSE resume path (Handler,
+// handler_sse.go): a reconnecting client's after= or Last-Event-ID names a
+// Seq, not an exchange id or a client, since the stream itself is not
+// scoped to one and ids arrive out of order (index.go's Summary.Seq doc;
+// PR 620 review: resuming on ID missed or duplicated exchanges whenever
+// two connections on one client finished out of id order). The scan
+// itself is still a full pass over the index rather than a maintained
+// global order, deliberately: it only runs once per (re)connect, not on
+// the hot path Q5 is about. The result slice is grown by append rather
+// than pre-sized to the whole index, and sorted after idx.mu is released
+// (PR 620 review, MEDIUM: a reconnect missing a handful of events used to
+// allocate and sort a slice sized for the whole index while holding the
+// lock the writer goroutine also needs), so a reconnect near the head of
+// a large index costs proportional to what it replays.
+func (s *Store) summariesAfter(afterSeq uint64) []Summary {
+	// Scanned in its own function so the deferred Unlock runs even if a
+	// panic interrupts the scan (PR 620 review, LOW: a bare Lock/Unlock
+	// pair left idx.mu locked for the life of the process on a panic
+	// between them), while still releasing the lock before the sort
+	// below runs, exactly as the round 2 fix intended (this doc's next
+	// paragraph).
+	out := func() []Summary {
+		s.idx.mu.Lock()
+		defer s.idx.mu.Unlock()
+		var out []Summary
+		for _, e := range s.idx.byID {
+			if e.Seq > afterSeq {
+				out = append(out, e.Summary)
+			}
+		}
+		return out
+	}()
+
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	return out
+}
+
+// subscription is one GET /stream reader's channel plus the guard that
+// makes ending it idempotent: a subscription can be ended three different
+// ways (its own ctx.Done(), publish's slow-reader drop, or Store.Close
+// ending every stream at once), and closeSubscription is the one place
+// that actually calls close(ch), so a race between any two of those paths
+// closes it exactly once rather than panicking on a double close.
+type subscription struct {
+	ch   chan Summary
+	once sync.Once
+	// forceExpire, when set, is called once as part of ending this
+	// subscription: handleStream sets it to force its own connection's
+	// write deadline into the past (PR 620 review, MEDIUM: a write
+	// already blocked on a stalled client waited out its own deadline,
+	// up to a minute in production, regardless of why the subscription
+	// ended). net.Conn's SetWriteDeadline "sets the deadline for future
+	// Write calls and any currently-blocked Write call" and is safe to
+	// call from another goroutine (net.Conn: "multiple goroutines may
+	// invoke methods on a Conn simultaneously").
+	forceExpire func()
+}
+
+// subscribeHook, when set by a test in this package, runs synchronously
+// right after Subscribe registers sub, with the raw bidirectional channel
+// (Subscribe's own return value is receive-only). It lets a test inject a
+// value directly, simulating publish's own race with a history replay
+// that reads sub before handleStream does, deterministically rather than
+// by racing the scheduler for it. Production never sets it.
+var subscribeHook func(ch chan Summary)
+
 // Subscribe returns a channel of every Summary recorded after the call,
-// closed when ctx ends. The store, not the caller, closes it (channels are
-// closed by the sender): a goroutine tied to ctx removes and closes it,
-// and publish (segment_writer.go) never blocks a slow reader, dropping
-// instead and counting SlowSubscribers.
-func (s *Store) Subscribe(ctx context.Context) <-chan Summary {
-	ch := make(chan Summary, subscriberBufferSize)
+// closed when ctx ends, when this subscriber falls too far behind
+// (publish, segment_writer.go), or when Store.Close ends every open
+// stream. The store, not the caller, closes it (channels are closed by the
+// sender): closeSubscription is the single path every one of those closes
+// funnels through, and forceExpire (nil is fine) runs there too, once,
+// however the subscription ends.
+func (s *Store) Subscribe(ctx context.Context, forceExpire func()) <-chan Summary {
+	sub := &subscription{ch: make(chan Summary, subscriberBufferSize), forceExpire: forceExpire}
 
 	s.subMu.Lock()
-	s.subs[ch] = struct{}{}
+	s.subs[sub] = struct{}{}
 	s.subMu.Unlock()
+
+	if subscribeHook != nil {
+		subscribeHook(sub.ch)
+	}
 
 	go func() {
 		<-ctx.Done()
-		s.subMu.Lock()
-		delete(s.subs, ch)
-		s.subMu.Unlock()
-		close(ch)
+		// force=false: ctx ending already means the connection is going
+		// (closeSubscription's doc below), so nothing here needs
+		// forceExpire's own write-deadline override.
+		s.closeSubscription(sub, false)
 	}()
 
-	return ch
+	return sub.ch
+}
+
+// closeSubscription removes sub from the live set and closes its channel,
+// exactly once regardless of how many of Subscribe's three end paths call
+// it concurrently for the same sub. force is true only on the two paths
+// where a write may genuinely be blocked on a connection that is not
+// already closing on its own (publish's slow-reader drop, and
+// Store.Close): only those call forceExpire. The subscription's own
+// ctx.Done() path always passes force=false (PR 620 review, MEDIUM:
+// forceExpire's SetWriteDeadline(now) otherwise logged "use of closed
+// network connection" on every ordinary disconnect, once net/http had
+// already closed the connection that ended ctx, and could hold the
+// shared once-a-minute log throttle against the genuine case
+// forceExpire exists for).
+func (s *Store) closeSubscription(sub *subscription, force bool) {
+	sub.once.Do(func() {
+		if force && sub.forceExpire != nil {
+			sub.forceExpire()
+		}
+		s.subMu.Lock()
+		delete(s.subs, sub)
+		s.subMu.Unlock()
+		close(sub.ch)
+	})
+}
+
+// closeAllSubscribers ends every open GET /stream subscription (Store.Close):
+// snapshotting the live set before closing avoids mutating subs while
+// ranging over it, since closeSubscription itself deletes from subs under
+// subMu.
+func (s *Store) closeAllSubscribers() {
+	s.subMu.Lock()
+	subs := make([]*subscription, 0, len(s.subs))
+	for sub := range s.subs {
+		subs = append(subs, sub)
+	}
+	s.subMu.Unlock()
+
+	for _, sub := range subs {
+		// force=true: a shutdown must not wait out a write already
+		// blocked on a stalled client (closeSubscription's doc above).
+		s.closeSubscription(sub, true)
+	}
 }

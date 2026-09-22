@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"sync"
@@ -35,13 +36,15 @@ const (
 	// handful of exchanges. This just keeps the channel itself from ever
 	// being the thing that decides a drop.
 	writeChanCapacity = 1024
-
-	// subscriberBufferSize bounds how far a live SSE reader (PR 4) may
-	// fall behind before publish drops its update and counts it in
-	// SlowSubscribers rather than blocking the writer goroutine on a slow
-	// reader.
-	subscriberBufferSize = 64
 )
+
+// subscriberBufferSize bounds how far a live SSE reader (PR 4) may fall
+// behind before publish drops its update and counts it in SlowSubscribers
+// rather than blocking the writer goroutine on a slow reader. A var, not a
+// const, so a test can shrink it to force that drop deterministically
+// without writing hundreds of exchanges to outrun a real subscriber's
+// socket buffer first.
+var subscriberBufferSize = 64
 
 // ErrEvicted is returned by Exchange for an id whose segment has since
 // been deleted to stay under CapBytes, or whose segment file could not be
@@ -115,6 +118,19 @@ type Store struct {
 	indexMemBudget int64
 	errorLog       *log.Logger
 
+	// epoch identifies this process's incarnation of the store, drawn
+	// fresh on every NewStore: nextPublishSeq always restarts at 1 on a
+	// restart (the guarded reset in reset.go wipes every segment), so
+	// Seq alone cannot tell a resume point left over from a previous
+	// incarnation apart from a valid one in this one, and a fresh
+	// Store's small Seq range can coincidentally contain an old value
+	// (PR 620 review, MEDIUM: measured both a false 400 and a silent
+	// skip of this run's own early events against a fresh Store). GET
+	// /stream stamps every "id:" with it (handler_sse.go), and a resume
+	// naming a different epoch is treated as unresolvable within this
+	// incarnation rather than compared against maxPublishSeq at all.
+	epoch uint64
+
 	writeCh    chan Exchange
 	writerDone chan struct{}
 
@@ -126,17 +142,27 @@ type Store struct {
 
 	// Writer-goroutine-owned state: touched only inside writeLoop, so it
 	// needs no lock of its own.
-	active     *segmentFile
-	nextSegNum int64
-	liveSegs   []liveSegment
+	active         *segmentFile
+	nextSegNum     int64
+	liveSegs       []liveSegment
+	nextPublishSeq uint64 // Summary.Seq source; see its doc in index.go
+
+	// maxPublishSeq mirrors nextPublishSeq for readers outside the writer
+	// goroutine (handleStream's after= validation, handler_sse.go): the
+	// highest Seq ever assigned, monotonic even across eviction, so a
+	// resume point above it can never be a Seq this Store actually issued.
+	maxPublishSeq atomic.Uint64
 
 	idx *index
 
 	subMu sync.Mutex
-	subs  map[chan Summary]struct{}
+	subs  map[*subscription]struct{}
 
 	writeErrLogMu sync.Mutex
 	writeErrLogAt time.Time // zero until the first logged write error
+
+	sseDeadlineErrLogMu sync.Mutex
+	sseDeadlineErrLogAt time.Time // zero until the first logged SSE deadline error
 
 	droppedQueueFull     atomic.Uint64
 	droppedWriteError    atomic.Uint64
@@ -186,10 +212,11 @@ func NewStore(cfg StoreConfig) (*Store, error) {
 		segBytes:       cfg.SegmentBytes,
 		indexMemBudget: cfg.IndexMemBudgetBytes,
 		errorLog:       cfg.ErrorLog,
+		epoch:          rand.Uint64(),
 		writeCh:        make(chan Exchange, writeChanCapacity),
 		writerDone:     make(chan struct{}),
 		idx:            newIndex(),
-		subs:           make(map[chan Summary]struct{}),
+		subs:           make(map[*subscription]struct{}),
 	}
 	go s.writeLoop()
 	return s, nil
@@ -229,13 +256,17 @@ func queuedSize(ex Exchange) int64 {
 	return int64(len(ex.Request.Bytes) + len(ex.Response.Bytes))
 }
 
-// Close stops intake, waits for the writer goroutine to drain whatever was
-// already queued, and closes the active segment, all bounded by ctx. If
-// ctx ends first, every record still in the queue is counted Abandoned
-// rather than written, and Close returns an error naming ctx.Err() and how
-// many were abandoned. It is safe to call more than once: the first call
-// closes intake, and a later call just repeats the same bounded wait
-// against whatever is left, which by then is normally nothing.
+// Close stops intake, ends every open GET /stream subscription (so a
+// handler blocked in handleStream's select returns immediately instead of
+// holding its connection until http.Server.Shutdown's own budget runs
+// out), waits for the writer goroutine to drain whatever was already
+// queued, and closes the active segment, all but the subscriber close
+// bounded by ctx. If ctx ends first, every record still in the queue is
+// counted Abandoned rather than written, and Close returns an error naming
+// ctx.Err() and how many were abandoned. It is safe to call more than
+// once: the first call closes intake and ends every subscriber, and a
+// later call just repeats the same bounded wait against whatever record
+// backlog is left, which by then is normally nothing.
 //
 // Close does not itself guard against a single write syscall that never
 // returns (a wedged disk or a stuck NFS mount): the writer goroutine has
@@ -248,6 +279,7 @@ func (s *Store) Close(ctx context.Context) error {
 		s.closed = true
 		s.intakeMu.Unlock()
 		close(s.writeCh)
+		s.closeAllSubscribers()
 	})
 
 	select {
@@ -299,10 +331,13 @@ type Stats struct {
 	Truncated            uint64
 	EvictedSegments      uint64
 	IndexMemoryEvictions uint64
-	SlowSubscribers      uint64
-	BytesOnDisk          int64
-	IndexEntries         int
-	IndexApproxBytes     int64
+	// SlowSubscribers counts GET /stream readers ended for falling behind
+	// (publish, segment_writer.go): one per ended subscription, not one
+	// per event it missed, matching the route doc (handler.go).
+	SlowSubscribers  uint64
+	BytesOnDisk      int64
+	IndexEntries     int
+	IndexApproxBytes int64
 	// DuplicateIndexIDs counts exchanges Record was handed with an id
 	// already present in the index: refused rather than indexed, so the
 	// first entry for that id stays authoritative (index.go, add).

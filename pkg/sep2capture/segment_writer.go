@@ -103,6 +103,7 @@ func (s *Store) writeOne(ex Exchange) {
 	// is a true write-order sequence regardless of what order ids were
 	// handed out at exchange open (index.go's Summary.Seq doc).
 	s.nextPublishSeq++
+	s.maxPublishSeq.Store(s.nextPublishSeq)
 
 	entry := exchangeEntry{
 		Summary: Summary{

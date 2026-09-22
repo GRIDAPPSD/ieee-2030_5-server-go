@@ -85,6 +85,7 @@ func (s *Store) Exchange(id uint64) (Exchange, error) {
 	return Exchange{
 		ID:         entry.ID,
 		ConnID:     entry.ConnID,
+		Seq:        entry.Seq,
 		ClientLFDI: entry.ClientKey,
 		ClientSFDI: entry.clientSFDI,
 		Started:    entry.Started,
@@ -110,21 +111,26 @@ func (s *Store) Exchange(id uint64) (Exchange, error) {
 // handler_sse.go): a reconnecting client's after= or Last-Event-ID names a
 // Seq, not an exchange id or a client, since the stream itself is not
 // scoped to one and ids arrive out of order (index.go's Summary.Seq doc;
-// PR 620 review, HIGH: resuming on ID missed or duplicated exchanges
-// whenever two connections on one client finished out of id order). This
-// is a full scan of the index rather than a maintained global order,
-// deliberately: it only runs once per (re)connect, not on the hot path Q5
-// is about.
+// PR 620 review: resuming on ID missed or duplicated exchanges whenever
+// two connections on one client finished out of id order). The scan
+// itself is still a full pass over the index rather than a maintained
+// global order, deliberately: it only runs once per (re)connect, not on
+// the hot path Q5 is about. The result slice is grown by append rather
+// than pre-sized to the whole index, and sorted after idx.mu is released
+// (PR 620 review, MEDIUM: a reconnect missing a handful of events used to
+// allocate and sort a slice sized for the whole index while holding the
+// lock the writer goroutine also needs), so a reconnect near the head of
+// a large index costs proportional to what it replays.
 func (s *Store) summariesAfter(afterSeq uint64) []Summary {
 	s.idx.mu.Lock()
-	defer s.idx.mu.Unlock()
-
-	out := make([]Summary, 0, len(s.idx.byID))
+	var out []Summary
 	for _, e := range s.idx.byID {
 		if e.Seq > afterSeq {
 			out = append(out, e.Summary)
 		}
 	}
+	s.idx.mu.Unlock()
+
 	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
 	return out
 }
@@ -138,6 +144,16 @@ func (s *Store) summariesAfter(afterSeq uint64) []Summary {
 type subscription struct {
 	ch   chan Summary
 	once sync.Once
+	// forceExpire, when set, is called once as part of ending this
+	// subscription: handleStream sets it to force its own connection's
+	// write deadline into the past (PR 620 review, MEDIUM: a write
+	// already blocked on a stalled client waited out its own deadline,
+	// up to a minute in production, regardless of why the subscription
+	// ended). net.Conn's SetWriteDeadline "sets the deadline for future
+	// Write calls and any currently-blocked Write call" and is safe to
+	// call from another goroutine (net.Conn: "multiple goroutines may
+	// invoke methods on a Conn simultaneously").
+	forceExpire func()
 }
 
 // subscribeHook, when set by a test in this package, runs synchronously
@@ -153,9 +169,10 @@ var subscribeHook func(ch chan Summary)
 // (publish, segment_writer.go), or when Store.Close ends every open
 // stream. The store, not the caller, closes it (channels are closed by the
 // sender): closeSubscription is the single path every one of those closes
-// funnels through.
-func (s *Store) Subscribe(ctx context.Context) <-chan Summary {
-	sub := &subscription{ch: make(chan Summary, subscriberBufferSize)}
+// funnels through, and forceExpire (nil is fine) runs there too, once,
+// however the subscription ends.
+func (s *Store) Subscribe(ctx context.Context, forceExpire func()) <-chan Summary {
+	sub := &subscription{ch: make(chan Summary, subscriberBufferSize), forceExpire: forceExpire}
 
 	s.subMu.Lock()
 	s.subs[sub] = struct{}{}
@@ -178,6 +195,9 @@ func (s *Store) Subscribe(ctx context.Context) <-chan Summary {
 // it concurrently for the same sub.
 func (s *Store) closeSubscription(sub *subscription) {
 	sub.once.Do(func() {
+		if sub.forceExpire != nil {
+			sub.forceExpire()
+		}
 		s.subMu.Lock()
 		delete(s.subs, sub)
 		s.subMu.Unlock()

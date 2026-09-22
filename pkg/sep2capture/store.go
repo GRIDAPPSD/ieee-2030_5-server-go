@@ -133,6 +133,12 @@ type Store struct {
 	liveSegs       []liveSegment
 	nextPublishSeq uint64 // Summary.Seq source; see its doc in index.go
 
+	// maxPublishSeq mirrors nextPublishSeq for readers outside the writer
+	// goroutine (handleStream's after= validation, handler_sse.go): the
+	// highest Seq ever assigned, monotonic even across eviction, so a
+	// resume point above it can never be a Seq this Store actually issued.
+	maxPublishSeq atomic.Uint64
+
 	idx *index
 
 	subMu sync.Mutex

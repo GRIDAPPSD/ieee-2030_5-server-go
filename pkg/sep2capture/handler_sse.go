@@ -61,13 +61,33 @@ func (s *Store) handleStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "after or Last-Event-ID must be a non-negative integer")
 		return
 	}
+	// A resume point above every Seq this Store has ever published cannot
+	// be one: unlike /exchanges' after= (an exchange id), this route's
+	// after= and Last-Event-ID name a Seq (handler.go's route doc), and
+	// the two spaces diverge by every dropped, refused or failed record
+	// (PR 620 review, MEDIUM: a client that mixed up the two got a 200
+	// and an empty replay, indistinguishable from "nothing was missed").
+	// maxPublishSeq only grows, so a value valid here stays valid by the
+	// time summariesAfter runs.
+	if resumeAfter != nil && *resumeAfter > s.maxPublishSeq.Load() {
+		writeError(w, http.StatusBadRequest, "after or Last-Event-ID names a publish sequence this stream has never issued")
+		return
+	}
 
 	// Subscribe before reading any history: everything recorded from this
 	// instant on is guaranteed to reach ch, so nothing recorded after this
 	// line can fall in the gap between "read history" and "start
 	// watching live" below (store_reader.go's add-then-publish order on
 	// one goroutine is what makes this true).
-	ch := s.Subscribe(r.Context())
+	ch := s.Subscribe(r.Context(), func() {
+		// Unblocks a Write already in flight to this connection the
+		// instant the subscription ends, rather than leaving it to run
+		// out whatever write deadline the last successful write set
+		// (subscription.forceExpire's doc, store_reader.go).
+		if err := rc.SetWriteDeadline(time.Now()); err != nil {
+			s.logSSEDeadlineErr(err)
+		}
+	})
 	if sseSubscribedHook != nil {
 		sseSubscribedHook()
 	}

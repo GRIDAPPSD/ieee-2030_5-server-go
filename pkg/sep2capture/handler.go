@@ -25,12 +25,15 @@ import (
 // GET /exchanges?client=<key>&after=<id>&limit=<n>
 //
 //	One client's exchange summaries, oldest first. client is required.
-//	after (default 0) returns only ids greater than it. limit (default
-//	200, clamped to at most 1000) bounds how many summaries come back; a
-//	limit of 0 or less is a 400, not "unbounded" (Store.Exchanges itself
-//	allows unbounded; this route never does).
+//	after (default 0) is an exchange id: returns only ids greater than
+//	it (unrelated to /stream's after=, a publish sequence: see that
+//	route's doc for why the two spaces differ and each summary's own
+//	"seq" field). limit (default 200, clamped to at most 1000) bounds
+//	how many summaries come back; a limit of 0 or less is a 400, not
+//	"unbounded" (Store.Exchanges itself allows unbounded; this route
+//	never does).
 //	200 application/json: {"exchanges": [{"id": 7, "connId": 2,
-//	"clientKey": "3e4f...", "started": "2026-09-22T10:00:00Z",
+//	"seq": 42, "clientKey": "3e4f...", "started": "2026-09-22T10:00:00Z",
 //	"ended": "2026-09-22T10:00:01Z", "mark": "handled", "handlerRuns": 1,
 //	"method": "GET", "path": "/dcap", "status": 200, "reqTrueLen": 128,
 //	"respTrueLen": 512, "reqStored": 128, "respStored": 512,
@@ -41,11 +44,12 @@ import (
 // GET /exchanges/{id}
 //
 //	One exchange's summary, the same shape as one entry above.
-//	200 application/json: {"id": 7, "connId": 2, "clientKey": "3e4f...",
-//	"started": "2026-09-22T10:00:00Z", "ended": "2026-09-22T10:00:01Z",
-//	"mark": "handled", "handlerRuns": 1, "method": "GET", "path": "/dcap",
-//	"status": 200, "reqTrueLen": 128, "respTrueLen": 512, "reqStored": 128,
-//	"respStored": 512, "reqTruncated": false, "respTruncated": false}
+//	200 application/json: {"id": 7, "connId": 2, "seq": 42,
+//	"clientKey": "3e4f...", "started": "2026-09-22T10:00:00Z",
+//	"ended": "2026-09-22T10:00:01Z", "mark": "handled", "handlerRuns": 1,
+//	"method": "GET", "path": "/dcap", "status": 200, "reqTrueLen": 128,
+//	"respTrueLen": 512, "reqStored": 128, "respStored": 512,
+//	"reqTruncated": false, "respTruncated": false}
 //	400 when id does not parse as a uint64.
 //	404 when id is higher than any exchange this Store has ever indexed.
 //	410 when id was indexed but its segment has since been evicted.
@@ -59,20 +63,26 @@ import (
 //	application/octet-stream, Content-Disposition: attachment, and
 //	X-Content-Type-Options: nosniff. Same 400/404/410 as above.
 //
-// GET /stream?after=<id>
+// GET /stream?after=<seq>
 //
 //	Server-Sent Events: one "data:" line of the JSON exchange-summary
-//	shape above per newly recorded exchange. "id:" is the exchange's
-//	publish sequence, not the JSON body's own "id" field (the exchange
-//	id): ids are assigned when an exchange opens, so two connections on
-//	the same client can finish, and so publish, out of that order, and a
-//	resume keyed on id can skip or repeat one. The publish sequence never
-//	does. A reconnect sends either the standard Last-Event-ID header or
-//	this route's own after= query parameter (Last-Event-ID wins when both
-//	are present), naming the last "id:" value it saw, to resume with no
-//	gap and no duplicate, as long as the exchange it names is still
-//	indexed (an evicted one is silently skipped, the same way an evicted
-//	exchange never appears in /exchanges).
+//	shape above per newly recorded exchange. Both "id:" and this route's
+//	after= (and the standard Last-Event-ID header, which wins when both
+//	are present) name the publish sequence, the same value as the JSON
+//	body's own "seq" field, never the exchange id in its "id" field:
+//	exchange ids are assigned when an exchange opens, so two connections
+//	on the same client can finish, and so publish, out of that order,
+//	and a resume keyed on id can skip or repeat one. The publish
+//	sequence never does, and it is one space across every client, unlike
+//	/exchanges' after= (that route's doc). A value above every sequence
+//	this Store has ever issued is a 400, not a silent empty replay: the
+//	two spaces are both plain uint64s, so a client that hands this route
+//	an exchange id instead of a "seq" would otherwise get a 200 that
+//	reads exactly like "nothing was missed" when it is really a mistake.
+//	A reconnect resumes with no gap and no duplicate as long as the
+//	exchange it names is still indexed (an evicted one is silently
+//	skipped, the same way an evicted exchange never appears in
+//	/exchanges).
 //	Neither present means live only, starting from this connection: the
 //	route never replays history on its own, so opening the tab for the
 //	first time does not have to hold the whole index in memory. after=0
@@ -81,7 +91,11 @@ import (
 //	has its stream ended rather than left open to miss events silently:
 //	the browser's EventSource reconnects and resumes from the last id:
 //	it received. The stream also ends when Store.Close runs, so a server
-//	shutdown does not wait out a stream's own write timeout.
+//	shutdown does not wait out a stream's own write timeout, even with a
+//	write already blocked on a stalled client (subscription.forceExpire,
+//	store_reader.go).
+//	400 when after or Last-Event-ID does not parse as a uint64, or names
+//	a publish sequence this Store has never issued.
 //
 // GET /stats
 //
@@ -125,8 +139,12 @@ type clientJSON struct {
 // exchange (GET /exchanges/{id}) and for each entry of a list (GET
 // /exchanges, and the "data:" line of GET /stream).
 type summaryJSON struct {
-	ID            uint64 `json:"id"`
-	ConnID        uint64 `json:"connId"`
+	ID     uint64 `json:"id"`
+	ConnID uint64 `json:"connId"`
+	// Seq is the publish sequence: /stream's resume point (Q7 item 4).
+	// /exchanges' own after= stays an exchange id (unchanged); a client
+	// resuming /stream uses this field, not id, on either route.
+	Seq           uint64 `json:"seq"`
 	ClientKey     string `json:"clientKey"`
 	Started       string `json:"started"`
 	Ended         string `json:"ended"`
@@ -174,6 +192,7 @@ func toSummaryJSON(sum Summary) summaryJSON {
 	return summaryJSON{
 		ID:            sum.ID,
 		ConnID:        sum.ConnID,
+		Seq:           sum.Seq,
 		ClientKey:     sum.ClientKey,
 		Started:       sum.Started.Format(rfc3339Nano),
 		Ended:         sum.Ended.Format(rfc3339Nano),
@@ -340,6 +359,7 @@ func summaryOf(ex Exchange) Summary {
 	return Summary{
 		ID:            ex.ID,
 		ConnID:        ex.ConnID,
+		Seq:           ex.Seq,
 		ClientKey:     ex.ClientLFDI,
 		Started:       ex.Started,
 		Ended:         ex.Ended,

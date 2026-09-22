@@ -56,7 +56,13 @@ func readSSEEvents(t testing.TB, r *bufio.Reader, n int, deadline time.Time) []s
 		case strings.HasPrefix(line, ":"):
 			// heartbeat/comment line, not part of any event
 		case strings.HasPrefix(line, "id: "):
-			id, perr := strconv.ParseUint(strings.TrimPrefix(line, "id: "), 10, 64)
+			raw := strings.TrimPrefix(line, "id: ")
+			// "<epoch>-<seq>" (Store.epoch's doc, store.go): every
+			// assertion in this file cares only about the trailing seq.
+			if dash := strings.LastIndexByte(raw, '-'); dash >= 0 {
+				raw = raw[dash+1:]
+			}
+			id, perr := strconv.ParseUint(raw, 10, 64)
 			if perr != nil {
 				t.Fatalf("readSSEEvents: bad id line %q: %v", line, perr)
 			}
@@ -554,10 +560,21 @@ func TestHandlerStreamResumeAcrossEvictionDeliversSurvivors(t *testing.T) {
 		t.Fatalf("Store.Exchange(1): got %v, want ErrEvicted (test setup needs id 1 evicted)", err)
 	}
 
-	survivors := st.summariesAfter(0)
-	wantSeqs := make([]uint64, len(survivors))
-	for i, sum := range survivors {
-		wantSeqs[i] = sum.Seq
+	// wantSeqs is built through Store.Exchange, not summariesAfter (PR 620
+	// review, coverage LOW, round 3): summariesAfter is also what builds
+	// the handler's own replay, so deriving the want list from it too
+	// would let a sort-direction bug in summariesAfter flip both sides
+	// together and still pass. ids were recorded 1..200 in that order, so
+	// Seq equals id here (makeExchange's own call order, single writer
+	// goroutine), which is what lets a surviving id double as its own
+	// surviving Seq below.
+	var wantSeqs []uint64
+	for id := uint64(1); id <= 200; id++ {
+		if _, err := st.Exchange(id); err == nil {
+			wantSeqs = append(wantSeqs, id)
+		} else if err != ErrEvicted {
+			t.Fatalf("Store.Exchange(%d): unexpected error %v", id, err)
+		}
 	}
 
 	ts := httptest.NewServer(st.Handler())
@@ -777,9 +794,20 @@ func TestSummaryJSONCarriesSeqAcrossExchangesAndStream(t *testing.T) {
 // list's own "seq" field (never "id") sees every exchange recorded after
 // the list was taken, with no gap and no repeat of what the list already
 // covered.
+//
+// ids are recorded out of their own numeric order (PR 620 review,
+// silent-failure MEDIUM 2, round 3): /exchanges orders by exchange id, so
+// with ids 3,1,2 the list's LAST row (id 3) is not the list's HIGHEST
+// seq (id 2 published third). The recipe a client must follow is the
+// list's maximum seq, not any one row's, in particular not the last row's.
+//
+// Mutant (this test): taking `listBody.Exchanges[len(listBody.Exchanges)-1].Seq`
+// instead of the list's maximum leaves this RED: exchange 3 published
+// first (seq 1), so resuming from its seq would replay exchanges 1 and 2
+// again instead of only the two genuinely new ones.
 func TestHandlerStreamHandoffFromExchangesListLosesNothing(t *testing.T) {
 	st := newTestStore(t)
-	for _, id := range []uint64{1, 2, 3} {
+	for _, id := range []uint64{3, 1, 2} {
 		st.Record(makeExchange(id, id, "client-a", 32, 32))
 	}
 	waitQueueDrained(t, st)
@@ -801,9 +829,14 @@ func TestHandlerStreamHandoffFromExchangesListLosesNothing(t *testing.T) {
 	if len(listBody.Exchanges) != 3 {
 		t.Fatalf("exchanges list: got %d, want 3", len(listBody.Exchanges))
 	}
-	lastSeq := listBody.Exchanges[len(listBody.Exchanges)-1].Seq
+	var maxSeq uint64
+	for _, e := range listBody.Exchanges {
+		if e.Seq > maxSeq {
+			maxSeq = e.Seq
+		}
+	}
 
-	streamResp, err := http.Get(ts.URL + "/stream?after=" + strconv.FormatUint(lastSeq, 10))
+	streamResp, err := http.Get(ts.URL + "/stream?after=" + strconv.FormatUint(maxSeq, 10))
 	if err != nil {
 		t.Fatalf("GET /stream: %v", err)
 	}
@@ -857,4 +890,208 @@ func TestHandlerStreamRejectsAResumePointBeyondAnyPublishedSeq(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want %d (999999 exceeds every Seq this Store has ever issued)", resp.StatusCode, http.StatusBadRequest)
 	}
+}
+
+// TestHandlerStreamRejectsAResumePointOneAboveMaxPublishedSeq is
+// coverage-lane LOW (round 3): the only over-max case a test covered was
+// far beyond the max (999999 against 3), which would also pass an
+// off-by-one guard; the boundary itself needs its own case.
+//
+// Mutant (handler_sse.go, handleStream): changing
+// `resume.seq > s.maxPublishSeq.Load()` to
+// `resume.seq > s.maxPublishSeq.Load()+1` makes this RED: a resume point
+// exactly one past the highest Seq this Store has ever issued gets a 200
+// with an empty replay instead of a 400.
+func TestHandlerStreamRejectsAResumePointOneAboveMaxPublishedSeq(t *testing.T) {
+	st := newTestStore(t)
+	for _, id := range []uint64{1, 2, 3} {
+		st.Record(makeExchange(id, id, "client-a", 32, 32))
+	}
+	waitQueueDrained(t, st)
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/stream?after=4")
+	if err != nil {
+		t.Fatalf("GET /stream?after=4: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want %d (4 is exactly one past the highest Seq issued, 3)", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+// TestHandlerStreamResumeFromAPreviousIncarnationReplaysEverything is
+// item 1's acceptance (PR 620 review, both lanes, MEDIUM): a Last-Event-ID
+// or after= value stamped with a different incarnation's epoch names a Seq
+// space this Store never issued. Per the route doc, that must never be a
+// 400 (an EventSource that gets one gives up and does not reconnect, per
+// the HTML standard) and must never silently skip this incarnation's own
+// early events (the numeric seq portion can coincidentally fall inside
+// this Store's own valid range, since every fresh Store's Seq counter
+// starts back at 1): the only answer that is both is a full replay of
+// everything this incarnation has indexed so far. prev stands in for "the
+// process before a restart": a distinct Store, never started against st's
+// own directory, whose epoch is (with overwhelming probability, drawn
+// from a 64-bit random source) different from st's.
+//
+// Mutant (handler_sse.go, parseResume): dropping the `gotEpoch != epoch`
+// check (trusting the numeric seq portion regardless of its epoch) makes
+// both subtests RED: "above max" answers 400 instead of replaying, and
+// "within range" replays only seq 11-23, silently skipping this
+// incarnation's own seq 1-10.
+func TestHandlerStreamResumeFromAPreviousIncarnationReplaysEverything(t *testing.T) {
+	t.Run("resume point above this incarnation's max", func(t *testing.T) {
+		prev := newTestStore(t)
+
+		st := newTestStore(t)
+		for _, id := range []uint64{1, 2, 3} {
+			st.Record(makeExchange(id, id, "client-a", 32, 32))
+		}
+		waitQueueDrained(t, st)
+
+		ts := httptest.NewServer(st.Handler())
+		defer ts.Close()
+
+		req, err := http.NewRequest(http.MethodGet, ts.URL+"/stream", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Last-Event-ID", fmt.Sprintf("%d-%d", prev.epoch, uint64(10)))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET /stream (resume): %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status: got %d, want %d (a foreign incarnation's resume point must never be a hard 400)", resp.StatusCode, http.StatusOK)
+		}
+		r := bufio.NewReader(resp.Body)
+		events := readSSEEvents(t, r, 3, time.Now().Add(5*time.Second))
+		var ids []uint64
+		for _, e := range events {
+			var body summaryJSON
+			if err := json.Unmarshal([]byte(e.data), &body); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			ids = append(ids, body.ID)
+		}
+		if want := []uint64{1, 2, 3}; !idsEqual(ids, want) {
+			t.Fatalf("resumed exchange ids: got %v, want %v (a foreign incarnation's resume must replay everything this one has)", ids, want)
+		}
+	})
+
+	t.Run("resume point within this incarnation's range", func(t *testing.T) {
+		prev := newTestStore(t)
+
+		st := newTestStore(t)
+		for i := uint64(1); i <= 23; i++ {
+			st.Record(makeExchange(i, i, "client-a", 32, 32))
+		}
+		waitQueueDrained(t, st)
+
+		ts := httptest.NewServer(st.Handler())
+		defer ts.Close()
+
+		req, err := http.NewRequest(http.MethodGet, ts.URL+"/stream", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Last-Event-ID", fmt.Sprintf("%d-%d", prev.epoch, uint64(10)))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET /stream (resume): %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status: got %d, want %d", resp.StatusCode, http.StatusOK)
+		}
+		r := bufio.NewReader(resp.Body)
+		events := readSSEEvents(t, r, 23, time.Now().Add(5*time.Second))
+		if events[0].id != 1 {
+			t.Fatalf("first replayed seq: got %d, want 1 (a foreign incarnation's low-numbered resume must not silently skip this run's own early seqs)", events[0].id)
+		}
+	})
+}
+
+// TestSummaryJSONSeqFieldIsThePublishSequenceNotTheExchangeID is item 2's
+// acceptance (PR 620 review, coverage MEDIUM 1, round 3): summaryJSON's
+// "seq" field must read Summary.Seq, the publish sequence /stream resumes
+// on, never the exchange id. ids are recorded 3,2,1 in that order so the
+// two disagree (Seq 1,2,3 respectively): the previous round's fixtures for
+// this field all had id == Seq, so a copy-paste of the wrong source field
+// left every prior assertion green.
+//
+// Mutant (handler.go, toSummaryJSON): changing `Seq: sum.Seq,` to
+// `Seq: sum.ID,` makes this RED across every subtest below.
+func TestSummaryJSONSeqFieldIsThePublishSequenceNotTheExchangeID(t *testing.T) {
+	st := newTestStore(t)
+	for _, id := range []uint64{3, 2, 1} {
+		st.Record(makeExchange(id, id, "client-a", 32, 32))
+	}
+	waitQueueDrained(t, st)
+
+	// id 3 published first, so its Seq is 1; id 1 published last, Seq 3.
+	wantSeqByID := map[uint64]uint64{3: 1, 2: 2, 1: 3}
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	t.Run("exchanges list", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/exchanges?client=client-a")
+		if err != nil {
+			t.Fatalf("GET /exchanges: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var body struct {
+			Exchanges []summaryJSON `json:"exchanges"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		for _, e := range body.Exchanges {
+			if want := wantSeqByID[e.ID]; e.Seq != want {
+				t.Errorf("exchange id %d: seq got %d, want %d (the publish sequence, not the exchange id)", e.ID, e.Seq, want)
+			}
+		}
+	})
+
+	t.Run("exchange summary", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/exchanges/1")
+		if err != nil {
+			t.Fatalf("GET /exchanges/1: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var sum summaryJSON
+		if err := json.NewDecoder(resp.Body).Decode(&sum); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if sum.Seq != 3 {
+			t.Errorf("exchange 1 seq: got %d, want 3 (published last of the three)", sum.Seq)
+		}
+	})
+
+	t.Run("stream event", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/stream?after=0")
+		if err != nil {
+			t.Fatalf("GET /stream: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		r := bufio.NewReader(resp.Body)
+		events := readSSEEvents(t, r, 3, time.Now().Add(5*time.Second))
+		for _, e := range events {
+			var body summaryJSON
+			if err := json.Unmarshal([]byte(e.data), &body); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			want := wantSeqByID[body.ID]
+			if body.Seq != want {
+				t.Errorf("stream exchange id %d: seq got %d, want %d", body.ID, body.Seq, want)
+			}
+			if e.id != want {
+				t.Errorf("stream exchange id %d: id: line seq got %d, want %d", body.ID, e.id, want)
+			}
+		}
+	})
 }

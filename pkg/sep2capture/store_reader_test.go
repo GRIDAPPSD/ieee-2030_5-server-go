@@ -3,6 +3,7 @@ package sep2capture
 import (
 	"context"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -102,6 +103,50 @@ func TestSubscribeChannelClosesOnContextCancel(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Subscribe channel: still open 2s after ctx cancel")
+	}
+}
+
+// TestSubscribeCtxDoneDoesNotForceExpire is item 5's acceptance (PR 620
+// review, silent-failure MEDIUM 3): ending a subscription through its own
+// ctx.Done() (an ordinary disconnect) must never call forceExpire, only
+// the slow-reader drop and Store.Close do (closeSubscription's doc,
+// store_reader.go). Proven directly against Subscribe's own contract
+// rather than by racing a real connection's close against the callback
+// over HTTP: whether forceExpire's own SetWriteDeadline call actually
+// observes an already-closed fd there depends on how far net/http's own
+// connection teardown has gotten by that moment, which is not
+// deterministic either way. called is read only after the channel closes:
+// close(sub.ch) in closeSubscription always runs after the forceExpire
+// call in the same once.Do body, so seeing the channel closed is proof
+// that call already happened, or already provably did not.
+//
+// Mutant (store_reader.go, Subscribe): changing the ctx.Done() goroutine's
+// `s.closeSubscription(sub, false)` to `s.closeSubscription(sub, true)`
+// makes this RED: called reads true.
+func TestSubscribeCtxDoneDoesNotForceExpire(t *testing.T) {
+	dir := t.TempDir()
+	st, err := NewStore(StoreConfig{Dir: dir})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	t.Cleanup(func() { closeStore(t, st) })
+
+	var called atomic.Bool
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := st.Subscribe(ctx, func() { called.Store(true) })
+	cancel()
+
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("Subscribe channel: got a value, want it closed with no value after ctx cancel")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Subscribe channel: still open 2s after ctx cancel")
+	}
+
+	if called.Load() {
+		t.Fatal("forceExpire: got called, want not called (ctx.Done() ending a subscription must never force the write deadline)")
 	}
 }
 
@@ -217,13 +262,29 @@ func TestSummariesAfterCostIsProportionalToWhatItReplaysNotToTheIndex(t *testing
 // "reconnects repeated" shape the review measured) must not starve the
 // writer goroutine of idx.mu for long. Interleaved rather than truly
 // concurrent, to stay deterministic: each round records one new exchange,
-// drains it, then calls summariesAfter once, and the whole loop is timed
-// against a budget that only the pre-fix per-call allocation cost (not
-// scan cost, which does not change) could blow.
+// drains it, then calls summariesAfter once.
+//
+// Asserted on cumulative bytes allocated across all rounds, not wall-clock
+// (PR 620 review, coverage MEDIUM 2, round 3): a 2s wall budget failed 1 of
+// 3 -race iterations on the review's own host at 2.013s, and the fix's own
+// documented mutant only moved the measured window by about 0.09s against
+// roughly 0.5s of run-to-run noise, so it did not reliably fail even when
+// reverted. The fixed cost is proportional to what each call replays (5
+// entries * rounds), never to the index, so allocation separates the two
+// cases by more than two orders of magnitude regardless of host load or
+// -race instrumentation overhead.
+//
+// Mutant (store_reader.go, summariesAfter): reverting to
+// `make([]Summary, 0, len(s.idx.byID))` makes this RED: allocated bytes
+// jump from a 5-entries-per-round result to a 200000-entry one every
+// round, well past budget.
 func TestWriterKeepsIndexingWhileSummariesAfterRunsRepeatedly(t *testing.T) {
 	const total = 200000
 	const rounds = 20
-	const budget = 2 * time.Second
+	// Far above what 20 rounds of a 5-entry result cost (a few thousand
+	// bytes) and far below what 20 rounds of a 200000-entry allocation
+	// would cost (roughly 20 * 40MB =~ 800MB, the pre-fix shape).
+	const allocBudget = 8 * 1024 * 1024
 
 	st := newTestStore(t)
 	now := time.Now()
@@ -239,6 +300,9 @@ func TestWriterKeepsIndexingWhileSummariesAfterRunsRepeatedly(t *testing.T) {
 	st.nextPublishSeq = total
 	st.maxPublishSeq.Store(total)
 
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
 	start := time.Now()
 	for i := uint64(1); i <= rounds; i++ {
 		id := total + i
@@ -249,10 +313,14 @@ func TestWriterKeepsIndexingWhileSummariesAfterRunsRepeatedly(t *testing.T) {
 		}
 	}
 	elapsed := time.Since(start)
-	if elapsed > budget {
-		t.Fatalf("%d rounds of Record+summariesAfter against a %d-entry index took %v, want < %v (the writer must not be starved of idx.mu by repeated reconnects)", rounds, total, elapsed, budget)
+	runtime.ReadMemStats(&after)
+
+	allocated := after.TotalAlloc - before.TotalAlloc
+	if allocated > allocBudget {
+		t.Fatalf("%d rounds of Record+summariesAfter against a %d-entry index allocated %d bytes, want < %d (the writer must not be starved of idx.mu by repeated reconnects re-scanning the whole index)", rounds, total, allocated, allocBudget)
 	}
 	if got := st.Stats().IndexEntries; got != total+rounds {
 		t.Fatalf("IndexEntries after %d rounds: got %d, want %d (every new record indexed, none dropped)", rounds, got, total+rounds)
 	}
+	t.Logf("%d rounds against a %d-entry index: %v elapsed, %d bytes allocated", rounds, total, elapsed, allocated)
 }

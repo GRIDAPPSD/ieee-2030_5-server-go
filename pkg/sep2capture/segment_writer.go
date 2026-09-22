@@ -148,15 +148,22 @@ func (s *Store) evictOldest() error {
 	return nil
 }
 
-// rollSegment closes nothing (the previous active segment, if any, is left
-// open and live in liveSegs; only Close or a write failure closes a
-// segment's file handle) and opens the next one.
+// rollSegment closes the previous active segment, if any (security lane
+// M3: leaving it open until a GC finalizer gets around to it let disk use
+// run past the hard cap, since a deleted-but-open file's space is never
+// freed), then opens the next one.
 func (s *Store) rollSegment() error {
+	prev := s.active
 	num := s.nextSegNum
 	s.nextSegNum++
 	f, err := os.OpenFile(s.segmentPath(num), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("sep2capture: create segment %d: %w", num, err)
+	}
+	if prev != nil {
+		if cerr := prev.f.Close(); cerr != nil {
+			s.logWriteErr(fmt.Errorf("sep2capture: close segment %d after roll: %w", prev.number, cerr))
+		}
 	}
 	s.active = &segmentFile{number: num, f: f}
 	s.liveSegs = append(s.liveSegs, liveSegment{number: num})

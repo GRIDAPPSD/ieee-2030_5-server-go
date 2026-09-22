@@ -104,6 +104,28 @@ func (s *Store) Exchange(id uint64) (Exchange, error) {
 	}, nil
 }
 
+// summariesAfter returns every indexed Summary with ID > afterID, sorted
+// by ID, across every client. It backs the SSE resume path (Handler,
+// handler_sse.go): a reconnecting client's after= or Last-Event-ID names
+// an id, not a client, since the stream itself is not scoped to one. This
+// is a full scan of the index rather than a maintained global order,
+// deliberately: it only runs once per (re)connect, not on the hot path Q5
+// is about, and out-of-order arrival (index.go) means a per-client sorted
+// slice like Exchanges' cannot be reused across clients without one.
+func (s *Store) summariesAfter(afterID uint64) []Summary {
+	s.idx.mu.Lock()
+	defer s.idx.mu.Unlock()
+
+	out := make([]Summary, 0, len(s.idx.byID))
+	for id, e := range s.idx.byID {
+		if id > afterID {
+			out = append(out, e.Summary)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
 // Subscribe returns a channel of every Summary recorded after the call,
 // closed when ctx ends. The store, not the caller, closes it (channels are
 // closed by the sender): a goroutine tied to ctx removes and closes it,

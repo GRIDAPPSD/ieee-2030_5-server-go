@@ -35,13 +35,15 @@ const (
 	// handful of exchanges. This just keeps the channel itself from ever
 	// being the thing that decides a drop.
 	writeChanCapacity = 1024
-
-	// subscriberBufferSize bounds how far a live SSE reader (PR 4) may
-	// fall behind before publish drops its update and counts it in
-	// SlowSubscribers rather than blocking the writer goroutine on a slow
-	// reader.
-	subscriberBufferSize = 64
 )
+
+// subscriberBufferSize bounds how far a live SSE reader (PR 4) may fall
+// behind before publish drops its update and counts it in SlowSubscribers
+// rather than blocking the writer goroutine on a slow reader. A var, not a
+// const, so a test can shrink it to force that drop deterministically
+// without writing hundreds of exchanges to outrun a real subscriber's
+// socket buffer first.
+var subscriberBufferSize = 64
 
 // ErrEvicted is returned by Exchange for an id whose segment has since
 // been deleted to stay under CapBytes, or whose segment file could not be

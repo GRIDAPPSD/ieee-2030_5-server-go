@@ -25,7 +25,7 @@ func TestDuplicateExchangeIDGoesNowhere(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	sub := st.Subscribe(ctx)
+	sub := st.Subscribe(ctx, nil)
 
 	st.Record(makeExchange(7, 1, "first", 25, 25))
 	st.Record(makeExchange(7, 2, "second", 25, 25))

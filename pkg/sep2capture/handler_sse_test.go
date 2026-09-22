@@ -312,9 +312,16 @@ func TestReplaySetHasDistinguishesReplayedIDs(t *testing.T) {
 // before handleStream's own goroutine ever reads from the channel, rather
 // than racing the scheduler for it.
 //
+// The request carries a bounded context (PR 620 review, coverage LOW: a
+// close-on-drop regression used to hang the whole package instead of
+// failing this one test, since neither this read nor readSSEEvents' own
+// ReadString had a deadline): a real fix still returns well inside it, and
+// a regression now fails with a named error instead of a package-wide
+// "panic: test timed out".
+//
 // Mutant (segment_writer.go, publish): reverting to the bare `default:
 // s.slowSubscribers.Add(1)` with no closeSubscription call makes this RED:
-// resp.Body never reaches EOF, so the test times out waiting for it.
+// r.ReadByte() returns the bounded context's error instead of io.EOF.
 func TestHandlerStreamClosesOnFirstDropSoResumeFillsTheGap(t *testing.T) {
 	old := subscriberBufferSize
 	subscriberBufferSize = 1
@@ -332,7 +339,13 @@ func TestHandlerStreamClosesOnFirstDropSoResumeFillsTheGap(t *testing.T) {
 	ts := httptest.NewServer(st.Handler())
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/stream")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/stream", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /stream: %v", err)
 	}
@@ -351,7 +364,7 @@ func TestHandlerStreamClosesOnFirstDropSoResumeFillsTheGap(t *testing.T) {
 		t.Errorf("SlowSubscribers: got %d, want 1", stats.SlowSubscribers)
 	}
 
-	req, err := http.NewRequest(http.MethodGet, ts.URL+"/stream", nil)
+	req, err = http.NewRequest(http.MethodGet, ts.URL+"/stream", nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
@@ -517,6 +530,11 @@ func TestHandlerStreamWithNoResumeParamIsLiveOnly(t *testing.T) {
 // MEDIUM 5: a resume point whose own exchange has since been evicted must
 // still deliver every surviving exchange recorded after it, per the route
 // doc's "an evicted id is silently skipped" (handler.go).
+//
+// Asserts the exact ordered Seq list, not just how many events came back
+// (PR 620 review, coverage LOW, round 2): a replay returning the right
+// count of the wrong entries, or the right entries out of order, used to
+// pass this test.
 func TestHandlerStreamResumeAcrossEvictionDeliversSurvivors(t *testing.T) {
 	dir := t.TempDir()
 	st, err := NewStore(StoreConfig{Dir: dir, CapBytes: 64 * 1024, SegmentBytes: 8 * 1024})
@@ -535,7 +553,12 @@ func TestHandlerStreamResumeAcrossEvictionDeliversSurvivors(t *testing.T) {
 	if _, err := st.Exchange(1); err != ErrEvicted {
 		t.Fatalf("Store.Exchange(1): got %v, want ErrEvicted (test setup needs id 1 evicted)", err)
 	}
-	wantCount := st.Stats().IndexEntries
+
+	survivors := st.summariesAfter(0)
+	wantSeqs := make([]uint64, len(survivors))
+	for i, sum := range survivors {
+		wantSeqs[i] = sum.Seq
+	}
 
 	ts := httptest.NewServer(st.Handler())
 	defer ts.Close()
@@ -555,9 +578,13 @@ func TestHandlerStreamResumeAcrossEvictionDeliversSurvivors(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	r := bufio.NewReader(resp.Body)
 
-	events := readSSEEvents(t, r, wantCount, time.Now().Add(5*time.Second))
-	if len(events) != wantCount {
-		t.Fatalf("replayed events: got %d, want %d (every surviving indexed exchange)", len(events), wantCount)
+	events := readSSEEvents(t, r, len(wantSeqs), time.Now().Add(5*time.Second))
+	gotSeqs := make([]uint64, len(events))
+	for i, e := range events {
+		gotSeqs[i] = e.id
+	}
+	if !idsEqual(gotSeqs, wantSeqs) {
+		t.Fatalf("replayed seqs: got %v, want %v (every surviving indexed exchange, in Seq order, none substituted)", gotSeqs, wantSeqs)
 	}
 }
 
@@ -570,26 +597,33 @@ func TestHandlerStreamResumeAcrossEvictionDeliversSurvivors(t *testing.T) {
 // replayHook inject that race directly and in order, since forcing it
 // through real timing is not deterministic from outside the package.
 //
+// Exchange ids 7 and 8, not 1 and 2 (PR 620 review, coverage MEDIUM 2,
+// round 2): with Seq starting fresh at 1, an id equal to its own Seq
+// cannot tell "keyed on Seq" apart from "keyed on ID" here.
+//
 // Mutant (handler_sse.go, handleStream): removing the
 // `if replayed.has(sum.Seq) { continue }` guard makes this RED: the
-// resumed stream delivers exchange 1's summary twice instead of once.
+// resumed stream delivers exchange 7's summary twice instead of once.
+// Mutant (handler_sse.go, handleStream): changing `replayed.add(sum.Seq)`
+// to `replayed.add(sum.ID)` also makes this RED: the second event is
+// exchange 7 again (the undetected duplicate), not exchange 8.
 func TestHandlerStreamDuplicateGuardCoversTheRaceWithHistoryReplay(t *testing.T) {
 	st := newTestStore(t)
-	st.Record(makeExchange(1, 1, "client-a", 32, 32))
+	st.Record(makeExchange(7, 7, "client-a", 32, 32))
 	waitQueueDrained(t, st)
 	firstSeq := st.summariesAfter(0)[0].Seq
 
 	subscribeHook = func(ch chan Summary) {
-		// The documented race: exchange 1's own summary also lands on
+		// The documented race: exchange 7's own summary also lands on
 		// the live channel, exactly as publish would, before the
 		// history read below has even run.
 		ch <- st.summariesAfter(0)[0]
 	}
 	t.Cleanup(func() { subscribeHook = nil })
 	replayHook = func() {
-		// Fires after `replayed` already holds firstSeq: exchange 2 is
+		// Fires after `replayed` already holds firstSeq: exchange 8 is
 		// now genuinely new and only ever reaches the client live.
-		st.Record(makeExchange(2, 2, "client-a", 32, 32))
+		st.Record(makeExchange(8, 8, "client-a", 32, 32))
 		waitQueueDrained(t, st)
 	}
 	t.Cleanup(func() { replayHook = nil })
@@ -617,8 +651,8 @@ func TestHandlerStreamDuplicateGuardCoversTheRaceWithHistoryReplay(t *testing.T)
 	if err := json.Unmarshal([]byte(events[1].data), &second); err != nil {
 		t.Fatalf("unmarshal second event: %v", err)
 	}
-	if second.ID != 2 {
-		t.Fatalf("second event exchange id: got %d, want 2 (exchange 1's replay must not repeat: with the guard removed this is exchange 1's duplicate instead)", second.ID)
+	if second.ID != 8 {
+		t.Fatalf("second event exchange id: got %d, want 8 (exchange 7's replay must not repeat: with the guard broken this is exchange 7's duplicate instead)", second.ID)
 	}
 }
 
@@ -659,5 +693,168 @@ func TestHandlerStreamLastEventIDWinsOverAfterQueryParam(t *testing.T) {
 	}
 	if body.ID != 3 {
 		t.Fatalf("resumed exchange id: got %d, want 3 (Last-Event-ID=2 must win over after=1)", body.ID)
+	}
+}
+
+// TestSummaryJSONCarriesSeqAcrossExchangesAndStream is item 1's JSON
+// contract (PR 620 review, silent-failure MEDIUM 3, round 2): /exchanges'
+// list, /exchanges/{id}, and /stream's "data:" line all carry the same
+// "seq" field, the value /stream resumes on. This only proves the field
+// is populated everywhere the shape appears; the handoff test below
+// proves the resume semantics.
+//
+// Mutant (handler.go, summaryOf): dropping `Seq: ex.Seq,` makes the
+// "exchange summary" subtest RED (seq reads 0): summaryOf, not
+// Store.Exchanges, is what /exchanges/{id} goes through, and only
+// Store.Exchange needed its own Seq wired in from the index.
+func TestSummaryJSONCarriesSeqAcrossExchangesAndStream(t *testing.T) {
+	st := newTestStore(t)
+	st.Record(makeExchange(1, 1, "client-a", 32, 32))
+	waitQueueDrained(t, st)
+	wantSeq := st.summariesAfter(0)[0].Seq
+	if wantSeq == 0 {
+		t.Fatal("test setup: wantSeq is 0, want > 0")
+	}
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	t.Run("exchanges list", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/exchanges?client=client-a")
+		if err != nil {
+			t.Fatalf("GET /exchanges: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var body struct {
+			Exchanges []summaryJSON `json:"exchanges"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(body.Exchanges) != 1 || body.Exchanges[0].Seq != wantSeq {
+			t.Fatalf("exchanges[0]: got %+v, want seq %d", body.Exchanges, wantSeq)
+		}
+	})
+
+	t.Run("exchange summary", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/exchanges/1")
+		if err != nil {
+			t.Fatalf("GET /exchanges/1: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var sum summaryJSON
+		if err := json.NewDecoder(resp.Body).Decode(&sum); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if sum.Seq != wantSeq {
+			t.Errorf("seq: got %d, want %d", sum.Seq, wantSeq)
+		}
+	})
+
+	t.Run("stream event", func(t *testing.T) {
+		resp, err := http.Get(ts.URL + "/stream?after=0")
+		if err != nil {
+			t.Fatalf("GET /stream: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		r := bufio.NewReader(resp.Body)
+		events := readSSEEvents(t, r, 1, time.Now().Add(5*time.Second))
+		var body summaryJSON
+		if err := json.Unmarshal([]byte(events[0].data), &body); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if body.Seq != wantSeq {
+			t.Errorf("data seq: got %d, want %d", body.Seq, wantSeq)
+		}
+		if events[0].id != wantSeq {
+			t.Errorf("id: line: got %d, want %d", events[0].id, wantSeq)
+		}
+	})
+}
+
+// TestHandlerStreamHandoffFromExchangesListLosesNothing is item 1's
+// acceptance: a client that loads /exchanges then opens /stream using the
+// list's own "seq" field (never "id") sees every exchange recorded after
+// the list was taken, with no gap and no repeat of what the list already
+// covered.
+func TestHandlerStreamHandoffFromExchangesListLosesNothing(t *testing.T) {
+	st := newTestStore(t)
+	for _, id := range []uint64{1, 2, 3} {
+		st.Record(makeExchange(id, id, "client-a", 32, 32))
+	}
+	waitQueueDrained(t, st)
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/exchanges?client=client-a")
+	if err != nil {
+		t.Fatalf("GET /exchanges: %v", err)
+	}
+	var listBody struct {
+		Exchanges []summaryJSON `json:"exchanges"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&listBody); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	_ = resp.Body.Close()
+	if len(listBody.Exchanges) != 3 {
+		t.Fatalf("exchanges list: got %d, want 3", len(listBody.Exchanges))
+	}
+	lastSeq := listBody.Exchanges[len(listBody.Exchanges)-1].Seq
+
+	streamResp, err := http.Get(ts.URL + "/stream?after=" + strconv.FormatUint(lastSeq, 10))
+	if err != nil {
+		t.Fatalf("GET /stream: %v", err)
+	}
+	defer func() { _ = streamResp.Body.Close() }()
+	r := bufio.NewReader(streamResp.Body)
+
+	for _, id := range []uint64{4, 5} {
+		st.Record(makeExchange(id, id, "client-a", 32, 32))
+	}
+	waitQueueDrained(t, st)
+
+	events := readSSEEvents(t, r, 2, time.Now().Add(5*time.Second))
+	gotIDs := make([]uint64, len(events))
+	for i, e := range events {
+		var body summaryJSON
+		if err := json.Unmarshal([]byte(e.data), &body); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		gotIDs[i] = body.ID
+	}
+	if want := []uint64{4, 5}; !idsEqual(gotIDs, want) {
+		t.Fatalf("handoff from /exchanges list to /stream: got exchange ids %v, want %v (no gap, no repeat of 1-3)", gotIDs, want)
+	}
+}
+
+// TestHandlerStreamRejectsAResumePointBeyondAnyPublishedSeq is item 1's
+// other half (PR 620 review, silent-failure MEDIUM 3, round 2): after=
+// (or Last-Event-ID) naming a value higher than any Seq this Store has
+// ever issued is a loud 400, not a silent empty replay: the shape a
+// client hits if it hands /stream an exchange id from /exchanges instead
+// of the seq field (handler.go's route doc).
+//
+// Mutant (handler_sse.go, handleStream): removing the maxPublishSeq check
+// makes this RED: a resume point that has never existed gets a 200 with
+// an empty replay instead of a 400.
+func TestHandlerStreamRejectsAResumePointBeyondAnyPublishedSeq(t *testing.T) {
+	st := newTestStore(t)
+	for _, id := range []uint64{1, 2, 3} {
+		st.Record(makeExchange(id, id, "client-a", 32, 32))
+	}
+	waitQueueDrained(t, st)
+
+	ts := httptest.NewServer(st.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/stream?after=999999")
+	if err != nil {
+		t.Fatalf("GET /stream?after=999999: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want %d (999999 exceeds every Seq this Store has ever issued)", resp.StatusCode, http.StatusBadRequest)
 	}
 }

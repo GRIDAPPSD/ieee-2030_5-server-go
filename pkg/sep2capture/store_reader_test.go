@@ -2,6 +2,7 @@ package sep2capture
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -66,7 +67,7 @@ func TestSubscribeReceivesRecordedSummary(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ch := st.Subscribe(ctx)
+	ch := st.Subscribe(ctx, nil)
 
 	st.Record(makeExchange(1, 1, "client-1", 100, 100))
 
@@ -91,7 +92,7 @@ func TestSubscribeChannelClosesOnContextCancel(t *testing.T) {
 	t.Cleanup(func() { closeStore(t, st) })
 
 	ctx, cancel := context.WithCancel(context.Background())
-	ch := st.Subscribe(ctx)
+	ch := st.Subscribe(ctx, nil)
 	cancel()
 
 	select {
@@ -117,7 +118,7 @@ func TestSubscribeCountsSlowSubscribers(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ch := st.Subscribe(ctx)
+	ch := st.Subscribe(ctx, nil)
 	_ = ch // never drained: that is what forces publish's default branch
 
 	for i := 1; i <= subscriberBufferSize+5; i++ {
@@ -128,5 +129,130 @@ func TestSubscribeCountsSlowSubscribers(t *testing.T) {
 
 	if got := st.Stats().SlowSubscribers; got == 0 {
 		t.Error("SlowSubscribers: got 0, want > 0 after overflowing an undrained subscriber's buffer")
+	}
+}
+
+// TestSummariesAfterOrdersByPublishSequenceNotID is coverage-lane MEDIUM 1
+// (round 2): replay order was never asserted, so sorting by ID instead of
+// Seq left every existing test green. Publish order here (ids 5,4,3,2,1)
+// is the reverse of id order, so the two orderings disagree: a client
+// resuming mid-replay records the highest Seq it saw, so any lower Seq it
+// never received would fall permanently below its own resume point.
+//
+// Mutant (store_reader.go, summariesAfter): changing the sort key from
+// `out[i].Seq < out[j].Seq` to `out[i].ID < out[j].ID` makes this RED: got
+// [1 2 3 4 5] (ascending by ID), want [5 4 3 2 1] (ascending by Seq, the
+// order they actually published in).
+func TestSummariesAfterOrdersByPublishSequenceNotID(t *testing.T) {
+	st := newTestStore(t)
+	for _, id := range []uint64{5, 4, 3, 2, 1} {
+		st.Record(makeExchange(id, id, "client-1", 32, 32))
+	}
+	waitQueueDrained(t, st)
+
+	got := summaryIDs(st.summariesAfter(0))
+	want := []uint64{5, 4, 3, 2, 1}
+	if !idsEqual(got, want) {
+		t.Fatalf("summariesAfter(0) ids in Seq order: got %v, want %v (publish order, not ascending by ID)", got, want)
+	}
+}
+
+// TestSummariesAfterCostIsProportionalToWhatItReplaysNotToTheIndex is
+// silent-failure-lane MEDIUM 2 (round 2): a reconnect missing only a
+// handful of events used to allocate and sort a slice sized for the WHOLE
+// index regardless of afterSeq, holding idx.mu throughout: the writer
+// goroutine needs the same lock to index a new record (segment_writer.go,
+// writeOne -> index.add), so a burst of reconnects near a large index
+// could stall capture. Measured before this fix, 200000 entries, a resume
+// missing 5: about 13.7ms held and about 40MB allocated for a 5-entry
+// result (the review's own probe). This proves the allocation no longer
+// scales with the index: a bare *Store with a hand-built index is enough,
+// since summariesAfter only ever touches s.idx.
+//
+// Mutant (store_reader.go, summariesAfter): reverting to
+// `make([]Summary, 0, len(s.idx.byID))` makes this RED: allocated bytes
+// jump from a 5-entry result to a 200000-entry one, well past budget.
+func TestSummariesAfterCostIsProportionalToWhatItReplaysNotToTheIndex(t *testing.T) {
+	const total = 200000
+	const missed = 5
+
+	st := &Store{idx: newIndex()}
+	now := time.Now()
+	for i := uint64(1); i <= total; i++ {
+		st.idx.add(exchangeEntry{
+			Summary: Summary{ID: i, Seq: i, ClientKey: "client-1", Started: now, Ended: now, Method: "GET", Path: "/x"},
+			segment: 0,
+		})
+	}
+
+	afterSeq := uint64(total - missed)
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	start := time.Now()
+	out := st.summariesAfter(afterSeq)
+	elapsed := time.Since(start)
+	runtime.ReadMemStats(&after)
+
+	if len(out) != missed {
+		t.Fatalf("summariesAfter(%d) out of %d: got %d entries, want %d", afterSeq, total, len(out), missed)
+	}
+
+	allocated := after.TotalAlloc - before.TotalAlloc
+	// Far above a 5-entry result (a few hundred bytes even under -race
+	// instrumentation) and far below a 200000-entry allocation (roughly
+	// 200 bytes/entry * 200000 =~ 40MB, the pre-fix shape), so this bound
+	// distinguishes the two without being sensitive to GC or race-mode
+	// overhead on this host.
+	const budget = 4 * 1024 * 1024
+	if allocated > budget {
+		t.Errorf("bytes allocated by summariesAfter for a %d-entry result out of a %d-entry index: got %d, want < %d (proportional to what was replayed, not to the index)", missed, total, allocated, budget)
+	}
+	t.Logf("summariesAfter(missed %d of %d): %v elapsed, %d bytes allocated", missed, total, elapsed, allocated)
+}
+
+// TestWriterKeepsIndexingWhileSummariesAfterRunsRepeatedly is the other
+// half of the same fix: repeated near-max summariesAfter calls (the
+// "reconnects repeated" shape the review measured) must not starve the
+// writer goroutine of idx.mu for long. Interleaved rather than truly
+// concurrent, to stay deterministic: each round records one new exchange,
+// drains it, then calls summariesAfter once, and the whole loop is timed
+// against a budget that only the pre-fix per-call allocation cost (not
+// scan cost, which does not change) could blow.
+func TestWriterKeepsIndexingWhileSummariesAfterRunsRepeatedly(t *testing.T) {
+	const total = 200000
+	const rounds = 20
+	const budget = 2 * time.Second
+
+	st := newTestStore(t)
+	now := time.Now()
+	for i := uint64(1); i <= total; i++ {
+		st.idx.add(exchangeEntry{
+			Summary: Summary{ID: i, Seq: i, ClientKey: "client-1", Started: now, Ended: now, Method: "GET", Path: "/x"},
+			segment: 0,
+		})
+	}
+	// The writer goroutine's own Seq counter must agree with the index
+	// just built directly, or the real Record calls below would collide
+	// with ids already indexed.
+	st.nextPublishSeq = total
+	st.maxPublishSeq.Store(total)
+
+	start := time.Now()
+	for i := uint64(1); i <= rounds; i++ {
+		id := total + i
+		st.Record(makeExchange(id, id, "client-1", 32, 32))
+		waitQueueDrained(t, st)
+		if got := len(st.summariesAfter(total + i - 5)); got != 5 {
+			t.Fatalf("round %d: summariesAfter near-max entries: got %d, want 5", i, got)
+		}
+	}
+	elapsed := time.Since(start)
+	if elapsed > budget {
+		t.Fatalf("%d rounds of Record+summariesAfter against a %d-entry index took %v, want < %v (the writer must not be starved of idx.mu by repeated reconnects)", rounds, total, elapsed, budget)
+	}
+	if got := st.Stats().IndexEntries; got != total+rounds {
+		t.Fatalf("IndexEntries after %d rounds: got %d, want %d (every new record indexed, none dropped)", rounds, got, total+rounds)
 	}
 }

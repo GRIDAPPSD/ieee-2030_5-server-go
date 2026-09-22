@@ -33,7 +33,7 @@ func TestHandlerDownloadBytesEqualWhatARealClientSentAndReceived(t *testing.T) {
 	// been handed to Record; the exchange only reaches Record later, off
 	// the ConnState hook, so that wait can pass by finding nothing queued
 	// yet rather than by finding the queue empty after draining (PR 620
-	// review, HIGH: this raced its own precondition and was CI's actual
+	// review: this raced its own precondition and was CI's actual
 	// failure). waitForExchangeCountAnyClient polls the observable result
 	// instead.
 	sums := waitForExchangeCountAnyClient(t, st, 1)

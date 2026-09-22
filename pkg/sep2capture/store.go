@@ -128,17 +128,21 @@ type Store struct {
 
 	// Writer-goroutine-owned state: touched only inside writeLoop, so it
 	// needs no lock of its own.
-	active     *segmentFile
-	nextSegNum int64
-	liveSegs   []liveSegment
+	active         *segmentFile
+	nextSegNum     int64
+	liveSegs       []liveSegment
+	nextPublishSeq uint64 // Summary.Seq source; see its doc in index.go
 
 	idx *index
 
 	subMu sync.Mutex
-	subs  map[chan Summary]struct{}
+	subs  map[*subscription]struct{}
 
 	writeErrLogMu sync.Mutex
 	writeErrLogAt time.Time // zero until the first logged write error
+
+	sseDeadlineErrLogMu sync.Mutex
+	sseDeadlineErrLogAt time.Time // zero until the first logged SSE deadline error
 
 	droppedQueueFull     atomic.Uint64
 	droppedWriteError    atomic.Uint64
@@ -191,7 +195,7 @@ func NewStore(cfg StoreConfig) (*Store, error) {
 		writeCh:        make(chan Exchange, writeChanCapacity),
 		writerDone:     make(chan struct{}),
 		idx:            newIndex(),
-		subs:           make(map[chan Summary]struct{}),
+		subs:           make(map[*subscription]struct{}),
 	}
 	go s.writeLoop()
 	return s, nil
@@ -231,13 +235,17 @@ func queuedSize(ex Exchange) int64 {
 	return int64(len(ex.Request.Bytes) + len(ex.Response.Bytes))
 }
 
-// Close stops intake, waits for the writer goroutine to drain whatever was
-// already queued, and closes the active segment, all bounded by ctx. If
-// ctx ends first, every record still in the queue is counted Abandoned
-// rather than written, and Close returns an error naming ctx.Err() and how
-// many were abandoned. It is safe to call more than once: the first call
-// closes intake, and a later call just repeats the same bounded wait
-// against whatever is left, which by then is normally nothing.
+// Close stops intake, ends every open GET /stream subscription (so a
+// handler blocked in handleStream's select returns immediately instead of
+// holding its connection until http.Server.Shutdown's own budget runs
+// out), waits for the writer goroutine to drain whatever was already
+// queued, and closes the active segment, all but the subscriber close
+// bounded by ctx. If ctx ends first, every record still in the queue is
+// counted Abandoned rather than written, and Close returns an error naming
+// ctx.Err() and how many were abandoned. It is safe to call more than
+// once: the first call closes intake and ends every subscriber, and a
+// later call just repeats the same bounded wait against whatever record
+// backlog is left, which by then is normally nothing.
 //
 // Close does not itself guard against a single write syscall that never
 // returns (a wedged disk or a stuck NFS mount): the writer goroutine has
@@ -250,6 +258,7 @@ func (s *Store) Close(ctx context.Context) error {
 		s.closed = true
 		s.intakeMu.Unlock()
 		close(s.writeCh)
+		s.closeAllSubscribers()
 	})
 
 	select {
@@ -301,10 +310,13 @@ type Stats struct {
 	Truncated            uint64
 	EvictedSegments      uint64
 	IndexMemoryEvictions uint64
-	SlowSubscribers      uint64
-	BytesOnDisk          int64
-	IndexEntries         int
-	IndexApproxBytes     int64
+	// SlowSubscribers counts GET /stream readers ended for falling behind
+	// (publish, segment_writer.go): one per ended subscription, not one
+	// per event it missed, matching the route doc (handler.go).
+	SlowSubscribers  uint64
+	BytesOnDisk      int64
+	IndexEntries     int
+	IndexApproxBytes int64
 	// DuplicateIndexIDs counts exchanges Record was handed with an id
 	// already present in the index: refused rather than indexed, so the
 	// first entry for that id stays authoritative (index.go, add).

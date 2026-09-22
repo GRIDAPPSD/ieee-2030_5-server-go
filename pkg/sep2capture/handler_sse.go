@@ -21,13 +21,31 @@ var (
 	sseHeartbeatInterval      = 10 * time.Second
 )
 
+// sseSubscribedHook, when set by a test in this package, runs synchronously
+// right after handleStream subscribes and before it writes any response
+// bytes. It lets a test force events onto the new subscription (and force
+// an overflow) before the stream's own goroutine ever reads from it,
+// proving the close-on-drop path deterministically instead of racing the
+// scheduler. Production never sets it.
+var sseSubscribedHook func()
+
+// replayHook, when set by a test in this package, runs synchronously right
+// after history replay finishes (or is skipped, for a fresh connection)
+// and before the live select loop starts. Combined with subscribeHook
+// (store_reader.go), it lets a test record a genuinely new exchange at
+// exactly the point where every replayed Seq is already in the replayed
+// set, so the live loop's first receive is deterministic. Production
+// never sets it.
+var replayHook func()
+
 // handleStream is the Live stream route (Q7 item 4): one SSE "data:" line
-// per newly recorded exchange, "id:" set to the exchange id, and a
-// heartbeat comment line on sseHeartbeatInterval so an idle stream still
-// extends its own write deadline and survives any intermediary's idle
-// timeout. It extends the connection's write deadline itself through
-// http.ResponseController before every write, since the server's own
-// WriteTimeout (set once, before the handler runs, per
+// per newly recorded exchange, "id:" set to the exchange's publish
+// sequence (Summary.Seq, not its exchange id: see that field's doc in
+// index.go), with a heartbeat comment line on sseHeartbeatInterval so an
+// idle stream still extends its own write deadline and survives any
+// intermediary's idle timeout. It extends the connection's write deadline
+// itself through http.ResponseController before every write, since the
+// server's own WriteTimeout (set once, before the handler runs, per
 // net/http/server.go) would otherwise cut the stream at that timeout
 // regardless of how live it still is.
 func (s *Store) handleStream(w http.ResponseWriter, r *http.Request) {
@@ -50,11 +68,16 @@ func (s *Store) handleStream(w http.ResponseWriter, r *http.Request) {
 	// watching live" below (store_reader.go's add-then-publish order on
 	// one goroutine is what makes this true).
 	ch := s.Subscribe(r.Context())
+	if sseSubscribedHook != nil {
+		sseSubscribedHook()
+	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	_ = rc.SetWriteDeadline(time.Now().Add(sseWriteDeadlineExtension))
+	if err := rc.SetWriteDeadline(time.Now().Add(sseWriteDeadlineExtension)); err != nil {
+		s.logSSEDeadlineErr(err)
+	}
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
@@ -63,11 +86,14 @@ func (s *Store) handleStream(w http.ResponseWriter, r *http.Request) {
 		history := s.summariesAfter(*resumeAfter)
 		replayed = make(replaySet, len(history))
 		for _, sum := range history {
-			if !writeSSEEvent(w, rc, flusher, sum) {
+			if !s.writeSSEEvent(w, rc, flusher, sum) {
 				return
 			}
-			replayed.add(sum.ID)
+			replayed.add(sum.Seq)
 		}
+	}
+	if replayHook != nil {
+		replayHook()
 	}
 
 	ticker := time.NewTicker(sseHeartbeatInterval)
@@ -79,6 +105,13 @@ func (s *Store) handleStream(w http.ResponseWriter, r *http.Request) {
 			return
 		case sum, open := <-ch:
 			if !open {
+				// Either the reader disconnected (ctx.Done, handled
+				// above and racing harmlessly with this case) or
+				// publish dropped this subscription for falling behind
+				// (segment_writer.go). Either way the response ends
+				// here, so EventSource reconnects and resumes from the
+				// last id: it saw rather than the stream silently
+				// continuing with a gap already in it.
 				return
 			}
 			// A replayed id can still arrive here: publish (writeOne,
@@ -90,14 +123,16 @@ func (s *Store) handleStream(w http.ResponseWriter, r *http.Request) {
 			// before publish), so this check only ever needs to fire
 			// for ids already in the one-time replay set, never again
 			// after that.
-			if replayed.has(sum.ID) {
+			if replayed.has(sum.Seq) {
 				continue
 			}
-			if !writeSSEEvent(w, rc, flusher, sum) {
+			if !s.writeSSEEvent(w, rc, flusher, sum) {
 				return
 			}
 		case <-ticker.C:
-			_ = rc.SetWriteDeadline(time.Now().Add(sseWriteDeadlineExtension))
+			if err := rc.SetWriteDeadline(time.Now().Add(sseWriteDeadlineExtension)); err != nil {
+				s.logSSEDeadlineErr(err)
+			}
 			if _, err := fmt.Fprint(w, ": keep-alive\n\n"); err != nil {
 				return
 			}
@@ -108,22 +143,25 @@ func (s *Store) handleStream(w http.ResponseWriter, r *http.Request) {
 
 // replaySet is the one-time membership test handleStream's live loop uses
 // to filter its subscribe channel against the history it already
-// replayed: an id present here has already been sent once and must never
-// be sent again, however it arrives a second time.
+// replayed, keyed by Seq (see summariesAfter and Summary.Seq's doc): a Seq
+// present here has already been sent once and must never be sent again,
+// however it arrives a second time.
 type replaySet map[uint64]struct{}
 
-func (r replaySet) add(id uint64) { r[id] = struct{}{} }
+func (r replaySet) add(seq uint64) { r[seq] = struct{}{} }
 
-func (r replaySet) has(id uint64) bool {
-	_, ok := r[id]
+func (r replaySet) has(seq uint64) bool {
+	_, ok := r[seq]
 	return ok
 }
 
-// parseResume reads the resume point a reconnecting client names, per
-// Q7 item 3: the standard Last-Event-ID header when present, else this
+// parseResume reads the resume point a reconnecting client names, per Q7
+// item 3: the standard Last-Event-ID header when present, else this
 // route's own after= query parameter, else no resume (nil, a fresh
-// stream). A value present but unparseable is reported to the caller
-// rather than silently treated as "no resume".
+// stream). Both name a Seq (the value handleStream sent as "id:"), not an
+// exchange id: see Summary.Seq's doc in index.go for why the two differ. A
+// value present but unparseable is reported to the caller rather than
+// silently treated as "no resume".
 func parseResume(r *http.Request) (*uint64, error) {
 	v := r.Header.Get("Last-Event-ID")
 	if v == "" {
@@ -143,16 +181,38 @@ func parseResume(r *http.Request) (*uint64, error) {
 // deadline first (see handleStream's doc). It reports whether the write
 // succeeded; the caller returns immediately on false; a write error means
 // the reader is gone or has fallen far enough behind that the connection
-// itself failed, not something to retry.
-func writeSSEEvent(w http.ResponseWriter, rc *http.ResponseController, flusher http.Flusher, sum Summary) bool {
-	_ = rc.SetWriteDeadline(time.Now().Add(sseWriteDeadlineExtension))
+// itself failed, not something to retry. "id:" carries sum.Seq: see
+// Summary.Seq's doc in index.go for why the stream resumes on it instead
+// of the exchange id carried in the JSON body's own "id" field.
+func (s *Store) writeSSEEvent(w http.ResponseWriter, rc *http.ResponseController, flusher http.Flusher, sum Summary) bool {
+	if err := rc.SetWriteDeadline(time.Now().Add(sseWriteDeadlineExtension)); err != nil {
+		s.logSSEDeadlineErr(err)
+	}
 	body, err := json.Marshal(toSummaryJSON(sum))
 	if err != nil {
 		return true // a marshal failure is not a connection failure; skip this event and keep the stream open
 	}
-	if _, err := fmt.Fprintf(w, "id: %d\ndata: %s\n\n", sum.ID, body); err != nil {
+	if _, err := fmt.Fprintf(w, "id: %d\ndata: %s\n\n", sum.Seq, body); err != nil {
 		return false
 	}
 	flusher.Flush()
 	return true
+}
+
+// logSSEDeadlineErr logs a failed write-deadline extension at most once a
+// minute (mirrors logWriteErr's cadence; kept as separate state so a
+// ResponseWriter wrapper that never supports deadlines does not also
+// throttle unrelated disk write-error logging). A wrapper of that shape
+// still ends the stream at the server's own WriteTimeout, same as before
+// (PR 620 review, MEDIUM: the failure was previously discarded via `_ =`
+// at every call site), but now with a line in the error log instead of
+// nothing.
+func (s *Store) logSSEDeadlineErr(err error) {
+	s.sseDeadlineErrLogMu.Lock()
+	defer s.sseDeadlineErrLogMu.Unlock()
+	if time.Since(s.sseDeadlineErrLogAt) < time.Minute {
+		return
+	}
+	s.sseDeadlineErrLogAt = time.Now()
+	s.errorLog.Printf("sep2capture: SSE write-deadline extension failed: %v", err)
 }

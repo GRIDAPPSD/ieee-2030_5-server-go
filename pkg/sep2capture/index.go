@@ -9,8 +9,16 @@ import (
 // Summary is one exchange's index entry: everything Exchanges and the
 // exchange list need to render without reading its bytes off disk (Q4).
 type Summary struct {
-	ID            uint64
-	ConnID        uint64
+	ID     uint64
+	ConnID uint64
+	// Seq is the order this exchange was durably indexed in, assigned by
+	// the single writer goroutine (writeOne) and therefore strictly
+	// increasing in write order. ID is assigned earlier, at exchange
+	// open, so two connections on the same client can finish (and reach
+	// Record) in the opposite order their ids were handed out; Seq never
+	// does, which is why the SSE stream resumes on it rather than on ID
+	// (handler_sse.go).
+	Seq           uint64
 	ClientKey     string // ClientLFDI, or "" when the connection had none
 	Started       time.Time
 	Ended         time.Time

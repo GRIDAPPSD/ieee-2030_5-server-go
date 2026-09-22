@@ -98,10 +98,17 @@ func (s *Store) writeOne(ex Exchange) {
 	s.setLiveSegSize(s.active.number, s.active.size)
 	s.totalOnDisk.Add(recLen)
 
+	// Assigned here, not at Record: this is the one point every exchange
+	// passes through exactly once, in the single writer goroutine, so Seq
+	// is a true write-order sequence regardless of what order ids were
+	// handed out at exchange open (index.go's Summary.Seq doc).
+	s.nextPublishSeq++
+
 	entry := exchangeEntry{
 		Summary: Summary{
 			ID:            ex.ID,
 			ConnID:        ex.ConnID,
+			Seq:           s.nextPublishSeq,
 			ClientKey:     ex.ClientLFDI,
 			Started:       ex.Started,
 			Ended:         ex.Ended,
@@ -261,16 +268,39 @@ func (s *Store) logWriteErr(err error) {
 
 // publish pushes sum to every live subscriber (Subscribe, in
 // store_reader.go) without blocking on a slow one: a full subscriber
-// channel counts as SlowSubscribers and drops this update for that reader
-// rather than stalling the writer goroutine.
+// channel ends that subscription right here rather than leaving it open to
+// silently miss whatever else publishes while it stays behind (PR 620
+// review, HIGH: a slow reader's stream never closed, so its browser never
+// reconnected to resume the gap). handleStream's `open` check on its next
+// select then returns, ending the response so EventSource reconnects and
+// resumes from the last Seq it saw. SlowSubscribers therefore counts
+// readers dropped, matching its own doc (Stats, store.go) and the route
+// doc (handler.go): one increment per ended subscription, not one per lost
+// update.
+//
+// Every send attempt below runs while subMu is held, exactly as it did
+// before this change: publish is the only sender (called only from this
+// store's one writer goroutine, never concurrently with itself), and
+// closeSubscription's own delete also runs under subMu, so holding the
+// lock across the whole loop is what stops a concurrent ctx.Done() close
+// from ever closing sub.ch while a send to it is in flight. The actual
+// close (in closeSubscription, called once the lock is released) is safe
+// precisely because nothing sends to a dropped sub again: the next
+// publish call re-reads s.subs, which by then no longer holds it.
 func (s *Store) publish(sum Summary) {
 	s.subMu.Lock()
-	defer s.subMu.Unlock()
-	for ch := range s.subs {
+	var dropped []*subscription
+	for sub := range s.subs {
 		select {
-		case ch <- sum:
+		case sub.ch <- sum:
 		default:
 			s.slowSubscribers.Add(1)
+			dropped = append(dropped, sub)
 		}
+	}
+	s.subMu.Unlock()
+
+	for _, sub := range dropped {
+		s.closeSubscription(sub)
 	}
 }

@@ -62,19 +62,26 @@ import (
 // GET /stream?after=<id>
 //
 //	Server-Sent Events: one "data:" line of the JSON exchange-summary
-//	shape above per newly recorded exchange, with "id:" set to the
-//	exchange id. A reconnect sends either the standard Last-Event-ID
-//	header or this route's own after= query parameter (Last-Event-ID
-//	wins when both are present) to resume from the last id it saw,
-//	getting exactly what it missed with no gap and no duplicate, as long
-//	as those ids are still indexed (an evicted id is silently skipped,
-//	the same way an evicted exchange never appears in /exchanges).
+//	shape above per newly recorded exchange. "id:" is the exchange's
+//	publish sequence, not the JSON body's own "id" field (the exchange
+//	id): ids are assigned when an exchange opens, so two connections on
+//	the same client can finish, and so publish, out of that order, and a
+//	resume keyed on id can skip or repeat one. The publish sequence never
+//	does. A reconnect sends either the standard Last-Event-ID header or
+//	this route's own after= query parameter (Last-Event-ID wins when both
+//	are present), naming the last "id:" value it saw, to resume with no
+//	gap and no duplicate, as long as the exchange it names is still
+//	indexed (an evicted one is silently skipped, the same way an evicted
+//	exchange never appears in /exchanges).
 //	Neither present means live only, starting from this connection: the
 //	route never replays history on its own, so opening the tab for the
 //	first time does not have to hold the whole index in memory. after=0
 //	is a valid, explicit way to ask for every already-indexed exchange.
-//	A reader that falls behind is dropped (Stats.SlowSubscribers) rather
-//	than allowed to slow capture for anyone else.
+//	A reader that cannot absorb one more event (Stats.SlowSubscribers)
+//	has its stream ended rather than left open to miss events silently:
+//	the browser's EventSource reconnects and resumes from the last id:
+//	it received. The stream also ends when Store.Close runs, so a server
+//	shutdown does not wait out a stream's own write timeout.
 //
 // GET /stats
 //

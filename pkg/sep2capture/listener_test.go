@@ -38,7 +38,10 @@ type material struct {
 	deviceLeaf    *x509.Certificate
 }
 
-func newMaterial(t *testing.T) material {
+// t is testing.TB rather than *testing.T so the benchmark in
+// recording_test.go (PR 2) can build the same certificate material a test
+// does, without a second generator.
+func newMaterial(t testing.TB) material {
 	t.Helper()
 	dir := t.TempDir()
 
@@ -97,7 +100,7 @@ func newMaterial(t *testing.T) material {
 	return m
 }
 
-func gcmServerConfig(t *testing.T, m material) *tls.Config {
+func gcmServerConfig(t testing.TB, m material) *tls.Config {
 	t.Helper()
 	cfg, err := sepTLS.NewServerTLSConfigWithExtraCAs(m.serverCertFile, m.serverKeyFile, m.caFile, nil)
 	if err != nil {
@@ -115,7 +118,7 @@ func ccmServerConfig(t *testing.T, m material) *gotls.Config {
 	return cfg
 }
 
-func gcmClientConfig(t *testing.T, m material) *tls.Config {
+func gcmClientConfig(t testing.TB, m material) *tls.Config {
 	t.Helper()
 	cfg, err := sepTLS.NewClientTLSConfigFromPEM(m.deviceCertPEM, m.deviceKeyPEM, m.caCertPEM)
 	if err != nil {
@@ -174,7 +177,7 @@ func ccmHTTPClient(t *testing.T, m material) *http.Client {
 	}
 }
 
-func listenTCP(t *testing.T) net.Listener {
+func listenTCP(t testing.TB) net.Listener {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -285,8 +288,8 @@ type naiveConn struct {
 }
 
 // naiveListener performs the identical handshake Listener does, then hands
-// back a naiveConn instead of a *Conn. It isolates the one thing item 3
-// tests: that implementing ConnectionState, not merely completing the
+// back a naiveConn instead of a *Conn. It isolates the one property this
+// test proves: that implementing ConnectionState, not merely completing the
 // handshake before Accept returns, is what keeps identity alive.
 type naiveListener struct {
 	inner net.Listener

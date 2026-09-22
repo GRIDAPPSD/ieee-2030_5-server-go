@@ -42,7 +42,15 @@ func (s *Store) writeOne(ex Exchange) {
 	respLen := int64(len(ex.Response.Bytes))
 	recLen := int64(recordHeaderLen) + reqLen + respLen
 
-	if err := s.ensureRoomFor(recLen); err != nil {
+	// Parsed and estimated before ensureRoomFor so a would-be index
+	// memory overage can trigger the same early eviction the disk cap
+	// does (operator decision 2026-09-22), rather than only being
+	// checked after the entry already exists.
+	method, path := parseRequestLine(ex.Request.Bytes)
+	status := parseStatusLine(ex.Response.Bytes)
+	entrySize := indexEntryBytes(method, path, ex.ClientLFDI, ex.ClientSFDI, ex.Error)
+
+	if err := s.ensureRoomFor(recLen, entrySize); err != nil {
 		s.droppedWriteError.Add(1)
 		s.logWriteErr(err)
 		return
@@ -83,8 +91,6 @@ func (s *Store) writeOne(ex Exchange) {
 	s.setLiveSegSize(s.active.number, s.active.size)
 	s.totalOnDisk.Add(recLen)
 
-	method, path := parseRequestLine(ex.Request.Bytes)
-	status := parseStatusLine(ex.Response.Bytes)
 	entry := exchangeEntry{
 		Summary: Summary{
 			ID:            ex.ID,
@@ -108,24 +114,35 @@ func (s *Store) writeOne(ex Exchange) {
 		clientSFDI: ex.ClientSFDI,
 		segment:    s.active.number,
 		offset:     offset,
+		memBytes:   entrySize,
 	}
 	s.idx.add(entry)
 	s.publish(entry.Summary)
 }
 
 // ensureRoomFor evicts whole segments, oldest first, until the directory
-// has room for need more bytes or only the active segment is left (Q4:
-// the active segment is never deleted). It can therefore return with the
-// directory still over capBytes by up to one record's worth on top of one
-// segment: an unavoidable transient, not a bug, since evicting the segment
-// currently being written to is not possible.
-func (s *Store) ensureRoomFor(need int64) error {
-	for s.totalOnDisk.Load()+need > s.capBytes && len(s.liveSegs) > 0 {
+// has room for need more bytes AND the index has room for one more entry of
+// entryEstimate bytes, or only the active segment is left (Q4: the active
+// segment is never deleted). The index memory budget (operator decision
+// 2026-09-22) evicts early, on the same segments, exactly like the disk
+// cap: with small exchanges the index fills first, so retained history can
+// end up under the 600 MB disk cap. It can therefore return with the
+// directory still over capBytes, or the index still over its budget, by up
+// to one record/entry on top of one segment: an unavoidable transient, not
+// a bug, since evicting the segment currently being written to is not
+// possible.
+func (s *Store) ensureRoomFor(need, entryEstimate int64) error {
+	for len(s.liveSegs) > 0 {
+		overDisk := s.totalOnDisk.Load()+need > s.capBytes
+		overIndex := s.idx.approxMemBytes()+entryEstimate > s.indexMemBudget
+		if !overDisk && !overIndex {
+			break
+		}
 		oldest := s.liveSegs[0]
 		if s.active != nil && oldest.number == s.active.number {
 			break
 		}
-		if err := s.evictOldest(); err != nil {
+		if err := s.evictOldest(overIndex); err != nil {
 			return err
 		}
 	}
@@ -134,8 +151,11 @@ func (s *Store) ensureRoomFor(need int64) error {
 
 // evictOldest deletes the oldest live segment (which ensureRoomFor has
 // already confirmed is not the active one) and removes its entries from
-// the index.
-func (s *Store) evictOldest() error {
+// the index. forIndexMemory is true when this eviction was needed for the
+// index memory budget (counted separately from EvictedSegments, per the
+// operator's 2026-09-22 decision), whether or not the disk cap was also
+// over at the time.
+func (s *Store) evictOldest(forIndexMemory bool) error {
 	num := s.liveSegs[0].number
 	size := s.liveSegs[0].size
 	if err := os.Remove(s.segmentPath(num)); err != nil && !os.IsNotExist(err) {
@@ -144,6 +164,9 @@ func (s *Store) evictOldest() error {
 	s.liveSegs = s.liveSegs[1:]
 	s.totalOnDisk.Add(-size)
 	s.evictedSegments.Add(1)
+	if forIndexMemory {
+		s.indexMemoryEvictions.Add(1)
+	}
 	s.idx.evictSegment(num)
 	return nil
 }

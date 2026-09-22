@@ -10,6 +10,13 @@ import (
 // hold the full path already, so this only trims what the listing carries.
 const maxIndexedPath = 256
 
+// maxIndexedMethod bounds the first token of the request line the same way
+// (security lane M1): with no cap, a malformed request line with no space
+// before it ends put a 1 MiB Method into the index, unbounded by the
+// perDirectionCap that only limits the exchange's stored bytes as a whole.
+// Every registered HTTP method name is well under this.
+const maxIndexedMethod = 32
+
 // firstLine returns b up to (not including) its first line break, or all
 // of b if it has none. A captured buffer already ends at whatever framing
 // the wire carried, so this never needs to handle more than one CRLF- or
@@ -36,11 +43,15 @@ func parseRequestLine(b []byte) (method, path string) {
 	if len(parts) < 2 {
 		return "", ""
 	}
+	m := parts[0]
+	if len(m) > maxIndexedMethod {
+		m = m[:maxIndexedMethod]
+	}
 	p := parts[1]
 	if len(p) > maxIndexedPath {
 		p = p[:maxIndexedPath]
 	}
-	return string(parts[0]), string(p)
+	return string(m), string(p)
 }
 
 // parseStatusLine reads the numeric status off a response's first line

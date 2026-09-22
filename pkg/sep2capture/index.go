@@ -17,7 +17,7 @@ type Summary struct {
 	Mark          Mark
 	Error         string
 	HandlerRuns   int
-	Method        string // from the request's first line, "" if unparseable
+	Method        string // from the request's first line, capped at maxIndexedMethod bytes, "" if unparseable
 	Path          string // capped at maxIndexedPath bytes
 	Status        int    // from the response's first line, 0 if none
 	ReqTrueLen    int64
@@ -48,6 +48,23 @@ type exchangeEntry struct {
 	clientSFDI string
 	segment    int64
 	offset     int64
+	memBytes   int64
+}
+
+// indexFixedEntryBytes approximates the part of one index entry's memory
+// cost that does not depend on any string it holds: the exchangeEntry
+// struct itself plus its bookkeeping in byID, byClient and segIDs
+// (security lane M1 measured about 292 bytes for a 138-byte record with
+// short strings). indexEntryBytes adds the actual bytes of every string
+// field on top, so a caller with an oversized Method or ClientKey (the
+// M1 finding) is charged for what it really costs, not an average.
+const indexFixedEntryBytes = 240
+
+// indexEntryBytes estimates one entry's cost against the operator's
+// 2026-09-22 index memory budget. It is an estimate used only to decide
+// when to evict early, not a measurement of actual heap bytes.
+func indexEntryBytes(method, path, clientKey, clientSFDI, errText string) int64 {
+	return indexFixedEntryBytes + int64(len(method)+len(path)+len(clientKey)+len(clientSFDI)+len(errText))
 }
 
 // clientEntry is one client's row plus the exchange ids recorded for it,
@@ -65,12 +82,15 @@ type clientEntry struct {
 // deleted file's entries were without scanning the whole map. Only the
 // writer goroutine ever calls add or evictSegment; the reader methods in
 // store_reader.go take mu for every access, including their own.
+// approxBytes is the running sum of every live entry's indexEntryBytes
+// estimate: the operator's 2026-09-22 index memory budget.
 type index struct {
-	mu       sync.Mutex
-	byID     map[uint64]*exchangeEntry
-	byClient map[string]*clientEntry
-	segIDs   map[int64][]uint64
-	maxSeen  uint64
+	mu          sync.Mutex
+	byID        map[uint64]*exchangeEntry
+	byClient    map[string]*clientEntry
+	segIDs      map[int64][]uint64
+	maxSeen     uint64
+	approxBytes int64
 }
 
 func newIndex() *index {
@@ -92,6 +112,7 @@ func (x *index) add(e exchangeEntry) {
 		x.maxSeen = e.ID
 	}
 	x.segIDs[e.segment] = append(x.segIDs[e.segment], e.ID)
+	x.approxBytes += e.memBytes
 
 	c := x.byClient[e.ClientKey]
 	if c == nil {
@@ -101,6 +122,15 @@ func (x *index) add(e exchangeEntry) {
 	c.LastSeen = e.Ended
 	c.ExchangeCount++
 	c.ids = insertSorted(c.ids, e.ID)
+}
+
+// approxMemBytes returns the index's current indexEntryBytes total, used by
+// ensureRoomFor (segment_writer.go) to decide whether an incoming entry
+// would cross the operator's 2026-09-22 index memory budget.
+func (x *index) approxMemBytes() int64 {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	return x.approxBytes
 }
 
 // insertSorted inserts id into a slice already sorted ascending, keeping
@@ -142,6 +172,7 @@ func (x *index) evictSegment(num int64) {
 			continue
 		}
 		delete(x.byID, id)
+		x.approxBytes -= e.memBytes
 		if c := x.byClient[e.ClientKey]; c != nil {
 			c.ids = removeSorted(c.ids, id)
 		}

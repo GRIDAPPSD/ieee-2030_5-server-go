@@ -14,10 +14,15 @@ import (
 
 // defaultCapBytes and defaultSegmentBytes are Q4's operator-approved
 // defaults (2026-09-21): a 600 MB hard cap on the capture directory, in
-// roughly 64 MB segments.
+// roughly 64 MB segments. defaultIndexMemBudgetBytes is the operator's
+// 2026-09-22 follow-up: a 256 MB budget on the in-memory index, enforced
+// by evicting segments early exactly as the disk cap does, so a client
+// sending small exchanges (cheap on disk, costly in index entries) cannot
+// push the index past this regardless of how far it is from the disk cap.
 const (
-	defaultCapBytes     = 600 * 1024 * 1024
-	defaultSegmentBytes = 64 * 1024 * 1024
+	defaultCapBytes            = 600 * 1024 * 1024
+	defaultSegmentBytes        = 64 * 1024 * 1024
+	defaultIndexMemBudgetBytes = 256 * 1024 * 1024
 
 	// writeQueueByteCap bounds bytes in flight between Record and the
 	// writer goroutine (Q5): a stalled disk can only ever hold this many
@@ -66,6 +71,11 @@ type StoreConfig struct {
 	// SegmentBytes is the rollover size for one segment file. Default
 	// 64 MB.
 	SegmentBytes int64
+	// IndexMemBudgetBytes is the operator's 2026-09-22 cap on the
+	// in-memory index: once a new entry would cross it, segments are
+	// evicted early, the same way and on the same schedule as the disk
+	// cap. Default 256 MB.
+	IndexMemBudgetBytes int64
 	// ErrorLog receives write-error and reset diagnostics. Nil uses the
 	// standard logger, matching net/http's own ErrorLog default.
 	ErrorLog *log.Logger
@@ -99,10 +109,11 @@ type liveSegment struct {
 // Recorder that calls it. Every other exported method may be called
 // concurrently with Record and with each other.
 type Store struct {
-	dir      string
-	capBytes int64
-	segBytes int64
-	errorLog *log.Logger
+	dir            string
+	capBytes       int64
+	segBytes       int64
+	indexMemBudget int64
+	errorLog       *log.Logger
 
 	writeCh    chan Exchange
 	writerDone chan struct{}
@@ -127,13 +138,14 @@ type Store struct {
 	writeErrLogMu sync.Mutex
 	writeErrLogAt time.Time // zero until the first logged write error
 
-	droppedQueueFull  atomic.Uint64
-	droppedWriteError atomic.Uint64
-	abandoned         atomic.Uint64
-	truncated         atomic.Uint64
-	evictedSegments   atomic.Uint64
-	slowSubscribers   atomic.Uint64
-	totalOnDisk       atomic.Int64
+	droppedQueueFull     atomic.Uint64
+	droppedWriteError    atomic.Uint64
+	abandoned            atomic.Uint64
+	truncated            atomic.Uint64
+	evictedSegments      atomic.Uint64
+	indexMemoryEvictions atomic.Uint64
+	slowSubscribers      atomic.Uint64
+	totalOnDisk          atomic.Int64
 
 	// testBeforeWrite, when set by a test in this package, runs on the
 	// writer goroutine before each record's file write. Production never
@@ -157,6 +169,9 @@ func NewStore(cfg StoreConfig) (*Store, error) {
 	if cfg.SegmentBytes <= 0 {
 		cfg.SegmentBytes = defaultSegmentBytes
 	}
+	if cfg.IndexMemBudgetBytes <= 0 {
+		cfg.IndexMemBudgetBytes = defaultIndexMemBudgetBytes
+	}
 	if cfg.ErrorLog == nil {
 		cfg.ErrorLog = log.Default()
 	}
@@ -166,14 +181,15 @@ func NewStore(cfg StoreConfig) (*Store, error) {
 	}
 
 	s := &Store{
-		dir:        cfg.Dir,
-		capBytes:   cfg.CapBytes,
-		segBytes:   cfg.SegmentBytes,
-		errorLog:   cfg.ErrorLog,
-		writeCh:    make(chan Exchange, writeChanCapacity),
-		writerDone: make(chan struct{}),
-		idx:        newIndex(),
-		subs:       make(map[chan Summary]struct{}),
+		dir:            cfg.Dir,
+		capBytes:       cfg.CapBytes,
+		segBytes:       cfg.SegmentBytes,
+		indexMemBudget: cfg.IndexMemBudgetBytes,
+		errorLog:       cfg.ErrorLog,
+		writeCh:        make(chan Exchange, writeChanCapacity),
+		writerDone:     make(chan struct{}),
+		idx:            newIndex(),
+		subs:           make(map[chan Summary]struct{}),
 	}
 	go s.writeLoop()
 	return s, nil
@@ -269,30 +285,40 @@ func (s *Store) abandonRemaining() int {
 
 // Stats reports the drop and loss counters the tab shows (Q5), plus the
 // directory's own tracked size and the index's current entry count.
+// IndexMemoryEvictions and IndexApproxBytes are the operator's 2026-09-22
+// index memory budget: evictions triggered by that budget rather than by
+// CapBytes, and the index's own indexEntryBytes estimate of its current
+// cost (an estimate used to decide when to evict, not a measurement of
+// actual heap bytes).
 type Stats struct {
-	DroppedQueueFull  uint64
-	DroppedWriteError uint64
-	Abandoned         uint64
-	Truncated         uint64
-	EvictedSegments   uint64
-	SlowSubscribers   uint64
-	BytesOnDisk       int64
-	IndexEntries      int
+	DroppedQueueFull     uint64
+	DroppedWriteError    uint64
+	Abandoned            uint64
+	Truncated            uint64
+	EvictedSegments      uint64
+	IndexMemoryEvictions uint64
+	SlowSubscribers      uint64
+	BytesOnDisk          int64
+	IndexEntries         int
+	IndexApproxBytes     int64
 }
 
 func (s *Store) Stats() Stats {
 	s.idx.mu.Lock()
 	entries := len(s.idx.byID)
+	approxBytes := s.idx.approxBytes
 	s.idx.mu.Unlock()
 	return Stats{
-		DroppedQueueFull:  s.droppedQueueFull.Load(),
-		DroppedWriteError: s.droppedWriteError.Load(),
-		Abandoned:         s.abandoned.Load(),
-		Truncated:         s.truncated.Load(),
-		EvictedSegments:   s.evictedSegments.Load(),
-		SlowSubscribers:   s.slowSubscribers.Load(),
-		BytesOnDisk:       s.totalOnDisk.Load(),
-		IndexEntries:      entries,
+		DroppedQueueFull:     s.droppedQueueFull.Load(),
+		DroppedWriteError:    s.droppedWriteError.Load(),
+		Abandoned:            s.abandoned.Load(),
+		Truncated:            s.truncated.Load(),
+		EvictedSegments:      s.evictedSegments.Load(),
+		IndexMemoryEvictions: s.indexMemoryEvictions.Load(),
+		SlowSubscribers:      s.slowSubscribers.Load(),
+		BytesOnDisk:          s.totalOnDisk.Load(),
+		IndexEntries:         entries,
+		IndexApproxBytes:     approxBytes,
 	}
 }
 

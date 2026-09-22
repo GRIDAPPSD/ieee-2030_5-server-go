@@ -6,6 +6,55 @@ import (
 	"time"
 )
 
+// summaryIDs collects the ids from a slice of Summary, for assertion
+// messages that read better than a struct dump.
+func summaryIDs(sums []Summary) []uint64 {
+	out := make([]uint64, len(sums))
+	for i, s := range sums {
+		out[i] = s.ID
+	}
+	return out
+}
+
+// TestExchangesAfterIDAndLimitSurviveOutOfOrderArrival is P7's Store-level
+// half: the same out-of-order arrival sequence (3, 1, 2) as
+// TestIndexOutOfOrderArrivalKeepsExtremesAndOrdering, this time through
+// Record and Exchanges, covering afterID's boundary and limit (coverage
+// lane M3's other two named mutants).
+func TestExchangesAfterIDAndLimitSurviveOutOfOrderArrival(t *testing.T) {
+	dir := t.TempDir()
+	st, err := NewStore(StoreConfig{Dir: dir})
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	t.Cleanup(func() { closeStore(t, st) })
+
+	for _, id := range []uint64{3, 1, 2} {
+		st.Record(makeExchange(id, id, "client-1", 100, 100))
+	}
+	waitQueueDrained(t, st)
+
+	all := st.Exchanges("client-1", 0, 0)
+	if len(all) != 3 {
+		t.Fatalf("Exchanges(afterID=0, limit=0): got %d, want 3", len(all))
+	}
+	for i, want := range []uint64{1, 2, 3} {
+		if all[i].ID != want {
+			t.Errorf("Exchanges[%d].ID: got %d, want %d (ascending despite arrival order 3,1,2)", i, all[i].ID, want)
+		}
+	}
+
+	after1 := st.Exchanges("client-1", 1, 0)
+	if got := summaryIDs(after1); len(got) != 2 || got[0] != 2 || got[1] != 3 {
+		t.Errorf("Exchanges(afterID=1): got ids %v, want [2 3]", got)
+	}
+
+	limited := st.Exchanges("client-1", 0, 2)
+	if got := summaryIDs(limited); len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Errorf("Exchanges(limit=2): got ids %v, want [1 2]", got)
+	}
+}
+
 // TestSubscribeReceivesRecordedSummary is coverage-lane M2's first
 // surviving mutant: dropping segment_writer.go's publish call.
 func TestSubscribeReceivesRecordedSummary(t *testing.T) {

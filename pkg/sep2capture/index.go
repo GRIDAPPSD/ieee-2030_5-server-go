@@ -102,7 +102,11 @@ func newIndex() *index {
 }
 
 // add records one exchange written to segment/offset. Called only from the
-// writer goroutine, once per exchange, in write order.
+// writer goroutine, once per exchange, but NOT necessarily in Started/Ended
+// order: two connections on the same client can finish, and so reach
+// Record, in either order (insertSorted's own doc below; P7). FirstSeen and
+// LastSeen therefore track the earliest Started and latest Ended seen so
+// far, not the first and most recent to arrive.
 func (x *index) add(e exchangeEntry) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
@@ -116,10 +120,16 @@ func (x *index) add(e exchangeEntry) {
 
 	c := x.byClient[e.ClientKey]
 	if c == nil {
-		c = &clientEntry{ClientSummary: ClientSummary{Key: e.ClientKey, FirstSeen: e.Started}}
+		c = &clientEntry{ClientSummary: ClientSummary{Key: e.ClientKey, FirstSeen: e.Started, LastSeen: e.Ended}}
 		x.byClient[e.ClientKey] = c
+	} else {
+		if e.Started.Before(c.FirstSeen) {
+			c.FirstSeen = e.Started
+		}
+		if e.Ended.After(c.LastSeen) {
+			c.LastSeen = e.Ended
+		}
 	}
-	c.LastSeen = e.Ended
 	c.ExchangeCount++
 	c.ids = insertSorted(c.ids, e.ID)
 }

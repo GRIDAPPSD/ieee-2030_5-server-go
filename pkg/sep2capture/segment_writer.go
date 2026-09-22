@@ -122,16 +122,25 @@ func (s *Store) writeOne(ex Exchange) {
 
 // ensureRoomFor evicts whole segments, oldest first, until the directory
 // has room for need more bytes AND the index has room for one more entry of
-// entryEstimate bytes, or only the active segment is left (Q4: the active
-// segment is never deleted). The index memory budget (operator decision
-// 2026-09-22) evicts early, on the same segments, exactly like the disk
-// cap: with small exchanges the index fills first, so retained history can
-// end up under the 600 MB disk cap. It can therefore return with the
-// directory still over capBytes, or the index still over its budget, by up
-// to one record/entry on top of one segment: an unavoidable transient, not
-// a bug, since evicting the segment currently being written to is not
-// possible.
+// entryEstimate bytes, or only the active segment is left with nothing more
+// to evict (Q4: the active segment is never deleted). The disk cap can
+// therefore return with the directory still over capBytes, by up to one
+// record on top of one segment: an unavoidable transient, since evicting
+// the segment currently being written to is not possible.
+//
+// The index memory budget (operator decision 2026-09-22) cannot rely on
+// that same transient allowance: with small exchanges, the index fills far
+// faster than the active segment fills on disk, so waiting for a disk-size
+// rollover would let the index grow past its budget by as much as one
+// whole segment's entries before anything is ever evicted. So when only
+// the active segment is left and the index is still over budget, this
+// rolls it early (rollForIndex), turning it into an ordinary evictable
+// segment, and evicts it on the next pass. Rolling is attempted at most
+// once per call, and only when the active segment already holds an entry
+// to evict: otherwise a budget smaller than one entry's own estimate would
+// roll and evict empty segments forever.
 func (s *Store) ensureRoomFor(need, entryEstimate int64) error {
+	rolledForIndex := false
 	for len(s.liveSegs) > 0 {
 		overDisk := s.totalOnDisk.Load()+need > s.capBytes
 		overIndex := s.idx.approxMemBytes()+entryEstimate > s.indexMemBudget
@@ -140,7 +149,14 @@ func (s *Store) ensureRoomFor(need, entryEstimate int64) error {
 		}
 		oldest := s.liveSegs[0]
 		if s.active != nil && oldest.number == s.active.number {
-			break
+			if !overIndex || rolledForIndex || s.active.size == 0 {
+				break
+			}
+			if err := s.rollSegment(); err != nil {
+				return err
+			}
+			rolledForIndex = true
+			continue
 		}
 		if err := s.evictOldest(overIndex); err != nil {
 			return err
@@ -152,9 +168,11 @@ func (s *Store) ensureRoomFor(need, entryEstimate int64) error {
 // evictOldest deletes the oldest live segment (which ensureRoomFor has
 // already confirmed is not the active one) and removes its entries from
 // the index. forIndexMemory is true when this eviction was needed for the
-// index memory budget (counted separately from EvictedSegments, per the
-// operator's 2026-09-22 decision), whether or not the disk cap was also
-// over at the time.
+// index memory budget, per the operator's 2026-09-22 decision. Exactly one
+// of EvictedSegments and IndexMemoryEvictions is incremented, so the two
+// counters are disjoint and sum to every eviction, matching their own doc
+// comments (Stats, in store.go): a cause is charged to the index budget
+// whenever it was over, even if the disk cap was over at the same time.
 func (s *Store) evictOldest(forIndexMemory bool) error {
 	num := s.liveSegs[0].number
 	size := s.liveSegs[0].size
@@ -163,18 +181,19 @@ func (s *Store) evictOldest(forIndexMemory bool) error {
 	}
 	s.liveSegs = s.liveSegs[1:]
 	s.totalOnDisk.Add(-size)
-	s.evictedSegments.Add(1)
 	if forIndexMemory {
 		s.indexMemoryEvictions.Add(1)
+	} else {
+		s.evictedSegments.Add(1)
 	}
 	s.idx.evictSegment(num)
 	return nil
 }
 
-// rollSegment closes the previous active segment, if any (security lane
-// M3: leaving it open until a GC finalizer gets around to it let disk use
-// run past the hard cap, since a deleted-but-open file's space is never
-// freed), then opens the next one.
+// rollSegment closes the previous active segment, if any (leaving it open
+// until a GC finalizer gets around to it let disk use run past the hard
+// cap, since a deleted-but-open file's space is never freed), then opens
+// the next one.
 func (s *Store) rollSegment() error {
 	prev := s.active
 	num := s.nextSegNum

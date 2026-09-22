@@ -10,11 +10,11 @@ import (
 // hold the full path already, so this only trims what the listing carries.
 const maxIndexedPath = 256
 
-// maxIndexedMethod bounds the first token of the request line the same way
-// (security lane M1): with no cap, a malformed request line with no space
-// before it ends put a 1 MiB Method into the index, unbounded by the
-// perDirectionCap that only limits the exchange's stored bytes as a whole.
-// Every registered HTTP method name is well under this.
+// maxIndexedMethod bounds the first token of the request line the same way:
+// with no cap, a malformed request line with no space before it ends put a
+// 1 MiB Method into the index, unbounded by the perDirectionCap that only
+// limits the exchange's stored bytes as a whole. Every registered HTTP
+// method name is well under this.
 const maxIndexedMethod = 32
 
 // firstLine returns b up to (not including) its first line break, or all

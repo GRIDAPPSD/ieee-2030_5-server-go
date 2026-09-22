@@ -285,11 +285,13 @@ func (s *Store) abandonRemaining() int {
 
 // Stats reports the drop and loss counters the tab shows (Q5), plus the
 // directory's own tracked size and the index's current entry count.
-// IndexMemoryEvictions and IndexApproxBytes are the operator's 2026-09-22
-// index memory budget: evictions triggered by that budget rather than by
-// CapBytes, and the index's own indexEntryBytes estimate of its current
-// cost (an estimate used to decide when to evict, not a measurement of
-// actual heap bytes).
+// EvictedSegments and IndexMemoryEvictions are disjoint and sum to every
+// eviction: EvictedSegments counts evictions caused by CapBytes alone, and
+// IndexMemoryEvictions counts every eviction where the index memory budget
+// (the operator's 2026-09-22 decision) was also over, so summing the two
+// gives the true total without double counting. IndexApproxBytes is the
+// index's own indexEntryBytes estimate of its current cost: an estimate
+// used to decide when to evict, not a measurement of actual heap bytes.
 type Stats struct {
 	DroppedQueueFull     uint64
 	DroppedWriteError    uint64
@@ -301,12 +303,17 @@ type Stats struct {
 	BytesOnDisk          int64
 	IndexEntries         int
 	IndexApproxBytes     int64
+	// DuplicateIndexIDs counts exchanges Record was handed with an id
+	// already present in the index: refused rather than indexed, so the
+	// first entry for that id stays authoritative (index.go, add).
+	DuplicateIndexIDs uint64
 }
 
 func (s *Store) Stats() Stats {
 	s.idx.mu.Lock()
 	entries := len(s.idx.byID)
 	approxBytes := s.idx.approxBytes
+	duplicateIDs := s.idx.duplicateIDs
 	s.idx.mu.Unlock()
 	return Stats{
 		DroppedQueueFull:     s.droppedQueueFull.Load(),
@@ -319,6 +326,7 @@ func (s *Store) Stats() Stats {
 		BytesOnDisk:          s.totalOnDisk.Load(),
 		IndexEntries:         entries,
 		IndexApproxBytes:     approxBytes,
+		DuplicateIndexIDs:    duplicateIDs,
 	}
 }
 

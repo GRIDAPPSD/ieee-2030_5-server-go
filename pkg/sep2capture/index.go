@@ -54,10 +54,10 @@ type exchangeEntry struct {
 // indexFixedEntryBytes approximates the part of one index entry's memory
 // cost that does not depend on any string it holds: the exchangeEntry
 // struct itself plus its bookkeeping in byID, byClient and segIDs
-// (security lane M1 measured about 292 bytes for a 138-byte record with
-// short strings). indexEntryBytes adds the actual bytes of every string
-// field on top, so a caller with an oversized Method or ClientKey (the
-// M1 finding) is charged for what it really costs, not an average.
+// (measured about 292 bytes for a 138-byte record with short strings).
+// indexEntryBytes adds the actual bytes of every string field on top, so a
+// caller with an oversized Method or ClientKey is charged for what it
+// really costs, not an average.
 const indexFixedEntryBytes = 240
 
 // indexEntryBytes estimates one entry's cost against the operator's
@@ -85,12 +85,13 @@ type clientEntry struct {
 // approxBytes is the running sum of every live entry's indexEntryBytes
 // estimate: the operator's 2026-09-22 index memory budget.
 type index struct {
-	mu          sync.Mutex
-	byID        map[uint64]*exchangeEntry
-	byClient    map[string]*clientEntry
-	segIDs      map[int64][]uint64
-	maxSeen     uint64
-	approxBytes int64
+	mu           sync.Mutex
+	byID         map[uint64]*exchangeEntry
+	byClient     map[string]*clientEntry
+	segIDs       map[int64][]uint64
+	maxSeen      uint64
+	approxBytes  int64
+	duplicateIDs uint64
 }
 
 func newIndex() *index {
@@ -104,12 +105,23 @@ func newIndex() *index {
 // add records one exchange written to segment/offset. Called only from the
 // writer goroutine, once per exchange, but NOT necessarily in Started/Ended
 // order: two connections on the same client can finish, and so reach
-// Record, in either order (insertSorted's own doc below; P7). FirstSeen and
+// Record, in either order (insertSorted's own doc below). FirstSeen and
 // LastSeen therefore track the earliest Started and latest Ended seen so
 // far, not the first and most recent to arrive.
 func (x *index) add(e exchangeEntry) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
+
+	if _, exists := x.byID[e.ID]; exists {
+		// Overwriting byID would leave segIDs and approxBytes pointing at
+		// two different entries for the same id: the old one's bytes are
+		// never subtracted (approxBytes drifts up for good), and whichever
+		// segment is evicted first deletes the id from byID regardless of
+		// which entry it actually held. Refusing and counting keeps the
+		// first entry authoritative and the index exactly consistent.
+		x.duplicateIDs++
+		return
+	}
 
 	x.byID[e.ID] = &e
 	if e.ID > x.maxSeen {
@@ -158,10 +170,10 @@ func insertSorted(ids []uint64, id uint64) []uint64 {
 
 // removeIDs drops every id in remove from ids (sorted ascending) in a
 // single linear pass, preserving order, and returns the result reusing
-// ids' backing array. Security lane M2: a removeSorted call per id, each
-// an O(n) slice shift under idx.mu, made evicting many ids from one
-// client's slice quadratic (10k of 100k ids took 338ms). Filtering once
-// is O(n) regardless of how many ids in remove belong to this client.
+// ids' backing array. A removeSorted call per id, each an O(n) slice shift
+// under idx.mu, made evicting many ids from one client's slice quadratic
+// (10k of 100k ids took 338ms). Filtering once is O(n) regardless of how
+// many ids in remove belong to this client.
 func removeIDs(ids []uint64, remove map[uint64]struct{}) []uint64 {
 	if len(remove) == 0 {
 		return ids
@@ -181,8 +193,8 @@ func removeIDs(ids []uint64, remove map[uint64]struct{}) []uint64 {
 // (ensureRoomFor in segment_writer.go), right before that segment's file
 // is deleted. Exchange counts on the affected clients are left untouched:
 // per Q4, "counts survive eviction; ids do not." Ids are grouped by client
-// first so each client's slice is filtered with one removeIDs pass (P3),
-// not one pass per id.
+// first so each client's slice is filtered with one removeIDs pass, not
+// one pass per id.
 func (x *index) evictSegment(num int64) {
 	x.mu.Lock()
 	defer x.mu.Unlock()

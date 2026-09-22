@@ -21,12 +21,12 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 )
 
-// startCaptureServer serves handler over a fresh TLS listener with Attach
-// installed, and returns the address to dial and the sink Attach was given.
-// The listener handshakes before Accept returns (this package's own
-// Listener over a bare tls.Listener); Attach no longer requires that (round
-// 3, item 1), but most tests here still use the pre-handshaken shape since
-// it is what most of this file predates.
+// startCaptureServer serves handler over a fresh TLS listener with a
+// Recorder attached, and returns the address to dial and the sink it was
+// given. The listener handshakes before Accept returns (this package's own
+// Listener over a bare tls.Listener); Attach does not require that, but
+// most tests here still use the pre-handshaken shape since it is what most
+// of this file predates.
 func startCaptureServer(t testing.TB, m material, handler http.Handler) (addr string, sink *MemorySink) {
 	t.Helper()
 	tcpLn := listenTCP(t)
@@ -34,10 +34,26 @@ func startCaptureServer(t testing.TB, m material, handler http.Handler) (addr st
 	ln := NewListener(tlsLn, nil)
 	srv := &http.Server{Handler: handler}
 	sink = NewMemorySink()
-	wrapped := Attach(srv, ln, sink)
+	rec := NewRecorder(sink, nil)
+	wrapped := rec.Attach(srv, ln)
 	go func() { _ = srv.Serve(wrapped) }()
+	t.Cleanup(func() { closeRecorder(t, rec) })
 	t.Cleanup(func() { _ = srv.Close() })
 	return tcpLn.Addr().String(), sink
+}
+
+// closeRecorder is the shared test cleanup for Recorder.Close: cleanup
+// itself is not the property under test, so a bounded context stands in for
+// the deadline a real caller would supply, and a failure is logged rather
+// than failing the test outright, so a slow-draining cleanup on an
+// unrelated test does not mask the assertion that actually mattered.
+func closeRecorder(t testing.TB, r *Recorder) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := r.Close(ctx); err != nil {
+		t.Logf("Recorder.Close in cleanup: %v", err)
+	}
 }
 
 func rawDial(t testing.TB, m material, addr string) *tls.Conn {
@@ -354,8 +370,10 @@ func TestConnStateHookSetBeforeAttachStillFires(t *testing.T) {
 	srv.ConnState = func(net.Conn, http.ConnState) { previousCalls.Add(1) }
 
 	sink := NewMemorySink()
-	wrapped := Attach(srv, ln, sink)
+	rec := NewRecorder(sink, nil)
+	wrapped := rec.Attach(srv, ln)
 	go func() { _ = srv.Serve(wrapped) }()
+	t.Cleanup(func() { closeRecorder(t, rec) })
 	t.Cleanup(func() { _ = srv.Close() })
 
 	conn := rawDial(t, m, tcpLn.Addr().String())
@@ -436,8 +454,8 @@ func TestGrowBufferAppendOneByteOverCapIsTruncated(t *testing.T) {
 	}
 }
 
-func newTestConnRecorder(rs *recorderSet) *connRecorder {
-	return newConnRecorder(rs, 1, "test-conn:1")
+func newTestConnRecorder(r *Recorder) *connRecorder {
+	return newConnRecorder(newAttachment(r, nil), 1, "test-conn:1")
 }
 
 // TestWaitForExchangesCatchesALateExtraExchange proves the settle window
@@ -451,9 +469,9 @@ func newTestConnRecorder(rs *recorderSet) *connRecorder {
 // test's.
 func TestWaitForExchangesCatchesALateExtraExchange(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink, nil)
-	t.Cleanup(rs.stop)
-	rec := newTestConnRecorder(rs)
+	r := NewRecorder(sink, nil)
+	t.Cleanup(func() { closeRecorder(t, r) })
+	rec := newTestConnRecorder(r)
 
 	b1 := &building{id: 1, handlerRuns: 1}
 	b1.req.append([]byte("x"))
@@ -492,9 +510,9 @@ func TestWaitForExchangesCatchesALateExtraExchange(t *testing.T) {
 // exchange 1's request instead of moving to exchange 2's.
 func TestCarryOverMovesAnEarlyByteToTheNextExchange(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink, nil)
-	t.Cleanup(rs.stop)
-	rec := newTestConnRecorder(rs)
+	r := NewRecorder(sink, nil)
+	t.Cleanup(func() { closeRecorder(t, r) })
+	rec := newTestConnRecorder(r)
 
 	rec.open(1)
 	rec.recordInbound([]byte("GET /a HTTP/1.1\r\n\r\n"), false)
@@ -522,9 +540,9 @@ func TestCarryOverMovesAnEarlyByteToTheNextExchange(t *testing.T) {
 // the exchange that is actually closing instead of dropping it.
 func TestCloseFinalKeepsAPendingCarryByteOnTheClosingExchange(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink, nil)
-	t.Cleanup(rs.stop)
-	rec := newTestConnRecorder(rs)
+	r := NewRecorder(sink, nil)
+	t.Cleanup(func() { closeRecorder(t, r) })
+	rec := newTestConnRecorder(r)
 
 	rec.open(1)
 	rec.recordInbound([]byte("GET /a HTTP/1.1\r\n\r\n"), false)
@@ -546,16 +564,17 @@ func TestCloseFinalKeepsAPendingCarryByteOnTheClosingExchange(t *testing.T) {
 
 func TestForgetRemovesTheClosedConnectionsEntry(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink, nil)
-	t.Cleanup(rs.stop)
-	rec := newConnRecorder(rs, 1, "test-conn:reuse")
-	rs.mu.Lock()
-	rs.byAddr[rec.remoteAddr] = rec
-	rs.mu.Unlock()
+	r := NewRecorder(sink, nil)
+	t.Cleanup(func() { closeRecorder(t, r) })
+	att := newAttachment(r, nil)
+	rec := newConnRecorder(att, 1, "test-conn:reuse")
+	att.mu.Lock()
+	att.byAddr[rec.remoteAddr] = rec
+	att.mu.Unlock()
 
-	rs.forget(rec)
+	att.forget(rec)
 
-	if got := rs.byRemoteAddr(rec.remoteAddr); got != nil {
+	if got := att.byRemoteAddr(rec.remoteAddr); got != nil {
 		t.Error("forget did not remove the closed connection's own entry")
 	}
 	rec.closeFinal()
@@ -563,18 +582,19 @@ func TestForgetRemovesTheClosedConnectionsEntry(t *testing.T) {
 
 func TestForgetLeavesANewerConnectionAtTheSameAddressAlone(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink, nil)
-	t.Cleanup(rs.stop)
+	r := NewRecorder(sink, nil)
+	t.Cleanup(func() { closeRecorder(t, r) })
+	att := newAttachment(r, nil)
 	addr := "test-conn:reuse"
-	oldRec := newConnRecorder(rs, 1, addr)
-	newRec := newConnRecorder(rs, 2, addr)
-	rs.mu.Lock()
-	rs.byAddr[addr] = newRec // simulates port reuse: a new connection already claimed this address
-	rs.mu.Unlock()
+	oldRec := newConnRecorder(att, 1, addr)
+	newRec := newConnRecorder(att, 2, addr)
+	att.mu.Lock()
+	att.byAddr[addr] = newRec // simulates port reuse: a new connection already claimed this address
+	att.mu.Unlock()
 
-	rs.forget(oldRec) // the old connection's own close path, racing behind the new one's wrap
+	att.forget(oldRec) // the old connection's own close path, racing behind the new one's wrap
 
-	if got := rs.byRemoteAddr(addr); got != newRec {
+	if got := att.byRemoteAddr(addr); got != newRec {
 		t.Errorf("forget removed the newer connection's entry: got %v, want the newer recorder", got)
 	}
 	oldRec.closeFinal()
@@ -802,13 +822,13 @@ func (s *stubConn) Write(p []byte) (int, error) { return s.write(p) }
 // noteError itself records whatever it is given unconditionally.
 func TestRecordingConnReadIgnoresOnlyTheAbortedPeekTimeout(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink, nil)
-	t.Cleanup(rs.stop)
-	rec := newTestConnRecorder(rs)
+	r := NewRecorder(sink, nil)
+	t.Cleanup(func() { closeRecorder(t, r) })
+	rec := newTestConnRecorder(r)
 	rec.open(1)
 
 	stub := &stubConn{read: func(p []byte) (int, error) { return 0, timeoutErr{} }}
-	rc := &recordingConn{Conn: stub, rec: rec}
+	rc := &recordingConn{recordingCore: recordingCore{Conn: stub, rec: rec}}
 	if _, err := rc.Read(make([]byte, 1)); err == nil {
 		t.Fatal("test setup: stub Read did not return an error")
 	}
@@ -825,14 +845,14 @@ func TestRecordingConnReadIgnoresOnlyTheAbortedPeekTimeout(t *testing.T) {
 
 func TestRecordingConnReadRecordsANonTimeoutErrorOnAOneByteRead(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink, nil)
-	t.Cleanup(rs.stop)
-	rec := newTestConnRecorder(rs)
+	r := NewRecorder(sink, nil)
+	t.Cleanup(func() { closeRecorder(t, r) })
+	rec := newTestConnRecorder(r)
 	rec.open(1)
 	rec.recordInbound([]byte("x"), false) // real bytes, so finish does not skip this exchange as empty
 
 	stub := &stubConn{read: func(p []byte) (int, error) { return 0, errors.New("read tcp: connection reset by peer") }}
-	rc := &recordingConn{Conn: stub, rec: rec}
+	rc := &recordingConn{recordingCore: recordingCore{Conn: stub, rec: rec}}
 	if _, err := rc.Read(make([]byte, 1)); err == nil {
 		t.Fatal("test setup: stub Read did not return an error")
 	}
@@ -851,15 +871,15 @@ func TestRecordingConnReadRecordsANonTimeoutErrorOnAOneByteRead(t *testing.T) {
 // unconditionally, the same as Read does for a real (non-peek) error.
 func TestRecordingConnWriteRecordsAWriteError(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink, nil)
-	t.Cleanup(rs.stop)
-	rec := newTestConnRecorder(rs)
+	r := NewRecorder(sink, nil)
+	t.Cleanup(func() { closeRecorder(t, r) })
+	rec := newTestConnRecorder(r)
 	rec.open(1)
 	rec.recordInbound([]byte("GET / HTTP/1.1\r\n\r\n"), false)
 	rec.markHandlerRan()
 
 	stub := &stubConn{write: func(p []byte) (int, error) { return 0, errors.New("write: broken pipe") }}
-	rc := &recordingConn{Conn: stub, rec: rec}
+	rc := &recordingConn{recordingCore: recordingCore{Conn: stub, rec: rec}}
 	if _, err := rc.Write([]byte("HTTP/1.1 200 OK\r\n\r\n")); err == nil {
 		t.Fatal("test setup: stub Write did not return an error")
 	}
@@ -895,7 +915,7 @@ func (c *handshakeFailingConn) Close() error {
 
 var _ handshaker = (*handshakeFailingConn)(nil)
 
-// TestCompleteHandshakeClosesOnFailure is the unit-level proof for item 3:
+// TestCompleteHandshakeClosesOnFailure is the unit-level proof that
 // completeHandshake must close the underlying connection when its handshake
 // fails. A black-box dial against a garbage TLS peer does not discriminate
 // this in the current design: net/http's own serve loop makes its next read
@@ -903,20 +923,20 @@ var _ handshaker = (*handshakeFailingConn)(nil)
 // tears the connection down through its own c.close(), whether or not this
 // method's own Close() call runs too (checked directly: the dial-based
 // TestAttachRefusesAHandshakeFailure still passed with this Close() call
-// removed, so it is not this item's proof). This test calls
-// completeHandshake directly against a stub that only fails its handshake,
-// so only this method's own Close() call can make it pass.
+// removed). This test calls completeHandshake directly against a stub that
+// only fails its handshake, so only this method's own Close() call can make
+// it pass.
 func TestCompleteHandshakeClosesOnFailure(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink, log.New(io.Discard, "", 0))
-	t.Cleanup(rs.stop)
-	rec := newTestConnRecorder(rs)
+	r := NewRecorder(sink, log.New(io.Discard, "", 0))
+	t.Cleanup(func() { closeRecorder(t, r) })
+	rec := newTestConnRecorder(r)
 
 	server, client := net.Pipe()
 	t.Cleanup(func() { _ = client.Close() })
 	var closeCalls int32
 	fc := &handshakeFailingConn{Conn: server, closeCalls: &closeCalls}
-	rc := &recordingConn{Conn: fc, rec: rec}
+	rc := &recordingConn{recordingCore: recordingCore{Conn: fc, rec: rec}}
 
 	rc.completeHandshake()
 
@@ -969,15 +989,15 @@ func (s *gatedSink) callsSoFar() int {
 
 // TestSinkStallDoesNotBlockTheConnectionGoroutine proves finish's hand-off
 // to the dispatch goroutine never blocks, even once a stalled Sink has let
-// the per-connection queue fill: the exchanges past the queue's capacity
-// are dropped and counted, not queued without bound and not left to stall
-// the caller (recorder.go's finish is called from the same goroutine
-// net/http uses to read from and write to the client).
+// the shared queue fill: the exchanges past the queue's capacity are
+// dropped and counted, not queued without bound and not left to stall the
+// caller (recorder.go's finish is called from the same goroutine net/http
+// uses to read from and write to the client).
 func TestSinkStallDoesNotBlockTheConnectionGoroutine(t *testing.T) {
 	sink := &gatedSink{gate: make(chan struct{})}
-	rs := newRecorderSet(sink, nil)
-	t.Cleanup(rs.stop)
-	rec := newTestConnRecorder(rs)
+	r := NewRecorder(sink, nil)
+	t.Cleanup(func() { closeRecorder(t, r) })
+	rec := newTestConnRecorder(r)
 
 	const capacity = 256
 	done := make(chan struct{})
@@ -1005,7 +1025,7 @@ func TestSinkStallDoesNotBlockTheConnectionGoroutine(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	if got := rs.dropped.Load(); got == 0 {
+	if got := r.Dropped(); got == 0 {
 		t.Errorf("dropped: got 0, want > 0 after exceeding the %d-slot queue", capacity)
 	}
 }
@@ -1042,9 +1062,9 @@ func (s *panicOnceSink) all() []Exchange {
 
 func TestPanickingSinkDoesNotStopTheDispatchGoroutine(t *testing.T) {
 	sink := &panicOnceSink{}
-	rs := newRecorderSet(sink, log.New(io.Discard, "", 0))
-	t.Cleanup(rs.stop)
-	rec := newTestConnRecorder(rs)
+	r := NewRecorder(sink, log.New(io.Discard, "", 0))
+	t.Cleanup(func() { closeRecorder(t, r) })
+	rec := newTestConnRecorder(r)
 
 	b1 := &building{id: 1, handlerRuns: 1}
 	b1.req.append([]byte("x"))
@@ -1067,13 +1087,13 @@ func TestPanickingSinkDoesNotStopTheDispatchGoroutine(t *testing.T) {
 	if got[0].ID != 2 {
 		t.Errorf("recorded exchange ID: got %d, want 2", got[0].ID)
 	}
-	if rs.dropped.Load() == 0 {
+	if r.Dropped() == 0 {
 		t.Error("dropped: got 0, want > 0 for the panicking call")
 	}
 }
 
 // Identity must be recorded through Attach, in both cipher modes, on
-// every listener the server really uses (round 3, item 1): this package's
+// every listener the server really uses: this package's
 // own pre-handshaking Listener (the first two subtests), core's
 // sepTLS.WrapCCMListener, a bare gotls.NewListener (P4: the server's real
 // CCM-8 listener, sep2server.wrapMTLS), and a bare crypto/tls.NewListener
@@ -1109,8 +1129,10 @@ func TestIdentityRecordedThroughAttach(t *testing.T) {
 		ln := NewListener(gotlsLn, nil)
 		srv := &http.Server{Handler: okHandler("ok")}
 		sink := NewMemorySink()
-		wrapped := Attach(srv, ln, sink)
+		rec := NewRecorder(sink, nil)
+		wrapped := rec.Attach(srv, ln)
 		go func() { _ = srv.Serve(wrapped) }()
+		t.Cleanup(func() { closeRecorder(t, rec) })
 		t.Cleanup(func() { _ = srv.Close() })
 
 		client := ccmHTTPClient(t, m)
@@ -1144,8 +1166,10 @@ func TestIdentityRecordedThroughAttach(t *testing.T) {
 		})
 		srv := &http.Server{Handler: handler}
 		sink := NewMemorySink()
-		served := Attach(srv, preHandshaken, sink)
+		rec := NewRecorder(sink, nil)
+		served := rec.Attach(srv, preHandshaken)
 		go func() { _ = srv.Serve(served) }()
+		t.Cleanup(func() { closeRecorder(t, rec) })
 		t.Cleanup(func() { _ = srv.Close() })
 
 		client := ccmHTTPClient(t, m)
@@ -1181,8 +1205,10 @@ func TestIdentityRecordedThroughAttach(t *testing.T) {
 		})
 		srv := &http.Server{Handler: handler}
 		sink := NewMemorySink()
-		served := Attach(srv, bare, sink)
+		rec := NewRecorder(sink, nil)
+		served := rec.Attach(srv, bare)
 		go func() { _ = srv.Serve(served) }()
+		t.Cleanup(func() { closeRecorder(t, rec) })
 		t.Cleanup(func() { _ = srv.Close() })
 
 		client := ccmHTTPClient(t, m)
@@ -1216,8 +1242,10 @@ func TestIdentityRecordedThroughAttach(t *testing.T) {
 		})
 		srv := &http.Server{Handler: handler}
 		sink := NewMemorySink()
-		served := Attach(srv, bare, sink)
+		rec := NewRecorder(sink, nil)
+		served := rec.Attach(srv, bare)
 		go func() { _ = srv.Serve(served) }()
+		t.Cleanup(func() { closeRecorder(t, rec) })
 		t.Cleanup(func() { _ = srv.Close() })
 
 		conn := rawDial(t, m, tcpLn.Addr().String())
@@ -1241,28 +1269,28 @@ func TestIdentityRecordedThroughAttach(t *testing.T) {
 
 // TestAttachRefusesAHandshakeFailure is the acceptance-level proof that a
 // connection whose handshake fails never produces an exchange and gets
-// closed promptly end to end. It is not, on its own, item 3's proof that
+// closed promptly end to end. It is not, on its own, the proof that
 // completeHandshake's own Close() call is what does the closing: checked by
 // mutation, this test still passes with that Close() call removed, because
 // net/http's own next read on the wrapped *tls.Conn returns its cached
 // handshake error immediately and net/http's serve loop tears the
 // connection down through its own c.close() regardless. A dial that only
-// times out would not distinguish "closed" from "left hanging" either way
-// (item 3's explicit warning), so this still reads the raw TCP socket
-// directly and requires a prompt EOF or reset, not a timeout, as the
-// end-to-end behavior this package must keep.
-// TestCompleteHandshakeClosesOnFailure below is the test that is actually
-// RED without completeHandshake's own Close() call.
+// times out would not distinguish "closed" from "left hanging" either way,
+// so this still reads the raw TCP socket directly and requires a prompt EOF
+// or reset, not a timeout, as the end-to-end behavior this package must
+// keep. TestCompleteHandshakeClosesOnFailure below is the test that is
+// actually RED without completeHandshake's own Close() call.
 func TestAttachRefusesAHandshakeFailure(t *testing.T) {
 	m := newMaterial(t)
 	tcpLn := listenTCP(t)
 	bare := tls.NewListener(tcpLn, gcmServerConfig(t, m))
 	srv := &http.Server{Handler: okHandler("ok")}
-	var logBuf syncBuffer
-	srv.ErrorLog = log.New(&logBuf, "", 0)
 	sink := NewMemorySink()
-	wrapped := Attach(srv, bare, sink)
+	var logBuf syncBuffer
+	rec := NewRecorder(sink, log.New(&logBuf, "", 0))
+	wrapped := rec.Attach(srv, bare)
 	go func() { _ = srv.Serve(wrapped) }()
+	t.Cleanup(func() { closeRecorder(t, rec) })
 	t.Cleanup(func() { _ = srv.Close() })
 
 	raw, err := net.Dial("tcp", tcpLn.Addr().String())
@@ -1285,7 +1313,7 @@ func TestAttachRefusesAHandshakeFailure(t *testing.T) {
 		t.Fatalf("read %d bytes, want the server to close after a failed handshake, not respond", n)
 	}
 	if ne, ok := readErr.(net.Error); ok && ne.Timeout() {
-		t.Fatal("read timed out instead of erroring: a dial that only times out does not prove the connection was closed (item 3)")
+		t.Fatal("read timed out instead of erroring: a dial that only times out does not prove the connection was closed")
 	}
 
 	if len(sink.All()) != 0 {
@@ -1316,12 +1344,16 @@ func TestAttachTwiceDoesNotPanicOnConnectionClose(t *testing.T) {
 	}
 
 	sink1 := NewMemorySink()
-	_ = Attach(srv, ln, sink1) // chains onto srv.ConnState and srv.Handler; its own listener is never served
+	rec1 := NewRecorder(sink1, nil)
+	_ = rec1.Attach(srv, ln) // chains onto srv.ConnState and srv.Handler; its own listener is never served
 
 	sink2 := NewMemorySink()
-	served := Attach(srv, ln, sink2)
+	rec2 := NewRecorder(sink2, nil)
+	served := rec2.Attach(srv, ln)
 
 	go func() { _ = srv.Serve(served) }()
+	t.Cleanup(func() { closeRecorder(t, rec1) })
+	t.Cleanup(func() { closeRecorder(t, rec2) })
 	t.Cleanup(func() { _ = srv.Close() })
 
 	conn := rawDial(t, m, tcpLn.Addr().String())
@@ -1338,7 +1370,7 @@ func TestAttachTwiceDoesNotPanicOnConnectionClose(t *testing.T) {
 	}
 }
 
-// Operator decisions, 2026-09-21 (item 6).
+// Operator decisions, 2026-09-21.
 
 // TestKeepAliveClientClosingWhileIdleLeavesNoEmptyExchange: a keep-alive
 // client that closes while idle (the ordinary way a well-behaved client
@@ -1377,14 +1409,14 @@ func TestKeepAliveClientClosingWhileIdleLeavesNoEmptyExchange(t *testing.T) {
 // building to the sink at all.
 func TestFinishSkipsAnExchangeWithNoBytesEitherDirection(t *testing.T) {
 	sink := NewMemorySink()
-	rs := newRecorderSet(sink, nil)
-	t.Cleanup(rs.stop)
-	rec := newTestConnRecorder(rs)
+	r := NewRecorder(sink, nil)
+	t.Cleanup(func() { closeRecorder(t, r) })
+	rec := newTestConnRecorder(r)
 
 	rec.finish(&building{id: 1})
 	rec.closeFinal()
 
-	// The shared dispatch goroutine drains rs.finished asynchronously, so
+	// The shared dispatch goroutine drains its queue asynchronously, so
 	// give it a window before trusting a zero count.
 	deadline := time.Now().Add(300 * time.Millisecond)
 	var got int
@@ -1411,8 +1443,10 @@ func TestAttachWithNilHandlerFallsBackToDefaultServeMux(t *testing.T) {
 	ln := NewListener(tlsLn, nil)
 	srv := &http.Server{} // no Handler set
 	sink := NewMemorySink()
-	wrapped := Attach(srv, ln, sink)
+	rec := NewRecorder(sink, nil)
+	wrapped := rec.Attach(srv, ln)
 	go func() { _ = srv.Serve(wrapped) }()
+	t.Cleanup(func() { closeRecorder(t, rec) })
 	t.Cleanup(func() { _ = srv.Close() })
 
 	conn := rawDial(t, m, tcpLn.Addr().String())
@@ -1436,15 +1470,14 @@ func TestAttachWithNilHandlerFallsBackToDefaultServeMux(t *testing.T) {
 	}
 }
 
-// TestOptionsStarBypassesTheHandlerAndIsMarkedRejectedBeforeHandler is item
-// 5 (round 3, silent-failure finding D, read only): GOROOT
-// net/http/server.go's serverHandler.ServeHTTP swaps in globalOptionsHandler
-// for "OPTIONS *" before calling srv.Handler, which is Attach's own annotate
-// wrapper. annotate therefore never runs for this request, handlerRuns stays
-// 0, and classify already sorts a written-but-unhandled response into
-// MarkRejectedBeforeHandler like any other one net/http answers without
-// calling into srv.Handler. No production code changes for this item; this
-// test is the coverage that was missing.
+// TestOptionsStarBypassesTheHandlerAndIsMarkedRejectedBeforeHandler covers a
+// GOROOT net/http/server.go behavior: serverHandler.ServeHTTP swaps in
+// globalOptionsHandler for "OPTIONS *" before calling srv.Handler, which is
+// Attach's own annotate wrapper. annotate therefore never runs for this
+// request, handlerRuns stays 0, and classify already sorts a
+// written-but-unhandled response into MarkRejectedBeforeHandler like any
+// other one net/http answers without calling into srv.Handler. No
+// production code change is needed; this test is the missing coverage.
 func TestOptionsStarBypassesTheHandlerAndIsMarkedRejectedBeforeHandler(t *testing.T) {
 	m := newMaterial(t)
 	addr, sink := startCaptureServer(t, m, okHandler("ok"))
@@ -1464,13 +1497,12 @@ func TestOptionsStarBypassesTheHandlerAndIsMarkedRejectedBeforeHandler(t *testin
 }
 
 // TestHungSinkKeepsGoroutinesBoundedAcrossManyConnections is the
-// reproduction for item 2 (P7, silent-failure finding B): a per-connection
-// sink queue let a hung Sink leak one dispatch goroutine per connection,
-// unbounded in the number of connections, with nothing counted in Dropped
-// until each connection's own queue happened to fill on its own. One shared
-// queue and a single dispatch goroutine per recorderSet means the goroutine
-// count stays flat regardless of how many connections stall behind the
-// hung Sink.
+// reproduction for a per-connection sink queue design that would let a hung
+// Sink leak one dispatch goroutine per connection, unbounded in the number
+// of connections, with nothing counted in Dropped until each connection's
+// own queue happened to fill on its own. One shared queue and a single
+// dispatch goroutine per Recorder means the goroutine count stays flat
+// regardless of how many connections stall behind the hung Sink.
 func TestHungSinkKeepsGoroutinesBoundedAcrossManyConnections(t *testing.T) {
 	m := newMaterial(t)
 	sink := &gatedSink{gate: make(chan struct{})}
@@ -1479,7 +1511,8 @@ func TestHungSinkKeepsGoroutinesBoundedAcrossManyConnections(t *testing.T) {
 	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
 	ln := NewListener(tlsLn, nil)
 	srv := &http.Server{Handler: okHandler("ok")}
-	wrapped := Attach(srv, ln, sink)
+	rec := NewRecorder(sink, nil)
+	wrapped := rec.Attach(srv, ln)
 	go func() { _ = srv.Serve(wrapped) }()
 	t.Cleanup(func() {
 		_ = srv.Close()
@@ -1522,11 +1555,17 @@ func TestHungSinkKeepsGoroutinesBoundedAcrossManyConnections(t *testing.T) {
 	}
 
 	close(sink.gate)
-	// Close explicitly, rather than waiting for t.Cleanup, so this
-	// settle check runs once Attach's own accept loop and dispatch
-	// goroutine (recordingListener.Close stops both) have actually
-	// stopped: nothing here should still be running afterward, per
-	// connection or otherwise.
+	// srv.Close alone no longer stops the dispatch goroutine: only
+	// recordingListener's own accept loop, since recordingListener.Close
+	// (Q1) touches nothing but the inner listener. The caller contract is
+	// srv stopped, then rec.Close, so this settle check waits on both,
+	// rather than on t.Cleanup, to prove neither leaves anything running
+	// afterward, per connection or otherwise.
 	_ = srv.Close()
+	closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer closeCancel()
+	if err := rec.Close(closeCtx); err != nil {
+		t.Fatalf("Recorder.Close: %v", err)
+	}
 	assertGoroutinesSettle(t, baseline)
 }

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
@@ -18,10 +19,10 @@ type connectionStater interface {
 }
 
 // gotlsStater is implemented by core's *gotls.Conn: its ConnectionState
-// method returns the fork's own type, not tls.ConnectionState (P3), so a
-// raw *gotls.Conn (WrapCCMListener's or a bare gotls.NewListener's output)
-// does not satisfy connectionStater directly. stateOf checks both shapes so
-// identityFrom and recordingConn.ConnectionState see one common type
+// method returns the fork's own type, not tls.ConnectionState, so a raw
+// *gotls.Conn (WrapCCMListener's or a bare gotls.NewListener's output) does
+// not satisfy connectionStater directly. stateOf checks both shapes so
+// identityFrom and the TLS-capable recording conn see one common type
 // regardless of cipher mode.
 type gotlsStater interface {
 	ConnectionState() gotls.ConnectionState
@@ -39,6 +40,19 @@ func stateOf(c net.Conn) (tls.ConnectionState, bool) {
 		return convertGotlsState(cs.ConnectionState()), true
 	default:
 		return tls.ConnectionState{}, false
+	}
+}
+
+// isTLSCapable reports whether c's own accepted type carries a
+// ConnectionState method, without calling it: wrap uses this at Accept
+// time to decide which recording conn type to return (Q4), before any
+// handshake has necessarily run.
+func isTLSCapable(c net.Conn) bool {
+	switch c.(type) {
+	case connectionStater, gotlsStater:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -60,59 +74,49 @@ func identityFrom(c net.Conn) (lfdi, sfdi string, ok bool) {
 	return sepTLS.LFDI(cert), sepTLS.SFDI(cert), true
 }
 
-// recordingConn wraps an accepted connection to copy every byte it moves
-// into the exchange the connRecorder currently has open, without changing
-// what Read or Write return to their caller. ConnectionState is forwarded
-// explicitly: embedding net.Conn alone promotes only net.Conn's own
-// methods, so without this net/http would not see it and every request
-// would fail identity (the same lesson PR 1's Conn documents).
-type recordingConn struct {
+// wrappedConn is implemented by both recordingConn and plainRecordingConn
+// (via the embedded recordingCore), so observe can reach the shared
+// connRecorder without knowing which of the two Accept actually returned.
+type wrappedConn interface {
+	net.Conn
+	recorderFor() *connRecorder
+}
+
+// recordingCore copies every byte a wrapped connection moves into the
+// exchange its connRecorder currently has open, without changing what Read
+// or Write return to their caller. recordingConn and plainRecordingConn
+// each embed it and differ only in whether ConnectionState exists (Q4).
+type recordingCore struct {
 	net.Conn
 	rec *connRecorder
 
 	handshakeOnce sync.Once
 }
 
-// ConnectionState is net/http's one-shot source of r.TLS for any connection
-// that is not itself a *tls.Conn (server.go's own unexported
-// connectionStater interface): it is called exactly once per connection,
-// before the first read, on that connection's own goroutine (c.serve),
-// never on the shared Accept loop. completeHandshake rides that same call
-// to drive the handshake and derive identity, so a slow or silent peer's
-// handshake blocks only its own connection's goroutine, the same way
-// net/http's own *tls.Conn special case drives its handshake on the
-// per-connection goroutine too, never inside Accept (silent-failure
-// re-review at 24b5e1c, finding A: the server's real CCM-8 listener,
-// gotls.NewListener, and a bare crypto/tls listener both hand Accept a
-// connection whose handshake has not started).
-func (c *recordingConn) ConnectionState() tls.ConnectionState {
-	c.handshakeOnce.Do(c.completeHandshake)
-	state, _ := stateOf(c.Conn)
-	return state
-}
+func (c *recordingCore) recorderFor() *connRecorder { return c.rec }
 
 // completeHandshake drives c's inner connection through its TLS handshake
 // if it has one and it is not already complete (a no-op, safely, for an
 // already-handshaken input such as sepTLS.WrapCCMListener's or this
 // package's own Listener's output: both *tls.Conn and *gotls.Conn treat a
-// second handshake call as a no-op once complete, the same fact PR 1's
-// Listener already relies on), then derives the connection's identity from
-// the resulting state. It runs at most once per connection (see
-// ConnectionState).
+// second handshake call as a no-op once complete), then derives the
+// connection's identity from the resulting state. It runs at most once per
+// connection, from ConnectionState, which only the TLS-capable wrapper type
+// implements: this method never runs at all for a plain connection.
 //
 // A connection whose handshake fails or times out is refused here, loudly:
 // closed and logged, so it is never recorded with an empty identity. The
-// handshake I/O runs directly against c.Conn, the wrapped connection,
-// never through recordingConn's own Read/Write: handshake records are not
+// handshake I/O runs directly against c.Conn, the wrapped connection, never
+// through recordingCore's own Read/Write: handshake records are not
 // exchange bytes, and driving them here must not recurse into
 // recordInbound/recordOutbound.
-func (c *recordingConn) completeHandshake() {
+func (c *recordingCore) completeHandshake() {
 	if hs, ok := c.Conn.(handshaker); ok {
-		hsCtx, cancel := context.WithTimeout(context.Background(), defaultHandshakeTimeout)
+		hsCtx, cancel := context.WithTimeout(context.Background(), handshakeBoundFor(c.rec.att.srv))
 		err := hs.HandshakeContext(hsCtx)
 		cancel()
 		if err != nil {
-			c.rec.rs.errorLog.Printf("sep2capture: TLS handshake error from %s: %v; refusing", c.RemoteAddr(), err)
+			c.rec.att.r.errorLog.Printf("sep2capture: TLS handshake error from %s: %v; refusing", c.RemoteAddr(), err)
 			_ = c.Conn.Close()
 			return
 		}
@@ -123,7 +127,7 @@ func (c *recordingConn) completeHandshake() {
 	}
 }
 
-func (c *recordingConn) Read(p []byte) (int, error) {
+func (c *recordingCore) Read(p []byte) (int, error) {
 	n, err := c.Conn.Read(p)
 	isPeek := len(p) == 1
 	if n > 0 {
@@ -133,20 +137,18 @@ func (c *recordingConn) Read(p []byte) (int, error) {
 	// deliberately times this read out on every exchange close
 	// (connReader.abortPendingRead, server.go) to reclaim it for the next
 	// request, and ignores that timeout itself (connReader.backgroundRead
-	// does the same check net/http/server.go, err.(net.Error) with
-	// Timeout()). Any other error on this read is real: a reset or a
-	// corrupt TLS record arriving while net/http is waiting on this
-	// background peek is exactly as much a connection failure as one on
-	// any other read, and net/http itself does not discard it either
-	// (handleReadErrorLocked runs for it). Only the timeout net/http
-	// itself manufactures is not.
+	// does the same check). Any other error on this read is real: a reset
+	// or a corrupt TLS record arriving while net/http is waiting on this
+	// background peek is exactly as much a connection failure as one on any
+	// other read, and net/http itself does not discard it either. Only the
+	// timeout net/http itself manufactures is not.
 	if err != nil && !(isPeek && isTimeout(err)) {
 		c.rec.noteError(err)
 	}
 	return n, err
 }
 
-func (c *recordingConn) Write(p []byte) (int, error) {
+func (c *recordingCore) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
 	if n > 0 {
 		c.rec.recordOutbound(p[:n])
@@ -155,12 +157,44 @@ func (c *recordingConn) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// recordingConn is the wrapper Accept returns for a TLS-capable accepted
+// connection: it forwards ConnectionState explicitly, since embedding
+// net.Conn alone promotes only net.Conn's own methods, so without this
+// net/http would not see it and every request would fail identity.
+type recordingConn struct {
+	recordingCore
+}
+
+// ConnectionState is net/http's one-shot source of r.TLS for any connection
+// that is not itself a *tls.Conn: it is called exactly once per connection,
+// before the first read, on that connection's own goroutine (c.serve),
+// never on the shared Accept loop. completeHandshake rides that same call
+// to drive the handshake and derive identity, so a slow or silent peer's
+// handshake blocks only its own connection's goroutine, the same way
+// net/http's own *tls.Conn special case drives its handshake on the
+// per-connection goroutine too, never inside Accept.
+func (c *recordingConn) ConnectionState() tls.ConnectionState {
+	c.handshakeOnce.Do(c.completeHandshake)
+	state, _ := stateOf(c.Conn)
+	return state
+}
+
 var _ net.Conn = (*recordingConn)(nil)
 var _ connectionStater = (*recordingConn)(nil)
 
+// plainRecordingConn is the wrapper Accept returns for a connection that is
+// not TLS-capable at all (Q4): it records the same bytes recordingConn
+// does but has no ConnectionState method, so net/http leaves r.TLS nil for
+// it, the same as for any other plaintext connection.
+type plainRecordingConn struct {
+	recordingCore
+}
+
+var _ net.Conn = (*plainRecordingConn)(nil)
+
 // recordingListener wraps ln so every accepted connection gets a
 // connRecorder before net/http ever sees it. It does not itself drive or
-// check any TLS handshake: that now happens lazily, per connection, in
+// check any TLS handshake: that happens lazily, per connection, in
 // recordingConn.ConnectionState (see completeHandshake), which runs on
 // that connection's own goroutine rather than here on the shared Accept
 // loop. Accept therefore never blocks on one peer's handshake, whatever ln
@@ -169,7 +203,7 @@ var _ connectionStater = (*recordingConn)(nil)
 // non-TLS net.Listener.
 type recordingListener struct {
 	inner net.Listener
-	rs    *recorderSet
+	att   *attachment
 }
 
 func (l *recordingListener) Accept() (net.Conn, error) {
@@ -177,13 +211,14 @@ func (l *recordingListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return l.rs.wrap(c), nil
+	return l.att.wrap(c), nil
 }
 
-// Close closes the inner listener and stops rs's dispatch goroutine. It is
-// safe to call more than once.
+// Close closes the inner listener. It does not touch the Recorder or its
+// dispatch goroutine: srv.Shutdown and srv.Close both call this while
+// holding their own lock, and neither may wait on a Sink (Q2). The caller
+// stops recording afterward, with Recorder.Close (Q1).
 func (l *recordingListener) Close() error {
-	l.rs.stop()
 	return l.inner.Close()
 }
 
@@ -191,20 +226,33 @@ func (l *recordingListener) Addr() net.Addr { return l.inner.Addr() }
 
 var _ net.Listener = (*recordingListener)(nil)
 
-// Dropped returns how many exchanges Attach's listener ln has dropped
-// because the recorderSet's shared queue to its Sink was full or
-// Sink.Record panicked (see exchange.go's Sink doc). It is 0 for any
-// net.Listener Attach did not return.
-func Dropped(ln net.Listener) uint64 {
-	rl, ok := ln.(*recordingListener)
-	if !ok {
-		return 0
+// handshakeBoundFor computes the bound net/http itself applies to a bare
+// *tls.Conn (GOROOT server.go's tlsHandshakeTimeout): the smallest positive
+// of ReadHeaderTimeout, ReadTimeout and WriteTimeout, or
+// defaultHandshakeTimeout when all three are zero or srv is nil. Unlike
+// net/http, this package has no other bound on an unhandshaken peer, so
+// falling back to unlimited would reopen the Slowloris surface
+// pkg/sep2server/server.go's own ReadHeaderTimeout comment rules out.
+func handshakeBoundFor(srv *http.Server) time.Duration {
+	var bound time.Duration
+	if srv != nil {
+		for _, v := range [...]time.Duration{srv.ReadHeaderTimeout, srv.ReadTimeout, srv.WriteTimeout} {
+			if v <= 0 {
+				continue
+			}
+			if bound == 0 || v < bound {
+				bound = v
+			}
+		}
 	}
-	return rl.rs.dropped.Load()
+	if bound == 0 {
+		return defaultHandshakeTimeout
+	}
+	return bound
 }
 
 // Attach installs recording on srv and ln: every exchange on every
-// connection Accept returns is captured and handed to sink. It must run
+// connection Accept returns is captured and handed to r's sink. It must run
 // after srv.Handler and any srv.ConnState are set and before Serve: it
 // chains srv.ConnState so a hook already installed keeps firing, and it
 // wraps srv.Handler with the annotation middleware, outermost, so the
@@ -212,55 +260,41 @@ func Dropped(ln net.Listener) uint64 {
 // not modified; Attach returns the listener to serve instead.
 //
 // ln's Accept may return a connection whose TLS handshake, if any, is not
-// yet complete: this package's own Listener and sepTLS.WrapCCMListener
-// both already hand Attach a finished handshake, and a bare
-// gotls.NewListener or crypto/tls.NewListener (the server's real CCM-8 and
-// GCM listeners, sep2server.wrapMTLS) do not, since both handshake lazily
-// on first Read. Attach supports all four: recordingConn.ConnectionState
-// drives the handshake itself, once, on the connection's own goroutine,
-// the first time net/http asks for it, and refuses (closes, logs) a
-// connection whose handshake fails rather than recording it with an empty
-// identity. Calling Attach more than once on the same srv is safe: an
-// earlier Attach's hooks stay chained and keep firing, but each
-// recorderSet only acts on the connections its own listener actually
-// wrapped.
+// yet complete: this package's own Listener and sepTLS.WrapCCMListener both
+// already hand Attach a finished handshake, and a bare gotls.NewListener or
+// crypto/tls.NewListener (the server's real CCM-8 and GCM listeners,
+// sep2server.wrapMTLS) do not, since both handshake lazily on first Read.
+// Attach supports all four, plus a plain, non-TLS listener (Q4):
+// recordingConn.ConnectionState drives the handshake itself, once, on the
+// connection's own goroutine, the first time net/http asks for it, bounded
+// by handshakeBoundFor(srv) (Q3), and refuses (closes, logs) a connection
+// whose handshake fails rather than recording it with an empty identity.
+// Calling Attach more than once on the same srv is safe: an earlier
+// Attach's hooks stay chained and keep firing, but each attachment only
+// acts on the connections its own listener actually wrapped.
+//
+// A ConnState or ConnContext hook installed on srv, before or after Attach,
+// must not call ConnectionState on StateNew: that is the one hook net/http
+// runs on the shared accept loop, and calling it there would drive this
+// connection's handshake on that loop instead of its own goroutine,
+// stalling Accept for up to the handshake bound.
 //
 // Errors this package logs on its own (a refused unhandshaken connection, a
-// panicking Sink) go to srv.ErrorLog, or the standard logger if that is nil,
-// matching net/http's own default.
-func Attach(srv *http.Server, ln net.Listener, sink Sink) net.Listener {
-	rs := newRecorderSet(sink, srv.ErrorLog)
+// panicking Sink) go to r's own errorLog, set once at NewRecorder, not to
+// srv.ErrorLog: one Recorder can be attached to more than one srv, so it
+// cannot take its log target from any single one of them.
+func (r *Recorder) Attach(srv *http.Server, ln net.Listener) net.Listener {
+	att := newAttachment(r, srv)
 
 	previous := srv.ConnState
 	srv.ConnState = func(c net.Conn, state http.ConnState) {
-		rs.observe(c, state)
+		att.observe(c, state)
 		if previous != nil {
 			previous(c, state)
 		}
 	}
 
-	srv.Handler = rs.annotate(srv.Handler)
+	srv.Handler = att.annotate(srv.Handler)
 
-	return &recordingListener{inner: ln, rs: rs}
-}
-
-// annotate marks the exchange open on the request's connection as
-// "a handler ran" before calling next. It reads no body and wraps nothing
-// else: a handler that never touches the body still gets marked, and a
-// handler that panics after this point still counts as having run.
-//
-// next is srv.Handler as Attach found it, nil included: a nil Handler is
-// ordinary net/http usage (server.go's serverHandler substitutes
-// DefaultServeMux at serve time), but Attach always replaces srv.Handler
-// with this wrapper, so that substitution must happen here instead.
-func (rs *recorderSet) annotate(next http.Handler) http.Handler {
-	if next == nil {
-		next = http.DefaultServeMux
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if rec := rs.byRemoteAddr(r.RemoteAddr); rec != nil {
-			rec.markHandlerRan()
-		}
-		next.ServeHTTP(w, r)
-	})
+	return &recordingListener{inner: ln, att: att}
 }

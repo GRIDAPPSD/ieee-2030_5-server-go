@@ -27,7 +27,7 @@ func benchmarkListener(b *testing.B, attach bool) {
 
 	var serveLn net.Listener = ln
 	if attach {
-		serveLn = Attach(srv, ln, NewMemorySink())
+		serveLn = NewRecorder(NewMemorySink(), nil).Attach(srv, ln)
 	}
 	go func() { _ = srv.Serve(serveLn) }()
 	b.Cleanup(func() { _ = srv.Close() })

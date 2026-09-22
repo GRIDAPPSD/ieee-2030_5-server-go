@@ -288,8 +288,8 @@ type naiveConn struct {
 }
 
 // naiveListener performs the identical handshake Listener does, then hands
-// back a naiveConn instead of a *Conn. It isolates the one thing item 3
-// tests: that implementing ConnectionState, not merely completing the
+// back a naiveConn instead of a *Conn. It isolates the one property this
+// test proves: that implementing ConnectionState, not merely completing the
 // handshake before Accept returns, is what keeps identity alive.
 type naiveListener struct {
 	inner net.Listener

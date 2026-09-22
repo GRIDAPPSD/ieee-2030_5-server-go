@@ -29,16 +29,15 @@ func TestHandlerDownloadBytesEqualWhatARealClientSentAndReceived(t *testing.T) {
 	}
 	respBytes := readRawHTTPMessage(t, conn)
 
-	waitQueueDrained(t, st)
-	clients := st.Clients()
-	if len(clients) != 1 {
-		t.Fatalf("Clients(): got %d, want 1", len(clients))
-	}
-	exchanges := st.Exchanges(clients[0].Key, 0, 10)
-	if len(exchanges) != 1 {
-		t.Fatalf("Exchanges(): got %d, want 1", len(exchanges))
-	}
-	id := exchanges[0].ID
+	// waitQueueDrained polls inFlightBytes, which is 0 until something has
+	// been handed to Record; the exchange only reaches Record later, off
+	// the ConnState hook, so that wait can pass by finding nothing queued
+	// yet rather than by finding the queue empty after draining (PR 620
+	// review, HIGH: this raced its own precondition and was CI's actual
+	// failure). waitForExchangeCountAnyClient polls the observable result
+	// instead.
+	sums := waitForExchangeCountAnyClient(t, st, 1)
+	id := sums[0].ID
 
 	ts := httptest.NewServer(st.Handler())
 	defer ts.Close()

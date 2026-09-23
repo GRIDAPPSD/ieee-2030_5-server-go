@@ -90,9 +90,28 @@ Host allowlist and the `Secure` cookie requirement, see
 | set | `true` | empty | HTTPS with a freshly generated self-signed cert (`VerifyClientCertIfGiven`); operator must trust on first use |
 
 When HTTPS is enabled, `ClientAuth` is `VerifyClientCertIfGiven`. An
-operator client that does present a cert and chains to a known CA gets the
-mTLS Path A in `AdminAuthMiddleware`. A browser that presents no cert still
-completes the TLS handshake and can authenticate via Bearer or cookie.
+operator client that does present a cert and chains to the admin listener's
+client-CA anchor (below) gets the mTLS Path A in `AdminAuthMiddleware`. A
+browser that presents no cert still completes the TLS handshake and can
+authenticate via Bearer or cookie.
+
+### Admin client-certificate trust anchor (`SEP2_ADMIN_CLIENT_CA`, #624)
+
+The admin listener verifies a presented operator certificate against
+`SEP2_ADMIN_CLIENT_CA`. Unset, this defaults to the serving CA
+(`SEP2_SERVING_CA`, or `SEP2_CA` where the two are not split): the CA that
+signs the operator certificate the certs API mints, so a freshly minted
+operator cert works with no extra client-side configuration. Set it to a
+PEM file path to trust a different CA instead, or to the literal value
+`system` to fall back to the host's root trust store: the behavior before
+#624, useful only for a deployment whose operator certificates come from a
+public CA rather than this server's own serving CA.
+
+A certificate signed by any CA outside this anchor is refused: a client
+that consults the server's CertificateRequest hint (most browsers and
+`curl --cert`) omits it and the request proceeds as if no certificate had
+been presented; a client that sends it anyway is refused at the TLS
+handshake. Either way it never reaches the admin policy-OID check.
 
 ## Caddy fronting (recommended for production)
 

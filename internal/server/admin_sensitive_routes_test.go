@@ -2,7 +2,10 @@ package server_test
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -132,25 +135,70 @@ func TestSensitiveRoutesRefuseBypassAdmission(t *testing.T) {
 
 // TestSensitiveRoutesStillRefuseUnderNonLoopbackExposure is acceptance
 // criterion 4: the rule holds on an opt-in non-loopback bind too.
-// BuildAdminRouter takes no bind-address parameter: the request shape that
-// actually distinguishes exposure posture is whether the request looks
-// loopback-local, and docs/admin.md's own warning names the failure mode
-// that produces exactly this shape under a non-loopback bind - "stock nginx
-// does not [inject X-Forwarded-For], and without those headers every
-// relayed request looks loopback-local and is admitted with no credential
-// at all". This request is that shape: RemoteAddr 127.0.0.1, as a relaying
-// proxy would present it, with no forwarded header. The credential
-// requirement on these two families holds regardless of why the request
-// looks loopback.
+//
+// #579 MEDIUM-2 (test coverage lane): the previous version of this test
+// built its request with the same bypassOnlyRequest helper, method and path
+// as the table's first case in TestSensitiveRoutesRefuseBypassAdmission, run
+// through the same synthetic router built by newSensitiveRoutesRouter. It
+// asserted the identical thing twice and could not fail unless that case
+// did. This version stands up a real server.Run, the path production takes,
+// with config.AdminAllowNonLoopback opted in and the admin listener bound to
+// 0.0.0.0 (exposureBootCfg): an uncredentialed request over that real
+// listener, from loopback address as a relaying proxy would present it,
+// covers the criterion through the full assembly (startAdminServer's own
+// wiring of BuildAdminRouter into the real *http.Server) rather than through
+// a second copy of the in-memory router the other tests already exercise.
 func TestSensitiveRoutesStillRefuseUnderNonLoopbackExposure(t *testing.T) {
-	router := newSensitiveRoutesRouter(t)
+	_, adminPort, err := net.SplitHostPort(mustProbePort(t))
+	if err != nil {
+		t.Fatalf("split probe port: %v", err)
+	}
+	loopbackProbe := net.JoinHostPort("127.0.0.1", adminPort)
 
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, bypassOnlyRequest(http.MethodGet, "/api/certs/ca"))
+	cfg, c := exposureBootCfg(t, adminPort, true)
 
-	if rec.Code != http.StatusUnauthorized || rec.Body.String() != sensitiveRefusalBody {
-		t.Fatalf("GET /api/certs/ca under a misconfigured-proxy non-loopback exposure: status = %d body = %q, want 401 %q",
-			rec.Code, rec.Body.String(), sensitiveRefusalBody)
+	ctx, cancel := context.WithCancel(context.Background())
+	runErrCh := make(chan error, 1)
+	go func() { runErrCh <- server.Run(ctx, cfg, c.svc) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runErrCh:
+		case <-time.After(5 * time.Second):
+			t.Error("server.Run did not exit within 5s after cancel")
+		}
+	})
+
+	// Wait for the admin listener to come up, exactly as
+	// TestAdminListenerRefusesNonLoopbackBindWithoutOptIn's opt-in case does:
+	// any response is proof-of-life, the status is asserted separately below.
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	var resp *http.Response
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err = client.Get("http://" + loopbackProbe + "/api/certs/ca")
+		if err == nil {
+			break
+		}
+		select {
+		case runErr := <-runErrCh:
+			t.Fatalf("server.Run exited during boot: %v", runErr)
+		default:
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("admin listener never became ready on %s: %v", loopbackProbe, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	if resp.StatusCode != http.StatusUnauthorized || string(body) != sensitiveRefusalBody {
+		t.Fatalf("GET /api/certs/ca, no credential, over a real opt-in non-loopback bind: status = %d body = %q, want 401 %q",
+			resp.StatusCode, body, sensitiveRefusalBody)
 	}
 }
 

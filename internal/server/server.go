@@ -825,6 +825,19 @@ func servingCAMismatchWarning(certFile string, servingCA *x509.Certificate) stri
 // flow through AdminAuthMiddleware Path A while browser clients without a
 // cert still complete the handshake and authenticate via Bearer/cookie.
 //
+// #624: ClientCAs is set from Config.EffectiveAdminClientCA, which
+// defaults to the serving CA (the CA that signs the operator certificate,
+// per #622's role split). Before this, ClientCAs was left nil: per
+// crypto/tls (handshake_server.go, the VerifyClientCertIfGiven branch) and
+// crypto/x509 (Certificate.Verify, the opts.Roots == nil branch), a nil
+// ClientCAs pool falls back to the HOST ROOT set, so a private-CA operator
+// cert failed the handshake before AdminAuthMiddleware's policy-OID check
+// ever ran (#418). Setting EffectiveAdminClientCA to the literal value
+// config.AdminClientCASystemRoots ("system") reproduces that host-root
+// fallback explicitly - ClientCAs is left nil rather than loading a file
+// named "system" - for a deployment whose operator certificates come from
+// a public CA rather than this server's own serving CA.
+//
 // The returned description string is human-readable for the startup log.
 func buildAdminTLSConfig(cfg *config.Config) (*tls.Config, string, error) {
 	var (
@@ -854,11 +867,42 @@ func buildAdminTLSConfig(cfg *config.Config) (*tls.Config, string, error) {
 		desc = "HTTPS, self-signed"
 	}
 
+	clientCAs, anchorDesc, err := adminClientCAPool(cfg)
+	if err != nil {
+		return nil, "", fmt.Errorf("admin client CA: %w", err)
+	}
+
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS12,
 		ClientAuth:   tls.VerifyClientCertIfGiven,
-	}, desc, nil
+		ClientCAs:    clientCAs,
+	}, desc + ", client CA: " + anchorDesc, nil
+}
+
+// adminClientCAPool resolves the admin listener's ClientCAs pool from
+// Config.EffectiveAdminClientCA (#624). The AdminClientCASystemRoots
+// sentinel returns a nil pool and its own description, so the caller sets
+// ClientCAs to nil rather than loading a file named "system" - crypto/tls
+// and crypto/x509 then fall back to the host root trust store on their own
+// (see buildAdminTLSConfig's doc comment for the exact source lines). An
+// anchor that resolves empty (no SEP2_CA, no SEP2_SERVING_CA, no
+// SEP2_ADMIN_CLIENT_CA) is a configuration gap, not a silent trust-everyone
+// default: this fails closed per this workspace's rule that an
+// indeterminate boundary denies rather than allows.
+func adminClientCAPool(cfg *config.Config) (*x509.CertPool, string, error) {
+	anchor := cfg.EffectiveAdminClientCA()
+	switch anchor {
+	case config.AdminClientCASystemRoots:
+		return nil, "host root trust store (SEP2_ADMIN_CLIENT_CA=system)", nil
+	case "":
+		return nil, "", errors.New("no anchor configured: set SEP2_CA, SEP2_SERVING_CA, or SEP2_ADMIN_CLIENT_CA (a path, or \"system\" for host roots)")
+	}
+	pool, err := sepTLS.LoadClientCAs(anchor, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("load %s: %w", anchor, err)
+	}
+	return pool, anchor, nil
 }
 
 // resolveSubParam reads the named environment variable and parses it as a

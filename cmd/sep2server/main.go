@@ -53,6 +53,26 @@ func runServe() error {
 		return err
 	}
 
+	svc, err := loadAdminCertService(cfg, resolver)
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	return server.Run(ctx, cfg, svc)
+}
+
+// loadAdminCertService resolves the CA key settings and loads both CA pairs
+// for the admin cert service (#622).
+//
+// #638 fix round 2 item 2: split out of runServe, which no test called, so
+// the SEP2_SERVING_CA_KEY/SEP2_DEVICE_CA_KEY fallback and the partial-pair
+// cases can be driven from a test with real files on disk. Behavior is
+// unchanged; runServe calls this with the same resolver and cfg it always
+// built inline.
+func loadAdminCertService(cfg *config.Config, resolver *certDirResolver) (*handler.AdminCertService, error) {
 	// #622: load both CA pairs for the admin cert service. SEP2_CA_KEY
 	// stays the shared default (mirrors CAFile): SEP2_SERVING_CA_KEY and
 	// SEP2_DEVICE_CA_KEY fall back to it, exactly as ServingCAFile/
@@ -69,15 +89,15 @@ func runServe() error {
 	// service as mint-capable, but the two cases get their own log line.
 	caKeyFile, err := resolver.envPathOrCertDir("SEP2_CA_KEY", "ca.key")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	servingCAKeyFile, err := envPathOr("SEP2_SERVING_CA_KEY", caKeyFile)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	deviceCAKeyFile, err := envPathOr("SEP2_DEVICE_CA_KEY", caKeyFile)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	servingCert, servingPEM, servingKey, servingKeyErr := certs.LoadCAPair(cfg.EffectiveServingCA(), servingCAKeyFile)
@@ -115,11 +135,7 @@ func runServe() error {
 			log.Println("CA certificate(s) loaded without a usable key: minting disabled; CA download and the banner still use the loaded certificate(s)")
 		}
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	return server.Run(ctx, cfg, svc)
+	return svc, nil
 }
 
 // configFromEnv builds the server configuration from SEP2_* environment

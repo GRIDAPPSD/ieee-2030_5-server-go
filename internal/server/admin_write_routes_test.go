@@ -186,10 +186,22 @@ func TestEveryAdminWriteRouteIsCovered(t *testing.T) {
 	}
 }
 
+// serveLoopbackWrite drives router from a loopback address with a valid
+// Bearer credential set by default ("the-key", the same value every caller
+// here builds its router with). This test is about body-type and
+// cross-origin behavior, not about credential admission, so it was already
+// credential-blind before #579: the loopback bypass admitted every request
+// regardless. #579 and #631 changed that for the certificate routes, which
+// now refuse a bypass-only request before ever reaching the body-type check
+// this test exercises, so the default credential keeps those three routes
+// exercising the same check as everything else here. A caller that
+// overrides "Authorization" in headers still wins, since that assignment
+// runs after this default.
 func serveLoopbackWrite(router http.Handler, method, target string, headers map[string]string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, strings.NewReader("{}"))
 	req.Host = "127.0.0.1"
 	req.RemoteAddr = "127.0.0.1:50000"
+	req.Header.Set("Authorization", "Bearer the-key")
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}

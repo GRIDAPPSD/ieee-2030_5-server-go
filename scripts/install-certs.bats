@@ -7,8 +7,7 @@
 # permission convention, including a verify that can actually fail.
 #
 # Fixtures are minted per test with openssl so the suite needs no network
-# access and never reads or writes the operator's real /home/debian/tls or
-# NSS DB.
+# access and never reads or writes the operator's real $HOME/tls or NSS DB.
 
 setup() {
   SRC_DIR="$BATS_TEST_DIRNAME"

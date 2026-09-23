@@ -31,6 +31,65 @@ func TestConfigFromEnvNoHomeWithAllCertPathsSet(t *testing.T) {
 	}
 }
 
+// TestConfigFromEnvServingAndDeviceCAUnsetLeaveConfigEmpty pins #622 item 1:
+// with neither new setting exported, configFromEnv must leave
+// ServingCAFile/DeviceCAFile empty rather than defaulting them to the
+// resolved CAFile path (or to the cert-dir fallback envPathOrCertDir would
+// apply). Config.EffectiveServingCA/EffectiveDeviceCA do the CAFile
+// fallback; if configFromEnv pre-filled the fields instead, an operator who
+// only overrides SEP2_CA (not SEP2_SERVING_CA/SEP2_DEVICE_CA) would see the
+// new settings silently frozen at whatever SEP2_CERT_DIR default was in
+// effect at startup, not the SEP2_CA value they actually asked for.
+func TestConfigFromEnvServingAndDeviceCAUnsetLeaveConfigEmpty(t *testing.T) {
+	t.Setenv("SEP2_SERVING_CA", "")
+	t.Setenv("SEP2_DEVICE_CA", "")
+	if err := os.Unsetenv("SEP2_SERVING_CA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Unsetenv("SEP2_DEVICE_CA"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SEP2_CA", "/etc/tls/ca.crt")
+
+	cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+	if err != nil {
+		t.Fatalf("configFromEnv: %v", err)
+	}
+	if cfg.ServingCAFile != "" {
+		t.Errorf("ServingCAFile = %q, want empty (defaulting is EffectiveServingCA's job)", cfg.ServingCAFile)
+	}
+	if cfg.DeviceCAFile != "" {
+		t.Errorf("DeviceCAFile = %q, want empty (defaulting is EffectiveDeviceCA's job)", cfg.DeviceCAFile)
+	}
+	if got := cfg.EffectiveServingCA(); got != "/etc/tls/ca.crt" {
+		t.Errorf("EffectiveServingCA() = %q, want the SEP2_CA value /etc/tls/ca.crt", got)
+	}
+	if got := cfg.EffectiveDeviceCA(); got != "/etc/tls/ca.crt" {
+		t.Errorf("EffectiveDeviceCA() = %q, want the SEP2_CA value /etc/tls/ca.crt", got)
+	}
+}
+
+// TestConfigFromEnvServingAndDeviceCASetIndependently pins the "two
+// different CAs" half of item 2 at the config-resolution layer: each env
+// var wins over CAFile independently, tilde-expanded like every other
+// path setting (#598).
+func TestConfigFromEnvServingAndDeviceCASetIndependently(t *testing.T) {
+	t.Setenv("SEP2_CA", "/etc/tls/ca.crt")
+	t.Setenv("SEP2_SERVING_CA", "/etc/tls/serving.crt")
+	t.Setenv("SEP2_DEVICE_CA", "/etc/tls/device.crt")
+
+	cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+	if err != nil {
+		t.Fatalf("configFromEnv: %v", err)
+	}
+	if got := cfg.EffectiveServingCA(); got != "/etc/tls/serving.crt" {
+		t.Errorf("EffectiveServingCA() = %q, want /etc/tls/serving.crt", got)
+	}
+	if got := cfg.EffectiveDeviceCA(); got != "/etc/tls/device.crt" {
+		t.Errorf("EffectiveDeviceCA() = %q, want /etc/tls/device.crt", got)
+	}
+}
+
 func TestConfigFromEnvNotificationAllowLoopback(t *testing.T) {
 	const key = "SEP2_NOTIFICATION_ALLOW_LOOPBACK"
 	value := func(s string) *string { return &s }

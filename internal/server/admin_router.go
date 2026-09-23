@@ -41,7 +41,7 @@ import (
 // trafficHandler, when non-nil, is the traffic-capture read API (#611):
 // mounted at "/api/traffic/" on the authenticated inner mux, so it gets the
 // same auth chain as every other admin API route, the one-time ticket path
-// included (Path C above covers GET /api/traffic/stream the same as any
+// included (Path D above covers GET /api/traffic/stream the same as any
 // other authed GET). Nil mounts nothing, which is what capture-off leaves.
 //
 // Test callers that don't need the pattern list discard the second
@@ -116,9 +116,13 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 	// unless the legacy flag routes that one to the old page.
 	authed.Handle("GET /ui/", http.StripPrefix("/ui", spaHandler()))
 
-	// Auth ticket endpoint - exchanges valid admin auth for a short-lived ticket
+	// Auth ticket endpoint - exchanges valid admin auth for a short-lived
+	// ticket. RequireNonTicketAdmission (#641) refuses when the admission
+	// that reached it was itself a ticket: every other real credential
+	// (mTLS, Bearer, cookie session) still mints one, but a ticket must
+	// never be sufficient to mint its own successor.
 	if tickets != nil {
-		authed.HandleFunc("POST /auth/ticket", handleIssueTicket(tickets))
+		authed.Handle("POST /auth/ticket", auth.RequireNonTicketAdmission(handleIssueTicket(tickets)))
 	}
 
 	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets, sessions)(

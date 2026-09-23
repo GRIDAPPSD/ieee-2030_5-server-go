@@ -69,6 +69,33 @@ section. `make certs` (documented in `admin.md`'s
 these same subcommands for you if you want the full four-artifact set
 instead of generating by hand.
 
+### Splitting the serving and device CAs (optional)
+
+`SEP2_CA` / `SEP2_CA_KEY` above sign four different things at once: the
+server's own TLS leaf, the trust bundle the protocol listener verifies
+devices against, minted device certificates, and minted server
+certificates. Four settings split that into two roles, each with its own
+key:
+
+| Setting | Role |
+|---|---|
+| `SEP2_SERVING_CA` / `SEP2_SERVING_CA_KEY` | Signs this server's own certificates: the leaf minted by `POST /api/certs/server`, and what `GET /api/certs/ca` hands an operator to verify this server. |
+| `SEP2_DEVICE_CA` / `SEP2_DEVICE_CA_KEY` | The trust bundle the protocol listener's `ClientCAs` pool verifies devices against, and the CA that signs minted device certificates (`POST /api/certs/device`). |
+
+All four default to `SEP2_CA` / `SEP2_CA_KEY`, so a deployment that sets
+none of them behaves exactly as it did before the split. Setting a role's
+certificate (for example `SEP2_SERVING_CA`) without its matching key
+(`SEP2_SERVING_CA_KEY`) is a real but incomplete configuration: the key
+setting still falls back to `SEP2_CA_KEY`, and unless that happens to be
+the new certificate's own key, the pair does not match. The certificate
+still loads (it is trusted for verification and shown in the startup
+banner), but minting through that role's route
+(`POST /api/certs/server` or `POST /api/certs/device`) returns
+`503 CA not initialized` until the matching key is set too. The startup
+log names the affected role when this happens; the banner does not, since
+it renders from the certificate alone and cannot tell a matched pair from
+a mismatched one.
+
 ### What LFDI and SFDI are
 
 Every certificate the server issues or accepts has two derived

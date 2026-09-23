@@ -126,6 +126,10 @@ func TestHandleCreateDeviceCertInvalidHWTypeDoesNotLeakDecoderDetail(t *testing.
 	}
 }
 
+// getCA performs a real HTTP GET against HandleGetCA over a listening
+// socket rather than httptest.NewRecorder: the property under test is what
+// a caller on the wire receives, and this change's invariant is that any
+// claim about the response is proven that way.
 func TestHandleGetCA(t *testing.T) {
 	svc := newTestCertService(t)
 	h := svc.HandleGetCA()
@@ -630,6 +634,42 @@ func TestHandleCertDeviceTypesValuesRoundTripThroughMint(t *testing.T) {
 	}
 }
 
+// TestHandleCreateServerCertNilKeyReturns503 is #638 fix round 1 (MEDIUM 3):
+// a certificate with a nil key (the shape LoadCAPair returns for a keyless
+// or mismatched pair) must be refused with a 503, not reach
+// certs.GenerateServerCert and panic on the nil key.
+func TestHandleCreateServerCertNilKeyReturns503(t *testing.T) {
+	svc, _, _ := newTestTwoCAService(t, "638 Serving CA", "638 Device CA")
+	certOnly := handler.NewAdminCertServiceWithCAs(svc.ServingCA(), nil, nil, svc.DeviceCA(), nil)
+	h := certOnly.HandleCreateServerCert()
+
+	body := `{"hosts":["localhost"],"validYears":1}`
+	req := httptest.NewRequest(http.MethodPost, "/api/certs/server", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleCreateDeviceCertNilKeyReturns503 is the device-route half of
+// TestHandleCreateServerCertNilKeyReturns503.
+func TestHandleCreateDeviceCertNilKeyReturns503(t *testing.T) {
+	svc, _, _ := newTestTwoCAService(t, "638 Serving CA", "638 Device CA")
+	certOnly := handler.NewAdminCertServiceWithCAs(svc.ServingCA(), nil, nil, svc.DeviceCA(), nil)
+	h := certOnly.HandleCreateDeviceCert()
+
+	body := `{"deviceType":1,"hwSerialNum":"NILKEY-001","hwType":"1.3.6.1.4.1.40732.99"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body: %s", w.Code, w.Body.String())
+	}
+}
+
 func newTestCertService(t *testing.T) *handler.AdminCertService {
 	t.Helper()
 	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{
@@ -646,4 +686,290 @@ func newTestCertService(t *testing.T) *handler.AdminCertService {
 	raw, _ := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
 
 	return handler.NewAdminCertService(caCert, raw.(*ecdsa.PrivateKey), caCertPEM)
+}
+
+// TestAdminCertServiceServingCAAndDeviceCAReturnTheirOwnCert is #638 fix
+// round 2 item 1: ServingCA() is exercised by TestHandleGetCA and
+// TestAdminCertServiceRoutesEachRouteToItsOwnCA, but before this test
+// DeviceCA()'s only caller in the handler package's own tests was
+// TestHandleCreateServerCertNilKeyReturns503 / TestHandleCreateDeviceCertNilKeyReturns503,
+// which read it back only to feed it into another constructor call, never
+// asserting on the value. Swapping DeviceCA()'s body to return
+// s.servingCACert passed the handler package's suite alone; both accessors
+// are asserted directly here, against two distinguishable CAs, so a swap of
+// either return statement fails.
+func TestAdminCertServiceServingCAAndDeviceCAReturnTheirOwnCert(t *testing.T) {
+	svc, servingCA, deviceCA := newTestTwoCAService(t, "638 Item1 Serving CA", "638 Item1 Device CA")
+
+	if got := svc.ServingCA(); !got.Equal(servingCA) {
+		t.Errorf("ServingCA() = %q, want the serving CA %q", got.Subject, servingCA.Subject)
+	}
+	if got := svc.ServingCA(); got.Equal(deviceCA) {
+		t.Error("ServingCA() returned the device CA")
+	}
+	if got := svc.DeviceCA(); !got.Equal(deviceCA) {
+		t.Errorf("DeviceCA() = %q, want the device CA %q", got.Subject, deviceCA.Subject)
+	}
+	if got := svc.DeviceCA(); got.Equal(servingCA) {
+		t.Error("DeviceCA() returned the serving CA")
+	}
+}
+
+// TestAdminCertServiceRoutesEachRouteToItsOwnCA is #622 done-condition 2: a
+// device certificate signed by the device CA verifies against the device
+// CA and is refused by the serving CA, and a server certificate signed by
+// the serving CA verifies against the serving CA and is refused by the
+// device CA. Both directions are asserted per data-invariants: a service
+// that quietly signs everything with one CA must not pass by having every
+// check trivially succeed.
+func TestAdminCertServiceRoutesEachRouteToItsOwnCA(t *testing.T) {
+	svc, servingCA, deviceCA := newTestTwoCAService(t, "Test Serving CA", "Test Device CA")
+
+	servingPool := x509.NewCertPool()
+	servingPool.AddCert(servingCA)
+	devicePool := x509.NewCertPool()
+	devicePool.AddCert(deviceCA)
+
+	// HandleGetCA answers with the serving CA, not the device CA: an
+	// operator downloads this to verify THIS server, not to see what the
+	// listener trusts (#622, #625).
+	getH := svc.HandleGetCA()
+	getReq := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	getW := httptest.NewRecorder()
+	getH.ServeHTTP(getW, getReq)
+	var getResp struct {
+		CertPEM string `json:"certPEM"`
+	}
+	if err := json.NewDecoder(getW.Body).Decode(&getResp); err != nil {
+		t.Fatalf("decode GET /api/certs/ca response: %v", err)
+	}
+	getBlock, _ := pem.Decode([]byte(getResp.CertPEM))
+	if getBlock == nil {
+		t.Fatal("GET /api/certs/ca: certPEM did not decode")
+	}
+	gotCA, err := x509.ParseCertificate(getBlock.Bytes)
+	if err != nil {
+		t.Fatalf("GET /api/certs/ca: parse cert: %v", err)
+	}
+	if !gotCA.Equal(servingCA) {
+		t.Error("GET /api/certs/ca did not return the serving CA")
+	}
+	if gotCA.Equal(deviceCA) {
+		t.Error("GET /api/certs/ca returned the device CA")
+	}
+
+	// Server cert: signed by the serving CA, verifies against it, refused
+	// by the device CA pool.
+	serverH := svc.HandleCreateServerCert()
+	serverReq := httptest.NewRequest(http.MethodPost, "/api/certs/server", bytes.NewBufferString(`{"hosts":["localhost"]}`))
+	serverW := httptest.NewRecorder()
+	serverH.ServeHTTP(serverW, serverReq)
+	if serverW.Code != http.StatusCreated {
+		t.Fatalf("POST /api/certs/server: status = %d, want 201, body: %s", serverW.Code, serverW.Body.String())
+	}
+	var serverResp struct {
+		CertPEM string `json:"certPEM"`
+	}
+	if err := json.NewDecoder(serverW.Body).Decode(&serverResp); err != nil {
+		t.Fatalf("decode POST /api/certs/server response: %v", err)
+	}
+	serverBlock, _ := pem.Decode([]byte(serverResp.CertPEM))
+	serverCert, err := x509.ParseCertificate(serverBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse minted server cert: %v", err)
+	}
+	if _, err := serverCert.Verify(x509.VerifyOptions{Roots: servingPool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+		t.Errorf("minted server cert does not verify against the serving CA: %v", err)
+	}
+	if _, err := serverCert.Verify(x509.VerifyOptions{Roots: devicePool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err == nil {
+		t.Error("minted server cert unexpectedly verifies against the device CA: HandleCreateServerCert is not routed to the serving pair")
+	}
+
+	// Device cert: signed by the device CA, verifies against it, refused
+	// by the serving CA pool.
+	deviceH := svc.HandleCreateDeviceCert()
+	deviceReq := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(`{"deviceType":1,"hwSerialNum":"ROUTE-001","hwType":"1.3.6.1.4.1.40732.99"}`))
+	deviceW := httptest.NewRecorder()
+	deviceH.ServeHTTP(deviceW, deviceReq)
+	if deviceW.Code != http.StatusCreated {
+		t.Fatalf("POST /api/certs/device: status = %d, want 201, body: %s", deviceW.Code, deviceW.Body.String())
+	}
+	var deviceResp struct {
+		CertPEM string `json:"certPEM"`
+	}
+	if err := json.NewDecoder(deviceW.Body).Decode(&deviceResp); err != nil {
+		t.Fatalf("decode POST /api/certs/device response: %v", err)
+	}
+	deviceBlock, _ := pem.Decode([]byte(deviceResp.CertPEM))
+	deviceCert, err := x509.ParseCertificate(deviceBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse minted device cert: %v", err)
+	}
+	// CheckSignatureFrom, not Verify: CSIP-compliant device certs carry a
+	// critical HardwareModuleName SAN that stdlib x509 leaves in
+	// UnhandledCriticalExtensions (internal/certs/generate_test.go documents
+	// the same choice for GenerateDeviceCert's own signature check). This
+	// still asserts what item 2 asks: which CA's key produced the signature.
+	if err := deviceCert.CheckSignatureFrom(deviceCA); err != nil {
+		t.Errorf("minted device cert is not signed by the device CA: %v", err)
+	}
+	if err := deviceCert.CheckSignatureFrom(servingCA); err == nil {
+		t.Error("minted device cert unexpectedly verifies as signed by the serving CA: HandleCreateDeviceCert is not routed to the device pair")
+	}
+}
+
+// TestAdminCertServiceRefusalControlSameCAVerifiesBoth is the control for
+// the two "unexpectedly verifies" assertions above: with a single CA
+// service (the pre-#622 constructor, both CAs are the same file), the same
+// cross-pool check that must refuse above instead succeeds. This proves
+// those assertions can fail - they are not vacuously true because a pool
+// is empty or malformed.
+func TestAdminCertServiceRefusalControlSameCAVerifiesBoth(t *testing.T) {
+	svc := newTestCertService(t) // one CA fills both roles, as when the two CAs are the same file
+
+	deviceH := svc.HandleCreateDeviceCert()
+	deviceReq := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(`{"deviceType":1,"hwSerialNum":"CTRL-001","hwType":"1.3.6.1.4.1.40732.99"}`))
+	deviceW := httptest.NewRecorder()
+	deviceH.ServeHTTP(deviceW, deviceReq)
+	if deviceW.Code != http.StatusCreated {
+		t.Fatalf("POST /api/certs/device: status = %d, want 201, body: %s", deviceW.Code, deviceW.Body.String())
+	}
+	var deviceResp struct {
+		CertPEM string `json:"certPEM"`
+	}
+	if err := json.NewDecoder(deviceW.Body).Decode(&deviceResp); err != nil {
+		t.Fatalf("decode POST /api/certs/device response: %v", err)
+	}
+	deviceBlock, _ := pem.Decode([]byte(deviceResp.CertPEM))
+	deviceCert, err := x509.ParseCertificate(deviceBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse minted device cert: %v", err)
+	}
+
+	if err := deviceCert.CheckSignatureFrom(svc.ServingCA()); err != nil {
+		t.Errorf("control: with one CA filling both roles, the device cert must be signed by the (identical) serving CA, got: %v", err)
+	}
+}
+
+func newTestTwoCAService(t *testing.T, servingCN, deviceCN string) (svc *handler.AdminCertService, servingCA, deviceCA *x509.Certificate) {
+	t.Helper()
+
+	mkCA := func(cn string) (*x509.Certificate, *ecdsa.PrivateKey, []byte) {
+		certPEM, keyPEM, err := certs.GenerateCA(certs.CAOptions{CommonName: cn, ValidYears: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		block, _ := pem.Decode(certPEM)
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keyBlock, _ := pem.Decode(keyPEM)
+		raw, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cert, raw.(*ecdsa.PrivateKey), certPEM
+	}
+
+	servingCA, servingKey, servingPEM := mkCA(servingCN)
+	deviceCA, deviceKey, _ := mkCA(deviceCN)
+
+	svc = handler.NewAdminCertServiceWithCAs(servingCA, servingKey, servingPEM, deviceCA, deviceKey)
+	return svc, servingCA, deviceCA
+}
+
+// generateTestCA is the single-CA half of newTestTwoCAService's mkCA
+// closure, factored out for #638 fix round 2 item 3 so a test can build one
+// role's pair without the other.
+func generateTestCA(t *testing.T, cn string) (cert *x509.Certificate, key *ecdsa.PrivateKey, certPEM []byte) {
+	t.Helper()
+	certPEM, keyPEM, err := certs.GenerateCA(certs.CAOptions{CommonName: cn, ValidYears: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(certPEM)
+	cert, err = x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyBlock, _ := pem.Decode(keyPEM)
+	raw, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert, raw.(*ecdsa.PrivateKey), certPEM
+}
+
+// TestAdminCertServiceDeviceOnlyPairServesDeviceRouteAndRefusesServingRoutes
+// is #638 fix round 2 item 3, device-only direction. admin_certs.go's doc
+// comment states that a deployment with only one CA pair loaded still
+// serves the routes that pair covers; every existing test builds both
+// pairs, so nothing exercises a service built with the serving pair fully
+// absent (not just its key, which TestHandleCreateServerCertNilKeyReturns503
+// already covers). Reverting HandleCreateServerCert's guard to a shared
+// check (`s.servingCACert == nil && s.deviceCACert == nil`) passes the rest
+// of the suite; this pins that the device route stays open and the two
+// serving routes refuse, from a real nil-pair construction rather than a
+// mocked check.
+func TestAdminCertServiceDeviceOnlyPairServesDeviceRouteAndRefusesServingRoutes(t *testing.T) {
+	deviceCA, deviceKey, _ := generateTestCA(t, "638 Item3 Device-Only CA")
+	svc := handler.NewAdminCertServiceWithCAs(nil, nil, nil, deviceCA, deviceKey)
+
+	deviceH := svc.HandleCreateDeviceCert()
+	deviceReq := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(`{"deviceType":1,"hwSerialNum":"DEVONLY-001","hwType":"1.3.6.1.4.1.40732.99"}`))
+	deviceW := httptest.NewRecorder()
+	deviceH.ServeHTTP(deviceW, deviceReq)
+	if deviceW.Code != http.StatusCreated {
+		t.Errorf("device-only pair: POST /api/certs/device: status = %d, want 201, body: %s", deviceW.Code, deviceW.Body.String())
+	}
+
+	serverH := svc.HandleCreateServerCert()
+	serverReq := httptest.NewRequest(http.MethodPost, "/api/certs/server", bytes.NewBufferString(`{"hosts":["localhost"]}`))
+	serverW := httptest.NewRecorder()
+	serverH.ServeHTTP(serverW, serverReq)
+	if serverW.Code != http.StatusServiceUnavailable {
+		t.Errorf("device-only pair: POST /api/certs/server: status = %d, want 503 (no serving CA loaded), body: %s", serverW.Code, serverW.Body.String())
+	}
+
+	getH := svc.HandleGetCA()
+	getReq := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	getW := httptest.NewRecorder()
+	getH.ServeHTTP(getW, getReq)
+	if getW.Code != http.StatusServiceUnavailable {
+		t.Errorf("device-only pair: GET /api/certs/ca: status = %d, want 503 (no serving CA to hand out), body: %s", getW.Code, getW.Body.String())
+	}
+}
+
+// TestAdminCertServiceServingOnlyPairServesServingRoutesAndRefusesDeviceRoute
+// is item 3's serving-only direction, the mirror of the test above: a
+// service built with the device pair fully absent still serves the two
+// serving routes and refuses device-cert minting.
+func TestAdminCertServiceServingOnlyPairServesServingRoutesAndRefusesDeviceRoute(t *testing.T) {
+	servingCA, servingKey, servingPEM := generateTestCA(t, "638 Item3 Serving-Only CA")
+	svc := handler.NewAdminCertServiceWithCAs(servingCA, servingKey, servingPEM, nil, nil)
+
+	serverH := svc.HandleCreateServerCert()
+	serverReq := httptest.NewRequest(http.MethodPost, "/api/certs/server", bytes.NewBufferString(`{"hosts":["localhost"]}`))
+	serverW := httptest.NewRecorder()
+	serverH.ServeHTTP(serverW, serverReq)
+	if serverW.Code != http.StatusCreated {
+		t.Errorf("serving-only pair: POST /api/certs/server: status = %d, want 201, body: %s", serverW.Code, serverW.Body.String())
+	}
+
+	getH := svc.HandleGetCA()
+	getReq := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	getW := httptest.NewRecorder()
+	getH.ServeHTTP(getW, getReq)
+	if getW.Code != http.StatusOK {
+		t.Errorf("serving-only pair: GET /api/certs/ca: status = %d, want 200, body: %s", getW.Code, getW.Body.String())
+	}
+
+	deviceH := svc.HandleCreateDeviceCert()
+	deviceReq := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(`{"deviceType":1,"hwSerialNum":"SRVONLY-001","hwType":"1.3.6.1.4.1.40732.99"}`))
+	deviceW := httptest.NewRecorder()
+	deviceH.ServeHTTP(deviceW, deviceReq)
+	if deviceW.Code != http.StatusServiceUnavailable {
+		t.Errorf("serving-only pair: POST /api/certs/device: status = %d, want 503 (no device CA loaded), body: %s", deviceW.Code, deviceW.Body.String())
+	}
 }

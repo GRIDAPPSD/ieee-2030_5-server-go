@@ -8,12 +8,29 @@ import (
 
 // Config holds server configuration.
 type Config struct {
-	Addr            string   // listen address for IEEE 2030.5 protocol (e.g., ":443")
-	CertFile        string   // server cert PEM path
-	KeyFile         string   // server key PEM path
-	CAFile          string   // CA cert PEM path
-	ExtraClientCAs  []string // additional PEM paths appended to the ClientCAs pool (additive to CAFile)
-	BootFixtureFile string   // optional YAML topology fixture loaded at startup; empty = no fixture
+	Addr            string // listen address for IEEE 2030.5 protocol (e.g., ":443")
+	CertFile        string // server cert PEM path
+	KeyFile         string // server key PEM path
+	CAFile          string // CA cert PEM path (legacy single-CA setting; also the shared default below)
+	BootFixtureFile string // optional YAML topology fixture loaded at startup; empty = no fixture
+
+	// #622: the CA that signs THIS server's own certificates - the server
+	// leaf minted at POST /api/certs/server, the admin operator cert, and
+	// what GET /api/certs/ca hands an operator to verify this server. Empty
+	// falls back to CAFile (EffectiveServingCA), so a deployment that never
+	// sets this behaves exactly as it did before the split. Env: SEP2_SERVING_CA.
+	ServingCAFile string
+
+	// #622: the CA the protocol listener's ClientCAs pool trusts devices
+	// against, and that signs minted device certs (POST /api/certs/device).
+	// Empty falls back to CAFile (EffectiveDeviceCA). Env: SEP2_DEVICE_CA.
+	DeviceCAFile string
+
+	// ExtraClientCAs lists additional PEM paths appended to the ClientCAs
+	// pool. Additive to the device CA (EffectiveDeviceCA), not the serving
+	// one: this pool exists to verify DEVICE certs, and #622 does not move
+	// its no-per-CA-scoping semantics.
+	ExtraClientCAs []string
 
 	// #165: persistence root for admin-mutated stores. Empty = pure
 	// in-memory (back-compat with every test path that predates #165).
@@ -142,6 +159,26 @@ func (c *Config) EffectiveAdminListen() string {
 		return c.AdminListen
 	}
 	return c.AdminAddr
+}
+
+// EffectiveServingCA returns ServingCAFile if set, else CAFile. #622: this
+// is the CA a caller signs THIS server's own certificates with - see
+// ServingCAFile's own comment for the roles that route through it.
+func (c *Config) EffectiveServingCA() string {
+	if c.ServingCAFile != "" {
+		return c.ServingCAFile
+	}
+	return c.CAFile
+}
+
+// EffectiveDeviceCA returns DeviceCAFile if set, else CAFile. #622: this is
+// the CA the protocol listener's ClientCAs pool trusts devices against, and
+// that signs minted device certs - see DeviceCAFile's own comment.
+func (c *Config) EffectiveDeviceCA() string {
+	if c.DeviceCAFile != "" {
+		return c.DeviceCAFile
+	}
+	return c.CAFile
 }
 
 // ResolveAdminBind applies the #268 loopback default to a raw admin

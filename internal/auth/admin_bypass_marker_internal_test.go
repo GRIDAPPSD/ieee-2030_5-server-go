@@ -29,11 +29,29 @@ func TestWithBypassAdmissionSetsBypassMarker(t *testing.T) {
 // pins that withCredentialAdmission sets its own distinct constant, so the
 // pair proves each function sets the value it claims to rather than the
 // pass being inferred from AdmittedByLoopbackBypassOnly's folded reading.
+// The path argument (credentialPathBearer here) is asserted separately by
+// TestWithCredentialAdmissionSetsCredentialPathMarker (#641); this test's
+// concern is only the outcome marker, so any path value would do.
 func TestWithCredentialAdmissionSetsCredentialMarker(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
-	marked := withCredentialAdmission(r)
+	marked := withCredentialAdmission(r, credentialPathBearer)
 	outcome, ok := marked.Context().Value(admissionOutcomeContextKey{}).(admissionOutcome)
 	if !ok || outcome != admissionOutcomeCredential {
 		t.Fatalf("withCredentialAdmission context value = %v (ok=%v), want admissionOutcomeCredential", outcome, ok)
+	}
+}
+
+// TestWithCredentialAdmissionSetsCredentialPathMarker is #641: the ticket
+// route's refusal (AdmittedViaTicket) reads a second marker that
+// withCredentialAdmission must also set, distinct from and alongside the
+// outcome marker above. A regression that sets the outcome but drops the
+// path (or sets the wrong one) would leave AdmittedViaTicket unable to tell
+// a ticket-admitted request from a Bearer-admitted one.
+func TestWithCredentialAdmissionSetsCredentialPathMarker(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	marked := withCredentialAdmission(r, credentialPathTicket)
+	path, ok := marked.Context().Value(credentialPathContextKey{}).(credentialPath)
+	if !ok || path != credentialPathTicket {
+		t.Fatalf("withCredentialAdmission context value = %v (ok=%v), want credentialPathTicket", path, ok)
 	}
 }

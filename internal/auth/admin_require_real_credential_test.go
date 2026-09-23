@@ -86,6 +86,35 @@ func TestRequireRealCredentialAdmitsValidMTLSFromLoopback(t *testing.T) {
 	}
 }
 
+// TestRequireRealCredentialAdmitsValidCookieSessionFromLoopback is #579
+// MEDIUM-1 (test coverage lane): the admin_ticket cookie is the one
+// credentialed path with no test on this rule, and it is the path the admin
+// UI itself presents on every /api/certs call. Bearer, mTLS and the query
+// ticket each had a test; changing the sessions argument RequireRealCredential
+// receives to nil left both packages green, because nothing exercised this
+// path through the guard.
+func TestRequireRealCredentialAdmitsValidCookieSessionFromLoopback(t *testing.T) {
+	tickets := auth.NewTicketStore(30 * time.Second)
+	sessions := auth.NewSessionStore(testSessionIdle, testSessionAbsolute)
+	id, err := sessions.Issue()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var reached bool
+	handler := chainedHandler("test-key", tickets, sessions, &reached)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	req.RemoteAddr = "127.0.0.1:54321"
+	req.AddCookie(&http.Cookie{Name: auth.AdminTicketCookieName, Value: id})
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if !reached {
+		t.Fatalf("valid cookie session from loopback was refused: status = %d, body = %q", w.Code, w.Body.String())
+	}
+}
+
 // TestRequireRealCredentialConsumesTicketExactlyOnce guards the design's
 // sharpest edge: Path 0 never touches the query-param ticket, so
 // RequireRealCredential's own recheck must be the sole redemption. A double

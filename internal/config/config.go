@@ -86,13 +86,16 @@ type Config struct {
 
 	// #624: the trust anchor for the admin listener's client-certificate
 	// verification (its ClientCAs pool). Empty falls back to the serving CA
-	// (EffectiveServingCA) - the CA that signs the operator certificate, per
-	// #622's role split - so an operator cert needs no client-side trust
-	// override to be admitted. The literal value AdminClientCASystemRoots
-	// ("system") keeps the pre-#624 host-root behavior explicitly, for a
-	// deployment whose operator certificates come from a public CA. Env:
-	// SEP2_ADMIN_CLIENT_CA. See EffectiveAdminClientCA and
-	// buildAdminTLSConfig (internal/server/server.go).
+	// (EffectiveServingCA), so a freshly minted operator cert needs no
+	// client-side trust override to be admitted. #657: in the default
+	// single-CA deployment (no ServingCAFile/DeviceCAFile split) that same
+	// CA also signs every device certificate and this server's own leaf,
+	// so it trusts more than "the operator cert" alone - set this
+	// explicitly to a dedicated CA where that is too wide. The literal
+	// value AdminClientCASystemRoots ("system") keeps the pre-#624
+	// host-root behavior explicitly, for a deployment whose operator
+	// certificates come from a public CA. Env: SEP2_ADMIN_CLIENT_CA. See
+	// EffectiveAdminClientCA and buildAdminTLSConfig (internal/server/server.go).
 	AdminClientCA string
 
 	// #269: operator hint that the admin listener is fronted by an
@@ -200,10 +203,9 @@ func (c *Config) EffectiveDeviceCA() string {
 const AdminClientCASystemRoots = "system"
 
 // EffectiveAdminClientCA returns AdminClientCA if set, else the serving CA
-// (EffectiveServingCA). #624: the admin listener verifies operator certs
-// against this anchor. The AdminClientCASystemRoots sentinel is returned
-// unresolved - the caller (buildAdminTLSConfig) checks for it and leaves
-// ClientCAs nil rather than treating "system" as a file path.
+// (EffectiveServingCA) - see AdminClientCA's own field comment for the
+// anchor's role, and adminClientCAPool (internal/server/server.go) for how
+// each returned value, sentinel included, is resolved.
 func (c *Config) EffectiveAdminClientCA() string {
 	if c.AdminClientCA != "" {
 		return c.AdminClientCA

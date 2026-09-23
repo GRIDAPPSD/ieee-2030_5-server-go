@@ -172,7 +172,7 @@ install-certs: export CERT_DIR := $(CERT_DIR)
 install-certs:              ## Install/verify/remove cert material (MODE= VERB= required; see scripts/install-certs.sh -h)
 	@test -n "$(MODE)" || (echo "ERROR: MODE=operator|trust|device is required" && exit 2)
 	@test -n "$(VERB)" || (echo "ERROR: VERB=install|verify|remove is required" && exit 2)
-	./scripts/install-certs.sh $(MODE) $(VERB) $(if $(DRY_RUN),--dry-run) $(if $(DEST),--dest $(DEST))
+	./scripts/install-certs.sh "$(MODE)" "$(VERB)" $(if $(DRY_RUN),--dry-run) $(if $(DEST),--dest "$(DEST)")
 
 # --- Run ----------------------------------------------------------
 

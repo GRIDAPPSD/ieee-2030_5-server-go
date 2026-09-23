@@ -4,9 +4,17 @@ import (
 	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 )
+
+// ErrLoadCATooManyOptions is returned when a caller passes more than one
+// ValidateCAOptions value to LoadCA. The variadic form exists so a caller
+// with no opinion on the clock can omit the argument; it never silently
+// drops a second value the caller may have intended to apply instead of
+// the first.
+var ErrLoadCATooManyOptions = errors.New("LoadCA accepts at most one ValidateCAOptions value")
 
 // ParseCertificatePEM parses a PEM-encoded certificate.
 func ParseCertificatePEM(pemBytes []byte) (*x509.Certificate, error) {
@@ -72,8 +80,20 @@ func ParseKeyPEM(pemBytes []byte) (*ecdsa.PrivateKey, error) {
 	return ecKey, nil
 }
 
-// LoadCA loads a CA certificate and private key from PEM files.
-func LoadCA(certFile, keyFile string) (*x509.Certificate, *ecdsa.PrivateKey, error) {
+// LoadCA loads a CA certificate and private key from PEM files and
+// validates that the pair can serve as an issuing CA. With no opts, it
+// applies ValidateCA's strict default options (time.Now(), no
+// self-signed requirement, no minimum-remaining margin). Passing exactly
+// one opts value overrides them; the variadic form keeps a caller with no
+// opinion on the clock, most commonly a test, source-compatible. Passing
+// more than one is refused with ErrLoadCATooManyOptions rather than
+// silently applying the first and dropping the rest. A refusal names both
+// file paths alongside the validation failure.
+func LoadCA(certFile, keyFile string, opts ...ValidateCAOptions) (*x509.Certificate, *ecdsa.PrivateKey, error) {
+	if len(opts) > 1 {
+		return nil, nil, ErrLoadCATooManyOptions
+	}
+
 	certPEM, err := os.ReadFile(certFile)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read CA cert: %w", err)
@@ -83,13 +103,13 @@ func LoadCA(certFile, keyFile string) (*x509.Certificate, *ecdsa.PrivateKey, err
 		return nil, nil, fmt.Errorf("read CA key: %w", err)
 	}
 
-	cert, err := ParseCertificatePEM(certPEM)
-	if err != nil {
-		return nil, nil, fmt.Errorf("parse CA cert: %w", err)
+	var opt ValidateCAOptions
+	if len(opts) == 1 {
+		opt = opts[0]
 	}
-	key, err := ParseKeyPEM(keyPEM)
+	cert, key, err := ParseCAPair(certPEM, keyPEM, opt)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse CA key: %w", err)
+		return nil, nil, fmt.Errorf("%s / %s: %w", certFile, keyFile, err)
 	}
 
 	return cert, key, nil

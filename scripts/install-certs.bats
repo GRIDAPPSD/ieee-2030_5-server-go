@@ -338,6 +338,46 @@ CURLEOF
   [ ! -e "$DEVICE_DEST_DIR/device.crt" ]
 }
 
+@test "operator remove reports certutil -D ran and shows the still-present verify message, not just its own final line" {
+  # NSS acceptance itself is UNVERIFIED (#656: certutil and pk12util are
+  # not installed here); this stubs certutil -L to always report the
+  # nickname present, so the "still present" branch is reachable without
+  # a real NSS DB, and proves the message operator_verify itself prints
+  # (previously discarded by >/dev/null 2>&1) now reaches the operator.
+  STILL_PRESENT_BIN="$WORK/certutil-still-present"
+  mkdir -p "$STILL_PRESENT_BIN"
+  cat >"$STILL_PRESENT_BIN/certutil" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$STILL_PRESENT_BIN/certutil"
+
+  PATH="$STILL_PRESENT_BIN:$PATH" run run_install_certs operator remove
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"certutil -D ran for"* ]]
+  [[ "$output" == *"is present in"* ]]
+  [[ "$output" == *"is still present"*"after remove"* ]]
+}
+
+@test "operator remove reports the removal succeeded when the absence check confirms it" {
+  ABSENT_BIN="$WORK/certutil-absent"
+  mkdir -p "$ABSENT_BIN"
+  cat >"$ABSENT_BIN/certutil" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+-D) exit 0 ;;
+-L) exit 1 ;;
+esac
+exit 0
+EOF
+  chmod +x "$ABSENT_BIN/certutil"
+
+  PATH="$ABSENT_BIN:$PATH" run run_install_certs operator remove
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"certutil -D ran for"* ]]
+  [[ "$output" == *"'sep2-admin' removed from"* ]]
+}
+
 # --------------------------------------- item 5: unchecked input, no --
 
 @test "trust install and remove refuse a TRUST_ANCHOR_NAME that is not a bare filename" {

@@ -2,13 +2,10 @@ package server_test
 
 // #622: the protocol listener's ClientCAs trust bundle must come from the
 // DEVICE CA (Config.DeviceCAFile / EffectiveDeviceCA), not the serving CA,
-// once the two are split. The role map's own "silent divergence" analysis
-// (artifacts/outputs/pike-server-622-ca-role-map-2026-09-23.md, section 3)
-// names this projection (internal/server/server.go's embedCfg.CAFile
-// assignment) as the highest-severity site to get wrong: a server cert
-// signed by the wrong CA fails nowhere on this host, but a client-trust
-// pool built from the wrong CA is loud immediately, at the very next
-// handshake. This test drives that handshake for real, both ways.
+// once the two are split. This is the highest-severity site to get wrong:
+// a server cert signed by the wrong CA fails nowhere on this host, but a
+// client-trust pool built from the wrong CA is loud immediately, at the
+// very next handshake. This test drives that handshake for real, both ways.
 
 import (
 	"context"

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/subtle"
 	"log"
 	"log/slog"
@@ -52,7 +53,7 @@ const AdminRefusalVary = "Sec-Fetch-Dest, Accept"
 //  1. mTLS: client cert with admin policy OID (1.3.6.1.4.1.40732.2.5)
 //  2. Bearer token: Authorization header matches adminKey
 //  3. Auth ticket: ?ticket= query param validated against the TicketStore
-//     (short-lived, one-time-use — for browser SSE/EventSource clients)
+//     (short-lived, one-time-use - for browser SSE/EventSource clients)
 //  4. Cookie session: admin_ticket cookie validated against the
 //     SessionStore without being consumed (browser login flow, #159).
 //

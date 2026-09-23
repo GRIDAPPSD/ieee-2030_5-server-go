@@ -1,14 +1,11 @@
 package server_test
 
-// #624: the admin listener never set ClientCAs, so an operator certificate
-// signed by a private CA verified against the HOST ROOT set and failed the
-// handshake before AdminAuthMiddleware's policy-OID check ever ran (#418).
-// The fix routes the admin listener's ClientCAs pool through
-// Config.EffectiveAdminClientCA, defaulting to the serving CA (the CA that
-// signs the operator cert, per #622's role split), with an explicit
-// "system" value that keeps host-root verification. These tests drive real
-// TLS handshakes against a real admin listener, both ways, per issue
-// #624's three done-conditions.
+// #624 gave the admin listener a client-certificate trust anchor (see
+// adminClientCAPool's doc comment, internal/server/server.go, for the #418
+// mechanism this closes); #657 covers the anchor's failure and refusal
+// shapes. These tests drive real TLS handshakes and real server.Run boots
+// against a real admin listener, not the config-resolution functions
+// directly.
 
 import (
 	"context"
@@ -19,18 +16,21 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"log"
 	"log/slog"
 	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
@@ -387,5 +387,343 @@ func TestAdminMTLSAdmissionIsLogged(t *testing.T) {
 
 	if !strings.Contains(buf.String(), `"event":"admin_auth_success"`) || !strings.Contains(buf.String(), `"admission_path":"mtls"`) {
 		t.Errorf("mTLS admission not logged: captured = %s", buf.String())
+	}
+}
+
+// bootAdminListener runs a real server.Run to completion under cfg/svc and
+// waits for the admin listener to answer, the same readiness probe
+// bootAdminClientCAListener uses. Unlike that helper, cfg is taken as
+// given rather than built from a shared splitListenerCerts bundle, so a
+// caller can put an on-disk CA anywhere in the role split (#657's
+// device-CA-only and non-CA-anchor shapes both need that).
+func bootAdminListener(t *testing.T, cfg *config.Config, svc *handler.AdminCertService) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	runErrCh := make(chan error, 1)
+	go func() { runErrCh <- server.Run(ctx, cfg, svc) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runErrCh:
+		case <-time.After(3 * time.Second):
+			t.Error("server.Run did not exit within 3s after cancel")
+		}
+	})
+
+	probeClient := &http.Client{
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		Timeout:   500 * time.Millisecond,
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case runErr := <-runErrCh:
+			t.Fatalf("server.Run returned before the admin listener answered: %v", runErr)
+		default:
+		}
+		resp, err := probeClient.Get("https://" + cfg.AdminListen + "/login")
+		if err == nil {
+			_ = resp.Body.Close()
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("admin listener never became ready")
+}
+
+// TestAdminListenerDeviceCAOnlyBoots is #657 design section 3 test 1. A
+// deployment that only ever set SEP2_DEVICE_CA (+key) and SEP2_ADMIN_TLS,
+// with no serving CA on disk, is live: docs/operator-guide.md documents
+// each CA role as independently settable, and CanMint() starts the admin
+// listener on the device key alone. Red before the fix: server.Run
+// returned "admin client CA: load ... no such file or directory" and
+// started neither listener (security and error-handling lanes' HIGH-1;
+// reproduced against the built binary as this task's RED evidence).
+//
+// Not t.Parallel(): it redirects the shared stdlib log.Writer() output to
+// capture the boot log, the same process-global constraint that keeps
+// TestAdminMTLSAdmissionIsLogged out of this file's parallel group.
+func TestAdminListenerDeviceCAOnlyBoots(t *testing.T) {
+	dir := t.TempDir()
+
+	deviceCACertPEM, deviceCAKeyPEM, err := certs.GenerateCA(certs.CAOptions{CommonName: "657 device-only CA", ValidYears: 1})
+	if err != nil {
+		t.Fatalf("GenerateCA(device): %v", err)
+	}
+	deviceCACert, err := certs.ParseCertificatePEM(deviceCACertPEM)
+	if err != nil {
+		t.Fatalf("ParseCertificatePEM(device): %v", err)
+	}
+	deviceCAKey, err := certs.ParseKeyPEM(deviceCAKeyPEM)
+	if err != nil {
+		t.Fatalf("ParseKeyPEM(device): %v", err)
+	}
+	deviceCAFile := filepath.Join(dir, "device-ca.pem")
+	if err := os.WriteFile(deviceCAFile, deviceCACertPEM, 0o600); err != nil {
+		t.Fatalf("write device CA: %v", err)
+	}
+
+	// The protocol listener's own leaf: which CA signs it is unrelated to
+	// which CA verifies admin clients against it, so signing with the
+	// device CA (the only one on disk here) is fine.
+	serverCertPEM, serverKeyPEM, err := certs.GenerateServerCert(deviceCACert, deviceCAKey, certs.ServerCertOptions{
+		Hosts:      []string{"127.0.0.1"},
+		CommonName: "657 device-only server",
+		ValidYears: 1,
+	})
+	if err != nil {
+		t.Fatalf("GenerateServerCert: %v", err)
+	}
+	certFile := filepath.Join(dir, "server.pem")
+	keyFile := filepath.Join(dir, "server-key.pem")
+	if err := os.WriteFile(certFile, serverCertPEM, 0o600); err != nil {
+		t.Fatalf("write server cert: %v", err)
+	}
+	if err := os.WriteFile(keyFile, serverKeyPEM, 0o600); err != nil {
+		t.Fatalf("write server key: %v", err)
+	}
+
+	svc := handler.NewAdminCertServiceWithCAs(nil, nil, nil, deviceCACert, deviceCAKey)
+
+	cfg := &config.Config{
+		Addr: mustProbePort(t),
+		// #657: a path that is configured but absent on disk, matching
+		// what envPathOrCertDir actually resolves SEP2_CA to when unset
+		// (the cert-dir default), never a truly empty CAFile - that shape
+		// is not reachable from the built binary (design doc section 1).
+		CAFile:       filepath.Join(dir, "no-serving-ca-here.crt"),
+		CertFile:     certFile,
+		KeyFile:      keyFile,
+		DeviceCAFile: deviceCAFile,
+		AdminListen:  mustProbePort(t),
+		AdminTLS:     true,
+		TZOffset:     -28800,
+		TimeQuality:  sep2.TimeQualityNTP,
+	}
+
+	// #657: capture the boot log (like TestAdminMTLSAdmissionIsLogged) so
+	// the description half of item 4 is asserted here too: the admin
+	// listener's "Admin server listening" line must say the anchor was not
+	// loaded, not read as a working one. server.Run keeps logging (the
+	// connection banner) from its own goroutine after the readiness probe
+	// first answers, so the buffer needs its own lock rather than relying
+	// on happens-before with the test goroutine.
+	logBuf := &syncLogBuffer{}
+	prevOut := log.Writer()
+	log.SetOutput(logBuf)
+	t.Cleanup(func() { log.SetOutput(prevOut) })
+
+	bootAdminListener(t, cfg, svc)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(logBuf.String(), "NOT LOADED") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := logBuf.String(); !strings.Contains(got, "NOT LOADED") {
+		t.Errorf("boot log = %s, want the admin listener's description to say the anchor was NOT LOADED", got)
+	}
+}
+
+// syncLogBuffer is a mutex-guarded io.Writer for capturing the shared
+// stdlib log.Writer() output across goroutines: strings.Builder alone is
+// not safe for the concurrent write (server.Run's own goroutines) and read
+// (the test asserting on it) this capture needs.
+type syncLogBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *syncLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestAdminListenerDegradedAnchorDeniesButServesCertless is #657 design
+// section 3 test 3, driven at shape 1 (no CA path configured anywhere):
+// the listener still starts, an operator certificate is refused
+// server-side, and a certless client still reaches sign-in. Red before the
+// fix: adminClientCAPool's empty-anchor branch returned an error, so the
+// admin listener never came up at all (nothing to assert a refusal
+// against). The refusal is read from the server's own handshake error
+// (adminClientFor forces presentation past the polite hint-honoring a real
+// client would do), per this task's evidence discipline on TLS 1.3
+// client-side false positives.
+func TestAdminListenerDegradedAnchorDeniesButServesCertless(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Any CA signs the operator cert under test and the listener's own
+	// leaf; shape 1's anchor is empty regardless of which CA this is, so
+	// it must refuse a certificate from THIS one same as any other.
+	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{CommonName: "657 shape-1 CA", ValidYears: 1})
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	caCert, err := certs.ParseCertificatePEM(caCertPEM)
+	if err != nil {
+		t.Fatalf("ParseCertificatePEM: %v", err)
+	}
+	caKey, err := certs.ParseKeyPEM(caKeyPEM)
+	if err != nil {
+		t.Fatalf("ParseKeyPEM: %v", err)
+	}
+	serverCertPEM, serverKeyPEM, err := certs.GenerateServerCert(caCert, caKey, certs.ServerCertOptions{
+		Hosts:      []string{"127.0.0.1"},
+		CommonName: "657 shape-1 server",
+		ValidYears: 1,
+	})
+	if err != nil {
+		t.Fatalf("GenerateServerCert: %v", err)
+	}
+	certFile := filepath.Join(dir, "server.pem")
+	keyFile := filepath.Join(dir, "server-key.pem")
+	if err := os.WriteFile(certFile, serverCertPEM, 0o600); err != nil {
+		t.Fatalf("write server cert: %v", err)
+	}
+	if err := os.WriteFile(keyFile, serverKeyPEM, 0o600); err != nil {
+		t.Fatalf("write server key: %v", err)
+	}
+	operatorCertPEM, operatorKeyPEM, err := certs.GenerateAdminCert(caCert, caKey, certs.AdminCertOptions{
+		CommonName: "657 operator, shape-1 anchor",
+		ValidYears: 1,
+	})
+	if err != nil {
+		t.Fatalf("GenerateAdminCert: %v", err)
+	}
+
+	svc := handler.NewAdminCertServiceWithCAs(caCert, caKey, caCertPEM, nil, nil)
+
+	// The protocol listener's device pool needs a real file on disk; reuse
+	// the same CA there so only the ADMIN anchor (CAFile/ServingCAFile/
+	// AdminClientCA, all left empty below) is shape 1.
+	deviceCAFile := filepath.Join(dir, "device-ca.pem")
+	if err := os.WriteFile(deviceCAFile, caCertPEM, 0o600); err != nil {
+		t.Fatalf("write device CA: %v", err)
+	}
+
+	cfg := &config.Config{
+		Addr:         mustProbePort(t),
+		CertFile:     certFile,
+		KeyFile:      keyFile,
+		DeviceCAFile: deviceCAFile,
+		AdminListen:  mustProbePort(t),
+		AdminTLS:     true,
+		TZOffset:     -28800,
+		TimeQuality:  sep2.TimeQualityNTP,
+	}
+
+	bootAdminListener(t, cfg, svc)
+	adminAddr := cfg.AdminListen
+
+	badResp, badErr := adminClientFor(t, operatorCertPEM, operatorKeyPEM).Get("https://" + adminAddr + "/api/certs/ca")
+	if badErr == nil {
+		_ = badResp.Body.Close()
+		t.Fatal("operator cert was accepted although shape 1 has no anchor configured at all; the degraded pool is not empty")
+	}
+	if !strings.Contains(badErr.Error(), "tls:") {
+		t.Errorf("err = %v, want a TLS-layer refusal", badErr)
+	}
+
+	loginResp, err := adminClientFor(t, nil, nil).Get("https://" + adminAddr + "/login")
+	if err != nil {
+		t.Fatalf("certless client on a degraded anchor: handshake itself failed, want it to still complete: %v", err)
+	}
+	defer func() { _ = loginResp.Body.Close() }()
+	if loginResp.StatusCode != http.StatusOK {
+		t.Errorf("certless GET /login on a degraded anchor: status = %d, want 200", loginResp.StatusCode)
+	}
+}
+
+// TestAdminListenerExplicitClientCAMissingFileRefusesToStart is #657
+// design section 3 test 4's missing-path half, at the server.Run level
+// TestAdminTLSConfigBrokenPair already uses for a fail-fast boot refusal.
+func TestAdminListenerExplicitClientCAMissingFileRefusesToStart(t *testing.T) {
+	t.Parallel()
+	c := newSplitListenerCerts(t)
+	missing := filepath.Join(t.TempDir(), "does-not-exist.pem")
+
+	cfg := &config.Config{
+		Addr:          c.sep2Probe,
+		CertFile:      c.certFile,
+		KeyFile:       c.keyFile,
+		CAFile:        c.caFile,
+		AdminListen:   c.adminProbe,
+		AdminTLS:      true,
+		AdminClientCA: missing,
+		TZOffset:      -28800,
+		TimeQuality:   sep2.TimeQualityNTP,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Run(ctx, cfg, c.svc) }()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("server.Run accepted a missing SEP2_ADMIN_CLIENT_CA path; want error")
+		}
+		if !strings.Contains(err.Error(), missing) || !strings.Contains(err.Error(), "SEP2_ADMIN_CLIENT_CA") {
+			t.Errorf("err = %v, want it to name the path %q and SEP2_ADMIN_CLIENT_CA", err, missing)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("server.Run did not fail-fast on a missing SEP2_ADMIN_CLIENT_CA within 2s")
+	}
+}
+
+// TestAdminListenerExplicitClientCANonCARefusesToStart is #657 design
+// section 3 test 4's non-CA half. Red before the fix: AppendCertsFromPEM
+// never checks IsCA, so this configuration booted successfully.
+func TestAdminListenerExplicitClientCANonCARefusesToStart(t *testing.T) {
+	t.Parallel()
+	c := newSplitListenerCerts(t)
+
+	caCert, caKey, err := certs.LoadCA(c.caFile, c.caKeyFile)
+	if err != nil {
+		t.Fatalf("LoadCA(serving): %v", err)
+	}
+	nonCALeafPEM, _ := genPlainClientCert(t, caCert, caKey, "657 explicit non-CA anchor")
+	nonCAFile := filepath.Join(t.TempDir(), "non-ca-anchor.pem")
+	if err := os.WriteFile(nonCAFile, nonCALeafPEM, 0o600); err != nil {
+		t.Fatalf("write non-CA anchor: %v", err)
+	}
+
+	cfg := &config.Config{
+		Addr:          c.sep2Probe,
+		CertFile:      c.certFile,
+		KeyFile:       c.keyFile,
+		CAFile:        c.caFile,
+		AdminListen:   c.adminProbe,
+		AdminTLS:      true,
+		AdminClientCA: nonCAFile,
+		TZOffset:      -28800,
+		TimeQuality:   sep2.TimeQualityNTP,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Run(ctx, cfg, c.svc) }()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("server.Run accepted a non-CA SEP2_ADMIN_CLIENT_CA file; want error")
+		}
+		if !strings.Contains(err.Error(), "no CA certificate") || !strings.Contains(err.Error(), "SEP2_ADMIN_CLIENT_CA") {
+			t.Errorf("err = %v, want it to name \"no CA certificate\" and SEP2_ADMIN_CLIENT_CA", err)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("server.Run did not fail-fast on a non-CA SEP2_ADMIN_CLIENT_CA within 2s")
 	}
 }

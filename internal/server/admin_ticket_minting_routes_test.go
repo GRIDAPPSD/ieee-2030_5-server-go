@@ -40,6 +40,13 @@ import (
 // Sending the declared type closes that: the subtest below also fails
 // outright if a POST or DELETE route is still refused for its content type,
 // since that means this walk never reached the route's own handler at all.
+//
+// Not covered (#641 fix round 2, item 3): "GET /api/traffic/" and "GET
+// /ui/" are subtree mounts, one pattern each on AuthedAdminPatterns, so a
+// route registered underneath either (pkg/sep2capture's own mux, the SPA's
+// static files) is invisible to this walk; here both are GET-only fixtures
+// that never mint. A future POST added inside either subtree needs its own
+// coverage, not this one.
 func TestNoAuthedRouteMintsATicketForTicketOnlyAdmission(t *testing.T) {
 	patterns := server.AuthedAdminPatterns(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",

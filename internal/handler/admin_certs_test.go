@@ -400,6 +400,33 @@ func newTestCertService(t *testing.T) *handler.AdminCertService {
 	return handler.NewAdminCertService(caCert, raw.(*ecdsa.PrivateKey), caCertPEM)
 }
 
+// TestAdminCertServiceServingCAAndDeviceCAReturnTheirOwnCert is #638 fix
+// round 2 item 1: ServingCA() is exercised by TestHandleGetCA and
+// TestAdminCertServiceRoutesEachRouteToItsOwnCA, but before this test
+// DeviceCA()'s only caller in the handler package's own tests was
+// TestHandleCreateServerCertNilKeyReturns503 / TestHandleCreateDeviceCertNilKeyReturns503,
+// which read it back only to feed it into another constructor call, never
+// asserting on the value. Swapping DeviceCA()'s body to return
+// s.servingCACert passed the handler package's suite alone; both accessors
+// are asserted directly here, against two distinguishable CAs, so a swap of
+// either return statement fails.
+func TestAdminCertServiceServingCAAndDeviceCAReturnTheirOwnCert(t *testing.T) {
+	svc, servingCA, deviceCA := newTestTwoCAService(t, "638 Item1 Serving CA", "638 Item1 Device CA")
+
+	if got := svc.ServingCA(); !got.Equal(servingCA) {
+		t.Errorf("ServingCA() = %q, want the serving CA %q", got.Subject, servingCA.Subject)
+	}
+	if got := svc.ServingCA(); got.Equal(deviceCA) {
+		t.Error("ServingCA() returned the device CA")
+	}
+	if got := svc.DeviceCA(); !got.Equal(deviceCA) {
+		t.Errorf("DeviceCA() = %q, want the device CA %q", got.Subject, deviceCA.Subject)
+	}
+	if got := svc.DeviceCA(); got.Equal(servingCA) {
+		t.Error("DeviceCA() returned the serving CA")
+	}
+}
+
 // TestAdminCertServiceRoutesEachRouteToItsOwnCA is #622 done-condition 2: a
 // device certificate signed by the device CA verifies against the device
 // CA and is refused by the serving CA, and a server certificate signed by
@@ -562,4 +589,99 @@ func newTestTwoCAService(t *testing.T, servingCN, deviceCN string) (svc *handler
 
 	svc = handler.NewAdminCertServiceWithCAs(servingCA, servingKey, servingPEM, deviceCA, deviceKey)
 	return svc, servingCA, deviceCA
+}
+
+// generateTestCA is the single-CA half of newTestTwoCAService's mkCA
+// closure, factored out for #638 fix round 2 item 3 so a test can build one
+// role's pair without the other.
+func generateTestCA(t *testing.T, cn string) (cert *x509.Certificate, key *ecdsa.PrivateKey, certPEM []byte) {
+	t.Helper()
+	certPEM, keyPEM, err := certs.GenerateCA(certs.CAOptions{CommonName: cn, ValidYears: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(certPEM)
+	cert, err = x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyBlock, _ := pem.Decode(keyPEM)
+	raw, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert, raw.(*ecdsa.PrivateKey), certPEM
+}
+
+// TestAdminCertServiceDeviceOnlyPairServesDeviceRouteAndRefusesServingRoutes
+// is #638 fix round 2 item 3, device-only direction. admin_certs.go's doc
+// comment states that a deployment with only one CA pair loaded still
+// serves the routes that pair covers; every existing test builds both
+// pairs, so nothing exercises a service built with the serving pair fully
+// absent (not just its key, which TestHandleCreateServerCertNilKeyReturns503
+// already covers). Reverting HandleCreateServerCert's guard to a shared
+// check (`s.servingCACert == nil && s.deviceCACert == nil`) passes the rest
+// of the suite; this pins that the device route stays open and the two
+// serving routes refuse, from a real nil-pair construction rather than a
+// mocked check.
+func TestAdminCertServiceDeviceOnlyPairServesDeviceRouteAndRefusesServingRoutes(t *testing.T) {
+	deviceCA, deviceKey, _ := generateTestCA(t, "638 Item3 Device-Only CA")
+	svc := handler.NewAdminCertServiceWithCAs(nil, nil, nil, deviceCA, deviceKey)
+
+	deviceH := svc.HandleCreateDeviceCert()
+	deviceReq := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(`{"deviceType":1,"hwSerialNum":"DEVONLY-001","hwType":"1.3.6.1.4.1.40732.99"}`))
+	deviceW := httptest.NewRecorder()
+	deviceH.ServeHTTP(deviceW, deviceReq)
+	if deviceW.Code != http.StatusCreated {
+		t.Errorf("device-only pair: POST /api/certs/device: status = %d, want 201, body: %s", deviceW.Code, deviceW.Body.String())
+	}
+
+	serverH := svc.HandleCreateServerCert()
+	serverReq := httptest.NewRequest(http.MethodPost, "/api/certs/server", bytes.NewBufferString(`{"hosts":["localhost"]}`))
+	serverW := httptest.NewRecorder()
+	serverH.ServeHTTP(serverW, serverReq)
+	if serverW.Code != http.StatusServiceUnavailable {
+		t.Errorf("device-only pair: POST /api/certs/server: status = %d, want 503 (no serving CA loaded), body: %s", serverW.Code, serverW.Body.String())
+	}
+
+	getH := svc.HandleGetCA()
+	getReq := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	getW := httptest.NewRecorder()
+	getH.ServeHTTP(getW, getReq)
+	if getW.Code != http.StatusServiceUnavailable {
+		t.Errorf("device-only pair: GET /api/certs/ca: status = %d, want 503 (no serving CA to hand out), body: %s", getW.Code, getW.Body.String())
+	}
+}
+
+// TestAdminCertServiceServingOnlyPairServesServingRoutesAndRefusesDeviceRoute
+// is item 3's serving-only direction, the mirror of the test above: a
+// service built with the device pair fully absent still serves the two
+// serving routes and refuses device-cert minting.
+func TestAdminCertServiceServingOnlyPairServesServingRoutesAndRefusesDeviceRoute(t *testing.T) {
+	servingCA, servingKey, servingPEM := generateTestCA(t, "638 Item3 Serving-Only CA")
+	svc := handler.NewAdminCertServiceWithCAs(servingCA, servingKey, servingPEM, nil, nil)
+
+	serverH := svc.HandleCreateServerCert()
+	serverReq := httptest.NewRequest(http.MethodPost, "/api/certs/server", bytes.NewBufferString(`{"hosts":["localhost"]}`))
+	serverW := httptest.NewRecorder()
+	serverH.ServeHTTP(serverW, serverReq)
+	if serverW.Code != http.StatusCreated {
+		t.Errorf("serving-only pair: POST /api/certs/server: status = %d, want 201, body: %s", serverW.Code, serverW.Body.String())
+	}
+
+	getH := svc.HandleGetCA()
+	getReq := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	getW := httptest.NewRecorder()
+	getH.ServeHTTP(getW, getReq)
+	if getW.Code != http.StatusOK {
+		t.Errorf("serving-only pair: GET /api/certs/ca: status = %d, want 200, body: %s", getW.Code, getW.Body.String())
+	}
+
+	deviceH := svc.HandleCreateDeviceCert()
+	deviceReq := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(`{"deviceType":1,"hwSerialNum":"SRVONLY-001","hwType":"1.3.6.1.4.1.40732.99"}`))
+	deviceW := httptest.NewRecorder()
+	deviceH.ServeHTTP(deviceW, deviceReq)
+	if deviceW.Code != http.StatusServiceUnavailable {
+		t.Errorf("serving-only pair: POST /api/certs/device: status = %d, want 503 (no device CA loaded), body: %s", deviceW.Code, deviceW.Body.String())
+	}
 }

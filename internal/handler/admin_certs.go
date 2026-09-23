@@ -132,7 +132,17 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 
 // HandleGetCA returns the serving CA certificate PEM (never the private
 // key). #622: this is the anchor an operator installs on a device to verify
-// THIS server, so it is the serving pair, not the device pair.
+// THIS server, so it is the serving pair, not the device pair. The body is
+// derived by parsing the stored bytes and re-encoding what parsed as a
+// certificate (#644 design, 2026-09-23): the file is never echoed verbatim,
+// so a combined certificate-and-key file cannot hand the caller the signing
+// key. Through the production wiring in main, servingCACertPEM's first block
+// always parses as a certificate, since certs.LoadCAPair requires that
+// before setting it, so the filter never empties there. Nothing enforces
+// that at this boundary: the exported constructors take servingCACertPEM
+// independently of servingCACert, so a filter result empty here is treated
+// as an invariant violation, not an operator problem, and is refused rather
+// than served as an empty 200 (#644 fix round 2, MEDIUM 2).
 func (s *AdminCertService) HandleGetCA() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
@@ -142,7 +152,16 @@ func (s *AdminCertService) HandleGetCA() http.HandlerFunc {
 			writeError(w, http.StatusServiceUnavailable, "CA not initialized")
 			return
 		}
-		writeJSON(w, http.StatusOK, certResponse{CertPEM: string(s.servingCACertPEM)})
+		filtered, dropped := certs.FilterCertificatePEM(s.servingCACertPEM)
+		if len(dropped) > 0 {
+			log.Printf("CA download: dropped %d PEM block(s) that did not parse as a certificate (types: %v)", len(dropped), dropped)
+		}
+		if len(filtered) == 0 {
+			log.Printf("CA download: the loaded CA PEM has no block that parses as a certificate")
+			writeError(w, http.StatusInternalServerError, "CA certificate contains no parseable certificate block")
+			return
+		}
+		writeJSON(w, http.StatusOK, certResponse{CertPEM: string(filtered)})
 	}
 }
 

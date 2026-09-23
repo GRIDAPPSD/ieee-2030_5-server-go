@@ -3,10 +3,14 @@ package handler_test
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -126,29 +130,536 @@ func TestHandleCreateDeviceCertInvalidHWTypeDoesNotLeakDecoderDetail(t *testing.
 	}
 }
 
-func TestHandleGetCA(t *testing.T) {
-	svc := newTestCertService(t)
-	h := svc.HandleGetCA()
+// getCA performs a real HTTP GET against HandleGetCA over a listening
+// socket rather than httptest.NewRecorder: the property under test is what
+// a caller on the wire receives, and this change's invariant is that any
+// claim about the response is proven that way.
+func getCA(t *testing.T, svc *handler.AdminCertService) (status int, certPEM string, rawBody []byte) {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/certs/ca", svc.HandleGetCA())
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
+	resp, err := http.Get(srv.URL + "/api/certs/ca")
+	if err != nil {
+		t.Fatalf("GET %s: %v", srv.URL, err)
 	}
-
-	var resp struct {
+	defer func() { _ = resp.Body.Close() }()
+	rawBody, err = io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	var out struct {
 		CertPEM string `json:"certPEM"`
 	}
-	_ = json.NewDecoder(w.Body).Decode(&resp)
-	if resp.CertPEM == "" {
+	_ = json.Unmarshal(rawBody, &out)
+	return resp.StatusCode, out.CertPEM, rawBody
+}
+
+func TestHandleGetCA(t *testing.T) {
+	svc := newTestCertService(t)
+
+	status, certPEM, _ := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if certPEM == "" {
 		t.Error("certPEM should not be empty")
 	}
-	// Verify it doesn't contain a private key
-	if bytes.Contains([]byte(resp.CertPEM), []byte("PRIVATE KEY")) {
+	if bytes.Contains([]byte(certPEM), []byte("PRIVATE KEY")) {
 		t.Error("CA response must NOT contain private key")
 	}
+}
+
+// TestHandleGetCACombinedPEMServesCertOnly pins #644: a combined PEM file
+// (certificate followed by its private key, a layout some tooling produces)
+// must not echo the key to the caller of the route an operator uses to fetch
+// the anchor for a device.
+func TestHandleGetCACombinedPEMServesCertOnly(t *testing.T) {
+	certPEM, keyPEM, caCert := newCAPEM(t)
+	combined := append(append([]byte{}, certPEM...), keyPEM...)
+
+	svc := handler.NewAdminCertService(caCert, nil, combined)
+	status, got, _ := getCA(t, svc)
+
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if bytes.Contains([]byte(got), []byte("PRIVATE KEY")) {
+		t.Fatalf("certPEM leaked a private key block: %q", got)
+	}
+	block, rest := pem.Decode([]byte(got))
+	if block == nil || block.Type != "CERTIFICATE" {
+		t.Fatalf("certPEM did not decode to a CERTIFICATE block: %q", got)
+	}
+	if len(bytes.TrimSpace(rest)) != 0 {
+		t.Errorf("certPEM carried trailing PEM content after the certificate: %q", rest)
+	}
+	if !bytes.Equal(block.Bytes, caCert.Raw) {
+		t.Error("certPEM decoded to a different certificate than the CA's")
+	}
+}
+
+// TestHandleGetCAServesEveryCertificateBlock covers the three file shapes
+// #644 names: a combined cert-and-key file, a multi-certificate file (a
+// chain), and a certificate with trailing non-PEM text. Every case must
+// yield a response holding every CERTIFICATE block and nothing else.
+func TestHandleGetCAServesEveryCertificateBlock(t *testing.T) {
+	cert1PEM, keyPEM, cert1 := newCAPEM(t)
+	cert2PEM, _, cert2 := newCAPEM(t)
+
+	tests := []struct {
+		name      string
+		file      []byte
+		wantCerts [][]byte // raw DER bytes expected, in order
+	}{
+		{
+			name:      "certificate and key",
+			file:      append(append([]byte{}, cert1PEM...), keyPEM...),
+			wantCerts: [][]byte{cert1.Raw},
+		},
+		{
+			name:      "certificate chain",
+			file:      append(append([]byte{}, cert1PEM...), cert2PEM...),
+			wantCerts: [][]byte{cert1.Raw, cert2.Raw},
+		},
+		{
+			name:      "certificate with trailing text",
+			file:      append(append([]byte{}, cert1PEM...), []byte("# comment appended by some tooling\n")...),
+			wantCerts: [][]byte{cert1.Raw},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := handler.NewAdminCertService(cert1, nil, tt.file)
+			status, certPEM, _ := getCA(t, svc)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200", status)
+			}
+			if bytes.Contains([]byte(certPEM), []byte("PRIVATE KEY")) {
+				t.Fatalf("certPEM leaked a private key block: %q", certPEM)
+			}
+
+			rest := []byte(certPEM)
+			var got [][]byte
+			for {
+				var block *pem.Block
+				block, rest = pem.Decode(rest)
+				if block == nil {
+					break
+				}
+				if block.Type != "CERTIFICATE" {
+					t.Fatalf("non-certificate block %q reached the response", block.Type)
+				}
+				got = append(got, block.Bytes)
+			}
+			if len(bytes.TrimSpace(rest)) != 0 {
+				t.Errorf("trailing non-PEM content reached the response: %q", rest)
+			}
+			if len(got) != len(tt.wantCerts) {
+				t.Fatalf("got %d certificate blocks, want %d", len(got), len(tt.wantCerts))
+			}
+			for i, want := range tt.wantCerts {
+				if !bytes.Equal(got[i], want) {
+					t.Errorf("block %d: certificate DER did not match", i)
+				}
+			}
+		})
+	}
+}
+
+// assertCanonicalCertificatePEM pins the literal shape the #644 design named
+// as the residual risk worth a test (#644 fix round 2, item 1): every
+// base64 line but the last is exactly 64 characters, the block carries no
+// PEM headers, and it decodes to wantDER. Earlier versions of this
+// assertion computed the expectation with pem.EncodeToMemory itself, which
+// cannot fail on a toolchain change to that same encoder's wrapping or
+// header handling, since both sides would move together; this checks the
+// text directly instead.
+func assertCanonicalCertificatePEM(t *testing.T, body string, wantDER []byte) {
+	t.Helper()
+
+	block, rest := pem.Decode([]byte(body))
+	if block == nil || block.Type != "CERTIFICATE" {
+		t.Fatalf("body did not decode to a CERTIFICATE block: %q", body)
+	}
+	if len(rest) != 0 {
+		t.Errorf("body carried trailing PEM content after the certificate: %q", rest)
+	}
+	if len(block.Headers) != 0 {
+		t.Errorf("block carried PEM headers %v, want none: crypto/x509.CertPool refuses a body with headers", block.Headers)
+	}
+	if !bytes.Equal(block.Bytes, wantDER) {
+		t.Error("block DER did not match the expected certificate")
+	}
+
+	lines := strings.Split(strings.TrimSuffix(body, "\n"), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("body has %d lines, want at least a BEGIN, a base64 line, and an END", len(lines))
+	}
+	b64Lines := lines[1 : len(lines)-1]
+	for i, line := range b64Lines {
+		if i < len(b64Lines)-1 && len(line) != 64 {
+			t.Errorf("base64 line %d is %d characters, want exactly 64", i, len(line))
+		}
+	}
+	if last := b64Lines[len(b64Lines)-1]; len(last) == 0 || len(last) > 64 {
+		t.Errorf("final base64 line is %d characters, want 1 to 64", len(last))
+	}
+}
+
+// TestHandleGetCACertOnlyFileIsCanonicallyReencoded pins Question 1 of the
+// #644 design: the response is pem.EncodeToMemory's canonical encoding of
+// the certificate the parser accepted, not the stored file's own bytes.
+// For the shipped generator's own output the two happen to coincide,
+// because certs.GenerateCA already encodes canonically (measured in the
+// design record: 526 of 526 bytes identical), so this also pins that the
+// common case is unaffected.
+func TestHandleGetCACertOnlyFileIsCanonicallyReencoded(t *testing.T) {
+	certPEM, _, caCert := newCAPEM(t)
+
+	svc := handler.NewAdminCertService(caCert, nil, certPEM)
+	status, got, _ := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+
+	assertCanonicalCertificatePEM(t, got, caCert.Raw)
+	if got != string(certPEM) {
+		t.Errorf("certPEM = %q, want it to still equal the generator's own output %q", got, string(certPEM))
+	}
+}
+
+// TestHandleGetCANormalizesNonCanonicalWrapping pins the design's named
+// residual risk for Question 1: the response is now coupled to Go's PEM
+// encoder rather than to the operator's file, so a stored file wrapped at a
+// width other than 64 columns comes back re-wrapped. assertCanonicalCertificatePEM
+// asserts the literal 64-column shape directly, so a toolchain change to
+// pem.EncodeToMemory's wrapping goes red here instead of silently changing
+// what every device is told to trust (#644 fix round 2, item 1: reproduced
+// the prior assertion's blind spot with a hand-rolled 76-column re-encoder
+// that this literal check would catch and the identity check would not).
+func TestHandleGetCANormalizesNonCanonicalWrapping(t *testing.T) {
+	_, _, caCert := newCAPEM(t)
+	src := "-----BEGIN CERTIFICATE-----\n" + wrapBase64(caCert.Raw, 48) + "\n-----END CERTIFICATE-----\n"
+
+	svc := handler.NewAdminCertService(caCert, nil, []byte(src))
+	status, got, _ := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if got == src {
+		t.Fatal("certPEM equals the 48-column source; want it re-wrapped canonically")
+	}
+	assertCanonicalCertificatePEM(t, got, caCert.Raw)
+}
+
+// TestHandleGetCADropsBlockSkippedBeforeAndBetweenCertificates pins #644's
+// escaped bug: the filter previously copied the span since the *previous*
+// block ended, not the matched block's own bytes, so a block pem.Decode
+// skipped (a mismatched END label, no END line, or malformed base64) was
+// folded into whichever certificate followed it.
+func TestHandleGetCADropsBlockSkippedBeforeAndBetweenCertificates(t *testing.T) {
+	cert1PEM, keyPEM, cert1 := newCAPEM(t)
+	cert2PEM, _, _ := newCAPEM(t)
+
+	// A key block whose END label does not match its BEGIN label: pem.Decode
+	// skips past it entirely rather than returning it as a block.
+	mismatchedEnd := bytes.Replace(append([]byte{}, keyPEM...), []byte("-----END PRIVATE KEY-----"), []byte("-----END WRONG LABEL-----"), 1)
+
+	tests := []struct {
+		name string
+		file []byte
+	}{
+		{
+			name: "skipped block precedes the only certificate",
+			file: append(append([]byte{}, mismatchedEnd...), cert1PEM...),
+		},
+		{
+			name: "skipped block sits between two certificates",
+			file: append(append(append([]byte{}, cert1PEM...), mismatchedEnd...), cert2PEM...),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := handler.NewAdminCertService(cert1, nil, tt.file)
+			status, certPEM, _ := getCA(t, svc)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200", status)
+			}
+			if bytes.Contains([]byte(certPEM), []byte("PRIVATE KEY")) {
+				t.Fatalf("certPEM leaked the skipped block's key material: %q", certPEM)
+			}
+			if bytes.Contains([]byte(certPEM), []byte("WRONG LABEL")) {
+				t.Fatalf("certPEM leaked the skipped block's mismatched trailer: %q", certPEM)
+			}
+		})
+	}
+}
+
+// TestHandleGetCASharedEndBeginLineServesCertificateOnly pins the shape the
+// #644 design measured, closed by no earlier round: a stored file whose
+// PRIVATE KEY block's END marker and the certificate's BEGIN marker share
+// one line. pem.Decode accepts a BEGIN at offset 0 of its current search
+// window even when the preceding byte is not a newline, so a source-byte
+// filter keyed on a reimplemented line-start rule fell back to offset 0 and
+// served the whole file, private key included (measured: 750 bytes at the
+// pre-design head, opening "-----BEGIN PRIVATE KEY-----"). The parse-based
+// filter selects by what x509.ParseCertificate accepts, never by an offset,
+// so it cannot repeat that mistake.
+func TestHandleGetCASharedEndBeginLineServesCertificateOnly(t *testing.T) {
+	certPEM, keyPEM, caCert := newCAPEM(t)
+	keyBlock, _ := pem.Decode(keyPEM)
+	if keyBlock == nil {
+		t.Fatal("generated CA key PEM did not decode")
+	}
+	certBlock, _ := pem.Decode(certPEM)
+	if certBlock == nil {
+		t.Fatal("generated CA cert PEM did not decode")
+	}
+	shared := "-----BEGIN PRIVATE KEY-----\n" + wrapBase64(keyBlock.Bytes, 64) + "\n" +
+		"-----END -----BEGIN CERTIFICATE-----\n" + wrapBase64(certBlock.Bytes, 64) + "\n" +
+		"-----END CERTIFICATE-----\n"
+
+	svc := handler.NewAdminCertService(caCert, nil, []byte(shared))
+	status, got, raw := getCA(t, svc)
+
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", status, raw)
+	}
+	if bytes.Contains([]byte(got), []byte("PRIVATE KEY")) {
+		t.Fatalf("certPEM leaked the private key on the shared END/BEGIN line: %q", got)
+	}
+	block, rest := pem.Decode([]byte(got))
+	if block == nil || block.Type != "CERTIFICATE" {
+		t.Fatalf("certPEM did not decode to a CERTIFICATE block: %q", got)
+	}
+	if !bytes.Equal(block.Bytes, caCert.Raw) {
+		t.Error("certPEM decoded to a different certificate than the CA's")
+	}
+	if len(bytes.TrimSpace(rest)) != 0 {
+		t.Errorf("certPEM carried trailing PEM content: %q", rest)
+	}
+}
+
+// TestHandleGetCANormalizesLegacyX509CertificateLabel pins Question 3 of the
+// #644 design: LoadCA does not check block.Type before parsing, so a CA
+// file carrying the legacy OpenSSL "X509 CERTIFICATE" label loads and
+// signs correctly, and the route must not silently empty it. The label is
+// not preserved: it is normalized to "CERTIFICATE" so the body always
+// loads as a trust anchor, which crypto/x509's pool loader requires.
+func TestHandleGetCANormalizesLegacyX509CertificateLabel(t *testing.T) {
+	certPEM, _, caCert := newCAPEM(t)
+	legacy := bytes.Replace(append([]byte{}, certPEM...), []byte("CERTIFICATE"), []byte("X509 CERTIFICATE"), 2)
+
+	svc := handler.NewAdminCertService(caCert, nil, legacy)
+	status, got, raw := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", status, raw)
+	}
+	block, _ := pem.Decode([]byte(got))
+	if block == nil {
+		t.Fatalf("certPEM did not decode: %q", got)
+	}
+	if block.Type != "CERTIFICATE" {
+		t.Errorf("block.Type = %q, want the normalized CERTIFICATE label", block.Type)
+	}
+	if !bytes.Equal(block.Bytes, caCert.Raw) {
+		t.Errorf("certPEM did not decode to the CA certificate: %q", got)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(got)) {
+		t.Error("certPEM did not load as a trust anchor via AppendCertsFromPEM")
+	}
+}
+
+// TestHandleGetCANoParseableCertificateReturns500 pins #644 fix round 2's
+// MEDIUM 2: the exported constructors take servingCACertPEM independently
+// of servingCACert, so nothing before this handler enforces that the PEM
+// holds a parseable certificate. Reproduced against this head before the
+// fix: a non-PEM body returned 200 with an empty certPEM. The fixed
+// behaviour is a 500 naming the condition, not a silent empty success.
+func TestHandleGetCANoParseableCertificateReturns500(t *testing.T) {
+	_, _, caCert := newCAPEM(t)
+
+	tests := []struct {
+		name string
+		pem  []byte
+	}{
+		{name: "non-PEM garbage", pem: []byte("not PEM at all\n")},
+		{name: "key DER alone under a CERTIFICATE label", pem: keyDERUnderCertificateLabel(t)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := handler.NewAdminCertService(caCert, nil, tt.pem)
+			status, got, raw := getCA(t, svc)
+			if status != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500, body: %s", status, raw)
+			}
+			if got != "" {
+				t.Errorf("certPEM = %q, want empty on a 500", got)
+			}
+		})
+	}
+}
+
+// TestHandleGetCAKeyDERUnderCertificateLabelDroppedFromChain pins MEDIUM 3's
+// third missing shape and error-handling finding 3 together: a block
+// labeled "CERTIFICATE" whose bytes are actually key DER, not certificate
+// DER, sits beside a real certificate in the same file, the same shape as a
+// CA file whose intermediate is corrupt. Selection is by parse, not by
+// label, so the bad block is dropped and the real certificate still
+// serves; the drop is no longer silent, per the decision in HandleGetCA's
+// doc comment (#644 fix round 2, item 5): logged, not refused, since the
+// caller still gets a working (if partial) chain.
+func TestHandleGetCAKeyDERUnderCertificateLabelDroppedFromChain(t *testing.T) {
+	certPEM, _, caCert := newCAPEM(t)
+	file := append(append([]byte{}, keyDERUnderCertificateLabel(t)...), certPEM...)
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	svc := handler.NewAdminCertService(caCert, nil, file)
+	status, got, raw := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", status, raw)
+	}
+	assertCanonicalCertificatePEM(t, got, caCert.Raw)
+
+	logged := buf.String()
+	if !strings.Contains(logged, "dropped 1 PEM block") || !strings.Contains(logged, "CERTIFICATE") {
+		t.Errorf("log = %q, want the dropped block type named so a corrupt intermediate is not silent", logged)
+	}
+}
+
+// keyDERUnderCertificateLabel builds a PEM block labeled "CERTIFICATE" whose
+// body is PKCS8 key DER, not a certificate: real key bytes under a label
+// selection-by-parse must still refuse, since x509.ParseCertificate rejects
+// it regardless of the label on the block.
+func keyDERUnderCertificateLabel(t *testing.T) []byte {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: keyDER})
+}
+
+// TestHandleGetCACRLFLineEndingsNormalized pins MEDIUM 3's first missing
+// shape: a stored CA file with CRLF line endings, which some Windows
+// tooling produces. The parser accepts it (encoding/pem tolerates \r before
+// \n), and the response is LF-only like every other canonical output.
+func TestHandleGetCACRLFLineEndingsNormalized(t *testing.T) {
+	certPEM, _, caCert := newCAPEM(t)
+	crlf := bytes.ReplaceAll(certPEM, []byte("\n"), []byte("\r\n"))
+
+	svc := handler.NewAdminCertService(caCert, nil, crlf)
+	status, got, raw := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", status, raw)
+	}
+	if strings.Contains(got, "\r") {
+		t.Errorf("certPEM = %q, want LF-only line endings", got)
+	}
+	assertCanonicalCertificatePEM(t, got, caCert.Raw)
+}
+
+// trustedCertificateFixturePEM is real `openssl x509 -trustout` output
+// (OpenSSL 3.5.4), not a hand-relabeled certificate: the coverage lane
+// flagged that distinction as an edge its own fixture did not cover, since
+// Go's trailing-data handling on a genuine "TRUSTED CERTIFICATE" block (no
+// -addtrust auxiliary data added) is what the design's Question 3 measured.
+// The private key that signed it was discarded; this is a throwaway,
+// self-signed test CA with no other use.
+const trustedCertificateFixturePEM = `-----BEGIN TRUSTED CERTIFICATE-----
+MIIBlTCCATugAwIBAgIUTnHjd+3w6vW5MTCWg3k4iRCy8XcwCgYIKoZIzj0EAwIw
+IDEeMBwGA1UEAwwVUDMgb3BlbnNzbCBmaXh0dXJlIENBMB4XDTI2MDkyMzIwMDQw
+MFoXDTI3MDkyMzIwMDQwMFowIDEeMBwGA1UEAwwVUDMgb3BlbnNzbCBmaXh0dXJl
+IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEi4HqFQMNU6tTTpsjCn4FERmA
+M2/o4UDhtutUw8tY/3urYZwhIf+tl7ZaWfcZ4mDoqFd0Xj+ATnFXT0reS3+6y6NT
+MFEwHQYDVR0OBBYEFEDkJf7HQpUzf4h/sONqjYWZ/EW0MB8GA1UdIwQYMBaAFEDk
+Jf7HQpUzf4h/sONqjYWZ/EW0MA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwID
+SAAwRQIhAMsrLvfVw0IRNdbyRcbXRlMEy+vAk7sDLYsD9wgAu+AVAiAzs1NStAJ5
+LBK8FiFJosSUYb/i0h95RARMc6E/lJHW+A==
+-----END TRUSTED CERTIFICATE-----
+`
+
+// TestHandleGetCATrustedCertificateLabelLoads pins MEDIUM 3's second
+// missing shape against real tool output rather than a relabeled fixture:
+// an openssl "-trustout" file with no aux data added parses and loads
+// today (LoadCA would sign with it), but the pre-#644 route refused it with
+// a 500 that called it a file with no certificate block. The filter accepts
+// the label on input and normalizes it to "CERTIFICATE" on output.
+func TestHandleGetCATrustedCertificateLabelLoads(t *testing.T) {
+	block, _ := pem.Decode([]byte(trustedCertificateFixturePEM))
+	if block == nil {
+		t.Fatal("trustedCertificateFixturePEM did not decode")
+	}
+	caCert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("fixture certificate did not parse: %v", err)
+	}
+
+	svc := handler.NewAdminCertService(caCert, nil, []byte(trustedCertificateFixturePEM))
+	status, got, raw := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", status, raw)
+	}
+	assertCanonicalCertificatePEM(t, got, caCert.Raw)
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(got)) {
+		t.Error("certPEM did not load as a trust anchor via AppendCertsFromPEM")
+	}
+}
+
+// wrapBase64 base64-encodes der and wraps it at width columns, distinct
+// from pem.EncodeToMemory (which always wraps at 64). Used to build
+// non-canonical fixtures the canonical-output tests must normalize.
+func wrapBase64(der []byte, width int) string {
+	b64 := base64.StdEncoding.EncodeToString(der)
+	var lines []string
+	for i := 0; i < len(b64); i += width {
+		end := i + width
+		if end > len(b64) {
+			end = len(b64)
+		}
+		lines = append(lines, b64[i:end])
+	}
+	return strings.Join(lines, "\n")
+}
+
+// newCAPEM generates a CA certificate and key pair and returns the encoded
+// PEM bytes alongside the parsed certificate, for constructing
+// AdminCertService fixtures directly (the private key type is irrelevant to
+// HandleGetCA).
+func newCAPEM(t *testing.T) (certPEM, keyPEM []byte, cert *x509.Certificate) {
+	t.Helper()
+	certPEM, keyPEM, err := certs.GenerateCA(certs.CAOptions{
+		CommonName: "Test CA",
+		ValidYears: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(certPEM)
+	cert, err = x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return certPEM, keyPEM, cert
 }
 
 func TestHandleCreateServerCert(t *testing.T) {

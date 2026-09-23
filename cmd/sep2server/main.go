@@ -53,26 +53,100 @@ func runServe() error {
 		return err
 	}
 
-	// Load CA for admin cert service. Reuses cfg.CAFile rather than
-	// re-reading SEP2_CA, since both name the same setting.
-	var svc *handler.AdminCertService
-	caKeyFile, err := resolver.envPathOrCertDir("SEP2_CA_KEY", "ca.key")
+	svc, err := loadAdminCertService(cfg, resolver)
 	if err != nil {
 		return err
-	}
-	caCert, caKey, loadErr := certs.LoadCA(cfg.CAFile, caKeyFile)
-	if loadErr != nil {
-		log.Printf("CA not loaded (%v): admin cert API disabled", loadErr)
-	} else {
-		caCertPEM, _ := os.ReadFile(cfg.CAFile)
-		svc = handler.NewAdminCertService(caCert, caKey, caCertPEM)
-		log.Println("CA loaded: admin cert API enabled")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	return server.Run(ctx, cfg, svc)
+}
+
+// loadAdminCertService resolves the CA key settings and loads both CA pairs
+// for the admin cert service (#622).
+//
+// #638 fix round 2 item 2: split out of runServe, which no test called, so
+// the SEP2_SERVING_CA_KEY/SEP2_DEVICE_CA_KEY fallback and the partial-pair
+// cases can be driven from a test with real files on disk. Behavior is
+// unchanged; runServe calls this with the same resolver and cfg it always
+// built inline.
+func loadAdminCertService(cfg *config.Config, resolver *certDirResolver) (*handler.AdminCertService, error) {
+	// #622: load both CA pairs for the admin cert service. SEP2_CA_KEY
+	// stays the shared default (mirrors CAFile): SEP2_SERVING_CA_KEY and
+	// SEP2_DEVICE_CA_KEY fall back to it, exactly as ServingCAFile/
+	// DeviceCAFile fall back to CAFile, so an unsplit deployment resolves
+	// the one key path twice rather than needing a second setting.
+	//
+	// #638 fix round 1 (MEDIUM 1/3): certs.LoadCAPair loads each
+	// certificate independently of its key, so a deployment that keeps a
+	// CA's certificate and removes its key - the safer posture for a role
+	// that never mints - still reports that CA as loaded rather than
+	// missing. keyErr distinguishes "no key at all" from "certificate and
+	// key are not a matched pair" (MEDIUM 2): both leave key nil, so
+	// neither is silently paired and neither reaches the admin cert
+	// service as mint-capable, but the two cases get their own log line.
+	caKeyFile, err := resolver.envPathOrCertDir("SEP2_CA_KEY", "ca.key")
+	if err != nil {
+		return nil, err
+	}
+	servingCAKeyFile, err := envPathOr("SEP2_SERVING_CA_KEY", caKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	deviceCAKeyFile, err := envPathOr("SEP2_DEVICE_CA_KEY", caKeyFile)
+	if err != nil {
+		return nil, err
+	}
+
+	// #638 fix round 3 item 2: the log lines below claim a CA-download
+	// status. GET /api/certs/ca is gated on the CERTIFICATE alone
+	// (internal/handler/admin_certs.go, HandleGetCA), never the key, so
+	// only a nil certificate disables it; a loaded certificate with an
+	// unusable key still serves it. Only the servingCert == nil case below
+	// says download is disabled; every other message here is silent on it,
+	// leaving that one line as the sole claim rather than one of several
+	// that can contradict each other.
+	servingCert, servingPEM, servingKey, servingCertErr, servingKeyErr := certs.LoadCAPair(cfg.EffectiveServingCA(), servingCAKeyFile)
+	switch {
+	case servingCert == nil:
+		log.Printf("serving CA not loaded (%v): certificate verification, server-cert minting and CA download disabled", servingCertErr)
+	case servingKeyErr != nil:
+		log.Printf("serving CA certificate loaded, key not usable (%v): server-cert minting disabled; certificate stays trusted for verification, CA download and the banner", servingKeyErr)
+	}
+	deviceCert, _, deviceKey, deviceCertErr, deviceKeyErr := certs.LoadCAPair(cfg.EffectiveDeviceCA(), deviceCAKeyFile)
+	switch {
+	case deviceCert == nil:
+		log.Printf("device CA not loaded (%v): device-cert minting disabled", deviceCertErr)
+	case deviceKeyErr != nil:
+		log.Printf("device CA certificate loaded, key not usable (%v): device-cert minting disabled; certificate stays trusted for verification and the banner", deviceKeyErr)
+	}
+
+	// svc is constructed whenever EITHER CA CERTIFICATE loaded: each
+	// handler checks its own pair's certificate AND key
+	// (internal/handler/admin_certs.go, #638 fix round 1 MEDIUM 3), so a
+	// deployment missing a key still serves the routes that need only the
+	// certificate (HandleGetCA, the banner), and a deployment missing a
+	// whole CA still serves the routes the other CA covers. Starting the
+	// admin LISTENER is a separate, narrower question: see AdminCertService
+	// .CanMint and its call site in internal/server/server.go (#638 fix
+	// round 3 item 1).
+	var svc *handler.AdminCertService
+	if servingCert != nil || deviceCert != nil {
+		svc = handler.NewAdminCertServiceWithCAs(servingCert, servingKey, servingPEM, deviceCert, deviceKey)
+		switch {
+		case servingKey != nil && deviceKey != nil:
+			log.Println("CA(s) loaded: admin cert API enabled")
+		case servingKey != nil:
+			log.Println("serving CA key loaded: admin cert API partially enabled (device-cert minting stays disabled)")
+		case deviceKey != nil:
+			log.Println("device CA key loaded: admin cert API partially enabled (server-cert minting stays disabled)")
+		default:
+			log.Println("CA certificate(s) loaded without a usable key: minting disabled; the banner still uses the loaded certificate(s)")
+		}
+	}
+	return svc, nil
 }
 
 // configFromEnv builds the server configuration from SEP2_* environment
@@ -96,6 +170,21 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		return nil, err
 	}
 	caFile, err := r.envPathOrCertDir("SEP2_CA", "ca.crt")
+	if err != nil {
+		return nil, err
+	}
+	// #622: SEP2_SERVING_CA / SEP2_DEVICE_CA are read raw (envPathOr, not
+	// envPathOrCertDir) and left empty when unset, so Config.EffectiveServingCA
+	// / EffectiveDeviceCA fall back to the just-resolved caFile rather than to
+	// the certDirResolver's own "ca.crt" default. Falling back through
+	// envPathOrCertDir here would ignore an explicit SEP2_CA in favor of the
+	// cert-dir default, breaking the "unsplit deployment reads what it read
+	// before" invariant the moment an operator set SEP2_CA to a custom path.
+	servingCAFile, err := envPathOr("SEP2_SERVING_CA", "")
+	if err != nil {
+		return nil, err
+	}
+	deviceCAFile, err := envPathOr("SEP2_DEVICE_CA", "")
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +222,8 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		CertFile:        certFile,
 		KeyFile:         keyFile,
 		CAFile:          caFile,
+		ServingCAFile:   servingCAFile,
+		DeviceCAFile:    deviceCAFile,
 		ExtraClientCAs:  extraClientCAs,
 		BootFixtureFile: bootFixtureFile,
 

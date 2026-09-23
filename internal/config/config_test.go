@@ -5,6 +5,56 @@ import (
 	"testing"
 )
 
+// #622: EffectiveServingCA/EffectiveDeviceCA are the shared-default seam a
+// deployment that never sets the new settings depends on: both must resolve
+// to the pre-split CAFile so item 1's "byte for byte" claim is a fact about
+// this function, not just about main.go's wiring of it.
+func TestEffectiveServingAndDeviceCA(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		cfg         Config
+		wantServing string
+		wantDevice  string
+	}{
+		{
+			name:        "neither set falls back to CAFile for both",
+			cfg:         Config{CAFile: "/etc/tls/ca.crt"},
+			wantServing: "/etc/tls/ca.crt",
+			wantDevice:  "/etc/tls/ca.crt",
+		},
+		{
+			name:        "only ServingCAFile set: device still falls back to CAFile",
+			cfg:         Config{CAFile: "/etc/tls/ca.crt", ServingCAFile: "/etc/tls/serving-ca.crt"},
+			wantServing: "/etc/tls/serving-ca.crt",
+			wantDevice:  "/etc/tls/ca.crt",
+		},
+		{
+			name:        "only DeviceCAFile set: serving still falls back to CAFile",
+			cfg:         Config{CAFile: "/etc/tls/ca.crt", DeviceCAFile: "/etc/tls/device-ca.crt"},
+			wantServing: "/etc/tls/ca.crt",
+			wantDevice:  "/etc/tls/device-ca.crt",
+		},
+		{
+			name:        "both set: each wins over CAFile independently",
+			cfg:         Config{CAFile: "/etc/tls/ca.crt", ServingCAFile: "/etc/tls/serving-ca.crt", DeviceCAFile: "/etc/tls/device-ca.crt"},
+			wantServing: "/etc/tls/serving-ca.crt",
+			wantDevice:  "/etc/tls/device-ca.crt",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.EffectiveServingCA(); got != tc.wantServing {
+				t.Errorf("EffectiveServingCA() = %q, want %q", got, tc.wantServing)
+			}
+			if got := tc.cfg.EffectiveDeviceCA(); got != tc.wantDevice {
+				t.Errorf("EffectiveDeviceCA() = %q, want %q", got, tc.wantDevice)
+			}
+		})
+	}
+}
+
 // #268: ResolveAdminBind applies a loopback default to a bare-port
 // admin listen string. Pre-#268, ":8444" handed to net.Listen bound
 // 0.0.0.0 - any network neighbor (or co-resident process on a multi-

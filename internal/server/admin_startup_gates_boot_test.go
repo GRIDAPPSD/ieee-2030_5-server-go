@@ -1,7 +1,6 @@
 package server_test
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"log"
@@ -236,16 +235,21 @@ func TestAdminListenerRefusesWhitespaceOnlyAdminKey(t *testing.T) {
 	})
 }
 
-// teeLogOutput tees the standard logger into buf for the duration of the test.
-// Teeing rather than replacing keeps any other test's diagnostics on their
-// original writer, since the logger is process-global.
-func teeLogOutput(t *testing.T) *bytes.Buffer {
+// teeLogOutput tees the standard logger into the returned buffer for the
+// duration of the test. Teeing rather than replacing keeps any other test's
+// diagnostics on their original writer, since the logger is process-global.
+// Returns *syncBuffer (capture_wiring_test.go), not bytes.Buffer: server.Run
+// logs from its own goroutine for as long as it runs, so a caller reading the
+// buffer (a poll loop, or a one-shot read after stop) reads concurrently with
+// those writes. #638 fix round 4: a caller that polled buf.String() while Run
+// was still writing raced under -race.
+func teeLogOutput(t *testing.T) *syncBuffer {
 	t.Helper()
-	var buf bytes.Buffer
+	buf := &syncBuffer{}
 	prev := log.Writer()
-	log.SetOutput(io.MultiWriter(prev, &buf))
+	log.SetOutput(io.MultiWriter(prev, buf))
 	t.Cleanup(func() { log.SetOutput(prev) })
-	return &buf
+	return buf
 }
 
 // TestAdminSecureCookieWarningIsWiredIntoBoot asserts the warning reaches the

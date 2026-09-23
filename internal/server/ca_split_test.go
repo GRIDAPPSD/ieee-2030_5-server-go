@@ -161,7 +161,7 @@ func TestProtocolListenerTrustsOnlyTheDeviceCA(t *testing.T) {
 		Timeout:   1 * time.Second,
 	}
 	badResp, badErr := badClient.Get("https://" + sep2Addr + "/dcap")
-	assertRefusedForCertFailure(t, badResp, badErr)
+	assertRefusedForCertFailure(t, badResp, badErr, "handshake failure")
 }
 
 // assertRefusedForCertFailure is #638 fix round 2 item 5: the original
@@ -169,12 +169,17 @@ func TestProtocolListenerTrustsOnlyTheDeviceCA(t *testing.T) {
 // already carry a short Timeout) or an unrelated transport reset would have
 // satisfied it as well as a real certificate refusal. Requiring the "tls:"
 // remote-alert prefix rules out anything that is not a TLS-layer refusal;
-// requiring "handshake failure" pins the exact alert this listener sends for
-// a client cert outside its ClientCAs pool, confirmed by running this
-// assertion against the pre-fix code and reading the actual error text
-// three times (deterministic: "remote error: tls: handshake failure" on
-// every run) rather than assuming the "bad certificate" alert name.
-func assertRefusedForCertFailure(t *testing.T, resp *http.Response, err error) {
+// requiring wantAlert pins the exact alert the listener sends for a client
+// cert outside its ClientCAs pool.
+//
+// #638 fix round 3 item 3: wantAlert is a parameter because the two TLS
+// stacks disagree on the alert name for the identical refusal. Measured
+// three runs each: the stdlib-backed GCM listener sends
+// "remote error: tls: handshake failure"; the CCM-8 listener, wired through
+// core's forked TLS stack, sends "remote error: tls: bad certificate" every
+// time. Reusing one string for both would either miss the CCM case (too
+// narrow) or accept an unrelated CCM failure under the GCM name (too loose).
+func assertRefusedForCertFailure(t *testing.T, resp *http.Response, err error, wantAlert string) {
 	t.Helper()
 	if resp != nil {
 		_ = resp.Body.Close()
@@ -182,8 +187,8 @@ func assertRefusedForCertFailure(t *testing.T, resp *http.Response, err error) {
 	if err == nil {
 		t.Fatal("serving-CA-signed client was accepted by the protocol listener; ClientCAs pool is not routed to the device CA")
 	}
-	if !strings.Contains(err.Error(), "tls:") || !strings.Contains(err.Error(), "handshake failure") {
-		t.Errorf("err = %v, want a TLS handshake refusal naming \"handshake failure\" (a hang or a reset would satisfy err != nil alone, but not this)", err)
+	if !strings.Contains(err.Error(), "tls:") || !strings.Contains(err.Error(), wantAlert) {
+		t.Errorf("err = %v, want a TLS handshake refusal naming %q (a hang or a reset would satisfy err != nil alone, but not this)", err, wantAlert)
 	}
 }
 
@@ -354,10 +359,5 @@ func TestProtocolListenerTrustsOnlyTheDeviceCAUnderCCM(t *testing.T) {
 	badClient := ccmHTTPClient(ccmClientConfig(badDeviceCertPEM, badDeviceKeyPEM))
 	badClient.Timeout = 1 * time.Second
 	badResp, badErr := badClient.Get("https://" + sep2Addr + "/dcap")
-	if badResp != nil {
-		_ = badResp.Body.Close()
-	}
-	if badErr == nil {
-		t.Error("serving-CA-signed CCM client was accepted by the protocol listener; ClientCAs pool is not routed to the device CA under CCM")
-	}
+	assertRefusedForCertFailure(t, badResp, badErr, "bad certificate")
 }

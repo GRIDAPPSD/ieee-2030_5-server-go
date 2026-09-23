@@ -88,10 +88,26 @@ func RenderConnectionBanner(in BannerInput) string {
 	// #622: a device verifies THIS server with the serving CA, not the
 	// device CA - the curl example's --cacert is the anchor GET
 	// /api/certs/ca hands an operator, which is the serving CA after the
-	// split (internal/handler/admin_certs.go HandleGetCA).
+	// split (internal/handler/admin_certs.go HandleGetCA). #638 fix round 1
+	// (HIGH 1): buildBannerInput now sets DeviceCAHint explicitly, so this
+	// fallback is only reached by a caller that leaves it empty; kept so
+	// the renderer stays correct on its own, and pinned by
+	// TestRenderConnectionBanner_DeviceCAHintFallsBackToServingCA.
 	caHint := in.DeviceCAHint
 	if caHint == "" {
 		caHint = in.ServingCAFile
+	}
+	// caHintRole names which role line above caHint actually came from, so
+	// an operator reading the smoke block does not have to infer it from
+	// the file path alone. Derived from caHint itself (not from which
+	// branch above ran), so the label cannot drift out of sync with the
+	// value it describes.
+	caHintRole := "an explicit device-CA-hint override"
+	switch caHint {
+	case in.ServingCAFile:
+		caHintRole = "the Serving CA above"
+	case in.DeviceCAFile:
+		caHintRole = "the Device CA above"
 	}
 	certHint := in.DeviceCertHint
 	if certHint == "" {
@@ -152,6 +168,7 @@ func RenderConnectionBanner(in BannerInput) string {
 	fmt.Fprintln(&b, rule)
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, " Device-side smoke:")
+	fmt.Fprintf(&b, "   (--cacert below is %s)\n", caHintRole)
 	fmt.Fprintf(&b, "   curl --cacert %s \\\n", caHint)
 	fmt.Fprintf(&b, "        --cert %s --key %s \\\n", certHint, keyHint)
 	fmt.Fprintf(&b, "        https://%s/dcap\n", host)

@@ -462,6 +462,16 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// to the routing-scope test pinned by router_certs_scope_test.go.
 	log.Print("\n" + RenderRoutesLog(cfg.Addr, protocolRoutes, adminAddr, adminRoutes))
 
+	// #638 fix round 1 (MEDIUM 2): warn, before the banner prints it as
+	// healthy, when the server's own leaf does not chain to the serving CA.
+	// svc may be nil (no CA loaded at all); servingCAMismatchWarning treats
+	// a nil serving CA the same as "nothing to compare against".
+	if svc != nil {
+		if msg := servingCAMismatchWarning(cfg.CertFile, svc.ServingCA()); msg != "" {
+			log.Print(msg)
+		}
+	}
+
 	// #206: print the operator-facing connection-details banner once
 	// after both listeners are up. Banner is log output only - it does not
 	// change behavior and intentionally suppresses secrets (admin key,
@@ -679,6 +689,14 @@ func caRoleInfo(cert *x509.Certificate) (subject, fingerprint string) {
 // (EffectiveServingCA/EffectiveDeviceCA), so an unsplit deployment (both
 // empty, both falling back to CAFile) still gets the "one certificate
 // fills both roles" note.
+//
+// #638 fix round 1 (MEDIUM 1): svc.ServingCA()/DeviceCA() now return a
+// loaded certificate whenever that CA's certificate file parsed, whether or
+// not its key is present or usable - see certs.LoadCAPair, wired in at
+// cmd/sep2server/main.go. Before that change this projection quietly went
+// through a service that existed only when a key had ALSO loaded, so a
+// keys-off-the-server deployment read every CA as "(not loaded)" although
+// the listener was actively trusting it.
 func buildBannerInput(cfg *config.Config, svc *handler.AdminCertService, tlsMode, serverSFDI, serverLFDI, adminTLSDesc string) BannerInput {
 	adminAuth := "disabled"
 	if cfg.AdminKey != "" {
@@ -723,7 +741,56 @@ func buildBannerInput(cfg *config.Config, svc *handler.AdminCertService, tlsMode
 		AdminAuthDesc:        adminAuth,
 		DataDirDesc:          dataDir,
 		MDNSEnabled:          cfg.EnableMDNS,
+		// #638 fix round 1 (HIGH 1): set explicitly, rather than left empty
+		// for RenderConnectionBanner's fallback to fill in silently. A
+		// device verifies THIS server with the serving CA (see
+		// RenderConnectionBanner's own comment on caHint), and this is the
+		// only production call site, so the choice belongs here where a
+		// test can assert it directly rather than only in the renderer's
+		// untested-at-boot fallback branch.
+		DeviceCAHint: cfg.EffectiveServingCA(),
 	}
+}
+
+// servingCAMismatchWarning returns a boot-log warning when the server's own
+// leaf certificate (certFile) is not signed by servingCA, and "" when they
+// match, the leaf cannot be read or parsed, or servingCA is nil (no serving
+// CA loaded - the "(not loaded)" banner line already covers that case, and
+// there is nothing here to compare against).
+//
+// #638 fix round 1 (MEDIUM 2): nothing previously compared the server's own
+// leaf against the serving CA the banner advertises as this server's
+// anchor. The mismatch fails no local handshake - the protocol listener
+// never verifies its own leaf - and surfaces only off this host, at a
+// device that trusted the printed serving CA and got "certificate signed
+// by unknown authority" with nothing in the boot log pointing at the
+// cause. A warning, not a refusal: #622's scope is a role split, and a
+// deployment that would have started before this fix round must still
+// start after it.
+//
+// Pure function so tests assert content directly without intercepting log
+// output or standing up a listener.
+func servingCAMismatchWarning(certFile string, servingCA *x509.Certificate) string {
+	if servingCA == nil {
+		return ""
+	}
+	leafPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		return ""
+	}
+	leaf, err := certs.ParseCertificatePEM(leafPEM)
+	if err != nil {
+		return ""
+	}
+	if err := leaf.CheckSignatureFrom(servingCA); err != nil {
+		return fmt.Sprintf(
+			"WARNING: server certificate %s is not signed by the advertised serving CA (subject %s): %v. "+
+				"A device that trusts the printed serving CA will refuse this server with "+
+				`"certificate signed by unknown authority". Regenerate the server certificate `+
+				"from the current serving CA, or point SEP2_SERVING_CA at the CA that signed it.",
+			certFile, servingCA.Subject, err)
+	}
+	return ""
 }
 
 // buildAdminTLSConfig assembles the admin listener's *tls.Config from the

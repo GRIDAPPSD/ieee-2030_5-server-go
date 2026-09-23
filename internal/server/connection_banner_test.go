@@ -69,6 +69,7 @@ func TestRenderConnectionBanner_FullProfile(t *testing.T) {
 		"Data dir:     /tmp/sep2-data",
 		"mDNS:         on",
 		"Device-side smoke:",
+		"(--cacert below is the Serving CA above)",
 		"--cacert certs/serving-ca.crt",
 		"--cert certs/device.crt --key certs/device.key",
 		"https://localhost:8443/dcap",
@@ -231,5 +232,75 @@ func TestRenderConnectionBanner_AddrHostPreserved(t *testing.T) {
 	}
 	if !strings.Contains(out, "https://10.0.0.101:8888/dcap") {
 		t.Errorf("device-side curl did not preserve non-loopback host\n---banner---\n%s", out)
+	}
+}
+
+// TestRenderConnectionBanner_DeviceCAHintFallsBackToServingCA is #638 fix
+// round 1, HIGH 1: with DeviceCAHint left EMPTY (the shape buildBannerInput
+// produced before this fix round, and the only shape ever reached at boot)
+// and ServingCAFile distinct from DeviceCAFile, the curl anchor must print
+// the SERVING file, never the device file. Mutant: connection_banner.go's
+// `caHint = in.ServingCAFile` flipped to `caHint = in.DeviceCAFile` -
+// before this test, no test caught it, because the only test exercising
+// this field (FullProfile, above) supplies DeviceCAHint explicitly and
+// never leaves the fallback branch to run.
+func TestRenderConnectionBanner_DeviceCAHintFallsBackToServingCA(t *testing.T) {
+	t.Parallel()
+
+	input := BannerInput{
+		Addr:          ":8443",
+		TLSMode:       "CCM-8",
+		CertFile:      "certs/server.crt",
+		ServerSFDI:    "123456789012",
+		ServerLFDI:    "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
+		ServingCAFile: "certs/serving-only.crt",
+		DeviceCAFile:  "certs/device-only.crt",
+		AdminAuthDesc: "disabled",
+		DataDirDesc:   "in-memory",
+		// DeviceCAHint deliberately left empty: this is the fallback branch.
+	}
+
+	out := RenderConnectionBanner(input)
+	if !strings.Contains(out, "--cacert certs/serving-only.crt") {
+		t.Errorf("curl anchor did not fall back to the serving CA file\n---banner---\n%s", out)
+	}
+	if strings.Contains(out, "--cacert certs/device-only.crt") {
+		t.Errorf("curl anchor used the DEVICE CA file; a device would be handed the wrong anchor\n---banner---\n%s", out)
+	}
+	if !strings.Contains(out, "(--cacert below is the Serving CA above)") {
+		t.Errorf("banner does not label which role the curl anchor came from\n---banner---\n%s", out)
+	}
+}
+
+// TestRenderConnectionBanner_CAHintRoleLabelsDeviceOverride is the control
+// for the role label added in the same fix round: when DeviceCAHint is
+// explicitly set to a value equal to DeviceCAFile (not ServingCAFile), the
+// label must say "Device CA", proving the label is derived from the actual
+// printed value rather than hardcoded to always say "Serving CA".
+func TestRenderConnectionBanner_CAHintRoleLabelsDeviceOverride(t *testing.T) {
+	t.Parallel()
+
+	input := BannerInput{
+		Addr:          ":8443",
+		TLSMode:       "CCM-8",
+		CertFile:      "certs/server.crt",
+		ServerSFDI:    "123456789012",
+		ServerLFDI:    "ABCDEF0123456789ABCDEF0123456789ABCDEF01",
+		ServingCAFile: "certs/serving-only.crt",
+		DeviceCAFile:  "certs/device-only.crt",
+		DeviceCAHint:  "certs/device-only.crt",
+		AdminAuthDesc: "disabled",
+		DataDirDesc:   "in-memory",
+	}
+
+	out := RenderConnectionBanner(input)
+	if !strings.Contains(out, "--cacert certs/device-only.crt") {
+		t.Errorf("curl anchor did not use the explicit device-CA-hint override\n---banner---\n%s", out)
+	}
+	if !strings.Contains(out, "(--cacert below is the Device CA above)") {
+		t.Errorf("label did not track the explicit override to the device CA\n---banner---\n%s", out)
+	}
+	if strings.Contains(out, "(--cacert below is the Serving CA above)") {
+		t.Errorf("label incorrectly says Serving CA for a device-CA override\n---banner---\n%s", out)
 	}
 }

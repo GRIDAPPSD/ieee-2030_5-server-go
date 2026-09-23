@@ -235,10 +235,6 @@ func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
 			want = append(want, p)
 		}
 	}
-	// #579 HIGH-1: the ticket-mint route is not under either path prefix, so
-	// it is not derivable from the router's pattern list the way the two
-	// families are; it is asserted explicitly instead.
-	want = append(want, "POST /auth/ticket")
 	sort.Strings(want)
 
 	var got []string
@@ -283,6 +279,63 @@ func TestEverySensitiveAdminPatternRefusesBypassOnly(t *testing.T) {
 			}
 			if !strings.Contains(buf.String(), `"event":"admin_sensitive_route_refused"`) {
 				t.Errorf("%s bypass-only: no admin_sensitive_route_refused log line; captured = %s", pattern, buf.String())
+			}
+		})
+	}
+}
+
+// TestEveryDefaultProtectedAdminWriteRefusesBypassOnly is the class
+// TestSensitiveAdminPatternsMatchRouterFamilies cannot cover: a credential-
+// minting write route (#579 HIGH-1 was POST /auth/ticket) sits under no
+// shared path prefix, so it cannot be derived by matching "/api/certs" or
+// "/api/traffic" the way that test derives its two families. This test
+// derives the OTHER class instead - every authed write route the router
+// reports, minus the small nonSensitiveAdminWrites exemption list, minus
+// whatever is already in SensitiveAdminPatterns - and drives a real
+// bypass-only request at each one. A new write route left off
+// nonSensitiveAdminWrites joins this derived set automatically and must
+// refuse here, with no name to remember to add anywhere (#579 fix round 2,
+// MEDIUM, coverage lane).
+func TestEveryDefaultProtectedAdminWriteRefusesBypassOnly(t *testing.T) {
+	patterns := server.AuthedAdminPatterns(
+		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
+		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
+		false, http.NotFoundHandler(),
+	)
+
+	var defaultProtected []string
+	for _, p := range patterns {
+		method, _, ok := strings.Cut(p, " ")
+		if !ok {
+			t.Fatalf("pattern %q names no method", p)
+		}
+		switch method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			continue
+		}
+		if _, sensitive := server.SensitiveAdminPatterns[p]; sensitive {
+			continue
+		}
+		if _, exempt := server.NonSensitiveAdminWrites[p]; exempt {
+			continue
+		}
+		defaultProtected = append(defaultProtected, p)
+	}
+	// Control: the derivation itself must find something to check, or every
+	// assertion below passes vacuously (#579 HIGH-1 is exactly this class).
+	if len(defaultProtected) == 0 {
+		t.Fatalf("no default-protected admin write route found; POST /auth/ticket, at least, should be one")
+	}
+
+	router := newSensitiveRoutesRouter(t)
+	for _, pattern := range defaultProtected {
+		method, path, _ := strings.Cut(pattern, " ")
+		target := strings.ReplaceAll(path, "{id}", "x")
+		t.Run(pattern, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, bypassOnlyRequest(method, target))
+			if rec.Code != http.StatusUnauthorized || rec.Body.String() != sensitiveRefusalBody {
+				t.Fatalf("%s bypass-only: status = %d body = %q, want 401 %q", pattern, rec.Code, rec.Body.String(), sensitiveRefusalBody)
 			}
 		})
 	}

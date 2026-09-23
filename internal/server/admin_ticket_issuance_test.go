@@ -13,9 +13,11 @@ import (
 // credential and minted a real one-time ticket. That ticket then satisfied
 // RequireRealCredential's own recheck on the routes it exists to protect,
 // walking the refusal in exactly two requests. The fix gates issuance
-// itself rather than trying to patch the recheck: the mint route is now a
-// member of sensitiveAdminPatterns, so it goes through the same
-// bypass-only refusal as GET /api/certs/ca.
+// itself rather than trying to patch the recheck: every admin write route
+// not on the nonSensitiveAdminWrites exemption list requires a real
+// credential by default (admin_sensitive_routes.go), so the mint route goes
+// through the same bypass-only refusal as GET /api/certs/ca without needing
+// its own name on any list.
 func TestAuthTicketMintRequiresRealCredential(t *testing.T) {
 	router := newSensitiveRoutesRouter(t)
 

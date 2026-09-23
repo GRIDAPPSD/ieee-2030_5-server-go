@@ -77,6 +77,18 @@ func (s *AdminCertService) DeviceCA() *x509.Certificate {
 	return s.deviceCACert
 }
 
+// CanMint reports whether either role has a usable key. #638 fix round 3
+// item 1: the service turns non-nil whenever a CA CERTIFICATE loads, with
+// or without its key (round 1), so a caller deciding whether to start the
+// admin listener - which exposes login, the UI, and every admin route, not
+// only the certificate-reporting routes - needs this narrower question
+// rather than a nil check on the service itself.
+func (s *AdminCertService) CanMint() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.servingCAKey != nil || s.deviceCAKey != nil
+}
+
 type createDeviceCertRequest struct {
 	DeviceType  int    `json:"deviceType"`
 	HWSerialNum string `json:"hwSerialNum"`

@@ -418,7 +418,17 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	if cfg.EnableCCM {
 		tlsModeName = "CCM-8"
 	}
-	if cfg.EffectiveAdminListen() != "" && svc != nil {
+	// #638 fix round 3 item 1: svc != nil alone is not the right gate here.
+	// It turns non-nil whenever a CA CERTIFICATE loads (round 1's keyless
+	// posture), which would bring up the whole admin plane - login, the UI,
+	// and every admin route - on a deployment that kept only a certificate
+	// on purpose. CanMint restores the pre-split gate: the admin listener
+	// starts only when at least one role can actually do something with
+	// its CA beyond reporting it, matching the behavior before #622 split
+	// the single CA into independently loadable serving/device pairs. The
+	// startup banner and the mismatch warning below are unaffected: both
+	// read svc directly, outside this gate.
+	if cfg.EffectiveAdminListen() != "" && svc != nil && svc.CanMint() {
 		var trafficHandler http.Handler
 		if captureStore != nil {
 			trafficHandler = captureStore.Handler()

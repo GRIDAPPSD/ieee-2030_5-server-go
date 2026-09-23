@@ -19,7 +19,7 @@ the certificate management API. A browser cannot present a client cert by
 default, so the admin listener can't share the SEP2 posture. The admin
 listener is therefore split off entirely. It runs on its own port and
 selects its TLS posture independently. `AdminAuthMiddleware` still gates the
-auth model — mTLS (operator cert), Bearer token, query-param ticket, and
+auth model: mTLS (operator cert), Bearer token, query-param ticket, and
 the #159 cookie all keep working.
 
 The `SEP2_ADMIN_ADDR` env var from the pre-#161 deployment is preserved
@@ -28,7 +28,7 @@ as a deprecated alias: empty `SEP2_ADMIN_LISTEN` falls back to it.
 ### Loopback by default (#268)
 
 A bare-port value (`:8444`, `:9443`) binds the admin listener to `127.0.0.1`
-by default, NOT `0.0.0.0`. This makes the admin surface safe-by-default —
+by default, NOT `0.0.0.0`. This makes the admin surface safe-by-default:
 the SEP2 protocol listener admits any self-signed client cert
 (`tls.RequireAnyClientCert`), and the admin auth middleware's Path 0
 admits loopback requests with no proxy headers, so a `0.0.0.0` admin bind
@@ -84,10 +84,10 @@ Host allowlist and the `Secure` cookie requirement, see
 
 | `SEP2_ADMIN_LISTEN` / `SEP2_ADMIN_ADDR` | `SEP2_ADMIN_TLS` | `SEP2_ADMIN_CERT` / `SEP2_ADMIN_KEY_FILE` | Behavior |
 |---|---|---|---|
-| empty | — | — | Admin listener disabled (no admin surface) |
-| set | `false` (default) | — | Plain HTTP on the admin port — intended for Caddy in front |
+| empty | - | - | Admin listener disabled (no admin surface) |
+| set | `false` (default) | - | Plain HTTP on the admin port: intended for Caddy in front |
 | set | `true` | set | HTTPS with operator-supplied cert/key (`VerifyClientCertIfGiven`) |
-| set | `true` | empty | HTTPS with a freshly generated self-signed cert (`VerifyClientCertIfGiven`) — operator must trust on first use |
+| set | `true` | empty | HTTPS with a freshly generated self-signed cert (`VerifyClientCertIfGiven`); operator must trust on first use |
 
 When HTTPS is enabled, `ClientAuth` is `VerifyClientCertIfGiven`. An
 operator client that does present a cert and chains to a known CA gets the
@@ -112,8 +112,8 @@ the `Forwarded-*` headers (or `Forwarded` per RFC 7239).
 ### Reverse-proxy XFF requirement (#269)
 
 `AdminAuthMiddleware` Path 0 admits requests that arrive over loopback
-with no proxy headers. That bypass is intentional — it makes a local
-operator session usable without juggling Bearer tokens — but it has a
+with no proxy headers. That bypass is intentional: it makes a local
+operator session usable without juggling Bearer tokens, but it has a
 sharp edge when an upstream reverse proxy fronts the admin listener
 without injecting `X-Forwarded-For` or RFC 7239 `Forwarded`. In that
 configuration the proxy relays public traffic to the loopback admin
@@ -134,11 +134,11 @@ WARNING explaining the requirement. Set `SEP2_ADMIN_BEHIND_PROXY=true`
 once the upstream proxy is verified to inject the headers.
 
 For loopback-only admin (the #268 default for bare-port input),
-the warning does not fire — there is no proxy gap to mind because no
+the warning does not fire: there is no proxy gap to mind because no
 public traffic can reach the listener.
 
 If you hit `error:0A0000C6:SSL routines::packet length too long`, the
-admin listener is in plain-HTTP mode and you sent it TLS bytes — drop
+admin listener is in plain-HTTP mode and you sent it TLS bytes: drop
 the `https://` or set `SEP2_ADMIN_TLS=true`.
 
 ### Plain HTTP plus the Secure session cookie (#365)
@@ -208,9 +208,9 @@ is loopback. The host gate is the defense-in-depth.
 
 A request whose `Host` header is not on the allowlist receives HTTP 421
 Misdirected Request and never reaches the auth middleware. An empty
-`Host` on HTTP/1.1 returns 400 (RFC 7230 §5.4 violation).
+`Host` on HTTP/1.1 returns 400 (RFC 7230 section 5.4 violation).
 
-The static defaults — always installed — are:
+The static defaults (always installed) are:
 
 - `localhost`
 - `127.0.0.1`

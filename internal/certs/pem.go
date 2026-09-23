@@ -95,15 +95,18 @@ type CAInfo struct {
 
 // FilterCertificatePEM returns every certificate block in pemBytes,
 // selected by parsing rather than by label, re-encoded canonically as
-// "CERTIFICATE". A block that does not parse as a certificate (most often a
-// private key) is dropped, and so is any non-PEM content, wherever it sits.
-// The result is therefore a pure function of the DER the parser accepted,
-// never of the stored file's own bytes: source-byte copying reimplemented
-// pem.Decode's undocumented block-boundary rule and got it wrong on a file
-// whose END and next BEGIN share one line, serving the CA's private key
-// (design record, 2026-09-23).
-func FilterCertificatePEM(pemBytes []byte) []byte {
-	var out []byte
+// "CERTIFICATE", plus the PEM type label of every block that did not parse
+// as a certificate (most often a private key), in file order. Any non-PEM
+// content is dropped silently, wherever it sits, since pem.Decode never
+// turns it into a block to report. The certificate result is therefore a
+// pure function of the DER the parser accepted, never of the stored file's
+// own bytes: source-byte copying reimplemented pem.Decode's undocumented
+// block-boundary rule and got it wrong on a file whose END and next BEGIN
+// share one line, serving the CA's private key (design record, 2026-09-23).
+// droppedTypes lets a caller log what a CA file's silently-dropped blocks
+// were, and decide whether an empty result is an invariant violation worth
+// refusing rather than serving an empty 200 (#644 fix round 2).
+func FilterCertificatePEM(pemBytes []byte) (out []byte, droppedTypes []string) {
 	rest := pemBytes
 	for {
 		var block *pem.Block
@@ -112,11 +115,12 @@ func FilterCertificatePEM(pemBytes []byte) []byte {
 			break
 		}
 		if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+			droppedTypes = append(droppedTypes, block.Type)
 			continue
 		}
 		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: block.Bytes})...)
 	}
-	return out
+	return out, droppedTypes
 }
 
 // LoadCAPair loads a CA certificate independently of its private key (#638

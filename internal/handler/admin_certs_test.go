@@ -3,6 +3,8 @@ package handler_test
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -472,6 +474,88 @@ func TestHandleGetCANormalizesLegacyX509CertificateLabel(t *testing.T) {
 	if !pool.AppendCertsFromPEM([]byte(got)) {
 		t.Error("certPEM did not load as a trust anchor via AppendCertsFromPEM")
 	}
+}
+
+// TestHandleGetCANoParseableCertificateReturns500 pins #644 fix round 2's
+// MEDIUM 2: the exported constructors take servingCACertPEM independently
+// of servingCACert, so nothing before this handler enforces that the PEM
+// holds a parseable certificate. Reproduced against this head before the
+// fix: a non-PEM body returned 200 with an empty certPEM. The fixed
+// behaviour is a 500 naming the condition, not a silent empty success.
+func TestHandleGetCANoParseableCertificateReturns500(t *testing.T) {
+	_, _, caCert := newCAPEM(t)
+
+	tests := []struct {
+		name string
+		pem  []byte
+	}{
+		{name: "non-PEM garbage", pem: []byte("not PEM at all\n")},
+		{name: "key DER alone under a CERTIFICATE label", pem: keyDERUnderCertificateLabel(t)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := handler.NewAdminCertService(caCert, nil, tt.pem)
+			status, got, raw := getCA(t, svc)
+			if status != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500, body: %s", status, raw)
+			}
+			if got != "" {
+				t.Errorf("certPEM = %q, want empty on a 500", got)
+			}
+		})
+	}
+}
+
+// TestHandleGetCAKeyDERUnderCertificateLabelDroppedFromChain pins MEDIUM 3's
+// third missing shape and error-handling finding 3 together: a block
+// labeled "CERTIFICATE" whose bytes are actually key DER, not certificate
+// DER, sits beside a real certificate in the same file, the same shape as a
+// CA file whose intermediate is corrupt. Selection is by parse, not by
+// label, so the bad block is dropped and the real certificate still
+// serves; the drop is no longer silent, per the decision in HandleGetCA's
+// doc comment (#644 fix round 2, item 5): logged, not refused, since the
+// caller still gets a working (if partial) chain.
+func TestHandleGetCAKeyDERUnderCertificateLabelDroppedFromChain(t *testing.T) {
+	certPEM, _, caCert := newCAPEM(t)
+	file := append(append([]byte{}, keyDERUnderCertificateLabel(t)...), certPEM...)
+
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	svc := handler.NewAdminCertService(caCert, nil, file)
+	status, got, raw := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", status, raw)
+	}
+	assertCanonicalCertificatePEM(t, got, caCert.Raw)
+
+	logged := buf.String()
+	if !strings.Contains(logged, "dropped 1 PEM block") || !strings.Contains(logged, "CERTIFICATE") {
+		t.Errorf("log = %q, want the dropped block type named so a corrupt intermediate is not silent", logged)
+	}
+}
+
+// keyDERUnderCertificateLabel builds a PEM block labeled "CERTIFICATE" whose
+// body is PKCS8 key DER, not a certificate: real key bytes under a label
+// selection-by-parse must still refuse, since x509.ParseCertificate rejects
+// it regardless of the label on the block.
+func keyDERUnderCertificateLabel(t *testing.T) []byte {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: keyDER})
 }
 
 // wrapBase64 base64-encodes der and wraps it at width columns, distinct

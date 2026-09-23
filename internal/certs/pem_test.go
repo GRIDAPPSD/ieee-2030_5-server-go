@@ -69,9 +69,12 @@ func TestFilterCertificatePEMNormalizesWrapping(t *testing.T) {
 	src := "-----BEGIN CERTIFICATE-----\n" + rewrap(der, 48) + "\n-----END CERTIFICATE-----\n"
 	want := canonical(der)
 
-	got := certs.FilterCertificatePEM([]byte(src))
+	got, dropped := certs.FilterCertificatePEM([]byte(src))
 	if string(got) != want {
 		t.Errorf("filtered output = %q, want the canonical re-encoding %q", got, want)
+	}
+	if len(dropped) != 0 {
+		t.Errorf("dropped = %v, want none: the only block present is the certificate", dropped)
 	}
 	// Control: prove the assertion can fail. The 48-column source is not
 	// byte-equal to the canonical form, so this fixture does distinguish a
@@ -81,10 +84,15 @@ func TestFilterCertificatePEMNormalizesWrapping(t *testing.T) {
 	}
 }
 
-// TestFilterCertificatePEMDropsNonCertificateBlocks kills a mutant that
-// selects by block.Type instead of by parsing: an EC-labeled private key
-// block is neither "CERTIFICATE" nor the PKCS8 "PRIVATE KEY" every other
-// fixture in this suite uses, and must not appear in the filtered output.
+// TestFilterCertificatePEMDropsNonCertificateBlocks proves an EC-labeled
+// private key block is dropped from the filtered output, and reported as a
+// dropped block by its own label. It does NOT kill the mutant that selects
+// by block.Type instead of by parsing: the block's label ("EC PRIVATE KEY")
+// is already not "CERTIFICATE", so a label-based selector drops it too.
+// TestFilterCertificatePEMNormalizesLegacyX509CertificateLabel is what kills
+// that mutant (#644 fix round 2, LOW 5: reproduced by changing the
+// selection to `block.Type != "CERTIFICATE"` and observing this test stay
+// green while that one goes red).
 func TestFilterCertificatePEMDropsNonCertificateBlocks(t *testing.T) {
 	der := genCertDER(t)
 	certSrc := "-----BEGIN CERTIFICATE-----\n" + rewrap(der, 64) + "\n-----END CERTIFICATE-----\n"
@@ -104,13 +112,16 @@ func TestFilterCertificatePEMDropsNonCertificateBlocks(t *testing.T) {
 	}
 
 	combined := append(append([]byte{}, ecKeyBuf.Bytes()...), []byte(certSrc)...)
-	got := certs.FilterCertificatePEM(combined)
+	got, dropped := certs.FilterCertificatePEM(combined)
 
 	if bytes.Contains(got, []byte("EC PRIVATE KEY")) {
 		t.Fatalf("filtered output carried an EC PRIVATE KEY block: %q", got)
 	}
 	if string(got) != want {
 		t.Errorf("filtered output = %q, want only the certificate block %q", got, want)
+	}
+	if len(dropped) != 1 || dropped[0] != "EC PRIVATE KEY" {
+		t.Errorf("dropped = %v, want exactly one \"EC PRIVATE KEY\" entry", dropped)
 	}
 }
 
@@ -159,7 +170,7 @@ func TestFilterCertificatePEMDropsBlockSkippedBeforeAndBetween(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := certs.FilterCertificatePEM(tt.file)
+			got, _ := certs.FilterCertificatePEM(tt.file)
 			if string(got) != tt.want {
 				t.Errorf("filtered output = %q, want %q", got, tt.want)
 			}
@@ -193,12 +204,22 @@ func TestFilterCertificatePEMSharedEndBeginLineDropsPrivateKey(t *testing.T) {
 		"-----END CERTIFICATE-----\n"
 	want := canonical(certDER)
 
-	got := certs.FilterCertificatePEM([]byte(shared))
+	got, dropped := certs.FilterCertificatePEM([]byte(shared))
 	if bytes.Contains(got, []byte("PRIVATE KEY")) {
 		t.Fatalf("filtered output leaked the private key on the shared END/BEGIN line: %q", got)
 	}
 	if string(got) != want {
 		t.Errorf("filtered output = %q, want only the certificate %q", got, want)
+	}
+	// pem.Decode itself never surfaces the private key as a *pem.Block on
+	// this shape (its own END search skips straight to the CERTIFICATE
+	// BEGIN embedded in the same line, which is the bug this fix closes),
+	// so it never reaches our parse-and-drop step: dropped is empty, not a
+	// PRIVATE KEY entry. Confirmed by inspection of the pem.Decode source
+	// this brief cites, not asserted here as a positive claim about a block
+	// we never receive.
+	if len(dropped) != 0 {
+		t.Errorf("dropped = %v, want none: pem.Decode itself never returns the private key as a block on this shape", dropped)
 	}
 }
 
@@ -207,21 +228,29 @@ func TestFilterCertificatePEMSharedEndBeginLineDropsPrivateKey(t *testing.T) {
 // file carrying the legacy OpenSSL "X509 CERTIFICATE" label loads and
 // signs correctly. The filter accepts that label on input (the bytes parse
 // as a certificate) and normalizes it to "CERTIFICATE" on output, since
-// byte preservation is not owed to a label being accepted as an alias.
+// byte preservation is not owed to a label being accepted as an alias. This
+// is also what kills the mutant that selects blocks by block.Type instead of
+// by parsing (#644 fix round 2, LOW 5): a label-based selector rejects this
+// legacy label outright, so want would never match a mutated got.
 func TestFilterCertificatePEMNormalizesLegacyX509CertificateLabel(t *testing.T) {
 	der := genCertDER(t)
 	src := "-----BEGIN X509 CERTIFICATE-----\n" + rewrap(der, 64) + "\n-----END X509 CERTIFICATE-----\n"
 	want := canonical(der)
 
-	got := certs.FilterCertificatePEM([]byte(src))
+	got, dropped := certs.FilterCertificatePEM([]byte(src))
 	if string(got) != want {
 		t.Errorf("filtered output = %q, want the normalized label %q", got, want)
+	}
+	if len(dropped) != 0 {
+		t.Errorf("dropped = %v, want none: the legacy label parses as a certificate", dropped)
 	}
 }
 
 // TestFilterCertificatePEMNoCertificateBlockIsEmpty documents the filter's
 // own contract: a file with no block that parses as a certificate returns
-// an empty slice.
+// an empty slice and reports every block found as dropped, which is what
+// HandleGetCA's invariant-violation log line names (#644 fix round 2,
+// MEDIUM 2).
 func TestFilterCertificatePEMNoCertificateBlockIsEmpty(t *testing.T) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -236,9 +265,12 @@ func TestFilterCertificatePEMNoCertificateBlockIsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := certs.FilterCertificatePEM(keyBuf.Bytes())
+	got, dropped := certs.FilterCertificatePEM(keyBuf.Bytes())
 	if len(got) != 0 {
 		t.Errorf("filtered output = %q, want empty for a key-only file", got)
+	}
+	if len(dropped) != 1 || dropped[0] != "PRIVATE KEY" {
+		t.Errorf("dropped = %v, want exactly one \"PRIVATE KEY\" entry", dropped)
 	}
 }
 

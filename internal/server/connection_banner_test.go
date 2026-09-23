@@ -1,6 +1,6 @@
 package server
 
-// #206 — boot connection-details banner.
+// #206 - boot connection-details banner.
 //
 // The format test pins the rendered banner shape so future log changes are
 // deliberate. The banner is operator-facing: a human reads it once at boot
@@ -39,7 +39,7 @@ func TestRenderConnectionBanner_FullProfile(t *testing.T) {
 	out := RenderConnectionBanner(input)
 
 	mustContain := []string{
-		"SEP2 Server — connection details",
+		"SEP2 Server - connection details",
 		"Listen:       https://localhost:8443",
 		"TLS mode:     CCM-8",
 		"Server cert:  certs/server.crt  (SFDI: 123456789012, LFDI: ABCDEF0123456789ABCDEF0123456789ABCDEF01)",

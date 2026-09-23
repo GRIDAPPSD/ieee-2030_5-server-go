@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/x509"
 	"fmt"
 	"log"
 	"os"
@@ -53,20 +55,57 @@ func runServe() error {
 		return err
 	}
 
-	// Load CA for admin cert service. Reuses cfg.CAFile rather than
-	// re-reading SEP2_CA, since both name the same setting.
-	var svc *handler.AdminCertService
+	// #622: load both CA pairs for the admin cert service. SEP2_CA_KEY
+	// stays the shared default (mirrors CAFile): SEP2_SERVING_CA_KEY and
+	// SEP2_DEVICE_CA_KEY fall back to it, exactly as ServingCAFile/
+	// DeviceCAFile fall back to CAFile, so an unsplit deployment resolves
+	// the one key path twice rather than needing a second setting.
 	caKeyFile, err := resolver.envPathOrCertDir("SEP2_CA_KEY", "ca.key")
 	if err != nil {
 		return err
 	}
-	caCert, caKey, loadErr := certs.LoadCA(cfg.CAFile, caKeyFile)
-	if loadErr != nil {
-		log.Printf("CA not loaded (%v): admin cert API disabled", loadErr)
+	servingCAKeyFile, err := envPathOr("SEP2_SERVING_CA_KEY", caKeyFile)
+	if err != nil {
+		return err
+	}
+	deviceCAKeyFile, err := envPathOr("SEP2_DEVICE_CA_KEY", caKeyFile)
+	if err != nil {
+		return err
+	}
+
+	var (
+		servingCert *x509.Certificate
+		servingKey  *ecdsa.PrivateKey
+		servingPEM  []byte
+		deviceCert  *x509.Certificate
+		deviceKey   *ecdsa.PrivateKey
+	)
+	if c, k, loadErr := certs.LoadCA(cfg.EffectiveServingCA(), servingCAKeyFile); loadErr != nil {
+		log.Printf("serving CA not loaded (%v): server-cert minting and CA download disabled", loadErr)
 	} else {
-		caCertPEM, _ := os.ReadFile(cfg.CAFile)
-		svc = handler.NewAdminCertService(caCert, caKey, caCertPEM)
-		log.Println("CA loaded: admin cert API enabled")
+		servingCert, servingKey = c, k
+		servingPEM, _ = os.ReadFile(cfg.EffectiveServingCA())
+	}
+	if c, k, loadErr := certs.LoadCA(cfg.EffectiveDeviceCA(), deviceCAKeyFile); loadErr != nil {
+		log.Printf("device CA not loaded (%v): device-cert minting disabled", loadErr)
+	} else {
+		deviceCert, deviceKey = c, k
+	}
+
+	// svc is constructed whenever EITHER CA loaded: each handler checks
+	// its own pair (internal/handler/admin_certs.go), so a deployment
+	// missing one CA still serves the routes the other CA covers.
+	var svc *handler.AdminCertService
+	if servingCert != nil || deviceCert != nil {
+		svc = handler.NewAdminCertServiceWithCAs(servingCert, servingKey, servingPEM, deviceCert, deviceKey)
+		switch {
+		case servingCert != nil && deviceCert != nil:
+			log.Println("CA(s) loaded: admin cert API enabled")
+		case servingCert != nil:
+			log.Println("serving CA loaded: admin cert API partially enabled (device-cert minting stays disabled)")
+		default:
+			log.Println("device CA loaded: admin cert API partially enabled (server-cert minting and CA download stay disabled)")
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -96,6 +135,21 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		return nil, err
 	}
 	caFile, err := r.envPathOrCertDir("SEP2_CA", "ca.crt")
+	if err != nil {
+		return nil, err
+	}
+	// #622: SEP2_SERVING_CA / SEP2_DEVICE_CA are read raw (envPathOr, not
+	// envPathOrCertDir) and left empty when unset, so Config.EffectiveServingCA
+	// / EffectiveDeviceCA fall back to the just-resolved caFile rather than to
+	// the certDirResolver's own "ca.crt" default. Falling back through
+	// envPathOrCertDir here would ignore an explicit SEP2_CA in favor of the
+	// cert-dir default, breaking the "unsplit deployment reads what it read
+	// before" invariant the moment an operator set SEP2_CA to a custom path.
+	servingCAFile, err := envPathOr("SEP2_SERVING_CA", "")
+	if err != nil {
+		return nil, err
+	}
+	deviceCAFile, err := envPathOr("SEP2_DEVICE_CA", "")
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +187,8 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		CertFile:        certFile,
 		KeyFile:         keyFile,
 		CAFile:          caFile,
+		ServingCAFile:   servingCAFile,
+		DeviceCAFile:    deviceCAFile,
 		ExtraClientCAs:  extraClientCAs,
 		BootFixtureFile: bootFixtureFile,
 

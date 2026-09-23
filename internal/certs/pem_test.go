@@ -23,6 +23,11 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 )
 
+// rewrap re-encodes base64 text at a fixed column width, distinct from
+// Go's own pem.Encode (which always wraps at 64 columns, LF only). A test
+// that used pem.Encode output as its only fixture could not tell a
+// normalizing filter from a byte-copying one, since the two forms would
+// happen to be identical.
 func rewrap(der []byte, width int) string {
 	b64 := base64.StdEncoding.EncodeToString(der)
 	var lines []string
@@ -49,39 +54,41 @@ func genCertDER(t *testing.T) []byte {
 	return block.Bytes
 }
 
-// TestFilterCertificatePEMPreservesNonStandardWrapping kills a mutant that
-// substitutes pem.Encode (re-encoding at 64 columns) for a source-byte copy:
-// a fixture wrapped at 48 columns, which Go's own encoder never produces,
-// must come back exactly as wrapped, not renormalized to 64.
-func TestFilterCertificatePEMPreservesNonStandardWrapping(t *testing.T) {
+// canonical is the encoding FilterCertificatePEM emits for der: the design
+// record's "parse, then pem.EncodeToMemory" contract.
+func canonical(der []byte) string {
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+// TestFilterCertificatePEMNormalizesWrapping pins Question 1 of the #644
+// design: the filter selects by parsing and emits the parser's own
+// canonical encoding, so a fixture wrapped at 48 columns (which Go's own
+// encoder never produces) comes back re-wrapped at 64, not preserved.
+func TestFilterCertificatePEMNormalizesWrapping(t *testing.T) {
 	der := genCertDER(t)
 	src := "-----BEGIN CERTIFICATE-----\n" + rewrap(der, 48) + "\n-----END CERTIFICATE-----\n"
+	want := canonical(der)
 
 	got := certs.FilterCertificatePEM([]byte(src))
-	if string(got) != src {
-		t.Errorf("filtered output changed a 48-column fixture:\n got: %q\nwant: %q", got, src)
+	if string(got) != want {
+		t.Errorf("filtered output = %q, want the canonical re-encoding %q", got, want)
 	}
-	// Control: prove the assertion can fail. A re-encoded (64-column) form
-	// of the identical certificate is NOT byte-equal to the 48-column
-	// source, so this fixture does distinguish the two.
-	var reencoded bytes.Buffer
-	if err := pem.Encode(&reencoded, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
-		t.Fatal(err)
-	}
-	if reencoded.String() == src {
-		t.Fatal("control failed: re-encoded form is byte-identical to the 48-column source, fixture cannot detect a re-encode mutant")
+	// Control: prove the assertion can fail. The 48-column source is not
+	// byte-equal to the canonical form, so this fixture does distinguish a
+	// normalizing filter from one that copies the stored bytes unchanged.
+	if src == want {
+		t.Fatal("control failed: the 48-column source is already byte-identical to the canonical form")
 	}
 }
 
-// TestFilterCertificatePEMDropsNonPKCS8PrivateKeyTypes kills a mutant that
-// checks block.Type != "PRIVATE KEY" instead of block.Type == "CERTIFICATE":
-// every other fixture in this suite uses PKCS8 ("PRIVATE KEY"), so a mutant
-// keying off that one literal would still pass them. An EC-labeled key
-// block is neither the accepted certificate type nor "PRIVATE KEY", and
-// must not appear in the filtered output.
-func TestFilterCertificatePEMDropsNonPKCS8PrivateKeyTypes(t *testing.T) {
+// TestFilterCertificatePEMDropsNonCertificateBlocks kills a mutant that
+// selects by block.Type instead of by parsing: an EC-labeled private key
+// block is neither "CERTIFICATE" nor the PKCS8 "PRIVATE KEY" every other
+// fixture in this suite uses, and must not appear in the filtered output.
+func TestFilterCertificatePEMDropsNonCertificateBlocks(t *testing.T) {
 	der := genCertDER(t)
 	certSrc := "-----BEGIN CERTIFICATE-----\n" + rewrap(der, 64) + "\n-----END CERTIFICATE-----\n"
+	want := canonical(der)
 
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -102,8 +109,8 @@ func TestFilterCertificatePEMDropsNonPKCS8PrivateKeyTypes(t *testing.T) {
 	if bytes.Contains(got, []byte("EC PRIVATE KEY")) {
 		t.Fatalf("filtered output carried an EC PRIVATE KEY block: %q", got)
 	}
-	if string(got) != certSrc {
-		t.Errorf("filtered output = %q, want only the certificate block %q", got, certSrc)
+	if string(got) != want {
+		t.Errorf("filtered output = %q, want only the certificate block %q", got, want)
 	}
 }
 
@@ -116,6 +123,8 @@ func TestFilterCertificatePEMDropsBlockSkippedBeforeAndBetween(t *testing.T) {
 	der2 := genCertDER(t)
 	cert1 := "-----BEGIN CERTIFICATE-----\n" + rewrap(der1, 64) + "\n-----END CERTIFICATE-----\n"
 	cert2 := "-----BEGIN CERTIFICATE-----\n" + rewrap(der2, 64) + "\n-----END CERTIFICATE-----\n"
+	want1 := canonical(der1)
+	want2 := canonical(der2)
 
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -139,12 +148,12 @@ func TestFilterCertificatePEMDropsBlockSkippedBeforeAndBetween(t *testing.T) {
 		{
 			name: "skipped block precedes the only certificate",
 			file: append(append([]byte{}, skipped...), []byte(cert1)...),
-			want: cert1,
+			want: want1,
 		},
 		{
 			name: "skipped block sits between two certificates",
 			file: append(append(append([]byte{}, []byte(cert1)...), skipped...), []byte(cert2)...),
-			want: cert1 + cert2,
+			want: want1 + want2,
 		},
 	}
 
@@ -161,24 +170,26 @@ func TestFilterCertificatePEMDropsBlockSkippedBeforeAndBetween(t *testing.T) {
 	}
 }
 
-// TestFilterCertificatePEMAcceptsLegacyX509CertificateLabel pins item 3:
-// LoadCA does not check block.Type, so a CA file carrying the legacy OpenSSL
-// "X509 CERTIFICATE" label loads and signs correctly. The filter must not
-// treat that label as non-certificate content.
-func TestFilterCertificatePEMAcceptsLegacyX509CertificateLabel(t *testing.T) {
+// TestFilterCertificatePEMNormalizesLegacyX509CertificateLabel pins
+// Question 3 of the #644 design: LoadCA does not check block.Type, so a CA
+// file carrying the legacy OpenSSL "X509 CERTIFICATE" label loads and
+// signs correctly. The filter accepts that label on input (the bytes parse
+// as a certificate) and normalizes it to "CERTIFICATE" on output, since
+// byte preservation is not owed to a label being accepted as an alias.
+func TestFilterCertificatePEMNormalizesLegacyX509CertificateLabel(t *testing.T) {
 	der := genCertDER(t)
 	src := "-----BEGIN X509 CERTIFICATE-----\n" + rewrap(der, 64) + "\n-----END X509 CERTIFICATE-----\n"
+	want := canonical(der)
 
 	got := certs.FilterCertificatePEM([]byte(src))
-	if string(got) != src {
-		t.Errorf("filtered output = %q, want the legacy-labeled block unchanged %q", got, src)
+	if string(got) != want {
+		t.Errorf("filtered output = %q, want the normalized label %q", got, want)
 	}
 }
 
 // TestFilterCertificatePEMNoCertificateBlockIsEmpty documents the filter's
-// own contract for item 2: a file with no certificate block returns an
-// empty slice. HandleGetCA (internal/handler) is responsible for treating
-// that as a refusal rather than a 200 success.
+// own contract: a file with no block that parses as a certificate returns
+// an empty slice.
 func TestFilterCertificatePEMNoCertificateBlockIsEmpty(t *testing.T) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

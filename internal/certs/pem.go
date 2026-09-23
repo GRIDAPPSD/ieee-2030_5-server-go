@@ -1,7 +1,6 @@
 package certs
 
 import (
-	"bytes"
 	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -94,63 +93,28 @@ type CAInfo struct {
 	Key  *ecdsa.PrivateKey
 }
 
-// certificateBlockTypes are the PEM block types FilterCertificatePEM treats
-// as a certificate. LoadCA does not check block.Type before calling
-// x509.ParseCertificate, so a CA file that loads and signs correctly may
-// still carry the legacy OpenSSL label instead of the modern one; the filter
-// accepts both rather than silently emptying a CA that is in active use.
-var certificateBlockTypes = map[string]bool{
-	"CERTIFICATE":      true,
-	"X509 CERTIFICATE": true,
-}
-
-// pemBeginMarker is the line prefix pem.Decode itself anchors on (see
-// pemStart in encoding/pem): a block's own encoded form starts at the last
-// such marker before the matching END line, not at the start of whatever
-// span pem.Decode was asked to search.
-var pemBeginMarker = []byte("-----BEGIN ")
-
-// blockSourceStart returns the offset within consumed (the bytes pem.Decode
-// walked to produce one block, any leading skipped content included) where
-// that block's own "-----BEGIN " line starts. It mirrors pem.Decode's "last
-// BEGIN line before the END line" rule so the returned offset always lands
-// on the same BEGIN pem.Decode itself matched, never on a marker belonging
-// to a skipped block that precedes it.
-func blockSourceStart(consumed []byte) int {
-	limit := len(consumed)
-	for {
-		i := bytes.LastIndex(consumed[:limit], pemBeginMarker)
-		if i < 0 {
-			return 0
-		}
-		if i == 0 || consumed[i-1] == '\n' {
-			return i
-		}
-		limit = i
-	}
-}
-
-// FilterCertificatePEM returns the concatenated certificate blocks found in
-// pemBytes (see certificateBlockTypes), dropping every other PEM block (most
-// often a private key) and any non-PEM content, whether it precedes the
-// first block, sits between two blocks, or trails the last one. Each
-// block's own source bytes are copied rather than re-encoded, so a file
-// holding only certificate blocks comes back unchanged byte for byte,
-// whatever its line wrapping.
+// FilterCertificatePEM returns every certificate block in pemBytes,
+// selected by parsing rather than by label, re-encoded canonically as
+// "CERTIFICATE". A block that does not parse as a certificate (most often a
+// private key) is dropped, and so is any non-PEM content, wherever it sits.
+// The result is therefore a pure function of the DER the parser accepted,
+// never of the stored file's own bytes: source-byte copying reimplemented
+// pem.Decode's undocumented block-boundary rule and got it wrong on a file
+// whose END and next BEGIN share one line, serving the CA's private key
+// (design record, 2026-09-23).
 func FilterCertificatePEM(pemBytes []byte) []byte {
 	var out []byte
 	rest := pemBytes
 	for {
-		start := rest
 		var block *pem.Block
 		block, rest = pem.Decode(rest)
 		if block == nil {
 			break
 		}
-		if certificateBlockTypes[block.Type] {
-			consumed := start[:len(start)-len(rest)]
-			out = append(out, consumed[blockSourceStart(consumed):]...)
+		if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+			continue
 		}
+		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: block.Bytes})...)
 	}
 	return out
 }

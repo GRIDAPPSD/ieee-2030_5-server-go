@@ -5,15 +5,18 @@ import (
 )
 
 // sensitiveAdminPatterns is the certificate and traffic-capture route
-// families (#579, #631): every pattern BuildAdminRouter mounts under
-// "/api/certs" or "/api/traffic". The certificate routes mint and return key
-// material; the traffic routes return captured Authorization and Cookie
-// header bytes verbatim. Both refuse a request admitted only by the #246
-// loopback bypass, even though AdminAuthMiddleware already lets it through
-// for every other admin route. Kept as a map literal, not derived from the
+// families (#579, #631), plus the one route that mints a credential those
+// families' own recheck accepts (#579 HIGH-1). The certificate routes mint
+// and return key material; the traffic routes return captured Authorization
+// and Cookie header bytes verbatim; POST /auth/ticket mints the one-time
+// ticket that credentialAdmits' Path C redeems, so admitting its issuance
+// through the bypass alone let a caller mint its own way past the other two
+// families in a second request. Kept as a map literal, not derived from the
 // router at init time, so a new /api/certs or /api/traffic pattern added
 // later fails the coverage test in admin_sensitive_routes_test.go instead of
-// silently joining an already-protected family.
+// silently joining an already-protected family; a new credential-minting
+// route needs the same manual addition here, since nothing about its name
+// marks it as a member the way the two path prefixes do.
 var sensitiveAdminPatterns = map[string]struct{}{
 	"GET /api/certs/ca":           {},
 	"POST /api/certs/server":      {},
@@ -21,6 +24,7 @@ var sensitiveAdminPatterns = map[string]struct{}{
 	"GET /api/certs/device-types": {},
 	"POST /api/certs/info":        {},
 	"GET /api/traffic/":           {},
+	"POST /auth/ticket":           {},
 }
 
 // requireCredentialForSensitiveRoutes routes a sensitiveAdminPatterns

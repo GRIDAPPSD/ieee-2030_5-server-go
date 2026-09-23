@@ -177,6 +177,10 @@ func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
 			want = append(want, p)
 		}
 	}
+	// #579 HIGH-1: the ticket-mint route is not under either path prefix, so
+	// it is not derivable from the router's pattern list the way the two
+	// families are; it is asserted explicitly instead.
+	want = append(want, "POST /auth/ticket")
 	sort.Strings(want)
 
 	var got []string

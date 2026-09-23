@@ -61,9 +61,11 @@ const (
 	// Store.Subscribe refuses to register a new subscription once the
 	// store is closed (store_reader.go), so a stream that arrives during
 	// shutdown can no longer hold Shutdown open on its own. This bound is
-	// defense in depth for any other handler that blocks past it, so
-	// Run's own shutdown path can never hang past a fixed grace period
-	// the way an unbounded context.Background() could.
+	// defense in depth for any other handler that blocks past it, so the
+	// admin listener's own shutdown can never hang past a fixed grace
+	// period. Two later steps on the same path are still unbounded:
+	// metricsSrv.Shutdown(context.Background()) and the bare <-notifierDone
+	// wait (#628 fix round 2, silent-failure LOW).
 	adminShutdownTimeout = 10 * time.Second
 )
 

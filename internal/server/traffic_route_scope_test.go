@@ -90,11 +90,12 @@ func TestTrafficRouteAbsentWithCaptureOff(t *testing.T) {
 // Bearer; this pins the same behavior at the unit level, unauthenticated
 // (the loopback bypass), for two non-GET methods.
 //
-// Mutant (admin_router.go): register the traffic mount without a leading
-// method, `authed.Handle("/api/traffic/", ...)`. net/http's ServeMux then
-// matches every method on that pattern, so POST reaches the handler (a
-// StripPrefix, whose target for this test is http.NotFoundHandler) and
-// answers 404, not 405: this test goes RED.
+// Mutant (admin_body_type.go): drop requireAdminBodyTypes's
+// `if pattern == "" { mux.ServeHTTP(w, r); return }` early return. A
+// method-mismatched request reaches mux.mux.Handler with an empty pattern
+// (net/http answers 405 itself for a matched path with no matched method),
+// so falling through looks it up in adminBodyTypes, finds nothing declared,
+// and answers 415 instead of 405: both subtests go RED.
 func TestTrafficRouteRefusesNonGETMethod(t *testing.T) {
 	router, _ := server.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",

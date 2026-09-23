@@ -113,19 +113,54 @@ func TestOptionsCaptureRecordsRealClientThroughRunBothModes(t *testing.T) {
 				t.Errorf("Recorder.Close (%s): %v", mode, cerr)
 			}
 
-			var found bool
-			for _, ex := range sink.All() {
-				if ex.Mark != sep2capture.MarkHandled || !strings.Contains(string(ex.Request.Bytes), "GET /dcap") {
-					continue
-				}
-				found = true
-				if ex.ClientLFDI == "" {
-					t.Errorf("captured exchange (%s) has no ClientLFDI: identity was not preserved", mode)
-				}
-			}
-			if !found {
-				t.Errorf("no captured GET /dcap exchange in %d recorded (mode=%s)", len(sink.All()), mode)
-			}
+			waitForCapturedGET(t, sink, mode)
 		})
 	}
+}
+
+// waitForCapturedGET polls sink for a MarkHandled GET /dcap exchange with a
+// preserved ClientLFDI, up to captureWaitBound, instead of reading sink.All
+// once: Recorder.Close(context.Background()) already blocks until every
+// finished exchange has reached Sink.Record (recorder.go's Close doc), so
+// this bound is defense against a dispatch delay this package's contract
+// does not actually leave open, not a fix for one. What it changes is the
+// failure: on a miss it names the Mark, HandlerRuns and request bytes of
+// every exchange sink held, so the next failure shows what the one recorded
+// exchange actually was instead of just its count.
+const captureWaitBound = 2 * time.Second
+
+func waitForCapturedGET(t *testing.T, sink *sep2capture.MemorySink, mode string) {
+	t.Helper()
+	deadline := time.Now().Add(captureWaitBound)
+	var seen []sep2capture.Exchange
+	for {
+		seen = sink.All()
+		for _, ex := range seen {
+			if ex.Mark != sep2capture.MarkHandled || !strings.Contains(string(ex.Request.Bytes), "GET /dcap") {
+				continue
+			}
+			if ex.ClientLFDI == "" {
+				t.Errorf("captured exchange (%s) has no ClientLFDI: identity was not preserved", mode)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Errorf("no captured GET /dcap exchange within %s (mode=%s); %d recorded:", captureWaitBound, mode, len(seen))
+	for _, ex := range seen {
+		t.Errorf("  id=%d conn=%d mark=%s handlerRuns=%d lfdi=%q err=%q reqLen=%d req=%q",
+			ex.ID, ex.ConnID, ex.Mark, ex.HandlerRuns, ex.ClientLFDI, ex.Error, len(ex.Request.Bytes), capped(string(ex.Request.Bytes), 200))
+	}
+}
+
+// capped truncates s to at most n bytes for a diagnostic line, marking the
+// cut so a truncated print is never mistaken for the whole value.
+func capped(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "...(truncated)"
 }

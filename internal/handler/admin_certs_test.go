@@ -295,6 +295,102 @@ func TestHandleGetCACertOnlyFileIsByteForByteUnchanged(t *testing.T) {
 	}
 }
 
+// TestHandleGetCADropsBlockSkippedBeforeAndBetweenCertificates pins #644's
+// escaped bug: the filter previously copied the span since the *previous*
+// block ended, not the matched block's own bytes, so a block pem.Decode
+// skipped (a mismatched END label, no END line, or malformed base64) was
+// folded into whichever certificate followed it. The request runs over a
+// real listening socket, not httptest.NewRecorder, because the property
+// under test is what a caller on the wire receives.
+func TestHandleGetCADropsBlockSkippedBeforeAndBetweenCertificates(t *testing.T) {
+	cert1PEM, keyPEM, cert1 := newCAPEM(t)
+	cert2PEM, _, _ := newCAPEM(t)
+
+	// A key block whose END label does not match its BEGIN label: pem.Decode
+	// skips past it entirely rather than returning it as a block.
+	mismatchedEnd := bytes.Replace(append([]byte{}, keyPEM...), []byte("-----END PRIVATE KEY-----"), []byte("-----END WRONG LABEL-----"), 1)
+
+	tests := []struct {
+		name string
+		file []byte
+	}{
+		{
+			name: "skipped block precedes the only certificate",
+			file: append(append([]byte{}, mismatchedEnd...), cert1PEM...),
+		},
+		{
+			name: "skipped block sits between two certificates",
+			file: append(append(append([]byte{}, cert1PEM...), mismatchedEnd...), cert2PEM...),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := handler.NewAdminCertService(cert1, nil, tt.file)
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/certs/ca", svc.HandleGetCA())
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+
+			resp, err := http.Get(srv.URL + "/api/certs/ca")
+			if err != nil {
+				t.Fatalf("GET %s: %v", srv.URL, err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			var out struct {
+				CertPEM string `json:"certPEM"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			if bytes.Contains([]byte(out.CertPEM), []byte("PRIVATE KEY")) {
+				t.Fatalf("certPEM leaked the skipped block's key material: %q", out.CertPEM)
+			}
+			if bytes.Contains([]byte(out.CertPEM), []byte("WRONG LABEL")) {
+				t.Fatalf("certPEM leaked the skipped block's mismatched trailer: %q", out.CertPEM)
+			}
+		})
+	}
+}
+
+// TestHandleGetCAAcceptsLegacyX509CertificateLabel pins item 3: LoadCA does
+// not check block.Type before parsing, so a CA file carrying the legacy
+// OpenSSL "X509 CERTIFICATE" label loads and signs correctly. The download
+// route must not silently empty such a file just because its label predates
+// the modern "CERTIFICATE" convention.
+func TestHandleGetCAAcceptsLegacyX509CertificateLabel(t *testing.T) {
+	certPEM, _, caCert := newCAPEM(t)
+	legacy := bytes.Replace(append([]byte{}, certPEM...), []byte("CERTIFICATE"), []byte("X509 CERTIFICATE"), 2)
+
+	svc := handler.NewAdminCertService(caCert, nil, legacy)
+	h := svc.HandleGetCA()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var out struct {
+		CertPEM string `json:"certPEM"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.CertPEM == "" {
+		t.Fatal("certPEM is empty for a legacy-labeled CA that loads and signs correctly")
+	}
+	block, _ := pem.Decode([]byte(out.CertPEM))
+	if block == nil || !bytes.Equal(block.Bytes, caCert.Raw) {
+		t.Errorf("certPEM did not decode to the CA certificate: %q", out.CertPEM)
+	}
+}
+
 // newCAPEM generates a CA certificate and key pair and returns the encoded
 // PEM bytes alongside the parsed certificate, for constructing
 // AdminCertService fixtures directly (the private key type is irrelevant to

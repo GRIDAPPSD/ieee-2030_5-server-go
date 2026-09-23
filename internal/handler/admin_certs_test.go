@@ -363,3 +363,167 @@ func newTestCertService(t *testing.T) *handler.AdminCertService {
 
 	return handler.NewAdminCertService(caCert, raw.(*ecdsa.PrivateKey), caCertPEM)
 }
+
+// TestAdminCertServiceRoutesEachRouteToItsOwnCA is #622 done-condition 2: a
+// device certificate signed by the device CA verifies against the device
+// CA and is refused by the serving CA, and a server certificate signed by
+// the serving CA verifies against the serving CA and is refused by the
+// device CA. Both directions are asserted per data-invariants: a service
+// that quietly signs everything with one CA must not pass by having every
+// check trivially succeed.
+func TestAdminCertServiceRoutesEachRouteToItsOwnCA(t *testing.T) {
+	svc, servingCA, deviceCA := newTestTwoCAService(t, "Test Serving CA", "Test Device CA")
+
+	servingPool := x509.NewCertPool()
+	servingPool.AddCert(servingCA)
+	devicePool := x509.NewCertPool()
+	devicePool.AddCert(deviceCA)
+
+	// HandleGetCA answers with the serving CA, not the device CA: an
+	// operator downloads this to verify THIS server, not to see what the
+	// listener trusts (#622, #625).
+	getH := svc.HandleGetCA()
+	getReq := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	getW := httptest.NewRecorder()
+	getH.ServeHTTP(getW, getReq)
+	var getResp struct {
+		CertPEM string `json:"certPEM"`
+	}
+	if err := json.NewDecoder(getW.Body).Decode(&getResp); err != nil {
+		t.Fatalf("decode GET /api/certs/ca response: %v", err)
+	}
+	getBlock, _ := pem.Decode([]byte(getResp.CertPEM))
+	if getBlock == nil {
+		t.Fatal("GET /api/certs/ca: certPEM did not decode")
+	}
+	gotCA, err := x509.ParseCertificate(getBlock.Bytes)
+	if err != nil {
+		t.Fatalf("GET /api/certs/ca: parse cert: %v", err)
+	}
+	if !gotCA.Equal(servingCA) {
+		t.Error("GET /api/certs/ca did not return the serving CA")
+	}
+	if gotCA.Equal(deviceCA) {
+		t.Error("GET /api/certs/ca returned the device CA")
+	}
+
+	// Server cert: signed by the serving CA, verifies against it, refused
+	// by the device CA pool.
+	serverH := svc.HandleCreateServerCert()
+	serverReq := httptest.NewRequest(http.MethodPost, "/api/certs/server", bytes.NewBufferString(`{"hosts":["localhost"]}`))
+	serverW := httptest.NewRecorder()
+	serverH.ServeHTTP(serverW, serverReq)
+	if serverW.Code != http.StatusCreated {
+		t.Fatalf("POST /api/certs/server: status = %d, want 201, body: %s", serverW.Code, serverW.Body.String())
+	}
+	var serverResp struct {
+		CertPEM string `json:"certPEM"`
+	}
+	if err := json.NewDecoder(serverW.Body).Decode(&serverResp); err != nil {
+		t.Fatalf("decode POST /api/certs/server response: %v", err)
+	}
+	serverBlock, _ := pem.Decode([]byte(serverResp.CertPEM))
+	serverCert, err := x509.ParseCertificate(serverBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse minted server cert: %v", err)
+	}
+	if _, err := serverCert.Verify(x509.VerifyOptions{Roots: servingPool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+		t.Errorf("minted server cert does not verify against the serving CA: %v", err)
+	}
+	if _, err := serverCert.Verify(x509.VerifyOptions{Roots: devicePool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err == nil {
+		t.Error("minted server cert unexpectedly verifies against the device CA: HandleCreateServerCert is not routed to the serving pair")
+	}
+
+	// Device cert: signed by the device CA, verifies against it, refused
+	// by the serving CA pool.
+	deviceH := svc.HandleCreateDeviceCert()
+	deviceReq := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(`{"deviceType":1,"hwSerialNum":"ROUTE-001","hwType":"1.3.6.1.4.1.40732.99"}`))
+	deviceW := httptest.NewRecorder()
+	deviceH.ServeHTTP(deviceW, deviceReq)
+	if deviceW.Code != http.StatusCreated {
+		t.Fatalf("POST /api/certs/device: status = %d, want 201, body: %s", deviceW.Code, deviceW.Body.String())
+	}
+	var deviceResp struct {
+		CertPEM string `json:"certPEM"`
+	}
+	if err := json.NewDecoder(deviceW.Body).Decode(&deviceResp); err != nil {
+		t.Fatalf("decode POST /api/certs/device response: %v", err)
+	}
+	deviceBlock, _ := pem.Decode([]byte(deviceResp.CertPEM))
+	deviceCert, err := x509.ParseCertificate(deviceBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse minted device cert: %v", err)
+	}
+	// CheckSignatureFrom, not Verify: CSIP-compliant device certs carry a
+	// critical HardwareModuleName SAN that stdlib x509 leaves in
+	// UnhandledCriticalExtensions (internal/certs/generate_test.go documents
+	// the same choice for GenerateDeviceCert's own signature check). This
+	// still asserts what item 2 asks: which CA's key produced the signature.
+	if err := deviceCert.CheckSignatureFrom(deviceCA); err != nil {
+		t.Errorf("minted device cert is not signed by the device CA: %v", err)
+	}
+	if err := deviceCert.CheckSignatureFrom(servingCA); err == nil {
+		t.Error("minted device cert unexpectedly verifies as signed by the serving CA: HandleCreateDeviceCert is not routed to the device pair")
+	}
+}
+
+// TestAdminCertServiceRefusalControlSameCAVerifiesBoth is the control for
+// the two "unexpectedly verifies" assertions above: with a single CA
+// service (the pre-#622 constructor, both CAs are the same file), the same
+// cross-pool check that must refuse above instead succeeds. This proves
+// those assertions can fail - they are not vacuously true because a pool
+// is empty or malformed.
+func TestAdminCertServiceRefusalControlSameCAVerifiesBoth(t *testing.T) {
+	svc := newTestCertService(t) // one CA fills both roles, as when the two CAs are the same file
+
+	deviceH := svc.HandleCreateDeviceCert()
+	deviceReq := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(`{"deviceType":1,"hwSerialNum":"CTRL-001","hwType":"1.3.6.1.4.1.40732.99"}`))
+	deviceW := httptest.NewRecorder()
+	deviceH.ServeHTTP(deviceW, deviceReq)
+	if deviceW.Code != http.StatusCreated {
+		t.Fatalf("POST /api/certs/device: status = %d, want 201, body: %s", deviceW.Code, deviceW.Body.String())
+	}
+	var deviceResp struct {
+		CertPEM string `json:"certPEM"`
+	}
+	if err := json.NewDecoder(deviceW.Body).Decode(&deviceResp); err != nil {
+		t.Fatalf("decode POST /api/certs/device response: %v", err)
+	}
+	deviceBlock, _ := pem.Decode([]byte(deviceResp.CertPEM))
+	deviceCert, err := x509.ParseCertificate(deviceBlock.Bytes)
+	if err != nil {
+		t.Fatalf("parse minted device cert: %v", err)
+	}
+
+	if err := deviceCert.CheckSignatureFrom(svc.ServingCA()); err != nil {
+		t.Errorf("control: with one CA filling both roles, the device cert must be signed by the (identical) serving CA, got: %v", err)
+	}
+}
+
+func newTestTwoCAService(t *testing.T, servingCN, deviceCN string) (svc *handler.AdminCertService, servingCA, deviceCA *x509.Certificate) {
+	t.Helper()
+
+	mkCA := func(cn string) (*x509.Certificate, *ecdsa.PrivateKey, []byte) {
+		certPEM, keyPEM, err := certs.GenerateCA(certs.CAOptions{CommonName: cn, ValidYears: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		block, _ := pem.Decode(certPEM)
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keyBlock, _ := pem.Decode(keyPEM)
+		raw, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cert, raw.(*ecdsa.PrivateKey), certPEM
+	}
+
+	servingCA, servingKey, servingPEM := mkCA(servingCN)
+	deviceCA, deviceKey, _ := mkCA(deviceCN)
+
+	svc = handler.NewAdminCertServiceWithCAs(servingCA, servingKey, servingPEM, deviceCA, deviceKey)
+	return svc, servingCA, deviceCA
+}

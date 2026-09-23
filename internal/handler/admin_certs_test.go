@@ -357,6 +357,29 @@ func TestHandleGetCADropsBlockSkippedBeforeAndBetweenCertificates(t *testing.T) 
 	}
 }
 
+// TestHandleGetCANoCertificateBlockIsRefused pins item 2 of the #644 fix
+// round: a stored file that decodes to no certificate block at all (here, a
+// key-only file) is not a 200 success. A scripted caller writes this
+// response straight to a trust anchor file, so an empty "success" is a
+// silent failure; the route refuses instead.
+func TestHandleGetCANoCertificateBlockIsRefused(t *testing.T) {
+	_, keyPEM, caCert := newCAPEM(t)
+
+	svc := handler.NewAdminCertService(caCert, nil, keyPEM)
+	h := svc.HandleGetCA()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code == http.StatusOK {
+		t.Fatalf("status = 200, want a non-2xx refusal for a file with no certificate block")
+	}
+	if strings.Contains(w.Body.String(), "PRIVATE KEY") {
+		t.Errorf("refusal body leaked key material: %q", w.Body.String())
+	}
+}
+
 // TestHandleGetCAAcceptsLegacyX509CertificateLabel pins item 3: LoadCA does
 // not check block.Type before parsing, so a CA file carrying the legacy
 // OpenSSL "X509 CERTIFICATE" label loads and signs correctly. The download

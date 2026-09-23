@@ -72,9 +72,13 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 // HandleGetCA returns the CA certificate PEM (never the private key). The
-// stored file is filtered to its CERTIFICATE blocks: some tooling writes a
+// stored file is filtered to its certificate blocks: some tooling writes a
 // combined PEM holding the certificate and its private key, and the file
-// content must never be echoed verbatim (#644).
+// content must never be echoed verbatim (#644). A stored file that yields no
+// certificate block is refused rather than served as an empty 200: a
+// scripted caller writes this response straight to a trust anchor file, and
+// an empty anchor is a silent failure a human watching a browser would not
+// hit the same way.
 func (s *AdminCertService) HandleGetCA() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
@@ -84,7 +88,13 @@ func (s *AdminCertService) HandleGetCA() http.HandlerFunc {
 			writeError(w, http.StatusServiceUnavailable, "CA not initialized")
 			return
 		}
-		writeJSON(w, http.StatusOK, certResponse{CertPEM: string(certs.FilterCertificatePEM(s.caCertPEM))})
+		filtered := certs.FilterCertificatePEM(s.caCertPEM)
+		if len(filtered) == 0 {
+			log.Printf("HandleGetCA: stored CA PEM has no certificate block")
+			writeError(w, http.StatusInternalServerError, "CA certificate PEM has no certificate block")
+			return
+		}
+		writeJSON(w, http.StatusOK, certResponse{CertPEM: string(filtered)})
 	}
 }
 

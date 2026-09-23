@@ -170,3 +170,27 @@ func TestFilterCertificatePEMAcceptsLegacyX509CertificateLabel(t *testing.T) {
 		t.Errorf("filtered output = %q, want the legacy-labeled block unchanged %q", got, src)
 	}
 }
+
+// TestFilterCertificatePEMNoCertificateBlockIsEmpty documents the filter's
+// own contract for item 2: a file with no certificate block returns an
+// empty slice. HandleGetCA (internal/handler) is responsible for treating
+// that as a refusal rather than a 200 success.
+func TestFilterCertificatePEMNoCertificateBlockIsEmpty(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keyBuf bytes.Buffer
+	if err := pem.Encode(&keyBuf, &pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := certs.FilterCertificatePEM(keyBuf.Bytes())
+	if len(got) != 0 {
+		t.Errorf("filtered output = %q, want empty for a key-only file", got)
+	}
+}

@@ -308,21 +308,50 @@ func TestRunCapturesProtocolTrafficNotAdminTraffic(t *testing.T) {
 		_ = resp.Body.Close()
 	}
 
-	clientsResp, err := client.Do(adminReq(t, http.MethodGet, "http://"+env.adminAddr+"/api/traffic/clients", true))
-	if err != nil {
-		t.Fatalf("GET /api/traffic/clients: %v", err)
-	}
-	body, _ := io.ReadAll(clientsResp.Body)
-	_ = clientsResp.Body.Close()
-
-	if !strings.Contains(string(body), env.deviceLFDI) {
-		t.Errorf("captured clients %s do not contain the protocol device's LFDI %q", body, env.deviceLFDI)
+	found, body := waitForTrafficClients(t, client, func() *http.Request {
+		return adminReq(t, http.MethodGet, "http://"+env.adminAddr+"/api/traffic/clients", true)
+	}, env.deviceLFDI)
+	if !found {
+		t.Errorf("captured clients do not contain the protocol device's LFDI %q within %s; last body seen: %s", env.deviceLFDI, trafficWaitBound, body)
 	}
 	// The admin listener carries no client certs at all, so the only way
 	// admin traffic could appear here is by connection count: exactly one
 	// client (the protocol device) must be present.
-	if got := strings.Count(string(body), `"key"`); got != 1 {
+	if got := strings.Count(body, `"key"`); got != 1 {
 		t.Errorf(`clients response has %d "key" entries, want 1 (the protocol device only): %s`, got, body)
+	}
+}
+
+// trafficWaitBound is how long waitForTrafficClients polls before giving up.
+// Store.Record (sep2capture/store.go) only enqueues onto writeCh; a separate
+// writeLoop goroutine does the actual index update Clients() (and this
+// route) reads, so a request that reads the endpoint immediately after the
+// protocol GET races that goroutine rather than waiting for it.
+const trafficWaitBound = 2 * time.Second
+
+// waitForTrafficClients polls GET /api/traffic/clients, via req (rebuilt
+// each attempt: an *http.Request is used at most once), until wantLFDI
+// appears in the response body or trafficWaitBound elapses. On a miss it
+// still returns the last body the endpoint actually gave, so the failure
+// names what was seen instead of just that nothing was found.
+func waitForTrafficClients(t *testing.T, client *http.Client, req func() *http.Request, wantLFDI string) (found bool, lastBody string) {
+	t.Helper()
+	deadline := time.Now().Add(trafficWaitBound)
+	for {
+		resp, err := client.Do(req())
+		if err != nil {
+			t.Fatalf("GET /api/traffic/clients: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		lastBody = string(body)
+		if strings.Contains(lastBody, wantLFDI) {
+			return true, lastBody
+		}
+		if time.Now().After(deadline) {
+			return false, lastBody
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

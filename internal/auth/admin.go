@@ -84,7 +84,7 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *Sessio
 
 			// Paths A through D: mTLS, Bearer, ticket, cookie session.
 			if credentialAdmits(r, adminKey, tickets, sessions) {
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(w, withCredentialAdmission(r))
 				return
 			}
 
@@ -236,28 +236,55 @@ func LogSuccessfulAdminCredential(r *http.Request, admissionPath string) {
 	)
 }
 
-// bypassAdmissionContextKey marks a request admitted only through the #246
-// loopback bypass (Path 0): no credential of any kind was presented.
-// AdmittedByLoopbackBypassOnly reads this marker; the four credentialed
-// paths never set it, so a request that passed mTLS, Bearer, a ticket, or a
-// cookie session reports false, the same as this middleware's own refusal
-// (which never reaches a handler at all).
-type bypassAdmissionContextKey struct{}
+// admissionOutcomeContextKey marks HOW AdminAuthMiddleware admitted a
+// request: through the #246 loopback bypass (Path 0, no credential of any
+// kind presented) or through one of the four credentialed paths
+// (credentialAdmits). AdmittedByLoopbackBypassOnly reads this marker.
+//
+// #579 MEDIUM-3: the marker used to be a single bool set only on the bypass
+// path, so its ABSENCE (unset, or any request that never passed through
+// AdminAuthMiddleware at all) read as "not bypass-only" and skipped the
+// recheck. A future middleware that rebuilds the request context between
+// AdminAuthMiddleware and RequireRealCredential, or any caller that wires
+// RequireRealCredential up without AdminAuthMiddleware in front of it, would
+// then admit silently with no credential and no log line. Recording both
+// outcomes and treating anything that is not explicitly
+// admissionOutcomeCredential as bypass-only makes that shape fail closed
+// instead: an unmarked request is rechecked, not waved through.
+type admissionOutcomeContextKey struct{}
 
-// withBypassAdmission returns r with the Path 0 marker attached.
+type admissionOutcome int
+
+const (
+	admissionOutcomeCredential admissionOutcome = iota + 1
+	admissionOutcomeBypass
+)
+
+// withBypassAdmission returns r marked as admitted by Path 0 alone.
 func withBypassAdmission(r *http.Request) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), bypassAdmissionContextKey{}, true))
+	return r.WithContext(context.WithValue(r.Context(), admissionOutcomeContextKey{}, admissionOutcomeBypass))
 }
 
-// AdmittedByLoopbackBypassOnly reports whether r reached its handler through
-// the #246 loopback bypass alone. A route family that must not accept
-// bypass-only admission (the certificate routes and the traffic-capture read
-// routes, #579 and #631) checks this after AdminAuthMiddleware and refuses
-// when it is true; a request carrying a real credential, from any address
-// including loopback, reports false and is unaffected.
+// withCredentialAdmission returns r marked as admitted by one of the four
+// credentialed paths (credentialAdmits), so RequireRealCredential's recheck
+// knows not to run credentialAdmits a second time for the same request - a
+// one-time ticket redeemed here must not be redeemed again.
+func withCredentialAdmission(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), admissionOutcomeContextKey{}, admissionOutcomeCredential))
+}
+
+// AdmittedByLoopbackBypassOnly reports whether r must be rechecked by
+// RequireRealCredential: true unless AdminAuthMiddleware explicitly marked
+// the request as admitted through a real credential. A route family that
+// must not accept bypass-only admission (the certificate routes, the
+// traffic-capture read routes, and the ticket-mint route, #579 and #631)
+// checks this after AdminAuthMiddleware; a request carrying a real
+// credential, from any address including loopback, reports false and is
+// unaffected. An unmarked request - the marker absent entirely, not merely
+// false - also reports true, per the fail-closed reasoning above.
 func AdmittedByLoopbackBypassOnly(r *http.Request) bool {
-	v, _ := r.Context().Value(bypassAdmissionContextKey{}).(bool)
-	return v
+	v, _ := r.Context().Value(admissionOutcomeContextKey{}).(admissionOutcome)
+	return v != admissionOutcomeCredential
 }
 
 // LogSensitiveRouteRefusal records a refusal of a route that requires a real

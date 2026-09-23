@@ -132,14 +132,17 @@ func TestAdmittedByLoopbackBypassOnlyTracksPathZeroAdmission(t *testing.T) {
 	}
 }
 
-// TestAdmittedByLoopbackBypassOnlyDefaultsFalse is the control for the table
-// above: a bare *http.Request built without ever passing through
-// AdminAuthMiddleware must not read as bypass-admitted, or the predicate
-// would default to "true" and every non-loopback subtest above would pass
-// for the wrong reason.
-func TestAdmittedByLoopbackBypassOnlyDefaultsFalse(t *testing.T) {
+// TestAdmittedByLoopbackBypassOnlyDefaultsToRecheck is #579 MEDIUM-3's fix: a
+// bare *http.Request built without ever passing through AdminAuthMiddleware
+// must read as needing the recheck, the same as an explicit bypass marker,
+// so RequireRealCredential fails closed on a request it cannot place rather
+// than admitting it unchecked. This does not weaken the table test above:
+// every "want: false" case there is a request AdminAuthMiddleware itself
+// marked admissionOutcomeCredential, which is the one value that still
+// reports false.
+func TestAdmittedByLoopbackBypassOnlyDefaultsToRecheck(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
-	if auth.AdmittedByLoopbackBypassOnly(req) {
-		t.Fatal("a request that never passed through AdminAuthMiddleware reports bypass-admitted")
+	if !auth.AdmittedByLoopbackBypassOnly(req) {
+		t.Fatal("a request that never passed through AdminAuthMiddleware reports not-bypass-only: it would skip the recheck")
 	}
 }

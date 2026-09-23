@@ -170,3 +170,32 @@ func TestRequireRealCredentialPassesThroughNonBypassAdmission(t *testing.T) {
 		t.Errorf("ticket store has %d entries after redemption, want 0", tickets.Len())
 	}
 }
+
+// TestRequireRealCredentialFailsClosedWhenAdmissionUnmarked is #579
+// MEDIUM-3 (error-handling lane): AdmittedByLoopbackBypassOnly's admit
+// condition was the ABSENCE of a context marker, so any request that
+// reaches this guard without first passing through AdminAuthMiddleware's
+// own admission decision - a future middleware that rebuilds the request
+// context between the two, or a caller that wires RequireRealCredential up
+// on its own - read as "not bypass-only" and passed straight through with
+// no credential check at all. RequireRealCredential is exercised directly
+// here, with no AdminAuthMiddleware in front of it, which is exactly that
+// unmarked shape.
+func TestRequireRealCredentialFailsClosedWhenAdmissionUnmarked(t *testing.T) {
+	tickets := auth.NewTicketStore(30 * time.Second)
+	sessions := auth.NewSessionStore(testSessionIdle, testSessionAbsolute)
+	var reached bool
+	inner := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
+	handler := auth.RequireRealCredential("test-key", tickets, sessions)(inner)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if reached {
+		t.Fatal("an unmarked, uncredentialed request reached the sensitive handler: the guard failed open")
+	}
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body = %q", w.Code, w.Body.String())
+	}
+}

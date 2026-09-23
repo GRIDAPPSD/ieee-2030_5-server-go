@@ -70,37 +70,38 @@ type CAInfo struct {
 // posture for a role that should never mint - still gets that certificate
 // back rather than being treated as though the CA were missing entirely.
 //
-// cert is nil only when the certificate itself could not be read or
-// parsed; keyErr is nil exactly when key is non-nil and usable. A key that
-// parses but does not match the certificate's public key is returned the
-// same as an absent key (#638 fix round 1, MEDIUM 2): LoadCA's plain
-// "read both files" contract would otherwise pair a certificate rotated
-// under SEP2_SERVING_CA or SEP2_DEVICE_CA with the old shared key, load
-// "clean", and fail only at the first mint with an opaque x509 error.
-func LoadCAPair(certFile, keyFile string) (cert *x509.Certificate, certPEM []byte, key *ecdsa.PrivateKey, keyErr error) {
+// cert is nil exactly when certErr is non-nil: the certificate itself could
+// not be read or parsed, and keyErr stays nil since the key was never
+// reached. keyErr is nil exactly when key is non-nil and usable; it is set,
+// with cert still non-nil, when the certificate loaded but its key did
+// not - absent, unparseable, or not the certificate's own key (#638 fix
+// round 1, MEDIUM 2). The two errors never both hold, so a caller that
+// branches on keyErr alone never reports a missing certificate as a key
+// problem (#638 fix round 3 item 6).
+func LoadCAPair(certFile, keyFile string) (cert *x509.Certificate, certPEM []byte, key *ecdsa.PrivateKey, certErr, keyErr error) {
 	certPEMBytes, err := os.ReadFile(certFile)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("read CA cert: %w", err)
+		return nil, nil, nil, fmt.Errorf("read CA cert: %w", err), nil
 	}
 	c, err := ParseCertificatePEM(certPEMBytes)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("parse CA cert: %w", err)
+		return nil, nil, nil, fmt.Errorf("parse CA cert: %w", err), nil
 	}
 
 	keyPEMBytes, err := os.ReadFile(keyFile)
 	if err != nil {
-		return c, certPEMBytes, nil, fmt.Errorf("read CA key: %w", err)
+		return c, certPEMBytes, nil, nil, fmt.Errorf("read CA key: %w", err)
 	}
 	k, err := ParseKeyPEM(keyPEMBytes)
 	if err != nil {
-		return c, certPEMBytes, nil, fmt.Errorf("parse CA key: %w", err)
+		return c, certPEMBytes, nil, nil, fmt.Errorf("parse CA key: %w", err)
 	}
 	certPub, ok := c.PublicKey.(*ecdsa.PublicKey)
 	if !ok {
-		return c, certPEMBytes, nil, fmt.Errorf("CA certificate public key is not ECDSA")
+		return c, certPEMBytes, nil, nil, fmt.Errorf("CA certificate public key is not ECDSA")
 	}
 	if !certPub.Equal(&k.PublicKey) {
-		return c, certPEMBytes, nil, fmt.Errorf("CA certificate and key are not a matched pair")
+		return c, certPEMBytes, nil, nil, fmt.Errorf("CA certificate and key are not a matched pair")
 	}
-	return c, certPEMBytes, k, nil
+	return c, certPEMBytes, k, nil, nil
 }

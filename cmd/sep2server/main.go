@@ -100,17 +100,25 @@ func loadAdminCertService(cfg *config.Config, resolver *certDirResolver) (*handl
 		return nil, err
 	}
 
-	servingCert, servingPEM, servingKey, servingKeyErr := certs.LoadCAPair(cfg.EffectiveServingCA(), servingCAKeyFile)
+	// #638 fix round 3 item 2: the log lines below claim a CA-download
+	// status. GET /api/certs/ca is gated on the CERTIFICATE alone
+	// (internal/handler/admin_certs.go, HandleGetCA), never the key, so
+	// only a nil certificate disables it; a loaded certificate with an
+	// unusable key still serves it. Only the servingCert == nil case below
+	// says download is disabled; every other message here is silent on it,
+	// leaving that one line as the sole claim rather than one of several
+	// that can contradict each other.
+	servingCert, servingPEM, servingKey, servingCertErr, servingKeyErr := certs.LoadCAPair(cfg.EffectiveServingCA(), servingCAKeyFile)
 	switch {
 	case servingCert == nil:
-		log.Printf("serving CA not loaded (%v): certificate verification, server-cert minting and CA download disabled", servingKeyErr)
+		log.Printf("serving CA not loaded (%v): certificate verification, server-cert minting and CA download disabled", servingCertErr)
 	case servingKeyErr != nil:
-		log.Printf("serving CA certificate loaded, key not usable (%v): server-cert minting and CA download disabled; certificate stays trusted for verification and the banner", servingKeyErr)
+		log.Printf("serving CA certificate loaded, key not usable (%v): server-cert minting disabled; certificate stays trusted for verification, CA download and the banner", servingKeyErr)
 	}
-	deviceCert, _, deviceKey, deviceKeyErr := certs.LoadCAPair(cfg.EffectiveDeviceCA(), deviceCAKeyFile)
+	deviceCert, _, deviceKey, deviceCertErr, deviceKeyErr := certs.LoadCAPair(cfg.EffectiveDeviceCA(), deviceCAKeyFile)
 	switch {
 	case deviceCert == nil:
-		log.Printf("device CA not loaded (%v): device-cert minting disabled", deviceKeyErr)
+		log.Printf("device CA not loaded (%v): device-cert minting disabled", deviceCertErr)
 	case deviceKeyErr != nil:
 		log.Printf("device CA certificate loaded, key not usable (%v): device-cert minting disabled; certificate stays trusted for verification and the banner", deviceKeyErr)
 	}
@@ -120,7 +128,10 @@ func loadAdminCertService(cfg *config.Config, resolver *certDirResolver) (*handl
 	// (internal/handler/admin_certs.go, #638 fix round 1 MEDIUM 3), so a
 	// deployment missing a key still serves the routes that need only the
 	// certificate (HandleGetCA, the banner), and a deployment missing a
-	// whole CA still serves the routes the other CA covers.
+	// whole CA still serves the routes the other CA covers. Starting the
+	// admin LISTENER is a separate, narrower question: see AdminCertService
+	// .CanMint and its call site in internal/server/server.go (#638 fix
+	// round 3 item 1).
 	var svc *handler.AdminCertService
 	if servingCert != nil || deviceCert != nil {
 		svc = handler.NewAdminCertServiceWithCAs(servingCert, servingKey, servingPEM, deviceCert, deviceKey)
@@ -130,9 +141,9 @@ func loadAdminCertService(cfg *config.Config, resolver *certDirResolver) (*handl
 		case servingKey != nil:
 			log.Println("serving CA key loaded: admin cert API partially enabled (device-cert minting stays disabled)")
 		case deviceKey != nil:
-			log.Println("device CA key loaded: admin cert API partially enabled (server-cert minting and CA download stay disabled)")
+			log.Println("device CA key loaded: admin cert API partially enabled (server-cert minting stays disabled)")
 		default:
-			log.Println("CA certificate(s) loaded without a usable key: minting disabled; CA download and the banner still use the loaded certificate(s)")
+			log.Println("CA certificate(s) loaded without a usable key: minting disabled; the banner still uses the loaded certificate(s)")
 		}
 	}
 	return svc, nil

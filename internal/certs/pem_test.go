@@ -10,6 +10,7 @@ package certs_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
@@ -24,12 +25,15 @@ func TestLoadCAPair_MatchedPair(t *testing.T) {
 	certFile := writeFile(t, dir, "ca.crt", certPEM)
 	keyFile := writeFile(t, dir, "ca.key", keyPEM)
 
-	cert, gotPEM, key, keyErr := certs.LoadCAPair(certFile, keyFile)
+	cert, gotPEM, key, certErr, keyErr := certs.LoadCAPair(certFile, keyFile)
 	if cert == nil {
 		t.Fatal("cert = nil, want the parsed CA certificate")
 	}
 	if key == nil {
 		t.Fatal("key = nil, want the parsed CA key for a matched pair")
+	}
+	if certErr != nil {
+		t.Errorf("certErr = %v, want nil for a matched pair", certErr)
 	}
 	if keyErr != nil {
 		t.Errorf("keyErr = %v, want nil for a matched pair", keyErr)
@@ -52,12 +56,15 @@ func TestLoadCAPair_CertOnlyNoKeyFile(t *testing.T) {
 	certFile := writeFile(t, dir, "ca.crt", certPEM)
 	missingKeyFile := filepath.Join(dir, "does-not-exist.key")
 
-	cert, _, key, keyErr := certs.LoadCAPair(certFile, missingKeyFile)
+	cert, _, key, certErr, keyErr := certs.LoadCAPair(certFile, missingKeyFile)
 	if cert == nil {
 		t.Fatal("cert = nil, want the certificate to load even though the key file is absent")
 	}
 	if key != nil {
 		t.Error("key != nil, want nil when the key file does not exist")
+	}
+	if certErr != nil {
+		t.Errorf("certErr = %v, want nil: the certificate loaded, so nothing about it failed", certErr)
 	}
 	if keyErr == nil {
 		t.Error("keyErr = nil, want a non-nil error naming the missing key")
@@ -80,18 +87,28 @@ func TestLoadCAPair_MismatchedPair(t *testing.T) {
 	certFile := writeFile(t, dir, "ca.crt", newCertPEM)
 	keyFile := writeFile(t, dir, "ca.key", oldKeyPEM)
 
-	cert, _, key, keyErr := certs.LoadCAPair(certFile, keyFile)
+	cert, _, key, certErr, keyErr := certs.LoadCAPair(certFile, keyFile)
 	if cert == nil {
 		t.Fatal("cert = nil, want the new certificate to still load")
 	}
 	if key != nil {
 		t.Error("key != nil, want nil for a certificate/key pair from two different CAs")
 	}
+	if certErr != nil {
+		t.Errorf("certErr = %v, want nil: the certificate itself parsed fine", certErr)
+	}
 	if keyErr == nil {
 		t.Error("keyErr = nil, want a non-nil error naming the mismatch")
 	}
 }
 
+// TestLoadCAPair_CertMissing is also the reproduction for #638 fix round 3
+// item 6: a caller branching on keyErr alone must not report a missing
+// certificate as a key problem. Before the fix, the missing-certificate
+// error was returned AS keyErr with certErr never existing, so the two
+// causes were indistinguishable from the caller's side; this asserts
+// certErr carries the failure and keyErr does not, and that certErr names
+// the certificate rather than the key.
 func TestLoadCAPair_CertMissing(t *testing.T) {
 	dir := t.TempDir()
 	_, keyPEM, err := certs.GenerateCA(certs.CAOptions{CommonName: "638 CA", ValidYears: 1})
@@ -101,7 +118,7 @@ func TestLoadCAPair_CertMissing(t *testing.T) {
 	keyFile := writeFile(t, dir, "ca.key", keyPEM)
 	missingCertFile := filepath.Join(dir, "does-not-exist.crt")
 
-	cert, certPEM, key, keyErr := certs.LoadCAPair(missingCertFile, keyFile)
+	cert, certPEM, key, certErr, keyErr := certs.LoadCAPair(missingCertFile, keyFile)
 	if cert != nil {
 		t.Error("cert != nil, want nil when the certificate file does not exist")
 	}
@@ -111,8 +128,14 @@ func TestLoadCAPair_CertMissing(t *testing.T) {
 	if key != nil {
 		t.Error("key != nil, want nil when the certificate itself never loaded")
 	}
-	if keyErr == nil {
-		t.Error("keyErr = nil, want a non-nil error naming the missing certificate")
+	if certErr == nil {
+		t.Fatal("certErr = nil, want a non-nil error naming the missing certificate")
+	}
+	if !strings.Contains(certErr.Error(), "CA cert") {
+		t.Errorf("certErr = %v, want it to name the certificate, not the key", certErr)
+	}
+	if keyErr != nil {
+		t.Errorf("keyErr = %v, want nil: the key was never reached, so it must not carry the certificate's failure", keyErr)
 	}
 }
 

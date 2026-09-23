@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"crypto/x509"
 	"encoding/pem"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
@@ -133,5 +135,93 @@ func TestLoadAdminCertServiceServingCertOverrideWithoutKeyDisablesServingMintOnl
 	svc.HandleCreateDeviceCert().ServeHTTP(deviceW, httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(`{"deviceType":1,"hwSerialNum":"ITEM2-002","hwType":"1.3.6.1.4.1.40732.99"}`)))
 	if deviceW.Code != http.StatusCreated {
 		t.Errorf("POST /api/certs/device: status = %d, want 201 (the device role is untouched by the serving override): %s", deviceW.Code, deviceW.Body.String())
+	}
+}
+
+// TestLoadAdminCertServiceKeylessServingCALogAgreesWithGetCA is #638 fix
+// round 3 item 2: the boot log's CA-download claims must agree with what
+// GET /api/certs/ca actually returns. Read by the consumer's path (the
+// route itself, not the log), against a keyless serving CA: the route is
+// gated on the certificate alone, so it answers 200, and no log line may
+// claim CA download is disabled for this boot.
+func TestLoadAdminCertServiceKeylessServingCALogAgreesWithGetCA(t *testing.T) {
+	unsetCAEnv(t)
+	dir := t.TempDir()
+	writeTestCAPair(t, dir, "638 Item3r Keyless Serving CA", "ca.crt", "ca.key")
+	if err := os.Remove(filepath.Join(dir, "ca.key")); err != nil {
+		t.Fatalf("remove ca.key: %v", err)
+	}
+
+	cfg := &config.Config{CAFile: filepath.Join(dir, "ca.crt")}
+	resolver := &certDirResolver{resolved: true, dir: dir}
+
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	svc, err := loadAdminCertService(cfg, resolver)
+	if err != nil {
+		t.Fatalf("loadAdminCertService: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("svc is nil; the keyless serving CA certificate did not load")
+	}
+
+	getW := httptest.NewRecorder()
+	svc.HandleGetCA().ServeHTTP(getW, httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil))
+	if getW.Code != http.StatusOK {
+		t.Fatalf("GET /api/certs/ca: status = %d, want 200 (the certificate loaded even though the key did not)", getW.Code)
+	}
+
+	// Look for the specific disabled/unavailable phrasing, not any mention
+	// of "CA download": the fixed serving-key-not-usable line correctly
+	// lists CA download among what STILL works ("...verification, CA
+	// download and the banner"), and a substring match on "CA download and"
+	// alone would flag that true sentence too.
+	if got := buf.String(); strings.Contains(got, "CA download disabled") || strings.Contains(got, "CA download stay disabled") || strings.Contains(got, "CA download and the banner still use") {
+		t.Errorf("boot log claims CA download is disabled or unavailable while the route answered 200:\n%s", got)
+	}
+}
+
+// TestLoadAdminCertServiceNoServingCertificateLogAgreesWithGetCA is item 2's
+// mirror case: no serving certificate at all, but a device certificate did
+// load. GET /api/certs/ca must answer 503, and no log line from this boot
+// may claim the opposite (main.go:135's "default" branch used to say CA
+// download still used the loaded certificate(s), contradicting the
+// "download disabled" line the serving switch had already printed).
+func TestLoadAdminCertServiceNoServingCertificateLogAgreesWithGetCA(t *testing.T) {
+	unsetCAEnv(t)
+	dir := t.TempDir()
+	writeTestCAPair(t, dir, "638 Item3r Device Only CA", "device.crt", "device.key")
+	missingServingCert := filepath.Join(dir, "does-not-exist-serving.crt")
+
+	cfg := &config.Config{
+		CAFile:       missingServingCert,
+		DeviceCAFile: filepath.Join(dir, "device.crt"),
+	}
+	resolver := &certDirResolver{resolved: true, dir: dir}
+
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	svc, err := loadAdminCertService(cfg, resolver)
+	if err != nil {
+		t.Fatalf("loadAdminCertService: %v", err)
+	}
+	if svc == nil {
+		t.Fatal("svc is nil; the device CA certificate did not load")
+	}
+
+	getW := httptest.NewRecorder()
+	svc.HandleGetCA().ServeHTTP(getW, httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil))
+	if getW.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /api/certs/ca: status = %d, want 503 (no serving certificate loaded)", getW.Code)
+	}
+
+	if got := buf.String(); strings.Contains(got, "CA download and the banner still use") {
+		t.Errorf("boot log claims CA download still works while the route answered 503:\n%s", got)
 	}
 }

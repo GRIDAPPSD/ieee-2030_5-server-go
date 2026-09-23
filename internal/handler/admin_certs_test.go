@@ -268,6 +268,46 @@ func TestHandleGetCAServesEveryCertificateBlock(t *testing.T) {
 	}
 }
 
+// assertCanonicalCertificatePEM pins the literal shape the #644 design named
+// as the residual risk worth a test (#644 fix round 2, item 1): every
+// base64 line but the last is exactly 64 characters, the block carries no
+// PEM headers, and it decodes to wantDER. Earlier versions of this
+// assertion computed the expectation with pem.EncodeToMemory itself, which
+// cannot fail on a toolchain change to that same encoder's wrapping or
+// header handling, since both sides would move together; this checks the
+// text directly instead.
+func assertCanonicalCertificatePEM(t *testing.T, body string, wantDER []byte) {
+	t.Helper()
+
+	block, rest := pem.Decode([]byte(body))
+	if block == nil || block.Type != "CERTIFICATE" {
+		t.Fatalf("body did not decode to a CERTIFICATE block: %q", body)
+	}
+	if len(rest) != 0 {
+		t.Errorf("body carried trailing PEM content after the certificate: %q", rest)
+	}
+	if len(block.Headers) != 0 {
+		t.Errorf("block carried PEM headers %v, want none: crypto/x509.CertPool refuses a body with headers", block.Headers)
+	}
+	if !bytes.Equal(block.Bytes, wantDER) {
+		t.Error("block DER did not match the expected certificate")
+	}
+
+	lines := strings.Split(strings.TrimSuffix(body, "\n"), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("body has %d lines, want at least a BEGIN, a base64 line, and an END", len(lines))
+	}
+	b64Lines := lines[1 : len(lines)-1]
+	for i, line := range b64Lines {
+		if i < len(b64Lines)-1 && len(line) != 64 {
+			t.Errorf("base64 line %d is %d characters, want exactly 64", i, len(line))
+		}
+	}
+	if last := b64Lines[len(b64Lines)-1]; len(last) == 0 || len(last) > 64 {
+		t.Errorf("final base64 line is %d characters, want 1 to 64", len(last))
+	}
+}
+
 // TestHandleGetCACertOnlyFileIsCanonicallyReencoded pins Question 1 of the
 // #644 design: the response is pem.EncodeToMemory's canonical encoding of
 // the certificate the parser accepted, not the stored file's own bytes.
@@ -284,10 +324,7 @@ func TestHandleGetCACertOnlyFileIsCanonicallyReencoded(t *testing.T) {
 		t.Fatalf("status = %d, want 200", status)
 	}
 
-	want := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw}))
-	if got != want {
-		t.Errorf("certPEM = %q, want the canonical re-encoding %q", got, want)
-	}
+	assertCanonicalCertificatePEM(t, got, caCert.Raw)
 	if got != string(certPEM) {
 		t.Errorf("certPEM = %q, want it to still equal the generator's own output %q", got, string(certPEM))
 	}
@@ -296,9 +333,12 @@ func TestHandleGetCACertOnlyFileIsCanonicallyReencoded(t *testing.T) {
 // TestHandleGetCANormalizesNonCanonicalWrapping pins the design's named
 // residual risk for Question 1: the response is now coupled to Go's PEM
 // encoder rather than to the operator's file, so a stored file wrapped at a
-// width other than 64 columns comes back re-wrapped. If a future toolchain
-// changed pem.EncodeToMemory's wrapping this goes red, instead of silently
-// changing what every device is told to trust.
+// width other than 64 columns comes back re-wrapped. assertCanonicalCertificatePEM
+// asserts the literal 64-column shape directly, so a toolchain change to
+// pem.EncodeToMemory's wrapping goes red here instead of silently changing
+// what every device is told to trust (#644 fix round 2, item 1: reproduced
+// the prior assertion's blind spot with a hand-rolled 76-column re-encoder
+// that this literal check would catch and the identity check would not).
 func TestHandleGetCANormalizesNonCanonicalWrapping(t *testing.T) {
 	_, _, caCert := newCAPEM(t)
 	src := "-----BEGIN CERTIFICATE-----\n" + wrapBase64(caCert.Raw, 48) + "\n-----END CERTIFICATE-----\n"
@@ -311,10 +351,7 @@ func TestHandleGetCANormalizesNonCanonicalWrapping(t *testing.T) {
 	if got == src {
 		t.Fatal("certPEM equals the 48-column source; want it re-wrapped canonically")
 	}
-	want := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw}))
-	if got != want {
-		t.Errorf("certPEM = %q, want the canonical (64-column) re-encoding %q", got, want)
-	}
+	assertCanonicalCertificatePEM(t, got, caCert.Raw)
 }
 
 // TestHandleGetCADropsBlockSkippedBeforeAndBetweenCertificates pins #644's

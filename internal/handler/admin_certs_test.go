@@ -151,6 +151,171 @@ func TestHandleGetCA(t *testing.T) {
 	}
 }
 
+// TestHandleGetCACombinedPEMServesCertOnly pins #644: a combined PEM file
+// (certificate followed by its private key, a layout some tooling produces)
+// must not echo the key to the caller of the route an operator uses to fetch
+// the anchor for a device. The control (bytes.Contains for "PRIVATE KEY")
+// reproduces RED against the pre-fix handler, which serves s.caCertPEM
+// verbatim; it goes GREEN once the handler filters to CERTIFICATE blocks.
+func TestHandleGetCACombinedPEMServesCertOnly(t *testing.T) {
+	certPEM, keyPEM, caCert := newCAPEM(t)
+	combined := append(append([]byte{}, certPEM...), keyPEM...)
+
+	svc := handler.NewAdminCertService(caCert, nil, combined)
+	h := svc.HandleGetCA()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+
+	var resp struct {
+		CertPEM string `json:"certPEM"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if bytes.Contains([]byte(resp.CertPEM), []byte("PRIVATE KEY")) {
+		t.Fatalf("certPEM leaked a private key block: %q", resp.CertPEM)
+	}
+	block, rest := pem.Decode([]byte(resp.CertPEM))
+	if block == nil || block.Type != "CERTIFICATE" {
+		t.Fatalf("certPEM did not decode to a CERTIFICATE block: %q", resp.CertPEM)
+	}
+	if len(bytes.TrimSpace(rest)) != 0 {
+		t.Errorf("certPEM carried trailing PEM content after the certificate: %q", rest)
+	}
+	if !bytes.Equal(block.Bytes, caCert.Raw) {
+		t.Error("certPEM decoded to a different certificate than the CA's")
+	}
+}
+
+// TestHandleGetCAServesEveryCertificateBlock covers the three file shapes
+// #644 names: a combined cert-and-key file, a multi-certificate file (a
+// chain), and a certificate with trailing non-PEM text. Every case must
+// yield a response holding every CERTIFICATE block and nothing else.
+func TestHandleGetCAServesEveryCertificateBlock(t *testing.T) {
+	cert1PEM, keyPEM, cert1 := newCAPEM(t)
+	cert2PEM, _, cert2 := newCAPEM(t)
+
+	tests := []struct {
+		name      string
+		file      []byte
+		wantCerts [][]byte // raw DER bytes expected, in order
+	}{
+		{
+			name:      "certificate and key",
+			file:      append(append([]byte{}, cert1PEM...), keyPEM...),
+			wantCerts: [][]byte{cert1.Raw},
+		},
+		{
+			name:      "certificate chain",
+			file:      append(append([]byte{}, cert1PEM...), cert2PEM...),
+			wantCerts: [][]byte{cert1.Raw, cert2.Raw},
+		},
+		{
+			name:      "certificate with trailing text",
+			file:      append(append([]byte{}, cert1PEM...), []byte("# comment appended by some tooling\n")...),
+			wantCerts: [][]byte{cert1.Raw},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := handler.NewAdminCertService(cert1, nil, tt.file)
+			h := svc.HandleGetCA()
+
+			req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			var resp struct {
+				CertPEM string `json:"certPEM"`
+			}
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if bytes.Contains([]byte(resp.CertPEM), []byte("PRIVATE KEY")) {
+				t.Fatalf("certPEM leaked a private key block: %q", resp.CertPEM)
+			}
+
+			rest := []byte(resp.CertPEM)
+			var got [][]byte
+			for {
+				var block *pem.Block
+				block, rest = pem.Decode(rest)
+				if block == nil {
+					break
+				}
+				if block.Type != "CERTIFICATE" {
+					t.Fatalf("non-certificate block %q reached the response", block.Type)
+				}
+				got = append(got, block.Bytes)
+			}
+			if len(bytes.TrimSpace(rest)) != 0 {
+				t.Errorf("trailing non-PEM content reached the response: %q", rest)
+			}
+			if len(got) != len(tt.wantCerts) {
+				t.Fatalf("got %d certificate blocks, want %d", len(got), len(tt.wantCerts))
+			}
+			for i, want := range tt.wantCerts {
+				if !bytes.Equal(got[i], want) {
+					t.Errorf("block %d: certificate DER did not match", i)
+				}
+			}
+		})
+	}
+}
+
+// TestHandleGetCACertOnlyFileIsByteForByteUnchanged pins the invariant that a
+// certificate-only file passes through unmodified: the route's fix for #644
+// must filter, never re-encode, or a source file wrapped at a different line
+// length than Go's pem.Encode would come back changed.
+func TestHandleGetCACertOnlyFileIsByteForByteUnchanged(t *testing.T) {
+	certPEM, _, caCert := newCAPEM(t)
+
+	svc := handler.NewAdminCertService(caCert, nil, certPEM)
+	h := svc.HandleGetCA()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	var resp struct {
+		CertPEM string `json:"certPEM"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.CertPEM != string(certPEM) {
+		t.Errorf("certificate-only response changed:\n got: %q\nwant: %q", resp.CertPEM, string(certPEM))
+	}
+}
+
+// newCAPEM generates a CA certificate and key pair and returns the encoded
+// PEM bytes alongside the parsed certificate, for constructing
+// AdminCertService fixtures directly (the private key type is irrelevant to
+// HandleGetCA).
+func newCAPEM(t *testing.T) (certPEM, keyPEM []byte, cert *x509.Certificate) {
+	t.Helper()
+	certPEM, keyPEM, err := certs.GenerateCA(certs.CAOptions{
+		CommonName: "Test CA",
+		ValidYears: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(certPEM)
+	cert, err = x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return certPEM, keyPEM, cert
+}
+
 func TestHandleCreateServerCert(t *testing.T) {
 	svc := newTestCertService(t)
 	h := svc.HandleCreateServerCert()

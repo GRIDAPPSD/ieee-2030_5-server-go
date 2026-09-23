@@ -21,6 +21,11 @@ import (
 // (HandleCreateDeviceCert). Each handler checks its OWN pair's nil-ness
 // rather than a shared one, so a deployment with only one CA loaded still
 // serves the routes the other CA covers.
+//
+// #638 fix round 1: a certificate and its key are now independently
+// nil-able within one pair (LoadCAPair loads a certificate whose key is
+// missing or does not match it), so the two minting handlers check BOTH
+// halves of their own pair, not just the certificate.
 type AdminCertService struct {
 	mu               sync.RWMutex
 	servingCACert    *x509.Certificate
@@ -40,7 +45,10 @@ func NewAdminCertService(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, caCe
 
 // NewAdminCertServiceWithCAs creates a service with independent serving and
 // device CA pairs (#622). Either pair may be nil, which disables only the
-// routes that pair signs; see the AdminCertService doc comment.
+// routes that pair signs; see the AdminCertService doc comment. A pair's
+// certificate may also be non-nil with its key nil (#638 fix round 1): the
+// minting routes for that pair are disabled the same as a fully-nil pair,
+// while ServingCA/DeviceCA and HandleGetCA still see the certificate.
 func NewAdminCertServiceWithCAs(servingCACert *x509.Certificate, servingCAKey *ecdsa.PrivateKey, servingCACertPEM []byte, deviceCACert *x509.Certificate, deviceCAKey *ecdsa.PrivateKey) *AdminCertService {
 	return &AdminCertService{
 		servingCACert:    servingCACert,
@@ -129,12 +137,18 @@ func (s *AdminCertService) HandleGetCA() http.HandlerFunc {
 // HandleCreateServerCert generates a server certificate signed by the
 // serving CA (#622): the protocol listener's own leaf must chain to the CA
 // devices are told to trust the server against.
+//
+// #638 fix round 1 (MEDIUM 3): guards the key alongside the certificate.
+// LoadCAPair (#638) can hand this service a certificate with a nil key -
+// the deliberate "trusted for verification, not for minting" case - and the
+// exported constructor accepts a nil key directly too; certs.GenerateServerCert
+// dereferences the key unconditionally, so a cert-only guard here panics.
 func (s *AdminCertService) HandleCreateServerCert() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
 
-		if s.servingCACert == nil {
+		if s.servingCACert == nil || s.servingCAKey == nil {
 			writeError(w, http.StatusServiceUnavailable, "CA not initialized")
 			return
 		}
@@ -173,12 +187,15 @@ func (s *AdminCertService) HandleCreateServerCert() http.HandlerFunc {
 // HandleCreateDeviceCert generates a device certificate signed by the
 // device CA (#622): the protocol listener's ClientCAs pool must trust it.
 // Returns the cert PEM, key PEM, SFDI, and LFDI.
+//
+// #638 fix round 1 (MEDIUM 3): guards the key alongside the certificate,
+// for the same reason as HandleCreateServerCert above.
 func (s *AdminCertService) HandleCreateDeviceCert() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
 
-		if s.deviceCACert == nil {
+		if s.deviceCACert == nil || s.deviceCAKey == nil {
 			writeError(w, http.StatusServiceUnavailable, "CA not initialized")
 			return
 		}

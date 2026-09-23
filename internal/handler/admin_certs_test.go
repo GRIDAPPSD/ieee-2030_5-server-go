@@ -346,6 +346,42 @@ func TestHandleCertDeviceTypesValuesRoundTripThroughMint(t *testing.T) {
 	}
 }
 
+// TestHandleCreateServerCertNilKeyReturns503 is #638 fix round 1 (MEDIUM 3):
+// a certificate with a nil key (the shape LoadCAPair returns for a keyless
+// or mismatched pair) must be refused with a 503, not reach
+// certs.GenerateServerCert and panic on the nil key.
+func TestHandleCreateServerCertNilKeyReturns503(t *testing.T) {
+	svc, _, _ := newTestTwoCAService(t, "638 Serving CA", "638 Device CA")
+	certOnly := handler.NewAdminCertServiceWithCAs(svc.ServingCA(), nil, nil, svc.DeviceCA(), nil)
+	h := certOnly.HandleCreateServerCert()
+
+	body := `{"hosts":["localhost"],"validYears":1}`
+	req := httptest.NewRequest(http.MethodPost, "/api/certs/server", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestHandleCreateDeviceCertNilKeyReturns503 is the device-route half of
+// TestHandleCreateServerCertNilKeyReturns503.
+func TestHandleCreateDeviceCertNilKeyReturns503(t *testing.T) {
+	svc, _, _ := newTestTwoCAService(t, "638 Serving CA", "638 Device CA")
+	certOnly := handler.NewAdminCertServiceWithCAs(svc.ServingCA(), nil, nil, svc.DeviceCA(), nil)
+	h := certOnly.HandleCreateDeviceCert()
+
+	body := `{"deviceType":1,"hwSerialNum":"NILKEY-001","hwType":"1.3.6.1.4.1.40732.99"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503, body: %s", w.Code, w.Body.String())
+	}
+}
+
 func newTestCertService(t *testing.T) *handler.AdminCertService {
 	t.Helper()
 	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{

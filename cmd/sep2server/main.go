@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/x509"
 	"fmt"
 	"log"
 	"os"
@@ -60,6 +58,15 @@ func runServe() error {
 	// SEP2_DEVICE_CA_KEY fall back to it, exactly as ServingCAFile/
 	// DeviceCAFile fall back to CAFile, so an unsplit deployment resolves
 	// the one key path twice rather than needing a second setting.
+	//
+	// #638 fix round 1 (MEDIUM 1/3): certs.LoadCAPair loads each
+	// certificate independently of its key, so a deployment that keeps a
+	// CA's certificate and removes its key - the safer posture for a role
+	// that never mints - still reports that CA as loaded rather than
+	// missing. keyErr distinguishes "no key at all" from "certificate and
+	// key are not a matched pair" (MEDIUM 2): both leave key nil, so
+	// neither is silently paired and neither reaches the admin cert
+	// service as mint-capable, but the two cases get their own log line.
 	caKeyFile, err := resolver.envPathOrCertDir("SEP2_CA_KEY", "ca.key")
 	if err != nil {
 		return err
@@ -73,38 +80,39 @@ func runServe() error {
 		return err
 	}
 
-	var (
-		servingCert *x509.Certificate
-		servingKey  *ecdsa.PrivateKey
-		servingPEM  []byte
-		deviceCert  *x509.Certificate
-		deviceKey   *ecdsa.PrivateKey
-	)
-	if c, k, loadErr := certs.LoadCA(cfg.EffectiveServingCA(), servingCAKeyFile); loadErr != nil {
-		log.Printf("serving CA not loaded (%v): server-cert minting and CA download disabled", loadErr)
-	} else {
-		servingCert, servingKey = c, k
-		servingPEM, _ = os.ReadFile(cfg.EffectiveServingCA())
+	servingCert, servingPEM, servingKey, servingKeyErr := certs.LoadCAPair(cfg.EffectiveServingCA(), servingCAKeyFile)
+	switch {
+	case servingCert == nil:
+		log.Printf("serving CA not loaded (%v): certificate verification, server-cert minting and CA download disabled", servingKeyErr)
+	case servingKeyErr != nil:
+		log.Printf("serving CA certificate loaded, key not usable (%v): server-cert minting and CA download disabled; certificate stays trusted for verification and the banner", servingKeyErr)
 	}
-	if c, k, loadErr := certs.LoadCA(cfg.EffectiveDeviceCA(), deviceCAKeyFile); loadErr != nil {
-		log.Printf("device CA not loaded (%v): device-cert minting disabled", loadErr)
-	} else {
-		deviceCert, deviceKey = c, k
+	deviceCert, _, deviceKey, deviceKeyErr := certs.LoadCAPair(cfg.EffectiveDeviceCA(), deviceCAKeyFile)
+	switch {
+	case deviceCert == nil:
+		log.Printf("device CA not loaded (%v): device-cert minting disabled", deviceKeyErr)
+	case deviceKeyErr != nil:
+		log.Printf("device CA certificate loaded, key not usable (%v): device-cert minting disabled; certificate stays trusted for verification and the banner", deviceKeyErr)
 	}
 
-	// svc is constructed whenever EITHER CA loaded: each handler checks
-	// its own pair (internal/handler/admin_certs.go), so a deployment
-	// missing one CA still serves the routes the other CA covers.
+	// svc is constructed whenever EITHER CA CERTIFICATE loaded: each
+	// handler checks its own pair's certificate AND key
+	// (internal/handler/admin_certs.go, #638 fix round 1 MEDIUM 3), so a
+	// deployment missing a key still serves the routes that need only the
+	// certificate (HandleGetCA, the banner), and a deployment missing a
+	// whole CA still serves the routes the other CA covers.
 	var svc *handler.AdminCertService
 	if servingCert != nil || deviceCert != nil {
 		svc = handler.NewAdminCertServiceWithCAs(servingCert, servingKey, servingPEM, deviceCert, deviceKey)
 		switch {
-		case servingCert != nil && deviceCert != nil:
+		case servingKey != nil && deviceKey != nil:
 			log.Println("CA(s) loaded: admin cert API enabled")
-		case servingCert != nil:
-			log.Println("serving CA loaded: admin cert API partially enabled (device-cert minting stays disabled)")
+		case servingKey != nil:
+			log.Println("serving CA key loaded: admin cert API partially enabled (device-cert minting stays disabled)")
+		case deviceKey != nil:
+			log.Println("device CA key loaded: admin cert API partially enabled (server-cert minting and CA download stay disabled)")
 		default:
-			log.Println("device CA loaded: admin cert API partially enabled (server-cert minting and CA download stay disabled)")
+			log.Println("CA certificate(s) loaded without a usable key: minting disabled; CA download and the banner still use the loaded certificate(s)")
 		}
 	}
 

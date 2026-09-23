@@ -130,14 +130,16 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, errorResponse{Error: msg})
 }
 
-// HandleGetCA returns the CA certificate PEM (never the private key). The
-// stored file is filtered to its certificate blocks: some tooling writes a
-// combined PEM holding the certificate and its private key, and the file
-// content must never be echoed verbatim (#644). A stored file that yields no
-// certificate block is refused rather than served as an empty 200: a
-// scripted caller writes this response straight to a trust anchor file, and
-// an empty anchor is a silent failure a human watching a browser would not
-// hit the same way.
+// HandleGetCA returns the serving CA certificate PEM (never the private
+// key). #622: this is the anchor an operator installs on a device to verify
+// THIS server, so it is the serving pair, not the device pair. The body is
+// derived by parsing the stored bytes and re-encoding what parsed as a
+// certificate (#644 design, 2026-09-23): the file is never echoed verbatim,
+// so a combined certificate-and-key file cannot hand the caller the signing
+// key. A filtered result empty is impossible here: certs.LoadCAPair already
+// requires the same bytes' first block to parse as a certificate before
+// servingCACertPEM is ever set, so the filter always finds at least that
+// block.
 func (s *AdminCertService) HandleGetCA() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
@@ -147,13 +149,7 @@ func (s *AdminCertService) HandleGetCA() http.HandlerFunc {
 			writeError(w, http.StatusServiceUnavailable, "CA not initialized")
 			return
 		}
-		filtered := certs.FilterCertificatePEM(s.servingCACertPEM)
-		if len(filtered) == 0 {
-			log.Printf("HandleGetCA: stored CA PEM has no certificate block")
-			writeError(w, http.StatusInternalServerError, "CA certificate PEM has no certificate block")
-			return
-		}
-		writeJSON(w, http.StatusOK, certResponse{CertPEM: string(filtered)})
+		writeJSON(w, http.StatusOK, certResponse{CertPEM: string(certs.FilterCertificatePEM(s.servingCACertPEM))})
 	}
 }
 

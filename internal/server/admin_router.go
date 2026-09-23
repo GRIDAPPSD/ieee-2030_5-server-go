@@ -47,6 +47,22 @@ import (
 // Test callers that don't need the pattern list discard the second
 // return value with `_`.
 func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, allowedHosts []string, legacyDashboard bool, trafficHandler http.Handler) (http.Handler, []string) {
+	authed, authedWithMiddleware := buildAuthedAdminMux(adminKey, svc, stores, tlsMode, tickets, sessions, legacyDashboard, trafficHandler)
+	return buildOuterAdminRouter(adminKey, sessions, allowedHosts, authed, authedWithMiddleware)
+}
+
+// buildAuthedAdminMux constructs the authenticated inner mux (dashboard,
+// /api/*, SSE, ticket exchange) and the middleware chain wrapped around it:
+// AdminAuthMiddleware, then requireCredentialForSensitiveRoutes, then
+// requireAdminBodyTypes. This is the guard's own domain (#579 MEDIUM-3,
+// test coverage lane): requireCredentialForSensitiveRoutes matches every
+// request pattern against authed and no other mux, so a route mounted on
+// the public outer mux instead never reaches this chain at all, however its
+// pattern string looks. Split out of BuildAdminRouter so a test that needs
+// "what can the guard actually see" reads authed.Patterns() here rather
+// than BuildAdminRouter's merged list, which also carries the outer mux's
+// routes and so overstates the guard's reach.
+func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, legacyDashboard bool, trafficHandler http.Handler) (*recordingMux, http.Handler) {
 	authed := newRecordingMux()
 
 	if trafficHandler != nil {
@@ -109,6 +125,18 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 		requireCredentialForSensitiveRoutes(authed, auth.RequireRealCredential(adminKey, tickets, sessions), requireAdminBodyTypes(authed)),
 	)
 
+	return authed, authedWithMiddleware
+}
+
+// buildOuterAdminRouter wraps authedWithMiddleware in the public outer mux
+// (login routes), the host-header allowlist, the cross-origin refusal, and
+// the shared no-store/security-header wrappers, and assembles the merged
+// pattern list BuildAdminRouter returns. Split from buildAuthedAdminMux so
+// the two mux's patterns stay independently readable: authed.Patterns() is
+// the guard's own domain, and the merged list here is everything mounted
+// under the listener regardless of which mux or guard a given route sits
+// behind.
+func buildOuterAdminRouter(adminKey string, sessions *auth.SessionStore, allowedHosts []string, authed *recordingMux, authedWithMiddleware http.Handler) (http.Handler, []string) {
 	// Outer mux: login routes are public; everything else is authed.
 	// #270 (bundle B) wraps authedWithMiddleware with a Host-allowlist
 	// middleware at the `outer.Handle("/", ...)` line - leave that wrap

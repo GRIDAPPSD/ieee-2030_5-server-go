@@ -155,16 +155,26 @@ func TestSensitiveRoutesStillRefuseUnderNonLoopbackExposure(t *testing.T) {
 }
 
 // TestSensitiveAdminPatternsMatchRouterFamilies establishes the two families
-// from the router itself (every "/api/certs" and "/api/traffic" pattern
-// BuildAdminRouter mounts), not from the handful of route names #579 and
-// #631 happen to quote. A new route under either prefix that is not added to
-// sensitiveAdminPatterns fails here instead of silently joining an
-// unprotected family.
+// from the guard's own domain (every "/api/certs" and "/api/traffic" pattern
+// on the AUTHENTICATED mux, not BuildAdminRouter's merged list), not from the
+// handful of route names #579 and #631 happen to quote. A new route under
+// either prefix that is not added to sensitiveAdminPatterns fails here
+// instead of silently joining an unprotected family.
+//
+// #579 MEDIUM-3 (test coverage lane): the merged list also carries the
+// public outer mux's routes, so a pattern that satisfies this comparison
+// without ever reaching requireCredentialForSensitiveRoutes (a route
+// registered on outer instead of authed) used to pass unnoticed.
+// AuthedAdminPatterns reads only the mux requireCredentialForSensitiveRoutes
+// actually matches against, closing that gap; the runtime check in
+// TestEverySensitiveAdminPatternRefusesBypassOnly below closes the other
+// half by driving a real request for every map entry instead of comparing
+// two static lists.
 func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
-	_, patterns := server.BuildAdminRouter(
+	patterns := server.AuthedAdminPatterns(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		server.DefaultAdminAllowedHosts(), false, http.NotFoundHandler(),
+		false, http.NotFoundHandler(),
 	)
 
 	var want []string
@@ -192,5 +202,40 @@ func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Fatalf("sensitiveAdminPatterns = %q (%d), want every /api/certs and /api/traffic route from the router = %q (%d)",
 			got, len(got), want, len(want))
+	}
+}
+
+// TestEverySensitiveAdminPatternRefusesBypassOnly drives a real bypass-only
+// request for every entry in sensitiveAdminPatterns, rather than comparing
+// two static pattern lists (#579 MEDIUM-3, test coverage lane). A pattern
+// added to the map that the guard cannot actually reach - mounted on the
+// outer mux instead of the authed one - stayed green under the old
+// membership-only test, since the membership check never drove a request.
+// This closes it: any such route now answers with whatever the outer mux
+// gives an unauthenticated request, which is not the refusal this test
+// requires.
+func TestEverySensitiveAdminPatternRefusesBypassOnly(t *testing.T) {
+	router := newSensitiveRoutesRouter(t)
+
+	for pattern := range server.SensitiveAdminPatterns {
+		method, path, ok := strings.Cut(pattern, " ")
+		if !ok {
+			t.Fatalf("pattern %q names no method", pattern)
+		}
+		t.Run(pattern, func(t *testing.T) {
+			buf := captureSlogForSensitiveRoutes(t)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, bypassOnlyRequest(method, path))
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("%s bypass-only: status = %d, want 401; body = %q", pattern, rec.Code, rec.Body.String())
+			}
+			if rec.Body.String() != sensitiveRefusalBody {
+				t.Errorf("%s bypass-only: body = %q, want %q", pattern, rec.Body.String(), sensitiveRefusalBody)
+			}
+			if !strings.Contains(buf.String(), `"event":"admin_sensitive_route_refused"`) {
+				t.Errorf("%s bypass-only: no admin_sensitive_route_refused log line; captured = %s", pattern, buf.String())
+			}
+		})
 	}
 }

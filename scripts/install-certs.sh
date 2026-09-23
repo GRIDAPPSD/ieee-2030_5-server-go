@@ -323,11 +323,28 @@ operator_remove() {
   else
     certutil -D -d "sql:$NSS_DB_DIR" -n "$OPERATOR_NICKNAME"
   fi
-  if operator_verify >/dev/null 2>&1; then
+  info "operator: certutil -D ran for '$OPERATOR_NICKNAME' in $NSS_DB_DIR"
+
+  # Run in a subshell for the same reason trust_remove and device_remove
+  # do: operator_verify's own precondition (require_tool) calls exit, not
+  # return, so calling it directly here would terminate the whole script
+  # with its message discarded by the redirect this used to carry.
+  local verify_status=0
+  ( operator_verify ) || verify_status=$?
+  case "$verify_status" in
+  0)
     err "operator: '$OPERATOR_NICKNAME' is still present in $NSS_DB_DIR after remove"
     return 1
-  fi
-  info "operator: '$OPERATOR_NICKNAME' removed from $NSS_DB_DIR"
+    ;;
+  1)
+    info "operator: '$OPERATOR_NICKNAME' removed from $NSS_DB_DIR"
+    return 0
+    ;;
+  *)
+    err "operator: certutil -D ran, but the verify step that would confirm removal could not run (exit $verify_status)"
+    return "$verify_status"
+    ;;
+  esac
 }
 
 # ------------------------------------------------------------------ trust

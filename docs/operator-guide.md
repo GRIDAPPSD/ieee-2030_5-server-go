@@ -96,6 +96,14 @@ log names the affected role when this happens; the banner does not, since
 it renders from the certificate alone and cannot tell a matched pair from
 a mismatched one.
 
+A fifth setting, `SEP2_ADMIN_CLIENT_CA`, has no key of its own: it names
+the trust anchor the admin listener verifies an operator's client
+certificate against, defaulting to `SEP2_SERVING_CA` (or `SEP2_CA` where
+the two are not split). See
+[Admin client-certificate trust anchor](admin-listener.md#admin-client-certificate-trust-anchor-sep2_admin_client_ca-624)
+for its full behavior, including the `system` sentinel and what happens
+when the anchor cannot be loaded.
+
 ### What LFDI and SFDI are
 
 Every certificate the server issues or accepts has two derived

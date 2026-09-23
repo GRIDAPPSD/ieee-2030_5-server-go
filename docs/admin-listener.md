@@ -107,11 +107,16 @@ PEM file path to trust a different CA instead, or to the literal value
 #624, useful only for a deployment whose operator certificates come from a
 public CA rather than this server's own serving CA.
 
-A certificate signed by any CA outside this anchor is refused: a client
-that consults the server's CertificateRequest hint (most browsers and
-`curl --cert`) omits it and the request proceeds as if no certificate had
-been presented; a client that sends it anyway is refused at the TLS
-handshake. Either way it never reaches the admin policy-OID check.
+A certificate signed by any CA outside this anchor is refused at the TLS
+handshake if the client presents it. Whether a client presents it at all is
+up to the client: some honor the server's CertificateRequest hint and omit
+a certificate that does not chain to the advertised CAs, connecting
+certless instead, but `curl --cert` is not one of them - it sends the
+certificate regardless, and the connection fails with a TLS alert
+(measured: curl 8.14.1 / OpenSSL 3.5.4, `SSL_read: ... tlsv1 alert unknown
+ca`). Either way the admin policy-OID check is never reached: a refused
+handshake never gets there, and an omitted certificate reaches it as a
+certless connection, the same as a browser that never had one.
 
 ## Caddy fronting (recommended for production)
 

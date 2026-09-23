@@ -136,13 +136,20 @@ func TestRequireNonTicketAdmissionAdmitsEveryOtherCredential(t *testing.T) {
 // TestTicketAlongsideEachCredentialAdmitsByTheOtherCredential is #641 fix
 // round 1, item 3: credentialAdmits checks the ticket last (admin.go), so a
 // caller who presents a ticket ALONGSIDE mTLS, a Bearer token, or a cookie
-// session is admitted by that other credential and the ticket is left
-// unspent, rather than the outcome depending on which of the two the
-// credential chain happened to reach first. Before that ordering, a cookie
-// plus a ticket was refused here (the ticket admitted, then
-// RequireNonTicketAdmission refused it) while Bearer plus a ticket was not,
-// so the same caller got a different answer depending only on which
-// credential they also happened to be carrying.
+// session is admitted by that other credential, rather than the outcome
+// depending on which of the two the credential chain happened to reach
+// first. Before that ordering, a cookie plus a ticket was refused here (the
+// ticket admitted, then RequireNonTicketAdmission refused it) while Bearer
+// plus a ticket was not, so the same caller got a different answer
+// depending only on which credential they also happened to be carrying.
+//
+// #641 fix round 2, item 2: the presented ticket is still consumed even
+// though it was not what admitted the request. Round 1 left it spendable,
+// which meant a ticket riding alongside a cookie on GET /dashboard/events -
+// the production SSE request, since a logged-in browser sends its session
+// cookie on every same-origin request - survived its own use for its full
+// TTL instead of being burned on first use, relaxing the one-time-use
+// property ticket.go's own comment calls load bearing.
 func TestTicketAlongsideEachCredentialAdmitsByTheOtherCredential(t *testing.T) {
 	tickets := auth.NewTicketStore(30 * time.Second)
 	sessions := auth.NewSessionStore(testSessionIdle, testSessionAbsolute)
@@ -187,10 +194,11 @@ func TestTicketAlongsideEachCredentialAdmitsByTheOtherCredential(t *testing.T) {
 			if w.Code != http.StatusOK {
 				t.Fatalf("%s plus a ticket: status = %d, want 200", tc.name, w.Code)
 			}
-			// The presented ticket must still be spendable: it was not the
-			// credential that admitted this request.
-			if !tickets.Redeem(ticket) {
-				t.Errorf("%s plus a ticket: the presented ticket was consumed even though %s admitted the request", tc.name, tc.name)
+			// The presented ticket must be consumed regardless: one-time use
+			// holds whether or not the ticket was what admitted (#641 fix
+			// round 2, item 2).
+			if tickets.Redeem(ticket) {
+				t.Errorf("%s plus a ticket: the presented ticket was still spendable after %s admitted the request", tc.name, tc.name)
 			}
 		})
 	}

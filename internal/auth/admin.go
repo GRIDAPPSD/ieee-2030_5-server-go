@@ -60,8 +60,10 @@ const AdminRefusalVary = "Sec-Fetch-Dest, Accept"
 // The ticket check runs last, after every other real credential, on purpose
 // (#641 fix round 1, item 3): a ticket is the lowest-trust, shortest-lived of
 // the four, so a caller who also holds an mTLS cert, a Bearer token, or a
-// cookie session is admitted by that credential and the ticket is left
-// unspent. Before this ordering, a cookie session presented alongside a
+// cookie session is admitted by that credential rather than the ticket. A
+// ticket presented alongside one of those is still consumed (#641 fix round
+// 2, item 2): one-time use holds regardless of which credential admits.
+// Before this ordering, a cookie session presented alongside a
 // ticket was admitted via the ticket (checked ahead of the cookie), which
 // both spent the ticket needlessly and, on the one route that refuses
 // ticket-only admission (RequireNonTicketAdmission), was refused a mint the
@@ -146,8 +148,10 @@ const (
 //
 // The ticket check runs last, deliberately (#641 fix round 1, item 3): every
 // other real credential admits a caller who also happens to carry a ticket,
-// leaving that ticket unspent, rather than the ticket taking precedence and
-// consuming itself for nothing. See AdminAuthMiddleware's own doc comment for
+// rather than the ticket taking precedence over a stronger credential. A
+// ticket presented alongside one of those is still redeemed
+// (redeemPresentedTicket, #641 fix round 2, item 2), so one-time use holds
+// no matter which credential admits. See AdminAuthMiddleware's own doc comment for
 // the failure this closes.
 func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, sessions *SessionStore) (bool, credentialPath) {
 	// Path A: mTLS with admin OID
@@ -155,6 +159,7 @@ func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, se
 		cert := r.TLS.PeerCertificates[0]
 		if certs.HasPolicyOID(cert, certs.OIDPolicyAdmin) {
 			LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathMTLS)
+			redeemPresentedTicket(r, tickets)
 			return true, credentialPathMTLS
 		}
 	}
@@ -168,6 +173,7 @@ func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, se
 		if token, ok := bearerToken(r.Header.Get("Authorization")); ok && !IsBlankCredential(token) {
 			if constantTimeEqual(token, adminKey) {
 				LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathBearer)
+				redeemPresentedTicket(r, tickets)
 				return true, credentialPathBearer
 			}
 			LogFailedAdminCredential(r, obs.AdminAdmissionPathBearer)
@@ -178,11 +184,12 @@ func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, se
 	// the idle deadline but does not consume the session, and no cookie is
 	// re-set here: a per-request rotation cannot survive the parallel
 	// subresource loads of one page. Checked ahead of the ticket so a caller
-	// who holds both is admitted by the reusable credential and the
-	// one-time ticket stays spendable (#641 fix round 1, item 3).
+	// who holds both is admitted by the reusable credential rather than the
+	// one-time ticket (#641 fix round 1, item 3).
 	if sessions != nil {
 		if c, err := r.Cookie(AdminTicketCookieName); err == nil && c.Value != "" {
 			if sessions.Validate(c.Value) {
+				redeemPresentedTicket(r, tickets)
 				return true, credentialPathCookie
 			}
 		}
@@ -190,8 +197,8 @@ func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, se
 
 	// Path D: Short-lived auth ticket (for SSE/EventSource). Checked last:
 	// it is the one credential kind a caller can leak in a URL, and the only
-	// one this admission chain ever consumes, so it is used only when
-	// nothing else admits.
+	// one this admission chain ever consumes on this path, so it is used
+	// only when nothing else admits.
 	if tickets != nil {
 		if ticket := r.URL.Query().Get("ticket"); ticket != "" {
 			if tickets.Redeem(ticket) {
@@ -201,6 +208,21 @@ func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, se
 	}
 
 	return false, credentialPathNone
+}
+
+// redeemPresentedTicket consumes a ticket on the query string even though a
+// stronger credential (mTLS, Bearer, or a cookie session) is what admits r,
+// so one-time use holds no matter which credential wins (#641 fix round 2,
+// item 2; ticket.go's own comment calls this load bearing). The redemption
+// result is discarded: admission already stands on the stronger credential,
+// and an absent, expired, or already-spent ticket must not change that.
+func redeemPresentedTicket(r *http.Request, tickets *TicketStore) {
+	if tickets == nil {
+		return
+	}
+	if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+		tickets.Redeem(ticket)
+	}
 }
 
 // RequireRealCredential returns middleware for a route family that must

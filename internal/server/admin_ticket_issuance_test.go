@@ -103,6 +103,14 @@ func TestAuthTicketMintRefusesTicketOnlyAdmission(t *testing.T) {
 
 	ticket := mintTicketFromLoopback(t, router)
 
+	// #641 fix round 1, item 2: this refusal is byte-identical to
+	// LogSensitiveRouteRefusal's (same 401, same body), so the log line is
+	// the only record distinguishing "a ticket tried to renew itself" from
+	// "no credential at all". Pinned here the same way the sibling refusal
+	// events are pinned (LogSensitiveRouteRefusal, LogFailedAdminCredential):
+	// renaming admin_ticket_self_renewal_refused, or mislabelling
+	// admission_path away from "ticket", fails this assertion.
+	buf := captureSlogForSensitiveRoutes(t)
 	renewRec := httptest.NewRecorder()
 	router.ServeHTTP(renewRec, ticketOnlyRequest(http.MethodPost, "/auth/ticket", ticket))
 	if renewRec.Code != http.StatusUnauthorized {
@@ -111,6 +119,12 @@ func TestAuthTicketMintRefusesTicketOnlyAdmission(t *testing.T) {
 	}
 	if renewRec.Body.String() != sensitiveRefusalBody {
 		t.Fatalf("POST /auth/ticket with only a ticket: body = %q, want %q", renewRec.Body.String(), sensitiveRefusalBody)
+	}
+	if !strings.Contains(buf.String(), `"event":"admin_ticket_self_renewal_refused"`) {
+		t.Errorf("POST /auth/ticket with only a ticket: no admin_ticket_self_renewal_refused log line; captured = %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), `"admission_path":"ticket"`) {
+		t.Errorf("POST /auth/ticket with only a ticket: log line missing admission_path=ticket; captured = %s", buf.String())
 	}
 
 	// The first refusal already consumed the ticket (RequireRealCredential's

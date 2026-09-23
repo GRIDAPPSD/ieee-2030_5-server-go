@@ -274,6 +274,11 @@ field, not with a PEM body, so the panel extracts that field and saves the
 file. A plain link to the route would save the JSON envelope under a
 `.crt` name and a device trust store would reject it.
 
+The body is normalized, not echoed: it is the certificate's own DER,
+re-encoded canonically, never the stored CA file's raw bytes. A file with
+unusual wrapping, line endings, or a legacy label still loads and comes
+back as a standard 64-column `CERTIFICATE` block.
+
 A device cert request needs the manufacturer PEN OID (`hwType`) as well as
 the hardware serial: the route rejects a request without it, since the OID
 is part of the CSIP HardwareModuleName SAN and the server cannot invent
@@ -340,20 +345,24 @@ your listener posture:
 ```bash
 # Plain-HTTP admin listener (default for `make run` / `make run-full`).
 # #246 loopback bypass admits the request - no Bearer needed.
-curl http://localhost:8444/api/certs/ca
+curl -f http://localhost:8444/api/certs/ca
 
 # HTTPS admin listener (after `SEP2_ADMIN_TLS=true`). The bypass still
 # applies, but mTLS exercises Path A explicitly.
-curl --cacert certs/ca.crt \
+curl -f --cacert certs/ca.crt \
      --cert  certs/admin.crt \
      --key   certs/admin.key \
      https://localhost:8444/api/certs/ca
 
 # HTTPS admin listener with Bearer (no client cert needed):
-curl https://localhost:8444/api/certs/ca \
+curl -f https://localhost:8444/api/certs/ca \
      --cacert certs/ca.crt \
      -H "Authorization: Bearer $SEP2_ADMIN_KEY"
 ```
+
+`-f` makes curl fail on a non-2xx response instead of writing the error
+body to stdout (or into a saved file if redirected), where it could be
+mistaken for a valid CA.
 
 If you hit `error:0A0000C6:SSL routines::packet length too long`, the
 listener is in plain-HTTP mode and you sent it TLS bytes - drop the

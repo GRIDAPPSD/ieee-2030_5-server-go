@@ -116,9 +116,13 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 	// unless the legacy flag routes that one to the old page.
 	authed.Handle("GET /ui/", http.StripPrefix("/ui", spaHandler()))
 
-	// Auth ticket endpoint - exchanges valid admin auth for a short-lived ticket
+	// Auth ticket endpoint - exchanges valid admin auth for a short-lived
+	// ticket. RequireNonTicketAdmission (#641) refuses when the admission
+	// that reached it was itself a ticket: every other real credential
+	// (mTLS, Bearer, cookie session) still mints one, but a ticket must
+	// never be sufficient to mint its own successor.
 	if tickets != nil {
-		authed.HandleFunc("POST /auth/ticket", handleIssueTicket(tickets))
+		authed.Handle("POST /auth/ticket", auth.RequireNonTicketAdmission(handleIssueTicket(tickets)))
 	}
 
 	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets, sessions)(

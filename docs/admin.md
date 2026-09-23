@@ -177,6 +177,16 @@ defense in depth):
    by default, and a reverse proxy in front injects `X-Forwarded-*` so
    the bypass declines automatically for production traffic. Every
    admission is logged.
+
+   **Two route families refuse this bypass on its own (#579, #631):** the
+   certificate routes (`/api/certs/*`, since they mint and return key
+   material) and the traffic-capture read routes (`/api/traffic/*`, since
+   they return captured `Authorization` and `Cookie` header bytes verbatim).
+   Both require a real credential (paths 1 to 4 below), even from a loopback
+   address: a request the bypass alone would admit is refused with a 401,
+   logged at WARN as `admin: sensitive route refused bypass-only admission`.
+   This is a credential requirement, not a loopback ban - a valid credential
+   presented from a loopback address still succeeds on these routes too.
 1. **[mTLS](glossary.md)** - peer cert with the IEEE 2030.5 admin policy OID
    `1.3.6.1.4.1.40732.2.5` (matched by
    [`certs.HasPolicyOID`](../internal/certs/oids.go)).

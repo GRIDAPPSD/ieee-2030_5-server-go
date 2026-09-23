@@ -105,7 +105,9 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 		authed.HandleFunc("POST /auth/ticket", handleIssueTicket(tickets))
 	}
 
-	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets, sessions)(requireAdminBodyTypes(authed))
+	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets, sessions)(
+		requireCredentialForSensitiveRoutes(authed, auth.RequireRealCredential(adminKey, tickets, sessions), requireAdminBodyTypes(authed)),
+	)
 
 	// Outer mux: login routes are public; everything else is authed.
 	// #270 (bundle B) wraps authedWithMiddleware with a Host-allowlist

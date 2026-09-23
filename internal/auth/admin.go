@@ -78,58 +78,14 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *Sessio
 			// deployments still run the full auth chain.
 			if isLoopbackRemote(r) && !hasForwardedHeader(r) {
 				log.Printf("admin: loopback bypass admitted %s %s", r.Method, r.URL.Path)
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(w, withBypassAdmission(r))
 				return
 			}
 
-			// Path A: mTLS with admin OID
-			if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
-				cert := r.TLS.PeerCertificates[0]
-				if certs.HasPolicyOID(cert, certs.OIDPolicyAdmin) {
-					LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathMTLS)
-					next.ServeHTTP(w, r)
-					return
-				}
-			}
-
-			// Path B: Bearer token. A blank configured key disables
-			// the path outright, so an operator who set only
-			// whitespace cannot be authenticated by presenting the
-			// same whitespace. A blank presented token is the same
-			// credential-free case as no Authorization header at all, so
-			// only a non-blank mismatch logs a failure (#413).
-			if !IsBlankCredential(adminKey) {
-				if token, ok := bearerToken(r.Header.Get("Authorization")); ok && !IsBlankCredential(token) {
-					if constantTimeEqual(token, adminKey) {
-						LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathBearer)
-						next.ServeHTTP(w, r)
-						return
-					}
-					LogFailedAdminCredential(r, obs.AdminAdmissionPathBearer)
-				}
-			}
-
-			// Path C: Short-lived auth ticket (for SSE/EventSource)
-			if tickets != nil {
-				if ticket := r.URL.Query().Get("ticket"); ticket != "" {
-					if tickets.Redeem(ticket) {
-						next.ServeHTTP(w, r)
-						return
-					}
-				}
-			}
-
-			// Path D: Cookie session (browser login flow, #159).
-			// Validation slides the idle deadline but does not consume the
-			// session, and no cookie is re-set here: a per-request rotation
-			// cannot survive the parallel subresource loads of one page.
-			if sessions != nil {
-				if c, err := r.Cookie(AdminTicketCookieName); err == nil && c.Value != "" {
-					if sessions.Validate(c.Value) {
-						next.ServeHTTP(w, r)
-						return
-					}
-				}
+			// Paths A through D: mTLS, Bearer, ticket, cookie session.
+			if credentialAdmits(r, adminKey, tickets, sessions) {
+				next.ServeHTTP(w, r)
+				return
 			}
 
 			// The refusal is negotiated: the same URL answers a navigation
@@ -151,6 +107,96 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *Sessio
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":"admin authentication required"}`))
+		})
+	}
+}
+
+// credentialAdmits runs the four credentialed admission paths (mTLS, Bearer,
+// ticket, cookie session), in the same order and with the same logging side
+// effects AdminAuthMiddleware's own chain uses, and reports whether one of
+// them admits r. Extracted so RequireRealCredential (the sensitive-route
+// recheck, #579 #631) and AdminAuthMiddleware's own chain share one
+// implementation and can never drift on what counts as a real credential.
+func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, sessions *SessionStore) bool {
+	// Path A: mTLS with admin OID
+	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		cert := r.TLS.PeerCertificates[0]
+		if certs.HasPolicyOID(cert, certs.OIDPolicyAdmin) {
+			LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathMTLS)
+			return true
+		}
+	}
+
+	// Path B: Bearer token. A blank configured key disables the path
+	// outright, so an operator who set only whitespace cannot be
+	// authenticated by presenting the same whitespace. A blank presented
+	// token is the same credential-free case as no Authorization header at
+	// all, so only a non-blank mismatch logs a failure (#413).
+	if !IsBlankCredential(adminKey) {
+		if token, ok := bearerToken(r.Header.Get("Authorization")); ok && !IsBlankCredential(token) {
+			if constantTimeEqual(token, adminKey) {
+				LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathBearer)
+				return true
+			}
+			LogFailedAdminCredential(r, obs.AdminAdmissionPathBearer)
+		}
+	}
+
+	// Path C: Short-lived auth ticket (for SSE/EventSource)
+	if tickets != nil {
+		if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+			if tickets.Redeem(ticket) {
+				return true
+			}
+		}
+	}
+
+	// Path D: Cookie session (browser login flow, #159). Validation slides
+	// the idle deadline but does not consume the session, and no cookie is
+	// re-set here: a per-request rotation cannot survive the parallel
+	// subresource loads of one page.
+	if sessions != nil {
+		if c, err := r.Cookie(AdminTicketCookieName); err == nil && c.Value != "" {
+			if sessions.Validate(c.Value) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// RequireRealCredential returns middleware for a route family that must
+// never admit through the #246 loopback bypass alone (#579, #631): the
+// certificate routes mint and return key material, and the traffic-capture
+// read routes return captured Authorization and Cookie header bytes
+// verbatim. It runs after AdminAuthMiddleware, which has already admitted
+// every request that reaches it, bypass or credentialed.
+//
+// When AdmittedByLoopbackBypassOnly reports true, Path 0 short-circuited
+// before any credential was consulted, so this middleware runs the same
+// four credentialed paths AdminAuthMiddleware itself uses (credentialAdmits)
+// against the same request: a credential that was present but never
+// checked (a valid Bearer token sent alongside a loopback address, for
+// instance) now admits, and the one-time ticket is consumed exactly once,
+// here, since Path 0 never touches it. A request with nothing to check is
+// refused and logged by LogSensitiveRouteRefusal.
+//
+// A request NOT marked bypass-only (admitted directly by mTLS, Bearer, a
+// ticket, or a cookie session inside AdminAuthMiddleware) passes through
+// unchanged: credentialAdmits never runs twice for the same request, so a
+// ticket is never redeemed twice and a success log line is never doubled.
+func RequireRealCredential(adminKey string, tickets *TicketStore, sessions *SessionStore) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if AdmittedByLoopbackBypassOnly(r) && !credentialAdmits(r, adminKey, tickets, sessions) {
+				LogSensitiveRouteRefusal(r)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error":"admin authentication required"}`))
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }
@@ -184,6 +230,46 @@ func LogSuccessfulAdminCredential(r *http.Request, admissionPath string) {
 	slog.Info("admin: credential presented and accepted",
 		"event", "admin_auth_success",
 		"admission_path", admissionPath,
+		"method", r.Method,
+		"path", r.URL.Path,
+		"remote_addr", r.RemoteAddr,
+	)
+}
+
+// bypassAdmissionContextKey marks a request admitted only through the #246
+// loopback bypass (Path 0): no credential of any kind was presented.
+// AdmittedByLoopbackBypassOnly reads this marker; the four credentialed
+// paths never set it, so a request that passed mTLS, Bearer, a ticket, or a
+// cookie session reports false, the same as this middleware's own refusal
+// (which never reaches a handler at all).
+type bypassAdmissionContextKey struct{}
+
+// withBypassAdmission returns r with the Path 0 marker attached.
+func withBypassAdmission(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), bypassAdmissionContextKey{}, true))
+}
+
+// AdmittedByLoopbackBypassOnly reports whether r reached its handler through
+// the #246 loopback bypass alone. A route family that must not accept
+// bypass-only admission (the certificate routes and the traffic-capture read
+// routes, #579 and #631) checks this after AdminAuthMiddleware and refuses
+// when it is true; a request carrying a real credential, from any address
+// including loopback, reports false and is unaffected.
+func AdmittedByLoopbackBypassOnly(r *http.Request) bool {
+	v, _ := r.Context().Value(bypassAdmissionContextKey{}).(bool)
+	return v
+}
+
+// LogSensitiveRouteRefusal records a refusal of a route that requires a real
+// credential even from a loopback address (#579, #631): the request carried
+// no credential at all, so this is distinct from LogFailedAdminCredential's
+// "presented and wrong" case. Same field shape as the other admission log
+// lines so all three are queryable the same way.
+func LogSensitiveRouteRefusal(r *http.Request) {
+	slog.Warn("admin: sensitive route refused bypass-only admission",
+		"event", "admin_sensitive_route_refused",
+		"outcome", "credential_required",
+		"admission_path", "loopback_bypass",
 		"method", r.Method,
 		"path", r.URL.Path,
 		"remote_addr", r.RemoteAddr,

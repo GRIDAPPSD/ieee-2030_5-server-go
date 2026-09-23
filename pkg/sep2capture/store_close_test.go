@@ -119,6 +119,105 @@ func TestStoreCloseEndsOpenSubscriptions(t *testing.T) {
 	}
 }
 
+// TestSubscribeAfterCloseReturnsAlreadyClosedChannel is #628 fix round 1
+// item 2's store-level unit acceptance (silent-failure MEDIUM): a Subscribe
+// call that arrives after Store.Close has already run must not register - it
+// gets a channel that is already closed, so a caller reading from it (as
+// handleStream's select loop does) sees `open == false` at once rather than
+// waiting for events that will never come.
+//
+// Mutant (store_reader.go, Subscribe): remove the `if s.closed { ...
+// return sub.ch }` guard, restoring plain registration under subMu alone.
+// This test goes RED: the channel is never closed, so the receive below
+// blocks until the test's own 2s timeout instead of observing open == false.
+func TestSubscribeAfterCloseReturnsAlreadyClosedChannel(t *testing.T) {
+	st := newTestStore(t)
+
+	closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer closeCancel()
+	if err := st.Close(closeCtx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	ch := st.Subscribe(context.Background(), nil)
+	select {
+	case _, open := <-ch:
+		if open {
+			t.Fatal("Subscribe after Close: got a value, want an already-closed channel")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Subscribe after Close: channel still open 2s later")
+	}
+}
+
+// TestHTTPServerShutdownReturnsPromptlyWhenStreamArrivesAfterClose is #628
+// fix round 1 item 2's HTTP-level reproduction of the exact defect the
+// silent-failure lane measured: "store closed first, then a GET /stream
+// opened, http.Server.Shutdown did not return within 8s; control, the same
+// stream opened before Close, returned at once." That control is already
+// TestHTTPServerShutdownReturnsPromptlyOnceStoreCloseEndsTheStream above
+// (stream opens before Close); this is the reverse order.
+//
+// Mutant: the same Subscribe guard removal as the unit test above. This
+// test goes RED: handleStream's select blocks forever on a channel Close
+// never closes (it was registered after closeAllSubscribers already ran),
+// so srv.Shutdown never returns within its budget.
+func TestHTTPServerShutdownReturnsPromptlyWhenStreamArrivesAfterClose(t *testing.T) {
+	st := newTestStore(t)
+
+	closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer closeCancel()
+	if err := st.Close(closeCtx); err != nil {
+		t.Fatalf("Store.Close: %v", err)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	srv := &http.Server{Handler: st.Handler()}
+	go func() { _ = srv.Serve(ln) }()
+
+	u, err := url.Parse("http://" + ln.Addr().String())
+	if err != nil {
+		t.Fatalf("url.Parse: %v", err)
+	}
+	conn, err := net.Dial("tcp", u.Host)
+	if err != nil {
+		t.Fatalf("net.Dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.Write([]byte("GET /stream HTTP/1.1\r\nHost: " + u.Host + "\r\n\r\n")); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	r := bufio.NewReader(conn)
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read headers: %v", err)
+		}
+		if line == "\r\n" {
+			break
+		}
+	}
+
+	shutdownDone := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		shutdownDone <- srv.Shutdown(ctx)
+	}()
+
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Fatalf("srv.Shutdown: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("srv.Shutdown: still blocked 2s after a stream request arrived following Store.Close")
+	}
+}
+
 // TestHTTPServerShutdownReturnsPromptlyOnceStoreCloseEndsTheStream is item
 // 4's HTTP-level acceptance: a real http.Server serving Store.Handler()
 // with one open GET /stream must not hold Shutdown past its budget once

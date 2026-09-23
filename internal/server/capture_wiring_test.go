@@ -62,8 +62,9 @@ func (e *captureListenerEnv) shutdown(timeout time.Duration) error {
 	return e.shutdownErr
 }
 
-// bootCaptureListener boots server.Run with both listeners bound and
-// SEP2_TRAFFIC_DIR-equivalent (cfg.TrafficDir) set to a fresh temp
+// bootCaptureListener boots server.Run with both listeners bound,
+// SEP2_TRAFFIC_CAPTURE-equivalent (cfg.TrafficCapture) permitting capture,
+// and SEP2_TRAFFIC_DIR-equivalent (cfg.TrafficDir) set to a fresh temp
 // directory, so capture is on. AdminTLS is left at its default (false,
 // plain HTTP): the auth assertions below need no TLS handshake on the
 // admin side, only the auth chain.
@@ -97,15 +98,16 @@ func bootCaptureListener(t *testing.T) *captureListenerEnv {
 	}
 
 	cfg := &config.Config{
-		Addr:        c.sep2Probe,
-		CertFile:    c.certFile,
-		KeyFile:     c.keyFile,
-		CAFile:      c.caFile,
-		AdminListen: c.adminProbe,
-		AdminKey:    adminTestKey,
-		TrafficDir:  trafficDir,
-		TZOffset:    -28800,
-		TimeQuality: sep2.TimeQualityNTP,
+		Addr:           c.sep2Probe,
+		CertFile:       c.certFile,
+		KeyFile:        c.keyFile,
+		CAFile:         c.caFile,
+		AdminListen:    c.adminProbe,
+		AdminKey:       adminTestKey,
+		TrafficCapture: true,
+		TrafficDir:     trafficDir,
+		TZOffset:       -28800,
+		TimeQuality:    sep2.TimeQualityNTP,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -374,13 +376,15 @@ func TestRunClosesCaptureAndEndsStreamOnShutdown(t *testing.T) {
 	}
 }
 
-// TestRunLogsBootLineWhenTrafficDirUnset is Q7 item 5's directory
-// resolution: "Run builds the capture when a directory resolves ..., else
-// capture is off with one boot line naming both" (SEP2_TRAFFIC_DIR and
-// SEP2_DATA_DIR). No admin listener is needed for this one; only the
-// protocol listener and the boot log matter.
-func TestRunLogsBootLineWhenTrafficDirUnset(t *testing.T) {
-	c := newSplitListenerCerts(t)
+// bootWithCaptureBootLog boots server.Run with cfg (Addr/CertFile/KeyFile/
+// CAFile already required by the caller) and returns the boot log
+// accumulated up to whichever of wantSubstrings appears first, or up to a
+// 3s deadline. Shared by the three #628 fix round 1 boot-line tests below
+// (not permitted, permitted but no directory, and permitted with a refused
+// directory), which differ only in cfg's capture fields and which log line
+// they wait for.
+func bootWithCaptureBootLog(t *testing.T, cfg *config.Config, waitFor string) string {
+	t.Helper()
 
 	// server.Run logs from its own goroutine while this test polls the
 	// buffer from the main one; a bare bytes.Buffer is not safe for that
@@ -391,21 +395,12 @@ func TestRunLogsBootLineWhenTrafficDirUnset(t *testing.T) {
 	log.SetOutput(io.MultiWriter(prev, buf))
 	t.Cleanup(func() { log.SetOutput(prev) })
 
-	cfg := &config.Config{
-		Addr:        c.sep2Probe,
-		CertFile:    c.certFile,
-		KeyFile:     c.keyFile,
-		CAFile:      c.caFile,
-		TZOffset:    -28800,
-		TimeQuality: sep2.TimeQualityNTP,
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	runErrCh := make(chan error, 1)
 	go func() { runErrCh <- server.Run(ctx, cfg, nil) }()
 
 	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && !strings.Contains(buf.String(), "traffic capture disabled") {
+	for time.Now().Before(deadline) && !strings.Contains(buf.String(), waitFor) {
 		time.Sleep(25 * time.Millisecond)
 	}
 
@@ -419,9 +414,165 @@ func TestRunLogsBootLineWhenTrafficDirUnset(t *testing.T) {
 		t.Fatal("server.Run did not exit within 5s after cancel")
 	}
 
-	got := buf.String()
+	return buf.String()
+}
+
+// TestRunLogsBootLineWhenTrafficCaptureNotSet is #628 fix round 1 item 1's
+// not-permitted state: TrafficCapture unset (false), with neither TrafficDir
+// nor DataDir set either, is capture off with one boot line saying
+// specifically that the permit is unset (not the neighbouring "permitted but
+// no directory" message, which also mentions SEP2_TRAFFIC_CAPTURE as part of
+// naming both directory variables - the assertion checks the full phrase,
+// not a bare substring, so the two states cannot pass for each other).
+//
+// Mutant: replace `if !cfg.TrafficCapture {` with `if false {`. Measured RED
+// both here and on the sibling test below, then reverted (git status
+// porcelain clean): with neither TrafficDir nor DataDir set, falling
+// through to the "permitted but no directory" branch still names
+// SEP2_TRAFFIC_CAPTURE as part of naming both directory variables, but not
+// with the exact "is not set" phrase this test requires.
+func TestRunLogsBootLineWhenTrafficCaptureNotSet(t *testing.T) {
+	c := newSplitListenerCerts(t)
+	cfg := &config.Config{
+		Addr:        c.sep2Probe,
+		CertFile:    c.certFile,
+		KeyFile:     c.keyFile,
+		CAFile:      c.caFile,
+		TZOffset:    -28800,
+		TimeQuality: sep2.TimeQualityNTP,
+	}
+
+	got := bootWithCaptureBootLog(t, cfg, "traffic capture disabled")
+	if !strings.Contains(got, "traffic capture disabled: SEP2_TRAFFIC_CAPTURE is not set") {
+		t.Errorf("boot log does not carry the not-permitted line verbatim:\n%s", got)
+	}
+}
+
+// TestRunDataDirAloneDoesNotEnableCapture is #628 fix round 1's decisive
+// reproduction of the defect both the silent-failure and security lanes
+// measured: "with SEP2_DATA_DIR set, SEP2_TRAFFIC_DIR unset and no admin
+// listener, <data dir>/traffic was created with the .sep2capture marker, and
+// 0 boot log lines contained 'traffic capture'." DataDir alone (no
+// TrafficCapture) must now leave capture off and create no traffic
+// directory at all - not merely log a disabled line, since EffectiveTrafficDir
+// still resolves <DataDir>/traffic whenever DataDir is set, and the pre-fix
+// bug was exactly that resolving a directory was treated as "on".
+//
+// Mutant: the same `if !cfg.TrafficCapture {` -> `if false {` as the
+// sibling test above. This test goes RED: with DataDir set, the mutant
+// falls through the disabled branches straight into NewStore, and
+// <DataDir>/traffic is created (an existing deployment upgrades to
+// recording, not to "off changes nothing").
+func TestRunDataDirAloneDoesNotEnableCapture(t *testing.T) {
+	c := newSplitListenerCerts(t)
+	dataDir := t.TempDir()
+	cfg := &config.Config{
+		Addr:        c.sep2Probe,
+		CertFile:    c.certFile,
+		KeyFile:     c.keyFile,
+		CAFile:      c.caFile,
+		DataDir:     dataDir,
+		TZOffset:    -28800,
+		TimeQuality: sep2.TimeQualityNTP,
+	}
+
+	got := bootWithCaptureBootLog(t, cfg, "traffic capture disabled")
+	if !strings.Contains(got, "traffic capture disabled: SEP2_TRAFFIC_CAPTURE is not set") {
+		t.Errorf("boot log does not carry the not-permitted line with DataDir set alone:\n%s", got)
+	}
+	if _, err := os.Stat(dataDir + "/traffic"); !os.IsNotExist(err) {
+		t.Errorf("os.Stat(%s/traffic) = %v, want IsNotExist: DataDir alone must create no traffic directory", dataDir, err)
+	}
+}
+
+// TestRunLogsBootLineWhenPermittedButNoDirectory is item 1's second
+// disabled state: TrafficCapture true but neither TrafficDir nor DataDir
+// resolves a directory (EffectiveTrafficDir returns ""), so capture stays
+// off with a boot line naming both directory variables.
+//
+// Mutant: drop the `else if trafficDir := cfg.EffectiveTrafficDir(); trafficDir
+// == ""` branch (fold it into the permit check, or always treat an empty
+// directory as sep2capture.NewStore's own refusal). This test goes RED
+// because the boot log then never names SEP2_TRAFFIC_DIR or SEP2_DATA_DIR
+// (a NewStore call with Dir: "" errors with a different message that does
+// not mention either variable).
+func TestRunLogsBootLineWhenPermittedButNoDirectory(t *testing.T) {
+	c := newSplitListenerCerts(t)
+	cfg := &config.Config{
+		Addr:           c.sep2Probe,
+		CertFile:       c.certFile,
+		KeyFile:        c.keyFile,
+		CAFile:         c.caFile,
+		TrafficCapture: true,
+		TZOffset:       -28800,
+		TimeQuality:    sep2.TimeQualityNTP,
+	}
+
+	got := bootWithCaptureBootLog(t, cfg, "traffic capture disabled")
 	if !strings.Contains(got, "SEP2_TRAFFIC_DIR") || !strings.Contains(got, "SEP2_DATA_DIR") {
-		t.Errorf("boot log does not name both variables when neither is set:\n%s", got)
+		t.Errorf("boot log does not name both directory variables when permitted with neither set:\n%s", got)
+	}
+}
+
+// TestRunLogsBootLineWhenPermittedAndRecording is item 1's enabled state:
+// TrafficCapture true with a directory that resolves logs one line naming
+// both that capture is on and the directory.
+//
+// Mutant: delete the `log.Printf("traffic capture enabled: ...")` call in
+// the success branch. This test goes RED because the boot log never
+// contains "traffic capture enabled" or the directory.
+func TestRunLogsBootLineWhenPermittedAndRecording(t *testing.T) {
+	c := newSplitListenerCerts(t)
+	trafficDir := t.TempDir()
+	cfg := &config.Config{
+		Addr:           c.sep2Probe,
+		CertFile:       c.certFile,
+		KeyFile:        c.keyFile,
+		CAFile:         c.caFile,
+		TrafficCapture: true,
+		TrafficDir:     trafficDir,
+		TZOffset:       -28800,
+		TimeQuality:    sep2.TimeQualityNTP,
+	}
+
+	got := bootWithCaptureBootLog(t, cfg, "traffic capture enabled")
+	if !strings.Contains(got, "traffic capture enabled") || !strings.Contains(got, trafficDir) {
+		t.Errorf("boot log does not name capture on and the directory when permitted and resolved:\n%s", got)
+	}
+}
+
+// TestRunLogsBootLineWhenDirectoryRefused is #628 fix round 1 item 4, the
+// coverage lane's MEDIUM 2: the refused-directory branch
+// (log.Printf("traffic capture disabled: %v", storeErr)) had no test, only
+// its neighbouring "neither variable set" branch did. Seeding the traffic
+// directory with a file sep2capture's guarded reset does not recognize
+// (reset.go) makes NewStore refuse it; capture must stay off and the
+// server must still start rather than failing.
+//
+// Mutant (server.go): `return fmt.Errorf("traffic capture: %w", storeErr)`
+// in place of the log.Printf. This test goes RED: server.Run returns that
+// error instead of nil, and the deadline loop above never sees the
+// "traffic capture disabled" line it is waiting for.
+func TestRunLogsBootLineWhenDirectoryRefused(t *testing.T) {
+	c := newSplitListenerCerts(t)
+	trafficDir := t.TempDir()
+	if err := os.WriteFile(trafficDir+"/notes.txt", []byte("not ours"), 0o600); err != nil {
+		t.Fatalf("seed refused directory: %v", err)
+	}
+	cfg := &config.Config{
+		Addr:           c.sep2Probe,
+		CertFile:       c.certFile,
+		KeyFile:        c.keyFile,
+		CAFile:         c.caFile,
+		TrafficCapture: true,
+		TrafficDir:     trafficDir,
+		TZOffset:       -28800,
+		TimeQuality:    sep2.TimeQualityNTP,
+	}
+
+	got := bootWithCaptureBootLog(t, cfg, "traffic capture disabled")
+	if !strings.Contains(got, "traffic capture disabled") || !strings.Contains(got, "unrecognized entry") {
+		t.Errorf("boot log does not name the reset refusal for a directory holding a foreign file:\n%s", got)
 	}
 }
 

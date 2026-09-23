@@ -11,6 +11,10 @@ package server
 // The format is pinned by TestRenderConnectionBanner_* in
 // connection_banner_test.go. Any format change must update the test in the
 // same commit.
+//
+// #622: the CA role split gave the banner two role-scoped lines (Serving
+// CA / Device CA) with subject and SHA-256 fingerprint, in place of the
+// single "Server CA" path line, per the issue's third done-condition.
 
 import (
 	"fmt"
@@ -28,9 +32,21 @@ type BannerInput struct {
 	ServerSFDI string // derived from leaf cert (12 decimal digits)
 	ServerLFDI string // derived from leaf cert (40 hex chars)
 
-	// Trust pool
-	CAFile         string   // primary server CA path (SEP2_CA)
-	ExtraClientCAs []string // additional trusted client CAs (SEP2_EXTRA_CLIENT_CAS)
+	// Trust pool (#622: split into a serving role and a device role).
+	// ServingCAFile signs this server's own certificates; DeviceCAFile is
+	// the protocol listener's client-trust bundle and signs minted device
+	// certs. Subject/fingerprint are read from the loaded certificate;
+	// empty means the CA did not load. SameCA is true when one certificate
+	// fills both roles, which the renderer says explicitly rather than
+	// repeating the same subject and fingerprint twice with no comment.
+	ServingCAFile        string
+	ServingCASubject     string
+	ServingCAFingerprint string // SHA-256, hex
+	DeviceCAFile         string
+	DeviceCASubject      string
+	DeviceCAFingerprint  string // SHA-256, hex
+	SameCA               bool
+	ExtraClientCAs       []string // additional trusted client CAs (SEP2_EXTRA_CLIENT_CAS), additive to DeviceCAFile
 
 	// Admin listener
 	AdminListen   string // bind addr of the admin port; empty = admin disabled
@@ -46,7 +62,22 @@ type BannerInput struct {
 	// Device-side smoke hints. Empty = render generic <device>.crt / <device>.key placeholders.
 	DeviceCertHint string
 	DeviceKeyHint  string
-	DeviceCAHint   string // typically same as CAFile; allows override per profile
+	DeviceCAHint   string // the CA a device verifies THIS server against; defaults to ServingCAFile
+}
+
+// caLine renders one role's CA line plus its subject/fingerprint (or a
+// not-loaded placeholder), so the serving and device blocks share one
+// formatting path and cannot drift from each other. prefix is the whole
+// "<label>:<padding>" run, e.g. " Serving CA:   ", so callers control
+// alignment the same way the rest of this file's literal columns do.
+func caLine(b *strings.Builder, prefix, path, subject, fingerprint string) {
+	fmt.Fprintf(b, "%s%s\n", prefix, path)
+	if subject == "" && fingerprint == "" {
+		fmt.Fprintln(b, "   (not loaded)")
+		return
+	}
+	fmt.Fprintf(b, "   subject: %s\n", subject)
+	fmt.Fprintf(b, "   fingerprint (sha256): %s\n", fingerprint)
 }
 
 // RenderConnectionBanner returns the rendered banner text. Caller writes it
@@ -54,9 +85,13 @@ type BannerInput struct {
 func RenderConnectionBanner(in BannerInput) string {
 	host := displayHost(in.Addr)
 
+	// #622: a device verifies THIS server with the serving CA, not the
+	// device CA - the curl example's --cacert is the anchor GET
+	// /api/certs/ca hands an operator, which is the serving CA after the
+	// split (internal/handler/admin_certs.go HandleGetCA).
 	caHint := in.DeviceCAHint
 	if caHint == "" {
-		caHint = in.CAFile
+		caHint = in.ServingCAFile
 	}
 	certHint := in.DeviceCertHint
 	if certHint == "" {
@@ -97,9 +132,15 @@ func RenderConnectionBanner(in BannerInput) string {
 	fmt.Fprintf(&b, " Listen:       https://%s\n", host)
 	fmt.Fprintf(&b, " TLS mode:     %s\n", in.TLSMode)
 	fmt.Fprintf(&b, " Server cert:  %s  (SFDI: %s, LFDI: %s)\n", in.CertFile, in.ServerSFDI, in.ServerLFDI)
-	fmt.Fprintf(&b, " Server CA:    %s\n", in.CAFile)
+	// #622: two role-scoped CA lines, each with subject and fingerprint,
+	// plus an explicit note when one certificate fills both roles.
+	caLine(&b, " Serving CA:   ", in.ServingCAFile, in.ServingCASubject, in.ServingCAFingerprint)
+	caLine(&b, " Device CA:    ", in.DeviceCAFile, in.DeviceCASubject, in.DeviceCAFingerprint)
+	if in.SameCA {
+		fmt.Fprintln(&b, "   (same certificate signs both roles)")
+	}
 	fmt.Fprintln(&b, " Trusted client CAs:")
-	fmt.Fprintf(&b, "   - %s\n", in.CAFile)
+	fmt.Fprintf(&b, "   - %s\n", in.DeviceCAFile)
 	for _, ca := range in.ExtraClientCAs {
 		fmt.Fprintf(&b, "   - %s\n", ca)
 	}

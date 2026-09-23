@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
@@ -463,7 +466,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// after both listeners are up. Banner is log output only - it does not
 	// change behavior and intentionally suppresses secrets (admin key,
 	// private keys). Format is pinned by TestRenderConnectionBanner_*.
-	log.Print("\n" + RenderConnectionBanner(buildBannerInput(cfg, tlsModeName, serverSFDI, serverLFDI, adminTLSDesc)))
+	log.Print("\n" + RenderConnectionBanner(buildBannerInput(cfg, svc, tlsModeName, serverSFDI, serverLFDI, adminTLSDesc)))
 
 	select {
 	case <-ctx.Done():
@@ -647,6 +650,17 @@ func startMetricsServer(addr string, errCh chan error) (*http.Server, error) {
 	return srv, nil
 }
 
+// caRoleInfo reads the subject and SHA-256 fingerprint the banner prints for
+// a loaded CA certificate. Returns two empty strings when cert is nil (not
+// loaded), which caLine renders as "(not loaded)" rather than a blank line.
+func caRoleInfo(cert *x509.Certificate) (subject, fingerprint string) {
+	if cert == nil {
+		return "", ""
+	}
+	fp := sepTLS.Fingerprint(cert)
+	return cert.Subject.String(), hex.EncodeToString(fp[:])
+}
+
 // buildBannerInput projects the runtime config + derived identity into the
 // flat BannerInput struct. Keeping this projection separate from the
 // renderer means tests can pin the formatting independently from changes
@@ -657,7 +671,15 @@ func startMetricsServer(addr string, errCh chan error) (*http.Server, error) {
 // (the only auth path is Bearer at this listener - #161 admin runs on
 // its own port and does not require client certs). The key itself is NEVER
 // printed.
-func buildBannerInput(cfg *config.Config, tlsMode, serverSFDI, serverLFDI, adminTLSDesc string) BannerInput {
+//
+// #622: svc carries the loaded serving/device CA certificates (nil when a
+// CA failed to load, or when the admin cert API is off entirely); their
+// subject and fingerprint come from svc's read-only accessors, never from
+// re-reading the CA files here. SameCA compares the RESOLVED paths
+// (EffectiveServingCA/EffectiveDeviceCA), so an unsplit deployment (both
+// empty, both falling back to CAFile) still gets the "one certificate
+// fills both roles" note.
+func buildBannerInput(cfg *config.Config, svc *handler.AdminCertService, tlsMode, serverSFDI, serverLFDI, adminTLSDesc string) BannerInput {
 	adminAuth := "disabled"
 	if cfg.AdminKey != "" {
 		adminAuth = "Bearer key set"
@@ -675,19 +697,32 @@ func buildBannerInput(cfg *config.Config, tlsMode, serverSFDI, serverLFDI, admin
 		dataDir = fmt.Sprintf("%s (subscriptions: %s)", dataDir, cfg.SubscriptionStorePath)
 	}
 
+	var servingCert, deviceCert *x509.Certificate
+	if svc != nil {
+		servingCert, deviceCert = svc.ServingCA(), svc.DeviceCA()
+	}
+	servingSubject, servingFingerprint := caRoleInfo(servingCert)
+	deviceSubject, deviceFingerprint := caRoleInfo(deviceCert)
+
 	return BannerInput{
-		Addr:           cfg.Addr,
-		TLSMode:        tlsMode,
-		CertFile:       cfg.CertFile,
-		ServerSFDI:     serverSFDI,
-		ServerLFDI:     serverLFDI,
-		CAFile:         cfg.CAFile,
-		ExtraClientCAs: cfg.ExtraClientCAs,
-		AdminListen:    cfg.EffectiveAdminListen(),
-		AdminTLSDesc:   adminTLSDesc,
-		AdminAuthDesc:  adminAuth,
-		DataDirDesc:    dataDir,
-		MDNSEnabled:    cfg.EnableMDNS,
+		Addr:                 cfg.Addr,
+		TLSMode:              tlsMode,
+		CertFile:             cfg.CertFile,
+		ServerSFDI:           serverSFDI,
+		ServerLFDI:           serverLFDI,
+		ServingCAFile:        cfg.EffectiveServingCA(),
+		ServingCASubject:     servingSubject,
+		ServingCAFingerprint: servingFingerprint,
+		DeviceCAFile:         cfg.EffectiveDeviceCA(),
+		DeviceCASubject:      deviceSubject,
+		DeviceCAFingerprint:  deviceFingerprint,
+		SameCA:               cfg.EffectiveServingCA() == cfg.EffectiveDeviceCA(),
+		ExtraClientCAs:       cfg.ExtraClientCAs,
+		AdminListen:          cfg.EffectiveAdminListen(),
+		AdminTLSDesc:         adminTLSDesc,
+		AdminAuthDesc:        adminAuth,
+		DataDirDesc:          dataDir,
+		MDNSEnabled:          cfg.EnableMDNS,
 	}
 }
 

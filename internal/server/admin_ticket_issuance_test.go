@@ -79,16 +79,23 @@ func mintTicketFromLoopback(t *testing.T, router http.Handler) string {
 	return ticket
 }
 
-// ticketOnlyRequest presents ticket as the sole credential: no Bearer, no
-// mTLS, no cookie. RemoteAddr is loopback so the request also exercises
-// RequireRealCredential's bypass-only recheck (the path a browser tab with
-// no other credential would take), not only AdminAuthMiddleware's own
-// initial admission.
-func ticketOnlyRequest(method, target, ticket string) *http.Request {
-	req := httptest.NewRequest(method, target+"?ticket="+ticket, strings.NewReader(""))
+// newTicketOnlyRequest is the shape ticketOnlyRequest and its twins share:
+// ticket as the sole credential on the query string, from loopback, with
+// body left to the caller. RemoteAddr is loopback so the request also
+// exercises RequireRealCredential's bypass-only recheck (the path a browser
+// tab with no other credential would take), not only AdminAuthMiddleware's
+// own initial admission.
+func newTicketOnlyRequest(method, target, ticket, body string) *http.Request {
+	req := httptest.NewRequest(method, target+"?ticket="+ticket, strings.NewReader(body))
 	req.Host = "127.0.0.1"
 	req.RemoteAddr = "127.0.0.1:54321"
 	return req
+}
+
+// ticketOnlyRequest presents ticket as the sole credential: no Bearer, no
+// mTLS, no cookie, and no body.
+func ticketOnlyRequest(method, target, ticket string) *http.Request {
+	return newTicketOnlyRequest(method, target, ticket, "")
 }
 
 // ticketOnlyRequestFromRoutableAddress is ticketOnlyRequest's non-loopback

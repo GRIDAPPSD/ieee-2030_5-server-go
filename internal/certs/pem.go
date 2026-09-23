@@ -17,6 +17,36 @@ func ParseCertificatePEM(pemBytes []byte) (*x509.Certificate, error) {
 	return x509.ParseCertificate(block.Bytes)
 }
 
+// ParseCertificateChainPEM parses every CERTIFICATE block in pemBytes, in
+// file order (#638 fix round 3 item 4): a server certificate file may hold
+// the leaf followed by the intermediates that sign it, the same layout the
+// TLS handshake path and the shared library's peer verifier both already
+// expect (vendor/.../pkg/sep2tls/verify.go). A block of another PEM type
+// (a private key sharing the file) is skipped rather than rejected.
+func ParseCertificateChainPEM(pemBytes []byte) ([]*x509.Certificate, error) {
+	var chain []*x509.Certificate
+	rest := pemBytes
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse certificate %d: %w", len(chain), err)
+		}
+		chain = append(chain, cert)
+	}
+	if len(chain) == 0 {
+		return nil, fmt.Errorf("no certificate found")
+	}
+	return chain, nil
+}
+
 // ParseKeyPEM parses a PEM-encoded PKCS8 private key.
 func ParseKeyPEM(pemBytes []byte) (*ecdsa.PrivateKey, error) {
 	block, _ := pem.Decode(pemBytes)

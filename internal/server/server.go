@@ -778,6 +778,14 @@ func buildBannerInput(cfg *config.Config, svc *handler.AdminCertService, tlsMode
 // deployment that would have started before this fix round must still
 // start after it.
 //
+// #638 fix round 3 item 4: the original check was leaf.CheckSignatureFrom
+// (direct signature only), so a leaf issued by an intermediate under the
+// advertised serving CA - a valid chained deployment - warned falsely. This
+// now verifies the chain the way a client would: certFile's later PEM
+// blocks (if any) go into Intermediates, and servingCA is the sole trusted
+// root, matching the pattern the shared library's own peer verifier uses
+// (vendor/.../pkg/sep2tls/verify.go).
+//
 // Pure function so tests assert content directly without intercepting log
 // output or standing up a listener.
 func servingCAMismatchWarning(certFile string, servingCA *x509.Certificate) string {
@@ -788,11 +796,18 @@ func servingCAMismatchWarning(certFile string, servingCA *x509.Certificate) stri
 	if err != nil {
 		return ""
 	}
-	leaf, err := certs.ParseCertificatePEM(leafPEM)
+	chain, err := certs.ParseCertificateChainPEM(leafPEM)
 	if err != nil {
 		return ""
 	}
-	if err := leaf.CheckSignatureFrom(servingCA); err != nil {
+	leaf := chain[0]
+	roots := x509.NewCertPool()
+	roots.AddCert(servingCA)
+	intermediates := x509.NewCertPool()
+	for _, c := range chain[1:] {
+		intermediates.AddCert(c)
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates}); err != nil {
 		return fmt.Sprintf(
 			"WARNING: server certificate %s is not signed by the advertised serving CA (subject %s): %v. "+
 				"A device that trusts the printed serving CA will refuse this server with "+

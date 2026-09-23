@@ -558,6 +558,73 @@ func keyDERUnderCertificateLabel(t *testing.T) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: keyDER})
 }
 
+// TestHandleGetCACRLFLineEndingsNormalized pins MEDIUM 3's first missing
+// shape: a stored CA file with CRLF line endings, which some Windows
+// tooling produces. The parser accepts it (encoding/pem tolerates \r before
+// \n), and the response is LF-only like every other canonical output.
+func TestHandleGetCACRLFLineEndingsNormalized(t *testing.T) {
+	certPEM, _, caCert := newCAPEM(t)
+	crlf := bytes.ReplaceAll(certPEM, []byte("\n"), []byte("\r\n"))
+
+	svc := handler.NewAdminCertService(caCert, nil, crlf)
+	status, got, raw := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", status, raw)
+	}
+	if strings.Contains(got, "\r") {
+		t.Errorf("certPEM = %q, want LF-only line endings", got)
+	}
+	assertCanonicalCertificatePEM(t, got, caCert.Raw)
+}
+
+// trustedCertificateFixturePEM is real `openssl x509 -trustout` output
+// (OpenSSL 3.5.4), not a hand-relabeled certificate: the coverage lane
+// flagged that distinction as an edge its own fixture did not cover, since
+// Go's trailing-data handling on a genuine "TRUSTED CERTIFICATE" block (no
+// -addtrust auxiliary data added) is what the design's Question 3 measured.
+// The private key that signed it was discarded; this is a throwaway,
+// self-signed test CA with no other use.
+const trustedCertificateFixturePEM = `-----BEGIN TRUSTED CERTIFICATE-----
+MIIBlTCCATugAwIBAgIUTnHjd+3w6vW5MTCWg3k4iRCy8XcwCgYIKoZIzj0EAwIw
+IDEeMBwGA1UEAwwVUDMgb3BlbnNzbCBmaXh0dXJlIENBMB4XDTI2MDkyMzIwMDQw
+MFoXDTI3MDkyMzIwMDQwMFowIDEeMBwGA1UEAwwVUDMgb3BlbnNzbCBmaXh0dXJl
+IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEi4HqFQMNU6tTTpsjCn4FERmA
+M2/o4UDhtutUw8tY/3urYZwhIf+tl7ZaWfcZ4mDoqFd0Xj+ATnFXT0reS3+6y6NT
+MFEwHQYDVR0OBBYEFEDkJf7HQpUzf4h/sONqjYWZ/EW0MB8GA1UdIwQYMBaAFEDk
+Jf7HQpUzf4h/sONqjYWZ/EW0MA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwID
+SAAwRQIhAMsrLvfVw0IRNdbyRcbXRlMEy+vAk7sDLYsD9wgAu+AVAiAzs1NStAJ5
+LBK8FiFJosSUYb/i0h95RARMc6E/lJHW+A==
+-----END TRUSTED CERTIFICATE-----
+`
+
+// TestHandleGetCATrustedCertificateLabelLoads pins MEDIUM 3's second
+// missing shape against real tool output rather than a relabeled fixture:
+// an openssl "-trustout" file with no aux data added parses and loads
+// today (LoadCA would sign with it), but the pre-#644 route refused it with
+// a 500 that called it a file with no certificate block. The filter accepts
+// the label on input and normalizes it to "CERTIFICATE" on output.
+func TestHandleGetCATrustedCertificateLabelLoads(t *testing.T) {
+	block, _ := pem.Decode([]byte(trustedCertificateFixturePEM))
+	if block == nil {
+		t.Fatal("trustedCertificateFixturePEM did not decode")
+	}
+	caCert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("fixture certificate did not parse: %v", err)
+	}
+
+	svc := handler.NewAdminCertService(caCert, nil, []byte(trustedCertificateFixturePEM))
+	status, got, raw := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", status, raw)
+	}
+	assertCanonicalCertificatePEM(t, got, caCert.Raw)
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(got)) {
+		t.Error("certPEM did not load as a trust anchor via AppendCertsFromPEM")
+	}
+}
+
 // wrapBase64 base64-encodes der and wraps it at width columns, distinct
 // from pem.EncodeToMemory (which always wraps at 64). Used to build
 // non-canonical fixtures the canonical-output tests must normalize.

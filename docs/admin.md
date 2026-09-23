@@ -177,6 +177,28 @@ defense in depth):
    by default, and a reverse proxy in front injects `X-Forwarded-*` so
    the bypass declines automatically for production traffic. Every
    admission is logged.
+
+   **Every admin write route refuses this bypass on its own by default
+   (#579, #631), with a named exemption list:** the exceptions are the
+   end-device and FSA management routes (create, delete, and their
+   program and assignment routes), because those routes only create or
+   delete configuration rows and never return key material, a captured
+   header, or a ticket. A write route not on that list requires a real
+   credential (paths 1 to 4 below) even from a loopback address, so a new
+   route is protected the moment it exists rather than only once someone
+   remembers to add it to a list.
+
+   Two route families are also named directly, regardless of method: the
+   certificate routes (`/api/certs/*`, since they mint and return key
+   material) and the traffic-capture routes (`/api/traffic/*`, since they
+   return captured `Authorization` and `Cookie` header bytes verbatim). Both
+   require a real credential on every method, GET reads included.
+
+   On any of these routes, a request the bypass alone would admit is
+   refused with a 401, logged at WARN as `admin: sensitive route refused
+   bypass-only admission`. This is a credential requirement, not a
+   loopback ban - a valid credential presented from a loopback address
+   still succeeds on these routes too.
 1. **[mTLS](glossary.md)** - peer cert with the IEEE 2030.5 admin policy OID
    `1.3.6.1.4.1.40732.2.5` (matched by
    [`certs.HasPolicyOID`](../internal/certs/oids.go)).

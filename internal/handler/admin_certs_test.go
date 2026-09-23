@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -130,27 +132,40 @@ func TestHandleCreateDeviceCertInvalidHWTypeDoesNotLeakDecoderDetail(t *testing.
 // socket rather than httptest.NewRecorder: the property under test is what
 // a caller on the wire receives, and this change's invariant is that any
 // claim about the response is proven that way.
-func TestHandleGetCA(t *testing.T) {
-	svc := newTestCertService(t)
-	h := svc.HandleGetCA()
+func getCA(t *testing.T, svc *handler.AdminCertService) (status int, certPEM string, rawBody []byte) {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/certs/ca", svc.HandleGetCA())
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
+	resp, err := http.Get(srv.URL + "/api/certs/ca")
+	if err != nil {
+		t.Fatalf("GET %s: %v", srv.URL, err)
 	}
-
-	var resp struct {
+	defer func() { _ = resp.Body.Close() }()
+	rawBody, err = io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	var out struct {
 		CertPEM string `json:"certPEM"`
 	}
-	_ = json.NewDecoder(w.Body).Decode(&resp)
-	if resp.CertPEM == "" {
+	_ = json.Unmarshal(rawBody, &out)
+	return resp.StatusCode, out.CertPEM, rawBody
+}
+
+func TestHandleGetCA(t *testing.T) {
+	svc := newTestCertService(t)
+
+	status, certPEM, _ := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if certPEM == "" {
 		t.Error("certPEM should not be empty")
 	}
-	// Verify it doesn't contain a private key
-	if bytes.Contains([]byte(resp.CertPEM), []byte("PRIVATE KEY")) {
+	if bytes.Contains([]byte(certPEM), []byte("PRIVATE KEY")) {
 		t.Error("CA response must NOT contain private key")
 	}
 }
@@ -158,36 +173,23 @@ func TestHandleGetCA(t *testing.T) {
 // TestHandleGetCACombinedPEMServesCertOnly pins #644: a combined PEM file
 // (certificate followed by its private key, a layout some tooling produces)
 // must not echo the key to the caller of the route an operator uses to fetch
-// the anchor for a device. The control (bytes.Contains for "PRIVATE KEY")
-// reproduces RED against the pre-fix handler, which serves s.caCertPEM
-// verbatim; it goes GREEN once the handler filters to CERTIFICATE blocks.
+// the anchor for a device.
 func TestHandleGetCACombinedPEMServesCertOnly(t *testing.T) {
 	certPEM, keyPEM, caCert := newCAPEM(t)
 	combined := append(append([]byte{}, certPEM...), keyPEM...)
 
 	svc := handler.NewAdminCertService(caCert, nil, combined)
-	h := svc.HandleGetCA()
+	status, got, _ := getCA(t, svc)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", w.Code)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
 	}
-
-	var resp struct {
-		CertPEM string `json:"certPEM"`
+	if bytes.Contains([]byte(got), []byte("PRIVATE KEY")) {
+		t.Fatalf("certPEM leaked a private key block: %q", got)
 	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if bytes.Contains([]byte(resp.CertPEM), []byte("PRIVATE KEY")) {
-		t.Fatalf("certPEM leaked a private key block: %q", resp.CertPEM)
-	}
-	block, rest := pem.Decode([]byte(resp.CertPEM))
+	block, rest := pem.Decode([]byte(got))
 	if block == nil || block.Type != "CERTIFICATE" {
-		t.Fatalf("certPEM did not decode to a CERTIFICATE block: %q", resp.CertPEM)
+		t.Fatalf("certPEM did not decode to a CERTIFICATE block: %q", got)
 	}
 	if len(bytes.TrimSpace(rest)) != 0 {
 		t.Errorf("certPEM carried trailing PEM content after the certificate: %q", rest)
@@ -230,23 +232,15 @@ func TestHandleGetCAServesEveryCertificateBlock(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := handler.NewAdminCertService(cert1, nil, tt.file)
-			h := svc.HandleGetCA()
-
-			req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
-			w := httptest.NewRecorder()
-			h.ServeHTTP(w, req)
-
-			var resp struct {
-				CertPEM string `json:"certPEM"`
+			status, certPEM, _ := getCA(t, svc)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200", status)
 			}
-			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-				t.Fatalf("decode response: %v", err)
-			}
-			if bytes.Contains([]byte(resp.CertPEM), []byte("PRIVATE KEY")) {
-				t.Fatalf("certPEM leaked a private key block: %q", resp.CertPEM)
+			if bytes.Contains([]byte(certPEM), []byte("PRIVATE KEY")) {
+				t.Fatalf("certPEM leaked a private key block: %q", certPEM)
 			}
 
-			rest := []byte(resp.CertPEM)
+			rest := []byte(certPEM)
 			var got [][]byte
 			for {
 				var block *pem.Block
@@ -274,28 +268,52 @@ func TestHandleGetCAServesEveryCertificateBlock(t *testing.T) {
 	}
 }
 
-// TestHandleGetCACertOnlyFileIsByteForByteUnchanged pins the invariant that a
-// certificate-only file passes through unmodified: the route's fix for #644
-// must filter, never re-encode, or a source file wrapped at a different line
-// length than Go's pem.Encode would come back changed.
-func TestHandleGetCACertOnlyFileIsByteForByteUnchanged(t *testing.T) {
+// TestHandleGetCACertOnlyFileIsCanonicallyReencoded pins Question 1 of the
+// #644 design: the response is pem.EncodeToMemory's canonical encoding of
+// the certificate the parser accepted, not the stored file's own bytes.
+// For the shipped generator's own output the two happen to coincide,
+// because certs.GenerateCA already encodes canonically (measured in the
+// design record: 526 of 526 bytes identical), so this also pins that the
+// common case is unaffected.
+func TestHandleGetCACertOnlyFileIsCanonicallyReencoded(t *testing.T) {
 	certPEM, _, caCert := newCAPEM(t)
 
 	svc := handler.NewAdminCertService(caCert, nil, certPEM)
-	h := svc.HandleGetCA()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	var resp struct {
-		CertPEM string `json:"certPEM"`
+	status, got, _ := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
 	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
+
+	want := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw}))
+	if got != want {
+		t.Errorf("certPEM = %q, want the canonical re-encoding %q", got, want)
 	}
-	if resp.CertPEM != string(certPEM) {
-		t.Errorf("certificate-only response changed:\n got: %q\nwant: %q", resp.CertPEM, string(certPEM))
+	if got != string(certPEM) {
+		t.Errorf("certPEM = %q, want it to still equal the generator's own output %q", got, string(certPEM))
+	}
+}
+
+// TestHandleGetCANormalizesNonCanonicalWrapping pins the design's named
+// residual risk for Question 1: the response is now coupled to Go's PEM
+// encoder rather than to the operator's file, so a stored file wrapped at a
+// width other than 64 columns comes back re-wrapped. If a future toolchain
+// changed pem.EncodeToMemory's wrapping this goes red, instead of silently
+// changing what every device is told to trust.
+func TestHandleGetCANormalizesNonCanonicalWrapping(t *testing.T) {
+	_, _, caCert := newCAPEM(t)
+	src := "-----BEGIN CERTIFICATE-----\n" + wrapBase64(caCert.Raw, 48) + "\n-----END CERTIFICATE-----\n"
+
+	svc := handler.NewAdminCertService(caCert, nil, []byte(src))
+	status, got, _ := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if got == src {
+		t.Fatal("certPEM equals the 48-column source; want it re-wrapped canonically")
+	}
+	want := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw}))
+	if got != want {
+		t.Errorf("certPEM = %q, want the canonical (64-column) re-encoding %q", got, want)
 	}
 }
 
@@ -303,9 +321,7 @@ func TestHandleGetCACertOnlyFileIsByteForByteUnchanged(t *testing.T) {
 // escaped bug: the filter previously copied the span since the *previous*
 // block ended, not the matched block's own bytes, so a block pem.Decode
 // skipped (a mismatched END label, no END line, or malformed base64) was
-// folded into whichever certificate followed it. The request runs over a
-// real listening socket, not httptest.NewRecorder, because the property
-// under test is what a caller on the wire receives.
+// folded into whichever certificate followed it.
 func TestHandleGetCADropsBlockSkippedBeforeAndBetweenCertificates(t *testing.T) {
 	cert1PEM, keyPEM, cert1 := newCAPEM(t)
 	cert2PEM, _, _ := newCAPEM(t)
@@ -331,68 +347,65 @@ func TestHandleGetCADropsBlockSkippedBeforeAndBetweenCertificates(t *testing.T) 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc := handler.NewAdminCertService(cert1, nil, tt.file)
-			mux := http.NewServeMux()
-			mux.HandleFunc("/api/certs/ca", svc.HandleGetCA())
-			srv := httptest.NewServer(mux)
-			defer srv.Close()
-
-			resp, err := http.Get(srv.URL + "/api/certs/ca")
-			if err != nil {
-				t.Fatalf("GET %s: %v", srv.URL, err)
+			status, certPEM, _ := getCA(t, svc)
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200", status)
 			}
-			defer func() { _ = resp.Body.Close() }()
-			var out struct {
-				CertPEM string `json:"certPEM"`
+			if bytes.Contains([]byte(certPEM), []byte("PRIVATE KEY")) {
+				t.Fatalf("certPEM leaked the skipped block's key material: %q", certPEM)
 			}
-			if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-				t.Fatalf("decode response: %v", err)
-			}
-
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("status = %d, want 200", resp.StatusCode)
-			}
-			if bytes.Contains([]byte(out.CertPEM), []byte("PRIVATE KEY")) {
-				t.Fatalf("certPEM leaked the skipped block's key material: %q", out.CertPEM)
-			}
-			if bytes.Contains([]byte(out.CertPEM), []byte("WRONG LABEL")) {
-				t.Fatalf("certPEM leaked the skipped block's mismatched trailer: %q", out.CertPEM)
+			if bytes.Contains([]byte(certPEM), []byte("WRONG LABEL")) {
+				t.Fatalf("certPEM leaked the skipped block's mismatched trailer: %q", certPEM)
 			}
 		})
 	}
 }
 
-// TestHandleGetCAAcceptsLegacyX509CertificateLabel pins item 3: LoadCA does
-// not check block.Type before parsing, so a CA file carrying the legacy
-// OpenSSL "X509 CERTIFICATE" label loads and signs correctly. The download
-// route must not silently empty such a file just because its label predates
-// the modern "CERTIFICATE" convention.
-func TestHandleGetCAAcceptsLegacyX509CertificateLabel(t *testing.T) {
+// TestHandleGetCANormalizesLegacyX509CertificateLabel pins Question 3 of the
+// #644 design: LoadCA does not check block.Type before parsing, so a CA
+// file carrying the legacy OpenSSL "X509 CERTIFICATE" label loads and
+// signs correctly, and the route must not silently empty it. The label is
+// not preserved: it is normalized to "CERTIFICATE" so the body always
+// loads as a trust anchor, which crypto/x509's pool loader requires.
+func TestHandleGetCANormalizesLegacyX509CertificateLabel(t *testing.T) {
 	certPEM, _, caCert := newCAPEM(t)
 	legacy := bytes.Replace(append([]byte{}, certPEM...), []byte("CERTIFICATE"), []byte("X509 CERTIFICATE"), 2)
 
 	svc := handler.NewAdminCertService(caCert, nil, legacy)
-	h := svc.HandleGetCA()
+	status, got, raw := getCA(t, svc)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", status, raw)
+	}
+	block, _ := pem.Decode([]byte(got))
+	if block == nil {
+		t.Fatalf("certPEM did not decode: %q", got)
+	}
+	if block.Type != "CERTIFICATE" {
+		t.Errorf("block.Type = %q, want the normalized CERTIFICATE label", block.Type)
+	}
+	if !bytes.Equal(block.Bytes, caCert.Raw) {
+		t.Errorf("certPEM did not decode to the CA certificate: %q", got)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(got)) {
+		t.Error("certPEM did not load as a trust anchor via AppendCertsFromPEM")
+	}
+}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+// wrapBase64 base64-encodes der and wraps it at width columns, distinct
+// from pem.EncodeToMemory (which always wraps at 64). Used to build
+// non-canonical fixtures the canonical-output tests must normalize.
+func wrapBase64(der []byte, width int) string {
+	b64 := base64.StdEncoding.EncodeToString(der)
+	var lines []string
+	for i := 0; i < len(b64); i += width {
+		end := i + width
+		if end > len(b64) {
+			end = len(b64)
+		}
+		lines = append(lines, b64[i:end])
 	}
-	var out struct {
-		CertPEM string `json:"certPEM"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&out); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if out.CertPEM == "" {
-		t.Fatal("certPEM is empty for a legacy-labeled CA that loads and signs correctly")
-	}
-	block, _ := pem.Decode([]byte(out.CertPEM))
-	if block == nil || !bytes.Equal(block.Bytes, caCert.Raw) {
-		t.Errorf("certPEM did not decode to the CA certificate: %q", out.CertPEM)
-	}
+	return strings.Join(lines, "\n")
 }
 
 // newCAPEM generates a CA certificate and key pair and returns the encoded

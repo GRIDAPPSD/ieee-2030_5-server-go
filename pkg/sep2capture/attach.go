@@ -3,6 +3,8 @@ package sep2capture
 import (
 	"context"
 	"crypto/tls"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -133,16 +135,16 @@ func (c *recordingCore) Read(p []byte) (int, error) {
 	if n > 0 {
 		c.rec.recordInbound(p[:n], isPeek)
 	}
-	// Only the aborted-peek's own timeout is not the exchange's: net/http
-	// deliberately times this read out on every exchange close
-	// (connReader.abortPendingRead, server.go) to reclaim it for the next
-	// request, and ignores that timeout itself (connReader.backgroundRead
-	// does the same check). Any other error on this read is real: a reset
-	// or a corrupt TLS record arriving while net/http is waiting on this
-	// background peek is exactly as much a connection failure as one on any
-	// other read, and net/http itself does not discard it either. Only the
-	// timeout net/http itself manufactures is not.
-	if err != nil && !(isPeek && isTimeout(err)) {
+	// abortPendingRead's manufactured timeout was never a real error (as
+	// before). A plain io.EOF on this peek is the other exclusion: it is
+	// "an ordinary client disconnect" (Mark's own doc), the routine end of
+	// a connection whose exchange already succeeded, not a failure of it.
+	// net/http's own http.Client produces exactly this EOF whenever a
+	// caller closes a response body without draining it first
+	// (net/http/transport.go's bodyEOFSignal.earlyCloseFn) - common client
+	// code, not a transport fault. Any other error (a reset, a corrupt TLS
+	// record) still counts, per the TestRecordingConnRead* tests below.
+	if err != nil && !(isPeek && (isTimeout(err) || errors.Is(err, io.EOF))) {
 		c.rec.noteError(err)
 	}
 	return n, err

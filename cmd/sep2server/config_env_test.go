@@ -3,6 +3,8 @@ package main
 import (
 	"os"
 	"testing"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 )
 
 // TestConfigFromEnvNoHomeWithAllCertPathsSet pins review finding 2 (#601):
@@ -167,5 +169,39 @@ func TestConfigFromEnvTrafficCapture(t *testing.T) {
 				t.Errorf("TrafficCapture = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestConfigFromEnvAdminClientCA pins #657's test coverage finding: nothing
+// exercised configFromEnv with SEP2_ADMIN_CLIENT_CA set, so a mutant that
+// blanks AdminClientCA at its assignment (main.go, the AdminClientCA field
+// literal) left every package green.
+func TestConfigFromEnvAdminClientCA(t *testing.T) {
+	t.Setenv("SEP2_ADMIN_CLIENT_CA", "/etc/tls/admin-client-ca.crt")
+
+	cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+	if err != nil {
+		t.Fatalf("configFromEnv: %v", err)
+	}
+	if got := cfg.AdminClientCA; got != "/etc/tls/admin-client-ca.crt" {
+		t.Errorf("AdminClientCA = %q, want /etc/tls/admin-client-ca.crt", got)
+	}
+}
+
+// TestConfigFromEnvAdminClientCASystemSentinelSurvivesHomeExpansion pins
+// the main.go comment's claim that the "system" sentinel has no leading
+// "~" and so passes through config.ExpandHome unchanged: nothing asserted
+// it before, and a regression here would fail every host-roots deployment
+// silently (envPathOr would try to resolve "system" as a home-relative
+// path instead of leaving it alone).
+func TestConfigFromEnvAdminClientCASystemSentinelSurvivesHomeExpansion(t *testing.T) {
+	t.Setenv("SEP2_ADMIN_CLIENT_CA", config.AdminClientCASystemRoots)
+
+	cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+	if err != nil {
+		t.Fatalf("configFromEnv: %v", err)
+	}
+	if got := cfg.AdminClientCA; got != config.AdminClientCASystemRoots {
+		t.Errorf("AdminClientCA = %q, want the sentinel %q unchanged", got, config.AdminClientCASystemRoots)
 	}
 }

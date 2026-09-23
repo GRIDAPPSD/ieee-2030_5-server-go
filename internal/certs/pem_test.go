@@ -170,6 +170,38 @@ func TestFilterCertificatePEMDropsBlockSkippedBeforeAndBetween(t *testing.T) {
 	}
 }
 
+// TestFilterCertificatePEMSharedEndBeginLineDropsPrivateKey pins the shape
+// the #644 design measured: pem.Decode accepts a BEGIN at offset 0 of its
+// current search window even when the byte before it is not a newline, so
+// a file whose PRIVATE KEY block's END marker and the certificate's BEGIN
+// marker share one line defeats an offset-based line-start guard. The
+// parse-based filter has no offset to get wrong: it never returns a block
+// that does not parse as a certificate.
+func TestFilterCertificatePEMSharedEndBeginLineDropsPrivateKey(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certDER := genCertDER(t)
+
+	shared := "-----BEGIN PRIVATE KEY-----\n" + rewrap(keyDER, 64) + "\n" +
+		"-----END -----BEGIN CERTIFICATE-----\n" + rewrap(certDER, 64) + "\n" +
+		"-----END CERTIFICATE-----\n"
+	want := canonical(certDER)
+
+	got := certs.FilterCertificatePEM([]byte(shared))
+	if bytes.Contains(got, []byte("PRIVATE KEY")) {
+		t.Fatalf("filtered output leaked the private key on the shared END/BEGIN line: %q", got)
+	}
+	if string(got) != want {
+		t.Errorf("filtered output = %q, want only the certificate %q", got, want)
+	}
+}
+
 // TestFilterCertificatePEMNormalizesLegacyX509CertificateLabel pins
 // Question 3 of the #644 design: LoadCA does not check block.Type, so a CA
 // file carrying the legacy OpenSSL "X509 CERTIFICATE" label loads and

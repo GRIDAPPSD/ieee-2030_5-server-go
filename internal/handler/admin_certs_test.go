@@ -361,6 +361,51 @@ func TestHandleGetCADropsBlockSkippedBeforeAndBetweenCertificates(t *testing.T) 
 	}
 }
 
+// TestHandleGetCASharedEndBeginLineServesCertificateOnly pins the shape the
+// #644 design measured, closed by no earlier round: a stored file whose
+// PRIVATE KEY block's END marker and the certificate's BEGIN marker share
+// one line. pem.Decode accepts a BEGIN at offset 0 of its current search
+// window even when the preceding byte is not a newline, so a source-byte
+// filter keyed on a reimplemented line-start rule fell back to offset 0 and
+// served the whole file, private key included (measured: 750 bytes at the
+// pre-design head, opening "-----BEGIN PRIVATE KEY-----"). The parse-based
+// filter selects by what x509.ParseCertificate accepts, never by an offset,
+// so it cannot repeat that mistake.
+func TestHandleGetCASharedEndBeginLineServesCertificateOnly(t *testing.T) {
+	certPEM, keyPEM, caCert := newCAPEM(t)
+	keyBlock, _ := pem.Decode(keyPEM)
+	if keyBlock == nil {
+		t.Fatal("generated CA key PEM did not decode")
+	}
+	certBlock, _ := pem.Decode(certPEM)
+	if certBlock == nil {
+		t.Fatal("generated CA cert PEM did not decode")
+	}
+	shared := "-----BEGIN PRIVATE KEY-----\n" + wrapBase64(keyBlock.Bytes, 64) + "\n" +
+		"-----END -----BEGIN CERTIFICATE-----\n" + wrapBase64(certBlock.Bytes, 64) + "\n" +
+		"-----END CERTIFICATE-----\n"
+
+	svc := handler.NewAdminCertService(caCert, nil, []byte(shared))
+	status, got, raw := getCA(t, svc)
+
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", status, raw)
+	}
+	if bytes.Contains([]byte(got), []byte("PRIVATE KEY")) {
+		t.Fatalf("certPEM leaked the private key on the shared END/BEGIN line: %q", got)
+	}
+	block, rest := pem.Decode([]byte(got))
+	if block == nil || block.Type != "CERTIFICATE" {
+		t.Fatalf("certPEM did not decode to a CERTIFICATE block: %q", got)
+	}
+	if !bytes.Equal(block.Bytes, caCert.Raw) {
+		t.Error("certPEM decoded to a different certificate than the CA's")
+	}
+	if len(bytes.TrimSpace(rest)) != 0 {
+		t.Errorf("certPEM carried trailing PEM content: %q", rest)
+	}
+}
+
 // TestHandleGetCANormalizesLegacyX509CertificateLabel pins Question 3 of the
 // #644 design: LoadCA does not check block.Type before parsing, so a CA
 // file carrying the legacy OpenSSL "X509 CERTIFICATE" label loads and

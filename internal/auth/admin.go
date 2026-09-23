@@ -52,10 +52,22 @@ const AdminRefusalVary = "Sec-Fetch-Dest, Accept"
 //     normal auth chain runs against operator traffic.
 //  1. mTLS: client cert with admin policy OID (1.3.6.1.4.1.40732.2.5)
 //  2. Bearer token: Authorization header matches adminKey
-//  3. Auth ticket: ?ticket= query param validated against the TicketStore
-//     (short-lived, one-time-use - for browser SSE/EventSource clients)
-//  4. Cookie session: admin_ticket cookie validated against the
+//  3. Cookie session: admin_ticket cookie validated against the
 //     SessionStore without being consumed (browser login flow, #159).
+//  4. Auth ticket: ?ticket= query param validated against the TicketStore
+//     (short-lived, one-time-use - for browser SSE/EventSource clients)
+//
+// The ticket check runs last, after every other real credential, on purpose
+// (#641 fix round 1, item 3): a ticket is the lowest-trust, shortest-lived of
+// the four, so a caller who also holds an mTLS cert, a Bearer token, or a
+// cookie session is admitted by that credential rather than the ticket. A
+// ticket presented alongside one of those is still consumed (#641 fix round
+// 2, item 2): one-time use holds regardless of which credential admits.
+// Before this ordering, a cookie session presented alongside a
+// ticket was admitted via the ticket (checked ahead of the cookie), which
+// both spent the ticket needlessly and, on the one route that refuses
+// ticket-only admission (RequireNonTicketAdmission), was refused a mint the
+// same caller's cookie alone would have received.
 //
 // Paths 3 and 4 take separate stores on purpose. A ticket value is URL-borne
 // and single-use; a session value is cookie-borne and reusable until it
@@ -82,9 +94,9 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *Sessio
 				return
 			}
 
-			// Paths A through D: mTLS, Bearer, ticket, cookie session.
-			if credentialAdmits(r, adminKey, tickets, sessions) {
-				next.ServeHTTP(w, withCredentialAdmission(r))
+			// Paths A through D: mTLS, Bearer, cookie session, ticket.
+			if admits, path := credentialAdmits(r, adminKey, tickets, sessions); admits {
+				next.ServeHTTP(w, withCredentialAdmission(r, path))
 				return
 			}
 
@@ -111,19 +123,44 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *Sessio
 	}
 }
 
+// credentialPath names which of credentialAdmits's four paths admitted a
+// request. Every consumer of the admission chain except AdmittedViaTicket
+// treats all four as an interchangeable "real credential", by design; this
+// type exists solely so the ticket-mint route can tell its own credential
+// kind apart from the other three (#641).
+type credentialPath int
+
+const (
+	credentialPathNone credentialPath = iota
+	credentialPathMTLS
+	credentialPathBearer
+	credentialPathTicket
+	credentialPathCookie
+)
+
 // credentialAdmits runs the four credentialed admission paths (mTLS, Bearer,
-// ticket, cookie session), in the same order and with the same logging side
+// cookie session, ticket), in the same order and with the same logging side
 // effects AdminAuthMiddleware's own chain uses, and reports whether one of
-// them admits r. Extracted so RequireRealCredential (the sensitive-route
-// recheck, #579 #631) and AdminAuthMiddleware's own chain share one
-// implementation and can never drift on what counts as a real credential.
-func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, sessions *SessionStore) bool {
+// them admits r and, if so, which one. Extracted so RequireRealCredential
+// (the sensitive-route recheck, #579 #631) and AdminAuthMiddleware's own
+// chain share one implementation and can never drift on what counts as a
+// real credential.
+//
+// The ticket check runs last, deliberately (#641 fix round 1, item 3): every
+// other real credential admits a caller who also happens to carry a ticket,
+// rather than the ticket taking precedence over a stronger credential. A
+// ticket presented alongside one of those is still redeemed
+// (redeemPresentedTicket, #641 fix round 2, item 2), so one-time use holds
+// no matter which credential admits. See AdminAuthMiddleware's own doc comment for
+// the failure this closes.
+func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, sessions *SessionStore) (bool, credentialPath) {
 	// Path A: mTLS with admin OID
 	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
 		cert := r.TLS.PeerCertificates[0]
 		if certs.HasPolicyOID(cert, certs.OIDPolicyAdmin) {
 			LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathMTLS)
-			return true
+			redeemPresentedTicket(r, tickets)
+			return true, credentialPathMTLS
 		}
 	}
 
@@ -136,34 +173,56 @@ func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, se
 		if token, ok := bearerToken(r.Header.Get("Authorization")); ok && !IsBlankCredential(token) {
 			if constantTimeEqual(token, adminKey) {
 				LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathBearer)
-				return true
+				redeemPresentedTicket(r, tickets)
+				return true, credentialPathBearer
 			}
 			LogFailedAdminCredential(r, obs.AdminAdmissionPathBearer)
 		}
 	}
 
-	// Path C: Short-lived auth ticket (for SSE/EventSource)
-	if tickets != nil {
-		if ticket := r.URL.Query().Get("ticket"); ticket != "" {
-			if tickets.Redeem(ticket) {
-				return true
-			}
-		}
-	}
-
-	// Path D: Cookie session (browser login flow, #159). Validation slides
+	// Path C: Cookie session (browser login flow, #159). Validation slides
 	// the idle deadline but does not consume the session, and no cookie is
 	// re-set here: a per-request rotation cannot survive the parallel
-	// subresource loads of one page.
+	// subresource loads of one page. Checked ahead of the ticket so a caller
+	// who holds both is admitted by the reusable credential rather than the
+	// one-time ticket (#641 fix round 1, item 3).
 	if sessions != nil {
 		if c, err := r.Cookie(AdminTicketCookieName); err == nil && c.Value != "" {
 			if sessions.Validate(c.Value) {
-				return true
+				redeemPresentedTicket(r, tickets)
+				return true, credentialPathCookie
 			}
 		}
 	}
 
-	return false
+	// Path D: Short-lived auth ticket (for SSE/EventSource). Checked last:
+	// it is the one credential kind a caller can leak in a URL, and the only
+	// one this admission chain ever consumes on this path, so it is used
+	// only when nothing else admits.
+	if tickets != nil {
+		if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+			if tickets.Redeem(ticket) {
+				return true, credentialPathTicket
+			}
+		}
+	}
+
+	return false, credentialPathNone
+}
+
+// redeemPresentedTicket consumes a ticket on the query string even though a
+// stronger credential (mTLS, Bearer, or a cookie session) is what admits r,
+// so one-time use holds no matter which credential wins (#641 fix round 2,
+// item 2; ticket.go's own comment calls this load bearing). The redemption
+// result is discarded: admission already stands on the stronger credential,
+// and an absent, expired, or already-spent ticket must not change that.
+func redeemPresentedTicket(r *http.Request, tickets *TicketStore) {
+	if tickets == nil {
+		return
+	}
+	if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+		tickets.Redeem(ticket)
+	}
 }
 
 // RequireRealCredential returns middleware for a route family that must
@@ -186,15 +245,25 @@ func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, se
 // ticket, or a cookie session inside AdminAuthMiddleware) passes through
 // unchanged: credentialAdmits never runs twice for the same request, so a
 // ticket is never redeemed twice and a success log line is never doubled.
+//
+// A recheck that succeeds marks r with the path that admitted it, the same
+// marker AdminAuthMiddleware leaves on a non-bypass admission, so a route
+// that needs to tell the four credential kinds apart (AdmittedViaTicket, for
+// the ticket-mint route, #641) sees the real one even when this recheck is
+// what found it.
 func RequireRealCredential(adminKey string, tickets *TicketStore, sessions *SessionStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if AdmittedByLoopbackBypassOnly(r) && !credentialAdmits(r, adminKey, tickets, sessions) {
-				LogSensitiveRouteRefusal(r)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusUnauthorized)
-				_, _ = w.Write([]byte(`{"error":"admin authentication required"}`))
-				return
+			if AdmittedByLoopbackBypassOnly(r) {
+				admits, path := credentialAdmits(r, adminKey, tickets, sessions)
+				if !admits {
+					LogSensitiveRouteRefusal(r)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusUnauthorized)
+					_, _ = w.Write([]byte(`{"error":"admin authentication required"}`))
+					return
+				}
+				r = withCredentialAdmission(r, path)
 			}
 			next.ServeHTTP(w, r)
 		})
@@ -221,7 +290,7 @@ func LogFailedAdminCredential(r *http.Request, admissionPath string) {
 }
 
 // LogSuccessfulAdminCredential records a successful credential PRESENTATION
-// at INFO: the login form, a Bearer match, or an mTLS admission. Path D (the
+// at INFO: the login form, a Bearer match, or an mTLS admission. Path C (the
 // cookie session) is deliberately excluded from every caller: one page load
 // validates the cookie four times for four independent subresources, so
 // per-request success logging there would recreate the noise problem this
@@ -268,9 +337,55 @@ func withBypassAdmission(r *http.Request) *http.Request {
 // withCredentialAdmission returns r marked as admitted by one of the four
 // credentialed paths (credentialAdmits), so RequireRealCredential's recheck
 // knows not to run credentialAdmits a second time for the same request - a
-// one-time ticket redeemed here must not be redeemed again.
-func withCredentialAdmission(r *http.Request) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), admissionOutcomeContextKey{}, admissionOutcomeCredential))
+// one-time ticket redeemed here must not be redeemed again. path records
+// WHICH of the four admitted, for AdmittedViaTicket (#641); every other
+// reader of the outcome marker still treats all four as interchangeable.
+func withCredentialAdmission(r *http.Request, path credentialPath) *http.Request {
+	ctx := context.WithValue(r.Context(), admissionOutcomeContextKey{}, admissionOutcomeCredential)
+	ctx = context.WithValue(ctx, credentialPathContextKey{}, path)
+	return r.WithContext(ctx)
+}
+
+// credentialPathContextKey holds the credentialPath a request was admitted
+// by, set alongside admissionOutcomeContextKey whenever that outcome is
+// admissionOutcomeCredential. AdmittedViaTicket is its only reader.
+type credentialPathContextKey struct{}
+
+// AdmittedViaTicket reports whether r's real credential - the one
+// AdmittedByLoopbackBypassOnly already required before this runs - was Path
+// D, the auth ticket itself, rather than mTLS, Bearer, or a cookie session.
+// Every other consumer of the admission chain treats a ticket as an
+// ordinary real credential; the ticket-mint route is the one place that
+// must not (#641), because a ticket satisfying its own issuance route turns
+// a 30-second leak into an unbounded one. An unmarked request (the path
+// context key absent) reports false, the same fail-open-looking default
+// credentialPathNone would give: callers only use this after establishing a
+// real credential admitted at all, via AdmittedByLoopbackBypassOnly plus
+// RequireRealCredential's own refusal, so an unmarked request never reaches
+// here in practice.
+func AdmittedViaTicket(r *http.Request) bool {
+	v, _ := r.Context().Value(credentialPathContextKey{}).(credentialPath)
+	return v == credentialPathTicket
+}
+
+// RequireNonTicketAdmission wraps the ticket-mint handler only
+// (BuildAdminRouter, admin_router.go). It runs after AdminAuthMiddleware and
+// RequireRealCredential have already established that some real credential
+// admitted the request and left its kind on r's context (withCredentialAdmission).
+// This is the one further refusal #641 needs: when that credential was
+// itself a ticket, refuse, so a ticket can never mint its own successor.
+// Every other real credential still mints one.
+func RequireNonTicketAdmission(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AdmittedViaTicket(r) {
+			LogTicketSelfRenewalRefused(r)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"admin authentication required"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // AdmittedByLoopbackBypassOnly reports whether r must be rechecked by
@@ -297,6 +412,23 @@ func LogSensitiveRouteRefusal(r *http.Request) {
 		"event", "admin_sensitive_route_refused",
 		"outcome", "credential_required",
 		"admission_path", "loopback_bypass",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"remote_addr", r.RemoteAddr,
+	)
+}
+
+// LogTicketSelfRenewalRefused records RequireNonTicketAdmission's refusal
+// (#641): the request DID carry a real credential, a ticket, so
+// LogSensitiveRouteRefusal's "loopback_bypass" label would misdescribe this
+// case as uncredentialed. Same field shape as the other admission log lines,
+// with its own event name so the two refusal kinds stay distinguishable in a
+// query.
+func LogTicketSelfRenewalRefused(r *http.Request) {
+	slog.Warn("admin: ticket-mint route refused ticket-only admission",
+		"event", "admin_ticket_self_renewal_refused",
+		"outcome", "credential_required",
+		"admission_path", "ticket",
 		"method", r.Method,
 		"path", r.URL.Path,
 		"remote_addr", r.RemoteAddr,

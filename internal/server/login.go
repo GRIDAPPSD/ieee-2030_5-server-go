@@ -15,7 +15,7 @@ import (
 // The login form is served at GET /login (unauthenticated) and posts to
 // POST /auth/login (also unauthenticated). On a successful key match the
 // server mints a SessionStore id and sets it as the admin_ticket cookie,
-// then redirects to /. The middleware's Path D validates that cookie on
+// then redirects to /. The middleware's Path C validates that cookie on
 // each request without consuming it. This handler is the only place the
 // cookie is set, so a client-supplied id is never adopted as a session.
 //
@@ -24,7 +24,7 @@ import (
 
 // HandleLoginPage returns a handler for GET /login. errMsg is interpolated
 // into the page; pass "" for the normal landing render. The handler always
-// returns 200 — the form is the response.
+// returns 200 - the form is the response.
 func HandleLoginPage(errMsg string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -109,7 +109,7 @@ func constantTimeEqual(a, b string) bool {
 
 // htmlEscape is a minimal HTML-attribute-safe escape for the error message
 // embedded into the login template. Operator-supplied input doesn't reach
-// this codepath — the message is server-controlled — but the substitution
+// this codepath - the message is server-controlled - but the substitution
 // goes through DOM-as-string, so escape defensively.
 func htmlEscape(s string) string {
 	replacer := strings.NewReplacer(

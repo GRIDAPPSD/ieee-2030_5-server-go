@@ -91,6 +91,21 @@ func ticketOnlyRequest(method, target, ticket string) *http.Request {
 	return req
 }
 
+// ticketOnlyRequestFromRoutableAddress is ticketOnlyRequest's non-loopback
+// twin (#641 fix round 1, item 4): RemoteAddr is a routable address, so
+// AdminAuthMiddleware's own admission redeems and marks the ticket itself
+// (isLoopbackRemote is false, Path 0 never runs) rather than
+// RequireRealCredential's bypass-only recheck finding it. Host still names an
+// allowed entry (DefaultAdminAllowedHosts) so the request reaches the auth
+// chain at all; only RemoteAddr, which is what isLoopbackRemote reads, is
+// routable.
+func ticketOnlyRequestFromRoutableAddress(method, target, ticket string) *http.Request {
+	req := httptest.NewRequest(method, target+"?ticket="+ticket, strings.NewReader(""))
+	req.Host = "127.0.0.1"
+	req.RemoteAddr = "203.0.113.5:54321"
+	return req
+}
+
 // TestAuthTicketMintRefusesTicketOnlyAdmission is #641: a one-time ticket
 // satisfied RequireRealCredential's own recheck exactly like a Bearer token
 // or a cookie session, so a ticket presented to POST /auth/ticket was
@@ -145,5 +160,58 @@ func TestAuthTicketMintRefusesTicketOnlyAdmission(t *testing.T) {
 	router.ServeHTTP(credRec, bearerFromLoopbackRequest(http.MethodPost, "/auth/ticket", "", ""))
 	if credRec.Code != http.StatusOK {
 		t.Fatalf("POST /auth/ticket with a valid Bearer: status = %d, want 200; body = %q", credRec.Code, credRec.Body.String())
+	}
+}
+
+// TestAuthTicketMintRefusesTicketOnlyAdmissionFromRoutableAddress is #641 fix
+// round 1, item 4: every router-level assertion above drives RemoteAddr
+// loopback, so it reaches the refusal only through RequireRealCredential's
+// bypass-only recheck. The arrival path where AdminAuthMiddleware's own
+// admission redeems and marks the ticket - isLoopbackRemote false, Path 0
+// never runs - was covered only by the hand-built middleware chain in
+// internal/auth (TestRequireNonTicketAdmissionRefusesTicketOnlyFromNonLoopback),
+// never by the real router with its cross-origin, host-allowlist, and
+// body-type layers in front. This drives the same property through
+// BuildAdminRouter.
+func TestAuthTicketMintRefusesTicketOnlyAdmissionFromRoutableAddress(t *testing.T) {
+	router := newSensitiveRoutesRouter(t)
+
+	ticket := mintTicketFromLoopback(t, router)
+
+	buf := captureSlogForSensitiveRoutes(t)
+	renewRec := httptest.NewRecorder()
+	router.ServeHTTP(renewRec, ticketOnlyRequestFromRoutableAddress(http.MethodPost, "/auth/ticket", ticket))
+	if renewRec.Code != http.StatusUnauthorized {
+		t.Fatalf("POST /auth/ticket with only a ticket, routable address: status = %d, want 401; body = %q (a ticket minted its own successor)",
+			renewRec.Code, renewRec.Body.String())
+	}
+	if renewRec.Body.String() != sensitiveRefusalBody {
+		t.Fatalf("POST /auth/ticket with only a ticket, routable address: body = %q, want %q", renewRec.Body.String(), sensitiveRefusalBody)
+	}
+	if !strings.Contains(buf.String(), `"event":"admin_ticket_self_renewal_refused"`) {
+		t.Errorf("POST /auth/ticket with only a ticket, routable address: no admin_ticket_self_renewal_refused log line; captured = %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), `"admission_path":"ticket"`) {
+		t.Errorf("POST /auth/ticket with only a ticket, routable address: log line missing admission_path=ticket; captured = %s", buf.String())
+	}
+
+	// The ticket was consumed by AdminAuthMiddleware's own admission this
+	// time, not by RequireRealCredential's recheck; a replay is refused for
+	// the ordinary reason of presenting an already-spent ticket either way.
+	replayRec := httptest.NewRecorder()
+	router.ServeHTTP(replayRec, ticketOnlyRequestFromRoutableAddress(http.MethodPost, "/auth/ticket", ticket))
+	if replayRec.Code != http.StatusUnauthorized {
+		t.Fatalf("POST /auth/ticket, ticket replayed, routable address: status = %d, want 401", replayRec.Code)
+	}
+
+	// Control: a real credential from the same routable address still mints.
+	credRec := httptest.NewRecorder()
+	credReq := httptest.NewRequest(http.MethodPost, "/auth/ticket", strings.NewReader(""))
+	credReq.Host = "127.0.0.1"
+	credReq.RemoteAddr = "203.0.113.5:54321"
+	credReq.Header.Set("Authorization", "Bearer the-key")
+	router.ServeHTTP(credRec, credReq)
+	if credRec.Code != http.StatusOK {
+		t.Fatalf("POST /auth/ticket with a valid Bearer, routable address: status = %d, want 200; body = %q", credRec.Code, credRec.Body.String())
 	}
 }

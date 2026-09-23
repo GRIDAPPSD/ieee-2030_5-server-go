@@ -34,6 +34,13 @@ type Config struct {
 	// SEP2_TRAFFIC_CAPTURE.
 	TrafficCapture bool
 
+	// #628 fix round 2: the raw SEP2_TRAFFIC_CAPTURE value, kept alongside
+	// the parsed TrafficCapture bool so the disabled boot line can tell
+	// "never set" apart from "set to something other than the exact
+	// literal true" instead of reporting every off case as unset. Empty
+	// means the variable was not set.
+	TrafficCaptureEnv string
+
 	// #611: dedicated directory for the traffic-capture segment log, read
 	// only when TrafficCapture is true. Empty falls back to
 	// <DataDir>/traffic; both empty means TrafficCapture had nothing to

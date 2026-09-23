@@ -448,6 +448,39 @@ func TestRunLogsBootLineWhenTrafficCaptureNotSet(t *testing.T) {
 	}
 }
 
+// TestRunLogsBootLineWhenTrafficCaptureEnvRejected is #628 fix round 2's
+// silent-failure LOW: an operator who set SEP2_TRAFFIC_CAPTURE to something
+// other than the exact literal "true" (a near-miss like "TRUE" or "1", per
+// the permit's strict comparison in cmd/sep2server/main.go) gets told which
+// value was rejected, not the same "is not set" line a truly-unset variable
+// gets, so they look at the value instead of an env-injection gap that is
+// not the actual problem.
+//
+// Mutant: revert the boot-line branch to always print "is not set"
+// regardless of TrafficCaptureEnv. This test goes RED because the rejected
+// value never appears in the log.
+func TestRunLogsBootLineWhenTrafficCaptureEnvRejected(t *testing.T) {
+	c := newSplitListenerCerts(t)
+	cfg := &config.Config{
+		Addr:              c.sep2Probe,
+		CertFile:          c.certFile,
+		KeyFile:           c.keyFile,
+		CAFile:            c.caFile,
+		TrafficCapture:    false, // what configFromEnv's == "true" comparison yields for "TRUE"
+		TrafficCaptureEnv: "TRUE",
+		TZOffset:          -28800,
+		TimeQuality:       sep2.TimeQualityNTP,
+	}
+
+	got := bootWithCaptureBootLog(t, cfg, "traffic capture disabled")
+	if !strings.Contains(got, `traffic capture disabled: SEP2_TRAFFIC_CAPTURE="TRUE" is not "true"`) {
+		t.Errorf("boot log does not name the rejected SEP2_TRAFFIC_CAPTURE value:\n%s", got)
+	}
+	if strings.Contains(got, "SEP2_TRAFFIC_CAPTURE is not set") {
+		t.Errorf("boot log used the unset-variable line for a set-but-rejected value:\n%s", got)
+	}
+}
+
 // TestRunDataDirAloneDoesNotEnableCapture is #628 fix round 1's decisive
 // reproduction of the defect both the silent-failure and security lanes
 // measured: "with SEP2_DATA_DIR set, SEP2_TRAFFIC_DIR unset and no admin

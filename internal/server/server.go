@@ -269,7 +269,11 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		closeCapture    = func() {}
 	)
 	if !cfg.TrafficCapture {
-		log.Printf("traffic capture disabled: SEP2_TRAFFIC_CAPTURE is not set")
+		if cfg.TrafficCaptureEnv == "" {
+			log.Printf("traffic capture disabled: SEP2_TRAFFIC_CAPTURE is not set")
+		} else {
+			log.Printf("traffic capture disabled: SEP2_TRAFFIC_CAPTURE=%q is not \"true\"", cfg.TrafficCaptureEnv)
+		}
 	} else if trafficDir := cfg.EffectiveTrafficDir(); trafficDir == "" {
 		log.Printf("traffic capture disabled: SEP2_TRAFFIC_CAPTURE is set but neither SEP2_TRAFFIC_DIR nor SEP2_DATA_DIR is set")
 	} else if store, storeErr := sep2capture.NewStore(sep2capture.StoreConfig{Dir: trafficDir}); storeErr != nil {

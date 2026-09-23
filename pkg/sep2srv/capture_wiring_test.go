@@ -89,17 +89,12 @@ func TestOptionsCaptureRecordsRealClientThroughRunBothModes(t *testing.T) {
 			runDone := make(chan error, 1)
 			go func() { runDone <- srv.Run(ctx) }()
 
-			waitForDial(t, addr)
-
 			clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey), mustRead(t, certs.caFile))
 			if err != nil {
 				t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
 			}
 			client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSCfg}}
-			resp, err := client.Get("https://" + addr + "/dcap")
-			if err != nil {
-				t.Fatalf("GET (%s): %v", mode, err)
-			}
+			resp := getWithRetry(t, client, "https://"+addr+"/dcap")
 			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("status (%s) = %d, want 200", mode, resp.StatusCode)

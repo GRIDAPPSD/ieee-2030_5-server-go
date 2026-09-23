@@ -180,12 +180,33 @@ var subscribeHook func(ch chan Summary)
 // sender): closeSubscription is the single path every one of those closes
 // funnels through, and forceExpire (nil is fine) runs there too, once,
 // however the subscription ends.
+//
+// A Subscribe that arrives after Store.Close has already run is refused: it
+// gets an already-closed channel back rather than being registered, since
+// closeAllSubscribers has already taken its one snapshot of subs and would
+// never see a later addition (#628 fix round 1, silent-failure MEDIUM: a
+// stream subscribed after Close previously registered and then never
+// ended, holding an admin shutdown open for as long as the client stayed
+// connected). The check and the registration both run under intakeMu's
+// read lock, the same lock Close takes exclusively to set closed=true, so
+// either this call's RLock is strictly before Close's Lock (sub is
+// registered before Close's own snapshot, and closeAllSubscribers will
+// close it) or strictly after Close's Unlock (closed is already true, and
+// sub is refused): there is no window where a subscription is registered
+// but closeAllSubscribers has already run.
 func (s *Store) Subscribe(ctx context.Context, forceExpire func()) <-chan Summary {
 	sub := &subscription{ch: make(chan Summary, subscriberBufferSize), forceExpire: forceExpire}
 
+	s.intakeMu.RLock()
+	if s.closed {
+		s.intakeMu.RUnlock()
+		close(sub.ch)
+		return sub.ch
+	}
 	s.subMu.Lock()
 	s.subs[sub] = struct{}{}
 	s.subMu.Unlock()
+	s.intakeMu.RUnlock()
 
 	if subscribeHook != nil {
 		subscribeHook(sub.ch)

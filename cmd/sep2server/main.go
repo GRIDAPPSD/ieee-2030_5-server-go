@@ -168,7 +168,12 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		// path when both are set.
 		DataDir:               dataDir,
 		SubscriptionStorePath: subscriptionStorePath,
-		TrafficDir:            trafficDir,
+
+		// #628 fix round 1: SEP2_TRAFFIC_CAPTURE is the permit; off by
+		// default. SEP2_TRAFFIC_DIR only decides where segments go once
+		// permitted (Config.EffectiveTrafficDir).
+		TrafficCapture: os.Getenv("SEP2_TRAFFIC_CAPTURE") == "true",
+		TrafficDir:     trafficDir,
 
 		// Observability: dedicated plain-HTTP Prometheus metrics listener.
 		// Empty SEP2_METRICS_ADDR (default) leaves it OFF; set e.g. ":9100"

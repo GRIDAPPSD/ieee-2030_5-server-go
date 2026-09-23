@@ -3,7 +3,7 @@
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
        coverage-scope-check \
        lint gofmt-check vet clean run run-ccm run-journald run-ccm-journald \
-       run-testdevice run-sunspec certs new-device \
+       run-testdevice run-sunspec certs new-device install-certs \
        serve help stress-pretest vendor bump-core ui-build ui-check \
        ci-local ci-local-drift-check
 
@@ -149,6 +149,30 @@ new-device: export CERT_DIR    := $(CERT_DIR)
 new-device: export SERVER_BIN  := $(SERVER)
 new-device:                ## Mint a new device cert (DEVICE_NAME= SERIAL= required); prints PEM for the admin dashboard
 	@./scripts/new-device.sh
+
+# install-certs: the single documented entry point for scripts/install-certs.sh
+# (#656). MODE selects the destination (operator's browser stores, the
+# system trust store, or a device host's plain cert/key files); VERB
+# selects install, verify, or remove. Implementation notes and every mode's
+# env vars live in the script's own header comment.
+#
+# Required:
+#   MODE=operator|trust|device
+#   VERB=install|verify|remove
+#
+# Optional:
+#   DRY_RUN=1    plan only; prints paths and tools, writes nothing (install/remove)
+#   DEST=<dir>   device mode's target directory (or set DEVICE_DEST_DIR directly)
+#
+# Examples:
+#   make install-certs MODE=trust VERB=install
+#   make install-certs MODE=device VERB=install DEST=/home/operator/.sep2/device
+#   make install-certs MODE=operator VERB=verify
+install-certs: export CERT_DIR := $(CERT_DIR)
+install-certs:              ## Install/verify/remove cert material (MODE= VERB= required; see scripts/install-certs.sh -h)
+	@test -n "$(MODE)" || (echo "ERROR: MODE=operator|trust|device is required" && exit 2)
+	@test -n "$(VERB)" || (echo "ERROR: VERB=install|verify|remove is required" && exit 2)
+	./scripts/install-certs.sh $(MODE) $(VERB) $(if $(DRY_RUN),--dry-run) $(if $(DEST),--dest $(DEST))
 
 # --- Run ----------------------------------------------------------
 

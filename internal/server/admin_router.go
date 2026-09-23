@@ -41,7 +41,7 @@ import (
 // trafficHandler, when non-nil, is the traffic-capture read API (#611):
 // mounted at "/api/traffic/" on the authenticated inner mux, so it gets the
 // same auth chain as every other admin API route, the one-time ticket path
-// included (Path C above covers GET /api/traffic/stream the same as any
+// included (Path D above covers GET /api/traffic/stream the same as any
 // other authed GET). Nil mounts nothing, which is what capture-off leaves.
 //
 // Test callers that don't need the pattern list discard the second

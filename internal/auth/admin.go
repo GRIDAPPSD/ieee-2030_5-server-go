@@ -52,10 +52,20 @@ const AdminRefusalVary = "Sec-Fetch-Dest, Accept"
 //     normal auth chain runs against operator traffic.
 //  1. mTLS: client cert with admin policy OID (1.3.6.1.4.1.40732.2.5)
 //  2. Bearer token: Authorization header matches adminKey
-//  3. Auth ticket: ?ticket= query param validated against the TicketStore
-//     (short-lived, one-time-use - for browser SSE/EventSource clients)
-//  4. Cookie session: admin_ticket cookie validated against the
+//  3. Cookie session: admin_ticket cookie validated against the
 //     SessionStore without being consumed (browser login flow, #159).
+//  4. Auth ticket: ?ticket= query param validated against the TicketStore
+//     (short-lived, one-time-use - for browser SSE/EventSource clients)
+//
+// The ticket check runs last, after every other real credential, on purpose
+// (#641 fix round 1, item 3): a ticket is the lowest-trust, shortest-lived of
+// the four, so a caller who also holds an mTLS cert, a Bearer token, or a
+// cookie session is admitted by that credential and the ticket is left
+// unspent. Before this ordering, a cookie session presented alongside a
+// ticket was admitted via the ticket (checked ahead of the cookie), which
+// both spent the ticket needlessly and, on the one route that refuses
+// ticket-only admission (RequireNonTicketAdmission), was refused a mint the
+// same caller's cookie alone would have received.
 //
 // Paths 3 and 4 take separate stores on purpose. A ticket value is URL-borne
 // and single-use; a session value is cookie-borne and reusable until it
@@ -82,7 +92,7 @@ func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *Sessio
 				return
 			}
 
-			// Paths A through D: mTLS, Bearer, ticket, cookie session.
+			// Paths A through D: mTLS, Bearer, cookie session, ticket.
 			if admits, path := credentialAdmits(r, adminKey, tickets, sessions); admits {
 				next.ServeHTTP(w, withCredentialAdmission(r, path))
 				return
@@ -127,12 +137,18 @@ const (
 )
 
 // credentialAdmits runs the four credentialed admission paths (mTLS, Bearer,
-// ticket, cookie session), in the same order and with the same logging side
+// cookie session, ticket), in the same order and with the same logging side
 // effects AdminAuthMiddleware's own chain uses, and reports whether one of
 // them admits r and, if so, which one. Extracted so RequireRealCredential
 // (the sensitive-route recheck, #579 #631) and AdminAuthMiddleware's own
 // chain share one implementation and can never drift on what counts as a
 // real credential.
+//
+// The ticket check runs last, deliberately (#641 fix round 1, item 3): every
+// other real credential admits a caller who also happens to carry a ticket,
+// leaving that ticket unspent, rather than the ticket taking precedence and
+// consuming itself for nothing. See AdminAuthMiddleware's own doc comment for
+// the failure this closes.
 func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, sessions *SessionStore) (bool, credentialPath) {
 	// Path A: mTLS with admin OID
 	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
@@ -158,23 +174,28 @@ func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, se
 		}
 	}
 
-	// Path C: Short-lived auth ticket (for SSE/EventSource)
-	if tickets != nil {
-		if ticket := r.URL.Query().Get("ticket"); ticket != "" {
-			if tickets.Redeem(ticket) {
-				return true, credentialPathTicket
-			}
-		}
-	}
-
-	// Path D: Cookie session (browser login flow, #159). Validation slides
+	// Path C: Cookie session (browser login flow, #159). Validation slides
 	// the idle deadline but does not consume the session, and no cookie is
 	// re-set here: a per-request rotation cannot survive the parallel
-	// subresource loads of one page.
+	// subresource loads of one page. Checked ahead of the ticket so a caller
+	// who holds both is admitted by the reusable credential and the
+	// one-time ticket stays spendable (#641 fix round 1, item 3).
 	if sessions != nil {
 		if c, err := r.Cookie(AdminTicketCookieName); err == nil && c.Value != "" {
 			if sessions.Validate(c.Value) {
 				return true, credentialPathCookie
+			}
+		}
+	}
+
+	// Path D: Short-lived auth ticket (for SSE/EventSource). Checked last:
+	// it is the one credential kind a caller can leak in a URL, and the only
+	// one this admission chain ever consumes, so it is used only when
+	// nothing else admits.
+	if tickets != nil {
+		if ticket := r.URL.Query().Get("ticket"); ticket != "" {
+			if tickets.Redeem(ticket) {
+				return true, credentialPathTicket
 			}
 		}
 	}
@@ -247,7 +268,7 @@ func LogFailedAdminCredential(r *http.Request, admissionPath string) {
 }
 
 // LogSuccessfulAdminCredential records a successful credential PRESENTATION
-// at INFO: the login form, a Bearer match, or an mTLS admission. Path D (the
+// at INFO: the login form, a Bearer match, or an mTLS admission. Path C (the
 // cookie session) is deliberately excluded from every caller: one page load
 // validates the cookie four times for four independent subresources, so
 // per-request success logging there would recreate the noise problem this
@@ -310,7 +331,7 @@ type credentialPathContextKey struct{}
 
 // AdmittedViaTicket reports whether r's real credential - the one
 // AdmittedByLoopbackBypassOnly already required before this runs - was Path
-// C, the auth ticket itself, rather than mTLS, Bearer, or a cookie session.
+// D, the auth ticket itself, rather than mTLS, Bearer, or a cookie session.
 // Every other consumer of the admission chain treats a ticket as an
 // ordinary real credential; the ticket-mint route is the one place that
 // must not (#641), because a ticket satisfying its own issuance route turns

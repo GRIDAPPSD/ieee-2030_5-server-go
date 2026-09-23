@@ -15,7 +15,7 @@ import (
 // The login form is served at GET /login (unauthenticated) and posts to
 // POST /auth/login (also unauthenticated). On a successful key match the
 // server mints a SessionStore id and sets it as the admin_ticket cookie,
-// then redirects to /. The middleware's Path D validates that cookie on
+// then redirects to /. The middleware's Path C validates that cookie on
 // each request without consuming it. This handler is the only place the
 // cookie is set, so a client-supplied id is never adopted as a session.
 //

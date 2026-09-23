@@ -7,9 +7,9 @@ import (
 
 // #268: ResolveAdminBind applies a loopback default to a bare-port
 // admin listen string. Pre-#268, ":8444" handed to net.Listen bound
-// 0.0.0.0 — any network neighbor (or co-resident process on a multi-
+// 0.0.0.0 - any network neighbor (or co-resident process on a multi-
 // tenant host) could reach the admin surface, and the AdminAuthMiddleware
-// Path 0 loopback bypass would admit them. The fix: bare-port → loopback
+// Path 0 loopback bypass would admit them. The fix: bare-port -> loopback
 // by default; any explicit host (0.0.0.0, an LAN IP, IPv6 wildcard, a
 // hostname) passes through unchanged. Operators who want network
 // exposure must say so explicitly.
@@ -27,12 +27,12 @@ func TestResolveAdminBind(t *testing.T) {
 
 		// #268 core: bare port gets the loopback default. This is
 		// the behavior change the card is for.
-		{"bare port :8444 → loopback", ":8444", "127.0.0.1:8444"},
-		{"bare port :9443 → loopback", ":9443", "127.0.0.1:9443"},
-		{"bare port :0 (ephemeral) → loopback", ":0", "127.0.0.1:0"},
+		{"bare port :8444 -> loopback", ":8444", "127.0.0.1:8444"},
+		{"bare port :9443 -> loopback", ":9443", "127.0.0.1:9443"},
+		{"bare port :0 (ephemeral) -> loopback", ":0", "127.0.0.1:0"},
 
 		// Explicit 0.0.0.0 is the operator saying "I want public
-		// network exposure" — pass through. No silent rewriting.
+		// network exposure" - pass through. No silent rewriting.
 		{"explicit 0.0.0.0:port unchanged", "0.0.0.0:8444", "0.0.0.0:8444"},
 
 		// Explicit IPv6 wildcard same story as 0.0.0.0.
@@ -42,7 +42,7 @@ func TestResolveAdminBind(t *testing.T) {
 		{"explicit 127.0.0.1:port unchanged", "127.0.0.1:8444", "127.0.0.1:8444"},
 		{"explicit [::1]:port unchanged", "[::1]:8444", "[::1]:8444"},
 
-		// LAN IP / management network — the operator explicitly said
+		// LAN IP / management network - the operator explicitly said
 		// "this interface". Honor it.
 		{"explicit LAN IP unchanged", "192.168.1.5:8444", "192.168.1.5:8444"},
 		{"explicit hostname unchanged", "admin.internal:8444", "admin.internal:8444"},
@@ -79,9 +79,9 @@ func TestResolveMetricsBind(t *testing.T) {
 	}{
 		{"empty (metrics disabled)", "", ""},
 
-		// HIGH fix core: bare port → loopback default.
-		{"bare port :9100 → loopback", ":9100", "127.0.0.1:9100"},
-		{"bare port :0 (ephemeral) → loopback", ":0", "127.0.0.1:0"},
+		// HIGH fix core: bare port -> loopback default.
+		{"bare port :9100 -> loopback", ":9100", "127.0.0.1:9100"},
+		{"bare port :0 (ephemeral) -> loopback", ":0", "127.0.0.1:0"},
 
 		// Explicit routable forms pass through (the documented
 		// host.docker.internal scrape path). No silent rewrite.
@@ -113,7 +113,7 @@ func TestResolveMetricsBind(t *testing.T) {
 //  1. If dedicatedPath is non-empty, return it verbatim (back-compat for
 //     SEP2_SUBSCRIPTION_STORE_PATH etc.).
 //  2. Else if DataDir is non-empty, return <DataDir>/<name>.json.
-//  3. Else return "" — in-memory mode.
+//  3. Else return "" - in-memory mode.
 //
 // Empty Config (no DataDir, no dedicated path) keeps the historical pre-
 // #165 behavior so every existing test path stays unchanged.
@@ -183,6 +183,54 @@ func TestEffectiveStorePath(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("EffectiveStorePath(%q, %q) with DataDir=%q = %q, want %q",
 					tc.storeName, tc.dedicatedPath, tc.dataDir, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEffectiveTrafficDir pins #611's directory precedence: TrafficDir wins,
+// else <DataDir>/traffic, else "" (capture off). Mutant: swap the two
+// EffectiveTrafficDir branches (return the DataDir join first) and this
+// test's "TrafficDir wins over DataDir" case goes red.
+func TestEffectiveTrafficDir(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		trafficDir string
+		dataDir    string
+		want       string
+	}{
+		{
+			name: "neither set returns empty (capture off)",
+			want: "",
+		},
+		{
+			name:    "DataDir only derives <DataDir>/traffic",
+			dataDir: "/var/lib/sep2",
+			want:    filepath.Join("/var/lib/sep2", "traffic"),
+		},
+		{
+			name:       "TrafficDir only returns verbatim",
+			trafficDir: "/custom/traffic",
+			want:       "/custom/traffic",
+		},
+		{
+			name:       "TrafficDir wins over DataDir",
+			trafficDir: "/custom/traffic",
+			dataDir:    "/var/lib/sep2",
+			want:       "/custom/traffic",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &Config{TrafficDir: tc.trafficDir, DataDir: tc.dataDir}
+			if got := cfg.EffectiveTrafficDir(); got != tc.want {
+				t.Errorf("EffectiveTrafficDir() with TrafficDir=%q DataDir=%q = %q, want %q",
+					tc.trafficDir, tc.dataDir, got, tc.want)
 			}
 		})
 	}

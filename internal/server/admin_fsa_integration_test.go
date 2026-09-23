@@ -32,7 +32,7 @@ func setupAdminRouter(t *testing.T) (*server.Stores, http.Handler) {
 		AdminFSAs:   memory.NewAdminFSAStore(),
 	}
 	tickets := auth.NewTicketStore(5 * time.Minute)
-	router, _ := server.BuildAdminRouter(adminKey, nil, stores, "GCM", tickets, nil, nil, false)
+	router, _ := server.BuildAdminRouter(adminKey, nil, stores, "GCM", tickets, nil, nil, false, nil)
 	return stores, router
 }
 
@@ -91,7 +91,7 @@ func TestAdminFSAIntegration_FullLifecycle(t *testing.T) {
 		t.Fatalf("attach: %d body=%s", w.Code, w.Body.String())
 	}
 
-	// 3) Attach to a non-existent program → 404.
+	// 3) Attach to a non-existent program -> 404.
 	w = authedDo(t, router, http.MethodPost, "/api/fsas/fsa-solar/programs",
 		`{"programHref":"/edev/dev-X/fsa/anyfsa/derp/ghost"}`)
 	if w.Code != http.StatusNotFound {

@@ -55,7 +55,7 @@ func TestProtocolListenerDoesNotMountCertAPI(t *testing.T) {
 			} else {
 				body = strings.NewReader("")
 			}
-			// RemoteAddr is loopback with no proxy headers — this is
+			// RemoteAddr is loopback with no proxy headers - this is
 			// exactly the Path 0 bypass shape. If the protocol-listener
 			// router still mounted /api/certs/*, the cert handler would
 			// fire and we'd see 200/400. We require 404 (mux miss).
@@ -73,17 +73,17 @@ func TestProtocolListenerDoesNotMountCertAPI(t *testing.T) {
 	}
 }
 
-// TestAdminListenerStillMountsCertAPI confirms the legitimate path —
+// TestAdminListenerStillMountsCertAPI confirms the legitimate path -
 // the admin listener's router DOES mount /api/certs/* and serves them
 // behind AdminAuthMiddleware. We don't authenticate here; we only need
 // to prove the routes exist on the admin mux (a 401 from the auth
-// layer is sufficient — it means the route was matched and handed to
+// layer is sufficient - it means the route was matched and handed to
 // AdminAuthMiddleware).
 func TestAdminListenerStillMountsCertAPI(t *testing.T) {
 	svc := newScopeTestCertService(t)
 	stores := newTestStores()
 
-	adminRouter, _ := server.BuildAdminRouter("test-admin-key", svc, stores, "", nil, nil, nil, false)
+	adminRouter, _ := server.BuildAdminRouter("test-admin-key", svc, stores, "", nil, nil, nil, false, nil)
 
 	cases := []struct {
 		name   string
@@ -99,7 +99,7 @@ func TestAdminListenerStillMountsCertAPI(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(""))
 			// Force a non-loopback RemoteAddr so Path 0 (loopback bypass)
-			// does not admit — we want to see the auth layer reject,
+			// does not admit - we want to see the auth layer reject,
 			// which proves the route exists and is guarded.
 			req.RemoteAddr = "10.0.0.5:1234"
 			rec := httptest.NewRecorder()

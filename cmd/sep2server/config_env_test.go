@@ -68,3 +68,45 @@ func TestConfigFromEnvNotificationAllowLoopback(t *testing.T) {
 		})
 	}
 }
+
+// TestConfigFromEnvTrafficCapture pins the #628 permit (main.go:175) to the
+// same strict-equality idiom TestConfigFromEnvNotificationAllowLoopback
+// already pins: only the exact literal "true" turns capture on, so a
+// deployment that never sets the variable, or sets a near-miss, stays off.
+func TestConfigFromEnvTrafficCapture(t *testing.T) {
+	const key = "SEP2_TRAFFIC_CAPTURE"
+	value := func(s string) *string { return &s }
+
+	for _, tc := range []struct {
+		name  string
+		value *string // nil means unset
+		want  bool
+	}{
+		{"unset stays off", nil, false},
+		{"empty stays off", value(""), false},
+		{"true opts in", value("true"), true},
+		{"TRUE stays off", value("TRUE"), false},
+		{"1 stays off", value("1"), false},
+		{"yes stays off", value("yes"), false},
+		{"false stays off", value("false"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(key, "")
+			if tc.value == nil {
+				if err := os.Unsetenv(key); err != nil {
+					t.Fatalf("unset %s: %v", key, err)
+				}
+			} else {
+				t.Setenv(key, *tc.value)
+			}
+
+			cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+			if err != nil {
+				t.Fatalf("configFromEnv: %v", err)
+			}
+			if got := cfg.TrafficCapture; got != tc.want {
+				t.Errorf("TrafficCapture = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

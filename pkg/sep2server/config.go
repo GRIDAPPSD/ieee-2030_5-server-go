@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2capture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 )
 
@@ -97,4 +98,13 @@ type Config struct {
 	// what this server has always done; set a bound if a hung request must
 	// not be able to hold the process open.
 	ShutdownTimeout time.Duration
+
+	// Capture, when non-nil, attaches traffic recording (#611) to the
+	// protocol listener: [New] calls Capture.Attach after the listener and
+	// handler are built and before [Server.Run] serves it. Nil (the zero
+	// value) leaves the listener exactly as it was before #611: nothing is
+	// allocated, opened or written. The caller owns Capture's lifetime
+	// (construction and Close) and may attach the same Recorder to more
+	// than one listener.
+	Capture *sep2capture.Recorder
 }

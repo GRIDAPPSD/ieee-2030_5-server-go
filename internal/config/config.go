@@ -27,6 +27,26 @@ type Config struct {
 	// set, the dedicated path wins.
 	SubscriptionStorePath string // env SEP2_SUBSCRIPTION_STORE_PATH
 
+	// #628 fix round 1: the permit gate. Capture is off unless this is
+	// explicitly set, regardless of TrafficDir or DataDir: review found
+	// capture turning itself on from DataDir alone, with no way off, on
+	// every deployment that sets SEP2_DATA_DIR for persistence. Env:
+	// SEP2_TRAFFIC_CAPTURE.
+	TrafficCapture bool
+
+	// #628 fix round 2: the raw SEP2_TRAFFIC_CAPTURE value, kept alongside
+	// the parsed TrafficCapture bool so the disabled boot line can tell
+	// "never set" apart from "set to something other than the exact
+	// literal true" instead of reporting every off case as unset. Empty
+	// means the variable was not set.
+	TrafficCaptureEnv string
+
+	// #611: dedicated directory for the traffic-capture segment log, read
+	// only when TrafficCapture is true. Empty falls back to
+	// <DataDir>/traffic; both empty means TrafficCapture had nothing to
+	// permit. See EffectiveTrafficDir for the precedence rule.
+	TrafficDir string // env SEP2_TRAFFIC_DIR
+
 	// #161: admin listener configuration.
 	//
 	// The SEP2 protocol listener is RequireAnyClientCert + manual verify per
@@ -113,7 +133,7 @@ type Config struct {
 // the operator (AdminListen wins; falls back to the deprecated AdminAddr).
 // An empty return value means the admin listener is disabled.
 //
-// This returns the env value verbatim — the loopback default applied to a
+// This returns the env value verbatim - the loopback default applied to a
 // bare-port input is layered on top via ResolveAdminBind at the actual
 // net.Listen site. Keeping the env value pristine here means the banner
 // surface and back-compat consumers see exactly what the operator set.
@@ -127,10 +147,10 @@ func (c *Config) EffectiveAdminListen() string {
 // ResolveAdminBind applies the #268 loopback default to a raw admin
 // listen string. The contract:
 //
-//	""              → ""              (admin disabled — caller gates this)
-//	":<port>"       → "127.0.0.1:<port>"  (bare port → loopback by default)
-//	"<host>:<port>" → unchanged       (any explicit host is honored verbatim)
-//	"<port>"        → unchanged       (malformed input passed through; net.Listen will reject)
+//	""              -> ""              (admin disabled - caller gates this)
+//	":<port>"       -> "127.0.0.1:<port>"  (bare port -> loopback by default)
+//	"<host>:<port>" -> unchanged       (any explicit host is honored verbatim)
+//	"<port>"        -> unchanged       (malformed input passed through; net.Listen will reject)
 //
 // Rationale: the SEP2 protocol listener (cfg.Addr) admits any self-signed
 // client cert via tls.RequireAnyClientCert + manual verify, and the admin
@@ -147,7 +167,7 @@ func ResolveAdminBind(listen string) string {
 	}
 	if strings.HasPrefix(listen, ":") {
 		// Bare port. net.SplitHostPort accepts ":8444"; the host portion
-		// comes back empty — that's the case we rewrite. Any non-empty
+		// comes back empty - that's the case we rewrite. Any non-empty
 		// host (including 0.0.0.0, [::], 192.168.x.y, hostnames) is
 		// passed through verbatim.
 		host, port, err := net.SplitHostPort(listen)
@@ -162,13 +182,13 @@ func ResolveAdminBind(listen string) string {
 // ResolveMetricsBind applies the #268 loopback default to a raw metrics
 // listen string, with the same contract as ResolveAdminBind:
 //
-//	""              → ""              (metrics disabled — caller gates this)
-//	":<port>"       → "127.0.0.1:<port>"  (bare port → loopback by default)
-//	"<host>:<port>" → unchanged       (any explicit host is honored verbatim)
-//	"<port>"        → unchanged       (malformed input passed through; net.Listen rejects)
+//	""              -> ""              (metrics disabled - caller gates this)
+//	":<port>"       -> "127.0.0.1:<port>"  (bare port -> loopback by default)
+//	"<host>:<port>" -> unchanged       (any explicit host is honored verbatim)
+//	"<port>"        -> unchanged       (malformed input passed through; net.Listen rejects)
 //
 // Rationale: the metrics listener serves an UNAUTHENTICATED /metrics surface
-// (no client cert, no Bearer — see Config.MetricsAddr). Pre-this-fix, a bare
+// (no client cert, no Bearer - see Config.MetricsAddr). Pre-this-fix, a bare
 // ":9100" bound 0.0.0.0/[::], so /metrics was reachable network-wide by any
 // neighbor. Defaulting bare ports to loopback makes network exposure opt-in:
 // an operator who wants a routable bind (e.g. for a containerized Prometheus
@@ -177,7 +197,7 @@ func ResolveAdminBind(listen string) string {
 // (see metricsExposureWarning).
 //
 // Implemented as a thin alias over ResolveAdminBind so the two listeners can
-// never drift in their loopback-default semantics — the rule is identical.
+// never drift in their loopback-default semantics - the rule is identical.
 func ResolveMetricsBind(listen string) string {
 	return ResolveAdminBind(listen)
 }
@@ -188,7 +208,7 @@ func ResolveMetricsBind(listen string) string {
 //  1. dedicatedPath wins if non-empty (back-compat for
 //     SEP2_SUBSCRIPTION_STORE_PATH and any future per-store overrides).
 //  2. Else if DataDir is non-empty, derive <DataDir>/<storeName>.json.
-//  3. Else return "" — pure in-memory mode (historical default).
+//  3. Else return "" - pure in-memory mode (historical default).
 //
 // storeName is the bare filename stem (e.g. "enddevices", "registrations",
 // "fsas", "derprograms", "subscriptions"). Caller adds the .json suffix via
@@ -202,4 +222,20 @@ func (c *Config) EffectiveStorePath(storeName, dedicatedPath string) string {
 		return ""
 	}
 	return filepath.Join(c.DataDir, storeName+".json")
+}
+
+// EffectiveTrafficDir resolves WHERE the traffic-capture segment log goes:
+// TrafficDir if set, else <DataDir>/traffic, else "" (no directory
+// resolves). It says nothing about WHETHER capture runs at all - that is
+// TrafficCapture's job (#628 fix round 1); a caller gates on both. Not
+// implemented as a call to EffectiveStorePath, which always appends
+// ".json": the capture store owns a whole directory, not one file (#611 Q4).
+func (c *Config) EffectiveTrafficDir() string {
+	if c.TrafficDir != "" {
+		return c.TrafficDir
+	}
+	if c.DataDir == "" {
+		return ""
+	}
+	return filepath.Join(c.DataDir, "traffic")
 }

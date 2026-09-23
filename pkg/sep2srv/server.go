@@ -24,6 +24,7 @@ import (
 
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2capture"
 )
 
 // HTTP server timeout defaults for the protocol listener. Zero means "no
@@ -68,6 +69,12 @@ type Options struct {
 	// ShutdownTimeout bounds Run's graceful drain after ctx is cancelled.
 	// Zero uses DefaultShutdownTimeout.
 	ShutdownTimeout time.Duration
+
+	// Capture, when non-nil, attaches traffic recording (#611) to the
+	// protocol listener: New calls Capture.Attach after Handler is set and
+	// before Run serves it. Nil (the zero value) leaves the listener
+	// exactly as it was before #611. The caller owns Capture's lifetime.
+	Capture *sep2capture.Recorder
 }
 
 // Identity is the server's SFDI and LFDI, derived from the leaf certificate
@@ -144,6 +151,13 @@ func New(opts Options, build HandlerFunc) (*Server, error) {
 		httpSrv.Handler = sepTLS.CCMIdentityMiddleware(handler)
 	} else {
 		httpSrv.Handler = handler
+	}
+
+	// #611: Attach must run after httpSrv.Handler is set (it wraps it) and
+	// before Server.Run calls Serve. Nil Capture leaves tlsListener
+	// untouched.
+	if opts.Capture != nil {
+		tlsListener = opts.Capture.Attach(httpSrv, tlsListener)
 	}
 
 	shutdownTimeout := opts.ShutdownTimeout

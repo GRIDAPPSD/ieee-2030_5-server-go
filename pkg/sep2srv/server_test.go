@@ -449,6 +449,26 @@ func waitForDial(t *testing.T, addr string) {
 	t.Fatalf("server at %s never accepted a connection within the deadline", addr)
 }
 
+// getWithRetry absorbs the gap between Run being called and Serve accepting,
+// the same way waitForDial does, but without waitForDial's bare TCP dial: a
+// Capture-wrapped listener records that dial as its own short-lived, failed
+// connection, which a test asserting on the recorded exchange set should not
+// have to account for. Mirrors pkg/sep2server's helper of the same name.
+func getWithRetry(t *testing.T, client *http.Client, url string) *http.Response {
+	t.Helper()
+	var lastErr error
+	for attempt := 0; attempt < 50; attempt++ {
+		resp, err := client.Get(url)
+		if err == nil {
+			return resp
+		}
+		lastErr = err
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("GET %s never succeeded: %v", url, lastErr)
+	return nil
+}
+
 // waitForDialFailure polls addr until a plain TCP dial fails, bounding the
 // wait so the "listener stopped accepting" assertion is deterministic
 // instead of racing OS-level socket teardown. A single-shot dial right

@@ -815,7 +815,8 @@ func (s *stubConn) Read(p []byte) (int, error) { return s.read(p) }
 
 func (s *stubConn) Write(p []byte) (int, error) { return s.write(p) }
 
-// TestRecordingConnReadIgnoresOnlyTheAbortedPeekTimeout and
+// TestRecordingConnReadIgnoresOnlyTheAbortedPeekTimeout,
+// TestRecordingConnReadIgnoresAnOrdinaryEOFOnAOneByteRead, and
 // TestRecordingConnReadRecordsANonTimeoutErrorOnAOneByteRead are the
 // unit-level proof, exercising recordingConn.Read directly rather than
 // through classify: the filtering this fixes lives entirely in Read, since
@@ -840,6 +841,36 @@ func TestRecordingConnReadIgnoresOnlyTheAbortedPeekTimeout(t *testing.T) {
 	exchanges := waitForExchanges(t, sink, 1)
 	if exchanges[0].Mark != MarkHandled {
 		t.Errorf("mark: got %v (error=%q), want handled (a peek timeout must stay silent)", exchanges[0].Mark, exchanges[0].Error)
+	}
+}
+
+// TestRecordingConnReadIgnoresAnOrdinaryEOFOnAOneByteRead reproduces #628's
+// CI failure at the unit level: a client that closes its response body
+// without draining it (Go's own http.Client does this whenever a caller
+// skips io.Copy(io.Discard, resp.Body) before Close) makes the peek read
+// return io.EOF, not a reset. That EOF must stay MarkHandled, per Mark's own
+// "distinct from an ordinary client disconnect" doc, the same as the
+// manufactured timeout above.
+func TestRecordingConnReadIgnoresAnOrdinaryEOFOnAOneByteRead(t *testing.T) {
+	sink := NewMemorySink()
+	r := NewRecorder(sink, nil)
+	t.Cleanup(func() { closeRecorder(t, r) })
+	rec := newTestConnRecorder(r)
+	rec.open(1)
+
+	stub := &stubConn{read: func(p []byte) (int, error) { return 0, io.EOF }}
+	rc := &recordingConn{recordingCore: recordingCore{Conn: stub, rec: rec}}
+	if _, err := rc.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("test setup: stub Read returned %v, want io.EOF", err)
+	}
+
+	rec.markHandlerRan()
+	rec.recordOutbound([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+	rec.closeFinal()
+
+	exchanges := waitForExchanges(t, sink, 1)
+	if exchanges[0].Mark != MarkHandled {
+		t.Errorf("mark: got %v (error=%q), want handled (an ordinary EOF on the peek must stay silent)", exchanges[0].Mark, exchanges[0].Error)
 	}
 }
 

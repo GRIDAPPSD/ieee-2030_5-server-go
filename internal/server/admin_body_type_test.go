@@ -20,7 +20,7 @@ func TestAdminBodyTypeRefusalLogsRefusalWithoutCredentialOrBody(t *testing.T) {
 	router, _ := server.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		server.DefaultAdminAllowedHosts(), false,
+		server.DefaultAdminAllowedHosts(), false, nil,
 	)
 
 	const (

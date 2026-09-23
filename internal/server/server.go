@@ -21,6 +21,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2capture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -46,6 +47,26 @@ const (
 	serverReadTimeout       = 30 * time.Second
 	serverWriteTimeout      = 30 * time.Second
 	serverIdleTimeout       = 120 * time.Second
+
+	// captureShutdownTimeout bounds the traffic-capture Recorder and Store
+	// close (#611), run after every listener has itself stopped. Distinct
+	// from the admin/metrics listeners' unbounded context.Background()
+	// shutdown: capture's Close contract is explicitly ctx-bounded (see
+	// sep2capture's lifecycle design), so Run gives it a real deadline
+	// rather than passing one that never fires.
+	captureShutdownTimeout = 5 * time.Second
+
+	// adminShutdownTimeout bounds adminSrv.Shutdown (#628 fix round 1,
+	// silent-failure MEDIUM): closeCapture runs first and now guarantees
+	// Store.Subscribe refuses to register a new subscription once the
+	// store is closed (store_reader.go), so a stream that arrives during
+	// shutdown can no longer hold Shutdown open on its own. This bound is
+	// defense in depth for any other handler that blocks past it, so the
+	// admin listener's own shutdown can never hang past a fixed grace
+	// period. Two later steps on the same path are still unbounded:
+	// metricsSrv.Shutdown(context.Background()) and the bare <-notifierDone
+	// wait (#628 fix round 2, silent-failure LOW).
+	adminShutdownTimeout = 10 * time.Second
 )
 
 // startNotifier runs the notification manager until its ctx is cancelled. A
@@ -210,6 +231,72 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		startNotifier(notifier, ctx)
 	}()
 
+	// #628 fix round 1: traffic capture is off unless SEP2_TRAFFIC_CAPTURE
+	// explicitly permits it. Two lanes measured capture turning itself on
+	// from SEP2_DATA_DIR alone, with no boot line and no way off, on every
+	// deployment that already sets SEP2_DATA_DIR for persistence; one read
+	// back an Authorization header byte for byte through the traffic API.
+	// cfg.TrafficCapture decides WHETHER; EffectiveTrafficDir (SEP2_TRAFFIC_DIR,
+	// else <DataDir>/traffic) keeps deciding only WHERE, as it did before.
+	// A reset refusal (a foreign file or a symlinked directory, see
+	// sep2capture's guarded reset) leaves capture off with a named boot
+	// error rather than failing startup, since the traffic log is a
+	// debugging aid the protocol does not depend on. The store's defaults
+	// already ARE the operator's 2026-09-21 limits (600 MB cap, 64 MB
+	// segments, 4 MiB per direction, ~256 MB index budget), so
+	// StoreConfig sets only Dir.
+	//
+	// captureStore.Handler() is threaded into startAdminServer below so it
+	// mounts on the authenticated admin mux; captureRecorder is threaded
+	// into embedCfg.Capture so sep2server.New attaches it to the protocol
+	// listener. Both are nil when capture is off, which is a no-op at both
+	// sites.
+	//
+	// closeCapture is called explicitly, not only deferred: it must run
+	// BEFORE adminSrv.Shutdown below, not after. Store.Close ends every
+	// open GET /api/traffic/stream subscription (and now refuses to
+	// register one that arrives after it, per Store.Subscribe's
+	// closed-store guard) so a handler blocked in that stream's select
+	// loop returns immediately instead of holding its connection open;
+	// adminSrv.Shutdown below is itself bounded now too, as defense in
+	// depth against any other handler that blocks past its budget.
+	// Registered as a defer too, idempotently (both Recorder.Close and
+	// Store.Close document repeat calls as safe and cheap), so every other
+	// exit path (an admin or metrics startup failure, a protocol listener
+	// failure) still closes capture rather than leaking its writer
+	// goroutine.
+	var (
+		captureStore    *sep2capture.Store
+		captureRecorder *sep2capture.Recorder
+		closeCapture    = func() {}
+	)
+	if !cfg.TrafficCapture {
+		if cfg.TrafficCaptureEnv == "" {
+			log.Printf("traffic capture disabled: SEP2_TRAFFIC_CAPTURE is not set")
+		} else {
+			log.Printf("traffic capture disabled: SEP2_TRAFFIC_CAPTURE=%q is not \"true\"", cfg.TrafficCaptureEnv)
+		}
+	} else if trafficDir := cfg.EffectiveTrafficDir(); trafficDir == "" {
+		log.Printf("traffic capture disabled: SEP2_TRAFFIC_CAPTURE is set but neither SEP2_TRAFFIC_DIR nor SEP2_DATA_DIR is set")
+	} else if store, storeErr := sep2capture.NewStore(sep2capture.StoreConfig{Dir: trafficDir}); storeErr != nil {
+		log.Printf("traffic capture disabled: %v", storeErr)
+	} else {
+		captureStore = store
+		captureRecorder = sep2capture.NewRecorder(captureStore, log.Default())
+		log.Printf("traffic capture enabled: recording to %s (cap 600 MB)", trafficDir)
+		closeCapture = func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), captureShutdownTimeout)
+			defer cancel()
+			if cerr := captureRecorder.Close(shutdownCtx); cerr != nil {
+				log.Printf("traffic capture recorder close: %v", cerr)
+			}
+			if cerr := captureStore.Close(shutdownCtx); cerr != nil {
+				log.Printf("traffic capture store close: %v", cerr)
+			}
+		}
+		defer closeCapture()
+	}
+
 	// Build the embeddable protocol server: it binds the listener, derives
 	// the server identity (SFDI/LFDI) from the leaf cert BEFORE assembling the
 	// routes so /sdev and /sdev/sdi see non-empty values under both cipher
@@ -233,6 +320,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	embedCfg.ConnState = func(_ net.Conn, state http.ConnState) {
 		obs.RecordConnState(state.String())
 	}
+	embedCfg.Capture = captureRecorder
 
 	protocolSrv, err := sep2server.New(embedCfg)
 	if err != nil {
@@ -324,7 +412,11 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		tlsModeName = "CCM-8"
 	}
 	if cfg.EffectiveAdminListen() != "" && svc != nil {
-		adminSrv, adminTLSDesc, adminAddr, adminRoutes, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh)
+		var trafficHandler http.Handler
+		if captureStore != nil {
+			trafficHandler = captureStore.Handler()
+		}
+		adminSrv, adminTLSDesc, adminAddr, adminRoutes, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh, trafficHandler)
 		if err != nil {
 			stopProtocolServer()
 			return fmt.Errorf("admin server: %w", err)
@@ -373,10 +465,17 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	case <-ctx.Done():
 		log.Println("shutting down servers...")
 		stopProtocolServer()
+		// Runs before adminSrv.Shutdown: see closeCapture's own comment
+		// above for why the order is load-bearing rather than incidental.
+		closeCapture()
 		if adminSrv != nil {
-			if err := adminSrv.Shutdown(context.Background()); err != nil {
+			// #628 fix round 1: bounded rather than context.Background().
+			// See adminShutdownTimeout's own comment for why.
+			adminShutdownCtx, adminShutdownCancel := context.WithTimeout(context.Background(), adminShutdownTimeout)
+			if err := adminSrv.Shutdown(adminShutdownCtx); err != nil {
 				log.Printf("admin server shutdown error: %v", err)
 			}
+			adminShutdownCancel()
 		}
 		if metricsSrv != nil {
 			if err := metricsSrv.Shutdown(context.Background()); err != nil {
@@ -418,7 +517,7 @@ const (
 // Path A still works for cert-bearing operators while Bearer/cookie clients
 // can connect without presenting a cert. The SEP2 protocol listener keeps
 // its own RequireAnyClientCert + manual-verify posture untouched.
-func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error) (*http.Server, string, string, []string, error) {
+func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error, trafficHandler http.Handler) (*http.Server, string, string, []string, error) {
 	// #268: resolve the operator-supplied env value into the actual
 	// bind string. A bare ":<port>" gets a loopback default so the admin
 	// listener is safe-by-default; any explicit host (0.0.0.0, an LAN IP,
@@ -478,7 +577,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	// #270: resolve the admin host-header allowlist from the static
 	// defaults plus operator-supplied SEP2_ADMIN_ALLOWED_HOSTS extras.
 	allowedHosts := ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
-	adminRouter, adminRoutes := BuildAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets, sessions, allowedHosts, cfg.AdminLegacyDashboard)
+	adminRouter, adminRoutes := BuildAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets, sessions, allowedHosts, cfg.AdminLegacyDashboard, trafficHandler)
 
 	adminListener, err := net.Listen("tcp", addr)
 	if err != nil {

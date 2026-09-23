@@ -62,3 +62,25 @@ type CAInfo struct {
 	Cert *x509.Certificate
 	Key  *ecdsa.PrivateKey
 }
+
+// FilterCertificatePEM returns the concatenated CERTIFICATE blocks found in
+// pemBytes, dropping every other PEM block (most often a private key) and any
+// trailing non-PEM content. Each block's own source bytes are copied rather
+// than re-encoded, so a file holding only CERTIFICATE blocks comes back
+// unchanged byte for byte, whatever its line wrapping.
+func FilterCertificatePEM(pemBytes []byte) []byte {
+	var out []byte
+	rest := pemBytes
+	for {
+		start := rest
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type == "CERTIFICATE" {
+			out = append(out, start[:len(start)-len(rest)]...)
+		}
+	}
+	return out
+}

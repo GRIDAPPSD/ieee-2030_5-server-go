@@ -71,7 +71,10 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, errorResponse{Error: msg})
 }
 
-// HandleGetCA returns the CA certificate PEM (never the private key).
+// HandleGetCA returns the CA certificate PEM (never the private key). The
+// stored file is filtered to its CERTIFICATE blocks: some tooling writes a
+// combined PEM holding the certificate and its private key, and the file
+// content must never be echoed verbatim (#644).
 func (s *AdminCertService) HandleGetCA() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
@@ -81,7 +84,7 @@ func (s *AdminCertService) HandleGetCA() http.HandlerFunc {
 			writeError(w, http.StatusServiceUnavailable, "CA not initialized")
 			return
 		}
-		writeJSON(w, http.StatusOK, certResponse{CertPEM: string(s.caCertPEM)})
+		writeJSON(w, http.StatusOK, certResponse{CertPEM: string(certs.FilterCertificatePEM(s.caCertPEM))})
 	}
 }
 

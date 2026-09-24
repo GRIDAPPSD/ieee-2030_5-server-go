@@ -4,15 +4,23 @@
 // The Aggregator posts the subscription to its OWN subscription list
 // (CSIP IG 6.2.3.3: "The Aggregator instance contains the
 // SubscriptionListLink"), naming the EndDeviceList as the subscribed
-// resource. Setup places SubscriptionListLink only on the aggregator's
-// EndDevice, never on a managed inverter's.
+// resource. The fixture sets no SubscriptionListLink on any EndDevice
+// (#678: no conforming client can discover this route yet); the
+// aggregator relation comes from the fixture's managed_by pairs, and
+// this test builds the /edev/{aggID}/sub URL directly.
 //
 // What this pins down on the server side:
 //   - POST /edev/{aggID}/sub accepts a Subscription naming /edev.
 //   - The SubscriptionStore preserves SubscribedResource and
 //     NotificationURI on the wire.
 //   - The aggregator's own subscription list surfaces exactly what was
-//     posted, with no extras and no foreign-edev leakage (#168).
+//     posted, with no extras and no foreign-edev leakage.
+//
+// Cross-EndDevice list-leak scope is no longer proven by this procedure
+// (the corrected AGG-001 reading holds to one subscription, issue
+// #510 review): it is pinned at TestListByDeviceWithIDs_ScopesByEndDevice
+// (pkg/store/memory) and TestHandleListSubscriptionsByDevice_NoCrossEdevLeak
+// (pkg/sep2srv/handlers/subscription).
 //
 // Steps 3-5 (server creates EDA1X, sends the notification, client
 // receives it and GETs the list) exercise notification *delivery* on a

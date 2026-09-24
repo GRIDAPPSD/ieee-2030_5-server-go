@@ -464,6 +464,97 @@ func TestCreateManagementPair_WriteFailureBodyHasNoPath(t *testing.T) {
 	}
 }
 
+// TestRemoveManagementPair_WriteFailureBodyHasNoPath and the two rekey tests
+// below are #677 fix round item 4: the create path already pinned the
+// sanitized 500 body (above), but remove and rekey route through the same
+// writeManagementInternalError and had no test of their own, so reverting
+// either to the echoing form would have gone unnoticed.
+func TestRemoveManagementPair_WriteFailureBodyHasNoPath(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission checks do not apply when running as root")
+	}
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "management.json")
+	store, err := memory.NewEndDeviceManagementStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("NewEndDeviceManagementStoreWithPersistence: %v", err)
+	}
+	h := &handler.AdminManagementHandler{Managers: store}
+	mustAssignH(t, h, mgHandlerManagerA, mgHandlerChildA)
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod dir read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	w := doJSON(t, h.HandleRemoveManagementPair(), http.MethodDelete, "/api/management-pairs?managed="+mgHandlerChildA, "")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), path) || strings.Contains(w.Body.String(), dir) || strings.Contains(w.Body.String(), "/") {
+		t.Errorf("body = %s, must not name the server's snapshot path", w.Body.String())
+	}
+}
+
+func TestRekeyManagementPair_ManagerWriteFailureBodyHasNoPath(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission checks do not apply when running as root")
+	}
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "management.json")
+	store, err := memory.NewEndDeviceManagementStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("NewEndDeviceManagementStoreWithPersistence: %v", err)
+	}
+	h := &handler.AdminManagementHandler{Managers: store}
+	mustAssignH(t, h, mgHandlerManagerA, mgHandlerChildA)
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod dir read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	w := doJSON(t, h.HandleRekeyManagementPair(), http.MethodPost, "/api/management-pairs/rekey",
+		`{"role":"manager","from":"`+mgHandlerManagerA+`","to":"`+mgHandlerManagerB+`"}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), path) || strings.Contains(w.Body.String(), dir) || strings.Contains(w.Body.String(), "/") {
+		t.Errorf("body = %s, must not name the server's snapshot path", w.Body.String())
+	}
+}
+
+func TestRekeyManagementPair_ManagedWriteFailureBodyHasNoPath(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission checks do not apply when running as root")
+	}
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "management.json")
+	store, err := memory.NewEndDeviceManagementStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("NewEndDeviceManagementStoreWithPersistence: %v", err)
+	}
+	h := &handler.AdminManagementHandler{Managers: store}
+	mustAssignH(t, h, mgHandlerManagerA, mgHandlerChildA)
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod dir read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	w := doJSON(t, h.HandleRekeyManagementPair(), http.MethodPost, "/api/management-pairs/rekey",
+		`{"role":"managed","from":"`+mgHandlerChildA+`","to":"`+mgHandlerChildB+`"}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), path) || strings.Contains(w.Body.String(), dir) || strings.Contains(w.Body.String(), "/") {
+		t.Errorf("body = %s, must not name the server's snapshot path", w.Body.String())
+	}
+}
+
 func mustAssignH(t *testing.T, h *handler.AdminManagementHandler, manager, managed string) {
 	t.Helper()
 	if err := h.Managers.Assign(t.Context(), manager, managed); err != nil {

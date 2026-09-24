@@ -108,7 +108,7 @@ func (h *AdminManagementHandler) HandleListManagementPairs() http.HandlerFunc {
 			}
 			managed, err := h.Managers.ManagedBy(r.Context(), manager)
 			if err != nil {
-				writeError(w, http.StatusInternalServerError, "list: "+err.Error())
+				writeManagementInternalError(w, "list", err)
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
@@ -127,7 +127,7 @@ func (h *AdminManagementHandler) HandleListManagementPairs() http.HandlerFunc {
 					writeError(w, http.StatusNotFound, "device is not managed")
 					return
 				}
-				writeError(w, http.StatusInternalServerError, "lookup: "+err.Error())
+				writeManagementInternalError(w, "lookup", err)
 				return
 			}
 			writeJSON(w, http.StatusOK, managementPairResponse{ManagerLFDI: manager, ManagedLFDI: managed})

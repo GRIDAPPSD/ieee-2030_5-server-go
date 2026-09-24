@@ -133,6 +133,12 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	if err != nil {
 		return fmt.Errorf("DERProgram persistence: %w", err)
 	}
+	endDeviceManagers, err := memory.NewEndDeviceManagementStoreWithPersistence(
+		cfg.EffectiveStorePath("enddevicemanagement", ""),
+	)
+	if err != nil {
+		return fmt.Errorf("EndDeviceManagement persistence: %w", err)
+	}
 
 	// #224: build the subscription store with optional durable
 	// persistence. #171 routes the path through
@@ -153,7 +159,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// Initialize stores
 	stores := &Stores{
 		EndDevices:        endDevices,
-		EndDeviceManagers: memory.NewEndDeviceManagementStore(),
+		EndDeviceManagers: endDeviceManagers,
 		// EndDeviceIndexes is seeded below, once every startup writer of
 		// EndDevice records (the persisted reload above, and the boot
 		// fixture that follows) has run; see the comment there.

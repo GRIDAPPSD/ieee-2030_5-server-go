@@ -104,7 +104,11 @@ through the usual server error line.
 
 `assembly.Stores.EndDeviceManagers` holds the pairs, as a
 `store.EndDeviceManagementStore`. `memory.NewEndDeviceManagementStore` is the
-in-memory implementation.
+in-memory implementation; `memory.NewEndDeviceManagementStoreWithPersistence`
+wraps it with the same on-disk JSON snapshot machinery the other
+admin-mutated stores use (#440), writing to
+`<SEP2_DATA_DIR>/enddevicemanagement.json` when a data directory is
+configured, and staying pure in-memory otherwise.
 
 - An absent (nil) store delegates nothing: every caller reaches only its own
   EndDevice. The router logs that once when it is built.
@@ -112,19 +116,25 @@ in-memory implementation.
   surrounding space, and a device named as its own manager, with
   `store.ErrInvalidManagementPair`. It returns `store.ErrAlreadyExists` when
   another manager already holds the device. Lookups never fold case.
+- `RekeyManager` and `RekeyManaged` replace a manager LFDI or a managed LFDI
+  across that LFDI's pairs, for a certificate rotation: a rotated
+  certificate carries a new LFDI, so a pair does not survive rotation of
+  either party without this. `RekeyManager` refuses when the old LFDI
+  manages nothing; `RekeyManaged` also refuses when the target LFDI already
+  has a manager, so a rekey never silently overwrites an existing pair.
 - Pairs are keyed by LFDI, not by the URL index, and outlive the EndDevice
   records they name. A pair whose managed LFDI has no record grants nothing.
-- The in-memory store is not persisted: pairs do not survive a restart.
 
-The server binary and `sep2server.NewStores` wire an empty store.
+The server binary wires the persisted store; `sep2server.NewStores` (the
+pure in-memory embeddable builder) wires an empty, unpersisted one.
 
 ## Who provisions pairs
 
-Management is utility data, established only on the utility side: by an
-embedder writing pairs to the store it passes as `Stores.EndDeviceManagers`,
-which the gate and `GET /edev` read on every request.
-No IEEE 2030.5 request, registration included, creates, changes, or removes a
-pair. Admin-plane provisioning and persistence of pairs are not implemented
-yet and are tracked in
-[#440](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/440); until
-then an aggregator on the server binary has self access only.
+Management is utility data, established only on the utility side. The
+server binary exposes this as the admin-plane API documented in
+[`admin.md`](admin.md#admin-features) (`POST`/`GET`/`DELETE
+/api/management-pairs`, `POST /api/management-pairs/rekey`, #440); an
+embedder may instead write pairs directly to the store it passes as
+`Stores.EndDeviceManagers`, which the gate and `GET /edev` read on every
+request. No IEEE 2030.5 request, registration included, creates, changes, or
+removes a pair.

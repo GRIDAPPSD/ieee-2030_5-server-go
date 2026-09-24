@@ -21,6 +21,7 @@ var wantAdminWriteRoutes = []string{
 	"DELETE /api/devices/{id}/fsa-assignment",
 	"DELETE /api/fsas/{id}",
 	"DELETE /api/fsas/{id}/programs",
+	"DELETE /api/management-pairs",
 	"POST /api/certs/device",
 	"POST /api/certs/info",
 	"POST /api/certs/server",
@@ -28,6 +29,8 @@ var wantAdminWriteRoutes = []string{
 	"POST /api/devices/{id}/fsa-assignment",
 	"POST /api/fsas",
 	"POST /api/fsas/{id}/programs",
+	"POST /api/management-pairs",
+	"POST /api/management-pairs/rekey",
 	"POST /auth/login",
 	"POST /auth/ticket",
 }
@@ -51,6 +54,9 @@ var wantAdminBodyTypes = map[string][]string{
 	"DELETE /api/fsas/{id}":                   nil,
 	"DELETE /api/fsas/{id}/programs":          nil,
 	"DELETE /api/devices/{id}/fsa-assignment": nil,
+	"POST /api/management-pairs":              {"application/json"},
+	"DELETE /api/management-pairs":            nil,
+	"POST /api/management-pairs/rekey":        {"application/json"},
 	"POST /auth/ticket":                       nil,
 }
 

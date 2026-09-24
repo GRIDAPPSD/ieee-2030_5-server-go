@@ -23,6 +23,9 @@ var adminBodyTypes = map[string][]string{
 	"DELETE /api/fsas/{id}":                   nil,
 	"DELETE /api/fsas/{id}/programs":          nil,
 	"DELETE /api/devices/{id}/fsa-assignment": nil,
+	"POST /api/management-pairs":              {"application/json"},
+	"DELETE /api/management-pairs":            nil,
+	"POST /api/management-pairs/rekey":        {"application/json"},
 	"POST /auth/ticket":                       nil,
 }
 

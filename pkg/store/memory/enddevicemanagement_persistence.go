@@ -92,7 +92,14 @@ func (s *EndDeviceManagementStore) loadFromFile(path string) error {
 
 	// Swap in the validated maps atomically: a record failing partway
 	// through the loop above must never leave the store holding a prefix
-	// of the file's records.
+	// of the file's records. Also takes persistMu (#677 fix round item 6),
+	// the same lock every mutate-routed write holds, even though load never
+	// calls persistRecords: it is unreachable concurrently today (the only
+	// caller is the constructor, before the store is shared), but a reload
+	// path added later must not be the one write site that skips the
+	// convention every other write to these maps holds.
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.managerOf = managerOf

@@ -31,13 +31,15 @@ type EndDeviceManagementStore struct {
 	// way holding mu for the write used to, but readers taking mu.RLock
 	// (ManagerOf, ManagedBy, and so every GET /edev that lists a caller's
 	// managed devices, protocol-side ownership gate included) are never
-	// blocked by a disk write in progress. A mutating method takes mu.RLock
-	// only to read the current state and build the candidate snapshot,
-	// releases it before the write, then re-takes mu.Lock only to apply the
-	// already-durable change. persistMu already excludes every other
-	// mutator for the whole operation, so nothing can have changed state
-	// between the RUnlock and the Lock: the precondition checked under
-	// RLock is still true when the mutation is applied under Lock.
+	// blocked by a disk write in progress. The persist-then-apply order
+	// itself lives in one place, [EndDeviceManagementStore.mutate] (#677
+	// fix round item 2): a mutating method takes mu.RLock only to read the
+	// current state and build the candidate snapshot, releases it before
+	// the write, then re-takes mu.Lock only to apply the already-durable
+	// change. persistMu already excludes every other mutator for the whole
+	// operation, so nothing can have changed state between the RUnlock and
+	// the Lock: the precondition checked under RLock is still true when the
+	// mutation is applied under Lock.
 	persistMu   sync.Mutex
 	persistPath string
 }
@@ -73,6 +75,43 @@ func (s *EndDeviceManagementStore) ManagedBy(_ context.Context, managerLFDI stri
 	return managed, nil
 }
 
+// mutate is the one place the persist-then-apply order lives (#677 fix
+// round item 2): every mutating method supplies only a build step, run
+// under mu.RLock, that returns either an error (the operation is refused,
+// nothing changes), a nil apply (a no-op: nothing to persist or apply), or a
+// candidate snapshot plus the apply step that makes it live. mutate
+// persists the candidate before it ever calls apply, and apply is the only
+// thing build hands back that can touch managerOf/managedBy, so a method has
+// no way to make a change live without the write already being durable.
+// This replaces four copies of the RLock/build/RUnlock/persist/Lock/apply/
+// Unlock sequence, and the eleven hand-called RUnlock/Unlock releases that
+// went with them, with one. See enddevicemanagement_lockorder_test.go for
+// the source-level proof that every write to the maps outside loadFromFile
+// (#677 fix round item 6) happens inside an apply closure passed here.
+func (s *EndDeviceManagementStore) mutate(build func() (records []managementPairRecord, apply func(), err error)) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+
+	s.mu.RLock()
+	records, apply, err := build()
+	s.mu.RUnlock()
+	if err != nil {
+		return err
+	}
+	if apply == nil {
+		return nil
+	}
+
+	if err := s.persistRecords(records); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	apply()
+	s.mu.Unlock()
+	return nil
+}
+
 // Assign implements [store.EndDeviceManagementStore].
 func (s *EndDeviceManagementStore) Assign(_ context.Context, managerLFDI, managedLFDI string) error {
 	if err := checkCanonicalLFDI("manager", managerLFDI); err != nil {
@@ -85,62 +124,42 @@ func (s *EndDeviceManagementStore) Assign(_ context.Context, managerLFDI, manage
 		return fmt.Errorf("enddevice management: %s cannot manage itself: %w", managedLFDI, store.ErrInvalidManagementPair)
 	}
 
-	s.persistMu.Lock()
-	defer s.persistMu.Unlock()
-
-	s.mu.RLock()
-	if current, ok := s.managerOf[managedLFDI]; ok {
-		s.mu.RUnlock()
-		if current == managerLFDI {
-			return nil
+	return s.mutate(func() ([]managementPairRecord, func(), error) {
+		if current, ok := s.managerOf[managedLFDI]; ok {
+			if current == managerLFDI {
+				return nil, nil, nil
+			}
+			return nil, nil, fmt.Errorf("enddevice management: %s already has a manager: %w", managedLFDI, store.ErrAlreadyExists)
 		}
-		return fmt.Errorf("enddevice management: %s already has a manager: %w", managedLFDI, store.ErrAlreadyExists)
-	}
-	records := append(s.recordsLocked(), managementPairRecord{ManagerLFDI: managerLFDI, ManagedLFDI: managedLFDI})
-	s.mu.RUnlock()
-
-	if err := s.persistRecords(records); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	s.managerOf[managedLFDI] = managerLFDI
-	if s.managedBy[managerLFDI] == nil {
-		s.managedBy[managerLFDI] = make(map[string]struct{})
-	}
-	s.managedBy[managerLFDI][managedLFDI] = struct{}{}
-	s.mu.Unlock()
-	return nil
+		records := append(s.recordsLocked(), managementPairRecord{ManagerLFDI: managerLFDI, ManagedLFDI: managedLFDI})
+		return records, func() {
+			s.managerOf[managedLFDI] = managerLFDI
+			if s.managedBy[managerLFDI] == nil {
+				s.managedBy[managerLFDI] = make(map[string]struct{})
+			}
+			s.managedBy[managerLFDI][managedLFDI] = struct{}{}
+		}, nil
+	})
 }
 
 // Unassign implements [store.EndDeviceManagementStore].
 func (s *EndDeviceManagementStore) Unassign(_ context.Context, managedLFDI string) error {
-	s.persistMu.Lock()
-	defer s.persistMu.Unlock()
-
-	s.mu.RLock()
-	manager, ok := s.managerOf[managedLFDI]
-	if !ok {
-		s.mu.RUnlock()
-		return store.ErrNotFound
-	}
-	records := slices.DeleteFunc(s.recordsLocked(), func(r managementPairRecord) bool {
-		return r.ManagedLFDI == managedLFDI
+	return s.mutate(func() ([]managementPairRecord, func(), error) {
+		manager, ok := s.managerOf[managedLFDI]
+		if !ok {
+			return nil, nil, store.ErrNotFound
+		}
+		records := slices.DeleteFunc(s.recordsLocked(), func(r managementPairRecord) bool {
+			return r.ManagedLFDI == managedLFDI
+		})
+		return records, func() {
+			delete(s.managerOf, managedLFDI)
+			delete(s.managedBy[manager], managedLFDI)
+			if len(s.managedBy[manager]) == 0 {
+				delete(s.managedBy, manager)
+			}
+		}, nil
 	})
-	s.mu.RUnlock()
-
-	if err := s.persistRecords(records); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	delete(s.managerOf, managedLFDI)
-	delete(s.managedBy[manager], managedLFDI)
-	if len(s.managedBy[manager]) == 0 {
-		delete(s.managedBy, manager)
-	}
-	s.mu.Unlock()
-	return nil
 }
 
 // RekeyManager replaces oldManagerLFDI with newManagerLFDI as the manager of
@@ -166,55 +185,42 @@ func (s *EndDeviceManagementStore) RekeyManager(_ context.Context, oldManagerLFD
 		return err
 	}
 
-	s.persistMu.Lock()
-	defer s.persistMu.Unlock()
-
-	s.mu.RLock()
-	managedSrc := s.managedBy[oldManagerLFDI]
-	if len(managedSrc) == 0 {
-		s.mu.RUnlock()
-		return store.ErrNotFound
-	}
-	if oldManagerLFDI == newManagerLFDI {
-		s.mu.RUnlock()
-		return nil
-	}
-	for managedLFDI := range managedSrc {
-		if managedLFDI == newManagerLFDI {
-			s.mu.RUnlock()
-			return fmt.Errorf("enddevice management: rekey would make %s manage itself: %w", newManagerLFDI, store.ErrInvalidManagementPair)
+	return s.mutate(func() ([]managementPairRecord, func(), error) {
+		managedSrc := s.managedBy[oldManagerLFDI]
+		if len(managedSrc) == 0 {
+			return nil, nil, store.ErrNotFound
 		}
-	}
-	if len(s.managedBy[newManagerLFDI]) > 0 {
-		s.mu.RUnlock()
-		return fmt.Errorf("enddevice management: %s already manages other devices: %w", newManagerLFDI, store.ErrAlreadyExists)
-	}
-	managed := make(map[string]struct{}, len(managedSrc))
-	for managedLFDI := range managedSrc {
-		managed[managedLFDI] = struct{}{}
-	}
-	records := s.recordsLocked()
-	for i := range records {
-		if records[i].ManagerLFDI == oldManagerLFDI {
-			records[i].ManagerLFDI = newManagerLFDI
+		if oldManagerLFDI == newManagerLFDI {
+			return nil, nil, nil
 		}
-	}
-	s.mu.RUnlock()
-
-	if err := s.persistRecords(records); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	dest := make(map[string]struct{}, len(managed))
-	for managedLFDI := range managed {
-		dest[managedLFDI] = struct{}{}
-		s.managerOf[managedLFDI] = newManagerLFDI
-	}
-	s.managedBy[newManagerLFDI] = dest
-	delete(s.managedBy, oldManagerLFDI)
-	s.mu.Unlock()
-	return nil
+		for managedLFDI := range managedSrc {
+			if managedLFDI == newManagerLFDI {
+				return nil, nil, fmt.Errorf("enddevice management: rekey would make %s manage itself: %w", newManagerLFDI, store.ErrInvalidManagementPair)
+			}
+		}
+		if len(s.managedBy[newManagerLFDI]) > 0 {
+			return nil, nil, fmt.Errorf("enddevice management: %s already manages other devices: %w", newManagerLFDI, store.ErrAlreadyExists)
+		}
+		managed := make(map[string]struct{}, len(managedSrc))
+		for managedLFDI := range managedSrc {
+			managed[managedLFDI] = struct{}{}
+		}
+		records := s.recordsLocked()
+		for i := range records {
+			if records[i].ManagerLFDI == oldManagerLFDI {
+				records[i].ManagerLFDI = newManagerLFDI
+			}
+		}
+		return records, func() {
+			dest := make(map[string]struct{}, len(managed))
+			for managedLFDI := range managed {
+				dest[managedLFDI] = struct{}{}
+				s.managerOf[managedLFDI] = newManagerLFDI
+			}
+			s.managedBy[newManagerLFDI] = dest
+			delete(s.managedBy, oldManagerLFDI)
+		}, nil
+	})
 }
 
 // RekeyManaged replaces oldManagedLFDI with newManagedLFDI, keeping the same
@@ -234,46 +240,33 @@ func (s *EndDeviceManagementStore) RekeyManaged(_ context.Context, oldManagedLFD
 		return err
 	}
 
-	s.persistMu.Lock()
-	defer s.persistMu.Unlock()
-
-	s.mu.RLock()
-	manager, ok := s.managerOf[oldManagedLFDI]
-	if !ok {
-		s.mu.RUnlock()
-		return store.ErrNotFound
-	}
-	if oldManagedLFDI == newManagedLFDI {
-		s.mu.RUnlock()
-		return nil
-	}
-	if newManagedLFDI == manager {
-		s.mu.RUnlock()
-		return fmt.Errorf("enddevice management: %s cannot manage itself: %w", newManagedLFDI, store.ErrInvalidManagementPair)
-	}
-	if _, exists := s.managerOf[newManagedLFDI]; exists {
-		s.mu.RUnlock()
-		return fmt.Errorf("enddevice management: %s already has a manager: %w", newManagedLFDI, store.ErrAlreadyExists)
-	}
-	records := s.recordsLocked()
-	for i := range records {
-		if records[i].ManagedLFDI == oldManagedLFDI {
-			records[i].ManagedLFDI = newManagedLFDI
+	return s.mutate(func() ([]managementPairRecord, func(), error) {
+		manager, ok := s.managerOf[oldManagedLFDI]
+		if !ok {
+			return nil, nil, store.ErrNotFound
 		}
-	}
-	s.mu.RUnlock()
-
-	if err := s.persistRecords(records); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	delete(s.managerOf, oldManagedLFDI)
-	s.managerOf[newManagedLFDI] = manager
-	delete(s.managedBy[manager], oldManagedLFDI)
-	s.managedBy[manager][newManagedLFDI] = struct{}{}
-	s.mu.Unlock()
-	return nil
+		if oldManagedLFDI == newManagedLFDI {
+			return nil, nil, nil
+		}
+		if newManagedLFDI == manager {
+			return nil, nil, fmt.Errorf("enddevice management: %s cannot manage itself: %w", newManagedLFDI, store.ErrInvalidManagementPair)
+		}
+		if _, exists := s.managerOf[newManagedLFDI]; exists {
+			return nil, nil, fmt.Errorf("enddevice management: %s already has a manager: %w", newManagedLFDI, store.ErrAlreadyExists)
+		}
+		records := s.recordsLocked()
+		for i := range records {
+			if records[i].ManagedLFDI == oldManagedLFDI {
+				records[i].ManagedLFDI = newManagedLFDI
+			}
+		}
+		return records, func() {
+			delete(s.managerOf, oldManagedLFDI)
+			s.managerOf[newManagedLFDI] = manager
+			delete(s.managedBy[manager], oldManagedLFDI)
+			s.managedBy[manager][newManagedLFDI] = struct{}{}
+		}, nil
+	})
 }
 
 // checkCanonicalLFDI refuses input a certificate-derived LFDI never takes, so

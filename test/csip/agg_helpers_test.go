@@ -97,48 +97,19 @@ func walkAggregatorDefaultDERControl(t *testing.T, ctx context.Context, c *csipt
 	return dderc
 }
 
-// aggSubscribableResource lists one of the 6 subscribable resources the
-// V1.2 Section 10.1 AGG-001 procedure exercises against each managed inverter.
-// Field names match the relative href the per-inverter aggregator
-// subscription targets.
-type aggSubscribableResource struct {
-	Name string // human label for subtest naming
-	Href string // POST target SubscribedResource (relative to baseURL)
-}
-
-// aggSubscribableResourcesForInverter returns the canonical 6 resources
-// AGG-001 subscribes to per managed inverter. Each is a top-of-chain
-// list URL because the aggregator subscription notifies on additions /
-// deletions to that list. SY-level FSA ("0") is used as the entry
-// point - the server scopes DERPrograms by EndDevice so any FSA's
-// DERProgramList href reaches all 4 programs (CORE-010 documented this).
-func aggSubscribableResourcesForInverter(edevID string) []aggSubscribableResource {
-	return []aggSubscribableResource{
-		{Name: "edevList", Href: "/edev"},
-		{Name: "endDevice", Href: fmt.Sprintf("/edev/%s", edevID)},
-		{Name: "fsaList", Href: fmt.Sprintf("/edev/%s/fsa", edevID)},
-		{Name: "derProgramList", Href: fmt.Sprintf("/edev/%s/fsa/%s/derp", edevID, aggFSAIDSY)},
-		{Name: "derProgram", Href: fmt.Sprintf("/edev/%s/fsa/%s/derp/%s", edevID, aggFSAIDSY, aggFSAIDSY)},
-		{Name: "derControlList", Href: fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/derc", edevID, aggFSAIDSY, aggFSAIDSY)},
-	}
-}
-
 // aggregatorNotificationURI is the per-test aggregator callback URL for
 // AGG-001 subscriptions. The procedure exercises subscription acceptance
 // only - delivery is gated on #12 follow-ups outside #147 scope.
 const aggregatorNotificationURI = "https://192.0.2.1/notify/agg"
 
-// postAggregatorSubscription is the AGG-001 variant of UTIL-003's
-// postAndVerifySubscription: it POSTs a Subscription to
-// /edev/{edevID}/sub with a configurable SubscribedResource, asserts
+// postAggregatorSubscription POSTs a Subscription to the aggregator's
+// own /edev/{aggID}/sub with a configurable SubscribedResource, asserts
 // 201 + non-empty Location, and confirms the new entry surfaces in the
-// per-inverter subscription list.
-//
-// AGG-001 calls this 6 times per managed inverter (one per subscribable
-// resource) across 4 inverters - 24 POSTs total. We run the per-inverter
-// loop in parallel under t.Run subtests so the SubscriptionStore is
-// hammered concurrently (race-detector gate).
-func postAggregatorSubscription(t *testing.T, ctx context.Context, client *http.Client, baseURL, edevID, resource string) {
+// aggregator's own subscription list. CSIP IG 6.2.3.3: the Aggregator
+// instance holds the SubscriptionListLink and posts to it - the route
+// is always the aggregator's own; the resource being subscribed to is
+// what varies.
+func postAggregatorSubscription(t *testing.T, ctx context.Context, client *http.Client, baseURL, aggID, resource string) {
 	t.Helper()
 
 	sub := sep2.Subscription{
@@ -151,7 +122,7 @@ func postAggregatorSubscription(t *testing.T, ctx context.Context, client *http.
 	if err != nil {
 		t.Fatalf("aggregator subscription marshal (resource=%q): %v", resource, err)
 	}
-	postURL := fmt.Sprintf("%s/edev/%s/sub", baseURL, edevID)
+	postURL := fmt.Sprintf("%s/edev/%s/sub", baseURL, aggID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("aggregator subscription build POST %s: %v", postURL, err)
@@ -170,11 +141,10 @@ func postAggregatorSubscription(t *testing.T, ctx context.Context, client *http.
 		t.Fatalf("aggregator subscription POST %s: empty Location header", postURL)
 	}
 
-	// GET /edev/{id}/sub and assert the new sub is present with the
-	// expected SubscribedResource - pins down both persistence and
-	// scope. Per-inverter subtests run in parallel, so this is also
-	// the race-detector probe surface.
-	listURL := fmt.Sprintf("%s/edev/%s/sub?l=255", baseURL, edevID)
+	// GET the aggregator's own /edev/{id}/sub and assert the new sub is
+	// present with the expected SubscribedResource - pins down both
+	// persistence and route.
+	listURL := fmt.Sprintf("%s/edev/%s/sub?l=255", baseURL, aggID)
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, listURL, nil)
 	if err != nil {
 		t.Fatalf("aggregator subscription build GET %s: %v", listURL, err)
@@ -208,21 +178,13 @@ func postAggregatorSubscription(t *testing.T, ctx context.Context, client *http.
 	}
 }
 
-// assertAggregatorSubscriptionsPresent GETs /edev/{edevID}/sub and
-// asserts strict per-inverter membership: exactly the supplied
+// assertAggregatorSubscriptionsPresent GETs the aggregator's own
+// /edev/{aggID}/sub and asserts strict membership: exactly the supplied
 // wantResources are present, with no extras and no foreign-edev
-// leakage. Used by AGG-001 after the parallel per-inverter subscription
-// burst joins.
-//
-// Pre-#168, the SubscriptionStore returned the union of all POSTed
-// subscriptions for every /edev/{id}/sub GET, and this helper accepted
-// the union as long as each wanted href was present (24 entries for
-// each of the 4 inverters after a 24-POST burst). #168 scoped
-// GET /edev/{id}/sub to the EndDevice {id}, so this helper now enforces
-// the strict membership the V1.2 Section 10.1 procedure implies.
-func assertAggregatorSubscriptionsPresent(t *testing.T, ctx context.Context, client *http.Client, baseURL, edevID string, wantResources []string) {
+// leakage (#168 scopes GET /edev/{id}/sub to the EndDevice {id}).
+func assertAggregatorSubscriptionsPresent(t *testing.T, ctx context.Context, client *http.Client, baseURL, aggID string, wantResources []string) {
 	t.Helper()
-	listURL := fmt.Sprintf("%s/edev/%s/sub?l=255", baseURL, edevID)
+	listURL := fmt.Sprintf("%s/edev/%s/sub?l=255", baseURL, aggID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, listURL, nil)
 	if err != nil {
 		t.Fatalf("count_gate build GET %s: %v", listURL, err)
@@ -244,45 +206,44 @@ func assertAggregatorSubscriptionsPresent(t *testing.T, ctx context.Context, cli
 		t.Fatalf("count_gate unmarshal %s: %v", listURL, err)
 	}
 
-	// #168: strict per-inverter scoping. Every entry the server
-	// returns must belong to this inverter (Href prefix /edev/{edevID}/sub/)
-	// and must be one of this inverter's aggregator subscriptions
-	// (NotificationURI matches aggregatorNotificationURI). Anything
-	// else is a cross-EndDevice leak.
-	wantHrefPrefix := fmt.Sprintf("/edev/%s/sub/", edevID)
+	// #168: strict scoping. Every entry the server returns must belong
+	// to this EndDevice (Href prefix /edev/{aggID}/sub/) and must be one
+	// of this aggregator's subscriptions (NotificationURI matches
+	// aggregatorNotificationURI). Anything else is a cross-EndDevice leak.
+	wantHrefPrefix := fmt.Sprintf("/edev/%s/sub/", aggID)
 	seen := make(map[string]bool, len(list.Subscription))
 	for _, s := range list.Subscription {
 		if s.NotificationURI != aggregatorNotificationURI {
-			t.Errorf("inverter=%q /sub list contains non-aggregator entry: SubscribedResource=%q NotificationURI=%q",
-				edevID, s.SubscribedResource, s.NotificationURI)
+			t.Errorf("aggregator=%q /sub list contains non-aggregator entry: SubscribedResource=%q NotificationURI=%q",
+				aggID, s.SubscribedResource, s.NotificationURI)
 			continue
 		}
 		if !strings.HasPrefix(s.Href, wantHrefPrefix) {
-			t.Errorf("inverter=%q /sub list leaked foreign entry: Href=%q (want prefix %q)",
-				edevID, s.Href, wantHrefPrefix)
+			t.Errorf("aggregator=%q /sub list leaked foreign entry: Href=%q (want prefix %q)",
+				aggID, s.Href, wantHrefPrefix)
 			continue
 		}
 		if seen[s.SubscribedResource] {
-			t.Errorf("inverter=%q /sub list has duplicate SubscribedResource=%q", edevID, s.SubscribedResource)
+			t.Errorf("aggregator=%q /sub list has duplicate SubscribedResource=%q", aggID, s.SubscribedResource)
 		}
 		seen[s.SubscribedResource] = true
 	}
 
 	for _, want := range wantResources {
 		if !seen[want] {
-			t.Errorf("inverter=%q /sub list missing SubscribedResource=%q (had %d entries)",
-				edevID, want, len(list.Subscription))
+			t.Errorf("aggregator=%q /sub list missing SubscribedResource=%q (had %d entries)",
+				aggID, want, len(list.Subscription))
 		}
 	}
-	// Exact count: this inverter's list must contain exactly the wanted
-	// 6 aggregator subscriptions - no extras, no foreign-edev bleed.
+	// Exact count: the aggregator's list must contain exactly the wanted
+	// subscriptions - no extras, no foreign-edev bleed.
 	if list.All != uint32(len(wantResources)) {
-		t.Errorf("inverter=%q SubscriptionList.All = %d, want %d (per-EndDevice scope)",
-			edevID, list.All, len(wantResources))
+		t.Errorf("aggregator=%q SubscriptionList.All = %d, want %d (per-EndDevice scope)",
+			aggID, list.All, len(wantResources))
 	}
 	if len(list.Subscription) != len(wantResources) {
-		t.Errorf("inverter=%q len(SubscriptionList.Subscription) = %d, want %d (per-EndDevice scope)",
-			edevID, len(list.Subscription), len(wantResources))
+		t.Errorf("aggregator=%q len(SubscriptionList.Subscription) = %d, want %d (per-EndDevice scope)",
+			aggID, len(list.Subscription), len(wantResources))
 	}
 }
 

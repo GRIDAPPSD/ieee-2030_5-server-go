@@ -1,66 +1,24 @@
-// CSIP V1.2 §10.1 — AGG-001 Aggregator Operation Subscription.
+// CSIP V1.2 Section 10.1 - AGG-001 Aggregator Operation Subscription.
 //
-// AGG-001 establishes the subscription baseline the rest of the AGG
-// cluster (AGG-002..012) builds on. Per §10.1 the Aggregator opens
-// Subscriptions against six resources per managed inverter:
-//
-//   - EDList (/edev)
-//   - EndDevice (/edev/{id})
-//   - FSAList (/edev/{id}/fsa)
-//   - DERProgramList (/edev/{id}/fsa/{fsa}/derp)
-//   - DERProgram (/edev/{id}/fsa/{fsa}/derp/{derp})
-//   - DERControlList (/edev/{id}/fsa/{fsa}/derp/{derp}/derc)
-//
-// Across 4 managed inverters that is 24 distinct POSTs against
-// /edev/{edevID}/sub. The procedure asserts that the server accepts
-// each subscription (201 Created + Location header) and that the
-// subscription surfaces in a subsequent GET of the per-inverter
-// SubscriptionList.
+// Procedure step 2 is one line: "[C] Subscribe to the EndDeviceList."
+// The Aggregator posts the subscription to its OWN subscription list
+// (CSIP IG 6.2.3.3: "The Aggregator instance contains the
+// SubscriptionListLink"), naming the EndDeviceList as the subscribed
+// resource. Setup places SubscriptionListLink only on the aggregator's
+// EndDevice, never on a managed inverter's.
 //
 // What this pins down on the server side:
-//   - The /edev/{id}/sub route accepts subscriptions for all 6 resource
-//     classes per managed inverter.
+//   - POST /edev/{aggID}/sub accepts a Subscription naming /edev.
 //   - The SubscriptionStore preserves SubscribedResource and
 //     NotificationURI on the wire.
-//   - Per-inverter scoping holds: a Subscription POSTed against EDA1's
-//     /sub does not bleed into EDA2/EDB1/EDB2's lists. Verified by the
-//     final per-inverter count gate.
-//   - The SubscriptionStore is race-clean under concurrent POSTs to
-//     different inverter scopes. AGG-001 runs the 4 per-inverter
-//     subtests in parallel via t.Parallel() to drive the -race probe.
+//   - The aggregator's own subscription list surfaces exactly what was
+//     posted, with no extras and no foreign-edev leakage (#168).
 //
-// Procedure step → assertion mapping (per V1.2 §10.1):
-//
-//	Step 1: Server has aggregator topology loaded (4 managed inverters).
-//	        ──► bootAggregatorTopology(t).
-//	Step 2: For each managed inverter, POST one Subscription per
-//	        subscribable resource (6 total).
-//	        ──► postAggregatorSubscription, 6× per inverter.
-//	Step 3: Each POST returns 201 + non-empty Location.
-//	        ──► asserted inside postAggregatorSubscription.
-//	Step 4: A subsequent GET /edev/{id}/sub surfaces the new
-//	        subscription with the supplied SubscribedResource.
-//	        ──► asserted inside postAggregatorSubscription.
-//	Step 5: After all per-inverter POSTs land, each /sub list surfaces
-//	        all 6 of that inverter's subscribed resources.
-//	        ──► assertAggregatorSubscriptionsPresent, called from the
-//	            "presence_gate" subtest which sequences after the
-//	            parallel inverter subtests.
-//
-// Per-inverter scoping gate.
-// #168 scoped GET /edev/{id}/sub to the EndDevice {id}: the
-// SubscriptionStore now indexes by EndDevice and the handler returns
-// only that EndDevice's subscriptions. AGG-001 asserts strict per-
-// inverter membership (exactly the 6 aggregator subscriptions for the
-// queried inverter; no extras; no foreign-edev leakage) in
-// assertAggregatorSubscriptionsPresent.
-//
-// Step 4 (deliver-side) — notification *delivery* on resource change is
-// gated on #12 follow-ups (the #27 mutation hook does not yet
-// call into the subscription manager — documented in UTIL-004's scope
-// note). AGG-001 itself only exercises subscription *acceptance*;
-// AGG-002..012 exercise the wire shape of events the aggregator would
-// be notified about, as a stand-in for end-to-end fan-out.
+// Steps 3-5 (server creates EDA1X, sends the notification, client
+// receives it and GETs the list) exercise notification *delivery* on a
+// topology mutation. That is gated on #12 follow-ups outside #147
+// scope: AGG-001 here exercises subscription *acceptance* only, per
+// the original test's own scope note.
 package csip_test
 
 import (
@@ -68,7 +26,7 @@ import (
 	"testing"
 )
 
-// TestAGG_001_AggregatorSubscription implements CSIP V1.2 §10.1.
+// TestAGG_001_AggregatorSubscription implements CSIP V1.2 Section 10.1.
 func TestAGG_001_AggregatorSubscription(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -76,38 +34,13 @@ func TestAGG_001_AggregatorSubscription(t *testing.T) {
 	srv := bootAggregatorTopology(t)
 	rawClient := srv.HTTPClient()
 
-	// Per managed inverter: open 6 Subscriptions covering the EDList,
-	// EndDevice, FSAList, DERProgramList, DERProgram, DERControlList
-	// classes called out in §10.1. The outer per-inverter Run is
-	// parallel; the inner per-resource loop is serial inside that
-	// Run so each inverter has a deterministic post-condition we can
-	// assert against once its 6 POSTs land.
-	t.Run("subscribe", func(t *testing.T) {
-		for _, edevID := range aggManagedInverters {
-			edevID := edevID
-			t.Run("inverter_"+edevID, func(t *testing.T) {
-				t.Parallel()
-				for _, res := range aggSubscribableResourcesForInverter(edevID) {
-					postAggregatorSubscription(t, ctx, rawClient, srv.BaseURL, edevID, res.Href)
-				}
-			})
-		}
-	})
+	// Procedure step 2: subscribe to the EndDeviceList, on the
+	// aggregator's own subscription list.
+	postAggregatorSubscription(t, ctx, rawClient, srv.BaseURL, aggEDFI, "/edev")
 
-	// After the parallel inverter subtests join, assert each managed
-	// inverter's /sub list surfaces all 6 of its subscribed resources
-	// AND nothing else (strict per-EndDevice scoping per #168).
+	// The aggregator's own /sub list surfaces exactly that one
+	// subscription: no extras, no foreign-edev leakage (#168).
 	t.Run("scope_gate", func(t *testing.T) {
-		for _, edevID := range aggManagedInverters {
-			edevID := edevID
-			t.Run("inverter_"+edevID, func(t *testing.T) {
-				resources := aggSubscribableResourcesForInverter(edevID)
-				wantHrefs := make([]string, 0, len(resources))
-				for _, r := range resources {
-					wantHrefs = append(wantHrefs, r.Href)
-				}
-				assertAggregatorSubscriptionsPresent(t, ctx, rawClient, srv.BaseURL, edevID, wantHrefs)
-			})
-		}
+		assertAggregatorSubscriptionsPresent(t, ctx, rawClient, srv.BaseURL, aggEDFI, []string{"/edev"})
 	})
 }

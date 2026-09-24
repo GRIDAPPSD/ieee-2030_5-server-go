@@ -1,8 +1,9 @@
 // CSIP V1.2 Section 9.3 - UTIL-003 Utility-Aggregator Group Assignment Retrieval.
 //
 // UTIL-003 proves the server accepts and persists Subscriptions an
-// Aggregator opens against each managed inverter's DERProgramList. The
-// procedure reads:
+// Aggregator opens, on its own subscription list, against each managed
+// inverter's DERProgramList (CSIP IG 6.2.3.3: the Aggregator instance
+// holds the SubscriptionListLink and posts to it). The procedure reads:
 //
 //  1. Aggregator GETs /edev (already exercised by UTIL-001/002 - UTIL-003
 //     re-walks to discover the per-inverter DERProgramList href via
@@ -11,16 +12,18 @@
 //     - Walk /edev/{id}/fsa -> DERProgramListLink for the SY FSA (the
 //     top-level chain entry; the server scopes DERPrograms by
 //     EndDevice so any FSA's link works - see CORE-010).
-//     - POST a Subscription targeting that DERProgramList URL.
+//     - POST a Subscription, on the aggregator's own list, targeting
+//     that DERProgramList URL.
 //  3. Server returns 201 Created + Location header for each.
-//  4. GET /edev/{id}/sub returns the just-created Subscription in the
-//     list under that EndDevice scope.
+//  4. GET the aggregator's own /edev/{id}/sub returns the just-created
+//     Subscription.
 //
 // What the test pins down:
-//   - The /edev/{id}/sub route accepts subscriptions for the aggregator
-//     across 4 distinct managed inverters in parallel (the spec allows
-//     concurrent subscriptions; we run the 4 inverter subtests with
-//     t.Parallel() to surface any race in the SubscriptionStore).
+//   - POST /edev/{aggID}/sub accepts a Subscription naming each of the
+//     4 managed inverters' DERProgramList in parallel (the spec allows
+//     concurrent subscriptions; we run the 4 subtests with t.Parallel()
+//     to surface any race in the SubscriptionStore, since all 4 now
+//     write the same aggregator subscription list).
 //   - The server preserves the subscribedResource URI on the wire.
 //
 // #12 (subscription deliver context) is the hard prerequisite for
@@ -85,24 +88,24 @@ func TestUTIL_003_GroupAssignmentRetrieval(t *testing.T) {
 		subscribedResource := progHrefs[edevID]
 		t.Run("subscribe_edev_"+edevID, func(t *testing.T) {
 			t.Parallel()
-			postAndVerifySubscription(t, ctx, rawClient, srv.BaseURL, edevID, subscribedResource)
+			postAndVerifySubscription(t, ctx, rawClient, srv.BaseURL, aggEDFI, subscribedResource)
 		})
 	}
 }
 
-// postAndVerifySubscription POSTs one subscription against /edev/{id}/sub
-// with SubscribedResource = resource, asserts 201 + non-empty Location,
-// then GETs /edev/{id}/sub and asserts the new subscription is present
-// in the list under the expected scope. Surfaces three failure modes
+// postAndVerifySubscription POSTs one subscription against the
+// aggregator's own /edev/{aggID}/sub with SubscribedResource = resource,
+// asserts 201 + non-empty Location, then GETs the same list and asserts
+// the new subscription is present. Surfaces three failure modes
 // distinctly:
 //
 //   - Server refused the POST (mode -> status != 201).
 //   - Server accepted but did not persist (mode -> GET list excludes it).
-//   - Server persisted under the wrong scope (mode -> GET on a different
-//     edev contains it; not asserted explicitly because the per-edev
-//     subtests run in parallel and each only walks its own list, which
-//     is a per-scope assertion by construction).
-func postAndVerifySubscription(t *testing.T, ctx context.Context, client *http.Client, baseURL, edevID, resource string) {
+//   - Server persisted under the wrong scope, on a different EndDevice's
+//     list (indistinguishable here from the mode above: the 4 parallel
+//     subtests share the aggregator's own list as their GET target, so
+//     a scope leak away from it surfaces the same way as a lost write).
+func postAndVerifySubscription(t *testing.T, ctx context.Context, client *http.Client, baseURL, aggID, resource string) {
 	t.Helper()
 
 	sub := sep2.Subscription{
@@ -116,7 +119,7 @@ func postAndVerifySubscription(t *testing.T, ctx context.Context, client *http.C
 		t.Fatalf("marshal Subscription: %v", err)
 	}
 
-	postURL := fmt.Sprintf("%s/edev/%s/sub", baseURL, edevID)
+	postURL := fmt.Sprintf("%s/edev/%s/sub", baseURL, aggID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST %s: build request: %v", postURL, err)
@@ -136,11 +139,12 @@ func postAndVerifySubscription(t *testing.T, ctx context.Context, client *http.C
 		t.Fatalf("POST %s: empty Location header", postURL)
 	}
 
-	// GET /edev/{id}/sub and assert the new sub is present with the
-	// supplied subscribed-resource URI. We GET the list (not the
-	// Location) because (a) the list is the procedure's verification
-	// surface and (b) it pins down list-handler scoping in one go.
-	listURL := fmt.Sprintf("%s/edev/%s/sub?l=255", baseURL, edevID)
+	// GET the aggregator's own /edev/{id}/sub and assert the new sub is
+	// present with the supplied subscribed-resource URI. We GET the list
+	// (not the Location) because (a) the list is the procedure's
+	// verification surface and (b) it pins down list-handler scoping in
+	// one go.
+	listURL := fmt.Sprintf("%s/edev/%s/sub?l=255", baseURL, aggID)
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, listURL, nil)
 	if err != nil {
 		t.Fatalf("GET %s: build request: %v", listURL, err)

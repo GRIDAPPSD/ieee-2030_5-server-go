@@ -115,9 +115,10 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 		if progLink == nil {
 			t.Fatalf("step 1: edev=%q SY-FSA missing DERProgramListLink", edevID)
 		}
-		// #157: POST the subscription with the receiver's URL so
-		// Manager.Notify fan-out reaches an in-test recorder.
-		postSubscriptionToURI(t, ctx, rawClient, srv.BaseURL, edevID, progLink.Href, receiver.URL())
+		// #157: POST the subscription, on the aggregator's own list, with
+		// the receiver's URL so Manager.Notify fan-out reaches an
+		// in-test recorder.
+		postSubscriptionToURI(t, ctx, rawClient, srv.BaseURL, aggEDFI, progLink.Href, receiver.URL())
 		subscribedHrefs[edevID] = progLink.Href
 	}
 
@@ -435,13 +436,13 @@ func (r *utilNotificationReceiver) Wait(n int, timeout time.Duration) ([]utilRec
 	}
 }
 
-// postSubscriptionToURI POSTs one Subscription against /edev/{id}/sub
-// with the supplied SubscribedResource and NotificationURI. Asserts
-// 201 + a Location header. Mirrors postAndVerifySubscription from
-// util_003 but takes the NotificationURI as a parameter so step 3 can
-// route fan-outs to a recording receiver instead of the unreachable
-// constant in UTIL-003.
-func postSubscriptionToURI(t *testing.T, ctx context.Context, client *http.Client, baseURL, edevID, resource, notificationURI string) {
+// postSubscriptionToURI POSTs one Subscription against the aggregator's
+// own /edev/{aggID}/sub with the supplied SubscribedResource and
+// NotificationURI. Asserts 201 + a Location header. Mirrors
+// postAndVerifySubscription from util_003 but takes the NotificationURI
+// as a parameter so step 3 can route fan-outs to a recording receiver
+// instead of the unreachable constant in UTIL-003.
+func postSubscriptionToURI(t *testing.T, ctx context.Context, client *http.Client, baseURL, aggID, resource, notificationURI string) {
 	t.Helper()
 	sub := sep2.Subscription{
 		SubscribedResource: resource,
@@ -453,7 +454,7 @@ func postSubscriptionToURI(t *testing.T, ctx context.Context, client *http.Clien
 	if err != nil {
 		t.Fatalf("postSubscriptionToURI: marshal: %v", err)
 	}
-	postURL := fmt.Sprintf("%s/edev/%s/sub", baseURL, edevID)
+	postURL := fmt.Sprintf("%s/edev/%s/sub", baseURL, aggID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, postURL, bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("postSubscriptionToURI: build %s: %v", postURL, err)

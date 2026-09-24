@@ -131,6 +131,12 @@ func TestSensitiveRoutesRefuseBypassAdmission(t *testing.T) {
 		{name: "GET /api/traffic/ (clients sub-route)", method: http.MethodGet, path: "/api/traffic/clients", wantReachedStatus: http.StatusNotFound},
 		{name: "GET /api/traffic/ (stats sub-route)", method: http.MethodGet, path: "/api/traffic/stats", wantReachedStatus: http.StatusNotFound},
 		{name: "GET /api/management-pairs", method: http.MethodGet, path: "/api/management-pairs?manager=AAAA000000000000000000000000000000000001", wantReachedStatus: http.StatusOK},
+		// #677 fix round item 4: a GET under this path with no route
+		// registered for it yet must still be refused, not fall through to
+		// the mux's own 404 unauthenticated. wantReachedStatus is 404
+		// because no handler answers this path even with a valid
+		// credential; the point is that credential check runs first.
+		{name: "GET /api/management-pairs/ (future sub-route, no handler yet)", method: http.MethodGet, path: "/api/management-pairs/audit", wantReachedStatus: http.StatusNotFound},
 	}
 
 	for _, tc := range cases {
@@ -213,10 +219,18 @@ func TestSensitiveRoutesStillRefuseUnderNonLoopbackExposure(t *testing.T) {
 // BuildAdminRouter's merged list), not from the handful of route names #579
 // and #631 happen to quote. A new route under either prefix that is not
 // added to sensitiveAdminPatterns fails here instead of silently joining an
-// unprotected family. GET /api/management-pairs (#677 fix round item 4) is
-// not a third prefix family: only the GET, not POST/DELETE/rekey under the
-// same path, is in sensitiveAdminPatterns, so it is checked by exact name
-// instead of by prefix.
+// unprotected family.
+//
+// The management-pair-read family (#440, #677 fix round item 4) is checked
+// by path prefix at request time instead (sensitiveAdminReadPrefix in
+// admin_sensitive_routes.go), not by exact pattern membership here: unlike
+// certs and traffic, it names only one existing route today, so an
+// exact-pattern coverage test could not tell a covered new route from an
+// uncovered one until the new route exists to name. sawManagementPairsGet
+// below is the vacuity control that the family still has something to
+// protect; TestSensitiveRoutesRefuseBypassAdmission's
+// "future sub-route, no handler yet" case is what proves the prefix itself,
+// by driving a real request rather than comparing pattern lists.
 //
 // #579 MEDIUM-3 (test coverage lane): the merged list also carries the
 // public outer mux's routes, so a pattern that satisfies this comparison
@@ -245,15 +259,15 @@ func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
 			want = append(want, p)
 		}
 		if method == http.MethodGet && path == "/api/management-pairs" {
-			want = append(want, p)
 			sawManagementPairsGet = true
 		}
 	}
-	// Control: the router must still expose the named single-pattern
-	// family, or the comparison below would pass by both sides having
-	// silently lost the same entry.
+	// Control: the router must still expose the named route, or the prefix
+	// family this test does not directly compare would have nothing to
+	// protect and TestSensitiveRoutesRefuseBypassAdmission's coverage of it
+	// would be vacuous too.
 	if !sawManagementPairsGet {
-		t.Fatal("router reports no GET /api/management-pairs pattern; the control for the third family cannot run")
+		t.Fatal("router reports no GET /api/management-pairs pattern; the control for the read-prefix family cannot run")
 	}
 	sort.Strings(want)
 
@@ -264,7 +278,7 @@ func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
 	sort.Strings(got)
 
 	if !slices.Equal(got, want) {
-		t.Fatalf("sensitiveAdminPatterns = %q (%d), want every /api/certs and /api/traffic route plus GET /api/management-pairs = %q (%d)",
+		t.Fatalf("sensitiveAdminPatterns = %q (%d), want every /api/certs and /api/traffic route = %q (%d)",
 			got, len(got), want, len(want))
 	}
 }

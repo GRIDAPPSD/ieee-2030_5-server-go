@@ -2,22 +2,16 @@ package server
 
 import (
 	"net/http"
+	"strings"
 )
 
-// sensitiveAdminPatterns is the certificate, traffic-capture, and
-// management-pair-read route families (#579, #631, #677 fix round item 4):
-// the certificate routes mint and return key material, the traffic routes
-// return captured Authorization and Cookie header bytes verbatim, and
-// GET /api/management-pairs discloses an aggregator's full managed fleet.
-// The management-pair WRITE routes already require a real credential by
-// default (they are not on nonSensitiveAdminWrites below); reads bypassed
-// with no credential at all until this entry, so the write and read
-// requirements are now the same. Kept as a map literal, not derived from
-// the router at init time, so a new /api/certs or /api/traffic pattern
-// added later fails the coverage test in admin_sensitive_routes_test.go
-// instead of silently joining an already-protected family;
-// GET /api/management-pairs does not share a path prefix with either family
-// and so is checked by name there instead.
+// sensitiveAdminPatterns is the certificate and traffic-capture route
+// families (#579, #631): the certificate routes mint and return key
+// material, the traffic routes return captured Authorization and Cookie
+// header bytes verbatim. Kept as a map literal, not derived from the router
+// at init time, so a new /api/certs or /api/traffic pattern added later
+// fails the coverage test in admin_sensitive_routes_test.go instead of
+// silently joining an already-protected family.
 var sensitiveAdminPatterns = map[string]struct{}{
 	"GET /api/certs/ca":           {},
 	"POST /api/certs/server":      {},
@@ -25,8 +19,23 @@ var sensitiveAdminPatterns = map[string]struct{}{
 	"GET /api/certs/device-types": {},
 	"POST /api/certs/info":        {},
 	"GET /api/traffic/":           {},
-	"GET /api/management-pairs":   {},
 }
+
+// sensitiveAdminReadPrefix is the management-pair-read family (#440, #677
+// fix round item 4): GET /api/management-pairs discloses an aggregator's
+// full managed fleet. An exact pattern entry in sensitiveAdminPatterns
+// covered only the one route that existed when it was added; a later GET
+// added below the same path (an audit or export endpoint, say) would have
+// joined the unprotected group by default instead of the protected one, the
+// same gap the certificate and traffic families avoid by being checked as a
+// path family below rather than by a fixed list of exact routes. Checked
+// against the request path directly, not the resolved mux pattern, so it
+// also covers a path with no route registered for it at all: the credential
+// requirement does not wait for the route to exist. The management-pair
+// WRITE routes (create, remove, rekey) are unaffected here: they already
+// require a real credential by default, since they are not on
+// nonSensitiveAdminWrites below.
+const sensitiveAdminReadPrefix = "/api/management-pairs"
 
 // nonSensitiveAdminWrites is the explicit, reviewed allowlist of admin WRITE
 // routes that do not need a real credential: FSA and end-device management,
@@ -69,6 +78,10 @@ func requireCredentialForSensitiveRoutes(mux *recordingMux, guard func(http.Hand
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, pattern := mux.mux.Handler(r)
 		if _, sensitive := sensitiveAdminPatterns[pattern]; sensitive {
+			guarded.ServeHTTP(w, r)
+			return
+		}
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.HasPrefix(r.URL.Path, sensitiveAdminReadPrefix) {
 			guarded.ServeHTTP(w, r)
 			return
 		}

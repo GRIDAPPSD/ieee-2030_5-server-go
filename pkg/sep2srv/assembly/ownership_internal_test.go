@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -388,6 +390,64 @@ func TestNoRouteRegistersHEADYet(t *testing.T) {
 	}
 	if head != 0 {
 		t.Errorf("%d mounted pattern(s) register HEAD explicitly; item 5's HEAD handling now decides a live verdict, not a latent one, and belongs in managerVerdicts", head)
+	}
+}
+
+// writeAllowlistDocPath is docs/enddevice-access.md relative to this package
+// directory.
+const writeAllowlistDocPath = "../../../docs/enddevice-access.md"
+
+// writeAllowlistDocRowPattern matches a write table row's backtick-quoted
+// request, for example "PUT /edev/{id}/der/{derId}/dercap" or
+// "POST /edev/{id}/lel".
+var writeAllowlistDocRowPattern = regexp.MustCompile("`([A-Z]+ /edev/\\{id\\}[^`]*)`")
+
+// TestWriteAllowlistDocTableMatches is item 4: nothing today ties the write
+// table in docs/enddevice-access.md to writeAllowlist, so either can drift
+// from the other with no signal. The table is read from the doc itself
+// rather than copied into a literal here, so a row this test misses is a row
+// the doc's own table structure changed, not a set someone forgot to update
+// alongside it.
+func TestWriteAllowlistDocTableMatches(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(writeAllowlistDocPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", writeAllowlistDocPath, err)
+	}
+	doc := string(raw)
+
+	start := strings.Index(doc, "| Request | Grants |")
+	if start < 0 {
+		t.Fatalf("%s: no \"| Request | Grants |\" table header found; the write table moved or was renamed", writeAllowlistDocPath)
+	}
+	end := strings.Index(doc[start:], "\n\n")
+	if end < 0 {
+		t.Fatalf("%s: the write table's closing blank line was not found", writeAllowlistDocPath)
+	}
+	table := doc[start : start+end]
+
+	rows := writeAllowlistDocRowPattern.FindAllStringSubmatch(table, -1)
+	if len(rows) == 0 {
+		t.Fatalf("%s: no request rows found in the write table; the row pattern matched nothing, which is not the same as an empty table", writeAllowlistDocPath)
+	}
+
+	fromDoc := make(map[string]bool, len(rows))
+	for _, m := range rows {
+		fromDoc[m[1]] = true
+	}
+	if len(fromDoc) != len(rows) {
+		t.Errorf("%s: the write table lists %d row(s) but only %d distinct pattern(s); a duplicate row", writeAllowlistDocPath, len(rows), len(fromDoc))
+	}
+
+	for p := range fromDoc {
+		if !writeAllowlist[p] {
+			t.Errorf("%s: the write table grants %q, which writeAllowlist does not; the doc has drifted ahead of the code", writeAllowlistDocPath, p)
+		}
+	}
+	for p := range writeAllowlist {
+		if !fromDoc[p] {
+			t.Errorf("%s: writeAllowlist grants %q, which the write table does not list; the code has drifted ahead of the doc", writeAllowlistDocPath, p)
+		}
 	}
 }
 

@@ -109,6 +109,28 @@ func BuildEndDeviceList(href string, result store.ListResult[sep2.EndDevice], po
 	}
 }
 
+// stampFlowReservationLinks sets FlowReservationRequestListLink and
+// FlowReservationResponseListLink from dev's own Href, whichever is absent.
+//
+// Applied on every serve rather than written back through the store on
+// registration: unlike RegistrationLink, which a coupled store decides
+// per-device, these two hrefs are a fixed function of Href alone (P3 on
+// #693: every Stores constructor in this repo wires both stores), so
+// recomputing them here can never disagree with what Create persisted, and
+// it heals a record written before this change, by a boot fixture, or
+// restored from SEP2_DATA_DIR, on every read rather than only once.
+func stampFlowReservationLinks(dev *sep2.EndDevice) {
+	if dev.Href == "" {
+		return
+	}
+	if dev.FlowReservationRequestListLink == nil {
+		dev.FlowReservationRequestListLink = &sep2.ListLink{Href: dev.Href + "/frq"}
+	}
+	if dev.FlowReservationResponseListLink == nil {
+		dev.FlowReservationResponseListLink = &sep2.ListLink{Href: dev.Href + "/frp"}
+	}
+}
+
 // HandleEndDevice returns a handler for GET /edev/{id}.
 func HandleEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +154,7 @@ func HandleEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 			srverr.Internal(w, r, err)
 			return
 		}
+		stampFlowReservationLinks(&dev)
 
 		encoding.WriteXML(w, http.StatusOK, &dev)
 	}
@@ -234,7 +257,11 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 				http.Error(w, deviceSFDIConflictMessage, http.StatusConflict)
 				return
 			}
-			// Already exists under this identity: return 200 with existing device
+			// Already exists under this identity: return 200 with existing
+			// device. stampFlowReservationLinks heals a record that predates
+			// this change (#693), the way a re-registration under the
+			// pre-existing code path would otherwise still leave nil.
+			stampFlowReservationLinks(&existing)
 			w.Header().Set("Location", existing.Href)
 			encoding.WriteXML(w, http.StatusOK, &existing)
 			return
@@ -261,6 +288,11 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 		}
 		dev.Href = "/edev/" + id
 		dev.FunctionSetAssignmentsListLink = &sep2.ListLink{Href: fmt.Sprintf("/edev/%s/fsa", id)}
+
+		// FlowReservationRequestListLink and FlowReservationResponseListLink:
+		// see stampFlowReservationLinks for why these are unconditional, like
+		// FSA above, and computed rather than written back on every serve.
+		stampFlowReservationLinks(&dev)
 
 		// RegistrationLink is deliberately NOT stamped here.
 		// It used to be, unconditionally, while nothing ever wrote a
@@ -293,6 +325,7 @@ func HandleCreateEndDevice(s store.EndDeviceStore, idx EndDeviceIndexer, identit
 				}
 				// Same identity raced its own registration: serve the record
 				// it already has.
+				stampFlowReservationLinks(&existing)
 				w.Header().Set("Location", existing.Href)
 				encoding.WriteXML(w, http.StatusOK, &existing)
 				return

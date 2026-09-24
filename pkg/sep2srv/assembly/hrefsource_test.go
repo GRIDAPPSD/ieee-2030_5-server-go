@@ -133,6 +133,13 @@ var valueRootedHrefs = map[string]string{
 	"{}/dercap": "/edev/{}/der/{}/dercap",
 	"{}/derg":   "/edev/{}/der/{}/derg",
 	"{}/ders":   "/edev/{}/der/{}/ders",
+
+	// enddevice.go: stampFlowReservationLinks derives both list hrefs from
+	// dev.Href, the EndDevice's own canonical href, which is "/edev/{id}".
+	// Applied on every serve so a device seeded before these links existed
+	// still gets them, not only a device created after (#693).
+	"{}/frq": "/edev/{}/frq",
+	"{}/frp": "/edev/{}/frp",
 }
 
 // hrefFamilies returns the set of first path segments that count as an href

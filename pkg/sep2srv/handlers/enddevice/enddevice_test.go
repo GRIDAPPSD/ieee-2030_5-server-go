@@ -126,6 +126,30 @@ func TestHandleCreateEndDevice(t *testing.T) {
 	if got.LFDI != testLFDI {
 		t.Errorf("LFDI = %q, want %q", got.LFDI, testLFDI)
 	}
+	if got.FunctionSetAssignmentsListLink == nil || got.FunctionSetAssignmentsListLink.Href != got.Href+"/fsa" {
+		t.Errorf("FunctionSetAssignmentsListLink = %+v, want href %s/fsa", got.FunctionSetAssignmentsListLink, got.Href)
+	}
+	if got.FlowReservationRequestListLink == nil || got.FlowReservationRequestListLink.Href != got.Href+"/frq" {
+		t.Errorf("FlowReservationRequestListLink = %+v, want href %s/frq", got.FlowReservationRequestListLink, got.Href)
+	}
+	if got.FlowReservationResponseListLink == nil || got.FlowReservationResponseListLink.Href != got.Href+"/frp" {
+		t.Errorf("FlowReservationResponseListLink = %+v, want href %s/frp", got.FlowReservationResponseListLink, got.Href)
+	}
+
+	// Element order on the wire follows the vendored EndDevice struct's XSD
+	// sequence (AbstractDevice, then EndDevice), not assignment order: the
+	// two flow reservation links come before FunctionSetAssignmentsListLink.
+	// This locks that order in against a schema-strict client.
+	body := w.Body.String()
+	iFrq := strings.Index(body, "<FlowReservationRequestListLink")
+	iFrp := strings.Index(body, "<FlowReservationResponseListLink")
+	iFsa := strings.Index(body, "<FunctionSetAssignmentsListLink")
+	if iFrq < 0 || iFrp < 0 || iFsa < 0 {
+		t.Fatalf("expected all three link elements present in body: %s", body)
+	}
+	if !(iFrq < iFrp && iFrp < iFsa) {
+		t.Errorf("element order = frq@%d frp@%d fsa@%d, want frq < frp < fsa", iFrq, iFrp, iFsa)
+	}
 }
 
 func TestHandleCreateEndDeviceDuplicate(t *testing.T) {
@@ -158,6 +182,59 @@ func TestHandleCreateEndDeviceDuplicate(t *testing.T) {
 	}
 	if got.LFDI != testLFDI || got.SFDI != testSFDI {
 		t.Errorf("duplicate POST body = %+v, want the caller's own identity %s/%s", got, testLFDI, testSFDI)
+	}
+}
+
+// TestHandleCreateEndDeviceBackfillsFlowReservationLinksOnExistingDevice
+// reproduces a device that predates this change: seeded straight into the
+// store, the way a boot fixture or a restored SEP2_DATA_DIR record would be,
+// with neither flow reservation link set. Both the idempotent POST /edev
+// response and a subsequent GET must still carry both links, read off the
+// served document rather than assumed from what was seeded.
+func TestHandleCreateEndDeviceBackfillsFlowReservationLinksOnExistingDevice(t *testing.T) {
+	t.Parallel()
+
+	s := memory.NewEndDeviceStore()
+	pre := sep2.EndDevice{SFDI: testSFDI, LFDI: testLFDI}
+	pre.Href = "/edev/1"
+	if err := s.Create(context.Background(), "1", pre); err != nil {
+		t.Fatalf("seed pre-existing EndDevice: %v", err)
+	}
+
+	h := coreedev.HandleCreateEndDevice(s, memory.NewEndDeviceIndex(), identityOK(testLFDI, testSFDI), sfdiFirst8)
+	req := httptest.NewRequest(http.MethodPost, "/edev", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST under the pre-existing identity: status %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var posted sep2.EndDevice
+	if err := xml.Unmarshal(w.Body.Bytes(), &posted); err != nil {
+		t.Fatalf("unmarshal POST body: %v", err)
+	}
+	if posted.FlowReservationRequestListLink == nil || posted.FlowReservationRequestListLink.Href != "/edev/1/frq" {
+		t.Errorf("POST response FlowReservationRequestListLink = %+v, want href /edev/1/frq", posted.FlowReservationRequestListLink)
+	}
+	if posted.FlowReservationResponseListLink == nil || posted.FlowReservationResponseListLink.Href != "/edev/1/frp" {
+		t.Errorf("POST response FlowReservationResponseListLink = %+v, want href /edev/1/frp", posted.FlowReservationResponseListLink)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /edev/{id}", coreedev.HandleEndDevice(s))
+	getReq := httptest.NewRequest(http.MethodGet, "/edev/1", nil)
+	getW := httptest.NewRecorder()
+	mux.ServeHTTP(getW, getReq)
+
+	var got sep2.EndDevice
+	if err := xml.Unmarshal(getW.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal GET body: %v", err)
+	}
+	if got.FlowReservationRequestListLink == nil || got.FlowReservationRequestListLink.Href != "/edev/1/frq" {
+		t.Errorf("GET FlowReservationRequestListLink = %+v, want href /edev/1/frq", got.FlowReservationRequestListLink)
+	}
+	if got.FlowReservationResponseListLink == nil || got.FlowReservationResponseListLink.Href != "/edev/1/frp" {
+		t.Errorf("GET FlowReservationResponseListLink = %+v, want href /edev/1/frp", got.FlowReservationResponseListLink)
 	}
 }
 

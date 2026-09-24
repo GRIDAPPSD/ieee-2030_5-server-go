@@ -170,3 +170,38 @@ func TestHandleEndDeviceListForCaller_IndexDriftLogNamesTheStoreKey(t *testing.T
 		t.Errorf("index drift was logged without the drifted record's store key; log=%q", buf.String())
 	}
 }
+
+// TestHandleEndDeviceListForCaller_BackfillsFlowReservationLinks covers the
+// same pre-existing-device gap as the POST /edev backfill test, through the
+// list a client actually discovers its devices with: a record seeded without
+// either flow reservation link must still carry both when it is listed.
+func TestHandleEndDeviceListForCaller_BackfillsFlowReservationLinks(t *testing.T) {
+	t.Parallel()
+
+	s := memory.NewEndDeviceStore()
+	pre := sep2.EndDevice{LFDI: "CALLER"}
+	pre.Href = "/edev/1"
+	if err := s.Create(context.Background(), "1", pre); err != nil {
+		t.Fatalf("seed pre-existing EndDevice: %v", err)
+	}
+
+	identity := func(context.Context) (string, string, bool) { return "CALLER", "", true }
+	status, body := serveList(t, coreedev.HandleEndDeviceListForCaller(s, nil, identity, 900))
+	if status != http.StatusOK {
+		t.Fatalf("status %d, want 200; body=%s", status, body)
+	}
+	var list sep2.EndDeviceList
+	if err := xml.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("decode: %v; body=%s", err, body)
+	}
+	if len(list.EndDevice) != 1 {
+		t.Fatalf("listed %d devices, want 1; body=%s", len(list.EndDevice), body)
+	}
+	got := list.EndDevice[0]
+	if got.FlowReservationRequestListLink == nil || got.FlowReservationRequestListLink.Href != "/edev/1/frq" {
+		t.Errorf("listed FlowReservationRequestListLink = %+v, want href /edev/1/frq", got.FlowReservationRequestListLink)
+	}
+	if got.FlowReservationResponseListLink == nil || got.FlowReservationResponseListLink.Href != "/edev/1/frp" {
+		t.Errorf("listed FlowReservationResponseListLink = %+v, want href /edev/1/frp", got.FlowReservationResponseListLink)
+	}
+}

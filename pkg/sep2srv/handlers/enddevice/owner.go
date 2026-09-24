@@ -155,6 +155,12 @@ func callerDevices(r *http.Request, s store.EndDeviceStore, managers store.EndDe
 			reported.printf("malformed:"+dev.Href, "enddevice: %s: an EndDevice in the caller's list has href %q, which names no store key; not listed", srverr.Route(r), dev.Href)
 			continue
 		}
+		// Heals a record listed here that predates the flow reservation
+		// links (#693), the same gap and the same fix as HandleEndDevice's
+		// stampFlowReservationLinks: a boot-fixture or SEP2_DATA_DIR record
+		// must not go permanently undiscoverable just because a client
+		// finds it through the list rather than a direct GET.
+		stampFlowReservationLinks(&dev)
 		devices = append(devices, listedDevice{key: key, dev: dev})
 	}
 	slices.SortFunc(devices, func(a, b listedDevice) int { return strings.Compare(a.key, b.key) })

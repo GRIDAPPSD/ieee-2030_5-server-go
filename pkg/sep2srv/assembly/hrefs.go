@@ -198,6 +198,8 @@ func MintableHrefs() []MintableHref {
 		{"/edev/{}/fsa/{}", http.MethodGet, "handlers/fsa.HandleFSA", "a single FunctionSetAssignments"},
 		{"/edev/{}/fsa/{}/derp", http.MethodGet, "handlers/fsa.HandleFSA DERProgramListLink", "the DERProgram list under an FSA"},
 		{"/edev/{}/fsa/{}/derp/{}", http.MethodGet, "handlers/der.DERProgramHref", "a single DERProgram member's self href"},
+		{"/edev/{}/frq", http.MethodGet, "handlers/enddevice.HandleCreateEndDevice FlowReservationRequestListLink", "the path from an EndDevice to the flow reservations it has requested"},
+		{"/edev/{}/frp", http.MethodGet, "handlers/enddevice.HandleCreateEndDevice FlowReservationResponseListLink", "the path from an EndDevice to the server's decisions on those requests"},
 		// The source of this href moved too, for the same reason as the
 		// Registration link above: it is minted by the store binding that
 		// decides whether the function set is served, not by a handler that

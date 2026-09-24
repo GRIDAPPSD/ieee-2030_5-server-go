@@ -91,6 +91,19 @@ test/stress/results/
 /test/conformance/wadl/*.xml
 sep_wadl.xml
 
+# IEEE 2030.5 XML Schema. sep.xsd is copyrighted by IEEE and is NOT
+# distributed with this project (see NOTICE). Point SEP2_SCHEMA_PATH at a
+# licensed copy to run the schema-gated tests; there is no in-repo location
+# for one, because neither normative artifact is committed here in any form
+# (see test/conformance/README.md). It must never be committed.
+# Ignored by what a file IS, like the key material above. A name-scoped
+# `sep*.xsd` would miss a copy saved under another name, and a
+# directory-scoped rule would miss the next fixtures directory added, which
+# is exactly where a schema extract lands by accident. Fixtures under
+# pkg/sep2srv/ are XML documents written to satisfy the schema, never
+# extracts of it, so nothing legitimate is caught: no .xsd is tracked here.
+*.xsd
+
 # Conformance sweep output (generated per run; a record of a server run, not
 # source, and verbose). Written only when SEP2_WADL_SWEEP_OUT is set.
 *.jsonl

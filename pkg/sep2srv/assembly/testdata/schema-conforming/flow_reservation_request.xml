@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A FlowReservationRequest carrying exactly the element set sep.xsd makes
+  mandatory, and nothing else. Derived from the schema, not copied from it;
+  see README.md in this directory.
+
+  Six elements are minOccurs="1" here: mRID (from IdentifiedObject), then
+  creationTime, energyRequested, intervalRequested, powerRequested and
+  RequestStatus. durationRequested, description and version are optional and
+  are deliberately absent, so this document is the floor a conforming client
+  may send rather than a comfortable middle.
+
+  RequestStatus is the element that mattered: the schema declares a complex
+  type with a mandatory dateTime and requestStatus, and our Go type carried a
+  bare integer until core v0.19.0, so this body was refused with 400 while
+  every self-marshalled body passed.
+
+  Element order is the schema's sequence order and is load-bearing:
+  encoding/xml accepts elements in any order, a validating peer does not.
+-->
+<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns">
+  <mRID>0102030405060708090A0B0C0D0E0F10</mRID>
+  <creationTime>1727136000</creationTime>
+  <energyRequested>
+    <multiplier>3</multiplier>
+    <value>15</value>
+  </energyRequested>
+  <intervalRequested>
+    <duration>10800</duration>
+    <start>1727136000</start>
+  </intervalRequested>
+  <powerRequested>
+    <multiplier>3</multiplier>
+    <value>7</value>
+  </powerRequested>
+  <RequestStatus>
+    <dateTime>1727136000</dateTime>
+    <requestStatus>0</requestStatus>
+  </RequestStatus>
+</FlowReservationRequest>

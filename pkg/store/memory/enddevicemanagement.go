@@ -85,12 +85,14 @@ func (s *EndDeviceManagementStore) ManagedBy(_ context.Context, managerLFDI stri
 // no way to make a change live without the write already being durable.
 // This replaces four copies of the RLock/build/RUnlock/persist/Lock/apply/
 // Unlock sequence, and the eleven hand-called RUnlock/Unlock releases that
-// went with them, with one. The order itself is proven by
+// went with them, with one. The order is held, for the mutators that have
+// a subtest there, by
 // TestManagementPersistence_WriteFailureLeavesMemoryAndDiskUnchanged
-// (enddevicemanagement_persistence_test.go); the obligation for every
-// mutator to route through here is proven by
-// TestEndDeviceManagementStoreHasExactMethodSet
-// (enddevicemanagement_methodset_test.go).
+// (enddevicemanagement_persistence_test.go). TestEndDeviceManagementStoreHasExactMethodSet
+// (enddevicemanagement_methodset_test.go) is a tripwire on the exported
+// method set, not a proof of routing: a mutator added later needs its own
+// subtest in the persistence test above, and adding its line to the
+// method-set pin is not enough.
 func (s *EndDeviceManagementStore) mutate(build func() (records []managementPairRecord, apply func(), err error)) error {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
@@ -108,6 +110,9 @@ func (s *EndDeviceManagementStore) mutate(build func() (records []managementPair
 	}
 	if records != nil && apply == nil {
 		return fmt.Errorf("enddevice management: build returned records with no apply")
+	}
+	if apply != nil && records == nil {
+		return fmt.Errorf("enddevice management: build returned apply with no records")
 	}
 	if apply == nil {
 		return nil

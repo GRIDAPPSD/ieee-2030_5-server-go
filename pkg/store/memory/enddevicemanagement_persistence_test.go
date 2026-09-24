@@ -334,6 +334,9 @@ func TestManagementPersistence_WriteFailureLeavesMemoryAndDiskUnchanged(t *testi
 		if _, mErr := s.ManagerOf(ctx, childB); !errors.Is(mErr, store.ErrNotFound) {
 			t.Errorf("ManagerOf(childB) after a failed create = %v, want ErrNotFound: the grant must not be live", mErr)
 		}
+		if got, mErr := s.ManagedBy(ctx, managerA); mErr != nil || !slices.Equal(got, []string{childA}) {
+			t.Errorf("ManagedBy(managerA) after a failed create = %v, %v; want [%s]: the grant must not be live", got, mErr, childA)
+		}
 	})
 
 	t.Run("delete reported as failed does not take effect", func(t *testing.T) {
@@ -343,6 +346,9 @@ func TestManagementPersistence_WriteFailureLeavesMemoryAndDiskUnchanged(t *testi
 		}
 		if manager, mErr := s.ManagerOf(ctx, childA); mErr != nil || manager != managerA {
 			t.Errorf("ManagerOf(childA) after a failed delete = %q, %v; want %q still present: the revocation must not have taken effect", manager, mErr, managerA)
+		}
+		if got, mErr := s.ManagedBy(ctx, managerA); mErr != nil || !slices.Equal(got, []string{childA}) {
+			t.Errorf("ManagedBy(managerA) after a failed delete = %v, %v; want [%s] still present: the revocation must not have taken effect", got, mErr, childA)
 		}
 	})
 
@@ -358,6 +364,12 @@ func TestManagementPersistence_WriteFailureLeavesMemoryAndDiskUnchanged(t *testi
 		if manager, mErr := s.ManagerOf(ctx, childA); mErr != nil || manager != managerA {
 			t.Errorf("ManagerOf(childA) after a failed rekey manager = %q, %v; want %q still present: the rotation must not have taken effect", manager, mErr, managerA)
 		}
+		if got, mErr := s.ManagedBy(ctx, managerA); mErr != nil || !slices.Equal(got, []string{childA}) {
+			t.Errorf("ManagedBy(managerA) after a failed rekey manager = %v, %v; want [%s] still present: the rotation must not have taken effect", got, mErr, childA)
+		}
+		if got, mErr := s.ManagedBy(ctx, managerB); mErr != nil || len(got) != 0 {
+			t.Errorf("ManagedBy(managerB) after a failed rekey manager = %v, %v; want empty: the rotation must not have taken effect", got, mErr)
+		}
 	})
 
 	t.Run("rekey managed reported as failed does not take effect", func(t *testing.T) {
@@ -367,6 +379,9 @@ func TestManagementPersistence_WriteFailureLeavesMemoryAndDiskUnchanged(t *testi
 		}
 		if manager, mErr := s.ManagerOf(ctx, childA); mErr != nil || manager != managerA {
 			t.Errorf("ManagerOf(childA) after a failed rekey managed = %q, %v; want %q still present: the rotation must not have taken effect", manager, mErr, managerA)
+		}
+		if got, mErr := s.ManagedBy(ctx, managerA); mErr != nil || !slices.Equal(got, []string{childA}) {
+			t.Errorf("ManagedBy(managerA) after a failed rekey managed = %v, %v; want [%s]: the rotation must not have taken effect", got, mErr, childA)
 		}
 	})
 

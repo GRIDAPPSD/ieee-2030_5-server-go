@@ -9,14 +9,16 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
-// managementReaders and managementMutators are
+// managementReaders and managementMutators pin
 // EndDeviceManagementStore's exported method set, name and signature,
-// split by whether the method mutates managerOf/managedBy. mutate
-// (enddevicemanagement.go) owns the persist-then-apply order for
-// everything routed through it; the one gap that leaves open is a
-// mutator added later that never calls mutate. Pinning the method set
-// here (#677 fix round item 3) catches that regardless of file, lvalue
-// shape, or local alias, which a source-walking check cannot.
+// split by whether the method mutates managerOf/managedBy: a tripwire
+// on that set, not a proof of routing. It catches a method added,
+// removed, or reclassified regardless of file, lvalue shape, or local
+// alias, but says nothing about whether a mutator calls mutate
+// (enddevicemanagement.go). A new mutator needs its own subtest in
+// TestManagementPersistence_WriteFailureLeavesMemoryAndDiskUnchanged
+// (enddevicemanagement_persistence_test.go); adding it here alone is
+// not enough.
 var managementReaders = []string{
 	"ManagedBy func(*memory.EndDeviceManagementStore, context.Context, string) ([]string, error)",
 	"ManagerOf func(*memory.EndDeviceManagementStore, context.Context, string) (string, error)",

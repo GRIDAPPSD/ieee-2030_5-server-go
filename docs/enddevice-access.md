@@ -145,9 +145,21 @@ configured, and staying pure in-memory otherwise.
 - `RekeyManager` and `RekeyManaged` replace a manager LFDI or a managed LFDI
   across that LFDI's pairs, for a certificate rotation: a rotated
   certificate carries a new LFDI, so a pair does not survive rotation of
-  either party without this. `RekeyManager` refuses when the old LFDI
-  manages nothing; `RekeyManaged` also refuses when the target LFDI already
-  has a manager, so a rekey never silently overwrites an existing pair.
+  either party without this. Both refuse when the LFDI being replaced
+  manages, or is managed, nothing, and both refuse a destination that
+  collides with an existing pair (`RekeyManager` when the new manager LFDI
+  already manages other devices, `RekeyManaged` when the new managed LFDI
+  already has a manager): a rekey never silently merges two fleets or
+  overwrites an existing pair.
+- A write is durable before it is live: a create, remove, or rekey writes
+  the candidate snapshot to disk first, and only then updates the in-memory
+  pairs. A write reported as failed is therefore never granting access in
+  memory, and a retry re-attempts the same write rather than answering
+  success for a change that never reached disk.
+- A snapshot is validated as it loads, by the same rules `Assign` enforces
+  (canonical LFDI, no self-management, one manager per device). A file
+  holding a record that fails any of them is refused wholesale, the same as
+  a corrupt file or an unsupported version.
 - Pairs are keyed by LFDI, not by the URL index, and outlive the EndDevice
   records they name. A pair whose managed LFDI has no record grants nothing.
 

@@ -193,6 +193,11 @@ defense in depth):
    material) and the traffic-capture routes (`/api/traffic/*`, since they
    return captured `Authorization` and `Cookie` header bytes verbatim). Both
    require a real credential on every method, GET reads included.
+   `GET /api/management-pairs` is named the same way: it discloses an
+   aggregator's full managed fleet, so it requires a real credential rather
+   than falling through with every other GET (#677 fix round). The write
+   verbs under the same path already required one, as a default-protected
+   write route not on the exemption list above.
 
    On any of these routes, a request the bypass alone would admit is
    refused with a 401, logged at WARN as `admin: sensitive route refused

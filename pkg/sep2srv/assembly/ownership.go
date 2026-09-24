@@ -115,6 +115,14 @@ var writeAllowlist = map[string]bool{
 // above; a write pattern not on the list is refused, even when a wildcard or
 // literal segment would have delegated it under the old pattern rule. A
 // record pattern that names no method is not delegated.
+//
+// The write lookup key is rebuilt from segments, the same host-free form the
+// read branch already parses into, rather than the raw pattern: a
+// ServeMux pattern may carry an optional host before the path
+// ("PUT example.test/edev/{id}/..."), and writeAllowlist's keys never do.
+// Keying on the raw pattern would silently refuse a host-form write that an
+// equivalent host-free entry grants, disagreeing with the read branch for no
+// reason tied to what is actually being requested.
 func delegable(pattern string) bool {
 	i := strings.IndexByte(pattern, '/')
 	if i < 0 {
@@ -126,7 +134,7 @@ func delegable(pattern string) bool {
 		return false
 	}
 	if method != http.MethodGet {
-		return writeAllowlist[pattern]
+		return writeAllowlist[method+" /"+strings.Join(segments, "/")]
 	}
 	if len(segments) == 2 {
 		return true

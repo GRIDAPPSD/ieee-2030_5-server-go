@@ -85,18 +85,29 @@ func (s *EndDeviceManagementStore) ManagedBy(_ context.Context, managerLFDI stri
 // no way to make a change live without the write already being durable.
 // This replaces four copies of the RLock/build/RUnlock/persist/Lock/apply/
 // Unlock sequence, and the eleven hand-called RUnlock/Unlock releases that
-// went with them, with one. See enddevicemanagement_lockorder_test.go for
-// the source-level proof that every write to the maps outside loadFromFile
-// (#677 fix round item 6) happens inside an apply closure passed here.
+// went with them, with one. The order itself is proven by
+// TestManagementPersistence_WriteFailureLeavesMemoryAndDiskUnchanged
+// (enddevicemanagement_persistence_test.go); the obligation for every
+// mutator to route through here is proven by
+// TestEndDeviceManagementStoreHasExactMethodSet
+// (enddevicemanagement_methodset_test.go).
 func (s *EndDeviceManagementStore) mutate(build func() (records []managementPairRecord, apply func(), err error)) error {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
 
-	s.mu.RLock()
-	records, apply, err := build()
-	s.mu.RUnlock()
+	// mu.RLock/RUnlock and mu.Lock/Unlock are each deferred inside their own
+	// closure (#677 fix round item 1) so a panic in build or apply still
+	// releases mu, instead of wedging the store for every later caller.
+	records, apply, err := func() (records []managementPairRecord, apply func(), err error) {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		return build()
+	}()
 	if err != nil {
 		return err
+	}
+	if records != nil && apply == nil {
+		return fmt.Errorf("enddevice management: build returned records with no apply")
 	}
 	if apply == nil {
 		return nil
@@ -106,9 +117,11 @@ func (s *EndDeviceManagementStore) mutate(build func() (records []managementPair
 		return err
 	}
 
-	s.mu.Lock()
-	apply()
-	s.mu.Unlock()
+	func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		apply()
+	}()
 	return nil
 }
 

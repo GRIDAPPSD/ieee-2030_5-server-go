@@ -109,12 +109,19 @@ var writeAllowlist = map[string]bool{
 }
 
 // delegable reports whether a manager may use pattern on a device it
-// manages. Reads (GET, which also serves HEAD) follow the managed device's
-// own access: the record itself, and every pattern strictly below it except
-// the Registration. Writes, creates and deletes follow only writeAllowlist
-// above; a write pattern not on the list is refused, even when a wildcard or
-// literal segment would have delegated it under the old pattern rule. A
-// record pattern that names no method is not delegated.
+// manages. Reads (GET, and HEAD wherever GET is delegated, decision 2)
+// follow the managed device's own access: the record itself, and every
+// pattern strictly below it except the Registration. Writes, creates and
+// deletes follow only writeAllowlist above; a write pattern not on the list
+// is refused, even when a wildcard or literal segment would have delegated
+// it under the old pattern rule. A record pattern that names no method is
+// not delegated.
+//
+// No mounted route registers HEAD explicitly today; ServeMux serves it from
+// the GET registration, so delegable never sees "HEAD ..." in practice. The
+// HEAD branch exists for the day a route does register it: without it, such
+// a pattern's non-GET method would fall into the write branch below and be
+// refused, contradicting decision 2's grant.
 //
 // The write lookup key is rebuilt from segments, the same host-free form the
 // read branch already parses into, rather than the raw pattern: a
@@ -133,7 +140,7 @@ func delegable(pattern string) bool {
 	if len(segments) < 2 || segments[0] != "edev" || segments[1] != "{id}" {
 		return false
 	}
-	if method != http.MethodGet {
+	if method != http.MethodGet && method != http.MethodHead {
 		return writeAllowlist[method+" /"+strings.Join(segments, "/")]
 	}
 	if len(segments) == 2 {

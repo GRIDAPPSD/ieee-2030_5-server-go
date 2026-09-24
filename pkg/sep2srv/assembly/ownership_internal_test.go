@@ -170,13 +170,19 @@ func TestDelegable(t *testing.T) {
 	t.Parallel()
 	cases := map[string]bool{
 		// Reads follow the managed device's own access: unchanged from the
-		// old pattern rule.
+		// old pattern rule. HEAD follows GET wherever GET is delegated
+		// (decision 2): no route registers HEAD explicitly today (GET serves
+		// it), but a route that ever does must not fall into the write
+		// branch below and be refused.
 		"GET /edev/{id}":             true,
+		"HEAD /edev/{id}":            true,
 		"GET example.test/edev/{id}": true,
 		"GET /edev/{id}/der":         true,
+		"HEAD /edev/{id}/der":        true,
 		"PUT /edev/{id}":             false,
 		"DELETE /edev/{id}":          false,
 		"GET /edev/{id}/rg":          false,
+		"HEAD /edev/{id}/rg":         false,
 		"GET /edev/{id}/{name}":      false,
 		"GET /edev/{id}/":            false,
 		"GET /edevx/{id}/der":        false,
@@ -346,6 +352,36 @@ func TestWriteAllowlistNamesOnlyMountedPatterns(t *testing.T) {
 		if !mounted[p] {
 			t.Errorf("writeAllowlist names %q, which is not a currently mounted pattern; remove the stale entry", p)
 		}
+	}
+}
+
+// TestNoRouteRegistersHEADYet is item 5's control: delegable's HEAD handling
+// changes no live verdict only for as long as no mounted pattern registers
+// HEAD explicitly (ServeMux already serves it from the GET registration). A
+// zero HEAD count from this same discovery loop is worth nothing until the
+// loop is shown able to find a method it is known to find; GET, mounted many
+// times over, is that control.
+func TestNoRouteRegistersHEADYet(t *testing.T) {
+	t.Parallel()
+	stores := fullStores()
+	policy := AuthPolicy{Identity: ownerIdentity("OWNER")}
+	_, patterns := BuildProtocolRouter(RouterConfig{}, stores, policy, "serverSFDI", "serverLFDI", nil)
+
+	var head, get int
+	for _, p := range patterns {
+		method, _, _ := strings.Cut(p, " ")
+		switch method {
+		case http.MethodHead:
+			head++
+		case http.MethodGet:
+			get++
+		}
+	}
+	if get == 0 {
+		t.Fatal("no GET pattern found; a search that cannot match GET proves nothing about a zero HEAD count")
+	}
+	if head != 0 {
+		t.Errorf("%d mounted pattern(s) register HEAD explicitly; item 5's HEAD handling now decides a live verdict, not a latent one, and belongs in managerVerdicts", head)
 	}
 }
 

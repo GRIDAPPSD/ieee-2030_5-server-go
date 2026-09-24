@@ -96,19 +96,52 @@ func TestManagement_ManagerReadsTheManagedEndDevice(t *testing.T) {
 	}
 }
 
-// delegatedPatterns selects, from the router's own pattern list, what a
-// manager is granted: GET on the record and every pattern strictly below
-// it except the Registration.
-func delegatedPatterns(patterns []string) []string {
+// delegatedReadPatterns selects, from the router's own pattern list, the
+// reads a manager is granted: GET on the record and every GET pattern
+// strictly below it except the Registration. ADR-007 B2's read rule: a
+// manager reads what the managed device's own client may read.
+func delegatedReadPatterns(patterns []string) []string {
 	var out []string
 	for _, p := range patterns {
 		method, path, _ := strings.Cut(p, " ")
-		if (path == "/edev/{id}" && method == http.MethodGet) ||
-			(strings.HasPrefix(path, "/edev/{id}/") && path != "/edev/{id}/rg") {
+		if method != http.MethodGet {
+			continue
+		}
+		if path == "/edev/{id}" || (strings.HasPrefix(path, "/edev/{id}/") && path != "/edev/{id}/rg") {
 			out = append(out, p)
 		}
 	}
 	return out
+}
+
+// writeBelowRecordPatterns selects every PUT, POST or DELETE pattern
+// strictly below /edev/{id}/. It excludes PUT and DELETE on the record
+// itself, which TestManagement_ManagerCannotRewriteOrDeleteTheRecordOrReadItsRegistration
+// already covers.
+func writeBelowRecordPatterns(patterns []string) []string {
+	var out []string
+	for _, p := range patterns {
+		method, path, _ := strings.Cut(p, " ")
+		if method == http.MethodGet || method == http.MethodHead {
+			continue
+		}
+		if strings.HasPrefix(path, "/edev/{id}/") {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// managerWriteAllowlist is this test's own, independently written statement
+// of ADR-007 B2's write allow-list: the five entries a manager may use below
+// a managed record. It is not derived from the package's writeAllowlist, so
+// a mistake in one does not hide behind a matching mistake in the other.
+var managerWriteAllowlist = map[string]bool{
+	"PUT /edev/{id}/der/{derId}/dercap": true, // A-12
+	"PUT /edev/{id}/der/{derId}/derg":   true, // A-13
+	"PUT /edev/{id}/der/{derId}/ders":   true, // A-14
+	"PUT /edev/{id}/der/{derId}/dera":   true, // A-15
+	"POST /edev/{id}/lel":               true, // A-16
 }
 
 // sweepStatus drives pattern, every wildcard set to the managed device's id,
@@ -128,30 +161,72 @@ func sweepStatus(t *testing.T, pattern, asLFDI string) int {
 	return status
 }
 
-func TestManagement_ManagerIsServedOnEveryDelegatedRouteAsTheOwnerIs(t *testing.T) {
+func TestManagement_ManagerReadIsServedAsTheOwnerIs(t *testing.T) {
 	t.Parallel()
 	_, patterns := assembly.BuildProtocolRouter(assembly.RouterConfig{}, newManagementFleet(t).stores, gateTestPolicy(), "serverSFDI", "serverLFDI", nil)
-	delegated := delegatedPatterns(patterns)
+	delegated := delegatedReadPatterns(patterns)
+	if len(delegated) == 0 {
+		t.Fatal("no delegated read pattern found; the sweep would pass vacuously")
+	}
 
-	methods := map[string]int{}
 	for _, p := range delegated {
-		method, _, _ := strings.Cut(p, " ")
-		methods[method]++
 		owner := sweepStatus(t, p, victimLFDI)
 		if owner == http.StatusForbidden || owner == http.StatusMethodNotAllowed {
 			t.Errorf("%s: the owner itself answered %d, so comparing the manager to it proves nothing", p, owner)
 			continue
 		}
 		if manager := sweepStatus(t, p, managerLFDI); manager != owner {
-			t.Errorf("%s: manager answered %d, owner %d; a delegated route serves the manager as it serves the owner", p, manager, owner)
+			t.Errorf("%s: manager answered %d, owner %d; a delegated read serves the manager as it serves the owner", p, manager, owner)
 		}
 	}
-	for _, m := range []string{http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete} {
-		if methods[m] == 0 {
-			t.Errorf("no delegated %s pattern was swept; the sweep does not cover writes of that kind", m)
+	t.Logf("swept %d delegated read patterns of %d mounted", len(delegated), len(patterns))
+}
+
+// TestManagement_ManagerWriteFollowsTheAllowlistNotTheOwner is issue 510's
+// property sweep (risk area 1 and 4): every write below a managed record is
+// established from the router's own mounted patterns, not from the routes
+// this brief happens to name, and each is checked against
+// managerWriteAllowlist rather than against what the owner may do. Before
+// this change every one of these patterns matched TestManagement_
+// ManagerIsServedOnEveryDelegatedRouteAsTheOwnerIs (manager == owner); the
+// control below is that prior behavior, reproduced by asserting the same
+// equality for the five allow-listed patterns while every other write is
+// refused regardless of what the owner gets.
+func TestManagement_ManagerWriteFollowsTheAllowlistNotTheOwner(t *testing.T) {
+	t.Parallel()
+	_, patterns := assembly.BuildProtocolRouter(assembly.RouterConfig{}, newManagementFleet(t).stores, gateTestPolicy(), "serverSFDI", "serverLFDI", nil)
+	writes := writeBelowRecordPatterns(patterns)
+	if len(writes) == 0 {
+		t.Fatal("no write-below-record pattern found; the sweep would pass vacuously")
+	}
+
+	var granted, refused int
+	for _, p := range writes {
+		owner := sweepStatus(t, p, victimLFDI)
+		if owner == http.StatusForbidden || owner == http.StatusMethodNotAllowed {
+			t.Errorf("%s: the owner itself answered %d, so this pattern proves nothing about delegation", p, owner)
+			continue
+		}
+		manager := sweepStatus(t, p, managerLFDI)
+		if managerWriteAllowlist[p] {
+			granted++
+			if manager != owner {
+				t.Errorf("%s: allow-listed; manager answered %d, owner %d; want the manager served as the owner is", p, manager, owner)
+			}
+			continue
+		}
+		refused++
+		if manager != http.StatusForbidden {
+			t.Errorf("%s: not on the allow-list; manager answered %d, owner %d; want 403 regardless of the owner's status", p, manager, owner)
 		}
 	}
-	t.Logf("swept %d delegated patterns of %d mounted: %v", len(delegated), len(patterns), methods)
+	if granted != len(managerWriteAllowlist) {
+		t.Errorf("swept %d allow-listed write patterns, want all %d entries reachable through the mounted routes", granted, len(managerWriteAllowlist))
+	}
+	if refused == 0 {
+		t.Error("no non-allow-listed write pattern was swept; the control that a write can still be refused never ran")
+	}
+	t.Logf("swept %d write-below-record patterns of %d mounted: %d allow-listed (granted), %d refused", len(writes), len(patterns), granted, refused)
 }
 
 func TestManagement_ManagerCannotRewriteOrDeleteTheRecordOrReadItsRegistration(t *testing.T) {

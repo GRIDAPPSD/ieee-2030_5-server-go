@@ -189,8 +189,14 @@ func TestDelegable(t *testing.T) {
 		"GET /edev":                  false,
 		"POST /edev":                 false,
 		"/edev/{id}":                 false,
-		"GET /edev/{other}/der":      false,
-		"GET /mup/{id}":              false,
+		// A methodless pattern below the record: the same degenerate shape as
+		// "/edev/{id}" above, one segment deeper. Under the old pattern rule a
+		// literal segment here delegated regardless of method; delegable's
+		// method switch now sends a methodless pattern into the write branch,
+		// where nothing matches, so this moved from granted to refused.
+		"/edev/{id}/der":        false,
+		"GET /edev/{other}/der": false,
+		"GET /mup/{id}":         false,
 		// Writes follow only writeAllowlist: the five entries below are
 		// granted; every other write pattern the old pattern rule would have
 		// delegated is now refused by default.

@@ -2,11 +2,15 @@ package memory_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -182,6 +186,22 @@ func TestManagementPersistence_LoadRefusesNonCanonicalLFDI(t *testing.T) {
 	}
 }
 
+// TestManagementPersistence_LoadRefusesNonHex40LFDI is item 5's decisive
+// case: checkCanonicalLFDI checked case and trimming but not length, so a
+// short value that is already upper case and trimmed passed it. normalizeLFDI
+// on the API path refuses the same value with validLFDI's 40-hex-digit rule,
+// so the two paths must agree or a seeded short value loads, is listed, and
+// answers 400 to both delete and re-key: visible and unremovable.
+func TestManagementPersistence_LoadRefusesNonHex40LFDI(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "management.json")
+	seedRecords(t, path, `[{"managerLFDI":"`+managerA+`","managedLFDI":"ZZZZ"}]`)
+
+	if _, err := memory.NewEndDeviceManagementStoreWithPersistence(path); !errors.Is(err, store.ErrInvalidManagementPair) {
+		t.Fatalf("load with a 4-character managed LFDI = %v, want ErrInvalidManagementPair", err)
+	}
+}
+
 // TestManagementPersistence_LoadRefusesSelfManagement covers the other H3
 // state the write path never allows: a record naming a device as its own
 // manager.
@@ -298,6 +318,30 @@ func TestManagementPersistence_WriteFailureLeavesMemoryAndDiskUnchanged(t *testi
 		}
 	})
 
+	// Item 2: the rekey pair persists before mutating too, the same as
+	// create and remove above. A failed write after the in-memory mutation
+	// would leave the rotated fleet live in memory while disk still names
+	// the retired manager, so the next boot hands the fleet back to it.
+	t.Run("rekey manager reported as failed does not take effect", func(t *testing.T) {
+		err := s.RekeyManager(ctx, managerA, managerB)
+		if err == nil {
+			t.Fatal("RekeyManager into an unwritable data directory: expected an error, got nil")
+		}
+		if manager, mErr := s.ManagerOf(ctx, childA); mErr != nil || manager != managerA {
+			t.Errorf("ManagerOf(childA) after a failed rekey manager = %q, %v; want %q still present: the rotation must not have taken effect", manager, mErr, managerA)
+		}
+	})
+
+	t.Run("rekey managed reported as failed does not take effect", func(t *testing.T) {
+		err := s.RekeyManaged(ctx, childA, childB)
+		if err == nil {
+			t.Fatal("RekeyManaged into an unwritable data directory: expected an error, got nil")
+		}
+		if manager, mErr := s.ManagerOf(ctx, childA); mErr != nil || manager != managerA {
+			t.Errorf("ManagerOf(childA) after a failed rekey managed = %q, %v; want %q still present: the rotation must not have taken effect", manager, mErr, managerA)
+		}
+	})
+
 	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read snapshot after the failing writes: %v", err)
@@ -357,9 +401,135 @@ func TestManagementPersistence_WriteFailureBodyHasNoPath(t *testing.T) {
 	}
 }
 
+// onDiskRecords decodes the snapshot envelope at path into the raw
+// (manager, managed) pairs as written, independent of any store type, so the
+// test can assert on-disk byte order rather than trusting a decoder that
+// might re-sort.
+func onDiskRecords(t *testing.T, path string) []struct {
+	ManagerLFDI string `json:"managerLFDI"`
+	ManagedLFDI string `json:"managedLFDI"`
+} {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	var env struct {
+		Records []struct {
+			ManagerLFDI string `json:"managerLFDI"`
+			ManagedLFDI string `json:"managedLFDI"`
+		} `json:"records"`
+	}
+	if err := json.Unmarshal(data, &env); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	return env.Records
+}
+
+// TestManagementPersistence_OnDiskOrderIsSorted is item 6's second small
+// truth: recordsLocked's comment promises a sorted-by-managed-LFDI on-disk
+// order, but Assign appends its new record after the sort and RekeyManaged
+// rewrites a record's sort key in place, so the file was unsorted after
+// either. childC sorts before childA and childB, and the rekey below moves
+// childB's sort key past childC, exercising both cases the comment claimed
+// were covered.
+func TestManagementPersistence_OnDiskOrderIsSorted(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, path := newPersistedManagementStore(t)
+
+	mustAssignT(t, s, managerA, childA)
+	mustAssignT(t, s, managerA, childB)
+	// childC sorts before both: an append-after-sort would leave it last.
+	mustAssignT(t, s, managerA, childC)
+
+	assertOnDiskSorted(t, path)
+
+	// Rekey childB to childD, which sorts after childC: rewriting the sort
+	// key in place without re-sorting would leave the record out of order.
+	if err := s.RekeyManaged(ctx, childB, childD); err != nil {
+		t.Fatalf("RekeyManaged: %v", err)
+	}
+	assertOnDiskSorted(t, path)
+}
+
+func assertOnDiskSorted(t *testing.T, path string) {
+	t.Helper()
+	records := onDiskRecords(t, path)
+	got := make([]string, len(records))
+	for i, r := range records {
+		got[i] = r.ManagedLFDI
+	}
+	want := slices.Clone(got)
+	sort.Strings(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("on-disk managed-LFDI order = %v, want sorted %v", got, want)
+	}
+}
+
+// TestManagementPersistence_ConcurrentAssignsAgreeWithDisk is risk area 2:
+// item 1's persistMu serializes every mutating call for its whole
+// operation, so two concurrent writers must never interleave and leave the
+// file disagreeing with memory. N goroutines each assign a distinct managed
+// LFDI to the same manager concurrently; every one must succeed (no writer
+// can have observed a stale precondition from another writer's half-applied
+// change), and the revived store's pairs must match the live store's
+// exactly, proving the file and memory agree after concurrent writers.
+func TestManagementPersistence_ConcurrentAssignsAgreeWithDisk(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, path := newPersistedManagementStore(t)
+
+	const n = 12
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			managed := fmt.Sprintf("C0C0%036X", i)
+			errs[i] = s.Assign(ctx, managerA, managed)
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("concurrent Assign %d: %v", i, err)
+		}
+	}
+
+	liveManaged, err := s.ManagedBy(ctx, managerA)
+	if err != nil {
+		t.Fatalf("ManagedBy after concurrent assigns: %v", err)
+	}
+	if len(liveManaged) != n {
+		t.Fatalf("ManagedBy after concurrent assigns = %d entries, want %d", len(liveManaged), n)
+	}
+
+	revived, err := memory.NewEndDeviceManagementStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("revive after concurrent assigns: %v", err)
+	}
+	revivedManaged, err := revived.ManagedBy(ctx, managerA)
+	if err != nil {
+		t.Fatalf("revived ManagedBy: %v", err)
+	}
+	sort.Strings(liveManaged)
+	sort.Strings(revivedManaged)
+	if !slices.Equal(liveManaged, revivedManaged) {
+		t.Errorf("revived ManagedBy = %v, want it to match the live store %v: disk and memory disagree after concurrent writers", revivedManaged, liveManaged)
+	}
+}
+
 const (
 	managerA = "AAAA000000000000000000000000000000000010"
 	managerB = "AAAA000000000000000000000000000000000020"
 	childA   = "C0A0000000000000000000000000000000000001"
 	childB   = "C0B0000000000000000000000000000000000002"
+	// childC and childD sort before childA (an append-after-sort in Assign
+	// would leave childC last) and between childC and childA (an in-place
+	// sort-key rewrite in RekeyManaged would leave childD wherever childB
+	// used to sit, not where childD belongs).
+	childC = "C000000000000000000000000000000000000003"
+	childD = "C005000000000000000000000000000000000004"
 )

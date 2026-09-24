@@ -169,28 +169,141 @@ func TestOwnershipGate_PatternListIsUnchanged(t *testing.T) {
 func TestDelegable(t *testing.T) {
 	t.Parallel()
 	cases := map[string]bool{
-		"GET /edev/{id}":                  true,
-		"GET example.test/edev/{id}":      true,
-		"GET /edev/{id}/der":              true,
-		"PUT /edev/{id}/der/{derId}/derg": true,
-		"POST /edev/{id}/sub":             true,
-		"DELETE /edev/{id}/sub/{subId}":   true,
-		"DELETE /edev/{id}/lel/{lelId}":   true,
-		"PUT /edev/{id}":                  false,
-		"DELETE /edev/{id}":               false,
-		"GET /edev/{id}/rg":               false,
-		"GET /edev/{id}/{name}":           false,
-		"GET /edev/{id}/":                 false,
-		"GET /edevx/{id}/der":             false,
-		"GET /edev":                       false,
-		"POST /edev":                      false,
-		"/edev/{id}":                      false,
-		"GET /edev/{other}/der":           false,
-		"GET /mup/{id}":                   false,
+		// Reads follow the managed device's own access: unchanged from the
+		// old pattern rule.
+		"GET /edev/{id}":             true,
+		"GET example.test/edev/{id}": true,
+		"GET /edev/{id}/der":         true,
+		"PUT /edev/{id}":             false,
+		"DELETE /edev/{id}":          false,
+		"GET /edev/{id}/rg":          false,
+		"GET /edev/{id}/{name}":      false,
+		"GET /edev/{id}/":            false,
+		"GET /edevx/{id}/der":        false,
+		"GET /edev":                  false,
+		"POST /edev":                 false,
+		"/edev/{id}":                 false,
+		"GET /edev/{other}/der":      false,
+		"GET /mup/{id}":              false,
+		// Writes follow only writeAllowlist. A-12 to A-16 are granted; every
+		// other write pattern the old pattern rule would have delegated
+		// (ADR-007's "Today: Granted by pattern") is now refused by default.
+		"PUT /edev/{id}/der/{derId}/derg": true,  // A-13
+		"POST /edev/{id}/lel":             true,  // A-16
+		"POST /edev/{id}/sub":             false, // X-06 write half
+		"DELETE /edev/{id}/sub/{subId}":   false, // X-06 write half
+		"DELETE /edev/{id}/lel/{lelId}":   false, // X-07 write half
+		"PUT /edev/{id}/der/{derId}":      false, // X-02
+		"PUT /edev/{id}/cfg":              false, // X-03 write half
+		"PUT /edev/{id}/dstat":            false, // X-04 write half
+		"PUT /edev/{id}/ps":               false, // X-05 write half
+		"POST /edev/{id}/frq":             false, // X-08 write half
+		// A write pattern nobody has registered yet: proves the default is
+		// denied, not merely that today's five entries are granted.
+		"PUT /edev/{id}/notyetregistered": false,
 	}
 	for pattern, want := range cases {
 		if got := delegable(pattern); got != want {
 			t.Errorf("delegable(%q) = %v, want %v", pattern, got, want)
+		}
+	}
+}
+
+// managerVerdicts is the explicit manager verdict for every pattern
+// TestManagerVerdictForEveryGatedPattern discovers as currently registered
+// and gated. It is issue 510's acceptance criterion 4: a route added to
+// registerAll's wiring appears in the discovered set on its next run, has no
+// entry here, and fails the test until someone adds one and states its
+// verdict, granted or refused.
+var managerVerdicts = map[string]bool{
+	"GET /edev/{id}":    true,
+	"GET /edev/{id}/rg": false,
+	"PUT /edev/{id}":    false,
+	"DELETE /edev/{id}": false,
+
+	"GET /edev/{id}/fsa":                                     true,
+	"GET /edev/{id}/fsa/{fsaId}":                             true,
+	"GET /edev/{id}/fsa/{fsaId}/derp":                        true,
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}":               true,
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc":          true,
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc/{dercId}": true,
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc":         true,
+	// X-01 (#456, closed) is not on this table: the PUT route it refused was
+	// removed from the mux, so no pattern exists for a verdict to name.
+
+	"GET /edev/{id}/der":                true,
+	"GET /edev/{id}/der/{derId}":        true,
+	"PUT /edev/{id}/der/{derId}":        false, // X-02
+	"GET /edev/{id}/der/{derId}/dercap": true,
+	"PUT /edev/{id}/der/{derId}/dercap": true, // A-12
+	"GET /edev/{id}/der/{derId}/derg":   true,
+	"PUT /edev/{id}/der/{derId}/derg":   true, // A-13
+	"GET /edev/{id}/der/{derId}/ders":   true,
+	"PUT /edev/{id}/der/{derId}/ders":   true, // A-14
+	"GET /edev/{id}/der/{derId}/dera":   true,
+	"PUT /edev/{id}/der/{derId}/dera":   true, // A-15
+
+	"GET /edev/{id}/sub":            true,  // X-06 read half
+	"POST /edev/{id}/sub":           false, // X-06 write half
+	"DELETE /edev/{id}/sub/{subId}": false, // X-06 write half
+
+	"GET /edev/{id}/cfg": true,  // X-03 read half
+	"PUT /edev/{id}/cfg": false, // X-03 write half
+
+	"GET /edev/{id}/dstat": true,  // X-04 read half
+	"PUT /edev/{id}/dstat": false, // X-04 write half
+
+	"GET /edev/{id}/lel":            true,  // X-07 read half
+	"POST /edev/{id}/lel":           true,  // A-16
+	"GET /edev/{id}/lel/{lelId}":    true,  // X-07 read half
+	"DELETE /edev/{id}/lel/{lelId}": false, // X-07 write half
+
+	"GET /edev/{id}/ps": true,  // X-05 read half
+	"PUT /edev/{id}/ps": false, // X-05 write half
+
+	"GET /edev/{id}/frq":         true,  // X-08 read half
+	"GET /edev/{id}/frq/{frqId}": true,  // X-08 read half
+	"POST /edev/{id}/frq":        false, // X-08 write half
+	"GET /edev/{id}/frp":         true,  // X-08 read half
+	"GET /edev/{id}/frp/{frpId}": true,  // X-08 read half
+}
+
+// TestManagerVerdictForEveryGatedPattern is issue 510's acceptance
+// criterion 4. It discovers every pattern the real route wiring gates, from
+// registerAll rather than from a hand-copied list, and requires an entry in
+// managerVerdicts for each: an entry missing on either side fails, so a
+// route added to any register*Routes helper without a decided verdict fails
+// this test rather than defaulting silently.
+func TestManagerVerdictForEveryGatedPattern(t *testing.T) {
+	t.Parallel()
+	stores := fullStores()
+	policy := AuthPolicy{Identity: ownerIdentity("OWNER")}
+	bare := newRecordingMux()
+	registerAll(bare, stores, policy)
+
+	discovered := map[string]bool{}
+	for _, p := range bare.Patterns() {
+		if requiresOwnership(p) {
+			discovered[p] = true
+		}
+	}
+	if len(discovered) == 0 {
+		t.Fatal("no gated pattern discovered; the sweep would pass vacuously")
+	}
+
+	for p := range discovered {
+		want, ok := managerVerdicts[p]
+		if !ok {
+			t.Errorf("gated pattern %q is registered but has no managerVerdicts entry; add one stating whether a manager is granted", p)
+			continue
+		}
+		if got := delegable(p); got != want {
+			t.Errorf("delegable(%q) = %v, want %v (managerVerdicts)", p, got, want)
+		}
+	}
+	for p := range managerVerdicts {
+		if !discovered[p] {
+			t.Errorf("managerVerdicts names %q, which is not a currently gated, registered pattern; remove the stale entry", p)
 		}
 	}
 }

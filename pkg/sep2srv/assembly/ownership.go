@@ -91,10 +91,30 @@ func requiresOwnership(pattern string) bool {
 	return path == "/edev" || strings.HasPrefix(path, "/edev/")
 }
 
-// delegable reports whether a manager may use pattern on a device it manages:
-// GET on the record, which also serves HEAD, and every pattern strictly below
-// it except the Registration. A manager never rewrites or deletes the record
-// itself, and a record pattern that names no method is not delegated.
+// writeAllowlist holds the exact PUT, POST and DELETE patterns a manager may
+// use on a device it manages, below the record. ADR-007 "Write, create and
+// delete allow-list" is the specification; each entry below cites the row
+// that grants it. A write pattern absent from this list is refused to a
+// manager by default: "No delegation by pattern," ADR-007.
+var writeAllowlist = map[string]bool{
+	// A-12 to A-15: the aggregator PUTs each of the four DER sub-resources of
+	// a managed device's DER instance.
+	"PUT /edev/{id}/der/{derId}/dercap": true,
+	"PUT /edev/{id}/der/{derId}/derg":   true,
+	"PUT /edev/{id}/der/{derId}/ders":   true,
+	"PUT /edev/{id}/der/{derId}/dera":   true,
+	// A-16: the aggregator POSTs a LogEvent for a managed device.
+	"POST /edev/{id}/lel": true,
+}
+
+// delegable reports whether a manager may use pattern on a device it
+// manages. Reads (GET, which also serves HEAD) follow the managed device's
+// own access: the record itself, and every pattern strictly below it except
+// the Registration, per ADR-007's read rule. Writes, creates and deletes
+// follow only writeAllowlist above; a write pattern not on the list is
+// refused, even when a wildcard or literal segment would have delegated it
+// under the old pattern rule. A record pattern that names no method is not
+// delegated.
 func delegable(pattern string) bool {
 	i := strings.IndexByte(pattern, '/')
 	if i < 0 {
@@ -105,8 +125,11 @@ func delegable(pattern string) bool {
 	if len(segments) < 2 || segments[0] != "edev" || segments[1] != "{id}" {
 		return false
 	}
+	if method != http.MethodGet {
+		return writeAllowlist[pattern]
+	}
 	if len(segments) == 2 {
-		return method == http.MethodGet
+		return true
 	}
 	// The resource segment must be a literal other than the Registration: a
 	// wildcard or an empty segment there would also match the Registration.

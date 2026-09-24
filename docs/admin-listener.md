@@ -99,13 +99,15 @@ authenticate via Bearer or cookie.
 
 The admin listener verifies a presented operator certificate against
 `SEP2_ADMIN_CLIENT_CA`. Unset, this defaults to the serving CA
-(`SEP2_SERVING_CA`, or `SEP2_CA` where the two are not split): the CA that
-signs the operator certificate the certs API mints, so a freshly minted
-operator cert works with no extra client-side configuration. Set it to a
-PEM file path to trust a different CA instead, or to the literal value
-`system` to fall back to the host's root trust store: the behavior before
-#624, useful only for a deployment whose operator certificates come from a
-public CA rather than this server's own serving CA.
+(`SEP2_SERVING_CA`, or `SEP2_CA` where the two are not split), so a freshly
+minted operator cert works with no extra client-side configuration. In the
+default, unsplit deployment that same CA also signs every device
+certificate and this server's own leaf, so it trusts more than "the
+operator cert" alone; set it explicitly to a dedicated CA where that is too
+wide. Set it to a PEM file path to trust a different CA instead, or to the
+literal value `system` to fall back to the host's root trust store: the
+behavior before #624, useful only for a deployment whose operator
+certificates come from a public CA rather than this server's own serving CA.
 
 A certificate signed by any CA outside this anchor is refused at the TLS
 handshake if the client presents it. Whether a client presents it at all is
@@ -117,6 +119,24 @@ certificate regardless, and the connection fails with a TLS alert
 ca`). Either way the admin policy-OID check is never reached: a refused
 handshake never gets there, and an omitted certificate reaches it as a
 certless connection, the same as a browser that never had one.
+
+Every certificate the anchor file contains becomes an independent trust
+anchor: concatenating a second CA into the file (a fullchain bundle, for
+example) admits certificates from either one, with no way to scope one CA
+to a narrower role than the other. Above one CA the startup banner drops
+the subject and fingerprint it prints for a single CA and shows only the
+count; the full per-CA detail goes to the startup log instead.
+
+**When the anchor cannot be loaded or holds no CA certificate:** if
+`SEP2_ADMIN_CLIENT_CA` was set explicitly, the server refuses to start and
+names the setting and the `system` escape hatch in the error. If the anchor
+was defaulted (nothing set, or the file it fell back to is what could not be
+loaded), the server does not fail to start: the admin listener comes up
+with an empty trust pool, operator-certificate sign-in is disabled, a log
+line and the startup banner both say so (`NOT LOADED (...)` or `no CA
+certificate in ...`), and a certless client still reaches sign-in exactly as
+before. A protocol-listener client cert (device or server) is unaffected
+either way - only the admin listener's mTLS path degrades.
 
 ## Caddy fronting (recommended for production)
 

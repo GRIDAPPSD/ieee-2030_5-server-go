@@ -267,17 +267,23 @@ func TestManagement_ManagerWriteFollowsTheAllowlistNotTheOwner(t *testing.T) {
 	var granted, refused int
 	for _, p := range writes {
 		owner := sweepStatus(t, p, victimLFDI)
-		// 404 guards the granted half the same way as delegatedReadPatterns'
-		// sweep above: a granted verdict that only ever compared two 404s
-		// would pass whether or not the manager was actually served as the
-		// owner is.
-		if owner == http.StatusForbidden || owner == http.StatusMethodNotAllowed || owner == http.StatusNotFound {
-			t.Errorf("%s: the owner itself answered %d, so this pattern proves nothing about delegation", p, owner)
-			continue
-		}
 		manager := sweepStatus(t, p, managerLFDI)
 		if managerWriteAllowlist[p] {
 			granted++
+			// The degenerate-owner guard applies only here: the refused half
+			// below never reads owner at all, so a degenerate owner answer
+			// cannot make its assertion meaningless the way it would here.
+			// 400 joins 403, 404 and 405: POST /edev/{id}/sub already answers
+			// 400 for the owner (no probe body is registered for it, so the
+			// probe falls back to an empty one), and if a 400-owner pattern
+			// is ever allow-listed, comparing the manager to it would demand
+			// the manager reproduce a probe artifact rather than a real
+			// granted status. None of today's five allow-listed patterns
+			// hits this.
+			if owner == http.StatusForbidden || owner == http.StatusMethodNotAllowed || owner == http.StatusNotFound || owner == http.StatusBadRequest {
+				t.Errorf("%s: allow-listed; the owner itself answered %d, so comparing the manager to it proves nothing", p, owner)
+				continue
+			}
 			if manager != owner {
 				t.Errorf("%s: allow-listed; manager answered %d, owner %d; want the manager served as the owner is", p, manager, owner)
 			}

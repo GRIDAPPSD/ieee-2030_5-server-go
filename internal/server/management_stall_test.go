@@ -129,6 +129,18 @@ func TestStalledManagementWriteDoesNotBlockUnrelatedEndDeviceList(t *testing.T) 
 	// block on the FIFO before measuring the bystander's request.
 	time.Sleep(300 * time.Millisecond)
 
+	// #677 fix round item 1: the timing assertions below pass even if the
+	// create never reached the FIFO at all (a fast success or failure looks
+	// identical to "not yet unblocked" from the bystander's side), and
+	// without this check the test then hangs forever at the blocking
+	// O_RDONLY open below, since nothing is left to write to the FIFO. A
+	// non-blocking receive here turns that into a named failure instead.
+	select {
+	case doErr := <-createErrCh:
+		t.Fatalf("admin create finished before the write could be observed stalled (err=%v): the FIFO at %s was never opened for write, so this run measured nothing", doErr, tmpPath)
+	default:
+	}
+
 	stalledStart := time.Now()
 	resp, err = bystanderClient.Get("https://" + c.sep2Probe + "/edev")
 	stalled := time.Since(stalledStart)
@@ -146,8 +158,13 @@ func TestStalledManagementWriteDoesNotBlockUnrelatedEndDeviceList(t *testing.T) 
 	// Unblock the stalled write by opening a reader on the FIFO and
 	// draining it, then confirm the create eventually completes: this test
 	// stops what it started rather than leaving the create request or the
-	// server's write goroutine blocked when the test returns.
-	reader, err := os.OpenFile(tmpPath, os.O_RDONLY, 0)
+	// server's write goroutine blocked when the test returns. O_NONBLOCK
+	// here (#677 fix round item 1) means this open cannot itself hang if the
+	// non-blocking check above did not already catch a create that finished
+	// early: a nonblocking reader open still completes a blocked writer's
+	// pending open, and if no writer is waiting it returns immediately
+	// instead of blocking for one that will never arrive.
+	reader, err := os.OpenFile(tmpPath, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		t.Fatalf("open FIFO reader to unblock the stalled write: %v", err)
 	}

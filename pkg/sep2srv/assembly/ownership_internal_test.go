@@ -185,19 +185,19 @@ func TestDelegable(t *testing.T) {
 		"/edev/{id}":                 false,
 		"GET /edev/{other}/der":      false,
 		"GET /mup/{id}":              false,
-		// Writes follow only writeAllowlist. A-12 to A-16 are granted; every
-		// other write pattern the old pattern rule would have delegated
-		// (ADR-007's "Today: Granted by pattern") is now refused by default.
-		"PUT /edev/{id}/der/{derId}/derg": true,  // A-13
-		"POST /edev/{id}/lel":             true,  // A-16
-		"POST /edev/{id}/sub":             false, // X-06 write half
-		"DELETE /edev/{id}/sub/{subId}":   false, // X-06 write half
-		"DELETE /edev/{id}/lel/{lelId}":   false, // X-07 write half
-		"PUT /edev/{id}/der/{derId}":      false, // X-02
-		"PUT /edev/{id}/cfg":              false, // X-03 write half
-		"PUT /edev/{id}/dstat":            false, // X-04 write half
-		"PUT /edev/{id}/ps":               false, // X-05 write half
-		"POST /edev/{id}/frq":             false, // X-08 write half
+		// Writes follow only writeAllowlist: the five entries below are
+		// granted; every other write pattern the old pattern rule would have
+		// delegated is now refused by default.
+		"PUT /edev/{id}/der/{derId}/derg": true,  // granted: DERSettings, CSIP V1.2 UTIL-002
+		"POST /edev/{id}/lel":             true,  // granted: LogEvent, CSIP V1.2 UTIL-001
+		"POST /edev/{id}/sub":             false, // refused: not the aggregator's own SubscriptionListLink
+		"DELETE /edev/{id}/sub/{subId}":   false, // refused: not the aggregator's own SubscriptionListLink
+		"DELETE /edev/{id}/lel/{lelId}":   false, // refused: no aggregator text deletes a LogEvent
+		"PUT /edev/{id}/der/{derId}":      false, // refused: UTIL-002 names only the four DER sub-resources
+		"PUT /edev/{id}/cfg":              false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
+		"PUT /edev/{id}/dstat":            false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
+		"PUT /edev/{id}/ps":               false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
+		"POST /edev/{id}/frq":             false, // refused: flow reservation appears in no aggregator text
 		// A write pattern nobody has registered yet: proves the default is
 		// denied, not merely that today's five entries are granted.
 		"PUT /edev/{id}/notyetregistered": false,
@@ -228,44 +228,44 @@ var managerVerdicts = map[string]bool{
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc":          true,
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc/{dercId}": true,
 	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc":         true,
-	// X-01 (#456, closed) is not on this table: the PUT route it refused was
-	// removed from the mux, so no pattern exists for a verdict to name.
+	// The PUT route a closed defect (#456) once refused was removed from the
+	// mux entirely, so no pattern exists here for it to name.
 
 	"GET /edev/{id}/der":                true,
 	"GET /edev/{id}/der/{derId}":        true,
-	"PUT /edev/{id}/der/{derId}":        false, // X-02
+	"PUT /edev/{id}/der/{derId}":        false, // UTIL-002 names only the four DER sub-resources
 	"GET /edev/{id}/der/{derId}/dercap": true,
-	"PUT /edev/{id}/der/{derId}/dercap": true, // A-12
+	"PUT /edev/{id}/der/{derId}/dercap": true, // DERCapability, CSIP V1.2 UTIL-002
 	"GET /edev/{id}/der/{derId}/derg":   true,
-	"PUT /edev/{id}/der/{derId}/derg":   true, // A-13
+	"PUT /edev/{id}/der/{derId}/derg":   true, // DERSettings, CSIP V1.2 UTIL-002
 	"GET /edev/{id}/der/{derId}/ders":   true,
-	"PUT /edev/{id}/der/{derId}/ders":   true, // A-14
+	"PUT /edev/{id}/der/{derId}/ders":   true, // DERStatus, CSIP V1.2 UTIL-002
 	"GET /edev/{id}/der/{derId}/dera":   true,
-	"PUT /edev/{id}/der/{derId}/dera":   true, // A-15
+	"PUT /edev/{id}/der/{derId}/dera":   true, // DERAvailability, CSIP V1.2 UTIL-002
 
-	"GET /edev/{id}/sub":            true,  // X-06 read half
-	"POST /edev/{id}/sub":           false, // X-06 write half
-	"DELETE /edev/{id}/sub/{subId}": false, // X-06 write half
+	"GET /edev/{id}/sub":            true,  // a manager reads what the managed device reads
+	"POST /edev/{id}/sub":           false, // not the aggregator's own SubscriptionListLink
+	"DELETE /edev/{id}/sub/{subId}": false, // not the aggregator's own SubscriptionListLink
 
-	"GET /edev/{id}/cfg": true,  // X-03 read half
-	"PUT /edev/{id}/cfg": false, // X-03 write half
+	"GET /edev/{id}/cfg": true,
+	"PUT /edev/{id}/cfg": false, // no aggregator text, IEEE 2030.5-2018 8.5.3 default
 
-	"GET /edev/{id}/dstat": true,  // X-04 read half
-	"PUT /edev/{id}/dstat": false, // X-04 write half
+	"GET /edev/{id}/dstat": true,
+	"PUT /edev/{id}/dstat": false, // no aggregator text, IEEE 2030.5-2018 8.5.3 default
 
-	"GET /edev/{id}/lel":            true,  // X-07 read half
-	"POST /edev/{id}/lel":           true,  // A-16
-	"GET /edev/{id}/lel/{lelId}":    true,  // X-07 read half
-	"DELETE /edev/{id}/lel/{lelId}": false, // X-07 write half
+	"GET /edev/{id}/lel":            true,
+	"POST /edev/{id}/lel":           true, // LogEvent, CSIP V1.2 UTIL-001
+	"GET /edev/{id}/lel/{lelId}":    true,
+	"DELETE /edev/{id}/lel/{lelId}": false, // no aggregator text deletes a LogEvent
 
-	"GET /edev/{id}/ps": true,  // X-05 read half
-	"PUT /edev/{id}/ps": false, // X-05 write half
+	"GET /edev/{id}/ps": true,
+	"PUT /edev/{id}/ps": false, // no aggregator text, IEEE 2030.5-2018 8.5.3 default
 
-	"GET /edev/{id}/frq":         true,  // X-08 read half
-	"GET /edev/{id}/frq/{frqId}": true,  // X-08 read half
-	"POST /edev/{id}/frq":        false, // X-08 write half
-	"GET /edev/{id}/frp":         true,  // X-08 read half
-	"GET /edev/{id}/frp/{frpId}": true,  // X-08 read half
+	"GET /edev/{id}/frq":         true,
+	"GET /edev/{id}/frq/{frqId}": true,
+	"POST /edev/{id}/frq":        false, // flow reservation appears in no aggregator text
+	"GET /edev/{id}/frp":         true,
+	"GET /edev/{id}/frp/{frpId}": true,
 }
 
 // TestManagerVerdictForEveryGatedPattern is issue 510's acceptance

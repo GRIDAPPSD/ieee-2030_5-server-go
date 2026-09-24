@@ -98,8 +98,8 @@ func TestManagement_ManagerReadsTheManagedEndDevice(t *testing.T) {
 
 // delegatedReadPatterns selects, from the router's own pattern list, the
 // reads a manager is granted: GET on the record and every GET pattern
-// strictly below it except the Registration. ADR-007 B2's read rule: a
-// manager reads what the managed device's own client may read.
+// strictly below it except the Registration. A manager reads what the
+// managed device's own client may read.
 func delegatedReadPatterns(patterns []string) []string {
 	var out []string
 	for _, p := range patterns {
@@ -133,15 +133,15 @@ func writeBelowRecordPatterns(patterns []string) []string {
 }
 
 // managerWriteAllowlist is this test's own, independently written statement
-// of ADR-007 B2's write allow-list: the five entries a manager may use below
-// a managed record. It is not derived from the package's writeAllowlist, so
-// a mistake in one does not hide behind a matching mistake in the other.
+// of the five entries a manager may use below a managed record (issue
+// #510). It is not derived from the package's writeAllowlist, so a mistake
+// in one does not hide behind a matching mistake in the other.
 var managerWriteAllowlist = map[string]bool{
-	"PUT /edev/{id}/der/{derId}/dercap": true, // A-12
-	"PUT /edev/{id}/der/{derId}/derg":   true, // A-13
-	"PUT /edev/{id}/der/{derId}/ders":   true, // A-14
-	"PUT /edev/{id}/der/{derId}/dera":   true, // A-15
-	"POST /edev/{id}/lel":               true, // A-16
+	"PUT /edev/{id}/der/{derId}/dercap": true, // DERCapability, CSIP V1.2 UTIL-002
+	"PUT /edev/{id}/der/{derId}/derg":   true, // DERSettings, CSIP V1.2 UTIL-002
+	"PUT /edev/{id}/der/{derId}/ders":   true, // DERStatus, CSIP V1.2 UTIL-002
+	"PUT /edev/{id}/der/{derId}/dera":   true, // DERAvailability, CSIP V1.2 UTIL-002
+	"POST /edev/{id}/lel":               true, // LogEvent, CSIP V1.2 UTIL-001
 }
 
 // sweepStatus drives pattern, every wildcard set to the managed device's id,

@@ -14,13 +14,13 @@ import (
 // assembled router with the same identity and management wiring the gate
 // itself uses, rather than mounting the handler alone.
 //
-// ADR-007 B2's write allow-list (issue 510) does not grant
-// DELETE /edev/{id}/sub/{subId} to a manager at all (X-06, write half): an
-// aggregator posts to its own SubscriptionListLink, not a managed device's.
-// So a manager's delete of any subscription under a managed {id} is now
-// refused by the ownership gate itself, before the handler's own
-// href-scoping check ever runs; #435's handler-level scoping is exercised
-// here only through self access, which the allow-list does not touch.
+// Issue #510's write allow-list does not grant
+// DELETE /edev/{id}/sub/{subId} to a manager at all: an aggregator posts to
+// its own SubscriptionListLink, not a managed device's. So a manager's
+// delete of any subscription under a managed {id} is now refused by the
+// ownership gate itself, before the handler's own href-scoping check ever
+// runs; #435's handler-level scoping is exercised here only through self
+// access, which the allow-list does not touch.
 func TestManagement_SubscriptionDeleteIsScopedToItsEndDevice(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

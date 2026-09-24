@@ -92,29 +92,29 @@ func requiresOwnership(pattern string) bool {
 }
 
 // writeAllowlist holds the exact PUT, POST and DELETE patterns a manager may
-// use on a device it manages, below the record. ADR-007 "Write, create and
-// delete allow-list" is the specification; each entry below cites the row
-// that grants it. A write pattern absent from this list is refused to a
-// manager by default: "No delegation by pattern," ADR-007.
+// use on a device it manages, below the record. Every other write is
+// refused by default (issue #510): IEEE 2030.5-2018 8.5.3 restricts a write
+// below an EndDevice to the device itself unless a specific procedure needs
+// otherwise.
 var writeAllowlist = map[string]bool{
-	// A-12 to A-15: the aggregator PUTs each of the four DER sub-resources of
-	// a managed device's DER instance.
+	// CSIP V1.2 UTIL-002: the aggregator PUTs each of the four DER
+	// sub-resources of a managed device's DER instance.
 	"PUT /edev/{id}/der/{derId}/dercap": true,
 	"PUT /edev/{id}/der/{derId}/derg":   true,
 	"PUT /edev/{id}/der/{derId}/ders":   true,
 	"PUT /edev/{id}/der/{derId}/dera":   true,
-	// A-16: the aggregator POSTs a LogEvent for a managed device.
+	// CSIP V1.2 UTIL-001: the aggregator POSTs a LogEvent for a managed
+	// device.
 	"POST /edev/{id}/lel": true,
 }
 
 // delegable reports whether a manager may use pattern on a device it
 // manages. Reads (GET, which also serves HEAD) follow the managed device's
 // own access: the record itself, and every pattern strictly below it except
-// the Registration, per ADR-007's read rule. Writes, creates and deletes
-// follow only writeAllowlist above; a write pattern not on the list is
-// refused, even when a wildcard or literal segment would have delegated it
-// under the old pattern rule. A record pattern that names no method is not
-// delegated.
+// the Registration. Writes, creates and deletes follow only writeAllowlist
+// above; a write pattern not on the list is refused, even when a wildcard or
+// literal segment would have delegated it under the old pattern rule. A
+// record pattern that names no method is not delegated.
 func delegable(pattern string) bool {
 	i := strings.IndexByte(pattern, '/')
 	if i < 0 {

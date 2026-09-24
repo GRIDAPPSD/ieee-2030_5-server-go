@@ -188,16 +188,21 @@ func TestDelegable(t *testing.T) {
 		// Writes follow only writeAllowlist: the five entries below are
 		// granted; every other write pattern the old pattern rule would have
 		// delegated is now refused by default.
-		"PUT /edev/{id}/der/{derId}/derg": true,  // granted: DERSettings, CSIP V1.2 UTIL-002
-		"POST /edev/{id}/lel":             true,  // granted: LogEvent, CSIP V1.2 UTIL-001
-		"POST /edev/{id}/sub":             false, // refused: not the aggregator's own SubscriptionListLink
-		"DELETE /edev/{id}/sub/{subId}":   false, // refused: not the aggregator's own SubscriptionListLink
-		"DELETE /edev/{id}/lel/{lelId}":   false, // refused: no aggregator text deletes a LogEvent
-		"PUT /edev/{id}/der/{derId}":      false, // refused: UTIL-002 names only the four DER sub-resources
-		"PUT /edev/{id}/cfg":              false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
-		"PUT /edev/{id}/dstat":            false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
-		"PUT /edev/{id}/ps":               false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
-		"POST /edev/{id}/frq":             false, // refused: flow reservation appears in no aggregator text
+		"PUT /edev/{id}/der/{derId}/derg": true, // granted: DERSettings, CSIP V1.2 UTIL-002
+		"POST /edev/{id}/lel":             true, // granted: LogEvent, CSIP V1.2 UTIL-001
+		// The write branch agrees with the read branch about a host prefix:
+		// this host-form write is granted because its host-free equivalent
+		// is, the same tolerance TestRequiresOwnership already exercises for
+		// reads.
+		"PUT example.test/edev/{id}/der/{derId}/derg": true,
+		"POST /edev/{id}/sub":                         false, // refused: not the aggregator's own SubscriptionListLink
+		"DELETE /edev/{id}/sub/{subId}":               false, // refused: not the aggregator's own SubscriptionListLink
+		"DELETE /edev/{id}/lel/{lelId}":               false, // refused: no aggregator text deletes a LogEvent
+		"PUT /edev/{id}/der/{derId}":                  false, // refused: UTIL-002 names only the four DER sub-resources
+		"PUT /edev/{id}/cfg":                          false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
+		"PUT /edev/{id}/dstat":                        false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
+		"PUT /edev/{id}/ps":                           false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
+		"POST /edev/{id}/frq":                         false, // refused: flow reservation appears in no aggregator text
 		// A write pattern nobody has registered yet: proves the default is
 		// denied, not merely that today's five entries are granted.
 		"PUT /edev/{id}/notyetregistered": false,
@@ -269,20 +274,28 @@ var managerVerdicts = map[string]bool{
 }
 
 // TestManagerVerdictForEveryGatedPattern is issue 510's acceptance
-// criterion 4. It discovers every pattern the real route wiring gates, from
-// registerAll rather than from a hand-copied list, and requires an entry in
-// managerVerdicts for each: an entry missing on either side fails, so a
-// route added to any register*Routes helper without a decided verdict fails
-// this test rather than defaulting silently.
+// criterion 4. It discovers every pattern the real route wiring gates from
+// BuildProtocolRouter's own pattern list, the router it protects, rather than
+// from a hand-copied helper list, and requires an entry in managerVerdicts
+// for each: an entry missing on either side fails, so a route added to any
+// register*Routes helper without a decided verdict fails this test rather
+// than defaulting silently.
+//
+// registerAll (below) is a second, separate source of the same wiring and is
+// deliberately NOT used here: it is a hand-copy of the register*Routes calls,
+// and a sixth helper added to BuildProtocolRouter but not to registerAll
+// would still pass a sweep built from it, undetected. It stays in use for
+// TestOwnershipGate_PatternListIsUnchanged, which needs the same routes
+// registered on a bare mux to compare against the gated one; BuildProtocolRouter
+// exposes no bare (ungated) mode to compare against.
 func TestManagerVerdictForEveryGatedPattern(t *testing.T) {
 	t.Parallel()
 	stores := fullStores()
 	policy := AuthPolicy{Identity: ownerIdentity("OWNER")}
-	bare := newRecordingMux()
-	registerAll(bare, stores, policy)
+	_, patterns := BuildProtocolRouter(RouterConfig{}, stores, policy, "serverSFDI", "serverLFDI", nil)
 
 	discovered := map[string]bool{}
-	for _, p := range bare.Patterns() {
+	for _, p := range patterns {
 		if requiresOwnership(p) {
 			discovered[p] = true
 		}
@@ -304,6 +317,34 @@ func TestManagerVerdictForEveryGatedPattern(t *testing.T) {
 	for p := range managerVerdicts {
 		if !discovered[p] {
 			t.Errorf("managerVerdicts names %q, which is not a currently gated, registered pattern; remove the stale entry", p)
+		}
+	}
+}
+
+// TestWriteAllowlistNamesOnlyMountedPatterns gives writeAllowlist the same
+// stale-entry check managerVerdicts already has above. Without it, an entry
+// naming a pattern the router no longer mounts (a route renamed or removed)
+// sits in the package unnoticed: it grants nothing, because delegable is
+// only ever asked about a pattern the gate actually wraps, but a reader
+// trusts it as live policy. Discovery is BuildProtocolRouter's own pattern
+// list, for the same reason TestManagerVerdictForEveryGatedPattern reads it
+// rather than registerAll.
+func TestWriteAllowlistNamesOnlyMountedPatterns(t *testing.T) {
+	t.Parallel()
+	stores := fullStores()
+	policy := AuthPolicy{Identity: ownerIdentity("OWNER")}
+	_, patterns := BuildProtocolRouter(RouterConfig{}, stores, policy, "serverSFDI", "serverLFDI", nil)
+
+	mounted := map[string]bool{}
+	for _, p := range patterns {
+		mounted[p] = true
+	}
+	if len(writeAllowlist) == 0 {
+		t.Fatal("writeAllowlist is empty; the stale-entry check would pass vacuously")
+	}
+	for p := range writeAllowlist {
+		if !mounted[p] {
+			t.Errorf("writeAllowlist names %q, which is not a currently mounted pattern; remove the stale entry", p)
 		}
 	}
 }

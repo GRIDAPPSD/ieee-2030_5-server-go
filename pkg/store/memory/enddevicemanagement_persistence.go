@@ -8,8 +8,15 @@ import (
 
 // Durable EndDeviceManagementStore persistence
 // (GRIDAPPSD/ieee-2030_5-server-go#440), following the shared
-// envelope/atomic-write machinery in persistence.go and the same
-// wrapper shape as the other five admin-mutated stores.
+// envelope/atomic-write machinery in persistence.go.
+//
+// This wrapper diverges from the other five admin-mutated stores in one
+// deliberate way (GRIDAPPSD/ieee-2030_5-server-go#677 fix round): the
+// candidate snapshot is written to disk before the corresponding change is
+// applied in memory, both under EndDeviceManagementStore.mu, rather than
+// after the change and outside it. See the persistPath field comment on
+// EndDeviceManagementStore for why: a management pair grants protocol
+// access, so it must never be live before it is durable.
 
 // managementPairRecord is the on-disk shape of one (manager, managed) pair.
 type managementPairRecord struct {
@@ -22,8 +29,11 @@ type managementPairRecord struct {
 // means "in-memory only": equivalent to NewEndDeviceManagementStore.
 //
 // If the file exists it is loaded; a missing file is cold boot (no error).
-// Corrupt or unknown-version files return an error and the caller decides
-// whether to rebuild or fail.
+// A corrupt file, an unsupported version, or a record that fails the same
+// checks Assign enforces (canonical LFDI, no self-management, one manager
+// per device) returns an error and the caller decides whether to rebuild or
+// fail: those rules gate a pair on every path it can enter the store, not
+// only the admin plane.
 func NewEndDeviceManagementStoreWithPersistence(path string) (*EndDeviceManagementStore, error) {
 	s := NewEndDeviceManagementStore()
 	if path == "" {
@@ -37,8 +47,11 @@ func NewEndDeviceManagementStoreWithPersistence(path string) (*EndDeviceManageme
 }
 
 // loadFromFile rehydrates the store from the given path. Missing file is
-// cold boot (no error, no state change). Corrupt or unknown-version files
-// return an error.
+// cold boot (no error, no state change). A corrupt file, an unsupported
+// version, or a record that fails validation returns an error and leaves
+// the store untouched: a file that fails partway is refused wholesale
+// rather than loaded with the bad records silently dropped, so a caller
+// that chooses to carry on does so having decided that, not by accident.
 func (s *EndDeviceManagementStore) loadFromFile(path string) error {
 	env, err := readSnapshotEnvelope(path)
 	if err != nil {
@@ -52,28 +65,44 @@ func (s *EndDeviceManagementStore) loadFromFile(path string) error {
 		return fmt.Errorf("decode records: %w", err)
 	}
 
-	// Rehydrate directly into the maps rather than through Assign: the
-	// records already came from a store that enforced one manager per
-	// device, and we are pre-publication so there is no lock contention to
-	// serialize against.
+	managerOf := make(map[string]string, len(records))
+	managedBy := make(map[string]map[string]struct{}, len(records))
+	for _, r := range records {
+		if err := checkCanonicalLFDI("manager", r.ManagerLFDI); err != nil {
+			return fmt.Errorf("record (manager %q, managed %q): %w", r.ManagerLFDI, r.ManagedLFDI, err)
+		}
+		if err := checkCanonicalLFDI("managed", r.ManagedLFDI); err != nil {
+			return fmt.Errorf("record (manager %q, managed %q): %w", r.ManagerLFDI, r.ManagedLFDI, err)
+		}
+		if r.ManagerLFDI == r.ManagedLFDI {
+			return fmt.Errorf("record: %s cannot manage itself", r.ManagedLFDI)
+		}
+		if _, dup := managerOf[r.ManagedLFDI]; dup {
+			return fmt.Errorf("record: %s has more than one manager on disk", r.ManagedLFDI)
+		}
+		managerOf[r.ManagedLFDI] = r.ManagerLFDI
+		if managedBy[r.ManagerLFDI] == nil {
+			managedBy[r.ManagerLFDI] = make(map[string]struct{})
+		}
+		managedBy[r.ManagerLFDI][r.ManagedLFDI] = struct{}{}
+	}
+
+	// Swap in the validated maps atomically: a record failing partway
+	// through the loop above must never leave the store holding a prefix
+	// of the file's records.
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, r := range records {
-		s.managerOf[r.ManagedLFDI] = r.ManagerLFDI
-		if s.managedBy[r.ManagerLFDI] == nil {
-			s.managedBy[r.ManagerLFDI] = make(map[string]struct{})
-		}
-		s.managedBy[r.ManagerLFDI][r.ManagedLFDI] = struct{}{}
-	}
+	s.managerOf = managerOf
+	s.managedBy = managedBy
 	return nil
 }
 
-// snapshotRecords captures the current pairs, sorted by managed LFDI for a
-// deterministic on-disk order, under the store's read lock.
-func (s *EndDeviceManagementStore) snapshotRecords() []managementPairRecord {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
+// recordsLocked captures the current pairs as a freshly built, independent
+// slice, sorted by managed LFDI for a deterministic on-disk order. The
+// caller must already hold s.mu; recordsLocked takes no lock of its own, so
+// a mutating method holding the write lock can call it to build the
+// candidate snapshot for the change it is about to make.
+func (s *EndDeviceManagementStore) recordsLocked() []managementPairRecord {
 	out := make([]managementPairRecord, 0, len(s.managerOf))
 	for managed, manager := range s.managerOf {
 		out = append(out, managementPairRecord{ManagerLFDI: manager, ManagedLFDI: managed})
@@ -82,16 +111,18 @@ func (s *EndDeviceManagementStore) snapshotRecords() []managementPairRecord {
 	return out
 }
 
-// persist flushes the snapshot to disk if persistence is configured. No-op
-// for in-memory stores.
-func (s *EndDeviceManagementStore) persist() error {
+// persistRecordsLocked writes records to disk as the durable snapshot, or is
+// a no-op for an in-memory (unpersisted) store. The caller must hold s.mu
+// for write and must not apply the in-memory mutation records represents
+// until this returns nil: records is the state about to become live,
+// written before it does, so a failed write leaves the store exactly where
+// its last successful write left it, and a caller who retries lands on the
+// same code path rather than an idempotent no-op for a change that never
+// took.
+func (s *EndDeviceManagementStore) persistRecordsLocked(records []managementPairRecord) error {
 	if s.persistPath == "" {
 		return nil
 	}
-	s.persistMu.Lock()
-	defer s.persistMu.Unlock()
-
-	records := s.snapshotRecords()
 	if err := writeSnapshotEnvelope(s.persistPath, records); err != nil {
 		return fmt.Errorf("enddevice management persistence: %w", err)
 	}

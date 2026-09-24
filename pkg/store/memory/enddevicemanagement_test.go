@@ -79,18 +79,31 @@ func TestRekeyManager_RetiredLFDIIsRefused(t *testing.T) {
 	}
 }
 
-func TestRekeyManager_MergesIntoExistingManager(t *testing.T) {
+// TestRekeyManager_CollisionIsRefused is item 5's decisive assertion: the
+// two rekey directions must agree about a collision. RekeyManaged already
+// refuses a destination that already has a manager (see
+// TestRekeyManaged_CollisionIsRefused); before this fix RekeyManager instead
+// merged the two fleets silently and irreversibly (the old key is deleted).
+// Merging is never what a certificate rotation needs, so it is refused the
+// same way.
+func TestRekeyManager_CollisionIsRefused(t *testing.T) {
 	ctx := context.Background()
 	s := newRekeyStore(t)
 	mustAssignT(t, s, oldManagerLFDI, child1LFDI)
 	mustAssignT(t, s, newManagerLFDI, child2LFDI)
 
-	if err := s.RekeyManager(ctx, oldManagerLFDI, newManagerLFDI); err != nil {
-		t.Fatalf("RekeyManager: %v", err)
+	err := s.RekeyManager(ctx, oldManagerLFDI, newManagerLFDI)
+	if !errors.Is(err, store.ErrAlreadyExists) {
+		t.Fatalf("RekeyManager(collision) = %v, want ErrAlreadyExists", err)
 	}
-	got, err := s.ManagedBy(ctx, newManagerLFDI)
-	if err != nil || !slices.Equal(got, []string{child1LFDI, child2LFDI}) {
-		t.Errorf("ManagedBy(new) = %v, %v; want [%s %s]", got, err, child1LFDI, child2LFDI)
+	// Neither fleet moved: the old manager keeps its device, the target
+	// keeps its own and does not gain the old manager's.
+	if manager, _ := s.ManagerOf(ctx, child1LFDI); manager != oldManagerLFDI {
+		t.Errorf("ManagerOf(child1) after refused collision = %q, want unchanged %q", manager, oldManagerLFDI)
+	}
+	got, _ := s.ManagedBy(ctx, newManagerLFDI)
+	if !slices.Equal(got, []string{child2LFDI}) {
+		t.Errorf("ManagedBy(new) after refused collision = %v, want [%s] unchanged", got, child2LFDI)
 	}
 }
 
@@ -98,6 +111,19 @@ func TestRekeyManager_NothingToRekeyIsNotFound(t *testing.T) {
 	s := newRekeyStore(t)
 	if err := s.RekeyManager(context.Background(), oldManagerLFDI, newManagerLFDI); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("RekeyManager(nothing) = %v, want ErrNotFound", err)
+	}
+}
+
+// TestRekeyManager_NoOpFromUnknownLFDIIsNotFound is item 6's H6 assertion:
+// from == to must not short-circuit to a reported success before existence
+// is checked. Pasting the same, never-assigned LFDI into both fields must
+// answer ErrNotFound, the same as any other rekey of an LFDI that manages
+// nothing, not a silent "successful" no-op.
+func TestRekeyManager_NoOpFromUnknownLFDIIsNotFound(t *testing.T) {
+	s := newRekeyStore(t)
+	err := s.RekeyManager(context.Background(), oldManagerLFDI, oldManagerLFDI)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("RekeyManager(unknown, unknown) = %v, want ErrNotFound", err)
 	}
 }
 
@@ -201,6 +227,17 @@ func TestRekeyManaged_NoOpWhenUnchanged(t *testing.T) {
 	mustAssignT(t, s, oldManagerLFDI, child1LFDI)
 	if err := s.RekeyManaged(ctx, child1LFDI, child1LFDI); err != nil {
 		t.Errorf("RekeyManaged(same LFDI) = %v, want nil", err)
+	}
+}
+
+// TestRekeyManaged_NoOpFromUnknownLFDIIsNotFound is RekeyManager's H6 case
+// mirrored on the managed side: from == to must not short-circuit before
+// existence is checked.
+func TestRekeyManaged_NoOpFromUnknownLFDIIsNotFound(t *testing.T) {
+	s := newRekeyStore(t)
+	err := s.RekeyManaged(context.Background(), child1LFDI, child1LFDI)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("RekeyManaged(unknown, unknown) = %v, want ErrNotFound", err)
 	}
 }
 

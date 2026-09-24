@@ -139,6 +139,34 @@ func TestManagementPersistence_RekeyThenReload(t *testing.T) {
 	}
 }
 
+// TestManagementPersistence_RekeyManagedThenReload is
+// TestManagementPersistence_RekeyThenReload's managed-side twin. Deleting the
+// loop that rewrites ManagedLFDI in the candidate snapshot leaves every other
+// test in this package green, because nothing else reads a managed-side
+// rekey back from a second construction over the file: this closes that gap
+// the same way the manager-side test already closes its own (#677).
+func TestManagementPersistence_RekeyManagedThenReload(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, path := newPersistedManagementStore(t)
+
+	mustAssignT(t, s, managerA, childA)
+	if err := s.RekeyManaged(ctx, childA, childB); err != nil {
+		t.Fatalf("RekeyManaged: %v", err)
+	}
+
+	revived, err := memory.NewEndDeviceManagementStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("revive: %v", err)
+	}
+	if manager, err := revived.ManagerOf(ctx, childB); err != nil || manager != managerA {
+		t.Errorf("revived ManagerOf(childB) after managed rekey+reload = %q, %v; want %q", manager, err, managerA)
+	}
+	if _, err := revived.ManagerOf(ctx, childA); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("revived ManagerOf(retired managed childA) = %v, want ErrNotFound", err)
+	}
+}
+
 func TestManagementPersistence_CorruptJSONRejected(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "management.json")
@@ -432,7 +460,10 @@ func onDiskRecords(t *testing.T, path string) []struct {
 // rewrites a record's sort key in place, so the file was unsorted after
 // either. childC sorts before childA and childB, and the rekey below moves
 // childB's sort key past childC, exercising both cases the comment claimed
-// were covered.
+// were covered. assertOnDiskRecords takes the expected identifiers rather
+// than re-sorting whatever it just read: a helper that only proves its own
+// output is internally sorted cannot tell a renamed identifier from a stale
+// one sitting in the same sorted position (#677).
 func TestManagementPersistence_OnDiskOrderIsSorted(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -443,27 +474,26 @@ func TestManagementPersistence_OnDiskOrderIsSorted(t *testing.T) {
 	// childC sorts before both: an append-after-sort would leave it last.
 	mustAssignT(t, s, managerA, childC)
 
-	assertOnDiskSorted(t, path)
+	assertOnDiskRecords(t, path, []string{childC, childA, childB})
 
 	// Rekey childB to childD, which sorts after childC: rewriting the sort
-	// key in place without re-sorting would leave the record out of order.
+	// key in place without re-sorting would leave the record out of order,
+	// and never renaming it would leave childB itself on disk instead.
 	if err := s.RekeyManaged(ctx, childB, childD); err != nil {
 		t.Fatalf("RekeyManaged: %v", err)
 	}
-	assertOnDiskSorted(t, path)
+	assertOnDiskRecords(t, path, []string{childC, childD, childA})
 }
 
-func assertOnDiskSorted(t *testing.T, path string) {
+func assertOnDiskRecords(t *testing.T, path string, want []string) {
 	t.Helper()
 	records := onDiskRecords(t, path)
 	got := make([]string, len(records))
 	for i, r := range records {
 		got[i] = r.ManagedLFDI
 	}
-	want := slices.Clone(got)
-	sort.Strings(want)
 	if !slices.Equal(got, want) {
-		t.Errorf("on-disk managed-LFDI order = %v, want sorted %v", got, want)
+		t.Errorf("on-disk managed-LFDI order = %v, want %v", got, want)
 	}
 }
 

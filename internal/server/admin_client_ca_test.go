@@ -547,14 +547,25 @@ func (b *syncLogBuffer) String() string {
 
 // TestAdminListenerDegradedAnchorDeniesButServesCertless is #657 design
 // section 3 test 3, driven at shape 1 (no CA path configured anywhere):
-// the listener still starts, an operator certificate is refused
-// server-side, and a certless client still reaches sign-in. Red before the
-// fix: adminClientCAPool's empty-anchor branch returned an error, so the
-// admin listener never came up at all (nothing to assert a refusal
-// against). The refusal is read from the server's own handshake error
-// (adminClientFor forces presentation past the polite hint-honoring a real
-// client would do), per this task's evidence discipline on TLS 1.3
-// client-side false positives.
+// the listener still starts, an operator certificate is refused, and a
+// certless client still reaches sign-in. Red before the fix: adminClientCAPool's
+// empty-anchor branch returned an error, so the admin listener never came up
+// at all (nothing to assert a refusal against).
+//
+// The refusal here is read from the CLIENT's handshake error (adminClientFor
+// forces presentation past the polite hint-honoring a real client would do),
+// per this task's evidence discipline on TLS 1.3 client-side false
+// positives. That error text does not distinguish a correct empty ClientCAs
+// pool from the #418 regression (a nil pool falling back to host roots this
+// test's CA is not in either), so it cannot guard #418 by itself:
+// TestAdminClientCAPoolEmptyAnchorDegrades and
+// TestBuildAdminTLSConfigDegradedAnchorHasNonNilClientCAs do that, by
+// reading the pool directly, because nil-vs-empty is not observable on the
+// wire (an empty pool's Subjects() has len 0, so crypto/tls omits
+// certificate_authorities for it exactly as it does for nil - see
+// handshake_server_tls13.go's len(certificateAuthorities) > 0 gate). What
+// this test proves, and can prove: a certificate outside the anchor is
+// refused end-to-end, and a certless client is not swept up in that refusal.
 func TestAdminListenerDegradedAnchorDeniesButServesCertless(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

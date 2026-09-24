@@ -138,10 +138,13 @@ configured, and staying pure in-memory otherwise.
 
 - An absent (nil) store delegates nothing: every caller reaches only its own
   EndDevice. The router logs that once when it is built.
-- `Assign` refuses an empty LFDI, one that is not upper case or carries
-  surrounding space, and a device named as its own manager, with
-  `store.ErrInvalidManagementPair`. It returns `store.ErrAlreadyExists` when
-  another manager already holds the device. Lookups never fold case.
+- `Assign` refuses an empty LFDI, one that is not upper case, carries
+  surrounding space, or is not exactly 40 hex digits, and a device named as
+  its own manager, with `store.ErrInvalidManagementPair`. The load path
+  enforces the same 40-hex-digit rule as the admin API's own normalization,
+  so a value the API would refuse cannot arrive from disk and become an
+  entry no API call can address again. It returns `store.ErrAlreadyExists`
+  when another manager already holds the device. Lookups never fold case.
 - `RekeyManager` and `RekeyManaged` replace a manager LFDI or a managed LFDI
   across that LFDI's pairs, for a certificate rotation: a rotated
   certificate carries a new LFDI, so a pair does not survive rotation of

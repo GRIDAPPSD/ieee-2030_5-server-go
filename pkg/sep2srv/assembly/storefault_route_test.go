@@ -307,7 +307,19 @@ func partitionMountedRoutes(patterns []string, exclusions map[string]string) (ro
 // body check, so it would report a covered route that the store failure never
 // reached. That refusal is why adding a write route without a probe body fails
 // this test instead of passing it vacuously.
+//
+// It substitutes faultProbePathValue for every wildcard. A caller that needs
+// a different, stated id (for example a specific EndDevice to compare a
+// manager's answer against its owner's) calls probeRequestForID directly
+// instead of relying on faultProbePathValue's value matching by coincidence.
 func probeRequestFor(base, pattern string) (*http.Request, error) {
+	return probeRequestForID(base, pattern, faultProbePathValue)
+}
+
+// probeRequestForID is probeRequestFor with the wildcard substitution named
+// explicitly, so a caller states which id it is asking about rather than
+// inheriting whatever faultProbePathValue happens to be.
+func probeRequestForID(base, pattern, idValue string) (*http.Request, error) {
 	method, shape, ok := strings.Cut(pattern, " ")
 	if !ok {
 		return nil, fmt.Errorf("pattern %q has no method", pattern)
@@ -316,7 +328,7 @@ func probeRequestFor(base, pattern string) (*http.Request, error) {
 	segments := strings.Split(shape, "/")
 	for i, seg := range segments {
 		if strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") {
-			segments[i] = faultProbePathValue
+			segments[i] = idValue
 		}
 	}
 	path := strings.Join(segments, "/")

@@ -49,6 +49,7 @@ func newManagementFleet(t *testing.T) managementFleet {
 	seedDevice(t, stores.EndDevices, callerID, callerLFDI, callerSFDI)
 	seedDevice(t, stores.EndDevices, unmanagedID, unmanagedLFDI, "")
 	seedDevice(t, stores.EndDevices, secondChildID, secondChildLFDI, "")
+	seedManagedSubResources(t, stores, victimID)
 	managers := memory.NewEndDeviceManagementStore()
 	for _, pair := range [][2]string{
 		{managerLFDI, victimLFDI},
@@ -61,6 +62,59 @@ func newManagementFleet(t *testing.T) managementFleet {
 	}
 	stores.EndDeviceManagers = managers
 	return managementFleet{stores: stores, managers: managers}
+}
+
+// seedManagedSubResources seeds one instance record under edevID for every
+// GET item route the read sweep in TestManagement_ManagerReadIsServedAsTheOwnerIs
+// drives: sweepStatus (via probeRequestForID) sets every wildcard in a
+// pattern to the SAME id, so a DER, DERProgram, DERControl, LogEvent, or flow
+// reservation instance route is probed at id "edevID" for every wildcard.
+// Without a record there, the owner itself gets 404 and the sweep's
+// manager-vs-owner comparison degrades to comparing two absent-resource
+// answers, exactly what the 404 case in sweepStatus's callers now exists to
+// catch.
+func seedManagedSubResources(t *testing.T, stores *assembly.Stores, edevID string) {
+	t.Helper()
+	ctx := context.Background()
+	seedDER(t, stores, edevID, edevID)
+	if err := stores.DERPrograms.Create(ctx, edevID, edevID, sep2.DERProgram{
+		SubscribableResource: sep2.SubscribableResource{
+			Resource: sep2.Resource{Href: "/edev/" + edevID + "/fsa/" + edevID + "/derp/" + edevID},
+		},
+	}); err != nil {
+		t.Fatalf("seed DERProgram: %v", err)
+	}
+	seedDERControl(t, stores, edevID, edevID, 0, 1700000000)
+	if err := stores.LogEvents.Create(ctx, edevID, edevID, sep2.LogEvent{
+		Resource: sep2.Resource{Href: "/edev/" + edevID + "/lel/" + edevID},
+	}); err != nil {
+		t.Fatalf("seed LogEvent: %v", err)
+	}
+	if err := stores.FlowReservationRequests.Create(ctx, edevID, edevID, sep2.FlowReservationRequest{
+		Resource: sep2.Resource{Href: "/edev/" + edevID + "/frq/" + edevID},
+	}); err != nil {
+		t.Fatalf("seed FlowReservationRequest: %v", err)
+	}
+	if err := stores.FlowReservationResponses.Create(ctx, edevID, edevID, sep2.FlowReservationResponse{
+		Event: sep2.Event{SubscribableResource: sep2.SubscribableResource{
+			Resource: sep2.Resource{Href: "/edev/" + edevID + "/frp/" + edevID},
+		}},
+	}); err != nil {
+		t.Fatalf("seed FlowReservationResponse: %v", err)
+	}
+	// DELETE /edev/{id}/sub/{subId} needs an existing record to remove: unlike
+	// the PUT routes above, a delete cannot upsert its way past a 404, so
+	// without this the owner's own probe would 404 the same way the item
+	// routes above did before they were seeded.
+	if err := stores.Subscriptions.Create(ctx, edevID, sep2.Subscription{
+		SubscribableResource: sep2.SubscribableResource{
+			Resource: sep2.Resource{Href: "/edev/" + edevID + "/sub/" + edevID},
+		},
+		SubscribedResource: "/edev/" + edevID,
+		NotificationURI:    "https://example.test/notify/" + edevID,
+	}); err != nil {
+		t.Fatalf("seed Subscription: %v", err)
+	}
 }
 
 // assertNoFleetData checks a refusal's raw bytes for any sep2 document and any
@@ -144,12 +198,17 @@ var managerWriteAllowlist = map[string]bool{
 	"POST /edev/{id}/lel":               true, // LogEvent, CSIP V1.2 UTIL-001
 }
 
-// sweepStatus drives pattern, every wildcard set to the managed device's id,
-// on a fresh fleet so one caller's write cannot change the other's answer.
+// sweepStatus drives pattern, every wildcard set explicitly to victimID (the
+// managed device this fleet's pairs name), on a fresh fleet so one caller's
+// write cannot change the other's answer. It names victimID directly rather
+// than taking probeRequestFor's default: that default is faultProbePathValue,
+// a constant from an unrelated file whose value equals victimID today only by
+// coincidence, and probeRequestForID makes the coupling to victimID the
+// caller states rather than one two files agree on by accident.
 func sweepStatus(t *testing.T, pattern, asLFDI string) int {
 	t.Helper()
 	srv := gateServer(t, newManagementFleet(t).stores, gateTestPolicy())
-	req, err := probeRequestFor(srv.URL, pattern)
+	req, err := probeRequestForID(srv.URL, pattern, victimID)
 	if err != nil {
 		method, path := concreteGatePath(pattern)
 		if req, err = http.NewRequest(method, srv.URL+path, nil); err != nil {
@@ -171,7 +230,11 @@ func TestManagement_ManagerReadIsServedAsTheOwnerIs(t *testing.T) {
 
 	for _, p := range delegated {
 		owner := sweepStatus(t, p, victimLFDI)
-		if owner == http.StatusForbidden || owner == http.StatusMethodNotAllowed {
+		// 404 guards against the same degeneration as 403 and 405: if the
+		// probed id ever stopped naming a real resource, both the owner and
+		// the manager would answer 404 and the comparison below would pass
+		// having proven nothing about delegation.
+		if owner == http.StatusForbidden || owner == http.StatusMethodNotAllowed || owner == http.StatusNotFound {
 			t.Errorf("%s: the owner itself answered %d, so comparing the manager to it proves nothing", p, owner)
 			continue
 		}
@@ -203,7 +266,11 @@ func TestManagement_ManagerWriteFollowsTheAllowlistNotTheOwner(t *testing.T) {
 	var granted, refused int
 	for _, p := range writes {
 		owner := sweepStatus(t, p, victimLFDI)
-		if owner == http.StatusForbidden || owner == http.StatusMethodNotAllowed {
+		// 404 guards the granted half the same way as delegatedReadPatterns'
+		// sweep above: a granted verdict that only ever compared two 404s
+		// would pass whether or not the manager was actually served as the
+		// owner is.
+		if owner == http.StatusForbidden || owner == http.StatusMethodNotAllowed || owner == http.StatusNotFound {
 			t.Errorf("%s: the owner itself answered %d, so this pattern proves nothing about delegation", p, owner)
 			continue
 		}

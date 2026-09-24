@@ -79,10 +79,8 @@ func (s *EndDeviceManagementStore) ManagedBy(_ context.Context, managerLFDI stri
 // round item 2): every mutating method supplies only a build step, run
 // under mu.RLock, that returns either an error (the operation is refused,
 // nothing changes), a nil apply (a no-op: nothing to persist or apply), or a
-// candidate snapshot plus the apply step that makes it live. mutate
-// persists the candidate before it ever calls apply, and apply is the only
-// thing build hands back that can touch managerOf/managedBy, so a method has
-// no way to make a change live without the write already being durable.
+// candidate snapshot plus the apply step that makes it live. build hands
+// back apply, and mutate persists the candidate before it ever calls it.
 // This replaces four copies of the RLock/build/RUnlock/persist/Lock/apply/
 // Unlock sequence, and the eleven hand-called RUnlock/Unlock releases that
 // went with them, with one. The order is held, for the mutators that have

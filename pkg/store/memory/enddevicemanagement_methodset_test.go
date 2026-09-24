@@ -12,10 +12,10 @@ import (
 // managementReaders and managementMutators pin
 // EndDeviceManagementStore's exported method set, name and signature,
 // split by whether the method mutates managerOf/managedBy: a tripwire
-// on that set, not a proof of routing. It catches a method added,
-// removed, or reclassified regardless of file, lvalue shape, or local
-// alias, but says nothing about whether a mutator calls mutate
-// (enddevicemanagement.go). A new mutator needs its own subtest in
+// on that set, not a proof of routing. It catches a method added or
+// removed regardless of file, lvalue shape, or local alias, but says
+// nothing about whether a mutator calls mutate (enddevicemanagement.go).
+// A new mutator needs its own subtest in
 // TestManagementPersistence_WriteFailureLeavesMemoryAndDiskUnchanged
 // (enddevicemanagement_persistence_test.go); adding it here alone is
 // not enough.

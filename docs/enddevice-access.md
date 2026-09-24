@@ -30,7 +30,9 @@ Reads and writes are two separate rules.
 client may: the record itself, and every gated route strictly below it
 (DER resources, FSAs, DERPrograms and DERControls, subscriptions, LogEvents,
 flow reservations, configuration, status singletons), except the
-Registration.
+Registration. Unlike writes, a read added to the route table later is
+delegated by default: the gate grants a new GET pattern until an entry here
+and in the gate specifically refuses it.
 
 **Writes, creates and deletes.** A manager may make only the requests on an
 explicit allow-list, each granted by a specific CSIP IG or V1.2 procedure
@@ -46,10 +48,11 @@ citation:
 
 Every other write below a managed record is refused, including
 `PUT /edev/{id}/der/{derId}` itself, `POST` and `DELETE` on the managed
-device's own subscriptions, and writes to `cfg`, `dstat`, `ps` and `frq`: a
-manager never rewrites or deletes the record, and IEEE 2030.5-2018 8.5.3's
-default is that a write below an EndDevice is restricted to the device
-itself unless the allow-list names an exception.
+device's own subscriptions, `DELETE` on a LogEvent instance, and writes to
+`cfg`, `dstat`, `ps` and `frq`: a manager never rewrites or deletes the
+record, and IEEE 2030.5-2018 8.5.3's default is that a write below an
+EndDevice is restricted to the device itself unless the allow-list names an
+exception.
 
 A manager may not:
 

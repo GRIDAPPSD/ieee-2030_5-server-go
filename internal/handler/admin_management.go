@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -80,7 +81,7 @@ func (h *AdminManagementHandler) HandleCreateManagementPair() http.HandlerFunc {
 		}
 
 		if err := h.Managers.Assign(r.Context(), managerLFDI, managedLFDI); err != nil {
-			writeManagementPairError(w, err)
+			writeManagementPairError(w, "create", err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, managementPairResponse{ManagerLFDI: managerLFDI, ManagedLFDI: managedLFDI})
@@ -151,7 +152,7 @@ func (h *AdminManagementHandler) HandleRemoveManagementPair() http.HandlerFunc {
 				writeError(w, http.StatusNotFound, "device is not managed")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, "remove: "+err.Error())
+			writeManagementInternalError(w, "remove", err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -203,7 +204,7 @@ func (h *AdminManagementHandler) HandleRekeyManagementPair() http.HandlerFunc {
 			opErr = h.Managers.RekeyManaged(r.Context(), from, to)
 		}
 		if opErr != nil {
-			writeManagementRekeyError(w, opErr)
+			writeManagementRekeyError(w, req.Role, opErr)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"role": req.Role, "from": from, "to": to})
@@ -227,8 +228,9 @@ func normalizeLFDI(s string) (string, error) {
 }
 
 // writeManagementPairError maps store.Assign's sentinels to the create
-// endpoint's response codes.
-func writeManagementPairError(w http.ResponseWriter, err error) {
+// endpoint's response codes. op names the operation for the internal-error
+// log line (writeManagementInternalError).
+func writeManagementPairError(w http.ResponseWriter, op string, err error) {
 	switch {
 	case errors.Is(err, store.ErrAlreadyExists):
 		writeError(w, http.StatusConflict, "device already has a different manager")
@@ -239,21 +241,41 @@ func writeManagementPairError(w http.ResponseWriter, err error) {
 		// failure if the two ever disagree.
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, "management pair: "+err.Error())
+		writeManagementInternalError(w, op, err)
 	}
 }
 
 // writeManagementRekeyError maps RekeyManager/RekeyManaged's sentinels to
-// the rekey endpoint's response codes.
-func writeManagementRekeyError(w http.ResponseWriter, err error) {
+// the rekey endpoint's response codes. role distinguishes a manager-side
+// collision (the target already manages other devices) from a managed-side
+// one (the target already has a manager): both map to the same
+// store.ErrAlreadyExists, and only role tells them apart.
+func writeManagementRekeyError(w http.ResponseWriter, role string, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "nothing to rekey")
 	case errors.Is(err, store.ErrAlreadyExists):
-		writeError(w, http.StatusConflict, "target already has a manager")
+		if role == "manager" {
+			writeError(w, http.StatusConflict, "target already manages other devices")
+		} else {
+			writeError(w, http.StatusConflict, "target already has a manager")
+		}
 	case errors.Is(err, store.ErrInvalidManagementPair):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, "rekey: "+err.Error())
+		writeManagementInternalError(w, "rekey", err)
 	}
+}
+
+// writeManagementInternalError answers a 500 for a store failure that does
+// not map to one of the sentinels above: chiefly a failed durable write
+// (store.EndDeviceManagementStore#677 fix round, H9). That error wraps
+// atomicfile's own error, which names the absolute snapshot path on disk;
+// the admin plane is authenticated, but a filesystem path is still
+// server-internal detail a response must not echo back to the caller
+// (secure-coding.md section 6). The full error, path included, still goes
+// to the server log, where an operator debugging a write failure needs it.
+func writeManagementInternalError(w http.ResponseWriter, op string, err error) {
+	log.Printf("admin management pairs: %s: %v", op, err)
+	writeError(w, http.StatusInternalServerError, op+": request failed, see server log")
 }

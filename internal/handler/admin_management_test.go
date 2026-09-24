@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -214,6 +216,29 @@ func TestListManagementPairs_ByManagedDevice(t *testing.T) {
 	}
 }
 
+// TestListManagementPairs_ByManagedDeviceNormalizesLowerCase closes item 6's
+// C1: the fifth LFDI entry point (the ?managed= query param) had no case
+// test, so a regression removing its normalizeLFDI call left the whole
+// suite green. This is that missing case, mirrored on
+// TestListManagementPairs_ByManagerNormalizesLowerCase.
+func TestListManagementPairs_ByManagedDeviceNormalizesLowerCase(t *testing.T) {
+	t.Parallel()
+	h := newManagementHandler(t)
+	mustAssignH(t, h, mgHandlerManagerA, mgHandlerChildA)
+
+	w := doJSON(t, h.HandleListManagementPairs(), http.MethodGet, "/api/management-pairs?managed="+strings.ToLower(mgHandlerChildA), "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	var got map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["managerLFDI"] != mgHandlerManagerA || got["managedLFDI"] != mgHandlerChildA {
+		t.Errorf("got = %v, want canonical upper-case LFDIs %q, %q (lowercase query must still find the pair)", got, mgHandlerManagerA, mgHandlerChildA)
+	}
+}
+
 func TestListManagementPairs_UnmanagedDeviceIsNotFound(t *testing.T) {
 	t.Parallel()
 	h := newManagementHandler(t)
@@ -344,6 +369,34 @@ func TestRekeyManagementPair_ManagedCollisionConflicts(t *testing.T) {
 	if w.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409; body = %s", w.Code, w.Body.String())
 	}
+	if !strings.Contains(w.Body.String(), "already has a manager") {
+		t.Errorf("body = %s, want it to say the target already has a manager", w.Body.String())
+	}
+}
+
+// TestRekeyManagementPair_ManagerCollisionConflicts is item 5's handler-level
+// assertion: the two rekey directions now agree about a collision, so the
+// manager side answers 409 the same way TestRekeyManagementPair_ManagedCollisionConflicts
+// already does for the managed side, rather than merging two fleets. The
+// message names what actually collided (manages other devices, not "has a
+// manager") since the two directions collide on different things.
+func TestRekeyManagementPair_ManagerCollisionConflicts(t *testing.T) {
+	t.Parallel()
+	h := newManagementHandler(t)
+	mustAssignH(t, h, mgHandlerManagerA, mgHandlerChildA)
+	mustAssignH(t, h, mgHandlerManagerB, mgHandlerChildB)
+
+	w := doJSON(t, h.HandleRekeyManagementPair(), http.MethodPost, "/api/management-pairs/rekey",
+		`{"role":"manager","from":"`+mgHandlerManagerA+`","to":"`+mgHandlerManagerB+`"}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "already manages other devices") {
+		t.Errorf("body = %s, want it to say the target already manages other devices", w.Body.String())
+	}
+	if manager, _ := h.Managers.ManagerOf(t.Context(), mgHandlerChildA); manager != mgHandlerManagerA {
+		t.Errorf("ManagerOf(childA) after refused collision = %q, want unchanged %q", manager, mgHandlerManagerA)
+	}
 }
 
 func TestRekeyManagementPair_BadRoleIsBadRequest(t *testing.T) {
@@ -370,6 +423,44 @@ func TestRekeyManagementPair_NormalizesLowerCase(t *testing.T) {
 	}
 	if manager, _ := h.Managers.ManagerOf(t.Context(), mgHandlerChildA); manager != mgHandlerManagerB {
 		t.Errorf("ManagerOf after lowercase-input rekey = %q, want canonical %q", manager, mgHandlerManagerB)
+	}
+}
+
+// TestCreateManagementPair_WriteFailureBodyHasNoPath is H9's handler-level
+// assertion: a create that fails to persist answers 500 with a message that
+// does not repeat the server's absolute snapshot path, even though the
+// underlying store error does carry it (see
+// memory.TestManagementPersistence_WriteFailureBodyHasNoPath). The
+// sanitizing has to happen here, at the boundary that writes the HTTP
+// response body.
+func TestCreateManagementPair_WriteFailureBodyHasNoPath(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission checks do not apply when running as root")
+	}
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "management.json")
+	store, err := memory.NewEndDeviceManagementStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("NewEndDeviceManagementStoreWithPersistence: %v", err)
+	}
+	h := &handler.AdminManagementHandler{Managers: store}
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod dir read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	w := doJSON(t, h.HandleCreateManagementPair(), http.MethodPost, "/api/management-pairs",
+		`{"managerLFDI":"`+mgHandlerManagerA+`","managedLFDI":"`+mgHandlerChildA+`"}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), path) || strings.Contains(w.Body.String(), dir) {
+		t.Errorf("body = %s, must not name the server's snapshot path %q", w.Body.String(), path)
+	}
+	if strings.Contains(w.Body.String(), "/") {
+		t.Errorf("body = %s, want no path-shaped content at all", w.Body.String())
 	}
 }
 

@@ -148,6 +148,45 @@ func writeHeaderedCAWithNonCALeaf(t *testing.T, path string) *x509.Certificate {
 	return caCert
 }
 
+// writeCAWithNonCALeaf writes a loadable CA certificate followed by a
+// loadable non-CA leaf, both unheadered, reproducing the #657 round 3
+// security lane's LOW: parseAdminClientCAPool adds every parsed
+// certificate to the pool (matching AppendCertsFromPEM) but cas holds only
+// the CA-flagged one, so the pool ends up trusting one more certificate
+// than caCount alone describes.
+func writeCAWithNonCALeaf(t *testing.T, path string) (ca, leaf *x509.Certificate) {
+	t.Helper()
+	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{CommonName: "657 round 3 CA", ValidYears: 1})
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	caCert, err := certs.ParseCertificatePEM(caCertPEM)
+	if err != nil {
+		t.Fatalf("ParseCertificatePEM: %v", err)
+	}
+	caKey, err := certs.ParseKeyPEM(caKeyPEM)
+	if err != nil {
+		t.Fatalf("ParseKeyPEM: %v", err)
+	}
+	leafPEM, _, err := certs.GenerateServerCert(caCert, caKey, certs.ServerCertOptions{
+		Hosts:      []string{"127.0.0.1"},
+		CommonName: "657 round 3 leaf",
+		ValidYears: 1,
+	})
+	if err != nil {
+		t.Fatalf("GenerateServerCert: %v", err)
+	}
+	leafCert, err := certs.ParseCertificatePEM(leafPEM)
+	if err != nil {
+		t.Fatalf("ParseCertificatePEM(leaf): %v", err)
+	}
+	buf := append(append([]byte{}, caCertPEM...), leafPEM...)
+	if err := os.WriteFile(path, buf, 0o600); err != nil {
+		t.Fatalf("write CA+leaf anchor: %v", err)
+	}
+	return caCert, leafCert
+}
+
 func TestAdminClientCAPoolSystemSentinel(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{AdminClientCA: config.AdminClientCASystemRoots}
@@ -466,6 +505,100 @@ func TestBuildAdminTLSConfigDegradedAnchorHasNonNilClientCAs(t *testing.T) {
 			}
 			if tlsCfg.ClientCAs == nil {
 				t.Error("ClientCAs = nil, want a non-nil empty pool (#418)")
+			}
+		})
+	}
+}
+
+// TestAdminClientCAPoolDescriptionCountsEveryTrustedCertificate is #657
+// round 3's item 2: a CA plus a non-CA leaf both load, so the pool trusts
+// two certificates, but the pre-fix description named only the CA count
+// ("1 CA"), silently dropping the leaf. Reproduced RED against the
+// unfixed code: desc read "<path> (1 CA; <ca subject>; <ca fingerprint>)"
+// with no mention of the second certificate the pool actually holds.
+func TestAdminClientCAPoolDescriptionCountsEveryTrustedCertificate(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "ca-plus-leaf.crt")
+	caCert, leafCert := writeCAWithNonCALeaf(t, path)
+	cfg := &config.Config{CAFile: path}
+
+	pool, desc, err := adminClientCAPool(cfg)
+	if err != nil {
+		t.Fatalf("adminClientCAPool: unexpected error: %v", err)
+	}
+	if _, verr := caCert.Verify(x509.VerifyOptions{Roots: pool}); verr != nil {
+		t.Errorf("the CA does not verify against the returned pool: %v", verr)
+	}
+	// The leaf itself became a usable anchor (AddCert does not check IsCA),
+	// which is the fact the description must not hide.
+	if _, verr := leafCert.Verify(x509.VerifyOptions{Roots: pool}); verr != nil {
+		t.Errorf("the non-CA leaf does not verify against the returned pool (it should, matching AppendCertsFromPEM): %v", verr)
+	}
+	wantSubject, wantFingerprint := caRoleInfo(caCert)
+	want := "(2 certificates; 1 CA; " + wantSubject + "; " + wantFingerprint + ")"
+	if !strings.Contains(desc, want) {
+		t.Errorf("desc = %q, want it to contain %q: the pool trusts 2 certificates, and \"1 CA\" alone understates that", desc, want)
+	}
+}
+
+// TestAdminClientCAPoolSkippedBlockIsLogged is #657 round 3's item 3: a
+// skipped PEM block (malformed, wrong type, or headered) used to load
+// silently, so an operator who meant to trust two CAs saw "(1 CA)" with
+// nothing explaining the gap. Not run with t.Parallel(): it captures the
+// shared stdlib log.Writer(), same reasoning as
+// TestAdminClientCAPoolMultiCALogsEachSubjectAndFingerprint.
+func TestAdminClientCAPoolSkippedBlockIsLogged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mixed.crt")
+	writeCAWithMalformedBlock(t, path)
+	cfg := &config.Config{CAFile: path}
+
+	var buf strings.Builder
+	prevOut := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prevOut) })
+
+	if _, _, err := adminClientCAPool(cfg); err != nil {
+		t.Fatalf("adminClientCAPool: unexpected error: %v", err)
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, "skipped 1") {
+		t.Errorf("log output = %s, want it to name the skipped-block count (1)", got)
+	}
+}
+
+// TestAdminClientCAPoolDegradeWarningsAreLogged is #657 round 3's item 4
+// (coverage lane LOW): server.go's three defaulted-degrade branches
+// (unconfigured, load failure, no CA certificate) each call a log.Printf
+// the settled design asks for, but nothing asserted on it, so deleting any
+// one line left the whole suite green. Not run with t.Parallel(): each
+// subtest captures the shared stdlib log.Writer(), same reasoning as the
+// other log-capturing tests in this file.
+func TestAdminClientCAPoolDegradeWarningsAreLogged(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist.crt")
+	nonCAPath := filepath.Join(t.TempDir(), "leaf-only.crt")
+	writeNonCALeaf(t, nonCAPath)
+
+	for _, tc := range []struct {
+		name string
+		cfg  *config.Config
+		want string
+	}{
+		{"shape 1: unconfigured", &config.Config{}, "admin client CA not configured"},
+		{"shape 2: defaulted load failure", &config.Config{CAFile: missing}, "admin client CA not loaded (" + missing},
+		{"shape 3: defaulted non-CA anchor", &config.Config{CAFile: nonCAPath}, "admin client CA not loaded (" + nonCAPath + ": no CA certificate)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf strings.Builder
+			prevOut := log.Writer()
+			log.SetOutput(&buf)
+			t.Cleanup(func() { log.SetOutput(prevOut) })
+
+			if _, _, err := adminClientCAPool(tc.cfg); err != nil {
+				t.Fatalf("adminClientCAPool: unexpected error: %v", err)
+			}
+			if got := buf.String(); !strings.Contains(got, tc.want) {
+				t.Errorf("log output = %s, want it to contain %q", got, tc.want)
 			}
 		})
 	}

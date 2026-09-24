@@ -914,7 +914,14 @@ func adminClientCAPool(cfg *config.Config) (*x509.CertPool, string, error) {
 	// One pass builds the pool AND counts its CAs (parseAdminClientCAPool),
 	// so the count can never describe a pool other than the one
 	// buildAdminTLSConfig hands to tls.Config.ClientCAs.
-	pool, cas := parseAdminClientCAPool(pemBytes)
+	pool, cas, certCount, skipped := parseAdminClientCAPool(pemBytes)
+	if skipped > 0 {
+		// A skipped block (wrong PEM type, headers, or a parse failure) is
+		// otherwise invisible: the file still loads and the banner still
+		// prints a CA count, so an operator who meant to trust N CAs sees a
+		// smaller number with nothing explaining the gap.
+		log.Printf("admin client CA %s: skipped %d unusable PEM block(s) while loading", anchor, skipped)
+	}
 	caCount := len(cas)
 	if caCount == 0 {
 		if explicit {
@@ -924,7 +931,16 @@ func adminClientCAPool(cfg *config.Config) (*x509.CertPool, string, error) {
 		return x509.NewCertPool(), "no CA certificate in " + anchor, nil
 	}
 
-	desc := anchor + " (" + strconv.Itoa(caCount) + " CA"
+	// AddCert (parseAdminClientCAPool) makes every parsed certificate a
+	// usable anchor, not only the CA-flagged ones, matching
+	// AppendCertsFromPEM. Naming only caCount understates what the pool
+	// trusts whenever a non-CA certificate rode along, so the certificate
+	// total is folded in wherever it differs from the CA count.
+	desc := anchor + " ("
+	if certCount != caCount {
+		desc += strconv.Itoa(certCount) + " certificates; "
+	}
+	desc += strconv.Itoa(caCount) + " CA"
 	if caCount == 1 {
 		subject, fingerprint := caRoleInfo(cas[0])
 		desc += "; " + subject + "; " + fingerprint
@@ -946,8 +962,11 @@ func adminClientCAPool(cfg *config.Config) (*x509.CertPool, string, error) {
 // same per-block accept/skip rule as x509.CertPool.AppendCertsFromPEM (skip
 // a block whose type isn't "CERTIFICATE", that carries PEM headers, or that
 // fails to parse), so the pool matches what AppendCertsFromPEM would have
-// built. cas returns, in file order, only the CA-flagged certificates.
-func parseAdminClientCAPool(pemBytes []byte) (pool *x509.CertPool, cas []*x509.Certificate) {
+// built. cas returns, in file order, only the CA-flagged certificates;
+// certCount is every certificate actually added to pool (CA-flagged or
+// not, since AddCert makes either one a usable anchor); skipped is every
+// PEM block that did not become a pool entry.
+func parseAdminClientCAPool(pemBytes []byte) (pool *x509.CertPool, cas []*x509.Certificate, certCount, skipped int) {
 	pool = x509.NewCertPool()
 	rest := pemBytes
 	for {
@@ -957,18 +976,21 @@ func parseAdminClientCAPool(pemBytes []byte) (pool *x509.CertPool, cas []*x509.C
 			break
 		}
 		if block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+			skipped++
 			continue
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
+			skipped++
 			continue
 		}
 		pool.AddCert(cert)
+		certCount++
 		if cert.IsCA && cert.BasicConstraintsValid {
 			cas = append(cas, cert)
 		}
 	}
-	return pool, cas
+	return pool, cas, certCount, skipped
 }
 
 // resolveSubParam reads the named environment variable and parses it as a

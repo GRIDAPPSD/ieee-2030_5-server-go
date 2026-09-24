@@ -560,12 +560,18 @@ func (b *syncLogBuffer) String() string {
 // test's CA is not in either), so it cannot guard #418 by itself:
 // TestAdminClientCAPoolEmptyAnchorDegrades and
 // TestBuildAdminTLSConfigDegradedAnchorHasNonNilClientCAs do that, by
-// reading the pool directly, because nil-vs-empty is not observable on the
-// wire (an empty pool's Subjects() has len 0, so crypto/tls omits
-// certificate_authorities for it exactly as it does for nil - see
-// handshake_server_tls13.go's len(certificateAuthorities) > 0 gate). What
-// this test proves, and can prove: a certificate outside the anchor is
-// refused end-to-end, and a certless client is not swept up in that refusal.
+// reading the pool directly. The CertificateRequest hint cannot tell nil
+// from empty either (an empty pool's Subjects() has len 0, so crypto/tls
+// omits certificate_authorities for it exactly as it does for nil -
+// handshake_server_tls13.go's len(certificateAuthorities) > 0 gate), but
+// admission itself IS the distinguishing signal and IS observable
+// end-to-end: pointed at a fixture CA via SSL_CERT_FILE, a client chaining
+// to it is admitted against nil and refused against empty, measured
+// server-side over a real socket (#657 round 3). That test needs its own
+// subprocess, since crypto/x509 caches the system root pool once per
+// process; none is written here. What this test proves, and can prove: a
+// certificate outside the anchor is refused end-to-end, and a certless
+// client is not swept up in that refusal.
 func TestAdminListenerDegradedAnchorDeniesButServesCertless(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

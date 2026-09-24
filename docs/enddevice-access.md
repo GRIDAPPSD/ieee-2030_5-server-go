@@ -130,27 +130,52 @@ through the usual server error line.
 
 `assembly.Stores.EndDeviceManagers` holds the pairs, as a
 `store.EndDeviceManagementStore`. `memory.NewEndDeviceManagementStore` is the
-in-memory implementation.
+in-memory implementation; `memory.NewEndDeviceManagementStoreWithPersistence`
+wraps it with the same on-disk JSON snapshot machinery the other
+admin-mutated stores use (#440), writing to
+`<SEP2_DATA_DIR>/enddevicemanagement.json` when a data directory is
+configured, and staying pure in-memory otherwise.
 
 - An absent (nil) store delegates nothing: every caller reaches only its own
   EndDevice. The router logs that once when it is built.
-- `Assign` refuses an empty LFDI, one that is not upper case or carries
-  surrounding space, and a device named as its own manager, with
-  `store.ErrInvalidManagementPair`. It returns `store.ErrAlreadyExists` when
-  another manager already holds the device. Lookups never fold case.
+- `Assign` refuses an empty LFDI, one that is not upper case, carries
+  surrounding space, or is not exactly 40 hex digits, and a device named as
+  its own manager, with `store.ErrInvalidManagementPair`. The load path
+  enforces the same 40-hex-digit rule as the admin API's own normalization,
+  so a value the API would refuse cannot arrive from disk and become an
+  entry no API call can address again. It returns `store.ErrAlreadyExists`
+  when another manager already holds the device. Lookups never fold case.
+- `RekeyManager` and `RekeyManaged` replace a manager LFDI or a managed LFDI
+  across that LFDI's pairs, for a certificate rotation: a rotated
+  certificate carries a new LFDI, so a pair does not survive rotation of
+  either party without this. Both refuse when the LFDI being replaced
+  manages, or is managed, nothing, and both refuse a destination that
+  collides with an existing pair (`RekeyManager` when the new manager LFDI
+  already manages other devices, `RekeyManaged` when the new managed LFDI
+  already has a manager): a rekey never silently merges two fleets or
+  overwrites an existing pair.
+- A write is durable before it is live: a create, remove, or rekey writes
+  the candidate snapshot to disk first, and only then updates the in-memory
+  pairs. A write reported as failed is therefore never granting access in
+  memory, and a retry re-attempts the same write rather than answering
+  success for a change that never reached disk.
+- A snapshot is validated as it loads, by the same rules `Assign` enforces
+  (canonical LFDI, no self-management, one manager per device). A file
+  holding a record that fails any of them is refused wholesale, the same as
+  a corrupt file or an unsupported version.
 - Pairs are keyed by LFDI, not by the URL index, and outlive the EndDevice
   records they name. A pair whose managed LFDI has no record grants nothing.
-- The in-memory store is not persisted: pairs do not survive a restart.
 
-The server binary and `sep2server.NewStores` wire an empty store.
+The server binary wires the persisted store; `sep2server.NewStores` (the
+pure in-memory embeddable builder) wires an empty, unpersisted one.
 
 ## Who provisions pairs
 
-Management is utility data, established only on the utility side: by an
-embedder writing pairs to the store it passes as `Stores.EndDeviceManagers`,
-which the gate and `GET /edev` read on every request.
-No IEEE 2030.5 request, registration included, creates, changes, or removes a
-pair. Admin-plane provisioning and persistence of pairs are not implemented
-yet and are tracked in
-[#440](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/440); until
-then an aggregator on the server binary has self access only.
+Management is utility data, established only on the utility side. The
+server binary exposes this as the admin-plane API documented in
+[`admin.md`](admin.md#admin-features) (`POST`/`GET`/`DELETE
+/api/management-pairs`, `POST /api/management-pairs/rekey`, #440); an
+embedder may instead write pairs directly to the store it passes as
+`Stores.EndDeviceManagers`, which the gate and `GET /edev` read on every
+request. No IEEE 2030.5 request, registration included, creates, changes, or
+removes a pair.

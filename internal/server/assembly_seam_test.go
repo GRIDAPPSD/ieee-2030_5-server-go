@@ -304,8 +304,9 @@ func TestNewCoreStoresCopiesAllFields(t *testing.T) {
 		PIN:      func(lfdi string) (uint32, bool) { return 1, true },
 		PollRate: 900,
 	}
-	// newTestStores leaves EndDeviceManagers absent, which means no delegation
-	// for every test sharing it; set it here so the copy is observable.
+	// newTestStores already wires an empty EndDeviceManagementStore (#440);
+	// re-set it here anyway so this test does not silently depend on that
+	// default and stays a self-contained proof that the copy works.
 	src.EndDeviceManagers = memory.NewEndDeviceManagementStore()
 	dst := server.NewCoreStores(src)
 

@@ -102,6 +102,14 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 		authed.HandleFunc("GET /api/topology", handler.HandleTopology(stores.AdminFSAs, stores.EndDevices))
 	}
 
+	// #440 management-pair API: who may manage which EndDevice.
+	if mgmtH := newAdminManagementHandler(stores); mgmtH != nil {
+		authed.HandleFunc("POST /api/management-pairs", mgmtH.HandleCreateManagementPair())
+		authed.HandleFunc("GET /api/management-pairs", mgmtH.HandleListManagementPairs())
+		authed.HandleFunc("DELETE /api/management-pairs", mgmtH.HandleRemoveManagementPair())
+		authed.HandleFunc("POST /api/management-pairs/rekey", mgmtH.HandleRekeyManagementPair())
+	}
+
 	// Admin dashboard. legacyDashboard decides which page GET / returns
 	// (see handleDashboardPage); the route pattern is the same either way,
 	// so the boot-time route list does not change with the flag.

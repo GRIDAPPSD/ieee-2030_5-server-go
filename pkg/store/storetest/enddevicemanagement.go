@@ -72,6 +72,14 @@ func RunEndDeviceManagementSuite(t *testing.T, newStore func(*testing.T) store.E
 	})
 
 	t.Run("invalid input is refused and stores nothing", func(t *testing.T) {
+		// "short manager"/"short managed" are #677 fix round item 5: the
+		// write path's checkCanonicalLFDI shares its length rule with the
+		// load path's, but the load path (LoadRefusesNonHex40LFDI) had a
+		// test of its own and the write path did not, so a future split
+		// between them could relax one and leave the other pinned only by
+		// accident. "AAAA" is valid hex and already upper case, so it
+		// exercises the length check on its own rather than the hex-decode
+		// failure a non-hex short value would trip first.
 		cases := map[string][2]string{
 			"empty manager":        {"", childLFDI1},
 			"empty managed":        {managerLFDIA, ""},
@@ -80,6 +88,8 @@ func RunEndDeviceManagementSuite(t *testing.T, newStore func(*testing.T) store.E
 			"lower-case managed":   {managerLFDIA, strings.ToLower(childLFDI1)},
 			"space around manager": {" " + managerLFDIA, childLFDI1},
 			"space around managed": {managerLFDIA, childLFDI1 + " "},
+			"short manager":        {"AAAA", childLFDI1},
+			"short managed":        {managerLFDIA, "AAAA"},
 		}
 		for name, pair := range cases {
 			s := newStore(t)

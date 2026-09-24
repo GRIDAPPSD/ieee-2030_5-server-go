@@ -204,6 +204,14 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	// #624: SEP2_ADMIN_CLIENT_CA is read like SEP2_SERVING_CA/SEP2_DEVICE_CA
+	// (envPathOr, left empty when unset, so Config.EffectiveAdminClientCA
+	// falls back to EffectiveServingCA). The sentinel "system" has no
+	// leading "~" and passes through config.ExpandHome unchanged.
+	adminClientCA, err := envPathOr("SEP2_ADMIN_CLIENT_CA", "")
+	if err != nil {
+		return nil, err
+	}
 	dataDir, err := envPathOr("SEP2_DATA_DIR", "")
 	if err != nil {
 		return nil, err
@@ -239,6 +247,7 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		AdminTLS:         os.Getenv("SEP2_ADMIN_TLS") == "true",
 		AdminCert:        adminCert,
 		AdminKeyFile:     adminKeyFile,
+		AdminClientCA:    adminClientCA,
 		AdminBehindProxy: os.Getenv("SEP2_ADMIN_BEHIND_PROXY") == "true",
 
 		// #365: opt-in for an admin bind reachable from outside this host.

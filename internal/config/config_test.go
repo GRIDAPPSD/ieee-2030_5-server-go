@@ -55,6 +55,51 @@ func TestEffectiveServingAndDeviceCA(t *testing.T) {
 	}
 }
 
+// #624: EffectiveAdminClientCA is the trust-anchor seam buildAdminTLSConfig
+// reads for the admin listener's ClientCAs pool. Unset falls back to the
+// serving CA (the CA that signs the operator cert, per #622's role split);
+// the AdminClientCASystemRoots sentinel is returned unresolved so the
+// caller building the *tls.Config leaves ClientCAs nil rather than treating
+// "system" as a file path.
+func TestEffectiveAdminClientCA(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{
+			name: "unset falls back to serving CA",
+			cfg:  Config{CAFile: "/etc/tls/ca.crt", ServingCAFile: "/etc/tls/serving-ca.crt"},
+			want: "/etc/tls/serving-ca.crt",
+		},
+		{
+			name: "unset with no serving CA falls back to CAFile",
+			cfg:  Config{CAFile: "/etc/tls/ca.crt"},
+			want: "/etc/tls/ca.crt",
+		},
+		{
+			name: "explicit path wins over the serving CA default",
+			cfg:  Config{CAFile: "/etc/tls/ca.crt", ServingCAFile: "/etc/tls/serving-ca.crt", AdminClientCA: "/etc/tls/public-ca.crt"},
+			want: "/etc/tls/public-ca.crt",
+		},
+		{
+			name: "the system-roots sentinel passes through unresolved",
+			cfg:  Config{CAFile: "/etc/tls/ca.crt", ServingCAFile: "/etc/tls/serving-ca.crt", AdminClientCA: AdminClientCASystemRoots},
+			want: "system",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.cfg.EffectiveAdminClientCA(); got != tc.want {
+				t.Errorf("EffectiveAdminClientCA() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // #268: ResolveAdminBind applies a loopback default to a bare-port
 // admin listen string. Pre-#268, ":8444" handed to net.Listen bound
 // 0.0.0.0 - any network neighbor (or co-resident process on a multi-

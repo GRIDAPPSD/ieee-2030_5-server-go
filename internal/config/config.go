@@ -84,6 +84,20 @@ type Config struct {
 	AdminCert    string // admin listener cert PEM path; empty + AdminTLS = self-signed
 	AdminKeyFile string // admin listener key PEM path; required when AdminCert is set
 
+	// #624: the trust anchor for the admin listener's client-certificate
+	// verification (its ClientCAs pool). Empty falls back to the serving CA
+	// (EffectiveServingCA), so a freshly minted operator cert needs no
+	// client-side trust override to be admitted. #657: in the default
+	// single-CA deployment (no ServingCAFile/DeviceCAFile split) that same
+	// CA also signs every device certificate and this server's own leaf,
+	// so it trusts more than "the operator cert" alone - set this
+	// explicitly to a dedicated CA where that is too wide. The literal
+	// value AdminClientCASystemRoots ("system") keeps the pre-#624
+	// host-root behavior explicitly, for a deployment whose operator
+	// certificates come from a public CA. Env: SEP2_ADMIN_CLIENT_CA. See
+	// EffectiveAdminClientCA and buildAdminTLSConfig (internal/server/server.go).
+	AdminClientCA string
+
 	// #269: operator hint that the admin listener is fronted by an
 	// upstream reverse proxy that injects X-Forwarded-* / Forwarded
 	// headers. When the admin listener binds to a non-loopback address
@@ -179,6 +193,24 @@ func (c *Config) EffectiveDeviceCA() string {
 		return c.DeviceCAFile
 	}
 	return c.CAFile
+}
+
+// AdminClientCASystemRoots is the SEP2_ADMIN_CLIENT_CA / AdminClientCA
+// value that keeps the admin listener's client-certificate verification on
+// the host root trust store - the behavior crypto/tls and crypto/x509 fall
+// back to when ClientCAs is nil - instead of a file this server loads. See
+// EffectiveAdminClientCA.
+const AdminClientCASystemRoots = "system"
+
+// EffectiveAdminClientCA returns AdminClientCA if set, else the serving CA
+// (EffectiveServingCA) - see AdminClientCA's own field comment for the
+// anchor's role, and adminClientCAPool (internal/server/server.go) for how
+// each returned value, sentinel included, is resolved.
+func (c *Config) EffectiveAdminClientCA() string {
+	if c.AdminClientCA != "" {
+		return c.AdminClientCA
+	}
+	return c.EffectiveServingCA()
 }
 
 // ResolveAdminBind applies the #268 loopback default to a raw admin

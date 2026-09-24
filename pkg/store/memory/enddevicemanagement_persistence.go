@@ -13,10 +13,13 @@ import (
 // This wrapper diverges from the other five admin-mutated stores in one
 // deliberate way (GRIDAPPSD/ieee-2030_5-server-go#677 fix round): the
 // candidate snapshot is written to disk before the corresponding change is
-// applied in memory, both under EndDeviceManagementStore.mu, rather than
-// after the change and outside it. See the persistPath field comment on
-// EndDeviceManagementStore for why: a management pair grants protocol
-// access, so it must never be live before it is durable.
+// applied in memory, under EndDeviceManagementStore.persistMu rather than
+// EndDeviceManagementStore.mu, and outside mu entirely. See the persistPath
+// and persistMu field comments on EndDeviceManagementStore for why: a
+// management pair grants protocol access, so it must never be live before it
+// is durable, and a disk write in progress must never hold out a reader
+// (GET /edev, the protocol-side ownership gate) that has no relationship to
+// the write.
 
 // managementPairRecord is the on-disk shape of one (manager, managed) pair.
 type managementPairRecord struct {
@@ -98,10 +101,16 @@ func (s *EndDeviceManagementStore) loadFromFile(path string) error {
 }
 
 // recordsLocked captures the current pairs as a freshly built, independent
-// slice, sorted by managed LFDI for a deterministic on-disk order. The
-// caller must already hold s.mu; recordsLocked takes no lock of its own, so
-// a mutating method holding the write lock can call it to build the
-// candidate snapshot for the change it is about to make.
+// slice, sorted by managed LFDI at the moment it is built. The caller must
+// already hold s.mu (for read or write); recordsLocked takes no lock of its
+// own, so a mutating method can call it under either to build the candidate
+// snapshot for the change it is about to make. A caller that appends a new
+// record or rewrites a record's ManagedLFDI field afterward (Assign,
+// RekeyManaged) does not get a re-sorted slice back: persistRecords sorts
+// again immediately before writing (#677 fix round item 6), so the on-disk
+// order is always sorted regardless of how the candidate slice was built,
+// matching this comment's own promise about the file rather than about this
+// function's return value alone.
 func (s *EndDeviceManagementStore) recordsLocked() []managementPairRecord {
 	out := make([]managementPairRecord, 0, len(s.managerOf))
 	for managed, manager := range s.managerOf {
@@ -111,18 +120,21 @@ func (s *EndDeviceManagementStore) recordsLocked() []managementPairRecord {
 	return out
 }
 
-// persistRecordsLocked writes records to disk as the durable snapshot, or is
-// a no-op for an in-memory (unpersisted) store. The caller must hold s.mu
-// for write and must not apply the in-memory mutation records represents
-// until this returns nil: records is the state about to become live,
-// written before it does, so a failed write leaves the store exactly where
-// its last successful write left it, and a caller who retries lands on the
-// same code path rather than an idempotent no-op for a change that never
+// persistRecords writes records to disk as the durable snapshot, sorted by
+// managed LFDI, or is a no-op for an in-memory (unpersisted) store. The
+// caller must hold persistMu for the duration of its whole operation (not
+// s.mu: the write happens outside it, GRIDAPPSD/ieee-2030_5-server-go#677
+// fix round item 1) and must not apply the in-memory mutation records
+// represents until this returns nil: records is the state about to become
+// live, written before it does, so a failed write leaves the store exactly
+// where its last successful write left it, and a caller who retries lands on
+// the same code path rather than an idempotent no-op for a change that never
 // took.
-func (s *EndDeviceManagementStore) persistRecordsLocked(records []managementPairRecord) error {
+func (s *EndDeviceManagementStore) persistRecords(records []managementPairRecord) error {
 	if s.persistPath == "" {
 		return nil
 	}
+	sort.Slice(records, func(i, j int) bool { return records[i].ManagedLFDI < records[j].ManagedLFDI })
 	if err := writeSnapshotEnvelope(s.persistPath, records); err != nil {
 		return fmt.Errorf("enddevice management persistence: %w", err)
 	}

@@ -113,8 +113,12 @@ func (tc sensitiveRouteCase) run(t *testing.T, router http.Handler) {
 	})
 }
 
-// TestSensitiveRoutesRefuseBypassAdmission is acceptance criteria 1 and 2 for
-// both #579 and #631, across every route in the two families.
+// TestSensitiveRoutesRefuseBypassAdmission is acceptance criteria 1 and 2
+// for #579 and #631, across every route in the two families, plus the
+// GET /api/management-pairs decision from the #677 fix round (item 4): a
+// pair grants read access to another device's resources, and the review
+// that raised it put the standard plainly, "if the pair graph is worth a
+// credential to write, it is worth one to read."
 func TestSensitiveRoutesRefuseBypassAdmission(t *testing.T) {
 	router := newSensitiveRoutesRouter(t)
 
@@ -126,6 +130,7 @@ func TestSensitiveRoutesRefuseBypassAdmission(t *testing.T) {
 		{name: "POST /api/certs/info", method: http.MethodPost, path: "/api/certs/info", bearerContentType: "application/x-pem-file", bearerBody: "not a certificate", wantReachedStatus: http.StatusBadRequest},
 		{name: "GET /api/traffic/ (clients sub-route)", method: http.MethodGet, path: "/api/traffic/clients", wantReachedStatus: http.StatusNotFound},
 		{name: "GET /api/traffic/ (stats sub-route)", method: http.MethodGet, path: "/api/traffic/stats", wantReachedStatus: http.StatusNotFound},
+		{name: "GET /api/management-pairs", method: http.MethodGet, path: "/api/management-pairs?manager=AAAA000000000000000000000000000000000001", wantReachedStatus: http.StatusOK},
 	}
 
 	for _, tc := range cases {
@@ -202,12 +207,16 @@ func TestSensitiveRoutesStillRefuseUnderNonLoopbackExposure(t *testing.T) {
 	}
 }
 
-// TestSensitiveAdminPatternsMatchRouterFamilies establishes the two families
-// from the guard's own domain (every "/api/certs" and "/api/traffic" pattern
-// on the AUTHENTICATED mux, not BuildAdminRouter's merged list), not from the
-// handful of route names #579 and #631 happen to quote. A new route under
-// either prefix that is not added to sensitiveAdminPatterns fails here
-// instead of silently joining an unprotected family.
+// TestSensitiveAdminPatternsMatchRouterFamilies establishes the certificate
+// and traffic-capture families from the guard's own domain (every
+// "/api/certs" and "/api/traffic" pattern on the AUTHENTICATED mux, not
+// BuildAdminRouter's merged list), not from the handful of route names #579
+// and #631 happen to quote. A new route under either prefix that is not
+// added to sensitiveAdminPatterns fails here instead of silently joining an
+// unprotected family. GET /api/management-pairs (#677 fix round item 4) is
+// not a third prefix family: only the GET, not POST/DELETE/rekey under the
+// same path, is in sensitiveAdminPatterns, so it is checked by exact name
+// instead of by prefix.
 //
 // #579 MEDIUM-3 (test coverage lane): the merged list also carries the
 // public outer mux's routes, so a pattern that satisfies this comparison
@@ -226,14 +235,25 @@ func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
 	)
 
 	var want []string
+	sawManagementPairsGet := false
 	for _, p := range patterns {
-		_, path, ok := strings.Cut(p, " ")
+		method, path, ok := strings.Cut(p, " ")
 		if !ok {
 			t.Fatalf("pattern %q names no method", p)
 		}
 		if strings.HasPrefix(path, "/api/certs") || strings.HasPrefix(path, "/api/traffic") {
 			want = append(want, p)
 		}
+		if method == http.MethodGet && path == "/api/management-pairs" {
+			want = append(want, p)
+			sawManagementPairsGet = true
+		}
+	}
+	// Control: the router must still expose the named single-pattern
+	// family, or the comparison below would pass by both sides having
+	// silently lost the same entry.
+	if !sawManagementPairsGet {
+		t.Fatal("router reports no GET /api/management-pairs pattern; the control for the third family cannot run")
 	}
 	sort.Strings(want)
 
@@ -244,7 +264,7 @@ func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
 	sort.Strings(got)
 
 	if !slices.Equal(got, want) {
-		t.Fatalf("sensitiveAdminPatterns = %q (%d), want every /api/certs and /api/traffic route from the router = %q (%d)",
+		t.Fatalf("sensitiveAdminPatterns = %q (%d), want every /api/certs and /api/traffic route plus GET /api/management-pairs = %q (%d)",
 			got, len(got), want, len(want))
 	}
 }

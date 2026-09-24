@@ -4,13 +4,20 @@ import (
 	"net/http"
 )
 
-// sensitiveAdminPatterns is the certificate and traffic-capture route
-// families (#579, #631): the certificate routes mint and return key
-// material, and the traffic routes return captured Authorization and Cookie
-// header bytes verbatim. Kept as a map literal, not derived from the router
-// at init time, so a new /api/certs or /api/traffic pattern added later
-// fails the coverage test in admin_sensitive_routes_test.go instead of
-// silently joining an already-protected family.
+// sensitiveAdminPatterns is the certificate, traffic-capture, and
+// management-pair-read route families (#579, #631, #677 fix round item 4):
+// the certificate routes mint and return key material, the traffic routes
+// return captured Authorization and Cookie header bytes verbatim, and
+// GET /api/management-pairs discloses an aggregator's full managed fleet.
+// The management-pair WRITE routes already require a real credential by
+// default (they are not on nonSensitiveAdminWrites below); reads bypassed
+// with no credential at all until this entry, so the write and read
+// requirements are now the same. Kept as a map literal, not derived from
+// the router at init time, so a new /api/certs or /api/traffic pattern
+// added later fails the coverage test in admin_sensitive_routes_test.go
+// instead of silently joining an already-protected family;
+// GET /api/management-pairs does not share a path prefix with either family
+// and so is checked by name there instead.
 var sensitiveAdminPatterns = map[string]struct{}{
 	"GET /api/certs/ca":           {},
 	"POST /api/certs/server":      {},
@@ -18,6 +25,7 @@ var sensitiveAdminPatterns = map[string]struct{}{
 	"GET /api/certs/device-types": {},
 	"POST /api/certs/info":        {},
 	"GET /api/traffic/":           {},
+	"GET /api/management-pairs":   {},
 }
 
 // nonSensitiveAdminWrites is the explicit, reviewed allowlist of admin WRITE

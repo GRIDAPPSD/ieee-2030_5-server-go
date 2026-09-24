@@ -29,9 +29,9 @@ import (
 // AdminManagementHandler is the dependency surface for the management-pair
 // admin endpoints. Managers is the concrete store, not the narrower
 // store.EndDeviceManagementStore interface, because RekeyManager and
-// RekeyManaged are not part of that interface (Pike rule: the interface
-// stays the minimal contract every implementation must satisfy; a
-// provisioning-plane operation like re-key is not one of them).
+// RekeyManaged are not part of that interface: the interface stays the
+// minimal contract every implementation must satisfy, and a
+// provisioning-plane operation like re-key is not one of them.
 type AdminManagementHandler struct {
 	Managers *memory.EndDeviceManagementStore
 }

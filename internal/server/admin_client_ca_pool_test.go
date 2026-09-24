@@ -10,6 +10,8 @@ package server
 
 import (
 	"crypto/x509"
+	"encoding/pem"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,6 +79,73 @@ func writeCAFile(t *testing.T, path string, n int) []*x509.Certificate {
 		t.Fatalf("write CA file: %v", err)
 	}
 	return cas
+}
+
+// writeCAWithMalformedBlock writes a valid, loadable CA certificate
+// followed by a syntactically valid PEM CERTIFICATE block whose body is not
+// valid DER, reproducing the #657 round 2 security lane's MEDIUM-1 shape:
+// one good CA and one bad block in a single anchor file.
+// x509.CertPool.AppendCertsFromPEM skips a block it cannot parse rather
+// than failing the whole file; parseAdminClientCAPool must do the same.
+func writeCAWithMalformedBlock(t *testing.T, path string) *x509.Certificate {
+	t.Helper()
+	certPEM, _, err := certs.GenerateCA(certs.CAOptions{CommonName: "657 round 2 malformed-block CA", ValidYears: 1})
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	caCert, err := certs.ParseCertificatePEM(certPEM)
+	if err != nil {
+		t.Fatalf("ParseCertificatePEM: %v", err)
+	}
+	malformed := []byte("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")
+	buf := append(append([]byte{}, certPEM...), malformed...)
+	if err := os.WriteFile(path, buf, 0o600); err != nil {
+		t.Fatalf("write mixed anchor: %v", err)
+	}
+	return caCert
+}
+
+// writeHeaderedCAWithNonCALeaf writes a CA certificate re-encoded with a
+// PEM header (a shape AppendCertsFromPEM skips outright, per its own
+// len(block.Headers) != 0 check) followed by a non-CA leaf, reproducing the
+// #657 round 2 security lane's MEDIUM-2 shape: the file's only CA-flagged
+// block never reaches the pool, so nothing in it should count as a CA.
+func writeHeaderedCAWithNonCALeaf(t *testing.T, path string) *x509.Certificate {
+	t.Helper()
+	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{CommonName: "657 round 2 headered CA", ValidYears: 1})
+	if err != nil {
+		t.Fatalf("GenerateCA: %v", err)
+	}
+	caCert, err := certs.ParseCertificatePEM(caCertPEM)
+	if err != nil {
+		t.Fatalf("ParseCertificatePEM: %v", err)
+	}
+	caKey, err := certs.ParseKeyPEM(caKeyPEM)
+	if err != nil {
+		t.Fatalf("ParseKeyPEM: %v", err)
+	}
+	block, _ := pem.Decode(caCertPEM)
+	if block == nil {
+		t.Fatal("decode generated CA PEM")
+	}
+	headered := pem.EncodeToMemory(&pem.Block{
+		Type:    "CERTIFICATE",
+		Headers: map[string]string{"X-657-Round2-Test": "value"},
+		Bytes:   block.Bytes,
+	})
+	leafPEM, _, err := certs.GenerateServerCert(caCert, caKey, certs.ServerCertOptions{
+		Hosts:      []string{"127.0.0.1"},
+		CommonName: "657 round 2 headered-anchor leaf",
+		ValidYears: 1,
+	})
+	if err != nil {
+		t.Fatalf("GenerateServerCert: %v", err)
+	}
+	buf := append(append([]byte{}, headered...), leafPEM...)
+	if err := os.WriteFile(path, buf, 0o600); err != nil {
+		t.Fatalf("write headered anchor: %v", err)
+	}
+	return caCert
 }
 
 func TestAdminClientCAPoolSystemSentinel(t *testing.T) {
@@ -260,6 +329,114 @@ func TestAdminClientCAPoolMultiCADescriptionDropsSubjectAndFingerprint(t *testin
 	}
 	if want := path + " (2 CA)"; desc != want {
 		t.Errorf("desc = %q, want %q (no subject/fingerprint above one CA)", desc, want)
+	}
+}
+
+// TestAdminClientCAPoolMultiCALogsEachSubjectAndFingerprint is #657 round
+// 2's LOW-5: the settled design pins the one-line banner to dropping
+// subject and fingerprint above one CA, so above one CA the full detail
+// goes to the startup log instead, the way it does for every degraded
+// shape's own log.Printf. Not run with t.Parallel(): it redirects the
+// shared stdlib log.Writer(), and Go holds every t.Parallel() test in this
+// package until every non-parallel one (this one included) has finished,
+// so no concurrent adminClientCAPool call can write into this buffer.
+func TestAdminClientCAPoolMultiCALogsEachSubjectAndFingerprint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "two-ca.crt")
+	cas := writeCAFile(t, path, 2)
+	cfg := &config.Config{CAFile: path}
+
+	var buf strings.Builder
+	prevOut := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prevOut) })
+
+	if _, _, err := adminClientCAPool(cfg); err != nil {
+		t.Fatalf("adminClientCAPool: unexpected error: %v", err)
+	}
+
+	got := buf.String()
+	for i, ca := range cas {
+		subject, fingerprint := caRoleInfo(ca)
+		if !strings.Contains(got, subject) || !strings.Contains(got, fingerprint) {
+			t.Errorf("CA %d: log output = %s, want it to name subject %q and fingerprint %q", i, got, subject, fingerprint)
+		}
+	}
+}
+
+// TestAdminClientCAPoolDefaultedMalformedBlockStillLoadsTheGoodCA is #657
+// round 2's MEDIUM-1: a defaulted anchor holding a valid CA and a malformed
+// CERTIFICATE block used to refuse the whole boot on the malformed block
+// alone, the same shape as HIGH-1 for a narrower input - a defaulted anchor
+// is meant to degrade, never take the process down. Red before the fix:
+// adminClientCAPool returned "<path>: parse certificate 1: x509: malformed
+// certificate" with a nil pool. x509.CertPool.AppendCertsFromPEM already
+// skips a block it cannot parse instead of failing the whole file; the fix
+// makes the admin resolver agree, so the good CA still loads.
+func TestAdminClientCAPoolDefaultedMalformedBlockStillLoadsTheGoodCA(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "mixed.crt")
+	caCert := writeCAWithMalformedBlock(t, path)
+	cfg := &config.Config{CAFile: path}
+
+	pool, desc, err := adminClientCAPool(cfg)
+	if err != nil {
+		t.Fatalf("adminClientCAPool: unexpected error: %v (want the good CA to load, the malformed block skipped)", err)
+	}
+	if _, verr := caCert.Verify(x509.VerifyOptions{Roots: pool}); verr != nil {
+		t.Errorf("the good CA does not verify against the returned pool: %v", verr)
+	}
+	wantSubject, wantFingerprint := caRoleInfo(caCert)
+	if !strings.Contains(desc, "(1 CA; "+wantSubject+"; "+wantFingerprint+")") {
+		t.Errorf("desc = %q, want it to contain the (1 CA; subject; fingerprint) suffix", desc)
+	}
+}
+
+// TestAdminClientCAPoolExplicitMalformedBlockStillLoadsTheGoodCA is the
+// explicit-anchor counterpart: a malformed block sitting next to a good CA
+// is not itself a provenance-split refusal condition (an unloadable file or
+// zero usable CAs still is, per TestAdminClientCAPoolExplicitLoadFailureRefuses
+// and TestAdminClientCAPoolExplicitNonCAAnchorRefuses), so an operator who
+// names this exact file with SEP2_ADMIN_CLIENT_CA gets the same working
+// anchor a defaulted server would, not a refusal.
+func TestAdminClientCAPoolExplicitMalformedBlockStillLoadsTheGoodCA(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "mixed.crt")
+	caCert := writeCAWithMalformedBlock(t, path)
+	cfg := &config.Config{AdminClientCA: path}
+
+	pool, _, err := adminClientCAPool(cfg)
+	if err != nil {
+		t.Fatalf("adminClientCAPool: unexpected error: %v", err)
+	}
+	if _, verr := caCert.Verify(x509.VerifyOptions{Roots: pool}); verr != nil {
+		t.Errorf("the good CA does not verify against the returned pool: %v", verr)
+	}
+}
+
+// TestAdminClientCAPoolDescriptionNeverClaimsACAThePoolDoesNotHave is #657
+// round 2's MEDIUM-2: AppendCertsFromPEM skips a PEM-headered CERTIFICATE
+// block, so it never reaches the pool, but round 1's description came from
+// a second, more permissive parser (certs.ParseCertificateChainPEM, which
+// accepts headers) that counted it anyway: "1 CA" over a pool that chains
+// nothing. Red before the fix (desc contained "1 CA" while caCert.Verify
+// against the returned pool failed). The fix counts CAs from the exact
+// blocks the pool itself was built from, so a block the pool never held can
+// never be counted.
+func TestAdminClientCAPoolDescriptionNeverClaimsACAThePoolDoesNotHave(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "headered.crt")
+	caCert := writeHeaderedCAWithNonCALeaf(t, path)
+	cfg := &config.Config{CAFile: path}
+
+	pool, desc, err := adminClientCAPool(cfg)
+	if err != nil {
+		t.Fatalf("adminClientCAPool: unexpected error: %v", err)
+	}
+	if _, verr := caCert.Verify(x509.VerifyOptions{Roots: pool}); verr == nil {
+		t.Fatal("the headered CA verified against the pool; AppendCertsFromPEM should have skipped its headered block")
+	}
+	if want := "no CA certificate in " + path; desc != want {
+		t.Errorf("desc = %q, want %q (the pool holds no usable CA, so the description must say so, not claim one)", desc, want)
 	}
 }
 

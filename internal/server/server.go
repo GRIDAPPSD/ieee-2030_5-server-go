@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log"
@@ -882,15 +883,13 @@ const adminClientCARemedy = `set SEP2_CA, SEP2_SERVING_CA, or SEP2_ADMIN_CLIENT_
 // adminClientCAPool resolves the admin listener's ClientCAs pool and its
 // startup-banner description from Config.EffectiveAdminClientCA (#624).
 // AdminClientCASystemRoots defers to buildAdminTLSConfig's nil handling.
-// An anchor that cannot be loaded, or holds no CA certificate, is a hard
-// refusal when the operator set it explicitly (AdminClientCA != ""), and a
-// closed-but-running degrade (an empty, non-nil pool - never nil, which
-// would reopen #418's host-root fallback) when this server defaulted to
-// it: the same file is already reported absent one line earlier in the
-// boot log (main.go's "serving CA not loaded"). #657: AppendCertsFromPEM
-// never inspects IsCA, so a file holding only a non-CA certificate used to
-// load silently; the CA count below is what makes that case distinct from
-// a real anchor in both the pool and the description.
+//
+// Every path below that can refuse (return a non-nil error) honours the same
+// provenance split: a hard refusal when the operator set the anchor
+// explicitly (AdminClientCA != ""), and a closed-but-running degrade (an
+// empty, non-nil pool - never nil, which would reopen #418's host-root
+// fallback) otherwise. Exactly two paths can refuse: the file read, and
+// finding zero usable CA certificates in it (parseAdminClientCAPool).
 func adminClientCAPool(cfg *config.Config) (*x509.CertPool, string, error) {
 	anchor := cfg.EffectiveAdminClientCA()
 	explicit := cfg.AdminClientCA != ""
@@ -903,35 +902,20 @@ func adminClientCAPool(cfg *config.Config) (*x509.CertPool, string, error) {
 		return x509.NewCertPool(), "none configured; operator certificate sign-in disabled", nil
 	}
 
-	pool, err := sepTLS.LoadClientCAs(anchor, nil)
+	pemBytes, err := os.ReadFile(anchor)
 	if err != nil {
 		if explicit {
 			return nil, "", fmt.Errorf("load %s: %w; %s", anchor, err, adminClientCARemedy)
 		}
-		log.Printf("admin client CA not loaded (%v): operator certificate sign-in disabled", err)
+		log.Printf("admin client CA not loaded (%s: %v): operator certificate sign-in disabled", anchor, err)
 		return x509.NewCertPool(), fmt.Sprintf("NOT LOADED (%s: %v); operator certificate sign-in disabled", anchor, err), nil
 	}
 
-	// #657: count CA certificates in the same file LoadClientCAs just
-	// accepted, so a leaf-only file (loads fine, verifies nothing) gets the
-	// same explicit/defaulted split as an unloadable one, instead of
-	// reporting a usable anchor.
-	pemBytes, err := os.ReadFile(anchor)
-	if err != nil {
-		return nil, "", fmt.Errorf("re-read %s after loading it: %w", anchor, err)
-	}
-	chain, err := certs.ParseCertificateChainPEM(pemBytes)
-	if err != nil {
-		return nil, "", fmt.Errorf("%s: %w", anchor, err)
-	}
-	var caCount int
-	var lastCA *x509.Certificate
-	for _, c := range chain {
-		if c.IsCA && c.BasicConstraintsValid {
-			caCount++
-			lastCA = c
-		}
-	}
+	// One pass builds the pool AND counts its CAs (parseAdminClientCAPool),
+	// so the count can never describe a pool other than the one
+	// buildAdminTLSConfig hands to tls.Config.ClientCAs.
+	pool, cas := parseAdminClientCAPool(pemBytes)
+	caCount := len(cas)
 	if caCount == 0 {
 		if explicit {
 			return nil, "", fmt.Errorf("%s holds no CA certificate; %s", anchor, adminClientCARemedy)
@@ -942,11 +926,49 @@ func adminClientCAPool(cfg *config.Config) (*x509.CertPool, string, error) {
 
 	desc := anchor + " (" + strconv.Itoa(caCount) + " CA"
 	if caCount == 1 {
-		subject, fingerprint := caRoleInfo(lastCA)
+		subject, fingerprint := caRoleInfo(cas[0])
 		desc += "; " + subject + "; " + fingerprint
+	} else {
+		// The banner line stays terse above one CA (design-pinned: no single
+		// member identifies a bundle anchor); the per-CA detail goes to the
+		// startup log instead of nowhere.
+		log.Printf("admin client CA %s trusts %d certificate authorities:", anchor, caCount)
+		for _, ca := range cas {
+			subject, fingerprint := caRoleInfo(ca)
+			log.Printf("  %s; %s", subject, fingerprint)
+		}
 	}
 	desc += ")"
 	return pool, desc, nil
+}
+
+// parseAdminClientCAPool builds an *x509.CertPool from pemBytes using the
+// same per-block accept/skip rule as x509.CertPool.AppendCertsFromPEM (skip
+// a block whose type isn't "CERTIFICATE", that carries PEM headers, or that
+// fails to parse), so the pool matches what AppendCertsFromPEM would have
+// built. cas returns, in file order, only the CA-flagged certificates.
+func parseAdminClientCAPool(pemBytes []byte) (pool *x509.CertPool, cas []*x509.Certificate) {
+	pool = x509.NewCertPool()
+	rest := pemBytes
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		if block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			continue
+		}
+		pool.AddCert(cert)
+		if cert.IsCA && cert.BasicConstraintsValid {
+			cas = append(cas, cert)
+		}
+	}
+	return pool, cas
 }
 
 // resolveSubParam reads the named environment variable and parses it as a

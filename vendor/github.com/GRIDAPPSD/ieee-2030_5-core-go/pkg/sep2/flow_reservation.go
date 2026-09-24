@@ -2,6 +2,16 @@ package sep2
 
 import "encoding/xml"
 
+// RequestStatus is the FlowReservationRequest status element (sep.xsd
+// complexType RequestStatus): a timestamp of the status change and the
+// status value itself, both mandatory. dateTime must be the instant the
+// status changed, never a future or past time (sep.xsd annotation on the
+// element).
+type RequestStatus struct {
+	DateTime      int64 `xml:"dateTime"`
+	RequestStatus uint8 `xml:"requestStatus"` // RequestStatusRequested or RequestStatusCancelled
+}
+
 // FlowReservationRequest is a client request to reserve energy flow.
 // Spec reference: section 10.9
 // Element order matches 2023 XSD.
@@ -18,7 +28,10 @@ type FlowReservationRequest struct {
 	EnergyRequested   *SignedRealEnergy `xml:"energyRequested,omitempty"`   // 2023: SignedRealEnergy
 	IntervalRequested *DateTimeInterval `xml:"intervalRequested,omitempty"`
 	PowerRequested    *ActivePower      `xml:"powerRequested,omitempty"`
-	RequestStatus     *uint8            `xml:"RequestStatus,omitempty"` // 0=requested, 1=cancelled
+	// RequestStatus is minOccurs="1" on the parent, so it is a value, not a
+	// pointer: encoding/xml always emits a struct-valued field regardless of
+	// omitempty, which is what a required element needs.
+	RequestStatus RequestStatus `xml:"RequestStatus"`
 }
 
 // Copy returns an independent copy.
@@ -44,10 +57,8 @@ func (f FlowReservationRequest) Copy() FlowReservationRequest {
 		v := *f.PowerRequested
 		c.PowerRequested = &v
 	}
-	if f.RequestStatus != nil {
-		v := *f.RequestStatus
-		c.RequestStatus = &v
-	}
+	// RequestStatus is a value, not a pointer, so `c := f` above already
+	// copied it independently; no per-field clone is needed here.
 	return c
 }
 

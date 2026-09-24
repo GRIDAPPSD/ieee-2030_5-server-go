@@ -110,9 +110,6 @@ var faultProbeBodies = map[string]string{
 	"PUT /edev/{id}/der/{derId}/ders":   sep2Doc("DERStatus", `<readingTime>1700000000</readingTime>`),
 	"PUT /edev/{id}/der/{derId}/dera":   sep2Doc("DERAvailability", `<readingTime>1700000000</readingTime>`),
 
-	"PUT /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc": sep2Doc("DefaultDERControl",
-		`<DERControlBase><opModEnergize>true</opModEnergize></DERControlBase>`),
-
 	"POST /msg/{msgId}/tm": sep2Doc("TextMessage",
 		`<creationTime>1700000000</creationTime>`+
 			`<EventStatus><currentStatus>0</currentStatus><dateTime>1700000000</dateTime>`+
@@ -151,6 +148,35 @@ var mirrorMeterReadingDoc = sep2Doc("MirrorMeterReading",
 // whose root does not carry it, and would do so before reaching any store.
 func sep2Doc(root, children string) string {
 	return `<` + root + ` xmlns="urn:ieee:std:2030.5:ns">` + children + `</` + root + `>`
+}
+
+// TestFaultProbeBodiesNameOnlyMountedPatterns gives faultProbeBodies the same
+// stale-entry check writeAllowlist already has (item 6): an entry naming a
+// pattern the router no longer mounts, such as the PUT on dderc this PR
+// removed (only its GET is mounted; PUT was never wired), sits here unnoticed
+// forever, because probeRequestForID is only ever asked about a pattern
+// actually walked by the route table. Discovery is BuildProtocolRouter's own
+// pattern list, for the same reason the fault tests below read it rather
+// than a hand-copied route list.
+func TestFaultProbeBodiesNameOnlyMountedPatterns(t *testing.T) {
+	t.Parallel()
+	stores, _, _ := faultyStores(t)
+	_, patterns := assembly.BuildProtocolRouter(
+		assembly.RouterConfig{}, stores, testAuthPolicy(), "serverSFDI", "serverLFDI", nil,
+	)
+
+	mounted := map[string]bool{}
+	for _, p := range patterns {
+		mounted[p] = true
+	}
+	if len(faultProbeBodies) == 0 {
+		t.Fatal("faultProbeBodies is empty; the stale-entry check would pass vacuously")
+	}
+	for p := range faultProbeBodies {
+		if !mounted[p] {
+			t.Errorf("faultProbeBodies names %q, which is not a currently mounted pattern; remove the stale entry", p)
+		}
+	}
 }
 
 // faultyStores builds a Stores whose every contract-typed field is the
@@ -307,7 +333,19 @@ func partitionMountedRoutes(patterns []string, exclusions map[string]string) (ro
 // body check, so it would report a covered route that the store failure never
 // reached. That refusal is why adding a write route without a probe body fails
 // this test instead of passing it vacuously.
+//
+// It substitutes faultProbePathValue for every wildcard. A caller that needs
+// a different, stated id (for example a specific EndDevice to compare a
+// manager's answer against its owner's) calls probeRequestForID directly
+// instead of relying on faultProbePathValue's value matching by coincidence.
 func probeRequestFor(base, pattern string) (*http.Request, error) {
+	return probeRequestForID(base, pattern, faultProbePathValue)
+}
+
+// probeRequestForID is probeRequestFor with the wildcard substitution named
+// explicitly, so a caller states which id it is asking about rather than
+// inheriting whatever faultProbePathValue happens to be.
+func probeRequestForID(base, pattern, idValue string) (*http.Request, error) {
 	method, shape, ok := strings.Cut(pattern, " ")
 	if !ok {
 		return nil, fmt.Errorf("pattern %q has no method", pattern)
@@ -316,7 +354,7 @@ func probeRequestFor(base, pattern string) (*http.Request, error) {
 	segments := strings.Split(shape, "/")
 	for i, seg := range segments {
 		if strings.HasPrefix(seg, "{") && strings.HasSuffix(seg, "}") {
-			segments[i] = faultProbePathValue
+			segments[i] = idValue
 		}
 	}
 	path := strings.Join(segments, "/")

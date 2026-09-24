@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -169,28 +171,282 @@ func TestOwnershipGate_PatternListIsUnchanged(t *testing.T) {
 func TestDelegable(t *testing.T) {
 	t.Parallel()
 	cases := map[string]bool{
-		"GET /edev/{id}":                  true,
-		"GET example.test/edev/{id}":      true,
-		"GET /edev/{id}/der":              true,
-		"PUT /edev/{id}/der/{derId}/derg": true,
-		"POST /edev/{id}/sub":             true,
-		"DELETE /edev/{id}/sub/{subId}":   true,
-		"DELETE /edev/{id}/lel/{lelId}":   true,
-		"PUT /edev/{id}":                  false,
-		"DELETE /edev/{id}":               false,
-		"GET /edev/{id}/rg":               false,
-		"GET /edev/{id}/{name}":           false,
-		"GET /edev/{id}/":                 false,
-		"GET /edevx/{id}/der":             false,
-		"GET /edev":                       false,
-		"POST /edev":                      false,
-		"/edev/{id}":                      false,
-		"GET /edev/{other}/der":           false,
-		"GET /mup/{id}":                   false,
+		// Reads follow the managed device's own access: unchanged from the
+		// old pattern rule. HEAD follows GET wherever GET is delegated
+		// (decision 2): no route registers HEAD explicitly today (GET serves
+		// it), but a route that ever does must not fall into the write
+		// branch below and be refused.
+		"GET /edev/{id}":             true,
+		"HEAD /edev/{id}":            true,
+		"GET example.test/edev/{id}": true,
+		"GET /edev/{id}/der":         true,
+		"HEAD /edev/{id}/der":        true,
+		"PUT /edev/{id}":             false,
+		"DELETE /edev/{id}":          false,
+		"GET /edev/{id}/rg":          false,
+		"HEAD /edev/{id}/rg":         false,
+		"GET /edev/{id}/{name}":      false,
+		"GET /edev/{id}/":            false,
+		"GET /edevx/{id}/der":        false,
+		"GET /edev":                  false,
+		"POST /edev":                 false,
+		"/edev/{id}":                 false,
+		// A methodless pattern below the record: the same degenerate shape as
+		// "/edev/{id}" above, one segment deeper. Under the old pattern rule a
+		// literal segment here delegated regardless of method; delegable's
+		// method switch now sends a methodless pattern into the write branch,
+		// where nothing matches, so this moved from granted to refused.
+		"/edev/{id}/der":        false,
+		"GET /edev/{other}/der": false,
+		"GET /mup/{id}":         false,
+		// Writes follow only writeAllowlist: the five entries below are
+		// granted; every other write pattern the old pattern rule would have
+		// delegated is now refused by default.
+		"PUT /edev/{id}/der/{derId}/derg": true, // granted: DERSettings, CSIP V1.2 UTIL-002
+		"POST /edev/{id}/lel":             true, // granted: LogEvent, CSIP V1.2 UTIL-001
+		// The write branch agrees with the read branch about a host prefix:
+		// this host-form write is granted because its host-free equivalent
+		// is, the same tolerance TestRequiresOwnership already exercises for
+		// reads.
+		"PUT example.test/edev/{id}/der/{derId}/derg": true,
+		"POST /edev/{id}/sub":                         false, // refused: not the aggregator's own SubscriptionListLink
+		"DELETE /edev/{id}/sub/{subId}":               false, // refused: not the aggregator's own SubscriptionListLink
+		"DELETE /edev/{id}/lel/{lelId}":               false, // refused: no aggregator text deletes a LogEvent
+		"PUT /edev/{id}/der/{derId}":                  false, // refused: UTIL-002 names only the four DER sub-resources
+		"PUT /edev/{id}/cfg":                          false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
+		"PUT /edev/{id}/dstat":                        false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
+		"PUT /edev/{id}/ps":                           false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
+		"POST /edev/{id}/frq":                         false, // refused: flow reservation appears in no aggregator text
+		// A write pattern nobody has registered yet: proves the default is
+		// denied, not merely that today's five entries are granted.
+		"PUT /edev/{id}/notyetregistered": false,
 	}
 	for pattern, want := range cases {
 		if got := delegable(pattern); got != want {
 			t.Errorf("delegable(%q) = %v, want %v", pattern, got, want)
+		}
+	}
+}
+
+// managerVerdicts is the explicit manager verdict for every pattern
+// TestManagerVerdictForEveryGatedPattern discovers as currently registered
+// and gated. It is issue 510's acceptance criterion 4: a route added to
+// registerAll's wiring appears in the discovered set on its next run, has no
+// entry here, and fails the test until someone adds one and states its
+// verdict, granted or refused.
+var managerVerdicts = map[string]bool{
+	"GET /edev/{id}":    true,
+	"GET /edev/{id}/rg": false,
+	"PUT /edev/{id}":    false,
+	"DELETE /edev/{id}": false,
+
+	"GET /edev/{id}/fsa":                                     true,
+	"GET /edev/{id}/fsa/{fsaId}":                             true,
+	"GET /edev/{id}/fsa/{fsaId}/derp":                        true,
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}":               true,
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc":          true,
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc/{dercId}": true,
+	"GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/dderc":         true,
+	// The PUT route a closed defect (#456) once refused was removed from the
+	// mux entirely, so no pattern exists here for it to name.
+
+	"GET /edev/{id}/der":                true,
+	"GET /edev/{id}/der/{derId}":        true,
+	"PUT /edev/{id}/der/{derId}":        false, // UTIL-002 names only the four DER sub-resources
+	"GET /edev/{id}/der/{derId}/dercap": true,
+	"PUT /edev/{id}/der/{derId}/dercap": true, // DERCapability, CSIP V1.2 UTIL-002
+	"GET /edev/{id}/der/{derId}/derg":   true,
+	"PUT /edev/{id}/der/{derId}/derg":   true, // DERSettings, CSIP V1.2 UTIL-002
+	"GET /edev/{id}/der/{derId}/ders":   true,
+	"PUT /edev/{id}/der/{derId}/ders":   true, // DERStatus, CSIP V1.2 UTIL-002
+	"GET /edev/{id}/der/{derId}/dera":   true,
+	"PUT /edev/{id}/der/{derId}/dera":   true, // DERAvailability, CSIP V1.2 UTIL-002
+
+	"GET /edev/{id}/sub":            true,  // a manager reads what the managed device reads
+	"POST /edev/{id}/sub":           false, // not the aggregator's own SubscriptionListLink
+	"DELETE /edev/{id}/sub/{subId}": false, // not the aggregator's own SubscriptionListLink
+
+	"GET /edev/{id}/cfg": true,
+	"PUT /edev/{id}/cfg": false, // no aggregator text, IEEE 2030.5-2018 8.5.3 default
+
+	"GET /edev/{id}/dstat": true,
+	"PUT /edev/{id}/dstat": false, // no aggregator text, IEEE 2030.5-2018 8.5.3 default
+
+	"GET /edev/{id}/lel":            true,
+	"POST /edev/{id}/lel":           true, // LogEvent, CSIP V1.2 UTIL-001
+	"GET /edev/{id}/lel/{lelId}":    true,
+	"DELETE /edev/{id}/lel/{lelId}": false, // no aggregator text deletes a LogEvent
+
+	"GET /edev/{id}/ps": true,
+	"PUT /edev/{id}/ps": false, // no aggregator text, IEEE 2030.5-2018 8.5.3 default
+
+	"GET /edev/{id}/frq":         true,
+	"GET /edev/{id}/frq/{frqId}": true,
+	"POST /edev/{id}/frq":        false, // flow reservation appears in no aggregator text
+	"GET /edev/{id}/frp":         true,
+	"GET /edev/{id}/frp/{frpId}": true,
+}
+
+// TestManagerVerdictForEveryGatedPattern is issue 510's acceptance
+// criterion 4. It discovers every pattern the real route wiring gates from
+// BuildProtocolRouter's own pattern list, the router it protects, rather than
+// from a hand-copied helper list, and requires an entry in managerVerdicts
+// for each: an entry missing on either side fails, so a route added to any
+// register*Routes helper without a decided verdict fails this test rather
+// than defaulting silently.
+//
+// registerAll (below) is a second, separate source of the same wiring and is
+// deliberately NOT used here: it is a hand-copy of the register*Routes calls,
+// and a sixth helper added to BuildProtocolRouter but not to registerAll
+// would still pass a sweep built from it, undetected. It stays in use for
+// TestOwnershipGate_PatternListIsUnchanged, which needs the same routes
+// registered on a bare mux to compare against the gated one; BuildProtocolRouter
+// exposes no bare (ungated) mode to compare against.
+func TestManagerVerdictForEveryGatedPattern(t *testing.T) {
+	t.Parallel()
+	stores := fullStores()
+	policy := AuthPolicy{Identity: ownerIdentity("OWNER")}
+	_, patterns := BuildProtocolRouter(RouterConfig{}, stores, policy, "serverSFDI", "serverLFDI", nil)
+
+	discovered := map[string]bool{}
+	for _, p := range patterns {
+		if requiresOwnership(p) {
+			discovered[p] = true
+		}
+	}
+	if len(discovered) == 0 {
+		t.Fatal("no gated pattern discovered; the sweep would pass vacuously")
+	}
+
+	for p := range discovered {
+		want, ok := managerVerdicts[p]
+		if !ok {
+			t.Errorf("gated pattern %q is registered but has no managerVerdicts entry; add one stating whether a manager is granted", p)
+			continue
+		}
+		if got := delegable(p); got != want {
+			t.Errorf("delegable(%q) = %v, want %v (managerVerdicts)", p, got, want)
+		}
+	}
+	for p := range managerVerdicts {
+		if !discovered[p] {
+			t.Errorf("managerVerdicts names %q, which is not a currently gated, registered pattern; remove the stale entry", p)
+		}
+	}
+}
+
+// TestWriteAllowlistNamesOnlyMountedPatterns gives writeAllowlist the same
+// stale-entry check managerVerdicts already has above. Without it, an entry
+// naming a pattern the router no longer mounts (a route renamed or removed)
+// sits in the package unnoticed: it grants nothing, because delegable is
+// only ever asked about a pattern the gate actually wraps, but a reader
+// trusts it as live policy. Discovery is BuildProtocolRouter's own pattern
+// list, for the same reason TestManagerVerdictForEveryGatedPattern reads it
+// rather than registerAll.
+func TestWriteAllowlistNamesOnlyMountedPatterns(t *testing.T) {
+	t.Parallel()
+	stores := fullStores()
+	policy := AuthPolicy{Identity: ownerIdentity("OWNER")}
+	_, patterns := BuildProtocolRouter(RouterConfig{}, stores, policy, "serverSFDI", "serverLFDI", nil)
+
+	mounted := map[string]bool{}
+	for _, p := range patterns {
+		mounted[p] = true
+	}
+	if len(writeAllowlist) == 0 {
+		t.Fatal("writeAllowlist is empty; the stale-entry check would pass vacuously")
+	}
+	for p := range writeAllowlist {
+		if !mounted[p] {
+			t.Errorf("writeAllowlist names %q, which is not a currently mounted pattern; remove the stale entry", p)
+		}
+	}
+}
+
+// TestNoRouteRegistersHEADYet is item 5's control: delegable's HEAD handling
+// changes no live verdict only for as long as no mounted pattern registers
+// HEAD explicitly (ServeMux already serves it from the GET registration). A
+// zero HEAD count from this same discovery loop is worth nothing until the
+// loop is shown able to find a method it is known to find; GET, mounted many
+// times over, is that control.
+func TestNoRouteRegistersHEADYet(t *testing.T) {
+	t.Parallel()
+	stores := fullStores()
+	policy := AuthPolicy{Identity: ownerIdentity("OWNER")}
+	_, patterns := BuildProtocolRouter(RouterConfig{}, stores, policy, "serverSFDI", "serverLFDI", nil)
+
+	var head, get int
+	for _, p := range patterns {
+		method, _, _ := strings.Cut(p, " ")
+		switch method {
+		case http.MethodHead:
+			head++
+		case http.MethodGet:
+			get++
+		}
+	}
+	if get == 0 {
+		t.Fatal("no GET pattern found; a search that cannot match GET proves nothing about a zero HEAD count")
+	}
+	if head != 0 {
+		t.Errorf("%d mounted pattern(s) register HEAD explicitly; item 5's HEAD handling now decides a live verdict, not a latent one, and belongs in managerVerdicts", head)
+	}
+}
+
+// writeAllowlistDocPath is docs/enddevice-access.md relative to this package
+// directory.
+const writeAllowlistDocPath = "../../../docs/enddevice-access.md"
+
+// writeAllowlistDocRowPattern matches a write table row's backtick-quoted
+// request, for example "PUT /edev/{id}/der/{derId}/dercap" or
+// "POST /edev/{id}/lel".
+var writeAllowlistDocRowPattern = regexp.MustCompile("`([A-Z]+ /edev/\\{id\\}[^`]*)`")
+
+// TestWriteAllowlistDocTableMatches is item 4: nothing today ties the write
+// table in docs/enddevice-access.md to writeAllowlist, so either can drift
+// from the other with no signal. The table is read from the doc itself
+// rather than copied into a literal here, so a row this test misses is a row
+// the doc's own table structure changed, not a set someone forgot to update
+// alongside it.
+func TestWriteAllowlistDocTableMatches(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(writeAllowlistDocPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", writeAllowlistDocPath, err)
+	}
+	doc := string(raw)
+
+	start := strings.Index(doc, "| Request | Grants |")
+	if start < 0 {
+		t.Fatalf("%s: no \"| Request | Grants |\" table header found; the write table moved or was renamed", writeAllowlistDocPath)
+	}
+	end := strings.Index(doc[start:], "\n\n")
+	if end < 0 {
+		t.Fatalf("%s: the write table's closing blank line was not found", writeAllowlistDocPath)
+	}
+	table := doc[start : start+end]
+
+	rows := writeAllowlistDocRowPattern.FindAllStringSubmatch(table, -1)
+	if len(rows) == 0 {
+		t.Fatalf("%s: no request rows found in the write table; the row pattern matched nothing, which is not the same as an empty table", writeAllowlistDocPath)
+	}
+
+	fromDoc := make(map[string]bool, len(rows))
+	for _, m := range rows {
+		fromDoc[m[1]] = true
+	}
+	if len(fromDoc) != len(rows) {
+		t.Errorf("%s: the write table lists %d row(s) but only %d distinct pattern(s); a duplicate row", writeAllowlistDocPath, len(rows), len(fromDoc))
+	}
+
+	for p := range fromDoc {
+		if !writeAllowlist[p] {
+			t.Errorf("%s: the write table grants %q, which writeAllowlist does not; the doc has drifted ahead of the code", writeAllowlistDocPath, p)
+		}
+	}
+	for p := range writeAllowlist {
+		if !fromDoc[p] {
+			t.Errorf("%s: writeAllowlist grants %q, which the write table does not list; the code has drifted ahead of the doc", writeAllowlistDocPath, p)
 		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/storetest"
@@ -49,6 +50,7 @@ func newManagementFleet(t *testing.T) managementFleet {
 	seedDevice(t, stores.EndDevices, callerID, callerLFDI, callerSFDI)
 	seedDevice(t, stores.EndDevices, unmanagedID, unmanagedLFDI, "")
 	seedDevice(t, stores.EndDevices, secondChildID, secondChildLFDI, "")
+	seedManagedSubResources(t, stores, victimID)
 	managers := memory.NewEndDeviceManagementStore()
 	for _, pair := range [][2]string{
 		{managerLFDI, victimLFDI},
@@ -61,6 +63,59 @@ func newManagementFleet(t *testing.T) managementFleet {
 	}
 	stores.EndDeviceManagers = managers
 	return managementFleet{stores: stores, managers: managers}
+}
+
+// seedManagedSubResources seeds one instance record under edevID for every
+// GET item route the read sweep in TestManagement_ManagerReadIsServedAsTheOwnerIs
+// drives: sweepStatus (via probeRequestForID) sets every wildcard in a
+// pattern to the SAME id, so a DER, DERProgram, DERControl, LogEvent, or flow
+// reservation instance route is probed at id "edevID" for every wildcard.
+// Without a record there, the owner itself gets 404 and the sweep's
+// manager-vs-owner comparison degrades to comparing two absent-resource
+// answers, exactly what the 404 case in sweepStatus's callers now exists to
+// catch.
+func seedManagedSubResources(t *testing.T, stores *assembly.Stores, edevID string) {
+	t.Helper()
+	ctx := context.Background()
+	seedDER(t, stores, edevID, edevID)
+	if err := stores.DERPrograms.Create(ctx, edevID, edevID, sep2.DERProgram{
+		SubscribableResource: sep2.SubscribableResource{
+			Resource: sep2.Resource{Href: "/edev/" + edevID + "/fsa/" + edevID + "/derp/" + edevID},
+		},
+	}); err != nil {
+		t.Fatalf("seed DERProgram: %v", err)
+	}
+	seedDERControl(t, stores, edevID, edevID, 0, 1700000000)
+	if err := stores.LogEvents.Create(ctx, edevID, edevID, sep2.LogEvent{
+		Resource: sep2.Resource{Href: "/edev/" + edevID + "/lel/" + edevID},
+	}); err != nil {
+		t.Fatalf("seed LogEvent: %v", err)
+	}
+	if err := stores.FlowReservationRequests.Create(ctx, edevID, edevID, sep2.FlowReservationRequest{
+		Resource: sep2.Resource{Href: "/edev/" + edevID + "/frq/" + edevID},
+	}); err != nil {
+		t.Fatalf("seed FlowReservationRequest: %v", err)
+	}
+	if err := stores.FlowReservationResponses.Create(ctx, edevID, edevID, sep2.FlowReservationResponse{
+		Event: sep2.Event{SubscribableResource: sep2.SubscribableResource{
+			Resource: sep2.Resource{Href: "/edev/" + edevID + "/frp/" + edevID},
+		}},
+	}); err != nil {
+		t.Fatalf("seed FlowReservationResponse: %v", err)
+	}
+	// DELETE /edev/{id}/sub/{subId} needs an existing record to remove: unlike
+	// the PUT routes above, a delete cannot upsert its way past a 404, so
+	// without this the owner's own probe would 404 the same way the item
+	// routes above did before they were seeded.
+	if err := stores.Subscriptions.Create(ctx, edevID, sep2.Subscription{
+		SubscribableResource: sep2.SubscribableResource{
+			Resource: sep2.Resource{Href: "/edev/" + edevID + "/sub/" + edevID},
+		},
+		SubscribedResource: "/edev/" + edevID,
+		NotificationURI:    "https://example.test/notify/" + edevID,
+	}); err != nil {
+		t.Fatalf("seed Subscription: %v", err)
+	}
 }
 
 // assertNoFleetData checks a refusal's raw bytes for any sep2 document and any
@@ -96,27 +151,65 @@ func TestManagement_ManagerReadsTheManagedEndDevice(t *testing.T) {
 	}
 }
 
-// delegatedPatterns selects, from the router's own pattern list, what a
-// manager is granted: GET on the record and every pattern strictly below
-// it except the Registration.
-func delegatedPatterns(patterns []string) []string {
+// delegatedReadPatterns selects, from the router's own pattern list, the
+// reads a manager is granted: GET on the record and every GET pattern
+// strictly below it except the Registration. A manager reads what the
+// managed device's own client may read.
+func delegatedReadPatterns(patterns []string) []string {
 	var out []string
 	for _, p := range patterns {
 		method, path, _ := strings.Cut(p, " ")
-		if (path == "/edev/{id}" && method == http.MethodGet) ||
-			(strings.HasPrefix(path, "/edev/{id}/") && path != "/edev/{id}/rg") {
+		if method != http.MethodGet {
+			continue
+		}
+		if path == "/edev/{id}" || (strings.HasPrefix(path, "/edev/{id}/") && path != "/edev/{id}/rg") {
 			out = append(out, p)
 		}
 	}
 	return out
 }
 
-// sweepStatus drives pattern, every wildcard set to the managed device's id,
-// on a fresh fleet so one caller's write cannot change the other's answer.
+// writeBelowRecordPatterns selects every PUT, POST or DELETE pattern
+// strictly below /edev/{id}/. It excludes PUT and DELETE on the record
+// itself, which TestManagement_ManagerCannotRewriteOrDeleteTheRecordOrReadItsRegistration
+// already covers.
+func writeBelowRecordPatterns(patterns []string) []string {
+	var out []string
+	for _, p := range patterns {
+		method, path, _ := strings.Cut(p, " ")
+		if method == http.MethodGet || method == http.MethodHead {
+			continue
+		}
+		if strings.HasPrefix(path, "/edev/{id}/") {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// managerWriteAllowlist is this test's own, independently written statement
+// of the five entries a manager may use below a managed record (issue
+// #510). It is not derived from the package's writeAllowlist, so a mistake
+// in one does not hide behind a matching mistake in the other.
+var managerWriteAllowlist = map[string]bool{
+	"PUT /edev/{id}/der/{derId}/dercap": true, // DERCapability, CSIP V1.2 UTIL-002
+	"PUT /edev/{id}/der/{derId}/derg":   true, // DERSettings, CSIP V1.2 UTIL-002
+	"PUT /edev/{id}/der/{derId}/ders":   true, // DERStatus, CSIP V1.2 UTIL-002
+	"PUT /edev/{id}/der/{derId}/dera":   true, // DERAvailability, CSIP V1.2 UTIL-002
+	"POST /edev/{id}/lel":               true, // LogEvent, CSIP V1.2 UTIL-001
+}
+
+// sweepStatus drives pattern, every wildcard set explicitly to victimID (the
+// managed device this fleet's pairs name), on a fresh fleet so one caller's
+// write cannot change the other's answer. It names victimID directly rather
+// than taking probeRequestFor's default: that default is faultProbePathValue,
+// a constant from an unrelated file whose value equals victimID today only by
+// coincidence, and probeRequestForID makes the coupling to victimID the
+// caller states rather than one two files agree on by accident.
 func sweepStatus(t *testing.T, pattern, asLFDI string) int {
 	t.Helper()
 	srv := gateServer(t, newManagementFleet(t).stores, gateTestPolicy())
-	req, err := probeRequestFor(srv.URL, pattern)
+	req, err := probeRequestForID(srv.URL, pattern, victimID)
 	if err != nil {
 		method, path := concreteGatePath(pattern)
 		if req, err = http.NewRequest(method, srv.URL+path, nil); err != nil {
@@ -128,30 +221,229 @@ func sweepStatus(t *testing.T, pattern, asLFDI string) int {
 	return status
 }
 
-func TestManagement_ManagerIsServedOnEveryDelegatedRouteAsTheOwnerIs(t *testing.T) {
+func TestManagement_ManagerReadIsServedAsTheOwnerIs(t *testing.T) {
 	t.Parallel()
 	_, patterns := assembly.BuildProtocolRouter(assembly.RouterConfig{}, newManagementFleet(t).stores, gateTestPolicy(), "serverSFDI", "serverLFDI", nil)
-	delegated := delegatedPatterns(patterns)
+	delegated := delegatedReadPatterns(patterns)
+	if len(delegated) == 0 {
+		t.Fatal("no delegated read pattern found; the sweep would pass vacuously")
+	}
 
-	methods := map[string]int{}
 	for _, p := range delegated {
-		method, _, _ := strings.Cut(p, " ")
-		methods[method]++
 		owner := sweepStatus(t, p, victimLFDI)
-		if owner == http.StatusForbidden || owner == http.StatusMethodNotAllowed {
+		// 404 guards against the same degeneration as 403 and 405: if the
+		// probed id ever stopped naming a real resource, both the owner and
+		// the manager would answer 404 and the comparison below would pass
+		// having proven nothing about delegation.
+		if owner == http.StatusForbidden || owner == http.StatusMethodNotAllowed || owner == http.StatusNotFound {
 			t.Errorf("%s: the owner itself answered %d, so comparing the manager to it proves nothing", p, owner)
 			continue
 		}
 		if manager := sweepStatus(t, p, managerLFDI); manager != owner {
-			t.Errorf("%s: manager answered %d, owner %d; a delegated route serves the manager as it serves the owner", p, manager, owner)
+			t.Errorf("%s: manager answered %d, owner %d; a delegated read serves the manager as it serves the owner", p, manager, owner)
 		}
 	}
-	for _, m := range []string{http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete} {
-		if methods[m] == 0 {
-			t.Errorf("no delegated %s pattern was swept; the sweep does not cover writes of that kind", m)
+	t.Logf("swept %d delegated read patterns of %d mounted", len(delegated), len(patterns))
+}
+
+// TestManagement_ManagerWriteFollowsTheAllowlistNotTheOwner is issue 510's
+// property sweep (risk area 1 and 4): every write below a managed record is
+// established from the router's own mounted patterns, not from the routes
+// this brief happens to name, and each is checked against
+// managerWriteAllowlist rather than against what the owner may do. Before
+// this change every one of these patterns matched TestManagement_
+// ManagerIsServedOnEveryDelegatedRouteAsTheOwnerIs (manager == owner); the
+// control below is that prior behavior, reproduced by asserting the same
+// equality for the five allow-listed patterns while every other write is
+// refused regardless of what the owner gets.
+func TestManagement_ManagerWriteFollowsTheAllowlistNotTheOwner(t *testing.T) {
+	t.Parallel()
+	_, patterns := assembly.BuildProtocolRouter(assembly.RouterConfig{}, newManagementFleet(t).stores, gateTestPolicy(), "serverSFDI", "serverLFDI", nil)
+	writes := writeBelowRecordPatterns(patterns)
+	if len(writes) == 0 {
+		t.Fatal("no write-below-record pattern found; the sweep would pass vacuously")
+	}
+
+	var granted, refused int
+	for _, p := range writes {
+		owner := sweepStatus(t, p, victimLFDI)
+		manager := sweepStatus(t, p, managerLFDI)
+		if managerWriteAllowlist[p] {
+			granted++
+			// The degenerate-owner guard applies only here: the refused half
+			// below never reads owner at all, so a degenerate owner answer
+			// cannot make its assertion meaningless the way it would here.
+			// 400 joins 403, 404 and 405: POST /edev/{id}/sub already answers
+			// 400 for the owner (no probe body is registered for it, so the
+			// probe falls back to an empty one), and if a 400-owner pattern
+			// is ever allow-listed, comparing the manager to it would demand
+			// the manager reproduce a probe artifact rather than a real
+			// granted status. None of today's five allow-listed patterns
+			// hits this.
+			if owner == http.StatusForbidden || owner == http.StatusMethodNotAllowed || owner == http.StatusNotFound || owner == http.StatusBadRequest {
+				t.Errorf("%s: allow-listed; the owner itself answered %d, so comparing the manager to it proves nothing", p, owner)
+				continue
+			}
+			if manager != owner {
+				t.Errorf("%s: allow-listed; manager answered %d, owner %d; want the manager served as the owner is", p, manager, owner)
+			}
+			continue
+		}
+		refused++
+		if manager != http.StatusForbidden {
+			t.Errorf("%s: not on the allow-list; manager answered %d, owner %d; want 403 regardless of the owner's status", p, manager, owner)
 		}
 	}
-	t.Logf("swept %d delegated patterns of %d mounted: %v", len(delegated), len(patterns), methods)
+	if granted != len(managerWriteAllowlist) {
+		t.Errorf("swept %d allow-listed write patterns, want all %d entries reachable through the mounted routes", granted, len(managerWriteAllowlist))
+	}
+	if refused == 0 {
+		t.Error("no non-allow-listed write pattern was swept; the control that a write can still be refused never ran")
+	}
+	t.Logf("swept %d write-below-record patterns of %d mounted: %d allow-listed (granted), %d refused", len(writes), len(patterns), granted, refused)
+}
+
+// derSingletonParentKey is the (parentID) half of the (parentID, id) pair
+// HandleSingletonGetPut reads and writes: r.PathValue("id") + "/" +
+// r.PathValue("derId"). sweepStatus drives every wildcard in a pattern to
+// victimID, so a DER PUT probed at victimID's record has this parent key.
+func derSingletonParentKey(edevID string) string {
+	return edevID + "/" + edevID
+}
+
+// TestManagement_ManagerGrantedWriteLandsOnTheManagedDevice is issue 510
+// round two's MEDIUM. TestManagement_ManagerWriteFollowsTheAllowlistNotTheOwner
+// proves a granted write gets the owner's STATUS, which a write silently
+// rerouted to a different scope key still produces: the reroute upserts just
+// as successfully as the correct target would, so the status never moves. A
+// mutant that redirects every delegated write's {id} onto the manager's own
+// LFDI before the handler runs, reproduced and reverted while building this
+// test, left every existing assembly test green, including this file's own
+// write sweep.
+//
+// This drives each of the five allow-listed writes as the manager, then
+// reads the result back through the SAME (parentID, id) pair a later GET on
+// the managed device would use: store.Get for the four DER singletons,
+// store.List for the LogEvent, whose id the handler generates. A field the
+// request carried, not merely the record's presence, is required, so an
+// unrelated write landing on the same key by coincidence would not pass.
+func TestManagement_ManagerGrantedWriteLandsOnTheManagedDevice(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fleet := newManagementFleet(t)
+	srv := gateServer(t, fleet.stores, gateTestPolicy())
+	parentKey := derSingletonParentKey(victimID)
+
+	derCases := []struct {
+		name  string
+		path  string
+		body  string
+		lands func(t *testing.T) bool
+	}{
+		{
+			name: "PUT dercap",
+			path: "/edev/" + victimID + "/der/" + victimID + "/dercap",
+			body: sep2Doc("DERCapability", `<type>91</type>`),
+			lands: func(t *testing.T) bool {
+				t.Helper()
+				got, err := fleet.stores.DERCapabilities.Get(ctx, parentKey, coresingleton.SingletonKey)
+				if err != nil {
+					t.Logf("DERCapabilities.Get(%q, %q): %v", parentKey, coresingleton.SingletonKey, err)
+					return false
+				}
+				return got.Type != nil && *got.Type == 91
+			},
+		},
+		{
+			name: "PUT derg",
+			path: "/edev/" + victimID + "/der/" + victimID + "/derg",
+			body: sep2Doc("DERSettings", `<updatedTime>1700000101</updatedTime>`),
+			lands: func(t *testing.T) bool {
+				t.Helper()
+				got, err := fleet.stores.DERSettings.Get(ctx, parentKey, coresingleton.SingletonKey)
+				if err != nil {
+					t.Logf("DERSettings.Get(%q, %q): %v", parentKey, coresingleton.SingletonKey, err)
+					return false
+				}
+				return got.UpdatedTime == 1700000101
+			},
+		},
+		{
+			name: "PUT ders",
+			path: "/edev/" + victimID + "/der/" + victimID + "/ders",
+			body: sep2Doc("DERStatus", `<readingTime>1700000102</readingTime>`),
+			lands: func(t *testing.T) bool {
+				t.Helper()
+				got, err := fleet.stores.DERStatuses.Get(ctx, parentKey, coresingleton.SingletonKey)
+				if err != nil {
+					t.Logf("DERStatuses.Get(%q, %q): %v", parentKey, coresingleton.SingletonKey, err)
+					return false
+				}
+				return got.ReadingTime == 1700000102
+			},
+		},
+		{
+			name: "PUT dera",
+			path: "/edev/" + victimID + "/der/" + victimID + "/dera",
+			body: sep2Doc("DERAvailability", `<readingTime>1700000103</readingTime>`),
+			lands: func(t *testing.T) bool {
+				t.Helper()
+				got, err := fleet.stores.DERAvailabilities.Get(ctx, parentKey, coresingleton.SingletonKey)
+				if err != nil {
+					t.Logf("DERAvailabilities.Get(%q, %q): %v", parentKey, coresingleton.SingletonKey, err)
+					return false
+				}
+				return got.ReadingTime == 1700000103
+			},
+		},
+	}
+
+	for _, tc := range derCases {
+		status, raw := gateRequest(t, srv, http.MethodPut, tc.path, managerLFDI, tc.body)
+		if status != http.StatusNoContent {
+			t.Fatalf("%s: status %d, want 204; body=%q", tc.name, status, raw)
+		}
+		if !tc.lands(t) {
+			t.Errorf("%s: the managed device's own store key %q does not carry the field the request sent; the write did not land where the manager addressed it", tc.name, parentKey)
+		}
+	}
+
+	// LogEvent: HandlePostLogEvent mints the id, so the consumer's read path
+	// is List(parentID), not a fixed Get key. seedManagedSubResources already
+	// put one LogEvent under victimID, so the count moving by exactly one,
+	// plus a matching LogEventID in the list, is what proves the manager's
+	// POST landed there and not somewhere the pre-seeded record cannot show.
+	before, err := fleet.stores.LogEvents.Count(ctx, victimID)
+	if err != nil {
+		t.Fatalf("LogEvents.Count before: %v", err)
+	}
+	lelBody := sep2Doc("LogEvent",
+		`<createdDateTime>1700000200</createdDateTime><logEventCode>7</logEventCode>`+
+			`<logEventID>4242</logEventID><logEventPEN>37244</logEventPEN><profileID>2</profileID>`)
+	status, raw := gateRequest(t, srv, http.MethodPost, "/edev/"+victimID+"/lel", managerLFDI, lelBody)
+	if status != http.StatusCreated {
+		t.Fatalf("POST lel: status %d, want 201; body=%q", status, raw)
+	}
+	after, err := fleet.stores.LogEvents.Count(ctx, victimID)
+	if err != nil {
+		t.Fatalf("LogEvents.Count after: %v", err)
+	}
+	if after != before+1 {
+		t.Errorf("POST lel: LogEvents.Count(%q) went from %d to %d, want +1; the manager's write did not add a record under the managed device's own key", victimID, before, after)
+	}
+	list, err := fleet.stores.LogEvents.List(ctx, victimID, store.ListOptions{Unbounded: true})
+	if err != nil {
+		t.Fatalf("LogEvents.List(%q): %v", victimID, err)
+	}
+	var found bool
+	for _, ev := range list.Items {
+		if ev.LogEventID == 4242 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("POST lel: no LogEvent with LogEventID 4242 listed under the managed device's own key %q; the sent body did not land there", victimID)
+	}
 }
 
 func TestManagement_ManagerCannotRewriteOrDeleteTheRecordOrReadItsRegistration(t *testing.T) {

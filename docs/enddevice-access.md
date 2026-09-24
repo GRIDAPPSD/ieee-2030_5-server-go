@@ -24,12 +24,35 @@ EndDevice. An aggregator with no pairs is an ordinary device.
 
 ## What a manager can and cannot do
 
-A manager may use:
+Reads and writes are two separate rules.
 
-- `GET` and `HEAD /edev/{id}` on the managed record;
-- every gated route strictly below `/edev/{id}/` (DER resources, FSAs,
-  DERPrograms and DERControls, subscriptions, LogEvents, flow reservations,
-  configuration, status singletons), for every method the route serves.
+**Reads.** A manager may `GET` and `HEAD` whatever the managed device's own
+client may: the record itself, and every gated route strictly below it
+(DER resources, FSAs, DERPrograms and DERControls, subscriptions, LogEvents,
+flow reservations, configuration, status singletons), except the
+Registration. Unlike writes, a read added to the route table later is
+delegated by default: the gate grants a new GET pattern until an entry here
+and in the gate specifically refuses it.
+
+**Writes, creates and deletes.** A manager may make only the requests on an
+explicit allow-list, each granted by a specific CSIP IG or V1.2 procedure
+citation:
+
+| Request | Grants |
+|---|---|
+| `PUT /edev/{id}/der/{derId}/dercap` | DERCapability |
+| `PUT /edev/{id}/der/{derId}/derg` | DERSettings |
+| `PUT /edev/{id}/der/{derId}/ders` | DERStatus |
+| `PUT /edev/{id}/der/{derId}/dera` | DERAvailability |
+| `POST /edev/{id}/lel` | a LogEvent |
+
+Every other write below a managed record is refused, including
+`PUT /edev/{id}/der/{derId}` itself, `POST` and `DELETE` on the managed
+device's own subscriptions, `DELETE` on a LogEvent instance, and writes to
+`cfg`, `dstat`, `ps` and `frq`: a manager never rewrites or deletes the
+record, and IEEE 2030.5-2018 8.5.3's default is that a write below an
+EndDevice is restricted to the device itself unless the allow-list names an
+exception.
 
 A manager may not:
 
@@ -37,6 +60,9 @@ A manager may not:
   managed device's record;
 - `GET /edev/{id}/rg`: the Registration, including its pIN, is the device's
   own.
+
+A write pattern added to the route table later is refused by default until
+an entry naming it, with its source, is added here and to the gate.
 
 ## GET /edev and PUT /edev/{id}
 

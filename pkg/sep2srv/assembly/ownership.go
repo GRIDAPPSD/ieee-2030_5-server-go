@@ -91,10 +91,45 @@ func requiresOwnership(pattern string) bool {
 	return path == "/edev" || strings.HasPrefix(path, "/edev/")
 }
 
-// delegable reports whether a manager may use pattern on a device it manages:
-// GET on the record, which also serves HEAD, and every pattern strictly below
-// it except the Registration. A manager never rewrites or deletes the record
-// itself, and a record pattern that names no method is not delegated.
+// writeAllowlist holds the exact PUT, POST and DELETE patterns a manager may
+// use on a device it manages, below the record. Every other write is
+// refused by default (issue #510): IEEE 2030.5-2018 8.5.3 restricts a write
+// below an EndDevice to the device itself unless a specific procedure needs
+// otherwise.
+var writeAllowlist = map[string]bool{
+	// CSIP V1.2 UTIL-002: the aggregator PUTs each of the four DER
+	// sub-resources of a managed device's DER instance.
+	"PUT /edev/{id}/der/{derId}/dercap": true,
+	"PUT /edev/{id}/der/{derId}/derg":   true,
+	"PUT /edev/{id}/der/{derId}/ders":   true,
+	"PUT /edev/{id}/der/{derId}/dera":   true,
+	// CSIP V1.2 UTIL-001: the aggregator POSTs a LogEvent for a managed
+	// device.
+	"POST /edev/{id}/lel": true,
+}
+
+// delegable reports whether a manager may use pattern on a device it
+// manages. Reads (GET, and HEAD wherever GET is delegated, decision 2)
+// follow the managed device's own access: the record itself, and every
+// pattern strictly below it except the Registration. Writes, creates and
+// deletes follow only writeAllowlist above; a write pattern not on the list
+// is refused, even when a wildcard or literal segment would have delegated
+// it under the old pattern rule. A record pattern that names no method is
+// not delegated.
+//
+// No mounted route registers HEAD explicitly today; ServeMux serves it from
+// the GET registration, so delegable never sees "HEAD ..." in practice. The
+// HEAD branch exists for the day a route does register it: without it, such
+// a pattern's non-GET method would fall into the write branch below and be
+// refused, contradicting decision 2's grant.
+//
+// The write lookup key is rebuilt from segments, the same host-free form the
+// read branch already parses into, rather than the raw pattern: a
+// ServeMux pattern may carry an optional host before the path
+// ("PUT example.test/edev/{id}/..."), and writeAllowlist's keys never do.
+// Keying on the raw pattern would silently refuse a host-form write that an
+// equivalent host-free entry grants, disagreeing with the read branch for no
+// reason tied to what is actually being requested.
 func delegable(pattern string) bool {
 	i := strings.IndexByte(pattern, '/')
 	if i < 0 {
@@ -105,8 +140,11 @@ func delegable(pattern string) bool {
 	if len(segments) < 2 || segments[0] != "edev" || segments[1] != "{id}" {
 		return false
 	}
+	if method != http.MethodGet && method != http.MethodHead {
+		return writeAllowlist[method+" /"+strings.Join(segments, "/")]
+	}
 	if len(segments) == 2 {
-		return method == http.MethodGet
+		return true
 	}
 	// The resource segment must be a literal other than the Registration: a
 	// wildcard or an empty segment there would also match the Registration.

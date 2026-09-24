@@ -12,7 +12,6 @@ import "encoding/xml"
 // not yet modeled here (ConfigurationLink, deviceCategory,
 // DeviceInformationLink, DeviceStatusLink, FileStatusLink,
 // IPInterfaceListLink, LoadShedAvailabilityListLink, PowerStatusLink,
-// FlowReservationRequestListLink, FlowReservationResponseListLink,
 // postRate) are omitted.
 // Schema parsers (e.g., EPRI oeg_client) validate element order strictly.
 type EndDevice struct {
@@ -26,10 +25,16 @@ type EndDevice struct {
 	SFDI             string    `xml:"sFDI"`
 
 	// --- EndDevice's own sequence (in XSD order) ---
-	ChangedTime                    int64     `xml:"changedTime"`
-	Enabled                        *bool     `xml:"enabled,omitempty"`
-	FunctionSetAssignmentsListLink *ListLink `xml:"FunctionSetAssignmentsListLink,omitempty"`
-	RegistrationLink               *Link     `xml:"RegistrationLink,omitempty"`
+	ChangedTime int64 `xml:"changedTime"`
+	Enabled     *bool `xml:"enabled,omitempty"`
+	// FlowReservationRequestListLink and FlowReservationResponseListLink
+	// advertise the per-EndDevice flow reservation lists the server already
+	// mounts (GRIDAPPSD/ieee-2030_5-core-go#177); without them a client that
+	// discovers resources by following links can never reach either list.
+	FlowReservationRequestListLink  *ListLink `xml:"FlowReservationRequestListLink,omitempty"`
+	FlowReservationResponseListLink *ListLink `xml:"FlowReservationResponseListLink,omitempty"`
+	FunctionSetAssignmentsListLink  *ListLink `xml:"FunctionSetAssignmentsListLink,omitempty"`
+	RegistrationLink                *Link     `xml:"RegistrationLink,omitempty"`
 	// SubscriptionListLink is the per-EndDevice subscription list
 	// (GRIDAPPSD/ieee-2030_5-server-go#180), per IEEE 2030.5 section
 	// 10.5.5 / CSIP V1.2 CORE-018 step 1. Servers that
@@ -57,6 +62,14 @@ func (e EndDevice) Copy() EndDevice {
 	if e.RegistrationLink != nil {
 		l := *e.RegistrationLink
 		c.RegistrationLink = &l
+	}
+	if e.FlowReservationRequestListLink != nil {
+		l := *e.FlowReservationRequestListLink
+		c.FlowReservationRequestListLink = &l
+	}
+	if e.FlowReservationResponseListLink != nil {
+		l := *e.FlowReservationResponseListLink
+		c.FlowReservationResponseListLink = &l
 	}
 	if e.FunctionSetAssignmentsListLink != nil {
 		l := *e.FunctionSetAssignmentsListLink

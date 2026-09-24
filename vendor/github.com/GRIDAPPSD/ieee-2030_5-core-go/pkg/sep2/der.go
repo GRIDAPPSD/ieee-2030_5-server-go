@@ -491,13 +491,25 @@ func (d DERStatus) Copy() DERStatus {
 	return c
 }
 
-// DERAvailability reports device availability.
+// DERAvailability reports device availability. Field order follows
+// sep.xsd's DERAvailability sequence, confirmed against the alphabetical
+// attribute listing in IEEE 2030.5-2023 Annex B.23. readingTime is
+// minOccurs=1 and carries no omitempty, unlike the other elements here.
+//
+// The 2023 edition adds two more elements here, statVarAbsorbAvail and
+// statWAbsorbAvail, but this module's schema gate (schema/PROVENANCE.md)
+// pins the 2018 edition, Model Build 20180301, which does not declare them;
+// CI's schema-gated test fails with unknown-element for both. Adding that
+// pair is therefore a separate change gated on an edition decision, not on
+// this one.
 type DERAvailability struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERAvailability"`
 	SubscribableResource
 	AvailabilityDuration *uint32        `xml:"availabilityDuration,omitempty"`
 	MaxChargeDuration    *uint32        `xml:"maxChargeDuration,omitempty"`
-	ReadingTime          int64          `xml:"readingTime,omitempty"`
+	ReadingTime          int64          `xml:"readingTime"`
+	ReserveChargePercent *PerCent       `xml:"reserveChargePercent,omitempty"`
+	ReservePercent       *PerCent       `xml:"reservePercent,omitempty"`
 	StatVarAvail         *ReactivePower `xml:"statVarAvail,omitempty"`
 	StatWAvail           *ActivePower   `xml:"statWAvail,omitempty"`
 }
@@ -512,6 +524,14 @@ func (d DERAvailability) Copy() DERAvailability {
 	if d.MaxChargeDuration != nil {
 		v := *d.MaxChargeDuration
 		c.MaxChargeDuration = &v
+	}
+	if d.ReserveChargePercent != nil {
+		v := *d.ReserveChargePercent
+		c.ReserveChargePercent = &v
+	}
+	if d.ReservePercent != nil {
+		v := *d.ReservePercent
+		c.ReservePercent = &v
 	}
 	if d.StatVarAvail != nil {
 		v := *d.StatVarAvail

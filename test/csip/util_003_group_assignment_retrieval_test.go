@@ -1,16 +1,16 @@
-// CSIP V1.2 §9.3 — UTIL-003 Utility-Aggregator Group Assignment Retrieval.
+// CSIP V1.2 Section 9.3 - UTIL-003 Utility-Aggregator Group Assignment Retrieval.
 //
 // UTIL-003 proves the server accepts and persists Subscriptions an
 // Aggregator opens against each managed inverter's DERProgramList. The
 // procedure reads:
 //
-//  1. Aggregator GETs /edev (already exercised by UTIL-001/002 — UTIL-003
+//  1. Aggregator GETs /edev (already exercised by UTIL-001/002 - UTIL-003
 //     re-walks to discover the per-inverter DERProgramList href via
 //     FSA chain).
 //  2. For each managed inverter (EDA1..EDB2):
-//     - Walk /edev/{id}/fsa → DERProgramListLink for the SY FSA (the
+//     - Walk /edev/{id}/fsa -> DERProgramListLink for the SY FSA (the
 //     top-level chain entry; the server scopes DERPrograms by
-//     EndDevice so any FSA's link works — see CORE-010).
+//     EndDevice so any FSA's link works - see CORE-010).
 //     - POST a Subscription targeting that DERProgramList URL.
 //  3. Server returns 201 Created + Location header for each.
 //  4. GET /edev/{id}/sub returns the just-created Subscription in the
@@ -50,7 +50,7 @@ import (
 // part of Subscription state and asserted on the GET round-trip.
 const utilSubscriptionNotificationURI = "https://192.0.2.1/notify"
 
-// TestUTIL_003_GroupAssignmentRetrieval implements CSIP V1.2 §9.3.
+// TestUTIL_003_GroupAssignmentRetrieval implements CSIP V1.2 Section 9.3.
 func TestUTIL_003_GroupAssignmentRetrieval(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -78,7 +78,7 @@ func TestUTIL_003_GroupAssignmentRetrieval(t *testing.T) {
 		progHrefs[edevID] = link.Href
 	}
 
-	// Step 2 + 3: POST a Subscription per inverter in parallel — surfaces
+	// Step 2 + 3: POST a Subscription per inverter in parallel - surfaces
 	// SubscriptionStore races under -race.
 	for _, edevID := range aggManagedInverters {
 		edevID := edevID
@@ -96,9 +96,9 @@ func TestUTIL_003_GroupAssignmentRetrieval(t *testing.T) {
 // in the list under the expected scope. Surfaces three failure modes
 // distinctly:
 //
-//   - Server refused the POST (mode → status != 201).
-//   - Server accepted but did not persist (mode → GET list excludes it).
-//   - Server persisted under the wrong scope (mode → GET on a different
+//   - Server refused the POST (mode -> status != 201).
+//   - Server accepted but did not persist (mode -> GET list excludes it).
+//   - Server persisted under the wrong scope (mode -> GET on a different
 //     edev contains it; not asserted explicitly because the per-edev
 //     subtests run in parallel and each only walks its own list, which
 //     is a per-scope assertion by construction).

@@ -1,6 +1,6 @@
 //go:build csip_test_hooks
 
-// CSIP V1.2 §9.4 — UTIL-004 Utility-Aggregator DER Retrieval.
+// CSIP V1.2 Section 9.4 - UTIL-004 Utility-Aggregator DER Retrieval.
 //
 // UTIL-004 is the end-to-end DERControl event flow for the
 // Utility-Aggregator profile:
@@ -16,7 +16,7 @@
 //     managed inverter against /rsps/{rspsId}/rsp.
 //  5. Server's response list reflects the POSTs.
 //
-// #157 update — Step 3 notification fan-out is now wired. The
+// #157 update - Step 3 notification fan-out is now wired. The
 // #27 derctl-add mutation hook calls ResourceNotifier.Notify on
 // the parent DERProgramList href after a successful Create, and the
 // csiptest.BootServer wires a real subscription.Manager into the test
@@ -25,17 +25,17 @@
 // inverter Subscription's NotificationURI at it; after step 2 commits
 // the 16 controls, the receiver records one Notification per managed
 // inverter per derctl-add on the subscribed (SY-level) DERProgramList
-// href — 4 inverters × 1 SY-level DERControl = 4 Notifications.
+// href - 4 inverters x 1 SY-level DERControl = 4 Notifications.
 //
 // Out-of-scope for #157 (and future Pike tickets):
-//   - Receiver-side TLS verification — the receiver is plain HTTP.
+//   - Receiver-side TLS verification - the receiver is plain HTTP.
 //     UTIL-004 asserts the server emitted the Notification, not that
 //     the spec's mTLS hop survives. A separate ticket can drive that.
 //   - Notifications for non-subscribed FSA levels (FDx / SPxx / DEV).
 //     UTIL-003 subscribes only the SY level; the other three
 //     derctl-add calls happen but no Subscription is registered on
 //     those hrefs so Manager.Notify does not fan out. This is by
-//     design — the procedure exercises the priority-chain top.
+//     design - the procedure exercises the priority-chain top.
 package csip_test
 
 import (
@@ -67,15 +67,15 @@ const utilResponseSetID = "util004"
 
 // utilDERControlBaseID is the per-node DERControl ID the mutation hook
 // stores under. UTIL-004 creates one DERControl per (inverter, FSA-node)
-// pair, so 4 inverters × 4 FSA levels = 16 controls. Per-pair ID is
+// pair, so 4 inverters x 4 FSA levels = 16 controls. Per-pair ID is
 // derived from `{edevID}-{fsaID}`.
 func utilDERControlID(edevID, fsaID string) string {
 	return fmt.Sprintf("ctl-%s-%s", edevID, fsaID)
 }
 
-// TestUTIL_004_DERRetrieval implements CSIP V1.2 §9.4.
+// TestUTIL_004_DERRetrieval implements CSIP V1.2 Section 9.4.
 func TestUTIL_004_DERRetrieval(t *testing.T) {
-	// The mutation hook is gated on SEP2_TEST_MUTATION_TOKEN — see
+	// The mutation hook is gated on SEP2_TEST_MUTATION_TOKEN - see
 	// internal/server/test_mutations.go RegisterMutationHandlers. Set
 	// before BootServer so the server picks it up. Use t.Setenv so the
 	// child test's env state is scoped, but note: csip_test_hooks reads
@@ -93,7 +93,7 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 	// subscriptions are POSTed. The receiver's URL becomes each
 	// Subscription's NotificationURI so the BootServer's Manager
 	// fan-out path (step 3) lands here. The receiver is plain HTTP
-	// (httptest.NewServer) — UTIL-004 asserts the server emitted the
+	// (httptest.NewServer) - UTIL-004 asserts the server emitted the
 	// Notification, not the spec's mTLS hop. Drop in #151's
 	// csiptest.NotificationReceiver once #152 lands.
 	receiver := newUTILNotificationReceiver(t)
@@ -123,7 +123,7 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 
 	// Step 2: create a DERControl on each FSA node for each managed
 	// inverter via the #27 mutation hook. 16 controls total
-	// (4 inverters × 4 FSA levels SY/FDx/SPxx/DEV).
+	// (4 inverters x 4 FSA levels SY/FDx/SPxx/DEV).
 	mutationURL := srv.BaseURL + "/test/mutations/derctl-add"
 	for _, edevID := range aggManagedInverters {
 		for _, fsaID := range aggInverterFSAIDs {
@@ -139,7 +139,7 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 	// mutation actually committed.
 	//
 	// The mutation hook stores the JSON-decoded sep2.DERControl as-is
-	// — it does NOT inject an Href on the stored body (production
+	// - it does NOT inject an Href on the stored body (production
 	// PUT/POST handlers do). So we identify the just-created control
 	// by its MRID, which we set in postDERControlMutation.
 	for _, edevID := range aggManagedInverters {
@@ -166,7 +166,7 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 	}
 
 	// Step 3 (#157): assert the notification fan-out reached the
-	// receiver. One Notification per managed inverter is expected —
+	// receiver. One Notification per managed inverter is expected -
 	// the SY-level derctl-add fires Notify on the subscribed
 	// DERProgramList href; the other three FSA levels have no
 	// subscription registered against them. The Manager dispatches on
@@ -177,7 +177,7 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 		t.Fatalf("step 3: receiver got %d Notifications, want %d before 2s timeout",
 			len(got), len(aggManagedInverters))
 	}
-	// Build a (resource-href → seen) presence map keyed by inverter so
+	// Build a (resource-href -> seen) presence map keyed by inverter so
 	// a missing inverter names itself in the failure message.
 	seenHrefs := map[string]bool{}
 	for _, n := range got {
@@ -199,7 +199,7 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 		}
 	}
 
-	// Step 4 + 5: aggregator POSTs Response (received → started →
+	// Step 4 + 5: aggregator POSTs Response (received -> started ->
 	// completed) for each managed inverter, then GET the response list
 	// and assert all three statuses are present per inverter.
 	statusProgression := []uint8{
@@ -313,7 +313,7 @@ func postDERControlMutation(t *testing.T, ctx context.Context, client *http.Clie
 
 // postResponseAck POSTs a sep2.Response with the given status + subject
 // to /rsps/{rspsId}/rsp. Asserts 201 Created strictly per IEEE 2030.5
-// §6.4.3 (create-via-POST returns 201 + Location).
+// Section 6.4.3 (create-via-POST returns 201 + Location).
 func postResponseAck(t *testing.T, ctx context.Context, client *http.Client, baseURL, rspsID string, status uint8, subject string) {
 	t.Helper()
 
@@ -348,12 +348,12 @@ func postResponseAck(t *testing.T, ctx context.Context, client *http.Client, bas
 // --- #157 step-3 helpers ----------------------------------------------
 //
 // utilReceivedNotification, utilNotificationReceiver, postSubscriptionToURI
-// are local to UTIL-004. They cover exactly the step-3 surface — record
+// are local to UTIL-004. They cover exactly the step-3 surface - record
 // POSTed Notifications, expose Wait/Snapshot, and POST a Subscription
 // with a caller-supplied NotificationURI. When #151 lands the
 // general csiptest.NotificationReceiver helper, delete this block and
 // switch UTIL-004 to that. The local version is deliberately minimal
-// (no WithStatusCode option, no Reset) — anything beyond step-3 verify
+// (no WithStatusCode option, no Reset) - anything beyond step-3 verify
 // belongs to the shared helper, not here.
 
 // utilReceivedNotification is one captured POST body and its parsed
@@ -409,7 +409,7 @@ func newUTILNotificationReceiver(t *testing.T) *utilNotificationReceiver {
 func (r *utilNotificationReceiver) URL() string { return r.srv.URL }
 
 // Wait blocks until at least n Notifications have been recorded or
-// timeout elapses. Returns a snapshot and an ok flag — the caller
+// timeout elapses. Returns a snapshot and an ok flag - the caller
 // decides how to format the failure.
 func (r *utilNotificationReceiver) Wait(n int, timeout time.Duration) ([]utilReceivedNotification, bool) {
 	deadline := time.Now().Add(timeout)

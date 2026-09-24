@@ -13,6 +13,14 @@ import (
 // check has to live in the handler. This drives that check through the
 // assembled router with the same identity and management wiring the gate
 // itself uses, rather than mounting the handler alone.
+//
+// Issue #510's write allow-list does not grant
+// DELETE /edev/{id}/sub/{subId} to a manager at all: an aggregator posts to
+// its own SubscriptionListLink, not a managed device's. So a manager's
+// delete of any subscription under a managed {id} is now refused by the
+// ownership gate itself, before the handler's own href-scoping check ever
+// runs; #435's handler-level scoping is exercised here only through self
+// access, which the allow-list does not touch.
 func TestManagement_SubscriptionDeleteIsScopedToItsEndDevice(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -59,18 +67,18 @@ func TestManagement_SubscriptionDeleteIsScopedToItsEndDevice(t *testing.T) {
 	}
 	stillStored(t, "sub-victim")
 
-	// The manager of victimID deletes victimID's own subscription: 204.
-	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID+"/sub/sub-victim", managerLFDI, ""); status != http.StatusNoContent {
-		t.Fatalf("manager delete of managed device's own subscription: status %d, want 204; body=%q", status, raw)
+	// The manager of victimID deletes victimID's own subscription: refused by
+	// the gate (X-06 write half is not on the allow-list), left stored.
+	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID+"/sub/sub-victim", managerLFDI, ""); status != http.StatusForbidden {
+		t.Fatalf("manager delete of managed device's own subscription: status %d, want 403; body=%q", status, raw)
 	}
-	removed(t, "sub-victim")
+	stillStored(t, "sub-victim")
 
 	// The manager addresses its OTHER managed device's subscription under
-	// victimID's path: the gate lets the manager through (it manages
-	// victimID), but the subscription belongs to secondChildID, so the
-	// handler must still refuse it and leave it stored.
-	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID+"/sub/sub-child", managerLFDI, ""); status != http.StatusNotFound {
-		t.Errorf("manager cross-device delete under its own managed id: status %d, want 404; body=%q", status, raw)
+	// victimID's path: the gate refuses the manager on this pattern outright
+	// now, so the handler's own cross-device scoping check is never reached.
+	if status, raw := gateRequest(t, srv, http.MethodDelete, "/edev/"+victimID+"/sub/sub-child", managerLFDI, ""); status != http.StatusForbidden {
+		t.Errorf("manager cross-device delete under its own managed id: status %d, want 403; body=%q", status, raw)
 	}
 	stillStored(t, "sub-child")
 

@@ -490,3 +490,67 @@ jobs:
             exit 1
           fi
           echo "gofmt check passed."
+
+  vendor-integrity:
+    name: Vendored tree integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # #691: nothing else in this workflow compares vendor/ bytes against the
+    # module they claim to be. go mod verify only checks whatever happens to
+    # already be in GOMODCACHE against go.sum, which can pass trivially on an
+    # empty cache, and never reads vendor/; the "inconsistent vendoring"
+    # check compares go.mod against vendor/modules.txt, also never file
+    # contents. This job regenerates vendor/ from the pinned go.mod/go.sum
+    # versions and compares the result against the committed tree with git
+    # status, catching a hand-edited, added, mode-changed, or deleted
+    # vendored file (a dropped TLS floor, an altered cipher suite) that
+    # every other gate here misses. It does not verify the pinned versions
+    # against upstream: a compromised or yanked release at the pinned
+    # version regenerates clean, and that is a different check this job
+    # does not attempt.
+    #
+    # No App token here: go.mod pins a released core-go version (currently
+    # v0.19.0), which the public module proxy serves, so this job needs
+    # neither GOPRIVATE nor the App token core-freshness.yml mints to reach
+    # core's unpublished main.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Regenerate vendor/ and check the committed tree for drift
+        # git status --porcelain, not git diff: go mod vendor recreates a
+        # deleted vendored file as an UNTRACKED path, and git diff only
+        # reports changes to already-tracked paths, so a deletion
+        # regenerates invisibly to it. Makefile:54-58 hits the identical
+        # gap in ui-check for the same reason: a new Vite-hashed asset
+        # lands as a new untracked path that git diff cannot see either.
+        #
+        # --ignored, because git status otherwise hides an untracked path
+        # that matches a .gitignore rule: deleting a vendored file and
+        # adding its path to the root .gitignore would regenerate it as an
+        # ignored, not untracked, path and pass silently without this flag.
+        # A rule added inside vendor/ itself does not survive: go mod
+        # vendor regenerates that tree too, so only a rule outside it
+        # (root .gitignore, or another path go mod vendor does not manage)
+        # can mask a path underneath.
+        #
+        # Capture the output before branching on it: porcelain exits 0
+        # whether or not it printed anything, so the failure has to come
+        # from the captured text being non-empty, not from the command's
+        # own exit status.
+        run: |
+          go mod vendor
+          drift="$(git status --porcelain --ignored -- vendor/)"
+          if [ -n "$drift" ]; then
+            echo "vendor-integrity: the committed vendor/ tree does not match what go mod vendor produces from the pinned go.mod/go.sum."
+            echo "$drift"
+            git --no-pager diff -- vendor/
+            exit 1
+          fi
+          echo "vendor-integrity: vendor/ matches the pinned modules."

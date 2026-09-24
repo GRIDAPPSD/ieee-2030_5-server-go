@@ -61,6 +61,16 @@ hand: it runs `go get`, `go mod tidy`, and `go mod vendor` in that order, so a
 human doing the bump manually cannot skip the vendor step. `core-freshness.yml`
 follows the same order in its automated `chore/bump-core` PR.
 
+`ci.yml`'s `vendor-integrity` job enforces the other direction: it runs
+`go mod vendor` and then `git status --porcelain -- vendor/`, so a content
+change, an added or removed file, or a mode change in the regenerated tree
+against the committed one fails the job. `git status`, not `git diff`: a
+deleted vendored file regenerates as an untracked path, which `git diff`
+does not report (the same reason `ui-check` uses `git status --porcelain`
+rather than `git diff` on `dist/`, at `Makefile:54-58`). A hand-edited
+vendored file, not just a missed `make vendor` after a pin bump, fails
+this gate.
+
 ## Toolchain caveat: vendoring removes the module fetch, not the toolchain fetch
 
 Vendoring `ieee-2030_5-core-go` and its dependencies removes the need to fetch

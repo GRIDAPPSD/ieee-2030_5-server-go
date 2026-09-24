@@ -13,6 +13,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/storetest"
@@ -294,6 +295,149 @@ func TestManagement_ManagerWriteFollowsTheAllowlistNotTheOwner(t *testing.T) {
 		t.Error("no non-allow-listed write pattern was swept; the control that a write can still be refused never ran")
 	}
 	t.Logf("swept %d write-below-record patterns of %d mounted: %d allow-listed (granted), %d refused", len(writes), len(patterns), granted, refused)
+}
+
+// derSingletonParentKey is the (parentID) half of the (parentID, id) pair
+// HandleSingletonGetPut reads and writes: r.PathValue("id") + "/" +
+// r.PathValue("derId"). sweepStatus drives every wildcard in a pattern to
+// victimID, so a DER PUT probed at victimID's record has this parent key.
+func derSingletonParentKey(edevID string) string {
+	return edevID + "/" + edevID
+}
+
+// TestManagement_ManagerGrantedWriteLandsOnTheManagedDevice is issue 510
+// round two's MEDIUM. TestManagement_ManagerWriteFollowsTheAllowlistNotTheOwner
+// proves a granted write gets the owner's STATUS, which a write silently
+// rerouted to a different scope key still produces: the reroute upserts just
+// as successfully as the correct target would, so the status never moves. A
+// mutant that redirects every delegated write's {id} onto the manager's own
+// LFDI before the handler runs, reproduced and reverted while building this
+// test, left every existing assembly test green, including this file's own
+// write sweep.
+//
+// This drives each of the five allow-listed writes as the manager, then
+// reads the result back through the SAME (parentID, id) pair a later GET on
+// the managed device would use: store.Get for the four DER singletons,
+// store.List for the LogEvent, whose id the handler generates. A field the
+// request carried, not merely the record's presence, is required, so an
+// unrelated write landing on the same key by coincidence would not pass.
+func TestManagement_ManagerGrantedWriteLandsOnTheManagedDevice(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fleet := newManagementFleet(t)
+	srv := gateServer(t, fleet.stores, gateTestPolicy())
+	parentKey := derSingletonParentKey(victimID)
+
+	derCases := []struct {
+		name  string
+		path  string
+		body  string
+		lands func(t *testing.T) bool
+	}{
+		{
+			name: "PUT dercap",
+			path: "/edev/" + victimID + "/der/" + victimID + "/dercap",
+			body: sep2Doc("DERCapability", `<type>91</type>`),
+			lands: func(t *testing.T) bool {
+				t.Helper()
+				got, err := fleet.stores.DERCapabilities.Get(ctx, parentKey, coresingleton.SingletonKey)
+				if err != nil {
+					t.Logf("DERCapabilities.Get(%q, %q): %v", parentKey, coresingleton.SingletonKey, err)
+					return false
+				}
+				return got.Type != nil && *got.Type == 91
+			},
+		},
+		{
+			name: "PUT derg",
+			path: "/edev/" + victimID + "/der/" + victimID + "/derg",
+			body: sep2Doc("DERSettings", `<updatedTime>1700000101</updatedTime>`),
+			lands: func(t *testing.T) bool {
+				t.Helper()
+				got, err := fleet.stores.DERSettings.Get(ctx, parentKey, coresingleton.SingletonKey)
+				if err != nil {
+					t.Logf("DERSettings.Get(%q, %q): %v", parentKey, coresingleton.SingletonKey, err)
+					return false
+				}
+				return got.UpdatedTime == 1700000101
+			},
+		},
+		{
+			name: "PUT ders",
+			path: "/edev/" + victimID + "/der/" + victimID + "/ders",
+			body: sep2Doc("DERStatus", `<readingTime>1700000102</readingTime>`),
+			lands: func(t *testing.T) bool {
+				t.Helper()
+				got, err := fleet.stores.DERStatuses.Get(ctx, parentKey, coresingleton.SingletonKey)
+				if err != nil {
+					t.Logf("DERStatuses.Get(%q, %q): %v", parentKey, coresingleton.SingletonKey, err)
+					return false
+				}
+				return got.ReadingTime == 1700000102
+			},
+		},
+		{
+			name: "PUT dera",
+			path: "/edev/" + victimID + "/der/" + victimID + "/dera",
+			body: sep2Doc("DERAvailability", `<readingTime>1700000103</readingTime>`),
+			lands: func(t *testing.T) bool {
+				t.Helper()
+				got, err := fleet.stores.DERAvailabilities.Get(ctx, parentKey, coresingleton.SingletonKey)
+				if err != nil {
+					t.Logf("DERAvailabilities.Get(%q, %q): %v", parentKey, coresingleton.SingletonKey, err)
+					return false
+				}
+				return got.ReadingTime == 1700000103
+			},
+		},
+	}
+
+	for _, tc := range derCases {
+		status, raw := gateRequest(t, srv, http.MethodPut, tc.path, managerLFDI, tc.body)
+		if status != http.StatusNoContent {
+			t.Fatalf("%s: status %d, want 204; body=%q", tc.name, status, raw)
+		}
+		if !tc.lands(t) {
+			t.Errorf("%s: the managed device's own store key %q does not carry the field the request sent; the write did not land where the manager addressed it", tc.name, parentKey)
+		}
+	}
+
+	// LogEvent: HandlePostLogEvent mints the id, so the consumer's read path
+	// is List(parentID), not a fixed Get key. seedManagedSubResources already
+	// put one LogEvent under victimID, so the count moving by exactly one,
+	// plus a matching LogEventID in the list, is what proves the manager's
+	// POST landed there and not somewhere the pre-seeded record cannot show.
+	before, err := fleet.stores.LogEvents.Count(ctx, victimID)
+	if err != nil {
+		t.Fatalf("LogEvents.Count before: %v", err)
+	}
+	lelBody := sep2Doc("LogEvent",
+		`<createdDateTime>1700000200</createdDateTime><logEventCode>7</logEventCode>`+
+			`<logEventID>4242</logEventID><logEventPEN>37244</logEventPEN><profileID>2</profileID>`)
+	status, raw := gateRequest(t, srv, http.MethodPost, "/edev/"+victimID+"/lel", managerLFDI, lelBody)
+	if status != http.StatusCreated {
+		t.Fatalf("POST lel: status %d, want 201; body=%q", status, raw)
+	}
+	after, err := fleet.stores.LogEvents.Count(ctx, victimID)
+	if err != nil {
+		t.Fatalf("LogEvents.Count after: %v", err)
+	}
+	if after != before+1 {
+		t.Errorf("POST lel: LogEvents.Count(%q) went from %d to %d, want +1; the manager's write did not add a record under the managed device's own key", victimID, before, after)
+	}
+	list, err := fleet.stores.LogEvents.List(ctx, victimID, store.ListOptions{Unbounded: true})
+	if err != nil {
+		t.Fatalf("LogEvents.List(%q): %v", victimID, err)
+	}
+	var found bool
+	for _, ev := range list.Items {
+		if ev.LogEventID == 4242 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("POST lel: no LogEvent with LogEventID 4242 listed under the managed device's own key %q; the sent body did not land there", victimID)
+	}
 }
 
 func TestManagement_ManagerCannotRewriteOrDeleteTheRecordOrReadItsRegistration(t *testing.T) {

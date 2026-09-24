@@ -143,10 +143,16 @@ func TestNewReaderStoresSeesWritesThroughTheWriteHandle(t *testing.T) {
 		t.Errorf("the read handle does not see a device seeded through the write handle: got SFDI %q, err %v", got.SFDI, err)
 	}
 
-	if err := writeHandle.EndDeviceManagers.Assign(ctx, "MGR", "DEV"); err != nil {
+	// #677 fix round item 5: the store's canonical-form check now enforces
+	// the same 40-hex-digit rule the admin API does, so these need to be
+	// valid-shaped LFDIs rather than short placeholders; the test is about
+	// wiring, not about identifier validation, so any two distinct
+	// canonical values would do.
+	const mgrLFDI, devLFDI = "AAAA000000000000000000000000000000000001", "BBBB000000000000000000000000000000000002"
+	if err := writeHandle.EndDeviceManagers.Assign(ctx, mgrLFDI, devLFDI); err != nil {
 		t.Fatalf("assign through the write handle: %v", err)
 	}
-	if got, err := readHandle.EndDeviceManagers.ManagerOf(ctx, "DEV"); err != nil || got != "MGR" {
+	if got, err := readHandle.EndDeviceManagers.ManagerOf(ctx, devLFDI); err != nil || got != mgrLFDI {
 		t.Errorf("the read handle does not see a management pair assigned through the write handle: got %q, err %v", got, err)
 	}
 

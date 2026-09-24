@@ -11,11 +11,18 @@ import (
 )
 
 // EndDeviceManagementStore is the in-memory [store.EndDeviceManagementStore].
-// It is not persisted.
 type EndDeviceManagementStore struct {
 	mu        sync.RWMutex
 	managerOf map[string]string              // managed LFDI -> manager LFDI
 	managedBy map[string]map[string]struct{} // manager LFDI -> managed LFDIs
+
+	// Durable persistence (GRIDAPPSD/ieee-2030_5-server-go#440). Empty
+	// persistPath = pure in-memory, the historical behavior. When set,
+	// every mutation flushes a snapshot under persistMu, held separately
+	// from mu so the disk syscall does not block readers on the in-memory
+	// state.
+	persistMu   sync.Mutex
+	persistPath string
 }
 
 // NewEndDeviceManagementStore returns an empty management store.
@@ -62,8 +69,8 @@ func (s *EndDeviceManagementStore) Assign(_ context.Context, managerLFDI, manage
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if current, ok := s.managerOf[managedLFDI]; ok {
+		s.mu.Unlock()
 		if current == managerLFDI {
 			return nil
 		}
@@ -74,15 +81,18 @@ func (s *EndDeviceManagementStore) Assign(_ context.Context, managerLFDI, manage
 		s.managedBy[managerLFDI] = make(map[string]struct{})
 	}
 	s.managedBy[managerLFDI][managedLFDI] = struct{}{}
-	return nil
+	s.mu.Unlock()
+	// Persist outside the lock so disk I/O does not block concurrent
+	// readers on s.mu.
+	return s.persist()
 }
 
 // Unassign implements [store.EndDeviceManagementStore].
 func (s *EndDeviceManagementStore) Unassign(_ context.Context, managedLFDI string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	manager, ok := s.managerOf[managedLFDI]
 	if !ok {
+		s.mu.Unlock()
 		return store.ErrNotFound
 	}
 	delete(s.managerOf, managedLFDI)
@@ -90,7 +100,92 @@ func (s *EndDeviceManagementStore) Unassign(_ context.Context, managedLFDI strin
 	if len(s.managedBy[manager]) == 0 {
 		delete(s.managedBy, manager)
 	}
-	return nil
+	s.mu.Unlock()
+	return s.persist()
+}
+
+// RekeyManager replaces oldManagerLFDI with newManagerLFDI as the manager of
+// every pair oldManagerLFDI currently holds, leaving the managed LFDIs
+// themselves unchanged. A rotated certificate carries a new LFDI (ADR-007
+// Amendments, B3), so without this a rotation leaves every pair naming the
+// retired LFDI: the retired certificate keeps management and the rotated
+// one has none. Returns ErrNotFound when oldManagerLFDI manages nothing, and
+// ErrInvalidManagementPair when either LFDI is not canonical or the rekey
+// would make newManagerLFDI manage itself.
+func (s *EndDeviceManagementStore) RekeyManager(_ context.Context, oldManagerLFDI, newManagerLFDI string) error {
+	if err := checkCanonicalLFDI("old manager", oldManagerLFDI); err != nil {
+		return err
+	}
+	if err := checkCanonicalLFDI("new manager", newManagerLFDI); err != nil {
+		return err
+	}
+	if oldManagerLFDI == newManagerLFDI {
+		return nil
+	}
+
+	s.mu.Lock()
+	managed := s.managedBy[oldManagerLFDI]
+	if len(managed) == 0 {
+		s.mu.Unlock()
+		return store.ErrNotFound
+	}
+	for managedLFDI := range managed {
+		if managedLFDI == newManagerLFDI {
+			s.mu.Unlock()
+			return fmt.Errorf("enddevice management: rekey would make %s manage itself: %w", newManagerLFDI, store.ErrInvalidManagementPair)
+		}
+	}
+	dest := s.managedBy[newManagerLFDI]
+	if dest == nil {
+		dest = make(map[string]struct{})
+		s.managedBy[newManagerLFDI] = dest
+	}
+	for managedLFDI := range managed {
+		dest[managedLFDI] = struct{}{}
+		s.managerOf[managedLFDI] = newManagerLFDI
+	}
+	delete(s.managedBy, oldManagerLFDI)
+	s.mu.Unlock()
+	return s.persist()
+}
+
+// RekeyManaged replaces oldManagedLFDI with newManagedLFDI, keeping the same
+// manager. Returns ErrNotFound when oldManagedLFDI is unmanaged,
+// ErrInvalidManagementPair when either LFDI is not canonical or
+// newManagedLFDI equals its own manager, and ErrAlreadyExists when
+// newManagedLFDI already has a manager: a rekey must never silently
+// overwrite an existing pair or leave a device with two managers.
+func (s *EndDeviceManagementStore) RekeyManaged(_ context.Context, oldManagedLFDI, newManagedLFDI string) error {
+	if err := checkCanonicalLFDI("old managed", oldManagedLFDI); err != nil {
+		return err
+	}
+	if err := checkCanonicalLFDI("new managed", newManagedLFDI); err != nil {
+		return err
+	}
+	if oldManagedLFDI == newManagedLFDI {
+		return nil
+	}
+
+	s.mu.Lock()
+	manager, ok := s.managerOf[oldManagedLFDI]
+	if !ok {
+		s.mu.Unlock()
+		return store.ErrNotFound
+	}
+	if newManagedLFDI == manager {
+		s.mu.Unlock()
+		return fmt.Errorf("enddevice management: %s cannot manage itself: %w", newManagedLFDI, store.ErrInvalidManagementPair)
+	}
+	if _, exists := s.managerOf[newManagedLFDI]; exists {
+		s.mu.Unlock()
+		return fmt.Errorf("enddevice management: %s already has a manager: %w", newManagedLFDI, store.ErrAlreadyExists)
+	}
+	delete(s.managerOf, oldManagedLFDI)
+	s.managerOf[newManagedLFDI] = manager
+	delete(s.managedBy[manager], oldManagedLFDI)
+	s.managedBy[manager][newManagedLFDI] = struct{}{}
+	s.mu.Unlock()
+	return s.persist()
 }
 
 // checkCanonicalLFDI refuses input a certificate-derived LFDI never takes, so

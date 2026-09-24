@@ -106,10 +106,10 @@ func (s *EndDeviceManagementStore) Unassign(_ context.Context, managedLFDI strin
 
 // RekeyManager replaces oldManagerLFDI with newManagerLFDI as the manager of
 // every pair oldManagerLFDI currently holds, leaving the managed LFDIs
-// themselves unchanged. A rotated certificate carries a new LFDI (ADR-007
-// Amendments, B3), so without this a rotation leaves every pair naming the
-// retired LFDI: the retired certificate keeps management and the rotated
-// one has none. Returns ErrNotFound when oldManagerLFDI manages nothing, and
+// themselves unchanged. A rotated certificate carries a new LFDI, so
+// without this a rotation leaves every pair naming the retired LFDI: the
+// retired certificate keeps management and the rotated one has none.
+// Returns ErrNotFound when oldManagerLFDI manages nothing, and
 // ErrInvalidManagementPair when either LFDI is not canonical or the rekey
 // would make newManagerLFDI manage itself.
 func (s *EndDeviceManagementStore) RekeyManager(_ context.Context, oldManagerLFDI, newManagerLFDI string) error {

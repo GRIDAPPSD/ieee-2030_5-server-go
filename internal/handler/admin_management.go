@@ -211,10 +211,9 @@ func (h *AdminManagementHandler) HandleRekeyManagementPair() http.HandlerFunc {
 }
 
 // normalizeLFDI trims and upper-cases s, refusing anything that is not a
-// valid 40-hex-digit HexBinary160. ADR-007 Amendments (B6): every
-// provisioning path normalizes case and refuses only a value that is not
-// valid hexBinary or not 40 hex digits; it never refuses a schema-valid
-// lowercase LFDI.
+// valid 40-hex-digit HexBinary160. Every provisioning path normalizes case
+// and refuses only a value that is not valid hexBinary or not 40 hex
+// digits; a schema-valid lowercase LFDI is never refused.
 func normalizeLFDI(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {

@@ -10,8 +10,8 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
-// #440: certificate rotation carries a new LFDI (ADR-007 Amendments, B3), so
-// a pair keyed on the retired LFDI must be moved rather than left behind.
+// #440: certificate rotation carries a new LFDI, so a pair keyed on the
+// retired LFDI must be moved rather than left behind.
 // These tests exercise RekeyManager and RekeyManaged directly on the
 // concrete store: they are not part of the generic
 // store.EndDeviceManagementStore contract in pkg/store/storetest, since

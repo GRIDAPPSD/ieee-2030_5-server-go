@@ -548,19 +548,64 @@ func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.E
 	return memory.NewLogEventLinkedEndDeviceStore(devs)
 }
 
+// flowReservationLinkedEndDevices returns the EndDevice store the /edev
+// routes must use so every served EndDevice carries, or is stripped of, its
+// flow reservation list links.
+//
+// Unlike [logEventLinkedEndDevices] and [registrationBoundEndDevices], this
+// decorator is never skipped: it always wraps devs, choosing between its
+// served and unserved arms. Skipping it when Stores.FlowReservationRequests
+// is absent would leave a client-supplied link on the resource uncleared,
+// which is the one respect this pattern strengthens rather than copies; see
+// the package comment on [FlowReservationLinkedEndDeviceStore] for why.
+//
+// THE GATE IS STILL THE MOUNT GATE: which arm is chosen is
+// Stores.FlowReservationRequests, the identical condition
+// registerNewFunctionSetRoutes uses to mount GET, POST /edev/{id}/frq and
+// GET /edev/{id}/frp. Changing this gate without changing that one is the
+// regression to look for, exactly as for its sibling.
+//
+// It also does not special-case a devs that is already this type, and reads
+// differ from writes here. Get, GetBySFDI, GetByLFDI and List always
+// overwrite both links from THIS layer's own served field before returning,
+// so whoever calls the outermost layer is served its own gate no matter what
+// is stored underneath or what an inner layer's gate was; this call's own
+// gate wins on every read. Create and Update instead stamp this layer's
+// links onto device and delegate: if devs is itself wrapped, the inner call
+// stamps again with ITS OWN served field before the record reaches the
+// store, so it is the INNERMOST layer's gate that ends up persisted.
+// Double-wrapping never leaks an unserved link, because every read
+// re-derives regardless of what is stored, but it does leave the persisted
+// record disagreeing with what is served, which is a reason to avoid
+// double-wrapping rather than a state this constructor detects.
+func flowReservationLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.EndDeviceStore {
+	if store.IsAbsent(devs) {
+		return devs
+	}
+	if store.IsAbsent(stores.FlowReservationRequests) {
+		return memory.NewFlowReservationUnservedEndDeviceStore(devs)
+	}
+	return memory.NewFlowReservationLinkedEndDeviceStore(devs)
+}
+
 // ownedEndDevices returns the fully-decorated EndDevice store the /edev
 // routes and the read handle serve from: registration-bound,
-// LogEventList-linked, and refusing rather than panicking when unwired.
-// registerEndDeviceRoutes and NewReaderStores both call it, so the
-// three-decorator chain is typed out in this one function rather than
-// twice, and the two callers cannot drift apart.
+// LogEventList-linked, flow-reservation-linked, and refusing rather than
+// panicking when unwired. registerEndDeviceRoutes and NewReaderStores both
+// call it, so the four-decorator chain is typed out in this one function
+// rather than twice, and the two callers cannot drift apart.
+//
+// Order between the LogEvent and flow reservation decorators does not
+// matter: each owns a disjoint set of fields on the served EndDevice and
+// neither reads what the other writes.
 //
 // Not every reader of EndDevices goes through it: BuildProtocolRouter's own
 // ownership gate reads stores.EndDevices directly, because it only compares
 // the stored LFDI and never serves the record to a client, so the
-// RegistrationLink and LogEventListLink derivations make no difference to it.
+// RegistrationLink, LogEventListLink and flow reservation link derivations
+// make no difference to it.
 func ownedEndDevices(stores *Stores) store.EndDeviceStore {
-	return requireEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores))
+	return requireEndDevices(flowReservationLinkedEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores), stores))
 }
 
 func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier) {
@@ -580,15 +625,16 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	// edevs, not stores.EndDevices: a route left on the undecorated store
 	// would be the one that reintroduces the drift.
 	//
-	// The LogEventList advertisement layers on top of that, and the order
-	// matters only in that both derivations must survive: the LogEvent
-	// decorator wraps the registration-bound store, so a read passes through
-	// the registration derivation first and the LogEventListLink derivation
-	// second, and a device carries both links or neither of them according
-	// to its own gate.
+	// The LogEventList and flow reservation link advertisements layer on top
+	// of that; order between those two does not matter, since each owns a
+	// disjoint set of fields.
 	//
-	// Both decorators return an absent handle unchanged, so the substitute is
-	// applied exactly when Stores.EndDevices is absent and is never decorated.
+	// All three decorators return an absent handle (stores.EndDevices itself)
+	// unchanged, so requireEndDevices' substitute is applied exactly when
+	// Stores.EndDevices is absent and never decorated. Registration and
+	// LogEvent additionally skip decorating when their OWN function set is
+	// not served; flow reservation does not, and always picks an arm, for
+	// the reason its package comment gives.
 	edevs := ownedEndDevices(stores)
 
 	mux.HandleFunc("GET /edev", coreedev.HandleEndDeviceListForCaller(edevs, stores.EndDeviceManagers, authPolicy.Identity, 900))

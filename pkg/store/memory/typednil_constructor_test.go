@@ -76,3 +76,35 @@ func TestNewLogEventLinkedEndDeviceStore_RejectsATypedNilStore(t *testing.T) {
 	}()
 	memory.NewLogEventLinkedEndDeviceStore(devs)
 }
+
+func TestNewFlowReservationLinkedEndDeviceStore_RejectsATypedNilStore(t *testing.T) {
+	t.Parallel()
+
+	var devs *memory.EndDeviceStore
+	if !store.IsAbsent(store.EndDeviceStore(devs)) {
+		t.Fatal("store.IsAbsent must read a typed nil EndDeviceStore as absent")
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Error("a typed nil decorated store must panic at construction, not be accepted as a wired store")
+		}
+	}()
+	memory.NewFlowReservationLinkedEndDeviceStore(devs)
+}
+
+func TestNewFlowReservationUnservedEndDeviceStore_RejectsATypedNilStore(t *testing.T) {
+	t.Parallel()
+
+	var devs *memory.EndDeviceStore
+	if !store.IsAbsent(store.EndDeviceStore(devs)) {
+		t.Fatal("store.IsAbsent must read a typed nil EndDeviceStore as absent")
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Error("a typed nil decorated store must panic at construction, not be accepted as a wired store")
+		}
+	}()
+	memory.NewFlowReservationUnservedEndDeviceStore(devs)
+}

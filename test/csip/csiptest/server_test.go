@@ -1,5 +1,5 @@
 // Tests for the BootServer helper. These exercise the spec server in
-// GCM mode (the default — fast, no fixture deps). Tests that exercise
+// GCM mode (the default - fast, no fixture deps). Tests that exercise
 // the CCM-8 path live in test/csip/handshake_test.go, which is the
 // canonical CCM consumer.
 package csiptest_test
@@ -71,7 +71,7 @@ func TestBootServer_ParallelDistinctPorts(t *testing.T) {
 		// Drain the channel after the parallel subtests complete so
 		// the cleanup-time assertion has both values. Subtests run
 		// concurrently with this outer test's body, but Cleanup runs
-		// after they finish — guaranteed by testing.T semantics.
+		// after they finish - guaranteed by testing.T semantics.
 		close(addrCh)
 		seen := map[string]bool{}
 		for addr := range addrCh {
@@ -116,7 +116,7 @@ func TestBootServer_CleanupShutsDown(t *testing.T) {
 		}
 	})
 
-	// "scope" has now exited and its t.Cleanup has run — meaning
+	// "scope" has now exited and its t.Cleanup has run - meaning
 	// BootServer's t.Cleanup closed the http.Server and the listener.
 	// A TLS handshake against the captured Addr must now fail: there is
 	// no longer a server to complete it. We do not verify the cert

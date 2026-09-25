@@ -164,7 +164,7 @@ new-device:                ## Mint a new device cert (DEVICE_NAME= SERIAL= requi
 # the EXPLICIT routable form 0.0.0.0:9100 so the scrape works. This exposes
 # /metrics on ALL interfaces and MUST sit behind a host firewall / trusted
 # network; the server logs a non-loopback startup WARNING to make that visible.
-run: build certs           ## Build, generate certs, and start server (GCM mode; admin on loopback :8444, metrics on 0.0.0.0:9100)
+run: build certs           ## Build, generate certs, and start server (CCM-8, the server's only mode; admin on loopback :8444, metrics on 0.0.0.0:9100)
 	SEP2_ADDR=:8443 \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
@@ -175,16 +175,7 @@ run: build certs           ## Build, generate certs, and start server (GCM mode;
 	SEP2_METRICS_ADDR=0.0.0.0:9100 \
 	./$(SERVER) serve
 
-run-ccm: build certs       ## Start server with CCM-8 cipher (spec-compliant; admin on loopback :8444)
-	SEP2_ADDR=:8443 \
-	SEP2_CERT=$(CERT_DIR)/server.crt \
-	SEP2_KEY=$(CERT_DIR)/server.key \
-	SEP2_CA=$(CERT_DIR)/ca.crt \
-	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
-	SEP2_ADMIN_ADDR=:8444 \
-	SEP2_ADMIN_KEY=admin \
-	SEP2_CCM=true \
-	./$(SERVER) serve
+run-ccm: run               ## Alias for run (CCM-8 is the server's only mode; kept for muscle memory and existing docs)
 
 # --- journald log shipping -----------------------------
 #
@@ -213,19 +204,9 @@ run-journald: build certs  ## Like run, but ship stdout+stderr to journald as SY
 	SEP2_ADMIN_KEY=admin \
 	systemd-cat -t sep2server ./$(SERVER) serve
 
-run-ccm-journald: build certs  ## Like run-ccm, but ship stdout+stderr to journald as SYSLOG_IDENTIFIER=sep2server
-	@# SEP2_ADMIN_KEY=admin is a local-dev default; MUST be overridden for any non-dev/bare-metal deployment
-	SEP2_ADDR=:8443 \
-	SEP2_CERT=$(CERT_DIR)/server.crt \
-	SEP2_KEY=$(CERT_DIR)/server.key \
-	SEP2_CA=$(CERT_DIR)/ca.crt \
-	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
-	SEP2_ADMIN_ADDR=:8444 \
-	SEP2_ADMIN_KEY=admin \
-	SEP2_CCM=true \
-	systemd-cat -t sep2server ./$(SERVER) serve
+run-ccm-journald: run-journald  ## Alias for run-journald (CCM-8 is the server's only mode; kept for muscle memory and existing docs)
 
-run-full: build certs      ## Start with CCM + mDNS + admin dashboard (admin on loopback :8444)
+run-full: build certs      ## Start with mDNS + admin dashboard (admin on loopback :8444)
 	SEP2_ADDR=:8443 \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
@@ -233,7 +214,6 @@ run-full: build certs      ## Start with CCM + mDNS + admin dashboard (admin on 
 	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
 	SEP2_ADMIN_ADDR=:8444 \
 	SEP2_ADMIN_KEY=admin \
-	SEP2_CCM=true \
 	SEP2_MDNS=true \
 	./$(SERVER) serve
 
@@ -269,7 +249,6 @@ run-testdevice: build certs   ## Start server with test device root + EndDevice 
 	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
 	SEP2_EXTRA_CLIENT_CAS=testdata/csip-pki/testdevice/root_ca.pem \
 	SEP2_BOOT_FIXTURE=test/csip/fixtures/testdevice-edev.yaml \
-	SEP2_CCM=true \
 	./$(SERVER) serve
 
 # SunSpec CSIP test PKI profile (#204).
@@ -304,7 +283,6 @@ run-sunspec: build certs   ## Start server trusting SunSpec CSIP test PKI roots 
 	SEP2_CA=$(CERT_DIR)/ca.crt \
 	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
 	SEP2_EXTRA_CLIENT_CAS=$(SUNSPEC_ROOTS) \
-	SEP2_CCM=true \
 	./$(SERVER) serve
 
 serve: run                 ## Alias for run

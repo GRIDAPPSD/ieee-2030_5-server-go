@@ -35,8 +35,8 @@
 //	         DERControl with opModFixedW = 3000 (30.00%))    -> assertL6ActiveControlPresent
 //	Step 7 (L0..L5 DERControlList is empty, all=0)  -> assertOtherLevelsControlListEmpty
 //
-// Run under both GCM and CCM cipher modes so the spec cipher path is
-// exercised end-to-end on the same multi-level walk procedure.
+// Run over CCM-8, the spec cipher path, end-to-end on the multi-level
+// walk procedure.
 package csip_test
 
 import (
@@ -72,8 +72,7 @@ func TestBASIC_002_GroupManagement(t *testing.T) {
 		name string
 		opts []csiptest.BootOption
 	}{
-		{name: "GCM", opts: nil},
-		{name: "CCM", opts: []csiptest.BootOption{csiptest.WithCCMMode()}},
+		{name: "CCM", opts: nil},
 	} {
 		mode := mode
 		t.Run(mode.name, func(t *testing.T) {

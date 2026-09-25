@@ -100,16 +100,7 @@ func newMaterial(t testing.TB) material {
 	return m
 }
 
-func gcmServerConfig(t testing.TB, m material) *tls.Config {
-	t.Helper()
-	cfg, err := sepTLS.NewServerTLSConfigWithExtraCAs(m.serverCertFile, m.serverKeyFile, m.caFile, nil)
-	if err != nil {
-		t.Fatalf("NewServerTLSConfigWithExtraCAs: %v", err)
-	}
-	return cfg
-}
-
-func ccmServerConfig(t *testing.T, m material) *gotls.Config {
+func ccmServerConfig(t testing.TB, m material) *gotls.Config {
 	t.Helper()
 	cfg, err := sepTLS.NewCCMServerConfigWithExtraCAs(m.serverCertFile, m.serverKeyFile, m.caFile, nil)
 	if err != nil {
@@ -118,45 +109,18 @@ func ccmServerConfig(t *testing.T, m material) *gotls.Config {
 	return cfg
 }
 
-func gcmClientConfig(t testing.TB, m material) *tls.Config {
+// ccmClientConfig builds the outbound *gotls.Config for the device
+// certificate minted by newMaterial, via core's CCM-8-only client
+// constructor. CipherSuites names CCM-8 alone (core's own contract for
+// NewCCMClientConfigFromPEM), so a completed handshake proves the CCM-8
+// path specifically.
+func ccmClientConfig(t testing.TB, m material) *gotls.Config {
 	t.Helper()
-	cfg, err := sepTLS.NewClientTLSConfigFromPEM(m.deviceCertPEM, m.deviceKeyPEM, m.caCertPEM)
+	cfg, err := sepTLS.NewCCMClientConfigFromPEM(m.deviceCertPEM, m.deviceKeyPEM, m.caCertPEM)
 	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
+		t.Fatalf("NewCCMClientConfigFromPEM: %v", err)
 	}
 	return cfg
-}
-
-// ccmClientConfig mirrors NewClientTLSConfigFromPEM's shape (config.go) for
-// the gotls fork, which has no equivalent constructor. CipherSuites names
-// CCM-8 alone, not the GCM fallback NewCCMServerConfig also accepts, so a
-// completed handshake proves the CCM-8 path specifically.
-func ccmClientConfig(t *testing.T, m material) *gotls.Config {
-	t.Helper()
-	cert, err := gotls.X509KeyPair(m.deviceCertPEM, m.deviceKeyPEM)
-	if err != nil {
-		t.Fatalf("gotls.X509KeyPair: %v", err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(m.caCertPEM) {
-		t.Fatal("AppendCertsFromPEM: no certificates added")
-	}
-	return &gotls.Config{
-		Certificates:     []gotls.Certificate{cert},
-		RootCAs:          pool,
-		CipherSuites:     []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
-		MinVersion:       gotls.VersionTLS12,
-		MaxVersion:       gotls.VersionTLS12,
-		CurvePreferences: []gotls.CurveID{gotls.CurveP256},
-	}
-}
-
-func gcmHTTPClient(t *testing.T, m material) *http.Client {
-	t.Helper()
-	return &http.Client{
-		Transport: &http.Transport{TLSClientConfig: gcmClientConfig(t, m)},
-		Timeout:   5 * time.Second,
-	}
 }
 
 // ccmHTTPClient drives net/http's client over a gotls connection dialed by
@@ -164,7 +128,7 @@ func gcmHTTPClient(t *testing.T, m material) *http.Client {
 // cannot negotiate CCM-8 (GOROOT crypto/tls/cipher_suites.go carries no CCM
 // suite). DialTLSContext hands Transport an already-negotiated connection
 // and it speaks HTTP/1.1 over it exactly as it would over its own.
-func ccmHTTPClient(t *testing.T, m material) *http.Client {
+func ccmHTTPClient(t testing.TB, m material) *http.Client {
 	t.Helper()
 	cfg := ccmClientConfig(t, m)
 	return &http.Client{
@@ -247,34 +211,21 @@ func assertPeerIsLeaf(t *testing.T, seen *tls.ConnectionState, leaf *x509.Certif
 // Identity per mode, and the control that proves it.
 
 // TestIdentityPreservedThroughListener: a protocol route sees the client's
-// leaf certificate through the listener, in both cipher modes.
+// leaf certificate through the listener, over CCM-8 (the only suite core
+// offers).
 func TestIdentityPreservedThroughListener(t *testing.T) {
 	t.Parallel()
 
-	t.Run("GCM", func(t *testing.T) {
-		t.Parallel()
-		m := newMaterial(t)
-		l := NewListener(tls.NewListener(listenTCP(t), gcmServerConfig(t, m)), nil)
-		status, seen := getWithSeenTLS(t, l, gcmHTTPClient(t, m), "https://"+l.Addr().String()+"/dcap")
-		if status != http.StatusOK {
-			t.Fatalf("status = %d, want 200", status)
-		}
-		assertPeerIsLeaf(t, seen, m.deviceLeaf)
-	})
-
-	t.Run("CCM", func(t *testing.T) {
-		t.Parallel()
-		m := newMaterial(t)
-		l := NewListener(gotls.NewListener(listenTCP(t), ccmServerConfig(t, m)), nil)
-		status, seen := getWithSeenTLS(t, l, ccmHTTPClient(t, m), "https://"+l.Addr().String()+"/dcap")
-		if status != http.StatusOK {
-			t.Fatalf("status = %d, want 200", status)
-		}
-		assertPeerIsLeaf(t, seen, m.deviceLeaf)
-		if seen.CipherSuite != gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 {
-			t.Errorf("cipher suite = %#04x, want CCM-8 %#04x (the client offered only CCM-8, so anything else means the wrong path ran)", seen.CipherSuite, gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8)
-		}
-	})
+	m := newMaterial(t)
+	l := NewListener(gotls.NewListener(listenTCP(t), ccmServerConfig(t, m)), nil)
+	status, seen := getWithSeenTLS(t, l, ccmHTTPClient(t, m), "https://"+l.Addr().String()+"/dcap")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	assertPeerIsLeaf(t, seen, m.deviceLeaf)
+	if seen.CipherSuite != gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 {
+		t.Errorf("cipher suite = %#04x, want CCM-8 %#04x (the client offered only CCM-8, so anything else means the wrong path ran)", seen.CipherSuite, gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8)
+	}
 }
 
 // naiveConn is the bug this package exists to prevent: it forwards every
@@ -323,31 +274,15 @@ var _ net.Listener = (*naiveListener)(nil)
 func TestNaiveWrapperLosesIdentity(t *testing.T) {
 	t.Parallel()
 
-	t.Run("GCM", func(t *testing.T) {
-		t.Parallel()
-		m := newMaterial(t)
-		l := &naiveListener{inner: tls.NewListener(listenTCP(t), gcmServerConfig(t, m))}
-		status, seen := getWithSeenTLS(t, l, gcmHTTPClient(t, m), "https://"+l.Addr().String()+"/dcap")
-		if status != http.StatusForbidden {
-			t.Errorf("status = %d, want 403 (IdentityMiddleware must see r.TLS == nil through the naive wrapper)", status)
-		}
-		if seen != nil {
-			t.Error("handler observed r.TLS through the naive wrapper; it must never be reached")
-		}
-	})
-
-	t.Run("CCM", func(t *testing.T) {
-		t.Parallel()
-		m := newMaterial(t)
-		l := &naiveListener{inner: gotls.NewListener(listenTCP(t), ccmServerConfig(t, m))}
-		status, seen := getWithSeenTLS(t, l, ccmHTTPClient(t, m), "https://"+l.Addr().String()+"/dcap")
-		if status != http.StatusForbidden {
-			t.Errorf("status = %d, want 403 (IdentityMiddleware must see r.TLS == nil through the naive wrapper)", status)
-		}
-		if seen != nil {
-			t.Error("handler observed r.TLS through the naive wrapper; it must never be reached")
-		}
-	})
+	m := newMaterial(t)
+	l := &naiveListener{inner: gotls.NewListener(listenTCP(t), ccmServerConfig(t, m))}
+	status, seen := getWithSeenTLS(t, l, ccmHTTPClient(t, m), "https://"+l.Addr().String()+"/dcap")
+	if status != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 (IdentityMiddleware must see r.TLS == nil through the naive wrapper)", status)
+	}
+	if seen != nil {
+		t.Error("handler observed r.TLS through the naive wrapper; it must never be reached")
+	}
 }
 
 // A refused certificate is reported, not silently dropped.
@@ -385,7 +320,7 @@ func TestRefusedCertificateIsReported(t *testing.T) {
 
 	logBuf := &syncBuffer{}
 	logger := log.New(logBuf, "", 0)
-	l := NewListener(tls.NewListener(listenTCP(t), gcmServerConfig(t, m)), logger)
+	l := NewListener(gotls.NewListener(listenTCP(t), ccmServerConfig(t, m)), logger)
 	t.Cleanup(func() { _ = l.Close() })
 
 	go func() {
@@ -400,11 +335,16 @@ func TestRefusedCertificateIsReported(t *testing.T) {
 
 	// No client certificate at all: RequireAnyClientCert (config.go) rejects
 	// the handshake before any application data crosses. Same control
-	// TestNew_GCM_MTLSAcceptAndReject already relies on in pkg/sep2srv.
-	noCertCfg := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // test-only control; the server enforces client auth regardless
+	// TestNew_MTLSAcceptAndReject already relies on in pkg/sep2srv.
+	noCertCfg := &gotls.Config{ //nolint:gosec // test-only control; the server enforces client auth regardless
+		InsecureSkipVerify: true,
+		CipherSuites:       []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		MinVersion:         gotls.VersionTLS12,
+		MaxVersion:         gotls.VersionTLS12,
+	}
 	dialErrCh := make(chan error, 1)
 	go func() {
-		_, err := tls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp", l.Addr().String(), noCertCfg)
+		_, err := gotls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp", l.Addr().String(), noCertCfg)
 		dialErrCh <- err
 	}()
 
@@ -440,7 +380,7 @@ func TestCloseLeavesNoGoroutineBehind(t *testing.T) {
 	baseline := runtime.NumGoroutine()
 
 	m := newMaterial(t)
-	l := NewListener(tls.NewListener(listenTCP(t), gcmServerConfig(t, m)), log.New(io.Discard, "", 0))
+	l := NewListener(gotls.NewListener(listenTCP(t), ccmServerConfig(t, m)), log.New(io.Discard, "", 0))
 
 	acceptDone := make(chan struct{})
 	go func() {
@@ -454,9 +394,9 @@ func TestCloseLeavesNoGoroutineBehind(t *testing.T) {
 		}
 	}()
 
-	clientCfg := gcmClientConfig(t, m)
+	clientCfg := ccmClientConfig(t, m)
 	for i := 0; i < 3; i++ {
-		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp", l.Addr().String(), clientCfg)
+		conn, err := gotls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp", l.Addr().String(), clientCfg)
 		if err != nil {
 			t.Fatalf("dial %d: %v", i, err)
 		}
@@ -541,7 +481,7 @@ func TestHandshakeDeadlineClosesSilentAndPartialPeers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			m := newMaterial(t)
-			l := NewListener(tls.NewListener(listenTCP(t), gcmServerConfig(t, m)), log.New(io.Discard, "", 0))
+			l := NewListener(gotls.NewListener(listenTCP(t), ccmServerConfig(t, m)), log.New(io.Discard, "", 0))
 			t.Cleanup(func() { _ = l.Close() })
 
 			go func() {
@@ -597,7 +537,7 @@ func TestCloseDuringInFlightHandshake(t *testing.T) {
 	baseline := runtime.NumGoroutine()
 
 	m := newMaterial(t)
-	l := NewListener(tls.NewListener(listenTCP(t), gcmServerConfig(t, m)), log.New(io.Discard, "", 0))
+	l := NewListener(gotls.NewListener(listenTCP(t), ccmServerConfig(t, m)), log.New(io.Discard, "", 0))
 
 	conn, err := net.DialTimeout("tcp", l.Addr().String(), 2*time.Second)
 	if err != nil {
@@ -666,7 +606,7 @@ func TestTemporaryAcceptErrorIsReturnedAndAcceptLoopContinues(t *testing.T) {
 	t.Parallel()
 	m := newMaterial(t)
 
-	flaky := &onceTemporaryErrListener{Listener: tls.NewListener(listenTCP(t), gcmServerConfig(t, m))}
+	flaky := &onceTemporaryErrListener{Listener: gotls.NewListener(listenTCP(t), ccmServerConfig(t, m))}
 	l := NewListener(flaky, nil)
 	t.Cleanup(func() { _ = l.Close() })
 
@@ -681,7 +621,7 @@ func TestTemporaryAcceptErrorIsReturnedAndAcceptLoopContinues(t *testing.T) {
 
 	// The accept loop must still be running: a real client can now connect
 	// and complete a handshake through the same Listener.
-	status, seen := getWithSeenTLS(t, l, gcmHTTPClient(t, m), "https://"+l.Addr().String()+"/dcap")
+	status, seen := getWithSeenTLS(t, l, ccmHTTPClient(t, m), "https://"+l.Addr().String()+"/dcap")
 	if status != http.StatusOK {
 		t.Fatalf("status after the temporary error = %d, want 200", status)
 	}

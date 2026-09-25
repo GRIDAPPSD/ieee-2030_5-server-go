@@ -42,9 +42,8 @@
 // Walking the per-program DERCurveListLink would 404 because the
 // server does not expose a per-program curve route today.
 //
-// Run under both GCM and CCM cipher modes so the spec cipher path
-// is exercised end-to-end on the same chained-walk procedure. CCM
-// is the #1 regression guard surface for the in-process
+// Run over CCM-8, the spec cipher path, end-to-end on the chained-walk
+// procedure. CCM is the #1 regression guard surface for the in-process
 // harness.
 package csip_test
 
@@ -66,8 +65,7 @@ func TestCORE_012_DERProgramBasic(t *testing.T) {
 		name string
 		opts []csiptest.BootOption
 	}{
-		{name: "GCM", opts: nil},
-		{name: "CCM", opts: []csiptest.BootOption{csiptest.WithCCMMode()}},
+		{name: "CCM", opts: nil},
 	} {
 		mode := mode
 		t.Run(mode.name, func(t *testing.T) {
@@ -246,11 +244,9 @@ func walkToFirstFSA(t *testing.T, ctx context.Context, c *csiptest.Client) sep2.
 //
 // The csiptest.Client returned by srv.Client() already trusts the
 // booted server's ephemeral CA and presents an ephemeral device cert,
-// so no separate client-PKI dance is needed for read-only walks. The
-// CCM-mode subtest still uses the same Client; the stdlib http.Client
-// inside it negotiates GCM against the gotls server which accepts
-// either GCM or CCM-8 (tightening is gated on #21/#22 per the
-// BASIC-001 doc-comment).
+// so no separate client-PKI dance is needed for read-only walks. It
+// dials through core's forked TLS stack, since the booted server
+// offers CCM-8 only.
 func bootWithDERProgramFixture(t *testing.T, fixture string, extraOpts []csiptest.BootOption) *csiptest.BootedServer {
 	t.Helper()
 

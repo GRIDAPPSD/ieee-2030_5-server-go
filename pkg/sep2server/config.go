@@ -32,16 +32,6 @@ type Config struct {
 	// CAFile, for multi-root device-certificate trust.
 	ExtraClientCAs []string
 
-	// EnableCCM selects the CCM-8 mandatory cipher suite (IEEE 2030.5-2018
-	// section 6.7) through core's forked crypto/tls. False (the zero value)
-	// serves the stdlib GCM fallback, which is still mutual TLS: this knob
-	// selects the cipher suite, not whether TLS is required.
-	//
-	// It also decides whether the handler chain carries core's CCM identity
-	// middleware, which is what populates r.TLS from the forked connection.
-	// See [BuildHandler] for where that lands in the chain.
-	EnableCCM bool
-
 	// Router carries the time-zone and DST scalars the /tm resource serves,
 	// and the PostRateProvider behind POST /mup. The zero value is a valid
 	// configuration: UTC, no DST, and no server-stated posting preference.

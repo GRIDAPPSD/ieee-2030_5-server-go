@@ -41,11 +41,11 @@ func TestOptionsCaptureNilBehavesAsBefore(t *testing.T) {
 
 	waitForDial(t, addr)
 
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey), mustRead(t, certs.caFile))
+	clientTLSCfg, err := sepTLS.NewCCMClientConfigFromPEM(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey), mustRead(t, certs.caFile))
 	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
+		t.Fatalf("NewCCMClientConfigFromPEM: %v", err)
 	}
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSCfg}}
+	client := ccmHTTPClient(clientTLSCfg, 0)
 	resp, err := client.Get("https://" + addr + "/dcap")
 	if err != nil {
 		t.Fatalf("GET with Capture nil: %v", err)
@@ -56,66 +56,57 @@ func TestOptionsCaptureNilBehavesAsBefore(t *testing.T) {
 	}
 }
 
-// TestOptionsCaptureRecordsRealClientThroughRunBothModes is #611 PR 5's Q7
-// item 5 acceptance for the sep2srv embeddable, mirroring the sep2server
-// test of the same shape: a real mTLS client through Run, in both cipher
-// modes, must be captured with its identity intact.
-func TestOptionsCaptureRecordsRealClientThroughRunBothModes(t *testing.T) {
-	for _, enableCCM := range []bool{false, true} {
-		mode := "GCM"
-		if enableCCM {
-			mode = "CCM"
-		}
-		t.Run(mode, func(t *testing.T) {
-			t.Parallel()
-			certs := newTestCertSet(t)
-			sink := sep2capture.NewMemorySink()
-			rec := sep2capture.NewRecorder(sink, nil)
+// TestOptionsCaptureRecordsRealClientThroughRun is #611 PR 5's Q7 item 5
+// acceptance for the sep2srv embeddable, mirroring the sep2server test of
+// the same shape: a real mTLS client through Run, over CCM-8, must be
+// captured with its identity intact.
+func TestOptionsCaptureRecordsRealClientThroughRun(t *testing.T) {
+	t.Parallel()
+	certs := newTestCertSet(t)
+	sink := sep2capture.NewMemorySink()
+	rec := sep2capture.NewRecorder(sink, nil)
 
-			srv, err := sep2srv.New(sep2srv.Options{
-				Addr:      "127.0.0.1:0",
-				CertFile:  certs.serverCert,
-				KeyFile:   certs.serverKey,
-				CAFile:    certs.caFile,
-				EnableCCM: enableCCM,
-				Capture:   rec,
-			}, echoHandler)
-			if err != nil {
-				t.Fatalf("New (%s): %v", mode, err)
-			}
-			addr := srv.Addr()
-
-			ctx, cancel := context.WithCancel(context.Background())
-			runDone := make(chan error, 1)
-			go func() { runDone <- srv.Run(ctx) }()
-
-			clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey), mustRead(t, certs.caFile))
-			if err != nil {
-				t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
-			}
-			client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSCfg}}
-			resp := getWithRetry(t, client, "https://"+addr+"/dcap")
-			_ = resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("status (%s) = %d, want 200", mode, resp.StatusCode)
-			}
-
-			cancel()
-			select {
-			case runErr := <-runDone:
-				if runErr != nil {
-					t.Errorf("Run returned %v after cancel (%s)", runErr, mode)
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatalf("Run did not return within 5s of cancellation (%s)", mode)
-			}
-			if cerr := rec.Close(context.Background()); cerr != nil {
-				t.Errorf("Recorder.Close (%s): %v", mode, cerr)
-			}
-
-			waitForCapturedGET(t, sink, mode)
-		})
+	srv, err := sep2srv.New(sep2srv.Options{
+		Addr:     "127.0.0.1:0",
+		CertFile: certs.serverCert,
+		KeyFile:  certs.serverKey,
+		CAFile:   certs.caFile,
+		Capture:  rec,
+	}, echoHandler)
+	if err != nil {
+		t.Fatalf("New: %v", err)
 	}
+	addr := srv.Addr()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Run(ctx) }()
+
+	clientTLSCfg, err := sepTLS.NewCCMClientConfigFromPEM(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey), mustRead(t, certs.caFile))
+	if err != nil {
+		t.Fatalf("NewCCMClientConfigFromPEM: %v", err)
+	}
+	client := ccmHTTPClient(clientTLSCfg, 0)
+	resp := getWithRetry(t, client, "https://"+addr+"/dcap")
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	cancel()
+	select {
+	case runErr := <-runDone:
+		if runErr != nil {
+			t.Errorf("Run returned %v after cancel", runErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return within 5s of cancellation")
+	}
+	if cerr := rec.Close(context.Background()); cerr != nil {
+		t.Errorf("Recorder.Close: %v", cerr)
+	}
+
+	waitForCapturedGET(t, sink)
 }
 
 // waitForCapturedGET polls sink for a MarkHandled GET /dcap exchange with a
@@ -129,7 +120,7 @@ func TestOptionsCaptureRecordsRealClientThroughRunBothModes(t *testing.T) {
 // exchange actually was instead of just its count.
 const captureWaitBound = 2 * time.Second
 
-func waitForCapturedGET(t *testing.T, sink *sep2capture.MemorySink, mode string) {
+func waitForCapturedGET(t *testing.T, sink *sep2capture.MemorySink) {
 	t.Helper()
 	deadline := time.Now().Add(captureWaitBound)
 	var seen []sep2capture.Exchange
@@ -140,7 +131,7 @@ func waitForCapturedGET(t *testing.T, sink *sep2capture.MemorySink, mode string)
 				continue
 			}
 			if ex.ClientLFDI == "" {
-				t.Errorf("captured exchange (%s) has no ClientLFDI: identity was not preserved", mode)
+				t.Error("captured exchange has no ClientLFDI: identity was not preserved")
 			}
 			return
 		}
@@ -149,7 +140,7 @@ func waitForCapturedGET(t *testing.T, sink *sep2capture.MemorySink, mode string)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Errorf("no captured GET /dcap exchange within %s (mode=%s); %d recorded:", captureWaitBound, mode, len(seen))
+	t.Errorf("no captured GET /dcap exchange within %s; %d recorded:", captureWaitBound, len(seen))
 	for _, ex := range seen {
 		t.Errorf("  id=%d conn=%d mark=%s handlerRuns=%d lfdi=%q err=%q reqLen=%d req=%q",
 			ex.ID, ex.ConnID, ex.Mark, ex.HandlerRuns, ex.ClientLFDI, ex.Error, len(ex.Request.Bytes), capped(string(ex.Request.Bytes), 200))

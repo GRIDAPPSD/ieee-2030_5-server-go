@@ -11,6 +11,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
@@ -38,7 +39,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 	defer func() { _ = adminListener.Close() }()
 
 	adminTLSListener := tls.NewListener(adminListener, adminTLSCfg)
-	adminRouter, _ := server.BuildAdminRouter("test-admin-key", env.svc, nil, "GCM", nil, nil, nil, false, nil)
+	adminRouter, _ := server.BuildAdminRouter("test-admin-key", env.svc, nil, "CCM-8", nil, nil, nil, false, nil)
 	adminSrv := &http.Server{Handler: adminRouter}
 	go func() { _ = adminSrv.Serve(adminTLSListener) }()
 	defer func() { _ = adminSrv.Close() }()
@@ -154,8 +155,9 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 func TestProtocolRegressionWithAdminEnabled(t *testing.T) {
 	env := setupTestEnv(t)
 
-	// Start protocol server with admin enabled
-	serverTLSCfg, _ := sepTLS.NewServerTLSConfigFromPEM(env.serverCertPEM, env.serverKeyPEM, env.caCertPEM)
+	// Start protocol server with admin enabled. The server offers CCM-8
+	// only, so the client dials through the fork.
+	serverTLSCfg, _ := sepTLS.NewCCMServerConfigFromPEM(env.serverCertPEM, env.serverKeyPEM, env.caCertPEM)
 
 	cfg := &config.Config{
 		TZOffset:    -28800,
@@ -166,18 +168,17 @@ func TestProtocolRegressionWithAdminEnabled(t *testing.T) {
 	listener, _ := net.Listen("tcp", "127.0.0.1:0")
 	defer func() { _ = listener.Close() }()
 
-	tlsListener := tls.NewListener(listener, serverTLSCfg)
+	tlsListener := gotls.NewListener(listener, serverTLSCfg)
 	stores := newTestStores()
 	router, _ := server.BuildProtocolRouter(cfg, stores, env.svc, "", "", nil)
-	srv := &http.Server{Handler: router}
+	srv := &http.Server{Handler: sepTLS.CCMIdentityMiddleware(router)}
+	sepTLS.SetupCCMServer(srv)
 	go func() { _ = srv.Serve(tlsListener) }()
 	defer func() { _ = srv.Close() }()
 
 	// Device client (not admin)
-	clientTLSCfg, _ := sepTLS.NewClientTLSConfigFromPEM(env.deviceCertPEM, env.deviceKeyPEM, env.caCertPEM)
-	client := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: clientTLSCfg},
-	}
+	clientTLSCfg, _ := sepTLS.NewCCMClientConfigFromPEM(env.deviceCertPEM, env.deviceKeyPEM, env.caCertPEM)
+	client := ccmHTTPClient(clientTLSCfg, 0)
 	baseURL := "https://" + listener.Addr().String()
 
 	// Protocol endpoints should still work with device certs

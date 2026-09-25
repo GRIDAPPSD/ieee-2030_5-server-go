@@ -2,7 +2,6 @@ package server_test
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"encoding/xml"
@@ -16,31 +15,54 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// TestServerIdentityPopulatedUnderGCM is the regression test for #1.
+// ccmClientTLSConfig builds the outbound *gotls.Config for a device
+// certificate/key pair against caPEM, using core's CCM-8-only client
+// constructor. Shared across this package's test files, which all dial a
+// server that offers CCM-8 only.
+func ccmClientTLSConfig(t *testing.T, certPEM, keyPEM, caPEM []byte) *gotls.Config {
+	t.Helper()
+	cfg, err := sepTLS.NewCCMClientConfigFromPEM(certPEM, keyPEM, caPEM)
+	if err != nil {
+		t.Fatalf("NewCCMClientConfigFromPEM: %v", err)
+	}
+	return cfg
+}
+
+// ccmHTTPClient wraps cfg in an *http.Client whose Transport dials through
+// core's forked TLS stack (gotls), the only way to reach a CCM-8-only
+// server: net/http's own TLSClientConfig field only accepts a *tls.Config,
+// which cannot negotiate CCM-8 at all. A zero timeout leaves the client
+// unbounded, matching http.Client's own zero-value default.
+func ccmHTTPClient(cfg *gotls.Config, timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return (&gotls.Dialer{Config: cfg}).DialContext(ctx, network, addr)
+			},
+		},
+	}
+}
+
+// TestServerIdentityPopulatedUnderCCM is the regression guard for #1.
 //
 // Before the fix, server.Run() constructed the router with empty SFDI/LFDI
 // strings and derived them from the cert only after - so /sdev returned
-// empty <sFDI/> and <lFDI/> elements under GCM mode. This test drives the
-// full Run() flow end-to-end and asserts that /sdev returns the expected
-// 12-digit SFDI and 40-hex-char LFDI computed from the server cert.
-func TestServerIdentityPopulatedUnderGCM(t *testing.T) {
-	runServerIdentityTest(t, false /* CCM disabled = GCM */)
-}
-
-// TestServerIdentityPopulatedUnderCCM is the parallel regression guard for
-// the CCM-8 path. Core's pkg/sep2tls/ccmserver.go has no parallel
-// server-identity derivation, so the same pre-fix bug also affected CCM;
-// the #1 fix lands both modes in one shot.
+// empty <sFDI/> and <lFDI/> elements. This test drives the full Run() flow
+// end-to-end and asserts that /sdev returns the expected 12-digit SFDI and
+// 40-hex-char LFDI computed from the server cert.
 func TestServerIdentityPopulatedUnderCCM(t *testing.T) {
-	runServerIdentityTest(t, true /* CCM enabled */)
+	runServerIdentityTest(t)
 }
 
-func runServerIdentityTest(t *testing.T, enableCCM bool) {
+func runServerIdentityTest(t *testing.T) {
 	t.Helper()
 
 	// Generate CA + server cert in a temp dir so we can hand server.Run()
@@ -110,10 +132,7 @@ func runServerIdentityTest(t *testing.T, enableCCM bool) {
 	// Build a client TLS config we'll reuse for readiness probing and the
 	// real request. Server enforces RequireAnyClientCert, so we need a real
 	// device cert even for the probe.
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, caCertPEM)
-	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
-	}
+	clientTLSCfg := ccmClientTLSConfig(t, deviceCertPEM, deviceKeyPEM, caCertPEM)
 
 	// Start the server with a port-pick retry to absorb the port-reuse race
 	// when two subtests run back-to-back (ephemeral ports cycle through
@@ -142,7 +161,6 @@ startLoop:
 			CertFile:    certFile,
 			KeyFile:     keyFile,
 			CAFile:      caFile,
-			EnableCCM:   enableCCM,
 			TZOffset:    -28800,
 			DSTOffset:   3600,
 			DSTStart:    1583661600,
@@ -179,14 +197,24 @@ startLoop:
 		t.Fatalf("server failed to start after %d attempts", startAttempts)
 	}
 
-	// Build a client. Both modes use stdlib crypto/tls on the client because
-	// the fork only adds CCM-8 cipher support - stdlib already knows GCM,
-	// and CCM mode also negotiates GCM as a fallback (see core's
-	// pkg/sep2tls/ccmserver.go), so a stdlib client can interop with
-	// either server config.
+	// Build a client. The server offers CCM-8 only, so the client dials
+	// through the fork; net/http never populates resp.TLS for a connection
+	// reached via DialTLSContext (see core's NewCCMClientConfig doc), so the
+	// dial hook stashes the negotiated *gotls.Conn for the cipher check
+	// below instead.
+	var dialedConn *gotls.Conn
 	client := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: clientTLSCfg},
-		Timeout:   3 * time.Second,
+		Timeout: 3 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				conn, dialErr := (&gotls.Dialer{Config: clientTLSCfg}).DialContext(ctx, network, addr)
+				if dialErr == nil {
+					dialedConn = conn.(*gotls.Conn)
+				}
+				return conn, dialErr
+			},
+		},
 	}
 
 	resp, err := client.Get("https://" + addr + "/sdev")
@@ -224,25 +252,13 @@ startLoop:
 		t.Errorf("SelfDevice.LFDI = %q, want %q (derived from server leaf cert)", sdev.LFDI, wantLFDI)
 	}
 
-	// Verify TLS negotiated the mode under test. Same connection state from
-	// the response above.
-	if resp.TLS == nil {
-		t.Fatal("response has no TLS state")
+	// Verify TLS negotiated CCM-8, the only suite core's sep2tls package
+	// offers, from the dialed connection stashed above.
+	if dialedConn == nil {
+		t.Fatal("no connection was dialed")
 	}
-	if enableCCM {
-		// CCM-preferred mode advertises CCM-8 first but falls back to GCM
-		// for stdlib clients. Either is fine for this test - we only care
-		// that the server identity flowed into the router.
-		switch resp.TLS.CipherSuite {
-		case sepTLS.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8, tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
-			// expected
-		default:
-			t.Errorf("CCM mode: cipher = 0x%04x, want CCM-8 or GCM fallback", resp.TLS.CipherSuite)
-		}
-	} else {
-		if resp.TLS.CipherSuite != tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 {
-			t.Errorf("GCM mode: cipher = 0x%04x, want ECDHE_ECDSA_AES128_GCM", resp.TLS.CipherSuite)
-		}
+	if got := dialedConn.ConnectionState().CipherSuite; got != gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 {
+		t.Errorf("cipher = 0x%04x, want CCM-8 (0x%04x)", got, gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8)
 	}
 
 	// Shut the server down and verify it exits cleanly.
@@ -262,12 +278,13 @@ startLoop:
 // TIME_WAIT socket from a sibling test even when the new Run failed to
 // bind, so this checks the full TLS handshake. The caller is responsible
 // for separately observing Run's exit channel after this returns false.
-func waitForServerReady(addr string, timeout time.Duration, clientTLSCfg *tls.Config) bool {
+// Dials through the fork since the server offers CCM-8 only.
+func waitForServerReady(addr string, timeout time.Duration, clientTLSCfg *gotls.Config) bool {
 	deadline := time.Now().Add(timeout)
 	dialer := &net.Dialer{Timeout: 200 * time.Millisecond}
 	probeCfg := clientTLSCfg.Clone()
 	for time.Now().Before(deadline) {
-		conn, err := tls.DialWithDialer(dialer, "tcp", addr, probeCfg)
+		conn, err := gotls.DialWithDialer(dialer, "tcp", addr, probeCfg)
 		if err == nil {
 			_ = conn.Close()
 			return true

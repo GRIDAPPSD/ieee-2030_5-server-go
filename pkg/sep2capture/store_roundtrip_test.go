@@ -2,10 +2,11 @@ package sep2capture
 
 import (
 	"bytes"
-	"crypto/tls"
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 )
 
 // startCaptureServerWithStore mirrors recording_test.go's
@@ -22,7 +23,7 @@ func startCaptureServerWithStore(t *testing.T, m material, handler http.Handler)
 	t.Cleanup(func() { closeStore(t, st) })
 
 	tcpLn := listenTCP(t)
-	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	tlsLn := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
 	ln := NewListener(tlsLn, nil)
 	srv := &http.Server{Handler: handler}
 	rec := NewRecorder(st, nil)

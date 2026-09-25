@@ -70,21 +70,18 @@ func bootWithEventPrioFixture(
 	return csiptest.BootServer(t, opts...)
 }
 
-// runUnderBothCiphers invokes inner under each of GCM and CCM cipher
-// modes as t.Run subtests, marking each subtest t.Parallel. Mirrors
-// the per-mode harness used by CORE-012/013 and #135's
-// basic_002 - every BASIC-NNN test in this package runs under both
-// ciphers so the spec cipher path (CCM-8) is exercised on the same
-// procedure walk.
-func runUnderBothCiphers(t *testing.T, inner func(t *testing.T, extraOpts []csiptest.BootOption)) {
+// runUnderCCM invokes inner as a t.Run subtest, marked t.Parallel, over
+// CCM-8, the only cipher mode the spec server offers. Mirrors the harness
+// used by CORE-012/013 and #135's basic_002 - every BASIC-NNN test in this
+// package runs the same procedure walk over the spec cipher path (CCM-8).
+func runUnderCCM(t *testing.T, inner func(t *testing.T, extraOpts []csiptest.BootOption)) {
 	t.Helper()
 
 	for _, mode := range []struct {
 		name string
 		opts []csiptest.BootOption
 	}{
-		{name: "GCM", opts: nil},
-		{name: "CCM", opts: []csiptest.BootOption{csiptest.WithCCMMode()}},
+		{name: "CCM", opts: nil},
 	} {
 		mode := mode
 		t.Run(mode.name, func(t *testing.T) {

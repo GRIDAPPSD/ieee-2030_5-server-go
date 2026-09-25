@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
@@ -378,10 +377,7 @@ func bootSplitListener(t *testing.T, opts splitListenerOpts) *splitListenerEnv {
 	if err != nil {
 		t.Fatalf("GenerateDeviceCert: %v", err)
 	}
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, c.caCertPEM)
-	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
-	}
+	clientTLSCfg := ccmClientTLSConfig(t, deviceCertPEM, deviceKeyPEM, c.caCertPEM)
 
 	cfg := &config.Config{
 		Addr:        c.sep2Probe,

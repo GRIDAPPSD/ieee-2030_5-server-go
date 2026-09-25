@@ -40,12 +40,11 @@ import (
 // half of the embeddable surface's Config: the time and rate policy, the
 // stores, the auth policy and the notifier.
 //
-// It deliberately leaves the SERVING half (Addr, the TLS material, EnableCCM,
-// Middleware, ConnState) at its zero value. Those are decisions Run makes when
-// it binds a listener, and leaving them out here is what keeps
-// BuildProtocolRouter returning the bare protocol router that the CSIP harness
-// and the route-surface test expect, regardless of the cipher mode the
-// surrounding config names.
+// It deliberately leaves the SERVING half (Addr, the TLS material, Middleware,
+// ConnState) at its zero value. Those are decisions Run makes when it binds a
+// listener, and leaving them out here is what keeps BuildProtocolRouter
+// returning the bare protocol router that the CSIP harness and the
+// route-surface test expect.
 func NewEmbedConfig(cfg *config.Config, stores *Stores, notifier handler.ResourceNotifier) sep2server.Config {
 	return sep2server.Config{
 		Router:   NewCoreRouterConfig(cfg),

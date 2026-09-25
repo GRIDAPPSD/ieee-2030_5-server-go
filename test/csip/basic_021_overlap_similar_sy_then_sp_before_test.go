@@ -25,7 +25,7 @@
 //	Step 5 (SP and SY DERControlLists each have 1 event)           -> assertBASIC021Events
 //	Step 6 (Rendered event intervals overlap; SP wins Section 10.10)      -> assertOverlapResolution
 //
-// Run under both GCM and CCM cipher modes.
+// Run over CCM-8, the spec cipher path.
 package csip_test
 
 import (
@@ -74,7 +74,7 @@ var basic021Events = map[string]struct {
 // TestBASIC_021_OverlapSimilarSPThenSYBefore implements CSIP V1.2 Section 8.21.
 func TestBASIC_021_OverlapSimilarSPThenSYBefore(t *testing.T) {
 	t.Parallel()
-	runUnderBothCiphers(t, runBASIC021)
+	runUnderCCM(t, runBASIC021)
 }
 
 func runBASIC021(t *testing.T, extraOpts []csiptest.BootOption) {

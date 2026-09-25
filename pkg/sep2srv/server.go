@@ -1,6 +1,6 @@
 // Package sep2srv provides a Server lifecycle wrapper for the IEEE 2030.5
-// protocol listener: mutual-TLS termination (CCM-8 primary, GCM fallback),
-// server-identity (SFDI/LFDI) derivation from the leaf certificate, and
+// protocol listener: mutual-TLS termination (CCM-8, the only suite core
+// offers), server-identity (SFDI/LFDI) derivation from the leaf certificate, and
 // graceful shutdown bound to a caller-supplied context.
 //
 // This is the GENERIC half of the reference server's internal/server.Run:
@@ -14,7 +14,6 @@ package sep2srv
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -60,11 +59,6 @@ type Options struct {
 	// ExtraClientCAs names additional client-CA bundles trusted alongside
 	// CAFile, for multi-root device-cert trust.
 	ExtraClientCAs []string
-
-	// EnableCCM selects the CCM-8 mandatory cipher suite via the forked
-	// crypto/tls in pkg/sep2tls/gotls (IEEE 2030.5-2018 section 6.7). False
-	// serves the stdlib GCM fallback.
-	EnableCCM bool
 
 	// ShutdownTimeout bounds Run's graceful drain after ctx is cancelled.
 	// Zero uses DefaultShutdownTimeout.
@@ -143,15 +137,10 @@ func New(opts Options, build HandlerFunc) (*Server, error) {
 		IdleTimeout:       DefaultIdleTimeout,
 	}
 
-	if opts.EnableCCM {
-		// Bridge: inject gotls connection state into request context so
-		// standard identity middleware (and handlers reading r.TLS) work
-		// the same under CCM as under GCM.
-		sepTLS.SetupCCMServer(httpSrv)
-		httpSrv.Handler = sepTLS.CCMIdentityMiddleware(handler)
-	} else {
-		httpSrv.Handler = handler
-	}
+	// Bridge: inject gotls connection state into request context so
+	// standard identity middleware (and handlers reading r.TLS) work.
+	sepTLS.SetupCCMServer(httpSrv)
+	httpSrv.Handler = sepTLS.CCMIdentityMiddleware(handler)
 
 	// #611: Attach must run after httpSrv.Handler is set (it wraps it) and
 	// before Server.Run calls Serve. Nil Capture leaves tlsListener
@@ -179,38 +168,23 @@ func (s *Server) Addr() string {
 	return s.listener.Addr().String()
 }
 
-// wrapMTLS builds the CCM or GCM TLS config per opts.EnableCCM, wraps
-// listener in the corresponding TLS listener, and derives the server
-// Identity from the resulting leaf certificate. listener is never closed
-// here; the caller owns that on error.
+// wrapMTLS builds the CCM-8 TLS config, wraps listener in the fork's TLS
+// listener, and derives the server Identity from the resulting leaf
+// certificate. listener is never closed here; the caller owns that on error.
 func wrapMTLS(listener net.Listener, opts Options) (net.Listener, Identity, error) {
-	if opts.EnableCCM {
-		ccmCfg, err := sepTLS.NewCCMServerConfigWithExtraCAs(opts.CertFile, opts.KeyFile, opts.CAFile, opts.ExtraClientCAs)
-		if err != nil {
-			return nil, Identity{}, fmt.Errorf("sep2srv: CCM TLS config: %w", err)
-		}
-		identity, err := deriveIdentity(ccmCfg.Certificates[0].Certificate)
-		if err != nil {
-			return nil, Identity{}, fmt.Errorf("sep2srv: derive server identity (CCM): %w", err)
-		}
-		return gotls.NewListener(listener, ccmCfg), identity, nil
-	}
-
-	tlsCfg, err := sepTLS.NewServerTLSConfigWithExtraCAs(opts.CertFile, opts.KeyFile, opts.CAFile, opts.ExtraClientCAs)
+	ccmCfg, err := sepTLS.NewCCMServerConfigWithExtraCAs(opts.CertFile, opts.KeyFile, opts.CAFile, opts.ExtraClientCAs)
 	if err != nil {
-		return nil, Identity{}, fmt.Errorf("sep2srv: TLS config: %w", err)
+		return nil, Identity{}, fmt.Errorf("sep2srv: CCM TLS config: %w", err)
 	}
-	identity, err := deriveIdentity(tlsCfg.Certificates[0].Certificate)
+	identity, err := deriveIdentity(ccmCfg.Certificates[0].Certificate)
 	if err != nil {
-		return nil, Identity{}, fmt.Errorf("sep2srv: derive server identity (GCM): %w", err)
+		return nil, Identity{}, fmt.Errorf("sep2srv: derive server identity (CCM): %w", err)
 	}
-	return tls.NewListener(listener, tlsCfg), identity, nil
+	return gotls.NewListener(listener, ccmCfg), identity, nil
 }
 
 // deriveIdentity parses the leaf certificate from a raw DER chain (as found
-// in tls.Certificate.Certificate / gotls.Certificate.Certificate) and
-// returns the server SFDI and LFDI. Mode-agnostic: works for both the
-// stdlib crypto/tls path (GCM) and the forked gotls path (CCM).
+// in gotls.Certificate.Certificate) and returns the server SFDI and LFDI.
 func deriveIdentity(rawChain [][]byte) (Identity, error) {
 	if len(rawChain) == 0 {
 		return Identity{}, errors.New("empty certificate chain")

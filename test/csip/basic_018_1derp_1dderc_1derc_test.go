@@ -16,7 +16,7 @@
 //	Step 5 (DERControl Interval [t0+60, t0+180), Status=0,      -> assertBASIC018DERControl
 //	         opModFixedW = 3000 (30.00%))
 //
-// Run under both GCM and CCM cipher modes.
+// Run over CCM-8, the spec cipher path.
 package csip_test
 
 import (
@@ -45,7 +45,7 @@ const basic018DERCFixedW sep2.SignedPerCent = 3000
 // TestBASIC_018_OneDERPOneDDERCOneDERC implements CSIP V1.2 Section 8.18.
 func TestBASIC_018_OneDERPOneDDERCOneDERC(t *testing.T) {
 	t.Parallel()
-	runUnderBothCiphers(t, runBASIC018)
+	runUnderCCM(t, runBASIC018)
 }
 
 func runBASIC018(t *testing.T, extraOpts []csiptest.BootOption) {

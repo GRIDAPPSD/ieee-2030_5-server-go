@@ -286,7 +286,6 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 
 		TZOffset:    -28800,
 		TimeQuality: 7,
-		EnableCCM:   os.Getenv("SEP2_CCM") == "true",
 		EnableMDNS:  os.Getenv("SEP2_MDNS") == "true",
 		MDNSHost:    envOr("SEP2_MDNS_HOST", "localhost"),
 

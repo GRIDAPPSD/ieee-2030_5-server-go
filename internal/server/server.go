@@ -327,7 +327,6 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// deployment reads the same file it always did.
 	embedCfg.CAFile = cfg.EffectiveDeviceCA()
 	embedCfg.ExtraClientCAs = cfg.ExtraClientCAs
-	embedCfg.EnableCCM = cfg.EnableCCM
 	embedCfg.Middleware = func(h http.Handler) http.Handler {
 		return obs.Middleware(wrapMutationHandlers(h, stores, notifier))
 	}
@@ -343,11 +342,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	serverSFDI, serverLFDI := protocolSrv.Identity().SFDI, protocolSrv.Identity().LFDI
 	protocolRoutes := protocolSrv.Patterns()
 
-	if cfg.EnableCCM {
-		log.Printf("IEEE 2030.5 server listening on %s (mTLS, CCM-8 primary)", cfg.Addr)
-	} else {
-		log.Printf("IEEE 2030.5 server listening on %s (mTLS, GCM)", cfg.Addr)
-	}
+	log.Printf("IEEE 2030.5 server listening on %s (mTLS, CCM-8)", cfg.Addr)
 	if len(cfg.ExtraClientCAs) > 0 {
 		log.Printf("trusted extra client CAs: %v", cfg.ExtraClientCAs)
 	}
@@ -421,10 +416,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		adminAddr    string
 		adminRoutes  []string
 	)
-	tlsModeName := "GCM"
-	if cfg.EnableCCM {
-		tlsModeName = "CCM-8"
-	}
+	tlsModeName := "CCM-8"
 	// #638 fix round 3 item 1: svc != nil alone is not the right gate here.
 	// It turns non-nil whenever a CA CERTIFICATE loads (round 1's keyless
 	// posture), which would bring up the whole admin plane - login, the UI,

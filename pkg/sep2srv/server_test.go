@@ -3,7 +3,6 @@ package sep2srv_test
 import (
 	"context"
 	"crypto/ecdsa"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -19,8 +18,26 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2cert"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
 )
+
+// ccmHTTPClient wraps cfg in an *http.Client whose Transport dials through
+// core's forked TLS stack (gotls), the only way to reach this package's
+// CCM-8-only listener: net/http's own TLSClientConfig field only accepts a
+// *tls.Config, which cannot negotiate CCM-8 at all. A zero timeout leaves
+// the client unbounded, matching http.Client's own zero-value default.
+func ccmHTTPClient(cfg *gotls.Config, timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return (&gotls.Dialer{Config: cfg}).DialContext(ctx, network, addr)
+			},
+		},
+	}
+}
 
 // testCertSet holds file paths for a generated CA, server cert, and device
 // (client) cert, plus the parsed server leaf so tests can compute the
@@ -133,38 +150,13 @@ func echoHandler(id sep2srv.Identity) http.Handler {
 	return mux
 }
 
-func TestNew_GCM_IdentityMatchesLeafCert(t *testing.T) {
-	t.Parallel()
-	certs := newTestCertSet(t)
-	wantSFDI := sepTLS.SFDI(certs.serverLeaf)
-	wantLFDI := sepTLS.LFDI(certs.serverLeaf)
-
-	srv, err := sep2srv.New(sep2srv.Options{
-		Addr:     "127.0.0.1:0",
-		CertFile: certs.serverCert,
-		KeyFile:  certs.serverKey,
-		CAFile:   certs.caFile,
-	}, echoHandler)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	t.Cleanup(func() { _ = shutdownNow(srv) })
-
-	if srv.Identity.SFDI != wantSFDI {
-		t.Errorf("SFDI = %q, want %q", srv.Identity.SFDI, wantSFDI)
-	}
-	if srv.Identity.LFDI != wantLFDI {
-		t.Errorf("LFDI = %q, want %q", srv.Identity.LFDI, wantLFDI)
-	}
-}
-
-// TestNew_GCM_MTLSAcceptAndReject is the required mTLS accept/reject pair:
+// TestNew_MTLSAcceptAndReject is the required mTLS accept/reject pair:
 // a client presenting a valid device cert completes the handshake and
 // receives a routed response; a client presenting no cert at all is
 // rejected at the TLS handshake before any handler runs. It also proves
 // Run exits cleanly on ctx cancellation within a bounded time, with no
 // leaked listener goroutine.
-func TestNew_GCM_MTLSAcceptAndReject(t *testing.T) {
+func TestNew_MTLSAcceptAndReject(t *testing.T) {
 	t.Parallel()
 	certs := newTestCertSet(t)
 
@@ -188,11 +180,11 @@ func TestNew_GCM_MTLSAcceptAndReject(t *testing.T) {
 
 	// (a) Valid client cert: handshake completes, handler runs, response
 	// carries the derived identity.
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey), mustRead(t, certs.caFile))
+	clientTLSCfg, err := sepTLS.NewCCMClientConfigFromPEM(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey), mustRead(t, certs.caFile))
 	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
+		t.Fatalf("NewCCMClientConfigFromPEM: %v", err)
 	}
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSCfg}}
+	client := ccmHTTPClient(clientTLSCfg, 0)
 
 	resp, err := client.Get("https://" + addr + "/dcap")
 	if err != nil {
@@ -210,11 +202,13 @@ func TestNew_GCM_MTLSAcceptAndReject(t *testing.T) {
 
 	// (b) No client cert: rejected at the TLS handshake, never reaches the
 	// handler.
-	noCertClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test-only: server enforces RequireAnyClientCert regardless of what the client trusts
-		},
+	noCertCfg := &gotls.Config{ //nolint:gosec // test-only: server enforces RequireAnyClientCert regardless of what the client trusts
+		InsecureSkipVerify: true,
+		CipherSuites:       []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		MinVersion:         gotls.VersionTLS12,
+		MaxVersion:         gotls.VersionTLS12,
 	}
+	noCertClient := ccmHTTPClient(noCertCfg, 0)
 	_, err = noCertClient.Get("https://" + addr + "/dcap")
 	if err == nil {
 		t.Error("expected TLS handshake to fail without a client certificate, got nil error")
@@ -250,7 +244,6 @@ func TestNew_CCM_IdentityAndLifecycle(t *testing.T) {
 		CertFile:        certs.serverCert,
 		KeyFile:         certs.serverKey,
 		CAFile:          certs.caFile,
-		EnableCCM:       true,
 		ShutdownTimeout: 500 * time.Millisecond,
 	}, echoHandler)
 	if err != nil {
@@ -319,11 +312,11 @@ func TestServer_Run_ShutdownTimeoutError(t *testing.T) {
 
 	waitForDial(t, addr)
 
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey), mustRead(t, certs.caFile))
+	clientTLSCfg, err := sepTLS.NewCCMClientConfigFromPEM(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey), mustRead(t, certs.caFile))
 	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
+		t.Fatalf("NewCCMClientConfigFromPEM: %v", err)
 	}
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSCfg}}
+	client := ccmHTTPClient(clientTLSCfg, 0)
 
 	reqDone := make(chan error, 1)
 	go func() {
@@ -391,11 +384,6 @@ func TestNew_ValidationErrors(t *testing.T) {
 		{
 			name:  "missing cert file",
 			opts:  sep2srv.Options{Addr: "127.0.0.1:0", CertFile: "/nonexistent/cert.pem", KeyFile: certs.serverKey, CAFile: certs.caFile},
-			build: echoHandler,
-		},
-		{
-			name:  "missing cert file (CCM)",
-			opts:  sep2srv.Options{Addr: "127.0.0.1:0", CertFile: "/nonexistent/cert.pem", KeyFile: certs.serverKey, CAFile: certs.caFile, EnableCCM: true},
 			build: echoHandler,
 		},
 		{

@@ -18,7 +18,7 @@
 //	Step 5 (SP and SY DERControlLists each have 1 event)       -> assertBASIC020Events
 //	Step 6 (Concatenated event intervals are pairwise disjoint) -> assertDisjointIntervals
 //
-// Run under both GCM and CCM cipher modes.
+// Run over CCM-8, the spec cipher path.
 package csip_test
 
 import (
@@ -67,7 +67,7 @@ var basic020Events = map[string]struct {
 // TestBASIC_020_TwoDERPTwoDDERCTwoDERCNonOverlap implements CSIP V1.2 Section 8.20.
 func TestBASIC_020_TwoDERPTwoDDERCTwoDERCNonOverlap(t *testing.T) {
 	t.Parallel()
-	runUnderBothCiphers(t, runBASIC020)
+	runUnderCCM(t, runBASIC020)
 }
 
 func runBASIC020(t *testing.T, extraOpts []csiptest.BootOption) {

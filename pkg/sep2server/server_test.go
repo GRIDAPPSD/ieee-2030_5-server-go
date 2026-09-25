@@ -2,7 +2,6 @@ package sep2server
 
 import (
 	"context"
-	"crypto/tls"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
@@ -114,47 +114,37 @@ func TestNewRejectsIncompleteConfig(t *testing.T) {
 }
 
 // TestBuildHandlerMiddlewareIsOutermost pins the documented chain order:
-// Config.Middleware wraps everything, including the auth policy and, when CCM
-// is on, the CCM identity layer between them.
+// Config.Middleware wraps everything, including the auth policy and the CCM
+// identity layer between them.
 //
 // The relative position is a contract rather than an accident. The CCM layer
 // is what populates r.TLS from the forked connection, so anything that needs
 // peer certificates has to sit inside it, and the auth policy does. Config
 // documents Middleware as outermost, so an instrumentation wrapper sees every
 // request including ones the auth policy goes on to refuse.
-//
-// The test runs both cipher modes so a future edit cannot preserve the order
-// on one path and invert it on the other.
 func TestBuildHandlerMiddlewareIsOutermost(t *testing.T) {
 	t.Parallel()
 
-	for _, enableCCM := range []bool{false, true} {
-		t.Run(map[bool]string{false: "GCM", true: "CCM"}[enableCCM], func(t *testing.T) {
-			t.Parallel()
+	var seen []string
 
-			var seen []string
+	cfg := Config{
+		Auth: recordingAuth(&seen),
+		Middleware: func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = append(seen, "middleware")
+				next.ServeHTTP(w, r)
+			})
+		},
+	}
 
-			cfg := Config{
-				EnableCCM: enableCCM,
-				Auth:      recordingAuth(&seen),
-				Middleware: func(next http.Handler) http.Handler {
-					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						seen = append(seen, "middleware")
-						next.ServeHTTP(w, r)
-					})
-				},
-			}
+	handler, _ := BuildHandler(cfg, sep2srv.Identity{SFDI: "111111111111", LFDI: "aabb"})
 
-			handler, _ := BuildHandler(cfg, sep2srv.Identity{SFDI: "111111111111", LFDI: "aabb"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dcap", nil))
 
-			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dcap", nil))
-
-			want := []string{"middleware", "auth"}
-			if !reflect.DeepEqual(seen, want) {
-				t.Fatalf("composition order: got %v, want %v (Middleware must be outermost)", seen, want)
-			}
-		})
+	want := []string{"middleware", "auth"}
+	if !reflect.DeepEqual(seen, want) {
+		t.Fatalf("composition order: got %v, want %v (Middleware must be outermost)", seen, want)
 	}
 }
 
@@ -325,10 +315,7 @@ func TestServerLifecycle(t *testing.T) {
 	runErr := make(chan error, 1)
 	go func() { runErr <- srv.Run(ctx) }()
 
-	client := &http.Client{
-		Timeout:   5 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: material.clientTLS},
-	}
+	client := ccmHTTPClient(material.clientTLS, 5*time.Second)
 	resp := getWithRetry(t, client, "https://"+addr+"/dcap")
 	if resp != http.StatusOK {
 		t.Errorf("GET /dcap over mTLS: status %d, want 200", resp)
@@ -422,7 +409,7 @@ type tlsMaterial struct {
 	certFile string
 	keyFile  string
 
-	clientTLS *tls.Config
+	clientTLS *gotls.Config
 
 	wantSFDI string
 	wantLFDI string
@@ -489,12 +476,28 @@ func writeTLSMaterial(t *testing.T) tlsMaterial {
 	m.wantSFDI = sepTLS.SFDI(serverLeaf)
 	m.wantLFDI = sepTLS.LFDI(serverLeaf)
 
-	m.clientTLS, err = sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, caCertPEM)
+	m.clientTLS, err = sepTLS.NewCCMClientConfigFromPEM(deviceCertPEM, deviceKeyPEM, caCertPEM)
 	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
+		t.Fatalf("NewCCMClientConfigFromPEM: %v", err)
 	}
 
 	return m
+}
+
+// ccmHTTPClient wraps cfg in an *http.Client whose Transport dials through
+// core's forked TLS stack (gotls), the only way to reach this package's
+// CCM-8-only listener: net/http's own TLSClientConfig field only accepts a
+// *tls.Config, which cannot negotiate CCM-8 at all.
+func ccmHTTPClient(cfg *gotls.Config, timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return (&gotls.Dialer{Config: cfg}).DialContext(ctx, network, addr)
+			},
+		},
+	}
 }
 
 // getWithRetry absorbs the gap between Run being called and Serve accepting.

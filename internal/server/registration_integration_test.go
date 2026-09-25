@@ -2,7 +2,6 @@ package server_test
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/xml"
 	"io"
 	"net"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
@@ -59,7 +59,7 @@ func TestIntegrationRegistrationGet(t *testing.T) {
 	deviceSFDI := sepTLS.SFDI(deviceCert)
 	deviceID := deviceSFDI[:8]
 
-	serverTLSCfg, err := sepTLS.NewServerTLSConfigFromPEM(serverCertPEM, serverKeyPEM, caCertPEM)
+	serverTLSCfg, err := sepTLS.NewCCMServerConfigFromPEM(serverCertPEM, serverKeyPEM, caCertPEM)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,17 +99,15 @@ func TestIntegrationRegistrationGet(t *testing.T) {
 	}
 	defer func() { _ = listener.Close() }()
 
-	tlsListener := tls.NewListener(listener, serverTLSCfg)
+	tlsListener := gotls.NewListener(listener, serverTLSCfg)
 	router, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", nil)
-	srv := &http.Server{Handler: router}
+	srv := &http.Server{Handler: sepTLS.CCMIdentityMiddleware(router)}
+	sepTLS.SetupCCMServer(srv)
 	go func() { _ = srv.Serve(tlsListener) }()
 	defer func() { _ = srv.Close() }()
 
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, caCertPEM)
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSCfg}}
+	clientTLSCfg := ccmClientTLSConfig(t, deviceCertPEM, deviceKeyPEM, caCertPEM)
+	client := ccmHTTPClient(clientTLSCfg, 0)
 	baseURL := "https://" + listener.Addr().String()
 
 	t.Run("GET /edev/{id}/rg returns Registration", func(t *testing.T) {

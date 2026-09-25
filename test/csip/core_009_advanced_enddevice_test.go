@@ -28,10 +28,10 @@
 //	Step 5 (PUT DERAvailability)        ------> putAndGetAvailability subtest
 //	Step 6 (GET each, assert roundtrip) ------> assertions inside each subtest
 //
-// Run under both GCM and CCM cipher modes. #1 (server identity
-// derivation under both modes) is the standing regression guard for
-// the CCM path: a regression that perturbed routing or body
-// serialization under CCM would surface here as a roundtrip miss.
+// Run over CCM-8, the spec cipher path. #1 (server identity derivation
+// under CCM) is the standing regression guard: a regression that
+// perturbed routing or body serialization under CCM would surface here
+// as a roundtrip miss.
 //
 // Router fix bundled in this PR: PUT /edev/{id}/der/{derId}/dera was
 // missing from internal/server/router.go (only the GET was wired). The
@@ -56,18 +56,15 @@ import (
 func TestCORE_009_AdvancedEndDevice(t *testing.T) {
 	t.Parallel()
 
-	// Each cipher mode boots its own server with its own in-memory
-	// stores, so the GCM and CCM subtrees do not share roundtrip
-	// state. Both modes exercise the same store keys (the singleton
-	// parent key is the URL path `{id}/{derId}`, not the device
-	// identity), so CCM verifies that the spec cipher path does not
-	// perturb routing or body serialization end-to-end.
+	// Boots its own server with its own in-memory stores. The store
+	// keys (the singleton parent key is the URL path `{id}/{derId}`,
+	// not the device identity) confirm the spec cipher path (CCM-8)
+	// does not perturb routing or body serialization end-to-end.
 	for _, mode := range []struct {
 		name string
 		opts []csiptest.BootOption
 	}{
-		{name: "GCM", opts: nil},
-		{name: "CCM", opts: []csiptest.BootOption{csiptest.WithCCMMode()}},
+		{name: "CCM", opts: nil},
 	} {
 		mode := mode
 		t.Run(mode.name+"/RoundtripAllFourResources", func(t *testing.T) {

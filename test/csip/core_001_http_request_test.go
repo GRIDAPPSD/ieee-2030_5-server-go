@@ -36,6 +36,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -43,6 +44,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
@@ -338,21 +340,35 @@ func mustBuildClientPKI(t *testing.T) (caCertPEM []byte, caCertFile string, devi
 // server-leaf CA and presenting deviceCert on every request. Timeout
 // matches csiptest's default (10s) so a hung handler under test fails
 // fast rather than wedging the test binary.
+//
+// The booted server offers CCM-8 only, so the client dials through the
+// fork (gotls.Dialer) rather than net/http's own TLSClientConfig, which
+// only accepts a *tls.Config and cannot negotiate CCM-8 at all.
 func buildClient(t *testing.T, serverRootCA []byte, deviceCert tls.Certificate) *http.Client {
 	t.Helper()
 	rootPool := x509.NewCertPool()
 	if !rootPool.AppendCertsFromPEM(serverRootCA) {
 		t.Fatalf("append server root CA")
 	}
+	ccmCfg := &gotls.Config{
+		Certificates: []gotls.Certificate{{
+			Certificate: deviceCert.Certificate,
+			PrivateKey:  deviceCert.PrivateKey,
+			Leaf:        deviceCert.Leaf,
+		}},
+		RootCAs:          rootPool,
+		ServerName:       "127.0.0.1",
+		MinVersion:       gotls.VersionTLS12,
+		MaxVersion:       gotls.VersionTLS12,
+		CipherSuites:     []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		CurvePreferences: []gotls.CurveID{gotls.CurveP256},
+	}
 	return &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				Certificates: []tls.Certificate{deviceCert},
-				RootCAs:      rootPool,
-				ServerName:   "127.0.0.1",
-				MinVersion:   tls.VersionTLS12,
-				MaxVersion:   tls.VersionTLS12,
+			DisableKeepAlives: true,
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return (&gotls.Dialer{Config: ccmCfg}).DialContext(ctx, network, addr)
 			},
 		},
 	}

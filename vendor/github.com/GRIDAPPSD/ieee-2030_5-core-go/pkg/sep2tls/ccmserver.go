@@ -17,8 +17,17 @@ import (
 
 type ccmStateKey struct{}
 
-// NewCCMServerConfig creates a gotls.Config with CCM-8 as primary cipher
-// and GCM as fallback for compatibility.
+// NewCCMServerConfig builds a *gotls.Config offering CCM-8 only, the sole
+// suite IEEE 2030.5-2018 clause 6.7 makes mandatory. Core does not offer
+// GCM anywhere: a peer that cannot speak CCM-8 is refused, not downgraded.
+//
+// The returned config is a *gotls.Config, not a *tls.Config: stdlib
+// crypto/tls cannot negotiate CCM-8 at all (golang/go#27484). Serve it with
+// gotls.NewListener, never tls.NewListener. A caller layering net/http on
+// top of it must also call SetupCCMServer and wrap its handlers with
+// CCMIdentityMiddleware (below): net/http populates req.TLS only for a
+// *crypto/tls.Conn, so without both req.TLS stays nil and any code reading
+// the peer certificate from it sees none.
 //
 // Equivalent to NewCCMServerConfigWithExtraCAs with no extra roots.
 func NewCCMServerConfig(certFile, keyFile, caFile string) (*gotls.Config, error) {
@@ -26,9 +35,16 @@ func NewCCMServerConfig(certFile, keyFile, caFile string) (*gotls.Config, error)
 }
 
 // NewCCMServerConfigWithExtraCAs is like NewCCMServerConfig but appends
-// additional client-CA roots from extraCAFiles into the ClientCAs pool.
-// See NewServerTLSConfigWithExtraCAs (config.go) for the multi-root
-// rationale and slice semantics.
+// additional client-CA roots from extraCAFiles into the ClientCAs pool. Use
+// this to trust device certs issued under multiple CSIP test roots (e.g.
+// SunSpec PKI plus Enphase test PKI) at the same listener.
+//
+// A nil or empty extraCAFiles slice is the no-op case (matches
+// NewCCMServerConfig behavior). Empty strings inside the slice are
+// tolerated (treated as no-op), accommodating trailing-comma env values.
+//
+// Same gotls.NewListener / SetupCCMServer / CCMIdentityMiddleware
+// obligation as NewCCMServerConfig: see its doc comment.
 func NewCCMServerConfigWithExtraCAs(certFile, keyFile, caFile string, extraCAFiles []string) (*gotls.Config, error) {
 	certPEM, err := os.ReadFile(certFile)
 	if err != nil {
@@ -49,6 +65,33 @@ func NewCCMServerConfigWithExtraCAs(certFile, keyFile, caFile string, extraCAFil
 		return nil, fmt.Errorf("load client CAs: %w", err)
 	}
 
+	return newCCMServerConfigFromMaterial(cert, caPool), nil
+}
+
+// NewCCMServerConfigFromPEM is NewCCMServerConfig from PEM byte slices
+// instead of file paths. Useful for testing.
+//
+// Same gotls.NewListener / SetupCCMServer / CCMIdentityMiddleware
+// obligation as NewCCMServerConfig: see its doc comment.
+func NewCCMServerConfigFromPEM(certPEM, keyPEM, caPEM []byte) (*gotls.Config, error) {
+	cert, err := gotls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("parse server cert: %w", err)
+	}
+
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("failed to parse CA certificate")
+	}
+
+	return newCCMServerConfigFromMaterial(cert, caPool), nil
+}
+
+// newCCMServerConfigFromMaterial builds the shared *gotls.Config body for
+// NewCCMServerConfigWithExtraCAs and NewCCMServerConfigFromPEM, so the
+// security invariants (TLS 1.2 cap, mutual auth pairing, tickets off) live
+// in exactly one place.
+func newCCMServerConfigFromMaterial(cert gotls.Certificate, caPool *x509.CertPool) *gotls.Config {
 	return &gotls.Config{
 		Certificates: []gotls.Certificate{cert},
 		ClientCAs:    caPool,
@@ -67,20 +110,17 @@ func NewCCMServerConfigWithExtraCAs(certFile, keyFile, caFile string, extraCAFil
 		},
 		// IEEE 2030.5-2018 clauses 6.1 and 6.4 (and IEEE 2030.5-2023) specify
 		// TLS 1.2; no server configuration accepts TLS 1.3. No exported
-		// field, option, or environment variable raises MaxVersion. CCM-8 is
-		// ranked ahead of GCM in the fork's preference order (cipher_suites_ccm.go),
-		// so it wins when a client offers both.
+		// field, option, or environment variable raises MaxVersion.
 		MinVersion: gotls.VersionTLS12,
 		MaxVersion: gotls.VersionTLS12,
 		CipherSuites: []uint16{
 			gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8,
-			0xC02B, // TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 (fallback)
 		},
 		CurvePreferences: []gotls.CurveID{gotls.CurveP256},
 		// Tickets off: a resumed session skips VerifyPeerCertificate above,
 		// bypassing the HardwareModuleName SAN check.
 		SessionTicketsDisabled: true,
-	}, nil
+	}
 }
 
 // SetupCCMServer configures an http.Server to work with gotls listeners.

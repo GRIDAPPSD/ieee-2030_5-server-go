@@ -6,7 +6,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 // alongside the existing dashboard at "/", so base must match that mount
 // point or every built asset URL resolves one level too high.
 //
-// Build output lands in ../dist (internal/server/web/dist), the directory
+// Build output lands in ../dist (pkg/adminui/web/dist), the directory
 // embed.go embeds via "//go:embed all:dist".
 //
 // The test block runs vitest in jsdom so component tests exercise rendered

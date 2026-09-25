@@ -399,13 +399,13 @@ jobs:
         with:
           node-version: '24.19.0'
           cache: npm
-          cache-dependency-path: internal/server/web/frontend/package-lock.json
+          cache-dependency-path: pkg/adminui/web/frontend/package-lock.json
 
       - name: Rebuild frontend and diff against committed dist/
         run: make ui-check
 
       - name: Run frontend component tests
-        run: cd internal/server/web/frontend && npm run test
+        run: cd pkg/adminui/web/frontend && npm run test
 
   e2e:
     name: Playwright e2e suite

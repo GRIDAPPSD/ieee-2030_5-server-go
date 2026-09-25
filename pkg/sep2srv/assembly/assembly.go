@@ -548,19 +548,53 @@ func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.E
 	return memory.NewLogEventLinkedEndDeviceStore(devs)
 }
 
+// flowReservationLinkedEndDevices returns the EndDevice store the /edev
+// routes must use so every served EndDevice carries, or is stripped of, its
+// flow reservation list links.
+//
+// Unlike [logEventLinkedEndDevices] and [registrationBoundEndDevices], this
+// decorator is never skipped: it always wraps devs, choosing between its
+// served and unserved arms. Skipping it when Stores.FlowReservationRequests
+// is absent would leave a client-supplied link on the resource uncleared,
+// which is the one respect this pattern strengthens rather than copies; see
+// the package comment on [FlowReservationLinkedEndDeviceStore] for why.
+//
+// THE GATE IS STILL THE MOUNT GATE: which arm is chosen is
+// Stores.FlowReservationRequests, the identical condition
+// registerNewFunctionSetRoutes uses to mount GET, POST /edev/{id}/frq and
+// GET /edev/{id}/frp. Changing this gate without changing that one is the
+// regression to look for, exactly as for its sibling.
+func flowReservationLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.EndDeviceStore {
+	if store.IsAbsent(devs) {
+		return devs
+	}
+	if linked, ok := devs.(*memory.FlowReservationLinkedEndDeviceStore); ok {
+		return linked
+	}
+	if store.IsAbsent(stores.FlowReservationRequests) {
+		return memory.NewFlowReservationUnservedEndDeviceStore(devs)
+	}
+	return memory.NewFlowReservationLinkedEndDeviceStore(devs)
+}
+
 // ownedEndDevices returns the fully-decorated EndDevice store the /edev
 // routes and the read handle serve from: registration-bound,
-// LogEventList-linked, and refusing rather than panicking when unwired.
-// registerEndDeviceRoutes and NewReaderStores both call it, so the
-// three-decorator chain is typed out in this one function rather than
-// twice, and the two callers cannot drift apart.
+// LogEventList-linked, flow-reservation-linked, and refusing rather than
+// panicking when unwired. registerEndDeviceRoutes and NewReaderStores both
+// call it, so the four-decorator chain is typed out in this one function
+// rather than twice, and the two callers cannot drift apart.
+//
+// Order between the LogEvent and flow reservation decorators does not
+// matter: each owns a disjoint set of fields on the served EndDevice and
+// neither reads what the other writes.
 //
 // Not every reader of EndDevices goes through it: BuildProtocolRouter's own
 // ownership gate reads stores.EndDevices directly, because it only compares
 // the stored LFDI and never serves the record to a client, so the
-// RegistrationLink and LogEventListLink derivations make no difference to it.
+// RegistrationLink, LogEventListLink and flow reservation link derivations
+// make no difference to it.
 func ownedEndDevices(stores *Stores) store.EndDeviceStore {
-	return requireEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores))
+	return requireEndDevices(flowReservationLinkedEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores), stores))
 }
 
 func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier) {

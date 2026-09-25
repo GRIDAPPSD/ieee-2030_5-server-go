@@ -124,10 +124,10 @@ func newScratchRepo(t *testing.T, goVersion string) string {
 			t.Fatalf("write go.mod: %v", err)
 		}
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "internal", "server", "web", "dist"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "pkg", "adminui", "web", "dist"), 0o755); err != nil {
 		t.Fatalf("mkdir dist: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "internal", "server", "web", "dist", "bundle.txt"), []byte("committed\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "pkg", "adminui", "web", "dist", "bundle.txt"), []byte("committed\n"), 0o644); err != nil {
 		t.Fatalf("write bundle.txt: %v", err)
 	}
 	run("git", "add", "-A")
@@ -432,7 +432,7 @@ func TestCILocalEndToEnd_UiCheckRefusesOverPreExistingDirt(t *testing.T) {
 	lib := writeScratchLib(t, dir, targets, prereqs)
 	workflow := writeScratchWorkflow(t, dir, targets)
 
-	precious := filepath.Join(repo, "internal", "server", "web", "dist", "bundle.txt")
+	precious := filepath.Join(repo, "pkg", "adminui", "web", "dist", "bundle.txt")
 	if err := os.WriteFile(precious, []byte("uncommitted developer work\n"), 0o644); err != nil {
 		t.Fatalf("dirty the tree: %v", err)
 	}

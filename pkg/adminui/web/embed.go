@@ -21,7 +21,9 @@
 // and the guarantee that it returns dist/'s contents rooted at
 // index.html rather than the raw embedded tree; the embed.FS backing it
 // stays a package-private var, so no caller can reassign or replace the
-// asset source.
+// asset source; and the guarantee that the returned fs.FS is safe for
+// concurrent use, since internal/server's http.Handler serves it to
+// concurrent requests.
 package web
 
 import (
@@ -34,11 +36,14 @@ var distFS embed.FS
 
 // assets is distFS rooted at dist/, so its paths start at index.html
 // rather than at dist/index.html. Computed once at package init so every
-// Assets call returns the same fs.FS. fs.Sub can only fail here if the
-// embedded tree does not contain a "dist" directory, which cannot
-// happen: the "//go:embed all:dist" directive above requires that
-// directory to exist at compile time. A panic on that impossible case
-// is a build defect, not a runtime condition to handle gracefully.
+// Assets call returns the same fs.FS. fs.Sub's only failure mode is an
+// invalid second argument per fs.ValidPath (empty, absolute, or
+// containing a "." or ".." element); embed.FS does not implement
+// fs.SubFS, so fs.Sub never checks whether "dist" actually exists in the
+// tree, and a missing directory would surface only later, on read, not
+// here. "dist" is a fixed literal that trivially satisfies ValidPath, so
+// this call cannot fail. The panic below documents that invariant; it is
+// not a runtime condition to handle gracefully.
 var assets = mustSubFS(distFS, "dist")
 
 func mustSubFS(f fs.FS, dir string) fs.FS {
@@ -51,7 +56,10 @@ func mustSubFS(f fs.FS, dir string) fs.FS {
 
 // Assets returns the admin UI's built static SPA tree: an index.html at
 // its root plus the built asset files beside it. The returned fs.FS is
-// read-only and shared across calls.
+// read-only, shared across calls, and safe for concurrent use: assets is
+// computed once at init from an embed.FS, which embed's own doc comment
+// guarantees is safe to use from multiple goroutines simultaneously, and
+// fs.Sub's wrapper around it adds no mutable state of its own.
 func Assets() fs.FS {
 	return assets
 }

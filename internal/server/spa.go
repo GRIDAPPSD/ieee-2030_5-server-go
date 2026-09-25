@@ -10,21 +10,8 @@ import (
 )
 
 // distFS is the SPA's built static assets (pkg/adminui/web/dist),
-// rooted so its paths start at index.html rather than at dist/index.html.
-// fs.Sub can only fail here if the embedded tree does not contain a
-// "dist" directory, which cannot happen: web.DistFS's own
-// "//go:embed all:dist" directive requires that directory to exist at
-// compile time. A panic at package init on that impossible case is a
-// build defect, not a runtime condition to handle gracefully.
-var distFS = mustSubFS(web.DistFS, "dist")
-
-func mustSubFS(f fs.FS, dir string) fs.FS {
-	sub, err := fs.Sub(f, dir)
-	if err != nil {
-		panic("server: web.DistFS is missing its \"" + dir + "\" root: " + err.Error())
-	}
-	return sub
-}
+// already rooted at index.html by web.Assets.
+var distFS = web.Assets()
 
 // spaHandler serves the admin UI's built SPA. BuildAdminRouter mounts it
 // under "/ui/" with the "/ui" prefix stripped, so every path this handler

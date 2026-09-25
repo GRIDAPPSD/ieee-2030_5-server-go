@@ -9,7 +9,7 @@ No release badge yet; this repo has not cut a tagged release.
 
 Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server binary (`sep2server`) with TLS/mTLS, CSIP V1.2 cipher-suite support (GCM and CCM-8), an admin dashboard, and cert-generation subcommands.
 
-> **Server of record for the IEEE 2030.5 (SEP2) Go implementation.** The original public reference is at `github.com/GRIDAPPSD/ieee-2030_5-go`; that GitHub repo remains accessible but active development lands here on GitLab. The `ieee-2030_5-core` library is consumed via a local-path `replace` directive in `go.mod` during the pre-1.0 window; CI clones core into the expected path before building.
+> **Server of record for the IEEE 2030.5 (SEP2) Go implementation.** This repository was previously named `github.com/GRIDAPPSD/ieee-2030_5-go`; GitHub redirects that name here. The `ieee-2030_5-core-go` library is an ordinary versioned Go module dependency, pinned in `go.mod` (`github.com/GRIDAPPSD/ieee-2030_5-core-go v0.19.0`); no `replace` directive is used.
 
 > **EndDevice access control.** Every `/edev/{id}` route answers only the device whose certificate LFDI is stored on that EndDevice, or an aggregator provisioned to manage it, and `GET /edev` lists only those devices. Manager pairs are provisioned on the utility side; the server binary wires none yet, so aggregators have self access only until admin-plane provisioning lands ([#440](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/440)). Embedders that relied on any certificate reaching any EndDevice must change. See [docs/enddevice-access.md](docs/enddevice-access.md).
 
@@ -31,7 +31,7 @@ Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utili
 - `golangci-lint` (optional, for `make lint`)
 - Node.js plus `npx` if you intend to run the Playwright E2E suite
 
-The Go module path is `github.com/GRIDAPPSD/ieee-2030_5-go`.
+The Go module path is `github.com/GRIDAPPSD/ieee-2030_5-server-go`.
 
 ## Build
 

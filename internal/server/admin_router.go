@@ -118,7 +118,7 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 		dashboard.RegisterRoutes(authed)
 	}
 
-	// Admin UI (embedded Svelte SPA, internal/server/web). Mounted at
+	// Admin UI (embedded Svelte SPA, pkg/adminui/web). Mounted at
 	// "/ui/", a more specific pattern than the dashboard's catch-all "GET
 	// /" above. The SPA is reachable at both paths: "/ui/" always, and "/"
 	// unless the legacy flag routes that one to the old page.

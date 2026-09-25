@@ -92,13 +92,13 @@ csip-like-target:
 	@echo csip-like-target ran with CSIP_SUNSPEC_REQUIRED=1
 
 ui-check:
-	@mkdir -p internal/server/web/dist
-	@echo rebuilt-$$(date +%s%N) > internal/server/web/dist/bundle.txt
+	@mkdir -p pkg/adminui/web/dist
+	@echo rebuilt-$$(date +%s%N) > pkg/adminui/web/dist/bundle.txt
 	@if [ -n "$$UI_CHECK_SHOULD_FAIL" ]; then exit 1; fi
 `
 
 // newScratchRepo creates a disposable git repo with the shared Makefile
-// and a committed internal/server/web/dist/bundle.txt, so run_ui_check_gate's
+// and a committed pkg/adminui/web/dist/bundle.txt, so run_ui_check_gate's
 // git status/checkout/clean plumbing has a real tracked path to operate
 // on. A minimal go.mod pins goVersion (check_toolchain reads it from
 // REPO_ROOT/go.mod); pass "" to omit it (indeterminate-toolchain path).
@@ -381,7 +381,7 @@ func TestCILocalEndToEnd_UiCheckPassRestoresCleanly(t *testing.T) {
 	if !strings.Contains(res.output, "PASSED  ui-check") {
 		t.Fatalf("output missing PASSED ui-check; output=%s", res.output)
 	}
-	status := gitStatusPorcelain(t, repo, "internal/server/web/dist")
+	status := gitStatusPorcelain(t, repo, "pkg/adminui/web/dist")
 	if status != "" {
 		t.Fatalf("dist/ left dirty after a passing ui-check run: %q", status)
 	}

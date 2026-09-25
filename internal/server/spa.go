@@ -6,10 +6,10 @@ import (
 	"path"
 	"strings"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server/web"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/adminui/web"
 )
 
-// distFS is the SPA's built static assets (internal/server/web/dist),
+// distFS is the SPA's built static assets (pkg/adminui/web/dist),
 // rooted so its paths start at index.html rather than at dist/index.html.
 // fs.Sub can only fail here if the embedded tree does not contain a
 // "dist" directory, which cannot happen: web.DistFS's own
@@ -33,7 +33,7 @@ func mustSubFS(f fs.FS, dir string) fs.FS {
 // For a path that exists in distFS (an actual built asset, such as
 // /assets/index-XXXX.js or /favicon.svg), the file server serves it
 // directly. For any other non-/api path, index.html is served instead, so
-// client side routing (internal/server/web/frontend/src/lib/router.ts)
+// client side routing (pkg/adminui/web/frontend/src/lib/router.ts)
 // still works on a hard reload of a client side route.
 //
 // A path under /ui/api/ (this handler's own mount point plus "/api")

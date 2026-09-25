@@ -1,6 +1,6 @@
 // Package web embeds the admin UI's built static SPA assets
-// (internal/server/web/dist/, produced by `make ui-build` from the Svelte
-// source under internal/server/web/frontend/) into the server binary.
+// (pkg/adminui/web/dist/, produced by `make ui-build` from the Svelte
+// source under pkg/adminui/web/frontend/) into the server binary.
 // Node and npm are build-time-only dependencies: the compiled Go binary
 // carries only the static assets below.
 //

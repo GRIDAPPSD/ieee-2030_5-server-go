@@ -1,25 +1,25 @@
 // This file (handshake_test.go) is the SunSpec-PKI external-cert smoke:
 // it proves the cert path + verifier hook + mTLS handshake end-to-end
-// against real CSIP §6.11 external materials (SunSpec V1.2 test PKI),
+// against real CSIP section 6.11 external materials (SunSpec V1.2 test PKI),
 // in CCM-8 cipher mode. Its fixtures are provisioned out of band (see
 // test/csip/README.md); the test t.Skip's cleanly when they are missing
 // so fresh clones never fail. CSIP_SUNSPEC_REQUIRED turns that skip into a
 // failure; see fixture_gate_test.go.
 //
-// The CSIP-named conformance counterparts for V1.2 §5.2 Out-of-Band
-// Discovery and V1.2 §5.3 Basic Security live alongside this file:
+// The CSIP-named conformance counterparts for V1.2 section 5.2 Out-of-Band
+// Discovery and V1.2 section 5.3 Basic Security live alongside this file:
 //
-//   - comm_002_oob_discovery_test.go (#62) — V1.2 §5.2, runs
+//   - comm_002_oob_discovery_test.go (#62) - V1.2 section 5.2, runs
 //     unconditionally against an ephemeral PKI booted by
 //     csiptest.BootServer. Satisfies the COMM-002 line item in the
 //     Phase 3 V1.2 coverage matrix.
-//   - comm_003_basic_security_test.go (#62) — V1.2 §5.3,
+//   - comm_003_basic_security_test.go (#62) - V1.2 section 5.3,
 //     skeleton in lax mode (accepts CCM-8 or GCM). Tightens to
 //     CCM-8 only once #22 lands.
 //
 // This SunSpec smoke is kept on top of those two because it is the
 // only test in the package that exercises the real external CSIP test
-// PKI — a different signal from the ephemeral-PKI conformance tests.
+// PKI - a different signal from the ephemeral-PKI conformance tests.
 package csip_test
 
 import (
@@ -92,7 +92,7 @@ func TestCSIPHandshakeWithSunSpecDeviceCert(t *testing.T) {
 
 	// Boot the spec server in CCM mode with SunSpec roots in ClientCAs
 	// and the SunSpec leaf as the client identity. csiptest owns the
-	// listener, http.Server, and shutdown — all via t.Cleanup.
+	// listener, http.Server, and shutdown - all via t.Cleanup.
 	srv := csiptest.BootServer(t,
 		csiptest.WithCCMMode(),
 		csiptest.WithClientCert(clientCert),
@@ -129,8 +129,8 @@ func TestCSIPHandshakeWithSunSpecDeviceCert(t *testing.T) {
 
 	// Application fetch via the csiptest Client. This proves the
 	// chained-GET helper (#51) and BootServer (#53) compose
-	// — future Phase 3 tests use Client.WalkLink to chain further
-	// (dcap → /edev → /edev/0/rg, etc.).
+	// - future Phase 3 tests use Client.WalkLink to chain further
+	// (dcap -> /edev -> /edev/0/rg, etc.).
 	dcap, err := srv.Client().GetDeviceCapability(context.Background())
 	if err != nil {
 		t.Fatalf("GetDeviceCapability: %v", err)

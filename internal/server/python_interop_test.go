@@ -23,8 +23,8 @@ import (
 // - Uses GCM TLS (ssl.PROTOCOL_TLS_CLIENT, no CCM)
 // - Sets check_hostname=False, verify_mode=CERT_OPTIONAL
 // - Sends Accept: application/sep+xml
-// - Follows: GET /dcap → GET /edev → POST /edev → GET /tm
-// - Posts metering: POST /mup → POST /mup/{id}/mr
+// - Follows: GET /dcap -> GET /edev -> POST /edev -> GET /tm
+// - Posts metering: POST /mup -> POST /mup/{id}/mr
 // - Uses Connection: keep-alive with Keep-Alive header
 func TestPythonClientInterop(t *testing.T) {
 	// Generate certs matching Python client pattern (ECDSA P-256)
@@ -57,8 +57,8 @@ func TestPythonClientInterop(t *testing.T) {
 	defer func() { _ = srv.Close() }()
 
 	// Create client mimicking Python behavior:
-	// - check_hostname = False → InsecureSkipVerify (for hostname, not cert chain)
-	// - verify_mode = CERT_OPTIONAL → still sends client cert
+	// - check_hostname = False -> InsecureSkipVerify (for hostname, not cert chain)
+	// - verify_mode = CERT_OPTIONAL -> still sends client cert
 	// - Connection: keep-alive
 	cert, _ := tls.X509KeyPair(deviceCertPEM, deviceKeyPEM)
 	caPool := x509.NewCertPool()

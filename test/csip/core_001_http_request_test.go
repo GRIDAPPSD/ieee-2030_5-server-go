@@ -1,4 +1,4 @@
-// CSIP V1.2 §5.4 — HTTP Request Semantics.
+// CSIP V1.2 section 5.4 - HTTP Request Semantics.
 //
 // CORE-001 walks the DeviceCapability subtree the server advertises and
 // asserts that every advertised resource behaves correctly under the
@@ -8,7 +8,7 @@
 //
 //   - Permitted methods on advertised resources return a 2xx status.
 //   - Disallowed methods on advertised resources return 405 Method Not
-//     Allowed with an Allow response header (RFC 7231 §6.5.5).
+//     Allowed with an Allow response header (RFC 7231 section 6.5.5).
 //   - Malformed bodies on POST endpoints return 400 Bad Request.
 //
 // This test is the workhorse smoke for the CSIP server: in one boot it
@@ -17,17 +17,17 @@
 // router wiring, method gating, ACL middleware, and XML serialization all
 // agree end-to-end.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §5.4 procedure):
+// V1.2 procedure step -> assertion mapping (per V1.2 section 5.4 procedure):
 //
-//	Step 1 (GET /dcap and parse DeviceCapability) ─────────► Step1 GET /dcap
-//	Step 2 (each advertised link returns 200 on GET) ──────► loop over advertisedLinks(dcap)
-//	Step 3 (disallowed methods produce 405 + Allow header) ► assertMethodNotAllowed
-//	Step 4 (malformed POST body produces 400) ─────────────► assertMalformedBodyRejected
+//	Step 1 (GET /dcap and parse DeviceCapability) -> Step1 GET /dcap
+//	Step 2 (each advertised link returns 200 on GET) -> loop over advertisedLinks(dcap)
+//	Step 3 (disallowed methods produce 405 + Allow header) -> assertMethodNotAllowed
+//	Step 4 (malformed POST body produces 400) -> assertMalformedBodyRejected
 //
 // All requests are issued through a single mTLS client wired to the
 // same CA + device cert that csiptest.BootServer is configured with via
 // WithClientCAsFile + WithClientCert, so the ACL chain (IdentityMiddleware
-// → ACLMiddleware → mux) is in play for every assertion.
+// -> ACLMiddleware -> mux) is in play for every assertion.
 package csip_test
 
 import (
@@ -48,16 +48,16 @@ import (
 )
 
 // Test files in this package share these helpers:
-//   - mustBuildClientPKI       — generates a CA + device cert under our
+//   - mustBuildClientPKI       - generates a CA + device cert under our
 //                                control. Used by both CORE-001 and CORE-002
 //                                so BootServer can be told to trust our CA.
-//   - buildClient              — wires an *http.Client to a booted server
+//   - buildClient              - wires an *http.Client to a booted server
 //                                using the server's RootCA + our device cert.
-//   - drain / mustNewRequest   — request-plumbing helpers used by the
+//   - drain / mustNewRequest   - request-plumbing helpers used by the
 //                                CORE-001 assertion helpers; CORE-002 builds
 //                                requests inline.
 
-// TestCORE_001_HTTPRequest implements CSIP V1.2 §5.4.
+// TestCORE_001_HTTPRequest implements CSIP V1.2 section 5.4.
 func TestCORE_001_HTTPRequest(t *testing.T) {
 	t.Parallel()
 
@@ -66,7 +66,7 @@ func TestCORE_001_HTTPRequest(t *testing.T) {
 	// internal client. csiptest exposes RootCA but not the CA key (we
 	// could not sign a new device cert against the booted server's
 	// default ephemeral CA), and it does not expose the wired
-	// *http.Client either — so we bring our own and tell BootServer
+	// *http.Client either - so we bring our own and tell BootServer
 	// to trust it via WithClientCAsFile + WithClientCert.
 	_, caCertFile, clientCert := mustBuildClientPKI(t)
 
@@ -138,7 +138,7 @@ func TestCORE_001_HTTPRequest(t *testing.T) {
 
 	// Step 4: malformed body on a POST endpoint returns 400 Bad Request.
 	// /edev accepts POST (registers an EndDevice). Feeding it junk XML
-	// must drop a 400 — the handler returns http.StatusBadRequest on
+	// must drop a 400 - the handler returns http.StatusBadRequest on
 	// body-read and xml.Unmarshal errors.
 	t.Run("400_malformed_POST_/edev", func(t *testing.T) {
 		t.Parallel()
@@ -156,7 +156,7 @@ type linkRef struct {
 
 // advertisedLinks hand-walks DeviceCapability and returns every populated
 // link / list-link. Reflection would be terser, but a hand walk is what
-// any reviewer reading the V1.2 §5.4 procedure expects to see, and the
+// any reviewer reading the V1.2 section 5.4 procedure expects to see, and the
 // field set is fixed at 13 by the XSD (10 FSA-base + 3 extension links).
 func advertisedLinks(dcap sep2.DeviceCapability) []linkRef {
 	var out []linkRef
@@ -228,7 +228,7 @@ func assertGetOK(t *testing.T, client *http.Client, baseURL, path string) {
 
 // assertMethodNotAllowed asserts that issuing method against path
 // produces 405 with an Allow header. We require the Allow header per
-// RFC 7231 §6.5.5 and per the ACL middleware behaviour (acl.go sets
+// RFC 7231 section 6.5.5 and per the ACL middleware behaviour (acl.go sets
 // Allow before writing 405).
 func assertMethodNotAllowed(t *testing.T, client *http.Client, baseURL, method, path string) {
 	t.Helper()
@@ -242,14 +242,14 @@ func assertMethodNotAllowed(t *testing.T, client *http.Client, baseURL, method, 
 		t.Fatalf("%s %s: status = %d, want %d", method, path, resp.StatusCode, http.StatusMethodNotAllowed)
 	}
 	if got := resp.Header.Get("Allow"); got == "" {
-		t.Errorf("%s %s: missing Allow header on 405 (RFC 7231 §6.5.5)", method, path)
+		t.Errorf("%s %s: missing Allow header on 405 (RFC 7231 section 6.5.5)", method, path)
 	}
 }
 
 // assertMalformedBodyRejected POSTs garbage to path and asserts the
 // server rejects it with 400 Bad Request. The IEEE-2030.5 server
 // distinguishes XML-parse failure (400) from semantic-validation failure
-// (also 400 in practice) — both satisfy §5.4 step 4 ("malformed request").
+// (also 400 in practice) - both satisfy section 5.4 step 4 ("malformed request").
 func assertMalformedBodyRejected(t *testing.T, client *http.Client, baseURL, path string) {
 	t.Helper()
 	body := bytes.NewReader([]byte("this is not XML at all"))

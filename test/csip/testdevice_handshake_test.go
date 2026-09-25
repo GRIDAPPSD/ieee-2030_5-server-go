@@ -6,7 +6,7 @@
 // test device chain and key as the client identity, asserts the mTLS
 // handshake completes, and walks GET /dcap.
 //
-// The test device cert is CSIP §6.11-compliant: it carries a critical
+// The test device cert is CSIP section 6.11-compliant: it carries a critical
 // HardwareModuleName SAN, an empty Subject, proper Key Usage, and Basic
 // Constraints. The server runs in its default (non-strict) mode, which
 // accepts both compliant and non-compliant device certs. Strict mode

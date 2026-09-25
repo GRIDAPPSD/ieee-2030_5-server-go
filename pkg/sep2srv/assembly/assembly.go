@@ -617,15 +617,16 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	// edevs, not stores.EndDevices: a route left on the undecorated store
 	// would be the one that reintroduces the drift.
 	//
-	// The LogEventList advertisement layers on top of that, and the order
-	// matters only in that both derivations must survive: the LogEvent
-	// decorator wraps the registration-bound store, so a read passes through
-	// the registration derivation first and the LogEventListLink derivation
-	// second, and a device carries both links or neither of them according
-	// to its own gate.
+	// The LogEventList and flow reservation link advertisements layer on top
+	// of that; order between those two does not matter, since each owns a
+	// disjoint set of fields.
 	//
-	// Both decorators return an absent handle unchanged, so the substitute is
-	// applied exactly when Stores.EndDevices is absent and is never decorated.
+	// All three decorators return an absent handle (stores.EndDevices itself)
+	// unchanged, so requireEndDevices' substitute is applied exactly when
+	// Stores.EndDevices is absent and never decorated. Registration and
+	// LogEvent additionally skip decorating when their OWN function set is
+	// not served; flow reservation does not, and always picks an arm, for
+	// the reason its package comment gives.
 	edevs := ownedEndDevices(stores)
 
 	mux.HandleFunc("GET /edev", coreedev.HandleEndDeviceListForCaller(edevs, stores.EndDeviceManagers, authPolicy.Identity, 900))

@@ -136,8 +136,9 @@ func (s *FlowReservationLinkedEndDeviceStore) Update(ctx context.Context, id str
 }
 
 // Delete removes the device. The flow reservation records are held in
-// separate scoped stores keyed by the same device id, and removing them is
-// the EndDevice DELETE handler's concern rather than this decorator's.
+// separate scoped stores keyed by the same device id; neither this call nor
+// EndDevice DELETE removes them, so they survive under the dead key (issue
+// 701).
 func (s *FlowReservationLinkedEndDeviceStore) Delete(ctx context.Context, id string) error {
 	return s.devs.Delete(ctx, id)
 }

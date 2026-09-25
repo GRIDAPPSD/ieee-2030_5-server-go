@@ -13,11 +13,11 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
-// The three defects the four rounds on PR 696 rediscovered in turn (#693):
-// a client-forged link surviving to the wire, a link derived from the wrong
-// identity, and an unwired deployment advertising an href it 404s on. Each
-// test here pins one of them at the router, the way the discovery test
-// already pins the fourth (that the advertised hrefs actually resolve).
+// Three properties of the flow reservation links, pinned at the router
+// (#693): a client-forged link is never served, a link is derived from the
+// caller's own identity rather than a neighbour's, and an unwired deployment
+// advertises neither link. edev_flowres_links_test.go pins a fourth: the
+// advertised hrefs actually resolve.
 
 // forgedFlowReservationBody is an EndDevice carrying attacker-chosen values
 // for the two flow reservation links, plus LogEventListLink as a control:
@@ -30,9 +30,9 @@ const forgedFlowReservationBody = `<EndDevice xmlns="urn:ieee:std:2030.5:ns">` +
 	`<LogEventListLink href="/evil/lel"/>` +
 	`</EndDevice>`
 
-// TestEndDeviceLinks_FlowReservationForgedBodyIsIgnored is the RED case for
-// round 4's HIGH: a POST body carrying a forged FlowReservationRequestListLink
-// was persisted and served back on the 201, a later GET, and the /edev list.
+// TestEndDeviceLinks_FlowReservationForgedBodyIsIgnored asserts a POST body
+// carrying a forged FlowReservationRequestListLink is never persisted or
+// served back, on the 201, a later GET, and the /edev list.
 func TestEndDeviceLinks_FlowReservationForgedBodyIsIgnored(t *testing.T) {
 	t.Parallel()
 
@@ -97,10 +97,9 @@ func assertDerivedNotForged(t *testing.T, where string, dev sep2.EndDevice) {
 	}
 }
 
-// TestEndDeviceLinks_FlowReservationForgedPUTIsIgnored is E3: the write path
-// a POST-only probe cannot reach. PUT /edev/{id} replaces the record, and
-// under the discarded handler-side helper a forged PUT body was never
-// corrected because nothing re-derived after it.
+// TestEndDeviceLinks_FlowReservationForgedPUTIsIgnored covers the write path
+// a POST-only probe cannot reach: PUT /edev/{id} replaces the record, and a
+// forged link in the PUT body must not survive to a later GET.
 func TestEndDeviceLinks_FlowReservationForgedPUTIsIgnored(t *testing.T) {
 	t.Parallel()
 
@@ -137,7 +136,7 @@ func TestEndDeviceLinks_FlowReservationForgedPUTIsIgnored(t *testing.T) {
 	assertDerivedNotForged(t, "GET after forged PUT", afterPut)
 }
 
-// TestEndDeviceLinks_KeyVersusHrefDisagreement is P9 (E4): a record's flow
+// TestEndDeviceLinks_KeyVersusHrefDisagreement asserts a record's flow
 // reservation links must come from the identity the read path actually has,
 // never lifted from a neighbouring device's Href or a malformed one.
 //
@@ -195,8 +194,8 @@ func TestEndDeviceLinks_KeyVersusHrefDisagreement(t *testing.T) {
 	// The caller-scoped HTTP GET /edev filters out a malformed-href record
 	// entirely (owner.go's callerDevices: "no client could address it"),
 	// which is a pre-existing, correct behavior orthogonal to this decorator.
-	// So this reads the full store through NewReaderStores directly, the way
-	// the design's own evidence for this bound was gathered (#693 E4).
+	// So this reads the full store through NewReaderStores directly, rather
+	// than through the caller-scoped HTTP GET.
 	readers := assembly.NewReaderStores(stores)
 	listed, err := readers.EndDevices.List(ctx, store.ListOptions{Unbounded: true})
 	if err != nil {
@@ -237,7 +236,7 @@ func TestEndDeviceLinks_KeyVersusHrefDisagreement(t *testing.T) {
 	}
 }
 
-// TestEndDeviceLinks_UnwiredAnchorAdvertisesNeither is P13 (E7): a deployment
+// TestEndDeviceLinks_UnwiredAnchorAdvertisesNeither asserts a deployment
 // that does not mount the flow reservation routes must not advertise either
 // link, including a value a client tried to install through the POST body.
 // The 404 on the un-mounted route is the control that the wiring really is

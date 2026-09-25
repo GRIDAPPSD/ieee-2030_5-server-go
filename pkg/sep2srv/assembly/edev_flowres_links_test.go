@@ -12,6 +12,41 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
+// TestEndDeviceLinks_FlowReservationGateWinsOverAPreWrappedStore asserts the
+// current mount gate decides what a served EndDevice advertises even when
+// Stores.EndDevices arrives already wrapped in the other arm, the way an
+// embedder that pre-wraps the store for a different Stores would hand it to
+// this one. Registrations and LogEvents are left absent so the pre-wrapped
+// value reaches the flow reservation decorator unwrapped by anything else.
+func TestEndDeviceLinks_FlowReservationGateWinsOverAPreWrappedStore(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	stores := testStores()
+	stores.Registrations = nil
+	stores.LogEvents = nil
+	// Pre-wrapped with the UNSERVED arm, as if built for a Stores where
+	// FlowReservationRequests was absent. This Stores' own
+	// FlowReservationRequests is present, so the served links must win.
+	stores.EndDevices = memory.NewFlowReservationUnservedEndDeviceStore(memory.NewEndDeviceStore())
+	if err := stores.EndDevices.Create(ctx, "1", sep2.EndDevice{}); err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+
+	readers := assembly.NewReaderStores(stores)
+	dev, err := readers.EndDevices.Get(ctx, "1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if dev.FlowReservationRequestListLink == nil || dev.FlowReservationRequestListLink.Href != "/edev/1/frq" {
+		t.Errorf("FlowReservationRequestListLink = %v, want href %q: this Stores' own gate must win over the arm "+
+			"a pre-wrapped store was built with", dev.FlowReservationRequestListLink, "/edev/1/frq")
+	}
+	if dev.FlowReservationResponseListLink == nil || dev.FlowReservationResponseListLink.Href != "/edev/1/frp" {
+		t.Errorf("FlowReservationResponseListLink = %v, want href %q", dev.FlowReservationResponseListLink, "/edev/1/frp")
+	}
+}
+
 // TestEndDeviceLinks_FlowReservationHrefsResolve proves discovery the way a
 // conforming client does it: register a device, read the hrefs the server
 // itself advertised on the served EndDevice, and follow them. A test that
@@ -24,7 +59,7 @@ func TestEndDeviceLinks_FlowReservationHrefsResolve(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	resp, err := http.Post(srv.URL+"/edev", "application/sep+xml", nil)
+	resp, err := srv.Client().Post(srv.URL+"/edev", "application/sep+xml", nil)
 	if err != nil {
 		t.Fatalf("POST /edev: %v", err)
 	}
@@ -63,7 +98,7 @@ func TestEndDeviceLinks_FlowReservationHrefsResolve(t *testing.T) {
 
 	// Follow the request-list href from the document, and assert the list's
 	// own fields rather than only its status (data-invariants rule 1).
-	frqResp, err := http.Get(srv.URL + dev.FlowReservationRequestListLink.Href)
+	frqResp, err := srv.Client().Get(srv.URL + dev.FlowReservationRequestListLink.Href)
 	if err != nil {
 		t.Fatalf("GET %s: %v", dev.FlowReservationRequestListLink.Href, err)
 	}
@@ -79,7 +114,7 @@ func TestEndDeviceLinks_FlowReservationHrefsResolve(t *testing.T) {
 		t.Errorf("FlowReservationRequestList.All = %d, want 0 (no reservation was made)", frqList.All)
 	}
 
-	frpResp, err := http.Get(srv.URL + dev.FlowReservationResponseListLink.Href)
+	frpResp, err := srv.Client().Get(srv.URL + dev.FlowReservationResponseListLink.Href)
 	if err != nil {
 		t.Fatalf("GET %s: %v", dev.FlowReservationResponseListLink.Href, err)
 	}

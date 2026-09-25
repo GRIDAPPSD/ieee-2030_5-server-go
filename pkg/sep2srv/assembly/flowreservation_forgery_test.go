@@ -40,7 +40,7 @@ func TestEndDeviceLinks_FlowReservationForgedBodyIsIgnored(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	resp, err := http.Post(srv.URL+"/edev", "application/sep+xml", strings.NewReader(forgedFlowReservationBody))
+	resp, err := srv.Client().Post(srv.URL+"/edev", "application/sep+xml", strings.NewReader(forgedFlowReservationBody))
 	if err != nil {
 		t.Fatalf("POST /edev: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestEndDeviceLinks_FlowReservationForgedBodyIsIgnored(t *testing.T) {
 			"in the same response for this probe to mean anything)", created.LogEventListLink, created.Href)
 	}
 
-	getResp, err := http.Get(srv.URL + created.Href)
+	getResp, err := srv.Client().Get(srv.URL + created.Href)
 	if err != nil {
 		t.Fatalf("GET %s: %v", created.Href, err)
 	}
@@ -63,7 +63,7 @@ func TestEndDeviceLinks_FlowReservationForgedBodyIsIgnored(t *testing.T) {
 	decodeXML(t, getResp, &reGet)
 	assertDerivedNotForged(t, "later GET", reGet)
 
-	listResp, err := http.Get(srv.URL + "/edev")
+	listResp, err := srv.Client().Get(srv.URL + "/edev")
 	if err != nil {
 		t.Fatalf("GET /edev: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestEndDeviceLinks_FlowReservationForgedBodyIsIgnored(t *testing.T) {
 	assertDerivedNotForged(t, "/edev list", list.EndDevice[0])
 
 	// The forged href must not even resolve: this server never routed it.
-	forgedResp, err := http.Get(srv.URL + "/evil/frq")
+	forgedResp, err := srv.Client().Get(srv.URL + "/evil/frq")
 	if err != nil {
 		t.Fatalf("GET /evil/frq: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestEndDeviceLinks_FlowReservationForgedPUTIsIgnored(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	resp, err := http.Post(srv.URL+"/edev", "application/sep+xml", nil)
+	resp, err := srv.Client().Post(srv.URL+"/edev", "application/sep+xml", nil)
 	if err != nil {
 		t.Fatalf("POST /edev: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestEndDeviceLinks_FlowReservationForgedPUTIsIgnored(t *testing.T) {
 		t.Fatalf("build PUT: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/sep+xml")
-	putResp, err := http.DefaultClient.Do(req)
+	putResp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("PUT %s: %v", created.Href, err)
 	}
@@ -128,7 +128,7 @@ func TestEndDeviceLinks_FlowReservationForgedPUTIsIgnored(t *testing.T) {
 		t.Fatalf("PUT %s status = %d, want 204", created.Href, putResp.StatusCode)
 	}
 
-	getResp, err := http.Get(srv.URL + created.Href)
+	getResp, err := srv.Client().Get(srv.URL + created.Href)
 	if err != nil {
 		t.Fatalf("GET %s: %v", created.Href, err)
 	}
@@ -253,7 +253,7 @@ func TestEndDeviceLinks_UnwiredAnchorAdvertisesNeither(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	resp, err := http.Post(srv.URL+"/edev", "application/sep+xml", strings.NewReader(forgedFlowReservationBody))
+	resp, err := srv.Client().Post(srv.URL+"/edev", "application/sep+xml", strings.NewReader(forgedFlowReservationBody))
 	if err != nil {
 		t.Fatalf("POST /edev: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestEndDeviceLinks_UnwiredAnchorAdvertisesNeither(t *testing.T) {
 
 	// Control: the route really is unmounted, so the nil fields above are
 	// not an accident of some other check.
-	forgedResp, err := http.Get(srv.URL + created.Href + "/frq")
+	forgedResp, err := srv.Client().Get(srv.URL + created.Href + "/frq")
 	if err != nil {
 		t.Fatalf("GET %s/frq: %v", created.Href, err)
 	}

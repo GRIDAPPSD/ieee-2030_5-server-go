@@ -564,12 +564,15 @@ func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.E
 // registerNewFunctionSetRoutes uses to mount GET, POST /edev/{id}/frq and
 // GET /edev/{id}/frp. Changing this gate without changing that one is the
 // regression to look for, exactly as for its sibling.
+//
+// It also does not special-case a devs that is already this type: every
+// method of the type re-derives both links from the OUTERMOST layer's own
+// served field, so an inner layer built for a different Stores (or by an
+// embedder) is overwritten rather than trusted, and this call's own gate
+// always wins.
 func flowReservationLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.EndDeviceStore {
 	if store.IsAbsent(devs) {
 		return devs
-	}
-	if linked, ok := devs.(*memory.FlowReservationLinkedEndDeviceStore); ok {
-		return linked
 	}
 	if store.IsAbsent(stores.FlowReservationRequests) {
 		return memory.NewFlowReservationUnservedEndDeviceStore(devs)

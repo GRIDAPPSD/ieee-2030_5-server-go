@@ -90,11 +90,16 @@ func TestFlowReservationLinkedEndDeviceStore_EveryReadPathDerivesTheLinks(t *tes
 }
 
 // TestFlowReservationLinkedEndDeviceStore_DiscardsAClientSuppliedLink asserts
-// both links are DERIVED, not stored, on Create and Update.
+// both links are DERIVED and PERSISTED on Create and Update: the record held
+// in the undecorated inner store carries the derived href, not a client's
+// forged one, rather than merely reading correctly back through the
+// decorator (data-invariants.md rule 1: assert the persisted value, the way
+// a consumer of the inner store reaches it).
 func TestFlowReservationLinkedEndDeviceStore_DiscardsAClientSuppliedLink(t *testing.T) {
 	t.Parallel()
 
-	s := memory.NewFlowReservationLinkedEndDeviceStore(memory.NewEndDeviceStore())
+	inner := memory.NewEndDeviceStore()
+	s := memory.NewFlowReservationLinkedEndDeviceStore(inner)
 	ctx := context.Background()
 
 	forged := sep2.EndDevice{
@@ -105,6 +110,19 @@ func TestFlowReservationLinkedEndDeviceStore_DiscardsAClientSuppliedLink(t *test
 	forged.Href = "/edev/1"
 	if err := s.Create(ctx, "1", forged); err != nil {
 		t.Fatalf("create: %v", err)
+	}
+
+	persisted, err := inner.Get(ctx, "1")
+	if err != nil {
+		t.Fatalf("read persisted record after Create: %v", err)
+	}
+	if persisted.FlowReservationRequestListLink == nil || persisted.FlowReservationRequestListLink.Href != "/edev/1/frq" {
+		t.Fatalf("persisted record after Create: FlowReservationRequestListLink = %v, want href %q",
+			persisted.FlowReservationRequestListLink, "/edev/1/frq")
+	}
+	if persisted.FlowReservationResponseListLink == nil || persisted.FlowReservationResponseListLink.Href != "/edev/1/frp" {
+		t.Fatalf("persisted record after Create: FlowReservationResponseListLink = %v, want href %q",
+			persisted.FlowReservationResponseListLink, "/edev/1/frp")
 	}
 
 	got, err := s.Get(ctx, "1")
@@ -123,13 +141,26 @@ func TestFlowReservationLinkedEndDeviceStore_DiscardsAClientSuppliedLink(t *test
 	if err := s.Update(ctx, "1", forged); err != nil {
 		t.Fatalf("update: %v", err)
 	}
+
+	persisted, err = inner.Get(ctx, "1")
+	if err != nil {
+		t.Fatalf("read persisted record after Update: %v", err)
+	}
+	if persisted.FlowReservationRequestListLink == nil || persisted.FlowReservationRequestListLink.Href != "/edev/1/frq" {
+		t.Errorf("persisted record after Update: FlowReservationRequestListLink = %v, want href %q: a client must not be able to "+
+			"point its own record's PERSISTED link at another device's list", persisted.FlowReservationRequestListLink, "/edev/1/frq")
+	}
+	if persisted.FlowReservationResponseListLink == nil || persisted.FlowReservationResponseListLink.Href != "/edev/1/frp" {
+		t.Errorf("persisted record after Update: FlowReservationResponseListLink = %v, want href %q",
+			persisted.FlowReservationResponseListLink, "/edev/1/frp")
+	}
+
 	got, err = s.Get(ctx, "1")
 	if err != nil {
 		t.Fatalf("Get after update: %v", err)
 	}
 	if got.FlowReservationRequestListLink == nil || got.FlowReservationRequestListLink.Href != "/edev/1/frq" {
-		t.Errorf("after Update, FlowReservationRequestListLink = %v, want href %q: a client must not be able to point "+
-			"its own record at another device's list", got.FlowReservationRequestListLink, "/edev/1/frq")
+		t.Errorf("after Update, FlowReservationRequestListLink = %v, want href %q", got.FlowReservationRequestListLink, "/edev/1/frq")
 	}
 	if got.FlowReservationResponseListLink == nil || got.FlowReservationResponseListLink.Href != "/edev/1/frp" {
 		t.Errorf("after Update, FlowReservationResponseListLink = %v, want href %q", got.FlowReservationResponseListLink, "/edev/1/frp")

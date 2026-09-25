@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"log"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -195,10 +196,15 @@ func (s *FlowReservationLinkedEndDeviceStore) Count(ctx context.Context) (uint32
 // the same fail-closed direction [LogEventLinkedEndDeviceStore.deriveByHref]
 // argues for: an unadvertised pair is recoverable by a client re-reading the
 // device under its canonical href, while links derived from a malformed href
-// would point at lists this server may not serve under that address.
+// would point at lists this server may not serve under that address. A strip
+// that discards a link is logged, since it means an EndDevice was stored off
+// the addressing scheme the rest of the package depends on.
 func (s *FlowReservationLinkedEndDeviceStore) deriveByHref(device sep2.EndDevice) sep2.EndDevice {
 	key, ok := keyFromEndDeviceHref(device.Href)
 	if !ok {
+		if device.FlowReservationRequestListLink != nil || device.FlowReservationResponseListLink != nil {
+			log.Printf("memory: EndDevice href %q does not follow the /edev/{key} addressing invariant; serving it without FlowReservationRequestListLink or FlowReservationResponseListLink", device.Href)
+		}
 		device.FlowReservationRequestListLink = nil
 		device.FlowReservationResponseListLink = nil
 		return device

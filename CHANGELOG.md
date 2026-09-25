@@ -19,6 +19,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.6.0] - 2026-09-24
+
+This entry covers `v0.5.0..v0.6.0` (12 merged pull requests). `CHANGELOG.md`
+carries no entries for `v0.4.0` or `v0.5.0`: that history was never recorded
+at the time, and reconstructing it now would be writing a record nobody kept.
+
+### Added
+
+- `FlowReservationRequestListLink` and `FlowReservationResponseListLink` are
+  now advertised on every served `EndDevice`, mounted at `/edev/{id}/frq` and
+  `/edev/{id}/frp`. A client that discovers resources by following links can
+  now reach the flow reservation lists; a client that hardcodes the address
+  needed no change.
+  ([#699](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/699),
+  [#693](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/693))
+- CI now fails when the vendored tree differs from the pinned modules.
+  CI-only gate; no runtime change.
+  ([#694](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/694))
+- The admin plane can provision EndDevice management pairs through new
+  `EndDeviceManagementStore.RekeyManager` / `RekeyManaged` methods on
+  `*memory.EndDeviceManagementStore`. Purely additive; no existing signature
+  changed.
+  ([#677](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/677),
+  [#440](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/440))
+- Admin UI: renders a descriptor's table and definition-list bodies.
+  Frontend-only; no Go API surface.
+  ([#610](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/610))
+- `Config.ServingCAFile` and `Config.DeviceCAFile` separate the serving CA
+  from the device CA, each falling back to the legacy `CAFile` when unset. A
+  deployment that never sets the new variables behaves exactly as before.
+  ([#638](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/638),
+  [#622](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/622))
+
+### Changed
+
+- **Breaking.** `ieee-2030_5-core-go` bumped `v0.17.0` -> `v0.19.0`. Core's
+  own range types `RequestStatus` as the complex type the schema declares
+  (previously a different shape) and churns the `DERAvailability` fields. A
+  consumer that reads or constructs `RequestStatus` values, directly or
+  through server-go's exported types that embed it, must rebuild against
+  core v0.19.0 and re-check that code; a consumer that never touches
+  `RequestStatus` or the `DERAvailability` fields needs no change.
+  ([#690](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/690))
+
+### Fixed
+
+- **Breaking.** The manager write-delegation rule is replaced with an
+  explicit allow-list: only the four DER PUT sub-resources and the LogEvent
+  POST are now delegated to a manager on a device it manages. Every other
+  write below `/edev/{id}` that the previous wildcard rule permitted is now
+  refused. An aggregator or manager client that wrote to a sub-resource
+  outside that list now gets refused where it previously succeeded.
+  ([#679](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/679),
+  [#510](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/510))
+
+### Security
+
+- **Breaking.** The admin listener's client trust anchor now defaults to the
+  serving CA rather than the host root store. A deployment running
+  `AdminTLS` with an operator certificate signed by a public CA, and no
+  explicit setting, previously verified against the host root store; it now
+  verifies against the serving CA and fails the handshake unless
+  `SEP2_ADMIN_CLIENT_CA=system` is set explicitly.
+  ([#657](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/657),
+  [#624](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/624),
+  [#418](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/418))
+- `GET /api/certs/ca` previously echoed the stored CA file's raw bytes; a
+  combined-PEM layout leaked the CA private key. It now serves only
+  certificate DER the server re-encodes itself.
+  ([#652](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/652),
+  [#644](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/644))
+- A one-time admin ticket could mint its own successor, making a single
+  leaked ticket an unbounded credential. Now refused.
+  ([#653](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/653),
+  [#641](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/641))
+
 ## [0.3.0] - 2026-09-17
 
 ### Added
@@ -182,4 +258,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#416](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/416))
 
 [0.3.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.2.0...v0.3.0
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.3.0...HEAD
+[0.6.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.5.0...v0.6.0
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.6.0...HEAD

@@ -565,11 +565,19 @@ func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.E
 // GET /edev/{id}/frp. Changing this gate without changing that one is the
 // regression to look for, exactly as for its sibling.
 //
-// It also does not special-case a devs that is already this type: every
-// method of the type re-derives both links from the OUTERMOST layer's own
-// served field, so an inner layer built for a different Stores (or by an
-// embedder) is overwritten rather than trusted, and this call's own gate
-// always wins.
+// It also does not special-case a devs that is already this type, and reads
+// differ from writes here. Get, GetBySFDI, GetByLFDI and List always
+// overwrite both links from THIS layer's own served field before returning,
+// so whoever calls the outermost layer is served its own gate no matter what
+// is stored underneath or what an inner layer's gate was; this call's own
+// gate wins on every read. Create and Update instead stamp this layer's
+// links onto device and delegate: if devs is itself wrapped, the inner call
+// stamps again with ITS OWN served field before the record reaches the
+// store, so it is the INNERMOST layer's gate that ends up persisted.
+// Double-wrapping never leaks an unserved link, because every read
+// re-derives regardless of what is stored, but it does leave the persisted
+// record disagreeing with what is served, which is a reason to avoid
+// double-wrapping rather than a state this constructor detects.
 func flowReservationLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.EndDeviceStore {
 	if store.IsAbsent(devs) {
 		return devs

@@ -200,6 +200,42 @@ func TestFlowReservationLinkedEndDeviceStore_MalformedHrefStripsTheLinks(t *test
 	}
 }
 
+// TestFlowReservationLinkedEndDeviceStore_MalformedHrefWithALinkPresentLogs
+// exercises the log branch in deriveByHref that
+// TestFlowReservationLinkedEndDeviceStore_MalformedHrefStripsTheLinks cannot:
+// that test's fixtures all seed nil links, so the guard behind the log is
+// never true. Here the malformed-href record already carries a link (as an
+// older write path, or a direct store write, could leave one), so the strip
+// has something to discard.
+func TestFlowReservationLinkedEndDeviceStore_MalformedHrefWithALinkPresentLogs(t *testing.T) {
+	t.Parallel()
+
+	inner := memory.NewEndDeviceStore()
+	ctx := context.Background()
+
+	dev := sep2.EndDevice{SFDI: "9999999999", LFDI: "FEED"}
+	dev.Href = "/edev/1/extra" // malformed: keyFromEndDeviceHref rejects it
+	dev.FlowReservationRequestListLink = &sep2.ListLink{Href: "/edev/1/frq"}
+	dev.FlowReservationResponseListLink = &sep2.ListLink{Href: "/edev/1/frp"}
+	if err := inner.Create(ctx, "k1", dev); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	s := memory.NewFlowReservationLinkedEndDeviceStore(inner)
+	result, err := s.List(ctx, store.ListOptions{Unbounded: true})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("List returned %d devices, want 1", len(result.Items))
+	}
+	got := result.Items[0]
+	if got.FlowReservationRequestListLink != nil || got.FlowReservationResponseListLink != nil {
+		t.Errorf("malformed href with a preexisting link: got req=%v resp=%v, want both nil",
+			got.FlowReservationRequestListLink, got.FlowReservationResponseListLink)
+	}
+}
+
 // TestFlowReservationUnservedEndDeviceStore_StripsBothLinksEverywhere is the
 // unit-level pin for the departure from the sibling pattern: the unserved
 // arm clears both links on every path, including a value a client supplied,

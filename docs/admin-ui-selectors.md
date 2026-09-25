@@ -1,7 +1,7 @@
 # Admin dashboard selector map
 
 The operator dashboard at `GET /` is now the embedded Svelte admin UI
-(`internal/server/web/frontend/`). It replaced a single server-rendered
+(`pkg/adminui/web/frontend/`). It replaced a single server-rendered
 HTML string, which the Playwright suite in `e2e/` addresses almost
 entirely by element `id`.
 

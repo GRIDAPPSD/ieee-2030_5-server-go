@@ -7,10 +7,12 @@
 // doc.go ties its short exported surface to a stability promise this
 // package does not carry: the admin UI is this repository's
 // fastest-churning surface, and pkg/sep2server/doc.go names the admin
-// dashboard, the ACL internals, the operator login surface and the
-// test-mutation hooks as staying in internal/ specifically so that promise
-// stays affordable. Placing the panel contract under that promise would
-// either freeze the UI or devalue the promise; there is no third option.
+// dashboard's serving logic, the ACL internals, the operator login
+// surface and the test-mutation hooks as staying in internal/, pointing
+// at this package and its sibling pkg/adminui/web for the UI's own,
+// weaker, promises instead. Placing the panel contract under
+// pkg/sep2server's promise would either freeze the UI or devalue the
+// promise; there is no third option.
 //
 // # Stability
 //

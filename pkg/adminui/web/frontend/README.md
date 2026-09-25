@@ -13,8 +13,8 @@ make ui-build
 ```
 
 This runs `npm ci && npm run build` here, writing the static output to
-`../dist` (`internal/server/web/dist/`), then rebuilds the Go binary so the
-freshly built assets are embedded via `internal/server/web/embed.go`.
+`../dist` (`pkg/adminui/web/dist/`), then rebuilds the Go binary so the
+freshly built assets are embedded via `pkg/adminui/web/embed.go`.
 
 Node and npm are build-time only. The shipped server binary embeds the
 built assets in `../dist`; nothing under this directory or its

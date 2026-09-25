@@ -110,7 +110,7 @@ func loginForCookie(t *testing.T, router http.Handler) *http.Cookie {
 // the tree rather than written down here.
 func builtAssetPaths(t *testing.T) (js, css string) {
 	t.Helper()
-	entries, err := os.ReadDir(filepath.Join("web", "dist", "assets"))
+	entries, err := os.ReadDir(filepath.Join("..", "..", "pkg", "adminui", "web", "dist", "assets"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func builtAssetPaths(t *testing.T) (js, css string) {
 func mustReadDist(t *testing.T, requestPath string) []byte {
 	t.Helper()
 	rel := strings.TrimPrefix(requestPath, "/ui/")
-	b, err := os.ReadFile(filepath.Join("web", "dist", filepath.FromSlash(rel)))
+	b, err := os.ReadFile(filepath.Join("..", "..", "pkg", "adminui", "web", "dist", filepath.FromSlash(rel)))
 	if err != nil {
 		t.Fatal(err)
 	}

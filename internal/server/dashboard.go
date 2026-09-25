@@ -130,7 +130,7 @@ func (d *DashboardHandler) collectData() DashboardData {
 }
 
 // handleDashboardPage answers GET / with one of two pages. By default it
-// serves the embedded admin UI (internal/server/web). With the legacy
+// serves the embedded admin UI (pkg/adminui/web). With the legacy
 // flag set (SEP2_ADMIN_LEGACY_DASHBOARD) it serves the string-constant
 // dashboard in dashboard_html.go instead, so an operator can fall back to
 // the previous page without downgrading the binary.

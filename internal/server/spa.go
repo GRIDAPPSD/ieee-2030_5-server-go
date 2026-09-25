@@ -6,25 +6,12 @@ import (
 	"path"
 	"strings"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server/web"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/adminui/web"
 )
 
-// distFS is the SPA's built static assets (internal/server/web/dist),
-// rooted so its paths start at index.html rather than at dist/index.html.
-// fs.Sub can only fail here if the embedded tree does not contain a
-// "dist" directory, which cannot happen: web.DistFS's own
-// "//go:embed all:dist" directive requires that directory to exist at
-// compile time. A panic at package init on that impossible case is a
-// build defect, not a runtime condition to handle gracefully.
-var distFS = mustSubFS(web.DistFS, "dist")
-
-func mustSubFS(f fs.FS, dir string) fs.FS {
-	sub, err := fs.Sub(f, dir)
-	if err != nil {
-		panic("server: web.DistFS is missing its \"" + dir + "\" root: " + err.Error())
-	}
-	return sub
-}
+// distFS is the SPA's built static assets (pkg/adminui/web/dist),
+// already rooted at index.html by web.Assets.
+var distFS = web.Assets()
 
 // spaHandler serves the admin UI's built SPA. BuildAdminRouter mounts it
 // under "/ui/" with the "/ui" prefix stripped, so every path this handler
@@ -33,7 +20,7 @@ func mustSubFS(f fs.FS, dir string) fs.FS {
 // For a path that exists in distFS (an actual built asset, such as
 // /assets/index-XXXX.js or /favicon.svg), the file server serves it
 // directly. For any other non-/api path, index.html is served instead, so
-// client side routing (internal/server/web/frontend/src/lib/router.ts)
+// client side routing (pkg/adminui/web/frontend/src/lib/router.ts)
 // still works on a hard reload of a client side route.
 //
 // A path under /ui/api/ (this handler's own mount point plus "/api")

@@ -162,7 +162,7 @@ run_make_gate() { # run_make_gate <gate> [env-assignment ...]
 run_ui_check_gate() {
   local gate="ui-check"
   local log="${GATE_LOG_DIR}/${gate}.log"
-  local dist_path="internal/server/web/dist"
+  local dist_path="pkg/adminui/web/dist"
 
   # Snapshot BEFORE running: make ui-check rebuilds this directory, so any
   # dirt found afterward is only safely attributable to this run if there
@@ -174,7 +174,7 @@ run_ui_check_gate() {
   local before
   before="$(git -C "${REPO_ROOT}" status --porcelain -- "${dist_path}")"
   if [[ -n "${before}" ]]; then
-    record "${gate}" FAILED "internal/server/web/dist has pre-existing uncommitted changes; refusing to rebuild over them. Commit, stash, or run 'git checkout -- ${dist_path}' yourself, then re-run."
+    record "${gate}" FAILED "pkg/adminui/web/dist has pre-existing uncommitted changes; refusing to rebuild over them. Commit, stash, or run 'git checkout -- ${dist_path}' yourself, then re-run."
     printf 'FAILED  %s (pre-existing uncommitted changes under %s; refusing to rebuild over them)\n' "${gate}" "${dist_path}"
     return 1
   fi

@@ -1,16 +1,16 @@
-// CSIP V1.2 §8.1 — DER Identification. Tests EndDevice identity matches
+// CSIP V1.2 section 8.1 - DER Identification. Tests EndDevice identity matches
 // cert-derived SFDI/LFDI, and SelfDevice carries non-empty identity under
 // both GCM and CCM (regression on #1 fix).
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.1):
+// V1.2 procedure step -> assertion mapping (per V1.2 section 8.1):
 //
-//	Step 1 (Boot server with a known device cert) ──────────► csiptest.BootServer with the committed test device cert
-//	Step 2 (Client POSTs an EndDevice to /edev) ────────────► postEndDevice; assert 201 + Location header
-//	Step 3 (GET the returned EndDevice; assert sFDI/lFDI) ──► assertEndDeviceIdentityFromCert
-//	Step 4 (GET /sdev; assert non-empty sFDI/lFDI) ─────────► assertSelfDeviceIdentityNonEmpty
-//	         under BOTH cipher modes — regression on #1
+//	Step 1 (Boot server with a known device cert) ---------- csiptest.BootServer with the committed test device cert
+//	Step 2 (Client POSTs an EndDevice to /edev) ------------ postEndDevice; assert 201 + Location header
+//	Step 3 (GET the returned EndDevice; assert sFDI/lFDI) -- assertEndDeviceIdentityFromCert
+//	Step 4 (GET /sdev; assert non-empty sFDI/lFDI) --------- assertSelfDeviceIdentityNonEmpty
+//	         under BOTH cipher modes - regression on #1
 //
-// V1.2 §3.2.3 specifies PIN = 111115 for the DER identification flow.
+// V1.2 section 3.2.3 specifies PIN = 111115 for the DER identification flow.
 // The procedure here exercises identity binding via the client cert
 // only; PIN handling lives in the Registration resource (separate
 // ticket on the client side: #42 / #44). PIN value is
@@ -20,7 +20,7 @@
 //   - csiptest.BootServer wiring serverSFDI/serverLFDI into NewRouter
 //     from the booted server's leaf cert (#1 parity for the
 //     in-process harness). Without that, /sdev returns empty identity
-//     under both modes and Step 4 fails — which IS the regression this
+//     under both modes and Step 4 fails - which IS the regression this
 //     test guards against.
 //   - The committed, self-minted test device PKI under
 //     testdata/csip-pki/testdevice/. Certificate provenance is
@@ -141,7 +141,7 @@ func TestBASIC_001_DERIdentification(t *testing.T) {
 			// Step 2: POST EndDevice. The CSIP server overrides
 			// client-supplied SFDI/LFDI with values derived from the
 			// presented client cert (see internal/handler/edev.go), so
-			// the POST body itself is intentionally minimal — the
+			// the POST body itself is intentionally minimal - the
 			// identity binding under test is the cert path, not the
 			// XML payload.
 			location := postEndDevice(t, httpClient, srv.BaseURL)
@@ -161,8 +161,8 @@ func TestBASIC_001_DERIdentification(t *testing.T) {
 
 // postEndDevice issues POST /edev with a minimal body and returns the
 // Location header. Asserts 201 Created (new) or 200 OK (already
-// registered for this SFDI — second-call idempotency from edev.go).
-// The Location header is RFC 7231 §7.1.2 compliant: an absolute path
+// registered for this SFDI - second-call idempotency from edev.go).
+// The Location header is RFC 7231 section 7.1.2 compliant: an absolute path
 // like "/edev/65DE1159" that callers compose with srv.BaseURL.
 func postEndDevice(t *testing.T, client *http.Client, baseURL string) string {
 	t.Helper()
@@ -255,10 +255,10 @@ func assertSelfDeviceIdentityNonEmpty(t *testing.T, ctx context.Context, c *csip
 	}
 
 	if sdev.SFDI == "" {
-		t.Errorf("SelfDevice.SFDI is empty — #1 regression (NewRouter not fed cert-derived identity)")
+		t.Errorf("SelfDevice.SFDI is empty - #1 regression (NewRouter not fed cert-derived identity)")
 	}
 	if sdev.LFDI == "" {
-		t.Errorf("SelfDevice.LFDI is empty — #1 regression (NewRouter not fed cert-derived identity)")
+		t.Errorf("SelfDevice.LFDI is empty - #1 regression (NewRouter not fed cert-derived identity)")
 	}
 	if sdev.SFDI != wantSFDI {
 		t.Errorf("SelfDevice.SFDI = %q, want %q (server's own cert-derived value)", sdev.SFDI, wantSFDI)

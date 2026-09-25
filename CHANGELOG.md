@@ -21,9 +21,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.0] - 2026-09-24
 
-This entry covers `v0.5.0..v0.6.0` (12 merged pull requests). `CHANGELOG.md`
-carries no entries for `v0.4.0` or `v0.5.0`: that history was never recorded
-at the time, and reconstructing it now would be writing a record nobody kept.
+This entry covers `v0.5.0..v0.6.0` (12 merged pull requests; two,
+[#574](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/574) (an
+intermediate core hop folded into the #690 citation) and
+[#697](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/697) (a
+regression test, no server-go runtime change), are not cited separately
+below). `CHANGELOG.md` carries no entries for `v0.4.0` or `v0.5.0`. See the
+published GitHub Releases for
+[v0.4.0](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/releases/tag/v0.4.0)
+and
+[v0.5.0](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/releases/tag/v0.5.0),
+each with a per-commit table. Two breaking changes live only there: the
+default certificate directory moved outside the working tree (v0.4.0), and
+admin write routes began requiring a real credential, closing a loopback
+bypass (v0.5.0). A reader upgrading from `v0.3.0` on this file alone should
+read both releases first.
 
 ### Added
 
@@ -54,13 +66,19 @@ at the time, and reconstructing it now would be writing a record nobody kept.
 
 ### Changed
 
-- **Breaking.** `ieee-2030_5-core-go` bumped `v0.17.0` -> `v0.19.0`. Core's
-  own range types `RequestStatus` as the complex type the schema declares
-  (previously a different shape) and churns the `DERAvailability` fields. A
-  consumer that reads or constructs `RequestStatus` values, directly or
-  through server-go's exported types that embed it, must rebuild against
-  core v0.19.0 and re-check that code; a consumer that never touches
-  `RequestStatus` or the `DERAvailability` fields needs no change.
+- **Breaking.** `ieee-2030_5-core-go` bumped `v0.17.0` -> `v0.19.0`. This
+  range retypes `RequestStatus`. It was an optional pointer to a bare
+  integer; it is now a mandatory struct of `dateTime` and `requestStatus`,
+  the complex type the schema declares. `DERAvailability` gains
+  `reserveChargePercent` and `reservePercent`, which round-trip unchanged
+  through this server's DER handler, and loses `omitempty` on
+  `readingTime`, which is now always emitted, including as a literal zero;
+  no test in this repository observes that field. A consumer that reads or
+  constructs `RequestStatus` values, directly or through server-go's
+  exported types that embed it, must rebuild against core v0.19.0 and
+  re-check that code. A consumer that reads `DERAvailability.readingTime`
+  should re-check it against the new always-emitted zero; any other
+  consumer needs no change.
   ([#690](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/690))
 
 ### Fixed
@@ -70,7 +88,9 @@ at the time, and reconstructing it now would be writing a record nobody kept.
   POST are now delegated to a manager on a device it manages. Every other
   write below `/edev/{id}` that the previous wildcard rule permitted is now
   refused. An aggregator or manager client that wrote to a sub-resource
-  outside that list now gets refused where it previously succeeded.
+  outside that list must make that write with the device owner's own
+  credential instead; it now gets refused where it previously succeeded
+  with the manager's.
   ([#679](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/679),
   [#510](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/510))
 

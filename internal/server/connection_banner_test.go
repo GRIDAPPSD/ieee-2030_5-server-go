@@ -100,7 +100,7 @@ func TestRenderConnectionBanner_SameCA(t *testing.T) {
 
 	input := BannerInput{
 		Addr:                 ":443",
-		TLSMode:              "GCM",
+		TLSMode:              "CCM-8",
 		CertFile:             "certs/server.crt",
 		ServerSFDI:           "000000000000",
 		ServerLFDI:           "0000000000000000000000000000000000000000",
@@ -133,7 +133,7 @@ func TestRenderConnectionBanner_CANotLoaded(t *testing.T) {
 
 	input := BannerInput{
 		Addr:          ":443",
-		TLSMode:       "GCM",
+		TLSMode:       "CCM-8",
 		CertFile:      "certs/server.crt",
 		ServerSFDI:    "000000000000",
 		ServerLFDI:    "0000000000000000000000000000000000000000",
@@ -154,7 +154,7 @@ func TestRenderConnectionBanner_DefaultsAndMinimal(t *testing.T) {
 
 	input := BannerInput{
 		Addr:          ":443",
-		TLSMode:       "GCM",
+		TLSMode:       "CCM-8",
 		CertFile:      "certs/server.crt",
 		ServerSFDI:    "000000000000",
 		ServerLFDI:    "0000000000000000000000000000000000000000",
@@ -171,7 +171,7 @@ func TestRenderConnectionBanner_DefaultsAndMinimal(t *testing.T) {
 
 	for _, want := range []string{
 		"Listen:       https://localhost:443",
-		"TLS mode:     GCM",
+		"TLS mode:     CCM-8",
 		"Admin URL:    (disabled)",
 		"Admin auth:   disabled",
 		"Data dir:     in-memory",

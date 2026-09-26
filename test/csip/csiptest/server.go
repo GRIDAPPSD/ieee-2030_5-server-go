@@ -299,7 +299,11 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 		t.Fatalf("csiptest: CCM config: %v", ccmErr)
 	}
 	serverSFDI, serverLFDI := deriveServerIdentity(t, ccmCfg.Certificates[0].Certificate)
-	tlsListener := gotls.NewListener(listener, ccmCfg)
+	// #709 fix round 2 item 4: wrap in the same eager-handshake listener
+	// production runs (pkg/sep2server/server.go, pkg/sep2srv/server.go), so
+	// the conformance suite exercises the shipped listener shape rather than
+	// the bare fork listener that skips the eager handshake and its logging.
+	tlsListener := sepTLS.WrapCCMListener(gotls.NewListener(listener, ccmCfg), nil)
 
 	// #157: wire a notifier so the test surface fans out Notifications.
 	// The default is a real subscription.Manager bound to Stores.Subscriptions

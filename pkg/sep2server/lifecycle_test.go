@@ -1,12 +1,17 @@
 package sep2server
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 )
 
 // TestNewUnderCCM asserts the CCM-8 construction path derives the correct
@@ -198,4 +203,102 @@ func TestConnStateHookFires(t *testing.T) {
 	if !sawNew || !sawActive {
 		t.Errorf("ConnState saw %v; expected at least StateNew and StateActive", states)
 	}
+}
+
+// TestNew_RefusedHandshakeIsLogged is #709 fix round 2, item 1: the coverage
+// lane found that this package's own wrapMTLS call (server.go, the sibling of
+// sep2srv's wrapMTLS) had no test proving it, even though it is the copy
+// internal/server.Run actually starts. sep2srv/server_test.go's test of the
+// same name covers only the sep2srv package's listener; this pins the one
+// that ships. See TestNew_RefusedHandshakeIsLogged in
+// github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv for why the
+// assertion is on a log line rather than the client error: a *gotls.Conn
+// handshakes lazily on its first Read, which net/http's own "TLS handshake
+// error" logging never fires for.
+func TestNew_RefusedHandshakeIsLogged(t *testing.T) {
+	material := writeTLSMaterial(t)
+
+	srv, err := New(Config{
+		Addr:            "127.0.0.1:0",
+		CertFile:        material.certFile,
+		KeyFile:         material.keyFile,
+		CAFile:          material.caFile,
+		Auth:            DefaultAuthPolicy(),
+		ShutdownTimeout: 500 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	addr := srv.Addr()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runDone:
+		case <-time.After(2 * time.Second):
+			t.Error("Run did not return within 2s of ctx cancellation")
+		}
+	})
+
+	// Not t.Parallel(): this redirects the process-wide default logger, which
+	// is what a nil errorLog resolves to.
+	logBuf := &syncBuffer{}
+	prevOut := log.Default().Writer()
+	prevFlags := log.Default().Flags()
+	log.Default().SetOutput(logBuf)
+	log.Default().SetFlags(0)
+	t.Cleanup(func() {
+		log.Default().SetOutput(prevOut)
+		log.Default().SetFlags(prevFlags)
+	})
+
+	noCertCfg := &gotls.Config{ //nolint:gosec // test-only: server enforces RequireAnyClientCert regardless of what the client trusts
+		InsecureSkipVerify: true,
+		CipherSuites:       []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		MinVersion:         gotls.VersionTLS12,
+		MaxVersion:         gotls.VersionTLS12,
+	}
+	noCertClient := ccmHTTPClient(noCertCfg, 2*time.Second)
+	if _, err := noCertClient.Get("https://" + addr + "/dcap"); err == nil {
+		t.Fatal("expected the handshake to fail without a client certificate")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		got = logBuf.String()
+		if len(got) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(got) == 0 {
+		t.Fatal("refused handshake produced 0 bytes of log output; want a logged TLS handshake error")
+	}
+	if !strings.Contains(got, "TLS handshake error") {
+		t.Errorf("log output = %q, want it to contain %q", got, "TLS handshake error")
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for one writer goroutine (the handshake
+// logger) and one reader goroutine (the test's poll loop) at once. The
+// standard library type is not: -race flags the unguarded case.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

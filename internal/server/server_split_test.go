@@ -11,12 +11,12 @@ package server_test
 //
 // Two integration tests cover the matrix:
 //
-//	TestAdminListenerSplit_PlainHTTP   — SEP2_ADMIN_TLS=false, Caddy mode
-//	TestAdminListenerSplit_HTTPS       — SEP2_ADMIN_TLS=true, self-signed
+//	TestAdminListenerSplit_PlainHTTP   - SEP2_ADMIN_TLS=false, Caddy mode
+//	TestAdminListenerSplit_HTTPS       - SEP2_ADMIN_TLS=true, self-signed
 //
 // Plus a back-compat test:
 //
-//	TestAdminListenerBackCompatAdminAddr — empty AdminListen + AdminAddr set
+//	TestAdminListenerBackCompatAdminAddr - empty AdminListen + AdminAddr set
 //	                                       (pre-#161 env layout)
 
 import (
@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
@@ -45,23 +44,22 @@ import (
 //   - Admin listener accepts a plain-HTTP request and 401s without a Bearer
 //     (i.e., AdminAuthMiddleware is wired through).
 //   - Admin Bearer request to an #159 endpoint (POST /api/certs/info)
-//     returns 200 — smoke check that the dashboard endpoints work on the
+//     returns 200 - smoke check that the dashboard endpoints work on the
 //     new listener.
 func TestAdminListenerSplit_PlainHTTP(t *testing.T) {
 	t.Parallel()
 	env := bootSplitListener(t, splitListenerOpts{adminTLS: false, useAdminAddr: false})
 	defer env.cancel()
 
-	// 1. SEP2 listener: a cert-less client must fail to handshake.
-	cleanClient := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		Timeout:   2 * time.Second,
-	}
-	if _, err := cleanClient.Get("https://" + env.sep2Addr + "/dcap"); err == nil {
-		t.Fatal("SEP2 listener accepted a cert-less client; want handshake failure")
+	// 1. SEP2 listener: a client offering CCM-8 but no client certificate
+	// must fail to handshake. Dialed through the fork so the refusal can
+	// only be ClientAuth, never a cipher mismatch (#709 fix round 1).
+	noCertClient := ccmHTTPClient(noClientCertCCMConfig(), 2*time.Second)
+	if _, err := noCertClient.Get("https://" + env.sep2Addr + "/dcap"); err == nil {
+		t.Fatal("SEP2 listener accepted a CCM-8 client with no client certificate; want handshake failure")
 	}
 
-	// 2. Admin listener (plain HTTP): no Bearer → 401. #246: this test
+	// 2. Admin listener (plain HTTP): no Bearer -> 401. #246: this test
 	//    binds 127.0.0.1, so we set X-Forwarded-For to simulate the
 	//    Caddy-fronted production case and force the loopback bypass to
 	//    decline so AdminAuthMiddleware actually runs.
@@ -77,7 +75,7 @@ func TestAdminListenerSplit_PlainHTTP(t *testing.T) {
 		t.Errorf("no-Bearer status = %d, want 401", resp.StatusCode)
 	}
 
-	// 3. Admin listener: Bearer → 200 on an #159 endpoint.
+	// 3. Admin listener: Bearer -> 200 on an #159 endpoint.
 	req, _ := http.NewRequest(http.MethodPost, "http://"+env.adminAddr+"/api/certs/info", nil)
 	req.Header.Set("Authorization", "Bearer "+adminTestKey)
 	req.Header.Set("X-Forwarded-For", "203.0.113.5")
@@ -87,7 +85,7 @@ func TestAdminListenerSplit_PlainHTTP(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	// /api/certs/info with no body is a 400 (no cert provided) — but the
+	// /api/certs/info with no body is a 400 (no cert provided) - but the
 	// fact that we got past AdminAuthMiddleware proves the listener and
 	// auth wiring. Status must NOT be 401 / 404 / 405.
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -106,17 +104,15 @@ func TestAdminListenerSplit_HTTPS(t *testing.T) {
 	env := bootSplitListener(t, splitListenerOpts{adminTLS: true, useAdminAddr: false})
 	defer env.cancel()
 
-	// 1. SEP2 listener: cert-less client rejected.
-	cleanClient := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		Timeout:   2 * time.Second,
-	}
-	if _, err := cleanClient.Get("https://" + env.sep2Addr + "/dcap"); err == nil {
-		t.Fatal("SEP2 listener accepted a cert-less client; want handshake failure")
+	// 1. SEP2 listener: a client offering CCM-8 but no client certificate
+	// is rejected. Dialed through the fork; see the plain-HTTP variant above.
+	noCertClient := ccmHTTPClient(noClientCertCCMConfig(), 2*time.Second)
+	if _, err := noCertClient.Get("https://" + env.sep2Addr + "/dcap"); err == nil {
+		t.Fatal("SEP2 listener accepted a CCM-8 client with no client certificate; want handshake failure")
 	}
 
 	// 2. Admin listener: TLS handshake succeeds without a client cert
-	//    (VerifyClientCertIfGiven), and no Bearer → 401. #246: XFF
+	//    (VerifyClientCertIfGiven), and no Bearer -> 401. #246: XFF
 	//    forces the loopback bypass to decline so the auth chain runs.
 	adminClient := &http.Client{
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
@@ -133,7 +129,7 @@ func TestAdminListenerSplit_HTTPS(t *testing.T) {
 		t.Errorf("no-Bearer status on HTTPS admin = %d, want 401", resp.StatusCode)
 	}
 
-	// 3. Admin listener: Bearer → #159 endpoint reachable.
+	// 3. Admin listener: Bearer -> #159 endpoint reachable.
 	req, _ := http.NewRequest(http.MethodPost, "https://"+env.adminAddr+"/api/certs/info", nil)
 	req.Header.Set("Authorization", "Bearer "+adminTestKey)
 	req.Header.Set("X-Forwarded-For", "203.0.113.5")
@@ -298,8 +294,8 @@ func TestAdminListenerOperatorCert(t *testing.T) {
 	t.Fatalf("operator-cert admin listener never validated: %v", lastErr)
 }
 
-// TestAdminTLSConfigBrokenPair asserts the matrix's invalid corner — only
-// one of AdminCert/AdminKeyFile set — fails fast instead of silently
+// TestAdminTLSConfigBrokenPair asserts the matrix's invalid corner - only
+// one of AdminCert/AdminKeyFile set - fails fast instead of silently
 // generating a self-signed cert. The helper is unexported; we exercise it
 // via server.Run() returning an error.
 func TestAdminTLSConfigBrokenPair(t *testing.T) {
@@ -315,7 +311,7 @@ func TestAdminTLSConfigBrokenPair(t *testing.T) {
 		AdminKey:    adminTestKey,
 		AdminTLS:    true,
 		AdminCert:   "/nonexistent/cert.pem",
-		// AdminKeyFile intentionally empty — broken pair.
+		// AdminKeyFile intentionally empty - broken pair.
 		TZOffset:    -28800,
 		TimeQuality: sep2.TimeQualityNTP,
 	}
@@ -361,7 +357,7 @@ func bootSplitListener(t *testing.T, opts splitListenerOpts) *splitListenerEnv {
 
 	c := newSplitListenerCerts(t)
 
-	// Build a device cert for the SEP2 readiness probe — SEP2 listener is
+	// Build a device cert for the SEP2 readiness probe - SEP2 listener is
 	// RequireAnyClientCert and won't complete a handshake without one.
 	caCert, _, err := certs.LoadCA(c.caFile, c.caKeyFile)
 	if err != nil {
@@ -378,10 +374,7 @@ func bootSplitListener(t *testing.T, opts splitListenerOpts) *splitListenerEnv {
 	if err != nil {
 		t.Fatalf("GenerateDeviceCert: %v", err)
 	}
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, c.caCertPEM)
-	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
-	}
+	clientTLSCfg := ccmClientTLSConfig(t, deviceCertPEM, deviceKeyPEM, c.caCertPEM)
 
 	cfg := &config.Config{
 		Addr:        c.sep2Probe,

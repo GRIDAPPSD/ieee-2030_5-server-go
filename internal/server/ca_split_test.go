@@ -19,150 +19,11 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
-
-// TestProtocolListenerTrustsOnlyTheDeviceCA is #622 done-condition 2 driven
-// at the real TLS listener: with ServingCAFile and DeviceCAFile pointed at
-// two different CAs, a device cert signed by the device CA completes the
-// mTLS handshake and reaches /dcap, and one signed by the serving CA is
-// refused at the handshake. Both directions are asserted so this cannot
-// pass by the listener trusting everything.
-func TestProtocolListenerTrustsOnlyTheDeviceCA(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-
-	servingCACertPEM, servingCAKeyPEM, err := certs.GenerateCA(certs.CAOptions{CommonName: "622 Serving CA", ValidYears: 1})
-	if err != nil {
-		t.Fatalf("GenerateCA(serving): %v", err)
-	}
-	deviceCACertPEM, deviceCAKeyPEM, err := certs.GenerateCA(certs.CAOptions{CommonName: "622 Device CA", ValidYears: 1})
-	if err != nil {
-		t.Fatalf("GenerateCA(device): %v", err)
-	}
-
-	servingCACert, err := certs.ParseCertificatePEM(servingCACertPEM)
-	if err != nil {
-		t.Fatalf("parse serving CA: %v", err)
-	}
-	servingCAKey, err := certs.ParseKeyPEM(servingCAKeyPEM)
-	if err != nil {
-		t.Fatalf("parse serving CA key: %v", err)
-	}
-	deviceCACert, err := certs.ParseCertificatePEM(deviceCACertPEM)
-	if err != nil {
-		t.Fatalf("parse device CA: %v", err)
-	}
-	deviceCAKey, err := certs.ParseKeyPEM(deviceCAKeyPEM)
-	if err != nil {
-		t.Fatalf("parse device CA key: %v", err)
-	}
-
-	// The server's own leaf chains to the SERVING CA (#622's stated role).
-	// This test's clients skip server-cert verification of their own
-	// accord below by trusting servingCACertPEM as RootCAs; what is under
-	// test is only the listener's CLIENT-cert (ClientCAs) check.
-	serverCertPEM, serverKeyPEM, err := certs.GenerateServerCert(servingCACert, servingCAKey, certs.ServerCertOptions{
-		Hosts:      []string{"127.0.0.1", "localhost"},
-		CommonName: "622 protocol listener",
-		ValidYears: 1,
-	})
-	if err != nil {
-		t.Fatalf("GenerateServerCert: %v", err)
-	}
-
-	// The "good" device cert: signed by the device CA.
-	goodDeviceCertPEM, goodDeviceKeyPEM, err := certs.GenerateDeviceCert(deviceCACert, deviceCAKey, certs.DeviceCertOptions{
-		DeviceType:  certs.DeviceTypeGeneric,
-		HWSerialNum: "622-good",
-	})
-	if err != nil {
-		t.Fatalf("GenerateDeviceCert(device CA): %v", err)
-	}
-
-	// The "bad" device-shaped cert: signed by the SERVING CA instead. This
-	// is the exact shape the protocol listener must refuse once
-	// EffectiveDeviceCA, not CAFile, feeds the ClientCAs pool.
-	badDeviceCertPEM, badDeviceKeyPEM, err := certs.GenerateDeviceCert(servingCACert, servingCAKey, certs.DeviceCertOptions{
-		DeviceType:  certs.DeviceTypeGeneric,
-		HWSerialNum: "622-bad",
-	})
-	if err != nil {
-		t.Fatalf("GenerateDeviceCert(serving CA): %v", err)
-	}
-
-	write := func(name string, data []byte) string {
-		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, data, 0o600); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-		return p
-	}
-	servingCAFile := write("serving-ca.pem", servingCACertPEM)
-	deviceCAFile := write("device-ca.pem", deviceCACertPEM)
-	certFile := write("server.pem", serverCertPEM)
-	keyFile := write("server-key.pem", serverKeyPEM)
-
-	sep2Addr := mustProbePort(t)
-	cfg := &config.Config{
-		Addr:          sep2Addr,
-		CertFile:      certFile,
-		KeyFile:       keyFile,
-		ServingCAFile: servingCAFile,
-		DeviceCAFile:  deviceCAFile,
-		TZOffset:      -28800,
-		TimeQuality:   sep2.TimeQualityNTP,
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	runErrCh := make(chan error, 1)
-	go func() { runErrCh <- server.Run(ctx, cfg, nil) }()
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case <-runErrCh:
-		case <-time.After(3 * time.Second):
-			t.Error("server.Run did not exit within 3s after cancel")
-		}
-	})
-
-	goodClientTLS, err := sepTLS.NewClientTLSConfigFromPEM(goodDeviceCertPEM, goodDeviceKeyPEM, servingCACertPEM)
-	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM(good): %v", err)
-	}
-	if !waitForServerReady(sep2Addr, 3*time.Second, goodClientTLS) {
-		t.Fatal("protocol listener never became ready for the device-CA-signed client")
-	}
-
-	goodClient := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: goodClientTLS},
-		Timeout:   2 * time.Second,
-	}
-	resp, err := goodClient.Get("https://" + sep2Addr + "/dcap")
-	if err != nil {
-		t.Fatalf("device-CA-signed client: GET /dcap: %v", err)
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("device-CA-signed client: status = %d, want 200", resp.StatusCode)
-	}
-
-	badClientTLS, err := sepTLS.NewClientTLSConfigFromPEM(badDeviceCertPEM, badDeviceKeyPEM, servingCACertPEM)
-	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM(bad): %v", err)
-	}
-	badClient := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: badClientTLS},
-		Timeout:   1 * time.Second,
-	}
-	badResp, badErr := badClient.Get("https://" + sep2Addr + "/dcap")
-	assertRefusedForCertFailure(t, badResp, badErr, "handshake failure")
-}
 
 // assertRefusedForCertFailure is #638 fix round 2 item 5: the original
 // assertion here only checked err != nil, so a hang (this test's clients
@@ -170,15 +31,9 @@ func TestProtocolListenerTrustsOnlyTheDeviceCA(t *testing.T) {
 // satisfied it as well as a real certificate refusal. Requiring the "tls:"
 // remote-alert prefix rules out anything that is not a TLS-layer refusal;
 // requiring wantAlert pins the exact alert the listener sends for a client
-// cert outside its ClientCAs pool.
-//
-// #638 fix round 3 item 3: wantAlert is a parameter because the two TLS
-// stacks disagree on the alert name for the identical refusal. Measured
-// three runs each: the stdlib-backed GCM listener sends
-// "remote error: tls: handshake failure"; the CCM-8 listener, wired through
-// core's forked TLS stack, sends "remote error: tls: bad certificate" every
-// time. Reusing one string for both would either miss the CCM case (too
-// narrow) or accept an unrelated CCM failure under the GCM name (too loose).
+// cert outside its ClientCAs pool. The CCM-8 listener, wired through core's
+// forked TLS stack, sends "remote error: tls: bad certificate" for this
+// refusal.
 func assertRefusedForCertFailure(t *testing.T, resp *http.Response, err error, wantAlert string) {
 	t.Helper()
 	if resp != nil {
@@ -192,32 +47,13 @@ func assertRefusedForCertFailure(t *testing.T, resp *http.Response, err error, w
 	}
 }
 
-// waitForCCMServerReady is waitForServerReady's CCM counterpart: the CCM
-// listener is bound through core's forked TLS stack (gotls), so a stdlib
-// *tls.Config probe cannot complete a handshake against it.
-func waitForCCMServerReady(addr string, timeout time.Duration, clientCfg *gotls.Config) bool {
-	deadline := time.Now().Add(timeout)
-	dialer := &net.Dialer{Timeout: 200 * time.Millisecond}
-	for time.Now().Before(deadline) {
-		conn, err := gotls.DialWithDialer(dialer, "tcp", addr, clientCfg)
-		if err == nil {
-			_ = conn.Close()
-			return true
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	return false
-}
-
 // TestProtocolListenerTrustsOnlyTheDeviceCAUnderCCM is #638 fix round 2 item
-// 4, the CCM-8 half of TestProtocolListenerTrustsOnlyTheDeviceCA: the
-// existing test asserts the property only for the GCM listener that
-// EnableCCM=false selects, and CCM is a distinct constructor over a forked
-// TLS stack (pkg/sep2server/server.go wraps the listener in gotls.NewListener
-// only when EnableCCM is set), so nothing here proved GCM's assertion held
-// for the mode the field spec mandates. Same CAs, same certs, same server
-// config with EnableCCM added; only the client transport changes, to a
-// CCM-8 cipher suite dialed through gotls.
+// 4: with ServingCAFile and DeviceCAFile pointed at two different CAs, a
+// device cert signed by the device CA completes the mTLS handshake and
+// reaches /dcap, and one signed by the serving CA is refused at the
+// handshake. Both directions are asserted so this cannot pass by the
+// listener trusting everything. The listener wraps in gotls.NewListener
+// (pkg/sep2server/server.go), so the client dials through gotls too.
 func TestProtocolListenerTrustsOnlyTheDeviceCAUnderCCM(t *testing.T) {
 	t.Parallel()
 
@@ -295,7 +131,6 @@ func TestProtocolListenerTrustsOnlyTheDeviceCAUnderCCM(t *testing.T) {
 		DeviceCAFile:  deviceCAFile,
 		TZOffset:      -28800,
 		TimeQuality:   sep2.TimeQualityNTP,
-		EnableCCM:     true,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -342,7 +177,7 @@ func TestProtocolListenerTrustsOnlyTheDeviceCAUnderCCM(t *testing.T) {
 	}
 
 	goodClientCfg := ccmClientConfig(goodDeviceCertPEM, goodDeviceKeyPEM)
-	if !waitForCCMServerReady(sep2Addr, 3*time.Second, goodClientCfg) {
+	if !waitForServerReady(sep2Addr, 3*time.Second, goodClientCfg) {
 		t.Fatal("CCM protocol listener never became ready for the device-CA-signed client")
 	}
 
@@ -360,4 +195,31 @@ func TestProtocolListenerTrustsOnlyTheDeviceCAUnderCCM(t *testing.T) {
 	badClient.Timeout = 1 * time.Second
 	badResp, badErr := badClient.Get("https://" + sep2Addr + "/dcap")
 	assertRefusedForCertFailure(t, badResp, badErr, "bad certificate")
+
+	// The client above is cooperative: gotls's default certificate
+	// selection filters candidates against the server's advertised
+	// AcceptableCAs and withholds one that does not match, so its refusal
+	// could be the client declining to send rather than the listener
+	// verifying and rejecting. A hostile client that forces the send is the
+	// only way to prove the listener itself does the rejecting (#709 fix
+	// round 1, closing the gap the security lane's `return nil` mutant
+	// found in the callback this drives).
+	hostileCert, err := gotls.X509KeyPair(badDeviceCertPEM, badDeviceKeyPEM)
+	if err != nil {
+		t.Fatalf("gotls.X509KeyPair(hostile): %v", err)
+	}
+	hostileClientCfg := &gotls.Config{
+		RootCAs:          rootPool,
+		MinVersion:       gotls.VersionTLS12,
+		MaxVersion:       gotls.VersionTLS12,
+		CipherSuites:     []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		CurvePreferences: []gotls.CurveID{gotls.CurveP256},
+		GetClientCertificate: func(*gotls.CertificateRequestInfo) (*gotls.Certificate, error) {
+			return &hostileCert, nil
+		},
+	}
+	hostileClient := ccmHTTPClient(hostileClientCfg)
+	hostileClient.Timeout = 1 * time.Second
+	hostileResp, hostileErr := hostileClient.Get("https://" + sep2Addr + "/dcap")
+	assertRefusedForCertFailure(t, hostileResp, hostileErr, "bad certificate")
 }

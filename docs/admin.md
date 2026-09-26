@@ -28,9 +28,8 @@ MUST set `SEP2_ADMIN_KEY` to a high-entropy value; the literal string
 
 | Profile | Command |
 |---|---|
-| Default (admin enabled, no mDNS) | `make run` |
-| CCM-8 + admin | `make run-ccm` |
-| CCM-8 + admin + mDNS | `make run-full` |
+| Default (admin enabled, no mDNS) | `make run` (`make run-ccm` is an alias) |
+| + mDNS | `make run-full` |
 
 The Make targets above leave `SEP2_ADMIN_TLS` unset, so the admin
 listener serves **plain HTTP** on `:8444` (Caddy mode). Two browser

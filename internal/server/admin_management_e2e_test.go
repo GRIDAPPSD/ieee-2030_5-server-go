@@ -11,7 +11,6 @@ package server_test
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -21,6 +20,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
@@ -33,7 +33,7 @@ import (
 type managementE2EDevice struct {
 	lfdi      string
 	sfdi      string
-	tlsConfig *tls.Config
+	tlsConfig *gotls.Config
 }
 
 func newManagementE2EDevice(t *testing.T, c *splitListenerCerts, serial string) managementE2EDevice {
@@ -57,10 +57,7 @@ func newManagementE2EDevice(t *testing.T, c *splitListenerCerts, serial string) 
 	if err != nil {
 		t.Fatalf("ParseCertificatePEM(%s): %v", serial, err)
 	}
-	tlsCfg, err := sepTLS.NewClientTLSConfigFromPEM(certPEM, keyPEM, c.caCertPEM)
-	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM(%s): %v", serial, err)
-	}
+	tlsCfg := ccmClientTLSConfig(t, certPEM, keyPEM, c.caCertPEM)
 	return managementE2EDevice{
 		lfdi:      sepTLS.LFDI(leaf),
 		sfdi:      sepTLS.SFDI(leaf),
@@ -124,7 +121,7 @@ func TestManagementPairTakesEffectAndRevokesOverTheProtocolListener(t *testing.T
 	// id with no record, so a pair alone proves nothing without this.
 	childHref := adminMgmtRegisterDevice(t, adminClient, c.adminProbe, child.sfdi, child.lfdi)
 
-	managerClient := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{TLSClientConfig: manager.tlsConfig}}
+	managerClient := ccmHTTPClient(manager.tlsConfig, 3*time.Second)
 	protoURL := "https://" + c.sep2Probe + childHref
 
 	// Before any pair exists, the aggregator is an ordinary, unrelated

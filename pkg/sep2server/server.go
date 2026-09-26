@@ -2,7 +2,6 @@ package sep2server
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -27,7 +26,7 @@ import (
 // The composition order, outermost first, is:
 //
 //	Config.Middleware        (when non-nil)
-//	CCM identity middleware  (when Config.EnableCCM)
+//	CCM identity middleware
 //	the assembled protocol router
 //
 // The CCM layer populates r.TLS from the forked connection, so anything that
@@ -47,9 +46,7 @@ func BuildHandler(cfg Config, identity sep2srv.Identity) (http.Handler, []string
 		cfg.Notifier,
 	)
 
-	if cfg.EnableCCM {
-		handler = sepTLS.CCMIdentityMiddleware(handler)
-	}
+	handler = sepTLS.CCMIdentityMiddleware(handler)
 	if cfg.Middleware != nil {
 		handler = cfg.Middleware(handler)
 	}
@@ -112,11 +109,9 @@ func New(cfg Config) (*Server, error) {
 
 	httpSrv := newProtocolServer(handler)
 
-	if cfg.EnableCCM {
-		// Threads the forked connection into the request context, which is
-		// what CCM identity middleware reads back out.
-		sepTLS.SetupCCMServer(httpSrv)
-	}
+	// Threads the forked connection into the request context, which is
+	// what CCM identity middleware reads back out.
+	sepTLS.SetupCCMServer(httpSrv)
 	// Chain rather than clobber: core's CCM setup is free to install its own
 	// hook here in a future release, and a consumer's observation must not
 	// silently displace it.
@@ -148,7 +143,7 @@ func New(cfg Config) (*Server, error) {
 }
 
 // Handler returns the handler the listener serves: the protocol router with
-// whatever Config.EnableCCM and Config.Middleware composed around it.
+// whatever Config.Middleware composed around it.
 //
 // This is the seam for a consumer that wants to mount its own surface
 // alongside the protocol routes, or to drive them from a test without
@@ -248,37 +243,28 @@ func newProtocolServer(handler http.Handler) *http.Server {
 	}
 }
 
-// wrapMTLS builds the CCM or GCM TLS config, wraps listener in the matching
-// TLS listener, and derives the server identity from the resulting leaf.
+// wrapMTLS builds the CCM-8 TLS config, wraps listener in the fork's TLS
+// listener, and derives the server identity from the resulting leaf.
 // listener is never closed here; the caller owns that on error.
 func wrapMTLS(listener net.Listener, cfg Config) (net.Listener, sep2srv.Identity, error) {
-	if cfg.EnableCCM {
-		ccmCfg, err := sepTLS.NewCCMServerConfigWithExtraCAs(cfg.CertFile, cfg.KeyFile, cfg.CAFile, cfg.ExtraClientCAs)
-		if err != nil {
-			return nil, sep2srv.Identity{}, fmt.Errorf("sep2server: CCM TLS config: %w", err)
-		}
-		if len(ccmCfg.Certificates) == 0 {
-			return nil, sep2srv.Identity{}, errors.New("sep2server: CCM TLS config carries no certificate")
-		}
-		identity, err := deriveIdentity(ccmCfg.Certificates[0].Certificate)
-		if err != nil {
-			return nil, sep2srv.Identity{}, fmt.Errorf("sep2server: derive server identity (CCM): %w", err)
-		}
-		return gotls.NewListener(listener, ccmCfg), identity, nil
-	}
-
-	tlsCfg, err := sepTLS.NewServerTLSConfigWithExtraCAs(cfg.CertFile, cfg.KeyFile, cfg.CAFile, cfg.ExtraClientCAs)
+	ccmCfg, err := sepTLS.NewCCMServerConfigWithExtraCAs(cfg.CertFile, cfg.KeyFile, cfg.CAFile, cfg.ExtraClientCAs)
 	if err != nil {
-		return nil, sep2srv.Identity{}, fmt.Errorf("sep2server: TLS config: %w", err)
+		return nil, sep2srv.Identity{}, fmt.Errorf("sep2server: CCM TLS config: %w", err)
 	}
-	if len(tlsCfg.Certificates) == 0 {
-		return nil, sep2srv.Identity{}, errors.New("sep2server: TLS config carries no certificate")
+	if len(ccmCfg.Certificates) == 0 {
+		return nil, sep2srv.Identity{}, errors.New("sep2server: CCM TLS config carries no certificate")
 	}
-	identity, err := deriveIdentity(tlsCfg.Certificates[0].Certificate)
+	identity, err := deriveIdentity(ccmCfg.Certificates[0].Certificate)
 	if err != nil {
-		return nil, sep2srv.Identity{}, fmt.Errorf("sep2server: derive server identity (GCM): %w", err)
+		return nil, sep2srv.Identity{}, fmt.Errorf("sep2server: derive server identity (CCM): %w", err)
 	}
-	return tls.NewListener(listener, tlsCfg), identity, nil
+	// A *gotls.Conn handshakes lazily on its first Read, which net/http
+	// never logs for (its "TLS handshake error" case matches only a
+	// concrete *tls.Conn). WrapCCMListener forces the handshake eagerly and
+	// logs a failure the way net/http logs one for the stdlib type; a nil
+	// errorLog logs through the standard logger, matching this package's
+	// unset http.Server.ErrorLog.
+	return sepTLS.WrapCCMListener(gotls.NewListener(listener, ccmCfg), nil), identity, nil
 }
 
 // deriveIdentity parses the leaf from a raw DER chain and returns the server

@@ -1,52 +1,42 @@
 package sep2server
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 )
 
-// TestNewUnderCCM asserts the CCM-8 construction path derives the same server
-// identity the GCM path does and binds a usable listener.
+// TestNewUnderCCM asserts the CCM-8 construction path derives the correct
+// server identity from the leaf cert and binds a usable listener.
 //
-// The identity assertion is the point. CCM runs through core's forked
-// crypto/tls, which is a separate config-building path with its own
-// certificate plumbing, and #1 was exactly a case where one cipher mode
-// served empty SFDI/LFDI while the other did not. Deriving the same values
-// from the same leaf under both modes is what makes that regression
-// impossible to reintroduce on one path only.
+// The identity assertion is the point: CCM runs through core's forked
+// crypto/tls, a separate config-building path with its own certificate
+// plumbing, and #1 was exactly a case where identity derivation on this
+// path served empty SFDI/LFDI.
 func TestNewUnderCCM(t *testing.T) {
 	t.Parallel()
 
 	material := writeTLSMaterial(t)
 
-	base := Config{
+	ccmSrv, err := New(Config{
 		Addr:     "127.0.0.1:0",
 		CertFile: material.certFile,
 		KeyFile:  material.keyFile,
 		CAFile:   material.caFile,
 		Auth:     DefaultAuthPolicy(),
-	}
-
-	gcmCfg := base
-	gcmSrv, err := New(gcmCfg)
+	})
 	if err != nil {
-		t.Fatalf("New (GCM): %v", err)
+		t.Fatalf("New: %v", err)
 	}
 
-	ccmCfg := base
-	ccmCfg.EnableCCM = true
-	ccmSrv, err := New(ccmCfg)
-	if err != nil {
-		t.Fatalf("New (CCM): %v", err)
-	}
-
-	if ccmSrv.Identity() != gcmSrv.Identity() {
-		t.Errorf("identity differs by cipher mode: CCM %+v, GCM %+v", ccmSrv.Identity(), gcmSrv.Identity())
-	}
 	if ccmSrv.Identity().SFDI != material.wantSFDI || ccmSrv.Identity().LFDI != material.wantLFDI {
 		t.Errorf("CCM identity: got %+v, want SFDI %q LFDI %q",
 			ccmSrv.Identity(), material.wantSFDI, material.wantLFDI)
@@ -54,25 +44,22 @@ func TestNewUnderCCM(t *testing.T) {
 	if ccmSrv.Addr() == "" {
 		t.Error("CCM server reported no bound address")
 	}
-	if len(ccmSrv.Patterns()) != len(gcmSrv.Patterns()) {
-		t.Errorf("route surface differs by cipher mode: CCM %d patterns, GCM %d",
-			len(ccmSrv.Patterns()), len(gcmSrv.Patterns()))
+	if len(ccmSrv.Patterns()) == 0 {
+		t.Error("CCM server reported no mounted patterns")
 	}
 
-	// Drain both so neither leaves a listener bound past the test.
-	for name, srv := range map[string]*Server{"GCM": gcmSrv, "CCM": ccmSrv} {
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan error, 1)
-		go func() { done <- srv.Run(ctx) }()
-		cancel()
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Errorf("%s: Run returned %v on a cancelled context", name, err)
-			}
-		case <-time.After(10 * time.Second):
-			t.Errorf("%s: Run did not return within 10s", name)
+	// Drain so the listener is not left bound past the test.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- ccmSrv.Run(ctx) }()
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run returned %v on a cancelled context", err)
 		}
+	case <-time.After(10 * time.Second):
+		t.Error("Run did not return within 10s")
 	}
 }
 
@@ -119,10 +106,7 @@ func TestRunHonoursShutdownTimeout(t *testing.T) {
 	runErr := make(chan error, 1)
 	go func() { runErr <- srv.Run(ctx) }()
 
-	client := &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: material.clientTLS},
-	}
+	client := ccmHTTPClient(material.clientTLS, 30*time.Second)
 	go func() {
 		resp, reqErr := client.Get("https://" + srv.Addr() + "/dcap")
 		if reqErr == nil {
@@ -190,10 +174,7 @@ func TestConnStateHookFires(t *testing.T) {
 	runErr := make(chan error, 1)
 	go func() { runErr <- srv.Run(ctx) }()
 
-	client := &http.Client{
-		Timeout:   5 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: material.clientTLS},
-	}
+	client := ccmHTTPClient(material.clientTLS, 5*time.Second)
 	if code := getWithRetry(t, client, "https://"+srv.Addr()+"/dcap"); code != http.StatusOK {
 		t.Fatalf("GET /dcap: status %d, want 200", code)
 	}
@@ -222,4 +203,102 @@ func TestConnStateHookFires(t *testing.T) {
 	if !sawNew || !sawActive {
 		t.Errorf("ConnState saw %v; expected at least StateNew and StateActive", states)
 	}
+}
+
+// TestNew_RefusedHandshakeIsLogged is #709 fix round 2, item 1: the coverage
+// lane found that this package's own wrapMTLS call (server.go, the sibling of
+// sep2srv's wrapMTLS) had no test proving it, even though it is the copy
+// internal/server.Run actually starts. sep2srv/server_test.go's test of the
+// same name covers only the sep2srv package's listener; this pins the one
+// that ships. See TestNew_RefusedHandshakeIsLogged in
+// github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv for why the
+// assertion is on a log line rather than the client error: a *gotls.Conn
+// handshakes lazily on its first Read, which net/http's own "TLS handshake
+// error" logging never fires for.
+func TestNew_RefusedHandshakeIsLogged(t *testing.T) {
+	material := writeTLSMaterial(t)
+
+	srv, err := New(Config{
+		Addr:            "127.0.0.1:0",
+		CertFile:        material.certFile,
+		KeyFile:         material.keyFile,
+		CAFile:          material.caFile,
+		Auth:            DefaultAuthPolicy(),
+		ShutdownTimeout: 500 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	addr := srv.Addr()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runDone:
+		case <-time.After(2 * time.Second):
+			t.Error("Run did not return within 2s of ctx cancellation")
+		}
+	})
+
+	// Not t.Parallel(): this redirects the process-wide default logger, which
+	// is what a nil errorLog resolves to.
+	logBuf := &syncBuffer{}
+	prevOut := log.Default().Writer()
+	prevFlags := log.Default().Flags()
+	log.Default().SetOutput(logBuf)
+	log.Default().SetFlags(0)
+	t.Cleanup(func() {
+		log.Default().SetOutput(prevOut)
+		log.Default().SetFlags(prevFlags)
+	})
+
+	noCertCfg := &gotls.Config{ //nolint:gosec // test-only: server enforces RequireAnyClientCert regardless of what the client trusts
+		InsecureSkipVerify: true,
+		CipherSuites:       []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		MinVersion:         gotls.VersionTLS12,
+		MaxVersion:         gotls.VersionTLS12,
+	}
+	noCertClient := ccmHTTPClient(noCertCfg, 2*time.Second)
+	if _, err := noCertClient.Get("https://" + addr + "/dcap"); err == nil {
+		t.Fatal("expected the handshake to fail without a client certificate")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		got = logBuf.String()
+		if len(got) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(got) == 0 {
+		t.Fatal("refused handshake produced 0 bytes of log output; want a logged TLS handshake error")
+	}
+	if !strings.Contains(got, "TLS handshake error") {
+		t.Errorf("log output = %q, want it to contain %q", got, "TLS handshake error")
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for one writer goroutine (the handshake
+// logger) and one reader goroutine (the test's poll loop) at once. The
+// standard library type is not: -race flags the unguarded case.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

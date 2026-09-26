@@ -84,7 +84,7 @@ func TestStalledManagementWriteDoesNotBlockUnrelatedEndDeviceList(t *testing.T) 
 	// callerDevices calls ManagedBy purely to find that it lists nothing.
 	adminMgmtRegisterDevice(t, adminClient, c.adminProbe, bystander.sfdi, bystander.lfdi)
 
-	bystanderClient := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{TLSClientConfig: bystander.tlsConfig}}
+	bystanderClient := ccmHTTPClient(bystander.tlsConfig, 2*time.Second)
 
 	// Healthy baseline, before any write ever touches the store: proves the
 	// timed comparison below is measuring the stall, not routine handler

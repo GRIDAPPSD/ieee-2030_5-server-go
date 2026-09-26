@@ -1,7 +1,7 @@
 package server_test
 
 import (
-	"crypto/tls"
+	"context"
 	"crypto/x509"
 	"encoding/xml"
 	"io"
@@ -12,20 +12,27 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 // TestPythonClientInterop simulates the GridAPPS-D Python IEEE 2030.5 client's
-// behavior against our server. The Python client:
+// protocol-level behavior against our server: the XML bodies, headers, and
+// status codes it depends on. The Python client:
 // - Uses ECDSA P-256 certs (same as ours)
-// - Uses GCM TLS (ssl.PROTOCOL_TLS_CLIENT, no CCM)
 // - Sets check_hostname=False, verify_mode=CERT_OPTIONAL
 // - Sends Accept: application/sep+xml
-// - Follows: GET /dcap → GET /edev → POST /edev → GET /tm
-// - Posts metering: POST /mup → POST /mup/{id}/mr
+// - Follows: GET /dcap -> GET /edev -> POST /edev -> GET /tm
+// - Posts metering: POST /mup -> POST /mup/{id}/mr
 // - Uses Connection: keep-alive with Keep-Alive header
+//
+// The cipher itself is out of scope for what this test proves: it dials
+// through the fork because the server offers CCM-8 only. The real
+// GridAPPS-D Python client historically used ssl.PROTOCOL_TLS_CLIENT (GCM);
+// that client needs its own move to CCM-8 to interoperate with this server,
+// which is not this test's concern to fix.
 func TestPythonClientInterop(t *testing.T) {
 	// Generate certs matching Python client pattern (ECDSA P-256)
 	caCertPEM, caKeyPEM, _ := certs.GenerateCA(certs.CAOptions{
@@ -43,38 +50,45 @@ func TestPythonClientInterop(t *testing.T) {
 	})
 
 	// Start server
-	serverTLSCfg, _ := sepTLS.NewServerTLSConfigFromPEM(serverCertPEM, serverKeyPEM, caCertPEM)
+	serverTLSCfg, _ := sepTLS.NewCCMServerConfigFromPEM(serverCertPEM, serverKeyPEM, caCertPEM)
 	stores := newTestStores()
 	cfg := &config.Config{TZOffset: -28800, TimeQuality: sep2.TimeQualityNTP}
 
 	listener, _ := net.Listen("tcp", "127.0.0.1:0")
 	defer func() { _ = listener.Close() }()
 
-	tlsListener := tls.NewListener(listener, serverTLSCfg)
+	tlsListener := gotls.NewListener(listener, serverTLSCfg)
 	router, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", nil)
-	srv := &http.Server{Handler: router}
+	srv := &http.Server{Handler: sepTLS.CCMIdentityMiddleware(router)}
+	sepTLS.SetupCCMServer(srv)
 	go func() { _ = srv.Serve(tlsListener) }()
 	defer func() { _ = srv.Close() }()
 
 	// Create client mimicking Python behavior:
-	// - check_hostname = False → InsecureSkipVerify (for hostname, not cert chain)
-	// - verify_mode = CERT_OPTIONAL → still sends client cert
+	// - check_hostname = False -> InsecureSkipVerify (for hostname, not cert chain)
+	// - verify_mode = CERT_OPTIONAL -> still sends client cert
 	// - Connection: keep-alive
-	cert, _ := tls.X509KeyPair(deviceCertPEM, deviceKeyPEM)
+	// Dials through the fork since the server offers CCM-8 only.
+	cert, _ := gotls.X509KeyPair(deviceCertPEM, deviceKeyPEM)
 	caPool := x509.NewCertPool()
 	caPool.AppendCertsFromPEM(caCertPEM)
 
-	pythonLikeTLS := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
+	pythonLikeTLS := &gotls.Config{
+		Certificates:       []gotls.Certificate{cert},
 		RootCAs:            caPool,
 		InsecureSkipVerify: false, // Python sets CERT_OPTIONAL but still verifies CA
-		MinVersion:         tls.VersionTLS12,
+		MinVersion:         gotls.VersionTLS12,
+		MaxVersion:         gotls.VersionTLS12,
+		CipherSuites:       []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		CurvePreferences:   []gotls.CurveID{gotls.CurveP256},
 	}
 
 	client := &http.Client{
 		Transport: &http.Transport{
-			TLSClientConfig:   pythonLikeTLS,
 			DisableKeepAlives: false, // persistent connections like Python
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return (&gotls.Dialer{Config: pythonLikeTLS}).DialContext(ctx, network, addr)
+			},
 		},
 	}
 

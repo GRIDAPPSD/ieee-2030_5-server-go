@@ -128,7 +128,7 @@ func TestBuildBannerInput_SameCAUnsplitDeployment(t *testing.T) {
 		// ServingCAFile, DeviceCAFile left empty: both fall back to CAFile.
 	}
 
-	got := buildBannerInput(cfg, svc, "GCM", "000000000000", "0000000000000000000000000000000000000000", "")
+	got := buildBannerInput(cfg, svc, "CCM-8", "000000000000", "0000000000000000000000000000000000000000", "")
 
 	if !got.SameCA {
 		t.Error("SameCA = false, want true when neither ServingCAFile nor DeviceCAFile is set")
@@ -152,7 +152,7 @@ func TestBuildBannerInput_NilService(t *testing.T) {
 		DeviceCAFile:  "certs/device-ca.crt",
 	}
 
-	got := buildBannerInput(cfg, nil, "GCM", "000000000000", "0000000000000000000000000000000000000000", "")
+	got := buildBannerInput(cfg, nil, "CCM-8", "000000000000", "0000000000000000000000000000000000000000", "")
 
 	if got.ServingCASubject != "" || got.ServingCAFingerprint != "" {
 		t.Errorf("serving subject/fingerprint not empty with nil svc: %q / %q", got.ServingCASubject, got.ServingCAFingerprint)
@@ -181,7 +181,7 @@ func TestBuildBannerInput_CertWithoutKeyStillReportsLoaded(t *testing.T) {
 		DeviceCAFile:  "certs/device-ca.crt",
 	}
 
-	got := buildBannerInput(cfg, svc, "GCM", "000000000000", "0000000000000000000000000000000000000000", "")
+	got := buildBannerInput(cfg, svc, "CCM-8", "000000000000", "0000000000000000000000000000000000000000", "")
 
 	wantSubject := servingCA.Cert.Subject.String()
 	if got.ServingCASubject != wantSubject {

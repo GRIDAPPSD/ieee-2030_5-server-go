@@ -44,9 +44,9 @@ import (
 // resulting program, the walked DERControlList, and the booted server's
 // client so the callback can issue mode-specific follow-up GETs.
 //
-// Boots under both GCM and CCM cipher modes - same shape as
-// CORE-012/013. The callback receives the cipher mode label for
-// failure-message diagnosability.
+// Boots over CCM-8, the spec cipher path - same shape as CORE-012/013.
+// The callback receives the cipher mode label for failure-message
+// diagnosability.
 func basicModeWalk(
 	t *testing.T,
 	fixture string,
@@ -58,8 +58,7 @@ func basicModeWalk(
 		name string
 		opts []csiptest.BootOption
 	}{
-		{name: "GCM", opts: nil},
-		{name: "CCM", opts: []csiptest.BootOption{csiptest.WithCCMMode()}},
+		{name: "CCM", opts: nil},
 	} {
 		mode := mode
 		t.Run(mode.name, func(t *testing.T) {
@@ -90,8 +89,7 @@ func basicModeWalkDefault(
 		name string
 		opts []csiptest.BootOption
 	}{
-		{name: "GCM", opts: nil},
-		{name: "CCM", opts: []csiptest.BootOption{csiptest.WithCCMMode()}},
+		{name: "CCM", opts: nil},
 	} {
 		mode := mode
 		t.Run(mode.name, func(t *testing.T) {

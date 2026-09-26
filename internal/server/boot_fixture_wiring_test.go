@@ -22,17 +22,15 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
-// TestBootFixtureWiringGCM asserts the Enphase fixture is loaded into
-// stores under GCM mode. The CCM path uses the same Load() call, so we
-// only need to cover one cipher mode here - the multi-mode coverage is
-// in TestServerIdentityPopulatedUnderCCM (#1).
-func TestBootFixtureWiringGCM(t *testing.T) {
+// TestBootFixtureWiring asserts the Enphase fixture is loaded into
+// stores over the server's real (CCM-8) listener. Identity-under-CCM
+// coverage is in TestServerIdentityPopulatedUnderCCM (#1).
+func TestBootFixtureWiring(t *testing.T) {
 	dir := t.TempDir()
 
 	caCertPEM, caKeyPEM, err := certs.GenerateCA(certs.CAOptions{
@@ -96,10 +94,7 @@ func TestBootFixtureWiringGCM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read test device key: %v", err)
 	}
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, caCertPEM)
-	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
-	}
+	clientTLSCfg := ccmClientTLSConfig(t, deviceCertPEM, deviceKeyPEM, caCertPEM)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -158,10 +153,7 @@ startLoop:
 		t.Fatalf("server failed to start after %d attempts", startAttempts)
 	}
 
-	client := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: clientTLSCfg},
-		Timeout:   3 * time.Second,
-	}
+	client := ccmHTTPClient(clientTLSCfg, 3*time.Second)
 
 	resp, err := client.Get("https://" + addr + "/edev")
 	if err != nil {

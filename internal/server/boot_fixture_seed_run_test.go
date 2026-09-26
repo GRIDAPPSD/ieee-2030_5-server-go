@@ -2,7 +2,6 @@ package server_test
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/xml"
 	"io"
 	"net"
@@ -14,7 +13,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
@@ -93,14 +92,8 @@ der_programs:
 	if err != nil {
 		t.Fatalf("read test device key: %v", err)
 	}
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, caCertPEM)
-	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
-	}
-	client := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: clientTLSCfg},
-		Timeout:   3 * time.Second,
-	}
+	clientTLSCfg := ccmClientTLSConfig(t, deviceCertPEM, deviceKeyPEM, caCertPEM)
+	client := ccmHTTPClient(clientTLSCfg, 3*time.Second)
 
 	newConfig := func(addr string) *config.Config {
 		return &config.Config{
@@ -171,7 +164,7 @@ der_programs:
 
 // startSeedRun starts server.Run and waits until it serves TLS. Only a bind
 // race is retried: any other Run error is the failure under test.
-func startSeedRun(t *testing.T, newConfig func(addr string) *config.Config, clientTLSCfg *tls.Config) (string, func()) {
+func startSeedRun(t *testing.T, newConfig func(addr string) *config.Config, clientTLSCfg *gotls.Config) (string, func()) {
 	t.Helper()
 	const startAttempts = 8
 	for attempt := 0; attempt < startAttempts; attempt++ {

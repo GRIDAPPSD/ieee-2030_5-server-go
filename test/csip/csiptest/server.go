@@ -15,17 +15,12 @@ package csiptest
 // its own store set, so parallel tests using t.Parallel() never collide
 // on port or state.
 //
-// Two cipher modes are supported:
-//
-//  1. GCM (default) uses stdlib crypto/tls. Fast, no fixture deps.
-//     Use this for everything that does not specifically assert CCM-8
-//     wire behavior. The default keeps Phase 3 tests cheap.
-//
-//  2. CCM-8 uses the fork vendored at
-//     vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls
-//     that registers TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 (0xC0AE). Opt in via
-//     WithCCMMode(). Tests that prove spec-cipher conformance should
-//     opt in; everything else should not pay the cost.
+// The booted server offers CCM-8 only, through the fork vendored at
+// vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls that
+// registers TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 (0xC0AE); core's sep2tls
+// package offers no other cipher suite (see core's config.go). The
+// returned Client dials through the same fork, since net/http's own
+// stdlib TLS client cannot negotiate CCM-8 at all.
 //
 // The helper generates an ephemeral CA + server cert per boot. By
 // default it also generates an ephemeral device cert and wires the
@@ -57,14 +52,12 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
-// deriveServerIdentity parses the leaf cert from a raw DER chain (as
-// found in tls.Certificate.Certificate / gotls.Certificate.Certificate)
-// and returns the server SFDI and LFDI. Mirrors the unexported helper
-// of the same name in internal/server/server.go (#1) so the
-// in-process harness populates /sdev and /sdev/sdi the same way the
-// production Run() flow does. Mode-agnostic: same code path for both
-// GCM (stdlib crypto/tls) and CCM-8 (vendored gotls). t.Fatal on any
-// failure; an empty chain means the caller fed BootServer a broken
+// deriveServerIdentity parses the leaf cert from a raw DER chain (as found
+// in gotls.Certificate.Certificate) and returns the server SFDI and LFDI.
+// Mirrors the unexported helper of the same name in
+// internal/server/server.go (#1) so the in-process harness populates
+// /sdev and /sdev/sdi the same way the production Run() flow does. t.Fatal
+// on any failure; an empty chain means the caller fed BootServer a broken
 // PKI and the test should surface that loudly.
 func deriveServerIdentity(t *testing.T, rawChain [][]byte) (sfdi, lfdi string) {
 	t.Helper()
@@ -78,18 +71,25 @@ func deriveServerIdentity(t *testing.T, rawChain [][]byte) (sfdi, lfdi string) {
 	return sepTLS.SFDI(leaf), sepTLS.LFDI(leaf)
 }
 
-// cipherMode selects the TLS path the booted server listens on.
-type cipherMode int
-
-const (
-	cipherGCM cipherMode = iota // stdlib crypto/tls, default
-	cipherCCM                   // vendored gotls + CCM-8
-)
+// toCCMCertificate converts a stdlib tls.Certificate to the fork's
+// gotls.Certificate. The two types are field-for-field identical (gotls is
+// a fork of crypto/tls), so this is a straight copy, not a re-parse: it
+// lets BootServer accept a caller-supplied tls.Certificate (WithClientCert,
+// and the ephemeral device cert tls.X509KeyPair mints) while dialing the
+// CCM-8-only server through the fork.
+func toCCMCertificate(cert tls.Certificate) gotls.Certificate {
+	return gotls.Certificate{
+		Certificate:                 cert.Certificate,
+		PrivateKey:                  cert.PrivateKey,
+		OCSPStaple:                  cert.OCSPStaple,
+		SignedCertificateTimestamps: cert.SignedCertificateTimestamps,
+		Leaf:                        cert.Leaf,
+	}
+}
 
 // bootCfg is the resolved configuration assembled from BootOptions
 // before the listener is opened. Internal, not exported.
 type bootCfg struct {
-	cipher        cipherMode
 	stores        *server.Stores
 	serverConfig  *config.Config
 	clientCert    *tls.Certificate         // if nil, helper generates an ephemeral device cert
@@ -100,14 +100,6 @@ type bootCfg struct {
 // BootOption configures BootServer. Apply via the functional-options
 // pattern; unrecognized fields fall through to the zero-value defaults.
 type BootOption func(*bootCfg)
-
-// WithCCMMode flips the booted server to the spec-compliant CCM-8
-// cipher path (vendored gotls). The default is GCM, which is faster
-// and good enough for most procedural tests. Use this when a test
-// specifically asserts CCM-8 negotiation.
-func WithCCMMode() BootOption {
-	return func(c *bootCfg) { c.cipher = cipherCCM }
-}
 
 // WithStores supplies a caller-built *server.Stores. The helper takes
 // ownership and does not mutate the slice. Use this with the fixture
@@ -154,7 +146,7 @@ func WithNotifier(n handler.ResourceNotifier) BootOption {
 // drives the server with an external cert chain, e.g. handshake_test
 // drives with a SunSpec V1.2 leaf and must put the SunSpec roots in
 // ClientCAs. The path is read at boot time by the underlying core
-// pkg/sep2tls.NewCCMServerConfig / NewServerTLSConfig.
+// pkg/sep2tls.NewCCMServerConfigWithExtraCAs.
 func WithClientCAsFile(path string) BootOption {
 	return func(c *bootCfg) { c.clientCAsPath = path }
 }
@@ -250,7 +242,6 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 	t.Helper()
 
 	cfg := bootCfg{
-		cipher:       cipherGCM,
 		serverConfig: defaultServerConfig(),
 	}
 	for _, opt := range opts {
@@ -298,33 +289,21 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 	// Build the TLS listener AND derive the server's SFDI/LFDI from its
 	// leaf cert BEFORE constructing the router. Mirrors the production
 	// Run() flow fixed by #1 so /sdev and /sdev/sdi see populated
-	// identity under both cipher modes. Without this, NewRouter is fed
-	// empty strings and the SelfDevice handler closes over them: exactly
-	// the regression #1 fixed in production but which this harness
-	// did not previously replicate.
-	var (
-		tlsListener net.Listener
-		serverSFDI  string
-		serverLFDI  string
-	)
-	switch cfg.cipher {
-	case cipherCCM:
-		ccmCfg, ccmErr := newCCMConfig(t, serverCertPEM, serverKeyPEM, clientCAsPEM)
-		if ccmErr != nil {
-			_ = listener.Close()
-			t.Fatalf("csiptest: CCM config: %v", ccmErr)
-		}
-		serverSFDI, serverLFDI = deriveServerIdentity(t, ccmCfg.Certificates[0].Certificate)
-		tlsListener = gotls.NewListener(listener, ccmCfg)
-	default:
-		stdCfg, stdErr := sepTLS.NewServerTLSConfigFromPEM(serverCertPEM, serverKeyPEM, clientCAsPEM)
-		if stdErr != nil {
-			_ = listener.Close()
-			t.Fatalf("csiptest: GCM config: %v", stdErr)
-		}
-		serverSFDI, serverLFDI = deriveServerIdentity(t, stdCfg.Certificates[0].Certificate)
-		tlsListener = tls.NewListener(listener, stdCfg)
+	// identity. Without this, NewRouter is fed empty strings and the
+	// SelfDevice handler closes over them: exactly the regression #1
+	// fixed in production but which this harness did not previously
+	// replicate.
+	ccmCfg, ccmErr := newCCMConfig(t, serverCertPEM, serverKeyPEM, clientCAsPEM)
+	if ccmErr != nil {
+		_ = listener.Close()
+		t.Fatalf("csiptest: CCM config: %v", ccmErr)
 	}
+	serverSFDI, serverLFDI := deriveServerIdentity(t, ccmCfg.Certificates[0].Certificate)
+	// #709 fix round 2 item 4: wrap in the same eager-handshake listener
+	// production runs (pkg/sep2server/server.go, pkg/sep2srv/server.go), so
+	// the conformance suite exercises the shipped listener shape rather than
+	// the bare fork listener that skips the eager handshake and its logging.
+	tlsListener := sepTLS.WrapCCMListener(gotls.NewListener(listener, ccmCfg), nil)
 
 	// #157: wire a notifier so the test surface fans out Notifications.
 	// The default is a real subscription.Manager bound to Stores.Subscriptions
@@ -353,12 +332,8 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 
 	router, mountedPatterns := server.BuildProtocolRouter(cfg.serverConfig, cfg.stores, nil, serverSFDI, serverLFDI, notifier)
 
-	if cfg.cipher == cipherCCM {
-		sepTLS.SetupCCMServer(httpSrv)
-		httpSrv.Handler = sepTLS.CCMIdentityMiddleware(router)
-	} else {
-		httpSrv.Handler = router
-	}
+	sepTLS.SetupCCMServer(httpSrv)
+	httpSrv.Handler = sepTLS.CCMIdentityMiddleware(router)
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpSrv.Serve(tlsListener) }()
@@ -376,23 +351,33 @@ func BootServer(t *testing.T, opts ...BootOption) *BootedServer {
 	booted.srv = httpSrv
 
 	// Build the http.Client. Trust the ephemeral CA via RootCAs; present
-	// the resolved client cert (caller-supplied or ephemeral device).
+	// the resolved client cert (caller-supplied or ephemeral device). The
+	// server offers CCM-8 only, so the client must dial through the fork
+	// (net/http's own TLSClientConfig field only accepts a *tls.Config,
+	// which cannot negotiate CCM-8 at all).
 	rootPool := x509.NewCertPool()
 	if !rootPool.AppendCertsFromPEM(caCertPEM) {
 		_ = httpSrv.Close()
 		_ = listener.Close()
 		t.Fatal("csiptest: append root CA to pool")
 	}
-	clientTLSCfg := &tls.Config{
-		Certificates: []tls.Certificate{clientCert},
-		RootCAs:      rootPool,
-		ServerName:   "127.0.0.1",
-		MinVersion:   tls.VersionTLS12,
-		MaxVersion:   tls.VersionTLS12,
+	clientTLSCfg := &gotls.Config{
+		Certificates:     []gotls.Certificate{toCCMCertificate(clientCert)},
+		RootCAs:          rootPool,
+		ServerName:       "127.0.0.1",
+		MinVersion:       gotls.VersionTLS12,
+		MaxVersion:       gotls.VersionTLS12,
+		CipherSuites:     []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		CurvePreferences: []gotls.CurveID{gotls.CurveP256},
 	}
 	httpClient := &http.Client{
-		Timeout:   10 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: clientTLSCfg},
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return (&gotls.Dialer{Config: clientTLSCfg}).DialContext(ctx, network, addr)
+			},
+		},
 	}
 	booted.client = NewClient(httpClient, baseURL)
 

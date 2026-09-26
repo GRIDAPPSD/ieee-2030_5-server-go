@@ -65,10 +65,7 @@ func startRunForNotificationPolicy(t *testing.T, allowLoopback bool) (string, *h
 	if err != nil {
 		t.Fatalf("GenerateDeviceCert: %v", err)
 	}
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, c.caCertPEM)
-	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
-	}
+	clientTLSCfg := ccmClientTLSConfig(t, deviceCertPEM, deviceKeyPEM, c.caCertPEM)
 
 	// Every /edev/{id} route admits only the EndDevice's owner, so the boot
 	// fixture seeds edev-1 with this client certificate's identity.
@@ -110,7 +107,7 @@ func startRunForNotificationPolicy(t *testing.T, allowLoopback bool) (string, *h
 				cancel()
 				t.Fatalf("protocol listener never became ready on %s", addr)
 			}
-			client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSCfg}, Timeout: 5 * time.Second}
+			client := ccmHTTPClient(clientTLSCfg, 5*time.Second)
 			return addr, client, cancel, runErrCh
 		case err := <-runErrCh:
 			cancel()

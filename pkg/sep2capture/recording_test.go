@@ -3,7 +3,6 @@ package sep2capture
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"errors"
 	"io"
 	"log"
@@ -24,13 +23,13 @@ import (
 // startCaptureServer serves handler over a fresh TLS listener with a
 // Recorder attached, and returns the address to dial and the sink it was
 // given. The listener handshakes before Accept returns (this package's own
-// Listener over a bare tls.Listener); Attach does not require that, but
-// most tests here still use the pre-handshaken shape since it is what most
-// of this file predates.
+// Listener over a bare gotls.Listener, the shape the server's real CCM-8
+// listener uses); Attach does not require that, but most tests here still
+// use the pre-handshaken shape since it is what most of this file predates.
 func startCaptureServer(t testing.TB, m material, handler http.Handler) (addr string, sink *MemorySink) {
 	t.Helper()
 	tcpLn := listenTCP(t)
-	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	tlsLn := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
 	ln := NewListener(tlsLn, nil)
 	srv := &http.Server{Handler: handler}
 	sink = NewMemorySink()
@@ -56,11 +55,11 @@ func closeRecorder(t testing.TB, r *Recorder) {
 	}
 }
 
-func rawDial(t testing.TB, m material, addr string) *tls.Conn {
+func rawDial(t testing.TB, m material, addr string) *gotls.Conn {
 	t.Helper()
-	conn, err := tls.Dial("tcp", addr, gcmClientConfig(t, m))
+	conn, err := gotls.Dial("tcp", addr, ccmClientConfig(t, m))
 	if err != nil {
-		t.Fatalf("tls.Dial: %v", err)
+		t.Fatalf("gotls.Dial: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	return conn
@@ -362,7 +361,7 @@ func TestExpectContinueStaysOneExchange(t *testing.T) {
 func TestConnStateHookSetBeforeAttachStillFires(t *testing.T) {
 	m := newMaterial(t)
 	tcpLn := listenTCP(t)
-	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	tlsLn := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
 	ln := NewListener(tlsLn, nil)
 	srv := &http.Server{Handler: okHandler("ok")}
 
@@ -950,7 +949,7 @@ var _ handshaker = (*handshakeFailingConn)(nil)
 // completeHandshake must close the underlying connection when its handshake
 // fails. A black-box dial against a garbage TLS peer does not discriminate
 // this in the current design: net/http's own serve loop makes its next read
-// return the wrapped *tls.Conn's cached handshake error immediately and
+// return the wrapped *gotls.Conn's cached handshake error immediately and
 // tears the connection down through its own c.close(), whether or not this
 // method's own Close() call runs too (checked directly: the dial-based
 // TestAttachRefusesAHandshakeFailure still passed with this Close() call
@@ -1123,17 +1122,16 @@ func TestPanickingSinkDoesNotStopTheDispatchGoroutine(t *testing.T) {
 	}
 }
 
-// Identity must be recorded through Attach, in both cipher modes, on
-// every listener the server really uses: this package's
-// own pre-handshaking Listener (the first two subtests), core's
-// sepTLS.WrapCCMListener, a bare gotls.NewListener (the server's real
-// CCM-8 listener, sep2server.wrapMTLS), and a bare crypto/tls.NewListener
-// (the GCM equivalent). Attach must refuse a connection whose handshake
-// genuinely fails rather than recording an empty identity for it (see
-// TestAttachRefusesAHandshakeFailure).
+// Identity must be recorded through Attach, on every listener shape the
+// server really uses: this package's own pre-handshaking Listener (the
+// first two subtests, one dialed raw and one through http.Client), core's
+// sepTLS.WrapCCMListener, and a bare gotls.NewListener (the server's real
+// CCM-8 listener, sep2server.wrapMTLS). Attach must refuse a connection
+// whose handshake genuinely fails rather than recording an empty identity
+// for it (see TestAttachRefusesAHandshakeFailure).
 
 func TestIdentityRecordedThroughAttach(t *testing.T) {
-	t.Run("GCM", func(t *testing.T) {
+	t.Run("raw dial", func(t *testing.T) {
 		m := newMaterial(t)
 		addr, sink := startCaptureServer(t, m, okHandler("ok"))
 		conn := rawDial(t, m, addr)
@@ -1153,7 +1151,7 @@ func TestIdentityRecordedThroughAttach(t *testing.T) {
 		}
 	})
 
-	t.Run("CCM", func(t *testing.T) {
+	t.Run("http.Client", func(t *testing.T) {
 		m := newMaterial(t)
 		tcpLn := listenTCP(t)
 		gotlsLn := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
@@ -1261,41 +1259,6 @@ func TestIdentityRecordedThroughAttach(t *testing.T) {
 		}
 	})
 
-	t.Run("GCM bare crypto/tls.NewListener", func(t *testing.T) {
-		m := newMaterial(t)
-		tcpLn := listenTCP(t)
-		bare := tls.NewListener(tcpLn, gcmServerConfig(t, m)) // not pre-handshaken
-
-		var seen observedTLS
-		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			seen.set(r.TLS)
-			w.WriteHeader(http.StatusOK)
-		})
-		srv := &http.Server{Handler: handler}
-		sink := NewMemorySink()
-		rec := NewRecorder(sink, nil)
-		served := rec.Attach(srv, bare)
-		go func() { _ = srv.Serve(served) }()
-		t.Cleanup(func() { closeRecorder(t, rec) })
-		t.Cleanup(func() { _ = srv.Close() })
-
-		conn := rawDial(t, m, tcpLn.Addr().String())
-		if _, err := conn.Write([]byte("GET / HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")); err != nil {
-			t.Fatalf("write: %v", err)
-		}
-		_ = readRawHTTPMessage(t, conn)
-
-		assertPeerIsLeaf(t, seen.get(), m.deviceLeaf)
-		exchanges := waitForExchanges(t, sink, 1)
-		wantLFDI := sepTLS.LFDI(m.deviceLeaf)
-		wantSFDI := sepTLS.SFDI(m.deviceLeaf)
-		if exchanges[0].ClientLFDI != wantLFDI {
-			t.Errorf("ClientLFDI: got %q, want %q", exchanges[0].ClientLFDI, wantLFDI)
-		}
-		if exchanges[0].ClientSFDI != wantSFDI {
-			t.Errorf("ClientSFDI: got %q, want %q", exchanges[0].ClientSFDI, wantSFDI)
-		}
-	})
 }
 
 // TestAttachRefusesAHandshakeFailure is the acceptance-level proof that a
@@ -1303,7 +1266,7 @@ func TestIdentityRecordedThroughAttach(t *testing.T) {
 // closed promptly end to end. It is not, on its own, the proof that
 // completeHandshake's own Close() call is what does the closing: checked by
 // mutation, this test still passes with that Close() call removed, because
-// net/http's own next read on the wrapped *tls.Conn returns its cached
+// net/http's own next read on the wrapped *gotls.Conn returns its cached
 // handshake error immediately and net/http's serve loop tears the
 // connection down through its own c.close() regardless. A dial that only
 // times out would not distinguish "closed" from "left hanging" either way,
@@ -1314,7 +1277,7 @@ func TestIdentityRecordedThroughAttach(t *testing.T) {
 func TestAttachRefusesAHandshakeFailure(t *testing.T) {
 	m := newMaterial(t)
 	tcpLn := listenTCP(t)
-	bare := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	bare := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
 	srv := &http.Server{Handler: okHandler("ok")}
 	sink := NewMemorySink()
 	var logBuf syncBuffer
@@ -1365,7 +1328,7 @@ func TestAttachRefusesAHandshakeFailure(t *testing.T) {
 func TestAttachTwiceDoesNotPanicOnConnectionClose(t *testing.T) {
 	m := newMaterial(t)
 	tcpLn := listenTCP(t)
-	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	tlsLn := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
 	ln := NewListener(tlsLn, nil)
 
 	var logBuf syncBuffer
@@ -1470,7 +1433,7 @@ func TestFinishSkipsAnExchangeWithNoBytesEitherDirection(t *testing.T) {
 func TestAttachWithNilHandlerFallsBackToDefaultServeMux(t *testing.T) {
 	m := newMaterial(t)
 	tcpLn := listenTCP(t)
-	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	tlsLn := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
 	ln := NewListener(tlsLn, nil)
 	srv := &http.Server{} // no Handler set
 	sink := NewMemorySink()
@@ -1539,7 +1502,7 @@ func TestHungSinkKeepsGoroutinesBoundedAcrossManyConnections(t *testing.T) {
 	sink := &gatedSink{gate: make(chan struct{})}
 
 	tcpLn := listenTCP(t)
-	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	tlsLn := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
 	ln := NewListener(tlsLn, nil)
 	srv := &http.Server{Handler: okHandler("ok")}
 	rec := NewRecorder(sink, nil)

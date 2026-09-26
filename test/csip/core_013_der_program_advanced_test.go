@@ -47,8 +47,8 @@
 //	Step 5 (for each program, follow DERControlList) -> walkAndAssertControl
 //	Step 6 (each DERControl carries FixedPFInjectW)  -> assertFixedPFInjectW
 //
-// Run under both GCM and CCM cipher modes so the spec cipher path is
-// exercised end-to-end on the same multi-program walk procedure.
+// Run over CCM-8, the spec cipher path, end-to-end on the multi-program
+// walk procedure.
 package csip_test
 
 import (
@@ -84,8 +84,7 @@ func TestCORE_013_DERProgramAdvanced(t *testing.T) {
 		name string
 		opts []csiptest.BootOption
 	}{
-		{name: "GCM", opts: nil},
-		{name: "CCM", opts: []csiptest.BootOption{csiptest.WithCCMMode()}},
+		{name: "CCM", opts: nil},
 	} {
 		mode := mode
 		t.Run(mode.name, func(t *testing.T) {

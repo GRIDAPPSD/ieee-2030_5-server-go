@@ -28,8 +28,7 @@
 // BASIC-015 is the first composed-mode procedure: any DERControl
 // store-schema bug that surfaces around multi-mode payload encoding
 // shows up here in isolation rather than masking a whole per-mode
-// batch. Run under both GCM and CCM cipher modes - same shape as
-// every #135 sibling.
+// batch.
 package csip_test
 
 import (

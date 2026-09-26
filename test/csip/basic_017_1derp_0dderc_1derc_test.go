@@ -25,7 +25,7 @@
 // program's DefaultDERControlLink is advertised - the procedure
 // concern is "no operating envelope outside the active event".
 //
-// Run under both GCM and CCM cipher modes.
+// Run over CCM-8, the spec cipher path.
 package csip_test
 
 import (
@@ -53,7 +53,7 @@ const basic017DERCFixedW sep2.SignedPerCent = 3500
 // TestBASIC_017_OneDERPZeroDDERCOneDERC implements CSIP V1.2 Section 8.17.
 func TestBASIC_017_OneDERPZeroDDERCOneDERC(t *testing.T) {
 	t.Parallel()
-	runUnderBothCiphers(t, runBASIC017)
+	runUnderCCM(t, runBASIC017)
 }
 
 func runBASIC017(t *testing.T, extraOpts []csiptest.BootOption) {

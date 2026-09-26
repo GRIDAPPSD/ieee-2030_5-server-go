@@ -1,25 +1,24 @@
 // This file (handshake_test.go) is the SunSpec-PKI external-cert smoke:
 // it proves the cert path + verifier hook + mTLS handshake end-to-end
-// against real CSIP §6.11 external materials (SunSpec V1.2 test PKI),
+// against real CSIP section 6.11 external materials (SunSpec V1.2 test PKI),
 // in CCM-8 cipher mode. Its fixtures are provisioned out of band (see
 // test/csip/README.md); the test t.Skip's cleanly when they are missing
 // so fresh clones never fail. CSIP_SUNSPEC_REQUIRED turns that skip into a
 // failure; see fixture_gate_test.go.
 //
-// The CSIP-named conformance counterparts for V1.2 §5.2 Out-of-Band
-// Discovery and V1.2 §5.3 Basic Security live alongside this file:
+// The CSIP-named conformance counterparts for V1.2 section 5.2 Out-of-Band
+// Discovery and V1.2 section 5.3 Basic Security live alongside this file:
 //
-//   - comm_002_oob_discovery_test.go (#62) — V1.2 §5.2, runs
+//   - comm_002_oob_discovery_test.go (#62) - V1.2 section 5.2, runs
 //     unconditionally against an ephemeral PKI booted by
 //     csiptest.BootServer. Satisfies the COMM-002 line item in the
 //     Phase 3 V1.2 coverage matrix.
-//   - comm_003_basic_security_test.go (#62) — V1.2 §5.3,
-//     skeleton in lax mode (accepts CCM-8 or GCM). Tightens to
-//     CCM-8 only once #22 lands.
+//   - comm_003_basic_security_test.go (#62) - V1.2 section 5.3,
+//     asserts CCM-8, the only suite the spec server offers.
 //
 // This SunSpec smoke is kept on top of those two because it is the
 // only test in the package that exercises the real external CSIP test
-// PKI — a different signal from the ephemeral-PKI conformance tests.
+// PKI - a different signal from the ephemeral-PKI conformance tests.
 package csip_test
 
 import (
@@ -29,12 +28,15 @@ import (
 	"os"
 	"testing"
 
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
 // TestCSIPHandshakeWithSunSpecDeviceCert exercises the full CSIP-cipher-aware
-// mTLS handshake against an in-process spec server running in CCM mode, using
-// the SunSpec V1.2 test device cert as the external client.
+// mTLS handshake against an in-process spec server, using the SunSpec V1.2
+// test device cert as the external client. The server offers CCM-8 only
+// (core's sep2tls package has no other cipher suite), so this asserts the
+// negotiated suite rather than only logging it.
 //
 // What this test asserts today:
 //   - The SunSpec leaf carries a critical, otherName-only
@@ -45,15 +47,8 @@ import (
 //     at all still completes every other step below.
 //   - The chain validates to the SunSpec Test 2030.5 Root (loaded into
 //     ClientCAs via roots.pem).
-//   - The mTLS handshake completes.
+//   - The mTLS handshake completes and negotiates CCM-8.
 //   - GET /dcap returns HTTP 200 and a parseable DeviceCapability XML body.
-//
-// What this test DOES NOT assert (deferred):
-//   - Negotiated cipher suite. The test logs it but does not require CCM-8.
-//     The stdlib http.Client used here cannot offer CCM-8; tightening this
-//     assertion is gated on #21 (move the client onto vendored gotls)
-//     and #22 (SEP2_CSIP_STRICT=true server mode that drops the GCM
-//     fallback). When both land, this test (or a sibling) asserts CCM-8.
 //
 // This test consumes csiptest.BootServer (#53) for the server boot
 // and csiptest.Client.GetDeviceCapability (#51) for the application
@@ -90,47 +85,57 @@ func TestCSIPHandshakeWithSunSpecDeviceCert(t *testing.T) {
 		t.Fatalf("SunSpec leaf at %s: %v", certPath, err)
 	}
 
-	// Boot the spec server in CCM mode with SunSpec roots in ClientCAs
-	// and the SunSpec leaf as the client identity. csiptest owns the
-	// listener, http.Server, and shutdown — all via t.Cleanup.
+	// Boot the spec server with SunSpec roots in ClientCAs and the
+	// SunSpec leaf as the client identity. csiptest owns the listener,
+	// http.Server, and shutdown - all via t.Cleanup.
 	srv := csiptest.BootServer(t,
-		csiptest.WithCCMMode(),
 		csiptest.WithClientCert(clientCert),
 		csiptest.WithClientCAsFile(rootsPath),
 	)
 
-	// Raw-dial probe so we log cipher negotiation independently from
+	// Raw-dial probe so we assert cipher negotiation independently from
 	// the HTTP layer. The probe builds its own client TLS config from
 	// the server's published ephemeral CA + the same SunSpec cert
-	// presented by the booted Client.
+	// presented by the booted Client, and dials through the fork since
+	// the server offers CCM-8 only.
 	rootPool := x509.NewCertPool()
 	if !rootPool.AppendCertsFromPEM(srv.RootCA) {
 		t.Fatal("append helper-supplied root CA to pool")
 	}
-	probeCfg := &tls.Config{
-		Certificates: []tls.Certificate{clientCert},
-		RootCAs:      rootPool,
-		ServerName:   "127.0.0.1",
-		MinVersion:   tls.VersionTLS12,
-		MaxVersion:   tls.VersionTLS12,
+	probeCfg := &gotls.Config{
+		Certificates: []gotls.Certificate{{
+			Certificate: clientCert.Certificate,
+			PrivateKey:  clientCert.PrivateKey,
+			Leaf:        clientCert.Leaf,
+		}},
+		RootCAs:          rootPool,
+		ServerName:       "127.0.0.1",
+		MinVersion:       gotls.VersionTLS12,
+		MaxVersion:       gotls.VersionTLS12,
+		CipherSuites:     []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		CurvePreferences: []gotls.CurveID{gotls.CurveP256},
 	}
-	rawConn, err := tls.Dial("tcp", srv.Addr(), probeCfg)
+	rawConn, err := gotls.Dial("tcp", srv.Addr(), probeCfg)
 	if err != nil {
-		t.Fatalf("tls.Dial: %v", err)
+		t.Fatalf("gotls.Dial: %v", err)
 	}
 	state := rawConn.ConnectionState()
 	if !state.HandshakeComplete {
 		_ = rawConn.Close()
 		t.Fatal("HandshakeComplete = false")
 	}
-	t.Logf("TLS handshake OK: version=0x%04x cipher=0x%04x (%s) peerCerts=%d",
-		state.Version, state.CipherSuite, tls.CipherSuiteName(state.CipherSuite), len(state.PeerCertificates))
+	if state.CipherSuite != gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 {
+		_ = rawConn.Close()
+		t.Fatalf("negotiated cipher = 0x%04x, want CCM-8 (0x%04x)", state.CipherSuite, gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8)
+	}
+	t.Logf("TLS handshake OK: version=0x%04x cipher=0x%04x peerCerts=%d",
+		state.Version, state.CipherSuite, len(state.PeerCertificates))
 	_ = rawConn.Close()
 
 	// Application fetch via the csiptest Client. This proves the
 	// chained-GET helper (#51) and BootServer (#53) compose
-	// — future Phase 3 tests use Client.WalkLink to chain further
-	// (dcap → /edev → /edev/0/rg, etc.).
+	// - future Phase 3 tests use Client.WalkLink to chain further
+	// (dcap -> /edev -> /edev/0/rg, etc.).
 	dcap, err := srv.Client().GetDeviceCapability(context.Background())
 	if err != nil {
 		t.Fatalf("GetDeviceCapability: %v", err)

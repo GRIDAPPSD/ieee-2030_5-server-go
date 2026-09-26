@@ -152,21 +152,13 @@ LFDI/SFDI derivation and the CCM-8 cipher registration live in the
 
 ## Cipher
 
-Server-side TLS stacks:
+The protocol listener offers `TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8`
+([CCM-8](glossary.md)) only, via `pkg/sep2tls/gotls` from
+GRIDAPPSD/ieee-2030_5-core-go, regardless of which `make run*` target
+starts it. There is no GCM fallback: a client that cannot negotiate
+CCM-8 is refused at the handshake.
 
-| Target | TLS stack | Cipher list | CSIP-conformant on the wire? |
-|---|---|---|---|
-| `make run` | Go stdlib | [GCM](glossary.md) only | No |
-| `make run-ccm`, `make run-full` | `pkg/sep2tls/gotls` from GRIDAPPSD/ieee-2030_5-core-go | [CCM-8](glossary.md) first, GCM fallback (see footnote) | Conditional |
-
-> **GCM-fallback footnote:** under `run-ccm` the server still accepts a
-> non-CSIP client that lands on GCM. Strict-mode (handshake fails when
-> the peer can't negotiate CCM-8) is tracked under
-> [#22](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/22).
-> Until that lands, conformance must be confirmed in the server's
-> handshake log, not assumed from the target name.
-
-Client-side stacks (paired with a running `run-ccm` server):
+Client-side stacks (paired with a running server):
 
 | Target | TLS stack | CSIP-conformant on the wire? |
 |---|---|---|

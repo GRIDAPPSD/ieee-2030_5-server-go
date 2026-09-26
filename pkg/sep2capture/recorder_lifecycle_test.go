@@ -3,7 +3,6 @@ package sep2capture
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"errors"
 	"io"
 	"log"
@@ -14,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 )
 
 // TestShutdownRecordsInFlightExchange is Q5 item 1: the exchange open when
@@ -23,7 +24,7 @@ import (
 func TestShutdownRecordsInFlightExchange(t *testing.T) {
 	m := newMaterial(t)
 	tcpLn := listenTCP(t)
-	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	tlsLn := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
 	ln := NewListener(tlsLn, nil)
 
 	handlerStarted := make(chan struct{})
@@ -79,7 +80,7 @@ func TestHungSinkDoesNotBlockServerShutdownOrClose(t *testing.T) {
 	t.Cleanup(func() { close(sink.gate) })
 
 	tcpLn := listenTCP(t)
-	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(t, m))
+	tlsLn := gotls.NewListener(tcpLn, ccmServerConfig(t, m))
 	ln := NewListener(tlsLn, nil)
 	srv := &http.Server{Handler: okHandler("ok")}
 	rec := NewRecorder(sink, nil)
@@ -233,12 +234,12 @@ func TestRecorderCloseIsIdempotentAndStopsDispatch(t *testing.T) {
 
 // TestAttachHandshakeBoundFollowsServerTimeouts is Q5 item 4 (Q3): the
 // handshake bound this package drives must follow srv's own timeouts, the
-// same net/http applies to a bare *tls.Conn, not the fixed
+// same net/http applies to a bare *gotls.Conn, not the fixed
 // defaultHandshakeTimeout PR 1's own Listener uses.
 func TestAttachHandshakeBoundFollowsServerTimeouts(t *testing.T) {
 	m := newMaterial(t)
 	tcpLn := listenTCP(t)
-	bare := tls.NewListener(tcpLn, gcmServerConfig(t, m)) // not pre-handshaken
+	bare := gotls.NewListener(tcpLn, ccmServerConfig(t, m)) // not pre-handshaken
 	srv := &http.Server{
 		Handler:           okHandler("ok"),
 		ReadHeaderTimeout: 300 * time.Millisecond,
@@ -308,8 +309,8 @@ func TestHandshakeBoundForFollowsSmallestPositiveServerTimeout(t *testing.T) {
 // plaintext listener, nil, not the non-nil zero value net/http would
 // populate if this package's own ConnectionState method existed
 // unconditionally on every wrapped connection. TestIdentityRecordedThroughAttach
-// is this test's control: its GCM and CCM subtests still see a non-nil
-// r.TLS through Attach, over a TLS-capable listener.
+// is this test's control: its subtests still see a non-nil r.TLS through
+// Attach, over a TLS-capable listener.
 func TestPlaintextListenerLeavesRequestTLSNil(t *testing.T) {
 	tcpLn := listenTCP(t)
 	var sawNil bool

@@ -7,7 +7,7 @@
 
 No release badge yet; this repo has not cut a tagged release.
 
-Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server binary (`sep2server`) with TLS/mTLS, CSIP V1.2 cipher-suite support (GCM and CCM-8), an admin dashboard, and cert-generation subcommands.
+Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server binary (`sep2server`) with TLS/mTLS, CSIP V1.2 CCM-8 cipher-suite support, an admin dashboard, and cert-generation subcommands.
 
 > **Server of record for the IEEE 2030.5 (SEP2) Go implementation.** This repository was previously named `github.com/GRIDAPPSD/ieee-2030_5-go`; GitHub redirects that name here. The `ieee-2030_5-core-go` library is an ordinary versioned Go module dependency, pinned in `go.mod` (`github.com/GRIDAPPSD/ieee-2030_5-core-go v0.19.0`); no `replace` directive is used.
 
@@ -44,13 +44,12 @@ Binaries land in `bin/`.
 ## Run
 
 ```bash
-make run           # builds, generates certs, serves on :8443; admin on 127.0.0.1:8444 (loopback)
-make run-ccm       # same, with CCM-8 cipher suite (CSIP-conformant)
-make run-full      # CCM-8 plus mDNS plus admin dashboard
+make run           # builds, generates certs, serves on :8443 (CCM-8); admin on 127.0.0.1:8444 (loopback)
+make run-ccm       # alias for run, kept for existing muscle memory
+make run-full      # run, plus mDNS
 ```
 
-[CCM-8](docs/glossary.md) vs [GCM](docs/glossary.md) and the operator
-profiles (`run-testdevice`, `run-sunspec`) are covered in
+The operator profiles (`run-testdevice`, `run-sunspec`) are covered in
 [docs/csip.md](docs/csip.md). `make run` enables the
 admin dashboard on `127.0.0.1:8444` (loopback) by default. Off-box access
 needs both `SEP2_ADMIN_LISTEN=0.0.0.0:8444` and

@@ -19,8 +19,8 @@
 //	Step 5 (SY DDERC carries opModFixedW = 2000 (20.00%))         -> assertBASIC016DDERCPayload (SY)
 //	Step 6 (no DERControl events on either program)      -> assertBASIC016NoEvents
 //
-// Run under both GCM and CCM cipher modes so the spec cipher path
-// (CCM-8) is exercised end-to-end on the multi-program walk.
+// Run over CCM-8, the spec cipher path, end-to-end on the multi-program
+// walk.
 package csip_test
 
 import (
@@ -53,7 +53,7 @@ const basic016SYFixedW sep2.SignedPerCent = 2000
 // TestBASIC_016_TwoDERPTwoDDERCZeroDERC implements CSIP V1.2 Section 8.16.
 func TestBASIC_016_TwoDERPTwoDDERCZeroDERC(t *testing.T) {
 	t.Parallel()
-	runUnderBothCiphers(t, runBASIC016)
+	runUnderCCM(t, runBASIC016)
 }
 
 func runBASIC016(t *testing.T, extraOpts []csiptest.BootOption) {

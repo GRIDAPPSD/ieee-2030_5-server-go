@@ -1,26 +1,46 @@
 package sep2srv_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2cert"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
 )
+
+// ccmHTTPClient wraps cfg in an *http.Client whose Transport dials through
+// core's forked TLS stack (gotls), the only way to reach this package's
+// CCM-8-only listener: net/http's own TLSClientConfig field only accepts a
+// *tls.Config, which cannot negotiate CCM-8 at all. A zero timeout leaves
+// the client unbounded, matching http.Client's own zero-value default.
+func ccmHTTPClient(cfg *gotls.Config, timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return (&gotls.Dialer{Config: cfg}).DialContext(ctx, network, addr)
+			},
+		},
+	}
+}
 
 // testCertSet holds file paths for a generated CA, server cert, and device
 // (client) cert, plus the parsed server leaf so tests can compute the
@@ -133,38 +153,13 @@ func echoHandler(id sep2srv.Identity) http.Handler {
 	return mux
 }
 
-func TestNew_GCM_IdentityMatchesLeafCert(t *testing.T) {
-	t.Parallel()
-	certs := newTestCertSet(t)
-	wantSFDI := sepTLS.SFDI(certs.serverLeaf)
-	wantLFDI := sepTLS.LFDI(certs.serverLeaf)
-
-	srv, err := sep2srv.New(sep2srv.Options{
-		Addr:     "127.0.0.1:0",
-		CertFile: certs.serverCert,
-		KeyFile:  certs.serverKey,
-		CAFile:   certs.caFile,
-	}, echoHandler)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	t.Cleanup(func() { _ = shutdownNow(srv) })
-
-	if srv.Identity.SFDI != wantSFDI {
-		t.Errorf("SFDI = %q, want %q", srv.Identity.SFDI, wantSFDI)
-	}
-	if srv.Identity.LFDI != wantLFDI {
-		t.Errorf("LFDI = %q, want %q", srv.Identity.LFDI, wantLFDI)
-	}
-}
-
-// TestNew_GCM_MTLSAcceptAndReject is the required mTLS accept/reject pair:
+// TestNew_MTLSAcceptAndReject is the required mTLS accept/reject pair:
 // a client presenting a valid device cert completes the handshake and
 // receives a routed response; a client presenting no cert at all is
 // rejected at the TLS handshake before any handler runs. It also proves
 // Run exits cleanly on ctx cancellation within a bounded time, with no
 // leaked listener goroutine.
-func TestNew_GCM_MTLSAcceptAndReject(t *testing.T) {
+func TestNew_MTLSAcceptAndReject(t *testing.T) {
 	t.Parallel()
 	certs := newTestCertSet(t)
 
@@ -188,11 +183,11 @@ func TestNew_GCM_MTLSAcceptAndReject(t *testing.T) {
 
 	// (a) Valid client cert: handshake completes, handler runs, response
 	// carries the derived identity.
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey), mustRead(t, certs.caFile))
+	clientTLSCfg, err := sepTLS.NewCCMClientConfigFromPEM(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey), mustRead(t, certs.caFile))
 	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
+		t.Fatalf("NewCCMClientConfigFromPEM: %v", err)
 	}
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSCfg}}
+	client := ccmHTTPClient(clientTLSCfg, 0)
 
 	resp, err := client.Get("https://" + addr + "/dcap")
 	if err != nil {
@@ -210,11 +205,13 @@ func TestNew_GCM_MTLSAcceptAndReject(t *testing.T) {
 
 	// (b) No client cert: rejected at the TLS handshake, never reaches the
 	// handler.
-	noCertClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test-only: server enforces RequireAnyClientCert regardless of what the client trusts
-		},
+	noCertCfg := &gotls.Config{ //nolint:gosec // test-only: server enforces RequireAnyClientCert regardless of what the client trusts
+		InsecureSkipVerify: true,
+		CipherSuites:       []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		MinVersion:         gotls.VersionTLS12,
+		MaxVersion:         gotls.VersionTLS12,
 	}
+	noCertClient := ccmHTTPClient(noCertCfg, 0)
 	_, err = noCertClient.Get("https://" + addr + "/dcap")
 	if err == nil {
 		t.Error("expected TLS handshake to fail without a client certificate, got nil error")
@@ -239,6 +236,191 @@ func TestNew_GCM_MTLSAcceptAndReject(t *testing.T) {
 	waitForDialFailure(t, addr)
 }
 
+// TestNew_RefusesNonCCM8Suites is #709 fix round 1 widened in fix round 2,
+// item 2: round 1 pinned AES-128-GCM alone, and the coverage lane showed that
+// appending AES-256-GCM instead of AES-128-GCM left the whole suite green, so
+// the guard was pinned to one suite id rather than to the property (CCM-8 and
+// nothing else). Each case offers exactly one non-CCM-8 suite, with a device
+// cert the server would otherwise accept, and must be refused at cipher
+// negotiation before client authentication is ever reached. The final case is
+// the control: the same client offering CCM-8 must be accepted, so a defect
+// that made the listener refuse everything would not read as this guard
+// passing.
+func TestNew_RefusesNonCCM8Suites(t *testing.T) {
+	t.Parallel()
+	certs := newTestCertSet(t)
+
+	srv, err := sep2srv.New(sep2srv.Options{
+		Addr:            "127.0.0.1:0",
+		CertFile:        certs.serverCert,
+		KeyFile:         certs.serverKey,
+		CAFile:          certs.caFile,
+		ShutdownTimeout: 500 * time.Millisecond,
+	}, echoHandler)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	addr := srv.Addr()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runDone:
+		case <-time.After(2 * time.Second):
+			t.Error("Run did not return within 2s of ctx cancellation")
+		}
+	})
+
+	waitForDial(t, addr)
+
+	cert, err := gotls.X509KeyPair(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey))
+	if err != nil {
+		t.Fatalf("gotls.X509KeyPair: %v", err)
+	}
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM(mustRead(t, certs.caFile)) {
+		t.Fatal("failed to parse CA into root pool")
+	}
+
+	dial := func(t *testing.T, suite uint16) error {
+		t.Helper()
+		cfg := &gotls.Config{
+			RootCAs:      caPool,
+			Certificates: []gotls.Certificate{cert},
+			CipherSuites: []uint16{suite},
+			MinVersion:   gotls.VersionTLS12,
+			MaxVersion:   gotls.VersionTLS12,
+		}
+		client := ccmHTTPClient(cfg, 2*time.Second)
+		_, err := client.Get("https://" + addr + "/dcap")
+		return err
+	}
+
+	for _, tc := range []struct {
+		name  string
+		suite uint16
+	}{
+		{"AES-128-GCM", gotls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
+		{"AES-256-GCM", gotls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384},
+		{"AES-128-CBC", gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := dial(t, tc.suite); err == nil {
+				t.Errorf("%s-only client was accepted; want a handshake failure (server must offer CCM-8 only)", tc.name)
+			}
+		})
+	}
+
+	t.Run("control: CCM-8 is still accepted", func(t *testing.T) {
+		if err := dial(t, gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8); err != nil {
+			t.Errorf("CCM-8 client was refused: %v; want acceptance (this proves the guard rejects on suite, not on every dial)", err)
+		}
+	})
+}
+
+// TestNew_RefusedHandshakeIsLogged is #709 fix round 1, item 4: a
+// *gotls.Conn handshakes lazily on its first Read, which net/http's own
+// "TLS handshake error" logging never fires for, so a refused handshake on
+// this listener produced no log line before wrapMTLS wrapped it in
+// sepTLS.WrapCCMListener. Not parallel: it redirects the process-wide
+// default logger, which is what a nil errorLog resolves to.
+func TestNew_RefusedHandshakeIsLogged(t *testing.T) {
+	certs := newTestCertSet(t)
+
+	srv, err := sep2srv.New(sep2srv.Options{
+		Addr:            "127.0.0.1:0",
+		CertFile:        certs.serverCert,
+		KeyFile:         certs.serverKey,
+		CAFile:          certs.caFile,
+		ShutdownTimeout: 500 * time.Millisecond,
+	}, echoHandler)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	addr := srv.Addr()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runDone:
+		case <-time.After(2 * time.Second):
+			t.Error("Run did not return within 2s of ctx cancellation")
+		}
+	})
+
+	waitForDial(t, addr)
+
+	// A plain bytes.Buffer races: the handshake goroutine writes to it
+	// through log.Default() while this test reads it below, and both can
+	// still be live in the Cleanup window (a late handshake attempt during
+	// ctx cancellation). logBuf serializes both sides.
+	logBuf := &syncBuffer{}
+	prevOut := log.Default().Writer()
+	prevFlags := log.Default().Flags()
+	log.Default().SetOutput(logBuf)
+	log.Default().SetFlags(0)
+	t.Cleanup(func() {
+		log.Default().SetOutput(prevOut)
+		log.Default().SetFlags(prevFlags)
+	})
+
+	noCertCfg := &gotls.Config{ //nolint:gosec // test-only: server enforces RequireAnyClientCert regardless of what the client trusts
+		InsecureSkipVerify: true,
+		CipherSuites:       []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		MinVersion:         gotls.VersionTLS12,
+		MaxVersion:         gotls.VersionTLS12,
+	}
+	noCertClient := ccmHTTPClient(noCertCfg, 2*time.Second)
+	if _, err := noCertClient.Get("https://" + addr + "/dcap"); err == nil {
+		t.Fatal("expected the handshake to fail without a client certificate")
+	}
+
+	// The handshake goroutine logs asynchronously; poll rather than reading
+	// logBuf immediately after the client's Get returns.
+	deadline := time.Now().Add(2 * time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		got = logBuf.String()
+		if len(got) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(got) == 0 {
+		t.Fatal("refused handshake produced 0 bytes of log output; want a logged TLS handshake error")
+	}
+	if !strings.Contains(got, "TLS handshake error") {
+		t.Errorf("log output = %q, want it to contain %q", got, "TLS handshake error")
+	}
+	t.Logf("refused handshake logged %d bytes: %q", len(got), got)
+}
+
+// syncBuffer is a bytes.Buffer safe for one writer goroutine (the handshake
+// logger) and one reader goroutine (the test's poll loop) at once. The
+// standard library type is not: -race flags the unguarded case.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func TestNew_CCM_IdentityAndLifecycle(t *testing.T) {
 	t.Parallel()
 	certs := newTestCertSet(t)
@@ -250,7 +432,6 @@ func TestNew_CCM_IdentityAndLifecycle(t *testing.T) {
 		CertFile:        certs.serverCert,
 		KeyFile:         certs.serverKey,
 		CAFile:          certs.caFile,
-		EnableCCM:       true,
 		ShutdownTimeout: 500 * time.Millisecond,
 	}, echoHandler)
 	if err != nil {
@@ -319,11 +500,11 @@ func TestServer_Run_ShutdownTimeoutError(t *testing.T) {
 
 	waitForDial(t, addr)
 
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey), mustRead(t, certs.caFile))
+	clientTLSCfg, err := sepTLS.NewCCMClientConfigFromPEM(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey), mustRead(t, certs.caFile))
 	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
+		t.Fatalf("NewCCMClientConfigFromPEM: %v", err)
 	}
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: clientTLSCfg}}
+	client := ccmHTTPClient(clientTLSCfg, 0)
 
 	reqDone := make(chan error, 1)
 	go func() {
@@ -391,11 +572,6 @@ func TestNew_ValidationErrors(t *testing.T) {
 		{
 			name:  "missing cert file",
 			opts:  sep2srv.Options{Addr: "127.0.0.1:0", CertFile: "/nonexistent/cert.pem", KeyFile: certs.serverKey, CAFile: certs.caFile},
-			build: echoHandler,
-		},
-		{
-			name:  "missing cert file (CCM)",
-			opts:  sep2srv.Options{Addr: "127.0.0.1:0", CertFile: "/nonexistent/cert.pem", KeyFile: certs.serverKey, CAFile: certs.caFile, EnableCCM: true},
 			build: echoHandler,
 		},
 		{
@@ -496,20 +672,4 @@ func mustRead(t *testing.T, path string) []byte {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return data
-}
-
-// shutdownNow forces a Server's Run loop to exit for tests that construct a
-// Server but never call Run on the success path (identity-only assertions),
-// so the listener does not leak past the test.
-func shutdownNow(srv *sep2srv.Server) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- srv.Run(ctx) }()
-	cancel()
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(2 * time.Second):
-		return errors.New("shutdownNow: Run did not return")
-	}
 }

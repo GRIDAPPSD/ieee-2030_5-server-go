@@ -92,10 +92,7 @@ func bootCaptureListener(t *testing.T) *captureListenerEnv {
 	if err != nil {
 		t.Fatalf("ParseCertificatePEM(device): %v", err)
 	}
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, c.caCertPEM)
-	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
-	}
+	clientTLSCfg := ccmClientTLSConfig(t, deviceCertPEM, deviceKeyPEM, c.caCertPEM)
 
 	cfg := &config.Config{
 		Addr:           c.sep2Probe,
@@ -145,7 +142,7 @@ func bootCaptureListener(t *testing.T) *captureListenerEnv {
 		cancel:     cancel,
 		runErrCh:   runErrCh,
 		deviceLFDI: sepTLS.LFDI(deviceLeaf),
-		deviceHTTP: &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: clientTLSCfg}},
+		deviceHTTP: ccmHTTPClient(clientTLSCfg, 5*time.Second),
 	}
 	t.Cleanup(func() {
 		if err := env.shutdown(5 * time.Second); err != nil {

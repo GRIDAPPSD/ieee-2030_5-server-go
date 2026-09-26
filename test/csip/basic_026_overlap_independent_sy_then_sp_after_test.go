@@ -17,7 +17,7 @@
 //	Step 5 (SP renders FixedW event; SY renders MaxLimW event)           --> assertBASIC026Events
 //	Step 6 (SP window contained in SY; no Section 10.10 winner)                 --> assertOverlapResolution
 //
-// Run under both GCM and CCM cipher modes.
+// Run over CCM-8, the spec cipher path.
 package csip_test
 
 import (
@@ -63,7 +63,7 @@ var basic026Events = map[string]struct {
 // TestBASIC_026_OverlapIndependentSYThenSPAfter implements CSIP V1.2 Section 8.26.
 func TestBASIC_026_OverlapIndependentSYThenSPAfter(t *testing.T) {
 	t.Parallel()
-	runUnderBothCiphers(t, runBASIC026)
+	runUnderCCM(t, runBASIC026)
 }
 
 func runBASIC026(t *testing.T, extraOpts []csiptest.BootOption) {

@@ -13,8 +13,6 @@
 //	Step 3 (DERControl.OpModVoltVar matches fixture int32)    -> assertVoltVarRef
 //	Step 4 (global /dc carries 1 Volt/Var curve with the seeded
 //	         CurveData round-tripped)                         -> walkSingleCurveBasic
-//
-// Run under both GCM and CCM cipher modes.
 package csip_test
 
 import (

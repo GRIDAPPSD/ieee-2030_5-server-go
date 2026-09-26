@@ -32,12 +32,12 @@ references. Linked from the docs on first use.
 
 - **GCM** - *Galois/Counter Mode*. The AEAD (Authenticated Encryption
   with Associated Data) that ships in the Go standard library
-  `crypto/tls` by default. Used by the `make run` profile here. NOT
-  CSIP-conformant on its own - CSIP V1.2 mandates CCM-8.
+  `crypto/tls` by default. NOT CSIP-conformant on its own - CSIP V1.2
+  mandates CCM-8. This server does not offer it under any profile.
 - **CCM-8** - *Counter with CBC-MAC, 8-byte authentication tag*.
   Specifically `TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8`, code point
-  `0xc0ae`. The cipher CSIP V1.2 mandates. Registered in this server
-  by the fork vendored at
+  `0xc0ae`. The cipher CSIP V1.2 mandates, and the only cipher suite
+  this server offers, registered by the fork vendored at
   `vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls`. See
   [`csip.md`](csip.md).
 - **AEAD** - *Authenticated Encryption with Associated Data*. A class

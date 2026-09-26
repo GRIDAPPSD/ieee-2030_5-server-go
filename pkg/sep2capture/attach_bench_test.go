@@ -1,11 +1,12 @@
 package sep2capture
 
 import (
-	"crypto/tls"
 	"io"
 	"net"
 	"net/http"
 	"testing"
+
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 )
 
 // benchmarkListener serves the same handler over the same TLS listener
@@ -15,7 +16,7 @@ import (
 func benchmarkListener(b *testing.B, attach bool) {
 	m := newMaterial(b)
 	tcpLn := listenTCP(b)
-	tlsLn := tls.NewListener(tcpLn, gcmServerConfig(b, m))
+	tlsLn := gotls.NewListener(tcpLn, ccmServerConfig(b, m))
 	ln := NewListener(tlsLn, nil)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +33,7 @@ func benchmarkListener(b *testing.B, attach bool) {
 	go func() { _ = srv.Serve(serveLn) }()
 	b.Cleanup(func() { _ = srv.Close() })
 
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: gcmClientConfig(b, m)}}
+	client := ccmHTTPClient(b, m)
 	url := "https://" + tcpLn.Addr().String() + "/"
 
 	b.ResetTimer()

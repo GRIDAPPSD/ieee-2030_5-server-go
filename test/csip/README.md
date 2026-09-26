@@ -143,17 +143,14 @@ Either path works; pick whichever fits your workflow.
 - **Chain walk:** the leaf validates against `roots.pem` (loaded into
   `ClientCAs` via `NewCCMServerConfig`).
 - **Handshake:** mTLS handshake completes (`HandshakeComplete == true`).
+- **Cipher suite:** a raw-dial probe through `gotls` requires the
+  negotiated suite to be `TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8`; the
+  server offers no other suite.
 - **Application layer:** `GET /dcap` returns HTTP 200 and a parseable
   `DeviceCapability` XML body.
 
 ### What it does NOT assert (yet)
 
-- **Cipher suite.** The test logs the negotiated cipher but does not
-  require CCM-8. The stdlib `http.Client` used here cannot offer the
-  CSIP-mandatory cipher; tightening this assertion is gated on:
-  - [#459](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/459) - require CCM-8 in this test.
-  - [#22](https://github.com/GRIDAPPSD/ieee-2030_5-go/issues/22)
-    — `SEP2_CSIP_STRICT=true` server mode that drops the GCM fallback.
 - The 25 SunSpec V1.2 conformance requirements. Those will be added as
   sibling tests once the scaffold lands.
 
@@ -163,5 +160,4 @@ Either path works; pick whichever fits your workflow.
 - #17 (PR #18) - CSIP section 6.11 cert generator + TLS verify hook.
 - #19 (PR #20) - README "Running in CSIP mode" docs.
 - #21 - CCM-8-capable inverter client.
-- #22 — `SEP2_CSIP_STRICT=true` server mode.
 - #23 - this scaffold + smoke.

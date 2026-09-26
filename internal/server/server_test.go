@@ -1,8 +1,8 @@
 package server_test
 
 import (
+	"context"
 	"crypto/ecdsa"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/xml"
 	"io"
@@ -14,6 +14,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
@@ -51,8 +52,8 @@ func TestIntegrationEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Start TLS server
-	serverTLSCfg, err := sepTLS.NewServerTLSConfigFromPEM(serverCertPEM, serverKeyPEM, caCertPEM)
+	// Start TLS server. Offers CCM-8 only.
+	serverTLSCfg, err := sepTLS.NewCCMServerConfigFromPEM(serverCertPEM, serverKeyPEM, caCertPEM)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,20 +72,31 @@ func TestIntegrationEndToEnd(t *testing.T) {
 	}
 	defer func() { _ = listener.Close() }()
 
-	tlsListener := tls.NewListener(listener, serverTLSCfg)
+	tlsListener := gotls.NewListener(listener, serverTLSCfg)
 	stores := newTestStores()
 	router, _ := server.BuildProtocolRouter(cfg, stores, nil, "", "", nil)
-	srv := &http.Server{Handler: router}
+	srv := &http.Server{Handler: sepTLS.CCMIdentityMiddleware(router)}
+	sepTLS.SetupCCMServer(srv)
 	go func() { _ = srv.Serve(tlsListener) }()
 	defer func() { _ = srv.Close() }()
 
-	// Create client
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, caCertPEM)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Create client. Dials through the fork since the server offers CCM-8
+	// only; the dial hook stashes the negotiated *gotls.Conn so the cipher
+	// subtest below can read ConnectionState directly (net/http never
+	// populates resp.TLS for a connection reached via DialTLSContext).
+	clientTLSCfg := ccmClientTLSConfig(t, deviceCertPEM, deviceKeyPEM, caCertPEM)
+	var dialedConn *gotls.Conn
 	client := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: clientTLSCfg},
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				conn, dialErr := (&gotls.Dialer{Config: clientTLSCfg}).DialContext(ctx, network, addr)
+				if dialErr == nil {
+					dialedConn = conn.(*gotls.Conn)
+				}
+				return conn, dialErr
+			},
+		},
 	}
 	baseURL := "https://" + listener.Addr().String()
 
@@ -154,7 +166,7 @@ func TestIntegrationEndToEnd(t *testing.T) {
 		}
 	})
 
-	// Test 3: Verify TLS cipher suite
+	// Test 3: Verify TLS cipher suite (CCM-8, the only suite core offers)
 	t.Run("TLS cipher suite", func(t *testing.T) {
 		resp, err := client.Get(baseURL + "/dcap")
 		if err != nil {
@@ -162,8 +174,11 @@ func TestIntegrationEndToEnd(t *testing.T) {
 		}
 		_ = resp.Body.Close()
 
-		if resp.TLS.CipherSuite != tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 {
-			t.Errorf("cipher = 0x%04x, want ECDHE_ECDSA_AES128_GCM", resp.TLS.CipherSuite)
+		if dialedConn == nil {
+			t.Fatal("no connection was dialed")
+		}
+		if got := dialedConn.ConnectionState().CipherSuite; got != gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 {
+			t.Errorf("cipher = 0x%04x, want CCM-8 (0x%04x)", got, gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8)
 		}
 	})
 

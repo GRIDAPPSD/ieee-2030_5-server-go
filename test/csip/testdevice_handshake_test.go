@@ -6,7 +6,7 @@
 // test device chain and key as the client identity, asserts the mTLS
 // handshake completes, and walks GET /dcap.
 //
-// The test device cert is CSIP §6.11-compliant: it carries a critical
+// The test device cert is CSIP section 6.11-compliant: it carries a critical
 // HardwareModuleName SAN, an empty Subject, proper Key Usage, and Basic
 // Constraints. The server runs in its default (non-strict) mode, which
 // accepts both compliant and non-compliant device certs. Strict mode
@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -90,38 +91,49 @@ func TestDeviceHandshake(t *testing.T) {
 		t.Errorf("device SFDI = %q, want %q (was the PKI regenerated without updating the fixture?)", gotSFDI, testdeviceSFDI)
 	}
 
-	// Boot the spec server in CCM mode with the test root CA in
-	// ClientCAs and the test device leaf as the presented client identity.
+	// Boot the spec server with the test root CA in ClientCAs and the
+	// test device leaf as the presented client identity. The server
+	// offers CCM-8 only.
 	srv := csiptest.BootServer(t,
-		csiptest.WithCCMMode(),
 		csiptest.WithClientCert(clientCert),
 		csiptest.WithClientCAsFile(rootPath),
 	)
 
-	// Raw-dial probe so we can log the negotiated cipher and prove the
-	// mTLS handshake completed independent of the HTTP layer.
+	// Raw-dial probe so we can assert the negotiated cipher and prove the
+	// mTLS handshake completed independent of the HTTP layer. Dials
+	// through the fork since the server offers CCM-8 only.
 	rootPool := x509.NewCertPool()
 	if !rootPool.AppendCertsFromPEM(srv.RootCA) {
 		t.Fatal("append helper-supplied root CA to pool")
 	}
-	probeCfg := &tls.Config{
-		Certificates: []tls.Certificate{clientCert},
-		RootCAs:      rootPool,
-		ServerName:   "127.0.0.1",
-		MinVersion:   tls.VersionTLS12,
-		MaxVersion:   tls.VersionTLS12,
+	probeCfg := &gotls.Config{
+		Certificates: []gotls.Certificate{{
+			Certificate: clientCert.Certificate,
+			PrivateKey:  clientCert.PrivateKey,
+			Leaf:        clientCert.Leaf,
+		}},
+		RootCAs:          rootPool,
+		ServerName:       "127.0.0.1",
+		MinVersion:       gotls.VersionTLS12,
+		MaxVersion:       gotls.VersionTLS12,
+		CipherSuites:     []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		CurvePreferences: []gotls.CurveID{gotls.CurveP256},
 	}
-	rawConn, err := tls.Dial("tcp", srv.Addr(), probeCfg)
+	rawConn, err := gotls.Dial("tcp", srv.Addr(), probeCfg)
 	if err != nil {
-		t.Fatalf("tls.Dial (test device chain to server): %v", err)
+		t.Fatalf("gotls.Dial (test device chain to server): %v", err)
 	}
 	state := rawConn.ConnectionState()
 	if !state.HandshakeComplete {
 		_ = rawConn.Close()
 		t.Fatal("HandshakeComplete = false")
 	}
-	t.Logf("test device mTLS handshake OK: version=0x%04x cipher=0x%04x (%s) peerCerts=%d LFDI=%s SFDI=%s",
-		state.Version, state.CipherSuite, tls.CipherSuiteName(state.CipherSuite),
+	if state.CipherSuite != gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 {
+		_ = rawConn.Close()
+		t.Fatalf("negotiated cipher = 0x%04x, want CCM-8 (0x%04x)", state.CipherSuite, gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8)
+	}
+	t.Logf("test device mTLS handshake OK: version=0x%04x cipher=0x%04x peerCerts=%d LFDI=%s SFDI=%s",
+		state.Version, state.CipherSuite,
 		len(state.PeerCertificates), gotLFDI, gotSFDI)
 	_ = rawConn.Close()
 

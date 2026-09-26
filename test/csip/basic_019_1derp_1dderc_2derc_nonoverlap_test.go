@@ -20,7 +20,7 @@
 //	        + opModFixedW)
 //	Step 6 (Intervals are pairwise disjoint)                    -> assertDisjointIntervals
 //
-// Run under both GCM and CCM cipher modes.
+// Run over CCM-8, the spec cipher path.
 package csip_test
 
 import (
@@ -51,7 +51,7 @@ var basic019Events = []struct {
 // TestBASIC_019_OneDERPOneDDERCTwoDERCNonOverlap implements CSIP V1.2 Section 8.19.
 func TestBASIC_019_OneDERPOneDDERCTwoDERCNonOverlap(t *testing.T) {
 	t.Parallel()
-	runUnderBothCiphers(t, runBASIC019)
+	runUnderCCM(t, runBASIC019)
 }
 
 func runBASIC019(t *testing.T, extraOpts []csiptest.BootOption) {

@@ -83,10 +83,7 @@ func TestBootFixtureNumericIDDoesNotLockOutNewRegistrant(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 
-	clientTLSCfg, err := sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, caCertPEM)
-	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
-	}
+	clientTLSCfg := ccmClientTLSConfig(t, deviceCertPEM, deviceKeyPEM, caCertPEM)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -144,10 +141,7 @@ startLoop:
 		t.Fatalf("server failed to start after %d attempts", startAttempts)
 	}
 
-	client := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: clientTLSCfg},
-		Timeout:   3 * time.Second,
-	}
+	client := ccmHTTPClient(clientTLSCfg, 3*time.Second)
 
 	// The self-registering device presents only its certificate: the
 	// allocator's first free id must already know the fixture occupies "1",

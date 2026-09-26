@@ -46,32 +46,39 @@ Phase 8 walk on 2026-05-13. Decision-maker: Pike.
 
 ## 2. COMM-003 (Basic Security) lax-mode cipher assertion
 
-**Ambiguity.** CSIP V1.2 section 5.3 step 2 requires:
+**Status: superseded.** The server now offers CCM-8 only, unconditionally,
+under every `make run*` target; there is no lax mode, no GCM fallback,
+and no `SEP2_CSIP_STRICT` toggle. `comm_003_basic_security_test.go`
+asserts CCM-8 directly (`TestCOMM_003_BasicSecurity_CCM8Only`). The
+ambiguity and interpretation below record the Phase 5 skeleton-era call
+that this superseded; kept for the #194 attestation lineage.
+
+**Ambiguity (as it stood in Phase 5).** CSIP V1.2 section 5.3 step 2
+requires:
 
 > "The server selects a cipher suite from the offered set, completes
 > the handshake, and the negotiated cipher suite is
 > TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8 (0xC0AE)."
 
-The server already supports CCM-8 under `make run-ccm` (the fork vendored
+The server already supported CCM-8 under `make run-ccm` (the fork vendored
 at `vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls/`
 registers 0xC0AE). The default
-`csiptest.BootServer()` path uses the stdlib `crypto/tls` GCM path -
-no CCM-8 registration - because the CCM build is opt-in via
+`csiptest.BootServer()` path used the stdlib `crypto/tls` GCM path -
+no CCM-8 registration - because the CCM build was opt-in via
 `SEP2_CSIP_STRICT=true` (#22 work-in-progress; tracked at
 GRIDAPPSD/ieee-2030_5-go#20).
 
-**Interpretation.** COMM-003's assertion accepts CCM-8 (0xC0AE) OR
-GCM (0xC02B / 0xC02C) under default boot. The test prose explicitly
-flags this as a skeleton-pending-#22 condition. Once it
-lands and `SEP2_CSIP_STRICT=true` propagates through `BootServer`,
-the assertion tightens to CCM-8-only.
+**Interpretation (as it stood in Phase 5).** COMM-003's assertion accepted
+CCM-8 (0xC0AE) OR GCM (0xC02B / 0xC02C) under default boot. The test prose
+explicitly flagged this as a skeleton-pending-#22 condition, to tighten to
+CCM-8-only once `SEP2_CSIP_STRICT=true` propagated through `BootServer`.
 
-The conformance claim under this interpretation is: "the server
-binary negotiates CCM-8 end-to-end under `make run-ccm` (verified in
+The conformance claim under this now-superseded interpretation was: "the
+server binary negotiates CCM-8 end-to-end under `make run-ccm` (verified in
 `test/csip/handshake_test.go`); the unit-level CSIP harness asserts
 the negotiated cipher is in the CSIP-permitted set, with strict-mode
 tightening pending #22." See INTERPRETATIONS.md section 3 for the
-COMM-004 cert-variant scope this depends on.
+COMM-004 cert-variant scope this depended on.
 
 **Implemented in.** `test/csip/comm_003_basic_security_test.go`
 (#22 escalation; landed as test skeleton under Phase 5).

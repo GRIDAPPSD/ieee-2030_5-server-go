@@ -113,11 +113,7 @@ func TestCORE_021_RandomizedEvents(t *testing.T) {
 		t.Fatalf("store RandomizeDuration = %v, want %d", stored.RandomizeDuration, core021RandomizeDuration)
 	}
 
-	// Boot the server against the seeded stores. GCM cipher is fine
-	// for section 7.1 - randomization emission is wire-shape, not cipher,
-	// and CORE-022 already covers POST flow under the default cipher
-	// too. CCM-mode coverage for DERControl emission lives in
-	// CORE-012/013 (#60).
+	// Boot the server against the seeded stores.
 	srv := csiptest.BootServer(t, csiptest.WithStores(stores), csiptest.WithDeviceIdentity(owner))
 
 	// Walk DERProgram list to confirm topology is reachable end-to-end,

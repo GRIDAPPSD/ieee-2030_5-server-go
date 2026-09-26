@@ -31,8 +31,7 @@
 //	Step 5 (PUT DERSettings with setMaxChargeRateW
 //	        as the PF-rate ceiling)              --> putAndGetSettingsPFRate
 //
-// Run under both GCM and CCM cipher modes to keep the spec-cipher
-// path covered (#1 regression guard surface).
+// Run over CCM-8, the spec-cipher path (#1 regression guard surface).
 package csip_test
 
 import (
@@ -69,8 +68,7 @@ func TestCORE_014_DERSettingsAdvanced(t *testing.T) {
 		name string
 		opts []csiptest.BootOption
 	}{
-		{name: "GCM", opts: nil},
-		{name: "CCM", opts: []csiptest.BootOption{csiptest.WithCCMMode()}},
+		{name: "CCM", opts: nil},
 	} {
 		mode := mode
 		t.Run(mode.name, func(t *testing.T) {

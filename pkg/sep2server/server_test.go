@@ -3,6 +3,7 @@ package sep2server
 import (
 	"context"
 	"crypto/tls"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,11 +11,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
@@ -114,47 +117,37 @@ func TestNewRejectsIncompleteConfig(t *testing.T) {
 }
 
 // TestBuildHandlerMiddlewareIsOutermost pins the documented chain order:
-// Config.Middleware wraps everything, including the auth policy and, when CCM
-// is on, the CCM identity layer between them.
+// Config.Middleware wraps everything, including the auth policy and the CCM
+// identity layer between them.
 //
 // The relative position is a contract rather than an accident. The CCM layer
 // is what populates r.TLS from the forked connection, so anything that needs
 // peer certificates has to sit inside it, and the auth policy does. Config
 // documents Middleware as outermost, so an instrumentation wrapper sees every
 // request including ones the auth policy goes on to refuse.
-//
-// The test runs both cipher modes so a future edit cannot preserve the order
-// on one path and invert it on the other.
 func TestBuildHandlerMiddlewareIsOutermost(t *testing.T) {
 	t.Parallel()
 
-	for _, enableCCM := range []bool{false, true} {
-		t.Run(map[bool]string{false: "GCM", true: "CCM"}[enableCCM], func(t *testing.T) {
-			t.Parallel()
+	var seen []string
 
-			var seen []string
+	cfg := Config{
+		Auth: recordingAuth(&seen),
+		Middleware: func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = append(seen, "middleware")
+				next.ServeHTTP(w, r)
+			})
+		},
+	}
 
-			cfg := Config{
-				EnableCCM: enableCCM,
-				Auth:      recordingAuth(&seen),
-				Middleware: func(next http.Handler) http.Handler {
-					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-						seen = append(seen, "middleware")
-						next.ServeHTTP(w, r)
-					})
-				},
-			}
+	handler, _ := BuildHandler(cfg, sep2srv.Identity{SFDI: "111111111111", LFDI: "aabb"})
 
-			handler, _ := BuildHandler(cfg, sep2srv.Identity{SFDI: "111111111111", LFDI: "aabb"})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dcap", nil))
 
-			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dcap", nil))
-
-			want := []string{"middleware", "auth"}
-			if !reflect.DeepEqual(seen, want) {
-				t.Fatalf("composition order: got %v, want %v (Middleware must be outermost)", seen, want)
-			}
-		})
+	want := []string{"middleware", "auth"}
+	if !reflect.DeepEqual(seen, want) {
+		t.Fatalf("composition order: got %v, want %v (Middleware must be outermost)", seen, want)
 	}
 }
 
@@ -325,10 +318,7 @@ func TestServerLifecycle(t *testing.T) {
 	runErr := make(chan error, 1)
 	go func() { runErr <- srv.Run(ctx) }()
 
-	client := &http.Client{
-		Timeout:   5 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: material.clientTLS},
-	}
+	client := ccmHTTPClient(material.clientTLS, 5*time.Second)
 	resp := getWithRetry(t, client, "https://"+addr+"/dcap")
 	if resp != http.StatusOK {
 		t.Errorf("GET /dcap over mTLS: status %d, want 200", resp)
@@ -379,6 +369,151 @@ func TestRunReportsListenerFailure(t *testing.T) {
 	}
 }
 
+// TestConfigMiddlewareSeesNilTLSUnderCCM is #709 fix round 1 item 5: it pins
+// the P9 finding rather than leaving it undocumented. Config.Middleware sits
+// outside CCMIdentityMiddleware (see the Middleware field's doc comment and
+// BuildHandler's composition order); core's vendored CCM bridge
+// (SetupCCMServer/CCMIdentityMiddleware) populates r.TLS only for the
+// layers CCMIdentityMiddleware wraps. This predates CCM-8 becoming the only
+// mode: the same ordering was already true whenever CCM-8 ran. Nil is
+// correct here, not a regression, and this test is the guard against a
+// future Config.Middleware silently starting to assume otherwise.
+func TestConfigMiddlewareSeesNilTLSUnderCCM(t *testing.T) {
+	t.Parallel()
+
+	material := writeTLSMaterial(t)
+
+	var mu sync.Mutex
+	var called bool
+	var sawTLS *tls.ConnectionState
+
+	srv, err := New(Config{
+		Addr:     "127.0.0.1:0",
+		CertFile: material.certFile,
+		KeyFile:  material.keyFile,
+		CAFile:   material.caFile,
+		Auth:     DefaultAuthPolicy(),
+		Middleware: func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				called = true
+				sawTLS = r.TLS
+				mu.Unlock()
+				next.ServeHTTP(w, r)
+			})
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runErr := make(chan error, 1)
+	go func() { runErr <- srv.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runErr:
+		case <-time.After(3 * time.Second):
+			t.Error("Run did not return within 3s of cancellation")
+		}
+	})
+
+	client := ccmHTTPClient(material.clientTLS, 5*time.Second)
+	if status := getWithRetry(t, client, "https://"+srv.Addr()+"/dcap"); status != http.StatusOK {
+		t.Fatalf("GET /dcap over mTLS: status %d, want 200", status)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !called {
+		t.Fatal("Config.Middleware never ran")
+	}
+	if sawTLS != nil {
+		t.Errorf("Config.Middleware observed r.TLS = %+v, want nil (it sits outside CCMIdentityMiddleware)", sawTLS)
+	}
+}
+
+// TestConfigMiddlewareMustNotAssumeNonNilTLS is #709 fix round 2, item 5,
+// settling P7: the coverage lane rated the test above "cement rather than
+// coverage", because it goes red on a deliberate reordering but stays green
+// on the failure it was meant to warn against, a middleware that assumes
+// r.TLS is non-nil and panics. This test triggers that exact failure rather
+// than only asserting the nil value, so the doc comment's warning is
+// something a mutant can falsify, not a fact nothing checks.
+func TestConfigMiddlewareMustNotAssumeNonNilTLS(t *testing.T) {
+	t.Parallel()
+
+	material := writeTLSMaterial(t)
+
+	srv, err := New(Config{
+		Addr:     "127.0.0.1:0",
+		CertFile: material.certFile,
+		KeyFile:  material.keyFile,
+		CAFile:   material.caFile,
+		Auth:     DefaultAuthPolicy(),
+		Middleware: func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// The assumption under test: r.TLS is always populated. It
+				// is not, at this layer under CCM, so this panics on every
+				// request net/http's own recover-and-log path then handles.
+				_ = r.TLS.CipherSuite
+				next.ServeHTTP(w, r)
+			})
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runErr := make(chan error, 1)
+	go func() { runErr <- srv.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runErr:
+		case <-time.After(3 * time.Second):
+			t.Error("Run did not return within 3s of cancellation")
+		}
+	})
+
+	// Not t.Parallel() with the log redirection below: it captures the
+	// process-wide default logger net/http's panic recovery writes to.
+	logBuf := &syncBuffer{}
+	prevOut := log.Default().Writer()
+	prevFlags := log.Default().Flags()
+	log.Default().SetOutput(logBuf)
+	log.Default().SetFlags(0)
+	t.Cleanup(func() {
+		log.Default().SetOutput(prevOut)
+		log.Default().SetFlags(prevFlags)
+	})
+
+	addr := srv.Addr()
+	waitForListen(t, addr)
+
+	client := ccmHTTPClient(material.clientTLS, 5*time.Second)
+	resp, err := client.Get("https://" + addr + "/dcap")
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("request succeeded through a middleware that dereferences a nil r.TLS; want the connection to fail")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		got = logBuf.String()
+		if strings.Contains(got, "panic") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(got, "panic") {
+		t.Fatalf("log output = %q, want a logged panic from the nil r.TLS dereference", got)
+	}
+}
+
 // TestNewClosesTheListenerOnTLSFailure asserts a failed construction leaves no
 // bound port behind. Without this, a retry loop around New leaks a socket per
 // attempt and eventually cannot bind at all.
@@ -422,7 +557,7 @@ type tlsMaterial struct {
 	certFile string
 	keyFile  string
 
-	clientTLS *tls.Config
+	clientTLS *gotls.Config
 
 	wantSFDI string
 	wantLFDI string
@@ -489,12 +624,28 @@ func writeTLSMaterial(t *testing.T) tlsMaterial {
 	m.wantSFDI = sepTLS.SFDI(serverLeaf)
 	m.wantLFDI = sepTLS.LFDI(serverLeaf)
 
-	m.clientTLS, err = sepTLS.NewClientTLSConfigFromPEM(deviceCertPEM, deviceKeyPEM, caCertPEM)
+	m.clientTLS, err = sepTLS.NewCCMClientConfigFromPEM(deviceCertPEM, deviceKeyPEM, caCertPEM)
 	if err != nil {
-		t.Fatalf("NewClientTLSConfigFromPEM: %v", err)
+		t.Fatalf("NewCCMClientConfigFromPEM: %v", err)
 	}
 
 	return m
+}
+
+// ccmHTTPClient wraps cfg in an *http.Client whose Transport dials through
+// core's forked TLS stack (gotls), the only way to reach this package's
+// CCM-8-only listener: net/http's own TLSClientConfig field only accepts a
+// *tls.Config, which cannot negotiate CCM-8 at all.
+func ccmHTTPClient(cfg *gotls.Config, timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return (&gotls.Dialer{Config: cfg}).DialContext(ctx, network, addr)
+			},
+		},
+	}
 }
 
 // getWithRetry absorbs the gap between Run being called and Serve accepting.
@@ -513,4 +664,23 @@ func getWithRetry(t *testing.T, client *http.Client, url string) int {
 	}
 	t.Fatalf("GET %s never succeeded: %v", url, lastErr)
 	return 0
+}
+
+// waitForListen polls addr with a plain TCP dial (no TLS) until it succeeds.
+// Used instead of getWithRetry when the test's own request must not be
+// retried, such as a request expected to fail: getWithRetry would otherwise
+// absorb the same gap by retrying past the deliberate failure.
+func waitForListen(t *testing.T, addr string) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s never accepted a TCP connection", addr)
 }

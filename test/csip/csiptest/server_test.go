@@ -4,8 +4,13 @@
 package csiptest_test
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"net"
+	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -162,4 +167,83 @@ func TestBootServer_CleanupShutsDown(t *testing.T) {
 	if err := dialProbe(); err == nil {
 		t.Fatalf("CCM-8 handshake succeeded after cleanup; server did not shut down (addr=%s)", capturedAddr)
 	}
+}
+
+// TestBootServer_RefusedHandshakeIsLogged is #709 fix round 2, item 4: BootServer
+// built its listener with a bare gotls.NewListener while both production
+// listeners (pkg/sep2server, pkg/sep2srv) wrap in sepTLS.WrapCCMListener, so the
+// suite that certifies conformance exercised a listener shape the server does
+// not ship. Mirrors pkg/sep2server's and pkg/sep2srv's own
+// TestNew_RefusedHandshakeIsLogged: a *gotls.Conn handshakes lazily on its
+// first Read, which net/http's own "TLS handshake error" logging never fires
+// for, so this only passes once BootServer wraps the same way production does.
+func TestBootServer_RefusedHandshakeIsLogged(t *testing.T) {
+	srv := csiptest.BootServer(t)
+	addr := srv.Addr()
+
+	// Not t.Parallel(): this redirects the process-wide default logger, which
+	// is what WrapCCMListener's nil errorLog resolves to.
+	logBuf := &syncLogBuf{}
+	prevOut := log.Default().Writer()
+	prevFlags := log.Default().Flags()
+	log.Default().SetOutput(logBuf)
+	log.Default().SetFlags(0)
+	t.Cleanup(func() {
+		log.Default().SetOutput(prevOut)
+		log.Default().SetFlags(prevFlags)
+	})
+
+	noCertCfg := &gotls.Config{ //nolint:gosec // test-only: server enforces RequireAnyClientCert regardless of what the client trusts
+		InsecureSkipVerify: true,
+		CipherSuites:       []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		MinVersion:         gotls.VersionTLS12,
+		MaxVersion:         gotls.VersionTLS12,
+	}
+	noCertClient := &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialTLSContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return (&gotls.Dialer{Config: noCertCfg}).DialContext(ctx, network, addr)
+			},
+		},
+	}
+	if _, err := noCertClient.Get("https://" + addr + "/dcap"); err == nil {
+		t.Fatal("expected the handshake to fail without a client certificate")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		got = logBuf.String()
+		if len(got) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(got) == 0 {
+		t.Fatal("refused handshake produced 0 bytes of log output; want a logged TLS handshake error")
+	}
+	if !strings.Contains(got, "TLS handshake error") {
+		t.Errorf("log output = %q, want it to contain %q", got, "TLS handshake error")
+	}
+}
+
+// syncLogBuf is a bytes.Buffer safe for one writer goroutine (the handshake
+// logger) and one reader goroutine (the test's poll loop) at once.
+type syncLogBuf struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncLogBuf) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncLogBuf) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

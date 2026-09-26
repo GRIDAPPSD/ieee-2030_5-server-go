@@ -1,6 +1,7 @@
 package sep2srv_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/x509"
@@ -8,11 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -231,6 +234,164 @@ func TestNew_MTLSAcceptAndReject(t *testing.T) {
 	}
 
 	waitForDialFailure(t, addr)
+}
+
+// TestNew_RefusesGCMOnlyClient is #709 fix round 1: nothing in the tree
+// asserted the listener's own suite list rejects GCM, so an accidental
+// re-addition would go undetected (every other cipher assertion dials with
+// a client that offers CCM-8 alone, which proves CCM-8 is offered but not
+// that nothing else is). A client offering only GCM, with a device cert the
+// server would otherwise accept, must be refused at cipher negotiation,
+// before client authentication is ever reached.
+func TestNew_RefusesGCMOnlyClient(t *testing.T) {
+	t.Parallel()
+	certs := newTestCertSet(t)
+
+	srv, err := sep2srv.New(sep2srv.Options{
+		Addr:            "127.0.0.1:0",
+		CertFile:        certs.serverCert,
+		KeyFile:         certs.serverKey,
+		CAFile:          certs.caFile,
+		ShutdownTimeout: 500 * time.Millisecond,
+	}, echoHandler)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	addr := srv.Addr()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runDone:
+		case <-time.After(2 * time.Second):
+			t.Error("Run did not return within 2s of ctx cancellation")
+		}
+	})
+
+	waitForDial(t, addr)
+
+	cert, err := gotls.X509KeyPair(mustRead(t, certs.deviceCert), mustRead(t, certs.deviceKey))
+	if err != nil {
+		t.Fatalf("gotls.X509KeyPair: %v", err)
+	}
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM(mustRead(t, certs.caFile)) {
+		t.Fatal("failed to parse CA into root pool")
+	}
+	gcmOnlyCfg := &gotls.Config{
+		RootCAs:      caPool,
+		Certificates: []gotls.Certificate{cert},
+		CipherSuites: []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
+		MinVersion:   gotls.VersionTLS12,
+		MaxVersion:   gotls.VersionTLS12,
+	}
+	gcmClient := ccmHTTPClient(gcmOnlyCfg, 2*time.Second)
+	if _, err := gcmClient.Get("https://" + addr + "/dcap"); err == nil {
+		t.Error("GCM-only client was accepted; want a handshake failure (server must offer CCM-8 only)")
+	}
+}
+
+// TestNew_RefusedHandshakeIsLogged is #709 fix round 1, item 4: a
+// *gotls.Conn handshakes lazily on its first Read, which net/http's own
+// "TLS handshake error" logging never fires for, so a refused handshake on
+// this listener produced no log line before wrapMTLS wrapped it in
+// sepTLS.WrapCCMListener. Not parallel: it redirects the process-wide
+// default logger, which is what a nil errorLog resolves to.
+func TestNew_RefusedHandshakeIsLogged(t *testing.T) {
+	certs := newTestCertSet(t)
+
+	srv, err := sep2srv.New(sep2srv.Options{
+		Addr:            "127.0.0.1:0",
+		CertFile:        certs.serverCert,
+		KeyFile:         certs.serverKey,
+		CAFile:          certs.caFile,
+		ShutdownTimeout: 500 * time.Millisecond,
+	}, echoHandler)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	addr := srv.Addr()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runDone:
+		case <-time.After(2 * time.Second):
+			t.Error("Run did not return within 2s of ctx cancellation")
+		}
+	})
+
+	waitForDial(t, addr)
+
+	// A plain bytes.Buffer races: the handshake goroutine writes to it
+	// through log.Default() while this test reads it below, and both can
+	// still be live in the Cleanup window (a late handshake attempt during
+	// ctx cancellation). logBuf serializes both sides.
+	logBuf := &syncBuffer{}
+	prevOut := log.Default().Writer()
+	prevFlags := log.Default().Flags()
+	log.Default().SetOutput(logBuf)
+	log.Default().SetFlags(0)
+	t.Cleanup(func() {
+		log.Default().SetOutput(prevOut)
+		log.Default().SetFlags(prevFlags)
+	})
+
+	noCertCfg := &gotls.Config{ //nolint:gosec // test-only: server enforces RequireAnyClientCert regardless of what the client trusts
+		InsecureSkipVerify: true,
+		CipherSuites:       []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		MinVersion:         gotls.VersionTLS12,
+		MaxVersion:         gotls.VersionTLS12,
+	}
+	noCertClient := ccmHTTPClient(noCertCfg, 2*time.Second)
+	if _, err := noCertClient.Get("https://" + addr + "/dcap"); err == nil {
+		t.Fatal("expected the handshake to fail without a client certificate")
+	}
+
+	// The handshake goroutine logs asynchronously; poll rather than reading
+	// logBuf immediately after the client's Get returns.
+	deadline := time.Now().Add(2 * time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		got = logBuf.String()
+		if len(got) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(got) == 0 {
+		t.Fatal("refused handshake produced 0 bytes of log output; want a logged TLS handshake error")
+	}
+	if !strings.Contains(got, "TLS handshake error") {
+		t.Errorf("log output = %q, want it to contain %q", got, "TLS handshake error")
+	}
+	t.Logf("refused handshake logged %d bytes: %q", len(got), got)
+}
+
+// syncBuffer is a bytes.Buffer safe for one writer goroutine (the handshake
+// logger) and one reader goroutine (the test's poll loop) at once. The
+// standard library type is not: -race flags the unguarded case.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func TestNew_CCM_IdentityAndLifecycle(t *testing.T) {

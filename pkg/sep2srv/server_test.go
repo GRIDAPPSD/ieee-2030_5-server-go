@@ -485,19 +485,3 @@ func mustRead(t *testing.T, path string) []byte {
 	}
 	return data
 }
-
-// shutdownNow forces a Server's Run loop to exit for tests that construct a
-// Server but never call Run on the success path (identity-only assertions),
-// so the listener does not leak past the test.
-func shutdownNow(srv *sep2srv.Server) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- srv.Run(ctx) }()
-	cancel()
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(2 * time.Second):
-		return errors.New("shutdownNow: Run did not return")
-	}
-}

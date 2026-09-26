@@ -12,8 +12,6 @@
 //	                                                            -> basicModeWalk
 //	Step 3 (DERControl.OpModFixedPFInjectW.Displacement = 950,
 //	         Excitation = true)                                 -> assertFixedPF
-//
-// Run under both GCM and CCM cipher modes.
 package csip_test
 
 import (

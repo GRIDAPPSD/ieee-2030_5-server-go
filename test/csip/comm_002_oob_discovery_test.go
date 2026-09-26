@@ -29,8 +29,7 @@
 //   - EndDeviceListLink - entry to per-device function sets.
 //   - TimeLink          - required for time-quality validation
 //     (chained-GET pattern, see CORE-005).
-//   - SelfDeviceLink    - server's own identity surface (required
-//     once #1 lands SFDI/LFDI in GCM mode).
+//   - SelfDeviceLink    - server's own identity surface.
 //
 // We use t.Errorf rather than t.Fatalf at each link so that a single
 // run surfaces every gap; a future server regression that drops two

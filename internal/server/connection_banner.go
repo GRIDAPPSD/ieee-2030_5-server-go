@@ -27,7 +27,7 @@ import (
 type BannerInput struct {
 	// SEP2 listener
 	Addr       string // raw listen address, e.g. ":8443" or "10.0.0.101:8888"
-	TLSMode    string // human label: "CCM-8", "GCM", "CCM-8+GCM"
+	TLSMode    string // human label: always "CCM-8", the server's only cipher
 	CertFile   string // server leaf cert path
 	ServerSFDI string // derived from leaf cert (12 decimal digits)
 	ServerLFDI string // derived from leaf cert (40 hex chars)

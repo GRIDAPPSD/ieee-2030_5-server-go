@@ -11,8 +11,6 @@
 //	                                                            -> basicModeWalk
 //	Step 3 (DERControl.OpModMaxLimW = 5000)                    -> assertMaxLimW
 //
-// Run under both GCM and CCM cipher modes.
-//
 // Per matrix: BASIC-013 / BASIC-014 (Set Active Power %, Set Active
 // Power Watts) are DER-Client-only and skipped from the Server
 // roadmap. BASIC-010 is the Server-side "limit" mode; it maps to

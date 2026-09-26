@@ -12,8 +12,6 @@
 //	                                                            -> basicModeWalk
 //	Step 3 (DERControl.OpModConnect = true,
 //	         DERControl.OpModEnergize = true)                   -> assertConnectEnergize
-//
-// Run under both GCM and CCM cipher modes.
 package csip_test
 
 import (

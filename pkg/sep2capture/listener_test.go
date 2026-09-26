@@ -200,6 +200,18 @@ func assertPeerIsLeaf(t *testing.T, seen *tls.ConnectionState, leaf *x509.Certif
 	if seen == nil {
 		t.Fatal("handler observed r.TLS == nil")
 	}
+	// #709 fix round 1, item 5: every caller here dials CCM-8 pinned to TLS
+	// 1.2, so Version and HandshakeComplete are as fixed a property of a
+	// successful request as the peer certificate is. Asserting them closes
+	// convertGotlsState's field-copy path: it read the peer certificates
+	// before, leaving Version and HandshakeComplete free to go stale or be
+	// dropped with nothing to notice.
+	if seen.Version != tls.VersionTLS12 {
+		t.Errorf("handler observed r.TLS.Version = %#04x, want TLS 1.2 (%#04x)", seen.Version, tls.VersionTLS12)
+	}
+	if !seen.HandshakeComplete {
+		t.Error("handler observed r.TLS.HandshakeComplete = false, want true")
+	}
 	if len(seen.PeerCertificates) == 0 {
 		t.Fatal("handler observed r.TLS with no PeerCertificates")
 	}

@@ -73,6 +73,12 @@ type Config struct {
 	// surface a consumer wants to mount in front of the protocol routes
 	// without reaching into them. Nil applies nothing.
 	//
+	// A handler installed here sees r.TLS == nil: core's CCM bridge
+	// (sepTLS.SetupCCMServer / CCMIdentityMiddleware) populates r.TLS only
+	// for the layers CCMIdentityMiddleware wraps, and this sits outside it.
+	// That is by design, not a gap to close by reordering: see
+	// TestConfigMiddlewareSeesNilTLSUnderCCM.
+	//
 	// See [BuildHandler] for the exact composition order.
 	Middleware func(http.Handler) http.Handler
 

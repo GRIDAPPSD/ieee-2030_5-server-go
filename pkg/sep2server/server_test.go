@@ -2,6 +2,7 @@ package sep2server
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -363,6 +365,71 @@ func TestRunReportsListenerFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "sep2server: serve") {
 		t.Errorf("error %q is not identified as a serve failure", err.Error())
+	}
+}
+
+// TestConfigMiddlewareSeesNilTLSUnderCCM is #709 fix round 1 item 5: it pins
+// the P9 finding rather than leaving it undocumented. Config.Middleware sits
+// outside CCMIdentityMiddleware (see the Middleware field's doc comment and
+// BuildHandler's composition order); core's vendored CCM bridge
+// (SetupCCMServer/CCMIdentityMiddleware) populates r.TLS only for the
+// layers CCMIdentityMiddleware wraps. This predates CCM-8 becoming the only
+// mode: the same ordering was already true whenever CCM-8 ran. Nil is
+// correct here, not a regression, and this test is the guard against a
+// future Config.Middleware silently starting to assume otherwise.
+func TestConfigMiddlewareSeesNilTLSUnderCCM(t *testing.T) {
+	t.Parallel()
+
+	material := writeTLSMaterial(t)
+
+	var mu sync.Mutex
+	var called bool
+	var sawTLS *tls.ConnectionState
+
+	srv, err := New(Config{
+		Addr:     "127.0.0.1:0",
+		CertFile: material.certFile,
+		KeyFile:  material.keyFile,
+		CAFile:   material.caFile,
+		Auth:     DefaultAuthPolicy(),
+		Middleware: func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				called = true
+				sawTLS = r.TLS
+				mu.Unlock()
+				next.ServeHTTP(w, r)
+			})
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runErr := make(chan error, 1)
+	go func() { runErr <- srv.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runErr:
+		case <-time.After(3 * time.Second):
+			t.Error("Run did not return within 3s of cancellation")
+		}
+	})
+
+	client := ccmHTTPClient(material.clientTLS, 5*time.Second)
+	if status := getWithRetry(t, client, "https://"+srv.Addr()+"/dcap"); status != http.StatusOK {
+		t.Fatalf("GET /dcap over mTLS: status %d, want 200", status)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !called {
+		t.Fatal("Config.Middleware never ran")
+	}
+	if sawTLS != nil {
+		t.Errorf("Config.Middleware observed r.TLS = %+v, want nil (it sits outside CCMIdentityMiddleware)", sawTLS)
 	}
 }
 

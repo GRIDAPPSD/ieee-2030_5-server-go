@@ -19,6 +19,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [0.7.0] - 2026-09-25
+
+This entry covers `v0.6.0..v0.7.0` (3 merged pull requests).
+
+### Changed
+
+- **Breaking.** Adopts `ieee-2030_5-core-go` v0.20.0's CCM-8-only `sep2tls`.
+  The protocol listener now negotiates only
+  `TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8`; the GCM cipher-suite fallback is gone.
+  A client, monitoring probe, or test harness that only offered GCM can no
+  longer complete a TLS handshake against the protocol listener; a client
+  offering CCM-8 (the standard's mandatory suite) now connects under this
+  server's default configuration, having already connected when
+  `SEP2_CCM=true` was set. `make run-ccm` is now an alias for `make run`,
+  since the two modes
+  became identical. The Python client and the stress load generator's `-ccm`
+  flag cannot yet reach a CCM-8-only server; not fixed in this release.
+  ([#709](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/709),
+  [#707](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/707),
+  [#708](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/708))
+- `pkg/adminui/web` (formerly `internal/server/web`) is now a public package:
+  the embedded FS is unexported in favor of an `Assets()` accessor. No
+  behavior change; no known consumer currently imports it.
+  ([#705](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/705))
+
+### Removed
+
+- **Breaking.** The `SEP2_CCM` environment variable and the `EnableCCM`
+  configuration field (`pkg/sep2server.Config`, `pkg/sep2srv.Options`,
+  `internal/config.Config`) are removed, not deprecated. Setting `SEP2_CCM`
+  in the environment now has no effect.
+  ([#709](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/709))
+
+### Fixed
+
+- Two false README claims are corrected (development on GitLab; core
+  consumed via a local-path `replace` directive), and the dead
+  `.gitlab-ci.yml` is removed. No runtime change.
+  ([#706](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/706))
+
 ## [0.6.0] - 2026-09-24
 
 This entry covers `v0.5.0..v0.6.0` (12 merged pull requests; two,
@@ -279,4 +319,5 @@ read both releases first.
 
 [0.3.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.2.0...v0.3.0
 [0.6.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.5.0...v0.6.0
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.6.0...HEAD
+[0.7.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.6.0...v0.7.0
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.7.0...HEAD

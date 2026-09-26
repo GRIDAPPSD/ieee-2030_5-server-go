@@ -236,14 +236,17 @@ func TestNew_MTLSAcceptAndReject(t *testing.T) {
 	waitForDialFailure(t, addr)
 }
 
-// TestNew_RefusesGCMOnlyClient is #709 fix round 1: nothing in the tree
-// asserted the listener's own suite list rejects GCM, so an accidental
-// re-addition would go undetected (every other cipher assertion dials with
-// a client that offers CCM-8 alone, which proves CCM-8 is offered but not
-// that nothing else is). A client offering only GCM, with a device cert the
-// server would otherwise accept, must be refused at cipher negotiation,
-// before client authentication is ever reached.
-func TestNew_RefusesGCMOnlyClient(t *testing.T) {
+// TestNew_RefusesNonCCM8Suites is #709 fix round 1 widened in fix round 2,
+// item 2: round 1 pinned AES-128-GCM alone, and the coverage lane showed that
+// appending AES-256-GCM instead of AES-128-GCM left the whole suite green, so
+// the guard was pinned to one suite id rather than to the property (CCM-8 and
+// nothing else). Each case offers exactly one non-CCM-8 suite, with a device
+// cert the server would otherwise accept, and must be refused at cipher
+// negotiation before client authentication is ever reached. The final case is
+// the control: the same client offering CCM-8 must be accepted, so a defect
+// that made the listener refuse everything would not read as this guard
+// passing.
+func TestNew_RefusesNonCCM8Suites(t *testing.T) {
 	t.Parallel()
 	certs := newTestCertSet(t)
 
@@ -281,17 +284,41 @@ func TestNew_RefusesGCMOnlyClient(t *testing.T) {
 	if !caPool.AppendCertsFromPEM(mustRead(t, certs.caFile)) {
 		t.Fatal("failed to parse CA into root pool")
 	}
-	gcmOnlyCfg := &gotls.Config{
-		RootCAs:      caPool,
-		Certificates: []gotls.Certificate{cert},
-		CipherSuites: []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
-		MinVersion:   gotls.VersionTLS12,
-		MaxVersion:   gotls.VersionTLS12,
+
+	dial := func(t *testing.T, suite uint16) error {
+		t.Helper()
+		cfg := &gotls.Config{
+			RootCAs:      caPool,
+			Certificates: []gotls.Certificate{cert},
+			CipherSuites: []uint16{suite},
+			MinVersion:   gotls.VersionTLS12,
+			MaxVersion:   gotls.VersionTLS12,
+		}
+		client := ccmHTTPClient(cfg, 2*time.Second)
+		_, err := client.Get("https://" + addr + "/dcap")
+		return err
 	}
-	gcmClient := ccmHTTPClient(gcmOnlyCfg, 2*time.Second)
-	if _, err := gcmClient.Get("https://" + addr + "/dcap"); err == nil {
-		t.Error("GCM-only client was accepted; want a handshake failure (server must offer CCM-8 only)")
+
+	for _, tc := range []struct {
+		name  string
+		suite uint16
+	}{
+		{"AES-128-GCM", gotls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
+		{"AES-256-GCM", gotls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384},
+		{"AES-128-CBC", gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := dial(t, tc.suite); err == nil {
+				t.Errorf("%s-only client was accepted; want a handshake failure (server must offer CCM-8 only)", tc.name)
+			}
+		})
 	}
+
+	t.Run("control: CCM-8 is still accepted", func(t *testing.T) {
+		if err := dial(t, gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8); err != nil {
+			t.Errorf("CCM-8 client was refused: %v; want acceptance (this proves the guard rejects on suite, not on every dial)", err)
+		}
+	})
 }
 
 // TestNew_RefusedHandshakeIsLogged is #709 fix round 1, item 4: a

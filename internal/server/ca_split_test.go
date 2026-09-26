@@ -195,4 +195,31 @@ func TestProtocolListenerTrustsOnlyTheDeviceCAUnderCCM(t *testing.T) {
 	badClient.Timeout = 1 * time.Second
 	badResp, badErr := badClient.Get("https://" + sep2Addr + "/dcap")
 	assertRefusedForCertFailure(t, badResp, badErr, "bad certificate")
+
+	// The client above is cooperative: gotls's default certificate
+	// selection filters candidates against the server's advertised
+	// AcceptableCAs and withholds one that does not match, so its refusal
+	// could be the client declining to send rather than the listener
+	// verifying and rejecting. A hostile client that forces the send is the
+	// only way to prove the listener itself does the rejecting (#709 fix
+	// round 1, closing the gap the security lane's `return nil` mutant
+	// found in the callback this drives).
+	hostileCert, err := gotls.X509KeyPair(badDeviceCertPEM, badDeviceKeyPEM)
+	if err != nil {
+		t.Fatalf("gotls.X509KeyPair(hostile): %v", err)
+	}
+	hostileClientCfg := &gotls.Config{
+		RootCAs:          rootPool,
+		MinVersion:       gotls.VersionTLS12,
+		MaxVersion:       gotls.VersionTLS12,
+		CipherSuites:     []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		CurvePreferences: []gotls.CurveID{gotls.CurveP256},
+		GetClientCertificate: func(*gotls.CertificateRequestInfo) (*gotls.Certificate, error) {
+			return &hostileCert, nil
+		},
+	}
+	hostileClient := ccmHTTPClient(hostileClientCfg)
+	hostileClient.Timeout = 1 * time.Second
+	hostileResp, hostileErr := hostileClient.Get("https://" + sep2Addr + "/dcap")
+	assertRefusedForCertFailure(t, hostileResp, hostileErr, "bad certificate")
 }

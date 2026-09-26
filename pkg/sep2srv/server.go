@@ -176,11 +176,20 @@ func wrapMTLS(listener net.Listener, opts Options) (net.Listener, Identity, erro
 	if err != nil {
 		return nil, Identity{}, fmt.Errorf("sep2srv: CCM TLS config: %w", err)
 	}
+	if len(ccmCfg.Certificates) == 0 {
+		return nil, Identity{}, errors.New("sep2srv: CCM TLS config carries no certificate")
+	}
 	identity, err := deriveIdentity(ccmCfg.Certificates[0].Certificate)
 	if err != nil {
 		return nil, Identity{}, fmt.Errorf("sep2srv: derive server identity (CCM): %w", err)
 	}
-	return gotls.NewListener(listener, ccmCfg), identity, nil
+	// A *gotls.Conn handshakes lazily on its first Read, which net/http
+	// never logs for (its "TLS handshake error" case matches only a
+	// concrete *tls.Conn). WrapCCMListener forces the handshake eagerly and
+	// logs a failure the way net/http logs one for the stdlib type; a nil
+	// errorLog logs through the standard logger, matching this package's
+	// unset http.Server.ErrorLog.
+	return sepTLS.WrapCCMListener(gotls.NewListener(listener, ccmCfg), nil), identity, nil
 }
 
 // deriveIdentity parses the leaf certificate from a raw DER chain (as found

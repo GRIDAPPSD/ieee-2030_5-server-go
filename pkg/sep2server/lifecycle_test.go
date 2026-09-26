@@ -3,6 +3,7 @@ package sep2server
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"log"
 	"net"
 	"net/http"
@@ -203,6 +204,118 @@ func TestConnStateHookFires(t *testing.T) {
 	if !sawNew || !sawActive {
 		t.Errorf("ConnState saw %v; expected at least StateNew and StateActive", states)
 	}
+}
+
+// TestNew_RefusesNonCCM8Suites is #711: sep2srv's identically named test
+// pins the property that this package's own wrapMTLS shares, but sep2srv is
+// the twin internal/server never constructs. Each case offers exactly one
+// non-CCM-8 suite with a device cert the server would otherwise accept, and
+// must be refused at cipher negotiation before client authentication is ever
+// reached. The final case is the control: the same client offering CCM-8
+// must be accepted, so a defect that made the listener refuse everything
+// would not read as this guard passing.
+func TestNew_RefusesNonCCM8Suites(t *testing.T) {
+	t.Parallel()
+
+	material := writeTLSMaterial(t)
+
+	srv, err := New(Config{
+		Addr:            "127.0.0.1:0",
+		CertFile:        material.certFile,
+		KeyFile:         material.keyFile,
+		CAFile:          material.caFile,
+		Auth:            DefaultAuthPolicy(),
+		ShutdownTimeout: 500 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	addr := srv.Addr()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runDone:
+		case <-time.After(2 * time.Second):
+			t.Error("Run did not return within 2s of ctx cancellation")
+		}
+	})
+
+	cert, err := gotls.X509KeyPair(material.deviceCertPEM, material.deviceKeyPEM)
+	if err != nil {
+		t.Fatalf("gotls.X509KeyPair: %v", err)
+	}
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM(material.caCertPEM) {
+		t.Fatal("failed to parse CA into root pool")
+	}
+
+	dial := func(t *testing.T, suite uint16) error {
+		t.Helper()
+		cfg := &gotls.Config{
+			RootCAs:      caPool,
+			Certificates: []gotls.Certificate{cert},
+			CipherSuites: []uint16{suite},
+			MinVersion:   gotls.VersionTLS12,
+			MaxVersion:   gotls.VersionTLS12,
+		}
+		client := ccmHTTPClient(cfg, 2*time.Second)
+		_, err := client.Get("https://" + addr + "/dcap")
+		return err
+	}
+
+	for _, tc := range []struct {
+		name  string
+		suite uint16
+	}{
+		{"AES-128-GCM", gotls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
+		{"AES-256-GCM", gotls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384},
+		{"AES-128-CBC", gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := dial(t, tc.suite); err == nil {
+				t.Errorf("%s-only client was accepted; want a handshake failure (server must offer CCM-8 only)", tc.name)
+			}
+		})
+	}
+
+	t.Run("every suite this package can name except CCM-8 is refused at once", func(t *testing.T) {
+		// Enumerating three suites is the defect #711 records: a fourth,
+		// unlisted suite added to the vendored config would pass the
+		// three cases above untested. Offering every ID gotls advertises
+		// (its full catalog minus CCM-8, which appears in neither list)
+		// closes that gap: any single suite the config gains beyond
+		// CCM-8 alone is somewhere in this set, so the assertion holds
+		// against an addition this test's author did not anticipate, not
+		// only against the three named above.
+		var suites []uint16
+		for _, c := range gotls.CipherSuites() {
+			suites = append(suites, c.ID)
+		}
+		for _, c := range gotls.InsecureCipherSuites() {
+			suites = append(suites, c.ID)
+		}
+		cfg := &gotls.Config{
+			RootCAs:      caPool,
+			Certificates: []gotls.Certificate{cert},
+			CipherSuites: suites,
+			MinVersion:   gotls.VersionTLS12,
+			MaxVersion:   gotls.VersionTLS12,
+		}
+		client := ccmHTTPClient(cfg, 2*time.Second)
+		if _, err := client.Get("https://" + addr + "/dcap"); err == nil {
+			t.Error("a client offering every known non-CCM-8 suite was accepted; want a handshake failure")
+		}
+	})
+
+	t.Run("control: CCM-8 is still accepted", func(t *testing.T) {
+		if err := dial(t, gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8); err != nil {
+			t.Errorf("CCM-8 client was refused: %v; want acceptance (this proves the guard rejects on suite, not on every dial)", err)
+		}
+	})
 }
 
 // TestNew_RefusedHandshakeIsLogged is #709 fix round 2, item 1: the coverage

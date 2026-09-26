@@ -30,8 +30,10 @@ This entry covers `v0.6.0..v0.7.0` (3 merged pull requests).
   `TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8`; the GCM cipher-suite fallback is gone.
   A client, monitoring probe, or test harness that only offered GCM can no
   longer complete a TLS handshake against the protocol listener; a client
-  offering CCM-8 (the standard's mandatory suite) now connects for the first
-  time. `make run-ccm` is now an alias for `make run`, since the two modes
+  offering CCM-8 (the standard's mandatory suite) now connects under this
+  server's default configuration, having already connected when
+  `SEP2_CCM=true` was set. `make run-ccm` is now an alias for `make run`,
+  since the two modes
   became identical. The Python client and the stress load generator's `-ccm`
   flag cannot yet reach a CCM-8-only server; not fixed in this release.
   ([#709](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/709),

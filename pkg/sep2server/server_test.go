@@ -559,6 +559,15 @@ type tlsMaterial struct {
 
 	clientTLS *gotls.Config
 
+	// caCertPEM, deviceCertPEM and deviceKeyPEM are kept in memory (not
+	// only written to disk as clientTLS's inputs) so a test can build its
+	// own *gotls.Config with a different CipherSuites list, the way
+	// TestNew_RefusesNonCCM8Suites needs to dial with a suite clientTLS
+	// does not offer.
+	caCertPEM     []byte
+	deviceCertPEM []byte
+	deviceKeyPEM  []byte
+
 	wantSFDI string
 	wantLFDI string
 }
@@ -603,9 +612,12 @@ func writeTLSMaterial(t *testing.T) tlsMaterial {
 	}
 
 	m := tlsMaterial{
-		caFile:   filepath.Join(dir, "ca.pem"),
-		certFile: filepath.Join(dir, "server.pem"),
-		keyFile:  filepath.Join(dir, "server-key.pem"),
+		caFile:        filepath.Join(dir, "ca.pem"),
+		certFile:      filepath.Join(dir, "server.pem"),
+		keyFile:       filepath.Join(dir, "server-key.pem"),
+		caCertPEM:     caCertPEM,
+		deviceCertPEM: deviceCertPEM,
+		deviceKeyPEM:  deviceKeyPEM,
 	}
 	for path, data := range map[string][]byte{
 		m.caFile:   caCertPEM,

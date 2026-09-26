@@ -1,17 +1,17 @@
-// CSIP V1.2 §8.8 — Inverter Control: Fixed Power Factor.
+// CSIP V1.2 Section 8.8 - Inverter Control: Fixed Power Factor.
 //
 // BASIC-008 proves the server renders a Fixed-PF DERControl carrying
-// opModFixedPFInjectW with displacement+excitation per Figure 8 — an
+// opModFixedPFInjectW with displacement+excitation per Figure 8 - an
 // immediate control mode with no DERCurve reference.
 //
-// V1.2 procedure step → assertion mapping (per V1.2 §8.8):
+// V1.2 procedure step -> assertion mapping (per V1.2 Section 8.8):
 //
 //	Step 1 (server has DERProgram + 1 DERControl with
-//	         opModFixedPFInjectW)                              ──► fixture load
-//	Step 2 (client walks /dcap → /edev → /fsa → DERProgram → DERControl)
-//	                                                            ──► basicModeWalk
+//	         opModFixedPFInjectW)                              -> fixture load
+//	Step 2 (client walks /dcap -> /edev -> /fsa -> DERProgram -> DERControl)
+//	                                                            -> basicModeWalk
 //	Step 3 (DERControl.OpModFixedPFInjectW.Displacement = 950,
-//	         Excitation = true)                                 ──► assertFixedPF
+//	         Excitation = true)                                 -> assertFixedPF
 //
 // Run under both GCM and CCM cipher modes.
 package csip_test
@@ -27,7 +27,7 @@ import (
 // leading == 950 in tenths-of-percent encoding).
 const basic008Displacement uint16 = 950
 
-// TestBASIC_008_FixedPF implements CSIP V1.2 §8.8.
+// TestBASIC_008_FixedPF implements CSIP V1.2 Section 8.8.
 func TestBASIC_008_FixedPF(t *testing.T) {
 	t.Parallel()
 	basicModeWalk(t, "basic-008-fixed-pf.yaml",
@@ -46,7 +46,7 @@ func TestBASIC_008_FixedPF(t *testing.T) {
 			}
 			pf := dc.DERControlBase.OpModFixedPFInjectW
 			if pf == nil {
-				t.Fatalf("[%s] DERControl.OpModFixedPFInjectW is nil — fixture dropped", cipher)
+				t.Fatalf("[%s] DERControl.OpModFixedPFInjectW is nil - fixture dropped", cipher)
 			}
 			if pf.Displacement != basic008Displacement {
 				t.Errorf("[%s] OpModFixedPFInjectW.Displacement = %d, want %d",

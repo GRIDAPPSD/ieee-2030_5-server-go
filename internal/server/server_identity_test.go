@@ -51,6 +51,20 @@ func ccmHTTPClient(cfg *gotls.Config, timeout time.Duration) *http.Client {
 	}
 }
 
+// noClientCertCCMConfig offers the CCM-8 cipher the protocol listener
+// negotiates but carries no client certificate. A stdlib client cannot
+// negotiate CCM-8 at all, so a stdlib dial being refused proves only that
+// the cipher lists do not overlap, not that client authentication is
+// enforced; this config isolates that second property.
+func noClientCertCCMConfig() *gotls.Config {
+	return &gotls.Config{ //nolint:gosec // test-only: the server enforces RequireAnyClientCert regardless of what the client trusts
+		InsecureSkipVerify: true,
+		CipherSuites:       []uint16{gotls.TLS_ECDHE_ECDSA_WITH_AES_128_CCM_8},
+		MinVersion:         gotls.VersionTLS12,
+		MaxVersion:         gotls.VersionTLS12,
+	}
+}
+
 // TestServerIdentityPopulatedUnderCCM is the regression guard for #1.
 //
 // Before the fix, server.Run() constructed the router with empty SFDI/LFDI

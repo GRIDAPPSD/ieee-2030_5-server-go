@@ -51,13 +51,12 @@ func TestAdminListenerSplit_PlainHTTP(t *testing.T) {
 	env := bootSplitListener(t, splitListenerOpts{adminTLS: false, useAdminAddr: false})
 	defer env.cancel()
 
-	// 1. SEP2 listener: a cert-less client must fail to handshake.
-	cleanClient := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		Timeout:   2 * time.Second,
-	}
-	if _, err := cleanClient.Get("https://" + env.sep2Addr + "/dcap"); err == nil {
-		t.Fatal("SEP2 listener accepted a cert-less client; want handshake failure")
+	// 1. SEP2 listener: a client offering CCM-8 but no client certificate
+	// must fail to handshake. Dialed through the fork so the refusal can
+	// only be ClientAuth, never a cipher mismatch (#709 fix round 1).
+	noCertClient := ccmHTTPClient(noClientCertCCMConfig(), 2*time.Second)
+	if _, err := noCertClient.Get("https://" + env.sep2Addr + "/dcap"); err == nil {
+		t.Fatal("SEP2 listener accepted a CCM-8 client with no client certificate; want handshake failure")
 	}
 
 	// 2. Admin listener (plain HTTP): no Bearer -> 401. #246: this test
@@ -105,13 +104,11 @@ func TestAdminListenerSplit_HTTPS(t *testing.T) {
 	env := bootSplitListener(t, splitListenerOpts{adminTLS: true, useAdminAddr: false})
 	defer env.cancel()
 
-	// 1. SEP2 listener: cert-less client rejected.
-	cleanClient := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		Timeout:   2 * time.Second,
-	}
-	if _, err := cleanClient.Get("https://" + env.sep2Addr + "/dcap"); err == nil {
-		t.Fatal("SEP2 listener accepted a cert-less client; want handshake failure")
+	// 1. SEP2 listener: a client offering CCM-8 but no client certificate
+	// is rejected. Dialed through the fork; see the plain-HTTP variant above.
+	noCertClient := ccmHTTPClient(noClientCertCCMConfig(), 2*time.Second)
+	if _, err := noCertClient.Get("https://" + env.sep2Addr + "/dcap"); err == nil {
+		t.Fatal("SEP2 listener accepted a CCM-8 client with no client certificate; want handshake failure")
 	}
 
 	// 2. Admin listener: TLS handshake succeeds without a client cert

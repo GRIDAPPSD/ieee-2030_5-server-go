@@ -3,6 +3,7 @@ package sep2server
 import (
 	"context"
 	"crypto/tls"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -433,6 +434,86 @@ func TestConfigMiddlewareSeesNilTLSUnderCCM(t *testing.T) {
 	}
 }
 
+// TestConfigMiddlewareMustNotAssumeNonNilTLS is #709 fix round 2, item 5,
+// settling P7: the coverage lane rated the test above "cement rather than
+// coverage", because it goes red on a deliberate reordering but stays green
+// on the failure it was meant to warn against, a middleware that assumes
+// r.TLS is non-nil and panics. This test triggers that exact failure rather
+// than only asserting the nil value, so the doc comment's warning is
+// something a mutant can falsify, not a fact nothing checks.
+func TestConfigMiddlewareMustNotAssumeNonNilTLS(t *testing.T) {
+	t.Parallel()
+
+	material := writeTLSMaterial(t)
+
+	srv, err := New(Config{
+		Addr:     "127.0.0.1:0",
+		CertFile: material.certFile,
+		KeyFile:  material.keyFile,
+		CAFile:   material.caFile,
+		Auth:     DefaultAuthPolicy(),
+		Middleware: func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// The assumption under test: r.TLS is always populated. It
+				// is not, at this layer under CCM, so this panics on every
+				// request net/http's own recover-and-log path then handles.
+				_ = r.TLS.CipherSuite
+				next.ServeHTTP(w, r)
+			})
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runErr := make(chan error, 1)
+	go func() { runErr <- srv.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runErr:
+		case <-time.After(3 * time.Second):
+			t.Error("Run did not return within 3s of cancellation")
+		}
+	})
+
+	// Not t.Parallel() with the log redirection below: it captures the
+	// process-wide default logger net/http's panic recovery writes to.
+	logBuf := &syncBuffer{}
+	prevOut := log.Default().Writer()
+	prevFlags := log.Default().Flags()
+	log.Default().SetOutput(logBuf)
+	log.Default().SetFlags(0)
+	t.Cleanup(func() {
+		log.Default().SetOutput(prevOut)
+		log.Default().SetFlags(prevFlags)
+	})
+
+	addr := srv.Addr()
+	waitForListen(t, addr)
+
+	client := ccmHTTPClient(material.clientTLS, 5*time.Second)
+	resp, err := client.Get("https://" + addr + "/dcap")
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("request succeeded through a middleware that dereferences a nil r.TLS; want the connection to fail")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		got = logBuf.String()
+		if strings.Contains(got, "panic") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(got, "panic") {
+		t.Fatalf("log output = %q, want a logged panic from the nil r.TLS dereference", got)
+	}
+}
+
 // TestNewClosesTheListenerOnTLSFailure asserts a failed construction leaves no
 // bound port behind. Without this, a retry loop around New leaks a socket per
 // attempt and eventually cannot bind at all.
@@ -583,4 +664,23 @@ func getWithRetry(t *testing.T, client *http.Client, url string) int {
 	}
 	t.Fatalf("GET %s never succeeded: %v", url, lastErr)
 	return 0
+}
+
+// waitForListen polls addr with a plain TCP dial (no TLS) until it succeeds.
+// Used instead of getWithRetry when the test's own request must not be
+// retried, such as a request expected to fail: getWithRetry would otherwise
+// absorb the same gap by retrying past the deliberate failure.
+func waitForListen(t *testing.T, addr string) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s never accepted a TCP connection", addr)
 }

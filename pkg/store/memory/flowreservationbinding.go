@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -65,6 +66,12 @@ func FlowReservationResponseListHref(key string) string { return "/edev/" + key 
 type FlowReservationLinkedEndDeviceStore struct {
 	devs   store.EndDeviceStore
 	served bool
+
+	// reqs and resps are set only on the served arm: the unserved arm's
+	// routes are never mounted, so no client could have created a record
+	// under this server's own function set for it to cascade.
+	reqs  store.ScopedStore[sep2.FlowReservationRequest]
+	resps store.ScopedStore[sep2.FlowReservationResponse]
 }
 
 // compile-time proof the decorator is substitutable for what it decorates.
@@ -83,11 +90,22 @@ var _ store.EndDeviceStore = (*FlowReservationLinkedEndDeviceStore)(nil)
 // against nil, for the reason argued at [NewRegisteredEndDeviceStore]: devs
 // is an interface, and an interface holding a nil concrete pointer is not
 // equal to nil.
-func NewFlowReservationLinkedEndDeviceStore(devs store.EndDeviceStore) *FlowReservationLinkedEndDeviceStore {
+//
+// reqs and resps back the cascade Delete performs: both are required, since
+// the served arm is chosen exactly when the flow reservation routes are
+// mounted, and those routes are backed by these same two stores.
+func NewFlowReservationLinkedEndDeviceStore(
+	devs store.EndDeviceStore,
+	reqs store.ScopedStore[sep2.FlowReservationRequest],
+	resps store.ScopedStore[sep2.FlowReservationResponse],
+) *FlowReservationLinkedEndDeviceStore {
 	if store.IsAbsent(devs) {
 		panic("memory: NewFlowReservationLinkedEndDeviceStore: devs (EndDeviceStore) must not be nil")
 	}
-	return &FlowReservationLinkedEndDeviceStore{devs: devs, served: true}
+	if store.IsAbsent(reqs) || store.IsAbsent(resps) {
+		panic("memory: NewFlowReservationLinkedEndDeviceStore: reqs and resps (ScopedStore) must not be nil")
+	}
+	return &FlowReservationLinkedEndDeviceStore{devs: devs, served: true, reqs: reqs, resps: resps}
 }
 
 // NewFlowReservationUnservedEndDeviceStore decorates devs so every served
@@ -135,11 +153,25 @@ func (s *FlowReservationLinkedEndDeviceStore) Update(ctx context.Context, id str
 	return s.devs.Update(ctx, id, device)
 }
 
-// Delete removes the device. The flow reservation records are held in
-// separate scoped stores keyed by the same device id; neither this call nor
-// EndDevice DELETE removes them, so they survive under the dead key (issue
-// 701).
+// Delete cascades the device's flow reservation request and response
+// records before removing the device, so neither survives under the dead
+// key for a later device created at the same key to inherit
+// (GRIDAPPSD/ieee-2030_5-server-go#701). The unserved arm cascades nothing:
+// its routes are never mounted, so nothing could have been created for it to
+// orphan.
+//
+// The cascade runs first and fails closed: if either collection cannot be
+// removed, the device is left in place rather than deleted with its records
+// still standing.
 func (s *FlowReservationLinkedEndDeviceStore) Delete(ctx context.Context, id string) error {
+	if s.served {
+		if err := deleteScopedParent(ctx, s.reqs, id); err != nil {
+			return fmt.Errorf("cascading flow reservation requests for %q: %w", id, err)
+		}
+		if err := deleteScopedParent(ctx, s.resps, id); err != nil {
+			return fmt.Errorf("cascading flow reservation responses for %q: %w", id, err)
+		}
+	}
 	return s.devs.Delete(ctx, id)
 }
 

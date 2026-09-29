@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -65,7 +66,8 @@ func LogEventListHref(key string) string { return "/edev/" + key + "/lel" }
 // link states where THIS server serves the list; it is not a field a client
 // gets to assert.
 type LogEventLinkedEndDeviceStore struct {
-	devs store.EndDeviceStore
+	devs   store.EndDeviceStore
+	events store.ScopedStore[sep2.LogEvent]
 }
 
 // compile-time proof the decorator is substitutable for what it decorates.
@@ -87,11 +89,18 @@ var _ store.EndDeviceStore = (*LogEventLinkedEndDeviceStore)(nil)
 // an interface holding a nil concrete pointer is not equal
 // to nil, so a plain comparison let the one mis-wiring a consumer actually
 // produces past the check that exists to catch it.
-func NewLogEventLinkedEndDeviceStore(devs store.EndDeviceStore) *LogEventLinkedEndDeviceStore {
+//
+// events backs the cascade Delete performs; it is required, since this
+// decorator is constructed exactly when the LogEvent routes are mounted, and
+// those routes are backed by the same store.
+func NewLogEventLinkedEndDeviceStore(devs store.EndDeviceStore, events store.ScopedStore[sep2.LogEvent]) *LogEventLinkedEndDeviceStore {
 	if store.IsAbsent(devs) {
 		panic("memory: NewLogEventLinkedEndDeviceStore: devs (EndDeviceStore) must not be nil")
 	}
-	return &LogEventLinkedEndDeviceStore{devs: devs}
+	if store.IsAbsent(events) {
+		panic("memory: NewLogEventLinkedEndDeviceStore: events (ScopedStore) must not be nil")
+	}
+	return &LogEventLinkedEndDeviceStore{devs: devs, events: events}
 }
 
 // Create stores the device with its LogEventListLink derived from the key it is
@@ -108,11 +117,17 @@ func (s *LogEventLinkedEndDeviceStore) Update(ctx context.Context, id string, de
 	return s.devs.Update(ctx, id, device)
 }
 
-// Delete removes the device. There is no LogEvent record to remove alongside
-// it: the events are held in a separate scoped store keyed by the same device
-// id, and removing them is the EndDevice DELETE handler's concern rather than
-// this decorator's.
+// Delete cascades the device's LogEvent records before removing the device,
+// so they do not survive under the dead key for a later device created at
+// the same key to inherit (GRIDAPPSD/ieee-2030_5-server-go#701).
+//
+// The cascade runs first and fails closed: if the LogEvent collection cannot
+// be removed, the device is left in place rather than deleted with its
+// events still standing.
 func (s *LogEventLinkedEndDeviceStore) Delete(ctx context.Context, id string) error {
+	if err := deleteScopedParent(ctx, s.events, id); err != nil {
+		return fmt.Errorf("cascading log events for %q: %w", id, err)
+	}
 	return s.devs.Delete(ctx, id)
 }
 

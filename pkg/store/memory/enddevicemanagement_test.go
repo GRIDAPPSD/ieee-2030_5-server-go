@@ -247,3 +247,37 @@ func mustAssignT(t *testing.T, s *memory.EndDeviceManagementStore, manager, mana
 		t.Fatalf("Assign(%q, %q): %v", manager, managed, err)
 	}
 }
+
+// TestManagers_SortedDeduplicatedByManagedCount pins #715's enumeration: one
+// entry per distinct manager regardless of how many devices it manages, and
+// no entry for an LFDI that only ever appears as a managed device.
+func TestManagers_SortedDeduplicatedByManagedCount(t *testing.T) {
+	ctx := context.Background()
+	s := newRekeyStore(t)
+
+	if got := s.Managers(ctx); len(got) != 0 {
+		t.Fatalf("Managers() on an empty store = %v, want empty", got)
+	}
+
+	mustAssignT(t, s, oldManagerLFDI, child1LFDI)
+	mustAssignT(t, s, oldManagerLFDI, child2LFDI)
+	mustAssignT(t, s, otherManager, newChildLFDI)
+
+	got := s.Managers(ctx)
+	want := []string{oldManagerLFDI, otherManager}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("Managers() = %v, want %v (deduplicated, sorted, managed-only LFDIs excluded)", got, want)
+	}
+
+	if err := s.Unassign(ctx, child1LFDI); err != nil {
+		t.Fatalf("Unassign: %v", err)
+	}
+	if err := s.Unassign(ctx, child2LFDI); err != nil {
+		t.Fatalf("Unassign: %v", err)
+	}
+	got = s.Managers(ctx)
+	if !slices.Equal(got, []string{otherManager}) {
+		t.Errorf("Managers() after the last child is unassigned = %v, want [%s]; a manager with no devices left must not still be listed", got, otherManager)
+	}
+}

@@ -22,6 +22,7 @@ import (
 var managementReaders = []string{
 	"ManagedBy func(*memory.EndDeviceManagementStore, context.Context, string) ([]string, error)",
 	"ManagerOf func(*memory.EndDeviceManagementStore, context.Context, string) (string, error)",
+	"Managers func(*memory.EndDeviceManagementStore, context.Context) []string",
 }
 
 var managementMutators = []string{

@@ -3,6 +3,7 @@ package flow_reservation_test
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/xml"
 	"log"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/flow_reservation"
+	corelisthandler "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/listhandler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -215,5 +217,159 @@ func TestHandlePostResponse_InvalidXMLDoesNotLeakDecoderDetail(t *testing.T) {
 	}
 	if logged := buf.String(); !strings.Contains(logged, marker) {
 		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
+	}
+}
+
+// TestHandlePostFlowReservationRequest_ResponseMRIDViaListRoute is #665's
+// first and second criteria: the auto-created response carries a 128-bit
+// mRID as 32 uppercase hex digits, read back the way a client actually reads
+// it (GET the list, not the store directly), and two responses created in
+// the same run get distinct mRIDs.
+//
+// The list route is wired here the same way pkg/sep2srv/assembly mounts
+// GET /edev/{id}/frp: a per-parent store.Under view fed to the generic list
+// handler. Reproduced from exported symbols rather than importing assembly,
+// to keep this a handler-package test.
+func TestHandlePostFlowReservationRequest_ResponseMRIDViaListRoute(t *testing.T) {
+	t.Parallel()
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore))
+	mux.HandleFunc("GET /edev/{id}/frp", func(w http.ResponseWriter, r *http.Request) {
+		scoped := store.Under[sep2.FlowReservationResponse](frpStore, r.PathValue("id"))
+		corelisthandler.ListHandler[sep2.FlowReservationResponse, sep2.FlowReservationResponseList](
+			scoped, flow_reservation.BuildFlowReservationResponseList, 900,
+		).ServeHTTP(w, r)
+	})
+
+	post := func(mrid string) {
+		energy := sep2.SignedRealEnergy{Value: 10000}
+		frq := sep2.FlowReservationRequest{MRID: mrid, EnergyRequested: &energy}
+		body, err := xml.Marshal(&frq)
+		if err != nil {
+			t.Fatalf("marshal request: %v", err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("POST status = %d, want 201, body: %s", w.Code, w.Body.String())
+		}
+	}
+	post("FRQ001")
+	post("FRQ002")
+
+	req := httptest.NewRequest(http.MethodGet, "/edev/dev1/frp", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+
+	var list sep2.FlowReservationResponseList
+	if err := xml.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatalf("unmarshal list: %v, body: %s", err, w.Body.String())
+	}
+	if len(list.FlowReservationResponse) != 2 {
+		t.Fatalf("responses in list = %d, want 2", len(list.FlowReservationResponse))
+	}
+
+	const hexDigits = "0123456789ABCDEF"
+	for i, frp := range list.FlowReservationResponse {
+		if len(frp.MRID) != 32 {
+			t.Errorf("response %d MRID = %q, want 32 hex digits", i, frp.MRID)
+			continue
+		}
+		if _, err := hex.DecodeString(frp.MRID); err != nil {
+			t.Errorf("response %d MRID = %q, not hex: %v", i, frp.MRID, err)
+		}
+		for _, c := range frp.MRID {
+			if !strings.ContainsRune(hexDigits, c) {
+				t.Errorf("response %d MRID = %q contains %q, want only uppercase hex digits", i, frp.MRID, c)
+				break
+			}
+		}
+	}
+	if list.FlowReservationResponse[0].MRID == list.FlowReservationResponse[1].MRID {
+		t.Errorf("both responses carry MRID %q; two responses created in the same run must differ", list.FlowReservationResponse[0].MRID)
+	}
+}
+
+// TestHandlePostFlowReservationRequest_ResponseSubjectEqualsRequestMRID pins
+// #665's third criterion: subject must equal the originating request's mRID.
+// The handler already set this field; nothing asserted it.
+func TestHandlePostFlowReservationRequest_ResponseSubjectEqualsRequestMRID(t *testing.T) {
+	t.Parallel()
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore))
+
+	energy := sep2.SignedRealEnergy{Value: 5000}
+	frq := sep2.FlowReservationRequest{MRID: "REQMRID123", EnergyRequested: &energy}
+	body, err := xml.Marshal(&frq)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201, body: %s", w.Code, w.Body.String())
+	}
+
+	responses, err := frpStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list stored responses: %v", err)
+	}
+	if len(responses.Items) != 1 {
+		t.Fatalf("stored response count = %d, want 1", len(responses.Items))
+	}
+	if got := responses.Items[0].Subject; got != "REQMRID123" {
+		t.Errorf("stored FlowReservationResponse Subject = %q, want the request mRID %q", got, "REQMRID123")
+	}
+}
+
+// TestHandlePostFlowReservationRequest_MissingRequestMRIDRefused pins #665's
+// fourth criterion: a request with no mRID is refused with 400 rather than
+// producing a response whose subject nobody can match to a bid.
+func TestHandlePostFlowReservationRequest_MissingRequestMRIDRefused(t *testing.T) {
+	t.Parallel()
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore))
+
+	energy := sep2.SignedRealEnergy{Value: 5000}
+	frq := sep2.FlowReservationRequest{EnergyRequested: &energy} // no MRID
+	body, err := xml.Marshal(&frq)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body: %s", w.Code, w.Body.String())
+	}
+
+	stored, err := frqStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list stored requests: %v", err)
+	}
+	if len(stored.Items) != 0 {
+		t.Errorf("stored request count = %d, want 0; a request with no mRID must not be stored", len(stored.Items))
+	}
+	responses, err := frpStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list stored responses: %v", err)
+	}
+	if len(responses.Items) != 0 {
+		t.Errorf("stored response count = %d, want 0; no response should be auto-created for a refused request", len(responses.Items))
 	}
 }

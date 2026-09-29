@@ -2,10 +2,13 @@ package flow_reservation
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -14,6 +17,42 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
+
+// frpRandRead is the FlowReservationResponse mRID randomness source.
+// Overridable in tests only, so a test can prove the all-F retry actually
+// retries rather than assert it by inspection (internal/dercontrol/mrid.go
+// uses the same seam for the same reason).
+var frpRandRead = rand.Read
+
+// newFRPMRID mints a 128-bit mRID (32 uppercase hex digits) for an
+// auto-created FlowReservationResponse, per IEEE 2030.5 mRIDType. The all-F
+// value is reserved by the standard for an object still being created and is
+// never returned; on that draw the function retries.
+//
+// internal/dercontrol/mrid.go mints DERControl mRIDs the same way but packs
+// a configured PEN into the low 32 bits; this handler has no PEN threaded to
+// it (#665 is scoped to the response mRID alone), so all 128 bits are random.
+func newFRPMRID() (string, error) {
+	var b [16]byte
+	if _, err := frpRandRead(b[:]); err != nil {
+		return "", err
+	}
+	for isAllFF(b[:]) {
+		if _, err := frpRandRead(b[:]); err != nil {
+			return "", err
+		}
+	}
+	return strings.ToUpper(hex.EncodeToString(b[:])), nil
+}
+
+func isAllFF(b []byte) bool {
+	for _, v := range b {
+		if v != 0xFF {
+			return false
+		}
+	}
+	return true
+}
 
 // BuildFlowReservationRequestList constructs a FlowReservationRequestList.
 func BuildFlowReservationRequestList(href string, result store.ListResult[sep2.FlowReservationRequest], pollRate uint32) sep2.FlowReservationRequestList {
@@ -76,6 +115,16 @@ func HandlePostFlowReservationRequest(
 			return
 		}
 
+		// The auto-created response's subject names the request it answers
+		// (#665). A request with no mRID has no subject to give it, and the
+		// client has no acknowledgement path back to a response nobody could
+		// address, so it is refused outright rather than stored with an
+		// empty subject downstream.
+		if frq.MRID == "" {
+			http.Error(w, "FlowReservationRequest mRID is required", http.StatusBadRequest)
+			return
+		}
+
 		frqID := fmt.Sprintf("frq-%d", time.Now().UnixNano())
 		frq.Href = fmt.Sprintf("/edev/%s/frq/%s", edevID, frqID)
 		frq.CreationTime = time.Now().Unix()
@@ -99,6 +148,18 @@ func HandlePostFlowReservationRequest(
 			Subject:         frq.MRID,
 		}
 		frp.Href = fmt.Sprintf("/edev/%s/frp/%s", edevID, frpID)
+
+		// mRID is mandatory on every Event-derived resource (#665), and
+		// without one a client has no subject to name in an acknowledgement
+		// or a superseding response. Minted here, not copied from the
+		// request: mRID identifies THIS response, distinct from Subject,
+		// which names the request it answers.
+		frpMRID, err := newFRPMRID()
+		if err != nil {
+			srverr.Internal(w, r, fmt.Errorf("mint FlowReservationResponse mRID: %w", err))
+			return
+		}
+		frp.MRID = frpMRID
 
 		// creationTime is required on every Event-derived resource and the
 		// server is its only legitimate producer. Leaving it unset is not a

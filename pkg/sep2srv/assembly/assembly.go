@@ -1455,17 +1455,18 @@ func responseSenderAuthorizer(identity func(ctx context.Context) (lfdi, sfdi str
 		return nil
 	}
 	managersAbsent := store.IsAbsent(managers)
-	return func(r *http.Request, lfdi string) (bool, error) {
+	return func(r *http.Request, lfdi string) (bool, string, error) {
 		caller, _, ok := identity(r.Context())
 		if !ok || caller == "" {
-			return false, nil
+			return false, "", nil
 		}
 		if coreedev.OwnedBy(lfdi, caller) {
-			return true, nil
+			return true, caller, nil
 		}
 		if managersAbsent {
-			return false, nil
+			return false, caller, nil
 		}
-		return coreedev.CurrentManagerOwns(r.Context(), managers, lfdi, caller)
+		allowed, err := coreedev.CurrentManagerOwns(r.Context(), managers, lfdi, caller)
+		return allowed, caller, err
 	}
 }

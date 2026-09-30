@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/xml"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coreresponse "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/response"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -85,5 +87,35 @@ func TestPostResponseChecksEndDeviceLFDIAgainstSender(t *testing.T) {
 				t.Fatalf("stored %+v, want one Response for %s", stored.Items, tc.wantStored)
 			}
 		})
+	}
+}
+
+// A request that carries no certificate identity cannot speak for any
+// device: its Response naming one is refused and nothing is stored.
+func TestPostResponseWithoutIdentityIsRefused(t *testing.T) {
+	stores := testStores()
+	seedOwnedDevices(t, stores.EndDevices, testLFDI)
+	policy := testAuthPolicy()
+	policy.Identity = func(context.Context) (string, string, bool) { return "", "", false }
+	h, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{}, stores, policy, "serverSFDI", "serverLFDI", nil)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	status := sep2.ResponseStatusEventReceived
+	body, err := xml.Marshal(&sep2.DERControlResponse{Response: sep2.Response{EndDeviceLFDI: testLFDI, Status: &status, Subject: "0123456789ABCDEF0123456789ABCDEF"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Post(srv.URL+coreresponse.ListHref(coreresponse.DefaultSetID), "application/sep+xml", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = readBody(t, resp)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+	stored, err := stores.Responses.List(context.Background(), coreresponse.DefaultSetID, store.ListOptions{Unbounded: true})
+	if err != nil || len(stored.Items) != 0 {
+		t.Fatalf("stored %+v (%v), want nothing", stored.Items, err)
 	}
 }

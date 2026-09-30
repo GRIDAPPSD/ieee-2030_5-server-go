@@ -281,16 +281,18 @@ func HandlePostResponse(rspStore store.ScopedStore[sep2.Response], authorize Res
 				http.Error(w, "endDeviceLFDI must be 40 hexadecimal digits", http.StatusBadRequest)
 				return
 			}
-			allowed := false
+			allowed, sender := false, ""
 			if authorize != nil {
-				allowed, err = authorize(r, lfdi)
+				allowed, sender, err = authorize(r, lfdi)
 				if err != nil {
 					srverr.Internal(w, r, err)
 					return
 				}
 			}
 			if !allowed {
-				log.Printf("rsps: refused a Response whose endDeviceLFDI is neither the sender nor a device it manages (%s %s)", r.Method, r.URL.Path)
+				// lfdi is canonical hex and sender a certificate identity;
+				// the path is quoted because it is decoded request text.
+				log.Printf("rsps: refused a Response for endDeviceLFDI %s from sender %s: neither the sender nor a device it manages (%s %q)", lfdi, sender, r.Method, r.URL.Path)
 				http.Error(w, "endDeviceLFDI is not the sender or a device it manages", http.StatusForbidden)
 				return
 			}
@@ -313,13 +315,16 @@ func HandlePostResponse(rspStore store.ScopedStore[sep2.Response], authorize Res
 
 // ResponseSenderAuthorizer reports whether the sender of r may post a
 // Response naming endDeviceLFDI (canonical uppercase): the sender's own
-// device, or one it manages. A non-nil error means the check could not
-// complete, and the POST answers 500.
-type ResponseSenderAuthorizer func(r *http.Request, endDeviceLFDI string) (bool, error)
+// device, or one it manages. sender is the sender's LFDI for the refusal
+// log, or "" when the request carries no identity. A non-nil error means
+// the check could not complete, and the POST answers 500.
+type ResponseSenderAuthorizer func(r *http.Request, endDeviceLFDI string) (allowed bool, sender string, err error)
 
 // canonicalLFDI returns s uppercased when it is 40 hex digits (HexBinary160).
-// hexBinary is case-insensitive, and identities are compared uppercase.
+// hexBinary collapses surrounding whitespace and is case-insensitive, and
+// identities are compared uppercase.
 func canonicalLFDI(s string) (string, bool) {
+	s = strings.Trim(s, " \t\r\n")
 	if len(s) != 40 {
 		return "", false
 	}

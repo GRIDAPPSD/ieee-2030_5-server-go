@@ -250,7 +250,7 @@ the dashboard form (where one exists) submits to it.
 | FSA management | Complete | Create/list/get/delete admin FSA templates, attach/detach DERPrograms, assign/unassign devices, plus a topology endpoint for the dashboard tree (#163). Create is the Create FSA card, attach/detach and delete are the tree's per-FSA controls, assign is the device table, unassign is the FSA template table. | [`internal/handler/admin_fsa.go`](../internal/handler/admin_fsa.go), [`internal/server/admin_fsa_wiring.go`](../internal/server/admin_fsa_wiring.go), [`frontend/src/panels/CreateFsa.svelte`](../pkg/adminui/web/frontend/src/panels/CreateFsa.svelte), [`frontend/src/panels/FsaNode.svelte`](../pkg/adminui/web/frontend/src/panels/FsaNode.svelte), [`frontend/src/panels/FsaCatalog.svelte`](../pkg/adminui/web/frontend/src/panels/FsaCatalog.svelte) |
 | Management-pair provisioning | Complete | `POST /api/management-pairs` creates a (manager LFDI, managed LFDI) pair; `GET /api/management-pairs?manager=` or `?managed=` lists in either direction; `DELETE /api/management-pairs?managed=` removes one; `POST /api/management-pairs/rekey` replaces a manager or managed LFDI across its pairs after a certificate rotation (#440). Every LFDI is normalized to 40 uppercase hex digits and refused only when it is not valid hexBinary. Pairs persist to `<SEP2_DATA_DIR>/enddevicemanagement.json` when a data directory is configured, the same as the other admin-mutated stores. See [`enddevice-access.md`](enddevice-access.md) for what a pair grants. No dashboard panel yet. | [`internal/handler/admin_management.go`](../internal/handler/admin_management.go), [`internal/server/admin_management_wiring.go`](../internal/server/admin_management_wiring.go), [`pkg/store/memory/enddevicemanagement.go`](../pkg/store/memory/enddevicemanagement.go) |
 | Topology view | Complete | `GET /api/topology` returns the SY / FD / SP / DEV tree the dashboard renders. | [`internal/handler/admin_topology.go`](../internal/handler/admin_topology.go), [`frontend/src/panels/TopologyTree.svelte`](../pkg/adminui/web/frontend/src/panels/TopologyTree.svelte) |
-| DER controls | In Progress | The API is complete; the dashboard form is not yet wired. `POST /api/der/controls` creates a DERControl (type `connect`, `disconnect`, `maxLimW` with `maxLimW`, or `fixedPFInjectW` with `powerFactor.displacement` and `powerFactor.excitation`; optional `startTime`, required `durationSeconds`, optional `description` of at most 32 octets of UTF-8). The control is stored under the FSA that the program's own DERControlListLink names; the fsa segment of `derProgramHref` is checked for form only and otherwise not used and answers 201 with its mRID, device-facing href and derived status. `GET /api/der/controls?device=<id>` (optionally `&derProgramHref=`) lists admin-issued controls with their derived status and the device's Response counts per status. `POST /api/der/controls/{mrid}/cancel` cancels one, with an optional `reason` of at most 192 octets. `GET /api/devices/{id}/der-programs` lists the device's DERPrograms in primacy order. Both POST routes require a real credential even from loopback. Create answers 503 until `SEP2_PEN` is set. The "Send DER Control" form still renders and validates with a stub submit that sends nothing. | [`internal/handler/admin_dercontrol.go`](../internal/handler/admin_dercontrol.go), [`internal/dercontrol/`](../internal/dercontrol/), [`frontend/src/panels/DerControl.svelte`](../pkg/adminui/web/frontend/src/panels/DerControl.svelte) |
+| DER controls | Complete | `POST /api/der/controls` creates a DERControl (type `connect`, `disconnect`, `maxLimW` with `maxLimW`, or `fixedPFInjectW` with `powerFactor.displacement` and `powerFactor.excitation`; optional `startTime`, required `durationSeconds`, optional `description` of at most 32 octets of UTF-8). The control is stored under the FSA that the program's own DERControlListLink names; the fsa segment of `derProgramHref` is checked for form only and otherwise not used and answers 201 with its mRID, device-facing href and derived status. `GET /api/der/controls?device=<id>` (optionally `&derProgramHref=`) lists admin-issued controls with their derived status and the device's Response counts per status. `POST /api/der/controls/{mrid}/cancel` cancels one, with an optional `reason` of at most 192 octets. `GET /api/devices/{id}/der-programs` lists the device's DERPrograms in primacy order. Both POST routes require a real credential even from loopback. Create answers 503 until `SEP2_PEN` is set. The "Send DER Control" card (#567) is wired to all four routes: it posts only after a Confirm step, and shows what the server stored rather than a claim of delivery; see "Sending a DER control" below. | [`internal/handler/admin_dercontrol.go`](../internal/handler/admin_dercontrol.go), [`internal/dercontrol/`](../internal/dercontrol/), [`frontend/src/panels/DerControl.svelte`](../pkg/adminui/web/frontend/src/panels/DerControl.svelte) |
 | Traffic capture API | In Progress | `GET /api/traffic/{clients,exchanges,exchanges/{id},exchanges/{id}/request,exchanges/{id}/response,stream,stats}` (#611): read-only access to recorded protocol exchanges, on the same auth chain as every other admin route (including the ticket path for `GET /api/traffic/stream`). A non-GET method on any of these routes answers 405, not 404. Off unless `SEP2_TRAFFIC_CAPTURE=true` permits it; when permitted, the directory is `SEP2_TRAFFIC_DIR`, else `<SEP2_DATA_DIR>/traffic`. No dashboard panel yet; that is a later PR. | [`pkg/sep2capture/`](../pkg/sep2capture/), [`internal/server/admin_router.go`](../internal/server/admin_router.go) |
 
 ## The dashboard is an embedded Svelte app
@@ -314,6 +314,67 @@ curl -X POST http://localhost:8444/api/certs/device \
 Each returns `certPEM` and `keyPEM` as JSON string fields; extract them
 (for example with `jq -r .keyPEM`) rather than saving the response
 envelope itself as a `.crt` or `.key` file.
+
+### Sending a DER control
+
+The Send DER Control card (Control tab) picks a device, then a DER
+program from that device's `GET .../der-programs` (programs come from
+the boot fixture; the admin UI cannot create one). The control type is
+Connect, Disconnect, a max power limit entered as a percent of setMaxW
+(sent to the server in hundredths), or a fixed power factor entered as
+0.001 to 1.000 (sent in thousandths) with an excitation choice: Over-
+excited means the DER injects reactive power, Under-excited means it
+absorbs. Start is "now" or a chosen time, plus a duration in minutes and
+an optional description.
+
+**Send never posts.** It validates the form and shows a one-sentence
+summary; only **Confirm** calls `POST /api/der/controls`, exactly once.
+This exists so a typo is caught before it reaches a device, and so
+nothing is sent while the operator is still filling the form in.
+
+**Stored, not sent.** The result line after Confirm reports what the
+server did: the control's mRID, the time it was stored, when it starts,
+its derived status and the time of that status. It also gives a nominal
+estimate, labelled as one: a device that polls every 900 seconds (the
+DERControlList pollRate) would read it by the stored time plus 900
+seconds. That figure is computed in the page, is not a delivery time,
+and says nothing about a device that is offline. The card never claims
+the device received or applied anything, because devices pull this list;
+the server's own promise stops at having stored it. If the store is not
+persisted to disk, the card says a restart forgets the control. If the
+server answers that a write could not be undone, the card names the
+control's mRID and href, says it was kept and is live, and reloads the
+table so it can be cancelled.
+
+The device and program selects are disabled while a Confirm or a cancel
+is in flight. A reply that still lands after the selection changed is
+shown with its own device and program named, never as the new
+selection's result.
+
+The confirmation sentence names the device and program. Changing either
+after Send drops the confirmation, so Confirm can only post what the
+sentence says. A limit is taken to at most 2 decimals and a power factor
+to at most 3; a value with more is refused rather than rounded. A failed
+programs or controls read shows the server's error, never "no programs"
+or an empty table.
+
+**The controls table** lists the selected program's admin-issued
+controls with their type, value, start, end and derived status, plus
+the device's own Response counts. Those counts are labelled as reported
+by the device and not verified by the server: they come from whatever
+Response records a device posted, and a device that never responds
+shows zero, not a failure.
+
+**Cancel** appears on Scheduled rows and on Active rows whose interval has
+not ended on the server's clock, taken from the `Date` header of the
+controls read (the server derives no ended status, so an ended control
+keeps reading Active and cancelling it is refused). If the response
+carries no `Date`, every Active row keeps Cancel and the server decides,
+because hiding Cancel on a live control is the unsafe mistake. Like Send, it takes a
+second click: clicking it opens an inline confirmation (with an optional
+reason) before `POST /api/der/controls/{mrid}/cancel` runs. The table
+reloads afterward, so a cancelled control's status and button update in
+place.
 
 ### Rolling back to the previous page
 

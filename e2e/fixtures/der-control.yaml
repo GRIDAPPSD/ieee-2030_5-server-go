@@ -1,0 +1,25 @@
+# One device, one FSA and one DERProgram, for the DER control e2e specs
+# (dashboard.spec.ts's DER control test, der_control_cancel.spec.ts).
+# der_control_list_link is required: the admin create route refuses a
+# program that has none (admin_dercontrol.go refuseNoControlListLink).
+end_devices:
+  - id: e2e0
+    sfdi: "222222222222"
+    lfdi: "D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1"
+    enabled: true
+    changed_time: 100
+
+fsas:
+  - end_device_id: e2e0
+    id: "0"
+
+der_programs:
+  - end_device_id: e2e0
+    fsa_id: "0"
+    id: p1
+    mrid: "D2D2D2D2D2D2D2D2"
+    description: "e2e der control program"
+    primacy: 0
+    der_control_list_link:
+      href: "/edev/e2e0/fsa/0/derp/p1/derc"
+      all: 0

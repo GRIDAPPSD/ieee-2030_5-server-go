@@ -362,6 +362,48 @@ func handlerTestNow() int64 {
 	return time.Now().Unix()
 }
 
+// --- #715 fix round 1 item 3: a follow-up MirrorMeterReading POST reusing an
+// --- established mRID may omit ReadingType, and the reading must still be
+// --- used, under the type its series was created with (2023 rule (n) /
+// --- rule (h)(3)). ------------------------------------------------------------
+
+func TestHandleListFleets_FollowUpReadingInheritsReadingTypeByMRID(t *testing.T) {
+	t.Parallel()
+	f := newFleetFixture(t)
+	f.assign(fleetAggregatorLFDI, fleetDeviceALFDI)
+
+	// The creating POST: carries ReadingType, establishes mRID "p-series".
+	f.postOutOfBandReading("mup-1", "r1", fleetDeviceALFDI, sep2.MirrorMeterReading{
+		MRID:           "p-series",
+		LastUpdateTime: 100,
+		ReadingType: &sep2.ReadingType{
+			Uom: u8(sep2.UomWatts), FlowDirection: u8(sep2.FlowDirectionReverse), PowerOfTenMultiplier: i8(0),
+		},
+		Reading: &sep2.Reading{Value: i64(400)},
+	})
+	// A follow-up POST reusing the same mRID, omitting ReadingType
+	// entirely, with a later LastUpdateTime so it is the one that should
+	// win.
+	f.postOutOfBandReading("mup-1", "r2", fleetDeviceALFDI, sep2.MirrorMeterReading{
+		MRID:           "p-series",
+		LastUpdateTime: 200,
+		Reading:        &sep2.Reading{Value: i64(450)},
+	})
+
+	fleets := fetchFleets(t, f.handler())
+	dev := findDevice(t, fleets[0], fleetDeviceALFDI)
+
+	if dev.Measurements.P == nil {
+		t.Fatal("Measurements.P is nil, want the follow-up reading used under the inherited ReadingType")
+	}
+	if dev.Measurements.P.Value != 450 {
+		t.Errorf("Measurements.P.Value = %v, want 450 (the follow-up reading, not the creating one)", dev.Measurements.P.Value)
+	}
+	if dev.Measurements.P.ReadingTime != 200 {
+		t.Errorf("Measurements.P.ReadingTime = %d, want 200", dev.Measurements.P.ReadingTime)
+	}
+}
+
 // --- AC4: a device outside the aggregator's fleet never appears in its -------
 // --- roll-up, tested both ways ------------------------------------------------
 

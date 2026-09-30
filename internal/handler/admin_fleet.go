@@ -2,13 +2,15 @@ package handler
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // #715: admin read API for aggregator fleet status, measurements and
@@ -81,6 +83,12 @@ type FleetDevice struct {
 type FleetSum struct {
 	Sum        float64 `json:"sum"`
 	Unreported int     `json:"unreported"`
+	// Stale counts a device whose latest known status has gone stale
+	// (staleAfterSeconds). Its value, if any, is excluded from Sum and from
+	// Unreported: it is neither summed as current nor treated as never
+	// reported, since both would misstate what the fleet is actually
+	// delivering right now.
+	Stale int `json:"stale"`
 }
 
 // FleetRollup is one aggregator's fleet-wide roll-up. Connected, Alarmed and
@@ -106,12 +114,21 @@ type Fleet struct {
 	Rollup         FleetRollup   `json:"rollup"`
 }
 
+// fleetManagerReader is the read surface AdminFleetHandler needs from the
+// management-pair store: ManagedBy (part of store.EndDeviceManagementReader)
+// plus Managers, which enumerates every aggregator and is not part of any
+// store interface (see memory.EndDeviceManagementStore.Managers's doc
+// comment). Narrowed here, at the consumer, rather than holding the full
+// concrete store: a test double can then exercise a ManagedBy failure, which
+// the concrete store's own implementation never produces.
+type fleetManagerReader interface {
+	ManagedBy(ctx context.Context, managerLFDI string) ([]string, error)
+	Managers(ctx context.Context) []string
+}
+
 // AdminFleetHandler is the dependency surface for GET /api/derms/fleets.
-// Managers is the concrete store, not the narrower store contract, because
-// Managers() (enumerate every aggregator) is not part of it, the same reason
-// AdminManagementHandler needs the concrete type for RekeyManager/RekeyManaged.
 type AdminFleetHandler struct {
-	Managers            *memory.EndDeviceManagementStore
+	Managers            fleetManagerReader
 	EndDevices          store.EndDeviceReader
 	DERs                store.ScopedReader[sep2.DER]
 	DERStatuses         store.ScopedReader[sep2.DERStatus]
@@ -134,14 +151,22 @@ const connectStatusConnectedBit = 1 << 0
 
 // HandleListFleets returns a handler for GET /api/derms/fleets: one entry
 // per aggregator (an LFDI that manages at least one device), each with its
-// fleet's devices and roll-up.
+// fleet's devices and roll-up. A backend failure building any one fleet
+// fails the whole request (500) rather than reading as a smaller, or empty,
+// fleet: a partial listing is not a fact this route is entitled to assert.
 func HandleListFleets(h *AdminFleetHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		aggregators := h.Managers.Managers(ctx)
 		fleets := make([]Fleet, 0, len(aggregators))
 		for _, agg := range aggregators {
-			fleets = append(fleets, h.buildFleet(ctx, agg))
+			fleet, err := h.buildFleet(ctx, agg)
+			if err != nil {
+				log.Printf("admin fleet: build fleet %q: %v", agg, err)
+				writeError(w, http.StatusInternalServerError, "fleet read failed, see server log")
+				return
+			}
+			fleets = append(fleets, fleet)
 		}
 		writeJSON(w, http.StatusOK, fleets)
 	}
@@ -149,8 +174,11 @@ func HandleListFleets(h *AdminFleetHandler) http.HandlerFunc {
 
 // buildFleet assembles one aggregator's fleet: its own EndDevice plus every
 // device it manages (design doc: a fleet is keyed by the aggregator's LFDI).
-func (h *AdminFleetHandler) buildFleet(ctx context.Context, aggregatorLFDI string) Fleet {
-	managed, _ := h.Managers.ManagedBy(ctx, aggregatorLFDI)
+func (h *AdminFleetHandler) buildFleet(ctx context.Context, aggregatorLFDI string) (Fleet, error) {
+	managed, err := h.Managers.ManagedBy(ctx, aggregatorLFDI)
+	if err != nil {
+		return Fleet{}, fmt.Errorf("ManagedBy(%q): %w", aggregatorLFDI, err)
+	}
 	memberLFDIs := make([]string, 0, len(managed)+1)
 	memberLFDIs = append(memberLFDIs, aggregatorLFDI)
 	memberLFDIs = append(memberLFDIs, managed...)
@@ -164,7 +192,7 @@ func (h *AdminFleetHandler) buildFleet(ctx context.Context, aggregatorLFDI strin
 		accumulateRollup(&rollup, dev, now)
 	}
 
-	return Fleet{AggregatorLFDI: aggregatorLFDI, Devices: devices, Rollup: rollup}
+	return Fleet{AggregatorLFDI: aggregatorLFDI, Devices: devices, Rollup: rollup}, nil
 }
 
 // nowUnix is a var so a test can pin the clock without threading time
@@ -185,6 +213,14 @@ func (h *AdminFleetHandler) buildDevice(ctx context.Context, lfdi string) FleetD
 	}
 	dev, err := h.EndDevices.GetByLFDI(ctx, lfdi)
 	if err != nil {
+		// ErrNotFound is the ordinary case for a managed LFDI that was never
+		// registered as an EndDevice: not a failure, and not logged. Any
+		// other error is a genuine lookup failure, distinct from "this
+		// device has no status" (pkg/store's absent-versus-failed
+		// contract), and must not pass for it silently.
+		if !errors.Is(err, store.ErrNotFound) {
+			log.Printf("admin fleet: EndDevices.GetByLFDI(%q): %v", lfdi, err)
+		}
 		return fd
 	}
 	edevID := pathTail(dev.Href)
@@ -193,6 +229,10 @@ func (h *AdminFleetHandler) buildDevice(ctx context.Context, lfdi string) FleetD
 	}
 	ders, err := h.DERs.List(ctx, edevID, store.ListOptions{Unbounded: true})
 	if err != nil {
+		// A scoped List never fails for an unknown parent (empty result,
+		// nil error, per store.ScopedReader.List): any error here is a
+		// genuine backend failure.
+		log.Printf("admin fleet: DERs.List(%q): %v", edevID, err)
 		return fd
 	}
 
@@ -219,6 +259,9 @@ func (h *AdminFleetHandler) latestStatus(ctx context.Context, parentKey string) 
 	}
 	s, err := h.DERStatuses.Get(ctx, parentKey, singletonKey)
 	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			log.Printf("admin fleet: DERStatuses.Get(%q): %v", parentKey, err)
+		}
 		return nil
 	}
 	out := &FleetDeviceStatus{ReadingTime: s.ReadingTime}
@@ -247,6 +290,9 @@ func (h *AdminFleetHandler) latestAvailability(ctx context.Context, parentKey st
 	}
 	a, err := h.DERAvailabilities.Get(ctx, parentKey, singletonKey)
 	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			log.Printf("admin fleet: DERAvailabilities.Get(%q): %v", parentKey, err)
+		}
 		return nil
 	}
 	out := &FleetDeviceAvailability{ReadingTime: a.ReadingTime}
@@ -272,7 +318,8 @@ const singletonKey = "default"
 // lfdi and returns the latest P, Q, V and f reading across all of them.
 // Readings can be stored two ways - inline on the MirrorUsagePoint (the
 // POST /mup body) and out-of-band (POST /mup/{id}/mr, a separate collection
-// an inline overwrite never touches) - so both are read.
+// an inline overwrite never touches) - so both are read, inline first, since
+// an inline reading is always the mRID's creating POST.
 func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string) FleetDeviceMeasurements {
 	var out FleetDeviceMeasurements
 	if h.MirrorUsagePoints == nil {
@@ -280,39 +327,70 @@ func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string)
 	}
 	result, err := h.MirrorUsagePoints.List(ctx, store.ListOptions{Unbounded: true})
 	if err != nil {
+		// List never fails for an empty collection (nil error, zero
+		// items): any error here is a genuine backend failure, and every
+		// device's measurements are unreachable until it clears, not merely
+		// this one device's.
+		log.Printf("admin fleet: MirrorUsagePoints.List: %v", err)
 		return out
 	}
 	for _, mup := range result.Items {
 		if mup.DeviceLFDI != lfdi {
 			continue
 		}
-		for i := range mup.MirrorMeterReading {
-			considerMeasurement(&out, mup.MirrorMeterReading[i])
+		readings := append([]sep2.MirrorMeterReading{}, mup.MirrorMeterReading...)
+		if h.MirrorMeterReadings != nil {
+			mupID := pathTail(mup.Href)
+			mmrs, err := h.MirrorMeterReadings.List(ctx, mupID, store.ListOptions{Unbounded: true})
+			if err != nil {
+				log.Printf("admin fleet: MirrorMeterReadings.List(%q): %v", mupID, err)
+			} else {
+				readings = append(readings, mmrs.Items...)
+			}
 		}
-		if h.MirrorMeterReadings == nil {
-			continue
-		}
-		mupID := pathTail(mup.Href)
-		mmrs, err := h.MirrorMeterReadings.List(ctx, mupID, store.ListOptions{Unbounded: true})
-		if err != nil {
-			continue
-		}
-		for i := range mmrs.Items {
-			considerMeasurement(&out, mmrs.Items[i])
+		inheritReadingTypeByMRID(readings)
+		for i := range readings {
+			considerMeasurement(&out, readings[i])
 		}
 	}
 	return out
+}
+
+// inheritReadingTypeByMRID fills a reading's ReadingType from an earlier
+// reading in readings sharing the same mRID. 2023 rule (n) / rule (h)(3): a
+// MirrorMeterReading POST that reuses an mRID already established for this
+// MirrorUsagePoint may omit ReadingType, and the reading is still valid,
+// under the type its series was created with. readings must already be in
+// chronological order (oldest first), the order deviceMeasurements builds
+// it in, since only an EARLIER reading's type can be inherited.
+func inheritReadingTypeByMRID(readings []sep2.MirrorMeterReading) {
+	seen := make(map[string]*sep2.ReadingType, len(readings))
+	for i := range readings {
+		mrid := readings[i].MRID
+		if readings[i].ReadingType != nil {
+			if _, ok := seen[mrid]; !ok {
+				seen[mrid] = readings[i].ReadingType
+			}
+			continue
+		}
+		if rt, ok := seen[mrid]; ok {
+			readings[i].ReadingType = rt
+		}
+	}
 }
 
 // considerMeasurement folds one MirrorMeterReading into out, keeping the
 // newest (by LastUpdateTime) reading per quantity. A reading missing its
 // type, value or unit is skipped: there is nothing to attribute it to.
 //
-// P and Q are mapped to export-positive (design doc's Q3 sign convention):
-// FlowDirectionReverse ("received from customer") is the fleet exporting and
-// is already export-positive; FlowDirectionForward ("delivered to customer")
-// is the fleet importing and is negated. A reading with no flowDirection is
-// passed through unmapped rather than guessing a sign.
+// P and Q are mapped to export-positive: export-positive = (Forward -> -1,
+// Reverse -> +1) * abs(value). 2023 Annex B says a value under Forward or
+// Reverse "SHALL be positive", but the EPRI reference client
+// (map_l3_get_der.c:862-870) sends the signed physical value and derives
+// flowDirection from its own sign instead, so the wire value's sign cannot be
+// trusted; only its magnitude and the declared direction are. A reading with
+// no flowDirection is passed through unmapped rather than guessing a
+// direction.
 func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReading) {
 	if mmr.ReadingType == nil || mmr.ReadingType.Uom == nil || mmr.Reading == nil || mmr.Reading.Value == nil {
 		return
@@ -338,8 +416,14 @@ func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReadi
 		multiplier = *rt.PowerOfTenMultiplier
 	}
 	value := scaledValue(float64(*mmr.Reading.Value), multiplier)
-	if directional && rt.FlowDirection != nil && *rt.FlowDirection == sep2.FlowDirectionForward {
-		value = -value
+	if directional && rt.FlowDirection != nil {
+		magnitude := math.Abs(value)
+		switch *rt.FlowDirection {
+		case sep2.FlowDirectionForward:
+			value = -magnitude
+		case sep2.FlowDirectionReverse:
+			value = magnitude
+		}
 	}
 
 	m := &FleetMeasurement{Value: value, ReadingTime: mmr.LastUpdateTime}
@@ -361,14 +445,14 @@ func scaledValue(value float64, multiplier int8) float64 {
 // status counts (connected, alarmed, stale) and the four additive sums, each
 // with the count of devices that did not report it.
 func accumulateRollup(rollup *FleetRollup, dev FleetDevice, now int64) {
+	// A device with no status at all is never-reported, not stale: it is
+	// not counted in any of connected/alarmed/stale, and its sums land in
+	// Unreported below, the same as any other missing value.
+	stale := dev.Status != nil && now-dev.Status.ReadingTime > staleAfterSeconds
+
 	switch {
 	case dev.Status == nil:
-		// Never reported: not counted in any of connected/alarmed/stale.
-		// "Never reported" and "reported, but the reading has gone stale"
-		// are different facts, and only the roll-up's sums carry an explicit
-		// unreported count (per the acceptance criteria); the status counts
-		// do not partition the fleet.
-	case now-dev.Status.ReadingTime > staleAfterSeconds:
+	case stale:
 		rollup.Stale++
 	default:
 		if dev.Status.Connected != nil && *dev.Status.Connected {
@@ -379,15 +463,14 @@ func accumulateRollup(rollup *FleetRollup, dev FleetDevice, now int64) {
 		rollup.Alarmed++
 	}
 
-	addToSum(&rollup.P, measurementValue(dev.Measurements.P))
-	addToSum(&rollup.Q, measurementValue(dev.Measurements.Q))
+	var statW, statVar *float64
 	if dev.Availability != nil {
-		addToSum(&rollup.StatWAvail, dev.Availability.StatWAvail)
-		addToSum(&rollup.StatVarAvail, dev.Availability.StatVarAvail)
-	} else {
-		rollup.StatWAvail.Unreported++
-		rollup.StatVarAvail.Unreported++
+		statW, statVar = dev.Availability.StatWAvail, dev.Availability.StatVarAvail
 	}
+	addToSum(&rollup.P, measurementValue(dev.Measurements.P), stale)
+	addToSum(&rollup.Q, measurementValue(dev.Measurements.Q), stale)
+	addToSum(&rollup.StatWAvail, statW, stale)
+	addToSum(&rollup.StatVarAvail, statVar, stale)
 }
 
 func measurementValue(m *FleetMeasurement) *float64 {
@@ -397,12 +480,19 @@ func measurementValue(m *FleetMeasurement) *float64 {
 	return &m.Value
 }
 
-// addToSum adds value to sum.Sum when reported, or counts it as unreported.
-// A missing value never contributes a synthesized zero to Sum.
-func addToSum(sum *FleetSum, value *float64) {
-	if value == nil {
+// addToSum adds value to sum.Sum when the device is neither stale nor
+// missing the value. A stale device's value, if any, counts toward
+// sum.Stale instead of Sum, ahead of the unreported check: staleness is a
+// fact about the device's last known state, distinct from never having
+// reported at all. A missing value never contributes a synthesized zero to
+// Sum.
+func addToSum(sum *FleetSum, value *float64, stale bool) {
+	switch {
+	case stale:
+		sum.Stale++
+	case value == nil:
 		sum.Unreported++
-		return
+	default:
+		sum.Sum += *value
 	}
-	sum.Sum += *value
 }

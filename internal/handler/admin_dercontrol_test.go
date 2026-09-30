@@ -240,6 +240,16 @@ func TestDERControlCreate_MaxLimW(t *testing.T) {
 	}
 }
 
+// The handler echoes the wiring's persistence answer rather than a constant.
+func TestDERControlCreate_PersistedEchoesWiring(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	d.h.Persisted = true
+	w := d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(futureStart(60), 1, 300))
+	if got := decodeCreated(t, w); !got.Persisted {
+		t.Fatalf("persisted = false with Persisted wired true: %s", w.Body.String())
+	}
+}
+
 func TestDERControlCreate_PowerFactorAndSupersede(t *testing.T) {
 	d := newDCHarness(t, ptrU32(dcPEN))
 	start := futureStart(600)

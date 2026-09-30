@@ -383,6 +383,47 @@ func TestLoadSpec_DuplicateEndDevice_Errors(t *testing.T) {
 	}
 }
 
+// TestLoadSpec_DERProgramMissingFSAID_Errors is #746 fix round 1, item 1:
+// the shared href builder needs the FSA segment, so a program with no
+// fsa_id must refuse rather than silently build an unroutable href.
+func TestLoadSpec_DERProgramMissingFSAID_Errors(t *testing.T) {
+	t.Parallel()
+
+	spec := &csiptest.Spec{
+		EndDevices:  []csiptest.EndDeviceSpec{{ID: "0", SFDI: "111", LFDI: "AA"}},
+		DERPrograms: []csiptest.DERProgramSpec{{EndDeviceID: "0", ID: "p0"}},
+	}
+	target := csiptest.NewTarget()
+	err := csiptest.LoadSpec(context.Background(), target, spec)
+	if err == nil {
+		t.Fatal("LoadSpec(DERProgram missing fsa_id): want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "fsa_id is required") {
+		t.Errorf("LoadSpec(DERProgram missing fsa_id): error = %v, want 'fsa_id is required'", err)
+	}
+}
+
+// TestLoadSpec_DERProgramUnknownFSAID_Errors is #746 fix round 1, item 2:
+// fsa_id must name an FSA this fixture declares for the same end device,
+// the way end_device_id is checked, so a typo cannot build an unroutable
+// href silently.
+func TestLoadSpec_DERProgramUnknownFSAID_Errors(t *testing.T) {
+	t.Parallel()
+
+	spec := &csiptest.Spec{
+		EndDevices:  []csiptest.EndDeviceSpec{{ID: "0", SFDI: "111", LFDI: "AA"}},
+		DERPrograms: []csiptest.DERProgramSpec{{EndDeviceID: "0", FSAID: "ghost", ID: "p0"}},
+	}
+	target := csiptest.NewTarget()
+	err := csiptest.LoadSpec(context.Background(), target, spec)
+	if err == nil {
+		t.Fatal("LoadSpec(DERProgram unknown fsa_id): want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown fsa_id") {
+		t.Errorf("LoadSpec(DERProgram unknown fsa_id): error = %v, want 'unknown fsa_id'", err)
+	}
+}
+
 // TestLoadSpec_PerCentOutOfRange_Errors pins that a percent the XML encoder
 // would refuse fails the load and stores no control, on both control paths.
 func TestLoadSpec_PerCentOutOfRange_Errors(t *testing.T) {

@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 	"gopkg.in/yaml.v3"
@@ -104,10 +105,12 @@ type FSASpec struct {
 	DERProgramListLink *ListRef `yaml:"der_program_list_link,omitempty"`
 }
 
-// DERProgramSpec describes one DERProgram scoped under an EndDevice.
+// DERProgramSpec describes one DERProgram scoped under an (EndDevice, FSA)
+// pair. FSAID is required (#743): it is part of the program's own href, the
+// same shape der.DERProgramHref builds for a runtime-created program.
 type DERProgramSpec struct {
 	EndDeviceID           string   `yaml:"end_device_id"`
-	FSAID                 string   `yaml:"fsa_id,omitempty"`
+	FSAID                 string   `yaml:"fsa_id"`
 	ID                    string   `yaml:"id"`
 	MRID                  string   `yaml:"mrid,omitempty"`
 	Description           string   `yaml:"description,omitempty"`
@@ -272,6 +275,7 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		}
 	}
 
+	fsaKeys := make(map[string]struct{}, len(spec.FSAs))
 	for i, f := range spec.FSAs {
 		if f.ID == "" {
 			return fmt.Errorf("fsas[%d]: id is required", i)
@@ -282,6 +286,7 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		if _, ok := edevIDs[f.EndDeviceID]; !ok {
 			return fmt.Errorf("fsas[%d] (id=%q): unknown end_device_id %q", i, f.ID, f.EndDeviceID)
 		}
+		fsaKeys[f.EndDeviceID+"/"+f.ID] = struct{}{}
 		if err := createFSA(ctx, target, i, f); err != nil {
 			return err
 		}
@@ -296,6 +301,12 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		}
 		if _, ok := edevIDs[p.EndDeviceID]; !ok {
 			return fmt.Errorf("der_programs[%d] (id=%q): unknown end_device_id %q", i, p.ID, p.EndDeviceID)
+		}
+		if p.FSAID == "" {
+			return fmt.Errorf("der_programs[%d] (id=%q): fsa_id is required", i, p.ID)
+		}
+		if _, ok := fsaKeys[p.EndDeviceID+"/"+p.FSAID]; !ok {
+			return fmt.Errorf("der_programs[%d] (id=%q): unknown fsa_id %q for end_device_id %q", i, p.ID, p.FSAID, p.EndDeviceID)
 		}
 		if err := createDERProgram(ctx, target, i, p); err != nil {
 			return err
@@ -442,7 +453,7 @@ func buildDERProgram(s DERProgramSpec) sep2.DERProgram {
 		Description: s.Description,
 		Primacy:     s.Primacy,
 	}
-	prog.Href = fmt.Sprintf("/edev/%s/derp/%s", s.EndDeviceID, s.ID)
+	prog.Href = der.DERProgramHref(s.EndDeviceID, s.FSAID, s.ID)
 	if s.DefaultDERControlLink != "" {
 		prog.DefaultDERControlLink = &sep2.Link{Href: s.DefaultDERControlLink}
 	}

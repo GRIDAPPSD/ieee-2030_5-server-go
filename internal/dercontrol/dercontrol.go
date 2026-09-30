@@ -73,7 +73,8 @@ type CreateRequest struct {
 	DurationSeconds uint32
 
 	// Description is the control's own description element, at most 32
-	// characters (IEEE 2030.5 String32). Empty leaves the element absent.
+	// octets of UTF-8 (IEEE 2030.5 String32). Empty leaves the element
+	// absent.
 	Description string
 }
 
@@ -87,8 +88,9 @@ type Scope struct {
 	DERProgramID string
 }
 
-// maxDescriptionChars is IEEE 2030.5's String32 bound on description.
-const maxDescriptionChars = 32
+// maxDescriptionOctets is IEEE 2030.5-2018 Annex B.2's String32 bound on
+// description, in octets of UTF-8.
+const maxDescriptionOctets = 32
 
 // Key is the store parent key the scope's controls and lifecycle records
 // are kept under ("edev/fsa/derp").
@@ -205,6 +207,11 @@ type UndoError struct {
 	// ID is the store id of the new control (Issue) or of the control
 	// Cancel targeted.
 	ID string
+
+	// Scope and MRID name the control ID refers to, so a caller can report
+	// a control that may be stored and visible to devices.
+	Scope Scope
+	MRID  string
 
 	// UnrevertedIDs holds the ids of older candidates whose revert failed
 	// during Issue's undo.

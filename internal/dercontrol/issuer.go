@@ -134,7 +134,7 @@ func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 	if !ok {
 		return Result{}, refuse(RefusalInvalidProgramHref)
 	}
-	if !utf8.ValidString(req.Description) || utf8.RuneCountInString(req.Description) > maxDescriptionChars {
+	if !utf8.ValidString(req.Description) || len(req.Description) > maxDescriptionOctets {
 		return Result{}, refuse(RefusalInvalidDescription)
 	}
 
@@ -232,15 +232,15 @@ func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 	// legal and unreachable, and once the control is stored, every
 	// stored control has its lifecycle record for the rest of the call.
 	if err := i.lifecycles.Create(ctx, scopeKey, id, LifecycleRecord{}); err != nil {
-		return i.undoLifecycleCreateFailure(ctx, scopeKey, id, err)
+		return nameUndo(scope, mrid)(i.undoLifecycleCreateFailure(ctx, scopeKey, id, err))
 	}
 	if err := i.controls.Create(ctx, scopeKey, id, ctrl); err != nil {
-		return i.undoControlCreateFailure(ctx, scopeKey, id, err)
+		return nameUndo(scope, mrid)(i.undoControlCreateFailure(ctx, scopeKey, id, err))
 	}
 
 	supersedes, attempted, err := i.applySupersedes(ctx, scopeKey, candidates, start, mrid)
 	if err != nil {
-		return i.undoMarkFailure(ctx, scopeKey, id, attempted, err)
+		return nameUndo(scope, mrid)(i.undoMarkFailure(ctx, scopeKey, id, attempted, err))
 	}
 
 	return Result{
@@ -454,7 +454,9 @@ func (i *Issuer) Cancel(ctx context.Context, scope Scope, id string, reason stri
 	lc.CancelledAt = ptrInt64(now)
 	lc.CancelReason = reason
 	if err := i.lifecycles.Update(ctx, scopeKey, id, lc); err != nil {
-		return i.undoCancelFailure(ctx, scopeKey, id, before, err)
+		lc, uerr := i.undoCancelFailure(ctx, scopeKey, id, before, err)
+		_, uerr = nameUndo(scope, ctrl.MRID)(Result{}, uerr)
+		return lc, uerr
 	}
 	return lc, nil
 }
@@ -551,6 +553,19 @@ func controlShape(b *sep2.DERControlBase) string {
 		return "fixed_pf_inject_w"
 	default:
 		return "other"
+	}
+}
+
+// nameUndo returns a pass-through that records scope and mrid on an
+// *UndoError, leaving any other error untouched.
+func nameUndo(scope Scope, mrid string) func(Result, error) (Result, error) {
+	return func(res Result, err error) (Result, error) {
+		var undo *UndoError
+		if errors.As(err, &undo) {
+			undo.Scope = scope
+			undo.MRID = mrid
+		}
+		return res, err
 	}
 }
 

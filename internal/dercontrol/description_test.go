@@ -7,8 +7,8 @@ import (
 )
 
 // The operator's description reaches the stored control's own description
-// element, and a description past IEEE 2030.5's String32 bound is refused
-// before anything is written.
+// element, and a description past IEEE 2030.5-2018 Annex B.2's String32
+// bound of 32 octets is refused before anything is written.
 func TestIssue_Description(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -17,8 +17,10 @@ func TestIssue_Description(t *testing.T) {
 	}{
 		{name: "empty stays empty", description: ""},
 		{name: "32 characters stored", description: strings.Repeat("a", 32)},
-		{name: "32 multi-byte characters stored", description: strings.Repeat("\u00e9", 32)},
+		{name: "16 two-octet characters (32 octets) stored", description: strings.Repeat("\u00e9", 16)},
 		{name: "33 characters refused", description: strings.Repeat("a", 33), wantRefusal: RefusalInvalidDescription},
+		{name: "17 two-octet characters (34 octets) refused", description: strings.Repeat("\u00e9", 17), wantRefusal: RefusalInvalidDescription},
+		{name: "32 two-octet characters (64 octets) refused", description: strings.Repeat("\u00e9", 32), wantRefusal: RefusalInvalidDescription},
 		{name: "invalid UTF-8 refused", description: "ok\xff", wantRefusal: RefusalInvalidDescription},
 	}
 	for _, tc := range cases {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -111,8 +112,8 @@ func stampMirrorMeterReading(mmr *sep2.MirrorMeterReading, parentID string, nano
 //     manages, per #720): the caller's own certificate identity when the
 //     client left deviceLFDI absent or claimed itself, or the managed
 //     device's LFDI when the caller is that device's current manager. Either
-//     way the value stamped here is one mayActFor already checked, so the
-//     record cannot be handed to a device the gate did not authorise.
+//     way the value stamped here is one the mirrorActor already checked, so
+//     the record cannot be handed to a device the gate did not authorise.
 //
 //   - PostRate is a rate the SERVER is being asked to absorb. sep.xsd:6485-6487
 //     grants the server both verbs, "add or modify", so a configured server
@@ -298,6 +299,7 @@ func authorizeMirrorOwner(
 		return zero, "", false
 	}
 	if !allowed {
+		log.Printf("mup: denied %s: caller is neither the mirrored device nor its current manager (id=%q)", srverr.Route(r), id)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return zero, "", false
 	}
@@ -401,29 +403,52 @@ func MirrorHref(id string) string {
 	return "/mup/" + id
 }
 
-// validHexBinaryDeviceLFDI reports whether raw is a non-empty hex string, the
-// character-set half of sep.xsd's HexBinary160 restriction on deviceLFDI.
+// hexBinary160Chars is the canonical width of a HexBinary160 LFDI once fully
+// expanded: 40 hex characters, the 20-byte width core's sep2tls.LFDI always
+// emits ("%X" on a 20-byte slice, never dropping a leading zero byte). IEEE
+// 2030.5-2023 line 10727-10728 states this as the max ("40 hex characters
+// max"), not a fixed width, because HexBinary160 tolerates a shorter hex
+// string that omits leading zero bytes (Table C.17's own example,
+// "<deviceLFDI>00</deviceLFDI>", is exactly that: one significant byte).
+const hexBinary160Chars = 40
+
+// canonicalDeviceLFDI validates and canonicalizes a client-claimed
+// deviceLFDI to its full HexBinary160 width, restoring any leading zero
+// bytes the client omitted, and upper-casing the result.
 //
-// The length half (40 hex characters max, IEEE 2030.5-2023 line 10727-10728)
-// is deliberately NOT enforced here: this server's own test fixtures carry
-// identity strings longer than that bound (e.g. assembly_test.go's testLFDI,
-// 48 characters), used as a caller's own certificate-derived LFDI, and no
-// other code path in this server validates LFDI length today. Adding a bound
-// that only this one claim path enforces would reject values every other
-// route already treats as valid identity, for no correctness gain: the id
-// derivation and the store comparisons that matter for this issue are exact
-// string operations, not length-sensitive ones. A length bound belongs to a
-// separate issue that decides whether to enforce it everywhere.
-func validHexBinaryDeviceLFDI(raw string) bool {
-	if raw == "" {
-		return false
+// Restoring the omitted width matters for interop, not just tidiness. The
+// EPRI reference client's own serializer (xml_output.c output_hex, "while (i
+// < n-1 && value[i] == 0) i++;") drops every leading zero BYTE of a
+// HexBinary160 value before writing it, and lower-cases what remains
+// (hex_char). A device whose certificate LFDI happens to start with a zero
+// byte therefore self-mirrors with a claim shorter than its own full-width
+// LFDI. Comparing that claim byte-for-byte against the caller's full-width
+// certificate identity (core sep2tls.LFDI, always 40 upper-case hex
+// characters) would refuse the device's OWN mirror with 403: #720 would
+// regress a case the pre-#720 code never had to get right, because it
+// ignored the claim entirely. Left-padding with '0' up to hexBinary160Chars
+// undoes exactly the omission the serializer performs, so the padded claim
+// compares equal to the caller's own identity again.
+//
+// ok is false, and the caller answers 400, when raw cannot be a HexBinary160
+// value at all: not hex, longer than 40 characters even before padding (so
+// padding could not shrink it to fit), or an odd number of hex digits, which
+// cannot represent a whole number of bytes and so cannot be what any
+// encoder, buggy or not, produces for a byte-oriented type. These are
+// distinct from "well-formed but unclaimable", which is a 403 decided later
+// by the mirrorActor: a malformed claim is refused before any authorization
+// question is even asked.
+func canonicalDeviceLFDI(raw string) (device string, ok bool) {
+	if raw == "" || len(raw) > hexBinary160Chars || len(raw)%2 != 0 {
+		return "", false
 	}
 	for _, c := range raw {
 		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
+			return "", false
 		}
 	}
-	return true
+	padded := strings.Repeat("0", hexBinary160Chars-len(raw)) + raw
+	return strings.ToUpper(padded), true
 }
 
 // resolveMirroredDevice canonicalizes a client-claimed deviceLFDI, or falls
@@ -432,24 +457,16 @@ func validHexBinaryDeviceLFDI(raw string) bool {
 // IEEE 2030.5-2023 UsagePointBase.deviceLFDI SHALL be present when mirroring
 // (extraction line 12584-12585), but tolerating absence keeps every existing
 // client that posts only an mRID working: absence is not itself malformed.
-// Canonicalizing to upper case matters because the certificate-derived LFDI is
-// always upper case (core sep2tls/identity.go's "%X") and
-// store.EndDeviceManagementStore compares LFDIs exactly, with no case
-// folding: a lower-case claim that happens to name the caller's own device
-// would otherwise miss both the self-check and the management lookup.
 //
-// ok is false when raw is present but not a valid HexBinary160 character set
-// (see validHexBinaryDeviceLFDI); the caller answers 400 in that case, never
-// a silent fallback to fallback, because a malformed claim is a client error,
+// ok is false when raw is present but cannot be a valid HexBinary160 value
+// (see canonicalDeviceLFDI); the caller answers 400 in that case, never a
+// silent fallback to fallback, because a malformed claim is a client error,
 // not an absent one.
 func resolveMirroredDevice(raw, fallback string) (device string, ok bool) {
 	if raw == "" {
 		return fallback, true
 	}
-	if !validHexBinaryDeviceLFDI(raw) {
-		return "", false
-	}
-	return strings.ToUpper(raw), true
+	return canonicalDeviceLFDI(raw)
 }
 
 // mirrorActor decides whether caller may act for device: because caller IS
@@ -458,14 +475,17 @@ func resolveMirroredDevice(raw, fallback string) (device string, ok bool) {
 type mirrorActor func(ctx context.Context, caller, device string) (bool, error)
 
 // newMirrorActor builds the "self or current manager" rule newMirrorActor's
-// callers use for every /mup route, from the operator decisions on #720:
+// callers use for every /mup route, from the operator decisions on #720. The
+// self half is coreedev.OwnedBy; the delegation half is
+// coreedev.CurrentManagerOwns, the same two functions the /edev ownership
+// gate uses for its own self-or-manager decision (assembly/ownership.go), so
+// the rule is defined once and the two call sites cannot drift apart:
 //
 //   - a caller acting for itself is always allowed, with no management store
 //     dependency, so self-mirroring costs nothing extra and keeps working
 //     when no management store is wired at all;
 //   - otherwise, an absent managers reader means self only: no delegation,
-//     matching the /edev ownership gate's managersAbsent branch
-//     (assembly/ownership.go);
+//     matching the /edev ownership gate's managersAbsent branch;
 //   - a lookup miss (store.ErrNotFound, the device is unmanaged) is a refusal,
 //     not an error;
 //   - any other management-store error is reported to the caller via err,
@@ -478,23 +498,13 @@ type mirrorActor func(ctx context.Context, caller, device string) (bool, error)
 func newMirrorActor(managers store.EndDeviceManagementReader) mirrorActor {
 	managersAbsent := store.IsAbsent(managers)
 	return func(ctx context.Context, caller, device string) (bool, error) {
-		if caller == "" || device == "" {
-			return false, nil
-		}
-		if caller == device {
+		if coreedev.OwnedBy(device, caller) {
 			return true, nil
 		}
 		if managersAbsent {
 			return false, nil
 		}
-		manager, err := managers.ManagerOf(ctx, device)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return false, nil
-			}
-			return false, err
-		}
-		return manager == caller, nil
+		return coreedev.CurrentManagerOwns(ctx, managers, device, caller)
 	}
 }
 
@@ -594,6 +604,7 @@ func HandleCreateMirrorUsagePoint(
 			return
 		}
 		if !allowed {
+			log.Printf("mup: create refused a deviceLFDI claim the caller may not act for (device=%q)", device)
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -718,11 +729,12 @@ func HandleCreateMirrorUsagePoint(
 
 // HandleMirrorUsagePoint returns a handler for GET /mup/{id}.
 //
-// Scoped to the creating client, same rule as the POST routes: see
-// authorizeMirrorOwner. Rule (e) governs POSTs only, and the WADL marks this
-// GET Optional (section 4.2 item (c) makes those modes normative), so scoping
-// it costs nothing in conformance while metering readings are customer data
-// that an unscoped GET hands to any authenticated peer.
+// Scoped to the mirrored device or its current manager (#720), same rule as
+// the POST routes: see authorizeMirrorOwner. Rule (e) governs POSTs only,
+// and the WADL marks this GET Optional (section 4.2 item (c) makes those
+// modes normative), so scoping it costs nothing in conformance while
+// metering readings are customer data that an unscoped GET hands to any
+// authenticated peer.
 //
 // Rule (c) still holds on the owner's own record: the response carries only
 // first-level elements, MirrorMeterReading children stripped.
@@ -866,8 +878,8 @@ func HandlePutMirrorUsagePoint(
 		// legitimately wants a mirror under a different device or mRID already
 		// has the route for it, POST /mup, which mints a new id; this handler
 		// never re-parents a stored resource onto the key derivation the client
-		// merely wishes it had. mayActFor already authorised the caller for the
-		// STORED device above; it is not re-run for a claimed device change,
+		// merely wishes it had. The mirrorActor already authorised the caller
+		// for the STORED device above; it is not re-run for a claimed device change,
 		// because the id mismatch refuses that case unconditionally regardless
 		// of what the caller could otherwise claim.
 		//

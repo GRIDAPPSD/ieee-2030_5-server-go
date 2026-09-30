@@ -50,8 +50,10 @@ const (
 // a wire-format reason. Children are in the sep.xsd sequence order (mRID,
 // description, roleFlags, serviceCategoryKind, status, deviceLFDI).
 //
-// claimedLFDI is the field a client must never get to set. Passing a value here
-// is how the tests below hand the server a forged identity claim.
+// claimedLFDI is the deviceLFDI claim (#720): the mirrored device, subject
+// to authorization (self or current manager, else 403) and validation (else
+// 400), never taken on faith. Passing a value here is how the tests below
+// probe that claim path, both the accepted and the refused shapes.
 func mupWireBody(mrid, description, claimedLFDI string) []byte {
 	var b strings.Builder
 	b.WriteString(`<MirrorUsagePoint xmlns="urn:ieee:std:2030.5:ns">`)

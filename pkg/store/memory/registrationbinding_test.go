@@ -260,11 +260,14 @@ func TestRegisteredEndDeviceStore_DeleteRefusesWhenRegistrationsIsUnreachable(t 
 // because that is the state any prior partial failure leaves, whatever
 // caused it.
 //
-// This is the store-level guarantee only. A retried HTTP DELETE /edev/{id}
-// does not reach this method a second time once the device is gone: the
-// ownership gate answers 404 on the id first, so the same leftover
-// Registration is not cleaned up through that path
-// (GRIDAPPSD/ieee-2030_5-server-go#721).
+// This is the store-level guarantee. Since Delete now removes the
+// Registration before the EndDevice (GRIDAPPSD/ieee-2030_5-server-go#721),
+// a retried HTTP DELETE /edev/{id} converges the same way: the ownership
+// gate only answers 404 once BOTH halves are gone, because a failure
+// removing the Registration never lets the EndDevice half proceed. The
+// HTTP-level pin is
+// TestEndDeviceDelete_RegistrationDeleteFailureLeavesTheDeviceInPlace in
+// pkg/sep2srv/assembly.
 func TestRegisteredEndDeviceStore_DeleteConvergesAfterAPriorPartialFailure(t *testing.T) {
 	t.Parallel()
 
@@ -327,6 +330,158 @@ func TestRegisteredEndDeviceStore_CreateReplacesAStaleRecordUnderTheKey(t *testi
 	}
 	if got.DateTimeRegistered != 1500000000 {
 		t.Errorf("Registration.dateTimeRegistered = %d, want the new registration's time", got.DateTimeRegistered)
+	}
+}
+
+// TestRegisteredEndDeviceStore_CreateClearsAStaleRecordWhenUnprovisioned
+// covers the other half of GRIDAPPSD/ieee-2030_5-server-go#721: a device the
+// policy gives no pIN of its own must not inherit a Registration left under
+// the same key by an earlier occupant. Before this fix Create only touched
+// the Registration store when it had one to write, so an unprovisioned
+// device left the stale record in place, readable through the key it now
+// occupies.
+func TestRegisteredEndDeviceStore_CreateClearsAStaleRecordWhenUnprovisioned(t *testing.T) {
+	t.Parallel()
+
+	bound, regs := bindingUnderTest(t)
+	ctx := context.Background()
+
+	stale := sep2.Registration{DateTimeRegistered: 1, PIN: 999999, PollRate: 60}
+	stale.Href = "/edev/5/rg"
+	if err := regs.Create(ctx, "5", stale); err != nil {
+		t.Fatalf("place a stale record under the key: %v", err)
+	}
+
+	if err := bound.Create(ctx, "5", deviceFixture("5", bindingUnprovisionedID)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := regs.Get(ctx, "5"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Registrations.Get = %v, want ErrNotFound: an unprovisioned device must not inherit the previous occupant's registration", err)
+	}
+}
+
+// deleteFailingEndDevices wraps a real EndDeviceStore and fails only
+// Delete, so a test can force a rollback attempt to fail without also
+// failing the Create the rollback follows.
+type deleteFailingEndDevices struct {
+	store.EndDeviceStore
+}
+
+var errDeviceDeleteFailed = errors.New("test: device delete failed")
+
+func (s deleteFailingEndDevices) Delete(context.Context, string) error {
+	return errDeviceDeleteFailed
+}
+
+// TestRegisteredEndDeviceStore_CreateClearingFailureIsReportedAndRolledBack
+// exercises the branch TestRegisteredEndDeviceStore_CreateClearsAStaleRecordWhenUnprovisioned
+// cannot reach: when clearing the leftover Registration itself fails, Create
+// must report that failure rather than swallow it, and must roll the
+// EndDevice back out rather than leave it stored with a stale record still
+// sitting under its key.
+func TestRegisteredEndDeviceStore_CreateClearingFailureIsReportedAndRolledBack(t *testing.T) {
+	t.Parallel()
+
+	fault := &storetest.Fault{}
+	regs := storetest.NewFaultyResourceStore[sep2.Registration](memory.NewRegistrationStore(), fault)
+	devs := memory.NewEndDeviceStore()
+	bound := memory.NewRegisteredEndDeviceStore(devs, regs, memory.RegistrationPolicy{
+		PIN: func(lfdi string) (uint32, bool) {
+			if lfdi == bindingUnprovisionedID || lfdi == "" {
+				return 0, false
+			}
+			return bindingFixturePIN, true
+		},
+	})
+	ctx := context.Background()
+
+	// The unprovisioned branch never calls regs.Get or regs.Create, so
+	// arming the fault before Create still lets the rest of the method run
+	// up to the one call this test is about: regs.Delete.
+	fault.Arm(storetest.ErrBackendUnavailable)
+
+	err := bound.Create(ctx, "5", deviceFixture("5", bindingUnprovisionedID))
+	if err == nil {
+		t.Fatal("Create succeeded while clearing the leftover Registration failed; want the error reported")
+	}
+	if !errors.Is(err, storetest.ErrBackendUnavailable) {
+		t.Errorf("Create error = %v, want it to wrap the clearing failure", err)
+	}
+	if _, getErr := devs.Get(ctx, "5"); !errors.Is(getErr, store.ErrNotFound) {
+		t.Errorf("device was left stored after the clearing failure: Get(5) = %v, want ErrNotFound", getErr)
+	}
+}
+
+// TestRegisteredEndDeviceStore_CreateClearingFailureSurvivesAFailedRollback
+// covers the branch above's own failure path: when the rollback itself also
+// fails, Create must still report the ORIGINAL clearing failure, not the
+// rollback error, and not a nil error. Swallowing either survives unless
+// this asserts the returned error specifically.
+func TestRegisteredEndDeviceStore_CreateClearingFailureSurvivesAFailedRollback(t *testing.T) {
+	t.Parallel()
+
+	fault := &storetest.Fault{}
+	regs := storetest.NewFaultyResourceStore[sep2.Registration](memory.NewRegistrationStore(), fault)
+	devs := deleteFailingEndDevices{EndDeviceStore: memory.NewEndDeviceStore()}
+	bound := memory.NewRegisteredEndDeviceStore(devs, regs, memory.RegistrationPolicy{
+		PIN: func(lfdi string) (uint32, bool) {
+			if lfdi == bindingUnprovisionedID || lfdi == "" {
+				return 0, false
+			}
+			return bindingFixturePIN, true
+		},
+	})
+	ctx := context.Background()
+
+	fault.Arm(storetest.ErrBackendUnavailable)
+
+	err := bound.Create(ctx, "5", deviceFixture("5", bindingUnprovisionedID))
+	if err == nil {
+		t.Fatal("Create succeeded while both the clearing and the rollback failed; want the clearing error reported")
+	}
+	if !errors.Is(err, storetest.ErrBackendUnavailable) {
+		t.Errorf("Create error = %v, want it to still wrap the clearing failure, not the rollback error", err)
+	}
+	if errors.Is(err, errDeviceDeleteFailed) {
+		t.Errorf("Create error = %v, want the clearing failure, not the rollback failure", err)
+	}
+}
+
+// TestRegisteredEndDeviceStore_ProvisionedCreateRollsBackWhenTheRegistrationWriteFails
+// covers rollbackAfterFailedRegistration's OTHER call site: a provisioned
+// device whose Registration write fails must be rolled back the same way
+// the unprovisioned branch already proves above, not merely have its error
+// returned. A mutant replacing either call with a bare `return err` passes
+// every test that only checks the returned error; this one also checks the
+// EndDevice is gone.
+func TestRegisteredEndDeviceStore_ProvisionedCreateRollsBackWhenTheRegistrationWriteFails(t *testing.T) {
+	t.Parallel()
+
+	fault := &storetest.Fault{}
+	regs := storetest.NewFaultyResourceStore[sep2.Registration](memory.NewRegistrationStore(), fault)
+	devs := memory.NewEndDeviceStore()
+	bound := memory.NewRegisteredEndDeviceStore(devs, regs, memory.RegistrationPolicy{
+		PIN: func(lfdi string) (uint32, bool) {
+			if lfdi == bindingUnprovisionedID || lfdi == "" {
+				return 0, false
+			}
+			return bindingFixturePIN, true
+		},
+	})
+	ctx := context.Background()
+
+	fault.Arm(storetest.ErrBackendUnavailable)
+
+	err := bound.Create(ctx, "6", deviceFixture("6", bindingLFDI))
+	if err == nil {
+		t.Fatal("Create succeeded while the Registration write failed; want the error reported")
+	}
+	if !errors.Is(err, storetest.ErrBackendUnavailable) {
+		t.Errorf("Create error = %v, want it to wrap the Registration write failure", err)
+	}
+	if _, getErr := devs.Get(ctx, "6"); !errors.Is(getErr, store.ErrNotFound) {
+		t.Errorf("device was left stored after the Registration write failed: Get(6) = %v, want ErrNotFound", getErr)
 	}
 }
 

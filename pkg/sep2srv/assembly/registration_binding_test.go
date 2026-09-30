@@ -3,6 +3,7 @@ package assembly_test
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -256,6 +257,52 @@ func TestRegistrationBinding_UnprovisionedDeviceAdvertisesNothing(t *testing.T) 
 	}
 	if strings.Contains(body, "<RegistrationLink") {
 		t.Errorf("unprovisioned EndDevice advertises a RegistrationLink it cannot serve; body=%s", body)
+	}
+}
+
+// TestRegistrationBinding_KeyReuseDoesNotInheritALeftoverRegistration pins
+// GRIDAPPSD/ieee-2030_5-server-go#721's second case: a Registration left
+// under a key by an earlier occupant must not be served to whichever device
+// is next allocated that key, when the new device's own policy gives it no
+// pIN. Read alone from the store it looks unprovisioned; read from the wire
+// through the key it would have inherited its predecessor's pIN.
+func TestRegistrationBinding_KeyReuseDoesNotInheritALeftoverRegistration(t *testing.T) {
+	t.Parallel()
+
+	stores, regs, _ := bindingTestStores(t)
+
+	// The leftover: a Registration under key "1" with no EndDevice record,
+	// the shape a partial DELETE (or any earlier corruption) leaves behind.
+	leftover := sep2.Registration{DateTimeRegistered: 1, PIN: 999999, PollRate: 60}
+	leftover.Href = "/edev/1/rg"
+	if err := regs.Create(context.Background(), "1", leftover); err != nil {
+		t.Fatalf("seed leftover registration: %v", err)
+	}
+
+	handler, _ := assembly.BuildProtocolRouter(
+		assembly.RouterConfig{}, stores, indexTestPolicy(), "serverSFDI", "serverLFDI", nil,
+	)
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	// unprovisionedLFDI is the first identity ever registered here, so it
+	// is allocated key "1" -- the key the leftover sits under -- and the
+	// policy gives it no pIN of its own.
+	dev := register(t, srv, unprovisionedLFDI)
+	if dev.Href != "/edev/1" {
+		t.Fatalf("precondition: new device landed at %q, want /edev/1 (the leftover's key)", dev.Href)
+	}
+	if dev.RegistrationLink != nil {
+		t.Errorf("unprovisioned device advertises %q, inherited from the leftover", dev.RegistrationLink.Href)
+	}
+
+	status, body := do(t, srv, http.MethodGet, "/edev/1/rg", unprovisionedLFDI)
+	if status != http.StatusNotFound {
+		t.Errorf("GET /edev/1/rg: status %d, want 404; the device must not be served the previous "+
+			"occupant's registration; body=%s", status, body)
+	}
+	if _, err := regs.Get(context.Background(), "1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Registrations.Get(1) = %v, want ErrNotFound: the leftover must be cleared, not merely unadvertised", err)
 	}
 }
 

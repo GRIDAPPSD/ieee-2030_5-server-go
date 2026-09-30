@@ -557,6 +557,32 @@ func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.E
 	return memory.NewLogEventLinkedEndDeviceStore(devs, stores.LogEvents)
 }
 
+// deviceKeyedCascadeEndDevices returns the EndDevice store the /edev routes
+// must use so DELETE also removes the device's Configuration, DeviceStatus,
+// PowerStatus and FunctionSetAssignments records
+// (GRIDAPPSD/ieee-2030_5-server-go#721).
+//
+// Unlike [logEventLinkedEndDevices], the gate here is not one mount decision:
+// assembly.go's own family table lists Configurations, DeviceStatuses,
+// PowerStatuses and FSAs as four independent anchors, each "its own routes
+// only", so any subset of the four can be wired while the others are not.
+// This decorator is built whenever at least one is, and internally cascades
+// only the families that are, which is the same per-family test
+// [DeviceKeyedCascadeEndDeviceStore] itself makes.
+func deviceKeyedCascadeEndDevices(devs store.EndDeviceStore, stores *Stores) store.EndDeviceStore {
+	if store.IsAbsent(devs) {
+		return devs
+	}
+	if store.IsAbsent(stores.Configurations) && store.IsAbsent(stores.DeviceStatuses) &&
+		store.IsAbsent(stores.PowerStatuses) && store.IsAbsent(stores.FSAs) {
+		return devs
+	}
+	if linked, ok := devs.(*memory.DeviceKeyedCascadeEndDeviceStore); ok {
+		return linked
+	}
+	return memory.NewDeviceKeyedCascadeEndDeviceStore(devs, stores.Configurations, stores.DeviceStatuses, stores.PowerStatuses, stores.FSAs)
+}
+
 // flowReservationLinkedEndDevices returns the EndDevice store the /edev
 // routes must use so every served EndDevice carries, or is stripped of, its
 // flow reservation list links.
@@ -603,14 +629,16 @@ func flowReservationLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) 
 
 // ownedEndDevices returns the fully-decorated EndDevice store the /edev
 // routes and the read handle serve from: registration-bound,
-// LogEventList-linked, flow-reservation-linked, and refusing rather than
-// panicking when unwired. registerEndDeviceRoutes and NewReaderStores both
-// call it, so the four-decorator chain is typed out in this one function
-// rather than twice, and the two callers cannot drift apart.
+// LogEventList-linked, device-keyed-cascade-wrapped, flow-reservation-linked,
+// and refusing rather than panicking when unwired. registerEndDeviceRoutes
+// and NewReaderStores both call it, so the five-decorator chain is typed out
+// in this one function rather than twice, and the two callers cannot drift
+// apart.
 //
-// Order between the LogEvent and flow reservation decorators does not
-// matter: each owns a disjoint set of fields on the served EndDevice and
-// neither reads what the other writes.
+// Order among the LogEvent, device-keyed-cascade and flow reservation
+// decorators does not matter: each owns a disjoint set of fields on the
+// served EndDevice, or (device-keyed-cascade) advertises no field at all,
+// and none reads what another writes.
 //
 // Not every reader of EndDevices goes through it: BuildProtocolRouter's own
 // ownership gate reads stores.EndDevices directly, because it only compares
@@ -618,7 +646,7 @@ func flowReservationLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) 
 // RegistrationLink, LogEventListLink and flow reservation link derivations
 // make no difference to it.
 func ownedEndDevices(stores *Stores) store.EndDeviceStore {
-	return requireEndDevices(flowReservationLinkedEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores), stores))
+	return requireEndDevices(flowReservationLinkedEndDevices(deviceKeyedCascadeEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores), stores), stores))
 }
 
 func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier) {

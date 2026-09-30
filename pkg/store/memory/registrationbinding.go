@@ -203,15 +203,21 @@ func (s *RegisteredEndDeviceStore) timestamp() int64 {
 //
 // When the policy resolves a pIN for the device, the Registration is written
 // and the EndDevice is stamped with the matching RegistrationLink. When it
-// does not, neither happens: the device is stored with no RegistrationLink,
-// per 2018 section 4.4 p.19. A client-supplied RegistrationLink on the
-// inbound device is discarded either way, because whether the server holds a
-// Registration is not the client's to assert.
+// does not, the device is stored with no RegistrationLink, per 2018 section
+// 4.4 p.19, and any Registration already sitting under id is cleared: id is
+// an index key that gets reused across devices, so a record left there
+// belongs to a device that no longer exists, and this device provided no pIN
+// of its own to justify serving it (GRIDAPPSD/ieee-2030_5-server-go#721). A
+// client-supplied RegistrationLink on the inbound device is discarded
+// either way, because whether the server holds a Registration is not the
+// client's to assert.
 //
-// If the Registration write fails after the EndDevice landed, the EndDevice
-// is removed again. Leaving it would publish exactly the advertised-but-
-// absent pair this type exists to prevent, and a failed registration that
-// the client can retry is the better of the two outcomes.
+// If the Registration write, or the leftover-clearing delete, fails after
+// the EndDevice landed, the EndDevice is removed again. Leaving it would
+// publish exactly the advertised-but-absent pair this type exists to
+// prevent (the provisioned case), or leave a device silently able to read a
+// pIN it was never given (the unprovisioned case); either way a failure the
+// client can retry is the better of the two outcomes.
 func (s *RegisteredEndDeviceStore) Create(ctx context.Context, id string, device sep2.EndDevice) error {
 	reg, provisioned := s.registrationFor(id, device)
 
@@ -223,7 +229,14 @@ func (s *RegisteredEndDeviceStore) Create(ctx context.Context, id string, device
 	if err := s.devs.Create(ctx, id, device); err != nil {
 		return err
 	}
+
 	if !provisioned {
+		if err := s.regs.Delete(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
+			if delErr := s.devs.Delete(ctx, id); delErr != nil {
+				log.Printf("memory: EndDevice %q left stored after a leftover Registration under the same key failed to clear; rollback also failed: %v", id, delErr)
+			}
+			return fmt.Errorf("clearing a leftover Registration for %q: %w", id, err)
+		}
 		return nil
 	}
 
@@ -271,7 +284,8 @@ func (s *RegisteredEndDeviceStore) probeDelete(ctx context.Context, id string) e
 	return nil
 }
 
-// Delete removes the EndDevice and its Registration together.
+// Delete removes the EndDevice and its Registration together, Registration
+// FIRST.
 //
 // probeDelete runs first, over the whole chain, so a Registration store
 // that cannot be read for id is refused before this or any layer above it
@@ -280,33 +294,42 @@ func (s *RegisteredEndDeviceStore) probeDelete(ctx context.Context, id string) e
 // the time a Registration delete failed here
 // (GRIDAPPSD/ieee-2030_5-server-go#701).
 //
-// The two removals do not short-circuit each other: devErr is recorded but
-// not returned early, so a device already removed by an earlier, partially
-// failed call does not stop this call from still trying to remove a
-// Registration left over from that failure. A direct retry against this
-// store therefore converges: each call removes whatever of the pair is
-// still present, and only once both are already gone does a further retry
-// report ErrNotFound, exactly as a DELETE of an id that never existed does.
-// A retried HTTP DELETE /edev/{id} does NOT converge the same way: once the
-// device is gone, the ownership gate answers 404 on the id before this
-// method is ever reached again, so a Registration left behind by a partial
-// failure is never cleaned up through that path (GRIDAPPSD/ieee-2030_5-server-go#721).
-// An absent Registration on its own is never an error: a device provisioned
-// without a pIN never had one. Any other failure from either store is
-// reported, because a Registration surviving its EndDevice would be served
-// to whoever the key is next allocated to.
+// The Registration is removed before the EndDevice, and a failure removing
+// it returns immediately without touching the EndDevice at all. The reverse
+// order let a Registration removal failure (a failed persistence flush, for
+// example) leave the EndDevice already gone, and that partial state was
+// unreachable through a retried HTTP DELETE: the ownership gate reads the
+// EndDevice store first and answers 404 on an id that is already absent
+// before this method is ever reached again, so the leftover Registration
+// was never cleaned up through that path
+// (GRIDAPPSD/ieee-2030_5-server-go#721). Removing the Registration first
+// means any failure here leaves the EndDevice present, so a retry -- HTTP
+// included -- reaches this method again instead of being turned away at the
+// gate.
+//
+// The two removals still do not short-circuit each other on the success
+// side: regErr is recorded but not returned early, so a device already
+// removed by an earlier, partially failed call does not stop this call from
+// still trying to remove the EndDevice left over from that failure. A
+// direct retry against this store therefore converges: each call removes
+// whatever of the pair is still present, and only once both are already
+// gone does a further retry report ErrNotFound, exactly as a DELETE of an id
+// that never existed does. An absent Registration on its own is never an
+// error: a device provisioned without a pIN never had one. Any other
+// failure from either store is reported, because a Registration surviving
+// its EndDevice would be served to whoever the key is next allocated to.
 func (s *RegisteredEndDeviceStore) Delete(ctx context.Context, id string) error {
 	if err := s.probeDelete(ctx, id); err != nil {
 		return err
 	}
 
-	devErr := s.devs.Delete(ctx, id)
-	if devErr != nil && !errors.Is(devErr, store.ErrNotFound) {
-		return devErr
-	}
 	regErr := s.regs.Delete(ctx, id)
 	if regErr != nil && !errors.Is(regErr, store.ErrNotFound) {
 		return regErr
+	}
+	devErr := s.devs.Delete(ctx, id)
+	if devErr != nil && !errors.Is(devErr, store.ErrNotFound) {
+		return devErr
 	}
 	if devErr == nil || regErr == nil {
 		// At least one half was actually removed by this call.

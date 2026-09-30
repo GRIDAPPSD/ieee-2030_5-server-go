@@ -260,11 +260,14 @@ func TestRegisteredEndDeviceStore_DeleteRefusesWhenRegistrationsIsUnreachable(t 
 // because that is the state any prior partial failure leaves, whatever
 // caused it.
 //
-// This is the store-level guarantee only. A retried HTTP DELETE /edev/{id}
-// does not reach this method a second time once the device is gone: the
-// ownership gate answers 404 on the id first, so the same leftover
-// Registration is not cleaned up through that path
-// (GRIDAPPSD/ieee-2030_5-server-go#721).
+// This is the store-level guarantee. Since Delete now removes the
+// Registration before the EndDevice (GRIDAPPSD/ieee-2030_5-server-go#721),
+// a retried HTTP DELETE /edev/{id} converges the same way: the ownership
+// gate only answers 404 once BOTH halves are gone, because a failure
+// removing the Registration never lets the EndDevice half proceed. The
+// HTTP-level pin is
+// TestEndDeviceDelete_RegistrationDeleteFailureLeavesTheDeviceInPlace in
+// pkg/sep2srv/assembly.
 func TestRegisteredEndDeviceStore_DeleteConvergesAfterAPriorPartialFailure(t *testing.T) {
 	t.Parallel()
 
@@ -327,6 +330,34 @@ func TestRegisteredEndDeviceStore_CreateReplacesAStaleRecordUnderTheKey(t *testi
 	}
 	if got.DateTimeRegistered != 1500000000 {
 		t.Errorf("Registration.dateTimeRegistered = %d, want the new registration's time", got.DateTimeRegistered)
+	}
+}
+
+// TestRegisteredEndDeviceStore_CreateClearsAStaleRecordWhenUnprovisioned
+// covers the other half of GRIDAPPSD/ieee-2030_5-server-go#721: a device the
+// policy gives no pIN of its own must not inherit a Registration left under
+// the same key by an earlier occupant. Before this fix Create only touched
+// the Registration store when it had one to write, so an unprovisioned
+// device left the stale record in place, readable through the key it now
+// occupies.
+func TestRegisteredEndDeviceStore_CreateClearsAStaleRecordWhenUnprovisioned(t *testing.T) {
+	t.Parallel()
+
+	bound, regs := bindingUnderTest(t)
+	ctx := context.Background()
+
+	stale := sep2.Registration{DateTimeRegistered: 1, PIN: 999999, PollRate: 60}
+	stale.Href = "/edev/5/rg"
+	if err := regs.Create(ctx, "5", stale); err != nil {
+		t.Fatalf("place a stale record under the key: %v", err)
+	}
+
+	if err := bound.Create(ctx, "5", deviceFixture("5", bindingUnprovisionedID)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := regs.Get(ctx, "5"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Registrations.Get = %v, want ErrNotFound: an unprovisioned device must not inherit the previous occupant's registration", err)
 	}
 }
 

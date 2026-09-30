@@ -72,6 +72,9 @@ func TestBootFixtureSeedKeepsProtocolEditAcrossRestart(t *testing.T) {
 	// The committed fixture plus a DERProgram under its device, so the second
 	// boot reaches the DERProgram reconcile as well as the EndDevice one.
 	fixture := string(baseFixture) + `
+fsas:
+  - end_device_id: "testdevice"
+    id: "f1"
 der_programs:
   - end_device_id: "testdevice"
     fsa_id: "f1"

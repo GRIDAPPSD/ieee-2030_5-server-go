@@ -50,6 +50,9 @@ end_devices:
     sfdi: "123456789012"
     lfdi: "0123456789ABCDEF0123456789ABCDEF01234567"
     changed_time: 1700000000
+fsas:
+  - end_device_id: dev-1
+    id: fsa-1
 der_programs:
   - end_device_id: dev-1
     fsa_id: fsa-1

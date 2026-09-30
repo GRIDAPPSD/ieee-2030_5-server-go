@@ -45,6 +45,9 @@ end_devices:
     lfdi: "` + lfdiE1 + `"
     enabled: true
     changed_time: 100
+fsas:
+  - end_device_id: e1
+    id: f1
 der_programs:
   - end_device_id: e1
     fsa_id: f1
@@ -589,6 +592,9 @@ end_devices:
     lfdi: "` + lfdiE3 + `"
     enabled: false
     changed_time: 300
+fsas:
+  - end_device_id: e1
+    id: f1
 der_programs:
   - end_device_id: e1
     fsa_id: f1
@@ -737,6 +743,11 @@ end_devices:
     sfdi: "111111111111"
     lfdi: "` + lfdiE1 + `"
     changed_time: 100
+fsas:
+  - end_device_id: e0
+    id: f0
+  - end_device_id: e1
+    id: f1
 der_programs:
   - end_device_id: e0
     fsa_id: f0

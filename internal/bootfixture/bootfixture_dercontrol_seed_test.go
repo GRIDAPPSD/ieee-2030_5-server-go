@@ -22,6 +22,9 @@ end_devices:
     lfdi: "D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1"
     enabled: true
     changed_time: 100
+fsas:
+  - end_device_id: e1
+    id: "0"
 der_programs:
   - end_device_id: e1
     fsa_id: "0"

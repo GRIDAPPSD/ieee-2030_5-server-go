@@ -167,7 +167,10 @@ end_devices:
 	h.mustBoot(withoutP1)
 	h.assertSeedKeys(edevKey("e1"), edevKey("e3"), derpKey("e1", "p1"))
 
-	h.mustBoot(withoutP1 + `der_programs:
+	h.mustBoot(withoutP1 + `fsas:
+  - end_device_id: e1
+    id: f1
+der_programs:
   - end_device_id: e1
     fsa_id: f1
     id: p1
@@ -214,8 +217,42 @@ end_devices:
 			wantMsg: `der_programs[1] (id="p9"): unknown end_device_id "nope"`,
 		},
 		{
+			// #746 fix round 1, item 1: the fsa_id-required refusal had no
+			// test.
+			name: "DERProgram missing fsa_id",
+			fixture: fixtureV1 + `  - end_device_id: e1
+    id: p9
+    primacy: 9
+`,
+			wantMsg: `der_programs[1] (id="p9"): fsa_id is required`,
+		},
+		{
+			// #746 fix round 1, item 2: fsa_id must name an FSA the
+			// fixture declares for the same end device, or a typo builds
+			// an unroutable href with no error.
+			name: "DERProgram with an unknown fsa_id",
+			fixture: fixtureV1 + `  - end_device_id: e1
+    fsa_id: ghost
+    id: p9
+    primacy: 9
+`,
+			wantMsg: `der_programs[1] (id="p9"): unknown fsa_id "ghost" for end_device_id "e1"`,
+		},
+		{
+			// Built independently rather than as fixtureV1 + "fsas: ...":
+			// fixtureV1 now declares its own fsas: section (for its
+			// der_programs entry's fsa_id), and a second top-level fsas:
+			// key in one document is a YAML decode error, not the
+			// end_device_id refusal this case exercises.
 			name: "FSA under an unknown EndDevice",
-			fixture: fixtureV1 + `fsas:
+			fixture: `
+end_devices:
+  - id: e1
+    sfdi: "111111111111"
+    lfdi: "` + lfdiE1 + `"
+    enabled: true
+    changed_time: 100
+fsas:
   - end_device_id: nope
     id: f9
 `,

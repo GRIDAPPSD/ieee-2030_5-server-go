@@ -275,6 +275,7 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		}
 	}
 
+	fsaKeys := make(map[string]struct{}, len(spec.FSAs))
 	for i, f := range spec.FSAs {
 		if f.ID == "" {
 			return fmt.Errorf("fsas[%d]: id is required", i)
@@ -285,6 +286,7 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		if _, ok := edevIDs[f.EndDeviceID]; !ok {
 			return fmt.Errorf("fsas[%d] (id=%q): unknown end_device_id %q", i, f.ID, f.EndDeviceID)
 		}
+		fsaKeys[f.EndDeviceID+"/"+f.ID] = struct{}{}
 		if err := createFSA(ctx, target, i, f); err != nil {
 			return err
 		}
@@ -302,6 +304,9 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		}
 		if p.FSAID == "" {
 			return fmt.Errorf("der_programs[%d] (id=%q): fsa_id is required", i, p.ID)
+		}
+		if _, ok := fsaKeys[p.EndDeviceID+"/"+p.FSAID]; !ok {
+			return fmt.Errorf("der_programs[%d] (id=%q): unknown fsa_id %q for end_device_id %q", i, p.ID, p.FSAID, p.EndDeviceID)
 		}
 		if err := createDERProgram(ctx, target, i, p); err != nil {
 			return err

@@ -14,6 +14,11 @@ import (
 const (
 	kindEndDevice  = "EndDevice"
 	kindDERProgram = "DERProgram"
+	// kindDERControl (GRIDAPPSD/ieee-2030_5-server-go#565): once DERControls
+	// persist, reconciling the same fixture on a second boot without seed
+	// tracking would retry Create on a record the first boot already wrote,
+	// and fail with ErrAlreadyExists (acceptance criterion 3).
+	kindDERControl = "DERControl"
 
 	seedRecordVersion = 1
 )
@@ -75,7 +80,7 @@ func (k seedKey) wellFormed() bool {
 	switch k.Kind {
 	case kindEndDevice:
 		return k.Parent == ""
-	case kindDERProgram:
+	case kindDERProgram, kindDERControl:
 		return k.Parent != ""
 	default:
 		return false

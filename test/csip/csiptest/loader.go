@@ -69,8 +69,11 @@ type Target struct {
 	// *memory.DERProgramStore and a bare *memory.ScopedStore both satisfy
 	// it. Core unexported the wrapper's inner collection, so the contract
 	// is the only surface the two share.
-	DERPrograms        store.ScopedStore[sep2.DERProgram]
-	DERControls        *memory.ScopedStore[sep2.DERControl]
+	DERPrograms store.ScopedStore[sep2.DERProgram]
+	// DERControls is the store.ScopedStore contract for the same reason
+	// DERPrograms is (GRIDAPPSD/ieee-2030_5-server-go#565): a booted server's
+	// *memory.DERControlStore and a bare *memory.ScopedStore both satisfy it.
+	DERControls        store.ScopedStore[sep2.DERControl]
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]
 	DERCurves          *memory.Store[sep2.DERCurve]
 	// EndDeviceManagers receives the pairs fixtures declare with managed_by.

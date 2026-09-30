@@ -201,9 +201,31 @@ func planReconcile(ctx context.Context, target *Target, spec *Spec, seeded map[s
 			p.defaultDERControls = append(p.defaultDERControls, indexed[DefaultDERControlSpec]{i, d})
 		}
 	}
+	// DERControls now persist (#565), so unlike DefaultDERControls above
+	// (still in-memory-only, recreated every boot) each one needs the same
+	// seed-once tracking DERPrograms uses above: without it, reconciling the
+	// same fixture against an already-persisted control retries Create and
+	// fails with ErrAlreadyExists.
 	for i, c := range spec.DERControls {
-		if !underSkipped(c.EndDeviceID, c.DERProgramID) {
+		scope := compositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
+		key := seedKey{Kind: kindDERControl, Parent: scope, ID: c.ID}
+		if underSkipped(c.EndDeviceID, c.DERProgramID) {
+			p.record(key)
+			p.skip("DERControl scope=%q id=%q: parent DERProgram skipped", scope, c.ID)
+			continue
+		}
+		_, wasSeeded := seeded[key]
+		_, err := target.DERControls.Get(ctx, scope, c.ID)
+		switch {
+		case err == nil: // keep, or adopt if unseeded
+			p.record(key)
+		case !errors.Is(err, store.ErrNotFound):
+			return nil, fmt.Errorf("der_controls[%d] (id=%q): read persisted DERControl: %w", i, c.ID, err)
+		case wasSeeded:
+			p.skip("DERControl scope=%q id=%q: deleted since seeded", scope, c.ID)
+		default:
 			p.derControls = append(p.derControls, indexed[DERControlSpec]{i, c})
+			p.record(key)
 		}
 	}
 	for i, c := range spec.DERCurves {

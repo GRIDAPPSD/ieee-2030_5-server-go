@@ -522,7 +522,7 @@ func NewFreshStores() *server.Stores {
 		DERStatuses:              memory.NewScopedStore[sep2.DERStatus](),
 		DERAvailabilities:        memory.NewScopedStore[sep2.DERAvailability](),
 		DERPrograms:              memory.NewDERProgramStore(),
-		DERControls:              memory.NewScopedStore[sep2.DERControl](),
+		DERControls:              memory.NewDERControlStore(),
 		DefaultDERControls:       memory.NewScopedStore[sep2.DefaultDERControl](),
 		DERCurves:                memory.NewStore[sep2.DERCurve](),
 		FSAs:                     memory.NewScopedStore[sep2.FunctionSetAssignments](),

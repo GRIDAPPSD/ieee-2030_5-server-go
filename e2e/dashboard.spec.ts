@@ -1,10 +1,17 @@
 import { test, expect } from '@playwright/test';
+import { join } from 'path';
 import { startServer, stopServer } from './setup';
 
 let baseUrl: string;
 
+// One device, one FSA and one DERProgram (e2e/fixtures/der-control.yaml),
+// plus a PEN so POST /api/der/controls does not answer 503: the DER
+// control test below needs both.
 test.beforeAll(async () => {
-  baseUrl = await startServer();
+  baseUrl = await startServer({
+    SEP2_BOOT_FIXTURE: join(__dirname, 'fixtures', 'der-control.yaml'),
+    SEP2_PEN: '12345',
+  });
 });
 
 test.afterAll(() => {
@@ -72,21 +79,34 @@ test('certificate generation form works', async ({ page }) => {
   await expect(result).not.toHaveText('', { timeout: 5000 });
 });
 
-// 4. DER control panel accepts input
-test('DER control panel sends commands', async ({ page }) => {
+// 4. DER control panel creates a control through the admin API (criterion 8;
+// e2e/fixtures/der-control.yaml seeds the device, FSA and DER program this
+// picks).
+test('DER control panel creates a control and lists it in the table', async ({ page }) => {
   await page.goto(baseUrl + '/ui/control?token=e2e-test-key');
   await page.waitForLoadState('domcontentloaded');
+
+  await page.locator('#controlDevice').selectOption({ label: '222222222222' });
+  await page.locator('#controlProgram').selectOption({ label: 'e2e der control program' });
 
   const controlSelect = page.locator('#controlType');
   await expect(controlSelect).toBeVisible();
   await controlSelect.selectOption('disconnect');
+  await page.locator('#controlDuration').fill('5');
 
   const sendButton = page.getByRole('button', { name: 'Send' });
   await expect(sendButton).toBeVisible();
   await sendButton.click();
+  await page.getByRole('button', { name: 'Confirm' }).click();
 
   const result = page.locator('#controlResult');
-  await expect(result).toContainText('disconnect', { timeout: 3000 });
+  await expect(result).toContainText(/[0-9A-F]{32}/, { timeout: 5000 });
+  const mrid = (await result.textContent())?.match(/[0-9A-F]{32}/)?.[0];
+  expect(mrid).toBeTruthy();
+
+  const row = page.locator(`[data-testid="der-control-row"][data-mrid="${mrid}"]`);
+  await expect(row).toBeVisible();
+  await expect(row).toContainText('disconnect');
 });
 
 // 5. Dashboard renders all sections correctly

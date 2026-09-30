@@ -49,8 +49,16 @@ address, which are preserved too, plus one id this work added.
 | `#hwType` | `panels/CertPanel.svelte` | no | new: the route rejects a device cert request without the PEN OID |
 | `#certResult` | `panels/CertPanel.svelte` | yes | same id |
 | `#controlType` | `panels/DerControl.svelte` | yes | same id |
-| `#controlValue` | `panels/DerControl.svelte` | no | same id |
+| `#controlValue` | `panels/DerControl.svelte` | no | same id, hidden for connect/disconnect (#567) |
 | `#controlResult` | `panels/DerControl.svelte` | yes | same id |
+| `#controlDevice` | `panels/DerControl.svelte` | yes | new (#567): device select, added when the card was wired to the admin API |
+| `#controlProgram` | `panels/DerControl.svelte` | yes | new (#567): DER program select, populated from `GET /api/devices/{id}/der-programs` |
+| `#controlExcitation` | `panels/DerControl.svelte` | no | new (#567): shown only for `fixedPFInjectW` |
+| `#controlStartNow` | `panels/DerControl.svelte` | no | new (#567) |
+| `#controlStartAt` | `panels/DerControl.svelte` | no | new (#567): shown only when Start now is unchecked |
+| `#controlDuration` | `panels/DerControl.svelte` | yes | new (#567) |
+| `#controlDescription` | `panels/DerControl.svelte` | no | new (#567) |
+| `#derControlsTable` | `panels/DerControl.svelte` | yes | new (#567): the program's admin-issued controls |
 | `#addDevCert` | `panels/AddDevice.svelte` | yes | same id |
 | `#addDevSFDI` | `panels/AddDevice.svelte` | yes | same id, still readonly |
 | `#addDevLFDI` | `panels/AddDevice.svelte` | yes | same id, still readonly |

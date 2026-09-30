@@ -12,6 +12,8 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coreder "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/storetest"
 )
 
 // seedIssuedDERControl seeds a DERControl AND its lifecycle record under the
@@ -406,5 +408,46 @@ func TestDERControlListTable50Order(t *testing.T) {
 	}
 	if list.DERControl[1].Href != first.Href {
 		t.Errorf("list[1].Href = %q, want %q (the older, first-issued control second)", list.DERControl[1].Href, first.Href)
+	}
+}
+
+// TestDERControlRoutesFailClosedOnLifecycleStoreError proves the fix for a
+// MEDIUM finding on PR 726 (#564): both the single-resource and the list
+// route answer 500 when the lifecycle store errors, rather than serving the
+// control with no EventStatus. A stored, pre-issued EventStatus of Active
+// is deliberately NOT what a failed-open derivation would ever produce for
+// this interval, so this test would also fail if a failed-open path started
+// stamping a wrong-but-present status instead of an absent one; the
+// assertion is simply "not 200".
+func TestDERControlRoutesFailClosedOnLifecycleStoreError(t *testing.T) {
+	t.Parallel()
+
+	stores := testStores()
+	now := time.Now().Unix()
+	ctrl := seedIssuedDERControl(t, stores, testLFDI, "faulty-0", now-7200, now-3600, 900, dercontrol.LifecycleRecord{})
+
+	var fault storetest.Fault
+	fault.Arm(storetest.ErrBackendUnavailable)
+	stores.DERControlLifecycles = storetest.NewFaultyScopedStore[dercontrol.LifecycleRecord](
+		memory.NewScopedStore[dercontrol.LifecycleRecord](), &fault,
+	)
+	srv := derControlRouter(t, stores)
+
+	singleResp, err := http.Get(srv.URL + ctrl.Href)
+	if err != nil {
+		t.Fatalf("GET single: %v", err)
+	}
+	_ = singleResp.Body.Close()
+	if singleResp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("GET single = %d, want 500 (a broken lifecycle store must fail the request, not serve a control with no EventStatus)", singleResp.StatusCode)
+	}
+
+	listResp, err := http.Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1/derc")
+	if err != nil {
+		t.Fatalf("GET list: %v", err)
+	}
+	_ = listResp.Body.Close()
+	if listResp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("GET list = %d, want 500 (a broken lifecycle store must fail the request, not serve a control with no EventStatus)", listResp.StatusCode)
 	}
 }

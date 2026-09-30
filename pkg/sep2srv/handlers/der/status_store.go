@@ -3,11 +3,11 @@ package der
 import (
 	"context"
 	"errors"
-	"log"
-	"strings"
+	"fmt"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -48,71 +48,65 @@ func NewDerivedStatusControlStore(controls store.ScopedStore[sep2.DERControl], l
 var _ store.ScopedStore[sep2.DERControl] = (*DerivedStatusControlStore)(nil)
 
 // Get returns the control stored under (parentID, id) with its EventStatus
-// derived, when a lifecycle record exists for it.
+// derived, when a lifecycle record exists for it. A lifecycle lookup
+// failure other than "no record" fails the whole request rather than
+// serving the control with no status: EventStatus is mandatory (2018
+// multiplicity 1, "Clients SHALL verify the EventStatus of an Event before
+// acting upon it"), and an issued control carries none of its own, so a
+// silently skipped derivation would serve a cancelled control as if it
+// carried no status at all rather than as Cancelled.
 func (s *DerivedStatusControlStore) Get(ctx context.Context, parentID, id string) (sep2.DERControl, error) {
 	ctrl, err := s.controls.Get(ctx, parentID, id)
 	if err != nil {
 		return ctrl, err
 	}
-	s.derive(ctx, parentID, id, &ctrl)
+	if err := s.derive(ctx, sep2time.Now().Unix(), parentID, id, &ctrl); err != nil {
+		return sep2.DERControl{}, err
+	}
 	return ctrl, nil
 }
 
 // List returns a page of controls, each with its EventStatus derived when a
-// lifecycle record exists for it.
+// lifecycle record exists for it. now is read once for the whole page, not
+// once per member, so every control in one response is judged against the
+// same instant. A lifecycle lookup failure other than "no record" fails the
+// whole list, for the same reason [Get] does.
 func (s *DerivedStatusControlStore) List(ctx context.Context, parentID string, opts store.ListOptions) (store.ListResult[sep2.DERControl], error) {
 	result, err := s.controls.List(ctx, parentID, opts)
 	if err != nil {
 		return result, err
 	}
+	now := sep2time.Now().Unix()
 	for i := range result.Items {
-		id, ok := idFromControlHref(result.Items[i].Href)
+		id, ok := derhref.ControlID(result.Items[i].Href)
 		if !ok {
 			continue
 		}
-		s.derive(ctx, parentID, id, &result.Items[i])
+		if err := s.derive(ctx, now, parentID, id, &result.Items[i]); err != nil {
+			return store.ListResult[sep2.DERControl]{}, err
+		}
 	}
 	return result, nil
 }
 
 // derive overwrites ctrl.EventStatus in place from its lifecycle record, or
-// leaves ctrl untouched when there is none (acceptance criterion 2) or the
-// lookup itself fails. A lookup failure other than "no record" is logged,
-// not swallowed: it is a store problem the operator should see, and serving
-// the control's stored status rather than failing the whole request is the
-// same fail-safe direction [FillAbsentDERLinks] takes for a derivation that
-// cannot complete.
-func (s *DerivedStatusControlStore) derive(ctx context.Context, parentID, id string, ctrl *sep2.DERControl) {
+// leaves ctrl untouched when there is none (acceptance criterion 2). A
+// lifecycle lookup failure other than store.ErrNotFound is returned rather
+// than swallowed: see [Get].
+func (s *DerivedStatusControlStore) derive(ctx context.Context, now int64, parentID, id string, ctrl *sep2.DERControl) error {
 	if ctrl.Interval == nil {
-		return
+		return nil
 	}
 	lc, err := s.lifecycles.Get(ctx, parentID, id)
 	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			log.Printf("der: loading lifecycle record for %s/%s: %v; serving the control's stored EventStatus", parentID, id, err)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
 		}
-		return
+		return fmt.Errorf("der: loading lifecycle record for %s/%s: %w", parentID, id, err)
 	}
-	status := dercontrol.DeriveStatus(sep2time.Now().Unix(), ctrl.CreationTime, ctrl.Interval.Start, lc)
+	status := dercontrol.DeriveStatus(now, ctrl.CreationTime, ctrl.Interval.Start, lc)
 	ctrl.EventStatus = &status
-}
-
-// idFromControlHref recovers the store id from a DERControl's own href
-// ("/edev/.../derc/<id>"), the same shape the issuer builds (internal/dercontrol)
-// and the boot fixture and CSIP loader both reproduce. ok is false for any
-// other shape, which this decorator treats as "cannot key a lookup on it"
-// rather than guessing.
-func idFromControlHref(href string) (string, bool) {
-	const marker = "/derc/"
-	idx := strings.LastIndex(href, marker)
-	if idx < 0 {
-		return "", false
-	}
-	id := href[idx+len(marker):]
-	if id == "" {
-		return "", false
-	}
-	return id, true
+	return nil
 }
 
 func (s *DerivedStatusControlStore) Count(ctx context.Context, parentID string) (uint32, error) {

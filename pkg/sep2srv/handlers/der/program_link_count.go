@@ -3,7 +3,6 @@ package der
 import (
 	"context"
 	"log"
-	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
@@ -68,7 +67,7 @@ func (s *DERControlCountedProgramStore) stampCount(ctx context.Context, p *sep2.
 	if p.DERControlListLink == nil {
 		return
 	}
-	scopeKey, ok := controlListScopeKey(p.DERControlListLink.Href)
+	scopeKey, ok := derhref.ControlListScope(p.DERControlListLink.Href)
 	if !ok {
 		return
 	}
@@ -78,22 +77,6 @@ func (s *DERControlCountedProgramStore) stampCount(ctx context.Context, p *sep2.
 		return
 	}
 	p.DERControlListLink.All = n
-}
-
-// controlListScopeKey pulls the composite (edev, fsa, derp) scope key out of
-// a DERControlListLink href ("/edev/{id}/fsa/{fsaId}/derp/{derpId}/derc"),
-// the same shape and the same key format [scopedListHandlerDeep] scopes the
-// control store by. ok is false for any other shape.
-func controlListScopeKey(href string) (string, bool) {
-	trimmed, ok := strings.CutSuffix(strings.TrimSpace(href), "/derc")
-	if !ok {
-		return "", false
-	}
-	edev, fsa, derp, ok := derhref.Program(trimmed)
-	if !ok {
-		return "", false
-	}
-	return edev + "/" + fsa + "/" + derp, true
 }
 
 func (s *DERControlCountedProgramStore) Count(ctx context.Context, parentID string) (uint32, error) {

@@ -224,7 +224,8 @@ func TestPostDERControlResponseIsStoredAndRetrievable(t *testing.T) {
 		t.Fatal("served DERControl carries no replyTo; the POST has no advertised target")
 	}
 
-	const wantLFDI = "AABBCCDDEEFF00112233445566778899AABBCCDD"
+	// The sender (testAuthPolicy) posts for its own device.
+	const wantLFDI = testLFDI
 	status := sep2.ResponseStatusEventReceived
 	body, err := xml.Marshal(&sep2.DERControlResponse{
 		Response: sep2.Response{

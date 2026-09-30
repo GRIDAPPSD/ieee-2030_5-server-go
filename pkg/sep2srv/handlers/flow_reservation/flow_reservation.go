@@ -1,10 +1,12 @@
 package flow_reservation
 
 import (
+	"bytes"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -238,7 +240,17 @@ func HandlePostFlowReservationRequest(
 // pin stays: DecodeResponse dispatches on the root element and decodes the
 // declared subtype, so the accepted set is exactly the subtypes the WADL
 // names.
-func HandlePostResponse(rspStore store.ScopedStore[sep2.Response]) http.HandlerFunc {
+//
+// A Response that names an endDeviceLFDI is stored only when authorize says
+// the sender may speak for that device: IEEE 2030.5-2018 6.11.2 grants access
+// from the certificate's identity, not from what a body claims. A refusal is
+// 403, since the request is well formed and its sender authenticated but not
+// authorized for the device it names; nothing is stored. A nil authorize
+// refuses every Response that names a device. The LFDI is compared and
+// stored in canonical uppercase. A DERControlResponse must name its device,
+// because the admin plane attributes it by that LFDI; other Response types
+// that name none are stored as before.
+func HandlePostResponse(rspStore store.ScopedStore[sep2.Response], authorize ResponseSenderAuthorizer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			encoding.MethodNotAllowed(w, "POST")
@@ -258,6 +270,33 @@ func HandlePostResponse(rspStore store.ScopedStore[sep2.Response]) http.HandlerF
 			return
 		}
 
+		if rsp.EndDeviceLFDI == "" {
+			if responseRoot(body) == "DERControlResponse" {
+				http.Error(w, "DERControlResponse endDeviceLFDI is required", http.StatusBadRequest)
+				return
+			}
+		} else {
+			lfdi, ok := canonicalLFDI(rsp.EndDeviceLFDI)
+			if !ok {
+				http.Error(w, "endDeviceLFDI must be 40 hexadecimal digits", http.StatusBadRequest)
+				return
+			}
+			allowed := false
+			if authorize != nil {
+				allowed, err = authorize(r, lfdi)
+				if err != nil {
+					srverr.Internal(w, r, err)
+					return
+				}
+			}
+			if !allowed {
+				log.Printf("rsps: refused a Response whose endDeviceLFDI is neither the sender nor a device it manages (%s %s)", r.Method, r.URL.Path)
+				http.Error(w, "endDeviceLFDI is not the sender or a device it manages", http.StatusForbidden)
+				return
+			}
+			rsp.EndDeviceLFDI = lfdi
+		}
+
 		id := fmt.Sprintf("rsp-%d", time.Now().UnixNano())
 		rsp.Href = coreresponse.MemberHref(rspsID, id)
 		rsp.CreatedDateTime = time.Now().Unix()
@@ -269,6 +308,42 @@ func HandlePostResponse(rspStore store.ScopedStore[sep2.Response]) http.HandlerF
 
 		w.Header().Set("Location", rsp.Href)
 		w.WriteHeader(http.StatusCreated)
+	}
+}
+
+// ResponseSenderAuthorizer reports whether the sender of r may post a
+// Response naming endDeviceLFDI (canonical uppercase): the sender's own
+// device, or one it manages. A non-nil error means the check could not
+// complete, and the POST answers 500.
+type ResponseSenderAuthorizer func(r *http.Request, endDeviceLFDI string) (bool, error)
+
+// canonicalLFDI returns s uppercased when it is 40 hex digits (HexBinary160).
+// hexBinary is case-insensitive, and identities are compared uppercase.
+func canonicalLFDI(s string) (string, bool) {
+	if len(s) != 40 {
+		return "", false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return "", false
+		}
+	}
+	return strings.ToUpper(s), true
+}
+
+// responseRoot returns the local name of body's root element, or "" when it
+// has none. body has already decoded, so this only names which subtype.
+func responseRoot(body []byte) string {
+	dec := xml.NewDecoder(bytes.NewReader(body))
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			return se.Name.Local
+		}
 	}
 }
 

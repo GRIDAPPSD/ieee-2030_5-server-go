@@ -164,7 +164,6 @@ func findDevice(t *testing.T, fleet handler.Fleet, lfdi string) handler.FleetDev
 
 func hexBin32(v uint32) *sep2.HexBinary32 { h := sep2.HexBinary32(v); return &h }
 func u8(v uint8) *uint8                   { return &v }
-func u16(v uint16) *uint16                { return &v }
 func i8(v int8) *int8                     { return &v }
 func i64(v int64) *int64                  { return &v }
 

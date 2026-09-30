@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -299,34 +300,57 @@ func TestAccumulateRollup_QSumAndStatVarAvailFromRightField(t *testing.T) {
 	}
 }
 
-// TestAccumulateRollup_StaleDeviceExcludedFromSums is #715 fix round 1 item
-// 4: a stale device's measurements must not contribute to a fleet sum, and
-// must be counted separately from "never reported".
-// TestAccumulateRollup_AvailabilityStaleFromDeviceStatus is the case where
-// the current, device-level rule is kept on purpose (#715 fix round 2 item
-// 4): DERAvailability carries no server-stamped receipt time, so its sums
-// still fall back to the device's DERStatus-derived staleness.
-func TestAccumulateRollup_AvailabilityStaleFromDeviceStatus(t *testing.T) {
+// TestAccumulateRollup_AvailabilityStalenessIsItsOwnClock is #715 fix round
+// 4 item 1: StatWAvail/StatVarAvail must be judged from DERAvailability's
+// own ReadingTime, not the device's DERStatus.ReadingTime. DERStatus and
+// DERAvailability are two independently client-set PUT resources (neither
+// carries a server-stamped receipt time; see accumulateRollup's doc
+// comment) and can drift apart from each other arbitrarily.
+func TestAccumulateRollup_AvailabilityStalenessIsItsOwnClock(t *testing.T) {
 	t.Parallel()
-	now := int64(100000)
-	statW, statVar := 700.0, 300.0
-	dev := FleetDevice{
-		Status:       &FleetDeviceStatus{ReadingTime: now - staleAfterSeconds - 1},
-		Availability: &FleetDeviceAvailability{StatWAvail: &statW, StatVarAvail: &statVar},
-	}
+	now := int64(1000000)
+	fresh := now
+	twoDaysOld := now - 2*24*60*60
+	staleTime := now - staleAfterSeconds - 1
 
-	var rollup FleetRollup
-	accumulateRollup(&rollup, dev, now)
+	t.Run("fresh status, 2-day-old availability: stale", func(t *testing.T) {
+		statW := 700.0
+		dev := FleetDevice{
+			Status:       &FleetDeviceStatus{ReadingTime: fresh},
+			Availability: &FleetDeviceAvailability{StatWAvail: &statW, ReadingTime: twoDaysOld},
+		}
+		var rollup FleetRollup
+		accumulateRollup(&rollup, dev, now)
+		if rollup.StatWAvail.Stale != 1 || rollup.StatWAvail.Sum != 0 {
+			t.Errorf("StatWAvail = %+v, want Stale 1, Sum 0", rollup.StatWAvail)
+		}
+	})
 
-	if rollup.Stale != 1 {
-		t.Errorf("Stale = %d, want 1", rollup.Stale)
-	}
-	if rollup.StatWAvail.Sum != 0 || rollup.StatWAvail.Stale != 1 {
-		t.Errorf("StatWAvail = %+v, want Sum 0, Stale 1", rollup.StatWAvail)
-	}
-	if rollup.StatVarAvail.Sum != 0 || rollup.StatVarAvail.Stale != 1 {
-		t.Errorf("StatVarAvail = %+v, want Sum 0, Stale 1", rollup.StatVarAvail)
-	}
+	t.Run("stale status, fresh availability: not stale", func(t *testing.T) {
+		statW := 700.0
+		dev := FleetDevice{
+			Status:       &FleetDeviceStatus{ReadingTime: staleTime},
+			Availability: &FleetDeviceAvailability{StatWAvail: &statW, ReadingTime: fresh},
+		}
+		var rollup FleetRollup
+		accumulateRollup(&rollup, dev, now)
+		if rollup.StatWAvail.Stale != 0 || rollup.StatWAvail.Sum != 700 {
+			t.Errorf("StatWAvail = %+v, want Stale 0, Sum 700", rollup.StatWAvail)
+		}
+	})
+
+	t.Run("no status at all: uses availability's own time", func(t *testing.T) {
+		statW := 700.0
+		dev := FleetDevice{
+			Status:       nil,
+			Availability: &FleetDeviceAvailability{StatWAvail: &statW, ReadingTime: fresh},
+		}
+		var rollup FleetRollup
+		accumulateRollup(&rollup, dev, now)
+		if rollup.StatWAvail.Stale != 0 || rollup.StatWAvail.Sum != 700 {
+			t.Errorf("StatWAvail = %+v, want Stale 0, Sum 700 (no DERStatus to judge, but availability is fresh)", rollup.StatWAvail)
+		}
+	})
 }
 
 // TestAccumulateRollup_MeasurementStalenessIsPerValueNotDeviceStatus is
@@ -763,7 +787,7 @@ func TestAccumulateRollup_AllFourSumsStale(t *testing.T) {
 			P: &FleetMeasurement{Value: 700, ReadingTime: oldTime},
 			Q: &FleetMeasurement{Value: 50, ReadingTime: oldTime},
 		},
-		Availability: &FleetDeviceAvailability{StatWAvail: &statW, StatVarAvail: &statVar},
+		Availability: &FleetDeviceAvailability{StatWAvail: &statW, StatVarAvail: &statVar, ReadingTime: oldTime},
 	}
 
 	var rollup FleetRollup
@@ -888,6 +912,175 @@ func TestConsiderMeasurement_EditionFlowDirectionMapping(t *testing.T) {
 
 			if out.P == nil || out.P.Value != tc.want {
 				t.Errorf("Measurements.P = %+v, want value %v", out.P, tc.want)
+			}
+		})
+	}
+}
+
+// --- #715 fix round 4 item 2: a future-dated client-set readingTime must
+// --- never read as negative age. -----------------------------------------
+
+// TestClampedAge_FutureDatedIsFlooredAtZero proves the floor mechanism
+// itself: clientClockStale's boolean result is identical whether a future
+// date floors to 0 or stays negative (both fail the staleness comparison),
+// so only a direct assertion on the age value can distinguish the two.
+func TestClampedAge_FutureDatedIsFlooredAtZero(t *testing.T) {
+	t.Parallel()
+	now := int64(1000)
+	future := int64(5000) // 4000 seconds in the future
+	if got := clampedAge(future, now); got != 0 {
+		t.Errorf("clampedAge(future, now) = %d, want 0 (floored, not -4000)", got)
+	}
+}
+
+// TestClampedAge_PastIsUnaffected is the control: an ordinary past
+// readingTime is not floored, so clampedAge(future,...) = 0 above is not
+// merely clampedAge always returning 0.
+func TestClampedAge_PastIsUnaffected(t *testing.T) {
+	t.Parallel()
+	now := int64(1000)
+	past := int64(400)
+	if got := clampedAge(past, now); got != 600 {
+		t.Errorf("clampedAge(past, now) = %d, want 600", got)
+	}
+}
+
+// TestAccumulateRollup_StatusDatedYear2100IsNotStaleAndConnectedWorks pins
+// the end-to-end outcome the design names: a DERStatus dated in the future
+// (here, year 2100) reads as not stale, and the Connected bit is still
+// honored normally - the future date does not corrupt anything downstream
+// of the staleness check.
+func TestAccumulateRollup_StatusDatedYear2100IsNotStaleAndConnectedWorks(t *testing.T) {
+	t.Parallel()
+	now := int64(1732900000)      // an ordinary "now", late 2024
+	year2100 := int64(4102444800) // 2100-01-01T00:00:00Z
+
+	dev := FleetDevice{Status: &FleetDeviceStatus{Connected: boolPtr(true), ReadingTime: year2100}}
+	var rollup FleetRollup
+	accumulateRollup(&rollup, dev, now)
+
+	if rollup.Stale != 0 {
+		t.Errorf("Stale = %d, want 0", rollup.Stale)
+	}
+	if rollup.Connected != 1 {
+		t.Errorf("Connected = %d, want 1", rollup.Connected)
+	}
+}
+
+// --- #715 fix round 4 item 3: Q's staleness must be judged independently of
+// --- P and of the device's DERStatus-derived staleness, with its own
+// --- ">"/"" >= "" boundary pinned. ---------------------------------------
+
+// TestMeasurementStale_Boundary pins measurementStale's own ">" boundary
+// directly: TestStaleness_BothSidesOfBoundary above pins the SAME boundary
+// shape for the unrelated clientClockStale/deviceStale path, and a ">="
+// mutant in measurementStale specifically survives unless this function is
+// exercised in isolation.
+func TestMeasurementStale_Boundary(t *testing.T) {
+	t.Parallel()
+	now := int64(100000)
+
+	t.Run("exactly at the boundary is not stale", func(t *testing.T) {
+		m := &FleetMeasurement{ReadingTime: now - staleAfterSeconds}
+		if measurementStale(m, now) {
+			t.Error("measurementStale at exactly staleAfterSeconds = true, want false")
+		}
+	})
+
+	t.Run("one second past the boundary is stale", func(t *testing.T) {
+		m := &FleetMeasurement{ReadingTime: now - staleAfterSeconds - 1}
+		if !measurementStale(m, now) {
+			t.Error("measurementStale one second past staleAfterSeconds = false, want true")
+		}
+	})
+}
+
+// TestAccumulateRollup_QStalenessIndependentOfPAndDeviceStatus gives Q a
+// staleness outcome that disagrees with BOTH P's and deviceStale's, so a
+// mutant that judges Q by either of those signals instead of Q's own
+// FleetMeasurement.ReadingTime fails here even though it might pass a test
+// where all three happen to agree.
+func TestAccumulateRollup_QStalenessIndependentOfPAndDeviceStatus(t *testing.T) {
+	t.Parallel()
+	now := int64(1000000)
+	fresh := now
+	oldTime := now - staleAfterSeconds - 1
+
+	dev := FleetDevice{
+		// deviceStale: stale (disagrees with Q, which is fresh).
+		Status: &FleetDeviceStatus{ReadingTime: oldTime},
+		Measurements: FleetDeviceMeasurements{
+			// P: stale (disagrees with Q, which is fresh).
+			P: &FleetMeasurement{Value: 111, ReadingTime: oldTime},
+			// Q: fresh - the only one of the three that is.
+			Q: &FleetMeasurement{Value: 222, ReadingTime: fresh},
+		},
+	}
+
+	var rollup FleetRollup
+	accumulateRollup(&rollup, dev, now)
+
+	if rollup.Q.Sum != 222 || rollup.Q.Stale != 0 {
+		t.Errorf("Q = %+v, want Sum 222, Stale 0: Q is fresh by its own clock even though P and the device status are both stale", rollup.Q)
+	}
+	if rollup.P.Sum != 0 || rollup.P.Stale != 1 {
+		t.Errorf("P = %+v, want Sum 0, Stale 1 (control: P really is stale here, unlike Q)", rollup.P)
+	}
+}
+
+// --- #715 fix round 4 item 4: edition/isDER through deviceMeasurements end
+// --- to end, with isDER derived from a stored mirror's RoleFlags bit rather
+// --- than passed as a literal to considerMeasurement directly. --------------
+
+// TestDeviceMeasurements_EditionAndIsDERFromRoleFlags drives
+// (*AdminFleetHandler).deviceMeasurements through a real stored
+// MirrorUsagePoint, table-driven over both editions and three RoleFlags
+// shapes, to kill four specific mutants at the isDER call site
+// (admin_fleet.go:422) and the flip condition (admin_fleet.go's
+// considerMeasurement):
+//   - "flipped := isDER" (drops the edition check): the "2018, isDER bit
+//     set" case would incorrectly flip.
+//   - "isDER := false" (hardcoded): the "2023, isDER bit set" case would
+//     fail to flip.
+//   - "isDER := true" (hardcoded): the "2023, isDER bit clear" case would
+//     incorrectly flip.
+//   - "roleFlagIsDER = 1 << 2" (wrong bit): the "2023, bit 2 set, bit 3
+//     clear" case would incorrectly flip, since bit 2 is isPEV, not isDER.
+func TestDeviceMeasurements_EditionAndIsDERFromRoleFlags(t *testing.T) {
+	t.Parallel()
+	forward := f8(sep2.FlowDirectionForward)
+
+	cases := []struct {
+		name      string
+		edition   SEP2Edition
+		roleFlags sep2.RoleFlagsValue
+		want      float64 // Forward, magnitude 100: -100 unflipped, +100 flipped
+	}{
+		{"2018, isDER bit (3) set: no flip", Edition2018, 1 << 3, -100},
+		{"2023, isDER bit (3) set: flips", Edition2023, 1 << 3, 100},
+		{"2023, isDER bit (3) clear: no flip", Edition2023, 0, -100},
+		{"2023, bit 2 set (isPEV, not isDER), bit 3 clear: no flip", Edition2023, 1 << 2, -100},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mups := memory.NewStore[sep2.MirrorUsagePoint]()
+			mupID := fmt.Sprintf("mup-%d", i)
+			mup := sep2.MirrorUsagePoint{
+				Resource:   sep2.Resource{Href: "/mup/" + mupID},
+				DeviceLFDI: fleetTestLFDI,
+				RoleFlags:  tc.roleFlags,
+				MirrorMeterReading: []sep2.MirrorMeterReading{
+					typedReading("series", 100, sep2.UomWatts, forward, 100),
+				},
+			}
+			if err := mups.Create(context.Background(), mupID, mup); err != nil {
+				t.Fatalf("MirrorUsagePoints.Create: %v", err)
+			}
+			h := &AdminFleetHandler{MirrorUsagePoints: mups, Edition: tc.edition}
+
+			got := h.deviceMeasurements(context.Background(), fleetTestLFDI)
+			if got.P == nil || got.P.Value != tc.want {
+				t.Errorf("Measurements.P = %+v, want value %v", got.P, tc.want)
 			}
 		})
 	}

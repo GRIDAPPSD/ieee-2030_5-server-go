@@ -545,21 +545,26 @@ func scaledValue(value float64, multiplier int8) float64 {
 // status counts (connected, alarmed, stale) and the four additive sums, each
 // with the count of devices that did not report it.
 //
-// Two different staleness signals feed the sums, because they have two
-// different qualities of timestamp available (#715 fix round 2, item 4).
-// deviceStale, from DERStatus.readingTime (a client-sent clock: see
-// FleetDeviceStatus's doc comment), is the only signal DERAvailability has,
-// so StatWAvail and StatVarAvail use it. P and Q have a better one: their own
-// FleetMeasurement.ReadingTime is server-stamped, so each is judged on its
-// own freshness rather than on the device's self-reported status. That
-// decoupling is the fix: before it, a device whose DERStatus had gone stale
-// (or was never sent at all) dropped its P and Q from the sums even when
-// those specific readings were still arriving on time.
+// Three different staleness signals feed the sums, because three different
+// qualities of timestamp are available. P and Q have the best one: their own
+// FleetMeasurement.ReadingTime is server-stamped (mirror.go's
+// stampServerOwnedMirrorFields overwrites it at receipt regardless of what
+// the client sent), so each is judged on its own freshness (measurementStale,
+// #715 fix round 2 item 4). DERStatus and DERAvailability have no server
+// stamp at all - both go through the same generic singleton PUT
+// (pkg/sep2srv/handlers/singleton.HandleSingletonGetPut), which stores
+// whatever readingTime the client sent - so deviceStale and availabilityStale
+// are each judged from their OWN resource's readingTime rather than sharing
+// one signal between two independently client-set records (#715 fix round 4
+// item 1): before this, a fresh DERAvailability under a stale DERStatus was
+// dropped, and a stale DERAvailability under a fresh DERStatus was summed as
+// current, neither of which is a fact about DERAvailability's own age.
 func accumulateRollup(rollup *FleetRollup, dev FleetDevice, now int64) {
 	// A device with no status at all is never-reported, not stale: it is
 	// not counted in any of connected/alarmed/stale, and its sums land in
-	// Unreported below, the same as any other missing value.
-	deviceStale := dev.Status != nil && now-dev.Status.ReadingTime > staleAfterSeconds
+	// Unreported below, the same as any other missing value. The same rule
+	// applies to availabilityStale below for DERAvailability.
+	deviceStale := dev.Status != nil && clientClockStale(dev.Status.ReadingTime, now)
 
 	switch {
 	case dev.Status == nil:
@@ -575,19 +580,55 @@ func accumulateRollup(rollup *FleetRollup, dev FleetDevice, now int64) {
 	}
 
 	var statW, statVar *float64
+	availabilityStale := dev.Availability != nil && clientClockStale(dev.Availability.ReadingTime, now)
 	if dev.Availability != nil {
 		statW, statVar = dev.Availability.StatWAvail, dev.Availability.StatVarAvail
 	}
 	addToSum(&rollup.P, measurementValue(dev.Measurements.P), measurementStale(dev.Measurements.P, now))
 	addToSum(&rollup.Q, measurementValue(dev.Measurements.Q), measurementStale(dev.Measurements.Q, now))
-	addToSum(&rollup.StatWAvail, statW, deviceStale)
-	addToSum(&rollup.StatVarAvail, statVar, deviceStale)
+	addToSum(&rollup.StatWAvail, statW, availabilityStale)
+	addToSum(&rollup.StatVarAvail, statVar, availabilityStale)
+}
+
+// clientClockStale reports whether now minus a client-authored readingTime
+// exceeds staleAfterSeconds, flooring a negative age (a future-dated
+// reading) at 0 rather than letting it read as more fresh than fresh (#715
+// fix round 4 item 2): DERStatus.readingTime and DERAvailability.readingTime
+// are both entirely client-set (see accumulateRollup's doc comment), and the
+// standard sets no coordinated-clock guarantee for either - devices are only
+// asked (SHOULD, not SHALL) to stay within a display tolerance, and
+// "intentionally uncoordinated time" is a valid quality class. A future date
+// is therefore this server's own policy to bound, not a client error to
+// refuse: a status or availability dated arbitrarily far in the future is
+// judged exactly current, never negative-age, under the same
+// staleAfterSeconds threshold every other client-set clock in this file
+// uses.
+func clientClockStale(readingTime, now int64) bool {
+	return clampedAge(readingTime, now) > staleAfterSeconds
+}
+
+// clampedAge returns now minus readingTime, floored at 0 (#715 fix round 4
+// item 2): a future-dated client-set readingTime must never produce a
+// negative age, which would read as "more fresh than fresh" wherever an age
+// rather than a stale/not-stale boolean is consulted. Split out from
+// clientClockStale so the floor itself is directly testable: the boolean
+// clientClockStale returns is identical whether a future date floors to 0 or
+// stays negative (both fail the ">" staleness comparison), so a test on the
+// boolean alone cannot prove the floor exists.
+func clampedAge(readingTime, now int64) int64 {
+	age := now - readingTime
+	if age < 0 {
+		return 0
+	}
+	return age
 }
 
 // measurementStale reports whether m's own server-stamped reading time is
 // older than staleAfterSeconds. A nil m is unreported, not stale: addToSum
 // checks staleness before the unreported case, so this must answer false for
-// a nil m or an absent value would be miscounted as stale.
+// a nil m or an absent value would be miscounted as stale. Server-stamped,
+// unlike clientClockStale's inputs, so it is never negative and needs no
+// floor.
 func measurementStale(m *FleetMeasurement, now int64) bool {
 	if m == nil {
 		return false

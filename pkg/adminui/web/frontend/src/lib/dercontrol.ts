@@ -87,14 +87,17 @@ export interface ControlRequestBody {
 }
 
 export interface ControlFormInput {
+  // Shown in the confirmation sentence so the operator sees the target.
+  deviceLabel: string
+  programLabel: string
   programHref: string
   type: ControlType
-  // Percent (0-100, maxLimW) or power factor (0.001-1.000, fixedPFInjectW).
-  // Ignored for connect/disconnect.
+  // Percent (0-100, at most 2 decimals, maxLimW) or power factor (0.001-1.000,
+  // at most 3 decimals, fixedPFInjectW). Ignored for connect/disconnect.
   value: number | null
   excitation: boolean
   startNow: boolean
-  // A datetime-local input value, used only when startNow is false.
+  // A datetime-local input value (no zone), used only when startNow is false.
   startAtLocal: string
   durationMinutes: number | null
   description: string
@@ -104,43 +107,70 @@ export type BuildResult =
   | { ok: true; body: ControlRequestBody; summary: string }
   | { ok: false; error: string }
 
-function actionText(input: ControlFormInput): BuildResult | string {
-  switch (input.type) {
-    case 'connect':
-      return 'Connect'
-    case 'disconnect':
-      return 'Disconnect'
-    case 'maxLimW':
-      if (input.value === null || input.value < 0 || input.value > 100) {
-        return { ok: false, error: 'Limit must be 0 to 100 percent.' }
-      }
-      return `Limit to ${input.value.toFixed(2)}% of setMaxW`
-    case 'fixedPFInjectW':
-      if (input.value === null || input.value < 0.001 || input.value > 1) {
-        return { ok: false, error: 'Power factor must be 0.001 to 1.000.' }
-      }
-      return `Set power factor to ${input.value.toFixed(3)} (${input.excitation ? 'under-excited' : 'over-excited'})`
-  }
+// scaled returns value * factor as an integer, or null when value carries
+// more decimals than the factor allows, so the confirmation and the posted
+// body can never disagree by a silent rounding.
+function scaled(value: number, factor: number): number | null {
+  const n = value * factor
+  const r = Math.round(n)
+  return Math.abs(n - r) > 1e-7 ? null : r
+}
+
+function pct(hundredths: number): string {
+  return (hundredths / 100).toFixed(2)
+}
+
+function pf(thousandths: number): string {
+  return (thousandths / 1000).toFixed(3)
 }
 
 // buildControlRequest turns the form's raw input into the POST
 // /api/der/controls body and a one-sentence confirmation summary, or an
 // error for the form to show without posting anything. Range checks here
 // mirror admin_dercontrol.go's buildCreateRequest/buildValue so a bad
-// value is caught before Confirm, not after.
+// value is caught before Confirm, not after. The summary is written from
+// the body's own numbers.
 export function buildControlRequest(input: ControlFormInput): BuildResult {
   if (!input.programHref) return { ok: false, error: 'Pick a DER program first.' }
   if (input.durationMinutes === null || !Number.isFinite(input.durationMinutes) || input.durationMinutes <= 0) {
     return { ok: false, error: 'Duration must be a positive number of minutes.' }
   }
-
-  const action = actionText(input)
-  if (typeof action !== 'string') return action
+  const durationSeconds = Math.round(input.durationMinutes * 60)
+  if (durationSeconds < 1) return { ok: false, error: 'Duration must be at least 1 second.' }
 
   const body: ControlRequestBody = {
     derProgramHref: input.programHref,
     type: input.type,
-    durationSeconds: Math.round(input.durationMinutes * 60),
+    durationSeconds,
+  }
+  let action: string
+  switch (input.type) {
+    case 'connect':
+      action = 'Connect'
+      break
+    case 'disconnect':
+      action = 'Disconnect'
+      break
+    case 'maxLimW': {
+      if (input.value === null || input.value < 0 || input.value > 100) {
+        return { ok: false, error: 'Limit must be 0 to 100 percent.' }
+      }
+      const h = scaled(input.value, 100)
+      if (h === null) return { ok: false, error: 'Limit allows at most 2 decimals.' }
+      body.maxLimW = h
+      action = `Limit to ${pct(h)}% of setMaxW`
+      break
+    }
+    case 'fixedPFInjectW': {
+      if (input.value === null || input.value < 0.001 || input.value > 1) {
+        return { ok: false, error: 'Power factor must be 0.001 to 1.000.' }
+      }
+      const t = scaled(input.value, 1000)
+      if (t === null) return { ok: false, error: 'Power factor allows at most 3 decimals.' }
+      body.powerFactor = { displacement: t, excitation: input.excitation }
+      action = `Set power factor to ${pf(t)} (${input.excitation ? 'under-excited' : 'over-excited'})`
+      break
+    }
   }
 
   if (input.description) {
@@ -148,12 +178,6 @@ export function buildControlRequest(input: ControlFormInput): BuildResult {
       return { ok: false, error: `Description must be at most ${MAX_DESCRIPTION_OCTETS} octets.` }
     }
     body.description = input.description
-  }
-
-  if (input.type === 'maxLimW' && input.value !== null) {
-    body.maxLimW = Math.round(input.value * 100)
-  } else if (input.type === 'fixedPFInjectW' && input.value !== null) {
-    body.powerFactor = { displacement: Math.round(input.value * 1000), excitation: input.excitation }
   }
 
   let when = 'now'
@@ -166,17 +190,28 @@ export function buildControlRequest(input: ControlFormInput): BuildResult {
     when = fmtTime(seconds)
   }
 
-  const summary = `${action}, starting ${when}, for ${input.durationMinutes} min.`
+  const length = durationSeconds % 60 === 0 ? `${durationSeconds / 60} min` : `${durationSeconds} s`
+  const summary = `${action} on device ${input.deviceLabel}, program ${input.programLabel}, starting ${when}, for ${length}.`
   return { ok: true, body, summary }
+}
+
+// keptControl reads the 500 body the create and cancel routes answer when a
+// write could not be undone (DERControlIncomplete): the control it names may
+// be live, so the operator needs its mRID and href.
+export function keptControl(body: unknown): { mRID: string; href: string } | null {
+  if (typeof body !== 'object' || body === null) return null
+  const b = body as { controlKept?: unknown; mRID?: unknown; href?: unknown }
+  if (b.controlKept !== true || typeof b.mRID !== 'string' || typeof b.href !== 'string') return null
+  return { mRID: b.mRID, href: b.href }
 }
 
 export function fmtTime(seconds: number): string {
   return new Date(seconds * 1000).toISOString()
 }
 
-// expectedDeviceReadTime is the latest time a device will have read the
-// control, absent a push notification: creationTime plus the
-// DERControlList pollRate.
+// expectedDeviceReadTime is a nominal estimate, never a delivery time: the
+// stored time plus the DERControlList pollRate, for a device that polls on
+// schedule and misses the push. An offline device never reads it.
 export function expectedDeviceReadTime(creationTime: number): string {
   return fmtTime(creationTime + POLL_RATE_SECONDS)
 }
@@ -195,9 +230,11 @@ export function controlValueText(ctrl: DERControlView): string {
   return '-'
 }
 
-// canCancel reports whether a control's derived status still allows
-// cancelling it: an ended, cancelled or superseded control has nothing
-// left to cancel.
-export function canCancel(status: string): boolean {
-  return status === 'scheduled' || status === 'active'
+// canCancel reports whether a row still offers Cancel. The server derives
+// no ended status (an ended control keeps reading active and cancelling it
+// answers 409), so an active row qualifies only while its interval has not
+// ended at nowSeconds.
+export function canCancel(status: string, start: number, duration: number, nowSeconds: number): boolean {
+  if (status === 'scheduled') return true
+  return status === 'active' && nowSeconds < start + duration
 }

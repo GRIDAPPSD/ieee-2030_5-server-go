@@ -8,7 +8,11 @@ export interface ApiError {
   error: string
 }
 
-export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; status: number }
+// body is the decoded error body when the server sent JSON, so a caller can
+// read fields beyond "error" (the DER control 500 that names a kept control).
+export type ApiResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; status: number; body?: unknown }
 
 // decode turns a Response into an ApiResult. A 204 (the FSA delete path)
 // carries no body at all, so it resolves to undefined rather than being
@@ -32,7 +36,7 @@ async function decode<T>(res: Response): Promise<ApiResult<T>> {
       body && typeof body === 'object' && typeof (body as ApiError).error === 'string'
         ? (body as ApiError).error
         : `request failed with status ${res.status}`
-    return { ok: false, error: message, status: res.status }
+    return { ok: false, error: message, status: res.status, body: body ?? undefined }
   }
 
   return { ok: true, data: body as T }

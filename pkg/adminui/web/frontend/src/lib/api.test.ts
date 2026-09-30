@@ -31,7 +31,15 @@ describe('api', () => {
     stubFetch({ ok: false, status: 409, json: () => Promise.resolve({ error: 'already exists' }) })
 
     const res = await postJSON('/api/fsas', {})
-    expect(res).toEqual({ ok: false, error: 'already exists', status: 409 })
+    expect(res).toEqual({ ok: false, error: 'already exists', status: 409, body: { error: 'already exists' } })
+  })
+
+  it('keeps the extra fields of an error body for callers that need them', async () => {
+    const kept = { error: 'control may be live', mRID: 'AB', href: '/edev/0/derc/1', controlKept: true }
+    stubFetch({ ok: false, status: 500, json: () => Promise.resolve(kept) })
+
+    const res = await postJSON('/api/der/controls', {})
+    expect(res.ok === false && res.body).toEqual(kept)
   })
 
   it('falls back to a status message when an error body is not JSON', async () => {

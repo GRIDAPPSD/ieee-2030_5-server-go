@@ -13,6 +13,8 @@
     controlValueText,
     expectedDeviceReadTime,
     fmtTime,
+    keptControl,
+    POLL_RATE_SECONDS,
     type ControlFormInput,
     type ControlRequestBody,
     type ControlType,
@@ -29,6 +31,7 @@
   let selectedDeviceId = $state('')
   let programs = $state<DERProgramView[]>([])
   let programsChecked = $state(false)
+  let programsError = $state('')
   let selectedProgramHref = $state('')
 
   let controlType = $state<ControlType>('connect')
@@ -46,6 +49,10 @@
   let ok = $state(false)
 
   let controls = $state<DERControlListItem[]>([])
+  let controlsError = $state('')
+  // Wall clock at the last successful controls read; it decides which
+  // Active rows have ended, so it is not re-read on every render.
+  let nowSeconds = $state(Math.floor(Date.now() / 1000))
   let cancelTarget = $state<string | null>(null)
   let cancelReason = $state('')
   let cancelPosting = $state(false)
@@ -57,11 +64,23 @@
   let programSeq = 0
   let controlSeq = 0
 
+  // A pending confirmation, a shown result and an open cancel belong to the
+  // selection they were made under, so any change of selection drops them.
+  function dropSelectionState() {
+    pendingBody = null
+    pendingSummary = ''
+    result = ''
+    cancelTarget = null
+    cancelResult = ''
+  }
+
   $effect(() => {
     const id = selectedDeviceId
     programs = []
     programsChecked = false
+    programsError = ''
     selectedProgramHref = ''
+    dropSelectionState()
     const seq = ++programSeq
     if (!id) return
     void loadPrograms(id, seq)
@@ -70,30 +89,51 @@
   $effect(() => {
     const href = selectedProgramHref
     controls = []
+    controlsError = ''
+    dropSelectionState()
     const seq = ++controlSeq
     if (!href) return
-    void loadControls(seq)
+    void loadControls(selectedDeviceId, href, seq)
   })
 
   async function loadPrograms(deviceId: string, seq: number) {
     const res = await fetchJSON<DERProgramListResponse>(`/api/devices/${encodeURIComponent(deviceId)}/der-programs`)
     if (seq !== programSeq) return
     programsChecked = true
-    programs = res.ok ? (res.data.programs ?? []) : []
+    if (!res.ok) {
+      programsError = res.error
+      programs = []
+      return
+    }
+    programsError = ''
+    programs = res.data.programs ?? []
   }
 
-  async function loadControls(seq: number) {
-    const deviceId = selectedDeviceId
-    const href = selectedProgramHref
+  async function loadControls(deviceId: string, href: string, seq: number) {
     const res = await fetchJSON<DERControlListResponse>(
       `/api/der/controls?device=${encodeURIComponent(deviceId)}&derProgramHref=${encodeURIComponent(href)}`,
     )
     if (seq !== controlSeq) return
-    controls = res.ok ? (res.data.controls ?? []) : []
+    if (!res.ok) {
+      controlsError = res.error
+      controls = []
+      return
+    }
+    controlsError = ''
+    nowSeconds = Math.floor(Date.now() / 1000)
+    controls = res.data.controls ?? []
+  }
+
+  function reloadControls() {
+    if (selectedProgramHref) void loadControls(selectedDeviceId, selectedProgramHref, ++controlSeq)
   }
 
   function formInput(): ControlFormInput {
+    const device = devices.find((d) => deviceIdFromHref(d.href) === selectedDeviceId)
+    const program = programs.find((p) => p.href === selectedProgramHref)
     return {
+      deviceLabel: device?.sfdi ?? selectedDeviceId,
+      programLabel: program ? program.description || program.mRID : selectedProgramHref,
       programHref: selectedProgramHref,
       type: controlType,
       value: controlValue,
@@ -127,6 +167,10 @@
     pendingSummary = ''
   }
 
+  function keptText(kept: { mRID: string; href: string }): string {
+    return ` The control was kept and is live: ${kept.mRID} (${kept.href}). Find it in the table and cancel it if it is not wanted.`
+  }
+
   async function confirmSend() {
     if (!pendingBody || posting) return
     posting = true
@@ -137,19 +181,26 @@
     posting = false
     if (!res.ok) {
       ok = false
-      result = `Error: ${res.error}`
+      const kept = keptControl(res.body)
+      result = `Error: ${res.error}` + (kept ? keptText(kept) : '')
+      reloadControls()
       return
     }
     ok = true
-    const stored = fmtTime(res.data.creationTime)
-    const status = res.data.eventStatus?.status ?? ''
-    const expectedBy = expectedDeviceReadTime(res.data.creationTime)
-    let text = `Stored ${res.data.mRID} at ${stored}. Status: ${status}. Expected on the device by ${expectedBy}.`
-    if (!res.data.persisted) {
+    const d = res.data
+    let text =
+      `Stored ${d.mRID} at ${fmtTime(d.creationTime)}; starts ${fmtTime(d.interval.start)}. ` +
+      `Status: ${d.eventStatus.status} (as of ${fmtTime(d.eventStatus.dateTime)}). ` +
+      `Nominal estimate only, not a delivery: a device polling every ${POLL_RATE_SECONDS} s would read it by ` +
+      `${expectedDeviceReadTime(d.creationTime)} (stored time + ${POLL_RATE_SECONDS} s, computed here).`
+    if (d.supersedes.length > 0) {
+      text += ` Superseded ${d.supersedes.length} earlier control${d.supersedes.length === 1 ? '' : 's'}.`
+    }
+    if (!d.persisted) {
       text += ' A server restart forgets this control.'
     }
     result = text
-    if (selectedProgramHref) void loadControls(++controlSeq)
+    reloadControls()
   }
 
   function startCancel(mrid: string) {
@@ -171,11 +222,12 @@
     cancelPosting = false
     cancelTarget = null
     if (!res.ok) {
-      cancelResult = `Cancel failed: ${res.error}`
-      return
+      const kept = keptControl(res.body)
+      cancelResult = kept ? res.error + keptText(kept) : `Cancel failed: ${res.error}`
+    } else {
+      cancelResult = ''
     }
-    cancelResult = ''
-    if (selectedProgramHref) void loadControls(++controlSeq)
+    reloadControls()
   }
 </script>
 
@@ -197,7 +249,9 @@
     </select>
   </div>
 
-  {#if selectedDeviceId && programsChecked && programs.length === 0}
+  {#if programsError}
+    <div class="result err" data-testid="der-control-programs-error">{programsError}</div>
+  {:else if selectedDeviceId && programsChecked && programs.length === 0}
     <p class="hint" data-testid="der-control-no-programs">
       This device has no DER programs. Programs come from the boot fixture; they cannot be created in the admin UI.
     </p>
@@ -287,7 +341,11 @@
         </tr>
       </thead>
       <tbody>
-        {#if controls.length === 0}
+        {#if controlsError}
+          <tr>
+            <td colspan="7" class="result err" data-testid="der-control-controls-error">{controlsError}</td>
+          </tr>
+        {:else if controls.length === 0}
           <tr><td colspan="7" class="stat-label">No admin-issued controls for this program</td></tr>
         {:else}
           {#each controls as ctrl (ctrl.mRID)}
@@ -306,7 +364,7 @@
                 {/if}
               </td>
               <td>
-                {#if canCancel(ctrl.eventStatus.status)}
+                {#if canCancel(ctrl.eventStatus.status, ctrl.interval.start, ctrl.interval.duration, nowSeconds)}
                   {#if cancelTarget === ctrl.mRID}
                     <input
                       type="text"

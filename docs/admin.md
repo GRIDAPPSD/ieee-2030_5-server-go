@@ -333,13 +333,25 @@ This exists so a typo is caught before it reaches a device, and so
 nothing is sent while the operator is still filling the form in.
 
 **Stored, not sent.** The result line after Confirm reports what the
-server did: the control's mRID, the time it was stored, its derived
-status, and the latest time a device will have read it absent a push
-notification (creation time plus the DERControlList pollRate, 900
-seconds). It never claims the device received or applied anything,
-because devices pull this list; the server's own promise stops at
-having stored it. If the store is not persisted to disk, the card says
-a restart forgets the control.
+server did: the control's mRID, the time it was stored, when it starts,
+its derived status and the time of that status. It also gives a nominal
+estimate, labelled as one: a device that polls every 900 seconds (the
+DERControlList pollRate) would read it by the stored time plus 900
+seconds. That figure is computed in the page, is not a delivery time,
+and says nothing about a device that is offline. The card never claims
+the device received or applied anything, because devices pull this list;
+the server's own promise stops at having stored it. If the store is not
+persisted to disk, the card says a restart forgets the control. If the
+server answers that a write could not be undone, the card names the
+control's mRID and href, says it was kept and is live, and reloads the
+table so it can be cancelled.
+
+The confirmation sentence names the device and program. Changing either
+after Send drops the confirmation, so Confirm can only post what the
+sentence says. A limit is taken to at most 2 decimals and a power factor
+to at most 3; a value with more is refused rather than rounded. A failed
+programs or controls read shows the server's error, never "no programs"
+or an empty table.
 
 **The controls table** lists the selected program's admin-issued
 controls with their type, value, start, end and derived status, plus
@@ -348,7 +360,9 @@ by the device and not verified by the server: they come from whatever
 Response records a device posted, and a device that never responds
 shows zero, not a failure.
 
-**Cancel** appears on Scheduled and Active rows and, like Send, takes a
+**Cancel** appears on Scheduled rows and on Active rows whose interval has
+not ended (the server derives no ended status, so an ended control keeps
+reading Active and cancelling it is refused). Like Send, it takes a
 second click: clicking it opens an inline confirmation (with an optional
 reason) before `POST /api/der/controls/{mrid}/cancel` runs. The table
 reloads afterward, so a cancelled control's status and button update in

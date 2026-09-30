@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -38,6 +39,66 @@ func TestLifecyclePersistence_ColdBootMissingFile(t *testing.T) {
 	}
 	if !s.Persists() {
 		t.Errorf("Persists() = false, want true once a path is configured")
+	}
+}
+
+// TestLifecyclePersistence_CorruptFileFailsToLoad is
+// GRIDAPPSD/ieee-2030_5-server-go#565 round 2 item 3: readLifecycleEnvelope's
+// json.Unmarshal failure branch had no test. Asserts the error names the
+// decode step, not just that some error came back, so a mutant that
+// swallowed the error or mixed it up with the version-mismatch branch
+// would still be caught.
+func TestLifecyclePersistence_CorruptFileFailsToLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dercontrol-lifecycles.json")
+	if err := os.WriteFile(path, []byte("{not valid json"), 0o600); err != nil {
+		t.Fatalf("write corrupt file: %v", err)
+	}
+	_, err := NewLifecycleStoreWithPersistence(path)
+	if err == nil {
+		t.Fatal("NewLifecycleStoreWithPersistence over a corrupt file returned nil error, want a decode failure")
+	}
+	if !strings.Contains(err.Error(), "decode") {
+		t.Errorf("error = %q, want it to name the decode step", err)
+	}
+}
+
+// TestLifecyclePersistence_EmptyFileIsColdBoot is round 2 item 3: an empty
+// file (readLifecycleEnvelope's len(data)==0 branch) is a valid "no
+// records" state, distinct from a missing file, and had no test of its
+// own separate from ColdBootMissingFile.
+func TestLifecyclePersistence_EmptyFileIsColdBoot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dercontrol-lifecycles.json")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatalf("write empty file: %v", err)
+	}
+	s, err := NewLifecycleStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("NewLifecycleStoreWithPersistence over an empty file: %v", err)
+	}
+	if !s.Persists() {
+		t.Error("Persists() = false, want true: an empty file still configures a path")
+	}
+	n, err := s.Count(context.Background(), "0/0/0")
+	if err != nil || n != 0 {
+		t.Errorf("Count after an empty-file boot = (%d, %v), want (0, nil)", n, err)
+	}
+}
+
+// TestLifecyclePersistence_VersionMismatchFailsToLoad is round 2 item 3:
+// readLifecycleEnvelope's version-mismatch branch had no test. Asserts the
+// error names the version step, distinguishing it from the decode-failure
+// branch above.
+func TestLifecyclePersistence_VersionMismatchFailsToLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dercontrol-lifecycles.json")
+	if err := os.WriteFile(path, []byte(`{"version":99,"records":[]}`), 0o600); err != nil {
+		t.Fatalf("write version-mismatch file: %v", err)
+	}
+	_, err := NewLifecycleStoreWithPersistence(path)
+	if err == nil {
+		t.Fatal("NewLifecycleStoreWithPersistence over a version-mismatch file returned nil error, want a version failure")
+	}
+	if !strings.Contains(err.Error(), "unsupported snapshot version") {
+		t.Errorf("error = %q, want it to name the version mismatch", err)
 	}
 }
 

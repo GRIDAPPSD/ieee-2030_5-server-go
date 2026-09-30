@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"log"
 	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -33,7 +34,20 @@ func (s *EndDeviceStore) Create(ctx context.Context, id string, device sep2.EndD
 	// Snapshot to disk if persistence is configured
 	// (GRIDAPPSD/ieee-2030_5-server-go#165). No-op for in-memory stores
 	// so back-compat is automatic.
-	return s.persistEndDeviceSnapshot()
+	if err := s.persistEndDeviceSnapshot(); err != nil {
+		// A failed flush must not leave a half-committed device readable: a
+		// decorator such as RegisteredEndDeviceStore trusts a nil error from
+		// this call before touching the Registration store, and an error
+		// here that still left the device inserted would let it skip that
+		// step while the device stayed servable
+		// (GRIDAPPSD/ieee-2030_5-server-go#721).
+		s.removeIndex(device)
+		if delErr := s.Store.Delete(ctx, id); delErr != nil {
+			log.Printf("memory: EndDevice %q left stored after its snapshot failed to flush; rollback also failed: %v", id, delErr)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *EndDeviceStore) Update(ctx context.Context, id string, device sep2.EndDevice) error {

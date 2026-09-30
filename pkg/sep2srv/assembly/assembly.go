@@ -559,28 +559,28 @@ func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.E
 
 // deviceKeyedCascadeEndDevices returns the EndDevice store the /edev routes
 // must use so DELETE also removes the device's Configuration, DeviceStatus,
-// PowerStatus and FunctionSetAssignments records
-// (GRIDAPPSD/ieee-2030_5-server-go#721).
+// PowerStatus and FunctionSetAssignments records, and the admin-plane FSA
+// assignment links that name it (GRIDAPPSD/ieee-2030_5-server-go#721).
 //
 // Unlike [logEventLinkedEndDevices], the gate here is not one mount decision:
 // assembly.go's own family table lists Configurations, DeviceStatuses,
 // PowerStatuses and FSAs as four independent anchors, each "its own routes
-// only", so any subset of the four can be wired while the others are not.
-// This decorator is built whenever at least one is, and internally cascades
-// only the families that are, which is the same per-family test
-// [DeviceKeyedCascadeEndDeviceStore] itself makes.
+// only", and AdminFSAs is wired separately again. Any subset of the five can
+// be present while the others are not. This decorator is built whenever at
+// least one is, and internally cascades only the ones that are, which is the
+// same per-family test [DeviceKeyedCascadeEndDeviceStore] itself makes.
 func deviceKeyedCascadeEndDevices(devs store.EndDeviceStore, stores *Stores) store.EndDeviceStore {
 	if store.IsAbsent(devs) {
 		return devs
 	}
 	if store.IsAbsent(stores.Configurations) && store.IsAbsent(stores.DeviceStatuses) &&
-		store.IsAbsent(stores.PowerStatuses) && store.IsAbsent(stores.FSAs) {
+		store.IsAbsent(stores.PowerStatuses) && store.IsAbsent(stores.FSAs) && store.IsAbsent(stores.AdminFSAs) {
 		return devs
 	}
 	if linked, ok := devs.(*memory.DeviceKeyedCascadeEndDeviceStore); ok {
 		return linked
 	}
-	return memory.NewDeviceKeyedCascadeEndDeviceStore(devs, stores.Configurations, stores.DeviceStatuses, stores.PowerStatuses, stores.FSAs)
+	return memory.NewDeviceKeyedCascadeEndDeviceStore(devs, stores.Configurations, stores.DeviceStatuses, stores.PowerStatuses, stores.FSAs, stores.AdminFSAs)
 }
 
 // flowReservationLinkedEndDevices returns the EndDevice store the /edev

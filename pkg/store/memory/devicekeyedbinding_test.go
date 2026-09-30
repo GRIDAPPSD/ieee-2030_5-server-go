@@ -12,35 +12,38 @@ import (
 )
 
 // The device-keyed four: Configuration, DeviceStatus, PowerStatus and
-// FunctionSetAssignments, the first slice of
-// GRIDAPPSD/ieee-2030_5-server-go#721. Each is scoped under the EndDevice id
-// the same way flow reservation and LogEvent records are, so a device's
-// records surviving a DELETE would be inherited by whichever device the key
-// is next allocated to.
+// FunctionSetAssignments, plus the admin-plane FSA assignment link, the
+// first slice of GRIDAPPSD/ieee-2030_5-server-go#721. Each of the four is
+// scoped under the EndDevice id the same way flow reservation and LogEvent
+// records are, so a device's records surviving a DELETE would be inherited
+// by whichever device the key is next allocated to; the admin link is keyed
+// by device id in a separate store and survives the same way if not cleared.
 
-// deviceKeyedFixture builds the four scoped stores and the decorator under
-// test, plus a seeded EndDevice at id "1" so Delete has something to cascade
-// from.
+// deviceKeyedFixture builds the four scoped stores, the admin FSA store, and
+// the decorator under test, plus a seeded EndDevice at id "1" so Delete has
+// something to cascade from.
 func deviceKeyedFixture(t *testing.T) (
 	s *memory.DeviceKeyedCascadeEndDeviceStore,
 	configurations store.ScopedStore[sep2.Configuration],
 	deviceStatuses store.ScopedStore[sep2.DeviceStatus],
 	powerStatuses store.ScopedStore[sep2.PowerStatus],
 	fsas store.ScopedStore[sep2.FunctionSetAssignments],
+	adminFSAs *memory.AdminFSAStore,
 ) {
 	t.Helper()
 	configurations = memory.NewScopedStore[sep2.Configuration]()
 	deviceStatuses = memory.NewScopedStore[sep2.DeviceStatus]()
 	powerStatuses = memory.NewScopedStore[sep2.PowerStatus]()
 	fsas = memory.NewScopedStore[sep2.FunctionSetAssignments]()
-	s = memory.NewDeviceKeyedCascadeEndDeviceStore(memory.NewEndDeviceStore(), configurations, deviceStatuses, powerStatuses, fsas)
+	adminFSAs = memory.NewAdminFSAStore()
+	s = memory.NewDeviceKeyedCascadeEndDeviceStore(memory.NewEndDeviceStore(), configurations, deviceStatuses, powerStatuses, fsas, adminFSAs)
 
 	dev := sep2.EndDevice{SFDI: "1111111111", LFDI: "AAAA"}
 	dev.Href = "/edev/1"
 	if err := s.Create(context.Background(), "1", dev); err != nil {
 		t.Fatalf("seed EndDevice: %v", err)
 	}
-	return s, configurations, deviceStatuses, powerStatuses, fsas
+	return s, configurations, deviceStatuses, powerStatuses, fsas, adminFSAs
 }
 
 // TestDeviceKeyedCascadeEndDeviceStore_DeleteCascadesEachFamily pins the
@@ -100,7 +103,7 @@ func TestDeviceKeyedCascadeEndDeviceStore_DeleteCascadesEachFamily(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			s, configurations, deviceStatuses, powerStatuses, fsas := deviceKeyedFixture(t)
+			s, configurations, deviceStatuses, powerStatuses, fsas, _ := deviceKeyedFixture(t)
 			ctx := context.Background()
 
 			if err := tc.seed(ctx, configurations, deviceStatuses, powerStatuses, fsas); err != nil {
@@ -125,6 +128,59 @@ func TestDeviceKeyedCascadeEndDeviceStore_DeleteCascadesEachFamily(t *testing.T)
 	}
 }
 
+// TestDeviceKeyedCascadeEndDeviceStore_DeleteClearsAdminFSAAssignment pins
+// the admin-plane half of GRIDAPPSD/ieee-2030_5-server-go#721:
+// HandleAssignDeviceFSA writes an admin-plane device -> FSA link in the same
+// act as the scoped FunctionSetAssignments record the table above already
+// covers, and the link must not outlive its device either. Left behind, the
+// admin topology keeps naming a device that is gone, and re-assigning the
+// key's new occupant fails as a duplicate.
+func TestDeviceKeyedCascadeEndDeviceStore_DeleteClearsAdminFSAAssignment(t *testing.T) {
+	t.Parallel()
+
+	s, _, _, _, fsas, adminFSAs := deviceKeyedFixture(t)
+	ctx := context.Background()
+
+	if err := adminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{}); err != nil {
+		t.Fatalf("seed admin FSA: %v", err)
+	}
+	if err := adminFSAs.AssignDevice(ctx, "fsa-1", "1"); err != nil {
+		t.Fatalf("assign device: %v", err)
+	}
+	if err := fsas.Create(ctx, "1", "fsa-1", sep2.FunctionSetAssignments{}); err != nil {
+		t.Fatalf("seed the scoped FSA record the assign handler materializes alongside the admin link: %v", err)
+	}
+
+	// Control: the assignment is really there before the delete.
+	if devs := adminFSAs.Devices(ctx, "fsa-1"); len(devs) != 1 || devs[0] != "1" {
+		t.Fatalf("control: adminFSAs.Devices(fsa-1) = %v, want [1]", devs)
+	}
+
+	if err := s.Delete(ctx, "1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if devs := adminFSAs.Devices(ctx, "fsa-1"); len(devs) != 0 {
+		t.Errorf("adminFSAs.Devices(fsa-1) after delete = %v, want none: the admin topology still names the dead device", devs)
+	}
+
+	// A device registered at the reused key starts with no FSA of its own.
+	newDev := sep2.EndDevice{SFDI: "2222222222", LFDI: "BBBB"}
+	newDev.Href = "/edev/1"
+	if err := s.Create(ctx, "1", newDev); err != nil {
+		t.Fatalf("recreate device at the reused key: %v", err)
+	}
+	if got := adminFSAs.FSAsForDevice(ctx, "1"); len(got) != 0 {
+		t.Errorf("the new device at the reused key is already assigned %v, want none", got)
+	}
+
+	// Re-assigning the key now succeeds instead of answering ErrAlreadyExists,
+	// since the stale link was cleared rather than merely left unread.
+	if err := adminFSAs.AssignDevice(ctx, "fsa-1", "1"); err != nil {
+		t.Errorf("re-assign after delete = %v, want nil: the stale link must not block a fresh assignment", err)
+	}
+}
+
 // TestDeviceKeyedCascadeEndDeviceStore_DeleteFailsClosedWhenOneFamilyCannotCascade
 // pins the probe-first rule GRIDAPPSD/ieee-2030_5-server-go#701 added: a
 // family that cannot cascade is refused before ANY layer removes anything,
@@ -140,7 +196,7 @@ func TestDeviceKeyedCascadeEndDeviceStore_DeleteFailsClosedWhenOneFamilyCannotCa
 	fsas := memory.NewScopedStore[sep2.FunctionSetAssignments]()
 
 	inner := memory.NewEndDeviceStore()
-	s := memory.NewDeviceKeyedCascadeEndDeviceStore(inner, configurations, deviceStatuses, powerStatuses, fsas)
+	s := memory.NewDeviceKeyedCascadeEndDeviceStore(inner, configurations, deviceStatuses, powerStatuses, fsas, nil)
 	ctx := context.Background()
 
 	dev := sep2.EndDevice{SFDI: "1111111111", LFDI: "AAAA"}
@@ -168,6 +224,138 @@ func TestDeviceKeyedCascadeEndDeviceStore_DeleteFailsClosedWhenOneFamilyCannotCa
 	}
 }
 
+// TestDeviceKeyedCascadeEndDeviceStore_DeleteLeavesEveryFamilyUntouchedWhenAnyOneCannotCascade
+// is the same probe-first guarantee, composed the way assembly.go actually
+// wires it: RegisteredEndDeviceStore, then LogEventLinkedEndDeviceStore,
+// then this decorator, with an admin FSA link assigned too. probeInner is
+// what reaches the two inner layers' own probes; faulting either of them, or
+// any of this layer's own four families, must refuse the delete before
+// anything anywhere in the chain is mutated. An admin FSA link is seeded in
+// every case because it is unassigned first among this layer's own
+// mutations (it has no probe of its own): a probe branch that stopped
+// checking its own family would still let that unassign run ahead of the
+// family's own (still-failing) delete call, which is what the "every
+// family, not just the faulted one" assertions below are built to catch.
+func TestDeviceKeyedCascadeEndDeviceStore_DeleteLeavesEveryFamilyUntouchedWhenAnyOneCannotCascade(t *testing.T) {
+	t.Parallel()
+
+	cases := []string{"Registrations", "LogEvents", "Configurations", "DeviceStatuses", "PowerStatuses", "FunctionSetAssignments"}
+
+	for _, faulted := range cases {
+		t.Run(faulted, func(t *testing.T) {
+			t.Parallel()
+
+			fault := &storetest.Fault{}
+
+			innerRegs := memory.NewRegistrationStore()
+			var regs store.ResourceStore[sep2.Registration] = innerRegs
+			innerEvents := memory.NewScopedStore[sep2.LogEvent]()
+			var events store.ScopedStore[sep2.LogEvent] = innerEvents
+			innerConfigurations := memory.NewScopedStore[sep2.Configuration]()
+			var configurations store.ScopedStore[sep2.Configuration] = innerConfigurations
+			innerDeviceStatuses := memory.NewScopedStore[sep2.DeviceStatus]()
+			var deviceStatuses store.ScopedStore[sep2.DeviceStatus] = innerDeviceStatuses
+			innerPowerStatuses := memory.NewScopedStore[sep2.PowerStatus]()
+			var powerStatuses store.ScopedStore[sep2.PowerStatus] = innerPowerStatuses
+			innerFSAs := memory.NewScopedStore[sep2.FunctionSetAssignments]()
+			var fsas store.ScopedStore[sep2.FunctionSetAssignments] = innerFSAs
+
+			switch faulted {
+			case "Registrations":
+				regs = storetest.NewFaultyResourceStore[sep2.Registration](innerRegs, fault)
+			case "LogEvents":
+				events = storetest.NewFaultyScopedStore[sep2.LogEvent](innerEvents, fault)
+			case "Configurations":
+				configurations = storetest.NewFaultyScopedStore[sep2.Configuration](innerConfigurations, fault)
+			case "DeviceStatuses":
+				deviceStatuses = storetest.NewFaultyScopedStore[sep2.DeviceStatus](innerDeviceStatuses, fault)
+			case "PowerStatuses":
+				powerStatuses = storetest.NewFaultyScopedStore[sep2.PowerStatus](innerPowerStatuses, fault)
+			case "FunctionSetAssignments":
+				fsas = storetest.NewFaultyScopedStore[sep2.FunctionSetAssignments](innerFSAs, fault)
+			}
+
+			devs := memory.NewEndDeviceStore()
+			bound := memory.NewRegisteredEndDeviceStore(devs, regs, memory.RegistrationPolicy{
+				PIN: func(string) (uint32, bool) { return bindingFixturePIN, true },
+			})
+			linked := memory.NewLogEventLinkedEndDeviceStore(bound, events)
+			adminFSAs := memory.NewAdminFSAStore()
+			s := memory.NewDeviceKeyedCascadeEndDeviceStore(linked, configurations, deviceStatuses, powerStatuses, fsas, adminFSAs)
+			ctx := context.Background()
+
+			dev := sep2.EndDevice{SFDI: "1111111111", LFDI: "AAAA"}
+			dev.Href = "/edev/1"
+			if err := s.Create(ctx, "1", dev); err != nil {
+				t.Fatalf("seed EndDevice: %v", err)
+			}
+			if err := innerEvents.Create(ctx, "1", "evt-1", sep2.LogEvent{LogEventID: 1}); err != nil {
+				t.Fatalf("seed log event: %v", err)
+			}
+			if err := innerConfigurations.Create(ctx, "1", "default", sep2.Configuration{}); err != nil {
+				t.Fatalf("seed configuration: %v", err)
+			}
+			if err := innerDeviceStatuses.Create(ctx, "1", "default", sep2.DeviceStatus{}); err != nil {
+				t.Fatalf("seed device status: %v", err)
+			}
+			if err := innerPowerStatuses.Create(ctx, "1", "default", sep2.PowerStatus{}); err != nil {
+				t.Fatalf("seed power status: %v", err)
+			}
+			if err := innerFSAs.Create(ctx, "1", "fsa-1", sep2.FunctionSetAssignments{}); err != nil {
+				t.Fatalf("seed function set assignment: %v", err)
+			}
+			if err := adminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{}); err != nil {
+				t.Fatalf("seed admin FSA: %v", err)
+			}
+			if err := adminFSAs.AssignDevice(ctx, "fsa-1", "1"); err != nil {
+				t.Fatalf("assign device: %v", err)
+			}
+
+			// Control: everything is present before the fault is armed.
+			if _, err := innerRegs.Get(ctx, "1"); err != nil {
+				t.Fatalf("control: registration for 1: %v", err)
+			}
+			if devs := adminFSAs.Devices(ctx, "fsa-1"); len(devs) != 1 {
+				t.Fatalf("control: adminFSAs.Devices(fsa-1) = %v, want [1]", devs)
+			}
+
+			fault.Arm(storetest.ErrBackendUnavailable)
+
+			if err := s.Delete(ctx, "1"); err == nil {
+				t.Fatalf("Delete succeeded while %s could not cascade; want an error and everything left in place", faulted)
+			}
+
+			fault.Disarm()
+
+			if _, err := devs.Get(ctx, "1"); err != nil {
+				t.Errorf("device was removed despite the refused delete (%s faulted): %v", faulted, err)
+			}
+			if _, err := innerRegs.Get(ctx, "1"); err != nil {
+				t.Errorf("registration was removed despite the refused delete (%s faulted): %v", faulted, err)
+			}
+			if n, err := innerEvents.Count(ctx, "1"); err != nil || n != 1 {
+				t.Errorf("log events under 1 (%s faulted) = %d, %v, want 1, nil", faulted, n, err)
+			}
+			if n, err := innerConfigurations.Count(ctx, "1"); err != nil || n != 1 {
+				t.Errorf("configurations under 1 (%s faulted) = %d, %v, want 1, nil", faulted, n, err)
+			}
+			if n, err := innerDeviceStatuses.Count(ctx, "1"); err != nil || n != 1 {
+				t.Errorf("device statuses under 1 (%s faulted) = %d, %v, want 1, nil", faulted, n, err)
+			}
+			if n, err := innerPowerStatuses.Count(ctx, "1"); err != nil || n != 1 {
+				t.Errorf("power statuses under 1 (%s faulted) = %d, %v, want 1, nil", faulted, n, err)
+			}
+			if n, err := innerFSAs.Count(ctx, "1"); err != nil || n != 1 {
+				t.Errorf("function set assignments under 1 (%s faulted) = %d, %v, want 1, nil", faulted, n, err)
+			}
+			if devs := adminFSAs.Devices(ctx, "fsa-1"); len(devs) != 1 {
+				t.Errorf("adminFSAs.Devices(fsa-1) after the refused delete (%s faulted) = %v, want [1]: "+
+					"the admin link must not be unassigned ahead of a family's own incapacity being discovered", faulted, devs)
+			}
+		})
+	}
+}
+
 // TestNewDeviceKeyedCascadeEndDeviceStore_RejectsANilStore asserts the
 // mis-wiring fails at construction, not at request time inside net/http's
 // per-request recover.
@@ -184,6 +372,7 @@ func TestNewDeviceKeyedCascadeEndDeviceStore_RejectsANilStore(t *testing.T) {
 		memory.NewScopedStore[sep2.DeviceStatus](),
 		memory.NewScopedStore[sep2.PowerStatus](),
 		memory.NewScopedStore[sep2.FunctionSetAssignments](),
+		memory.NewAdminFSAStore(),
 	)
 }
 
@@ -197,9 +386,9 @@ func TestDeviceKeyedCascadeEndDeviceStore_SkipsAFamilyThatIsNotWired(t *testing.
 
 	configurations := memory.NewScopedStore[sep2.Configuration]()
 	inner := memory.NewEndDeviceStore()
-	// DeviceStatuses, PowerStatuses and FSAs are all nil: only Configurations
-	// is wired.
-	s := memory.NewDeviceKeyedCascadeEndDeviceStore(inner, configurations, nil, nil, nil)
+	// DeviceStatuses, PowerStatuses, FSAs and AdminFSAs are all nil: only
+	// Configurations is wired.
+	s := memory.NewDeviceKeyedCascadeEndDeviceStore(inner, configurations, nil, nil, nil, nil)
 	ctx := context.Background()
 
 	dev := sep2.EndDevice{SFDI: "1111111111", LFDI: "AAAA"}

@@ -286,7 +286,7 @@ func TestRegistrationBinding_KeyReuseDoesNotInheritALeftoverRegistration(t *test
 	t.Cleanup(srv.Close)
 
 	// unprovisionedLFDI is the first identity ever registered here, so it
-	// is allocated key "1" -- the key the leftover sits under -- and the
+	// is allocated key "1" - the key the leftover sits under - and the
 	// policy gives it no pIN of its own.
 	dev := register(t, srv, unprovisionedLFDI)
 	if dev.Href != "/edev/1" {

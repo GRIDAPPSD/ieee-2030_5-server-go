@@ -2,6 +2,7 @@ package memory_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	corestore "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -128,6 +130,46 @@ func TestEndDevicePersistence_DeleteThenReload(t *testing.T) {
 	}
 	if _, err := revived.Get(ctx, "dev-B"); err != nil {
 		t.Errorf("dev-B should be present after revive: %v", err)
+	}
+}
+
+// TestEndDevicePersistence_CreateRollsBackWhenTheSnapshotFailsToFlush pins
+// GRIDAPPSD/ieee-2030_5-server-go#721: Create inserts the device and its
+// SFDI/LFDI indexes before it flushes a snapshot, and a failed flush must
+// not leave that insert readable. RegisteredEndDeviceStore.Create trusts a
+// non-nil error here to mean nothing happened before it decides whether the
+// Registration half needs touching; a half-committed device would let it
+// skip that decision while the device stayed servable.
+//
+// The path's parent directory is never created. That makes the cold-boot
+// read at construction (os.ReadFile, ENOENT, no error per readSnapshotEnvelope)
+// succeed while the write at Create time (open a sibling .tmp file for
+// create, also ENOENT, a real error since a write has no cold-boot reading)
+// still fails, which isolates the flush failure this test is about from a
+// construction-time one.
+func TestEndDevicePersistence_CreateRollsBackWhenTheSnapshotFailsToFlush(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	path := filepath.Join(t.TempDir(), "missing-subdir", "snapshot.json")
+
+	s, err := memory.NewEndDeviceStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("NewEndDeviceStoreWithPersistence: %v", err)
+	}
+
+	if err := s.Create(ctx, "1", mkDevice("1", "1111111111", "AAAA")); err == nil {
+		t.Fatal("Create succeeded while the snapshot path could not be written; want an error and nothing stored")
+	}
+
+	if _, err := s.Get(ctx, "1"); !errors.Is(err, corestore.ErrNotFound) {
+		t.Errorf("Get(1) after the failed flush = %v, want ErrNotFound: the insert must be rolled back", err)
+	}
+	if _, err := s.GetBySFDI(ctx, "1111111111"); !errors.Is(err, corestore.ErrNotFound) {
+		t.Errorf("GetBySFDI after the failed flush = %v, want ErrNotFound: the index must be rolled back too", err)
+	}
+	if _, err := s.GetByLFDI(ctx, "AAAA"); !errors.Is(err, corestore.ErrNotFound) {
+		t.Errorf("GetByLFDI after the failed flush = %v, want ErrNotFound: the index must be rolled back too", err)
 	}
 }
 

@@ -232,24 +232,28 @@ func (s *RegisteredEndDeviceStore) Create(ctx context.Context, id string, device
 
 	if !provisioned {
 		if err := s.regs.Delete(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
-			if delErr := s.devs.Delete(ctx, id); delErr != nil {
-				log.Printf("memory: EndDevice %q left stored after a leftover Registration under the same key failed to clear; rollback also failed: %v", id, delErr)
-			}
-			return fmt.Errorf("clearing a leftover Registration for %q: %w", id, err)
+			return s.rollbackAfterFailedRegistration(ctx, id, fmt.Errorf("clearing a leftover Registration for %q: %w", id, err))
 		}
 		return nil
 	}
 
 	if err := s.putRegistration(ctx, id, reg); err != nil {
-		if delErr := s.devs.Delete(ctx, id); delErr != nil {
-			// Both halves failed. Say so: the store is now in the state
-			// this type promises never to publish, and a caller that only
-			// saw the first error would not know to re-check.
-			log.Printf("memory: EndDevice %q left stored after its Registration failed to write; rollback also failed: %v", id, delErr)
-		}
-		return err
+		return s.rollbackAfterFailedRegistration(ctx, id, err)
 	}
 	return nil
+}
+
+// rollbackAfterFailedRegistration removes the EndDevice Create just stored
+// under id, because its Registration half (a write, or the leftover-clearing
+// delete) did not complete, and cause is the error Create reports either
+// way. A rollback failure is logged rather than folded into cause: the store
+// is now in the state this type promises never to publish, and a caller that
+// only saw cause would not know to re-check.
+func (s *RegisteredEndDeviceStore) rollbackAfterFailedRegistration(ctx context.Context, id string, cause error) error {
+	if delErr := s.devs.Delete(ctx, id); delErr != nil {
+		log.Printf("memory: EndDevice %q left stored after %v; rollback also failed: %v", id, cause, delErr)
+	}
+	return cause
 }
 
 // Update replaces the stored EndDevice, re-deriving RegistrationLink from
@@ -285,7 +289,10 @@ func (s *RegisteredEndDeviceStore) probeDelete(ctx context.Context, id string) e
 }
 
 // Delete removes the EndDevice and its Registration together, Registration
-// FIRST.
+// FIRST: a failure removing it leaves the EndDevice untouched, so a retry -
+// HTTP included - still finds the device and reaches this method again,
+// instead of the ownership gate answering 404 on an id already gone
+// (GRIDAPPSD/ieee-2030_5-server-go#721).
 //
 // probeDelete runs first, over the whole chain, so a Registration store
 // that cannot be read for id is refused before this or any layer above it
@@ -293,19 +300,6 @@ func (s *RegisteredEndDeviceStore) probeDelete(ctx context.Context, id string) e
 // LogEvent decorators unprobed, so their cascades could already have run by
 // the time a Registration delete failed here
 // (GRIDAPPSD/ieee-2030_5-server-go#701).
-//
-// The Registration is removed before the EndDevice, and a failure removing
-// it returns immediately without touching the EndDevice at all. The reverse
-// order let a Registration removal failure (a failed persistence flush, for
-// example) leave the EndDevice already gone, and that partial state was
-// unreachable through a retried HTTP DELETE: the ownership gate reads the
-// EndDevice store first and answers 404 on an id that is already absent
-// before this method is ever reached again, so the leftover Registration
-// was never cleaned up through that path
-// (GRIDAPPSD/ieee-2030_5-server-go#721). Removing the Registration first
-// means any failure here leaves the EndDevice present, so a retry -- HTTP
-// included -- reaches this method again instead of being turned away at the
-// gate.
 //
 // The two removals still do not short-circuit each other on the success
 // side: regErr is recorded but not returned early, so a device already

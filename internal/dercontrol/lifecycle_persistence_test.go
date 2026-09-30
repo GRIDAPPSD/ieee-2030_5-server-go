@@ -201,6 +201,53 @@ func TestLifecyclePersistence_DeleteRollsBackOnPersistFailure(t *testing.T) {
 	}
 }
 
+// TestLifecyclePersistence_DeleteRollbackSurvivesNextPersistAndReload is
+// round 3 item 2: the test above reads back through Get, which reads the
+// in-memory collection directly and never consults the key index, so it
+// cannot tell a restored key index apart from a dropped one.
+// snapshotRecords walks the key index, not the collection, so a record
+// whose key entry is not restored is silently missing from the NEXT
+// successful snapshot and lost after a restart, even though Get would
+// still find it in the meantime. This forces a second, unrelated,
+// successful write (the moment that actually loses the data) and reloads
+// from disk.
+func TestLifecyclePersistence_DeleteRollbackSurvivesNextPersistAndReload(t *testing.T) {
+	s, path := newPersistedLifecycleStore(t)
+	ctx := context.Background()
+	cancelledAt := int64(700)
+	kept := LifecycleRecord{CancelledAt: &cancelledAt, CancelReason: "keep me"}
+	if err := s.Create(ctx, "0/0/0", "c1", kept); err != nil {
+		t.Fatalf("seed Create: %v", err)
+	}
+
+	blockLifecyclePersist(t, path)
+	if err := s.Delete(ctx, "0/0/0", "c1"); err == nil {
+		t.Fatal("Delete with a blocked snapshot path returned nil error, want the persist failure")
+	}
+	if err := os.RemoveAll(path + ".tmp"); err != nil {
+		t.Fatalf("unblock persist path: %v", err)
+	}
+
+	if err := s.Create(ctx, "0/0/1", "c2", LifecycleRecord{}); err != nil {
+		t.Fatalf("Create c2 (the write that forces a real snapshot): %v", err)
+	}
+
+	revived, err := NewLifecycleStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	got, err := revived.Get(ctx, "0/0/0", "c1")
+	if err != nil {
+		t.Fatalf("reloaded c1 (whose Delete was rolled back): %v, want it still present", err)
+	}
+	if got.CancelReason != "keep me" || got.CancelledAt == nil || *got.CancelledAt != cancelledAt {
+		t.Errorf("reloaded c1 = %+v, want the seeded value", got)
+	}
+	if _, err := revived.Get(ctx, "0/0/1", "c2"); err != nil {
+		t.Errorf("reloaded c2: %v, want it present too", err)
+	}
+}
+
 func TestLifecyclePersistence_Persists(t *testing.T) {
 	mem := NewLifecycleStore()
 	if mem.Persists() {

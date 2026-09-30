@@ -191,6 +191,42 @@ func TestDERControlPersistence_UpdateRefusesDuplicateMRID(t *testing.T) {
 	}
 }
 
+// TestDERControlPersistence_UpdateKeepingOwnMRIDAllowed is
+// GRIDAPPSD/ieee-2030_5-server-go#565 round 3 item 3: the mRID-conflict
+// check (round 2 item 2) must not refuse an Update that keeps a control's
+// own current mRID unchanged. mridOwner resolves to this record's own key
+// in that case, and the check's `owner != key` term is exactly what lets
+// it through; a mutant that checked presence alone (`ok`) without
+// comparing to this record's own key would wrongly refuse it.
+func TestDERControlPersistence_UpdateKeepingOwnMRIDAllowed(t *testing.T) {
+	s, _ := newPersistedDERControlStore(t)
+	ctx := context.Background()
+	original := mkControl("SAME", 100)
+	if err := s.Create(ctx, "0/0/0", "c1", original); err != nil {
+		t.Fatalf("seed Create: %v", err)
+	}
+
+	updated := mkControl("SAME", 200) // same mRID, changed field
+	if err := s.Update(ctx, "0/0/0", "c1", updated); err != nil {
+		t.Fatalf("Update keeping its own mRID: %v, want success", err)
+	}
+
+	got, err := s.Get(ctx, "0/0/0", "c1")
+	if err != nil {
+		t.Fatalf("Get after Update: %v", err)
+	}
+	if got.CreationTime != 200 {
+		t.Errorf("CreationTime after Update = %d, want 200", got.CreationTime)
+	}
+	parentID, id, _, err := s.ByMRID(ctx, "SAME")
+	if err != nil {
+		t.Fatalf("ByMRID(SAME) after Update: %v", err)
+	}
+	if parentID != "0/0/0" || id != "c1" {
+		t.Errorf("ByMRID(SAME) = (%q, %q), want (\"0/0/0\", \"c1\")", parentID, id)
+	}
+}
+
 // blockPersist creates a non-empty directory at <path>.tmp so
 // atomicfile.Write's os.OpenFile fails with EISDIR regardless of which user
 // runs the test: chmod-based unwritability is bypassed by root, but no user
@@ -281,6 +317,53 @@ func TestDERControlPersistence_DeleteRollsBackOnPersistFailure(t *testing.T) {
 	}
 	if _, _, _, err := s.ByMRID(ctx, "KEEP"); err != nil {
 		t.Errorf("ByMRID after a failed Delete: %v, want the index restored", err)
+	}
+}
+
+// TestDERControlPersistence_DeleteRollbackSurvivesNextPersistAndReload is
+// GRIDAPPSD/ieee-2030_5-server-go#565 round 3 item 2: the rollback test
+// above reads back through Get, which reads the in-memory collection
+// directly and never consults the key index, so it cannot tell a restored
+// key index apart from a dropped one. snapshotRecords walks the key
+// index, not the collection, so a record whose key entry is not restored
+// is silently missing from the NEXT successful snapshot and lost after a
+// restart, even though Get would still find it in the meantime. This
+// forces a second, unrelated, successful write (the moment that actually
+// loses the data) and reloads from disk.
+func TestDERControlPersistence_DeleteRollbackSurvivesNextPersistAndReload(t *testing.T) {
+	s, path := newPersistedDERControlStore(t)
+	ctx := context.Background()
+	kept := mkControl("KEPT", 100)
+	if err := s.Create(ctx, "0/0/0", "c1", kept); err != nil {
+		t.Fatalf("seed Create: %v", err)
+	}
+
+	blockPersist(t, path)
+	if err := s.Delete(ctx, "0/0/0", "c1"); err == nil {
+		t.Fatal("Delete with a blocked snapshot path returned nil error, want the persist failure")
+	}
+	if err := os.RemoveAll(path + ".tmp"); err != nil {
+		t.Fatalf("unblock persist path: %v", err)
+	}
+
+	other := mkControl("OTHER", 200)
+	if err := s.Create(ctx, "0/0/1", "c2", other); err != nil {
+		t.Fatalf("Create c2 (the write that forces a real snapshot): %v", err)
+	}
+
+	revived, err := memory.NewDERControlStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	got, err := revived.Get(ctx, "0/0/0", "c1")
+	if err != nil {
+		t.Fatalf("reloaded c1 (whose Delete was rolled back): %v, want it still present", err)
+	}
+	if got.MRID != "KEPT" {
+		t.Errorf("reloaded c1 MRID = %q, want KEPT", got.MRID)
+	}
+	if _, err := revived.Get(ctx, "0/0/1", "c2"); err != nil {
+		t.Errorf("reloaded c2: %v, want it present too", err)
 	}
 }
 

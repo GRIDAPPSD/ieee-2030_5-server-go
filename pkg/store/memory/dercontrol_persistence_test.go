@@ -117,6 +117,80 @@ func TestDERControlPersistence_ByMRIDAfterReload(t *testing.T) {
 	}
 }
 
+// TestDERControlPersistence_CreateRefusesDuplicateMRID is
+// GRIDAPPSD/ieee-2030_5-server-go#565 round 2 item 2: addMRID used to take
+// over the index entry silently when a second control carried the same
+// mRID as a live one, so ByMRID could stop resolving the first, untouched
+// control. Create now refuses instead, and the first control's index
+// entry and stored record are both provably unaffected by the refused
+// attempt.
+func TestDERControlPersistence_CreateRefusesDuplicateMRID(t *testing.T) {
+	s, _ := newPersistedDERControlStore(t)
+	ctx := context.Background()
+	first := mkControl("SHARED", 100)
+	if err := s.Create(ctx, "0/0/0", "c1", first); err != nil {
+		t.Fatalf("seed Create: %v", err)
+	}
+
+	second := mkControl("SHARED", 200)
+	err := s.Create(ctx, "0/0/1", "c2", second)
+	if !errors.Is(err, memory.ErrMRIDConflict) {
+		t.Fatalf("Create with a duplicate mRID error = %v, want ErrMRIDConflict", err)
+	}
+
+	if _, err := s.Get(ctx, "0/0/1", "c2"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Get(c2) after the refused Create = %v, want ErrNotFound: nothing must be stored", err)
+	}
+	parentID, id, got, err := s.ByMRID(ctx, "SHARED")
+	if err != nil {
+		t.Fatalf("ByMRID(SHARED) after the refused Create: %v", err)
+	}
+	if parentID != "0/0/0" || id != "c1" {
+		t.Errorf("ByMRID(SHARED) = (%q, %q), want (\"0/0/0\", \"c1\"): the first control's entry must survive", parentID, id)
+	}
+	if got.CreationTime != first.CreationTime {
+		t.Errorf("ByMRID(SHARED) control = %+v, want the first control's own value", got)
+	}
+}
+
+// TestDERControlPersistence_UpdateRefusesDuplicateMRID is round 2 item 2's
+// Update half: changing a control's mRID to one another control already
+// owns must refuse the same way Create does, leaving both controls'
+// stored values and index entries exactly as they were.
+func TestDERControlPersistence_UpdateRefusesDuplicateMRID(t *testing.T) {
+	s, _ := newPersistedDERControlStore(t)
+	ctx := context.Background()
+	a := mkControl("MRID-A", 100)
+	if err := s.Create(ctx, "0/0/0", "a", a); err != nil {
+		t.Fatalf("seed Create a: %v", err)
+	}
+	b := mkControl("MRID-B", 200)
+	if err := s.Create(ctx, "0/0/1", "b", b); err != nil {
+		t.Fatalf("seed Create b: %v", err)
+	}
+
+	collide := mkControl("MRID-A", 300)
+	err := s.Update(ctx, "0/0/1", "b", collide)
+	if !errors.Is(err, memory.ErrMRIDConflict) {
+		t.Fatalf("Update with a duplicate mRID error = %v, want ErrMRIDConflict", err)
+	}
+
+	gotB, err := s.Get(ctx, "0/0/1", "b")
+	if err != nil {
+		t.Fatalf("Get(b) after the refused Update: %v", err)
+	}
+	if gotB.MRID != "MRID-B" {
+		t.Errorf("b.MRID after the refused Update = %q, want the unchanged MRID-B", gotB.MRID)
+	}
+	parentID, id, _, err := s.ByMRID(ctx, "MRID-A")
+	if err != nil {
+		t.Fatalf("ByMRID(MRID-A) after the refused Update: %v", err)
+	}
+	if parentID != "0/0/0" || id != "a" {
+		t.Errorf("ByMRID(MRID-A) = (%q, %q), want (\"0/0/0\", \"a\"): a's entry must survive", parentID, id)
+	}
+}
+
 // blockPersist creates a non-empty directory at <path>.tmp so
 // atomicfile.Write's os.OpenFile fails with EISDIR regardless of which user
 // runs the test: chmod-based unwritability is bypassed by root, but no user

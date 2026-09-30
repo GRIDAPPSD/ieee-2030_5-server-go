@@ -94,6 +94,14 @@ func (s *LifecycleStore) Persists() bool {
 	return s.persistPath != ""
 }
 
+// RollsBackOnFailure reports true: a failed Create, Update or Delete
+// already restores the collection to its pre-call state (see the type doc
+// comment). Issuer uses this to skip a redundant compensating write
+// against its own just-failed write (round 2, item 1).
+func (s *LifecycleStore) RollsBackOnFailure() bool {
+	return true
+}
+
 func readLifecycleEnvelope(path string) (*lifecycleEnvelope, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

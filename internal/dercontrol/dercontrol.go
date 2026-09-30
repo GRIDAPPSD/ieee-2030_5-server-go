@@ -220,6 +220,23 @@ type lifecycleStore interface {
 	Delete(ctx context.Context, parentID, id string) error
 }
 
+// selfRollingBack is implemented by a store whose failed Create, Update or
+// Delete already leaves the collection exactly as it was before the call:
+// memory.DERControlStore and LifecycleStore both do this
+// (GRIDAPPSD/ieee-2030_5-server-go#565 fix round 1's rollback-on-persist-
+// failure). Issuer checks for it before compensating its OWN just-failed
+// write with another write to the same record: against such a store there
+// is nothing left to fix, and attempting one anyway can itself fail for
+// the same underlying reason the forward write did, turning a definite
+// outcome ("the record equals what Cancel read") into an uncertain
+// UndoError ("the record may or may not...") for no reason (round 2,
+// item 1). It does not apply to a compensating write that undoes a
+// DIFFERENT, previously SUCCESSFUL write: that revert is still a genuine
+// action whose own failure is genuinely uncertain.
+type selfRollingBack interface {
+	RollsBackOnFailure() bool
+}
+
 // Config holds the issuer's tunables. A zero StartLead, MinDuration or
 // MaxDuration takes the package default. A configured (non-zero) bound must
 // be a positive whole number of seconds, and MinDuration must not exceed

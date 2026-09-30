@@ -120,6 +120,16 @@ func (s *DERControlStore) Persists() bool {
 	return s.persistPath != ""
 }
 
+// RollsBackOnFailure reports true: a failed Create, Update or Delete
+// already restores the collection to its pre-call state (see the type doc
+// comment's "Rollback on a failed snapshot write" section). A caller such
+// as internal/dercontrol.Issuer that would otherwise compensate its own
+// just-failed write with another write to the same record can skip that
+// redundant write: there is nothing left to fix.
+func (s *DERControlStore) RollsBackOnFailure() bool {
+	return true
+}
+
 func (s *DERControlStore) loadFromFile(path string) error {
 	env, err := readSnapshotEnvelope(path)
 	if err != nil {
@@ -201,6 +211,27 @@ func (s *DERControlStore) dropMRID(mrid string) {
 	defer s.mridMu.Unlock()
 	delete(s.mrid, mrid)
 }
+
+// mridOwner returns the (parentID, id) currently indexed for mrid, or
+// false if none is. A blank mrid is never indexed (see addMRID).
+func (s *DERControlStore) mridOwner(mrid string) (derControlKey, bool) {
+	if mrid == "" {
+		return derControlKey{}, false
+	}
+	s.mridMu.Lock()
+	defer s.mridMu.Unlock()
+	key, ok := s.mrid[mrid]
+	return key, ok
+}
+
+// ErrMRIDConflict is returned by Create or Update when the control's mRID
+// is already indexed under a DIFFERENT (parentID, id). addMRID used to
+// take over the index entry silently: a second control minted or seeded
+// with the same mRID as a live one displaced it, and rolling the second
+// write back on a persist failure then dropped the index entry the FIRST,
+// still-live control legitimately owned, leaving ByMRID answer
+// ErrNotFound for it (round 2, item 2).
+var ErrMRIDConflict = errors.New("dercontrol persistence: mRID already indexed to a different control")
 
 // ByMRID returns the control stored under the given mRID, or ErrNotFound.
 // The index is rebuilt from the reloaded stores at construction time
@@ -287,15 +318,23 @@ func (s *DERControlStore) Parents(ctx context.Context) ([]string, error) {
 // in-memory write, the key index and the mRID index are all rolled back
 // before the error returns (see the type doc comment): the caller never
 // observes a Get or ByMRID succeeding for a write this call reported as
-// failed.
+// failed. A non-blank control.MRID already indexed under a different
+// (parentID, id) refuses with ErrMRIDConflict and stores nothing (round 2,
+// item 2): the index maps one mRID to one control, and a second writer
+// silently taking over the entry is what let ByMRID answer ErrNotFound for
+// a control that was never touched.
 func (s *DERControlStore) Create(ctx context.Context, parentID, id string, control sep2.DERControl) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
+	key := derControlKey{ParentID: parentID, ID: id}
+	if owner, ok := s.mridOwner(control.MRID); ok && owner != key {
+		return fmt.Errorf("%w: %q owned by %s/%s", ErrMRIDConflict, control.MRID, owner.ParentID, owner.ID)
+	}
+
 	if err := s.inner.Create(ctx, parentID, id, control); err != nil {
 		return err
 	}
-	key := derControlKey{ParentID: parentID, ID: id}
 	s.addKey(parentID, id)
 	s.addMRID(control.MRID, key)
 	if s.afterMutateBeforePersist != nil {
@@ -313,10 +352,18 @@ func (s *DERControlStore) Create(ctx context.Context, parentID, id string, contr
 }
 
 // Update replaces a control and flushes a snapshot, rolling back to the
-// prior value on a persist failure (see the type doc comment).
+// prior value on a persist failure (see the type doc comment). A change of
+// MRID to one already indexed under a different (parentID, id) refuses
+// with ErrMRIDConflict and stores nothing, for the same reason Create does
+// (round 2, item 2).
 func (s *DERControlStore) Update(ctx context.Context, parentID, id string, control sep2.DERControl) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+
+	key := derControlKey{ParentID: parentID, ID: id}
+	if owner, ok := s.mridOwner(control.MRID); ok && owner != key {
+		return fmt.Errorf("%w: %q owned by %s/%s", ErrMRIDConflict, control.MRID, owner.ParentID, owner.ID)
+	}
 
 	before, err := s.inner.Get(ctx, parentID, id)
 	if err != nil {
@@ -325,7 +372,6 @@ func (s *DERControlStore) Update(ctx context.Context, parentID, id string, contr
 	if err := s.inner.Update(ctx, parentID, id, control); err != nil {
 		return err
 	}
-	key := derControlKey{ParentID: parentID, ID: id}
 	if before.MRID != control.MRID {
 		s.dropMRID(before.MRID)
 		s.addMRID(control.MRID, key)

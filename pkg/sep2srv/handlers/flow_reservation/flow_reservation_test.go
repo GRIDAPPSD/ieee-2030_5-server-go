@@ -3,48 +3,62 @@ package flow_reservation_test
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/flow_reservation"
-	corelisthandler "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/listhandler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
-// TestHandlePostFlowReservationRequest_ResponseCarriesCreationTime asserts the
-// auto-approved FlowReservationResponse gets a real creationTime.
-//
-// FlowReservationResponse embeds RandomizableEvent, so it inherits Event's
-// required creationTime. The field has no omitempty by design: an unset value
-// serializes as a visible <creationTime>0</creationTime> rather than vanishing.
-// That makes a missing producer parseable instead of loud, which is worse, not
-// better: IEEE 2030.5 resolves two overlapping events of equal primacy by
-// comparing creationTime, and the EPRI reference client's block_supersede tests
-// x->creationTime > y->creationTime. With both events at 0 the comparison is
-// false in BOTH directions, neither event wins, and the INCOMING one is
-// discarded. A server that leaves creationTime unset cannot replace a control it
-// already issued.
-//
-// So the assertion here is deliberately NOT "the element is present": that would
-// pass against the broken code. It asserts the value is non-zero and inside the
-// window the request was served in.
-func TestHandlePostFlowReservationRequest_ResponseCarriesCreationTime(t *testing.T) {
+// stubSubmitter records every Submit call instead of scheduling a real
+// deadline fallback: #666 moved response-building (mRID, subject, status,
+// the deadline itself) into internal/flowreservation.Queue, which has its
+// own tests. This package's tests only need to prove the handler stores the
+// request correctly and hands it to Submitter exactly once, or not at all
+// when validation refuses the body.
+type stubSubmitter struct {
+	mu    sync.Mutex
+	calls []submitCall
+}
+
+type submitCall struct {
+	edevID, frqID string
+	frq           sep2.FlowReservationRequest
+	createdAt     int64
+}
+
+func (s *stubSubmitter) Submit(edevID, frqID string, frq sep2.FlowReservationRequest, createdAt int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, submitCall{edevID, frqID, frq, createdAt})
+}
+
+func (s *stubSubmitter) submitted() []submitCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]submitCall(nil), s.calls...)
+}
+
+// TestHandlePostFlowReservationRequest_SubmitsStoredRequestToQueue is #666's
+// first criterion at the handler's boundary: POST stores the request, stamps
+// its own creationTime, and hands it to Submitter exactly once with the
+// same createdAt, building no response itself.
+func TestHandlePostFlowReservationRequest_SubmitsStoredRequestToQueue(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
-	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+	sub := &stubSubmitter{}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, sub))
 
 	energy := sep2.SignedRealEnergy{Value: 10000}
 	frq := sep2.FlowReservationRequest{
@@ -66,8 +80,6 @@ func TestHandlePostFlowReservationRequest_ResponseCarriesCreationTime(t *testing
 		t.Fatalf("status = %d, want 201, body: %s", w.Code, w.Body.String())
 	}
 
-	// The request path already set its own creationTime; assert it still does,
-	// so a regression there is caught by the same test that covers the response.
 	stored, err := frqStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
 	if err != nil {
 		t.Fatalf("list stored requests: %v", err)
@@ -79,38 +91,26 @@ func TestHandlePostFlowReservationRequest_ResponseCarriesCreationTime(t *testing
 		t.Errorf("stored request CreationTime = %d, want server clock in [%d, %d]", ct, before, after)
 	}
 
-	// The auto-approved response is the card's subject: it was constructed
-	// without a creationTime producer.
-	responses, err := frpStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
-	if err != nil {
-		t.Fatalf("list stored responses: %v", err)
+	calls := sub.submitted()
+	if len(calls) != 1 {
+		t.Fatalf("Submit calls = %d, want 1; the handler must build no response itself", len(calls))
 	}
-	if len(responses.Items) != 1 {
-		t.Fatalf("stored response count = %d, want 1", len(responses.Items))
+	call := calls[0]
+	if call.edevID != "dev1" {
+		t.Errorf("Submit edevID = %q, want %q", call.edevID, "dev1")
 	}
-	frp := responses.Items[0]
-	if frp.CreationTime == 0 {
-		t.Errorf("stored FlowReservationResponse CreationTime = 0; a client comparing creationTime to resolve supersession will discard the incoming event in both directions")
+	if call.frq.MRID != "FRQ001" {
+		t.Errorf("Submit frq.MRID = %q, want %q", call.frq.MRID, "FRQ001")
 	}
-	if frp.CreationTime < before || frp.CreationTime > after {
-		t.Errorf("stored FlowReservationResponse CreationTime = %d, want server clock in [%d, %d]", frp.CreationTime, before, after)
-	}
-
-	// Same assertion at the wire level: the value a client actually parses.
-	// Marshal the stored resource the way a GET /edev/{id}/frp/{id} would.
-	served, err := xml.Marshal(&frp)
-	if err != nil {
-		t.Fatalf("marshal stored response: %v", err)
-	}
-	if strings.Contains(string(served), "<creationTime>0</creationTime>") {
-		t.Errorf("served FlowReservationResponse carries <creationTime>0</creationTime>:\n%s", served)
+	if call.createdAt != stored.Items[0].CreationTime {
+		t.Errorf("Submit createdAt = %d, want the stored request's CreationTime %d", call.createdAt, stored.Items[0].CreationTime)
 	}
 }
 
 // TestHandlePostResponse_CarriesCreatedDateTime covers the sibling Response
 // resource on the same handler file. Response is NOT Event-derived: it carries
 // createdDateTime, a distinct field. It has always had a producer; this locks
-// that in alongside the Event-derived assertion above.
+// that in alongside the request-side assertion above.
 func TestHandlePostResponse_CarriesCreatedDateTime(t *testing.T) {
 	t.Parallel()
 	rspStore := memory.NewScopedStore[sep2.Response]()
@@ -163,10 +163,10 @@ func TestHandlePostFlowReservationRequest_InvalidXMLDoesNotLeakDecoderDetail(t *
 	})
 
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
-	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+	sub := &stubSubmitter{}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, sub))
 
 	req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", strings.NewReader("<"+marker+">bar</"+marker+">"))
 	w := httptest.NewRecorder()
@@ -180,6 +180,9 @@ func TestHandlePostFlowReservationRequest_InvalidXMLDoesNotLeakDecoderDetail(t *
 	}
 	if logged := buf.String(); !strings.Contains(logged, marker) {
 		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
+	}
+	if len(sub.submitted()) != 0 {
+		t.Errorf("Submit calls = %d, want 0 for a refused body", len(sub.submitted()))
 	}
 }
 
@@ -222,129 +225,16 @@ func TestHandlePostResponse_InvalidXMLDoesNotLeakDecoderDetail(t *testing.T) {
 	}
 }
 
-// TestHandlePostFlowReservationRequest_ResponseMRIDViaListRoute is #665's
-// first and second criteria: the auto-created response carries a 128-bit
-// mRID as 32 uppercase hex digits, read back the way a client actually reads
-// it (GET the list, not the store directly), and two responses created in
-// the same run get distinct mRIDs.
-//
-// The list route is wired here the same way pkg/sep2srv/assembly mounts
-// GET /edev/{id}/frp: a per-parent store.Under view fed to the generic list
-// handler. Reproduced from exported symbols rather than importing assembly,
-// to keep this a handler-package test.
-func TestHandlePostFlowReservationRequest_ResponseMRIDViaListRoute(t *testing.T) {
-	t.Parallel()
-	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
-	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
-	mux.HandleFunc("GET /edev/{id}/frp", func(w http.ResponseWriter, r *http.Request) {
-		scoped := store.Under[sep2.FlowReservationResponse](frpStore, r.PathValue("id"))
-		corelisthandler.ListHandler[sep2.FlowReservationResponse, sep2.FlowReservationResponseList](
-			scoped, flow_reservation.BuildFlowReservationResponseList, 900,
-		).ServeHTTP(w, r)
-	})
-
-	post := func(mrid string) {
-		energy := sep2.SignedRealEnergy{Value: 10000}
-		frq := sep2.FlowReservationRequest{MRID: mrid, EnergyRequested: &energy}
-		body, err := xml.Marshal(&frq)
-		if err != nil {
-			t.Fatalf("marshal request: %v", err)
-		}
-		req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", bytes.NewReader(body))
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
-		if w.Code != http.StatusCreated {
-			t.Fatalf("POST status = %d, want 201, body: %s", w.Code, w.Body.String())
-		}
-	}
-	post("FRQ001")
-	post("FRQ002")
-
-	req := httptest.NewRequest(http.MethodGet, "/edev/dev1/frp", nil)
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("GET status = %d, want 200, body: %s", w.Code, w.Body.String())
-	}
-
-	var list sep2.FlowReservationResponseList
-	if err := xml.Unmarshal(w.Body.Bytes(), &list); err != nil {
-		t.Fatalf("unmarshal list: %v, body: %s", err, w.Body.String())
-	}
-	if len(list.FlowReservationResponse) != 2 {
-		t.Fatalf("responses in list = %d, want 2", len(list.FlowReservationResponse))
-	}
-
-	const hexDigits = "0123456789ABCDEF"
-	for i, frp := range list.FlowReservationResponse {
-		if len(frp.MRID) != 32 {
-			t.Errorf("response %d MRID = %q, want 32 hex digits", i, frp.MRID)
-			continue
-		}
-		if _, err := hex.DecodeString(frp.MRID); err != nil {
-			t.Errorf("response %d MRID = %q, not hex: %v", i, frp.MRID, err)
-		}
-		for _, c := range frp.MRID {
-			if !strings.ContainsRune(hexDigits, c) {
-				t.Errorf("response %d MRID = %q contains %q, want only uppercase hex digits", i, frp.MRID, c)
-				break
-			}
-		}
-	}
-	if list.FlowReservationResponse[0].MRID == list.FlowReservationResponse[1].MRID {
-		t.Errorf("both responses carry MRID %q; two responses created in the same run must differ", list.FlowReservationResponse[0].MRID)
-	}
-}
-
-// TestHandlePostFlowReservationRequest_ResponseSubjectEqualsRequestMRID pins
-// #665's third criterion: subject must equal the originating request's mRID.
-// The handler already set this field; nothing asserted it.
-func TestHandlePostFlowReservationRequest_ResponseSubjectEqualsRequestMRID(t *testing.T) {
-	t.Parallel()
-	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
-	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
-
-	energy := sep2.SignedRealEnergy{Value: 5000}
-	frq := sep2.FlowReservationRequest{MRID: "REQMRID123", EnergyRequested: &energy}
-	body, err := xml.Marshal(&frq)
-	if err != nil {
-		t.Fatalf("marshal request: %v", err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201, body: %s", w.Code, w.Body.String())
-	}
-
-	responses, err := frpStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
-	if err != nil {
-		t.Fatalf("list stored responses: %v", err)
-	}
-	if len(responses.Items) != 1 {
-		t.Fatalf("stored response count = %d, want 1", len(responses.Items))
-	}
-	if got := responses.Items[0].Subject; got != "REQMRID123" {
-		t.Errorf("stored FlowReservationResponse Subject = %q, want the request mRID %q", got, "REQMRID123")
-	}
-}
-
 // TestHandlePostFlowReservationRequest_MissingRequestMRIDRefused pins #665's
 // fourth criterion: a request with no mRID is refused with 400 rather than
-// producing a response whose subject nobody can match to a bid.
+// stored and handed to the queue for a response nobody could address.
 func TestHandlePostFlowReservationRequest_MissingRequestMRIDRefused(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
-	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+	sub := &stubSubmitter{}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, sub))
 
 	energy := sep2.SignedRealEnergy{Value: 5000}
 	frq := sep2.FlowReservationRequest{EnergyRequested: &energy} // no MRID
@@ -367,19 +257,15 @@ func TestHandlePostFlowReservationRequest_MissingRequestMRIDRefused(t *testing.T
 	if len(stored.Items) != 0 {
 		t.Errorf("stored request count = %d, want 0; a request with no mRID must not be stored", len(stored.Items))
 	}
-	responses, err := frpStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
-	if err != nil {
-		t.Fatalf("list stored responses: %v", err)
-	}
-	if len(responses.Items) != 0 {
-		t.Errorf("stored response count = %d, want 0; no response should be auto-created for a refused request", len(responses.Items))
+	if len(sub.submitted()) != 0 {
+		t.Errorf("Submit calls = %d, want 0; no response should ever be built for a refused request", len(sub.submitted()))
 	}
 }
 
 // TestHandlePostFlowReservationRequest_WhitespaceOnlyMRIDRefused extends the
 // missing-mRID criterion: encoding/xml does not trim element content, so
 // "<mRID>   </mRID>" unmarshals to a non-empty string that the bare "== """
-// check let through, storing a response whose subject is meaningless
+// check let through, storing a request whose subject is meaningless
 // whitespace. A whitespace-only mRID carries no more identity than an absent
 // one and must be refused the same way.
 //
@@ -402,10 +288,10 @@ func TestHandlePostFlowReservationRequest_WhitespaceOnlyMRIDRefused(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
-			frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+			sub := &stubSubmitter{}
 
 			mux := http.NewServeMux()
-			mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
+			mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, sub))
 
 			body := `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>` + tc.mrid + `</mRID>` +
 				`<RequestStatus><dateTime>1727136000</dateTime><requestStatus>0</requestStatus></RequestStatus></FlowReservationRequest>`
@@ -427,66 +313,17 @@ func TestHandlePostFlowReservationRequest_WhitespaceOnlyMRIDRefused(t *testing.T
 			if len(stored.Items) != 0 {
 				t.Errorf("stored request count = %d, want 0; a whitespace-only mRID must not be stored", len(stored.Items))
 			}
-			responses, err := frpStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
-			if err != nil {
-				t.Fatalf("list stored responses: %v", err)
-			}
-			if len(responses.Items) != 0 {
-				t.Errorf("stored response count = %d, want 0", len(responses.Items))
+			if len(sub.submitted()) != 0 {
+				t.Errorf("Submit calls = %d, want 0", len(sub.submitted()))
 			}
 		})
-	}
-}
-
-// TestHandlePostFlowReservationRequest_WithPEN_LowBitsArePEN is fix round
-// 2's PEN criterion, exercised through the handler HandlePostFlowReservationRequest
-// is actually called with, not just the internal mint function: a
-// configured PEN reaches the stored response's mRID with its value in the
-// low 32 bits, the same place internal/dercontrol embeds one for a
-// DERControl mRID.
-func TestHandlePostFlowReservationRequest_WithPEN_LowBitsArePEN(t *testing.T) {
-	t.Parallel()
-	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
-	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-
-	pen := uint32(0x40732001)
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, &pen))
-
-	energy := sep2.SignedRealEnergy{Value: 10000}
-	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &energy}
-	body, err := xml.Marshal(&frq)
-	if err != nil {
-		t.Fatalf("marshal request: %v", err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", bytes.NewReader(body))
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201, body: %s", w.Code, w.Body.String())
-	}
-
-	responses, err := frpStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
-	if err != nil {
-		t.Fatalf("list stored responses: %v", err)
-	}
-	if len(responses.Items) != 1 {
-		t.Fatalf("stored response count = %d, want 1", len(responses.Items))
-	}
-	got := responses.Items[0].MRID
-	raw, err := hex.DecodeString(got)
-	if err != nil {
-		t.Fatalf("MRID %q is not hex: %v", got, err)
-	}
-	if gotPEN := binary.BigEndian.Uint32(raw[12:]); gotPEN != pen {
-		t.Fatalf("low 32 bits of MRID %q = %#x, want configured PEN %#x", got, gotPEN, pen)
 	}
 }
 
 // TestHandlePostFlowReservationRequest_RequestStatusRefused is #692's three
 // acceptance criteria: a body with no RequestStatus, an out-of-range
 // requestStatus, or a negative dateTime is refused, storing neither the
-// request nor an auto-approved response for it.
+// request nor handing it to the queue.
 //
 // Each body is hand-crafted XML, not marshalled from sep2.FlowReservationRequest:
 // RequestStatus is a value field there, so a struct literal always emits it
@@ -579,10 +416,10 @@ func TestHandlePostFlowReservationRequest_RequestStatusRefused(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
-			frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+			sub := &stubSubmitter{}
 
 			mux := http.NewServeMux()
-			mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
+			mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, sub))
 
 			req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", strings.NewReader(tc.body))
 			w := httptest.NewRecorder()
@@ -599,12 +436,8 @@ func TestHandlePostFlowReservationRequest_RequestStatusRefused(t *testing.T) {
 			if len(stored.Items) != 0 {
 				t.Errorf("stored request count = %d, want 0; an invalid RequestStatus must not be stored", len(stored.Items))
 			}
-			responses, err := frpStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
-			if err != nil {
-				t.Fatalf("list stored responses: %v", err)
-			}
-			if len(responses.Items) != 0 {
-				t.Errorf("stored response count = %d, want 0; no response should be auto-created for a refused request", len(responses.Items))
+			if len(sub.submitted()) != 0 {
+				t.Errorf("Submit calls = %d, want 0", len(sub.submitted()))
 			}
 		})
 	}
@@ -627,10 +460,10 @@ func TestHandlePostFlowReservationRequest_RequestStatusValidValuesAccepted(t *te
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
-			frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+			sub := &stubSubmitter{}
 
 			mux := http.NewServeMux()
-			mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
+			mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, sub))
 
 			body := fmt.Sprintf(
 				`<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>`+
@@ -657,6 +490,14 @@ func TestHandlePostFlowReservationRequest_RequestStatusValidValuesAccepted(t *te
 			}
 			if got := stored.Items[0].RequestStatus.RequestStatus; got != tc.status {
 				t.Errorf("stored RequestStatus.requestStatus = %d, want %d", got, tc.status)
+			}
+
+			calls := sub.submitted()
+			if len(calls) != 1 {
+				t.Fatalf("Submit calls = %d, want 1", len(calls))
+			}
+			if calls[0].frq.RequestStatus.RequestStatus != tc.status {
+				t.Errorf("Submit frq.RequestStatus.requestStatus = %d, want %d", calls[0].frq.RequestStatus.RequestStatus, tc.status)
 			}
 		})
 	}

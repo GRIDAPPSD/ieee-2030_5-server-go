@@ -103,13 +103,10 @@ func TestFlowReservationRequest_ConformingBodyIsAccepted(t *testing.T) {
 	}
 
 	// The server derives its own grant from those elements, so a silent drop
-	// upstream shows up here as a reservation granting nothing.
-	listResp, err := http.Get(srv.URL + "/edev/e1/frp")
-	if err != nil {
-		t.Fatalf("GET /edev/e1/frp: %v", err)
-	}
-	var list sep2.FlowReservationResponseList
-	decodeXML(t, listResp, &list)
+	// upstream shows up here as a reservation granting nothing. #666: the
+	// grant comes from the deadline fallback, built asynchronously, since
+	// nothing here answers explicitly.
+	list := waitForFRPList(t, srv, "/edev/e1/frp", 1)
 	if len(list.FlowReservationResponse) != 1 {
 		t.Fatalf("FlowReservationResponseList has %d members, want 1", len(list.FlowReservationResponse))
 	}

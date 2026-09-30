@@ -6,10 +6,31 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 )
+
+// waitForFRPCount polls parentID's FlowReservationResponse count for up to
+// 2s: #666's deadline fallback answers asynchronously, so a control that
+// reads the store right after POST must give it time to fire.
+func waitForFRPCount(t *testing.T, stores *assembly.Stores, parentID string, want uint32) {
+	t.Helper()
+	ctx := context.Background()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		n, err := stores.FlowReservationResponses.Count(ctx, parentID)
+		if err != nil {
+			t.Fatalf("control: FlowReservationResponses under %s: %v", parentID, err)
+		}
+		if n >= want {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("control: FlowReservationResponses under %s did not reach %d within 2s", parentID, want)
+}
 
 // TestEndDeviceDelete_CascadesFlowReservationAndLogEventRecords is the
 // end-to-end pin for GRIDAPPSD/ieee-2030_5-server-go#701: DELETE /edev/{id}
@@ -22,7 +43,7 @@ func TestEndDeviceDelete_CascadesFlowReservationAndLogEventRecords(t *testing.T)
 	stores := testStores()
 	seedOwnedDevices(t, stores.EndDevices, "e1")
 	handler, _ := assembly.BuildProtocolRouter(
-		assembly.RouterConfig{},
+		assembly.RouterConfig{FlowReservationDeadline: 20 * time.Millisecond},
 		stores,
 		testAuthPolicy(),
 		testSFDI, testLFDI,
@@ -38,13 +59,12 @@ func TestEndDeviceDelete_CascadesFlowReservationAndLogEventRecords(t *testing.T)
 
 	// Control: the records exist under "e1" before the delete, so the zero
 	// counts asserted below mean the cascade ran rather than nothing having
-	// been seeded.
+	// been seeded. #666: the response is built by the deadline fallback, not
+	// synchronously by the POST, so this control waits for it.
 	if n, err := stores.FlowReservationRequests.Count(ctx, "e1"); err != nil || n != 1 {
 		t.Fatalf("control: FlowReservationRequests under e1 = %d, %v, want 1, nil", n, err)
 	}
-	if n, err := stores.FlowReservationResponses.Count(ctx, "e1"); err != nil || n != 1 {
-		t.Fatalf("control: FlowReservationResponses under e1 = %d, %v, want 1, nil", n, err)
-	}
+	waitForFRPCount(t, stores, "e1", 1)
 	if n, err := stores.LogEvents.Count(ctx, "e1"); err != nil || n != 1 {
 		t.Fatalf("control: LogEvents under e1 = %d, %v, want 1, nil", n, err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,6 +72,67 @@ type FRPCreator interface {
 	Create(ctx context.Context, parentID, id string, resource sep2.FlowReservationResponse) error
 }
 
+// requestStatusPresence decodes only whether RequestStatus and its two
+// children were present in the document, using pointer fields.
+// sep2.FlowReservationRequest cannot make that distinction: RequestStatus is
+// a value there (core flow_reservation.go: a served response must always
+// emit the mandatory element), so a request that omitted it decodes to the
+// same {0, 0} as one that sent <dateTime>0</dateTime><requestStatus>0
+// </requestStatus> (#692). This type exists to check the document, not the
+// struct.
+type requestStatusPresence struct {
+	XMLName       xml.Name `xml:"urn:ieee:std:2030.5:ns FlowReservationRequest"`
+	RequestStatus *struct {
+		DateTime      *int64 `xml:"dateTime"`
+		RequestStatus *uint8 `xml:"requestStatus"`
+	} `xml:"RequestStatus"`
+}
+
+// errRequestStatusRequired and its siblings name the missing or invalid
+// piece; the handler logs them and sends a fixed client-facing message,
+// matching the mRID check above and the #360 no-decoder-detail convention.
+var (
+	errRequestStatusRequired         = errors.New("RequestStatus is required")
+	errRequestStatusDateTimeRequired = errors.New("RequestStatus.dateTime is required")
+	errRequestStatusValueRequired    = errors.New("RequestStatus.requestStatus is required")
+	errRequestStatusDateTimeNegative = errors.New("RequestStatus.dateTime must not be negative")
+	errRequestStatusValueReserved    = errors.New("RequestStatus.requestStatus is not 0 (Requested) or 1 (Cancelled)")
+)
+
+// validateRequestStatus refuses a FlowReservationRequest body whose
+// RequestStatus element is missing, incomplete, or carries a value the
+// schema does not allow (2018 S233 / 2023 S240 RequestStatus object).
+//
+// requestStatus is UInt8 with only 0 (Requested) and 1 (Cancelled) defined;
+// "All other values reserved". dateTime is TimeType, seconds since the 1970
+// epoch, and "SHALL be set to the time at which the status change occurred,
+// not a time in the future or past": a negative value predates 1970 and can
+// never be that instant, so it is refused outright rather than guessed at.
+func validateRequestStatus(body []byte) error {
+	var probe requestStatusPresence
+	if err := xml.Unmarshal(body, &probe); err != nil {
+		return fmt.Errorf("invalid XML: %w", err)
+	}
+	if probe.RequestStatus == nil {
+		return errRequestStatusRequired
+	}
+	if probe.RequestStatus.DateTime == nil {
+		return errRequestStatusDateTimeRequired
+	}
+	if probe.RequestStatus.RequestStatus == nil {
+		return errRequestStatusValueRequired
+	}
+	if *probe.RequestStatus.DateTime < 0 {
+		return errRequestStatusDateTimeNegative
+	}
+	switch *probe.RequestStatus.RequestStatus {
+	case sep2.RequestStatusRequested, sep2.RequestStatusCancelled:
+		return nil
+	default:
+		return errRequestStatusValueReserved
+	}
+}
+
 // HandlePostFlowReservationRequest returns a handler for POST /edev/{id}/frq.
 // pen is RouterConfig.PEN, passed straight through: nil (or the IANA-reserved
 // value 0) mints a response mRID with no embedded PEN, per newFRPMRID.
@@ -95,6 +157,14 @@ func HandlePostFlowReservationRequest(
 		var frq sep2.FlowReservationRequest
 		if err := xml.Unmarshal(body, &frq); err != nil {
 			srverr.BadRequestMessage(w, r, "invalid XML", err)
+			return
+		}
+
+		// Checked against the raw body, not frq: RequestStatus is a value
+		// field, so an absent element and a present-but-zero one decode
+		// identically (#692). See validateRequestStatus.
+		if err := validateRequestStatus(body); err != nil {
+			srverr.BadRequestMessage(w, r, "invalid RequestStatus", err)
 			return
 		}
 

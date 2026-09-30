@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/xml"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -468,5 +469,129 @@ func TestHandlePostFlowReservationRequest_WithPEN_LowBitsArePEN(t *testing.T) {
 	}
 	if gotPEN := binary.BigEndian.Uint32(raw[12:]); gotPEN != pen {
 		t.Fatalf("low 32 bits of MRID %q = %#x, want configured PEN %#x", got, gotPEN, pen)
+	}
+}
+
+// TestHandlePostFlowReservationRequest_RequestStatusRefused is #692's three
+// acceptance criteria: a body with no RequestStatus, an out-of-range
+// requestStatus, or a negative dateTime is refused, storing neither the
+// request nor an auto-approved response for it.
+//
+// Each body is hand-crafted XML, not marshalled from sep2.FlowReservationRequest:
+// RequestStatus is a value field there, so a struct literal always emits it
+// with both children present, which cannot express "omitted" at all (#692).
+func TestHandlePostFlowReservationRequest_RequestStatusRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "RequestStatus element absent",
+			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID></FlowReservationRequest>`,
+		},
+		{
+			name: "dateTime child absent",
+			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>` +
+				`<RequestStatus><requestStatus>0</requestStatus></RequestStatus></FlowReservationRequest>`,
+		},
+		{
+			name: "requestStatus child absent",
+			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>` +
+				`<RequestStatus><dateTime>1727136000</dateTime></RequestStatus></FlowReservationRequest>`,
+		},
+		{
+			name: "requestStatus out of the defined set",
+			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>` +
+				`<RequestStatus><dateTime>1727136000</dateTime><requestStatus>200</requestStatus></RequestStatus></FlowReservationRequest>`,
+		},
+		{
+			name: "dateTime negative",
+			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>` +
+				`<RequestStatus><dateTime>-5</dateTime><requestStatus>0</requestStatus></RequestStatus></FlowReservationRequest>`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+			frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
+
+			req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", strings.NewReader(tc.body))
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400, body: %s", w.Code, w.Body.String())
+			}
+
+			stored, err := frqStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
+			if err != nil {
+				t.Fatalf("list stored requests: %v", err)
+			}
+			if len(stored.Items) != 0 {
+				t.Errorf("stored request count = %d, want 0; an invalid RequestStatus must not be stored", len(stored.Items))
+			}
+			responses, err := frpStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
+			if err != nil {
+				t.Fatalf("list stored responses: %v", err)
+			}
+			if len(responses.Items) != 0 {
+				t.Errorf("stored response count = %d, want 0; no response should be auto-created for a refused request", len(responses.Items))
+			}
+		})
+	}
+}
+
+// TestHandlePostFlowReservationRequest_RequestStatusValidValuesAccepted is
+// the acceptance-side complement: requestStatus 0 (Requested) and 1
+// (Cancelled) are both defined values and neither is refused. Asserts the
+// stored request carries the posted values, not just a 201, so a handler
+// that accepted the body but dropped RequestStatus on the way to the store
+// would still fail this.
+func TestHandlePostFlowReservationRequest_RequestStatusValidValuesAccepted(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status uint8
+	}{
+		{"Requested", sep2.RequestStatusRequested},
+		{"Cancelled", sep2.RequestStatusCancelled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+			frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
+
+			body := fmt.Sprintf(
+				`<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>`+
+					`<RequestStatus><dateTime>1727136000</dateTime><requestStatus>%d</requestStatus></RequestStatus></FlowReservationRequest>`,
+				tc.status,
+			)
+			req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", strings.NewReader(body))
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want 201, body: %s", w.Code, w.Body.String())
+			}
+
+			stored, err := frqStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
+			if err != nil {
+				t.Fatalf("list stored requests: %v", err)
+			}
+			if len(stored.Items) != 1 {
+				t.Fatalf("stored request count = %d, want 1", len(stored.Items))
+			}
+			if got := stored.Items[0].RequestStatus.DateTime; got != 1727136000 {
+				t.Errorf("stored RequestStatus.dateTime = %d, want 1727136000", got)
+			}
+			if got := stored.Items[0].RequestStatus.RequestStatus; got != tc.status {
+				t.Errorf("stored RequestStatus.requestStatus = %d, want %d", got, tc.status)
+			}
+		})
 	}
 }

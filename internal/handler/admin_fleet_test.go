@@ -91,6 +91,21 @@ func (f *fleetFixture) seedDevice(edevID, deviceLFDI, derID string) {
 	}
 }
 
+// addDER registers an additional DER under an edevID seedDevice already
+// registered, for tests that need more than one DER per device (newest-wins
+// selection across DERs).
+func (f *fleetFixture) addDER(edevID, derID string) {
+	f.t.Helper()
+	der := sep2.DER{
+		SubscribableResource: sep2.SubscribableResource{
+			Resource: sep2.Resource{Href: "/edev/" + edevID + "/der/" + derID},
+		},
+	}
+	if err := f.ders.Create(context.Background(), edevID, derID, der); err != nil {
+		f.t.Fatalf("DERs.Create(%q, %q): %v", edevID, derID, err)
+	}
+}
+
 func (f *fleetFixture) setStatus(edevID, derID string, status sep2.DERStatus) {
 	f.t.Helper()
 	if err := f.derStatuses.Create(context.Background(), edevID+"/"+derID, "default", status); err != nil {
@@ -314,7 +329,7 @@ func TestHandleListFleets_Rollup(t *testing.T) {
 		ReadingTime:      handlerTestNow(),
 	})
 	f.postInlineReading("mup-a", fleetDeviceALFDI, sep2.MirrorMeterReading{
-		MRID: "a-p", LastUpdateTime: 1,
+		MRID: "a-p", LastUpdateTime: handlerTestNow(),
 		ReadingType: &sep2.ReadingType{Uom: u8(sep2.UomWatts), FlowDirection: u8(sep2.FlowDirectionReverse), PowerOfTenMultiplier: i8(0)},
 		Reading:     &sep2.Reading{Value: i64(200)},
 	})
@@ -439,5 +454,108 @@ func TestHandleListFleets_FleetIsolation(t *testing.T) {
 	}
 	if mine.Rollup.DeviceCount != 2 || other.Rollup.DeviceCount != 2 {
 		t.Errorf("DeviceCount = %d, %d; want 2, 2 (each fleet is its own aggregator plus its own managed device)", mine.Rollup.DeviceCount, other.Rollup.DeviceCount)
+	}
+}
+
+// --- #715 fix round 2 item 5: coverage gaps a pure-function test cannot
+// --- reach, because they live at the call site (buildFleet's own clock
+// --- read) or need real store-backed multi-record selection. ----------------
+
+// TestHandleListFleets_UsesRealWallClockForStaleness kills a mutation
+// hardcoding buildFleet's now (for example "now := int64(0)"): a device
+// whose DERStatus is old by REAL wall-clock time must show up stale. Under
+// a hardcoded now of 0, now-ReadingTime would be a large negative number,
+// never exceeding staleAfterSeconds, so the device would wrongly read as
+// fresh instead.
+func TestHandleListFleets_UsesRealWallClockForStaleness(t *testing.T) {
+	t.Parallel()
+	f := newFleetFixture(t)
+	f.assign(fleetAggregatorLFDI, fleetDeviceALFDI)
+	f.seedDevice("3", fleetDeviceALFDI, "1")
+	f.setStatus("3", "1", sep2.DERStatus{
+		GenConnectStatus: &sep2.ConnectStatusType{Value: 1},
+		ReadingTime:      time.Now().Unix() - staleAfterSecondsForTest - 100,
+	})
+
+	fleets := fetchFleets(t, f.handler())
+	if fleets[0].Rollup.Stale != 1 {
+		t.Errorf("Stale = %d, want 1: a real-clock-old DERStatus must count as stale", fleets[0].Rollup.Stale)
+	}
+	if fleets[0].Rollup.Connected != 0 {
+		t.Errorf("Connected = %d, want 0", fleets[0].Rollup.Connected)
+	}
+}
+
+// staleAfterSecondsForTest mirrors admin_fleet.go's unexported
+// staleAfterSeconds (15 minutes); duplicated here because handler_test is a
+// separate package and the two must not silently drift, so the value is
+// named, not guessed, at each use.
+const staleAfterSecondsForTest = 15 * 60
+
+// TestHandleListFleets_ConnectBitClearIsNotConnected kills "connected :=
+// true" replacing the bit test: a GenConnectStatus with bit 0 clear (here
+// Value 2, bit 1 set) must report Connected false, not true.
+func TestHandleListFleets_ConnectBitClearIsNotConnected(t *testing.T) {
+	t.Parallel()
+	f := newFleetFixture(t)
+	f.assign(fleetAggregatorLFDI, fleetDeviceALFDI)
+	f.seedDevice("3", fleetDeviceALFDI, "1")
+	f.setStatus("3", "1", sep2.DERStatus{
+		GenConnectStatus: &sep2.ConnectStatusType{Value: 2}, // bit 1 set, bit 0 (connected) clear
+		ReadingTime:      handlerTestNow(),
+	})
+
+	fleets := fetchFleets(t, f.handler())
+	dev := findDevice(t, fleets[0], fleetDeviceALFDI)
+	if dev.Status == nil || dev.Status.Connected == nil {
+		t.Fatal("Status.Connected is nil, want false")
+	}
+	if *dev.Status.Connected {
+		t.Error("Status.Connected = true, want false: bit 0 of GenConnectStatus.Value is clear")
+	}
+	if fleets[0].Rollup.Connected != 0 {
+		t.Errorf("Rollup.Connected = %d, want 0", fleets[0].Rollup.Connected)
+	}
+}
+
+// TestHandleListFleets_NewestStatusAndAvailabilityWinAcrossDERs kills a
+// flipped newest-wins comparison (">" to "<") in buildDevice: with two DERs
+// under one device, the DERStatus and DERAvailability with the LATER
+// readingTime must be the ones reported, not the earlier ones.
+func TestHandleListFleets_NewestStatusAndAvailabilityWinAcrossDERs(t *testing.T) {
+	t.Parallel()
+	f := newFleetFixture(t)
+	f.assign(fleetAggregatorLFDI, fleetDeviceALFDI)
+	f.seedDevice("3", fleetDeviceALFDI, "1")
+	f.addDER("3", "2")
+
+	f.setStatus("3", "1", sep2.DERStatus{
+		GenConnectStatus: &sep2.ConnectStatusType{Value: 1},
+		ReadingTime:      100,
+	})
+	f.setStatus("3", "2", sep2.DERStatus{
+		GenConnectStatus: &sep2.ConnectStatusType{Value: 0}, // not connected
+		ReadingTime:      200,
+	})
+	f.setAvailability("3", "1", sep2.DERAvailability{
+		ReadingTime: 100,
+		StatWAvail:  &sep2.ActivePower{Multiplier: 0, Value: 111},
+	})
+	f.setAvailability("3", "2", sep2.DERAvailability{
+		ReadingTime: 200,
+		StatWAvail:  &sep2.ActivePower{Multiplier: 0, Value: 222},
+	})
+
+	fleets := fetchFleets(t, f.handler())
+	dev := findDevice(t, fleets[0], fleetDeviceALFDI)
+
+	if dev.Status == nil || dev.Status.ReadingTime != 200 {
+		t.Fatalf("Status.ReadingTime = %+v, want 200 (the newer DER's status)", dev.Status)
+	}
+	if dev.Status.Connected != nil && *dev.Status.Connected {
+		t.Error("Status.Connected = true, want false: the newer DER's status reports not connected")
+	}
+	if dev.Availability == nil || dev.Availability.StatWAvail == nil || *dev.Availability.StatWAvail != 222 {
+		t.Errorf("Availability = %+v, want StatWAvail 222 (the newer DER's availability)", dev.Availability)
 	}
 }

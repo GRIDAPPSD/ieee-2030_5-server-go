@@ -302,12 +302,17 @@ func TestAccumulateRollup_QSumAndStatVarAvailFromRightField(t *testing.T) {
 // TestAccumulateRollup_StaleDeviceExcludedFromSums is #715 fix round 1 item
 // 4: a stale device's measurements must not contribute to a fleet sum, and
 // must be counted separately from "never reported".
-func TestAccumulateRollup_StaleDeviceExcludedFromSums(t *testing.T) {
+// TestAccumulateRollup_AvailabilityStaleFromDeviceStatus is the case where
+// the current, device-level rule is kept on purpose (#715 fix round 2 item
+// 4): DERAvailability carries no server-stamped receipt time, so its sums
+// still fall back to the device's DERStatus-derived staleness.
+func TestAccumulateRollup_AvailabilityStaleFromDeviceStatus(t *testing.T) {
 	t.Parallel()
 	now := int64(100000)
+	statW, statVar := 700.0, 300.0
 	dev := FleetDevice{
 		Status:       &FleetDeviceStatus{ReadingTime: now - staleAfterSeconds - 1},
-		Measurements: FleetDeviceMeasurements{P: &FleetMeasurement{Value: 700, ReadingTime: now}},
+		Availability: &FleetDeviceAvailability{StatWAvail: &statW, StatVarAvail: &statVar},
 	}
 
 	var rollup FleetRollup
@@ -316,15 +321,57 @@ func TestAccumulateRollup_StaleDeviceExcludedFromSums(t *testing.T) {
 	if rollup.Stale != 1 {
 		t.Errorf("Stale = %d, want 1", rollup.Stale)
 	}
-	if rollup.P.Sum != 0 {
-		t.Errorf("P.Sum = %v, want 0: a stale device's P must not be summed", rollup.P.Sum)
+	if rollup.StatWAvail.Sum != 0 || rollup.StatWAvail.Stale != 1 {
+		t.Errorf("StatWAvail = %+v, want Sum 0, Stale 1", rollup.StatWAvail)
 	}
-	if rollup.P.Stale != 1 {
-		t.Errorf("P.Stale = %d, want 1", rollup.P.Stale)
+	if rollup.StatVarAvail.Sum != 0 || rollup.StatVarAvail.Stale != 1 {
+		t.Errorf("StatVarAvail = %+v, want Sum 0, Stale 1", rollup.StatVarAvail)
 	}
-	if rollup.P.Unreported != 0 {
-		t.Errorf("P.Unreported = %d, want 0: a stale device is not the same fact as an unreported one", rollup.P.Unreported)
-	}
+}
+
+// TestAccumulateRollup_MeasurementStalenessIsPerValueNotDeviceStatus is
+// #715 fix round 2 item 4's fix, both directions:
+//   - a stale DERStatus must not drop an otherwise-fresh P/Q reading (the
+//     "901 s behind drops fresh power" bug), because P and Q are judged on
+//     their own server-stamped reading time; and
+//   - a device with NO DERStatus at all is not automatically "never stale"
+//     for P/Q the way it is for the status/alarm/connected bucket: an old
+//     mirror reading is still stale by its own clock.
+func TestAccumulateRollup_MeasurementStalenessIsPerValueNotDeviceStatus(t *testing.T) {
+	t.Parallel()
+	now := int64(100000)
+
+	t.Run("fresh P survives a stale DERStatus", func(t *testing.T) {
+		dev := FleetDevice{
+			Status:       &FleetDeviceStatus{ReadingTime: now - staleAfterSeconds - 1}, // stale
+			Measurements: FleetDeviceMeasurements{P: &FleetMeasurement{Value: 700, ReadingTime: now}},
+		}
+		var rollup FleetRollup
+		accumulateRollup(&rollup, dev, now)
+
+		if rollup.Stale != 1 {
+			t.Errorf("Stale = %d, want 1: the device's own status is still stale", rollup.Stale)
+		}
+		if rollup.P.Sum != 700 || rollup.P.Stale != 0 {
+			t.Errorf("P = %+v, want Sum 700, Stale 0: a fresh reading must not be dropped by a stale DERStatus", rollup.P)
+		}
+	})
+
+	t.Run("stale P with no DERStatus at all", func(t *testing.T) {
+		dev := FleetDevice{
+			Status:       nil,
+			Measurements: FleetDeviceMeasurements{P: &FleetMeasurement{Value: 700, ReadingTime: now - staleAfterSeconds - 1}},
+		}
+		var rollup FleetRollup
+		accumulateRollup(&rollup, dev, now)
+
+		if rollup.Stale != 0 {
+			t.Errorf("Stale = %d, want 0: the device-level bucket has no status to judge", rollup.Stale)
+		}
+		if rollup.P.Sum != 0 || rollup.P.Stale != 1 {
+			t.Errorf("P = %+v, want Sum 0, Stale 1: an old mirror reading is stale on its own clock even with no DERStatus at all", rollup.P)
+		}
+	})
 }
 
 // --- #715 fix round 1 item 6: store read errors must be logged, and a
@@ -561,4 +608,241 @@ func memoryMirrorUsagePointsFor(t *testing.T, lfdi string) store.ResourceReader[
 		t.Fatalf("Create: %v", err)
 	}
 	return s
+}
+
+// --- #715 fix round 2 items 1 and 2: inheritReadingTypeByMRID must not
+// --- depend on which reading in the slice happens to carry ReadingType
+// --- first: a rule (a)(4) re-POST rewrites the inline readings, so a newer
+// --- untyped inline reading can precede an older typed out-of-band one in
+// --- whatever order deviceMeasurements happens to assemble them in. -----------
+
+func typedReading(mrid string, updateTime int64, uom uint8, flow *uint8, value int64) sep2.MirrorMeterReading {
+	return sep2.MirrorMeterReading{
+		MRID:           mrid,
+		LastUpdateTime: updateTime,
+		ReadingType:    &sep2.ReadingType{Uom: f8(uom), FlowDirection: flow, PowerOfTenMultiplier: fi8(0)},
+		Reading:        &sep2.Reading{Value: fi64(value)},
+	}
+}
+
+func untypedReading(mrid string, updateTime int64, value int64) sep2.MirrorMeterReading {
+	return sep2.MirrorMeterReading{
+		MRID:           mrid,
+		LastUpdateTime: updateTime,
+		Reading:        &sep2.Reading{Value: fi64(value)},
+	}
+}
+
+// TestInheritReadingTypeByMRID_OrderIndependent covers both orderings: the
+// typed reading appearing before the untyped one in the slice (what
+// deviceMeasurements happens to produce when nothing has been re-POSTed),
+// and the untyped one appearing first (what a rule (a)(4) re-POST of the
+// inline reading can produce, since it can carry a LATER LastUpdateTime than
+// an existing out-of-band reading while still landing earlier in the slice
+// deviceMeasurements builds, inline-then-out-of-band).
+func TestInheritReadingTypeByMRID_OrderIndependent(t *testing.T) {
+	t.Parallel()
+	typed := typedReading("series-1", 100, sep2.UomWatts, nil, 400)
+	untyped := untypedReading("series-1", 200, 450)
+
+	t.Run("typed first", func(t *testing.T) {
+		readings := []sep2.MirrorMeterReading{typed, untyped}
+		inheritReadingTypeByMRID(readings)
+		if readings[1].ReadingType == nil {
+			t.Fatal("the untyped reading's ReadingType is still nil")
+		}
+		if *readings[1].ReadingType.Uom != sep2.UomWatts {
+			t.Errorf("inherited Uom = %v, want Watts", *readings[1].ReadingType.Uom)
+		}
+	})
+
+	t.Run("untyped first", func(t *testing.T) {
+		readings := []sep2.MirrorMeterReading{untyped, typed}
+		inheritReadingTypeByMRID(readings)
+		if readings[0].ReadingType == nil {
+			t.Fatal("the untyped reading's ReadingType is still nil: inheritance must not depend on slice order")
+		}
+		if *readings[0].ReadingType.Uom != sep2.UomWatts {
+			t.Errorf("inherited Uom = %v, want Watts", *readings[0].ReadingType.Uom)
+		}
+	})
+}
+
+// TestInheritReadingTypeByMRID_DoesNotCrossContaminateDifferentMRIDs kills a
+// mutation collapsing the per-reading mRID key to a constant (for example
+// ""): two distinct series must never inherit each other's type.
+func TestInheritReadingTypeByMRID_DoesNotCrossContaminateDifferentMRIDs(t *testing.T) {
+	t.Parallel()
+	seriesA := typedReading("series-A", 100, sep2.UomWatts, nil, 400)
+	seriesB := untypedReading("series-B", 100, 999) // never typed; a different, unrelated series
+
+	readings := []sep2.MirrorMeterReading{seriesA, seriesB}
+	inheritReadingTypeByMRID(readings)
+
+	if readings[1].ReadingType != nil {
+		t.Errorf("series-B inherited a ReadingType (%+v) from series-A; the two series share no mRID", readings[1].ReadingType)
+	}
+
+	var out FleetDeviceMeasurements
+	considerMeasurement(&out, readings[1])
+	if out.P != nil {
+		t.Errorf("Measurements.P = %+v, want nil: an untyped reading with no established series contributes nothing", out.P)
+	}
+}
+
+// TestInheritReadingTypeByMRID_ReverseUntypedFollowUp is #715 fix round 2
+// item 1's Reverse case: once inheritance and the export-positive mapping
+// both apply, an untyped follow-up reading of -300 under a Reverse-typed
+// series reports +300 (Reverse = the fleet exporting = already
+// export-positive; abs() discards the sign the untyped reading happened to
+// carry, per the fix round 1 sign convention).
+func TestInheritReadingTypeByMRID_ReverseUntypedFollowUp(t *testing.T) {
+	t.Parallel()
+	reverse := f8(sep2.FlowDirectionReverse)
+	readings := []sep2.MirrorMeterReading{
+		typedReading("series-r", 100, sep2.UomWatts, reverse, 50),
+		untypedReading("series-r", 200, -300),
+	}
+	inheritReadingTypeByMRID(readings)
+
+	var out FleetDeviceMeasurements
+	for i := range readings {
+		considerMeasurement(&out, readings[i])
+	}
+	if out.P == nil || out.P.Value != 300 {
+		t.Errorf("Measurements.P = %+v, want value 300", out.P)
+	}
+}
+
+// TestHandleListFleets_InlineCreateThenOutOfBandFollowUpInheritsType is
+// #715 fix round 2 item 2: the realistic shape is an inline reading from
+// the creating POST /mup, followed by an out-of-band POST /mup/{id}/mr
+// reusing that mRID without ReadingType.
+func TestHandleListFleets_InlineCreateThenOutOfBandFollowUpInheritsType(t *testing.T) {
+	t.Parallel()
+	mups := memory.NewStore[sep2.MirrorUsagePoint]()
+	mmrs := memory.NewScopedStore[sep2.MirrorMeterReading]()
+	h := &AdminFleetHandler{MirrorUsagePoints: mups, MirrorMeterReadings: mmrs}
+
+	mup := sep2.MirrorUsagePoint{
+		Resource:   sep2.Resource{Href: "/mup/1"},
+		DeviceLFDI: fleetTestLFDI,
+		MirrorMeterReading: []sep2.MirrorMeterReading{
+			typedReading("inline-series", 100, sep2.UomWatts, f8(sep2.FlowDirectionReverse), 400),
+		},
+	}
+	if err := mups.Create(context.Background(), "1", mup); err != nil {
+		t.Fatalf("MirrorUsagePoints.Create: %v", err)
+	}
+	if err := mmrs.Create(context.Background(), "1", "r2", untypedReading("inline-series", 200, 450)); err != nil {
+		t.Fatalf("MirrorMeterReadings.Create: %v", err)
+	}
+
+	got := h.deviceMeasurements(context.Background(), fleetTestLFDI)
+	if got.P == nil || got.P.Value != 450 {
+		t.Errorf("Measurements.P = %+v, want value 450 (the out-of-band follow-up, inheriting the inline creating reading's type)", got.P)
+	}
+}
+
+// --- #715 fix round 2 item 3: pin Stale for all four sums, and pin that
+// --- addToSum checks staleness before "value == nil" (a swap would report a
+// --- stale-but-unreported value as Unreported instead of Stale). -------------
+
+// TestAccumulateRollup_AllFourSumsStale kills a mutation that only excludes
+// one sum from staleness (for example passing false for Q, StatWAvail or
+// StatVarAvail) by giving all four a value and checking all four land in
+// Stale, not Sum or Unreported.
+func TestAccumulateRollup_AllFourSumsStale(t *testing.T) {
+	t.Parallel()
+	now := int64(100000)
+	oldTime := now - staleAfterSeconds - 1
+	statW, statVar := 111.0, 222.0
+	dev := FleetDevice{
+		Status: &FleetDeviceStatus{ReadingTime: oldTime},
+		Measurements: FleetDeviceMeasurements{
+			P: &FleetMeasurement{Value: 700, ReadingTime: oldTime},
+			Q: &FleetMeasurement{Value: 50, ReadingTime: oldTime},
+		},
+		Availability: &FleetDeviceAvailability{StatWAvail: &statW, StatVarAvail: &statVar},
+	}
+
+	var rollup FleetRollup
+	accumulateRollup(&rollup, dev, now)
+
+	for name, sum := range map[string]FleetSum{
+		"P": rollup.P, "Q": rollup.Q, "StatWAvail": rollup.StatWAvail, "StatVarAvail": rollup.StatVarAvail,
+	} {
+		if sum.Sum != 0 || sum.Stale != 1 || sum.Unreported != 0 {
+			t.Errorf("%s = %+v, want Sum 0, Stale 1, Unreported 0", name, sum)
+		}
+	}
+}
+
+// TestAddToSum_StaleTakesPrecedenceOverUnreported kills a swap of addToSum's
+// case order: a stale device with no value for this quantity must count as
+// Stale, never Unreported, because "we know the last value is too old to
+// trust" and "we have never heard a value at all" are different facts.
+func TestAddToSum_StaleTakesPrecedenceOverUnreported(t *testing.T) {
+	t.Parallel()
+	var sum FleetSum
+	addToSum(&sum, nil, true)
+	if sum.Stale != 1 {
+		t.Errorf("Stale = %d, want 1", sum.Stale)
+	}
+	if sum.Unreported != 0 {
+		t.Errorf("Unreported = %d, want 0: stale must be checked before the unreported case", sum.Unreported)
+	}
+}
+
+// TestDeviceMeasurements_MMRListFailureStillUsesInlineReadings kills a
+// mutation that clears the inline readings when MirrorMeterReadings.List
+// fails, instead of only skipping the out-of-band readings that call would
+// have added: the inline reading was already read from the MirrorUsagePoint
+// itself and does not depend on that call succeeding.
+func TestDeviceMeasurements_MMRListFailureStillUsesInlineReadings(t *testing.T) {
+	t.Parallel()
+	mups := memory.NewStore[sep2.MirrorUsagePoint]()
+	mup := sep2.MirrorUsagePoint{
+		Resource:   sep2.Resource{Href: "/mup/1"},
+		DeviceLFDI: fleetTestLFDI,
+		MirrorMeterReading: []sep2.MirrorMeterReading{
+			typedReading("inline-series", 100, sep2.UomWatts, nil, 400),
+		},
+	}
+	if err := mups.Create(context.Background(), "1", mup); err != nil {
+		t.Fatalf("MirrorUsagePoints.Create: %v", err)
+	}
+	h := &AdminFleetHandler{
+		MirrorUsagePoints:   mups,
+		MirrorMeterReadings: erroringScopedReader[sep2.MirrorMeterReading]{err: errors.New("mmr list backend down")},
+	}
+
+	got := h.deviceMeasurements(context.Background(), fleetTestLFDI)
+	if got.P == nil || got.P.Value != 400 {
+		t.Errorf("Measurements.P = %+v, want value 400: the inline reading must survive a failed out-of-band List", got.P)
+	}
+}
+
+// TestConsiderMeasurement_UnrecognizedFlowDirectionLeavesValueUnchanged
+// kills a default case added to the flowDirection switch that would flip
+// the sign for any code other than Forward or Reverse: only those two codes
+// are defined by the export-positive mapping (#715 fix round 1 item 2), so
+// anything else must pass through as scaledValue computed it, the same as
+// no flowDirection at all.
+func TestConsiderMeasurement_UnrecognizedFlowDirectionLeavesValueUnchanged(t *testing.T) {
+	t.Parallel()
+	const unrecognizedFlowDirection uint8 = 12 // neither FlowDirectionForward (1) nor FlowDirectionReverse (19)
+	// A positive raw value, deliberately: Forward's mapping is also
+	// "-magnitude", so a negative raw value would leave a default case that
+	// copies Forward's behavior indistinguishable from the correct
+	// unchanged result. Only a positive input, where "unchanged" (+75) and
+	// "-magnitude" (-75) disagree, proves no sign flip happened.
+	reading := typedReading("series", 100, sep2.UomWatts, f8(unrecognizedFlowDirection), 75)
+
+	var out FleetDeviceMeasurements
+	considerMeasurement(&out, reading)
+
+	if out.P == nil || out.P.Value != 75 {
+		t.Errorf("Measurements.P = %+v, want value 75 (unchanged; no defined mapping for flowDirection %d)", out.P, unrecognizedFlowDirection)
+	}
 }

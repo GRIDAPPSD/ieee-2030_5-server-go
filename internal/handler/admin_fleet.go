@@ -32,7 +32,12 @@ import (
 // same name.
 const uomHertz uint8 = 33
 
-// FleetMeasurement is one quantity's latest reported value.
+// FleetMeasurement is one quantity's latest reported value. ReadingTime is
+// the mirror reading's LastUpdateTime, which the server itself stamps at
+// POST time (mirror.go's stampMirrorMeterReading, both the inline and the
+// out-of-band path) rather than trusting the client's own clock. That is why
+// staleness for P and Q is judged from this field directly (see
+// accumulateRollup) rather than from the device's self-reported DERStatus.
 type FleetMeasurement struct {
 	Value        float64 `json:"value"`
 	ReadingTime  int64   `json:"readingTime"`
@@ -51,7 +56,16 @@ type FleetDeviceMeasurements struct {
 }
 
 // FleetDeviceStatus is the subset of DERStatus the DERMS tab needs:
-// connection, operational mode, alarm and state of charge.
+// connection, operational mode, alarm and state of charge. ReadingTime is
+// DERStatus.readingTime AS THE CLIENT REPORTED IT: DERStatus is stored
+// through the generic singleton PUT (pkg/sep2srv/handlers/singleton), which
+// stamps no server-side receipt time of its own, so this is a client-sent
+// clock and nothing here corrects for a device that misreports it, reports
+// it far in the future, or never sends a DERStatus at all (#715 fix round 2,
+// item 4). It is still the only signal available for connection, alarm and
+// state of charge, which have no other source, so it is used as-is for
+// those and for the DERAvailability sums below, which have the identical
+// limitation.
 type FleetDeviceStatus struct {
 	Connected       *bool   `json:"connected,omitempty"`
 	OperationalMode *uint8  `json:"operationalMode,omitempty"`
@@ -61,7 +75,12 @@ type FleetDeviceStatus struct {
 }
 
 // FleetDeviceAvailability is the subset of DERAvailability the DERMS tab
-// needs: available active and reactive capacity.
+// needs: available active and reactive capacity. ReadingTime is
+// DERAvailability.readingTime as the client reported it: like
+// FleetDeviceStatus.ReadingTime, DERAvailability is stored through the same
+// generic singleton PUT with no server-stamped receipt time, so there is no
+// better signal for it, and the roll-up falls back to the device's
+// DERStatus-derived staleness for these two sums (#715 fix round 2, item 4).
 type FleetDeviceAvailability struct {
 	StatWAvail   *float64 `json:"statWAvail,omitempty"`
 	StatVarAvail *float64 `json:"statVarAvail,omitempty"`
@@ -318,8 +337,11 @@ const singletonKey = "default"
 // lfdi and returns the latest P, Q, V and f reading across all of them.
 // Readings can be stored two ways - inline on the MirrorUsagePoint (the
 // POST /mup body) and out-of-band (POST /mup/{id}/mr, a separate collection
-// an inline overwrite never touches) - so both are read, inline first, since
-// an inline reading is always the mRID's creating POST.
+// an inline overwrite never touches) - so both are read. The two are
+// gathered into one slice before inheritReadingTypeByMRID runs on it, since
+// inheritance does not depend on which one comes first: see that function's
+// doc comment for why an inline reading is NOT always the mRID's creating
+// POST (#715 fix round 2, item 1).
 func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string) FleetDeviceMeasurements {
 	var out FleetDeviceMeasurements
 	if h.MirrorUsagePoints == nil {
@@ -335,6 +357,10 @@ func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string)
 		return out
 	}
 	for _, mup := range result.Items {
+		// The attribution point: a reading is credited to lfdi by the
+		// mirror's own stored deviceLFDI, whoever posted it. Whether an
+		// aggregator's own certificate is even allowed to post on a managed
+		// device's behalf is #720, not yet landed as of this commit.
 		if mup.DeviceLFDI != lfdi {
 			continue
 		}
@@ -356,25 +382,35 @@ func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string)
 	return out
 }
 
-// inheritReadingTypeByMRID fills a reading's ReadingType from an earlier
+// inheritReadingTypeByMRID fills a reading's ReadingType from another
 // reading in readings sharing the same mRID. 2023 rule (n) / rule (h)(3): a
 // MirrorMeterReading POST that reuses an mRID already established for this
 // MirrorUsagePoint may omit ReadingType, and the reading is still valid,
-// under the type its series was created with. readings must already be in
-// chronological order (oldest first), the order deviceMeasurements builds
-// it in, since only an EARLIER reading's type can be inherited.
+// under the type its series was created with.
+//
+// This does NOT assume readings arrives in the order each reading was
+// created: a rule (a)(4) re-POST of a MirrorUsagePoint rewrites its inline
+// MirrorMeterReading with fresh server-owned fields (mirror.go's
+// stampServerOwnedMirrorFields), so a later, untyped inline reading can sit
+// earlier in the slice deviceMeasurements assembles (inline entries first,
+// then out-of-band) than an established out-of-band reading of the same
+// mRID that predates it. Resolving every mRID's type in one pass over the
+// whole slice before filling any of them in a second pass is what makes the
+// result independent of that arrangement.
 func inheritReadingTypeByMRID(readings []sep2.MirrorMeterReading) {
-	seen := make(map[string]*sep2.ReadingType, len(readings))
+	typeByMRID := make(map[string]*sep2.ReadingType, len(readings))
 	for i := range readings {
-		mrid := readings[i].MRID
 		if readings[i].ReadingType != nil {
-			if _, ok := seen[mrid]; !ok {
-				seen[mrid] = readings[i].ReadingType
+			if _, ok := typeByMRID[readings[i].MRID]; !ok {
+				typeByMRID[readings[i].MRID] = readings[i].ReadingType
 			}
-			continue
 		}
-		if rt, ok := seen[mrid]; ok {
-			readings[i].ReadingType = rt
+	}
+	for i := range readings {
+		if readings[i].ReadingType == nil {
+			if rt, ok := typeByMRID[readings[i].MRID]; ok {
+				readings[i].ReadingType = rt
+			}
 		}
 	}
 }
@@ -444,15 +480,26 @@ func scaledValue(value float64, multiplier int8) float64 {
 // accumulateRollup folds one device into its fleet's roll-up: the three
 // status counts (connected, alarmed, stale) and the four additive sums, each
 // with the count of devices that did not report it.
+//
+// Two different staleness signals feed the sums, because they have two
+// different qualities of timestamp available (#715 fix round 2, item 4).
+// deviceStale, from DERStatus.readingTime (a client-sent clock: see
+// FleetDeviceStatus's doc comment), is the only signal DERAvailability has,
+// so StatWAvail and StatVarAvail use it. P and Q have a better one: their own
+// FleetMeasurement.ReadingTime is server-stamped, so each is judged on its
+// own freshness rather than on the device's self-reported status. That
+// decoupling is the fix: before it, a device whose DERStatus had gone stale
+// (or was never sent at all) dropped its P and Q from the sums even when
+// those specific readings were still arriving on time.
 func accumulateRollup(rollup *FleetRollup, dev FleetDevice, now int64) {
 	// A device with no status at all is never-reported, not stale: it is
 	// not counted in any of connected/alarmed/stale, and its sums land in
 	// Unreported below, the same as any other missing value.
-	stale := dev.Status != nil && now-dev.Status.ReadingTime > staleAfterSeconds
+	deviceStale := dev.Status != nil && now-dev.Status.ReadingTime > staleAfterSeconds
 
 	switch {
 	case dev.Status == nil:
-	case stale:
+	case deviceStale:
 		rollup.Stale++
 	default:
 		if dev.Status.Connected != nil && *dev.Status.Connected {
@@ -467,10 +514,21 @@ func accumulateRollup(rollup *FleetRollup, dev FleetDevice, now int64) {
 	if dev.Availability != nil {
 		statW, statVar = dev.Availability.StatWAvail, dev.Availability.StatVarAvail
 	}
-	addToSum(&rollup.P, measurementValue(dev.Measurements.P), stale)
-	addToSum(&rollup.Q, measurementValue(dev.Measurements.Q), stale)
-	addToSum(&rollup.StatWAvail, statW, stale)
-	addToSum(&rollup.StatVarAvail, statVar, stale)
+	addToSum(&rollup.P, measurementValue(dev.Measurements.P), measurementStale(dev.Measurements.P, now))
+	addToSum(&rollup.Q, measurementValue(dev.Measurements.Q), measurementStale(dev.Measurements.Q, now))
+	addToSum(&rollup.StatWAvail, statW, deviceStale)
+	addToSum(&rollup.StatVarAvail, statVar, deviceStale)
+}
+
+// measurementStale reports whether m's own server-stamped reading time is
+// older than staleAfterSeconds. A nil m is unreported, not stale: addToSum
+// checks staleness before the unreported case, so this must answer false for
+// a nil m or an absent value would be miscounted as stale.
+func measurementStale(m *FleetMeasurement, now int64) bool {
+	if m == nil {
+		return false
+	}
+	return now-m.ReadingTime > staleAfterSeconds
 }
 
 func measurementValue(m *FleetMeasurement) *float64 {

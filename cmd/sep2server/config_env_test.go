@@ -253,4 +253,48 @@ func TestConfigFromEnvPEN(t *testing.T) {
 			t.Fatal("configFromEnv: want an error for a SEP2_PEN past uint32 range, got nil")
 		}
 	})
+
+	// Fix round 3: the max uint32 value pins the ParseUint bit-size argument
+	// itself. A mutant changing envUint32's `32` to `31` passed every test
+	// above (none of them named a value only the 32nd bit distinguishes) and
+	// would refuse this one.
+	t.Run("the maximum uint32 value is accepted", func(t *testing.T) {
+		t.Setenv("SEP2_PEN", "4294967295") // 2^32 - 1
+
+		cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+		if err != nil {
+			t.Fatalf("configFromEnv: unexpected error for the maximum uint32 value: %v", err)
+		}
+		if cfg.PEN == nil || *cfg.PEN != 4294967295 {
+			t.Errorf("PEN = %v, want 4294967295", cfg.PEN)
+		}
+	})
+
+	// "0" is a syntactically valid uint32, so envUint32 stores it as
+	// configured; EffectivePEN is what treats it as unset, the same
+	// normalization internal/dercontrol.Config already applies to its own
+	// PEN field. Both halves are asserted so a regression in either layer is
+	// caught at the layer it actually lives in.
+	t.Run("0 parses through configFromEnv and is normalized to unset by EffectivePEN", func(t *testing.T) {
+		t.Setenv("SEP2_PEN", "0")
+
+		cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if cfg.PEN == nil || *cfg.PEN != 0 {
+			t.Errorf("PEN = %v, want a pointer to 0 (the raw env value, unnormalized)", cfg.PEN)
+		}
+		if got := cfg.EffectivePEN(); got != nil {
+			t.Errorf("EffectivePEN() = %#x, want nil for SEP2_PEN=0 (IANA-reserved, treated as unset)", *got)
+		}
+	})
+
+	t.Run("a negative value is a startup error", func(t *testing.T) {
+		t.Setenv("SEP2_PEN", "-1")
+
+		if _, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"}); err == nil {
+			t.Fatal("configFromEnv: want an error for SEP2_PEN=-1, got nil")
+		}
+	})
 }

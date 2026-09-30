@@ -472,7 +472,7 @@ func (i *Issuer) undoCancelFailure(ctx context.Context, scopeKey, id string, bef
 		uctx, cancel := undoContext(ctx)
 		defer cancel()
 		if rerr := i.lifecycles.Update(uctx, scopeKey, id, before); !undoWriteOK(rerr) {
-			return LifecycleRecord{}, &UndoError{Step: UndoStepCancel, ID: id, cause: cause, reverts: []error{rerr}}
+			return LifecycleRecord{}, &UndoError{Step: UndoStepCancel, ControlKept: true, LifecycleKept: true, ID: id, cause: cause, reverts: []error{rerr}}
 		}
 	}
 	return LifecycleRecord{}, fmt.Errorf("dercontrol: cancel: %w", cause)

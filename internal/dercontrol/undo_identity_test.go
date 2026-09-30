@@ -45,3 +45,50 @@ func TestIssue_UndoErrorNamesTheKeptControl(t *testing.T) {
 		t.Errorf("UndoError.Scope = %+v", undo.Scope)
 	}
 }
+
+// Every Issue undo path names the control by mRID and scope, including the
+// two where the store write that failed was the control or its record.
+func TestIssue_UndoErrorNamesTheControlOnEveryPath(t *testing.T) {
+	boom := errors.New("store failed")
+	cases := []struct {
+		name        string
+		controls    *failingControls
+		lifecycles  *failingLifecycles
+		controlKept bool
+	}{
+		{
+			name:        "control create applied and its delete fails",
+			controls:    &failingControls{ScopedStore: memory.NewScopedStore[sep2.DERControl](), createFailAt: map[int]error{1: boom}, createModeAt: map[int]failMode{1: failApplied}, failDelete: boom},
+			lifecycles:  &failingLifecycles{ScopedStore: memory.NewScopedStore[LifecycleRecord]()},
+			controlKept: true,
+		},
+		{
+			name:       "lifecycle create applied and its delete fails",
+			controls:   &failingControls{ScopedStore: memory.NewScopedStore[sep2.DERControl]()},
+			lifecycles: &failingLifecycles{ScopedStore: memory.NewScopedStore[LifecycleRecord](), createFailAt: map[int]error{1: boom}, createModeAt: map[int]failMode{1: failApplied}, failDelete: boom},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			issuer, programs := newWriteOrderIssuer(t, tc.controls, tc.lifecycles)
+			seedWriteOrderProgram(t, programs, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+			_, err := issuer.Issue(context.Background(), CreateRequest{DERProgramHref: programHref("dev1", "0", "p1"), Type: Connect, DurationSeconds: 3600})
+			var undo *UndoError
+			if !errors.As(err, &undo) {
+				t.Fatalf("err = %v, want *UndoError", err)
+			}
+			if undo.ControlKept != tc.controlKept {
+				t.Fatalf("ControlKept = %v, want %v", undo.ControlKept, tc.controlKept)
+			}
+			if len(undo.MRID) != 32 || undo.Scope != (Scope{EndDeviceID: "dev1", FSAID: "0", DERProgramID: "p1"}) {
+				t.Fatalf("UndoError names mRID %q scope %+v", undo.MRID, undo.Scope)
+			}
+			if tc.controlKept {
+				stored, err := tc.controls.ScopedStore.Get(context.Background(), "dev1/0/p1", undo.ID)
+				if err != nil || stored.MRID != undo.MRID {
+					t.Fatalf("stored control %+v (%v), want mRID %s", stored, err, undo.MRID)
+				}
+			}
+		})
+	}
+}

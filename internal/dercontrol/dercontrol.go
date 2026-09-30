@@ -199,9 +199,10 @@ const (
 type UndoError struct {
 	Step UndoStep
 
-	// ControlKept and LifecycleKept report whether the new control, or its
-	// lifecycle record, may still be stored. Both are false for a Cancel
-	// failure, which creates neither.
+	// ControlKept and LifecycleKept report whether the control ID names, or its
+	// lifecycle record, may still be stored. Both are true for a Cancel
+	// failure: Cancel deletes nothing, so the control stays stored and
+	// visible to devices.
 	ControlKept, LifecycleKept bool
 
 	// ID is the store id of the new control (Issue) or of the control

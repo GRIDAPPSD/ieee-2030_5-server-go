@@ -505,6 +505,7 @@ func TestDERControlList(t *testing.T) {
 		{"/api/der/controls", "device: required", 400},
 		{"/api/der/controls?device=77", "device not found", 404},
 		{"/api/der/controls?device=0&derProgramHref=nope", "derProgramHref: invalid format", 400},
+		{"/api/der/controls?device=0&derProgramHref=/edev/0/fsa/0%0D%0A/derp/0", "derProgramHref: invalid format", 400},
 		{"/api/der/controls?device=0&derProgramHref=/edev/1/fsa/0/derp/0", "derProgramHref: not a program of this device", 400},
 	} {
 		assertRefusal(t, d.do(t, http.MethodGet, tc.target, ""), tc.status, tc.want)
@@ -812,7 +813,7 @@ func TestDERControlCreate_UndoFailureKeepsControlLive(t *testing.T) {
 	}
 	out := d.logs.String()
 	if strings.Count(out, "\n") != 1 || !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "event=der_control_create_incomplete") ||
-		!strings.Contains(out, "mrid="+got.MRID) || !strings.Contains(out, "control_kept=true") || strings.Contains(out, "/var/lib") {
+		!strings.Contains(out, "mrid="+got.MRID) || !strings.Contains(out, "control_kept=true") || !strings.Contains(out, "cause=undo_incomplete") || strings.Contains(out, "/var/lib") {
 		t.Errorf("log = %s", out)
 	}
 	list := d.do(t, http.MethodGet, "/api/der/controls?device=0", "")
@@ -836,8 +837,12 @@ func TestDERControlCancel_UndoFailureNotifies(t *testing.T) {
 		t.Fatalf("status = %d body %s, want 500", w.Code, w.Body.String())
 	}
 	var got handler.DERControlIncomplete
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.MRID != created.MRID || got.Href != created.Href {
-		t.Fatalf("body = %s (%v)", w.Body.String(), err)
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.MRID != created.MRID || got.Href != created.Href || !got.ControlKept {
+		t.Fatalf("body = %s (%v), want the control named and controlKept true", w.Body.String(), err)
+	}
+	list := d.do(t, http.MethodGet, "/api/der/controls?device=0", "")
+	if !strings.Contains(list.Body.String(), created.MRID) {
+		t.Errorf("the control is not listed after the failed cancel: %s", list.Body.String())
 	}
 	if n := d.notifier.take(); len(n) != 2 {
 		t.Errorf("notifications = %v, want the program list and the control list", n)
@@ -867,5 +872,49 @@ func TestDERControlCancel_CommittedCancelNotifiesWithoutRereading(t *testing.T) 
 	}
 	if n := d.notifier.take(); len(n) != 2 {
 		t.Errorf("notifications = %v, want 2", n)
+	}
+}
+
+// failingCreateAndDelete is a lifecycle store whose Create stores the record
+// and then reports failure, and whose Delete fails, so the issuer's undo
+// leaves an orphan record but no control.
+type failingCreateAndDelete struct{ failingUpdates }
+
+func (f *failingCreateAndDelete) Create(ctx context.Context, parentID, id string, r dercontrol.LifecycleRecord) error {
+	if err := f.inner.Create(ctx, parentID, id, r); err != nil {
+		return err
+	}
+	return errors.New("lifecycle create failed")
+}
+
+func (f *failingCreateAndDelete) Delete(context.Context, string, string) error {
+	return errors.New("lifecycle delete failed")
+}
+
+// An undo that fails without keeping the control leaves nothing a device
+// can read, so the create is a plain 500 naming no control and sending no
+// notification.
+func TestDERControlCreate_UndoFailureWithoutControlIsPlain500(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	f := &failingCreateAndDelete{failingUpdates{inner: d.lifecycles}}
+	issuer, err := dercontrol.NewIssuer(d.programs, d.controls, f, dercontrol.Config{PEN: ptrU32(dcPEN)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.h.Issuer = issuer
+
+	w := d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(futureStart(60), 100, 300))
+	assertRefusal(t, w, http.StatusInternalServerError, "internal error")
+	if strings.Contains(w.Body.String(), "mRID") || strings.Contains(w.Body.String(), "controlKept") {
+		t.Errorf("body names a control that was never stored: %s", w.Body.String())
+	}
+	if c, _ := d.storedCounts(t); c != 0 {
+		t.Errorf("%d controls stored, want 0", c)
+	}
+	if n := d.notifier.take(); len(n) != 0 {
+		t.Errorf("notifications = %v, want none", n)
+	}
+	if out := d.logs.String(); !strings.Contains(out, "event=der_control_create_failed") || !strings.Contains(out, "cause=undo_incomplete") || !strings.Contains(out, "control_kept=false") {
+		t.Errorf("log = %s", out)
 	}
 }

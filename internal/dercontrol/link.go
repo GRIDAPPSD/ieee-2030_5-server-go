@@ -82,8 +82,9 @@ func newProposal(scope Scope, ctrl sep2.DERControl, grant string, fleet Fleet, c
 // Relink moves the execution at (scope, id) to grantMRID, changing no other
 // field of its lifecycle record. It is for a caller holding the fleet's
 // commitment lock that has already checked the execution against the new
-// grant. On a plain error the record equals what Relink read; a failed
-// restore is a *UndoError.
+// grant. On a *RefusalError or a plain error the stored record equals what
+// Relink read, and a plain error returns that record (zero when the read
+// itself failed). A failed restore is a *UndoError.
 func (i *Issuer) Relink(ctx context.Context, scope Scope, id, grantMRID string) (LifecycleRecord, error) {
 	scopeKey := scopeKeyOf(scope)
 	unlock := i.lockScope(scopeKey)
@@ -104,33 +105,18 @@ func (i *Issuer) Relink(ctx context.Context, scope Scope, id, grantMRID string) 
 		return LifecycleRecord{}, fmt.Errorf("dercontrol: load lifecycle: %w", err)
 	}
 	if before.GrantMRID == "" || grantMRID == "" {
-		return LifecycleRecord{}, ErrNotExecution
+		return before, ErrNotExecution
 	}
 	if err := ctx.Err(); err != nil {
-		return LifecycleRecord{}, err
+		return before, err
 	}
 
 	lc := before
 	lc.GrantMRID = grantMRID
 	if err := i.lifecycles.Update(ctx, scopeKey, id, lc); err != nil {
-		lc, uerr := i.undoRelinkFailure(ctx, scopeKey, id, before, err)
-		_, uerr = nameUndo(scope, ctrl.MRID)(Result{}, uerr)
-		return lc, uerr
+		return i.restoreLifecycle(ctx, scope, id, ctrl.MRID, before, UndoStepRelink, err)
 	}
 	return lc, nil
-}
-
-// undoRelinkFailure restores the record Relink read, skipping the write
-// when the store already rolled its own failure back.
-func (i *Issuer) undoRelinkFailure(ctx context.Context, scopeKey, id string, before LifecycleRecord, cause error) (LifecycleRecord, error) {
-	if !skipCompensation(i.lifecycles) {
-		uctx, cancel := undoContext(ctx)
-		defer cancel()
-		if rerr := i.lifecycles.Update(uctx, scopeKey, id, before); !undoWriteOK(rerr) {
-			return LifecycleRecord{}, &UndoError{Step: UndoStepRelink, ControlKept: true, LifecycleKept: true, ID: id, cause: cause, reverts: []error{rerr}}
-		}
-	}
-	return LifecycleRecord{}, fmt.Errorf("dercontrol: relink: %w", cause)
 }
 
 // CancelLive cancels the control at (scope, id) and reports true, or

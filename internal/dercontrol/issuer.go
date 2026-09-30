@@ -249,6 +249,9 @@ func (i *Issuer) issue(ctx context.Context, req CreateRequest, fleet Fleet) (Res
 	// prefix of this sequence stays legal: an orphan lifecycle record is
 	// legal and unreachable, and once the control is stored, every
 	// stored control has its lifecycle record for the rest of the call.
+	// An orphan left by a failed undo carries the grant link, so anything
+	// counting commitments must start from stored controls, never from
+	// lifecycle records alone.
 	link := LifecycleRecord{GrantMRID: req.ExecutesGrant, FleetKey: fleet.Key, Reach: fleet.Reach}
 	if err := i.lifecycles.Create(ctx, scopeKey, id, link); err != nil {
 		return nameUndo(scope, mrid)(i.undoLifecycleCreateFailure(ctx, scopeKey, id, err))
@@ -425,10 +428,11 @@ func (i *Issuer) undoMarkFailure(ctx context.Context, scopeKey, id string, attem
 // interval has ended (acceptance criterion 8).
 //
 // On a nil error CancelledAt and CancelReason are stored. On a
-// *RefusalError nothing was written. On any other plain error the record
-// equals what Cancel read: the write's effect has been undone. When the
-// restore itself fails, Cancel returns a *UndoError naming the control;
-// the record may or may not carry the cancellation.
+// *RefusalError nothing was written. On any other plain error the stored
+// record equals what Cancel read, and that record is returned (zero when
+// the read itself failed). When the restore itself fails, Cancel returns a
+// *UndoError naming the control; the record may or may not carry the
+// cancellation.
 func (i *Issuer) Cancel(ctx context.Context, scope Scope, id string, reason string) (LifecycleRecord, error) {
 	scopeKey := scopeKeyOf(scope)
 
@@ -458,7 +462,7 @@ func (i *Issuer) Cancel(ctx context.Context, scope Scope, id string, reason stri
 		return LifecycleRecord{}, refuse(RefusalAlreadySuperseded)
 	}
 	if ctrl.Interval == nil {
-		return LifecycleRecord{}, fmt.Errorf("dercontrol: control has no interval")
+		return before, fmt.Errorf("dercontrol: control has no interval")
 	}
 	if end := ctrl.Interval.Start + int64(ctrl.Interval.Duration); now >= end {
 		return LifecycleRecord{}, refuse(RefusalEnded)
@@ -466,35 +470,33 @@ func (i *Issuer) Cancel(ctx context.Context, scope Scope, id string, reason stri
 
 	if err := ctx.Err(); err != nil {
 		// Nothing has been written yet, so nothing needs undoing.
-		return LifecycleRecord{}, err
+		return before, err
 	}
 
 	lc := before
 	lc.CancelledAt = ptrInt64(now)
 	lc.CancelReason = reason
 	if err := i.lifecycles.Update(ctx, scopeKey, id, lc); err != nil {
-		lc, uerr := i.undoCancelFailure(ctx, scopeKey, id, before, err)
-		_, uerr = nameUndo(scope, ctrl.MRID)(Result{}, uerr)
-		return lc, uerr
+		return i.restoreLifecycle(ctx, scope, id, ctrl.MRID, before, UndoStepCancel, err)
 	}
 	return lc, nil
 }
 
-// undoCancelFailure restores the record Cancel read before its Update
-// failed. When the store already rolled its own failure back
-// (skipCompensation), the record is provably already at `before`: the
-// compensating write is skipped, and Cancel returns the plain cause,
-// matching its own documented contract that a plain error means "the
-// record equals what Cancel read" (round 2, item 1).
-func (i *Issuer) undoCancelFailure(ctx context.Context, scopeKey, id string, before LifecycleRecord, cause error) (LifecycleRecord, error) {
+// restoreLifecycle undoes a failed Update of the record at (scope, id),
+// the one write Cancel and Relink make. On a plain error the store holds
+// before again, and before is returned. When the store already rolled its
+// own failure back (skipCompensation) the compensating write is skipped. A
+// failed restore is a *UndoError naming the control, whose record may or
+// may not carry the write.
+func (i *Issuer) restoreLifecycle(ctx context.Context, scope Scope, id, mrid string, before LifecycleRecord, step UndoStep, cause error) (LifecycleRecord, error) {
 	if !skipCompensation(i.lifecycles) {
 		uctx, cancel := undoContext(ctx)
 		defer cancel()
-		if rerr := i.lifecycles.Update(uctx, scopeKey, id, before); !undoWriteOK(rerr) {
-			return LifecycleRecord{}, &UndoError{Step: UndoStepCancel, ControlKept: true, LifecycleKept: true, ID: id, cause: cause, reverts: []error{rerr}}
+		if rerr := i.lifecycles.Update(uctx, scopeKeyOf(scope), id, before); !undoWriteOK(rerr) {
+			return LifecycleRecord{}, &UndoError{Step: step, ControlKept: true, LifecycleKept: true, ID: id, Scope: scope, MRID: mrid, cause: cause, reverts: []error{rerr}}
 		}
 	}
-	return LifecycleRecord{}, fmt.Errorf("dercontrol: cancel: %w", cause)
+	return before, fmt.Errorf("dercontrol: %s: %w", step, cause)
 }
 
 // buildBase maps a request's type and value to the closed set of

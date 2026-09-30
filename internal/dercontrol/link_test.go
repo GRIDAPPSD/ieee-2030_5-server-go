@@ -700,3 +700,332 @@ func TestCancelLive(t *testing.T) {
 		assertRefusal(t, err, RefusalControlNotFound)
 	})
 }
+
+// The link is read later by the commitment ledger even after the control is
+// superseded or cancelled (a superseded execution still spends its grant's
+// energy), so neither lifecycle write may drop it.
+func TestLink_SurvivesSupersedeMarkAndCancel(t *testing.T) {
+	h := newLinkHarness(t)
+	ctx := context.Background()
+	start := sep2time.Now().Unix() + 1000
+	grant := "AAAA0000AAAA0000AAAA0000AAAA0000"
+
+	older, err := h.issuer.IssueInFleet(ctx, targetRequest(start, 600, activePower(-1000, 0), grant), Fleet{Key: "LFDI-AGG", Reach: 2, Check: allowCheck})
+	if err != nil {
+		t.Fatalf("issue older execution: %v", err)
+	}
+	newer, err := h.issuer.IssueInFleet(ctx, targetRequest(start+60, 600, activePower(-500, 0), grant), Fleet{Key: "LFDI-AGG", Reach: 3, Check: allowCheck})
+	if err != nil {
+		t.Fatalf("issue superseding execution: %v", err)
+	}
+	superseded, err := h.lifecycles.Get(ctx, linkScopeKey, older.ID)
+	if err != nil {
+		t.Fatalf("load superseded lifecycle: %v", err)
+	}
+	if superseded.SupersededAt == nil || *superseded.SupersededAt != start+60 || superseded.SupersededBy != newer.Control.MRID {
+		t.Fatalf("supersede = (%v, %q), want (%d, %s)", superseded.SupersededAt, superseded.SupersededBy, start+60, newer.Control.MRID)
+	}
+	assertLink(t, "superseded", superseded, grant, "LFDI-AGG", 2)
+
+	returned, err := h.issuer.Cancel(ctx, newer.Scope, newer.ID, "stop")
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	stored, err := h.lifecycles.Get(ctx, linkScopeKey, newer.ID)
+	if err != nil {
+		t.Fatalf("load cancelled lifecycle: %v", err)
+	}
+	for name, rec := range map[string]LifecycleRecord{"returned": returned, "stored": stored} {
+		if rec.CancelledAt == nil || rec.CancelReason != "stop" {
+			t.Fatalf("%s cancel = (%v, %q), want cancelled with reason stop", name, rec.CancelledAt, rec.CancelReason)
+		}
+		assertLink(t, "cancelled "+name, rec, grant, "LFDI-AGG", 3)
+	}
+}
+
+func assertLink(t *testing.T, what string, rec LifecycleRecord, grant, fleet string, reach int) {
+	t.Helper()
+	if rec.GrantMRID != grant || rec.FleetKey != fleet || rec.Reach != reach {
+		t.Fatalf("%s link = (%q, %q, %d), want (%q, %q, %d)", what, rec.GrantMRID, rec.FleetKey, rec.Reach, grant, fleet, reach)
+	}
+}
+
+// Cancel and Relink promise that a plain error leaves the record as read,
+// and they return that record, not a zero one a caller could mistake for a
+// plain dispatch.
+func TestLifecycleWriteFailure_ReturnsRecordAsRead(t *testing.T) {
+	errWrite := errors.New("lifecycle store unavailable")
+	ops := []struct {
+		name  string
+		write func(*Issuer, Result) (LifecycleRecord, error)
+	}{
+		{"Cancel", func(i *Issuer, r Result) (LifecycleRecord, error) {
+			return i.Cancel(context.Background(), r.Scope, r.ID, "stop")
+		}},
+		{"Relink", func(i *Issuer, r Result) (LifecycleRecord, error) {
+			return i.Relink(context.Background(), r.Scope, r.ID, "BBBB")
+		}},
+	}
+	modes := []struct {
+		name string
+		mode failMode
+	}{{"clean", failClean}, {"applied", failApplied}}
+	for _, op := range ops {
+		for _, m := range modes {
+			t.Run(op.name+" "+m.name, func(t *testing.T) {
+				lifecycles := &failingLifecycles{ScopedStore: memory.NewScopedStore[LifecycleRecord](), log: &callLog{}}
+				issuer, programs, _ := newFailingLifecycleHarness(t, lifecycles)
+				seedWriteOrderProgram(t, programs, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+				start := sep2time.Now().Unix() + 1000
+				res, err := issuer.IssueInFleet(context.Background(), targetRequest(start, 600, activePower(-1000, 0), "AAAA"),
+					Fleet{Key: "LFDI-AGG", Reach: 2, Check: allowCheck})
+				if err != nil {
+					t.Fatalf("issue: %v", err)
+				}
+				read, err := lifecycles.Get(context.Background(), linkScopeKey, res.ID)
+				if err != nil {
+					t.Fatalf("load lifecycle: %v", err)
+				}
+				lifecycles.updateFailAt = map[int]error{1: errWrite}
+				lifecycles.updateModeAt = map[int]failMode{1: m.mode}
+
+				got, err := op.write(issuer, res)
+				if !errors.Is(err, errWrite) {
+					t.Fatalf("error = %v, want wrapping %v", err, errWrite)
+				}
+				var undo *UndoError
+				if errors.As(err, &undo) {
+					t.Fatalf("error = %v, want a plain error", err)
+				}
+				if got != read {
+					t.Fatalf("returned record = %+v, want the record as read %+v", got, read)
+				}
+				stored, err := lifecycles.Get(context.Background(), linkScopeKey, res.ID)
+				if err != nil {
+					t.Fatalf("load lifecycle after failure: %v", err)
+				}
+				if stored != read {
+					t.Fatalf("stored record = %+v, want %+v", stored, read)
+				}
+			})
+		}
+	}
+}
+
+// An orphan lifecycle record, left when a create and its undo both fail,
+// carries the grant link. It is reported through the UndoError and is not
+// reachable from any stored control, which is the property a commitment
+// source keeps by starting from stored controls.
+func TestIssueInFleet_OrphanLifecycleIsReportedAndUnreachable(t *testing.T) {
+	errCreate := errors.New("create failed")
+	errDelete := errors.New("delete failed")
+	ctx := context.Background()
+	start := sep2time.Now().Unix() + 1000
+	grant := "AAAA0000AAAA0000AAAA0000AAAA0000"
+
+	assertOrphanUndo := func(t *testing.T, err error) *UndoError {
+		t.Helper()
+		var undo *UndoError
+		if !errors.As(err, &undo) {
+			t.Fatalf("error = %v (%T), want *UndoError", err, err)
+		}
+		if undo.ControlKept || !undo.LifecycleKept || undo.ID == "" || undo.MRID == "" || undo.Scope.Key() != linkScopeKey {
+			t.Fatalf("UndoError = %+v, want only the lifecycle kept, naming its id, mRID and scope", undo)
+		}
+		return undo
+	}
+
+	t.Run("lifecycle create and its delete fail", func(t *testing.T) {
+		controls := memory.NewDERControlStore()
+		lifecycles := &failingLifecycles{
+			ScopedStore:  memory.NewScopedStore[LifecycleRecord](),
+			createFailAt: map[int]error{1: errCreate},
+			createModeAt: map[int]failMode{1: failApplied},
+			failDelete:   errDelete,
+		}
+		programs := memory.NewScopedStore[sep2.DERProgram]()
+		issuer, err := NewIssuer(programs, controls, lifecycles, Config{PEN: testPEN(1)})
+		if err != nil {
+			t.Fatalf("NewIssuer: %v", err)
+		}
+		seedWriteOrderProgram(t, programs, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+
+		_, err = issuer.IssueInFleet(ctx, targetRequest(start, 600, activePower(-1000, 0), grant), Fleet{Key: "LFDI-AGG", Reach: 1, Check: allowCheck})
+		undo := assertOrphanUndo(t, err)
+
+		orphan, gerr := lifecycles.Get(ctx, linkScopeKey, undo.ID)
+		if gerr != nil {
+			t.Fatalf("orphan record not stored: %v", gerr)
+		}
+		assertLink(t, "orphan", orphan, grant, "LFDI-AGG", 1)
+		if _, _, _, berr := controls.ByMRID(ctx, undo.MRID); !errors.Is(berr, store.ErrNotFound) {
+			t.Fatalf("ByMRID(orphan) error = %v, want store.ErrNotFound", berr)
+		}
+		list, lerr := controls.List(ctx, linkScopeKey, store.ListOptions{Unbounded: true})
+		if lerr != nil && !errors.Is(lerr, store.ErrNotFound) {
+			t.Fatalf("List: %v", lerr)
+		}
+		if len(list.Items) != 0 {
+			t.Fatalf("listing holds %d controls, want 0", len(list.Items))
+		}
+	})
+
+	t.Run("control create and the lifecycle delete fail", func(t *testing.T) {
+		controls := &failingControls{ScopedStore: memory.NewScopedStore[sep2.DERControl](), createFailAt: map[int]error{1: errCreate}}
+		lifecycles := &failingLifecycles{ScopedStore: memory.NewScopedStore[LifecycleRecord](), failDelete: errDelete}
+		issuer, programs := newWriteOrderIssuer(t, controls, lifecycles)
+		seedWriteOrderProgram(t, programs, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+
+		_, err := issuer.IssueInFleet(ctx, targetRequest(start, 600, activePower(-1000, 0), grant), Fleet{Key: "LFDI-AGG", Reach: 1, Check: allowCheck})
+		undo := assertOrphanUndo(t, err)
+
+		orphan, gerr := lifecycles.Get(ctx, linkScopeKey, undo.ID)
+		if gerr != nil {
+			t.Fatalf("orphan record not stored: %v", gerr)
+		}
+		assertLink(t, "orphan", orphan, grant, "LFDI-AGG", 1)
+		if _, cerr := controls.Get(ctx, linkScopeKey, undo.ID); !errors.Is(cerr, store.ErrNotFound) {
+			t.Fatalf("control Get(orphan id) error = %v, want store.ErrNotFound", cerr)
+		}
+		list, lerr := controls.List(ctx, linkScopeKey, store.ListOptions{Unbounded: true})
+		if lerr != nil && !errors.Is(lerr, store.ErrNotFound) {
+			t.Fatalf("List: %v", lerr)
+		}
+		if len(list.Items) != 0 {
+			t.Fatalf("listing holds %d controls, want 0", len(list.Items))
+		}
+	})
+}
+
+func TestIssueInFleet_NegativeReachRefused(t *testing.T) {
+	h := newLinkHarness(t)
+	start := sep2time.Now().Unix() + 1000
+	_, err := h.issuer.IssueInFleet(context.Background(), targetRequest(start, 600, activePower(-1000, 0), "AAAA"), Fleet{Key: "LFDI-AGG", Reach: -1, Check: allowCheck})
+	if !errors.Is(err, ErrUncheckedCommitment) {
+		t.Fatalf("error = %v, want ErrUncheckedCommitment", err)
+	}
+	assertNoNewControl(t, h)
+	assertNoLifecycle(t, h)
+}
+
+func TestRelink_Edges(t *testing.T) {
+	ctx := context.Background()
+	scope := Scope{EndDeviceID: "dev1", FSAID: "0", DERProgramID: "p1"}
+
+	seedStored := func(t *testing.T, h *testHarness, id string, start int64, rec *LifecycleRecord) {
+		t.Helper()
+		var ctrl sep2.DERControl
+		ctrl.Href = controlListHref("dev1", "0", "p1") + "/" + id
+		ctrl.MRID = "CCCC0000CCCC0000CCCC0000CCCC0000"
+		ctrl.Interval = &sep2.DateTimeInterval{Start: start, Duration: 60}
+		if err := h.controls.Create(ctx, linkScopeKey, id, ctrl); err != nil {
+			t.Fatalf("seed control: %v", err)
+		}
+		if rec != nil {
+			if err := h.lifecycles.Create(ctx, linkScopeKey, id, *rec); err != nil {
+				t.Fatalf("seed lifecycle: %v", err)
+			}
+		}
+	}
+
+	t.Run("control without a lifecycle record", func(t *testing.T) {
+		h := newLinkHarness(t)
+		seedStored(t, h, "fixture", sep2time.Now().Unix()+1000, nil)
+		_, err := h.issuer.Relink(ctx, scope, "fixture", "BBBB")
+		assertRefusal(t, err, RefusalControlNotFound)
+		assertNoLifecycle(t, h)
+	})
+
+	t.Run("cancelled context writes nothing", func(t *testing.T) {
+		h := newLinkHarness(t)
+		seedStored(t, h, "exec", sep2time.Now().Unix()+1000, &LifecycleRecord{GrantMRID: "AAAA", FleetKey: "LFDI-AGG", Reach: 1})
+		cctx, cancel := context.WithCancel(ctx)
+		cancel()
+		returned, err := h.issuer.Relink(cctx, scope, "exec", "BBBB")
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Relink() error = %v, want context.Canceled", err)
+		}
+		assertLink(t, "returned after cancelled relink", returned, "AAAA", "LFDI-AGG", 1)
+		got, err := h.lifecycles.Get(ctx, linkScopeKey, "exec")
+		if err != nil {
+			t.Fatalf("load lifecycle: %v", err)
+		}
+		assertLink(t, "after cancelled relink", got, "AAAA", "LFDI-AGG", 1)
+	})
+
+	t.Run("ended execution moves with its grant", func(t *testing.T) {
+		h := newLinkHarness(t)
+		seedStored(t, h, "ended", sep2time.Now().Unix()-1000, &LifecycleRecord{GrantMRID: "AAAA", FleetKey: "LFDI-AGG", Reach: 2})
+		got, err := h.issuer.Relink(ctx, scope, "ended", "BBBB")
+		if err != nil {
+			t.Fatalf("Relink() of an ended execution error = %v, want nil", err)
+		}
+		stored, err := h.lifecycles.Get(ctx, linkScopeKey, "ended")
+		if err != nil {
+			t.Fatalf("load lifecycle: %v", err)
+		}
+		if got != stored {
+			t.Fatalf("returned %+v, stored %+v", got, stored)
+		}
+		assertLink(t, "ended", stored, "BBBB", "LFDI-AGG", 2)
+	})
+}
+
+func TestNewProposal_CopiesTargetW(t *testing.T) {
+	target := activePower(-1500, 1)
+	var ctrl sep2.DERControl
+	ctrl.DERControlBase = &sep2.DERControlBase{OpModTargetW: target}
+	ctrl.Interval = &sep2.DateTimeInterval{Start: 100, Duration: 60}
+
+	p := newProposal(Scope{}, ctrl, "", Fleet{Key: "LFDI-AGG", Reach: 1}, nil)
+	if p.TargetW == nil || *p.TargetW != *target {
+		t.Fatalf("TargetW = %v, want %+v", p.TargetW, *target)
+	}
+	if p.TargetW == target {
+		t.Fatal("proposal shares the control's OpModTargetW; a check that changes it would rewrite the control")
+	}
+	p.TargetW.Value = 1
+	if target.Value != -1500 {
+		t.Fatalf("control target changed to %d through the proposal", target.Value)
+	}
+}
+
+// The same promise over the persisting store, whose own rollback makes the
+// compensating write unnecessary: the skip path returns the record as read
+// too.
+func TestLifecycleWriteFailure_PersistedStoreReturnsRecordAsRead(t *testing.T) {
+	ops := map[string]func(*Issuer, Result) (LifecycleRecord, error){
+		"Cancel": func(i *Issuer, r Result) (LifecycleRecord, error) {
+			return i.Cancel(context.Background(), r.Scope, r.ID, "stop")
+		},
+		"Relink": func(i *Issuer, r Result) (LifecycleRecord, error) {
+			return i.Relink(context.Background(), r.Scope, r.ID, "BBBB")
+		},
+	}
+	for name, write := range ops {
+		t.Run(name, func(t *testing.T) {
+			h := newPersistedHarness(t, Config{PEN: testPEN(1)})
+			h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+			start := sep2time.Now().Unix() + 1000
+			res, err := h.issuer.IssueInFleet(context.Background(), targetRequest(start, 600, activePower(-1000, 0), "AAAA"),
+				Fleet{Key: "LFDI-AGG", Reach: 2, Check: allowCheck})
+			if err != nil {
+				t.Fatalf("issue: %v", err)
+			}
+			read, err := h.lifecycles.Get(context.Background(), linkScopeKey, res.ID)
+			if err != nil {
+				t.Fatalf("load lifecycle: %v", err)
+			}
+			blockLifecyclePersist(t, h.lifecyclePath)
+
+			got, err := write(h.issuer, res)
+			var undo *UndoError
+			if err == nil || errors.As(err, &undo) {
+				t.Fatalf("error = %v, want a plain persist failure", err)
+			}
+			if got != read {
+				t.Fatalf("returned record = %+v, want the record as read %+v", got, read)
+			}
+		})
+	}
+}

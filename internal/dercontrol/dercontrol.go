@@ -23,8 +23,8 @@ const (
 )
 
 // ControlType selects which DERControlBase shape Issue builds. The set is
-// closed: IEEE 2030.5-2018 defines other opMod fields, but v1 supports only
-// these four.
+// closed: IEEE 2030.5-2018 defines other opMod fields, but only these five
+// are supported.
 type ControlType string
 
 const (
@@ -32,6 +32,7 @@ const (
 	Disconnect     ControlType = "disconnect"
 	MaxLimW        ControlType = "maxLimW"
 	FixedPFInjectW ControlType = "fixedPFInjectW"
+	TargetW        ControlType = "targetW"
 )
 
 // PowerFactorValue is the value object required for FixedPFInjectW.
@@ -64,6 +65,16 @@ type CreateRequest struct {
 
 	// PowerFactor is required for, and only for, Type == FixedPFInjectW.
 	PowerFactor *PowerFactorValue
+
+	// TargetW is required for, and only for, Type == TargetW. It is
+	// discharge positive, like every DER function value.
+	TargetW *sep2.ActivePower
+
+	// ExecutesGrant is the mRID of the FlowReservationResponse this control
+	// carries out, or empty for a plain dispatch. Only IssueInFleet accepts
+	// it, because a link is valid only once a commitment check has bounded
+	// it (GRIDAPPSD/ieee-2030_5-server-go#714).
+	ExecutesGrant string
 
 	// Start is the requested interval start, Unix seconds. Nil means
 	// "start at creationTime" (acceptance criterion 4).
@@ -185,6 +196,7 @@ const (
 	UndoStepStoreControl   UndoStep = "store control"
 	UndoStepMarkSuperseded UndoStep = "mark superseded"
 	UndoStepCancel         UndoStep = "cancel"
+	UndoStepRelink         UndoStep = "relink"
 )
 
 // UndoError is returned when a forward write inside Issue or Cancel fails

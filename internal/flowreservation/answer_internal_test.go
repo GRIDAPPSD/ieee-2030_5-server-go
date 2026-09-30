@@ -272,7 +272,7 @@ func TestDeriveEventStatus(t *testing.T) {
 	}
 }
 
-// TestDeriveEventStatus_ZeroDurationNeverActive is the denial edge Noor's
+// TestDeriveEventStatus_ZeroDurationNeverActive is the denial edge the
 // design flags: a zero-duration interval's active span is empty, so the
 // derivation must report Scheduled or Complete for it, never Active, at
 // any "now".

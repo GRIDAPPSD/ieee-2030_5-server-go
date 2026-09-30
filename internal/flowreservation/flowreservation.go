@@ -78,7 +78,7 @@ func answerFor(frq sep2.FlowReservationRequest, decision Decision) (sep2.FlowRes
 	if decision.Kind == Deny {
 		// 10.9.3.2: "If a server wants to deny a request, it SHALL create a
 		// FlowReservationResponse with duration equal to zero." interval.start
-		// is the requested start (Noor's design, Q1); energyAvailable and
+		// is the requested start (the design's Q1); energyAvailable and
 		// powerAvailable are both mandatory elements and the standard fixes
 		// neither value on a denial, so our declared convention zeroes both.
 		var start int64

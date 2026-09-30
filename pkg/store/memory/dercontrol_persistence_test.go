@@ -152,6 +152,40 @@ func TestDERControlPersistence_CreateRollsBackOnPersistFailure(t *testing.T) {
 	}
 }
 
+// TestDERControlPersistence_UpdateRollsBackOnPersistFailure is
+// GRIDAPPSD/ieee-2030_5-server-go#565 fix round 1, item 2: the sibling
+// Create and Delete rollback tests above had no Update counterpart, so a
+// mutant that dropped Update's rollback (dercontrol_persistence.go's
+// restore of `before` and of the mRID index) went uncaught. This asserts
+// both the field value and the mRID index revert to the pre-Update state.
+func TestDERControlPersistence_UpdateRollsBackOnPersistFailure(t *testing.T) {
+	s, path := newPersistedDERControlStore(t)
+	ctx := context.Background()
+	original := mkControl("ORIGINAL", 100)
+	if err := s.Create(ctx, "0/0/0", "c1", original); err != nil {
+		t.Fatalf("seed Create: %v", err)
+	}
+
+	blockPersist(t, path)
+	changed := mkControl("CHANGED", 200)
+	if err := s.Update(ctx, "0/0/0", "c1", changed); err == nil {
+		t.Fatal("Update with a blocked snapshot path returned nil error, want the persist failure")
+	}
+	got, err := s.Get(ctx, "0/0/0", "c1")
+	if err != nil {
+		t.Fatalf("Get after a failed Update: %v, want the prior value restored", err)
+	}
+	if got.MRID != "ORIGINAL" {
+		t.Errorf("control after a failed Update has MRID = %q, want the restored ORIGINAL", got.MRID)
+	}
+	if _, _, _, err := s.ByMRID(ctx, "ORIGINAL"); err != nil {
+		t.Errorf("ByMRID(ORIGINAL) after a failed Update: %v, want the index restored to the prior mRID", err)
+	}
+	if _, _, _, err := s.ByMRID(ctx, "CHANGED"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("ByMRID(CHANGED) after a failed Update = %v, want ErrNotFound: the rejected mRID must not be indexed", err)
+	}
+}
+
 func TestDERControlPersistence_DeleteRollsBackOnPersistFailure(t *testing.T) {
 	s, path := newPersistedDERControlStore(t)
 	ctx := context.Background()

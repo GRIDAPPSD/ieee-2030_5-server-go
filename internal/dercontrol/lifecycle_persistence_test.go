@@ -114,6 +114,32 @@ func TestLifecyclePersistence_UpdateRollsBackOnPersistFailure(t *testing.T) {
 	}
 }
 
+// TestLifecyclePersistence_DeleteRollsBackOnPersistFailure is
+// GRIDAPPSD/ieee-2030_5-server-go#565 fix round 1, item 2: Create and
+// Update above had rollback tests; Delete did not, so a mutant that
+// dropped Delete's restore-on-persist-failure went uncaught.
+func TestLifecyclePersistence_DeleteRollsBackOnPersistFailure(t *testing.T) {
+	s, path := newPersistedLifecycleStore(t)
+	ctx := context.Background()
+	cancelledAt := int64(700)
+	seeded := LifecycleRecord{CancelledAt: &cancelledAt, CancelReason: "keep me"}
+	if err := s.Create(ctx, "0/0/0", "c1", seeded); err != nil {
+		t.Fatalf("seed Create: %v", err)
+	}
+
+	blockLifecyclePersist(t, path)
+	if err := s.Delete(ctx, "0/0/0", "c1"); err == nil {
+		t.Fatal("Delete with a blocked snapshot path returned nil error, want the persist failure")
+	}
+	got, err := s.Get(ctx, "0/0/0", "c1")
+	if err != nil {
+		t.Fatalf("Get after a failed Delete: %v, want the record restored", err)
+	}
+	if got.CancelReason != "keep me" || got.CancelledAt == nil || *got.CancelledAt != cancelledAt {
+		t.Errorf("record after a failed Delete = %+v, want the seeded value restored", got)
+	}
+}
+
 func TestLifecyclePersistence_Persists(t *testing.T) {
 	mem := NewLifecycleStore()
 	if mem.Persists() {

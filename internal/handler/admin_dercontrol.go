@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -55,6 +54,7 @@ func validString(s string, max int) bool {
 // production implementation is *dercontrol.Issuer. Create goes through
 // IssueInFleet only, so no control is stored without a commitment check.
 type DERControlIssuer interface {
+	Validate(req dercontrol.CreateRequest) error
 	IssueInFleet(ctx context.Context, req dercontrol.CreateRequest, fleet dercontrol.Fleet) (dercontrol.Result, error)
 	Cancel(ctx context.Context, scope dercontrol.Scope, id, reason string) (dercontrol.LifecycleRecord, error)
 }
@@ -90,9 +90,17 @@ type ResponseLister interface {
 	List(ctx context.Context, parentID string, opts store.ListOptions) (store.ListResult[sep2.Response], error)
 }
 
-// errCommitmentUnavailable marks a commitment check that could not
-// complete. It answers 500, never 409, and never lets the create through.
-var errCommitmentUnavailable = errors.New("commitment check could not complete")
+// commitmentFailure is a commitment check that could not complete. It
+// answers 500, never 409, and never lets the create through. sub is a fixed
+// name logged in place of err, whose text can carry a store's diagnostic.
+type commitmentFailure struct {
+	sub string
+	err error
+}
+
+func (e *commitmentFailure) Error() string { return "commitment check could not complete: " + e.sub }
+
+func (e *commitmentFailure) Unwrap() error { return e.err }
 
 // controlReach is the number of a fleet's devices that read one control: a
 // control is served only under the EndDevice it is stored beneath.
@@ -182,6 +190,7 @@ var (
 	refuseExecutesGrantFormat = derControlRefusal{http.StatusBadRequest, "executes_grant_invalid", "executesGrant: invalid format"}
 	refusePENNotConfigured    = derControlRefusal{http.StatusServiceUnavailable, "pen_not_configured", "server PEN not configured"}
 	refuseInternal            = derControlRefusal{http.StatusInternalServerError, "internal_error", "internal error"}
+	refuseClientGone          = derControlRefusal{http.StatusServiceUnavailable, "client_gone", "request cancelled"}
 	refuseMRIDFormat          = derControlRefusal{http.StatusBadRequest, "mrid_invalid", "mrid: invalid format"}
 	refuseReason              = derControlRefusal{http.StatusBadRequest, "reason_invalid", "reason: at most 192 octets"}
 	refuseControlNotFound     = derControlRefusal{http.StatusNotFound, "control_not_found", "control not found"}
@@ -394,7 +403,8 @@ func (h *AdminDERControlHandler) refuse(w http.ResponseWriter, r *http.Request, 
 
 func (h *AdminDERControlHandler) logRefusal(r *http.Request, op string, ref derControlRefusal, l *derControlLog) {
 	level, msg, event := slog.LevelWarn, "admin: DER control request refused", "der_control_"+op+"_refused"
-	if ref.status >= http.StatusInternalServerError {
+	// A client that went away is not a server failure.
+	if ref.status >= http.StatusInternalServerError && ref != refuseClientGone {
 		level, msg, event = slog.LevelError, "admin: DER control request failed", "der_control_"+op+"_failed"
 	}
 	h.log(r, level, msg, event, append([]any{"code", ref.code, "status", ref.status}, l.attrs...))
@@ -466,6 +476,12 @@ func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
 			return
 		}
 
+		// Checks that read no store run first, so a bad request is refused
+		// without resolving the fleet or waiting for its lock.
+		if err := h.Issuer.Validate(req); err != nil {
+			h.refuse(w, r, "create", mapIssuerError(err, &logged), &logged)
+			return
+		}
 		res, err := h.issueInFleet(r.Context(), req)
 		if err != nil {
 			var conflict *commitment.ConflictError
@@ -473,9 +489,21 @@ func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
 				h.refuseConflict(w, r, conflict, &logged)
 				return
 			}
-			if errors.Is(err, errCommitmentUnavailable) {
+			var failure *commitmentFailure
+			if errors.As(err, &failure) {
+				// The href passed validProgramHref, so its segments are
+				// plain ASCII and safe to log.
+				edevID, _, _, _ := derhref.Program(req.DERProgramHref)
 				logged.add("cause", "commitment_check_failed")
+				logged.add("sub_cause", failure.sub)
+				logged.add("device_id", edevID)
+				logged.add("program_href", req.DERProgramHref)
 				h.refuse(w, r, "create", refuseInternal, &logged)
+				return
+			}
+			if isContextErr(err) && r.Context().Err() != nil {
+				logged.add("cause", "client_gone")
+				h.refuse(w, r, "create", refuseClientGone, &logged)
 				return
 			}
 			var undo *dercontrol.UndoError
@@ -506,25 +534,36 @@ func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
 }
 
 // issueInFleet runs the issuer inside the commitment lock of the program's
-// fleet, so no other create or grant on that fleet can land between the
-// check and the write. An error wrapping errCommitmentUnavailable means the
-// check did not complete; a *commitment.ConflictError is a refusal.
+// fleet. The flow reservation gate takes the same lock for every grant, so
+// no grant or other create on that fleet lands between the check and the
+// write. The fleet key is resolved before the lock is taken, so a change of
+// management pairs in between is not serialized with it.
+//
+// A *commitmentFailure means the check did not complete; a
+// *commitment.ConflictError is a refusal; a context error means the client
+// went away before anything was written.
 func (h *AdminDERControlHandler) issueInFleet(ctx context.Context, req dercontrol.CreateRequest) (dercontrol.Result, error) {
-	if h.Fleets == nil || h.Ledger == nil {
-		return dercontrol.Result{}, fmt.Errorf("%w: not wired", errCommitmentUnavailable)
+	if h.Fleets == nil {
+		return dercontrol.Result{}, &commitmentFailure{sub: "no_resolver"}
+	}
+	if h.Ledger == nil {
+		return dercontrol.Result{}, &commitmentFailure{sub: "no_ledger"}
 	}
 	edevID, _, _, ok := derhref.Program(req.DERProgramHref)
 	if !ok {
 		return dercontrol.Result{}, &dercontrol.RefusalError{Code: dercontrol.RefusalInvalidProgramHref}
 	}
 	fleetKey, err := h.Fleets.FleetOf(ctx, edevID)
-	if err != nil {
+	switch {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
 		// A program cannot be stored under an EndDevice that does not
 		// exist, so this is the issuer's own 404.
-		if errors.Is(err, store.ErrNotFound) {
-			return dercontrol.Result{}, &dercontrol.RefusalError{Code: dercontrol.RefusalProgramNotFound}
-		}
-		return dercontrol.Result{}, fmt.Errorf("%w: %w", errCommitmentUnavailable, err)
+		return dercontrol.Result{}, &dercontrol.RefusalError{Code: dercontrol.RefusalProgramNotFound}
+	case errors.Is(err, commitment.ErrNoLFDI):
+		return dercontrol.Result{}, &commitmentFailure{sub: "device_without_lfdi", err: err}
+	default:
+		return dercontrol.Result{}, &commitmentFailure{sub: "fleet_resolve_failed", err: err}
 	}
 
 	var res dercontrol.Result
@@ -535,10 +574,20 @@ func (h *AdminDERControlHandler) issueInFleet(ctx context.Context, req dercontro
 		res, err = h.Issuer.IssueInFleet(ctx, req, dercontrol.Fleet{Key: fleetKey, Reach: controlReach, Check: checkIn(v)})
 		return err
 	})
-	if err != nil && !ran {
-		return dercontrol.Result{}, fmt.Errorf("%w: %w", errCommitmentUnavailable, err)
+	if ran {
+		return res, err
 	}
-	return res, err
+	switch {
+	case err == nil:
+		// Nothing was issued, so there is no control to report as created.
+		return dercontrol.Result{}, &commitmentFailure{sub: "ledger_did_not_run"}
+	case errors.Is(err, commitment.ErrNoLedger):
+		return dercontrol.Result{}, &commitmentFailure{sub: "no_ledger", err: err}
+	case isContextErr(err):
+		return dercontrol.Result{}, err
+	default:
+		return dercontrol.Result{}, &commitmentFailure{sub: "ledger_failed", err: err}
+	}
 }
 
 // checkIn adapts a ledger View to the issuer's check hook.
@@ -553,11 +602,15 @@ func checkIn(v commitment.View) dercontrol.Check {
 			Supersedes: p.Supersedes,
 		})
 		var conflict *commitment.ConflictError
-		if err != nil && !errors.As(err, &conflict) {
-			return fmt.Errorf("%w: %w", errCommitmentUnavailable, err)
+		if err == nil || errors.As(err, &conflict) || isContextErr(err) {
+			return err
 		}
-		return err
+		return &commitmentFailure{sub: "store_read_failed", err: err}
 	}
+}
+
+func isContextErr(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // logSuccess writes the audit line for a completed create or cancel.

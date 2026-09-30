@@ -4,10 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
+
+// ErrNoLFDI is FleetOf's error for an EndDevice with no LFDI: its fleet
+// cannot be known.
+var ErrNoLFDI = errors.New("commitment: EndDevice has no LFDI")
 
 // Resolver turns an EndDevice id into the fleet key everything else in this
 // package keys on.
@@ -31,14 +36,18 @@ func (r Resolver) FleetOf(ctx context.Context, endDeviceID string) (string, erro
 		return "", fmt.Errorf("commitment: resolving fleet of EndDevice %s: %w", endDeviceID, err)
 	}
 	if dev.LFDI == "" {
-		return "", fmt.Errorf("commitment: EndDevice %s has no LFDI", endDeviceID)
+		return "", fmt.Errorf("%w: EndDevice %s", ErrNoLFDI, endDeviceID)
 	}
-	manager, err := r.Managers.ManagerOf(ctx, dev.LFDI)
+	// hexBinary allows either case; the management store keys on the
+	// canonical upper-case form, so an exact lookup of a lower-case LFDI
+	// would miss its manager and fail open.
+	lfdi := strings.ToUpper(dev.LFDI)
+	manager, err := r.Managers.ManagerOf(ctx, lfdi)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return dev.LFDI, nil
+			return lfdi, nil
 		}
-		return "", fmt.Errorf("commitment: looking up the manager of EndDevice %s (LFDI %s): %w", endDeviceID, dev.LFDI, err)
+		return "", fmt.Errorf("commitment: looking up the manager of EndDevice %s (LFDI %s): %w", endDeviceID, lfdi, err)
 	}
-	return manager, nil
+	return strings.ToUpper(manager), nil
 }

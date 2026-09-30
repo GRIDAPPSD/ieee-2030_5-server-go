@@ -12,6 +12,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // The mounted create route consults the process's commitment ledger: a
@@ -25,16 +26,21 @@ func TestDERControlCreateRouteUsesCommitmentLedger(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		ledger   bool
+		managers bool
 		wantCode int
 	}{
-		{"ledger wired", true, http.StatusConflict},
-		{"no ledger", false, http.StatusInternalServerError},
+		{"ledger wired", true, true, http.StatusConflict},
+		{"no ledger", false, true, http.StatusInternalServerError},
+		{"typed-nil management store", true, false, http.StatusInternalServerError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			stores := newTestStores()
 			if !tc.ledger {
 				stores.CommitmentLedger = nil
+			}
+			if !tc.managers {
+				stores.EndDeviceManagers = (*memory.EndDeviceManagementStore)(nil)
 			}
 			pen := uint32(0xA0B1)
 			stores.PEN = &pen

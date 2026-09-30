@@ -143,3 +143,31 @@ func TestResolver_FleetOf_DeviceLookupFailurePropagates(t *testing.T) {
 		t.Errorf("FleetOf error = %q, want it wrapped with the EndDevice id context, not the bare underlying error", got)
 	}
 }
+
+// A stored LFDI in lower case resolves to the same fleet as its upper-case
+// form: the management store holds the canonical upper-case LFDI, and hex
+// allows either case.
+func TestResolver_FleetOf_LFDICaseInsensitive(t *testing.T) {
+	t.Parallel()
+	devices := fakeDevices{
+		"managed-lower": sep2.EndDevice{LFDI: "ab12cd"},
+		"standalone":    sep2.EndDevice{LFDI: "ef34"},
+	}
+	r := Resolver{Devices: devices, Managers: fakeManagers{"AB12CD": "AGG9"}}
+	ctx := context.Background()
+
+	if got, err := r.FleetOf(ctx, "managed-lower"); err != nil || got != "AGG9" {
+		t.Errorf("FleetOf(lower-case managed) = %q, %v; want the manager AGG9", got, err)
+	}
+	if got, err := r.FleetOf(ctx, "standalone"); err != nil || got != "EF34" {
+		t.Errorf("FleetOf(lower-case standalone) = %q, %v; want the canonical EF34", got, err)
+	}
+}
+
+func TestResolver_FleetOf_EmptyLFDIIsErrNoLFDI(t *testing.T) {
+	t.Parallel()
+	r := Resolver{Devices: fakeDevices{"no-lfdi": sep2.EndDevice{}}, Managers: fakeManagers{}}
+	if _, err := r.FleetOf(context.Background(), "no-lfdi"); !errors.Is(err, ErrNoLFDI) {
+		t.Errorf("FleetOf(empty LFDI) error = %v, want ErrNoLFDI", err)
+	}
+}

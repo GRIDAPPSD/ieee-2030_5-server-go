@@ -157,7 +157,9 @@ type Controls struct {
 
 // NewControls builds a Controls source.
 func NewControls(controls scopedLister[sep2.DERControl], lifecycles lifecycleWalker, fleets FleetResolver) *Controls {
-	return &Controls{controls: controls, lifecycles: lifecycles, fleets: newOrphans(fleets, "DER controls")}
+	o := newOrphans(fleets, "DER controls")
+	o.skipNoLFDI = true
+	return &Controls{controls: controls, lifecycles: lifecycles, fleets: o}
 }
 
 var _ commitment.ControlSource = (*Controls)(nil)
@@ -241,6 +243,14 @@ func (c *Controls) filter(ctx context.Context, keep func(commitment.Control) boo
 type orphans struct {
 	fleets FleetResolver
 	what   string
+
+	// skipNoLFDI reads a device with no LFDI as gone too. DER controls set
+	// it: an admin create could store one under such a device before the
+	// create checked its fleet, and no create or grant can resolve to that
+	// fleet now. No device can reserve under a record without an LFDI, so a
+	// response there is not expected and still refuses.
+	skipNoLFDI bool
+
 	logf   func(format string, args ...any)
 	logged sync.Map // EndDevice ids already logged as gone
 }
@@ -255,11 +265,17 @@ func (o *orphans) fleetOrGone(ctx context.Context, edevID string) (string, error
 	if err == nil {
 		return fleet, nil
 	}
-	if !errors.Is(err, store.ErrNotFound) {
+	var why string
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		why = "outlive their device"
+	case o.skipNoLFDI && errors.Is(err, commitment.ErrNoLFDI):
+		why = "sit under a device with no LFDI"
+	default:
 		return "", err
 	}
 	if _, seen := o.logged.LoadOrStore(edevID, true); !seen {
-		o.logf("commitment sources: %s under EndDevice %s outlive their device; not counted in any fleet: %v", o.what, edevID, err)
+		o.logf("commitment sources: %s under EndDevice %s %s; not counted in any fleet", o.what, edevID, why)
 	}
 	return "", nil
 }

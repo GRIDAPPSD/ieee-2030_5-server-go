@@ -375,6 +375,8 @@ func TestDERControlCreate_Refusals(t *testing.T) {
 // failingIssuer returns a fixed error from both methods, for the 500 path.
 type failingIssuer struct{ err error }
 
+func (failingIssuer) Validate(dercontrol.CreateRequest) error { return nil }
+
 func (f failingIssuer) IssueInFleet(context.Context, dercontrol.CreateRequest, dercontrol.Fleet) (dercontrol.Result, error) {
 	return dercontrol.Result{}, f.err
 }

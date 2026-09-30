@@ -6,6 +6,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
 // newAdminDERControlHandler builds the #566 DER control handler and the one
@@ -30,16 +31,23 @@ func newAdminDERControlHandler(stores *Stores) *handler.AdminDERControlHandler {
 		Programs:   stores.DERPrograms,
 		EndDevices: stores.EndDevices,
 		Notifier:   stores.AdminNotifier,
-		Ledger:     stores.CommitmentLedger,
 		Persisted:  stores.DERControls.Persists() && stores.DERControlLifecycles.Persists(),
 	}
 	if stores.Responses != nil {
 		h.Responses = stores.Responses
 	}
-	// Without a management store the resolver cannot be built, and a nil
-	// Fleets makes every create answer 500 rather than go unchecked.
-	if stores.EndDeviceManagers != nil {
+	// A missing management store or ledger leaves the handler's field nil,
+	// so every create answers 500 rather than going unchecked. IsAbsent
+	// also catches a typed-nil pointer, which a plain nil test passes.
+	if store.IsAbsent(stores.EndDeviceManagers) {
+		log.Printf("server: DER control create: no EndDevice management store; every create answers 500")
+	} else {
 		h.Fleets = commitment.Resolver{Devices: stores.EndDevices, Managers: stores.EndDeviceManagers}
+	}
+	if store.IsAbsent(stores.CommitmentLedger) {
+		log.Printf("server: DER control create: no commitment ledger; every create answers 500")
+	} else {
+		h.Ledger = stores.CommitmentLedger
 	}
 	return h
 }

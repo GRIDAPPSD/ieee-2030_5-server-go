@@ -11,9 +11,11 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -340,29 +342,42 @@ func (failingGrantLister) List(context.Context, string, store.ListOptions) (stor
 	return store.ListResult[sep2.FlowReservationResponse]{}, errors.New("response store /var/lib/sep2 unavailable")
 }
 
+// failingDevices is an EndDevice store whose reads fail.
+type failingDevices struct{}
+
+func (failingDevices) Get(context.Context, string) (sep2.EndDevice, error) {
+	return sep2.EndDevice{}, errors.New("device store /var/lib/sep2 unavailable")
+}
+
 // A check that cannot complete takes the internal-error path, never a
-// conflict, and never passes: a store error, an unresolvable fleet and an
-// unwired ledger each answer 500 with nothing stored.
+// conflict, and never passes. Each failure logs its own sub-cause with the
+// device id and program href, and never the store's error text.
 func TestDERControlCreate_CommitmentCheckFailsClosed(t *testing.T) {
 	gStart := futureStart(600)
 	for _, tc := range []struct {
 		name  string
 		setup func(t *testing.T, d *dcHarness)
 		body  string
+		sub   string
 	}{
 		{"grant store fails, plain control", func(t *testing.T, d *dcHarness) {
 			d.h.Ledger = sources.NewLedger(d.devices, d.managers, failingGrantLister{}, d.grantMarks, d.controls, d.lifecycles)
-		}, maxLimWBody(gStart, 100, 60)},
+		}, maxLimWBody(gStart, 100, 60), "store_read_failed"},
 		{"grant store fails, execution", func(t *testing.T, d *dcHarness) {
 			d.h.Ledger = sources.NewLedger(d.devices, d.managers, failingGrantLister{}, d.grantMarks, d.controls, d.lifecycles)
-		}, targetWBody("0", -1000, gStart, 60, grantMRID)},
+		}, targetWBody("0", -1000, gStart, 60, grantMRID), "store_read_failed"},
 		{"device has no LFDI", func(t *testing.T, d *dcHarness) {
 			if err := d.devices.Update(context.Background(), dcDevice, sep2.EndDevice{SFDI: "1"}); err != nil {
 				t.Fatal(err)
 			}
-		}, maxLimWBody(gStart, 100, 60)},
-		{"no ledger", func(t *testing.T, d *dcHarness) { d.h.Ledger = nil }, maxLimWBody(gStart, 100, 60)},
-		{"no fleet resolver", func(t *testing.T, d *dcHarness) { d.h.Fleets = nil }, maxLimWBody(gStart, 100, 60)},
+		}, maxLimWBody(gStart, 100, 60), "device_without_lfdi"},
+		{"device store fails", func(t *testing.T, d *dcHarness) {
+			d.h.Fleets = commitment.Resolver{Devices: failingDevices{}, Managers: d.managers}
+		}, maxLimWBody(gStart, 100, 60), "fleet_resolve_failed"},
+		{"no ledger", func(t *testing.T, d *dcHarness) { d.h.Ledger = nil }, maxLimWBody(gStart, 100, 60), "no_ledger"},
+		{"typed-nil ledger", func(t *testing.T, d *dcHarness) { d.h.Ledger = (*commitment.Ledger)(nil) }, maxLimWBody(gStart, 100, 60), "no_ledger"},
+		{"no fleet resolver", func(t *testing.T, d *dcHarness) { d.h.Fleets = nil }, maxLimWBody(gStart, 100, 60), "no_resolver"},
+		{"ledger never runs the create", func(t *testing.T, d *dcHarness) { d.h.Ledger = skippingLedger{} }, maxLimWBody(gStart, 100, 60), "ledger_did_not_run"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := newDCHarness(t, ptrU32(dcPEN))
@@ -372,10 +387,127 @@ func TestDERControlCreate_CommitmentCheckFailsClosed(t *testing.T) {
 			assertRefusal(t, w, http.StatusInternalServerError, "internal error")
 			d.assertNothingStored(t)
 			out := d.logs.String()
-			if !strings.Contains(out, "cause=commitment_check_failed") || !strings.Contains(out, "level=ERROR") || strings.Contains(out, "/var/lib") {
-				t.Errorf("log = %s", out)
+			for _, want := range []string{"level=ERROR", "cause=commitment_check_failed", "sub_cause=" + tc.sub, "device_id=0", "program_href=/edev/0/fsa/0/derp/0"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("log lacks %q: %s", want, out)
+				}
+			}
+			if strings.Contains(out, "/var/lib") || strings.Contains(out, "unavailable") {
+				t.Errorf("store error text logged: %s", out)
 			}
 		})
+	}
+}
+
+// skippingLedger returns nil without running fn, which no real ledger does;
+// the create must not report success for a control it never stored.
+type skippingLedger struct{}
+
+func (skippingLedger) Within(context.Context, []string, func(commitment.View) error) error {
+	return nil
+}
+
+// conflictLedger runs fn with a View that refuses every control with code.
+type conflictLedger struct{ code commitment.ConflictCode }
+
+func (l conflictLedger) Within(_ context.Context, _ []string, fn func(commitment.View) error) error {
+	return fn(conflictView(l))
+}
+
+type conflictView conflictLedger
+
+func (conflictView) CheckGrant(context.Context, string, *commitment.Window, string) error { return nil }
+
+func (v conflictView) CheckControl(context.Context, commitment.Proposal) error {
+	return &commitment.ConflictError{Code: v.code, MRID: grantMRID}
+}
+
+// A conflict code with no reviewed message answers 500, not a 409 with an
+// unreviewed body.
+func TestDERControlCreate_UnmappedConflictIs500(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	d.h.Ledger = conflictLedger{code: commitment.ConflictOverlap}
+	w := d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(futureStart(600), 100, 60))
+	assertRefusal(t, w, http.StatusInternalServerError, "internal error")
+	d.assertNothingStored(t)
+	if out := d.logs.String(); !strings.Contains(out, "cause=unmapped_conflict") || !strings.Contains(out, "conflict_code=execution_overlaps_execution") {
+		t.Errorf("log = %s", out)
+	}
+}
+
+// A client that disconnects while its create waits for the fleet lock is
+// not a server failure: nothing is stored and the line is WARN, not ERROR.
+func TestDERControlCreate_ClientGoneIsNotAnError(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/api/der/controls", strings.NewReader(maxLimWBody(futureStart(600), 100, 60))).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	d.mux.ServeHTTP(w, req)
+	if w.Code < 400 {
+		t.Fatalf("status = %d, want a refusal", w.Code)
+	}
+	d.assertNothingStored(t)
+	out := d.logs.String()
+	if strings.Contains(out, "level=ERROR") || !strings.Contains(out, "level=WARN") || !strings.Contains(out, "cause=client_gone") {
+		t.Errorf("log = %s", out)
+	}
+}
+
+// Request checks that need no store run before the fleet is resolved, so a
+// device without an LFDI still gets the 400 or 503 those checks give.
+func TestDERControlCreate_ValidationBeforeFleet(t *testing.T) {
+	past := sep2time.Now().Unix() - 3600
+	for _, tc := range []struct {
+		name   string
+		pen    *uint32
+		body   string
+		status int
+		want   string
+	}{
+		{"no PEN", nil, maxLimWBody(futureStart(600), 100, 60), 503, "server PEN not configured"},
+		{"start in the past", ptrU32(dcPEN), maxLimWBody(past, 100, 60), 400, "startTime: in the past"},
+		{"duration under the minimum", ptrU32(dcPEN), maxLimWBody(futureStart(600), 100, 59), 400, "durationSeconds: out of range"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newDCHarness(t, tc.pen)
+			if err := d.devices.Update(context.Background(), dcDevice, sep2.EndDevice{SFDI: "1"}); err != nil {
+				t.Fatal(err)
+			}
+			assertRefusal(t, d.do(t, http.MethodPost, "/api/der/controls", tc.body), tc.status, tc.want)
+		})
+	}
+}
+
+// One pre-S5 control record (no FleetKey) under a device whose fleet
+// cannot be known is skipped, like an orphan, and does not fail an
+// unrelated fleet's create.
+func TestDERControlCreate_UnresolvableRecordIsSkipped(t *testing.T) {
+	gStart := futureStart(600)
+	d := newDCHarness(t, ptrU32(dcPEN))
+	d.seedFleet(t)
+	d.seedGrant(t, grantSpec{start: gStart, duration: 3600, energyWh: 100, powerW: ptrI16(5000)})
+	ctx := context.Background()
+	if err := d.devices.Create(ctx, "nolfdi", sep2.EndDevice{SFDI: "4"}); err != nil {
+		t.Fatal(err)
+	}
+	ctrl := sep2.DERControl{}
+	ctrl.Href = "/edev/nolfdi/fsa/0/derp/0/derc/X1"
+	ctrl.MRID = strings.Repeat("E", 32)
+	ctrl.Interval = &sep2.DateTimeInterval{Start: gStart, Duration: 60}
+	ctrl.DERControlBase = &sep2.DERControlBase{OpModTargetW: &sep2.ActivePower{Value: -1}}
+	if err := d.controls.Create(ctx, "nolfdi/0/0", "X1", ctrl); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.lifecycles.Create(ctx, "nolfdi/0/0", "X1", dercontrol.LifecycleRecord{GrantMRID: grantMRID}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, body := range []string{targetWBody("0", -1000, gStart, 60, grantMRID), maxLimWBody(gStart+3600, 100, 60)} {
+		if w := d.do(t, http.MethodPost, "/api/der/controls", body); w.Code != http.StatusCreated {
+			t.Fatalf("status = %d body = %s, want 201", w.Code, w.Body.String())
+		}
 	}
 }
 
@@ -442,4 +574,102 @@ func TestDERControlCreate_TargetWPlainAndLowerCaseGrant(t *testing.T) {
 	if got := decodeCreated(t, w); got.ExecutesGrant == nil || *got.ExecutesGrant != grantMRID {
 		t.Errorf("executesGrant = %v, want %s", got.ExecutesGrant, grantMRID)
 	}
+}
+
+// seedSecondManaged adds device 2, a second managed device of the
+// aggregator with its own program.
+func (d *dcHarness) seedSecondManaged(t *testing.T) {
+	t.Helper()
+	const lfdi2 = "2222222222222222222222222222222222222222"
+	ctx := context.Background()
+	if err := d.devices.Create(ctx, "2", sep2.EndDevice{LFDI: lfdi2, SFDI: "5"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.managers.Assign(ctx, aggLFDI, lfdi2); err != nil {
+		t.Fatal(err)
+	}
+	d.seedProgram(t, "2", "0", "0", "PROGRAM-2", 1, true)
+}
+
+// The power and energy bounds sum over every execution of a grant across
+// the fleet's devices. Power names the other execution active at the
+// instant; energy names the grant (design 5.3), and nothing is stored.
+func TestDERControlCreate_SummedBoundsAcrossDevices(t *testing.T) {
+	gStart := futureStart(600)
+	grant := grantSpec{start: gStart, duration: 3600, energyWh: 100, powerW: ptrI16(5000)}
+	for _, tc := range []struct {
+		name               string
+		first, second      string
+		code, message      string
+		namesFirst, refuse bool
+	}{
+		{"power at the bound", targetWBody("0", -2500, gStart, 60, grantMRID), targetWBody("2", -2500, gStart+30, 60, grantMRID), "", "", false, false},
+		{"power one watt past", targetWBody("0", -2500, gStart, 60, grantMRID), targetWBody("2", -2501, gStart+30, 60, grantMRID),
+			"execution_exceeds_power", "targetW: exceeds the grant's powerAvailable", true, true},
+		{"energy at the bound", targetWBody("0", -1000, gStart, 200, grantMRID), targetWBody("2", -1000, gStart+600, 160, grantMRID), "", "", false, false},
+		{"energy one second past", targetWBody("0", -1000, gStart, 200, grantMRID), targetWBody("2", -1000, gStart+600, 161, grantMRID),
+			"execution_exceeds_energy", "targetW: exceeds the grant's energyAvailable", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newDCHarness(t, ptrU32(dcPEN))
+			d.seedFleet(t)
+			d.seedSecondManaged(t)
+			d.seedGrant(t, grant)
+			w := d.do(t, http.MethodPost, "/api/der/controls", tc.first)
+			if w.Code != http.StatusCreated {
+				t.Fatalf("first: status = %d body = %s", w.Code, w.Body.String())
+			}
+			first := decodeCreated(t, w)
+			w = d.do(t, http.MethodPost, "/api/der/controls", tc.second)
+			if !tc.refuse {
+				if w.Code != http.StatusCreated {
+					t.Fatalf("second: status = %d body = %s, want 201", w.Code, w.Body.String())
+				}
+				return
+			}
+			want := grantMRID
+			if tc.namesFirst {
+				want = first.MRID
+			}
+			assertConflict(t, w, tc.code, tc.message, want)
+			if c, l := d.storedCounts(t); c != 1 || l != 1 {
+				t.Errorf("stored %d controls and %d records, want only the first", c, l)
+			}
+		})
+	}
+}
+
+// Re-issuing an execution that supersedes an identical one on the same
+// device replaces it rather than adding to it: the older one is counted
+// only up to the newer one's start, here nothing.
+func TestDERControlCreate_SupersedingExecutionIsNotDoubleCounted(t *testing.T) {
+	gStart := futureStart(600)
+	d := newDCHarness(t, ptrU32(dcPEN))
+	d.seedFleet(t)
+	d.seedGrant(t, grantSpec{start: gStart, duration: 3600, energyWh: 100, powerW: ptrI16(5000)})
+	body := targetWBody("0", -1000, gStart, 360, grantMRID)
+	if w := d.do(t, http.MethodPost, "/api/der/controls", body); w.Code != http.StatusCreated {
+		t.Fatalf("first: status = %d body = %s", w.Code, w.Body.String())
+	}
+	w := d.do(t, http.MethodPost, "/api/der/controls", body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("replacement: status = %d body = %s, want 201", w.Code, w.Body.String())
+	}
+	if got := decodeCreated(t, w); len(got.Supersedes) != 1 {
+		t.Errorf("supersedes = %v, want the first execution", got.Supersedes)
+	}
+}
+
+// A device stored with a lower-case LFDI is still found under its manager,
+// so a plain control on its program meets the aggregator's grant.
+func TestDERControlCreate_LowerCaseLFDIJoinsItsFleet(t *testing.T) {
+	gStart := futureStart(600)
+	d := newDCHarness(t, ptrU32(dcPEN))
+	d.seedFleet(t)
+	d.seedGrant(t, grantSpec{start: gStart, duration: 3600, energyWh: 100, powerW: ptrI16(5000)})
+	if err := d.devices.Update(context.Background(), dcDevice, sep2.EndDevice{LFDI: strings.ToLower(dcLFDI), SFDI: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	w := d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(gStart, 100, 60))
+	assertConflict(t, w, "fleet_window_committed", "control overlaps a live flow reservation grant of its fleet", grantMRID)
 }

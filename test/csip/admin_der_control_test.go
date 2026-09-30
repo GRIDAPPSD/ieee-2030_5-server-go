@@ -25,10 +25,8 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -113,9 +111,6 @@ func TestAdminCreatedControl_BASIC_008_009_010(t *testing.T) {
 func runAdminDERControlProcedure(t *testing.T, tc adminDERControlCase, cipher string, extraOpts []csiptest.BootOption) {
 	ctx := context.Background()
 	stores := csiptest.NewFreshStores()
-	stores.DERControlLifecycles = dercontrol.NewLifecycleStore()
-	stores.FlowReservationResponseLifecycles = memory.NewScopedStore[dercontrol.LifecycleRecord]()
-	stores.CommitmentLedger = server.NewCommitmentLedger(stores)
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
 		FSAs:               stores.FSAs,

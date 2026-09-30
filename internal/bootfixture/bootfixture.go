@@ -473,6 +473,7 @@ func buildDefaultDERControl(s DefaultDERControlSpec) sep2.DefaultDERControl {
 
 func buildDERControl(s DERControlSpec) sep2.DERControl {
 	dc := sep2.DERControl{}
+	dc.MRID = s.MRID
 	dc.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/derc/%s",
 		s.EndDeviceID, s.FSAID, s.DERProgramID, s.ID)
 	if s.DERControlBase != nil {

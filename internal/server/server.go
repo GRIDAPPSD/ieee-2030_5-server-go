@@ -21,7 +21,6 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
@@ -229,11 +228,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		PEN: cfg.EffectivePEN(),
 	}
 
-	stores.CommitmentLedger = sources.NewLedger(
-		stores.EndDevices, stores.EndDeviceManagers,
-		stores.FlowReservationResponses, stores.FlowReservationResponseLifecycles,
-		stores.DERControls, stores.DERControlLifecycles,
-	)
+	stores.CommitmentLedger = NewCommitmentLedger(stores)
 
 	if cfg.BootFixtureFile != "" {
 		target := &bootfixture.Target{

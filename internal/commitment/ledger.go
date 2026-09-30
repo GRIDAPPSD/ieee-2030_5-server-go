@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
 // GrantSource reads flow reservation grants from wherever they are stored.
@@ -17,7 +16,8 @@ type GrantSource interface {
 	// GrantsInFleet returns every response of the fleet whose interval has a
 	// positive duration, cancelled or not: liveness is the ledger's test.
 	GrantsInFleet(ctx context.Context, fleetKey string) ([]Grant, error)
-	// Grant returns the response with this mRID, or store.ErrNotFound.
+	// Grant returns the response with this mRID, or an error wrapping
+	// ErrNoGrant when there is none.
 	Grant(ctx context.Context, mrid string) (Grant, error)
 }
 
@@ -28,6 +28,15 @@ type ControlSource interface {
 	ControlsInFleet(ctx context.Context, fleetKey string) ([]Control, error)
 	ExecutionsOf(ctx context.Context, grantMRID string) ([]Control, error)
 }
+
+// ErrNoGrant is what a GrantSource returns when no response has the mRID.
+// It is the only error the ledger reads as an absent grant; any other
+// failure, a store.ErrNotFound from a resolver included, is internal.
+var ErrNoGrant = errors.New("commitment: no such grant")
+
+// ErrNoLedger is returned by Within on a nil Ledger, so an unwired ledger
+// refuses every check instead of passing it.
+var ErrNoLedger = errors.New("commitment: no ledger wired")
 
 // ErrFleetNotLocked is returned by a View asked about a fleet its Within
 // call did not lock: a check outside the lock could be stale by the time
@@ -87,8 +96,11 @@ type Proposal struct {
 // inside fn, and unlocks. Keys are locked in ascending order so two calls
 // naming the same fleets in different orders cannot deadlock. An empty key
 // set or an empty key is refused: a check of fleet "" would silently group
-// every unresolved device together.
+// every unresolved device together. A nil Ledger refuses with ErrNoLedger.
 func (l *Ledger) Within(ctx context.Context, fleetKeys []string, fn func(View) error) error {
+	if l == nil {
+		return ErrNoLedger
+	}
 	keys := slices.Clone(fleetKeys)
 	slices.Sort(keys)
 	keys = slices.Compact(keys)
@@ -217,7 +229,7 @@ func (v *view) checkExecution(ctx context.Context, p Proposal) error {
 	}
 	g, err := v.ledger.grants.Grant(ctx, p.GrantMRID)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		if errors.Is(err, ErrNoGrant) {
 			return &ConflictError{Code: ConflictGrantNotLive, MRID: p.GrantMRID}
 		}
 		return fmt.Errorf("commitment: reading grant %s: %w", p.GrantMRID, err)

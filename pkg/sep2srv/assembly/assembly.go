@@ -269,6 +269,8 @@ type Stores struct {
 
 	// CommitmentLedger is the process's one commitment ledger (#714),
 	// built over the same stores. Nothing in this package consults it yet.
+	// A nil ledger refuses every check (commitment.ErrNoLedger), so a Stores
+	// built without one fails closed rather than passing.
 	CommitmentLedger *commitment.Ledger
 }
 
@@ -1394,12 +1396,9 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		mux.HandleFunc("POST /edev/{id}/frq", coreflowrsv.HandlePostFlowReservationRequest(
 			stores.FlowReservationRequests, flowReservationQueue,
 		))
-		// Only the read routes derive a response's status from its lifecycle
-		// record; the queue writes and checks the store as stored.
-		servedResponses := flowReservationResponses
-		if !store.IsAbsent(stores.FlowReservationResponseLifecycles) {
-			servedResponses = flowreservation.NewDerivedStatusResponseStore(flowReservationResponses, stores.FlowReservationResponseLifecycles)
-		}
+		// Only the read routes derive a response's status; the queue writes
+		// and checks the store as stored.
+		servedResponses := servedFlowReservationResponses(flowReservationResponses, stores)
 		mux.HandleFunc("GET /edev/{id}/frp", scopedListHandler[sep2.FlowReservationResponse, sep2.FlowReservationResponseList](
 			servedResponses, "id", coreflowrsv.BuildFlowReservationResponseList, 900,
 		))
@@ -1487,4 +1486,14 @@ func responseSenderAuthorizer(identity func(ctx context.Context) (lfdi, sfdi str
 		allowed, err := coreedev.CurrentManagerOwns(r.Context(), managers, lfdi, caller)
 		return allowed, caller, err
 	}
+}
+
+// servedFlowReservationResponses is responses as a reader sees them: with
+// each EventStatus derived from its lifecycle record when that store is
+// wired, and as stored otherwise.
+func servedFlowReservationResponses(responses store.ScopedStore[sep2.FlowReservationResponse], stores *Stores) store.ScopedStore[sep2.FlowReservationResponse] {
+	if store.IsAbsent(stores.FlowReservationResponseLifecycles) {
+		return responses
+	}
+	return flowreservation.NewDerivedStatusResponseStore(responses, stores.FlowReservationResponseLifecycles)
 }

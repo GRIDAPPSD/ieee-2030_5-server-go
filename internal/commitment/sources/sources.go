@@ -8,7 +8,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
+	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
@@ -72,7 +74,8 @@ func (g *Grants) GrantsInFleet(ctx context.Context, fleetKey string) ([]commitme
 
 // Grant returns the response with this mRID, whatever its interval, so an
 // execution naming an interval-less grant is refused as not executable
-// rather than as absent.
+// rather than as absent. Only a scan that completes without finding it
+// returns commitment.ErrNoGrant.
 func (g *Grants) Grant(ctx context.Context, mrid string) (commitment.Grant, error) {
 	all, err := g.all(ctx)
 	if err != nil {
@@ -83,7 +86,7 @@ func (g *Grants) Grant(ctx context.Context, mrid string) (commitment.Grant, erro
 			return gr, nil
 		}
 	}
-	return commitment.Grant{}, fmt.Errorf("sources: grant %s: %w", mrid, store.ErrNotFound)
+	return commitment.Grant{}, fmt.Errorf("sources: grant %s: %w", mrid, commitment.ErrNoGrant)
 }
 
 func (g *Grants) all(ctx context.Context) ([]commitment.Grant, error) {
@@ -147,11 +150,14 @@ type Controls struct {
 	controls   scopedLister[sep2.DERControl]
 	lifecycles lifecycleWalker
 	fleets     FleetResolver
+
+	logf    func(format string, args ...any)
+	orphans sync.Map // EndDevice ids already logged as gone
 }
 
 // NewControls builds a Controls source.
 func NewControls(controls scopedLister[sep2.DERControl], lifecycles lifecycleWalker, fleets FleetResolver) *Controls {
-	return &Controls{controls: controls, lifecycles: lifecycles, fleets: fleets}
+	return &Controls{controls: controls, lifecycles: lifecycles, fleets: fleets, logf: log.Printf}
 }
 
 var _ commitment.ControlSource = (*Controls)(nil)
@@ -176,7 +182,7 @@ func (c *Controls) filter(ctx context.Context, keep func(commitment.Control) boo
 	if err != nil {
 		return nil, fmt.Errorf("sources: listing control lifecycle scopes: %w", err)
 	}
-	fleetOf := map[string]string{}
+	fleetOf := map[string]string{} // "" marks an EndDevice that is gone
 	var out []commitment.Control
 	for _, scope := range scopes {
 		edevID, ok := scopeEndDevice(scope)
@@ -190,7 +196,7 @@ func (c *Controls) filter(ctx context.Context, keep func(commitment.Control) boo
 		for _, ctrl := range page.Items {
 			id, ok := derhref.ControlID(ctrl.Href)
 			if !ok {
-				continue // no id to key a lifecycle lookup on, so no record
+				return nil, fmt.Errorf("sources: control href %q in %s has no store id", ctrl.Href, scope)
 			}
 			lc, err := c.lifecycles.Get(ctx, scope, id)
 			if errors.Is(err, store.ErrNotFound) {
@@ -201,10 +207,14 @@ func (c *Controls) filter(ctx context.Context, keep func(commitment.Control) boo
 			}
 			fleet, cached := fleetOf[edevID]
 			if !cached {
-				if fleet, err = c.fleets.FleetOf(ctx, edevID); err != nil {
+				fleet, err = c.resolve(ctx, edevID)
+				if err != nil {
 					return nil, err
 				}
 				fleetOf[edevID] = fleet
+			}
+			if fleet == "" {
+				continue
 			}
 			ctl, err := controlOf(scope, fleet, ctrl, lc)
 			if err != nil {
@@ -216,6 +226,25 @@ func (c *Controls) filter(ctx context.Context, keep func(commitment.Control) boo
 		}
 	}
 	return out, nil
+}
+
+// resolve returns the fleet of a control scope's EndDevice, or "" when the
+// device is gone. DER controls outlive a DELETE of their EndDevice (#721),
+// and no device reads them afterwards, so such a scope belongs to no live
+// fleet; refusing instead would block every fleet's checks on one orphan.
+// Any other failure still refuses.
+func (c *Controls) resolve(ctx context.Context, edevID string) (string, error) {
+	fleet, err := c.fleets.FleetOf(ctx, edevID)
+	if err == nil {
+		return fleet, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return "", err
+	}
+	if _, logged := c.orphans.LoadOrStore(edevID, true); !logged {
+		c.logf("commitment sources: DER controls under EndDevice %s outlive their device; not counted in any fleet: %v", edevID, err)
+	}
+	return "", nil
 }
 
 // controlOf builds the ledger's view of one control. The lifecycle record

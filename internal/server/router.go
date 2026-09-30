@@ -3,6 +3,7 @@ package server
 import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -142,4 +143,15 @@ type Stores struct {
 	// the same reason as Sep2Edition: BuildAdminRouter's other parameters
 	// are routing and listener knobs.
 	AdminNotifier handler.ResourceNotifier
+}
+
+// NewCommitmentLedger builds the commitment ledger over s's own stores: the
+// response lifecycle store it reads is the one the response status routes
+// read, so a cancel mark frees the window and serves Cancelled together.
+func NewCommitmentLedger(s *Stores) *commitment.Ledger {
+	return sources.NewLedger(
+		s.EndDevices, s.EndDeviceManagers,
+		s.FlowReservationResponses, s.FlowReservationResponseLifecycles,
+		s.DERControls, s.DERControlLifecycles,
+	)
 }

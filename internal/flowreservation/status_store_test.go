@@ -92,7 +92,7 @@ func TestDerivedStatusResponseStore(t *testing.T) {
 		}
 		wantCancelled(t, got)
 	})
-	t.Run("Get serves a response with no record exactly as stored", func(t *testing.T) {
+	t.Run("Get serves a response with no record and a future start as Scheduled", func(t *testing.T) {
 		got, err := decorated.Get(ctx, "E1", "R2")
 		if err != nil {
 			t.Fatal(err)
@@ -167,5 +167,38 @@ func TestDerivedStatusResponseStore_ListRefusesAnUnkeyableMember(t *testing.T) {
 	decorated := NewDerivedStatusResponseStore(responses, memory.NewScopedStore[dercontrol.LifecycleRecord]())
 	if _, err := decorated.List(ctx, "E1", store.ListOptions{Unbounded: true}); err == nil {
 		t.Fatal("List = nil error, want a refusal for a member with no store id")
+	}
+}
+
+// A response with no lifecycle record is still derived at read time
+// (2030.5 EventStatus: an event whose start has passed SHALL NOT read
+// Scheduled), so the status stored at build moves to Active at its start.
+func TestDerivedStatusResponseStore_NoRecordFollowsTheStart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	responses := memory.NewScopedStore[sep2.FlowReservationResponse]()
+	past := storedResponse("E1", "PAST")
+	past.Interval = &sep2.DateTimeInterval{Start: 1000, Duration: 600}
+	if err := responses.Create(ctx, "E1", "PAST", past); err != nil {
+		t.Fatal(err)
+	}
+	if err := responses.Create(ctx, "E1", "FUTURE", storedResponse("E1", "FUTURE")); err != nil {
+		t.Fatal(err)
+	}
+	decorated := NewDerivedStatusResponseStore(responses, memory.NewScopedStore[dercontrol.LifecycleRecord]())
+
+	got, err := decorated.Get(ctx, "E1", "PAST")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EventStatus == nil || got.EventStatus.CurrentStatus != sep2.EventStatusActive || got.EventStatus.DateTime != 1000 {
+		t.Errorf("start passed, no record: EventStatus = %+v, want Active at 1000", got.EventStatus)
+	}
+	got, err = decorated.Get(ctx, "E1", "FUTURE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EventStatus == nil || got.EventStatus.CurrentStatus != sep2.EventStatusScheduled || got.EventStatus.DateTime != 100 {
+		t.Errorf("start ahead, no record: EventStatus = %+v, want Scheduled at creation 100", got.EventStatus)
 	}
 }

@@ -170,8 +170,8 @@ func TestGrants_Grant(t *testing.T) {
 	if g.Window != nil || g.FleetKey != aggLFDI {
 		t.Errorf("Grant(R3) = %+v, want no window in fleet %s", g, aggLFDI)
 	}
-	if _, err := f.grants().Grant(context.Background(), "MRID-none"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("Grant(absent) = %v, want store.ErrNotFound", err)
+	if _, err := f.grants().Grant(context.Background(), "MRID-none"); !errors.Is(err, commitment.ErrNoGrant) {
+		t.Errorf("Grant(absent) = %v, want commitment.ErrNoGrant", err)
 	}
 }
 
@@ -366,17 +366,116 @@ func TestLedgerOverSources_StoreErrorRefuses(t *testing.T) {
 	}
 }
 
-func TestSources_UnresolvableFleetRefuses(t *testing.T) {
+// A control scope whose EndDevice is gone (DER controls outlive a DELETE
+// of their EndDevice) belongs to no live fleet: it is skipped, and every
+// other fleet still reads.
+func TestControls_OrphanScopeIsSkipped(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
-	must(t, f.devices.Delete(ctx, managedID))
-	if _, err := f.controlSource().ControlsInFleet(ctx, aggLFDI); err == nil {
-		t.Error("ControlsInFleet with a control's EndDevice gone = nil error, want a refusal")
+	must(t, f.devices.Delete(ctx, standaloneID))
+	got, err := f.controlSource().ControlsInFleet(ctx, aggLFDI)
+	if err != nil {
+		t.Fatalf("ControlsInFleet(agg) with another fleet's device gone = %v, want its own controls", err)
 	}
-	f = newFixture(t)
+	if len(got) != 3 {
+		t.Errorf("ControlsInFleet(agg) = %d controls, want 3", len(got))
+	}
+	stand, err := f.controlSource().ControlsInFleet(ctx, standaloneLFDI)
+	if err != nil || len(stand) != 0 {
+		t.Errorf("ControlsInFleet(standalone) = %v, %v; want none, since C4's device is gone", stand, err)
+	}
+	if _, err := f.controlSource().ExecutionsOf(ctx, "MRID-R1"); err != nil {
+		t.Errorf("ExecutionsOf with an orphan scope = %v, want nil", err)
+	}
+}
+
+// failingFleets fails to resolve one EndDevice with an error that is not
+// "not found".
+type failingFleets struct {
+	commitment.Resolver
+	failFor string
+}
+
+func (f failingFleets) FleetOf(ctx context.Context, id string) (string, error) {
+	if id == f.failFor {
+		return "", errDown
+	}
+	return f.Resolver.FleetOf(ctx, id)
+}
+
+func TestControls_ResolveErrorRefuses(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	c := sources.NewControls(f.controls, f.controlLifecycles, failingFleets{Resolver: f.resolver(), failFor: standaloneID})
+	if _, err := c.ControlsInFleet(context.Background(), aggLFDI); !errors.Is(err, errDown) {
+		t.Errorf("ControlsInFleet with a failing resolve = %v, want the failure", err)
+	}
+	if _, err := c.ExecutionsOf(context.Background(), "MRID-R1"); !errors.Is(err, errDown) {
+		t.Errorf("ExecutionsOf with a failing resolve = %v, want the failure", err)
+	}
+}
+
+// A response under a device that is gone makes Grant fail as an internal
+// error, never as "no such grant": the grant may well be live.
+func TestGrants_UnresolvableIsNotAbsent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
 	must(t, f.devices.Delete(ctx, aggID))
+	_, err := f.grants().Grant(ctx, "MRID-R1")
+	if err == nil || errors.Is(err, commitment.ErrNoGrant) {
+		t.Fatalf("Grant with its device gone = %v, want an error that is not ErrNoGrant", err)
+	}
 	if _, err := f.grants().GrantsInFleet(ctx, aggLFDI); err == nil {
 		t.Error("GrantsInFleet with a response's EndDevice gone = nil error, want a refusal")
 	}
+
+	l := commitment.NewLedger(f.grants(), f.controlSource())
+	p := commitment.Proposal{FleetKey: aggLFDI, Window: commitment.Window{Start: 1000, Duration: 10}, GrantMRID: "MRID-R1", TargetW: &sep2.ActivePower{Value: -1}, Reach: 1}
+	err = l.Within(ctx, []string{aggLFDI}, func(v commitment.View) error { return v.CheckControl(ctx, p) })
+	var ce *commitment.ConflictError
+	if err == nil || errors.As(err, &ce) {
+		t.Fatalf("CheckControl on a live grant whose device is gone = %v, want an internal error, not a conflict", err)
+	}
+}
+
+// Every shape a source cannot read is refused rather than skipped.
+func TestSources_UnreadableShapesRefuse(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	t.Run("response href with no store id", func(t *testing.T) {
+		t.Parallel()
+		f := newFixture(t)
+		frp, err := f.responses.Get(ctx, aggID, "R1")
+		must(t, err)
+		frp.Href = "/edev/" + aggID + "/frq/R1"
+		must(t, f.responses.Update(ctx, aggID, "R1", frp))
+		if _, err := f.grants().GrantsInFleet(ctx, aggLFDI); err == nil {
+			t.Error("GrantsInFleet = nil error, want a refusal")
+		}
+	})
+	t.Run("control href with no store id", func(t *testing.T) {
+		t.Parallel()
+		f := newFixture(t)
+		ctrl, err := f.controls.Get(ctx, managedScope, "C1")
+		must(t, err)
+		ctrl.Href = "/edev/m1/fsa/fsa1/derp/derp1"
+		must(t, f.controls.Update(ctx, managedScope, "C1", ctrl))
+		if _, err := f.controlSource().ControlsInFleet(ctx, aggLFDI); err == nil {
+			t.Error("ControlsInFleet = nil error, want a refusal")
+		}
+	})
+	t.Run("recorded control with no interval", func(t *testing.T) {
+		t.Parallel()
+		f := newFixture(t)
+		ctrl, err := f.controls.Get(ctx, managedScope, "C1")
+		must(t, err)
+		ctrl.Interval = nil
+		must(t, f.controls.Update(ctx, managedScope, "C1", ctrl))
+		if _, err := f.controlSource().ControlsInFleet(ctx, aggLFDI); err == nil {
+			t.Error("ControlsInFleet = nil error, want a refusal")
+		}
+	})
 }

@@ -3,6 +3,7 @@ package commitment
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -41,7 +42,7 @@ func (f *fakeGrants) Grant(_ context.Context, mrid string) (Grant, error) {
 			return g, nil
 		}
 	}
-	return Grant{}, store.ErrNotFound
+	return Grant{}, ErrNoGrant
 }
 
 type fakeControls struct {
@@ -417,6 +418,14 @@ func TestWithin_StoreErrorRefuses(t *testing.T) {
 			},
 		},
 		{
+			name: "CheckControl execution, grant read fails",
+			l:    NewLedger(&fakeGrants{err: errStoreDown}, &fakeControls{}),
+			check: func(v View) error {
+				p := Proposal{FleetKey: "FLEET1", Window: Window{Start: 1000, Duration: 10}, GrantMRID: "grant-1", TargetW: &sep2.ActivePower{Value: -1}, Reach: 1}
+				return v.CheckControl(context.Background(), p)
+			},
+		},
+		{
 			name: "CheckControl execution, execution read fails",
 			l:    NewLedger(&fakeGrants{grants: []Grant{baseGrant()}}, &fakeControls{err: errStoreDown}),
 			check: func(v View) error {
@@ -511,10 +520,10 @@ func TestWithin_Serializes(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			keys := []string{"FLEET1", "FLEET2"}
-			if i%2 == 1 {
-				keys = []string{"FLEET2", "FLEET1"}
-			}
+			// Mixed key sets: locking only the first or only the last
+			// sorted key leaves FLEET1 unlocked for some of them.
+			keySets := [][]string{{"FLEET1"}, {"FLEET1", "FLEET2"}, {"FLEET2", "FLEET1"}, {"FLEET0", "FLEET1"}}
+			keys := keySets[i%len(keySets)]
 			err := l.Within(context.Background(), keys, func(v View) error {
 				if err := v.CheckGrant(context.Background(), "FLEET1", &w, ""); err != nil {
 					return err
@@ -561,4 +570,38 @@ func (f *lockedGrants) Grant(ctx context.Context, mrid string) (Grant, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return (&fakeGrants{grants: append([]Grant(nil), f.grants...)}).Grant(ctx, mrid)
+}
+
+// Only ErrNoGrant is an absent grant. A store.ErrNotFound from anywhere else
+// (a device the resolver cannot find) is an internal error, not a 409.
+func TestCheckControl_OnlyErrNoGrantIsNotLive(t *testing.T) {
+	t.Parallel()
+	p := Proposal{FleetKey: "FLEET1", Window: Window{Start: 1000, Duration: 10}, GrantMRID: "grant-1", TargetW: &sep2.ActivePower{Value: -1}, Reach: 1}
+	resolveFailed := fmt.Errorf("resolving fleet of EndDevice gone: %w", store.ErrNotFound)
+	err := checkControl(t, NewLedger(&fakeGrants{err: resolveFailed}, &fakeControls{}), p)
+	var ce *ConflictError
+	if err == nil || errors.As(err, &ce) || !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("CheckControl = %v, want the resolve error, not a conflict", err)
+	}
+}
+
+func TestWithin_NilLedgerRefuses(t *testing.T) {
+	t.Parallel()
+	var l *Ledger
+	called := false
+	err := l.Within(context.Background(), []string{"FLEET1"}, func(View) error { called = true; return nil })
+	if !errors.Is(err, ErrNoLedger) || called {
+		t.Fatalf("nil Ledger Within = %v, called=%v; want ErrNoLedger and fn not called", err, called)
+	}
+}
+
+func TestWithin_CancelledContextRefuses(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	called := false
+	err := NewLedger(&fakeGrants{}, &fakeControls{}).Within(ctx, []string{"FLEET1"}, func(View) error { called = true; return nil })
+	if !errors.Is(err, context.Canceled) || called {
+		t.Fatalf("Within on a cancelled ctx = %v, called=%v; want context.Canceled and fn not called", err, called)
+	}
 }

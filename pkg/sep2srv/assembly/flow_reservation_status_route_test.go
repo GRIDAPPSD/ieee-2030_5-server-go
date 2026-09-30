@@ -7,6 +7,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 )
 
 // TestFlowReservationResponse_CancelledServesCancelled: a response whose
@@ -70,5 +71,31 @@ func TestFlowReservationResponse_CancelledServesCancelled(t *testing.T) {
 	}
 	for _, frp := range list.FlowReservationResponse {
 		check(t, frp)
+	}
+}
+
+// The read-only store handle serves the same derived status as the routes.
+func TestReaderStores_FlowReservationResponseServesCancelled(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	stores := testStores()
+	frp := sep2.FlowReservationResponse{}
+	frp.Href = "/edev/e1/frp/R1"
+	frp.MRID = "MRID-R1"
+	frp.CreationTime = 100
+	frp.Interval = &sep2.DateTimeInterval{Start: 1 << 40, Duration: 600}
+	if err := stores.FlowReservationResponses.Create(ctx, "e1", "R1", frp); err != nil {
+		t.Fatal(err)
+	}
+	at := int64(777)
+	if err := stores.FlowReservationResponseLifecycles.Create(ctx, "e1", "R1", dercontrol.LifecycleRecord{CancelledAt: &at}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := assembly.NewReaderStores(stores).FlowReservationResponses.Get(ctx, "e1", "R1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EventStatus == nil || got.EventStatus.CurrentStatus != sep2.EventStatusCancelled || got.EventStatus.DateTime != at {
+		t.Errorf("EventStatus = %+v, want Cancelled at %d", got.EventStatus, at)
 	}
 }

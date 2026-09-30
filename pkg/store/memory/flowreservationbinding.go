@@ -74,8 +74,12 @@ type FlowReservationLinkedEndDeviceStore struct {
 	resps store.ScopedStore[sep2.FlowReservationResponse]
 }
 
-// compile-time proof the decorator is substitutable for what it decorates.
-var _ store.EndDeviceStore = (*FlowReservationLinkedEndDeviceStore)(nil)
+// compile-time proof the decorator is substitutable for what it decorates,
+// and that it can be probed as part of a Delete chain (deleteProber).
+var (
+	_ store.EndDeviceStore = (*FlowReservationLinkedEndDeviceStore)(nil)
+	_ deleteProber         = (*FlowReservationLinkedEndDeviceStore)(nil)
+)
 
 // NewFlowReservationLinkedEndDeviceStore decorates devs so every served
 // EndDevice advertises its flow reservation lists.
@@ -153,17 +157,42 @@ func (s *FlowReservationLinkedEndDeviceStore) Update(ctx context.Context, id str
 	return s.devs.Update(ctx, id, device)
 }
 
+// probeDelete checks whether Delete(ctx, id) would succeed, without
+// mutating anything: its own two collections, and whatever s.devs owns
+// beneath it. See [deleteProber].
+func (s *FlowReservationLinkedEndDeviceStore) probeDelete(ctx context.Context, id string) error {
+	if err := probeInner(ctx, s.devs, id); err != nil {
+		return err
+	}
+	if !s.served {
+		return nil
+	}
+	if err := probeScopedParent(ctx, s.reqs, id); err != nil {
+		return fmt.Errorf("checking flow reservation requests for %q: %w", id, err)
+	}
+	if err := probeScopedParent(ctx, s.resps, id); err != nil {
+		return fmt.Errorf("checking flow reservation responses for %q: %w", id, err)
+	}
+	return nil
+}
+
 // Delete cascades the device's flow reservation request and response
 // records before removing the device, so neither survives under the dead
 // key for a later device created at the same key to inherit
-// (GRIDAPPSD/ieee-2030_5-server-go#701). The unserved arm cascades nothing:
-// its routes are never mounted, so nothing could have been created for it to
-// orphan.
+// (GRIDAPPSD/ieee-2030_5-server-go#701). The unserved arm cascades nothing of
+// its own: its routes are never mounted, so nothing could have been created
+// for it to orphan; it still delegates to s.devs, whose own cascade (if any)
+// runs as usual.
 //
-// The cascade runs first and fails closed: if either collection cannot be
-// removed, the device is left in place rather than deleted with its records
-// still standing.
+// probeDelete runs first over the WHOLE chain, this layer and everything
+// s.devs owns, and nothing is mutated unless every layer reports it can
+// succeed. Without that, this layer's own cascade could complete and then
+// fail one layer down, leaving the device present with its flow reservation
+// records already gone.
 func (s *FlowReservationLinkedEndDeviceStore) Delete(ctx context.Context, id string) error {
+	if err := s.probeDelete(ctx, id); err != nil {
+		return err
+	}
 	if s.served {
 		if err := deleteScopedParent(ctx, s.reqs, id); err != nil {
 			return fmt.Errorf("cascading flow reservation requests for %q: %w", id, err)

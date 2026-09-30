@@ -70,8 +70,12 @@ type LogEventLinkedEndDeviceStore struct {
 	events store.ScopedStore[sep2.LogEvent]
 }
 
-// compile-time proof the decorator is substitutable for what it decorates.
-var _ store.EndDeviceStore = (*LogEventLinkedEndDeviceStore)(nil)
+// compile-time proof the decorator is substitutable for what it decorates,
+// and that it can be probed as part of a Delete chain (deleteProber).
+var (
+	_ store.EndDeviceStore = (*LogEventLinkedEndDeviceStore)(nil)
+	_ deleteProber         = (*LogEventLinkedEndDeviceStore)(nil)
+)
 
 // NewLogEventLinkedEndDeviceStore decorates devs.
 //
@@ -117,14 +121,33 @@ func (s *LogEventLinkedEndDeviceStore) Update(ctx context.Context, id string, de
 	return s.devs.Update(ctx, id, device)
 }
 
+// probeDelete checks whether Delete(ctx, id) would succeed, without
+// mutating anything: its own LogEvent collection, and whatever s.devs owns
+// beneath it. See [deleteProber].
+func (s *LogEventLinkedEndDeviceStore) probeDelete(ctx context.Context, id string) error {
+	if err := probeInner(ctx, s.devs, id); err != nil {
+		return err
+	}
+	if err := probeScopedParent(ctx, s.events, id); err != nil {
+		return fmt.Errorf("checking log events for %q: %w", id, err)
+	}
+	return nil
+}
+
 // Delete cascades the device's LogEvent records before removing the device,
 // so they do not survive under the dead key for a later device created at
 // the same key to inherit (GRIDAPPSD/ieee-2030_5-server-go#701).
 //
-// The cascade runs first and fails closed: if the LogEvent collection cannot
-// be removed, the device is left in place rather than deleted with its
-// events still standing.
+// probeDelete runs first over the WHOLE chain, this layer and everything
+// s.devs owns, and nothing is mutated unless every layer reports it can
+// succeed. Without that, an outer decorator's cascade (flow reservation
+// requests and responses) could complete before this layer's LogEvent
+// cascade failed, leaving the device present with those records already
+// gone.
 func (s *LogEventLinkedEndDeviceStore) Delete(ctx context.Context, id string) error {
+	if err := s.probeDelete(ctx, id); err != nil {
+		return err
+	}
 	if err := deleteScopedParent(ctx, s.events, id); err != nil {
 		return fmt.Errorf("cascading log events for %q: %w", id, err)
 	}

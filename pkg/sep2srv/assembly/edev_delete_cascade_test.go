@@ -107,6 +107,12 @@ func TestEndDeviceDelete_CascadesFlowReservationAndLogEventRecords(t *testing.T)
 // routes already answer 500 rather than panic in that state (miswired.go);
 // DELETE /edev/{id} must do the same rather than delete the device while
 // unable to cascade its (possibly present) response records.
+//
+// It also pins the fix-round-1 all-or-nothing property (#701): a request
+// record that could have cascaded cleanly is seeded first, and must survive
+// too, not just the device. Before the probe-first restructuring, the
+// request cascade ran and succeeded before the response store's incapacity
+// was discovered.
 func TestEndDeviceDelete_FailsClosedWhenFlowReservationResponsesIsMiswired(t *testing.T) {
 	t.Parallel()
 
@@ -123,6 +129,14 @@ func TestEndDeviceDelete_FailsClosedWhenFlowReservationResponsesIsMiswired(t *te
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
+	ctx := context.Background()
+	if err := stores.FlowReservationRequests.Create(ctx, "e1", "req-1", sep2.FlowReservationRequest{MRID: "req-1"}); err != nil {
+		t.Fatalf("seed request: %v", err)
+	}
+	if n, err := stores.FlowReservationRequests.Count(ctx, "e1"); err != nil || n != 1 {
+		t.Fatalf("control: requests under e1 = %d, %v, want 1, nil", n, err)
+	}
+
 	req, err := http.NewRequest(http.MethodDelete, srv.URL+"/edev/e1", nil)
 	if err != nil {
 		t.Fatalf("new DELETE request: %v", err)
@@ -136,7 +150,11 @@ func TestEndDeviceDelete_FailsClosedWhenFlowReservationResponsesIsMiswired(t *te
 		t.Fatalf("DELETE /edev/e1 status = %d, want 500: a half-wired flow reservation family must refuse, not silently delete", resp.StatusCode)
 	}
 
-	if _, err := stores.EndDevices.Get(context.Background(), "e1"); err != nil {
+	if _, err := stores.EndDevices.Get(ctx, "e1"); err != nil {
 		t.Errorf("device was removed despite the failed cascade: Get(e1) = %v, want the device still present", err)
+	}
+	if n, err := stores.FlowReservationRequests.Count(ctx, "e1"); err != nil || n != 1 {
+		t.Errorf("requests under e1 = %d, %v, want 1, nil: a request cascade that could have completed "+
+			"must not run ahead of the response store's incapacity being discovered", n, err)
 	}
 }

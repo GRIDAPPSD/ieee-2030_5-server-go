@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
@@ -49,9 +52,10 @@ func validString(s string, max int) bool {
 }
 
 // DERControlIssuer creates and cancels admin-issued DER controls. The
-// production implementation is *dercontrol.Issuer.
+// production implementation is *dercontrol.Issuer. Create goes through
+// IssueInFleet only, so no control is stored without a commitment check.
 type DERControlIssuer interface {
-	Issue(ctx context.Context, req dercontrol.CreateRequest) (dercontrol.Result, error)
+	IssueInFleet(ctx context.Context, req dercontrol.CreateRequest, fleet dercontrol.Fleet) (dercontrol.Result, error)
 	Cancel(ctx context.Context, scope dercontrol.Scope, id, reason string) (dercontrol.LifecycleRecord, error)
 }
 
@@ -86,18 +90,25 @@ type ResponseLister interface {
 	List(ctx context.Context, parentID string, opts store.ListOptions) (store.ListResult[sep2.Response], error)
 }
 
-// CommitmentCheck decides whether a control request fits the commitments the
-// server has already made (granted flow reservations, GRIDAPPSD/ieee-2030_5-server-go#714).
-// An error wrapping ErrCommitmentConflict answers 409; any other error means
-// the check could not complete and answers 500. Nothing is stored either way.
-type CommitmentCheck func(ctx context.Context, req dercontrol.CreateRequest) error
+// errCommitmentUnavailable marks a commitment check that could not
+// complete. It answers 500, never 409, and never lets the create through.
+var errCommitmentUnavailable = errors.New("commitment check could not complete")
 
-// ErrCommitmentConflict marks a CommitmentCheck refusal: the request does
-// not fit a commitment already made.
-var ErrCommitmentConflict = errors.New("control conflicts with an existing commitment")
+// controlReach is the number of a fleet's devices that read one control: a
+// control is served only under the EndDevice it is stored beneath.
+const controlReach = 1
 
-// allowAllCommitments is the check used until the commitment rule exists.
-func allowAllCommitments(context.Context, dercontrol.CreateRequest) error { return nil }
+// FleetResolver maps an EndDevice id to its commitment fleet key. The
+// production implementation is commitment.Resolver.
+type FleetResolver interface {
+	FleetOf(ctx context.Context, endDeviceID string) (string, error)
+}
+
+// CommitmentLedger serializes a create against the commitments of its
+// fleet. The production implementation is *commitment.Ledger.
+type CommitmentLedger interface {
+	Within(ctx context.Context, fleetKeys []string, fn func(commitment.View) error) error
+}
 
 // AdminDERControlHandler serves the DER control admin routes. Notifier and
 // Logger may be nil; every other field is required.
@@ -110,9 +121,11 @@ type AdminDERControlHandler struct {
 	Responses  ResponseLister
 	Notifier   ResourceNotifier
 
-	// Commitments is consulted on every create before the issuer runs. Nil
-	// allows every request.
-	Commitments CommitmentCheck
+	// Fleets and Ledger bound every create by the commitments of the
+	// program's fleet (GRIDAPPSD/ieee-2030_5-server-go#714). A nil one
+	// answers 500 rather than creating unchecked.
+	Fleets FleetResolver
+	Ledger CommitmentLedger
 
 	// Persisted reports whether both the control and lifecycle stores write
 	// through to disk, echoed in the create response.
@@ -161,7 +174,12 @@ var (
 	refuseDescription         = derControlRefusal{http.StatusBadRequest, "description_invalid", "description: at most 32 octets"}
 	refuseProgramNotFound     = derControlRefusal{http.StatusNotFound, "program_not_found", "derProgramHref: DERProgram not found"}
 	refuseNoControlListLink   = derControlRefusal{http.StatusConflict, "no_der_control_list_link", "derProgramHref: DERProgram has no usable DERControlListLink"}
-	refuseCommitment          = derControlRefusal{http.StatusConflict, "commitment_conflict", "control conflicts with an existing commitment"}
+	refuseTargetWRequired     = derControlRefusal{http.StatusBadRequest, "target_w_required", "targetW: required for type targetW"}
+	refuseTargetWNotAllowed   = derControlRefusal{http.StatusBadRequest, "target_w_not_allowed", "targetW: not allowed for this type"}
+	refuseTargetWValueReq     = derControlRefusal{http.StatusBadRequest, "target_w_value_required", "targetW.value: required"}
+	refuseTargetWValueRange   = derControlRefusal{http.StatusBadRequest, "target_w_value_range", "targetW.value: must be -32768 to 32767"}
+	refuseTargetWMultRange    = derControlRefusal{http.StatusBadRequest, "target_w_multiplier_range", "targetW.multiplier: must be -9 to 9"}
+	refuseExecutesGrantFormat = derControlRefusal{http.StatusBadRequest, "executes_grant_invalid", "executesGrant: invalid format"}
 	refusePENNotConfigured    = derControlRefusal{http.StatusServiceUnavailable, "pen_not_configured", "server PEN not configured"}
 	refuseInternal            = derControlRefusal{http.StatusInternalServerError, "internal_error", "internal error"}
 	refuseMRIDFormat          = derControlRefusal{http.StatusBadRequest, "mrid_invalid", "mrid: invalid format"}
@@ -197,6 +215,30 @@ var issuerRefusals = map[dercontrol.RefusalCode]derControlRefusal{
 	dercontrol.RefusalEnded:              refuseEnded,
 }
 
+// conflictMessages maps each commitment.ConflictCode a create can meet to
+// its fixed message. A code missing here answers 500, like an unmapped
+// issuer refusal.
+var conflictMessages = map[commitment.ConflictCode]string{
+	commitment.ConflictFleetWindow:     "control overlaps a live flow reservation grant of its fleet",
+	commitment.ConflictGrantNotLive:    "executesGrant: grant is not live",
+	commitment.ConflictNotExecutable:   "executesGrant: grant has no interval, energy or power to execute",
+	commitment.ConflictModeNotTarget:   "type: a control carrying out a grant must be targetW",
+	commitment.ConflictOutsideFleet:    "executesGrant: grant belongs to another fleet",
+	commitment.ConflictZeroDuration:    "durationSeconds: a control carrying out a grant needs a duration",
+	commitment.ConflictOutsideInterval: "startTime, durationSeconds: outside the grant's interval",
+	commitment.ConflictDirection:       "targetW: sign reverses the grant's direction",
+	commitment.ConflictPower:           "targetW: exceeds the grant's powerAvailable",
+	commitment.ConflictEnergy:          "targetW: exceeds the grant's energyAvailable",
+}
+
+// DERControlConflict is the 409 body of a create refused by a commitment.
+// MRID names the grant or control it conflicts with.
+type DERControlConflict struct {
+	Error string `json:"error"`
+	Code  string `json:"code"`
+	MRID  string `json:"mRID"`
+}
+
 // derControlCreateBody is the POST /api/der/controls body. Every field is a
 // pointer so "absent" and "zero" are told apart.
 type derControlCreateBody struct {
@@ -204,9 +246,17 @@ type derControlCreateBody struct {
 	Type            *string                `json:"type"`
 	MaxLimW         *int64                 `json:"maxLimW"`
 	PowerFactor     *derControlPowerFactor `json:"powerFactor"`
+	TargetW         *derControlTargetW     `json:"targetW"`
+	ExecutesGrant   *string                `json:"executesGrant"`
 	StartTime       *int64                 `json:"startTime"`
 	DurationSeconds *int64                 `json:"durationSeconds"`
 	Description     *string                `json:"description"`
+}
+
+// derControlTargetW is opModTargetW. A missing multiplier is 0.
+type derControlTargetW struct {
+	Value      *int64 `json:"value"`
+	Multiplier *int64 `json:"multiplier"`
 }
 
 type derControlPowerFactor struct {
@@ -225,6 +275,14 @@ type DERControlBaseView struct {
 	OpModEnergize       *bool                 `json:"opModEnergize,omitempty"`
 	OpModMaxLimW        *uint16               `json:"opModMaxLimW,omitempty"`
 	OpModFixedPFInjectW *FixedPowerFactorView `json:"opModFixedPFInjectW,omitempty"`
+	OpModTargetW        *ActivePowerView      `json:"opModTargetW,omitempty"`
+}
+
+// ActivePowerView is opModTargetW: value x 10^multiplier watts, discharge
+// positive.
+type ActivePowerView struct {
+	Value      int16 `json:"value"`
+	Multiplier int8  `json:"multiplier"`
 }
 
 // FixedPowerFactorView is opModFixedPFInjectW.
@@ -260,6 +318,7 @@ type DERControlView struct {
 	CreationTime       int64              `json:"creationTime"`
 	Interval           IntervalView       `json:"interval"`
 	EventStatus        EventStatusView    `json:"eventStatus"`
+	ExecutesGrant      *string            `json:"executesGrant"`
 }
 
 // DERControlCreated is the 201 body of POST /api/der/controls. Supersedes
@@ -329,12 +388,32 @@ func (l *derControlLog) addControl(scope dercontrol.Scope, ctrl sep2.DERControl)
 // refusal, ERROR for a 5xx, whose cause l carries. op is "create" or
 // "cancel".
 func (h *AdminDERControlHandler) refuse(w http.ResponseWriter, r *http.Request, op string, ref derControlRefusal, l *derControlLog) {
+	h.logRefusal(r, op, ref, l)
+	writeError(w, ref.status, ref.message)
+}
+
+func (h *AdminDERControlHandler) logRefusal(r *http.Request, op string, ref derControlRefusal, l *derControlLog) {
 	level, msg, event := slog.LevelWarn, "admin: DER control request refused", "der_control_"+op+"_refused"
 	if ref.status >= http.StatusInternalServerError {
 		level, msg, event = slog.LevelError, "admin: DER control request failed", "der_control_"+op+"_failed"
 	}
 	h.log(r, level, msg, event, append([]any{"code", ref.code, "status", ref.status}, l.attrs...))
-	writeError(w, ref.status, ref.message)
+}
+
+// refuseConflict answers 409 for a create a commitment refused. The body
+// carries the fixed message, the code and the conflicting mRID, which is a
+// stored mRID or the validated executesGrant, never other request text.
+func (h *AdminDERControlHandler) refuseConflict(w http.ResponseWriter, r *http.Request, conflict *commitment.ConflictError, l *derControlLog) {
+	message, ok := conflictMessages[conflict.Code]
+	if !ok {
+		l.add("cause", "unmapped_conflict")
+		l.add("conflict_code", string(conflict.Code))
+		h.refuse(w, r, "create", refuseInternal, l)
+		return
+	}
+	l.add("conflict_mrid", conflict.MRID)
+	h.logRefusal(r, "create", derControlRefusal{http.StatusConflict, string(conflict.Code), message}, l)
+	writeJSON(w, http.StatusConflict, DERControlConflict{Error: message, Code: string(conflict.Code), MRID: conflict.MRID})
 }
 
 // log writes one audit line carrying the fields every line shares.
@@ -387,22 +466,18 @@ func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
 			return
 		}
 
-		check := h.Commitments
-		if check == nil {
-			check = allowAllCommitments
-		}
-		if err := check(r.Context(), req); err != nil {
-			if errors.Is(err, ErrCommitmentConflict) {
-				h.refuse(w, r, "create", refuseCommitment, &logged)
+		res, err := h.issueInFleet(r.Context(), req)
+		if err != nil {
+			var conflict *commitment.ConflictError
+			if errors.As(err, &conflict) {
+				h.refuseConflict(w, r, conflict, &logged)
 				return
 			}
-			logged.add("cause", "commitment_check_failed")
-			h.refuse(w, r, "create", refuseInternal, &logged)
-			return
-		}
-
-		res, err := h.Issuer.Issue(r.Context(), req)
-		if err != nil {
+			if errors.Is(err, errCommitmentUnavailable) {
+				logged.add("cause", "commitment_check_failed")
+				h.refuse(w, r, "create", refuseInternal, &logged)
+				return
+			}
 			var undo *dercontrol.UndoError
 			if errors.As(err, &undo) && undo.ControlKept {
 				h.incomplete(w, r, "create", "control may be live: its write could not be undone", undo)
@@ -417,16 +492,71 @@ func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
 		if supersedes == nil {
 			supersedes = []string{}
 		}
-		h.logSuccess(r, "der_control_created", "admin: DER control created", res.Scope, res.Control, "supersedes", supersedes)
+		h.logSuccess(r, "der_control_created", "admin: DER control created", res.Scope, res.Control, "supersedes", supersedes, "executes_grant", req.ExecutesGrant)
 
 		now := sep2time.Now().Unix()
 		w.Header().Set("Location", res.Href)
 		writeJSON(w, http.StatusCreated, DERControlCreated{
-			DERControlView:        newDERControlView(res.Scope, res.Control, dercontrol.LifecycleRecord{}, now),
+			DERControlView:        newDERControlView(res.Scope, res.Control, dercontrol.LifecycleRecord{GrantMRID: req.ExecutesGrant}, now),
 			Supersedes:            supersedes,
 			NotificationAttempted: h.Notifier != nil,
 			Persisted:             h.Persisted,
 		})
+	}
+}
+
+// issueInFleet runs the issuer inside the commitment lock of the program's
+// fleet, so no other create or grant on that fleet can land between the
+// check and the write. An error wrapping errCommitmentUnavailable means the
+// check did not complete; a *commitment.ConflictError is a refusal.
+func (h *AdminDERControlHandler) issueInFleet(ctx context.Context, req dercontrol.CreateRequest) (dercontrol.Result, error) {
+	if h.Fleets == nil || h.Ledger == nil {
+		return dercontrol.Result{}, fmt.Errorf("%w: not wired", errCommitmentUnavailable)
+	}
+	edevID, _, _, ok := derhref.Program(req.DERProgramHref)
+	if !ok {
+		return dercontrol.Result{}, &dercontrol.RefusalError{Code: dercontrol.RefusalInvalidProgramHref}
+	}
+	fleetKey, err := h.Fleets.FleetOf(ctx, edevID)
+	if err != nil {
+		// A program cannot be stored under an EndDevice that does not
+		// exist, so this is the issuer's own 404.
+		if errors.Is(err, store.ErrNotFound) {
+			return dercontrol.Result{}, &dercontrol.RefusalError{Code: dercontrol.RefusalProgramNotFound}
+		}
+		return dercontrol.Result{}, fmt.Errorf("%w: %w", errCommitmentUnavailable, err)
+	}
+
+	var res dercontrol.Result
+	ran := false
+	err = h.Ledger.Within(ctx, []string{fleetKey}, func(v commitment.View) error {
+		ran = true
+		var err error
+		res, err = h.Issuer.IssueInFleet(ctx, req, dercontrol.Fleet{Key: fleetKey, Reach: controlReach, Check: checkIn(v)})
+		return err
+	})
+	if err != nil && !ran {
+		return dercontrol.Result{}, fmt.Errorf("%w: %w", errCommitmentUnavailable, err)
+	}
+	return res, err
+}
+
+// checkIn adapts a ledger View to the issuer's check hook.
+func checkIn(v commitment.View) dercontrol.Check {
+	return func(ctx context.Context, p dercontrol.Proposal) error {
+		err := v.CheckControl(ctx, commitment.Proposal{
+			FleetKey:   p.FleetKey,
+			Window:     p.Window,
+			GrantMRID:  p.GrantMRID,
+			TargetW:    p.TargetW,
+			Reach:      p.Reach,
+			Supersedes: p.Supersedes,
+		})
+		var conflict *commitment.ConflictError
+		if err != nil && !errors.As(err, &conflict) {
+			return fmt.Errorf("%w: %w", errCommitmentUnavailable, err)
+		}
+		return err
 	}
 }
 
@@ -727,6 +857,10 @@ var wrongTypeRefusals = map[string]derControlRefusal{
 	"startTime":                {http.StatusBadRequest, "start_type", "startTime: must be an integer"},
 	"durationSeconds":          {http.StatusBadRequest, "duration_type", "durationSeconds: must be an integer"},
 	"description":              {http.StatusBadRequest, "description_type", "description: must be a string"},
+	"targetW":                  {http.StatusBadRequest, "target_w_type", "targetW: must be an object"},
+	"targetW.value":            {http.StatusBadRequest, "target_w_value_type", "targetW.value: must be an integer"},
+	"targetW.multiplier":       {http.StatusBadRequest, "target_w_multiplier_type", "targetW.multiplier: must be an integer"},
+	"executesGrant":            {http.StatusBadRequest, "executes_grant_type", "executesGrant: must be a string"},
 	"reason":                   {http.StatusBadRequest, "reason_type", "reason: must be a string"},
 }
 
@@ -736,6 +870,7 @@ var controlTypes = map[string]dercontrol.ControlType{
 	string(dercontrol.Disconnect):     dercontrol.Disconnect,
 	string(dercontrol.MaxLimW):        dercontrol.MaxLimW,
 	string(dercontrol.FixedPFInjectW): dercontrol.FixedPFInjectW,
+	string(dercontrol.TargetW):        dercontrol.TargetW,
 }
 
 // buildCreateRequest validates body field by field so each refusal names
@@ -762,6 +897,14 @@ func buildCreateRequest(body derControlCreateBody, l *derControlLog) (dercontrol
 
 	if ref, ok := buildValue(typ, body, &req, l); !ok {
 		return req, ref, false
+	}
+
+	if body.ExecutesGrant != nil {
+		grant, ok := normalizeMRID(*body.ExecutesGrant)
+		if !ok {
+			return req, refuseExecutesGrantFormat, false
+		}
+		req.ExecutesGrant = grant
 	}
 
 	if body.DurationSeconds == nil {
@@ -793,6 +936,9 @@ func buildCreateRequest(body derControlCreateBody, l *derControlLog) (dercontrol
 }
 
 func buildValue(typ dercontrol.ControlType, body derControlCreateBody, req *dercontrol.CreateRequest, l *derControlLog) (derControlRefusal, bool) {
+	if typ != dercontrol.TargetW && body.TargetW != nil {
+		return refuseTargetWNotAllowed, false
+	}
 	switch typ {
 	case dercontrol.MaxLimW:
 		if body.PowerFactor != nil {
@@ -828,6 +974,33 @@ func buildValue(typ dercontrol.ControlType, body derControlCreateBody, req *derc
 		req.PowerFactor = &dercontrol.PowerFactorValue{Displacement: uint16(*pf.Displacement), Excitation: &excitation}
 		l.add("value", uint16(*pf.Displacement))
 		l.add("excitation", excitation)
+	case dercontrol.TargetW:
+		if body.MaxLimW != nil {
+			return refuseMaxLimWNotAllowed, false
+		}
+		if body.PowerFactor != nil {
+			return refusePFNotAllowed, false
+		}
+		tw := body.TargetW
+		if tw == nil {
+			return refuseTargetWRequired, false
+		}
+		if tw.Value == nil {
+			return refuseTargetWValueReq, false
+		}
+		if *tw.Value < math.MinInt16 || *tw.Value > math.MaxInt16 {
+			return refuseTargetWValueRange, false
+		}
+		var mult int64
+		if tw.Multiplier != nil {
+			mult = *tw.Multiplier
+		}
+		if mult < -9 || mult > 9 {
+			return refuseTargetWMultRange, false
+		}
+		req.TargetW = &sep2.ActivePower{Value: int16(*tw.Value), Multiplier: int8(mult)}
+		l.add("value", req.TargetW.Value)
+		l.add("multiplier", req.TargetW.Multiplier)
 	default: // Connect and Disconnect carry no value.
 		if body.MaxLimW != nil {
 			return refuseMaxLimWNotAllowed, false
@@ -849,6 +1022,9 @@ func addBaseToLog(l *derControlLog, ctrl sep2.DERControl) {
 		case b.OpModFixedPFInjectW != nil:
 			l.add("value", b.OpModFixedPFInjectW.Displacement)
 			l.add("excitation", b.OpModFixedPFInjectW.Excitation)
+		case b.OpModTargetW != nil:
+			l.add("value", b.OpModTargetW.Value)
+			l.add("multiplier", b.OpModTargetW.Multiplier)
 		}
 	}
 	if ctrl.Interval != nil {
@@ -911,6 +1087,13 @@ func newDERControlView(scope dercontrol.Scope, ctrl sep2.DERControl, lc dercontr
 		if pf := b.OpModFixedPFInjectW; pf != nil {
 			v.DERControlBase.OpModFixedPFInjectW = &FixedPowerFactorView{Displacement: pf.Displacement, Excitation: pf.Excitation, Multiplier: pf.Multiplier}
 		}
+		if tw := b.OpModTargetW; tw != nil {
+			v.DERControlBase.OpModTargetW = &ActivePowerView{Value: tw.Value, Multiplier: tw.Multiplier}
+		}
+	}
+	if lc.GrantMRID != "" {
+		grant := lc.GrantMRID
+		v.ExecutesGrant = &grant
 	}
 	if ctrl.Interval != nil {
 		v.Interval = IntervalView{Start: ctrl.Interval.Start, Duration: ctrl.Interval.Duration}
@@ -934,6 +1117,8 @@ func controlTypeName(b *sep2.DERControlBase) string {
 		return string(dercontrol.MaxLimW)
 	case b.OpModFixedPFInjectW != nil:
 		return string(dercontrol.FixedPFInjectW)
+	case b.OpModTargetW != nil:
+		return string(dercontrol.TargetW)
 	default:
 		return "other"
 	}

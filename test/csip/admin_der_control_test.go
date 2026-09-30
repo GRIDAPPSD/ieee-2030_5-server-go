@@ -22,10 +22,13 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -111,6 +114,8 @@ func runAdminDERControlProcedure(t *testing.T, tc adminDERControlCase, cipher st
 	ctx := context.Background()
 	stores := csiptest.NewFreshStores()
 	stores.DERControlLifecycles = dercontrol.NewLifecycleStore()
+	stores.FlowReservationResponseLifecycles = memory.NewScopedStore[dercontrol.LifecycleRecord]()
+	stores.CommitmentLedger = server.NewCommitmentLedger(stores)
 	target := &csiptest.Target{
 		EndDevices:         stores.EndDevices,
 		FSAs:               stores.FSAs,
@@ -145,6 +150,8 @@ func runAdminDERControlProcedure(t *testing.T, tc adminDERControlCase, cipher st
 		Programs:   stores.DERPrograms,
 		EndDevices: stores.EndDevices,
 		Responses:  stores.Responses,
+		Fleets:     commitment.Resolver{Devices: stores.EndDevices, Managers: stores.EndDeviceManagers},
+		Ledger:     stores.CommitmentLedger,
 	}
 
 	// The CSIP loader stores a program's own href without its FSA segment

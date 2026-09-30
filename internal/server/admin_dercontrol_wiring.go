@@ -3,6 +3,7 @@ package server
 import (
 	"log"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 )
@@ -29,10 +30,16 @@ func newAdminDERControlHandler(stores *Stores) *handler.AdminDERControlHandler {
 		Programs:   stores.DERPrograms,
 		EndDevices: stores.EndDevices,
 		Notifier:   stores.AdminNotifier,
+		Ledger:     stores.CommitmentLedger,
 		Persisted:  stores.DERControls.Persists() && stores.DERControlLifecycles.Persists(),
 	}
 	if stores.Responses != nil {
 		h.Responses = stores.Responses
+	}
+	// Without a management store the resolver cannot be built, and a nil
+	// Fleets makes every create answer 500 rather than go unchecked.
+	if stores.EndDeviceManagers != nil {
+		h.Fleets = commitment.Resolver{Devices: stores.EndDevices, Managers: stores.EndDeviceManagers}
 	}
 	return h
 }

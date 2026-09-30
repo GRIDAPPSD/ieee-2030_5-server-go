@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coreder "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
@@ -57,15 +58,16 @@ func testStores() *assembly.Stores {
 		MirrorUsagePoints:   memory.NewStore[sep2.MirrorUsagePoint](),
 		MirrorMeterReadings: memory.NewScopedStore[sep2.MirrorMeterReading](),
 
-		DERs:               memory.NewScopedStore[sep2.DER](),
-		DERCapabilities:    memory.NewScopedStore[sep2.DERCapability](),
-		DERSettings:        memory.NewScopedStore[sep2.DERSettings](),
-		DERStatuses:        memory.NewScopedStore[sep2.DERStatus](),
-		DERAvailabilities:  memory.NewScopedStore[sep2.DERAvailability](),
-		DERPrograms:        memory.NewDERProgramStore(),
-		DERControls:        memory.NewScopedStore[sep2.DERControl](),
-		DefaultDERControls: memory.NewScopedStore[sep2.DefaultDERControl](),
-		DERCurves:          memory.NewStore[sep2.DERCurve](),
+		DERs:                 memory.NewScopedStore[sep2.DER](),
+		DERCapabilities:      memory.NewScopedStore[sep2.DERCapability](),
+		DERSettings:          memory.NewScopedStore[sep2.DERSettings](),
+		DERStatuses:          memory.NewScopedStore[sep2.DERStatus](),
+		DERAvailabilities:    memory.NewScopedStore[sep2.DERAvailability](),
+		DERPrograms:          memory.NewDERProgramStore(),
+		DERControls:          memory.NewScopedStore[sep2.DERControl](),
+		DefaultDERControls:   memory.NewScopedStore[sep2.DefaultDERControl](),
+		DERCurves:            memory.NewStore[sep2.DERCurve](),
+		DERControlLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
 
 		FSAs:          memory.NewScopedStore[sep2.FunctionSetAssignments](),
 		Subscriptions: memory.NewSubscriptionStore(),

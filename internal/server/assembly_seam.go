@@ -150,6 +150,7 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 		DERControls:              s.DERControls,
 		DefaultDERControls:       s.DefaultDERControls,
 		DERCurves:                s.DERCurves,
+		DERControlLifecycles:     s.DERControlLifecycles,
 		FSAs:                     s.FSAs,
 		AdminFSAs:                s.AdminFSAs,
 		Subscriptions:            s.Subscriptions,

@@ -2,6 +2,7 @@ package assembly
 
 import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -36,6 +37,9 @@ type ReaderStores struct {
 	DERControls        store.ScopedReader[sep2.DERControl]
 	DefaultDERControls store.ScopedReader[sep2.DefaultDERControl]
 	DERCurves          store.ResourceReader[sep2.DERCurve]
+	// DERControlLifecycles mirrors Stores.DERControlLifecycles: absent means
+	// no admin issuer is wired, same as on the write side.
+	DERControlLifecycles store.ScopedReader[dercontrol.LifecycleRecord]
 
 	FSAs store.ScopedReader[sep2.FunctionSetAssignments]
 
@@ -111,6 +115,8 @@ func NewReaderStores(s *Stores) *ReaderStores {
 		DERControls:        store.AsScopedReader(requireScoped(s.DERControls, "DERControls")),
 		DefaultDERControls: store.AsScopedReader(requireScoped(s.DefaultDERControls, "DefaultDERControls")),
 		DERCurves:          store.AsReader(requireResource(s.DERCurves, "DERCurves")),
+
+		DERControlLifecycles: store.AsScopedReader(requireScoped(s.DERControlLifecycles, "DERControlLifecycles")),
 
 		FSAs: store.AsScopedReader(requireScoped(s.FSAs, "FSAs")),
 

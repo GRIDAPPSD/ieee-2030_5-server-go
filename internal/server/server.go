@@ -22,6 +22,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
@@ -181,6 +182,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		DERPrograms:              derPrograms,
 		DERControls:              memory.NewScopedStore[sep2.DERControl](),
 		DefaultDERControls:       memory.NewScopedStore[sep2.DefaultDERControl](),
+		DERControlLifecycles:     memory.NewScopedStore[dercontrol.LifecycleRecord](),
 		DERCurves:                memory.NewStore[sep2.DERCurve](),
 		FSAs:                     memory.NewScopedStore[sep2.FunctionSetAssignments](),
 		AdminFSAs:                adminFSAs,

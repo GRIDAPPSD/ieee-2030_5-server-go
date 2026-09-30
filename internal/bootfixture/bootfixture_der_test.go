@@ -211,11 +211,9 @@ der_programs:
 	if err != nil {
 		t.Fatalf("DERPrograms.Get(e1, p1): %v", err)
 	}
-	// NOTE: this href is NOT the routable form. Core registers the
-	// DERProgram list only at /edev/{id}/fsa/{fsaId}/derp; there is no
-	// /edev/{id}/derp/{derpId} route. Pinned as current behavior and
-	// reported as a finding rather than changed here.
-	if want := "/edev/e1/derp/p1"; prog.Href != want {
+	// #743: the FSA segment makes this the routable form. Core registers
+	// the DERProgram list only at /edev/{id}/fsa/{fsaId}/derp.
+	if want := "/edev/e1/fsa/f1/derp/p1"; prog.Href != want {
 		t.Errorf("DERProgram.Href = %q, want %q", prog.Href, want)
 	}
 	if want := "DERP-MRID-1"; prog.MRID != want {

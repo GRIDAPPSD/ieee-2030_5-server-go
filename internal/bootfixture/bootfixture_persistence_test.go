@@ -52,6 +52,7 @@ end_devices:
     changed_time: 1700000000
 der_programs:
   - end_device_id: dev-1
+    fsa_id: fsa-1
     id: prog-1
     mrid: "ABCDEF0123456789"
     description: persisted program
@@ -107,7 +108,7 @@ func TestBootFixtureDERProgramsReachDiskThroughWrapper(t *testing.T) {
 	// The href is what a client dereferences, and the loader is the only
 	// thing that stamps it, so an empty or mis-scoped value here is an
 	// unroutable program rather than a cosmetic defect.
-	if want := "/edev/dev-1/derp/prog-1"; got.Href != want {
+	if want := "/edev/dev-1/fsa/fsa-1/derp/prog-1"; got.Href != want {
 		t.Errorf("stored Href = %q, want %q", got.Href, want)
 	}
 
@@ -191,7 +192,7 @@ func TestBootFixtureDERProgramsRehydrateFromSnapshot(t *testing.T) {
 	if got.MRID != "ABCDEF0123456789" {
 		t.Errorf("rehydrated MRID = %q, want %q", got.MRID, "ABCDEF0123456789")
 	}
-	if want := "/edev/dev-1/derp/prog-1"; got.Href != want {
+	if want := "/edev/dev-1/fsa/fsa-1/derp/prog-1"; got.Href != want {
 		t.Errorf("rehydrated Href = %q, want %q", got.Href, want)
 	}
 }

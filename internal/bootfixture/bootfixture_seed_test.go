@@ -47,6 +47,7 @@ end_devices:
     changed_time: 100
 der_programs:
   - end_device_id: e1
+    fsa_id: f1
     id: p1
     mrid: "A1A1A1A1A1A1A1A1"
     description: fixture program p1
@@ -341,8 +342,8 @@ func assertFixtureP1(t *testing.T, prog sep2.DERProgram) {
 	if prog.MRID != "A1A1A1A1A1A1A1A1" {
 		t.Errorf("p1 MRID = %q, want A1A1A1A1A1A1A1A1", prog.MRID)
 	}
-	if prog.Href != "/edev/e1/derp/p1" {
-		t.Errorf("p1 Href = %q, want /edev/e1/derp/p1", prog.Href)
+	if prog.Href != "/edev/e1/fsa/f1/derp/p1" {
+		t.Errorf("p1 Href = %q, want /edev/e1/fsa/f1/derp/p1", prog.Href)
 	}
 }
 
@@ -590,11 +591,13 @@ end_devices:
     changed_time: 300
 der_programs:
   - end_device_id: e1
+    fsa_id: f1
     id: p1
     mrid: "A1A1A1A1A1A1A1A1"
     description: fixture program p1
     primacy: 3
   - end_device_id: e1
+    fsa_id: f1
     id: p9
     mrid: "A9A9A9A9A9A9A9A9"
     primacy: 9
@@ -613,7 +616,7 @@ der_programs:
 	assertEndDeviceCount(t, edevs, 2)
 	assertFixtureP1(t, mustProgram(t, derps, "e1", "p1"))
 	p9 := mustProgram(t, derps, "e1", "p9")
-	if p9.Primacy != 9 || p9.MRID != "A9A9A9A9A9A9A9A9" || p9.Href != "/edev/e1/derp/p9" {
+	if p9.Primacy != 9 || p9.MRID != "A9A9A9A9A9A9A9A9" || p9.Href != "/edev/e1/fsa/f1/derp/p9" {
 		t.Errorf("p9 = Primacy %d MRID %q Href %q, want the v2 fixture values", p9.Primacy, p9.MRID, p9.Href)
 	}
 	h.assertSeedKeys(edevKey("e1"), edevKey("e3"), derpKey("e1", "p1"), derpKey("e1", "p9"))
@@ -736,9 +739,11 @@ end_devices:
     changed_time: 100
 der_programs:
   - end_device_id: e0
+    fsa_id: f0
     id: p0
     primacy: 1
   - end_device_id: e1
+    fsa_id: f1
     id: p1
     primacy: 3
 `
@@ -887,9 +892,9 @@ func TestReconcileWithoutDataDirCreatesEveryRecord(t *testing.T) {
 		}
 		assertEndDeviceCount(t, target.EndDevices, 2)
 		assertFixtureE1(t, mustEndDevice(t, target.EndDevices, "e1"))
-		for _, key := range [][2]string{{"e1", "p1"}, {"e1", "p3"}, {"e2", "p2"}} {
-			prog := mustProgram(t, target.DERPrograms, key[0], key[1])
-			if want := "/edev/" + key[0] + "/derp/" + key[1]; prog.Href != want {
+		for _, key := range [][3]string{{"e1", "f1", "p1"}, {"e1", "f1", "p3"}, {"e2", "f2", "p2"}} {
+			prog := mustProgram(t, target.DERPrograms, key[0], key[2])
+			if want := "/edev/" + key[0] + "/fsa/" + key[1] + "/derp/" + key[2]; prog.Href != want {
 				t.Errorf("%s: DERProgram Href = %q, want %q", bootName, prog.Href, want)
 			}
 		}

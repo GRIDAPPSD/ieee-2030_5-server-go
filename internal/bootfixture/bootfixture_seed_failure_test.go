@@ -169,6 +169,7 @@ end_devices:
 
 	h.mustBoot(withoutP1 + `der_programs:
   - end_device_id: e1
+    fsa_id: f1
     id: p1
     primacy: 3
 `)

@@ -74,6 +74,7 @@ func TestBootFixtureSeedKeepsProtocolEditAcrossRestart(t *testing.T) {
 	fixture := string(baseFixture) + `
 der_programs:
   - end_device_id: "testdevice"
+    fsa_id: "f1"
     id: "p1"
     mrid: "A1A1A1A1A1A1A1A1"
     primacy: 3

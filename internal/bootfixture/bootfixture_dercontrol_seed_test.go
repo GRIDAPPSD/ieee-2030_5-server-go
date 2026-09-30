@@ -24,6 +24,7 @@ end_devices:
     changed_time: 100
 der_programs:
   - end_device_id: e1
+    fsa_id: "0"
     id: p1
     mrid: "D2D2D2D2D2D2D2D2"
     description: fixture program p1

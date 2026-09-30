@@ -75,6 +75,23 @@ func (s *EndDeviceManagementStore) ManagedBy(_ context.Context, managerLFDI stri
 	return managed, nil
 }
 
+// Managers returns the sorted, deduplicated LFDIs that manage at least one
+// device. Not part of [store.EndDeviceManagementStore]: the protocol-side
+// ownership gate only ever asks "who manages THIS device", never "list every
+// manager", so the interface has no such method. It lives here, next to
+// RekeyManager/RekeyManaged, the other admin-plane operations that need the
+// concrete store rather than the narrower contract (GRIDAPPSD/ieee-2030_5-server-go#715).
+func (s *EndDeviceManagementStore) Managers(_ context.Context) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	managers := make([]string, 0, len(s.managedBy))
+	for lfdi := range s.managedBy {
+		managers = append(managers, lfdi)
+	}
+	slices.Sort(managers)
+	return managers
+}
+
 // mutate is the one place the persist-then-apply order lives (#677 fix
 // round item 2): every mutating method supplies only a build step, run
 // under mu.RLock, that returns either an error (the operation is refused,

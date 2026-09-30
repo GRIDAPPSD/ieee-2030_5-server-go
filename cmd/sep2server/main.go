@@ -229,6 +229,10 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	sep2Edition, err := parseSEP2Edition(os.Getenv("SEP2_EDITION"))
+	if err != nil {
+		return nil, err
+	}
 
 	return &config.Config{
 		Addr:            envOr("SEP2_ADDR", ":443"),
@@ -302,6 +306,10 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		// mRIDs are then fully random rather than conformant, and Run logs
 		// a startup warning instead of refusing every POST.
 		PEN: pen,
+
+		// #715 fix round 3 item 2: unset by default (empty string), which
+		// Config.EffectiveSEP2Edition resolves to "2018".
+		SEP2Edition: sep2Edition,
 	}, nil
 }
 
@@ -327,6 +335,20 @@ func envUint32(key string) (*uint32, error) {
 	}
 	pen := uint32(n)
 	return &pen, nil
+}
+
+// parseSEP2Edition validates SEP2_EDITION: empty (unset, resolved by
+// Config.EffectiveSEP2Edition) or one of the two declared editions. An
+// unrecognized value is a startup error, the same fail-closed shape every
+// other fallible SEP2_* setting in this file takes (see envUint32), rather
+// than being silently treated as the default.
+func parseSEP2Edition(v string) (string, error) {
+	switch v {
+	case "", "2018", "2023":
+		return v, nil
+	default:
+		return "", fmt.Errorf(`SEP2_EDITION: %q is not "2018" or "2023"`, v)
+	}
 }
 
 // parseCSV splits a comma-separated env value into trimmed, non-empty

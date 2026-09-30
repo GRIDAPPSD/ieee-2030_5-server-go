@@ -2,6 +2,7 @@ package server
 
 import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -98,4 +99,15 @@ type Stores struct {
 	FlowReservationResponses *memory.ScopedStore[sep2.FlowReservationResponse]
 	ResponseSets             *memory.Store[sep2.ResponseSet]
 	Responses                *memory.ScopedStore[sep2.Response]
+
+	// Sep2Edition is the config-declared IEEE 2030.5 edition (env
+	// SEP2_EDITION, internal/config.Config.EffectiveSEP2Edition), threaded
+	// to the fleet-read admin handler's export-positive sign mapping (#715
+	// fix round 3, item 2). The zero value, handler.Edition2018, is what an
+	// unconfigured server already did before this field existed. Held on
+	// Stores rather than as a BuildAdminRouter parameter: it is config about
+	// how to interpret the resources in these stores, the same role
+	// RegistrationPolicy already carries on this struct, not a routing or
+	// listener knob like the router's other explicit parameters.
+	Sep2Edition handler.SEP2Edition
 }

@@ -298,3 +298,56 @@ func TestConfigFromEnvPEN(t *testing.T) {
 		}
 	})
 }
+
+// TestConfigFromEnvSEP2Edition pins #715 fix round 3 item 2: SEP2_EDITION
+// unset leaves Config.SEP2Edition empty (EffectiveSEP2Edition then resolves
+// "2018"), "2018" and "2023" both parse through unchanged, and an
+// unrecognized value is a startup error, matching this file's other
+// fallible SEP2_* settings (see TestConfigFromEnvPEN).
+func TestConfigFromEnvSEP2Edition(t *testing.T) {
+	t.Run("unset stays empty", func(t *testing.T) {
+		t.Setenv("SEP2_EDITION", "")
+		if err := os.Unsetenv("SEP2_EDITION"); err != nil {
+			t.Fatalf("unset SEP2_EDITION: %v", err)
+		}
+		cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if cfg.SEP2Edition != "" {
+			t.Errorf("SEP2Edition = %q, want empty", cfg.SEP2Edition)
+		}
+		if got := cfg.EffectiveSEP2Edition(); got != "2018" {
+			t.Errorf("EffectiveSEP2Edition() = %q, want \"2018\"", got)
+		}
+	})
+
+	t.Run("2018 parses through", func(t *testing.T) {
+		t.Setenv("SEP2_EDITION", "2018")
+		cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if cfg.SEP2Edition != "2018" {
+			t.Errorf("SEP2Edition = %q, want \"2018\"", cfg.SEP2Edition)
+		}
+	})
+
+	t.Run("2023 parses through", func(t *testing.T) {
+		t.Setenv("SEP2_EDITION", "2023")
+		cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if cfg.SEP2Edition != "2023" {
+			t.Errorf("SEP2Edition = %q, want \"2023\"", cfg.SEP2Edition)
+		}
+	})
+
+	t.Run("an unrecognized value is a startup error", func(t *testing.T) {
+		t.Setenv("SEP2_EDITION", "2030")
+		if _, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"}); err == nil {
+			t.Fatal("configFromEnv: want an error for SEP2_EDITION=2030, got nil")
+		}
+	})
+}

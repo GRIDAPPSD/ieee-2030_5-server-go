@@ -110,6 +110,13 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 		authed.HandleFunc("POST /api/management-pairs/rekey", mgmtH.HandleRekeyManagementPair())
 	}
 
+	// #715 DERMS read API: per-aggregator fleet status, measurements and
+	// availability. Read-only; the same management-pair store above decides
+	// fleet membership.
+	if fleetH := newAdminFleetHandler(stores); fleetH != nil {
+		authed.HandleFunc("GET /api/derms/fleets", handler.HandleListFleets(fleetH))
+	}
+
 	// Admin dashboard. legacyDashboard decides which page GET / returns
 	// (see handleDashboardPage); the route pattern is the same either way,
 	// so the boot-time route list does not change with the flag.

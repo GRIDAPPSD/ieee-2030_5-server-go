@@ -199,6 +199,10 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		FlowReservationResponses: memory.NewScopedStore[sep2.FlowReservationResponse](),
 		ResponseSets:             memory.NewStore[sep2.ResponseSet](),
 		Responses:                memory.NewScopedStore[sep2.Response](),
+
+		// #715 fix round 3 item 2: env SEP2_EDITION, default "2018" via
+		// EffectiveSEP2Edition.
+		Sep2Edition: handler.SEP2Edition(cfg.EffectiveSEP2Edition()),
 	}
 
 	if cfg.BootFixtureFile != "" {

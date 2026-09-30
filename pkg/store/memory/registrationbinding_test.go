@@ -253,11 +253,18 @@ func TestRegisteredEndDeviceStore_DeleteRefusesWhenRegistrationsIsUnreachable(t 
 }
 
 // TestRegisteredEndDeviceStore_DeleteConvergesAfterAPriorPartialFailure pins
-// the other half of the same finding: a retry after a partial failure must
-// finish the job instead of stopping at the first ErrNotFound. It reaches
-// the partial state directly (device already gone, Registration left
-// behind) rather than by arming a fault mid-call, because that is the state
-// any prior partial failure leaves, whatever caused it.
+// the other half of the same finding: a direct retry against this store
+// after a partial failure must finish the job instead of stopping at the
+// first ErrNotFound. It reaches the partial state directly (device already
+// gone, Registration left behind) rather than by arming a fault mid-call,
+// because that is the state any prior partial failure leaves, whatever
+// caused it.
+//
+// This is the store-level guarantee only. A retried HTTP DELETE /edev/{id}
+// does not reach this method a second time once the device is gone: the
+// ownership gate answers 404 on the id first, so the same leftover
+// Registration is not cleaned up through that path
+// (GRIDAPPSD/ieee-2030_5-server-go#721).
 func TestRegisteredEndDeviceStore_DeleteConvergesAfterAPriorPartialFailure(t *testing.T) {
 	t.Parallel()
 

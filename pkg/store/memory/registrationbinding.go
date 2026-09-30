@@ -283,14 +283,18 @@ func (s *RegisteredEndDeviceStore) probeDelete(ctx context.Context, id string) e
 // The two removals do not short-circuit each other: devErr is recorded but
 // not returned early, so a device already removed by an earlier, partially
 // failed call does not stop this call from still trying to remove a
-// Registration left over from that failure. A retry therefore converges:
-// each call removes whatever of the pair is still present, and only once
-// both are already gone does a further retry report ErrNotFound, exactly as
-// a DELETE of an id that never existed does. An absent Registration on its
-// own is never an error: a device provisioned without a pIN never had one.
-// Any other failure from either store is reported, because a Registration
-// surviving its EndDevice would be served to whoever the key is next
-// allocated to.
+// Registration left over from that failure. A direct retry against this
+// store therefore converges: each call removes whatever of the pair is
+// still present, and only once both are already gone does a further retry
+// report ErrNotFound, exactly as a DELETE of an id that never existed does.
+// A retried HTTP DELETE /edev/{id} does NOT converge the same way: once the
+// device is gone, the ownership gate answers 404 on the id before this
+// method is ever reached again, so a Registration left behind by a partial
+// failure is never cleaned up through that path (GRIDAPPSD/ieee-2030_5-server-go#721).
+// An absent Registration on its own is never an error: a device provisioned
+// without a pIN never had one. Any other failure from either store is
+// reported, because a Registration surviving its EndDevice would be served
+// to whoever the key is next allocated to.
 func (s *RegisteredEndDeviceStore) Delete(ctx context.Context, id string) error {
 	if err := s.probeDelete(ctx, id); err != nil {
 		return err

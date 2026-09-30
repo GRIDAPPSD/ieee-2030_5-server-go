@@ -17,7 +17,7 @@ func TestIssue_Description(t *testing.T) {
 	}{
 		{name: "empty stays empty", description: ""},
 		{name: "32 characters stored", description: strings.Repeat("a", 32)},
-		{name: "32 multi-byte characters stored", description: strings.Repeat("é", 32)},
+		{name: "32 multi-byte characters stored", description: strings.Repeat("\u00e9", 32)},
 		{name: "33 characters refused", description: strings.Repeat("a", 33), wantRefusal: RefusalInvalidDescription},
 		{name: "invalid UTF-8 refused", description: "ok\xff", wantRefusal: RefusalInvalidDescription},
 	}

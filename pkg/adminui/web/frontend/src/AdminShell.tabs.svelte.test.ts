@@ -33,6 +33,7 @@ function mockAuthenticated() {
     if (path === '/api/certs/device-types') {
       return { ok: true, data: { deviceTypes: [{ value: 1, name: 'generic', label: 'Generic' }] } } as never
     }
+    if (path === '/api/derms/fleets') return { ok: true, data: [] } as never
     return { ok: true, data: { kind: 'SY', id: 'sy', label: 'System' } } as never
   })
   vi.spyOn(dash, 'connectDashboard').mockReturnValue(() => {})
@@ -65,6 +66,7 @@ const TAB_HEADINGS: Record<string, string[]> = {
   fsas: ['Create FSA Template', 'FSA Templates', 'FSA Tree (SY -> FD -> SP -> DEV)'],
   control: ['Send DER Control'],
   certificates: ['Certificate Management'],
+  derms: ['DERMS Fleets'],
 }
 
 describe('AdminShell tab card partition (criterion 1)', () => {

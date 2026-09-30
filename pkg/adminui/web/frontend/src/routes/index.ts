@@ -7,8 +7,8 @@
 // well as under the SPA's own /ui/ mount, and the client side router
 // matches on the exact pathname, so both need an entry.
 //
-// The five tab paths map to the same AdminShell reference as "/" and
-// "/ui/", not to per-tab components: AdminShell reads the active tab from
+// The tab paths map to the same AdminShell reference as "/" and "/ui/",
+// not to per-tab components: AdminShell reads the active tab from
 // currentPath itself (issue 561), so every admin UI path resolves to one
 // component identity and a tab switch never remounts the shell.
 
@@ -23,6 +23,7 @@ export const routeList: Route[] = [
   { path: '/ui/fsas', label: 'FSAs' },
   { path: '/ui/control', label: 'Control' },
   { path: '/ui/certificates', label: 'Certificates' },
+  { path: '/ui/derms', label: 'DERMS' },
 ]
 
 export const routes: Record<string, Component> = {
@@ -33,6 +34,7 @@ export const routes: Record<string, Component> = {
   '/ui/fsas': AdminShell,
   '/ui/control': AdminShell,
   '/ui/certificates': AdminShell,
+  '/ui/derms': AdminShell,
 }
 
 export const defaultRoute: Component = AdminShell

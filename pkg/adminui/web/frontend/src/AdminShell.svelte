@@ -30,16 +30,19 @@
   import DeviceTable from './panels/DeviceTable.svelte'
   import ActivityChart from './panels/ActivityChart.svelte'
   import LoginPanel from './panels/LoginPanel.svelte'
+  import FleetPane from './panels/FleetPane.svelte'
 
-  // The five tabs and the card each owns (issue 561's Context section).
-  // "/" and "/ui/" are not tab paths of their own: they alias overview.
-  type TabSlug = 'overview' | 'devices' | 'fsas' | 'control' | 'certificates'
+  // The tabs and the card each owns (issue 561's Context section, plus
+  // issue 671's DERMS tab). "/" and "/ui/" are not tab paths of their own:
+  // they alias overview.
+  type TabSlug = 'overview' | 'devices' | 'fsas' | 'control' | 'certificates' | 'derms'
   const TABS: { slug: TabSlug; label: string }[] = [
     { slug: 'overview', label: 'Overview' },
     { slug: 'devices', label: 'Devices' },
     { slug: 'fsas', label: 'FSAs' },
     { slug: 'control', label: 'Control' },
     { slug: 'certificates', label: 'Certificates' },
+    { slug: 'derms', label: 'DERMS' },
   ]
 
   // 'not-found' is issue 561 criterion 6: any /ui/ path that names no tab
@@ -178,6 +181,8 @@
       <DerControl />
     {:else if activeTab === 'certificates'}
       <CertPanel onMinted={(cert) => (mintedCert = cert)} />
+    {:else if activeTab === 'derms'}
+      <FleetPane />
     {:else if activeTab === 'not-found'}
       <div class="card" data-testid="not-found">
         <h2>Not Found</h2>

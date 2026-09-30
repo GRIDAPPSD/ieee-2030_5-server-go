@@ -31,6 +31,7 @@ const TAB_HEADING: Record<string, string> = {
   fsas: 'Create FSA Template',
   control: 'Send DER Control',
   certificates: 'Certificate Management',
+  derms: 'DERMS Fleets',
 };
 
 // 1. Back and forward across three tabs follows aria-current (criterion 4)

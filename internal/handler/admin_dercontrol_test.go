@@ -240,6 +240,19 @@ func TestDERControlCreate_MaxLimW(t *testing.T) {
 	}
 }
 
+// Range edges that must be accepted: maxLimW 10000 and displacement 1000.
+func TestDERControlCreate_AcceptsRangeEdges(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	w := d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(futureStart(60), 10000, 300))
+	if got := decodeCreated(t, w); w.Code != http.StatusCreated || *got.DERControlBase.OpModMaxLimW != 10000 {
+		t.Fatalf("maxLimW 10000: %d %s", w.Code, w.Body.String())
+	}
+	w = d.do(t, http.MethodPost, "/api/der/controls", fmt.Sprintf(`{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"fixedPFInjectW","powerFactor":{"displacement":1000,"excitation":false},"startTime":%d,"durationSeconds":300}`, futureStart(60)))
+	if got := decodeCreated(t, w); w.Code != http.StatusCreated || got.DERControlBase.OpModFixedPFInjectW.Displacement != 1000 {
+		t.Fatalf("displacement 1000: %d %s", w.Code, w.Body.String())
+	}
+}
+
 // The handler echoes the wiring's persistence answer rather than a constant.
 func TestDERControlCreate_PersistedEchoesWiring(t *testing.T) {
 	d := newDCHarness(t, ptrU32(dcPEN))
@@ -314,9 +327,20 @@ func TestDERControlCreate_Refusals(t *testing.T) {
 		{"start in the past", ptrU32(dcPEN), fmt.Sprintf(`{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","startTime":%d,"durationSeconds":300}`, past), 400, "startTime: in the past"},
 		{"start too far ahead", ptrU32(dcPEN), fmt.Sprintf(`{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","startTime":%d,"durationSeconds":300}`, farAhead), 400, "startTime: too far in the future"},
 		{"start negative", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","startTime":-5,"durationSeconds":300}`, 400, "startTime: out of range"},
-		{"description too long", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","durationSeconds":300,"description":"` + marker + strings.Repeat("d", 30) + `"}`, 400, "description: at most 32 characters"},
+		{"description too long", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","durationSeconds":300,"description":"` + marker + strings.Repeat("d", 30) + `"}`, 400, "description: at most 32 octets"},
 		{"program not found", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/9","type":"connect","durationSeconds":300}`, 404, "derProgramHref: DERProgram not found"},
 		{"program without control list link", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/nolink","type":"connect","durationSeconds":300}`, 409, "derProgramHref: DERProgram has no usable DERControlListLink"},
+		{"description of 17 two-octet characters", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","durationSeconds":300,"description":"` + strings.Repeat("\u00e9", 17) + `"}`, 400, "description: at most 32 octets"},
+		{"duration past UInt32", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","durationSeconds":4294967596}`, 400, "durationSeconds: out of range"},
+		{"displacement over range", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"fixedPFInjectW","powerFactor":{"displacement":1001,"excitation":true},"durationSeconds":300}`, 400, "powerFactor.displacement: must be 1 to 1000"},
+		{"type wrong type", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":7,"durationSeconds":300}`, 400, "type: must be a string"},
+		{"powerFactor wrong type", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"fixedPFInjectW","powerFactor":"` + marker + `","durationSeconds":300}`, 400, "powerFactor: must be an object"},
+		{"excitation wrong type", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"fixedPFInjectW","powerFactor":{"displacement":950,"excitation":"` + marker + `"},"durationSeconds":300}`, 400, "powerFactor.excitation: must be a boolean"},
+		{"startTime wrong type", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","startTime":"` + marker + `","durationSeconds":300}`, 400, "startTime: must be an integer"},
+		{"durationSeconds wrong type", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","durationSeconds":"` + marker + `"}`, 400, "durationSeconds: must be an integer"},
+		{"description wrong type", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","durationSeconds":300,"description":7}`, 400, "description: must be a string"},
+		{"fsa segment with control bytes", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0\r\n` + marker + `/derp/0","type":"connect","durationSeconds":300}`, 400, "derProgramHref: invalid format"},
+		{"href with surrounding space", ptrU32(dcPEN), `{"derProgramHref":" /edev/0/fsa/0/derp/0","type":"connect","durationSeconds":300}`, 400, "derProgramHref: invalid format"},
 		{"PEN not configured", nil, `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","durationSeconds":300}`, 503, "server PEN not configured"},
 	}
 	for _, tc := range cases {
@@ -359,22 +383,39 @@ func TestDERControlCreate_InternalErrorHasNoDetail(t *testing.T) {
 	}
 }
 
-// The #714 seam: a commitment check that refuses stops the create with 409
-// and stores nothing; the default allows.
+// The #714 seam: a commitment conflict answers 409 and a check that could
+// not complete answers 500, so the two stay distinguishable; neither stores
+// anything, and the check sees the validated request.
 func TestDERControlCreate_CommitmentCheck(t *testing.T) {
-	d := newDCHarness(t, ptrU32(dcPEN))
-	var seen dercontrol.CreateRequest
-	d.h.Commitments = func(_ context.Context, req dercontrol.CreateRequest) error {
-		seen = req
-		return errors.New("overlaps a granted reservation")
-	}
-	w := d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(futureStart(60), 1234, 300))
-	assertRefusal(t, w, http.StatusConflict, "control conflicts with an existing commitment")
-	if c, l := d.storedCounts(t); c != 0 || l != 0 {
-		t.Errorf("stored %d/%d after a commitment refusal", c, l)
-	}
-	if seen.Type != dercontrol.MaxLimW || seen.MaxLimW == nil || *seen.MaxLimW != 1234 || seen.DERProgramHref != "/edev/0/fsa/0/derp/0" {
-		t.Errorf("check saw %+v, want the validated request", seen)
+	for _, tc := range []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantError  string
+		wantLog    string
+	}{
+		{"conflict", fmt.Errorf("overlaps grant X: %w", handler.ErrCommitmentConflict), http.StatusConflict, "control conflicts with an existing commitment", "level=WARN"},
+		{"check failed", errors.New("reservation store unavailable"), http.StatusInternalServerError, "internal error", "cause=commitment_check_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newDCHarness(t, ptrU32(dcPEN))
+			var seen dercontrol.CreateRequest
+			d.h.Commitments = func(_ context.Context, req dercontrol.CreateRequest) error {
+				seen = req
+				return tc.err
+			}
+			w := d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(futureStart(60), 1234, 300))
+			assertRefusal(t, w, tc.wantStatus, tc.wantError)
+			if c, l := d.storedCounts(t); c != 0 || l != 0 {
+				t.Errorf("stored %d/%d after a commitment refusal", c, l)
+			}
+			if seen.Type != dercontrol.MaxLimW || seen.MaxLimW == nil || *seen.MaxLimW != 1234 || seen.DERProgramHref != "/edev/0/fsa/0/derp/0" {
+				t.Errorf("check saw %+v, want the validated request", seen)
+			}
+			if !strings.Contains(d.logs.String(), tc.wantLog) || strings.Contains(d.logs.String(), "reservation store") {
+				t.Errorf("log = %s, want %q and no check error text", d.logs.String(), tc.wantLog)
+			}
+		})
 	}
 }
 
@@ -503,7 +544,9 @@ func TestDERControlCancel(t *testing.T) {
 	assertRefusal(t, d.do(t, http.MethodPost, "/api/der/controls/"+created.MRID+"/cancel", ""), http.StatusConflict, "control already cancelled")
 	assertRefusal(t, d.do(t, http.MethodPost, "/api/der/controls/"+strings.Repeat("A", 32)+"/cancel", ""), http.StatusNotFound, "control not found")
 	assertRefusal(t, d.do(t, http.MethodPost, "/api/der/controls/not-an-mrid/cancel", ""), http.StatusBadRequest, "mrid: invalid format")
-	assertRefusal(t, d.do(t, http.MethodPost, "/api/der/controls/"+created.MRID+"/cancel", `{"reason":"`+strings.Repeat("r", 193)+`"}`), http.StatusBadRequest, "reason: at most 192 characters")
+	assertRefusal(t, d.do(t, http.MethodPost, "/api/der/controls/"+created.MRID+"/cancel", `{"reason":"`+strings.Repeat("r", 193)+`"}`), http.StatusBadRequest, "reason: at most 192 octets")
+	assertRefusal(t, d.do(t, http.MethodPost, "/api/der/controls/"+created.MRID+"/cancel", `{"reason":"`+strings.Repeat("\u00e9", 97)+`"}`), http.StatusBadRequest, "reason: at most 192 octets")
+	assertRefusal(t, d.do(t, http.MethodPost, "/api/der/controls/"+created.MRID+"/cancel", `{"reason":7}`), http.StatusBadRequest, "reason: must be a string")
 	assertRefusal(t, d.do(t, http.MethodPost, "/api/der/controls/"+created.MRID+"/cancel", `{"why":"x"}`), http.StatusBadRequest, "unknown field")
 
 	// Superseded and ended both turn on the issuer's clock reaching a
@@ -605,7 +648,7 @@ func TestDERControlAuditLog(t *testing.T) {
 	// JSON escapes, so each body decodes to a real CR and LF.
 	const forged = `\r\nevent=forged`
 
-	create := d.do(t, http.MethodPost, "/api/der/controls", fmt.Sprintf(`{"derProgramHref":"/edev/0/fsa/0\r\nevent=forged/derp/0","type":"maxLimW","maxLimW":4200,"startTime":%d,"durationSeconds":300,"description":"a\r\nevent=forged"}`, futureStart(60)))
+	create := d.do(t, http.MethodPost, "/api/der/controls", fmt.Sprintf(`{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"maxLimW","maxLimW":4200,"startTime":%d,"durationSeconds":300,"description":"a\r\nevent=forged"}`, futureStart(60)))
 	if create.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", create.Code, create.Body.String())
 	}
@@ -619,6 +662,9 @@ func TestDERControlAuditLog(t *testing.T) {
 		`{"derProgramHref":"/edev/0/fsa/0/derp/0` + forged + `","type":"connect","durationSeconds":300}`,
 		`{"` + forged + `":1}`,
 		`{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","durationSeconds":300,"description":"` + strings.Repeat("x", 30) + forged + `"}`,
+		`{"derProgramHref":"/edev/0/fsa/0` + forged + `/derp/0","type":"connect","durationSeconds":300}`,
+		// Passes every handler check and is refused by the issuer.
+		`{"derProgramHref":"/edev/0/fsa/0/derp/9","type":"connect","durationSeconds":300,"description":"` + forged + `"}`,
 	}
 	for _, body := range refusals {
 		if w := d.do(t, http.MethodPost, "/api/der/controls", body); w.Code < 400 {
@@ -628,12 +674,29 @@ func TestDERControlAuditLog(t *testing.T) {
 	if w := d.do(t, http.MethodPost, "/api/der/controls/"+created.MRID+"/cancel", `{"reason":"`+forged+`"}`); w.Code != http.StatusConflict {
 		t.Fatalf("second cancel answered %d", w.Code)
 	}
+	// A 5xx after full validation.
+	d.h.Commitments = func(context.Context, dercontrol.CreateRequest) error { return errors.New("down") }
+	if w := d.do(t, http.MethodPost, "/api/der/controls", `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","durationSeconds":300,"description":"`+forged+`"}`); w.Code != http.StatusInternalServerError {
+		t.Fatalf("failing check answered %d", w.Code)
+	}
 
 	out := d.logs.String()
 	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
-	wantLines := 2 + len(refusals) + 1
+	wantLines := 2 + len(refusals) + 1 + 1
 	if len(lines) != wantLines {
 		t.Fatalf("got %d log lines, want %d:\n%s", len(lines), wantLines, out)
+	}
+	for _, line := range lines {
+		if !strings.Contains(line, "admission=none") {
+			t.Errorf("line carries no admission field: %s", line)
+		}
+		refused := strings.Contains(line, "_refused ")
+		if refused && !strings.Contains(line, "level=WARN") {
+			t.Errorf("refusal not at WARN: %s", line)
+		}
+		if strings.Contains(line, "status=5") && (refused || !strings.Contains(line, "level=ERROR") || !strings.Contains(line, "cause=")) {
+			t.Errorf("5xx not logged as an ERROR failure with a cause: %s", line)
+		}
 	}
 	if strings.Contains(out, "\r") || strings.Contains(out, "forged") {
 		t.Fatalf("log carries request-supplied bytes:\n%s", out)
@@ -641,7 +704,7 @@ func TestDERControlAuditLog(t *testing.T) {
 	for _, want := range []string{
 		"event=der_control_created", "event=der_control_cancelled", "event=der_control_create_refused", "event=der_control_cancel_refused",
 		"mrid=" + created.MRID, "href=" + created.Href, "type=maxLimW", "value=4200", "duration=300",
-		"remote_addr=192.0.2.7:4000", "admission=none", "code=type_unknown", "code=already_cancelled",
+		"remote_addr=192.0.2.7:4000", "admission=none", "code=type_unknown", "code=already_cancelled", "code=program_not_found", "event=der_control_create_failed",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("log misses %q:\n%s", want, out)
@@ -669,3 +732,140 @@ func assertRefusal(t *testing.T, w *httptest.ResponseRecorder, status int, messa
 }
 
 func ptrU32(v uint32) *uint32 { return &v }
+
+// failingUpdates is a lifecycle store whose Update fails while fail is set.
+// It does not claim to roll back its own failures, so the issuer's undo
+// really runs its compensating writes against it.
+type failingUpdates struct {
+	inner *dercontrol.LifecycleStore
+	fail  bool
+}
+
+func (f *failingUpdates) Get(ctx context.Context, parentID, id string) (dercontrol.LifecycleRecord, error) {
+	return f.inner.Get(ctx, parentID, id)
+}
+
+func (f *failingUpdates) Create(ctx context.Context, parentID, id string, r dercontrol.LifecycleRecord) error {
+	return f.inner.Create(ctx, parentID, id, r)
+}
+
+func (f *failingUpdates) Update(ctx context.Context, parentID, id string, r dercontrol.LifecycleRecord) error {
+	if f.fail {
+		return errors.New("lifecycle store /var/lib/sep2 unavailable")
+	}
+	return f.inner.Update(ctx, parentID, id, r)
+}
+
+func (f *failingUpdates) Delete(ctx context.Context, parentID, id string) error {
+	return f.inner.Delete(ctx, parentID, id)
+}
+
+func withFailingUpdates(t *testing.T, d *dcHarness) *failingUpdates {
+	t.Helper()
+	f := &failingUpdates{inner: d.lifecycles}
+	issuer, err := dercontrol.NewIssuer(d.programs, d.controls, f, dercontrol.Config{PEN: ptrU32(dcPEN)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.h.Issuer, d.h.Lifecycles = issuer, f
+	return f
+}
+
+// A create whose supersede mark fails and cannot be undone leaves the new
+// control stored and served to devices. The API says so, names it, logs it
+// at ERROR and notifies, since devices can see it.
+func TestDERControlCreate_UndoFailureKeepsControlLive(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	f := withFailingUpdates(t, d)
+	start := futureStart(600)
+	if w := d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(start, 100, 600)); w.Code != http.StatusCreated {
+		t.Fatalf("first create: %d %s", w.Code, w.Body.String())
+	}
+	d.notifier.take()
+	d.logs.Reset()
+	f.fail = true
+
+	w := d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(start+60, 200, 600))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body %s, want 500", w.Code, w.Body.String())
+	}
+	var got handler.DERControlIncomplete
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	parent, id, stored, err := d.controls.ByMRID(context.Background(), got.MRID)
+	if err != nil {
+		t.Fatalf("the reported mRID %q is not stored: %v", got.MRID, err)
+	}
+	if !got.ControlKept || got.Href != stored.Href || parent != "0/0/0" || !strings.HasSuffix(got.Href, "/"+id) {
+		t.Fatalf("body = %+v, stored %s under %s", got, stored.Href, parent)
+	}
+	if got.Error != "control may be live: its write could not be undone" || strings.Contains(w.Body.String(), "/var/lib") {
+		t.Errorf("body = %s", w.Body.String())
+	}
+	want := []recordedNotification{
+		{"/edev/0/fsa/0/derp", sep2.NotificationStatusChanged},
+		{"/edev/0/fsa/0/derp/0/derc", sep2.NotificationStatusChanged},
+	}
+	if n := d.notifier.take(); !slices.Equal(n, want) {
+		t.Errorf("notifications = %v, want %v", n, want)
+	}
+	out := d.logs.String()
+	if strings.Count(out, "\n") != 1 || !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "event=der_control_create_incomplete") ||
+		!strings.Contains(out, "mrid="+got.MRID) || !strings.Contains(out, "control_kept=true") || strings.Contains(out, "/var/lib") {
+		t.Errorf("log = %s", out)
+	}
+	list := d.do(t, http.MethodGet, "/api/der/controls?device=0", "")
+	if !strings.Contains(list.Body.String(), got.MRID) {
+		t.Errorf("the kept control is not listed: %s", list.Body.String())
+	}
+}
+
+// A cancel whose write fails and cannot be restored may have recorded the
+// cancellation, which devices read; it is reported, logged and notified.
+func TestDERControlCancel_UndoFailureNotifies(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	f := withFailingUpdates(t, d)
+	created := decodeCreated(t, d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(futureStart(600), 100, 300)))
+	d.notifier.take()
+	d.logs.Reset()
+	f.fail = true
+
+	w := d.do(t, http.MethodPost, "/api/der/controls/"+created.MRID+"/cancel", "")
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body %s, want 500", w.Code, w.Body.String())
+	}
+	var got handler.DERControlIncomplete
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.MRID != created.MRID || got.Href != created.Href {
+		t.Fatalf("body = %s (%v)", w.Body.String(), err)
+	}
+	if n := d.notifier.take(); len(n) != 2 {
+		t.Errorf("notifications = %v, want the program list and the control list", n)
+	}
+	if out := d.logs.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "event=der_control_cancel_incomplete") || !strings.Contains(out, "mrid="+created.MRID) {
+		t.Errorf("log = %s", out)
+	}
+}
+
+// getFails is a control store whose Get always fails. A committed cancel
+// must not depend on reading the control again.
+type getFails struct{ *memory.DERControlStore }
+
+func (getFails) Get(context.Context, string, string) (sep2.DERControl, error) {
+	return sep2.DERControl{}, errors.New("read failed")
+}
+
+func TestDERControlCancel_CommittedCancelNotifiesWithoutRereading(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	created := decodeCreated(t, d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(futureStart(600), 100, 300)))
+	d.notifier.take()
+	d.h.Controls = getFails{d.controls}
+
+	w := d.do(t, http.MethodPost, "/api/der/controls/"+created.MRID+"/cancel", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"status":"cancelled"`) {
+		t.Fatalf("cancel: %d %s", w.Code, w.Body.String())
+	}
+	if n := d.notifier.take(); len(n) != 2 {
+		t.Errorf("notifications = %v, want 2", n)
+	}
+}

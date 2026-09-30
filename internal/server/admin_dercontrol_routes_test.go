@@ -123,9 +123,13 @@ func TestDERControlRoutesLoopbackBypass(t *testing.T) {
 		t.Fatalf("bypass-only GET der-programs: status = %d body = %s, want 200 listing the program", programs.Code, programs.Body.String())
 	}
 
+	logs := captureSlogForSensitiveRoutes(t)
 	created := serveDERControl(router, http.MethodPost, "/api/der/controls", derControlRouteRequest{remote: loopback, contentType: "application/json", bearer: "the-key", body: derControlCreateBody()})
 	if created.Code != http.StatusCreated {
 		t.Fatalf("Bearer POST from loopback: status = %d body = %s, want 201", created.Code, created.Body.String())
+	}
+	if !strings.Contains(logs.String(), `"event":"der_control_created","remote_addr":"127.0.0.1:4000","admission":"bearer"`) {
+		t.Errorf("the create's audit line does not name the Bearer admission:\n%s", logs.String())
 	}
 	var view struct {
 		MRID string `json:"mRID"`

@@ -36,8 +36,17 @@ import (
 // truncated, so a padded body can never decode as a shorter valid one.
 const derControlMaxBody = 64 << 10
 
-// maxCancelReasonChars is the bound on a cancel reason (IEEE 2030.5 String192).
-const maxCancelReasonChars = 192
+// Description and reason bounds, in octets of UTF-8: IEEE 2030.5-2018
+// Annex B.2 String32 and String192 bound a string by maxLength octets.
+const (
+	maxDescriptionOctets  = 32
+	maxCancelReasonOctets = 192
+)
+
+// validString reports whether s is valid UTF-8 of at most max octets.
+func validString(s string, max int) bool {
+	return utf8.ValidString(s) && len(s) <= max
+}
 
 // DERControlIssuer creates and cancels admin-issued DER controls. The
 // production implementation is *dercontrol.Issuer.
@@ -50,7 +59,6 @@ type DERControlIssuer interface {
 // cancel routes need. The production implementation is
 // *memory.DERControlStore.
 type DERControlReader interface {
-	Get(ctx context.Context, parentID, id string) (sep2.DERControl, error)
 	List(ctx context.Context, parentID string, opts store.ListOptions) (store.ListResult[sep2.DERControl], error)
 	Parents(ctx context.Context) ([]string, error)
 	ByMRID(ctx context.Context, mrid string) (parentID, id string, control sep2.DERControl, err error)
@@ -80,8 +88,13 @@ type ResponseLister interface {
 
 // CommitmentCheck decides whether a control request fits the commitments the
 // server has already made (granted flow reservations, GRIDAPPSD/ieee-2030_5-server-go#714).
-// A non-nil error refuses the request with 409 before anything is stored.
+// An error wrapping ErrCommitmentConflict answers 409; any other error means
+// the check could not complete and answers 500. Nothing is stored either way.
 type CommitmentCheck func(ctx context.Context, req dercontrol.CreateRequest) error
+
+// ErrCommitmentConflict marks a CommitmentCheck refusal: the request does
+// not fit a commitment already made.
+var ErrCommitmentConflict = errors.New("control conflicts with an existing commitment")
 
 // allowAllCommitments is the check used until the commitment rule exists.
 func allowAllCommitments(context.Context, dercontrol.CreateRequest) error { return nil }
@@ -145,14 +158,14 @@ var (
 	refuseStartRange          = derControlRefusal{http.StatusBadRequest, "start_range", "startTime: out of range"}
 	refuseStartInPast         = derControlRefusal{http.StatusBadRequest, "start_in_past", "startTime: in the past"}
 	refuseStartTooFarAhead    = derControlRefusal{http.StatusBadRequest, "start_too_far_ahead", "startTime: too far in the future"}
-	refuseDescription         = derControlRefusal{http.StatusBadRequest, "description_invalid", "description: at most 32 characters"}
+	refuseDescription         = derControlRefusal{http.StatusBadRequest, "description_invalid", "description: at most 32 octets"}
 	refuseProgramNotFound     = derControlRefusal{http.StatusNotFound, "program_not_found", "derProgramHref: DERProgram not found"}
 	refuseNoControlListLink   = derControlRefusal{http.StatusConflict, "no_der_control_list_link", "derProgramHref: DERProgram has no usable DERControlListLink"}
 	refuseCommitment          = derControlRefusal{http.StatusConflict, "commitment_conflict", "control conflicts with an existing commitment"}
 	refusePENNotConfigured    = derControlRefusal{http.StatusServiceUnavailable, "pen_not_configured", "server PEN not configured"}
 	refuseInternal            = derControlRefusal{http.StatusInternalServerError, "internal_error", "internal error"}
 	refuseMRIDFormat          = derControlRefusal{http.StatusBadRequest, "mrid_invalid", "mrid: invalid format"}
-	refuseReason              = derControlRefusal{http.StatusBadRequest, "reason_invalid", "reason: at most 192 characters"}
+	refuseReason              = derControlRefusal{http.StatusBadRequest, "reason_invalid", "reason: at most 192 octets"}
 	refuseControlNotFound     = derControlRefusal{http.StatusNotFound, "control_not_found", "control not found"}
 	refuseAlreadyCancelled    = derControlRefusal{http.StatusConflict, "already_cancelled", "control already cancelled"}
 	refuseAlreadySuperseded   = derControlRefusal{http.StatusConflict, "already_superseded", "control already superseded"}
@@ -312,31 +325,65 @@ func (l *derControlLog) addControl(scope dercontrol.Scope, ctrl sep2.DERControl)
 	l.add("program_href", scope.ProgramHref())
 }
 
-func (h *AdminDERControlHandler) refuse(w http.ResponseWriter, r *http.Request, event string, ref derControlRefusal, l *derControlLog) {
-	attrs := append([]any{
-		"event", event,
-		"code", ref.code,
-		"status", ref.status,
-		"remote_addr", r.RemoteAddr,
-		"admission", auth.AdmissionPath(r),
-	}, l.attrs...)
-	h.logger().Warn("admin: DER control request refused", attrs...)
+// refuse answers ref and writes the request's one log line: WARN for a
+// refusal, ERROR for a 5xx, whose cause l carries. op is "create" or
+// "cancel".
+func (h *AdminDERControlHandler) refuse(w http.ResponseWriter, r *http.Request, op string, ref derControlRefusal, l *derControlLog) {
+	level, msg, event := slog.LevelWarn, "admin: DER control request refused", "der_control_"+op+"_refused"
+	if ref.status >= http.StatusInternalServerError {
+		level, msg, event = slog.LevelError, "admin: DER control request failed", "der_control_"+op+"_failed"
+	}
+	h.log(r, level, msg, event, append([]any{"code", ref.code, "status", ref.status}, l.attrs...))
 	writeError(w, ref.status, ref.message)
+}
+
+// log writes one audit line carrying the fields every line shares.
+func (h *AdminDERControlHandler) log(r *http.Request, level slog.Level, msg, event string, attrs []any) {
+	base := []any{"event", event, "remote_addr", r.RemoteAddr, "admission", auth.AdmissionPath(r)}
+	h.logger().Log(r.Context(), level, msg, append(base, attrs...)...)
+}
+
+// DERControlIncomplete is the 500 body when a write failed and could not be
+// undone, so the named control may be stored and visible to devices.
+type DERControlIncomplete struct {
+	Error       string `json:"error"`
+	MRID        string `json:"mRID"`
+	Href        string `json:"href"`
+	ControlKept bool   `json:"controlKept"`
+}
+
+// incomplete handles a *dercontrol.UndoError whose control may be live: the
+// scope is notified, because devices can read the control, and the 500 body
+// names it so the operator can find it and cancel it.
+func (h *AdminDERControlHandler) incomplete(w http.ResponseWriter, r *http.Request, op, message string, undo *dercontrol.UndoError) {
+	href := undo.Scope.ControlListHref() + "/" + undo.ID
+	h.notify(r.Context(), undo.Scope)
+	h.log(r, slog.LevelError, "admin: DER control write could not be undone", "der_control_"+op+"_incomplete", []any{
+		"code", refuseInternal.code,
+		"cause", "undo_incomplete",
+		"mrid", undo.MRID,
+		"href", href,
+		"program_href", undo.Scope.ProgramHref(),
+		"undo_step", string(undo.Step),
+		"control_kept", undo.ControlKept,
+		"lifecycle_kept", undo.LifecycleKept,
+		"unreverted_ids", undo.UnrevertedIDs,
+	})
+	writeJSON(w, http.StatusInternalServerError, DERControlIncomplete{Error: message, MRID: undo.MRID, Href: href, ControlKept: undo.ControlKept})
 }
 
 // HandleCreate returns the handler for POST /api/der/controls.
 func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
-	const refusedEvent = "der_control_create_refused"
 	return func(w http.ResponseWriter, r *http.Request) {
 		var logged derControlLog
 		var body derControlCreateBody
 		if ref, ok := decodeDERControlBody(w, r, &body, false); !ok {
-			h.refuse(w, r, refusedEvent, ref, &logged)
+			h.refuse(w, r, "create", ref, &logged)
 			return
 		}
 		req, ref, ok := buildCreateRequest(body, &logged)
 		if !ok {
-			h.refuse(w, r, refusedEvent, ref, &logged)
+			h.refuse(w, r, "create", ref, &logged)
 			return
 		}
 
@@ -345,13 +392,23 @@ func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
 			check = allowAllCommitments
 		}
 		if err := check(r.Context(), req); err != nil {
-			h.refuse(w, r, refusedEvent, refuseCommitment, &logged)
+			if errors.Is(err, ErrCommitmentConflict) {
+				h.refuse(w, r, "create", refuseCommitment, &logged)
+				return
+			}
+			logged.add("cause", "commitment_check_failed")
+			h.refuse(w, r, "create", refuseInternal, &logged)
 			return
 		}
 
 		res, err := h.Issuer.Issue(r.Context(), req)
 		if err != nil {
-			h.refuse(w, r, refusedEvent, h.mapIssuerError(err, &logged), &logged)
+			var undo *dercontrol.UndoError
+			if errors.As(err, &undo) && undo.ControlKept {
+				h.incomplete(w, r, "create", "control may be live: its write could not be undone", undo)
+				return
+			}
+			h.refuse(w, r, "create", mapIssuerError(err, &logged), &logged)
 			return
 		}
 
@@ -360,15 +417,7 @@ func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
 		if supersedes == nil {
 			supersedes = []string{}
 		}
-		var created derControlLog
-		created.addControl(res.Scope, res.Control)
-		addBaseToLog(&created, res.Control)
-		created.add("supersedes", supersedes)
-		h.logger().Info("admin: DER control created", append([]any{
-			"event", "der_control_created",
-			"remote_addr", r.RemoteAddr,
-			"admission", auth.AdmissionPath(r),
-		}, created.attrs...)...)
+		h.logSuccess(r, "der_control_created", "admin: DER control created", res.Scope, res.Control, "supersedes", supersedes)
 
 		now := sep2time.Now().Unix()
 		w.Header().Set("Location", res.Href)
@@ -381,72 +430,76 @@ func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
 	}
 }
 
+// logSuccess writes the audit line for a completed create or cancel.
+func (h *AdminDERControlHandler) logSuccess(r *http.Request, event, msg string, scope dercontrol.Scope, ctrl sep2.DERControl, extra ...any) {
+	var l derControlLog
+	l.addControl(scope, ctrl)
+	addBaseToLog(&l, ctrl)
+	h.log(r, slog.LevelInfo, msg, event, append(l.attrs, extra...))
+}
+
 // HandleCancel returns the handler for POST /api/der/controls/{mrid}/cancel.
 func (h *AdminDERControlHandler) HandleCancel() http.HandlerFunc {
-	const refusedEvent = "der_control_cancel_refused"
 	return func(w http.ResponseWriter, r *http.Request) {
 		var logged derControlLog
 		var body derControlCancelBody
 		if ref, ok := decodeDERControlBody(w, r, &body, true); !ok {
-			h.refuse(w, r, refusedEvent, ref, &logged)
+			h.refuse(w, r, "cancel", ref, &logged)
 			return
 		}
 		reason := ""
 		if body.Reason != nil {
 			reason = *body.Reason
 		}
-		if !utf8.ValidString(reason) || utf8.RuneCountInString(reason) > maxCancelReasonChars {
-			h.refuse(w, r, refusedEvent, refuseReason, &logged)
+		if !validString(reason, maxCancelReasonOctets) {
+			h.refuse(w, r, "cancel", refuseReason, &logged)
 			return
 		}
 		mrid, ok := normalizeMRID(r.PathValue("mrid"))
 		if !ok {
-			h.refuse(w, r, refusedEvent, refuseMRIDFormat, &logged)
+			h.refuse(w, r, "cancel", refuseMRIDFormat, &logged)
 			return
 		}
 
-		parentID, id, _, err := h.Controls.ByMRID(r.Context(), mrid)
+		// A stored Event is never edited (IEEE 2030.5-2018 line 5470), so
+		// the copy read here is the control Cancel acts on, and the view is
+		// built from it rather than from a second read that could fail
+		// after the cancellation is committed.
+		parentID, id, ctrl, err := h.Controls.ByMRID(r.Context(), mrid)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				h.refuse(w, r, refusedEvent, refuseControlNotFound, &logged)
+				h.refuse(w, r, "cancel", refuseControlNotFound, &logged)
 				return
 			}
-			h.refuse(w, r, refusedEvent, refuseInternal, &logged)
+			logged.add("cause", "store_error")
+			h.refuse(w, r, "cancel", refuseInternal, &logged)
 			return
 		}
 		scope, ok := dercontrol.ScopeFromKey(parentID)
 		if !ok {
 			// Indexed under a key the issuer never builds: not an
 			// admin-issued control.
-			h.refuse(w, r, refusedEvent, refuseControlNotFound, &logged)
+			h.refuse(w, r, "cancel", refuseControlNotFound, &logged)
 			return
 		}
+		logged.addControl(scope, ctrl)
 
-		// Cancel re-reads the control under the scope lock; the copy read
-		// here only resolves the scope and is not used for the view.
 		lc, err := h.Issuer.Cancel(r.Context(), scope, id, reason)
 		if err != nil {
-			if ctrl, gerr := h.Controls.Get(r.Context(), parentID, id); gerr == nil {
-				logged.addControl(scope, ctrl)
+			var undo *dercontrol.UndoError
+			if errors.As(err, &undo) {
+				if undo.MRID == "" {
+					undo.Scope, undo.MRID = scope, ctrl.MRID
+				}
+				h.incomplete(w, r, "cancel", "cancellation may be recorded: its write could not be undone", undo)
+				return
 			}
-			h.refuse(w, r, refusedEvent, h.mapIssuerError(err, &logged), &logged)
-			return
-		}
-		ctrl, err := h.Controls.Get(r.Context(), parentID, id)
-		if err != nil {
-			h.refuse(w, r, refusedEvent, refuseInternal, &logged)
+			h.refuse(w, r, "cancel", mapIssuerError(err, &logged), &logged)
 			return
 		}
 
 		h.notify(r.Context(), scope)
-		logged.addControl(scope, ctrl)
-		addBaseToLog(&logged, ctrl)
-		h.logger().Info("admin: DER control cancelled", append([]any{
-			"event", "der_control_cancelled",
-			"remote_addr", r.RemoteAddr,
-			"admission", auth.AdmissionPath(r),
-		}, logged.attrs...)...)
-
+		h.logSuccess(r, "der_control_cancelled", "admin: DER control cancelled", scope, ctrl)
 		writeJSON(w, http.StatusOK, newDERControlView(scope, ctrl, lc, sep2time.Now().Unix()))
 	}
 }
@@ -468,7 +521,7 @@ func (h *AdminDERControlHandler) HandleList() http.HandlerFunc {
 		wantDerp := ""
 		if href := r.URL.Query().Get("derProgramHref"); href != "" {
 			progEdev, _, derp, ok := derhref.Program(href)
-			if !ok {
+			if !ok || !validProgramHref(href) {
 				writeError(w, refuseProgramHrefFormat.status, refuseProgramHrefFormat.message)
 				return
 			}
@@ -594,25 +647,29 @@ func (h *AdminDERControlHandler) notify(ctx context.Context, scope dercontrol.Sc
 	h.Notifier.Notify(ctx, scope.ControlListHref(), sep2.NotificationStatusChanged)
 }
 
-// mapIssuerError turns an Issue or Cancel error into its wire refusal. An
-// UndoError's typed fields are logged; its text is not, since it may carry
-// a store's own diagnostic.
-func (h *AdminDERControlHandler) mapIssuerError(err error, l *derControlLog) derControlRefusal {
+// mapIssuerError turns an Issue or Cancel error into its wire refusal, and
+// records the cause of a 500 on l. Error text is not logged: a store's
+// diagnostic may carry a request-derived id.
+func mapIssuerError(err error, l *derControlLog) derControlRefusal {
 	var refusal *dercontrol.RefusalError
 	if errors.As(err, &refusal) {
 		if ref, ok := issuerRefusals[refusal.Code]; ok {
 			return ref
 		}
+		l.add("cause", "unmapped_refusal")
+		l.add("issuer_code", string(refusal.Code))
 		return refuseInternal
 	}
 	var undo *dercontrol.UndoError
 	if errors.As(err, &undo) {
+		l.add("cause", "undo_incomplete")
 		l.add("undo_step", string(undo.Step))
 		l.add("control_kept", undo.ControlKept)
 		l.add("lifecycle_kept", undo.LifecycleKept)
 		l.add("store_id", undo.ID)
-		l.add("unreverted_ids", undo.UnrevertedIDs)
+		return refuseInternal
 	}
+	l.add("cause", "store_error")
 	return refuseInternal
 }
 
@@ -688,7 +745,7 @@ func buildCreateRequest(body derControlCreateBody, l *derControlLog) (dercontrol
 	if body.DERProgramHref == nil || *body.DERProgramHref == "" {
 		return req, refuseProgramHrefRequired, false
 	}
-	if _, _, _, ok := derhref.Program(*body.DERProgramHref); !ok {
+	if !validProgramHref(*body.DERProgramHref) {
 		return req, refuseProgramHrefFormat, false
 	}
 	req.DERProgramHref = *body.DERProgramHref
@@ -727,7 +784,7 @@ func buildCreateRequest(body derControlCreateBody, l *derControlLog) (dercontrol
 
 	if body.Description != nil {
 		d := *body.Description
-		if !utf8.ValidString(d) || utf8.RuneCountInString(d) > 32 {
+		if !validString(d, maxDescriptionOctets) {
 			return req, refuseDescription, false
 		}
 		req.Description = d
@@ -798,6 +855,26 @@ func addBaseToLog(l *derControlLog, ctrl sep2.DERControl) {
 		l.add("start", ctrl.Interval.Start)
 		l.add("duration", ctrl.Interval.Duration)
 	}
+}
+
+// validProgramHref reports whether href has the DERProgram shape and every
+// id segment is plain ASCII letters, digits, '.', '_' or '-'. The fsa
+// segment is otherwise ignored: the issuer stores the control under the fsa
+// the program's own DERControlListLink names.
+func validProgramHref(href string) bool {
+	edev, fsa, derp, ok := derhref.Program(href)
+	if !ok || strings.TrimSpace(href) != href {
+		return false
+	}
+	for _, seg := range []string{edev, fsa, derp} {
+		for i := 0; i < len(seg); i++ {
+			c := seg[i]
+			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '.' || c == '_' || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // normalizeMRID accepts exactly 32 hex digits, either case, and returns them

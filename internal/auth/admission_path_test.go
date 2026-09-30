@@ -1,6 +1,8 @@
 package auth_test
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -14,18 +16,38 @@ import (
 // router wires: AdminAuthMiddleware, then RequireRealCredential.
 func TestAdmissionPath(t *testing.T) {
 	sessions := auth.NewSessionStore(testSessionIdle, testSessionAbsolute)
+	sessionID, err := sessions.Issue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminCert := generateAdminCert(t)
+	const loopback, remote = "127.0.0.1:1234", "192.0.2.10:1234"
+
 	cases := []struct {
 		name        string
 		remote      string
-		bearer      string
 		recheck     bool
+		build       func(r *http.Request, tickets *auth.TicketStore)
 		wantPath    string
 		wantReached bool
 	}{
-		{name: "loopback with no credential", remote: "127.0.0.1:1234", wantPath: auth.AdmissionPathLoopbackBypass, wantReached: true},
-		{name: "bearer from a non-loopback address", remote: "192.0.2.10:1234", bearer: "test-key", wantPath: auth.AdmissionPathBearer, wantReached: true},
-		{name: "bearer from loopback rechecked", remote: "127.0.0.1:1234", bearer: "test-key", recheck: true, wantPath: auth.AdmissionPathBearer, wantReached: true},
-		{name: "loopback with no credential rechecked is refused", remote: "127.0.0.1:1234", recheck: true, wantReached: false},
+		{name: "loopback with no credential", remote: loopback, wantPath: auth.AdmissionPathLoopbackBypass, wantReached: true},
+		{name: "bearer", remote: remote, build: func(r *http.Request, _ *auth.TicketStore) { r.Header.Set("Authorization", "Bearer test-key") }, wantPath: auth.AdmissionPathBearer, wantReached: true},
+		{name: "mtls", remote: remote, build: func(r *http.Request, _ *auth.TicketStore) {
+			r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{adminCert}}
+		}, wantPath: auth.AdmissionPathMTLS, wantReached: true},
+		{name: "ticket", remote: remote, build: func(r *http.Request, tickets *auth.TicketStore) {
+			ticket, err := tickets.Issue()
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.URL.RawQuery = "ticket=" + ticket
+		}, wantPath: auth.AdmissionPathTicket, wantReached: true},
+		{name: "cookie session", remote: remote, build: func(r *http.Request, _ *auth.TicketStore) {
+			r.AddCookie(&http.Cookie{Name: auth.AdminTicketCookieName, Value: sessionID})
+		}, wantPath: auth.AdmissionPathCookie, wantReached: true},
+		{name: "bearer from loopback rechecked", remote: loopback, recheck: true, build: func(r *http.Request, _ *auth.TicketStore) { r.Header.Set("Authorization", "Bearer test-key") }, wantPath: auth.AdmissionPathBearer, wantReached: true},
+		{name: "loopback with no credential rechecked is refused", remote: loopback, recheck: true, wantReached: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,8 +64,8 @@ func TestAdmissionPath(t *testing.T) {
 			h := auth.AdminAuthMiddleware("test-key", tickets, sessions)(inner)
 			req := httptest.NewRequest(http.MethodPost, "/api/der/controls", nil)
 			req.RemoteAddr = tc.remote
-			if tc.bearer != "" {
-				req.Header.Set("Authorization", "Bearer "+tc.bearer)
+			if tc.build != nil {
+				tc.build(req, tickets)
 			}
 			h.ServeHTTP(httptest.NewRecorder(), req)
 			if reached != tc.wantReached {

@@ -124,8 +124,17 @@ func (i *Issuer) lockScope(scopeKey string) func() {
 // naming what may remain; that remainder is always a state a successful
 // call could have passed through. Result is zero on every error;
 // a partial result travels only inside *UndoError. Callers branch on the
-// outcome with errors.As, checking *RefusalError before *UndoError.
+// outcome with errors.As, checking *RefusalError before *UndoError. A
+// request naming ExecutesGrant is refused with ErrUncheckedCommitment: only
+// IssueInFleet stores a grant link.
 func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
+	if req.ExecutesGrant != "" {
+		return Result{}, ErrUncheckedCommitment
+	}
+	return i.issue(ctx, req, Fleet{})
+}
+
+func (i *Issuer) issue(ctx context.Context, req CreateRequest, fleet Fleet) (Result, error) {
 	if i.cfg.PEN == nil {
 		return Result{}, refuse(RefusalPENNotConfigured)
 	}
@@ -222,6 +231,15 @@ func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 		return Result{}, err
 	}
 
+	// The check runs after the supersede scan, so it can discount the
+	// controls this one replaces, and before the first write, so a refusal
+	// leaves nothing to undo.
+	if fleet.Check != nil {
+		if err := fleet.Check(ctx, newProposal(scope, ctrl, req.ExecutesGrant, fleet, candidates)); err != nil {
+			return Result{}, err
+		}
+	}
+
 	if err := ctx.Err(); err != nil {
 		// Nothing has been written yet, so nothing needs undoing.
 		return Result{}, err
@@ -231,7 +249,8 @@ func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 	// prefix of this sequence stays legal: an orphan lifecycle record is
 	// legal and unreachable, and once the control is stored, every
 	// stored control has its lifecycle record for the rest of the call.
-	if err := i.lifecycles.Create(ctx, scopeKey, id, LifecycleRecord{}); err != nil {
+	link := LifecycleRecord{GrantMRID: req.ExecutesGrant, FleetKey: fleet.Key, Reach: fleet.Reach}
+	if err := i.lifecycles.Create(ctx, scopeKey, id, link); err != nil {
 		return nameUndo(scope, mrid)(i.undoLifecycleCreateFailure(ctx, scopeKey, id, err))
 	}
 	if err := i.controls.Create(ctx, scopeKey, id, ctrl); err != nil {
@@ -484,6 +503,9 @@ func (i *Issuer) undoCancelFailure(ctx context.Context, scopeKey, id string, bef
 // EventStatus, replyTo, responseRequired, mRID or creationTime, because
 // CreateRequest carries none of them.
 func buildBase(req CreateRequest) (*sep2.DERControlBase, error) {
+	if req.Type != TargetW && req.TargetW != nil {
+		return nil, refuse(RefusalUnexpectedValue)
+	}
 	switch req.Type {
 	case Connect:
 		if req.MaxLimW != nil || req.PowerFactor != nil {
@@ -530,16 +552,30 @@ func buildBase(req CreateRequest) (*sep2.DERControlBase, error) {
 			Excitation:   *req.PowerFactor.Excitation,
 			Multiplier:   -3,
 		}}, nil
+	case TargetW:
+		if req.MaxLimW != nil || req.PowerFactor != nil {
+			return nil, refuse(RefusalUnexpectedValue)
+		}
+		if req.TargetW == nil {
+			return nil, refuse(RefusalMissingValue)
+		}
+		// Value is bounded by its int16 type; the multiplier is an Int8 the
+		// standard limits to -9..9 (PowerOfTenMultiplierType).
+		if req.TargetW.Multiplier < -9 || req.TargetW.Multiplier > 9 {
+			return nil, refuse(RefusalValueOutOfRange)
+		}
+		v := *req.TargetW
+		return &sep2.DERControlBase{OpModTargetW: &v}, nil
 	default:
 		return nil, refuse(RefusalUnknownType)
 	}
 }
 
-// controlShape reduces a DERControlBase to the closed set of shapes v1's
-// four request types produce, for the supersede scan's control-set equality
-// test. A switch over the four shapes is enough because only controls this
+// controlShape reduces a DERControlBase to the closed set of shapes the
+// five request types produce, for the supersede scan's control-set equality
+// test. A switch over the five shapes is enough because only controls this
 // package created ever carry a lifecycle record, and buildBase produces
-// only these four.
+// only these five.
 func controlShape(b *sep2.DERControlBase) string {
 	if b == nil {
 		return ""
@@ -551,6 +587,8 @@ func controlShape(b *sep2.DERControlBase) string {
 		return "max_lim_w"
 	case b.OpModFixedPFInjectW != nil:
 		return "fixed_pf_inject_w"
+	case b.OpModTargetW != nil:
+		return "target_w"
 	default:
 		return "other"
 	}

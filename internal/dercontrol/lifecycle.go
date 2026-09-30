@@ -19,6 +19,13 @@ type LifecycleRecord struct {
 	// interval start) at which this control is superseded, or nil.
 	SupersededAt *int64
 	SupersededBy string // mRID of the superseding control
+
+	// The commitment link (GRIDAPPSD/ieee-2030_5-server-go#714), written at
+	// create and changed only by Relink. omitempty keeps a plain record's
+	// snapshot byte-identical to one written before the fields existed.
+	GrantMRID string `json:",omitempty"` // response mRID carried out; "" is a plain dispatch
+	FleetKey  string `json:",omitempty"` // fleet resolved at create, so a later management change cannot move it
+	Reach     int    `json:",omitempty"` // devices of the fleet that read the control, counted at create
 }
 
 // Copy returns an independent copy, satisfying store.Copier for use with a

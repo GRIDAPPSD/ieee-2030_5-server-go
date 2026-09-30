@@ -9,10 +9,39 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 )
+
+// testFRPDeadline is the deadline fallback bound this file's tests run
+// with: short enough to keep them fast, since #666 no longer answers a
+// FlowReservationRequest synchronously on POST. waitForFRPList is how a
+// test observes the fallback firing.
+const testFRPDeadline = 20 * time.Millisecond
+
+// waitForFRPList polls path for up to 2s until it carries at least want
+// members, the poll-with-deadline idiom internal/server's admin tests use
+// for an async effect with no signal channel of its own.
+func waitForFRPList(t *testing.T, srv *httptest.Server, path string, want int) sep2.FlowReservationResponseList {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		var list sep2.FlowReservationResponseList
+		decodeXML(t, resp, &list)
+		if len(list.FlowReservationResponse) >= want {
+			return list
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("GET %s: fewer than %d members within 2s", path, want)
+	return sep2.FlowReservationResponseList{}
+}
 
 // The FlowReservation instance routes.
 //
@@ -47,6 +76,9 @@ func frqServer(t *testing.T) (*httptest.Server, *assembly.Stores) {
 func frqServerWithConfig(t *testing.T, cfg assembly.RouterConfig) (*httptest.Server, *assembly.Stores) {
 	t.Helper()
 
+	if cfg.FlowReservationDeadline == 0 {
+		cfg.FlowReservationDeadline = testFRPDeadline
+	}
 	stores := testStores()
 	seedOwnedDevices(t, stores.EndDevices, "e1", "deviceA", "deviceB")
 	handler, _ := assembly.BuildProtocolRouter(
@@ -148,13 +180,9 @@ func TestFlowReservationResponse_HrefFromTheListResolves(t *testing.T) {
 	const mrid = "1112131415161718191A1B1C1D1E1F20"
 	postFlowReservationRequest(t, srv, "e1", mrid)
 
-	listResp, err := http.Get(srv.URL + "/edev/e1/frp")
-	if err != nil {
-		t.Fatalf("GET /edev/e1/frp: %v", err)
-	}
-	var list sep2.FlowReservationResponseList
-	decodeXML(t, listResp, &list)
-
+	// #666: no response until the deadline fallback answers, since nothing
+	// here denies or grants explicitly.
+	list := waitForFRPList(t, srv, "/edev/e1/frp", 1)
 	if len(list.FlowReservationResponse) != 1 {
 		t.Fatalf("FlowReservationResponseList has %d members, want 1", len(list.FlowReservationResponse))
 	}
@@ -220,12 +248,7 @@ func TestFlowReservationResponse_ConfiguredPENReachesTheMountedRoute(t *testing.
 	const mrid = "2122232425262728292A2B2C2D2E2F31"
 	postFlowReservationRequest(t, srv, "e1", mrid)
 
-	listResp, err := http.Get(srv.URL + "/edev/e1/frp")
-	if err != nil {
-		t.Fatalf("GET /edev/e1/frp: %v", err)
-	}
-	var list sep2.FlowReservationResponseList
-	decodeXML(t, listResp, &list)
+	list := waitForFRPList(t, srv, "/edev/e1/frp", 1)
 	if len(list.FlowReservationResponse) != 1 {
 		t.Fatalf("FlowReservationResponseList has %d members, want 1", len(list.FlowReservationResponse))
 	}
@@ -255,12 +278,7 @@ func TestFlowReservationInstances_UnknownIDIsACleanNotFound(t *testing.T) {
 	srv, _ := frqServer(t)
 	loc := postFlowReservationRequest(t, srv, "e1", "2122232425262728292A2B2C2D2E2F30")
 
-	listResp, err := http.Get(srv.URL + "/edev/e1/frp")
-	if err != nil {
-		t.Fatalf("GET /edev/e1/frp: %v", err)
-	}
-	var list sep2.FlowReservationResponseList
-	decodeXML(t, listResp, &list)
+	list := waitForFRPList(t, srv, "/edev/e1/frp", 1)
 	if len(list.FlowReservationResponse) != 1 {
 		t.Fatalf("FlowReservationResponseList has %d members, want 1", len(list.FlowReservationResponse))
 	}

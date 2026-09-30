@@ -46,10 +46,12 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	coreconfiguration "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/configuration"
 	coredcap "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/dcap"
 	coreder "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
@@ -293,6 +295,14 @@ type RouterConfig struct {
 	// BuildProtocolRouter logs one startup warning and mints a fully random
 	// mRID instead of refusing the POST.
 	PEN *uint32
+
+	// FlowReservationDeadline bounds how long a FlowReservationRequest
+	// waits for an operator answer before the deadline fallback decides
+	// (#666 D1/D2), capped so it never fires later than the request's own
+	// interval start. Zero takes flowreservation.DefaultDeadline (300 s).
+	// Threading this to a server-side config knob is left to whichever
+	// issue exposes it to an operator (#670's admin surface).
+	FlowReservationDeadline time.Duration
 }
 
 // AuthPolicy bundles the three auth touch points the protocol router and the
@@ -402,7 +412,7 @@ func BuildProtocolRouter(
 		registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
 		registerDERRoutes(gated, stores)
 		registerMeteringRoutes(gated, stores)
-		registerNewFunctionSetRoutes(gated, stores, cfg.PEN)
+		registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline)
 	}
 
 	var protocolChain http.Handler
@@ -1216,7 +1226,7 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(readingTypes))
 }
 
-func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32) {
+func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline time.Duration) {
 	if !store.IsAbsent(stores.Configurations) {
 		mux.HandleFunc("GET /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 		mux.HandleFunc("PUT /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
@@ -1327,11 +1337,22 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 			log.Print("assembly: no PEN configured for FlowReservationResponse mRIDs: minted mRIDs are random and not conformant with IEEE 2030.5 mRIDType until a PEN is set")
 		}
 
+		// #666: the queue holds a request until the operator answers or the
+		// deadline fallback decides; it is what ever calls
+		// flowReservationResponses.Create, not the POST handler directly.
+		// checker is the permissive default until #714 builds the real
+		// commitment ledger (see flowreservation.PermissiveCommitmentChecker).
+		flowReservationQueue := flowreservation.NewQueue(
+			stores.FlowReservationRequests, flowReservationResponses,
+			flowreservation.PermissiveCommitmentChecker{},
+			flowreservation.Config{Deadline: frpDeadline}, pen,
+		)
+
 		mux.HandleFunc("GET /edev/{id}/frq", scopedListHandler[sep2.FlowReservationRequest, sep2.FlowReservationRequestList](
 			stores.FlowReservationRequests, "id", coreflowrsv.BuildFlowReservationRequestList, 900,
 		))
 		mux.HandleFunc("POST /edev/{id}/frq", coreflowrsv.HandlePostFlowReservationRequest(
-			stores.FlowReservationRequests, flowReservationResponses, pen,
+			stores.FlowReservationRequests, flowReservationQueue,
 		))
 		mux.HandleFunc("GET /edev/{id}/frp", scopedListHandler[sep2.FlowReservationResponse, sep2.FlowReservationResponseList](
 			flowReservationResponses, "id", coreflowrsv.BuildFlowReservationResponseList, 900,

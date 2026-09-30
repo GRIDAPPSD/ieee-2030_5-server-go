@@ -1,4 +1,4 @@
-package flow_reservation
+package flowreservation
 
 import (
 	"encoding/binary"
@@ -10,7 +10,10 @@ import (
 
 // TestNewFRPMRID_WithPEN_LowBitsArePEN pins the plumbing: newFRPMRID(pen)
 // reaches the shared minter (internal/mrid) with the configured PEN, the
-// same place internal/dercontrol embeds one for a DERControl mRID.
+// same place internal/dercontrol embeds one for a DERControl mRID. Moved
+// here from pkg/sep2srv/handlers/flow_reservation, which minted directly
+// before #666: minting is now Queue.build's job (see mrid.go), so this
+// package is where the seam lives and where its own tests belong.
 func TestNewFRPMRID_WithPEN_LowBitsArePEN(t *testing.T) {
 	pen := uint32(0xABCD1234)
 	mrid, err := newFRPMRID(&pen)
@@ -29,8 +32,7 @@ func TestNewFRPMRID_WithPEN_LowBitsArePEN(t *testing.T) {
 // TestNewFRPMRID_NeverProducesAllFReservedForm proves the all-F retry in
 // newFRPMRID actually retries: it forces the first draw to be the reserved
 // all-F value (IEEE 2030.5 mRIDType, "reserved for an object being created")
-// and asserts the function draws again rather than returning it. Mirrors
-// internal/dercontrol/mrid_test.go's proof of the same seam pattern.
+// and asserts the function draws again rather than returning it.
 func TestNewFRPMRID_NeverProducesAllFReservedForm(t *testing.T) {
 	orig := frpRandRead
 	defer func() { frpRandRead = orig }()

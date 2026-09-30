@@ -8,10 +8,13 @@ export interface ApiError {
   error: string
 }
 
+// serverTime is the response's Date header in epoch milliseconds, present
+// only when the server sent a parseable one; it lets a caller compare server
+// timestamps against the server's clock rather than the browser's.
 // body is the decoded error body when the server sent JSON, so a caller can
 // read fields beyond "error" (the DER control 500 that names a kept control).
 export type ApiResult<T> =
-  | { ok: true; data: T }
+  | { ok: true; data: T; serverTime?: number }
   | { ok: false; error: string; status: number; body?: unknown }
 
 // decode turns a Response into an ApiResult. A 204 (the FSA delete path)
@@ -39,7 +42,8 @@ async function decode<T>(res: Response): Promise<ApiResult<T>> {
     return { ok: false, error: message, status: res.status, body: body ?? undefined }
   }
 
-  return { ok: true, data: body as T }
+  const serverTime = Date.parse(res.headers?.get('Date') ?? '')
+  return Number.isNaN(serverTime) ? { ok: true, data: body as T } : { ok: true, data: body as T, serverTime }
 }
 
 async function send<T>(path: string, init: RequestInit): Promise<ApiResult<T>> {

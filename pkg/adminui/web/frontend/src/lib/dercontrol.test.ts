@@ -210,7 +210,7 @@ describe('display helpers', () => {
     expect(controlValueText(ctrl)).toBe('-')
   })
 
-  it('canCancel: scheduled always; active only while its interval has not ended', () => {
+  it('canCancel: scheduled always; active only while its interval has not ended on the server clock', () => {
     expect(canCancel('scheduled', 100, 60, 0)).toBe(true)
     expect(canCancel('active', 100, 60, 159)).toBe(true)
     expect(canCancel('active', 100, 60, 160)).toBe(false)
@@ -218,5 +218,10 @@ describe('display helpers', () => {
     expect(canCancel('cancelled', 100, 60, 0)).toBe(false)
     expect(canCancel('superseded', 100, 60, 0)).toBe(false)
     expect(canCancel('unknown', 100, 60, 0)).toBe(false)
+  })
+
+  it('canCancel: with no server time an active row keeps Cancel, so the server decides', () => {
+    expect(canCancel('active', 100, 60, null)).toBe(true)
+    expect(canCancel('cancelled', 100, 60, null)).toBe(false)
   })
 })

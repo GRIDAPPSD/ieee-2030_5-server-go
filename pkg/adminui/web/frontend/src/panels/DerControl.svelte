@@ -50,9 +50,10 @@
 
   let controls = $state<DERControlListItem[]>([])
   let controlsError = $state('')
-  // Wall clock at the last successful controls read; it decides which
-  // Active rows have ended, so it is not re-read on every render.
-  let nowSeconds = $state(Math.floor(Date.now() / 1000))
+  // The server's clock at the last successful controls read (its Date
+  // header), which decides which Active rows have ended; null when the
+  // response carried none.
+  let serverNow = $state<number | null>(null)
   let cancelTarget = $state<string | null>(null)
   let cancelReason = $state('')
   let cancelPosting = $state(false)
@@ -63,10 +64,15 @@
   // the same pattern FleetPane's load() uses for its own requestSeq.
   let programSeq = 0
   let controlSeq = 0
+  // selectionSeq advances on every selection change. A create or cancel
+  // remembers the value it was sent under; a reply that finds it changed is
+  // shown named with its own device and program, not as the new selection's.
+  let selectionSeq = 0
 
   // A pending confirmation, a shown result and an open cancel belong to the
   // selection they were made under, so any change of selection drops them.
   function dropSelectionState() {
+    selectionSeq++
     pendingBody = null
     pendingSummary = ''
     result = ''
@@ -120,7 +126,7 @@
       return
     }
     controlsError = ''
-    nowSeconds = Math.floor(Date.now() / 1000)
+    serverNow = res.serverTime === undefined ? null : Math.floor(res.serverTime / 1000)
     controls = res.data.controls ?? []
   }
 
@@ -167,28 +173,47 @@
     pendingSummary = ''
   }
 
-  function keptText(kept: { mRID: string; href: string }): string {
-    return ` The control was kept and is live: ${kept.mRID} (${kept.href}). Find it in the table and cancel it if it is not wanted.`
+  function targetLabel(): string {
+    const f = formInput()
+    return `device ${f.deviceLabel}, program ${f.programLabel}`
+  }
+
+  // For a create 500, the server says the control may be live. stale means
+  // the table now on screen belongs to another selection.
+  function keptCreateText(kept: { mRID: string; href: string }, stale: boolean): string {
+    const where = stale ? 'Select that device and program to see it in the table' : 'Cancel it from the table if it is not wanted'
+    return `The control was kept and may be live: ${kept.mRID} (${kept.href}). ${where}.`
+  }
+
+  // For a cancel 500, only what the server says: the cancellation may or may
+  // not have taken, so the control still exists and its status is unknown.
+  function keptCancelText(kept: { mRID: string; href: string }, stale: boolean): string {
+    const where = stale ? 'Select that device and program to see its status' : 'The reloaded table shows its status'
+    return `The control ${kept.mRID} (${kept.href}) still exists. ${where}.`
   }
 
   async function confirmSend() {
     if (!pendingBody || posting) return
     posting = true
     const body = pendingBody
+    const sentUnder = selectionSeq
+    const target = targetLabel()
     pendingBody = null
     pendingSummary = ''
     const res = await postJSON<DERControlCreated>('/api/der/controls', body)
     posting = false
+    const stale = sentUnder !== selectionSeq
+    const prefix = stale ? `For ${target}: ` : ''
     if (!res.ok) {
       ok = false
       const kept = keptControl(res.body)
-      result = `Error: ${res.error}` + (kept ? keptText(kept) : '')
+      result = `${prefix}Error: ${res.error}` + (kept ? `. ${keptCreateText(kept, stale)}` : '')
       reloadControls()
       return
     }
     ok = true
     const d = res.data
-    let text =
+    let text = prefix +
       `Stored ${d.mRID} at ${fmtTime(d.creationTime)}; starts ${fmtTime(d.interval.start)}. ` +
       `Status: ${d.eventStatus.status} (as of ${fmtTime(d.eventStatus.dateTime)}). ` +
       `Nominal estimate only, not a delivery: a device polling every ${POLL_RATE_SECONDS} s would read it by ` +
@@ -216,15 +241,25 @@
   async function confirmCancel(mrid: string) {
     if (cancelPosting) return
     cancelPosting = true
+    const sentUnder = selectionSeq
+    const target = targetLabel()
     const body: { reason?: string } = {}
     if (cancelReason) body.reason = cancelReason
     const res = await postJSON<DERControlView>(`/api/der/controls/${encodeURIComponent(mrid)}/cancel`, body)
     cancelPosting = false
     cancelTarget = null
+    const stale = sentUnder !== selectionSeq
     if (!res.ok) {
       const kept = keptControl(res.body)
-      cancelResult = kept ? res.error + keptText(kept) : `Cancel failed: ${res.error}`
-    } else {
+      const text = kept ? `${res.error}. ${keptCancelText(kept, stale)}` : `Cancel failed: ${res.error}`
+      if (stale) {
+        // The table and its cancel box now belong to another selection.
+        ok = false
+        result = `For ${target}, control ${mrid}: ${text}`
+      } else {
+        cancelResult = text
+      }
+    } else if (!stale) {
       cancelResult = ''
     }
     reloadControls()
@@ -235,13 +270,13 @@
   <h2>Send DER Control</h2>
 
   <div class="form-row">
-    <select id="controlDevice" bind:value={selectedDeviceId}>
+    <select id="controlDevice" bind:value={selectedDeviceId} disabled={posting || cancelPosting}>
       <option value="">(pick device)</option>
       {#each devices as device (device.href)}
         <option value={deviceIdFromHref(device.href)}>{device.sfdi}</option>
       {/each}
     </select>
-    <select id="controlProgram" bind:value={selectedProgramHref} disabled={!selectedDeviceId}>
+    <select id="controlProgram" bind:value={selectedProgramHref} disabled={!selectedDeviceId || posting || cancelPosting}>
       <option value="">(pick DER program)</option>
       {#each programs as program (program.href)}
         <option value={program.href}>{program.description || program.mRID}</option>
@@ -364,7 +399,7 @@
                 {/if}
               </td>
               <td>
-                {#if canCancel(ctrl.eventStatus.status, ctrl.interval.start, ctrl.interval.duration, nowSeconds)}
+                {#if canCancel(ctrl.eventStatus.status, ctrl.interval.start, ctrl.interval.duration, serverNow)}
                   {#if cancelTarget === ctrl.mRID}
                     <input
                       type="text"

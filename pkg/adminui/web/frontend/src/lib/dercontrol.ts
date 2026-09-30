@@ -232,9 +232,13 @@ export function controlValueText(ctrl: DERControlView): string {
 
 // canCancel reports whether a row still offers Cancel. The server derives
 // no ended status (an ended control keeps reading active and cancelling it
-// answers 409), so an active row qualifies only while its interval has not
-// ended at nowSeconds.
-export function canCancel(status: string, start: number, duration: number, nowSeconds: number): boolean {
+// answers 409), so an active row qualifies while its interval has not ended
+// on the SERVER's clock (serverNowSeconds, from the response's Date header).
+// With no server time the row keeps Cancel and the server decides: hiding
+// Cancel on a live curtailment because of a skewed browser clock is the
+// unsafe direction, while a refused cancel is loud.
+export function canCancel(status: string, start: number, duration: number, serverNowSeconds: number | null): boolean {
   if (status === 'scheduled') return true
-  return status === 'active' && nowSeconds < start + duration
+  if (status !== 'active') return false
+  return serverNowSeconds === null || serverNowSeconds < start + duration
 }

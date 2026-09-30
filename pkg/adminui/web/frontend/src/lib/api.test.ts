@@ -20,6 +20,22 @@ describe('api', () => {
     expect(res).toEqual({ ok: true, data: { sfdi: '1' } })
   })
 
+  it('reports the server clock from a Date header, and omits it when absent', async () => {
+    stubFetch({
+      ok: true,
+      status: 200,
+      headers: new Headers({ Date: 'Wed, 30 Sep 2026 20:00:00 GMT' }),
+      json: () => Promise.resolve({ a: 1 }),
+    })
+    const withDate = await fetchJSON('/api/x')
+    expect(withDate).toEqual({ ok: true, data: { a: 1 }, serverTime: Date.UTC(2026, 8, 30, 20, 0, 0) })
+
+    stubFetch({ ok: true, status: 200, headers: new Headers(), json: () => Promise.resolve({ a: 1 }) })
+    const without = await fetchJSON('/api/x')
+    expect(without).toEqual({ ok: true, data: { a: 1 } })
+    expect('serverTime' in without).toBe(false)
+  })
+
   it('treats a 204 as success with no body rather than a decode failure', async () => {
     stubFetch({ ok: true, status: 204, json: () => Promise.reject(new Error('no body')) })
 

@@ -371,7 +371,7 @@ describe('DerControl: result area (criterion 3)', () => {
 
     await waitFor(() => expect(result(container)).toHaveTextContent('KEPTKEPTKEPTKEPTKEPTKEPTKEPTKEPT'))
     const text = result(container).textContent ?? ''
-    expect(text).toContain('control may be live: its write could not be undone')
+    expect(text).toContain('control may be live: its write could not be undone. ')
     expect(text).toContain('/edev/0/fsa/0/derp/0/derc/kept1')
     expect(text).toMatch(/kept/i)
     expect(text).toMatch(/live/i)
@@ -404,7 +404,7 @@ describe('DerControl: controls table (criterion 5)', () => {
   } satisfies DERControlListResponse
 
   it('lists type, value, start, end, status and response counts labelled as device-reported', async () => {
-    mockApi({ controlsFor: () => ({ ok: true, data: rows }) })
+    mockApi({ controlsFor: () => ({ ok: true, data: rows, serverTime: now * 1000 }) })
     const { container } = render(DerControl, { devices })
     await pickDeviceAndProgram(container)
     await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(5))
@@ -421,7 +421,7 @@ describe('DerControl: controls table (criterion 5)', () => {
   })
 
   it('offers Cancel on Scheduled and on Active-not-ended rows only', async () => {
-    mockApi({ controlsFor: () => ({ ok: true, data: rows }) })
+    mockApi({ controlsFor: () => ({ ok: true, data: rows, serverTime: now * 1000 }) })
     const { container } = render(DerControl, { devices })
     await pickDeviceAndProgram(container)
     await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(5))
@@ -435,7 +435,7 @@ describe('DerControl: controls table (criterion 5)', () => {
   })
 
   it('cancels only after a second confirmation, posts the typed reason, then reloads the table', async () => {
-    const { post, controlGets } = mockApi({ controlsFor: () => ({ ok: true, data: rows }) })
+    const { post, controlGets } = mockApi({ controlsFor: () => ({ ok: true, data: rows, serverTime: now * 1000 }) })
     post.mockResolvedValue({ ok: true, data: {} })
     const { container } = render(DerControl, { devices })
     await pickDeviceAndProgram(container)
@@ -453,7 +453,7 @@ describe('DerControl: controls table (criterion 5)', () => {
   })
 
   it('Back abandons the cancellation without posting; with no reason the body is empty', async () => {
-    const { post } = mockApi({ controlsFor: () => ({ ok: true, data: rows }) })
+    const { post } = mockApi({ controlsFor: () => ({ ok: true, data: rows, serverTime: now * 1000 }) })
     post.mockResolvedValue({ ok: true, data: {} })
     const { container } = render(DerControl, { devices })
     await pickDeviceAndProgram(container)
@@ -470,7 +470,7 @@ describe('DerControl: controls table (criterion 5)', () => {
   })
 
   it('shows a cancel refusal and reloads the table', async () => {
-    const { post, controlGets } = mockApi({ controlsFor: () => ({ ok: true, data: rows }) })
+    const { post, controlGets } = mockApi({ controlsFor: () => ({ ok: true, data: rows, serverTime: now * 1000 }) })
     post.mockResolvedValue({ ok: false, error: 'control already ended', status: 409 })
     const { container } = render(DerControl, { devices })
     await pickDeviceAndProgram(container)
@@ -485,7 +485,7 @@ describe('DerControl: controls table (criterion 5)', () => {
   })
 
   it('a cancel 500 that names a kept control says so instead of "Cancel failed"', async () => {
-    const { post } = mockApi({ controlsFor: () => ({ ok: true, data: rows }) })
+    const { post } = mockApi({ controlsFor: () => ({ ok: true, data: rows, serverTime: now * 1000 }) })
     post.mockResolvedValue({
       ok: false,
       status: 500,
@@ -499,9 +499,11 @@ describe('DerControl: controls table (criterion 5)', () => {
     await fireEvent.click(screen.getByTestId('der-control-confirm-cancel-SCHED'))
 
     const box = await screen.findByTestId('der-control-cancel-result')
-    expect(box).toHaveTextContent('cancellation may be recorded')
-    expect(box.textContent).toMatch(/kept/i)
-    expect(box.textContent).toMatch(/live/i)
+    // The server's own words, a separator, then what the page knows: the
+    // control still exists. It does not claim the control is live.
+    expect(box.textContent).toContain('cancellation may be recorded: its write could not be undone. ')
+    expect(box.textContent).toContain('still exists')
+    expect(box.textContent).not.toMatch(/\blive\b/i)
     expect(box.textContent).not.toContain('Cancel failed')
   })
 })
@@ -625,5 +627,184 @@ describe('DerControl: ids and the removed stub (criterion 7)', () => {
     expect(container.querySelector('#controlResult')).toBeTruthy()
     expect(container.querySelector('[data-testid="der-control-stub-note"]')).toBeNull()
     expect(container.textContent).not.toContain('admin DER control route')
+  })
+})
+
+describe('DerControl: a reply after a selection change names its own target (fix round 2 item 1)', () => {
+  it('disables both selects while a create is in flight', async () => {
+    const held = deferred<unknown>()
+    const { post } = mockApi()
+    post.mockReturnValue(held.promise as never)
+    const { container } = render(DerControl, { devices })
+    await fillConnect(container)
+    await sendAndConfirm(container)
+
+    await waitFor(() => expect(sel(container, '#controlDevice')).toBeDisabled())
+    expect(sel(container, '#controlProgram')).toBeDisabled()
+    held.resolve(created())
+    await waitFor(() => expect(sel(container, '#controlDevice')).not.toBeDisabled())
+  })
+
+  it('a create reply held across a device change is named with the device and program it was for', async () => {
+    const held = deferred<unknown>()
+    const { post } = mockApi()
+    post.mockReturnValue(held.promise as never)
+    const { container } = render(DerControl, { devices })
+    await fillConnect(container)
+    await sendAndConfirm(container)
+    await pickDevice(container, '1', 1)
+
+    held.resolve(created())
+    await waitFor(() => expect(result(container)).toHaveTextContent('Stored'))
+    expect(result(container).textContent).toContain('For device 167261211635, program fixture program: ')
+  })
+
+  it('a reply for the current selection carries no such prefix', async () => {
+    const { post } = mockApi()
+    post.mockResolvedValue(created())
+    const { container } = render(DerControl, { devices })
+    await fillConnect(container)
+    await sendAndConfirm(container)
+    await waitFor(() => expect(result(container)).toHaveTextContent('Stored'))
+    expect(result(container).textContent).not.toContain('For device')
+  })
+
+  it('a kept-control 500 held across a program change does not send the operator to the table', async () => {
+    const held = deferred<unknown>()
+    const { post } = mockApi()
+    post.mockReturnValue(held.promise as never)
+    const { container } = render(DerControl, { devices })
+    await fillConnect(container)
+    await sendAndConfirm(container)
+    await fireEvent.change(sel(container, '#controlProgram'), { target: { value: PROG_B } })
+
+    held.resolve({
+      ok: false,
+      status: 500,
+      error: 'control may be live: its write could not be undone',
+      body: { error: 'x', mRID: 'KEPT', href: '/edev/0/fsa/0/derp/0/derc/kept1', controlKept: true },
+    })
+    await waitFor(() => expect(result(container)).toHaveTextContent('KEPT'))
+    const text = result(container).textContent ?? ''
+    expect(text).toContain('For device 167261211635, program fixture program: ')
+    expect(text).toContain('/edev/0/fsa/0/derp/0/derc/kept1')
+    expect(text).not.toMatch(/find it in the table/i)
+    expect(text).toContain('Select that device and program')
+  })
+
+  it('a cancel refusal held across a program change is shown in the result area, named with its target', async () => {
+    const held = deferred<unknown>()
+    const row = item('SCHED', 'scheduled', Math.floor(Date.now() / 1000) + 3600, 600)
+    const { post } = mockApi({ controlsFor: () => ({ ok: true, data: { device: '0', controls: [row] } }) })
+    post.mockReturnValue(held.promise as never)
+    const { container } = render(DerControl, { devices })
+    await pickDeviceAndProgram(container)
+    await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(1))
+    await fireEvent.click(screen.getByTestId('der-control-cancel-SCHED'))
+    await fireEvent.click(screen.getByTestId('der-control-confirm-cancel-SCHED'))
+    await fireEvent.change(sel(container, '#controlProgram'), { target: { value: PROG_B } })
+
+    held.resolve({ ok: false, error: 'control already ended', status: 409 })
+    await waitFor(() => expect(result(container)).toHaveTextContent('control already ended'))
+    expect(result(container).textContent).toContain(
+      'For device 167261211635, program fixture program, control SCHED: Cancel failed: control already ended',
+    )
+  })
+})
+
+describe('DerControl: selection reset and reload details (fix round 2 item 2)', () => {
+  const soon = Math.floor(Date.now() / 1000) + 3600
+  const rowsOnce = { device: '0', controls: [item('SCHED', 'scheduled', soon, 600)] }
+
+  it('changing the program closes an open cancel confirmation', async () => {
+    mockApi({ controlsFor: () => ({ ok: true, data: rowsOnce }) })
+    const { container } = render(DerControl, { devices })
+    await pickDeviceAndProgram(container)
+    await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(1))
+    await fireEvent.click(screen.getByTestId('der-control-cancel-SCHED'))
+    expect(screen.getByTestId('der-control-confirm-cancel-SCHED')).toBeInTheDocument()
+
+    await fireEvent.change(sel(container, '#controlProgram'), { target: { value: PROG_B } })
+
+    await waitFor(() => expect(screen.getByTestId('der-control-cancel-SCHED')).toBeInTheDocument())
+    expect(screen.queryByTestId('der-control-confirm-cancel-SCHED')).toBeNull()
+  })
+
+  it('changing the program clears a shown cancel failure', async () => {
+    const { post } = mockApi({ controlsFor: () => ({ ok: true, data: rowsOnce }) })
+    post.mockResolvedValue({ ok: false, error: 'control already ended', status: 409 })
+    const { container } = render(DerControl, { devices })
+    await pickDeviceAndProgram(container)
+    await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(1))
+    await fireEvent.click(screen.getByTestId('der-control-cancel-SCHED'))
+    await fireEvent.click(screen.getByTestId('der-control-confirm-cancel-SCHED'))
+    await screen.findByTestId('der-control-cancel-result')
+
+    await fireEvent.change(sel(container, '#controlProgram'), { target: { value: PROG_B } })
+
+    await waitFor(() => expect(screen.queryByTestId('der-control-cancel-result')).toBeNull())
+  })
+
+  it('a controls error clears when the reload after a create error succeeds', async () => {
+    let n = 0
+    const { post } = mockApi({
+      controlsFor: () => (++n === 1 ? { ok: false, error: 'internal error', status: 500 } : { ok: true, data: noControls }),
+    })
+    post.mockResolvedValue({ ok: false, error: 'maxLimW: must be 0 to 10000', status: 400 })
+    const { container } = render(DerControl, { devices })
+    await fillConnect(container)
+    await screen.findByTestId('der-control-controls-error')
+
+    await sendAndConfirm(container)
+
+    await waitFor(() => expect(screen.queryByTestId('der-control-controls-error')).toBeNull())
+    expect(container.textContent).toContain('No admin-issued controls')
+  })
+
+  it('says "Superseded 1 earlier control" in the singular', async () => {
+    const { post } = mockApi()
+    post.mockResolvedValue(created({ supersedes: ['X1'] }))
+    const { container } = render(DerControl, { devices })
+    await fillConnect(container)
+    await sendAndConfirm(container)
+    await waitFor(() => expect(result(container)).toHaveTextContent('Superseded 1 earlier control.'))
+  })
+})
+
+describe('DerControl: "now" for Cancel comes from the server clock (fix round 2 item 4)', () => {
+  const browserNow = Math.floor(Date.now() / 1000)
+  // Ends 50 s after the server's clock but 100 s before the browser's.
+  const serverNow = browserNow - 150
+  const live = { device: '0', controls: [item('LIVE', 'active', serverNow - 10, 60)] }
+
+  it('keeps Cancel on an Active row the browser clock alone would call ended', async () => {
+    mockApi({ controlsFor: () => ({ ok: true, data: live, serverTime: serverNow * 1000 }) })
+    const { container } = render(DerControl, { devices })
+    await pickDeviceAndProgram(container)
+    await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(1))
+    expect(screen.getByTestId('der-control-cancel-LIVE')).toBeInTheDocument()
+  })
+
+  it('hides Cancel once the server clock is past the end, and refreshes that clock on each reload', async () => {
+    let serverMs = (serverNow - 10) * 1000 // before the end: Cancel shown
+    const { post } = mockApi({ controlsFor: () => ({ ok: true, data: live, serverTime: serverMs }) })
+    post.mockResolvedValue({ ok: false, error: 'maxLimW: must be 0 to 10000', status: 400 })
+    const { container } = render(DerControl, { devices })
+    await fillConnect(container)
+    await waitFor(() => expect(screen.getByTestId('der-control-cancel-LIVE')).toBeInTheDocument())
+
+    serverMs = (serverNow + 500) * 1000 // the next read says the interval has ended
+    await sendAndConfirm(container) // refusal reloads the table
+
+    await waitFor(() => expect(screen.queryByTestId('der-control-cancel-LIVE')).toBeNull())
+  })
+
+  it('with no server time the Active row keeps Cancel and the server decides', async () => {
+    const ended = { device: '0', controls: [item('OLD', 'active', browserNow - 7200, 60)] }
+    mockApi({ controlsFor: () => ({ ok: true, data: ended }) })
+    const { container } = render(DerControl, { devices })
+    await pickDeviceAndProgram(container)
+    await waitFor(() => expect(screen.getAllByTestId('der-control-row')).toHaveLength(1))
+    expect(screen.getByTestId('der-control-cancel-OLD')).toBeInTheDocument()
   })
 })

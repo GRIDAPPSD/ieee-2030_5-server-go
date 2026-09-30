@@ -346,6 +346,11 @@ server answers that a write could not be undone, the card names the
 control's mRID and href, says it was kept and is live, and reloads the
 table so it can be cancelled.
 
+The device and program selects are disabled while a Confirm or a cancel
+is in flight. A reply that still lands after the selection changed is
+shown with its own device and program named, never as the new
+selection's result.
+
 The confirmation sentence names the device and program. Changing either
 after Send drops the confirmation, so Confirm can only post what the
 sentence says. A limit is taken to at most 2 decimals and a power factor
@@ -361,8 +366,11 @@ Response records a device posted, and a device that never responds
 shows zero, not a failure.
 
 **Cancel** appears on Scheduled rows and on Active rows whose interval has
-not ended (the server derives no ended status, so an ended control keeps
-reading Active and cancelling it is refused). Like Send, it takes a
+not ended on the server's clock, taken from the `Date` header of the
+controls read (the server derives no ended status, so an ended control
+keeps reading Active and cancelling it is refused). If the response
+carries no `Date`, every Active row keeps Cancel and the server decides,
+because hiding Cancel on a live control is the unsafe mistake. Like Send, it takes a
 second click: clicking it opens an inline confirmation (with an optional
 reason) before `POST /api/der/controls/{mrid}/cancel` runs. The table
 reloads afterward, so a cancelled control's status and button update in

@@ -68,6 +68,15 @@ describe('sumFigure', () => {
     const fig = sumFigure(f, f.rollup.p, null, 1000)
     expect(fig.ageSeconds).toBeNull()
   })
+
+  it('is "reporting" with value 0 for a real 0 W from a fully-reported fleet (PR 730 round 1, finding 2)', () => {
+    // Kills the mutant `sum.sum !== 0 ? 'reporting' : 'none'`: that reads
+    // this exact case (contributing, value 0) as 'none', which the pane
+    // would render as "No devices reporting" instead of "0 W".
+    const f = fleet({ rollup: { ...fleet().rollup, deviceCount: 1, p: { sum: 0, unreported: 0, stale: 0 } } })
+    const fig = sumFigure(f, f.rollup.p, 900, 1000)
+    expect(fig).toEqual({ kind: 'reporting', value: 0, unreported: 0, stale: 0, ageSeconds: 100 })
+  })
 })
 
 describe('directionWord', () => {
@@ -79,6 +88,18 @@ describe('directionWord', () => {
   })
   it('carries no direction word for exactly zero', () => {
     expect(directionWord(0)).toBe('')
+  })
+  it('carries no direction word for a positive value that rounds to 0 (PR 730 round 1, finding 5)', () => {
+    expect(directionWord(0.4)).toBe('')
+  })
+  it('carries no direction word for a negative value that rounds to 0', () => {
+    expect(directionWord(-0.4)).toBe('')
+  })
+  it('names export once the magnitude rounds up to at least 1', () => {
+    expect(directionWord(0.6)).toBe('exporting')
+  })
+  it('names import once the negative magnitude rounds up to at least 1', () => {
+    expect(directionWord(-0.6)).toBe('importing')
   })
 })
 

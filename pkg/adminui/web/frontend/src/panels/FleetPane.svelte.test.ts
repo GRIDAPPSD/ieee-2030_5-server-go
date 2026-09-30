@@ -3,7 +3,15 @@
 // admin_fleet.go's FleetSum doc comment): a roll-up over devices that did
 // not report must show the count missing, never a filled value, so "every
 // device unreported" and "every device stale" both have to render as "no
-// devices reporting" rather than a synthesized 0 W.
+// devices reporting" rather than a synthesized 0 W - and a REAL 0 W from a
+// reporting device must still say "0 W" (PR 730 round 1, finding 2).
+//
+// PR 730 round 1 also covers: a stale response never overwriting a fresher
+// one regardless of arrival order (findings 1, 3), the reading age
+// re-deriving on a timer instead of freezing (finding 4), the direction
+// word agreeing with the rounded number beside it (finding 5), and an
+// unexpected response body reading as an error rather than throwing
+// (finding 5).
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/svelte'
 import FleetPane from './FleetPane.svelte'
@@ -13,6 +21,54 @@ import type { Fleet } from '../lib/fleet'
 function mockFetchJSON(result: { ok: true; data: Fleet[] } | { ok: false; error: string; status: number }) {
   return vi.spyOn(api, 'fetchJSON').mockResolvedValue(result as never)
 }
+
+function minimalFleet(aggregatorLFDI: string): Fleet {
+  return {
+    aggregatorLFDI,
+    devices: [],
+    rollup: {
+      deviceCount: 0,
+      connected: 0,
+      alarmed: 0,
+      stale: 0,
+      p: { sum: 0, unreported: 0, stale: 0 },
+      q: { sum: 0, unreported: 0, stale: 0 },
+      statWAvail: { sum: 0, unreported: 0, stale: 0 },
+      statVarAvail: { sum: 0, unreported: 0, stale: 0 },
+    },
+  }
+}
+
+// Field names copied from internal/handler/admin_fleet.go's json tags at
+// 643e2d1 (`git show 643e2d1:internal/handler/admin_fleet.go`): Fleet
+// {aggregatorLFDI, devices, rollup}, FleetRollup {deviceCount, connected,
+// alarmed, stale, p, q, statWAvail, statVarAvail}, FleetSum {sum,
+// unreported, stale}. Parsed rather than typed as object literals, so a
+// key this pane reads but a renamed Go tag no longer sends shows up as a
+// wrong rendered value, not a TypeScript type that silently keeps compiling.
+const OLD_FLEET_JSON = `[{
+  "aggregatorLFDI": "AGGOLD00000000000000000000000000000001",
+  "devices": [],
+  "rollup": {
+    "deviceCount": 3, "connected": 1, "alarmed": 0, "stale": 0,
+    "p": {"sum": 0, "unreported": 3, "stale": 0},
+    "q": {"sum": 0, "unreported": 3, "stale": 0},
+    "statWAvail": {"sum": 0, "unreported": 3, "stale": 0},
+    "statVarAvail": {"sum": 0, "unreported": 3, "stale": 0}
+  }
+}]`
+
+const NEW_FLEET_JSON = `[{
+  "aggregatorLFDI": "AGGNEW00000000000000000000000000000002",
+  "devices": [],
+  "rollup": {
+    "deviceCount": 7, "connected": 5, "alarmed": 1, "stale": 0,
+    "p": {"sum": 0, "unreported": 7, "stale": 0},
+    "q": {"sum": 0, "unreported": 7, "stale": 0},
+    "statWAvail": {"sum": 0, "unreported": 7, "stale": 0},
+    "statVarAvail": {"sum": 0, "unreported": 7, "stale": 0}
+  }
+}]`
 
 beforeEach(() => {
   vi.setSystemTime(new Date(1_700_000_000 * 1000))
@@ -144,6 +200,60 @@ describe('FleetPane', () => {
     expect(power).toHaveTextContent('No devices reporting')
   })
 
+  it('renders a measured 0 W from a reporting fleet as "0 W", not "No devices reporting"', async () => {
+    // PR 730 round 1, finding 2: kills the mutant at lib/fleet.ts:104
+    // (`contributing > 0` replaced by `sum.sum !== 0`), which this exact
+    // shape (a real 0 W, fully reported) would pass through unnoticed.
+    const fleet: Fleet = {
+      aggregatorLFDI: 'AGG-ZERO',
+      devices: [{ lfdi: 'DEV1', measurements: { p: { value: 0, readingTime: 1_699_999_990 } } }],
+      rollup: {
+        deviceCount: 1,
+        connected: 0,
+        alarmed: 0,
+        stale: 0,
+        p: { sum: 0, unreported: 0, stale: 0 },
+        q: { sum: 0, unreported: 1, stale: 0 },
+        statWAvail: { sum: 0, unreported: 1, stale: 0 },
+        statVarAvail: { sum: 0, unreported: 1, stale: 0 },
+      },
+    }
+    mockFetchJSON({ ok: true, data: [fleet] })
+
+    render(FleetPane)
+
+    const power = await screen.findByTestId('fleet-power')
+    expect(power).toHaveTextContent('0 W')
+    expect(power).not.toHaveTextContent('No devices reporting')
+  })
+
+  it('shows no direction word when the sum rounds to 0 W', async () => {
+    // PR 730 round 1, finding 5: directionWord used to read the unrounded
+    // value, so 0.4 W printed "0 W exporting".
+    const fleet: Fleet = {
+      aggregatorLFDI: 'AGG-SUBWATT',
+      devices: [{ lfdi: 'DEV1', measurements: { p: { value: 0.4, readingTime: 1_699_999_990 } } }],
+      rollup: {
+        deviceCount: 1,
+        connected: 0,
+        alarmed: 0,
+        stale: 0,
+        p: { sum: 0.4, unreported: 0, stale: 0 },
+        q: { sum: 0, unreported: 1, stale: 0 },
+        statWAvail: { sum: 0, unreported: 1, stale: 0 },
+        statVarAvail: { sum: 0, unreported: 1, stale: 0 },
+      },
+    }
+    mockFetchJSON({ ok: true, data: [fleet] })
+
+    render(FleetPane)
+
+    const power = await screen.findByTestId('fleet-power')
+    expect(power).toHaveTextContent('0 W')
+    expect(power).not.toHaveTextContent('exporting')
+    expect(power).not.toHaveTextContent('importing')
+  })
+
   it('shows the unreported and stale counts beside a partial sum', async () => {
     const fleet: Fleet = {
       aggregatorLFDI: 'AGG5',
@@ -203,6 +313,61 @@ describe('FleetPane', () => {
     expect(avail).toHaveTextContent('updated 10m ago')
   })
 
+  it('shows active capacity independently when reactive has no contributors', async () => {
+    // PR 730 round 1, finding 3: kills both the `&&` to `||` mutant and the
+    // `{#if true}` mutant at the old combined guard, since active and
+    // reactive no longer share one condition.
+    const fleet: Fleet = {
+      aggregatorLFDI: 'AGG-MIXED-AVAIL-1',
+      devices: [{ lfdi: 'DEV1', availability: { statWAvail: 500, readingTime: 1_699_999_995 }, measurements: {} }],
+      rollup: {
+        deviceCount: 1,
+        connected: 0,
+        alarmed: 0,
+        stale: 0,
+        p: { sum: 0, unreported: 1, stale: 0 },
+        q: { sum: 0, unreported: 1, stale: 0 },
+        statWAvail: { sum: 500, unreported: 0, stale: 0 },
+        statVarAvail: { sum: 0, unreported: 1, stale: 0 },
+      },
+    }
+    mockFetchJSON({ ok: true, data: [fleet] })
+
+    render(FleetPane)
+
+    const active = await screen.findByTestId('fleet-avail-active')
+    const reactive = await screen.findByTestId('fleet-avail-reactive')
+    expect(active).toHaveTextContent('500 W active')
+    expect(reactive).toHaveTextContent('No devices reporting')
+    expect(reactive).toHaveTextContent('1 unreported')
+  })
+
+  it('shows reactive capacity independently when active has no contributors', async () => {
+    const fleet: Fleet = {
+      aggregatorLFDI: 'AGG-MIXED-AVAIL-2',
+      devices: [{ lfdi: 'DEV1', availability: { statVarAvail: 250, readingTime: 1_699_999_995 }, measurements: {} }],
+      rollup: {
+        deviceCount: 1,
+        connected: 0,
+        alarmed: 0,
+        stale: 0,
+        p: { sum: 0, unreported: 1, stale: 0 },
+        q: { sum: 0, unreported: 1, stale: 0 },
+        statWAvail: { sum: 0, unreported: 1, stale: 0 },
+        statVarAvail: { sum: 250, unreported: 0, stale: 0 },
+      },
+    }
+    mockFetchJSON({ ok: true, data: [fleet] })
+
+    render(FleetPane)
+
+    const active = await screen.findByTestId('fleet-avail-active')
+    const reactive = await screen.findByTestId('fleet-avail-reactive')
+    expect(active).toHaveTextContent('No devices reporting')
+    expect(active).toHaveTextContent('1 unreported')
+    expect(reactive).toHaveTextContent('250 VAR reactive')
+  })
+
   it('shows the unreported status count for a device with no status field at all', async () => {
     const fleet: Fleet = {
       aggregatorLFDI: 'AGG7',
@@ -248,15 +413,171 @@ describe('FleetPane', () => {
     })
   })
 
-  it('reloads the fleet list on Refresh', async () => {
-    const fetchJSON = mockFetchJSON({ ok: true, data: [] })
+  it('shows the error state, not a TypeError, when the body is not an array', async () => {
+    // PR 730 round 1, finding 5: a 200 whose body is null or otherwise not
+    // an array used to throw inside fleets.length before this guard.
+    mockFetchJSON({ ok: true, data: null as unknown as Fleet[] })
 
     render(FleetPane)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fleet-error')).toHaveTextContent('Could not load fleets:')
+    })
+  })
+
+  it('disables Refresh while a load is in flight', async () => {
+    let resolveFirst: ((v: { ok: true; data: Fleet[] }) => void) | undefined
+    const pending = new Promise<{ ok: true; data: Fleet[] }>((resolve) => {
+      resolveFirst = resolve
+    })
+    vi.spyOn(api, 'fetchJSON').mockReturnValueOnce(pending as never)
+
+    render(FleetPane)
+
+    const button = await screen.findByRole('button', { name: 'Refresh' })
+    expect(button).toBeDisabled()
+
+    resolveFirst?.({ ok: true, data: [] })
     await screen.findByTestId('fleet-empty')
+    expect(button).not.toBeDisabled()
+  })
+
+  it('replaces old data with new data on Refresh (fixture field names from admin_fleet.go json tags)', async () => {
+    const oldFleet = (JSON.parse(OLD_FLEET_JSON) as Fleet[])[0]
+    const newFleet = (JSON.parse(NEW_FLEET_JSON) as Fleet[])[0]
+    const fetchJSON = vi
+      .spyOn(api, 'fetchJSON')
+      .mockResolvedValueOnce({ ok: true, data: [oldFleet] } as never)
+      .mockResolvedValueOnce({ ok: true, data: [newFleet] } as never)
+
+    render(FleetPane)
+
+    const oldRow = await screen.findByTestId('fleet-row')
+    expect(oldRow.children[1]).toHaveTextContent('3')
+    expect(oldRow).toHaveTextContent(`${oldFleet.aggregatorLFDI.substring(0, 16)}...`)
 
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
 
-    await waitFor(() => expect(fetchJSON).toHaveBeenCalledTimes(2))
-    expect(fetchJSON).toHaveBeenCalledWith('/api/derms/fleets')
+    await waitFor(() => {
+      expect(screen.getByTestId('fleet-row').children[1]).toHaveTextContent('7')
+    })
+    expect(screen.getByTestId('fleet-row')).toHaveTextContent(`${newFleet.aggregatorLFDI.substring(0, 16)}...`)
+    expect(fetchJSON).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows an error when a later Refresh fails, even though the first load succeeded', async () => {
+    vi.spyOn(api, 'fetchJSON')
+      .mockResolvedValueOnce({ ok: true, data: JSON.parse(OLD_FLEET_JSON) } as never)
+      .mockResolvedValueOnce({ ok: false, error: 'refresh failed', status: 500 } as never)
+
+    render(FleetPane)
+    await screen.findByTestId('fleet-row')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fleet-error')).toHaveTextContent('refresh failed')
+    })
+    expect(screen.queryByTestId('fleet-row')).toBeNull()
+  })
+
+  it('keeps a newer error result when an older, slower response resolves last carrying data', async () => {
+    // PR 730 round 1, finding 1: the sequence guard, "older arrives last"
+    // case 1 of 2 (older carries data).
+    let resolveOlder: ((v: { ok: true; data: Fleet[] }) => void) | undefined
+    const olderPromise = new Promise<{ ok: true; data: Fleet[] }>((resolve) => {
+      resolveOlder = resolve
+    })
+    const fetchJSON = vi
+      .spyOn(api, 'fetchJSON')
+      .mockImplementationOnce(() => olderPromise as never) // onMount's load: older, held pending
+      .mockImplementationOnce(async () => ({ ok: false, error: 'boom', status: 500 }) as never) // Refresh: newer
+
+    render(FleetPane)
+    await screen.findByTestId('fleet-loading')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await waitFor(() => expect(screen.getByTestId('fleet-error')).toHaveTextContent('boom'))
+
+    resolveOlder?.({ ok: true, data: [minimalFleet('AGG-STALE-DATA')] })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(screen.getByTestId('fleet-error')).toHaveTextContent('boom')
+    expect(screen.queryByTestId('fleet-row')).toBeNull()
+    expect(fetchJSON).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps newer data when an older, slower response resolves last carrying an error', async () => {
+    // PR 730 round 1, finding 1: the sequence guard, "older arrives last"
+    // case 2 of 2 (older carries an error).
+    let resolveOlder: ((v: { ok: false; error: string; status: number }) => void) | undefined
+    const olderPromise = new Promise<{ ok: false; error: string; status: number }>((resolve) => {
+      resolveOlder = resolve
+    })
+    const newer = minimalFleet('AGG-FRESH-DATA')
+    vi.spyOn(api, 'fetchJSON')
+      .mockImplementationOnce(() => olderPromise as never) // onMount's load: older, held pending
+      .mockImplementationOnce(async () => ({ ok: true, data: [newer] }) as never) // Refresh: newer
+
+    render(FleetPane)
+    await screen.findByTestId('fleet-loading')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    const row = await screen.findByTestId('fleet-row')
+    expect(row).toHaveTextContent(newer.aggregatorLFDI.substring(0, 16))
+
+    resolveOlder?.({ ok: false, error: 'stale failure', status: 500 })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(screen.getByTestId('fleet-row')).toBeInTheDocument()
+    expect(screen.queryByTestId('fleet-error')).toBeNull()
+  })
+
+  it('does not write state or log an error when a response lands after unmount', async () => {
+    let resolveLate: ((v: { ok: false; error: string; status: number }) => void) | undefined
+    const pending = new Promise<{ ok: false; error: string; status: number }>((resolve) => {
+      resolveLate = resolve
+    })
+    vi.spyOn(api, 'fetchJSON').mockReturnValueOnce(pending as never)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { unmount } = render(FleetPane)
+    unmount()
+    resolveLate?.({ ok: false, error: 'too late', status: 500 })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(consoleError).not.toHaveBeenCalled()
+  })
+
+  it('re-derives the reading age on a timer instead of freezing at fetch time', async () => {
+    // PR 730 round 1, finding 4. vi.setSystemTime alone (used by every
+    // other test above) never fires setInterval; this test needs the
+    // timer itself faked to prove the age keeps moving.
+    vi.useFakeTimers()
+    vi.setSystemTime(1_700_000_000_000)
+    const fleet: Fleet = {
+      aggregatorLFDI: 'AGG-TICK',
+      devices: [{ lfdi: 'DEV1', measurements: { p: { value: 1000, readingTime: 1_699_999_990 } } }],
+      rollup: {
+        deviceCount: 1,
+        connected: 0,
+        alarmed: 0,
+        stale: 0,
+        p: { sum: 1000, unreported: 0, stale: 0 },
+        q: { sum: 0, unreported: 1, stale: 0 },
+        statWAvail: { sum: 0, unreported: 1, stale: 0 },
+        statVarAvail: { sum: 0, unreported: 1, stale: 0 },
+      },
+    }
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: [fleet] } as never)
+
+    render(FleetPane)
+    await vi.advanceTimersByTimeAsync(0) // flush onMount's fetch microtask, no timer tick yet
+
+    expect(screen.getByTestId('fleet-power')).toHaveTextContent('updated 10s ago')
+
+    await vi.advanceTimersByTimeAsync(3600 * 1000) // the clock moves an hour with no refetch
+
+    expect(screen.getByTestId('fleet-power')).toHaveTextContent('updated 1h ago')
   })
 })

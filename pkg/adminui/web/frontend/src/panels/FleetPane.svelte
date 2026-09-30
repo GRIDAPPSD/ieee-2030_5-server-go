@@ -10,7 +10,7 @@
   // sumFigure's 'none' branch is the same "never a filled value" trap the
   // server's own FleetSum contract states, read off the counts the server
   // returned rather than re-derived.
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { fetchJSON } from '../lib/api'
   import {
     directionWord,
@@ -24,29 +24,67 @@
     type Fleet,
   } from '../lib/fleet'
 
+  // How often the displayed reading age re-derives itself against the wall
+  // clock, so a page left open does not freeze "updated 10s ago" forever
+  // while the underlying reading keeps aging (PR 730 round 1, finding 4).
+  const AGE_TICK_MS = 15_000
+
   let fleets = $state<Fleet[]>([])
   let status = $state<'loading' | 'ready' | 'error'>('loading')
   let error = $state('')
+  let nowSeconds = $state(Math.floor(Date.now() / 1000))
+
+  // requestSeq is the sequence guard PR 730 round 1 asked for: each load()
+  // claims the next number, and only the call still holding the CURRENT
+  // number when its response lands may write status/fleets/error. An older
+  // request that resolves after a newer one, success or failure, is
+  // dropped instead of overwriting the newer result. destroyed does the
+  // same for a response that lands after the component is gone.
+  let requestSeq = 0
+  let destroyed = false
 
   async function load() {
+    const seq = ++requestSeq
     status = 'loading'
     const res = await fetchJSON<Fleet[]>('/api/derms/fleets')
+    if (destroyed || seq !== requestSeq) return
     if (!res.ok) {
       status = 'error'
       error = res.error
+      return
+    }
+    // fetchJSON's decode only checks res.ok before handing back whatever
+    // the body parsed to; a 200 with a null or non-array body is not a
+    // shape this route sends, but nothing upstream guarantees it, so this
+    // is the last place to catch it before fleets.length throws below.
+    if (!Array.isArray(res.data)) {
+      status = 'error'
+      error = 'server returned an unexpected response shape'
       return
     }
     fleets = res.data
     status = 'ready'
   }
 
-  onMount(load)
+  let ageTimer: ReturnType<typeof setInterval> | undefined
+
+  onMount(() => {
+    load()
+    ageTimer = setInterval(() => {
+      nowSeconds = Math.floor(Date.now() / 1000)
+    }, AGE_TICK_MS)
+  })
+
+  onDestroy(() => {
+    destroyed = true
+    if (ageTimer !== undefined) clearInterval(ageTimer)
+  })
 </script>
 
 <div class="card full-width">
   <h2>DERMS Fleets</h2>
   <div class="hint">
-    <button class="btn btn-small" onclick={load}>Refresh</button>
+    <button class="btn btn-small" onclick={load} disabled={status === 'loading'}>Refresh</button>
   </div>
   {#if status === 'loading'}
     <p class="hint" data-testid="fleet-loading">Loading fleets...</p>
@@ -70,11 +108,10 @@
       </thead>
       <tbody>
         {#each fleets as fleet (fleet.aggregatorLFDI)}
-          {@const now = Math.floor(Date.now() / 1000)}
-          {@const power = sumFigure(fleet, fleet.rollup.p, newestPReadingTime(fleet), now)}
+          {@const power = sumFigure(fleet, fleet.rollup.p, newestPReadingTime(fleet), nowSeconds)}
           {@const availAge = newestAvailReadingTime(fleet)}
-          {@const activeAvail = sumFigure(fleet, fleet.rollup.statWAvail, availAge, now)}
-          {@const reactiveAvail = sumFigure(fleet, fleet.rollup.statVarAvail, availAge, now)}
+          {@const activeAvail = sumFigure(fleet, fleet.rollup.statWAvail, availAge, nowSeconds)}
+          {@const reactiveAvail = sumFigure(fleet, fleet.rollup.statVarAvail, availAge, nowSeconds)}
           <tr data-testid="fleet-row">
             <td class="mono" title={fleet.aggregatorLFDI}>{fleet.aggregatorLFDI.substring(0, 16)}...</td>
             <td>{fleet.rollup.deviceCount}</td>
@@ -93,17 +130,21 @@
               {/if}
             </td>
             <td data-testid="fleet-avail">
-              {#if activeAvail.kind === 'none' && reactiveAvail.kind === 'none'}
-                No devices reporting
-              {:else}
+              <div data-testid="fleet-avail-active">
                 {#if activeAvail.kind === 'reporting'}
-                  <div>{formatValue(activeAvail.value)} W active{formatContributionNote(activeAvail)}</div>
+                  {formatValue(activeAvail.value)} W active{formatContributionNote(activeAvail)}
+                {:else}
+                  No devices reporting{formatContributionNote(activeAvail)}
                 {/if}
+              </div>
+              <div data-testid="fleet-avail-reactive">
                 {#if reactiveAvail.kind === 'reporting'}
-                  <div>{formatValue(reactiveAvail.value)} VAR reactive{formatContributionNote(reactiveAvail)}</div>
+                  {formatValue(reactiveAvail.value)} VAR reactive{formatContributionNote(reactiveAvail)}
+                {:else}
+                  No devices reporting{formatContributionNote(reactiveAvail)}
                 {/if}
-                <div class="hint">updated {formatAge(activeAvail.ageSeconds)}</div>
-              {/if}
+              </div>
+              <div class="hint">updated {formatAge(activeAvail.ageSeconds)}</div>
             </td>
           </tr>
         {/each}

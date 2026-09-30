@@ -111,11 +111,13 @@ export function sumFigure(
 
 // directionWord names the export-positive sign convention the server
 // already applied (admin_fleet.go's considerMeasurement): positive is
-// exporting, negative is importing, zero carries no direction word.
+// exporting, negative is importing, zero carries no direction word. The
+// word is decided on the ROUNDED magnitude, the same rounding formatValue
+// applies to the number beside it: an unrounded 0.4 W read as positive
+// would print "0 W exporting", a word the displayed "0 W" does not back.
 export function directionWord(watts: number): string {
-  if (watts > 0) return 'exporting'
-  if (watts < 0) return 'importing'
-  return ''
+  if (Math.round(Math.abs(watts)) === 0) return ''
+  return watts > 0 ? 'exporting' : 'importing'
 }
 
 export function newestPReadingTime(fleet: Fleet): number | null {

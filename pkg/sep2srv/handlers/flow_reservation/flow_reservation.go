@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -71,6 +72,106 @@ type FRPCreator interface {
 	Create(ctx context.Context, parentID, id string, resource sep2.FlowReservationResponse) error
 }
 
+// requestStatusPresence decodes only whether RequestStatus and its two
+// children were present in the document, and their raw text, using pointer
+// fields to a string rather than the typed int64/uint8 sep2 carries.
+// sep2.FlowReservationRequest cannot make either distinction on its own:
+// RequestStatus is a value there (core flow_reservation.go: a served
+// response must always emit the mandatory element), so a request that
+// omitted it decodes to the same {0, 0} as one that sent
+// <dateTime>0</dateTime><requestStatus>0</requestStatus> (#692). A string
+// pointer goes one step further than an int64/uint8 pointer would: per
+// encoding/xml's copyValue (GOROOT src/encoding/xml/read.go:639-656), a
+// present-but-empty numeric element (self-closed, open-close, or
+// comment-only, which all decode to zero-length character data) still
+// allocates the pointer and sets it to 0, so an *int64 cannot tell "present,
+// empty" from "present, literal 0". A *string can: it holds "" for empty
+// content and the literal digits otherwise, with no numeric parsing to erase
+// the difference. This type exists to check the document, not the struct.
+type requestStatusPresence struct {
+	XMLName       xml.Name `xml:"urn:ieee:std:2030.5:ns FlowReservationRequest"`
+	RequestStatus *struct {
+		DateTime      *string `xml:"dateTime"`
+		RequestStatus *string `xml:"requestStatus"`
+	} `xml:"RequestStatus"`
+}
+
+// requestStatusDateTimeFutureTolerance bounds how far ahead of the server's
+// own clock a client's dateTime may be before it stops being explainable by
+// clock skew. 2018 S233 / 2023 S240 requires dateTime to be "the time at
+// which the status change occurred, not a time in the future or past"; the
+// standard's own worst-case device clock accuracy is 60 seconds of drift per
+// 24 hours for a device with no user interface (2023 S88), so five minutes
+// comfortably covers that plus request latency while still refusing a client
+// whose dateTime is wrong by any meaningful amount.
+const requestStatusDateTimeFutureTolerance = 5 * time.Minute
+
+// errRequestStatusRequired and its siblings name the missing or invalid
+// piece; the handler logs them and sends a fixed client-facing message,
+// matching the mRID check above and the #360 no-decoder-detail convention.
+var (
+	errRequestStatusRequired         = errors.New("RequestStatus is required")
+	errRequestStatusDateTimeRequired = errors.New("RequestStatus.dateTime is required")
+	errRequestStatusDateTimeEmpty    = errors.New("RequestStatus.dateTime must not be empty")
+	errRequestStatusValueRequired    = errors.New("RequestStatus.requestStatus is required")
+	errRequestStatusValueEmpty       = errors.New("RequestStatus.requestStatus must not be empty")
+	errRequestStatusDateTimeNegative = errors.New("RequestStatus.dateTime must not be negative")
+	errRequestStatusDateTimeFuture   = errors.New("RequestStatus.dateTime is too far in the future to be the instant the status changed")
+	errRequestStatusValueReserved    = errors.New("RequestStatus.requestStatus is not 0 (Requested) or 1 (Cancelled)")
+)
+
+// validateRequestStatus refuses a FlowReservationRequest body whose
+// RequestStatus element is missing, incomplete, empty, or carries a value the
+// schema does not allow (2018 S233 / 2023 S240 RequestStatus object).
+//
+// requestStatus is UInt8 with only 0 (Requested) and 1 (Cancelled) defined;
+// "All other values reserved". dateTime is TimeType, seconds since the 1970
+// epoch, and "SHALL be set to the time at which the status change occurred,
+// not a time in the future or past": a negative value predates 1970 and a
+// value materially ahead of the server's clock is neither, so both are
+// refused outright rather than guessed at.
+//
+// frq is the same body already decoded by the caller: once presence and
+// non-emptiness are established from the raw text above, its parsed
+// DateTime and RequestStatus are what the numeric checks run against, so the
+// digits are parsed once (by that earlier xml.Unmarshal), not twice.
+func validateRequestStatus(body []byte, frq sep2.FlowReservationRequest) error {
+	var probe requestStatusPresence
+	// Cannot fail: the caller already parsed the same bytes successfully
+	// into frq, and every field probe decodes into is a string or a pointer
+	// to one, so there is no numeric conversion left to fail on either.
+	_ = xml.Unmarshal(body, &probe)
+
+	if probe.RequestStatus == nil {
+		return errRequestStatusRequired
+	}
+	if probe.RequestStatus.DateTime == nil {
+		return errRequestStatusDateTimeRequired
+	}
+	if strings.TrimSpace(*probe.RequestStatus.DateTime) == "" {
+		return errRequestStatusDateTimeEmpty
+	}
+	if probe.RequestStatus.RequestStatus == nil {
+		return errRequestStatusValueRequired
+	}
+	if strings.TrimSpace(*probe.RequestStatus.RequestStatus) == "" {
+		return errRequestStatusValueEmpty
+	}
+
+	if frq.RequestStatus.DateTime < 0 {
+		return errRequestStatusDateTimeNegative
+	}
+	if frq.RequestStatus.DateTime > time.Now().Add(requestStatusDateTimeFutureTolerance).Unix() {
+		return errRequestStatusDateTimeFuture
+	}
+	switch frq.RequestStatus.RequestStatus {
+	case sep2.RequestStatusRequested, sep2.RequestStatusCancelled:
+		return nil
+	default:
+		return errRequestStatusValueReserved
+	}
+}
+
 // HandlePostFlowReservationRequest returns a handler for POST /edev/{id}/frq.
 // pen is RouterConfig.PEN, passed straight through: nil (or the IANA-reserved
 // value 0) mints a response mRID with no embedded PEN, per newFRPMRID.
@@ -95,6 +196,15 @@ func HandlePostFlowReservationRequest(
 		var frq sep2.FlowReservationRequest
 		if err := xml.Unmarshal(body, &frq); err != nil {
 			srverr.BadRequestMessage(w, r, "invalid XML", err)
+			return
+		}
+
+		// Presence and emptiness are checked against the raw body, not frq:
+		// RequestStatus is a value field, so an absent element and a
+		// present-but-zero one decode identically (#692). See
+		// validateRequestStatus.
+		if err := validateRequestStatus(body, frq); err != nil {
+			srverr.BadRequestMessage(w, r, "invalid RequestStatus", err)
 			return
 		}
 

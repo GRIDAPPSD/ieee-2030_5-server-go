@@ -94,13 +94,17 @@ var faultProbeBodies = map[string]string{
 
 	// #665: mRID is required (a request without one is refused before any
 	// store is touched), so the happy-path probe document must carry one.
+	// #692: RequestStatus is the wrapper element (capital R, matching the
+	// schema and the core struct tag); the lowercase requestStatus this
+	// carried until now never matched, so it decoded as absent and this
+	// route's probe was refused with 400 rather than reaching the store.
 	"POST /edev/{id}/frq": sep2Doc("FlowReservationRequest",
 		`<mRID>FRQPROBE00000001</mRID>`+
 			`<durationRequested>60</durationRequested>`+
 			`<energyRequested><multiplier>0</multiplier><value>100</value></energyRequested>`+
 			`<intervalRequested><duration>60</duration><start>1700000000</start></intervalRequested>`+
 			`<powerRequested><multiplier>0</multiplier><value>100</value></powerRequested>`+
-			`<requestStatus><dateTime>1700000000</dateTime><requestStatus>0</requestStatus></requestStatus>`),
+			`<RequestStatus><dateTime>1700000000</dateTime><requestStatus>0</requestStatus></RequestStatus>`),
 
 	"PUT /edev/{id}/cfg":   sep2Doc("Configuration", `<userDeviceName>probe</userDeviceName>`),
 	"PUT /edev/{id}/dstat": sep2Doc("DeviceStatus", `<changedTime>1700000000</changedTime>`),

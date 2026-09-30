@@ -25,6 +25,7 @@ import (
 const (
 	endDevicesFile  = "enddevices.json"
 	derProgramsFile = "derprograms.json"
+	derControlsFile = "dercontrols.json"
 	seedRecordFile  = "bootfixture-seed.json"
 )
 
@@ -107,9 +108,18 @@ func (h *seedHarness) bootWithSeedPath(fixture, seedPath string) (*bootfixture.T
 	if err != nil {
 		return nil, fmt.Errorf("open DERProgram store: %w", err)
 	}
+	// #565: DERControls persist too, so a "boot" in this harness must open
+	// them the same way EndDevices and DERPrograms are opened above, or
+	// reconcile's seed tracking (which reads the shared seed record file
+	// across "boots") disagrees with a store that resets every call.
+	dercs, err := memory.NewDERControlStoreWithPersistence(h.path(derControlsFile))
+	if err != nil {
+		return nil, fmt.Errorf("open DERControl store: %w", err)
+	}
 	target := freshTarget()
 	target.EndDevices = edevs
 	target.DERPrograms = derps
+	target.DERControls = dercs
 
 	h.boots++
 	fixturePath := filepath.Join(h.fixtureDir, fmt.Sprintf("fixture-%d.yaml", h.boots))
@@ -257,6 +267,10 @@ func edevKey(id string) seedKey { return seedKey{Kind: "EndDevice", ID: id} }
 
 func derpKey(parent, id string) seedKey {
 	return seedKey{Kind: "DERProgram", Parent: parent, ID: id}
+}
+
+func dercKey(parent, id string) seedKey {
+	return seedKey{Kind: "DERControl", Parent: parent, ID: id}
 }
 
 func mustEndDevice(t *testing.T, s store.EndDeviceStore, id string) sep2.EndDevice {
@@ -511,10 +525,19 @@ func TestReconcileKeepsDeletesAndSkipsChildren(t *testing.T) {
 	if ctl.Href != "/edev/e1/fsa/f1/derp/p1/derc/c1" {
 		t.Errorf("DERControl c1 Href = %q", ctl.Href)
 	}
-	_, err = target.DERControls.Get(ctx, "e1/f1/p3", "c3")
-	assertNotFound(t, err, "DERControl c3 under deleted p3")
-	_, err = target.DERControls.Get(ctx, "e2/f2/p2", "c2")
-	assertNotFound(t, err, "DERControl c2 under deleted e2")
+	// c2 and c3 were persisted on boot 1, under (e2,p2) and (e1,p3), and
+	// nothing deletes a DERControl when its parent EndDevice or DERProgram
+	// is later deleted: reconcile only skips CREATING new fixture entries
+	// under a skipped parent (planReconcile's underSkipped), it does not
+	// cascade-delete an already-persisted one (#565 scope; unlike FSAs,
+	// which "disappear" here only because they never persist at all).
+	// Both records are still readable, orphaned, after boot 2.
+	if _, err := target.DERControls.Get(ctx, "e1/f1/p3", "c3"); err != nil {
+		t.Errorf("DERControl c3 under deleted p3: %v, want it still present (orphaned, not cascade-deleted)", err)
+	}
+	if _, err := target.DERControls.Get(ctx, "e2/f2/p2", "c2"); err != nil {
+		t.Errorf("DERControl c2 under deleted e2: %v, want it still present (orphaned, not cascade-deleted)", err)
+	}
 
 	dflt, err := target.DefaultDERControls.Get(ctx, "e1/f1/p1", dderControlSingletonKey)
 	if err != nil {
@@ -537,7 +560,8 @@ func TestReconcileKeepsDeletesAndSkipsChildren(t *testing.T) {
 	}
 
 	h.assertSeedKeys(edevKey("e1"), edevKey("e2"),
-		derpKey("e1", "p1"), derpKey("e1", "p3"), derpKey("e2", "p2"))
+		derpKey("e1", "p1"), derpKey("e1", "p3"), derpKey("e2", "p2"),
+		dercKey("e1/f1/p1", "c1"), dercKey("e1/f1/p3", "c3"), dercKey("e2/f2/p2", "c2"))
 
 	h.requireLog(`EndDevice id="e2"`, "deleted since seeded")
 	h.requireLog(`DERProgram edev="e1" id="p3"`, "deleted since seeded")
@@ -688,7 +712,7 @@ der_controls:
 		assertNotFound(t, err, bootName+": FSA (1, f1)")
 		_, err = target.DERControls.Get(ctx, "1/f1/p1", "c1")
 		assertNotFound(t, err, bootName+": DERControl c1")
-		h.assertSeedKeys(edevKey("1"), derpKey("1", "p1"))
+		h.assertSeedKeys(edevKey("1"), derpKey("1", "p1"), dercKey("1/f1/p1", "c1"))
 	}
 	h.requireLog(`EndDevice id="1"`, "id now held by another identity")
 	h.assertNoLFDIInLogs()

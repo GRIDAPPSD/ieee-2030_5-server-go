@@ -85,6 +85,18 @@ func undoWriteOK(err error) bool {
 	return err == nil || errors.Is(err, store.ErrNotFound)
 }
 
+// skipCompensation reports whether a compensating write against s, to undo
+// s's OWN just-failed forward write to the SAME record, is unnecessary
+// because s already implements selfRollingBack and confirms it: the
+// forward write's failure already left the record exactly as it was
+// before that write. See selfRollingBack's doc comment for why this must
+// not be used for a compensating write that undoes a different, earlier,
+// successful write.
+func skipCompensation(s any) bool {
+	r, ok := s.(selfRollingBack)
+	return ok && r.RollsBackOnFailure()
+}
+
 // lockScope returns an unlock func for scopeKey, taken after this call
 // returns. Callers must defer the returned func.
 func (i *Issuer) lockScope(scopeKey string) func() {
@@ -307,27 +319,34 @@ func (i *Issuer) applySupersedes(ctx context.Context, scopeKey string, candidate
 	return marked, nil, nil
 }
 
-// undoLifecycleCreateFailure undoes a failed lifecycle Create. The write
+// undoLifecycleCreateFailure undoes a failed lifecycle Create. Unless the
+// store already rolled its own failure back (skipCompensation), the write
 // may have taken effect despite the error, so it is always deleted; a
 // store.ErrNotFound from that delete means it never took effect.
 func (i *Issuer) undoLifecycleCreateFailure(ctx context.Context, scopeKey, id string, cause error) (Result, error) {
-	uctx, cancel := undoContext(ctx)
-	defer cancel()
-	if derr := i.lifecycles.Delete(uctx, scopeKey, id); !undoWriteOK(derr) {
-		return Result{}, &UndoError{Step: UndoStepStoreLifecycle, LifecycleKept: true, ID: id, cause: cause, reverts: []error{derr}}
+	if !skipCompensation(i.lifecycles) {
+		uctx, cancel := undoContext(ctx)
+		defer cancel()
+		if derr := i.lifecycles.Delete(uctx, scopeKey, id); !undoWriteOK(derr) {
+			return Result{}, &UndoError{Step: UndoStepStoreLifecycle, LifecycleKept: true, ID: id, cause: cause, reverts: []error{derr}}
+		}
 	}
 	return Result{}, fmt.Errorf("dercontrol: store lifecycle: %w", cause)
 }
 
-// undoControlCreateFailure undoes a failed control Create. The lifecycle
-// record already exists at this point, so it is deleted too, unless
-// deleting the control itself fails: the lifecycle record must not be
-// removed while the control it backs might still be stored.
+// undoControlCreateFailure undoes a failed control Create. The control
+// Delete compensates that SAME failed write (skipCompensation applies).
+// The lifecycle record was created successfully in an earlier step, so
+// deleting it is a genuine revert of a successful write, not skippable,
+// unless deleting the control itself fails: the lifecycle record must not
+// be removed while the control it backs might still be stored.
 func (i *Issuer) undoControlCreateFailure(ctx context.Context, scopeKey, id string, cause error) (Result, error) {
 	uctx, cancel := undoContext(ctx)
 	defer cancel()
-	if derr := i.controls.Delete(uctx, scopeKey, id); !undoWriteOK(derr) {
-		return Result{}, &UndoError{Step: UndoStepStoreControl, ControlKept: true, LifecycleKept: true, ID: id, cause: cause, reverts: []error{derr}}
+	if !skipCompensation(i.controls) {
+		if derr := i.controls.Delete(uctx, scopeKey, id); !undoWriteOK(derr) {
+			return Result{}, &UndoError{Step: UndoStepStoreControl, ControlKept: true, LifecycleKept: true, ID: id, cause: cause, reverts: []error{derr}}
+		}
 	}
 	if derr := i.lifecycles.Delete(uctx, scopeKey, id); !undoWriteOK(derr) {
 		return Result{}, &UndoError{Step: UndoStepStoreControl, LifecycleKept: true, ID: id, cause: cause, reverts: []error{derr}}
@@ -348,7 +367,17 @@ func (i *Issuer) undoMarkFailure(ctx context.Context, scopeKey, id string, attem
 
 	var unrevertedIDs []string
 	var reverts []error
-	for _, cand := range attempted {
+	// applySupersedes's contract puts the candidate whose OWN mark-write
+	// failed (the write that is `cause`) last in attempted; every earlier
+	// candidate's mark-write succeeded and its revert here is a genuine
+	// action. For the last one, when the store self-rolls back, its own
+	// failure already restored cand.before: skip the redundant re-write so
+	// a second, unrelated failure there cannot be misreported as "not
+	// reverted" when it is already known to be (round 2, item 1).
+	for n, cand := range attempted {
+		if n == len(attempted)-1 && skipCompensation(i.lifecycles) {
+			continue
+		}
 		if rerr := i.lifecycles.Update(uctx, scopeKey, cand.id, cand.before); !undoWriteOK(rerr) {
 			unrevertedIDs = append(unrevertedIDs, cand.id)
 			reverts = append(reverts, rerr)
@@ -426,12 +455,18 @@ func (i *Issuer) Cancel(ctx context.Context, scope Scope, id string, reason stri
 }
 
 // undoCancelFailure restores the record Cancel read before its Update
-// failed.
+// failed. When the store already rolled its own failure back
+// (skipCompensation), the record is provably already at `before`: the
+// compensating write is skipped, and Cancel returns the plain cause,
+// matching its own documented contract that a plain error means "the
+// record equals what Cancel read" (round 2, item 1).
 func (i *Issuer) undoCancelFailure(ctx context.Context, scopeKey, id string, before LifecycleRecord, cause error) (LifecycleRecord, error) {
-	uctx, cancel := undoContext(ctx)
-	defer cancel()
-	if rerr := i.lifecycles.Update(uctx, scopeKey, id, before); !undoWriteOK(rerr) {
-		return LifecycleRecord{}, &UndoError{Step: UndoStepCancel, ID: id, cause: cause, reverts: []error{rerr}}
+	if !skipCompensation(i.lifecycles) {
+		uctx, cancel := undoContext(ctx)
+		defer cancel()
+		if rerr := i.lifecycles.Update(uctx, scopeKey, id, before); !undoWriteOK(rerr) {
+			return LifecycleRecord{}, &UndoError{Step: UndoStepCancel, ID: id, cause: cause, reverts: []error{rerr}}
+		}
 	}
 	return LifecycleRecord{}, fmt.Errorf("dercontrol: cancel: %w", cause)
 }

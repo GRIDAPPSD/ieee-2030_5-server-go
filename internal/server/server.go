@@ -140,6 +140,21 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	if err != nil {
 		return fmt.Errorf("DERProgram persistence: %w", err)
 	}
+	// #565: DERControls and their lifecycle records persist the same way
+	// DERPrograms does, so a restart does not forget a control a device is
+	// still executing.
+	derControls, err := memory.NewDERControlStoreWithPersistence(
+		cfg.EffectiveStorePath("dercontrols", ""),
+	)
+	if err != nil {
+		return fmt.Errorf("DERControl persistence: %w", err)
+	}
+	derControlLifecycles, err := dercontrol.NewLifecycleStoreWithPersistence(
+		cfg.EffectiveStorePath("dercontrol-lifecycles", ""),
+	)
+	if err != nil {
+		return fmt.Errorf("DERControl lifecycle persistence: %w", err)
+	}
 	endDeviceManagers, err := memory.NewEndDeviceManagementStoreWithPersistence(
 		cfg.EffectiveStorePath("enddevicemanagement", ""),
 	)
@@ -180,9 +195,9 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		DERStatuses:              memory.NewScopedStore[sep2.DERStatus](),
 		DERAvailabilities:        memory.NewScopedStore[sep2.DERAvailability](),
 		DERPrograms:              derPrograms,
-		DERControls:              memory.NewScopedStore[sep2.DERControl](),
+		DERControls:              derControls,
+		DERControlLifecycles:     derControlLifecycles,
 		DefaultDERControls:       memory.NewScopedStore[sep2.DefaultDERControl](),
-		DERControlLifecycles:     memory.NewScopedStore[dercontrol.LifecycleRecord](),
 		DERCurves:                memory.NewStore[sep2.DERCurve](),
 		FSAs:                     memory.NewScopedStore[sep2.FunctionSetAssignments](),
 		AdminFSAs:                adminFSAs,

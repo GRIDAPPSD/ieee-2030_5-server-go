@@ -67,17 +67,22 @@ type Stores struct {
 	// .ScopedStore reach-through exists. Consumers that want a scoped
 	// DERProgram surface take the store.ScopedStore contract and address
 	// resources by (parent, id).
-	DERPrograms        *memory.DERProgramStore
-	DERControls        *memory.ScopedStore[sep2.DERControl]
-	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]
-	DERCurves          *memory.Store[sep2.DERCurve]
-	// DERControlLifecycles is wired (Run populates it, in-memory only, like
-	// DERControls above) but nothing writes to it yet: no admin issuer
-	// (internal/dercontrol) is constructed until its own admin route lands.
-	// Empty and wired behaves identically to nil here, since a control with
-	// no lifecycle record is served unchanged either way; see
-	// assembly.Stores.DERControlLifecycles for the protocol-route detail.
-	DERControlLifecycles *memory.ScopedStore[dercontrol.LifecycleRecord]
+	DERPrograms *memory.DERProgramStore
+	// DERControls is the persistence-aware wrapper (GRIDAPPSD/ieee-2030_5-server-go#565).
+	// It satisfies store.ScopedStore[sep2.DERControl]; its Create/Update/Delete
+	// add the disk flush, and it carries the mRID-to-scope index
+	// internal/dercontrol.Issuer's undo logic and #566's admin API need.
+	DERControls *memory.DERControlStore
+	// DERControlLifecycles is the persistence-aware companion store for
+	// internal/dercontrol.LifecycleRecord, keyed identically to DERControls
+	// (GRIDAPPSD/ieee-2030_5-server-go#565). #564's serve-time status
+	// decorator (pkg/sep2srv/handlers/der, wired in
+	// pkg/sep2srv/assembly/assembly.go behind store.IsAbsent) reads it when
+	// present; nothing writes to it yet, since wiring
+	// internal/dercontrol.Issuer into the admin plane is #566.
+	DERControlLifecycles *dercontrol.LifecycleStore
+	DefaultDERControls   *memory.ScopedStore[sep2.DefaultDERControl]
+	DERCurves            *memory.Store[sep2.DERCurve]
 
 	// FSA store
 	FSAs *memory.ScopedStore[sep2.FunctionSetAssignments]

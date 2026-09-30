@@ -62,8 +62,11 @@ type Target struct {
 	// hands over *memory.DERProgramStore, whose collection stopped being an
 	// exported embedded field in core. The contract is what both shapes
 	// have in common and all this loader ever needed.
-	DERPrograms        store.ScopedStore[sep2.DERProgram]
-	DERControls        *memory.ScopedStore[sep2.DERControl]
+	DERPrograms store.ScopedStore[sep2.DERProgram]
+	// DERControls is the store.ScopedStore contract for the same reason
+	// DERPrograms is (GRIDAPPSD/ieee-2030_5-server-go#565): the server hands
+	// over *memory.DERControlStore once a data directory is configured.
+	DERControls        store.ScopedStore[sep2.DERControl]
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]
 	DERCurves          *memory.Store[sep2.DERCurve]
 }
@@ -470,6 +473,7 @@ func buildDefaultDERControl(s DefaultDERControlSpec) sep2.DefaultDERControl {
 
 func buildDERControl(s DERControlSpec) sep2.DERControl {
 	dc := sep2.DERControl{}
+	dc.MRID = s.MRID
 	dc.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/derc/%s",
 		s.EndDeviceID, s.FSAID, s.DERProgramID, s.ID)
 	if s.DERControlBase != nil {

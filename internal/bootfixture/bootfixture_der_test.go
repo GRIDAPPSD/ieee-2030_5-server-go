@@ -478,16 +478,18 @@ der_controls:
 		t.Errorf("RampTms = %d, want 20", got)
 	}
 
-	// --- known defects, pinned deliberately ---------------------------
-	//
-	// buildDERControl drops DERControlSpec.MRID on the floor: the YAML
-	// field is declared and parsed but never copied onto the resource.
-	// buildFSA, buildDERProgram and buildDefaultDERControl all copy their
-	// MRID. Reported as a finding; when it is fixed this assertion must
-	// flip to want "DERC-MRID-A".
-	if dc.MRID != "" {
-		t.Errorf("DERControl.MRID = %q; expected the known drop-on-load defect (empty). If MRID is now carried, update this test", dc.MRID)
+	// buildDERControl used to drop DERControlSpec.MRID on the floor: the
+	// YAML field was declared and parsed but never copied onto the
+	// resource, unlike buildFSA, buildDERProgram and buildDefaultDERControl,
+	// which all copy theirs. Fixed as part of
+	// GRIDAPPSD/ieee-2030_5-server-go#565 fix round 1, item 3: the round's
+	// own restart test needed a real MRID to assert field values against.
+	if dc.MRID != "DERC-MRID-A" {
+		t.Errorf("DERControl.MRID = %q, want DERC-MRID-A", dc.MRID)
 	}
+
+	// --- known defects, still pinned deliberately ---------------------
+	//
 	// The spec type has no interval, event_status, description, replyTo
 	// or responseRequired field, so a boot-seeded DERControl carries an
 	// absent interval (never activatable) and no response contract. This

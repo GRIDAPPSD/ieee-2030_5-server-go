@@ -77,6 +77,7 @@ var (
 var (
 	_ store.ResourceStore[sep2.Registration] = (*RegistrationStore)(nil)
 	_ store.ScopedStore[sep2.DERProgram]     = (*DERProgramStore)(nil)
+	_ store.ScopedStore[sep2.DERControl]     = (*DERControlStore)(nil)
 
 	// The EndDevice implementations. The two decorators also assert this next
 	// to their own declarations; repeated here so this file reads as a complete

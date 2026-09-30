@@ -348,6 +348,185 @@ func TestQueue_Answer_NoRequestedInterval_EventStatusActive(t *testing.T) {
 	}
 }
 
+// capturingChecker records every Committed call, so a test can assert the
+// exact window Queue passed it rather than only the bool/error it returned.
+type capturingChecker struct {
+	mu    sync.Mutex
+	calls []checkerCall
+}
+
+type checkerCall struct {
+	fleetKey string
+	start    int64
+	duration uint32
+}
+
+func (c *capturingChecker) Committed(_ context.Context, fleetKey string, start int64, duration uint32) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, checkerCall{fleetKey, start, duration})
+	return false, nil
+}
+
+func (c *capturingChecker) snapshot() []checkerCall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]checkerCall(nil), c.calls...)
+}
+
+// TestQueue_DeadlineFallback_PassesTheRequestedWindowToTheChecker is #736's
+// small item: the fleet key and the request's own interval reach
+// CommitmentChecker.Committed unchanged, not zero values a mutant dropping
+// the arguments would also pass under alwaysFree/alwaysCommitted.
+func TestQueue_DeadlineFallback_PassesTheRequestedWindowToTheChecker(t *testing.T) {
+	t.Parallel()
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+	checker := &capturingChecker{}
+	q := flowreservation.NewQueue(frqStore, frpStore, checker, flowreservation.Config{Deadline: shortDeadline}, nil)
+	t.Cleanup(q.Close)
+
+	frq := testRequest()
+	frq.IntervalRequested = &sep2.DateTimeInterval{Start: 424242, Duration: 1800}
+	storeRequest(t, frqStore, "dev1", "frq1", frq)
+	q.Submit("dev1", "frq1", frq, time.Now().Unix())
+
+	waitForResponse(t, frpStore, "dev1")
+
+	calls := checker.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("Committed calls = %d, want 1", len(calls))
+	}
+	want := checkerCall{fleetKey: "dev1", start: 424242, duration: 1800}
+	if calls[0] != want {
+		t.Errorf("Committed call = %+v, want %+v", calls[0], want)
+	}
+}
+
+// TestQueue_DeadlineFallback_CancelledRequestIsDenied is #736's
+// error-handling LOW: a request posted with RequestStatus Cancelled is
+// denied at the deadline, never granted, and the commitment checker is
+// never even consulted for it.
+func TestQueue_DeadlineFallback_CancelledRequestIsDenied(t *testing.T) {
+	t.Parallel()
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+	checker := &capturingChecker{}
+	q := flowreservation.NewQueue(frqStore, frpStore, checker, flowreservation.Config{Deadline: shortDeadline}, nil)
+	t.Cleanup(q.Close)
+
+	frq := testRequest()
+	frq.RequestStatus.RequestStatus = sep2.RequestStatusCancelled
+	storeRequest(t, frqStore, "dev1", "frq1", frq)
+	q.Submit("dev1", "frq1", frq, time.Now().Unix())
+
+	items := waitForResponse(t, frpStore, "dev1")
+	frp := items[0]
+	if frp.Interval == nil || frp.Interval.Duration != 0 {
+		t.Fatalf("fallback response for a cancelled request = %+v, want a denial (duration 0)", frp.Interval)
+	}
+	if calls := checker.snapshot(); len(calls) != 0 {
+		t.Errorf("Committed calls for a cancelled request = %d, want 0", len(calls))
+	}
+}
+
+// TestQueue_DeadlineFallback_ZeroDurationRequestIsDenied proves a request
+// whose own IntervalRequested.Duration is 0 is decided as a denial at the
+// deadline rather than retried forever: grant-as-asked would build a
+// zero-duration interval, which answerFor correctly refuses
+// (ErrGrantZeroDuration), and without the explicit check in
+// attemptFallback that refusal reads as an infrastructure failure and the
+// fallback would retry it up to the bound and then give up silently,
+// never answering a legitimate request.
+func TestQueue_DeadlineFallback_ZeroDurationRequestIsDenied(t *testing.T) {
+	t.Parallel()
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: shortDeadline, RetryBackoff: shortDeadline}, nil)
+	t.Cleanup(q.Close)
+
+	frq := testRequest()
+	frq.IntervalRequested = &sep2.DateTimeInterval{Start: frq.IntervalRequested.Start, Duration: 0}
+	storeRequest(t, frqStore, "dev1", "frq1", frq)
+	q.Submit("dev1", "frq1", frq, time.Now().Unix())
+
+	items := waitForResponse(t, frpStore, "dev1")
+	if len(items) != 1 {
+		t.Fatalf("responses stored = %d, want 1", len(items))
+	}
+	if items[0].Interval == nil || items[0].Interval.Duration != 0 {
+		t.Fatalf("response Interval = %+v, want duration 0", items[0].Interval)
+	}
+	if items[0].EnergyAvailable == nil || items[0].EnergyAvailable.Value != 0 {
+		t.Errorf("EnergyAvailable = %+v, want 0 (a denial, not an echoed grant)", items[0].EnergyAvailable)
+	}
+}
+
+// TestQueue_Answer_RefusesGrantOnCancelledRequest is the operator-path half
+// of the cancellation rule: #670's admin route will call Answer directly,
+// and a Grant reaching it for a cancelled request must be refused, not
+// silently satisfied.
+func TestQueue_Answer_RefusesGrantOnCancelledRequest(t *testing.T) {
+	t.Parallel()
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: time.Hour}, nil)
+	t.Cleanup(q.Close)
+
+	frq := testRequest()
+	frq.RequestStatus.RequestStatus = sep2.RequestStatusCancelled
+	storeRequest(t, frqStore, "dev1", "frq1", frq)
+	q.Submit("dev1", "frq1", frq, time.Now().Unix())
+
+	_, err := q.Answer(context.Background(), "dev1", "frq1", flowreservation.Decision{})
+	if !errors.Is(err, flowreservation.ErrRequestCancelled) {
+		t.Fatalf("Answer(Grant) on a cancelled request: err = %v, want ErrRequestCancelled", err)
+	}
+
+	got, err := frpStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list responses: %v", err)
+	}
+	if len(got.Items) != 0 {
+		t.Errorf("responses stored = %d, want 0; a refused Grant must not have built one", len(got.Items))
+	}
+}
+
+// TestQueue_DeadlineFallback_ThenLateAnswer is #666/#736's coverage HIGH:
+// the deadline fires first (waited for, not raced), and an operator Answer
+// that arrives afterward gets ErrAlreadyAnswered rather than building a
+// second response. TestQueue_ConcurrentAnswerAndFallback_ExactlyOneResponse
+// covers the reverse order under a real race; this pins the order the
+// coverage review found untested, since a mutant clearing the exactly-once
+// state after the fallback answers survives a test where every Answer call
+// finishes before the timer ever fires.
+func TestQueue_DeadlineFallback_ThenLateAnswer(t *testing.T) {
+	t.Parallel()
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: shortDeadline}, nil)
+	t.Cleanup(q.Close)
+
+	frq := testRequest()
+	storeRequest(t, frqStore, "dev1", "frq1", frq)
+	q.Submit("dev1", "frq1", frq, time.Now().Unix())
+
+	waitForResponse(t, frpStore, "dev1")
+
+	_, err := q.Answer(context.Background(), "dev1", "frq1", flowreservation.Decision{Kind: flowreservation.Deny})
+	if !errors.Is(err, flowreservation.ErrAlreadyAnswered) {
+		t.Fatalf("late Answer err = %v, want ErrAlreadyAnswered", err)
+	}
+
+	got, err := frpStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list responses: %v", err)
+	}
+	if len(got.Items) != 1 {
+		t.Fatalf("responses stored = %d, want exactly 1", len(got.Items))
+	}
+}
+
 // TestQueue_PENLowBitsArePEN mirrors the handler-level PEN test: a
 // configured PEN reaches the built response's mRID in its low 32 bits.
 func TestQueue_PENLowBitsArePEN(t *testing.T) {

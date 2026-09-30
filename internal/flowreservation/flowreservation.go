@@ -11,7 +11,7 @@ package flowreservation
 
 import (
 	"errors"
-	"math"
+	"math/big"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 )
@@ -30,6 +30,8 @@ var (
 	ErrNoRequestedPower      = errors.New("flowreservation: operator set power but the request named none")
 	ErrPowerExceedsRequest   = errors.New("flowreservation: granted power exceeds the requested magnitude")
 	ErrPowerReversesRequest  = errors.New("flowreservation: granted power reverses the requested direction")
+	ErrRequestCancelled      = errors.New("flowreservation: cannot grant a cancelled request")
+	ErrGrantZeroDuration     = errors.New("flowreservation: a grant cannot carry interval duration zero, which 10.9.3.2 reserves for a denial")
 )
 
 // DecisionKind selects how a Decision answers a pending request.
@@ -78,10 +80,13 @@ func answerFor(frq sep2.FlowReservationRequest, decision Decision) (sep2.FlowRes
 	if decision.Kind == Deny {
 		// 10.9.3.2: "If a server wants to deny a request, it SHALL create a
 		// FlowReservationResponse with duration equal to zero." interval.start
-		// is the requested start (the design's Q1); energyAvailable and
+		// is the requested start when there is one; a request that named no
+		// window at all has no start to echo, so this falls back to the
+		// request's own creationTime rather than the zero value, which would
+		// be a wire timestamp nobody supplied. energyAvailable and
 		// powerAvailable are both mandatory elements and the standard fixes
 		// neither value on a denial, so our declared convention zeroes both.
-		var start int64
+		start := frq.CreationTime
 		if frq.IntervalRequested != nil {
 			start = frq.IntervalRequested.Start
 		}
@@ -91,9 +96,26 @@ func answerFor(frq sep2.FlowReservationRequest, decision Decision) (sep2.FlowRes
 		return frp, nil
 	}
 
+	// 10.9.3.1: a Cancelled request (RequestStatus 1) is one the client
+	// withdrew; granting it would answer a request nobody is waiting on
+	// any more. Queue's deadline fallback already denies a cancelled
+	// request without reaching here (there is no point trying a grant this
+	// refuses), so this guard is what stops a Grant reaching this request
+	// through Answer instead, once #670 exposes it.
+	if frq.RequestStatus.RequestStatus == sep2.RequestStatusCancelled {
+		return sep2.FlowReservationResponse{}, ErrRequestCancelled
+	}
+
 	interval, err := grantedInterval(frq, decision.Interval)
 	if err != nil {
 		return sep2.FlowReservationResponse{}, err
+	}
+	// A granted interval of duration zero is indistinguishable on the wire
+	// from a denial (10.9.3.2), whether that zero came from the operator's
+	// own override or from echoing a request that asked for a zero-length
+	// window: either way a Grant must never produce it.
+	if interval != nil && interval.Duration == 0 {
+		return sep2.FlowReservationResponse{}, ErrGrantZeroDuration
 	}
 	frp.Interval = interval
 
@@ -150,12 +172,10 @@ func grantedEnergy(frq sep2.FlowReservationRequest, want *sep2.SignedRealEnergy)
 	if frq.EnergyRequested == nil {
 		return nil, ErrNoRequestedEnergy
 	}
-	granted := appliedValue(want.Value, want.Multiplier)
-	requested := appliedValue(frq.EnergyRequested.Value, frq.EnergyRequested.Multiplier)
-	if sign(granted) != 0 && sign(granted) != sign(requested) {
+	if want.Value != 0 && sign64(want.Value) != sign64(frq.EnergyRequested.Value) {
 		return nil, ErrEnergyReversesRequest
 	}
-	if math.Abs(granted) > math.Abs(requested) {
+	if magnitudeExceeds(want.Value, want.Multiplier, frq.EnergyRequested.Value, frq.EnergyRequested.Multiplier) {
 		return nil, ErrEnergyExceedsRequest
 	}
 	cp := *want
@@ -173,27 +193,40 @@ func grantedPower(frq sep2.FlowReservationRequest, want *sep2.ActivePower) (*sep
 	if frq.PowerRequested == nil {
 		return nil, ErrNoRequestedPower
 	}
-	granted := appliedValue(int64(want.Value), want.Multiplier)
-	requested := appliedValue(int64(frq.PowerRequested.Value), frq.PowerRequested.Multiplier)
-	if sign(granted) != 0 && sign(granted) != sign(requested) {
+	if want.Value != 0 && sign64(int64(want.Value)) != sign64(int64(frq.PowerRequested.Value)) {
 		return nil, ErrPowerReversesRequest
 	}
-	if math.Abs(granted) > math.Abs(requested) {
+	if magnitudeExceeds(int64(want.Value), want.Multiplier, int64(frq.PowerRequested.Value), frq.PowerRequested.Multiplier) {
 		return nil, ErrPowerExceedsRequest
 	}
 	cp := *want
 	return &cp, nil
 }
 
-// appliedValue applies a sep2 Multiplier (a power-of-ten exponent) to value,
-// for magnitude and sign comparisons only; it is never used to build a wire
-// value, so float64's precision loss is immaterial at grid-relevant
-// magnitudes.
-func appliedValue(value int64, multiplier int8) float64 {
-	return float64(value) * math.Pow(10, float64(multiplier))
+// magnitudeExceeds reports whether |aVal*10^aMul| > |bVal*10^bMul|, computed
+// exactly with math/big rather than float64. float64 has 53 bits of integer
+// precision: a granted value of 2^53+1 against a requested 2^53 rounds to
+// equal in float64 and passes a magnitude check that should refuse it. Both
+// sides are brought to the smaller of the two multipliers by scaling the
+// other UP with an integer power of ten, so the comparison never divides
+// and never loses a digit.
+func magnitudeExceeds(aVal int64, aMul int8, bVal int64, bMul int8) bool {
+	a := new(big.Int).Abs(big.NewInt(aVal))
+	b := new(big.Int).Abs(big.NewInt(bVal))
+	switch {
+	case aMul > bMul:
+		a.Mul(a, pow10(int64(aMul)-int64(bMul)))
+	case bMul > aMul:
+		b.Mul(b, pow10(int64(bMul)-int64(aMul)))
+	}
+	return a.Cmp(b) > 0
 }
 
-func sign(v float64) int {
+func pow10(exp int64) *big.Int {
+	return new(big.Int).Exp(big.NewInt(10), big.NewInt(exp), nil)
+}
+
+func sign64(v int64) int {
 	switch {
 	case v > 0:
 		return 1

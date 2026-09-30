@@ -67,6 +67,63 @@ func TestAnswerFor_GrantWithOperatorValues(t *testing.T) {
 	}
 }
 
+// TestAnswerFor_GrantRefusedOnCancelledRequest is #736's error-handling
+// LOW: 10.9.3.1 makes RequestStatus 1 (Cancelled) a withdrawal, so a Grant
+// on a cancelled request is refused, whether it comes from the deadline
+// fallback (which never even tries, see Queue.attemptFallback) or an
+// operator's explicit Answer once #670 exists.
+func TestAnswerFor_GrantRefusedOnCancelledRequest(t *testing.T) {
+	t.Parallel()
+	frq := requestWithWindow()
+	frq.RequestStatus.RequestStatus = sep2.RequestStatusCancelled
+
+	_, err := answerFor(frq, Decision{})
+	if !errors.Is(err, ErrRequestCancelled) {
+		t.Errorf("err = %v, want ErrRequestCancelled", err)
+	}
+}
+
+// TestAnswerFor_DenyAllowedOnCancelledRequest: denying a cancelled request
+// is not a Grant, so it is not refused by the cancellation guard.
+func TestAnswerFor_DenyAllowedOnCancelledRequest(t *testing.T) {
+	t.Parallel()
+	frq := requestWithWindow()
+	frq.RequestStatus.RequestStatus = sep2.RequestStatusCancelled
+
+	_, err := answerFor(frq, Decision{Kind: Deny})
+	if err != nil {
+		t.Errorf("answerFor(Deny) on a cancelled request: %v, want nil", err)
+	}
+}
+
+// TestAnswerFor_GrantZeroDurationRefused is #736's small item: 10.9.3.2
+// reserves interval duration zero for a denial, so a Grant can never
+// produce it, whether the zero comes from an operator override or from
+// echoing a request that asked for a zero-length window.
+func TestAnswerFor_GrantZeroDurationRefused(t *testing.T) {
+	t.Parallel()
+
+	t.Run("operator override", func(t *testing.T) {
+		t.Parallel()
+		frq := requestWithWindow()
+		decision := Decision{Kind: Grant, Interval: &sep2.DateTimeInterval{Start: 1000, Duration: 0}}
+		_, err := answerFor(frq, decision)
+		if !errors.Is(err, ErrGrantZeroDuration) {
+			t.Errorf("err = %v, want ErrGrantZeroDuration", err)
+		}
+	})
+
+	t.Run("grant as asked, request itself asked for zero duration", func(t *testing.T) {
+		t.Parallel()
+		frq := requestWithWindow()
+		frq.IntervalRequested = &sep2.DateTimeInterval{Start: 1000, Duration: 0}
+		_, err := answerFor(frq, Decision{})
+		if !errors.Is(err, ErrGrantZeroDuration) {
+			t.Errorf("err = %v, want ErrGrantZeroDuration", err)
+		}
+	})
+}
+
 // TestAnswerFor_Deny is #666's deny branch: interval duration zero,
 // interval.start the requested start, energyAvailable and powerAvailable
 // both zero.
@@ -93,20 +150,21 @@ func TestAnswerFor_Deny(t *testing.T) {
 }
 
 // TestAnswerFor_DenyWithNoRequestedInterval covers a request that named no
-// window at all: the denial still carries a zero-duration interval, start
-// 0, rather than a nil one (energyAvailable and powerAvailable are
-// mandatory elements; so is interval, once EventStatus needs to derive
-// from it).
+// window at all: the denial still carries a zero-duration interval, rather
+// than a nil one (energyAvailable and powerAvailable are mandatory
+// elements; so is interval, once EventStatus needs to derive from it).
+// start falls back to the request's own creationTime, not the zero value:
+// 0 is a real wire timestamp (1970-01-01), and nobody supplied it.
 func TestAnswerFor_DenyWithNoRequestedInterval(t *testing.T) {
 	t.Parallel()
-	frq := sep2.FlowReservationRequest{MRID: "REQ1"}
+	frq := sep2.FlowReservationRequest{MRID: "REQ1", CreationTime: 123456}
 
 	frp, err := answerFor(frq, Decision{Kind: Deny})
 	if err != nil {
 		t.Fatalf("answerFor: %v", err)
 	}
-	if frp.Interval == nil || frp.Interval.Start != 0 || frp.Interval.Duration != 0 {
-		t.Errorf("Interval = %+v, want {Start:0 Duration:0}", frp.Interval)
+	if frp.Interval == nil || frp.Interval.Start != frq.CreationTime || frp.Interval.Duration != 0 {
+		t.Errorf("Interval = %+v, want {Start:%d Duration:0}", frp.Interval, frq.CreationTime)
 	}
 }
 
@@ -127,6 +185,12 @@ func TestAnswerFor_IntervalBounds(t *testing.T) {
 		{"ends after window", sep2.DateTimeInterval{Start: 4500, Duration: 200}, ErrIntervalOutsideWindow},
 		{"exactly the window", sep2.DateTimeInterval{Start: 1000, Duration: 3600}, nil},
 		{"strictly inside", sep2.DateTimeInterval{Start: 1500, Duration: 100}, nil},
+		// The window ends at 4600 (Start 1000 + Duration 3600). These two
+		// pin that exact boundary: one second past it is refused, and a
+		// mutant loosening the end check to outerEnd+1 only shows up here,
+		// not against "ends after window" above, which ends 100s past.
+		{"ends exactly at the window end", sep2.DateTimeInterval{Start: 4500, Duration: 100}, nil},
+		{"ends one second past the window end", sep2.DateTimeInterval{Start: 4500, Duration: 101}, ErrIntervalOutsideWindow},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -175,6 +239,54 @@ func TestAnswerFor_EnergyBounds(t *testing.T) {
 				t.Errorf("err = %v, want %v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestAnswerFor_EnergyBounds_Discharge is TestAnswerFor_EnergyBounds's
+// mirror in the discharging (negative) direction: every bound test above
+// uses a positive request, so a mutant dropping the Abs in the magnitude
+// compare, or one that refuses any negative grant outright rather than
+// only a reversal, both pass every test above and only fail here.
+func TestAnswerFor_EnergyBounds_Discharge(t *testing.T) {
+	t.Parallel()
+	frq := requestWithWindow()
+	frq.EnergyRequested = &sep2.SignedRealEnergy{Value: -10000} // discharging
+
+	for _, tc := range []struct {
+		name    string
+		granted sep2.SignedRealEnergy
+		wantErr error
+	}{
+		{"exceeds magnitude", sep2.SignedRealEnergy{Value: -10001}, ErrEnergyExceedsRequest},
+		{"reverses sign (positive against a discharging request)", sep2.SignedRealEnergy{Value: 1}, ErrEnergyReversesRequest},
+		{"exact magnitude, same sign", sep2.SignedRealEnergy{Value: -10000}, nil},
+		{"lower magnitude, same sign", sep2.SignedRealEnergy{Value: -4000}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := answerFor(frq, Decision{Kind: Grant, Energy: &tc.granted})
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestAnswerFor_EnergyBounds_ExactMagnitude is #736's security LOW: the
+// magnitude compare is exact integer arithmetic, not float64, which loses
+// precision past 2^53 and would read 2^53+1 as equal to 2^53 rather than
+// exceeding it.
+func TestAnswerFor_EnergyBounds_ExactMagnitude(t *testing.T) {
+	t.Parallel()
+	frq := requestWithWindow()
+	const twoPow53 = int64(1) << 53
+	frq.EnergyRequested = &sep2.SignedRealEnergy{Value: twoPow53}
+
+	if _, err := answerFor(frq, Decision{Kind: Grant, Energy: &sep2.SignedRealEnergy{Value: twoPow53}}); err != nil {
+		t.Errorf("granting exactly the requested 2^53: err = %v, want nil", err)
+	}
+	if _, err := answerFor(frq, Decision{Kind: Grant, Energy: &sep2.SignedRealEnergy{Value: twoPow53 + 1}}); !errors.Is(err, ErrEnergyExceedsRequest) {
+		t.Errorf("granting 2^53+1 against a 2^53 request: err = %v, want ErrEnergyExceedsRequest", err)
 	}
 }
 
@@ -233,6 +345,60 @@ func TestAnswerFor_PowerBounds(t *testing.T) {
 	}
 }
 
+// TestAnswerFor_PowerBounds_Discharge mirrors
+// TestAnswerFor_EnergyBounds_Discharge for power.
+func TestAnswerFor_PowerBounds_Discharge(t *testing.T) {
+	t.Parallel()
+	frq := requestWithWindow()
+	frq.PowerRequested = &sep2.ActivePower{Value: -5000} // discharging
+
+	for _, tc := range []struct {
+		name    string
+		granted sep2.ActivePower
+		wantErr error
+	}{
+		{"exceeds magnitude", sep2.ActivePower{Value: -5001}, ErrPowerExceedsRequest},
+		{"reverses sign (positive against a discharging request)", sep2.ActivePower{Value: 1}, ErrPowerReversesRequest},
+		{"exact magnitude, same sign", sep2.ActivePower{Value: -5000}, nil},
+		{"lower magnitude, same sign", sep2.ActivePower{Value: -2000}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := answerFor(frq, Decision{Kind: Grant, Power: &tc.granted})
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestAnswerFor_PowerBounds_ZeroGrant is coverage's LOW: a Value-0 power
+// override (asking for no power at all, e.g. to pair with a zero-power but
+// non-zero-energy grant) is a real value, not the "no override" nil case,
+// and must never be read as a reversal.
+func TestAnswerFor_PowerBounds_ZeroGrant(t *testing.T) {
+	t.Parallel()
+	frq := requestWithWindow()
+	_, err := answerFor(frq, Decision{Kind: Grant, Power: &sep2.ActivePower{Value: 0}})
+	if err != nil {
+		t.Errorf("granting zero power: err = %v, want nil", err)
+	}
+}
+
+// TestAnswerFor_PowerBounds_Multiplier mirrors
+// TestAnswerFor_EnergyBounds_Multiplier for power.
+func TestAnswerFor_PowerBounds_Multiplier(t *testing.T) {
+	t.Parallel()
+	frq := requestWithWindow() // PowerRequested = {Value: 5000, Multiplier: 0} = 5000 W
+
+	if _, err := answerFor(frq, Decision{Kind: Grant, Power: &sep2.ActivePower{Value: 400, Multiplier: 1}}); err != nil {
+		t.Errorf("400e1 = 4000 W, inside 5000 W: err = %v, want nil", err)
+	}
+	if _, err := answerFor(frq, Decision{Kind: Grant, Power: &sep2.ActivePower{Value: 600, Multiplier: 1}}); !errors.Is(err, ErrPowerExceedsRequest) {
+		t.Errorf("600e1 = 6000 W, exceeds 5000 W: err = %v, want ErrPowerExceedsRequest", err)
+	}
+}
+
 // TestAnswerFor_PowerWithNoRequestedPower refuses an operator power value
 // when the request named none.
 func TestAnswerFor_PowerWithNoRequestedPower(t *testing.T) {
@@ -273,12 +439,12 @@ func TestDeriveEventStatus(t *testing.T) {
 	}
 }
 
-// TestDeriveEventStatus_ZeroDurationNeverActive is the denial edge the
-// design flags: this package no longer takes duration at all, so a
-// zero-duration denial reads by the same start-versus-now rule as any
-// grant, Active once its start has passed, never Complete -- the same
+// TestDeriveEventStatus_ZeroDurationReadsActiveNeverComplete is the denial
+// edge the design flags: this package no longer takes duration at all, so
+// a zero-duration denial reads by the same start-versus-now rule as any
+// grant, Active once its start has passed, never Complete, the same
 // property #564 already gives an ended DERControl.
-func TestDeriveEventStatus_ZeroDurationNeverActive(t *testing.T) {
+func TestDeriveEventStatus_ZeroDurationReadsActiveNeverComplete(t *testing.T) {
 	t.Parallel()
 	const start, creationTime = int64(1000), int64(1000)
 

@@ -168,6 +168,56 @@ func TestFlowReservationRequest_LocationHeaderResolves(t *testing.T) {
 	}
 }
 
+// TestFlowReservationRequest_HoldsUntilTheConfiguredDeadline is #736's
+// coverage MEDIUM: a route-level proof that POST answers nothing before
+// its configured deadline elapses, distinct from every other test in this
+// file, which only waits FOR the deadline and never checks the state
+// before it. A wiring mutant that answers synchronously, or a deadline cap
+// that fires at once despite a far-future start, would still pass those;
+// this catches both.
+func TestFlowReservationRequest_HoldsUntilTheConfiguredDeadline(t *testing.T) {
+	t.Parallel()
+
+	const deadline = 150 * time.Millisecond
+	srv, _ := frqServerWithConfig(t, assembly.RouterConfig{FlowReservationDeadline: deadline})
+
+	duration := uint32(3600)
+	farFuture := time.Now().Add(time.Hour).Unix()
+	body, err := xml.Marshal(&sep2.FlowReservationRequest{
+		MRID:              "7172737475767778797A7B7C7D7E7F80",
+		EnergyRequested:   &sep2.SignedRealEnergy{Value: 1000},
+		IntervalRequested: &sep2.DateTimeInterval{Start: farFuture, Duration: duration},
+	})
+	if err != nil {
+		t.Fatalf("marshal FlowReservationRequest: %v", err)
+	}
+	resp, err := http.Post(srv.URL+"/edev/e1/frq", "application/sep+xml", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatalf("POST /edev/e1/frq: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /edev/e1/frq status = %d, want 201", resp.StatusCode)
+	}
+
+	// Before the deadline: nothing answered yet.
+	before, err := http.Get(srv.URL + "/edev/e1/frp")
+	if err != nil {
+		t.Fatalf("GET /edev/e1/frp: %v", err)
+	}
+	var beforeList sep2.FlowReservationResponseList
+	decodeXML(t, before, &beforeList)
+	if len(beforeList.FlowReservationResponse) != 0 {
+		t.Fatalf("FlowReservationResponseList before the deadline has %d members, want 0: the request was answered synchronously or the deadline fired at once", len(beforeList.FlowReservationResponse))
+	}
+
+	// After the deadline: the fallback has answered.
+	list := waitForFRPList(t, srv, "/edev/e1/frp", 1)
+	if len(list.FlowReservationResponse) != 1 {
+		t.Fatalf("FlowReservationResponseList after the deadline has %d members, want 1", len(list.FlowReservationResponse))
+	}
+}
+
 // TestFlowReservationResponse_HrefFromTheListResolves walks the link the client
 // actually walks: POST the request, read the FlowReservationResponseList, take a
 // member's own href, and follow it. The response href is where the server

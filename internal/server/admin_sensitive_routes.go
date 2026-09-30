@@ -21,21 +21,36 @@ var sensitiveAdminPatterns = map[string]struct{}{
 	"GET /api/traffic/":           {},
 }
 
-// sensitiveAdminReadPrefix is the management-pair-read family (#440, #677
-// fix round item 4): GET /api/management-pairs discloses an aggregator's
-// full managed fleet. An exact pattern entry in sensitiveAdminPatterns
-// covered only the one route that existed when it was added; a later GET
-// added below the same path (an audit or export endpoint, say) would have
-// joined the unprotected group by default instead of the protected one, the
-// same gap the certificate and traffic families avoid by being checked as a
-// path family below rather than by a fixed list of exact routes. Checked
-// against the request path directly, not the resolved mux pattern, so it
-// also covers a path with no route registered for it at all: the credential
-// requirement does not wait for the route to exist. The management-pair
-// WRITE routes (create, remove, rekey) are unaffected here: they already
-// require a real credential by default, since they are not on
-// nonSensitiveAdminWrites below.
-const sensitiveAdminReadPrefix = "/api/management-pairs"
+// sensitiveAdminReadPrefixes are read families protected by path prefix
+// rather than by an exact pattern entry in sensitiveAdminPatterns: each
+// discloses another party's data by default, and each is a family that can
+// gain routes over time, so a later GET under the same prefix is covered
+// automatically instead of silently joining the unprotected group the way an
+// exact-pattern list would leave it. Checked against the request path
+// directly, not the resolved mux pattern, so a path with no route registered
+// for it at all is covered too: the credential requirement does not wait for
+// the route to exist.
+//
+//   - /api/management-pairs (#440, #677 fix round item 4): GET discloses an
+//     aggregator's full managed fleet. The WRITE routes (create, remove,
+//     rekey) are unaffected here: they already require a real credential by
+//     default, since they are not on nonSensitiveAdminWrites below.
+//   - /api/derms/fleets (#715 fix round 1, HIGH, all four review lanes):
+//     GET discloses every aggregator's managed LFDIs, DER status and
+//     measurements, a wider disclosure than /api/management-pairs, which
+//     already required a credential.
+var sensitiveAdminReadPrefixes = []string{"/api/management-pairs", "/api/derms/fleets"}
+
+// isSensitiveAdminReadPath reports whether path falls under one of
+// sensitiveAdminReadPrefixes.
+func isSensitiveAdminReadPath(path string) bool {
+	for _, prefix := range sensitiveAdminReadPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 // nonSensitiveAdminWrites is the explicit, reviewed allowlist of admin WRITE
 // routes that do not need a real credential: FSA and end-device management,
@@ -81,7 +96,7 @@ func requireCredentialForSensitiveRoutes(mux *recordingMux, guard func(http.Hand
 			guarded.ServeHTTP(w, r)
 			return
 		}
-		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.HasPrefix(r.URL.Path, sensitiveAdminReadPrefix) {
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && isSensitiveAdminReadPath(r.URL.Path) {
 			guarded.ServeHTTP(w, r)
 			return
 		}

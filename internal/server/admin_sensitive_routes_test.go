@@ -137,6 +137,11 @@ func TestSensitiveRoutesRefuseBypassAdmission(t *testing.T) {
 		// because no handler answers this path even with a valid
 		// credential; the point is that credential check runs first.
 		{name: "GET /api/management-pairs/ (future sub-route, no handler yet)", method: http.MethodGet, path: "/api/management-pairs/audit", wantReachedStatus: http.StatusNotFound},
+		// #715 fix round 1, HIGH (all four review lanes): this route
+		// discloses every aggregator's managed LFDIs, DER status and
+		// measurements, a wider disclosure than GET /api/management-pairs,
+		// which already required a credential.
+		{name: "GET /api/derms/fleets", method: http.MethodGet, path: "/api/derms/fleets", wantReachedStatus: http.StatusOK},
 	}
 
 	for _, tc := range cases {
@@ -221,12 +226,13 @@ func TestSensitiveRoutesStillRefuseUnderNonLoopbackExposure(t *testing.T) {
 // added to sensitiveAdminPatterns fails here instead of silently joining an
 // unprotected family.
 //
-// The management-pair-read family (#440, #677 fix round item 4) is checked
-// by path prefix at request time instead (sensitiveAdminReadPrefix in
-// admin_sensitive_routes.go), not by exact pattern membership here: unlike
-// certs and traffic, it names only one existing route today, so an
-// exact-pattern coverage test could not tell a covered new route from an
-// uncovered one until the new route exists to name. sawManagementPairsGet
+// The management-pair-read and DERMS fleet-read families (#440, #677 fix
+// round item 4; #715 fix round 1) are checked by path prefix at request time
+// instead (sensitiveAdminReadPrefixes in admin_sensitive_routes.go), not by
+// exact pattern membership here: unlike certs and traffic, each names only
+// its one existing route today, so an exact-pattern coverage test could not
+// tell a covered new route from an uncovered one until the new route exists
+// to name. sawManagementPairsGet
 // below is the vacuity control that the family still has something to
 // protect; TestSensitiveRoutesRefuseBypassAdmission's
 // "future sub-route, no handler yet" case is what proves the prefix itself,

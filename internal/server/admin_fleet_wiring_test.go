@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -90,5 +91,65 @@ func TestNewAdminFleetHandler_PartiallyWiredStoresDoNotPanic(t *testing.T) {
 	handler.HandleListFleets(h)(w, req) // must not panic
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+}
+
+// fullyWiredFleetStores returns a *Stores with every field
+// newAdminFleetHandler reads set to a fresh, empty concrete store, so a
+// per-field test can null out exactly one and see both sides of that field's
+// store.IsAbsent guard (admin_fleet_wiring.go lines 39, 42, 45, 51 named in
+// the #715 fix round 1 review, plus EndDevices and MirrorUsagePoints).
+func fullyWiredFleetStores() *Stores {
+	return &Stores{
+		EndDeviceManagers:   memory.NewEndDeviceManagementStore(),
+		EndDevices:          memory.NewEndDeviceStore(),
+		DERs:                memory.NewScopedStore[sep2.DER](),
+		DERStatuses:         memory.NewScopedStore[sep2.DERStatus](),
+		DERAvailabilities:   memory.NewScopedStore[sep2.DERAvailability](),
+		MirrorUsagePoints:   memory.NewStore[sep2.MirrorUsagePoint](),
+		MirrorMeterReadings: memory.NewScopedStore[sep2.MirrorMeterReading](),
+	}
+}
+
+// TestNewAdminFleetHandler_EachOptionalStoreGuardedIndependently exercises
+// every store.IsAbsent guard in newAdminFleetHandler on both sides: present,
+// wired into the matching handler field, and absent, leaving that field nil
+// (never a typed-nil interface). A mutation that drops, inverts, or
+// misassigns one guard fails on that field alone.
+func TestNewAdminFleetHandler_EachOptionalStoreGuardedIndependently(t *testing.T) {
+	cases := []struct {
+		name    string
+		clear   func(*Stores)
+		present func(*handler.AdminFleetHandler) bool // true when the field this guard sets is non-nil
+	}{
+		{"EndDevices", func(s *Stores) { s.EndDevices = nil }, func(h *handler.AdminFleetHandler) bool { return h.EndDevices != nil }},
+		{"DERs", func(s *Stores) { s.DERs = nil }, func(h *handler.AdminFleetHandler) bool { return h.DERs != nil }},
+		{"DERStatuses", func(s *Stores) { s.DERStatuses = nil }, func(h *handler.AdminFleetHandler) bool { return h.DERStatuses != nil }},
+		{"DERAvailabilities", func(s *Stores) { s.DERAvailabilities = nil }, func(h *handler.AdminFleetHandler) bool { return h.DERAvailabilities != nil }},
+		{"MirrorUsagePoints", func(s *Stores) { s.MirrorUsagePoints = nil }, func(h *handler.AdminFleetHandler) bool { return h.MirrorUsagePoints != nil }},
+		{"MirrorMeterReadings", func(s *Stores) { s.MirrorMeterReadings = nil }, func(h *handler.AdminFleetHandler) bool { return h.MirrorMeterReadings != nil }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name+"/present", func(t *testing.T) {
+			h := newAdminFleetHandler(fullyWiredFleetStores())
+			if h == nil {
+				t.Fatal("newAdminFleetHandler = nil, want a handler")
+			}
+			if !tc.present(h) {
+				t.Errorf("%s field is nil, want it wired when the store is present", tc.name)
+			}
+		})
+		t.Run(tc.name+"/absent", func(t *testing.T) {
+			stores := fullyWiredFleetStores()
+			tc.clear(stores)
+			h := newAdminFleetHandler(stores)
+			if h == nil {
+				t.Fatal("newAdminFleetHandler = nil, want a handler (only EndDeviceManagers gates mounting)")
+			}
+			if tc.present(h) {
+				t.Errorf("%s field is non-nil, want nil when the store is absent", tc.name)
+			}
+		})
 	}
 }

@@ -11,9 +11,9 @@ const DefaultDeadline = 300 * time.Second
 // not a decision refusal.
 const DefaultRetryBackoff = 5 * time.Second
 
-// DefaultRetryAttempts bounds how many times the deadline fallback retries
-// an infrastructure failure before giving up and leaving the request
-// unanswered, logged.
+// DefaultRetryAttempts is the total number of attempts (the first try
+// included) the deadline fallback makes against an infrastructure failure
+// before giving up and leaving the request unanswered, logged.
 const DefaultRetryAttempts = 5
 
 // Config bounds the deadline fallback. The zero value takes the package
@@ -30,8 +30,11 @@ type Config struct {
 	// disappeared. Zero takes DefaultRetryBackoff.
 	RetryBackoff time.Duration
 
-	// RetryAttempts bounds the number of fallback attempts (the first try
-	// plus this many retries) before Queue gives up and logs. Zero takes
+	// RetryAttempts is the total number of fallback attempts, the first
+	// try included, before Queue gives up and logs: attempt 1 is the
+	// deadline's own fire, and Queue stops once attempt reaches
+	// RetryAttempts (so RetryAttempts=3 means 3 Create calls total, 2
+	// retries after the first try, never RetryAttempts+1). Zero takes
 	// DefaultRetryAttempts.
 	RetryAttempts int
 }

@@ -24,6 +24,12 @@ type stubFRQReader struct {
 	requests     map[string]sep2.FlowReservationRequest
 	failGetTimes int
 	getCalls     int
+	// deleteAfterGetCall, when equal to the 1-based getCalls count of a
+	// successful lookup, removes that entry immediately after returning
+	// it, so the NEXT Get for the same key sees store.ErrNotFound. Used to
+	// simulate the request disappearing between attemptFallback's own Get
+	// and build's internal one (build's NotFound branch).
+	deleteAfterGetCall int
 }
 
 func (s *stubFRQReader) Get(_ context.Context, parentID, id string) (sep2.FlowReservationRequest, error) {
@@ -34,11 +40,21 @@ func (s *stubFRQReader) Get(_ context.Context, parentID, id string) (sep2.FlowRe
 		s.failGetTimes--
 		return sep2.FlowReservationRequest{}, errors.New("boom: transient get failure")
 	}
-	frq, ok := s.requests[parentID+"/"+id]
+	key := parentID + "/" + id
+	frq, ok := s.requests[key]
 	if !ok {
 		return sep2.FlowReservationRequest{}, store.ErrNotFound
 	}
+	if s.deleteAfterGetCall == s.getCalls {
+		delete(s.requests, key)
+	}
 	return frq, nil
+}
+
+func (s *stubFRQReader) getCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.getCalls
 }
 
 func (s *stubFRQReader) put(parentID, id string, frq sep2.FlowReservationRequest) {
@@ -64,6 +80,12 @@ type stubFRPStore struct {
 	created         map[string]sep2.FlowReservationResponse
 	failCreateTimes int
 	createCalls     int
+
+	// forceAlreadyExists, when true, makes every Create answer
+	// store.ErrAlreadyExists regardless of the map's own state: it isolates
+	// build's mapping of that error to ErrAlreadyAnswered from whatever a
+	// real store's own duplicate-key logic would need to trigger it.
+	forceAlreadyExists bool
 }
 
 func (s *stubFRPStore) Get(_ context.Context, parentID, id string) (sep2.FlowReservationResponse, error) {
@@ -76,6 +98,12 @@ func (s *stubFRPStore) Get(_ context.Context, parentID, id string) (sep2.FlowRes
 	return r, nil
 }
 
+// Create refuses a duplicate key with store.ErrAlreadyExists, matching
+// memory.ScopedStore's real contract: #736's re-review found that
+// exactly-once rests entirely on this refusal once a failed attempt has
+// pruned its keyLock entry (see queue.go's build and lockKey comments), and
+// a stub that silently overwrote instead could not catch a regression
+// there.
 func (s *stubFRPStore) Create(_ context.Context, parentID, id string, resource sep2.FlowReservationResponse) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -84,10 +112,17 @@ func (s *stubFRPStore) Create(_ context.Context, parentID, id string, resource s
 		s.failCreateTimes--
 		return errors.New("boom: transient create failure")
 	}
+	if s.forceAlreadyExists {
+		return store.ErrAlreadyExists
+	}
+	key := parentID + "/" + id
+	if _, exists := s.created[key]; exists {
+		return store.ErrAlreadyExists
+	}
 	if s.created == nil {
 		s.created = map[string]sep2.FlowReservationResponse{}
 	}
-	s.created[parentID+"/"+id] = resource
+	s.created[key] = resource
 	return nil
 }
 
@@ -238,6 +273,15 @@ func TestQueue_Fallback_GivesUpAfterBoundedRetries(t *testing.T) {
 	if n := frpStore.count(); n != 0 {
 		t.Errorf("responses created = %d, want 0 (Create never succeeded)", n)
 	}
+	if got := q.GivenUpCount(); got != 1 {
+		t.Errorf("GivenUpCount() = %d, want 1", got)
+	}
+	q.mu.Lock()
+	_, stillTracked := q.timers[queueKey("dev1", "frq1")]
+	q.mu.Unlock()
+	if stillTracked {
+		t.Error("timers still holds an entry after giving up: the give-up branch must forget it")
+	}
 }
 
 // TestQueue_Fallback_RequestGoneStopsRetrying is #736's error-handling
@@ -260,11 +304,55 @@ func TestQueue_Fallback_RequestGoneStopsRetrying(t *testing.T) {
 		t.Errorf("responses created = %d, want 0", n)
 	}
 
+	// The precise count is what distinguishes "stopped at once" from
+	// "retried all the way to the RetryAttempts=10 bound and then gave
+	// up", which would also end at 0 responses and empty timers: exactly
+	// 1 means attemptFallback's own Get saw NotFound and returned without
+	// ever calling retryOrGiveUp.
+	if got := frqStore.getCallCount(); got != 1 {
+		t.Errorf("frq.Get calls = %d, want exactly 1 (stopped at once, not retried to the bound)", got)
+	}
+	if got := q.GivenUpCount(); got != 0 {
+		t.Errorf("GivenUpCount() = %d, want 0: a gone request is not a give-up, it is answered by definition", got)
+	}
+
 	q.mu.Lock()
 	_, stillTracked := q.timers[queueKey("dev1", "frq1")]
 	q.mu.Unlock()
 	if stillTracked {
 		t.Error("timers still tracks a request the fallback already gave up on")
+	}
+}
+
+// TestQueue_Build_NotFoundBetweenTheTwoGets covers build's OWN internal
+// frq.Get, distinct from attemptFallback's: the request exists when
+// attemptFallback reads it (so a decision is computed), and is gone by the
+// time build re-reads it (the shape an EndDevice delete landing between
+// the two would leave). build's own NotFound wrapping must still surface
+// as store.ErrNotFound, so attemptFallback recognizes it as "gone" rather
+// than retrying.
+func TestQueue_Build_NotFoundBetweenTheTwoGets(t *testing.T) {
+	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frqStore := &stubFRQReader{deleteAfterGetCall: 1}
+	frqStore.put("dev1", "frq1", frq)
+	frpStore := &stubFRPStore{}
+	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Millisecond, RetryBackoff: 2 * time.Millisecond, RetryAttempts: 10}, nil)
+	t.Cleanup(q.Close)
+
+	q.Submit("dev1", "frq1", frq, 0)
+
+	time.Sleep(50 * time.Millisecond)
+	if n := frpStore.count(); n != 0 {
+		t.Errorf("responses created = %d, want 0", n)
+	}
+	if got := frqStore.getCallCount(); got != 2 {
+		t.Errorf("frq.Get calls = %d, want exactly 2 (attemptFallback's own, then build's internal one finding it gone)", got)
+	}
+	q.mu.Lock()
+	_, stillTracked := q.timers[queueKey("dev1", "frq1")]
+	q.mu.Unlock()
+	if stillTracked {
+		t.Error("timers still tracks a request build found gone on its own internal Get")
 	}
 }
 
@@ -377,5 +465,154 @@ func TestQueue_Submit_AfterCloseIsRefused(t *testing.T) {
 	q.mu.Unlock()
 	if timers != 0 {
 		t.Errorf("timers entries after Submit-post-Close = %d, want 0", timers)
+	}
+}
+
+// TestQueue_RetryOrGiveUp_ClosedSkipsScheduling is the third give-up-path
+// mutant #736's coverage re-review named: Close between a failed attempt
+// and its retry being scheduled must stop the retry from being scheduled
+// at all, the same refusal Submit gives, not just stop timers that already
+// existed when Close ran.
+func TestQueue_RetryOrGiveUp_ClosedSkipsScheduling(t *testing.T) {
+	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frqStore := &stubFRQReader{}
+	frqStore.put("dev1", "frq1", frq)
+	frpStore := &stubFRPStore{failCreateTimes: 1000}
+	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Millisecond, RetryBackoff: 40 * time.Millisecond, RetryAttempts: 10}, nil)
+
+	q.Submit("dev1", "frq1", frq, 0)
+	waitForCount(t, frpStore.createCallCount, 1) // the first (failed) attempt has run and scheduled a retry
+
+	q.Close()
+	time.Sleep(80 * time.Millisecond) // well past the 40ms backoff the pending retry would have fired at
+
+	if got := frpStore.createCallCount(); got != 1 {
+		t.Errorf("Create calls = %d, want exactly 1: Close must stop the pending retry from ever firing", got)
+	}
+}
+
+// TestQueue_Fallback_LateAnswerClearsTheRetryTimer is #736's error-handling
+// LOW: when an Answer call wins between a failed attempt and its scheduled
+// retry, the retry still fires and finds ErrAlreadyAnswered; it must
+// forget its timers entry there rather than leaving a stale one, since
+// nothing else will ever clean it up.
+func TestQueue_Fallback_LateAnswerClearsTheRetryTimer(t *testing.T) {
+	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frqStore := &stubFRQReader{}
+	frqStore.put("dev1", "frq1", frq)
+	frpStore := &stubFRPStore{failCreateTimes: 1}
+	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Millisecond, RetryBackoff: 40 * time.Millisecond}, nil)
+	t.Cleanup(q.Close)
+
+	q.Submit("dev1", "frq1", frq, 0)
+	waitForCount(t, frpStore.createCallCount, 1) // the first (failed) attempt has run and scheduled a retry
+
+	if _, err := q.Answer(context.Background(), "dev1", "frq1", Decision{}); err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+
+	time.Sleep(80 * time.Millisecond) // let the scheduled retry fire and find ErrAlreadyAnswered
+
+	q.mu.Lock()
+	_, stillTracked := q.timers[queueKey("dev1", "frq1")]
+	q.mu.Unlock()
+	if stillTracked {
+		t.Error("timers still holds an entry after the late-won retry fired and found ErrAlreadyAnswered")
+	}
+	if n := frpStore.count(); n != 1 {
+		t.Errorf("responses stored = %d, want exactly 1", n)
+	}
+}
+
+// TestQueue_Build_GetGuardAloneShortCircuitsBeforeCreate isolates the
+// frp.Get pre-check: seeding an existing response directly (bypassing
+// build) and then answering must refuse before ever calling Create, not
+// merely end in the same ErrAlreadyAnswered that Create's own
+// ErrAlreadyExists mapping would also produce.
+func TestQueue_Build_GetGuardAloneShortCircuitsBeforeCreate(t *testing.T) {
+	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frqStore := &stubFRQReader{}
+	frqStore.put("dev1", "frq1", frq)
+	frpStore := &stubFRPStore{}
+	if err := frpStore.Create(context.Background(), "dev1", "frq1", sep2.FlowReservationResponse{Event: sep2.Event{MRID: "EXISTING"}}); err != nil {
+		t.Fatalf("seed existing response: %v", err)
+	}
+
+	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Hour}, nil)
+	t.Cleanup(q.Close)
+
+	if _, err := q.Answer(context.Background(), "dev1", "frq1", Decision{}); !errors.Is(err, ErrAlreadyAnswered) {
+		t.Fatalf("Answer on an already-answered request: err = %v, want ErrAlreadyAnswered", err)
+	}
+	if got := frpStore.createCallCount(); got != 1 { // the 1 seed call only; the guard must add none
+		t.Errorf("Create calls = %d, want 1 (the seed only): the frp.Get pre-check must refuse before ever attempting another Create", got)
+	}
+}
+
+// TestQueue_Build_MapsCreateAlreadyExistsToErrAlreadyAnswered isolates
+// build's OWN mapping of store.ErrAlreadyExists to ErrAlreadyAnswered,
+// independent of whatever triggered it in a real store and independent of
+// the frp.Get pre-check (which never fires here, since forceAlreadyExists
+// answers Create's refusal without the key ever being in the stub's map,
+// so Get still reports store.ErrNotFound).
+func TestQueue_Build_MapsCreateAlreadyExistsToErrAlreadyAnswered(t *testing.T) {
+	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &sep2.SignedRealEnergy{Value: 10000}}
+	frqStore := &stubFRQReader{}
+	frqStore.put("dev1", "frq1", frq)
+	frpStore := &stubFRPStore{forceAlreadyExists: true}
+	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Hour}, nil)
+	t.Cleanup(q.Close)
+
+	if _, err := q.Answer(context.Background(), "dev1", "frq1", Decision{}); !errors.Is(err, ErrAlreadyAnswered) {
+		t.Fatalf("err = %v, want ErrAlreadyAnswered", err)
+	}
+	if got := frpStore.createCallCount(); got != 1 {
+		t.Errorf("Create calls = %d, want 1 (the Get pre-check must not have refused it first)", got)
+	}
+}
+
+// TestStubFRPStore_CreateRefusesADuplicate isolates the OTHER exactly-once
+// guard directly at the store level, independent of Queue's own locking:
+// once a failed attempt has pruned its keyLock entry (see lockKey's
+// comment), a caller that arrives fresh no longer serializes against one
+// already in flight, so FRPStore.Create refusing a duplicate key is what
+// is actually left to keep the result to exactly one response, the same
+// contract memory.ScopedStore.Create already has to honor. Reverting this
+// stub to overwrite-on-Create, the shape it had before #736's re-review,
+// makes this fail immediately.
+func TestStubFRPStore_CreateRefusesADuplicate(t *testing.T) {
+	frpStore := &stubFRPStore{}
+	first := sep2.FlowReservationResponse{Subject: "first"}
+	second := sep2.FlowReservationResponse{Subject: "second"}
+
+	if err := frpStore.Create(context.Background(), "dev1", "frq1", first); err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+	if err := frpStore.Create(context.Background(), "dev1", "frq1", second); !errors.Is(err, store.ErrAlreadyExists) {
+		t.Fatalf("second Create for the same key: err = %v, want store.ErrAlreadyExists", err)
+	}
+
+	got, err := frpStore.Get(context.Background(), "dev1", "frq1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Subject != "first" {
+		t.Errorf("stored response Subject = %q, want %q: the refused second Create must not have overwritten it", got.Subject, "first")
+	}
+}
+
+// TestDefaultDeadline_Value and TestDefaultRetryBackoff_Value pin the
+// literal durations, not just each constant compared with itself (which a
+// test using DefaultDeadline on both sides of an equality would still pass
+// after the constant changed).
+func TestDefaultDeadline_Value(t *testing.T) {
+	if DefaultDeadline != 300*time.Second {
+		t.Errorf("DefaultDeadline = %s, want 300s", DefaultDeadline)
+	}
+}
+
+func TestDefaultRetryBackoff_Value(t *testing.T) {
+	if DefaultRetryBackoff != 5*time.Second {
+		t.Errorf("DefaultRetryBackoff = %s, want 5s", DefaultRetryBackoff)
 	}
 }

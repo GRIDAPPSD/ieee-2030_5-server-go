@@ -308,6 +308,24 @@ func TestAnswerFor_EnergyBounds_Multiplier(t *testing.T) {
 	}
 }
 
+// TestAnswerFor_EnergyBounds_RequestMultiplierAboveGrant is
+// TestAnswerFor_EnergyBounds_Multiplier's mirror: there the GRANT carried
+// the larger multiplier, exercising magnitudeExceeds's aMul > bMul branch;
+// here the REQUEST does, exercising the bMul > aMul branch, which the
+// other test's shape cannot reach.
+func TestAnswerFor_EnergyBounds_RequestMultiplierAboveGrant(t *testing.T) {
+	t.Parallel()
+	frq := requestWithWindow()
+	frq.EnergyRequested = &sep2.SignedRealEnergy{Value: 100, Multiplier: 2} // 10000 Wh applied
+
+	if _, err := answerFor(frq, Decision{Kind: Grant, Energy: &sep2.SignedRealEnergy{Value: 9999, Multiplier: 0}}); err != nil {
+		t.Errorf("9999 Wh, inside 10000 Wh (100e2): err = %v, want nil", err)
+	}
+	if _, err := answerFor(frq, Decision{Kind: Grant, Energy: &sep2.SignedRealEnergy{Value: 10001, Multiplier: 0}}); !errors.Is(err, ErrEnergyExceedsRequest) {
+		t.Errorf("10001 Wh, exceeds 10000 Wh (100e2): err = %v, want ErrEnergyExceedsRequest", err)
+	}
+}
+
 // TestAnswerFor_EnergyWithNoRequestedEnergy refuses an operator energy
 // value when the request named none.
 func TestAnswerFor_EnergyWithNoRequestedEnergy(t *testing.T) {

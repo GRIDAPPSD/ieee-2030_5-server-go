@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -34,10 +35,6 @@ type FRPStore interface {
 type timer interface {
 	Stop() bool
 }
-
-// ErrQueueClosed is Submit's outcome after Close: the queue schedules no
-// more fallbacks once shut down.
-var ErrQueueClosed = errors.New("flowreservation: queue is closed")
 
 // Queue holds every FlowReservationRequest awaiting an answer and, for each,
 // fires the deadline fallback (#666 D1/D2) if the operator has not answered
@@ -70,6 +67,29 @@ type Queue struct {
 	closed   bool
 	timers   map[string]timer
 	keyLocks map[string]*sync.Mutex
+
+	// givenUp counts requests the deadline fallback permanently failed to
+	// answer, read through GivenUpCount. Accessed with sync/atomic, not mu:
+	// it is incremented from retryOrGiveUp without holding mu across the
+	// log line that precedes it.
+	givenUp uint64
+}
+
+// GivenUpCount reports how many requests the deadline fallback has
+// permanently failed to answer, after exhausting Config.RetryAttempts on
+// an infrastructure failure (never on a decision refusal, which is not
+// retried at all). This is the fix-round answer to #736's "visible beyond
+// one log line": the alternative offered was a server-authored
+// IEEE 2030.5-2023 10.9.4 FR_SCHEDULING_ERROR LogEvent, a SHOULD, not a
+// SHALL. This codebase has no existing pattern for a server-authored
+// LogEvent (the /edev/{id}/lel route is client-write, server-read only;
+// nothing here ever originates one), so building a conformant entry
+// (FunctionSet, LogEventCode, ProfileID, PEN) is a new write path and its
+// own issue, not a fix-round addition. The counter is simple today and
+// gives #670's admin surface, or a metrics endpoint, a real value to read
+// once either exists.
+func (q *Queue) GivenUpCount() uint64 {
+	return atomic.LoadUint64(&q.givenUp)
 }
 
 // NewQueue builds a Queue. checker nil takes PermissiveCommitmentChecker
@@ -110,7 +130,7 @@ func queueKey(edevID, frqID string) string {
 // fallback delay at the requested start (D1: "never later than the
 // requested start"). Submit after Close does nothing: it logs and returns,
 // since the handler's Submitter interface has no error return for it to
-// carry ErrQueueClosed through.
+// carry a refusal through.
 func (q *Queue) Submit(edevID, frqID string, frq sep2.FlowReservationRequest, createdAt int64) {
 	key := queueKey(edevID, frqID)
 	delay := q.deadlineDelay(frq, createdAt)
@@ -118,7 +138,7 @@ func (q *Queue) Submit(edevID, frqID string, frq sep2.FlowReservationRequest, cr
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.closed {
-		log.Printf("flowreservation: Submit %s/%s after Close: %v", edevID, frqID, ErrQueueClosed)
+		log.Printf("flowreservation: Submit %s/%s after Close: refused", edevID, frqID)
 		return
 	}
 	q.timers[key] = q.after(delay, func() {
@@ -216,6 +236,11 @@ func (q *Queue) attemptFallback(ctx context.Context, edevID, frqID string, attem
 
 	if _, err := q.build(ctx, edevID, frqID, decision); err != nil {
 		if errors.Is(err, ErrAlreadyAnswered) {
+			// An Answer call won between this attempt's failure and its
+			// retry being scheduled: the retry that just fired has nothing
+			// left to do, and forgetting it is what keeps timers from
+			// holding an entry no future attempt will ever consult again.
+			q.forgetTimer(edevID, frqID)
 			return
 		}
 		if errors.Is(err, store.ErrNotFound) {
@@ -245,6 +270,7 @@ func (q *Queue) forgetTimer(edevID, frqID string) {
 func (q *Queue) retryOrGiveUp(ctx context.Context, edevID, frqID string, attempt int, cause error) {
 	if attempt >= q.cfg.RetryAttempts {
 		log.Printf("flowreservation: deadline fallback: %s/%s: giving up after %d attempt(s): %v", edevID, frqID, attempt, cause)
+		atomic.AddUint64(&q.givenUp, 1)
 		q.forgetTimer(edevID, frqID)
 		return
 	}
@@ -285,9 +311,7 @@ func (q *Queue) Answer(ctx context.Context, edevID, frqID string, decision Decis
 }
 
 // build is the one code path that ever constructs a FlowReservationResponse
-// (#666's first criterion): the deadline fallback and Answer both call it,
-// and keyLock serializes them per request so only the first caller to reach
-// it builds a response; the other gets ErrAlreadyAnswered.
+// (#666's first criterion): the deadline fallback and Answer both call it.
 //
 // The response is stored under frqID itself, the same id the request was
 // stored under (in FRPStore, a separate collection from FRQReader's, so the
@@ -295,6 +319,13 @@ func (q *Queue) Answer(ctx context.Context, edevID, frqID string, decision Decis
 // "does this request already have a response" durably, in place of an
 // in-memory map that would otherwise grow by one entry for every request
 // ever answered over the life of the process.
+//
+// Exactly-once rests on FRPStore.Create refusing a duplicate key with
+// store.ErrAlreadyExists (mapped to ErrAlreadyAnswered below), not on
+// keyLock. keyLock only serializes the COMMON case, where nothing has
+// failed, so a caller that finds the key already locked waits instead of
+// wasting a full attempt; see lockKey's own comment for why it cannot be
+// more than that once a failed attempt has pruned its entry.
 func (q *Queue) build(ctx context.Context, edevID, frqID string, decision Decision) (sep2.FlowReservationResponse, error) {
 	key := queueKey(edevID, frqID)
 	unlock := q.lockKey(key)
@@ -369,13 +400,16 @@ func (q *Queue) build(ctx context.Context, edevID, frqID string, decision Decisi
 //
 // build removes key from keyLocks again once it is done (still holding l),
 // so the map does not grow by one entry per request for the life of the
-// process. That is safe: any goroutine already waiting on l got its
-// reference before the deletion and is unaffected by it, and a goroutine
-// that looks the key up afterward (necessarily after build's own q.mu
-// section, since both go through q.mu) only does so once build has already
-// made the durable, store-backed exactly-once check (frp.Get/Create) the
-// correct answer, so a freshly made mutex for that same key is still
-// exclusive in every way that matters.
+// process. That pruning is NOT a serialization guarantee by itself, and
+// the comment that used to claim a fresh mutex stays "exclusive in every
+// way that matters" was wrong: after a FAILED attempt prunes its entry
+// (nothing was written, so there is nothing for a later reader to have
+// observed), two callers that each find the key absent get two DIFFERENT
+// mutexes and run build concurrently, both reaching FRPStore.Create. What
+// still holds exactly-once is Create refusing the second of them with
+// store.ErrAlreadyExists, exactly as memory.ScopedStore.Create does.
+// lockKey's only remaining job is to avoid a wasted duplicate attempt in
+// the common, non-racing case.
 func (q *Queue) lockKey(key string) func() {
 	q.mu.Lock()
 	l, ok := q.keyLocks[key]

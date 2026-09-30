@@ -195,7 +195,7 @@ func TestFlowReservationRequest_HoldsUntilTheConfiguredDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST /edev/e1/frq: %v", err)
 	}
-	_ = resp.Body.Close()
+	_ = resp.Body.Close() // response already read via StatusCode below; a close error is immaterial to the test
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /edev/e1/frq status = %d, want 201", resp.StatusCode)
 	}

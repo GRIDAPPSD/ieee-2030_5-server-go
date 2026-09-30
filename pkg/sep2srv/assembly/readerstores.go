@@ -2,7 +2,6 @@ package assembly
 
 import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -17,8 +16,11 @@ import (
 // config value (a PIN resolver), not a store. AdminFSAs and Subscriptions
 // are bespoke admin and notification planes with no existing reader/writer
 // interface split, and no acceptance criterion for this handle names either
-// as a read consumer's need; narrowing them is future work for whichever
-// consumer first needs to read one.
+// as a read consumer's need. DERControlLifecycles is unlike every other
+// mirrored field: its absence is the ordinary pre-issuer state (see
+// Stores.DERControlLifecycles), not a misconfiguration, so requireScoped's
+// "not wired" log would fire falsely on most deployments today. Narrowing
+// all four is future work for whichever consumer first needs to read one.
 type ReaderStores struct {
 	EndDevices        store.EndDeviceReader
 	EndDeviceManagers store.EndDeviceManagementReader
@@ -37,9 +39,6 @@ type ReaderStores struct {
 	DERControls        store.ScopedReader[sep2.DERControl]
 	DefaultDERControls store.ScopedReader[sep2.DefaultDERControl]
 	DERCurves          store.ResourceReader[sep2.DERCurve]
-	// DERControlLifecycles mirrors Stores.DERControlLifecycles: absent means
-	// no admin issuer is wired, same as on the write side.
-	DERControlLifecycles store.ScopedReader[dercontrol.LifecycleRecord]
 
 	FSAs store.ScopedReader[sep2.FunctionSetAssignments]
 
@@ -115,8 +114,6 @@ func NewReaderStores(s *Stores) *ReaderStores {
 		DERControls:        store.AsScopedReader(requireScoped(s.DERControls, "DERControls")),
 		DefaultDERControls: store.AsScopedReader(requireScoped(s.DefaultDERControls, "DefaultDERControls")),
 		DERCurves:          store.AsReader(requireResource(s.DERCurves, "DERCurves")),
-
-		DERControlLifecycles: store.AsScopedReader(requireScoped(s.DERControlLifecycles, "DERControlLifecycles")),
 
 		FSAs: store.AsScopedReader(requireScoped(s.FSAs, "FSAs")),
 

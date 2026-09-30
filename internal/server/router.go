@@ -71,10 +71,12 @@ type Stores struct {
 	DERControls        *memory.ScopedStore[sep2.DERControl]
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]
 	DERCurves          *memory.Store[sep2.DERCurve]
-	// DERControlLifecycles is nil until an admin issuer (internal/dercontrol,
-	// wired by a later issue) is given one to write to. See
-	// assembly.Stores.DERControlLifecycles for what its absence means to the
-	// protocol routes.
+	// DERControlLifecycles is wired (Run populates it, in-memory only, like
+	// DERControls above) but nothing writes to it yet: no admin issuer
+	// (internal/dercontrol) is constructed until its own admin route lands.
+	// Empty and wired behaves identically to nil here, since a control with
+	// no lifecycle record is served unchanged either way; see
+	// assembly.Stores.DERControlLifecycles for the protocol-route detail.
 	DERControlLifecycles *memory.ScopedStore[dercontrol.LifecycleRecord]
 
 	// FSA store

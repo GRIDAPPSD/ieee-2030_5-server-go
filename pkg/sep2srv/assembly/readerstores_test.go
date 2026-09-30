@@ -137,6 +137,8 @@ var readerStoresExcludedFields = map[string]string{
 	"RegistrationPolicy": "provisioning config, not a store",
 	"AdminFSAs":          "a bespoke admin plane with no reader/writer split",
 	"Subscriptions":      "a bespoke notification plane with no reader/writer split",
+	"DERControlLifecycles": "absence is the ordinary pre-issuer state, not a " +
+		"misconfiguration; requireScoped's log would be false on most deployments",
 }
 
 // TestNewReaderStoresWiresEveryMirroredField fails when a field is added to

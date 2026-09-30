@@ -74,7 +74,7 @@ func TestNewLogEventLinkedEndDeviceStore_RejectsATypedNilStore(t *testing.T) {
 			t.Error("a typed nil decorated store must panic at construction, not be accepted as a wired store")
 		}
 	}()
-	memory.NewLogEventLinkedEndDeviceStore(devs)
+	memory.NewLogEventLinkedEndDeviceStore(devs, memory.NewScopedStore[sep2.LogEvent]())
 }
 
 func TestNewFlowReservationLinkedEndDeviceStore_RejectsATypedNilStore(t *testing.T) {
@@ -90,7 +90,7 @@ func TestNewFlowReservationLinkedEndDeviceStore_RejectsATypedNilStore(t *testing
 			t.Error("a typed nil decorated store must panic at construction, not be accepted as a wired store")
 		}
 	}()
-	memory.NewFlowReservationLinkedEndDeviceStore(devs)
+	memory.NewFlowReservationLinkedEndDeviceStore(devs, memory.NewScopedStore[sep2.FlowReservationRequest](), memory.NewScopedStore[sep2.FlowReservationResponse]())
 }
 
 func TestNewFlowReservationUnservedEndDeviceStore_RejectsATypedNilStore(t *testing.T) {
@@ -107,4 +107,62 @@ func TestNewFlowReservationUnservedEndDeviceStore_RejectsATypedNilStore(t *testi
 		}
 	}()
 	memory.NewFlowReservationUnservedEndDeviceStore(devs)
+}
+
+// TestNewFlowReservationLinkedEndDeviceStore_RejectsATypedNilReqsStore covers
+// the cascade collaborator added for GRIDAPPSD/ieee-2030_5-server-go#701: a
+// typed nil reqs must be caught the same way a typed nil devs already is,
+// not accepted and dereferenced the first time Delete cascades.
+func TestNewFlowReservationLinkedEndDeviceStore_RejectsATypedNilReqsStore(t *testing.T) {
+	t.Parallel()
+
+	var reqs *memory.ScopedStore[sep2.FlowReservationRequest]
+	if !store.IsAbsent(store.ScopedStore[sep2.FlowReservationRequest](reqs)) {
+		t.Fatal("store.IsAbsent must read a typed nil ScopedStore as absent")
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Error("a typed nil reqs must panic at construction, not be accepted as a wired store")
+		}
+	}()
+	memory.NewFlowReservationLinkedEndDeviceStore(memory.NewEndDeviceStore(), reqs, memory.NewScopedStore[sep2.FlowReservationResponse]())
+}
+
+// TestNewFlowReservationLinkedEndDeviceStore_RejectsATypedNilRespsStore is
+// [TestNewFlowReservationLinkedEndDeviceStore_RejectsATypedNilReqsStore]'s
+// twin for resps.
+func TestNewFlowReservationLinkedEndDeviceStore_RejectsATypedNilRespsStore(t *testing.T) {
+	t.Parallel()
+
+	var resps *memory.ScopedStore[sep2.FlowReservationResponse]
+	if !store.IsAbsent(store.ScopedStore[sep2.FlowReservationResponse](resps)) {
+		t.Fatal("store.IsAbsent must read a typed nil ScopedStore as absent")
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Error("a typed nil resps must panic at construction, not be accepted as a wired store")
+		}
+	}()
+	memory.NewFlowReservationLinkedEndDeviceStore(memory.NewEndDeviceStore(), memory.NewScopedStore[sep2.FlowReservationRequest](), resps)
+}
+
+// TestNewLogEventLinkedEndDeviceStore_RejectsATypedNilEventsStore is
+// [TestNewFlowReservationLinkedEndDeviceStore_RejectsATypedNilReqsStore]'s
+// twin for the LogEvent decorator's cascade collaborator.
+func TestNewLogEventLinkedEndDeviceStore_RejectsATypedNilEventsStore(t *testing.T) {
+	t.Parallel()
+
+	var events *memory.ScopedStore[sep2.LogEvent]
+	if !store.IsAbsent(store.ScopedStore[sep2.LogEvent](events)) {
+		t.Fatal("store.IsAbsent must read a typed nil ScopedStore as absent")
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Error("a typed nil events must panic at construction, not be accepted as a wired store")
+		}
+	}()
+	memory.NewLogEventLinkedEndDeviceStore(memory.NewEndDeviceStore(), events)
 }

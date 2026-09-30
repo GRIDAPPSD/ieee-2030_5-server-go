@@ -545,7 +545,7 @@ func logEventLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) store.E
 	if linked, ok := devs.(*memory.LogEventLinkedEndDeviceStore); ok {
 		return linked
 	}
-	return memory.NewLogEventLinkedEndDeviceStore(devs)
+	return memory.NewLogEventLinkedEndDeviceStore(devs, stores.LogEvents)
 }
 
 // flowReservationLinkedEndDevices returns the EndDevice store the /edev
@@ -585,7 +585,11 @@ func flowReservationLinkedEndDevices(devs store.EndDeviceStore, stores *Stores) 
 	if store.IsAbsent(stores.FlowReservationRequests) {
 		return memory.NewFlowReservationUnservedEndDeviceStore(devs)
 	}
-	return memory.NewFlowReservationLinkedEndDeviceStore(devs)
+	// FlowReservationResponses rides on FlowReservationRequests (miswired.go):
+	// a half-wired family gets a refusing substitute here, the same one the
+	// frq/frp routes themselves fall back to, rather than a boot-time panic.
+	resps := requireScoped(stores.FlowReservationResponses, "FlowReservationResponses")
+	return memory.NewFlowReservationLinkedEndDeviceStore(devs, stores.FlowReservationRequests, resps)
 }
 
 // ownedEndDevices returns the fully-decorated EndDevice store the /edev

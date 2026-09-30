@@ -7,6 +7,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/storetest"
 )
 
 // LogEventListLink derivation.
@@ -38,7 +39,7 @@ func seedDevice(t *testing.T, s *memory.LogEventLinkedEndDeviceStore, id, sfdi, 
 func TestLogEventLinkedEndDeviceStore_EveryReadPathDerivesTheLink(t *testing.T) {
 	t.Parallel()
 
-	s := memory.NewLogEventLinkedEndDeviceStore(memory.NewEndDeviceStore())
+	s := memory.NewLogEventLinkedEndDeviceStore(memory.NewEndDeviceStore(), memory.NewScopedStore[sep2.LogEvent]())
 	seedDevice(t, s, "1", "1111111111", "AAAA")
 	seedDevice(t, s, "2", "2222222222", "BBBB")
 
@@ -105,7 +106,7 @@ func TestLogEventLinkedEndDeviceStore_EveryReadPathDerivesTheLink(t *testing.T) 
 func TestLogEventLinkedEndDeviceStore_DiscardsAClientSuppliedLink(t *testing.T) {
 	t.Parallel()
 
-	s := memory.NewLogEventLinkedEndDeviceStore(memory.NewEndDeviceStore())
+	s := memory.NewLogEventLinkedEndDeviceStore(memory.NewEndDeviceStore(), memory.NewScopedStore[sep2.LogEvent]())
 	ctx := context.Background()
 
 	forged := sep2.EndDevice{
@@ -164,7 +165,7 @@ func TestLogEventLinkedEndDeviceStore_MalformedHrefStripsTheLink(t *testing.T) {
 		}
 	}
 
-	s := memory.NewLogEventLinkedEndDeviceStore(inner)
+	s := memory.NewLogEventLinkedEndDeviceStore(inner, memory.NewScopedStore[sep2.LogEvent]())
 	result, err := s.List(ctx, store.ListOptions{Unbounded: true})
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -192,5 +193,64 @@ func TestNewLogEventLinkedEndDeviceStore_RejectsANilStore(t *testing.T) {
 			t.Error("a nil decorated store must panic at construction")
 		}
 	}()
-	memory.NewLogEventLinkedEndDeviceStore(nil)
+	memory.NewLogEventLinkedEndDeviceStore(nil, memory.NewScopedStore[sep2.LogEvent]())
+}
+
+// TestLogEventLinkedEndDeviceStore_DeleteCascadesLogEvents pins
+// GRIDAPPSD/ieee-2030_5-server-go#701: a device's LogEvent records must not
+// survive its own deletion, or a later device created at the same key
+// inherits them.
+func TestLogEventLinkedEndDeviceStore_DeleteCascadesLogEvents(t *testing.T) {
+	t.Parallel()
+
+	events := memory.NewScopedStore[sep2.LogEvent]()
+	s := memory.NewLogEventLinkedEndDeviceStore(memory.NewEndDeviceStore(), events)
+	ctx := context.Background()
+
+	seedDevice(t, s, "1", "1111111111", "AAAA")
+	if err := events.Create(ctx, "1", "evt-1", sep2.LogEvent{LogEventID: 1}); err != nil {
+		t.Fatalf("seed log event: %v", err)
+	}
+
+	// Control: prove the count below can be non-zero before asserting it is
+	// zero after, so a passing assertion means the cascade ran rather than
+	// the seed above silently doing nothing.
+	if n, err := events.Count(ctx, "1"); err != nil || n != 1 {
+		t.Fatalf("control: log events under %q = %d, %v, want 1, nil", "1", n, err)
+	}
+
+	if err := s.Delete(ctx, "1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if n, err := events.Count(ctx, "1"); err != nil || n != 0 {
+		t.Errorf("log events under the dead key %q = %d, %v, want 0, nil", "1", n, err)
+	}
+	if has, err := events.HasParent(ctx, "1"); err != nil || has {
+		t.Errorf("HasParent(%q) = %v, %v, want false, nil: the bucket must not linger for a reused key", "1", has, err)
+	}
+}
+
+// TestLogEventLinkedEndDeviceStore_DeleteFailsClosedWhenCascadeFails asserts
+// the device survives when its LogEvent records cannot be cascaded, rather
+// than being deleted with the cascade half-done.
+func TestLogEventLinkedEndDeviceStore_DeleteFailsClosedWhenCascadeFails(t *testing.T) {
+	t.Parallel()
+
+	fault := &storetest.Fault{}
+	fault.Arm(storetest.ErrBackendUnavailable)
+	events := storetest.NewFaultyScopedStore[sep2.LogEvent](memory.NewScopedStore[sep2.LogEvent](), fault)
+
+	inner := memory.NewEndDeviceStore()
+	s := memory.NewLogEventLinkedEndDeviceStore(inner, events)
+	ctx := context.Background()
+	seedDevice(t, s, "1", "1111111111", "AAAA")
+
+	if err := s.Delete(ctx, "1"); err == nil {
+		t.Fatal("Delete succeeded while the events store could not cascade; want an error and the device left in place")
+	}
+
+	if _, err := inner.Get(ctx, "1"); err != nil {
+		t.Errorf("device was removed despite the failed cascade: Get(%q) = %v, want the device still present", "1", err)
+	}
 }

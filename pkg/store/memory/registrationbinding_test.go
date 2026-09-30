@@ -8,6 +8,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/storetest"
 )
 
 // The EndDevice-Registration coupling at the store layer. The HTTP-level
@@ -212,6 +213,86 @@ func TestRegisteredEndDeviceStore_DeleteRemovesBothHalves(t *testing.T) {
 	}
 	if _, err := regs.Get(ctx, "1"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Registrations.Get = %v, want ErrNotFound: the Registration outlived its EndDevice", err)
+	}
+}
+
+// TestRegisteredEndDeviceStore_DeleteRefusesWhenRegistrationsIsUnreachable
+// pins GRIDAPPSD/ieee-2030_5-server-go#701 fix round 2: the Registration
+// store now sits in the probe chain, so a Delete refuses before the device
+// is removed when the Registration store cannot be read, rather than
+// removing the device and only then discovering the Registration cannot be
+// cleaned up.
+func TestRegisteredEndDeviceStore_DeleteRefusesWhenRegistrationsIsUnreachable(t *testing.T) {
+	t.Parallel()
+
+	inner := memory.NewRegistrationStore()
+	fault := &storetest.Fault{}
+	regs := storetest.NewFaultyResourceStore[sep2.Registration](inner, fault)
+	devs := memory.NewEndDeviceStore()
+	bound := memory.NewRegisteredEndDeviceStore(devs, regs, memory.RegistrationPolicy{
+		PIN: func(string) (uint32, bool) { return bindingFixturePIN, true },
+	})
+	ctx := context.Background()
+
+	if err := bound.Create(ctx, "1", deviceFixture("1", bindingLFDI)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	fault.Arm(storetest.ErrBackendUnavailable)
+	if err := bound.Delete(ctx, "1"); err == nil {
+		t.Fatal("Delete succeeded while the Registration store was unreachable; want an error and the pair left in place")
+	}
+
+	if _, err := devs.Get(ctx, "1"); err != nil {
+		t.Errorf("device was removed despite the failed probe: Get(%q) = %v, want the device still present", "1", err)
+	}
+	fault.Disarm()
+	if _, err := inner.Get(ctx, "1"); err != nil {
+		t.Errorf("registration was removed despite the failed probe: Get(%q) = %v, want the registration still present", "1", err)
+	}
+}
+
+// TestRegisteredEndDeviceStore_DeleteConvergesAfterAPriorPartialFailure pins
+// the other half of the same finding: a direct retry against this store
+// after a partial failure must finish the job instead of stopping at the
+// first ErrNotFound. It reaches the partial state directly (device already
+// gone, Registration left behind) rather than by arming a fault mid-call,
+// because that is the state any prior partial failure leaves, whatever
+// caused it.
+//
+// This is the store-level guarantee only. A retried HTTP DELETE /edev/{id}
+// does not reach this method a second time once the device is gone: the
+// ownership gate answers 404 on the id first, so the same leftover
+// Registration is not cleaned up through that path
+// (GRIDAPPSD/ieee-2030_5-server-go#721).
+func TestRegisteredEndDeviceStore_DeleteConvergesAfterAPriorPartialFailure(t *testing.T) {
+	t.Parallel()
+
+	bound, regs := bindingUnderTest(t)
+	ctx := context.Background()
+
+	if err := regs.Create(ctx, "1", sep2.Registration{PIN: bindingFixturePIN}); err != nil {
+		t.Fatalf("seed leftover registration: %v", err)
+	}
+
+	if err := bound.Delete(ctx, "1"); err != nil {
+		t.Fatalf("Delete: %v, want the leftover registration cleaned up and a nil error", err)
+	}
+	if _, err := regs.Get(ctx, "1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Registrations.Get = %v, want ErrNotFound: the retry must remove the leftover registration", err)
+	}
+}
+
+// TestRegisteredEndDeviceStore_DeleteUnknownIDReturnsNotFound pins the
+// ordinary case Delete's restructuring must not change: an id neither store
+// has ever held reports ErrNotFound, the answer the DELETE /edev/{id}
+// handler renders as 404.
+func TestRegisteredEndDeviceStore_DeleteUnknownIDReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
+	bound, _ := bindingUnderTest(t)
+	if err := bound.Delete(context.Background(), "ghost"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Delete(ghost) = %v, want ErrNotFound", err)
 	}
 }
 

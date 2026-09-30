@@ -7,6 +7,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/storetest"
 )
 
 // Flow reservation link derivation, mirroring logeventbinding_test.go.
@@ -16,6 +17,13 @@ import (
 // against the mount gate. What is covered HERE is the derivation itself on
 // the read paths a router does not exercise in the happy case, and the
 // UNSERVED arm this decorator's sibling does not have.
+
+// newFlowReservationScopedStores returns a fresh, empty pair for the served
+// arm's constructor. Tests that need to inspect what got cascaded keep their
+// own reference to one or both returned stores.
+func newFlowReservationScopedStores() (store.ScopedStore[sep2.FlowReservationRequest], store.ScopedStore[sep2.FlowReservationResponse]) {
+	return memory.NewScopedStore[sep2.FlowReservationRequest](), memory.NewScopedStore[sep2.FlowReservationResponse]()
+}
 
 func seedFlowReservationDevice(t *testing.T, s *memory.FlowReservationLinkedEndDeviceStore, id, sfdi, lfdi string) {
 	t.Helper()
@@ -33,7 +41,8 @@ func seedFlowReservationDevice(t *testing.T, s *memory.FlowReservationLinkedEndD
 func TestFlowReservationLinkedEndDeviceStore_EveryReadPathDerivesTheLinks(t *testing.T) {
 	t.Parallel()
 
-	s := memory.NewFlowReservationLinkedEndDeviceStore(memory.NewEndDeviceStore())
+	reqs, resps := newFlowReservationScopedStores()
+	s := memory.NewFlowReservationLinkedEndDeviceStore(memory.NewEndDeviceStore(), reqs, resps)
 	seedFlowReservationDevice(t, s, "1", "1111111111", "AAAA")
 	seedFlowReservationDevice(t, s, "2", "2222222222", "BBBB")
 
@@ -99,7 +108,8 @@ func TestFlowReservationLinkedEndDeviceStore_DiscardsAClientSuppliedLink(t *test
 	t.Parallel()
 
 	inner := memory.NewEndDeviceStore()
-	s := memory.NewFlowReservationLinkedEndDeviceStore(inner)
+	reqs, resps := newFlowReservationScopedStores()
+	s := memory.NewFlowReservationLinkedEndDeviceStore(inner, reqs, resps)
 	ctx := context.Background()
 
 	forged := sep2.EndDevice{
@@ -184,7 +194,8 @@ func TestFlowReservationLinkedEndDeviceStore_MalformedHrefStripsTheLinks(t *test
 		}
 	}
 
-	s := memory.NewFlowReservationLinkedEndDeviceStore(inner)
+	reqs, resps := newFlowReservationScopedStores()
+	s := memory.NewFlowReservationLinkedEndDeviceStore(inner, reqs, resps)
 	result, err := s.List(ctx, store.ListOptions{Unbounded: true})
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -221,7 +232,8 @@ func TestFlowReservationLinkedEndDeviceStore_MalformedHrefWithALinkPresentLogs(t
 		t.Fatalf("seed: %v", err)
 	}
 
-	s := memory.NewFlowReservationLinkedEndDeviceStore(inner)
+	reqs, resps := newFlowReservationScopedStores()
+	s := memory.NewFlowReservationLinkedEndDeviceStore(inner, reqs, resps)
 	result, err := s.List(ctx, store.ListOptions{Unbounded: true})
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -303,4 +315,158 @@ func TestFlowReservationUnservedEndDeviceStore_StripsBothLinksEverywhere(t *test
 		t.Fatalf("Get after update: %v", err)
 	}
 	assertBothNil("Get after Update", got)
+}
+
+// TestFlowReservationLinkedEndDeviceStore_DeleteCascadesRequestsAndResponses
+// pins GRIDAPPSD/ieee-2030_5-server-go#701: a device's flow reservation
+// request and response records must not survive its own deletion, or a later
+// device created at the same key inherits them.
+func TestFlowReservationLinkedEndDeviceStore_DeleteCascadesRequestsAndResponses(t *testing.T) {
+	t.Parallel()
+
+	reqs, resps := newFlowReservationScopedStores()
+	s := memory.NewFlowReservationLinkedEndDeviceStore(memory.NewEndDeviceStore(), reqs, resps)
+	ctx := context.Background()
+
+	seedFlowReservationDevice(t, s, "1", "1111111111", "AAAA")
+	if err := reqs.Create(ctx, "1", "req-1", sep2.FlowReservationRequest{MRID: "req-1"}); err != nil {
+		t.Fatalf("seed request: %v", err)
+	}
+	if err := resps.Create(ctx, "1", "resp-1", sep2.FlowReservationResponse{Subject: "req-1"}); err != nil {
+		t.Fatalf("seed response: %v", err)
+	}
+
+	// Control: prove the counts below can be non-zero before asserting they
+	// are zero after, so a passing assertion means the cascade ran rather
+	// than the seed above silently doing nothing.
+	if n, err := reqs.Count(ctx, "1"); err != nil || n != 1 {
+		t.Fatalf("control: requests under %q = %d, %v, want 1, nil", "1", n, err)
+	}
+	if n, err := resps.Count(ctx, "1"); err != nil || n != 1 {
+		t.Fatalf("control: responses under %q = %d, %v, want 1, nil", "1", n, err)
+	}
+
+	if err := s.Delete(ctx, "1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if n, err := reqs.Count(ctx, "1"); err != nil || n != 0 {
+		t.Errorf("requests under the dead key %q = %d, %v, want 0, nil", "1", n, err)
+	}
+	if n, err := resps.Count(ctx, "1"); err != nil || n != 0 {
+		t.Errorf("responses under the dead key %q = %d, %v, want 0, nil", "1", n, err)
+	}
+	if has, err := reqs.HasParent(ctx, "1"); err != nil || has {
+		t.Errorf("HasParent(%q) on requests = %v, %v, want false, nil: the bucket must not linger for a reused key", "1", has, err)
+	}
+	if has, err := resps.HasParent(ctx, "1"); err != nil || has {
+		t.Errorf("HasParent(%q) on responses = %v, %v, want false, nil", "1", has, err)
+	}
+}
+
+// TestFlowReservationLinkedEndDeviceStore_DeleteFailsClosedWhenCascadeFails
+// asserts the device survives when its records cannot be cascaded, rather
+// than being deleted with the cascade half-done.
+func TestFlowReservationLinkedEndDeviceStore_DeleteFailsClosedWhenCascadeFails(t *testing.T) {
+	t.Parallel()
+
+	fault := &storetest.Fault{}
+	fault.Arm(storetest.ErrBackendUnavailable)
+	reqs := storetest.NewFaultyScopedStore[sep2.FlowReservationRequest](memory.NewScopedStore[sep2.FlowReservationRequest](), fault)
+	_, resps := newFlowReservationScopedStores()
+
+	inner := memory.NewEndDeviceStore()
+	s := memory.NewFlowReservationLinkedEndDeviceStore(inner, reqs, resps)
+	ctx := context.Background()
+	seedFlowReservationDevice(t, s, "1", "1111111111", "AAAA")
+
+	if err := s.Delete(ctx, "1"); err == nil {
+		t.Fatal("Delete succeeded while the request store could not cascade; want an error and the device left in place")
+	}
+
+	if _, err := inner.Get(ctx, "1"); err != nil {
+		t.Errorf("device was removed despite the failed cascade: Get(%q) = %v, want the device still present", "1", err)
+	}
+}
+
+// TestFlowReservationLinkedEndDeviceStore_DeleteLeavesRequestsUntouchedWhenResponsesCascadeFails
+// pins GRIDAPPSD/ieee-2030_5-server-go#701: a layer that cannot cascade
+// (responses, here) is refused before any other layer removes anything.
+// Requests cascade cleanly on their own; before the probe-first
+// restructuring, they were already gone by the time the responses cascade
+// failed.
+func TestFlowReservationLinkedEndDeviceStore_DeleteLeavesRequestsUntouchedWhenResponsesCascadeFails(t *testing.T) {
+	t.Parallel()
+
+	reqs := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	fault := &storetest.Fault{}
+	resps := storetest.NewFaultyScopedStore[sep2.FlowReservationResponse](memory.NewScopedStore[sep2.FlowReservationResponse](), fault)
+
+	inner := memory.NewEndDeviceStore()
+	s := memory.NewFlowReservationLinkedEndDeviceStore(inner, reqs, resps)
+	ctx := context.Background()
+	seedFlowReservationDevice(t, s, "1", "1111111111", "AAAA")
+	if err := reqs.Create(ctx, "1", "req-1", sep2.FlowReservationRequest{MRID: "req-1"}); err != nil {
+		t.Fatalf("seed request: %v", err)
+	}
+
+	// Control: the request exists, and responses is not yet armed, so a
+	// delete right now would succeed; the fault below is what must make the
+	// whole delete fail.
+	if n, err := reqs.Count(ctx, "1"); err != nil || n != 1 {
+		t.Fatalf("control: requests under %q = %d, %v, want 1, nil", "1", n, err)
+	}
+
+	fault.Arm(storetest.ErrBackendUnavailable)
+	if err := s.Delete(ctx, "1"); err == nil {
+		t.Fatal("Delete succeeded while the response store could not cascade; want an error and everything left in place")
+	}
+
+	if n, err := reqs.Count(ctx, "1"); err != nil || n != 1 {
+		t.Errorf("requests under %q = %d, %v, want 1, nil: a request cascade that ran before the failing response "+
+			"cascade must not survive a failed DELETE", "1", n, err)
+	}
+	if _, err := inner.Get(ctx, "1"); err != nil {
+		t.Errorf("device was removed despite the failed cascade: Get(%q) = %v, want the device still present", "1", err)
+	}
+}
+
+// TestFlowReservationUnservedEndDeviceStore_DeleteCascadesWhatTheInnerLayerOwns
+// asserts the unserved arm still delegates a successful Delete through to
+// whatever the inner layer owns, even though it owns no flow reservation
+// records of its own. It kills the mutant that turns `if s.served` into
+// `if true`: under that mutation this arm's nil reqs/resps make every
+// Delete fail, including this one, which the test's want-no-error assertion
+// catches.
+func TestFlowReservationUnservedEndDeviceStore_DeleteCascadesWhatTheInnerLayerOwns(t *testing.T) {
+	t.Parallel()
+
+	events := memory.NewScopedStore[sep2.LogEvent]()
+	inner := memory.NewEndDeviceStore()
+	logStore := memory.NewLogEventLinkedEndDeviceStore(inner, events)
+	s := memory.NewFlowReservationUnservedEndDeviceStore(logStore)
+	ctx := context.Background()
+
+	dev := sep2.EndDevice{SFDI: "1111111111", LFDI: "AAAA"}
+	dev.Href = "/edev/1"
+	if err := s.Create(ctx, "1", dev); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := events.Create(ctx, "1", "evt-1", sep2.LogEvent{LogEventID: 1}); err != nil {
+		t.Fatalf("seed log event: %v", err)
+	}
+
+	if n, err := events.Count(ctx, "1"); err != nil || n != 1 {
+		t.Fatalf("control: log events under %q = %d, %v, want 1, nil", "1", n, err)
+	}
+
+	if err := s.Delete(ctx, "1"); err != nil {
+		t.Fatalf("Delete on the unserved arm: %v, want success: the arm owns no flow reservation records "+
+			"of its own but must still delegate the inner layer's cascade", err)
+	}
+
+	if n, err := events.Count(ctx, "1"); err != nil || n != 0 {
+		t.Errorf("log events under the dead key %q = %d, %v, want 0, nil: the unserved arm must still "+
+			"delegate to the inner LogEvent cascade", "1", n, err)
+	}
 }

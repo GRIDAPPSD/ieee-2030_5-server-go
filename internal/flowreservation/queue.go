@@ -212,17 +212,16 @@ func (q *Queue) build(ctx context.Context, edevID, frqID string, decision Decisi
 	// same reasoning in pkg/sep2srv/handlers/flow_reservation.go).
 	now := sep2time.Now()
 	frp.CreationTime = now.Unix()
+	// A grant with no interval at all (the request named none, and nothing
+	// overrode it) has no start to derive against; 0 is always <= now
+	// (a real wall clock), so deriveEventStatus reads it Active, matching
+	// the status every response carried before #666.
+	var start int64
 	if frp.Interval != nil {
-		es := deriveEventStatus(*frp.Interval, now.Unix())
-		frp.EventStatus = &es
-	} else {
-		// A grant with no interval at all (the request named none, and
-		// nothing overrode it) has no window to derive Scheduled/Active/
-		// Complete from; it reads as a standing grant in effect from
-		// issuance, so it is Active, matching the status every response
-		// carried before #666.
-		frp.EventStatus = &sep2.EventStatus{CurrentStatus: sep2.EventStatusActive, DateTime: now.Unix()}
+		start = frp.Interval.Start
 	}
+	es := deriveEventStatus(start, frp.CreationTime, now.Unix())
+	frp.EventStatus = &es
 
 	frpID := fmt.Sprintf("frp-%d", now.UnixNano())
 	frp.Href = fmt.Sprintf("/edev/%s/frp/%s", edevID, frpID)

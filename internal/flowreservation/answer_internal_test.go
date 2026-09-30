@@ -244,12 +244,15 @@ func TestAnswerFor_PowerWithNoRequestedPower(t *testing.T) {
 	}
 }
 
-// TestDeriveEventStatus is #666's fifth criterion as applied by this
-// package's standalone status rule (see status.go): Scheduled before the
-// start, Active inside the interval, Complete once duration has elapsed.
+// TestDeriveEventStatus is #666's fifth criterion, reusing #564's
+// dercontrol.DeriveStatus (see status.go): Scheduled before the effective
+// start (the later of start and creationTime), Active from then on, and
+// never Complete, however long past start now is, since DeriveStatus
+// takes no duration and #564 deliberately never returns that 2023-only
+// value.
 func TestDeriveEventStatus(t *testing.T) {
 	t.Parallel()
-	interval := sep2.DateTimeInterval{Start: 1000, Duration: 100}
+	const start, creationTime = int64(1000), int64(1000)
 
 	for _, tc := range []struct {
 		name string
@@ -258,13 +261,11 @@ func TestDeriveEventStatus(t *testing.T) {
 	}{
 		{"before start", 999, sep2.EventStatusScheduled},
 		{"at start", 1000, sep2.EventStatusActive},
-		{"inside", 1050, sep2.EventStatusActive},
-		{"at end (duration elapsed)", 1100, sep2.EventStatusComplete},
-		{"well after end", 5000, sep2.EventStatusComplete},
+		{"well after start", 5000, sep2.EventStatusActive},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := deriveEventStatus(interval, tc.now)
+			got := deriveEventStatus(start, creationTime, tc.now)
 			if got.CurrentStatus != tc.want {
 				t.Errorf("CurrentStatus = %d, want %d", got.CurrentStatus, tc.want)
 			}
@@ -273,17 +274,35 @@ func TestDeriveEventStatus(t *testing.T) {
 }
 
 // TestDeriveEventStatus_ZeroDurationNeverActive is the denial edge the
-// design flags: a zero-duration interval's active span is empty, so the
-// derivation must report Scheduled or Complete for it, never Active, at
-// any "now".
+// design flags: this package no longer takes duration at all, so a
+// zero-duration denial reads by the same start-versus-now rule as any
+// grant, Active once its start has passed, never Complete -- the same
+// property #564 already gives an ended DERControl.
 func TestDeriveEventStatus_ZeroDurationNeverActive(t *testing.T) {
 	t.Parallel()
-	interval := sep2.DateTimeInterval{Start: 1000, Duration: 0}
+	const start, creationTime = int64(1000), int64(1000)
 
-	for _, now := range []int64{0, 999, 1000, 1001, 5000} {
-		got := deriveEventStatus(interval, now)
-		if got.CurrentStatus == sep2.EventStatusActive {
-			t.Errorf("now=%d: CurrentStatus = Active, want Scheduled or Complete for a zero-duration interval", now)
+	for _, now := range []int64{1000, 1001, 5000} {
+		got := deriveEventStatus(start, creationTime, now)
+		if got.CurrentStatus != sep2.EventStatusActive {
+			t.Errorf("now=%d: CurrentStatus = %d, want Active (never Complete)", now, got.CurrentStatus)
 		}
+	}
+}
+
+// TestDeriveEventStatus_CreationTimeBumpsEffectiveStart mirrors
+// dercontrol's own TestDeriveStatusEffectiveStartIsLaterOfStartAndCreationTime:
+// a creationTime later than start delays the Scheduled-to-Active
+// transition to creationTime, not start, since a response must not read
+// Active before it was even created.
+func TestDeriveEventStatus_CreationTimeBumpsEffectiveStart(t *testing.T) {
+	t.Parallel()
+	const start, creationTime = int64(1000), int64(2000)
+
+	if got := deriveEventStatus(start, creationTime, 1500); got.CurrentStatus != sep2.EventStatusScheduled {
+		t.Errorf("now=1500 (past start, before the bumped creationTime): CurrentStatus = %d, want Scheduled", got.CurrentStatus)
+	}
+	if got := deriveEventStatus(start, creationTime, 2000); got.CurrentStatus != sep2.EventStatusActive {
+		t.Errorf("now=2000 (at the bumped creationTime): CurrentStatus = %d, want Active", got.CurrentStatus)
 	}
 }

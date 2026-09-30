@@ -145,6 +145,34 @@ type fleetManagerReader interface {
 	Managers(ctx context.Context) []string
 }
 
+// SEP2Edition selects which IEEE 2030.5 edition's flowDirection semantics
+// govern the export-positive sign mapping (#715 fix round 3, item 2,
+// operator decision on #715). The zero value is Edition2018, so an
+// AdminFleetHandler built without setting Edition behaves exactly as it did
+// before this field existed.
+type SEP2Edition string
+
+const (
+	// Edition2018: ReadingType.flowDirection Forward means import (mapped
+	// negative) and Reverse means export (mapped positive). This is the
+	// edition CSIP conformance is written against, and what the zero value
+	// of Edition (empty string) also resolves to below, so an
+	// AdminFleetHandler with Edition unset behaves exactly as it did
+	// before this field existed.
+	Edition2018 SEP2Edition = "2018"
+	// Edition2023: the Forward/Reverse export mapping flips ONLY when the
+	// posting MirrorUsagePoint's roleFlags has isDER set; a non-DER mirror
+	// keeps the Edition2018 mapping even under this edition.
+	Edition2023 SEP2Edition = "2023"
+)
+
+// roleFlagIsDER is RoleFlagsType bit 3 (sep.xsd RoleFlagsType; see
+// mirror.go's RoleFlagsValue doc comment in core: bit 0 isMirror, bit 1
+// isPremisesAggregationPoint, bit 2 isPEV, bit 3 isDER, ...): the posting
+// MirrorUsagePoint represents a DER. #715 fix round 3 item 2 uses it to
+// decide whether Edition2023's flipped Forward/Reverse mapping applies.
+const roleFlagIsDER = 1 << 3
+
 // AdminFleetHandler is the dependency surface for GET /api/derms/fleets.
 type AdminFleetHandler struct {
 	Managers            fleetManagerReader
@@ -154,6 +182,11 @@ type AdminFleetHandler struct {
 	DERAvailabilities   store.ScopedReader[sep2.DERAvailability]
 	MirrorUsagePoints   store.ResourceReader[sep2.MirrorUsagePoint]
 	MirrorMeterReadings store.ScopedReader[sep2.MirrorMeterReading]
+	// Edition is the declared IEEE 2030.5 edition (config SEP2_EDITION,
+	// internal/config.Config.EffectiveSEP2Edition); the zero value,
+	// Edition2018, is what a handler built with none of this field set
+	// already did.
+	Edition SEP2Edition
 }
 
 // staleAfterSeconds is how old a DERStatus reading may be before a device
@@ -342,6 +375,18 @@ const singletonKey = "default"
 // inheritance does not depend on which one comes first: see that function's
 // doc comment for why an inline reading is NOT always the mRID's creating
 // POST (#715 fix round 2, item 1).
+//
+// It does NOT read readings nested inside MirrorReadingSet (the shape the
+// CSIP aggregator implementation guide's own example uses, #715 fix round 3
+// item 3), because vendor/github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2's
+// MirrorMeterReading does not implement that field at all: its own doc
+// comment names canonical sequence positions 1, 2, 4, 7 and 8 as implemented
+// and leaves position 5 (MirrorReadingSet) out. encoding/xml silently drops
+// an element with no matching struct field, so a client's MirrorReadingSet
+// is lost before it ever reaches pkg/store, not merely unread by this admin
+// route. Reading it here needs a core change first, which is out of scope
+// for this branch (core is read-only per this dispatch's hard rules), so
+// this is reported rather than attempted.
 func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string) FleetDeviceMeasurements {
 	var out FleetDeviceMeasurements
 	if h.MirrorUsagePoints == nil {
@@ -358,9 +403,8 @@ func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string)
 	}
 	for _, mup := range result.Items {
 		// The attribution point: a reading is credited to lfdi by the
-		// mirror's own stored deviceLFDI, whoever posted it. Whether an
-		// aggregator's own certificate is even allowed to post on a managed
-		// device's behalf is #720, not yet landed as of this commit.
+		// mirror's own stored deviceLFDI, which #720 requires to be either
+		// the poster itself or a device the poster currently manages.
 		if mup.DeviceLFDI != lfdi {
 			continue
 		}
@@ -375,8 +419,9 @@ func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string)
 			}
 		}
 		inheritReadingTypeByMRID(readings)
+		isDER := mup.RoleFlags&roleFlagIsDER != 0
 		for i := range readings {
-			considerMeasurement(&out, readings[i])
+			considerMeasurement(&out, readings[i], h.Edition, isDER)
 		}
 	}
 	return out
@@ -419,15 +464,25 @@ func inheritReadingTypeByMRID(readings []sep2.MirrorMeterReading) {
 // newest (by LastUpdateTime) reading per quantity. A reading missing its
 // type, value or unit is skipped: there is nothing to attribute it to.
 //
-// P and Q are mapped to export-positive: export-positive = (Forward -> -1,
-// Reverse -> +1) * abs(value). 2023 Annex B says a value under Forward or
-// Reverse "SHALL be positive", but the EPRI reference client
-// (map_l3_get_der.c:862-870) sends the signed physical value and derives
-// flowDirection from its own sign instead, so the wire value's sign cannot be
-// trusted; only its magnitude and the declared direction are. A reading with
+// P and Q are mapped to export-positive: export-positive = sign * abs(value),
+// where sign depends on edition, isDER and the declared flowDirection (#715
+// fix round 3 item 2, operator decision on #715):
+//
+//   - Edition2018, or Edition2023 with isDER false: Forward -> -1 (import),
+//     Reverse -> +1 (export). This is the mapping CSIP conformance is
+//     written against.
+//   - Edition2023 with isDER true: the pair flips, Forward -> +1 (export),
+//     Reverse -> -1 (import).
+//
+// abs(value) is applied before the sign under every combination: 2023 Annex
+// B says a value under Forward or Reverse "SHALL be positive", but the EPRI
+// reference client (map_l3_get_der.c:862-870) sends the signed physical
+// value and derives flowDirection from its own sign instead, so the wire
+// value's sign cannot be trusted regardless of edition; only its magnitude
+// and the declared direction are (#715 fix round 1 item 2). A reading with
 // no flowDirection is passed through unmapped rather than guessing a
 // direction.
-func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReading) {
+func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReading, edition SEP2Edition, isDER bool) {
 	if mmr.ReadingType == nil || mmr.ReadingType.Uom == nil || mmr.Reading == nil || mmr.Reading.Value == nil {
 		return
 	}
@@ -454,11 +509,20 @@ func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReadi
 	value := scaledValue(float64(*mmr.Reading.Value), multiplier)
 	if directional && rt.FlowDirection != nil {
 		magnitude := math.Abs(value)
+		flipped := edition == Edition2023 && isDER
 		switch *rt.FlowDirection {
 		case sep2.FlowDirectionForward:
-			value = -magnitude
+			if flipped {
+				value = magnitude
+			} else {
+				value = -magnitude
+			}
 		case sep2.FlowDirectionReverse:
-			value = magnitude
+			if flipped {
+				value = -magnitude
+			} else {
+				value = magnitude
+			}
 		}
 	}
 

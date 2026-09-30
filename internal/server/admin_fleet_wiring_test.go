@@ -153,3 +153,20 @@ func TestNewAdminFleetHandler_EachOptionalStoreGuardedIndependently(t *testing.T
 		})
 	}
 }
+
+// TestNewAdminFleetHandler_ThreadsSep2Edition is #715 fix round 3 item 2's
+// wiring proof: Stores.Sep2Edition reaches the constructed handler's
+// Edition field unchanged, for both declared editions.
+func TestNewAdminFleetHandler_ThreadsSep2Edition(t *testing.T) {
+	for _, edition := range []handler.SEP2Edition{handler.Edition2018, handler.Edition2023} {
+		stores := fullyWiredFleetStores()
+		stores.Sep2Edition = edition
+		h := newAdminFleetHandler(stores)
+		if h == nil {
+			t.Fatalf("newAdminFleetHandler(%q) = nil, want a handler", edition)
+		}
+		if h.Edition != edition {
+			t.Errorf("Edition = %q, want %q", h.Edition, edition)
+		}
+	}
+}

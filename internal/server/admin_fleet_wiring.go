@@ -32,7 +32,7 @@ func newAdminFleetHandler(stores *Stores) *handler.AdminFleetHandler {
 		return nil
 	}
 
-	h := &handler.AdminFleetHandler{Managers: managers}
+	h := &handler.AdminFleetHandler{Managers: managers, Edition: stores.Sep2Edition}
 	if !store.IsAbsent(stores.EndDevices) {
 		h.EndDevices = stores.EndDevices
 	}

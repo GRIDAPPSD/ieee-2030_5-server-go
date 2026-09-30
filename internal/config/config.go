@@ -168,6 +168,21 @@ type Config struct {
 	// with IEEE 2030.5 mRIDType, and the server logs one startup warning
 	// rather than refusing the request.
 	PEN *uint32
+
+	// SEP2Edition is the IEEE 2030.5 edition GET /api/derms/fleets uses to
+	// choose ReadingType.flowDirection semantics for its export-positive
+	// mirror-reading sign mapping (#715 fix round 3, item 2: operator
+	// decision on #715). Env: SEP2_EDITION, "2018" or "2023". Empty (unset)
+	// means the server was not given one; use EffectiveSEP2Edition, which
+	// resolves that to "2018", the edition CSIP conformance is written
+	// against. Under 2018, flowDirection Forward means import (mapped
+	// negative) and Reverse means export (mapped positive). Under 2023,
+	// that pair flips to export/import ONLY when the posting
+	// MirrorUsagePoint's roleFlags has isDER (bit 3) set; a non-DER mirror
+	// under 2023 keeps the 2018 mapping. Neither edition changes abs(value)
+	// being applied before the sign (#715 fix round 1, item 2): only the
+	// wire's own sign is ever untrusted.
+	SEP2Edition string
 }
 
 // EffectivePEN normalizes PEN the way internal/dercontrol.Config already
@@ -178,6 +193,15 @@ func (c *Config) EffectivePEN() *uint32 {
 		return nil
 	}
 	return c.PEN
+}
+
+// EffectiveSEP2Edition normalizes SEP2Edition the way EffectivePEN
+// normalizes PEN: an unset (empty) value resolves to the default, "2018".
+func (c *Config) EffectiveSEP2Edition() string {
+	if c.SEP2Edition == "" {
+		return "2018"
+	}
+	return c.SEP2Edition
 }
 
 // EffectiveAdminListen returns the admin listener address as supplied by

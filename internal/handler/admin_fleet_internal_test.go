@@ -71,7 +71,7 @@ func TestConsiderMeasurement_SignConvention(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(uom.name+"/"+tc.name, func(t *testing.T) {
 				var out FleetDeviceMeasurements
-				considerMeasurement(&out, readingWithFlow(uom.uom, tc.flow, tc.raw))
+				considerMeasurement(&out, readingWithFlow(uom.uom, tc.flow, tc.raw), Edition2018, false)
 				got := uom.get(out)
 				if got == nil {
 					t.Fatalf("measurement is nil, want value %v", tc.want)
@@ -95,8 +95,8 @@ func TestConsiderMeasurement_NewestWins(t *testing.T) {
 
 	t.Run("newer processed second", func(t *testing.T) {
 		var out FleetDeviceMeasurements
-		considerMeasurement(&out, older)
-		considerMeasurement(&out, newer)
+		considerMeasurement(&out, older, Edition2018, false)
+		considerMeasurement(&out, newer, Edition2018, false)
 		if out.P == nil || out.P.Value != 200 {
 			t.Errorf("P = %+v, want value 200 (the newer reading)", out.P)
 		}
@@ -104,8 +104,8 @@ func TestConsiderMeasurement_NewestWins(t *testing.T) {
 
 	t.Run("newer processed first", func(t *testing.T) {
 		var out FleetDeviceMeasurements
-		considerMeasurement(&out, newer)
-		considerMeasurement(&out, older)
+		considerMeasurement(&out, newer, Edition2018, false)
+		considerMeasurement(&out, older, Edition2018, false)
 		if out.P == nil || out.P.Value != 200 {
 			t.Errorf("P = %+v, want value 200 (the newer reading must not be overwritten by an older one processed later)", out.P)
 		}
@@ -141,7 +141,7 @@ func TestConsiderMeasurement_SkipsInvalidReadings(t *testing.T) {
 			r = tc.mutate(r)
 
 			var out FleetDeviceMeasurements
-			considerMeasurement(&out, r)
+			considerMeasurement(&out, r, Edition2018, false)
 			if out.P != nil || out.Q != nil || out.V != nil || out.F != nil {
 				t.Errorf("measurements = %+v, want all nil for an invalid reading", out)
 			}
@@ -684,7 +684,7 @@ func TestInheritReadingTypeByMRID_DoesNotCrossContaminateDifferentMRIDs(t *testi
 	}
 
 	var out FleetDeviceMeasurements
-	considerMeasurement(&out, readings[1])
+	considerMeasurement(&out, readings[1], Edition2018, false)
 	if out.P != nil {
 		t.Errorf("Measurements.P = %+v, want nil: an untyped reading with no established series contributes nothing", out.P)
 	}
@@ -707,7 +707,7 @@ func TestInheritReadingTypeByMRID_ReverseUntypedFollowUp(t *testing.T) {
 
 	var out FleetDeviceMeasurements
 	for i := range readings {
-		considerMeasurement(&out, readings[i])
+		considerMeasurement(&out, readings[i], Edition2018, false)
 	}
 	if out.P == nil || out.P.Value != 300 {
 		t.Errorf("Measurements.P = %+v, want value 300", out.P)
@@ -840,9 +840,55 @@ func TestConsiderMeasurement_UnrecognizedFlowDirectionLeavesValueUnchanged(t *te
 	reading := typedReading("series", 100, sep2.UomWatts, f8(unrecognizedFlowDirection), 75)
 
 	var out FleetDeviceMeasurements
-	considerMeasurement(&out, reading)
+	considerMeasurement(&out, reading, Edition2018, false)
 
 	if out.P == nil || out.P.Value != 75 {
 		t.Errorf("Measurements.P = %+v, want value 75 (unchanged; no defined mapping for flowDirection %d)", out.P, unrecognizedFlowDirection)
+	}
+}
+
+// --- #715 fix round 3 item 2: the declared-edition flowDirection mapping,
+// --- operator decision on #715. ------------------------------------------
+
+// TestConsiderMeasurement_EditionFlowDirectionMapping covers every
+// combination the decision names: a forward and a reverse reading under
+// each edition, and a non-DER mirror under 2023 (which must keep the 2018
+// mapping, not the DER-flipped one).
+func TestConsiderMeasurement_EditionFlowDirectionMapping(t *testing.T) {
+	t.Parallel()
+	forward := f8(sep2.FlowDirectionForward)
+	reverse := f8(sep2.FlowDirectionReverse)
+
+	cases := []struct {
+		name    string
+		edition SEP2Edition
+		isDER   bool
+		flow    *uint8
+		want    float64
+	}{
+		{"2018 forward is import (negative)", Edition2018, false, forward, -100},
+		{"2018 reverse is export (positive)", Edition2018, false, reverse, 100},
+		{"2023 DER forward is export (positive)", Edition2023, true, forward, 100},
+		{"2023 DER reverse is import (negative)", Edition2023, true, reverse, -100},
+		{"2023 non-DER forward keeps the 2018 mapping (negative)", Edition2023, false, forward, -100},
+		{"2023 non-DER reverse keeps the 2018 mapping (positive)", Edition2023, false, reverse, 100},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// A negative raw value throughout: proves abs(value) still
+			// applies before the sign under every edition and isDER
+			// combination (#715 fix round 1 item 2's rule, restated by
+			// fix round 3 item 2), since a mapping that forgot to take
+			// the magnitude would carry the raw sign through instead of
+			// the edition-declared one.
+			reading := typedReading("series", 100, sep2.UomWatts, tc.flow, -100)
+
+			var out FleetDeviceMeasurements
+			considerMeasurement(&out, reading, tc.edition, tc.isDER)
+
+			if out.P == nil || out.P.Value != tc.want {
+				t.Errorf("Measurements.P = %+v, want value %v", out.P, tc.want)
+			}
+		})
 	}
 }

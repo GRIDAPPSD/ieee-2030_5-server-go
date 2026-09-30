@@ -366,3 +366,30 @@ func TestEffectivePEN(t *testing.T) {
 		})
 	}
 }
+
+// TestEffectiveSEP2Edition pins the "2018" default (#715 fix round 3, item
+// 2): an unset SEP2Edition must resolve to "2018", the CSIP edition, and a
+// configured edition passes through unchanged.
+func TestEffectiveSEP2Edition(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{name: "unset defaults to 2018", cfg: Config{}, want: "2018"},
+		{name: "2018 passes through", cfg: Config{SEP2Edition: "2018"}, want: "2018"},
+		{name: "2023 passes through", cfg: Config{SEP2Edition: "2023"}, want: "2023"},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.cfg.EffectiveSEP2Edition(); got != tc.want {
+				t.Errorf("EffectiveSEP2Edition() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -118,3 +118,139 @@ func TestAssembly_MirrorUnmanagedClaimRefusedThroughTheRouter(t *testing.T) {
 		t.Fatalf("unmanaged claim through the router: status = %d, want 403; body = %s", resp.StatusCode, respBody)
 	}
 }
+
+// mupWiringInstanceRoutes is every /mup route BESIDES POST /mup (the two
+// tests above already cover creation): the five separate HandleFunc calls in
+// registerMirrorRoutes (assembly.go), each its own line passing
+// stores.EndDeviceManagers, so a mutation on any ONE line is a defect this
+// table must catch on that line's own row. path is relative to the created
+// mirror's Location; wantStatus is the response on the admitted case.
+var mupWiringInstanceRoutes = []struct {
+	name       string
+	method     string
+	path       func(loc string) string
+	body       func(mrid string) string
+	wantStatus int
+}{
+	{
+		name:       "GET /mup/{id}",
+		method:     http.MethodGet,
+		path:       func(loc string) string { return loc },
+		body:       func(string) string { return "" },
+		wantStatus: http.StatusOK,
+	},
+	{
+		name:   "PUT /mup/{id}",
+		method: http.MethodPut,
+		path:   func(loc string) string { return loc },
+		body: func(mrid string) string {
+			return `<MirrorUsagePoint xmlns="urn:ieee:std:2030.5:ns"><mRID>` + mrid + `</mRID></MirrorUsagePoint>`
+		},
+		wantStatus: http.StatusNoContent,
+	},
+	{
+		name:   "POST /mup/{id}",
+		method: http.MethodPost,
+		path:   func(loc string) string { return loc },
+		body: func(string) string {
+			return `<MirrorMeterReading xmlns="urn:ieee:std:2030.5:ns"><mRID>WIRING_MMR_ID</mRID></MirrorMeterReading>`
+		},
+		wantStatus: http.StatusCreated,
+	},
+	{
+		name:   "POST /mup/{id}/mr",
+		method: http.MethodPost,
+		path:   func(loc string) string { return loc + "/mr" },
+		body: func(string) string {
+			return `<MirrorMeterReading xmlns="urn:ieee:std:2030.5:ns"><mRID>WIRING_MMR_MR</mRID></MirrorMeterReading>`
+		},
+		wantStatus: http.StatusCreated,
+	},
+	{
+		// DELETE last: it removes the resource, so within one subtest's own
+		// server this must run after any read/write case that needs the
+		// record present. Each route below runs in its OWN subtest with its
+		// OWN router, so ordering across routes does not matter; only
+		// mattering here because it documents why this entry names no
+		// further requests after itself.
+		name:       "DELETE /mup/{id}",
+		method:     http.MethodDelete,
+		path:       func(loc string) string { return loc },
+		body:       func(string) string { return "" },
+		wantStatus: http.StatusOK,
+	},
+}
+
+// mupWiringCreateAsManager creates a mirror for wiringDeviceLFDI, POSTed by
+// creator (who must already be assigned as the device's manager, or must BE
+// the device), and returns its Location.
+func mupWiringCreateAsManager(t *testing.T, srv *httptest.Server, creator, mrid string) string {
+	t.Helper()
+	body := `<MirrorUsagePoint xmlns="urn:ieee:std:2030.5:ns"><mRID>` + mrid + `</mRID>` +
+		`<deviceLFDI>` + wiringDeviceLFDI + `</deviceLFDI></MirrorUsagePoint>`
+	resp := mupWiringRequest(t, http.MethodPost, srv.URL+"/mup", creator, body)
+	respBody, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("seed create as %q: status = %d, want 201; body = %s", creator, resp.StatusCode, respBody)
+	}
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		t.Fatal("seed create: no Location header")
+	}
+	return loc
+}
+
+// TestAssembly_MirrorInstanceRoutesManagerWiring is the MEDIUM fix (#720
+// round 2): TestAssembly_MirrorManagerWiringThroughTheRouter above proved
+// only POST /mup and a GET as the DEVICE ITSELF, which cannot tell a wired
+// managers reader from a nil one on the other four registrations, because
+// self-access needs no management store at all. This test drives every
+// remaining /mup instance route through the real router with a genuine
+// manager identity, admitted and refused, so a nil passed at any one of the
+// five registerMirrorRoutes call sites (assembly.go: GET, POST /mup/{id},
+// POST /mup/{id}/mr, PUT, DELETE) is caught on that route's own subtest.
+func TestAssembly_MirrorInstanceRoutesManagerWiring(t *testing.T) {
+	t.Parallel()
+	for _, rt := range mupWiringInstanceRoutes {
+		rt := rt
+		t.Run(rt.name+"/manager admitted", func(t *testing.T) {
+			t.Parallel()
+			srv, stores := mupWiringRouter(t)
+			const mrid = "WIRING_INSTANCE"
+			if err := stores.EndDeviceManagers.Assign(context.Background(), wiringManagerLFDI, wiringDeviceLFDI); err != nil {
+				t.Fatalf("assign manager: %v", err)
+			}
+			loc := mupWiringCreateAsManager(t, srv, wiringManagerLFDI, mrid)
+
+			resp := mupWiringRequest(t, rt.method, srv.URL+rt.path(loc), wiringManagerLFDI, rt.body(mrid))
+			respBody, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode != rt.wantStatus {
+				t.Fatalf("manager %s %s: status = %d, want %d; body = %s", rt.method, rt.path(loc), resp.StatusCode, rt.wantStatus, respBody)
+			}
+		})
+		t.Run(rt.name+"/unassigned manager refused", func(t *testing.T) {
+			t.Parallel()
+			srv, stores := mupWiringRouter(t)
+			const mrid = "WIRING_INSTANCE"
+			// Someone has to be able to create the seed mirror: a second
+			// identity, assigned as the device's manager, does that. The
+			// route under test then runs as wiringManagerLFDI, which this
+			// store never assigns to anything, so admission can only come
+			// from a wiring bug.
+			const seedCreator = "9999999999999999999999999999999999999999"
+			if err := stores.EndDeviceManagers.Assign(context.Background(), seedCreator, wiringDeviceLFDI); err != nil {
+				t.Fatalf("assign seed creator: %v", err)
+			}
+			loc := mupWiringCreateAsManager(t, srv, seedCreator, mrid)
+
+			resp := mupWiringRequest(t, rt.method, srv.URL+rt.path(loc), wiringManagerLFDI, rt.body(mrid))
+			respBody, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("unassigned manager %s %s: status = %d, want 403; body = %s", rt.method, rt.path(loc), resp.StatusCode, respBody)
+			}
+		})
+	}
+}

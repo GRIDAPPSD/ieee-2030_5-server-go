@@ -160,3 +160,117 @@ func TestHandlePutMirrorUsagePoint_MalformedDeviceLFDIRejected(t *testing.T) {
 	}
 	assertMirrorUnchanged(t, mupStore, idA, "MUP_A", putOwnerLFDI, "original A")
 }
+
+// evenLengthNonHex is 40 characters (even, and the canonical HexBinary160
+// width), none of them hex digits. "ZZZ" (the malformed claim used above and
+// in TestHandleCreateMirrorUsagePoint_OddLengthDeviceLFDIRejected) is both
+// non-hex AND odd length, so canonicalDeviceLFDI's length%2 guard refuses it
+// before the hex character-set loop ever runs: neither test proves that loop
+// does anything. This value is even length so only the charset check can be
+// what refuses it.
+const evenLengthNonHex = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+
+// TestHandleCreateMirrorUsagePoint_NonHexEvenLengthDeviceLFDIRejected is the
+// POST half of that coverage gap.
+func TestHandleCreateMirrorUsagePoint_NonHexEvenLengthDeviceLFDIRejected(t *testing.T) {
+	t.Parallel()
+	const caller = "AABBCCDDEEFF00112233445566778899AABBCCDD"
+	s := memory.NewStore[sep2.MirrorUsagePoint]()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, identityProvider(caller), nil))
+
+	mup := sep2.MirrorUsagePoint{MRID: "INV_NONHEX", DeviceLFDI: evenLengthNonHex}
+	body, _ := xml.Marshal(&mup)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/mup", bytes.NewReader(body)))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (deviceLFDI is even length but not hex); body: %s", w.Code, w.Body.String())
+	}
+	if count, _ := s.Count(context.Background()); count != 0 {
+		t.Errorf("stored count = %d, want 0", count)
+	}
+}
+
+// TestHandlePutMirrorUsagePoint_NonHexEvenLengthDeviceLFDIRejected is the PUT
+// half.
+func TestHandlePutMirrorUsagePoint_NonHexEvenLengthDeviceLFDIRejected(t *testing.T) {
+	t.Parallel()
+	mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
+	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
+	idA := seedDerivedMirror(t, mupStore, putOwnerLFDI, "MUP_A", "original A")
+
+	mux := mirrorInstanceMux(mupStore, mmrStore, putOwnerLFDI)
+	req := httptest.NewRequest(http.MethodPut, "/mup/"+idA,
+		bytes.NewReader(mupWireBody("MUP_A", "probe", evenLengthNonHex)))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (deviceLFDI is even length but not hex); body: %s", w.Code, w.Body.String())
+	}
+	assertMirrorUnchanged(t, mupStore, idA, "MUP_A", putOwnerLFDI, "original A")
+}
+
+// TestHandleCreateMirrorUsagePoint_WhitespacePaddedSelfClaimAccepted: XSD's
+// hexBinary type carries whiteSpace facet "collapse" (leading and trailing
+// whitespace stripped, internal runs collapsed), so a claim like
+// " 00AABB...\n" is a schema-valid document naming the same value as the
+// trimmed one. Refusing it with 400 would be this server inventing a
+// stricter grammar than the standard's own type.
+func TestHandleCreateMirrorUsagePoint_WhitespacePaddedSelfClaimAccepted(t *testing.T) {
+	t.Parallel()
+	const caller = "AABBCCDDEEFF00112233445566778899AABBCCDD"
+	s := memory.NewStore[sep2.MirrorUsagePoint]()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, identityProvider(caller), nil))
+
+	mup := sep2.MirrorUsagePoint{MRID: "INV_WS", DeviceLFDI: " " + caller + "\n"}
+	body, err := xml.Marshal(&mup)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/mup", bytes.NewReader(body)))
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (whitespace-collapsed self-claim); body: %s", w.Code, w.Body.String())
+	}
+	loc := w.Header().Get("Location")
+	stored, err := s.Get(context.Background(), strings.TrimPrefix(loc, "/mup/"))
+	if err != nil {
+		t.Fatalf("get stored MirrorUsagePoint: %v", err)
+	}
+	if stored.DeviceLFDI != caller {
+		t.Errorf("stored DeviceLFDI = %q, want %q (whitespace trimmed)", stored.DeviceLFDI, caller)
+	}
+}
+
+// TestHandlePutMirrorUsagePoint_WhitespaceOnlyDeviceLFDITreatedAsAbsent: a
+// claim that is whitespace ONLY collapses to the empty string under the same
+// XSD facet, which is indistinguishable from an absent element once
+// collapsed; it must default to the stored device (#720's PUT rule), not be
+// refused as malformed.
+func TestHandlePutMirrorUsagePoint_WhitespaceOnlyDeviceLFDITreatedAsAbsent(t *testing.T) {
+	t.Parallel()
+	mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
+	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
+	idA := seedDerivedMirror(t, mupStore, putOwnerLFDI, "MUP_A", "original A")
+
+	mux := mirrorInstanceMux(mupStore, mmrStore, putOwnerLFDI)
+	req := httptest.NewRequest(http.MethodPut, "/mup/"+idA,
+		bytes.NewReader(mupWireBody("MUP_A", "updated", "   ")))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (whitespace-only deviceLFDI collapses to absent); body: %s", w.Code, w.Body.String())
+	}
+	stored, err := mupStore.Get(context.Background(), idA)
+	if err != nil {
+		t.Fatalf("get stored MirrorUsagePoint: %v", err)
+	}
+	if stored.DeviceLFDI != putOwnerLFDI {
+		t.Errorf("stored DeviceLFDI = %q, want %q unchanged", stored.DeviceLFDI, putOwnerLFDI)
+	}
+}

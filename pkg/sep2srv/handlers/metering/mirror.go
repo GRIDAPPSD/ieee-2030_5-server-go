@@ -10,9 +10,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -264,6 +267,7 @@ func authorizeMirrorOwner(
 	r *http.Request,
 	s store.ResourceStore[sep2.MirrorUsagePoint],
 	actFor mirrorActor,
+	denials *mirrorDenialLog,
 	lfdiProvider LFDIProvider,
 	id string,
 ) (sep2.MirrorUsagePoint, string, bool) {
@@ -299,7 +303,15 @@ func authorizeMirrorOwner(
 		return zero, "", false
 	}
 	if !allowed {
-		log.Printf("mup: denied %s: caller is neither the mirrored device nor its current manager (id=%q)", srverr.Route(r), id)
+		// Truncated the way assembly/ownership.go's denialLog truncates a
+		// client-chosen id: it cannot forge a log line of unbounded length.
+		loggedID := id
+		if len(loggedID) > maxLoggedIDLen {
+			loggedID = loggedID[:maxLoggedIDLen]
+		}
+		denials.record(lfdi, "not-device-or-manager", fmt.Sprintf(
+			"mup: denied %s: caller=%q is neither the mirrored device nor its current manager (id=%q)",
+			srverr.Route(r), lfdi, loggedID))
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return zero, "", false
 	}
@@ -454,19 +466,30 @@ func canonicalDeviceLFDI(raw string) (device string, ok bool) {
 // resolveMirroredDevice canonicalizes a client-claimed deviceLFDI, or falls
 // back to fallback when the client left it absent.
 //
+// raw is trimmed of surrounding whitespace before anything else. sep.xsd
+// types deviceLFDI as xs:hexBinary, whose whiteSpace facet is "collapse":
+// leading and trailing whitespace is stripped before the value is compared,
+// so " 00AABB...\n" is schema-valid and names the same value as
+// "00AABB...". Go's encoding/xml has no XSD facet awareness and hands back
+// the text node verbatim, so this server has to apply the facet itself
+// rather than refuse a document the standard accepts.
+//
 // IEEE 2030.5-2023 UsagePointBase.deviceLFDI SHALL be present when mirroring
 // (extraction line 12584-12585), but tolerating absence keeps every existing
-// client that posts only an mRID working: absence is not itself malformed.
+// client that posts only an mRID working: absence is not itself malformed. A
+// claim that is whitespace only collapses to empty under the same facet, so
+// it is treated exactly like an absent element, not like a malformed one.
 //
-// ok is false when raw is present but cannot be a valid HexBinary160 value
-// (see canonicalDeviceLFDI); the caller answers 400 in that case, never a
-// silent fallback to fallback, because a malformed claim is a client error,
-// not an absent one.
+// ok is false when the trimmed claim is non-empty but cannot be a valid
+// HexBinary160 value (see canonicalDeviceLFDI); the caller answers 400 in
+// that case, never a silent fallback to fallback, because a malformed claim
+// is a client error, not an absent one.
 func resolveMirroredDevice(raw, fallback string) (device string, ok bool) {
-	if raw == "" {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
 		return fallback, true
 	}
-	return canonicalDeviceLFDI(raw)
+	return canonicalDeviceLFDI(trimmed)
 }
 
 // mirrorActor decides whether caller may act for device: because caller IS
@@ -508,6 +531,171 @@ func newMirrorActor(managers store.EndDeviceManagementReader) mirrorActor {
 	}
 }
 
+// Bounds for mirrorDenialLog, matching the /edev ownership gate's denialLog
+// (assembly/ownership.go): a per-caller budget stops one caller from
+// spending another's lines, and the total limit across callers stops a probe
+// from many identities flooding the log.
+const (
+	mirrorDenialPerCaller = 5
+	mirrorDenialLimit     = 100
+	mirrorDenialWindow    = time.Minute
+	// maxLoggedIDLen bounds a client-chosen id before it is written to the
+	// log, matching assembly/ownership.go's own constant of the same name
+	// and purpose: a client cannot forge a log line of unbounded length.
+	maxLoggedIDLen = 64
+)
+
+// mirrorDenialLog rate-limits the /mup refusal log lines the same way
+// assembly/ownership.go's denialLog rate-limits the /edev ones: at most
+// mirrorDenialPerCaller lines per caller and mirrorDenialLimit lines total
+// inside a rolling mirrorDenialWindow, with a one-line suppression summary,
+// broken down by reason, when a window that suppressed anything closes.
+//
+// This is a second copy of that algorithm rather than a shared type. Sharing
+// it would mean moving assembly's denialLog and its own 700-plus lines of
+// tests to a package both sides could import, for a LOW-severity ask whose
+// two log lines already carry different fields (an EndDevice id vs. a
+// mirrored device LFDI) that a shared type would have to abstract over for
+// no real gain; #720's round 2 review asked to bound these lines "the way
+// the gate does", not to unify the two gates.
+//
+// Constructed once per /mup handler (HandleCreateMirrorUsagePoint,
+// HandleMirrorUsagePoint, HandlePutMirrorUsagePoint,
+// HandleDeleteMirrorUsagePoint, HandlePostMirrorMeterReading), so the budget
+// is per ROUTE rather than shared across all of /mup, the same granularity
+// newMirrorActor's managersAbsent is resolved at.
+type mirrorDenialLog struct {
+	mu        sync.Mutex
+	logf      func(format string, args ...any)
+	now       func() time.Time
+	afterFunc func(d time.Duration, f func()) (stop func() bool)
+	window    time.Duration
+
+	windowStart time.Time
+	windowEnds  time.Time // zero when no window is open
+	generation  uint64
+	written     int
+	perCaller   map[string]int
+	suppressed  map[string]int
+	stopTimer   func() bool
+}
+
+func newMirrorDenialLog(logf func(format string, args ...any)) *mirrorDenialLog {
+	return &mirrorDenialLog{
+		logf: logf,
+		now:  time.Now,
+		afterFunc: func(d time.Duration, f func()) func() bool {
+			return time.AfterFunc(d, f).Stop
+		},
+		window: mirrorDenialWindow,
+	}
+}
+
+// record logs message, subject to the budget above. caller keys the
+// per-caller count; reason keys the suppression-summary breakdown. message
+// is the complete, already-formatted log line each call site builds for
+// itself, so the two /mup refusal sites can each name their own fields
+// (device claim vs. id) without this type knowing about either.
+func (d *mirrorDenialLog) record(caller, reason, message string) {
+	summary, admitted := d.admit(caller, reason)
+	if summary != "" {
+		d.logf("%s", summary)
+	}
+	if !admitted {
+		return
+	}
+	d.logf("%s", message)
+}
+
+// admit runs the critical section under the mutex, released on every path
+// including a panic, so a panic here cannot leave every later refusal
+// blocked on the lock.
+func (d *mirrorDenialLog) admit(caller, reason string) (summary string, admitted bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := d.now()
+	summary = d.closeExpiredLocked(now)
+	if d.windowEnds.IsZero() {
+		d.windowStart, d.windowEnds = now, now.Add(d.window)
+		d.generation++
+	}
+	admitted = d.admitLocked(now, caller, reason)
+	return summary, admitted
+}
+
+func (d *mirrorDenialLog) admitLocked(now time.Time, caller, reason string) bool {
+	if d.written < mirrorDenialLimit && d.perCaller[caller] < mirrorDenialPerCaller {
+		if d.perCaller == nil {
+			d.perCaller = make(map[string]int)
+		}
+		d.perCaller[caller]++
+		d.written++
+		return true
+	}
+	if d.suppressed == nil {
+		d.suppressed = make(map[string]int)
+	}
+	d.suppressed[reason]++
+	if d.stopTimer == nil {
+		d.armLocked(now)
+	}
+	return false
+}
+
+func (d *mirrorDenialLog) armLocked(now time.Time) {
+	gen := d.generation
+	d.stopTimer = d.afterFunc(d.windowEnds.Sub(now), func() { d.flush(gen) })
+}
+
+// flush reports the window armed as generation gen, unless a refusal already
+// closed it.
+func (d *mirrorDenialLog) flush(gen uint64) {
+	d.mu.Lock()
+	if gen != d.generation || d.windowEnds.IsZero() {
+		d.mu.Unlock()
+		return
+	}
+	now := d.now()
+	if now.Before(d.windowEnds) {
+		d.armLocked(now)
+		d.mu.Unlock()
+		return
+	}
+	summary := d.closeExpiredLocked(now)
+	d.mu.Unlock()
+
+	if summary != "" {
+		d.logf("%s", summary)
+	}
+}
+
+// closeExpiredLocked closes the open window if it has ended and returns its
+// suppression summary, or "" when there is nothing to report. The interval is
+// measured from the window's first refusal to now, not assumed to be the
+// window length, because the close can come later than the window's end.
+func (d *mirrorDenialLog) closeExpiredLocked(now time.Time) string {
+	if d.windowEnds.IsZero() || now.Before(d.windowEnds) {
+		return ""
+	}
+	var summary string
+	if len(d.suppressed) > 0 {
+		total := 0
+		reasons := make([]string, 0, len(d.suppressed))
+		for _, reason := range slices.Sorted(maps.Keys(d.suppressed)) {
+			total += d.suppressed[reason]
+			reasons = append(reasons, fmt.Sprintf("%s=%d", reason, d.suppressed[reason]))
+		}
+		summary = fmt.Sprintf("mup: suppressed %d denial log lines in the last %s: %s",
+			total, now.Sub(d.windowStart).Round(time.Millisecond), strings.Join(reasons, " "))
+	}
+	if d.stopTimer != nil {
+		d.stopTimer()
+	}
+	d.windowStart, d.windowEnds = time.Time{}, time.Time{}
+	d.written, d.perCaller, d.suppressed, d.stopTimer = 0, nil, nil, nil
+	return summary
+}
+
 // HandleCreateMirrorUsagePoint returns a handler for POST /mup.
 // Inverters create MirrorUsagePoints to register for metering data reporting.
 // lfdiProvider extracts the client LFDI from the request context; the server
@@ -544,6 +732,7 @@ func HandleCreateMirrorUsagePoint(
 	postRateProvider PostRateProvider,
 ) http.HandlerFunc {
 	actFor := newMirrorActor(managers)
+	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			encoding.MethodNotAllowed(w, "POST")
@@ -604,7 +793,9 @@ func HandleCreateMirrorUsagePoint(
 			return
 		}
 		if !allowed {
-			log.Printf("mup: create refused a deviceLFDI claim the caller may not act for (device=%q)", device)
+			denials.record(lfdi, "unclaimable-device", fmt.Sprintf(
+				"mup: create refused a deviceLFDI claim: caller=%q may not act for device=%q",
+				lfdi, device))
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -661,9 +852,10 @@ func HandleCreateMirrorUsagePoint(
 				// data SHALL be written over the existing MirrorUsagePoint."
 				// mup already carries this POST's data with every
 				// server-owned field stamped the same way the create path
-				// stamps it: DeviceLFDI from the caller's certificate (not
-				// the body, set above), Href derived from the same id this
-				// (owner, mRID) pair always resolves to, and any inline
+				// stamps it: DeviceLFDI from the resolved, already-authorised
+				// device (not taken from the body uninspected, set above),
+				// Href derived from the same id this (device, mRID) pair
+				// always resolves to, and any inline
 				// MirrorMeterReading elements already re-stamped with
 				// fresh server-owned href/lastUpdateTime values. Persisting
 				// mup as-is overwrites every other field verbatim from what
@@ -744,13 +936,14 @@ func HandleMirrorUsagePoint(
 	lfdiProvider LFDIProvider,
 ) http.HandlerFunc {
 	actFor := newMirrorActor(managers)
+	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			encoding.MethodNotAllowed(w, "GET, HEAD")
 			return
 		}
 
-		mup, _, ok := authorizeMirrorOwner(w, r, s, actFor, lfdiProvider, r.PathValue("id"))
+		mup, _, ok := authorizeMirrorOwner(w, r, s, actFor, denials, lfdiProvider, r.PathValue("id"))
 		if !ok {
 			return
 		}
@@ -815,6 +1008,7 @@ func HandlePutMirrorUsagePoint(
 	postRateProvider PostRateProvider,
 ) http.HandlerFunc {
 	actFor := newMirrorActor(managers)
+	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			encoding.MethodNotAllowed(w, "PUT")
@@ -827,7 +1021,7 @@ func HandlePutMirrorUsagePoint(
 		// below this line is reachable only by the device that owns this
 		// mirror or its current manager, so no branch below can be used as an
 		// oracle by anyone else.
-		storedMup, _, ok := authorizeMirrorOwner(w, r, s, actFor, lfdiProvider, id)
+		storedMup, _, ok := authorizeMirrorOwner(w, r, s, actFor, denials, lfdiProvider, id)
 		if !ok {
 			return
 		}
@@ -992,6 +1186,7 @@ func HandleDeleteMirrorUsagePoint(
 	lfdiProvider LFDIProvider,
 ) http.HandlerFunc {
 	actFor := newMirrorActor(managers)
+	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			encoding.MethodNotAllowed(w, "DELETE")
@@ -1004,7 +1199,7 @@ func HandleDeleteMirrorUsagePoint(
 		// through, but the gate is still first for the same reason the read and
 		// write paths put it first: no branch of this handler is reachable by a
 		// caller that is not the mirrored device or its current manager.
-		mup, _, ok := authorizeMirrorOwner(w, r, s, actFor, lfdiProvider, id)
+		mup, _, ok := authorizeMirrorOwner(w, r, s, actFor, denials, lfdiProvider, id)
 		if !ok {
 			return
 		}
@@ -1195,6 +1390,7 @@ func HandlePostMirrorMeterReading(
 	lfdiProvider LFDIProvider,
 ) http.HandlerFunc {
 	actFor := newMirrorActor(managers)
+	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			encoding.MethodNotAllowed(w, "POST")
@@ -1207,7 +1403,7 @@ func HandlePostMirrorMeterReading(
 		// confirms the caller is the mirrored device or its current manager.
 		// Runs before the body is read so an unauthorized caller's payload is
 		// never parsed, let alone stored.
-		if _, _, ok := authorizeMirrorOwner(w, r, mupStore, actFor, lfdiProvider, parentID); !ok {
+		if _, _, ok := authorizeMirrorOwner(w, r, mupStore, actFor, denials, lfdiProvider, parentID); !ok {
 			return
 		}
 

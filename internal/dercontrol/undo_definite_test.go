@@ -171,3 +171,89 @@ func TestIssue_SupersedeMarkDiskWriteFails_ReturnsDefiniteNotUndoError(t *testin
 		t.Fatalf("C.SupersededAt = %v after the failed Issue, want nil: C was never actually marked", lc.SupersededAt)
 	}
 }
+
+// TestIssue_SupersedeMarkTwoCandidates_OnlySecondFails_FirstStillReverted
+// is round 3 item 1: issuer.go's loop skips the compensating revert only
+// for the LAST candidate in attempted (the one whose own mark write is
+// what failed); a mutant that drops the index check and skips on
+// skipCompensation alone cannot be caught by a single-candidate scenario,
+// since index 0 and "last" are the same thing there. Here N supersedes
+// two non-overlapping controls, C1 and C2: C1's own mark write succeeds
+// (a genuine revert is owed), C2's fails (already rolled back by the
+// store, so its revert is skippable). If the index check is missing, C1's
+// revert is also wrongly skipped and C1 is left marked "superseded" by N,
+// a control that no longer exists once the undo path deletes it.
+func TestIssue_SupersedeMarkTwoCandidates_OnlySecondFails_FirstStillReverted(t *testing.T) {
+	h := newPersistedHarness(t, Config{PEN: testPEN(1)})
+	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+
+	base := sep2time.Now().Unix() + 1000
+	c1Start := base
+	c2Start := base + 1400 // no overlap with C1 ([base, base+600)): the two
+	// candidates must not supersede each other, only both be superseded by N.
+	c1, err := h.issuer.Issue(context.Background(), CreateRequest{
+		DERProgramHref:  programHref("dev1", "0", "p1"),
+		Type:            Connect,
+		Start:           &c1Start,
+		DurationSeconds: 600,
+	})
+	if err != nil {
+		t.Fatalf("issue C1: %v", err)
+	}
+	c2, err := h.issuer.Issue(context.Background(), CreateRequest{
+		DERProgramHref:  programHref("dev1", "0", "p1"),
+		Type:            Connect,
+		Start:           &c2Start,
+		DurationSeconds: 600,
+	})
+	if err != nil {
+		t.Fatalf("issue C2: %v", err)
+	}
+
+	// Sortable ids order by interval.start ascending, so C1 (earlier
+	// start) sorts before C2 and is scanned first by computeSupersedes:
+	// lifecycle write #1 is N's own Create; #2 marks C1 (must succeed,
+	// the genuine-revert case); #3 marks C2 (sabotaged, fails, triggers
+	// undoMarkFailure); #4 is undoMarkFailure's own revert of C1
+	// (unsabotaged again, so the genuine revert can be observed to run).
+	calls := 0
+	h.lifecycles.afterMutateBeforePersist = func() {
+		calls++
+		switch calls {
+		case 3:
+			if err := os.MkdirAll(filepath.Join(h.lifecyclePath+".tmp", "keep"), 0o700); err != nil {
+				t.Fatalf("block lifecycle path: %v", err)
+			}
+		case 4:
+			if err := os.RemoveAll(h.lifecyclePath + ".tmp"); err != nil {
+				t.Fatalf("unblock lifecycle path: %v", err)
+			}
+		}
+	}
+
+	nStart := base + 500
+	_, err = h.issuer.Issue(context.Background(), CreateRequest{
+		DERProgramHref:  programHref("dev1", "0", "p1"),
+		Type:            Disconnect, // same control set as Connect
+		Start:           &nStart,
+		DurationSeconds: 1100, // [base+500, base+1600): overlaps both C1 and C2
+	})
+	if err == nil {
+		t.Fatal("Issue N with a blocked second mark write returned nil error, want the persist failure")
+	}
+
+	lc1, gerr := h.lifecycles.Get(context.Background(), "dev1/0/p1", c1.ID)
+	if gerr != nil {
+		t.Fatalf("Get C1's lifecycle: %v", gerr)
+	}
+	if lc1.SupersededAt != nil {
+		t.Fatalf("C1.SupersededAt = %v, want nil: C1's genuine revert must have run, not been skipped", lc1.SupersededAt)
+	}
+	lc2, gerr := h.lifecycles.Get(context.Background(), "dev1/0/p1", c2.ID)
+	if gerr != nil {
+		t.Fatalf("Get C2's lifecycle: %v", gerr)
+	}
+	if lc2.SupersededAt != nil {
+		t.Fatalf("C2.SupersededAt = %v, want nil: C2's own mark write was rolled back by the store", lc2.SupersededAt)
+	}
+}

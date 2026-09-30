@@ -205,3 +205,52 @@ func TestConfigFromEnvAdminClientCASystemSentinelSurvivesHomeExpansion(t *testin
 		t.Errorf("AdminClientCA = %q, want the sentinel %q unchanged", got, config.AdminClientCASystemRoots)
 	}
 }
+
+// TestConfigFromEnvPEN pins #665: SEP2_PEN unset leaves Config.PEN nil (so
+// FlowReservationResponse mRIDs mint fully random, per RouterConfig.PEN's
+// contract), a valid base-10 uint32 parses through, and an unparseable
+// value is a startup error rather than a silently ignored setting, matching
+// this file's other fallible SEP2_* settings.
+func TestConfigFromEnvPEN(t *testing.T) {
+	t.Run("unset stays nil", func(t *testing.T) {
+		t.Setenv("SEP2_PEN", "")
+		if err := os.Unsetenv("SEP2_PEN"); err != nil {
+			t.Fatalf("unset SEP2_PEN: %v", err)
+		}
+		cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if cfg.PEN != nil {
+			t.Errorf("PEN = %v, want nil", *cfg.PEN)
+		}
+	})
+
+	t.Run("a valid value parses through", func(t *testing.T) {
+		t.Setenv("SEP2_PEN", "1082533889") // 0x40832001
+
+		cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if cfg.PEN == nil || *cfg.PEN != 1082533889 {
+			t.Errorf("PEN = %v, want 1082533889", cfg.PEN)
+		}
+	})
+
+	t.Run("an unparseable value is a startup error", func(t *testing.T) {
+		t.Setenv("SEP2_PEN", "not-a-number")
+
+		if _, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"}); err == nil {
+			t.Fatal("configFromEnv: want an error for an unparseable SEP2_PEN, got nil")
+		}
+	})
+
+	t.Run("a value past uint32 range is a startup error", func(t *testing.T) {
+		t.Setenv("SEP2_PEN", "4294967296") // 2^32
+
+		if _, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"}); err == nil {
+			t.Fatal("configFromEnv: want an error for a SEP2_PEN past uint32 range, got nil")
+		}
+	})
+}

@@ -3,6 +3,7 @@ package flow_reservation_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/xml"
 	"log"
@@ -42,7 +43,7 @@ func TestHandlePostFlowReservationRequest_ResponseCarriesCreationTime(t *testing
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore))
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
 
 	energy := sep2.SignedRealEnergy{Value: 10000}
 	frq := sep2.FlowReservationRequest{
@@ -164,7 +165,7 @@ func TestHandlePostFlowReservationRequest_InvalidXMLDoesNotLeakDecoderDetail(t *
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore))
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
 
 	req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", strings.NewReader("<"+marker+">bar</"+marker+">"))
 	w := httptest.NewRecorder()
@@ -236,7 +237,7 @@ func TestHandlePostFlowReservationRequest_ResponseMRIDViaListRoute(t *testing.T)
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore))
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
 	mux.HandleFunc("GET /edev/{id}/frp", func(w http.ResponseWriter, r *http.Request) {
 		scoped := store.Under[sep2.FlowReservationResponse](frpStore, r.PathValue("id"))
 		corelisthandler.ListHandler[sep2.FlowReservationResponse, sep2.FlowReservationResponseList](
@@ -306,7 +307,7 @@ func TestHandlePostFlowReservationRequest_ResponseSubjectEqualsRequestMRID(t *te
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore))
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
 
 	energy := sep2.SignedRealEnergy{Value: 5000}
 	frq := sep2.FlowReservationRequest{MRID: "REQMRID123", EnergyRequested: &energy}
@@ -342,7 +343,7 @@ func TestHandlePostFlowReservationRequest_MissingRequestMRIDRefused(t *testing.T
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore))
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
 
 	energy := sep2.SignedRealEnergy{Value: 5000}
 	frq := sep2.FlowReservationRequest{EnergyRequested: &energy} // no MRID
@@ -396,7 +397,7 @@ func TestHandlePostFlowReservationRequest_WhitespaceOnlyMRIDRefused(t *testing.T
 			frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
 
 			mux := http.NewServeMux()
-			mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore))
+			mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
 
 			body := `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>` + tc.mrid + `</mRID></FlowReservationRequest>`
 			req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", strings.NewReader(body))
@@ -422,5 +423,50 @@ func TestHandlePostFlowReservationRequest_WhitespaceOnlyMRIDRefused(t *testing.T
 				t.Errorf("stored response count = %d, want 0", len(responses.Items))
 			}
 		})
+	}
+}
+
+// TestHandlePostFlowReservationRequest_WithPEN_LowBitsArePEN is fix round
+// 2's PEN criterion, exercised through the handler HandlePostFlowReservationRequest
+// is actually called with, not just the internal mint function: a
+// configured PEN reaches the stored response's mRID with its value in the
+// low 32 bits, the same place internal/dercontrol embeds one for a
+// DERControl mRID.
+func TestHandlePostFlowReservationRequest_WithPEN_LowBitsArePEN(t *testing.T) {
+	t.Parallel()
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+
+	pen := uint32(0x40732001)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, &pen))
+
+	energy := sep2.SignedRealEnergy{Value: 10000}
+	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &energy}
+	body, err := xml.Marshal(&frq)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201, body: %s", w.Code, w.Body.String())
+	}
+
+	responses, err := frpStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list stored responses: %v", err)
+	}
+	if len(responses.Items) != 1 {
+		t.Fatalf("stored response count = %d, want 1", len(responses.Items))
+	}
+	got := responses.Items[0].MRID
+	raw, err := hex.DecodeString(got)
+	if err != nil {
+		t.Fatalf("MRID %q is not hex: %v", got, err)
+	}
+	if gotPEN := binary.BigEndian.Uint32(raw[12:]); gotPEN != pen {
+		t.Fatalf("low 32 bits of MRID %q = %#x, want configured PEN %#x", got, gotPEN, pen)
 	}
 }

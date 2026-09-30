@@ -11,8 +11,11 @@
 // assembly.BuildProtocolRouter). Route-surface coverage is preserved: any
 // addition or deletion from the 58 canonical patterns fails this test.
 //
-// TestNewCoreRouterConfig pins the five-field mapping from *config.Config
+// TestNewCoreRouterConfig pins the scalar-field mapping from *config.Config
 // to assembly.RouterConfig so a transposed field is caught immediately.
+// TestNewCoreRouterConfig_PEN separately pins the EffectivePEN normalization
+// (#665): a set PEN maps through, and an explicit 0 (IANA-reserved) maps to
+// nil rather than to a zero PEN.
 //
 // TestNewCoreAuthPolicyIdentity pins the Identity closure field order and
 // asserts Wrap and SFDIPrefix are non-nil.
@@ -277,6 +280,30 @@ func TestNewCoreRouterConfig(t *testing.T) {
 	}
 	if got.TimeQuality != cfg.TimeQuality {
 		t.Errorf("TimeQuality: got %d, want %d", got.TimeQuality, cfg.TimeQuality)
+	}
+}
+
+// TestNewCoreRouterConfig_PEN pins EffectivePEN's normalization reaching the
+// router: a set PEN maps through unchanged, and 0 (IANA-reserved) maps to
+// nil rather than to a zero-valued PEN.
+func TestNewCoreRouterConfig_PEN(t *testing.T) {
+	t.Parallel()
+
+	pen := uint32(0x40732001)
+	got := server.NewCoreRouterConfig(&config.Config{PEN: &pen})
+	if got.PEN == nil || *got.PEN != pen {
+		t.Errorf("PEN: got %v, want %#x", got.PEN, pen)
+	}
+
+	zero := uint32(0)
+	got = server.NewCoreRouterConfig(&config.Config{PEN: &zero})
+	if got.PEN != nil {
+		t.Errorf("PEN: got %v for an explicit 0, want nil (IANA-reserved, treated as unset)", *got.PEN)
+	}
+
+	got = server.NewCoreRouterConfig(&config.Config{})
+	if got.PEN != nil {
+		t.Errorf("PEN: got %v for an unset Config.PEN, want nil", *got.PEN)
 	}
 }
 

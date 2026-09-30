@@ -79,10 +79,13 @@ func BuildProtocolRouter(cfg *config.Config, stores *Stores, _ *handler.AdminCer
 	return wrapMutationHandlers(coreHandler, stores, notifier), patterns
 }
 
-// NewCoreRouterConfig maps the five scalar fields from *config.Config to
+// NewCoreRouterConfig maps the scalar fields from *config.Config to
 // assembly.RouterConfig. Core never imports internal/config; the server
 // supplies these scalars explicitly. Exported so the equivalence test
 // (and Phase 2 wiring) can use it directly.
+//
+// PEN goes through EffectivePEN, not the raw field, so an explicit 0 (IANA-
+// reserved) reaches the router as unset rather than as a real PEN (#665).
 func NewCoreRouterConfig(cfg *config.Config) assembly.RouterConfig {
 	return assembly.RouterConfig{
 		TZOffset:    cfg.TZOffset,
@@ -90,6 +93,7 @@ func NewCoreRouterConfig(cfg *config.Config) assembly.RouterConfig {
 		DSTStart:    cfg.DSTStart,
 		DSTEnd:      cfg.DSTEnd,
 		TimeQuality: cfg.TimeQuality,
+		PEN:         cfg.EffectivePEN(),
 	}
 }
 

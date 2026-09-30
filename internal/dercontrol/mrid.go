@@ -2,9 +2,8 @@ package dercontrol
 
 import (
 	"crypto/rand"
-	"encoding/binary"
-	"encoding/hex"
-	"strings"
+
+	sharedmrid "github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 )
 
 // randRead is the mRID randomness source. Overridable in tests only, the
@@ -19,25 +18,18 @@ var randRead = rand.Read
 // (0xFFFFFFFFFFFFFFFFFFFFFFFF[pen]) is reserved by the standard for an
 // object still being created and is never returned; on that draw the
 // function retries.
+//
+// Delegates to internal/mrid, the copy this package shares with
+// pkg/sep2srv/handlers/flow_reservation, so the retry logic exists once.
+// randRead is still threaded through explicitly: this package's own test
+// seam overrides that var directly, and the call below is what makes the
+// override reach the shared implementation.
 func newMRID(pen uint32) (string, error) {
-	var b [16]byte
-	for {
-		if _, err := randRead(b[:12]); err != nil {
-			return "", err
-		}
-		if !isAllFF(b[:12]) {
-			break
-		}
-	}
-	binary.BigEndian.PutUint32(b[12:], pen)
-	return strings.ToUpper(hex.EncodeToString(b[:])), nil
+	return sharedmrid.New(randRead, &pen)
 }
 
+// isAllFF is kept as a package-level name because mrid_test.go asserts
+// against it directly; the logic itself lives in internal/mrid.
 func isAllFF(b []byte) bool {
-	for _, v := range b {
-		if v != 0xFF {
-			return false
-		}
-	}
-	return true
+	return sharedmrid.IsAllFF(b)
 }

@@ -1,10 +1,30 @@
 package flow_reservation
 
 import (
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
 )
+
+// TestNewFRPMRID_WithPEN_LowBitsArePEN pins the plumbing: newFRPMRID(pen)
+// reaches the shared minter (internal/mrid) with the configured PEN, the
+// same place internal/dercontrol embeds one for a DERControl mRID.
+func TestNewFRPMRID_WithPEN_LowBitsArePEN(t *testing.T) {
+	pen := uint32(0xABCD1234)
+	mrid, err := newFRPMRID(&pen)
+	if err != nil {
+		t.Fatalf("newFRPMRID(&pen) error = %v", err)
+	}
+	raw, err := hex.DecodeString(mrid)
+	if err != nil {
+		t.Fatalf("mRID %q is not hex: %v", mrid, err)
+	}
+	if gotPEN := binary.BigEndian.Uint32(raw[12:]); gotPEN != pen {
+		t.Fatalf("low 32 bits = %#x, want %#x", gotPEN, pen)
+	}
+}
 
 // TestNewFRPMRID_NeverProducesAllFReservedForm proves the all-F retry in
 // newFRPMRID actually retries: it forces the first draw to be the reserved
@@ -30,9 +50,9 @@ func TestNewFRPMRID_NeverProducesAllFReservedForm(t *testing.T) {
 		return len(b), nil
 	}
 
-	mrid, err := newFRPMRID()
+	mrid, err := newFRPMRID(nil)
 	if err != nil {
-		t.Fatalf("newFRPMRID() error = %v", err)
+		t.Fatalf("newFRPMRID(nil) error = %v", err)
 	}
 	if calls < 2 {
 		t.Fatalf("frpRandRead called %d times, want at least 2 (a retry after the all-F draw)", calls)
@@ -50,9 +70,9 @@ func TestNewFRPMRID_RandReadErrorPropagates(t *testing.T) {
 	wantErr := errors.New("boom")
 	frpRandRead = func(b []byte) (int, error) { return 0, wantErr }
 
-	_, err := newFRPMRID()
+	_, err := newFRPMRID(nil)
 	if !errors.Is(err, wantErr) {
-		t.Fatalf("newFRPMRID() error = %v, want %v", err, wantErr)
+		t.Fatalf("newFRPMRID(nil) error = %v, want %v", err, wantErr)
 	}
 }
 
@@ -78,9 +98,9 @@ func TestNewFRPMRID_SecondDrawErrorPropagates(t *testing.T) {
 		return 0, wantErr
 	}
 
-	_, err := newFRPMRID()
+	_, err := newFRPMRID(nil)
 	if !errors.Is(err, wantErr) {
-		t.Fatalf("newFRPMRID() error = %v, want %v", err, wantErr)
+		t.Fatalf("newFRPMRID(nil) error = %v, want %v", err, wantErr)
 	}
 	if calls != 2 {
 		t.Fatalf("frpRandRead called %d times, want exactly 2", calls)

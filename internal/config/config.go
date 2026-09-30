@@ -157,6 +157,27 @@ type Config struct {
 	// notificationURIs. Off by default because the admin listener is on
 	// loopback. Env: SEP2_NOTIFICATION_ALLOW_LOOPBACK.
 	NotificationAllowLoopback bool
+
+	// PEN is this server's manufacturer Private Enterprise Number, embedded
+	// in the low 32 bits of a minted FlowReservationResponse mRID (#665) so
+	// a device can attribute it to this server rather than to a random
+	// draw. Env: SEP2_PEN. Nil (unset) or the explicit value 0 (IANA-
+	// reserved; use EffectivePEN, which treats it the same way
+	// internal/dercontrol.Config already does) means the server was not
+	// given one: minted mRIDs are then fully random and not conformant
+	// with IEEE 2030.5 mRIDType, and the server logs one startup warning
+	// rather than refusing the request.
+	PEN *uint32
+}
+
+// EffectivePEN normalizes PEN the way internal/dercontrol.Config already
+// does for its own PEN field: the explicit value 0 is IANA-reserved and is
+// treated as unset, so both fields resolve "not configured" identically.
+func (c *Config) EffectivePEN() *uint32 {
+	if c.PEN == nil || *c.PEN == 0 {
+		return nil
+	}
+	return c.PEN
 }
 
 // EffectiveAdminListen returns the admin listener address as supplied by

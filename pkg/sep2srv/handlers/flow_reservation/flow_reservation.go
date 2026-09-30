@@ -3,7 +3,6 @@ package flow_reservation
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	sharedmrid "github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	coreresponse "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/response"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -25,33 +25,13 @@ import (
 var frpRandRead = rand.Read
 
 // newFRPMRID mints a 128-bit mRID (32 uppercase hex digits) for an
-// auto-created FlowReservationResponse, per IEEE 2030.5 mRIDType. The all-F
-// value is reserved by the standard for an object still being created and is
-// never returned; on that draw the function retries.
-//
-// internal/dercontrol/mrid.go mints DERControl mRIDs the same way but packs
-// a configured PEN into the low 32 bits; this handler has no PEN threaded to
-// it (#665 is scoped to the response mRID alone), so all 128 bits are random.
-func newFRPMRID() (string, error) {
-	var b [16]byte
-	if _, err := frpRandRead(b[:]); err != nil {
-		return "", err
-	}
-	for isAllFF(b[:]) {
-		if _, err := frpRandRead(b[:]); err != nil {
-			return "", err
-		}
-	}
-	return strings.ToUpper(hex.EncodeToString(b[:])), nil
-}
-
-func isAllFF(b []byte) bool {
-	for _, v := range b {
-		if v != 0xFF {
-			return false
-		}
-	}
-	return true
+// auto-created FlowReservationResponse, per IEEE 2030.5 mRIDType, sharing
+// internal/mrid's retry logic with internal/dercontrol's DERControl mRIDs
+// rather than a second copy. pen is nil unless the server was configured
+// with one (RouterConfig.PEN); nil mints all 128 bits at random, since
+// there is nothing to embed in the low 32 bits.
+func newFRPMRID(pen *uint32) (string, error) {
+	return sharedmrid.New(frpRandRead, pen)
 }
 
 // BuildFlowReservationRequestList constructs a FlowReservationRequestList.
@@ -92,9 +72,12 @@ type FRPCreator interface {
 }
 
 // HandlePostFlowReservationRequest returns a handler for POST /edev/{id}/frq.
+// pen is RouterConfig.PEN, passed straight through: nil (or the IANA-reserved
+// value 0) mints a response mRID with no embedded PEN, per newFRPMRID.
 func HandlePostFlowReservationRequest(
 	frqStore store.ScopedStore[sep2.FlowReservationRequest],
 	frpStore FRPCreator,
+	pen *uint32,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -135,7 +118,7 @@ func HandlePostFlowReservationRequest(
 		// acknowledgement or a superseding response. Minted here, not copied
 		// from the request: mRID identifies THIS response, distinct from
 		// Subject, which names the request it answers.
-		frpMRID, err := newFRPMRID()
+		frpMRID, err := newFRPMRID(pen)
 		if err != nil {
 			srverr.Internal(w, r, fmt.Errorf("mint FlowReservationResponse mRID: %w", err))
 			return

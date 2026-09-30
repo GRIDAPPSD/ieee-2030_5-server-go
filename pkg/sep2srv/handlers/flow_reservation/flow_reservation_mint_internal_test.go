@@ -31,7 +31,7 @@ func TestHandlePostFlowReservationRequest_MintFailureStoresNothing(t *testing.T)
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /edev/{id}/frq", HandlePostFlowReservationRequest(frqStore, frpStore))
+	mux.HandleFunc("POST /edev/{id}/frq", HandlePostFlowReservationRequest(frqStore, frpStore, nil))
 
 	energy := sep2.SignedRealEnergy{Value: 10000}
 	frq := sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &energy}

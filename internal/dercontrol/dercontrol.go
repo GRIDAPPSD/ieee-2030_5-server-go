@@ -1,7 +1,7 @@
 // Package dercontrol turns an operator request into a conformant IEEE
 // 2030.5 DERControl event and keeps that control's lifecycle (supersede
-// and cancel). It has no HTTP route: an admin handler (a later issue)
-// calls it and maps its errors to wire responses.
+// and cancel). It has no HTTP route: the admin DER control handler in
+// internal/handler calls it and maps its errors to wire responses.
 package dercontrol
 
 import (
@@ -71,6 +71,10 @@ type CreateRequest struct {
 
 	// DurationSeconds is the requested interval length, required.
 	DurationSeconds uint32
+
+	// Description is the control's own description element, at most 32
+	// characters (IEEE 2030.5 String32). Empty leaves the element absent.
+	Description string
 }
 
 // Scope identifies the (EndDevice, FSA, DERProgram) triple a control is
@@ -81,6 +85,41 @@ type Scope struct {
 	EndDeviceID  string
 	FSAID        string
 	DERProgramID string
+}
+
+// maxDescriptionChars is IEEE 2030.5's String32 bound on description.
+const maxDescriptionChars = 32
+
+// Key is the store parent key the scope's controls and lifecycle records
+// are kept under ("edev/fsa/derp").
+func (s Scope) Key() string {
+	return scopeKeyOf(s)
+}
+
+// ScopeFromKey is the inverse of [Scope.Key]. ok is false unless key has
+// exactly three non-empty segments.
+func ScopeFromKey(key string) (Scope, bool) {
+	parts := strings.Split(key, "/")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return Scope{}, false
+	}
+	return Scope{EndDeviceID: parts[0], FSAID: parts[1], DERProgramID: parts[2]}, true
+}
+
+// ProgramListHref is the DERProgramList href the scope's program is listed
+// under, the resource a subscriber watches for program and control changes.
+func (s Scope) ProgramListHref() string {
+	return "/edev/" + s.EndDeviceID + "/fsa/" + s.FSAID + "/derp"
+}
+
+// ProgramHref is the device-facing href of the scope's DERProgram.
+func (s Scope) ProgramHref() string {
+	return s.ProgramListHref() + "/" + s.DERProgramID
+}
+
+// ControlListHref is the device-facing href of the scope's DERControlList.
+func (s Scope) ControlListHref() string {
+	return s.ProgramHref() + "/derc"
 }
 
 // Result is what Issue returns on success.
@@ -117,6 +156,7 @@ const (
 	RefusalAlreadyCancelled   RefusalCode = "already_cancelled"
 	RefusalAlreadySuperseded  RefusalCode = "already_superseded"
 	RefusalEnded              RefusalCode = "ended"
+	RefusalInvalidDescription RefusalCode = "invalid_description"
 )
 
 // RefusalError is returned when Issue or Cancel declines. Error() carries
@@ -243,8 +283,8 @@ type selfRollingBack interface {
 // MaxDuration; NewIssuer rejects a Config that violates either. PEN has no
 // default: a nil PEN, or a PEN of 0 (IANA-reserved and therefore treated as
 // not configured), makes every Issue call refuse with
-// RefusalPENNotConfigured. Wiring these from server configuration is a
-// later issue.
+// RefusalPENNotConfigured. The server wires PEN from SEP2_PEN; the
+// duration and lead bounds take their defaults.
 type Config struct {
 	PEN         *uint32
 	StartLead   time.Duration

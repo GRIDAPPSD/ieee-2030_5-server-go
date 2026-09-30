@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
@@ -133,6 +134,9 @@ func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 	if !ok {
 		return Result{}, refuse(RefusalInvalidProgramHref)
 	}
+	if !utf8.ValidString(req.Description) || utf8.RuneCountInString(req.Description) > maxDescriptionChars {
+		return Result{}, refuse(RefusalInvalidDescription)
+	}
 
 	base, err := buildBase(req)
 	if err != nil {
@@ -205,6 +209,7 @@ func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 	ctrl := sep2.DERControl{DERControlBase: base}
 	ctrl.Href = href
 	ctrl.MRID = mrid
+	ctrl.Description = req.Description
 	ctrl.CreationTime = creationTime
 	ctrl.Interval = &sep2.DateTimeInterval{Start: start, Duration: uint32(req.DurationSeconds)}
 

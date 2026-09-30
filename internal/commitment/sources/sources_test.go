@@ -416,27 +416,57 @@ func TestControls_ResolveErrorRefuses(t *testing.T) {
 	}
 }
 
-// A response under a device that is gone makes Grant fail as an internal
-// error, never as "no such grant": the grant may well be live.
-func TestGrants_UnresolvableIsNotAbsent(t *testing.T) {
+// A response left under an EndDevice that is gone belongs to no live
+// fleet, the same as an orphan control scope: it is skipped, so it neither
+// refuses every other fleet's checks nor stays executable.
+func TestGrants_OrphanResponseIsSkipped(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	f := newFixture(t)
-	must(t, f.devices.Delete(ctx, aggID))
-	_, err := f.grants().Grant(ctx, "MRID-R1")
-	if err == nil || errors.Is(err, commitment.ErrNoGrant) {
-		t.Fatalf("Grant with its device gone = %v, want an error that is not ErrNoGrant", err)
+	// The standalone device's grant is the orphan; the aggregator's fleet
+	// must still read its own.
+	orphan := sep2.FlowReservationResponse{
+		EnergyAvailable: &sep2.SignedRealEnergy{Value: 10000},
+		PowerAvailable:  &sep2.ActivePower{Value: 4000},
 	}
-	if _, err := f.grants().GrantsInFleet(ctx, aggLFDI); err == nil {
-		t.Error("GrantsInFleet with a response's EndDevice gone = nil error, want a refusal")
+	orphan.Href = "/edev/" + standaloneID + "/frp/O1"
+	orphan.MRID = "MRID-O1"
+	orphan.Interval = &sep2.DateTimeInterval{Start: 1000, Duration: 600}
+	must(t, f.responses.Create(ctx, standaloneID, "O1", orphan))
+	must(t, f.devices.Delete(ctx, standaloneID))
+
+	got, err := f.grants().GrantsInFleet(ctx, aggLFDI)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("GrantsInFleet(agg) with another fleet's device gone = %d grants, %v; want R1 and R4", len(got), err)
+	}
+	if _, err := f.grants().Grant(ctx, "MRID-O1"); !errors.Is(err, commitment.ErrNoGrant) {
+		t.Fatalf("Grant(orphan) = %v, want ErrNoGrant", err)
+	}
+	if _, err := f.grants().Grant(ctx, "MRID-R1"); err != nil {
+		t.Fatalf("Grant(R1) with an orphan present = %v, want R1", err)
 	}
 
 	l := commitment.NewLedger(f.grants(), f.controlSource())
-	p := commitment.Proposal{FleetKey: aggLFDI, Window: commitment.Window{Start: 1000, Duration: 10}, GrantMRID: "MRID-R1", TargetW: &sep2.ActivePower{Value: -1}, Reach: 1}
-	err = l.Within(ctx, []string{aggLFDI}, func(v commitment.View) error { return v.CheckControl(ctx, p) })
+	p := commitment.Proposal{FleetKey: standaloneLFDI, Window: commitment.Window{Start: 1000, Duration: 10}, GrantMRID: "MRID-O1", TargetW: &sep2.ActivePower{Value: -1}, Reach: 1}
+	err = l.Within(ctx, []string{standaloneLFDI}, func(v commitment.View) error { return v.CheckControl(ctx, p) })
 	var ce *commitment.ConflictError
-	if err == nil || errors.As(err, &ce) {
-		t.Fatalf("CheckControl on a live grant whose device is gone = %v, want an internal error, not a conflict", err)
+	if !errors.As(err, &ce) || ce.Code != commitment.ConflictGrantNotLive || ce.MRID != "MRID-O1" {
+		t.Fatalf("CheckControl executing an orphan grant = %v, want grant_not_live naming MRID-O1", err)
+	}
+}
+
+// A resolve failure other than "not found" still refuses: the grant may be
+// live, so it is neither skipped nor read as absent.
+func TestGrants_ResolveErrorRefuses(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+	g := sources.NewGrants(f.responses, f.responseLifecycles, failingFleets{Resolver: f.resolver(), failFor: aggID})
+	if _, err := g.Grant(ctx, "MRID-R1"); !errors.Is(err, errDown) {
+		t.Fatalf("Grant with a failing resolve = %v, want the failure", err)
+	}
+	if _, err := g.GrantsInFleet(ctx, standaloneLFDI); !errors.Is(err, errDown) {
+		t.Fatalf("GrantsInFleet with a failing resolve = %v, want the failure", err)
 	}
 }
 

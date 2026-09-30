@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -40,14 +41,16 @@ type timer interface {
 // Queue holds every FlowReservationRequest awaiting an answer and, for each,
 // fires the deadline fallback (#666 D1/D2) if the operator has not answered
 // by then: grant as asked when the fleet's window is free, deny otherwise.
+// Lock order: a request's key lock, then the gate's fleet lock, never the
+// reverse.
 //
 // The zero value is not usable: construct with NewQueue.
 type Queue struct {
-	frq     FRQReader
-	frp     FRPStore
-	checker CommitmentChecker
-	cfg     Config
-	pen     *uint32
+	frq  FRQReader
+	frp  FRPStore
+	gate Gate
+	cfg  Config
+	pen  *uint32
 
 	// after schedules f to run after d and returns a stoppable handle;
 	// production uses time.AfterFunc, tests substitute a short-deadline or
@@ -93,18 +96,18 @@ func (q *Queue) GivenUpCount() uint64 {
 	return atomic.LoadUint64(&q.givenUp)
 }
 
-// NewQueue builds a Queue. checker nil takes PermissiveCommitmentChecker
-// (the default until #714 lands the real commitment ledger). cfg's zero
-// fields take the package defaults. pen is threaded straight to
+// NewQueue builds a Queue. gate is required: there is no permissive
+// default, so an unwired commitment rule cannot pass for a free window.
+// cfg's zero fields take the package defaults. pen is threaded straight to
 // newFRPMRID, same meaning as RouterConfig.PEN.
-func NewQueue(frq FRQReader, frp FRPStore, checker CommitmentChecker, cfg Config, pen *uint32) *Queue {
-	if checker == nil {
-		checker = PermissiveCommitmentChecker{}
+func NewQueue(frq FRQReader, frp FRPStore, gate Gate, cfg Config, pen *uint32) *Queue {
+	if gate == nil {
+		panic("flowreservation: NewQueue: gate must not be nil")
 	}
 	return &Queue{
 		frq:      frq,
 		frp:      frp,
-		checker:  checker,
+		gate:     gate,
 		cfg:      cfg.withDefaults(),
 		pen:      pen,
 		after:    defaultAfter,
@@ -188,11 +191,11 @@ func secondsToDuration(seconds int64) time.Duration {
 }
 
 // attemptFallback is the deadline path: D2, grant as asked when the fleet's
-// window is uncommitted, deny otherwise; a Cancelled request (10.9.3.1) is
-// denied without consulting the commitment checker at all, since a
-// withdrawn request is never granted regardless of fleet state. A
-// commitment check that cannot complete denies rather than grants (fail
-// closed): an indeterminate answer must not be read as "free capacity".
+// window is uncommitted, deny otherwise. A Cancelled request (10.9.3.1) is
+// denied without trying a grant at all. A grant the gate refuses, as a
+// conflict or because the check could not complete, is answered with a
+// denial: an indeterminate check must not be read as free capacity (fail
+// closed).
 //
 // attempt is 1 on the timer's own fire; retryFallback re-invokes this with
 // attempt+1 after a backoff, so every attempt re-reads the request fresh
@@ -224,18 +227,14 @@ func (q *Queue) attemptFallback(ctx context.Context, edevID, frqID string, attem
 		// rather than tried as a Grant and treated as a retryable failure
 		// when answerFor correctly refuses it.
 		decision = Decision{Kind: Deny}
-	default:
-		committed, err := q.checker.Committed(ctx, edevID, requestedStart(frq), requestedDuration(frq))
-		switch {
-		case err != nil:
-			log.Printf("flowreservation: deadline fallback: commitment check %s/%s: %v; denying (fail closed)", edevID, frqID, err)
-			decision = Decision{Kind: Deny}
-		case committed:
-			decision = Decision{Kind: Deny}
-		}
 	}
 
-	if _, err := q.build(ctx, edevID, frqID, decision); err != nil {
+	_, err = q.build(ctx, edevID, frqID, decision)
+	if refused, why := grantRefused(err); decision.Kind == Grant && refused {
+		log.Printf("flowreservation: deadline fallback: %s/%s: %s: %v; denying", edevID, frqID, why, err)
+		_, err = q.build(ctx, edevID, frqID, Decision{Kind: Deny})
+	}
+	if err != nil {
 		if errors.Is(err, ErrAlreadyAnswered) {
 			// An Answer call won between this attempt's failure and its
 			// retry being scheduled: the retry that just fired has nothing
@@ -288,25 +287,27 @@ func (q *Queue) retryOrGiveUp(ctx context.Context, edevID, frqID string, attempt
 	})
 }
 
-func requestedStart(frq sep2.FlowReservationRequest) int64 {
-	if frq.IntervalRequested == nil {
-		return 0
+// grantRefused reports whether err is the gate refusing a grant, either
+// as a conflict or because the check could not complete, and which.
+func grantRefused(err error) (bool, string) {
+	var conflict *commitment.ConflictError
+	switch {
+	case errors.As(err, &conflict):
+		return true, "window committed"
+	case errors.Is(err, ErrCommitmentCheck):
+		return true, "commitment check failed (fail closed)"
 	}
-	return frq.IntervalRequested.Start
-}
-
-func requestedDuration(frq sep2.FlowReservationRequest) uint32 {
-	if frq.IntervalRequested == nil {
-		return 0
-	}
-	return frq.IntervalRequested.Duration
+	return false, ""
 }
 
 // Answer is the operator's path: #670's admin route will call this to
 // answer a pending request explicitly. It cancels the request's deadline
 // timer on success. Returns ErrAlreadyAnswered if the request already has a
 // response, whether from an earlier Answer call or because the deadline
-// fallback fired first.
+// fallback fired first. A grant whose window the fleet already holds
+// returns the gate's *commitment.ConflictError unwrapped, and a check that
+// could not complete returns an error wrapping ErrCommitmentCheck; neither
+// stores anything.
 func (q *Queue) Answer(ctx context.Context, edevID, frqID string, decision Decision) (sep2.FlowReservationResponse, error) {
 	return q.build(ctx, edevID, frqID, decision)
 }
@@ -378,11 +379,8 @@ func (q *Queue) build(ctx context.Context, edevID, frqID string, decision Decisi
 	frp.EventStatus = &es
 	frp.Href = responseHref(edevID, frqID)
 
-	if err := q.frp.Create(ctx, edevID, frqID, frp); err != nil {
-		if errors.Is(err, store.ErrAlreadyExists) {
-			return sep2.FlowReservationResponse{}, ErrAlreadyAnswered
-		}
-		return sep2.FlowReservationResponse{}, fmt.Errorf("flowreservation: create FlowReservationResponse: %w", err)
+	if err := q.store(ctx, edevID, frqID, frp); err != nil {
+		return sep2.FlowReservationResponse{}, err
 	}
 
 	q.mu.Lock()
@@ -393,6 +391,41 @@ func (q *Queue) build(ctx context.Context, edevID, frqID string, decision Decisi
 	q.mu.Unlock()
 
 	return frp, nil
+}
+
+// store creates frp under frqID. A grant with a positive duration commits
+// its fleet's window, so its Create runs inside the gate, under the fleet
+// lock; a denial and a grant with no interval commit nothing and bypass it.
+// An error from the Create itself keeps its infrastructure meaning (the
+// fallback retries it), so only the gate's own refusals are marked.
+func (q *Queue) store(ctx context.Context, edevID, frqID string, frp sep2.FlowReservationResponse) error {
+	var createErr error
+	create := func(ctx context.Context) error {
+		createErr = q.frp.Create(ctx, edevID, frqID, frp)
+		return createErr
+	}
+
+	var err error
+	if frp.Interval != nil && frp.Interval.Duration > 0 {
+		err = q.gate.Grant(ctx, edevID, frp.Interval, "", create)
+	} else {
+		err = create(ctx)
+	}
+
+	var conflict *commitment.ConflictError
+	switch {
+	case err == nil:
+		return nil
+	case createErr != nil:
+		if errors.Is(createErr, store.ErrAlreadyExists) {
+			return ErrAlreadyAnswered
+		}
+		return fmt.Errorf("flowreservation: create FlowReservationResponse: %w", createErr)
+	case errors.As(err, &conflict):
+		return err
+	default:
+		return fmt.Errorf("%w: %w", ErrCommitmentCheck, err)
+	}
 }
 
 // lockKey returns an unlock func for key, taken after this call returns.

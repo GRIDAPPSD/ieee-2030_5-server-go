@@ -382,6 +382,13 @@ func TestHandlePostFlowReservationRequest_MissingRequestMRIDRefused(t *testing.T
 // check let through, storing a response whose subject is meaningless
 // whitespace. A whitespace-only mRID carries no more identity than an absent
 // one and must be refused the same way.
+//
+// The body carries a valid RequestStatus (#692 fix round 1): without one, the
+// RequestStatus check refuses the body first, and the 400 this test asserts
+// would no longer say anything about the mRID path it is named for. The
+// response body is asserted, not just the status, so a regression that swaps
+// in a different 400 (RequestStatus's, say) is caught rather than passing for
+// the wrong reason a second time.
 func TestHandlePostFlowReservationRequest_WhitespaceOnlyMRIDRefused(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -400,13 +407,17 @@ func TestHandlePostFlowReservationRequest_WhitespaceOnlyMRIDRefused(t *testing.T
 			mux := http.NewServeMux()
 			mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore, nil))
 
-			body := `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>` + tc.mrid + `</mRID></FlowReservationRequest>`
+			body := `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>` + tc.mrid + `</mRID>` +
+				`<RequestStatus><dateTime>1727136000</dateTime><requestStatus>0</requestStatus></RequestStatus></FlowReservationRequest>`
 			req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", strings.NewReader(body))
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, req)
 
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400, body: %s", w.Code, w.Body.String())
+			}
+			if got := strings.TrimSpace(w.Body.String()); got != "FlowReservationRequest mRID is required" {
+				t.Errorf("body = %q, want the mRID-specific message: a 400 for any other reason does not prove this path was reached", got)
 			}
 
 			stored, err := frqStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
@@ -508,6 +519,61 @@ func TestHandlePostFlowReservationRequest_RequestStatusRefused(t *testing.T) {
 			name: "dateTime negative",
 			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>` +
 				`<RequestStatus><dateTime>-5</dateTime><requestStatus>0</requestStatus></RequestStatus></FlowReservationRequest>`,
+		},
+		{
+			// Boundary: -1 is refused by "< 0" but not by a mutant widened
+			// to "< -4"; -5 alone cannot tell the two apart.
+			name: "dateTime negative boundary",
+			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>` +
+				`<RequestStatus><dateTime>-1</dateTime><requestStatus>0</requestStatus></RequestStatus></FlowReservationRequest>`,
+		},
+		{
+			// Boundary: 2 is refused by the defined set {0, 1} but not by a
+			// mutant widened to case 0, 1, 2; 200 alone cannot tell the two
+			// apart.
+			name: "requestStatus boundary just past the defined set",
+			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>` +
+				`<RequestStatus><dateTime>1727136000</dateTime><requestStatus>2</requestStatus></RequestStatus></FlowReservationRequest>`,
+		},
+		{
+			// A dateTime this far ahead of the server clock cannot be "the
+			// time at which the status change occurred": it is billions of
+			// years in the future, not a client running a few seconds fast.
+			name: "dateTime far in the future",
+			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>` +
+				`<RequestStatus><dateTime>9000000000000000000</dateTime><requestStatus>0</requestStatus></RequestStatus></FlowReservationRequest>`,
+		},
+		{
+			// encoding/xml allocates the pointer and sets 0 for a present
+			// but empty numeric element (GOROOT src/encoding/xml/read.go:
+			// 639-656), so a struct-only presence check cannot tell this
+			// from a client that literally sent dateTime 0. The document
+			// itself can: the child is present with no character data.
+			name: "dateTime self-closed",
+			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>` +
+				`<RequestStatus><dateTime/><requestStatus>0</requestStatus></RequestStatus></FlowReservationRequest>`,
+		},
+		{
+			name: "dateTime open-close empty",
+			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>` +
+				`<RequestStatus><dateTime></dateTime><requestStatus>0</requestStatus></RequestStatus></FlowReservationRequest>`,
+		},
+		{
+			// A comment carries no character data either, so this decodes
+			// identically to the open-close-empty case above.
+			name: "dateTime comment-only",
+			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>` +
+				`<RequestStatus><dateTime><!-- x --></dateTime><requestStatus>0</requestStatus></RequestStatus></FlowReservationRequest>`,
+		},
+		{
+			name: "requestStatus self-closed",
+			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>` +
+				`<RequestStatus><dateTime>1727136000</dateTime><requestStatus/></RequestStatus></FlowReservationRequest>`,
+		},
+		{
+			name: "requestStatus open-close empty",
+			body: `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>FRQ001</mRID>` +
+				`<RequestStatus><dateTime>1727136000</dateTime><requestStatus></requestStatus></RequestStatus></FlowReservationRequest>`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

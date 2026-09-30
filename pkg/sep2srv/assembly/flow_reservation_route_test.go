@@ -415,3 +415,35 @@ func TestFlowReservationInstances_HEADIsServedByTheGETPattern(t *testing.T) {
 		t.Errorf("HEAD returned a %d-byte body, want none: %s", len(body), body)
 	}
 }
+
+// TestFlowReservationRequest_InvalidRequestStatusRefusedThroughTheMountedRoute
+// is #692 exercised through the real mounted route rather than only against
+// HandlePostFlowReservationRequest called directly: BuildProtocolRouter is
+// what an operator's server actually runs, and nothing else in this package
+// posts a RequestStatus the schema forbids.
+func TestFlowReservationRequest_InvalidRequestStatusRefusedThroughTheMountedRoute(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := frqServer(t)
+	body := `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>6162636465666768696A6B6C6D6E6F70</mRID>` +
+		`<RequestStatus><dateTime>1727136000</dateTime><requestStatus>200</requestStatus></RequestStatus></FlowReservationRequest>`
+
+	resp, err := http.Post(srv.URL+"/edev/e1/frq", "application/sep+xml", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /edev/e1/frq: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+
+	listResp, err := http.Get(srv.URL + "/edev/e1/frq")
+	if err != nil {
+		t.Fatalf("GET /edev/e1/frq: %v", err)
+	}
+	var list sep2.FlowReservationRequestList
+	decodeXML(t, listResp, &list)
+	if len(list.FlowReservationRequest) != 0 {
+		t.Errorf("FlowReservationRequestList has %d members, want 0: a refused request must not be stored", len(list.FlowReservationRequest))
+	}
+}

@@ -1,8 +1,6 @@
 package dercontrol
 
 import (
-	"strings"
-
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 )
 
@@ -13,13 +11,11 @@ func parseProgramHref(href string) (edev, fsa, derp string, ok bool) {
 }
 
 // parseControlListHref pulls (edev, fsa, derp) out of
-// "/edev/{id}/fsa/{fsaId}/derp/{derpId}/derc". A href missing the "/derc"
-// suffix is not a control list link and is refused: it may be the program's
-// own href, which no device could have followed to reach a control list.
+// "/edev/{id}/fsa/{fsaId}/derp/{derpId}/derc". See [derhref.ControlList];
+// this package's own status-derivation decorator
+// (pkg/sep2srv/handlers/der) and the DERControlListLink.all decorator call
+// the same shared function directly, so the parse logic exists in exactly
+// one place.
 func parseControlListHref(href string) (edev, fsa, derp string, ok bool) {
-	trimmed, ok := strings.CutSuffix(strings.TrimSpace(href), "/derc")
-	if !ok {
-		return "", "", "", false
-	}
-	return derhref.Program(trimmed)
+	return derhref.ControlList(href)
 }

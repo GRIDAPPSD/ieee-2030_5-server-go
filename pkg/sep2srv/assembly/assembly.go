@@ -49,6 +49,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	coreconfiguration "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/configuration"
 	coredcap "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/dcap"
 	coreder "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
@@ -215,6 +216,16 @@ type Stores struct {
 	DERControls        store.ScopedStore[sep2.DERControl]
 	DefaultDERControls store.ScopedStore[sep2.DefaultDERControl]
 	DERCurves          store.ResourceStore[sep2.DERCurve]
+
+	// DERControlLifecycles holds the cancellation and supersede record an
+	// admin issuer (internal/dercontrol) keeps per control it created. It is
+	// consulted, never written, by this package: absent means no issuer is
+	// wired yet, and every DERControl is served exactly as stored (GET
+	// DERControlList and GET DERControl both go through
+	// coreder.DerivedStatusControlStore only when this is present). A
+	// control loaded from a boot fixture or the CSIP loader never has a
+	// record here regardless, since only the issuer ever creates one.
+	DERControlLifecycles store.ScopedStore[dercontrol.LifecycleRecord]
 
 	// FSA store
 	FSAs store.ScopedStore[sep2.FunctionSetAssignments]
@@ -766,6 +777,21 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	derControls := requireScoped(stores.DERControls, "DERControls")
 	defaultDERControls := requireScoped(stores.DefaultDERControls, "DefaultDERControls")
 	derCurves := requireResource(stores.DERCurves, "DERCurves")
+
+	// DERControlLifecycles is optional (see the Stores field doc): it rides on
+	// no family gate, since its absence is not a mis-wired deployment but the
+	// ordinary state before an admin issuer is wired. Wrapping derControls
+	// only when present is what keeps every existing deployment (no issuer
+	// yet) served exactly as before.
+	if !store.IsAbsent(stores.DERControlLifecycles) {
+		derControls = coreder.NewDerivedStatusControlStore(derControls, stores.DERControlLifecycles)
+	}
+
+	// DERProgram.DERControlListLink.all is always derived from the live
+	// control count in the scope the link names (issue context: a control
+	// added after boot must be counted), independent of whether an issuer's
+	// lifecycle store is wired.
+	derPrograms = coreder.NewDERControlCountedProgramStore(derPrograms, derControls)
 
 	dercap, derg, ders, dera := coreder.DERSingletonHandlers(
 		derCapabilities, derSettings, derStatuses, derAvailabilities,

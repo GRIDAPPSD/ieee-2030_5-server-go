@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -261,7 +261,7 @@ func (i *Issuer) computeSupersedes(ctx context.Context, scopeKey string, existin
 		if c.Interval == nil {
 			continue
 		}
-		id, ok := idFromHref(c.Href)
+		id, ok := derhref.ControlID(c.Href)
 		if !ok {
 			continue
 		}
@@ -512,23 +512,6 @@ func controlShape(b *sep2.DERControlBase) string {
 	default:
 		return "other"
 	}
-}
-
-// idFromHref recovers the store id this package assigned, from the tail of
-// an href it built ("/edev/.../derc/<id>"). A control this package did not
-// create may have any other href shape; ok is false for those, which is
-// the caller's signal to treat it as not admin-issued.
-func idFromHref(href string) (string, bool) {
-	const marker = "/derc/"
-	idx := strings.LastIndex(href, marker)
-	if idx < 0 {
-		return "", false
-	}
-	id := href[idx+len(marker):]
-	if id == "" {
-		return "", false
-	}
-	return id, true
 }
 
 func ptrInt64(v int64) *int64 { return &v }

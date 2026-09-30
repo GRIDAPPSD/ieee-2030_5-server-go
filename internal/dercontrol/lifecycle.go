@@ -6,8 +6,10 @@ package dercontrol
 // itself: cancellation and supersede are status changes, and a stored
 // Event is never edited (2018 line 5470).
 //
-// Serve-time EventStatus derivation from this record is a later issue;
-// here it backs only Issue's supersede check and Cancel's refusals.
+// Serve-time EventStatus derivation from this record is DeriveStatus
+// (status.go, #564), called from pkg/sep2srv/handlers/der's serve-side
+// decorator; here it also backs Issue's supersede check and Cancel's
+// refusals.
 type LifecycleRecord struct {
 	// CancelledAt is the Unix-second time Cancel was called, or nil.
 	CancelledAt  *int64

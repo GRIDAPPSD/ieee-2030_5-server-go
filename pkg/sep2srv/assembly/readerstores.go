@@ -16,8 +16,11 @@ import (
 // config value (a PIN resolver), not a store. AdminFSAs and Subscriptions
 // are bespoke admin and notification planes with no existing reader/writer
 // interface split, and no acceptance criterion for this handle names either
-// as a read consumer's need; narrowing them is future work for whichever
-// consumer first needs to read one.
+// as a read consumer's need. DERControlLifecycles is unlike every other
+// mirrored field: its absence is the ordinary pre-issuer state (see
+// Stores.DERControlLifecycles), not a misconfiguration, so requireScoped's
+// "not wired" log would fire falsely on most deployments today. Narrowing
+// all four is future work for whichever consumer first needs to read one.
 type ReaderStores struct {
 	EndDevices        store.EndDeviceReader
 	EndDeviceManagers store.EndDeviceManagementReader

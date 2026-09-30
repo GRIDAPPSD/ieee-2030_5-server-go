@@ -2,6 +2,7 @@ package server
 
 import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -70,6 +71,13 @@ type Stores struct {
 	DERControls        *memory.ScopedStore[sep2.DERControl]
 	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]
 	DERCurves          *memory.Store[sep2.DERCurve]
+	// DERControlLifecycles is wired (Run populates it, in-memory only, like
+	// DERControls above) but nothing writes to it yet: no admin issuer
+	// (internal/dercontrol) is constructed until its own admin route lands.
+	// Empty and wired behaves identically to nil here, since a control with
+	// no lifecycle record is served unchanged either way; see
+	// assembly.Stores.DERControlLifecycles for the protocol-route detail.
+	DERControlLifecycles *memory.ScopedStore[dercontrol.LifecycleRecord]
 
 	// FSA store
 	FSAs *memory.ScopedStore[sep2.FunctionSetAssignments]

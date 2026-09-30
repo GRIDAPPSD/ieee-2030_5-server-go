@@ -33,3 +33,45 @@ func Split(href string, seg0, seg1, seg2 string) ([3]string, bool) {
 	}
 	return [3]string{parts[1], parts[3], parts[5]}, true
 }
+
+// ControlID recovers the store id from a DERControl's own href
+// ("/edev/.../derc/<id>"), the one shape the issuer (internal/dercontrol),
+// the boot fixture and the CSIP loader all build. ok is false for any other
+// shape, which callers treat as "cannot key a lookup on it" rather than
+// guessing.
+func ControlID(href string) (string, bool) {
+	const marker = "/derc/"
+	idx := strings.LastIndex(href, marker)
+	if idx < 0 {
+		return "", false
+	}
+	id := href[idx+len(marker):]
+	if id == "" {
+		return "", false
+	}
+	return id, true
+}
+
+// ControlList pulls (edev, fsa, derp) out of a DERControlListLink href
+// ("/edev/{id}/fsa/{fsaId}/derp/{derpId}/derc"). A href missing the "/derc"
+// suffix is not a control list link and is refused: it may be the
+// program's own href, which no device could have followed to reach a
+// control list.
+func ControlList(href string) (edev, fsa, derp string, ok bool) {
+	trimmed, ok := strings.CutSuffix(strings.TrimSpace(href), "/derc")
+	if !ok {
+		return "", "", "", false
+	}
+	return Program(trimmed)
+}
+
+// ControlListScope is [ControlList] composed into the single scope key
+// string the DERControl store is keyed by ("edev/fsa/derp"), the same join
+// [internal/dercontrol.Scope]'s own key uses.
+func ControlListScope(href string) (string, bool) {
+	edev, fsa, derp, ok := ControlList(href)
+	if !ok {
+		return "", false
+	}
+	return edev + "/" + fsa + "/" + derp, true
+}

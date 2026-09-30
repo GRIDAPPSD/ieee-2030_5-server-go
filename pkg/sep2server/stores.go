@@ -2,6 +2,7 @@ package sep2server
 
 import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -36,6 +37,7 @@ func NewStores() *assembly.Stores {
 		DERControls:              memory.NewScopedStore[sep2.DERControl](),
 		DefaultDERControls:       memory.NewScopedStore[sep2.DefaultDERControl](),
 		DERCurves:                memory.NewStore[sep2.DERCurve](),
+		DERControlLifecycles:     memory.NewScopedStore[dercontrol.LifecycleRecord](),
 		FSAs:                     memory.NewScopedStore[sep2.FunctionSetAssignments](),
 		AdminFSAs:                memory.NewAdminFSAStore(),
 		Subscriptions:            memory.NewSubscriptionStore(),

@@ -156,8 +156,12 @@ type RegisteredEndDeviceStore struct {
 	now    func() int64
 }
 
-// compile-time proof the decorator is substitutable for what it decorates.
-var _ store.EndDeviceStore = (*RegisteredEndDeviceStore)(nil)
+// compile-time proof the decorator is substitutable for what it decorates,
+// and that it can be probed as part of a Delete chain (deleteProber).
+var (
+	_ store.EndDeviceStore = (*RegisteredEndDeviceStore)(nil)
+	_ deleteProber         = (*RegisteredEndDeviceStore)(nil)
+)
 
 // NewRegisteredEndDeviceStore binds devs to regs under policy.
 //
@@ -252,20 +256,60 @@ func (s *RegisteredEndDeviceStore) Update(ctx context.Context, id string, device
 	return s.devs.Update(ctx, id, device)
 }
 
-// Delete removes the EndDevice and its Registration together.
-//
-// The Registration is removed after the device, and an absent Registration
-// is not an error: a device provisioned without a pIN never had one. Any
-// other failure is reported, because a Registration surviving its EndDevice
-// would be served to whoever the key is next allocated to.
-func (s *RegisteredEndDeviceStore) Delete(ctx context.Context, id string) error {
-	if err := s.devs.Delete(ctx, id); err != nil {
+// probeDelete checks whether Delete(ctx, id) looks likely to succeed,
+// without mutating anything: that the Registration store can be read for
+// id, and whatever s.devs owns beneath it (there is none today; s.devs is
+// the base store this binding sits on). See [deleteProber] and
+// [probeResource] for what this does and does not guarantee.
+func (s *RegisteredEndDeviceStore) probeDelete(ctx context.Context, id string) error {
+	if err := probeInner(ctx, s.devs, id); err != nil {
 		return err
 	}
-	if err := s.regs.Delete(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
-		return err
+	if err := probeResource(ctx, s.regs, id); err != nil {
+		return fmt.Errorf("checking the registration for %q: %w", id, err)
 	}
 	return nil
+}
+
+// Delete removes the EndDevice and its Registration together.
+//
+// probeDelete runs first, over the whole chain, so a Registration store
+// that cannot be read for id is refused before this or any layer above it
+// removes anything. This layer used to sit beneath the flow reservation and
+// LogEvent decorators unprobed, so their cascades could already have run by
+// the time a Registration delete failed here
+// (GRIDAPPSD/ieee-2030_5-server-go#701).
+//
+// The two removals do not short-circuit each other: devErr is recorded but
+// not returned early, so a device already removed by an earlier, partially
+// failed call does not stop this call from still trying to remove a
+// Registration left over from that failure. A retry therefore converges:
+// each call removes whatever of the pair is still present, and only once
+// both are already gone does a further retry report ErrNotFound, exactly as
+// a DELETE of an id that never existed does. An absent Registration on its
+// own is never an error: a device provisioned without a pIN never had one.
+// Any other failure from either store is reported, because a Registration
+// surviving its EndDevice would be served to whoever the key is next
+// allocated to.
+func (s *RegisteredEndDeviceStore) Delete(ctx context.Context, id string) error {
+	if err := s.probeDelete(ctx, id); err != nil {
+		return err
+	}
+
+	devErr := s.devs.Delete(ctx, id)
+	if devErr != nil && !errors.Is(devErr, store.ErrNotFound) {
+		return devErr
+	}
+	regErr := s.regs.Delete(ctx, id)
+	if regErr != nil && !errors.Is(regErr, store.ErrNotFound) {
+		return regErr
+	}
+	if devErr == nil || regErr == nil {
+		// At least one half was actually removed by this call.
+		return nil
+	}
+	// Both were already absent: nothing existed for this call to remove.
+	return store.ErrNotFound
 }
 
 // Get returns the EndDevice stored under id with its RegistrationLink

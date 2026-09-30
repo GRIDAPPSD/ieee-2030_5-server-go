@@ -390,10 +390,11 @@ func TestFlowReservationLinkedEndDeviceStore_DeleteFailsClosedWhenCascadeFails(t
 }
 
 // TestFlowReservationLinkedEndDeviceStore_DeleteLeavesRequestsUntouchedWhenResponsesCascadeFails
-// pins GRIDAPPSD/ieee-2030_5-server-go#701: a failed DELETE must be
-// all-or-nothing. Requests cascade cleanly here; responses cannot. Before
-// the probe-first restructuring, the requests were already gone by the time
-// the responses cascade failed.
+// pins GRIDAPPSD/ieee-2030_5-server-go#701: a layer that cannot cascade
+// (responses, here) is refused before any other layer removes anything.
+// Requests cascade cleanly on their own; before the probe-first
+// restructuring, they were already gone by the time the responses cascade
+// failed.
 func TestFlowReservationLinkedEndDeviceStore_DeleteLeavesRequestsUntouchedWhenResponsesCascadeFails(t *testing.T) {
 	t.Parallel()
 

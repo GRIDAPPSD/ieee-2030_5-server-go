@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -30,16 +31,22 @@ func deleteScopedParent[T store.Copier[T]](ctx context.Context, s store.ScopedSt
 	return err
 }
 
-// probeScopedParent reports whether a later deleteScopedParent(ctx, s,
-// parentID) is expected to succeed, without removing anything. It checks the
-// same capability deleteScopedParent requires, then makes one read call
-// (HasParent) so a store that is wired but unreachable is caught the same
-// way: [store.ScopedReader.HasParent] must report a failed check as an
-// error rather than as false, per its own contract.
+// probeScopedParent checks the two things known ahead of the actual cascade:
+// that s HAS the capability deleteScopedParent requires, and that a read
+// against it (HasParent) succeeds. [store.ScopedReader.HasParent] must
+// report a failed check as an error rather than as false, per its own
+// contract, so this catches a store that is wired but currently unreachable
+// the same way it catches one that never supports DeleteParent at all.
 //
-// This is what lets a decorator chain check every cascade point before any
-// of them mutates anything (GRIDAPPSD/ieee-2030_5-server-go#701):
-// a probe that fails leaves every store, including this one, untouched.
+// This is a READ check, not a rehearsal of the delete itself: passing it
+// means the cascade is not already known to fail, not that DeleteParent is
+// guaranteed to succeed. A store can pass this probe and still fail the
+// actual DeleteParent call, for reasons the probe cannot see (the capability
+// and reachability it checks are not the same call as the removal). What it
+// closes is the case found in GRIDAPPSD/ieee-2030_5-server-go#701: a layer
+// that CANNOT cascade, or is already unreachable, is refused before any
+// layer in the chain removes anything, rather than discovered only after an
+// earlier layer's cascade has already mutated its store.
 func probeScopedParent[T store.Copier[T]](ctx context.Context, s store.ScopedStore[T], parentID string) error {
 	if _, ok := s.(parentCascader); !ok {
 		return fmt.Errorf("the store (%T) cannot cascade a parent delete", s)
@@ -50,21 +57,36 @@ func probeScopedParent[T store.Copier[T]](ctx context.Context, s store.ScopedSto
 	return nil
 }
 
+// probeResource is [probeScopedParent] for a flat store.ResourceStore keyed
+// directly by id, such as Registrations: Delete on that shape is always
+// present (there is no optional capability to check), so the only thing
+// worth checking ahead of time is reachability, via Get. ErrNotFound is not
+// a failure here: a later Delete tolerates it the same way, since an absent
+// record needs no removal.
+func probeResource[T store.Copier[T]](ctx context.Context, s store.ResourceStore[T], id string) error {
+	if _, err := s.Get(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("checking whether the store (%T) can be read for %q: %w", s, id, err)
+	}
+	return nil
+}
+
 // deleteProber is implemented by an EndDeviceStore decorator that owns a
-// cascade of its own: it can check, without mutating anything, whether its
-// Delete(ctx, id) would succeed, and it recurses into whatever it decorates.
-// Delete calls probeDelete first and only cascades or deletes when the whole
-// chain reports success, so a failure anywhere leaves the whole chain, not
-// just the layer that failed: the flow reservation decorator's own cascade
-// must not succeed before the LogEvent decorator's cascade fails one layer
-// down (GRIDAPPSD/ieee-2030_5-server-go#701).
+// cascade of its own: it can check, via a read, whether its Delete(ctx, id)
+// looks likely to succeed, without mutating anything, and it recurses into
+// whatever it decorates. Delete calls probeDelete first and only cascades or
+// deletes when the whole chain's probe passes, so a layer that already
+// cannot cascade, found anywhere in the chain, is refused before any layer
+// removes anything: the flow reservation decorator's own cascade must not
+// run ahead of the LogEvent decorator's cascade being refused one layer down
+// (GRIDAPPSD/ieee-2030_5-server-go#701). A probe passing is not a guarantee
+// the delete that follows will succeed; see [probeScopedParent].
 type deleteProber interface {
 	probeDelete(ctx context.Context, id string) error
 }
 
 // probeInner runs devs's own probeDelete when it decorates one, so a caller
 // need not know whether the layer beneath it has anything to check.
-func probeInner(ctx context.Context, devs any, id string) error {
+func probeInner(ctx context.Context, devs store.EndDeviceStore, id string) error {
 	if inner, ok := devs.(deleteProber); ok {
 		return inner.probeDelete(ctx, id)
 	}

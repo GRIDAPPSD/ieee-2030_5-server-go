@@ -108,11 +108,12 @@ func TestEndDeviceDelete_CascadesFlowReservationAndLogEventRecords(t *testing.T)
 // DELETE /edev/{id} must do the same rather than delete the device while
 // unable to cascade its (possibly present) response records.
 //
-// It also pins the fix-round-1 all-or-nothing property (#701): a request
-// record that could have cascaded cleanly is seeded first, and must survive
-// too, not just the device. Before the probe-first restructuring, the
-// request cascade ran and succeeded before the response store's incapacity
-// was discovered.
+// It also pins the property added for GRIDAPPSD/ieee-2030_5-server-go#701: a
+// request record that could have cascaded cleanly is seeded first, and must
+// survive too, not just the device, because the response store's incapacity
+// is refused before any layer removes anything. Before the probe-first
+// restructuring, the request cascade ran and succeeded before the response
+// store's incapacity was discovered.
 func TestEndDeviceDelete_FailsClosedWhenFlowReservationResponsesIsMiswired(t *testing.T) {
 	t.Parallel()
 

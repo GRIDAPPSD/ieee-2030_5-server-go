@@ -157,9 +157,10 @@ func (s *FlowReservationLinkedEndDeviceStore) Update(ctx context.Context, id str
 	return s.devs.Update(ctx, id, device)
 }
 
-// probeDelete checks whether Delete(ctx, id) would succeed, without
-// mutating anything: its own two collections, and whatever s.devs owns
-// beneath it. See [deleteProber].
+// probeDelete checks whether Delete(ctx, id) looks likely to succeed,
+// without mutating anything: its own two collections, and whatever s.devs
+// owns beneath it. See [deleteProber] and [probeScopedParent] for what this
+// does and does not guarantee.
 func (s *FlowReservationLinkedEndDeviceStore) probeDelete(ctx context.Context, id string) error {
 	if err := probeInner(ctx, s.devs, id); err != nil {
 		return err

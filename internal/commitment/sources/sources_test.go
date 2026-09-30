@@ -467,6 +467,14 @@ func TestSources_UnreadableShapesRefuse(t *testing.T) {
 			t.Error("ControlsInFleet = nil error, want a refusal")
 		}
 	})
+	t.Run("recorded control with a negative reach", func(t *testing.T) {
+		t.Parallel()
+		f := newFixture(t)
+		f.addControl(t, managedScope, "NEG", 20000, 60, &dercontrol.LifecycleRecord{Reach: -1})
+		if _, err := f.controlSource().ControlsInFleet(ctx, aggLFDI); err == nil {
+			t.Error("ControlsInFleet = nil error, want a refusal: a negative reach would shrink the power and energy sums")
+		}
+	})
 	t.Run("recorded control with no interval", func(t *testing.T) {
 		t.Parallel()
 		f := newFixture(t)
@@ -478,4 +486,44 @@ func TestSources_UnreadableShapesRefuse(t *testing.T) {
 			t.Error("ControlsInFleet = nil error, want a refusal")
 		}
 	})
+}
+
+// A record carrying the link (FleetKey, GrantMRID, Reach) is read as
+// written: its fleet is not resolved again, so it counts even after its
+// EndDevice is gone, and ExecutionsOf finds it by grant.
+func TestControls_LinkedRecordIsReadAsWritten(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newFixture(t)
+	f.addControl(t, standScope, "X1", 1000, 300, &dercontrol.LifecycleRecord{FleetKey: aggLFDI, GrantMRID: "MRID-R1", Reach: 4})
+	must(t, f.devices.Delete(ctx, standaloneID))
+
+	execs, err := f.controlSource().ExecutionsOf(ctx, "MRID-R1")
+	must(t, err)
+	if len(execs) != 1 {
+		t.Fatalf("ExecutionsOf(R1) = %v, want X1", execs)
+	}
+	x := execs[0]
+	if x.MRID != "MRID-X1" || x.FleetKey != aggLFDI || x.GrantMRID != "MRID-R1" || x.Reach != 4 || x.Scope != standScope {
+		t.Errorf("X1 = %+v, want the record's fleet, grant and reach", x)
+	}
+	inFleet, err := f.controlSource().ControlsInFleet(ctx, aggLFDI)
+	must(t, err)
+	if !slices.ContainsFunc(inFleet, func(c commitment.Control) bool { return c.MRID == "MRID-X1" }) {
+		t.Error("ControlsInFleet(agg) omits X1, whose record names that fleet")
+	}
+}
+
+// A record written before the link fields existed has no FleetKey: its
+// fleet is resolved from the scope's EndDevice and it reaches one device.
+func TestControls_UnlinkedRecordResolvesAndReachesOne(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	got, err := f.controlSource().ControlsInFleet(context.Background(), aggLFDI)
+	must(t, err)
+	for _, c := range got {
+		if c.FleetKey != aggLFDI || c.Reach != 1 || c.GrantMRID != "" {
+			t.Errorf("%s = fleet %q reach %d grant %q, want the resolved fleet, reach 1, plain", c.MRID, c.FleetKey, c.Reach, c.GrantMRID)
+		}
+	}
 }

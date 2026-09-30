@@ -205,16 +205,21 @@ func (c *Controls) filter(ctx context.Context, keep func(commitment.Control) boo
 			if err != nil {
 				return nil, fmt.Errorf("sources: lifecycle of control %s/%s: %w", scope, id, err)
 			}
-			fleet, cached := fleetOf[edevID]
-			if !cached {
-				fleet, err = c.resolve(ctx, edevID)
-				if err != nil {
-					return nil, err
-				}
-				fleetOf[edevID] = fleet
-			}
+			// A record written at create carries its fleet, fixed so a later
+			// management change cannot move it; only an older record
+			// without one is resolved from the scope's EndDevice.
+			fleet := lc.FleetKey
 			if fleet == "" {
-				continue
+				var cached bool
+				if fleet, cached = fleetOf[edevID]; !cached {
+					if fleet, err = c.resolve(ctx, edevID); err != nil {
+						return nil, err
+					}
+					fleetOf[edevID] = fleet
+				}
+				if fleet == "" {
+					continue
+				}
 			}
 			ctl, err := controlOf(scope, fleet, ctrl, lc)
 			if err != nil {
@@ -247,20 +252,27 @@ func (c *Controls) resolve(ctx context.Context, edevID string) (string, error) {
 	return "", nil
 }
 
-// controlOf builds the ledger's view of one control. The lifecycle record
-// carries no link yet (#714), so every control reads as a plain dispatch
-// reaching the one device it is stored under.
+// controlOf builds the ledger's view of one control, taking the link from
+// its lifecycle record. A record without a reach predates the link and
+// reaches the one device the control is stored under.
 func controlOf(scope, fleet string, ctrl sep2.DERControl, lc dercontrol.LifecycleRecord) (commitment.Control, error) {
 	if ctrl.Interval == nil {
 		return commitment.Control{}, fmt.Errorf("sources: control %s in %s has no interval", ctrl.MRID, scope)
+	}
+	if lc.Reach < 0 {
+		return commitment.Control{}, fmt.Errorf("sources: control %s in %s has reach %d", ctrl.MRID, scope, lc.Reach)
 	}
 	ctl := commitment.Control{
 		MRID:      ctrl.MRID,
 		Scope:     scope,
 		FleetKey:  fleet,
 		Window:    commitment.Window{Start: ctrl.Interval.Start, Duration: ctrl.Interval.Duration},
-		Reach:     1,
+		GrantMRID: lc.GrantMRID,
+		Reach:     lc.Reach,
 		Cancelled: lc.CancelledAt != nil,
+	}
+	if ctl.Reach == 0 {
+		ctl.Reach = 1
 	}
 	if ctrl.DERControlBase != nil {
 		ctl.TargetW = ctrl.DERControlBase.OpModTargetW

@@ -448,6 +448,43 @@ func TestRegisteredEndDeviceStore_CreateClearingFailureSurvivesAFailedRollback(t
 	}
 }
 
+// TestRegisteredEndDeviceStore_ProvisionedCreateRollsBackWhenTheRegistrationWriteFails
+// covers rollbackAfterFailedRegistration's OTHER call site: a provisioned
+// device whose Registration write fails must be rolled back the same way
+// the unprovisioned branch already proves above, not merely have its error
+// returned. A mutant replacing either call with a bare `return err` passes
+// every test that only checks the returned error; this one also checks the
+// EndDevice is gone.
+func TestRegisteredEndDeviceStore_ProvisionedCreateRollsBackWhenTheRegistrationWriteFails(t *testing.T) {
+	t.Parallel()
+
+	fault := &storetest.Fault{}
+	regs := storetest.NewFaultyResourceStore[sep2.Registration](memory.NewRegistrationStore(), fault)
+	devs := memory.NewEndDeviceStore()
+	bound := memory.NewRegisteredEndDeviceStore(devs, regs, memory.RegistrationPolicy{
+		PIN: func(lfdi string) (uint32, bool) {
+			if lfdi == bindingUnprovisionedID || lfdi == "" {
+				return 0, false
+			}
+			return bindingFixturePIN, true
+		},
+	})
+	ctx := context.Background()
+
+	fault.Arm(storetest.ErrBackendUnavailable)
+
+	err := bound.Create(ctx, "6", deviceFixture("6", bindingLFDI))
+	if err == nil {
+		t.Fatal("Create succeeded while the Registration write failed; want the error reported")
+	}
+	if !errors.Is(err, storetest.ErrBackendUnavailable) {
+		t.Errorf("Create error = %v, want it to wrap the Registration write failure", err)
+	}
+	if _, getErr := devs.Get(ctx, "6"); !errors.Is(getErr, store.ErrNotFound) {
+		t.Errorf("device was left stored after the Registration write failed: Get(6) = %v, want ErrNotFound", getErr)
+	}
+}
+
 // TestRegisteredEndDeviceStore_UpdateDoesNotProvision asserts Update never
 // brings a Registration into being. Update is a client-driven PUT: letting
 // it provision would let a device register itself by editing its own record,

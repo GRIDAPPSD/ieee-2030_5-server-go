@@ -3,6 +3,8 @@ package memory_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -178,6 +180,128 @@ func TestDeviceKeyedCascadeEndDeviceStore_DeleteClearsAdminFSAAssignment(t *test
 	// since the stale link was cleared rather than merely left unread.
 	if err := adminFSAs.AssignDevice(ctx, "fsa-1", "1"); err != nil {
 		t.Errorf("re-assign after delete = %v, want nil: the stale link must not block a fresh assignment", err)
+	}
+}
+
+// deleteParentFailingFSAs wraps a real ScopedStore[FunctionSetAssignments]
+// so its probe (HasParent, delegated to the real store) succeeds while its
+// actual cascade call always fails: the state a probe cannot predict, since
+// "A probe passing is not a guarantee the delete that follows will succeed"
+// (cascade.go, probeScopedParent's own doc).
+type deleteParentFailingFSAs struct {
+	store.ScopedStore[sep2.FunctionSetAssignments]
+}
+
+var errDeleteParentFailed = errors.New("test: DeleteParent failed")
+
+func (deleteParentFailingFSAs) DeleteParent(context.Context, string) (uint32, error) {
+	return 0, errDeleteParentFailed
+}
+
+// TestDeviceKeyedCascadeEndDeviceStore_DeleteLeavesTheAdminLinkUntouchedWhenAScopedDeleteFailsAfterItsProbePassed
+// pins GRIDAPPSD/ieee-2030_5-server-go#721: the admin FSA link is unassigned
+// LAST among this layer's own mutations, after every scoped family, so a
+// family's own delete call failing post-probe (the FSA family itself, here)
+// never lets the admin link disappear while the device keeps serving the
+// program the family's delete never actually removed. A retried DELETE
+// finishes the job: nothing about the admin link changed, so it converges
+// the same way TestDeviceKeyedCascadeEndDeviceStore_DeleteClearsAdminFSAAssignment
+// already pins for the clean path.
+func TestDeviceKeyedCascadeEndDeviceStore_DeleteLeavesTheAdminLinkUntouchedWhenAScopedDeleteFailsAfterItsProbePassed(t *testing.T) {
+	t.Parallel()
+
+	inner := memory.NewScopedStore[sep2.FunctionSetAssignments]()
+	ctx := context.Background()
+	if err := inner.Create(ctx, "1", "fsa-1", sep2.FunctionSetAssignments{}); err != nil {
+		t.Fatalf("seed the scoped FSA record: %v", err)
+	}
+	fsas := deleteParentFailingFSAs{ScopedStore: inner}
+
+	configurations := memory.NewScopedStore[sep2.Configuration]()
+	deviceStatuses := memory.NewScopedStore[sep2.DeviceStatus]()
+	powerStatuses := memory.NewScopedStore[sep2.PowerStatus]()
+	adminFSAs := memory.NewAdminFSAStore()
+	if err := adminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{}); err != nil {
+		t.Fatalf("seed admin FSA: %v", err)
+	}
+	if err := adminFSAs.AssignDevice(ctx, "fsa-1", "1"); err != nil {
+		t.Fatalf("assign device: %v", err)
+	}
+
+	devs := memory.NewEndDeviceStore()
+	s := memory.NewDeviceKeyedCascadeEndDeviceStore(devs, configurations, deviceStatuses, powerStatuses, fsas, adminFSAs)
+	dev := sep2.EndDevice{SFDI: "1111111111", LFDI: "AAAA"}
+	dev.Href = "/edev/1"
+	if err := s.Create(ctx, "1", dev); err != nil {
+		t.Fatalf("seed EndDevice: %v", err)
+	}
+
+	if err := s.Delete(ctx, "1"); err == nil {
+		t.Fatal("Delete succeeded while the FSA family's DeleteParent failed; want an error")
+	}
+
+	if _, err := devs.Get(ctx, "1"); err != nil {
+		t.Errorf("device was removed despite the failed cascade: Get(1) = %v, want the device still present", err)
+	}
+	if got := adminFSAs.Devices(ctx, "fsa-1"); len(got) != 1 || got[0] != "1" {
+		t.Errorf("adminFSAs.Devices(fsa-1) after the failed cascade = %v, want [1]: the admin link must not be "+
+			"cleared ahead of the scoped record it is paired with actually being removed", got)
+	}
+}
+
+// TestDeviceKeyedCascadeEndDeviceStore_DeleteReportsAnUnassignDeviceFailure
+// pins the other direction of GRIDAPPSD/ieee-2030_5-server-go#721: when
+// clearing the admin link genuinely fails (a durable AdminFSAStore whose
+// snapshot directory is read-only, here, the same reproduction
+// TestAdminFSAPersistence_UnassignDeviceRollsBackMemoryWhenPersistFails
+// uses at the AdminFSAStore layer), Delete must report that failure rather
+// than swallow it, and must not proceed to remove the device.
+func TestDeviceKeyedCascadeEndDeviceStore_DeleteReportsAnUnassignDeviceFailure(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	adminFSAs, err := memory.NewAdminFSAStoreWithPersistence(filepath.Join(dir, "fsas.json"))
+	if err != nil {
+		t.Fatalf("NewAdminFSAStoreWithPersistence: %v", err)
+	}
+	if err := adminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{}); err != nil {
+		t.Fatalf("seed admin FSA: %v", err)
+	}
+	if err := adminFSAs.AssignDevice(ctx, "fsa-1", "1"); err != nil {
+		t.Fatalf("assign device: %v", err)
+	}
+
+	configurations := memory.NewScopedStore[sep2.Configuration]()
+	deviceStatuses := memory.NewScopedStore[sep2.DeviceStatus]()
+	powerStatuses := memory.NewScopedStore[sep2.PowerStatus]()
+	fsas := memory.NewScopedStore[sep2.FunctionSetAssignments]()
+	if err := fsas.Create(ctx, "1", "fsa-1", sep2.FunctionSetAssignments{}); err != nil {
+		t.Fatalf("seed the scoped FSA record: %v", err)
+	}
+
+	devs := memory.NewEndDeviceStore()
+	s := memory.NewDeviceKeyedCascadeEndDeviceStore(devs, configurations, deviceStatuses, powerStatuses, fsas, adminFSAs)
+	dev := sep2.EndDevice{SFDI: "1111111111", LFDI: "AAAA"}
+	dev.Href = "/edev/1"
+	if err := s.Create(ctx, "1", dev); err != nil {
+		t.Fatalf("seed EndDevice: %v", err)
+	}
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod the snapshot directory read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if err := s.Delete(ctx, "1"); err == nil {
+		t.Fatal("Delete succeeded while UnassignDevice could not persist; want the error reported")
+	}
+
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("restore write access: %v", err)
+	}
+	if _, err := devs.Get(ctx, "1"); err != nil {
+		t.Errorf("device was removed despite the failed unassign: Get(1) = %v, want the device still present", err)
 	}
 }
 

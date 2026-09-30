@@ -173,6 +173,84 @@ func TestEndDevicePersistence_CreateRollsBackWhenTheSnapshotFailsToFlush(t *test
 	}
 }
 
+// TestEndDevicePersistence_CreateRollbackDoesNotLeaveADanglingLFDIIndexEntry
+// is a sharper reproduction of the same rollback than the test above: that
+// one's GetByLFDI("AAAA") = ErrNotFound assertion also passes if only the
+// rollback's Store.Delete ran and the index entry itself leaked, because
+// GetByLFDI's second step (Store.Get on the resolved id) fails on its own
+// once the record is gone. Reusing the key for a second, successful Create
+// under a DIFFERENT LFDI is what actually distinguishes the two cases: if
+// the first LFDI's index entry survived, it now resolves straight through
+// to the second device (GRIDAPPSD/ieee-2030_5-server-go#721).
+func TestEndDevicePersistence_CreateRollbackDoesNotLeaveADanglingLFDIIndexEntry(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "snapshot.json")
+	s, err := memory.NewEndDeviceStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("NewEndDeviceStoreWithPersistence: %v", err)
+	}
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod the snapshot directory read-only: %v", err)
+	}
+	if err := s.Create(ctx, "1", mkDevice("1", "1111111111", "AAAA")); err == nil {
+		t.Fatal("Create succeeded while the snapshot directory was read-only; want an error")
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("restore write access: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if err := s.Create(ctx, "1", mkDevice("1", "2222222222", "BBBB")); err != nil {
+		t.Fatalf("Create id 1 with LFDI BBBB after the rollback: %v", err)
+	}
+
+	if _, err := s.GetByLFDI(ctx, "AAAA"); !errors.Is(err, corestore.ErrNotFound) {
+		t.Errorf("GetByLFDI(AAAA) after the rollback and a second Create at the same id = %v, want ErrNotFound: "+
+			"a dangling index entry would resolve straight through to the second device", err)
+	}
+}
+
+// TestEndDeviceStore_DeleteDoesNotEraseAnotherDevicesReclaimedIdentity pins
+// GRIDAPPSD/ieee-2030_5-server-go#721: removeIndex used to delete an SFDI
+// or LFDI key by value alone, with no check that the key still pointed at
+// the id being removed. Store.Create and Store.Update enforce uniqueness on
+// id only, not on either identity field, so one device (B) can legally
+// reclaim another's (A's) SFDI and LFDI; deleting A afterward must not
+// erase B's now-current claim on identities A no longer holds.
+func TestEndDeviceStore_DeleteDoesNotEraseAnotherDevicesReclaimedIdentity(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := memory.NewEndDeviceStore()
+
+	if err := s.Create(ctx, "1", mkDevice("1", "1111111111", "AAAA")); err != nil {
+		t.Fatalf("create device A: %v", err)
+	}
+	if err := s.Create(ctx, "2", mkDevice("2", "2222222222", "BBBB")); err != nil {
+		t.Fatalf("create device B: %v", err)
+	}
+	if err := s.Update(ctx, "2", mkDevice("2", "1111111111", "AAAA")); err != nil {
+		t.Fatalf("update device B to reclaim device A's SFDI and LFDI: %v", err)
+	}
+	if got, err := s.GetByLFDI(ctx, "AAAA"); err != nil || got.SFDI != "1111111111" {
+		t.Fatalf("control: GetByLFDI(AAAA) = %+v, %v, want device B holding the reclaimed identity", got, err)
+	}
+
+	if err := s.Delete(ctx, "1"); err != nil {
+		t.Fatalf("delete device A: %v", err)
+	}
+
+	if _, err := s.GetBySFDI(ctx, "1111111111"); err != nil {
+		t.Errorf("GetBySFDI(1111111111) after deleting device A = %v, want device B still resolvable by the identity it reclaimed", err)
+	}
+	if _, err := s.GetByLFDI(ctx, "AAAA"); err != nil {
+		t.Errorf("GetByLFDI(AAAA) after deleting device A = %v, want device B still resolvable by the identity it reclaimed", err)
+	}
+}
+
 func TestEndDevicePersistence_UpdateThenReload(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -9,6 +9,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // TestEndDeviceDelete_CascadesTheDeviceKeyedFour is the end-to-end pin for
@@ -168,5 +169,60 @@ func TestEndDeviceDelete_NewOccupantOfADeadKeyStartsWithNoFunctionSetAssignments
 	if len(fsaList.FunctionSetAssignments) != 0 {
 		t.Errorf("the reused key e1 was served %d function set assignment(s) from the dead device, want 0",
 			len(fsaList.FunctionSetAssignments))
+	}
+}
+
+// TestEndDeviceDelete_ClearsTheAdminFSAAssignmentThroughTheAssembledRouter
+// pins GRIDAPPSD/ieee-2030_5-server-go#721's admin-plane cascade through the
+// real router assembly.go wires, not just DeviceKeyedCascadeEndDeviceStore
+// directly. testStores() leaves AdminFSAs nil, so no other test in this
+// package had ever exercised deviceKeyedCascadeEndDevices's AdminFSAs
+// branch before this one wired it explicitly: passing nil there stayed
+// green everywhere else.
+func TestEndDeviceDelete_ClearsTheAdminFSAAssignmentThroughTheAssembledRouter(t *testing.T) {
+	t.Parallel()
+
+	stores := testStores()
+	stores.AdminFSAs = memory.NewAdminFSAStore()
+	seedOwnedDevices(t, stores.EndDevices, "e1")
+
+	ctx := context.Background()
+	if err := stores.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{}); err != nil {
+		t.Fatalf("seed admin FSA: %v", err)
+	}
+	if err := stores.AdminFSAs.AssignDevice(ctx, "fsa-1", "e1"); err != nil {
+		t.Fatalf("assign device: %v", err)
+	}
+
+	handler, _ := assembly.BuildProtocolRouter(
+		assembly.RouterConfig{},
+		stores,
+		testAuthPolicy(),
+		testSFDI, testLFDI,
+		nil,
+	)
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	// Control: the assignment is really there before the delete.
+	if devs := stores.AdminFSAs.Devices(ctx, "fsa-1"); len(devs) != 1 || devs[0] != "e1" {
+		t.Fatalf("control: adminFSAs.Devices(fsa-1) = %v, want [e1]", devs)
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, srv.URL+"/edev/e1", nil)
+	if err != nil {
+		t.Fatalf("new DELETE request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE /edev/e1: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE /edev/e1 status = %d, want 204", resp.StatusCode)
+	}
+
+	if devs := stores.AdminFSAs.Devices(ctx, "fsa-1"); len(devs) != 0 {
+		t.Errorf("adminFSAs.Devices(fsa-1) after DELETE through the assembled router = %v, want none", devs)
 	}
 }

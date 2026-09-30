@@ -41,7 +41,7 @@ func (s *EndDeviceStore) Create(ctx context.Context, id string, device sep2.EndD
 		// here that still left the device inserted would let it skip that
 		// step while the device stayed servable
 		// (GRIDAPPSD/ieee-2030_5-server-go#721).
-		s.removeIndex(device)
+		s.removeIndex(id, device)
 		if delErr := s.Store.Delete(ctx, id); delErr != nil {
 			log.Printf("memory: EndDevice %q left stored after its snapshot failed to flush; rollback also failed: %v", id, delErr)
 		}
@@ -56,7 +56,7 @@ func (s *EndDeviceStore) Update(ctx context.Context, id string, device sep2.EndD
 	if err != nil {
 		return err
 	}
-	s.removeIndex(old)
+	s.removeIndex(id, old)
 
 	if err := s.Store.Update(ctx, id, device); err != nil {
 		return err
@@ -70,7 +70,7 @@ func (s *EndDeviceStore) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	s.removeIndex(old)
+	s.removeIndex(id, old)
 	if err := s.Store.Delete(ctx, id); err != nil {
 		return err
 	}
@@ -110,9 +110,20 @@ func (s *EndDeviceStore) indexDevice(id string, device sep2.EndDevice) {
 	}
 }
 
-func (s *EndDeviceStore) removeIndex(device sep2.EndDevice) {
+// removeIndex clears device's SFDI and LFDI index entries, but only when
+// they still point at id. Store.Create enforces uniqueness on id alone, not
+// on either identity field, so a duplicate SFDI or LFDI across two ids is
+// possible; deleting by field value alone would then erase the OTHER id's
+// live entry, whether that id is a genuinely different device or this same
+// device's own successor after a rolled-back Create reused its key
+// (GRIDAPPSD/ieee-2030_5-server-go#721).
+func (s *EndDeviceStore) removeIndex(id string, device sep2.EndDevice) {
 	s.idxMu.Lock()
 	defer s.idxMu.Unlock()
-	delete(s.sfdiIndex, device.SFDI)
-	delete(s.lfdiIndex, device.LFDI)
+	if s.sfdiIndex[device.SFDI] == id {
+		delete(s.sfdiIndex, device.SFDI)
+	}
+	if s.lfdiIndex[device.LFDI] == id {
+		delete(s.lfdiIndex, device.LFDI)
+	}
 }

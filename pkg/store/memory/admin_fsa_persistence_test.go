@@ -160,6 +160,58 @@ func TestAdminFSAPersistence_DeleteThenReload(t *testing.T) {
 	}
 }
 
+// TestAdminFSAPersistence_UnassignDeviceRollsBackMemoryWhenPersistFails pins
+// GRIDAPPSD/ieee-2030_5-server-go#721: UnassignDevice mutates deviceLinks
+// before it persists, and a persist failure (a read-only snapshot
+// directory, here) must not leave that mutation applied only in memory.
+// Without a rollback, a retried DELETE that reaches this call again would
+// find the link already gone in memory, return success having recorded no
+// write, and the assignment would silently reappear once the server
+// restarts and reloads the never-updated snapshot.
+func TestAdminFSAPersistence_UnassignDeviceRollsBackMemoryWhenPersistFails(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fsas.json")
+	store, err := memory.NewAdminFSAStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("NewAdminFSAStoreWithPersistence: %v", err)
+	}
+
+	if err := store.Create(ctx, "fsa-A", mkFSA("MRa", "a", 1)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.AssignDevice(ctx, "fsa-A", "d-1"); err != nil {
+		t.Fatalf("AssignDevice: %v", err)
+	}
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod the snapshot directory read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) // let TempDir clean up
+
+	if err := store.UnassignDevice(ctx, "fsa-A", "d-1"); err == nil {
+		t.Fatal("UnassignDevice succeeded while the snapshot directory was read-only; want an error")
+	}
+
+	if got := store.Devices(ctx, "fsa-A"); !equalSlices(got, []string{"d-1"}) {
+		t.Errorf("Devices(fsa-A) after the failed unassign = %v, want [d-1]: the in-memory link must be rolled back", got)
+	}
+
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("restore write access: %v", err)
+	}
+
+	reloaded, err := memory.NewAdminFSAStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := reloaded.Devices(ctx, "fsa-A"); !equalSlices(got, []string{"d-1"}) {
+		t.Errorf("Devices(fsa-A) after reload = %v, want [d-1]: the on-disk assignment must not have been silently dropped either", got)
+	}
+}
+
 func TestAdminFSAPersistence_DetachUnassignRoundTrip(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

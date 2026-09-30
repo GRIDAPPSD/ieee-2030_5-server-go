@@ -47,6 +47,24 @@ func NewAdminFSAStore() *AdminFSAStore {
 	}
 }
 
+// persistOrRollback flushes the snapshot and, on failure, runs undo under
+// s.mu before returning the persist error, so a write that could not be
+// durably recorded leaves the in-memory state exactly as it was
+// (GRIDAPPSD/ieee-2030_5-server-go#721): without this, a caller that
+// retries after a persist failure (a read-only snapshot directory, for
+// example) finds the in-memory mutation already applied, does nothing on
+// the retry, and the change never reaches disk at all. undo must not call
+// persist itself.
+func (s *AdminFSAStore) persistOrRollback(undo func()) error {
+	if err := s.persist(); err != nil {
+		s.mu.Lock()
+		undo()
+		s.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
 // Create persists an admin FSA. Returns ErrAlreadyExists if id is taken.
 func (s *AdminFSAStore) Create(_ context.Context, id string, fsa sep2.FunctionSetAssignments) error {
 	s.mu.Lock()
@@ -60,7 +78,12 @@ func (s *AdminFSAStore) Create(_ context.Context, id string, fsa sep2.FunctionSe
 	s.mu.Unlock()
 	// Persist outside the lock so disk I/O does not block concurrent
 	// readers on s.mu.
-	return s.persist()
+	return s.persistOrRollback(func() {
+		delete(s.fsas, id)
+		if idx, found := slices.BinarySearch(s.keys, id); found {
+			s.keys = slices.Delete(s.keys, idx, idx+1)
+		}
+	})
 }
 
 // Get returns an independent copy of the FSA. ErrNotFound if absent.
@@ -92,7 +115,8 @@ func (s *AdminFSAStore) List(_ context.Context) []sep2.FunctionSetAssignments {
 // first; the store does NOT silently cascade.
 func (s *AdminFSAStore) Delete(_ context.Context, id string) error {
 	s.mu.Lock()
-	if _, exists := s.fsas[id]; !exists {
+	fsa, exists := s.fsas[id]
+	if !exists {
 		s.mu.Unlock()
 		return store.ErrNotFound
 	}
@@ -105,7 +129,12 @@ func (s *AdminFSAStore) Delete(_ context.Context, id string) error {
 		s.keys = slices.Delete(s.keys, idx, idx+1)
 	}
 	s.mu.Unlock()
-	return s.persist()
+	return s.persistOrRollback(func() {
+		s.fsas[id] = fsa
+		if idx, found := slices.BinarySearch(s.keys, id); !found {
+			s.keys = slices.Insert(s.keys, idx, id)
+		}
+	})
 }
 
 // AttachProgram links a DERProgram href to an FSA. ErrNotFound if FSA is
@@ -124,7 +153,12 @@ func (s *AdminFSAStore) AttachProgram(_ context.Context, fsaID, programHref stri
 	}
 	s.programLinks[fsaID] = slices.Insert(hrefs, idx, programHref)
 	s.mu.Unlock()
-	return s.persist()
+	return s.persistOrRollback(func() {
+		hrefs := s.programLinks[fsaID]
+		if idx, found := slices.BinarySearch(hrefs, programHref); found {
+			s.programLinks[fsaID] = slices.Delete(hrefs, idx, idx+1)
+		}
+	})
 }
 
 // DetachProgram unlinks a DERProgram href from an FSA. ErrNotFound if the
@@ -144,7 +178,12 @@ func (s *AdminFSAStore) DetachProgram(_ context.Context, fsaID, programHref stri
 	}
 	s.programLinks[fsaID] = slices.Delete(hrefs, idx, idx+1)
 	s.mu.Unlock()
-	return s.persist()
+	return s.persistOrRollback(func() {
+		hrefs := s.programLinks[fsaID]
+		if idx, found := slices.BinarySearch(hrefs, programHref); !found {
+			s.programLinks[fsaID] = slices.Insert(hrefs, idx, programHref)
+		}
+	})
 }
 
 // Programs returns sorted program hrefs attached to the FSA, or empty slice.
@@ -173,7 +212,12 @@ func (s *AdminFSAStore) AssignDevice(_ context.Context, fsaID, deviceID string) 
 	}
 	s.deviceLinks[fsaID] = slices.Insert(devs, idx, deviceID)
 	s.mu.Unlock()
-	return s.persist()
+	return s.persistOrRollback(func() {
+		devs := s.deviceLinks[fsaID]
+		if idx, found := slices.BinarySearch(devs, deviceID); found {
+			s.deviceLinks[fsaID] = slices.Delete(devs, idx, idx+1)
+		}
+	})
 }
 
 // UnassignDevice unlinks a device from an FSA. ErrNotFound if no such link.
@@ -191,7 +235,12 @@ func (s *AdminFSAStore) UnassignDevice(_ context.Context, fsaID, deviceID string
 	}
 	s.deviceLinks[fsaID] = slices.Delete(devs, idx, idx+1)
 	s.mu.Unlock()
-	return s.persist()
+	return s.persistOrRollback(func() {
+		devs := s.deviceLinks[fsaID]
+		if idx, found := slices.BinarySearch(devs, deviceID); !found {
+			s.deviceLinks[fsaID] = slices.Insert(devs, idx, deviceID)
+		}
+	})
 }
 
 // Devices returns sorted device ids assigned to the FSA, or empty slice.

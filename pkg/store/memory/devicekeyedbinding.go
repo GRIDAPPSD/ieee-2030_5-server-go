@@ -143,21 +143,31 @@ func (s *DeviceKeyedCascadeEndDeviceStore) probeDelete(ctx context.Context, id s
 	return nil
 }
 
-// unassignAdminFSALinks clears the admin-plane device -> FSA assignment
-// links before any other family is cascaded, so its one failure mode (a
-// persistence flush, when AdminFSAStore is durable) leaves every other
-// family untouched. HandleAssignDeviceFSA writes this link in the same act
-// as the scoped FunctionSetAssignments record s.fsas cascades below;
-// leaving the link behind would keep the admin topology naming a device
-// that is gone and refuse a later re-assign as a duplicate
+// unassignOneAdminFSALink unassigns id from fsaID, tolerating ErrNotFound:
+// the link may already be gone by the time this call reaches it (a
+// concurrent unassign, or a retried DELETE whose earlier attempt got this
+// far and then failed on a later step), and that is not a failure this
+// layer needs to report.
+func (s *DeviceKeyedCascadeEndDeviceStore) unassignOneAdminFSALink(ctx context.Context, fsaID, id string) error {
+	if err := s.adminFSAs.UnassignDevice(ctx, fsaID, id); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("clearing the admin FSA assignment %q for %q: %w", fsaID, id, err)
+	}
+	return nil
+}
+
+// unassignAdminFSALinks clears every admin-plane device -> FSA assignment
+// link for id. HandleAssignDeviceFSA writes this link in the same act as
+// the scoped FunctionSetAssignments record s.fsas cascades in
+// scopedFamilies; leaving the link behind would keep the admin topology
+// naming a device that is gone and refuse a later re-assign as a duplicate
 // (GRIDAPPSD/ieee-2030_5-server-go#721).
 func (s *DeviceKeyedCascadeEndDeviceStore) unassignAdminFSALinks(ctx context.Context, id string) error {
 	if store.IsAbsent(s.adminFSAs) {
 		return nil
 	}
 	for _, fsaID := range s.adminFSAs.FSAsForDevice(ctx, id) {
-		if err := s.adminFSAs.UnassignDevice(ctx, fsaID, id); err != nil && !errors.Is(err, store.ErrNotFound) {
-			return fmt.Errorf("clearing the admin FSA assignment %q for %q: %w", fsaID, id, err)
+		if err := s.unassignOneAdminFSALink(ctx, fsaID, id); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -170,20 +180,26 @@ func (s *DeviceKeyedCascadeEndDeviceStore) unassignAdminFSALinks(ctx context.Con
 // probeDelete runs first over the WHOLE chain, this layer and everything
 // s.devs owns, and nothing is mutated unless every layer reports it can
 // succeed; see [LogEventLinkedEndDeviceStore.Delete] for why that ordering
-// matters. The admin FSA links are unassigned first among this layer's own
-// mutations, ahead of the probed ScopedStore families, since that is the
-// one step here with no probe of its own.
+// matters. The admin FSA links are unassigned LAST among this layer's own
+// mutations, after every probed ScopedStore family, including the scoped
+// FunctionSetAssignments record the admin link is paired with: a scoped
+// family's own delete call can still fail after its probe passed (a probe
+// is not a guarantee), and clearing the admin link ahead of that leaves the
+// admin topology showing the device unassigned while it keeps serving the
+// program the family's own delete never actually removed. Doing the admin
+// unassign last means any earlier failure leaves it untouched, and a
+// retried DELETE finishes the job the same way whichever step failed.
 func (s *DeviceKeyedCascadeEndDeviceStore) Delete(ctx context.Context, id string) error {
 	if err := s.probeDelete(ctx, id); err != nil {
-		return err
-	}
-	if err := s.unassignAdminFSALinks(ctx, id); err != nil {
 		return err
 	}
 	for _, f := range s.scopedFamilies() {
 		if err := f.delete(ctx, id); err != nil {
 			return fmt.Errorf("cascading %s for %q: %w", f.name, id, err)
 		}
+	}
+	if err := s.unassignAdminFSALinks(ctx, id); err != nil {
+		return err
 	}
 	return s.devs.Delete(ctx, id)
 }

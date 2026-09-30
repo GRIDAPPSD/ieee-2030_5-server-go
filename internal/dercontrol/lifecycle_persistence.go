@@ -32,8 +32,22 @@ type LifecycleStore struct {
 	keysMu sync.Mutex
 	keys   map[string][]string
 
-	persistMu   sync.Mutex
+	// writeMu serializes every Create, Update and Delete end to end, for
+	// the same reason DERControlStore's field of the same name does (see
+	// its doc comment): a lock held only around the snapshot write leaves
+	// a window where a second writer's persist can capture a first
+	// writer's not-yet-committed mutation, so a write reported as failed
+	// can still land on disk (GRIDAPPSD/ieee-2030_5-server-go#565 fix
+	// round 1, item 1).
+	writeMu sync.Mutex
+
 	persistPath string
+
+	// afterMutateBeforePersist, when non-nil, runs once inside a writer's
+	// critical section, after the in-memory mutation and before
+	// persistLocked is attempted. Nil in production; set only by
+	// lifecycle_persistence_race_test.go.
+	afterMutateBeforePersist func()
 }
 
 const lifecyclePersistenceVersion = 1
@@ -181,12 +195,12 @@ func (s *LifecycleStore) snapshotRecords(ctx context.Context) ([]lifecycleDiskRe
 	return out, nil
 }
 
-func (s *LifecycleStore) persist(ctx context.Context) error {
+// persistLocked snapshots the current state and writes it to disk. The
+// caller must already hold writeMu (see the type doc comment).
+func (s *LifecycleStore) persistLocked(ctx context.Context) error {
 	if s.persistPath == "" {
 		return nil
 	}
-	s.persistMu.Lock()
-	defer s.persistMu.Unlock()
 
 	records, err := s.snapshotRecords(ctx)
 	if err != nil {
@@ -231,11 +245,17 @@ func (s *LifecycleStore) Parents(ctx context.Context) ([]string, error) {
 // and rollback here closes the window where a reader could see a record that
 // never reached disk (acceptance criterion 4).
 func (s *LifecycleStore) Create(ctx context.Context, parentID, id string, record LifecycleRecord) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	if err := s.inner.Create(ctx, parentID, id, record); err != nil {
 		return err
 	}
 	s.addKey(parentID, id)
-	if err := s.persist(ctx); err != nil {
+	if s.afterMutateBeforePersist != nil {
+		s.afterMutateBeforePersist()
+	}
+	if err := s.persistLocked(ctx); err != nil {
 		if derr := s.inner.Delete(ctx, parentID, id); derr != nil && !errors.Is(derr, store.ErrNotFound) {
 			return errors.Join(err, fmt.Errorf("dercontrol lifecycle persistence: rollback create %s/%s: %w", parentID, id, derr))
 		}
@@ -248,6 +268,9 @@ func (s *LifecycleStore) Create(ctx context.Context, parentID, id string, record
 // Update replaces a lifecycle record and flushes a snapshot, rolling back to
 // the prior value on a persist failure.
 func (s *LifecycleStore) Update(ctx context.Context, parentID, id string, record LifecycleRecord) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	before, err := s.inner.Get(ctx, parentID, id)
 	if err != nil {
 		return err
@@ -255,7 +278,10 @@ func (s *LifecycleStore) Update(ctx context.Context, parentID, id string, record
 	if err := s.inner.Update(ctx, parentID, id, record); err != nil {
 		return err
 	}
-	if err := s.persist(ctx); err != nil {
+	if s.afterMutateBeforePersist != nil {
+		s.afterMutateBeforePersist()
+	}
+	if err := s.persistLocked(ctx); err != nil {
 		if derr := s.inner.Update(ctx, parentID, id, before); derr != nil {
 			return errors.Join(err, fmt.Errorf("dercontrol lifecycle persistence: rollback update %s/%s: %w", parentID, id, derr))
 		}
@@ -267,6 +293,9 @@ func (s *LifecycleStore) Update(ctx context.Context, parentID, id string, record
 // Delete removes a lifecycle record and flushes a snapshot, restoring the
 // deleted record on a persist failure.
 func (s *LifecycleStore) Delete(ctx context.Context, parentID, id string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	before, err := s.inner.Get(ctx, parentID, id)
 	if err != nil {
 		return err
@@ -275,7 +304,10 @@ func (s *LifecycleStore) Delete(ctx context.Context, parentID, id string) error 
 		return err
 	}
 	s.dropKey(parentID, id)
-	if err := s.persist(ctx); err != nil {
+	if s.afterMutateBeforePersist != nil {
+		s.afterMutateBeforePersist()
+	}
+	if err := s.persistLocked(ctx); err != nil {
 		if derr := s.inner.Create(ctx, parentID, id, before); derr != nil {
 			return errors.Join(err, fmt.Errorf("dercontrol lifecycle persistence: rollback delete %s/%s: %w", parentID, id, derr))
 		}

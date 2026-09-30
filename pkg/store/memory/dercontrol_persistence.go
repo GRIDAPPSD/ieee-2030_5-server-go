@@ -49,8 +49,32 @@ type DERControlStore struct {
 	mridMu sync.Mutex
 	mrid   map[string]derControlKey
 
-	persistMu   sync.Mutex
+	// writeMu serializes every Create, Update and Delete end to end: the
+	// in-memory mutation, the key and mRID index updates, the snapshot
+	// write, and any rollback if persist fails. An earlier version locked
+	// only around the snapshot write, which left a window between one
+	// writer's mutation and its own persist/rollback decision where a
+	// SECOND writer's persist call (for a different id) could run,
+	// snapshot the whole store including the first writer's not-yet-
+	// committed record, and durably write it to disk. If the first
+	// writer's own persist then failed and rolled back, the caller was
+	// told Create failed while the record was, in fact, on disk: after a
+	// restart the "failed" control is served, and it has no lifecycle
+	// record, so Issuer.Cancel refuses it with RefusalControlNotFound
+	// even though the aggregator can see it (GRIDAPPSD/ieee-2030_5-server-go#565
+	// fix round 1, item 1). Holding one lock across the whole sequence
+	// means no writer's persist can ever observe another writer's
+	// in-flight, not-yet-decided mutation.
+	writeMu sync.Mutex
+
 	persistPath string
+
+	// afterMutateBeforePersist, when non-nil, runs once inside a writer's
+	// critical section, after the in-memory mutation (and index updates)
+	// and before persistLocked is attempted. Nil in production; set only
+	// by dercontrol_persistence_race_test.go to force a deterministic
+	// interleaving between two writers.
+	afterMutateBeforePersist func()
 }
 
 // derControlKey addresses one control by (parent, id).
@@ -215,12 +239,14 @@ func (s *DERControlStore) snapshotRecords(ctx context.Context) ([]derControlReco
 	return out, nil
 }
 
-func (s *DERControlStore) persist(ctx context.Context) error {
+// persistLocked snapshots the current state and writes it to disk. The
+// caller must already hold writeMu: see the type doc comment for why the
+// whole mutate-then-persist-then-rollback sequence, not just this call,
+// has to run under one lock.
+func (s *DERControlStore) persistLocked(ctx context.Context) error {
 	if s.persistPath == "" {
 		return nil
 	}
-	s.persistMu.Lock()
-	defer s.persistMu.Unlock()
 
 	records, err := s.snapshotRecords(ctx)
 	if err != nil {
@@ -263,13 +289,19 @@ func (s *DERControlStore) Parents(ctx context.Context) ([]string, error) {
 // observes a Get or ByMRID succeeding for a write this call reported as
 // failed.
 func (s *DERControlStore) Create(ctx context.Context, parentID, id string, control sep2.DERControl) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	if err := s.inner.Create(ctx, parentID, id, control); err != nil {
 		return err
 	}
 	key := derControlKey{ParentID: parentID, ID: id}
 	s.addKey(parentID, id)
 	s.addMRID(control.MRID, key)
-	if err := s.persist(ctx); err != nil {
+	if s.afterMutateBeforePersist != nil {
+		s.afterMutateBeforePersist()
+	}
+	if err := s.persistLocked(ctx); err != nil {
 		if derr := s.inner.Delete(ctx, parentID, id); derr != nil && !errors.Is(derr, store.ErrNotFound) {
 			return errors.Join(err, fmt.Errorf("dercontrol persistence: rollback create %s/%s: %w", parentID, id, derr))
 		}
@@ -283,6 +315,9 @@ func (s *DERControlStore) Create(ctx context.Context, parentID, id string, contr
 // Update replaces a control and flushes a snapshot, rolling back to the
 // prior value on a persist failure (see the type doc comment).
 func (s *DERControlStore) Update(ctx context.Context, parentID, id string, control sep2.DERControl) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	before, err := s.inner.Get(ctx, parentID, id)
 	if err != nil {
 		return err
@@ -295,7 +330,10 @@ func (s *DERControlStore) Update(ctx context.Context, parentID, id string, contr
 		s.dropMRID(before.MRID)
 		s.addMRID(control.MRID, key)
 	}
-	if err := s.persist(ctx); err != nil {
+	if s.afterMutateBeforePersist != nil {
+		s.afterMutateBeforePersist()
+	}
+	if err := s.persistLocked(ctx); err != nil {
 		if derr := s.inner.Update(ctx, parentID, id, before); derr != nil {
 			return errors.Join(err, fmt.Errorf("dercontrol persistence: rollback update %s/%s: %w", parentID, id, derr))
 		}
@@ -311,6 +349,9 @@ func (s *DERControlStore) Update(ctx context.Context, parentID, id string, contr
 // Delete removes a control and flushes a snapshot, restoring the deleted
 // record on a persist failure (see the type doc comment).
 func (s *DERControlStore) Delete(ctx context.Context, parentID, id string) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
 	before, err := s.inner.Get(ctx, parentID, id)
 	if err != nil {
 		return err
@@ -320,7 +361,10 @@ func (s *DERControlStore) Delete(ctx context.Context, parentID, id string) error
 	}
 	s.dropKey(parentID, id)
 	s.dropMRID(before.MRID)
-	if err := s.persist(ctx); err != nil {
+	if s.afterMutateBeforePersist != nil {
+		s.afterMutateBeforePersist()
+	}
+	if err := s.persistLocked(ctx); err != nil {
 		if derr := s.inner.Create(ctx, parentID, id, before); derr != nil {
 			return errors.Join(err, fmt.Errorf("dercontrol persistence: rollback delete %s/%s: %w", parentID, id, derr))
 		}

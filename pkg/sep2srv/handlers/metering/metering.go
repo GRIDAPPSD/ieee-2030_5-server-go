@@ -128,11 +128,12 @@ func boundedID(domain, value string) string {
 // unparseable Location crashes it. Hashing makes the output always 32
 // characters and always hex, whatever the client sends.
 //
-// The other half of MirrorStoreID, scoping the id to the creating device's
+// The other half of MirrorStoreID, scoping the id to the mirrored device's
 // LFDI, has no counterpart here and is deliberately NOT invented. On /mup the
 // owner is a real, stored fact: HandleCreateMirrorUsagePoint stamps
-// MirrorUsagePoint.deviceLFDI from the caller's certificate, and rule (e)
-// names the creating client as the scope for later POSTs. sep2.UsagePoint has
+// MirrorUsagePoint.deviceLFDI from the mirrored device (the caller itself, or
+// a device the caller currently manages, #720), and rule (e) names that
+// device or its manager as the scope for later POSTs. sep2.UsagePoint has
 // no deviceLFDI or any other owner field (sep.xsd UsagePoint extends
 // UsagePointBase extends IdentifiedObject: mRID, description, version,
 // roleFlags, serviceCategoryKind, status), Annex A.4.4.1 and A.4.4.2 define

@@ -276,10 +276,10 @@ func TestBASIC_029_MeterReading(t *testing.T) {
 	if mupOut.Description != mupIn.Description {
 		t.Errorf("step 4: MirrorUsagePoint.Description = %q, want %q", mupOut.Description, mupIn.Description)
 	}
-	// HandleCreateMirrorUsagePoint forcibly overrides DeviceLFDI from
-	// the cert identity (security: never trust client-supplied LFDI).
-	// We assert non-empty rather than the exact value; the LFDI is
-	// derived from the ephemeral device cert and recomputed per test.
+	// mupIn leaves deviceLFDI absent, so HandleCreateMirrorUsagePoint
+	// resolves it to the caller's own cert identity (#720). We assert
+	// non-empty rather than the exact value; the LFDI is derived from
+	// the ephemeral device cert and recomputed per test.
 	if mupOut.DeviceLFDI == "" {
 		t.Errorf("step 4: MirrorUsagePoint.DeviceLFDI = empty, want server-assigned from cert")
 	}

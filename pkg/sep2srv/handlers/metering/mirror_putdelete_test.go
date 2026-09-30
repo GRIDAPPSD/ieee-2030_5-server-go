@@ -50,8 +50,10 @@ const (
 // a wire-format reason. Children are in the sep.xsd sequence order (mRID,
 // description, roleFlags, serviceCategoryKind, status, deviceLFDI).
 //
-// claimedLFDI is the field a client must never get to set. Passing a value here
-// is how the tests below hand the server a forged identity claim.
+// claimedLFDI is the deviceLFDI claim (#720): the mirrored device, subject
+// to authorization (self or current manager, else 403) and validation (else
+// 400), never taken on faith. Passing a value here is how the tests below
+// probe that claim path, both the accepted and the refused shapes.
 func mupWireBody(mrid, description, claimedLFDI string) []byte {
 	var b strings.Builder
 	b.WriteString(`<MirrorUsagePoint xmlns="urn:ieee:std:2030.5:ns">`)
@@ -76,10 +78,10 @@ func mirrorInstanceMux(
 ) *http.ServeMux {
 	provider := identityProvider(caller)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(mupStore, provider))
-	mux.HandleFunc("PUT /mup/{id}", metering.HandlePutMirrorUsagePoint(mupStore, provider, nil))
-	mux.HandleFunc("DELETE /mup/{id}", metering.HandleDeleteMirrorUsagePoint(mupStore, mmrStore, provider))
-	mux.HandleFunc("POST /mup/{id}", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, provider))
+	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(mupStore, nil, provider))
+	mux.HandleFunc("PUT /mup/{id}", metering.HandlePutMirrorUsagePoint(mupStore, nil, provider, nil))
+	mux.HandleFunc("DELETE /mup/{id}", metering.HandleDeleteMirrorUsagePoint(mupStore, mmrStore, nil, provider))
+	mux.HandleFunc("POST /mup/{id}", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, nil, provider))
 	return mux
 }
 
@@ -283,25 +285,26 @@ func TestHandlePutMirrorUsagePoint_InvalidXMLDoesNotLeakDecoderDetail(t *testing
 }
 
 // ---------------------------------------------------------------------------
-// PUT: deviceLFDI comes from the certificate, never from the body
+// PUT: a claimed deviceLFDI different from the stored one is a rejection, not
+// a reassignment (#720)
 // ---------------------------------------------------------------------------
 
-// TestHandlePutMirrorUsagePoint_DeviceLFDIComesFromTheCertificateNotTheBody
-// sends a body that claims ANOTHER device's LFDI and asserts the stored record
-// still carries the caller's certificate identity.
+// TestHandlePutMirrorUsagePoint_DeviceChangeIsRejectedAndTheStoreIsUntouched
+// sends a body that claims ANOTHER device's LFDI and asserts the store is
+// left exactly as it was, the same "rejection, not a rename" property
+// TestHandlePutMirrorUsagePoint_MRIDChangeIsRejectedAndTheStoreIsUntouched
+// asserts for mRID. MirrorStoreID derives the key from (device, mRID)
+// together (#720), so claiming a different device on an unchanged mRID
+// derives a different key from the one in the URL: the same 409 the mRID
+// case takes, for the same reason.
 //
-// The claim is not cosmetic. authorizeMirrorOwner implements section 10.11.3
-// rule (e) by comparing the caller against the stored DeviceLFDI, so a PUT that
-// took DeviceLFDI from the body would let a client hand its own mirror to
-// another device's identity and lock itself out, or, worse, park a record
-// carrying a victim's LFDI that the victim would then be authorised to write to
-// and read from. The field is the access-control key, so a client writing it is
-// a client editing the ACL.
-//
-// The check is on the stored record AND on the served bytes of the follow-up
-// GET, because those are two different failure surfaces: the store could be
-// right while the response echoed the request, or the reverse.
-func TestHandlePutMirrorUsagePoint_DeviceLFDIComesFromTheCertificateNotTheBody(t *testing.T) {
+// Before #720 this body would have been silently overwritten with the
+// caller's own certificate identity. That "protection" is exactly the defect
+// #720 fixes: it is what let an aggregator's every posted mirror collapse
+// onto its own identity instead of the device it was mirroring. The
+// replacement property is stronger: the claim is refused outright, and
+// nothing about the targeted record changes.
+func TestHandlePutMirrorUsagePoint_DeviceChangeIsRejectedAndTheStoreIsUntouched(t *testing.T) {
 	t.Parallel()
 
 	mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
@@ -315,49 +318,53 @@ func TestHandlePutMirrorUsagePoint_DeviceLFDIComesFromTheCertificateNotTheBody(t
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
+	if w.Code != http.StatusConflict {
+		t.Fatalf("PUT /mup/%s claiming a different device: status = %d, want 409; body = %s", idA, w.Code, w.Body.String())
+	}
+	assertNoBodyLeak(t, w, putOwnerLFDI, putVictimLFDI, "MUP_A", idA)
+
+	// The targeted record is untouched: same mRID, same device, same
+	// description. In particular "replaced" from the rejected body was not
+	// applied, which is what a partially-applied write would look like.
+	assertMirrorUnchanged(t, mupStore, idA, "MUP_A", putOwnerLFDI, "original A")
+
+	// The device whose LFDI was claimed still owns its own mirror, unchanged.
+	assertMirrorUnchanged(t, mupStore, idB, "MUP_B", putVictimLFDI, "original B")
+}
+
+// TestHandlePutMirrorUsagePoint_ExplicitMatchingDeviceLFDIAccepted is the
+// positive half: a PUT that names the SAME device the record already carries
+// is a plain write-over, exactly as if deviceLFDI had been left absent. This
+// is what distinguishes "device change refused" from "any deviceLFDI in a PUT
+// body refused": the field is accepted when it identifies the resource
+// rather than trying to move it.
+func TestHandlePutMirrorUsagePoint_ExplicitMatchingDeviceLFDIAccepted(t *testing.T) {
+	t.Parallel()
+
+	mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
+	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
+	idA := seedDerivedMirror(t, mupStore, putOwnerLFDI, "MUP_A", "original A")
+
+	mux := mirrorInstanceMux(mupStore, mmrStore, putOwnerLFDI)
+	req := httptest.NewRequest(http.MethodPut, "/mup/"+idA,
+		bytes.NewReader(mupWireBody("MUP_A", "replaced", putOwnerLFDI)))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("PUT /mup/%s: status = %d, want 204; body = %s", idA, w.Code, w.Body.String())
-	}
-	if got, want := w.Header().Get("Location"), metering.MirrorHref(idA); got != want {
-		t.Errorf("PUT Location = %q, want %q", got, want)
-	}
-	if w.Body.Len() != 0 {
-		t.Errorf("204 carries a body %q, want none", w.Body.String())
 	}
 
 	stored, err := mupStore.Get(context.Background(), idA)
 	if err != nil {
 		t.Fatalf("get MirrorUsagePoint %q: %v", idA, err)
 	}
-	if stored.DeviceLFDI == putVictimLFDI {
-		t.Fatalf("stored DeviceLFDI = %q, the value the BODY claimed: a client set its own identity", stored.DeviceLFDI)
-	}
 	if stored.DeviceLFDI != putOwnerLFDI {
-		t.Errorf("stored DeviceLFDI = %q, want the certificate identity %q", stored.DeviceLFDI, putOwnerLFDI)
+		t.Errorf("stored DeviceLFDI = %q, want %q unchanged", stored.DeviceLFDI, putOwnerLFDI)
 	}
-	// The rest of the body WAS applied, so the test is not passing because the
-	// handler ignored the whole document.
 	if stored.Description != "replaced" {
-		t.Errorf("stored Description = %q, want %q: the PUT did not apply the client-owned fields", stored.Description, "replaced")
+		t.Errorf("stored Description = %q, want %q: an accepted PUT must still apply the client-owned fields", stored.Description, "replaced")
 	}
-
-	// The served bytes agree with the store.
-	getReq := httptest.NewRequest(http.MethodGet, "/mup/"+idA, nil)
-	getW := httptest.NewRecorder()
-	mux.ServeHTTP(getW, getReq)
-	if getW.Code != http.StatusOK {
-		t.Fatalf("GET /mup/%s after PUT: status = %d, want 200", idA, getW.Code)
-	}
-	served := getW.Body.String()
-	if !strings.Contains(served, "<deviceLFDI>"+putOwnerLFDI+"</deviceLFDI>") {
-		t.Errorf("served bytes do not carry the certificate LFDI as deviceLFDI; body = %s", served)
-	}
-	if strings.Contains(served, putVictimLFDI) {
-		t.Errorf("served bytes carry the LFDI the request body claimed; body = %s", served)
-	}
-
-	// The device whose LFDI was claimed still owns its own mirror, unchanged.
-	assertMirrorUnchanged(t, mupStore, idB, "MUP_B", putVictimLFDI, "original B")
 }
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -229,7 +230,7 @@ func TestHandleCreateMirrorUsagePoint_Created(t *testing.T) {
 	t.Parallel()
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, identityProvider("TEST_LFDI_ABCDEF"), nil))
+	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, identityProvider("TEST_LFDI_ABCDEF"), nil))
 
 	mup := sep2.MirrorUsagePoint{
 		MRID:        "INV001",
@@ -299,14 +300,17 @@ func TestHandleCreateMirrorUsagePoint_InlineReadingsAreServerStamped(t *testing.
 	t.Parallel()
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, identityProvider("TEST_LFDI_ABCDEF"), nil))
+	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, identityProvider("TEST_LFDI_ABCDEF"), nil))
 
 	const forgedHref = "/mup/VICTIM/mr/00000000000000000001"
 	const forgedTime = int64(1)
 	valA, valB := int64(1000), int64(2000)
 	mup := sep2.MirrorUsagePoint{
-		MRID:       "INV001",
-		DeviceLFDI: "CLIENT_SUPPLIED_LFDI",
+		MRID: "INV001",
+		// No DeviceLFDI: absent means the caller (#720). This test is about
+		// the inline readings' href and lastUpdateTime stamping, not the
+		// deviceLFDI claim path, which mirror_putdelete_test.go and the
+		// aggregator tests below cover directly.
 		MirrorMeterReading: []sep2.MirrorMeterReading{
 			{
 				Resource:       sep2.Resource{Href: forgedHref},
@@ -343,7 +347,7 @@ func TestHandleCreateMirrorUsagePoint_InlineReadingsAreServerStamped(t *testing.
 		t.Fatalf("get stored MirrorUsagePoint: %v", err)
 	}
 	if stored.DeviceLFDI != "TEST_LFDI_ABCDEF" {
-		t.Errorf("stored DeviceLFDI = %q, want TEST_LFDI_ABCDEF (cert override)", stored.DeviceLFDI)
+		t.Errorf("stored DeviceLFDI = %q, want TEST_LFDI_ABCDEF (absent deviceLFDI defaults to the caller)", stored.DeviceLFDI)
 	}
 	if len(stored.MirrorMeterReading) != 2 {
 		t.Fatalf("stored MirrorMeterReading count = %d, want 2", len(stored.MirrorMeterReading))
@@ -407,7 +411,7 @@ func TestHandleCreateMirrorUsagePoint_NoIdentity(t *testing.T) {
 	})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, noIdentity, nil))
+	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, noIdentity, nil))
 
 	req := httptest.NewRequest(http.MethodPost, "/mup", bytes.NewBufferString("<MirrorUsagePoint/>"))
 	w := httptest.NewRecorder()
@@ -446,7 +450,7 @@ func TestHandlePostMirrorMeterReading_Created(t *testing.T) {
 	body, _ := xml.Marshal(&mmr)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup/{id}/mr", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, identityProvider("DEVICE_A_LFDI")))
+	mux.HandleFunc("POST /mup/{id}/mr", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, nil, identityProvider("DEVICE_A_LFDI")))
 
 	before := time.Now().Unix()
 	req := httptest.NewRequest(http.MethodPost, "/mup/inv1/mr", bytes.NewReader(body))
@@ -525,7 +529,7 @@ func TestHandlePostMirrorMeterReading_InvalidXMLDoesNotLeakDecoderDetail(t *test
 	})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup/{id}/mr", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, identityProvider("DEVICE_A_LFDI")))
+	mux.HandleFunc("POST /mup/{id}/mr", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, nil, identityProvider("DEVICE_A_LFDI")))
 
 	body := `<MirrorMeterReading xmlns="urn:ieee:std:2030.5:ns"><foo>bar</` + marker + `></MirrorMeterReading>`
 	req := httptest.NewRequest(http.MethodPost, "/mup/inv1/mr", strings.NewReader(body))
@@ -552,7 +556,7 @@ func TestHandlePostMirrorMeterReading_NotFoundParent(t *testing.T) {
 	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup/{id}/mr", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, identityProvider("DEVICE_A_LFDI")))
+	mux.HandleFunc("POST /mup/{id}/mr", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, nil, identityProvider("DEVICE_A_LFDI")))
 
 	req := httptest.NewRequest(http.MethodPost, "/mup/nonexistent/mr", bytes.NewBufferString("<MirrorMeterReading/>"))
 	w := httptest.NewRecorder()
@@ -578,9 +582,9 @@ func TestHandlePostMirrorMeterReading_ViaLocationHeader(t *testing.T) {
 	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(mupStore, identityProvider("DEVICE_A_LFDI"), nil))
-	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(mupStore, identityProvider("DEVICE_A_LFDI")))
-	mux.HandleFunc("POST /mup/{id}", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, identityProvider("DEVICE_A_LFDI")))
+	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(mupStore, nil, identityProvider("DEVICE_A_LFDI"), nil))
+	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(mupStore, nil, identityProvider("DEVICE_A_LFDI")))
+	mux.HandleFunc("POST /mup/{id}", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, nil, identityProvider("DEVICE_A_LFDI")))
 
 	// Step 1: create the MirrorUsagePoint, exactly the client's first exchange.
 	mup := sep2.MirrorUsagePoint{MRID: "INV001"}
@@ -672,7 +676,7 @@ func TestHandlePostMirrorMeterReading_ViaLocationHeader_NotFoundParent(t *testin
 	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup/{id}", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, identityProvider("DEVICE_A_LFDI")))
+	mux.HandleFunc("POST /mup/{id}", metering.HandlePostMirrorMeterReading(mupStore, mmrStore, nil, identityProvider("DEVICE_A_LFDI")))
 
 	req := httptest.NewRequest(http.MethodPost, "/mup/nonexistent", bytes.NewBufferString("<MirrorMeterReading/>"))
 	w := httptest.NewRecorder()
@@ -744,7 +748,7 @@ func mirrorPostMux(
 	caller string,
 ) *http.ServeMux {
 	mux := http.NewServeMux()
-	h := metering.HandlePostMirrorMeterReading(mupStore, mmrStore, identityProvider(caller))
+	h := metering.HandlePostMirrorMeterReading(mupStore, mmrStore, nil, identityProvider(caller))
 	mux.HandleFunc("POST /mup/{id}", h)
 	mux.HandleFunc("POST /mup/{id}/mr", h)
 	return mux
@@ -865,67 +869,94 @@ func TestHandlePostMirrorMeterReading_OwnerWriteAccepted(t *testing.T) {
 }
 
 // TestHandlePostMirrorMeterReading_AggregatorOwnsMultipleMirrors is the case a
-// naive per-device rule breaks. Under CSIP an aggregator acts for many DERs
-// and legitimately owns many mirrors. Because HandleCreateMirrorUsagePoint
-// stamps each mirror with the CREATING caller's LFDI, all of an aggregator's
-// mirrors carry the aggregator's LFDI and it retains write access to every one
-// of them. Scope is by stamped creator; nothing assumes one mirror per
-// certificate.
+// naive per-device rule breaks, and it is the reproduction for #720: an
+// aggregator posts mirrors NAMING each managed device's own deviceLFDI, and
+// every reading must end up attributed to that device, not merged onto the
+// aggregator's own identity. Before #720, HandleCreateMirrorUsagePoint
+// overwrote every claim with the CREATING caller's LFDI, so a fleet API
+// reading this store saw every device's power on the aggregator and nothing
+// on the devices themselves (the exact defect the issue's field report
+// describes).
 //
 // The mirrors are created through the real POST /mup handler rather than
-// seeded, so the test exercises the actual stamping path the rule depends on.
+// seeded, so the test exercises the actual stamping and authorization path
+// the rule depends on, including the management store lookup.
 func TestHandlePostMirrorMeterReading_AggregatorOwnsMultipleMirrors(t *testing.T) {
 	t.Parallel()
-	const aggregatorLFDI = "AGGREGATOR_LFDI"
-	const outsiderLFDI = "OUTSIDER_LFDI"
+	// Every LFDI here is exactly 40 hex characters, canonical form: Assign
+	// below refuses anything else (store/memory/enddevicemanagement.go
+	// checkCanonicalLFDI), and the mirrored device claims must also pass
+	// resolveMirroredDevice's hex check.
+	const aggregatorLFDI = "A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1A1"
+	const outsiderLFDI = "E5E5E5E5E5E5E5E5E5E5E5E5E5E5E5E5E5E5E5E5"
+	const derOneDeviceLFDI = "B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2B2"
+	const derTwoDeviceLFDI = "C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3C3"
+	const unmanagedDeviceLFDI = "D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4D4"
 
 	mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
 	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
+	managers := memory.NewEndDeviceManagementStore()
+	if err := managers.Assign(context.Background(), aggregatorLFDI, derOneDeviceLFDI); err != nil {
+		t.Fatalf("assign manager for device one: %v", err)
+	}
+	if err := managers.Assign(context.Background(), aggregatorLFDI, derTwoDeviceLFDI); err != nil {
+		t.Fatalf("assign manager for device two: %v", err)
+	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(mupStore, identityProvider(aggregatorLFDI), nil))
-	aggPost := metering.HandlePostMirrorMeterReading(mupStore, mmrStore, identityProvider(aggregatorLFDI))
+	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(mupStore, managers, identityProvider(aggregatorLFDI), nil))
+	aggPost := metering.HandlePostMirrorMeterReading(mupStore, mmrStore, managers, identityProvider(aggregatorLFDI))
 	mux.HandleFunc("POST /mup/{id}", aggPost)
 	mux.HandleFunc("POST /mup/{id}/mr", aggPost)
 
-	// One aggregator certificate creates mirrors for two distinct DERs. The
-	// server assigns each an id; the aggregator addresses them by the Location
-	// it was handed, exactly as a client does.
-	derMRIDs := []string{"DER_ONE", "DER_TWO"}
-	mirrorIDs := make(map[string]string, len(derMRIDs))
-	for _, mrid := range derMRIDs {
-		body, err := xml.Marshal(&sep2.MirrorUsagePoint{MRID: mrid})
+	// One aggregator certificate creates mirrors naming two distinct managed
+	// devices. The server assigns each an id; the aggregator addresses them
+	// by the Location it was handed, exactly as a client does.
+	devices := []struct {
+		mrid   string
+		device string
+	}{
+		{"DER_ONE", derOneDeviceLFDI},
+		{"DER_TWO", derTwoDeviceLFDI},
+	}
+	mirrorIDs := make(map[string]string, len(devices))
+	for _, d := range devices {
+		body, err := xml.Marshal(&sep2.MirrorUsagePoint{MRID: d.mrid, DeviceLFDI: d.device})
 		if err != nil {
-			t.Fatalf("marshal MirrorUsagePoint %q: %v", mrid, err)
+			t.Fatalf("marshal MirrorUsagePoint %q: %v", d.mrid, err)
 		}
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/mup", bytes.NewReader(body)))
 		if w.Code != http.StatusCreated {
-			t.Fatalf("create %q: status = %d, want 201; body = %s", mrid, w.Code, w.Body.String())
+			t.Fatalf("create %q: status = %d, want 201; body = %s", d.mrid, w.Code, w.Body.String())
 		}
 		id := strings.TrimPrefix(w.Header().Get("Location"), "/mup/")
-		mirrorIDs[mrid] = id
+		mirrorIDs[d.mrid] = id
 		stored, err := mupStore.Get(context.Background(), id)
 		if err != nil {
-			t.Fatalf("get created MirrorUsagePoint %q (id %q): %v", mrid, id, err)
+			t.Fatalf("get created MirrorUsagePoint %q (id %q): %v", d.mrid, id, err)
 		}
-		// The scope key: every mirror carries the CREATOR's LFDI, so the
-		// aggregator owns all of them at once.
-		if stored.DeviceLFDI != aggregatorLFDI {
-			t.Fatalf("mirror %q DeviceLFDI = %q, want %q (creator stamp)", mrid, stored.DeviceLFDI, aggregatorLFDI)
+		// The core of #720: the stored DeviceLFDI is the MIRRORED DEVICE the
+		// aggregator claimed, never the aggregator's own certificate identity.
+		if stored.DeviceLFDI != d.device {
+			t.Fatalf("mirror %q DeviceLFDI = %q, want %q (the managed device, not the aggregator)", d.mrid, stored.DeviceLFDI, d.device)
+		}
+		if stored.DeviceLFDI == aggregatorLFDI {
+			t.Fatalf("mirror %q DeviceLFDI = the aggregator's own LFDI: readings would misattribute to the aggregator", d.mrid)
 		}
 	}
-	if mirrorIDs[derMRIDs[0]] == mirrorIDs[derMRIDs[1]] {
-		t.Fatalf("both mirrors got id %q: distinct mRIDs from one owner must stay distinct resources", mirrorIDs[derMRIDs[0]])
+	if mirrorIDs[devices[0].mrid] == mirrorIDs[devices[1].mrid] {
+		t.Fatalf("both mirrors got id %q: distinct devices must stay distinct resources", mirrorIDs[devices[0].mrid])
 	}
 
-	// The aggregator posts to every mirror it created, over both routes.
-	for i, mrid := range derMRIDs {
-		mirrorID := mirrorIDs[mrid]
+	// The aggregator posts readings to every mirror it created, over both
+	// routes, and each lands under the DEVICE's mirror id.
+	for i, d := range devices {
+		mirrorID := mirrorIDs[d.mrid]
 		for _, path := range bothPostRoutes(mirrorID) {
 			val := int64(100 * (i + 1))
 			w := httptest.NewRecorder()
-			mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, bytes.NewReader(readingBody(t, "MMR_"+mrid, val))))
+			mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, bytes.NewReader(readingBody(t, "MMR_"+d.mrid, val))))
 			if w.Code != http.StatusCreated {
 				t.Fatalf("aggregator POST %s: status = %d, want 201; body = %s", path, w.Code, w.Body.String())
 			}
@@ -933,27 +964,44 @@ func TestHandlePostMirrorMeterReading_AggregatorOwnsMultipleMirrors(t *testing.T
 			id := strings.TrimPrefix(loc, "/mup/"+mirrorID+"/mr/")
 			stored, err := mmrStore.Get(context.Background(), mirrorID, id)
 			if err != nil {
-				t.Fatalf("get stored reading for %q: %v", mrid, err)
+				t.Fatalf("get stored reading for %q: %v", d.mrid, err)
 			}
 			if stored.Reading == nil || stored.Reading.Value == nil || *stored.Reading.Value != val {
-				t.Errorf("mirror %q: stored Reading value not preserved: %+v", mrid, stored.Reading)
+				t.Errorf("mirror %q: stored Reading value not preserved: %+v", d.mrid, stored.Reading)
 			}
 		}
 	}
 
-	// A different certificate is still shut out of the aggregator's mirrors:
-	// broad ownership is earned by creation, not granted by aggregator status.
-	outsider := metering.HandlePostMirrorMeterReading(mupStore, mmrStore, identityProvider(outsiderLFDI))
+	// A certificate that manages neither device is shut out of both mirrors:
+	// broad access is earned by the management relationship, not by holding
+	// any valid certificate.
+	outsider := metering.HandlePostMirrorMeterReading(mupStore, mmrStore, managers, identityProvider(outsiderLFDI))
 	outMux := http.NewServeMux()
 	outMux.HandleFunc("POST /mup/{id}", outsider)
-	for _, mrid := range derMRIDs {
-		mirrorID := mirrorIDs[mrid]
+	for _, d := range devices {
+		mirrorID := mirrorIDs[d.mrid]
 		w := httptest.NewRecorder()
 		outMux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/mup/"+mirrorID, bytes.NewReader(readingBody(t, "FORGED", 1))))
 		if w.Code != http.StatusForbidden {
 			t.Errorf("outsider POST /mup/%s: status = %d, want 403", mirrorID, w.Code)
 		}
-		assertNoBodyLeak(t, w, aggregatorLFDI, outsiderLFDI, mrid)
+		assertNoBodyLeak(t, w, aggregatorLFDI, outsiderLFDI, d.mrid)
+	}
+
+	// The aggregator may not claim a device it does not manage: refused at
+	// create time, nothing stored (#720's "refuses an unassigned manager").
+	unmanagedBody, err := xml.Marshal(&sep2.MirrorUsagePoint{MRID: "DER_THREE", DeviceLFDI: unmanagedDeviceLFDI})
+	if err != nil {
+		t.Fatalf("marshal MirrorUsagePoint for the unmanaged device: %v", err)
+	}
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/mup", bytes.NewReader(unmanagedBody)))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("create for an unmanaged device: status = %d, want 403; body = %s", w.Code, w.Body.String())
+	}
+	assertNoBodyLeak(t, w, aggregatorLFDI, unmanagedDeviceLFDI, "DER_THREE")
+	if _, err := mupStore.Get(context.Background(), metering.MirrorStoreID(unmanagedDeviceLFDI, "DER_THREE")); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("a record exists for the unmanaged device's derived id (err = %v): the denied create stored something", err)
 	}
 }
 
@@ -1116,7 +1164,7 @@ func TestHandleMirrorUsagePoint_OmitsMirrorMeterReading(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, identityProvider("DEVICE_A_LFDI")))
+	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, nil, identityProvider("DEVICE_A_LFDI")))
 
 	req := httptest.NewRequest(http.MethodGet, "/mup/inv1", nil)
 	w := httptest.NewRecorder()
@@ -1150,7 +1198,7 @@ func TestHandleMirrorUsagePoint_NotFound(t *testing.T) {
 	t.Parallel()
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, identityProvider("DEVICE_A_LFDI")))
+	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, nil, identityProvider("DEVICE_A_LFDI")))
 
 	req := httptest.NewRequest(http.MethodGet, "/mup/nonexistent", nil)
 	w := httptest.NewRecorder()
@@ -1188,7 +1236,7 @@ func TestHandleMirrorUsagePoint_NonOwnerDenied(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, identityProvider(attackerLFDI)))
+	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, nil, identityProvider(attackerLFDI)))
 
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/mup/device-a", nil))
@@ -1212,7 +1260,7 @@ func TestHandleMirrorUsagePoint_NoIdentityDenied(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, identityProvider("")))
+	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, nil, identityProvider("")))
 
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/mup/device-a", nil))
@@ -1247,7 +1295,7 @@ func TestHandleMirrorUsagePoint_OwnerServedWithRuleC(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, identityProvider(ownerLFDI)))
+	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, nil, identityProvider(ownerLFDI)))
 
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/mup/device-a", nil))
@@ -1290,7 +1338,7 @@ const (
 // real server does with several client certificates.
 func createMirrorMux(s *memory.Store[sep2.MirrorUsagePoint], caller string) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, identityProvider(caller), nil))
+	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, identityProvider(caller), nil))
 	return mux
 }
 
@@ -1550,7 +1598,7 @@ func TestHandleCreateMirrorUsagePoint_CollisionKeepsACLIntact(t *testing.T) {
 
 	// Device A may not read device B's mirror.
 	readMux := http.NewServeMux()
-	readMux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, identityProvider(mupKeyLFDIA)))
+	readMux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, nil, identityProvider(mupKeyLFDIA)))
 	w := httptest.NewRecorder()
 	readMux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/mup/"+idB, nil))
 	if w.Code != http.StatusForbidden {
@@ -1700,7 +1748,7 @@ func TestHandleMirrorUsagePoint_NilLFDIProviderLogsRouteNotPath(t *testing.T) {
 
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, nil))
+	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, nil, nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/mup/"+pathMarker, nil)
 	w := httptest.NewRecorder()

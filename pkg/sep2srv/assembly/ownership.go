@@ -236,17 +236,17 @@ func (g *ownershipGate) decide(r *http.Request, delegated bool) ownershipVerdict
 
 	// Management is consulted only after self fails and only on a delegable
 	// pattern, so a management store outage never blocks a device's own
-	// /edev/{id} routes.
+	// /edev/{id} routes. CurrentManagerOwns is the same helper the /mup
+	// device-or-manager rule uses (metering.newMirrorActor, #720), so the two
+	// "is caller the current manager of this device" checks cannot drift.
 	if !delegated || g.managersAbsent {
 		return refuse(reasonNotOwner)
 	}
-	manager, err := g.managers.ManagerOf(r.Context(), dev.LFDI)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		return refuse(reasonNotManager)
-	case err != nil:
+	allowed, err := coreedev.CurrentManagerOwns(r.Context(), g.managers, dev.LFDI, callerLFDI)
+	if err != nil {
 		return ownershipVerdict{decision: ownershipStoreFailed, err: fmt.Errorf("ownership check could not read the EndDevice's manager: %w", err)}
-	case !coreedev.OwnedBy(manager, callerLFDI):
+	}
+	if !allowed {
 		return refuse(reasonNotManager)
 	}
 	return ownershipVerdict{decision: ownershipAllowed}

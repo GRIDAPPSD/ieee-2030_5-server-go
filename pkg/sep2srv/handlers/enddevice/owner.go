@@ -1,6 +1,7 @@
 package enddevice
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -24,6 +25,38 @@ import (
 // checked them, so a record stored without an LFDI is owned by nobody.
 func OwnedBy(storedLFDI, callerLFDI string) bool {
 	return storedLFDI != "" && callerLFDI != "" && storedLFDI == callerLFDI
+}
+
+// CurrentManagerOwns reports whether device's current manager, per managers,
+// is caller, using OwnedBy for the comparison (exact, no case folding).
+//
+// This is the "consult the management store" half of the self-or-manager
+// rule shared by the /edev ownership gate (pkg/sep2srv/assembly/ownership.go)
+// and the /mup device-or-manager rule (pkg/sep2srv/handlers/metering,
+// GRIDAPPSD/ieee-2030_5-server-go#720): both resolve a device's self-access
+// separately (OwnedBy against the record itself, which each caller already
+// has in hand from its own lookup) and then, only when self fails, ask this
+// function about delegation. Extracting exactly this half, not the whole
+// decision, is deliberate: the two callers attach different verdict shapes
+// and different refusal reasons to the same underlying fact, and forcing one
+// shared return type onto both would either impoverish one caller's
+// diagnostics or bloat the shared function with a result type neither caller
+// fully uses.
+//
+// A lookup miss (store.ErrNotFound, the device is unmanaged) is reported as
+// false with no error: an unmanaged device simply has no delegate today, not
+// an indeterminate check. Any other management-store error is returned
+// rather than folded into false, so a caller can answer 500 (a check that
+// could not complete) instead of misreporting an outage as "not authorized".
+func CurrentManagerOwns(ctx context.Context, managers store.EndDeviceManagementReader, device, caller string) (bool, error) {
+	manager, err := managers.ManagerOf(ctx, device)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return OwnedBy(manager, caller), nil
 }
 
 // HandleEndDeviceListForCaller returns a handler for GET /edev that lists the

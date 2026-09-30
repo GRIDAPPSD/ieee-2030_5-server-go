@@ -94,7 +94,15 @@ func testStores() *assembly.Stores {
 //   - Wrap is a no-op (no TLS required).
 //   - Identity always returns the fixed test identity (ok=true).
 //   - SFDIPrefix truncates to 8 chars (mirrors auth.ExtractSFDIPrefix).
-const testLFDI = "AABBCCDDEEFF001122334455667788990011223344556677"
+//
+// testLFDI is exactly 40 hex characters: the canonical width a real LFDI
+// always has (core sep2tls.LFDI: "%X" of a 20-byte fingerprint prefix, never
+// longer or shorter). It was 48 characters until #720's fix round taught a
+// body-claimed deviceLFDI to validate HexBinary160 width; the
+// storefault/storefake mup fault-probe bodies self-claim it verbatim
+// (deviceLFDI == the identity their fixed test identity presents), and a
+// non-canonical length would have 400'd every one of them.
+const testLFDI = "AABBCCDDEEFF0011223344556677889900112233"
 const testSFDI = "AABBCCDD11223344"
 
 func testAuthPolicy() assembly.AuthPolicy {

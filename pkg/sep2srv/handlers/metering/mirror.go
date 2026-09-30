@@ -10,13 +10,17 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -44,9 +48,10 @@ type LFDIProvider func(ctx context.Context) (lfdi string, ok bool)
 // what HandleCreateMirrorUsagePoint does, and it is the reason this is a
 // resolver rather than a plain "default if absent" value.
 //
-// The rate is keyed on the CREATING client's LFDI, the same identity
-// HandleCreateMirrorUsagePoint stamps into MirrorUsagePoint.DeviceLFDI. That
-// makes a per-device rate policy a pure consumer-side concern: a consumer
+// The rate is keyed on the MIRRORED DEVICE's LFDI, the same identity
+// HandleCreateMirrorUsagePoint stamps into MirrorUsagePoint.DeviceLFDI: the
+// posting client itself, or the managed device it posted on behalf of (#720).
+// That makes a per-device rate policy a pure consumer-side concern: a consumer
 // that today answers one fleet-wide value for every LFDI can later answer a
 // per-device value with no change to this package or to any call site here.
 //
@@ -104,11 +109,14 @@ func stampMirrorMeterReading(mmr *sep2.MirrorMeterReading, parentID string, nano
 //
 // The fields, and why each is the server's:
 //
-//   - DeviceLFDI is an identity claim, so a client must never be able to assert
-//     one. It is taken from the caller's certificate identity, which for a PUT
-//     is the same value the rule (e) gate already compared against the stored
-//     record, so the record cannot be handed to a device the gate did not
-//     authorise.
+//   - DeviceLFDI is an identity claim, so a client must never be able to
+//     assert one unchecked. device is the mirrored device the caller has
+//     already been authorised to act for (itself, or a device it currently
+//     manages, per #720): the caller's own certificate identity when the
+//     client left deviceLFDI absent or claimed itself, or the managed
+//     device's LFDI when the caller is that device's current manager. Either
+//     way the value stamped here is one the mirrorActor already checked, so
+//     the record cannot be handed to a device the gate did not authorise.
 //
 //   - PostRate is a rate the SERVER is being asked to absorb. sep.xsd:6485-6487
 //     grants the server both verbs, "add or modify", so a configured server
@@ -122,7 +130,9 @@ func stampMirrorMeterReading(mmr *sep2.MirrorMeterReading, parentID string, nano
 //     the new data over the existing record; the overwrite would persist an
 //     un-stamped client value and silently revert the server's configured rate.
 //     An ingest-budget policy the server cannot make survive a rewrite is not a
-//     policy it can rely on.
+//     policy it can rely on. The rate is asked about the mirrored DEVICE, the
+//     same identity stamped into DeviceLFDI, not the caller: a per-device rate
+//     policy is a pure consumer-side concern this signature already supports.
 //
 //     A nil provider, or one that reports no configured rate, is a no-op:
 //     PostRate keeps whatever the client submitted in THIS request, not whatever
@@ -149,11 +159,11 @@ func stampMirrorMeterReading(mmr *sep2.MirrorMeterReading, parentID string, nano
 // and 204 carries none (rule (a)(4)), so a client learns its actual postRate
 // only from a follow-up GET /mup/{id}. The stamp still has to happen before
 // storage, because GET only ever echoes what was persisted.
-func stampServerOwnedMirrorFields(mup *sep2.MirrorUsagePoint, id, lfdi string, postRateProvider PostRateProvider) {
-	mup.DeviceLFDI = lfdi
+func stampServerOwnedMirrorFields(mup *sep2.MirrorUsagePoint, id, device string, postRateProvider PostRateProvider) {
+	mup.DeviceLFDI = device
 
 	if postRateProvider != nil {
-		if rate, ok := postRateProvider(lfdi); ok {
+		if rate, ok := postRateProvider(device); ok {
 			// Bind to a fresh local: taking the address of the per-request
 			// `rate` is fine, while pointing at any shared policy storage would
 			// alias one value across every mirror.
@@ -191,35 +201,38 @@ func stripMirrorMeterReadings(mup sep2.MirrorUsagePoint) sep2.MirrorUsagePoint {
 }
 
 // authorizeMirrorOwner resolves the caller's certificate-derived LFDI and
-// confirms the caller is the client that CREATED the MirrorUsagePoint at id.
+// confirms the caller may act for the MirrorUsagePoint at id's mirrored
+// device: because the caller IS that device, or the management store names
+// the caller as the device's CURRENT manager (see newMirrorActor).
 //
 // IEEE 2030.5-2018 section 10.11.3 rule (e): "The Metering Mirror server
 // SHOULD only accept POSTs to a given MirrorUsagePoint from the client that
-// created the mirror."
+// created the mirror." #720 widens the scope from "the creator" to "the
+// device or its current manager": the stored DeviceLFDI now names the
+// mirrored device rather than always the creator (see
+// stampServerOwnedMirrorFields), and a device may act on a mirror its manager
+// created for it, which the strict creator-only reading would refuse.
 //
-// The scope key is the CREATOR, not the device whose readings the mirror
-// describes. HandleCreateMirrorUsagePoint stamps MirrorUsagePoint.DeviceLFDI
-// from the caller's identity, overriding whatever the client claimed in the
-// body, so the stored DeviceLFDI IS the creator's identity and comparing the
-// caller against it implements rule (e) directly rather than by proxy.
-//
-// This composes with CSIP aggregators, which is the case a naive
+// This still composes with CSIP aggregators, which is the case a naive
 // one-mirror-per-certificate rule would break. An aggregator acting for many
-// DERs legitimately creates many mirrors; each is stamped with the
-// aggregator's own LFDI at creation, so the aggregator retains access to all
-// of them. Nothing here assumes a single mirror per certificate.
+// managed DERs claims each one's own LFDI when creating its mirror, so the
+// aggregator retains access to every one of them through the management
+// relationship rather than through a shared creator stamp. Nothing here
+// assumes a single mirror per certificate.
 //
 // The check lives in core rather than in a consumer's middleware because core
 // owns protocol behavior: /mup is not /edev-scoped, so no path-shaped ACL rule
-// a server writes can express "the creator of this record", which is a fact
-// only the stored resource carries. An authorization rule enforced solely in a
-// consumer is a rule core cannot guarantee, and that is exactly the shape that
-// lets one route drift out of compliance with its sibling.
+// a server writes can express "the device or manager of this record", which is
+// a fact only the stored resource and the management store carry together. An
+// authorization rule enforced solely in a consumer is a rule core cannot
+// guarantee, and that is exactly the shape that lets one route drift out of
+// compliance with its sibling.
 //
 // Fails closed on every indeterminate case: a nil provider, no identity, an
-// empty caller LFDI, or a stored record carrying no DeviceLFDI. A mirror with
-// no recorded creator has nobody who can claim it, so it accepts no writes and
-// serves no reads; treating an empty stored DeviceLFDI as "matches anyone"
+// empty caller LFDI, a stored record carrying no DeviceLFDI, or a management
+// store error (reported via a 500, never read as "not authorized"). A mirror
+// with no recorded device has nobody who can claim it, so it accepts no writes
+// and serves no reads; treating an empty stored DeviceLFDI as "matches anyone"
 // would be the unsafe fallback that converts a missing value into open access.
 //
 // Denial status is 403, not 404, on both the write and the read path:
@@ -242,16 +255,19 @@ func stripMirrorMeterReadings(mup sep2.MirrorUsagePoint) sep2.MirrorUsagePoint {
 // On success the already-fetched record is returned, so callers need not
 // re-read the store, together with the CALLER's certificate-derived LFDI.
 //
-// Returning the caller LFDI is what lets PUT derive server-owned fields from
-// the certificate without asking the provider a second time. Two reads of the
-// same provider inside one request are two chances to disagree, and the value
-// this gate compared against the stored record is by definition the one the
-// rest of the request must use: any other value would be authorised by a check
-// that never saw it.
+// Returning both the stored record and the caller LFDI is what lets PUT derive
+// server-owned fields, and its default device when the body leaves deviceLFDI
+// absent, without asking the provider or the store a second time. Two reads of
+// the same provider inside one request are two chances to disagree, and the
+// value this gate compared against the stored record is by definition the one
+// the rest of the request must use: any other value would be authorised by a
+// check that never saw it.
 func authorizeMirrorOwner(
 	w http.ResponseWriter,
 	r *http.Request,
 	s store.ResourceStore[sep2.MirrorUsagePoint],
+	actFor mirrorActor,
+	denials *mirrorDenialLog,
 	lfdiProvider LFDIProvider,
 	id string,
 ) (sep2.MirrorUsagePoint, string, bool) {
@@ -281,7 +297,21 @@ func authorizeMirrorOwner(
 		return zero, "", false
 	}
 
-	if mup.DeviceLFDI == "" || mup.DeviceLFDI != lfdi {
+	allowed, err := actFor(r.Context(), lfdi, mup.DeviceLFDI)
+	if err != nil {
+		srverr.Internal(w, r, fmt.Errorf("the management lookup for the ownership check failed: %w", err))
+		return zero, "", false
+	}
+	if !allowed {
+		// Truncated the way assembly/ownership.go's denialLog truncates a
+		// client-chosen id: it cannot forge a log line of unbounded length.
+		loggedID := id
+		if len(loggedID) > maxLoggedIDLen {
+			loggedID = loggedID[:maxLoggedIDLen]
+		}
+		denials.record(lfdi, "not-device-or-manager", fmt.Sprintf(
+			"mup: denied %s: caller=%q is neither the mirrored device nor its current manager (id=%q)",
+			srverr.Route(r), lfdi, loggedID))
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return zero, "", false
 	}
@@ -385,25 +415,324 @@ func MirrorHref(id string) string {
 	return "/mup/" + id
 }
 
+// hexBinary160Chars is the canonical width of a HexBinary160 LFDI once fully
+// expanded: 40 hex characters, the 20-byte width core's sep2tls.LFDI always
+// emits ("%X" on a 20-byte slice, never dropping a leading zero byte). IEEE
+// 2030.5-2023 line 10727-10728 states this as the max ("40 hex characters
+// max"), not a fixed width, because HexBinary160 tolerates a shorter hex
+// string that omits leading zero bytes (Table C.17's own example,
+// "<deviceLFDI>00</deviceLFDI>", is exactly that: one significant byte).
+const hexBinary160Chars = 40
+
+// canonicalDeviceLFDI validates and canonicalizes a client-claimed
+// deviceLFDI to its full HexBinary160 width, restoring any leading zero
+// bytes the client omitted, and upper-casing the result.
+//
+// Restoring the omitted width matters for interop, not just tidiness. The
+// EPRI reference client's own serializer (xml_output.c output_hex, "while (i
+// < n-1 && value[i] == 0) i++;") drops every leading zero BYTE of a
+// HexBinary160 value before writing it, and lower-cases what remains
+// (hex_char). A device whose certificate LFDI happens to start with a zero
+// byte therefore self-mirrors with a claim shorter than its own full-width
+// LFDI. Comparing that claim byte-for-byte against the caller's full-width
+// certificate identity (core sep2tls.LFDI, always 40 upper-case hex
+// characters) would refuse the device's OWN mirror with 403: #720 would
+// regress a case the pre-#720 code never had to get right, because it
+// ignored the claim entirely. Left-padding with '0' up to hexBinary160Chars
+// undoes exactly the omission the serializer performs, so the padded claim
+// compares equal to the caller's own identity again.
+//
+// ok is false, and the caller answers 400, when raw cannot be a HexBinary160
+// value at all: not hex, longer than 40 characters even before padding (so
+// padding could not shrink it to fit), or an odd number of hex digits, which
+// cannot represent a whole number of bytes and so cannot be what any
+// encoder, buggy or not, produces for a byte-oriented type. These are
+// distinct from "well-formed but unclaimable", which is a 403 decided later
+// by the mirrorActor: a malformed claim is refused before any authorization
+// question is even asked.
+func canonicalDeviceLFDI(raw string) (device string, ok bool) {
+	if raw == "" || len(raw) > hexBinary160Chars || len(raw)%2 != 0 {
+		return "", false
+	}
+	for _, c := range raw {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return "", false
+		}
+	}
+	padded := strings.Repeat("0", hexBinary160Chars-len(raw)) + raw
+	return strings.ToUpper(padded), true
+}
+
+// resolveMirroredDevice canonicalizes a client-claimed deviceLFDI, or falls
+// back to fallback when the client left it absent.
+//
+// raw is trimmed of surrounding whitespace before anything else. sep.xsd
+// types deviceLFDI as xs:hexBinary, whose whiteSpace facet is "collapse":
+// leading and trailing whitespace is stripped before the value is compared,
+// so " 00AABB...\n" is schema-valid and names the same value as
+// "00AABB...". Go's encoding/xml has no XSD facet awareness and hands back
+// the text node verbatim, so this server has to apply the facet itself
+// rather than refuse a document the standard accepts.
+//
+// IEEE 2030.5-2023 UsagePointBase.deviceLFDI SHALL be present when mirroring
+// (extraction line 12584-12585), but tolerating absence keeps every existing
+// client that posts only an mRID working: absence is not itself malformed. A
+// claim that is whitespace only collapses to empty under the same facet, so
+// it is treated exactly like an absent element, not like a malformed one.
+//
+// ok is false when the trimmed claim is non-empty but cannot be a valid
+// HexBinary160 value (see canonicalDeviceLFDI); the caller answers 400 in
+// that case, never a silent fallback to fallback, because a malformed claim
+// is a client error, not an absent one.
+func resolveMirroredDevice(raw, fallback string) (device string, ok bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fallback, true
+	}
+	return canonicalDeviceLFDI(trimmed)
+}
+
+// mirrorActor decides whether caller may act for device: because caller IS
+// device, or the management store names caller as device's CURRENT manager.
+// See newMirrorActor for the rule and its fail-closed cases.
+type mirrorActor func(ctx context.Context, caller, device string) (bool, error)
+
+// newMirrorActor builds the "self or current manager" rule newMirrorActor's
+// callers use for every /mup route, from the operator decisions on #720. The
+// self half is coreedev.OwnedBy; the delegation half is
+// coreedev.CurrentManagerOwns, the same two functions the /edev ownership
+// gate uses for its own self-or-manager decision (assembly/ownership.go), so
+// the rule is defined once and the two call sites cannot drift apart:
+//
+//   - a caller acting for itself is always allowed, with no management store
+//     dependency, so self-mirroring costs nothing extra and keeps working
+//     when no management store is wired at all;
+//   - otherwise, an absent managers reader means self only: no delegation,
+//     matching the /edev ownership gate's managersAbsent branch;
+//   - a lookup miss (store.ErrNotFound, the device is unmanaged) is a refusal,
+//     not an error;
+//   - any other management-store error is reported to the caller via err,
+//     which every call site turns into a 500 rather than a silent refusal:
+//     an indeterminate check must not read as "not authorized".
+//
+// managersAbsent is resolved once, at mount time, not per request: IsAbsent's
+// own doc says as much, and every /mup route constructor calls this exactly
+// once and reuses the returned func for the handler's lifetime.
+func newMirrorActor(managers store.EndDeviceManagementReader) mirrorActor {
+	managersAbsent := store.IsAbsent(managers)
+	return func(ctx context.Context, caller, device string) (bool, error) {
+		if coreedev.OwnedBy(device, caller) {
+			return true, nil
+		}
+		if managersAbsent {
+			return false, nil
+		}
+		return coreedev.CurrentManagerOwns(ctx, managers, device, caller)
+	}
+}
+
+// Bounds for mirrorDenialLog, matching the /edev ownership gate's denialLog
+// (assembly/ownership.go): a per-caller budget stops one caller from
+// spending another's lines, and the total limit across callers stops a probe
+// from many identities flooding the log.
+const (
+	mirrorDenialPerCaller = 5
+	mirrorDenialLimit     = 100
+	mirrorDenialWindow    = time.Minute
+	// maxLoggedIDLen bounds a client-chosen id before it is written to the
+	// log, matching assembly/ownership.go's own constant of the same name
+	// and purpose: a client cannot forge a log line of unbounded length.
+	maxLoggedIDLen = 64
+)
+
+// mirrorDenialLog rate-limits the /mup refusal log lines the same way
+// assembly/ownership.go's denialLog rate-limits the /edev ones: at most
+// mirrorDenialPerCaller lines per caller and mirrorDenialLimit lines total
+// inside a rolling mirrorDenialWindow, with a one-line suppression summary,
+// broken down by reason, when a window that suppressed anything closes.
+//
+// This is a second copy of that algorithm rather than a shared type. Sharing
+// it would mean moving assembly's denialLog and its own 700-plus lines of
+// tests to a package both sides could import, for a LOW-severity ask whose
+// two log lines already carry different fields (an EndDevice id vs. a
+// mirrored device LFDI) that a shared type would have to abstract over for
+// no real gain; #720's round 2 review asked to bound these lines "the way
+// the gate does", not to unify the two gates.
+//
+// Constructed once per /mup handler (HandleCreateMirrorUsagePoint,
+// HandleMirrorUsagePoint, HandlePutMirrorUsagePoint,
+// HandleDeleteMirrorUsagePoint, HandlePostMirrorMeterReading), so the budget
+// is per ROUTE rather than shared across all of /mup, the same granularity
+// newMirrorActor's managersAbsent is resolved at.
+type mirrorDenialLog struct {
+	mu        sync.Mutex
+	logf      func(format string, args ...any)
+	now       func() time.Time
+	afterFunc func(d time.Duration, f func()) (stop func() bool)
+	window    time.Duration
+
+	windowStart time.Time
+	windowEnds  time.Time // zero when no window is open
+	generation  uint64
+	written     int
+	perCaller   map[string]int
+	suppressed  map[string]int
+	stopTimer   func() bool
+}
+
+func newMirrorDenialLog(logf func(format string, args ...any)) *mirrorDenialLog {
+	return &mirrorDenialLog{
+		logf: logf,
+		now:  time.Now,
+		afterFunc: func(d time.Duration, f func()) func() bool {
+			return time.AfterFunc(d, f).Stop
+		},
+		window: mirrorDenialWindow,
+	}
+}
+
+// record logs message, subject to the budget above. caller keys the
+// per-caller count; reason keys the suppression-summary breakdown. message
+// is the complete, already-formatted log line each call site builds for
+// itself, so the two /mup refusal sites can each name their own fields
+// (device claim vs. id) without this type knowing about either.
+func (d *mirrorDenialLog) record(caller, reason, message string) {
+	summary, admitted := d.admit(caller, reason)
+	if summary != "" {
+		d.logf("%s", summary)
+	}
+	if !admitted {
+		return
+	}
+	d.logf("%s", message)
+}
+
+// admit runs the critical section under the mutex, released on every path
+// including a panic, so a panic here cannot leave every later refusal
+// blocked on the lock.
+func (d *mirrorDenialLog) admit(caller, reason string) (summary string, admitted bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	now := d.now()
+	summary = d.closeExpiredLocked(now)
+	if d.windowEnds.IsZero() {
+		d.windowStart, d.windowEnds = now, now.Add(d.window)
+		d.generation++
+	}
+	admitted = d.admitLocked(now, caller, reason)
+	return summary, admitted
+}
+
+func (d *mirrorDenialLog) admitLocked(now time.Time, caller, reason string) bool {
+	if d.written < mirrorDenialLimit && d.perCaller[caller] < mirrorDenialPerCaller {
+		if d.perCaller == nil {
+			d.perCaller = make(map[string]int)
+		}
+		d.perCaller[caller]++
+		d.written++
+		return true
+	}
+	if d.suppressed == nil {
+		d.suppressed = make(map[string]int)
+	}
+	d.suppressed[reason]++
+	if d.stopTimer == nil {
+		d.armLocked(now)
+	}
+	return false
+}
+
+func (d *mirrorDenialLog) armLocked(now time.Time) {
+	gen := d.generation
+	d.stopTimer = d.afterFunc(d.windowEnds.Sub(now), func() { d.flush(gen) })
+}
+
+// flush reports the window armed as generation gen, unless a refusal already
+// closed it.
+func (d *mirrorDenialLog) flush(gen uint64) {
+	d.mu.Lock()
+	if gen != d.generation || d.windowEnds.IsZero() {
+		d.mu.Unlock()
+		return
+	}
+	now := d.now()
+	if now.Before(d.windowEnds) {
+		d.armLocked(now)
+		d.mu.Unlock()
+		return
+	}
+	summary := d.closeExpiredLocked(now)
+	d.mu.Unlock()
+
+	if summary != "" {
+		d.logf("%s", summary)
+	}
+}
+
+// closeExpiredLocked closes the open window if it has ended and returns its
+// suppression summary, or "" when there is nothing to report. The interval is
+// measured from the window's first refusal to now, not assumed to be the
+// window length, because the close can come later than the window's end.
+func (d *mirrorDenialLog) closeExpiredLocked(now time.Time) string {
+	if d.windowEnds.IsZero() || now.Before(d.windowEnds) {
+		return ""
+	}
+	var summary string
+	if len(d.suppressed) > 0 {
+		total := 0
+		reasons := make([]string, 0, len(d.suppressed))
+		for _, reason := range slices.Sorted(maps.Keys(d.suppressed)) {
+			total += d.suppressed[reason]
+			reasons = append(reasons, fmt.Sprintf("%s=%d", reason, d.suppressed[reason]))
+		}
+		summary = fmt.Sprintf("mup: suppressed %d denial log lines in the last %s: %s",
+			total, now.Sub(d.windowStart).Round(time.Millisecond), strings.Join(reasons, " "))
+	}
+	if d.stopTimer != nil {
+		d.stopTimer()
+	}
+	d.windowStart, d.windowEnds = time.Time{}, time.Time{}
+	d.written, d.perCaller, d.suppressed, d.stopTimer = 0, nil, nil, nil
+	return summary
+}
+
 // HandleCreateMirrorUsagePoint returns a handler for POST /mup.
 // Inverters create MirrorUsagePoints to register for metering data reporting.
 // lfdiProvider extracts the client LFDI from the request context; the server
 // passes a closure over auth.GetIdentity so that the auth package does not
 // become a dependency of core.
 //
-// The created resource's id is derived from the caller's certificate identity
-// and its mRID together (see MirrorStoreID), so two devices POSTing the same
-// mRID each get their own MirrorUsagePoint and neither is ever handed the
-// other's Location.
+// managers resolves which LFDI currently manages a device (see
+// store.EndDeviceManagementReader). A nil or absent reader means no
+// delegation: only self-mirroring is accepted (see newMirrorActor).
+//
+// The mirrored device D is resolved from the body's deviceLFDI (#720): absent
+// means the caller itself; present must be valid HexBinary160 hex (400
+// otherwise) and is canonicalized to upper case before any comparison. The
+// caller must be D or D's current manager, or the request is refused with 403
+// and nothing is stored; see resolveMirroredDevice and newMirrorActor.
+//
+// The created resource's id is derived from D and the client's mRID together
+// (see MirrorStoreID), so two distinct devices posting the same mRID (whether
+// each for itself, or a manager posting for several managed devices) each get
+// their own MirrorUsagePoint, and no caller is ever handed another device's
+// Location.
 //
 // postRateProvider supplies the server's preferred MirrorUsagePoint.postRate
-// for the creating client (see PostRateProvider). Nil, or a provider that
+// for D, the mirrored device (see PostRateProvider). Nil, or a provider that
 // answers false, leaves the client's own postRate exactly as submitted, so a
 // server that configures no rate behaves precisely as it did before this
 // parameter existed. The stamp applies identically on the create path and on
 // the rule (a)(4) overwrite path a re-POST of the same mRID takes; see the
 // stamping site below for why the overwrite path is not exempted.
-func HandleCreateMirrorUsagePoint(s store.ResourceStore[sep2.MirrorUsagePoint], lfdiProvider LFDIProvider, postRateProvider PostRateProvider) http.HandlerFunc {
+func HandleCreateMirrorUsagePoint(
+	s store.ResourceStore[sep2.MirrorUsagePoint],
+	managers store.EndDeviceManagementReader,
+	lfdiProvider LFDIProvider,
+	postRateProvider PostRateProvider,
+) http.HandlerFunc {
+	actFor := newMirrorActor(managers)
+	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			encoding.MethodNotAllowed(w, "POST")
@@ -448,8 +777,31 @@ func HandleCreateMirrorUsagePoint(s store.ResourceStore[sep2.MirrorUsagePoint], 
 			return
 		}
 
-		// The resource identity is (creating device, client mRID).
-		id := MirrorStoreID(lfdi, mup.MRID)
+		// #720: deviceLFDI names the device being mirrored, not necessarily
+		// the poster. Absent defaults to the caller; present must be valid
+		// hex and claimable by the caller (itself, or a device it currently
+		// manages), or the request is refused before anything is derived or
+		// stored.
+		device, ok := resolveMirroredDevice(mup.DeviceLFDI, lfdi)
+		if !ok {
+			http.Error(w, "MirrorUsagePoint deviceLFDI is not a valid HexBinary160", http.StatusBadRequest)
+			return
+		}
+		allowed, err := actFor(r.Context(), lfdi, device)
+		if err != nil {
+			srverr.Internal(w, r, fmt.Errorf("the management lookup for the device claim failed: %w", err))
+			return
+		}
+		if !allowed {
+			denials.record(lfdi, "unclaimable-device", fmt.Sprintf(
+				"mup: create refused a deviceLFDI claim: caller=%q may not act for device=%q",
+				lfdi, device))
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+
+		// The resource identity is (mirrored device, client mRID).
+		id := MirrorStoreID(device, mup.MRID)
 
 		// Every server-owned field is stamped in one place, shared with PUT.
 		// The stamp runs once here, on the same mup value the ErrAlreadyExists
@@ -457,7 +809,7 @@ func HandleCreateMirrorUsagePoint(s store.ResourceStore[sep2.MirrorUsagePoint], 
 		// BOTH the create path and the rule (a)(4) overwrite path a re-POST of
 		// the same mRID takes. See stampServerOwnedMirrorFields for why each
 		// field is server-owned and why the overwrite path is not exempted.
-		stampServerOwnedMirrorFields(&mup, id, lfdi, postRateProvider)
+		stampServerOwnedMirrorFields(&mup, id, device, postRateProvider)
 
 		// sep.xsd carries MirrorMeterReading inline on MirrorUsagePoint
 		// (sep2.MirrorUsagePoint.MirrorMeterReading), not via a link
@@ -481,13 +833,17 @@ func HandleCreateMirrorUsagePoint(s store.ResourceStore[sep2.MirrorUsagePoint], 
 				}
 
 				// Ownership is re-checked rather than inferred from the
-				// derivation. Per-owner keying already means only this
-				// caller's own record can occupy this id, but the store is
+				// derivation. Per-device keying already means only this
+				// device's own record can occupy this id, but the store is
 				// also writable by a consumer that seeds it directly, and
-				// handing a caller a resource it does not own is precisely
-				// the defect being fixed. Two independent barriers, not one.
-				if existing.DeviceLFDI == "" || existing.DeviceLFDI != lfdi {
-					log.Printf("mup: create collided with a record owned by another device (id=%q)", id)
+				// handing a caller a resource for a different device is
+				// precisely the defect being fixed. Two independent barriers,
+				// not one. The comparison is against device (the resolved,
+				// already-authorised mirrored device), not lfdi: a manager's
+				// re-POST for a device it manages must match the device the
+				// id was derived for, not the manager's own identity.
+				if existing.DeviceLFDI == "" || existing.DeviceLFDI != device {
+					log.Printf("mup: create collided with a record for another device (id=%q)", id)
 					http.Error(w, "forbidden", http.StatusForbidden)
 					return
 				}
@@ -496,9 +852,10 @@ func HandleCreateMirrorUsagePoint(s store.ResourceStore[sep2.MirrorUsagePoint], 
 				// data SHALL be written over the existing MirrorUsagePoint."
 				// mup already carries this POST's data with every
 				// server-owned field stamped the same way the create path
-				// stamps it: DeviceLFDI from the caller's certificate (not
-				// the body, set above), Href derived from the same id this
-				// (owner, mRID) pair always resolves to, and any inline
+				// stamps it: DeviceLFDI from the resolved, already-authorised
+				// device (not taken from the body uninspected, set above),
+				// Href derived from the same id this (device, mRID) pair
+				// always resolves to, and any inline
 				// MirrorMeterReading elements already re-stamped with
 				// fresh server-owned href/lastUpdateTime values. Persisting
 				// mup as-is overwrites every other field verbatim from what
@@ -564,22 +921,29 @@ func HandleCreateMirrorUsagePoint(s store.ResourceStore[sep2.MirrorUsagePoint], 
 
 // HandleMirrorUsagePoint returns a handler for GET /mup/{id}.
 //
-// Scoped to the creating client, same rule as the POST routes: see
-// authorizeMirrorOwner. Rule (e) governs POSTs only, and the WADL marks this
-// GET Optional (section 4.2 item (c) makes those modes normative), so scoping
-// it costs nothing in conformance while metering readings are customer data
-// that an unscoped GET hands to any authenticated peer.
+// Scoped to the mirrored device or its current manager (#720), same rule as
+// the POST routes: see authorizeMirrorOwner. Rule (e) governs POSTs only,
+// and the WADL marks this GET Optional (section 4.2 item (c) makes those
+// modes normative), so scoping it costs nothing in conformance while
+// metering readings are customer data that an unscoped GET hands to any
+// authenticated peer.
 //
 // Rule (c) still holds on the owner's own record: the response carries only
 // first-level elements, MirrorMeterReading children stripped.
-func HandleMirrorUsagePoint(s store.ResourceStore[sep2.MirrorUsagePoint], lfdiProvider LFDIProvider) http.HandlerFunc {
+func HandleMirrorUsagePoint(
+	s store.ResourceStore[sep2.MirrorUsagePoint],
+	managers store.EndDeviceManagementReader,
+	lfdiProvider LFDIProvider,
+) http.HandlerFunc {
+	actFor := newMirrorActor(managers)
+	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			encoding.MethodNotAllowed(w, "GET, HEAD")
 			return
 		}
 
-		mup, _, ok := authorizeMirrorOwner(w, r, s, lfdiProvider, r.PathValue("id"))
+		mup, _, ok := authorizeMirrorOwner(w, r, s, actFor, denials, lfdiProvider, r.PathValue("id"))
 		if !ok {
 			return
 		}
@@ -610,25 +974,27 @@ func HandleMirrorUsagePoint(s store.ResourceStore[sep2.MirrorUsagePoint], lfdiPr
 // alone, so every body it can construct yields the identical response, which is
 // what the tests assert rather than merely that both are refused.
 //
-// # Why a differing mRID is a rejection and not a rename
+// # Why a differing mRID or deviceLFDI is a rejection and not a rename
 //
-// MirrorStoreID derives the store key from the owner and the mRID TOGETHER (see
-// MirrorStoreID for why), so the mRID is part of this resource's identity, not a
-// mutable attribute of it. A PUT whose body carries a different mRID therefore
-// does not describe an edit to the resource at {id}: it describes a DIFFERENT
-// resource, living at a different key.
+// MirrorStoreID derives the store key from the device and the mRID TOGETHER
+// (see MirrorStoreID for why), so both together are this resource's identity,
+// not mutable attributes of it. A PUT whose body carries a different mRID, or
+// claims a different device (#720), therefore does not describe an edit to
+// the resource at {id}: it describes a DIFFERENT resource, living at a
+// different key.
 //
-// Honouring it as a rename would be data corruption rather than a 4xx. The
+// Honouring either as a rename would be data corruption rather than a 4xx. The
 // record at {id} would be left behind with nothing addressing it, since its key
-// no longer matches the mRID it now claims to hold and no future request from
-// the owner can derive that key again; and a second record would appear at the
+// no longer matches what it now claims to hold and no future request from the
+// owner can derive that key again; and a second record would appear at the
 // new key, so one mirror would have become two, one of them unreachable. The
 // readings scoped under the old id would be stranded under a parent nothing can
 // name. Refusing with 409 leaves the store exactly as it was, which the tests
 // assert directly rather than inferring from the status code.
 //
-// The client that genuinely wants a mirror under a new mRID already has the
-// route for it: POST /mup mints one and returns its Location, rule (a)(3).
+// The client that genuinely wants a mirror under a new mRID or device already
+// has the route for it: POST /mup mints one and returns its Location, rule
+// (a)(3).
 //
 // The response is 204 with a Location header, matching rule (a)(4)'s treatment
 // of a write-over of an existing MirrorUsagePoint. No representation is served:
@@ -637,9 +1003,12 @@ func HandleMirrorUsagePoint(s store.ResourceStore[sep2.MirrorUsagePoint], lfdiPr
 // non-conformant and a parse surface no client reads.
 func HandlePutMirrorUsagePoint(
 	s store.ResourceStore[sep2.MirrorUsagePoint],
+	managers store.EndDeviceManagementReader,
 	lfdiProvider LFDIProvider,
 	postRateProvider PostRateProvider,
 ) http.HandlerFunc {
+	actFor := newMirrorActor(managers)
+	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			encoding.MethodNotAllowed(w, "PUT")
@@ -649,9 +1018,10 @@ func HandlePutMirrorUsagePoint(
 		id := r.PathValue("id")
 
 		// Rule (e), BEFORE the body. See the ordering note above: everything
-		// below this line is reachable only by the client that created the
-		// mirror, so no branch below can be used as an oracle by anyone else.
-		_, lfdi, ok := authorizeMirrorOwner(w, r, s, lfdiProvider, id)
+		// below this line is reachable only by the device that owns this
+		// mirror or its current manager, so no branch below can be used as an
+		// oracle by anyone else.
+		storedMup, _, ok := authorizeMirrorOwner(w, r, s, actFor, denials, lfdiProvider, id)
 		if !ok {
 			return
 		}
@@ -681,24 +1051,45 @@ func HandlePutMirrorUsagePoint(
 			return
 		}
 
+		// #720: deviceLFDI absent on a PUT defaults to the STORED device, not
+		// the caller, so a manager PUTting a managed device's mirror does not
+		// accidentally reassign it to itself. Present must still be valid hex.
+		device, ok := resolveMirroredDevice(mup.DeviceLFDI, storedMup.DeviceLFDI)
+		if !ok {
+			http.Error(w, "MirrorUsagePoint deviceLFDI is not a valid HexBinary160", http.StatusBadRequest)
+			return
+		}
+
 		// The identity check. Nothing has been written at this point and
 		// nothing is written on this branch: the store is left byte-for-byte as
 		// it was, which is the property that distinguishes a refusal from a
 		// half-applied rename.
 		//
-		// The message names neither the submitted mRID nor the stored one. The
-		// caller owns this resource, so it could learn both by other means, but
-		// echoing request content into an error body is how a reflected value
-		// ends up somewhere it was not expected.
-		if derived := MirrorStoreID(lfdi, mup.MRID); derived != id {
-			http.Error(w, "MirrorUsagePoint mRID does not identify this resource", http.StatusConflict)
+		// MirrorStoreID derives the key from (device, mRID) together, so this
+		// single comparison rejects an mRID rename (device unchanged, id
+		// derives elsewhere) AND a device change (mRID unchanged, id derives
+		// elsewhere) the same way: 409, nothing written. A caller that
+		// legitimately wants a mirror under a different device or mRID already
+		// has the route for it, POST /mup, which mints a new id; this handler
+		// never re-parents a stored resource onto the key derivation the client
+		// merely wishes it had. The mirrorActor already authorised the caller
+		// for the STORED device above; it is not re-run for a claimed device change,
+		// because the id mismatch refuses that case unconditionally regardless
+		// of what the caller could otherwise claim.
+		//
+		// The message names neither the submitted mRID nor the stored one, nor
+		// either deviceLFDI. The caller owns this resource, so it could learn
+		// both by other means, but echoing request content into an error body
+		// is how a reflected value ends up somewhere it was not expected.
+		if derived := MirrorStoreID(device, mup.MRID); derived != id {
+			http.Error(w, "MirrorUsagePoint deviceLFDI or mRID does not identify this resource", http.StatusConflict)
 			return
 		}
 
 		// Identical stamping to the create path, by construction: one function,
-		// both routes. DeviceLFDI comes from the certificate identity the gate
-		// above already matched against the stored record, never from the body.
-		stampServerOwnedMirrorFields(&mup, id, lfdi, postRateProvider)
+		// both routes. DeviceLFDI is the device the identity check above just
+		// re-derived the id from, never taken from the body uninspected.
+		stampServerOwnedMirrorFields(&mup, id, device, postRateProvider)
 
 		// A full write-over, not a merge, matching rule (a)(4). An inline
 		// MirrorMeterReading this PUT omits is cleared from the stored record.
@@ -791,8 +1182,11 @@ type parentCascader interface {
 func HandleDeleteMirrorUsagePoint(
 	s store.ResourceStore[sep2.MirrorUsagePoint],
 	mmrStore store.ScopedStore[sep2.MirrorMeterReading],
+	managers store.EndDeviceManagementReader,
 	lfdiProvider LFDIProvider,
 ) http.HandlerFunc {
+	actFor := newMirrorActor(managers)
+	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			encoding.MethodNotAllowed(w, "DELETE")
@@ -804,8 +1198,8 @@ func HandleDeleteMirrorUsagePoint(
 		// Rule (e), before anything is removed. A DELETE has no body to leak
 		// through, but the gate is still first for the same reason the read and
 		// write paths put it first: no branch of this handler is reachable by a
-		// caller that does not own the record.
-		mup, _, ok := authorizeMirrorOwner(w, r, s, lfdiProvider, id)
+		// caller that is not the mirrored device or its current manager.
+		mup, _, ok := authorizeMirrorOwner(w, r, s, actFor, denials, lfdiProvider, id)
 		if !ok {
 			return
 		}
@@ -976,8 +1370,8 @@ func decodeMirrorMeterReadings(body []byte) ([]sep2.MirrorMeterReading, error) {
 // rule (e) on one route and not its sibling is the failure shape this
 // arrangement exists to prevent.
 //
-// Ownership: the caller's LFDI must equal the parent MirrorUsagePoint's stored
-// DeviceLFDI, which is the LFDI of the client that created the mirror. See
+// Ownership: the caller must be the parent MirrorUsagePoint's mirrored device
+// (its stored DeviceLFDI) or that device's current manager (#720). See
 // authorizeMirrorOwner for the rule, the CSIP aggregator case, and the choice
 // of 403 over 404. The gate runs before the body is read, so it covers a batch
 // exactly as it covers a single reading: an unauthorized caller's payload is
@@ -992,8 +1386,11 @@ func decodeMirrorMeterReadings(body []byte) ([]sep2.MirrorMeterReading, error) {
 func HandlePostMirrorMeterReading(
 	mupStore store.ResourceStore[sep2.MirrorUsagePoint],
 	mmrStore store.ScopedStore[sep2.MirrorMeterReading],
+	managers store.EndDeviceManagementReader,
 	lfdiProvider LFDIProvider,
 ) http.HandlerFunc {
+	actFor := newMirrorActor(managers)
+	denials := newMirrorDenialLog(log.Printf)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			encoding.MethodNotAllowed(w, "POST")
@@ -1003,9 +1400,10 @@ func HandlePostMirrorMeterReading(
 		parentID := r.PathValue("id")
 
 		// Ownership gate: resolves identity, confirms the parent exists, and
-		// confirms the caller created it. Runs before the body is read so an
-		// unauthorized caller's payload is never parsed, let alone stored.
-		if _, _, ok := authorizeMirrorOwner(w, r, mupStore, lfdiProvider, parentID); !ok {
+		// confirms the caller is the mirrored device or its current manager.
+		// Runs before the body is read so an unauthorized caller's payload is
+		// never parsed, let alone stored.
+		if _, _, ok := authorizeMirrorOwner(w, r, mupStore, actFor, denials, lfdiProvider, parentID); !ok {
 			return
 		}
 

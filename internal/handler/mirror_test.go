@@ -61,8 +61,9 @@ func authLFDIProvider(ctx context.Context) (string, bool) {
 func noPostRatePreference(string) (uint32, bool) { return 0, false }
 
 // TestHandleCreateMirrorUsagePoint pins the server-auth-to-core-handler
-// wiring: the identity core stamps into the record is the one the auth
-// context carried, not one the client claimed.
+// wiring: an absent deviceLFDI resolves to the identity the auth context
+// carried (#720), so what ends up stored is a fact about the connection, not
+// about the body.
 //
 // The 201 response body is NOT where that is observed. IEEE 2030.5-2018
 // section 10.11.3 rule (a)(3) has POST /mup answer 201 with a Location and
@@ -74,18 +75,17 @@ func TestHandleCreateMirrorUsagePoint(t *testing.T) {
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(s, authLFDIProvider, noPostRatePreference))
-	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(s, authLFDIProvider))
+	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(s, nil, authLFDIProvider, noPostRatePreference))
+	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(s, nil, authLFDIProvider))
 
 	mup := sep2.MirrorUsagePoint{
 		MRID:                "INV001",
 		Description:         "Inverter 1",
 		ServiceCategoryKind: 0,
 		Status:              1,
-		// A client-claimed LFDI that core must overwrite. Sending the value
-		// the server would have assigned anyway would let a handler that
-		// trusts the body pass this test.
-		DeviceLFDI: "CLIENT_CLAIMED_LFDI_DEADBEEF00112233445566",
+		// No DeviceLFDI: absent means the caller (#720), which is what this
+		// test pins: the wiring resolves identity from the auth context, not
+		// from a client-supplied claim.
 	}
 	body, _ := xml.Marshal(&mup)
 
@@ -138,6 +138,33 @@ func TestHandleCreateMirrorUsagePoint(t *testing.T) {
 	}
 }
 
+// TestHandleCreateMirrorUsagePoint_UnclaimableDeviceDenied is the sign flip of
+// the old "core overwrites the body's claim" behavior (#720): a client that
+// names a device it neither is nor manages is refused with 403 and nothing is
+// stored, rather than having the claim silently replaced.
+func TestHandleCreateMirrorUsagePoint_UnclaimableDeviceDenied(t *testing.T) {
+	s := memory.NewStore[sep2.MirrorUsagePoint]()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(s, nil, authLFDIProvider, noPostRatePreference))
+
+	const foreignDevice = "9999999999999999999999999999999999999999"
+	mup := sep2.MirrorUsagePoint{MRID: "INV002", DeviceLFDI: foreignDevice}
+	body, _ := xml.Marshal(&mup)
+
+	req := httptest.NewRequest(http.MethodPost, "/mup", bytes.NewReader(body))
+	req = addIdentity(req, testSFDI, testLFDI)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403, body: %s", w.Code, w.Body.String())
+	}
+	if count, _ := s.Count(context.Background()); count != 0 {
+		t.Errorf("stored MirrorUsagePoint count = %d, want 0: a denied claim must not be stored", count)
+	}
+}
+
 func TestHandleMirrorUsagePointGet(t *testing.T) {
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	// DeviceLFDI is the creator stamp core compares the caller against for
@@ -150,7 +177,7 @@ func TestHandleMirrorUsagePointGet(t *testing.T) {
 	})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(s, authLFDIProvider))
+	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(s, nil, authLFDIProvider))
 
 	req := httptest.NewRequest(http.MethodGet, "/mup/test1", nil)
 	req = addIdentity(req, testSFDI, testLFDI)
@@ -175,7 +202,7 @@ func TestHandleMirrorUsagePointGetForeignCallerDenied(t *testing.T) {
 	})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(s, authLFDIProvider))
+	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(s, nil, authLFDIProvider))
 
 	req := httptest.NewRequest(http.MethodGet, "/mup/test1", nil)
 	req = addIdentity(req, "OTHER_SFDI_99", "OTHER_LFDI_40CHARS_99887766554433221100FF")
@@ -211,7 +238,7 @@ func TestHandlePostMirrorMeterReading(t *testing.T) {
 	body, _ := xml.Marshal(&mmr)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup/{id}/mr", coremetering.HandlePostMirrorMeterReading(mupStore, mmrStore, authLFDIProvider))
+	mux.HandleFunc("POST /mup/{id}/mr", coremetering.HandlePostMirrorMeterReading(mupStore, mmrStore, nil, authLFDIProvider))
 
 	req := httptest.NewRequest(http.MethodPost, "/mup/inv1/mr", bytes.NewReader(body))
 	req = addIdentity(req, testSFDI, testLFDI)
@@ -234,7 +261,7 @@ func TestHandlePostMirrorMeterReadingNotFoundParent(t *testing.T) {
 	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup/{id}/mr", coremetering.HandlePostMirrorMeterReading(mupStore, mmrStore, authLFDIProvider))
+	mux.HandleFunc("POST /mup/{id}/mr", coremetering.HandlePostMirrorMeterReading(mupStore, mmrStore, nil, authLFDIProvider))
 
 	req := httptest.NewRequest(http.MethodPost, "/mup/nonexistent/mr", bytes.NewBufferString("<MirrorMeterReading/>"))
 	req = addIdentity(req, testSFDI, testLFDI)

@@ -22,8 +22,8 @@ import (
 func postRateMUPMux(lfdi string, provider metering.PostRateProvider) *http.ServeMux {
 	s := memory.NewStore[sep2.MirrorUsagePoint]()
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, identityProvider(lfdi), provider))
-	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, identityProvider(lfdi)))
+	mux.HandleFunc("POST /mup", metering.HandleCreateMirrorUsagePoint(s, nil, identityProvider(lfdi), provider))
+	mux.HandleFunc("GET /mup/{id}", metering.HandleMirrorUsagePoint(s, nil, identityProvider(lfdi)))
 	return mux
 }
 

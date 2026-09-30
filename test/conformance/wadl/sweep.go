@@ -588,11 +588,16 @@ func seedSet() []seed {
 		},
 		{
 			method: http.MethodPost, path: "/mup", element: "MirrorUsagePoint",
+			// No deviceLFDI: absent resolves to the posting client's own
+			// certificate identity (#720). seedLFDI names the seeded
+			// EndDevice above, a different certificate from the one this
+			// sweep posts as, and with no management pair between them a
+			// claimed seedLFDI here would now be refused with 403 instead of
+			// creating the seed mirror the walk needs.
 			body: `<MirrorUsagePoint xmlns="` + sepNS + `">` +
 				`<mRID>0F0F0F0F0F0F0F0F0F0F0F0F0F0F0FAA</mRID>` +
 				`<description>wadl sweep mup</description><roleFlags>03</roleFlags>` +
-				`<serviceCategoryKind>0</serviceCategoryKind><status>1</status>` +
-				`<deviceLFDI>` + seedLFDI + `</deviceLFDI></MirrorUsagePoint>`,
+				`<serviceCategoryKind>0</serviceCategoryKind><status>1</status></MirrorUsagePoint>`,
 		},
 		{
 			method: http.MethodPost, path: "/upt", element: "UsagePoint",

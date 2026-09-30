@@ -212,6 +212,128 @@ func TestAdminFSAPersistence_UnassignDeviceRollsBackMemoryWhenPersistFails(t *te
 	}
 }
 
+// TestAdminFSAPersistence_WriteRollsBackMemoryWhenPersistFails is
+// TestAdminFSAPersistence_UnassignDeviceRollsBackMemoryWhenPersistFails
+// applied to the other five persistOrRollback call sites: Create, Delete,
+// AttachProgram, DetachProgram and AssignDevice each mutate in-memory state
+// before persisting, and each needs its OWN test, because the undo closure
+// at one call site rolling back correctly says nothing about whether
+// another site's does (GRIDAPPSD/ieee-2030_5-server-go#721).
+func TestAdminFSAPersistence_WriteRollsBackMemoryWhenPersistFails(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		seed   func(t *testing.T, ctx context.Context, s *memory.AdminFSAStore)
+		mutate func(ctx context.Context, s *memory.AdminFSAStore) error
+		check  func(t *testing.T, ctx context.Context, s *memory.AdminFSAStore)
+	}{
+		{
+			name: "Create",
+			seed: func(t *testing.T, ctx context.Context, s *memory.AdminFSAStore) {},
+			mutate: func(ctx context.Context, s *memory.AdminFSAStore) error {
+				return s.Create(ctx, "fsa-A", mkFSA("MRa", "a", 1))
+			},
+			check: func(t *testing.T, ctx context.Context, s *memory.AdminFSAStore) {
+				if _, err := s.Get(ctx, "fsa-A"); err == nil {
+					t.Error("Get(fsa-A) succeeded after a failed Create; want the in-memory insert rolled back")
+				}
+			},
+		},
+		{
+			name: "Delete",
+			seed: func(t *testing.T, ctx context.Context, s *memory.AdminFSAStore) {
+				if err := s.Create(ctx, "fsa-A", mkFSA("MRa", "a", 1)); err != nil {
+					t.Fatalf("seed: Create: %v", err)
+				}
+			},
+			mutate: func(ctx context.Context, s *memory.AdminFSAStore) error {
+				return s.Delete(ctx, "fsa-A")
+			},
+			check: func(t *testing.T, ctx context.Context, s *memory.AdminFSAStore) {
+				if _, err := s.Get(ctx, "fsa-A"); err != nil {
+					t.Errorf("Get(fsa-A) after a failed Delete = %v, want the record restored", err)
+				}
+			},
+		},
+		{
+			name: "AttachProgram",
+			seed: func(t *testing.T, ctx context.Context, s *memory.AdminFSAStore) {
+				if err := s.Create(ctx, "fsa-A", mkFSA("MRa", "a", 1)); err != nil {
+					t.Fatalf("seed: Create: %v", err)
+				}
+			},
+			mutate: func(ctx context.Context, s *memory.AdminFSAStore) error {
+				return s.AttachProgram(ctx, "fsa-A", "/p/1")
+			},
+			check: func(t *testing.T, ctx context.Context, s *memory.AdminFSAStore) {
+				if got := s.Programs(ctx, "fsa-A"); len(got) != 0 {
+					t.Errorf("Programs(fsa-A) after a failed AttachProgram = %v, want none", got)
+				}
+			},
+		},
+		{
+			name: "DetachProgram",
+			seed: func(t *testing.T, ctx context.Context, s *memory.AdminFSAStore) {
+				if err := s.Create(ctx, "fsa-A", mkFSA("MRa", "a", 1)); err != nil {
+					t.Fatalf("seed: Create: %v", err)
+				}
+				if err := s.AttachProgram(ctx, "fsa-A", "/p/1"); err != nil {
+					t.Fatalf("seed: AttachProgram: %v", err)
+				}
+			},
+			mutate: func(ctx context.Context, s *memory.AdminFSAStore) error {
+				return s.DetachProgram(ctx, "fsa-A", "/p/1")
+			},
+			check: func(t *testing.T, ctx context.Context, s *memory.AdminFSAStore) {
+				if got := s.Programs(ctx, "fsa-A"); !equalSlices(got, []string{"/p/1"}) {
+					t.Errorf("Programs(fsa-A) after a failed DetachProgram = %v, want [/p/1] restored", got)
+				}
+			},
+		},
+		{
+			name: "AssignDevice",
+			seed: func(t *testing.T, ctx context.Context, s *memory.AdminFSAStore) {
+				if err := s.Create(ctx, "fsa-A", mkFSA("MRa", "a", 1)); err != nil {
+					t.Fatalf("seed: Create: %v", err)
+				}
+			},
+			mutate: func(ctx context.Context, s *memory.AdminFSAStore) error {
+				return s.AssignDevice(ctx, "fsa-A", "d-1")
+			},
+			check: func(t *testing.T, ctx context.Context, s *memory.AdminFSAStore) {
+				if got := s.Devices(ctx, "fsa-A"); len(got) != 0 {
+					t.Errorf("Devices(fsa-A) after a failed AssignDevice = %v, want none", got)
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+
+			dir := t.TempDir()
+			s, err := memory.NewAdminFSAStoreWithPersistence(filepath.Join(dir, "fsas.json"))
+			if err != nil {
+				t.Fatalf("NewAdminFSAStoreWithPersistence: %v", err)
+			}
+			tc.seed(t, ctx, s)
+
+			if err := os.Chmod(dir, 0o500); err != nil {
+				t.Fatalf("chmod the snapshot directory read-only: %v", err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+			if err := tc.mutate(ctx, s); err == nil {
+				t.Fatalf("%s succeeded while the snapshot directory was read-only; want an error", tc.name)
+			}
+			tc.check(t, ctx, s)
+		})
+	}
+}
+
 func TestAdminFSAPersistence_DetachUnassignRoundTrip(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

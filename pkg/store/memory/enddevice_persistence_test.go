@@ -251,6 +251,57 @@ func TestEndDeviceStore_DeleteDoesNotEraseAnotherDevicesReclaimedIdentity(t *tes
 	}
 }
 
+// TestEndDevicePersistence_CreateRollbackRestoresAnIdentityItOverwrote pins
+// what round 2's id-checked removeIndex could not: a Create rollback must
+// restore the PRIOR owner of an SFDI or LFDI it overwrote, not merely erase
+// the key. Device 1 legitimately holds SFDI and LFDI X. Create(id=2, also X)
+// overwrites both index keys to "2" before the flush is attempted; when the
+// flush fails, id-checked-only deletion sees the keys now name "2" (the
+// failed write) and clears them, leaving device 1 -- untouched throughout --
+// unresolvable by an identity it never stopped holding.
+func TestEndDevicePersistence_CreateRollbackRestoresAnIdentityItOverwrote(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "snapshot.json")
+	s, err := memory.NewEndDeviceStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("NewEndDeviceStoreWithPersistence: %v", err)
+	}
+
+	if err := s.Create(ctx, "1", mkDevice("1", "1111111111", "AAAA")); err != nil {
+		t.Fatalf("create device 1: %v", err)
+	}
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod the snapshot directory read-only: %v", err)
+	}
+	if err := s.Create(ctx, "2", mkDevice("2", "1111111111", "AAAA")); err == nil {
+		t.Fatal("Create succeeded while the snapshot directory was read-only; want an error")
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("restore write access: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if _, err := s.Get(ctx, "1"); err != nil {
+		t.Fatalf("control: device 1 must still be present: Get(1) = %v", err)
+	}
+
+	got, err := s.GetBySFDI(ctx, "1111111111")
+	if err != nil {
+		t.Errorf("GetBySFDI(1111111111) after the failed Create of id 2 with the same identity = %v, "+
+			"want device 1 still resolvable: it never stopped holding that SFDI", err)
+	} else if got.LFDI != "AAAA" {
+		t.Errorf("GetBySFDI(1111111111) returned LFDI %q, want device 1's AAAA", got.LFDI)
+	}
+	if _, err := s.GetByLFDI(ctx, "AAAA"); err != nil {
+		t.Errorf("GetByLFDI(AAAA) after the failed Create of id 2 with the same identity = %v, "+
+			"want device 1 still resolvable: it never stopped holding that LFDI", err)
+	}
+}
+
 func TestEndDevicePersistence_UpdateThenReload(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

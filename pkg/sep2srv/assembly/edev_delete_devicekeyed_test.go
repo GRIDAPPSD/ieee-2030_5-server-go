@@ -226,3 +226,64 @@ func TestEndDeviceDelete_ClearsTheAdminFSAAssignmentThroughTheAssembledRouter(t 
 		t.Errorf("adminFSAs.Devices(fsa-1) after DELETE through the assembled router = %v, want none", devs)
 	}
 }
+
+// TestEndDeviceDelete_ClearsTheAdminFSAAssignmentWhenItIsTheOnlyDeviceKeyedFamilyWired
+// pins the deviceKeyedCascadeEndDevices gate itself: Configurations,
+// DeviceStatuses, PowerStatuses and FSAs are all left nil here, so the
+// four-term "nothing wired" check only stays false because of the
+// AdminFSAs term. Dropping that term from the gate would make it decide
+// nothing is wired, skip building DeviceKeyedCascadeEndDeviceStore
+// entirely, and leave the admin link uncascaded even though AdminFSAs is
+// present (GRIDAPPSD/ieee-2030_5-server-go#721).
+func TestEndDeviceDelete_ClearsTheAdminFSAAssignmentWhenItIsTheOnlyDeviceKeyedFamilyWired(t *testing.T) {
+	t.Parallel()
+
+	stores := testStores()
+	stores.Configurations = nil
+	stores.DeviceStatuses = nil
+	stores.PowerStatuses = nil
+	stores.FSAs = nil
+	stores.AdminFSAs = memory.NewAdminFSAStore()
+	seedOwnedDevices(t, stores.EndDevices, "e1")
+
+	ctx := context.Background()
+	if err := stores.AdminFSAs.Create(ctx, "fsa-1", sep2.FunctionSetAssignments{}); err != nil {
+		t.Fatalf("seed admin FSA: %v", err)
+	}
+	if err := stores.AdminFSAs.AssignDevice(ctx, "fsa-1", "e1"); err != nil {
+		t.Fatalf("assign device: %v", err)
+	}
+
+	handler, _ := assembly.BuildProtocolRouter(
+		assembly.RouterConfig{},
+		stores,
+		testAuthPolicy(),
+		testSFDI, testLFDI,
+		nil,
+	)
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	// Control: the assignment is really there before the delete.
+	if devs := stores.AdminFSAs.Devices(ctx, "fsa-1"); len(devs) != 1 || devs[0] != "e1" {
+		t.Fatalf("control: adminFSAs.Devices(fsa-1) = %v, want [e1]", devs)
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, srv.URL+"/edev/e1", nil)
+	if err != nil {
+		t.Fatalf("new DELETE request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE /edev/e1: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE /edev/e1 status = %d, want 204", resp.StatusCode)
+	}
+
+	if devs := stores.AdminFSAs.Devices(ctx, "fsa-1"); len(devs) != 0 {
+		t.Errorf("adminFSAs.Devices(fsa-1) after DELETE with AdminFSAs the only wired family = %v, want none: "+
+			"the gate must still build the cascade decorator", devs)
+	}
+}

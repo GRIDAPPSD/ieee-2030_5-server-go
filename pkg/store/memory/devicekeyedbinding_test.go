@@ -255,7 +255,11 @@ func TestDeviceKeyedCascadeEndDeviceStore_DeleteLeavesTheAdminLinkUntouchedWhenA
 // snapshot directory is read-only, here, the same reproduction
 // TestAdminFSAPersistence_UnassignDeviceRollsBackMemoryWhenPersistFails
 // uses at the AdminFSAStore layer), Delete must report that failure rather
-// than swallow it, and must not proceed to remove the device.
+// than swallow it, must not proceed to remove the device, must leave the
+// admin link restored (AdminFSAStore's own rollback, exercised through the
+// cascade rather than directly), and a retried DELETE, once the directory
+// is writable again, must converge: the device gone and the admin link
+// cleared, both in memory and on disk.
 func TestDeviceKeyedCascadeEndDeviceStore_DeleteReportsAnUnassignDeviceFailure(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -297,11 +301,34 @@ func TestDeviceKeyedCascadeEndDeviceStore_DeleteReportsAnUnassignDeviceFailure(t
 		t.Fatal("Delete succeeded while UnassignDevice could not persist; want the error reported")
 	}
 
+	if got := adminFSAs.Devices(ctx, "fsa-1"); !equalSlices(got, []string{"1"}) {
+		t.Errorf("adminFSAs.Devices(fsa-1) after the failed delete = %v, want [1]: AdminFSAStore's own rollback "+
+			"must restore the link, not just report the error", got)
+	}
+
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatalf("restore write access: %v", err)
 	}
 	if _, err := devs.Get(ctx, "1"); err != nil {
 		t.Errorf("device was removed despite the failed unassign: Get(1) = %v, want the device still present", err)
+	}
+
+	if err := s.Delete(ctx, "1"); err != nil {
+		t.Fatalf("retried Delete after restoring write access: %v, want it to converge", err)
+	}
+	if _, err := devs.Get(ctx, "1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("Get(1) after the retried delete = %v, want ErrNotFound", err)
+	}
+	if got := adminFSAs.Devices(ctx, "fsa-1"); len(got) != 0 {
+		t.Errorf("adminFSAs.Devices(fsa-1) after the retried delete = %v, want none", got)
+	}
+
+	reloaded, err := memory.NewAdminFSAStoreWithPersistence(filepath.Join(dir, "fsas.json"))
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := reloaded.Devices(ctx, "fsa-1"); len(got) != 0 {
+		t.Errorf("Devices(fsa-1) after reload = %v, want none: the retry's unassign must have reached disk", got)
 	}
 }
 

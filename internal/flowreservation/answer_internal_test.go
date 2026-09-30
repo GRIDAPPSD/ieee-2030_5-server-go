@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 )
 
 func requestWithWindow() sep2.FlowReservationRequest {
@@ -449,7 +450,7 @@ func TestDeriveEventStatus(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := deriveEventStatus(start, creationTime, tc.now)
+			got := deriveEventStatus(start, creationTime, tc.now, dercontrol.LifecycleRecord{})
 			if got.CurrentStatus != tc.want {
 				t.Errorf("CurrentStatus = %d, want %d", got.CurrentStatus, tc.want)
 			}
@@ -467,7 +468,7 @@ func TestDeriveEventStatus_ZeroDurationReadsActiveNeverComplete(t *testing.T) {
 	const start, creationTime = int64(1000), int64(1000)
 
 	for _, now := range []int64{1000, 1001, 5000} {
-		got := deriveEventStatus(start, creationTime, now)
+		got := deriveEventStatus(start, creationTime, now, dercontrol.LifecycleRecord{})
 		if got.CurrentStatus != sep2.EventStatusActive {
 			t.Errorf("now=%d: CurrentStatus = %d, want Active (never Complete)", now, got.CurrentStatus)
 		}
@@ -483,10 +484,10 @@ func TestDeriveEventStatus_CreationTimeBumpsEffectiveStart(t *testing.T) {
 	t.Parallel()
 	const start, creationTime = int64(1000), int64(2000)
 
-	if got := deriveEventStatus(start, creationTime, 1500); got.CurrentStatus != sep2.EventStatusScheduled {
+	if got := deriveEventStatus(start, creationTime, 1500, dercontrol.LifecycleRecord{}); got.CurrentStatus != sep2.EventStatusScheduled {
 		t.Errorf("now=1500 (past start, before the bumped creationTime): CurrentStatus = %d, want Scheduled", got.CurrentStatus)
 	}
-	if got := deriveEventStatus(start, creationTime, 2000); got.CurrentStatus != sep2.EventStatusActive {
+	if got := deriveEventStatus(start, creationTime, 2000, dercontrol.LifecycleRecord{}); got.CurrentStatus != sep2.EventStatusActive {
 		t.Errorf("now=2000 (at the bumped creationTime): CurrentStatus = %d, want Active", got.CurrentStatus)
 	}
 }

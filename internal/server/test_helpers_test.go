@@ -1,9 +1,13 @@
 package server_test
 
 import (
+	"context"
+
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -42,5 +46,26 @@ func newTestStores() *server.Stores {
 		FlowReservationResponses: memory.NewScopedStore[sep2.FlowReservationResponse](),
 		ResponseSets:             memory.NewStore[sep2.ResponseSet](),
 		Responses:                memory.NewScopedStore[sep2.Response](),
+
+		FlowReservationResponseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
+		CommitmentLedger:                  commitment.NewLedger(noGrants{}, noControls{}),
 	}
+}
+
+// noGrants and noControls are empty ledger sources: these tests only need a
+// non-nil ledger to prove it is carried into the assembly.
+type noGrants struct{}
+
+func (noGrants) GrantsInFleet(context.Context, string) ([]commitment.Grant, error) { return nil, nil }
+func (noGrants) Grant(context.Context, string) (commitment.Grant, error) {
+	return commitment.Grant{}, store.ErrNotFound
+}
+
+type noControls struct{}
+
+func (noControls) ControlsInFleet(context.Context, string) ([]commitment.Control, error) {
+	return nil, nil
+}
+func (noControls) ExecutionsOf(context.Context, string) ([]commitment.Control, error) {
+	return nil, nil
 }

@@ -2,6 +2,7 @@ package sep2server
 
 import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -21,7 +22,7 @@ import (
 // PIN this package invented. Registration PINs must not be derivable from
 // device identity, so there is no defensible default to ship.
 func NewStores() *assembly.Stores {
-	return &assembly.Stores{
+	s := &assembly.Stores{
 		EndDevices:               memory.NewEndDeviceStore(),
 		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
 		EndDeviceIndexes:         memory.NewEndDeviceIndex(),
@@ -55,5 +56,13 @@ func NewStores() *assembly.Stores {
 		FlowReservationResponses: memory.NewScopedStore[sep2.FlowReservationResponse](),
 		ResponseSets:             memory.NewStore[sep2.ResponseSet](),
 		Responses:                memory.NewScopedStore[sep2.Response](),
+
+		FlowReservationResponseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
 	}
+	s.CommitmentLedger = sources.NewLedger(
+		s.EndDevices, s.EndDeviceManagers,
+		s.FlowReservationResponses, s.FlowReservationResponseLifecycles,
+		s.DERControls, s.DERControlLifecycles,
+	)
+	return s
 }

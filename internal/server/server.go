@@ -21,6 +21,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
@@ -217,6 +218,8 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		ResponseSets:             memory.NewStore[sep2.ResponseSet](),
 		Responses:                memory.NewScopedStore[sep2.Response](),
 
+		FlowReservationResponseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
+
 		// #715 fix round 3 item 2: env SEP2_EDITION, default "2018" via
 		// EffectiveSEP2Edition.
 		Sep2Edition: handler.SEP2Edition(cfg.EffectiveSEP2Edition()),
@@ -225,6 +228,12 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		// answers 503 on create.
 		PEN: cfg.EffectivePEN(),
 	}
+
+	stores.CommitmentLedger = sources.NewLedger(
+		stores.EndDevices, stores.EndDeviceManagers,
+		stores.FlowReservationResponses, stores.FlowReservationResponseLifecycles,
+		stores.DERControls, stores.DERControlLifecycles,
+	)
 
 	if cfg.BootFixtureFile != "" {
 		target := &bootfixture.Target{

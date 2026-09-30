@@ -50,6 +50,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	coreconfiguration "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/configuration"
@@ -258,6 +259,17 @@ type Stores struct {
 	FlowReservationResponses store.ScopedStore[sep2.FlowReservationResponse]
 	ResponseSets             store.ResourceStore[sep2.ResponseSet]
 	Responses                store.ScopedStore[sep2.Response]
+
+	// FlowReservationResponseLifecycles holds each response's cancel mark
+	// (#714), keyed exactly as the response. Optional, like
+	// DERControlLifecycles: when present, GET of a response and of the
+	// response list derive EventStatus from it; when absent every response
+	// is served as stored.
+	FlowReservationResponseLifecycles store.ScopedStore[dercontrol.LifecycleRecord]
+
+	// CommitmentLedger is the process's one commitment ledger (#714),
+	// built over the same stores. Nothing in this package consults it yet.
+	CommitmentLedger *commitment.Ledger
 }
 
 // RouterConfig carries the scalar configuration values the protocol router
@@ -1382,8 +1394,14 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		mux.HandleFunc("POST /edev/{id}/frq", coreflowrsv.HandlePostFlowReservationRequest(
 			stores.FlowReservationRequests, flowReservationQueue,
 		))
+		// Only the read routes derive a response's status from its lifecycle
+		// record; the queue writes and checks the store as stored.
+		servedResponses := flowReservationResponses
+		if !store.IsAbsent(stores.FlowReservationResponseLifecycles) {
+			servedResponses = flowreservation.NewDerivedStatusResponseStore(flowReservationResponses, stores.FlowReservationResponseLifecycles)
+		}
 		mux.HandleFunc("GET /edev/{id}/frp", scopedListHandler[sep2.FlowReservationResponse, sep2.FlowReservationResponseList](
-			flowReservationResponses, "id", coreflowrsv.BuildFlowReservationResponseList, 900,
+			servedResponses, "id", coreflowrsv.BuildFlowReservationResponseList, 900,
 		))
 
 		// The two FlowReservation instances. One POST mints both
@@ -1405,7 +1423,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		mux.HandleFunc("GET /edev/{id}/frq/{frqId}", frqInstance)
 
 		frpInstance := scopedResourceHandler[sep2.FlowReservationResponse](
-			flowReservationResponses, "id", "frpId", itemMethods{}, nil)
+			servedResponses, "id", "frpId", itemMethods{}, nil)
 		mux.HandleFunc("GET /edev/{id}/frp/{frpId}", frpInstance)
 	}
 

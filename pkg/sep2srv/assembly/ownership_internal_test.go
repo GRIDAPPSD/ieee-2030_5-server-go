@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -103,7 +104,7 @@ func TestOwnershipGate_NilIdentityIsRefused(t *testing.T) {
 
 // fullStores wires every function set so every register*Routes branch mounts.
 func fullStores() *Stores {
-	return &Stores{
+	s := &Stores{
 		EndDevices:               memory.NewEndDeviceStore(),
 		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
 		Registrations:            memory.NewRegistrationStore(),
@@ -135,7 +136,15 @@ func fullStores() *Stores {
 		FlowReservationResponses: memory.NewScopedStore[sep2.FlowReservationResponse](),
 		ResponseSets:             memory.NewStore[sep2.ResponseSet](),
 		Responses:                memory.NewScopedStore[sep2.Response](),
+
+		FlowReservationResponseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
 	}
+	s.CommitmentLedger = sources.NewLedger(
+		s.EndDevices, s.EndDeviceManagers,
+		s.FlowReservationResponses, s.FlowReservationResponseLifecycles,
+		s.DERControls, s.DERControlLifecycles,
+	)
+	return s
 }
 
 func registerAll(mux routeRegistrar, stores *Stores, policy AuthPolicy) {

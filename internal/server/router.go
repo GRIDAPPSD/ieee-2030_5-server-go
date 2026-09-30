@@ -2,6 +2,7 @@ package server
 
 import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -112,6 +113,13 @@ type Stores struct {
 	FlowReservationResponses *memory.ScopedStore[sep2.FlowReservationResponse]
 	ResponseSets             *memory.Store[sep2.ResponseSet]
 	Responses                *memory.ScopedStore[sep2.Response]
+
+	// FlowReservationResponseLifecycles holds each response's cancel mark
+	// (#714), keyed exactly as the response and memory-only like it.
+	FlowReservationResponseLifecycles *memory.ScopedStore[dercontrol.LifecycleRecord]
+
+	// CommitmentLedger is the process's one commitment ledger (#714).
+	CommitmentLedger *commitment.Ledger
 
 	// Sep2Edition is the config-declared IEEE 2030.5 edition (env
 	// SEP2_EDITION, internal/config.Config.EffectiveSEP2Edition), threaded

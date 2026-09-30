@@ -168,6 +168,9 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 		FlowReservationResponses: s.FlowReservationResponses,
 		ResponseSets:             s.ResponseSets,
 		Responses:                s.Responses,
+
+		FlowReservationResponseLifecycles: s.FlowReservationResponseLifecycles,
+		CommitmentLedger:                  s.CommitmentLedger,
 	}
 }
 

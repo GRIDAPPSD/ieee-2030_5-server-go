@@ -220,6 +220,10 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		// #715 fix round 3 item 2: env SEP2_EDITION, default "2018" via
 		// EffectiveSEP2Edition.
 		Sep2Edition: handler.SEP2Edition(cfg.EffectiveSEP2Edition()),
+
+		// #566: the DER control issuer mints mRIDs under this PEN; unset
+		// answers 503 on create.
+		PEN: cfg.EffectivePEN(),
 	}
 
 	if cfg.BootFixtureFile != "" {
@@ -262,6 +266,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	subQueueSize := resolveSubParam("SEP2_SUBSCRIPTION_QUEUE_SIZE", subscriptionQueueSize)
 	notifier := newSubscriptionNotifier(cfg, stores.Subscriptions, subWorkers, subQueueSize)
 	notifier.SetObserver(obs.RecordNotification)
+	stores.AdminNotifier = notifier
 	notifierDone := make(chan struct{})
 	go func() {
 		defer close(notifierDone)

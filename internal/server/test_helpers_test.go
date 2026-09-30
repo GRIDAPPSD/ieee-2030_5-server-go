@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -21,6 +22,7 @@ func newTestStores() *server.Stores {
 		DERAvailabilities:        memory.NewScopedStore[sep2.DERAvailability](),
 		DERPrograms:              memory.NewDERProgramStore(),
 		DERControls:              memory.NewDERControlStore(),
+		DERControlLifecycles:     dercontrol.NewLifecycleStore(),
 		DefaultDERControls:       memory.NewScopedStore[sep2.DefaultDERControl](),
 		DERCurves:                memory.NewStore[sep2.DERCurve](),
 		FSAs:                     memory.NewScopedStore[sep2.FunctionSetAssignments](),

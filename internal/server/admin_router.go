@@ -117,6 +117,21 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 		authed.HandleFunc("GET /api/derms/fleets", handler.HandleListFleets(fleetH))
 	}
 
+	// #566 DER control API. Both POST routes change what a device does, so
+	// neither is on nonSensitiveAdminWrites: a real credential is required
+	// even from loopback.
+	if derH := newAdminDERControlHandler(stores); derH != nil {
+		authed.HandleFunc("POST /api/der/controls", derH.HandleCreate())
+		authed.HandleFunc("GET /api/der/controls", derH.HandleList())
+		authed.HandleFunc("POST /api/der/controls/{mrid}/cancel", derH.HandleCancel())
+		// "GET /api/devices/{id}/der-programs" would conflict with "GET
+		// /api/devices/by-lfdi/{lfdi}" (neither is more specific), so the
+		// device sub-collection is matched by a wildcard and dispatched here.
+		authed.HandleFunc("GET /api/devices/{id}/{collection}", deviceCollections(map[string]http.Handler{
+			"der-programs": derH.HandleListPrograms(),
+		}))
+	}
+
 	// Admin dashboard. legacyDashboard decides which page GET / returns
 	// (see handleDashboardPage); the route pattern is the same either way,
 	// so the boot-time route list does not change with the flag.
@@ -256,5 +271,18 @@ func handleIssueTicket(tickets *auth.TicketStore) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ticket":"` + ticket + `"}`))
+	}
+}
+
+// deviceCollections serves GET /api/devices/{id}/{collection} from the named
+// handlers and answers 404 for any other collection.
+func deviceCollections(handlers map[string]http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h, ok := handlers[r.PathValue("collection")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		h.ServeHTTP(w, r)
 	}
 }

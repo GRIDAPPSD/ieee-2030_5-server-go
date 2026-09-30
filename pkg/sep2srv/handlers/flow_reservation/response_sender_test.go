@@ -74,6 +74,7 @@ func TestPostResponseLFDIForm(t *testing.T) {
 		{"39 hex digits", senderLFDI[:39], http.StatusBadRequest},
 		{"41 hex digits", senderLFDI + "A", http.StatusBadRequest},
 		{"40 characters with one non-hex", senderLFDI[:39] + "G", http.StatusBadRequest},
+		{"40 characters with one lower-case non-hex", strings.ToLower(senderLFDI[:39]) + "g", http.StatusBadRequest},
 		{"inner space", senderLFDI[:20] + " " + senderLFDI[21:], http.StatusBadRequest},
 	}
 	for _, tc := range cases {

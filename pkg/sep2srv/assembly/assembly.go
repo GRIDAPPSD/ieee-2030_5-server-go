@@ -273,6 +273,15 @@ type RouterConfig struct {
 	// no default here, because "how often may this client post to me" is an
 	// ingest-budget question only the deploying server can answer.
 	PostRateProvider coremetering.PostRateProvider
+
+	// PEN is the manufacturer Private Enterprise Number embedded in the low
+	// 32 bits of a minted FlowReservationResponse mRID (#665), the same
+	// place internal/dercontrol embeds it for a DERControl mRID. Nil, or the
+	// IANA-reserved value 0 (internal/dercontrol.Config already treats 0 as
+	// unset for the same reason), means the server has not been given one:
+	// BuildProtocolRouter logs one startup warning and mints a fully random
+	// mRID instead of refusing the POST.
+	PEN *uint32
 }
 
 // AuthPolicy bundles the three auth touch points the protocol router and the
@@ -382,7 +391,7 @@ func BuildProtocolRouter(
 		registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
 		registerDERRoutes(gated, stores)
 		registerMeteringRoutes(gated, stores)
-		registerNewFunctionSetRoutes(gated, stores)
+		registerNewFunctionSetRoutes(gated, stores, cfg.PEN)
 	}
 
 	var protocolChain http.Handler
@@ -1181,7 +1190,7 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(readingTypes))
 }
 
-func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
+func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32) {
 	if !store.IsAbsent(stores.Configurations) {
 		mux.HandleFunc("GET /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 		mux.HandleFunc("PUT /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
@@ -1285,11 +1294,18 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores) {
 		// halves (see miswired.go).
 		flowReservationResponses := requireScoped(stores.FlowReservationResponses, "FlowReservationResponses")
 
+		// #665: a nil or IANA-reserved-zero PEN still serves every request
+		// (minted mRIDs are just not conformant), so this warns once at boot
+		// rather than refusing per POST.
+		if pen == nil || *pen == 0 {
+			log.Print("assembly: no PEN configured for FlowReservationResponse mRIDs: minted mRIDs are random and not conformant with IEEE 2030.5 mRIDType until a PEN is set")
+		}
+
 		mux.HandleFunc("GET /edev/{id}/frq", scopedListHandler[sep2.FlowReservationRequest, sep2.FlowReservationRequestList](
 			stores.FlowReservationRequests, "id", coreflowrsv.BuildFlowReservationRequestList, 900,
 		))
 		mux.HandleFunc("POST /edev/{id}/frq", coreflowrsv.HandlePostFlowReservationRequest(
-			stores.FlowReservationRequests, flowReservationResponses,
+			stores.FlowReservationRequests, flowReservationResponses, pen,
 		))
 		mux.HandleFunc("GET /edev/{id}/frp", scopedListHandler[sep2.FlowReservationResponse, sep2.FlowReservationResponseList](
 			flowReservationResponses, "id", coreflowrsv.BuildFlowReservationResponseList, 900,

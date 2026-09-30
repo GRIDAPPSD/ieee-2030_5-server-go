@@ -1,6 +1,8 @@
 package assembly_test
 
 import (
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/xml"
 	"io"
 	"net/http"
@@ -32,11 +34,23 @@ import (
 // device ids this file addresses are seeded as the test identity's own.
 func frqServer(t *testing.T) (*httptest.Server, *assembly.Stores) {
 	t.Helper()
+	return frqServerWithConfig(t, assembly.RouterConfig{})
+}
+
+// frqServerWithConfig is frqServer with the caller's own RouterConfig, so a
+// test can exercise a configured RouterConfig.PEN through the real mounted
+// route rather than only through HandlePostFlowReservationRequest called
+// directly (#665 fix round 3: a mutant dropping cfg.PEN on the way to that
+// call, anywhere across assembly.go, registerNewFunctionSetRoutes, or
+// HandlePostFlowReservationRequest's own parameter, survived every other
+// test because none of them read RouterConfig.PEN through this route).
+func frqServerWithConfig(t *testing.T, cfg assembly.RouterConfig) (*httptest.Server, *assembly.Stores) {
+	t.Helper()
 
 	stores := testStores()
 	seedOwnedDevices(t, stores.EndDevices, "e1", "deviceA", "deviceB")
 	handler, _ := assembly.BuildProtocolRouter(
-		assembly.RouterConfig{},
+		cfg,
 		stores,
 		testAuthPolicy(),
 		testSFDI, testLFDI,
@@ -168,6 +182,17 @@ func TestFlowReservationResponse_HrefFromTheListResolves(t *testing.T) {
 	if got.Subject != mrid {
 		t.Errorf("subject = %q, want %q: the response must name the request it answers", got.Subject, mrid)
 	}
+	// #665: the response's own mRID (distinct from Subject, which names the
+	// request), asserted through the real mounted route rather than only a
+	// hand-wired copy of the handler.
+	if len(got.MRID) != 32 {
+		t.Errorf("MRID = %q, want 32 hex digits", got.MRID)
+	} else if _, err := hex.DecodeString(got.MRID); err != nil || got.MRID != strings.ToUpper(got.MRID) {
+		t.Errorf("MRID = %q, want 32 uppercase hex digits", got.MRID)
+	}
+	if got.MRID == mrid {
+		t.Errorf("MRID = %q equals the request mRID; the response's own identity must not be the request's", got.MRID)
+	}
 	if got.CreationTime == 0 {
 		t.Error("creationTime = 0 on the served FlowReservationResponse")
 	}
@@ -176,6 +201,42 @@ func TestFlowReservationResponse_HrefFromTheListResolves(t *testing.T) {
 	}
 	if got.EventStatus.CurrentStatus != sep2.EventStatusActive {
 		t.Errorf("EventStatus.currentStatus = %d, want %d", got.EventStatus.CurrentStatus, sep2.EventStatusActive)
+	}
+}
+
+// TestFlowReservationResponse_ConfiguredPENReachesTheMountedRoute is fix
+// round 3's coverage gap: every other PEN test calls
+// HandlePostFlowReservationRequest or newFRPMRID directly, so a mutant that
+// drops RouterConfig.PEN anywhere between BuildProtocolRouter and that call
+// (assembly.go's own call site, registerNewFunctionSetRoutes' parameter, or
+// HandlePostFlowReservationRequest's) passed every test but this one. This
+// test goes through the real mounted route, exactly as an operator's
+// SEP2_PEN reaches a running server.
+func TestFlowReservationResponse_ConfiguredPENReachesTheMountedRoute(t *testing.T) {
+	t.Parallel()
+
+	pen := uint32(0x40732001)
+	srv, _ := frqServerWithConfig(t, assembly.RouterConfig{PEN: &pen})
+	const mrid = "2122232425262728292A2B2C2D2E2F31"
+	postFlowReservationRequest(t, srv, "e1", mrid)
+
+	listResp, err := http.Get(srv.URL + "/edev/e1/frp")
+	if err != nil {
+		t.Fatalf("GET /edev/e1/frp: %v", err)
+	}
+	var list sep2.FlowReservationResponseList
+	decodeXML(t, listResp, &list)
+	if len(list.FlowReservationResponse) != 1 {
+		t.Fatalf("FlowReservationResponseList has %d members, want 1", len(list.FlowReservationResponse))
+	}
+
+	got := list.FlowReservationResponse[0].MRID
+	raw, err := hex.DecodeString(got)
+	if err != nil {
+		t.Fatalf("MRID %q is not hex: %v", got, err)
+	}
+	if gotPEN := binary.BigEndian.Uint32(raw[12:]); gotPEN != pen {
+		t.Fatalf("low 32 bits of MRID %q = %#x, want configured PEN %#x", got, gotPEN, pen)
 	}
 }
 

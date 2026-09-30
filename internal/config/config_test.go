@@ -330,3 +330,39 @@ func TestEffectiveTrafficDir(t *testing.T) {
 		})
 	}
 }
+
+// TestEffectivePEN pins the IANA-reserved-zero normalization (#665):
+// internal/dercontrol.Config already treats a PEN of 0 as unset, and
+// EffectivePEN must resolve the server's own PEN field the same way, so a
+// caller cannot embed a meaningless zero PEN by leaving an env var set to
+// literal "0" instead of unset.
+func TestEffectivePEN(t *testing.T) {
+	t.Parallel()
+
+	pen := uint32(0x40732001)
+	zero := uint32(0)
+
+	tests := []struct {
+		name string
+		cfg  Config
+		want *uint32
+	}{
+		{name: "unset (nil) stays nil", cfg: Config{}, want: nil},
+		{name: "a real PEN passes through", cfg: Config{PEN: &pen}, want: &pen},
+		{name: "explicit 0 normalizes to nil", cfg: Config{PEN: &zero}, want: nil},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := tc.cfg.EffectivePEN()
+			switch {
+			case tc.want == nil && got != nil:
+				t.Errorf("EffectivePEN() = %#x, want nil", *got)
+			case tc.want != nil && (got == nil || *got != *tc.want):
+				t.Errorf("EffectivePEN() = %v, want %#x", got, *tc.want)
+			}
+		})
+	}
+}

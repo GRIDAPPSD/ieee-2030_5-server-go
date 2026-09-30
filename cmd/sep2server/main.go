@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -224,6 +225,10 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	pen, err := envUint32("SEP2_PEN")
+	if err != nil {
+		return nil, err
+	}
 
 	return &config.Config{
 		Addr:            envOr("SEP2_ADDR", ":443"),
@@ -292,6 +297,11 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		// Refused by default: the admin listener is on loopback. For test
 		// harnesses whose notification receivers listen there.
 		NotificationAllowLoopback: os.Getenv("SEP2_NOTIFICATION_ALLOW_LOOPBACK") == "true",
+
+		// #665: unset by default (nil); minted FlowReservationResponse
+		// mRIDs are then fully random rather than conformant, and Run logs
+		// a startup warning instead of refusing every POST.
+		PEN: pen,
 	}, nil
 }
 
@@ -300,6 +310,23 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envUint32 parses key as a base-10 uint32, returning nil when the env var
+// is unset (the empty string). An unparseable value is a startup error, not
+// a silently ignored setting: every other fallible SEP2_* setting in this
+// file (envPathOr, expandCSVPaths) fails closed the same way.
+func envUint32(key string) (*uint32, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return nil, nil
+	}
+	n, err := strconv.ParseUint(v, 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %q is not a valid uint32: %w", key, v, err)
+	}
+	pen := uint32(n)
+	return &pen, nil
 }
 
 // parseCSV splits a comma-separated env value into trimmed, non-empty

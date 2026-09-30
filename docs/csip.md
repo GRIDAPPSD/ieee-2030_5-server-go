@@ -136,6 +136,11 @@ an allowlist, no per-vendor handling. CSIP section 6.2 mandates the SAN is
 present and well-formed; that's it. The PEN is metadata, parallel to
 the device-type policy OID above.
 
+A separate setting, `SEP2_PEN` (a plain decimal number, not an OID), embeds
+this server's own PEN into a minted FlowReservationResponse mRID. Unset by
+default: minted mRIDs are then fully random rather than IEEE 2030.5
+mRIDType-conformant, and the server logs one startup warning saying so.
+
 Inspect with:
 
 ```bash

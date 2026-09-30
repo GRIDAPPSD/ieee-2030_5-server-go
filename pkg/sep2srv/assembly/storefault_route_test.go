@@ -92,8 +92,11 @@ var faultProbeBodies = map[string]string{
 			`<logEventPEN>37244</logEventPEN>`+
 			`<profileID>2</profileID>`),
 
+	// #665: mRID is required (a request without one is refused before any
+	// store is touched), so the happy-path probe document must carry one.
 	"POST /edev/{id}/frq": sep2Doc("FlowReservationRequest",
-		`<durationRequested>60</durationRequested>`+
+		`<mRID>FRQPROBE00000001</mRID>`+
+			`<durationRequested>60</durationRequested>`+
 			`<energyRequested><multiplier>0</multiplier><value>100</value></energyRequested>`+
 			`<intervalRequested><duration>60</duration><start>1700000000</start></intervalRequested>`+
 			`<powerRequested><multiplier>0</multiplier><value>100</value></powerRequested>`+

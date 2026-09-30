@@ -72,6 +72,17 @@ func newLedgerFixture(t *testing.T, cfg flowreservation.Config) *ledgerFixture {
 	return f
 }
 
+// queueOver builds a second queue on the fixture's ledger whose response
+// writes go through frp, which must write to f.frp for the ledger to see
+// them.
+func (f *ledgerFixture) queueOver(t *testing.T, frp flowreservation.FRPStore, cfg flowreservation.Config) *flowreservation.Queue {
+	t.Helper()
+	gate := flowreservation.NewLedgerGate(f.ledger, commitment.Resolver{Devices: f.devices, Managers: f.managers})
+	q := flowreservation.NewQueue(f.frq, frp, gate, cfg, nil)
+	t.Cleanup(q.Close)
+	return q
+}
+
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
@@ -336,7 +347,7 @@ func TestLedgerGate_GrantSignReachesTheExecutionCheck(t *testing.T) {
 // times: exactly one of them commits the window, never both.
 func TestLedgerGate_FallbackRacesAPlainControl(t *testing.T) {
 	t.Parallel()
-	const rounds = 40
+	const rounds = 80
 	grants, controls := 0, 0
 	for i := range rounds {
 		grantWon, controlWon := raceFallbackAgainstControl(t, i)
@@ -350,6 +361,11 @@ func TestLedgerGate_FallbackRacesAPlainControl(t *testing.T) {
 		}
 	}
 	t.Logf("%d rounds: grant won %d, control won %d", rounds, grants, controls)
+	// A ledger that refused every call, or never contended, would let one
+	// side win every round; the race has only been exercised if both won.
+	if grants == 0 || controls == 0 {
+		t.Fatalf("%d rounds: grant won %d, control won %d; want each side to win at least once", rounds, grants, controls)
+	}
 }
 
 func raceFallbackAgainstControl(t *testing.T, round int) (grantStored, controlStored bool) {
@@ -413,5 +429,101 @@ func viewCheck(v commitment.View) dercontrol.Check {
 			Reach:      p.Reach,
 			Supersedes: p.Supersedes,
 		})
+	}
+}
+
+// blockingFRP holds every Create until release is closed, reporting entry
+// on entered.
+type blockingFRP struct {
+	*memory.ScopedStore[sep2.FlowReservationResponse]
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingFRP) Create(ctx context.Context, parentID, id string, r sep2.FlowReservationResponse) error {
+	close(b.entered)
+	<-b.release
+	return b.ScopedStore.Create(ctx, parentID, id, r)
+}
+
+// TestLedgerGate_WriteHoldsTheFleetLock: the response Create runs inside
+// the ledger's Within, so another check on the same fleet waits until the
+// write returns. A gate that checked under the lock and wrote after it
+// would let that check in while the grant is still unwritten.
+func TestLedgerGate_WriteHoldsTheFleetLock(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newLedgerFixture(t, flowreservation.Config{Deadline: time.Hour})
+	frp := &blockingFRP{ScopedStore: f.frp, entered: make(chan struct{}), release: make(chan struct{})}
+	q := f.queueOver(t, frp, flowreservation.Config{Deadline: time.Hour})
+	storeRequest(t, f.frq, aggID, "R1", windowRequest("REQ1", 7000, 600, 10000))
+
+	answered := make(chan error, 1)
+	go func() {
+		_, err := q.Answer(ctx, aggID, "R1", flowreservation.Decision{})
+		answered <- err
+	}()
+	<-frp.entered
+
+	checked := make(chan error, 1)
+	go func() {
+		w := commitment.Window{Start: 7100, Duration: 10}
+		checked <- f.ledger.Within(ctx, []string{aggLFDI}, func(v commitment.View) error {
+			return v.CheckGrant(ctx, aggLFDI, &w, "")
+		})
+	}()
+	select {
+	case err := <-checked:
+		close(frp.release)
+		t.Fatalf("a second check on the fleet ran while the grant's Create was held (err = %v); the write must be inside Within", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(frp.release)
+	must(t, <-answered)
+	grant, err := f.frp.Get(ctx, aggID, "R1")
+	must(t, err)
+	wantConflict(t, <-checked, commitment.ConflictFleetWindow, grant.MRID)
+}
+
+// flakyFRP fails the first failures Create calls with a transient error.
+type flakyFRP struct {
+	*memory.ScopedStore[sep2.FlowReservationResponse]
+	mu       sync.Mutex
+	failures int
+}
+
+func (s *flakyFRP) Create(ctx context.Context, parentID, id string, r sep2.FlowReservationResponse) error {
+	s.mu.Lock()
+	fail := s.failures > 0
+	if fail {
+		s.failures--
+	}
+	s.mu.Unlock()
+	if fail {
+		return errors.New("transient create failure")
+	}
+	return s.ScopedStore.Create(ctx, parentID, id, r)
+}
+
+// TestLedgerGate_FallbackRetriesAFailedGatedCreate: a Create that fails
+// inside the gate is an infrastructure failure, retried to a grant, not a
+// refused check turned into a permanent denial.
+func TestLedgerGate_FallbackRetriesAFailedGatedCreate(t *testing.T) {
+	t.Parallel()
+	f := newLedgerFixture(t, flowreservation.Config{Deadline: time.Hour})
+	cfg := flowreservation.Config{Deadline: time.Millisecond, RetryBackoff: time.Millisecond, RetryAttempts: 3}
+	q := f.queueOver(t, &flakyFRP{ScopedStore: f.frp, failures: 1}, cfg)
+
+	req := windowRequest("REQ1", time.Now().Add(time.Hour).Unix(), 600, 10000)
+	storeRequest(t, f.frq, aggID, "R1", req)
+	q.Submit(aggID, "R1", req, time.Now().Unix())
+
+	got := waitForResponse(t, f.frp, aggID)
+	if len(got) != 1 || got[0].Interval == nil || *got[0].Interval != *req.IntervalRequested {
+		t.Fatalf("responses after one failed Create = %+v, want one grant as asked", got)
+	}
+	if _, err := q.Answer(context.Background(), aggID, "R1", flowreservation.Decision{Kind: flowreservation.Deny}); !errors.Is(err, flowreservation.ErrAlreadyAnswered) {
+		t.Fatalf("later Answer err = %v, want ErrAlreadyAnswered", err)
 	}
 }

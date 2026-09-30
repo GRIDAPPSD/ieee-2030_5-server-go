@@ -97,21 +97,10 @@ func newAdminServer(handler http.Handler) *http.Server {
 	}
 }
 
-// Run starts the IEEE 2030.5 server with mutual TLS and optionally
-// an admin HTTPS server on a separate port.
-//
-// The protocol half (listener, mutual TLS, server-identity derivation,
-// the assembled routes and the graceful drain) is now the embeddable
-// surface in pkg/sep2server, and this function is its first consumer.
-// What remains here is what an embedder does NOT get: the admin
-// listener, the dashboard, the metrics listener, mDNS and the operator banner.
-//
-// One consequence of that split is visible in the ordering below: the stores
-// and the notifier are now built BEFORE the listener is bound, because the
-// surface takes them as construction inputs. A deployment whose store path and
-// whose bind address are BOTH bad now reports the store path first. Nothing
-// else about the sequence changed, and no port is held while a store fails.
-func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService) error {
+// newRunStores builds the stores Run serves, with the one commitment ledger
+// over them. The EndDevice store is also returned undecorated, because the
+// index is seeded from it only after the boot fixture has run.
+func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 	// #165: build the admin-mutated stores honoring SEP2_DATA_DIR.
 	// Empty DataDir + empty per-store dedicated paths = pure in-memory
 	// (back-compat). The constructors return non-persistent stores in
@@ -120,25 +109,25 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		cfg.EffectiveStorePath("enddevices", ""),
 	)
 	if err != nil {
-		return fmt.Errorf("EndDevice persistence: %w", err)
+		return nil, nil, fmt.Errorf("EndDevice persistence: %w", err)
 	}
 	registrations, err := memory.NewRegistrationStoreWithPersistence(
 		cfg.EffectiveStorePath("registrations", ""),
 	)
 	if err != nil {
-		return fmt.Errorf("Registration persistence: %w", err)
+		return nil, nil, fmt.Errorf("Registration persistence: %w", err)
 	}
 	adminFSAs, err := memory.NewAdminFSAStoreWithPersistence(
 		cfg.EffectiveStorePath("fsas", ""),
 	)
 	if err != nil {
-		return fmt.Errorf("AdminFSA persistence: %w", err)
+		return nil, nil, fmt.Errorf("AdminFSA persistence: %w", err)
 	}
 	derPrograms, err := memory.NewDERProgramStoreWithPersistence(
 		cfg.EffectiveStorePath("derprograms", ""),
 	)
 	if err != nil {
-		return fmt.Errorf("DERProgram persistence: %w", err)
+		return nil, nil, fmt.Errorf("DERProgram persistence: %w", err)
 	}
 	// #565: DERControls and their lifecycle records persist the same way
 	// DERPrograms does, so a restart does not forget a control a device is
@@ -147,19 +136,19 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		cfg.EffectiveStorePath("dercontrols", ""),
 	)
 	if err != nil {
-		return fmt.Errorf("DERControl persistence: %w", err)
+		return nil, nil, fmt.Errorf("DERControl persistence: %w", err)
 	}
 	derControlLifecycles, err := dercontrol.NewLifecycleStoreWithPersistence(
 		cfg.EffectiveStorePath("dercontrol-lifecycles", ""),
 	)
 	if err != nil {
-		return fmt.Errorf("DERControl lifecycle persistence: %w", err)
+		return nil, nil, fmt.Errorf("DERControl lifecycle persistence: %w", err)
 	}
 	endDeviceManagers, err := memory.NewEndDeviceManagementStoreWithPersistence(
 		cfg.EffectiveStorePath("enddevicemanagement", ""),
 	)
 	if err != nil {
-		return fmt.Errorf("EndDeviceManagement persistence: %w", err)
+		return nil, nil, fmt.Errorf("EndDeviceManagement persistence: %w", err)
 	}
 
 	// #224: build the subscription store with optional durable
@@ -172,7 +161,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	subPath := cfg.EffectiveStorePath("subscriptions", cfg.SubscriptionStorePath)
 	subStore, subErr := memory.NewSubscriptionStoreWithPersistence(subPath)
 	if subErr != nil {
-		return fmt.Errorf("subscription store: %w", subErr)
+		return nil, nil, fmt.Errorf("subscription store: %w", subErr)
 	}
 	if subPath != "" {
 		log.Printf("subscription persistence enabled: %s", subPath)
@@ -229,6 +218,29 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	}
 
 	stores.CommitmentLedger = NewCommitmentLedger(stores)
+
+	return stores, endDevices, nil
+}
+
+// Run starts the IEEE 2030.5 server with mutual TLS and optionally
+// an admin HTTPS server on a separate port.
+//
+// The protocol half (listener, mutual TLS, server-identity derivation,
+// the assembled routes and the graceful drain) is now the embeddable
+// surface in pkg/sep2server, and this function is its first consumer.
+// What remains here is what an embedder does NOT get: the admin
+// listener, the dashboard, the metrics listener, mDNS and the operator banner.
+//
+// One consequence of that split is visible in the ordering below: the stores
+// and the notifier are now built BEFORE the listener is bound, because the
+// surface takes them as construction inputs. A deployment whose store path and
+// whose bind address are BOTH bad now reports the store path first. Nothing
+// else about the sequence changed, and no port is held while a store fails.
+func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService) error {
+	stores, endDevices, err := newRunStores(cfg)
+	if err != nil {
+		return err
+	}
 
 	if cfg.BootFixtureFile != "" {
 		target := &bootfixture.Target{

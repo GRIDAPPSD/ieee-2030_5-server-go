@@ -616,3 +616,39 @@ func TestDefaultRetryBackoff_Value(t *testing.T) {
 		t.Errorf("DefaultRetryBackoff = %s, want 5s", DefaultRetryBackoff)
 	}
 }
+
+// TestQueue_Build_GatedCreateErrorsKeepTheirMeaning: for a grant with a
+// window, whose Create runs inside the gate, a duplicate key still maps to
+// ErrAlreadyAnswered and a transient failure stays a create failure,
+// never ErrCommitmentCheck, so the fallback retries instead of denying.
+func TestQueue_Build_GatedCreateErrorsKeepTheirMeaning(t *testing.T) {
+	frq := sep2.FlowReservationRequest{
+		MRID:              "FRQ001",
+		EnergyRequested:   &sep2.SignedRealEnergy{Value: 10000},
+		IntervalRequested: &sep2.DateTimeInterval{Start: 5000, Duration: 600},
+	}
+	for _, tc := range []struct {
+		name  string
+		frp   *stubFRPStore
+		check func(error) bool
+	}{
+		{"duplicate", &stubFRPStore{forceAlreadyExists: true}, func(err error) bool { return errors.Is(err, ErrAlreadyAnswered) }},
+		{"transient", &stubFRPStore{failCreateTimes: 1}, func(err error) bool {
+			return err != nil && !errors.Is(err, ErrCommitmentCheck) && !errors.Is(err, ErrAlreadyAnswered)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frqStore := &stubFRQReader{}
+			frqStore.put("dev1", "frq1", frq)
+			q := NewQueue(frqStore, tc.frp, PermissiveGate{}, Config{Deadline: time.Hour}, nil)
+			t.Cleanup(q.Close)
+			_, err := q.Answer(context.Background(), "dev1", "frq1", Decision{})
+			if !tc.check(err) {
+				t.Fatalf("err = %v", err)
+			}
+			if got := tc.frp.createCallCount(); got != 1 {
+				t.Fatalf("Create calls = %d, want 1: the gate must have run the write", got)
+			}
+		})
+	}
+}

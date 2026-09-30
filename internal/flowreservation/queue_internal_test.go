@@ -173,7 +173,7 @@ func TestQueue_Build_MintFailureLeavesRequestUnanswered(t *testing.T) {
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{}
-	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Hour}, nil)
+	q := NewQueue(frqStore, frpStore, PermissiveGate{}, Config{Deadline: time.Hour}, nil)
 	t.Cleanup(q.Close)
 
 	frpRandRead = func(b []byte) (int, error) { return 0, errors.New("boom") }
@@ -236,7 +236,7 @@ func TestQueue_Fallback_RetriesEachInfrastructureFailureKind(t *testing.T) {
 			cleanup := tc.setup(frqStore, frpStore)
 			defer cleanup()
 
-			q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Millisecond, RetryBackoff: time.Millisecond}, nil)
+			q := NewQueue(frqStore, frpStore, PermissiveGate{}, Config{Deadline: time.Millisecond, RetryBackoff: time.Millisecond}, nil)
 			t.Cleanup(q.Close)
 
 			q.Submit("dev1", "frq1", frq, 0)
@@ -258,7 +258,7 @@ func TestQueue_Fallback_GivesUpAfterBoundedRetries(t *testing.T) {
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{failCreateTimes: 1000} // never succeeds within the bound
-	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Millisecond, RetryBackoff: 2 * time.Millisecond, RetryAttempts: 3}, nil)
+	q := NewQueue(frqStore, frpStore, PermissiveGate{}, Config{Deadline: time.Millisecond, RetryBackoff: 2 * time.Millisecond, RetryAttempts: 3}, nil)
 	t.Cleanup(q.Close)
 
 	q.Submit("dev1", "frq1", frq, 0)
@@ -293,7 +293,7 @@ func TestQueue_Fallback_RequestGoneStopsRetrying(t *testing.T) {
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{}
-	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Millisecond, RetryBackoff: 2 * time.Millisecond, RetryAttempts: 10}, nil)
+	q := NewQueue(frqStore, frpStore, PermissiveGate{}, Config{Deadline: time.Millisecond, RetryBackoff: 2 * time.Millisecond, RetryAttempts: 10}, nil)
 	t.Cleanup(q.Close)
 
 	frqStore.delete("dev1", "frq1") // the request is gone before the timer ever fires
@@ -336,7 +336,7 @@ func TestQueue_Build_NotFoundBetweenTheTwoGets(t *testing.T) {
 	frqStore := &stubFRQReader{deleteAfterGetCall: 1}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{}
-	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Millisecond, RetryBackoff: 2 * time.Millisecond, RetryAttempts: 10}, nil)
+	q := NewQueue(frqStore, frpStore, PermissiveGate{}, Config{Deadline: time.Millisecond, RetryBackoff: 2 * time.Millisecond, RetryAttempts: 10}, nil)
 	t.Cleanup(q.Close)
 
 	q.Submit("dev1", "frq1", frq, 0)
@@ -374,7 +374,7 @@ func TestQueue_Submit_DeadlineThroughAfterSeam(t *testing.T) {
 		{"start at or before createdAt fires at once", sep2.FlowReservationRequest{IntervalRequested: &sep2.DateTimeInterval{Start: 500}}, Config{Deadline: time.Hour}, 1000, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			q := NewQueue(&stubFRQReader{}, &stubFRPStore{}, PermissiveCommitmentChecker{}, tc.cfg, nil)
+			q := NewQueue(&stubFRQReader{}, &stubFRPStore{}, PermissiveGate{}, tc.cfg, nil)
 			t.Cleanup(q.Close)
 
 			var got time.Duration
@@ -396,7 +396,7 @@ func TestQueue_Submit_DeadlineThroughAfterSeam(t *testing.T) {
 // than overflow into a near-zero delay, which would grant the request at
 // once instead of holding it for the full configured deadline.
 func TestQueue_Submit_FarFutureStartHoldsTheFullDeadline(t *testing.T) {
-	q := NewQueue(&stubFRQReader{}, &stubFRPStore{}, PermissiveCommitmentChecker{}, Config{Deadline: DefaultDeadline}, nil)
+	q := NewQueue(&stubFRQReader{}, &stubFRPStore{}, PermissiveGate{}, Config{Deadline: DefaultDeadline}, nil)
 	t.Cleanup(q.Close)
 
 	var got time.Duration
@@ -419,7 +419,7 @@ func TestQueue_Submit_FarFutureStartHoldsTheFullDeadline(t *testing.T) {
 func TestQueue_Build_PrunesKeyLocksAfterEachAttempt(t *testing.T) {
 	frqStore := &stubFRQReader{}
 	frpStore := &stubFRPStore{}
-	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Hour}, nil)
+	q := NewQueue(frqStore, frpStore, PermissiveGate{}, Config{Deadline: time.Hour}, nil)
 	t.Cleanup(q.Close)
 
 	const n = 50
@@ -451,7 +451,7 @@ func TestQueue_Submit_AfterCloseIsRefused(t *testing.T) {
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{}
-	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Millisecond, RetryBackoff: time.Millisecond}, nil)
+	q := NewQueue(frqStore, frpStore, PermissiveGate{}, Config{Deadline: time.Millisecond, RetryBackoff: time.Millisecond}, nil)
 	q.Close()
 
 	q.Submit("dev1", "frq1", frq, 0)
@@ -478,7 +478,7 @@ func TestQueue_RetryOrGiveUp_ClosedSkipsScheduling(t *testing.T) {
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{failCreateTimes: 1000}
-	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Millisecond, RetryBackoff: 40 * time.Millisecond, RetryAttempts: 10}, nil)
+	q := NewQueue(frqStore, frpStore, PermissiveGate{}, Config{Deadline: time.Millisecond, RetryBackoff: 40 * time.Millisecond, RetryAttempts: 10}, nil)
 
 	q.Submit("dev1", "frq1", frq, 0)
 	waitForCount(t, frpStore.createCallCount, 1) // the first (failed) attempt has run and scheduled a retry
@@ -501,7 +501,7 @@ func TestQueue_Fallback_LateAnswerClearsTheRetryTimer(t *testing.T) {
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{failCreateTimes: 1}
-	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Millisecond, RetryBackoff: 40 * time.Millisecond}, nil)
+	q := NewQueue(frqStore, frpStore, PermissiveGate{}, Config{Deadline: time.Millisecond, RetryBackoff: 40 * time.Millisecond}, nil)
 	t.Cleanup(q.Close)
 
 	q.Submit("dev1", "frq1", frq, 0)
@@ -538,7 +538,7 @@ func TestQueue_Build_GetGuardAloneShortCircuitsBeforeCreate(t *testing.T) {
 		t.Fatalf("seed existing response: %v", err)
 	}
 
-	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Hour}, nil)
+	q := NewQueue(frqStore, frpStore, PermissiveGate{}, Config{Deadline: time.Hour}, nil)
 	t.Cleanup(q.Close)
 
 	if _, err := q.Answer(context.Background(), "dev1", "frq1", Decision{}); !errors.Is(err, ErrAlreadyAnswered) {
@@ -560,7 +560,7 @@ func TestQueue_Build_MapsCreateAlreadyExistsToErrAlreadyAnswered(t *testing.T) {
 	frqStore := &stubFRQReader{}
 	frqStore.put("dev1", "frq1", frq)
 	frpStore := &stubFRPStore{forceAlreadyExists: true}
-	q := NewQueue(frqStore, frpStore, PermissiveCommitmentChecker{}, Config{Deadline: time.Hour}, nil)
+	q := NewQueue(frqStore, frpStore, PermissiveGate{}, Config{Deadline: time.Hour}, nil)
 	t.Cleanup(q.Close)
 
 	if _, err := q.Answer(context.Background(), "dev1", "frq1", Decision{}); !errors.Is(err, ErrAlreadyAnswered) {
@@ -614,5 +614,41 @@ func TestDefaultDeadline_Value(t *testing.T) {
 func TestDefaultRetryBackoff_Value(t *testing.T) {
 	if DefaultRetryBackoff != 5*time.Second {
 		t.Errorf("DefaultRetryBackoff = %s, want 5s", DefaultRetryBackoff)
+	}
+}
+
+// TestQueue_Build_GatedCreateErrorsKeepTheirMeaning: for a grant with a
+// window, whose Create runs inside the gate, a duplicate key still maps to
+// ErrAlreadyAnswered and a transient failure stays a create failure,
+// never ErrCommitmentCheck, so the fallback retries instead of denying.
+func TestQueue_Build_GatedCreateErrorsKeepTheirMeaning(t *testing.T) {
+	frq := sep2.FlowReservationRequest{
+		MRID:              "FRQ001",
+		EnergyRequested:   &sep2.SignedRealEnergy{Value: 10000},
+		IntervalRequested: &sep2.DateTimeInterval{Start: 5000, Duration: 600},
+	}
+	for _, tc := range []struct {
+		name  string
+		frp   *stubFRPStore
+		check func(error) bool
+	}{
+		{"duplicate", &stubFRPStore{forceAlreadyExists: true}, func(err error) bool { return errors.Is(err, ErrAlreadyAnswered) }},
+		{"transient", &stubFRPStore{failCreateTimes: 1}, func(err error) bool {
+			return err != nil && !errors.Is(err, ErrCommitmentCheck) && !errors.Is(err, ErrAlreadyAnswered)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			frqStore := &stubFRQReader{}
+			frqStore.put("dev1", "frq1", frq)
+			q := NewQueue(frqStore, tc.frp, PermissiveGate{}, Config{Deadline: time.Hour}, nil)
+			t.Cleanup(q.Close)
+			_, err := q.Answer(context.Background(), "dev1", "frq1", Decision{})
+			if !tc.check(err) {
+				t.Fatalf("err = %v", err)
+			}
+			if got := tc.frp.createCallCount(); got != 1 {
+				t.Fatalf("Create calls = %d, want 1: the gate must have run the write", got)
+			}
+		})
 	}
 }

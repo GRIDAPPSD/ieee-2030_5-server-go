@@ -46,12 +46,12 @@ type lifecycleWalker interface {
 type Grants struct {
 	responses  scopedLister[sep2.FlowReservationResponse]
 	lifecycles lifecycleGetter
-	fleets     FleetResolver
+	fleets     *orphans
 }
 
 // NewGrants builds a Grants source.
 func NewGrants(responses scopedLister[sep2.FlowReservationResponse], lifecycles lifecycleGetter, fleets FleetResolver) *Grants {
-	return &Grants{responses: responses, lifecycles: lifecycles, fleets: fleets}
+	return &Grants{responses: responses, lifecycles: lifecycles, fleets: newOrphans(fleets, "flow reservation responses")}
 }
 
 var _ commitment.GrantSource = (*Grants)(nil)
@@ -103,9 +103,12 @@ func (g *Grants) all(ctx context.Context) ([]commitment.Grant, error) {
 		if len(page.Items) == 0 {
 			continue
 		}
-		fleet, err := g.fleets.FleetOf(ctx, edevID)
+		fleet, err := g.fleets.fleetOrGone(ctx, edevID)
 		if err != nil {
 			return nil, err
+		}
+		if fleet == "" {
+			continue
 		}
 		for _, frp := range page.Items {
 			gr, err := g.grantOf(ctx, edevID, fleet, frp)
@@ -149,15 +152,12 @@ func (g *Grants) grantOf(ctx context.Context, edevID, fleet string, frp sep2.Flo
 type Controls struct {
 	controls   scopedLister[sep2.DERControl]
 	lifecycles lifecycleWalker
-	fleets     FleetResolver
-
-	logf    func(format string, args ...any)
-	orphans sync.Map // EndDevice ids already logged as gone
+	fleets     *orphans
 }
 
 // NewControls builds a Controls source.
 func NewControls(controls scopedLister[sep2.DERControl], lifecycles lifecycleWalker, fleets FleetResolver) *Controls {
-	return &Controls{controls: controls, lifecycles: lifecycles, fleets: fleets, logf: log.Printf}
+	return &Controls{controls: controls, lifecycles: lifecycles, fleets: newOrphans(fleets, "DER controls")}
 }
 
 var _ commitment.ControlSource = (*Controls)(nil)
@@ -212,7 +212,7 @@ func (c *Controls) filter(ctx context.Context, keep func(commitment.Control) boo
 			if fleet == "" {
 				var cached bool
 				if fleet, cached = fleetOf[edevID]; !cached {
-					if fleet, err = c.resolve(ctx, edevID); err != nil {
+					if fleet, err = c.fleets.fleetOrGone(ctx, edevID); err != nil {
 						return nil, err
 					}
 					fleetOf[edevID] = fleet
@@ -233,21 +233,33 @@ func (c *Controls) filter(ctx context.Context, keep func(commitment.Control) boo
 	return out, nil
 }
 
-// resolve returns the fleet of a control scope's EndDevice, or "" when the
-// device is gone. DER controls outlive a DELETE of their EndDevice (#721),
-// and no device reads them afterwards, so such a scope belongs to no live
-// fleet; refusing instead would block every fleet's checks on one orphan.
-// Any other failure still refuses.
-func (c *Controls) resolve(ctx context.Context, edevID string) (string, error) {
-	fleet, err := c.fleets.FleetOf(ctx, edevID)
+// orphans resolves the EndDevice a stored commitment sits under, and reads
+// a device that is gone as belonging to no live fleet. DER controls and
+// flow reservation responses can outlive a DELETE of their EndDevice
+// (#721), and no device reads them afterwards; refusing instead would block
+// every fleet's checks on one orphan. Any other failure still refuses.
+type orphans struct {
+	fleets FleetResolver
+	what   string
+	logf   func(format string, args ...any)
+	logged sync.Map // EndDevice ids already logged as gone
+}
+
+func newOrphans(fleets FleetResolver, what string) *orphans {
+	return &orphans{fleets: fleets, what: what, logf: log.Printf}
+}
+
+// fleetOrGone returns the fleet of edevID, or "" when the device is gone.
+func (o *orphans) fleetOrGone(ctx context.Context, edevID string) (string, error) {
+	fleet, err := o.fleets.FleetOf(ctx, edevID)
 	if err == nil {
 		return fleet, nil
 	}
 	if !errors.Is(err, store.ErrNotFound) {
 		return "", err
 	}
-	if _, logged := c.orphans.LoadOrStore(edevID, true); !logged {
-		c.logf("commitment sources: DER controls under EndDevice %s outlive their device; not counted in any fleet: %v", edevID, err)
+	if _, seen := o.logged.LoadOrStore(edevID, true); !seen {
+		o.logf("commitment sources: %s under EndDevice %s outlive their device; not counted in any fleet: %v", o.what, edevID, err)
 	}
 	return "", nil
 }

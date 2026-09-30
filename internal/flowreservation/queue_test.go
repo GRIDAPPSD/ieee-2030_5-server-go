@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -56,23 +57,18 @@ func testRequest() sep2.FlowReservationRequest {
 	}
 }
 
-// alwaysFree and alwaysCommitted are CommitmentChecker stand-ins for the
-// deadline fallback tests: #714 has not landed the real ledger, so these
-// exercise the two branches Queue.fallback must choose between.
-type alwaysFree struct{}
+// conflictGate refuses every grant as a conflict, and failingGate as a
+// check that could not complete; neither calls write.
+type conflictGate struct{ mrid string }
 
-func (alwaysFree) Committed(context.Context, string, int64, uint32) (bool, error) { return false, nil }
-
-type alwaysCommitted struct{}
-
-func (alwaysCommitted) Committed(context.Context, string, int64, uint32) (bool, error) {
-	return true, nil
+func (g conflictGate) Grant(context.Context, string, *sep2.DateTimeInterval, string, func(context.Context) error) error {
+	return &commitment.ConflictError{Code: commitment.ConflictFleetWindow, MRID: g.mrid}
 }
 
-type checkerError struct{ err error }
+type failingGate struct{ err error }
 
-func (c checkerError) Committed(context.Context, string, int64, uint32) (bool, error) {
-	return false, c.err
+func (g failingGate) Grant(context.Context, string, *sep2.DateTimeInterval, string, func(context.Context) error) error {
+	return g.err
 }
 
 // TestQueue_SubmitCreatesNoResponseUntilAnswered is #666's first criterion:
@@ -81,7 +77,7 @@ func TestQueue_SubmitCreatesNoResponseUntilAnswered(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: time.Hour}, nil)
+	q := flowreservation.NewQueue(frqStore, frpStore, flowreservation.PermissiveGate{}, flowreservation.Config{Deadline: time.Hour}, nil)
 	t.Cleanup(q.Close)
 
 	frq := testRequest()
@@ -105,7 +101,7 @@ func TestQueue_Answer_ExactlyOneResponse(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: time.Hour}, nil)
+	q := flowreservation.NewQueue(frqStore, frpStore, flowreservation.PermissiveGate{}, flowreservation.Config{Deadline: time.Hour}, nil)
 	t.Cleanup(q.Close)
 
 	frq := testRequest()
@@ -155,7 +151,7 @@ func TestQueue_Answer_CancelsFallbackTimer(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: shortDeadline}, nil)
+	q := flowreservation.NewQueue(frqStore, frpStore, flowreservation.PermissiveGate{}, flowreservation.Config{Deadline: shortDeadline}, nil)
 	t.Cleanup(q.Close)
 
 	frq := testRequest()
@@ -183,7 +179,7 @@ func TestQueue_DeadlineFallback_GrantsWhenUncommitted(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: shortDeadline}, nil)
+	q := flowreservation.NewQueue(frqStore, frpStore, flowreservation.PermissiveGate{}, flowreservation.Config{Deadline: shortDeadline}, nil)
 	t.Cleanup(q.Close)
 
 	frq := testRequest()
@@ -210,7 +206,7 @@ func TestQueue_DeadlineFallback_DeniesWhenCommitted(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	q := flowreservation.NewQueue(frqStore, frpStore, alwaysCommitted{}, flowreservation.Config{Deadline: shortDeadline}, nil)
+	q := flowreservation.NewQueue(frqStore, frpStore, conflictGate{mrid: "GRANT-A"}, flowreservation.Config{Deadline: shortDeadline}, nil)
 	t.Cleanup(q.Close)
 
 	frq := testRequest()
@@ -232,7 +228,7 @@ func TestQueue_DeadlineFallback_ChecksFailClosed(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	q := flowreservation.NewQueue(frqStore, frpStore, checkerError{err: errors.New("backend unreachable")}, flowreservation.Config{Deadline: shortDeadline}, nil)
+	q := flowreservation.NewQueue(frqStore, frpStore, failingGate{err: errors.New("backend unreachable")}, flowreservation.Config{Deadline: shortDeadline}, nil)
 	t.Cleanup(q.Close)
 
 	frq := testRequest()
@@ -255,7 +251,7 @@ func TestQueue_DeadlineCappedAtRequestedStart(t *testing.T) {
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
 	// Configured deadline is generous; the request's own start is soon.
-	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: time.Hour}, nil)
+	q := flowreservation.NewQueue(frqStore, frpStore, flowreservation.PermissiveGate{}, flowreservation.Config{Deadline: time.Hour}, nil)
 	t.Cleanup(q.Close)
 
 	createdAt := time.Now().Unix()
@@ -278,7 +274,7 @@ func TestQueue_ConcurrentAnswerAndFallback_ExactlyOneResponse(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: shortDeadline}, nil)
+	q := flowreservation.NewQueue(frqStore, frpStore, flowreservation.PermissiveGate{}, flowreservation.Config{Deadline: shortDeadline}, nil)
 	t.Cleanup(q.Close)
 
 	frq := testRequest()
@@ -329,7 +325,7 @@ func TestQueue_Answer_NoRequestedInterval_EventStatusActive(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: time.Hour}, nil)
+	q := flowreservation.NewQueue(frqStore, frpStore, flowreservation.PermissiveGate{}, flowreservation.Config{Deadline: time.Hour}, nil)
 	t.Cleanup(q.Close)
 
 	frq := sep2.FlowReservationRequest{MRID: "REQ1"} // no IntervalRequested
@@ -348,42 +344,46 @@ func TestQueue_Answer_NoRequestedInterval_EventStatusActive(t *testing.T) {
 	}
 }
 
-// capturingChecker records every Committed call, so a test can assert the
-// exact window Queue passed it rather than only the bool/error it returned.
-type capturingChecker struct {
+// capturingGate records every Grant call and then writes, so a test can
+// assert the exact fleet device and window Queue passed it.
+type capturingGate struct {
 	mu    sync.Mutex
-	calls []checkerCall
+	calls []gateCall
 }
 
-type checkerCall struct {
-	fleetKey string
-	start    int64
-	duration uint32
+type gateCall struct {
+	edevID string
+	window sep2.DateTimeInterval
+	except string
 }
 
-func (c *capturingChecker) Committed(_ context.Context, fleetKey string, start int64, duration uint32) (bool, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.calls = append(c.calls, checkerCall{fleetKey, start, duration})
-	return false, nil
+func (g *capturingGate) Grant(ctx context.Context, edevID string, w *sep2.DateTimeInterval, except string, write func(context.Context) error) error {
+	g.mu.Lock()
+	call := gateCall{edevID: edevID, except: except}
+	if w != nil {
+		call.window = *w
+	}
+	g.calls = append(g.calls, call)
+	g.mu.Unlock()
+	return write(ctx)
 }
 
-func (c *capturingChecker) snapshot() []checkerCall {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]checkerCall(nil), c.calls...)
+func (g *capturingGate) snapshot() []gateCall {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]gateCall(nil), g.calls...)
 }
 
-// TestQueue_DeadlineFallback_PassesTheRequestedWindowToTheChecker is #736's
-// small item: the fleet key and the request's own interval reach
-// CommitmentChecker.Committed unchanged, not zero values a mutant dropping
-// the arguments would also pass under alwaysFree/alwaysCommitted.
-func TestQueue_DeadlineFallback_PassesTheRequestedWindowToTheChecker(t *testing.T) {
+// TestQueue_DeadlineFallback_PassesTheGrantedWindowToTheGate: the
+// EndDevice id and the granted interval reach Gate.Grant unchanged, as a
+// first answer (except empty), not zero values a mutant dropping the
+// arguments would also pass under a permissive gate.
+func TestQueue_DeadlineFallback_PassesTheGrantedWindowToTheGate(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	checker := &capturingChecker{}
-	q := flowreservation.NewQueue(frqStore, frpStore, checker, flowreservation.Config{Deadline: shortDeadline}, nil)
+	gate := &capturingGate{}
+	q := flowreservation.NewQueue(frqStore, frpStore, gate, flowreservation.Config{Deadline: shortDeadline}, nil)
 	t.Cleanup(q.Close)
 
 	frq := testRequest()
@@ -393,26 +393,26 @@ func TestQueue_DeadlineFallback_PassesTheRequestedWindowToTheChecker(t *testing.
 
 	waitForResponse(t, frpStore, "dev1")
 
-	calls := checker.snapshot()
+	calls := gate.snapshot()
 	if len(calls) != 1 {
-		t.Fatalf("Committed calls = %d, want 1", len(calls))
+		t.Fatalf("Grant calls = %d, want 1", len(calls))
 	}
-	want := checkerCall{fleetKey: "dev1", start: 424242, duration: 1800}
+	want := gateCall{edevID: "dev1", window: sep2.DateTimeInterval{Start: 424242, Duration: 1800}}
 	if calls[0] != want {
-		t.Errorf("Committed call = %+v, want %+v", calls[0], want)
+		t.Errorf("Grant call = %+v, want %+v", calls[0], want)
 	}
 }
 
 // TestQueue_DeadlineFallback_CancelledRequestIsDenied is #736's
 // error-handling LOW: a request posted with RequestStatus Cancelled is
-// denied at the deadline, never granted, and the commitment checker is
-// never even consulted for it.
+// denied at the deadline, never granted, and the gate is never consulted:
+// a denial commits no window.
 func TestQueue_DeadlineFallback_CancelledRequestIsDenied(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	checker := &capturingChecker{}
-	q := flowreservation.NewQueue(frqStore, frpStore, checker, flowreservation.Config{Deadline: shortDeadline}, nil)
+	gate := &capturingGate{}
+	q := flowreservation.NewQueue(frqStore, frpStore, gate, flowreservation.Config{Deadline: shortDeadline}, nil)
 	t.Cleanup(q.Close)
 
 	frq := testRequest()
@@ -425,8 +425,8 @@ func TestQueue_DeadlineFallback_CancelledRequestIsDenied(t *testing.T) {
 	if frp.Interval == nil || frp.Interval.Duration != 0 {
 		t.Fatalf("fallback response for a cancelled request = %+v, want a denial (duration 0)", frp.Interval)
 	}
-	if calls := checker.snapshot(); len(calls) != 0 {
-		t.Errorf("Committed calls for a cancelled request = %d, want 0", len(calls))
+	if calls := gate.snapshot(); len(calls) != 0 {
+		t.Errorf("Grant calls for a cancelled request = %d, want 0", len(calls))
 	}
 }
 
@@ -442,7 +442,7 @@ func TestQueue_DeadlineFallback_ZeroDurationRequestIsDenied(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: shortDeadline, RetryBackoff: shortDeadline}, nil)
+	q := flowreservation.NewQueue(frqStore, frpStore, flowreservation.PermissiveGate{}, flowreservation.Config{Deadline: shortDeadline, RetryBackoff: shortDeadline}, nil)
 	t.Cleanup(q.Close)
 
 	frq := testRequest()
@@ -470,7 +470,7 @@ func TestQueue_Answer_RefusesGrantOnCancelledRequest(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: time.Hour}, nil)
+	q := flowreservation.NewQueue(frqStore, frpStore, flowreservation.PermissiveGate{}, flowreservation.Config{Deadline: time.Hour}, nil)
 	t.Cleanup(q.Close)
 
 	frq := testRequest()
@@ -504,7 +504,7 @@ func TestQueue_DeadlineFallback_ThenLateAnswer(t *testing.T) {
 	t.Parallel()
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
-	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: shortDeadline}, nil)
+	q := flowreservation.NewQueue(frqStore, frpStore, flowreservation.PermissiveGate{}, flowreservation.Config{Deadline: shortDeadline}, nil)
 	t.Cleanup(q.Close)
 
 	frq := testRequest()
@@ -534,7 +534,7 @@ func TestQueue_PENLowBitsArePEN(t *testing.T) {
 	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
 	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
 	pen := uint32(0x40732001)
-	q := flowreservation.NewQueue(frqStore, frpStore, alwaysFree{}, flowreservation.Config{Deadline: time.Hour}, &pen)
+	q := flowreservation.NewQueue(frqStore, frpStore, flowreservation.PermissiveGate{}, flowreservation.Config{Deadline: time.Hour}, &pen)
 	t.Cleanup(q.Close)
 
 	frq := testRequest()
@@ -551,5 +551,89 @@ func TestQueue_PENLowBitsArePEN(t *testing.T) {
 	}
 	if gotPEN := binary.BigEndian.Uint32(raw[12:]); gotPEN != pen {
 		t.Fatalf("low 32 bits of MRID %q = %#x, want configured PEN %#x", frp.MRID, gotPEN, pen)
+	}
+}
+
+// TestQueue_Answer_ReturnsTheConflictUnchanged: a grant the gate refuses
+// comes back as the gate's own *commitment.ConflictError, not wrapped, so
+// the admin route can name its mRID in a 409, and nothing is stored.
+func TestQueue_Answer_ReturnsTheConflictUnchanged(t *testing.T) {
+	t.Parallel()
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+	q := flowreservation.NewQueue(frqStore, frpStore, conflictGate{mrid: "GRANT-A"}, flowreservation.Config{Deadline: time.Hour}, nil)
+	t.Cleanup(q.Close)
+
+	storeRequest(t, frqStore, "dev1", "frq1", testRequest())
+	_, err := q.Answer(context.Background(), "dev1", "frq1", flowreservation.Decision{})
+	ce, ok := err.(*commitment.ConflictError)
+	if !ok {
+		t.Fatalf("Answer err = %v (%T), want an unwrapped *commitment.ConflictError", err, err)
+	}
+	if ce.MRID != "GRANT-A" || ce.Code != commitment.ConflictFleetWindow {
+		t.Errorf("conflict = %+v, want fleet_window_committed naming GRANT-A", *ce)
+	}
+	assertNoResponse(t, frpStore, "dev1")
+}
+
+// TestQueue_Answer_GateFailureIsInternal: a check that cannot complete is
+// an internal error, never a conflict, and stores nothing.
+func TestQueue_Answer_GateFailureIsInternal(t *testing.T) {
+	t.Parallel()
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+	cause := errors.New("backend unreachable")
+	q := flowreservation.NewQueue(frqStore, frpStore, failingGate{err: cause}, flowreservation.Config{Deadline: time.Hour}, nil)
+	t.Cleanup(q.Close)
+
+	storeRequest(t, frqStore, "dev1", "frq1", testRequest())
+	_, err := q.Answer(context.Background(), "dev1", "frq1", flowreservation.Decision{})
+	if !errors.Is(err, flowreservation.ErrCommitmentCheck) || !errors.Is(err, cause) {
+		t.Fatalf("Answer err = %v, want ErrCommitmentCheck wrapping the cause", err)
+	}
+	var ce *commitment.ConflictError
+	if errors.As(err, &ce) {
+		t.Fatalf("Answer err = %v, a failed check must not read as a conflict", err)
+	}
+	assertNoResponse(t, frpStore, "dev1")
+}
+
+// TestQueue_Answer_BypassesTheGateWhenNothingIsCommitted: a denial and a
+// grant with no interval commit no window, so a gate that refuses
+// everything still lets both through.
+func TestQueue_Answer_BypassesTheGateWhenNothingIsCommitted(t *testing.T) {
+	t.Parallel()
+	frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+	q := flowreservation.NewQueue(frqStore, frpStore, conflictGate{mrid: "GRANT-A"}, flowreservation.Config{Deadline: time.Hour}, nil)
+	t.Cleanup(q.Close)
+
+	storeRequest(t, frqStore, "dev1", "deny", testRequest())
+	denied, err := q.Answer(context.Background(), "dev1", "deny", flowreservation.Decision{Kind: flowreservation.Deny})
+	if err != nil {
+		t.Fatalf("Answer(Deny) err = %v, want nil", err)
+	}
+	if denied.Interval == nil || denied.Interval.Duration != 0 {
+		t.Errorf("denial interval = %+v, want duration 0", denied.Interval)
+	}
+
+	storeRequest(t, frqStore, "dev1", "open", sep2.FlowReservationRequest{MRID: "REQ2"})
+	open, err := q.Answer(context.Background(), "dev1", "open", flowreservation.Decision{})
+	if err != nil {
+		t.Fatalf("Answer(Grant, no interval) err = %v, want nil", err)
+	}
+	if open.Interval != nil {
+		t.Errorf("grant interval = %+v, want none", open.Interval)
+	}
+}
+
+func assertNoResponse(t *testing.T, frpStore *memory.ScopedStore[sep2.FlowReservationResponse], edevID string) {
+	t.Helper()
+	got, err := frpStore.List(context.Background(), edevID, store.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list responses: %v", err)
+	}
+	if len(got.Items) != 0 {
+		t.Fatalf("responses stored = %d, want 0", len(got.Items))
 	}
 }

@@ -268,9 +268,10 @@ type Stores struct {
 	FlowReservationResponseLifecycles store.ScopedStore[dercontrol.LifecycleRecord]
 
 	// CommitmentLedger is the process's one commitment ledger (#714),
-	// built over the same stores. Nothing in this package consults it yet.
-	// A nil ledger refuses every check (commitment.ErrNoLedger), so a Stores
-	// built without one fails closed rather than passing.
+	// built over the same stores. The flow reservation queue checks every
+	// grant against it. A nil ledger refuses every check
+	// (commitment.ErrNoLedger), so a Stores built without one fails closed
+	// rather than passing.
 	CommitmentLedger *commitment.Ledger
 }
 
@@ -1382,11 +1383,13 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		// #666: the queue holds a request until the operator answers or the
 		// deadline fallback decides; it is what ever calls
 		// flowReservationResponses.Create, not the POST handler directly.
-		// checker is the permissive default until #714 builds the real
-		// commitment ledger (see flowreservation.PermissiveCommitmentChecker).
+		// #714: every grant it stores is checked against the fleet's
+		// commitments; a nil ledger refuses every grant with a window.
 		flowReservationQueue := flowreservation.NewQueue(
 			stores.FlowReservationRequests, flowReservationResponses,
-			flowreservation.PermissiveCommitmentChecker{},
+			flowreservation.NewLedgerGate(stores.CommitmentLedger, commitment.Resolver{
+				Devices: stores.EndDevices, Managers: stores.EndDeviceManagers,
+			}),
 			flowreservation.Config{Deadline: frpDeadline}, pen,
 		)
 

@@ -46,6 +46,7 @@ import (
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
@@ -511,7 +512,7 @@ func newCCMConfig(t *testing.T, serverCertPEM, serverKeyPEM, caCertPEM []byte) (
 // to mutate stores before booting can call this themselves and pass
 // the result via WithStores.
 func NewFreshStores() *server.Stores {
-	return &server.Stores{
+	s := &server.Stores{
 		EndDevices:               memory.NewEndDeviceStore(),
 		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
 		MirrorUsagePoints:        memory.NewStore[sep2.MirrorUsagePoint](),
@@ -541,5 +542,12 @@ func NewFreshStores() *server.Stores {
 		FlowReservationResponses: memory.NewScopedStore[sep2.FlowReservationResponse](),
 		ResponseSets:             memory.NewStore[sep2.ResponseSet](),
 		Responses:                memory.NewScopedStore[sep2.Response](),
+
+		DERControlLifecycles:              dercontrol.NewLifecycleStore(),
+		FlowReservationResponseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
 	}
+	// Built the way Run builds it (#714): without a ledger every windowed
+	// flow reservation grant is refused.
+	s.CommitmentLedger = server.NewCommitmentLedger(s)
+	return s
 }

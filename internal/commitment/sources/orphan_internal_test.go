@@ -3,6 +3,7 @@ package sources
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -14,17 +15,17 @@ func (goneFleets) FleetOf(_ context.Context, id string) (string, error) {
 	return "", fmt.Errorf("resolving fleet of EndDevice %s: %w", id, store.ErrNotFound)
 }
 
-func TestResolve_LogsAnOrphanOnce(t *testing.T) {
+func TestFleetOrGone_LogsAnOrphanOnce(t *testing.T) {
 	t.Parallel()
 	var lines []string
-	c := &Controls{fleets: goneFleets{}, logf: func(f string, a ...any) { lines = append(lines, fmt.Sprintf(f, a...)) }}
+	o := orphans{fleets: goneFleets{}, what: "things", logf: func(f string, a ...any) { lines = append(lines, fmt.Sprintf(f, a...)) }}
 	for range 3 {
-		fleet, err := c.resolve(context.Background(), "gone")
+		fleet, err := o.fleetOrGone(context.Background(), "gone")
 		if fleet != "" || err != nil {
-			t.Fatalf("resolve = %q, %v; want \"\", nil", fleet, err)
+			t.Fatalf("fleetOrGone = %q, %v; want \"\", nil", fleet, err)
 		}
 	}
-	if len(lines) != 1 {
-		t.Fatalf("logged %d lines for one orphan, want 1: %q", len(lines), lines)
+	if len(lines) != 1 || !strings.Contains(lines[0], "things under EndDevice gone") {
+		t.Fatalf("logged %q for one orphan, want one line naming it", lines)
 	}
 }

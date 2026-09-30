@@ -368,6 +368,43 @@ func AdmittedViaTicket(r *http.Request) bool {
 	return v == credentialPathTicket
 }
 
+// Admission path names returned by AdmissionPath. They are fixed strings,
+// never request-derived, so an audit log line may carry them as-is.
+const (
+	AdmissionPathNone           = "none"
+	AdmissionPathLoopbackBypass = "loopback_bypass"
+	AdmissionPathMTLS           = "mtls"
+	AdmissionPathBearer         = "bearer"
+	AdmissionPathTicket         = "ticket"
+	AdmissionPathCookie         = "cookie"
+)
+
+// AdmissionPath names the admission path that let r through the admin auth
+// chain, for a handler's audit log. A request rechecked by
+// RequireRealCredential reports the credential the recheck found, not the
+// bypass that preceded it. An unmarked request reports AdmissionPathNone.
+func AdmissionPath(r *http.Request) string {
+	outcome, _ := r.Context().Value(admissionOutcomeContextKey{}).(admissionOutcome)
+	if outcome == admissionOutcomeBypass {
+		return AdmissionPathLoopbackBypass
+	}
+	if outcome != admissionOutcomeCredential {
+		return AdmissionPathNone
+	}
+	switch path, _ := r.Context().Value(credentialPathContextKey{}).(credentialPath); path {
+	case credentialPathMTLS:
+		return AdmissionPathMTLS
+	case credentialPathBearer:
+		return AdmissionPathBearer
+	case credentialPathTicket:
+		return AdmissionPathTicket
+	case credentialPathCookie:
+		return AdmissionPathCookie
+	default:
+		return AdmissionPathNone
+	}
+}
+
 // RequireNonTicketAdmission wraps the ticket-mint handler only
 // (BuildAdminRouter, admin_router.go). It runs after AdminAuthMiddleware and
 // RequireRealCredential have already established that some real credential

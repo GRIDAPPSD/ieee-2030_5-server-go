@@ -412,7 +412,7 @@ func BuildProtocolRouter(
 		registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
 		registerDERRoutes(gated, stores)
 		registerMeteringRoutes(gated, stores)
-		registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline)
+		registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, authPolicy.Identity)
 	}
 
 	var protocolChain http.Handler
@@ -1254,7 +1254,7 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(readingTypes))
 }
 
-func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline time.Duration) {
+func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline time.Duration, identity func(ctx context.Context) (lfdi, sfdi string, ok bool)) {
 	if !store.IsAbsent(stores.Configurations) {
 		mux.HandleFunc("GET /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 		mux.HandleFunc("PUT /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
@@ -1438,10 +1438,35 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 				inner, coreflowrsv.BuildResponseList, 900,
 			)(w, r)
 		})
-		mux.HandleFunc("POST /rsps/{rspsId}/rsp", coreflowrsv.HandlePostResponse(responses))
+		mux.HandleFunc("POST /rsps/{rspsId}/rsp", coreflowrsv.HandlePostResponse(responses, responseSenderAuthorizer(identity, stores.EndDeviceManagers)))
 		mux.HandleFunc("GET /rsps/{rspsId}/rsp/{rspId}", coreresponse.HandleResponse(responses))
 	}
 }
 
 // suppress unused import
 var _ = paging.DefaultLimit
+
+// responseSenderAuthorizer admits a Response naming lfdi when the caller's
+// certificate identity is that device, or its current manager. A nil
+// identity yields a nil authorizer, which HandlePostResponse treats as
+// refusing every Response that names a device.
+func responseSenderAuthorizer(identity func(ctx context.Context) (lfdi, sfdi string, ok bool), managers store.EndDeviceManagementStore) coreflowrsv.ResponseSenderAuthorizer {
+	if identity == nil {
+		return nil
+	}
+	managersAbsent := store.IsAbsent(managers)
+	return func(r *http.Request, lfdi string) (bool, string, error) {
+		caller, _, ok := identity(r.Context())
+		if !ok || caller == "" {
+			return false, "", nil
+		}
+		if coreedev.OwnedBy(lfdi, caller) {
+			return true, caller, nil
+		}
+		if managersAbsent {
+			return false, caller, nil
+		}
+		allowed, err := coreedev.CurrentManagerOwns(r.Context(), managers, lfdi, caller)
+		return allowed, caller, err
+	}
+}

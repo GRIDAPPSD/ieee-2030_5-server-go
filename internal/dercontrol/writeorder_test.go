@@ -1027,6 +1027,10 @@ func TestCancel_UpdateFailure_RestoreAlsoFails(t *testing.T) {
 	if undo.Step != UndoStepCancel || undo.ID != res.ID {
 		t.Fatalf("UndoError = %+v, want Step=%q ID=%q", undo, UndoStepCancel, res.ID)
 	}
+	// Cancel deletes nothing, so the control and its record are both kept.
+	if !undo.ControlKept || !undo.LifecycleKept || undo.MRID != res.Control.MRID || undo.Scope != res.Scope {
+		t.Fatalf("UndoError = %+v, want both kept and naming %s in %+v", undo, res.Control.MRID, res.Scope)
+	}
 }
 
 // Cancel checks ctx before its write: a cancelled context stops before

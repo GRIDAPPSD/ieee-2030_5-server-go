@@ -116,7 +116,7 @@ func TestHandlePostResponse_CarriesCreatedDateTime(t *testing.T) {
 	rspStore := memory.NewScopedStore[sep2.Response]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /rsps/{rspsId}/rsp", flow_reservation.HandlePostResponse(rspStore))
+	mux.HandleFunc("POST /rsps/{rspsId}/rsp", flow_reservation.HandlePostResponse(rspStore, nil))
 
 	rsp := sep2.Response{Subject: "SUBJ001"}
 	body, err := xml.Marshal(&rsp)
@@ -205,7 +205,7 @@ func TestHandlePostResponse_InvalidXMLDoesNotLeakDecoderDetail(t *testing.T) {
 	rspStore := memory.NewScopedStore[sep2.Response]()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /rsps/{rspsId}/rsp", flow_reservation.HandlePostResponse(rspStore))
+	mux.HandleFunc("POST /rsps/{rspsId}/rsp", flow_reservation.HandlePostResponse(rspStore, nil))
 
 	req := httptest.NewRequest(http.MethodPost, "/rsps/set1/rsp", strings.NewReader("<"+marker+">bar</"+marker+">"))
 	w := httptest.NewRecorder()

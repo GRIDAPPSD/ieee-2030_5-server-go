@@ -77,9 +77,9 @@ type Stores struct {
 	// internal/dercontrol.LifecycleRecord, keyed identically to DERControls
 	// (GRIDAPPSD/ieee-2030_5-server-go#565). #564's serve-time status
 	// decorator (pkg/sep2srv/handlers/der, wired in
-	// pkg/sep2srv/assembly/assembly.go behind store.IsAbsent) reads it when
-	// present; nothing writes to it yet, since wiring
-	// internal/dercontrol.Issuer into the admin plane is #566.
+	// pkg/sep2srv/assembly/assembly.go behind store.IsAbsent) reads it; the
+	// #566 admin DER control routes write it through
+	// internal/dercontrol.Issuer. Nil leaves those routes unmounted.
 	DERControlLifecycles *dercontrol.LifecycleStore
 	DefaultDERControls   *memory.ScopedStore[sep2.DefaultDERControl]
 	DERCurves            *memory.Store[sep2.DERCurve]
@@ -123,4 +123,15 @@ type Stores struct {
 	// RegistrationPolicy already carries on this struct, not a routing or
 	// listener knob like the router's other explicit parameters.
 	Sep2Edition handler.SEP2Edition
+
+	// PEN is the server's IANA Private Enterprise Number, the low 32 bits of
+	// every admin-issued DERControl mRID (config.Config.EffectivePEN). Nil
+	// leaves the DER control create route answering 503.
+	PEN *uint32
+
+	// AdminNotifier fans out the subscription notifications an admin write
+	// causes (the #566 DER control routes). Nil sends none. Held here for
+	// the same reason as Sep2Edition: BuildAdminRouter's other parameters
+	// are routing and listener knobs.
+	AdminNotifier handler.ResourceNotifier
 }

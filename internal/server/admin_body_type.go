@@ -27,6 +27,8 @@ var adminBodyTypes = map[string][]string{
 	"DELETE /api/management-pairs":            nil,
 	"POST /api/management-pairs/rekey":        {"application/json"},
 	"POST /auth/ticket":                       nil,
+	"POST /api/der/controls":                  {"application/json"},
+	"POST /api/der/controls/{mrid}/cancel":    {"application/json"},
 }
 
 // unsupportedContentTypeBody is the 415 refusal shape. Accepted names the

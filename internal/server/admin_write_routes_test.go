@@ -25,6 +25,8 @@ var wantAdminWriteRoutes = []string{
 	"POST /api/certs/device",
 	"POST /api/certs/info",
 	"POST /api/certs/server",
+	"POST /api/der/controls",
+	"POST /api/der/controls/{mrid}/cancel",
 	"POST /api/devices",
 	"POST /api/devices/{id}/fsa-assignment",
 	"POST /api/fsas",
@@ -58,6 +60,8 @@ var wantAdminBodyTypes = map[string][]string{
 	"DELETE /api/management-pairs":            nil,
 	"POST /api/management-pairs/rekey":        {"application/json"},
 	"POST /auth/ticket":                       nil,
+	"POST /api/der/controls":                  {"application/json"},
+	"POST /api/der/controls/{mrid}/cancel":    {"application/json"},
 }
 
 // TestEveryAdminWriteRouteIsCovered walks the routes BuildAdminRouter reports
@@ -111,7 +115,7 @@ func TestEveryAdminWriteRouteIsCovered(t *testing.T) {
 
 	for _, p := range writes {
 		method, path, _ := strings.Cut(p, " ")
-		target := strings.ReplaceAll(path, "{id}", "x")
+		target := strings.NewReplacer("{id}", "x", "{mrid}", "x").Replace(path)
 		// goodType and the expected refusals below come from
 		// wantAdminBodyTypes, the independent source, not the production
 		// table: a wrong table entry must make this subtest fail rather

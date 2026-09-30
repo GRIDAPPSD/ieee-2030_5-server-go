@@ -373,3 +373,54 @@ func TestHandlePostFlowReservationRequest_MissingRequestMRIDRefused(t *testing.T
 		t.Errorf("stored response count = %d, want 0; no response should be auto-created for a refused request", len(responses.Items))
 	}
 }
+
+// TestHandlePostFlowReservationRequest_WhitespaceOnlyMRIDRefused extends the
+// missing-mRID criterion: encoding/xml does not trim element content, so
+// "<mRID>   </mRID>" unmarshals to a non-empty string that the bare "== """
+// check let through, storing a response whose subject is meaningless
+// whitespace. A whitespace-only mRID carries no more identity than an absent
+// one and must be refused the same way.
+func TestHandlePostFlowReservationRequest_WhitespaceOnlyMRIDRefused(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		mrid string
+	}{
+		{"spaces", "   "},
+		{"newline", "\n"},
+		{"tab", "\t"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			frqStore := memory.NewScopedStore[sep2.FlowReservationRequest]()
+			frpStore := memory.NewScopedStore[sep2.FlowReservationResponse]()
+
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(frqStore, frpStore))
+
+			body := `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>` + tc.mrid + `</mRID></FlowReservationRequest>`
+			req := httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", strings.NewReader(body))
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400, body: %s", w.Code, w.Body.String())
+			}
+
+			stored, err := frqStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
+			if err != nil {
+				t.Fatalf("list stored requests: %v", err)
+			}
+			if len(stored.Items) != 0 {
+				t.Errorf("stored request count = %d, want 0; a whitespace-only mRID must not be stored", len(stored.Items))
+			}
+			responses, err := frpStore.List(context.Background(), "dev1", store.ListOptions{Limit: 10})
+			if err != nil {
+				t.Fatalf("list stored responses: %v", err)
+			}
+			if len(responses.Items) != 0 {
+				t.Errorf("stored response count = %d, want 0", len(responses.Items))
+			}
+		})
+	}
+}

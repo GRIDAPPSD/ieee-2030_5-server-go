@@ -55,3 +55,34 @@ func TestNewFRPMRID_RandReadErrorPropagates(t *testing.T) {
 		t.Fatalf("newFRPMRID() error = %v, want %v", err, wantErr)
 	}
 }
+
+// TestNewFRPMRID_SecondDrawErrorPropagates covers the retry loop's own error
+// check, not just the first draw's: the first call reports the reserved
+// all-F value (forcing a retry), and the second call fails. A mutant that
+// drops the error check inside the retry loop passes every other test here
+// because the first-draw check already returns early on a first-call error.
+func TestNewFRPMRID_SecondDrawErrorPropagates(t *testing.T) {
+	orig := frpRandRead
+	defer func() { frpRandRead = orig }()
+	wantErr := errors.New("boom on retry")
+
+	calls := 0
+	frpRandRead = func(b []byte) (int, error) {
+		calls++
+		if calls == 1 {
+			for i := range b {
+				b[i] = 0xFF
+			}
+			return len(b), nil
+		}
+		return 0, wantErr
+	}
+
+	_, err := newFRPMRID()
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("newFRPMRID() error = %v, want %v", err, wantErr)
+	}
+	if calls != 2 {
+		t.Fatalf("frpRandRead called %d times, want exactly 2", calls)
+	}
+}

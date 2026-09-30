@@ -116,12 +116,28 @@ func HandlePostFlowReservationRequest(
 		}
 
 		// The auto-created response's subject names the request it answers
-		// (#665). A request with no mRID has no subject to give it, and the
-		// client has no acknowledgement path back to a response nobody could
-		// address, so it is refused outright rather than stored with an
-		// empty subject downstream.
-		if frq.MRID == "" {
+		// (#665). A request with no mRID, or one that is whitespace only
+		// (encoding/xml does not trim element content, so "<mRID> </mRID>"
+		// unmarshals to a non-empty string), has no subject to give it, and
+		// the client has no acknowledgement path back to a response nobody
+		// could address, so it is refused outright rather than stored with a
+		// meaningless subject downstream.
+		if strings.TrimSpace(frq.MRID) == "" {
 			http.Error(w, "FlowReservationRequest mRID is required", http.StatusBadRequest)
+			return
+		}
+
+		// Minted before any store write: a mint failure after the request is
+		// already stored would leave it orphaned behind a 500, with no
+		// response and no way for the client to tell the request was ever
+		// accepted. mRID is mandatory on every Event-derived resource
+		// (#665), and without one a client has no subject to name in an
+		// acknowledgement or a superseding response. Minted here, not copied
+		// from the request: mRID identifies THIS response, distinct from
+		// Subject, which names the request it answers.
+		frpMRID, err := newFRPMRID()
+		if err != nil {
+			srverr.Internal(w, r, fmt.Errorf("mint FlowReservationResponse mRID: %w", err))
 			return
 		}
 
@@ -148,17 +164,6 @@ func HandlePostFlowReservationRequest(
 			Subject:         frq.MRID,
 		}
 		frp.Href = fmt.Sprintf("/edev/%s/frp/%s", edevID, frpID)
-
-		// mRID is mandatory on every Event-derived resource (#665), and
-		// without one a client has no subject to name in an acknowledgement
-		// or a superseding response. Minted here, not copied from the
-		// request: mRID identifies THIS response, distinct from Subject,
-		// which names the request it answers.
-		frpMRID, err := newFRPMRID()
-		if err != nil {
-			srverr.Internal(w, r, fmt.Errorf("mint FlowReservationResponse mRID: %w", err))
-			return
-		}
 		frp.MRID = frpMRID
 
 		// creationTime is required on every Event-derived resource and the

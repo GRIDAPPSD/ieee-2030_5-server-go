@@ -1,6 +1,7 @@
 package assembly_test
 
 import (
+	"encoding/hex"
 	"encoding/xml"
 	"io"
 	"net/http"
@@ -167,6 +168,17 @@ func TestFlowReservationResponse_HrefFromTheListResolves(t *testing.T) {
 	}
 	if got.Subject != mrid {
 		t.Errorf("subject = %q, want %q: the response must name the request it answers", got.Subject, mrid)
+	}
+	// #665: the response's own mRID (distinct from Subject, which names the
+	// request), asserted through the real mounted route rather than only a
+	// hand-wired copy of the handler.
+	if len(got.MRID) != 32 {
+		t.Errorf("MRID = %q, want 32 hex digits", got.MRID)
+	} else if _, err := hex.DecodeString(got.MRID); err != nil || got.MRID != strings.ToUpper(got.MRID) {
+		t.Errorf("MRID = %q, want 32 uppercase hex digits", got.MRID)
+	}
+	if got.MRID == mrid {
+		t.Errorf("MRID = %q equals the request mRID; the response's own identity must not be the request's", got.MRID)
 	}
 	if got.CreationTime == 0 {
 		t.Error("creationTime = 0 on the served FlowReservationResponse")

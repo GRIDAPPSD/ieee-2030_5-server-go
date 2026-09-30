@@ -47,6 +47,7 @@ func TestWindow_Within(t *testing.T) {
 		{"zero duration inside o is vacuously within", Window{Start: 5, Duration: 0}, Window{Start: 0, Duration: 10}, true},
 		{"zero duration exactly at o's end is vacuously within, consistent with Overlaps treating it as asserting nothing", Window{Start: 10, Duration: 0}, Window{Start: 0, Duration: 10}, true},
 		{"zero duration entirely outside o is still vacuously within", Window{Start: 999, Duration: 0}, Window{Start: 0, Duration: 10}, true},
+		{"a one-second window entirely outside o is NOT within (kills a Duration<2 mutant of the zero-duration guard)", Window{Start: -1, Duration: 1}, Window{Start: 0, Duration: 10}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

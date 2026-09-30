@@ -26,16 +26,20 @@ func sign(v int64) int {
 // FitsGrant checks every rule of design 5.3 for a set of executions against
 // one grant, and returns the first ConflictError found. Rules are checked
 // in the order 5.3 lists them: grant liveness and executability once, then
-// each execution's mode, fleet, window and direction, then the aggregate
-// power and energy bounds across the whole set.
+// each execution's mode, fleet, zero-duration guard, window and direction,
+// then the aggregate power and energy bounds across the whole set.
 //
-// execs is the complete set to validate, not a delta: CheckControl (design
-// 3.4) calls this with the grant's live executions plus the new proposal,
-// and Revise calls it with the old grant's executions against the new
-// grant. Neither call shape is visible to FitsGrant itself, so an aggregate
-// conflict (rules 6 and 7) is never named by slice position; see checkPower
-// and checkEnergy.
-func FitsGrant(g Grant, execs []Control) error {
+// existing is the grant's current live executions. proposal is the one
+// execution under test, or nil when there is none: CheckControl (design
+// 3.4) passes the grant's live executions as existing and the new control
+// as proposal; Revise passes the old grant's executions as existing with a
+// nil proposal, since it re-validates a fixed set rather than admitting a
+// new one. The distinction matters for two rules: a zero-duration proposal
+// is refused outright (design 5.1), while a zero-duration member of
+// existing (already clipped at SupersededAt, design 5.2) still counts as
+// nothing; and an aggregate conflict (rule 6) never names the proposal,
+// which is design 5.3's "other execution" reading, never a slice position.
+func FitsGrant(g Grant, existing []Control, proposal *Control) error {
 	if g.CancelledAt != nil {
 		return &ConflictError{Code: ConflictGrantNotLive, MRID: g.MRID}
 	}
@@ -43,13 +47,24 @@ func FitsGrant(g Grant, execs []Control) error {
 		return &ConflictError{Code: ConflictNotExecutable, MRID: g.MRID}
 	}
 
+	all := make([]Control, 0, len(existing)+1)
+	all = append(all, existing...)
+	proposalIndex := -1
+	if proposal != nil {
+		proposalIndex = len(all)
+		all = append(all, *proposal)
+	}
+
 	want := DirectionOf(g)
-	for _, c := range execs {
+	for j, c := range all {
 		if c.TargetW == nil {
 			return &ConflictError{Code: ConflictModeNotTarget, MRID: c.MRID}
 		}
 		if c.FleetKey != g.FleetKey {
 			return &ConflictError{Code: ConflictOutsideFleet, MRID: c.MRID}
+		}
+		if j == proposalIndex && c.Window.Duration == 0 {
+			return &ConflictError{Code: ConflictZeroDuration, MRID: c.MRID}
 		}
 		if !c.Window.Within(*g.Window) {
 			return &ConflictError{Code: ConflictOutsideInterval, MRID: c.MRID}
@@ -59,10 +74,10 @@ func FitsGrant(g Grant, execs []Control) error {
 		}
 	}
 
-	if err := checkPower(g, execs); err != nil {
+	if err := checkPower(g, all, proposalIndex); err != nil {
 		return err
 	}
-	return checkEnergy(g, execs)
+	return checkEnergy(g, all)
 }
 
 // checkPower enforces rule 6: at every instant covered by some execution's
@@ -70,18 +85,18 @@ func FitsGrant(g Grant, execs []Control) error {
 // execution active at that instant must not exceed |powerAvailable|. The
 // value is piecewise constant, so a local maximum can only appear where
 // some execution's window begins (design: "exact for step functions"),
-// which is why only those instants are tested.
+// which is why only those instants, for every execution in execs, are
+// tested: checking only the first or only the last survives a same-start
+// test suite and misses a violation whose sole witnessing instant is
+// elsewhere in the set.
 //
-// Design 5.3 names the conflict by "the other execution's" mRID, not the
-// grant's. Here "the other execution" is whichever active execution is not
-// the one whose own instant triggered the check (index i): that is the one
-// rule 6's own comment frames as the caller's proposal in CheckControl's
-// usual shape, but FitsGrant is handed a flat, order-agnostic set, so the
-// rule is applied structurally rather than by slice position. When i is
+// Design 5.3 names the conflict by "the other execution's" mRID, never the
+// proposal's (proposalIndex, -1 when there is none): the first active
+// execution other than the proposal, in execs order. When the proposal is
 // the only execution active at the violating instant, there is no other
 // execution to name, and the conflict names the grant instead.
-func checkPower(g Grant, execs []Control) error {
-	for i, x := range execs {
+func checkPower(g Grant, execs []Control, proposalIndex int) error {
+	for _, x := range execs {
 		t := x.Window.Start
 		var active []int
 		for j, c := range execs {
@@ -104,7 +119,7 @@ func checkPower(g Grant, execs []Control) error {
 		}
 
 		for _, j := range active {
-			if j != i {
+			if j != proposalIndex {
 				return &ConflictError{Code: ConflictPower, MRID: execs[j].MRID}
 			}
 		}

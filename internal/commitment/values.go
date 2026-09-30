@@ -36,13 +36,16 @@ type ConflictCode string
 // The closed set of conflict codes. Not every code is produced by S1's
 // FitsGrant: ConflictFleetWindow is the plain-dispatch rule (design 5.4),
 // and ConflictOverlap is reserved for the literal no-overlap reading the
-// operator did not choose (design 9.2).
+// operator did not choose (design 9.2). ConflictZeroDuration fires only for
+// a proposed execution (design 5.1): an existing live execution already
+// clipped to zero duration still counts as nothing, unrefused.
 const (
 	ConflictFleetWindow     ConflictCode = "fleet_window_committed"
 	ConflictGrantNotLive    ConflictCode = "grant_not_live"
 	ConflictNotExecutable   ConflictCode = "grant_not_executable"
 	ConflictModeNotTarget   ConflictCode = "execution_mode_not_target_w"
 	ConflictOutsideFleet    ConflictCode = "execution_outside_fleet"
+	ConflictZeroDuration    ConflictCode = "execution_zero_duration"
 	ConflictOutsideInterval ConflictCode = "execution_outside_interval"
 	ConflictDirection       ConflictCode = "execution_reverses_grant"
 	ConflictPower           ConflictCode = "execution_exceeds_power"

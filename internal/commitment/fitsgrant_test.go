@@ -51,14 +51,15 @@ func wantConflict(t *testing.T, err error, wantCode ConflictCode, wantMRID strin
 
 func TestFitsGrant_BaselineAccepts(t *testing.T) {
 	t.Parallel()
-	if err := FitsGrant(baseGrant(), []Control{baseExecution()}); err != nil {
+	c := baseExecution()
+	if err := FitsGrant(baseGrant(), nil, &c); err != nil {
 		t.Fatalf("FitsGrant(valid grant, valid execution) error = %v, want nil", err)
 	}
 }
 
 func TestFitsGrant_NoExecutionsAccepts(t *testing.T) {
 	t.Parallel()
-	if err := FitsGrant(baseGrant(), nil); err != nil {
+	if err := FitsGrant(baseGrant(), nil, nil); err != nil {
 		t.Fatalf("FitsGrant(valid grant, no executions) error = %v, want nil", err)
 	}
 }
@@ -69,7 +70,8 @@ func TestFitsGrant_Rule1_GrantNotLive(t *testing.T) {
 	g := baseGrant()
 	cancelled := int64(500)
 	g.CancelledAt = &cancelled
-	err := FitsGrant(g, []Control{baseExecution()})
+	c := baseExecution()
+	err := FitsGrant(g, nil, &c)
 	wantConflict(t, err, ConflictGrantNotLive, g.MRID)
 }
 
@@ -90,7 +92,7 @@ func TestFitsGrant_Rule1_GrantNotExecutable(t *testing.T) {
 			t.Parallel()
 			g := baseGrant()
 			tc.mutate(&g)
-			err := FitsGrant(g, nil)
+			err := FitsGrant(g, nil, nil)
 			wantConflict(t, err, ConflictNotExecutable, g.MRID)
 		})
 	}
@@ -105,14 +107,14 @@ func TestFitsGrant_Rule1_WindowDurationBoundary(t *testing.T) {
 		t.Parallel()
 		g := baseGrant()
 		g.Window = &Window{Start: 1000, Duration: 0}
-		err := FitsGrant(g, nil)
+		err := FitsGrant(g, nil, nil)
 		wantConflict(t, err, ConflictNotExecutable, g.MRID)
 	})
 	t.Run("duration 1 is live", func(t *testing.T) {
 		t.Parallel()
 		g := baseGrant()
 		g.Window = &Window{Start: 1000, Duration: 1}
-		if err := FitsGrant(g, nil); err != nil {
+		if err := FitsGrant(g, nil, nil); err != nil {
 			t.Fatalf("FitsGrant error = %v, want nil", err)
 		}
 	})
@@ -123,7 +125,7 @@ func TestFitsGrant_Rule2_ModeNotTarget(t *testing.T) {
 	t.Parallel()
 	c := baseExecution()
 	c.TargetW = nil
-	err := FitsGrant(baseGrant(), []Control{c})
+	err := FitsGrant(baseGrant(), nil, &c)
 	wantConflict(t, err, ConflictModeNotTarget, c.MRID)
 }
 
@@ -132,8 +134,53 @@ func TestFitsGrant_Rule3_OutsideFleet(t *testing.T) {
 	t.Parallel()
 	c := baseExecution()
 	c.FleetKey = "FLEET2"
-	err := FitsGrant(baseGrant(), []Control{c})
+	err := FitsGrant(baseGrant(), nil, &c)
 	wantConflict(t, err, ConflictOutsideFleet, c.MRID)
+}
+
+// The zero-duration guard sits between rule 3 and rule 4, and fires only
+// for the proposal (design 5.1): an existing live execution already
+// clipped to zero duration (design 5.2) still counts as nothing.
+func TestFitsGrant_ZeroDurationProposal(t *testing.T) {
+	t.Parallel()
+	g := baseGrant() // window [1000, 4600)
+
+	t.Run("duration 0 at the grant's start is refused", func(t *testing.T) {
+		t.Parallel()
+		c := baseExecution()
+		c.Window = Window{Start: g.Window.Start, Duration: 0}
+		err := FitsGrant(g, nil, &c)
+		wantConflict(t, err, ConflictZeroDuration, c.MRID)
+	})
+
+	t.Run("duration 0 far outside the grant's window is refused the same way, not as outside-interval", func(t *testing.T) {
+		t.Parallel()
+		c := baseExecution()
+		c.Window = Window{Start: 999999, Duration: 0}
+		err := FitsGrant(g, nil, &c)
+		wantConflict(t, err, ConflictZeroDuration, c.MRID)
+	})
+
+	t.Run("duration 1 inside is accepted", func(t *testing.T) {
+		t.Parallel()
+		c := baseExecution()
+		c.Window = Window{Start: g.Window.Start, Duration: 1}
+		if err := FitsGrant(g, nil, &c); err != nil {
+			t.Fatalf("FitsGrant error = %v, want nil", err)
+		}
+	})
+
+	t.Run("an existing execution clipped to zero duration still counts as nothing, unrefused", func(t *testing.T) {
+		t.Parallel()
+		clipped := baseExecution()
+		clipped.MRID = "ctrl-clipped"
+		clipped.Window = Window{Start: 999999, Duration: 0} // nowhere near the grant's window
+		proposal := baseExecution()
+		proposal.MRID = "ctrl-proposal"
+		if err := FitsGrant(g, []Control{clipped}, &proposal); err != nil {
+			t.Fatalf("FitsGrant error = %v, want nil: a zero-duration EXISTING execution must not be refused", err)
+		}
+	})
 }
 
 // Rule 4: the execution's window must lie within the grant's, both sides.
@@ -145,7 +192,7 @@ func TestFitsGrant_Rule4_WindowWithin(t *testing.T) {
 		t.Parallel()
 		c := baseExecution()
 		c.Window = *g.Window
-		if err := FitsGrant(g, []Control{c}); err != nil {
+		if err := FitsGrant(g, nil, &c); err != nil {
 			t.Fatalf("FitsGrant error = %v, want nil", err)
 		}
 	})
@@ -154,7 +201,7 @@ func TestFitsGrant_Rule4_WindowWithin(t *testing.T) {
 		t.Parallel()
 		c := baseExecution()
 		c.Window = Window{Start: g.Window.Start - 1, Duration: g.Window.Duration}
-		err := FitsGrant(g, []Control{c})
+		err := FitsGrant(g, nil, &c)
 		wantConflict(t, err, ConflictOutsideInterval, c.MRID)
 	})
 
@@ -162,7 +209,7 @@ func TestFitsGrant_Rule4_WindowWithin(t *testing.T) {
 		t.Parallel()
 		c := baseExecution()
 		c.Window = Window{Start: g.Window.Start, Duration: g.Window.Duration + 1}
-		err := FitsGrant(g, []Control{c})
+		err := FitsGrant(g, nil, &c)
 		wantConflict(t, err, ConflictOutsideInterval, c.MRID)
 	})
 }
@@ -177,7 +224,7 @@ func TestFitsGrant_Rule5_Direction(t *testing.T) {
 		g := baseGrant() // energy +10000
 		c := baseExecution()
 		c.TargetW = &sep2.ActivePower{Value: -2000}
-		if err := FitsGrant(g, []Control{c}); err != nil {
+		if err := FitsGrant(g, nil, &c); err != nil {
 			t.Fatalf("FitsGrant error = %v, want nil", err)
 		}
 	})
@@ -187,7 +234,7 @@ func TestFitsGrant_Rule5_Direction(t *testing.T) {
 		g := baseGrant()
 		c := baseExecution()
 		c.TargetW = &sep2.ActivePower{Value: 2000}
-		err := FitsGrant(g, []Control{c})
+		err := FitsGrant(g, nil, &c)
 		wantConflict(t, err, ConflictDirection, c.MRID)
 	})
 
@@ -197,7 +244,7 @@ func TestFitsGrant_Rule5_Direction(t *testing.T) {
 		g.Energy = &sep2.SignedRealEnergy{Value: -10000}
 		c := baseExecution()
 		c.TargetW = &sep2.ActivePower{Value: 2000}
-		if err := FitsGrant(g, []Control{c}); err != nil {
+		if err := FitsGrant(g, nil, &c); err != nil {
 			t.Fatalf("FitsGrant error = %v, want nil", err)
 		}
 	})
@@ -208,7 +255,7 @@ func TestFitsGrant_Rule5_Direction(t *testing.T) {
 		g.Energy = &sep2.SignedRealEnergy{Value: -10000}
 		c := baseExecution()
 		c.TargetW = &sep2.ActivePower{Value: -2000}
-		err := FitsGrant(g, []Control{c})
+		err := FitsGrant(g, nil, &c)
 		wantConflict(t, err, ConflictDirection, c.MRID)
 	})
 
@@ -217,7 +264,7 @@ func TestFitsGrant_Rule5_Direction(t *testing.T) {
 		g := baseGrant()
 		c := baseExecution()
 		c.TargetW = &sep2.ActivePower{Value: 0}
-		err := FitsGrant(g, []Control{c})
+		err := FitsGrant(g, nil, &c)
 		wantConflict(t, err, ConflictDirection, c.MRID)
 	})
 }
@@ -243,9 +290,8 @@ func TestSign(t *testing.T) {
 }
 
 // Rule 6: summed per-device power at every instant must not exceed
-// powerAvailable. A conflict names an execution active at the violating
-// instant other than the one whose own instant triggered the check, or the
-// grant when that execution is alone.
+// powerAvailable. A conflict names an active execution other than the
+// proposal, or the grant when the proposal is the only one active.
 func TestFitsGrant_Rule6_Power(t *testing.T) {
 	t.Parallel()
 	g := baseGrant()
@@ -258,7 +304,7 @@ func TestFitsGrant_Rule6_Power(t *testing.T) {
 		c := baseExecution()
 		c.TargetW = &sep2.ActivePower{Value: -4000}
 		c.Reach = 1
-		if err := FitsGrant(g, []Control{c}); err != nil {
+		if err := FitsGrant(g, nil, &c); err != nil {
 			t.Fatalf("FitsGrant error = %v, want nil", err)
 		}
 	})
@@ -268,7 +314,7 @@ func TestFitsGrant_Rule6_Power(t *testing.T) {
 		c := baseExecution()
 		c.TargetW = &sep2.ActivePower{Value: -4001}
 		c.Reach = 1
-		err := FitsGrant(g, []Control{c})
+		err := FitsGrant(g, nil, &c)
 		wantConflict(t, err, ConflictPower, g.MRID)
 	})
 
@@ -277,7 +323,7 @@ func TestFitsGrant_Rule6_Power(t *testing.T) {
 		c := baseExecution()
 		c.TargetW = &sep2.ActivePower{Value: -1001}
 		c.Reach = 4 // 1001 * 4 = 4004 > 4000
-		err := FitsGrant(g, []Control{c})
+		err := FitsGrant(g, nil, &c)
 		wantConflict(t, err, ConflictPower, g.MRID)
 	})
 
@@ -286,7 +332,7 @@ func TestFitsGrant_Rule6_Power(t *testing.T) {
 		c := baseExecution()
 		c.TargetW = &sep2.ActivePower{Value: -1000}
 		c.Reach = 4 // 1000 * 4 = 4000, exactly the bound
-		if err := FitsGrant(g, []Control{c}); err != nil {
+		if err := FitsGrant(g, nil, &c); err != nil {
 			t.Fatalf("FitsGrant error = %v, want nil", err)
 		}
 	})
@@ -296,111 +342,152 @@ func TestFitsGrant_Rule6_Power(t *testing.T) {
 		gg := baseGrant()
 		gg.Power = &sep2.ActivePower{Value: 12000}
 		gg.Energy = &sep2.SignedRealEnergy{Value: 1000000}
-		var execs []Control
+		var accepted []Control
 		for i := 0; i < 4; i++ {
 			c := baseExecution()
 			c.MRID = mustMRID(i)
 			c.Window = Window{Start: 1000, Duration: 10}
 			c.TargetW = &sep2.ActivePower{Value: -3000} // 12000/4
 			c.Reach = 1
-			execs = append(execs, c)
-			if err := FitsGrant(gg, execs); err != nil {
-				t.Fatalf("FitsGrant after adding execution %d error = %v, want nil", i+1, err)
+			if err := FitsGrant(gg, accepted, &c); err != nil {
+				t.Fatalf("FitsGrant for execution %d error = %v, want nil", i+1, err)
 			}
+			accepted = append(accepted, c)
 		}
 	})
 
-	t.Run("four at a third of powerAvailable are refused on the fourth call", func(t *testing.T) {
+	t.Run("four at a third of powerAvailable are refused on the fourth call, naming an existing execution, never the proposal", func(t *testing.T) {
 		t.Parallel()
 		gg := baseGrant()
 		gg.Power = &sep2.ActivePower{Value: 12000}
 		gg.Energy = &sep2.SignedRealEnergy{Value: 1000000}
-		var execs []Control
+		var accepted []Control
 		for i := 0; i < 3; i++ {
 			c := baseExecution()
 			c.MRID = mustMRID(i)
 			c.Window = Window{Start: 1000, Duration: 10}
 			c.TargetW = &sep2.ActivePower{Value: -4000} // 12000/3
 			c.Reach = 1
-			execs = append(execs, c)
-			if err := FitsGrant(gg, execs); err != nil {
-				t.Fatalf("FitsGrant after accepted execution %d error = %v, want nil", i+1, err)
+			if err := FitsGrant(gg, accepted, &c); err != nil {
+				t.Fatalf("FitsGrant for execution %d error = %v, want nil", i+1, err)
 			}
+			accepted = append(accepted, c)
 		}
 		fourth := baseExecution()
 		fourth.MRID = mustMRID(3)
 		fourth.Window = Window{Start: 1000, Duration: 10}
 		fourth.TargetW = &sep2.ActivePower{Value: -4000}
 		fourth.Reach = 1
-		execs = append(execs, fourth)
-		// All four share one window, so the violation is found at the
-		// first execution's own instant (index 0); the conflict names
-		// some other active execution, not index 0 itself: here, the
-		// second control added (mustMRID(1)).
-		err := FitsGrant(gg, execs)
-		wantConflict(t, err, ConflictPower, mustMRID(1))
+		err := FitsGrant(gg, accepted, &fourth)
+		wantConflict(t, err, ConflictPower, mustMRID(0)) // the first of the three existing executions
+	})
+
+	// The proposal is never named: design 5.3's "other execution" reading.
+	// Tested with the long execution as the proposal, and again with it as
+	// the existing one, so the exclusion follows the identity given to
+	// FitsGrant rather than which physical control happens to be larger
+	// or smaller.
+	t.Run("the proposal is never named, whichever control plays that role", func(t *testing.T) {
+		t.Parallel()
+		short := baseExecution()
+		short.MRID = "ctrl-short"
+		short.Window = Window{Start: 1050, Duration: 10} // [1050, 1060)
+		short.TargetW = &sep2.ActivePower{Value: -4000}
+
+		long := baseExecution()
+		long.MRID = "ctrl-long"
+		long.Window = Window{Start: 1000, Duration: 100} // [1000, 1100), spans short's start
+		long.TargetW = &sep2.ActivePower{Value: -4000}
+
+		t.Run("long is the proposal: the conflict names short, the existing one", func(t *testing.T) {
+			t.Parallel()
+			err := FitsGrant(g, []Control{short}, &long)
+			wantConflict(t, err, ConflictPower, short.MRID)
+		})
+
+		t.Run("short is the proposal: the conflict names long, the existing one", func(t *testing.T) {
+			t.Parallel()
+			err := FitsGrant(g, []Control{long}, &short)
+			wantConflict(t, err, ConflictPower, long.MRID)
+		})
 	})
 
 	// Staggered starts: mutants this section kills. The active-at-t test is
-	// c.Window.Start <= t && t < c.Window.End(); dropping either bound, or
-	// checking only the last execution's own start instead of every
-	// execution's, each survives a same-start test suite and is only
-	// caught by windows that begin at different seconds.
-	t.Run("staggered starts", func(t *testing.T) {
+	// c.Window.Start <= t && t < c.Window.End(); dropping either bound
+	// survives a same-start test suite. checkPower is exercised directly
+	// here (proposalIndex -1: neither pure detection test cares which
+	// element is a proposal), in both slice orders, since the mutants this
+	// proves against are position-dependent by construction and the public
+	// FitsGrant no longer exposes raw slice order to a caller.
+	t.Run("staggered starts kill position-dependent mutants in both slice orders", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("the reviewer's case: a proposal spanning an existing execution's start must be refused (kills checking only the last execution's start)", func(t *testing.T) {
-			t.Parallel()
-			existing := baseExecution()
-			existing.MRID = "ctrl-existing"
-			existing.Window = Window{Start: 1050, Duration: 10}
-			existing.TargetW = &sep2.ActivePower{Value: -4000}
-			proposal := baseExecution()
-			proposal.MRID = "ctrl-proposal"
-			proposal.Window = Window{Start: 1000, Duration: 100}
-			proposal.TargetW = &sep2.ActivePower{Value: -4000}
-			// existing's own start (1050) is the only instant where both
-			// are active; checking only the last element's start (1000)
-			// would miss it and wrongly accept.
-			err := FitsGrant(g, []Control{existing, proposal})
-			wantConflict(t, err, ConflictPower, proposal.MRID)
-		})
+		shortLong := func() (short, long Control) {
+			short = baseExecution()
+			short.MRID = "ctrl-short"
+			short.Window = Window{Start: 1050, Duration: 10} // [1050, 1060)
+			short.TargetW = &sep2.ActivePower{Value: -4000}
+			long = baseExecution()
+			long.MRID = "ctrl-long"
+			long.Window = Window{Start: 1000, Duration: 100} // [1000, 1100)
+			long.TargetW = &sep2.ActivePower{Value: -4000}
+			return short, long
+		}
 
-		t.Run("touching windows, later window second, do not overlap (kills dropping the lower/Start bound)", func(t *testing.T) {
+		t.Run("short first, long second: kills checking only the first execution's start", func(t *testing.T) {
 			t.Parallel()
-			later := baseExecution()
-			later.MRID = "ctrl-later"
-			later.Window = Window{Start: 1010, Duration: 10} // [1010, 1020)
-			later.TargetW = &sep2.ActivePower{Value: -4000}
-			earlier := baseExecution()
-			earlier.MRID = "ctrl-earlier"
-			earlier.Window = Window{Start: 1000, Duration: 10} // [1000, 1010)
-			earlier.TargetW = &sep2.ActivePower{Value: -4000}
-			// Dropping the Start bound would count "later" as already
-			// active at "earlier"'s start-adjacent instant 1000 purely
-			// because 1000 < later.End(); the two never actually share a
-			// second.
-			if err := FitsGrant(g, []Control{later, earlier}); err != nil {
-				t.Fatalf("FitsGrant(touching, non-overlapping windows) error = %v, want nil", err)
+			short, long := shortLong()
+			// Under "check only execs[0]'s start" (t=1050), long is
+			// already active there too (its window covers 1050), so this
+			// order alone does not distinguish that mutant; it is here to
+			// keep both orders symmetric with the pair below and to kill
+			// "check only the last execution's start" (t=1000 alone would
+			// miss the violation, since short is not active at 1000).
+			if err := checkPower(g, []Control{short, long}, -1); err == nil {
+				t.Fatal("checkPower error = nil, want *ConflictError")
 			}
 		})
 
-		t.Run("touching windows, earlier window second, do not overlap (kills dropping the upper/End bound)", func(t *testing.T) {
+		t.Run("long first, short second: kills checking only the first execution's start", func(t *testing.T) {
+			t.Parallel()
+			short, long := shortLong()
+			// Checking only execs[0]'s start (long's, t=1000) finds only
+			// long active (4000 W, not exceeding); the violation is only
+			// visible at execs[1]'s start (short's, t=1050), where both
+			// are active. A "first only" mutant accepts; full instant
+			// coverage refuses.
+			if err := checkPower(g, []Control{long, short}, -1); err == nil {
+				t.Fatal("checkPower error = nil, want *ConflictError")
+			}
+		})
+	})
+
+	t.Run("touching windows never overlap in the power sense, in either order", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("later window second: kills dropping the lower/Start bound", func(t *testing.T) {
+			t.Parallel()
+			later := baseExecution()
+			later.Window = Window{Start: 1010, Duration: 10} // [1010, 1020)
+			later.TargetW = &sep2.ActivePower{Value: -4000}
+			earlier := baseExecution()
+			earlier.Window = Window{Start: 1000, Duration: 10} // [1000, 1010)
+			earlier.TargetW = &sep2.ActivePower{Value: -4000}
+			if err := checkPower(g, []Control{later, earlier}, -1); err != nil {
+				t.Fatalf("checkPower(touching, non-overlapping windows) error = %v, want nil", err)
+			}
+		})
+
+		t.Run("earlier window second: kills dropping the upper/End bound", func(t *testing.T) {
 			t.Parallel()
 			earlier := baseExecution()
-			earlier.MRID = "ctrl-earlier"
 			earlier.Window = Window{Start: 1000, Duration: 10} // [1000, 1010)
 			earlier.TargetW = &sep2.ActivePower{Value: -4000}
 			later := baseExecution()
-			later.MRID = "ctrl-later"
 			later.Window = Window{Start: 1010, Duration: 10} // [1010, 1020)
 			later.TargetW = &sep2.ActivePower{Value: -4000}
-			// Dropping the End bound would count "earlier" as still
-			// active at "later"'s start instant 1010 purely because
-			// earlier.Start <= 1010, even though earlier's window ended
-			// exactly then.
-			if err := FitsGrant(g, []Control{earlier, later}); err != nil {
-				t.Fatalf("FitsGrant(touching, non-overlapping windows) error = %v, want nil", err)
+			if err := checkPower(g, []Control{earlier, later}, -1); err != nil {
+				t.Fatalf("checkPower(touching, non-overlapping windows) error = %v, want nil", err)
 			}
 		})
 	})
@@ -419,7 +506,7 @@ func TestFitsGrant_Rule6_Power(t *testing.T) {
 			c := baseExecution()
 			c.TargetW = &sep2.ActivePower{Value: -5, Multiplier: 3} // 5000 W > 4000 W
 			c.Reach = 1
-			err := FitsGrant(gg, []Control{c})
+			err := FitsGrant(gg, nil, &c)
 			wantConflict(t, err, ConflictPower, gg.MRID)
 		})
 
@@ -431,42 +518,10 @@ func TestFitsGrant_Rule6_Power(t *testing.T) {
 			c := baseExecution()
 			c.TargetW = &sep2.ActivePower{Value: -3999} // 3999 W < 4000 W
 			c.Reach = 1
-			if err := FitsGrant(gg, []Control{c}); err != nil {
+			if err := FitsGrant(gg, nil, &c); err != nil {
 				t.Fatalf("FitsGrant error = %v, want nil", err)
 			}
 		})
-	})
-
-	t.Run("an offender placed first still gets an other-execution name, and order does not change which rule fires", func(t *testing.T) {
-		t.Parallel()
-		gg := baseGrant()
-		gg.Power = &sep2.ActivePower{Value: 4000}
-		gg.Energy = &sep2.SignedRealEnergy{Value: 1000000}
-
-		offender := baseExecution()
-		offender.MRID = "ctrl-offender"
-		offender.Window = Window{Start: 1000, Duration: 10}
-		offender.TargetW = &sep2.ActivePower{Value: -4000}
-		offender.Reach = 2 // 8000 W alone: already past the 4000 W bound
-
-		innocent := baseExecution()
-		innocent.MRID = "ctrl-innocent"
-		innocent.Window = Window{Start: 1000, Duration: 10}
-		innocent.TargetW = &sep2.ActivePower{Value: -10}
-		innocent.Reach = 1
-
-		// Offender first: the violation is found at index 0 (offender's
-		// own instant), and the conflict names the other active
-		// execution, innocent, not offender itself.
-		err := FitsGrant(gg, []Control{offender, innocent})
-		wantConflict(t, err, ConflictPower, innocent.MRID)
-
-		// Innocent first: the violation is still found at index 0
-		// (innocent's own instant, since both share one window), and the
-		// conflict now names offender: the naming follows "other than the
-		// index under test", never a fixed slice position.
-		err = FitsGrant(gg, []Control{innocent, offender})
-		wantConflict(t, err, ConflictPower, offender.MRID)
 	})
 }
 
@@ -486,7 +541,7 @@ func TestFitsGrant_Rule7_Energy(t *testing.T) {
 		c.TargetW = &sep2.ActivePower{Value: -100}
 		c.Reach = 1
 		c.Window = Window{Start: 1000, Duration: 360} // 100 * 1 * 360 = 36000 Ws
-		if err := FitsGrant(g, []Control{c}); err != nil {
+		if err := FitsGrant(g, nil, &c); err != nil {
 			t.Fatalf("FitsGrant error = %v, want nil", err)
 		}
 	})
@@ -497,7 +552,7 @@ func TestFitsGrant_Rule7_Energy(t *testing.T) {
 		c.TargetW = &sep2.ActivePower{Value: -100}
 		c.Reach = 1
 		c.Window = Window{Start: 1000, Duration: 361} // 36100 Ws > 36000 Ws
-		err := FitsGrant(g, []Control{c})
+		err := FitsGrant(g, nil, &c)
 		wantConflict(t, err, ConflictEnergy, g.MRID)
 	})
 
@@ -509,7 +564,7 @@ func TestFitsGrant_Rule7_Energy(t *testing.T) {
 			c.TargetW = &sep2.ActivePower{Value: -50}
 			c.Reach = 2
 			c.Window = Window{Start: 1000, Duration: 360} // 50*2*360 = 36000 Ws
-			if err := FitsGrant(g, []Control{c}); err != nil {
+			if err := FitsGrant(g, nil, &c); err != nil {
 				t.Fatalf("FitsGrant error = %v, want nil", err)
 			}
 		})
@@ -519,7 +574,7 @@ func TestFitsGrant_Rule7_Energy(t *testing.T) {
 			c.TargetW = &sep2.ActivePower{Value: -50}
 			c.Reach = 2
 			c.Window = Window{Start: 1000, Duration: 361} // 50*2*361 = 36100 Ws
-			err := FitsGrant(g, []Control{c})
+			err := FitsGrant(g, nil, &c)
 			wantConflict(t, err, ConflictEnergy, g.MRID)
 		})
 	})
@@ -538,7 +593,7 @@ func TestFitsGrant_Rule7_Energy(t *testing.T) {
 			c.TargetW = &sep2.ActivePower{Value: -2, Multiplier: 2} // 200 W
 			c.Reach = 1
 			c.Window = Window{Start: 1000, Duration: 200} // 200*200 = 40000 Ws > 36000
-			err := FitsGrant(gg, []Control{c})
+			err := FitsGrant(gg, nil, &c)
 			wantConflict(t, err, ConflictEnergy, gg.MRID)
 		})
 
@@ -551,7 +606,7 @@ func TestFitsGrant_Rule7_Energy(t *testing.T) {
 			c.TargetW = &sep2.ActivePower{Value: -99}
 			c.Reach = 1
 			c.Window = Window{Start: 1000, Duration: 360} // 99*360 = 35640 Ws < 36000
-			if err := FitsGrant(gg, []Control{c}); err != nil {
+			if err := FitsGrant(gg, nil, &c); err != nil {
 				t.Fatalf("FitsGrant error = %v, want nil", err)
 			}
 		})
@@ -572,7 +627,7 @@ func TestFitsGrant_Rule7_Energy(t *testing.T) {
 			c.TargetW = &sep2.ActivePower{Value: -1}
 			c.Reach = 1
 			c.Window = Window{Start: 1000, Duration: 3600}
-			if err := FitsGrant(gg, []Control{c}); err != nil {
+			if err := FitsGrant(gg, nil, &c); err != nil {
 				t.Fatalf("FitsGrant error = %v, want nil", err)
 			}
 		})
@@ -582,7 +637,7 @@ func TestFitsGrant_Rule7_Energy(t *testing.T) {
 			c.TargetW = &sep2.ActivePower{Value: -1}
 			c.Reach = 1
 			c.Window = Window{Start: 1000, Duration: 3601}
-			err := FitsGrant(gg, []Control{c})
+			err := FitsGrant(gg, nil, &c)
 			wantConflict(t, err, ConflictEnergy, gg.MRID)
 		})
 	})

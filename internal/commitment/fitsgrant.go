@@ -30,16 +30,16 @@ func sign(v int64) int {
 // power and energy bounds across the whole set.
 //
 // execs is the complete set to validate, not a delta: CheckControl (design
-// 3.4) calls this with the grant's live executions plus the new proposal
-// appended last, and Revise calls it with the old grant's executions
-// against the new grant. When an aggregate bound (power or energy) is
-// broken, the conflict names the last element of execs, since that is
-// always the one the caller is asking about.
+// 3.4) calls this with the grant's live executions plus the new proposal,
+// and Revise calls it with the old grant's executions against the new
+// grant. Neither call shape is visible to FitsGrant itself, so an aggregate
+// conflict (rules 6 and 7) is never named by slice position; see checkPower
+// and checkEnergy.
 func FitsGrant(g Grant, execs []Control) error {
 	if g.CancelledAt != nil {
 		return &ConflictError{Code: ConflictGrantNotLive, MRID: g.MRID}
 	}
-	if g.Window == nil || g.Energy == nil || g.Energy.Value == 0 || g.Power == nil {
+	if g.Window == nil || g.Window.Duration == 0 || g.Energy == nil || g.Energy.Value == 0 || g.Power == nil {
 		return &ConflictError{Code: ConflictNotExecutable, MRID: g.MRID}
 	}
 
@@ -71,30 +71,57 @@ func FitsGrant(g Grant, execs []Control) error {
 // value is piecewise constant, so a local maximum can only appear where
 // some execution's window begins (design: "exact for step functions"),
 // which is why only those instants are tested.
+//
+// Design 5.3 names the conflict by "the other execution's" mRID, not the
+// grant's. Here "the other execution" is whichever active execution is not
+// the one whose own instant triggered the check (index i): that is the one
+// rule 6's own comment frames as the caller's proposal in CheckControl's
+// usual shape, but FitsGrant is handed a flat, order-agnostic set, so the
+// rule is applied structurally rather than by slice position. When i is
+// the only execution active at the violating instant, there is no other
+// execution to name, and the conflict names the grant instead.
 func checkPower(g Grant, execs []Control) error {
-	for _, instant := range execs {
-		t := instant.Window.Start
-		var terms []scaledTerm
-		for _, c := range execs {
+	for i, x := range execs {
+		t := x.Window.Start
+		var active []int
+		for j, c := range execs {
 			if c.Window.Start <= t && t < c.Window.End() {
-				terms = append(terms, scaledTerm{
-					value:      int64(c.TargetW.Value),
-					multiplier: c.TargetW.Multiplier,
-					factor:     int64(c.Reach),
-				})
+				active = append(active, j)
 			}
 		}
-		if magnitudeSumExceeds(terms, int64(g.Power.Value), g.Power.Multiplier) {
-			return &ConflictError{Code: ConflictPower, MRID: execs[len(execs)-1].MRID}
+
+		var terms []scaledTerm
+		for _, j := range active {
+			c := execs[j]
+			terms = append(terms, scaledTerm{
+				value:      int64(c.TargetW.Value),
+				multiplier: c.TargetW.Multiplier,
+				factor:     int64(c.Reach),
+			})
 		}
+		if !magnitudeSumExceeds(terms, scaledTerm{value: int64(g.Power.Value), multiplier: g.Power.Multiplier, factor: 1}) {
+			continue
+		}
+
+		for _, j := range active {
+			if j != i {
+				return &ConflictError{Code: ConflictPower, MRID: execs[j].MRID}
+			}
+		}
+		return &ConflictError{Code: ConflictPower, MRID: g.MRID}
 	}
 	return nil
 }
 
 // checkEnergy enforces rule 7: the summed energy of every execution
 // (|opModTargetW| x Reach x duration, watt-seconds) must not exceed
-// |energyAvailable| (watt-hours, so the bound is scaled by 3600 rather
-// than the sum divided, which would round).
+// |energyAvailable| (watt-hours, converted to watt-seconds by scaling the
+// bound with the same math/big machinery the sum uses, never by dividing
+// the sum or multiplying the bound in plain int64, which could overflow
+// for a value near the Int48 range design 5.3 allows). Design 5.3 names an
+// energy conflict by the grant's mRID unconditionally: unlike power, there
+// is no "other execution" reading for a bound every live execution
+// contributes to at once, regardless of instant.
 func checkEnergy(g Grant, execs []Control) error {
 	terms := make([]scaledTerm, 0, len(execs))
 	for _, c := range execs {
@@ -104,8 +131,9 @@ func checkEnergy(g Grant, execs []Control) error {
 			factor:     int64(c.Reach) * int64(c.Window.Duration),
 		})
 	}
-	if magnitudeSumExceeds(terms, g.Energy.Value*3600, g.Energy.Multiplier) {
-		return &ConflictError{Code: ConflictEnergy, MRID: execs[len(execs)-1].MRID}
+	bound := scaledTerm{value: g.Energy.Value, multiplier: g.Energy.Multiplier, factor: 3600}
+	if magnitudeSumExceeds(terms, bound) {
+		return &ConflictError{Code: ConflictEnergy, MRID: g.MRID}
 	}
 	return nil
 }

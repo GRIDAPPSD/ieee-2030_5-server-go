@@ -30,8 +30,16 @@ func (w Window) Overlaps(o Window) bool {
 	return w.Start < o.End() && o.Start < w.End()
 }
 
-// Within reports whether every instant w covers is also covered by o. A
-// zero-duration w covers no instant, so it is vacuously within any o.
+// Within reports whether every instant w covers is also covered by o.
+// Duration zero is guarded explicitly, the same choice Overlaps makes: a
+// zero-duration w covers no instant, so it is vacuously within any o,
+// wherever it sits. Without the guard the plain range check below reads a
+// zero-duration point as within o only when its Start falls inside o's
+// closed range, which is inconsistent with Overlaps already treating a
+// zero-duration window as asserting nothing.
 func (w Window) Within(o Window) bool {
+	if w.Duration == 0 {
+		return true
+	}
 	return w.Start >= o.Start && w.End() <= o.End()
 }

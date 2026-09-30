@@ -3,6 +3,7 @@ package commitment
 import "testing"
 
 func TestWindow_Overlaps(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		w    Window
@@ -19,6 +20,7 @@ func TestWindow_Overlaps(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tc.w.Overlaps(tc.o); got != tc.want {
 				t.Errorf("Overlaps(%+v, %+v) = %v, want %v", tc.w, tc.o, got, tc.want)
 			}
@@ -31,6 +33,7 @@ func TestWindow_Overlaps(t *testing.T) {
 }
 
 func TestWindow_Within(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		w    Window
@@ -41,9 +44,13 @@ func TestWindow_Within(t *testing.T) {
 		{"one step inside: strictly interior", Window{Start: 2, Duration: 5}, Window{Start: 0, Duration: 10}, true},
 		{"one step past: starts one second before the outer window", Window{Start: -1, Duration: 10}, Window{Start: 0, Duration: 10}, false},
 		{"one step past: ends one second after the outer window", Window{Start: 0, Duration: 11}, Window{Start: 0, Duration: 10}, false},
+		{"zero duration inside o is vacuously within", Window{Start: 5, Duration: 0}, Window{Start: 0, Duration: 10}, true},
+		{"zero duration exactly at o's end is vacuously within, consistent with Overlaps treating it as asserting nothing", Window{Start: 10, Duration: 0}, Window{Start: 0, Duration: 10}, true},
+		{"zero duration entirely outside o is still vacuously within", Window{Start: 999, Duration: 0}, Window{Start: 0, Duration: 10}, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tc.w.Within(tc.o); got != tc.want {
 				t.Errorf("Within(%+v, %+v) = %v, want %v", tc.w, tc.o, got, tc.want)
 			}
@@ -52,6 +59,7 @@ func TestWindow_Within(t *testing.T) {
 }
 
 func TestWindow_End(t *testing.T) {
+	t.Parallel()
 	w := Window{Start: 100, Duration: 50}
 	if got := w.End(); got != 150 {
 		t.Errorf("End() = %d, want 150", got)

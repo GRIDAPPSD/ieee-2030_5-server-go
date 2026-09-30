@@ -9,6 +9,7 @@ import (
 // defines: every code is a fixed string (never request text) and no two
 // collide, since a caller matches on the string in a 409 body.
 func TestConflictCodes_AreClosedAndDistinct(t *testing.T) {
+	t.Parallel()
 	codes := []ConflictCode{
 		ConflictFleetWindow,
 		ConflictGrantNotLive,
@@ -34,6 +35,7 @@ func TestConflictCodes_AreClosedAndDistinct(t *testing.T) {
 }
 
 func TestConflictError_ImplementsError(t *testing.T) {
+	t.Parallel()
 	err := &ConflictError{Code: ConflictGrantNotLive, MRID: "grant-1"}
 	var target *ConflictError
 	if !errors.As(error(err), &target) {

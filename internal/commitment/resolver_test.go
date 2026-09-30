@@ -56,6 +56,7 @@ func (failingManagers) ManagedBy(context.Context, string) ([]string, error) {
 }
 
 func TestResolver_FleetOf(t *testing.T) {
+	t.Parallel()
 	const (
 		aggregatorID   = "aggregator-edev"
 		aggregatorLFDI = "AGG1"
@@ -106,6 +107,7 @@ func TestResolver_FleetOf(t *testing.T) {
 }
 
 func TestResolver_FleetOf_EmptyLFDIIsError(t *testing.T) {
+	t.Parallel()
 	devices := fakeDevices{"no-lfdi": sep2.EndDevice{LFDI: ""}}
 	r := Resolver{Devices: devices, Managers: fakeManagers{}}
 
@@ -116,6 +118,7 @@ func TestResolver_FleetOf_EmptyLFDIIsError(t *testing.T) {
 }
 
 func TestResolver_FleetOf_ManagerLookupFailurePropagates(t *testing.T) {
+	t.Parallel()
 	devices := fakeDevices{"dev": sep2.EndDevice{LFDI: "DEV1"}}
 	r := Resolver{Devices: devices, Managers: failingManagers{}}
 
@@ -123,13 +126,20 @@ func TestResolver_FleetOf_ManagerLookupFailurePropagates(t *testing.T) {
 	if !errors.Is(err, errManagerLookupFailed) {
 		t.Errorf("FleetOf error = %v, want errManagerLookupFailed to propagate (caller fails closed)", err)
 	}
+	if got := err.Error(); got == errManagerLookupFailed.Error() {
+		t.Errorf("FleetOf error = %q, want it wrapped with the device/LFDI context, not the bare underlying error", got)
+	}
 }
 
 func TestResolver_FleetOf_DeviceLookupFailurePropagates(t *testing.T) {
+	t.Parallel()
 	r := Resolver{Devices: fakeDevices{}, Managers: fakeManagers{}}
 
 	_, err := r.FleetOf(context.Background(), "absent")
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("FleetOf(absent device) error = %v, want store.ErrNotFound to propagate", err)
+	}
+	if got := err.Error(); got == store.ErrNotFound.Error() {
+		t.Errorf("FleetOf error = %q, want it wrapped with the EndDevice id context, not the bare underlying error", got)
 	}
 }

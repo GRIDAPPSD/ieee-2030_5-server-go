@@ -3,22 +3,25 @@ package commitment
 import "math/big"
 
 // scaledTerm is one addend in a magnitude sum: |value| * factor * 10^multiplier.
+// A bound is a scaledTerm too (factor 1, or 3600 for the watt-hour to
+// watt-second conversion rule 7 needs), so every unit conversion goes
+// through the same math/big scaling and never divides or overflows int64.
 type scaledTerm struct {
 	value      int64
 	multiplier int8
 	factor     int64
 }
 
-// magnitudeSumExceeds reports whether the exact sum of terms exceeds
-// |boundValue| * 10^boundMultiplier. Every term is scaled to the lowest
-// multiplier present (across the terms and the bound) by multiplying the
-// others UP with an integer power of ten, so the comparison never divides
-// and never rounds. This generalizes
+// magnitudeSumExceeds reports whether the exact sum of terms exceeds bound.
+// Every term, bound included, is scaled to the lowest multiplier present by
+// multiplying the others UP with an integer power of ten, so the
+// comparison never divides and never rounds. This generalizes
 // internal/flowreservation.magnitudeExceeds, which compares exactly two
-// values the same way, to a sum of any number of them (design 5.3 rules 6
-// and 7 each sum several executions against one bound).
-func magnitudeSumExceeds(terms []scaledTerm, boundValue int64, boundMultiplier int8) bool {
-	exp := boundMultiplier
+// values the same way, to a sum of any number of them plus an arbitrary
+// integer factor per term (design 5.3 rules 6 and 7 each sum several
+// executions, scaled by Reach or by Reach*duration, against one bound).
+func magnitudeSumExceeds(terms []scaledTerm, bound scaledTerm) bool {
+	exp := bound.multiplier
 	for _, t := range terms {
 		if t.multiplier < exp {
 			exp = t.multiplier
@@ -29,8 +32,7 @@ func magnitudeSumExceeds(terms []scaledTerm, boundValue int64, boundMultiplier i
 	for _, t := range terms {
 		sum.Add(sum, scaleUp(t.value, t.multiplier, exp, t.factor))
 	}
-	bound := scaleUp(boundValue, boundMultiplier, exp, 1)
-	return sum.Cmp(bound) > 0
+	return sum.Cmp(scaleUp(bound.value, bound.multiplier, exp, bound.factor)) > 0
 }
 
 // scaleUp returns |value| * factor * 10^(multiplier-exp). multiplier must be

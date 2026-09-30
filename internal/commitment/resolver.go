@@ -28,7 +28,7 @@ type Resolver struct {
 func (r Resolver) FleetOf(ctx context.Context, endDeviceID string) (string, error) {
 	dev, err := r.Devices.Get(ctx, endDeviceID)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("commitment: resolving fleet of EndDevice %s: %w", endDeviceID, err)
 	}
 	if dev.LFDI == "" {
 		return "", fmt.Errorf("commitment: EndDevice %s has no LFDI", endDeviceID)
@@ -38,7 +38,7 @@ func (r Resolver) FleetOf(ctx context.Context, endDeviceID string) (string, erro
 		if errors.Is(err, store.ErrNotFound) {
 			return dev.LFDI, nil
 		}
-		return "", err
+		return "", fmt.Errorf("commitment: looking up the manager of EndDevice %s (LFDI %s): %w", endDeviceID, dev.LFDI, err)
 	}
 	return manager, nil
 }

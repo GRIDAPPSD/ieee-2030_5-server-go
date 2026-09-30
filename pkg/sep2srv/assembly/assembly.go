@@ -682,10 +682,10 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 	mux.HandleFunc("GET /mup", corelisthandler.ListHandler[sep2.MirrorUsagePoint, sep2.MirrorUsagePointList](
 		stores.MirrorUsagePoints, coremetering.BuildMirrorUsagePointList, 300,
 	))
-	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(stores.MirrorUsagePoints, lfdiProvider, postRateProvider))
-	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(stores.MirrorUsagePoints, lfdiProvider))
+	mux.HandleFunc("POST /mup", coremetering.HandleCreateMirrorUsagePoint(stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, postRateProvider))
+	mux.HandleFunc("GET /mup/{id}", coremetering.HandleMirrorUsagePoint(stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider))
 	mux.HandleFunc("POST /mup/{id}/mr", coremetering.HandlePostMirrorMeterReading(
-		stores.MirrorUsagePoints, mirrorMeterReadings, lfdiProvider,
+		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider,
 	))
 
 	// IEEE 2030.5-2018 section 10.11.3 rule (d): the client posts readings
@@ -703,7 +703,7 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 	// drift into minting different href shapes, or into enforcing creator
 	// scope on one path and not the other, for the same resource kind.
 	mux.HandleFunc("POST /mup/{id}", coremetering.HandlePostMirrorMeterReading(
-		stores.MirrorUsagePoints, mirrorMeterReadings, lfdiProvider,
+		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider,
 	))
 
 	// The two Mandatory methods on the MirrorUsagePoint instance.
@@ -727,10 +727,10 @@ func registerMirrorRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPol
 	// wrapper tables are removed upstream. Editing those tables from here is
 	// the cross-repo lockstep drift to avoid.
 	mux.HandleFunc("PUT /mup/{id}", coremetering.HandlePutMirrorUsagePoint(
-		stores.MirrorUsagePoints, lfdiProvider, postRateProvider,
+		stores.MirrorUsagePoints, stores.EndDeviceManagers, lfdiProvider, postRateProvider,
 	))
 	mux.HandleFunc("DELETE /mup/{id}", coremetering.HandleDeleteMirrorUsagePoint(
-		stores.MirrorUsagePoints, mirrorMeterReadings, lfdiProvider,
+		stores.MirrorUsagePoints, mirrorMeterReadings, stores.EndDeviceManagers, lfdiProvider,
 	))
 }
 

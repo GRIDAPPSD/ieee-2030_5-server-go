@@ -1,8 +1,8 @@
 // Package commitment holds the one rule that #714 exists to enforce: a
-// fleet window carries at most one live grant or one unlinked control, and
-// an execution carrying out a grant stays inside that grant's bounds. The
-// package is pure: it reads no store and holds no state of its own, so
-// every value it works with is handed in by a caller.
+// fleet window carries either one live grant with the controls carrying it
+// out, or any number of plain controls, never both; and an execution stays
+// inside its grant's bounds. It reads no store directly: the Ledger reads
+// through the GrantSource and ControlSource it is given, and keeps no copy.
 package commitment
 
 // Window is the half-open interval [Start, Start+Duration). Duration zero
@@ -42,4 +42,16 @@ func (w Window) Within(o Window) bool {
 		return true
 	}
 	return w.Start >= o.Start && w.End() <= o.End()
+}
+
+// ClipAt ends w at instant t, the way a supersede does: a window starting
+// at or after t covers nothing.
+func (w Window) ClipAt(t int64) Window {
+	if t <= w.Start {
+		return Window{Start: w.Start}
+	}
+	if t < w.End() {
+		return Window{Start: w.Start, Duration: uint32(t - w.Start)}
+	}
+	return w
 }

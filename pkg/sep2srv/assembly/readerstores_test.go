@@ -139,6 +139,9 @@ var readerStoresExcludedFields = map[string]string{
 	"Subscriptions":      "a bespoke notification plane with no reader/writer split",
 	"DERControlLifecycles": "absence is the ordinary pre-issuer state, not a " +
 		"misconfiguration; requireScoped's log would be false on most deployments",
+	"FlowReservationResponseLifecycles": "optional like DERControlLifecycles, " +
+		"and only the serve-time status derivation reads it",
+	"CommitmentLedger": "a lock-holding check service, not resource data",
 }
 
 // TestNewReaderStoresWiresEveryMirroredField fails when a field is added to

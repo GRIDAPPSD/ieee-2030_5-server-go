@@ -66,3 +66,26 @@ func TestWindow_End(t *testing.T) {
 		t.Errorf("End() = %d, want 150", got)
 	}
 }
+
+func TestWindow_ClipAt(t *testing.T) {
+	t.Parallel()
+	w := Window{Start: 100, Duration: 50}
+	for _, tc := range []struct {
+		name string
+		t    int64
+		want Window
+	}{
+		{"before start covers nothing", 99, Window{Start: 100}},
+		{"at start covers nothing", 100, Window{Start: 100}},
+		{"inside ends at t", 120, Window{Start: 100, Duration: 20}},
+		{"at end is unchanged", 150, w},
+		{"after end is unchanged", 200, w},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := w.ClipAt(tc.t); got != tc.want {
+				t.Errorf("ClipAt(%d) = %+v, want %+v", tc.t, got, tc.want)
+			}
+		})
+	}
+}

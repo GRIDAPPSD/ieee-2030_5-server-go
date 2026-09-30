@@ -129,7 +129,7 @@ func NewReaderStores(s *Stores) *ReaderStores {
 		MessagingPrograms:        store.AsReader(requireResource(s.MessagingPrograms, "MessagingPrograms")),
 		TextMessages:             store.AsScopedReader(requireScoped(s.TextMessages, "TextMessages")),
 		FlowReservationRequests:  store.AsScopedReader(requireScoped(s.FlowReservationRequests, "FlowReservationRequests")),
-		FlowReservationResponses: store.AsScopedReader(requireScoped(s.FlowReservationResponses, "FlowReservationResponses")),
+		FlowReservationResponses: store.AsScopedReader(servedFlowReservationResponses(requireScoped(s.FlowReservationResponses, "FlowReservationResponses"), s)),
 		ResponseSets:             store.AsReader(requireResource(s.ResponseSets, "ResponseSets")),
 		Responses:                store.AsScopedReader(requireScoped(s.Responses, "Responses")),
 	}

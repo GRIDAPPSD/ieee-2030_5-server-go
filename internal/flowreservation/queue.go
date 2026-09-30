@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -372,9 +373,10 @@ func (q *Queue) build(ctx context.Context, edevID, frqID string, decision Decisi
 	if frp.Interval != nil {
 		start = frp.Interval.Start
 	}
-	es := deriveEventStatus(start, frp.CreationTime, now.Unix())
+	// A response being built has no lifecycle record yet.
+	es := deriveEventStatus(start, frp.CreationTime, now.Unix(), dercontrol.LifecycleRecord{})
 	frp.EventStatus = &es
-	frp.Href = fmt.Sprintf("/edev/%s/frp/%s", edevID, frqID)
+	frp.Href = responseHref(edevID, frqID)
 
 	if err := q.frp.Create(ctx, edevID, frqID, frp); err != nil {
 		if errors.Is(err, store.ErrAlreadyExists) {

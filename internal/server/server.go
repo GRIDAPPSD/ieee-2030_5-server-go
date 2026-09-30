@@ -217,6 +217,8 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		ResponseSets:             memory.NewStore[sep2.ResponseSet](),
 		Responses:                memory.NewScopedStore[sep2.Response](),
 
+		FlowReservationResponseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
+
 		// #715 fix round 3 item 2: env SEP2_EDITION, default "2018" via
 		// EffectiveSEP2Edition.
 		Sep2Edition: handler.SEP2Edition(cfg.EffectiveSEP2Edition()),
@@ -225,6 +227,8 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		// answers 503 on create.
 		PEN: cfg.EffectivePEN(),
 	}
+
+	stores.CommitmentLedger = NewCommitmentLedger(stores)
 
 	if cfg.BootFixtureFile != "" {
 		target := &bootfixture.Target{

@@ -8,7 +8,7 @@ import (
 )
 
 func newTestStores() *server.Stores {
-	return &server.Stores{
+	s := &server.Stores{
 		EndDevices:               memory.NewEndDeviceStore(),
 		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
 		EndDeviceIndexes:         memory.NewEndDeviceIndex(),
@@ -42,5 +42,9 @@ func newTestStores() *server.Stores {
 		FlowReservationResponses: memory.NewScopedStore[sep2.FlowReservationResponse](),
 		ResponseSets:             memory.NewStore[sep2.ResponseSet](),
 		Responses:                memory.NewScopedStore[sep2.Response](),
+
+		FlowReservationResponseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
 	}
+	s.CommitmentLedger = server.NewCommitmentLedger(s)
+	return s
 }

@@ -2,6 +2,8 @@ package server
 
 import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -113,6 +115,13 @@ type Stores struct {
 	ResponseSets             *memory.Store[sep2.ResponseSet]
 	Responses                *memory.ScopedStore[sep2.Response]
 
+	// FlowReservationResponseLifecycles holds each response's cancel mark
+	// (#714), keyed exactly as the response and memory-only like it.
+	FlowReservationResponseLifecycles *memory.ScopedStore[dercontrol.LifecycleRecord]
+
+	// CommitmentLedger is the process's one commitment ledger (#714).
+	CommitmentLedger *commitment.Ledger
+
 	// Sep2Edition is the config-declared IEEE 2030.5 edition (env
 	// SEP2_EDITION, internal/config.Config.EffectiveSEP2Edition), threaded
 	// to the fleet-read admin handler's export-positive sign mapping (#715
@@ -134,4 +143,15 @@ type Stores struct {
 	// the same reason as Sep2Edition: BuildAdminRouter's other parameters
 	// are routing and listener knobs.
 	AdminNotifier handler.ResourceNotifier
+}
+
+// NewCommitmentLedger builds the commitment ledger over s's own stores: the
+// response lifecycle store it reads is the one the response status routes
+// read, so a cancel mark frees the window and serves Cancelled together.
+func NewCommitmentLedger(s *Stores) *commitment.Ledger {
+	return sources.NewLedger(
+		s.EndDevices, s.EndDeviceManagers,
+		s.FlowReservationResponses, s.FlowReservationResponseLifecycles,
+		s.DERControls, s.DERControlLifecycles,
+	)
 }

@@ -3,6 +3,7 @@ package flowreservation_test
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -363,6 +364,11 @@ func TestLedgerGate_FallbackRacesAPlainControl(t *testing.T) {
 	t.Logf("%d rounds: grant won %d, control won %d", rounds, grants, controls)
 	// A ledger that refused every call, or never contended, would let one
 	// side win every round; the race has only been exercised if both won.
+	// On one P the fallback's timer goroutine runs first every round, so
+	// only the exactly-one check above applies there.
+	if runtime.GOMAXPROCS(0) == 1 {
+		return
+	}
 	if grants == 0 || controls == 0 {
 		t.Fatalf("%d rounds: grant won %d, control won %d; want each side to win at least once", rounds, grants, controls)
 	}
@@ -513,7 +519,8 @@ func TestLedgerGate_FallbackRetriesAFailedGatedCreate(t *testing.T) {
 	t.Parallel()
 	f := newLedgerFixture(t, flowreservation.Config{Deadline: time.Hour})
 	cfg := flowreservation.Config{Deadline: time.Millisecond, RetryBackoff: time.Millisecond, RetryAttempts: 3}
-	q := f.queueOver(t, &flakyFRP{ScopedStore: f.frp, failures: 1}, cfg)
+	flaky := &flakyFRP{ScopedStore: f.frp, failures: 1}
+	q := f.queueOver(t, flaky, cfg)
 
 	req := windowRequest("REQ1", time.Now().Add(time.Hour).Unix(), 600, 10000)
 	storeRequest(t, f.frq, aggID, "R1", req)
@@ -522,6 +529,12 @@ func TestLedgerGate_FallbackRetriesAFailedGatedCreate(t *testing.T) {
 	got := waitForResponse(t, f.frp, aggID)
 	if len(got) != 1 || got[0].Interval == nil || *got[0].Interval != *req.IntervalRequested {
 		t.Fatalf("responses after one failed Create = %+v, want one grant as asked", got)
+	}
+	flaky.mu.Lock()
+	left := flaky.failures
+	flaky.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("injected Create failures left = %d, want 0: the grant must have followed a failed Create", left)
 	}
 	if _, err := q.Answer(context.Background(), aggID, "R1", flowreservation.Decision{Kind: flowreservation.Deny}); !errors.Is(err, flowreservation.ErrAlreadyAnswered) {
 		t.Fatalf("later Answer err = %v, want ErrAlreadyAnswered", err)

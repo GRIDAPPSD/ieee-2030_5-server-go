@@ -451,3 +451,64 @@ func TestDERControlRoutesFailClosedOnLifecycleStoreError(t *testing.T) {
 		t.Errorf("GET list = %d, want 500 (a broken lifecycle store must fail the request, not serve a control with no EventStatus)", listResp.StatusCode)
 	}
 }
+
+// TestDERControlRoutesServeUnchangedWhenLifecyclesUnwired asserts a MEDIUM
+// finding on PR 726 (#564): with Stores.DERControlLifecycles left absent
+// (the ordinary state before an admin issuer is wired), both routes must
+// serve a control exactly as stored, not run it through the
+// status-derivation decorator at all. The stored status is deliberately
+// what real timing would not derive, the same control used by
+// TestDERControlWithNoLifecycleRecordServedUnchanged, so a build that wraps
+// the decorator unconditionally (the "if !store.IsAbsent(...)" guard in
+// assembly.go weakened to always wrap) either serves a recomputed status
+// here or panics reaching a nil lifecycle store; this test fails either
+// way.
+func TestDERControlRoutesServeUnchangedWhenLifecyclesUnwired(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().Unix()
+	stores := testStores()
+	stores.DERControlLifecycles = nil
+
+	want := sep2.DERControl{
+		DERControlBase: &sep2.DERControlBase{
+			OpModTargetW: &sep2.ActivePower{Value: 500, Multiplier: 0},
+		},
+	}
+	want.Href = "/edev/" + testLFDI + "/fsa/1/derp/1/derc/unwired-0"
+	want.MRID = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	want.CreationTime = now - 3600
+	want.Interval = &sep2.DateTimeInterval{Start: now - 3600, Duration: 900}
+	want.EventStatus = &sep2.EventStatus{CurrentStatus: sep2.EventStatusScheduled, DateTime: now + 999999}
+
+	scopeKey := derControlScopeKey(testLFDI, "1", "1")
+	if err := stores.DERControls.Create(context.Background(), scopeKey, "unwired-0", want); err != nil {
+		t.Fatalf("seed DERControl: %v", err)
+	}
+	srv := derControlRouter(t, stores)
+
+	resp, err := http.Get(srv.URL + want.Href)
+	if err != nil {
+		t.Fatalf("GET single: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET single = %d, want 200", resp.StatusCode)
+	}
+	var single sep2.DERControl
+	decodeXML(t, resp, &single)
+	assertEventStatus(t, "single (DERControlLifecycles unwired)", single.EventStatus, want.EventStatus.CurrentStatus, want.EventStatus.DateTime)
+
+	listResp, err := http.Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1/derc")
+	if err != nil {
+		t.Fatalf("GET list: %v", err)
+	}
+	if listResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET list = %d, want 200", listResp.StatusCode)
+	}
+	var list sep2.DERControlList
+	decodeXML(t, listResp, &list)
+	if len(list.DERControl) != 1 {
+		t.Fatalf("list served %d controls, want 1", len(list.DERControl))
+	}
+	assertEventStatus(t, "list member (DERControlLifecycles unwired)", list.DERControl[0].EventStatus, want.EventStatus.CurrentStatus, want.EventStatus.DateTime)
+}

@@ -2,17 +2,19 @@ package bootfixture_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // dercontrolSeedFixture seeds one EndDevice, one DERProgram and one
-// DERControl. Used only by TestDERControlSeed_TwoBootsNoDuplicateCreate.
+// DERControl. Shared by the seed tests below.
 const dercontrolSeedFixture = `
 end_devices:
   - id: e1
@@ -109,5 +111,44 @@ func TestDERControlSeed_TwoBootsNoDuplicateCreate(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("Count after boot 2 = %d, want 1 (the fixture's single control, not duplicated)", n)
+	}
+}
+
+// TestDERControlSeed_DeletedStaysDeleted is GRIDAPPSD/ieee-2030_5-server-go#565
+// fix round 1, item 4: the sibling test above never deletes a seeded
+// control, so reconcile.go's `case wasSeeded:` branch for DERControl (the
+// one that skips recreating a control an operator deleted since it was
+// seeded) had no test that could catch it being disabled. This seeds the
+// fixture's control, deletes it directly (mirroring how
+// TestReconcileKeepsDeletesAndSkipsChildren simulates an operator delete
+// for EndDevice and DERProgram), boots again over the same fixture and
+// data_dir, and asserts the control was not recreated.
+func TestDERControlSeed_DeletedStaysDeleted(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	fixturePath := filepath.Join(t.TempDir(), "fixture.yaml")
+	if err := os.WriteFile(fixturePath, []byte(dercontrolSeedFixture), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	seedPath := filepath.Join(dataDir, "bootfixture-seed.json")
+
+	target1 := dercontrolSeedTarget(t, dataDir)
+	if err := bootfixture.Reconcile(ctx, target1, fixturePath, seedPath, t.Logf); err != nil {
+		t.Fatalf("boot 1: %v", err)
+	}
+	if _, err := target1.DERControls.Get(ctx, "e1/0/p1", "c1"); err != nil {
+		t.Fatalf("control missing after boot 1: %v", err)
+	}
+
+	if err := target1.DERControls.Delete(ctx, "e1/0/p1", "c1"); err != nil {
+		t.Fatalf("operator delete: %v", err)
+	}
+
+	target2 := dercontrolSeedTarget(t, dataDir)
+	if err := bootfixture.Reconcile(ctx, target2, fixturePath, seedPath, t.Logf); err != nil {
+		t.Fatalf("boot 2: %v", err)
+	}
+	if _, err := target2.DERControls.Get(ctx, "e1/0/p1", "c1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("DERControl after boot 2 = %v, want ErrNotFound: a control deleted since it was seeded must stay deleted", err)
 	}
 }

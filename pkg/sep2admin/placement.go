@@ -48,6 +48,13 @@ func corePlacement(rank int) Placement {
 	return Placement{group: groupCore, Rank: rank}
 }
 
+// Extension reports whether p is in the graft band, the only band
+// ExtensionSlot produces. A caller serving a frozen registry's extension
+// panels filters on it, since the core band holds the shell's own tabs.
+func (p Placement) Extension() bool {
+	return p.group == groupGraft
+}
+
 func (p Placement) isZero() bool {
 	return p.group == groupInvalid
 }

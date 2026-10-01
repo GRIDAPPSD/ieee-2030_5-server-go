@@ -746,7 +746,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	// #270: resolve the admin host-header allowlist from the static
 	// defaults plus operator-supplied SEP2_ADMIN_ALLOWED_HOSTS extras.
 	allowedHosts := adminplane.ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
-	adminRouter, adminRoutes := adminplane.Build(adminplane.Config{
+	adminRouter, adminRoutes, err := adminplane.Build(adminplane.Config{
 		AdminKey:        cfg.AdminKey,
 		CertService:     svc,
 		Stores:          stores,
@@ -757,6 +757,9 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		LegacyDashboard: cfg.AdminLegacyDashboard,
 		Traffic:         trafficHandler,
 	})
+	if err != nil {
+		return nil, "", "", nil, fmt.Errorf("admin router: %w", err)
+	}
 
 	adminListener, err := net.Listen("tcp", addr)
 	if err != nil {

@@ -41,7 +41,9 @@ var sensitiveAdminPatterns = map[string]struct{}{
 //     already required a credential. The flow reservation and grant reads
 //     disclose a fleet's requested and granted energy and who answered, so
 //     the whole family is covered by prefix, not route by route.
-var sensitiveAdminReadPrefixes = []string{"/api/management-pairs", "/api/derms/"}
+//   - /api/ui/panels (#829): an embedder's panel View may disclose
+//     anything, and the plane cannot tell what.
+var sensitiveAdminReadPrefixes = []string{"/api/management-pairs", "/api/derms/", "/api/ui/panels"}
 
 // isSensitiveAdminReadPath reports whether path falls under one of
 // sensitiveAdminReadPrefixes.

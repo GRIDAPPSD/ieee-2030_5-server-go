@@ -1,51 +1,52 @@
 <script lang="ts">
-  // Reads Descriptor.kind by name and renders the matching body, never
-  // by inferring the shape from which fields happen to be present.
-  // kind is the wire discriminator (descriptor.go's wireDescriptor); an
-  // unrecognised kind, an absent kind, and a body that does not match
-  // its kind (an absent body included) each render an honest message
-  // instead of nothing or a crash (issue 368 criterion 3).
+  // Renders a v2 Descriptor: each section's kind picks its body renderer
+  // by name. An unsupported version, an unknown section kind, and a body
+  // that does not match its kind each render a message, never nothing.
   import DescriptorTable from './DescriptorTable.svelte'
   import DescriptorDefinitionList from './DescriptorDefinitionList.svelte'
   import type { Descriptor, DescriptorTableBody, DescriptorDefinitionListBody } from '../lib/descriptor'
 
   let { descriptor }: { descriptor: Descriptor } = $props()
 
-  // The literal 1, not a shared constant: descriptor_test.go pins the
-  // wire "version" number the same way, reasoning that a renderer in
-  // another language hardcodes the number rather than importing Go's
-  // CurrentDescriptorVersion. Register already refuses an unsupported
-  // Panel.DescriptorVersion at boot (registry.go,
-  // ErrUnsupportedDescriptorVersion); this guard is this frontend's half
-  // of issue 368 criterion 10, covering the wire body a future build's
-  // server could still send.
-  const SUPPORTED_VERSION = 1
+  // The literal 2, as descriptor_test.go pins the wire number: a renderer
+  // in another language hardcodes it rather than importing Go's constant.
+  const SUPPORTED_VERSION = 2
 
   function isTableBody(value: unknown): value is DescriptorTableBody {
-    return typeof value === 'object' && value !== null && 'columns' in value && 'rows' in value
+    if (typeof value !== 'object' || value === null) return false
+    const body = value as Partial<DescriptorTableBody>
+    return Array.isArray(body.columns) && Array.isArray(body.rows) && body.rows.every(Array.isArray)
   }
 
   function isDefinitionListBody(value: unknown): value is DescriptorDefinitionListBody {
-    return typeof value === 'object' && value !== null && 'groups' in value
+    if (typeof value !== 'object' || value === null) return false
+    const body = value as Partial<DescriptorDefinitionListBody>
+    return Array.isArray(body.groups) && body.groups.every((g) => Array.isArray(g?.entries))
   }
 </script>
 
-<!-- descriptor.body is typed unknown: TypeScript cannot see its shape
-     from the kind check alone, so isTableBody/isDefinitionListBody
-     confirm the body actually carries its kind's keys before the cast
-     below reads it as that shape. A kind with no body, and a kind whose
-     body is the other shape, both fail their guard and fall to the
-     malformed-body message instead of throwing. -->
 {#if descriptor.version !== SUPPORTED_VERSION}
   <p class="hint" data-testid="descriptor-unsupported-version">Unsupported content version: {descriptor.version}</p>
-{:else if descriptor.kind === 'table' && isTableBody(descriptor.body)}
-  <DescriptorTable body={descriptor.body as DescriptorTableBody} />
-{:else if descriptor.kind === 'definitionList' && isDefinitionListBody(descriptor.body)}
-  <DescriptorDefinitionList body={descriptor.body as DescriptorDefinitionListBody} />
-{:else if descriptor.kind === undefined}
+{:else if !Array.isArray(descriptor.sections) || descriptor.sections.length === 0}
   <p class="hint" data-testid="descriptor-empty">This panel has no content.</p>
-{:else if descriptor.kind === 'table' || descriptor.kind === 'definitionList'}
-  <p class="hint" data-testid="descriptor-malformed-body">This panel's content could not be rendered.</p>
 {:else}
-  <p class="hint" data-testid="descriptor-unknown-kind">Unsupported content type: "{descriptor.kind}"</p>
+  {#each descriptor.sections as section, i (i)}
+    <div class="card" data-testid="descriptor-section">
+      {#if section.heading}
+        <h2 data-testid="descriptor-heading">{section.heading}</h2>
+      {/if}
+      {#each section.prose ?? [] as line, j (j)}
+        <p class="hint" data-testid="descriptor-prose">{line}</p>
+      {/each}
+      {#if section.kind === 'table' && isTableBody(section.body)}
+        <DescriptorTable body={section.body} empty={section.empty} />
+      {:else if section.kind === 'definitionList' && isDefinitionListBody(section.body)}
+        <DescriptorDefinitionList body={section.body} empty={section.empty} />
+      {:else if section.kind === 'table' || section.kind === 'definitionList'}
+        <p class="hint" data-testid="descriptor-malformed-body">This section's content could not be rendered.</p>
+      {:else}
+        <p class="hint" data-testid="descriptor-unknown-kind">Unsupported content type: "{section.kind}"</p>
+      {/if}
+    </div>
+  {/each}
 {/if}

@@ -1,0 +1,59 @@
+{
+  "version": 2,
+  "sections": [
+    {
+      "kind": "table",
+      "heading": "Registry",
+      "prose": ["Devices the bridge has registered."],
+      "empty": "No registry entries yet.",
+      "body": {
+        "columns": ["Name", "State", "Last seen", "Docs"],
+        "rows": [
+          [
+            {"kind": "text", "text": "pv-1"},
+            {"kind": "badge", "text": "accepted", "badge": "ok"},
+            {"kind": "time", "text": "5 minutes ago", "datetime": "2026-10-01T18:30:00Z"},
+            {"kind": "link", "text": "devices", "href": "/ui/devices"}
+          ],
+          [
+            {"kind": "text", "text": "pv-2"},
+            {"kind": "badge", "text": "rejected", "badge": "error"},
+            {"kind": "time", "text": "5 minutes ago", "datetime": "2026-10-01T18:30:00Z"},
+            {"kind": "link", "text": "spec", "href": "https://example.org/a?b=c"}
+          ]
+        ]
+      }
+    },
+    {
+      "kind": "table",
+      "heading": "Clients",
+      "prose": [],
+      "empty": "No clients connected.",
+      "body": {"columns": ["LFDI"], "rows": []}
+    },
+    {
+      "kind": "definitionList",
+      "heading": "",
+      "prose": [],
+      "empty": "",
+      "body": {
+        "groups": [
+          {
+            "heading": "Connection",
+            "entries": [
+              {"key": "Status", "value": {"kind": "badge", "text": "degraded", "badge": "warn"}},
+              {"key": "Topic", "value": {"kind": "text", "text": "goss/gridappsd/simulation/output"}}
+            ]
+          },
+          {
+            "heading": "",
+            "entries": [
+              {"key": "Badges", "value": {"kind": "badge", "text": "n", "badge": "neutral"}},
+              {"key": "Info", "value": {"kind": "badge", "text": "i", "badge": "info"}}
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

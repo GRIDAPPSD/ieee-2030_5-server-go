@@ -6,6 +6,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -21,11 +22,21 @@ type Config struct {
 	AllowedHosts    []string
 	LegacyDashboard bool
 	Traffic         http.Handler
+	// Panels are an embedder's extra tabs, served after the shell's own
+	// under /api/ui/panels. Run registers none.
+	Panels []sep2admin.Panel
 }
 
-// Build is the admin router Run serves, with its route list for the boot log.
-func Build(cfg Config) (http.Handler, []string) {
-	return BuildAdminRouter(cfg.AdminKey, cfg.CertService, cfg.Stores, cfg.TLSMode, cfg.Tickets, cfg.Sessions, cfg.AllowedHosts, cfg.LegacyDashboard, cfg.Traffic)
+// Build is the admin router Run serves, with its route list for the boot
+// log. It fails when a panel is refused at registration.
+func Build(cfg Config) (http.Handler, []string, error) {
+	panels, err := newPanelSet(cfg.Panels)
+	if err != nil {
+		return nil, nil, err
+	}
+	authed, authedWithMiddleware := buildAuthedAdminMux(cfg.AdminKey, cfg.CertService, cfg.Stores, cfg.TLSMode, cfg.Tickets, cfg.Sessions, cfg.LegacyDashboard, cfg.Traffic, panels)
+	h, patterns := buildOuterAdminRouter(cfg.AdminKey, cfg.Sessions, cfg.AllowedHosts, authed, authedWithMiddleware)
+	return h, patterns, nil
 }
 
 // BuildAdminRouter creates the admin router AND returns the canonical
@@ -67,7 +78,7 @@ func Build(cfg Config) (http.Handler, []string) {
 // Test callers that don't need the pattern list discard the second
 // return value with `_`.
 func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, allowedHosts []string, legacyDashboard bool, trafficHandler http.Handler) (http.Handler, []string) {
-	authed, authedWithMiddleware := buildAuthedAdminMux(adminKey, svc, stores, tlsMode, tickets, sessions, legacyDashboard, trafficHandler)
+	authed, authedWithMiddleware := buildAuthedAdminMux(adminKey, svc, stores, tlsMode, tickets, sessions, legacyDashboard, trafficHandler, noPanels())
 	return buildOuterAdminRouter(adminKey, sessions, allowedHosts, authed, authedWithMiddleware)
 }
 
@@ -82,7 +93,7 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 // "what can the guard actually see" reads authed.Patterns() here rather
 // than BuildAdminRouter's merged list, which also carries the outer mux's
 // routes and so overstates the guard's reach.
-func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, legacyDashboard bool, trafficHandler http.Handler) (*recordingMux, http.Handler) {
+func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, legacyDashboard bool, trafficHandler http.Handler, panels *panelSet) (*recordingMux, http.Handler) {
 	authed := newRecordingMux()
 
 	if trafficHandler != nil {
@@ -179,6 +190,12 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 		dashboard := NewDashboardHandler(stores, tlsMode, legacyDashboard)
 		dashboard.RegisterRoutes(authed)
 	}
+
+	// #829 embedder panels. Mounted with no panels too, so the shell can
+	// tell "none" ([]) from an older server (404). Both are sensitive
+	// reads (sensitiveAdminReadPrefixes): a View may disclose anything.
+	authed.HandleFunc("GET /api/ui/panels", panels.handleList())
+	authed.HandleFunc("GET /api/ui/panels/{id}", panels.handleGet())
 
 	// Admin UI (embedded Svelte SPA, pkg/adminui/web). Mounted at
 	// "/ui/", a more specific pattern than the dashboard's catch-all "GET

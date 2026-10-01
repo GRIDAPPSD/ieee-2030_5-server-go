@@ -16,6 +16,7 @@
   } from './lib/dashboard'
   import type { AdminFSA, AdminFSAList, TopologyNode } from './lib/fsa'
   import type { MintedCert } from './lib/deviceCert'
+  import { PANEL_REQUEST_TIMEOUT_MS, type PanelEntry } from './lib/descriptor'
   import { currentPath, navigate, replace } from './lib/router'
   import NavBar from './panels/NavBar.svelte'
   import Overview from './panels/Overview.svelte'
@@ -33,6 +34,7 @@
   import FleetPane from './panels/FleetPane.svelte'
   import RequestQueuePane from './panels/RequestQueuePane.svelte'
   import DispatchPane from './panels/DispatchPane.svelte'
+  import PanelView from './panels/PanelView.svelte'
 
   // The tabs and the card each owns (issue 561's Context section, plus
   // issue 671's DERMS tab). "/" and "/ui/" are not tab paths of their own:
@@ -65,6 +67,28 @@
 
   let activeTab = $derived(tabForPath($currentPath))
 
+  // Tabs an embedder registered, read once at load. They sit after the
+  // core tabs and never take a core tab's path: the server refuses a
+  // panel whose id is a core slug, and tabForPath matches core slugs
+  // first.
+  let panels = $state<PanelEntry[]>([])
+  let panelsLoaded = $state(false)
+  let panelsError = $state('')
+  let activePanel = $derived(
+    activeTab === 'not-found' ? panels.find((panel) => $currentPath === `/ui/${panel.id}` || $currentPath === `/ui/${panel.id}/`) : undefined,
+  )
+
+  async function loadPanels() {
+    const res = await fetchJSON<PanelEntry[]>('/api/ui/panels', { timeoutMs: PANEL_REQUEST_TIMEOUT_MS })
+    if (destroyed) return
+    if (res.ok) {
+      panels = Array.isArray(res.data) ? res.data : []
+    } else {
+      panelsError = `Could not load the registered tabs: ${res.error}`
+    }
+    panelsLoaded = true
+  }
+
   // Renders the correct tab immediately from tabForPath above; this effect
   // only fixes the address bar afterward, as a replace so a trailing-slash
   // entry never lands in history for back to stop on. "/ui/" itself is the
@@ -77,6 +101,14 @@
     if (TABS.some((tab) => tab.slug === slug)) replace(`/ui/${slug}`)
   })
 
+  // Panel paths normalize the same way, once the panel list is known.
+  $effect(() => {
+    const path = $currentPath
+    if (!path.startsWith('/ui/') || !path.endsWith('/')) return
+    const slug = path.slice('/ui/'.length, -1)
+    if (panels.some((panel) => panel.id === slug)) replace(`/ui/${slug}`)
+  })
+
   function onTabClick(event: MouseEvent, slug: TabSlug) {
     // A modifier key or a non-primary button asks the browser for its own
     // handling (new tab, new window); only a plain click becomes a
@@ -85,6 +117,13 @@
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault()
     navigate(`/ui/${slug}`)
+  }
+
+  function onPanelClick(event: MouseEvent, id: string) {
+    if (event.defaultPrevented || event.button !== 0) return
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    event.preventDefault()
+    navigate(`/ui/${id}`)
   }
 
   let data = $state<DashboardData | null>(null)
@@ -151,6 +190,7 @@
       probeError = probe.error
     }
 
+    void loadPanels()
     disconnect = connectDashboard((next) => {
       data = next
       probeError = ''
@@ -192,7 +232,18 @@
         onclick={(event) => onTabClick(event, tab.slug)}
       >{tab.label}</a>
     {/each}
+    {#each panels as panel (panel.id)}
+      <a
+        href="/ui/{panel.id}"
+        data-testid="tab-{panel.id}"
+        aria-current={activePanel?.id === panel.id ? 'page' : undefined}
+        onclick={(event) => onPanelClick(event, panel.id)}
+      >{panel.label}</a>
+    {/each}
   </nav>
+  {#if panelsError}
+    <div class="card result err" role="alert" data-testid="panels-error">{panelsError}</div>
+  {/if}
   {#if dashboardError}
     <div class="card result err" role="alert" data-testid="dashboard-error">{dashboardError}</div>
   {/if}
@@ -217,6 +268,12 @@
       <FleetPane />
       <RequestQueuePane />
       <DispatchPane />
+    {:else if activePanel}
+      {#key activePanel.id}
+        <PanelView id={activePanel.id} />
+      {/key}
+    {:else if activeTab === 'not-found' && !panelsLoaded}
+      <p class="hint" data-testid="panels-pending">Loading...</p>
     {:else if activeTab === 'not-found'}
       <div class="card" data-testid="not-found">
         <h2>Not Found</h2>

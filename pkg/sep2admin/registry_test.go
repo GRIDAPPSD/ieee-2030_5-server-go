@@ -105,11 +105,15 @@ func TestValidateID(t *testing.T) {
 		{"reserved fsas", "fsas"},
 		{"reserved control", "control"},
 		{"reserved certificates", "certificates"},
+		{"reserved derms", "derms"},
 		{"reserved ui", "ui"},
 		{"reserved api", "api"},
 		{"reserved auth", "auth"},
 		{"reserved login", "login"},
 		{"reserved dashboard", "dashboard"},
+		{"api prefix api-status", "api-status"},
+		{"api prefix apix", "apix"},
+		{"spa assets dir", "assets"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -165,7 +169,7 @@ func TestRegisterRejectsUnsupportedDescriptorVersion(t *testing.T) {
 }
 
 func TestFreezeRejectsRegistrationsWithNoCorePanel(t *testing.T) {
-	r := NewRegistry()
+	r := &registry{panels: make(map[string]registeredPanel)}
 	if err := r.Register(graftPanel("only-graft", 1)); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -261,5 +265,48 @@ func TestErrDisabledIsDistinctFromEveryConfigurationRefusal(t *testing.T) {
 		if errors.Is(err, ErrDisabled) || errors.Is(ErrDisabled, err) {
 			t.Fatalf("%v must not match ErrDisabled: a caller that treats ErrDisabled as \"skip starting a runner\" must never misread a genuine boot refusal as that", err)
 		}
+	}
+}
+
+func TestNewRegistrySeedsTheShellTabsAndFreezesWithNoExtensions(t *testing.T) {
+	out, err := NewRegistry().Freeze()
+	if err != nil {
+		t.Fatalf("Freeze with no extensions: %v", err)
+	}
+	ids := make([]string, len(out))
+	for i, p := range out {
+		if p.Placement.Extension() {
+			t.Errorf("seed %q is in the extension band", p.ID)
+		}
+		ids[i] = p.ID
+	}
+	if !slices.Equal(ids, coreTabs) {
+		t.Fatalf("frozen IDs = %v, want the shell tabs in order %v", ids, coreTabs)
+	}
+}
+
+// TestExtensionsSortAfterCoreTabsByRankThenID: registered b then a at an
+// equal rank, the frozen order is every core tab unchanged, then a, b.
+func TestExtensionsSortAfterCoreTabsByRankThenID(t *testing.T) {
+	r := NewRegistry()
+	for _, p := range []Panel{graftPanel("b", -100), graftPanel("a", -100)} {
+		if err := r.Register(p); err != nil {
+			t.Fatalf("Register(%q): %v", p.ID, err)
+		}
+	}
+	out, err := r.Freeze()
+	if err != nil {
+		t.Fatalf("Freeze: %v", err)
+	}
+	var ids []string
+	for _, p := range out {
+		ids = append(ids, p.ID)
+	}
+	want := append(slices.Clone(coreTabs), "a", "b")
+	if !slices.Equal(ids, want) {
+		t.Fatalf("frozen IDs = %v, want %v", ids, want)
+	}
+	if !out[len(out)-1].Placement.Extension() || out[0].Placement.Extension() {
+		t.Fatalf("Extension() does not separate the bands: first %v, last %v", out[0].Placement, out[len(out)-1].Placement)
 	}
 }

@@ -140,18 +140,75 @@ func queueKey(edevID, frqID string) string {
 // since the handler's Submitter interface has no error return for it to
 // carry a refusal through.
 func (q *Queue) Submit(edevID, frqID string, frq sep2.FlowReservationRequest, createdAt int64) {
-	key := queueKey(edevID, frqID)
-	delay := q.deadlineDelay(frq, createdAt)
+	q.arm("Submit", edevID, frqID, q.deadlineDelay(frq, createdAt))
+}
 
+// Rearm schedules the deadline fallback for a request found in the store at
+// startup. The hold is measured from the request's own creationTime, so a
+// request 200 s into a 300 s hold is decided 100 s after now; one whose
+// deadline, or requested start, has already passed is decided at once, by the
+// same fallback rule as any other (granted if the window is free, else
+// denied). An earlier timer for the request is replaced. Like Submit, it
+// does nothing after Close, and reports whether it armed a timer.
+func (q *Queue) Rearm(edevID, frqID string, frq sep2.FlowReservationRequest, now time.Time) bool {
+	return q.arm("Rearm", edevID, frqID, q.remainingHold(frq, now))
+}
+
+// arm starts the fallback timer for one request, replacing any timer it
+// already has. op names the caller in the refusal log line. It reports
+// whether a timer was armed.
+func (q *Queue) arm(op, edevID, frqID string, delay time.Duration) bool {
+	key := queueKey(edevID, frqID)
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.closed {
-		log.Printf("flowreservation: Submit %s/%s after Close: refused", edevID, frqID)
-		return
+		log.Printf("flowreservation: %s %s/%s after Close: refused", op, edevID, frqID)
+		return false
+	}
+	if prev, ok := q.timers[key]; ok {
+		prev.Stop()
 	}
 	q.timers[key] = q.after(delay, func() {
 		q.attemptFallback(context.Background(), edevID, frqID, 1)
 	})
+	return true
+}
+
+// DeadlineAt is the Unix second the fallback decides frq: its creationTime
+// plus the configured bound, or the requested start when that comes sooner.
+// It is pure, so a read model can show it without a timer.
+func (q *Queue) DeadlineAt(frq sep2.FlowReservationRequest) int64 {
+	bound := int64(q.cfg.Deadline / time.Second)
+	if q.cfg.Deadline%time.Second != 0 {
+		bound++
+	}
+	at := int64(math.MaxInt64)
+	if frq.CreationTime <= math.MaxInt64-bound {
+		at = frq.CreationTime + bound
+	}
+	if frq.IntervalRequested != nil && frq.IntervalRequested.Start < at {
+		at = frq.IntervalRequested.Start
+	}
+	return at
+}
+
+// remainingHold is how long the fallback still waits for frq at now: the
+// configured bound less the time since creation, capped at the time left
+// before the requested start, never below zero.
+func (q *Queue) remainingHold(frq sep2.FlowReservationRequest, now time.Time) time.Duration {
+	nowSec := now.Unix()
+	delay := q.cfg.Deadline - secondsToDuration(nowSec-frq.CreationTime)
+	if delay < 0 {
+		delay = 0
+	}
+	if frq.IntervalRequested == nil {
+		return delay
+	}
+	start := frq.IntervalRequested.Start
+	if start <= nowSec {
+		return 0
+	}
+	return min(delay, secondsToDuration(start-nowSec))
 }
 
 // deadlineDelay is the configured bound, capped so the fallback never fires

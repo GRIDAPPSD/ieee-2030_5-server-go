@@ -32,6 +32,10 @@ import (
 // same name.
 const uomHertz uint8 = 33
 
+// flowDirectionNet is FlowDirectionType Net (2023: abs(Forward) - abs(Reverse),
+// signed). The vendored core defines no constant for it, and 2018 reserves 4.
+const flowDirectionNet uint8 = 4
+
 // FleetMeasurement is one quantity's latest reported value. ReadingTime is
 // the mirror reading's LastUpdateTime, which the server itself stamps at
 // POST time (mirror.go's stampMirrorMeterReading, both the inline and the
@@ -512,7 +516,10 @@ func inheritReadingTypeByMRID(readings []sep2.MirrorMeterReading) {
 // value's sign cannot be trusted regardless of edition; only its magnitude
 // and the declared direction are (#715 fix round 1 item 2). A reading with
 // no flowDirection is passed through unmapped rather than guessing a
-// direction, and is marked DirectionUnknown (#733).
+// direction, and is marked DirectionUnknown (#733). Net (4) is mapped only for
+// Edition2023 with isDER true: the signed value is already export-positive and
+// is kept as sent (#776). Under 2018 (reserved) or a non-DER mirror it stays
+// flagged.
 func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReading, edition SEP2Edition, isDER bool) {
 	if mmr.ReadingType == nil || mmr.ReadingType.Uom == nil || mmr.Reading == nil || mmr.Reading.Value == nil {
 		return
@@ -557,6 +564,8 @@ func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReadi
 				value = magnitude
 			}
 			mapped = true
+		case flowDirectionNet:
+			mapped = edition == Edition2023 && isDER
 		}
 	}
 

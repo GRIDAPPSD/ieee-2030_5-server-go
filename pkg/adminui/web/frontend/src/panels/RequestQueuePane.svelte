@@ -43,9 +43,15 @@
   let loaded = $state(false)
   let refreshing = $state(true)
   let unavailable = $state(false)
+  let failed = $state(false)
   let error = $state('')
   let fetchedAtMs = $state(Date.now())
   let nowMs = $state(Date.now())
+
+  // An empty message must not hide a failure, so visibility rides on `failed`.
+  function reason(message: string): string {
+    return message === '' ? 'no message from the server' : message
+  }
 
   // A sequence guard drops a response that a newer load has overtaken; the
   // abort controller drops one that lands after unmount and cancels it on
@@ -62,9 +68,11 @@
   function fail(message: string, status: number) {
     if (!loaded && status === 404) {
       unavailable = true
+      failed = false
       error = ''
     } else {
       unavailable = false
+      failed = true
       error = message
     }
     refreshing = false
@@ -103,7 +111,7 @@
     if (lifetime.signal.aborted || seq !== requestSeq) return
     const next: QueueView[] = []
     let succeeded = 0
-    let firstFailure = { error: '', status: 0 }
+    let firstFailure: { error: string; status: number } | null = null
     for (const [i, { res, arrivedAt }] of results.entries()) {
       const lfdi = lfdis[i]
       const prev = views.find((v) => v.lfdi === lfdi)
@@ -128,7 +136,11 @@
         }
       }
       if (problem !== null) {
-        if (succeeded === 0 && firstFailure.error === '') firstFailure = problem
+        // A non-404 failure outranks a 404, so a real error is never read as
+        // "not available yet".
+        if (firstFailure === null || (firstFailure.status === 404 && problem.status !== 404)) {
+          firstFailure = problem
+        }
         next.push({
           lfdi,
           queue: prev?.queue ?? null,
@@ -140,10 +152,13 @@
     }
     // Every aggregator failing is a pane-level failure; one failing is
     // only that aggregator's section.
-    if (lfdis.length > 0 && succeeded === 0) return fail(firstFailure.error, firstFailure.status)
+    if (lfdis.length > 0 && succeeded === 0 && firstFailure !== null) {
+      return fail(firstFailure.error, firstFailure.status)
+    }
     views = next
     loaded = true
     unavailable = false
+    failed = false
     error = ''
     fetchedAtMs = Date.now()
     nowMs = fetchedAtMs
@@ -216,14 +231,14 @@
     <p class="hint" data-testid="frq-unavailable">
       Flow reservation requests are not available on this server yet.
     </p>
-  {:else if !loaded && error !== ''}
-    <div class="result err" data-testid="frq-error">Could not load requests: {error}</div>
+  {:else if !loaded && failed}
+    <div class="result err" data-testid="frq-error">Could not load requests: {reason(error)}</div>
   {:else if !loaded}
     <p class="hint" data-testid="frq-loading">Loading requests...</p>
   {:else}
-    {#if error !== ''}
+    {#if failed}
       <div class="result err" data-testid="frq-stale">
-        Could not refresh requests: {error}. Showing the queue fetched {formatAge(ageOf(fetchedAtMs))} (stale).
+        Could not refresh requests: {reason(error)}. Showing the queue fetched {formatAge(ageOf(fetchedAtMs))} (stale).
       </div>
     {/if}
     {#if views.every((v) => v.queue !== null && v.queue.requests.length === 0)}
@@ -232,7 +247,7 @@
     {#each views as view (view.lfdi)}
       {#if view.error !== null}
         <div class="result err" data-testid="frq-section-error">
-          Could not load requests for <span class="mono">{view.lfdi.substring(0, 16)}...</span>: {view.error}.
+          Could not load requests for <span class="mono">{view.lfdi.substring(0, 16)}...</span>: {reason(view.error)}.
           {#if view.queue !== null}Showing the queue fetched {formatAge(ageOf(view.fetchedAtMs))} (stale).{/if}
         </div>
       {/if}
@@ -265,6 +280,9 @@
                 </td>
                 <td>
                   <span data-testid="frq-state">{entry.state}</span>
+                  {#if entry.requestCancelled === true}
+                    <div class="hint" data-testid="frq-cancel-requested">cancel requested, grant still active</div>
+                  {/if}
                   {#if entry.state === 'pending'}
                     <div data-testid="frq-countdown">
                       {formatCountdown(entry.deadlineAt, view.serverNow, ageOf(view.fetchedAtMs))}

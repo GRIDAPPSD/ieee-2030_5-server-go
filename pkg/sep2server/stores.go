@@ -22,6 +22,9 @@ import (
 // PIN this package invented. Registration PINs must not be derivable from
 // device identity, so there is no defensible default to ship.
 func NewStores() *assembly.Stores {
+	// The response store removes its lifecycle records with it, so an EndDevice
+	// delete leaves no cancel mark behind (#761).
+	responseLifecycles := memory.NewScopedStore[dercontrol.LifecycleRecord]()
 	s := &assembly.Stores{
 		EndDevices:               memory.NewEndDeviceStore(),
 		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
@@ -53,11 +56,11 @@ func NewStores() *assembly.Stores {
 		MessagingPrograms:        memory.NewStore[sep2.MessagingProgram](),
 		TextMessages:             memory.NewScopedStore[sep2.TextMessage](),
 		FlowReservationRequests:  memory.NewScopedStore[sep2.FlowReservationRequest](),
-		FlowReservationResponses: memory.NewScopedStore[sep2.FlowReservationResponse](),
+		FlowReservationResponses: memory.WithDependents(memory.NewScopedStore[sep2.FlowReservationResponse](), responseLifecycles),
 		ResponseSets:             memory.NewStore[sep2.ResponseSet](),
 		Responses:                memory.NewScopedStore[sep2.Response](),
 
-		FlowReservationResponseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
+		FlowReservationResponseLifecycles: responseLifecycles,
 	}
 	s.CommitmentLedger = sources.NewLedger(
 		s.EndDevices, s.EndDeviceManagers,

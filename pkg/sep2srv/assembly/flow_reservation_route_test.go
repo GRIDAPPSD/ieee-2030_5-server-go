@@ -28,7 +28,7 @@ func waitForFRPList(t *testing.T, srv *httptest.Server, path string, want int) s
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(srv.URL + path)
+		resp, err := srv.Client().Get(srv.URL + path)
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)
 		}
@@ -108,7 +108,7 @@ func postFlowReservationRequest(t *testing.T, srv *httptest.Server, edevID, mrid
 		t.Fatalf("marshal FlowReservationRequest: %v", err)
 	}
 
-	resp, err := http.Post(srv.URL+"/edev/"+edevID+"/frq", "application/sep+xml", strings.NewReader(string(body)))
+	resp, err := srv.Client().Post(srv.URL+"/edev/"+edevID+"/frq", "application/sep+xml", strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatalf("POST /edev/%s/frq: %v", edevID, err)
 	}
@@ -138,7 +138,7 @@ func TestFlowReservationRequest_LocationHeaderResolves(t *testing.T) {
 	const mrid = "0102030405060708090A0B0C0D0E0F10"
 	loc := postFlowReservationRequest(t, srv, "e1", mrid)
 
-	resp, err := http.Get(srv.URL + loc)
+	resp, err := srv.Client().Get(srv.URL + loc)
 	if err != nil {
 		t.Fatalf("GET %s: %v", loc, err)
 	}
@@ -191,7 +191,7 @@ func TestFlowReservationRequest_HoldsUntilTheConfiguredDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal FlowReservationRequest: %v", err)
 	}
-	resp, err := http.Post(srv.URL+"/edev/e1/frq", "application/sep+xml", strings.NewReader(string(body)))
+	resp, err := srv.Client().Post(srv.URL+"/edev/e1/frq", "application/sep+xml", strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatalf("POST /edev/e1/frq: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestFlowReservationRequest_HoldsUntilTheConfiguredDeadline(t *testing.T) {
 	}
 
 	// Before the deadline: nothing answered yet.
-	before, err := http.Get(srv.URL + "/edev/e1/frp")
+	before, err := srv.Client().Get(srv.URL + "/edev/e1/frp")
 	if err != nil {
 		t.Fatalf("GET /edev/e1/frp: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestFlowReservationResponse_HrefFromTheListResolves(t *testing.T) {
 		t.Fatal("the list member carries no href; there is nothing to follow")
 	}
 
-	resp, err := http.Get(srv.URL + href)
+	resp, err := srv.Client().Get(srv.URL + href)
 	if err != nil {
 		t.Fatalf("GET %s: %v", href, err)
 	}
@@ -338,7 +338,7 @@ func TestFlowReservationInstances_UnknownIDIsACleanNotFound(t *testing.T) {
 		{"frp", list.FlowReservationResponse[0].Href, "/edev/e1/frp/nosuch", "<FlowReservationResponse"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			present, err := http.Get(srv.URL + tc.present)
+			present, err := srv.Client().Get(srv.URL + tc.present)
 			if err != nil {
 				t.Fatalf("GET %s: %v", tc.present, err)
 			}
@@ -348,7 +348,7 @@ func TestFlowReservationInstances_UnknownIDIsACleanNotFound(t *testing.T) {
 					tc.present, present.StatusCode)
 			}
 
-			resp, err := http.Get(srv.URL + tc.missing)
+			resp, err := srv.Client().Get(srv.URL + tc.missing)
 			if err != nil {
 				t.Fatalf("GET %s: %v", tc.missing, err)
 			}
@@ -386,7 +386,7 @@ func TestFlowReservationInstances_ScopeBindsToTheDeviceInThePath(t *testing.T) {
 		t.Fatalf("test setup: could not rewrite %q to a foreign device", loc)
 	}
 
-	resp, err := http.Get(srv.URL + foreign)
+	resp, err := srv.Client().Get(srv.URL + foreign)
 	if err != nil {
 		t.Fatalf("GET %s: %v", foreign, err)
 	}
@@ -397,7 +397,7 @@ func TestFlowReservationInstances_ScopeBindsToTheDeviceInThePath(t *testing.T) {
 
 	// And it is still there for its own device, so the 404 above is scoping
 	// rather than a failed POST.
-	own, err := http.Get(srv.URL + loc)
+	own, err := srv.Client().Get(srv.URL + loc)
 	if err != nil {
 		t.Fatalf("GET %s: %v", loc, err)
 	}
@@ -441,7 +441,7 @@ func TestFlowReservationInstances_UnservedMethodsGet405WithAnAccurateAllow(t *te
 				if err != nil {
 					t.Fatalf("new request: %v", err)
 				}
-				resp, err := http.DefaultClient.Do(req)
+				resp, err := srv.Client().Do(req)
 				if err != nil {
 					t.Fatalf("%s: %v", method, err)
 				}
@@ -472,7 +472,7 @@ func TestFlowReservationInstances_HEADIsServedByTheGETPattern(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("HEAD: %v", err)
 	}
@@ -502,7 +502,7 @@ func TestFlowReservationRequest_InvalidRequestStatusRefusedThroughTheMountedRout
 	body := `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>6162636465666768696A6B6C6D6E6F70</mRID>` +
 		`<RequestStatus><dateTime>1727136000</dateTime><requestStatus>200</requestStatus></RequestStatus></FlowReservationRequest>`
 
-	resp, err := http.Post(srv.URL+"/edev/e1/frq", "application/sep+xml", strings.NewReader(body))
+	resp, err := srv.Client().Post(srv.URL+"/edev/e1/frq", "application/sep+xml", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /edev/e1/frq: %v", err)
 	}
@@ -511,7 +511,7 @@ func TestFlowReservationRequest_InvalidRequestStatusRefusedThroughTheMountedRout
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
 
-	listResp, err := http.Get(srv.URL + "/edev/e1/frq")
+	listResp, err := srv.Client().Get(srv.URL + "/edev/e1/frq")
 	if err != nil {
 		t.Fatalf("GET /edev/e1/frq: %v", err)
 	}

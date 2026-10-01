@@ -3,7 +3,6 @@ package flowreservation_test
 import (
 	"context"
 	"errors"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -343,15 +342,25 @@ func TestLedgerGate_GrantSignReachesTheExecutionCheck(t *testing.T) {
 	}
 }
 
+// raceOrder says how the fallback and the plain control are started.
+type raceOrder int
+
+const (
+	raceConcurrent raceOrder = iota
+	raceControlFirst
+	raceFallbackFirst
+)
+
 // TestLedgerGate_FallbackRacesAPlainControl runs the deadline fallback and
 // a plain control create on one fleet window at the same time, many
-// times: exactly one of them commits the window, never both.
+// times: exactly one of them commits the window, never both. Which side
+// wins is the scheduler's choice and is not asserted.
 func TestLedgerGate_FallbackRacesAPlainControl(t *testing.T) {
 	t.Parallel()
 	const rounds = 80
 	grants, controls := 0, 0
 	for i := range rounds {
-		grantWon, controlWon := raceFallbackAgainstControl(t, i)
+		grantWon, controlWon := raceFallbackAgainstControl(t, i, raceConcurrent)
 		if grantWon == controlWon {
 			t.Fatalf("round %d: grant stored %v, control stored %v; want exactly one", i, grantWon, controlWon)
 		}
@@ -362,19 +371,34 @@ func TestLedgerGate_FallbackRacesAPlainControl(t *testing.T) {
 		}
 	}
 	t.Logf("%d rounds: grant won %d, control won %d", rounds, grants, controls)
-	// A ledger that refused every call, or never contended, would let one
-	// side win every round; the race has only been exercised if both won.
-	// On one P the fallback's timer goroutine runs first every round, so
-	// only the exactly-one check above applies there.
-	if runtime.GOMAXPROCS(0) == 1 {
-		return
+}
+
+// TestLedgerGate_FallbackAndControlEachWinWhenOrdered forces each winner by
+// running one side to completion before the other starts: the side that
+// commits the window first wins, and the other is refused.
+func TestLedgerGate_FallbackAndControlEachWinWhenOrdered(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name                      string
+		order                     raceOrder
+		wantGrantWon, wantCtrlWon bool
+	}{
+		{"fallback first", raceFallbackFirst, true, false},
+		{"control first", raceControlFirst, false, true},
 	}
-	if grants == 0 || controls == 0 {
-		t.Fatalf("%d rounds: grant won %d, control won %d; want each side to win at least once", rounds, grants, controls)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			grantWon, controlWon := raceFallbackAgainstControl(t, 0, tc.order)
+			if grantWon != tc.wantGrantWon || controlWon != tc.wantCtrlWon {
+				t.Fatalf("grant stored %v, control stored %v; want %v and %v",
+					grantWon, controlWon, tc.wantGrantWon, tc.wantCtrlWon)
+			}
+		})
 	}
 }
 
-func raceFallbackAgainstControl(t *testing.T, round int) (grantStored, controlStored bool) {
+func raceFallbackAgainstControl(t *testing.T, round int, order raceOrder) (grantStored, controlStored bool) {
 	t.Helper()
 	ctx := context.Background()
 	f := newLedgerFixture(t, flowreservation.Config{Deadline: time.Hour})
@@ -398,21 +422,36 @@ func raceFallbackAgainstControl(t *testing.T, round int) (grantStored, controlSt
 		DurationSeconds: 600,
 	}
 
-	var wg sync.WaitGroup
-	var issueErr error
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		issueErr = f.ledger.Within(ctx, []string{aggLFDI}, func(v commitment.View) error {
+	issue := func() error {
+		return f.ledger.Within(ctx, []string{aggLFDI}, func(v commitment.View) error {
 			_, err := issuer.IssueInFleet(ctx, create, dercontrol.Fleet{Key: aggLFDI, Reach: 1, Check: viewCheck(v)})
 			return err
 		})
-	}()
+	}
 	// createdAt at the requested start caps the deadline at zero, so the
-	// fallback fires at once, alongside the create.
-	f.queue.Submit(aggID, "R1", req, start)
-	frp := waitForResponse(t, f.frp, aggID)[0]
-	wg.Wait()
+	// fallback fires at once.
+	var frp sep2.FlowReservationResponse
+	var issueErr error
+	switch order {
+	case raceControlFirst:
+		issueErr = issue()
+		f.queue.Submit(aggID, "R1", req, start)
+		frp = waitForResponse(t, f.frp, aggID)[0]
+	case raceFallbackFirst:
+		f.queue.Submit(aggID, "R1", req, start)
+		frp = waitForResponse(t, f.frp, aggID)[0]
+		issueErr = issue()
+	default:
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			issueErr = issue()
+		}()
+		f.queue.Submit(aggID, "R1", req, start)
+		frp = waitForResponse(t, f.frp, aggID)[0]
+		wg.Wait()
+	}
 
 	var ce *commitment.ConflictError
 	if issueErr != nil && !errors.As(issueErr, &ce) {

@@ -72,6 +72,7 @@ export interface FlowReservationEntry {
   requestHref: string
   aggregatorLFDI: string
   state: string
+  requestCancelled?: boolean
   deadlineAt: number | null
   request: FlowReservationRequest
   responses: ResponseView[]

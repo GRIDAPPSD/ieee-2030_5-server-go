@@ -78,7 +78,7 @@ func TestServedDERControlRequestsAResponse(t *testing.T) {
 		want.Href,
 		"/edev/" + testLFDI + "/fsa/1/derp/1/derc",
 	} {
-		resp, err := http.Get(srv.URL + href)
+		resp, err := srv.Client().Get(srv.URL + href)
 		if err != nil {
 			t.Fatalf("GET %s: %v", href, err)
 		}
@@ -130,7 +130,7 @@ func TestServedDERControlKeepsAnExplicitResponsePolicy(t *testing.T) {
 	}
 
 	srv := derControlRouter(t, stores)
-	resp, err := http.Get(srv.URL + ctrl.Href)
+	resp, err := srv.Client().Get(srv.URL + ctrl.Href)
 	if err != nil {
 		t.Fatalf("GET %s: %v", ctrl.Href, err)
 	}
@@ -159,7 +159,7 @@ func TestResponseSetIsSeededAndServed(t *testing.T) {
 
 	srv := derControlRouter(t, testStores())
 
-	listResp, err := http.Get(srv.URL + "/rsps")
+	listResp, err := srv.Client().Get(srv.URL + "/rsps")
 	if err != nil {
 		t.Fatalf("GET /rsps: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestResponseSetIsSeededAndServed(t *testing.T) {
 		t.Errorf("seeded ResponseSet Href = %q, want %q", list.ResponseSet[0].Href, wantSetHref)
 	}
 
-	memberResp, err := http.Get(srv.URL + wantSetHref)
+	memberResp, err := srv.Client().Get(srv.URL + wantSetHref)
 	if err != nil {
 		t.Fatalf("GET %s: %v", wantSetHref, err)
 	}
@@ -214,7 +214,7 @@ func TestPostDERControlResponseIsStoredAndRetrievable(t *testing.T) {
 	srv := derControlRouter(t, stores)
 
 	// Read replyTo the way a client does: off the served event.
-	ctrlResp, err := http.Get(srv.URL + ctrl.Href)
+	ctrlResp, err := srv.Client().Get(srv.URL + ctrl.Href)
 	if err != nil {
 		t.Fatalf("GET %s: %v", ctrl.Href, err)
 	}
@@ -242,7 +242,7 @@ func TestPostDERControlResponseIsStoredAndRetrievable(t *testing.T) {
 		t.Fatalf("test fixture is not a DERControlResponse document: %s", body)
 	}
 
-	postResp, err := http.Post(srv.URL+served.ReplyTo, "application/sep+xml", bytes.NewReader(body))
+	postResp, err := srv.Client().Post(srv.URL+served.ReplyTo, "application/sep+xml", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST %s: %v", served.ReplyTo, err)
 	}
@@ -279,7 +279,7 @@ func TestPostDERControlResponseIsStoredAndRetrievable(t *testing.T) {
 	}
 
 	// The Location the server minted has to resolve.
-	locResp, err := http.Get(srv.URL + location)
+	locResp, err := srv.Client().Get(srv.URL + location)
 	if err != nil {
 		t.Fatalf("GET %s: %v", location, err)
 	}
@@ -296,7 +296,7 @@ func TestPostDERControlResponseIsStoredAndRetrievable(t *testing.T) {
 	}
 
 	// And it has to appear in the list the ResponseSet links to.
-	listResp, err := http.Get(srv.URL + coreresponse.ListHref(coreresponse.DefaultSetID))
+	listResp, err := srv.Client().Get(srv.URL + coreresponse.ListHref(coreresponse.DefaultSetID))
 	if err != nil {
 		t.Fatalf("GET response list: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestPostBaseResponseStillAccepted(t *testing.T) {
 		t.Fatalf("marshal Response: %v", err)
 	}
 	href := coreresponse.ListHref(coreresponse.DefaultSetID)
-	resp, err := http.Post(srv.URL+href, "application/sep+xml", bytes.NewReader(body))
+	resp, err := srv.Client().Post(srv.URL+href, "application/sep+xml", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST %s: %v", href, err)
 	}
@@ -339,7 +339,7 @@ func TestPostForeignRootStillRejected(t *testing.T) {
 	srv := derControlRouter(t, testStores())
 	href := coreresponse.ListHref(coreresponse.DefaultSetID)
 
-	resp, err := http.Post(srv.URL+href, "application/sep+xml",
+	resp, err := srv.Client().Post(srv.URL+href, "application/sep+xml",
 		strings.NewReader(`<DERSettings xmlns="`+sep2.Namespace+`"><setGradW>1</setGradW></DERSettings>`))
 	if err != nil {
 		t.Fatalf("POST %s: %v", href, err)

@@ -35,6 +35,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // NewEmbedConfig projects the server's own concrete types onto the router-level
@@ -176,7 +177,7 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 		MessagingPrograms:        s.MessagingPrograms,
 		TextMessages:             s.TextMessages,
 		FlowReservationRequests:  s.FlowReservationRequests,
-		FlowReservationResponses: s.FlowReservationResponses,
+		FlowReservationResponses: memory.WithDependents(s.FlowReservationResponses, s.FlowReservationResponseLifecycles),
 		ResponseSets:             s.ResponseSets,
 		Responses:                s.Responses,
 

@@ -151,7 +151,7 @@ func TestPartialFamilyRefusesRatherThanPanicking(t *testing.T) {
 			if err != nil {
 				t.Fatalf("build request: %v", err)
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := srv.Client().Do(req)
 			if err != nil {
 				// A nil dereference inside the handler is recovered by
 				// net/http, which closes the connection: the client sees a
@@ -216,7 +216,7 @@ func TestPartialMirrorFamilyRefusesRatherThanPanicking(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
-	created, err := http.Post(srv.URL+"/mup", "application/sep+xml", strings.NewReader(mirrorUsagePointDoc))
+	created, err := srv.Client().Post(srv.URL+"/mup", "application/sep+xml", strings.NewReader(mirrorUsagePointDoc))
 	if err != nil {
 		t.Fatalf("POST /mup: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestPartialMirrorFamilyRefusesRatherThanPanicking(t *testing.T) {
 		t.Fatal("POST /mup returned no Location header")
 	}
 
-	resp, err := http.Post(srv.URL+location+"/mr", "application/sep+xml", strings.NewReader(mirrorMeterReadingDoc))
+	resp, err := srv.Client().Post(srv.URL+location+"/mr", "application/sep+xml", strings.NewReader(mirrorMeterReadingDoc))
 	if err != nil {
 		t.Fatalf("POST %s/mr over an unwired Stores.MirrorMeterReadings: %v (a panicking handler, not a refusal)", location, err)
 	}
@@ -255,7 +255,7 @@ func sendForRefusal(t *testing.T, srvURL, method, path, body string) refusal {
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := isolatedClient().Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v (a panicking handler, not a refusal)", method, path, err)
 	}

@@ -59,7 +59,7 @@ func postTextMessage(t *testing.T, srv *httptest.Server, msgID, text string) str
 		t.Fatalf("marshal TextMessage: %v", err)
 	}
 
-	resp, err := http.Post(srv.URL+"/msg/"+msgID+"/tm", "application/sep+xml", strings.NewReader(string(body)))
+	resp, err := srv.Client().Post(srv.URL+"/msg/"+msgID+"/tm", "application/sep+xml", strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatalf("POST /msg/%s/tm: %v", msgID, err)
 	}
@@ -85,7 +85,7 @@ func TestTextMessage_LocationHeaderResolves(t *testing.T) {
 	srv, _ := tmServer(t)
 	loc := postTextMessage(t, srv, "m1", "planned outage 0200 to 0400")
 
-	resp, err := http.Get(srv.URL + loc)
+	resp, err := srv.Client().Get(srv.URL + loc)
 	if err != nil {
 		t.Fatalf("GET %s: %v", loc, err)
 	}
@@ -134,7 +134,7 @@ func TestTextMessage_ScopeBindsToTheMessagingProgramInThePath(t *testing.T) {
 		t.Fatalf("test setup: could not rewrite %q to a foreign program", loc)
 	}
 
-	resp, err := http.Get(srv.URL + foreign)
+	resp, err := srv.Client().Get(srv.URL + foreign)
 	if err != nil {
 		t.Fatalf("GET %s: %v", foreign, err)
 	}
@@ -143,7 +143,7 @@ func TestTextMessage_ScopeBindsToTheMessagingProgramInThePath(t *testing.T) {
 		t.Fatalf("GET %s status = %d, want 404: a message must not be reachable under a program it was not posted to", foreign, resp.StatusCode)
 	}
 
-	own, err := http.Get(srv.URL + loc)
+	own, err := srv.Client().Get(srv.URL + loc)
 	if err != nil {
 		t.Fatalf("GET %s: %v", loc, err)
 	}
@@ -165,7 +165,7 @@ func TestTextMessage_UnknownIDIsACleanNotFound(t *testing.T) {
 	srv, _ := tmServer(t)
 	loc := postTextMessage(t, srv, "m1", "a real message")
 
-	present, err := http.Get(srv.URL + loc)
+	present, err := srv.Client().Get(srv.URL + loc)
 	if err != nil {
 		t.Fatalf("GET %s: %v", loc, err)
 	}
@@ -175,7 +175,7 @@ func TestTextMessage_UnknownIDIsACleanNotFound(t *testing.T) {
 			loc, present.StatusCode)
 	}
 
-	resp, err := http.Get(srv.URL + "/msg/m1/tm/nosuch")
+	resp, err := srv.Client().Get(srv.URL + "/msg/m1/tm/nosuch")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestTextMessage_UnservedMethodsGet405WithAnAccurateAllow(t *testing.T) {
 			if err != nil {
 				t.Fatalf("new request: %v", err)
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := srv.Client().Do(req)
 			if err != nil {
 				t.Fatalf("%s: %v", method, err)
 			}
@@ -241,7 +241,7 @@ func TestTextMessage_HEADIsServedByTheGETPattern(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("HEAD: %v", err)
 	}

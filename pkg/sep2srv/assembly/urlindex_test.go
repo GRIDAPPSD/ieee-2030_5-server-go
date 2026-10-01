@@ -125,7 +125,7 @@ func do(t *testing.T, srv *httptest.Server, method, path, asLFDI string) (int, s
 	if asLFDI != "" {
 		req.Header.Set("X-Test-LFDI", asLFDI)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}

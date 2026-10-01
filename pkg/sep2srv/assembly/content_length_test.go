@@ -55,7 +55,7 @@ func TestAssembly_ListOverChunkThresholdIsLengthFramed(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/mup?l=100")
+	resp, err := srv.Client().Get(srv.URL + "/mup?l=100")
 	if err != nil {
 		t.Fatalf("GET /mup: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestAssembly_ContentLengthFramingAcrossPaths(t *testing.T) {
 			if err != nil {
 				t.Fatalf("build request: %v", err)
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := srv.Client().Do(req)
 			if err != nil {
 				t.Fatalf("%s %s: %v", tc.method, tc.path, err)
 			}
@@ -194,7 +194,7 @@ func TestAssembly_NoContentStaysHeaderless(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("DELETE /edev/delete-me: %v", err)
 	}

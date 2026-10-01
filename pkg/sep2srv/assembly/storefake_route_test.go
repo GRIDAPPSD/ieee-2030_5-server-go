@@ -175,7 +175,7 @@ func TestSecondImplementation_FlatStoreServesPostAndGet(t *testing.T) {
 		`<status>1</status>` +
 		`</UsagePoint>`
 
-	resp, err := http.Post(srv.URL+"/upt", "application/sep+xml", strings.NewReader(body))
+	resp, err := srv.Client().Post(srv.URL+"/upt", "application/sep+xml", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /upt: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestSecondImplementation_FlatStoreServesPostAndGet(t *testing.T) {
 
 	// Follow the server's own Location header, which is the only address a
 	// client has, and check the document served is the one that was posted.
-	got, err := http.Get(srv.URL + location)
+	got, err := srv.Client().Get(srv.URL + location)
 	if err != nil {
 		t.Fatalf("GET %s: %v", location, err)
 	}
@@ -212,7 +212,7 @@ func TestSecondImplementation_FlatStoreServesPostAndGet(t *testing.T) {
 	}
 
 	// The list route reads the same collection through the same interface.
-	listResp, err := http.Get(srv.URL + "/upt")
+	listResp, err := srv.Client().Get(srv.URL + "/upt")
 	if err != nil {
 		t.Fatalf("GET /upt: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestSecondImplementation_ScopedStoreServesPostAndGet(t *testing.T) {
 		`<profileID>2</profileID>` +
 		`</LogEvent>`
 
-	resp, err := http.Post(srv.URL+"/edev/"+deviceID+"/lel", "application/sep+xml", strings.NewReader(body))
+	resp, err := srv.Client().Post(srv.URL+"/edev/"+deviceID+"/lel", "application/sep+xml", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /edev/%s/lel: %v", deviceID, err)
 	}
@@ -275,7 +275,7 @@ func TestSecondImplementation_ScopedStoreServesPostAndGet(t *testing.T) {
 		t.Fatalf("Location = %q, want an instance under /edev/%s/lel/", location, deviceID)
 	}
 
-	got, err := http.Get(srv.URL + location)
+	got, err := srv.Client().Get(srv.URL + location)
 	if err != nil {
 		t.Fatalf("GET %s: %v", location, err)
 	}
@@ -296,7 +296,7 @@ func TestSecondImplementation_ScopedStoreServesPostAndGet(t *testing.T) {
 		t.Errorf("href = %q, want the Location the server minted, %q", event.Href, location)
 	}
 
-	listResp, err := http.Get(srv.URL + "/edev/" + deviceID + "/lel")
+	listResp, err := srv.Client().Get(srv.URL + "/edev/" + deviceID + "/lel")
 	if err != nil {
 		t.Fatalf("GET /edev/%s/lel: %v", deviceID, err)
 	}
@@ -312,7 +312,7 @@ func TestSecondImplementation_ScopedStoreServesPostAndGet(t *testing.T) {
 	// Scoping is real rather than incidental: the same list under another
 	// device is empty, and reading that unknown parent must not bring it into
 	// existence.
-	otherResp, err := http.Get(srv.URL + "/edev/999/lel")
+	otherResp, err := srv.Client().Get(srv.URL + "/edev/999/lel")
 	if err != nil {
 		t.Fatalf("GET /edev/999/lel: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestSecondImplementation_SingletonPutThenGet(t *testing.T) {
 			t.Fatalf("build PUT: %v", err)
 		}
 		req.Header.Set("Content-Type", "application/sep+xml")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := srv.Client().Do(req)
 		if err != nil {
 			t.Fatalf("PUT %s: %v", path, err)
 		}
@@ -372,7 +372,7 @@ func TestSecondImplementation_SingletonPutThenGet(t *testing.T) {
 	put(t, 1)
 	put(t, 2) // the second write takes the update branch
 
-	got, err := http.Get(srv.URL + path)
+	got, err := srv.Client().Get(srv.URL + path)
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
@@ -417,7 +417,7 @@ func TestSecondImplementation_MirrorDeleteFailsClosedWithoutCascade(t *testing.T
 		`<status>1</status>` +
 		`</MirrorUsagePoint>`
 
-	resp, err := http.Post(srv.URL+"/mup", "application/sep+xml", strings.NewReader(body))
+	resp, err := srv.Client().Post(srv.URL+"/mup", "application/sep+xml", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /mup: %v", err)
 	}
@@ -434,7 +434,7 @@ func TestSecondImplementation_MirrorDeleteFailsClosedWithoutCascade(t *testing.T
 	if err != nil {
 		t.Fatalf("build DELETE: %v", err)
 	}
-	del, err := http.DefaultClient.Do(req)
+	del, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("DELETE %s: %v", location, err)
 	}
@@ -448,7 +448,7 @@ func TestSecondImplementation_MirrorDeleteFailsClosedWithoutCascade(t *testing.T
 	if _, err := stores.MirrorUsagePoints.Get(context.Background(), id); err != nil {
 		t.Fatalf("the MirrorUsagePoint was removed by a delete that failed: %v", err)
 	}
-	still, err := http.Get(srv.URL + location)
+	still, err := srv.Client().Get(srv.URL + location)
 	if err != nil {
 		t.Fatalf("GET %s: %v", location, err)
 	}

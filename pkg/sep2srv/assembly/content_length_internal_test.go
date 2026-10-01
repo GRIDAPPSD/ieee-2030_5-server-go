@@ -27,7 +27,7 @@ func TestBufferContentLength_BodyIsByteIdentical(t *testing.T) {
 	srv := httptest.NewServer(bufferContentLength(raw))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL)
+	resp, err := srv.Client().Get(srv.URL)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestBufferContentLength_NoBodyStatusUnchanged(t *testing.T) {
 			srv := httptest.NewServer(bufferContentLength(raw))
 			defer srv.Close()
 
-			resp, err := http.Get(srv.URL)
+			resp, err := srv.Client().Get(srv.URL)
 			if err != nil {
 				t.Fatalf("GET: %v", err)
 			}
@@ -110,7 +110,7 @@ func TestBufferContentLength_BodylessOKPreservesHandlerContentLength(t *testing.
 	srv := httptest.NewServer(bufferContentLength(raw))
 	defer srv.Close()
 
-	resp, err := http.Head(srv.URL)
+	resp, err := srv.Client().Head(srv.URL)
 	if err != nil {
 		t.Fatalf("HEAD: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestBufferContentLength_InformationalStatusIsNotFinal(t *testing.T) {
 	srv := httptest.NewServer(bufferContentLength(raw))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL)
+	resp, err := srv.Client().Get(srv.URL)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestBufferContentLength_HeaderFrozenAtWriteHeader(t *testing.T) {
 	srv := httptest.NewServer(bufferContentLength(raw))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL)
+	resp, err := srv.Client().Get(srv.URL)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestBufferContentLength_FlushFailsVisibly(t *testing.T) {
 	srv := httptest.NewServer(bufferContentLength(raw))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL)
+	resp, err := srv.Client().Get(srv.URL)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestBufferContentLength_HijackFailsVisibly(t *testing.T) {
 	srv := httptest.NewServer(bufferContentLength(raw))
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL)
+	resp, err := srv.Client().Get(srv.URL)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}

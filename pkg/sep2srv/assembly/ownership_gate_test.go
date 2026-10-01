@@ -147,7 +147,7 @@ func gateRequest(t *testing.T, srv *httptest.Server, method, path, asLFDI, body 
 
 func sendGateRequest(t *testing.T, req *http.Request) (int, []byte) {
 	t.Helper()
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := isolatedClient().Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", req.Method, req.URL.Path, err)
 	}

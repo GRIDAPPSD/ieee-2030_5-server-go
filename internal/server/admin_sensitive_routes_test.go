@@ -377,7 +377,7 @@ func TestEveryDefaultProtectedAdminWriteRefusesBypassOnly(t *testing.T) {
 	router := newSensitiveRoutesRouter(t)
 	for _, pattern := range defaultProtected {
 		method, path, _ := strings.Cut(pattern, " ")
-		target := strings.ReplaceAll(path, "{id}", "x")
+		target := strings.NewReplacer("{id}", "x", "{edevId}", "x", "{frqId}", "x").Replace(path)
 		t.Run(pattern, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, bypassOnlyRequest(method, target))

@@ -29,6 +29,10 @@ var adminBodyTypes = map[string][]string{
 	"POST /auth/ticket":                       nil,
 	"POST /api/der/controls":                  {"application/json"},
 	"POST /api/der/controls/{mrid}/cancel":    {"application/json"},
+
+	"POST /api/derms/flow-reservations/{edevId}/{frqId}/answer": {"application/json"},
+	"POST /api/derms/flow-reservations/{edevId}/{frqId}/revise": {"application/json"},
+	"POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel": {"application/json"},
 }
 
 // unsupportedContentTypeBody is the 415 refusal shape. Accepted names the

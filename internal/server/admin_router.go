@@ -119,11 +119,16 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 
 	// #764 DERMS read API: a fleet's flow reservation requests, their
 	// responses and executions, and the live grants a dispatch can carry out.
-	// Read-only, on the same authenticated mux as the fleet read above.
+	// #670 adds the writes that answer, revise and cancel them. They change
+	// what devices are told and do, so none is on nonSensitiveAdminWrites: a
+	// real credential is required even from loopback.
 	if frH := newAdminFlowReservationHandler(stores); frH != nil {
 		authed.HandleFunc("GET /api/derms/flow-reservations", frH.HandleList())
 		authed.HandleFunc("GET /api/derms/flow-reservations/{edevId}/{frqId}", frH.HandleGet())
 		authed.HandleFunc("GET /api/derms/grants", frH.HandleGrants())
+		authed.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/answer", frH.HandleAnswer())
+		authed.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/revise", frH.HandleRevise())
+		authed.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel", frH.HandleCancel())
 	}
 
 	// #566 DER control API. Both POST routes change what a device does, so

@@ -139,6 +139,11 @@ func (c *Canceller) cancelChain(ctx context.Context, chain []sep2.FlowReservatio
 		if errors.As(err, &conflict) && conflict.Code == commitment.ConflictGrantNotLive {
 			continue
 		}
+		// A member seen mid-revision and rolled back cleanly is gone by now;
+		// the next walk no longer lists it.
+		if errors.Is(err, commitment.ErrNoGrant) {
+			continue
+		}
 		if err != nil {
 			return err
 		}

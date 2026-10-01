@@ -16,7 +16,9 @@ type FRPReader interface {
 
 // ChainOf returns the responses to one request, oldest first: the one stored
 // under frqID, then each revision RevisionID names in turn. The last is the
-// tip, the only response that can be live. A request with no response yet
+// tip, the response the next revision replaces. Normally only the tip is
+// live; a revision whose rollback failed can leave an older one live too, so
+// a caller that cancels must not assume it. A request with no response yet
 // has an empty chain and no error.
 //
 // The first missing id ends the walk, so a gap would hide every later

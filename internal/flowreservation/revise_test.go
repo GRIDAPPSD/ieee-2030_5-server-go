@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -570,6 +571,16 @@ func TestRevise_NilDependenciesFailClosed(t *testing.T) {
 	if err := revise(noReplace); !errors.Is(err, flowreservation.ErrIncompleteDeps) {
 		t.Errorf("nil Replace: err = %v, want ErrIncompleteDeps", err)
 	}
+	noFRQ := f.reviseDeps()
+	noFRQ.FRQ = nil
+	if err := revise(noFRQ); !errors.Is(err, flowreservation.ErrIncompleteDeps) {
+		t.Errorf("nil FRQ: err = %v, want ErrIncompleteDeps", err)
+	}
+	noFRP := f.reviseDeps()
+	noFRP.FRP = nil
+	if err := revise(noFRP); !errors.Is(err, flowreservation.ErrIncompleteDeps) {
+		t.Errorf("nil FRP: err = %v, want ErrIncompleteDeps", err)
+	}
 	if _, err := f.frp.Get(context.Background(), aggID, "R1-r1"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("a refused revise stored R1-r1: err = %v", err)
 	}
@@ -672,4 +683,137 @@ func TestCancel_EmptyChainAfterAnAnsweredRequestIsNotFound(t *testing.T) {
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("err = %v, want store.ErrNotFound", err)
 	}
+}
+
+// relinkBackRefuser lets an execution move to the revision and refuses to
+// move it back to the old grant, as a store that fails during rollback does.
+type relinkBackRefuser struct {
+	commitment.ExecutionWriter
+	oldMRID string
+}
+
+func (w relinkBackRefuser) RelinkExecution(ctx context.Context, c commitment.Control, grantMRID string) error {
+	if grantMRID == w.oldMRID {
+		return errors.New("boom: relink back refused")
+	}
+	return w.ExecutionWriter.RelinkExecution(ctx, c, grantMRID)
+}
+
+// An execution that may still name the revision must keep the revision
+// stored, or no walk of the chain reaches the execution again.
+func TestRevise_FailedRelinkBackKeepsTheRevisionSoCancelReachesTheControl(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	base := time.Now().Add(time.Hour).Unix()
+	old := f.answered(t, base)
+	exec := f.issueExec(t, old, base, -2000)
+
+	real := sources.NewWriters(f.issuer, f.frpLifecycles)
+	deps := f.reviseDeps()
+	deps.Writers = commitment.Writers{
+		Executions: relinkBackRefuser{ExecutionWriter: real.Executions, oldMRID: old.MRID},
+		Grants:     &failingGrantWriter{inner: real.Grants},
+	}
+	_, err := flowreservation.Revise(ctx, deps, aggID, "R1", shorten(base, 1800), "operator revise", flowreservation.Attribution{}, time.Now())
+	if !errors.Is(err, commitment.ErrUndo) {
+		t.Fatalf("Revise err = %v, want ErrUndo", err)
+	}
+	rev := f.storedResponse(t, "R1-r1")
+	lc, err := f.controlLifecycles.Get(ctx, exec.Scope.Key(), exec.ID)
+	must(t, err)
+	if lc.GrantMRID != rev.MRID {
+		t.Fatalf("setup: execution linked to %q, want the revision %q", lc.GrantMRID, rev.MRID)
+	}
+
+	must(t, f.canceller.Cancel(ctx, aggID, "R1", cancelledStatus(time.Now().Unix())))
+
+	lc, err = f.controlLifecycles.Get(ctx, exec.Scope.Key(), exec.ID)
+	must(t, err)
+	if lc.CancelledAt == nil {
+		t.Errorf("execution lifecycle = %+v, want cancelled", lc)
+	}
+}
+
+// growingChain serves a chain one member longer on every walk: the first
+// member is the real R1 and the rest are zero-duration denials with no
+// ledger record. It counts walks by reads of the first id.
+type growingChain struct {
+	flowreservation.FRPStore
+	walks int
+}
+
+func (g *growingChain) Get(ctx context.Context, p, id string) (sep2.FlowReservationResponse, error) {
+	if id == "R1" {
+		g.walks++
+	}
+	ids := []string{"R1"}
+	for len(ids) < g.walks {
+		ids = append(ids, flowreservation.RevisionID(ids[len(ids)-1]))
+	}
+	if !slices.Contains(ids, id) {
+		return sep2.FlowReservationResponse{}, store.ErrNotFound
+	}
+	if id == "R1" {
+		return g.FRPStore.Get(ctx, p, id)
+	}
+	return ghostResponse("GHOST-"+id, "/edev/"+p+"/frp/"+id, 1, 0), nil
+}
+
+func TestCancel_ChainThatKeepsGrowingIsAnErrorAfterFourPasses(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	f.answered(t, time.Now().Add(time.Hour).Unix())
+	g := &growingChain{FRPStore: f.frp}
+	canceller := flowreservation.NewCanceller(f.frq, g, f.queue, f.ledger, sources.NewWriters(f.issuer, f.frpLifecycles))
+
+	err := canceller.Cancel(ctx, aggID, "R1", cancelledStatus(time.Now().Unix()))
+	if !errors.Is(err, flowreservation.ErrChainMoving) {
+		t.Fatalf("err = %v, want ErrChainMoving", err)
+	}
+	// Two walks per pass, four passes.
+	if g.walks != 8 {
+		t.Errorf("walks = %d, want 8", g.walks)
+	}
+	// The request's own response was still cancelled on the way.
+	if lc, err := f.frpLifecycles.Get(ctx, aggID, "R1"); err != nil || lc.CancelledAt == nil {
+		t.Errorf("R1 lifecycle = %+v (err %v), want cancelled", lc, err)
+	}
+}
+
+// A member listed by a walk but gone by the time it is cancelled (a revision
+// rolled back cleanly in between) must not turn a finished cancel into an
+// error.
+func TestCancel_MemberGoneAfterTheWalkIsNotAnError(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	base := time.Now().Add(time.Hour).Unix()
+	old := f.answered(t, base)
+	exec := f.issueExec(t, old, base, -2000)
+
+	var served bool
+	canceller := flowreservation.NewCanceller(f.frq, frpHook{FRPStore: f.frp, get: func(ctx context.Context, p, id string) (sep2.FlowReservationResponse, error) {
+		if id == "R1-r1" && !served {
+			served = true
+			return ghostResponse("GONE", "/edev/"+p+"/frp/R1-r1", base, 600), nil
+		}
+		return f.frp.Get(ctx, p, id)
+	}}, f.queue, f.ledger, sources.NewWriters(f.issuer, f.frpLifecycles))
+
+	must(t, canceller.Cancel(ctx, aggID, "R1", cancelledStatus(time.Now().Unix())))
+	lc, err := f.controlLifecycles.Get(ctx, exec.Scope.Key(), exec.ID)
+	must(t, err)
+	if lc.CancelledAt == nil {
+		t.Errorf("execution lifecycle = %+v, want cancelled", lc)
+	}
+}
+
+// ghostResponse is a response a walk lists that the ledger has no record of.
+func ghostResponse(mrid, href string, start int64, dur uint32) sep2.FlowReservationResponse {
+	var frp sep2.FlowReservationResponse
+	frp.MRID, frp.Href = mrid, href
+	frp.Interval = &sep2.DateTimeInterval{Start: start, Duration: dur}
+	return frp
 }

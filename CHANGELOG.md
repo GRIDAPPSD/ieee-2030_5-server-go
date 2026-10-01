@@ -35,7 +35,9 @@ admin UI panes (`feature`) and changes several exported signatures
   the requesting client. Response list subscribers are notified, the list
   advertises a short `pollRate` while a request is pending, ended reservations
   are removed after a grace period, and pending requests and interrupted writes
-  are recovered at startup. Requests, responses and cancel marks persist.
+  are recovered at startup. Requests, responses and cancel marks persist, and
+  pending requests are recovered, only when `SEP2_DATA_DIR` is set; the default
+  is in-memory and loses them on restart.
   ([#736](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/736),
   [#755](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/755),
   [#768](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/768),
@@ -46,10 +48,13 @@ admin UI panes (`feature`) and changes several exported signatures
   [#789](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/789),
   [#796](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/796),
   [#811](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/811))
-- **Commitment ledger.** Fleet windows, grant fit rules and a ledger of
-  grants and DER controls; every flow reservation grant and every admin DER
-  control create is checked against it, a grant can be cancelled or revised
-  through it, and a read route serves each fleet's current commitments.
+- **Commitment ledger.** Fleet windows, grant fit rules and a ledger that
+  serializes check-then-write per fleet and reads grants and controls from
+  their own stores each time; it keeps no copy of any commitment. Every admin
+  DER control create, and every flow reservation grant whose interval has a
+  positive duration, is checked against it. A grant can be cancelled or
+  revised through it, and a read route serves each fleet's current
+  commitments.
   ([#741](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/741),
   [#747](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/747),
   [#749](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/749),
@@ -74,8 +79,8 @@ admin UI panes (`feature`) and changes several exported signatures
   answer, revise and cancel actions, and a dispatch pane that executes a live
   grant or sends a plain dispatch and shows metered delivery; the Send DER
   Control card is wired to the admin API; panes name the source of each
-  quantity and show each fleet's commitments; tabs reload FSAs and topology on
-  entry; and a chart section renders in panels. The admin UI type check now
+  quantity and show each fleet's commitments; entering the Devices or FSAs tab reloads
+  the FSA list and topology; and a chart section renders in panels. The admin UI type check now
   runs in CI.
   ([#730](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/730),
   [#748](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/748),
@@ -90,8 +95,9 @@ admin UI panes (`feature`) and changes several exported signatures
   [#838](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/838))
 - **Embeddable admin plane.** New public package `pkg/sep2adminplane`: a
   facade over the admin plane with a loopback bypass switch, a `ReadOnly`
-  mode that mounts no admin write route, and exported settings parsers. An
-  embedder can register tabs that the shell renders.
+  mode that mounts no admin write route except `POST /auth/login` and
+  `POST /auth/ticket`, and an exported `SettingsFromEnv` with its `Settings`
+  type. An embedder can register tabs that the shell renders.
   ([#835](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/835),
   [#837](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/837),
   [#840](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/840),
@@ -108,10 +114,13 @@ admin UI panes (`feature`) and changes several exported signatures
   `subscription.HandleCreateSubscription` takes a `subscription.ReadCheck` as
   its third argument (nil refuses every create; `BuildProtocolRouter` passes
   its own); `flow_reservation.HandlePostResponse` takes a `ResponseSenderAuthorizer`;
-  `HandleCreateMirrorUsagePoint` and `HandleMirrorUsagePoint` take additional
-  arguments; and `NewFlowReservationLinkedEndDeviceStore` and
-  `NewLogEventLinkedEndDeviceStore` take additional stores. The
-  `flow_reservation.FRPCreator` interface is removed. An embedder that calls
+  the five mirror handlers `HandleCreateMirrorUsagePoint`,
+  `HandleMirrorUsagePoint`, `HandlePutMirrorUsagePoint`,
+  `HandleDeleteMirrorUsagePoint` and `HandlePostMirrorMeterReading` take an
+  `EndDeviceManagementReader`; `HandlePostFlowReservationRequest` takes a
+  `Submitter` in place of the removed `FRPCreator`; and `NewFlowReservationLinkedEndDeviceStore` and
+  `NewLogEventLinkedEndDeviceStore` take additional stores.
+  An embedder that calls
   these directly must update its call sites.
   ([#718](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/718),
   [#722](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/722),
@@ -121,8 +130,11 @@ admin UI panes (`feature`) and changes several exported signatures
 - **Breaking.** The admin UI descriptor in `pkg/sep2admin` is version 2:
   `CurrentDescriptorVersion` is 2, `Row` is `[]Cell` (was `[]Value`), and
   `ErrUnhandledBodyKind` now names `Section.Body`. A consumer that builds or
-  reads descriptors must update.
-  ([#838](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/838))
+  reads descriptors must update. `Descriptor.Body` became
+  `Descriptor.Sections`, and `DefinitionEntry.Value` is now a `Cell`. A chart
+  section is added in a later pull request.
+  ([#835](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/835),
+  [#838](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/838))
 - The admin plane moves into `internal/adminplane`; embedders use the new
   `pkg/sep2adminplane` facade.
   ([#834](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/834))
@@ -133,7 +145,8 @@ admin UI panes (`feature`) and changes several exported signatures
 
 ### Fixed
 
-- Flow reservation: every `FlowReservationResponse` gets a minted mRID; an
+- Flow reservation: every server-built `FlowReservationResponse` gets a minted
+  mRID, and a request with a blank mRID is refused with 400; an
   invalid `RequestStatus` is refused; an answer-record conflict is told apart
   from an existing response; `potentiallySuperseded` is edition-aware and
   status times are ordered; a refused relink rolls back cleanly and a stored
@@ -146,7 +159,10 @@ admin UI panes (`feature`) and changes several exported signatures
   [#819](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/819),
   [#822](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/822))
 - Deleting an EndDevice now removes its flow reservation records, log events,
-  device-keyed records and leftover registrations.
+  configuration, device status, power status, FSA links and leftover
+  registrations. Its DER records and its subscriptions are still left behind;
+  that is not fixed in this release and is tracked in
+  [#721](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/721).
   ([#718](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/718),
   [#724](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/724))
 - An aggregator's mirror usage point is attributed to the managed device, and
@@ -177,8 +193,8 @@ admin UI panes (`feature`) and changes several exported signatures
   decision the GET routes use. On create, a resource the caller could not GET
   is refused with 400; at delivery, each stored subscription is re-checked, so
   a subscriber that can no longer read the resource is not notified. The
-  href is canonicalised first, and `/mup`, `/tm` and `/dcap` cannot be
-  subscribed to.
+  href is canonicalised first, and only `/edev` resources can be subscribed
+  to.
   ([#830](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/830))
 
 ## [0.7.0] - 2026-09-25

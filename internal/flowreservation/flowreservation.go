@@ -67,6 +67,10 @@ type Decision struct {
 	// Power overrides PowerRequested's magnitude, same direction rule as
 	// Energy. Nil grants the full requested amount.
 	Power *sep2.ActivePower
+
+	// By is who answered, recorded with the response when the queue has an
+	// answer store. A zero At takes the response's creationTime.
+	By Attribution
 }
 
 // answerFor builds the FlowReservationResponse fields decision implies for

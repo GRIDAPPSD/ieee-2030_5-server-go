@@ -202,7 +202,8 @@ func recoverRequest(ctx context.Context, deps RecoverDeps, edevID string, frq se
 	if len(st.chain) == 0 {
 		if cancelled {
 			// Answer notifies through the queue's own hook, outside its key lock.
-			if _, err := deps.Queue.Answer(ctx, edevID, frqID, Decision{Kind: Deny}); err != nil && !errors.Is(err, ErrAlreadyAnswered) {
+			by := Attribution{Kind: KindRecovery, At: now.Unix()}
+			if _, err := deps.Queue.Answer(ctx, edevID, frqID, Decision{Kind: Deny, By: by}); err != nil && !errors.Is(err, ErrAlreadyAnswered) {
 				return fmt.Errorf("deny cancelled request: %w", err)
 			}
 			counts.DeniedCancelled++
@@ -252,8 +253,10 @@ func recoverRequest(ctx context.Context, deps RecoverDeps, edevID string, frq se
 				return err
 			}
 			// The path Canceller takes: CancelGrant on each live member.
-			c := &Canceller{ledger: deps.Ledger, writers: deps.Writers}
-			if gone, err := c.cancelChain(ctx, live); err != nil {
+			c := &Canceller{queue: deps.Queue, ledger: deps.Ledger, writers: deps.Writers}
+			done, gone, err := c.cancelChain(ctx, edevID, live, cancelReason)
+			c.recordCancels(ctx, edevID, done, Attribution{Kind: KindRecovery, At: now.Unix()})
+			if err != nil {
 				return errors.Join(reviseErr, fmt.Errorf("finish cancel: %w", err))
 			} else if len(gone) > 0 {
 				return errors.Join(reviseErr, fmt.Errorf("finish cancel: grants not known to the ledger: %v", gone))

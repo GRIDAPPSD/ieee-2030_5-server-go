@@ -54,6 +54,10 @@ type Queue struct {
 
 	notify notifyHook
 
+	// answers records who created each response. Guarded by mu, since
+	// RecordAnswers may set it after the queue is built.
+	answers *Answers
+
 	// after schedules f to run after d and returns a stoppable handle;
 	// production uses time.AfterFunc, tests substitute a short-deadline or
 	// synchronous stand-in so no test waits out a real 300 s bound or the
@@ -122,6 +126,22 @@ func NewQueue(frq FRQReader, frp FRPStore, gate Gate, cfg Config, pen *uint32, o
 		timers:   make(map[string]timer),
 		keyLocks: make(map[string]*sync.Mutex),
 	}
+}
+
+// RecordAnswers makes every response the queue creates carry an answer
+// record naming its Decision.By, written just before the response. Call it
+// before the queue answers anything: a response created earlier has none.
+func (q *Queue) RecordAnswers(a *Answers) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.answers = a
+}
+
+// Answers returns the answer records the queue writes to, or nil.
+func (q *Queue) Answers() *Answers {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.answers
 }
 
 func defaultAfter(d time.Duration, f func()) timer {
@@ -295,28 +315,29 @@ func (q *Queue) attemptFallback(ctx context.Context, edevID, frqID string, attem
 		return
 	}
 
-	decision := Decision{Kind: Grant}
+	fallback := Attribution{Kind: KindDeadlineFallback}
+	decision := Decision{Kind: Grant, By: fallback}
 	switch {
 	case frq.RequestStatus.RequestStatus == sep2.RequestStatusCancelled:
-		decision = Decision{Kind: Deny}
+		decision = Decision{Kind: Deny, By: fallback}
 	case frq.IntervalRequested != nil && frq.IntervalRequested.Duration == 0:
 		// A zero-duration request can never be granted as asked (10.9.3.2
 		// reserves that shape for a denial; answerFor refuses it with
 		// ErrGrantZeroDuration), so this is decided as a denial up front
 		// rather than tried as a Grant and treated as a retryable failure
 		// when answerFor correctly refuses it.
-		decision = Decision{Kind: Deny}
+		decision = Decision{Kind: Deny, By: fallback}
 	}
 
 	_, err = q.build(ctx, edevID, frqID, decision)
 	if refused, why := grantRefused(err); decision.Kind == Grant && refused {
 		log.Printf("flowreservation: deadline fallback: %s/%s: %s: %v; denying", edevID, frqID, why, err)
-		_, err = q.build(ctx, edevID, frqID, Decision{Kind: Deny})
+		_, err = q.build(ctx, edevID, frqID, Decision{Kind: Deny, By: fallback})
 	}
 	// A cancel's status write can land between the read above and build's
 	// own read: the request is now withdrawn, which a denial answers.
 	if decision.Kind == Grant && errors.Is(err, ErrRequestCancelled) {
-		_, err = q.build(ctx, edevID, frqID, Decision{Kind: Deny})
+		_, err = q.build(ctx, edevID, frqID, Decision{Kind: Deny, By: fallback})
 	}
 	if err != nil {
 		if errors.Is(err, ErrAlreadyAnswered) {
@@ -387,7 +408,7 @@ func grantRefused(err error) (bool, string) {
 	return false, ""
 }
 
-// Answer is the operator's path: #670's admin route will call this to
+// Answer is the operator's path: the admin answer route calls this to
 // answer a pending request explicitly. It cancels the request's deadline
 // timer on success. Returns ErrAlreadyAnswered if the request already has a
 // response, whether from an earlier Answer call or because the deadline
@@ -479,7 +500,11 @@ func (q *Queue) buildLocked(ctx context.Context, edevID, frqID string, decision 
 	frp.EventStatus = &es
 	frp.Href = responseHref(edevID, frqID)
 
-	if err := q.store(ctx, edevID, frqID, frp); err != nil {
+	by := decision.By
+	if by.At == 0 {
+		by.At = frp.CreationTime
+	}
+	if err := q.store(ctx, edevID, frqID, frp, AnswerRecord{Action: ActionAnswer, By: by}); err != nil {
 		return sep2.FlowReservationResponse{}, err
 	}
 
@@ -493,15 +518,19 @@ func (q *Queue) buildLocked(ctx context.Context, edevID, frqID string, decision 
 	return frp, nil
 }
 
-// store creates frp under frqID. A grant with a positive duration commits
-// its fleet's window, so its Create runs inside the gate, under the fleet
-// lock; a denial and a grant with no interval commit nothing and bypass it.
-// An error from the Create itself keeps its infrastructure meaning (the
-// fallback retries it), so only the gate's own refusals are marked.
-func (q *Queue) store(ctx context.Context, edevID, frqID string, frp sep2.FlowReservationResponse) error {
+// store creates frp under frqID, with rec written just before it. A grant
+// with a positive duration commits its fleet's window, so its Create runs
+// inside the gate, under the fleet lock; a denial and a grant with no
+// interval commit nothing and bypass it. A refusal from the gate stores
+// neither. An error from the Create itself keeps its infrastructure meaning
+// (the fallback retries it), so only the gate's own refusals are marked.
+func (q *Queue) store(ctx context.Context, edevID, frqID string, frp sep2.FlowReservationResponse, rec AnswerRecord) error {
 	var createErr error
+	createRecorded, _ := q.Answers().recorded(edevID, frqID, rec, func(ctx context.Context) error {
+		return q.frp.Create(ctx, edevID, frqID, frp)
+	}, nil)
 	create := func(ctx context.Context) error {
-		createErr = q.frp.Create(ctx, edevID, frqID, frp)
+		createErr = createRecorded(ctx)
 		return createErr
 	}
 

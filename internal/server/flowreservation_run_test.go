@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -61,18 +63,19 @@ func newFRRunEnv(t *testing.T) *frRunEnv {
 func (e *frRunEnv) config(deadline time.Duration) *config.Config {
 	pen := uint32(0xA0B1)
 	return &config.Config{
-		Addr:                    e.c.sep2Probe,
-		CertFile:                e.c.certFile,
-		KeyFile:                 e.c.keyFile,
-		CAFile:                  e.c.caFile,
-		AdminListen:             e.c.adminProbe,
-		AdminKey:                adminTestKey,
-		TZOffset:                -28800,
-		TimeQuality:             sep2.TimeQualityNTP,
-		PEN:                     &pen,
-		DataDir:                 e.dataDir,
-		BootFixtureFile:         e.fixture,
-		FlowReservationDeadline: deadline,
+		Addr:                      e.c.sep2Probe,
+		CertFile:                  e.c.certFile,
+		KeyFile:                   e.c.keyFile,
+		CAFile:                    e.c.caFile,
+		AdminListen:               e.c.adminProbe,
+		AdminKey:                  adminTestKey,
+		TZOffset:                  -28800,
+		TimeQuality:               sep2.TimeQualityNTP,
+		PEN:                       &pen,
+		DataDir:                   e.dataDir,
+		NotificationAllowLoopback: true,
+		BootFixtureFile:           e.fixture,
+		FlowReservationDeadline:   deadline,
 	}
 }
 
@@ -183,8 +186,14 @@ func TestRun_FlowReservationRequestIsAnsweredByTheFallbackAfterARestart(t *testi
 	if !strings.HasPrefix(got[0].Href, "/edev/0/frp/") || got[0].MRID == "" {
 		t.Errorf("response Href = %q MRID = %q, want an href under /edev/0/frp/ and a minted mRID", got[0].Href, got[0].MRID)
 	}
+	// Let the rest of the hold pass and the run end: a second answer to the
+	// same request would be stored by then.
+	time.Sleep(time.Second)
 	if err := stop(); err != nil {
 		t.Fatalf("second run: %v", err)
+	}
+	if n := len(e.storedResponses(t)); n != 1 {
+		t.Errorf("after the second run %d responses are stored, want exactly 1", n)
 	}
 }
 
@@ -238,9 +247,30 @@ func TestRun_UnrepairableRequestIsLoggedAndBootContinues(t *testing.T) {
 	}
 }
 
-// A recovery pass that cannot complete stops the boot before the protocol
-// listener is bound.
+// A recovery pass that fails stops the boot with that error, before the
+// protocol listener is bound.
 func TestRun_RecoveryPassErrorStopsBootBeforeBind(t *testing.T) {
+	e := newFRRunEnv(t)
+	boom := errors.New("recovery pass failed")
+	server.SetRecoverAtBoot(t, func(context.Context, *server.Stores, *flowreservation.Queue, flowreservation.Notifier, *slog.Logger, time.Time) (flowreservation.RecoverCounts, error) {
+		return flowreservation.RecoverCounts{}, boom
+	})
+
+	err := server.Run(context.Background(), e.config(0), e.c.svc)
+	if !errors.Is(err, boom) || !strings.Contains(err.Error(), "flow reservation recovery") {
+		t.Fatalf("Run = %v, want a flow reservation recovery error wrapping the pass error", err)
+	}
+	l, lerr := net.Listen("tcp", e.c.sep2Probe)
+	if lerr != nil {
+		t.Fatalf("protocol address is bound after a failed boot: %v", lerr)
+	}
+	_ = l.Close()
+}
+
+// A stop requested during recovery is a clean stop whether or not requests
+// are stored: the pass sees the cancelled context only between requests, so
+// without this the exit status would depend on the data directory.
+func TestRun_StopDuringRecoveryIsACleanStop(t *testing.T) {
 	e := newFRRunEnv(t)
 	seed, err := memory.NewPersistentScopedStore[sep2.FlowReservationRequest](
 		filepath.Join(e.dataDir, "flowreservation-requests.json"), "FlowReservationRequest")
@@ -253,21 +283,104 @@ func TestRun_RecoveryPassErrorStopsBootBeforeBind(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Recover returns the context's error between requests, which is a failure
-	// of the pass and not of one request.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	cfg := e.config(0)
 	cfg.BootFixtureFile = ""
-	err = server.Run(ctx, cfg, e.c.svc)
-	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), "flow reservation recovery") {
-		t.Fatalf("Run = %v, want a flow reservation recovery error wrapping context.Canceled", err)
+	if err := server.Run(ctx, cfg, e.c.svc); err != nil {
+		t.Fatalf("Run = %v, want nil: a requested stop is not a failure", err)
 	}
 	l, lerr := net.Listen("tcp", e.c.sep2Probe)
 	if lerr != nil {
-		t.Fatalf("protocol address is bound after a failed boot: %v", lerr)
+		t.Fatalf("protocol address is bound after a stop during recovery: %v", lerr)
 	}
 	_ = l.Close()
+}
+
+// Recovery runs while neither listener is bound: a recovery that ran after
+// the protocol listener started would find its address taken.
+func TestRun_RecoveryRunsBeforeEitherListenerBinds(t *testing.T) {
+	e := newFRRunEnv(t)
+	var free map[string]bool
+	server.SetRecoverAtBoot(t, func(ctx context.Context, s *server.Stores, q *flowreservation.Queue, n flowreservation.Notifier, l *slog.Logger, now time.Time) (flowreservation.RecoverCounts, error) {
+		free = map[string]bool{}
+		for name, addr := range map[string]string{"protocol": e.c.sep2Probe, "admin": e.c.adminProbe} {
+			if ln, err := net.Listen("tcp", addr); err == nil {
+				free[name] = true
+				_ = ln.Close()
+			}
+		}
+		return server.RecoverFlowReservations(ctx, s, q, n, l, now)
+	})
+
+	e.start(t, e.config(0))
+	if free == nil {
+		t.Fatal("the recovery hook never ran")
+	}
+	if !free["protocol"] || !free["admin"] {
+		t.Errorf("addresses free at recovery = %v, want both: a listener was already bound", free)
+	}
+}
+
+// Close runs on an error exit after recovery as well as on shutdown: with the
+// certificate missing, Run fails after it has re-armed the stored request,
+// and the re-armed hold must not outlive Run.
+func TestRun_NoQueueTimerSurvivesAnErrorExitAfterRecovery(t *testing.T) {
+	e := newFRRunEnv(t)
+	seed, err := memory.NewPersistentScopedStore[sep2.FlowReservationRequest](
+		filepath.Join(e.dataDir, "flowreservation-requests.json"), "FlowReservationRequest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := sep2.FlowReservationRequest{MRID: "REQ", CreationTime: time.Now().Unix()}
+	req.Href = "/edev/0/frq/r1"
+	if err := seed.Create(context.Background(), "0", "r1", req); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := e.config(time.Second)
+	cfg.BootFixtureFile = ""
+	cfg.CertFile = filepath.Join(t.TempDir(), "missing.pem")
+	if err := server.Run(context.Background(), cfg, e.c.svc); err == nil {
+		t.Fatal("Run with a missing server certificate returned nil, want the error that ends this boot after recovery")
+	}
+	if got := e.waitForStoredResponse(t, 2500*time.Millisecond); len(got) != 0 {
+		t.Fatalf("%d responses stored after Run failed, want none: the re-armed hold outlived Run", len(got))
+	}
+}
+
+// The queue Run builds carries the notifier: when the fallback answers, the
+// device's subscription to its response list is told.
+func TestRun_FallbackAnswerNotifiesTheDevicesResponseList(t *testing.T) {
+	e := newFRRunEnv(t)
+	e.start(t, e.config(2*time.Second))
+
+	rcv := newLoopbackReceiver(t)
+	sub := `<Subscription xmlns="urn:ieee:std:2030.5:ns"><subscribedResource>/edev/0/frp</subscribedResource>` +
+		`<notificationURI>` + rcv.uri + `</notificationURI><encoding>0</encoding></Subscription>`
+	resp, err := e.protocolClient().Post("https://"+e.c.sep2Probe+"/edev/0/sub", "application/sep+xml", strings.NewReader(sub))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("subscribe: status %d body %s", resp.StatusCode, got)
+	}
+
+	e.postRequest(t)
+	time.Sleep(500 * time.Millisecond)
+	before := rcv.hits.Load()
+	deadline := time.Now().Add(6 * time.Second)
+	for rcv.hits.Load() == before && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if rcv.hits.Load() == before {
+		t.Fatal("no notification reached the response-list subscriber after the fallback answered")
+	}
+	if n := len(e.storedResponses(t)); n != 1 {
+		t.Errorf("responses stored = %d, want 1", n)
+	}
 }
 
 // The setting reaches the admin read API through the same value the queue

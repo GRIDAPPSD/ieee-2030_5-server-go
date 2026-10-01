@@ -53,11 +53,17 @@ import (
 // returning the bare protocol router that the CSIP harness and the
 // route-surface test expect.
 func NewEmbedConfig(cfg *config.Config, stores *Stores, notifier handler.ResourceNotifier) sep2server.Config {
+	return newEmbedConfig(cfg, stores, adaptNotifier(notifier))
+}
+
+// newEmbedConfig is NewEmbedConfig for a notifier already adapted, so a
+// caller that also hands the adapted notifier elsewhere adapts it once.
+func newEmbedConfig(cfg *config.Config, stores *Stores, notifier assembly.ResourceNotifier) sep2server.Config {
 	return sep2server.Config{
 		Router:   NewCoreRouterConfig(cfg),
 		Stores:   NewCoreStores(stores),
 		Auth:     NewCoreAuthPolicy(),
-		Notifier: adaptNotifier(notifier),
+		Notifier: notifier,
 	}
 }
 
@@ -114,19 +120,11 @@ func flowReservationConfig(deadline time.Duration) flowreservation.Config {
 	return flowreservation.Config{Deadline: deadline}
 }
 
-// newFlowReservationQueue builds the process's one queue over stores, the way
-// the assembly builds its own: grants are checked against the commitment
-// ledger and a response store that cascades to its lifecycle records. A nil
+// newFlowReservationQueue builds the process's one queue through the
+// assembly's own constructor, over the same stores the routes are given. A nil
 // notifier notifies no one.
-func newFlowReservationQueue(stores *Stores, notifier flowreservation.Notifier) *flowreservation.Queue {
-	opts := []flowreservation.Option{flowreservation.WithNotifier(notifier)}
-	return flowreservation.NewQueue(
-		stores.FlowReservationRequests, flowReservationResponses(stores),
-		flowreservation.NewLedgerGate(stores.CommitmentLedger, commitment.Resolver{
-			Devices: stores.EndDevices, Managers: stores.EndDeviceManagers,
-		}),
-		flowReservationConfig(stores.FlowReservationDeadline), stores.PEN, opts...,
-	)
+func newFlowReservationQueue(stores *Stores, notifier assembly.ResourceNotifier) *flowreservation.Queue {
+	return assembly.NewFlowReservationQueue(NewCoreStores(stores), stores.PEN, flowReservationConfig(stores.FlowReservationDeadline).Deadline, notifier)
 }
 
 // flowReservationResponses is the response store with its lifecycle records
@@ -136,18 +134,28 @@ func flowReservationResponses(s *Stores) store.ScopedStore[sep2.FlowReservationR
 	return memory.WithDependents(s.FlowReservationResponses, s.FlowReservationResponseLifecycles)
 }
 
+// recoverAtBoot is the call Run makes; tests replace it to observe when it runs.
+var recoverAtBoot = recoverFlowReservations
+
+// recoveryWriters are the writers a repair cancels grants through: the
+// process's issuer and cancel marks, notifying as a live cancel does. Without
+// an issuer it returns the zero Writers, and a repair that needs them ends the
+// pass with an error (requireRepairDeps), which Run never meets because it
+// always sets one.
+func recoveryWriters(stores *Stores, notifier flowreservation.Notifier) commitment.Writers {
+	if stores.DERControlIssuer == nil {
+		return commitment.Writers{}
+	}
+	return flowreservation.NotifyingWriters(
+		sources.NewWriters(stores.DERControlIssuer, stores.FlowReservationResponseLifecycles), notifier)
+}
+
 // recoverFlowReservations is the startup pass over stored flow reservation
 // requests (#762). A request it could not repair is logged at error level by
 // Recover, once per request, and does not stop the boot: it is retried at the
 // next start. Only a failure of the pass itself returns an error.
 func recoverFlowReservations(ctx context.Context, stores *Stores, queue *flowreservation.Queue, notifier flowreservation.Notifier, logger *slog.Logger, now time.Time) (flowreservation.RecoverCounts, error) {
-	// Without an issuer there are no writers, so a repair that needs one fails
-	// and is counted, rather than dereferencing a nil issuer.
-	var writers commitment.Writers
-	if stores.DERControlIssuer != nil {
-		writers = flowreservation.NotifyingWriters(
-			sources.NewWriters(stores.DERControlIssuer, stores.FlowReservationResponseLifecycles), notifier)
-	}
+	writers := recoveryWriters(stores, notifier)
 	return flowreservation.Recover(ctx, flowreservation.RecoverDeps{
 		FRQ:        stores.FlowReservationRequests,
 		FRP:        flowReservationResponses(stores),
@@ -228,7 +236,7 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 		MessagingPrograms:        s.MessagingPrograms,
 		TextMessages:             s.TextMessages,
 		FlowReservationRequests:  s.FlowReservationRequests,
-		FlowReservationResponses: memory.WithDependents(s.FlowReservationResponses, s.FlowReservationResponseLifecycles),
+		FlowReservationResponses: flowReservationResponses(s),
 		ResponseSets:             s.ResponseSets,
 		Responses:                s.Responses,
 

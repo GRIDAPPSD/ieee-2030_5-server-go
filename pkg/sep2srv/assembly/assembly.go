@@ -276,10 +276,12 @@ type Stores struct {
 	CommitmentLedger *commitment.Ledger
 
 	// FlowReservationQueue is the queue the FlowReservationRequest routes
-	// submit to. A server that also reads or answers the queue elsewhere
-	// (the admin API, startup recovery, shutdown) builds it once and sets it
-	// here, and then owns Close. Nil makes the assembly build a queue of its
-	// own from FlowReservationDeadline, which nothing closes.
+	// submit to, built with NewFlowReservationQueue. A server that also
+	// recovers or answers requests elsewhere sets it once and owns Close and
+	// recovery. Nil makes the assembly build a queue of its own: an embedder
+	// outside this module cannot do better, because the queue type and
+	// flowreservation.Recover live in an internal package, so nothing closes
+	// that queue or re-arms its pending requests after a restart.
 	FlowReservationQueue *flowreservation.Queue
 
 	// DERControlIssuer is the issuer the grant cancel path writes DER
@@ -1406,14 +1408,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		// commitments; a nil ledger refuses every grant with a window.
 		flowReservationQueue := stores.FlowReservationQueue
 		if flowReservationQueue == nil {
-			flowReservationQueue = flowreservation.NewQueue(
-				stores.FlowReservationRequests, flowReservationResponses,
-				flowreservation.NewLedgerGate(stores.CommitmentLedger, commitment.Resolver{
-					Devices: stores.EndDevices, Managers: stores.EndDeviceManagers,
-				}),
-				flowreservation.Config{Deadline: frpDeadline}, pen,
-				flowreservation.WithNotifier(notifier),
-			)
+			flowReservationQueue = NewFlowReservationQueue(stores, pen, frpDeadline, notifier)
 		}
 
 		mux.HandleFunc("GET /edev/{id}/frq", scopedListHandler[sep2.FlowReservationRequest, sep2.FlowReservationRequestList](
@@ -1546,6 +1541,25 @@ func commitmentWriters(stores *Stores) commitment.Writers {
 		}
 	}
 	return sources.NewWriters(issuer, stores.FlowReservationResponseLifecycles)
+}
+
+// NewFlowReservationQueue is the one place a flow reservation queue is built:
+// requests and responses from stores, every grant checked against the
+// commitment ledger over the fleet, the deadline fallback held for deadline
+// (zero takes flowreservation.DefaultDeadline), and a response notified
+// through notifier when it is non-nil. The caller owns Close.
+func NewFlowReservationQueue(stores *Stores, pen *uint32, deadline time.Duration, notifier ResourceNotifier) *flowreservation.Queue {
+	var opts []flowreservation.Option
+	if notifier != nil {
+		opts = append(opts, flowreservation.WithNotifier(notifier))
+	}
+	return flowreservation.NewQueue(
+		stores.FlowReservationRequests, requireScoped(stores.FlowReservationResponses, "FlowReservationResponses"),
+		flowreservation.NewLedgerGate(stores.CommitmentLedger, commitment.Resolver{
+			Devices: stores.EndDevices, Managers: stores.EndDeviceManagers,
+		}),
+		flowreservation.Config{Deadline: deadline}, pen, opts...,
+	)
 }
 
 // NewDERControlIssuer is the one place a DER control issuer is built, so a

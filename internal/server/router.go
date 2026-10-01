@@ -127,7 +127,8 @@ type Stores struct {
 
 	// FlowReservationQueue is the process's one flow reservation queue (#763),
 	// shared by the protocol routes and startup recovery, and closed by Run.
-	// Nil leaves the assembly to build a queue of its own.
+	// Nil leaves the assembly to build a queue of its own, which nothing
+	// closes or recovers.
 	FlowReservationQueue *flowreservation.Queue
 
 	// FlowReservationDeadline is the hold the queue runs under. The admin read

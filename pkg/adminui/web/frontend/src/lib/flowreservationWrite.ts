@@ -51,12 +51,25 @@ function writePath(entry: FlowReservationEntry, verb: 'answer' | 'revise' | 'can
   )
 }
 
-// parseStart reads a UTC instant written as 2026-10-01T12:00:00Z.
+// parseStart reads a UTC instant written as 2026-10-01T12:00:00Z. Date.parse
+// rolls 2026-02-31 over to March, so the instant must print back as typed.
 function parseStart(text: string): number | null {
   const t = text.trim()
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?Z$/.test(t)) return null
   const ms = Date.parse(t)
-  return Number.isNaN(ms) ? null : Math.floor(ms / 1000)
+  if (Number.isNaN(ms)) return null
+  const iso = new Date(ms).toISOString()
+  if (iso.slice(0, 16) !== t.slice(0, 16)) return null
+  if (t.length === 20 && iso.slice(17, 19) !== t.slice(17, 19)) return null
+  return Math.floor(ms / 1000)
+}
+
+// formatStart prints an epoch second as the form's start text, or '' when
+// the server sent a value outside the range a Date can hold.
+export function formatStart(epochSeconds: number): string {
+  const when = new Date(epochSeconds * 1000)
+  if (Number.isNaN(when.getTime())) return ''
+  return when.toISOString().replace('.000Z', 'Z')
 }
 
 type Parsed<T> = { ok: true; value: T | undefined } | { ok: false; error: string }
@@ -144,7 +157,6 @@ const REFUSALS: Record<string, string> = {
   execution_exceeds_power: 'A control carrying out the grant is above the new power.',
   execution_exceeds_energy: 'The controls carrying out the grant use more than the new energy.',
   execution_reverses_grant: 'A control carrying out the grant would run in the opposite direction.',
-  internal: 'The server failed to store the change.',
 }
 
 interface RefusalBody {
@@ -161,12 +173,26 @@ function asRefusal(body: unknown): RefusalBody | null {
 // describeRefusal shows a failed write with its code, and names the mRID
 // and request id the body carries. A 404 or 405 without a refusal code is a
 // route this server does not have, which is not the same as "not found".
+// outcomeUnknown is a failure after which the write may still have been
+// applied: no answer at all, or a server-side failure. Only a 503
+// not_configured is a definite "nothing was done".
+function outcomeUnknown(status: number, code: string | null): boolean {
+  return status === 0 || (status >= 500 && !(status === 503 && code === 'not_configured'))
+}
+
+// Refusals that say the row on screen is out of date: the server's state has
+// moved on, so the pane reloads rather than offer the same action again.
+const STALE_CODES = new Set(['already_answered', 'grant_not_live', 'request_cancelled', 'not_answered', 'request_not_found'])
+
 export function describeRefusal(status: number, error: string, body: unknown): string {
   const b = asRefusal(body)
   const code = b !== null && typeof b.code === 'string' && b.code !== '' ? b.code : null
   if (status === 503 && code === 'not_configured') return 'Answers are not enabled on this server (not_configured).'
   if ((status === 404 || status === 405) && code === null) return 'Answer API not available on this server yet.'
-  if (status === 0) return 'No answer from the server (' + error + '). The change may or may not have been applied.'
+  if (outcomeUnknown(status, code)) {
+    const said = status === 0 ? 'No answer from the server (' + error + ')' : 'The server answered ' + status + (code === null ? '' : ' (' + code + ')')
+    return said + '. Outcome unknown: reloading the queue. Check the row before trying again.'
+  }
   if (code === null) return 'The server refused the change (status ' + status + '): ' + error
   const words = REFUSALS[code] ?? error
   const names: string[] = []
@@ -177,28 +203,38 @@ export function describeRefusal(status: number, error: string, body: unknown): s
 
 export type WriteResult =
   | { ok: true; entry: FlowReservationEntry }
-  | { ok: false; message: string; refresh: boolean }
+  | { ok: false; message: string; kind: 'refused' | 'stale' | 'unknown' }
 
 // viewFrom reads the request the server returns after a write: the whole
-// FlowReservationView, as the body itself.
-function viewFrom(data: unknown): FlowReservationEntry | null {
+// FlowReservationView, as the body itself, for the request that was written.
+function viewFrom(data: unknown, href: string): FlowReservationEntry | null {
   const parsed = normalizeQueue({ requests: [data] })
-  return 'queue' in parsed ? parsed.queue.requests[0] : null
+  if (!('queue' in parsed)) return null
+  const entry = parsed.queue.requests[0]
+  const ok = typeof entry.edevId === 'string' && typeof entry.frqId === 'string' && entry.requestHref === href
+  return ok ? entry : null
 }
 
-export async function submitWrite(path: string, body: WriteBody, opts: RequestOptions): Promise<WriteResult> {
+export async function submitWrite(
+  path: string,
+  body: WriteBody,
+  href: string,
+  opts: RequestOptions,
+): Promise<WriteResult> {
   const res = await postJSON<unknown>(path, body, opts)
   if (!res.ok) {
-    // Status 0 is a timeout or network failure: the server may have applied
-    // the write, so the pane re-reads the queue instead of guessing.
-    return { ok: false, message: describeRefusal(res.status, res.error, res.body), refresh: res.status === 0 }
+    const b = asRefusal(res.body)
+    const code = b !== null && typeof b.code === 'string' ? b.code : null
+    const message = describeRefusal(res.status, res.error, res.body)
+    if (outcomeUnknown(res.status, code)) return { ok: false, message, kind: 'unknown' }
+    return { ok: false, message, kind: code !== null && STALE_CODES.has(code) ? 'stale' : 'refused' }
   }
-  const entry = viewFrom(res.data)
+  const entry = viewFrom(res.data, href)
   if (entry === null) {
     return {
       ok: false,
-      message: 'The server accepted the change but its reply could not be read. Refresh to see the request.',
-      refresh: true,
+      message: 'The server accepted the change but its reply could not be read. Reloading the queue; check the row.',
+      kind: 'unknown',
     }
   }
   return { ok: true, entry }

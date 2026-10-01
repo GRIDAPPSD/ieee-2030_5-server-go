@@ -14,6 +14,7 @@
     REASON_MAX,
     buildAction,
     emptyForm,
+    formatStart,
     submitWrite,
     type ActionForm,
     type ActionKind,
@@ -225,8 +226,8 @@
     const asked = entry.request.intervalRequested
     const held = kind === 'revise' ? entry.tip?.interval : asked
     if ((kind === 'grant_adjusted' || kind === 'revise') && held) {
-      form.start = new Date(held.start * 1000).toISOString().replace('.000Z', 'Z')
-      form.duration = String(held.duration)
+      form.start = formatStart(held.start)
+      if (form.start !== '') form.duration = String(held.duration)
     }
     writeNote = ''
     action = {
@@ -249,6 +250,24 @@
     action.error = ''
     action.confirming = true
   }
+
+  function backToInputs() {
+    if (action === null || action.busy) return
+    action.confirming = false
+  }
+
+  function focusOnMount(el: HTMLElement) {
+    el.focus()
+  }
+
+  // A busy action whose row left the list (a refresh dropped it) would have
+  // no panel and no way out until the timeout.
+  const orphan = $derived(
+    action !== null &&
+      !views.some((v) => v.queue?.requests.some((e) => e.requestHref === action?.href) === true),
+  )
+
+  const HAS_INPUTS: ActionKind[] = ['grant_adjusted', 'revise', 'cancel']
 
   function closeAction() {
     if (action?.busy === true) return
@@ -294,7 +313,7 @@
     writeCtrl = ctrl
     open.busy = true
     open.error = ''
-    const result = await submitWrite(built.path, built.body, { signal: ctrl.signal, timeoutMs: WRITE_TIMEOUT_MS })
+    const result = await submitWrite(built.path, built.body, entry.requestHref, { signal: ctrl.signal, timeoutMs: WRITE_TIMEOUT_MS })
     if (lifetime.signal.aborted || seq !== writeSeq) return
     writeCtrl = null
     if (result.ok) {
@@ -303,9 +322,17 @@
       action = null
       return
     }
-    open.busy = false
-    open.error = result.message
-    if (result.refresh && !refreshing) load()
+    if (result.kind === 'refused') {
+      open.busy = false
+      open.error = result.message
+      return
+    }
+    // The write may or may not have landed, or the row is out of date: the
+    // confirm step closes so the same write is never re-sent, and a fresh load
+    // (the sequence guard drops any older one) shows the server's state.
+    writeNote = result.message
+    action = null
+    load()
   }
 
   const KIND_LABEL: Record<ActionKind, string> = {
@@ -374,17 +401,20 @@
         <button class="btn btn-small" onclick={() => review(entry)}>Review</button>
         <button class="btn btn-small" onclick={closeAction}>Close</button>
       {:else}
-        <p data-testid="frq-confirm-text">{effectText(entry, a)}</p>
+        <p data-testid="frq-confirm-text" tabindex="-1" {@attach focusOnMount}>{effectText(entry, a)}</p>
         <button class="btn btn-small" disabled={a.busy} onclick={() => confirm(entry)}>Confirm</button>
         {#if a.busy}
           <span class="hint" data-testid="frq-writing">Sending...</span>
           <button class="btn btn-small" onclick={stopWaiting}>Stop waiting</button>
         {:else}
+          {#if HAS_INPUTS.includes(a.kind)}
+            <button class="btn btn-small" onclick={backToInputs}>Back</button>
+          {/if}
           <button class="btn btn-small" onclick={closeAction}>Do not send</button>
         {/if}
       {/if}
       {#if a.error !== ''}
-        <div class="result err" data-testid="frq-write-error">{a.error}</div>
+        <div class="result err" role="alert" data-testid="frq-write-error">{a.error}</div>
       {/if}
     </div>
   {/if}
@@ -446,7 +476,17 @@
       </div>
     {/if}
     {#if writeNote !== ''}
-      <div class="hint" data-testid="frq-write-note">{writeNote}</div>
+      <div class="hint" role="alert" data-testid="frq-write-note">{writeNote}</div>
+    {/if}
+    {#if action !== null && orphan}
+      <div class="action-panel" data-testid="frq-orphan">
+        {KIND_LABEL[action.kind]} on {action.href} is no longer in the list.
+        {#if action.busy}
+          <button class="btn btn-small" onclick={stopWaiting}>Stop waiting</button>
+        {:else}
+          <button class="btn btn-small" onclick={closeAction}>Close</button>
+        {/if}
+      </div>
     {/if}
     {#if views.every((v) => v.queue !== null && v.queue.requests.length === 0)}
       <p class="hint" data-testid="frq-empty">No flow reservation requests.</p>

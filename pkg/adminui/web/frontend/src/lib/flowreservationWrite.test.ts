@@ -6,6 +6,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildAction,
+  formatStart,
+  submitWrite,
   describeRefusal,
   emptyForm,
   REASON_MAX,
@@ -115,6 +117,18 @@ describe('buildAction', () => {
     expect(buildAction('cancel', ENTRY, form({ reason: 'a'.repeat(REASON_MAX + 1) })).ok).toBe(false)
   })
 
+  it.each(['2026-02-31T12:00:00Z', '2026-04-31T12:00:00Z', '2026-10-01T24:00:00Z', '2026-10-01T12:60:00Z', '2026-10-01T12:00:61Z'])(
+    'refuses the impossible start %s instead of rolling it over',
+    (start) => {
+      expect(buildAction('grant_adjusted', ENTRY, form({ start, duration: '60' })).ok).toBe(false)
+    },
+  )
+
+  it('accepts a real leap day and a start without seconds', () => {
+    expect(buildAction('grant_adjusted', ENTRY, form({ start: '2028-02-29T12:00:00Z', duration: '60' })).ok).toBe(true)
+    expect(buildAction('grant_adjusted', ENTRY, form({ start: '2026-10-01T12:00Z', duration: '60' })).ok).toBe(true)
+  })
+
   it('addresses the request by the server ids, escaped', () => {
     const odd = { ...ENTRY, edevId: 'a/b', frqId: 'x y' }
     const built = buildAction('grant_as_asked', odd, emptyForm())
@@ -161,7 +175,6 @@ describe('describeRefusal', () => {
     [409, 'grant_not_live', 'not live'],
     [409, 'execution_exceeds_energy', 'more than the new energy'],
     [409, 'execution_reverses_grant', 'opposite direction'],
-    [500, 'internal', 'failed to store'],
   ])('maps %i %s to plain words and keeps the code', (status, code, words) => {
     const text = describeRefusal(status, 'server text', { error: 'server text', code })
     expect(text).toContain(words)
@@ -175,6 +188,73 @@ describe('describeRefusal', () => {
   })
 
   it('reads a timeout as unknown outcome, not as a refusal', () => {
-    expect(describeRefusal(0, 'request timed out', undefined)).toContain('may or may not have been applied')
+    expect(describeRefusal(0, 'request timed out', undefined)).toContain('Outcome unknown: reloading')
+  })
+
+  it.each([
+    [500, 'internal'],
+    [502, null],
+    [503, 'unavailable'],
+    [504, null],
+  ])('reads a %i (%s) as outcome unknown, never as a stored failure', (status, code) => {
+    const text = describeRefusal(status, 'x', code === null ? undefined : { error: 'x', code })
+    expect(text).toContain('Outcome unknown: reloading')
+    expect(text).toContain('answered ' + status)
+  })
+})
+
+describe('formatStart', () => {
+  it('prints a normal start and returns blank for one outside the Date range', () => {
+    expect(formatStart(1790003600)).toBe(new Date(1790003600000).toISOString().replace('.000Z', 'Z'))
+    expect(formatStart(1e15)).toBe('')
+  })
+})
+
+describe('submitWrite', () => {
+  const HREF = ENTRY.requestHref
+  const other = () => ({ ...JSON.parse(JSON.stringify(ENTRY)), requestHref: '/edev/9/frq/other' })
+
+  it('refuses a reply for another request as unknown, and one without ids', async () => {
+    const { vi } = await import('vitest')
+    const api = await import('./api')
+    const spy = vi.spyOn(api, 'postJSON')
+    spy.mockResolvedValueOnce({ ok: true, data: other() })
+    const wrong = await submitWrite('/x', {}, HREF, {})
+    expect(wrong.ok).toBe(false)
+    expect(!wrong.ok && wrong.kind).toBe('unknown')
+    const noIds = JSON.parse(JSON.stringify(ENTRY))
+    delete noIds.frqId
+    spy.mockResolvedValueOnce({ ok: true, data: noIds })
+    expect((await submitWrite('/x', {}, HREF, {})).ok).toBe(false)
+    spy.mockResolvedValueOnce({ ok: true, data: JSON.parse(JSON.stringify(ENTRY)) })
+    expect((await submitWrite('/x', {}, HREF, {})).ok).toBe(true)
+    spy.mockRestore()
+  })
+
+  it.each([
+    [409, 'already_answered', 'stale'],
+    [409, 'grant_not_live', 'stale'],
+    [409, 'request_cancelled', 'stale'],
+    [409, 'not_answered', 'stale'],
+    [404, 'request_not_found', 'stale'],
+    [409, 'fleet_window_committed', 'refused'],
+    [400, 'interval_outside_window', 'refused'],
+    [503, 'not_configured', 'refused'],
+    [500, 'internal', 'unknown'],
+    [502, '', 'unknown'],
+    [504, '', 'unknown'],
+    [0, '', 'unknown'],
+  ])('classifies %i %s as %s', async (status, code, kind) => {
+    const { vi } = await import('vitest')
+    const api = await import('./api')
+    const spy = vi.spyOn(api, 'postJSON').mockResolvedValueOnce({
+      ok: false,
+      status,
+      error: 'e',
+      body: code === '' ? undefined : { error: 'e', code },
+    })
+    const r = await submitWrite('/x', {}, HREF, {})
+    spy.mockRestore()
+    expect(!r.ok && r.kind).toBe(kind)
   })
 })

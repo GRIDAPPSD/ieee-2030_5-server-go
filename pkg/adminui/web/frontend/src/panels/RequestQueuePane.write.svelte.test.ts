@@ -170,7 +170,7 @@ describe('decisions', () => {
     const before = reads.mock.calls.length
     await press(pending, 'Grant as asked')
     await press(pending, 'Confirm')
-    expect((await screen.findByTestId('frq-write-error')).textContent).toContain('could not be read')
+    expect((await screen.findByTestId('frq-write-note')).textContent).toContain('could not be read')
     expect(within(pending).getByTestId('frq-state').textContent).toBe('pending')
     await waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(before))
   })
@@ -339,10 +339,8 @@ describe('refusals', () => {
   it.each([
     [400, 'interval_outside_window', 'outside the window the aggregator asked for', '', ''],
     [400, 'power_exceeds_request', 'more than the aggregator asked for', '', ''],
-    [409, 'already_answered', 'already has an answer', 'TIPMRID01', 'frq-1790000000000000001'],
     [409, 'fleet_window_committed', 'overlaps a grant or control', 'CTRLMRID02', ''],
     [409, 'execution_exceeds_power', 'above the new power', 'CTRLMRID03', ''],
-    [500, 'internal', 'failed to store', '', ''],
   ])('shows %i %s with its code, in words, naming %s %s', async (status, code, words, mRID, frqId) => {
     const { pending, text } = await refused({
       ok: false,
@@ -373,31 +371,169 @@ describe('refusals', () => {
     expect(text).toBe('Answer API not available on this server yet.')
   })
 
-  it('shows a timeout as unknown outcome and re-reads the queue', async () => {
+  it.each([
+    [0, undefined, 'request timed out'],
+    [500, { error: 'x', code: 'internal' }, 'x'],
+    [502, undefined, 'bad gateway'],
+    [503, { error: 'x', code: 'unavailable' }, 'x'],
+    [504, undefined, 'gateway timeout'],
+  ])('after outcome unknown (%i) closes the confirm step, reloads, and sends the write once', async (status, body, error) => {
     const reads = mockReads()
+    const post = mockWrite({ ok: false, status, error, body })
+    render(RequestQueuePane)
+    const [pending] = await rows()
+    const before = reads.mock.calls.length
+    await press(pending, 'Grant as asked')
+    const confirmBtn = within(pending).getByRole('button', { name: 'Confirm' })
+    await fireEvent.click(confirmBtn)
+    await fireEvent.click(confirmBtn)
+    const note = await screen.findByTestId('frq-write-note')
+    expect(note.textContent).toContain('Outcome unknown: reloading')
+    expect(note.getAttribute('role')).toBe('alert')
+    expect(post).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('frq-action')).toBeNull()
+    expect(within(pending).queryByRole('button', { name: 'Confirm' })).toBeNull()
+    await waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(before))
+  })
+
+  it('starts a new load after an unknown outcome even when one is in flight', async () => {
+    let flowCalls = 0
+    let releaseLoad!: () => void
+    const gate = new Promise<void>((r) => (releaseLoad = r))
+    vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
+      if (path === '/api/derms/fleets') return { ok: true, data: [{ aggregatorLFDI: LFDI }] }
+      flowCalls++
+      if (flowCalls === 2) await gate
+      return { ok: true, data: fixture }
+    }) as never)
     mockWrite({ ok: false, status: 0, error: 'request timed out' })
     render(RequestQueuePane)
     const [pending] = await rows()
-    const before = reads.mock.calls.length
+    await press(document.body, 'Refresh')
     await press(pending, 'Grant as asked')
     await press(pending, 'Confirm')
-    const err = await screen.findByTestId('frq-write-error')
-    expect(err.textContent).toContain('may or may not have been applied')
-    await waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(before))
-    expect(within(pending).getByTestId('frq-state').textContent).toBe('pending')
+    await waitFor(() => expect(flowCalls).toBe(3))
+    releaseLoad()
   })
 
-  it('says so when a success reply cannot be read, and re-reads the queue', async () => {
+  it.each(['already_answered', 'grant_not_live', 'request_cancelled', 'not_answered', 'request_not_found'])(
+    'reloads after %s, which says the row is stale, and closes the confirm step',
+    async (code) => {
+      const reads = mockReads()
+      mockWrite({ ok: false, status: code === 'request_not_found' ? 404 : 409, error: 'x', body: { error: 'x', code, mRID: 'M1' } })
+      render(RequestQueuePane)
+      const [pending] = await rows()
+      const before = reads.mock.calls.length
+      await press(pending, 'Grant as asked')
+      await press(pending, 'Confirm')
+      const note = await screen.findByTestId('frq-write-note')
+      expect(note.textContent).toContain('(' + code + ')')
+      expect(note.textContent).toContain('mRID M1')
+      expect(screen.queryByTestId('frq-action')).toBeNull()
+      await waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(before))
+    },
+  )
+
+  it('does not reload after a definite refusal', async () => {
     const reads = mockReads()
-    mockWrite({ ok: true, data: { nothing: 'useful' } })
+    mockWrite({ ok: false, status: 400, error: 'x', body: { error: 'x', code: 'interval_outside_window' } })
     render(RequestQueuePane)
     const [pending] = await rows()
     const before = reads.mock.calls.length
     await press(pending, 'Grant as asked')
     await press(pending, 'Confirm')
-    const err = await screen.findByTestId('frq-write-error')
-    expect(err.textContent).toContain('could not be read')
+    await screen.findByTestId('frq-write-error')
+    expect(reads.mock.calls.length).toBe(before)
+  })
+
+  it('treats a reply for another request as unreadable and reloads', async () => {
+    const reads = mockReads()
+    const wrong = grantedView()
+    wrong.requestHref = '/edev/9/frq/other'
+    mockWrite({ ok: true, data: wrong })
+    render(RequestQueuePane)
+    const [pending] = await rows()
+    const before = reads.mock.calls.length
+    await press(pending, 'Grant as asked')
+    await press(pending, 'Confirm')
+    expect((await screen.findByTestId('frq-write-note')).textContent).toContain('could not be read')
+    expect(within(pending).getByTestId('frq-state').textContent).toBe('pending')
     await waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(before))
+  })
+})
+
+describe('form and accessibility', () => {
+  it('Back from confirm keeps the typed values, and Confirm after it sends them', async () => {
+    mockReads()
+    const post = mockWrite({ ok: true, data: grantedView() })
+    render(RequestQueuePane)
+    const [pending] = await rows()
+    await press(pending, 'Grant adjusted')
+    await fireEvent.input(screen.getByTestId('frq-in-energy'), { target: { value: '4242' } })
+    await press(pending, 'Review')
+    await press(pending, 'Back')
+    expect((screen.getByTestId('frq-in-energy') as HTMLInputElement).value).toBe('4242')
+    await press(pending, 'Review')
+    await press(pending, 'Confirm')
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    expect(post.mock.calls[0][1]).toMatchObject({ energy: { value: 4242, multiplier: 0 } })
+  })
+
+  it('offers no Back where there are no inputs', async () => {
+    mockReads()
+    render(RequestQueuePane)
+    const [pending] = await rows()
+    await press(pending, 'Deny')
+    expect(within(pending).queryByRole('button', { name: 'Back' })).toBeNull()
+  })
+
+  it('moves focus to the confirm text', async () => {
+    mockReads()
+    render(RequestQueuePane)
+    const [pending] = await rows()
+    await press(pending, 'Grant adjusted')
+    await fireEvent.input(screen.getByTestId('frq-in-energy'), { target: { value: '1' } })
+    await press(pending, 'Review')
+    expect(document.activeElement).toBe(screen.getByTestId('frq-confirm-text'))
+  })
+
+  it('announces a form error and a refusal through role alert', async () => {
+    mockReads()
+    mockWrite({ ok: false, status: 400, error: 'x', body: { error: 'x', code: 'interval_outside_window' } })
+    render(RequestQueuePane)
+    const [pending] = await rows()
+    await press(pending, 'Grant adjusted')
+    await fireEvent.input(screen.getByTestId('frq-in-energy'), { target: { value: '-1' } })
+    await press(pending, 'Review')
+    expect(screen.getByTestId('frq-write-error').getAttribute('role')).toBe('alert')
+    await fireEvent.input(screen.getByTestId('frq-in-energy'), { target: { value: '1' } })
+    await press(pending, 'Review')
+    await press(pending, 'Confirm')
+    await waitFor(() => expect(screen.getByTestId('frq-write-error').textContent).toContain('outside the window'))
+    expect(screen.getByTestId('frq-write-error').getAttribute('role')).toBe('alert')
+  })
+
+  it('rejects an impossible date typed into the form', async () => {
+    mockReads()
+    const post = mockWrite({ ok: true, data: grantedView() })
+    render(RequestQueuePane)
+    const [pending] = await rows()
+    await press(pending, 'Grant adjusted')
+    await fireEvent.input(screen.getByTestId('frq-in-start'), { target: { value: '2026-02-31T12:00:00Z' } })
+    await press(pending, 'Review')
+    expect(screen.getByTestId('frq-write-error').textContent).toContain('start must be a UTC time')
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('opens the adjusted form with a blank start when the server start is out of range', async () => {
+    const q = copy()
+    q.requests[0].request.intervalRequested = { start: 1e15, duration: 1800 }
+    mockReads(q)
+    render(RequestQueuePane)
+    const [pending] = await rows()
+    await press(pending, 'Grant adjusted')
+    expect((screen.getByTestId('frq-in-start') as HTMLInputElement).value).toBe('')
+    expect((screen.getByTestId('frq-in-duration') as HTMLInputElement).value).toBe('')
   })
 })
 
@@ -483,5 +619,35 @@ describe('writes in flight', () => {
     const row = (await rows())[0]
     expect(within(row).getByTestId('frq-state').textContent).toBe('granted')
     expect(within(row).getByTestId('response-energy').textContent).toBe('7,777 Wh')
+  })
+})
+
+describe('a busy action whose row disappears', () => {
+  it('shows a Stop waiting button and drops the late answer', async () => {
+    let reads = 0
+    vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
+      if (path === '/api/derms/fleets') return { ok: true, data: [{ aggregatorLFDI: LFDI }] }
+      reads++
+      if (reads === 1) return { ok: true, data: fixture }
+      const q = copy()
+      q.requests = [q.requests[1]]
+      return { ok: true, data: q }
+    }) as never)
+    let resolve!: (r: Res) => void
+    const post = mockWrite(new Promise<Res>((r) => (resolve = r)))
+    render(RequestQueuePane)
+    const [pending] = await rows()
+    await press(pending, 'Grant as asked')
+    await press(pending, 'Confirm')
+    await press(document.body, 'Refresh')
+    const orphan = await screen.findByTestId('frq-orphan')
+    expect(orphan.textContent).toContain('no longer in the list')
+    const signal = post.mock.calls[0][2]?.signal as AbortSignal
+    await press(orphan, 'Stop waiting')
+    expect(signal.aborted).toBe(true)
+    expect(screen.queryByTestId('frq-orphan')).toBeNull()
+    resolve({ ok: true, data: grantedView() })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(screen.getAllByTestId('frq-row')).toHaveLength(1)
   })
 })

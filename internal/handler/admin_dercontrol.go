@@ -905,15 +905,15 @@ func (h *AdminDERControlHandler) internal(w http.ResponseWriter, r *http.Request
 	writeError(w, refuseInternal.status, refuseInternal.message)
 }
 
-// notify fans a Changed notification out to the program list and the
+// notify fans a change notification out to the program list and the
 // control list the control is stored under, both taken from the resolved
 // scope rather than the request.
 func (h *AdminDERControlHandler) notify(ctx context.Context, scope dercontrol.Scope) {
 	if h.Notifier == nil {
 		return
 	}
-	h.Notifier.Notify(ctx, scope.ProgramListHref(), sep2.NotificationStatusChanged)
-	h.Notifier.Notify(ctx, scope.ControlListHref(), sep2.NotificationStatusChanged)
+	h.Notifier.Notify(ctx, scope.ProgramListHref(), sep2.NotificationStatusDefault)
+	h.Notifier.Notify(ctx, scope.ControlListHref(), sep2.NotificationStatusDefault)
 }
 
 // mapIssuerError turns an Issue or Cancel error into its wire refusal, and

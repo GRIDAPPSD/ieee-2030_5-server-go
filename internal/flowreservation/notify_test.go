@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/xml"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -75,8 +77,8 @@ func (r *recordingNotifier) requireOne(t *testing.T, wantHref string) notificati
 	if len(got) != 1 {
 		t.Fatalf("notifications = %+v, want exactly 1", got)
 	}
-	if got[0].href != wantHref || got[0].status != sep2.NotificationStatusChanged {
-		t.Errorf("notification = %+v, want href %q status %d", got[0], wantHref, sep2.NotificationStatusChanged)
+	if got[0].href != wantHref || got[0].status != sep2.NotificationStatusDefault {
+		t.Errorf("notification = %+v, want href %q status %d", got[0], wantHref, sep2.NotificationStatusDefault)
 	}
 	return got[0]
 }
@@ -218,7 +220,7 @@ func TestNotify_ReviseNotifiesThroughTheGrantWriter(t *testing.T) {
 	}
 
 	got := rec.all()
-	if len(got) != before+1 || got[before].href != "/edev/"+aggID+"/frp" || got[before].status != sep2.NotificationStatusChanged {
+	if len(got) != before+1 || got[before].href != "/edev/"+aggID+"/frp" || got[before].status != sep2.NotificationStatusDefault {
 		t.Fatalf("notifications = %+v, want one more list notification after the revision", got)
 	}
 	if _, err := f.frp.Get(ctx, aggID, revisedID); err != nil {
@@ -523,19 +525,21 @@ func TestNotify_SubscriberHearsASupersede(t *testing.T) {
 
 	type seen struct {
 		note     sep2.Notification
+		raw      string
 		revision bool
 		oldMark  bool
 	}
 	got := make(chan seen, 4)
 	rcv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var n sep2.Notification
-		if err := xml.NewDecoder(r.Body).Decode(&n); err != nil {
+		raw, _ := io.ReadAll(r.Body)
+		if err := xml.Unmarshal(raw, &n); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		_, revErr := f.frp.Get(ctx, aggID, revisedID)
 		lc, lcErr := f.frpLifecycles.Get(ctx, aggID, "R1")
-		got <- seen{note: n, revision: revErr == nil, oldMark: lcErr == nil && lc.CancelledAt != nil}
+		got <- seen{note: n, raw: string(raw), revision: revErr == nil, oldMark: lcErr == nil && lc.CancelledAt != nil}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(rcv.Close)
@@ -569,8 +573,11 @@ func TestNotify_SubscriberHearsASupersede(t *testing.T) {
 
 	select {
 	case s := <-got:
-		if s.note.Href != flowreservation.ListHref(aggID) || s.note.SubscribedResource != flowreservation.ListHref(aggID) || s.note.Status != sep2.NotificationStatusChanged {
-			t.Errorf("notification = %+v, want a Changed on %s", s.note, flowreservation.ListHref(aggID))
+		if s.note.Href != flowreservation.ListHref(aggID) || s.note.SubscribedResource != flowreservation.ListHref(aggID) || s.note.Status != sep2.NotificationStatusDefault {
+			t.Errorf("notification = %+v, want a change notification (status 0) on %s", s.note, flowreservation.ListHref(aggID))
+		}
+		if !strings.Contains(s.raw, "<status>0</status>") {
+			t.Errorf("wire body lacks <status>0</status>: %s", s.raw)
 		}
 		if !s.revision || !s.oldMark {
 			t.Errorf("at delivery: revision stored=%v, old grant marked cancelled=%v; want both", s.revision, s.oldMark)

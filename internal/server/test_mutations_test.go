@@ -396,7 +396,7 @@ func newRouterWithNotifier(t *testing.T) (http.Handler, *server.Stores, *recordi
 
 // TestDERControlAdd_FiresNotification - #157. On successful Create
 // the derctl-add hook calls notifier.Notify with the DERProgramList
-// href and NotificationStatusChanged. Aggregators subscribe to the
+// href and NotificationStatusDefault. Aggregators subscribe to the
 // DERProgramList href (UTIL-003 pattern); a new DERControl under one
 // of its programs is the change event.
 func TestDERControlAdd_FiresNotification(t *testing.T) {
@@ -422,8 +422,8 @@ func TestDERControlAdd_FiresNotification(t *testing.T) {
 	if calls[0].resourceHref != wantHref {
 		t.Errorf("Notify href = %q, want %q", calls[0].resourceHref, wantHref)
 	}
-	if calls[0].status != sep2.NotificationStatusChanged {
-		t.Errorf("Notify status = %d, want %d (NotificationStatusChanged)", calls[0].status, sep2.NotificationStatusChanged)
+	if calls[0].status != sep2.NotificationStatusDefault {
+		t.Errorf("Notify status = %d, want %d (NotificationStatusDefault)", calls[0].status, sep2.NotificationStatusDefault)
 	}
 }
 
@@ -1417,8 +1417,8 @@ func TestStressNotify_CallsNotifier(t *testing.T) {
 	if calls[0].resourceHref != "/edev/42/fsa" {
 		t.Errorf("Notify href = %q, want /edev/42/fsa", calls[0].resourceHref)
 	}
-	if calls[0].status != sep2.NotificationStatusChanged {
-		t.Errorf("Notify status = %d, want %d (Changed)", calls[0].status, sep2.NotificationStatusChanged)
+	if calls[0].status != sep2.NotificationStatusDefault {
+		t.Errorf("Notify status = %d, want %d (Default)", calls[0].status, sep2.NotificationStatusDefault)
 	}
 }
 

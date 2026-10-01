@@ -38,14 +38,14 @@ func newNotifyHook(opts []Option) notifyHook {
 	return h
 }
 
-// fire enqueues one Changed notification for edevID's response list. The
+// fire enqueues one change notification for edevID's response list. The
 // context is detached so a request that has already answered its client does
 // not cancel the lookup of its subscribers.
 func (h notifyHook) fire(ctx context.Context, edevID string) {
 	if h.n == nil {
 		return
 	}
-	h.n.Notify(context.WithoutCancel(ctx), ListHref(edevID), sep2.NotificationStatusChanged)
+	h.n.Notify(context.WithoutCancel(ctx), ListHref(edevID), sep2.NotificationStatusDefault)
 }
 
 // ListHref is the href of edevID's FlowReservationResponseList, the resource

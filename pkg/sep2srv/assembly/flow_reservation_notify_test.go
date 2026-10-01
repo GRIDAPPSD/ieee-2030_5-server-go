@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/xml"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,9 +42,13 @@ func newNotificationReceiver(t *testing.T) *notificationReceiver {
 	r := &notificationReceiver{seen: make(chan struct{}, 64)}
 	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		var n sep2.Notification
-		if err := xml.NewDecoder(req.Body).Decode(&n); err != nil {
+		raw, _ := io.ReadAll(req.Body)
+		if err := xml.Unmarshal(raw, &n); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		if !strings.Contains(string(raw), "<status>0</status>") {
+			t.Errorf("wire body lacks <status>0</status>: %s", raw)
 		}
 		r.mu.Lock()
 		r.got = append(r.got, receivedNotification{n.Href, n.SubscribedResource, n.Status})
@@ -121,8 +126,8 @@ func TestFlowReservationNotify_SubscriberHearsGrantAndCancel(t *testing.T) {
 
 	href := postWindowRequest(t, srv, "e1")
 	granted := rcv.waitFor(t, 1)
-	if granted[0] != (receivedNotification{Resource: "/edev/e1/frp", SubscribedResource: "/edev/e1/frp", Status: sep2.NotificationStatusChanged}) {
-		t.Fatalf("grant notification = %+v, want a Changed on /edev/e1/frp", granted[0])
+	if granted[0] != (receivedNotification{Resource: "/edev/e1/frp", SubscribedResource: "/edev/e1/frp", Status: sep2.NotificationStatusDefault}) {
+		t.Fatalf("grant notification = %+v, want a change notification (status 0) on /edev/e1/frp", granted[0])
 	}
 	list := listResponses(t, srv, "e1")
 	if len(list.FlowReservationResponse) != 1 || list.FlowReservationResponse[0].Interval.Duration != 900 {
@@ -154,8 +159,8 @@ func TestFlowReservationNotify_PendingCancelNotifiesItsDenial(t *testing.T) {
 	}
 
 	got := rcv.waitFor(t, 1)
-	if got[0].Resource != "/edev/e1/frp" || got[0].Status != sep2.NotificationStatusChanged {
-		t.Errorf("notification = %+v, want a Changed on /edev/e1/frp", got[0])
+	if got[0].Resource != "/edev/e1/frp" || got[0].Status != sep2.NotificationStatusDefault {
+		t.Errorf("notification = %+v, want a change notification (status 0) on /edev/e1/frp", got[0])
 	}
 	if d := listResponses(t, srv, "e1").FlowReservationResponse[0].Interval.Duration; d != 0 {
 		t.Errorf("response duration = %d, want the zero-duration denial", d)

@@ -206,7 +206,7 @@
     {:else if activeTab === 'derms'}
       <FleetPane />
       <RequestQueuePane />
-      <DispatchPane devices={data?.devices ?? []} />
+      <DispatchPane />
     {:else if activeTab === 'not-found'}
       <div class="card" data-testid="not-found">
         <h2>Not Found</h2>

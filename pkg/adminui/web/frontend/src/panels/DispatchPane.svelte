@@ -19,10 +19,6 @@
   } from '../lib/dispatch'
   import { formatAge, isFleet, type Fleet } from '../lib/fleet'
   import { directionLabel, formatInterval, formatQuantity, scaledNumber } from '../lib/flowreservation'
-  import { deviceIdFromHref } from '../lib/fsa'
-  import type { DashboardDevice } from '../lib/dashboard'
-
-  let { devices }: { devices: DashboardDevice[] } = $props()
 
   const TICK_MS = 1000
   const FETCH_TIMEOUT_MS = 15_000
@@ -85,13 +81,13 @@
   const fleet = $derived(fleets.find((f) => f.aggregatorLFDI === fleetLFDI) ?? null)
   const grant = $derived(grants.find((g) => g.response.id === grantResponseId) ?? null)
   const choices = $derived.by((): DeviceChoice[] => {
-    const own = fleet === null ? [] : fleetDeviceChoices(fleet.devices, devices, deviceIdFromHref)
+    const own = fleet === null ? [] : fleetDeviceChoices(fleet.devices)
     if (grant !== null && !own.some((c) => c.id === grant.edevId)) {
       return [...own, { id: grant.edevId, label: 'device ' + grant.edevId, lfdi: '' }]
     }
     return own
   })
-  const unaddressable = $derived(fleet === null ? 0 : fleet.devices.length - fleetDeviceChoices(fleet.devices, devices, deviceIdFromHref).length)
+  const unaddressable = $derived(fleet === null ? 0 : fleet.devices.length - fleetDeviceChoices(fleet.devices).length)
   const unlockIn = $derived(unlockAt === null ? 0 : Math.max(0, Math.ceil((unlockAt - nowMs) / 1000)))
   const program = $derived(programs.find((p) => p.href === programHref) ?? null)
   const locked = $derived(busy || unknownNote !== '')
@@ -465,7 +461,7 @@
 
     {#if fleet !== null && unaddressable > 0}
       <p class="hint" data-testid="dispatch-unaddressable">
-        {unaddressable} of {fleet.devices.length} fleet devices cannot be offered here: the page cannot map them to an EndDevice id.
+        {unaddressable} of {fleet.devices.length} fleet devices cannot be offered here: they were never registered as an EndDevice.
       </p>
     {/if}
 
@@ -523,7 +519,7 @@
             <select data-testid="dispatch-device" value={deviceId} disabled={locked} onchange={(e) => setDevice(e.currentTarget.value)}>
               <option value="">(pick device)</option>
               {#each choices as c (c.id)}
-                <option value={c.id}>{c.label}</option>
+                <option value={c.id}>{c.label}{c.lfdi === '' ? '' : ' (' + short(c.lfdi) + ')'}</option>
               {/each}
             </select>
           </label>

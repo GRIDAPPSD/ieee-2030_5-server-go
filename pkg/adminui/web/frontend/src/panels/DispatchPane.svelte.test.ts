@@ -16,12 +16,11 @@ type Res =
 const LFDI = 'AGG00000000000000000000000000000000001'
 const GRANT_MRID = '9D1E3B5C00000000000000000000A1B2'
 const PROGRAM = '/edev/4/derp/1'
-const DEVICES = [{ sfdi: 'SFDI-4', lfdi: 'dev-lfdi-4', href: '/edev/4', enabled: true }]
 
 const zero = { sum: 0, unreported: 1, stale: 0 }
 const FLEET = {
   aggregatorLFDI: LFDI,
-  devices: [{ lfdi: 'DEV-LFDI-4', measurements: {} }],
+  devices: [{ lfdi: 'DEV-LFDI-4', edevId: '4', href: '/edev/4', measurements: {} }],
   rollup: { deviceCount: 1, connected: 0, alarmed: 0, stale: 0, p: zero, q: zero, statWAvail: zero, statVarAvail: zero },
 }
 
@@ -80,6 +79,7 @@ interface World {
   fleet: unknown
   programs: unknown
   controlsReply: Res | null
+  reads: string[]
 }
 
 function mockReads(world: Partial<World> = {}) {
@@ -91,15 +91,17 @@ function mockReads(world: Partial<World> = {}) {
     fleet: FLEET,
     programs: [{ href: PROGRAM, mRID: 'P1', description: 'Dispatch program', primacy: 0, derControlListHref: PROGRAM + '/derc' }],
     controlsReply: null,
+    reads: [],
     ...world,
   }
   const spy = vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
+    w.reads.push(path)
     if (path === '/api/derms/fleets') return { ok: true, data: [w.fleet] }
     if (path.startsWith('/api/derms/grants')) {
       return w.grantsReply ?? { ok: true, data: { aggregatorLFDI: LFDI, now: w.now, grants: w.grants } }
     }
-    if (path === '/api/devices/4/der-programs') {
-      return { ok: true, data: { device: '4', programs: w.programs } }
+    if (/^\/api\/devices\/[^/]+\/der-programs$/.test(path)) {
+      return { ok: true, data: { device: path.split('/')[3], programs: w.programs } }
     }
     if (path.startsWith('/api/der/controls')) {
       w.controlReads++
@@ -150,7 +152,7 @@ async function confirmAndWait() {
 }
 
 function mount() {
-  return render(DispatchPane, { devices: DEVICES })
+  return render(DispatchPane)
 }
 
 afterEach(() => {
@@ -458,18 +460,42 @@ describe('DispatchPane, what the operator sees', () => {
     await pickGrant()
     await review()
     const text = (await screen.findByTestId('dispatch-confirm-text')).textContent ?? ''
-    expect(text).toContain('device SFDI-4 (LFDI dev-lfdi-4)')
+    expect(text).toContain('device EndDevice 4 (LFDI DEV-LFDI-4)')
     expect(text).toContain('program Dispatch program')
     expect(text).toContain('It reaches that device only, not the whole fleet.')
     expect(text).toContain(GRANT_MRID)
   })
 
   it('says how many fleet devices cannot be offered', async () => {
-    const fleet = { ...FLEET, devices: [...FLEET.devices, { lfdi: 'UNKNOWN-LFDI', measurements: {} }, { lfdi: 'UNKNOWN-2', measurements: {} }] }
+    const fleet = { ...FLEET, devices: [...FLEET.devices, { lfdi: 'UNREGISTERED-1', measurements: {} }, { lfdi: 'UNREGISTERED-2', measurements: {} }] }
     mockReads({ fleet })
     mount()
     await pickFleet()
-    expect(await screen.findByTestId('dispatch-unaddressable')).toHaveTextContent('2 of 3 fleet devices cannot be offered here')
+    expect(await screen.findByTestId('dispatch-unaddressable')).toHaveTextContent('2 of 3 fleet devices cannot be offered here: they were never registered as an EndDevice')
+  })
+
+  it('offers every device of a fleet larger than 50, not a first page', async () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({ lfdi: 'LFDI-' + i, edevId: String(i + 100), href: '/edev/' + (i + 100), measurements: {} }))
+    mockReads({ fleet: { ...FLEET, devices: many, rollup: { ...FLEET.rollup, deviceCount: 60 } } })
+    mount()
+    await pickFleet()
+    await fireEvent.click(screen.getByRole('radio', { name: 'Plain dispatch' }))
+    const select = (await screen.findByTestId('dispatch-device')) as HTMLSelectElement
+    const ids = Array.from(select.options).map((o) => o.value).filter((v) => v !== '')
+    expect(ids).toHaveLength(60)
+    expect(ids[59]).toBe('159')
+    expect(screen.queryByTestId('dispatch-unaddressable')).toBeNull()
+  })
+
+  it('takes the device id for the program and control routes from the fleet entry', async () => {
+    const fleet = { ...FLEET, devices: [{ lfdi: 'SOME-LFDI', edevId: '77', href: '/edev/77', measurements: {} }] }
+    const { w } = mockReads({ fleet })
+    mount()
+    await pickFleet()
+    await fireEvent.click(screen.getByRole('radio', { name: 'Plain dispatch' }))
+    await fireEvent.change(await screen.findByTestId('dispatch-device'), { target: { value: '77' } })
+    await waitFor(() => expect(w.reads).toContain('/api/devices/77/der-programs'))
+    await waitFor(() => expect(w.reads.some((r) => r.startsWith('/api/der/controls?device=77&'))).toBe(true))
   })
 
   it('does not warn when every fleet device can be offered', async () => {
@@ -534,8 +560,13 @@ describe('DispatchPane, what the operator sees', () => {
     let releasePrograms5!: () => void
     const gate5 = new Promise<void>((r) => (releasePrograms5 = r))
     const prog = (id: string) => ({ href: `/edev/${id}/derp/1`, mRID: 'P' + id, description: 'Prog ' + id, primacy: 0, derControlListHref: '' })
-    const fleet = { ...FLEET, devices: [{ lfdi: 'DEV-LFDI-4', measurements: {} }, { lfdi: 'DEV-LFDI-5', measurements: {} }] }
-    const dash = [...DEVICES, { sfdi: 'SFDI-5', lfdi: 'dev-lfdi-5', href: '/edev/5', enabled: true }]
+    const fleet = {
+      ...FLEET,
+      devices: [
+        { lfdi: 'DEV-LFDI-4', edevId: '4', href: '/edev/4', measurements: {} },
+        { lfdi: 'DEV-LFDI-5', edevId: '5', href: '/edev/5', measurements: {} },
+      ],
+    }
     vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
       if (path === '/api/derms/fleets') return { ok: true, data: [fleet] }
       if (path.startsWith('/api/derms/grants')) return { ok: true, data: { aggregatorLFDI: LFDI, now: 1789990000, grants: [] } }
@@ -551,7 +582,7 @@ describe('DispatchPane, what the operator sees', () => {
       if (path.startsWith('/api/der/controls?device=5')) return new Promise(() => {})
       throw new Error('unexpected read ' + path)
     }) as never)
-    render(DispatchPane, { devices: dash })
+    render(DispatchPane)
     await pickFleet()
     await fireEvent.click(screen.getByRole('radio', { name: 'Plain dispatch' }))
     await fireEvent.change(await screen.findByTestId('dispatch-device'), { target: { value: '4' } })

@@ -158,16 +158,18 @@ describe('parseGrants', () => {
 })
 
 describe('fleetDeviceChoices', () => {
-  it('maps fleet LFDIs to dashboard ids ignoring case, and leaves unknown devices out', () => {
+  it('offers each registered device by the EndDevice id the fleet read carries, and leaves unregistered ones out', () => {
     const fleetDevices = [
-      { lfdi: 'AAAA', measurements: {} },
+      { lfdi: 'AAAA', edevId: '4', href: '/edev/4', measurements: {} },
       { lfdi: 'BBBB', measurements: {} },
+      { lfdi: 'CCCC', edevId: '', measurements: {} },
     ]
-    const dash = [
-      { sfdi: 's-a', lfdi: 'aaaa', href: '/edev/4' },
-      { sfdi: 's-z', lfdi: 'zzzz', href: '/edev/9' },
-    ]
-    expect(fleetDeviceChoices(fleetDevices, dash, (h) => h.split('/').pop() as string)).toEqual([{ id: '4', label: 's-a', lfdi: 'aaaa' }])
+    expect(fleetDeviceChoices(fleetDevices)).toEqual([{ id: '4', label: 'EndDevice 4', lfdi: 'AAAA' }])
+  })
+
+  it('offers all of a large fleet', () => {
+    const many = Array.from({ length: 120 }, (_, i) => ({ lfdi: 'L' + i, edevId: String(i), measurements: {} }))
+    expect(fleetDeviceChoices(many)).toHaveLength(120)
   })
 })
 

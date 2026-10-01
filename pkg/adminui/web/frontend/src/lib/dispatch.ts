@@ -66,18 +66,15 @@ export interface DeviceChoice {
 }
 
 // fleetDeviceChoices lists the devices of a fleet the page can address: the
-// fleet read names devices by LFDI, and only the dashboard list maps an LFDI
-// to the id the control and program routes take. A device the dashboard does
-// not know is left out, not guessed at.
-export function fleetDeviceChoices(
-  fleetDevices: FleetDevice[],
-  dashboard: { sfdi: string; lfdi: string; href: string }[],
-  idOf: (href: string) => string,
-): DeviceChoice[] {
+// fleet read names each registered device's EndDevice id (the id the control
+// and program routes take). A device with no edevId was never registered as an
+// EndDevice, so it is left out, not guessed at.
+export function fleetDeviceChoices(fleetDevices: FleetDevice[]): DeviceChoice[] {
   const out: DeviceChoice[] = []
   for (const fd of fleetDevices) {
-    const known = dashboard.find((d) => d.lfdi.toUpperCase() === fd.lfdi.toUpperCase())
-    if (known !== undefined) out.push({ id: idOf(known.href), label: known.sfdi, lfdi: known.lfdi })
+    if (typeof fd.edevId === 'string' && fd.edevId !== '') {
+      out.push({ id: fd.edevId, label: 'EndDevice ' + fd.edevId, lfdi: fd.lfdi })
+    }
   }
   return out
 }

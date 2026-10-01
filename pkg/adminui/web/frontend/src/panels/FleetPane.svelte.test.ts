@@ -552,10 +552,9 @@ describe('FleetPane', () => {
   it('replaces old data with new data on Refresh (fixture field names from admin_fleet.go json tags)', async () => {
     const oldFleet = (JSON.parse(OLD_FLEET_JSON) as Fleet[])[0]
     const newFleet = (JSON.parse(NEW_FLEET_JSON) as Fleet[])[0]
-    const fetchJSON = vi
-      .spyOn(api, 'fetchJSON')
-      .mockResolvedValueOnce({ ok: true, data: [oldFleet] } as never)
-      .mockResolvedValueOnce({ ok: true, data: [newFleet] } as never)
+    const loads = [{ ok: true, data: [oldFleet] }, { ok: true, data: [newFleet] }]
+    const fetchJSON = vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) =>
+      path === '/api/derms/fleets' ? loads.shift() : { ok: false, error: 'not under test', status: 500 }) as never)
 
     render(FleetPane)
 
@@ -569,13 +568,16 @@ describe('FleetPane', () => {
       expect(screen.getByTestId('fleet-row').children[1]).toHaveTextContent('7')
     })
     expect(screen.getByTestId('fleet-row')).toHaveTextContent(`${newFleet.aggregatorLFDI.substring(0, 16)}...`)
-    expect(fetchJSON).toHaveBeenCalledTimes(2)
+    expect(fetchJSON.mock.calls.filter(([p]) => p === '/api/derms/fleets')).toHaveLength(2)
   })
 
   it('shows an error when a later Refresh fails, even though the first load succeeded', async () => {
-    vi.spyOn(api, 'fetchJSON')
-      .mockResolvedValueOnce({ ok: true, data: JSON.parse(OLD_FLEET_JSON) } as never)
-      .mockResolvedValueOnce({ ok: false, error: 'refresh failed', status: 500 } as never)
+    const loads = [
+      { ok: true, data: JSON.parse(OLD_FLEET_JSON) },
+      { ok: false, error: 'refresh failed', status: 500 },
+    ]
+    vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) =>
+      path === '/api/derms/fleets' ? loads.shift() : { ok: false, error: 'not under test', status: 500 }) as never)
 
     render(FleetPane)
     await screen.findByTestId('fleet-row')

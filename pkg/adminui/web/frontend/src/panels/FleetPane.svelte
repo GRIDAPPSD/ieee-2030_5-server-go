@@ -1,8 +1,8 @@
 <script lang="ts">
   // GET /api/derms/fleets (#715): one row per aggregator, its fleet size,
   // status counts and the two additive sums this pane shows (#671's first
-  // criterion). The reservation queue and the dispatch pane need routes
-  // that do not exist yet, so current commitments are not rendered here.
+  // criterion). Each fleet's current commitments come from
+  // GET /api/derms/commitments (#801), one read per fleet.
   //
   // This panel computes no commitment or sign of its own: the export-
   // positive convention in directionWord is a label for the sign the
@@ -12,6 +12,8 @@
   // returned rather than re-derived.
   import { onDestroy, onMount } from 'svelte'
   import { fetchJSON } from '../lib/api'
+  import { formatInterval, formatQuantity } from '../lib/flowreservation'
+  import { grantDirectionWord, isCommitments, type Commitments } from '../lib/commitments'
   import {
     directionWord,
     formatAge,
@@ -74,6 +76,32 @@
     }
     fleets = res.data
     status = 'ready'
+    commitments = Object.fromEntries(res.data.map((f) => [f.aggregatorLFDI, { kind: 'loading' } as CommitmentsState]))
+    for (const f of res.data) loadCommitments(f.aggregatorLFDI, seq)
+  }
+
+  // One entry per fleet. A failed read is its own state, so the render can
+  // never fall through to "none" for a fleet whose commitments are unknown.
+  type CommitmentsState =
+    | { kind: 'loading' }
+    | { kind: 'ready'; data: Commitments }
+    | { kind: 'error'; message: string }
+  let commitments = $state<Record<string, CommitmentsState>>({})
+
+  async function loadCommitments(lfdi: string, seq: number) {
+    const res = await fetchJSON<unknown>(`/api/derms/commitments?aggregatorLFDI=${encodeURIComponent(lfdi)}`, {
+      signal: lifetime.signal,
+      timeoutMs: FETCH_TIMEOUT_MS,
+    })
+    if (lifetime.signal.aborted || seq !== requestSeq) return
+    if (!res.ok) {
+      const message = res.status === 404 ? 'fleet not found on the server' : res.error
+      commitments[lfdi] = { kind: 'error', message }
+    } else if (!isCommitments(res.data)) {
+      commitments[lfdi] = { kind: 'error', message: 'server returned an unexpected response shape' }
+    } else {
+      commitments[lfdi] = { kind: 'ready', data: res.data }
+    }
   }
 
   let ageTimer: ReturnType<typeof setInterval> | undefined
@@ -114,6 +142,7 @@
           <th>Unreported</th>
           <th>Measured power</th>
           <th>Available capacity</th>
+          <th>Current commitments</th>
         </tr>
       </thead>
       <tbody>
@@ -122,6 +151,7 @@
           {@const availAge = newestAvailReadingTime(fleet)}
           {@const activeAvail = sumFigure(fleet, fleet.rollup.statWAvail, availAge, nowSeconds)}
           {@const reactiveAvail = sumFigure(fleet, fleet.rollup.statVarAvail, availAge, nowSeconds)}
+          {@const held = commitments[fleet.aggregatorLFDI]}
           {@const neitherAvail = activeAvail.kind === 'none' && reactiveAvail.kind === 'none'}
           <tr data-testid="fleet-row">
             <td class="mono" title={fleet.aggregatorLFDI}>{fleet.aggregatorLFDI.substring(0, 16)}...</td>
@@ -163,6 +193,30 @@
               </div>
               <div class="hint">updated {formatAge(activeAvail.ageSeconds)}</div>
               <div class="hint" data-testid="fleet-avail-source">Source: device reports (device clock)</div>
+            </td>
+            <td data-testid="fleet-commitments">
+              {#if held === undefined || held.kind === 'loading'}
+                <span class="hint" data-testid="fleet-commitments-loading">Loading commitments...</span>
+              {:else if held.kind === 'error'}
+                <div class="result err" data-testid="fleet-commitments-error">Could not read commitments: {held.message}</div>
+              {:else if held.data.grants.length === 0 && held.data.plainControls.length === 0}
+                <span data-testid="fleet-commitments-none">none</span>
+              {:else}
+                {#each held.data.grants as g (g.mRID)}
+                  <div data-testid="fleet-grant">
+                    Grant {formatInterval(g.window)}: {grantDirectionWord(g.direction)},
+                    {g.powerW === null ? 'power not sent' : formatQuantity(g.powerW, 'W')},
+                    {g.energyRemainingWh === null ? 'energy left not sent' : `${formatQuantity(g.energyRemainingWh, 'Wh')} left`}
+                  </div>
+                {/each}
+                {#each held.data.plainControls as c (c.mRID)}
+                  <div data-testid="fleet-control">
+                    Control {formatInterval(c.window)}: target
+                    {c.targetW === null ? 'not sent' : `${formatQuantity(c.targetW, 'W')} (discharge positive)`}
+                  </div>
+                {/each}
+              {/if}
+              <div class="hint" data-testid="fleet-commitments-source">Source: this server's records of grants and controls</div>
             </td>
           </tr>
         {/each}

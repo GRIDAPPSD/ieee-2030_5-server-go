@@ -63,12 +63,12 @@ func (d *deliveryHarness) seedControl(t *testing.T, id string, start int64, dura
 	return mrid
 }
 
-// seedMirror stores a mirror for lfdi with out-of-band export readings of
-// watts, held for postRate seconds each, received at each of times.
+// seedMirror stores a DER mirror for lfdi with out-of-band export readings
+// of watts, held for postRate seconds each, received at each of times.
 func (d *deliveryHarness) seedMirror(t *testing.T, id, lfdi string, postRate uint32, watts int64, dir *uint8, times ...int64) {
 	t.Helper()
 	ctx := context.Background()
-	mup := sep2.MirrorUsagePoint{MRID: "MUP" + id, DeviceLFDI: lfdi, PostRate: &postRate}
+	mup := sep2.MirrorUsagePoint{MRID: "MUP" + id, DeviceLFDI: lfdi, PostRate: &postRate, RoleFlags: roleIsDER}
 	mup.Href = "/mup/" + id
 	if err := d.mups.Create(ctx, id, mup); err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestDERControlList_DeliveryStopsAtSupersedeAndCancel(t *testing.T) {
 	d := newDeliveryHarness(t)
 	b := deliveryBase
 	// A mirror with a lowercase deviceLFDI still matches device 0.
-	d.seedMirror(t, "1", strings.ToLower(dcLFDI), 1000, 3600, reverseDir(), b, b+1000, b+2000, b+3000)
+	d.seedMirror(t, "1", strings.ToLower(dcLFDI), 900, 3600, reverseDir(), b, b+500, b+1000, b+1500, b+2000, b+2500, b+3000)
 	ended := d.seedControl(t, "e", b, 1000, dercontrol.LifecycleRecord{})
 	superseded := d.seedControl(t, "s", b+1000, 1000, dercontrol.LifecycleRecord{SupersededAt: ptrI64(b + 1400), SupersededBy: "X"})
 	cancelled := d.seedControl(t, "c", b+2000, 1000, dercontrol.LifecycleRecord{CancelledAt: ptrI64(b + 2250), CancelReason: "test"})
@@ -130,10 +130,11 @@ func TestDERControlList_DeliveryStopsAtSupersedeAndCancel(t *testing.T) {
 		start    int64
 		end      int64
 		readings int
+		newest   int64
 	}{
-		{ended, b, b + 1000, 1},
-		{superseded, b + 1000, b + 1400, 1},
-		{cancelled, b + 2000, b + 2250, 1},
+		{ended, b, b + 1000, 2, b + 500},
+		{superseded, b + 1000, b + 1400, 1, b + 1000},
+		{cancelled, b + 2000, b + 2250, 1, b + 2000},
 	} {
 		del := got[tc.mrid].Delivery
 		if del == nil {
@@ -143,8 +144,8 @@ func TestDERControlList_DeliveryStopsAtSupersedeAndCancel(t *testing.T) {
 			t.Errorf("control %s delivery = %+v, want window [%d,%d) fully covered by %d reading", tc.mrid, *del, tc.start, tc.end, tc.readings)
 		}
 		wantWh(t, del.DeliveredWh, float64(tc.end-tc.start))
-		if del.NewestReadingTime == nil || *del.NewestReadingTime != tc.start {
-			t.Errorf("control %s newestReadingTime = %v, want %d", tc.mrid, del.NewestReadingTime, tc.start)
+		if del.NewestReadingTime == nil || *del.NewestReadingTime != tc.newest {
+			t.Errorf("control %s newestReadingTime = %v, want %d", tc.mrid, del.NewestReadingTime, tc.newest)
 		}
 	}
 }
@@ -165,7 +166,7 @@ func TestDERControlList_DeliveryWithNoReadingsIsNull(t *testing.T) {
 	if del.WindowStart != deliveryBase || del.WindowEnd != deliveryBase+600 {
 		t.Fatalf("window = [%d,%d), want [%d,%d)", del.WindowStart, del.WindowEnd, deliveryBase, deliveryBase+600)
 	}
-	want := fmt.Sprintf(`"delivery":{"windowStart":%d,"windowEnd":%d,"deliveredWh":null,"coveredSeconds":0,"readings":0,"directionUnknown":false,"deviceLFDI":"%s","newestReadingTime":null}`, deliveryBase, deliveryBase+600, dcLFDI)
+	want := fmt.Sprintf(`"delivery":{"windowStart":%d,"windowEnd":%d,"deliveredWh":null,"averageW":null,"coveredSeconds":0,"readings":0,"directionUnknown":false,"deviceLFDI":"%s","newestReadingTime":null}`, deliveryBase, deliveryBase+600, dcLFDI)
 	if !strings.Contains(body, want) {
 		t.Fatalf("body lacks %s: %s", want, body)
 	}

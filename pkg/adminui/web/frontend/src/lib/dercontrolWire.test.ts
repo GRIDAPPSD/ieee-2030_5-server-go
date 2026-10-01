@@ -16,6 +16,7 @@ const wire = {
       windowStart: true,
       windowEnd: true,
       deliveredWh: true,
+      averageW: true,
       coveredSeconds: true,
       readings: true,
       directionUnknown: true,

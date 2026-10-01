@@ -816,14 +816,6 @@ func (h *AdminDERControlHandler) HandleList() http.HandlerFunc {
 			return
 		}
 
-		mirrors, err := mirrorReadingsFor(ctx, h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool {
-			return strings.EqualFold(device, edev.LFDI)
-		})
-		if err != nil {
-			h.internal(w, r, "list mirror readings")
-			return
-		}
-
 		parents, err := h.Controls.Parents(ctx)
 		if err != nil {
 			h.internal(w, r, "list control scopes")
@@ -831,6 +823,9 @@ func (h *AdminDERControlHandler) HandleList() http.HandlerFunc {
 		}
 		now := sep2time.Now().Unix()
 		items := []DERControlListItem{}
+		// Mirrors are read once, and only when a listed control needs them.
+		var mirrors []deviceMirror
+		mirrorsRead := false
 		for _, key := range parents {
 			scope, ok := dercontrol.ScopeFromKey(key)
 			if !ok || scope.EndDeviceID != deviceID || (wantDerp != "" && scope.DERProgramID != wantDerp) {
@@ -859,6 +854,16 @@ func (h *AdminDERControlHandler) HandleList() http.HandlerFunc {
 					Responses:      counts.forMRID(ctrl.MRID),
 				}
 				if ctrl.Interval != nil {
+					if !mirrorsRead {
+						mirrors, err = mirrorReadingsFor(ctx, "admin GET /api/der/controls", h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool {
+							return strings.EqualFold(device, edev.LFDI)
+						})
+						if err != nil {
+							h.internal(w, r, "list mirror readings")
+							return
+						}
+						mirrorsRead = true
+					}
 					ws, we := effectiveWindow(*ctrl.Interval, lc, now)
 					item.Delivery = newDelivery(edev.LFDI, mirrors, h.Edition, ws, we)
 				}
@@ -916,12 +921,13 @@ func (h *AdminDERControlHandler) loadDevice(w http.ResponseWriter, r *http.Reque
 }
 
 // internal answers 500 for a read route. step is a fixed string naming the
-// failed operation; the store's error text is not logged because it may
-// carry a request-derived id.
+// failed operation and route the mux pattern; the store's error text is not
+// logged because it may carry a request-derived id.
 func (h *AdminDERControlHandler) internal(w http.ResponseWriter, r *http.Request, step string) {
 	h.logger().Error("admin: DER control read failed",
 		"event", "der_control_read_failed",
 		"step", step,
+		"route", r.Pattern,
 		"remote_addr", r.RemoteAddr,
 	)
 	writeError(w, refuseInternal.status, refuseInternal.message)

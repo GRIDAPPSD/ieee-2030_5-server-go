@@ -38,28 +38,27 @@ func readingWithFlow(uom uint8, flow *uint8, value int64) sep2.MirrorMeterReadin
 	}
 }
 
-// TestConsiderMeasurement_SignConvention is #715 fix round 1 item 2: the
-// EPRI client sends the signed value and derives flowDirection from its own
-// sign (map_l3_get_der.c:862-870), so a wire value under Forward or Reverse
-// cannot be trusted for sign and must be taken as a magnitude. The declared
-// convention: export-positive = (Forward -> -1, Reverse -> +1) * abs(value);
-// no flowDirection leaves the value exactly as reported.
+// TestConsiderMeasurement_SignConvention pins export-positive =
+// (Forward -> -1, Reverse -> +1) * value for a non-negative value. A negative
+// value under Forward or Reverse is not folded to its magnitude (#802): it is
+// served as sent and flagged, as is a reading with no flowDirection.
 func TestConsiderMeasurement_SignConvention(t *testing.T) {
 	t.Parallel()
 	forward := f8(sep2.FlowDirectionForward)
 	reverse := f8(sep2.FlowDirectionReverse)
 
 	cases := []struct {
-		name string
-		flow *uint8
-		raw  int64
-		want float64
+		name    string
+		flow    *uint8
+		raw     int64
+		want    float64
+		flagged bool
 	}{
-		{"forward, positive raw", forward, 500, -500},
-		{"forward, negative raw", forward, -500, -500},
-		{"reverse, positive raw", reverse, 300, 300},
-		{"reverse, negative raw", reverse, -300, 300},
-		{"no flow direction, unchanged", nil, 150, 150},
+		{"forward, positive raw", forward, 500, -500, false},
+		{"forward, negative raw, flagged", forward, -500, -500, true},
+		{"reverse, positive raw", reverse, 300, 300, false},
+		{"reverse, negative raw, flagged", reverse, -300, -300, true},
+		{"no flow direction, unchanged", nil, 150, 150, true},
 	}
 
 	for _, uom := range []struct {
@@ -78,8 +77,8 @@ func TestConsiderMeasurement_SignConvention(t *testing.T) {
 				if got == nil {
 					t.Fatalf("measurement is nil, want value %v", tc.want)
 				}
-				if got.Value != tc.want {
-					t.Errorf("Value = %v, want %v", got.Value, tc.want)
+				if got.Value != tc.want || got.DirectionUnknown != tc.flagged {
+					t.Errorf("Value = %v, DirectionUnknown = %v, want %v, %v", got.Value, got.DirectionUnknown, tc.want, tc.flagged)
 				}
 			})
 		}
@@ -819,16 +818,14 @@ func TestInheritReadingTypeByMRID_DoesNotCrossContaminateDifferentMRIDs(t *testi
 
 // TestInheritReadingTypeByMRID_ReverseUntypedFollowUp is #715 fix round 2
 // item 1's Reverse case: once inheritance and the export-positive mapping
-// both apply, an untyped follow-up reading of -300 under a Reverse-typed
-// series reports +300 (Reverse = the fleet exporting = already
-// export-positive; abs() discards the sign the untyped reading happened to
-// carry, per the fix round 1 sign convention).
+// both apply, an untyped follow-up reading of 300 under a Reverse-typed
+// series reports +300, unflagged (Reverse = the fleet exporting).
 func TestInheritReadingTypeByMRID_ReverseUntypedFollowUp(t *testing.T) {
 	t.Parallel()
 	reverse := f8(sep2.FlowDirectionReverse)
 	readings := []sep2.MirrorMeterReading{
 		typedReading("series-r", 100, sep2.UomWatts, reverse, 50),
-		untypedReading("series-r", 200, -300),
+		untypedReading("series-r", 200, 300),
 	}
 	inheritReadingTypeByMRID(readings)
 
@@ -836,7 +833,7 @@ func TestInheritReadingTypeByMRID_ReverseUntypedFollowUp(t *testing.T) {
 	for i := range readings {
 		considerMeasurement(&out, readings[i], Edition2018, false)
 	}
-	if out.P == nil || out.P.Value != 300 {
+	if out.P == nil || out.P.Value != 300 || out.P.DirectionUnknown {
 		t.Errorf("Measurements.P = %+v, want value 300", out.P)
 	}
 }
@@ -976,19 +973,21 @@ func TestConsiderMeasurement_EditionFlowDirectionMapping(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// A negative raw value throughout: proves abs(value) still
-			// applies before the sign under every edition and isDER
-			// combination (#715 fix round 1 item 2's rule, restated by
-			// fix round 3 item 2), since a mapping that forgot to take
-			// the magnitude would carry the raw sign through instead of
-			// the edition-declared one.
-			reading := typedReading("series", 100, sep2.UomWatts, tc.flow, -100)
+			reading := typedReading("series", 100, sep2.UomWatts, tc.flow, 100)
 
 			var out FleetDeviceMeasurements
 			considerMeasurement(&out, reading, tc.edition, tc.isDER)
 
-			if out.P == nil || out.P.Value != tc.want {
-				t.Errorf("Measurements.P = %+v, want value %v", out.P, tc.want)
+			if out.P == nil || out.P.Value != tc.want || out.P.DirectionUnknown {
+				t.Errorf("Measurements.P = %+v, want value %v, unflagged", out.P, tc.want)
+			}
+
+			// A negative value under the same direction is not folded to
+			// its magnitude: it is served as sent and flagged (#802).
+			out = FleetDeviceMeasurements{}
+			considerMeasurement(&out, typedReading("series", 100, sep2.UomWatts, tc.flow, -100), tc.edition, tc.isDER)
+			if out.P == nil || out.P.Value != -100 || !out.P.DirectionUnknown {
+				t.Errorf("negative reading: Measurements.P = %+v, want -100 flagged", out.P)
 			}
 		})
 	}

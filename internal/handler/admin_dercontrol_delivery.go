@@ -14,12 +14,15 @@ import (
 // Times are Unix seconds. DeliveredWh is export-positive and null when no
 // reading covers any second of the window; CoveredSeconds says how much of
 // [WindowStart, WindowEnd) the figure stands on, and the rest is uncovered,
-// never filled. Readings counts the readings the figure uses, and
-// NewestReadingTime is the newest of them, by server receipt time.
+// never filled. AverageW is DeliveredWh over the covered seconds, in watts,
+// the figure comparable with a target power. Readings counts the readings the
+// figure uses, and NewestReadingTime is the newest of them, by server
+// receipt time.
 type DERControlDelivery struct {
 	WindowStart       int64    `json:"windowStart"`
 	WindowEnd         int64    `json:"windowEnd"`
 	DeliveredWh       *float64 `json:"deliveredWh"`
+	AverageW          *float64 `json:"averageW"`
 	CoveredSeconds    int64    `json:"coveredSeconds"`
 	Readings          int      `json:"readings"`
 	DirectionUnknown  bool     `json:"directionUnknown"`
@@ -27,12 +30,27 @@ type DERControlDelivery struct {
 	NewestReadingTime *int64   `json:"newestReadingTime"`
 }
 
-// dataQualifierAverage is DataQualifierType 2, "Average" (CSIP Table 3).
+// dataQualifierAverage is DataQualifierType 2, "Average over the Interval
+// (the last posting)" (CSIP Table 3).
 const dataQualifierAverage uint8 = 2
 
-// defaultHoldSeconds bounds the hold of a reading with no period when its
-// mirror carries no postRate.
-const defaultHoldSeconds = 300
+// Hold bounds, INFERRED (#802): the standard sets no hold. 300 s is this
+// server's own default for a mirror with no postRate; 900 s is the postRate
+// 2023 assumes when none is given, used here as a ceiling so a device's
+// declared rate cannot stretch one reading across a whole window.
+const (
+	defaultHoldSeconds = 300
+	maxHoldSeconds     = 900
+)
+
+// holdSeconds is how far one reading with no period may reach. A postRate of
+// 0 is treated as absent.
+func holdSeconds(postRate *uint32) int64 {
+	if postRate == nil || *postRate == 0 {
+		return defaultHoldSeconds
+	}
+	return min(int64(*postRate), maxHoldSeconds)
+}
 
 // effectiveWindow is the part of a control's interval it was in force: from
 // its start to the earliest of its end, its supersede time, its cancel time
@@ -58,51 +76,53 @@ type powerSpan struct {
 	order      int
 }
 
-// powerSpans turns a device's real-power readings into the spans they cover.
+// countsAsDelivery reports whether a reading is DER real power that may be
+// integrated: uom W, instantaneous (no qualifier) or Average. Maximum and
+// Minimum series describe extremes, not energy.
+func countsAsDelivery(r sep2.MirrorMeterReading) bool {
+	rt := r.ReadingType
+	if rt == nil || rt.Uom == nil || *rt.Uom != sep2.UomWatts || r.Reading == nil || r.Reading.Value == nil {
+		return false
+	}
+	return rt.DataQualifier == nil || *rt.DataQualifier == dataQualifierAverage
+}
+
+// powerSeries turns a device's DER real-power readings into spans, one slice
+// per series (a mirror and mRID; per-phase series are distinct mRIDs).
 //
-// An Average reading covers its timePeriod. Its other fallback, the
-// ReadingType's intervalLength, is not decoded by the vendored core, so an
-// Average reading without a timePeriod falls to the hold rule below.
+// An Average reading covers its timePeriod. Without one (intervalLength is
+// not decoded by the vendored core) it covers the hold before its receipt,
+// back to no earlier than the previous reading of its series. An
+// instantaneous reading holds forward from its receipt until the next reading
+// of its series, for at most the hold. See holdSeconds.
 //
-// Hold rule, INFERRED (#802), since the standard sets none: a reading with no
-// period holds its value from its receipt time until the next reading of the
-// same mirror and mRID, for at most the mirror's postRate, or
-// defaultHoldSeconds without one.
-//
-// A reading whose direction cannot be mapped yields no span and sets
-// undirected when it would have covered any part of [ws, we).
-func powerSpans(mirrors []deviceMirror, edition SEP2Edition, ws, we int64) (spans []powerSpan, undirected bool) {
+// Only isDER mirrors count: a premises mirror measures net site power, not
+// the DER output a control targets. A reading whose sign cannot be mapped
+// (exportPositive) yields no span and sets flagged when it would have covered
+// any part of [ws, we).
+func powerSeries(mirrors []deviceMirror, edition SEP2Edition, ws, we int64) (series [][]powerSpan, flagged bool) {
+	order := 0
 	for _, m := range mirrors {
-		hold := int64(defaultHoldSeconds)
-		if m.postRate != nil && *m.postRate > 0 {
-			hold = int64(*m.postRate)
+		if !m.isDER {
+			continue
 		}
+		hold := holdSeconds(m.postRate)
 		power := make([]sep2.MirrorMeterReading, 0, len(m.readings))
 		for _, r := range m.readings {
-			rt := r.ReadingType
-			if rt == nil || rt.Uom == nil || *rt.Uom != sep2.UomWatts || r.Reading == nil || r.Reading.Value == nil {
-				continue
+			if countsAsDelivery(r) {
+				power = append(power, r)
 			}
-			power = append(power, r)
 		}
 		slices.SortStableFunc(power, func(a, b sep2.MirrorMeterReading) int {
 			return cmp.Or(cmp.Compare(a.MRID, b.MRID), cmp.Compare(a.LastUpdateTime, b.LastUpdateTime))
 		})
+		var spans []powerSpan
 		for i, r := range power {
-			start, end := r.LastUpdateTime, r.LastUpdateTime+hold
-			if tp := r.Reading.TimePeriod; tp != nil && tp.Duration > 0 && isAverage(r.ReadingType) {
-				start, end = tp.Start, tp.Start+int64(tp.Duration)
-			} else {
-				for _, next := range power[i+1:] {
-					if next.MRID != r.MRID {
-						break
-					}
-					if next.LastUpdateTime > r.LastUpdateTime {
-						end = min(end, next.LastUpdateTime)
-						break
-					}
-				}
+			if i > 0 && power[i-1].MRID != r.MRID {
+				series = append(series, spans)
+				spans = nil
 			}
+			start, end := readingCoverage(power, i, hold)
 			start, end = max(start, ws), min(end, we)
 			if start >= end {
 				continue
@@ -113,24 +133,63 @@ func powerSpans(mirrors []deviceMirror, edition SEP2Edition, ws, we int64) (span
 			}
 			watts, mapped := exportPositive(scaledValue(float64(*r.Reading.Value), multiplier), r.ReadingType.FlowDirection, edition, m.isDER)
 			if !mapped {
-				undirected = true
+				flagged = true
 				continue
 			}
-			spans = append(spans, powerSpan{start: start, end: end, watts: watts, received: r.LastUpdateTime, order: len(spans)})
+			spans = append(spans, powerSpan{start: start, end: end, watts: watts, received: r.LastUpdateTime, order: order})
+			order++
+		}
+		series = append(series, spans)
+	}
+	return series, flagged
+}
+
+// readingCoverage is the span power[i] covers before window clipping. power
+// is sorted by mRID, then receipt time.
+func readingCoverage(power []sep2.MirrorMeterReading, i int, hold int64) (start, end int64) {
+	r := power[i]
+	at := r.LastUpdateTime
+	if !isAverage(r.ReadingType) {
+		end = at + hold
+		for _, next := range power[i+1:] {
+			if next.MRID != r.MRID {
+				break
+			}
+			if next.LastUpdateTime > at {
+				end = min(end, next.LastUpdateTime)
+				break
+			}
+		}
+		return at, end
+	}
+	if tp := r.Reading.TimePeriod; tp != nil && tp.Duration > 0 {
+		return tp.Start, tp.Start + int64(tp.Duration)
+	}
+	start = at - hold
+	for j := i - 1; j >= 0 && power[j].MRID == r.MRID; j-- {
+		if power[j].LastUpdateTime < at {
+			start = max(start, power[j].LastUpdateTime)
+			break
 		}
 	}
-	return spans, undirected
+	return start, at
 }
 
 func isAverage(rt *sep2.ReadingType) bool {
 	return rt.DataQualifier != nil && *rt.DataQualifier == dataQualifierAverage
 }
 
-// integrate sums watt-seconds over the union of spans, counting each second
-// once: where spans overlap, the most recently received one is used.
-func integrate(spans []powerSpan) (wattSeconds float64, covered int64, used []powerSpan) {
+// piece is a stretch of one series' power, after its overlaps are resolved.
+type piece struct {
+	start, end int64
+	span       powerSpan
+}
+
+// resolveSeries splits one series' spans into disjoint pieces: where its own
+// spans overlap, the most recently received one is used.
+func resolveSeries(spans []powerSpan) []piece {
 	if len(spans) == 0 {
-		return 0, 0, nil
+		return nil
 	}
 	slices.SortFunc(spans, func(a, b powerSpan) int { return cmp.Compare(a.start, b.start) })
 	bounds := make([]int64, 0, 2*len(spans))
@@ -140,7 +199,7 @@ func integrate(spans []powerSpan) (wattSeconds float64, covered int64, used []po
 	slices.Sort(bounds)
 	bounds = slices.Compact(bounds)
 
-	usedOrder := map[int]bool{}
+	var pieces []piece
 	active := &spanHeap{}
 	next := 0
 	for i := 0; i+1 < len(bounds); i++ {
@@ -152,16 +211,38 @@ func integrate(spans []powerSpan) (wattSeconds float64, covered int64, used []po
 		for active.Len() > 0 && (*active)[0].end <= x {
 			heap.Pop(active)
 		}
-		if active.Len() == 0 {
-			continue
+		if active.Len() > 0 {
+			pieces = append(pieces, piece{start: x, end: bounds[i+1], span: (*active)[0]})
 		}
-		top := (*active)[0]
-		seconds := bounds[i+1] - x
-		wattSeconds += top.watts * float64(seconds)
-		covered += seconds
-		if !usedOrder[top.order] {
-			usedOrder[top.order] = true
-			used = append(used, top)
+	}
+	return pieces
+}
+
+// integrate sums watt-seconds across series, since parallel series (phases,
+// several DER mirrors) are parts of one output. A second counts as covered
+// when any series covers it.
+func integrate(series [][]powerSpan) (wattSeconds float64, covered int64, used []powerSpan) {
+	var all []piece
+	usedOrder := map[int]bool{}
+	for _, spans := range series {
+		for _, p := range resolveSeries(spans) {
+			wattSeconds += p.span.watts * float64(p.end-p.start)
+			all = append(all, p)
+			if !usedOrder[p.span.order] {
+				usedOrder[p.span.order] = true
+				used = append(used, p.span)
+			}
+		}
+	}
+	slices.SortFunc(all, func(a, b piece) int { return cmp.Compare(a.start, b.start) })
+	reach := int64(0)
+	for i, p := range all {
+		if i == 0 || p.start > reach {
+			covered += p.end - p.start
+			reach = p.end
+		} else if p.end > reach {
+			covered += p.end - reach
+			reach = p.end
 		}
 	}
 	return wattSeconds, covered, used
@@ -189,14 +270,16 @@ func (h *spanHeap) Pop() any {
 // newDelivery computes one control's delivery from its device's mirrors.
 func newDelivery(deviceLFDI string, mirrors []deviceMirror, edition SEP2Edition, ws, we int64) *DERControlDelivery {
 	d := &DERControlDelivery{WindowStart: ws, WindowEnd: we, DeviceLFDI: deviceLFDI}
-	spans, undirected := powerSpans(mirrors, edition, ws, we)
-	d.DirectionUnknown = undirected
-	wattSeconds, covered, used := integrate(spans)
+	series, flagged := powerSeries(mirrors, edition, ws, we)
+	d.DirectionUnknown = flagged
+	wattSeconds, covered, used := integrate(series)
 	if covered == 0 {
 		return d
 	}
 	wh := wattSeconds / 3600
+	avg := wattSeconds / float64(covered)
 	d.DeliveredWh = &wh
+	d.AverageW = &avg
 	d.CoveredSeconds = covered
 	d.Readings = len(used)
 	newest := used[0].received

@@ -430,7 +430,7 @@ const singletonKey = "default"
 // this is reported rather than attempted.
 func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string) (FleetDeviceMeasurements, error) {
 	var out FleetDeviceMeasurements
-	mirrors, err := mirrorReadingsFor(ctx, h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool { return device == lfdi })
+	mirrors, err := mirrorReadingsFor(ctx, "admin GET /api/derms/fleets", h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool { return device == lfdi })
 	if err != nil {
 		return FleetDeviceMeasurements{}, err
 	}
@@ -453,8 +453,8 @@ type deviceMirror struct {
 // mirrorReadingsFor gathers every mirror whose stored deviceLFDI satisfies
 // match, for the fleet route and the DER control delivery figure alike. A nil
 // mups reader yields no mirrors; any store error is returned, never read as
-// "no readings".
-func mirrorReadingsFor(ctx context.Context, mups store.ResourceReader[sep2.MirrorUsagePoint], mmrs store.ScopedReader[sep2.MirrorMeterReading], match func(deviceLFDI string) bool) ([]deviceMirror, error) {
+// "no readings". logPrefix names the calling route in the log line.
+func mirrorReadingsFor(ctx context.Context, logPrefix string, mups store.ResourceReader[sep2.MirrorUsagePoint], mmrs store.ScopedReader[sep2.MirrorMeterReading], match func(deviceLFDI string) bool) ([]deviceMirror, error) {
 	if mups == nil {
 		return nil, nil
 	}
@@ -464,7 +464,7 @@ func mirrorReadingsFor(ctx context.Context, mups store.ResourceReader[sep2.Mirro
 		// items): any error here is a genuine backend failure, and every
 		// device's measurements are unreachable until it clears, not merely
 		// this one device's.
-		log.Printf("admin fleet: MirrorUsagePoints.List: %v", err)
+		log.Printf("%s: MirrorUsagePoints.List: %v", logPrefix, err)
 		return nil, fmt.Errorf("MirrorUsagePoints.List: %w", err)
 	}
 	var out []deviceMirror
@@ -480,7 +480,7 @@ func mirrorReadingsFor(ctx context.Context, mups store.ResourceReader[sep2.Mirro
 			mupID := pathTail(mup.Href)
 			page, err := mmrs.List(ctx, mupID, store.ListOptions{Unbounded: true})
 			if err != nil {
-				log.Printf("admin fleet: MirrorMeterReadings.List(%q): %v", mupID, err)
+				log.Printf("%s: MirrorMeterReadings.List(%q): %v", logPrefix, mupID, err)
 				return nil, fmt.Errorf("MirrorMeterReadings.List(%q): %w", mupID, err)
 			}
 			readings = append(readings, page.Items...)
@@ -528,7 +528,7 @@ func inheritReadingTypeByMRID(readings []sep2.MirrorMeterReading) {
 // newest (by LastUpdateTime) reading per quantity. A reading missing its
 // type, value or unit is skipped: there is nothing to attribute it to.
 //
-// P and Q are mapped to export-positive: export-positive = sign * abs(value),
+// P and Q are mapped to export-positive: export-positive = sign * value,
 // where sign depends on edition, isDER and the declared flowDirection (#715
 // fix round 3 item 2, operator decision on #715):
 //
@@ -538,17 +538,13 @@ func inheritReadingTypeByMRID(readings []sep2.MirrorMeterReading) {
 //   - Edition2023 with isDER true: the pair flips, Forward -> +1 (export),
 //     Reverse -> -1 (import).
 //
-// abs(value) is applied before the sign under every combination: 2023 Annex
-// B says a value under Forward or Reverse "SHALL be positive", but the EPRI
-// reference client (map_l3_get_der.c:862-870) sends the signed physical
-// value and derives flowDirection from its own sign instead, so the wire
-// value's sign cannot be trusted regardless of edition; only its magnitude
-// and the declared direction are (#715 fix round 1 item 2). A reading with
-// no flowDirection is passed through unmapped rather than guessing a
-// direction, and is marked DirectionUnknown (#733). Net (4) is mapped only for
-// Edition2023 with isDER true: the signed value is already export-positive and
-// is kept as sent (#776). Under 2018 (reserved) or a non-DER mirror it stays
-// flagged.
+// A negative value under Forward or Reverse is not folded to its magnitude
+// (#802): 2023 Annex B says such values "SHALL be positive", and 2018 leaves
+// a signed value's meaning to the sender, so it is passed through unmapped
+// and marked DirectionUnknown, like a reading with no flowDirection (#733).
+// Net (4) is mapped only for Edition2023 with isDER true: the signed value is
+// already export-positive and is kept as sent (#776). Under 2018 (reserved)
+// or a non-DER mirror it stays flagged.
 func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReading, edition SEP2Edition, isDER bool) {
 	if mmr.ReadingType == nil || mmr.ReadingType.Uom == nil || mmr.Reading == nil || mmr.Reading.Value == nil {
 		return
@@ -595,24 +591,31 @@ func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReadi
 
 // exportPositive maps a scaled P or Q value to export-positive under the
 // rule in considerMeasurement's doc comment. mapped is false when the
-// direction is absent or not mappable; value is then returned unchanged.
+// direction is absent or not mappable, or when a Forward or Reverse value is
+// negative; value is then returned unchanged.
+//
+// The 2018 mapping (Reverse is export) rests on 2018 Table E.2, which gives
+// DER active power as ReadingType::flowDirection = 19 (Reverse).
 func exportPositive(value float64, flowDirection *uint8, edition SEP2Edition, isDER bool) (float64, bool) {
 	if flowDirection == nil {
 		return value, false
 	}
-	magnitude := math.Abs(value)
 	flipped := edition == Edition2023 && isDER
 	switch *flowDirection {
-	case sep2.FlowDirectionForward:
-		if flipped {
-			return magnitude, true
+	case sep2.FlowDirectionForward, sep2.FlowDirectionReverse:
+		// 2023 requires these values to be positive; under 2018 a negative
+		// one is the sender's own sign, which no rule here can read.
+		if value < 0 {
+			return value, false
 		}
-		return -magnitude, true
-	case sep2.FlowDirectionReverse:
+		export := *flowDirection == sep2.FlowDirectionReverse
 		if flipped {
-			return -magnitude, true
+			export = !export
 		}
-		return magnitude, true
+		if export {
+			return value, true
+		}
+		return -value, true
 	case flowDirectionNet:
 		return value, edition == Edition2023 && isDER
 	}

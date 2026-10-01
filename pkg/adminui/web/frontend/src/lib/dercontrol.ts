@@ -59,11 +59,13 @@ export interface DERControlResponseCounts {
 }
 
 // Metered export over the control's effective window (Unix seconds).
-// deliveredWh is null when no reading covers any second of it.
+// deliveredWh and averageW (watts over the covered seconds) are null when no
+// reading covers any second of it.
 export interface DERControlDelivery {
   windowStart: number
   windowEnd: number
   deliveredWh: number | null
+  averageW: number | null
   coveredSeconds: number
   readings: number
   directionUnknown: boolean

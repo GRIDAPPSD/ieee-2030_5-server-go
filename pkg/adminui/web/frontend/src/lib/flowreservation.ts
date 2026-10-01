@@ -1,10 +1,13 @@
-// Wire shapes and pure display helpers for GET /api/derms/flow-reservations
-// (#764). The page shows what the server sends: it never grants, flips a
-// sign, or decides which response is the tip.
+// Wire shapes and pure display helpers for GET
+// /api/derms/flow-reservations?aggregatorLFDI=... (#764). The page shows
+// what the server sends: it never grants, flips a sign, or decides which
+// response is the tip.
 
+// multiplier may be absent on a malformed body; scaledNumber then reports
+// the quantity as missing instead of computing NaN.
 export interface ScaledValue {
   value: number
-  multiplier: number
+  multiplier?: number
 }
 
 export interface Interval {
@@ -29,12 +32,10 @@ export interface ExecutionView {
   mRID: string
   href: string
   derControlListHref: string
-  interval: Interval
+  interval: Interval | null
   targetW: ScaledValue | null
   eventStatus: EventStatus | null
 }
-
-export type Direction = 'charge' | 'discharge'
 
 export interface ResponseView {
   id: string
@@ -42,7 +43,7 @@ export interface ResponseView {
   mRID: string
   subject: string
   creationTime: number
-  interval: Interval
+  interval: Interval | null
   energyAvailable: ScaledValue | null
   powerAvailable: ScaledValue | null
   direction: string | null
@@ -59,7 +60,7 @@ export interface FlowReservationRequest {
   mRID: string
   creationTime: number
   requestStatus: string
-  intervalRequested: Interval
+  intervalRequested: Interval | null
   energyRequested: ScaledValue | null
   powerRequested: ScaledValue | null
   direction: string | null
@@ -85,20 +86,28 @@ export interface FlowReservationQueue {
   requests: FlowReservationEntry[]
 }
 
+function isFiniteNumber(n: unknown): n is number {
+  return typeof n === 'number' && Number.isFinite(n)
+}
+
 // scaledNumber applies the 2030.5 multiplier (a power of ten). null stays
-// null: an absent quantity is missing, not zero.
+// null: an absent quantity, or one with a missing value or multiplier, is
+// missing, not zero and not NaN.
 export function scaledNumber(q: ScaledValue | null | undefined): number | null {
-  if (q === null || q === undefined) return null
+  if (q === null || q === undefined || typeof q !== 'object') return null
+  if (!isFiniteNumber(q.value) || !isFiniteNumber(q.multiplier)) return null
   return q.value * Math.pow(10, q.multiplier)
 }
 
-// formatQuantity prints the magnitude with its unit. Direction is a separate
-// word taken from the server's own direction field, so no sign is rewritten
-// here: the minus on a discharge energy is replaced by the word beside it,
-// never by a flipped number.
-export function formatQuantity(n: number | null, unit: string): string {
-  if (n === null) return 'missing'
-  return `${Math.round(Math.abs(n)).toLocaleString('en-US')} ${unit}`
+// formatQuantity prints the value as the server sent it, sign included.
+// The sign is the only direction there is when the direction field is
+// null, so it is never dropped and never flipped; the direction word beside
+// it comes from the server's own field.
+export function formatQuantity(n: number | null | undefined, unit: string): string {
+  if (!isFiniteNumber(n)) return 'missing'
+  const rounded = Math.round(n)
+  const text = Math.abs(rounded).toLocaleString('en-US')
+  return (rounded < 0 ? '-' : '') + text + ' ' + unit
 }
 
 export function directionLabel(direction: string | null | undefined): string {
@@ -107,39 +116,50 @@ export function directionLabel(direction: string | null | undefined): string {
 }
 
 // remainingSeconds is the countdown to a deadline measured on the server's
-// clock: serverNow is the payload's `now` and elapsedSeconds is how long
-// this page has held that payload, so browser clock skew does not move it.
-// null means the server sent no deadline.
+// clock: serverNow is the payload's `now` (or the response Date header when
+// the payload has none) and elapsedSeconds is how long this page has held
+// that payload, so browser clock skew does not move it. null means there is
+// nothing to count down from.
 export function remainingSeconds(
-  deadlineAt: number | null,
-  serverNow: number,
+  deadlineAt: number | null | undefined,
+  serverNow: number | null,
   elapsedSeconds: number,
 ): number | null {
-  if (deadlineAt === null) return null
+  if (!isFiniteNumber(deadlineAt) || serverNow === null) return null
   return deadlineAt - (serverNow + elapsedSeconds)
 }
 
-export function formatCountdown(remaining: number | null): string {
-  if (remaining === null) return 'deadline missing'
+export function formatCountdown(
+  deadlineAt: number | null | undefined,
+  serverNow: number | null,
+  elapsedSeconds: number,
+): string {
+  if (!isFiniteNumber(deadlineAt)) return 'deadline missing'
+  const remaining = remainingSeconds(deadlineAt, serverNow, elapsedSeconds)
+  if (remaining === null) return 'server time unavailable'
   if (remaining <= 0) return 'deadline passed'
-  return `${remaining}s to deadline`
+  return remaining + 's to deadline'
 }
 
-export function formatInterval(i: Interval): string {
+export function formatInterval(i: Interval | null | undefined): string {
+  if (i === null || i === undefined || !isFiniteNumber(i.start) || !isFiniteNumber(i.duration)) {
+    return 'interval missing'
+  }
   const start = new Date(i.start * 1000).toISOString().replace('T', ' ').replace('.000Z', ' UTC')
   const mins = i.duration / 60
-  const dur = Number.isInteger(mins) ? `${mins} min` : `${i.duration} s`
-  return `${start} for ${dur}`
+  const dur = Number.isInteger(mins) ? mins + ' min' : i.duration + ' s'
+  return start + ' for ' + dur
 }
 
 // formatActor names who acted. A null actor is shown as unknown rather
 // than omitted, since a missing answerer is itself information.
-export function formatActor(a: Actor | null): string {
-  if (a === null) return 'unknown'
+export function formatActor(a: Actor | null | undefined): string {
+  if (a === null || a === undefined || typeof a.kind !== 'string') return 'unknown'
   const kind = a.kind.replace(/_/g, ' ')
-  const principal = a.principal === null ? '' : ` ${a.principal.length > 20 ? a.principal.slice(0, 20) + '...' : a.principal}`
-  const admission = a.admission === null ? '' : ` via ${a.admission}`
-  return `${kind}${principal}${admission}`
+  const principal =
+    typeof a.principal !== 'string' ? '' : ' ' + (a.principal.length > 20 ? a.principal.slice(0, 20) + '...' : a.principal)
+  const admission = typeof a.admission !== 'string' ? '' : ' via ' + a.admission
+  return kind + principal + admission
 }
 
 // historyResponses is every response except the one the server named as
@@ -149,14 +169,89 @@ export function historyResponses(entry: FlowReservationEntry): ResponseView[] {
   return entry.responses.filter((r) => r.id !== tipId)
 }
 
-// normalizeQueues accepts one aggregator's object or a list of them: the
-// fixture shows one object, and #764 has not fixed the multi-aggregator shape.
-export function normalizeQueues(data: unknown): FlowReservationQueue[] | null {
-  const list = Array.isArray(data) ? data : [data]
-  for (const q of list) {
-    if (q === null || typeof q !== 'object' || !Array.isArray((q as FlowReservationQueue).requests)) {
-      return null
-    }
+function isObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v)
+}
+
+function objectOrNull(v: unknown): boolean {
+  return v === null || v === undefined || isObject(v)
+}
+
+function dupKey(keys: string[]): string | null {
+  const seen = new Set<string>()
+  for (const k of keys) {
+    if (seen.has(k)) return k
+    seen.add(k)
   }
-  return list as FlowReservationQueue[]
+  return null
+}
+
+function checkResponse(r: unknown, where: string): string | null {
+  if (!isObject(r)) return where + ' is not an object'
+  if (typeof r.id !== 'string') return where + ' has no id'
+  if (!objectOrNull(r.interval)) return where + ' interval is not an object'
+  if (!objectOrNull(r.eventStatus)) return where + ' eventStatus is not an object'
+  if (!objectOrNull(r.answeredBy) || !objectOrNull(r.cancelledBy)) return where + ' actor is not an object'
+  if (!Array.isArray(r.executions)) return where + ' has no executions list'
+  const mRIDs: string[] = []
+  for (const ex of r.executions) {
+    if (!isObject(ex) || typeof ex.mRID !== 'string') return where + ' has a malformed execution'
+    if (!objectOrNull(ex.interval) || !objectOrNull(ex.eventStatus)) return where + ' has a malformed execution'
+    mRIDs.push(ex.mRID)
+  }
+  const dup = dupKey(mRIDs)
+  if (dup !== null) return where + ' repeats execution ' + dup
+  return null
+}
+
+// normalizeQueue checks, before anything renders, every field the pane
+// reads, because a throw during render leaves the pane stuck on its loading
+// state with nothing shown. It returns a copy with an undefined tip read as
+// null, or the first problem found.
+export function normalizeQueue(data: unknown): { queue: FlowReservationQueue } | { error: string } {
+  if (!isObject(data)) return { error: 'queue is not an object' }
+  if (!Array.isArray(data.requests)) return { error: 'queue has no requests list' }
+  const keys: string[] = []
+  const requests: FlowReservationEntry[] = []
+  for (const [n, e] of data.requests.entries()) {
+    const where = 'request ' + n
+    if (!isObject(e)) return { error: where + ' is not an object' }
+    if (typeof e.requestHref !== 'string') return { error: where + ' has no requestHref' }
+    if (typeof e.aggregatorLFDI !== 'string') return { error: where + ' has no aggregatorLFDI' }
+    if (typeof e.state !== 'string') return { error: where + ' has no state' }
+    if (!isObject(e.request)) return { error: where + ' has no request' }
+    if (!objectOrNull(e.request.intervalRequested)) return { error: where + ' interval is not an object' }
+    if (!Array.isArray(e.responses)) return { error: where + ' has no responses list' }
+    const ids: string[] = []
+    for (const [m, r] of e.responses.entries()) {
+      const bad = checkResponse(r, where + ' response ' + m)
+      if (bad !== null) return { error: bad }
+      ids.push((r as { id: string }).id)
+    }
+    const dupResp = dupKey(ids)
+    if (dupResp !== null) return { error: where + ' repeats response ' + dupResp }
+    const tip = e.tip === undefined ? null : e.tip
+    if (tip !== null) {
+      const bad = checkResponse(tip, where + ' tip')
+      if (bad !== null) return { error: bad }
+    }
+    keys.push(e.requestHref)
+    requests.push({ ...(e as unknown as FlowReservationEntry), tip: tip as ResponseView | null })
+  }
+  const dup = dupKey(keys)
+  if (dup !== null) return { error: 'queue repeats request ' + dup }
+  return { queue: { ...(data as unknown as FlowReservationQueue), requests } }
+}
+
+// parseFleetLFDIs reads the aggregator list from GET /api/derms/fleets.
+// Null when the body is not a list of fleets or repeats an aggregator,
+// since each LFDI keys a block of the pane.
+export function parseFleetLFDIs(data: unknown): string[] | null {
+  if (!Array.isArray(data)) return null
+  const out: string[] = []
+  for (const f of data) {
+    if (!isObject(f) || typeof f.aggregatorLFDI !== 'string') return null
+    out.push(f.aggregatorLFDI)
+  }
+  return dupKey(out) === null ? out : null
 }

@@ -230,6 +230,15 @@ function nullAbsent(r: Record<string, unknown>): Record<string, unknown> {
   return out
 }
 
+// normalizeResponse is normalizeQueue's per-response check for a reader that
+// holds a response outside a queue: the response with absent nullable keys
+// read as null, or the first problem found.
+export function normalizeResponse(r: unknown, where: string): { response: ResponseView } | { error: string } {
+  const bad = checkResponse(r, where)
+  if (bad !== null) return { error: bad }
+  return { response: nullAbsent(r as Record<string, unknown>) as unknown as ResponseView }
+}
+
 // normalizeQueue checks, before anything renders, every field the pane
 // reads, because a throw during render leaves the pane stuck on its loading
 // state with nothing shown. It returns a copy with an undefined tip read as

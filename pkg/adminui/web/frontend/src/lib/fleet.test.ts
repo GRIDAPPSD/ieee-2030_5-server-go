@@ -224,6 +224,7 @@ describe('isFleet', () => {
     ['devices that is not an array', { ...fleet(), devices: null }],
     ['a device that is null', { ...fleet(), devices: [null] }],
     ['a device with no measurements', { ...fleet(), devices: [{ lfdi: 'a' }] }],
+    ['a device with no lfdi', { ...fleet(), devices: [{ measurements: {} }] }],
     ['a non-string aggregator', { ...fleet(), aggregatorLFDI: 7 }],
   ])('rejects %s', (_name, value) => {
     expect(isFleet(value)).toBe(false)

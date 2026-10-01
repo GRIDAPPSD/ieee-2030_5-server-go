@@ -187,7 +187,7 @@ export function isFleet(v: unknown): v is Fleet {
   if (!isObject(v) || typeof v.aggregatorLFDI !== 'string') return false
   if (!Array.isArray(v.devices)) return false
   for (const d of v.devices) {
-    if (!isObject(d) || !isObject(d.measurements)) return false
+    if (!isObject(d) || typeof d.lfdi !== 'string' || !isObject(d.measurements)) return false
   }
   const r = v.rollup
   if (!isObject(r)) return false

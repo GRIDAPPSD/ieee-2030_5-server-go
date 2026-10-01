@@ -30,6 +30,7 @@ export interface DERControlBaseView {
   opModEnergize?: boolean
   opModMaxLimW?: number
   opModFixedPFInjectW?: FixedPowerFactorView
+  opModTargetW?: { value: number; multiplier: number }
 }
 
 export interface DERControlView {
@@ -43,6 +44,7 @@ export interface DERControlView {
   creationTime: number
   interval: { start: number; duration: number }
   eventStatus: { currentStatus: number; status: string; dateTime: number }
+  executesGrant?: string | null
 }
 
 export interface DERControlCreated extends DERControlView {

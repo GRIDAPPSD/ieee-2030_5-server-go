@@ -21,6 +21,7 @@
     newestPReadingTime,
     sumFigure,
     unreportedStatusCount,
+    isFleet,
     type Fleet,
   } from '../lib/fleet'
 
@@ -28,6 +29,10 @@
   // clock, so a page left open does not freeze "updated 10s ago" forever
   // while the underlying reading keeps aging (PR 730 round 1, finding 4).
   const AGE_TICK_MS = 15_000
+
+  // A fetch that never settles would leave the pane on "Loading" with
+  // Refresh disabled; past this the request is aborted into the error state.
+  const FETCH_TIMEOUT_MS = 15_000
 
   let fleets = $state<Fleet[]>([])
   let status = $state<'loading' | 'ready' | 'error'>('loading')
@@ -38,26 +43,31 @@
   // claims the next number, and only the call still holding the CURRENT
   // number when its response lands may write status/fleets/error. An older
   // request that resolves after a newer one, success or failure, is
-  // dropped instead of overwriting the newer result. destroyed does the
-  // same for a response that lands after the component is gone.
+  // dropped instead of overwriting the newer result. The abort controller
+  // does the same for a response that lands after the component is gone,
+  // and also cancels that request on the wire.
   let requestSeq = 0
-  let destroyed = false
+  const lifetime = new AbortController()
 
   async function load() {
     const seq = ++requestSeq
     status = 'loading'
-    const res = await fetchJSON<Fleet[]>('/api/derms/fleets')
-    if (destroyed || seq !== requestSeq) return
+    const res = await fetchJSON<Fleet[]>('/api/derms/fleets', {
+      signal: lifetime.signal,
+      timeoutMs: FETCH_TIMEOUT_MS,
+    })
+    if (lifetime.signal.aborted || seq !== requestSeq) return
     if (!res.ok) {
       status = 'error'
       error = res.error
       return
     }
     // fetchJSON's decode only checks res.ok before handing back whatever
-    // the body parsed to; a 200 with a null or non-array body is not a
-    // shape this route sends, but nothing upstream guarantees it, so this
-    // is the last place to catch it before fleets.length throws below.
-    if (!Array.isArray(res.data)) {
+    // the body parsed to; a 200 with a null body, a non-array, or an array
+    // holding a non-fleet element is not a shape this route sends, but
+    // nothing upstream guarantees it, so this is the last place to catch it
+    // before the render below throws.
+    if (!Array.isArray(res.data) || !res.data.every(isFleet)) {
       status = 'error'
       error = 'server returned an unexpected response shape'
       return
@@ -76,7 +86,7 @@
   })
 
   onDestroy(() => {
-    destroyed = true
+    lifetime.abort()
     if (ageTimer !== undefined) clearInterval(ageTimer)
   })
 </script>
@@ -112,6 +122,7 @@
           {@const availAge = newestAvailReadingTime(fleet)}
           {@const activeAvail = sumFigure(fleet, fleet.rollup.statWAvail, availAge, nowSeconds)}
           {@const reactiveAvail = sumFigure(fleet, fleet.rollup.statVarAvail, availAge, nowSeconds)}
+          {@const neitherAvail = activeAvail.kind === 'none' && reactiveAvail.kind === 'none'}
           <tr data-testid="fleet-row">
             <td class="mono" title={fleet.aggregatorLFDI}>{fleet.aggregatorLFDI.substring(0, 16)}...</td>
             <td>{fleet.rollup.deviceCount}</td>
@@ -134,14 +145,14 @@
                 {#if activeAvail.kind === 'reporting'}
                   {formatValue(activeAvail.value)} W active{formatContributionNote(activeAvail)}
                 {:else}
-                  No devices reporting{formatContributionNote(activeAvail)}
+                  No devices reporting{neitherAvail ? ' active' : ''}{formatContributionNote(activeAvail)}
                 {/if}
               </div>
               <div data-testid="fleet-avail-reactive">
                 {#if reactiveAvail.kind === 'reporting'}
                   {formatValue(reactiveAvail.value)} VAR reactive{formatContributionNote(reactiveAvail)}
                 {:else}
-                  No devices reporting{formatContributionNote(reactiveAvail)}
+                  No devices reporting{neitherAvail ? ' reactive' : ''}{formatContributionNote(reactiveAvail)}
                 {/if}
               </div>
               <div class="hint">updated {formatAge(activeAvail.ageSeconds)}</div>

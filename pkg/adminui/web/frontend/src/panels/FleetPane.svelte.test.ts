@@ -76,6 +76,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.unstubAllGlobals()
 })
 
 describe('FleetPane', () => {
@@ -579,5 +580,88 @@ describe('FleetPane', () => {
     await vi.advanceTimersByTimeAsync(3600 * 1000) // the clock moves an hour with no refetch
 
     expect(screen.getByTestId('fleet-power')).toHaveTextContent('updated 1h ago')
+  })
+
+  // PR 730 follow-ups (#735). A fetch that honors its AbortSignal but never
+  // answers, which is what a hung connection looks like to the pane.
+  function hangingFetch() {
+    const signals: AbortSignal[] = []
+    const fetchMock = vi.fn((_path: string, init?: RequestInit) => {
+      const signal = init?.signal as AbortSignal
+      signals.push(signal)
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return { signals, fetchMock }
+  }
+
+  it('times a hung fetch out into the error state and re-enables Refresh', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_700_000_000_000)
+    hangingFetch()
+
+    render(FleetPane)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(screen.getByTestId('fleet-loading')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled()
+
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    expect(screen.getByTestId('fleet-error')).toHaveTextContent('Could not load fleets: request timed out')
+    expect(screen.getByRole('button', { name: 'Refresh' })).not.toBeDisabled()
+  })
+
+  it('shows the error state, not a TypeError, when the array holds a null element', async () => {
+    mockFetchJSON({ ok: true, data: [null] as unknown as Fleet[] })
+
+    render(FleetPane)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fleet-error')).toHaveTextContent(
+        'Could not load fleets: server returned an unexpected response shape',
+      )
+    })
+    expect(screen.queryByTestId('fleet-row')).toBeNull()
+  })
+
+  it('aborts the in-flight request when the component is destroyed', async () => {
+    const { signals } = hangingFetch()
+
+    const { unmount } = render(FleetPane)
+    await waitFor(() => expect(signals).toHaveLength(1))
+    expect(signals[0].aborted).toBe(false)
+
+    unmount()
+
+    expect(signals[0].aborted).toBe(true)
+  })
+
+  it('clears the age interval when the component is destroyed', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_700_000_000_000)
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: [] } as never)
+
+    const { unmount } = render(FleetPane)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(vi.getTimerCount()).toBe(1)
+
+    unmount()
+
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('labels each cell when neither availability sum has a contributor', async () => {
+    const fleet = minimalFleet('AGG-NO-AVAIL')
+    fleet.rollup.deviceCount = 1
+    fleet.rollup.statWAvail.unreported = 1
+    fleet.rollup.statVarAvail.unreported = 1
+    mockFetchJSON({ ok: true, data: [fleet] })
+
+    render(FleetPane)
+
+    expect(await screen.findByTestId('fleet-avail-active')).toHaveTextContent('No devices reporting active')
+    expect(screen.getByTestId('fleet-avail-reactive')).toHaveTextContent('No devices reporting reactive')
   })
 })

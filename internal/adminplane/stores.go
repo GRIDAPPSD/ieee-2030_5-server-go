@@ -32,10 +32,8 @@ type Stores struct {
 	// wiring memory.NewEndDeviceIndexWithPersistence via cfg.DataDir,
 	// the way Registrations does, is a follow-up, not forced by this bump.
 	EndDeviceIndexes *memory.EndDeviceIndex
-	// Registrations is the persistent-aware wrapper around the in-memory
-	// Store[sep2.Registration]. The embedded *Store gives back-compat
-	// method promotion (Get/List/Count) for call sites that don't need
-	// the persistence flush.
+	// Registrations holds the Registration served at /edev/{id}/rg. Run
+	// wires the persistent store.
 	Registrations store.ResourceStore[sep2.Registration]
 	// RegistrationPolicy supplies the pIN and pollRate for the Registration
 	// core creates alongside every EndDevice. core v0.13.0 added this
@@ -57,23 +55,17 @@ type Stores struct {
 	DERSettings       *memory.ScopedStore[sep2.DERSettings]
 	DERStatuses       store.ScopedStore[sep2.DERStatus]
 	DERAvailabilities store.ScopedStore[sep2.DERAvailability]
-	// DERPrograms is the persistence-aware wrapper. It satisfies
-	// store.ScopedStore[sep2.DERProgram] and its Create/Delete add the
-	// disk flush.
-	//
-	// It no longer embeds the collection: core made the inner store an
-	// unexported field, so neither the promoted ForParent nor the old
-	// .ScopedStore reach-through exists. Consumers that want a scoped
-	// DERProgram surface take the store.ScopedStore contract and address
-	// resources by (parent, id).
+	// DERPrograms holds the DERPrograms served under an FSA. Run wires the
+	// persistent store.
 	DERPrograms store.ScopedStore[sep2.DERProgram]
 	// DERControls is the persistence-aware wrapper (GRIDAPPSD/ieee-2030_5-server-go#565).
 	// It satisfies store.ScopedStore[sep2.DERControl]; its Create/Update/Delete
 	// add the disk flush, and it carries the mRID-to-scope index
-	// internal/dercontrol.Issuer's undo logic and #566's admin API need.
+	// internal/dercontrol.Issuer's undo logic and #566's admin API need. It
+	// stays concrete because that index is not on the interface.
 	DERControls *memory.DERControlStore
-	// DERControlLifecycles is the persistence-aware companion store for
-	// internal/dercontrol.LifecycleRecord, keyed identically to DERControls
+	// DERControlLifecycles holds each internal/dercontrol.LifecycleRecord,
+	// keyed identically to DERControls
 	// (GRIDAPPSD/ieee-2030_5-server-go#565). #564's serve-time status
 	// decorator (pkg/sep2srv/handlers/der, wired in
 	// pkg/sep2srv/assembly/assembly.go behind store.IsAbsent) reads it; the

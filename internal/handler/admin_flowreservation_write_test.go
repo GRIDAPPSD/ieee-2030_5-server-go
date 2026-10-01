@@ -1278,3 +1278,22 @@ func TestFRWrite_InternalFailureIsNeverAnsweredAsARefusal(t *testing.T) {
 		})
 	}
 }
+
+// A response exists, so the answer still gets 409, but an answer record the
+// queue could not take back is the server's fault and is logged at ERROR
+// with its own cause.
+func TestFRWrite_AnswerTakeBackFailureIs409LoggedAtError(t *testing.T) {
+	f := newFRWFixture(t)
+	f.pending("frq-1", "REQ-1")
+	f.h.Queue = fakeAnswerer{fmt.Errorf("%w: %w", flowreservation.ErrAlreadyAnswered, flowreservation.ErrAnswerRecordTakeBack)}
+	f.logs.Reset()
+	rec := f.post("answer", "frq-1", `{"decision":"grant"}`)
+	if r := decodeRefusal(t, rec); rec.Code != http.StatusConflict || r.Code != "already_answered" {
+		t.Fatalf("answer = %d %+v, want 409 already_answered", rec.Code, r)
+	}
+	logs := f.logs.String()
+	assertOneSafeLine(t, logs, "event=flow_reservation_answer_refused")
+	if !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, "cause=answer_record_take_back") {
+		t.Errorf("log = %q, want an ERROR line with cause=answer_record_take_back", logs)
+	}
+}

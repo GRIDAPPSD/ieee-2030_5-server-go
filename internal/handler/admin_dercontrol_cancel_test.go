@@ -154,9 +154,9 @@ func TestDERControlCancel_WithoutAFleetLockStillCancels(t *testing.T) {
 		{"resolver errors", "fleet_resolve_failed", func(_ *testing.T, d *dcHarness) { d.h.Fleets = failingFleets{} }},
 		{"no resolver", "no_resolver", func(_ *testing.T, d *dcHarness) { d.h.Fleets = nil }},
 		{"no ledger", "no_ledger", func(_ *testing.T, d *dcHarness) { d.h.Ledger = nil }},
-			{"ledger fails", "ledger_failed", func(_ *testing.T, d *dcHarness) {
-				d.h.Ledger = failingLedger{err: errors.New("lock table unavailable")}
-			}},
+		{"ledger fails", "ledger_failed", func(_ *testing.T, d *dcHarness) {
+			d.h.Ledger = failingLedger{err: errors.New("lock table unavailable")}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := newDCHarness(t, ptrU32(dcPEN))
@@ -174,8 +174,14 @@ func TestDERControlCancel_WithoutAFleetLockStillCancels(t *testing.T) {
 			if !strings.Contains(logs, "level=WARN") || !strings.Contains(logs, "der_control_cancel_unlocked") || !strings.Contains(logs, "reason="+tc.reason) {
 				t.Errorf("log = %q, want a WARN der_control_cancel_unlocked with reason=%s", logs, tc.reason)
 			}
-			if !strings.Contains(logs, "mrid="+created.MRID) {
-				t.Errorf("log = %q, want the WARN to name mrid=%s", logs, created.MRID)
+			var warn string
+			for _, line := range strings.Split(logs, "\n") {
+				if strings.Contains(line, "der_control_cancel_unlocked") {
+					warn = line
+				}
+			}
+			if !strings.Contains(warn, "mrid="+created.MRID) {
+				t.Errorf("WARN = %q, want it to name mrid=%s", warn, created.MRID)
 			}
 			if hasErr := strings.Contains(logs, "lock table unavailable"); hasErr != (tc.reason == "ledger_failed") {
 				t.Errorf("log = %q, ledger error present = %v, want it only for ledger_failed", logs, hasErr)

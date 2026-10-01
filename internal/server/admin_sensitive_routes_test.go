@@ -142,6 +142,13 @@ func TestSensitiveRoutesRefuseBypassAdmission(t *testing.T) {
 		// measurements, a wider disclosure than GET /api/management-pairs,
 		// which already required a credential.
 		{name: "GET /api/derms/fleets", method: http.MethodGet, path: "/api/derms/fleets", wantReachedStatus: http.StatusOK},
+		// #764: the flow reservation reads sit under the same family. With a
+		// valid credential and no query they reach their handler and answer
+		// its own refusal, which a 401 from the gate would not be.
+		{name: "GET /api/derms/flow-reservations", method: http.MethodGet, path: "/api/derms/flow-reservations", wantReachedStatus: http.StatusBadRequest},
+		{name: "GET /api/derms/flow-reservations/{edevId}/{frqId}", method: http.MethodGet, path: "/api/derms/flow-reservations/4/frq-1", wantReachedStatus: http.StatusNotFound},
+		{name: "GET /api/derms/grants", method: http.MethodGet, path: "/api/derms/grants", wantReachedStatus: http.StatusBadRequest},
+		{name: "GET /api/derms/ (future sub-route, no handler yet)", method: http.MethodGet, path: "/api/derms/audit", wantReachedStatus: http.StatusNotFound},
 	}
 
 	for _, tc := range cases {

@@ -337,7 +337,12 @@ func seedEveryState(f *frFixture) {
 			interval: win(start, 3600), energy: &sep2.SignedRealEnergy{Value: 4000}, power: &sep2.ActivePower{Value: 8000}})
 	}
 	grant := func(id string, start int64, dur uint32, cancelledAt *int64) {
-		f.response(frpSpec{edev: "4", id: id, mrid: "R-" + id, subject: "M-" + id, created: start - 10,
+		created := start - 10
+		if cancelledAt != nil {
+			// A cancel mark never precedes the grant's own creationTime.
+			created = min(created, *cancelledAt-10)
+		}
+		f.response(frpSpec{edev: "4", id: id, mrid: "R-" + id, subject: "M-" + id, created: created,
 			interval: win(start, dur), energy: &sep2.SignedRealEnergy{Value: 4000}, power: &sep2.ActivePower{Value: 8000},
 			cancelledAt: cancelledAt})
 	}

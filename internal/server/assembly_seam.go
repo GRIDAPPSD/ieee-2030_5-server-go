@@ -257,6 +257,8 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 		CommitmentLedger:                  s.CommitmentLedger,
 		FlowReservationQueue:              s.FlowReservationQueue,
 		DERControlIssuer:                  s.DERControlIssuer,
+
+		Edition2023: s.Sep2Edition == handler.Edition2023,
 	}
 }
 

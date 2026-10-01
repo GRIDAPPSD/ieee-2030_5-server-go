@@ -289,6 +289,12 @@ type Stores struct {
 	// it; nil builds one from the stores (NewDERControlIssuer), as an
 	// embedder with no admin API expects.
 	DERControlIssuer *dercontrol.Issuer
+
+	// Edition2023 is true when the server runs as IEEE 2030.5-2023. It makes
+	// the served DERControl and FlowReservationResponse EventStatus carry
+	// potentiallySuperseded true, which 2023 requires; false (the default) is
+	// the 2018 rule.
+	Edition2023 bool
 }
 
 // RouterConfig carries the scalar configuration values the protocol router
@@ -858,7 +864,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// only when present is what keeps every existing deployment (no issuer
 	// yet) served exactly as before.
 	if !store.IsAbsent(stores.DERControlLifecycles) {
-		derControls = coreder.NewDerivedStatusControlStore(derControls, stores.DERControlLifecycles)
+		derControls = coreder.NewDerivedStatusControlStoreFor(derControls, stores.DERControlLifecycles, stores.Edition2023)
 	}
 
 	// DERProgram.DERControlListLink.all is always derived from the live
@@ -1591,5 +1597,5 @@ func servedFlowReservationResponses(responses store.ScopedStore[sep2.FlowReserva
 	if store.IsAbsent(stores.FlowReservationResponseLifecycles) {
 		return responses
 	}
-	return flowreservation.NewDerivedStatusResponseStore(responses, stores.FlowReservationResponseLifecycles)
+	return flowreservation.NewDerivedStatusResponseStoreFor(responses, stores.FlowReservationResponseLifecycles, stores.Edition2023)
 }

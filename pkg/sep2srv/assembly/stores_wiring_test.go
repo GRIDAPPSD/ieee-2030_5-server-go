@@ -13,6 +13,7 @@ func TestTestStoresWiresEveryStoresField(t *testing.T) {
 		"EndDeviceIndexes": "nil selects the process-local index these tests rely on",
 		"AdminFSAs":        "the admin plane is not mounted on the protocol router",
 
+		"Edition2023":          "the 2018 edition is the default; true only when the server runs as 2023",
 		"FlowReservationQueue": "nil makes the assembly build a queue from RouterConfig.FlowReservationDeadline",
 		"DERControlIssuer":     "nil makes the assembly build an issuer from the stores",
 	}

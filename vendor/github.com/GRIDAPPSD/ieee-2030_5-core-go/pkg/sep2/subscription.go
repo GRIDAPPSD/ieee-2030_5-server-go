@@ -64,12 +64,27 @@ type NotificationList struct {
 	Notification []Notification `xml:"Notification,omitempty"`
 }
 
-// Notification status values per spec.
+// Notification status values per IEEE 2030.5. Values above 4 are reserved.
 const (
-	NotificationStatusDefault     uint8 = 0
+	NotificationStatusDefault                   uint8 = 0
+	NotificationStatusCanceledNoInfo            uint8 = 1
+	NotificationStatusCanceledMoved             uint8 = 2
+	NotificationStatusCanceledDefinitionChanged uint8 = 3
+	NotificationStatusCanceledDeleted           uint8 = 4
+)
+
+// Pre-standard names kept so existing callers still compile. Each value is a
+// subscription-cancelled code in the standard, not the meaning its name implies.
+const (
+	// Deprecated: value 1 means "subscription canceled, no additional
+	// information"; use NotificationStatusCanceledNoInfo.
 	NotificationStatusSubscripted uint8 = 1
-	NotificationStatusChanged     uint8 = 2
-	NotificationStatusRemoved     uint8 = 3
+	// Deprecated: value 2 means "subscription canceled, resource moved"; use
+	// NotificationStatusCanceledMoved. It is not a change notification.
+	NotificationStatusChanged uint8 = 2
+	// Deprecated: value 3 means "subscription canceled, resource definition
+	// changed"; use NotificationStatusCanceledDefinitionChanged.
+	NotificationStatusRemoved uint8 = 3
 )
 
 // Encoding values per spec.

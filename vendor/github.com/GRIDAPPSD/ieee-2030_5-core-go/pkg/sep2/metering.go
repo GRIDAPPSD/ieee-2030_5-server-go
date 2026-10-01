@@ -88,16 +88,23 @@ type DateTimeInterval struct {
 //
 // Field order matches the sep.xsd ReadingBase sequence (sep.xsd:6511):
 // consumptionBlock, qualityFlags, timePeriod, touTier, value, followed by
-// Reading's own localID. This struct implements qualityFlags (position 2),
-// timePeriod (position 3), and value (position 5); their declaration order
-// below preserves that relative sequence for a strict schema-validating
-// client, even though the unimplemented optional fields are omitted.
+// Reading's own localID (sep.xsd:1996-2016). This struct implements
+// qualityFlags (position 2), timePeriod (position 3), value (position 5),
+// and localID (own position, after value); their declaration order below
+// preserves that relative sequence for a strict schema-validating client,
+// even though the unimplemented optional fields are omitted.
+//
+// LocalID is minOccurs=0: it identifies a reading's position within a
+// MirrorReadingSet (assigned in creation-time order) and has no meaning
+// for a standalone Reading, so a pointer with omitempty is correct rather
+// than a required-field hazard.
 type Reading struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns Reading"`
 	Resource
 	QualityFlags *HexBinary16      `xml:"qualityFlags,omitempty"`
 	TimePeriod   *DateTimeInterval `xml:"timePeriod,omitempty"`
 	Value        *int64            `xml:"value,omitempty"`
+	LocalID      *HexBinary16      `xml:"localID,omitempty"`
 }
 
 // Copy returns an independent copy.
@@ -114,6 +121,10 @@ func (r Reading) Copy() Reading {
 	if r.QualityFlags != nil {
 		q := *r.QualityFlags
 		c.QualityFlags = &q
+	}
+	if r.LocalID != nil {
+		l := *r.LocalID
+		c.LocalID = &l
 	}
 	return c
 }

@@ -43,6 +43,10 @@ type PersistentScopedStore[T store.Copier[T]] struct {
 	writeMu     sync.RWMutex
 	persistPath string
 
+	// idOf, when set by WithRecordID, names the id a record carries so a
+	// load can refuse a record stored under a different key.
+	idOf func(T) string
+
 	// afterMutateBeforePersist, when non-nil, runs inside a writer's critical
 	// section between the in-memory mutation and the persist attempt. Nil in
 	// production; the race test sets it to force an interleaving.
@@ -56,14 +60,26 @@ type persistentScopedRecord[T any] struct {
 	Value    T      `json:"value"`
 }
 
+// PersistentScopedOption configures NewPersistentScopedStore.
+type PersistentScopedOption[T store.Copier[T]] func(*PersistentScopedStore[T])
+
+// WithRecordID tells the store which id a record carries, so loading refuses
+// a snapshot record whose value disagrees with the key it is stored under.
+func WithRecordID[T store.Copier[T]](idOf func(T) string) PersistentScopedOption[T] {
+	return func(s *PersistentScopedStore[T]) { s.idOf = idOf }
+}
+
 // NewPersistentScopedStore builds a store wired to a JSON snapshot at path and
 // loads it. An empty path is pure in-memory. label names the collection in
 // error messages.
-func NewPersistentScopedStore[T store.Copier[T]](path, label string) (*PersistentScopedStore[T], error) {
+func NewPersistentScopedStore[T store.Copier[T]](path, label string, opts ...PersistentScopedOption[T]) (*PersistentScopedStore[T], error) {
 	s := &PersistentScopedStore[T]{
 		label: label,
 		inner: NewScopedStore[T](),
 		keys:  make(map[string][]string),
+	}
+	for _, o := range opts {
+		o(s)
 	}
 	if path == "" {
 		return s, nil
@@ -100,6 +116,14 @@ func (s *PersistentScopedStore[T]) loadFromFile(path string) error {
 	}
 	ctx := context.Background()
 	for _, r := range records {
+		if r.ParentID == "" || r.ID == "" {
+			return fmt.Errorf("record with empty parent %q or id %q", r.ParentID, r.ID)
+		}
+		if s.idOf != nil {
+			if got := s.idOf(r.Value); got != r.ID {
+				return fmt.Errorf("record %s/%s carries id %q", r.ParentID, r.ID, got)
+			}
+		}
 		// Through this store's own Create so the key index is built by the
 		// path that maintains it in service. persistPath is still empty, so
 		// loading cannot write a snapshot back.
@@ -342,6 +366,13 @@ func (s *PersistentScopedStore[T]) DeleteParent(ctx context.Context, parentID st
 		s.inner.ForParent(parentID)
 		for i, id := range ids {
 			if rerr := s.inner.Create(ctx, parentID, id, before[i]); rerr != nil {
+				// The records restored so far are served, so their keys
+				// must stay indexed or later snapshots would drop them.
+				if i > 0 {
+					s.keysMu.Lock()
+					s.keys[parentID] = ids[:i]
+					s.keysMu.Unlock()
+				}
 				return 0, errors.Join(err, fmt.Errorf("%s persistence: rollback delete parent %s/%s: %w", s.label, parentID, id, rerr))
 			}
 		}

@@ -496,3 +496,72 @@ func TestPersistentScopedStore_DeleteParentOfUnknownParentIsNoOp(t *testing.T) {
 		t.Fatalf("DeleteParent(unknown) = %d, %v; want 0, nil", n, err)
 	}
 }
+
+func TestPersistentScopedStore_DeleteParentCountOnSuccessAndFailure(t *testing.T) {
+	ctx := context.Background()
+	s, path := newPersistentResources(t)
+	for _, id := range []string{"a", "b"} {
+		if err := s.Create(ctx, "p", id, res(id, "x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blockPersist(t, path)
+	if n, err := s.DeleteParent(ctx, "p"); err == nil || n != 0 {
+		t.Fatalf("failed DeleteParent = %d, %v; want 0 and an error", n, err)
+	}
+	if n, _ := s.Count(ctx, "p"); n != 2 {
+		t.Fatalf("Count after failed DeleteParent = %d, want 2", n)
+	}
+	if err := os.RemoveAll(path + ".tmp"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.DeleteParent(ctx, "p"); err != nil || n != 2 {
+		t.Fatalf("DeleteParent = %d, %v; want 2, nil", n, err)
+	}
+}
+
+// A refused DeleteParent of a parent that holds no records still leaves the
+// parent as it was.
+func TestPersistentScopedStore_FailedDeleteParentKeepsEmptiedParent(t *testing.T) {
+	ctx := context.Background()
+	s, path := newPersistentResources(t)
+	if err := s.Create(ctx, "p", "a", res("a", "x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(ctx, "p", "a"); err != nil {
+		t.Fatal(err)
+	}
+	blockPersist(t, path)
+	if _, err := s.DeleteParent(ctx, "p"); err == nil {
+		t.Fatal("DeleteParent succeeded on an unwritable path")
+	}
+	if ok, _ := s.HasParent(ctx, "p"); !ok {
+		t.Fatal("HasParent = false after a refused DeleteParent of an emptied parent, want true")
+	}
+}
+
+func TestPersistentScopedStore_LoadValidatesRecords(t *testing.T) {
+	withID := memory.WithRecordID(func(r storetest.Resource) string { return r.ID })
+	for name, tc := range map[string]struct {
+		content string
+		opts    []memory.PersistentScopedOption[storetest.Resource]
+		wantErr bool
+	}{
+		"empty parent":    {`{"version":1,"records":[{"parent":"","id":"a","value":{"ID":"a"}}]}`, nil, true},
+		"empty id":        {`{"version":1,"records":[{"parent":"p","id":"","value":{"ID":"a"}}]}`, nil, true},
+		"id disagrees":    {`{"version":1,"records":[{"parent":"p","id":"a","value":{"ID":"other"}}]}`, []memory.PersistentScopedOption[storetest.Resource]{withID}, true},
+		"id agrees":       {`{"version":1,"records":[{"parent":"p","id":"a","value":{"ID":"a"}}]}`, []memory.PersistentScopedOption[storetest.Resource]{withID}, false},
+		"no id check set": {`{"version":1,"records":[{"parent":"p","id":"a","value":{"ID":"other"}}]}`, nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "r.json")
+			if err := os.WriteFile(path, []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := memory.NewPersistentScopedStore[storetest.Resource](path, "resources", tc.opts...)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}

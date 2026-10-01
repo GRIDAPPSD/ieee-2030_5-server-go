@@ -16,6 +16,7 @@ const (
 	bodyKindNone bodyKind = iota
 	bodyKindTable
 	bodyKindDefinitionList
+	bodyKindChart
 )
 
 // ErrBodyMarshalledDirectly is returned when a Body is marshalled outside
@@ -29,8 +30,8 @@ var ErrBodyMarshalledDirectly = errors.New("sep2admin: Body must be marshalled t
 
 // ErrUnhandledBodyKind is returned by Descriptor.MarshalJSON when a
 // Section's Body kind is none of the shapes this package knows how to
-// render. Unreachable today, since kind is unexported and only two
-// constructors set it; kept as a named refusal so a future body shape
+// render. Unreachable today, since kind is unexported and only the
+// three constructors set it; kept as a named refusal so a future body shape
 // cannot fall through a switch silently.
 var ErrUnhandledBodyKind = errors.New("sep2admin: Section.Body has an unhandled kind")
 
@@ -39,8 +40,8 @@ var ErrUnhandledBodyKind = errors.New("sep2admin: Section.Body has an unhandled 
 // that builds one gets an error on the request instead of a payload.
 var (
 	// ErrSectionWithoutBody is a Section whose Body is the zero Body. A
-	// section is a table or a definition list; one with neither has no
-	// shape for the renderer to switch on.
+	// section is a table, a definition list or a chart; one with none has
+	// no shape for the renderer to switch on.
 	ErrSectionWithoutBody = errors.New("sep2admin: Section has no Body")
 
 	// ErrZeroCell is a zero-value Cell. It is refused rather than encoded
@@ -65,10 +66,10 @@ var (
 	ErrUnsafeLink = errors.New("sep2admin: LinkCell href is not http, https or a relative path")
 )
 
-// Body is a Section's shape: a TableBody or a DefinitionListBody.
-// NewTableBody and NewDefinitionListBody are the only functions outside
-// this package that produce a non-zero Body, so "both a table and a
-// definition list" stays unconstructible.
+// Body is a Section's shape: a TableBody, a DefinitionListBody or a
+// ChartBody. NewTableBody, NewDefinitionListBody and NewChartBody are the
+// only functions outside this package that produce a non-zero Body, so a
+// Body carrying two shapes stays unconstructible.
 //
 // The seal is an unexported field, not an unexported interface method: a
 // method is promoted through embedding into another package's type, a
@@ -78,6 +79,7 @@ type Body struct {
 	kind           bodyKind
 	table          TableBody
 	definitionList DefinitionListBody
+	chart          ChartBody
 }
 
 // NewTableBody returns a Body carrying the table shape.
@@ -88,6 +90,11 @@ func NewTableBody(b TableBody) Body {
 // NewDefinitionListBody returns a Body carrying the definition-list shape.
 func NewDefinitionListBody(b DefinitionListBody) Body {
 	return Body{kind: bodyKindDefinitionList, definitionList: b}
+}
+
+// NewChartBody returns a Body carrying the chart shape.
+func NewChartBody(b ChartBody) Body {
+	return Body{kind: bodyKindChart, chart: b}
 }
 
 // MarshalJSON always fails with ErrBodyMarshalledDirectly. A Body is
@@ -307,10 +314,10 @@ type DefinitionEntry struct {
 }
 
 // Section is one block of a Descriptor: a heading, explanatory prose, and
-// a table or a definition list. Empty is the text a renderer shows in
-// place of the body when it holds no rows, or no entries in any group;
-// it is distinct from a zero-row table so a panel can say why it is
-// empty.
+// a table, a definition list or a chart. Empty is the text a renderer
+// shows in place of the body when it holds no rows, no entries in any
+// group, or no points in any series; it is distinct from a zero-row table
+// so a panel can say why it is empty.
 type Section struct {
 	Heading string
 	Prose   []string
@@ -354,13 +361,14 @@ type wireEntry struct {
 }
 
 // MarshalJSON writes {version, sections}. Each section carries kind
-// ("table" or "definitionList"), heading, prose, empty and body, and every
+// ("table", "definitionList" or "chart"), heading, prose, empty and body, and every
 // cell carries its own kind. This is the rendering contract a renderer in
 // another language reads by field name; testdata/descriptor_v2.json pins
 // it byte for byte. Any refusal in a section or a cell fails the whole
 // Descriptor, so a renderer never gets a partial payload.
 func (d Descriptor) MarshalJSON() ([]byte, error) {
 	w := wireDescriptor{Version: d.Version, Sections: make([]wireSection, 0, len(d.Sections))}
+	chartPoints := 0
 	for i, s := range d.Sections {
 		ws := wireSection{Heading: s.Heading, Prose: nonNil(s.Prose), Empty: s.Empty}
 		switch s.Body.kind {
@@ -370,6 +378,12 @@ func (d Descriptor) MarshalJSON() ([]byte, error) {
 			ws.Kind, ws.Body = "table", wireTableOf(s.Body.table)
 		case bodyKindDefinitionList:
 			ws.Kind, ws.Body = "definitionList", wireDefinitionListOf(s.Body.definitionList)
+		case bodyKindChart:
+			c, err := wireChartOf(s.Body.chart, &chartPoints)
+			if err != nil {
+				return nil, fmt.Errorf("sections[%d]: %w", i, err)
+			}
+			ws.Kind, ws.Body = "chart", c
 		default:
 			return nil, fmt.Errorf("sections[%d]: %w: %d", i, ErrUnhandledBodyKind, s.Body.kind)
 		}
@@ -406,7 +420,8 @@ func nonNil[T any](s []T) []T {
 }
 
 // RowCount is the number of table rows plus definition entries across
-// every section: the rows a renderer puts on the page.
+// every section: the rows a renderer puts on the page. Chart points are
+// not rows; MaxDescriptorChartPoints bounds them instead.
 func (d Descriptor) RowCount() int {
 	n := 0
 	for _, s := range d.Sections {

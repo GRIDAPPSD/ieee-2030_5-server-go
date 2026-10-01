@@ -21,7 +21,8 @@ const panelViewTimeout = 5 * time.Second
 // paging and re-polls an open panel, so a panel's payload stays small.
 // The largest panel in view is a per-device registry, sized by the fleet
 // (tens of devices); 1000 rows leaves an order of magnitude of headroom.
-// 1 MiB holds 1000 rows at about 1 KiB each.
+// 1 MiB holds 1000 rows at about 1 KiB each. Chart points are not rows:
+// the encoder caps them per Descriptor, and only the byte cap applies here.
 const (
 	maxPanelRows  = 1000
 	maxPanelBytes = 1 << 20

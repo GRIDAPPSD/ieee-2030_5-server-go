@@ -1,0 +1,231 @@
+{
+  "about": "Chart cases shared by the Go encoder and the admin UI renderer. A case is a Descriptor of chart sections, given as wire chart bodies in charts or as generate: one list per section of series lengths, series k named s<k> with point j at [1759343400000 + 60000*j, j]. A value of \"NaN\", \"Infinity\" or \"-Infinity\" stands for the number JSON cannot carry. refusal is empty when the Descriptor is accepted.",
+  "bounds": {
+    "seriesPerSection": 16,
+    "pointsPerSeries": 720,
+    "pointsPerDescriptor": 12000
+  },
+  "cases": [
+    {
+      "name": "16 series in a section",
+      "refusal": "",
+      "generate": [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    {
+      "name": "720 points in a series",
+      "refusal": "",
+      "generate": [
+        [720]
+      ]
+    },
+    {
+      "name": "12000 points across a Descriptor",
+      "refusal": "",
+      "generate": [
+        [720, 720, 720, 720, 720, 720, 720, 720, 720, 720, 720, 720, 720, 720, 720, 720],
+        [480]
+      ]
+    },
+    {
+      "name": "no series and no unit",
+      "refusal": "",
+      "charts": [
+        {
+          "unit": "",
+          "series": []
+        }
+      ]
+    },
+    {
+      "name": "markup in a series name is text",
+      "refusal": "",
+      "charts": [
+        {
+          "unit": "W",
+          "series": [
+            {
+              "name": "<img src=x onerror=alert(1)>",
+              "points": [
+                [1759343400000, 1]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "17 series in a section",
+      "refusal": "too-many-series",
+      "generate": [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+      ]
+    },
+    {
+      "name": "721 points in a series",
+      "refusal": "series-too-long",
+      "generate": [
+        [721]
+      ]
+    },
+    {
+      "name": "12001 points across a Descriptor",
+      "refusal": "too-many-points",
+      "generate": [
+        [720, 720, 720, 720, 720, 720, 720, 720, 720, 720, 720, 720, 720, 720, 720, 720],
+        [481]
+      ]
+    },
+    {
+      "name": "NaN value",
+      "refusal": "value-not-finite",
+      "charts": [
+        {
+          "unit": "%",
+          "series": [
+            {
+              "name": "a",
+              "points": [
+                [
+                  1759343400000,
+                  "NaN"
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "positive infinity",
+      "refusal": "value-not-finite",
+      "charts": [
+        {
+          "unit": "%",
+          "series": [
+            {
+              "name": "a",
+              "points": [
+                [
+                  1759343400000,
+                  "Infinity"
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "negative infinity",
+      "refusal": "value-not-finite",
+      "charts": [
+        {
+          "unit": "%",
+          "series": [
+            {
+              "name": "a",
+              "points": [
+                [
+                  1759343400000,
+                  "-Infinity"
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "points out of time order",
+      "refusal": "points-out-of-order",
+      "charts": [
+        {
+          "unit": "%",
+          "series": [
+            {
+              "name": "a",
+              "points": [
+                [1759343460000, 1],
+                [1759343400000, 2]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "duplicate timestamp",
+      "refusal": "points-out-of-order",
+      "charts": [
+        {
+          "unit": "%",
+          "series": [
+            {
+              "name": "a",
+              "points": [
+                [1759343400000, 1],
+                [1759343400000, 2]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "empty series name",
+      "refusal": "series-without-name",
+      "charts": [
+        {
+          "unit": "%",
+          "series": [
+            {
+              "name": "",
+              "points": [
+                [1759343400000, 1]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "time after the JavaScript Date range",
+      "refusal": "time-out-of-range",
+      "charts": [
+        {
+          "unit": "%",
+          "series": [
+            {
+              "name": "a",
+              "points": [
+                [8640000000000001, 1]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "time before the JavaScript Date range",
+      "refusal": "time-out-of-range",
+      "charts": [
+        {
+          "unit": "%",
+          "series": [
+            {
+              "name": "a",
+              "points": [
+                [
+                  -8640000000000001,
+                  1
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

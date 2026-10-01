@@ -66,6 +66,7 @@ func TestGraftCannotSetAnyBodyField(t *testing.T) {
 		{field: "kind", dir: "graftcannotsetbodykind"},
 		{field: "table", dir: "graftcannotsettable"},
 		{field: "definitionList", dir: "graftcannotsetdefinitionlist"},
+		{field: "chart", dir: "graftcannotsetchart"},
 	}
 
 	if got, want := reflect.TypeOf(sep2admin.Body{}).NumField(), len(cases); got != want {

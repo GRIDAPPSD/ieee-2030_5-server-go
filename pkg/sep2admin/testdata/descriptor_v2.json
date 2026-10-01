@@ -32,6 +32,20 @@
       "body": {"columns": ["LFDI"], "rows": []}
     },
     {
+      "kind": "chart",
+      "heading": "State of charge",
+      "prose": ["Battery state of charge, one sample a minute."],
+      "empty": "No samples yet.",
+      "body": {
+        "unit": "%",
+        "series": [
+          {"name": "bat-1", "points": [[1759343400000, 65.5], [1759343460000, 66]]},
+          {"name": "\u003cimg src=x onerror=alert(1)\u003e", "points": [[1759343400000, -0.25]]},
+          {"name": "bat-3", "points": []}
+        ]
+      }
+    },
+    {
       "kind": "definitionList",
       "heading": "",
       "prose": [],

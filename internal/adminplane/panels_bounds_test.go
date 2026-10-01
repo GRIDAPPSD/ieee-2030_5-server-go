@@ -154,6 +154,50 @@ func TestPanelResponseIsBounded(t *testing.T) {
 	}
 }
 
+// chartAtCaps is a table at the row cap beside charts holding
+// MaxDescriptorChartPoints, each value the longest float64 encoding.
+func chartAtCaps(name string) sep2admin.ViewFunc {
+	return func(context.Context) (sep2admin.Descriptor, error) {
+		v, err := tableOf(maxPanelRows, "x")(context.Background())
+		if err != nil {
+			return v, err
+		}
+		left := sep2admin.MaxDescriptorChartPoints
+		for left > 0 {
+			body := sep2admin.ChartBody{Unit: "%"}
+			for range sep2admin.MaxChartSeries {
+				n := min(left, sep2admin.MaxChartSeriesPoints)
+				left -= n
+				s := sep2admin.ChartSeries{Name: name}
+				for j := range n {
+					s.Points = append(s.Points, sep2admin.ChartPoint{At: time.UnixMilli(1759343400000 + int64(j)), Value: -1.2345678901234567e-300})
+				}
+				body.Series = append(body.Series, s)
+			}
+			v.Sections = append(v.Sections, sep2admin.Section{Body: sep2admin.NewChartBody(body)})
+		}
+		return v, nil
+	}
+}
+
+// TestChartPointsCountAgainstBytesNotRows: chart points are bounded by the
+// byte cap and the encoder's own point cap, never by the row cap.
+func TestChartPointsCountAgainstBytesNotRows(t *testing.T) {
+	h := routerFor(t, 5*time.Second,
+		testPanel("chart-at-caps", 1, chartAtCaps("s")),
+		testPanel("chart-over-byte-cap", 1, chartAtCaps(strings.Repeat("n", maxPanelBytes/16))),
+	)
+	if rec := get(h, "/api/ui/panels/chart-at-caps", true); rec.Code != http.StatusOK {
+		t.Fatalf("1000 rows and 12000 chart points = %d %.80s, want 200", rec.Code, rec.Body)
+	} else if n := rec.Body.Len(); n > maxPanelBytes {
+		t.Fatalf("served %d bytes, over the cap", n)
+	}
+	rec := get(h, "/api/ui/panels/chart-over-byte-cap", true)
+	if rec.Code != http.StatusInternalServerError || rec.Body.String() != `{"error":"panel response too large"}` {
+		t.Errorf("chart over the byte cap = %d %.80s, want 500 with the fixed body", rec.Code, rec.Body)
+	}
+}
+
 // TestPanelIDsCannotShadowSPAPaths: a panel is served at /ui/<id>, and the
 // SPA handler answers /ui/api... and its built files itself.
 func TestPanelIDsCannotShadowSPAPaths(t *testing.T) {

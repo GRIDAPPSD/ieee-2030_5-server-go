@@ -30,10 +30,12 @@
 // ExtensionSlot's signature; the Body and Cell constructors' signatures;
 // the Descriptor type and its exported field names; every JSON field name
 // on the wire; and the closed sets of section kinds (table,
-// definitionList), cell kinds (text, badge, time, link) and badge names
-// (neutral, info, ok, warn, error). testdata/descriptor_v2.json is the
-// wire shape. A renderer switches exhaustively on each kind, so a new
-// value in any of those sets is a new CurrentDescriptorVersion.
+// definitionList, chart), cell kinds (text, badge, time, link) and badge
+// names (neutral, info, ok, warn, error). testdata/descriptor_v2.json is
+// the wire shape. A renderer switches exhaustively on each kind. The shell
+// is that renderer and ships in the same binary as this encoder, so a kind
+// added to both at once stays in version 2, as chart did; removing or
+// reshaping a kind is a new CurrentDescriptorVersion.
 //
 // # What this package does not implement yet
 //

@@ -6,7 +6,7 @@
   // topology tree, and the most recent minted device certificate) and the
   // one refresh path that reloads the first three, so a create/attach/
   // assign/mint in any panel updates every panel that shows the result.
-  import { onDestroy, onMount } from 'svelte'
+  import { onDestroy, onMount, untrack } from 'svelte'
   import { fetchJSON } from './lib/api'
   import {
     appendHistory,
@@ -91,6 +91,7 @@
   let topology = $state<TopologyNode | null>(null)
   let topologyError = $state('')
   let unauthorized = $state('')
+  let streaming = $state(false)
   let disconnect: (() => void) | null = null
   let destroyed = false
 
@@ -100,11 +101,20 @@
   // whichever panel is not active.
   let mintedCert = $state<MintedCert | null>(null)
 
-  async function refresh() {
-    const list = await fetchJSON<AdminFSAList>('/api/fsas')
-    fsas = list.ok ? (list.data.fsas ?? []) : []
+  // Reloads overlap (every entry to Devices or FSAs starts one), so each
+  // result is applied only if no newer request for the same data started
+  // after it; an older response finishing late must not overwrite a newer.
+  let fsasSeq = 0
+  let topologySeq = 0
 
+  async function refresh() {
+    const fsasReq = ++fsasSeq
+    const list = await fetchJSON<AdminFSAList>('/api/fsas')
+    if (fsasReq === fsasSeq) fsas = list.ok ? (list.data.fsas ?? []) : []
+
+    const topologyReq = ++topologySeq
     const tree = await fetchJSON<TopologyNode>('/api/topology')
+    if (topologyReq !== topologySeq) return
     if (tree.ok) {
       topology = tree.data
       topologyError = ''
@@ -137,7 +147,17 @@
       data = next
       history = appendHistory(history, next)
     })
-    await refresh()
+    streaming = true
+  })
+
+  // Entering Devices or FSAs reloads the FSA list and topology once
+  // (issue 561 criterion 15); no other tab reads them. Gated on the stream
+  // so an unauthenticated load issues no admin reads, and the same entry
+  // serves a hard load straight onto either tab.
+  $effect(() => {
+    if (streaming && (activeTab === 'devices' || activeTab === 'fsas')) {
+      untrack(() => void refresh())
+    }
   })
 
   onDestroy(() => {

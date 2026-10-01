@@ -166,7 +166,7 @@ func TestDERControlList_DeliveryWithNoReadingsIsNull(t *testing.T) {
 	if del.WindowStart != deliveryBase || del.WindowEnd != deliveryBase+600 {
 		t.Fatalf("window = [%d,%d), want [%d,%d)", del.WindowStart, del.WindowEnd, deliveryBase, deliveryBase+600)
 	}
-	want := fmt.Sprintf(`"delivery":{"windowStart":%d,"windowEnd":%d,"deliveredWh":null,"averageW":null,"coveredSeconds":0,"readings":0,"directionUnknown":false,"deviceLFDI":"%s","newestReadingTime":null}`, deliveryBase, deliveryBase+600, dcLFDI)
+	want := fmt.Sprintf(`"delivery":{"windowStart":%d,"windowEnd":%d,"deliveredWh":null,"averageW":null,"coveredSeconds":0,"readings":0,"directionUnknown":false,"concurrentMirrors":false,"excludedReadings":0,"deviceLFDI":"%s","newestReadingTime":null}`, deliveryBase, deliveryBase+600, dcLFDI)
 	if !strings.Contains(body, want) {
 		t.Fatalf("body lacks %s: %s", want, body)
 	}

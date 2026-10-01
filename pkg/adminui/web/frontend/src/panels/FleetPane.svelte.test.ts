@@ -13,7 +13,7 @@
 // unexpected response body reading as an error rather than throwing
 // (finding 5).
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/svelte'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/svelte'
 import FleetPane from './FleetPane.svelte'
 import * as api from '../lib/api'
 import type { Fleet } from '../lib/fleet'
@@ -139,6 +139,21 @@ describe('FleetPane', () => {
     await screen.findByTestId('fleet-row')
     expect(screen.getByTestId('fleet-power')).toHaveTextContent('Source: mirror readings (server time)')
     expect(screen.getByTestId('fleet-avail')).toHaveTextContent('Source: device reports (device clock)')
+  })
+
+  it('names the source of the status counts', async () => {
+    mockFetchJSON({ ok: true, data: [minimalFleet('AGGCNT')] })
+    render(FleetPane)
+    await screen.findByTestId('fleet-row')
+    expect(screen.getByTestId('fleet-counts-source')).toHaveTextContent('Source: device status reports (DERStatus, device clock)')
+  })
+
+  it('hides the power source when no device reports power', async () => {
+    mockFetchJSON({ ok: true, data: [minimalFleet('AGGNONE')] })
+    render(FleetPane)
+    const row = await screen.findByTestId('fleet-row')
+    expect(screen.getByTestId('fleet-power')).toHaveTextContent('No devices reporting')
+    expect(within(row).queryByTestId('fleet-power-source')).toBeNull()
   })
 
   it('names importing for a negative export-positive sum', async () => {

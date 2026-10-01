@@ -461,11 +461,13 @@
       <div data-testid="response-commitment">
         energy committed {formatQuantity(r.energyCommittedWh, 'Wh')}, remaining
         {formatQuantity(r.energyRemainingWh, 'Wh')}
+        <div class="hint" data-testid="response-commitment-source">Source: computed by this server from its live controls</div>
       </div>
       {#each r.executions as ex (ex.mRID)}
         <div class="hint" data-testid="response-execution">
           control {ex.eventStatus?.status ?? 'status missing'}, {formatInterval(ex.interval)}, target
           {formatQuantity(scaledNumber(ex.targetW), 'W')} {directionLabel(r.direction)} (DER frame)
+          <div data-testid="response-execution-source">Source: this server's DER control record</div>
         </div>
       {/each}
     {/if}

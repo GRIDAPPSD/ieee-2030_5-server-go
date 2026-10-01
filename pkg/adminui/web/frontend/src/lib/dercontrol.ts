@@ -60,7 +60,9 @@ export interface DERControlResponseCounts {
 
 // Metered export over the control's effective window (Unix seconds).
 // deliveredWh and averageW (watts over the covered seconds) are null when no
-// reading covers any second of it.
+// reading covers any second of it. concurrentMirrors: two DER mirrors of the
+// device covered one second, so the figure may undercount; excludedReadings:
+// DER W readings in the window the figure could not read.
 export interface DERControlDelivery {
   windowStart: number
   windowEnd: number
@@ -69,6 +71,8 @@ export interface DERControlDelivery {
   coveredSeconds: number
   readings: number
   directionUnknown: boolean
+  concurrentMirrors: boolean
+  excludedReadings: number
   deviceLFDI: string
   newestReadingTime: number | null
 }

@@ -18,6 +18,13 @@ import (
 // the figure comparable with a target power. Readings counts the readings the
 // figure uses, and NewestReadingTime is the newest of them, by server
 // receipt time.
+//
+// ConcurrentMirrors is set when two DER mirrors of the device cover one
+// second of one leg: a combined DER is one mirror (2023 10.10.4.4.1), so the
+// figure may undercount separate components and they are never summed.
+// ExcludedReadings counts DER real-power readings reaching the window that
+// the figure cannot read (an unhandled kind, qualifier, accumulation or
+// phase).
 type DERControlDelivery struct {
 	WindowStart       int64    `json:"windowStart"`
 	WindowEnd         int64    `json:"windowEnd"`
@@ -26,6 +33,8 @@ type DERControlDelivery struct {
 	CoveredSeconds    int64    `json:"coveredSeconds"`
 	Readings          int      `json:"readings"`
 	DirectionUnknown  bool     `json:"directionUnknown"`
+	ConcurrentMirrors bool     `json:"concurrentMirrors"`
+	ExcludedReadings  int      `json:"excludedReadings"`
 	DeviceLFDI        string   `json:"deviceLFDI"`
 	NewestReadingTime *int64   `json:"newestReadingTime"`
 }
@@ -92,11 +101,20 @@ type powerSpan struct {
 // leg is one quantity a device reports, whatever mRID or mirror carries it:
 // its qualifier (Average or instantaneous) and its phase (0 is the total).
 // The EPRI client posts every reading under a fresh mRID, and a client may
-// open a new mirror after a restart, so neither may split a leg.
+// open a new mirror after a restart, so neither may split a leg. Under 2023
+// only, dir splits a leg's Forward and Reverse readings into two sub-series
+// whose sum is Net (see legValue); every other direction stays in dirMain.
 type leg struct {
 	average bool
 	phase   uint8
+	dir     uint8
 }
+
+const (
+	dirMain uint8 = iota
+	dirForward
+	dirReverse
+)
 
 // Phase legs (2018 PhaseCode): the total is absent, 0 or ABC (224); A is
 // 128 or AN 129, B 64 or BN 65, C 32 or CN 33. Line-to-line codes are not
@@ -143,10 +161,23 @@ func legOf(r sep2.MirrorMeterReading) (leg, bool) {
 	return l, true
 }
 
-// candidate is one leg reading with the hold of the mirror it came from.
+// candidate is one leg reading with the hold and index of the mirror it
+// came from.
 type candidate struct {
-	r    sep2.MirrorMeterReading
-	hold int64
+	r      sep2.MirrorMeterReading
+	hold   int64
+	mirror int
+}
+
+// legReadings is powerLegs' result. seen marks a leg with any reading whose
+// span reaches the window; flagged is set by a reading whose sign cannot be
+// mapped (exportPositive).
+type legReadings struct {
+	spans      map[leg][]powerSpan
+	seen       map[leg]bool
+	flagged    bool
+	concurrent bool
+	excluded   int
 }
 
 // powerLegs turns a device's DER real-power readings into spans per leg.
@@ -158,47 +189,113 @@ type candidate struct {
 // for at most the hold. See holdSeconds. Another leg never cuts a span.
 //
 // Only isDER mirrors count: a premises mirror measures net site power, not
-// the DER output a control targets. seen marks a leg with any reading whose
-// span reaches [ws, we). A reading whose sign cannot be mapped
-// (exportPositive) yields no span and sets flagged.
-func powerLegs(mirrors []deviceMirror, edition SEP2Edition, ws, we int64) (spans map[leg][]powerSpan, seen map[leg]bool, flagged bool) {
+// the DER output a control targets. A reading whose sign cannot be mapped
+// yields no span. A W reading legOf rejects is counted as excluded when its
+// own span, read alone, reaches the window.
+//
+// Under 2023 Forward and Reverse are split before overlaps are resolved, as
+// newest-wins within one series would discard one direction.
+func powerLegs(mirrors []deviceMirror, edition SEP2Edition, ws, we int64) legReadings {
+	out := legReadings{spans: map[leg][]powerSpan{}, seen: map[leg]bool{}}
 	byLeg := map[leg][]candidate{}
-	for _, m := range mirrors {
+	for mi, m := range mirrors {
 		if !m.isDER {
 			continue
 		}
 		hold := holdSeconds(m.postRate)
 		for _, r := range m.readings {
-			if l, ok := legOf(r); ok {
-				byLeg[l] = append(byLeg[l], candidate{r: r, hold: hold})
+			l, ok := legOf(r)
+			if !ok {
+				if isWatts(r) {
+					start, end := readingCoverage([]candidate{{r: r, hold: hold}}, 0)
+					if max(start, ws) < min(end, we) {
+						out.excluded++
+					}
+				}
+				continue
 			}
+			if edition == Edition2023 {
+				l.dir = directionSeries(r.ReadingType.FlowDirection)
+			}
+			byLeg[l] = append(byLeg[l], candidate{r: r, hold: hold, mirror: mi})
 		}
 	}
-	spans, seen = map[leg][]powerSpan{}, map[leg]bool{}
+	covers := map[leg][]mirrorCover{}
 	order := 0
 	for l, cs := range byLeg {
 		slices.SortStableFunc(cs, func(a, b candidate) int { return cmp.Compare(a.r.LastUpdateTime, b.r.LastUpdateTime) })
+		base := l
+		base.dir = dirMain
 		for i, c := range cs {
 			start, end := readingCoverage(cs, i)
 			start, end = max(start, ws), min(end, we)
 			if start >= end {
 				continue
 			}
-			seen[l] = true
+			out.seen[l] = true
+			covers[base] = append(covers[base], mirrorCover{start: start, end: end, mirror: c.mirror})
 			multiplier := int8(0)
 			if c.r.ReadingType.PowerOfTenMultiplier != nil {
 				multiplier = *c.r.ReadingType.PowerOfTenMultiplier
 			}
 			watts, mapped := exportPositive(scaledValue(float64(*c.r.Reading.Value), multiplier), c.r.ReadingType.FlowDirection, edition, true)
 			if !mapped {
-				flagged = true
+				out.flagged = true
 				continue
 			}
-			spans[l] = append(spans[l], powerSpan{start: start, end: end, watts: watts, received: c.r.LastUpdateTime, order: order})
+			out.spans[l] = append(out.spans[l], powerSpan{start: start, end: end, watts: watts, received: c.r.LastUpdateTime, order: order})
 			order++
 		}
 	}
-	return spans, seen, flagged
+	for _, cv := range covers {
+		if mirrorsOverlap(cv) {
+			out.concurrent = true
+			break
+		}
+	}
+	return out
+}
+
+func isWatts(r sep2.MirrorMeterReading) bool {
+	return r.ReadingType != nil && r.ReadingType.Uom != nil && *r.ReadingType.Uom == sep2.UomWatts
+}
+
+// directionSeries is the 2023 sub-series a reading's flowDirection puts it in.
+func directionSeries(flowDirection *uint8) uint8 {
+	if flowDirection == nil {
+		return dirMain
+	}
+	switch *flowDirection {
+	case sep2.FlowDirectionForward:
+		return dirForward
+	case sep2.FlowDirectionReverse:
+		return dirReverse
+	}
+	return dirMain
+}
+
+// mirrorCover is the window-clipped span one reading of a mirror covers.
+type mirrorCover struct {
+	start, end int64
+	mirror     int
+}
+
+// mirrorsOverlap reports whether two different mirrors cover one second.
+// Spans come from readingCoverage over the pooled leg, so a client that
+// opens a new mirror after a restart, whose last reading's hold is cut by
+// the new mirror's first, is not concurrent.
+func mirrorsOverlap(cv []mirrorCover) bool {
+	slices.SortFunc(cv, func(a, b mirrorCover) int { return cmp.Compare(a.start, b.start) })
+	reach := map[int]int64{}
+	for _, c := range cv {
+		for m, end := range reach {
+			if m != c.mirror && end > c.start {
+				return true
+			}
+		}
+		reach[c.mirror] = max(reach[c.mirror], c.end)
+	}
+	return false
 }
 
 // readingCoverage is the span cs[i] covers before window clipping. cs is one
@@ -216,7 +313,8 @@ func readingCoverage(cs []candidate, i int) (start, end int64) {
 		}
 		return at, end
 	}
-	if tp := r.Reading.TimePeriod; tp != nil && tp.Duration > 0 {
+	if r.Reading != nil && r.Reading.TimePeriod != nil && r.Reading.TimePeriod.Duration > 0 {
+		tp := r.Reading.TimePeriod
 		return tp.Start, tp.Start + int64(tp.Duration)
 	}
 	start = at - hold
@@ -273,7 +371,7 @@ func resolveSeries(spans []powerSpan) []piece {
 }
 
 // integrate values each second by exactly one path, the highest ranked that
-// covers it; paths are never added together:
+// covers it (each leg valued by legValue); paths are never added together:
 //  1. the Average total;
 //  2. the instantaneous total;
 //  3. the phase sum.
@@ -328,7 +426,7 @@ func integrate(spans map[leg][]powerSpan, seen map[leg]bool) (wattSeconds float6
 		if i == len(edges) {
 			break
 		}
-		path := pickPath(active, phases)
+		path := pickPath(active, seen, phases)
 		if len(path) == 0 {
 			continue
 		}
@@ -353,27 +451,53 @@ func boolInt(b bool) int {
 }
 
 // pickPath returns the spans of the highest-ranked path active now, or none.
-func pickPath(active map[leg]powerSpan, phases []uint8) []powerSpan {
+func pickPath(active map[leg]powerSpan, seen map[leg]bool, phases []uint8) []powerSpan {
 	for _, total := range []leg{{average: true}, {average: false}} {
-		if sp, ok := active[total]; ok {
-			return []powerSpan{sp}
+		if sps := legValue(active, seen, total); sps != nil {
+			return sps
 		}
 	}
 	if len(phases) == 0 {
 		return nil
 	}
-	path := make([]powerSpan, 0, len(phases))
+	var path []powerSpan
 	for _, p := range phases {
-		sp, ok := active[leg{average: true, phase: p}]
-		if !ok {
-			sp, ok = active[leg{average: false, phase: p}]
+		sps := legValue(active, seen, leg{average: true, phase: p})
+		if sps == nil {
+			sps = legValue(active, seen, leg{average: false, phase: p})
 		}
-		if !ok {
+		if sps == nil {
 			return nil
 		}
-		path = append(path, sp)
+		path = append(path, sps...)
 	}
 	return path
+}
+
+// legValue returns the spans valuing base now, or nil. Its main series ranks
+// first, as a 2023 Net reading is the standard's own |Forward| - |Reverse|
+// (2023 FlowDirectionType 4). Otherwise its Forward and Reverse sub-series,
+// already export-signed, are summed; once both are seen in the window a
+// second needs both, so a dropped direction is uncovered, never read as 0 W.
+func legValue(active map[leg]powerSpan, seen map[leg]bool, base leg) []powerSpan {
+	if sp, ok := active[base]; ok {
+		return []powerSpan{sp}
+	}
+	fwd, rev := base, base
+	fwd.dir, rev.dir = dirForward, dirReverse
+	f, fok := active[fwd]
+	r, rok := active[rev]
+	switch {
+	case fok && rok:
+		return []powerSpan{f, r}
+	case seen[fwd] && seen[rev]:
+		return nil
+	case fok:
+		return []powerSpan{f}
+	case rok:
+		return []powerSpan{r}
+	}
+	return nil
 }
 
 // spanHeap keeps the most recently received span on top.
@@ -398,9 +522,11 @@ func (h *spanHeap) Pop() any {
 // newDelivery computes one control's delivery from its device's mirrors.
 func newDelivery(deviceLFDI string, mirrors []deviceMirror, edition SEP2Edition, ws, we int64) *DERControlDelivery {
 	d := &DERControlDelivery{WindowStart: ws, WindowEnd: we, DeviceLFDI: deviceLFDI}
-	spans, seen, flagged := powerLegs(mirrors, edition, ws, we)
-	d.DirectionUnknown = flagged
-	wattSeconds, covered, used := integrate(spans, seen)
+	lr := powerLegs(mirrors, edition, ws, we)
+	d.DirectionUnknown = lr.flagged
+	d.ConcurrentMirrors = lr.concurrent
+	d.ExcludedReadings = lr.excluded
+	wattSeconds, covered, used := integrate(lr.spans, lr.seen)
 	if covered == 0 {
 		return d
 	}

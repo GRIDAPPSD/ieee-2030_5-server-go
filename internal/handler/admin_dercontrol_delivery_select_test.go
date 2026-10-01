@@ -169,22 +169,40 @@ func TestDERControlList_DeliveryAverageCoversBeforeReceipt(t *testing.T) {
 // Item 3: under 2023 a negative value under Forward or Reverse is flagged,
 // not folded into a magnitude, on the delivery figure.
 func TestDERControlList_DeliveryFlagsNegativeDirectedValue(t *testing.T) {
-	d := newDeliveryHarness(t)
-	d.h.Edition = handler.Edition2023
 	b := deliveryBase
 	fwd := sep2.FlowDirectionForward
-	d.seedReadings(t, "1", dcLFDI, roleIsDER, ptrU32(100),
-		reading{mrid: "P", at: b, value: 3600, dir: &fwd},
-		reading{mrid: "Q", at: b + 200, value: -3600, dir: reverseDir()},
-		reading{mrid: "R", at: b + 400, value: -3600, dir: &fwd},
-	)
-	mrid := d.seedControl(t, "e", b, 1000, dercontrol.LifecycleRecord{})
+	t.Run("forward only", func(t *testing.T) {
+		d := newDeliveryHarness(t)
+		d.h.Edition = handler.Edition2023
+		d.seedReadings(t, "1", dcLFDI, roleIsDER, ptrU32(100),
+			reading{mrid: "P", at: b, value: 3600, dir: &fwd},
+			reading{mrid: "R", at: b + 400, value: -3600, dir: &fwd},
+		)
+		mrid := d.seedControl(t, "e", b, 1000, dercontrol.LifecycleRecord{})
 
-	del := d.deliveryOf(t, mrid)
-	if !del.DirectionUnknown || del.CoveredSeconds != 100 || del.Readings != 1 {
-		t.Fatalf("delivery = %+v, want the two negative readings flagged and unsummed", *del)
-	}
-	wantWh(t, del.DeliveredWh, 100)
+		del := d.deliveryOf(t, mrid)
+		if !del.DirectionUnknown || del.CoveredSeconds != 100 || del.Readings != 1 {
+			t.Fatalf("delivery = %+v, want the negative reading flagged and unsummed", *del)
+		}
+		wantWh(t, del.DeliveredWh, 100)
+	})
+	// #813: a flagged Reverse reading still marks Reverse seen, so the
+	// Forward seconds need a Reverse value too and are uncovered.
+	t.Run("flagged reverse uncovers forward", func(t *testing.T) {
+		d := newDeliveryHarness(t)
+		d.h.Edition = handler.Edition2023
+		d.seedReadings(t, "1", dcLFDI, roleIsDER, ptrU32(100),
+			reading{mrid: "P", at: b, value: 3600, dir: &fwd},
+			reading{mrid: "Q", at: b + 200, value: -3600, dir: reverseDir()},
+			reading{mrid: "R", at: b + 400, value: -3600, dir: &fwd},
+		)
+		mrid := d.seedControl(t, "e", b, 1000, dercontrol.LifecycleRecord{})
+
+		del := d.deliveryOf(t, mrid)
+		if !del.DirectionUnknown || del.CoveredSeconds != 0 || del.Readings != 0 || del.DeliveredWh != nil {
+			t.Fatalf("delivery = %+v, want a flagged null figure", *del)
+		}
+	})
 }
 
 // Item 5: the power-of-ten multiplier scales the delivered figure.

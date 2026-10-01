@@ -20,6 +20,8 @@ const wire = {
       coveredSeconds: true,
       readings: true,
       directionUnknown: true,
+      concurrentMirrors: true,
+      excludedReadings: true,
       deviceLFDI: true,
       newestReadingTime: true,
     } satisfies Record<keyof DERControlDelivery, true>),

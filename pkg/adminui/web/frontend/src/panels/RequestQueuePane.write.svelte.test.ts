@@ -29,6 +29,21 @@ function mockReads(queue: unknown = fixture) {
       : { ok: true, data: queue }) as never)
 }
 
+// gatedReads serves the first queue load at once and holds every later one
+// until release(), so a test can look at the pane while a reload is pending.
+function gatedReads() {
+  let release!: () => void
+  const gate = new Promise<void>((r) => (release = r))
+  let flowCalls = 0
+  const spy = vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
+    if (path === '/api/derms/fleets') return { ok: true, data: [{ aggregatorLFDI: LFDI }] }
+    flowCalls++
+    if (flowCalls > 1) await gate
+    return { ok: true, data: fixture }
+  }) as never)
+  return { spy, release: () => release() }
+}
+
 function mockWrite(res: Res | Promise<Res>) {
   return vi.spyOn(api, 'postJSON').mockImplementation((async () => res) as never)
 }
@@ -378,7 +393,7 @@ describe('refusals', () => {
     [503, { error: 'x', code: 'unavailable' }, 'x'],
     [504, undefined, 'gateway timeout'],
   ])('after outcome unknown (%i) closes the confirm step, reloads, and sends the write once', async (status, body, error) => {
-    const reads = mockReads()
+    const { spy: reads, release } = gatedReads()
     const post = mockWrite({ ok: false, status, error, body })
     render(RequestQueuePane)
     const [pending] = await rows()
@@ -394,6 +409,43 @@ describe('refusals', () => {
     expect(screen.queryByTestId('frq-action')).toBeNull()
     expect(within(pending).queryByRole('button', { name: 'Confirm' })).toBeNull()
     await waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(before))
+    release()
+  })
+
+  it('keeps the unknown-outcome note and the actions locked until a reload lands', async () => {
+    const { release } = gatedReads()
+    const post = mockWrite({ ok: false, status: 0, error: 'request timed out' })
+    render(RequestQueuePane)
+    const [pending] = await rows()
+    await press(pending, 'Grant as asked')
+    await press(pending, 'Confirm')
+    await screen.findByTestId('frq-write-note')
+    await fireEvent.click(within(pending).getByRole('button', { name: 'Deny' }))
+    expect(screen.queryByTestId('frq-action')).toBeNull()
+    expect(within(pending).getByRole('button', { name: 'Deny' })).toBeDisabled()
+    expect(screen.getByTestId('frq-write-note').textContent).toContain('Outcome unknown')
+    release()
+    await waitFor(() => expect(screen.queryByTestId('frq-write-note')).toBeNull())
+    expect(within(pending).getByRole('button', { name: 'Deny' })).not.toBeDisabled()
+    expect(post).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the note and the lock when the reload fails', async () => {
+    let flowCalls = 0
+    vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
+      if (path === '/api/derms/fleets') return { ok: true, data: [{ aggregatorLFDI: LFDI }] }
+      flowCalls++
+      return flowCalls > 1 ? { ok: false, status: 500, error: 'down' } : { ok: true, data: fixture }
+    }) as never)
+    mockWrite({ ok: false, status: 0, error: 'request timed out' })
+    render(RequestQueuePane)
+    const [pending] = await rows()
+    await press(pending, 'Grant as asked')
+    await press(pending, 'Confirm')
+    await waitFor(() => expect(flowCalls).toBe(2))
+    await screen.findByTestId('frq-stale')
+    expect(screen.getByTestId('frq-write-note').textContent).toContain('Outcome unknown')
+    expect(within(pending).getByRole('button', { name: 'Deny' })).toBeDisabled()
   })
 
   it('starts a new load after an unknown outcome even when one is in flight', async () => {
@@ -565,7 +617,7 @@ describe('writes in flight', () => {
   })
 
   it('ignores an answer that lands after the operator stopped waiting', async () => {
-    mockReads()
+    const { release } = gatedReads()
     const d = deferred()
     const post = mockWrite(d.promise)
     render(RequestQueuePane)
@@ -581,6 +633,28 @@ describe('writes in flight', () => {
     expect(within(pending).getByTestId('frq-state').textContent).toBe('pending')
     expect(screen.getByTestId('frq-write-note').textContent).toContain('Stopped waiting')
     expect(screen.queryByTestId('frq-action')).toBeNull()
+    release()
+  })
+
+  it('reloads after Stop waiting and sends no second revise until that read lands', async () => {
+    const { spy: reads, release } = gatedReads()
+    const d = deferred()
+    const post = mockWrite(d.promise)
+    render(RequestQueuePane)
+    const granted = (await rows())[1]
+    const before = reads.mock.calls.length
+    await press(granted, 'Revise')
+    await press(granted, 'Review')
+    await press(granted, 'Confirm')
+    await press(granted, 'Stop waiting')
+    await waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(before))
+    expect(within(granted).getByRole('button', { name: 'Revise' })).toBeDisabled()
+    await fireEvent.click(within(granted).getByRole('button', { name: 'Revise' }))
+    expect(screen.queryByTestId('frq-action')).toBeNull()
+    expect(post).toHaveBeenCalledTimes(1)
+    release()
+    await waitFor(() => expect(within(granted).getByRole('button', { name: 'Revise' })).not.toBeDisabled())
+    d.resolve({ ok: true, data: copy().requests[1] })
   })
 
   it('aborts the in-flight write on unmount', async () => {

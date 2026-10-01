@@ -85,6 +85,11 @@
   let writeCtrl: AbortController | null = null
   let action = $state<OpenAction | null>(null)
   let writeNote = $state('')
+  // After a write whose outcome is unknown, the rows on screen may be older
+  // than the server. The actions stay locked and the note stays up until a
+  // load has landed; markStale starts one, and the sequence guard means only
+  // the newest load ever applies.
+  let staleNote = $state(false)
   // A write that lands while a load is in flight would be undone by that
   // load's older payload, so the written row is kept over it. `seq` is the
   // latest load at write time, and any load numbered at or below it started
@@ -192,6 +197,10 @@
     if (lfdis.length > 0 && succeeded === 0 && firstFailure !== null) {
       return fail(firstFailure.error, firstFailure.status)
     }
+    if (staleNote) {
+      staleNote = false
+      writeNote = ''
+    }
     for (const [href, w] of written) if (w.seq < seq) written.delete(href)
     views = next
     loaded = true
@@ -221,7 +230,7 @@
   })
 
   function openAction(entry: FlowReservationEntry, kind: ActionKind) {
-    if (action?.busy === true) return
+    if (action?.busy === true || staleNote) return
     const form = emptyForm()
     const asked = entry.request.intervalRequested
     const held = kind === 'revise' ? entry.tip?.interval : asked
@@ -267,6 +276,8 @@
       !views.some((v) => v.queue?.requests.some((e) => e.requestHref === action?.href) === true),
   )
 
+  const locked = $derived(action?.busy === true || staleNote)
+
   const HAS_INPUTS: ActionKind[] = ['grant_adjusted', 'revise', 'cancel']
 
   function closeAction() {
@@ -281,7 +292,15 @@
     writeCtrl?.abort()
     writeCtrl = null
     action = null
-    writeNote = 'Stopped waiting. The server may or may not have applied the change; refresh to see the current state.'
+    markStale('Stopped waiting. The server may or may not have applied the change. Reloading the queue.')
+  }
+
+  // markStale starts a fresh load (the sequence guard drops any older one)
+  // and locks the actions until that load has landed.
+  function markStale(note: string) {
+    writeNote = note
+    load()
+    staleNote = true
   }
 
   function replaceRow(entry: FlowReservationEntry) {
@@ -330,9 +349,8 @@
     // The write may or may not have landed, or the row is out of date: the
     // confirm step closes so the same write is never re-sent, and a fresh load
     // (the sequence guard drops any older one) shows the server's state.
-    writeNote = result.message
     action = null
-    load()
+    markStale(result.message)
   }
 
   const KIND_LABEL: Record<ActionKind, string> = {
@@ -548,14 +566,14 @@
                   {/if}
                   {#if entry.state === 'pending' || entry.state === 'overdue'}
                     <div class="actions">
-                      <button class="btn btn-small" disabled={action?.busy === true} onclick={() => openAction(entry, 'grant_as_asked')}>Grant as asked</button>
-                      <button class="btn btn-small" disabled={action?.busy === true} onclick={() => openAction(entry, 'grant_adjusted')}>Grant adjusted</button>
-                      <button class="btn btn-small" disabled={action?.busy === true} onclick={() => openAction(entry, 'deny')}>Deny</button>
+                      <button class="btn btn-small" disabled={locked} onclick={() => openAction(entry, 'grant_as_asked')}>Grant as asked</button>
+                      <button class="btn btn-small" disabled={locked} onclick={() => openAction(entry, 'grant_adjusted')}>Grant adjusted</button>
+                      <button class="btn btn-small" disabled={locked} onclick={() => openAction(entry, 'deny')}>Deny</button>
                     </div>
                   {:else if entry.state === 'granted'}
                     <div class="actions">
-                      <button class="btn btn-small" disabled={action?.busy === true} onclick={() => openAction(entry, 'revise')}>Revise</button>
-                      <button class="btn btn-small" disabled={action?.busy === true} onclick={() => openAction(entry, 'cancel')}>Cancel grant</button>
+                      <button class="btn btn-small" disabled={locked} onclick={() => openAction(entry, 'revise')}>Revise</button>
+                      <button class="btn btn-small" disabled={locked} onclick={() => openAction(entry, 'cancel')}>Cancel grant</button>
                     </div>
                   {/if}
                   {@render actionPanel(entry)}

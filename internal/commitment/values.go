@@ -16,6 +16,11 @@ type Grant struct {
 	Energy      *sep2.SignedRealEnergy // as stored: charging positive
 	Power       *sep2.ActivePower      // magnitude is the bound; its sign is ignored
 	CancelledAt *int64
+
+	// Subject and CreationTime decide which of two responses for one
+	// request is current (IEEE 2030.5-2023 10.2.2.3 d and e).
+	Subject      string
+	CreationTime int64
 }
 
 // Control is an admin-issued DERControl as the ledger sees it.

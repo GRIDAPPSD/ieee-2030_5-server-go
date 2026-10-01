@@ -145,11 +145,13 @@ func grantFields(edevID string, frp sep2.FlowReservationResponse) (commitment.Gr
 		return commitment.Grant{}, fmt.Errorf("sources: response href %q under %s has no store id", frp.Href, edevID)
 	}
 	gr := commitment.Grant{
-		MRID:        frp.MRID,
-		ID:          id,
-		EndDeviceID: edevID,
-		Energy:      frp.EnergyAvailable,
-		Power:       frp.PowerAvailable,
+		MRID:         frp.MRID,
+		ID:           id,
+		EndDeviceID:  edevID,
+		Energy:       frp.EnergyAvailable,
+		Power:        frp.PowerAvailable,
+		Subject:      frp.Subject,
+		CreationTime: frp.CreationTime,
 	}
 	if frp.Interval != nil {
 		gr.Window = &commitment.Window{Start: frp.Interval.Start, Duration: frp.Interval.Duration}

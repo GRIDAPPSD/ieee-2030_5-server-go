@@ -9,10 +9,16 @@ import (
 	"time"
 )
 
-// ErrUndo marks a failed CancelGrant or Revise step whose rollback also
-// failed: the stores may hold part of the change, and the caller must
-// report an internal error rather than a refusal.
+// ErrUndo marks a failed Revise step whose rollback also failed: the stores
+// may hold part of the revision, and the caller must report an internal
+// error rather than a refusal. CancelGrant never undoes and never returns
+// it. A plain error from either may still follow partial progress (some
+// executions cancelled under a live grant); calling again finishes it.
 var ErrUndo = errors.New("commitment: undo failed; the stores may hold part of the change")
+
+// ErrBadReplacement refuses a Revise whose replacement is not a revision of
+// the old response. It is the caller's error, never a conflict.
+var ErrBadReplacement = errors.New("commitment: not a revision of the grant")
 
 // ExecutionWriter performs the DER control writes of a grant's lifecycle.
 type ExecutionWriter interface {
@@ -44,15 +50,17 @@ func (w Writers) valid() error {
 
 // Replacement is the response a revision stores in place of the old one.
 // Grant is the new response as the ledger checks it; Create stores it and
-// Delete removes it again when a later step fails.
+// Delete removes it again when a later step fails. Create must be atomic:
+// one that fails must have stored nothing, since it is not undone.
 type Replacement struct {
 	Grant  Grant
 	Create func(ctx context.Context) error
 	Delete func(ctx context.Context) error
 }
 
-// undoTimeout bounds a rollback, which runs even when the caller's context
-// is done: the forward writes it reverses were made under that context.
+// undoTimeout bounds each step of a rollback, which runs even when the
+// caller's context is done: the forward writes it reverses were made under
+// that context.
 const undoTimeout = 5 * time.Second
 
 // CancelGrant cancels grantMRID and every execution of it, executions
@@ -88,12 +96,17 @@ func (l *Ledger) CancelGrant(ctx context.Context, w Writers, grantMRID, reason s
 }
 
 // Revise replaces the live grant oldMRID with the response build returns,
-// under the fleet lock. build is called with the old grant once it is read
-// live. A replacement whose window has duration zero is a denial: the old
+// under the fleet lock. A denial, a response with no interval and a
+// cancelled one are not live grants and are refused grant_not_live. build is
+// called with the old grant once it is read live, with the fleet lock held:
+// it must not call the ledger, whose lock is not reentrant. The replacement
+// must share the old response's subject and have a strictly later
+// creationTime (IEEE 2030.5-2023 10.2.2.3 d and e). A replacement whose window has duration zero is a denial: the old
 // grant's executions are cancelled and nothing is checked. Otherwise the new
-// window must be free on the fleet apart from the old grant, and every live
-// execution must still fit; the first that does not, in start order then
-// mRID, is the refusal's MRID, and nothing is written.
+// window must be free on the fleet apart from the old grant, the new grant
+// must be executable, and every live execution must still fit; the first
+// that does not, in start order then mRID, is the refusal's MRID, and
+// nothing is written.
 //
 // The writes run in an order whose every prefix is legal: create the new
 // response, relink each execution, mark the old grant cancelled. A failed
@@ -113,6 +126,9 @@ func (l *Ledger) Revise(ctx context.Context, w Writers, oldMRID, reason string, 
 		old, err := l.liveGrant(ctx, oldMRID, fleet)
 		if err != nil {
 			return err
+		}
+		if old.Window == nil || old.Window.Duration == 0 {
+			return &ConflictError{Code: ConflictGrantNotLive, MRID: old.MRID}
 		}
 		rep, err := build(old)
 		if err != nil {
@@ -186,13 +202,17 @@ func replacementGrant(old Grant, rep Replacement) (Grant, error) {
 	g := rep.Grant
 	switch {
 	case rep.Create == nil || rep.Delete == nil:
-		return Grant{}, errors.New("commitment: a replacement needs Create and Delete")
+		return Grant{}, fmt.Errorf("%w: a replacement needs Create and Delete", ErrBadReplacement)
 	case g.MRID == "" || g.MRID == old.MRID:
-		return Grant{}, fmt.Errorf("commitment: a replacement of %s needs its own mRID, got %q", old.MRID, g.MRID)
+		return Grant{}, fmt.Errorf("%w: a replacement of %s needs its own mRID, got %q", ErrBadReplacement, old.MRID, g.MRID)
 	case g.EndDeviceID != old.EndDeviceID:
-		return Grant{}, fmt.Errorf("commitment: replacement %s is under EndDevice %q, the grant it replaces under %q", g.MRID, g.EndDeviceID, old.EndDeviceID)
+		return Grant{}, fmt.Errorf("%w: replacement %s is under EndDevice %q, the grant it replaces under %q", ErrBadReplacement, g.MRID, g.EndDeviceID, old.EndDeviceID)
+	case g.Subject == "" || g.Subject != old.Subject:
+		return Grant{}, fmt.Errorf("%w: replacement %s has subject %q, the grant it replaces %q", ErrBadReplacement, g.MRID, g.Subject, old.Subject)
+	case g.CreationTime <= old.CreationTime:
+		return Grant{}, fmt.Errorf("%w: replacement %s was created at %d, not after %d", ErrBadReplacement, g.MRID, g.CreationTime, old.CreationTime)
 	case g.CancelledAt != nil:
-		return Grant{}, fmt.Errorf("commitment: replacement %s is already cancelled", g.MRID)
+		return Grant{}, fmt.Errorf("%w: replacement %s is already cancelled", ErrBadReplacement, g.MRID)
 	}
 	g.FleetKey = old.FleetKey
 	return g, nil
@@ -201,8 +221,13 @@ func replacementGrant(old Grant, rep Replacement) (Grant, error) {
 // fitsRevision adds the executions to next one at a time. The rules only
 // tighten as executions are added, so the first prefix that fails is the
 // one ending in the execution that does not fit, and that execution is
-// named whichever rule broke, the energy and power sums included.
+// named whichever rule broke, the energy and power sums included. With no
+// executions, next is still checked, so a revision cannot leave a live grant
+// that no control could carry out.
 func fitsRevision(next Grant, execs []Control) error {
+	if len(execs) == 0 {
+		return FitsGrant(next, nil, nil)
+	}
 	for i, c := range execs {
 		err := FitsGrant(next, execs[:i+1], nil)
 		var conflict *ConflictError
@@ -229,17 +254,18 @@ func reviseWrites(ctx context.Context, w Writers, old Grant, rep Replacement, ex
 	if err := rep.Create(ctx); err != nil {
 		return fmt.Errorf("commitment: storing revision %s: %w", rep.Grant.MRID, err)
 	}
-	var relinked []Control
+	// touched includes an execution whose relink failed: a store whose own
+	// rollback failed may have kept the new link, and relinking a record
+	// that never moved back to the old grant is harmless.
+	var touched []Control
 	undo := func(cause error) error {
-		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), undoTimeout)
-		defer cancel()
 		var failed []error
-		for _, c := range slices.Backward(relinked) {
-			if err := w.Executions.RelinkExecution(uctx, c, old.MRID); err != nil {
+		for _, c := range slices.Backward(touched) {
+			if err := undoStep(ctx, func(uctx context.Context) error { return w.Executions.RelinkExecution(uctx, c, old.MRID) }); err != nil {
 				failed = append(failed, fmt.Errorf("relinking %s back to %s: %w", c.MRID, old.MRID, err))
 			}
 		}
-		if err := rep.Delete(uctx); err != nil {
+		if err := undoStep(ctx, rep.Delete); err != nil {
 			failed = append(failed, fmt.Errorf("deleting revision %s: %w", rep.Grant.MRID, err))
 		}
 		if len(failed) > 0 {
@@ -249,15 +275,23 @@ func reviseWrites(ctx context.Context, w Writers, old Grant, rep Replacement, ex
 	}
 
 	for _, c := range execs {
+		touched = append(touched, c)
 		if err := w.Executions.RelinkExecution(ctx, c, rep.Grant.MRID); err != nil {
 			return undo(fmt.Errorf("commitment: relinking execution %s to %s: %w", c.MRID, rep.Grant.MRID, err))
 		}
-		relinked = append(relinked, c)
 	}
 	if err := w.Grants.MarkCancelled(ctx, old, reason, now); err != nil {
 		return undo(fmt.Errorf("commitment: marking grant %s cancelled: %w", old.MRID, err))
 	}
 	return nil
+}
+
+// undoStep runs one rollback write with its own deadline and without the
+// caller's cancellation, so one slow step cannot starve the next.
+func undoStep(ctx context.Context, step func(context.Context) error) error {
+	uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), undoTimeout)
+	defer cancel()
+	return step(uctx)
 }
 
 // reviseToDenial cancels the executions first, as CancelGrant does, then
@@ -273,9 +307,7 @@ func reviseToDenial(ctx context.Context, w Writers, old Grant, rep Replacement, 
 	}
 	if err := w.Grants.MarkCancelled(ctx, old, reason, now); err != nil {
 		cause := fmt.Errorf("commitment: marking grant %s cancelled: %w", old.MRID, err)
-		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), undoTimeout)
-		defer cancel()
-		if derr := rep.Delete(uctx); derr != nil {
+		if derr := undoStep(ctx, rep.Delete); derr != nil {
 			return fmt.Errorf("%w: %w: deleting denial %s: %w", ErrUndo, cause, rep.Grant.MRID, derr)
 		}
 		return cause

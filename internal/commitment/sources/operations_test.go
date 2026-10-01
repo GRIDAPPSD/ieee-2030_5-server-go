@@ -59,6 +59,7 @@ func (h *opsHarness) grantResponse(id, mrid string, start int64, dur uint32, ene
 	frp.Href = "/edev/" + aggID + "/frp/" + id
 	frp.MRID = mrid
 	frp.Subject = "FRQ-MRID"
+	frp.CreationTime = 100
 	frp.Interval = &sep2.DateTimeInterval{Start: start, Duration: dur}
 	return frp
 }
@@ -175,9 +176,10 @@ func TestCancelPlainControl_FreesItsWindow(t *testing.T) {
 }
 
 // revise runs a revision of GRANT-1 to frp, stored under the id
-// flowreservation.RevisionID gives.
+// flowreservation.RevisionID gives, created after the old response.
 func (h *opsHarness) revise(t *testing.T, frp sep2.FlowReservationResponse, now int64) error {
 	t.Helper()
+	frp.CreationTime = 200
 	return h.ledger.Revise(context.Background(), h.writers(), "GRANT-1", "revised", now, func(old commitment.Grant) (commitment.Replacement, error) {
 		if old.ID != grantID {
 			t.Errorf("old grant ID = %q, want %q", old.ID, grantID)
@@ -289,7 +291,8 @@ func TestNewReplacement(t *testing.T) {
 	must(t, err)
 	g := rep.Grant
 	if g.MRID != "GRANT-2" || g.ID != "frq-1-r1" || g.EndDeviceID != aggID || g.Window == nil ||
-		*g.Window != (commitment.Window{Start: h.base, Duration: 600}) || g.Energy.Value != 10000 || g.Power.Value != 4000 || g.CancelledAt != nil {
+		*g.Window != (commitment.Window{Start: h.base, Duration: 600}) || g.Energy.Value != 10000 || g.Power.Value != 4000 || g.CancelledAt != nil ||
+		g.Subject != "FRQ-MRID" || g.CreationTime != 100 {
 		t.Fatalf("Replacement.Grant = %+v", g)
 	}
 	must(t, rep.Create(context.Background()))

@@ -287,7 +287,7 @@ func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
 	sort.Strings(want)
 
 	var got []string
-	for p := range adminplane.SensitiveAdminPatterns {
+	for p := range adminplane.SensitiveAdminPatterns() {
 		got = append(got, p)
 	}
 	sort.Strings(got)
@@ -310,7 +310,7 @@ func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
 func TestEverySensitiveAdminPatternRefusesBypassOnly(t *testing.T) {
 	router := newSensitiveRoutesRouter(t)
 
-	for pattern := range adminplane.SensitiveAdminPatterns {
+	for pattern := range adminplane.SensitiveAdminPatterns() {
 		method, path, ok := strings.Cut(pattern, " ")
 		if !ok {
 			t.Fatalf("pattern %q names no method", pattern)
@@ -362,10 +362,10 @@ func TestEveryDefaultProtectedAdminWriteRefusesBypassOnly(t *testing.T) {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 			continue
 		}
-		if _, sensitive := adminplane.SensitiveAdminPatterns[p]; sensitive {
+		if _, sensitive := adminplane.SensitiveAdminPatterns()[p]; sensitive {
 			continue
 		}
-		if _, exempt := adminplane.NonSensitiveAdminWrites[p]; exempt {
+		if _, exempt := adminplane.NonSensitiveAdminWrites()[p]; exempt {
 			continue
 		}
 		defaultProtected = append(defaultProtected, p)
@@ -441,7 +441,7 @@ func TestNoSensitiveAdminWriteIsListedAsNonSensitive(t *testing.T) {
 		if strings.HasSuffix(path, "/answer") {
 			sawAnswer = true
 		}
-		if _, exempt := adminplane.NonSensitiveAdminWrites[p]; exempt {
+		if _, exempt := adminplane.NonSensitiveAdminWrites()[p]; exempt {
 			t.Errorf("%s changes grants, controls, answers or certificates but is listed in nonSensitiveAdminWrites", p)
 		}
 	}

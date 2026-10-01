@@ -1,7 +1,9 @@
 package adminplane
 
 import (
+	"maps"
 	"net/http"
+	"slices"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
@@ -17,19 +19,34 @@ import (
 // guard's actual domain, distinct from BuildAdminRouter's merged list, which
 // also carries the public outer mux's routes (#579 MEDIUM-3).
 func AuthedAdminPatterns(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, legacyDashboard bool, trafficHandler http.Handler) []string {
-	authed, _ := buildAuthedAdminMux(adminKey, svc, stores, tlsMode, tickets, sessions, legacyDashboard, trafficHandler, noPanels())
+	authed, _ := buildAuthedAdminMux(runConfig(adminKey, svc, stores, tlsMode, tickets, sessions, legacyDashboard, trafficHandler), noPanels())
 	return authed.Patterns()
 }
 
-// AdminBodyTypes is the admin write-route content-type table.
-var AdminBodyTypes = adminBodyTypes
+// The three guard tables below are returned as copies: the router consults
+// the originals on every request, so a caller that could edit them could
+// remove a credential requirement from a live server.
 
-// SensitiveAdminPatterns is the certificate and traffic-capture route
-// families (#579, #631).
-var SensitiveAdminPatterns = sensitiveAdminPatterns
+// AdminBodyTypes returns a copy of the admin write-route content-type table.
+func AdminBodyTypes() map[string][]string {
+	out := make(map[string][]string, len(adminBodyTypes))
+	for pattern, types := range adminBodyTypes {
+		out[pattern] = slices.Clone(types)
+	}
+	return out
+}
 
-// NonSensitiveAdminWrites is the admin write-route allowlist (#579).
-var NonSensitiveAdminWrites = nonSensitiveAdminWrites
+// SensitiveAdminPatterns returns a copy of the certificate and
+// traffic-capture route families (#579, #631).
+func SensitiveAdminPatterns() map[string]struct{} {
+	return maps.Clone(sensitiveAdminPatterns)
+}
+
+// NonSensitiveAdminWrites returns a copy of the admin write-route allowlist
+// (#579).
+func NonSensitiveAdminWrites() map[string]struct{} {
+	return maps.Clone(nonSensitiveAdminWrites)
+}
 
 // NewAdminFlowReservationHandler is newAdminFlowReservationHandler.
 func NewAdminFlowReservationHandler(stores *Stores) *handler.AdminFlowReservationHandler {

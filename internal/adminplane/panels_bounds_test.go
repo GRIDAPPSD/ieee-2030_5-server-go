@@ -23,8 +23,9 @@ func routerFor(t *testing.T, timeout time.Duration, panels ...sep2admin.Panel) h
 		t.Fatalf("newPanelSet: %v", err)
 	}
 	ps.timeout = timeout
-	authed, withMW := buildAuthedAdminMux(panelTestKey, nil, nil, "GCM", nil, nil, false, nil, ps)
-	h, _ := buildOuterAdminRouter(panelTestKey, nil, nil, authed, withMW)
+	cfg := runConfig(panelTestKey, nil, nil, "GCM", nil, nil, false, nil)
+	authed, withMW := buildAuthedAdminMux(cfg, ps)
+	h, _ := buildOuterAdminRouter(cfg, authed, withMW)
 	return h
 }
 

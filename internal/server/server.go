@@ -666,14 +666,6 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	}
 }
 
-// Browser admin session lifetimes. The idle window is what an operator
-// notices; the absolute cap is what a stolen cookie runs into, and it is
-// never extended by use.
-const (
-	adminSessionIdleTimeout     = 30 * time.Minute
-	adminSessionAbsoluteTimeout = 8 * time.Hour
-)
-
 // startAdminServer brings up the admin listener on its own port. #161:
 // the listener selection matrix is
 //
@@ -741,8 +733,8 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 			addr)
 	}
 
-	tickets := auth.NewTicketStore(30 * time.Second)
-	sessions := auth.NewSessionStore(adminSessionIdleTimeout, adminSessionAbsoluteTimeout)
+	tickets := auth.NewTicketStore(adminplane.AdminTicketTTL)
+	sessions := auth.NewSessionStore(adminplane.AdminSessionIdleTimeout, adminplane.AdminSessionAbsoluteTimeout)
 	// #270: resolve the admin host-header allowlist from the static
 	// defaults plus operator-supplied SEP2_ADMIN_ALLOWED_HOSTS extras.
 	allowedHosts := adminplane.ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
@@ -756,6 +748,8 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		AllowedHosts:    allowedHosts,
 		LegacyDashboard: cfg.AdminLegacyDashboard,
 		Traffic:         trafficHandler,
+		LoopbackBypass:  true,
+		ControlWrites:   true,
 	})
 	if err != nil {
 		return nil, "", "", nil, fmt.Errorf("admin router: %w", err)

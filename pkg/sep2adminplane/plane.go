@@ -1,0 +1,197 @@
+package sep2adminplane
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"slices"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+)
+
+// Errors New returns for a Config it refuses; test for them with errors.Is.
+var (
+	// ErrNoCredential: AdminKey is blank (empty or whitespace only). With no
+	// key and the bypass off, nothing could reach the plane.
+	ErrNoCredential = errors.New("sep2adminplane: admin key is blank")
+	// ErrNoAllowedHosts: AllowedHosts names no host. An empty list turns the
+	// Host-header gate off, which leaves the plane open to DNS rebinding.
+	ErrNoAllowedHosts = errors.New("sep2adminplane: no allowed hosts")
+	// ErrNoStores: Stores is nil.
+	ErrNoStores = errors.New("sep2adminplane: no stores")
+	// ErrShortCredential: AdminKey is shorter than MinAdminKeyLength.
+	ErrShortCredential = errors.New("sep2adminplane: admin key is too short")
+	// ErrBlankAllowedHost: an AllowedHosts entry is blank.
+	ErrBlankAllowedHost = errors.New("sep2adminplane: blank allowed host")
+	// ErrUnknownEdition: Edition is not "", "2018" or "2023".
+	ErrUnknownEdition = errors.New("sep2adminplane: unknown edition")
+	// ErrEditionMismatch: Edition disagrees with Stores.Edition2023, which
+	// the protocol router serves.
+	ErrEditionMismatch = errors.New("sep2adminplane: edition disagrees with the stores")
+)
+
+// MinAdminKeyLength is the shortest AdminKey New accepts, in characters.
+// With the loopback bypass off the key is the only barrier to the plane.
+const MinAdminKeyLength = 16
+
+// Config is what New builds the plane from.
+type Config struct {
+	// Stores is the same set the protocol router serves, so an admin write
+	// is what a device reads.
+	Stores *assembly.Stores
+	// AdminKey is the Bearer credential, and the password the login form
+	// takes. It must be at least MinAdminKeyLength characters.
+	AdminKey string
+	// AllowedHosts are the Host header values the plane answers; any other
+	// gets 421. It must name at least one host and hold no blank entry.
+	AllowedHosts []string
+	// Edition is the IEEE 2030.5 edition, "2018" or "2023"; empty means
+	// "2018". It must agree with Stores.Edition2023.
+	Edition string
+	// PEN is the IANA Private Enterprise Number in the low 32 bits of every
+	// DER control mRID the plane issues. Nil or 0 leaves DER control create
+	// answering 503. New copies the value.
+	PEN *uint32
+	// FlowReservationDeadline is the hold the admin API reports each
+	// request's deadline under; it must match the queue's. Zero means the
+	// server's default, and a set value must be from 1s to 1h.
+	FlowReservationDeadline time.Duration
+	// RetentionGrace is how long an ended flow reservation stays readable.
+	// Zero means the server's default, and a set value must be whole
+	// seconds from 15m to 168h.
+	RetentionGrace time.Duration
+	// Notifier fans out the subscription notifications an admin write
+	// causes. Nil sends none.
+	Notifier assembly.ResourceNotifier
+	// LoopbackBypass admits a loopback request that carries no credential
+	// and no forwarded header, as the standalone server does. Leave it off
+	// unless nothing else on the host can reach the listener.
+	LoopbackBypass bool
+	// ControlWrites mounts five routes: DER control create and cancel, and
+	// flow reservation answer, revise and cancel. Off, only those five are
+	// unmounted. Every other admin write stays, FSA program attach and
+	// device FSA assignment among them, which also change what a device is
+	// told.
+	ControlWrites bool
+	// Panels are extra tabs the shell shows after its own. A panel the
+	// registry refuses makes New fail.
+	Panels []sep2admin.Panel
+}
+
+// Plane is a built admin plane.
+type Plane struct {
+	handler  http.Handler
+	patterns []string
+}
+
+// New builds the plane. It refuses a blank or short AdminKey, an empty
+// AllowedHosts or one with a blank entry, a nil Stores, an unknown or
+// disagreeing Edition, an out-of-range deadline or grace, and a panel the
+// registry refuses.
+func New(cfg Config) (*Plane, error) {
+	if auth.IsBlankCredential(cfg.AdminKey) {
+		return nil, ErrNoCredential
+	}
+	if utf8.RuneCountInString(cfg.AdminKey) < MinAdminKeyLength {
+		return nil, ErrShortCredential
+	}
+	if len(cfg.AllowedHosts) == 0 {
+		return nil, ErrNoAllowedHosts
+	}
+	if slices.ContainsFunc(cfg.AllowedHosts, func(h string) bool { return strings.TrimSpace(h) == "" }) {
+		return nil, ErrBlankAllowedHost
+	}
+	if cfg.Stores == nil {
+		return nil, ErrNoStores
+	}
+	edition, err := resolveEdition(cfg.Edition, cfg.Stores.Edition2023)
+	if err != nil {
+		return nil, err
+	}
+	durations := config.Config{FlowReservationDeadline: cfg.FlowReservationDeadline, FlowReservationRetentionGrace: cfg.RetentionGrace}
+	deadline, err := durations.EffectiveFlowReservationDeadline()
+	if err != nil {
+		return nil, fmt.Errorf("sep2adminplane: %w", err)
+	}
+	grace, err := durations.EffectiveFlowReservationRetentionGrace()
+	if err != nil {
+		return nil, fmt.Errorf("sep2adminplane: %w", err)
+	}
+
+	stores, err := adminStores(cfg, edition, deadline, grace)
+	if err != nil {
+		return nil, err
+	}
+
+	h, patterns, err := adminplane.Build(adminplane.Config{
+		AdminKey:       cfg.AdminKey,
+		Stores:         stores,
+		Tickets:        auth.NewTicketStore(adminplane.AdminTicketTTL),
+		Sessions:       auth.NewSessionStore(adminplane.AdminSessionIdleTimeout, adminplane.AdminSessionAbsoluteTimeout),
+		AllowedHosts:   slices.Clone(cfg.AllowedHosts),
+		Panels:         cfg.Panels,
+		LoopbackBypass: cfg.LoopbackBypass,
+		ControlWrites:  cfg.ControlWrites,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sep2adminplane: %w", err)
+	}
+	return &Plane{handler: h, patterns: patterns}, nil
+}
+
+// adminStores is the admin plane's view of cfg.Stores with the settings New
+// resolved.
+func adminStores(cfg Config, edition handler.SEP2Edition, deadline, grace time.Duration) (*adminplane.Stores, error) {
+	stores, err := adminplane.StoresFromAssembly(cfg.Stores)
+	if err != nil {
+		return nil, fmt.Errorf("sep2adminplane: %w", err)
+	}
+	stores.Sep2Edition = edition
+	// A copy, so the caller cannot change the PEN after the zero check.
+	if cfg.PEN != nil && *cfg.PEN != 0 {
+		pen := *cfg.PEN
+		stores.PEN = &pen
+	}
+	stores.FlowReservationDeadline = deadline
+	stores.FlowReservationRetentionGrace = grace
+	// AdaptNotifier is nil for a nil or typed-nil notifier, which would
+	// otherwise panic on the first admin write.
+	if adminplane.AdaptNotifier(cfg.Notifier) != nil {
+		stores.AdminNotifier = cfg.Notifier
+	}
+	return stores, nil
+}
+
+// resolveEdition maps Config.Edition onto the handler's edition and refuses
+// one that disagrees with the stores: the protocol router serves
+// Stores.Edition2023, and the admin views must read the same rule.
+func resolveEdition(edition string, stores2023 bool) (handler.SEP2Edition, error) {
+	var e handler.SEP2Edition
+	switch edition {
+	case "", string(handler.Edition2018):
+		e = handler.Edition2018
+	case string(handler.Edition2023):
+		e = handler.Edition2023
+	default:
+		return "", fmt.Errorf("%w: %q is not 2018 or 2023", ErrUnknownEdition, edition)
+	}
+	if (e == handler.Edition2023) != stores2023 {
+		return "", fmt.Errorf("%w: edition %s, Stores.Edition2023=%t", ErrEditionMismatch, e, stores2023)
+	}
+	return e, nil
+}
+
+// Handler serves the admin UI at /ui/ and the admin API under /api/.
+func (p *Plane) Handler() http.Handler { return p.handler }
+
+// Patterns lists every route mounted under the plane, sorted. The slice is
+// the caller's.
+func (p *Plane) Patterns() []string { return slices.Clone(p.patterns) }

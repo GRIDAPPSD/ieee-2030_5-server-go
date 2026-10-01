@@ -17,7 +17,7 @@ import (
 
 func chainedHandler(adminKey string, tickets *auth.TicketStore, sessions *auth.SessionStore, reached *bool) http.Handler {
 	inner := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { *reached = true })
-	return auth.AdminAuthMiddleware(adminKey, tickets, sessions)(auth.RequireRealCredential(adminKey, tickets, sessions)(inner))
+	return auth.AdminAuthMiddleware(adminKey, tickets, sessions, true)(auth.RequireRealCredential(adminKey, tickets, sessions)(inner))
 }
 
 // TestRequireRealCredentialRefusesBypassOnly is acceptance criterion 1: a
@@ -77,7 +77,8 @@ func TestRequireRealCredentialAdmitsValidMTLSFromLoopback(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{generateAdminCert(t)}}
+	adminCert := generateAdminCert(t)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{adminCert}, VerifiedChains: [][]*x509.Certificate{{adminCert}}}
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 

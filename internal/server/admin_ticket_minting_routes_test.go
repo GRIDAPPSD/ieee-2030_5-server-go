@@ -108,7 +108,7 @@ func TestNoAuthedRouteMintsATicketForTicketOnlyAdmission(t *testing.T) {
 // with no declared type, or a nil entry (a GET, or a DELETE that reads no
 // body), gets no Content-Type and no body, same as ticketOnlyRequest.
 func ticketOnlyRequestDeclaringBody(method, target, ticket, pattern string) *http.Request {
-	types, ok := adminplane.AdminBodyTypes[pattern]
+	types, ok := adminplane.AdminBodyTypes()[pattern]
 	if !ok || len(types) == 0 {
 		return ticketOnlyRequest(method, target, ticket)
 	}

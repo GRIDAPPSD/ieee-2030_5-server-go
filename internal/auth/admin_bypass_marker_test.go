@@ -113,7 +113,7 @@ func TestAdmittedByLoopbackBypassOnlyTracksPathZeroAdmission(t *testing.T) {
 			sessions := auth.NewSessionStore(testSessionIdle, testSessionAbsolute)
 
 			var got, reached bool
-			handler := auth.AdminAuthMiddleware("test-key", tickets, sessions)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			handler := auth.AdminAuthMiddleware("test-key", tickets, sessions, true)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 				reached = true
 				got = auth.AdmittedByLoopbackBypassOnly(r)
 			}))

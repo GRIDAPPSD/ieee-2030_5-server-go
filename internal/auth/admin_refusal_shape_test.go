@@ -32,7 +32,7 @@ func refusedResponse(t *testing.T, method, target string, headers map[string]str
 		t.Fatalf("fixture RemoteAddr %q is loopback: the request would take the Path 0 bypass and assert nothing about a refusal", req.RemoteAddr)
 	}
 	rec := httptest.NewRecorder()
-	handler := auth.AdminAuthMiddleware("the-key", nil, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := auth.AdminAuthMiddleware("the-key", nil, nil, true)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("%s %s reached the protected handler with no credential", r.Method, r.URL.Path)
 	}))
 	handler.ServeHTTP(rec, req)
@@ -194,7 +194,7 @@ func TestRefusalShapeGuardCatchesTheBypass(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	admitted := false
-	handler := auth.AdminAuthMiddleware("the-key", nil, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	handler := auth.AdminAuthMiddleware("the-key", nil, nil, true)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		admitted = true
 	}))
 	handler.ServeHTTP(rec, req)

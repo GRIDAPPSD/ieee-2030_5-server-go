@@ -98,11 +98,11 @@ func TestEveryAdminWriteRouteIsCovered(t *testing.T) {
 	}
 
 	for _, p := range writes {
-		if _, declared := adminplane.AdminBodyTypes[p]; !declared && p != loginPattern {
+		if _, declared := adminplane.AdminBodyTypes()[p]; !declared && p != loginPattern {
 			t.Errorf("%s has no entry in the admin body-type table; the middleware refuses every write to it", p)
 		}
 	}
-	for p := range adminplane.AdminBodyTypes {
+	for p := range adminplane.AdminBodyTypes() {
 		if !slices.Contains(writes, p) {
 			t.Errorf("body-type table names %s, which is not a registered admin write route", p)
 		}
@@ -115,7 +115,7 @@ func TestEveryAdminWriteRouteIsCovered(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s has no independent expectation; wantAdminBodyTypes is out of date", p)
 		}
-		if got := adminplane.AdminBodyTypes[p]; !slices.Equal(got, want) {
+		if got := adminplane.AdminBodyTypes()[p]; !slices.Equal(got, want) {
 			t.Errorf("%s: adminBodyTypes = %v, want %v (from the handler, not the table under test)", p, got, want)
 		}
 	}

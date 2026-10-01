@@ -44,13 +44,14 @@ const AdminRefusalVary = "Sec-Fetch-Dest, Accept"
 // AdminAuthMiddleware returns middleware that checks for admin authorization.
 // Five paths are supported (checked in order):
 //
-//  0. Loopback bypass (#246): the request originated from a loopback
-//     address (127.0.0.0/8 or ::1) AND no reverse-proxy forwarded header is
-//     present. This is the local-developer ergonomic path: `make run` on
+//  0. Loopback bypass (#246), only when loopbackBypass is true: the request
+//     originated from a loopback address (127.0.0.0/8 or ::1) AND no
+//     reverse-proxy forwarded header is present. This is the local-developer ergonomic path: `make run` on
 //     localhost has no working credentials by default, and Caddy in front
 //     injects X-Forwarded-* so this bypass declines automatically and the
 //     normal auth chain runs against operator traffic.
-//  1. mTLS: client cert with admin policy OID (1.3.6.1.4.1.40732.2.5)
+//  1. mTLS: a client cert the listener verified, carrying the admin policy
+//     OID (1.3.6.1.4.1.40732.2.5)
 //  2. Bearer token: Authorization header matches adminKey
 //  3. Cookie session: admin_ticket cookie validated against the
 //     SessionStore without being consumed (browser login flow, #159).
@@ -82,13 +83,16 @@ const AdminRefusalVary = "Sec-Fetch-Dest, Accept"
 // A refused request is answered by consumer: a browser navigating to a page is
 // redirected to AdminLoginPath, and everything else gets a JSON 401 it can
 // read. See wantsLoginPage.
-func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *SessionStore) func(http.Handler) http.Handler {
+//
+// Run passes loopbackBypass true. An embedder serving the plane beside its
+// own loopback services passes false, so every request needs a credential.
+func AdminAuthMiddleware(adminKey string, tickets *TicketStore, sessions *SessionStore, loopbackBypass bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Path 0: loopback bypass (#246). Declines automatically
 			// when ANY proxy-forwarded header is present so Caddy-fronted
 			// deployments still run the full auth chain.
-			if isLoopbackRemote(r) && !hasForwardedHeader(r) {
+			if loopbackBypass && isLoopbackRemote(r) && !hasForwardedHeader(r) {
 				log.Printf("admin: loopback bypass admitted %s %s", r.Method, r.URL.Path)
 				next.ServeHTTP(w, withBypassAdmission(r))
 				return
@@ -154,9 +158,12 @@ const (
 // no matter which credential admits. See AdminAuthMiddleware's own doc comment for
 // the failure this closes.
 func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, sessions *SessionStore) (bool, credentialPath) {
-	// Path A: mTLS with admin OID
-	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
-		cert := r.TLS.PeerCertificates[0]
+	// Path A: mTLS with admin OID, on the leaf of a chain the listener
+	// verified. PeerCertificates alone is whatever the client sent: a
+	// listener that requests a certificate without verifying it would admit
+	// a self-signed one.
+	if r.TLS != nil && len(r.TLS.VerifiedChains) > 0 && len(r.TLS.VerifiedChains[0]) > 0 {
+		cert := r.TLS.VerifiedChains[0][0]
 		if certs.HasPolicyOID(cert, certs.OIDPolicyAdmin) {
 			LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathMTLS)
 			redeemPresentedTicket(r, tickets)

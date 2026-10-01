@@ -119,7 +119,7 @@ func (f *frwFixture) router() http.Handler {
 	mux.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/answer", f.h.HandleAnswer())
 	mux.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/revise", f.h.HandleRevise())
 	mux.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel", f.h.HandleCancel())
-	return auth.AdminAuthMiddleware(frwKey, nil, nil)(mux)
+	return auth.AdminAuthMiddleware(frwKey, nil, nil, true)(mux)
 }
 
 func (f *frwFixture) post(op, frqID, body string) *httptest.ResponseRecorder {
@@ -339,7 +339,7 @@ func TestFRWrite_MTLSAnswerRecordsTheCertificateFingerprint(t *testing.T) {
 	cert := adminCertificate(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/derms/flow-reservations/4/frq-1/answer", strings.NewReader(`{"decision":"grant"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}, VerifiedChains: [][]*x509.Certificate{{cert}}}
 	rec := httptest.NewRecorder()
 	f.router().ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
@@ -1123,7 +1123,8 @@ func TestFRWrite_BearerWithACertificateRecordsTheAdminKey(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/derms/flow-reservations/4/frq-1/answer", strings.NewReader(`{"decision":"grant"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+frwKey)
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{nonAdminCertificate(t)}}
+	nonAdmin := nonAdminCertificate(t)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{nonAdmin}, VerifiedChains: [][]*x509.Certificate{{nonAdmin}}}
 	rec := httptest.NewRecorder()
 	f.router().ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {

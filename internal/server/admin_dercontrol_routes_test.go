@@ -76,7 +76,7 @@ func serveDERControl(router http.Handler, method, target string, rr derControlRo
 // from a non-loopback address.
 func TestDERControlPostRoutesAdminGates(t *testing.T) {
 	for _, pattern := range []string{"POST /api/der/controls", "POST /api/der/controls/{mrid}/cancel"} {
-		if got := adminplane.AdminBodyTypes[pattern]; len(got) != 1 || got[0] != "application/json" {
+		if got := adminplane.AdminBodyTypes()[pattern]; len(got) != 1 || got[0] != "application/json" {
 			t.Errorf("AdminBodyTypes[%q] = %v, want [application/json]", pattern, got)
 		}
 	}

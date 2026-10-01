@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 const (
@@ -34,10 +34,10 @@ type unsupportedMediaTypeResponse struct {
 // check stands between a page and the handlers.
 func newLoopbackAdminServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	router, _ := server.BuildAdminRouter(
+	router, _ := adminplane.BuildAdminRouter(
 		"the-key", nil, newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		server.DefaultAdminAllowedHosts(), false, nil,
+		adminplane.DefaultAdminAllowedHosts(), false, nil,
 	)
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)

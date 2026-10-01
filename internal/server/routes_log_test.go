@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
@@ -28,7 +29,7 @@ func TestRoutesEnumerationConfirmsCertAPIAdminOnly(t *testing.T) {
 	stores := newTestStores()
 
 	_, protoRoutes := server.BuildProtocolRouter(cfg, stores, svc, "", "", nil)
-	_, adminRoutes := server.BuildAdminRouter("test-admin-key", svc, stores, "", nil, nil, nil, false, nil)
+	_, adminRoutes := adminplane.BuildAdminRouter("test-admin-key", svc, stores, "", nil, nil, nil, false, nil)
 
 	// Protocol routes MUST NOT contain any /api/certs/* pattern: a hit
 	// here is the regression this test exists to prevent. Surface it
@@ -118,7 +119,7 @@ func TestAdminRoutesContainsLoginAndDashboard(t *testing.T) {
 	svc := newScopeTestCertService(t)
 	stores := newTestStores()
 
-	_, adminRoutes := server.BuildAdminRouter("test-admin-key", svc, stores, "", nil, nil, nil, false, nil)
+	_, adminRoutes := adminplane.BuildAdminRouter("test-admin-key", svc, stores, "", nil, nil, nil, false, nil)
 
 	wantContains := []string{
 		"GET /login",       // public outer mux

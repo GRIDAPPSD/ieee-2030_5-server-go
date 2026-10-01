@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 // #159 login flow tests.
 
 func TestLoginPageRendersForm(t *testing.T) {
-	h := server.HandleLoginPage("")
+	h := adminplane.HandleLoginPage("")
 	req := httptest.NewRequest(http.MethodGet, "/login", nil)
 	w := httptest.NewRecorder()
 	h(w, req)
@@ -33,7 +33,7 @@ func TestLoginPageRendersForm(t *testing.T) {
 }
 
 func TestLoginPageInjectsError(t *testing.T) {
-	h := server.HandleLoginPage("Invalid key")
+	h := adminplane.HandleLoginPage("Invalid key")
 	req := httptest.NewRequest(http.MethodGet, "/login?err=1", nil)
 	w := httptest.NewRecorder()
 	h(w, req)
@@ -44,7 +44,7 @@ func TestLoginPageInjectsError(t *testing.T) {
 
 func TestLoginSubmitSuccessSetsCookieAndRedirects(t *testing.T) {
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	h := server.HandleLoginSubmit("the-secret", sessions)
+	h := adminplane.HandleLoginSubmit("the-secret", sessions)
 
 	form := url.Values{"key": []string{"the-secret"}}
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
@@ -85,7 +85,7 @@ func TestLoginSubmitSuccessSetsCookieAndRedirects(t *testing.T) {
 
 func TestLoginSubmitWrongKey(t *testing.T) {
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	h := server.HandleLoginSubmit("the-secret", sessions)
+	h := adminplane.HandleLoginSubmit("the-secret", sessions)
 
 	form := url.Values{"key": []string{"wrong"}}
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
@@ -111,7 +111,7 @@ func TestLoginSubmitEmptyKeyDisabled(t *testing.T) {
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
 	// Server started with no admin key — login submission must be refused
 	// (mTLS-only mode; no browser login possible).
-	h := server.HandleLoginSubmit("", sessions)
+	h := adminplane.HandleLoginSubmit("", sessions)
 
 	form := url.Values{"key": []string{"anything"}}
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
@@ -126,7 +126,7 @@ func TestLoginSubmitEmptyKeyDisabled(t *testing.T) {
 
 func TestLoginSubmitFormParseError(t *testing.T) {
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	h := server.HandleLoginSubmit("secret", sessions)
+	h := adminplane.HandleLoginSubmit("secret", sessions)
 	// Body with broken urlencoded form (invalid percent escape) — ParseForm
 	// returns an error and the handler must surface the login page rather
 	// than a 5xx.
@@ -141,7 +141,7 @@ func TestLoginSubmitFormParseError(t *testing.T) {
 
 func TestLoginSubmitMethodNotAllowed(t *testing.T) {
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	h := server.HandleLoginSubmit("secret", sessions)
+	h := adminplane.HandleLoginSubmit("secret", sessions)
 	req := httptest.NewRequest(http.MethodGet, "/auth/login", nil)
 	w := httptest.NewRecorder()
 	h(w, req)

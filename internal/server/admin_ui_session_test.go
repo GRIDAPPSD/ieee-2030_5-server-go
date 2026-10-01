@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 // One browser page load of the admin shell is four authenticated requests:
@@ -63,7 +63,7 @@ func newUIRequest(t *testing.T, method, target, body string) *http.Request {
 func newUIRouter(t *testing.T) (http.Handler, *auth.SessionStore) {
 	t.Helper()
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	router, _ := server.BuildAdminRouter(
+	router, _ := adminplane.BuildAdminRouter(
 		"the-key", nil, newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), sessions,
 		[]string{testUIHost}, false, nil,

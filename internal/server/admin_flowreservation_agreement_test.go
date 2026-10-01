@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
@@ -72,10 +73,10 @@ func frAgreementFixture(t *testing.T) (device *httptest.Server, admin http.Handl
 		server.NewCoreStores(stores), policy, "serverSFDI", "serverLFDI", nil)
 	device = httptest.NewServer(protocol)
 	t.Cleanup(device.Close)
-	admin, _ = server.BuildAdminRouter(
+	admin, _ = adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), stores, "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		server.DefaultAdminAllowedHosts(), false, nil,
+		adminplane.DefaultAdminAllowedHosts(), false, nil,
 	)
 	return device, admin, stores
 }

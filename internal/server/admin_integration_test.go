@@ -12,6 +12,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
@@ -39,7 +40,7 @@ func TestAdminIntegrationBearerToken(t *testing.T) {
 	defer func() { _ = adminListener.Close() }()
 
 	adminTLSListener := tls.NewListener(adminListener, adminTLSCfg)
-	adminRouter, _ := server.BuildAdminRouter("test-admin-key", env.svc, nil, "CCM-8", nil, nil, nil, false, nil)
+	adminRouter, _ := adminplane.BuildAdminRouter("test-admin-key", env.svc, nil, "CCM-8", nil, nil, nil, false, nil)
 	adminSrv := &http.Server{Handler: adminRouter}
 	go func() { _ = adminSrv.Serve(adminTLSListener) }()
 	defer func() { _ = adminSrv.Close() }()

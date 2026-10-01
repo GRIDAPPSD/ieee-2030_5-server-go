@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 // wantAdminWriteRoutes is the admin plane's state-changing surface with every
@@ -75,10 +75,10 @@ var wantAdminBodyTypes = map[string][]string{
 // and drives each one from a loopback address, where the auth chain admits
 // anything, so a refusal can only come from the checks under test.
 func TestEveryAdminWriteRouteIsCovered(t *testing.T) {
-	router, patterns := server.BuildAdminRouter(
+	router, patterns := adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		server.DefaultAdminAllowedHosts(), false, nil,
+		adminplane.DefaultAdminAllowedHosts(), false, nil,
 	)
 
 	var writes []string
@@ -98,11 +98,11 @@ func TestEveryAdminWriteRouteIsCovered(t *testing.T) {
 	}
 
 	for _, p := range writes {
-		if _, declared := server.AdminBodyTypes[p]; !declared && p != loginPattern {
+		if _, declared := adminplane.AdminBodyTypes[p]; !declared && p != loginPattern {
 			t.Errorf("%s has no entry in the admin body-type table; the middleware refuses every write to it", p)
 		}
 	}
-	for p := range server.AdminBodyTypes {
+	for p := range adminplane.AdminBodyTypes {
 		if !slices.Contains(writes, p) {
 			t.Errorf("body-type table names %s, which is not a registered admin write route", p)
 		}
@@ -115,7 +115,7 @@ func TestEveryAdminWriteRouteIsCovered(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s has no independent expectation; wantAdminBodyTypes is out of date", p)
 		}
-		if got := server.AdminBodyTypes[p]; !slices.Equal(got, want) {
+		if got := adminplane.AdminBodyTypes[p]; !slices.Equal(got, want) {
 			t.Errorf("%s: adminBodyTypes = %v, want %v (from the handler, not the table under test)", p, got, want)
 		}
 	}

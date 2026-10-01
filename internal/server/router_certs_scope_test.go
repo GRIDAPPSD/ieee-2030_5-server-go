@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
@@ -83,7 +84,7 @@ func TestAdminListenerStillMountsCertAPI(t *testing.T) {
 	svc := newScopeTestCertService(t)
 	stores := newTestStores()
 
-	adminRouter, _ := server.BuildAdminRouter("test-admin-key", svc, stores, "", nil, nil, nil, false, nil)
+	adminRouter, _ := adminplane.BuildAdminRouter("test-admin-key", svc, stores, "", nil, nil, nil, false, nil)
 
 	cases := []struct {
 		name   string

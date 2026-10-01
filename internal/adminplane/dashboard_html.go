@@ -1,4 +1,4 @@
-package server
+package adminplane
 
 const dashboardHTML = `<!DOCTYPE html>
 <html lang="en">

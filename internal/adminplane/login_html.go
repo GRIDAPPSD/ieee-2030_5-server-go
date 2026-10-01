@@ -1,4 +1,4 @@
-package server
+package adminplane
 
 // loginHTML is the plain HTML form served at GET /login. The form POSTs to
 // /auth/login. On success the server sets the admin_ticket cookie and

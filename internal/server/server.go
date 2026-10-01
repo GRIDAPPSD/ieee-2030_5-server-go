@@ -19,6 +19,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
@@ -417,7 +418,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// requests through it before either listener binds (sep2server.New binds).
 	// The deferred Close runs on every exit, after the protocol listener has
 	// drained; the admin listener is drained first only on the shutdown path.
-	coreNotifier := adaptNotifier(notifier)
+	coreNotifier := adminplane.AdaptNotifier(notifier)
 	frNotifier := flowreservation.Notifier(coreNotifier)
 	stores.FlowReservationQueue = newFlowReservationQueue(stores, coreNotifier)
 	defer stores.FlowReservationQueue.Close()
@@ -744,8 +745,18 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	sessions := auth.NewSessionStore(adminSessionIdleTimeout, adminSessionAbsoluteTimeout)
 	// #270: resolve the admin host-header allowlist from the static
 	// defaults plus operator-supplied SEP2_ADMIN_ALLOWED_HOSTS extras.
-	allowedHosts := ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
-	adminRouter, adminRoutes := BuildAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets, sessions, allowedHosts, cfg.AdminLegacyDashboard, trafficHandler)
+	allowedHosts := adminplane.ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
+	adminRouter, adminRoutes := adminplane.Build(adminplane.Config{
+		AdminKey:        cfg.AdminKey,
+		CertService:     svc,
+		Stores:          stores,
+		TLSMode:         tlsMode,
+		Tickets:         tickets,
+		Sessions:        sessions,
+		AllowedHosts:    allowedHosts,
+		LegacyDashboard: cfg.AdminLegacyDashboard,
+		Traffic:         trafficHandler,
+	})
 
 	adminListener, err := net.Listen("tcp", addr)
 	if err != nil {

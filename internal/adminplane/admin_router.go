@@ -1,4 +1,4 @@
-package server
+package adminplane
 
 import (
 	"log"
@@ -7,6 +7,25 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 )
+
+// Config is what Build assembles the admin router from. Each field is the
+// BuildAdminRouter parameter of the same role.
+type Config struct {
+	AdminKey        string
+	CertService     *handler.AdminCertService
+	Stores          *Stores
+	TLSMode         string
+	Tickets         *auth.TicketStore
+	Sessions        *auth.SessionStore
+	AllowedHosts    []string
+	LegacyDashboard bool
+	Traffic         http.Handler
+}
+
+// Build is the admin router Run serves, with its route list for the boot log.
+func Build(cfg Config) (http.Handler, []string) {
+	return BuildAdminRouter(cfg.AdminKey, cfg.CertService, cfg.Stores, cfg.TLSMode, cfg.Tickets, cfg.Sessions, cfg.AllowedHosts, cfg.LegacyDashboard, cfg.Traffic)
+}
 
 // BuildAdminRouter creates the admin router AND returns the canonical
 // pattern list mounted under it. Layers, outermost first:

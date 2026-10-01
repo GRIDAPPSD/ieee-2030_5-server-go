@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 const trafficMountPattern = "GET /api/traffic/"
@@ -30,10 +30,10 @@ const trafficMountPattern = "GET /api/traffic/"
 // capture off.
 func TestTrafficRoutePatternPresentOnlyWithHandler(t *testing.T) {
 	buildRouter := func(trafficHandler http.Handler) []string {
-		_, patterns := server.BuildAdminRouter(
+		_, patterns := adminplane.BuildAdminRouter(
 			"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 			auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-			server.DefaultAdminAllowedHosts(), false, trafficHandler,
+			adminplane.DefaultAdminAllowedHosts(), false, trafficHandler,
 		)
 		return patterns
 	}
@@ -66,10 +66,10 @@ func TestTrafficRoutePatternPresentOnlyWithHandler(t *testing.T) {
 // reaches http.StripPrefix wrapping a nil handler and panics instead of
 // returning the mux-miss 404 this test expects.
 func TestTrafficRouteAbsentWithCaptureOff(t *testing.T) {
-	router, _ := server.BuildAdminRouter(
+	router, _ := adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		server.DefaultAdminAllowedHosts(), false, nil,
+		adminplane.DefaultAdminAllowedHosts(), false, nil,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/clients", nil)
@@ -97,10 +97,10 @@ func TestTrafficRouteAbsentWithCaptureOff(t *testing.T) {
 // so falling through looks it up in adminBodyTypes, finds nothing declared,
 // and answers 415 instead of 405: both subtests go RED.
 func TestTrafficRouteRefusesNonGETMethod(t *testing.T) {
-	router, _ := server.BuildAdminRouter(
+	router, _ := adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		server.DefaultAdminAllowedHosts(), false, http.NotFoundHandler(),
+		adminplane.DefaultAdminAllowedHosts(), false, http.NotFoundHandler(),
 	)
 
 	for _, method := range []string{http.MethodPost, http.MethodDelete} {

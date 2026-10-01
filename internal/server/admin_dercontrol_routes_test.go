@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 )
 
@@ -36,10 +36,10 @@ func newDERControlRouter(t *testing.T) http.Handler {
 	if err := stores.DERPrograms.Create(ctx, "0", "0", program); err != nil {
 		t.Fatal(err)
 	}
-	router, _ := server.BuildAdminRouter(
+	router, _ := adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), stores, "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		server.DefaultAdminAllowedHosts(), false, nil,
+		adminplane.DefaultAdminAllowedHosts(), false, nil,
 	)
 	return router
 }
@@ -76,7 +76,7 @@ func serveDERControl(router http.Handler, method, target string, rr derControlRo
 // from a non-loopback address.
 func TestDERControlPostRoutesAdminGates(t *testing.T) {
 	for _, pattern := range []string{"POST /api/der/controls", "POST /api/der/controls/{mrid}/cancel"} {
-		if got := server.AdminBodyTypes[pattern]; len(got) != 1 || got[0] != "application/json" {
+		if got := adminplane.AdminBodyTypes[pattern]; len(got) != 1 || got[0] != "application/json" {
 			t.Errorf("AdminBodyTypes[%q] = %v, want [application/json]", pattern, got)
 		}
 	}

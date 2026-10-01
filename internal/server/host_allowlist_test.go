@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 // #270: Host-header allowlist (DNS-rebinding defense).
@@ -164,7 +164,7 @@ func TestHostAllowlistMiddleware(t *testing.T) {
 				nextCalled = true
 				w.WriteHeader(http.StatusOK)
 			})
-			h := server.HostAllowlistMiddleware(tc.allowed)(next)
+			h := adminplane.HostAllowlistMiddleware(tc.allowed)(next)
 
 			req := httptest.NewRequest(http.MethodGet, "http://example/anything", nil)
 			req.Host = tc.host
@@ -199,7 +199,7 @@ func TestHostAllowlistMiddleware_DisabledWhenEmpty(t *testing.T) {
 	// an empty list, MUST reject everything - there is no "open by
 	// default" mode for the middleware itself. The router-level skip is
 	// the only opt-out.
-	h := server.HostAllowlistMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := adminplane.HostAllowlistMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	req := httptest.NewRequest(http.MethodGet, "http://localhost/", nil)
@@ -212,7 +212,7 @@ func TestHostAllowlistMiddleware_DisabledWhenEmpty(t *testing.T) {
 }
 
 func TestDefaultAdminAllowedHosts(t *testing.T) {
-	got := server.DefaultAdminAllowedHosts()
+	got := adminplane.DefaultAdminAllowedHosts()
 	want := []string{"localhost", "127.0.0.1", "::1", discovery.AdminHostname}
 
 	gotSorted := append([]string(nil), got...)
@@ -270,7 +270,7 @@ func TestResolveAdminAllowedHosts(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := server.ResolveAdminAllowedHosts(tc.extras)
+			got := adminplane.ResolveAdminAllowedHosts(tc.extras)
 			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
 				t.Errorf("ResolveAdminAllowedHosts(%v):\n got  %v\n want %v", tc.extras, got, tc.want)
 			}
@@ -285,7 +285,7 @@ func TestAdminRouterHostAllowlistGatesLogin(t *testing.T) {
 	stores := newTestStores()
 	tickets := auth.NewTicketStore(5 * time.Minute)
 	allowed := []string{"localhost", "127.0.0.1"}
-	r, _ := server.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, nil, allowed, false, nil)
+	r, _ := adminplane.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, nil, allowed, false, nil)
 
 	srv := httptest.NewServer(r)
 	defer srv.Close()

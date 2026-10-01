@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 // TestNoAuthedRouteMintsATicketForTicketOnlyAdmission is #641 fix round 1,
@@ -25,7 +25,7 @@ import (
 //
 // This test names no route. It walks every pattern AuthedAdminPatterns
 // reports, mints a fresh one-time ticket for each, presents it alone with
-// the Content-Type the route itself declares (server.AdminBodyTypes), and
+// the Content-Type the route itself declares (adminplane.AdminBodyTypes), and
 // requires the response never carry a new one. A minting route added later
 // without RequireNonTicketAdmission fails its own subtest here, with nothing
 // to add to any list.
@@ -48,7 +48,7 @@ import (
 // that never mint. A future POST added inside either subtree needs its own
 // coverage, not this one.
 func TestNoAuthedRouteMintsATicketForTicketOnlyAdmission(t *testing.T) {
-	patterns := server.AuthedAdminPatterns(
+	patterns := adminplane.AuthedAdminPatterns(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
 		false, http.NotFoundHandler(),
@@ -102,13 +102,13 @@ func TestNoAuthedRouteMintsATicketForTicketOnlyAdmission(t *testing.T) {
 
 // ticketOnlyRequestDeclaringBody is ticketOnlyRequest's twin for this walk
 // (#641 fix round 2, item 1): it sends the Content-Type and a body for
-// pattern's own entry in server.AdminBodyTypes, so a state-changing route
+// pattern's own entry in adminplane.AdminBodyTypes, so a state-changing route
 // reaches its handler instead of being refused 415 by requireAdminBodyTypes
 // before ticketOnlyRequest's type-less request ever gets there. A pattern
 // with no declared type, or a nil entry (a GET, or a DELETE that reads no
 // body), gets no Content-Type and no body, same as ticketOnlyRequest.
 func ticketOnlyRequestDeclaringBody(method, target, ticket, pattern string) *http.Request {
-	types, ok := server.AdminBodyTypes[pattern]
+	types, ok := adminplane.AdminBodyTypes[pattern]
 	if !ok || len(types) == 0 {
 		return ticketOnlyRequest(method, target, ticket)
 	}

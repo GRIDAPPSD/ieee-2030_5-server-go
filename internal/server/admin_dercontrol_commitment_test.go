@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -59,10 +59,10 @@ func TestDERControlCreateRouteUsesCommitmentLedger(t *testing.T) {
 			if err := stores.FlowReservationResponses.Create(ctx, "0", "R1", frp); err != nil {
 				t.Fatal(err)
 			}
-			router, _ := server.BuildAdminRouter(
+			router, _ := adminplane.BuildAdminRouter(
 				"the-key", newScopeTestCertService(t), stores, "GCM",
 				auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-				server.DefaultAdminAllowedHosts(), false, nil,
+				adminplane.DefaultAdminAllowedHosts(), false, nil,
 			)
 
 			w := serveDERControl(router, http.MethodPost, "/api/der/controls", derControlRouteRequest{remote: "127.0.0.1:4000", contentType: "application/json", bearer: "the-key", body: body})

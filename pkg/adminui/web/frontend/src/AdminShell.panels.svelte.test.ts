@@ -71,7 +71,7 @@ describe('AdminShell registered panels', () => {
   it('leaves the nav as the core tabs, in order, when no panel is registered', async () => {
     const spy = mockServer(entries())
     await renderOn('/ui/overview')
-    await waitFor(() => expect(spy).toHaveBeenCalledWith('/api/ui/panels'))
+    await waitFor(() => expect(spy).toHaveBeenCalledWith('/api/ui/panels', expect.anything()))
 
     expect(tabLabels()).toEqual(CORE_TABS)
     expect(screen.queryByTestId('panels-error')).toBeNull()
@@ -166,5 +166,43 @@ describe('AdminShell registered panels', () => {
 
     await screen.findByTestId('login-panel')
     expect(spy.mock.calls.map((c) => c[0])).toEqual(['/dashboard/data'])
+  })
+
+  it('normalizes a trailing slash on a panel path the way core tabs do', async () => {
+    mockServer(entries({ id: 'gridappsd-registry', label: 'Registry' }))
+    await renderOn('/ui/gridappsd-registry/')
+
+    await screen.findByTestId('descriptor-section')
+    await waitFor(() => expect(window.location.pathname).toBe('/ui/gridappsd-registry'))
+    expect(screen.queryByTestId('not-found')).toBeNull()
+  })
+
+  it('gives up on a panel list that never answers after 10s and says so', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.spyOn(dash, 'connectDashboard').mockReturnValue(() => {})
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((path: string, init?: RequestInit) => {
+          if (path === '/dashboard/data') {
+            return Promise.resolve(new Response(JSON.stringify(data), { status: 200 }))
+          }
+          return new Promise((_, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+          })
+        }),
+      )
+      window.history.pushState({}, '', '/ui/overview')
+      const { unmount } = render(AdminShell)
+      await vi.advanceTimersByTimeAsync(9999)
+      expect(screen.queryByTestId('panels-error')).toBeNull()
+      await vi.advanceTimersByTimeAsync(1)
+
+      expect(screen.getByTestId('panels-error')).toHaveTextContent('Could not load the registered tabs: request timed out')
+      unmount()
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
   })
 })

@@ -16,7 +16,7 @@
   } from './lib/dashboard'
   import type { AdminFSA, AdminFSAList, TopologyNode } from './lib/fsa'
   import type { MintedCert } from './lib/deviceCert'
-  import type { PanelEntry } from './lib/descriptor'
+  import { PANEL_REQUEST_TIMEOUT_MS, type PanelEntry } from './lib/descriptor'
   import { currentPath, navigate, replace } from './lib/router'
   import NavBar from './panels/NavBar.svelte'
   import Overview from './panels/Overview.svelte'
@@ -75,11 +75,11 @@
   let panelsLoaded = $state(false)
   let panelsError = $state('')
   let activePanel = $derived(
-    activeTab === 'not-found' ? panels.find((panel) => $currentPath === `/ui/${panel.id}`) : undefined,
+    activeTab === 'not-found' ? panels.find((panel) => $currentPath === `/ui/${panel.id}` || $currentPath === `/ui/${panel.id}/`) : undefined,
   )
 
   async function loadPanels() {
-    const res = await fetchJSON<PanelEntry[]>('/api/ui/panels')
+    const res = await fetchJSON<PanelEntry[]>('/api/ui/panels', { timeoutMs: PANEL_REQUEST_TIMEOUT_MS })
     if (destroyed) return
     if (res.ok) {
       panels = Array.isArray(res.data) ? res.data : []
@@ -99,6 +99,14 @@
     if (path === '/ui/' || !path.startsWith('/ui/') || !path.endsWith('/')) return
     const slug = path.slice('/ui/'.length, -1)
     if (TABS.some((tab) => tab.slug === slug)) replace(`/ui/${slug}`)
+  })
+
+  // Panel paths normalize the same way, once the panel list is known.
+  $effect(() => {
+    const path = $currentPath
+    if (!path.startsWith('/ui/') || !path.endsWith('/')) return
+    const slug = path.slice('/ui/'.length, -1)
+    if (panels.some((panel) => panel.id === slug)) replace(`/ui/${slug}`)
   })
 
   function onTabClick(event: MouseEvent, slug: TabSlug) {

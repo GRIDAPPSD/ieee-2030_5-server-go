@@ -97,4 +97,17 @@ describe('PanelView', () => {
     expect(screen.getByTestId('descriptor-heading')).toHaveTextContent('Back')
     unmount()
   })
+
+  it('shows a 200 reply whose body is not a descriptor as an error in words, not as Loading', async () => {
+    for (const data of [null, 'text', 7]) {
+      vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: data as never })
+      const { unmount } = render(PanelView, { props: { id: 'p' } })
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(screen.getByRole('alert')).toHaveTextContent('The server sent a reply for this panel that could not be read.')
+      expect(screen.queryByTestId('panel-loading')).toBeNull()
+      unmount()
+      vi.restoreAllMocks()
+    }
+  })
 })

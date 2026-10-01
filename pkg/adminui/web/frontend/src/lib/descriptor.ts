@@ -71,21 +71,28 @@ export function badgeClass(variant: string | undefined): string {
   return BADGE_CLASSES.neutral
 }
 
-// Mirrors the server's checkHref as a second defence: http or https, or a
-// relative reference with no scheme or host. Returns null for anything
-// else, and the caller shows the text unlinked.
+// The rule pkg/sep2admin's checkHref enforces at encode, applied again as
+// a second defence; href_cases.json holds the cases both sides run.
+// Returns null for a refused href, and the caller shows the text unlinked.
 export function safeHref(href: string | undefined): string | null {
   if (!href) return null
   for (let i = 0; i < href.length; i++) {
     const code = href.charCodeAt(i)
     if (code <= 0x20 || code === 0x7f || href[i] === '\\') return null
   }
-  const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(href)
-  if (scheme) {
-    const name = scheme[1].toLowerCase()
-    return name === 'http' || name === 'https' ? href : null
+  const lower = href.toLowerCase()
+  if (lower.startsWith('http://') || lower.startsWith('https://')) {
+    const rest = href.slice(href.indexOf('//') + 2)
+    const authority = rest.slice(0, firstOf(rest, '/?#'))
+    return authority === '' || authority.includes('@') ? null : href
   }
-  return href.startsWith('//') ? null : href
+  if (href.startsWith('//')) return null
+  return href.slice(0, firstOf(href, '/?#')).includes(':') ? null : href
+}
+
+function firstOf(s: string, chars: string): number {
+  for (let i = 0; i < s.length; i++) if (chars.includes(s[i])) return i
+  return s.length
 }
 
 // How often an open panel is re-read, and how long one read may take. The

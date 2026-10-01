@@ -98,27 +98,24 @@ describe('badgeClass', () => {
   })
 })
 
+// The same list pkg/sep2admin runs through its encoder check, so the
+// renderer's second defence accepts exactly what the server lets through.
+const hrefCases = JSON.parse(
+  readFileSync('../../../../pkg/sep2admin/testdata/href_cases.json', 'utf8'),
+) as { href: string; ok: boolean }[]
+
 describe('safeHref', () => {
-  it('admits http, https and relative references', () => {
-    for (const ok of ['/ui/devices', 'a/b:c', '?q=1', '#frag', 'http://h/p', 'HTTPS://h/p?x=1']) {
-      expect(safeHref(ok)).toBe(ok)
+  it('accepts and refuses exactly the shared cases the Go encoder check does', () => {
+    expect(hrefCases.length).toBeGreaterThan(30)
+    expect(hrefCases.some((c) => c.ok)).toBe(true)
+    expect(hrefCases.some((c) => !c.ok)).toBe(true)
+    for (const c of hrefCases) {
+      expect([c.href, safeHref(c.href) !== null]).toEqual([c.href, c.ok])
+      if (c.ok) expect(safeHref(c.href)).toBe(c.href)
     }
   })
 
-  it('refuses every other scheme, scheme-relative hosts, and bytes a browser rewrites', () => {
-    for (const bad of [
-      'javascript:alert(1)',
-      'JaVaScRiPt:x',
-      'data:text/html,x',
-      'vbscript:x',
-      '//evil.example/x',
-      '/ok\\evil',
-      'java\tscript:x',
-      ' javascript:x',
-      '',
-      undefined,
-    ]) {
-      expect(safeHref(bad)).toBeNull()
-    }
+  it('refuses an undefined href', () => {
+    expect(safeHref(undefined)).toBeNull()
   })
 })

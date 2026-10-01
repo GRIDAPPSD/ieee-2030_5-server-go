@@ -40,9 +40,12 @@
         timeoutMs: PANEL_REQUEST_TIMEOUT_MS,
       })
       if (ctrl.signal.aborted) return
-      if (res.ok) {
+      if (res.ok && typeof res.data === 'object' && res.data !== null) {
         descriptor = res.data
         error = ''
+      } else if (res.ok) {
+        descriptor = null
+        error = 'The server sent a reply for this panel that could not be read.'
       } else {
         descriptor = null
         error = describe(res.status, res.error)

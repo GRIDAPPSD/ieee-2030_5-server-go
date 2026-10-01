@@ -257,6 +257,33 @@ type Config struct {
 	MirrorReadingMaxPerSeries int
 }
 
+// ParsePEN validates the value of SEP2_PEN: empty is unset (nil), anything
+// else must be a base-10 uint32. An unparseable value is an error rather
+// than a silently ignored setting.
+func ParsePEN(v string) (*uint32, error) {
+	if v == "" {
+		return nil, nil
+	}
+	n, err := strconv.ParseUint(v, 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("SEP2_PEN: %q is not a valid uint32: %w", v, err)
+	}
+	pen := uint32(n)
+	return &pen, nil
+}
+
+// ParseSEP2Edition validates the value of SEP2_EDITION: empty (unset,
+// resolved by Config.EffectiveSEP2Edition) or one of the two declared
+// editions. An unrecognized value is an error, not the default.
+func ParseSEP2Edition(v string) (string, error) {
+	switch v {
+	case "", "2018", "2023":
+		return v, nil
+	default:
+		return "", fmt.Errorf(`SEP2_EDITION: %q is not "2018" or "2023"`, v)
+	}
+}
+
 // ParseFlowReservationDeadlineSeconds validates the value of
 // SEP2_FLOW_RESERVATION_DEADLINE_SECONDS: empty is unset (zero), anything
 // else must be whole seconds from 1 to 3600.

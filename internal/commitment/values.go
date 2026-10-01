@@ -9,6 +9,7 @@ import (
 // Grant is a live-or-not FlowReservationResponse as the ledger sees it.
 type Grant struct {
 	MRID        string
+	ID          string // store id under EndDeviceID; "" for a grant not yet stored
 	EndDeviceID string // the {id} it is stored under
 	FleetKey    string // resolved at read time from EndDeviceID
 	Window      *Window
@@ -20,6 +21,7 @@ type Grant struct {
 // Control is an admin-issued DERControl as the ledger sees it.
 type Control struct {
 	MRID      string
+	ID        string // store id within Scope
 	Scope     string // edev/fsa/derp
 	FleetKey  string
 	Window    Window // already clipped at SupersededAt, see design 5.2

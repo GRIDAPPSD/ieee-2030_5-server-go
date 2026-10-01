@@ -35,7 +35,12 @@ type Canceller struct {
 // and writers cancel an answered one through commitment.Ledger.CancelGrant,
 // the only path that cancels a grant and its executions. A nil ledger or
 // writers refuse an answered cancel (fail closed) and never a pending one.
-func NewCanceller(frq FRQStore, frp FRPStore, queue *Queue, ledger *commitment.Ledger, writers commitment.Writers) *Canceller {
+// WithNotifier notifies the response list's subscribers once a grant is
+// cancelled; a pending request's denial notifies through the queue.
+func NewCanceller(frq FRQStore, frp FRPStore, queue *Queue, ledger *commitment.Ledger, writers commitment.Writers, opts ...Option) *Canceller {
+	if h := newNotifyHook(opts); h.n != nil {
+		writers = NotifyingWriters(writers, h.n)
+	}
 	return &Canceller{frq: frq, frp: frp, queue: queue, ledger: ledger, writers: writers}
 }
 

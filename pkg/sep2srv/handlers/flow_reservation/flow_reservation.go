@@ -14,6 +14,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/listhandler"
 	coreresponse "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/response"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -58,6 +59,38 @@ func BuildFlowReservationResponseList(href string, result store.ListResult[sep2.
 			PollRate: pollRate,
 		},
 		FlowReservationResponse: result.Items,
+	}
+}
+
+// PendingFunc reports whether any request under edevID is still waiting for
+// its response. Satisfied by flowreservation.NewPendingCheck.
+type PendingFunc func(ctx context.Context, edevID string) (bool, error)
+
+// HandleListFlowReservationResponses returns a handler for GET
+// /edev/{id}/frp. While pending reports a request awaiting its response the
+// list advertises pendingPollRate, so a client that follows pollRate looks
+// again soon; otherwise it advertises pollRate. A pending check that fails
+// is logged and the registered pollRate is served, since a wrong short rate
+// would only cost polling and a wrong long one hides a reachable answer.
+func HandleListFlowReservationResponses(
+	responses store.ScopedStore[sep2.FlowReservationResponse],
+	pending PendingFunc,
+	pollRate, pendingPollRate uint32,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		edevID := r.PathValue("id")
+		rate := pollRate
+		if pending != nil {
+			waiting, err := pending(r.Context(), edevID)
+			if err != nil {
+				log.Printf("flow_reservation: pending check for %s failed, serving the registered pollRate: %v", edevID, err)
+			} else if waiting {
+				rate = pendingPollRate
+			}
+		}
+		listhandler.ListHandler[sep2.FlowReservationResponse, sep2.FlowReservationResponseList](
+			store.Under(responses, edevID), BuildFlowReservationResponseList, rate,
+		)(w, r)
 	}
 }
 

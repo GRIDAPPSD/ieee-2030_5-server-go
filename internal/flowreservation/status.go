@@ -31,6 +31,16 @@ func responseHref(edevID, frqID string) string {
 	return "/edev/" + edevID + "/frp/" + frqID
 }
 
+// requestID recovers the store id from a request's own href, under the
+// EndDevice it is stored beneath. ok is false for any other shape.
+func requestID(edevID, href string) (string, bool) {
+	id, ok := strings.CutPrefix(href, "/edev/"+edevID+"/frq/")
+	if !ok || id == "" || strings.Contains(id, "/") {
+		return "", false
+	}
+	return id, true
+}
+
 // ResponseID recovers the store id from a response's own href, under the
 // EndDevice it is stored beneath. ok is false for any other shape.
 func ResponseID(edevID, href string) (string, bool) {

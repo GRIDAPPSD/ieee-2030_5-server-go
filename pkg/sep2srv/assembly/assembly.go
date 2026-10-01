@@ -319,6 +319,11 @@ type RouterConfig struct {
 	// Threading this to a server-side config knob is left to whichever
 	// issue exposes it to an operator (#670's admin surface).
 	FlowReservationDeadline time.Duration
+
+	// FlowReservationPendingPollRate is the pollRate a EndDevice's
+	// FlowReservationResponseList advertises while one of its requests has no
+	// response yet; the list advertises 900 s otherwise (#669). Zero takes 30 s.
+	FlowReservationPendingPollRate time.Duration
 }
 
 // AuthPolicy bundles the three auth touch points the protocol router and the
@@ -428,7 +433,7 @@ func BuildProtocolRouter(
 		registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
 		registerDERRoutes(gated, stores)
 		registerMeteringRoutes(gated, stores)
-		registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, authPolicy.Identity)
+		registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, notifier)
 	}
 
 	var protocolChain http.Handler
@@ -1270,7 +1275,7 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(readingTypes))
 }
 
-func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline time.Duration, identity func(ctx context.Context) (lfdi, sfdi string, ok bool)) {
+func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline, frpPendingPollRate time.Duration, identity func(ctx context.Context) (lfdi, sfdi string, ok bool), notifier ResourceNotifier) {
 	if !store.IsAbsent(stores.Configurations) {
 		mux.HandleFunc("GET /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 		mux.HandleFunc("PUT /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
@@ -1386,12 +1391,18 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		// flowReservationResponses.Create, not the POST handler directly.
 		// #714: every grant it stores is checked against the fleet's
 		// commitments; a nil ledger refuses every grant with a window.
+		// #669: a nil notifier must stay a nil interface, not a typed nil.
+		var frpNotifier flowreservation.Notifier
+		if notifier != nil {
+			frpNotifier = notifier
+		}
 		flowReservationQueue := flowreservation.NewQueue(
 			stores.FlowReservationRequests, flowReservationResponses,
 			flowreservation.NewLedgerGate(stores.CommitmentLedger, commitment.Resolver{
 				Devices: stores.EndDevices, Managers: stores.EndDeviceManagers,
 			}),
 			flowreservation.Config{Deadline: frpDeadline}, pen,
+			flowreservation.WithNotifier(frpNotifier),
 		)
 
 		mux.HandleFunc("GET /edev/{id}/frq", scopedListHandler[sep2.FlowReservationRequest, sep2.FlowReservationRequestList](
@@ -1403,8 +1414,10 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		// Only the read routes derive a response's status; the queue writes
 		// and checks the store as stored.
 		servedResponses := servedFlowReservationResponses(flowReservationResponses, stores)
-		mux.HandleFunc("GET /edev/{id}/frp", scopedListHandler[sep2.FlowReservationResponse, sep2.FlowReservationResponseList](
-			servedResponses, "id", coreflowrsv.BuildFlowReservationResponseList, 900,
+		mux.HandleFunc("GET /edev/{id}/frp", coreflowrsv.HandleListFlowReservationResponses(
+			servedResponses,
+			flowreservation.NewPendingCheck(stores.FlowReservationRequests, flowReservationResponses),
+			900, pendingPollRateSeconds(frpPendingPollRate),
 		))
 
 		// The two FlowReservation instances. One POST mints both
@@ -1429,6 +1442,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 			flowreservation.NewCanceller(
 				stores.FlowReservationRequests, flowReservationResponses, flowReservationQueue,
 				stores.CommitmentLedger, commitmentWriters(stores),
+				flowreservation.WithNotifier(frpNotifier),
 			),
 		))
 
@@ -1516,6 +1530,15 @@ func commitmentWriters(stores *Stores) commitment.Writers {
 		return commitment.Writers{}
 	}
 	return sources.NewWriters(issuer, stores.FlowReservationResponseLifecycles)
+}
+
+// pendingPollRateSeconds is d as whole seconds for a pollRate, 30 s when
+// unset and never below one second.
+func pendingPollRateSeconds(d time.Duration) uint32 {
+	if d <= 0 {
+		return 30
+	}
+	return uint32(max(d/time.Second, 1))
 }
 
 // servedFlowReservationResponses is responses as a reader sees them: with

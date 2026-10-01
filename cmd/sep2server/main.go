@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -225,11 +224,11 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	pen, err := envUint32("SEP2_PEN")
+	pen, err := config.ParsePEN(os.Getenv("SEP2_PEN"))
 	if err != nil {
 		return nil, err
 	}
-	sep2Edition, err := parseSEP2Edition(os.Getenv("SEP2_EDITION"))
+	sep2Edition, err := config.ParseSEP2Edition(os.Getenv("SEP2_EDITION"))
 	if err != nil {
 		return nil, err
 	}
@@ -345,37 +344,6 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
-}
-
-// envUint32 parses key as a base-10 uint32, returning nil when the env var
-// is unset (the empty string). An unparseable value is a startup error, not
-// a silently ignored setting: every other fallible SEP2_* setting in this
-// file (envPathOr, expandCSVPaths) fails closed the same way.
-func envUint32(key string) (*uint32, error) {
-	v := os.Getenv(key)
-	if v == "" {
-		return nil, nil
-	}
-	n, err := strconv.ParseUint(v, 10, 32)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %q is not a valid uint32: %w", key, v, err)
-	}
-	pen := uint32(n)
-	return &pen, nil
-}
-
-// parseSEP2Edition validates SEP2_EDITION: empty (unset, resolved by
-// Config.EffectiveSEP2Edition) or one of the two declared editions. An
-// unrecognized value is a startup error, the same fail-closed shape every
-// other fallible SEP2_* setting in this file takes (see envUint32), rather
-// than being silently treated as the default.
-func parseSEP2Edition(v string) (string, error) {
-	switch v {
-	case "", "2018", "2023":
-		return v, nil
-	default:
-		return "", fmt.Errorf(`SEP2_EDITION: %q is not "2018" or "2023"`, v)
-	}
 }
 
 // parseCSV splits a comma-separated env value into trimmed, non-empty

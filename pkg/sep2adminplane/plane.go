@@ -123,18 +123,9 @@ func New(cfg Config) (*Plane, error) {
 	if cfg.ReadOnly && cfg.ControlWrites {
 		return nil, ErrReadOnlyWithControlWrites
 	}
-	edition, err := resolveEdition(cfg.Edition, cfg.Stores.Edition2023)
+	edition, deadline, grace, err := resolveSettings(cfg)
 	if err != nil {
 		return nil, err
-	}
-	durations := config.Config{FlowReservationDeadline: cfg.FlowReservationDeadline, FlowReservationRetentionGrace: cfg.RetentionGrace}
-	deadline, err := durations.EffectiveFlowReservationDeadline()
-	if err != nil {
-		return nil, fmt.Errorf("sep2adminplane: %w", err)
-	}
-	grace, err := durations.EffectiveFlowReservationRetentionGrace()
-	if err != nil {
-		return nil, fmt.Errorf("sep2adminplane: %w", err)
 	}
 
 	stores, err := adminStores(cfg, edition, deadline, grace)
@@ -157,6 +148,25 @@ func New(cfg Config) (*Plane, error) {
 		return nil, fmt.Errorf("sep2adminplane: %w", err)
 	}
 	return &Plane{handler: h, patterns: patterns}, nil
+}
+
+// resolveSettings turns the edition, deadline and grace of cfg into the values
+// the plane runs under: an unset one takes the server's default.
+func resolveSettings(cfg Config) (handler.SEP2Edition, time.Duration, time.Duration, error) {
+	edition, err := resolveEdition(cfg.Edition, cfg.Stores.Edition2023)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	durations := config.Config{FlowReservationDeadline: cfg.FlowReservationDeadline, FlowReservationRetentionGrace: cfg.RetentionGrace}
+	deadline, err := durations.EffectiveFlowReservationDeadline()
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("sep2adminplane: %w", err)
+	}
+	grace, err := durations.EffectiveFlowReservationRetentionGrace()
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("sep2adminplane: %w", err)
+	}
+	return edition, deadline, grace, nil
 }
 
 // adminStores is the admin plane's view of cfg.Stores with the settings New

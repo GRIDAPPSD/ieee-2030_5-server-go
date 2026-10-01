@@ -141,6 +141,11 @@ type Stores struct {
 	// takes the queue's default.
 	FlowReservationDeadline time.Duration
 
+	// FlowReservationRetentionGrace is how long an ended flow reservation
+	// stays readable before retention removes it (#672). Zero takes the
+	// package default.
+	FlowReservationRetentionGrace time.Duration
+
 	// DERControlIssuer is the process's one DER control issuer (#763), shared
 	// by the admin DER control handler and the grant cancel writers. Nil makes
 	// each of them build its own.

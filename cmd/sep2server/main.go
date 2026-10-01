@@ -237,6 +237,10 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	flowReservationRetentionGrace, err := config.ParseFlowReservationRetentionGraceSeconds(os.Getenv("SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS"))
+	if err != nil {
+		return nil, err
+	}
 
 	return &config.Config{
 		Addr:            envOr("SEP2_ADDR", ":443"),
@@ -316,6 +320,10 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		SEP2Edition: sep2Edition,
 
 		FlowReservationDeadline: flowReservationDeadline,
+
+		// #672: unset by default (zero), which
+		// Config.EffectiveFlowReservationRetentionGrace resolves to 1800 s.
+		FlowReservationRetentionGrace: flowReservationRetentionGrace,
 	}, nil
 }
 

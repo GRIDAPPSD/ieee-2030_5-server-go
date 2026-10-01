@@ -430,40 +430,63 @@ const singletonKey = "default"
 // this is reported rather than attempted.
 func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string) (FleetDeviceMeasurements, error) {
 	var out FleetDeviceMeasurements
-	if h.MirrorUsagePoints == nil {
-		return out, nil
+	mirrors, err := mirrorReadingsFor(ctx, h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool { return device == lfdi })
+	if err != nil {
+		return FleetDeviceMeasurements{}, err
 	}
-	result, err := h.MirrorUsagePoints.List(ctx, store.ListOptions{Unbounded: true})
+	for _, m := range mirrors {
+		for i := range m.readings {
+			considerMeasurement(&out, m.readings[i], h.Edition, m.isDER)
+		}
+	}
+	return out, nil
+}
+
+// deviceMirror is one MirrorUsagePoint attributed to a device, with its
+// inline and out-of-band readings gathered and their ReadingType inherited.
+type deviceMirror struct {
+	isDER    bool
+	postRate *uint32
+	readings []sep2.MirrorMeterReading
+}
+
+// mirrorReadingsFor gathers every mirror whose stored deviceLFDI satisfies
+// match, for the fleet route and the DER control delivery figure alike. A nil
+// mups reader yields no mirrors; any store error is returned, never read as
+// "no readings".
+func mirrorReadingsFor(ctx context.Context, mups store.ResourceReader[sep2.MirrorUsagePoint], mmrs store.ScopedReader[sep2.MirrorMeterReading], match func(deviceLFDI string) bool) ([]deviceMirror, error) {
+	if mups == nil {
+		return nil, nil
+	}
+	result, err := mups.List(ctx, store.ListOptions{Unbounded: true})
 	if err != nil {
 		// List never fails for an empty collection (nil error, zero
 		// items): any error here is a genuine backend failure, and every
 		// device's measurements are unreachable until it clears, not merely
 		// this one device's.
 		log.Printf("admin fleet: MirrorUsagePoints.List: %v", err)
-		return FleetDeviceMeasurements{}, fmt.Errorf("MirrorUsagePoints.List: %w", err)
+		return nil, fmt.Errorf("MirrorUsagePoints.List: %w", err)
 	}
+	var out []deviceMirror
 	for _, mup := range result.Items {
-		// The attribution point: a reading is credited to lfdi by the
+		// The attribution point: a reading is credited to a device by the
 		// mirror's own stored deviceLFDI, which #720 requires to be either
 		// the poster itself or a device the poster currently manages.
-		if mup.DeviceLFDI != lfdi {
+		if !match(mup.DeviceLFDI) {
 			continue
 		}
 		readings := append([]sep2.MirrorMeterReading{}, mup.MirrorMeterReading...)
-		if h.MirrorMeterReadings != nil {
+		if mmrs != nil {
 			mupID := pathTail(mup.Href)
-			mmrs, err := h.MirrorMeterReadings.List(ctx, mupID, store.ListOptions{Unbounded: true})
+			page, err := mmrs.List(ctx, mupID, store.ListOptions{Unbounded: true})
 			if err != nil {
 				log.Printf("admin fleet: MirrorMeterReadings.List(%q): %v", mupID, err)
-				return FleetDeviceMeasurements{}, fmt.Errorf("MirrorMeterReadings.List(%q): %w", mupID, err)
+				return nil, fmt.Errorf("MirrorMeterReadings.List(%q): %w", mupID, err)
 			}
-			readings = append(readings, mmrs.Items...)
+			readings = append(readings, page.Items...)
 		}
 		inheritReadingTypeByMRID(readings)
-		isDER := mup.RoleFlags&roleFlagIsDER != 0
-		for i := range readings {
-			considerMeasurement(&out, readings[i], h.Edition, isDER)
-		}
+		out = append(out, deviceMirror{isDER: mup.RoleFlags&roleFlagIsDER != 0, postRate: mup.PostRate, readings: readings})
 	}
 	return out, nil
 }
@@ -552,27 +575,8 @@ func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReadi
 	}
 	value := scaledValue(float64(*mmr.Reading.Value), multiplier)
 	mapped := false
-	if directional && rt.FlowDirection != nil {
-		magnitude := math.Abs(value)
-		flipped := edition == Edition2023 && isDER
-		switch *rt.FlowDirection {
-		case sep2.FlowDirectionForward:
-			if flipped {
-				value = magnitude
-			} else {
-				value = -magnitude
-			}
-			mapped = true
-		case sep2.FlowDirectionReverse:
-			if flipped {
-				value = -magnitude
-			} else {
-				value = magnitude
-			}
-			mapped = true
-		case flowDirectionNet:
-			mapped = edition == Edition2023 && isDER
-		}
+	if directional {
+		value, mapped = exportPositive(value, rt.FlowDirection, edition, isDER)
 	}
 
 	m := &FleetMeasurement{
@@ -587,6 +591,32 @@ func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReadi
 	if *slot == nil || m.ReadingTime >= (*slot).ReadingTime {
 		*slot = m
 	}
+}
+
+// exportPositive maps a scaled P or Q value to export-positive under the
+// rule in considerMeasurement's doc comment. mapped is false when the
+// direction is absent or not mappable; value is then returned unchanged.
+func exportPositive(value float64, flowDirection *uint8, edition SEP2Edition, isDER bool) (float64, bool) {
+	if flowDirection == nil {
+		return value, false
+	}
+	magnitude := math.Abs(value)
+	flipped := edition == Edition2023 && isDER
+	switch *flowDirection {
+	case sep2.FlowDirectionForward:
+		if flipped {
+			return magnitude, true
+		}
+		return -magnitude, true
+	case sep2.FlowDirectionReverse:
+		if flipped {
+			return -magnitude, true
+		}
+		return magnitude, true
+	case flowDirectionNet:
+		return value, edition == Edition2023 && isDER
+	}
+	return value, false
 }
 
 // scaledValue applies a sep2 multiplier+value pair's power-of-ten scale.

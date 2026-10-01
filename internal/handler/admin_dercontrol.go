@@ -135,6 +135,13 @@ type AdminDERControlHandler struct {
 	Fleets FleetResolver
 	Ledger CommitmentLedger
 
+	// MirrorUsagePoints and MirrorMeterReadings back each listed control's
+	// delivery; nil means no mirror storage, so every delivery reads "no
+	// readings". Edition selects the sign mapping the fleet route uses.
+	MirrorUsagePoints   store.ResourceReader[sep2.MirrorUsagePoint]
+	MirrorMeterReadings store.ScopedReader[sep2.MirrorMeterReading]
+	Edition             SEP2Edition
+
 	// Persisted reports whether both the control and lifecycle stores write
 	// through to disk, echoed in the create response.
 	Persisted bool
@@ -351,6 +358,8 @@ type DERControlResponseCounts struct {
 type DERControlListItem struct {
 	DERControlView
 	Responses DERControlResponseCounts `json:"responses"`
+	// Delivery is null only for a control with no interval.
+	Delivery *DERControlDelivery `json:"delivery"`
 }
 
 // DERControlList is the GET /api/der/controls body. Controls is always an
@@ -807,6 +816,14 @@ func (h *AdminDERControlHandler) HandleList() http.HandlerFunc {
 			return
 		}
 
+		mirrors, err := mirrorReadingsFor(ctx, h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool {
+			return strings.EqualFold(device, edev.LFDI)
+		})
+		if err != nil {
+			h.internal(w, r, "list mirror readings")
+			return
+		}
+
 		parents, err := h.Controls.Parents(ctx)
 		if err != nil {
 			h.internal(w, r, "list control scopes")
@@ -837,10 +854,15 @@ func (h *AdminDERControlHandler) HandleList() http.HandlerFunc {
 					h.internal(w, r, "load lifecycle")
 					return
 				}
-				items = append(items, DERControlListItem{
+				item := DERControlListItem{
 					DERControlView: newDERControlView(scope, ctrl, lc, now),
 					Responses:      counts.forMRID(ctrl.MRID),
-				})
+				}
+				if ctrl.Interval != nil {
+					ws, we := effectiveWindow(*ctrl.Interval, lc, now)
+					item.Delivery = newDelivery(edev.LFDI, mirrors, h.Edition, ws, we)
+				}
+				items = append(items, item)
 			}
 		}
 		writeJSON(w, http.StatusOK, DERControlList{Device: deviceID, Controls: items})

@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -60,5 +62,23 @@ func TestNewAdminDERControlHandler_LockStoresWiredIsSilent(t *testing.T) {
 	}
 	if buf.Len() != 0 {
 		t.Errorf("log output = %q, want none", buf.String())
+	}
+}
+
+// The delivery figure reads the mirror stores and the declared edition; a
+// store left unset stays a nil field, never a typed-nil interface.
+func TestNewAdminDERControlHandler_ThreadsMirrorStoresAndEdition(t *testing.T) {
+	s := derControlWiringStores()
+	h := newAdminDERControlHandler(s)
+	if h.MirrorUsagePoints != nil || h.MirrorMeterReadings != nil || h.Edition != "" {
+		t.Fatalf("unset mirror stores: MirrorUsagePoints %v, MirrorMeterReadings %v, Edition %q, want nil, nil, empty", h.MirrorUsagePoints, h.MirrorMeterReadings, h.Edition)
+	}
+
+	s.MirrorUsagePoints = memory.NewStore[sep2.MirrorUsagePoint]()
+	s.MirrorMeterReadings = memory.NewScopedStore[sep2.MirrorMeterReading]()
+	s.Sep2Edition = handler.Edition2023
+	h = newAdminDERControlHandler(s)
+	if h.MirrorUsagePoints != s.MirrorUsagePoints || h.MirrorMeterReadings != s.MirrorMeterReadings || h.Edition != handler.Edition2023 {
+		t.Fatalf("wired: MirrorUsagePoints %v, MirrorMeterReadings %v, Edition %q, want the stores and 2023", h.MirrorUsagePoints, h.MirrorMeterReadings, h.Edition)
 	}
 }

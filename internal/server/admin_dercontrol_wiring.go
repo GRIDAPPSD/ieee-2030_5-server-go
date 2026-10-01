@@ -42,6 +42,13 @@ func newAdminDERControlHandler(stores *Stores) *handler.AdminDERControlHandler {
 	if stores.Responses != nil {
 		h.Responses = stores.Responses
 	}
+	h.Edition = stores.Sep2Edition
+	if !store.IsAbsent(stores.MirrorUsagePoints) {
+		h.MirrorUsagePoints = stores.MirrorUsagePoints
+	}
+	if !store.IsAbsent(stores.MirrorMeterReadings) {
+		h.MirrorMeterReadings = stores.MirrorMeterReadings
+	}
 	// A missing management store or ledger leaves the handler's field nil,
 	// so every create answers 500 rather than going unchecked; a cancel still
 	// runs, without the fleet lock, and logs a warning. IsAbsent

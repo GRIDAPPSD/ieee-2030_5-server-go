@@ -27,6 +27,8 @@ const wireKeys = {
   Fleet: Object.keys({ aggregatorLFDI: true, devices: true, rollup: true } satisfies Record<keyof Fleet, true>),
   FleetDevice: Object.keys({
     lfdi: true,
+    edevId: true,
+    href: true,
     status: true,
     availability: true,
     measurements: true,

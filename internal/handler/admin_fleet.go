@@ -97,7 +97,11 @@ type FleetDeviceAvailability struct {
 
 // FleetDevice is one managed device's reported state.
 type FleetDevice struct {
-	LFDI         string                   `json:"lfdi"`
+	LFDI string `json:"lfdi"`
+	// EdevID and Href come from the stored EndDevice record. A managed LFDI
+	// with no EndDevice record carries neither; they are never synthesized.
+	EdevID       string                   `json:"edevId,omitempty"`
+	Href         string                   `json:"href,omitempty"`
 	Status       *FleetDeviceStatus       `json:"status,omitempty"`
 	Availability *FleetDeviceAvailability `json:"availability,omitempty"`
 	Measurements FleetDeviceMeasurements  `json:"measurements"`
@@ -297,6 +301,8 @@ func (h *AdminFleetHandler) buildDevice(ctx context.Context, lfdi string) (Fleet
 		return FleetDevice{}, fmt.Errorf("EndDevices.GetByLFDI(%q): %w", lfdi, err)
 	}
 	edevID := pathTail(dev.Href)
+	fd.EdevID = edevID
+	fd.Href = dev.Href
 	if h.DERs == nil {
 		return fd, nil
 	}

@@ -35,6 +35,9 @@ export interface FleetDeviceAvailability {
 
 export interface FleetDevice {
   lfdi: string
+  // edevId and href are absent for a managed LFDI never registered as an EndDevice.
+  edevId?: string
+  href?: string
   status?: FleetDeviceStatus
   availability?: FleetDeviceAvailability
   measurements: FleetDeviceMeasurements

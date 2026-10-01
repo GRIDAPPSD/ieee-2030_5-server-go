@@ -152,7 +152,7 @@ func registerAll(mux routeRegistrar, stores *Stores, policy AuthPolicy) {
 	registerMirrorRoutes(mux, stores, policy, nil)
 	registerDERRoutes(mux, stores)
 	registerMeteringRoutes(mux, stores)
-	registerNewFunctionSetRoutes(mux, stores, nil, 0, nil)
+	registerNewFunctionSetRoutes(mux, stores, nil, 0, 0, nil, nil)
 }
 
 // TestOwnershipGate_PatternListIsUnchanged registers every route twice, bare

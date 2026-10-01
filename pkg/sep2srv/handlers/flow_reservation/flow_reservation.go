@@ -14,6 +14,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/listhandler"
 	coreresponse "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/response"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -46,18 +47,69 @@ func BuildFlowReservationRequestList(href string, result store.ListResult[sep2.F
 	}
 }
 
-// BuildFlowReservationResponseList constructs a FlowReservationResponseList.
+// subscribableResource is the subscribable attribute value 1: the resource
+// supports non-conditional subscriptions (IEEE 2030.5 B.2). An absent
+// attribute means not subscribable.
+const subscribableResource uint8 = 1
+
+// BuildFlowReservationResponseList constructs a FlowReservationResponseList
+// that advertises itself as subscribable.
 func BuildFlowReservationResponseList(href string, result store.ListResult[sep2.FlowReservationResponse], pollRate uint32) sep2.FlowReservationResponseList {
+	subscribable := subscribableResource
 	return sep2.FlowReservationResponseList{
 		ListResource: sep2.ListResource{
 			SubscribableResource: sep2.SubscribableResource{
-				Resource: sep2.Resource{Href: href},
+				Resource:     sep2.Resource{Href: href},
+				Subscribable: &subscribable,
 			},
 			All:      result.All,
 			Results:  result.Results,
 			PollRate: pollRate,
 		},
 		FlowReservationResponse: result.Items,
+	}
+}
+
+// PendingFunc reports whether any request under edevID is still waiting for
+// its response. Satisfied by flowreservation.NewPendingCheck.
+type PendingFunc func(ctx context.Context, edevID string) (bool, error)
+
+// HandleListFlowReservationResponses returns a handler for GET
+// /edev/{id}/frp. While pending reports a request awaiting its response the
+// list advertises pendingPollRate, so a client that follows pollRate looks
+// again soon; otherwise it advertises pollRate. A pending check that fails
+// is logged and the short rate is served, since a wrong short rate only costs
+// polling while a wrong long one makes a client with an answer waiting sit
+// out the registered interval. subscribable false drops the subscribable
+// attribute, for a server with nobody to notify.
+func HandleListFlowReservationResponses(
+	responses store.ScopedStore[sep2.FlowReservationResponse],
+	pending PendingFunc,
+	pollRate, pendingPollRate uint32,
+	subscribable bool,
+) http.HandlerFunc {
+	build := func(href string, result store.ListResult[sep2.FlowReservationResponse], rate uint32) sep2.FlowReservationResponseList {
+		list := BuildFlowReservationResponseList(href, result, rate)
+		if !subscribable {
+			list.Subscribable = nil
+		}
+		return list
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		edevID := r.PathValue("id")
+		rate := pollRate
+		if pending != nil {
+			waiting, err := pending(r.Context(), edevID)
+			if err != nil {
+				log.Printf("flow_reservation: pending check for %s failed, serving the short pollRate: %v", edevID, err)
+				rate = pendingPollRate
+			} else if waiting {
+				rate = pendingPollRate
+			}
+		}
+		listhandler.ListHandler[sep2.FlowReservationResponse, sep2.FlowReservationResponseList](
+			store.Under(responses, edevID), build, rate,
+		)(w, r)
 	}
 }
 

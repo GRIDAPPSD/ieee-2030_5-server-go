@@ -29,14 +29,21 @@ type Canceller struct {
 	queue   *Queue
 	ledger  *commitment.Ledger
 	writers commitment.Writers
+	notify  notifyHook
 }
 
 // NewCanceller builds a Canceller. queue answers a pending request; ledger
 // and writers cancel an answered one through commitment.Ledger.CancelGrant,
 // the only path that cancels a grant and its executions. A nil ledger or
 // writers refuse an answered cancel (fail closed) and never a pending one.
-func NewCanceller(frq FRQStore, frp FRPStore, queue *Queue, ledger *commitment.Ledger, writers commitment.Writers) *Canceller {
-	return &Canceller{frq: frq, frp: frp, queue: queue, ledger: ledger, writers: writers}
+// WithNotifier notifies the response list's subscribers once a grant is
+// cancelled; a pending request's denial notifies through the queue.
+func NewCanceller(frq FRQStore, frp FRPStore, queue *Queue, ledger *commitment.Ledger, writers commitment.Writers, opts ...Option) *Canceller {
+	h := newNotifyHook(opts)
+	if h.n != nil {
+		writers = NotifyingWriters(writers, h.n)
+	}
+	return &Canceller{frq: frq, frp: frp, queue: queue, ledger: ledger, writers: writers, notify: h}
 }
 
 // Cancel marks the request Cancelled with status's dateTime, then settles its
@@ -81,6 +88,13 @@ func (c *Canceller) Cancel(ctx context.Context, edevID, frqID string, status sep
 	}
 	if c.ledger == nil {
 		return commitment.ErrNoLedger
+	}
+	// The grant writer notifies only after CancelGrant returns, once the
+	// fleet lock is released.
+	if c.notify.n != nil {
+		var flush func()
+		ctx, flush = DeferNotifications(ctx, c.notify.n)
+		defer flush()
 	}
 	err = c.ledger.CancelGrant(ctx, c.writers, frp.MRID, cancelReason, sep2time.Now().Unix())
 	var conflict *commitment.ConflictError

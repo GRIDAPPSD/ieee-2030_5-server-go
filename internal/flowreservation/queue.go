@@ -52,6 +52,8 @@ type Queue struct {
 	cfg  Config
 	pen  *uint32
 
+	notify notifyHook
+
 	// after schedules f to run after d and returns a stoppable handle;
 	// production uses time.AfterFunc, tests substitute a short-deadline or
 	// synchronous stand-in so no test waits out a real 300 s bound or the
@@ -99,8 +101,9 @@ func (q *Queue) GivenUpCount() uint64 {
 // NewQueue builds a Queue. gate is required: there is no permissive
 // default, so an unwired commitment rule cannot pass for a free window.
 // cfg's zero fields take the package defaults. pen is threaded straight to
-// newFRPMRID, same meaning as RouterConfig.PEN.
-func NewQueue(frq FRQReader, frp FRPStore, gate Gate, cfg Config, pen *uint32) *Queue {
+// newFRPMRID, same meaning as RouterConfig.PEN. WithNotifier makes every
+// stored response notify its EndDevice's response list subscribers.
+func NewQueue(frq FRQReader, frp FRPStore, gate Gate, cfg Config, pen *uint32, opts ...Option) *Queue {
 	if gate == nil {
 		panic("flowreservation: NewQueue: gate must not be nil")
 	}
@@ -110,6 +113,7 @@ func NewQueue(frq FRQReader, frp FRPStore, gate Gate, cfg Config, pen *uint32) *
 		gate:     gate,
 		cfg:      cfg.withDefaults(),
 		pen:      pen,
+		notify:   newNotifyHook(opts),
 		after:    defaultAfter,
 		timers:   make(map[string]timer),
 		keyLocks: make(map[string]*sync.Mutex),
@@ -334,6 +338,19 @@ func (q *Queue) Answer(ctx context.Context, edevID, frqID string, decision Decis
 // wasting a full attempt; see lockKey's own comment for why it cannot be
 // more than that once a failed attempt has pruned its entry.
 func (q *Queue) build(ctx context.Context, edevID, frqID string, decision Decision) (sep2.FlowReservationResponse, error) {
+	frp, err := q.buildLocked(ctx, edevID, frqID, decision)
+	if err == nil {
+		// Every created response, from the deadline hold, an operator answer
+		// or a client cancel's denial, passes here. The notification runs
+		// after buildLocked has released the request's key lock, so a slow
+		// subscriber lookup holds up no other answer.
+		q.notify.fire(ctx, edevID)
+	}
+	return frp, err
+}
+
+// buildLocked is build's work, under the request's key lock.
+func (q *Queue) buildLocked(ctx context.Context, edevID, frqID string, decision Decision) (sep2.FlowReservationResponse, error) {
 	key := queueKey(edevID, frqID)
 	unlock := q.lockKey(key)
 	defer func() {

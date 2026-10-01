@@ -6,6 +6,7 @@ import {
   formatCountdown,
   formatInterval,
   formatQuantity,
+  formatMeasured,
   historyResponses,
   normalizeQueue,
   parseFleetLFDIs,
@@ -99,5 +100,18 @@ describe('parseFleetLFDIs', () => {
     expect(parseFleetLFDIs(null)).toBeNull()
     expect(parseFleetLFDIs([{ aggregatorLFDI: 'A' }, { aggregatorLFDI: 'A' }])).toBeNull()
     expect(parseFleetLFDIs([{}])).toBeNull()
+  })
+})
+
+describe('formatMeasured', () => {
+  it('keeps one decimal below 10, marks the sub-0.1 as non-zero, and leaves the rest as formatQuantity', () => {
+    expect(formatMeasured(0.4, 'Wh')).toBe('0.4 Wh')
+    expect(formatMeasured(-9.94, 'Wh')).toBe('-9.9 Wh')
+    expect(formatMeasured(0.04, 'W')).toBe('<0.1 W')
+    expect(formatMeasured(-0.04, 'W')).toBe('-<0.1 W')
+    expect(formatMeasured(0, 'Wh')).toBe('0 Wh')
+    expect(formatMeasured(1234.4, 'Wh')).toBe('1,234 Wh')
+    expect(formatMeasured(10, 'Wh')).toBe('10 Wh')
+    expect(formatMeasured(null, 'Wh')).toBe('missing')
   })
 })

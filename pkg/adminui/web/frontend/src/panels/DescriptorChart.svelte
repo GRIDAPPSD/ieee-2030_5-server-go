@@ -6,6 +6,7 @@
   import { LineChart } from 'echarts/charts'
   import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
   import { CanvasRenderer } from 'echarts/renderers'
+  import { chartTooltip, richTextSafe } from '../lib/chart'
   import type { DescriptorChartBody } from '../lib/descriptor'
 
   echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -25,6 +26,7 @@
     let instance: echarts.ECharts
     try {
       instance = echarts.init(container)
+      initError = ''
     } catch (err) {
       initError = err instanceof Error ? err.message : String(err)
       return
@@ -45,13 +47,13 @@
       {
         backgroundColor: 'transparent',
         animation: false,
-        tooltip: { trigger: 'axis', renderMode: 'richText' },
+        tooltip: { trigger: 'axis', renderMode: 'richText', formatter: chartTooltip(body.unit) },
         legend: { textStyle: { color: textColor }, top: 0 },
         grid: { left: 60, right: 30, top: 40, bottom: 30 },
         xAxis: { type: 'time', axisLabel: { color: textColor } },
         yAxis: {
           type: 'value',
-          name: body.unit,
+          name: richTextSafe(body.unit),
           nameTextStyle: { color: textColor },
           axisLabel: { color: textColor },
           splitLine: { lineStyle: { color: '#334155' } },

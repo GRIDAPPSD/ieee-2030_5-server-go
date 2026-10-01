@@ -6,6 +6,7 @@ import type { Descriptor, DescriptorChartBody } from './descriptor'
 export const MAX_CHART_SERIES = 16
 export const MAX_CHART_SERIES_POINTS = 720
 export const MAX_DESCRIPTOR_CHART_POINTS = 12000
+export const MAX_CHART_SECTIONS = 8
 
 // The range a JavaScript Date holds, in milliseconds either side of the epoch.
 const MAX_CHART_MILLIS = 8_640_000_000_000_000
@@ -14,10 +15,12 @@ export type ChartRefusal =
   | 'too-many-series'
   | 'series-too-long'
   | 'too-many-points'
+  | 'too-many-sections'
   | 'value-not-finite'
   | 'points-out-of-order'
   | 'series-without-name'
   | 'time-out-of-range'
+  | 'time-not-integer'
   | 'malformed'
 
 export function isChartBody(value: unknown): value is DescriptorChartBody {
@@ -49,7 +52,8 @@ export function chartRefusal(body: DescriptorChartBody, total: { points: number 
     for (let j = 0; j < s.points.length; j++) {
       const [ms, value] = s.points[j]
       if (!Number.isFinite(value)) return 'value-not-finite'
-      if (!Number.isInteger(ms) || Math.abs(ms) > MAX_CHART_MILLIS) return 'time-out-of-range'
+      if (Math.abs(ms) > MAX_CHART_MILLIS) return 'time-out-of-range'
+      if (!Number.isInteger(ms)) return 'time-not-integer'
       if (j > 0 && ms <= last) return 'points-out-of-order'
       last = ms
     }
@@ -61,8 +65,38 @@ export function chartRefusal(body: DescriptorChartBody, total: { points: number 
 // rest. A body of the wrong shape is 'malformed'.
 export function descriptorChartRefusals(d: Descriptor): (ChartRefusal | null)[] {
   const total = { points: 0 }
+  let charts = 0
   return d.sections.map((section) => {
     if (section.kind !== 'chart') return null
+    if (++charts > MAX_CHART_SECTIONS) return 'too-many-sections'
     return isChartBody(section.body) ? chartRefusal(section.body, total) : 'malformed'
   })
+}
+
+// ECharts wraps a series name as {style|name} in rich text without escaping
+// it, so a name holding braces, a bar or a line break can forge tokens or
+// lines. Lookalike characters keep the name readable.
+export function richTextSafe(text: string): string {
+  return text.replace(/[{}|]/g, (c) => ({ '{': '\uFF5B', '}': '\uFF5D', '|': '\uFF5C' })[c] ?? c).replace(/[\r\n]+/g, ' ')
+}
+
+export interface TooltipParam {
+  marker?: string
+  seriesName?: string
+  value?: unknown
+  axisValueLabel?: string
+}
+
+// The tooltip text for one axis position. Names and the unit are wire text,
+// so each goes through richTextSafe; the legend keeps the real name.
+export function chartTooltip(unit: string): (params: TooltipParam | TooltipParam[]) => string {
+  const suffix = unit === '' ? '' : ' ' + richTextSafe(unit)
+  return (params) => {
+    const rows = Array.isArray(params) ? params : [params]
+    const lines = rows.map((p) => {
+      const v = Array.isArray(p.value) ? p.value[1] : p.value
+      return `${p.marker ?? ''}${richTextSafe(p.seriesName ?? '')}: ${String(v)}${suffix}`
+    })
+    return [rows[0]?.axisValueLabel ?? '', ...lines].join('\n')
+  }
 }

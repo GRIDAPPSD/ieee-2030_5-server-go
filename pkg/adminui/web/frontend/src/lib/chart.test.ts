@@ -3,7 +3,7 @@
 /// <reference types="node" />
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { descriptorChartRefusals, MAX_CHART_SERIES, MAX_CHART_SERIES_POINTS, MAX_DESCRIPTOR_CHART_POINTS } from './chart'
+import { descriptorChartRefusals, MAX_CHART_SECTIONS, MAX_CHART_SERIES, MAX_CHART_SERIES_POINTS, MAX_DESCRIPTOR_CHART_POINTS } from './chart'
 import type { Descriptor, DescriptorChartBody, DescriptorSection } from './descriptor'
 
 type WireValue = number | 'NaN' | 'Infinity' | '-Infinity'
@@ -14,12 +14,13 @@ interface WireChart {
 interface ChartCase {
   name: string
   refusal: string
+  rendererOnly?: boolean
   generate?: number[][]
   charts?: WireChart[]
 }
 
 const doc = JSON.parse(readFileSync('../../../../pkg/sep2admin/testdata/chart_cases.json', 'utf8')) as {
-  bounds: { seriesPerSection: number; pointsPerSeries: number; pointsPerDescriptor: number }
+  bounds: { seriesPerSection: number; pointsPerSeries: number; pointsPerDescriptor: number; chartSectionsPerDescriptor: number }
   cases: ChartCase[]
 }
 
@@ -62,12 +63,17 @@ describe('chart refusals', () => {
       MAX_CHART_SERIES_POINTS,
       MAX_DESCRIPTOR_CHART_POINTS,
     ])
+    expect(doc.bounds.chartSectionsPerDescriptor).toBe(MAX_CHART_SECTIONS)
   })
 
   it('refuses and accepts exactly the shared cases the Go encoder does', () => {
     expect(doc.cases.length).toBeGreaterThan(10)
     expect(doc.cases.some((c) => c.refusal === '')).toBe(true)
     expect(new Set(doc.cases.map((c) => c.refusal)).size).toBeGreaterThan(5)
+    for (const code of ['too-many-sections', 'time-not-integer']) {
+      expect(doc.cases.some((c) => c.refusal === code)).toBe(true)
+    }
+    expect(doc.cases.some((c) => c.rendererOnly)).toBe(true)
     for (const c of doc.cases) {
       const found = descriptorChartRefusals(descriptorOf(c)).find((r) => r !== null) ?? ''
       expect([c.name, found]).toEqual([c.name, c.refusal])

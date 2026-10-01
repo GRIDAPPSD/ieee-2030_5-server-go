@@ -14,7 +14,7 @@ import (
 // writes is unset. Stores.Responses may be nil: controls then list with zero
 // Response counts.
 func newAdminDERControlHandler(stores *Stores) *handler.AdminDERControlHandler {
-	if stores == nil || stores.DERPrograms == nil || stores.DERControls == nil || stores.DERControlLifecycles == nil || stores.EndDevices == nil {
+	if stores == nil || store.IsAbsent(stores.DERPrograms) || stores.DERControls == nil || store.IsAbsent(stores.DERControlLifecycles) || stores.EndDevices == nil {
 		return nil
 	}
 	// Run supplies the process's one issuer; a Stores built without one gets
@@ -37,9 +37,9 @@ func newAdminDERControlHandler(stores *Stores) *handler.AdminDERControlHandler {
 		Programs:   stores.DERPrograms,
 		EndDevices: stores.EndDevices,
 		Notifier:   stores.AdminNotifier,
-		Persisted:  stores.DERControls.Persists() && stores.DERControlLifecycles.Persists(),
+		Persisted:  persists(stores.DERControls) && persists(stores.DERControlLifecycles),
 	}
-	if stores.Responses != nil {
+	if !store.IsAbsent(stores.Responses) {
 		h.Responses = stores.Responses
 	}
 	h.Edition = stores.Sep2Edition

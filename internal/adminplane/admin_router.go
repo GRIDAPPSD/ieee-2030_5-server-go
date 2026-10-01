@@ -6,6 +6,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
 // Config is what Build assembles the admin router from. Each field is the
@@ -103,7 +104,7 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 	authed.HandleFunc("POST /api/certs/info", handler.HandleCertInfo())
 	if stores != nil {
 		authed.HandleFunc("GET /api/devices/by-lfdi/{lfdi}", handler.HandleDeviceLookupByLFDI(stores.EndDevices))
-		if stores.Registrations != nil {
+		if !store.IsAbsent(stores.Registrations) {
 			authed.HandleFunc("POST /api/devices", handler.HandleAddEndDevice(stores.EndDevices, stores.Registrations))
 		}
 	}

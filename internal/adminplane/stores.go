@@ -36,7 +36,7 @@ type Stores struct {
 	// Store[sep2.Registration]. The embedded *Store gives back-compat
 	// method promotion (Get/List/Count) for call sites that don't need
 	// the persistence flush.
-	Registrations *memory.RegistrationStore
+	Registrations store.ResourceStore[sep2.Registration]
 	// RegistrationPolicy supplies the pIN and pollRate for the Registration
 	// core creates alongside every EndDevice. core v0.13.0 added this
 	// field to assembly.Stores. The zero value provisions
@@ -48,15 +48,15 @@ type Stores struct {
 	// manual PIN entry at POST /api/devices) is a follow-up feature
 	// decision, not forced by copying the field.
 	RegistrationPolicy  memory.RegistrationPolicy
-	MirrorUsagePoints   *memory.Store[sep2.MirrorUsagePoint]
-	MirrorMeterReadings *memory.ScopedStore[sep2.MirrorMeterReading]
+	MirrorUsagePoints   store.ResourceStore[sep2.MirrorUsagePoint]
+	MirrorMeterReadings store.ScopedStore[sep2.MirrorMeterReading]
 
 	// DER stores
-	DERs              *memory.ScopedStore[sep2.DER]
+	DERs              store.ScopedStore[sep2.DER]
 	DERCapabilities   *memory.ScopedStore[sep2.DERCapability]
 	DERSettings       *memory.ScopedStore[sep2.DERSettings]
-	DERStatuses       *memory.ScopedStore[sep2.DERStatus]
-	DERAvailabilities *memory.ScopedStore[sep2.DERAvailability]
+	DERStatuses       store.ScopedStore[sep2.DERStatus]
+	DERAvailabilities store.ScopedStore[sep2.DERAvailability]
 	// DERPrograms is the persistence-aware wrapper. It satisfies
 	// store.ScopedStore[sep2.DERProgram] and its Create/Delete add the
 	// disk flush.
@@ -66,7 +66,7 @@ type Stores struct {
 	// .ScopedStore reach-through exists. Consumers that want a scoped
 	// DERProgram surface take the store.ScopedStore contract and address
 	// resources by (parent, id).
-	DERPrograms *memory.DERProgramStore
+	DERPrograms store.ScopedStore[sep2.DERProgram]
 	// DERControls is the persistence-aware wrapper (GRIDAPPSD/ieee-2030_5-server-go#565).
 	// It satisfies store.ScopedStore[sep2.DERControl]; its Create/Update/Delete
 	// add the disk flush, and it carries the mRID-to-scope index
@@ -79,7 +79,7 @@ type Stores struct {
 	// pkg/sep2srv/assembly/assembly.go behind store.IsAbsent) reads it; the
 	// #566 admin DER control routes write it through
 	// internal/dercontrol.Issuer. Nil leaves those routes unmounted.
-	DERControlLifecycles *dercontrol.LifecycleStore
+	DERControlLifecycles store.ScopedStore[dercontrol.LifecycleRecord]
 	DefaultDERControls   *memory.ScopedStore[sep2.DefaultDERControl]
 	DERCurves            *memory.Store[sep2.DERCurve]
 
@@ -110,7 +110,7 @@ type Stores struct {
 	FlowReservationRequests  store.ScopedStore[sep2.FlowReservationRequest]
 	FlowReservationResponses store.ScopedStore[sep2.FlowReservationResponse]
 	ResponseSets             *memory.Store[sep2.ResponseSet]
-	Responses                *memory.ScopedStore[sep2.Response]
+	Responses                store.ScopedStore[sep2.Response]
 
 	// FlowReservationResponseLifecycles holds each response's cancel mark
 	// (#714), keyed exactly as the response and persisted like it (#761).

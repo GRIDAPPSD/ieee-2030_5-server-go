@@ -93,6 +93,10 @@
   let topology = $state<TopologyNode | null>(null)
   let topologyError = $state('')
   let unauthorized = $state('')
+  // Why the device list is missing, when the server could not read it. The
+  // 500 probe body and an SSE frame both carry it; a good frame clears it.
+  let probeError = $state('')
+  const dashboardError = $derived(data?.error || probeError)
   let streaming = $state(false)
   let disconnect: (() => void) | null = null
   let destroyed = false
@@ -143,10 +147,13 @@
     if (probe.ok) {
       data = probe.data
       history = appendHistory(history, probe.data)
+    } else {
+      probeError = probe.error
     }
 
     disconnect = connectDashboard((next) => {
       data = next
+      probeError = ''
       history = appendHistory(history, next)
     })
     streaming = true
@@ -186,6 +193,9 @@
       >{tab.label}</a>
     {/each}
   </nav>
+  {#if dashboardError}
+    <div class="card result err" role="alert" data-testid="dashboard-error">{dashboardError}</div>
+  {/if}
   <div class="grid">
     {#if activeTab === 'overview'}
       <Overview {data} />

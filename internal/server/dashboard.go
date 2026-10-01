@@ -18,6 +18,10 @@ type DashboardData struct {
 	TLSMode     string            `json:"tlsMode"`
 	Uptime      string            `json:"uptime"`
 	Devices     []DashboardDevice `json:"devices"`
+	// Error is set when the device list could not be read. Devices is then
+	// null rather than an empty list, so a failed read never looks like a
+	// server with no devices.
+	Error string `json:"error,omitempty"`
 }
 
 // DashboardDevice represents a device in the dashboard.
@@ -62,6 +66,9 @@ func (d *DashboardHandler) RegisterRoutes(mux routeRegistrar) {
 func (d *DashboardHandler) handleData(w http.ResponseWriter, r *http.Request) {
 	data := d.collectData()
 	w.Header().Set("Content-Type", "application/json")
+	if data.Error != "" {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
 	_ = json.NewEncoder(w).Encode(data)
 }
 
@@ -105,8 +112,14 @@ func (d *DashboardHandler) collectData() DashboardData {
 	devCount, _ := d.stores.EndDevices.Count(ctx)
 	mupCount, _ := d.stores.MirrorUsagePoints.Count(ctx)
 
-	result, _ := d.stores.EndDevices.List(ctx, store.ListOptions{Limit: 50})
+	// Unbounded: the dashboard lists every device, so none is dropped
+	// silently past a page size.
+	result, listErr := d.stores.EndDevices.List(ctx, store.ListOptions{Unbounded: true})
 	var devices []DashboardDevice
+	var errMsg string
+	if listErr != nil {
+		errMsg = "device list unavailable: " + listErr.Error()
+	}
 	for _, dev := range result.Items {
 		enabled := dev.Enabled != nil && *dev.Enabled
 		devices = append(devices, DashboardDevice{
@@ -126,6 +139,7 @@ func (d *DashboardHandler) collectData() DashboardData {
 		TLSMode:     d.tlsMode,
 		Uptime:      uptime.String(),
 		Devices:     devices,
+		Error:       errMsg,
 	}
 }
 

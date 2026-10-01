@@ -30,6 +30,10 @@ type stubFRQReader struct {
 	// simulate the request disappearing between attemptFallback's own Get
 	// and build's internal one (build's NotFound branch).
 	deleteAfterGetCall int
+	// cancelAfterGetCall marks the request Cancelled right after that
+	// 1-based successful Get returns it, as a client's status write landing
+	// between the fallback's read and build's.
+	cancelAfterGetCall int
 }
 
 func (s *stubFRQReader) Get(_ context.Context, parentID, id string) (sep2.FlowReservationRequest, error) {
@@ -47,6 +51,11 @@ func (s *stubFRQReader) Get(_ context.Context, parentID, id string) (sep2.FlowRe
 	}
 	if s.deleteAfterGetCall == s.getCalls {
 		delete(s.requests, key)
+	}
+	if s.cancelAfterGetCall == s.getCalls {
+		cancelled := frq
+		cancelled.RequestStatus.RequestStatus = sep2.RequestStatusCancelled
+		s.requests[key] = cancelled
 	}
 	return frq, nil
 }
@@ -650,5 +659,36 @@ func TestQueue_Build_GatedCreateErrorsKeepTheirMeaning(t *testing.T) {
 				t.Fatalf("Create calls = %d, want 1: the gate must have run the write", got)
 			}
 		})
+	}
+}
+
+// TestFallback_CancelBetweenItsReadsDeniesAndIsNotGivenUp: the status write
+// lands after the fallback decided to grant and before build re-reads the
+// request. That is a withdrawal, answered by one denial; it is neither a
+// retry nor a request given up on, even at RetryAttempts=1.
+func TestFallback_CancelBetweenItsReadsDeniesAndIsNotGivenUp(t *testing.T) {
+	frqStore := &stubFRQReader{cancelAfterGetCall: 1}
+	frqStore.put("e1", "frq-1", sep2.FlowReservationRequest{
+		MRID:              "REQ1",
+		IntervalRequested: &sep2.DateTimeInterval{Start: time.Now().Add(time.Hour).Unix(), Duration: 3600},
+	})
+	frpStore := &stubFRPStore{}
+	q := NewQueue(frqStore, frpStore, PermissiveGate{}, Config{Deadline: time.Hour, RetryBackoff: time.Millisecond, RetryAttempts: 1}, nil)
+	t.Cleanup(q.Close)
+
+	q.attemptFallback(context.Background(), "e1", "frq-1", 1)
+
+	if got := q.GivenUpCount(); got != 0 {
+		t.Errorf("GivenUpCount = %d, want 0: a withdrawn request is not one the fallback failed", got)
+	}
+	if n := frpStore.count(); n != 1 {
+		t.Fatalf("responses = %d, want exactly 1", n)
+	}
+	frp, err := frpStore.Get(context.Background(), "e1", "frq-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frp.Interval == nil || frp.Interval.Duration != 0 {
+		t.Errorf("response interval = %+v, want a zero-duration denial", frp.Interval)
 	}
 }

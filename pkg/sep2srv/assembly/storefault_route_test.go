@@ -106,6 +106,11 @@ var faultProbeBodies = map[string]string{
 			`<powerRequested><multiplier>0</multiplier><value>100</value></powerRequested>`+
 			`<RequestStatus><dateTime>1700000000</dateTime><requestStatus>0</requestStatus></RequestStatus>`),
 
+	// #667: the cancel PUT reads the stored request first, so a store fault
+	// surfaces there; the document is a cancel of an empty request.
+	"PUT /edev/{id}/frq/{frqId}": sep2Doc("FlowReservationRequest",
+		`<RequestStatus><dateTime>1700000000</dateTime><requestStatus>1</requestStatus></RequestStatus>`),
+
 	"PUT /edev/{id}/cfg":   sep2Doc("Configuration", `<userDeviceName>probe</userDeviceName>`),
 	"PUT /edev/{id}/dstat": sep2Doc("DeviceStatus", `<changedTime>1700000000</changedTime>`),
 	"PUT /edev/{id}/ps": sep2Doc("PowerStatus",

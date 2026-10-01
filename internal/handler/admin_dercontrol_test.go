@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
@@ -535,6 +536,51 @@ func TestDERControlCancel(t *testing.T) {
 	} {
 		d.h.Issuer = failingIssuer{err: &dercontrol.RefusalError{Code: code}}
 		assertRefusal(t, d.do(t, http.MethodPost, "/api/der/controls/"+created.MRID+"/cancel", ""), http.StatusConflict, want)
+	}
+}
+
+// TestDERControlCancel_WaitsForTheFleetLock: the admin cancel runs under the
+// control's fleet lock, the lock a client's CancelGrant holds, so the two
+// cannot interleave.
+func TestDERControlCancel_WaitsForTheFleetLock(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	created := decodeCreated(t, d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(futureStart(600), 100, 300)))
+	fleet, err := d.h.Fleets.FleetOf(context.Background(), dcDevice)
+	if err != nil {
+		t.Fatalf("FleetOf: %v", err)
+	}
+
+	held, release, lockDone := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		lockDone <- d.h.Ledger.Within(context.Background(), []string{fleet}, func(commitment.View) error {
+			close(held)
+			<-release
+			return nil
+		})
+	}()
+	<-held
+
+	cancelled := make(chan *httptest.ResponseRecorder, 1)
+	go func() { cancelled <- d.do(t, http.MethodPost, "/api/der/controls/"+created.MRID+"/cancel", "") }()
+	select {
+	case w := <-cancelled:
+		t.Fatalf("cancel returned %d while the fleet lock was held; it must wait", w.Code)
+	case <-time.After(150 * time.Millisecond):
+	}
+	parent, id, _, _ := d.controls.ByMRID(context.Background(), created.MRID)
+	if lc, err := d.lifecycles.Get(context.Background(), parent, id); err == nil && lc.CancelledAt != nil {
+		t.Fatal("the control was cancelled while the fleet lock was held")
+	}
+
+	close(release)
+	if err := <-lockDone; err != nil {
+		t.Fatalf("Within: %v", err)
+	}
+	if w := <-cancelled; w.Code != http.StatusOK {
+		t.Fatalf("cancel after release: %d %s", w.Code, w.Body.String())
+	}
+	if lc, err := d.lifecycles.Get(context.Background(), parent, id); err != nil || lc.CancelledAt == nil {
+		t.Fatalf("lifecycle after release = %+v, %v; want cancelled", lc, err)
 	}
 }
 

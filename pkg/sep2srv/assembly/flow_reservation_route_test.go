@@ -419,8 +419,10 @@ func TestFlowReservationInstances_ScopeBindsToTheDeviceInThePath(t *testing.T) {
 // test does not exercise scopedResourceHandler's own 405 branch. That branch is
 // covered directly in scopedresource_internal_test.go against itemMethods.
 //
-// Neutralization check for the next reader: register a PUT pattern for either
-// shape and this test fails with Allow "GET, HEAD, PUT".
+// PUT on the request is mounted (#667), so the request path's Allow is
+// "GET, HEAD, PUT" and its PUT is not a 405; the response path stays
+// "GET, HEAD". Registering a PUT pattern for the response shape fails this
+// test with Allow "GET, HEAD, PUT".
 func TestFlowReservationInstances_UnservedMethodsGet405WithAnAccurateAllow(t *testing.T) {
 	t.Parallel()
 
@@ -428,8 +430,12 @@ func TestFlowReservationInstances_UnservedMethodsGet405WithAnAccurateAllow(t *te
 	loc := postFlowReservationRequest(t, srv, "e1", "4142434445464748494A4B4C4D4E4F50")
 	frpPath := "/edev/e1/frp/frp-1"
 
-	for _, path := range []string{loc, frpPath} {
+	for _, tc := range []struct{ path, allow string }{{loc, "GET, HEAD, PUT"}, {frpPath, "GET, HEAD"}} {
+		path, allow := tc.path, tc.allow
 		for _, method := range []string{http.MethodPut, http.MethodPost, http.MethodDelete, http.MethodPatch} {
+			if method == http.MethodPut && path == loc {
+				continue
+			}
 			t.Run(method+" "+path, func(t *testing.T) {
 				req, err := http.NewRequest(method, srv.URL+path, strings.NewReader(""))
 				if err != nil {
@@ -444,8 +450,8 @@ func TestFlowReservationInstances_UnservedMethodsGet405WithAnAccurateAllow(t *te
 				if resp.StatusCode != http.StatusMethodNotAllowed {
 					t.Errorf("status = %d, want 405", resp.StatusCode)
 				}
-				if got := resp.Header.Get("Allow"); got != "GET, HEAD" {
-					t.Errorf("Allow = %q, want %q: an Allow that overstates what is served is barely better than a 404", got, "GET, HEAD")
+				if got := resp.Header.Get("Allow"); got != allow {
+					t.Errorf("Allow = %q, want %q: an Allow that overstates what is served is barely better than a 404", got, allow)
 				}
 			})
 		}

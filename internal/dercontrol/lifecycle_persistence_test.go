@@ -311,8 +311,8 @@ func TestLifecycleStore_DeleteParentPersists(t *testing.T) {
 	}
 }
 
-// A failed snapshot restores every record, the key index and the parent, with
-// each field unchanged.
+// A failed snapshot restores every record and the parent, with each field
+// unchanged. The key index is pinned by the test that follows.
 func TestLifecycleStore_DeleteParentRollsBackOnAFailedSnapshot(t *testing.T) {
 	ctx := context.Background()
 	s, path := newPersistedLifecycleStore(t)
@@ -326,10 +326,6 @@ func TestLifecycleStore_DeleteParentRollsBackOnAFailedSnapshot(t *testing.T) {
 			t.Errorf("record %s after rollback = %+v, %v, want %+v", id, got, err, rec)
 		}
 	}
-	// The key index is what a later snapshot is written from.
-	if n, err := s.DeleteParent(ctx, "dev"); err == nil || n != 0 {
-		t.Errorf("second DeleteParent on the still-broken snapshot = %d, %v, want 0 and an error", n, err)
-	}
 	if has, _ := s.HasParent(ctx, "dev"); !has {
 		t.Error("parent lost after rollback")
 	}
@@ -341,9 +337,12 @@ func TestLifecycleStore_TakeParentUndoRestores(t *testing.T) {
 	ctx := context.Background()
 	s, path := newPersistedLifecycleStore(t)
 	want := seedLifecycles(t, s)
-	undo, _, err := s.TakeParent(ctx, "dev")
+	undo, removed, err := s.TakeParent(ctx, "dev")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if removed != 2 {
+		t.Errorf("TakeParent removed = %d, want 2", removed)
 	}
 	if c, _ := s.Count(ctx, "dev"); c != 0 {
 		t.Fatalf("TakeParent left %d records", c)
@@ -402,5 +401,34 @@ func TestLifecycleStore_DeleteParentThenRecreateThenDeleteAgain(t *testing.T) {
 	}
 	if c, _ := s.Count(ctx, "dev"); c != 0 {
 		t.Errorf("records left = %d, want 0", c)
+	}
+}
+
+// The rollback of a failed DeleteParent re-indexes the restored records: a
+// later snapshot, written for another parent once the file is writable again,
+// is built from that index and must still hold them.
+func TestLifecycleStore_DeleteParentRollbackKeepsTheRestoredRecordsInLaterSnapshots(t *testing.T) {
+	ctx := context.Background()
+	s, path := newPersistedLifecycleStore(t)
+	want := seedLifecycles(t, s)
+	breakSnapshot(t, path)
+	if n, err := s.DeleteParent(ctx, "dev"); err == nil || n != 0 {
+		t.Fatalf("DeleteParent = %d, %v, want 0 and an error", n, err)
+	}
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create(ctx, "other", "x", LifecycleRecord{Reach: 1}); err != nil {
+		t.Fatalf("write under another parent after the repair: %v", err)
+	}
+
+	re, err := NewLifecycleStoreWithPersistence(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, rec := range want {
+		if got, err := re.Get(ctx, "dev", id); err != nil || !reflect.DeepEqual(got, rec) {
+			t.Errorf("record %s after reload = %+v, %v, want %+v: the rollback left it out of the index", id, got, err, rec)
+		}
 	}
 }

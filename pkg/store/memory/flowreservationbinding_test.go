@@ -978,3 +978,36 @@ func TestPersistentScopedStore_TakeParentUndoRestoresTheRestPastAFailedRecord(t 
 		t.Errorf("record b after the undo = %+v, %v, want %+v: the undo stopped at the failed record a", got, err, b)
 	}
 }
+
+// The in-memory store's undo carries on past a record it cannot restore, and
+// TakeParent reports how many records it removed.
+func TestScopedStore_TakeParentCountsAndItsUndoRestoresTheRestPastAFailedRecord(t *testing.T) {
+	ctx := context.Background()
+	reqs := memory.NewScopedStore[sep2.FlowReservationRequest]()
+	a := sep2.FlowReservationRequest{MRID: "A"}
+	b := sep2.FlowReservationRequest{MRID: "B"}
+	for k, v := range map[string]sep2.FlowReservationRequest{"a": a, "b": b} {
+		if err := reqs.Create(ctx, "1", k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	undo, n, err := reqs.TakeParent(ctx, "1")
+	if err != nil || n != 2 {
+		t.Fatalf("TakeParent = %d, %v, want 2, nil", n, err)
+	}
+	if c, _ := reqs.Count(ctx, "1"); c != 0 {
+		t.Fatalf("TakeParent left %d records", c)
+	}
+	// "a" is back before the undo runs, so restoring it fails.
+	if err := reqs.Create(ctx, "1", "a", a); err != nil {
+		t.Fatal(err)
+	}
+	log.SetOutput(&strings.Builder{})
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	if err := undo(ctx); err == nil {
+		t.Fatal("undo succeeded although record a already exists")
+	}
+	if got, err := reqs.Get(ctx, "1", "b"); err != nil || !reflect.DeepEqual(got, b) {
+		t.Errorf("record b after the undo = %+v, %v, want %+v: the undo stopped at the failed record a", got, err, b)
+	}
+}

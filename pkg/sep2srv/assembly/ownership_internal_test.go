@@ -472,6 +472,9 @@ func TestFullStoresWiresEveryStoresField(t *testing.T) {
 		"EndDeviceIndexes":   "nil selects the process-local index",
 		"AdminFSAs":          "the admin plane is not mounted on the protocol router",
 		"RegistrationPolicy": "the pattern-list comparison provisions no Registration",
+
+		"FlowReservationQueue": "nil makes the assembly build a queue of its own",
+		"DERControlIssuer":     "nil makes the assembly build an issuer from the stores",
 	}
 	v := reflect.ValueOf(fullStores()).Elem()
 	seen := map[string]bool{}

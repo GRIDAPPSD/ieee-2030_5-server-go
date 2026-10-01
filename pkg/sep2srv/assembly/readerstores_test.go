@@ -141,7 +141,9 @@ var readerStoresExcludedFields = map[string]string{
 		"misconfiguration; requireScoped's log would be false on most deployments",
 	"FlowReservationResponseLifecycles": "optional like DERControlLifecycles, " +
 		"and only the serve-time status derivation reads it",
-	"CommitmentLedger": "a lock-holding check service, not resource data",
+	"CommitmentLedger":     "a lock-holding check service, not resource data",
+	"FlowReservationQueue": "a timer-holding service the server closes, not resource data",
+	"DERControlIssuer":     "a lock-holding write service, not resource data",
 }
 
 // TestNewReaderStoresWiresEveryMirroredField fails when a field is added to

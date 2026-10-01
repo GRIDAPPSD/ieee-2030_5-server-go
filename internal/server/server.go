@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -24,10 +25,12 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2capture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -242,6 +245,20 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 
 	stores.CommitmentLedger = NewCommitmentLedger(stores)
 
+	// #763: one issuer for the admin DER control handler and the grant cancel
+	// writers, so a cancel and an admin write on one program share their locks.
+	issuer, err := assembly.NewDERControlIssuer(derPrograms, derControls, derControlLifecycles, stores.PEN)
+	if err != nil {
+		return nil, nil, fmt.Errorf("DER control issuer: %w", err)
+	}
+	stores.DERControlIssuer = issuer
+
+	deadline, err := cfg.EffectiveFlowReservationDeadline()
+	if err != nil {
+		return nil, nil, err
+	}
+	stores.FlowReservationDeadline = deadline
+
 	return stores, endDevices, nil
 }
 
@@ -388,6 +405,20 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// and the build-tagged CSIP mutation mux, which is a no-op in production
 	// builds. ShutdownTimeout is left at zero, which drains without a bound,
 	// as this server has always done.
+	// #763: the one flow reservation queue. Recovery re-arms the pending
+	// requests through it before either listener binds (sep2server.New binds),
+	// and it is closed only after both have drained. The defer covers every
+	// other exit, and Close is idempotent.
+	var frNotifier flowreservation.Notifier
+	if n := adaptNotifier(notifier); n != nil {
+		frNotifier = n
+	}
+	stores.FlowReservationQueue = newFlowReservationQueue(stores, frNotifier)
+	defer stores.FlowReservationQueue.Close()
+	if _, err := recoverFlowReservations(ctx, stores, stores.FlowReservationQueue, frNotifier, slog.Default(), time.Now()); err != nil {
+		return fmt.Errorf("flow reservation recovery: %w", err)
+	}
+
 	embedCfg := NewEmbedConfig(cfg, stores, notifier)
 	embedCfg.Addr = cfg.Addr
 	embedCfg.CertFile = cfg.CertFile

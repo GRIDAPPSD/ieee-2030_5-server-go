@@ -20,7 +20,9 @@ import (
 // NewStores does not fill fails HERE, at construction, instead of as a missing
 // route somebody notices in the field.
 //
-// RegistrationPolicy is the one field deliberately left zero; see NewStores.
+// RegistrationPolicy is deliberately left zero; see NewStores. The queue and
+// issuer fields are optional services: nil makes the assembly build its own,
+// which is what an embedder with no admin API wants.
 func TestNewStoresPopulatesEveryField(t *testing.T) {
 	t.Parallel()
 
@@ -36,6 +38,9 @@ func TestNewStoresPopulatesEveryField(t *testing.T) {
 		if name == "RegistrationPolicy" {
 			// Fail-closed by design: no PIN resolver means no Registration
 			// at all, rather than one carrying an invented PIN.
+			continue
+		}
+		if name == "FlowReservationQueue" || name == "DERControlIssuer" {
 			continue
 		}
 		field := val.Field(i)

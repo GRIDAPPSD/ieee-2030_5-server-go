@@ -10,11 +10,13 @@ import (
 
 // NewStores builds a fully populated, pure in-memory store set.
 //
-// Every field is non-nil. That matters: core treats a nil store field as
-// "skip those routes", so a partially populated set does not fail loudly, it
-// serves a quietly smaller protocol surface. A consumer that wants persistence
-// or pre-seeded contents builds its own set and passes it as [Config.Stores];
-// this is the baseline that makes the simple case a one-liner.
+// Every field is non-nil except the optional FlowReservationQueue and
+// DERControlIssuer, which the assembly builds itself when nil. That matters:
+// core treats a nil store field as "skip those routes", so a partially
+// populated set does not fail loudly, it serves a quietly smaller protocol
+// surface. A consumer that wants persistence or pre-seeded contents builds its
+// own set and passes it as [Config.Stores]; this is the baseline that makes
+// the simple case a one-liner.
 //
 // RegistrationPolicy is deliberately left at its zero value. That is
 // fail-closed rather than degraded: with no PIN resolver wired, a device gets

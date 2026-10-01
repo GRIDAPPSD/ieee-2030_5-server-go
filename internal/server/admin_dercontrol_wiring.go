@@ -4,8 +4,8 @@ import (
 	"log"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -17,12 +17,18 @@ func newAdminDERControlHandler(stores *Stores) *handler.AdminDERControlHandler {
 	if stores == nil || stores.DERPrograms == nil || stores.DERControls == nil || stores.DERControlLifecycles == nil || stores.EndDevices == nil {
 		return nil
 	}
-	issuer, err := dercontrol.NewIssuer(stores.DERPrograms, stores.DERControls, stores.DERControlLifecycles, dercontrol.Config{PEN: stores.PEN})
-	if err != nil {
-		// Unreachable with the default Config bounds used here; logged
-		// rather than silently dropping the routes.
-		log.Printf("server: DER control issuer: %v: no DER control admin routes mounted", err)
-		return nil
+	// Run supplies the process's one issuer; a Stores built without one gets
+	// its own, which only tests do.
+	issuer := stores.DERControlIssuer
+	if issuer == nil {
+		var err error
+		issuer, err = assembly.NewDERControlIssuer(stores.DERPrograms, stores.DERControls, stores.DERControlLifecycles, stores.PEN)
+		if err != nil {
+			// Unreachable with the default Config bounds used here; logged
+			// rather than silently dropping the routes.
+			log.Printf("server: DER control issuer: %v: no DER control admin routes mounted", err)
+			return nil
+		}
 	}
 	h := &handler.AdminDERControlHandler{
 		Issuer:     issuer,

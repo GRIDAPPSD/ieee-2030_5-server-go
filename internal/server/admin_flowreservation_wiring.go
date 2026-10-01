@@ -30,7 +30,7 @@ func newAdminFlowReservationHandler(stores *Stores) *handler.AdminFlowReservatio
 		Responses:  flowreservation.NewDerivedStatusResponseStore(stores.FlowReservationResponses, stores.FlowReservationResponseLifecycles),
 		Lifecycles: stores.FlowReservationResponseLifecycles,
 		Fleets:     fleets,
-		Deadline:   flowReservationConfig(),
+		Deadline:   flowReservationConfig(stores.FlowReservationDeadline),
 		Persisted:  persists(stores.FlowReservationRequests) && persists(stores.FlowReservationResponses) && persists(stores.FlowReservationResponseLifecycles),
 	}
 	if !store.IsAbsent(stores.DERControls) && !store.IsAbsent(stores.DERControlLifecycles) {

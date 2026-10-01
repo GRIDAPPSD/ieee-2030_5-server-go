@@ -24,10 +24,14 @@ package server
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 	"reflect"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
@@ -35,6 +39,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -97,16 +102,62 @@ func NewCoreRouterConfig(cfg *config.Config) assembly.RouterConfig {
 		TimeQuality: cfg.TimeQuality,
 		PEN:         cfg.EffectivePEN(),
 
-		FlowReservationDeadline: flowReservationConfig().Deadline,
+		FlowReservationDeadline: cfg.FlowReservationDeadline,
 	}
 }
 
-// flowReservationConfig is the one place the flow reservation deadline is
-// chosen. The protocol queue runs under it through NewCoreRouterConfig, and
-// the admin read API computes deadlineAt under it, so a configured value
-// moves both together. Zero takes the queue's default.
-func flowReservationConfig() flowreservation.Config {
-	return flowreservation.Config{}
+// flowReservationConfig is the one place the flow reservation queue's
+// Config is built. The queue runs under it, and the admin read API computes
+// deadlineAt under it, so a configured deadline moves both together. Zero
+// takes the queue's default.
+func flowReservationConfig(deadline time.Duration) flowreservation.Config {
+	return flowreservation.Config{Deadline: deadline}
+}
+
+// newFlowReservationQueue builds the process's one queue over stores, the way
+// the assembly builds its own: grants are checked against the commitment
+// ledger and a response store that cascades to its lifecycle records. A nil
+// notifier notifies no one.
+func newFlowReservationQueue(stores *Stores, notifier flowreservation.Notifier) *flowreservation.Queue {
+	opts := []flowreservation.Option{flowreservation.WithNotifier(notifier)}
+	return flowreservation.NewQueue(
+		stores.FlowReservationRequests, flowReservationResponses(stores),
+		flowreservation.NewLedgerGate(stores.CommitmentLedger, commitment.Resolver{
+			Devices: stores.EndDevices, Managers: stores.EndDeviceManagers,
+		}),
+		flowReservationConfig(stores.FlowReservationDeadline), stores.PEN, opts...,
+	)
+}
+
+// flowReservationResponses is the response store with its lifecycle records
+// removed alongside it, the form the assembly serves and recovery deletes
+// through.
+func flowReservationResponses(s *Stores) store.ScopedStore[sep2.FlowReservationResponse] {
+	return memory.WithDependents(s.FlowReservationResponses, s.FlowReservationResponseLifecycles)
+}
+
+// recoverFlowReservations is the startup pass over stored flow reservation
+// requests (#762). A request it could not repair is logged at error level by
+// Recover, once per request, and does not stop the boot: it is retried at the
+// next start. Only a failure of the pass itself returns an error.
+func recoverFlowReservations(ctx context.Context, stores *Stores, queue *flowreservation.Queue, notifier flowreservation.Notifier, logger *slog.Logger, now time.Time) (flowreservation.RecoverCounts, error) {
+	// Without an issuer there are no writers, so a repair that needs one fails
+	// and is counted, rather than dereferencing a nil issuer.
+	var writers commitment.Writers
+	if stores.DERControlIssuer != nil {
+		writers = flowreservation.NotifyingWriters(
+			sources.NewWriters(stores.DERControlIssuer, stores.FlowReservationResponseLifecycles), notifier)
+	}
+	return flowreservation.Recover(ctx, flowreservation.RecoverDeps{
+		FRQ:        stores.FlowReservationRequests,
+		FRP:        flowReservationResponses(stores),
+		Lifecycles: stores.FlowReservationResponseLifecycles,
+		Queue:      queue,
+		Ledger:     stores.CommitmentLedger,
+		Writers:    writers,
+		Notifier:   notifier,
+		Log:        logger,
+	}, now)
 }
 
 // NewCoreAuthPolicy wires the three server-side auth implementations into
@@ -183,6 +234,8 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 
 		FlowReservationResponseLifecycles: s.FlowReservationResponseLifecycles,
 		CommitmentLedger:                  s.CommitmentLedger,
+		FlowReservationQueue:              s.FlowReservationQueue,
+		DERControlIssuer:                  s.DERControlIssuer,
 	}
 }
 

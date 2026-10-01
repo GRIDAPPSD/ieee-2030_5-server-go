@@ -34,8 +34,11 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -339,6 +342,18 @@ func TestNewCoreStoresCopiesAllFields(t *testing.T) {
 	// re-set it here anyway so this test does not silently depend on that
 	// default and stays a self-contained proof that the copy works.
 	src.EndDeviceManagers = memory.NewEndDeviceManagementStore()
+	// Set on this src alone: a queue in the shared fixture would replace the
+	// per-router deadline every other test in the package relies on.
+	src.FlowReservationQueue = flowreservation.NewQueue(
+		src.FlowReservationRequests, src.FlowReservationResponses,
+		flowreservation.NewLedgerGate(src.CommitmentLedger, commitment.Resolver{Devices: src.EndDevices, Managers: src.EndDeviceManagers}),
+		flowreservation.Config{}, nil)
+	t.Cleanup(src.FlowReservationQueue.Close)
+	issuer, err := assembly.NewDERControlIssuer(src.DERPrograms, src.DERControls, src.DERControlLifecycles, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.DERControlIssuer = issuer
 	dst := server.NewCoreStores(src)
 
 	if dst == nil {

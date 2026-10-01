@@ -79,6 +79,10 @@ func newProposal(scope Scope, ctrl sep2.DERControl, grant string, fleet Fleet, c
 	return p
 }
 
+// ErrRelinkNotStarted wraps the context error of a Relink that stopped
+// before its write, so the stored record is as it was.
+var ErrRelinkNotStarted = errors.New("dercontrol: relink stopped before writing")
+
 // Relink moves the execution at (scope, id) to grantMRID, changing no other
 // field of its lifecycle record. It is for a caller holding the fleet's
 // commitment lock that has already checked the execution against the new
@@ -108,7 +112,7 @@ func (i *Issuer) Relink(ctx context.Context, scope Scope, id, grantMRID string) 
 		return before, ErrNotExecution
 	}
 	if err := ctx.Err(); err != nil {
-		return before, err
+		return before, fmt.Errorf("%w: %w", ErrRelinkNotStarted, err)
 	}
 
 	lc := before

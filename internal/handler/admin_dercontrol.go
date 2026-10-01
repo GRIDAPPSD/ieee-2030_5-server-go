@@ -590,6 +590,47 @@ func (h *AdminDERControlHandler) issueInFleet(ctx context.Context, req dercontro
 	}
 }
 
+// cancelInFleet cancels the control under the fleet lock, the lock a client's
+// cancel of the grant it executes (Ledger.CancelGrant) also holds, so the two
+// cannot interleave and a failed write's restore cannot undo the other's
+// cancel. A resolver or ledger that is missing, or a fleet that cannot be
+// resolved, refuses rather than cancelling unserialized.
+func (h *AdminDERControlHandler) cancelInFleet(ctx context.Context, scope dercontrol.Scope, id, reason string) (dercontrol.LifecycleRecord, error) {
+	if h.Fleets == nil {
+		return dercontrol.LifecycleRecord{}, &commitmentFailure{sub: "no_resolver"}
+	}
+	if h.Ledger == nil {
+		return dercontrol.LifecycleRecord{}, &commitmentFailure{sub: "no_ledger"}
+	}
+	fleetKey, err := h.Fleets.FleetOf(ctx, scope.EndDeviceID)
+	switch {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+		return dercontrol.LifecycleRecord{}, &dercontrol.RefusalError{Code: dercontrol.RefusalControlNotFound}
+	default:
+		return dercontrol.LifecycleRecord{}, &commitmentFailure{sub: "fleet_resolve_failed", err: err}
+	}
+
+	var lc dercontrol.LifecycleRecord
+	ran := false
+	err = h.Ledger.Within(ctx, []string{fleetKey}, func(commitment.View) error {
+		ran = true
+		var err error
+		lc, err = h.Issuer.Cancel(ctx, scope, id, reason)
+		return err
+	})
+	switch {
+	case ran:
+		return lc, err
+	case err == nil:
+		return dercontrol.LifecycleRecord{}, &commitmentFailure{sub: "ledger_did_not_run"}
+	case isContextErr(err):
+		return dercontrol.LifecycleRecord{}, err
+	default:
+		return dercontrol.LifecycleRecord{}, &commitmentFailure{sub: "ledger_failed", err: err}
+	}
+}
+
 // checkIn adapts a ledger View to the issuer's check hook.
 func checkIn(v commitment.View) dercontrol.Check {
 	return func(ctx context.Context, p dercontrol.Proposal) error {
@@ -667,7 +708,7 @@ func (h *AdminDERControlHandler) HandleCancel() http.HandlerFunc {
 		}
 		logged.addControl(scope, ctrl)
 
-		lc, err := h.Issuer.Cancel(r.Context(), scope, id, reason)
+		lc, err := h.cancelInFleet(r.Context(), scope, id, reason)
 		if err != nil {
 			var undo *dercontrol.UndoError
 			if errors.As(err, &undo) {
@@ -850,6 +891,12 @@ func mapIssuerError(err error, l *derControlLog) derControlRefusal {
 		l.add("control_kept", undo.ControlKept)
 		l.add("lifecycle_kept", undo.LifecycleKept)
 		l.add("store_id", undo.ID)
+		return refuseInternal
+	}
+	var cf *commitmentFailure
+	if errors.As(err, &cf) {
+		l.add("cause", "commitment_unavailable")
+		l.add("commitment", cf.sub)
 		return refuseInternal
 	}
 	l.add("cause", "store_error")

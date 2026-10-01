@@ -125,6 +125,22 @@ describe('FleetPane', () => {
     expect(power).toHaveTextContent('updated 1m ago')
   })
 
+  it('names the source beside measured power and capacity', async () => {
+    const fleet: Fleet = {
+      ...minimalFleet('AGGSRC'),
+      rollup: {
+        ...minimalFleet('AGGSRC').rollup,
+        deviceCount: 1,
+        p: { sum: 100, unreported: 0, stale: 0, directionUnknown: false },
+      },
+    }
+    mockFetchJSON({ ok: true, data: [fleet] })
+    render(FleetPane)
+    await screen.findByTestId('fleet-row')
+    expect(screen.getByTestId('fleet-power')).toHaveTextContent('Source: mirror readings (server time)')
+    expect(screen.getByTestId('fleet-avail')).toHaveTextContent('Source: device reports (device clock)')
+  })
+
   it('names importing for a negative export-positive sum', async () => {
     const fleet: Fleet = {
       aggregatorLFDI: 'AGG2',

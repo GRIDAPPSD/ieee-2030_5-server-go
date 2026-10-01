@@ -259,6 +259,20 @@ describe('RequestQueuePane content', () => {
     expect(within(history).queryByTestId('response-commitment')).toBeNull()
   })
 
+  it('names the source of requested and granted values, and gives a granted value no age', async () => {
+    mockOk(fixture)
+    render(RequestQueuePane)
+    const rows = await loaded()
+    expect(within(rows[0]).getByTestId('frq-requested-source')).toHaveTextContent("Source: the aggregator's request")
+    const tip = screen.getByTestId('frq-tip')
+    const granted = within(tip).getByTestId('response-source')
+    expect(granted).toHaveTextContent("Source: this server's grant record")
+    expect(granted.textContent).not.toMatch(/ago|updated|fetched/)
+    expect(within(screen.getByTestId('frq-history')).getByTestId('response-source')).toHaveTextContent(
+      "Source: this server's grant record",
+    )
+  })
+
   it('shows a null quantity as missing, never as 0', async () => {
     const d = copy()
     d.requests[1].tip.energyRemainingWh = null

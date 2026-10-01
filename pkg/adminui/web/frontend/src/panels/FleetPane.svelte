@@ -142,6 +142,7 @@
                   updated {formatAge(power.ageSeconds)}{formatContributionNote(power)}
                 </div>
               {/if}
+              <div class="hint" data-testid="fleet-power-source">Source: mirror readings (server time)</div>
             </td>
             <td data-testid="fleet-avail">
               <div data-testid="fleet-avail-active">
@@ -159,6 +160,7 @@
                 {/if}
               </div>
               <div class="hint">updated {formatAge(activeAvail.ageSeconds)}</div>
+              <div class="hint" data-testid="fleet-avail-source">Source: device reports (device clock)</div>
             </td>
           </tr>
         {/each}

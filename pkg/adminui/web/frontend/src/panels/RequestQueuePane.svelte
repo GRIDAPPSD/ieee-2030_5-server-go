@@ -450,6 +450,7 @@
       {directionLabel(r.direction)},
       <span data-testid="response-power">{formatQuantity(scaledNumber(r.powerAvailable), 'W')}</span>
     </div>
+    <div class="hint" data-testid="response-source">Source: this server's grant record (not a reading)</div>
     <div class="hint" data-testid="response-answered">answered by {formatActor(r.answeredBy)}</div>
     {#if r.cancelledBy !== null || r.cancelReason !== null}
       <div class="hint" data-testid="response-cancelled">
@@ -542,6 +543,7 @@
                     {directionLabel(entry.request.direction)},
                     {formatQuantity(scaledNumber(entry.request.powerRequested), 'W')}
                   </div>
+                  <div class="hint" data-testid="frq-requested-source">Source: the aggregator's request</div>
                 </td>
                 <td>
                   <span data-testid="frq-state">{entry.state}</span>

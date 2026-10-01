@@ -98,3 +98,88 @@ func blockPersistPath(t *testing.T, path string) {
 		t.Fatalf("block persist path: %v", err)
 	}
 }
+
+// Reads wait for a writer's decision: a Get issued while a Create is paused
+// between mutate and persist must not return the record, which the Create
+// then rolls back.
+func TestPersistentScopedStore_ReadDuringInFlightWriteSeesOnlyDecidedState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resources.json")
+	s, err := NewPersistentScopedStore[storetest.Resource](path, "resources")
+	if err != nil {
+		t.Fatalf("constructor: %v", err)
+	}
+	mutated := make(chan struct{})
+	proceed := make(chan struct{})
+	s.afterMutateBeforePersist = func() {
+		close(mutated)
+		<-proceed
+	}
+	ctx := context.Background()
+	errA := make(chan error, 1)
+	go func() { errA <- s.Create(ctx, "p", "X", storetest.Resource{ID: "X", Body: "in-flight"}) }()
+	select {
+	case <-mutated:
+	case <-time.After(5 * time.Second):
+		t.Fatal("writer never reached the hook")
+	}
+
+	type getResult struct {
+		v   storetest.Resource
+		err error
+	}
+	got := make(chan getResult, 1)
+	go func() {
+		v, err := s.Get(ctx, "p", "X")
+		got <- getResult{v, err}
+	}()
+	select {
+	case r := <-got:
+		t.Fatalf("Get returned %+v, %v while the write was undecided", r.v, r.err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	blockPersistPath(t, path)
+	close(proceed)
+	if err := <-errA; err == nil {
+		t.Fatal("Create succeeded on a blocked path")
+	}
+	select {
+	case r := <-got:
+		if !errors.Is(r.err, store.ErrNotFound) {
+			t.Fatalf("Get after rollback = %+v, %v; want ErrNotFound", r.v, r.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Get never completed after the writer released the lock")
+	}
+}
+
+// A drifted key index must not let a failed Update or Delete report
+// ErrNotFound, which callers read as "already gone".
+func TestPersistentScopedStore_SnapshotReadFailureIsNotNotFound(t *testing.T) {
+	for name, op := range map[string]func(s *PersistentScopedStore[storetest.Resource]) error{
+		"update": func(s *PersistentScopedStore[storetest.Resource]) error {
+			return s.Update(context.Background(), "p", "a", storetest.Resource{ID: "a", Body: "new"})
+		},
+		"delete": func(s *PersistentScopedStore[storetest.Resource]) error {
+			return s.Delete(context.Background(), "p", "a")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, err := NewPersistentScopedStore[storetest.Resource](filepath.Join(t.TempDir(), "r.json"), "resources")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Create(context.Background(), "p", "a", storetest.Resource{ID: "a", Body: "old"}); err != nil {
+				t.Fatal(err)
+			}
+			s.addKey("p", "ghost")
+			err = op(s)
+			if err == nil {
+				t.Fatal("write succeeded with a drifted index, want an error")
+			}
+			if errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("failed write reported ErrNotFound: %v", err)
+			}
+		})
+	}
+}

@@ -20,7 +20,8 @@ import (
 // error returns: the collection, the key index and the parent's existence all
 // return to what they held before the call. A caller that treats a failed
 // write as "not stored" is then never wrong, and no reader sees a record the
-// caller was told failed.
+// caller was told failed: reads take writeMu's read side, so they wait out a
+// writer's mutate, persist and rollback and see only decided state.
 //
 // writeMu is held across mutate, persist and rollback, not just the file
 // write. Locking only the file write lets a second writer snapshot the whole
@@ -39,7 +40,7 @@ type PersistentScopedStore[T store.Copier[T]] struct {
 	keysMu sync.Mutex
 	keys   map[string][]string
 
-	writeMu     sync.Mutex
+	writeMu     sync.RWMutex
 	persistPath string
 
 	// afterMutateBeforePersist, when non-nil, runs inside a writer's critical
@@ -146,7 +147,9 @@ func (s *PersistentScopedStore[T]) snapshotRecords(ctx context.Context) ([]persi
 		for _, id := range idsByParent[parent] {
 			v, err := s.inner.Get(ctx, parent, id)
 			if err != nil {
-				return nil, fmt.Errorf("read %s/%s for snapshot: %w", parent, id, err)
+				// %v, not %w: a drifted index must never let a failed write match
+				// store.ErrNotFound, which callers read as "already gone".
+				return nil, fmt.Errorf("read %s/%s for snapshot: %v", parent, id, err)
 			}
 			out = append(out, persistentScopedRecord[T]{ParentID: parent, ID: id, Value: v})
 		}
@@ -171,26 +174,36 @@ func (s *PersistentScopedStore[T]) persistLocked(ctx context.Context) error {
 
 // Get returns the record under (parentID, id), or store.ErrNotFound.
 func (s *PersistentScopedStore[T]) Get(ctx context.Context, parentID, id string) (T, error) {
+	s.writeMu.RLock()
+	defer s.writeMu.RUnlock()
 	return s.inner.Get(ctx, parentID, id)
 }
 
 // List returns one page of the records under parentID.
 func (s *PersistentScopedStore[T]) List(ctx context.Context, parentID string, opts store.ListOptions) (store.ListResult[T], error) {
+	s.writeMu.RLock()
+	defer s.writeMu.RUnlock()
 	return s.inner.List(ctx, parentID, opts)
 }
 
 // Count returns the number of records under parentID.
 func (s *PersistentScopedStore[T]) Count(ctx context.Context, parentID string) (uint32, error) {
+	s.writeMu.RLock()
+	defer s.writeMu.RUnlock()
 	return s.inner.Count(ctx, parentID)
 }
 
 // HasParent reports whether the collection knows parentID.
 func (s *PersistentScopedStore[T]) HasParent(ctx context.Context, parentID string) (bool, error) {
+	s.writeMu.RLock()
+	defer s.writeMu.RUnlock()
 	return s.inner.HasParent(ctx, parentID)
 }
 
 // Parents returns the parent ids the collection knows, ascending.
 func (s *PersistentScopedStore[T]) Parents(ctx context.Context) ([]string, error) {
+	s.writeMu.RLock()
+	defer s.writeMu.RUnlock()
 	return s.inner.Parents(ctx)
 }
 
@@ -212,7 +225,6 @@ func (s *PersistentScopedStore[T]) Create(ctx context.Context, parentID, id stri
 		s.afterMutateBeforePersist()
 	}
 	if err := s.persistLocked(ctx); err != nil {
-		s.dropKey(parentID, id)
 		var rerr error
 		if hadParent {
 			rerr = s.inner.Delete(ctx, parentID, id)
@@ -222,8 +234,11 @@ func (s *PersistentScopedStore[T]) Create(ctx context.Context, parentID, id stri
 			_, rerr = s.inner.DeleteParent(ctx, parentID)
 		}
 		if rerr != nil && !errors.Is(rerr, store.ErrNotFound) {
+			// The record is still served, so its key stays indexed: dropping
+			// it would leave it out of every later snapshot.
 			return errors.Join(err, fmt.Errorf("%s persistence: rollback create %s/%s: %w", s.label, parentID, id, rerr))
 		}
+		s.dropKey(parentID, id)
 		return err
 	}
 	return nil
@@ -279,4 +294,63 @@ func (s *PersistentScopedStore[T]) Delete(ctx context.Context, parentID, id stri
 		return err
 	}
 	return nil
+}
+
+// DeleteParent removes a parent's whole collection, reports how many records
+// went with it, and flushes a snapshot. On a persist failure the records, the
+// key index and the parent's existence are restored and the error returns
+// with a zero count.
+//
+// It exists for cascade deletes (the EndDevice delete). Forwarding to the
+// inner store directly would skip writeMu, the key index and the snapshot, so
+// the cascaded records would be gone in memory and back after a restart.
+func (s *PersistentScopedStore[T]) DeleteParent(ctx context.Context, parentID string) (uint32, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	hadParent, err := s.inner.HasParent(ctx, parentID)
+	if err != nil {
+		return 0, err
+	}
+	if !hadParent {
+		return 0, nil
+	}
+	s.keysMu.Lock()
+	ids := slices.Clone(s.keys[parentID])
+	s.keysMu.Unlock()
+	before := make([]T, 0, len(ids))
+	for _, id := range ids {
+		v, err := s.inner.Get(ctx, parentID, id)
+		if err != nil {
+			return 0, fmt.Errorf("%s persistence: read %s/%s before delete: %v", s.label, parentID, id, err)
+		}
+		before = append(before, v)
+	}
+
+	n, err := s.inner.DeleteParent(ctx, parentID)
+	if err != nil {
+		return 0, err
+	}
+	s.keysMu.Lock()
+	delete(s.keys, parentID)
+	s.keysMu.Unlock()
+	if s.afterMutateBeforePersist != nil {
+		s.afterMutateBeforePersist()
+	}
+	if err := s.persistLocked(ctx); err != nil {
+		// ForParent re-establishes the parent even when it held no records.
+		s.inner.ForParent(parentID)
+		for i, id := range ids {
+			if rerr := s.inner.Create(ctx, parentID, id, before[i]); rerr != nil {
+				return 0, errors.Join(err, fmt.Errorf("%s persistence: rollback delete parent %s/%s: %w", s.label, parentID, id, rerr))
+			}
+		}
+		s.keysMu.Lock()
+		if len(ids) > 0 {
+			s.keys[parentID] = ids
+		}
+		s.keysMu.Unlock()
+		return 0, err
+	}
+	return n, nil
 }

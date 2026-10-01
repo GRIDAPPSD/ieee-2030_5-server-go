@@ -558,3 +558,77 @@ describe('RequestQueuePane round 3', () => {
     expect(second).toHaveTextContent('200s to deadline')
   })
 })
+
+describe('RequestQueuePane failure visibility', () => {
+  const OTHER = 'AB'.repeat(20)
+  const TWO: Res = { ok: true, data: [{ aggregatorLFDI: LFDI }, { aggregatorLFDI: OTHER }] }
+
+  it('shows an error, not Loading, when every aggregator fails with an empty message', async () => {
+    mockRoutes(() => ({ ok: false, error: '', status: 500 }))
+    render(RequestQueuePane)
+    const err = await screen.findByTestId('frq-error')
+    expect(err).toHaveTextContent('Could not load requests: no message from the server')
+    expect(screen.queryByTestId('frq-loading')).toBeNull()
+  })
+
+  it('marks the old queue stale when a refresh fails with an empty message', async () => {
+    let fail = false
+    mockRoutes(() => (fail ? { ok: false, error: '', status: 500 } : { ok: true, data: fixture }))
+    render(RequestQueuePane)
+    await loaded()
+    fail = true
+    await vi.advanceTimersByTimeAsync(30_000)
+    await tick()
+    expect(screen.getByTestId('frq-stale')).toHaveTextContent('no message from the server')
+    expect(screen.getByTestId('frq-stale')).toHaveTextContent('(stale)')
+    expect(screen.getAllByTestId('frq-row')).toHaveLength(2)
+  })
+
+  it('shows the 500 when one aggregator returns 404 and the next returns 500', async () => {
+    mockRoutes(
+      (path) =>
+        path.endsWith(LFDI)
+          ? { ok: false, error: 'not found', status: 404 }
+          : { ok: false, error: 'database down', status: 500 },
+      TWO,
+    )
+    render(RequestQueuePane)
+    expect(await screen.findByTestId('frq-error')).toHaveTextContent('database down')
+    expect(screen.queryByTestId('frq-unavailable')).toBeNull()
+  })
+
+  it('shows the 500 when the 500 comes first and the 404 second', async () => {
+    mockRoutes(
+      (path) =>
+        path.endsWith(LFDI)
+          ? { ok: false, error: 'database down', status: 500 }
+          : { ok: false, error: 'not found', status: 404 },
+      TWO,
+    )
+    render(RequestQueuePane)
+    expect(await screen.findByTestId('frq-error')).toHaveTextContent('database down')
+    expect(screen.queryByTestId('frq-unavailable')).toBeNull()
+  })
+
+  it('still reads as not available when every aggregator returns 404', async () => {
+    mockRoutes(() => ({ ok: false, error: 'not found', status: 404 }), TWO)
+    render(RequestQueuePane)
+    expect(await screen.findByTestId('frq-unavailable')).toBeInTheDocument()
+    expect(screen.queryByTestId('frq-error')).toBeNull()
+  })
+})
+
+describe('RequestQueuePane cancel requested on a live grant', () => {
+  it('shows the line only on the row whose requestCancelled is true', async () => {
+    const d = copy()
+    d.requests[0].requestCancelled = true
+    delete d.requests[1].requestCancelled
+    mockOk(d)
+    render(RequestQueuePane)
+    const rows = await loaded()
+    expect(within(rows[0]).getByTestId('frq-cancel-requested')).toHaveTextContent(
+      'cancel requested, grant still active',
+    )
+    expect(within(rows[1]).queryByTestId('frq-cancel-requested')).toBeNull()
+  })
+})

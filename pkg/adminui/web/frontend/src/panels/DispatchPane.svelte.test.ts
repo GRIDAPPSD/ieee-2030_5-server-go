@@ -272,7 +272,7 @@ describe('DispatchPane, plain dispatch', () => {
 })
 
 describe('DispatchPane, after a create', () => {
-  it('shows the stored control with its response counts, the grant it carries out, and no delivery claim', async () => {
+  it('shows the stored control with its response counts, the grant it carries out, and no delivery figure when the server sent none', async () => {
     const { w } = mockReads()
     mockWrite({ ok: true, data: created })
     mount()
@@ -285,7 +285,7 @@ describe('DispatchPane, after a create', () => {
     expect(screen.getByTestId('dispatch-control-grant')).toHaveTextContent(GRANT_MRID)
     expect(row).toHaveTextContent('8,000 W (DER frame)')
     expect(screen.getByTestId('dispatch-result')).toHaveTextContent('Stored control NEWCTL01')
-    expect(screen.getByTestId('dispatch-delivery-note')).toHaveTextContent('does not expose it yet')
+    expect(screen.getByTestId('dispatch-control-delivery')).toHaveTextContent('no readings')
   })
 
   it('reloads the grants so the energy left reflects the new control', async () => {

@@ -7,7 +7,7 @@
   // never sent twice on a guess.
   import { onDestroy, onMount } from 'svelte'
   import { fetchJSON } from '../lib/api'
-  import { fmtTime, type DERControlListItem, type DERControlListResponse, type DERProgramListResponse, type DERProgramView } from '../lib/dercontrol'
+  import { fmtTime, type DERControlDelivery, type DERControlListItem, type DERControlListResponse, type DERProgramListResponse, type DERProgramView } from '../lib/dercontrol'
   import {
     buildDispatch,
     fleetDeviceChoices,
@@ -421,6 +421,14 @@
     return formatQuantity(scaledNumber(t), 'W') + ' (DER frame)'
   }
 
+  // The figure is shown as the server served it: no sum, no sign flip, no
+  // fill for uncovered seconds. A null stays "no readings", never 0.
+  const NO_READINGS = 'no readings'
+
+  function windowSeconds(d: DERControlDelivery): number {
+    return Math.max(0, d.windowEnd - d.windowStart)
+  }
+
   function grantLabel(g: GrantView): string {
     return `request ${g.frqId} on device ${g.edevId}: ${formatInterval(g.response.interval)}, ${directionLabel(g.response.direction)}`
   }
@@ -605,7 +613,8 @@
         <thead>
           <tr>
             <th>Control</th>
-            <th>Target</th>
+            <th>Target (DER frame)</th>
+            <th>Metered delivery</th>
             <th>Interval</th>
             <th>Status</th>
             <th>Grant carried out</th>
@@ -617,6 +626,27 @@
             <tr data-testid="dispatch-control-row" data-mrid={c.mRID} data-created={c.mRID === createdMRID}>
               <td class="mono">{c.mRID}</td>
               <td>{c.type === 'targetW' ? targetText(c) : c.type}</td>
+              <td data-testid="dispatch-control-delivery">
+                {#if c.delivery}
+                  {@const d = c.delivery}
+                  <div data-testid="dispatch-delivery-wh">
+                    {#if d.directionUnknown}Delivered{:else}Delivered (export-positive){/if}:
+                    {d.deliveredWh === null ? NO_READINGS : formatQuantity(d.deliveredWh, 'Wh')}
+                  </div>
+                  <div data-testid="dispatch-delivery-avg">Average over covered seconds: {d.averageW === null ? NO_READINGS : formatQuantity(d.averageW, 'W')}</div>
+                  <div data-testid="dispatch-delivery-covered">Covered {d.coveredSeconds} s of {windowSeconds(d)} s</div>
+                  <div data-testid="dispatch-delivery-newest">
+                    Newest reading:
+                    {#if d.newestReadingTime === null}{NO_READINGS}{:else}{fmtTime(d.newestReadingTime)} ({formatAge(ageOf(d.newestReadingTime * 1000))}){/if}
+                  </div>
+                  {#if d.directionUnknown}
+                    <div class="hint" data-testid="dispatch-delivery-direction">Some readings were not counted because their direction is unknown.</div>
+                  {/if}
+                  <div class="hint mono" data-testid="dispatch-delivery-source">Source: mirror readings of device {d.deviceLFDI}</div>
+                {:else}
+                  <span data-testid="dispatch-delivery-wh">{NO_READINGS}</span>
+                {/if}
+              </td>
               <td>{formatInterval(c.interval)}</td>
               <td>{c.eventStatus.status}</td>
               <td class="mono" data-testid="dispatch-control-grant">{c.executesGrant ?? 'none (plain dispatch)'}</td>
@@ -630,12 +660,12 @@
               </td>
             </tr>
           {:else}
-            <tr><td colspan="6" class="stat-label">{controlsLoaded ? 'No admin-issued controls for this program' : controlsError ? 'Controls could not be read.' : 'Loading controls...'}</td></tr>
+            <tr><td colspan="7" class="stat-label">{controlsLoaded ? 'No admin-issued controls for this program' : controlsError ? 'Controls could not be read.' : 'Loading controls...'}</td></tr>
           {/each}
         </tbody>
       </table>
       <p class="hint" data-testid="dispatch-delivery-note">
-        Metered delivery: the server does not expose it yet, so none is shown.
+        Metered delivery comes from the device's own mirror readings and covers only the seconds a reading reaches. A control may take minutes to take effect, so a short control can read as under-delivery.
       </p>
     {/if}
   {/if}

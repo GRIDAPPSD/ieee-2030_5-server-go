@@ -135,6 +135,13 @@ type AdminDERControlHandler struct {
 	Fleets FleetResolver
 	Ledger CommitmentLedger
 
+	// MirrorUsagePoints and MirrorMeterReadings back each listed control's
+	// delivery; nil means no mirror storage, so every delivery reads "no
+	// readings". Edition selects the sign mapping the fleet route uses.
+	MirrorUsagePoints   store.ResourceReader[sep2.MirrorUsagePoint]
+	MirrorMeterReadings store.ScopedReader[sep2.MirrorMeterReading]
+	Edition             SEP2Edition
+
 	// Persisted reports whether both the control and lifecycle stores write
 	// through to disk, echoed in the create response.
 	Persisted bool
@@ -351,6 +358,8 @@ type DERControlResponseCounts struct {
 type DERControlListItem struct {
 	DERControlView
 	Responses DERControlResponseCounts `json:"responses"`
+	// Delivery is null only for a control with no interval.
+	Delivery *DERControlDelivery `json:"delivery"`
 }
 
 // DERControlList is the GET /api/der/controls body. Controls is always an
@@ -814,6 +823,9 @@ func (h *AdminDERControlHandler) HandleList() http.HandlerFunc {
 		}
 		now := sep2time.Now().Unix()
 		items := []DERControlListItem{}
+		// Mirrors are read once, and only when a listed control needs them.
+		var mirrors []deviceMirror
+		mirrorsRead := false
 		for _, key := range parents {
 			scope, ok := dercontrol.ScopeFromKey(key)
 			if !ok || scope.EndDeviceID != deviceID || (wantDerp != "" && scope.DERProgramID != wantDerp) {
@@ -837,10 +849,25 @@ func (h *AdminDERControlHandler) HandleList() http.HandlerFunc {
 					h.internal(w, r, "load lifecycle")
 					return
 				}
-				items = append(items, DERControlListItem{
+				item := DERControlListItem{
 					DERControlView: newDERControlView(scope, ctrl, lc, now),
 					Responses:      counts.forMRID(ctrl.MRID),
-				})
+				}
+				if ctrl.Interval != nil {
+					if !mirrorsRead {
+						mirrors, err = mirrorReadingsFor(ctx, "admin GET /api/der/controls", h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool {
+							return strings.EqualFold(device, edev.LFDI)
+						})
+						if err != nil {
+							h.internal(w, r, "list mirror readings")
+							return
+						}
+						mirrorsRead = true
+					}
+					ws, we := effectiveWindow(*ctrl.Interval, lc, now)
+					item.Delivery = newDelivery(edev.LFDI, mirrors, h.Edition, ws, we)
+				}
+				items = append(items, item)
 			}
 		}
 		writeJSON(w, http.StatusOK, DERControlList{Device: deviceID, Controls: items})
@@ -894,12 +921,13 @@ func (h *AdminDERControlHandler) loadDevice(w http.ResponseWriter, r *http.Reque
 }
 
 // internal answers 500 for a read route. step is a fixed string naming the
-// failed operation; the store's error text is not logged because it may
-// carry a request-derived id.
+// failed operation and route the mux pattern; the store's error text is not
+// logged because it may carry a request-derived id.
 func (h *AdminDERControlHandler) internal(w http.ResponseWriter, r *http.Request, step string) {
 	h.logger().Error("admin: DER control read failed",
 		"event", "der_control_read_failed",
 		"step", step,
+		"route", r.Pattern,
 		"remote_addr", r.RemoteAddr,
 	)
 	writeError(w, refuseInternal.status, refuseInternal.message)

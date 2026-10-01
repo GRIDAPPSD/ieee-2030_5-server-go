@@ -286,15 +286,6 @@ func breakSnapshot(t *testing.T, path string) {
 	}
 }
 
-func TestLifecycleStore_KeysAreTheStoredIdsAscending(t *testing.T) {
-	s, _ := newPersistedLifecycleStore(t)
-	seedLifecycles(t, s)
-	got, err := s.Keys(context.Background(), "dev")
-	if err != nil || !reflect.DeepEqual(got, []string{"a", "b"}) {
-		t.Errorf("Keys = %v, %v, want [a b]", got, err)
-	}
-}
-
 // DeleteParent removes the whole parent in one snapshot and the removal
 // survives a reload.
 func TestLifecycleStore_DeleteParentPersists(t *testing.T) {
@@ -335,8 +326,9 @@ func TestLifecycleStore_DeleteParentRollsBackOnAFailedSnapshot(t *testing.T) {
 			t.Errorf("record %s after rollback = %+v, %v, want %+v", id, got, err, rec)
 		}
 	}
-	if keys, _ := s.Keys(ctx, "dev"); !reflect.DeepEqual(keys, []string{"a", "b"}) {
-		t.Errorf("keys after rollback = %v, want [a b]", keys)
+	// The key index is what a later snapshot is written from.
+	if n, err := s.DeleteParent(ctx, "dev"); err == nil || n != 0 {
+		t.Errorf("second DeleteParent on the still-broken snapshot = %d, %v, want 0 and an error", n, err)
 	}
 	if has, _ := s.HasParent(ctx, "dev"); !has {
 		t.Error("parent lost after rollback")
@@ -349,7 +341,7 @@ func TestLifecycleStore_TakeParentUndoRestores(t *testing.T) {
 	ctx := context.Background()
 	s, path := newPersistedLifecycleStore(t)
 	want := seedLifecycles(t, s)
-	undo, err := s.TakeParent(ctx, "dev")
+	undo, _, err := s.TakeParent(ctx, "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +366,7 @@ func TestLifecycleStore_TakeParentUndoLogsWhatItCouldNotRestore(t *testing.T) {
 	ctx := context.Background()
 	s, path := newPersistedLifecycleStore(t)
 	seedLifecycles(t, s)
-	undo, err := s.TakeParent(ctx, "dev")
+	undo, _, err := s.TakeParent(ctx, "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,5 +381,26 @@ func TestLifecycleStore_TakeParentUndoLogsWhatItCouldNotRestore(t *testing.T) {
 		if !strings.Contains(buf.String(), id) {
 			t.Errorf("log %q does not name the lost record %s", buf.String(), id)
 		}
+	}
+}
+
+// Delete, recreate under the same parent and key, delete again: a stale key
+// index would make the second delete read an id that is no longer there.
+func TestLifecycleStore_DeleteParentThenRecreateThenDeleteAgain(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newPersistedLifecycleStore(t)
+	seedLifecycles(t, s)
+	if n, err := s.DeleteParent(ctx, "dev"); err != nil || n != 2 {
+		t.Fatalf("first DeleteParent = %d, %v, want 2, nil", n, err)
+	}
+	if err := s.Create(ctx, "dev", "a", LifecycleRecord{Reach: 9}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.DeleteParent(ctx, "dev")
+	if err != nil || n != 1 {
+		t.Fatalf("second DeleteParent = %d, %v, want 1, nil", n, err)
+	}
+	if c, _ := s.Count(ctx, "dev"); c != 0 {
+		t.Errorf("records left = %d, want 0", c)
 	}
 }

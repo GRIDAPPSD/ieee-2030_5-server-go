@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -183,20 +184,64 @@ func (s *FlowReservationLinkedEndDeviceStore) probeDelete(ctx context.Context, i
 // it, so a later step failing puts back what an earlier one removed, under
 // the keys the records were stored under.
 type ParentTaker interface {
-	// TakeParent removes every record under parentID. A failure leaves the
-	// collection as it was and returns no undo; a success returns an undo
-	// that recreates what was removed.
-	TakeParent(ctx context.Context, parentID string) (undo func(context.Context) error, err error)
+	// TakeParent removes every record under parentID and reports how many
+	// went. A failure leaves the collection as it was and returns no undo; a
+	// success returns an undo that recreates what was removed.
+	TakeParent(ctx context.Context, parentID string) (undo func(context.Context) error, removed uint32, err error)
 }
 
-// takeParent removes s's collection under parentID, with an undo when s can
-// give one. A store that cannot (a purely in-memory one has no snapshot to
-// fail partway) is removed through its plain cascade and has no undo.
-func takeParent[T store.Copier[T]](ctx context.Context, s store.ScopedStore[T], parentID string) (func(context.Context) error, error) {
+// takeParent removes s's collection under parentID with an undo when s can
+// give one: a [ParentTaker], including the in-memory [ScopedStore]. A store
+// that is neither is removed through its plain cascade and has no undo, so a
+// later failing step cannot put its records back.
+func takeParent[T store.Copier[T]](ctx context.Context, s store.ScopedStore[T], parentID string) (func(context.Context) error, uint32, error) {
 	if t, ok := s.(ParentTaker); ok {
 		return t.TakeParent(ctx, parentID)
 	}
-	return nil, deleteScopedParent(ctx, s, parentID)
+	n, err := cascadeScopedParent(ctx, s, parentID)
+	return nil, n, err
+}
+
+// cascadeScopedParent is deleteScopedParent that also reports the count.
+func cascadeScopedParent[T store.Copier[T]](ctx context.Context, s store.ScopedStore[T], parentID string) (uint32, error) {
+	cascader, ok := s.(parentCascader)
+	if !ok {
+		return 0, fmt.Errorf("the store (%T) cannot cascade a parent delete", s)
+	}
+	return cascader.DeleteParent(ctx, parentID)
+}
+
+// TakeParent implements [ParentTaker] for the in-memory store by detaching the
+// parent's bucket, which already holds every record under its key. The undo
+// recreates each record under that key.
+func (s *ScopedStore[T]) TakeParent(ctx context.Context, parentID string) (func(context.Context) error, uint32, error) {
+	s.mu.Lock()
+	st, ok := s.stores[parentID]
+	if ok {
+		delete(s.stores, parentID)
+	}
+	s.mu.Unlock()
+	if !ok {
+		return nil, 0, nil
+	}
+	st.mu.RLock()
+	keys := slices.Clone(st.keys)
+	records := make([]T, len(keys))
+	for i, k := range keys {
+		records[i] = st.data[k].Copy()
+	}
+	st.mu.RUnlock()
+	return func(ctx context.Context) error {
+		var errs []error
+		bucket := s.ForParent(parentID)
+		for i, k := range keys {
+			if err := bucket.Create(ctx, k, records[i]); err != nil {
+				log.Printf("memory: could not restore %s/%s after a failed cascade: %v", parentID, k, err)
+				errs = append(errs, fmt.Errorf("record %s/%s: %w", parentID, k, err))
+			}
+		}
+		return errors.Join(errs...)
+	}, uint32(len(keys)), nil
 }
 
 // dependentStore is a scoped store whose parent collection is removed together
@@ -219,21 +264,24 @@ func WithDependents[T store.Copier[T], D store.Copier[D]](primary store.ScopedSt
 	return &dependentStore[T, D]{ScopedStore: primary, dependents: dependents}
 }
 
-// TakeParent implements [ParentTaker] across both stores. Its undo runs the
-// dependents' first, the reverse of the removal order.
-func (d *dependentStore[T, D]) TakeParent(ctx context.Context, parentID string) (func(context.Context) error, error) {
-	undoPrimary, err := takeParent(ctx, d.ScopedStore, parentID)
+// TakeParent implements [ParentTaker] across both stores. The primary goes
+// first, so a crash between the two removals leaves a dependent with no
+// primary rather than a primary with no dependent; the undo runs the other
+// way, dependents first, so a crash mid-restore never serves a restored
+// response without the cancel mark that belongs to it (design 2.2).
+func (d *dependentStore[T, D]) TakeParent(ctx context.Context, parentID string) (func(context.Context) error, uint32, error) {
+	undoPrimary, n, err := takeParent(ctx, d.ScopedStore, parentID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	undoDependents, err := takeParent(ctx, d.dependents, parentID)
+	undoDependents, _, err := takeParent(ctx, d.dependents, parentID)
 	if err != nil {
 		if undoPrimary != nil {
 			if uerr := undoPrimary(context.WithoutCancel(ctx)); uerr != nil {
 				err = errors.Join(err, uerr)
 			}
 		}
-		return nil, err
+		return nil, 0, err
 	}
 	return func(ctx context.Context) error {
 		var errs []error
@@ -244,21 +292,15 @@ func (d *dependentStore[T, D]) TakeParent(ctx context.Context, parentID string) 
 			errs = append(errs, undoPrimary(ctx))
 		}
 		return errors.Join(errs...)
-	}, nil
+	}, n, nil
 }
 
 // DeleteParent removes the parent from both stores and reports how many
 // primary records went. It is what makes the probe's capability check pass,
 // so it must cascade the dependents too and not forward to the primary alone.
 func (d *dependentStore[T, D]) DeleteParent(ctx context.Context, parentID string) (uint32, error) {
-	n, err := d.ScopedStore.Count(ctx, parentID)
-	if err != nil {
-		return 0, err
-	}
-	if _, err := d.TakeParent(ctx, parentID); err != nil {
-		return 0, err
-	}
-	return n, nil
+	_, n, err := d.TakeParent(ctx, parentID)
+	return n, err
 }
 
 // Delete cascades the device's flow reservation request, response and
@@ -274,7 +316,8 @@ func (d *dependentStore[T, D]) DeleteParent(ctx context.Context, parentID string
 // succeed. The probe is a read check, so a persistent store can still fail
 // its snapshot write afterwards. A failure at any later step, the device
 // removal included, therefore undoes every collection already removed, in
-// reverse order.
+// reverse order. A collection held by a store with no [ParentTaker] (not the
+// in-memory or persistent stores) has no undo, and its records stay removed.
 func (s *FlowReservationLinkedEndDeviceStore) Delete(ctx context.Context, id string) error {
 	if err := s.probeDelete(ctx, id); err != nil {
 		return err
@@ -295,7 +338,7 @@ func (s *FlowReservationLinkedEndDeviceStore) Delete(ctx context.Context, id str
 		return err
 	}
 
-	undo, err := takeParent(ctx, s.reqs, id)
+	undo, _, err := takeParent(ctx, s.reqs, id)
 	if err != nil {
 		return fmt.Errorf("cascading flow reservation requests for %q: %w", id, err)
 	}
@@ -304,7 +347,7 @@ func (s *FlowReservationLinkedEndDeviceStore) Delete(ctx context.Context, id str
 	}
 	// A response store built with WithDependents removes the response
 	// lifecycle records here too, after the responses.
-	undo, err = takeParent(ctx, s.resps, id)
+	undo, _, err = takeParent(ctx, s.resps, id)
 	if err != nil {
 		return fail(fmt.Errorf("cascading flow reservation responses for %q: %w", id, err))
 	}

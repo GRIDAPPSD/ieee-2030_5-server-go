@@ -326,13 +326,6 @@ func (s *LifecycleStore) Delete(ctx context.Context, parentID, id string) error 
 	return nil
 }
 
-// Keys returns the ids stored under parentID, ascending.
-func (s *LifecycleStore) Keys(_ context.Context, parentID string) ([]string, error) {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	return s.idsUnder(parentID), nil
-}
-
 // DeleteParent removes every lifecycle record under parentID with one
 // snapshot write, reports how many went, and restores them all if the write
 // fails (GRIDAPPSD/ieee-2030_5-server-go#761).
@@ -396,12 +389,12 @@ func (s *LifecycleStore) deleteParentLocked(ctx context.Context, parentID string
 // TakeParent is DeleteParent that also returns an undo recreating each removed
 // record under its store key, for a cascade whose later step can fail. An undo
 // that cannot restore a record logs its parent and id.
-func (s *LifecycleStore) TakeParent(ctx context.Context, parentID string) (func(context.Context) error, error) {
+func (s *LifecycleStore) TakeParent(ctx context.Context, parentID string) (func(context.Context) error, uint32, error) {
 	s.writeMu.Lock()
-	_, ids, before, err := s.deleteParentLocked(ctx, parentID)
+	n, ids, before, err := s.deleteParentLocked(ctx, parentID)
 	s.writeMu.Unlock()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	return func(ctx context.Context) error {
 		var errs []error
@@ -412,7 +405,7 @@ func (s *LifecycleStore) TakeParent(ctx context.Context, parentID string) (func(
 			}
 		}
 		return errors.Join(errs...)
-	}, nil
+	}, n, nil
 }
 
 var _ memory.ParentTaker = (*LifecycleStore)(nil)

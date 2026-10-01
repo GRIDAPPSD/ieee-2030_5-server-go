@@ -345,12 +345,12 @@ func (s *PersistentScopedStore[T]) DeleteParent(ctx context.Context, parentID st
 // An undo that cannot restore a record logs that record's parent and id, since
 // the same failing snapshot that made the cascade fail is usually what fails
 // the restore, and the log is then the only trace of what was lost.
-func (s *PersistentScopedStore[T]) TakeParent(ctx context.Context, parentID string) (func(context.Context) error, error) {
+func (s *PersistentScopedStore[T]) TakeParent(ctx context.Context, parentID string) (func(context.Context) error, uint32, error) {
 	s.writeMu.Lock()
-	_, ids, before, err := s.deleteParentLocked(ctx, parentID)
+	n, ids, before, err := s.deleteParentLocked(ctx, parentID)
 	s.writeMu.Unlock()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	return func(ctx context.Context) error {
 		var errs []error
@@ -361,16 +361,7 @@ func (s *PersistentScopedStore[T]) TakeParent(ctx context.Context, parentID stri
 			}
 		}
 		return errors.Join(errs...)
-	}, nil
-}
-
-// Keys returns the ids stored under parentID, ascending.
-func (s *PersistentScopedStore[T]) Keys(_ context.Context, parentID string) ([]string, error) {
-	s.writeMu.RLock()
-	defer s.writeMu.RUnlock()
-	s.keysMu.Lock()
-	defer s.keysMu.Unlock()
-	return slices.Clone(s.keys[parentID]), nil
+	}, n, nil
 }
 
 // deleteParentLocked is DeleteParent with writeMu already held, and with the

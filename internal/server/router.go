@@ -122,6 +122,11 @@ type Stores struct {
 	// (#714), keyed exactly as the response and persisted like it (#761).
 	FlowReservationResponseLifecycles store.ScopedStore[dercontrol.LifecycleRecord]
 
+	// FlowReservationAnswers records who created and who cancelled each
+	// response (#670), keyed exactly as the response. Nil records nothing,
+	// and every response reads as unrecorded.
+	FlowReservationAnswers store.ScopedStore[flowreservation.AnswerRecord]
+
 	// CommitmentLedger is the process's one commitment ledger (#714).
 	CommitmentLedger *commitment.Ledger
 

@@ -27,6 +27,9 @@ var wantAdminWriteRoutes = []string{
 	"POST /api/certs/server",
 	"POST /api/der/controls",
 	"POST /api/der/controls/{mrid}/cancel",
+	"POST /api/derms/flow-reservations/{edevId}/{frqId}/answer",
+	"POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel",
+	"POST /api/derms/flow-reservations/{edevId}/{frqId}/revise",
 	"POST /api/devices",
 	"POST /api/devices/{id}/fsa-assignment",
 	"POST /api/fsas",
@@ -62,6 +65,10 @@ var wantAdminBodyTypes = map[string][]string{
 	"POST /auth/ticket":                       nil,
 	"POST /api/der/controls":                  {"application/json"},
 	"POST /api/der/controls/{mrid}/cancel":    {"application/json"},
+
+	"POST /api/derms/flow-reservations/{edevId}/{frqId}/answer": {"application/json"},
+	"POST /api/derms/flow-reservations/{edevId}/{frqId}/revise": {"application/json"},
+	"POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel": {"application/json"},
 }
 
 // TestEveryAdminWriteRouteIsCovered walks the routes BuildAdminRouter reports
@@ -115,7 +122,7 @@ func TestEveryAdminWriteRouteIsCovered(t *testing.T) {
 
 	for _, p := range writes {
 		method, path, _ := strings.Cut(p, " ")
-		target := strings.NewReplacer("{id}", "x", "{mrid}", "x").Replace(path)
+		target := strings.NewReplacer("{id}", "x", "{mrid}", "x", "{edevId}", "x", "{frqId}", "x").Replace(path)
 		// goodType and the expected refusals below come from
 		// wantAdminBodyTypes, the independent source, not the production
 		// table: a wrong table entry must make this subtest fail rather

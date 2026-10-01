@@ -170,6 +170,12 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("FlowReservationResponse lifecycle persistence: %w", err)
 	}
+	flowReservationAnswers, err := memory.NewPersistentScopedStore[flowreservation.AnswerRecord](
+		cfg.EffectiveStorePath("flowreservation-answers", ""), "FlowReservationAnswer",
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("FlowReservationAnswer persistence: %w", err)
+	}
 	endDeviceManagers, err := memory.NewEndDeviceManagementStoreWithPersistence(
 		cfg.EffectiveStorePath("enddevicemanagement", ""),
 	)
@@ -233,6 +239,7 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 		Responses:                memory.NewScopedStore[sep2.Response](),
 
 		FlowReservationResponseLifecycles: flowReservationLifecycles,
+		FlowReservationAnswers:            flowReservationAnswers,
 
 		// #715 fix round 3 item 2: env SEP2_EDITION, default "2018" via
 		// EffectiveSEP2Edition.

@@ -18,17 +18,6 @@ var ErrNothingToRevise = errors.New("flowreservation: request has no response to
 // ErrIncompleteDeps is returned when ReviseDeps lacks a store or Replace.
 var ErrIncompleteDeps = errors.New("flowreservation: ReviseDeps needs FRQ, FRP and Replace")
 
-// Attribution names who made a change: an mTLS certificate fingerprint when
-// the admission path verified one, otherwise "admin-key". Revise accepts it
-// so the admin route that records it does not change this signature; it is
-// not yet stored.
-type Attribution struct {
-	Kind      string
-	Admission string
-	Principal string
-	At        int64
-}
-
 // ReplacementFunc wraps a response about to be stored as a
 // commitment.Replacement. internal/commitment/sources.NewReplacement over
 // the response store is the production one; it lives there because that
@@ -44,6 +33,8 @@ type ReviseDeps struct {
 	Replace ReplacementFunc
 	// PEN is embedded in the new response's mRID, as for Queue.
 	PEN *uint32
+	// Answers records who made the revision; nil records nothing.
+	Answers *Answers
 }
 
 // Revise changes the answer to a request by cancel-and-create: it builds the
@@ -55,10 +46,14 @@ type ReviseDeps struct {
 // cancelled or denied tip, a window the fleet holds, a control that no
 // longer fits) stores nothing.
 //
+// by is recorded as the new response's author, written under the fleet lock
+// just before the response and taken back with it. Recording the old
+// grant's canceller is the caller's, once Revise has succeeded.
+//
 // The new creationTime is max(now, old+1): creationTime is whole seconds and
 // must strictly increase along a chain (10.2.2.3 e), so a revision in the
 // same second as its predecessor is not the client's error.
-func Revise(ctx context.Context, deps ReviseDeps, edevID, frqID string, decision Decision, reason string, _ Attribution, now time.Time) (sep2.FlowReservationResponse, error) {
+func Revise(ctx context.Context, deps ReviseDeps, edevID, frqID string, decision Decision, reason string, by Attribution, now time.Time) (sep2.FlowReservationResponse, error) {
 	if deps.Ledger == nil {
 		return sep2.FlowReservationResponse{}, commitment.ErrNoLedger
 	}
@@ -92,7 +87,8 @@ func Revise(ctx context.Context, deps ReviseDeps, edevID, frqID string, decision
 	}
 	frp.MRID = mrid
 	frp.Subject = tip.Subject
-	frp.Href = responseHref(edevID, RevisionID(tipID))
+	newID := RevisionID(tipID)
+	frp.Href = responseHref(edevID, newID)
 
 	var stored sep2.FlowReservationResponse
 	err = deps.Ledger.Revise(ctx, deps.Writers, tip.MRID, reason, now.Unix(), func(old commitment.Grant) (commitment.Replacement, error) {
@@ -104,7 +100,14 @@ func Revise(ctx context.Context, deps ReviseDeps, edevID, frqID string, decision
 		es := deriveEventStatus(start, frp.CreationTime, now.Unix(), dercontrol.LifecycleRecord{})
 		frp.EventStatus = &es
 		stored = frp
-		return deps.Replace(edevID, frp)
+		rep, err := deps.Replace(edevID, frp)
+		if err != nil {
+			return rep, err
+		}
+		if rep.Create != nil && rep.Delete != nil {
+			rep.Create, rep.Delete = deps.Answers.recorded(edevID, newID, AnswerRecord{Action: ActionRevise, By: by}, rep.Create, rep.Delete)
+		}
+		return rep, nil
 	})
 	if err != nil {
 		return sep2.FlowReservationResponse{}, err

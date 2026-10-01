@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"math"
 	"math/big"
 	"net/http"
@@ -78,7 +79,7 @@ type flowReservationLifecycles interface {
 }
 
 // AdminFlowReservationHandler is the dependency surface of the three read
-// routes.
+// routes and the three write routes (admin_flowreservation_write.go).
 type AdminFlowReservationHandler struct {
 	Requests FlowReservationRequestReader
 	// Responses must be the store the protocol GET serves, the one that
@@ -99,6 +100,21 @@ type AdminFlowReservationHandler struct {
 	// Now is the clock for state and the page's countdown base; nil uses
 	// the protocol clock.
 	Now func() int64
+
+	// Queue, Revise and Canceller carry out the writes; a write whose
+	// dependency is unset answers 503 not_configured. Revise.FRP must read
+	// the stored responses and Revise.Answers records the reviser.
+	Queue     FlowReservationAnswerer
+	Revise    flowreservation.ReviseDeps
+	Canceller FlowReservationGrantCanceller
+	// CancelRecorder records who revised or cancelled a grant, once the
+	// change committed; nil records nothing.
+	CancelRecorder FlowReservationCancelRecorder
+	// Notifier is the one Revise.Writers notify through. A revise holds its
+	// notifications until the fleet lock is released; nil holds nothing.
+	Notifier flowreservation.Notifier
+	// Logger receives one line per write; nil uses slog.Default().
+	Logger *slog.Logger
 }
 
 // The JSON shapes below are the contract the frontend fixture
@@ -211,11 +227,15 @@ type FlowReservationGrantList struct {
 }
 
 // frRefusal is the one refusal body of the flow reservation admin API.
+// Cancelled and Unresolved appear only on a cancel that did not settle the
+// whole chain: the mRIDs it cancelled and those the ledger could not reach.
 type frRefusal struct {
-	Error string `json:"error"`
-	Code  string `json:"code"`
-	MRID  string `json:"mRID"`
-	FrqID string `json:"frqId"`
+	Error      string   `json:"error"`
+	Code       string   `json:"code"`
+	MRID       string   `json:"mRID"`
+	FrqID      string   `json:"frqId"`
+	Cancelled  []string `json:"cancelled,omitempty"`
+	Unresolved []string `json:"unresolved,omitempty"`
 }
 
 func writeFRRefusal(w http.ResponseWriter, status int, code, text, frqID string) {

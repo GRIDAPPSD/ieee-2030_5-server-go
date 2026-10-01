@@ -121,17 +121,30 @@ func flowReservationConfig(deadline time.Duration) flowreservation.Config {
 }
 
 // newFlowReservationQueue builds the process's one queue through the
-// assembly's own constructor, over the same stores the routes are given. A nil
+// assembly's own constructor, over the same stores the routes are given, and
+// records each response's author in the answer store when one is wired. A nil
 // notifier notifies no one.
 func newFlowReservationQueue(stores *Stores, notifier assembly.ResourceNotifier) *flowreservation.Queue {
-	return assembly.NewFlowReservationQueue(NewCoreStores(stores), stores.PEN, flowReservationConfig(stores.FlowReservationDeadline).Deadline, notifier)
+	q := assembly.NewFlowReservationQueue(NewCoreStores(stores), stores.PEN, flowReservationConfig(stores.FlowReservationDeadline).Deadline, notifier)
+	q.RecordAnswers(flowReservationAnswers(stores))
+	return q
 }
 
-// flowReservationResponses is the response store with its lifecycle records
-// removed alongside it, the form the assembly serves and recovery deletes
-// through.
+// flowReservationAnswers is the answer store as the queue and the admin API
+// use it, or nil when none is wired.
+func flowReservationAnswers(s *Stores) *flowreservation.Answers {
+	if store.IsAbsent(s.FlowReservationAnswers) {
+		return nil
+	}
+	return flowreservation.NewAnswers(s.FlowReservationAnswers)
+}
+
+// flowReservationResponses is the response store with its lifecycle and
+// answer records removed alongside it, the form the assembly serves and
+// recovery deletes through, so an EndDevice delete leaves neither behind.
 func flowReservationResponses(s *Stores) store.ScopedStore[sep2.FlowReservationResponse] {
-	return memory.WithDependents(s.FlowReservationResponses, s.FlowReservationResponseLifecycles)
+	withLifecycles := memory.WithDependents(s.FlowReservationResponses, s.FlowReservationResponseLifecycles)
+	return memory.WithDependents(withLifecycles, s.FlowReservationAnswers)
 }
 
 // recoverAtBoot is the call Run makes; tests replace it to observe when it runs.

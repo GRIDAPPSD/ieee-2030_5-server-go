@@ -153,6 +153,10 @@ func (a *Answers) RecordCancel(ctx context.Context, edevID, id string, by Attrib
 	return nil
 }
 
+// errTakeBack marks a failed undo of an answer record after its response's
+// create failed: the record may now name a response it did not create.
+var errTakeBack = errors.New("flowreservation: take back answer record")
+
 // recorded wraps a response's create and delete so its record is written
 // just before the create and put back as it was if the create fails or the
 // response is deleted again (a revision's rollback). A caller that never
@@ -167,7 +171,7 @@ func (a *Answers) recorded(edevID, id string, rec AnswerRecord, create, del func
 		undo = u
 		if err := create(ctx); err != nil {
 			if uerr := undo(context.WithoutCancel(ctx)); uerr != nil {
-				return errors.Join(err, fmt.Errorf("flowreservation: take back answer record %s/%s: %w", edevID, id, uerr))
+				return errors.Join(err, fmt.Errorf("%w %s/%s: %w", errTakeBack, edevID, id, uerr))
 			}
 			return err
 		}

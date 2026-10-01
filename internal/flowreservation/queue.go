@@ -525,9 +525,10 @@ func (q *Queue) buildLocked(ctx context.Context, edevID, frqID string, decision 
 // neither. An error from the Create itself keeps its infrastructure meaning
 // (the fallback retries it), so only the gate's own refusals are marked.
 func (q *Queue) store(ctx context.Context, edevID, frqID string, frp sep2.FlowReservationResponse, rec AnswerRecord) error {
-	var createErr error
+	var createErr, frpErr error
 	createRecorded, _ := q.Answers().recorded(edevID, frqID, rec, func(ctx context.Context) error {
-		return q.frp.Create(ctx, edevID, frqID, frp)
+		frpErr = q.frp.Create(ctx, edevID, frqID, frp)
+		return frpErr
 	}, nil)
 	create := func(ctx context.Context) error {
 		createErr = createRecorded(ctx)
@@ -546,7 +547,13 @@ func (q *Queue) store(ctx context.Context, edevID, frqID string, frp sep2.FlowRe
 	case err == nil:
 		return nil
 	case createErr != nil:
-		if errors.Is(createErr, store.ErrAlreadyExists) {
+		// Only the response store refusing a duplicate means a response
+		// exists. The answer record's own Create refusing one is a racing
+		// attempt that may still fail, so it stays a retryable failure.
+		if errors.Is(frpErr, store.ErrAlreadyExists) {
+			if errors.Is(createErr, errTakeBack) {
+				return fmt.Errorf("%w: %w", ErrAlreadyAnswered, createErr)
+			}
 			return ErrAlreadyAnswered
 		}
 		return fmt.Errorf("flowreservation: create FlowReservationResponse: %w", createErr)

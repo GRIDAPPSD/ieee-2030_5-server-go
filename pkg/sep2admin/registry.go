@@ -74,20 +74,21 @@ var ErrDisabled = errors.New("sep2admin: admin UI not configured, this is not a 
 // match.
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
-// reservedIDs are names this repository's own routes already use, or has
-// committed to using. A panel ID colliding with one of these would shadow
-// a server-owned route rather than merely occupying URL space, so
-// Register refuses it the same way it refuses a malformed ID. This set
-// includes the admin UI's core tab slugs and its top-level path segments,
-// so the two lists cannot drift apart silently.
-var reservedIDs = map[string]struct{}{
-	// Core tab slugs.
+// coreTabIDs are the shell's own tab slugs, the paths under /ui/ in
+// pkg/adminui/web/frontend/src/routes/index.ts. A panel with one of these
+// IDs would claim a core tab's nav slot. TestCoreTabIDsMatchTheShell
+// reads that file, so the two lists cannot drift apart silently.
+var coreTabIDs = map[string]struct{}{
 	"overview":     {},
 	"devices":      {},
 	"fsas":         {},
 	"control":      {},
 	"certificates": {},
-	// Top-level path segments.
+	"derms":        {},
+}
+
+// pathSegmentIDs are the admin listener's own top-level path segments.
+var pathSegmentIDs = map[string]struct{}{
 	"ui":        {},
 	"api":       {},
 	"auth":      {},
@@ -236,8 +237,11 @@ func validateID(id string) error {
 	if !idPattern.MatchString(id) {
 		return fmt.Errorf("%w: %q does not match the slug pattern", ErrInvalidID, id)
 	}
-	if _, reserved := reservedIDs[id]; reserved {
-		return fmt.Errorf("%w: %q is a reserved name", ErrInvalidID, id)
+	if _, reserved := coreTabIDs[id]; reserved {
+		return fmt.Errorf("%w: %q is a core tab", ErrInvalidID, id)
+	}
+	if _, reserved := pathSegmentIDs[id]; reserved {
+		return fmt.Errorf("%w: %q is a reserved path segment", ErrInvalidID, id)
 	}
 	return nil
 }

@@ -105,6 +105,7 @@ func TestValidateID(t *testing.T) {
 		{"reserved fsas", "fsas"},
 		{"reserved control", "control"},
 		{"reserved certificates", "certificates"},
+		{"reserved derms", "derms"},
 		{"reserved ui", "ui"},
 		{"reserved api", "api"},
 		{"reserved auth", "auth"},

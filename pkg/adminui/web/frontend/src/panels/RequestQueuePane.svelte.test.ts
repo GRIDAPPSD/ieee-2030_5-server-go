@@ -285,11 +285,20 @@ describe('RequestQueuePane content', () => {
     expect(container.textContent).not.toContain('NaN')
   })
 
-  it('has no answer, revise or cancel button', async () => {
+  it('offers only Refresh and the operator actions, and sends nothing on load', async () => {
     mockOk(fixture)
+    const post = vi.spyOn(api, 'postJSON')
     render(RequestQueuePane)
     await loaded()
-    expect(screen.getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['Refresh'])
+    expect(screen.getAllByRole('button').map((b) => b.textContent?.trim())).toEqual([
+      'Refresh',
+      'Grant as asked',
+      'Grant adjusted',
+      'Deny',
+      'Revise',
+      'Cancel grant',
+    ])
+    expect(post).not.toHaveBeenCalled()
   })
 })
 

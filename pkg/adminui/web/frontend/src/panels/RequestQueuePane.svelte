@@ -4,10 +4,21 @@
   // aggregator's flow reservation requests, read-only. The page renders
   // what the server says: the tip, the history, the commitments and the
   // deadline all come from the payload, and a 404 reads as "not available"
-  // rather than as an empty queue.
+  // rather than as an empty queue. The operator's answer, revise and cancel
+  // actions post to the write routes (#670) and the row is replaced from the
+  // view the server returns, never patched here.
   import { onDestroy, onMount } from 'svelte'
   import { fetchJSON } from '../lib/api'
   import { formatAge } from '../lib/fleet'
+  import {
+    REASON_MAX,
+    buildAction,
+    emptyForm,
+    formatStart,
+    submitWrite,
+    type ActionForm,
+    type ActionKind,
+  } from '../lib/flowreservationWrite'
   import {
     directionLabel,
     formatActor,
@@ -18,6 +29,7 @@
     normalizeQueue,
     parseFleetLFDIs,
     scaledNumber,
+    type FlowReservationEntry,
     type FlowReservationQueue,
     type ResponseView,
   } from '../lib/flowreservation'
@@ -25,6 +37,18 @@
   const TICK_MS = 1000
   const REFRESH_MS = 30_000
   const FETCH_TIMEOUT_MS = 15_000
+  const WRITE_TIMEOUT_MS = 20_000
+
+  // One action is open at a time. `confirming` is the step after the
+  // inputs: nothing is sent until it is on screen and Confirm is pressed.
+  interface OpenAction {
+    href: string
+    kind: ActionKind
+    form: ActionForm
+    confirming: boolean
+    busy: boolean
+    error: string
+  }
 
   // serverNow anchors a queue's countdown to the server's clock: the
   // payload's own `now`, else the response Date header, else null.
@@ -57,6 +81,20 @@
   // abort controller drops one that lands after unmount and cancels it on
   // the wire.
   let requestSeq = 0
+  let writeSeq = 0
+  let writeCtrl: AbortController | null = null
+  let action = $state<OpenAction | null>(null)
+  let writeNote = $state('')
+  // After a write whose outcome is unknown, the rows on screen may be older
+  // than the server. The actions stay locked and the note stays up until a
+  // load has landed; markStale starts one, and the sequence guard means only
+  // the newest load ever applies.
+  let staleNote = $state(false)
+  // A write that lands while a load is in flight would be undone by that
+  // load's older payload, so the written row is kept over it. `seq` is the
+  // latest load at write time, and any load numbered at or below it started
+  // before the write.
+  const written = new Map<string, { entry: FlowReservationEntry; seq: number }>()
   const lifetime = new AbortController()
   let tickTimer: ReturnType<typeof setInterval> | undefined
   let refreshTimer: ReturnType<typeof setInterval> | undefined
@@ -123,6 +161,10 @@
         if ('error' in parsed) {
           problem = { error: 'server returned an unexpected response shape: ' + parsed.error, status: 0 }
         } else {
+          parsed.queue.requests = parsed.queue.requests.map((e) => {
+            const w = written.get(e.requestHref)
+            return w !== undefined && w.seq >= seq ? w.entry : e
+          })
           const own = parsed.queue.now
           const header = res.serverTime === undefined ? null : Math.floor(res.serverTime / 1000)
           next.push({
@@ -155,6 +197,11 @@
     if (lfdis.length > 0 && succeeded === 0 && firstFailure !== null) {
       return fail(firstFailure.error, firstFailure.status)
     }
+    if (staleNote) {
+      staleNote = false
+      writeNote = ''
+    }
+    for (const [href, w] of written) if (w.seq < seq) written.delete(href)
     views = next
     loaded = true
     unavailable = false
@@ -177,14 +224,219 @@
 
   onDestroy(() => {
     lifetime.abort()
+    writeCtrl?.abort()
     if (tickTimer !== undefined) clearInterval(tickTimer)
     if (refreshTimer !== undefined) clearInterval(refreshTimer)
   })
+
+  function openAction(entry: FlowReservationEntry, kind: ActionKind) {
+    if (action?.busy === true || staleNote) return
+    const form = emptyForm()
+    const asked = entry.request.intervalRequested
+    const held = kind === 'revise' ? entry.tip?.interval : asked
+    if ((kind === 'grant_adjusted' || kind === 'revise') && held) {
+      form.start = formatStart(held.start)
+      if (form.start !== '') form.duration = String(held.duration)
+    }
+    writeNote = ''
+    action = {
+      href: entry.requestHref,
+      kind,
+      form,
+      confirming: kind === 'grant_as_asked' || kind === 'deny',
+      busy: false,
+      error: '',
+    }
+  }
+
+  function review(entry: FlowReservationEntry) {
+    if (action === null) return
+    const built = buildAction(action.kind, entry, action.form)
+    if (!built.ok) {
+      action.error = built.error
+      return
+    }
+    action.error = ''
+    action.confirming = true
+  }
+
+  function backToInputs() {
+    if (action === null || action.busy) return
+    action.confirming = false
+  }
+
+  function focusOnMount(el: HTMLElement) {
+    el.focus()
+  }
+
+  // A busy action whose row left the list (a refresh dropped it) would have
+  // no panel and no way out until the timeout.
+  const orphan = $derived(
+    action !== null &&
+      !views.some((v) => v.queue?.requests.some((e) => e.requestHref === action?.href) === true),
+  )
+
+  const locked = $derived(action?.busy === true || staleNote)
+
+  const HAS_INPUTS: ActionKind[] = ['grant_adjusted', 'revise', 'cancel']
+
+  function closeAction() {
+    if (action?.busy === true) return
+    action = null
+  }
+
+  // stopWaiting drops the answer to an in-flight write: the response is
+  // ignored when it lands, and the pane says the outcome is unknown.
+  function stopWaiting() {
+    writeSeq++
+    writeCtrl?.abort()
+    writeCtrl = null
+    action = null
+    markStale('Stopped waiting. The server may or may not have applied the change. Reloading the queue.')
+  }
+
+  // markStale starts a fresh load (the sequence guard drops any older one)
+  // and locks the actions until that load has landed.
+  function markStale(note: string) {
+    writeNote = note
+    load()
+    staleNote = true
+  }
+
+  function replaceRow(entry: FlowReservationEntry) {
+    written.set(entry.requestHref, { entry, seq: requestSeq })
+    views = views.map((v) =>
+      v.queue === null
+        ? v
+        : {
+            ...v,
+            queue: {
+              ...v.queue,
+              requests: v.queue.requests.map((e) => (e.requestHref === entry.requestHref ? entry : e)),
+            },
+          },
+    )
+  }
+
+  async function confirm(entry: FlowReservationEntry) {
+    const open = action
+    if (open === null || open.busy || !open.confirming) return
+    const built = buildAction(open.kind, entry, open.form)
+    if (!built.ok) {
+      open.error = built.error
+      open.confirming = false
+      return
+    }
+    const seq = ++writeSeq
+    const ctrl = new AbortController()
+    writeCtrl = ctrl
+    open.busy = true
+    open.error = ''
+    const result = await submitWrite(built.path, built.body, entry.requestHref, { signal: ctrl.signal, timeoutMs: WRITE_TIMEOUT_MS })
+    if (lifetime.signal.aborted || seq !== writeSeq) return
+    writeCtrl = null
+    if (result.ok) {
+      replaceRow(result.entry)
+      writeNote = 'Request ' + result.entry.frqId + ' is now ' + result.entry.state + ' (server answer).'
+      action = null
+      return
+    }
+    if (result.kind === 'refused') {
+      open.busy = false
+      open.error = result.message
+      return
+    }
+    // The write may or may not have landed, or the row is out of date: the
+    // confirm step closes so the same write is never re-sent, and a fresh load
+    // (the sequence guard drops any older one) shows the server's state.
+    action = null
+    markStale(result.message)
+  }
+
+  const KIND_LABEL: Record<ActionKind, string> = {
+    grant_as_asked: 'Grant as asked',
+    grant_adjusted: 'Grant adjusted',
+    deny: 'Deny',
+    revise: 'Revise',
+    cancel: 'Cancel grant',
+  }
+
+  // effectText says what Confirm will do, in the operator's terms. For an
+  // adjusted grant it repeats the values typed, as magnitudes.
+  function effectText(entry: FlowReservationEntry, a: OpenAction): string {
+    const f = a.form
+    const adjusted =
+      [
+        f.start !== '' ? 'interval ' + f.start + ' for ' + f.duration + ' s' : '',
+        f.energy !== '' ? 'energy ' + f.energy + ' Wh' : '',
+        f.power !== '' ? 'power ' + f.power + ' W' : '',
+      ]
+        .filter((t) => t !== '')
+        .join(', ') || 'the values as asked'
+    switch (a.kind) {
+      case 'grant_as_asked':
+        return 'Grant the request exactly as asked: ' + formatInterval(entry.request.intervalRequested) + '.'
+      case 'grant_adjusted':
+        return 'Grant the request with ' + adjusted + '. Anything left blank is granted as asked. The server applies the request\'s direction.'
+      case 'deny':
+        return 'Deny the request. The aggregator is answered with a zero-duration grant.'
+      case 'revise':
+        return f.deny
+          ? 'Cancel the current grant and deny the request. Controls carrying out the grant are checked by the server.'
+          : 'Cancel the current grant and issue a new one with ' + adjusted + '. Controls carrying out the old grant move to the new one only if they still fit.'
+      case 'cancel':
+        return 'Cancel the grant and the controls carrying it out.'
+    }
+  }
 
   function ageOf(since: number): number {
     return Math.max(0, Math.floor((nowMs - since) / 1000))
   }
 </script>
+
+{#snippet actionPanel(entry: FlowReservationEntry)}
+  {#if action !== null && action.href === entry.requestHref}
+    {@const a = action}
+    <div class="action-panel" data-testid="frq-action">
+      <strong>{KIND_LABEL[a.kind]}</strong>
+      <span class="hint">request {entry.frqId} on device {entry.edevId}</span>
+      {#if !a.confirming}
+        {#if a.kind === 'grant_adjusted' || (a.kind === 'revise' && !a.form.deny)}
+          <div class="hint">Blank means as asked. Energy and power are magnitudes, with no sign.</div>
+          <label>Start (UTC) <input type="text" bind:value={a.form.start} data-testid="frq-in-start" /></label>
+          <label>Duration (s) <input type="text" inputmode="numeric" bind:value={a.form.duration} data-testid="frq-in-duration" /></label>
+          <label>Energy (Wh) <input type="text" inputmode="numeric" bind:value={a.form.energy} data-testid="frq-in-energy" /></label>
+          <label>Power (W) <input type="text" inputmode="numeric" bind:value={a.form.power} data-testid="frq-in-power" /></label>
+        {/if}
+        {#if a.kind === 'revise'}
+          <label><input type="checkbox" bind:checked={a.form.deny} data-testid="frq-in-deny" /> Deny instead</label>
+        {/if}
+        {#if a.kind === 'revise' || a.kind === 'cancel'}
+          <label>Reason (optional, up to {REASON_MAX} characters)
+            <input type="text" bind:value={a.form.reason} data-testid="frq-in-reason" />
+          </label>
+        {/if}
+        <button class="btn btn-small" onclick={() => review(entry)}>Review</button>
+        <button class="btn btn-small" onclick={closeAction}>Close</button>
+      {:else}
+        <p data-testid="frq-confirm-text" tabindex="-1" {@attach focusOnMount}>{effectText(entry, a)}</p>
+        <button class="btn btn-small" disabled={a.busy} onclick={() => confirm(entry)}>Confirm</button>
+        {#if a.busy}
+          <span class="hint" data-testid="frq-writing">Sending...</span>
+          <button class="btn btn-small" onclick={stopWaiting}>Stop waiting</button>
+        {:else}
+          {#if HAS_INPUTS.includes(a.kind)}
+            <button class="btn btn-small" onclick={backToInputs}>Back</button>
+          {/if}
+          <button class="btn btn-small" onclick={closeAction}>Do not send</button>
+        {/if}
+      {/if}
+      {#if a.error !== ''}
+        <div class="result err" role="alert" data-testid="frq-write-error">{a.error}</div>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
 
 {#snippet responseView(r: ResponseView, tip: boolean)}
   <div class={tip ? 'response tip' : 'response history'} data-testid={tip ? 'frq-tip' : 'frq-history'}>
@@ -239,6 +491,19 @@
     {#if failed}
       <div class="result err" data-testid="frq-stale">
         Could not refresh requests: {reason(error)}. Showing the queue fetched {formatAge(ageOf(fetchedAtMs))} (stale).
+      </div>
+    {/if}
+    {#if writeNote !== ''}
+      <div class="hint" role="alert" data-testid="frq-write-note">{writeNote}</div>
+    {/if}
+    {#if action !== null && orphan}
+      <div class="action-panel" data-testid="frq-orphan">
+        {KIND_LABEL[action.kind]} on {action.href} is no longer in the list.
+        {#if action.busy}
+          <button class="btn btn-small" onclick={stopWaiting}>Stop waiting</button>
+        {:else}
+          <button class="btn btn-small" onclick={closeAction}>Close</button>
+        {/if}
       </div>
     {/if}
     {#if views.every((v) => v.queue !== null && v.queue.requests.length === 0)}
@@ -299,6 +564,19 @@
                   {#if entry.tip === null && entry.responses.length === 0}
                     <span class="hint">no answer yet</span>
                   {/if}
+                  {#if entry.state === 'pending' || entry.state === 'overdue'}
+                    <div class="actions">
+                      <button class="btn btn-small" disabled={locked} onclick={() => openAction(entry, 'grant_as_asked')}>Grant as asked</button>
+                      <button class="btn btn-small" disabled={locked} onclick={() => openAction(entry, 'grant_adjusted')}>Grant adjusted</button>
+                      <button class="btn btn-small" disabled={locked} onclick={() => openAction(entry, 'deny')}>Deny</button>
+                    </div>
+                  {:else if entry.state === 'granted'}
+                    <div class="actions">
+                      <button class="btn btn-small" disabled={locked} onclick={() => openAction(entry, 'revise')}>Revise</button>
+                      <button class="btn btn-small" disabled={locked} onclick={() => openAction(entry, 'cancel')}>Cancel grant</button>
+                    </div>
+                  {/if}
+                  {@render actionPanel(entry)}
                 </td>
               </tr>
             {/each}

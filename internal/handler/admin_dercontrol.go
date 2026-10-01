@@ -601,13 +601,13 @@ func (h *AdminDERControlHandler) issueInFleet(ctx context.Context, req dercontro
 // when no fleet resolves, or no ledger or resolver is wired, or the ledger
 // cannot run, it cancels without the lock and logs why at WARN. A client that
 // went away while waiting for the lock gets the context error back.
-func (h *AdminDERControlHandler) cancelInFleet(ctx context.Context, scope dercontrol.Scope, id, reason string) (dercontrol.LifecycleRecord, error) {
+func (h *AdminDERControlHandler) cancelInFleet(ctx context.Context, scope dercontrol.Scope, id, mrid, reason string) (dercontrol.LifecycleRecord, error) {
 	keys, why := h.cancelFleetKeys(ctx, scope, id)
 	if h.Ledger == nil {
 		why = "no_ledger"
 	}
 	if len(keys) == 0 || h.Ledger == nil {
-		return h.cancelUnlocked(ctx, scope, id, reason, why)
+		return h.cancelUnlocked(ctx, scope, id, mrid, reason, why, nil)
 	}
 
 	var lc dercontrol.LifecycleRecord
@@ -624,7 +624,7 @@ func (h *AdminDERControlHandler) cancelInFleet(ctx context.Context, scope dercon
 	case ctx.Err() != nil:
 		return dercontrol.LifecycleRecord{}, ctx.Err()
 	default:
-		return h.cancelUnlocked(ctx, scope, id, reason, "ledger_failed")
+		return h.cancelUnlocked(ctx, scope, id, mrid, reason, "ledger_failed", err)
 	}
 }
 
@@ -655,12 +655,19 @@ func (h *AdminDERControlHandler) cancelFleetKeys(ctx context.Context, scope derc
 	return keys, why
 }
 
-func (h *AdminDERControlHandler) cancelUnlocked(ctx context.Context, scope dercontrol.Scope, id, reason, why string) (dercontrol.LifecycleRecord, error) {
-	h.logger().Warn("admin: DER control cancelled without the fleet lock",
+// cancelUnlocked cancels without the fleet lock and says at WARN which control
+// and why; lockErr is the error the ledger returned, when it was the cause.
+func (h *AdminDERControlHandler) cancelUnlocked(ctx context.Context, scope dercontrol.Scope, id, mrid, reason, why string, lockErr error) (dercontrol.LifecycleRecord, error) {
+	attrs := []any{
 		"event", "der_control_cancel_unlocked",
 		"reason", why,
 		"device_id", scope.EndDeviceID,
-	)
+		"mrid", mrid,
+	}
+	if lockErr != nil {
+		attrs = append(attrs, "error", lockErr)
+	}
+	h.logger().Warn("admin: DER control cancelled without the fleet lock", attrs...)
 	return h.Issuer.Cancel(ctx, scope, id, reason)
 }
 
@@ -741,7 +748,7 @@ func (h *AdminDERControlHandler) HandleCancel() http.HandlerFunc {
 		}
 		logged.addControl(scope, ctrl)
 
-		lc, err := h.cancelInFleet(r.Context(), scope, id, reason)
+		lc, err := h.cancelInFleet(r.Context(), scope, id, ctrl.MRID, reason)
 		if err != nil {
 			if isContextErr(err) && r.Context().Err() != nil {
 				logged.add("cause", "client_gone")

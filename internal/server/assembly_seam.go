@@ -29,6 +29,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
@@ -94,7 +95,17 @@ func NewCoreRouterConfig(cfg *config.Config) assembly.RouterConfig {
 		DSTEnd:      cfg.DSTEnd,
 		TimeQuality: cfg.TimeQuality,
 		PEN:         cfg.EffectivePEN(),
+
+		FlowReservationDeadline: flowReservationConfig().Deadline,
 	}
+}
+
+// flowReservationConfig is the one place the flow reservation deadline is
+// chosen. The protocol queue runs under it through NewCoreRouterConfig, and
+// the admin read API computes deadlineAt under it, so a configured value
+// moves both together. Zero takes the queue's default.
+func flowReservationConfig() flowreservation.Config {
+	return flowreservation.Config{}
 }
 
 // NewCoreAuthPolicy wires the three server-side auth implementations into

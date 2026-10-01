@@ -1,0 +1,603 @@
+{
+  "aggregatorLFDI": "3E4F45AB31EDFE5B67E343E5E4562E31984E23E5",
+  "now": 1790000100,
+  "deadlineSeconds": 300,
+  "persisted": true,
+  "requests": [
+    {
+      "edevId": "4",
+      "frqId": "frq-pending",
+      "requestHref": "/edev/4/frq/frq-pending",
+      "aggregatorLFDI": "3E4F45AB31EDFE5B67E343E5E4562E31984E23E5",
+      "state": "pending",
+      "deadlineAt": 1790000390,
+      "request": {
+        "mRID": "M-frq-pending",
+        "creationTime": 1790000090,
+        "requestStatus": "requested",
+        "intervalRequested": {
+          "start": 1790009100,
+          "duration": 3600
+        },
+        "energyRequested": {
+          "value": 4000,
+          "multiplier": 0
+        },
+        "powerRequested": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "charge"
+      },
+      "responses": [],
+      "tip": null
+    },
+    {
+      "edevId": "4",
+      "frqId": "frq-ended",
+      "requestHref": "/edev/4/frq/frq-ended",
+      "aggregatorLFDI": "3E4F45AB31EDFE5B67E343E5E4562E31984E23E5",
+      "state": "ended",
+      "deadlineAt": null,
+      "request": {
+        "mRID": "M-frq-ended",
+        "creationTime": 1789991100,
+        "requestStatus": "requested",
+        "intervalRequested": {
+          "start": 1789992100,
+          "duration": 3600
+        },
+        "energyRequested": {
+          "value": 4000,
+          "multiplier": 0
+        },
+        "powerRequested": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "charge"
+      },
+      "responses": [
+        {
+          "id": "frq-ended",
+          "href": "/edev/4/frp/frq-ended",
+          "mRID": "R-frq-ended",
+          "subject": "M-frq-ended",
+          "creationTime": 1789992090,
+          "interval": {
+            "start": 1789992100,
+            "duration": 600
+          },
+          "energyAvailable": {
+            "value": 4000,
+            "multiplier": 0
+          },
+          "powerAvailable": {
+            "value": 8000,
+            "multiplier": 0
+          },
+          "direction": "charge",
+          "eventStatus": {
+            "currentStatus": 1,
+            "status": "active",
+            "dateTime": 1789992100
+          },
+          "cancelReason": null,
+          "answeredBy": {
+            "kind": "unrecorded",
+            "admission": null,
+            "principal": null,
+            "at": 1789992090
+          },
+          "cancelledBy": null,
+          "executions": [],
+          "energyCommittedWh": 0,
+          "energyRemainingWh": 4000
+        }
+      ],
+      "tip": {
+        "id": "frq-ended",
+        "href": "/edev/4/frp/frq-ended",
+        "mRID": "R-frq-ended",
+        "subject": "M-frq-ended",
+        "creationTime": 1789992090,
+        "interval": {
+          "start": 1789992100,
+          "duration": 600
+        },
+        "energyAvailable": {
+          "value": 4000,
+          "multiplier": 0
+        },
+        "powerAvailable": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "charge",
+        "eventStatus": {
+          "currentStatus": 1,
+          "status": "active",
+          "dateTime": 1789992100
+        },
+        "cancelReason": null,
+        "answeredBy": {
+          "kind": "unrecorded",
+          "admission": null,
+          "principal": null,
+          "at": 1789992090
+        },
+        "cancelledBy": null,
+        "executions": [],
+        "energyCommittedWh": 0,
+        "energyRemainingWh": 4000
+      }
+    },
+    {
+      "edevId": "4",
+      "frqId": "frq-withdrawn",
+      "requestHref": "/edev/4/frq/frq-withdrawn",
+      "aggregatorLFDI": "3E4F45AB31EDFE5B67E343E5E4562E31984E23E5",
+      "state": "withdrawn",
+      "deadlineAt": null,
+      "request": {
+        "mRID": "M-frq-withdrawn",
+        "creationTime": 1790000050,
+        "requestStatus": "cancelled",
+        "intervalRequested": {
+          "start": 1790000200,
+          "duration": 3600
+        },
+        "energyRequested": {
+          "value": 4000,
+          "multiplier": 0
+        },
+        "powerRequested": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "charge"
+      },
+      "responses": [],
+      "tip": null
+    },
+    {
+      "edevId": "4",
+      "frqId": "frq-granted",
+      "requestHref": "/edev/4/frq/frq-granted",
+      "aggregatorLFDI": "3E4F45AB31EDFE5B67E343E5E4562E31984E23E5",
+      "state": "granted",
+      "deadlineAt": null,
+      "request": {
+        "mRID": "M-frq-granted",
+        "creationTime": 1790000050,
+        "requestStatus": "requested",
+        "intervalRequested": {
+          "start": 1790000200,
+          "duration": 3600
+        },
+        "energyRequested": {
+          "value": 4000,
+          "multiplier": 0
+        },
+        "powerRequested": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "charge"
+      },
+      "responses": [
+        {
+          "id": "frq-granted",
+          "href": "/edev/4/frp/frq-granted",
+          "mRID": "R-frq-granted",
+          "subject": "M-frq-granted",
+          "creationTime": 1790000190,
+          "interval": {
+            "start": 1790000200,
+            "duration": 3600
+          },
+          "energyAvailable": {
+            "value": 4000,
+            "multiplier": 0
+          },
+          "powerAvailable": {
+            "value": 8000,
+            "multiplier": 0
+          },
+          "direction": "charge",
+          "eventStatus": {
+            "currentStatus": 1,
+            "status": "active",
+            "dateTime": 1790000200
+          },
+          "cancelReason": null,
+          "answeredBy": {
+            "kind": "operator",
+            "admission": "mtls",
+            "principal": "cert:5D9A0C1B7E3F2A4D6C8B0E1F3A5C7E9B1D3F5A7C9E1B3D5F7A9C1E3B5D7F9A1C",
+            "at": 1790000040
+          },
+          "cancelledBy": null,
+          "executions": [],
+          "energyCommittedWh": 0,
+          "energyRemainingWh": 4000
+        }
+      ],
+      "tip": {
+        "id": "frq-granted",
+        "href": "/edev/4/frp/frq-granted",
+        "mRID": "R-frq-granted",
+        "subject": "M-frq-granted",
+        "creationTime": 1790000190,
+        "interval": {
+          "start": 1790000200,
+          "duration": 3600
+        },
+        "energyAvailable": {
+          "value": 4000,
+          "multiplier": 0
+        },
+        "powerAvailable": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "charge",
+        "eventStatus": {
+          "currentStatus": 1,
+          "status": "active",
+          "dateTime": 1790000200
+        },
+        "cancelReason": null,
+        "answeredBy": {
+          "kind": "operator",
+          "admission": "mtls",
+          "principal": "cert:5D9A0C1B7E3F2A4D6C8B0E1F3A5C7E9B1D3F5A7C9E1B3D5F7A9C1E3B5D7F9A1C",
+          "at": 1790000040
+        },
+        "cancelledBy": null,
+        "executions": [],
+        "energyCommittedWh": 0,
+        "energyRemainingWh": 4000
+      }
+    },
+    {
+      "edevId": "4",
+      "frqId": "frq-denied",
+      "requestHref": "/edev/4/frq/frq-denied",
+      "aggregatorLFDI": "3E4F45AB31EDFE5B67E343E5E4562E31984E23E5",
+      "state": "denied",
+      "deadlineAt": null,
+      "request": {
+        "mRID": "M-frq-denied",
+        "creationTime": 1790000050,
+        "requestStatus": "requested",
+        "intervalRequested": {
+          "start": 1790000200,
+          "duration": 3600
+        },
+        "energyRequested": {
+          "value": 4000,
+          "multiplier": 0
+        },
+        "powerRequested": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "charge"
+      },
+      "responses": [
+        {
+          "id": "frq-denied",
+          "href": "/edev/4/frp/frq-denied",
+          "mRID": "R-frq-denied",
+          "subject": "M-frq-denied",
+          "creationTime": 1790000190,
+          "interval": {
+            "start": 1790000200,
+            "duration": 0
+          },
+          "energyAvailable": {
+            "value": 4000,
+            "multiplier": 0
+          },
+          "powerAvailable": {
+            "value": 8000,
+            "multiplier": 0
+          },
+          "direction": "charge",
+          "eventStatus": {
+            "currentStatus": 1,
+            "status": "active",
+            "dateTime": 1790000200
+          },
+          "cancelReason": null,
+          "answeredBy": {
+            "kind": "unrecorded",
+            "admission": null,
+            "principal": null,
+            "at": 1790000190
+          },
+          "cancelledBy": null,
+          "executions": [],
+          "energyCommittedWh": 0,
+          "energyRemainingWh": null
+        }
+      ],
+      "tip": {
+        "id": "frq-denied",
+        "href": "/edev/4/frp/frq-denied",
+        "mRID": "R-frq-denied",
+        "subject": "M-frq-denied",
+        "creationTime": 1790000190,
+        "interval": {
+          "start": 1790000200,
+          "duration": 0
+        },
+        "energyAvailable": {
+          "value": 4000,
+          "multiplier": 0
+        },
+        "powerAvailable": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "charge",
+        "eventStatus": {
+          "currentStatus": 1,
+          "status": "active",
+          "dateTime": 1790000200
+        },
+        "cancelReason": null,
+        "answeredBy": {
+          "kind": "unrecorded",
+          "admission": null,
+          "principal": null,
+          "at": 1790000190
+        },
+        "cancelledBy": null,
+        "executions": [],
+        "energyCommittedWh": 0,
+        "energyRemainingWh": null
+      }
+    },
+    {
+      "edevId": "4",
+      "frqId": "frq-cancelled",
+      "requestHref": "/edev/4/frq/frq-cancelled",
+      "aggregatorLFDI": "3E4F45AB31EDFE5B67E343E5E4562E31984E23E5",
+      "state": "cancelled",
+      "deadlineAt": null,
+      "request": {
+        "mRID": "M-frq-cancelled",
+        "creationTime": 1790000050,
+        "requestStatus": "requested",
+        "intervalRequested": {
+          "start": 1790000200,
+          "duration": 3600
+        },
+        "energyRequested": {
+          "value": 4000,
+          "multiplier": 0
+        },
+        "powerRequested": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "charge"
+      },
+      "responses": [
+        {
+          "id": "frq-cancelled",
+          "href": "/edev/4/frp/frq-cancelled",
+          "mRID": "R-frq-cancelled",
+          "subject": "M-frq-cancelled",
+          "creationTime": 1790000190,
+          "interval": {
+            "start": 1790000200,
+            "duration": 3600
+          },
+          "energyAvailable": {
+            "value": 4000,
+            "multiplier": 0
+          },
+          "powerAvailable": {
+            "value": 8000,
+            "multiplier": 0
+          },
+          "direction": "charge",
+          "eventStatus": {
+            "currentStatus": 2,
+            "status": "cancelled",
+            "dateTime": 1790000095
+          },
+          "cancelReason": null,
+          "answeredBy": {
+            "kind": "unrecorded",
+            "admission": null,
+            "principal": null,
+            "at": 1790000190
+          },
+          "cancelledBy": {
+            "kind": "unrecorded",
+            "admission": null,
+            "principal": null,
+            "at": 1790000095
+          },
+          "executions": [],
+          "energyCommittedWh": 0,
+          "energyRemainingWh": 4000
+        }
+      ],
+      "tip": {
+        "id": "frq-cancelled",
+        "href": "/edev/4/frp/frq-cancelled",
+        "mRID": "R-frq-cancelled",
+        "subject": "M-frq-cancelled",
+        "creationTime": 1790000190,
+        "interval": {
+          "start": 1790000200,
+          "duration": 3600
+        },
+        "energyAvailable": {
+          "value": 4000,
+          "multiplier": 0
+        },
+        "powerAvailable": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "charge",
+        "eventStatus": {
+          "currentStatus": 2,
+          "status": "cancelled",
+          "dateTime": 1790000095
+        },
+        "cancelReason": null,
+        "answeredBy": {
+          "kind": "unrecorded",
+          "admission": null,
+          "principal": null,
+          "at": 1790000190
+        },
+        "cancelledBy": {
+          "kind": "unrecorded",
+          "admission": null,
+          "principal": null,
+          "at": 1790000095
+        },
+        "executions": [],
+        "energyCommittedWh": 0,
+        "energyRemainingWh": 4000
+      }
+    },
+    {
+      "edevId": "4",
+      "frqId": "frq-cancelling",
+      "requestHref": "/edev/4/frq/frq-cancelling",
+      "aggregatorLFDI": "3E4F45AB31EDFE5B67E343E5E4562E31984E23E5",
+      "state": "granted",
+      "requestCancelled": true,
+      "deadlineAt": null,
+      "request": {
+        "mRID": "M-cancelling",
+        "creationTime": 1790000050,
+        "requestStatus": "cancelled",
+        "intervalRequested": {
+          "start": 1790000200,
+          "duration": 3600
+        },
+        "energyRequested": {
+          "value": 4000,
+          "multiplier": 0
+        },
+        "powerRequested": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "charge"
+      },
+      "responses": [
+        {
+          "id": "frq-cancelling",
+          "href": "/edev/4/frp/frq-cancelling",
+          "mRID": "R-cancelling",
+          "subject": "M-cancelling",
+          "creationTime": 1790000060,
+          "interval": {
+            "start": 1790000200,
+            "duration": 3600
+          },
+          "energyAvailable": {
+            "value": 4000,
+            "multiplier": 0
+          },
+          "powerAvailable": {
+            "value": 8000,
+            "multiplier": 0
+          },
+          "direction": "charge",
+          "eventStatus": {
+            "currentStatus": 1,
+            "status": "active",
+            "dateTime": 1790000200
+          },
+          "cancelReason": null,
+          "answeredBy": {
+            "kind": "unrecorded",
+            "admission": null,
+            "principal": null,
+            "at": 1790000060
+          },
+          "cancelledBy": null,
+          "executions": [],
+          "energyCommittedWh": 0,
+          "energyRemainingWh": 4000
+        }
+      ],
+      "tip": {
+        "id": "frq-cancelling",
+        "href": "/edev/4/frp/frq-cancelling",
+        "mRID": "R-cancelling",
+        "subject": "M-cancelling",
+        "creationTime": 1790000060,
+        "interval": {
+          "start": 1790000200,
+          "duration": 3600
+        },
+        "energyAvailable": {
+          "value": 4000,
+          "multiplier": 0
+        },
+        "powerAvailable": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "charge",
+        "eventStatus": {
+          "currentStatus": 1,
+          "status": "active",
+          "dateTime": 1790000200
+        },
+        "cancelReason": null,
+        "answeredBy": {
+          "kind": "unrecorded",
+          "admission": null,
+          "principal": null,
+          "at": 1790000060
+        },
+        "cancelledBy": null,
+        "executions": [],
+        "energyCommittedWh": 0,
+        "energyRemainingWh": 4000
+      }
+    },
+    {
+      "edevId": "4",
+      "frqId": "frq-overdue",
+      "requestHref": "/edev/4/frq/frq-overdue",
+      "aggregatorLFDI": "3E4F45AB31EDFE5B67E343E5E4562E31984E23E5",
+      "state": "overdue",
+      "deadlineAt": 1790000000,
+      "request": {
+        "mRID": "M-frq-overdue",
+        "creationTime": 1789999700,
+        "requestStatus": "requested",
+        "intervalRequested": {
+          "start": 1790009100,
+          "duration": 3600
+        },
+        "energyRequested": {
+          "value": 4000,
+          "multiplier": 0
+        },
+        "powerRequested": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "charge"
+      },
+      "responses": [],
+      "tip": null
+    }
+  ]
+}

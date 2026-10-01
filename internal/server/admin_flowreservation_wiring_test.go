@@ -3,6 +3,9 @@ package server
 import (
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
+
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -76,5 +79,42 @@ func TestNewAdminFlowReservationHandler_ReportsNotPersisted(t *testing.T) {
 	}
 	if got := h.Deadline.EffectiveDeadline().Seconds(); got != 300 {
 		t.Errorf("deadline = %v s, want the 300 s default", got)
+	}
+}
+
+// The queue and the admin read API must run under one deadline: the queue
+// takes it from NewCoreRouterConfig, the handler from its own wiring.
+func TestAdminFlowReservationDeadlineIsTheQueuesDeadline(t *testing.T) {
+	queue := NewCoreRouterConfig(&config.Config{}).FlowReservationDeadline
+	h := newAdminFlowReservationHandler(fullyWiredFlowReservationStores())
+	if got := h.Deadline.Deadline; got != queue {
+		t.Errorf("admin deadline = %v, queue deadline = %v, want them equal", got, queue)
+	}
+	if got, want := h.Deadline.EffectiveDeadline(), (flowreservation.Config{Deadline: queue}).EffectiveDeadline(); got != want {
+		t.Errorf("effective admin deadline = %v, want the queue's %v", got, want)
+	}
+}
+
+type persistingStore struct{ persists bool }
+
+func (s persistingStore) Persists() bool { return s.persists }
+
+// Persisted follows the stores' own Persists, so it turns true when they do.
+func TestPersistsFollowsTheStore(t *testing.T) {
+	if persists(memory.NewScopedStore[sep2.FlowReservationRequest]()) {
+		t.Error("persists(in-memory store) = true, want false")
+	}
+	if persists(persistingStore{false}) {
+		t.Error("persists(a store reporting false) = true")
+	}
+	if !persists(persistingStore{true}) {
+		t.Error("persists(a store reporting true) = false")
+	}
+	disk, err := memory.NewPersistentScopedStore[sep2.FlowReservationRequest](t.TempDir()+"/frq.json", "frq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !persists(disk) {
+		t.Error("persists(PersistentScopedStore) = false, want true")
 	}
 }

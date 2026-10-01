@@ -30,11 +30,19 @@ func newAdminFlowReservationHandler(stores *Stores) *handler.AdminFlowReservatio
 		Responses:  flowreservation.NewDerivedStatusResponseStore(stores.FlowReservationResponses, stores.FlowReservationResponseLifecycles),
 		Lifecycles: stores.FlowReservationResponseLifecycles,
 		Fleets:     fleets,
-		Deadline:   flowreservation.Config{},
+		Deadline:   flowReservationConfig(),
+		Persisted:  persists(stores.FlowReservationRequests) && persists(stores.FlowReservationResponses) && persists(stores.FlowReservationResponseLifecycles),
 	}
 	if !store.IsAbsent(stores.DERControls) && !store.IsAbsent(stores.DERControlLifecycles) {
 		h.Controls = coreder.NewDerivedStatusControlStore(stores.DERControls, stores.DERControlLifecycles)
 		h.Executions = sources.NewControls(stores.DERControls, stores.DERControlLifecycles, fleets)
 	}
 	return h
+}
+
+// persists reports whether a store keeps its records across a restart. A
+// store with no such method (the in-memory one) does not.
+func persists(s any) bool {
+	p, ok := s.(interface{ Persists() bool })
+	return ok && p.Persists()
 }

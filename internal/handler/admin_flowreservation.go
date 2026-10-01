@@ -172,15 +172,18 @@ type frRequestBody struct {
 
 // FlowReservationView is one request with its chain of responses.
 type FlowReservationView struct {
-	EdevID         string                        `json:"edevId"`
-	FrqID          string                        `json:"frqId"`
-	RequestHref    string                        `json:"requestHref"`
-	AggregatorLFDI string                        `json:"aggregatorLFDI"`
-	State          string                        `json:"state"`
-	DeadlineAt     *int64                        `json:"deadlineAt"`
-	Request        frRequestBody                 `json:"request"`
-	Responses      []FlowReservationResponseView `json:"responses"`
-	Tip            *FlowReservationResponseView  `json:"tip"`
+	EdevID         string `json:"edevId"`
+	FrqID          string `json:"frqId"`
+	RequestHref    string `json:"requestHref"`
+	AggregatorLFDI string `json:"aggregatorLFDI"`
+	State          string `json:"state"`
+	// RequestCancelled is set only on a granted request the client cancelled
+	// while its grant is still live: the cancel is incomplete.
+	RequestCancelled bool                          `json:"requestCancelled,omitempty"`
+	DeadlineAt       *int64                        `json:"deadlineAt"`
+	Request          frRequestBody                 `json:"request"`
+	Responses        []FlowReservationResponseView `json:"responses"`
+	Tip              *FlowReservationResponseView  `json:"tip"`
 }
 
 // FlowReservationList is one fleet's requests.
@@ -390,6 +393,7 @@ func stateFilter(w http.ResponseWriter, r *http.Request) ([]string, bool) {
 func (h *AdminFlowReservationHandler) fleetOf(ctx context.Context, edevID string) (fleet string, held bool, err error) {
 	fleet, err = h.Fleets.FleetOf(ctx, edevID)
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, commitment.ErrNoLFDI) {
+		log.Printf("WARNING: admin flow reservations: EndDevice %s skipped, its requests belong to no fleet: %v", edevID, err)
 		return "", false, nil
 	}
 	if err != nil {
@@ -499,19 +503,29 @@ func (h *AdminFlowReservationHandler) viewOf(ctx context.Context, edevID, frqID,
 	}
 	deadlineAt := flowreservation.DeadlineAt(h.Deadline, frq)
 	view.State = stateOf(frq, view.Tip, now, deadlineAt)
+	view.RequestCancelled = view.State == frStateGranted && frq.RequestStatus.RequestStatus == sep2.RequestStatusCancelled
 	if view.State == frStatePending || view.State == frStateOverdue {
 		view.DeadlineAt = &deadlineAt
 	}
 	return view, nil
 }
 
-// stateOf names where a request stands. A request the client cancelled is
-// withdrawn whatever answered it; an unanswered one is pending until its
-// deadline and overdue after; an answered one follows its tip.
+// stateOf names where a request stands, from its chain first: an unanswered
+// request is pending until its deadline and overdue after, and an answered
+// one follows its tip. A client cancel marks the request before it cancels
+// the grant, so a cancelled request whose tip is still live stays granted
+// (requestCancelled tells the operator the cancel did not finish); every
+// other cancelled request is withdrawn.
 func stateOf(frq sep2.FlowReservationRequest, tip *FlowReservationResponseView, now, deadlineAt int64) string {
-	switch {
-	case frq.RequestStatus.RequestStatus == sep2.RequestStatusCancelled:
+	state := chainState(tip, now, deadlineAt)
+	if frq.RequestStatus.RequestStatus == sep2.RequestStatusCancelled && state != frStateGranted {
 		return frStateWithdrawn
+	}
+	return state
+}
+
+func chainState(tip *FlowReservationResponseView, now, deadlineAt int64) string {
+	switch {
 	case tip == nil && now < deadlineAt:
 		return frStatePending
 	case tip == nil:

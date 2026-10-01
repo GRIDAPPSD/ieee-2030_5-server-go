@@ -201,3 +201,59 @@ func TestAdminFlowReservationRoutesNeedACredential(t *testing.T) {
 		}
 	}
 }
+
+// An execution's eventStatus, read through the admin router, is the one the
+// protocol serves for a control: derived from its lifecycle record.
+func TestAdminFlowReservationExecutionStatusThroughTheRouter(t *testing.T) {
+	_, admin, stores := frAgreementFixture(t)
+	ctx := context.Background()
+	now := sep2time.Now().Unix()
+	mk := func(id string, cancelledAt *int64) {
+		ctrl := sep2.DERControl{
+			RandomizableEvent: sep2.RandomizableEvent{Event: sep2.Event{
+				SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/7/fsa/1/derp/1/derc/" + id}},
+				MRID:                 "C-" + id, CreationTime: now - 150, Interval: &sep2.DateTimeInterval{Start: now - 100, Duration: 600},
+			}},
+			DERControlBase: &sep2.DERControlBase{OpModTargetW: &sep2.ActivePower{Value: -100}},
+		}
+		if err := stores.DERControls.Create(ctx, "7/1/1", id, ctrl); err != nil {
+			t.Fatal(err)
+		}
+		lc := dercontrol.LifecycleRecord{GrantMRID: "R-frq-active", FleetKey: frAgreeLFDI, Reach: 1, CancelledAt: cancelledAt}
+		if err := stores.DERControlLifecycles.Create(ctx, "7/1/1", id, lc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cancelledAt := now - 20
+	mk("1", nil)
+	mk("2", &cancelledAt)
+
+	w := httptest.NewRecorder()
+	admin.ServeHTTP(w, bearerFromLoopbackRequest(http.MethodGet, "/api/derms/flow-reservations/dev/frq-active", "", ""))
+	if w.Code != http.StatusOK {
+		t.Fatalf("get = %d %s", w.Code, w.Body.String())
+	}
+	var v struct {
+		Tip struct {
+			Executions []struct {
+				MRID        string `json:"mRID"`
+				Href        string `json:"href"`
+				EventStatus struct {
+					CurrentStatus uint8  `json:"currentStatus"`
+					Status        string `json:"status"`
+					DateTime      int64  `json:"dateTime"`
+				} `json:"eventStatus"`
+			} `json:"executions"`
+		} `json:"tip"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil || len(v.Tip.Executions) != 2 {
+		t.Fatalf("decode %v, %d executions\n%s", err, len(v.Tip.Executions), w.Body.String())
+	}
+	a, c := v.Tip.Executions[0], v.Tip.Executions[1]
+	if a.MRID != "C-1" || a.EventStatus.CurrentStatus != sep2.EventStatusActive || a.EventStatus.DateTime != now-100 || a.Href != "/edev/7/fsa/1/derp/1/derc/1" {
+		t.Errorf("live execution = %+v, want active since %d under its own href", a, now-100)
+	}
+	if c.MRID != "C-2" || c.EventStatus.CurrentStatus != sep2.EventStatusCancelled || c.EventStatus.DateTime != cancelledAt {
+		t.Errorf("cancelled execution = %+v, want cancelled at %d", c, cancelledAt)
+	}
+}

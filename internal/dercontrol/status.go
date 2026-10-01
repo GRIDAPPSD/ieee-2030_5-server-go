@@ -28,13 +28,15 @@ import "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 // on the wire before this derivation existed.
 func DeriveStatus(now, creationTime, start int64, lc LifecycleRecord) sep2.EventStatus {
 	if lc.CancelledAt != nil {
-		// dateTime never precedes creationTime. A revise in the same second as
-		// its predecessor stores creationTime one second past that second
-		// (10.2.2.3 e needs it strictly increasing), so a cancel read in that
-		// second would otherwise carry an earlier dateTime than the response's
-		// own creationTime. Operator choice (#798): accept at most 1 s of
-		// future skew, on a same-second revise only, over the 2023 dateTime
-		// text "not a time in the future or past".
+		// dateTime never precedes creationTime. creationTime is bumped past
+		// an existing sibling's, one second per item (a revise in the same
+		// second as its predecessor, 10.2.2.3 e; a same-second burst of
+		// controls in one scope, see Issue), so it can run ahead of the clock
+		// and a cancel read before it would carry an earlier dateTime. The
+		// result runs ahead of the cancel time only as far as creationTime
+		// itself does: 1 s after a same-second revise, N-1 s after a burst of
+		// N. Operator choice (#798) over the 2023 dateTime text "not a time
+		// in the future or past".
 		return sep2.EventStatus{CurrentStatus: sep2.EventStatusCancelled, DateTime: max(*lc.CancelledAt, creationTime)}
 	}
 	if lc.SupersededAt != nil && now >= *lc.SupersededAt {

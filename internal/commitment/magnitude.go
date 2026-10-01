@@ -51,3 +51,14 @@ func scaleUp(value int64, multiplier, exp int8, factor int64) *big.Int {
 func pow10(exp int64) *big.Int {
 	return new(big.Int).Exp(big.NewInt(10), big.NewInt(exp), nil)
 }
+
+// ratScaled returns |value| * factor * 10^multiplier exactly, as a Rat so a
+// negative multiplier loses nothing.
+func ratScaled(value int64, multiplier int8, factor int64) *big.Rat {
+	n := new(big.Int).Abs(big.NewInt(value))
+	n.Mul(n, big.NewInt(factor))
+	if multiplier >= 0 {
+		return new(big.Rat).SetInt(n.Mul(n, pow10(int64(multiplier))))
+	}
+	return new(big.Rat).SetFrac(n, pow10(-int64(multiplier)))
+}

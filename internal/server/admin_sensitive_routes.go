@@ -35,11 +35,13 @@ var sensitiveAdminPatterns = map[string]struct{}{
 //     aggregator's full managed fleet. The WRITE routes (create, remove,
 //     rekey) are unaffected here: they already require a real credential by
 //     default, since they are not on nonSensitiveAdminWrites below.
-//   - /api/derms/fleets (#715 fix round 1, HIGH, all four review lanes):
-//     GET discloses every aggregator's managed LFDIs, DER status and
-//     measurements, a wider disclosure than /api/management-pairs, which
-//     already required a credential.
-var sensitiveAdminReadPrefixes = []string{"/api/management-pairs", "/api/derms/fleets"}
+//   - /api/derms/ (#715 fix round 1, HIGH, all four review lanes, then #764):
+//     the fleet read discloses every aggregator's managed LFDIs, DER status
+//     and measurements, a wider disclosure than /api/management-pairs, which
+//     already required a credential. The flow reservation and grant reads
+//     disclose a fleet's requested and granted energy and who answered, so
+//     the whole family is covered by prefix, not route by route.
+var sensitiveAdminReadPrefixes = []string{"/api/management-pairs", "/api/derms/"}
 
 // isSensitiveAdminReadPath reports whether path falls under one of
 // sensitiveAdminReadPrefixes.

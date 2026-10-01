@@ -1,5 +1,7 @@
 package commitment
 
+import "math/big"
+
 // DirectionOf returns the sign opModTargetW must carry to execute g:
 // the negative of energyAvailable's sign. The response stores energy in
 // our declared convention, charging positive (2023 13523-13524 states no
@@ -128,27 +130,33 @@ func checkPower(g Grant, execs []Control, proposalIndex int) error {
 	return nil
 }
 
-// checkEnergy enforces rule 7: the summed energy of every execution
-// (|opModTargetW| x Reach x duration, watt-seconds) must not exceed
-// |energyAvailable| (watt-hours, converted to watt-seconds by scaling the
-// bound with the same math/big machinery the sum uses, never by dividing
-// the sum or multiplying the bound in plain int64, which could overflow
-// for a value near the Int48 range design 5.3 allows). Design 5.3 names an
-// energy conflict by the grant's mRID unconditionally: unlike power, there
-// is no "other execution" reading for a bound every live execution
-// contributes to at once, regardless of instant.
+// checkEnergy enforces rule 7: the energy Committed to the executions must
+// not exceed |energyAvailable|, watt-hours converted to watt-seconds exactly.
+// Design 5.3 names an energy conflict by the grant's mRID unconditionally:
+// unlike power, there is no "other execution" reading for a bound every live
+// execution contributes to at once, regardless of instant.
 func checkEnergy(g Grant, execs []Control) error {
-	terms := make([]scaledTerm, 0, len(execs))
-	for _, c := range execs {
-		terms = append(terms, scaledTerm{
-			value:      int64(c.TargetW.Value),
-			multiplier: c.TargetW.Multiplier,
-			factor:     int64(c.Reach) * int64(c.Window.Duration),
-		})
-	}
-	bound := scaledTerm{value: g.Energy.Value, multiplier: g.Energy.Multiplier, factor: 3600}
-	if magnitudeSumExceeds(terms, bound) {
+	bound := ratScaled(g.Energy.Value, g.Energy.Multiplier, 3600)
+	if Committed(execs).Cmp(bound) > 0 {
 		return &ConflictError{Code: ConflictEnergy, MRID: g.MRID}
 	}
 	return nil
+}
+
+// Committed is the energy execs carry out, in watt-seconds: the sum of
+// |opModTargetW| x Reach x duration over every control that has a target.
+// It is the one figure rule 7 compares with the grant's energyAvailable and
+// the admin view shows as energy committed, so the two cannot disagree. The
+// caller passes the executions that count (live ones); a control without a
+// target adds nothing, since FitsGrant refuses one before this is reached.
+// It is a Rat because a negative multiplier makes the sum fractional.
+func Committed(execs []Control) *big.Rat {
+	sum := new(big.Rat)
+	for _, c := range execs {
+		if c.TargetW == nil {
+			continue
+		}
+		sum.Add(sum, ratScaled(int64(c.TargetW.Value), c.TargetW.Multiplier, int64(c.Reach)*int64(c.Window.Duration)))
+	}
+	return sum
 }

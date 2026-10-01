@@ -3,8 +3,10 @@ package dercontrol
 import (
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -256,5 +258,136 @@ func TestLifecyclePersistence_Persists(t *testing.T) {
 	persisted, _ := newPersistedLifecycleStore(t)
 	if !persisted.Persists() {
 		t.Errorf("persisted store Persists() = false, want true")
+	}
+}
+
+func seedLifecycles(t *testing.T, s *LifecycleStore) map[string]LifecycleRecord {
+	t.Helper()
+	at := int64(777)
+	want := map[string]LifecycleRecord{
+		"a": {CancelledAt: &at, CancelReason: "operator cancel"},
+		"b": {GrantMRID: "G-B", FleetKey: "fleet", Reach: 3},
+	}
+	for id, rec := range want {
+		if err := s.Create(context.Background(), "dev", id, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return want
+}
+
+func breakSnapshot(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(path, "keep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLifecycleStore_KeysAreTheStoredIdsAscending(t *testing.T) {
+	s, _ := newPersistedLifecycleStore(t)
+	seedLifecycles(t, s)
+	got, err := s.Keys(context.Background(), "dev")
+	if err != nil || !reflect.DeepEqual(got, []string{"a", "b"}) {
+		t.Errorf("Keys = %v, %v, want [a b]", got, err)
+	}
+}
+
+// DeleteParent removes the whole parent in one snapshot and the removal
+// survives a reload.
+func TestLifecycleStore_DeleteParentPersists(t *testing.T) {
+	ctx := context.Background()
+	s, path := newPersistedLifecycleStore(t)
+	seedLifecycles(t, s)
+	if err := s.Create(ctx, "other", "x", LifecycleRecord{Reach: 1}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.DeleteParent(ctx, "dev")
+	if err != nil || n != 2 {
+		t.Fatalf("DeleteParent = %d, %v, want 2, nil", n, err)
+	}
+	re, err := NewLifecycleStoreWithPersistence(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := re.Count(ctx, "dev"); c != 0 {
+		t.Errorf("records under dev after reload = %d, want 0", c)
+	}
+	if got, err := re.Get(ctx, "other", "x"); err != nil || got.Reach != 1 {
+		t.Errorf("unrelated parent after reload = %+v, %v, want Reach 1", got, err)
+	}
+}
+
+// A failed snapshot restores every record, the key index and the parent, with
+// each field unchanged.
+func TestLifecycleStore_DeleteParentRollsBackOnAFailedSnapshot(t *testing.T) {
+	ctx := context.Background()
+	s, path := newPersistedLifecycleStore(t)
+	want := seedLifecycles(t, s)
+	breakSnapshot(t, path)
+	if n, err := s.DeleteParent(ctx, "dev"); err == nil || n != 0 {
+		t.Fatalf("DeleteParent = %d, %v, want 0 and an error", n, err)
+	}
+	for id, rec := range want {
+		if got, err := s.Get(ctx, "dev", id); err != nil || !reflect.DeepEqual(got, rec) {
+			t.Errorf("record %s after rollback = %+v, %v, want %+v", id, got, err, rec)
+		}
+	}
+	if keys, _ := s.Keys(ctx, "dev"); !reflect.DeepEqual(keys, []string{"a", "b"}) {
+		t.Errorf("keys after rollback = %v, want [a b]", keys)
+	}
+	if has, _ := s.HasParent(ctx, "dev"); !has {
+		t.Error("parent lost after rollback")
+	}
+}
+
+// TakeParent's undo recreates the records under their store keys, field for
+// field, and a later snapshot still includes them.
+func TestLifecycleStore_TakeParentUndoRestores(t *testing.T) {
+	ctx := context.Background()
+	s, path := newPersistedLifecycleStore(t)
+	want := seedLifecycles(t, s)
+	undo, err := s.TakeParent(ctx, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := s.Count(ctx, "dev"); c != 0 {
+		t.Fatalf("TakeParent left %d records", c)
+	}
+	if err := undo(ctx); err != nil {
+		t.Fatalf("undo: %v", err)
+	}
+	re, err := NewLifecycleStoreWithPersistence(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, rec := range want {
+		if got, err := re.Get(ctx, "dev", id); err != nil || !reflect.DeepEqual(got, rec) {
+			t.Errorf("record %s after undo and reload = %+v, %v, want %+v", id, got, err, rec)
+		}
+	}
+}
+
+func TestLifecycleStore_TakeParentUndoLogsWhatItCouldNotRestore(t *testing.T) {
+	ctx := context.Background()
+	s, path := newPersistedLifecycleStore(t)
+	seedLifecycles(t, s)
+	undo, err := s.TakeParent(ctx, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	breakSnapshot(t, path)
+	var buf strings.Builder
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	if err := undo(ctx); err == nil {
+		t.Fatal("undo succeeded although the snapshot cannot be written")
+	}
+	for _, id := range []string{"dev/a", "dev/b"} {
+		if !strings.Contains(buf.String(), id) {
+			t.Errorf("log %q does not name the lost record %s", buf.String(), id)
+		}
 	}
 }

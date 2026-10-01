@@ -23,8 +23,6 @@ package server
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"reflect"
@@ -32,13 +30,11 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -181,7 +177,7 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 		MessagingPrograms:        s.MessagingPrograms,
 		TextMessages:             s.TextMessages,
 		FlowReservationRequests:  s.FlowReservationRequests,
-		FlowReservationResponses: withResponseLifecycles(s.FlowReservationResponses, s.FlowReservationResponseLifecycles),
+		FlowReservationResponses: memory.WithDependents(s.FlowReservationResponses, s.FlowReservationResponseLifecycles),
 		ResponseSets:             s.ResponseSets,
 		Responses:                s.Responses,
 
@@ -189,76 +185,6 @@ func NewCoreStores(s *Stores) *assembly.Stores {
 		CommitmentLedger:                  s.CommitmentLedger,
 	}
 }
-
-// responsesWithLifecycles is the response store the protocol assembly sees:
-// the same store, plus the response lifecycle records the EndDevice delete
-// cascade removes after the responses (#761). Reads and writes pass straight
-// through, so the queue, canceller and routes behave as before.
-type responsesWithLifecycles struct {
-	store.ScopedStore[sep2.FlowReservationResponse]
-	lifecycles store.ScopedStore[dercontrol.LifecycleRecord]
-}
-
-// withResponseLifecycles returns responses unchanged when either store is
-// absent: wrapping a nil store would turn a nil check elsewhere into a
-// non-nil wrapper around nothing.
-func withResponseLifecycles(responses store.ScopedStore[sep2.FlowReservationResponse], lifecycles store.ScopedStore[dercontrol.LifecycleRecord]) store.ScopedStore[sep2.FlowReservationResponse] {
-	if store.IsAbsent(responses) || store.IsAbsent(lifecycles) {
-		return responses
-	}
-	return &responsesWithLifecycles{ScopedStore: responses, lifecycles: lifecycles}
-}
-
-// DeleteParent forwards to the wrapped store: embedding the interface hides
-// the cascade capability the EndDevice delete looks for.
-func (w *responsesWithLifecycles) DeleteParent(ctx context.Context, parentID string) (uint32, error) {
-	c, ok := w.ScopedStore.(interface {
-		DeleteParent(ctx context.Context, parentID string) (uint32, error)
-	})
-	if !ok {
-		return 0, fmt.Errorf("the store (%T) cannot cascade a parent delete", w.ScopedStore)
-	}
-	return c.DeleteParent(ctx, parentID)
-}
-
-// CascadeResponseLifecycles implements memory.ResponseLifecycleCascader. Each
-// record is removed through the lifecycle store's own Delete, which rolls
-// back its own failed snapshot; records removed before a failure are put back.
-func (w *responsesWithLifecycles) CascadeResponseLifecycles(ctx context.Context, parentID string, ids []string) (func(context.Context) error, error) {
-	type removed struct {
-		id  string
-		rec dercontrol.LifecycleRecord
-	}
-	var gone []removed
-	undo := func(ctx context.Context) error {
-		var errs []error
-		for _, r := range gone {
-			if err := w.lifecycles.Create(ctx, parentID, r.id, r.rec); err != nil {
-				errs = append(errs, fmt.Errorf("lifecycle %q: %w", r.id, err))
-			}
-		}
-		return errors.Join(errs...)
-	}
-	for _, id := range ids {
-		rec, err := w.lifecycles.Get(ctx, parentID, id)
-		if errors.Is(err, store.ErrNotFound) {
-			continue
-		}
-		if err == nil {
-			err = w.lifecycles.Delete(ctx, parentID, id)
-		}
-		if err != nil {
-			if uerr := undo(context.WithoutCancel(ctx)); uerr != nil {
-				err = errors.Join(err, uerr)
-			}
-			return nil, err
-		}
-		gone = append(gone, removed{id: id, rec: rec})
-	}
-	return undo, nil
-}
-
-var _ memory.ResponseLifecycleCascader = (*responsesWithLifecycles)(nil)
 
 // notifyRemover mirrors the unexported interface core uses to detect and
 // extract NotifyRemoved from the notifier. Defined here at the consumer

@@ -81,8 +81,7 @@ func (f frpFixture) requireStored(t *testing.T, s *Stores) {
 	if got, err := s.FlowReservationResponses.Get(ctx, frpDevice, "frq-3"); err != nil || !reflect.DeepEqual(got, f.cancelled) {
 		t.Errorf("response frq-3 = %+v, %v, want %+v", got, err, f.cancelled)
 	}
-	got, err := s.FlowReservationResponseLifecycles.Get(ctx, frpDevice, "frq-3")
-	if err != nil || got.CancelledAt == nil || *got.CancelledAt != *f.cancelledMark.CancelledAt || got.CancelReason != f.cancelledMark.CancelReason {
+	if got, err := s.FlowReservationResponseLifecycles.Get(ctx, frpDevice, "frq-3"); err != nil || !reflect.DeepEqual(got, f.cancelledMark) {
 		t.Errorf("lifecycle frq-3 = %+v, %v, want %+v", got, err, f.cancelledMark)
 	}
 	if _, err := s.FlowReservationResponseLifecycles.Get(ctx, frpDevice, "frq-2"); err == nil {

@@ -441,14 +441,7 @@ func BuildProtocolRouter(
 	protocolMux.HandleFunc("GET /sdev/sdi", coredevinfo.HandleDeviceInformation(serverLFDI))
 
 	if stores != nil {
-		// Every helper registers through the ownership gate, so each
-		// /edev/{id}-scoped route is bound to the caller wherever it is mounted.
-		gated := newOwnershipGate(protocolMux, stores.EndDevices, stores.EndDeviceManagers, authPolicy.Identity)
-		registerEndDeviceRoutes(gated, stores, authPolicy, notifier, gated.checkSubscribe)
-		registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
-		registerDERRoutes(gated, stores)
-		registerMeteringRoutes(gated, stores)
-		registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, notifier)
+		gated := registerGatedRoutes(protocolMux, cfg, stores, authPolicy, notifier)
 		setSubscriberCheck(notifier, gated.checkSubscriber)
 	}
 
@@ -464,6 +457,44 @@ func BuildProtocolRouter(
 	}
 
 	return bufferContentLength(encoding.NamespaceMiddleware(top)), protocolMux.Patterns()
+}
+
+// registerGatedRoutes registers every store-backed route on next through one
+// ownership gate and returns the gate.
+func registerGatedRoutes(next routeRegistrar, cfg RouterConfig, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier) *ownershipGate {
+	// Every helper registers through the ownership gate, so each
+	// /edev/{id}-scoped route is bound to the caller wherever it is mounted.
+	gated := newOwnershipGate(next, stores.EndDevices, stores.EndDeviceManagers, authPolicy.Identity)
+	registerEndDeviceRoutes(gated, stores, authPolicy, notifier, gated.checkSubscribe)
+	registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
+	registerDERRoutes(gated, stores)
+	registerMeteringRoutes(gated, stores)
+	registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, notifier)
+	return gated
+}
+
+// discardRegistrar takes route registrations and serves none of them.
+type discardRegistrar struct{}
+
+func (discardRegistrar) HandleFunc(string, func(http.ResponseWriter, *http.Request)) {}
+
+// NewSubscriberCheck returns the delivery-time subscriber check that
+// BuildProtocolRouter installs on its notifier, decided over the same routes.
+// It is for a caller that notifies before the router is built, such as a
+// server recovering state at boot; pass the cfg and stores the router will
+// get. The routes it registers are never served, so a flow reservation
+// queue or DER control issuer it builds for a nil Stores field is unused.
+func NewSubscriberCheck(cfg RouterConfig, stores *Stores) coresub.SubscriberCheck {
+	if stores == nil {
+		return func(context.Context, sep2.Subscription) error {
+			return errors.New("subscriber check has no stores")
+		}
+	}
+	deny := AuthPolicy{
+		Identity:   func(context.Context) (string, string, bool) { return "", "", false },
+		SFDIPrefix: func(string) (string, error) { return "", errors.New("SFDIPrefix not configured: deny") },
+	}
+	return registerGatedRoutes(discardRegistrar{}, cfg, stores, deny, nil).checkSubscriber
 }
 
 // topLevelMounts are the prefixes under which the protocol mux is mounted on

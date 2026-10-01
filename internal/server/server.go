@@ -415,6 +415,10 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	frNotifier := flowreservation.Notifier(coreNotifier)
 	stores.FlowReservationQueue = newFlowReservationQueue(stores, coreNotifier)
 	defer stores.FlowReservationQueue.Close()
+	// Recovery and retention can notify before sep2server.New builds the
+	// router, so the router's subscriber check is installed now; the router
+	// installs its own, decided over the same routes, when it is built.
+	notifier.SetSubscriberCheck(assembly.NewSubscriberCheck(NewCoreRouterConfig(cfg), NewCoreStores(stores)))
 	if _, err := recoverAtBoot(ctx, stores, stores.FlowReservationQueue, frNotifier, slog.Default(), time.Now()); err != nil {
 		if ctx.Err() != nil {
 			log.Printf("flow reservation recovery stopped by shutdown request: %v", err)

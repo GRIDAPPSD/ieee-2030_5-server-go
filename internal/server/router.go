@@ -146,6 +146,12 @@ type Stores struct {
 	// package default.
 	FlowReservationRetentionGrace time.Duration
 
+	// MirrorReadingRetention and MirrorReadingMaxPerMirror bound the
+	// out-of-band mirror readings (#806). Run resolves both from Config; a
+	// zero value makes the retention sweep refuse, logged at boot.
+	MirrorReadingRetention    time.Duration
+	MirrorReadingMaxPerMirror int
+
 	// DERControlIssuer is the process's one DER control issuer (#763), shared
 	// by the admin DER control handler and the grant cancel writers. Nil makes
 	// each of them build its own.

@@ -270,6 +270,12 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 		return nil, nil, err
 	}
 	stores.FlowReservationRetentionGrace = grace
+	if stores.MirrorReadingRetention, err = cfg.EffectiveMirrorReadingRetention(); err != nil {
+		return nil, nil, err
+	}
+	if stores.MirrorReadingMaxPerMirror, err = cfg.EffectiveMirrorReadingMaxPerMirror(); err != nil {
+		return nil, nil, err
+	}
 
 	return stores, endDevices, nil
 }
@@ -426,6 +432,9 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// Deferred after the queue's Close, so it stops first.
 	stopRetention := startRetentionAtBoot(ctx, stores, frNotifier, slog.Default(), time.Now)
 	defer stopRetention()
+	// #806: mirror readings are swept the same way, at boot and every minute.
+	stopMirrorRetention := startMirrorRetentionAtBoot(ctx, stores, slog.Default(), time.Now)
+	defer stopMirrorRetention()
 
 	// Build the embeddable protocol server: it binds the listener, derives
 	// the server identity (SFDI/LFDI) from the leaf cert BEFORE assembling the

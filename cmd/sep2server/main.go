@@ -241,6 +241,14 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	mirrorReadingRetention, err := config.ParseMirrorReadingRetentionSeconds(os.Getenv("SEP2_MIRROR_READING_RETENTION_SECONDS"))
+	if err != nil {
+		return nil, err
+	}
+	mirrorReadingMaxPerMirror, err := config.ParseMirrorReadingMaxPerMirror(os.Getenv("SEP2_MIRROR_READING_MAX_PER_MIRROR"))
+	if err != nil {
+		return nil, err
+	}
 
 	return &config.Config{
 		Addr:            envOr("SEP2_ADDR", ":443"),
@@ -324,6 +332,11 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		// #672: unset by default (zero), which
 		// Config.EffectiveFlowReservationRetentionGrace resolves to 1800 s.
 		FlowReservationRetentionGrace: flowReservationRetentionGrace,
+
+		// #806: unset by default (zero), which resolves to 90000 s and 20000
+		// readings per mirror.
+		MirrorReadingRetention:    mirrorReadingRetention,
+		MirrorReadingMaxPerMirror: mirrorReadingMaxPerMirror,
 	}, nil
 }
 

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 )
 
 // Bounds on SEP2_FLOW_RESERVATION_DEADLINE_SECONDS. Zero in Config means
@@ -27,6 +29,23 @@ const (
 	MaxFlowReservationRetentionGrace     = 7 * 24 * time.Hour
 	DefaultFlowReservationRetentionGrace = 1800 * time.Second
 )
+
+// Bounds on SEP2_MIRROR_READING_RETENTION_SECONDS. The floor keeps every
+// reading the DER control delivery figure can still use: the longest control
+// the issuer accepts plus the furthest one reading reaches. Zero in Config
+// means unset and takes DefaultMirrorReadingRetention.
+const (
+	MirrorReadingMaxHold          = 900 * time.Second
+	MinMirrorReadingRetention     = dercontrol.DefaultMaxDuration + MirrorReadingMaxHold
+	MaxMirrorReadingRetention     = 30 * 24 * time.Hour
+	DefaultMirrorReadingRetention = 25 * time.Hour
+)
+
+// DefaultMirrorReadingMaxPerMirror is the per-mirror reading count kept when
+// SEP2_MIRROR_READING_MAX_PER_MIRROR is unset. Over the default retention it
+// is one reading every 4.5 s, so a mirror posting at a conforming rate never
+// reaches it.
+const DefaultMirrorReadingMaxPerMirror = 20000
 
 // Config holds server configuration.
 type Config struct {
@@ -217,6 +236,16 @@ type Config struct {
 	// SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS, 900 to 604800. Zero means
 	// unset; use EffectiveFlowReservationRetentionGrace.
 	FlowReservationRetentionGrace time.Duration
+
+	// MirrorReadingRetention is how long a MirrorMeterReading is kept after
+	// the server received it. Env: SEP2_MIRROR_READING_RETENTION_SECONDS,
+	// 87300 to 2592000. Zero means unset; use EffectiveMirrorReadingRetention.
+	MirrorReadingRetention time.Duration
+
+	// MirrorReadingMaxPerMirror caps the readings kept per MirrorUsagePoint.
+	// Env: SEP2_MIRROR_READING_MAX_PER_MIRROR, a positive whole number. Zero
+	// means unset; use EffectiveMirrorReadingMaxPerMirror.
+	MirrorReadingMaxPerMirror int
 }
 
 // ParseFlowReservationDeadlineSeconds validates the value of
@@ -278,6 +307,63 @@ func (c *Config) EffectiveFlowReservationRetentionGrace() (time.Duration, error)
 		return 0, fmt.Errorf("flow reservation retention grace %s is not whole seconds from 15m to 168h", g)
 	}
 	return g, nil
+}
+
+// ParseMirrorReadingRetentionSeconds validates the value of
+// SEP2_MIRROR_READING_RETENTION_SECONDS: empty is unset (zero), anything else
+// must be whole seconds within the bounds.
+func ParseMirrorReadingRetentionSeconds(v string) (time.Duration, error) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("SEP2_MIRROR_READING_RETENTION_SECONDS: %q is not a whole number of seconds", v)
+	}
+	lo, hi := int64(MinMirrorReadingRetention/time.Second), int64(MaxMirrorReadingRetention/time.Second)
+	if n < lo || n > hi {
+		return 0, fmt.Errorf("SEP2_MIRROR_READING_RETENTION_SECONDS: %d is outside %d to %d", n, lo, hi)
+	}
+	return time.Duration(n) * time.Second, nil
+}
+
+// EffectiveMirrorReadingRetention resolves an unset retention to the default
+// and refuses a value outside the bounds.
+func (c *Config) EffectiveMirrorReadingRetention() (time.Duration, error) {
+	r := c.MirrorReadingRetention
+	if r == 0 {
+		return DefaultMirrorReadingRetention, nil
+	}
+	if r < MinMirrorReadingRetention || r > MaxMirrorReadingRetention || r%time.Second != 0 {
+		return 0, fmt.Errorf("mirror reading retention %s is not whole seconds from %s to %s", r, MinMirrorReadingRetention, MaxMirrorReadingRetention)
+	}
+	return r, nil
+}
+
+// ParseMirrorReadingMaxPerMirror validates the value of
+// SEP2_MIRROR_READING_MAX_PER_MIRROR: empty is unset (zero), anything else
+// must be a positive whole number.
+func ParseMirrorReadingMaxPerMirror(v string) (int, error) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("SEP2_MIRROR_READING_MAX_PER_MIRROR: %q is not a positive whole number", v)
+	}
+	return n, nil
+}
+
+// EffectiveMirrorReadingMaxPerMirror resolves an unset cap to the default and
+// refuses a negative one.
+func (c *Config) EffectiveMirrorReadingMaxPerMirror() (int, error) {
+	switch {
+	case c.MirrorReadingMaxPerMirror == 0:
+		return DefaultMirrorReadingMaxPerMirror, nil
+	case c.MirrorReadingMaxPerMirror < 0:
+		return 0, fmt.Errorf("mirror reading cap %d is not a positive whole number", c.MirrorReadingMaxPerMirror)
+	}
+	return c.MirrorReadingMaxPerMirror, nil
 }
 
 // EffectivePEN normalizes PEN the way internal/dercontrol.Config already

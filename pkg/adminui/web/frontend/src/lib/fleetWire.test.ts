@@ -51,6 +51,7 @@ const wireKeys = {
     value: true,
     readingTime: true,
     qualityFlags: true,
+    directionUnknown: true,
   } satisfies Record<keyof FleetMeasurement, true>),
   FleetRollup: Object.keys({
     deviceCount: true,
@@ -62,7 +63,12 @@ const wireKeys = {
     statWAvail: true,
     statVarAvail: true,
   } satisfies Record<keyof FleetRollup, true>),
-  FleetSum: Object.keys({ sum: true, unreported: true, stale: true } satisfies Record<keyof FleetSum, true>),
+  FleetSum: Object.keys({
+    sum: true,
+    unreported: true,
+    stale: true,
+    directionUnknown: true,
+  } satisfies Record<keyof FleetSum, true>),
 }
 
 function goTags(structName: string): string[] {

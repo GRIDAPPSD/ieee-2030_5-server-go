@@ -134,7 +134,10 @@
               {#if power.kind === 'none'}
                 No devices reporting
               {:else}
-                {formatValue(power.value)} W{directionWord(power.value) ? ` ${directionWord(power.value)}` : ''}
+                {formatValue(power.value)} W{power.directionKnown && directionWord(power.value) ? ` ${directionWord(power.value)}` : ''}
+                {#if !power.directionKnown}
+                  <span class="hint" data-testid="fleet-power-direction-unknown">direction unknown</span>
+                {/if}
                 <div class="hint">
                   updated {formatAge(power.ageSeconds)}{formatContributionNote(power)}
                 </div>

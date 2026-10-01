@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
@@ -96,6 +97,7 @@ func (c *Canceller) Cancel(ctx context.Context, edevID, frqID string, status sep
 		ctx, flush = DeferNotifications(ctx, c.notify.n)
 		defer flush()
 	}
+	var unresolved []string
 	for range maxCancelPasses {
 		chain, err := ChainOf(ctx, c.frp, edevID, frqID)
 		if err != nil {
@@ -104,19 +106,27 @@ func (c *Canceller) Cancel(ctx context.Context, edevID, frqID string, status sep
 		if len(chain) == 0 {
 			return fmt.Errorf("flowreservation: get FlowReservationResponse %s/%s: %w", edevID, frqID, store.ErrNotFound)
 		}
-		if err := c.cancelChain(ctx, chain); err != nil {
+		gone, err := c.cancelChain(ctx, chain)
+		if err != nil {
 			return err
 		}
 		// A Revise that stored its response after the walk cancelled the
 		// member we held, so that member's cancel read as "not live" and
 		// the new tip is still live: walk again until the chain holds still.
+		// A member the ledger did not know means the walk saw a state that
+		// has since changed (another response may now hold its id), so that
+		// pass settles nothing even when the length is unchanged.
 		after, err := ChainOf(ctx, c.frp, edevID, frqID)
 		if err != nil {
 			return err
 		}
-		if len(after) == len(chain) {
+		if len(gone) == 0 && len(after) == len(chain) {
 			return nil
 		}
+		unresolved = gone
+	}
+	if len(unresolved) > 0 {
+		return fmt.Errorf("%w: not known to the ledger: %s", ErrChainMoving, strings.Join(unresolved, ", "))
 	}
 	return ErrChainMoving
 }
@@ -124,7 +134,7 @@ func (c *Canceller) Cancel(ctx context.Context, edevID, frqID string, status sep
 // cancelChain cancels every live grant in chain. More than one can be live
 // after a Revise whose rollback failed, so the tip alone is not enough. A
 // member that is already cancelled is skipped.
-func (c *Canceller) cancelChain(ctx context.Context, chain []sep2.FlowReservationResponse) error {
+func (c *Canceller) cancelChain(ctx context.Context, chain []sep2.FlowReservationResponse) (gone []string, err error) {
 	for _, frp := range chain {
 		// A denial or a response with no interval commits nothing: there is
 		// no grant to cancel and no execution can name it.
@@ -132,21 +142,22 @@ func (c *Canceller) cancelChain(ctx context.Context, chain []sep2.FlowReservatio
 			continue
 		}
 		if c.ledger == nil {
-			return commitment.ErrNoLedger
+			return gone, commitment.ErrNoLedger
 		}
-		err := c.ledger.CancelGrant(ctx, c.writers, frp.MRID, cancelReason, sep2time.Now().Unix())
+		err = c.ledger.CancelGrant(ctx, c.writers, frp.MRID, cancelReason, sep2time.Now().Unix())
 		var conflict *commitment.ConflictError
 		if errors.As(err, &conflict) && conflict.Code == commitment.ConflictGrantNotLive {
 			continue
 		}
-		// A member seen mid-revision and rolled back cleanly is gone by now;
-		// the next walk no longer lists it.
+		// A member seen mid-revision and rolled back cleanly is gone by now,
+		// and the pass is repeated to see what replaced it.
 		if errors.Is(err, commitment.ErrNoGrant) {
+			gone = append(gone, frp.MRID)
 			continue
 		}
 		if err != nil {
-			return err
+			return gone, err
 		}
 	}
-	return nil
+	return gone, nil
 }

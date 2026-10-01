@@ -817,3 +817,64 @@ func ghostResponse(mrid, href string, start int64, dur uint32) sep2.FlowReservat
 	frp.Interval = &sep2.DateTimeInterval{Start: start, Duration: dur}
 	return frp
 }
+
+// A member listed on the first walk that the ledger does not know (X rolled
+// back) must not be settled by a second walk of the same length: Y now holds
+// that id, and Y is live.
+func TestCancel_ReplacedMemberOfEqualLengthForcesAnotherPass(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	base := time.Now().Add(time.Hour).Unix()
+	old := f.answered(t, base)
+	exec := f.issueExec(t, old, base, -2000)
+	_, err := flowreservation.Revise(ctx, f.reviseDeps(), aggID, "R1", shorten(base, 1800), "operator revise", flowreservation.Attribution{}, time.Now())
+	must(t, err)
+
+	walks := 0
+	canceller := flowreservation.NewCanceller(f.frq, frpHook{FRPStore: f.frp, get: func(ctx context.Context, p, id string) (sep2.FlowReservationResponse, error) {
+		if id == "R1" {
+			walks++
+		}
+		if id == "R1-r1" && walks == 1 {
+			return ghostResponse("X", "/edev/"+p+"/frp/R1-r1", base, 1800), nil
+		}
+		return f.frp.Get(ctx, p, id)
+	}}, f.queue, f.ledger, sources.NewWriters(f.issuer, f.frpLifecycles))
+
+	must(t, canceller.Cancel(ctx, aggID, "R1", cancelledStatus(time.Now().Unix())))
+
+	rlc, err := f.frpLifecycles.Get(ctx, aggID, "R1-r1")
+	if err != nil || rlc.CancelledAt == nil {
+		t.Errorf("revision lifecycle = %+v (err %v), want cancelled", rlc, err)
+	}
+	lc, err := f.controlLifecycles.Get(ctx, exec.Scope.Key(), exec.ID)
+	must(t, err)
+	if lc.CancelledAt == nil {
+		t.Errorf("execution lifecycle = %+v, want cancelled", lc)
+	}
+}
+
+// A member every walk lists but the ledger never knows cannot be cancelled;
+// Cancel must say so after its bounded passes, not answer success.
+func TestCancel_MemberTheLedgerNeverKnowsIsAnErrorNamingIt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	base := time.Now().Add(time.Hour).Unix()
+	f.answered(t, base)
+	canceller := flowreservation.NewCanceller(f.frq, frpHook{FRPStore: f.frp, get: func(ctx context.Context, p, id string) (sep2.FlowReservationResponse, error) {
+		if id == "R1-r1" {
+			return ghostResponse("GHOST-MRID", "/edev/"+p+"/frp/R1-r1", base, 600), nil
+		}
+		return f.frp.Get(ctx, p, id)
+	}}, f.queue, f.ledger, sources.NewWriters(f.issuer, f.frpLifecycles))
+
+	err := canceller.Cancel(ctx, aggID, "R1", cancelledStatus(time.Now().Unix()))
+	if err == nil || !errors.Is(err, flowreservation.ErrChainMoving) || !strings.Contains(err.Error(), "GHOST-MRID") {
+		t.Fatalf("err = %v, want ErrChainMoving naming GHOST-MRID", err)
+	}
+	if lc, err := f.frpLifecycles.Get(ctx, aggID, "R1"); err != nil || lc.CancelledAt == nil {
+		t.Errorf("R1 lifecycle = %+v (err %v), want cancelled", lc, err)
+	}
+}

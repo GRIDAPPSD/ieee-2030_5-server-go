@@ -428,9 +428,10 @@ func TestRevise_RefusedRelinkWithAFailedUndoIsErrUndo(t *testing.T) {
 		name   string
 		failOn string
 		moved  string
+		kept   bool
 	}{
-		{"revision delete fails", "delete:grant-2", "grant-1"},
-		{"relink back fails", "relink:ctrl-b->grant-1", "grant-2"},
+		{"revision delete fails", "delete:grant-2", "grant-1", false},
+		{"relink back fails", "relink:ctrl-b->grant-1", "grant-2", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -446,6 +447,9 @@ func TestRevise_RefusedRelinkWithAFailedUndoIsErrUndo(t *testing.T) {
 			}
 			if got := w.control("ctrl-b").GrantMRID; got != tc.moved {
 				t.Errorf("ctrl-b is on %s, want %s", got, tc.moved)
+			}
+			if tc.kept && (slices.Contains(w.calls, "delete:grant-2") || len(w.grants.grants) != 2) {
+				t.Errorf("calls = %v grants = %+v, want the revision kept while an execution may name it", w.calls, w.grants.grants)
 			}
 		})
 	}
@@ -466,6 +470,9 @@ func TestRevise_RefusedRelinkBackIsErrUndo(t *testing.T) {
 	}
 	if got := w.control("ctrl-b").GrantMRID; got != "grant-2" {
 		t.Errorf("ctrl-b is on %s, want grant-2 (the refused relink back left it there)", got)
+	}
+	if slices.Contains(w.calls, "delete:grant-2") || len(w.grants.grants) != 2 {
+		t.Errorf("calls = %v grants = %+v, want grant-2 kept: ctrl-b still names it", w.calls, w.grants.grants)
 	}
 }
 

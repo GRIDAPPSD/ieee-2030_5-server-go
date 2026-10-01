@@ -24,6 +24,13 @@ func (failingFleets) FleetOf(context.Context, string) (string, error) {
 	return "", errors.New("resolver unavailable")
 }
 
+// failingLedger is a ledger whose lock cannot be taken, so Within never runs fn.
+type failingLedger struct{ err error }
+
+func (l failingLedger) Within(context.Context, []string, func(commitment.View) error) error {
+	return l.err
+}
+
 func (d *dcHarness) controlCancelled(t *testing.T, mrid string) bool {
 	t.Helper()
 	parent, id, _, err := d.controls.ByMRID(context.Background(), mrid)
@@ -147,6 +154,9 @@ func TestDERControlCancel_WithoutAFleetLockStillCancels(t *testing.T) {
 		{"resolver errors", "fleet_resolve_failed", func(_ *testing.T, d *dcHarness) { d.h.Fleets = failingFleets{} }},
 		{"no resolver", "no_resolver", func(_ *testing.T, d *dcHarness) { d.h.Fleets = nil }},
 		{"no ledger", "no_ledger", func(_ *testing.T, d *dcHarness) { d.h.Ledger = nil }},
+			{"ledger fails", "ledger_failed", func(_ *testing.T, d *dcHarness) {
+				d.h.Ledger = failingLedger{err: errors.New("lock table unavailable")}
+			}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := newDCHarness(t, ptrU32(dcPEN))
@@ -163,6 +173,12 @@ func TestDERControlCancel_WithoutAFleetLockStillCancels(t *testing.T) {
 			logs := d.logs.String()
 			if !strings.Contains(logs, "level=WARN") || !strings.Contains(logs, "der_control_cancel_unlocked") || !strings.Contains(logs, "reason="+tc.reason) {
 				t.Errorf("log = %q, want a WARN der_control_cancel_unlocked with reason=%s", logs, tc.reason)
+			}
+			if !strings.Contains(logs, "mrid="+created.MRID) {
+				t.Errorf("log = %q, want the WARN to name mrid=%s", logs, created.MRID)
+			}
+			if hasErr := strings.Contains(logs, "lock table unavailable"); hasErr != (tc.reason == "ledger_failed") {
+				t.Errorf("log = %q, ledger error present = %v, want it only for ledger_failed", logs, hasErr)
 			}
 		})
 	}
@@ -206,5 +222,43 @@ func TestDERControlCancel_ClientGoneWhileWaitingIs503(t *testing.T) {
 	}
 	if d.controlCancelled(t, created.MRID) {
 		t.Error("a cancel whose client went away cancelled the control")
+	}
+	if strings.Contains(logs, "der_control_cancel_unlocked") || strings.Contains(logs, "ledger_failed") {
+		t.Errorf("log = %q, want no unlocked-cancel WARN for a client that left", logs)
+	}
+}
+
+// TestDERControlCancel_GrantFleetLockHeldWhenDeviceFleetUnresolved: with the
+// device gone, only the grant's stored fleet is locked, and the cancel must
+// still wait on it.
+func TestDERControlCancel_GrantFleetLockHeldWhenDeviceFleetUnresolved(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	created := d.executionOnGrant(t)
+	if err := d.devices.Delete(context.Background(), dcDevice); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	release := holdFleet(t, d, aggLFDI)
+
+	cancelled := make(chan *httptest.ResponseRecorder, 1)
+	go func() { cancelled <- d.do(t, http.MethodPost, d.cancelPath(created.MRID), "") }()
+	select {
+	case w := <-cancelled:
+		release()
+		t.Fatalf("cancel returned %d while the grant's lock was held; it must wait", w.Code)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if d.controlCancelled(t, created.MRID) {
+		t.Fatal("the control was cancelled while the grant's fleet lock was held")
+	}
+
+	release()
+	if w := <-cancelled; w.Code != http.StatusOK {
+		t.Fatalf("cancel after release: %d %s", w.Code, w.Body.String())
+	}
+	if !d.controlCancelled(t, created.MRID) {
+		t.Error("the control is not cancelled after the lock was released")
+	}
+	if strings.Contains(d.logs.String(), "der_control_cancel_unlocked") {
+		t.Errorf("log = %q, want no unlocked WARN: the grant's fleet resolved", d.logs.String())
 	}
 }

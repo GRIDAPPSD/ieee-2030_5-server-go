@@ -348,6 +348,8 @@ func seedEveryState(f *frFixture) {
 	req("frq-denied", frNow-50, frNow+100, false)
 	grant("frq-denied", frNow+100, 0, nil)
 	req("frq-cancelled", frNow-50, frNow+100, false)
+	// Cancelled before its own creationTime (frNow+90): the served dateTime is the
+	// later of the two (#798).
 	grant("frq-cancelled", frNow+100, 3600, ptr(frNow-5))
 	req("frq-withdrawn", frNow-50, frNow+100, true)
 	req("frq-ended", frNow-9000, frNow-8000, false)

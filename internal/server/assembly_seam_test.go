@@ -37,6 +37,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -334,6 +335,7 @@ func TestNewCoreStoresCopiesAllFields(t *testing.T) {
 	// src alone, after newTestStores() returns, keeps that blast radius
 	// at zero while still giving THIS test a non-zero value to prove the
 	// copy itself works.
+	src.Sep2Edition = handler.Edition2023
 	src.RegistrationPolicy = memory.RegistrationPolicy{
 		PIN:      func(lfdi string) (uint32, bool) { return 1, true },
 		PollRate: 900,

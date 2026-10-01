@@ -57,11 +57,20 @@ func ResponseID(edevID, href string) (string, bool) {
 // once its start passes it reads Active, never Scheduled (2030.5 EventStatus
 // currentStatus 0).
 func NewDerivedStatusResponseStore(responses store.ScopedStore[sep2.FlowReservationResponse], lifecycles dercontrol.LifecycleReader) *dercontrol.DerivedStatusStore[sep2.FlowReservationResponse] {
+	return NewDerivedStatusResponseStoreFor(responses, lifecycles, false)
+}
+
+// NewDerivedStatusResponseStoreFor is NewDerivedStatusResponseStore for a
+// server running as the given edition: edition2023 serves
+// potentiallySuperseded true on every status, as 2023 requires.
+func NewDerivedStatusResponseStoreFor(responses store.ScopedStore[sep2.FlowReservationResponse], lifecycles dercontrol.LifecycleReader, edition2023 bool) *dercontrol.DerivedStatusStore[sep2.FlowReservationResponse] {
 	return dercontrol.NewDerivedStatusStore(responses, lifecycles, dercontrol.StatusPolicy[sep2.FlowReservationResponse]{
 		Event: func(frp *sep2.FlowReservationResponse) *sep2.Event { return &frp.Event },
 		ID: func(edevID string, frp sep2.FlowReservationResponse) (string, bool) {
 			return ResponseID(edevID, frp.Href)
 		},
 		ServerAuthored: true,
+
+		AlwaysPotentiallySuperseded: edition2023,
 	})
 }

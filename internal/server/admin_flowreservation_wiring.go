@@ -28,14 +28,14 @@ func newAdminFlowReservationHandler(stores *Stores) *handler.AdminFlowReservatio
 	fleets := commitment.Resolver{Devices: stores.EndDevices, Managers: stores.EndDeviceManagers}
 	h := &handler.AdminFlowReservationHandler{
 		Requests:   stores.FlowReservationRequests,
-		Responses:  flowreservation.NewDerivedStatusResponseStore(stores.FlowReservationResponses, stores.FlowReservationResponseLifecycles),
+		Responses:  flowreservation.NewDerivedStatusResponseStoreFor(stores.FlowReservationResponses, stores.FlowReservationResponseLifecycles, stores.Sep2Edition == handler.Edition2023),
 		Lifecycles: stores.FlowReservationResponseLifecycles,
 		Fleets:     fleets,
 		Deadline:   flowReservationConfig(stores.FlowReservationDeadline),
 		Persisted:  persists(stores.FlowReservationRequests) && persists(stores.FlowReservationResponses) && persists(stores.FlowReservationResponseLifecycles),
 	}
 	if !store.IsAbsent(stores.DERControls) && !store.IsAbsent(stores.DERControlLifecycles) {
-		h.Controls = coreder.NewDerivedStatusControlStore(stores.DERControls, stores.DERControlLifecycles)
+		h.Controls = coreder.NewDerivedStatusControlStoreFor(stores.DERControls, stores.DERControlLifecycles, stores.Sep2Edition == handler.Edition2023)
 		h.Executions = sources.NewControls(stores.DERControls, stores.DERControlLifecycles, fleets)
 	}
 	if answers := flowReservationAnswers(stores); answers != nil {

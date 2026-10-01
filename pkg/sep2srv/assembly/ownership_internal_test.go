@@ -473,6 +473,7 @@ func TestFullStoresWiresEveryStoresField(t *testing.T) {
 		"AdminFSAs":          "the admin plane is not mounted on the protocol router",
 		"RegistrationPolicy": "the pattern-list comparison provisions no Registration",
 
+		"Edition2023":          "the 2018 edition is the default; true only when the server runs as 2023",
 		"FlowReservationQueue": "nil makes the assembly build a queue of its own",
 		"DERControlIssuer":     "nil makes the assembly build an issuer from the stores",
 	}

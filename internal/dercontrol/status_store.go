@@ -34,6 +34,13 @@ type StatusPolicy[T any] struct {
 	// lifecycle record are this server's to derive; any other item (a boot
 	// fixture or CSIP loader control) is served exactly as stored.
 	ServerAuthored bool
+
+	// AlwaysPotentiallySuperseded serves potentiallySuperseded true on every
+	// derived status, as IEEE 2030.5-2023 requires of a server (the field is
+	// deprecated there and "SHALL be set to true"). False is the 2018 rule:
+	// true only for a partially overlapping event, which this derivation
+	// never reports.
+	AlwaysPotentiallySuperseded bool
 }
 
 // DerivedStatusStore decorates a scoped store of events so Get and List
@@ -110,6 +117,7 @@ func (s *DerivedStatusStore[T]) derive(ctx context.Context, now int64, parentID,
 		start = ev.Interval.Start
 	}
 	status := DeriveStatus(now, ev.CreationTime, start, lc)
+	status.PotentiallySuperseded = s.policy.AlwaysPotentiallySuperseded
 	ev.EventStatus = &status
 	return nil
 }

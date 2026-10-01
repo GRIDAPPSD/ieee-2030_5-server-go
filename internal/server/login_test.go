@@ -93,7 +93,7 @@ func TestLoginSubmitWrongKey(t *testing.T) {
 	w := httptest.NewRecorder()
 	h(w, req)
 
-	// Render login page with an error (200) — do NOT set a cookie.
+	// Render login page with an error (200) - do NOT set a cookie.
 	if w.Code != http.StatusOK {
 		t.Fatalf("wrong key should re-render login (200), got %d", w.Code)
 	}
@@ -109,7 +109,7 @@ func TestLoginSubmitWrongKey(t *testing.T) {
 
 func TestLoginSubmitEmptyKeyDisabled(t *testing.T) {
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	// Server started with no admin key — login submission must be refused
+	// Server started with no admin key - login submission must be refused
 	// (mTLS-only mode; no browser login possible).
 	h := adminplane.HandleLoginSubmit("", sessions)
 
@@ -127,7 +127,7 @@ func TestLoginSubmitEmptyKeyDisabled(t *testing.T) {
 func TestLoginSubmitFormParseError(t *testing.T) {
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
 	h := adminplane.HandleLoginSubmit("secret", sessions)
-	// Body with broken urlencoded form (invalid percent escape) — ParseForm
+	// Body with broken urlencoded form (invalid percent escape) - ParseForm
 	// returns an error and the handler must surface the login page rather
 	// than a 5xx.
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader("key=%ZZ"))

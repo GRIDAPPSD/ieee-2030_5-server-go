@@ -634,7 +634,7 @@ function renderFSA(fsa, depth, allowDelete) {
   wrap.style.color = '#fbbf24';
 
   var line = document.createElement('div');
-  line.textContent = 'FSA ' + fsa.mRID + ' — ' + (fsa.description || '');
+  line.textContent = 'FSA ' + fsa.mRID + ' \u2014 ' + (fsa.description || '');
   wrap.appendChild(line);
 
   // Programs.

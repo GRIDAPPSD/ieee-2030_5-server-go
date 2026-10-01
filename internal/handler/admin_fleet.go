@@ -32,6 +32,9 @@ import (
 // same name.
 const uomHertz uint8 = 33
 
+// flowDirectionNone is FlowDirectionType 0, "Not applicable".
+const flowDirectionNone uint8 = 0
+
 // flowDirectionNet is FlowDirectionType Net (2023: abs(Forward) - abs(Reverse),
 // signed). The vendored core defines no constant for it, and 2018 reserves 4.
 const flowDirectionNet uint8 = 4
@@ -538,10 +541,11 @@ func inheritReadingTypeByMRID(readings []sep2.MirrorMeterReading) {
 //   - Edition2023 with isDER true: the pair flips, Forward -> +1 (export),
 //     Reverse -> -1 (import).
 //
-// A negative value under Forward or Reverse is not folded to its magnitude
-// (#802): 2023 Annex B says such values "SHALL be positive", and 2018 leaves
-// a signed value's meaning to the sender, so it is passed through unmapped
-// and marked DirectionUnknown, like a reading with no flowDirection (#733).
+// A negative value under Forward or Reverse is never folded to its magnitude
+// (#802): under 2018 it is kept as the sender's export-positive sign, and
+// under 2023, which says such values "SHALL be positive", it is passed
+// through and marked DirectionUnknown, like a reading with no flowDirection
+// (#733). A zero under flowDirection 0 (none) is 0 W, unflagged.
 // Net (4) is mapped only for Edition2023 with isDER true: the signed value is
 // already export-positive and is kept as sent (#776). Under 2018 (reserved)
 // or a non-DER mirror it stays flagged.
@@ -591,8 +595,7 @@ func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReadi
 
 // exportPositive maps a scaled P or Q value to export-positive under the
 // rule in considerMeasurement's doc comment. mapped is false when the
-// direction is absent or not mappable, or when a Forward or Reverse value is
-// negative; value is then returned unchanged.
+// direction is absent or not mappable; value is then returned unchanged.
 //
 // The 2018 mapping (Reverse is export) rests on 2018 Table E.2, which gives
 // DER active power as ReadingType::flowDirection = 19 (Reverse).
@@ -600,16 +603,22 @@ func exportPositive(value float64, flowDirection *uint8, edition SEP2Edition, is
 	if flowDirection == nil {
 		return value, false
 	}
-	flipped := edition == Edition2023 && isDER
 	switch *flowDirection {
+	case flowDirectionNone:
+		// A zero has no direction to declare, so 0 W under "none" is a
+		// reading, while any other value under it has no sign to read.
+		return value, value == 0
 	case sep2.FlowDirectionForward, sep2.FlowDirectionReverse:
-		// 2023 requires these values to be positive; under 2018 a negative
-		// one is the sender's own sign, which no rule here can read.
 		if value < 0 {
-			return value, false
+			// 2023 says these values "SHALL be positive", so a negative one
+			// is flagged. 2018 has no such clause, and by operator decision
+			// (2026-10-01) a negative value is the sender's own
+			// export-positive sign and is kept: the EPRI reference client
+			// posts a negative value under Forward.
+			return value, edition != Edition2023
 		}
 		export := *flowDirection == sep2.FlowDirectionReverse
-		if flipped {
+		if edition == Edition2023 && isDER {
 			export = !export
 		}
 		if export {

@@ -40,8 +40,8 @@ func readingWithFlow(uom uint8, flow *uint8, value int64) sep2.MirrorMeterReadin
 
 // TestConsiderMeasurement_SignConvention pins export-positive =
 // (Forward -> -1, Reverse -> +1) * value for a non-negative value. A negative
-// value under Forward or Reverse is not folded to its magnitude (#802): it is
-// served as sent and flagged, as is a reading with no flowDirection.
+// value under Forward or Reverse is not folded to its magnitude (#802): under
+// 2018 it is the sender's own sign, served as sent and unflagged.
 func TestConsiderMeasurement_SignConvention(t *testing.T) {
 	t.Parallel()
 	forward := f8(sep2.FlowDirectionForward)
@@ -55,9 +55,9 @@ func TestConsiderMeasurement_SignConvention(t *testing.T) {
 		flagged bool
 	}{
 		{"forward, positive raw", forward, 500, -500, false},
-		{"forward, negative raw, flagged", forward, -500, -500, true},
+		{"forward, negative raw, kept", forward, -500, -500, false},
 		{"reverse, positive raw", reverse, 300, 300, false},
-		{"reverse, negative raw, flagged", reverse, -300, -300, true},
+		{"reverse, negative raw, kept", reverse, -300, -300, false},
 		{"no flow direction, unchanged", nil, 150, 150, true},
 	}
 
@@ -983,11 +983,12 @@ func TestConsiderMeasurement_EditionFlowDirectionMapping(t *testing.T) {
 			}
 
 			// A negative value under the same direction is not folded to
-			// its magnitude: it is served as sent and flagged (#802).
+			// its magnitude: it is served as sent, and flagged only under
+			// 2023, which requires a positive value (#802).
 			out = FleetDeviceMeasurements{}
 			considerMeasurement(&out, typedReading("series", 100, sep2.UomWatts, tc.flow, -100), tc.edition, tc.isDER)
-			if out.P == nil || out.P.Value != -100 || !out.P.DirectionUnknown {
-				t.Errorf("negative reading: Measurements.P = %+v, want -100 flagged", out.P)
+			if want := tc.edition == Edition2023; out.P == nil || out.P.Value != -100 || out.P.DirectionUnknown != want {
+				t.Errorf("negative reading: Measurements.P = %+v, want -100 flagged=%v", out.P, want)
 			}
 		})
 	}

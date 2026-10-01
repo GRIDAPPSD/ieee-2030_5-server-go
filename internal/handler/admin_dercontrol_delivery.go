@@ -30,9 +30,13 @@ type DERControlDelivery struct {
 	NewestReadingTime *int64   `json:"newestReadingTime"`
 }
 
-// dataQualifierAverage is DataQualifierType 2, "Average over the Interval
-// (the last posting)" (CSIP Table 3).
-const dataQualifierAverage uint8 = 2
+// DataQualifierType values. 0 is "Not applicable (default, if not
+// specified)" (2018 DataQualifierType), so it reads as an absent qualifier.
+// 2 is "Average over the Interval (the last posting)" (CSIP Table 3).
+const (
+	dataQualifierNone    uint8 = 0
+	dataQualifierAverage uint8 = 2
+)
 
 // Hold bounds, INFERRED (#802): the standard sets no hold. 300 s is this
 // server's own default for a mirror with no postRate; 900 s is the postRate
@@ -77,14 +81,15 @@ type powerSpan struct {
 }
 
 // countsAsDelivery reports whether a reading is DER real power that may be
-// integrated: uom W, instantaneous (no qualifier) or Average. Maximum and
-// Minimum series describe extremes, not energy.
+// integrated: uom W, instantaneous (no qualifier, or 0) or Average. Maximum
+// and Minimum series describe extremes, not energy.
 func countsAsDelivery(r sep2.MirrorMeterReading) bool {
 	rt := r.ReadingType
 	if rt == nil || rt.Uom == nil || *rt.Uom != sep2.UomWatts || r.Reading == nil || r.Reading.Value == nil {
 		return false
 	}
-	return rt.DataQualifier == nil || *rt.DataQualifier == dataQualifierAverage
+	q := rt.DataQualifier
+	return q == nil || *q == dataQualifierNone || *q == dataQualifierAverage
 }
 
 // powerSeries turns a device's DER real-power readings into spans, one slice
@@ -219,30 +224,58 @@ func resolveSeries(spans []powerSpan) []piece {
 }
 
 // integrate sums watt-seconds across series, since parallel series (phases,
-// several DER mirrors) are parts of one output. A second counts as covered
-// when any series covers it.
+// several DER mirrors) are parts of one output. A second is covered only when
+// every series with a span in the window covers it: a second some series
+// miss would understate the output, so it is left uncovered and its energy
+// is not counted.
 func integrate(series [][]powerSpan) (wattSeconds float64, covered int64, used []powerSpan) {
 	var all []piece
-	usedOrder := map[int]bool{}
+	reporting := 0
 	for _, spans := range series {
-		for _, p := range resolveSeries(spans) {
-			wattSeconds += p.span.watts * float64(p.end-p.start)
-			all = append(all, p)
-			if !usedOrder[p.span.order] {
-				usedOrder[p.span.order] = true
-				used = append(used, p.span)
+		pieces := resolveSeries(spans)
+		if len(pieces) > 0 {
+			reporting++
+		}
+		all = append(all, pieces...)
+	}
+	if reporting == 0 {
+		return 0, 0, nil
+	}
+	type edge struct {
+		at    int64
+		piece int
+		open  bool
+	}
+	edges := make([]edge, 0, 2*len(all))
+	for i, p := range all {
+		edges = append(edges, edge{p.start, i, true}, edge{p.end, i, false})
+	}
+	slices.SortFunc(edges, func(a, b edge) int { return cmp.Compare(a.at, b.at) })
+
+	// Pieces of one series are disjoint, so the active pieces belong to
+	// distinct series.
+	active := map[int]powerSpan{}
+	usedOrder := map[int]bool{}
+	for i := 0; i < len(edges); {
+		x := edges[i].at
+		for ; i < len(edges) && edges[i].at == x; i++ {
+			if edges[i].open {
+				active[edges[i].piece] = all[edges[i].piece].span
+			} else {
+				delete(active, edges[i].piece)
 			}
 		}
-	}
-	slices.SortFunc(all, func(a, b piece) int { return cmp.Compare(a.start, b.start) })
-	reach := int64(0)
-	for i, p := range all {
-		if i == 0 || p.start > reach {
-			covered += p.end - p.start
-			reach = p.end
-		} else if p.end > reach {
-			covered += p.end - reach
-			reach = p.end
+		if i == len(edges) || len(active) < reporting {
+			continue
+		}
+		seconds := edges[i].at - x
+		covered += seconds
+		for _, sp := range active {
+			wattSeconds += sp.watts * float64(seconds)
+			if !usedOrder[sp.order] {
+				usedOrder[sp.order] = true
+				used = append(used, sp)
+			}
 		}
 	}
 	return wattSeconds, covered, used

@@ -101,7 +101,8 @@ func TestDelivery_UncoveredSecondsAreNotFilled(t *testing.T) {
 }
 
 // Overlapping spans of one series count each second once, using the newest
-// receipt; spans of different series (mirrors or mRIDs) add.
+// receipt; spans of different series (mirrors or mRIDs) add, over the seconds
+// every series covers.
 func TestDelivery_OverlapWithinSeriesAndSumAcross(t *testing.T) {
 	avg := u8(dataQualifierAverage)
 	t.Run("one series", func(t *testing.T) {
@@ -122,10 +123,11 @@ func TestDelivery_OverlapWithinSeriesAndSumAcross(t *testing.T) {
 			{isDER: true, readings: []sep2.MirrorMeterReading{wReading("A", 1400, 400, reverse, avg, &sep2.DateTimeInterval{Start: 1200, Duration: 200})}},
 		}
 		d := newDelivery("L", m, Edition2018, 0, 5000)
-		if d.CoveredSeconds != 400 || d.Readings != 2 {
-			t.Fatalf("delivery = %+v, want 400 covered by 2 readings", d)
+		// Only [1200,1300) is covered by both mirrors.
+		if d.CoveredSeconds != 100 || d.Readings != 2 {
+			t.Fatalf("delivery = %+v, want 100 covered by 2 readings", d)
 		}
-		approx(t, "deliveredWh", d.DeliveredWh, (100*300+400*200)/3600.0)
+		approx(t, "deliveredWh", d.DeliveredWh, (100+400)*100/3600.0)
 	})
 	t.Run("non-DER mirror ignored", func(t *testing.T) {
 		m := []deviceMirror{{readings: []sep2.MirrorMeterReading{wReading("A", 1300, 100, reverse, avg, &sep2.DateTimeInterval{Start: 1000, Duration: 300})}}}
@@ -188,7 +190,8 @@ func TestDelivery_DirectionlessReadingIsFlaggedNotSummed(t *testing.T) {
 // Criterion: the sign uses the fleet pane's mapping. Each case runs the same
 // reading through considerMeasurement (the fleet route) and, for a DER
 // mirror, newDelivery, and requires both to give the expected export-positive
-// watts. A negative value under Forward or Reverse is flagged on both.
+// watts. A negative value under Forward or Reverse keeps its sign under 2018
+// and is flagged under 2023, on both.
 func TestDelivery_SignMatchesFleetMapping(t *testing.T) {
 	forward, net := u8(sep2.FlowDirectionForward), u8(flowDirectionNet)
 	for _, tc := range []struct {
@@ -202,8 +205,8 @@ func TestDelivery_SignMatchesFleetMapping(t *testing.T) {
 		{Edition2018, false, forward, 360, -360, false},
 		{Edition2018, false, reverse, 360, 360, false},
 		{Edition2018, true, forward, 360, -360, false},
-		{Edition2018, true, reverse, 360, 360, false}, // 2018 Table E.2: DER active power is Reverse
-		{Edition2018, true, reverse, -360, -360, true},
+		{Edition2018, true, reverse, 360, 360, false},   // 2018 Table E.2: DER active power is Reverse
+		{Edition2018, true, reverse, -360, -360, false}, // the sender's sign, kept under 2018
 		{Edition2023, false, reverse, 360, 360, false},
 		{Edition2023, true, forward, 360, 360, false},
 		{Edition2023, true, forward, -360, -360, true},

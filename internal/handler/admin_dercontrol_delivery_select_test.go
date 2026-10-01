@@ -163,14 +163,15 @@ func TestDERControlList_DeliveryAverageCoversBeforeReceipt(t *testing.T) {
 	wantWh(t, del.DeliveredWh, 300+200)
 }
 
-// Item 3: a negative value under Forward or Reverse is flagged, not folded
-// into a magnitude, on the delivery figure.
+// Item 3: under 2023 a negative value under Forward or Reverse is flagged,
+// not folded into a magnitude, on the delivery figure.
 func TestDERControlList_DeliveryFlagsNegativeDirectedValue(t *testing.T) {
 	d := newDeliveryHarness(t)
+	d.h.Edition = handler.Edition2023
 	b := deliveryBase
 	fwd := sep2.FlowDirectionForward
 	d.seedReadings(t, "1", dcLFDI, roleIsDER, ptrU32(100),
-		reading{mrid: "P", at: b, value: 3600, dir: reverseDir()},
+		reading{mrid: "P", at: b, value: 3600, dir: &fwd},
 		reading{mrid: "Q", at: b + 200, value: -3600, dir: reverseDir()},
 		reading{mrid: "R", at: b + 400, value: -3600, dir: &fwd},
 	)
@@ -301,8 +302,8 @@ func TestDERControlList_NoControlsReadsNoMirrors(t *testing.T) {
 	}
 }
 
-// Item 3: the fleet route uses the same mapping, so a negative directed P
-// reading is served as its raw value with directionUnknown set.
+// Item 3: the fleet route uses the same mapping, so under 2023 a negative
+// directed P reading is served as its raw value with directionUnknown set.
 func TestHandleListFleets_NegativeDirectedValueIsFlagged(t *testing.T) {
 	f := newFleetFixture(t)
 	f.assign(fleetAggregatorLFDI, fleetDeviceALFDI)
@@ -311,13 +312,15 @@ func TestHandleListFleets_NegativeDirectedValueIsFlagged(t *testing.T) {
 		ReadingType: &sep2.ReadingType{Uom: u8(sep2.UomWatts), FlowDirection: u8(sep2.FlowDirectionReverse), PowerOfTenMultiplier: i8(0)},
 		Reading:     &sep2.Reading{Value: i64(-500)},
 	})
+	h := f.handler()
+	h.Edition = handler.Edition2023
 	w := httptest.NewRecorder()
-	handler.HandleListFleets(f.handler())(w, httptest.NewRequest(http.MethodGet, "/api/derms/fleets", nil))
+	handler.HandleListFleets(h)(w, httptest.NewRequest(http.MethodGet, "/api/derms/fleets", nil))
 	want := `"p":{"value":-500,`
 	if !containsAll(w.Body.String(), want, `"directionUnknown":true`) {
 		t.Fatalf("fleet body lacks %s with directionUnknown: %s", want, w.Body.String())
 	}
-	dev := findDevice(t, fetchFleets(t, f.handler())[0], fleetDeviceALFDI)
+	dev := findDevice(t, fetchFleets(t, h)[0], fleetDeviceALFDI)
 	if dev.Measurements.P == nil || dev.Measurements.P.Value != -500 || !dev.Measurements.P.DirectionUnknown {
 		t.Fatalf("P = %+v, want -500 flagged", dev.Measurements.P)
 	}

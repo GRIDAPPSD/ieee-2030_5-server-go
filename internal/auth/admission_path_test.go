@@ -61,7 +61,7 @@ func TestAdmissionPath(t *testing.T) {
 			if tc.recheck {
 				inner = auth.RequireRealCredential("test-key", tickets, sessions)(inner)
 			}
-			h := auth.AdminAuthMiddleware("test-key", tickets, sessions)(inner)
+			h := auth.AdminAuthMiddleware("test-key", tickets, sessions, true)(inner)
 			req := httptest.NewRequest(http.MethodPost, "/api/der/controls", nil)
 			req.RemoteAddr = tc.remote
 			if tc.build != nil {

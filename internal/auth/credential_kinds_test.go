@@ -31,7 +31,7 @@ func TestQueryTicketNotAcceptedAsCookieSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler := auth.AdminAuthMiddleware("test-key", tickets, sessions)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", tickets, sessions, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/devices", nil)
 	req.AddCookie(&http.Cookie{Name: auth.AdminTicketCookieName, Value: ticket})
 	w := httptest.NewRecorder()
@@ -57,7 +57,7 @@ func TestCookieSessionNotAcceptedAsQueryTicket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler := auth.AdminAuthMiddleware("test-key", tickets, sessions)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", tickets, sessions, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/devices?ticket="+id, nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -84,7 +84,7 @@ func TestQueryTicketRemainsSingleUse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler := auth.AdminAuthMiddleware("test-key", tickets, sessions)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", tickets, sessions, true)(okHandler())
 	want := []int{http.StatusOK, http.StatusUnauthorized}
 	for i, wantCode := range want {
 		req := httptest.NewRequest(http.MethodGet, "/api/devices?ticket="+ticket, nil)
@@ -189,7 +189,7 @@ func TestAdminAuthAllFiveAdmissionPathsReachable(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tickets := auth.NewTicketStore(30 * time.Second)
 			sessions := auth.NewSessionStore(testSessionIdle, testSessionAbsolute)
-			handler := auth.AdminAuthMiddleware("test-key", tickets, sessions)(okHandler())
+			handler := auth.AdminAuthMiddleware("test-key", tickets, sessions, true)(okHandler())
 
 			req := tc.prepare(t, tickets, sessions)
 			w := httptest.NewRecorder()

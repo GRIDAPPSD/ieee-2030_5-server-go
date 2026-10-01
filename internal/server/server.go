@@ -756,6 +756,8 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		AllowedHosts:    allowedHosts,
 		LegacyDashboard: cfg.AdminLegacyDashboard,
 		Traffic:         trafficHandler,
+		LoopbackBypass:  true,
+		ControlWrites:   true,
 	})
 	if err != nil {
 		return nil, "", "", nil, fmt.Errorf("admin router: %w", err)

@@ -17,7 +17,7 @@ import (
 
 func chainedHandler(adminKey string, tickets *auth.TicketStore, sessions *auth.SessionStore, reached *bool) http.Handler {
 	inner := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { *reached = true })
-	return auth.AdminAuthMiddleware(adminKey, tickets, sessions)(auth.RequireRealCredential(adminKey, tickets, sessions)(inner))
+	return auth.AdminAuthMiddleware(adminKey, tickets, sessions, true)(auth.RequireRealCredential(adminKey, tickets, sessions)(inner))
 }
 
 // TestRequireRealCredentialRefusesBypassOnly is acceptance criterion 1: a

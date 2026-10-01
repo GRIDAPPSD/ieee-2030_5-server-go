@@ -19,7 +19,7 @@ import (
 
 func mintChain(adminKey string, tickets *auth.TicketStore, sessions *auth.SessionStore, reached *bool) http.Handler {
 	inner := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { *reached = true })
-	return auth.AdminAuthMiddleware(adminKey, tickets, sessions)(
+	return auth.AdminAuthMiddleware(adminKey, tickets, sessions, true)(
 		auth.RequireRealCredential(adminKey, tickets, sessions)(
 			auth.RequireNonTicketAdmission(inner),
 		),

@@ -25,6 +25,14 @@ type Config struct {
 	// Panels are an embedder's extra tabs, served after the shell's own
 	// under /api/ui/panels. Run registers none.
 	Panels []sep2admin.Panel
+	// LoopbackBypass admits a loopback request with no forwarded header and
+	// no credential (#246). Run sets it; the zero value requires a
+	// credential from every address.
+	LoopbackBypass bool
+	// ControlWrites mounts the DER control create and cancel routes and the
+	// flow reservation answer, revise and cancel routes. Run sets it; the
+	// zero value mounts none of them, and their reads stay mounted.
+	ControlWrites bool
 }
 
 // Build is the admin router Run serves, with its route list for the boot
@@ -34,8 +42,8 @@ func Build(cfg Config) (http.Handler, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	authed, authedWithMiddleware := buildAuthedAdminMux(cfg.AdminKey, cfg.CertService, cfg.Stores, cfg.TLSMode, cfg.Tickets, cfg.Sessions, cfg.LegacyDashboard, cfg.Traffic, panels)
-	h, patterns := buildOuterAdminRouter(cfg.AdminKey, cfg.Sessions, cfg.AllowedHosts, authed, authedWithMiddleware)
+	authed, authedWithMiddleware := buildAuthedAdminMux(cfg, panels)
+	h, patterns := buildOuterAdminRouter(cfg, authed, authedWithMiddleware)
 	return h, patterns, nil
 }
 
@@ -76,10 +84,30 @@ func Build(cfg Config) (http.Handler, []string, error) {
 // other authed GET). Nil mounts nothing, which is what capture-off leaves.
 //
 // Test callers that don't need the pattern list discard the second
-// return value with `_`.
+// return value with `_`. It builds what Run builds: the loopback bypass on
+// and the control writes mounted.
 func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, allowedHosts []string, legacyDashboard bool, trafficHandler http.Handler) (http.Handler, []string) {
-	authed, authedWithMiddleware := buildAuthedAdminMux(adminKey, svc, stores, tlsMode, tickets, sessions, legacyDashboard, trafficHandler, noPanels())
-	return buildOuterAdminRouter(adminKey, sessions, allowedHosts, authed, authedWithMiddleware)
+	cfg := runConfig(adminKey, svc, stores, tlsMode, tickets, sessions, legacyDashboard, trafficHandler)
+	cfg.AllowedHosts = allowedHosts
+	authed, authedWithMiddleware := buildAuthedAdminMux(cfg, noPanels())
+	return buildOuterAdminRouter(cfg, authed, authedWithMiddleware)
+}
+
+// runConfig is the Config BuildAdminRouter's parameters describe, with Run's
+// loopback bypass and control writes.
+func runConfig(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, legacyDashboard bool, trafficHandler http.Handler) Config {
+	return Config{
+		AdminKey:        adminKey,
+		CertService:     svc,
+		Stores:          stores,
+		TLSMode:         tlsMode,
+		Tickets:         tickets,
+		Sessions:        sessions,
+		LegacyDashboard: legacyDashboard,
+		Traffic:         trafficHandler,
+		LoopbackBypass:  true,
+		ControlWrites:   true,
+	}
 }
 
 // buildAuthedAdminMux constructs the authenticated inner mux (dashboard,
@@ -93,7 +121,8 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 // "what can the guard actually see" reads authed.Patterns() here rather
 // than BuildAdminRouter's merged list, which also carries the outer mux's
 // routes and so overstates the guard's reach.
-func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, legacyDashboard bool, trafficHandler http.Handler, panels *panelSet) (*recordingMux, http.Handler) {
+func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Handler) {
+	adminKey, svc, stores, tickets, sessions, trafficHandler := cfg.AdminKey, cfg.CertService, cfg.Stores, cfg.Tickets, cfg.Sessions, cfg.Traffic
 	authed := newRecordingMux()
 
 	if trafficHandler != nil {
@@ -157,9 +186,11 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 		authed.HandleFunc("GET /api/derms/flow-reservations", frH.HandleList())
 		authed.HandleFunc("GET /api/derms/flow-reservations/{edevId}/{frqId}", frH.HandleGet())
 		authed.HandleFunc("GET /api/derms/grants", frH.HandleGrants())
-		authed.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/answer", frH.HandleAnswer())
-		authed.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/revise", frH.HandleRevise())
-		authed.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel", frH.HandleCancel())
+		if cfg.ControlWrites {
+			authed.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/answer", frH.HandleAnswer())
+			authed.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/revise", frH.HandleRevise())
+			authed.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel", frH.HandleCancel())
+		}
 	}
 
 	// #801 DERMS read API: each fleet's live grants and plain controls, read
@@ -172,9 +203,11 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 	// neither is on nonSensitiveAdminWrites: a real credential is required
 	// even from loopback.
 	if derH := newAdminDERControlHandler(stores); derH != nil {
-		authed.HandleFunc("POST /api/der/controls", derH.HandleCreate())
 		authed.HandleFunc("GET /api/der/controls", derH.HandleList())
-		authed.HandleFunc("POST /api/der/controls/{mrid}/cancel", derH.HandleCancel())
+		if cfg.ControlWrites {
+			authed.HandleFunc("POST /api/der/controls", derH.HandleCreate())
+			authed.HandleFunc("POST /api/der/controls/{mrid}/cancel", derH.HandleCancel())
+		}
 		// "GET /api/devices/{id}/der-programs" would conflict with "GET
 		// /api/devices/by-lfdi/{lfdi}" (neither is more specific), so the
 		// device sub-collection is matched by a wildcard and dispatched here.
@@ -187,7 +220,7 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 	// (see handleDashboardPage); the route pattern is the same either way,
 	// so the boot-time route list does not change with the flag.
 	if stores != nil {
-		dashboard := NewDashboardHandler(stores, tlsMode, legacyDashboard)
+		dashboard := NewDashboardHandler(stores, cfg.TLSMode, cfg.LegacyDashboard)
 		dashboard.RegisterRoutes(authed)
 	}
 
@@ -212,7 +245,7 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 		authed.Handle("POST /auth/ticket", auth.RequireNonTicketAdmission(handleIssueTicket(tickets)))
 	}
 
-	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets, sessions)(
+	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets, sessions, cfg.LoopbackBypass)(
 		requireCredentialForSensitiveRoutes(authed, auth.RequireRealCredential(adminKey, tickets, sessions), requireAdminBodyTypes(authed)),
 	)
 
@@ -227,7 +260,8 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 // the guard's own domain, and the merged list here is everything mounted
 // under the listener regardless of which mux or guard a given route sits
 // behind.
-func buildOuterAdminRouter(adminKey string, sessions *auth.SessionStore, allowedHosts []string, authed *recordingMux, authedWithMiddleware http.Handler) (http.Handler, []string) {
+func buildOuterAdminRouter(cfg Config, authed *recordingMux, authedWithMiddleware http.Handler) (http.Handler, []string) {
+	adminKey, sessions, allowedHosts := cfg.AdminKey, cfg.Sessions, cfg.AllowedHosts
 	// Outer mux: login routes are public; everything else is authed.
 	// #270 (bundle B) wraps authedWithMiddleware with a Host-allowlist
 	// middleware at the `outer.Handle("/", ...)` line - leave that wrap

@@ -31,7 +31,7 @@ func okView(_ context.Context) (sep2admin.Descriptor, error) {
 
 func buildWithPanels(t *testing.T, panels ...sep2admin.Panel) http.Handler {
 	t.Helper()
-	h, _, err := Build(Config{AdminKey: panelTestKey, Panels: panels})
+	h, _, err := Build(Config{AdminKey: panelTestKey, Panels: panels, LoopbackBypass: true})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -94,8 +94,9 @@ func TestHungPanelViewAnswers504(t *testing.T) {
 		t.Fatalf("newPanelSet: %v", err)
 	}
 	ps.timeout = 50 * time.Millisecond
-	authed, withMW := buildAuthedAdminMux(panelTestKey, nil, nil, "GCM", nil, nil, false, nil, ps)
-	h, _ := buildOuterAdminRouter(panelTestKey, nil, nil, authed, withMW)
+	cfg := runConfig(panelTestKey, nil, nil, "GCM", nil, nil, false, nil)
+	authed, withMW := buildAuthedAdminMux(cfg, ps)
+	h, _ := buildOuterAdminRouter(cfg, authed, withMW)
 
 	start := time.Now()
 	rec := get(h, "/api/ui/panels/hung", true)

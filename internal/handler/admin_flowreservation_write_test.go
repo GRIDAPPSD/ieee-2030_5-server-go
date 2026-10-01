@@ -119,7 +119,7 @@ func (f *frwFixture) router() http.Handler {
 	mux.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/answer", f.h.HandleAnswer())
 	mux.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/revise", f.h.HandleRevise())
 	mux.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel", f.h.HandleCancel())
-	return auth.AdminAuthMiddleware(frwKey, nil, nil)(mux)
+	return auth.AdminAuthMiddleware(frwKey, nil, nil, true)(mux)
 }
 
 func (f *frwFixture) post(op, frqID, body string) *httptest.ResponseRecorder {

@@ -50,7 +50,7 @@ func cookieAuthRequest(value string) *http.Request {
 // with no credential at all must be refused.
 func TestAdminAuthNoCredentialNonLoopbackRefused(t *testing.T) {
 	sessions := auth.NewSessionStore(testSessionIdle, testSessionAbsolute)
-	handler := auth.AdminAuthMiddleware("test-key", nil, sessions)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, sessions, true)(okHandler())
 
 	req := cookieAuthRequest("")
 	if isLoopbackAddr(req.RemoteAddr) {
@@ -78,7 +78,7 @@ func TestAdminAuthCookieSessionAdmitsSuccessiveRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler := auth.AdminAuthMiddleware("test-key", nil, sessions)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, sessions, true)(okHandler())
 
 	for i := 1; i <= 2; i++ {
 		req := cookieAuthRequest(id)
@@ -104,7 +104,7 @@ func TestAdminAuthCookieSessionAdmitsConcurrentRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler := auth.AdminAuthMiddleware("test-key", nil, sessions)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, sessions, true)(okHandler())
 
 	const n = 8
 	codes := make([]int, n)
@@ -137,7 +137,7 @@ func TestAdminAuthCookieSessionSetsNoCookie(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler := auth.AdminAuthMiddleware("test-key", nil, sessions)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, sessions, true)(okHandler())
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, cookieAuthRequest(id))
 
@@ -161,7 +161,7 @@ func TestAdminAuthCookieSessionValid(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler := auth.AdminAuthMiddleware("test-key", nil, sessions)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, sessions, true)(okHandler())
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, cookieAuthRequest(id))
 
@@ -181,7 +181,7 @@ func TestAdminAuthCookieSessionRefusals(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			sessions := auth.NewSessionStore(testSessionIdle, testSessionAbsolute)
-			handler := auth.AdminAuthMiddleware("test-key", nil, sessions)(okHandler())
+			handler := auth.AdminAuthMiddleware("test-key", nil, sessions, true)(okHandler())
 
 			req := httptest.NewRequest(http.MethodGet, "/api/devices", nil)
 			req.AddCookie(&http.Cookie{Name: auth.AdminTicketCookieName, Value: tc.value})
@@ -203,7 +203,7 @@ func TestAdminAuthCookieSessionExpired(t *testing.T) {
 	}
 	time.Sleep(5 * time.Millisecond)
 
-	handler := auth.AdminAuthMiddleware("test-key", nil, sessions)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, sessions, true)(okHandler())
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, cookieAuthRequest(id))
 
@@ -215,7 +215,7 @@ func TestAdminAuthCookieSessionExpired(t *testing.T) {
 // TestAdminAuthCookieSessionDisabledWhenNil pins that a nil session store
 // disables Path D rather than admitting on it.
 func TestAdminAuthCookieSessionDisabledWhenNil(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("test-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, cookieAuthRequest("any-value"))
 

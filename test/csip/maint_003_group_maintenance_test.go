@@ -109,7 +109,7 @@ func TestMAINT_003_GroupMaintenanceFSAReassignment(t *testing.T) {
 	}
 
 	// Step 3: drive FSAList Notification.
-	mgr.Notify(ctx, fsaListHref, sep2.NotificationStatusChanged)
+	mgr.Notify(ctx, fsaListHref, 0)
 
 	got, ok := receiver.Wait(1, 2*time.Second)
 	if !ok {
@@ -123,8 +123,8 @@ func TestMAINT_003_GroupMaintenanceFSAReassignment(t *testing.T) {
 		t.Errorf("MAINT-003 Step 3: SubscribedResource = %q, want %q",
 			rec.Notification.SubscribedResource, fsaListHref)
 	}
-	if rec.Notification.Status != sep2.NotificationStatusChanged {
-		t.Errorf("MAINT-003 Step 3: Status = %d, want %d (Changed)",
-			rec.Notification.Status, sep2.NotificationStatusChanged)
+	if rec.Notification.Status != 0 {
+		t.Errorf("MAINT-003 Step 3: Status = %d, want 0 (Default Status)",
+			rec.Notification.Status)
 	}
 }

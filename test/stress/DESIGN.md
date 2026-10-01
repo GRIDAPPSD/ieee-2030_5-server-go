@@ -176,7 +176,7 @@ The sequence is:
 3. **Notification injection**: a goroutine inside `sep2loadgen` fires
    `POST /test/mutations/stress-notify` at `MUTATION_RATE_HZ` calls/second (default
    20 Hz). The mutation token authenticates via `X-CSIP-Test-Token`. Each call
-   invokes `notifier.Notify(ctx, href, Changed)` inside the server, which enqueues
+   invokes `notifier.Notify(ctx, href, Default)` (status 0) inside the server, which enqueues
    work onto the worker/queue pool and dispatches notification POSTs to all
    subscribers of that href.
 

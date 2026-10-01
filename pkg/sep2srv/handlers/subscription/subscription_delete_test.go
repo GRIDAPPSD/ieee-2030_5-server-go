@@ -277,9 +277,8 @@ func TestHandleDeleteSubscription_Integration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unmarshal notification: %v\nbody=%s", err, string(body))
 		}
-		if n.Status != sep2.NotificationStatusRemoved {
-			t.Errorf("Notification.Status = %d, want %d (Removed)",
-				n.Status, sep2.NotificationStatusRemoved)
+		if n.Status != 1 {
+			t.Errorf("Notification.Status = %d, want 1 (subscription canceled)", n.Status)
 		}
 		if n.SubscriptionURI != sub.Href {
 			t.Errorf("Notification.SubscriptionURI = %q, want %q",

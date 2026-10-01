@@ -39,7 +39,6 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -56,9 +55,6 @@ func TestMAINT_002_InverterMaintenanceInband(t *testing.T) {
 	receiver := csiptest.NewNotificationReceiver(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-
-	mgr := coresub.NewManager(srv.Stores.Subscriptions, 2, 16, csiptest.AllowLoopbackReceivers())
-	go mgr.Start(ctx)
 
 	// Step 1a: seed EndDevice the DELETE will target.
 	// The device deletes its own record; a record with no LFDI is owned by
@@ -97,11 +93,8 @@ func TestMAINT_002_InverterMaintenanceInband(t *testing.T) {
 			deleteURL, delResp.StatusCode)
 	}
 
-	// Step 3a: server emits Notification on /edev. See file header for
-	// why the Notify is driven from the test rather than relying on
-	// BootServer's wiring of the production notifier.
-	mgr.Notify(ctx, "/edev", sep2.NotificationStatusRemoved)
-
+	// Step 3a: the booted server's own DELETE handler notifies /edev
+	// through BootServer's real subscription Manager.
 	got, ok := receiver.Wait(1, 2*time.Second)
 	if !ok {
 		t.Fatalf("MAINT-002 Step 3a: timed out waiting for Notification; received %d, want >=1",
@@ -115,9 +108,9 @@ func TestMAINT_002_InverterMaintenanceInband(t *testing.T) {
 		t.Errorf("MAINT-002 Step 3a: SubscribedResource = %q, want %q",
 			rec.Notification.SubscribedResource, "/edev")
 	}
-	if rec.Notification.Status != sep2.NotificationStatusRemoved {
-		t.Errorf("MAINT-002 Step 3a: Status = %d, want %d (Removed)",
-			rec.Notification.Status, sep2.NotificationStatusRemoved)
+	if rec.Notification.Status != 0 {
+		t.Errorf("MAINT-002 Step 3a: Status = %d, want 0 (Default Status: the list changed)",
+			rec.Notification.Status)
 	}
 
 	// Step 3b: subsequent GET on the deleted href is 404.

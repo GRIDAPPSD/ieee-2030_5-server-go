@@ -145,7 +145,7 @@ func TestCORE_019_AdvancedSubscription(t *testing.T) {
 	// Drive a Notify on the subscribed resource. Only the survivor
 	// (receiverB) should fire. ReceiverA was attached to the deleted
 	// sub and must remain empty.
-	mgr.Notify(ctx, core019FSAHref, sep2.NotificationStatusChanged)
+	mgr.Notify(ctx, core019FSAHref, 0)
 
 	gotB, ok := receiverB.Wait(1, 2*time.Second)
 	if !ok {
@@ -155,7 +155,7 @@ func TestCORE_019_AdvancedSubscription(t *testing.T) {
 		t.Errorf("CORE-019 (b): survivor receiver got %d, want 1", len(gotB))
 	}
 	// #169 / CSIP V1.2 section 11.6: the DELETE itself fires a final
-	// Removed Notification (Status=3) to the deleted subscriber so it
+	// final Notification (Status=1, subscription canceled) to the deleted subscriber so it
 	// can flush local state. So receiverA must have exactly one
 	// Notification - the Removed - and a subsequent Notify on the
 	// resource must NOT add a second (the sub is gone from
@@ -170,9 +170,9 @@ func TestCORE_019_AdvancedSubscription(t *testing.T) {
 	if gotA[0].Notification == nil {
 		t.Fatalf("CORE-019 (b): Removed Notification did not parse")
 	}
-	if gotA[0].Notification.Status != sep2.NotificationStatusRemoved {
-		t.Errorf("CORE-019 (b): final Notification Status = %d, want %d (Removed)",
-			gotA[0].Notification.Status, sep2.NotificationStatusRemoved)
+	if gotA[0].Notification.Status != 1 {
+		t.Errorf("CORE-019 (b): final Notification Status = %d, want 1 (subscription canceled)",
+			gotA[0].Notification.Status)
 	}
 	// A second beat to confirm the post-DELETE Notify() did not
 	// double-deliver to the gone subscription.

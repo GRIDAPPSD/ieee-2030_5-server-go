@@ -106,12 +106,12 @@ func TestMAINT_001_InverterMaintenanceOOB(t *testing.T) {
 	// Step 3a: server fires Notification on /edev. The OOB mutation
 	// handler does not emit notifications (its scope is the
 	// authoritative-store rewrite); the #155 contract layered on
-	// top is to fan out a Removed Notification from the test, the
+	// top is to fan out a status 0 Notification from the test, the
 	// same way #151 layers Notify on top of the #27 mutation
 	// shape. The shape under test is the manager + receiver fan-out,
 	// not the bridge from mutation to Notify (that bridge is the
 	// in-band DELETE path's job, exercised in MAINT-002).
-	mgr.Notify(ctx, "/edev", sep2.NotificationStatusRemoved)
+	mgr.Notify(ctx, "/edev", 0)
 
 	got, ok := receiver.Wait(1, 2*time.Second)
 	if !ok {
@@ -125,9 +125,9 @@ func TestMAINT_001_InverterMaintenanceOOB(t *testing.T) {
 		t.Errorf("MAINT-001 Step 3a: SubscribedResource = %q, want %q",
 			rec.Notification.SubscribedResource, "/edev")
 	}
-	if rec.Notification.Status != sep2.NotificationStatusRemoved {
-		t.Errorf("MAINT-001 Step 3a: Status = %d, want %d (Removed)",
-			rec.Notification.Status, sep2.NotificationStatusRemoved)
+	if rec.Notification.Status != 0 {
+		t.Errorf("MAINT-001 Step 3a: Status = %d, want 0 (Default Status: the list changed)",
+			rec.Notification.Status)
 	}
 
 	// Step 3b: aggregator GETs the deleted href; expect 404.

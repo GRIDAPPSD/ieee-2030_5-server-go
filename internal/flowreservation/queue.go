@@ -149,20 +149,21 @@ func (q *Queue) Submit(edevID, frqID string, frq sep2.FlowReservationRequest, cr
 // deadline, or requested start, has already passed is decided at once, by the
 // same fallback rule as any other (granted if the window is free, else
 // denied). An earlier timer for the request is replaced. Like Submit, it
-// does nothing after Close.
-func (q *Queue) Rearm(edevID, frqID string, frq sep2.FlowReservationRequest, now time.Time) {
-	q.arm("Rearm", edevID, frqID, q.remainingHold(frq, now))
+// does nothing after Close, and reports whether it armed a timer.
+func (q *Queue) Rearm(edevID, frqID string, frq sep2.FlowReservationRequest, now time.Time) bool {
+	return q.arm("Rearm", edevID, frqID, q.remainingHold(frq, now))
 }
 
 // arm starts the fallback timer for one request, replacing any timer it
-// already has. op names the caller in the refusal log line.
-func (q *Queue) arm(op, edevID, frqID string, delay time.Duration) {
+// already has. op names the caller in the refusal log line. It reports
+// whether a timer was armed.
+func (q *Queue) arm(op, edevID, frqID string, delay time.Duration) bool {
 	key := queueKey(edevID, frqID)
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if q.closed {
 		log.Printf("flowreservation: %s %s/%s after Close: refused", op, edevID, frqID)
-		return
+		return false
 	}
 	if prev, ok := q.timers[key]; ok {
 		prev.Stop()
@@ -170,6 +171,7 @@ func (q *Queue) arm(op, edevID, frqID string, delay time.Duration) {
 	q.timers[key] = q.after(delay, func() {
 		q.attemptFallback(context.Background(), edevID, frqID, 1)
 	})
+	return true
 }
 
 // DeadlineAt is the Unix second the fallback decides frq: its creationTime

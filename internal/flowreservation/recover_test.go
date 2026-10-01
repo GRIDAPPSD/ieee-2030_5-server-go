@@ -1,9 +1,12 @@
 package flowreservation_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -358,27 +361,6 @@ func TestRecover_CancelledRequestWithTwoLiveResponsesEndsWithNoneLive(t *testing
 	}
 }
 
-func TestRecover_RevisionToDenialStoppedBeforeTheOldGrantWasMarked(t *testing.T) {
-	t.Parallel()
-	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
-	_, _, execs := f.revisionPrefixWithExecutions(t, 0)
-
-	counts, err := flowreservation.Recover(context.Background(), f.recoverDeps(), time.Now())
-	must(t, err)
-
-	if counts.RevisionsRolledForward != 1 || counts.Failed != 0 {
-		t.Fatalf("counts = %+v, want the revision to a denial rolled forward", counts)
-	}
-	if got, want := f.liveResponses(t, "R1"), []string{"R1-r1"}; !slices.Equal(got, want) {
-		t.Errorf("live responses = %v, want only the denial %v", got, want)
-	}
-	for _, res := range execs {
-		if elc := f.executionLifecycle(t, res); elc.CancelledAt == nil {
-			t.Errorf("execution %s lifecycle = %+v, want cancelled", res.Control.MRID, elc)
-		}
-	}
-}
-
 func TestRecover_CancelledRequestAnsweredWithADenialIsLeftAlone(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -589,5 +571,323 @@ func TestRecover_NotifiesOnlyAfterTheFleetLockIsReleased(t *testing.T) {
 	}
 	if probe.held != 0 {
 		t.Errorf("%d notification(s) ran while the fleet lock was held", probe.held)
+	}
+}
+
+// cancelExecutions cancels the executions as reviseToDenial does before it
+// stores the denial, so the stores hold the state a crash after that leaves.
+func (f *cancelFixture) cancelExecutions(t *testing.T, execs ...dercontrol.Result) {
+	t.Helper()
+	for _, res := range execs {
+		if _, err := f.issuer.CancelLive(context.Background(), res.Scope, res.ID, "revise"); err != nil {
+			t.Fatalf("cancel execution %s: %v", res.Control.MRID, err)
+		}
+	}
+}
+
+func TestRecover_RevisionToDenialCrashLeavesExecutionsCancelledAndFinishesTheOldGrant(t *testing.T) {
+	t.Parallel()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	_, _, execs := f.revisionPrefixWithExecutions(t, 0)
+	f.cancelExecutions(t, execs...)
+	before := f.executionLifecycle(t, execs[0])
+
+	counts, err := flowreservation.Recover(context.Background(), f.recoverDeps(), time.Now())
+	must(t, err)
+
+	if counts.RevisionsRolledForward != 1 || counts.Failed != 0 {
+		t.Fatalf("counts = %+v, want the revision to a denial rolled forward", counts)
+	}
+	if got, want := f.liveResponses(t, "R1"), []string{"R1-r1"}; !slices.Equal(got, want) {
+		t.Errorf("live responses = %v, want only the denial %v", got, want)
+	}
+	if lc, _ := f.responseLifecycle(t, "R1"); lc.CancelledAt == nil {
+		t.Errorf("old response lifecycle = %+v, want a cancel mark", lc)
+	}
+	for i, res := range execs {
+		elc := f.executionLifecycle(t, res)
+		if elc.CancelledAt == nil {
+			t.Errorf("execution %s lifecycle = %+v, want cancelled", res.Control.MRID, elc)
+		}
+		if i == 0 && (before.CancelledAt == nil || *elc.CancelledAt != *before.CancelledAt) {
+			t.Errorf("execution %s cancel time moved from %v to %v", res.Control.MRID, before.CancelledAt, elc.CancelledAt)
+		}
+	}
+}
+
+func TestRecover_CancelledRequestWithSomeExecutionsAlreadyCancelled(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	base := time.Now().Add(time.Hour).Unix()
+	grant := f.answered(t, base)
+	frq := f.storedRequest(t, "R1")
+	frq.Href = "/edev/" + aggID + "/frq/R1"
+	must(t, f.frq.Update(ctx, aggID, "R1", frq))
+	e1 := f.issueExec(t, grant, base, -2000)
+	e2 := f.issueExec(t, grant, base+600, -3000)
+	f.cancelExecutions(t, e1)
+	first := f.executionLifecycle(t, e1)
+	f.cancelRequest(t, "R1", time.Now().Unix())
+
+	counts, err := flowreservation.Recover(ctx, f.recoverDeps(), time.Now())
+	must(t, err)
+
+	if counts.GrantsCancelled != 1 || counts.Failed != 0 {
+		t.Fatalf("counts = %+v, want the grant cancelled", counts)
+	}
+	if lc, marked := f.responseLifecycle(t, "R1"); !marked || lc.CancelledAt == nil {
+		t.Errorf("response lifecycle = %+v (present %v), want a cancel mark", lc, marked)
+	}
+	if got := f.executionLifecycle(t, e2); got.CancelledAt == nil {
+		t.Errorf("second execution lifecycle = %+v, want cancelled", got)
+	}
+	if got := f.executionLifecycle(t, e1); got.CancelledAt == nil || *got.CancelledAt != *first.CancelledAt {
+		t.Errorf("first execution cancel time = %v, want it left at %v", got.CancelledAt, first.CancelledAt)
+	}
+}
+
+// deleteFailingFRP fails every response delete, as a store whose file cannot
+// be written does.
+type deleteFailingFRP struct{ flowreservation.RecoverFRP }
+
+func (deleteFailingFRP) Delete(context.Context, string, string) error { return errRecoverStore }
+
+func TestRecover_CancelledRequestIsCancelledEvenWhenTheRevisionRepairFails(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	_, _, execs := f.revisionPrefixWithExecutions(t, 600)
+	f.cancelRequest(t, "R1", time.Now().Unix())
+	var buf bytes.Buffer
+	deps := f.recoverDeps()
+	deps.FRP = deleteFailingFRP{f.frp}
+	deps.Log = slog.New(slog.NewTextHandler(&buf, nil))
+
+	counts, err := flowreservation.Recover(ctx, deps, time.Now())
+	must(t, err)
+
+	if line := buf.String(); !strings.Contains(line, "level=WARN") || !strings.Contains(line, "request=R1") {
+		t.Errorf("log = %q, want a warning that the revision repair failed for R1", line)
+	}
+	if counts.Failed != 0 || counts.GrantsCancelled != 1 {
+		t.Fatalf("counts = %+v, want the cancelled request settled by cancelling", counts)
+	}
+	if got := f.liveResponses(t, "R1"); len(got) != 0 {
+		t.Errorf("live responses = %v, want none for a cancelled request", got)
+	}
+	for _, res := range execs {
+		if elc := f.executionLifecycle(t, res); elc.CancelledAt == nil {
+			t.Errorf("execution %s lifecycle = %+v, want cancelled", res.Control.MRID, elc)
+		}
+	}
+}
+
+func TestRecover_CancelledRequestWhoseRevisionRollsBackEndsWithNothingLive(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	_, _, execs := f.revisionPrefixWithExecutions(t, 600)
+	f.cancelRequest(t, "R1", time.Now().Unix())
+	var buf bytes.Buffer
+	deps := f.recoverDeps()
+	deps.Log = slog.New(slog.NewTextHandler(&buf, nil))
+
+	counts, err := flowreservation.Recover(ctx, deps, time.Now())
+	must(t, err)
+
+	// A stale chain would fail a second repair of the deleted tip, which the
+	// cancel then absorbs; the only trace is the warning.
+	if buf.Len() != 0 {
+		t.Errorf("log = %q, want nothing: the roll back and the cancel both succeed", buf.String())
+	}
+	if counts.RevisionsRolledBack != 1 || counts.GrantsCancelled != 1 || counts.Failed != 0 {
+		t.Fatalf("counts = %+v, want the revision rolled back and the old grant cancelled", counts)
+	}
+	if got := f.liveResponses(t, "R1"); len(got) != 0 {
+		t.Errorf("live responses = %v, want none", got)
+	}
+	if _, err := f.frp.Get(ctx, aggID, "R1-r1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("tip lookup error = %v, want it deleted by the roll back", err)
+	}
+	if lc, _ := f.responseLifecycle(t, "R1"); lc.CancelledAt == nil || lc.CancelReason != "client cancel" {
+		t.Errorf("old response lifecycle = %+v, want cancelled with reason client cancel", lc)
+	}
+	for _, res := range execs {
+		if elc := f.executionLifecycle(t, res); elc.CancelledAt == nil {
+			t.Errorf("execution %s lifecycle = %+v, want cancelled", res.Control.MRID, elc)
+		}
+	}
+}
+
+func TestRecover_CancelledTipDoesNotHideALiveOlderGrant(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	_, _, execs := f.revisionPrefixWithExecutions(t, 1800)
+	now := time.Now().Unix()
+	must(t, f.frpLifecycles.Create(ctx, aggID, "R1-r1", dercontrol.LifecycleRecord{CancelledAt: &now, CancelReason: "earlier"}))
+	f.cancelRequest(t, "R1", now)
+
+	counts, err := flowreservation.Recover(ctx, f.recoverDeps(), time.Now())
+	must(t, err)
+
+	if counts.GrantsCancelled != 1 || counts.Failed != 0 {
+		t.Fatalf("counts = %+v, want the older grant cancelled", counts)
+	}
+	if got := f.liveResponses(t, "R1"); len(got) != 0 {
+		t.Errorf("live responses = %v, want none", got)
+	}
+	for _, res := range execs {
+		if elc := f.executionLifecycle(t, res); elc.CancelledAt == nil {
+			t.Errorf("execution %s lifecycle = %+v, want cancelled", res.Control.MRID, elc)
+		}
+	}
+}
+
+func TestRecover_ARequestThatCannotBeRepairedIsReturnedAndLoggedAtErrorLevel(t *testing.T) {
+	t.Parallel()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	f.revisionPrefixWithExecutions(t, 600)
+	var buf bytes.Buffer
+	deps := f.recoverDeps()
+	deps.FRP = deleteFailingFRP{f.frp}
+	deps.Log = slog.New(slog.NewTextHandler(&buf, nil))
+
+	counts, err := flowreservation.Recover(context.Background(), deps, time.Now())
+	must(t, err)
+
+	if counts.Failed != 1 || len(counts.Failures) != 1 {
+		t.Fatalf("counts = %+v, want one failure", counts)
+	}
+	got := counts.Failures[0]
+	if got.EndDeviceID != aggID || got.RequestID != "R1" || got.Href != "/edev/"+aggID+"/frq/R1" || !errors.Is(got.Err, errRecoverStore) {
+		t.Errorf("failure = %+v, want R1 under %s with the store error", got, aggID)
+	}
+	if live := f.liveResponses(t, "R1"); len(live) != 2 {
+		t.Errorf("live responses = %v, want the two the failed repair left", live)
+	}
+	line := buf.String()
+	if !strings.Contains(line, "level=ERROR") || !strings.Contains(line, "request=R1") {
+		t.Errorf("log = %q, want an error-level record naming request R1", line)
+	}
+}
+
+func TestRecover_ARearmAfterCloseIsAFailureNotARearm(t *testing.T) {
+	t.Parallel()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: hold})
+	f.pendingRequest(t, "R1", time.Now().Unix()-10, windowRequest("REQ", time.Now().Add(time.Hour).Unix(), 600, 10000))
+	f.queue.Close()
+
+	counts, err := flowreservation.Recover(context.Background(), f.recoverDeps(), time.Now())
+	must(t, err)
+
+	if counts.Rearmed != 0 || counts.Failed != 1 || len(counts.Failures) != 1 || !errors.Is(counts.Failures[0].Err, flowreservation.ErrQueueClosed) {
+		t.Fatalf("counts = %+v, want one failure for the closed queue and no rearm", counts)
+	}
+}
+
+func TestRecover_MissingLedgerOrWritersFailTheStartOnlyWhenARepairNeedsThem(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	t.Run("only pending requests need neither", func(t *testing.T) {
+		t.Parallel()
+		f := newCancelFixture(t, flowreservation.Config{Deadline: hold})
+		f.queue.RecordTimers()
+		f.pendingRequest(t, "R1", time.Now().Unix()-10, windowRequest("REQ", time.Now().Add(time.Hour).Unix(), 600, 10000))
+		deps := f.recoverDeps()
+		deps.Ledger, deps.Writers = nil, commitment.Writers{}
+		counts, err := flowreservation.Recover(ctx, deps, time.Now())
+		must(t, err)
+		if counts.Rearmed != 1 {
+			t.Errorf("counts = %+v, want the request rearmed", counts)
+		}
+	})
+	t.Run("a revision needs the ledger", func(t *testing.T) {
+		t.Parallel()
+		f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+		f.revisionPrefixWithExecutions(t, 1800)
+		deps := f.recoverDeps()
+		deps.Ledger = nil
+		if _, err := flowreservation.Recover(ctx, deps, time.Now()); !errors.Is(err, commitment.ErrNoLedger) {
+			t.Fatalf("Recover error = %v, want ErrNoLedger", err)
+		}
+	})
+	t.Run("a cancel needs the writers", func(t *testing.T) {
+		t.Parallel()
+		f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+		f.revisionPrefixWithExecutions(t, 1800)
+		f.cancelRequest(t, "R1", time.Now().Unix())
+		deps := f.recoverDeps()
+		deps.Writers = commitment.Writers{}
+		if _, err := flowreservation.Recover(ctx, deps, time.Now()); !errors.Is(err, flowreservation.ErrIncompleteRecoverDeps) {
+			t.Fatalf("Recover error = %v, want ErrIncompleteRecoverDeps", err)
+		}
+	})
+}
+
+func TestRecover_RollBackNotifiesTheDevicesList(t *testing.T) {
+	t.Parallel()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	f.revisionPrefixWithExecutions(t, 600)
+	probe := &lockProbe{ledger: f.ledger}
+	deps := f.recoverDeps()
+	deps.Writers = flowreservation.NotifyingWriters(deps.Writers, probe)
+	deps.Notifier = probe
+
+	counts, err := flowreservation.Recover(context.Background(), deps, time.Now())
+	must(t, err)
+
+	probe.mu.Lock()
+	defer probe.mu.Unlock()
+	if counts.RevisionsRolledBack != 1 || probe.calls != 1 || probe.held != 0 {
+		t.Errorf("counts = %+v, notifications = %d (under lock %d), want one roll back and one notification after the lock", counts, probe.calls, probe.held)
+	}
+}
+
+func TestQueue_ArmingARequestTwiceKeepsOneLiveTimer(t *testing.T) {
+	t.Parallel()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: hold})
+	timers := f.queue.RecordTimers()
+	now := time.Now()
+	frq := f.pendingRequest(t, "R1", now.Unix(), windowRequest("REQ", now.Add(time.Hour).Unix(), 600, 10000))
+
+	f.queue.Submit(aggID, "R1", frq, now.Unix())
+	if !f.queue.Rearm(aggID, "R1", frq, now) {
+		t.Fatal("Rearm on an open queue returned false")
+	}
+
+	if live := timers.Live(); len(live) != 1 {
+		t.Errorf("live timers = %d, want the first replaced by the second", len(live))
+	}
+}
+
+func TestRecover_SeveralOlderLiveResponsesAreSettledInOnePass(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	_, tip, execs := f.revisionPrefixWithExecutions(t, 1800)
+	// A third response too short for the second execution: it rolls back to
+	// R1-r1, which then fits and rolls forward.
+	tip2 := tip
+	tip2.MRID = "MRID-TIP2"
+	tip2.Href = "/edev/" + aggID + "/frp/R1-r2"
+	tip2.CreationTime = tip.CreationTime + 1
+	tip2.Interval = &sep2.DateTimeInterval{Start: tip.Interval.Start, Duration: 600}
+	must(t, f.frp.Create(ctx, aggID, "R1-r2", tip2))
+
+	counts, err := flowreservation.Recover(ctx, f.recoverDeps(), time.Now())
+	must(t, err)
+
+	if counts.RevisionsRolledBack != 1 || counts.RevisionsRolledForward != 1 || counts.Failed != 0 {
+		t.Fatalf("counts = %+v, want one roll back then one roll forward", counts)
+	}
+	if got, want := f.liveResponses(t, "R1"), []string{"R1-r1"}; !slices.Equal(got, want) {
+		t.Errorf("live responses = %v, want only %v after one pass", got, want)
+	}
+	for _, res := range execs {
+		if elc := f.executionLifecycle(t, res); elc.GrantMRID != tip.MRID || elc.CancelledAt != nil {
+			t.Errorf("execution %s lifecycle = %+v, want live and linked to %s", res.Control.MRID, elc, tip.MRID)
+		}
 	}
 }

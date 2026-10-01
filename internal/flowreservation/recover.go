@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -44,6 +45,16 @@ type RecoverDeps struct {
 	// fleet lock is released, as Canceller does. Pass the one the writers
 	// notify through.
 	Notifier Notifier
+	// Log receives one error-level record per request that could not be
+	// repaired. Nil takes slog.Default().
+	Log *slog.Logger
+}
+
+func (d RecoverDeps) logger() *slog.Logger {
+	if d.Log != nil {
+		return d.Log
+	}
+	return slog.Default()
 }
 
 // RecoverCounts is what one Recover pass did. A request counts under every
@@ -58,13 +69,26 @@ type RecoverCounts struct {
 	RevisionsRolledBack    int // two live responses, tip no longer fit and was deleted
 	Untouched              int
 	Failed                 int // requests whose repair failed, logged and skipped
+	// Failures names each of those requests with its error, so the caller
+	// can show them: a request that fails here fails again on every start.
+	Failures []RecoverFailure
 }
 
-// readError marks a failure to read a store, which fails the whole pass.
-type readError struct{ err error }
+// RecoverFailure is one request Recover could not repair.
+type RecoverFailure struct {
+	EndDeviceID string
+	// RequestID is the request's store id; empty when its href has none.
+	RequestID string
+	Href      string
+	Err       error
+}
 
-func (e *readError) Error() string { return e.err.Error() }
-func (e *readError) Unwrap() error { return e.err }
+// passError marks a failure that ends the whole pass: a store that cannot be
+// read, or a dependency a needed repair cannot run without.
+type passError struct{ err error }
+
+func (e *passError) Error() string { return e.err.Error() }
+func (e *passError) Unwrap() error { return e.err }
 
 // Recover is the startup pass over every stored request. It restores what a
 // restart or a crash between two store writes left behind, so each request
@@ -86,6 +110,7 @@ func (e *readError) Unwrap() error { return e.err }
 // skipped. The counts are returned either way.
 func Recover(ctx context.Context, deps RecoverDeps, now time.Time) (RecoverCounts, error) {
 	var counts RecoverCounts
+	logger := deps.logger()
 	if deps.FRQ == nil || deps.FRP == nil || deps.Lifecycles == nil || deps.Queue == nil {
 		return counts, ErrIncompleteRecoverDeps
 	}
@@ -104,13 +129,16 @@ func Recover(ctx context.Context, deps RecoverDeps, now time.Time) (RecoverCount
 			}
 			counts.Scanned++
 			err := recoverRequest(ctx, deps, edevID, frq, now, &counts)
-			var re *readError
+			var re *passError
 			switch {
 			case errors.As(err, &re):
 				return counts, fmt.Errorf("flowreservation: recover: %w", err)
 			case err != nil:
+				id, _ := requestID(edevID, frq.Href)
 				counts.Failed++
-				log.Printf("flowreservation: recover: %s %s: skipped: %v", edevID, frq.Href, err)
+				counts.Failures = append(counts.Failures, RecoverFailure{EndDeviceID: edevID, RequestID: id, Href: frq.Href, Err: err})
+				logger.Error("flowreservation: recover: request not repaired, retried at the next start",
+					"endDevice", edevID, "request", id, "href", frq.Href, "err", err)
 			}
 		}
 	}
@@ -126,8 +154,6 @@ type chainState struct {
 	cancelled []bool
 }
 
-func (s chainState) tip() sep2.FlowReservationResponse { return s.chain[len(s.chain)-1] }
-
 // liveIndexes returns the positions of the responses with no cancel mark.
 func (s chainState) liveIndexes() []int {
 	var live []int
@@ -142,7 +168,7 @@ func (s chainState) liveIndexes() []int {
 func readChain(ctx context.Context, deps RecoverDeps, edevID, frqID string) (chainState, error) {
 	chain, err := ChainOf(ctx, deps.FRP, edevID, frqID)
 	if err != nil {
-		return chainState{}, &readError{err}
+		return chainState{}, &passError{err}
 	}
 	st := chainState{chain: chain, cancelled: make([]bool, len(chain))}
 	for i, frp := range chain {
@@ -156,7 +182,7 @@ func readChain(ctx context.Context, deps RecoverDeps, edevID, frqID string) (cha
 			st.cancelled[i] = lc.CancelledAt != nil
 		case errors.Is(err, store.ErrNotFound):
 		default:
-			return chainState{}, &readError{fmt.Errorf("lifecycle of response %s/%s: %w", edevID, id, err)}
+			return chainState{}, &passError{fmt.Errorf("lifecycle of response %s/%s: %w", edevID, id, err)}
 		}
 	}
 	return st, nil
@@ -182,7 +208,9 @@ func recoverRequest(ctx context.Context, deps RecoverDeps, edevID string, frq se
 			counts.DeniedCancelled++
 			return nil
 		}
-		deps.Queue.Rearm(edevID, frqID, frq, now)
+		if !deps.Queue.Rearm(edevID, frqID, frq, now) {
+			return ErrQueueClosed
+		}
 		counts.Rearmed++
 		return nil
 	}
@@ -193,10 +221,87 @@ func recoverRequest(ctx context.Context, deps RecoverDeps, edevID string, frq se
 	}
 
 	acted := false
-	if live := st.liveIndexes(); len(live) >= 2 {
+	var reviseErr error
+	if len(st.liveIndexes()) >= 2 {
+		var err error
+		st, acted, err = settleRevisions(ctx, deps, edevID, frqID, st, now, counts)
+		if err != nil {
+			var pe *passError
+			if !cancelled || errors.As(err, &pe) {
+				return err
+			}
+			// A withdrawn request needs no revision finished: every live
+			// response is cancelled below, as Canceller would. The failed
+			// repair is reported only if that cancel does not settle it.
+			reviseErr = err
+			if st, err = readChain(ctx, deps, edevID, frqID); err != nil {
+				return err
+			}
+		}
+	}
+
+	if cancelled {
+		var live []sep2.FlowReservationResponse
+		for i, frp := range st.chain {
+			if !st.cancelled[i] && frp.Interval != nil && frp.Interval.Duration > 0 {
+				live = append(live, frp)
+			}
+		}
+		if len(live) > 0 {
+			if err := requireRepairDeps(deps); err != nil {
+				return err
+			}
+			// The path Canceller takes: CancelGrant on each live member.
+			c := &Canceller{ledger: deps.Ledger, writers: deps.Writers}
+			if gone, err := c.cancelChain(ctx, live); err != nil {
+				return errors.Join(reviseErr, fmt.Errorf("finish cancel: %w", err))
+			} else if len(gone) > 0 {
+				return errors.Join(reviseErr, fmt.Errorf("finish cancel: grants not known to the ledger: %v", gone))
+			}
+			counts.GrantsCancelled++
+			acted = true
+		}
+		if reviseErr != nil {
+			deps.logger().Warn("flowreservation: recover: revision repair failed but the cancelled request was settled",
+				"endDevice", edevID, "request", frqID, "err", reviseErr)
+		}
+	}
+	if !acted {
+		counts.Untouched++
+	}
+	return nil
+}
+
+// ErrQueueClosed is returned for a pending request Recover could not re-arm
+// because the queue is closed.
+var ErrQueueClosed = errors.New("flowreservation: queue is closed, request not re-armed")
+
+// requireRepairDeps fails the pass when a repair that needs the ledger has
+// none: that is a wiring error, not one request's.
+func requireRepairDeps(deps RecoverDeps) error {
+	switch {
+	case deps.Ledger == nil:
+		return &passError{commitment.ErrNoLedger}
+	case deps.Writers.Executions == nil || deps.Writers.Grants == nil:
+		return &passError{fmt.Errorf("%w: both writers are required to finish a cancel or revision", ErrIncompleteRecoverDeps)}
+	}
+	return nil
+}
+
+// settleRevisions repeats completeRevision until at most one response of the
+// chain is live, so a chain with several older live responses is settled in
+// one pass. Each roll back deletes a response, so the passes are bounded by
+// the chain's length. It returns the chain as last read.
+func settleRevisions(ctx context.Context, deps RecoverDeps, edevID, frqID string, st chainState, now time.Time, counts *RecoverCounts) (chainState, bool, error) {
+	acted := false
+	for range len(st.chain) {
+		live := st.liveIndexes()
+		if len(live) < 2 {
+			break
+		}
 		forward, err := completeRevision(ctx, deps, edevID, st, live, now)
 		if err != nil {
-			return err
+			return st, acted, err
 		}
 		if forward {
 			counts.RevisionsRolledForward++
@@ -205,30 +310,10 @@ func recoverRequest(ctx context.Context, deps RecoverDeps, edevID string, frq se
 		}
 		acted = true
 		if st, err = readChain(ctx, deps, edevID, frqID); err != nil {
-			return err
+			return st, acted, err
 		}
 	}
-
-	if cancelled {
-		tip := st.tip()
-		tipLive := !st.cancelled[len(st.chain)-1] && tip.Interval != nil && tip.Interval.Duration > 0
-		if tipLive {
-			if deps.Ledger == nil {
-				return commitment.ErrNoLedger
-			}
-			err := deps.Ledger.CancelGrant(ctx, deps.Writers, tip.MRID, cancelReason, now.Unix())
-			var conflict *commitment.ConflictError
-			if err != nil && !(errors.As(err, &conflict) && conflict.Code == commitment.ConflictGrantNotLive) {
-				return fmt.Errorf("finish cancel of grant %s: %w", tip.MRID, err)
-			}
-			counts.GrantsCancelled++
-			acted = true
-		}
-	}
-	if !acted {
-		counts.Untouched++
-	}
-	return nil
+	return st, acted, nil
 }
 
 // completeRevision finishes the revision whose older live responses sit at
@@ -242,8 +327,8 @@ func completeRevision(ctx context.Context, deps RecoverDeps, edevID string, st c
 			olds = append(olds, st.chain[i].MRID)
 		}
 	}
-	if deps.Ledger == nil {
-		return false, commitment.ErrNoLedger
+	if err := requireRepairDeps(deps); err != nil {
+		return false, err
 	}
 	tipID, ok := ResponseID(edevID, tip.Href)
 	if !ok || len(olds) == 0 {
@@ -254,9 +339,14 @@ func completeRevision(ctx context.Context, deps RecoverDeps, edevID string, st c
 	if err != nil {
 		return false, fmt.Errorf("complete revision %v -> %s: %w", olds, tip.MRID, err)
 	}
-	outcome := "rolled back, the revision no longer fit"
-	if forward {
-		outcome = "rolled forward"
+	outcome := "rolled forward"
+	if !forward {
+		outcome = "rolled back, the revision no longer fit"
+		// A delete notifies nothing, and the tip was visible to subscribers
+		// before the restart, so the device's list changed.
+		if d, ok := ctx.Value(deferredKey{}).(*deferredNotes); ok {
+			d.add(edevID)
+		}
 	}
 	log.Printf("flowreservation: recover: revision of %s/%s: %v -> %s: %s", edevID, tipID, olds, tip.MRID, outcome)
 	return forward, nil

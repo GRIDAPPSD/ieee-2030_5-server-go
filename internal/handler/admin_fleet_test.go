@@ -559,3 +559,59 @@ func TestHandleListFleets_NewestStatusAndAvailabilityWinAcrossDERs(t *testing.T)
 		t.Errorf("Availability = %+v, want StatWAvail 222 (the newer DER's availability)", dev.Availability)
 	}
 }
+
+// TestHandleListFleets_DirectionUnknownOnTheWire reads the served JSON: every
+// sum carries directionUnknown (false when known), a power sum with an
+// undirected contributing reading carries true, and a V or f reading never
+// carries the per-reading flag (#733).
+func TestHandleListFleets_DirectionUnknownOnTheWire(t *testing.T) {
+	t.Parallel()
+	f := newFleetFixture(t)
+	f.assign(fleetAggregatorLFDI, fleetDeviceALFDI)
+	f.assign(fleetAggregatorLFDI, fleetDeviceBLFDI)
+	now := handlerTestNow()
+
+	f.postInlineReading("mup-a", fleetDeviceALFDI, sep2.MirrorMeterReading{
+		MRID: "a-p", LastUpdateTime: now,
+		ReadingType: &sep2.ReadingType{Uom: u8(sep2.UomWatts), FlowDirection: u8(sep2.FlowDirectionForward), PowerOfTenMultiplier: i8(0)},
+		Reading:     &sep2.Reading{Value: i64(200)},
+	})
+	f.postInlineReading("mup-a-v", fleetDeviceALFDI, sep2.MirrorMeterReading{
+		MRID: "a-v", LastUpdateTime: now,
+		ReadingType: &sep2.ReadingType{Uom: u8(sep2.UomVolts), PowerOfTenMultiplier: i8(0)},
+		Reading:     &sep2.Reading{Value: i64(240)},
+	})
+	f.postInlineReading("mup-b", fleetDeviceBLFDI, sep2.MirrorMeterReading{
+		MRID: "b-q", LastUpdateTime: now,
+		ReadingType: &sep2.ReadingType{Uom: u8(sep2.UomVars), PowerOfTenMultiplier: i8(0)},
+		Reading:     &sep2.Reading{Value: i64(50)},
+	})
+
+	w := httptest.NewRecorder()
+	handler.HandleListFleets(f.handler())(w, httptest.NewRequest(http.MethodGet, "/api/derms/fleets", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var fleets []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &fleets); err != nil {
+		t.Fatal(err)
+	}
+	rollup := fleets[0]["rollup"].(map[string]any)
+	want := map[string]bool{"p": false, "q": true, "statWAvail": false, "statVarAvail": false}
+	for key, wantFlag := range want {
+		sum := rollup[key].(map[string]any)
+		got, present := sum["directionUnknown"]
+		if !present || got != wantFlag {
+			t.Errorf("rollup.%s.directionUnknown = %v (present %v), want %v always emitted", key, got, present, wantFlag)
+		}
+	}
+	for _, d := range fleets[0]["devices"].([]any) {
+		dev := d.(map[string]any)
+		meas := dev["measurements"].(map[string]any)
+		if v, ok := meas["v"].(map[string]any); ok {
+			if _, has := v["directionUnknown"]; has {
+				t.Errorf("device %v: v reading carries directionUnknown: %v", dev["lfdi"], v)
+			}
+		}
+	}
+}

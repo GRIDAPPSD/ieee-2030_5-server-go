@@ -120,6 +120,7 @@ describe('FleetPane', () => {
 
     const power = screen.getByTestId('fleet-power')
     expect(power).toHaveTextContent('2,000 W exporting')
+    expect(screen.queryByTestId('fleet-power-direction-unknown')).toBeNull()
     // Newest P reading is 60s before the mocked "now".
     expect(power).toHaveTextContent('updated 1m ago')
   })
@@ -168,6 +169,7 @@ describe('FleetPane', () => {
 
     const power = await screen.findByTestId('fleet-power')
     expect(power).toHaveTextContent('300 W')
+    expect(screen.getByTestId('fleet-power-direction-unknown')).toHaveTextContent('direction unknown')
     expect(power).not.toHaveTextContent('exporting')
     expect(power).not.toHaveTextContent('importing')
   })

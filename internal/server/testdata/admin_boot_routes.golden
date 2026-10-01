@@ -17,6 +17,8 @@
     GET /api/fsas/{id}
     GET /api/management-pairs
     GET /api/topology
+    GET /api/ui/panels
+    GET /api/ui/panels/{id}
     GET /dashboard/data
     GET /dashboard/events
     GET /login

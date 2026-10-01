@@ -4,6 +4,8 @@
   // that does not match its kind each render a message, never nothing.
   import DescriptorTable from './DescriptorTable.svelte'
   import DescriptorDefinitionList from './DescriptorDefinitionList.svelte'
+  import DescriptorChart from './DescriptorChart.svelte'
+  import { descriptorChartRefusals, isChartBody } from '../lib/chart'
   import type { Descriptor, DescriptorTableBody, DescriptorDefinitionListBody } from '../lib/descriptor'
 
   let { descriptor }: { descriptor: Descriptor } = $props()
@@ -23,6 +25,10 @@
     const body = value as Partial<DescriptorDefinitionListBody>
     return Array.isArray(body.groups) && body.groups.every((g) => Array.isArray(g?.entries))
   }
+
+  // Per section, so the Descriptor-wide point bound is checked across all
+  // chart sections as the encoder does.
+  const chartRefusals = $derived(Array.isArray(descriptor.sections) ? descriptorChartRefusals(descriptor) : [])
 </script>
 
 {#if descriptor.version !== SUPPORTED_VERSION}
@@ -42,7 +48,9 @@
         <DescriptorTable body={section.body} empty={section.empty} />
       {:else if section.kind === 'definitionList' && isDefinitionListBody(section.body)}
         <DescriptorDefinitionList body={section.body} empty={section.empty} />
-      {:else if section.kind === 'table' || section.kind === 'definitionList'}
+      {:else if section.kind === 'chart' && chartRefusals[i] === null && isChartBody(section.body)}
+        <DescriptorChart body={section.body} empty={section.empty} />
+      {:else if section.kind === 'table' || section.kind === 'definitionList' || section.kind === 'chart'}
         <p class="hint" data-testid="descriptor-malformed-body">This section's content could not be rendered.</p>
       {:else}
         <p class="hint" data-testid="descriptor-unknown-kind">Unsupported content type: "{section.kind}"</p>

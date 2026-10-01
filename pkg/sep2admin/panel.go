@@ -16,7 +16,7 @@ import (
 const CurrentDescriptorVersion = 2
 
 // Descriptor is the versioned, data-only payload a Panel's View produces:
-// an ordered list of Sections, each a table or a definition list. It
+// an ordered list of Sections, each a table, a definition list or a chart. It
 // carries no markup, script or style, and a View never sees the request.
 type Descriptor struct {
 	// Version is the schema version this Descriptor was produced against.

@@ -16,8 +16,15 @@ import (
 // it byte for byte, so a change to either side is a visible diff.
 var wireFixture = filepath.Join("testdata", "descriptor_v2.json")
 
+// chartAt is 2025-10-01T18:30:00Z, 1759343400000 on the wire.
+var chartAt = time.UnixMilli(1759343400000)
+
+// hostileSeriesName is the series name the renderer must show as text.
+const hostileSeriesName = "<img src=x onerror=alert(1)>"
+
 // fixtureDescriptor exercises every section kind and every cell kind, with
-// two tables, so the fixture shows each wire field at least once.
+// two tables and a chart beside the second, so the fixture shows each wire
+// field at least once.
 func fixtureDescriptor() Descriptor {
 	at := time.Date(2026, 10, 1, 12, 30, 0, 0, time.FixedZone("x", -6*3600))
 	return Descriptor{
@@ -39,6 +46,19 @@ func fixtureDescriptor() Descriptor {
 				Heading: "Clients",
 				Empty:   "No clients connected.",
 				Body:    NewTableBody(TableBody{Columns: []string{"LFDI"}}),
+			},
+			{
+				Heading: "State of charge",
+				Prose:   []string{"Battery state of charge, one sample a minute."},
+				Empty:   "No samples yet.",
+				Body: NewChartBody(ChartBody{
+					Unit: "%",
+					Series: []ChartSeries{
+						{Name: "bat-1", Points: []ChartPoint{{At: chartAt, Value: 65.5}, {At: chartAt.Add(time.Minute), Value: 66}}},
+						{Name: hostileSeriesName, Points: []ChartPoint{{At: chartAt, Value: -0.25}}},
+						{Name: "bat-3"},
+					},
+				}),
 			},
 			{
 				Body: NewDefinitionListBody(DefinitionListBody{
@@ -108,8 +128,8 @@ func TestDescriptorV2FieldValues(t *testing.T) {
 	if got.Version != 2 {
 		t.Errorf("version = %d, want the literal 2", got.Version)
 	}
-	if len(got.Sections) != 3 || got.Sections[0].Kind != "table" || got.Sections[1].Kind != "table" || got.Sections[2].Kind != "definitionList" {
-		t.Fatalf("sections = %+v, want table, table, definitionList", got.Sections)
+	if len(got.Sections) != 4 || got.Sections[0].Kind != "table" || got.Sections[1].Kind != "table" || got.Sections[2].Kind != "chart" || got.Sections[3].Kind != "definitionList" {
+		t.Fatalf("sections = %+v, want table, table, chart, definitionList", got.Sections)
 	}
 	s := got.Sections[0]
 	if s.Heading != "Registry" || s.Empty != "No registry entries yet." || len(s.Prose) != 1 || s.Prose[0] != "Devices the bridge has registered." {
@@ -268,7 +288,7 @@ func TestSectionRefusalsAtEncode(t *testing.T) {
 // a payload with the bad cell dropped or blanked.
 func TestRefusalInOneCellFailsTheWholeDescriptor(t *testing.T) {
 	d := fixtureDescriptor()
-	d.Sections[2] = Section{Body: NewDefinitionListBody(DefinitionListBody{Groups: []DefinitionGroup{{
+	d.Sections[3] = Section{Body: NewDefinitionListBody(DefinitionListBody{Groups: []DefinitionGroup{{
 		Entries: []DefinitionEntry{{Key: "k", Value: LinkCell("javascript:x", "x")}},
 	}}})}
 	b, err := json.Marshal(d)
@@ -322,6 +342,8 @@ func TestDescriptorEncodeErrorsAreDistinct(t *testing.T) {
 	errs := []error{
 		ErrBodyMarshalledDirectly, ErrUnhandledBodyKind, ErrSectionWithoutBody, ErrZeroCell,
 		ErrUnhandledCellKind, ErrUnknownBadge, ErrZeroTime, ErrUnsafeLink,
+		ErrChartTooManySeries, ErrChartSeriesTooLong, ErrChartTooManyPoints, ErrChartTooManySections, ErrChartSeriesNoName,
+		ErrChartValueNotFinite, ErrChartZeroTime, ErrChartTimeOutOfRange, ErrChartPointsOutOfOrder,
 	}
 	for i, a := range errs {
 		for j, b := range errs {

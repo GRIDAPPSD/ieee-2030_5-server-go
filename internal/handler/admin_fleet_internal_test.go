@@ -994,6 +994,62 @@ func TestConsiderMeasurement_EditionFlowDirectionMapping(t *testing.T) {
 	}
 }
 
+// TestConsiderMeasurement_NetFlowDirection is #776: 2023 defines Net as
+// abs(Forward) - abs(Reverse), so a signed Net value is already
+// export-positive for a DER and is kept as sent. 2018 reserves 4 and a
+// non-DER mirror has no text fixing the frame, so both stay flagged.
+func TestConsiderMeasurement_NetFlowDirection(t *testing.T) {
+	t.Parallel()
+	net := f8(4)
+	cases := []struct {
+		name        string
+		edition     SEP2Edition
+		isDER       bool
+		raw         int64
+		want        float64
+		wantUnknown bool
+	}{
+		{"2023 DER positive net is export as sent", Edition2023, true, 120, 120, false},
+		{"2023 DER negative net is import as sent", Edition2023, true, -120, -120, false},
+		{"2018 net is reserved and stays flagged", Edition2018, true, -120, -120, true},
+		{"2018 non-DER net stays flagged", Edition2018, false, 120, 120, true},
+		{"2023 non-DER net stays flagged", Edition2023, false, -120, -120, true},
+	}
+	for _, tc := range cases {
+		for _, uom := range []uint8{sep2.UomWatts, sep2.UomVars} {
+			t.Run(tc.name, func(t *testing.T) {
+				var out FleetDeviceMeasurements
+				considerMeasurement(&out, typedReading("series", 100, uom, net, tc.raw), tc.edition, tc.isDER)
+
+				got := out.P
+				if uom == sep2.UomVars {
+					got = out.Q
+				}
+				if got == nil || got.Value != tc.want || got.DirectionUnknown != tc.wantUnknown {
+					t.Errorf("uom %d: measurement = %+v, want Value %v DirectionUnknown %v", uom, got, tc.want, tc.wantUnknown)
+				}
+			})
+		}
+	}
+}
+
+// TestFleetRollup_NetUnderDER2023IsKnown checks the roll-up of a 2023 DER
+// Net reading: it sums as sent and is not flagged.
+func TestFleetRollup_NetUnderDER2023IsKnown(t *testing.T) {
+	t.Parallel()
+	const now = int64(1000)
+	var rollup FleetRollup
+	for _, raw := range []int64{100, -30} {
+		var m FleetDeviceMeasurements
+		r := typedReading("series", now, sep2.UomWatts, f8(4), raw)
+		considerMeasurement(&m, r, Edition2023, true)
+		accumulateRollup(&rollup, FleetDevice{Measurements: m}, now)
+	}
+	if rollup.P.Sum != 70 || rollup.P.DirectionUnknown {
+		t.Errorf("P = %+v, want Sum 70 DirectionUnknown false", rollup.P)
+	}
+}
+
 // --- #715 fix round 4 item 2: a future-dated client-set readingTime must
 // --- never read as negative age. -----------------------------------------
 
@@ -1184,8 +1240,8 @@ func directionRollup(uom uint8, flows ...*uint8) FleetRollup {
 // TestFleetRollup_DirectionUnknownFlag is #733: a sum still totals every
 // contributing reading, and is flagged only when one of them had no known
 // flowDirection, in either order and for P and Q alike. Forward and Reverse
-// both count as known; Net (4) stays flagged until mapping it is decided in
-// a separate issue.
+// both count as known; Net (4) is known only for a 2023 DER reading (#776),
+// so the 2018 rows here keep it flagged.
 func TestFleetRollup_DirectionUnknownFlag(t *testing.T) {
 	t.Parallel()
 	forward := f8(sep2.FlowDirectionForward)
@@ -1203,7 +1259,7 @@ func TestFleetRollup_DirectionUnknownFlag(t *testing.T) {
 		{"undirected first", []*uint8{nil, reverse}, 200, true},
 		{"undirected only", []*uint8{nil}, 100, true},
 		{"unrecognized code", []*uint8{reverse, f8(12)}, 200, true},
-		{"net stays flagged", []*uint8{reverse, f8(4)}, 200, true},
+		{"net under 2018 stays flagged", []*uint8{reverse, f8(4)}, 200, true},
 	}
 	for _, tc := range cases {
 		for _, q := range []struct {

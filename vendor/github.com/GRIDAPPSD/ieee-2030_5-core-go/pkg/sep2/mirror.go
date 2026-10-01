@@ -82,8 +82,9 @@ type MirrorUsagePointList struct {
 // (sep.xsd:6416, :6452, :5324): mRID, description, version,
 // lastUpdateTime, MirrorReadingSet, nextUpdateTime, Reading, ReadingType.
 // This struct implements mRID (position 1), description (position 2),
-// lastUpdateTime (position 4), Reading (position 7), and ReadingType
-// (position 8); Reading is declared before ReadingType below to match.
+// lastUpdateTime (position 4), MirrorReadingSet (position 5), Reading
+// (position 7), and ReadingType (position 8); Reading is declared before
+// ReadingType below to match.
 // Prior code emitted ReadingType before Reading, which was latent while
 // the only client behavior was posting ReadingType alone, but breaks a
 // strict sequence-validating parser the moment both are present.
@@ -94,16 +95,23 @@ type MirrorUsagePointList struct {
 type MirrorMeterReading struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns MirrorMeterReading"`
 	Resource
-	MRID           string       `xml:"mRID"`
-	Description    string       `xml:"description,omitempty"`
-	LastUpdateTime int64        `xml:"lastUpdateTime,omitempty"`
-	Reading        *Reading     `xml:"Reading,omitempty"`
-	ReadingType    *ReadingType `xml:"ReadingType,omitempty"`
+	MRID             string             `xml:"mRID"`
+	Description      string             `xml:"description,omitempty"`
+	LastUpdateTime   int64              `xml:"lastUpdateTime,omitempty"`
+	MirrorReadingSet []MirrorReadingSet `xml:"MirrorReadingSet,omitempty"`
+	Reading          *Reading           `xml:"Reading,omitempty"`
+	ReadingType      *ReadingType       `xml:"ReadingType,omitempty"`
 }
 
 // Copy returns an independent copy.
 func (m MirrorMeterReading) Copy() MirrorMeterReading {
 	c := m
+	if m.MirrorReadingSet != nil {
+		c.MirrorReadingSet = make([]MirrorReadingSet, len(m.MirrorReadingSet))
+		for i, rs := range m.MirrorReadingSet {
+			c.MirrorReadingSet[i] = rs.Copy()
+		}
+	}
 	if m.ReadingType != nil {
 		rt := m.ReadingType.Copy()
 		c.ReadingType = &rt
@@ -120,4 +128,41 @@ type MirrorMeterReadingList struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns MirrorMeterReadingList"`
 	ListResource
 	MirrorMeterReading []MirrorMeterReading `xml:"MirrorMeterReading,omitempty"`
+}
+
+// MirrorReadingSet is a batch of Readings posted together under one
+// MirrorMeterReading, sharing the parent's ReadingType. The CSIP
+// aggregator example posts a device's interval readings this way instead
+// of one Reading per POST; encoding/xml drops any element with no
+// matching struct field, so without this type every reading inside a
+// posted set was silently lost.
+//
+// Field order matches the canonical sep.xsd ReadingSetBase ->
+// IdentifiedObject sequence: mRID, description, version, timePeriod,
+// then the contained Reading elements, confirmed by the standard's own
+// POX example, which serves mRID, timePeriod, and the Reading list in
+// that order. This struct implements mRID (position 1) and timePeriod
+// (own position); description and version are not implemented.
+//
+// MRID and TimePeriod have no omitempty: both are required (minOccurs=1)
+// via IdentifiedObject and ReadingSetBase respectively, so a zero value
+// must still serialize.
+type MirrorReadingSet struct {
+	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns MirrorReadingSet"`
+	Resource
+	MRID       string           `xml:"mRID"`
+	TimePeriod DateTimeInterval `xml:"timePeriod"`
+	Reading    []Reading        `xml:"Reading,omitempty"`
+}
+
+// Copy returns an independent copy.
+func (m MirrorReadingSet) Copy() MirrorReadingSet {
+	c := m
+	if m.Reading != nil {
+		c.Reading = make([]Reading, len(m.Reading))
+		for i, r := range m.Reading {
+			c.Reading[i] = r.Copy()
+		}
+	}
+	return c
 }

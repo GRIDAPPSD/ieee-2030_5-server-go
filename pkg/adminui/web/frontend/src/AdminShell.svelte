@@ -32,6 +32,7 @@
   import LoginPanel from './panels/LoginPanel.svelte'
   import FleetPane from './panels/FleetPane.svelte'
   import RequestQueuePane from './panels/RequestQueuePane.svelte'
+  import DispatchPane from './panels/DispatchPane.svelte'
 
   // The tabs and the card each owns (issue 561's Context section, plus
   // issue 671's DERMS tab). "/" and "/ui/" are not tab paths of their own:
@@ -205,6 +206,7 @@
     {:else if activeTab === 'derms'}
       <FleetPane />
       <RequestQueuePane />
+      <DispatchPane devices={data?.devices ?? []} />
     {:else if activeTab === 'not-found'}
       <div class="card" data-testid="not-found">
         <h2>Not Found</h2>

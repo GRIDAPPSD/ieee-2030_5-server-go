@@ -605,13 +605,22 @@ func TestHandleListFleets_DirectionUnknownOnTheWire(t *testing.T) {
 			t.Errorf("rollup.%s.directionUnknown = %v (present %v), want %v always emitted", key, got, present, wantFlag)
 		}
 	}
+	sawV := false
 	for _, d := range fleets[0]["devices"].([]any) {
 		dev := d.(map[string]any)
-		meas := dev["measurements"].(map[string]any)
-		if v, ok := meas["v"].(map[string]any); ok {
-			if _, has := v["directionUnknown"]; has {
-				t.Errorf("device %v: v reading carries directionUnknown: %v", dev["lfdi"], v)
-			}
+		if dev["lfdi"] != fleetDeviceALFDI {
+			continue
 		}
+		v, ok := dev["measurements"].(map[string]any)["v"].(map[string]any)
+		if !ok {
+			t.Fatalf("device A has no v reading in %v, want the posted 240 V", dev["measurements"])
+		}
+		sawV = true
+		if _, has := v["directionUnknown"]; has {
+			t.Errorf("v reading carries directionUnknown: %v", v)
+		}
+	}
+	if !sawV {
+		t.Errorf("device A %q not found in the served fleet", fleetDeviceALFDI)
 	}
 }

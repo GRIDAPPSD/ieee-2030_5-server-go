@@ -174,6 +174,54 @@ describe('FleetPane', () => {
     expect(power).not.toHaveTextContent('importing')
   })
 
+  it('still says direction unknown when a mixed fleet sums to 0 W (#733)', async () => {
+    const fleet: Fleet = {
+      aggregatorLFDI: 'AGG4',
+      devices: [{ lfdi: 'DEV1', measurements: { p: { value: 100, readingTime: 1_699_999_970 } } }],
+      rollup: {
+        deviceCount: 1,
+        connected: 0,
+        alarmed: 0,
+        stale: 0,
+        p: { sum: 0, unreported: 0, stale: 0, directionUnknown: true },
+        q: { sum: 0, unreported: 1, stale: 0 },
+        statWAvail: { sum: 0, unreported: 1, stale: 0 },
+        statVarAvail: { sum: 0, unreported: 1, stale: 0 },
+      },
+    }
+    mockFetchJSON({ ok: true, data: [fleet] })
+
+    render(FleetPane)
+
+    const power = await screen.findByTestId('fleet-power')
+    expect(power).toHaveTextContent('0 W')
+    expect(screen.getByTestId('fleet-power-direction-unknown')).toHaveTextContent('direction unknown')
+  })
+
+  it('omits the direction-unknown note when no device is reporting power (#733)', async () => {
+    const fleet: Fleet = {
+      aggregatorLFDI: 'AGG5',
+      devices: [{ lfdi: 'DEV1', measurements: {} }],
+      rollup: {
+        deviceCount: 1,
+        connected: 0,
+        alarmed: 0,
+        stale: 0,
+        p: { sum: 0, unreported: 1, stale: 0, directionUnknown: true },
+        q: { sum: 0, unreported: 1, stale: 0 },
+        statWAvail: { sum: 0, unreported: 1, stale: 0 },
+        statVarAvail: { sum: 0, unreported: 1, stale: 0 },
+      },
+    }
+    mockFetchJSON({ ok: true, data: [fleet] })
+
+    render(FleetPane)
+
+    const power = await screen.findByTestId('fleet-power')
+    expect(power).toHaveTextContent('No devices reporting')
+    expect(screen.queryByTestId('fleet-power-direction-unknown')).toBeNull()
+  })
+
   it('shows "no devices reporting" rather than 0 W when every device is unreported (the trap)', async () => {
     const fleet: Fleet = {
       aggregatorLFDI: 'AGG3',

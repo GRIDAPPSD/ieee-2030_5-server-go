@@ -1184,8 +1184,8 @@ func directionRollup(uom uint8, flows ...*uint8) FleetRollup {
 // TestFleetRollup_DirectionUnknownFlag is #733: a sum still totals every
 // contributing reading, and is flagged only when one of them had no known
 // flowDirection, in either order and for P and Q alike. Forward and Reverse
-// both count as known; Net (4) stays flagged because its sign frame is not
-// fixed by the export-positive convention here.
+// both count as known; Net (4) stays flagged until mapping it is decided in
+// a separate issue.
 func TestFleetRollup_DirectionUnknownFlag(t *testing.T) {
 	t.Parallel()
 	forward := f8(sep2.FlowDirectionForward)

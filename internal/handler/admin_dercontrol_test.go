@@ -584,26 +584,6 @@ func TestDERControlCancel_WaitsForTheFleetLock(t *testing.T) {
 	}
 }
 
-// TestDERControlCancel_NoLedgerRefusesAndCancelsNothing: a cancel that cannot
-// take the fleet lock refuses, as a create does.
-func TestDERControlCancel_NoLedgerRefusesAndCancelsNothing(t *testing.T) {
-	for name, wipe := range map[string]func(*handler.AdminDERControlHandler){
-		"no ledger":   func(h *handler.AdminDERControlHandler) { h.Ledger = nil },
-		"no resolver": func(h *handler.AdminDERControlHandler) { h.Fleets = nil },
-	} {
-		t.Run(name, func(t *testing.T) {
-			d := newDCHarness(t, ptrU32(dcPEN))
-			created := decodeCreated(t, d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(futureStart(600), 100, 300)))
-			wipe(d.h)
-			assertRefusal(t, d.do(t, http.MethodPost, "/api/der/controls/"+created.MRID+"/cancel", ""), http.StatusInternalServerError, "internal error")
-			parent, id, _, _ := d.controls.ByMRID(context.Background(), created.MRID)
-			if lc, err := d.lifecycles.Get(context.Background(), parent, id); err == nil && lc.CancelledAt != nil {
-				t.Errorf("a refused cancel marked the control cancelled: %+v", lc)
-			}
-		})
-	}
-}
-
 // Criterion 5: programs in primacy ascending, then mRID descending order,
 // with a null derControlListHref when the program has none.
 func TestDERControlListPrograms(t *testing.T) {

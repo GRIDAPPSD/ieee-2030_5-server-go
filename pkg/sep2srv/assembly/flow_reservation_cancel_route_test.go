@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -296,7 +297,12 @@ func TestFlowReservationCancel_InvalidRequestStatusIs400(t *testing.T) {
 	if got := putRequest(t, srv, href, reserved); got != http.StatusBadRequest {
 		t.Errorf("PUT requestStatus 7 status = %d, want 400", got)
 	}
-	noStatus := `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>` + posted.MRID + `</mRID></FlowReservationRequest>`
+	// Every other field equals the stored request, so only the missing
+	// RequestStatus element can make this a 400.
+	noStatus := regexp.MustCompile(`<RequestStatus>.*</RequestStatus>`).ReplaceAllString(mustMarshal(t, &posted), "")
+	if !strings.Contains(noStatus, "<energyRequested>") || strings.Contains(noStatus, "RequestStatus") {
+		t.Fatalf("setup: body %q must keep energyRequested and drop RequestStatus", noStatus)
+	}
 	if got := putRaw(t, srv, href, noStatus); got != http.StatusBadRequest {
 		t.Errorf("PUT with no RequestStatus element status = %d, want 400", got)
 	}

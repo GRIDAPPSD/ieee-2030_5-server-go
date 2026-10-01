@@ -37,15 +37,16 @@ func newAdminDERControlHandler(stores *Stores) *handler.AdminDERControlHandler {
 		h.Responses = stores.Responses
 	}
 	// A missing management store or ledger leaves the handler's field nil,
-	// so every create answers 500 rather than going unchecked. IsAbsent
+	// so every create answers 500 rather than going unchecked; a cancel still
+	// runs, without the fleet lock, and logs a warning. IsAbsent
 	// also catches a typed-nil pointer, which a plain nil test passes.
 	if store.IsAbsent(stores.EndDeviceManagers) {
-		log.Printf("server: DER control create: no EndDevice management store; every create answers 500")
+		log.Printf("server: DER control create: no EndDevice management store; every create answers 500 and a cancel runs without the fleet lock")
 	} else {
 		h.Fleets = commitment.Resolver{Devices: stores.EndDevices, Managers: stores.EndDeviceManagers}
 	}
 	if store.IsAbsent(stores.CommitmentLedger) {
-		log.Printf("server: DER control create: no commitment ledger; every create answers 500")
+		log.Printf("server: DER control create: no commitment ledger; every create answers 500 and a cancel runs without the fleet lock")
 	} else {
 		h.Ledger = stores.CommitmentLedger
 	}

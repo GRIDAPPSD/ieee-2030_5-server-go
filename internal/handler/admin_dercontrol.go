@@ -590,30 +590,29 @@ func (h *AdminDERControlHandler) issueInFleet(ctx context.Context, req dercontro
 	}
 }
 
-// cancelInFleet cancels the control under the fleet lock, the lock a client's
-// cancel of the grant it executes (Ledger.CancelGrant) also holds, so the two
-// cannot interleave and a failed write's restore cannot undo the other's
-// cancel. A resolver or ledger that is missing, or a fleet that cannot be
-// resolved, refuses rather than cancelling unserialized.
+// cancelInFleet cancels the control under the fleet locks that serialize it
+// against a client's cancel of the grant it executes (Ledger.CancelGrant): the
+// fleet stored on the control's lifecycle record when it carries a grant, which
+// is the fleet CancelGrant locks, and the device's current fleet. The two
+// differ once a device's management pair changes after the grant. Within sorts
+// its keys, so taking two cannot deadlock.
+//
+// An operator's cancel is never refused for a reason about locking or fleets:
+// when no fleet resolves, or no ledger or resolver is wired, or the ledger
+// cannot run, it cancels without the lock and logs why at WARN. A client that
+// went away while waiting for the lock gets the context error back.
 func (h *AdminDERControlHandler) cancelInFleet(ctx context.Context, scope dercontrol.Scope, id, reason string) (dercontrol.LifecycleRecord, error) {
-	if h.Fleets == nil {
-		return dercontrol.LifecycleRecord{}, &commitmentFailure{sub: "no_resolver"}
-	}
+	keys, why := h.cancelFleetKeys(ctx, scope, id)
 	if h.Ledger == nil {
-		return dercontrol.LifecycleRecord{}, &commitmentFailure{sub: "no_ledger"}
+		why = "no_ledger"
 	}
-	fleetKey, err := h.Fleets.FleetOf(ctx, scope.EndDeviceID)
-	switch {
-	case err == nil:
-	case errors.Is(err, store.ErrNotFound):
-		return dercontrol.LifecycleRecord{}, &dercontrol.RefusalError{Code: dercontrol.RefusalControlNotFound}
-	default:
-		return dercontrol.LifecycleRecord{}, &commitmentFailure{sub: "fleet_resolve_failed", err: err}
+	if len(keys) == 0 || h.Ledger == nil {
+		return h.cancelUnlocked(ctx, scope, id, reason, why)
 	}
 
 	var lc dercontrol.LifecycleRecord
 	ran := false
-	err = h.Ledger.Within(ctx, []string{fleetKey}, func(commitment.View) error {
+	err := h.Ledger.Within(ctx, keys, func(commitment.View) error {
 		ran = true
 		var err error
 		lc, err = h.Issuer.Cancel(ctx, scope, id, reason)
@@ -622,13 +621,47 @@ func (h *AdminDERControlHandler) cancelInFleet(ctx context.Context, scope dercon
 	switch {
 	case ran:
 		return lc, err
-	case err == nil:
-		return dercontrol.LifecycleRecord{}, &commitmentFailure{sub: "ledger_did_not_run"}
-	case isContextErr(err):
-		return dercontrol.LifecycleRecord{}, err
+	case ctx.Err() != nil:
+		return dercontrol.LifecycleRecord{}, ctx.Err()
 	default:
-		return dercontrol.LifecycleRecord{}, &commitmentFailure{sub: "ledger_failed", err: err}
+		return h.cancelUnlocked(ctx, scope, id, reason, "ledger_failed")
 	}
+}
+
+// cancelFleetKeys returns the fleets to lock for a cancel of the control at
+// (scope, id), and why none resolved when the list is empty.
+func (h *AdminDERControlHandler) cancelFleetKeys(ctx context.Context, scope dercontrol.Scope, id string) (keys []string, why string) {
+	if h.Lifecycles != nil {
+		if lc, err := h.Lifecycles.Get(ctx, scope.Key(), id); err == nil && lc.GrantMRID != "" && lc.FleetKey != "" {
+			keys = append(keys, lc.FleetKey)
+		}
+	}
+	if h.Fleets == nil {
+		return keys, "no_resolver"
+	}
+	fleetKey, err := h.Fleets.FleetOf(ctx, scope.EndDeviceID)
+	switch {
+	case err == nil:
+		if !slices.Contains(keys, fleetKey) {
+			keys = append(keys, fleetKey)
+		}
+	case errors.Is(err, store.ErrNotFound):
+		why = "device_gone"
+	case errors.Is(err, commitment.ErrNoLFDI):
+		why = "device_without_lfdi"
+	default:
+		why = "fleet_resolve_failed"
+	}
+	return keys, why
+}
+
+func (h *AdminDERControlHandler) cancelUnlocked(ctx context.Context, scope dercontrol.Scope, id, reason, why string) (dercontrol.LifecycleRecord, error) {
+	h.logger().Warn("admin: DER control cancelled without the fleet lock",
+		"event", "der_control_cancel_unlocked",
+		"reason", why,
+		"device_id", scope.EndDeviceID,
+	)
+	return h.Issuer.Cancel(ctx, scope, id, reason)
 }
 
 // checkIn adapts a ledger View to the issuer's check hook.
@@ -710,6 +743,11 @@ func (h *AdminDERControlHandler) HandleCancel() http.HandlerFunc {
 
 		lc, err := h.cancelInFleet(r.Context(), scope, id, reason)
 		if err != nil {
+			if isContextErr(err) && r.Context().Err() != nil {
+				logged.add("cause", "client_gone")
+				h.refuse(w, r, "cancel", refuseClientGone, &logged)
+				return
+			}
 			var undo *dercontrol.UndoError
 			if errors.As(err, &undo) {
 				if undo.MRID == "" {
@@ -891,12 +929,6 @@ func mapIssuerError(err error, l *derControlLog) derControlRefusal {
 		l.add("control_kept", undo.ControlKept)
 		l.add("lifecycle_kept", undo.LifecycleKept)
 		l.add("store_id", undo.ID)
-		return refuseInternal
-	}
-	var cf *commitmentFailure
-	if errors.As(err, &cf) {
-		l.add("cause", "commitment_unavailable")
-		l.add("commitment", cf.sub)
 		return refuseInternal
 	}
 	l.add("cause", "store_error")

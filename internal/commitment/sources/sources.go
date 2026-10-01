@@ -122,26 +122,39 @@ func (g *Grants) all(ctx context.Context) ([]commitment.Grant, error) {
 }
 
 func (g *Grants) grantOf(ctx context.Context, edevID, fleet string, frp sep2.FlowReservationResponse) (commitment.Grant, error) {
+	gr, err := grantFields(edevID, frp)
+	if err != nil {
+		return commitment.Grant{}, err
+	}
+	gr.FleetKey = fleet
+	lc, err := g.lifecycles.Get(ctx, edevID, gr.ID)
+	switch {
+	case err == nil:
+		gr.CancelledAt = lc.CancelledAt
+	case !errors.Is(err, store.ErrNotFound):
+		return commitment.Grant{}, fmt.Errorf("sources: lifecycle of response %s/%s: %w", edevID, gr.ID, err)
+	}
+	return gr, nil
+}
+
+// grantFields is a stored or about-to-be-stored response as the ledger sees
+// it, without its fleet or cancel mark.
+func grantFields(edevID string, frp sep2.FlowReservationResponse) (commitment.Grant, error) {
 	id, ok := flowreservation.ResponseID(edevID, frp.Href)
 	if !ok {
 		return commitment.Grant{}, fmt.Errorf("sources: response href %q under %s has no store id", frp.Href, edevID)
 	}
 	gr := commitment.Grant{
-		MRID:        frp.MRID,
-		EndDeviceID: edevID,
-		FleetKey:    fleet,
-		Energy:      frp.EnergyAvailable,
-		Power:       frp.PowerAvailable,
+		MRID:         frp.MRID,
+		ID:           id,
+		EndDeviceID:  edevID,
+		Energy:       frp.EnergyAvailable,
+		Power:        frp.PowerAvailable,
+		Subject:      frp.Subject,
+		CreationTime: frp.CreationTime,
 	}
 	if frp.Interval != nil {
 		gr.Window = &commitment.Window{Start: frp.Interval.Start, Duration: frp.Interval.Duration}
-	}
-	lc, err := g.lifecycles.Get(ctx, edevID, id)
-	switch {
-	case err == nil:
-		gr.CancelledAt = lc.CancelledAt
-	case !errors.Is(err, store.ErrNotFound):
-		return commitment.Grant{}, fmt.Errorf("sources: lifecycle of response %s/%s: %w", edevID, id, err)
 	}
 	return gr, nil
 }
@@ -223,7 +236,7 @@ func (c *Controls) filter(ctx context.Context, keep func(commitment.Control) boo
 					continue
 				}
 			}
-			ctl, err := controlOf(scope, fleet, ctrl, lc)
+			ctl, err := controlOf(scope, id, fleet, ctrl, lc)
 			if err != nil {
 				return nil, err
 			}
@@ -283,7 +296,7 @@ func (o *orphans) fleetOrGone(ctx context.Context, edevID string) (string, error
 // controlOf builds the ledger's view of one control, taking the link from
 // its lifecycle record. A record without a reach predates the link and
 // reaches the one device the control is stored under.
-func controlOf(scope, fleet string, ctrl sep2.DERControl, lc dercontrol.LifecycleRecord) (commitment.Control, error) {
+func controlOf(scope, id, fleet string, ctrl sep2.DERControl, lc dercontrol.LifecycleRecord) (commitment.Control, error) {
 	if ctrl.Interval == nil {
 		return commitment.Control{}, fmt.Errorf("sources: control %s in %s has no interval", ctrl.MRID, scope)
 	}
@@ -292,6 +305,7 @@ func controlOf(scope, fleet string, ctrl sep2.DERControl, lc dercontrol.Lifecycl
 	}
 	ctl := commitment.Control{
 		MRID:      ctrl.MRID,
+		ID:        id,
 		Scope:     scope,
 		FleetKey:  fleet,
 		Window:    commitment.Window{Start: ctrl.Interval.Start, Duration: ctrl.Interval.Duration},

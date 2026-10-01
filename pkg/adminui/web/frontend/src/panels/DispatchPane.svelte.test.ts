@@ -76,21 +76,35 @@ interface World {
   controlReads: number
   failControls: boolean
   grantsReply: Res | null
+  now: number
+  fleet: unknown
+  programs: unknown
+  controlsReply: Res | null
 }
 
 function mockReads(world: Partial<World> = {}) {
-  const w: World = { grants: [grantWire()], controls: [], controlReads: 0, failControls: false, grantsReply: null, ...world }
+  const w: World = { grants: [grantWire()], controls: [], controlReads: 0,
+    failControls: false,
+    grantsReply: null,
+    // Before the grant's start, so a grant is not "already started" unless a test says so.
+    now: 1789990000,
+    fleet: FLEET,
+    programs: [{ href: PROGRAM, mRID: 'P1', description: 'Dispatch program', primacy: 0, derControlListHref: PROGRAM + '/derc' }],
+    controlsReply: null,
+    ...world,
+  }
   const spy = vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
-    if (path === '/api/derms/fleets') return { ok: true, data: [FLEET] }
+    if (path === '/api/derms/fleets') return { ok: true, data: [w.fleet] }
     if (path.startsWith('/api/derms/grants')) {
-      return w.grantsReply ?? { ok: true, data: { aggregatorLFDI: LFDI, now: 1790000100, grants: w.grants } }
+      return w.grantsReply ?? { ok: true, data: { aggregatorLFDI: LFDI, now: w.now, grants: w.grants } }
     }
     if (path === '/api/devices/4/der-programs') {
-      return { ok: true, data: { device: '4', programs: [{ href: PROGRAM, mRID: 'P1', description: 'Dispatch program', primacy: 0, derControlListHref: PROGRAM + '/derc' }] } }
+      return { ok: true, data: { device: '4', programs: w.programs } }
     }
     if (path.startsWith('/api/der/controls')) {
       w.controlReads++
       if (w.failControls) return { ok: false, error: 'boom', status: 500 }
+      if (w.controlsReply !== null) return w.controlsReply
       return { ok: true, data: { device: '4', controls: w.controls } }
     }
     throw new Error('unexpected read ' + path)
@@ -119,6 +133,11 @@ async function pickGrant() {
   const select = await screen.findByTestId('dispatch-grant')
   await fireEvent.change(select, { target: { value: 'frq-1-r1' } })
   await waitFor(() => expect((screen.getByTestId('dispatch-program') as HTMLSelectElement).value).toBe(PROGRAM))
+}
+
+async function pickGrantOnly() {
+  await pickFleet()
+  await fireEvent.change(await screen.findByTestId('dispatch-grant'), { target: { value: 'frq-1-r1' } })
 }
 
 async function review() {
@@ -299,24 +318,64 @@ describe('DispatchPane, refusals and unknown outcomes', () => {
     expect(screen.getByRole('button', { name: 'Review' })).toBeEnabled()
   })
 
-  it('never re-sends after an unknown outcome and stays locked until the controls list is read again', async () => {
+  it('never re-sends after an unknown outcome; only a read that started a write-timeout after the send lifts the lock', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { w } = mockReads()
+    const post = mockWrite({ ok: false, status: 0, error: 'network error' })
+    mount()
+    await pickGrant()
+    await confirmAndWait()
+    expect(await screen.findByTestId('dispatch-result')).toHaveTextContent('Outcome unknown')
+    // The read made at once succeeds, but it started before the write could have landed.
+    await waitFor(() => expect(w.controlReads).toBeGreaterThanOrEqual(1))
+    await waitFor(() => expect(screen.getByTestId('dispatch-controls-age')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Review' })).toBeDisabled()
+    expect(screen.getByTestId('dispatch-lock')).toHaveTextContent(/Next read in \d+ s/)
+    const readsBefore = w.controlReads
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(screen.getByRole('button', { name: 'Review' })).toBeDisabled()
+    expect(w.controlReads).toBe(readsBefore)
+    await vi.advanceTimersByTimeAsync(6_000)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review' })).toBeEnabled())
+    expect(w.controlReads).toBe(readsBefore + 1)
+    expect(post).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  it('a manual Reload before the unlock time does not lift the lock; one after it does', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
     const { w } = mockReads()
     const post = mockWrite({ ok: false, status: 0, error: 'network error' })
     mount()
     await pickGrant()
     w.failControls = true
     await confirmAndWait()
-    expect(await screen.findByTestId('dispatch-result')).toHaveTextContent('Outcome unknown')
     await waitFor(() => expect(screen.getByTestId('dispatch-controls-error')).toBeInTheDocument())
-    expect(screen.getByRole('button', { name: 'Review' })).toBeDisabled()
-    expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull()
-    expect(post).toHaveBeenCalledTimes(1)
-
     w.failControls = false
     w.controls = [controlItem()]
     await fireEvent.click(screen.getByRole('button', { name: 'Reload' }))
+    await waitFor(() => expect(screen.getByTestId('dispatch-controls-age')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Review' })).toBeDisabled()
+    await vi.advanceTimersByTimeAsync(21_000)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Review' })).toBeEnabled())
     expect(post).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  it('does not lift the lock on a controls reply that has no list, and shows an error', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { w } = mockReads({ controlsReply: { ok: true, data: { device: '4' } } })
+    mockWrite({ ok: false, status: 0, error: 'network error' })
+    mount()
+    await pickGrant()
+    await confirmAndWait()
+    await vi.advanceTimersByTimeAsync(21_000)
+    expect(await screen.findByTestId('dispatch-controls-error')).toHaveTextContent('no controls list')
+    expect(screen.getByRole('button', { name: 'Review' })).toBeDisabled()
+    expect(screen.getByTestId('dispatch-lock')).toHaveTextContent('Waiting for a successful read')
+    expect(screen.queryByText('No admin-issued controls for this program')).toBeNull()
+    expect(w.controlReads).toBeGreaterThan(1)
+    vi.useRealTimers()
   })
 
   it('names a kept control from a 500 and does not re-send', async () => {
@@ -363,6 +422,8 @@ describe('DispatchPane, while a write is in flight', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Stop waiting' }))
     expect(signal?.aborted).toBe(true)
     expect(await screen.findByTestId('dispatch-result')).toHaveTextContent('Stopped waiting')
+    await waitFor(() => expect(screen.getByTestId('dispatch-controls-age')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Review' })).toBeDisabled()
     finish({ ok: true, data: created })
     await new Promise((r) => setTimeout(r, 0))
     expect(screen.getByTestId('dispatch-result')).not.toHaveTextContent('Stored control')
@@ -386,5 +447,121 @@ describe('DispatchPane, while a write is in flight', () => {
     finish({ ok: true, data: created })
     await new Promise((r) => setTimeout(r, 0))
     expect(screen.queryByTestId('dispatch-pane')).toBeNull()
+  })
+})
+
+describe('DispatchPane, what the operator sees', () => {
+  it('names the device with its LFDI, the program, the fleet and the grant in the confirm text', async () => {
+    mockReads()
+    mockWrite({ ok: true, data: created })
+    mount()
+    await pickGrant()
+    await review()
+    const text = (await screen.findByTestId('dispatch-confirm-text')).textContent ?? ''
+    expect(text).toContain('device SFDI-4 (LFDI dev-lfdi-4)')
+    expect(text).toContain('program Dispatch program')
+    expect(text).toContain('It reaches that device only, not the whole fleet.')
+    expect(text).toContain(GRANT_MRID)
+  })
+
+  it('says how many fleet devices cannot be offered', async () => {
+    const fleet = { ...FLEET, devices: [...FLEET.devices, { lfdi: 'UNKNOWN-LFDI', measurements: {} }, { lfdi: 'UNKNOWN-2', measurements: {} }] }
+    mockReads({ fleet })
+    mount()
+    await pickFleet()
+    expect(await screen.findByTestId('dispatch-unaddressable')).toHaveTextContent('2 of 3 fleet devices cannot be offered here')
+  })
+
+  it('does not warn when every fleet device can be offered', async () => {
+    mockReads()
+    mount()
+    await pickFleet()
+    await screen.findByTestId('dispatch-grant')
+    expect(screen.queryByTestId('dispatch-unaddressable')).toBeNull()
+  })
+
+  it('says why the program select is empty for a device with no programs', async () => {
+    mockReads({ programs: [] })
+    mount()
+    await pickGrantOnly()
+    expect(await screen.findByTestId('dispatch-no-programs')).toHaveTextContent('no DER programs')
+  })
+
+  it('shows an error, not an empty list, for a programs reply with no list', async () => {
+    mockReads({ programs: undefined })
+    mount()
+    await pickGrantOnly()
+    expect(await screen.findByTestId('dispatch-programs-error')).toHaveTextContent('no programs list')
+    expect(screen.queryByTestId('dispatch-no-programs')).toBeNull()
+  })
+
+  it('moves a grant that has already started to now plus a margin, and says so', async () => {
+    mockReads({ now: 1790000100 })
+    mount()
+    await pickGrant()
+    const startText = (screen.getByTestId('dispatch-start') as HTMLInputElement).value
+    expect(Date.parse(startText) / 1000).toBeGreaterThanOrEqual(1790000130)
+    expect(Date.parse(startText) / 1000).toBeLessThan(1790000140)
+    expect(screen.getByTestId('dispatch-prefill-note')).toHaveTextContent('already started')
+  })
+
+  it('shows an error, not Loading, when the first controls read fails', async () => {
+    mockReads({ failControls: true })
+    mount()
+    await pickGrant()
+    expect(await screen.findByTestId('dispatch-controls-error')).toBeInTheDocument()
+    expect(screen.queryByText('Loading controls...')).toBeNull()
+    expect(screen.getByText('Controls could not be read.')).toBeInTheDocument()
+  })
+
+  it('drops the picked grant, its form and its note when the refresh after a create no longer lists it', async () => {
+    const { w } = mockReads({ now: 1790000100 })
+    mockWrite({ ok: true, data: created })
+    mount()
+    await pickGrant()
+    expect(screen.getByTestId('dispatch-prefill-note')).toBeInTheDocument()
+    w.grants = []
+    await confirmAndWait()
+    await waitFor(() => expect(screen.queryByTestId('dispatch-grant-detail')).toBeNull())
+    expect(screen.queryByTestId('dispatch-prefill-note')).toBeNull()
+    expect(screen.queryByTestId('dispatch-confirm')).toBeNull()
+    expect(screen.queryByTestId('dispatch-power')).toBeNull()
+  })
+
+  it('ignores a controls read for the previous device that lands after a device change', async () => {
+    let releaseControls!: () => void
+    const gate = new Promise<void>((r) => (releaseControls = r))
+    let releasePrograms5!: () => void
+    const gate5 = new Promise<void>((r) => (releasePrograms5 = r))
+    const prog = (id: string) => ({ href: `/edev/${id}/derp/1`, mRID: 'P' + id, description: 'Prog ' + id, primacy: 0, derControlListHref: '' })
+    const fleet = { ...FLEET, devices: [{ lfdi: 'DEV-LFDI-4', measurements: {} }, { lfdi: 'DEV-LFDI-5', measurements: {} }] }
+    const dash = [...DEVICES, { sfdi: 'SFDI-5', lfdi: 'dev-lfdi-5', href: '/edev/5', enabled: true }]
+    vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
+      if (path === '/api/derms/fleets') return { ok: true, data: [fleet] }
+      if (path.startsWith('/api/derms/grants')) return { ok: true, data: { aggregatorLFDI: LFDI, now: 1789990000, grants: [] } }
+      if (path === '/api/devices/4/der-programs') return { ok: true, data: { device: '4', programs: [prog('4')] } }
+      if (path === '/api/devices/5/der-programs') {
+        await gate5
+        return { ok: true, data: { device: '5', programs: [prog('5')] } }
+      }
+      if (path.startsWith('/api/der/controls?device=4')) {
+        await gate
+        return { ok: true, data: { device: '4', controls: [controlItem({ mRID: 'DEVICE4CTL' })] } }
+      }
+      if (path.startsWith('/api/der/controls?device=5')) return new Promise(() => {})
+      throw new Error('unexpected read ' + path)
+    }) as never)
+    render(DispatchPane, { devices: dash })
+    await pickFleet()
+    await fireEvent.click(screen.getByRole('radio', { name: 'Plain dispatch' }))
+    await fireEvent.change(await screen.findByTestId('dispatch-device'), { target: { value: '4' } })
+    await waitFor(() => expect((screen.getByTestId('dispatch-program') as HTMLSelectElement).value).toBe('/edev/4/derp/1'))
+    await fireEvent.change(screen.getByTestId('dispatch-device'), { target: { value: '5' } })
+    releaseControls()
+    await new Promise((r) => setTimeout(r, 0))
+    releasePrograms5()
+    await waitFor(() => expect((screen.getByTestId('dispatch-program') as HTMLSelectElement).value).toBe('/edev/5/derp/1'))
+    expect(screen.queryByText('DEVICE4CTL')).toBeNull()
+    expect(screen.queryByTestId('dispatch-control-row')).toBeNull()
   })
 })

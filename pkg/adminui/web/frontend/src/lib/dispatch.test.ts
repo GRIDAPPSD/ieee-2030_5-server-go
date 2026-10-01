@@ -97,19 +97,34 @@ describe('grantPrefill', () => {
     if (!('list' in parsed)) throw new Error(parsed.error)
     return { ...parsed.list.grants[0], ...over }
   }
+  // The grant runs 1790000000 for 1800 s.
+  const BEFORE = 1789990000
 
-  it('fills the interval and the suggested target from the grant', () => {
-    expect(grantPrefill(grant({}))).toEqual({ start: '2026-09-21T14:13:20Z', duration: '1800', power: '8000' })
+  it('fills the interval and the suggested target from a grant that has not started', () => {
+    expect(grantPrefill(grant({}), BEFORE)).toEqual({ start: '2026-09-21T14:13:20Z', duration: '1800', power: '8000', note: '' })
   })
 
   it('keeps the sign the server sent for a charge grant', () => {
-    expect(grantPrefill(grant({ suggestedTargetW: { value: -5000, multiplier: 0 } })).power).toBe('-5000')
+    expect(grantPrefill(grant({ suggestedTargetW: { value: -5000, multiplier: 0 } }), BEFORE).power).toBe('-5000')
   })
 
   it('leaves a value the server did not send empty, never a default', () => {
     const g = grant({ suggestedTargetW: null })
     g.response = { ...g.response, interval: null }
-    expect(grantPrefill(g)).toEqual({ start: '', duration: '', power: '' })
+    expect(grantPrefill(g, BEFORE)).toEqual({ start: '', duration: '', power: '', note: '' })
+  })
+
+  it('moves a started grant to now plus the margin, runs it to the grant end, and says so', () => {
+    const r = grantPrefill(grant({}), 1790000100)
+    expect(r.start).toBe('2026-09-21T14:15:30Z')
+    expect(r.duration).toBe('1670')
+    expect(r.note).toContain('already started')
+  })
+
+  it('never prefills a start in the past, and says a grant that is ending has no interval', () => {
+    const r = grantPrefill(grant({}), 1790001790)
+    expect(r).toMatchObject({ start: '', duration: '' })
+    expect(r.note).toContain('ended')
   })
 })
 
@@ -152,7 +167,7 @@ describe('fleetDeviceChoices', () => {
       { sfdi: 's-a', lfdi: 'aaaa', href: '/edev/4' },
       { sfdi: 's-z', lfdi: 'zzzz', href: '/edev/9' },
     ]
-    expect(fleetDeviceChoices(fleetDevices, dash, (h) => h.split('/').pop() as string)).toEqual([{ id: '4', label: 's-a' }])
+    expect(fleetDeviceChoices(fleetDevices, dash, (h) => h.split('/').pop() as string)).toEqual([{ id: '4', label: 's-a', lfdi: 'aaaa' }])
   })
 })
 

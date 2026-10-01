@@ -44,11 +44,13 @@
   let deviceId = $state('')
   let programs = $state<DERProgramView[]>([])
   let programsError = $state('')
+  let programsChecked = $state(false)
   let programHref = $state('')
 
   let start = $state('')
   let duration = $state('')
   let power = $state('')
+  let prefillNote = $state('')
 
   let controls = $state<DERControlListItem[]>([])
   let controlsLoaded = $state(false)
@@ -62,6 +64,12 @@
   let resultOk = $state(false)
   let createdMRID = $state('')
   let unknownNote = $state('')
+  // After an unknown outcome the lock lifts only on a controls read that
+  // started at or after unlockAt (the send time plus the write timeout): a
+  // read that started earlier can land before a write that still commits.
+  let unlockAt = $state<number | null>(null)
+  let lastSentAt = 0
+  let unlockTimer: ReturnType<typeof setTimeout> | undefined
   let nowMs = $state(Date.now())
 
   let fleetsSeq = 0
@@ -79,10 +87,12 @@
   const choices = $derived.by((): DeviceChoice[] => {
     const own = fleet === null ? [] : fleetDeviceChoices(fleet.devices, devices, deviceIdFromHref)
     if (grant !== null && !own.some((c) => c.id === grant.edevId)) {
-      return [...own, { id: grant.edevId, label: 'device ' + grant.edevId }]
+      return [...own, { id: grant.edevId, label: 'device ' + grant.edevId, lfdi: '' }]
     }
     return own
   })
+  const unaddressable = $derived(fleet === null ? 0 : fleet.devices.length - fleetDeviceChoices(fleet.devices, devices, deviceIdFromHref).length)
+  const unlockIn = $derived(unlockAt === null ? 0 : Math.max(0, Math.ceil((unlockAt - nowMs) / 1000)))
   const program = $derived(programs.find((p) => p.href === programHref) ?? null)
   const locked = $derived(busy || unknownNote !== '')
 
@@ -111,6 +121,15 @@
     fleets = res.data
   }
 
+  // A picked grant the server no longer lists is dropped with its confirm
+  // step, unless a write is in flight: its Stop waiting button lives there.
+  function dropMissingGrant() {
+    if (busy || grantResponseId === '' || grants.some((g) => g.response.id === grantResponseId)) return
+    grantResponseId = ''
+    confirming = false
+    prefillNote = ''
+  }
+
   async function loadGrants() {
     const seq = ++grantsSeq
     if (fleetLFDI === '' || mode !== 'grant') return
@@ -123,12 +142,14 @@
     if (!res.ok) {
       grantsError = res.status === 404 ? 'Grants are not available on this server yet.' : res.error
       grants = []
+      dropMissingGrant()
       return
     }
     const parsed = parseGrants(res.data)
     if ('error' in parsed) {
       grantsError = 'server returned an unexpected response shape: ' + parsed.error
       grants = []
+      dropMissingGrant()
       return
     }
     grantsError = ''
@@ -136,18 +157,19 @@
     grantsServerNow = parsed.list.now
     grantsFetchedAt = Date.now()
     nowMs = grantsFetchedAt
-    if (grantResponseId !== '' && !grants.some((g) => g.response.id === grantResponseId)) {
-      grantResponseId = ''
-    }
+    dropMissingGrant()
   }
 
   async function loadPrograms(id: string) {
     const seq = ++programsSeq
+    controlsSeq++
     programs = []
     programHref = ''
     programsError = ''
+    programsChecked = false
     controls = []
     controlsLoaded = false
+    controlsError = ''
     if (id === '') return
     const res = await fetchJSON<DERProgramListResponse>(`/api/devices/${encodeURIComponent(id)}/der-programs`, bounds)
     if (lifetime.signal.aborted || seq !== programsSeq) return
@@ -155,7 +177,12 @@
       programsError = res.error
       return
     }
-    programs = res.data.programs ?? []
+    if (!Array.isArray(res.data.programs)) {
+      programsError = 'server returned a programs reply with no programs list'
+      return
+    }
+    programsChecked = true
+    programs = res.data.programs
     if (programs.length === 1) {
       programHref = programs[0].href
       void loadControls()
@@ -165,6 +192,7 @@
   async function loadControls() {
     const seq = ++controlsSeq
     if (deviceId === '' || programHref === '') return
+    const startedAt = Date.now()
     const res = await fetchJSON<DERControlListResponse>(
       `/api/der/controls?device=${encodeURIComponent(deviceId)}&derProgramHref=${encodeURIComponent(programHref)}`,
       bounds,
@@ -174,12 +202,19 @@
       controlsError = res.error
       return
     }
+    if (!Array.isArray(res.data?.controls)) {
+      controlsError = 'server returned a controls reply with no controls list'
+      return
+    }
     controlsError = ''
-    controls = res.data.controls ?? []
+    controls = res.data.controls
     controlsLoaded = true
     controlsFetchedAt = Date.now()
     nowMs = controlsFetchedAt
-    unknownNote = ''
+    if (unlockAt !== null && startedAt >= unlockAt) {
+      unknownNote = ''
+      unlockAt = null
+    }
   }
 
   onMount(() => {
@@ -193,6 +228,7 @@
     lifetime.abort()
     writeCtrl?.abort()
     if (tickTimer !== undefined) clearInterval(tickTimer)
+    clearTimeout(unlockTimer)
   })
 
   function resetInputs() {
@@ -203,6 +239,7 @@
     start = ''
     duration = ''
     power = ''
+    prefillNote = ''
     deviceId = ''
     void loadPrograms('')
   }
@@ -234,7 +271,9 @@
     formError = ''
     const g = grants.find((x) => x.response.id === id)
     if (g === undefined) return
-    const fill = grantPrefill(g)
+    const serverNow = grantsServerNow === null ? Date.now() / 1000 : grantsServerNow + (Date.now() - grantsFetchedAt) / 1000
+    const fill = grantPrefill(g, serverNow)
+    prefillNote = fill.note
     start = fill.start
     duration = fill.duration
     power = fill.power
@@ -295,9 +334,11 @@
       grant === null
         ? 'A plain dispatch, carrying out no grant.'
         : `Carrying out grant ${grant.response.mRID} (request ${grant.frqId}, ${directionLabel(grant.response.direction)}).`
+    const dev = choices.find((c) => c.id === deviceId)
+    const device = dev === undefined ? `device ${deviceId}` : `device ${dev.label}${dev.lfdi === '' ? '' : ` (LFDI ${dev.lfdi})`}`
     const watts = b.targetW.value * Math.pow(10, b.targetW.multiplier)
     return (
-      `Send a control to fleet ${short(fleet.aggregatorLFDI)} through program ${program?.description || program?.mRID || programHref}: ` +
+      `Send a control to ${device} of fleet ${short(fleet.aggregatorLFDI)} through program ${program?.description || program?.mRID || programHref}. It reaches that device only, not the whole fleet. ` +
       `target power ${formatQuantity(watts, 'W')} (DER frame: positive discharges, negative charges), ` +
       `${when}${b.startTime === undefined ? ` for ${b.durationSeconds} s` : ''}. ${carrying}`
     )
@@ -308,12 +349,26 @@
     confirming = false
   }
 
+  function scheduleUnlockRead() {
+    clearTimeout(unlockTimer)
+    if (unlockAt === null) return
+    const wait = unlockAt - Date.now()
+    unlockTimer = setTimeout(() => {
+      if (unlockAt !== null && Date.now() < unlockAt) scheduleUnlockRead()
+      else void loadControls()
+    }, Math.max(0, wait))
+  }
+
+  // The immediate read only refreshes the table; the read that can lift the
+  // lock is the one scheduled for unlockAt.
   function markUnknown(note: string) {
     unknownNote = note
     result = note
     resultOk = false
+    unlockAt = lastSentAt + WRITE_TIMEOUT_MS
     void loadControls()
     void loadGrants()
+    scheduleUnlockRead()
   }
 
   async function confirm() {
@@ -328,6 +383,7 @@
     const ctrl = new AbortController()
     writeCtrl = ctrl
     busy = true
+    lastSentAt = Date.now()
     const res = await submitDispatch(built.body, { signal: ctrl.signal, timeoutMs: WRITE_TIMEOUT_MS })
     if (lifetime.signal.aborted || seq !== writeSeq) return
     writeCtrl = null
@@ -407,6 +463,12 @@
       </label>
     </div>
 
+    {#if fleet !== null && unaddressable > 0}
+      <p class="hint" data-testid="dispatch-unaddressable">
+        {unaddressable} of {fleet.devices.length} fleet devices cannot be offered here: the page cannot map them to an EndDevice id.
+      </p>
+    {/if}
+
     {#if fleet !== null && mode === 'grant'}
       {#if grantsError}
         <div class="result err" data-testid="dispatch-grants-error">Could not load grants: {grantsError}</div>
@@ -481,6 +543,13 @@
         </div>
         {#if programsError}
           <div class="result err" data-testid="dispatch-programs-error">{programsError}</div>
+        {:else if deviceId !== '' && programsChecked && programs.length === 0}
+          <p class="hint" data-testid="dispatch-no-programs">
+            This device has no DER programs. Programs come from the boot fixture; they cannot be created in the admin UI.
+          </p>
+        {/if}
+        {#if prefillNote}
+          <p class="hint" data-testid="dispatch-prefill-note">{prefillNote}</p>
         {/if}
         <div class="form-row">
           <label>Start (UTC, empty to start now)
@@ -511,6 +580,13 @@
       {#if formError}
         <div class="result err" role="alert" data-testid="dispatch-form-error">{formError}</div>
       {/if}
+    {/if}
+
+    {#if unknownNote !== ''}
+      <p class="hint" role="status" data-testid="dispatch-lock">
+        Sending is locked until the controls list has been read again after the write could have landed.
+        {#if unlockIn > 0}Next read in {unlockIn} s.{:else}Waiting for a successful read.{/if}
+      </p>
     {/if}
 
     {#if result}
@@ -557,7 +633,7 @@
               </td>
             </tr>
           {:else}
-            <tr><td colspan="6" class="stat-label">{controlsLoaded ? 'No admin-issued controls for this program' : 'Loading controls...'}</td></tr>
+            <tr><td colspan="6" class="stat-label">{controlsLoaded ? 'No admin-issued controls for this program' : controlsError ? 'Controls could not be read.' : 'Loading controls...'}</td></tr>
           {/each}
         </tbody>
       </table>

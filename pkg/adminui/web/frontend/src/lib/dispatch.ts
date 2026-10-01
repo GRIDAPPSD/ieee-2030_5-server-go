@@ -61,6 +61,8 @@ export function parseGrants(data: unknown): { list: GrantList } | { error: strin
 export interface DeviceChoice {
   id: string
   label: string
+  // Empty when the device is known only by the id a grant carries.
+  lfdi: string
 }
 
 // fleetDeviceChoices lists the devices of a fleet the page can address: the
@@ -75,7 +77,7 @@ export function fleetDeviceChoices(
   const out: DeviceChoice[] = []
   for (const fd of fleetDevices) {
     const known = dashboard.find((d) => d.lfdi.toUpperCase() === fd.lfdi.toUpperCase())
-    if (known !== undefined) out.push({ id: idOf(known.href), label: known.sfdi })
+    if (known !== undefined) out.push({ id: idOf(known.href), label: known.sfdi, lfdi: known.lfdi })
   }
   return out
 }
@@ -153,16 +155,47 @@ export function buildDispatch(form: DispatchForm): { ok: true; body: DispatchBod
   return { ok: true, body }
 }
 
+// START_MARGIN_SECONDS is how far ahead of the server's clock a running
+// grant's prefilled start is put, so the server does not refuse it as past.
+export const START_MARGIN_SECONDS = 30
+
+function utc(seconds: number): string {
+  const when = new Date(seconds * 1000)
+  return Number.isNaN(when.getTime()) ? '' : when.toISOString().replace('.000Z', 'Z')
+}
+
 // grantPrefill is what picking a grant puts in the form: its interval and the
 // server's suggested target, as text. A value the server did not send stays
-// empty rather than becoming a default.
-export function grantPrefill(g: GrantView): { start: string; duration: string; power: string } {
+// empty rather than becoming a default. A grant that has started is prefilled
+// from now plus a margin to the grant's own end, never from a past start, and
+// note says so. nowSeconds is the server's clock.
+export function grantPrefill(
+  g: GrantView,
+  nowSeconds: number,
+): { start: string; duration: string; power: string; note: string } {
   const i = g.response.interval
-  const when = i !== null && Number.isFinite(i.start) ? new Date(i.start * 1000) : null
-  const start = when !== null && !Number.isNaN(when.getTime()) ? when.toISOString().replace('.000Z', 'Z') : ''
-  const duration = i !== null && Number.isFinite(i.duration) ? String(i.duration) : ''
   const watts = scaledNumber(g.suggestedTargetW)
-  return { start, duration, power: watts !== null && Number.isInteger(watts) ? String(watts) : '' }
+  const power = watts !== null && Number.isInteger(watts) ? String(watts) : ''
+  if (i === null || !Number.isFinite(i.start) || !Number.isFinite(i.duration)) {
+    return { start: '', duration: '', power, note: '' }
+  }
+  const earliest = Math.floor(nowSeconds) + START_MARGIN_SECONDS
+  if (i.start >= earliest) return { start: utc(i.start), duration: String(i.duration), power, note: '' }
+  const left = i.start + i.duration - earliest
+  if (left < 1) {
+    return {
+      start: '',
+      duration: '',
+      power,
+      note: 'This grant has ended or is about to, so no interval is prefilled.',
+    }
+  }
+  return {
+    start: utc(earliest),
+    duration: String(left),
+    power,
+    note: `This grant has already started: the start is now plus ${START_MARGIN_SECONDS} s and the duration runs to the grant's end.`,
+  }
 }
 
 export type CreateResult =

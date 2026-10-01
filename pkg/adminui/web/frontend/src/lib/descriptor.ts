@@ -100,3 +100,13 @@ function firstOf(s: string, chars: string): number {
 // connection rather than its View.
 export const PANEL_POLL_MS = 15000
 export const PANEL_REQUEST_TIMEOUT_MS = 10000
+
+export interface DescriptorChartSeries {
+  name: string
+  points: [number, number][]
+}
+
+export interface DescriptorChartBody {
+  unit: string
+  series: DescriptorChartSeries[]
+}

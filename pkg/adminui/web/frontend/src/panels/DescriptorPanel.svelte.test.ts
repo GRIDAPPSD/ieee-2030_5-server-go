@@ -6,7 +6,11 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { render, screen, within } from '@testing-library/svelte'
 import DescriptorPanel from './DescriptorPanel.svelte'
+import { installCanvasStub } from '../test-canvas-stub'
 import type { Descriptor, DescriptorCell, DescriptorSection } from '../lib/descriptor'
+
+// The fixture holds a chart section, which needs a canvas context jsdom lacks.
+installCanvasStub()
 
 const fixture = JSON.parse(
   readFileSync('../../../../pkg/sep2admin/testdata/descriptor_v2.json', 'utf8'),
@@ -35,13 +39,16 @@ function renderOne(section: DescriptorSection) {
 }
 
 describe('DescriptorPanel v2', () => {
-  it('renders every section of the fixture: two tables and a definition list, with headings and prose', () => {
+  it('renders every section of the fixture: two tables, a chart and a definition list, with headings and prose', () => {
     render(DescriptorPanel, { props: { descriptor: fixture } })
 
-    expect(screen.getAllByTestId('descriptor-section')).toHaveLength(3)
+    expect(screen.getAllByTestId('descriptor-section')).toHaveLength(4)
     expect(screen.getAllByRole('table')).toHaveLength(2)
-    expect(screen.getAllByTestId('descriptor-heading').map((h) => h.textContent)).toEqual(['Registry', 'Clients'])
-    expect(screen.getByTestId('descriptor-prose')).toHaveTextContent('Devices the bridge has registered.')
+    expect(screen.getAllByTestId('descriptor-heading').map((h) => h.textContent)).toEqual(['Registry', 'Clients', 'State of charge'])
+    expect(screen.getAllByTestId('descriptor-prose').map((p) => p.textContent)).toEqual([
+      'Devices the bridge has registered.',
+      'Battery state of charge, one sample a minute.',
+    ])
     expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Name', 'State', 'Last seen', 'Docs', 'LFDI'])
     expect(screen.getByTestId('descriptor-group-heading')).toHaveTextContent('Connection')
     expect(screen.getAllByTestId('descriptor-key').map((k) => k.textContent)).toEqual(['Status', 'Topic', 'Badges', 'Info'])
@@ -161,8 +168,8 @@ describe('DescriptorPanel v2', () => {
     expect(screen.getByTestId('descriptor-empty')).toHaveTextContent('This panel has no content.')
     empty.unmount()
 
-    const odd = renderOne({ kind: 'chart', heading: '', prose: [], empty: '', body: {} })
-    expect(screen.getByTestId('descriptor-unknown-kind')).toHaveTextContent('Unsupported content type: "chart"')
+    const odd = renderOne({ kind: 'gauge', heading: '', prose: [], empty: '', body: {} })
+    expect(screen.getByTestId('descriptor-unknown-kind')).toHaveTextContent('Unsupported content type: "gauge"')
     odd.unmount()
 
     renderOne({ kind: 'table', heading: '', prose: [], empty: '', body: { columns: ['A'] } })

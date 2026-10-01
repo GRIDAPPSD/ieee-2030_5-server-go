@@ -11,6 +11,8 @@ import { badgeClass, safeHref } from './descriptor'
 import type {
   Descriptor,
   DescriptorCell,
+  DescriptorChartBody,
+  DescriptorChartSeries,
   DescriptorDefinitionEntry,
   DescriptorDefinitionGroup,
   DescriptorDefinitionListBody,
@@ -38,6 +40,8 @@ const sectionKeys = keys({
 const tableKeys = keys({ columns: true, rows: true } satisfies Record<keyof DescriptorTableBody, true>)
 const listKeys = keys({ groups: true } satisfies Record<keyof DescriptorDefinitionListBody, true>)
 const groupKeys = keys({ heading: true, entries: true } satisfies Record<keyof DescriptorDefinitionGroup, true>)
+const chartKeys = keys({ unit: true, series: true } satisfies Record<keyof DescriptorChartBody, true>)
+const chartSeriesKeys = keys({ name: true, points: true } satisfies Record<keyof DescriptorChartSeries, true>)
 const entryKeys = keys({ key: true, value: true } satisfies Record<keyof DescriptorDefinitionEntry, true>)
 
 // A cell carries kind and text, plus the one field its kind adds.
@@ -53,7 +57,7 @@ function* cellsOf(d: Descriptor): Generator<DescriptorCell> {
   for (const section of d.sections) {
     if (section.kind === 'table') {
       for (const row of (section.body as DescriptorTableBody).rows) yield* row
-    } else {
+    } else if (section.kind === 'definitionList') {
       for (const group of (section.body as DescriptorDefinitionListBody).groups) {
         for (const entry of group.entries) yield entry.value
       }
@@ -65,11 +69,18 @@ describe('Descriptor v2 wire shape', () => {
   it('has the keys the TypeScript types declare, at every level of the fixture', () => {
     expect(fixture.version).toBe(2)
     expect(sorted(fixture)).toEqual(descriptorKeys)
-    expect(fixture.sections.map((s) => s.kind)).toEqual(['table', 'table', 'definitionList'])
+    expect(fixture.sections.map((s) => s.kind)).toEqual(['table', 'table', 'chart', 'definitionList'])
     for (const section of fixture.sections) {
       expect(sorted(section)).toEqual(sectionKeys)
       if (section.kind === 'table') {
         expect(sorted(section.body as object)).toEqual(tableKeys)
+      } else if (section.kind === 'chart') {
+        const body = section.body as DescriptorChartBody
+        expect(sorted(body)).toEqual(chartKeys)
+        for (const series of body.series) {
+          expect(sorted(series)).toEqual(chartSeriesKeys)
+          for (const point of series.points) expect(point).toHaveLength(2)
+        }
       } else {
         const body = section.body as DescriptorDefinitionListBody
         expect(sorted(body)).toEqual(listKeys)

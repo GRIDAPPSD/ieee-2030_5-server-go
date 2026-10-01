@@ -230,7 +230,7 @@ type derControlAddRequest struct {
 // UTIL-004 (Utility-Aggregator DER retrieval).
 //
 // On successful Create the handler fires a Notification on the parent
-// DERProgramList href with NotificationStatusChanged. The DERProgramList
+// DERProgramList href with NotificationStatusDefault. The DERProgramList
 // is the resource aggregators subscribe to (see UTIL-003 procedure), so
 // fanning out at that href reaches every subscribed aggregator. nil
 // notifier disables the fan-out : used by the existing unit tests that
@@ -283,7 +283,7 @@ func handleDERControlAdd(stores *Stores, notifier handler.ResourceNotifier) http
 		// programs in that list is the change event. The Manager.Notify
 		// path is non-blocking (bounded queue, drops on full).
 		if notifier != nil {
-			notifier.Notify(ctx, derProgramListHref(req.EndDeviceID, req.FSAID), sep2.NotificationStatusChanged)
+			notifier.Notify(ctx, derProgramListHref(req.EndDeviceID, req.FSAID), sep2.NotificationStatusDefault)
 		}
 
 		w.WriteHeader(http.StatusCreated)
@@ -589,7 +589,7 @@ func handleSubscriptionCancel(stores *Stores) http.HandlerFunc {
 
 // stressNotifyRequest is the JSON body for /test/mutations/stress-notify.
 // Href is the subscribable-resource href to fan notifications to; Status
-// is the sep2.NotificationStatus* value (default 2 = Changed). The
+// is the sep2.NotificationStatus* value (default 0 = Default). The
 // endpoint exists solely to drive the subscription worker pool from the
 // stress harness without requiring any pre-existing store object (unlike
 // derctl-add which requires a DERProgram parent). Production builds never
@@ -618,7 +618,7 @@ func handleStressNotify(notifier handler.ResourceNotifier) http.HandlerFunc {
 			http.Error(w, "bad request: href required", http.StatusBadRequest)
 			return
 		}
-		status := sep2.NotificationStatusChanged
+		status := sep2.NotificationStatusDefault
 		if req.Status != nil {
 			status = *req.Status
 		}

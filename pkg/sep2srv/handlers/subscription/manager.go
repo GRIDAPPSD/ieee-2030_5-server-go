@@ -215,7 +215,11 @@ func (m *Manager) trySend(task notificationTask) error {
 	}
 }
 
-// NotifyRemoved enqueues a final "Removed" Notification (Status=3) targeted
+// notificationStatusCanceled is the standard's Notification status 1,
+// "Subscription canceled, no additional information".
+const notificationStatusCanceled uint8 = 1
+
+// NotifyRemoved enqueues a final Notification (Status=1, subscription canceled) targeted
 // at exactly one subscriber, identified by the supplied Subscription's
 // NotificationURI. The Notification's SubscriptionURI field carries the
 // subscription's Href and SubscribedResource carries the resource it was
@@ -245,7 +249,7 @@ func (m *Manager) NotifyRemoved(_ context.Context, sub sep2.Subscription) error 
 		Resource:           sep2.Resource{Href: sub.SubscribedResource},
 		SubscribedResource: sub.SubscribedResource,
 		SubscriptionURI:    sub.Href,
-		Status:             sep2.NotificationStatusRemoved,
+		Status:             notificationStatusCanceled,
 	}
 
 	payload, err := xml.Marshal(&notification)

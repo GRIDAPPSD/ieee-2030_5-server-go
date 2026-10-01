@@ -627,7 +627,7 @@ func TestDERControlListPrograms(t *testing.T) {
 }
 
 // Criterion 6: a create and a cancel each notify the program list and the
-// control list the control is stored under, once each, with status Changed.
+// control list the control is stored under, once each, with status 0 (Default).
 // The program's link names fsa 3, so the request's fsa segment must not leak
 // into either href.
 func TestDERControlNotifications(t *testing.T) {
@@ -638,8 +638,8 @@ func TestDERControlNotifications(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []recordedNotification{
-		{"/edev/0/fsa/3/derp", sep2.NotificationStatusChanged},
-		{"/edev/0/fsa/3/derp/8/derc", sep2.NotificationStatusChanged},
+		{"/edev/0/fsa/3/derp", sep2.NotificationStatusDefault},
+		{"/edev/0/fsa/3/derp/8/derc", sep2.NotificationStatusDefault},
 	}
 
 	w := d.do(t, http.MethodPost, "/api/der/controls", fmt.Sprintf(`{"derProgramHref":"/edev/0/fsa/9/derp/8","type":"connect","startTime":%d,"durationSeconds":300}`, futureStart(60)))
@@ -827,8 +827,8 @@ func TestDERControlCreate_UndoFailureKeepsControlLive(t *testing.T) {
 		t.Errorf("body = %s", w.Body.String())
 	}
 	want := []recordedNotification{
-		{"/edev/0/fsa/0/derp", sep2.NotificationStatusChanged},
-		{"/edev/0/fsa/0/derp/0/derc", sep2.NotificationStatusChanged},
+		{"/edev/0/fsa/0/derp", sep2.NotificationStatusDefault},
+		{"/edev/0/fsa/0/derp/0/derc", sep2.NotificationStatusDefault},
 	}
 	if n := d.notifier.take(); !slices.Equal(n, want) {
 		t.Errorf("notifications = %v, want %v", n, want)

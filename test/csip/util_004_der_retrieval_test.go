@@ -187,9 +187,9 @@ func TestUTIL_004_DERRetrieval(t *testing.T) {
 			continue
 		}
 		seenHrefs[n.Notification.SubscribedResource] = true
-		if n.Notification.Status != sep2.NotificationStatusChanged {
-			t.Errorf("step 3: subscribedResource=%q Status=%d, want %d (Changed)",
-				n.Notification.SubscribedResource, n.Notification.Status, sep2.NotificationStatusChanged)
+		if n.Notification.Status != sep2.NotificationStatusDefault {
+			t.Errorf("step 3: subscribedResource=%q Status=%d, want %d (Default)",
+				n.Notification.SubscribedResource, n.Notification.Status, sep2.NotificationStatusDefault)
 		}
 	}
 	for _, edevID := range aggManagedInverters {

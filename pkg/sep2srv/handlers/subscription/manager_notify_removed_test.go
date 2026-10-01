@@ -23,7 +23,7 @@ import (
 // for "this one subscription was deleted").
 
 // TestManagerNotifyRemovedPostsToSubscriber verifies that NotifyRemoved
-// dispatches a Notification with Status = NotificationStatusRemoved (3)
+// dispatches a Notification with Status = 1 (subscription canceled)
 // to exactly the subscription's NotificationURI, carrying both the
 // SubscribedResource and the Subscription.Href in the SubscriptionURI
 // field.
@@ -78,9 +78,8 @@ func TestManagerNotifyRemovedPostsToSubscriber(t *testing.T) {
 		if got.contentType != "application/sep+xml" {
 			t.Errorf("Content-Type = %q, want application/sep+xml", got.contentType)
 		}
-		if got.notification.Status != sep2.NotificationStatusRemoved {
-			t.Errorf("status = %d, want %d (Removed)",
-				got.notification.Status, sep2.NotificationStatusRemoved)
+		if got.notification.Status != 1 {
+			t.Errorf("status = %d, want 1 (subscription canceled)", got.notification.Status)
 		}
 		if got.notification.SubscribedResource != sub.SubscribedResource {
 			t.Errorf("subscribedResource = %q, want %q",

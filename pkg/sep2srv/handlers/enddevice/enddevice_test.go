@@ -818,9 +818,8 @@ func TestHandleDeleteEndDevice_TriggersNotification(t *testing.T) {
 	if n == nil {
 		t.Fatal("got nil notification")
 	}
-	if n.Status != sep2.NotificationStatusRemoved {
-		t.Errorf("notification Status = %d, want NotificationStatusRemoved (%d)",
-			n.Status, sep2.NotificationStatusRemoved)
+	if n.Status != 0 {
+		t.Errorf("notification Status = %d, want 0 (Default Status)", n.Status)
 	}
 	if n.SubscribedResource != coreedev.EndDeviceListHref {
 		t.Errorf("SubscribedResource = %q, want %q",

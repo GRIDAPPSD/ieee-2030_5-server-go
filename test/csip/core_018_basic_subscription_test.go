@@ -143,7 +143,7 @@ func TestCORE_018_BasicSubscription(t *testing.T) {
 	// SubscribedResource equals that href verbatim. The Subscription
 	// was registered against the FSAList href, so Notify on the
 	// FSAList href hits it.
-	mgr.Notify(ctx, core018FSAHref, sep2.NotificationStatusChanged)
+	mgr.Notify(ctx, core018FSAHref, 0)
 
 	got, ok := receiver.Wait(1, 2*time.Second)
 	if !ok {
@@ -174,9 +174,9 @@ func TestCORE_018_BasicSubscription(t *testing.T) {
 		t.Errorf("CORE-018 Notification.Resource.Href = %q, want %q",
 			rec.Notification.Href, core018FSAHref)
 	}
-	if rec.Notification.Status != sep2.NotificationStatusChanged {
-		t.Errorf("CORE-018 Notification.Status = %d, want %d (Changed)",
-			rec.Notification.Status, sep2.NotificationStatusChanged)
+	if rec.Notification.Status != 0 {
+		t.Errorf("CORE-018 Notification.Status = %d, want 0 (Default Status)",
+			rec.Notification.Status)
 	}
 	if rec.Notification.SubscriptionURI == "" {
 		t.Errorf("CORE-018 Notification.SubscriptionURI = empty, want subscription href")

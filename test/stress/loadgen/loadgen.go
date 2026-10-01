@@ -393,8 +393,7 @@ func Run(ctx context.Context, cfg Config) (*BreakResult, error) {
 					return
 				case <-ticker.C:
 					payload, err := json.Marshal(map[string]interface{}{
-						"href":   mutHref,
-						"status": 2, // NotificationStatusChanged
+						"href": mutHref,
 					})
 					if err != nil {
 						logger.Printf("mutation: marshal payload: %v", err)

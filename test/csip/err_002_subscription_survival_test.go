@@ -147,7 +147,7 @@ func TestERR_002_SubscriptionSurvivalAndDeleteOn400(t *testing.T) {
 
 	// Step 3: Notify on Manager B; receiver returns 400; Manager B
 	// deletes the subscription.
-	mgrB.Notify(ctxB, err002SubscribedResource, sep2.NotificationStatusChanged)
+	mgrB.Notify(ctxB, err002SubscribedResource, 0)
 
 	// Wait for the receiver to observe the POST (proves the
 	// notification was actually delivered before checking the post-

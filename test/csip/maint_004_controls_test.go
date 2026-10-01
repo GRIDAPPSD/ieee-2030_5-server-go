@@ -34,7 +34,6 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -55,9 +54,6 @@ func TestMAINT_004_MaintenanceOfControls(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	mgr := coresub.NewManager(srv.Stores.Subscriptions, 2, 16, csiptest.AllowLoopbackReceivers())
-	go mgr.Start(ctx)
-
 	// Step 1a: seed EndDevice + DERProgram.
 	seedOwnedEndDevice(t, srv.Stores.EndDevices, maint004EndDeviceID, owner)
 	derpHref := "/edev/" + maint004EndDeviceID + "/derp/" + maint004ProgramID
@@ -68,9 +64,11 @@ func TestMAINT_004_MaintenanceOfControls(t *testing.T) {
 		t.Fatalf("MAINT-004 Step 1a: seed DERProgram: %v", err)
 	}
 
-	// Step 1b: subscribe to the DERProgram href.
+	// Step 1b: subscribe to the DERProgramList the derctl-add handler
+	// notifies.
+	listHref := "/edev/" + maint004EndDeviceID + "/fsa/" + maint004FSAID + "/derp"
 	sub := sep2.Subscription{
-		SubscribedResource: derpHref,
+		SubscribedResource: listHref,
 		NotificationURI:    receiver.URL(),
 		Encoding:           sep2.EncodingXML,
 	}
@@ -106,8 +104,6 @@ func TestMAINT_004_MaintenanceOfControls(t *testing.T) {
 	// follow up with a GET /edev/{id}/derp/{prog}/derc, but that
 	// surface is exercised under CORE-012/013; here we only assert the
 	// notification delivery contract.
-	mgr.Notify(ctx, derpHref, sep2.NotificationStatusChanged)
-
 	got, ok := receiver.Wait(1, 2*time.Second)
 	if !ok {
 		t.Fatalf("MAINT-004 Step 3: timed out; received %d, want >=1", len(got))
@@ -116,12 +112,12 @@ func TestMAINT_004_MaintenanceOfControls(t *testing.T) {
 	if rec.Notification == nil {
 		t.Fatalf("MAINT-004 Step 3: body did not parse: %q", string(rec.Body))
 	}
-	if rec.Notification.SubscribedResource != derpHref {
+	if rec.Notification.SubscribedResource != listHref {
 		t.Errorf("MAINT-004 Step 3: SubscribedResource = %q, want %q",
-			rec.Notification.SubscribedResource, derpHref)
+			rec.Notification.SubscribedResource, listHref)
 	}
-	if rec.Notification.Status != sep2.NotificationStatusChanged {
-		t.Errorf("MAINT-004 Step 3: Status = %d, want %d (Changed)",
-			rec.Notification.Status, sep2.NotificationStatusChanged)
+	if rec.Notification.Status != 0 {
+		t.Errorf("MAINT-004 Step 3: Status = %d, want 0 (Default Status)",
+			rec.Notification.Status)
 	}
 }

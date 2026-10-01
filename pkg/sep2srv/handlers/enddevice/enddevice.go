@@ -383,7 +383,7 @@ func HandleUpdateEndDevice(s store.EndDeviceStore) http.HandlerFunc {
 // HandleDeleteEndDevice returns a handler for DELETE /edev/{id}. CSIP V1.2
 // MAINT-002 step 5 mandates that on successful deletion the server fires a
 // Notification on the EndDeviceList subscription (SubscribedResource =
-// "/edev") with NotificationStatusRemoved. The notifier is optional:
+// "/edev") with NotificationStatusDefault: the list changed, no subscription ended. The notifier is optional:
 // passing nil disables notification fan-out (useful for tests that don't
 // exercise the subscription path).
 func HandleDeleteEndDevice(s store.EndDeviceStore, n ResourceNotifier) http.HandlerFunc {
@@ -412,7 +412,7 @@ func HandleDeleteEndDevice(s store.EndDeviceStore, n ResourceNotifier) http.Hand
 		// EndDeviceList subscriber. The Manager enqueues onto a bounded
 		// queue and returns immediately, so this stays non-blocking.
 		if n != nil {
-			n.Notify(r.Context(), EndDeviceListHref, sep2.NotificationStatusRemoved)
+			n.Notify(r.Context(), EndDeviceListHref, sep2.NotificationStatusDefault)
 		}
 
 		w.WriteHeader(http.StatusNoContent)

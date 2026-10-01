@@ -40,6 +40,11 @@ type ownershipGate struct {
 	identity       func(ctx context.Context) (lfdi, sfdi string, ok bool)
 	identityAbsent bool
 	denials        *denialLog
+
+	// reads holds a probe for every GET pattern registered through the gate
+	// that the gate decides, so a resource href is matched to its route by
+	// the same ServeMux rules a GET of it would be.
+	reads *http.ServeMux
 }
 
 // ownershipExempt holds the only /edev patterns served without the gate.
@@ -62,6 +67,7 @@ func newOwnershipGate(next routeRegistrar, devices store.EndDeviceStore, manager
 		identity:       identity,
 		identityAbsent: identity == nil,
 		denials:        newDenialLog(log.Printf),
+		reads:          http.NewServeMux(),
 	}
 	if g.managersAbsent {
 		log.Print("assembly: Stores.EndDeviceManagers is not wired: no EndDevice access is delegated to a manager")
@@ -70,10 +76,15 @@ func newOwnershipGate(next routeRegistrar, devices store.EndDeviceStore, manager
 }
 
 func (g *ownershipGate) HandleFunc(pattern string, h func(http.ResponseWriter, *http.Request)) {
-	if requiresOwnership(pattern) {
-		h = g.wrap(h, delegable(pattern))
+	gated := requiresOwnership(pattern)
+	delegated := gated && delegable(pattern)
+	if gated {
+		h = g.wrap(h, delegated)
 	}
 	g.next.HandleFunc(pattern, h)
+	if servesGET(pattern) && (gated || ownershipExempt[pattern]) {
+		g.reads.HandleFunc(pattern, readProbe(readRoute{gated: gated, delegated: delegated}))
+	}
 }
 
 // requiresOwnership reports whether pattern is under /edev and not exempt.
@@ -204,17 +215,27 @@ func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request), dele
 }
 
 func (g *ownershipGate) decide(r *http.Request, delegated bool) ownershipVerdict {
+	callerLFDI, ok := g.caller(r.Context())
+	if !ok {
+		return ownershipVerdict{reason: reasonNoIdentity}
+	}
+	return g.decideFor(r.Context(), callerLFDI, r.PathValue("id"), delegated)
+}
+
+func (g *ownershipGate) caller(ctx context.Context) (string, bool) {
 	if g.identityAbsent {
-		return ownershipVerdict{reason: reasonNoIdentity}
+		return "", false
 	}
-	callerLFDI, _, ok := g.identity(r.Context())
-	if !ok || callerLFDI == "" {
-		return ownershipVerdict{reason: reasonNoIdentity}
-	}
+	callerLFDI, _, ok := g.identity(ctx)
+	return callerLFDI, ok && callerLFDI != ""
+}
+
+// decideFor is decide for a caller and path {id} already in hand, so a
+// subscribedResource is judged by the same rule as a request for it.
+func (g *ownershipGate) decideFor(ctx context.Context, callerLFDI, id string, delegated bool) ownershipVerdict {
 	refuse := func(reason string) ownershipVerdict {
 		return ownershipVerdict{caller: callerLFDI, reason: reason}
 	}
-	id := r.PathValue("id")
 	if id == "" {
 		return refuse(reasonNoDeviceID)
 	}
@@ -222,7 +243,7 @@ func (g *ownershipGate) decide(r *http.Request, delegated bool) ownershipVerdict
 		return ownershipVerdict{decision: ownershipStoreFailed, err: errors.New("ownership check has no EndDevice store to read")}
 	}
 
-	dev, err := g.devices.Get(r.Context(), id)
+	dev, err := g.devices.Get(ctx, id)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return ownershipVerdict{decision: ownershipDeviceAbsent, caller: callerLFDI, reason: reasonAbsent}
@@ -242,7 +263,7 @@ func (g *ownershipGate) decide(r *http.Request, delegated bool) ownershipVerdict
 	if !delegated || g.managersAbsent {
 		return refuse(reasonNotOwner)
 	}
-	allowed, err := coreedev.CurrentManagerOwns(r.Context(), g.managers, dev.LFDI, callerLFDI)
+	allowed, err := coreedev.CurrentManagerOwns(ctx, g.managers, dev.LFDI, callerLFDI)
 	if err != nil {
 		return ownershipVerdict{decision: ownershipStoreFailed, err: fmt.Errorf("ownership check could not read the EndDevice's manager: %w", err)}
 	}

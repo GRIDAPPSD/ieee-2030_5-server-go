@@ -444,11 +444,12 @@ func BuildProtocolRouter(
 		// Every helper registers through the ownership gate, so each
 		// /edev/{id}-scoped route is bound to the caller wherever it is mounted.
 		gated := newOwnershipGate(protocolMux, stores.EndDevices, stores.EndDeviceManagers, authPolicy.Identity)
-		registerEndDeviceRoutes(gated, stores, authPolicy, notifier)
+		registerEndDeviceRoutes(gated, stores, authPolicy, notifier, gated.checkSubscribe)
 		registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
 		registerDERRoutes(gated, stores)
 		registerMeteringRoutes(gated, stores)
 		registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, notifier)
+		setSubscriberCheck(notifier, gated.checkSubscriber)
 	}
 
 	var protocolChain http.Handler
@@ -553,6 +554,25 @@ func asNotifyRemoved(n ResourceNotifier) func(context.Context, sep2.Subscription
 // create route vets a notificationURI under the same policy delivery uses.
 type notificationURIValidator interface {
 	ValidateNotificationURI(ctx context.Context, uri string) error
+}
+
+// subscriberCheckSetter is satisfied by *subscription.Manager.
+type subscriberCheckSetter interface {
+	SetSubscriberCheck(fn coresub.SubscriberCheck)
+}
+
+// setSubscriberCheck hands n the delivery-time subscriber check. A notifier
+// that cannot take one delivers on its stored index alone, which is logged.
+func setSubscriberCheck(n ResourceNotifier, check coresub.SubscriberCheck) {
+	if n == nil {
+		return
+	}
+	s, ok := n.(subscriberCheckSetter)
+	if !ok {
+		log.Printf("assembly: notifier %T takes no subscriber check; notifications are not re-checked at delivery", n)
+		return
+	}
+	s.SetSubscriberCheck(check)
 }
 
 // asNotificationURIValidator returns n's validator, or nil so the create
@@ -706,7 +726,7 @@ func ownedEndDevices(stores *Stores) store.EndDeviceStore {
 	return requireEndDevices(flowReservationLinkedEndDevices(deviceKeyedCascadeEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores), stores), stores))
 }
 
-func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier) {
+func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier, canRead coresub.ReadCheck) {
 	// A nil index allocator is substituted rather than rejected so a
 	// zero-value Stores stays usable, but the substitute is process-local:
 	// log it, because on a production server it means every device is
@@ -758,7 +778,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	// Subscription endpoints
 	if !store.IsAbsent(stores.Subscriptions) {
 		mux.HandleFunc("GET /edev/{id}/sub", coresub.HandleListSubscriptionsByDevice(stores.Subscriptions, 900))
-		mux.HandleFunc("POST /edev/{id}/sub", coresub.HandleCreateSubscription(stores.Subscriptions, asNotificationURIValidator(notifier)))
+		mux.HandleFunc("POST /edev/{id}/sub", coresub.HandleCreateSubscription(stores.Subscriptions, asNotificationURIValidator(notifier), canRead))
 		mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", coresub.HandleDeleteSubscription(stores.Subscriptions, asNotifyRemoved(notifier)))
 	}
 }

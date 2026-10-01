@@ -325,6 +325,23 @@ func (a *notifierAdapter) ValidateNotificationURI(ctx context.Context, uri strin
 	return coresub.DestinationPolicy{}.ValidateNotificationURI(ctx, uri)
 }
 
+type subscriberCheckSetter interface {
+	SetSubscriberCheck(fn coresub.SubscriberCheck)
+}
+
+var _ subscriberCheckSetter = (*coresub.Manager)(nil)
+
+// SetSubscriberCheck forwards the router's delivery-time subscriber check to
+// the inner notifier. Without the forward the wrapped Manager would deliver
+// on its stored index alone.
+func (a *notifierAdapter) SetSubscriberCheck(fn coresub.SubscriberCheck) {
+	if s, ok := a.inner.(subscriberCheckSetter); ok {
+		s.SetSubscriberCheck(fn)
+		return
+	}
+	log.Printf("server: notifier %T takes no subscriber check; notifications are not re-checked at delivery", a.inner)
+}
+
 // adaptNotifier wraps a handler.ResourceNotifier as an
 // assembly.ResourceNotifier. Returns nil when n is nil so
 // assembly.BuildProtocolRouter can skip fan-out safely (nil notifier

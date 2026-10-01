@@ -112,4 +112,34 @@ describe('AdminShell', () => {
 
     expect(connect).not.toHaveBeenCalled()
   })
+
+  it('shows the server error for a failed device read and clears it on a good frame', async () => {
+    vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string) => {
+      if (path === '/dashboard/data') {
+        return { ok: false, error: 'device list unavailable: backend down', status: 500 } as never
+      }
+      if (path === '/api/fsas') return { ok: true, data: { fsas: [] } } as never
+      return { ok: true, data: { kind: 'SY', id: 'sy', label: 'System' } } as never
+    })
+    let push: ((d: DashboardData) => void) | undefined
+    vi.spyOn(dash, 'connectDashboard').mockImplementation((cb) => {
+      push = cb
+      return () => {}
+    })
+
+    render(AdminShell)
+
+    const banner = await screen.findByTestId('dashboard-error')
+    expect(banner).toHaveTextContent('device list unavailable: backend down')
+
+    push?.({ ...data, devices: null, error: 'device list unavailable: still down' })
+    await waitFor(() => {
+      expect(screen.getByTestId('dashboard-error')).toHaveTextContent('still down')
+    })
+
+    push?.(data)
+    await waitFor(() => {
+      expect(screen.queryByTestId('dashboard-error')).toBeNull()
+    })
+  })
 })

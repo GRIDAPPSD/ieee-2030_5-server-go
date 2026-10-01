@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -18,6 +20,10 @@ type DashboardData struct {
 	TLSMode     string            `json:"tlsMode"`
 	Uptime      string            `json:"uptime"`
 	Devices     []DashboardDevice `json:"devices"`
+	// Error is set when the device list could not be read. Devices is then
+	// null rather than an empty list, so a failed read never looks like a
+	// server with no devices.
+	Error string `json:"error,omitempty"`
 }
 
 // DashboardDevice represents a device in the dashboard.
@@ -62,6 +68,9 @@ func (d *DashboardHandler) RegisterRoutes(mux routeRegistrar) {
 func (d *DashboardHandler) handleData(w http.ResponseWriter, r *http.Request) {
 	data := d.collectData()
 	w.Header().Set("Content-Type", "application/json")
+	if data.Error != "" {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
 	_ = json.NewEncoder(w).Encode(data)
 }
 
@@ -102,11 +111,27 @@ func (d *DashboardHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 func (d *DashboardHandler) collectData() DashboardData {
 	ctx := context.Background()
-	devCount, _ := d.stores.EndDevices.Count(ctx)
-	mupCount, _ := d.stores.MirrorUsagePoints.Count(ctx)
+	var problems []string
+	note := func(what string, err error) {
+		log.Printf("dashboard: %s unavailable: %v", what, err)
+		problems = append(problems, what+" unavailable: "+err.Error())
+	}
+	devCount, err := d.stores.EndDevices.Count(ctx)
+	if err != nil {
+		note("device count", err)
+	}
+	mupCount, err := d.stores.MirrorUsagePoints.Count(ctx)
+	if err != nil {
+		note("MUP count", err)
+	}
 
-	result, _ := d.stores.EndDevices.List(ctx, store.ListOptions{Limit: 50})
+	// Unbounded: the dashboard lists every device, so none is dropped
+	// silently past a page size.
+	result, listErr := d.stores.EndDevices.List(ctx, store.ListOptions{Unbounded: true})
 	var devices []DashboardDevice
+	if listErr != nil {
+		note("device list", listErr)
+	}
 	for _, dev := range result.Items {
 		enabled := dev.Enabled != nil && *dev.Enabled
 		devices = append(devices, DashboardDevice{
@@ -126,6 +151,7 @@ func (d *DashboardHandler) collectData() DashboardData {
 		TLSMode:     d.tlsMode,
 		Uptime:      uptime.String(),
 		Devices:     devices,
+		Error:       strings.Join(problems, "; "),
 	}
 }
 

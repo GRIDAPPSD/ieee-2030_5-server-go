@@ -20,6 +20,8 @@ export interface DashboardData {
   tlsMode: string
   uptime: string
   devices: DashboardDevice[] | null
+  // Set when the server could not read the device list; devices is then null.
+  error?: string
 }
 
 // HISTORY_LIMIT caps the in-memory activity series at 5 minutes of

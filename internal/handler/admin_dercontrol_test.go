@@ -17,6 +17,8 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
@@ -66,6 +68,9 @@ type dcHarness struct {
 	programs   *memory.DERProgramStore
 	devices    *memory.EndDeviceStore
 	responses  *memory.ScopedStore[sep2.Response]
+	managers   *memory.EndDeviceManagementStore
+	grants     *memory.ScopedStore[sep2.FlowReservationResponse]
+	grantMarks *memory.ScopedStore[dercontrol.LifecycleRecord]
 	notifier   *recordingNotifier
 	logs       *bytes.Buffer
 }
@@ -78,6 +83,9 @@ func newDCHarness(t *testing.T, pen *uint32) *dcHarness {
 		programs:   memory.NewDERProgramStore(),
 		devices:    memory.NewEndDeviceStore(),
 		responses:  memory.NewScopedStore[sep2.Response](),
+		managers:   memory.NewEndDeviceManagementStore(),
+		grants:     memory.NewScopedStore[sep2.FlowReservationResponse](),
+		grantMarks: memory.NewScopedStore[dercontrol.LifecycleRecord](),
 		notifier:   &recordingNotifier{},
 		logs:       &bytes.Buffer{},
 	}
@@ -93,6 +101,8 @@ func newDCHarness(t *testing.T, pen *uint32) *dcHarness {
 		EndDevices: d.devices,
 		Responses:  d.responses,
 		Notifier:   d.notifier,
+		Fleets:     commitment.Resolver{Devices: d.devices, Managers: d.managers},
+		Ledger:     sources.NewLedger(d.devices, d.managers, d.grants, d.grantMarks, d.controls, d.lifecycles),
 		Logger:     slog.New(slog.NewTextHandler(d.logs, nil)),
 	}
 	d.mux = http.NewServeMux()
@@ -365,7 +375,9 @@ func TestDERControlCreate_Refusals(t *testing.T) {
 // failingIssuer returns a fixed error from both methods, for the 500 path.
 type failingIssuer struct{ err error }
 
-func (f failingIssuer) Issue(context.Context, dercontrol.CreateRequest) (dercontrol.Result, error) {
+func (failingIssuer) Validate(dercontrol.CreateRequest) error { return nil }
+
+func (f failingIssuer) IssueInFleet(context.Context, dercontrol.CreateRequest, dercontrol.Fleet) (dercontrol.Result, error) {
 	return dercontrol.Result{}, f.err
 }
 
@@ -380,42 +392,6 @@ func TestDERControlCreate_InternalErrorHasNoDetail(t *testing.T) {
 	assertRefusal(t, w, http.StatusInternalServerError, "internal error")
 	if strings.Contains(w.Body.String(), "disk") || strings.Contains(d.logs.String(), "no space") {
 		t.Errorf("internal detail leaked: body %s log %s", w.Body.String(), d.logs.String())
-	}
-}
-
-// The #714 seam: a commitment conflict answers 409 and a check that could
-// not complete answers 500, so the two stay distinguishable; neither stores
-// anything, and the check sees the validated request.
-func TestDERControlCreate_CommitmentCheck(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		err        error
-		wantStatus int
-		wantError  string
-		wantLog    string
-	}{
-		{"conflict", fmt.Errorf("overlaps grant X: %w", handler.ErrCommitmentConflict), http.StatusConflict, "control conflicts with an existing commitment", "level=WARN"},
-		{"check failed", errors.New("reservation store unavailable"), http.StatusInternalServerError, "internal error", "cause=commitment_check_failed"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			d := newDCHarness(t, ptrU32(dcPEN))
-			var seen dercontrol.CreateRequest
-			d.h.Commitments = func(_ context.Context, req dercontrol.CreateRequest) error {
-				seen = req
-				return tc.err
-			}
-			w := d.do(t, http.MethodPost, "/api/der/controls", maxLimWBody(futureStart(60), 1234, 300))
-			assertRefusal(t, w, tc.wantStatus, tc.wantError)
-			if c, l := d.storedCounts(t); c != 0 || l != 0 {
-				t.Errorf("stored %d/%d after a commitment refusal", c, l)
-			}
-			if seen.Type != dercontrol.MaxLimW || seen.MaxLimW == nil || *seen.MaxLimW != 1234 || seen.DERProgramHref != "/edev/0/fsa/0/derp/0" {
-				t.Errorf("check saw %+v, want the validated request", seen)
-			}
-			if !strings.Contains(d.logs.String(), tc.wantLog) || strings.Contains(d.logs.String(), "reservation store") {
-				t.Errorf("log = %s, want %q and no check error text", d.logs.String(), tc.wantLog)
-			}
-		})
 	}
 }
 
@@ -676,7 +652,7 @@ func TestDERControlAuditLog(t *testing.T) {
 		t.Fatalf("second cancel answered %d", w.Code)
 	}
 	// A 5xx after full validation.
-	d.h.Commitments = func(context.Context, dercontrol.CreateRequest) error { return errors.New("down") }
+	d.h.Ledger = sources.NewLedger(d.devices, d.managers, failingGrantLister{}, d.grantMarks, d.controls, d.lifecycles)
 	if w := d.do(t, http.MethodPost, "/api/der/controls", `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","durationSeconds":300,"description":"`+forged+`"}`); w.Code != http.StatusInternalServerError {
 		t.Fatalf("failing check answered %d", w.Code)
 	}

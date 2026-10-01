@@ -134,38 +134,54 @@ func (i *Issuer) Issue(ctx context.Context, req CreateRequest) (Result, error) {
 	return i.issue(ctx, req, Fleet{})
 }
 
-func (i *Issuer) issue(ctx context.Context, req CreateRequest, fleet Fleet) (Result, error) {
-	if i.cfg.PEN == nil {
-		return Result{}, refuse(RefusalPENNotConfigured)
-	}
+// Validate runs every check Issue makes that reads no store, and returns
+// the *RefusalError Issue would. A caller that must take a lock before
+// Issue runs these first, so a bad request is refused without waiting.
+func (i *Issuer) Validate(req CreateRequest) error {
+	_, err := i.validate(req, sep2time.Now().Unix())
+	return err
+}
 
-	reqEdev, _, reqDerp, ok := parseProgramHref(req.DERProgramHref)
-	if !ok {
-		return Result{}, refuse(RefusalInvalidProgramHref)
+// validate is Validate at now, returning the DERControlBase it built.
+func (i *Issuer) validate(req CreateRequest, now int64) (*sep2.DERControlBase, error) {
+	if i.cfg.PEN == nil {
+		return nil, refuse(RefusalPENNotConfigured)
+	}
+	if _, _, _, ok := parseProgramHref(req.DERProgramHref); !ok {
+		return nil, refuse(RefusalInvalidProgramHref)
 	}
 	if !utf8.ValidString(req.Description) || len(req.Description) > maxDescriptionOctets {
-		return Result{}, refuse(RefusalInvalidDescription)
+		return nil, refuse(RefusalInvalidDescription)
 	}
 
 	base, err := buildBase(req)
 	if err != nil {
-		return Result{}, err
+		return nil, err
 	}
-
-	now := sep2time.Now().Unix()
 
 	if req.Start != nil {
 		if *req.Start < now {
-			return Result{}, refuse(RefusalStartInPast)
+			return nil, refuse(RefusalStartInPast)
 		}
 		if *req.Start > now+int64(i.cfg.StartLead/time.Second) {
-			return Result{}, refuse(RefusalStartTooFarAhead)
+			return nil, refuse(RefusalStartTooFarAhead)
 		}
 	}
 	durationSeconds := int64(req.DurationSeconds)
 	if durationSeconds < int64(i.cfg.MinDuration/time.Second) || durationSeconds > int64(i.cfg.MaxDuration/time.Second) {
-		return Result{}, refuse(RefusalDurationOutOfRange)
+		return nil, refuse(RefusalDurationOutOfRange)
 	}
+	return base, nil
+}
+
+func (i *Issuer) issue(ctx context.Context, req CreateRequest, fleet Fleet) (Result, error) {
+	now := sep2time.Now().Unix()
+	base, err := i.validate(req, now)
+	if err != nil {
+		return Result{}, err
+	}
+	reqEdev, _, reqDerp, _ := parseProgramHref(req.DERProgramHref)
+	durationSeconds := int64(req.DurationSeconds)
 
 	program, err := i.programs.Get(ctx, reqEdev, reqDerp)
 	if err != nil {

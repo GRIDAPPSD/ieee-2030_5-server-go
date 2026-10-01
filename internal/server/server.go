@@ -265,6 +265,11 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 		return nil, nil, err
 	}
 	stores.FlowReservationDeadline = deadline
+	grace, err := cfg.EffectiveFlowReservationRetentionGrace()
+	if err != nil {
+		return nil, nil, err
+	}
+	stores.FlowReservationRetentionGrace = grace
 
 	return stores, endDevices, nil
 }
@@ -417,6 +422,10 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		}
 		return fmt.Errorf("flow reservation recovery: %w", err)
 	}
+	// #672: retention sweeps once now, after recovery, then every minute.
+	// Deferred after the queue's Close, so it stops first.
+	stopRetention := startRetentionAtBoot(ctx, stores, frNotifier, slog.Default(), time.Now)
+	defer stopRetention()
 
 	// Build the embeddable protocol server: it binds the listener, derives
 	// the server identity (SFDI/LFDI) from the leaf cert BEFORE assembling the

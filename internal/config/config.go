@@ -17,6 +17,14 @@ const (
 	DefaultFlowReservationDeadline = 300 * time.Second
 )
 
+// Bounds on SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS. Zero in Config
+// means unset and takes DefaultFlowReservationRetentionGrace.
+const (
+	MinFlowReservationRetentionGrace     = time.Second
+	MaxFlowReservationRetentionGrace     = 7 * 24 * time.Hour
+	DefaultFlowReservationRetentionGrace = 1800 * time.Second
+)
+
 // Config holds server configuration.
 type Config struct {
 	Addr            string // listen address for IEEE 2030.5 protocol (e.g., ":443")
@@ -200,6 +208,12 @@ type Config struct {
 	// SEP2_FLOW_RESERVATION_DEADLINE_SECONDS, 1 to 3600. Zero means unset;
 	// use EffectiveFlowReservationDeadline.
 	FlowReservationDeadline time.Duration
+
+	// FlowReservationRetentionGrace is how long an ended flow reservation
+	// stays readable before it is removed. Env:
+	// SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS, 1 to 604800. Zero means
+	// unset; use EffectiveFlowReservationRetentionGrace.
+	FlowReservationRetentionGrace time.Duration
 }
 
 // ParseFlowReservationDeadlineSeconds validates the value of
@@ -231,6 +245,36 @@ func (c *Config) EffectiveFlowReservationDeadline() (time.Duration, error) {
 		return 0, fmt.Errorf("flow reservation deadline %s is outside 1s to 1h", c.FlowReservationDeadline)
 	}
 	return c.FlowReservationDeadline, nil
+}
+
+// ParseFlowReservationRetentionGraceSeconds validates the value of
+// SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS: empty is unset (zero),
+// anything else must be whole seconds from 1 to 604800.
+func ParseFlowReservationRetentionGraceSeconds(v string) (time.Duration, error) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS: %q is not a whole number of seconds", v)
+	}
+	if n < int64(MinFlowReservationRetentionGrace/time.Second) || n > int64(MaxFlowReservationRetentionGrace/time.Second) {
+		return 0, fmt.Errorf("SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS: %d is outside 1 to 604800", n)
+	}
+	return time.Duration(n) * time.Second, nil
+}
+
+// EffectiveFlowReservationRetentionGrace resolves an unset grace to the
+// default and refuses a value outside the bounds.
+func (c *Config) EffectiveFlowReservationRetentionGrace() (time.Duration, error) {
+	g := c.FlowReservationRetentionGrace
+	if g == 0 {
+		return DefaultFlowReservationRetentionGrace, nil
+	}
+	if g < MinFlowReservationRetentionGrace || g > MaxFlowReservationRetentionGrace || g%time.Second != 0 {
+		return 0, fmt.Errorf("flow reservation retention grace %s is not whole seconds from 1s to 168h", g)
+	}
+	return g, nil
 }
 
 // EffectivePEN normalizes PEN the way internal/dercontrol.Config already

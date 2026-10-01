@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -116,5 +117,42 @@ func TestDashboardSSE_FrameCarriesStoreError(t *testing.T) {
 	}
 	if v, present := body["devices"]; !present || v != nil {
 		t.Errorf("devices = %v (present=%v), want present and null", v, present)
+	}
+}
+
+// failingCountEndDevices fails Count only; List still serves.
+type failingCountEndDevices struct {
+	store.EndDeviceStore
+}
+
+func (failingCountEndDevices) Count(context.Context) (uint32, error) {
+	return 0, errors.New("count down")
+}
+
+func TestDashboardData_CountErrorIsSurfacedNotDropped(t *testing.T) {
+	mem := memory.NewEndDeviceStore()
+	if err := mem.Create(context.Background(), "1", sep2.EndDevice{SFDI: "111", LFDI: "AA"}); err != nil {
+		t.Fatal(err)
+	}
+	code, body := getDashboardData(t, dashboardTestStores(t, failingCountEndDevices{mem}))
+
+	if code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", code)
+	}
+	if got, _ := body["error"].(string); got != "device count unavailable: count down" {
+		t.Errorf("error = %q, want the count error named", got)
+	}
+}
+
+func TestDashboardData_ListErrorIsLoggedOncePerRead(t *testing.T) {
+	var buf strings.Builder
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	getDashboardData(t, dashboardTestStores(t, failingListEndDevices{memory.NewEndDeviceStore()}))
+
+	if got := strings.Count(buf.String(), "dashboard: device list unavailable: backend down"); got != 1 {
+		t.Errorf("list error logged %d times in %q, want 1", got, buf.String())
 	}
 }

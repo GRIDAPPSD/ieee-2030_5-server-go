@@ -245,7 +245,18 @@ function onSSEMessage(event) {
   var tbody = document.getElementById('deviceTable');
   while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
 
-  if (d.devices && d.devices.length > 0) {
+  if (d.error) {
+    // A failed read is not an empty server: show the reason, not the
+    // "No devices registered" row.
+    var errTr = document.createElement('tr');
+    var errTd = document.createElement('td');
+    errTd.colSpan = 5;
+    errTd.className = 'dashboard-error';
+    errTd.style.color = 'var(--red)';
+    errTd.textContent = d.error;
+    errTr.appendChild(errTd);
+    tbody.appendChild(errTr);
+  } else if (d.devices && d.devices.length > 0) {
     d.devices.forEach(function(dev) {
       var tr = document.createElement('tr');
       appendCell(tr, dev.sfdi, 'mono');

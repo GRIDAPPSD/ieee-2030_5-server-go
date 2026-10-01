@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -109,16 +111,26 @@ func (d *DashboardHandler) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 func (d *DashboardHandler) collectData() DashboardData {
 	ctx := context.Background()
-	devCount, _ := d.stores.EndDevices.Count(ctx)
-	mupCount, _ := d.stores.MirrorUsagePoints.Count(ctx)
+	var problems []string
+	note := func(what string, err error) {
+		log.Printf("dashboard: %s unavailable: %v", what, err)
+		problems = append(problems, what+" unavailable: "+err.Error())
+	}
+	devCount, err := d.stores.EndDevices.Count(ctx)
+	if err != nil {
+		note("device count", err)
+	}
+	mupCount, err := d.stores.MirrorUsagePoints.Count(ctx)
+	if err != nil {
+		note("MUP count", err)
+	}
 
 	// Unbounded: the dashboard lists every device, so none is dropped
 	// silently past a page size.
 	result, listErr := d.stores.EndDevices.List(ctx, store.ListOptions{Unbounded: true})
 	var devices []DashboardDevice
-	var errMsg string
 	if listErr != nil {
-		errMsg = "device list unavailable: " + listErr.Error()
+		note("device list", listErr)
 	}
 	for _, dev := range result.Items {
 		enabled := dev.Enabled != nil && *dev.Enabled
@@ -139,7 +151,7 @@ func (d *DashboardHandler) collectData() DashboardData {
 		TLSMode:     d.tlsMode,
 		Uptime:      uptime.String(),
 		Devices:     devices,
-		Error:       errMsg,
+		Error:       strings.Join(problems, "; "),
 	}
 }
 

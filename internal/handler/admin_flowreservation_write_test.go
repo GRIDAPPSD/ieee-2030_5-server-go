@@ -23,6 +23,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
@@ -1183,5 +1184,97 @@ func TestFRWrite_ReviseRefusedByAnotherRequestsGrant(t *testing.T) {
 	}
 	if after := f.snapshot(); after != before {
 		t.Errorf("refused revise stored something")
+	}
+}
+
+// A reason whose 192-octet cut lands inside a character is stored as the
+// longest whole-character prefix, valid UTF-8, on the grant and on its
+// controls alike.
+func TestFRWrite_ReasonCutInsideACharacterKeepsWholeCharacters(t *testing.T) {
+	f := newFRWFixture(t)
+	ctx := context.Background()
+	g := f.granted("frq-1", "REQ-1")
+	exec := f.execute(g, f.base, -2000)
+	// One octet then three-octet characters: octet 192 falls inside the 64th.
+	reason := "a" + strings.Repeat("\u65e5", 100)
+	body, err := json.Marshal(map[string]any{"reason": reason})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := f.post("cancel", "frq-1", string(body)); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	want := "a" + strings.Repeat("\u65e5", 63)
+	lc, err := f.lcs.Get(ctx, frwEdev, "frq-1")
+	if err != nil || lc.CancelReason != want || !utf8.ValidString(lc.CancelReason) {
+		t.Errorf("grant reason: %d octets, valid %v (%v), want the %d-octet whole-character prefix", len(lc.CancelReason), utf8.ValidString(lc.CancelReason), err, len(want))
+	}
+	clc, err := f.ctrlLcs.Get(ctx, exec.Scope.Key(), exec.ID)
+	if err != nil || clc.CancelReason != want || !utf8.ValidString(clc.CancelReason) {
+		t.Errorf("control reason: %d octets, valid %v (%v), want the %d-octet whole-character prefix", len(clc.CancelReason), utf8.ValidString(clc.CancelReason), err, len(want))
+	}
+}
+
+// The multiplier bound is -9..9 inclusive at both ends.
+func TestFRWrite_MultiplierNineIsTheUpperBound(t *testing.T) {
+	f := newFRWFixture(t)
+	f.pending("frq-1", "REQ-1")
+	f.pending("frq-2", "REQ-2")
+	rec := f.post("answer", "frq-2", `{"decision":"grant","power":{"value":0,"multiplier":10}}`)
+	if r := decodeRefusal(t, rec); rec.Code != http.StatusBadRequest || r.Code != "multiplier_out_of_range" {
+		t.Errorf("multiplier 10 = %d %+v, want 400 multiplier_out_of_range", rec.Code, r)
+	}
+	rec = f.post("answer", "frq-1", `{"decision":"grant","power":{"value":0,"multiplier":9}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("multiplier 9: status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	if p := f.response("frq-1").PowerAvailable; p == nil || p.Multiplier != 9 {
+		t.Errorf("power = %+v, want multiplier 9", p)
+	}
+}
+
+type fakeAnswerer struct{ err error }
+
+func (a fakeAnswerer) Answer(context.Context, string, string, flowreservation.Decision) (sep2.FlowReservationResponse, error) {
+	return sep2.FlowReservationResponse{}, a.err
+}
+
+// A failed undo or commitment check is the server's failure even when its
+// cause wraps a refusal's sentinel: answer and cancel give 500, never a 4xx.
+func TestFRWrite_InternalFailureIsNeverAnsweredAsARefusal(t *testing.T) {
+	cases := []struct {
+		name, op, body, cause string
+		set                   func(f *frwFixture)
+	}{
+		{"answer: check wrapping not found", "answer", `{"decision":"grant"}`, "commitment_check", func(f *frwFixture) {
+			f.pending("frq-1", "REQ-1")
+			f.h.Queue = fakeAnswerer{fmt.Errorf("%w: %w", flowreservation.ErrCommitmentCheck, store.ErrNotFound)}
+		}},
+		{"answer: undo wrapping already answered", "answer", `{"decision":"grant"}`, "undo_failed", func(f *frwFixture) {
+			f.pending("frq-1", "REQ-1")
+			f.h.Queue = fakeAnswerer{fmt.Errorf("%w: %w", commitment.ErrUndo, flowreservation.ErrAlreadyAnswered)}
+		}},
+		{"cancel: undo wrapping not found", "cancel", `{}`, "undo_failed", func(f *frwFixture) {
+			f.granted("frq-1", "REQ-1")
+			f.h.Canceller = fakeCanceller{err: fmt.Errorf("%w: %w", commitment.ErrUndo, store.ErrNotFound)}
+		}},
+		{"cancel: check wrapping chain moving", "cancel", `{}`, "commitment_check", func(f *frwFixture) {
+			f.granted("frq-1", "REQ-1")
+			f.h.Canceller = fakeCanceller{err: fmt.Errorf("%w: %w", flowreservation.ErrCommitmentCheck, flowreservation.ErrChainMoving)}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFRWFixture(t)
+			c.set(f)
+			f.logs.Reset()
+			rec := f.post(c.op, "frq-1", c.body)
+			if r := decodeRefusal(t, rec); rec.Code != http.StatusInternalServerError || r.Code != "internal" {
+				t.Fatalf("%s = %d %+v, want 500 internal", c.op, rec.Code, r)
+			}
+			if logs := f.logs.String(); !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, "cause="+c.cause) {
+				t.Errorf("log = %q, want an ERROR line with cause=%s", logs, c.cause)
+			}
+		})
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"container/heap"
 	"slices"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
@@ -17,7 +18,8 @@ import (
 // never filled. AverageW is DeliveredWh over the covered seconds, in watts,
 // the figure comparable with a target power. Readings counts the readings the
 // figure uses, and NewestReadingTime is the newest of them, by server
-// receipt time.
+// receipt time. ReadingsExpired is true when retention may have removed
+// readings the window needs; the figure is then null rather than partial.
 type DERControlDelivery struct {
 	WindowStart       int64    `json:"windowStart"`
 	WindowEnd         int64    `json:"windowEnd"`
@@ -28,6 +30,7 @@ type DERControlDelivery struct {
 	DirectionUnknown  bool     `json:"directionUnknown"`
 	DeviceLFDI        string   `json:"deviceLFDI"`
 	NewestReadingTime *int64   `json:"newestReadingTime"`
+	ReadingsExpired   bool     `json:"readingsExpired"`
 }
 
 // DataQualifierType values. 0 is "Not applicable (default, if not
@@ -393,6 +396,14 @@ func (h *spanHeap) Pop() any {
 	x := old[len(old)-1]
 	*h = old[:len(old)-1]
 	return x
+}
+
+// readingsExpired reports whether a window starting at ws needs a reading
+// received before the retention cutoff: the earliest that can reach ws is
+// received maxHoldSeconds before it. A zero retention is unknown, never
+// expired.
+func readingsExpired(ws, now int64, retention time.Duration) bool {
+	return retention > 0 && ws-maxHoldSeconds < now-int64(retention/time.Second)
 }
 
 // newDelivery computes one control's delivery from its device's mirrors.

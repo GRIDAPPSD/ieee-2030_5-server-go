@@ -20,7 +20,7 @@ func TestRun_SweepsMirrorReadingsAtBoot(t *testing.T) {
 	e := newFRRunEnv(t)
 	cfg := e.config(0)
 	cfg.MirrorReadingRetention = 87300 * time.Second
-	cfg.MirrorReadingMaxPerMirror = 7
+	cfg.MirrorReadingMaxPerSeries = 300
 
 	var (
 		mu                 sync.Mutex
@@ -34,7 +34,7 @@ func TestRun_SweepsMirrorReadingsAtBoot(t *testing.T) {
 	server.SetStartMirrorRetentionAtBoot(t, func(ctx context.Context, s *server.Stores, l *slog.Logger, now func() time.Time) func() {
 		mu.Lock()
 		defer mu.Unlock()
-		started, maxAge, maxPer = true, s.MirrorReadingRetention, s.MirrorReadingMaxPerMirror
+		started, maxAge, maxPer = true, s.MirrorReadingRetention, s.MirrorReadingMaxPerSeries
 		at := now()
 		for i, age := range []time.Duration{87301 * time.Second, time.Hour} {
 			nanos := at.Add(-age).UnixNano() + int64(i)
@@ -71,8 +71,8 @@ func TestRun_SweepsMirrorReadingsAtBoot(t *testing.T) {
 	if !started || !stopped || left != 1 {
 		t.Fatalf("started %v, stopped %v (%d), want one start and one stop", started, stopped, left)
 	}
-	if maxAge != 87300*time.Second || maxPer != 7 {
-		t.Errorf("stores carry retention %v and cap %d, want 24h15m0s and 7", maxAge, maxPer)
+	if maxAge != 87300*time.Second || maxPer != 300 {
+		t.Errorf("stores carry retention %v and cap %d, want 24h15m0s and 300", maxAge, maxPer)
 	}
 	if seedErr != nil || listErr != nil {
 		t.Fatalf("seed %v, list %v", seedErr, listErr)

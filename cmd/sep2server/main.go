@@ -245,7 +245,7 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	mirrorReadingMaxPerMirror, err := config.ParseMirrorReadingMaxPerMirror(os.Getenv("SEP2_MIRROR_READING_MAX_PER_MIRROR"))
+	mirrorReadingMaxPerSeries, err := config.ParseMirrorReadingMaxPerSeries(os.Getenv("SEP2_MIRROR_READING_MAX_PER_SERIES"))
 	if err != nil {
 		return nil, err
 	}
@@ -334,9 +334,9 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		FlowReservationRetentionGrace: flowReservationRetentionGrace,
 
 		// #806: unset by default (zero), which resolves to 90000 s and 20000
-		// readings per mirror.
+		// readings per series.
 		MirrorReadingRetention:    mirrorReadingRetention,
-		MirrorReadingMaxPerMirror: mirrorReadingMaxPerMirror,
+		MirrorReadingMaxPerSeries: mirrorReadingMaxPerSeries,
 	}, nil
 }
 

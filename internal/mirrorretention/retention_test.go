@@ -3,6 +3,7 @@ package mirrorretention_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -51,8 +52,9 @@ func watts() *sep2.ReadingType {
 
 func defaults() *mirrorretention.Retention {
 	return &mirrorretention.Retention{
+		Mirrors:      memory.NewStore[sep2.MirrorUsagePoint](),
 		MaxAge:       config.DefaultMirrorReadingRetention,
-		MaxPerMirror: config.DefaultMirrorReadingMaxPerMirror,
+		MaxPerSeries: config.DefaultMirrorReadingMaxPerSeries,
 		Log:          slog.New(slog.DiscardHandler),
 	}
 }
@@ -86,7 +88,8 @@ func TestSweep_KeepsReadingAtRetention(t *testing.T) {
 	}
 }
 
-// G/W/T 2: over the cap the oldest goes, and one log line names the mirror.
+// G/W/T 2: over the cap the oldest of the series goes, and one log line names
+// the mirror and the series.
 func TestSweep_CapRemovesOldestAndLogsMirror(t *testing.T) {
 	s := memory.NewScopedStore[sep2.MirrorMeterReading]()
 	const n = 20001
@@ -117,8 +120,8 @@ func TestSweep_CapRemovesOldestAndLogsMirror(t *testing.T) {
 			naming = append(naming, l)
 		}
 	}
-	if len(naming) != 1 || !strings.Contains(naming[0], "overCap=1") || !strings.Contains(naming[0], "level=WARN") {
-		t.Fatalf("log lines naming m7 = %q, want one WARN with overCap=1; all: %s", naming, logs.String())
+	if len(naming) != 1 || !strings.Contains(naming[0], "mrid=W") || !strings.Contains(naming[0], "overCap=1") || !strings.Contains(naming[0], "level=WARN") {
+		t.Fatalf("log lines naming m7 = %q, want one WARN for mrid W with overCap=1; all: %s", naming, logs.String())
 	}
 }
 
@@ -165,10 +168,12 @@ func TestSweep_LeavesUnaddressableRecord(t *testing.T) {
 
 func TestSweep_RefusesIncompleteRetention(t *testing.T) {
 	s := memory.NewScopedStore[sep2.MirrorMeterReading]()
+	mups := memory.NewStore[sep2.MirrorUsagePoint]()
 	for _, r := range []*mirrorretention.Retention{
-		{MaxAge: time.Hour, MaxPerMirror: 1},
-		{Readings: s, MaxPerMirror: 1},
-		{Readings: s, MaxAge: time.Hour},
+		{Mirrors: mups, MaxAge: time.Hour, MaxPerSeries: 1},
+		{Readings: s, MaxAge: time.Hour, MaxPerSeries: 1},
+		{Readings: s, Mirrors: mups, MaxPerSeries: 1},
+		{Readings: s, Mirrors: mups, MaxAge: time.Hour},
 	} {
 		if _, err := r.Sweep(context.Background(), sweepNow); err != mirrorretention.ErrIncomplete {
 			t.Errorf("Sweep(%+v) err = %v, want ErrIncomplete", r, err)
@@ -191,4 +196,90 @@ func TestStart_SweepsEachTickAndStops(t *testing.T) {
 	}
 	stop()
 	stop()
+}
+
+// Fix round item 1: the cap counts each series on its own, so a mirror with
+// several series loses only the readings of the one over the cap.
+func TestSweep_CapIsPerSeries(t *testing.T) {
+	s := memory.NewScopedStore[sep2.MirrorMeterReading]()
+	a := []string{
+		put(t, s, "1", secondsAgo(600, 0), "A", watts()),
+		put(t, s, "1", secondsAgo(500, 0), "A", watts()),
+		put(t, s, "1", secondsAgo(400, 0), "A", watts()),
+	}
+	b := []string{
+		put(t, s, "1", secondsAgo(700, 0), "B", watts()),
+		put(t, s, "1", secondsAgo(300, 0), "B", watts()),
+	}
+	r := defaults()
+	r.Readings = s
+	r.MaxPerSeries = 2
+	if n, err := r.Sweep(context.Background(), sweepNow); err != nil || n != 1 {
+		t.Fatalf("Sweep = %d, %v, want 1 removed", n, err)
+	}
+	var got []string
+	for _, m := range stored(t, s, "1") {
+		got = append(got, m.Href)
+	}
+	want := []string{"/mup/1/mr/" + b[0], "/mup/1/mr/" + a[1], "/mup/1/mr/" + a[2], "/mup/1/mr/" + b[1]}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("stored = %v, want %v", got, want)
+	}
+}
+
+func inlineMirror(t *testing.T, id string, inline ...sep2.MirrorMeterReading) *memory.Store[sep2.MirrorUsagePoint] {
+	t.Helper()
+	mups := memory.NewStore[sep2.MirrorUsagePoint]()
+	mup := sep2.MirrorUsagePoint{MRID: "MUP" + id, MirrorMeterReading: inline}
+	mup.Href = "/mup/" + id
+	if err := mups.Create(context.Background(), id, mup); err != nil {
+		t.Fatal(err)
+	}
+	return mups
+}
+
+// Fix round item 4: an inline untyped reading keeps the aged out-of-band
+// record its type comes from; an inline typed one does not need it.
+func TestSweep_InlineReadingsInTypeRule(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		inlineRT *sep2.ReadingType
+		kept     int
+	}{
+		{"untyped inline relies on the aged record", nil, 1},
+		{"typed inline needs nothing", watts(), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := memory.NewScopedStore[sep2.MirrorMeterReading]()
+			typed := put(t, s, "1", secondsAgo(30*3600, 0), "W", watts())
+			r := defaults()
+			r.Readings = s
+			r.Mirrors = inlineMirror(t, "1", sep2.MirrorMeterReading{MRID: "W", ReadingType: tc.inlineRT})
+			if _, err := r.Sweep(context.Background(), sweepNow); err != nil {
+				t.Fatal(err)
+			}
+			got := stored(t, s, "1")
+			if len(got) != tc.kept || (tc.kept == 1 && (got[0].Href != "/mup/1/mr/"+typed || got[0].ReadingType == nil)) {
+				t.Fatalf("stored = %+v, want %d record(s), the typed %s", got, tc.kept, typed)
+			}
+		})
+	}
+}
+
+type failingMirrors struct{}
+
+func (failingMirrors) Get(context.Context, string) (sep2.MirrorUsagePoint, error) {
+	return sep2.MirrorUsagePoint{}, errors.New("mirror store down")
+}
+
+// A mirror whose inline readings cannot be read keeps every record this sweep.
+func TestSweep_MirrorReadFailureRemovesNothing(t *testing.T) {
+	s := memory.NewScopedStore[sep2.MirrorMeterReading]()
+	put(t, s, "1", secondsAgo(40*3600, 0), "W", watts())
+	r := defaults()
+	r.Readings = s
+	r.Mirrors = failingMirrors{}
+	if n, err := r.Sweep(context.Background(), sweepNow); err != nil || n != 0 || len(stored(t, s, "1")) != 1 {
+		t.Fatalf("Sweep = %d, %v, want nothing removed", n, err)
+	}
 }

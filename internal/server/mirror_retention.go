@@ -23,8 +23,13 @@ func startMirrorReadingRetention(ctx context.Context, stores *Stores, logger *sl
 	r := &mirrorretention.Retention{
 		Readings:     stores.MirrorMeterReadings,
 		MaxAge:       stores.MirrorReadingRetention,
-		MaxPerMirror: stores.MirrorReadingMaxPerMirror,
+		MaxPerSeries: stores.MirrorReadingMaxPerSeries,
 		Log:          logger,
+	}
+	// A nil mirror store leaves Mirrors nil, so every sweep refuses rather
+	// than removing a type an inline reading relies on.
+	if stores.MirrorUsagePoints != nil {
+		r.Mirrors = stores.MirrorUsagePoints
 	}
 	if _, err := r.Sweep(ctx, now()); err != nil && ctx.Err() == nil {
 		logger.Error("mirrorretention: boot sweep failed, retried at the next tick", "err", err)

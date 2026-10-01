@@ -4,6 +4,7 @@ import (
 	"log"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
@@ -80,5 +81,14 @@ func TestNewAdminDERControlHandler_ThreadsMirrorStoresAndEdition(t *testing.T) {
 	h = newAdminDERControlHandler(s)
 	if h.MirrorUsagePoints != s.MirrorUsagePoints || h.MirrorMeterReadings != s.MirrorMeterReadings || h.Edition != handler.Edition2023 {
 		t.Fatalf("wired: MirrorUsagePoints %v, MirrorMeterReadings %v, Edition %q, want the stores and 2023", h.MirrorUsagePoints, h.MirrorMeterReadings, h.Edition)
+	}
+}
+
+// #806: the list marks expired figures with the retention Run resolved.
+func TestNewAdminDERControlHandler_ThreadsMirrorReadingRetention(t *testing.T) {
+	s := derControlWiringStores()
+	s.MirrorReadingRetention = 87300 * time.Second
+	if h := newAdminDERControlHandler(s); h.MirrorReadingRetention != 87300*time.Second {
+		t.Fatalf("MirrorReadingRetention = %v, want 24h15m0s", h.MirrorReadingRetention)
 	}
 }

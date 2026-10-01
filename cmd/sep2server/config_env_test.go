@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -474,37 +475,40 @@ func TestConfigFromEnvMirrorReadingRetention(t *testing.T) {
 	}
 }
 
-// #806: SEP2_MIRROR_READING_MAX_PER_MIRROR reaches the config as a count, and
-// anything but a positive whole number stops startup.
-func TestConfigFromEnvMirrorReadingMaxPerMirror(t *testing.T) {
+// #806: SEP2_MIRROR_READING_MAX_PER_SERIES reaches the config as a count, and
+// a cap that cannot hold a 300 s cadence across the retention floor, or one
+// above the ceiling, stops startup naming the setting.
+func TestConfigFromEnvMirrorReadingMaxPerSeries(t *testing.T) {
 	resolver := func() *certDirResolver { return &certDirResolver{resolved: true, dir: "/test/certdir"} }
 
-	t.Run("a positive value is the cap", func(t *testing.T) {
-		t.Setenv("SEP2_MIRROR_READING_MAX_PER_MIRROR", "500")
-		cfg, err := configFromEnv(resolver())
-		if err != nil || cfg.MirrorReadingMaxPerMirror != 500 {
-			t.Fatalf("configFromEnv = %+v, %v, want MirrorReadingMaxPerMirror 500", cfg, err)
-		}
-	})
+	for _, ok := range []int{292, 2592000} {
+		t.Run(fmt.Sprintf("%d is the cap", ok), func(t *testing.T) {
+			t.Setenv("SEP2_MIRROR_READING_MAX_PER_SERIES", fmt.Sprint(ok))
+			cfg, err := configFromEnv(resolver())
+			if err != nil || cfg.MirrorReadingMaxPerSeries != ok {
+				t.Fatalf("configFromEnv = %+v, %v, want MirrorReadingMaxPerSeries %d", cfg, err, ok)
+			}
+		})
+	}
 
 	t.Run("unset resolves to 20000", func(t *testing.T) {
-		t.Setenv("SEP2_MIRROR_READING_MAX_PER_MIRROR", "")
+		t.Setenv("SEP2_MIRROR_READING_MAX_PER_SERIES", "")
 		cfg, err := configFromEnv(resolver())
 		if err != nil {
 			t.Fatalf("configFromEnv: %v", err)
 		}
-		got, err := cfg.EffectiveMirrorReadingMaxPerMirror()
+		got, err := cfg.EffectiveMirrorReadingMaxPerSeries()
 		if err != nil || got != 20000 {
-			t.Errorf("EffectiveMirrorReadingMaxPerMirror = %v, %v, want 20000", got, err)
+			t.Errorf("EffectiveMirrorReadingMaxPerSeries = %v, %v, want 20000", got, err)
 		}
 	})
 
-	for _, bad := range []string{"0", "-1", "ten", "1.5"} {
+	for _, bad := range []string{"1", "291", "2592001", "0", "-1", "ten", "1.5"} {
 		t.Run("invalid "+bad+" is a startup error", func(t *testing.T) {
-			t.Setenv("SEP2_MIRROR_READING_MAX_PER_MIRROR", bad)
+			t.Setenv("SEP2_MIRROR_READING_MAX_PER_SERIES", bad)
 			cfg, err := configFromEnv(resolver())
-			if err == nil || !strings.Contains(err.Error(), "SEP2_MIRROR_READING_MAX_PER_MIRROR") {
-				t.Fatalf("configFromEnv = %+v, %v, want an error naming SEP2_MIRROR_READING_MAX_PER_MIRROR", cfg, err)
+			if err == nil || !strings.Contains(err.Error(), "SEP2_MIRROR_READING_MAX_PER_SERIES") {
+				t.Fatalf("configFromEnv = %+v, %v, want an error naming SEP2_MIRROR_READING_MAX_PER_SERIES", cfg, err)
 			}
 		})
 	}

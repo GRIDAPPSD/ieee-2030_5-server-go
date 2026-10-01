@@ -43,16 +43,41 @@ func TestEffectiveMirrorReadingRetention(t *testing.T) {
 	}
 }
 
-func TestEffectiveMirrorReadingMaxPerMirror(t *testing.T) {
+// The cap's floor is one reading every 300 s across the retention floor, ends
+// included, so the cap never removes what the time floor keeps at that rate.
+func TestMinMirrorReadingMaxPerSeries_HoldsCadenceAcrossFloor(t *testing.T) {
+	t.Parallel()
+	if MinMirrorReadingMaxPerSeries != 87300/300+1 {
+		t.Fatalf("MinMirrorReadingMaxPerSeries = %d, want %d", MinMirrorReadingMaxPerSeries, 87300/300+1)
+	}
+}
+
+func TestEffectiveMirrorReadingMaxPerSeries(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		in, want int
 		wantErr  bool
-	}{{0, 20000, false}, {1, 1, false}, {-1, 0, true}} {
-		c := &Config{MirrorReadingMaxPerMirror: tc.in}
-		got, err := c.EffectiveMirrorReadingMaxPerMirror()
+	}{{0, 20000, false}, {292, 292, false}, {2592000, 2592000, false}, {291, 0, true}, {1, 0, true}, {2592001, 0, true}, {-1, 0, true}} {
+		c := &Config{MirrorReadingMaxPerSeries: tc.in}
+		got, err := c.EffectiveMirrorReadingMaxPerSeries()
 		if (err != nil) != tc.wantErr || got != tc.want {
-			t.Errorf("EffectiveMirrorReadingMaxPerMirror(%d) = %d, %v; want %d, err %v", tc.in, got, err, tc.want, tc.wantErr)
+			t.Errorf("EffectiveMirrorReadingMaxPerSeries(%d) = %d, %v; want %d, err %v", tc.in, got, err, tc.want, tc.wantErr)
+		}
+	}
+}
+
+// A cap that cannot hold a 300 s cadence across the time floor, or one above
+// the ceiling, is refused.
+func TestParseMirrorReadingMaxPerSeries_Bounds(t *testing.T) {
+	t.Parallel()
+	for _, v := range []string{"1", "291", "2592001"} {
+		if _, err := ParseMirrorReadingMaxPerSeries(v); err == nil {
+			t.Errorf("cap %s accepted, want refused", v)
+		}
+	}
+	for _, v := range []string{"292", "2592000"} {
+		if _, err := ParseMirrorReadingMaxPerSeries(v); err != nil {
+			t.Errorf("cap %s refused: %v", v, err)
 		}
 	}
 }

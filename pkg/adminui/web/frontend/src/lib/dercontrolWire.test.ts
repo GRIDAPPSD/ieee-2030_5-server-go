@@ -22,6 +22,7 @@ const wire = {
       directionUnknown: true,
       deviceLFDI: true,
       newestReadingTime: true,
+      readingsExpired: true,
     } satisfies Record<keyof DERControlDelivery, true>),
   },
   // Only the list item's own fields; the embedded DERControlView is untagged.

@@ -56,8 +56,9 @@ func TestDERControlList_DeliveryCoveredAfterRetentionSweep(t *testing.T) {
 
 			ret := &mirrorretention.Retention{
 				Readings:     d.mmrs,
+				Mirrors:      d.mups,
 				MaxAge:       maxAge,
-				MaxPerMirror: config.DefaultMirrorReadingMaxPerMirror,
+				MaxPerSeries: config.DefaultMirrorReadingMaxPerSeries,
 				Log:          slog.New(slog.DiscardHandler),
 			}
 			if removed, err := ret.Sweep(ctx, time.Unix(start+day, 0)); err != nil || removed != 0 {

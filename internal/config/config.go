@@ -41,11 +41,18 @@ const (
 	DefaultMirrorReadingRetention = 25 * time.Hour
 )
 
-// DefaultMirrorReadingMaxPerMirror is the per-mirror reading count kept when
-// SEP2_MIRROR_READING_MAX_PER_MIRROR is unset. Over the default retention it
-// is one reading every 4.5 s, so a mirror posting at a conforming rate never
-// reaches it.
-const DefaultMirrorReadingMaxPerMirror = 20000
+// Bounds on SEP2_MIRROR_READING_MAX_PER_SERIES, the readings kept per mirror
+// and mRID. The floor holds one reading every MirrorReadingCadence across
+// MinMirrorReadingRetention, ends included, so the cap never removes a reading
+// the time floor keeps at that rate. The ceiling is one reading a second
+// across MaxMirrorReadingRetention. The default, over the default retention,
+// is one reading every 4.5 s. Zero in Config means unset.
+const (
+	MirrorReadingCadence             = 300 * time.Second
+	MinMirrorReadingMaxPerSeries     = int(MinMirrorReadingRetention/MirrorReadingCadence) + 1
+	MaxMirrorReadingMaxPerSeries     = int(MaxMirrorReadingRetention / time.Second)
+	DefaultMirrorReadingMaxPerSeries = 20000
+)
 
 // Config holds server configuration.
 type Config struct {
@@ -242,10 +249,10 @@ type Config struct {
 	// 87300 to 2592000. Zero means unset; use EffectiveMirrorReadingRetention.
 	MirrorReadingRetention time.Duration
 
-	// MirrorReadingMaxPerMirror caps the readings kept per MirrorUsagePoint.
-	// Env: SEP2_MIRROR_READING_MAX_PER_MIRROR, a positive whole number. Zero
-	// means unset; use EffectiveMirrorReadingMaxPerMirror.
-	MirrorReadingMaxPerMirror int
+	// MirrorReadingMaxPerSeries caps the readings kept per mirror and mRID.
+	// Env: SEP2_MIRROR_READING_MAX_PER_SERIES, 292 to 2592000. Zero means
+	// unset; use EffectiveMirrorReadingMaxPerSeries.
+	MirrorReadingMaxPerSeries int
 }
 
 // ParseFlowReservationDeadlineSeconds validates the value of
@@ -340,30 +347,34 @@ func (c *Config) EffectiveMirrorReadingRetention() (time.Duration, error) {
 	return r, nil
 }
 
-// ParseMirrorReadingMaxPerMirror validates the value of
-// SEP2_MIRROR_READING_MAX_PER_MIRROR: empty is unset (zero), anything else
-// must be a positive whole number.
-func ParseMirrorReadingMaxPerMirror(v string) (int, error) {
+// ParseMirrorReadingMaxPerSeries validates the value of
+// SEP2_MIRROR_READING_MAX_PER_SERIES: empty is unset (zero), anything else
+// must be a whole number within the bounds.
+func ParseMirrorReadingMaxPerSeries(v string) (int, error) {
 	if v == "" {
 		return 0, nil
 	}
 	n, err := strconv.Atoi(v)
-	if err != nil || n < 1 {
-		return 0, fmt.Errorf("SEP2_MIRROR_READING_MAX_PER_MIRROR: %q is not a positive whole number", v)
+	if err != nil {
+		return 0, fmt.Errorf("SEP2_MIRROR_READING_MAX_PER_SERIES: %q is not a whole number", v)
+	}
+	if n < MinMirrorReadingMaxPerSeries || n > MaxMirrorReadingMaxPerSeries {
+		return 0, fmt.Errorf("SEP2_MIRROR_READING_MAX_PER_SERIES: %d is outside %d to %d", n, MinMirrorReadingMaxPerSeries, MaxMirrorReadingMaxPerSeries)
 	}
 	return n, nil
 }
 
-// EffectiveMirrorReadingMaxPerMirror resolves an unset cap to the default and
-// refuses a negative one.
-func (c *Config) EffectiveMirrorReadingMaxPerMirror() (int, error) {
-	switch {
-	case c.MirrorReadingMaxPerMirror == 0:
-		return DefaultMirrorReadingMaxPerMirror, nil
-	case c.MirrorReadingMaxPerMirror < 0:
-		return 0, fmt.Errorf("mirror reading cap %d is not a positive whole number", c.MirrorReadingMaxPerMirror)
+// EffectiveMirrorReadingMaxPerSeries resolves an unset cap to the default and
+// refuses a value outside the bounds.
+func (c *Config) EffectiveMirrorReadingMaxPerSeries() (int, error) {
+	n := c.MirrorReadingMaxPerSeries
+	if n == 0 {
+		return DefaultMirrorReadingMaxPerSeries, nil
 	}
-	return c.MirrorReadingMaxPerMirror, nil
+	if n < MinMirrorReadingMaxPerSeries || n > MaxMirrorReadingMaxPerSeries {
+		return 0, fmt.Errorf("mirror reading cap %d is outside %d to %d", n, MinMirrorReadingMaxPerSeries, MaxMirrorReadingMaxPerSeries)
+	}
+	return n, nil
 }
 
 // EffectivePEN normalizes PEN the way internal/dercontrol.Config already

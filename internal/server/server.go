@@ -273,7 +273,7 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 	if stores.MirrorReadingRetention, err = cfg.EffectiveMirrorReadingRetention(); err != nil {
 		return nil, nil, err
 	}
-	if stores.MirrorReadingMaxPerMirror, err = cfg.EffectiveMirrorReadingMaxPerMirror(); err != nil {
+	if stores.MirrorReadingMaxPerSeries, err = cfg.EffectiveMirrorReadingMaxPerSeries(); err != nil {
 		return nil, nil, err
 	}
 

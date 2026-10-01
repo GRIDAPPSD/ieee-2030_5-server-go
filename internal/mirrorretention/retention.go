@@ -1,7 +1,7 @@
 // Package mirrorretention bounds the out-of-band MirrorMeterReading store
 // (POST /mup/{id}/mr): readings older than a retention are removed, and a
-// per-mirror count cap removes the oldest beyond it. Readings stored inline in
-// a MirrorUsagePoint are not covered.
+// count cap per series (mirror and mRID) removes the oldest beyond it.
+// Readings stored inline in a MirrorUsagePoint are not removed.
 package mirrorretention
 
 import (
@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +23,7 @@ import (
 const Interval = 60 * time.Second
 
 // ErrIncomplete is returned by Sweep when a required dependency is missing.
-var ErrIncomplete = errors.New("mirrorretention: Retention needs Readings, a positive MaxAge and a positive MaxPerMirror")
+var ErrIncomplete = errors.New("mirrorretention: Retention needs Readings, Mirrors, a positive MaxAge and a positive MaxPerSeries")
 
 // Readings is the part of the reading store the sweep reads and deletes.
 type Readings interface {
@@ -30,13 +32,20 @@ type Readings interface {
 	Delete(ctx context.Context, parentID, id string) error
 }
 
+// Mirrors reads a mirror's inline readings, which take their ReadingType
+// from out-of-band records of the same mRID.
+type Mirrors interface {
+	Get(ctx context.Context, id string) (sep2.MirrorUsagePoint, error)
+}
+
 // Retention removes readings whose LastUpdateTime, the server's receipt time,
-// is more than MaxAge before the sweep, then the oldest of a mirror's readings
-// beyond MaxPerMirror.
+// is more than MaxAge before the sweep, then the oldest of a series' readings
+// beyond MaxPerSeries.
 type Retention struct {
 	Readings     Readings
+	Mirrors      Mirrors
 	MaxAge       time.Duration
-	MaxPerMirror int
+	MaxPerSeries int
 	// Log takes the cap and failure lines and the summary; nil takes
 	// slog.Default().
 	Log *slog.Logger
@@ -60,7 +69,7 @@ type record struct {
 // deleted, is logged and left for the next sweep; only a failure to list the
 // mirrors themselves is returned.
 func (r *Retention) Sweep(ctx context.Context, now time.Time) (int, error) {
-	if r.Readings == nil || r.MaxAge <= 0 || r.MaxPerMirror <= 0 {
+	if r.Readings == nil || r.Mirrors == nil || r.MaxAge <= 0 || r.MaxPerSeries <= 0 {
 		return 0, ErrIncomplete
 	}
 	parents, err := r.Readings.Parents(ctx)
@@ -85,6 +94,17 @@ func (r *Retention) Sweep(ctx context.Context, now time.Time) (int, error) {
 
 // sweepMirror applies both bounds to one mirror's readings, oldest first.
 func (r *Retention) sweepMirror(ctx context.Context, mupID string, cutoff int64) (removed, failures int) {
+	var inline []sep2.MirrorMeterReading
+	switch mup, err := r.Mirrors.Get(ctx, mupID); {
+	case err == nil:
+		inline = mup.MirrorMeterReading
+	case errors.Is(err, store.ErrNotFound):
+	default:
+		// Without the inline readings the type rule cannot be applied, so
+		// nothing of this mirror is removed.
+		r.logger().Warn("mirrorretention: left for the next sweep", "mirror", mupID, "err", err)
+		return 0, 1
+	}
 	page, err := r.Readings.List(ctx, mupID, store.ListOptions{Unbounded: true})
 	if err != nil {
 		r.logger().Warn("mirrorretention: left for the next sweep", "mirror", mupID, "err", err)
@@ -104,24 +124,27 @@ func (r *Retention) sweepMirror(ctx context.Context, mupID string, cutoff int64)
 	}
 
 	drop := make([]bool, len(recs))
-	kept := len(recs)
 	for i := range recs {
-		if recs[i].reading.LastUpdateTime < cutoff {
-			drop[i] = true
-			kept--
-		}
+		drop[i] = recs[i].reading.LastUpdateTime < cutoff
 	}
 	// Ids are fixed-width nanoseconds, so store order is age order and the
-	// cap takes the oldest survivors first.
-	overCap := 0
-	for i := 0; kept > r.MaxPerMirror && i < len(recs); i++ {
+	// cap takes each series' oldest survivors first.
+	perSeries := map[string]int{}
+	for i := range recs {
 		if !drop[i] {
-			drop[i] = true
-			kept--
-			overCap++
+			perSeries[recs[i].reading.MRID]++
 		}
 	}
-	keepSeriesType(recs, drop)
+	overCap := map[string]int{}
+	for i := range recs {
+		m := recs[i].reading.MRID
+		if !drop[i] && perSeries[m] > r.MaxPerSeries {
+			drop[i] = true
+			perSeries[m]--
+			overCap[m]++
+		}
+	}
+	keepSeriesType(recs, drop, inline)
 
 	for i := range recs {
 		if !drop[i] {
@@ -140,19 +163,20 @@ func (r *Retention) sweepMirror(ctx context.Context, mupID string, cutoff int64)
 			failures++
 		}
 	}
-	if overCap > 0 {
-		r.logger().Warn("mirrorretention: mirror over its reading cap, oldest removed",
-			"mirror", mupID, "overCap", overCap, "maxPerMirror", r.MaxPerMirror)
+	for _, m := range slices.Sorted(maps.Keys(overCap)) {
+		r.logger().Warn("mirrorretention: series over its reading cap, oldest removed",
+			"mirror", mupID, "mrid", m, "overCap", overCap[m], "maxPerSeries", r.MaxPerSeries)
 	}
 	return removed, failures
 }
 
 // keepSeriesType un-drops the oldest typed record of an mRID when every typed
-// record of it is being dropped while an untyped one survives. A reading that
-// reuses an mRID may omit its ReadingType and inherits it from any record of
-// that mRID (2023 rule (n)), so removing the last typed one would leave the
-// surviving series untyped and silently out of every figure.
-func keepSeriesType(recs []record, drop []bool) {
+// record of it is being dropped while an untyped one survives, out of band or
+// inline. A reading that reuses an mRID may omit its ReadingType and inherits
+// it from any record of that mRID, inline ones included (2023 rule (n)), so
+// removing the last typed one would leave the surviving series untyped and
+// silently out of every figure.
+func keepSeriesType(recs []record, drop []bool, inline []sep2.MirrorMeterReading) {
 	type series struct {
 		survivor, typedSurvivor bool
 		oldestTypedDropped      int
@@ -172,6 +196,12 @@ func keepSeriesType(recs []record, drop []bool) {
 			s.typedSurvivor = s.typedSurvivor || typed
 		case typed && s.oldestTypedDropped < 0:
 			s.oldestTypedDropped = i
+		}
+	}
+	for _, m := range inline {
+		if s, ok := byMRID[m.MRID]; ok {
+			s.survivor = true
+			s.typedSurvivor = s.typedSurvivor || m.ReadingType != nil
 		}
 	}
 	for _, s := range byMRID {

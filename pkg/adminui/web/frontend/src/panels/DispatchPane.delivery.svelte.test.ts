@@ -29,6 +29,7 @@ function delivery(over: Record<string, unknown> = {}) {
     directionUnknown: false,
     deviceLFDI: DEVICE_LFDI,
     newestReadingTime: nowS - 125,
+    readingsExpired: false,
     ...over,
   }
 }

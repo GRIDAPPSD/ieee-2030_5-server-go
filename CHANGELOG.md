@@ -107,7 +107,7 @@ admin UI panes (`feature`) and changes several exported signatures
   `pkg/sep2srv/handlers` and `pkg/store/memory`:
   `subscription.HandleCreateSubscription` takes a `subscription.ReadCheck` as
   its third argument (nil refuses every create; `BuildProtocolRouter` passes
-  its own); `response.HandlePostResponse` takes a `ResponseSenderAuthorizer`;
+  its own); `flow_reservation.HandlePostResponse` takes a `ResponseSenderAuthorizer`;
   `HandleCreateMirrorUsagePoint` and `HandleMirrorUsagePoint` take additional
   arguments; and `NewFlowReservationLinkedEndDeviceStore` and
   `NewLogEventLinkedEndDeviceStore` take additional stores. The

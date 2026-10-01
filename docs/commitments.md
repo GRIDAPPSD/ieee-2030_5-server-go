@@ -49,12 +49,37 @@ Cancelling a grant cancels its controls first and marks the response last, so
 a failure part way never leaves live controls under a cancelled grant. The
 response is still served, with EventStatus Cancelled.
 
+A revision cancels the old response and creates a new one. IEEE 2030.5-2023
+lists cancelling and reissuing as a way to change an event, and marks the
+Superseded status deprecated: servers shall not use it. An overlapping newer
+event would also leave the old one Active.
+
 A revision stores a new response, moves every live control to it, then marks
-the old one cancelled. It is refused, naming the first control (by start time,
-then mRID) that would no longer fit, and nothing changes. A revision to
-duration zero is a denial: the old grant's controls are cancelled. A
-revision is stored under `<request id>-r1`, then `-r2` and on, because the
+the old one cancelled. Only a live grant can be revised: a denial, a response
+with no interval and a cancelled one are refused. The new response must have
+the old one's subject and a later creationTime, so a client that sees both
+picks the new one (2023 10.2.2.3). It must also be executable, and every live
+control must still fit; otherwise the revision is refused, naming the first
+control (by start time, then mRID) that would not fit, and nothing changes. A
+revision to duration zero is a denial: the old grant's controls are cancelled.
+A revision is stored under `<request id>-r1`, then `-r2` and on, because the
 request's own id holds its first response.
+
+Between storing the new response and marking the old one cancelled, both are
+live for a moment. The fleet lock keeps every other commitment check out of
+that window, but a client reading the response list then sees both; the
+creationTime rule above tells it which is current.
+
+### Partial failure and retry
+
+A failed revision step is undone in reverse: controls are moved back and the
+new response is deleted. Only when the undo itself fails is the error
+`ErrUndo`, meaning the stores may hold part of the revision.
+
+Cancelling is never undone. If a control fails to cancel, the grant stays
+live with some controls already cancelled, which is a legal state; calling
+cancel again skips the cancelled controls and finishes the job. A revision to
+duration zero behaves the same way for its controls.
 
 ## Restart
 

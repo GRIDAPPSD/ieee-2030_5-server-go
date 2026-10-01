@@ -239,7 +239,10 @@ func (h *AdminFleetHandler) buildFleet(ctx context.Context, aggregatorLFDI strin
 	now := nowUnix()
 	rollup := FleetRollup{DeviceCount: len(memberLFDIs)}
 	for _, lfdi := range memberLFDIs {
-		dev := h.buildDevice(ctx, lfdi)
+		dev, err := h.buildDevice(ctx, lfdi)
+		if err != nil {
+			return Fleet{}, fmt.Errorf("device %q: %w", lfdi, err)
+		}
 		devices = append(devices, dev)
 		accumulateRollup(&rollup, dev, now)
 	}
@@ -256,28 +259,33 @@ var nowUnix = func() int64 { return time.Now().Unix() }
 // but never registered) still gets its mirror measurements: the trap in the
 // #715 acceptance criteria is that a reading is attributed by the mirror's
 // own deviceLFDI, never by whether the EndDevice store happens to know the
-// device.
-func (h *AdminFleetHandler) buildDevice(ctx context.Context, lfdi string) FleetDevice {
-	fd := FleetDevice{LFDI: lfdi, Measurements: h.deviceMeasurements(ctx, lfdi)}
+// device. Any store error other than store.ErrNotFound is returned, so the
+// route fails (500) instead of presenting a device as having no data.
+func (h *AdminFleetHandler) buildDevice(ctx context.Context, lfdi string) (FleetDevice, error) {
+	meas, err := h.deviceMeasurements(ctx, lfdi)
+	if err != nil {
+		return FleetDevice{}, err
+	}
+	fd := FleetDevice{LFDI: lfdi, Measurements: meas}
 
 	if h.EndDevices == nil {
-		return fd
+		return fd, nil
 	}
 	dev, err := h.EndDevices.GetByLFDI(ctx, lfdi)
 	if err != nil {
 		// ErrNotFound is the ordinary case for a managed LFDI that was never
-		// registered as an EndDevice: not a failure, and not logged. Any
-		// other error is a genuine lookup failure, distinct from "this
-		// device has no status" (pkg/store's absent-versus-failed
-		// contract), and must not pass for it silently.
-		if !errors.Is(err, store.ErrNotFound) {
-			log.Printf("admin fleet: EndDevices.GetByLFDI(%q): %v", lfdi, err)
+		// registered as an EndDevice: not a failure. Any other error is a
+		// genuine lookup failure, distinct from "this device has no status"
+		// (pkg/store's absent-versus-failed contract).
+		if errors.Is(err, store.ErrNotFound) {
+			return fd, nil
 		}
-		return fd
+		log.Printf("admin fleet: EndDevices.GetByLFDI(%q): %v", lfdi, err)
+		return FleetDevice{}, fmt.Errorf("EndDevices.GetByLFDI(%q): %w", lfdi, err)
 	}
 	edevID := pathTail(dev.Href)
 	if h.DERs == nil {
-		return fd
+		return fd, nil
 	}
 	ders, err := h.DERs.List(ctx, edevID, store.ListOptions{Unbounded: true})
 	if err != nil {
@@ -285,7 +293,7 @@ func (h *AdminFleetHandler) buildDevice(ctx context.Context, lfdi string) FleetD
 		// nil error, per store.ScopedReader.List): any error here is a
 		// genuine backend failure.
 		log.Printf("admin fleet: DERs.List(%q): %v", edevID, err)
-		return fd
+		return FleetDevice{}, fmt.Errorf("DERs.List(%q): %w", edevID, err)
 	}
 
 	var status *FleetDeviceStatus
@@ -293,28 +301,39 @@ func (h *AdminFleetHandler) buildDevice(ctx context.Context, lfdi string) FleetD
 	for _, der := range ders.Items {
 		derID := pathTail(der.Href)
 		parentKey := edevID + "/" + derID
-		if s := h.latestStatus(ctx, parentKey); s != nil && (status == nil || s.ReadingTime > status.ReadingTime) {
+		s, err := h.latestStatus(ctx, parentKey)
+		if err != nil {
+			return FleetDevice{}, err
+		}
+		if s != nil && (status == nil || s.ReadingTime > status.ReadingTime) {
 			status = s
 		}
-		if a := h.latestAvailability(ctx, parentKey); a != nil && (avail == nil || a.ReadingTime > avail.ReadingTime) {
+		a, err := h.latestAvailability(ctx, parentKey)
+		if err != nil {
+			return FleetDevice{}, err
+		}
+		if a != nil && (avail == nil || a.ReadingTime > avail.ReadingTime) {
 			avail = a
 		}
 	}
 	fd.Status = status
 	fd.Availability = avail
-	return fd
+	return fd, nil
 }
 
-func (h *AdminFleetHandler) latestStatus(ctx context.Context, parentKey string) *FleetDeviceStatus {
+// latestStatus returns nil, nil when the DER has no status yet
+// (store.ErrNotFound) and a non-nil error for any other read failure.
+func (h *AdminFleetHandler) latestStatus(ctx context.Context, parentKey string) (*FleetDeviceStatus, error) {
 	if h.DERStatuses == nil {
-		return nil
+		return nil, nil
 	}
 	s, err := h.DERStatuses.Get(ctx, parentKey, singletonKey)
 	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			log.Printf("admin fleet: DERStatuses.Get(%q): %v", parentKey, err)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, nil
 		}
-		return nil
+		log.Printf("admin fleet: DERStatuses.Get(%q): %v", parentKey, err)
+		return nil, fmt.Errorf("DERStatuses.Get(%q): %w", parentKey, err)
 	}
 	out := &FleetDeviceStatus{ReadingTime: s.ReadingTime}
 	if s.GenConnectStatus != nil {
@@ -333,19 +352,22 @@ func (h *AdminFleetHandler) latestStatus(ctx context.Context, parentKey string) 
 		v := s.StateOfChargeStatus.Value
 		out.StateOfCharge = &v
 	}
-	return out
+	return out, nil
 }
 
-func (h *AdminFleetHandler) latestAvailability(ctx context.Context, parentKey string) *FleetDeviceAvailability {
+// latestAvailability returns nil, nil when the DER has no availability yet
+// (store.ErrNotFound) and a non-nil error for any other read failure.
+func (h *AdminFleetHandler) latestAvailability(ctx context.Context, parentKey string) (*FleetDeviceAvailability, error) {
 	if h.DERAvailabilities == nil {
-		return nil
+		return nil, nil
 	}
 	a, err := h.DERAvailabilities.Get(ctx, parentKey, singletonKey)
 	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			log.Printf("admin fleet: DERAvailabilities.Get(%q): %v", parentKey, err)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, nil
 		}
-		return nil
+		log.Printf("admin fleet: DERAvailabilities.Get(%q): %v", parentKey, err)
+		return nil, fmt.Errorf("DERAvailabilities.Get(%q): %w", parentKey, err)
 	}
 	out := &FleetDeviceAvailability{ReadingTime: a.ReadingTime}
 	if a.StatWAvail != nil {
@@ -356,7 +378,7 @@ func (h *AdminFleetHandler) latestAvailability(ctx context.Context, parentKey st
 		v := scaledValue(float64(a.StatVarAvail.Value), a.StatVarAvail.Multiplier)
 		out.StatVarAvail = &v
 	}
-	return out
+	return out, nil
 }
 
 // singletonKey mirrors pkg/sep2srv/handlers/singleton.SingletonKey. Not
@@ -387,10 +409,10 @@ const singletonKey = "default"
 // route. Reading it here needs a core change first, which is out of scope
 // for this branch (core is read-only per this dispatch's hard rules), so
 // this is reported rather than attempted.
-func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string) FleetDeviceMeasurements {
+func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string) (FleetDeviceMeasurements, error) {
 	var out FleetDeviceMeasurements
 	if h.MirrorUsagePoints == nil {
-		return out
+		return out, nil
 	}
 	result, err := h.MirrorUsagePoints.List(ctx, store.ListOptions{Unbounded: true})
 	if err != nil {
@@ -399,7 +421,7 @@ func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string)
 		// device's measurements are unreachable until it clears, not merely
 		// this one device's.
 		log.Printf("admin fleet: MirrorUsagePoints.List: %v", err)
-		return out
+		return FleetDeviceMeasurements{}, fmt.Errorf("MirrorUsagePoints.List: %w", err)
 	}
 	for _, mup := range result.Items {
 		// The attribution point: a reading is credited to lfdi by the
@@ -414,9 +436,9 @@ func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string)
 			mmrs, err := h.MirrorMeterReadings.List(ctx, mupID, store.ListOptions{Unbounded: true})
 			if err != nil {
 				log.Printf("admin fleet: MirrorMeterReadings.List(%q): %v", mupID, err)
-			} else {
-				readings = append(readings, mmrs.Items...)
+				return FleetDeviceMeasurements{}, fmt.Errorf("MirrorMeterReadings.List(%q): %w", mupID, err)
 			}
+			readings = append(readings, mmrs.Items...)
 		}
 		inheritReadingTypeByMRID(readings)
 		isDER := mup.RoleFlags&roleFlagIsDER != 0
@@ -424,7 +446,7 @@ func (h *AdminFleetHandler) deviceMeasurements(ctx context.Context, lfdi string)
 			considerMeasurement(&out, readings[i], h.Edition, isDER)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // inheritReadingTypeByMRID fills a reading's ReadingType from another

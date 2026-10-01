@@ -20,7 +20,7 @@ func TestAdminAuthMTLSWithAdminCert(t *testing.T) {
 	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.TLS = &tls.ConnectionState{
-		PeerCertificates: []*x509.Certificate{adminCert},
+		PeerCertificates: []*x509.Certificate{adminCert}, VerifiedChains: [][]*x509.Certificate{{adminCert}},
 	}
 
 	w := httptest.NewRecorder()
@@ -37,7 +37,7 @@ func TestAdminAuthMTLSWithDeviceCert(t *testing.T) {
 	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.TLS = &tls.ConnectionState{
-		PeerCertificates: []*x509.Certificate{deviceCert},
+		PeerCertificates: []*x509.Certificate{deviceCert}, VerifiedChains: [][]*x509.Certificate{{deviceCert}},
 	}
 
 	w := httptest.NewRecorder()

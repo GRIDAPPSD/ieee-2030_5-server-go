@@ -77,7 +77,8 @@ func TestRequireRealCredentialAdmitsValidMTLSFromLoopback(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{generateAdminCert(t)}}
+	adminCert := generateAdminCert(t)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{adminCert}, VerifiedChains: [][]*x509.Certificate{{adminCert}}}
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 

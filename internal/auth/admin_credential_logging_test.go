@@ -191,7 +191,7 @@ func TestMTLSAdminCertLogsSuccess(t *testing.T) {
 
 	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{adminCert}}
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{adminCert}, VerifiedChains: [][]*x509.Certificate{{adminCert}}}
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -219,7 +219,7 @@ func TestMTLSDeviceCertDoesNotLogFailure(t *testing.T) {
 
 	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{deviceCert}}
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{deviceCert}, VerifiedChains: [][]*x509.Certificate{{deviceCert}}}
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 

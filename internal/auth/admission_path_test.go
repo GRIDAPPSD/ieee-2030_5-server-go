@@ -34,7 +34,7 @@ func TestAdmissionPath(t *testing.T) {
 		{name: "loopback with no credential", remote: loopback, wantPath: auth.AdmissionPathLoopbackBypass, wantReached: true},
 		{name: "bearer", remote: remote, build: func(r *http.Request, _ *auth.TicketStore) { r.Header.Set("Authorization", "Bearer test-key") }, wantPath: auth.AdmissionPathBearer, wantReached: true},
 		{name: "mtls", remote: remote, build: func(r *http.Request, _ *auth.TicketStore) {
-			r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{adminCert}}
+			r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{adminCert}, VerifiedChains: [][]*x509.Certificate{{adminCert}}}
 		}, wantPath: auth.AdmissionPathMTLS, wantReached: true},
 		{name: "ticket", remote: remote, build: func(r *http.Request, tickets *auth.TicketStore) {
 			ticket, err := tickets.Issue()

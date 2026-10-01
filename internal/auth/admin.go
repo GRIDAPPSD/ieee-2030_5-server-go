@@ -50,7 +50,8 @@ const AdminRefusalVary = "Sec-Fetch-Dest, Accept"
 //     localhost has no working credentials by default, and Caddy in front
 //     injects X-Forwarded-* so this bypass declines automatically and the
 //     normal auth chain runs against operator traffic.
-//  1. mTLS: client cert with admin policy OID (1.3.6.1.4.1.40732.2.5)
+//  1. mTLS: a client cert the listener verified, carrying the admin policy
+//     OID (1.3.6.1.4.1.40732.2.5)
 //  2. Bearer token: Authorization header matches adminKey
 //  3. Cookie session: admin_ticket cookie validated against the
 //     SessionStore without being consumed (browser login flow, #159).
@@ -157,9 +158,12 @@ const (
 // no matter which credential admits. See AdminAuthMiddleware's own doc comment for
 // the failure this closes.
 func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, sessions *SessionStore) (bool, credentialPath) {
-	// Path A: mTLS with admin OID
-	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
-		cert := r.TLS.PeerCertificates[0]
+	// Path A: mTLS with admin OID, on the leaf of a chain the listener
+	// verified. PeerCertificates alone is whatever the client sent: a
+	// listener that requests a certificate without verifying it would admit
+	// a self-signed one.
+	if r.TLS != nil && len(r.TLS.VerifiedChains) > 0 && len(r.TLS.VerifiedChains[0]) > 0 {
+		cert := r.TLS.VerifiedChains[0][0]
 		if certs.HasPolicyOID(cert, certs.OIDPolicyAdmin) {
 			LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathMTLS)
 			redeemPresentedTicket(r, tickets)

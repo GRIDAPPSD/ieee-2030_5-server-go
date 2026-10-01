@@ -19,7 +19,7 @@ import (
 // not be usable in a URL.
 
 func adminTLSState(cert *x509.Certificate) *tls.ConnectionState {
-	return &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+	return &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}, VerifiedChains: [][]*x509.Certificate{{cert}}}
 }
 
 func TestQueryTicketNotAcceptedAsCookieSession(t *testing.T) {

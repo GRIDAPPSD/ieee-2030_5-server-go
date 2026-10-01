@@ -1,9 +1,10 @@
 {
-  "about": "Chart cases shared by the Go encoder and the admin UI renderer. A case is a Descriptor of chart sections, given as wire chart bodies in charts or as generate: one list per section of series lengths, series k named s<k> with point j at [1759343400000 + 60000*j, j]. A value of \"NaN\", \"Infinity\" or \"-Infinity\" stands for the number JSON cannot carry. refusal is empty when the Descriptor is accepted.",
+  "about": "Chart cases shared by the Go encoder and the admin UI renderer. A case is a Descriptor of chart sections, given as wire chart bodies in charts or as generate: one list per section of series lengths, series k named s<k> with point j at [1759343400000 + 60000*j, j]. A value of \"NaN\", \"Infinity\" or \"-Infinity\" stands for the number JSON cannot carry. refusal is empty when the Descriptor is accepted. rendererOnly marks a case the encoder cannot produce, because it writes times as integers; only the renderer runs it.",
   "bounds": {
     "seriesPerSection": 16,
     "pointsPerSeries": 720,
-    "pointsPerDescriptor": 12000
+    "pointsPerDescriptor": 12000,
+    "chartSectionsPerDescriptor": 8
   },
   "cases": [
     {
@@ -53,6 +54,20 @@
             }
           ]
         }
+      ]
+    },
+    {
+      "name": "8 chart sections in a Descriptor",
+      "refusal": "",
+      "generate": [
+        [1],
+        [1],
+        [1],
+        [1],
+        [1],
+        [1],
+        [1],
+        [1]
       ]
     },
     {
@@ -219,6 +234,42 @@
               "points": [
                 [
                   -8640000000000001,
+                  1
+                ]
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "9 chart sections in a Descriptor",
+      "refusal": "too-many-sections",
+      "generate": [
+        [1],
+        [1],
+        [1],
+        [1],
+        [1],
+        [1],
+        [1],
+        [1],
+        [1]
+      ]
+    },
+    {
+      "name": "non-integer millisecond time",
+      "refusal": "time-not-integer",
+      "rendererOnly": true,
+      "charts": [
+        {
+          "unit": "%",
+          "series": [
+            {
+              "name": "a",
+              "points": [
+                [
+                  1759343400000.5,
                   1
                 ]
               ]

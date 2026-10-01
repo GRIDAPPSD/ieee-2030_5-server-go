@@ -9,11 +9,15 @@ import (
 
 // Chart bounds, refused at encode. 720 points is a day at two-minute
 // samples. 12000 points across a Descriptor encode to about 0.5 MB at
-// worst, under the admin plane's 1 MiB response cap.
+// worst, under the admin plane's 1 MiB response cap. The shell draws each
+// chart section on its own canvas, so sections are capped too: without it
+// the byte cap alone admits thousands of one-point charts. 8 charts of 16
+// series already exceed what one panel can show side by side.
 const (
-	MaxChartSeries           = 16
-	MaxChartSeriesPoints     = 720
-	MaxDescriptorChartPoints = 12000
+	MaxChartSeries             = 16
+	MaxChartSeriesPoints       = 720
+	MaxDescriptorChartPoints   = 12000
+	MaxDescriptorChartSections = 8
 )
 
 // maxChartMillis is the largest instant, in Unix milliseconds either side
@@ -26,6 +30,7 @@ var (
 	ErrChartTooManySeries    = errors.New("sep2admin: chart has more series than MaxChartSeries")
 	ErrChartSeriesTooLong    = errors.New("sep2admin: chart series has more points than MaxChartSeriesPoints")
 	ErrChartTooManyPoints    = errors.New("sep2admin: Descriptor has more chart points than MaxDescriptorChartPoints")
+	ErrChartTooManySections  = errors.New("sep2admin: Descriptor has more chart sections than MaxDescriptorChartSections")
 	ErrChartSeriesNoName     = errors.New("sep2admin: chart series has an empty name")
 	ErrChartValueNotFinite   = errors.New("sep2admin: chart point value is NaN or infinite")
 	ErrChartZeroTime         = errors.New("sep2admin: chart point has the zero time")

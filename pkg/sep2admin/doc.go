@@ -29,13 +29,20 @@
 // three methods exist to hold; the Panel and Placement type signatures;
 // ExtensionSlot's signature; the Body and Cell constructors' signatures;
 // the Descriptor type and its exported field names; every JSON field name
-// on the wire; and the closed sets of section kinds (table,
-// definitionList, chart), cell kinds (text, badge, time, link) and badge
-// names (neutral, info, ok, warn, error). testdata/descriptor_v2.json is
-// the wire shape. A renderer switches exhaustively on each kind. The shell
-// is that renderer and ships in the same binary as this encoder, so a kind
-// added to both at once stays in version 2, as chart did; removing or
-// reshaping a kind is a new CurrentDescriptorVersion.
+// on the wire; and the fields and meaning of every section kind (table,
+// definitionList, chart), cell kind (text, badge, time, link) and badge
+// name (neutral, info, ok, warn, error) listed here.
+// testdata/descriptor_v2.json is the wire shape.
+//
+// MAY grow without a version change: the sets of kinds and badge names.
+// A new one reaches the encoder and the shell in the same release, since
+// the shell is served from this binary. Any other reader of a version 2
+// Descriptor can rely on the kinds above keeping their fields and
+// meaning, and must render around a value it does not know rather than
+// refuse the payload. The shell shows an unknown section kind as
+// unsupported, an unknown cell kind as its text and an unknown badge as
+// neutral. Removing a kind or changing its fields is a new
+// CurrentDescriptorVersion.
 //
 // # What this package does not implement yet
 //

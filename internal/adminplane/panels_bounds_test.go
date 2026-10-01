@@ -155,7 +155,8 @@ func TestPanelResponseIsBounded(t *testing.T) {
 }
 
 // chartAtCaps is a table at the row cap beside charts holding
-// MaxDescriptorChartPoints, each value the longest float64 encoding.
+// MaxDescriptorChartPoints, each value a 24-character float64. Times are
+// 13-digit milliseconds, so this is near the worst case, not at it.
 func chartAtCaps(name string) sep2admin.ViewFunc {
 	return func(context.Context) (sep2admin.Descriptor, error) {
 		v, err := tableOf(maxPanelRows, "x")(context.Background())

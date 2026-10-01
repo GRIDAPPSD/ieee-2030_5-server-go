@@ -18,6 +18,7 @@ var chartRefusals = map[string]error{
 	"too-many-series":     ErrChartTooManySeries,
 	"series-too-long":     ErrChartSeriesTooLong,
 	"too-many-points":     ErrChartTooManyPoints,
+	"too-many-sections":   ErrChartTooManySections,
 	"value-not-finite":    ErrChartValueNotFinite,
 	"points-out-of-order": ErrChartPointsOutOfOrder,
 	"series-without-name": ErrChartSeriesNoName,
@@ -25,10 +26,13 @@ var chartRefusals = map[string]error{
 }
 
 type chartCase struct {
-	Name     string            `json:"name"`
-	Refusal  string            `json:"refusal"`
-	Generate [][]int           `json:"generate"`
-	Charts   []json.RawMessage `json:"charts"`
+	Name    string `json:"name"`
+	Refusal string `json:"refusal"`
+	// RendererOnly marks a wire value the encoder cannot produce, such as
+	// a fractional millisecond time; only the admin UI runs it.
+	RendererOnly bool              `json:"rendererOnly"`
+	Generate     [][]int           `json:"generate"`
+	Charts       []json.RawMessage `json:"charts"`
 }
 
 // chartCaseDescriptor builds the Descriptor a shared case describes.
@@ -115,20 +119,27 @@ func TestChartSharedCases(t *testing.T) {
 	}
 	var doc struct {
 		Bounds struct {
-			SeriesPerSection    int `json:"seriesPerSection"`
-			PointsPerSeries     int `json:"pointsPerSeries"`
-			PointsPerDescriptor int `json:"pointsPerDescriptor"`
+			SeriesPerSection           int `json:"seriesPerSection"`
+			PointsPerSeries            int `json:"pointsPerSeries"`
+			PointsPerDescriptor        int `json:"pointsPerDescriptor"`
+			ChartSectionsPerDescriptor int `json:"chartSectionsPerDescriptor"`
 		} `json:"bounds"`
 		Cases []chartCase `json:"cases"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if b := doc.Bounds; b.SeriesPerSection != MaxChartSeries || b.PointsPerSeries != MaxChartSeriesPoints || b.PointsPerDescriptor != MaxDescriptorChartPoints {
-		t.Fatalf("fixture bounds %+v differ from the encoder's %d, %d, %d", b, MaxChartSeries, MaxChartSeriesPoints, MaxDescriptorChartPoints)
+	if b := doc.Bounds; b.SeriesPerSection != MaxChartSeries || b.PointsPerSeries != MaxChartSeriesPoints || b.PointsPerDescriptor != MaxDescriptorChartPoints || b.ChartSectionsPerDescriptor != MaxDescriptorChartSections {
+		t.Fatalf("fixture bounds %+v differ from the encoder's %d, %d, %d, %d", b, MaxChartSeries, MaxChartSeriesPoints, MaxDescriptorChartPoints, MaxDescriptorChartSections)
 	}
 	seen := map[string]bool{}
 	for _, c := range doc.Cases {
+		if c.RendererOnly {
+			if _, ok := chartRefusals[c.Refusal]; ok || c.Refusal == "" {
+				t.Errorf("renderer-only case %q has refusal %q; want a code the encoder never returns", c.Name, c.Refusal)
+			}
+			continue
+		}
 		t.Run(c.Name, func(t *testing.T) {
 			d := chartCaseDescriptor(t, c)
 			b, err := json.Marshal(d)

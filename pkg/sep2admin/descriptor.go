@@ -368,7 +368,7 @@ type wireEntry struct {
 // Descriptor, so a renderer never gets a partial payload.
 func (d Descriptor) MarshalJSON() ([]byte, error) {
 	w := wireDescriptor{Version: d.Version, Sections: make([]wireSection, 0, len(d.Sections))}
-	chartPoints := 0
+	chartPoints, chartSections := 0, 0
 	for i, s := range d.Sections {
 		ws := wireSection{Heading: s.Heading, Prose: nonNil(s.Prose), Empty: s.Empty}
 		switch s.Body.kind {
@@ -379,6 +379,9 @@ func (d Descriptor) MarshalJSON() ([]byte, error) {
 		case bodyKindDefinitionList:
 			ws.Kind, ws.Body = "definitionList", wireDefinitionListOf(s.Body.definitionList)
 		case bodyKindChart:
+			if chartSections++; chartSections > MaxDescriptorChartSections {
+				return nil, fmt.Errorf("sections[%d]: %w: %d", i, ErrChartTooManySections, chartSections)
+			}
 			c, err := wireChartOf(s.Body.chart, &chartPoints)
 			if err != nil {
 				return nil, fmt.Errorf("sections[%d]: %w", i, err)

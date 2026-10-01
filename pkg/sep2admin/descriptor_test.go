@@ -342,7 +342,7 @@ func TestDescriptorEncodeErrorsAreDistinct(t *testing.T) {
 	errs := []error{
 		ErrBodyMarshalledDirectly, ErrUnhandledBodyKind, ErrSectionWithoutBody, ErrZeroCell,
 		ErrUnhandledCellKind, ErrUnknownBadge, ErrZeroTime, ErrUnsafeLink,
-		ErrChartTooManySeries, ErrChartSeriesTooLong, ErrChartTooManyPoints, ErrChartSeriesNoName,
+		ErrChartTooManySeries, ErrChartSeriesTooLong, ErrChartTooManyPoints, ErrChartTooManySections, ErrChartSeriesNoName,
 		ErrChartValueNotFinite, ErrChartZeroTime, ErrChartTimeOutOfRange, ErrChartPointsOutOfOrder,
 	}
 	for i, a := range errs {

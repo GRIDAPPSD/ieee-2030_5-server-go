@@ -31,6 +31,7 @@
   import ActivityChart from './panels/ActivityChart.svelte'
   import LoginPanel from './panels/LoginPanel.svelte'
   import FleetPane from './panels/FleetPane.svelte'
+  import RequestQueuePane from './panels/RequestQueuePane.svelte'
 
   // The tabs and the card each owns (issue 561's Context section, plus
   // issue 671's DERMS tab). "/" and "/ui/" are not tab paths of their own:
@@ -203,6 +204,7 @@
       <CertPanel onMinted={(cert) => (mintedCert = cert)} />
     {:else if activeTab === 'derms'}
       <FleetPane />
+      <RequestQueuePane />
     {:else if activeTab === 'not-found'}
       <div class="card" data-testid="not-found">
         <h2>Not Found</h2>

@@ -1,0 +1,215 @@
+{
+  "aggregatorLFDI": "3E4F45AB31EDFE5B67E343E5E4562E31984E23E5",
+  "now": 1790000100,
+  "deadlineSeconds": 300,
+  "persisted": true,
+  "requests": [
+    {
+      "edevId": "4",
+      "frqId": "frq-1790000000000000001",
+      "requestHref": "/edev/4/frq/frq-1790000000000000001",
+      "aggregatorLFDI": "3E4F45AB31EDFE5B67E343E5E4562E31984E23E5",
+      "state": "pending",
+      "deadlineAt": 1790000300,
+      "request": {
+        "mRID": "A1B2C3D4E5F60718293A4B5C6D7E8F90",
+        "creationTime": 1790000000,
+        "requestStatus": "requested",
+        "intervalRequested": {
+          "start": 1790003600,
+          "duration": 1800
+        },
+        "energyRequested": {
+          "value": 10000,
+          "multiplier": 0
+        },
+        "powerRequested": {
+          "value": 20000,
+          "multiplier": 0
+        },
+        "direction": "charge"
+      },
+      "responses": [],
+      "tip": null
+    },
+    {
+      "edevId": "4",
+      "frqId": "frq-1789990000000000002",
+      "requestHref": "/edev/4/frq/frq-1789990000000000002",
+      "aggregatorLFDI": "3E4F45AB31EDFE5B67E343E5E4562E31984E23E5",
+      "state": "granted",
+      "deadlineAt": null,
+      "request": {
+        "mRID": "0F1E2D3C4B5A69788796A5B4C3D2E1F0",
+        "creationTime": 1789990000,
+        "requestStatus": "requested",
+        "intervalRequested": {
+          "start": 1790000000,
+          "duration": 3600
+        },
+        "energyRequested": {
+          "value": -8000,
+          "multiplier": 0
+        },
+        "powerRequested": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "discharge"
+      },
+      "responses": [
+        {
+          "id": "frq-1789990000000000002",
+          "href": "/edev/4/frp/frq-1789990000000000002",
+          "mRID": "4A2F7C9E00000000000000000000A1B2",
+          "subject": "0F1E2D3C4B5A69788796A5B4C3D2E1F0",
+          "creationTime": 1789990200,
+          "interval": {
+            "start": 1790000000,
+            "duration": 3600
+          },
+          "energyAvailable": {
+            "value": -8000,
+            "multiplier": 0
+          },
+          "powerAvailable": {
+            "value": 8000,
+            "multiplier": 0
+          },
+          "direction": "discharge",
+          "eventStatus": {
+            "currentStatus": 2,
+            "status": "cancelled",
+            "dateTime": 1789995000
+          },
+          "cancelReason": "revised for feeder limit",
+          "answeredBy": {
+            "kind": "deadline_fallback",
+            "admission": null,
+            "principal": null,
+            "at": 1789990200
+          },
+          "cancelledBy": {
+            "kind": "operator",
+            "admission": "mtls",
+            "principal": "cert:5D9A0C1B7E3F2A4D6C8B0E1F3A5C7E9B1D3F5A7C9E1B3D5F7A9C1E3B5D7F9A1C",
+            "at": 1789995000
+          },
+          "executions": [],
+          "energyCommittedWh": 0,
+          "energyRemainingWh": 8000
+        },
+        {
+          "id": "frq-1789990000000000002-r1",
+          "href": "/edev/4/frp/frq-1789990000000000002-r1",
+          "mRID": "9D1E3B5C00000000000000000000A1B2",
+          "subject": "0F1E2D3C4B5A69788796A5B4C3D2E1F0",
+          "creationTime": 1789995000,
+          "interval": {
+            "start": 1790000000,
+            "duration": 1800
+          },
+          "energyAvailable": {
+            "value": -4000,
+            "multiplier": 0
+          },
+          "powerAvailable": {
+            "value": 8000,
+            "multiplier": 0
+          },
+          "direction": "discharge",
+          "eventStatus": {
+            "currentStatus": 1,
+            "status": "active",
+            "dateTime": 1790000000
+          },
+          "cancelReason": null,
+          "answeredBy": {
+            "kind": "operator",
+            "admission": "mtls",
+            "principal": "cert:5D9A0C1B7E3F2A4D6C8B0E1F3A5C7E9B1D3F5A7C9E1B3D5F7A9C1E3B5D7F9A1C",
+            "at": 1789995000
+          },
+          "cancelledBy": null,
+          "executions": [
+            {
+              "mRID": "C0FFEE0000000000000000000000A1B2",
+              "href": "/edev/7/fsa/1/derp/1/derc/3",
+              "derControlListHref": "/edev/7/fsa/1/derp/1/derc",
+              "interval": {
+                "start": 1790000000,
+                "duration": 900
+              },
+              "targetW": {
+                "value": 4000,
+                "multiplier": 0
+              },
+              "eventStatus": {
+                "currentStatus": 1,
+                "status": "active",
+                "dateTime": 1790000000
+              }
+            }
+          ],
+          "energyCommittedWh": 1000,
+          "energyRemainingWh": 3000
+        }
+      ],
+      "tip": {
+        "id": "frq-1789990000000000002-r1",
+        "href": "/edev/4/frp/frq-1789990000000000002-r1",
+        "mRID": "9D1E3B5C00000000000000000000A1B2",
+        "subject": "0F1E2D3C4B5A69788796A5B4C3D2E1F0",
+        "creationTime": 1789995000,
+        "interval": {
+          "start": 1790000000,
+          "duration": 1800
+        },
+        "energyAvailable": {
+          "value": -4000,
+          "multiplier": 0
+        },
+        "powerAvailable": {
+          "value": 8000,
+          "multiplier": 0
+        },
+        "direction": "discharge",
+        "eventStatus": {
+          "currentStatus": 1,
+          "status": "active",
+          "dateTime": 1790000000
+        },
+        "cancelReason": null,
+        "answeredBy": {
+          "kind": "operator",
+          "admission": "mtls",
+          "principal": "cert:5D9A0C1B7E3F2A4D6C8B0E1F3A5C7E9B1D3F5A7C9E1B3D5F7A9C1E3B5D7F9A1C",
+          "at": 1789995000
+        },
+        "cancelledBy": null,
+        "executions": [
+          {
+            "mRID": "C0FFEE0000000000000000000000A1B2",
+            "href": "/edev/7/fsa/1/derp/1/derc/3",
+            "derControlListHref": "/edev/7/fsa/1/derp/1/derc",
+            "interval": {
+              "start": 1790000000,
+              "duration": 900
+            },
+            "targetW": {
+              "value": 4000,
+              "multiplier": 0
+            },
+            "eventStatus": {
+              "currentStatus": 1,
+              "status": "active",
+              "dateTime": 1790000000
+            }
+          }
+        ],
+        "energyCommittedWh": 1000,
+        "energyRemainingWh": 3000
+      }
+    }
+  ]
+}

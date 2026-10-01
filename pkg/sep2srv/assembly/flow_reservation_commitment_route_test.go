@@ -29,7 +29,7 @@ func TestFlowReservation_FallbackConsultsTheCommitmentLedger(t *testing.T) {
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
 		}
-		resp, err := http.Post(srv.URL+"/edev/"+edev+"/frq", "application/sep+xml", strings.NewReader(string(body)))
+		resp, err := srv.Client().Post(srv.URL+"/edev/"+edev+"/frq", "application/sep+xml", strings.NewReader(string(body)))
 		if err != nil {
 			t.Fatalf("POST /edev/%s/frq: %v", edev, err)
 		}

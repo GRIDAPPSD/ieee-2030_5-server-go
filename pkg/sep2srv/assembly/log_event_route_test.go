@@ -89,7 +89,7 @@ func postLogEvent(t *testing.T, srv *httptest.Server, edevID string, evt sep2.Lo
 		t.Fatalf("marshal LogEvent: %v", err)
 	}
 
-	resp, err := http.Post(srv.URL+"/edev/"+edevID+"/lel", "application/sep+xml", strings.NewReader(string(body)))
+	resp, err := srv.Client().Post(srv.URL+"/edev/"+edevID+"/lel", "application/sep+xml", strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatalf("POST /edev/%s/lel: %v", edevID, err)
 	}
@@ -111,7 +111,7 @@ func postLogEvent(t *testing.T, srv *httptest.Server, edevID string, evt sep2.Lo
 func getBytes(t *testing.T, srv *httptest.Server, path string) (int, []byte) {
 	t.Helper()
 
-	resp, err := http.Get(srv.URL + path)
+	resp, err := srv.Client().Get(srv.URL + path)
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
@@ -357,7 +357,7 @@ func TestLogEvent_InstanceUnservedMethodsGet405WithAnAccurateAllow(t *testing.T)
 			if err != nil {
 				t.Fatalf("new request: %v", err)
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := srv.Client().Do(req)
 			if err != nil {
 				t.Fatalf("%s: %v", method, err)
 			}
@@ -395,7 +395,7 @@ func TestLogEvent_ListEModeMethodsAreRefusedExplicitly(t *testing.T) {
 			if err != nil {
 				t.Fatalf("new request: %v", err)
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := srv.Client().Do(req)
 			if err != nil {
 				t.Fatalf("%s: %v", method, err)
 			}
@@ -429,7 +429,7 @@ func TestLogEvent_HEADIsServedOnListAndInstance(t *testing.T) {
 		if err != nil {
 			t.Fatalf("new request: %v", err)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := srv.Client().Do(req)
 		if err != nil {
 			t.Fatalf("HEAD %s: %v", path, err)
 		}
@@ -552,7 +552,7 @@ func TestLogEvent_UndeclaredLogAddressIsGone(t *testing.T) {
 			t.Errorf("GET %s status = %d, want 404: the undeclared /log alias is removed", path, status)
 		}
 	}
-	resp, err := http.Post(srv.URL+"/edev/d1/log", "application/sep+xml", strings.NewReader("<LogEvent/>"))
+	resp, err := srv.Client().Post(srv.URL+"/edev/d1/log", "application/sep+xml", strings.NewReader("<LogEvent/>"))
 	if err != nil {
 		t.Fatalf("POST /edev/d1/log: %v", err)
 	}
@@ -576,7 +576,7 @@ func TestEndDevice_AdvertisesLogEventListLinkWhenTheFunctionSetIsServed(t *testi
 
 	srv, _ := lelServer(t)
 
-	resp, err := http.Post(srv.URL+"/edev", "application/sep+xml", strings.NewReader(""))
+	resp, err := srv.Client().Post(srv.URL+"/edev", "application/sep+xml", strings.NewReader(""))
 	if err != nil {
 		t.Fatalf("POST /edev: %v", err)
 	}
@@ -656,7 +656,7 @@ func TestEndDevice_LogEventListLinkIsAbsentWhenTheFunctionSetIsNot(t *testing.T)
 		}
 	}
 
-	resp, err := http.Post(srv.URL+"/edev", "application/sep+xml", strings.NewReader(""))
+	resp, err := srv.Client().Post(srv.URL+"/edev", "application/sep+xml", strings.NewReader(""))
 	if err != nil {
 		t.Fatalf("POST /edev: %v", err)
 	}
@@ -685,7 +685,7 @@ func TestLogEventListLink_IsNotClientForgeable(t *testing.T) {
 
 	srv, _ := lelServer(t)
 
-	resp, err := http.Post(srv.URL+"/edev", "application/sep+xml", strings.NewReader(""))
+	resp, err := srv.Client().Post(srv.URL+"/edev", "application/sep+xml", strings.NewReader(""))
 	if err != nil {
 		t.Fatalf("POST /edev: %v", err)
 	}
@@ -702,7 +702,7 @@ func TestLogEventListLink_IsNotClientForgeable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	put, err := http.DefaultClient.Do(req)
+	put, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("PUT %s: %v", created.Href, err)
 	}
@@ -745,7 +745,7 @@ func statusOf(t *testing.T, method, url string) int {
 	if err != nil {
 		t.Fatalf("new %s request: %v", method, err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := isolatedClient().Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}

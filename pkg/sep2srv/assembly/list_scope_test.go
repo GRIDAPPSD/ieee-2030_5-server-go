@@ -59,7 +59,7 @@ func TestTextMessageList_ScopeBindsToTheMessagingProgramInThePath(t *testing.T) 
 
 	for _, tc := range cases {
 		t.Run(tc.msgID, func(t *testing.T) {
-			resp, err := http.Get(srv.URL + "/msg/" + tc.msgID + "/tm")
+			resp, err := srv.Client().Get(srv.URL + "/msg/" + tc.msgID + "/tm")
 			if err != nil {
 				t.Fatalf("GET /msg/%s/tm: %v", tc.msgID, err)
 			}
@@ -108,7 +108,7 @@ func TestTextMessageList_EmptyProgramIsAnEmptyList(t *testing.T) {
 	// distinguishes "this program is empty" from "the store is empty".
 	postTextMessage(t, srv, "m1", "somewhere else entirely")
 
-	resp, err := http.Get(srv.URL + "/msg/m-empty/tm")
+	resp, err := srv.Client().Get(srv.URL + "/msg/m-empty/tm")
 	if err != nil {
 		t.Fatalf("GET /msg/m-empty/tm: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestMeterReadingList_ScopeBindsToTheUsagePointInThePath(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.uptID, func(t *testing.T) {
-			resp, err := http.Get(srv.URL + "/upt/" + tc.uptID + "/mr")
+			resp, err := srv.Client().Get(srv.URL + "/upt/" + tc.uptID + "/mr")
 			if err != nil {
 				t.Fatalf("GET /upt/%s/mr: %v", tc.uptID, err)
 			}
@@ -215,7 +215,7 @@ func TestMeterReadingList_EmptyUsagePointIsAnEmptyList(t *testing.T) {
 	srv, stores := tmServer(t)
 	seedMeterReading(t, stores, "u1", "mr1", "somewhere else entirely")
 
-	resp, err := http.Get(srv.URL + "/upt/u-empty/mr")
+	resp, err := srv.Client().Get(srv.URL + "/upt/u-empty/mr")
 	if err != nil {
 		t.Fatalf("GET /upt/u-empty/mr: %v", err)
 	}

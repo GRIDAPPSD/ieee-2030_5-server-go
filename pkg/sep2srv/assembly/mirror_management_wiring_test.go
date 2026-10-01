@@ -54,7 +54,7 @@ func mupWiringRequest(t *testing.T, method, url, caller, body string) *http.Resp
 		req.Header.Set("Content-Type", "application/sep+xml")
 	}
 	req.Header.Set(gateIdentityHeader, caller)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := isolatedClient().Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}

@@ -108,7 +108,7 @@ func subscribeToResponseList(t *testing.T, srv *httptest.Server, edevID, notific
 		NotificationURI:    notificationURI,
 		Limit:              10,
 	})
-	resp, err := http.Post(srv.URL+"/edev/"+edevID+"/sub", "application/sep+xml", strings.NewReader(body))
+	resp, err := srv.Client().Post(srv.URL+"/edev/"+edevID+"/sub", "application/sep+xml", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST sub: %v", err)
 	}

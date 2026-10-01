@@ -96,7 +96,7 @@ func registrationFaultServer(t *testing.T, authLFDI string) (*httptest.Server, *
 // the test if the store does not answer 201.
 func postFixtureDevice(t *testing.T, base string) {
 	t.Helper()
-	resp, err := http.Post(base+"/edev", "application/sep+xml", strings.NewReader(""))
+	resp, err := isolatedClient().Post(base+"/edev", "application/sep+xml", strings.NewReader(""))
 	if err != nil {
 		t.Fatalf("POST /edev: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestListReportsARegistrationsStoreFailureAsAServerError(t *testing.T) {
 
 	regsFault.Arm(storetest.ErrBackendUnavailable)
 
-	resp, err := http.Get(srv.URL + "/edev")
+	resp, err := srv.Client().Get(srv.URL + "/edev")
 	if err != nil {
 		t.Fatalf("GET /edev: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestListServesAGenuinelyUnregisteredDeviceAs200WithTheLinkAbsent(t *testing
 
 	postFixtureDevice(t, srv.URL)
 
-	resp, err := http.Get(srv.URL + "/edev")
+	resp, err := srv.Client().Get(srv.URL + "/edev")
 	if err != nil {
 		t.Fatalf("GET /edev: %v", err)
 	}

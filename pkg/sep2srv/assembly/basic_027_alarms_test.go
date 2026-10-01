@@ -64,7 +64,7 @@ func TestBASIC_027_Alarms(t *testing.T) {
 
 	// Step 2a: register, and take the EndDevice's own self href from the
 	// Location the server returned.
-	resp, err := http.Post(srv.URL+dcap.EndDeviceListLink.Href, "application/sep+xml", strings.NewReader(""))
+	resp, err := srv.Client().Post(srv.URL+dcap.EndDeviceListLink.Href, "application/sep+xml", strings.NewReader(""))
 	if err != nil {
 		t.Fatalf("POST %s: %v", dcap.EndDeviceListLink.Href, err)
 	}
@@ -102,7 +102,7 @@ func TestBASIC_027_Alarms(t *testing.T) {
 		if err != nil {
 			t.Fatalf("marshal LogEvent[%d]: %v", i, err)
 		}
-		post, err := http.Post(srv.URL+logListHref, "application/sep+xml", strings.NewReader(string(body)))
+		post, err := srv.Client().Post(srv.URL+logListHref, "application/sep+xml", strings.NewReader(string(body)))
 		if err != nil {
 			t.Fatalf("POST %s [%d]: %v", logListHref, i, err)
 		}
@@ -215,7 +215,7 @@ func TestBASIC_027_ListPUTIsOutOfScopeAndRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("PUT /edev/d1/lel: %v", err)
 	}

@@ -61,7 +61,7 @@ func TestEndDeviceDelete_RegistrationDeleteFailureLeavesTheDeviceInPlace(t *test
 
 	// Control: the device is provisioned, so its Registration is really
 	// being served before anything is armed.
-	controlResp, err := http.Get(srv.URL + "/edev/1/rg")
+	controlResp, err := srv.Client().Get(srv.URL + "/edev/1/rg")
 	if err != nil {
 		t.Fatalf("control GET /edev/1/rg: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestEndDeviceDelete_RegistrationDeleteFailureLeavesTheDeviceInPlace(t *test
 	if err != nil {
 		t.Fatalf("new DELETE request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("DELETE /edev/1: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestEndDeviceDelete_RegistrationDeleteFailureLeavesTheDeviceInPlace(t *test
 		t.Fatalf("first DELETE /edev/1 = %d, want 500 while the Registration delete fails", resp.StatusCode)
 	}
 
-	getResp, err := http.Get(srv.URL + "/edev/1")
+	getResp, err := srv.Client().Get(srv.URL + "/edev/1")
 	if err != nil {
 		t.Fatalf("GET /edev/1: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestEndDeviceDelete_RegistrationDeleteFailureLeavesTheDeviceInPlace(t *test
 	if err != nil {
 		t.Fatalf("new retried DELETE request: %v", err)
 	}
-	resp2, err := http.DefaultClient.Do(req2)
+	resp2, err := srv.Client().Do(req2)
 	if err != nil {
 		t.Fatalf("retried DELETE /edev/1: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestEndDeviceDelete_RegistrationDeleteFailureLeavesTheDeviceInPlace(t *test
 		t.Fatalf("retried DELETE /edev/1 = %d, want 204", resp2.StatusCode)
 	}
 
-	getResp2, err := http.Get(srv.URL + "/edev/1")
+	getResp2, err := srv.Client().Get(srv.URL + "/edev/1")
 	if err != nil {
 		t.Fatalf("GET /edev/1 after the retried delete: %v", err)
 	}

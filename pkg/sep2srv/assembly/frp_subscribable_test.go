@@ -43,7 +43,7 @@ func TestFlowReservationResponseList_SubscribableFollowsTheWiring(t *testing.T) 
 			srv := httptest.NewServer(handler)
 			t.Cleanup(srv.Close)
 
-			resp, err := http.Get(srv.URL + "/edev/e1/frp")
+			resp, err := srv.Client().Get(srv.URL + "/edev/e1/frp")
 			if err != nil {
 				t.Fatal(err)
 			}

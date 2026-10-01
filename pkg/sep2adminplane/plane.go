@@ -36,6 +36,9 @@ var (
 	// ErrEditionMismatch: Edition disagrees with Stores.Edition2023, which
 	// the protocol router serves.
 	ErrEditionMismatch = errors.New("sep2adminplane: edition disagrees with the stores")
+	// ErrReadOnlyWithControlWrites: ReadOnly and ControlWrites are both set,
+	// and they ask for opposite things.
+	ErrReadOnlyWithControlWrites = errors.New("sep2adminplane: ReadOnly and ControlWrites are both set")
 )
 
 // MinAdminKeyLength is the shortest AdminKey New accepts, in characters.
@@ -81,6 +84,11 @@ type Config struct {
 	// device FSA assignment among them, which also change what a device is
 	// told.
 	ControlWrites bool
+	// ReadOnly mounts no write route except POST /auth/login and POST
+	// /auth/ticket, so an embedder that seeds the stores itself has no second
+	// writer. A write then gets 404 or 405; every GET route stays. It cannot
+	// be combined with ControlWrites.
+	ReadOnly bool
 	// Panels are extra tabs the shell shows after its own. A panel the
 	// registry refuses makes New fail.
 	Panels []sep2admin.Panel
@@ -94,7 +102,7 @@ type Plane struct {
 
 // New builds the plane. It refuses a blank or short AdminKey, an empty
 // AllowedHosts or one with a blank entry, a nil Stores, an unknown or
-// disagreeing Edition, an out-of-range deadline or grace, and a panel the
+// disagreeing Edition, ReadOnly with ControlWrites, an out-of-range deadline or grace, and a panel the
 // registry refuses.
 func New(cfg Config) (*Plane, error) {
 	if auth.IsBlankCredential(cfg.AdminKey) {
@@ -111,6 +119,9 @@ func New(cfg Config) (*Plane, error) {
 	}
 	if cfg.Stores == nil {
 		return nil, ErrNoStores
+	}
+	if cfg.ReadOnly && cfg.ControlWrites {
+		return nil, ErrReadOnlyWithControlWrites
 	}
 	edition, err := resolveEdition(cfg.Edition, cfg.Stores.Edition2023)
 	if err != nil {
@@ -140,6 +151,7 @@ func New(cfg Config) (*Plane, error) {
 		Panels:         cfg.Panels,
 		LoopbackBypass: cfg.LoopbackBypass,
 		ControlWrites:  cfg.ControlWrites,
+		ReadOnly:       cfg.ReadOnly,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sep2adminplane: %w", err)

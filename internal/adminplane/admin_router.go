@@ -34,6 +34,10 @@ type Config struct {
 	// unmounts only those five, and every other write, FSA program attach
 	// and device FSA assignment among them, stays.
 	ControlWrites bool
+	// ReadOnly mounts no write route but the two auth POSTs (/auth/login and
+	// /auth/ticket). It wins over ControlWrites, so a route is never mounted
+	// and then filtered. Run leaves it false.
+	ReadOnly bool
 }
 
 // Build is the admin router Run serves, with its route list for the boot
@@ -125,6 +129,14 @@ func runConfig(adminKey string, svc *handler.AdminCertService, stores *Stores, t
 func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Handler) {
 	adminKey, svc, stores, tickets, sessions, trafficHandler := cfg.AdminKey, cfg.CertService, cfg.Stores, cfg.Tickets, cfg.Sessions, cfg.Traffic
 	authed := newRecordingMux()
+	// A write route mounts through mountWrite, so ReadOnly leaves it out of
+	// the mux and of the pattern list alike.
+	mountWrite := func(pattern string, h http.HandlerFunc) {
+		if !cfg.ReadOnly {
+			authed.HandleFunc(pattern, h)
+		}
+	}
+	controlWrites := cfg.ControlWrites && !cfg.ReadOnly
 
 	if trafficHandler != nil {
 		authed.Handle("GET /api/traffic/", http.StripPrefix("/api/traffic", trafficHandler))
@@ -133,8 +145,8 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	// Certificate management API
 	if svc != nil {
 		authed.HandleFunc("GET /api/certs/ca", svc.HandleGetCA())
-		authed.HandleFunc("POST /api/certs/server", svc.HandleCreateServerCert())
-		authed.HandleFunc("POST /api/certs/device", svc.HandleCreateDeviceCert())
+		mountWrite("POST /api/certs/server", svc.HandleCreateServerCert())
+		mountWrite("POST /api/certs/device", svc.HandleCreateDeviceCert())
 	}
 
 	// #594: the device type vocabulary a device cert is minted against.
@@ -142,33 +154,33 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	authed.HandleFunc("GET /api/certs/device-types", handler.HandleCertDeviceTypes())
 
 	// #159 registration-assistant API
-	authed.HandleFunc("POST /api/certs/info", handler.HandleCertInfo())
+	mountWrite("POST /api/certs/info", handler.HandleCertInfo())
 	if stores != nil {
 		authed.HandleFunc("GET /api/devices/by-lfdi/{lfdi}", handler.HandleDeviceLookupByLFDI(stores.EndDevices))
 		if !store.IsAbsent(stores.Registrations) {
-			authed.HandleFunc("POST /api/devices", handler.HandleAddEndDevice(stores.EndDevices, stores.Registrations))
+			mountWrite("POST /api/devices", handler.HandleAddEndDevice(stores.EndDevices, stores.Registrations))
 		}
 	}
 
 	// #163 FSA hierarchy management API.
 	if fsaH := newAdminFSAHandler(stores); fsaH != nil {
-		authed.HandleFunc("POST /api/fsas", fsaH.HandleCreateAdminFSA())
+		mountWrite("POST /api/fsas", fsaH.HandleCreateAdminFSA())
 		authed.HandleFunc("GET /api/fsas", fsaH.HandleListAdminFSAs())
 		authed.HandleFunc("GET /api/fsas/{id}", fsaH.HandleGetAdminFSA())
-		authed.HandleFunc("DELETE /api/fsas/{id}", fsaH.HandleDeleteAdminFSA())
-		authed.HandleFunc("POST /api/fsas/{id}/programs", fsaH.HandleAttachProgram())
-		authed.HandleFunc("DELETE /api/fsas/{id}/programs", fsaH.HandleDetachProgram())
-		authed.HandleFunc("POST /api/devices/{id}/fsa-assignment", fsaH.HandleAssignDeviceFSA())
-		authed.HandleFunc("DELETE /api/devices/{id}/fsa-assignment", fsaH.HandleUnassignDeviceFSA())
+		mountWrite("DELETE /api/fsas/{id}", fsaH.HandleDeleteAdminFSA())
+		mountWrite("POST /api/fsas/{id}/programs", fsaH.HandleAttachProgram())
+		mountWrite("DELETE /api/fsas/{id}/programs", fsaH.HandleDetachProgram())
+		mountWrite("POST /api/devices/{id}/fsa-assignment", fsaH.HandleAssignDeviceFSA())
+		mountWrite("DELETE /api/devices/{id}/fsa-assignment", fsaH.HandleUnassignDeviceFSA())
 		authed.HandleFunc("GET /api/topology", handler.HandleTopology(stores.AdminFSAs, stores.EndDevices))
 	}
 
 	// #440 management-pair API: who may manage which EndDevice.
 	if mgmtH := newAdminManagementHandler(stores); mgmtH != nil {
-		authed.HandleFunc("POST /api/management-pairs", mgmtH.HandleCreateManagementPair())
+		mountWrite("POST /api/management-pairs", mgmtH.HandleCreateManagementPair())
 		authed.HandleFunc("GET /api/management-pairs", mgmtH.HandleListManagementPairs())
-		authed.HandleFunc("DELETE /api/management-pairs", mgmtH.HandleRemoveManagementPair())
-		authed.HandleFunc("POST /api/management-pairs/rekey", mgmtH.HandleRekeyManagementPair())
+		mountWrite("DELETE /api/management-pairs", mgmtH.HandleRemoveManagementPair())
+		mountWrite("POST /api/management-pairs/rekey", mgmtH.HandleRekeyManagementPair())
 	}
 
 	// #715 DERMS read API: per-aggregator fleet status, measurements and
@@ -187,10 +199,10 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		authed.HandleFunc("GET /api/derms/flow-reservations", frH.HandleList())
 		authed.HandleFunc("GET /api/derms/flow-reservations/{edevId}/{frqId}", frH.HandleGet())
 		authed.HandleFunc("GET /api/derms/grants", frH.HandleGrants())
-		if cfg.ControlWrites {
-			authed.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/answer", frH.HandleAnswer())
-			authed.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/revise", frH.HandleRevise())
-			authed.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel", frH.HandleCancel())
+		if controlWrites {
+			mountWrite("POST /api/derms/flow-reservations/{edevId}/{frqId}/answer", frH.HandleAnswer())
+			mountWrite("POST /api/derms/flow-reservations/{edevId}/{frqId}/revise", frH.HandleRevise())
+			mountWrite("POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel", frH.HandleCancel())
 		}
 	}
 
@@ -205,9 +217,9 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	// even from loopback.
 	if derH := newAdminDERControlHandler(stores); derH != nil {
 		authed.HandleFunc("GET /api/der/controls", derH.HandleList())
-		if cfg.ControlWrites {
-			authed.HandleFunc("POST /api/der/controls", derH.HandleCreate())
-			authed.HandleFunc("POST /api/der/controls/{mrid}/cancel", derH.HandleCancel())
+		if controlWrites {
+			mountWrite("POST /api/der/controls", derH.HandleCreate())
+			mountWrite("POST /api/der/controls/{mrid}/cancel", derH.HandleCancel())
 		}
 		// "GET /api/devices/{id}/der-programs" would conflict with "GET
 		// /api/devices/by-lfdi/{lfdi}" (neither is more specific), so the

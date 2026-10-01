@@ -193,6 +193,45 @@ func TestControlWritesOffLeavesWriteRoutesUnmounted(t *testing.T) {
 	}
 }
 
+func TestReadOnlyMountsNoWriteRoute(t *testing.T) {
+	cfg := baseConfig()
+	cfg.ReadOnly = true
+	p := newPlane(t, cfg)
+	patterns := p.Patterns()
+	for _, pat := range patterns {
+		if pat == "POST /auth/login" || pat == "POST /auth/ticket" {
+			continue
+		}
+		if !strings.HasPrefix(pat, "GET ") && !strings.HasPrefix(pat, "HEAD ") {
+			t.Errorf("ReadOnly: non-read route %q is mounted", pat)
+		}
+	}
+	for _, keep := range []string{"POST /auth/login", "POST /auth/ticket", "GET /api/fsas", "GET /api/topology", "GET /api/der/controls", "GET /api/ui/panels"} {
+		if !slices.Contains(patterns, keep) {
+			t.Errorf("ReadOnly: %s is not mounted", keep)
+		}
+	}
+	if rec := send(p, http.MethodPost, "/api/fsas", `{}`, true); rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("ReadOnly: POST /api/fsas = %d, want 404 or 405", rec.Code)
+	}
+
+	// The control: without ReadOnly the same stores mount write routes, so
+	// the loop above could have failed.
+	open := len(newPlane(t, baseConfig()).Patterns())
+	if open <= len(patterns) || !slices.Contains(newPlane(t, baseConfig()).Patterns(), "POST /api/fsas") {
+		t.Errorf("control: ReadOnly false mounts %d routes, ReadOnly true %d", open, len(patterns))
+	}
+}
+
+func TestReadOnlyWithControlWritesIsRefused(t *testing.T) {
+	cfg := baseConfig()
+	cfg.ReadOnly = true
+	cfg.ControlWrites = true
+	if _, err := sep2adminplane.New(cfg); !errors.Is(err, sep2adminplane.ErrReadOnlyWithControlWrites) {
+		t.Errorf("New(ReadOnly+ControlWrites) = %v, want ErrReadOnlyWithControlWrites", err)
+	}
+}
+
 // TestGuardTablesCannotBeEditedFromOutside edits every table the admin
 // plane exports, in the way that would open a guarded route, and checks a
 // plane built afterwards still guards it. The bypass is on, so the guard

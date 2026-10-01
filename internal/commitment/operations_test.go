@@ -3,7 +3,6 @@ package commitment
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"testing"
 
@@ -31,7 +30,10 @@ type fakeWriters struct {
 	cancelOnFail  context.CancelFunc
 }
 
-var errWrite = errors.New("fake: write failed")
+var (
+	errWrite   = errors.New("fake: write failed")
+	errRefused = errors.New("fake: refused")
+)
 
 // record logs call and reports whether to apply it and what to return.
 func (f *fakeWriters) record(ctx context.Context, call string) (apply bool, err error) {
@@ -76,8 +78,8 @@ func (f *fakeWriters) CancelExecution(ctx context.Context, c Control, _ string) 
 
 func (f *fakeWriters) RelinkExecution(ctx context.Context, c Control, grantMRID string) error {
 	apply, err := f.record(ctx, "relink:"+c.MRID+"->"+grantMRID)
-	if f.refuseRelink[c.MRID] {
-		return fmt.Errorf("%w: fake refusal", ErrNothingWritten)
+	if f.refuseRelink["relink:"+c.MRID+"->"+grantMRID] {
+		return NothingWritten(errRefused)
 	}
 	if apply {
 		f.control(c.MRID).GrantMRID = grantMRID
@@ -402,12 +404,12 @@ func TestRevise_FailedUndoIsErrUndo(t *testing.T) {
 func TestRevise_RefusedRelinkRollsBackCleanly(t *testing.T) {
 	t.Parallel()
 	l, w := opsFixture(t)
-	w.refuseRelink = map[string]bool{"ctrl-a": true}
+	w.refuseRelink = map[string]bool{"relink:ctrl-a->grant-2": true}
 	err := l.Revise(context.Background(), w.writers(), "grant-1", "", 900, func(Grant) (Replacement, error) {
 		return w.replacement(revisedGrant(func(*Grant) {})), nil
 	})
-	if !errors.Is(err, ErrNothingWritten) || errors.Is(err, ErrUndo) {
-		t.Fatalf("Revise() error = %v, want the refusal and no ErrUndo", err)
+	if !errors.Is(err, errRefused) || errors.Is(err, ErrUndo) || errors.Is(err, ErrNothingWritten) {
+		t.Fatalf("Revise() error = %v, want the refusal, no ErrUndo and no ErrNothingWritten", err)
 	}
 	if slices.Contains(w.calls, "relink:ctrl-a->grant-1") {
 		t.Errorf("calls = %v, want no relink back of an execution that never moved", w.calls)
@@ -415,6 +417,55 @@ func TestRevise_RefusedRelinkRollsBackCleanly(t *testing.T) {
 	if !slices.Contains(w.calls, "delete:grant-2") || len(w.grants.grants) != 1 ||
 		w.control("ctrl-a").GrantMRID != "grant-1" || w.control("ctrl-b").GrantMRID != "grant-1" {
 		t.Errorf("calls = %v grants = %+v, want the revision deleted and both executions on grant-1", w.calls, w.grants.grants)
+	}
+}
+
+// A refusal that wrote nothing does not make a rollback that left state
+// behind look clean: the error is ErrUndo and never ErrNothingWritten.
+func TestRevise_RefusedRelinkWithAFailedUndoIsErrUndo(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		failOn string
+		moved  string
+	}{
+		{"revision delete fails", "delete:grant-2", "grant-1"},
+		{"relink back fails", "relink:ctrl-b->grant-1", "grant-2"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			l, w := opsFixture(t)
+			w.refuseRelink = map[string]bool{"relink:ctrl-a->grant-2": true}
+			w.failOn = map[string]bool{tc.failOn: true}
+			err := l.Revise(context.Background(), w.writers(), "grant-1", "", 900, func(Grant) (Replacement, error) {
+				return w.replacement(revisedGrant(func(*Grant) {})), nil
+			})
+			if !errors.Is(err, ErrUndo) || !errors.Is(err, errRefused) || errors.Is(err, ErrNothingWritten) {
+				t.Fatalf("Revise() error = %v, want ErrUndo wrapping the refusal and no ErrNothingWritten", err)
+			}
+			if got := w.control("ctrl-b").GrantMRID; got != tc.moved {
+				t.Errorf("ctrl-b is on %s, want %s", got, tc.moved)
+			}
+		})
+	}
+}
+
+// A relink back that is itself refused leaves the execution on the new
+// grant, so the error is ErrUndo and the refusal mark stays inside the writer.
+func TestRevise_RefusedRelinkBackIsErrUndo(t *testing.T) {
+	t.Parallel()
+	l, w := opsFixture(t)
+	w.failOn = map[string]bool{"relink:ctrl-a->grant-2": true}
+	w.refuseRelink = map[string]bool{"relink:ctrl-b->grant-1": true}
+	err := l.Revise(context.Background(), w.writers(), "grant-1", "", 900, func(Grant) (Replacement, error) {
+		return w.replacement(revisedGrant(func(*Grant) {})), nil
+	})
+	if !errors.Is(err, ErrUndo) || !errors.Is(err, errRefused) || errors.Is(err, ErrNothingWritten) {
+		t.Fatalf("Revise() error = %v, want ErrUndo wrapping the refusal and no ErrNothingWritten", err)
+	}
+	if got := w.control("ctrl-b").GrantMRID; got != "grant-2" {
+		t.Errorf("ctrl-b is on %s, want grant-2 (the refused relink back left it there)", got)
 	}
 }
 

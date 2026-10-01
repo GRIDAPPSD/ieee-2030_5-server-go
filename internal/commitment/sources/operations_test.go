@@ -3,6 +3,7 @@ package sources_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -33,25 +34,34 @@ type opsHarness struct {
 // through, so a test can fail one write or hide one record from it; the
 // ledger's own reads go to the unwrapped store.
 type lifecycleHooks struct {
-	*memory.ScopedStore[dercontrol.LifecycleRecord]
+	lifecycleStore
 	failUpdate func(id string, rec dercontrol.LifecycleRecord) error
 	hideGet    string
+	updates    []string // "<id>-><grant mRID>" of every Update the Issuer made
+}
+
+// RollsBackOnFailure forwards the wrapped store's answer, which the Issuer
+// reads to decide whether to compensate a failed write itself.
+func (l *lifecycleHooks) RollsBackOnFailure() bool {
+	r, ok := l.lifecycleStore.(interface{ RollsBackOnFailure() bool })
+	return ok && r.RollsBackOnFailure()
 }
 
 func (l *lifecycleHooks) Update(ctx context.Context, parentID, id string, rec dercontrol.LifecycleRecord) error {
+	l.updates = append(l.updates, id+"->"+rec.GrantMRID)
 	if l.failUpdate != nil {
 		if err := l.failUpdate(id, rec); err != nil {
 			return err
 		}
 	}
-	return l.ScopedStore.Update(ctx, parentID, id, rec)
+	return l.lifecycleStore.Update(ctx, parentID, id, rec)
 }
 
 func (l *lifecycleHooks) Get(ctx context.Context, parentID, id string) (dercontrol.LifecycleRecord, error) {
 	if id == l.hideGet {
 		return dercontrol.LifecycleRecord{}, store.ErrNotFound
 	}
-	return l.ScopedStore.Get(ctx, parentID, id)
+	return l.lifecycleStore.Get(ctx, parentID, id)
 }
 
 // markHooks wraps the response lifecycle store MarkCancelled writes
@@ -80,12 +90,25 @@ func (deleteFails) Delete(context.Context, string, string) error { return errDel
 
 func newOpsHarness(t *testing.T) *opsHarness {
 	t.Helper()
-	f := newFixture(t)
+	return newOpsHarnessOn(t, newFixture(t))
+}
+
+// newOpsHarnessPersisted runs the harness on the control lifecycle store
+// the server wires, which rolls back its own failed writes.
+func newOpsHarnessPersisted(t *testing.T) *opsHarness {
+	t.Helper()
+	lifecycles, err := dercontrol.NewLifecycleStoreWithPersistence(filepath.Join(t.TempDir(), "lifecycles.json"))
+	must(t, err)
+	return newOpsHarnessOn(t, newFixtureWith(t, lifecycles))
+}
+
+func newOpsHarnessOn(t *testing.T, f *fixture) *opsHarness {
+	t.Helper()
 	programs := memory.NewScopedStore[sep2.DERProgram]()
 	must(t, programs.Create(context.Background(), managedID, "derp1",
 		sep2.DERProgram{DERControlListLink: &sep2.ListLink{Href: "/edev/m1/fsa/fsa1/derp/derp1/derc"}}))
 	pen := uint32(1)
-	hooks := &lifecycleHooks{ScopedStore: f.controlLifecycles}
+	hooks := &lifecycleHooks{lifecycleStore: f.controlLifecycles}
 	issuer, err := dercontrol.NewIssuer(programs, f.controls, hooks, dercontrol.Config{PEN: &pen})
 	must(t, err)
 	h := &opsHarness{
@@ -429,10 +452,13 @@ func TestRevise_FailedRelinkUndoneAgainstRealStores(t *testing.T) {
 	}
 
 	err := h.reviseVia(t, h.responses, "GRANT-2")
-	if err == nil || errors.Is(err, commitment.ErrUndo) {
+	if err == nil || errors.Is(err, commitment.ErrUndo) || errors.Is(err, commitment.ErrNothingWritten) {
 		t.Fatalf("Revise() = %v, want the relink failure with a clean rollback and no ErrUndo", err)
 	}
 	h.wantRolledBack(t, a, b)
+	if n := countOf(h.hooks.updates, b.ID+"->GRANT-1"); n != 2 {
+		t.Errorf("Updates back to GRANT-1 for the failed execution = %d, want 2 (the Issuer's compensating write and the revise undo): %v", n, h.hooks.updates)
+	}
 	if _, err := h.responses.Get(context.Background(), aggID, flowreservation.RevisionID(grantID)); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("revision read = %v, want it deleted by the undo", err)
 	}
@@ -531,8 +557,8 @@ func TestRevise_RefusedRelinkIsNotErrUndo(t *testing.T) {
 
 	err := h.reviseVia(t, h.responses, "GRANT-2")
 	var refusal *dercontrol.RefusalError
-	if !errors.As(err, &refusal) || refusal.Code != dercontrol.RefusalControlNotFound || errors.Is(err, commitment.ErrUndo) {
-		t.Fatalf("Revise() = %v, want a control_not_found refusal and no ErrUndo", err)
+	if !errors.As(err, &refusal) || refusal.Code != dercontrol.RefusalControlNotFound || errors.Is(err, commitment.ErrUndo) || errors.Is(err, commitment.ErrNothingWritten) {
+		t.Fatalf("Revise() = %v, want a control_not_found refusal, no ErrUndo and no ErrNothingWritten", err)
 	}
 	h.hooks.hideGet = ""
 	h.wantRolledBack(t, a, b)
@@ -555,6 +581,84 @@ func TestWriters_RelinkOfAPlainControlWroteNothing(t *testing.T) {
 		t.Fatalf("RelinkExecution(plain) = %v, want ErrNothingWritten wrapping ErrNotExecution", err)
 	}
 	if got := h.lifecycle(t, plain); got.GrantMRID != before.GrantMRID || got.CancelledAt != nil {
+		t.Errorf("lifecycle = %+v, want %+v unchanged", got, before)
+	}
+}
+
+// Every Update of one execution fails, the restore inside Relink included,
+// so its record may keep the new link: that is a failed undo, never a
+// refusal that wrote nothing.
+func TestRevise_RelinkThatMayHaveWrittenIsErrUndo(t *testing.T) {
+	t.Parallel()
+	h := newOpsHarness(t)
+	h.storeGrant(t)
+	h.issue(t, "GRANT-1", h.base, 600, -2000)
+	b := h.issue(t, "GRANT-1", h.base+600, 600, -1000)
+	h.hooks.failUpdate = func(id string, _ dercontrol.LifecycleRecord) error {
+		if id == b.ID {
+			return errors.New(errRelink)
+		}
+		return nil
+	}
+
+	err := h.reviseVia(t, h.responses, "GRANT-2")
+	var undo *dercontrol.UndoError
+	if !errors.Is(err, commitment.ErrUndo) || !errors.As(err, &undo) || errors.Is(err, commitment.ErrNothingWritten) {
+		t.Fatalf("Revise() = %v, want ErrUndo wrapping the Relink UndoError and no ErrNothingWritten", err)
+	}
+}
+
+func countOf(items []string, want string) int {
+	n := 0
+	for _, it := range items {
+		if it == want {
+			n++
+		}
+	}
+	return n
+}
+
+// On the store the server wires, a failed Relink Update leaves the record
+// as it was and the Issuer makes no compensating Update of its own.
+func TestRevise_FailedRelinkOnTheServersLifecycleStore(t *testing.T) {
+	t.Parallel()
+	h := newOpsHarnessPersisted(t)
+	h.storeGrant(t)
+	a := h.issue(t, "GRANT-1", h.base, 600, -2000)
+	b := h.issue(t, "GRANT-1", h.base+600, 600, -1000)
+	h.hooks.failUpdate = func(id string, rec dercontrol.LifecycleRecord) error {
+		if id == b.ID && rec.GrantMRID == "GRANT-2" {
+			return errors.New(errRelink)
+		}
+		return nil
+	}
+
+	err := h.reviseVia(t, h.responses, "GRANT-2")
+	if err == nil || errors.Is(err, commitment.ErrUndo) {
+		t.Fatalf("Revise() = %v, want the relink failure with a clean rollback", err)
+	}
+	h.wantRolledBack(t, a, b)
+	if n := countOf(h.hooks.updates, b.ID+"->GRANT-1"); n != 1 {
+		t.Errorf("Updates back to GRANT-1 for the failed execution = %d, want 1 (the revise undo; no compensating write): %v", n, h.hooks.updates)
+	}
+}
+
+// A relink that stops on a done context before its write changed nothing.
+func TestWriters_RelinkOnADoneContextWroteNothing(t *testing.T) {
+	t.Parallel()
+	h := newOpsHarness(t)
+	h.storeGrant(t)
+	a := h.issue(t, "GRANT-1", h.base, 600, -2000)
+	before := h.lifecycle(t, a)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c := commitment.Control{MRID: a.Control.MRID, ID: a.ID, Scope: a.Scope.Key()}
+	err := h.writers().Executions.RelinkExecution(ctx, c, "GRANT-2")
+	if !errors.Is(err, commitment.ErrNothingWritten) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("RelinkExecution(done context) = %v, want ErrNothingWritten wrapping context.Canceled", err)
+	}
+	if got := h.lifecycle(t, a); got.GrantMRID != before.GrantMRID {
 		t.Errorf("lifecycle = %+v, want %+v unchanged", got, before)
 	}
 }

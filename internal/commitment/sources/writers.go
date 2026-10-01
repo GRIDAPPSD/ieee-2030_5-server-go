@@ -55,8 +55,8 @@ func (w executionWriter) RelinkExecution(ctx context.Context, c commitment.Contr
 	}
 	_, err = w.issuer.Relink(ctx, scope, c.ID, grantMRID)
 	var refusal *dercontrol.RefusalError
-	if errors.As(err, &refusal) || errors.Is(err, dercontrol.ErrNotExecution) {
-		return fmt.Errorf("%w: %w", commitment.ErrNothingWritten, err)
+	if errors.As(err, &refusal) || errors.Is(err, dercontrol.ErrNotExecution) || errors.Is(err, dercontrol.ErrRelinkNotStarted) {
+		return commitment.NothingWritten(err)
 	}
 	return err
 }
@@ -95,14 +95,14 @@ func (w grantWriter) MarkCancelled(ctx context.Context, g commitment.Grant, reas
 }
 
 // RevisionStoredError reports that a response already sits at the id a
-// revision would take: an earlier Revise whose undo failed left it
-// (commitment.ErrUndo). It unwraps to store.ErrAlreadyExists.
+// revision would take. The usual cause is an earlier Revise whose undo
+// failed (commitment.ErrUndo). It unwraps to store.ErrAlreadyExists.
 type RevisionStoredError struct {
 	EndDeviceID, ID string
 }
 
 func (e *RevisionStoredError) Error() string {
-	return fmt.Sprintf("sources: revision %s/%s is already stored; an earlier revise whose undo failed left it", e.EndDeviceID, e.ID)
+	return fmt.Sprintf("sources: a response is already stored at %s/%s, the id of the revision", e.EndDeviceID, e.ID)
 }
 
 func (e *RevisionStoredError) Unwrap() error { return store.ErrAlreadyExists }

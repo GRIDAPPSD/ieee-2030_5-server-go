@@ -16,9 +16,31 @@ import (
 // executions cancelled under a live grant); calling again finishes it.
 var ErrUndo = errors.New("commitment: undo failed; the stores may hold part of the change")
 
-// ErrNothingWritten marks a write error from an ExecutionWriter that refused
-// the write before changing anything. Revise needs no undo for such a step.
+// ErrNothingWritten matches an ExecutionWriter error built with NothingWritten.
+// Revise acts on it and never returns it: a caller reads Revise's error for
+// the cause and for ErrUndo, never for this.
 var ErrNothingWritten = errors.New("commitment: the write was refused and changed nothing")
+
+// NothingWrittenError is a write error from a step that stopped before
+// changing anything, so Revise needs no undo for it.
+type NothingWrittenError struct{ Err error }
+
+// NothingWritten marks err as a write that changed nothing.
+func NothingWritten(err error) error { return &NothingWrittenError{Err: err} }
+
+func (e *NothingWrittenError) Error() string        { return e.Err.Error() }
+func (e *NothingWrittenError) Unwrap() error        { return e.Err }
+func (e *NothingWrittenError) Is(target error) bool { return target == ErrNothingWritten }
+
+// unmarked drops the NothingWritten mark, so the sentinel cannot reach a
+// caller inside an error that also reports ErrUndo.
+func unmarked(err error) error {
+	var nw *NothingWrittenError
+	if errors.As(err, &nw) {
+		return nw.Err
+	}
+	return err
+}
 
 // ErrBadReplacement refuses a Revise whose replacement is not a revision of
 // the old response. It is the caller's error, never a conflict.
@@ -29,8 +51,8 @@ type ExecutionWriter interface {
 	// CancelExecution stops c. One already cancelled, superseded or ended
 	// is done, not an error.
 	CancelExecution(ctx context.Context, c Control, reason string) error
-	// RelinkExecution moves c to grantMRID, changing nothing else. A refusal
-	// that wrote nothing wraps ErrNothingWritten.
+	// RelinkExecution moves c to grantMRID, changing nothing else. A failure
+	// that wrote nothing is returned through NothingWritten.
 	RelinkExecution(ctx context.Context, c Control, grantMRID string) error
 }
 
@@ -268,7 +290,7 @@ func reviseWrites(ctx context.Context, w Writers, old Grant, rep Replacement, ex
 		var failed []error
 		for _, c := range slices.Backward(touched) {
 			if err := undoStep(ctx, func(uctx context.Context) error { return w.Executions.RelinkExecution(uctx, c, old.MRID) }); err != nil {
-				failed = append(failed, fmt.Errorf("relinking %s back to %s: %w", c.MRID, old.MRID, err))
+				failed = append(failed, fmt.Errorf("relinking %s back to %s: %w", c.MRID, old.MRID, unmarked(err)))
 			}
 		}
 		if err := undoStep(ctx, rep.Delete); err != nil {
@@ -286,7 +308,7 @@ func reviseWrites(ctx context.Context, w Writers, old Grant, rep Replacement, ex
 			touched = append(touched, c)
 		}
 		if err != nil {
-			return undo(fmt.Errorf("commitment: relinking execution %s to %s: %w", c.MRID, rep.Grant.MRID, err))
+			return undo(fmt.Errorf("commitment: relinking execution %s to %s: %w", c.MRID, rep.Grant.MRID, unmarked(err)))
 		}
 	}
 	if err := w.Grants.MarkCancelled(ctx, old, reason, now); err != nil {

@@ -35,7 +35,14 @@ type fixture struct {
 	responses          *memory.ScopedStore[sep2.FlowReservationResponse]
 	responseLifecycles *memory.ScopedStore[dercontrol.LifecycleRecord]
 	controls           *memory.ScopedStore[sep2.DERControl]
-	controlLifecycles  *memory.ScopedStore[dercontrol.LifecycleRecord]
+	controlLifecycles  lifecycleStore
+}
+
+// lifecycleStore is the control lifecycle store a test wires: the plain
+// memory store, or the one the server wires.
+type lifecycleStore interface {
+	store.ScopedStore[dercontrol.LifecycleRecord]
+	Parents(ctx context.Context) ([]string, error)
 }
 
 func (f *fixture) resolver() commitment.Resolver {
@@ -94,6 +101,11 @@ func (f *fixture) addControl(t *testing.T, scope, id string, start int64, dur ui
 // C2 superseded at 1300, C3 cancelled. C4 on the standalone device.
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	return newFixtureWith(t, memory.NewScopedStore[dercontrol.LifecycleRecord]())
+}
+
+func newFixtureWith(t *testing.T, controlLifecycles lifecycleStore) *fixture {
+	t.Helper()
 	ctx := context.Background()
 	f := &fixture{
 		devices:            memory.NewEndDeviceStore(),
@@ -101,7 +113,7 @@ func newFixture(t *testing.T) *fixture {
 		responses:          memory.NewScopedStore[sep2.FlowReservationResponse](),
 		responseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
 		controls:           memory.NewScopedStore[sep2.DERControl](),
-		controlLifecycles:  memory.NewScopedStore[dercontrol.LifecycleRecord](),
+		controlLifecycles:  controlLifecycles,
 	}
 	must(t, f.devices.Create(ctx, aggID, sep2.EndDevice{LFDI: aggLFDI}))
 	must(t, f.devices.Create(ctx, managedID, sep2.EndDevice{LFDI: managedLFDI}))

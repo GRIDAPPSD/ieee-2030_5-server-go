@@ -358,3 +358,106 @@ func TestRun_RetentionSweepsAtBootAfterRecoveryAndStopsBeforeTheQueueCloses(t *t
 		t.Errorf("stored responses after the boot sweep = %d (%v), want 0", n, err)
 	}
 }
+
+// seedEndedRequest stores, in e's data directory, a request on device 0 and
+// its response, whose window ended endedAgo before now.
+func seedEndedRequest(t *testing.T, e *frRunEnv, endedAgo time.Duration) {
+	t.Helper()
+	ctx := context.Background()
+	reqs, err := memory.NewPersistentScopedStore[sep2.FlowReservationRequest](
+		filepath.Join(e.dataDir, "flowreservation-requests.json"), "FlowReservationRequest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resps, err := memory.NewPersistentScopedStore[sep2.FlowReservationResponse](
+		filepath.Join(e.dataDir, "flowreservation-responses.json"), "FlowReservationResponse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := time.Now().Add(-endedAgo).Unix()
+	frq := sep2.FlowReservationRequest{MRID: "OLD", CreationTime: ended - 600, IntervalRequested: &sep2.DateTimeInterval{Start: ended - 600, Duration: 600}}
+	frq.Href = "/edev/0/frq/frq-old"
+	if err := reqs.Create(ctx, "0", "frq-old", frq); err != nil {
+		t.Fatal(err)
+	}
+	frp := sep2.FlowReservationResponse{Subject: "OLD"}
+	frp.Href, frp.MRID, frp.CreationTime = "/edev/0/frp/frq-old", "R-OLD", ended-600
+	frp.Interval = &sep2.DateTimeInterval{Start: ended - 600, Duration: 600}
+	if err := resps.Create(ctx, "0", "frq-old", frp); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func storedOldRequest(t *testing.T, e *frRunEnv) bool {
+	t.Helper()
+	reqs, err := memory.NewPersistentScopedStore[sep2.FlowReservationRequest](
+		filepath.Join(e.dataDir, "flowreservation-requests.json"), "FlowReservationRequest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = reqs.Get(context.Background(), "0", "frq-old")
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		t.Fatal(err)
+	}
+	return err == nil
+}
+
+// The configured grace is the one the running sweep applies: a request that
+// ended 120 s ago is removed at boot under a 60 s grace, and kept under the
+// 1800 s default.
+func TestRun_RetentionGraceSettingReachesTheRunningSweep(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		grace    time.Duration
+		wantKept bool
+	}{
+		{"60 s grace removes it", 60 * time.Second, false},
+		{"default grace keeps it", 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newFRRunEnv(t)
+			seedEndedRequest(t, e, 120*time.Second)
+			cfg := e.config(0)
+			cfg.FlowReservationRetentionGrace = tc.grace
+			stop := e.start(t, cfg)
+			if err := stop(); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if got := storedOldRequest(t, e); got != tc.wantKept {
+				t.Errorf("request stored after the boot sweep = %v, want %v", got, tc.wantKept)
+			}
+		})
+	}
+}
+
+// A grace the setting would have refused stops startup with an error naming
+// it, before recovery, the sweep or either listener: never the default.
+func TestRun_InvalidRetentionGraceStopsStartup(t *testing.T) {
+	e := newFRRunEnv(t)
+	seedEndedRequest(t, e, 120*time.Second)
+	server.SetStartRetentionAtBoot(t, func(context.Context, *server.Stores, flowreservation.Notifier, *slog.Logger, func() time.Time) func() {
+		t.Error("retention started with an invalid grace")
+		return func() {}
+	})
+	cfg := e.config(0)
+	cfg.FlowReservationRetentionGrace = 1500 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runErr := make(chan error, 1)
+	go func() { runErr <- server.Run(ctx, cfg, e.c.svc) }()
+	var err error
+	select {
+	case err = <-runErr:
+	case <-time.After(10 * time.Second):
+		cancel()
+		<-runErr
+		t.Fatal("Run was still serving after 10 s, want a startup error")
+	}
+	if err == nil || !strings.Contains(err.Error(), "retention grace") {
+		t.Fatalf("Run = %v, want an error naming the retention grace", err)
+	}
+	if !storedOldRequest(t, e) {
+		t.Error("the request was removed although startup failed")
+	}
+}

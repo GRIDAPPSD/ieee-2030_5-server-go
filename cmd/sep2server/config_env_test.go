@@ -393,3 +393,43 @@ func TestConfigFromEnvFlowReservationDeadline(t *testing.T) {
 		})
 	}
 }
+
+// #672: SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS reaches the config as a
+// duration, and anything outside 1 to 604800 stops startup rather than being
+// replaced by the default.
+func TestConfigFromEnvFlowReservationRetentionGrace(t *testing.T) {
+	resolver := func() *certDirResolver { return &certDirResolver{resolved: true, dir: "/test/certdir"} }
+
+	t.Run("a value in range is the grace", func(t *testing.T) {
+		t.Setenv("SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS", "60")
+		cfg, err := configFromEnv(resolver())
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if cfg.FlowReservationRetentionGrace != 60*time.Second {
+			t.Errorf("FlowReservationRetentionGrace = %v, want 1m0s", cfg.FlowReservationRetentionGrace)
+		}
+	})
+
+	t.Run("unset leaves the default to the effective accessor", func(t *testing.T) {
+		t.Setenv("SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS", "")
+		cfg, err := configFromEnv(resolver())
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		got, err := cfg.EffectiveFlowReservationRetentionGrace()
+		if err != nil || got != 1800*time.Second {
+			t.Errorf("EffectiveFlowReservationRetentionGrace = %v, %v, want 30m0s", got, err)
+		}
+	})
+
+	for _, bad := range []string{"0", "604801", "-1", "ten", "1.5"} {
+		t.Run("invalid "+bad+" is a startup error", func(t *testing.T) {
+			t.Setenv("SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS", bad)
+			cfg, err := configFromEnv(resolver())
+			if err == nil || !strings.Contains(err.Error(), "SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS") {
+				t.Fatalf("configFromEnv = %+v, %v, want an error naming SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS", cfg, err)
+			}
+		})
+	}
+}

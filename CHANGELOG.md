@@ -78,8 +78,8 @@ admin UI panes (`feature`) and changes several exported signatures
 - **Admin UI.** The DERMS tab gains a fleet pane, a request queue pane with
   answer, revise and cancel actions, and a dispatch pane that executes a live
   grant or sends a plain dispatch and shows metered delivery; the Send DER
-  Control card is wired to the admin API; panes name the source of each
-  quantity and show each fleet's commitments; entering the Devices or FSAs tab reloads
+  Control card is wired to the admin API; the fleet, request queue and dispatch
+  panes show `Source:` labels and show each fleet's commitments; entering the Devices or FSAs tab reloads
   the FSA list and topology; and a chart section renders in panels. The admin UI type check now
   runs in CI.
   ([#730](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/730),
@@ -133,8 +133,12 @@ admin UI panes (`feature`) and changes several exported signatures
   reads descriptors must update. `Descriptor.Body` became
   `Descriptor.Sections`, and `DefinitionEntry.Value` is now a `Cell`. A chart
   section is added in a later pull request.
-  ([#835](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/835),
-  [#838](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/838))
+  ([#835](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/835))
+- A posted DERControlResponse with no `endDeviceLFDI`, or a malformed one, is
+  now refused with 400, and a Response whose `endDeviceLFDI` is not the
+  sender's is refused with 403. Other Response types that name no device are
+  still stored. A request that v0.7.0 accepted is therefore refused.
+  ([#742](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/742))
 - The admin plane moves into `internal/adminplane`; embedders use the new
   `pkg/sep2adminplane` facade.
   ([#834](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/834))

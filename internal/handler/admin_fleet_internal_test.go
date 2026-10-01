@@ -501,13 +501,13 @@ func TestHandleListFleets_ManagedByErrorReturns500AndLogs(t *testing.T) {
 	}
 }
 
-func TestLatestStatus_GenuineFailureIsLoggedAndAbsent(t *testing.T) {
+func TestLatestStatus_GenuineFailureIsReturnedAndLogged(t *testing.T) {
 	buf := captureLog(t)
 	h := &AdminFleetHandler{DERStatuses: erroringScopedReader[sep2.DERStatus]{err: errors.New("disk read failed")}}
 
-	got := h.latestStatus(context.Background(), "3/1")
-	if got != nil {
-		t.Errorf("latestStatus = %+v, want nil: there is still nothing to report", got)
+	got, err := h.latestStatus(context.Background(), "3/1")
+	if got != nil || err == nil || !strings.Contains(err.Error(), "disk read failed") {
+		t.Errorf("latestStatus = %+v, %v; want nil and an error naming the failure", got, err)
 	}
 	if !strings.Contains(buf.String(), "disk read failed") {
 		t.Errorf("log output = %q, want it to name the failure", buf.String())
@@ -518,22 +518,22 @@ func TestLatestStatus_ErrNotFoundIsTheOrdinaryCaseAndSilent(t *testing.T) {
 	buf := captureLog(t)
 	h := &AdminFleetHandler{DERStatuses: erroringScopedReader[sep2.DERStatus]{err: store.ErrNotFound}}
 
-	got := h.latestStatus(context.Background(), "3/1")
-	if got != nil {
-		t.Errorf("latestStatus = %+v, want nil", got)
+	got, err := h.latestStatus(context.Background(), "3/1")
+	if got != nil || err != nil {
+		t.Errorf("latestStatus = %+v, %v, want nil, nil", got, err)
 	}
 	if buf.Len() != 0 {
 		t.Errorf("log output = %q, want none: a device with no DERStatus yet is the ordinary case, not a failure", buf.String())
 	}
 }
 
-func TestLatestAvailability_GenuineFailureIsLoggedAndAbsent(t *testing.T) {
+func TestLatestAvailability_GenuineFailureIsReturnedAndLogged(t *testing.T) {
 	buf := captureLog(t)
 	h := &AdminFleetHandler{DERAvailabilities: erroringScopedReader[sep2.DERAvailability]{err: errors.New("disk read failed")}}
 
-	got := h.latestAvailability(context.Background(), "3/1")
-	if got != nil {
-		t.Errorf("latestAvailability = %+v, want nil", got)
+	got, err := h.latestAvailability(context.Background(), "3/1")
+	if got != nil || err == nil || !strings.Contains(err.Error(), "disk read failed") {
+		t.Errorf("latestAvailability = %+v, %v; want nil and an error naming the failure", got, err)
 	}
 	if !strings.Contains(buf.String(), "disk read failed") {
 		t.Errorf("log output = %q, want it to name the failure", buf.String())
@@ -544,22 +544,22 @@ func TestLatestAvailability_ErrNotFoundIsTheOrdinaryCaseAndSilent(t *testing.T) 
 	buf := captureLog(t)
 	h := &AdminFleetHandler{DERAvailabilities: erroringScopedReader[sep2.DERAvailability]{err: store.ErrNotFound}}
 
-	got := h.latestAvailability(context.Background(), "3/1")
-	if got != nil {
-		t.Errorf("latestAvailability = %+v, want nil", got)
+	got, err := h.latestAvailability(context.Background(), "3/1")
+	if got != nil || err != nil {
+		t.Errorf("latestAvailability = %+v, %v, want nil, nil", got, err)
 	}
 	if buf.Len() != 0 {
 		t.Errorf("log output = %q, want none", buf.String())
 	}
 }
 
-func TestBuildDevice_EndDevicesGenuineFailureIsLoggedAndAbsent(t *testing.T) {
+func TestBuildDevice_EndDevicesGenuineFailureIsReturnedAndLogged(t *testing.T) {
 	buf := captureLog(t)
 	h := &AdminFleetHandler{EndDevices: erroringEndDevices{err: errors.New("lookup backend down")}}
 
-	fd := h.buildDevice(context.Background(), fleetTestLFDI)
-	if fd.Status != nil || fd.Availability != nil {
-		t.Errorf("buildDevice = %+v, want no status or availability", fd)
+	_, err := h.buildDevice(context.Background(), fleetTestLFDI)
+	if err == nil || !strings.Contains(err.Error(), "lookup backend down") {
+		t.Errorf("buildDevice error = %v, want one naming the failure", err)
 	}
 	if !strings.Contains(buf.String(), "lookup backend down") {
 		t.Errorf("log output = %q, want it to name the failure", buf.String())
@@ -570,33 +570,39 @@ func TestBuildDevice_EndDevicesErrNotFoundIsTheOrdinaryCaseAndSilent(t *testing.
 	buf := captureLog(t)
 	h := &AdminFleetHandler{EndDevices: erroringEndDevices{err: store.ErrNotFound}}
 
-	h.buildDevice(context.Background(), fleetTestLFDI)
+	fd, err := h.buildDevice(context.Background(), fleetTestLFDI)
+	if err != nil || fd.LFDI != fleetTestLFDI {
+		t.Errorf("buildDevice = %+v, %v, want the bare device and no error", fd, err)
+	}
 	if buf.Len() != 0 {
 		t.Errorf("log output = %q, want none: a managed LFDI with no EndDevice record is the ordinary case", buf.String())
 	}
 }
 
-func TestBuildDevice_DERsListFailureIsLogged(t *testing.T) {
+func TestBuildDevice_DERsListFailureIsReturnedAndLogged(t *testing.T) {
 	buf := captureLog(t)
 	h := &AdminFleetHandler{
 		EndDevices: erroringEndDevices{}, // nil err: GetByLFDI succeeds with a zero-value EndDevice
 		DERs:       erroringScopedReader[sep2.DER]{err: errors.New("der list backend down")},
 	}
 
-	fd := h.buildDevice(context.Background(), fleetTestLFDI)
-	if fd.Status != nil || fd.Availability != nil {
-		t.Errorf("buildDevice = %+v, want no status or availability", fd)
+	_, err := h.buildDevice(context.Background(), fleetTestLFDI)
+	if err == nil || !strings.Contains(err.Error(), "der list backend down") {
+		t.Errorf("buildDevice error = %v, want one naming the failure: DERs.List never fails for an unknown parent, so any error here is genuine", err)
 	}
 	if !strings.Contains(buf.String(), "der list backend down") {
-		t.Errorf("log output = %q, want it to name the failure: DERs.List never fails for an unknown parent, so any error here is genuine", buf.String())
+		t.Errorf("log output = %q, want it to name the failure", buf.String())
 	}
 }
 
-func TestDeviceMeasurements_MirrorUsagePointsListFailureIsLogged(t *testing.T) {
+func TestDeviceMeasurements_MirrorUsagePointsListFailureIsReturnedAndLogged(t *testing.T) {
 	buf := captureLog(t)
 	h := &AdminFleetHandler{MirrorUsagePoints: erroringResourceReader[sep2.MirrorUsagePoint]{err: errors.New("mup list backend down")}}
 
-	got := h.deviceMeasurements(context.Background(), fleetTestLFDI)
+	got, err := h.deviceMeasurements(context.Background(), fleetTestLFDI)
+	if err == nil || !strings.Contains(err.Error(), "mup list backend down") {
+		t.Errorf("deviceMeasurements error = %v, want one naming the failure", err)
+	}
 	if got.P != nil || got.Q != nil || got.V != nil || got.F != nil {
 		t.Errorf("deviceMeasurements = %+v, want all nil", got)
 	}
@@ -605,7 +611,7 @@ func TestDeviceMeasurements_MirrorUsagePointsListFailureIsLogged(t *testing.T) {
 	}
 }
 
-func TestDeviceMeasurements_MirrorMeterReadingsListFailureIsLogged(t *testing.T) {
+func TestDeviceMeasurements_MirrorMeterReadingsListFailureIsReturnedAndLogged(t *testing.T) {
 	buf := captureLog(t)
 	mups := memoryMirrorUsagePointsFor(t, fleetTestLFDI)
 	h := &AdminFleetHandler{
@@ -613,11 +619,107 @@ func TestDeviceMeasurements_MirrorMeterReadingsListFailureIsLogged(t *testing.T)
 		MirrorMeterReadings: erroringScopedReader[sep2.MirrorMeterReading]{err: errors.New("mmr list backend down")},
 	}
 
-	h.deviceMeasurements(context.Background(), fleetTestLFDI)
+	_, err := h.deviceMeasurements(context.Background(), fleetTestLFDI)
+	if err == nil || !strings.Contains(err.Error(), "mmr list backend down") {
+		t.Errorf("deviceMeasurements error = %v, want one naming the failure", err)
+	}
 	if !strings.Contains(buf.String(), "mmr list backend down") {
 		t.Errorf("log output = %q, want it to name the failure", buf.String())
 	}
 }
+
+// fleetOf500 drives HandleListFleets over h with one aggregator and returns
+// the recorded response.
+func fleetOf500(h *AdminFleetHandler) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	HandleListFleets(h)(w, httptest.NewRequest(http.MethodGet, "/api/derms/fleets", nil))
+	return w
+}
+
+// registeredEndDevices serves one EndDevice at /edev/3 for any LFDI, so
+// buildDevice proceeds to the DER reads.
+type registeredEndDevices struct{ erroringEndDevices }
+
+func (registeredEndDevices) GetByLFDI(context.Context, string) (sep2.EndDevice, error) {
+	return sep2.EndDevice{SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/3"}}}, nil
+}
+
+// oneDER lists a single DER under any parent so the status and availability
+// reads are reached.
+type oneDER struct{ erroringScopedReader[sep2.DER] }
+
+func (oneDER) List(context.Context, string, store.ListOptions) (store.ListResult[sep2.DER], error) {
+	return store.ListResult[sep2.DER]{Items: []sep2.DER{{SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/3/der/1"}}}}}, nil
+}
+
+// TestHandleListFleets_StoreReadFailureIs500 is #731: each of the six
+// per-device store reads, failing with a non-NotFound error, fails the whole
+// request with 500 and never a 200 listing the device without its data; the
+// same reads failing with ErrNotFound stay a 200.
+func TestHandleListFleets_StoreReadFailureIs500(t *testing.T) {
+	boom := errors.New("backend down")
+	cases := []struct {
+		name string
+		// getRead marks the single-item Get reads, where ErrNotFound is the
+		// ordinary "no data yet" case; a List read never returns it (the
+		// store's List contract), so any List error is a failure.
+		getRead bool
+		build   func(err error) *AdminFleetHandler
+	}{
+		{"EndDevices.GetByLFDI", true, func(err error) *AdminFleetHandler {
+			return &AdminFleetHandler{EndDevices: erroringEndDevices{err: err}}
+		}},
+		{"DERs.List", false, func(err error) *AdminFleetHandler {
+			return &AdminFleetHandler{EndDevices: registeredEndDevices{}, DERs: erroringScopedReader[sep2.DER]{err: err}}
+		}},
+		{"DERStatuses.Get", true, func(err error) *AdminFleetHandler {
+			return &AdminFleetHandler{EndDevices: registeredEndDevices{}, DERs: oneDER{}, DERStatuses: erroringScopedReader[sep2.DERStatus]{err: err}}
+		}},
+		{"DERAvailabilities.Get", true, func(err error) *AdminFleetHandler {
+			return &AdminFleetHandler{EndDevices: registeredEndDevices{}, DERs: oneDER{}, DERAvailabilities: erroringScopedReader[sep2.DERAvailability]{err: err}}
+		}},
+		{"MirrorUsagePoints.List", false, func(err error) *AdminFleetHandler {
+			return &AdminFleetHandler{MirrorUsagePoints: erroringResourceReader[sep2.MirrorUsagePoint]{err: err}}
+		}},
+		{"MirrorMeterReadings.List", false, func(err error) *AdminFleetHandler {
+			return &AdminFleetHandler{
+				MirrorUsagePoints:   memoryMirrorUsagePointsFor(t, fleetTestLFDI),
+				MirrorMeterReadings: erroringScopedReader[sep2.MirrorMeterReading]{err: err},
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			captureLog(t)
+			h := tc.build(boom)
+			h.Managers = fleetOneAggregator{lfdi: fleetTestLFDI}
+			w := fleetOf500(h)
+			if w.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500; body = %s", w.Code, w.Body.String())
+			}
+			if strings.Contains(w.Body.String(), fleetTestLFDI) {
+				t.Errorf("body = %s, want no fleet listing", w.Body.String())
+			}
+
+			if !tc.getRead {
+				return
+			}
+			h = tc.build(store.ErrNotFound)
+			h.Managers = fleetOneAggregator{lfdi: fleetTestLFDI}
+			w = fleetOf500(h)
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), fleetTestLFDI) {
+				t.Errorf("ErrNotFound: status = %d, body = %s, want 200 listing the device", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+// fleetOneAggregator is a fleetManagerReader with one aggregator managing
+// nobody, so the fleet holds exactly the aggregator's own device.
+type fleetOneAggregator struct{ lfdi string }
+
+func (f fleetOneAggregator) ManagedBy(context.Context, string) ([]string, error) { return nil, nil }
+func (f fleetOneAggregator) Managers(context.Context) []string                   { return []string{f.lfdi} }
 
 const fleetTestLFDI = "D001000000000000000000000000000000000001"
 
@@ -762,7 +864,10 @@ func TestHandleListFleets_InlineCreateThenOutOfBandFollowUpInheritsType(t *testi
 		t.Fatalf("MirrorMeterReadings.Create: %v", err)
 	}
 
-	got := h.deviceMeasurements(context.Background(), fleetTestLFDI)
+	got, err := h.deviceMeasurements(context.Background(), fleetTestLFDI)
+	if err != nil {
+		t.Fatalf("deviceMeasurements: %v", err)
+	}
 	if got.P == nil || got.P.Value != 450 {
 		t.Errorf("Measurements.P = %+v, want value 450 (the out-of-band follow-up, inheriting the inline creating reading's type)", got.P)
 	}
@@ -815,35 +920,6 @@ func TestAddToSum_StaleTakesPrecedenceOverUnreported(t *testing.T) {
 	}
 	if sum.Unreported != 0 {
 		t.Errorf("Unreported = %d, want 0: stale must be checked before the unreported case", sum.Unreported)
-	}
-}
-
-// TestDeviceMeasurements_MMRListFailureStillUsesInlineReadings kills a
-// mutation that clears the inline readings when MirrorMeterReadings.List
-// fails, instead of only skipping the out-of-band readings that call would
-// have added: the inline reading was already read from the MirrorUsagePoint
-// itself and does not depend on that call succeeding.
-func TestDeviceMeasurements_MMRListFailureStillUsesInlineReadings(t *testing.T) {
-	t.Parallel()
-	mups := memory.NewStore[sep2.MirrorUsagePoint]()
-	mup := sep2.MirrorUsagePoint{
-		Resource:   sep2.Resource{Href: "/mup/1"},
-		DeviceLFDI: fleetTestLFDI,
-		MirrorMeterReading: []sep2.MirrorMeterReading{
-			typedReading("inline-series", 100, sep2.UomWatts, nil, 400),
-		},
-	}
-	if err := mups.Create(context.Background(), "1", mup); err != nil {
-		t.Fatalf("MirrorUsagePoints.Create: %v", err)
-	}
-	h := &AdminFleetHandler{
-		MirrorUsagePoints:   mups,
-		MirrorMeterReadings: erroringScopedReader[sep2.MirrorMeterReading]{err: errors.New("mmr list backend down")},
-	}
-
-	got := h.deviceMeasurements(context.Background(), fleetTestLFDI)
-	if got.P == nil || got.P.Value != 400 {
-		t.Errorf("Measurements.P = %+v, want value 400: the inline reading must survive a failed out-of-band List", got.P)
 	}
 }
 
@@ -1078,7 +1154,10 @@ func TestDeviceMeasurements_EditionAndIsDERFromRoleFlags(t *testing.T) {
 			}
 			h := &AdminFleetHandler{MirrorUsagePoints: mups, Edition: tc.edition}
 
-			got := h.deviceMeasurements(context.Background(), fleetTestLFDI)
+			got, err := h.deviceMeasurements(context.Background(), fleetTestLFDI)
+			if err != nil {
+				t.Fatalf("deviceMeasurements: %v", err)
+			}
 			if got.P == nil || got.P.Value != tc.want {
 				t.Errorf("Measurements.P = %+v, want value %v", got.P, tc.want)
 			}

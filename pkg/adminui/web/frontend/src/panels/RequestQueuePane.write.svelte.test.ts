@@ -76,7 +76,7 @@ afterEach(() => {
 })
 
 describe('which actions a row offers', () => {
-  it('offers answer actions on pending and revise or cancel on granted, nothing else', async () => {
+  it('offers answer actions on pending or overdue and revise or cancel on granted, nothing else', async () => {
     mockReads()
     render(RequestQueuePane)
     const [pending, granted] = await rows()
@@ -88,7 +88,7 @@ describe('which actions a row offers', () => {
     expect(within(granted).getAllByRole('button').map((b) => b.textContent)).toEqual(['Revise', 'Cancel grant'])
   })
 
-  it.each(['denied', 'cancelled', 'withdrawn', 'ended', 'overdue'])('offers no action on a %s request', async (state) => {
+  it.each(['denied', 'cancelled', 'withdrawn', 'ended'])('offers no action on a %s request', async (state) => {
     const q = copy()
     q.requests[1].state = state
     q.requests = [q.requests[1]]
@@ -162,14 +162,36 @@ describe('decisions', () => {
     expect(screen.queryByTestId('frq-action')).toBeNull()
   })
 
-  it('accepts the view wrapped under view', async () => {
-    mockReads()
+  it('does not read a view wrapped under view, and re-reads the queue', async () => {
+    const reads = mockReads()
     mockWrite({ ok: true, data: { persisted: true, view: grantedView() } })
     render(RequestQueuePane)
     const [pending] = await rows()
+    const before = reads.mock.calls.length
     await press(pending, 'Grant as asked')
     await press(pending, 'Confirm')
-    await waitFor(() => expect(within(pending).getByTestId('frq-state').textContent).toBe('granted'))
+    expect((await screen.findByTestId('frq-write-error')).textContent).toContain('could not be read')
+    expect(within(pending).getByTestId('frq-state').textContent).toBe('pending')
+    await waitFor(() => expect(reads.mock.calls.length).toBeGreaterThan(before))
+  })
+
+  it('answers an overdue request through the answer route', async () => {
+    const q = copy()
+    q.requests[0].state = 'overdue'
+    mockReads(q)
+    const post = mockWrite({ ok: true, data: grantedView() })
+    render(RequestQueuePane)
+    const [overdue] = await rows()
+    expect(within(overdue).getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Grant as asked',
+      'Grant adjusted',
+      'Deny',
+    ])
+    await press(overdue, 'Deny')
+    await press(overdue, 'Confirm')
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    expect(post.mock.calls[0][0]).toBe(PENDING_BASE + 'answer')
+    expect(post.mock.calls[0][1]).toEqual({ decision: 'deny' })
   })
 
   it('bounds the write with a timeout and a signal', async () => {

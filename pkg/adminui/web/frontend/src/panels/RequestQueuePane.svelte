@@ -506,7 +506,7 @@
                   {#if entry.tip === null && entry.responses.length === 0}
                     <span class="hint">no answer yet</span>
                   {/if}
-                  {#if entry.state === 'pending'}
+                  {#if entry.state === 'pending' || entry.state === 'overdue'}
                     <div class="actions">
                       <button class="btn btn-small" disabled={action?.busy === true} onclick={() => openAction(entry, 'grant_as_asked')}>Grant as asked</button>
                       <button class="btn btn-small" disabled={action?.busy === true} onclick={() => openAction(entry, 'grant_adjusted')}>Grant adjusted</button>

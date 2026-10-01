@@ -179,14 +179,10 @@ export type WriteResult =
   | { ok: true; entry: FlowReservationEntry }
   | { ok: false; message: string; refresh: boolean }
 
-// viewFrom reads the request the server returns after a write: either the
-// view itself or a wrapper holding it under `view`.
+// viewFrom reads the request the server returns after a write: the whole
+// FlowReservationView, as the body itself.
 function viewFrom(data: unknown): FlowReservationEntry | null {
-  const inner =
-    data !== null && typeof data === 'object' && 'view' in data && (data as { view: unknown }).view !== null
-      ? (data as { view: unknown }).view
-      : data
-  const parsed = normalizeQueue({ requests: [inner] })
+  const parsed = normalizeQueue({ requests: [data] })
   return 'queue' in parsed ? parsed.queue.requests[0] : null
 }
 

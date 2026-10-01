@@ -1,11 +1,13 @@
 package adminplane
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
@@ -15,11 +17,22 @@ import (
 // deadline answers 504; its goroutine is not killed (see InvokeView).
 const panelViewTimeout = 5 * time.Second
 
+// Response bounds. The shell renders every row into the page with no
+// paging and re-polls an open panel, so a panel's payload stays small.
+// The largest panel in view is a per-device registry, sized by the fleet
+// (tens of devices); 1000 rows leaves an order of magnitude of headroom.
+// 1 MiB holds 1000 rows at about 1 KiB each.
+const (
+	maxPanelRows  = 1000
+	maxPanelBytes = 1 << 20
+)
+
 // panelSet is the frozen extension band an embedder registered: the
 // panels the shell adds after its own tabs. The core band holds the
 // shell's tabs, which the shell renders itself, so it is never served.
 type panelSet struct {
 	panels  []sep2admin.Panel
+	busy    map[string]*atomic.Bool
 	timeout time.Duration
 }
 
@@ -41,6 +54,7 @@ func newPanelSet(panels []sep2admin.Panel) (*panelSet, error) {
 	for _, p := range frozen {
 		if p.Placement.Extension() {
 			ps.panels = append(ps.panels, p)
+			ps.busy[p.ID] = new(atomic.Bool)
 		}
 	}
 	return ps, nil
@@ -49,7 +63,7 @@ func newPanelSet(panels []sep2admin.Panel) (*panelSet, error) {
 // noPanels is the set BuildAdminRouter mounts: the routes exist and list
 // nothing.
 func noPanels() *panelSet {
-	return &panelSet{panels: []sep2admin.Panel{}, timeout: panelViewTimeout}
+	return &panelSet{panels: []sep2admin.Panel{}, busy: map[string]*atomic.Bool{}, timeout: panelViewTimeout}
 }
 
 type panelEntry struct {
@@ -80,7 +94,16 @@ func (ps *panelSet) handleGet() http.HandlerFunc {
 			writePanelError(w, http.StatusNotFound, "no such panel")
 			return
 		}
-		d, err := sep2admin.InvokeView(r.Context(), p, ps.timeout)
+		// One View per panel at a time. A hung View keeps its goroutine
+		// until it returns, so without this each read would leak one more.
+		busy := ps.busy[id]
+		if !busy.CompareAndSwap(false, true) {
+			writePanelError(w, http.StatusGatewayTimeout, "panel is still answering an earlier request")
+			return
+		}
+		guarded, settle := oneAtATime(p, busy)
+		d, err := sep2admin.InvokeView(r.Context(), guarded, ps.timeout)
+		settle()
 		switch {
 		case err == nil:
 		case errors.Is(err, sep2admin.ErrViewTimedOut), errors.Is(err, sep2admin.ErrViewNotInvoked):
@@ -100,6 +123,11 @@ func (ps *panelSet) handleGet() http.HandlerFunc {
 			writePanelError(w, http.StatusInternalServerError, "panel failed")
 			return
 		}
+		if rows := d.RowCount(); rows > maxPanelRows {
+			log.Printf("admin: panel %q: %d rows, over the cap of %d", id, rows, maxPanelRows)
+			writePanelError(w, http.StatusInternalServerError, "panel response too large")
+			return
+		}
 		// Encoded before any header is written, so a refused Descriptor
 		// (an unsafe link, an undeclared badge) answers 500, not a
 		// truncated 200.
@@ -109,12 +137,41 @@ func (ps *panelSet) handleGet() http.HandlerFunc {
 			writePanelError(w, http.StatusInternalServerError, "panel failed")
 			return
 		}
+		if len(body) > maxPanelBytes {
+			log.Printf("admin: panel %q: %d encoded bytes, over the cap of %d", id, len(body), maxPanelBytes)
+			writePanelError(w, http.StatusInternalServerError, "panel response too large")
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write(body); err != nil {
 			log.Printf("admin: panel %q: write: %v", id, err)
 		}
 	}
+}
+
+// oneAtATime returns p with a View that frees busy when the real View
+// returns, which can be long after InvokeView gave up on it, and a settle
+// func the caller runs once InvokeView returns. InvokeView may never start
+// the View (the request was already gone); whichever of the View and
+// settle claims started first decides, so busy is freed exactly once and
+// a View that starts after settle does not run.
+func oneAtATime(p sep2admin.Panel, busy *atomic.Bool) (sep2admin.Panel, func()) {
+	var started atomic.Bool
+	view := p.View
+	p.View = func(ctx context.Context) (sep2admin.Descriptor, error) {
+		if !started.CompareAndSwap(false, true) {
+			return sep2admin.Descriptor{}, context.Canceled
+		}
+		defer busy.Store(false)
+		return view(ctx)
+	}
+	settle := func() {
+		if started.CompareAndSwap(false, true) {
+			busy.Store(false)
+		}
+	}
+	return p, settle
 }
 
 func (ps *panelSet) lookup(id string) (sep2admin.Panel, bool) {

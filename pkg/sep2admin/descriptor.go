@@ -212,10 +212,19 @@ func (c Cell) MarshalJSON() ([]byte, error) {
 	return json.Marshal(w)
 }
 
-// checkHref admits an absolute http or https URL with a host, or a
-// relative reference with neither scheme nor host. Bytes a browser strips
-// or rewrites before parsing (controls, space, backslash) are refused
-// outright, so the URL checked here is the URL the browser follows.
+// checkHref is the link rule. An href is accepted only when all of these
+// hold, and a renderer applying the same rule accepts the same set:
+//  1. it is not empty, and holds no byte at or below 0x20 (controls and
+//     space), no 0x7F and no backslash;
+//  2. if it starts with "http://" or "https://" (scheme in any case), the
+//     authority after the "//", up to the first "/", "?" or "#", is not
+//     empty and holds no "@";
+//  3. otherwise it does not start with "//", and holds no ":" before its
+//     first "/", "?" or "#".
+//
+// Rule 3 refuses "//host", "///host" and longer runs, which a browser
+// resolves to another host, and any other scheme. url.Parse then backs
+// the rule up.
 func checkHref(href string) error {
 	if href == "" {
 		return fmt.Errorf("%w: empty", ErrUnsafeLink)
@@ -224,6 +233,19 @@ func checkHref(href string) error {
 		if b := href[i]; b <= ' ' || b == 0x7f || b == '\\' {
 			return fmt.Errorf("%w: %q holds byte 0x%02x", ErrUnsafeLink, href, b)
 		}
+	}
+	lower := strings.ToLower(href)
+	switch {
+	case strings.HasPrefix(lower, "http://"), strings.HasPrefix(lower, "https://"):
+		rest := href[strings.Index(href, "//")+2:]
+		authority := rest[:firstOf(rest, "/?#")]
+		if authority == "" || strings.Contains(authority, "@") {
+			return fmt.Errorf("%w: %q has no usable host", ErrUnsafeLink, href)
+		}
+	case strings.HasPrefix(href, "//"):
+		return fmt.Errorf("%w: %q starts with //", ErrUnsafeLink, href)
+	case strings.Contains(href[:firstOf(href, "/?#")], ":"):
+		return fmt.Errorf("%w: %q has a scheme other than http or https", ErrUnsafeLink, href)
 	}
 	u, err := url.Parse(href)
 	if err != nil {
@@ -242,6 +264,14 @@ func checkHref(href string) error {
 		return fmt.Errorf("%w: %q has scheme %q", ErrUnsafeLink, href, u.Scheme)
 	}
 	return nil
+}
+
+// firstOf is the index of the first byte of s in chars, or len(s).
+func firstOf(s, chars string) int {
+	if i := strings.IndexAny(s, chars); i >= 0 {
+		return i
+	}
+	return len(s)
 }
 
 // Row is one row of a TableBody: one Cell per column, in column order.
@@ -373,4 +403,17 @@ func nonNil[T any](s []T) []T {
 		return []T{}
 	}
 	return s
+}
+
+// RowCount is the number of table rows plus definition entries across
+// every section: the rows a renderer puts on the page.
+func (d Descriptor) RowCount() int {
+	n := 0
+	for _, s := range d.Sections {
+		n += len(s.Body.table.Rows)
+		for _, g := range s.Body.definitionList.Groups {
+			n += len(g.Entries)
+		}
+	}
+	return n
 }

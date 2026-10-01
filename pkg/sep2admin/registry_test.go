@@ -111,6 +111,9 @@ func TestValidateID(t *testing.T) {
 		{"reserved auth", "auth"},
 		{"reserved login", "login"},
 		{"reserved dashboard", "dashboard"},
+		{"api prefix api-status", "api-status"},
+		{"api prefix apix", "apix"},
+		{"spa assets dir", "assets"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

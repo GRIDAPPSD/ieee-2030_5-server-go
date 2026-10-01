@@ -184,6 +184,12 @@ func TestLinkCellHrefIsCheckedAtEncode(t *testing.T) {
 		"https://user@evil.example/",
 		"",
 		"ftp://example.org/",
+		"///evil.example",
+		"////evil.example",
+		"///evil.example/a?b",
+		"http:///evil.example",
+		"https:evil.example",
+		"HTTP:/evil.example",
 	}
 	for _, href := range refused {
 		_, err := json.Marshal(oneCell(LinkCell(href, "x")))

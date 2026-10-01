@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -89,6 +90,9 @@ var pathSegmentIDs = map[string]struct{}{
 	"auth":      {},
 	"login":     {},
 	"dashboard": {},
+	// The SPA's built asset directory; its other top-level files have a
+	// "." and cannot match idPattern.
+	"assets": {},
 }
 
 // Registry is the add-only contract a Panel is registered through. Its
@@ -245,6 +249,9 @@ func validateID(id string) error {
 	}
 	if slices.Contains(coreTabs, id) {
 		return fmt.Errorf("%w: %q is a core tab", ErrInvalidID, id)
+	}
+	if strings.HasPrefix(id, "api") {
+		return fmt.Errorf("%w: %q starts with api, which the SPA handler answers as an API path", ErrInvalidID, id)
 	}
 	if _, reserved := pathSegmentIDs[id]; reserved {
 		return fmt.Errorf("%w: %q is a reserved path segment", ErrInvalidID, id)

@@ -1,129 +1,187 @@
-// The dispatch decision (issue 368 criterion 3): kind is read by name,
-// and an absent kind, an unrecognised kind, and a body that does not
-// match its kind (an absent body included) each render an honest
-// message rather than nothing or a crash.
+// The v2 renderer. Each test names the behavior it can fail on; the
+// escaping and link tests use the shared hostile string so every sink is
+// checked with the same full payload.
+/// <reference types="node" />
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/svelte'
+import { render, screen, within } from '@testing-library/svelte'
 import DescriptorPanel from './DescriptorPanel.svelte'
-import type { Descriptor } from '../lib/descriptor'
+import type { Descriptor, DescriptorCell, DescriptorSection } from '../lib/descriptor'
 
-describe('DescriptorPanel', () => {
-  it('dispatches a table kind to the table renderer', () => {
-    const descriptor: Descriptor = {
-      version: 1,
+const fixture = JSON.parse(
+  readFileSync('../../../../pkg/sep2admin/testdata/descriptor_v2.json', 'utf8'),
+) as Descriptor
+
+const hostile = '<script>window.__pwned=1</script><img src=x onerror="window.__pwned=2">\'"&\u0000'
+
+function tableSection(cells: DescriptorCell[], over: Partial<DescriptorSection> = {}): DescriptorSection {
+  return {
+    kind: 'table',
+    heading: '',
+    prose: [],
+    empty: '',
+    body: { columns: cells.map(() => 'c'), rows: [cells] },
+    ...over,
+  }
+}
+
+// The variant class, without the scoped-style hash Svelte appends.
+function variantClass(el: Element): string | undefined {
+  return [...el.classList].find((c) => c.startsWith('badge-'))
+}
+
+function renderOne(section: DescriptorSection) {
+  return render(DescriptorPanel, { props: { descriptor: { version: 2, sections: [section] } } })
+}
+
+describe('DescriptorPanel v2', () => {
+  it('renders every section of the fixture: two tables and a definition list, with headings and prose', () => {
+    render(DescriptorPanel, { props: { descriptor: fixture } })
+
+    expect(screen.getAllByTestId('descriptor-section')).toHaveLength(3)
+    expect(screen.getAllByRole('table')).toHaveLength(2)
+    expect(screen.getAllByTestId('descriptor-heading').map((h) => h.textContent)).toEqual(['Registry', 'Clients'])
+    expect(screen.getByTestId('descriptor-prose')).toHaveTextContent('Devices the bridge has registered.')
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Name', 'State', 'Last seen', 'Docs', 'LFDI'])
+    expect(screen.getByTestId('descriptor-group-heading')).toHaveTextContent('Connection')
+    expect(screen.getAllByTestId('descriptor-key').map((k) => k.textContent)).toEqual(['Status', 'Topic', 'Badges', 'Info'])
+  })
+
+  it('shows a section\'s empty text for a table with no rows and for a list with no entries', () => {
+    const { unmount } = renderOne({
       kind: 'table',
-      body: { columns: ['A'], rows: [['x']] },
-    }
-    render(DescriptorPanel, { props: { descriptor } })
+      heading: 'T',
+      prose: [],
+      empty: 'No clients connected.',
+      body: { columns: ['LFDI'], rows: [] },
+    })
+    expect(screen.getByTestId('descriptor-table-empty')).toHaveTextContent('No clients connected.')
+    unmount()
 
-    expect(screen.getByRole('columnheader', { name: 'A' })).toBeInTheDocument()
-    expect(screen.getByTestId('descriptor-cell')).toHaveTextContent('x')
-  })
-
-  it('dispatches a definitionList kind to the definition-list renderer', () => {
-    const descriptor: Descriptor = {
-      version: 1,
+    renderOne({
       kind: 'definitionList',
-      body: { groups: [{ heading: '', entries: [{ key: 'k', value: 'v' }] }] },
-    }
-    render(DescriptorPanel, { props: { descriptor } })
-
-    expect(screen.getByTestId('descriptor-key')).toHaveTextContent('k')
-    expect(screen.getByTestId('descriptor-value')).toHaveTextContent('v')
+      heading: 'L',
+      prose: [],
+      empty: 'Nothing to list.',
+      body: { groups: [{ heading: '', entries: [] }] },
+    })
+    expect(screen.getByTestId('descriptor-list-empty')).toHaveTextContent('Nothing to list.')
   })
 
-  it('renders an honest empty state for a descriptor with no body, rather than nothing', () => {
-    const descriptor: Descriptor = { version: 1 }
-    render(DescriptorPanel, { props: { descriptor } })
+  it('gives each badge the class of its closed-set variant, and neutral to a variant outside the set', () => {
+    render(DescriptorPanel, { props: { descriptor: fixture } })
+    const classes = screen.getAllByTestId('descriptor-badge').map((b) => [b.textContent, variantClass(b)])
+    expect(classes).toEqual([
+      ['accepted', 'badge-ok'],
+      ['rejected', 'badge-error'],
+      ['degraded', 'badge-warn'],
+      ['n', 'badge-neutral'],
+      ['i', 'badge-info'],
+    ])
+  })
 
+  it('never lets a hostile badge value reach the class attribute', () => {
+    renderOne(tableSection([{ kind: 'badge', text: 'x', badge: '" onmouseover="window.__pwned=3' }]))
+    const badge = screen.getByTestId('descriptor-badge')
+    expect(variantClass(badge)).toBe('badge-neutral')
+    expect(badge.getAttributeNames().sort()).toEqual(['class', 'data-testid'])
+  })
+
+  it('shows a time cell\'s display text inside a time element carrying the machine value', () => {
+    renderOne(tableSection([{ kind: 'time', text: '5 minutes ago', datetime: '2026-10-01T18:30:00Z' }]))
+    const time = screen.getByText('5 minutes ago')
+    expect(time.tagName).toBe('TIME')
+    expect(time.getAttribute('datetime')).toBe('2026-10-01T18:30:00Z')
+  })
+
+  it('links http, https and relative hrefs', () => {
+    render(DescriptorPanel, { props: { descriptor: fixture } })
+    const links = screen.getAllByTestId('descriptor-link')
+    expect(links.map((a) => [a.textContent, a.getAttribute('href')])).toEqual([
+      ['devices', '/ui/devices'],
+      ['spec', 'https://example.org/a?b=c'],
+    ])
+    expect(links.every((a) => a.getAttribute('rel') === 'noopener noreferrer')).toBe(true)
+  })
+
+  it('shows a link with any other scheme as plain text with no anchor', () => {
+    for (const href of ['javascript:window.__pwned=4', 'data:text/html,x', '//evil.example/x']) {
+      const { container, unmount } = renderOne(tableSection([{ kind: 'link', text: 'click me', href }]))
+      expect(container.querySelector('a')).toBeNull()
+      expect(screen.getByText('click me').tagName).toBe('SPAN')
+      unmount()
+    }
+  })
+
+  it('renders hostile text as text in every sink, with no element created from it', () => {
+    const cell = (kind: string): DescriptorCell => ({ kind, text: hostile, badge: 'ok', datetime: hostile, href: '/x' })
+    const { container } = render(DescriptorPanel, {
+      props: {
+        descriptor: {
+          version: 2,
+          sections: [
+            {
+              kind: 'table',
+              heading: hostile,
+              prose: [hostile],
+              empty: hostile,
+              body: { columns: [hostile], rows: [[cell('text')], [cell('badge')], [cell('time')], [cell('link')]] },
+            },
+            {
+              kind: 'definitionList',
+              heading: '',
+              prose: [],
+              empty: hostile,
+              body: { groups: [{ heading: hostile, entries: [{ key: hostile, value: cell('text') }] }] },
+            },
+            { kind: hostile, heading: '', prose: [], empty: '', body: null },
+          ],
+        },
+      },
+    })
+
+    expect(screen.getByTestId('descriptor-heading').textContent).toBe(hostile)
+    expect(screen.getByTestId('descriptor-prose').textContent).toBe(hostile)
+    expect(screen.getByTestId('descriptor-column-header').textContent).toBe(hostile)
+    expect(screen.getAllByTestId('descriptor-cell').map((c) => c.textContent)).toEqual([hostile, hostile, hostile, hostile])
+    expect(screen.getByTestId('descriptor-group-heading').textContent).toBe(hostile)
+    expect(screen.getByTestId('descriptor-key').textContent).toBe(hostile)
+    expect(screen.getByTestId('descriptor-unknown-kind').textContent).toBe(`Unsupported content type: "${hostile}"`)
+    expect(container.querySelector('script')).toBeNull()
+    expect(container.querySelector('img')).toBeNull()
+    expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined()
+  })
+
+  it('says so for an unsupported version, an unknown section kind, a malformed body and no sections', () => {
+    const { unmount } = render(DescriptorPanel, { props: { descriptor: { version: 1, sections: [] } } })
+    expect(screen.getByTestId('descriptor-unsupported-version')).toHaveTextContent('Unsupported content version: 1')
+    unmount()
+
+    const empty = render(DescriptorPanel, { props: { descriptor: { version: 2, sections: [] } } })
     expect(screen.getByTestId('descriptor-empty')).toHaveTextContent('This panel has no content.')
-  })
+    empty.unmount()
 
-  it('renders an honest message for a kind this frontend does not recognise, rather than crashing', () => {
-    // A future server version could add a shape this build predates;
-    // simulating that is exactly why kind is typed loosely on the wire.
-    const descriptor: Descriptor = { version: 1, kind: 'chart', body: { anything: true } }
-    render(DescriptorPanel, { props: { descriptor } })
-
+    const odd = renderOne({ kind: 'chart', heading: '', prose: [], empty: '', body: {} })
     expect(screen.getByTestId('descriptor-unknown-kind')).toHaveTextContent('Unsupported content type: "chart"')
-  })
+    odd.unmount()
 
-  it('renders a hostile unrecognised kind as text, not markup', () => {
-    // Item 3: the unsupported-kind echo sink had no escaping test.
-    const hostile = '<script>window.__pwned=1</script><img src=x onerror="window.__pwned=2">\'"&\u0000'
-    const descriptor: Descriptor = { version: 1, kind: hostile }
-    render(DescriptorPanel, { props: { descriptor } })
-
-    const unknown = screen.getByTestId('descriptor-unknown-kind')
-    expect(unknown.textContent).toBe(`Unsupported content type: "${hostile}"`)
-    expect(unknown.querySelector('script')).toBeNull()
-    expect(unknown.querySelector('img')).toBeNull()
-    expect(unknown.innerHTML).not.toContain('<script>')
-    expect(unknown.innerHTML).not.toContain('<img')
-  })
-
-  // Fix round 1, item 2 (P3): a kind present with no body previously
-  // threw instead of rendering the honest message the doc comment
-  // promises.
-  it('renders an honest message for a table kind with no body, rather than throwing', () => {
-    const descriptor: Descriptor = { version: 1, kind: 'table' }
-    render(DescriptorPanel, { props: { descriptor } })
-
+    renderOne({ kind: 'table', heading: '', prose: [], empty: '', body: { columns: ['A'] } })
     expect(screen.getByTestId('descriptor-malformed-body')).toBeInTheDocument()
   })
 
-  // Fix round 1, item 2 (P3): a kind whose body is the other shape
-  // previously threw on property access instead of rendering the
-  // honest message.
-  it('renders an honest message for a table kind whose body is a definitionList shape, rather than throwing', () => {
-    const descriptor: Descriptor = {
-      version: 1,
+  it('surfaces a wrong-length row instead of padding or truncating it', () => {
+    renderOne({
       kind: 'table',
-      body: { groups: [{ heading: '', entries: [{ key: 'k', value: 'v' }] }] },
-    }
-    render(DescriptorPanel, { props: { descriptor } })
-
-    expect(screen.getByTestId('descriptor-malformed-body')).toBeInTheDocument()
-  })
-
-  it('renders an honest message for a definitionList kind whose body is a table shape, rather than throwing', () => {
-    const descriptor: Descriptor = {
-      version: 1,
-      kind: 'definitionList',
-      body: { columns: ['A'], rows: [['x']] },
-    }
-    render(DescriptorPanel, { props: { descriptor } })
-
-    expect(screen.getByTestId('descriptor-malformed-body')).toBeInTheDocument()
-  })
-
-  // Fix round 1, item 1 (P1, P2): reproduced from the literal wire bytes
-  // the security lane measured, through the full dispatch path.
-  it('reproduces the empty-table wire bytes end to end and renders the empty state, not a crash', () => {
-    const wireDescriptor = JSON.parse(
-      '{"version":1,"kind":"table","body":{"columns":["A"],"rows":null}}',
-    ) as Descriptor
-    render(DescriptorPanel, { props: { descriptor: wireDescriptor } })
-
-    expect(screen.getByRole('columnheader', { name: 'A' })).toBeInTheDocument()
-    expect(screen.getByText('No rows')).toBeInTheDocument()
-  })
-
-  // Fix round 1, item 5: the version field was declared and never read.
-  // Register already refuses an unsupported Panel.DescriptorVersion at
-  // boot, so this covers the wire body a future build's server could
-  // still send.
-  it('renders an honest message for an unsupported descriptor version, rather than guessing at the shape', () => {
-    const descriptor: Descriptor = {
-      version: 99,
-      kind: 'table',
-      body: { columns: ['A'], rows: [['x']] },
-    }
-    render(DescriptorPanel, { props: { descriptor } })
-
-    expect(screen.getByTestId('descriptor-unsupported-version')).toHaveTextContent(
-      'Unsupported content version: 99',
-    )
+      heading: '',
+      prose: [],
+      empty: '',
+      body: {
+        columns: ['A', 'B'],
+        rows: [[{ kind: 'text', text: 'only' }]],
+      },
+    })
+    const row = screen.getByTestId('row-mismatch')
+    expect(within(row).getByText(/expected 2 columns, got 1: only/)).toBeInTheDocument()
     expect(screen.queryByTestId('descriptor-cell')).toBeNull()
   })
 })

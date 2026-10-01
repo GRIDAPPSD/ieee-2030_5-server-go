@@ -19,7 +19,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
-const testKey = "plane-test-key"
+const testKey = "plane-test-key-0123"
 
 // controlWritePatterns are the five routes ControlWrites mounts.
 var controlWritePatterns = []string{
@@ -91,9 +91,15 @@ func TestNewRefusesUnsafeConfig(t *testing.T) {
 	}{
 		{"empty key", func(c *sep2adminplane.Config) { c.AdminKey = "" }, sep2adminplane.ErrNoCredential},
 		{"whitespace key", func(c *sep2adminplane.Config) { c.AdminKey = " \t" }, sep2adminplane.ErrNoCredential},
+		{"15-character key", func(c *sep2adminplane.Config) { c.AdminKey = "fifteen-chars-x" }, sep2adminplane.ErrShortCredential},
+		{"blank host among real ones", func(c *sep2adminplane.Config) { c.AllowedHosts = []string{"localhost", ""} }, sep2adminplane.ErrBlankAllowedHost},
+		{"whitespace host among real ones", func(c *sep2adminplane.Config) { c.AllowedHosts = []string{" ", "localhost"} }, sep2adminplane.ErrBlankAllowedHost},
+		{"unknown edition", func(c *sep2adminplane.Config) { c.Edition = "2030" }, sep2adminplane.ErrUnknownEdition},
+		{"edition 2023 over 2018 stores", func(c *sep2adminplane.Config) { c.Edition = "2023" }, sep2adminplane.ErrEditionMismatch},
+		{"edition 2018 over 2023 stores", func(c *sep2adminplane.Config) { c.Stores.Edition2023 = true }, sep2adminplane.ErrEditionMismatch},
 		{"nil hosts", func(c *sep2adminplane.Config) { c.AllowedHosts = nil }, sep2adminplane.ErrNoAllowedHosts},
 		{"empty hosts", func(c *sep2adminplane.Config) { c.AllowedHosts = []string{} }, sep2adminplane.ErrNoAllowedHosts},
-		{"blank hosts", func(c *sep2adminplane.Config) { c.AllowedHosts = []string{"", "  "} }, sep2adminplane.ErrNoAllowedHosts},
+		{"blank hosts", func(c *sep2adminplane.Config) { c.AllowedHosts = []string{"", "  "} }, sep2adminplane.ErrBlankAllowedHost},
 		{"nil stores", func(c *sep2adminplane.Config) { c.Stores = nil }, sep2adminplane.ErrNoStores},
 	}
 	for _, tc := range cases {
@@ -109,6 +115,12 @@ func TestNewRefusesUnsafeConfig(t *testing.T) {
 			}
 		})
 	}
+
+	// The control: a key of exactly MinAdminKeyLength characters, multi-byte
+	// ones included, is accepted.
+	exact := baseConfig()
+	exact.AdminKey = strings.Repeat("\u00e9", sep2adminplane.MinAdminKeyLength)
+	newPlane(t, exact)
 }
 
 func TestNewRefusesInconsistentSettings(t *testing.T) {
@@ -116,9 +128,6 @@ func TestNewRefusesInconsistentSettings(t *testing.T) {
 		name   string
 		mutate func(*sep2adminplane.Config)
 	}{
-		{"unknown edition", func(c *sep2adminplane.Config) { c.Edition = "2030" }},
-		{"edition 2023 over 2018 stores", func(c *sep2adminplane.Config) { c.Edition = "2023" }},
-		{"edition 2018 over 2023 stores", func(c *sep2adminplane.Config) { c.Stores.Edition2023 = true }},
 		{"deadline below 1s", func(c *sep2adminplane.Config) { c.FlowReservationDeadline = time.Millisecond }},
 		{"grace below 15m", func(c *sep2adminplane.Config) { c.RetentionGrace = time.Minute }},
 		{"FSAs not the concrete store", func(c *sep2adminplane.Config) {

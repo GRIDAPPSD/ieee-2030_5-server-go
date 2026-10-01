@@ -29,9 +29,10 @@ type Config struct {
 	// no credential (#246). Run sets it; the zero value requires a
 	// credential from every address.
 	LoopbackBypass bool
-	// ControlWrites mounts the DER control create and cancel routes and the
-	// flow reservation answer, revise and cancel routes. Run sets it; the
-	// zero value mounts none of them, and their reads stay mounted.
+	// ControlWrites mounts five routes: DER control create and cancel, and
+	// flow reservation answer, revise and cancel. Run sets it; the zero value
+	// unmounts only those five, and every other write, FSA program attach
+	// and device FSA assignment among them, stays.
 	ControlWrites bool
 }
 

@@ -43,7 +43,7 @@ func get(h http.Handler, path string, withKey bool) *httptest.ResponseRecorder {
 	req.RemoteAddr = "127.0.0.1:40000"
 	req.Host = "localhost"
 	if withKey {
-		req.Header.Set("Authorization", "Bearer outside-key")
+		req.Header.Set("Authorization", "Bearer outside-key-0123456789")
 	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -53,7 +53,7 @@ func get(h http.Handler, path string, withKey bool) *httptest.ResponseRecorder {
 func main() {
 	plane, err := sep2adminplane.New(sep2adminplane.Config{
 		Stores:       sep2server.NewStores(),
-		AdminKey:     "outside-key",
+		AdminKey:     "outside-key-0123456789",
 		AllowedHosts: []string{"localhost"},
 		Panels: []sep2admin.Panel{{
 			ID:                "outside-status",

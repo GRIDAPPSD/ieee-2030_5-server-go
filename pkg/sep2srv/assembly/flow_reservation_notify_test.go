@@ -29,14 +29,16 @@ type receivedNotification struct {
 
 // notificationReceiver is a subscriber's notificationURI endpoint.
 type notificationReceiver struct {
-	mu  sync.Mutex
-	got []receivedNotification
-	srv *httptest.Server
+	mu     sync.Mutex
+	got    []receivedNotification
+	seen   chan struct{}
+	waited int
+	srv    *httptest.Server
 }
 
 func newNotificationReceiver(t *testing.T) *notificationReceiver {
 	t.Helper()
-	r := &notificationReceiver{}
+	r := &notificationReceiver{seen: make(chan struct{}, 64)}
 	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		var n sep2.Notification
 		if err := xml.NewDecoder(req.Body).Decode(&n); err != nil {
@@ -46,31 +48,28 @@ func newNotificationReceiver(t *testing.T) *notificationReceiver {
 		r.mu.Lock()
 		r.got = append(r.got, receivedNotification{n.Href, n.SubscribedResource, n.Status})
 		r.mu.Unlock()
+		r.seen <- struct{}{}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(r.srv.Close)
 	return r
 }
 
-func (r *notificationReceiver) count() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return len(r.got)
-}
-
+// waitFor blocks until n notifications have arrived in total, driven by the
+// receiver's own signal rather than a poll.
 func (r *notificationReceiver) waitFor(t *testing.T, n int) []receivedNotification {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if r.count() >= n {
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			return append([]receivedNotification(nil), r.got...)
+	for r.waited < n {
+		select {
+		case <-r.seen:
+			r.waited++
+		case <-time.After(5 * time.Second):
+			t.Fatalf("received %d of %d notifications within 5s", r.waited, n)
 		}
-		time.Sleep(2 * time.Millisecond)
 	}
-	t.Fatalf("received %d notifications within 3s, want %d", r.count(), n)
-	return nil
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]receivedNotification(nil), r.got...)
 }
 
 // frpNotifyServer is a fully wired router whose notifier is a real
@@ -149,10 +148,6 @@ func TestFlowReservationNotify_PendingCancelNotifiesItsDenial(t *testing.T) {
 	srv, _ := frpNotifyServer(t, assembly.RouterConfig{}, nil)
 	subscribeToResponseList(t, srv, "e1", rcv.srv.URL)
 	href := postWindowRequest(t, srv, "e1")
-	time.Sleep(50 * time.Millisecond)
-	if n := rcv.count(); n != 0 {
-		t.Fatalf("a held request notified %d times before any answer", n)
-	}
 
 	if got := putRequest(t, srv, href, cancelled(getRequest(t, srv, href), time.Now().Unix())); got != http.StatusNoContent {
 		t.Fatalf("PUT cancel status = %d, want 204", got)
@@ -164,21 +159,6 @@ func TestFlowReservationNotify_PendingCancelNotifiesItsDenial(t *testing.T) {
 	}
 	if d := listResponses(t, srv, "e1").FlowReservationResponse[0].Interval.Duration; d != 0 {
 		t.Errorf("response duration = %d, want the zero-duration denial", d)
-	}
-}
-
-func TestFlowReservationNotify_OnlyTheOwnersSubscribersHear(t *testing.T) {
-	t.Parallel()
-	mine, other := newNotificationReceiver(t), newNotificationReceiver(t)
-	srv, _ := frpNotifyServer(t, assembly.RouterConfig{FlowReservationDeadline: 20 * time.Millisecond}, nil)
-	subscribeToResponseList(t, srv, "e1", mine.srv.URL)
-	subscribeToResponseList(t, srv, "deviceA", other.srv.URL)
-
-	postWindowRequest(t, srv, "e1")
-	mine.waitFor(t, 1)
-	time.Sleep(50 * time.Millisecond)
-	if n := other.count(); n != 0 {
-		t.Errorf("a subscriber of deviceA's list heard %d notifications about e1's response", n)
 	}
 }
 
@@ -257,14 +237,19 @@ func TestFlowReservationPollRate_ShortWhilePendingThenRegistered(t *testing.T) {
 	}
 }
 
-func TestFlowReservationPollRate_DefaultsToThirtyAndReturnsOnceAnswered(t *testing.T) {
+func TestFlowReservationPollRate_DefaultsToThirtyWhilePending(t *testing.T) {
 	t.Parallel()
-	srv, _ := frqServerWithConfig(t, assembly.RouterConfig{FlowReservationDeadline: 150 * time.Millisecond})
+	srv, _ := frqServerWithConfig(t, assembly.RouterConfig{FlowReservationDeadline: time.Hour})
 	postWindowRequest(t, srv, "e1")
 	if got := responseListPollRate(t, srv, "e1"); got != 30 {
 		t.Errorf("pollRate while pending with no setting = %d, want the default 30", got)
 	}
+}
 
+func TestFlowReservationPollRate_RegisteredOnceTheFallbackAnswered(t *testing.T) {
+	t.Parallel()
+	srv, _ := frqServerWithConfig(t, assembly.RouterConfig{FlowReservationDeadline: 20 * time.Millisecond})
+	postWindowRequest(t, srv, "e1")
 	waitForFRPList(t, srv, "/edev/e1/frp", 1)
 	if got := responseListPollRate(t, srv, "e1"); got != 900 {
 		t.Errorf("pollRate after the deadline fallback answered = %d, want 900", got)

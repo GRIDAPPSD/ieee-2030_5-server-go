@@ -338,6 +338,19 @@ func (q *Queue) Answer(ctx context.Context, edevID, frqID string, decision Decis
 // wasting a full attempt; see lockKey's own comment for why it cannot be
 // more than that once a failed attempt has pruned its entry.
 func (q *Queue) build(ctx context.Context, edevID, frqID string, decision Decision) (sep2.FlowReservationResponse, error) {
+	frp, err := q.buildLocked(ctx, edevID, frqID, decision)
+	if err == nil {
+		// Every created response, from the deadline hold, an operator answer
+		// or a client cancel's denial, passes here. The notification runs
+		// after buildLocked has released the request's key lock, so a slow
+		// subscriber lookup holds up no other answer.
+		q.notify.fire(ctx, edevID)
+	}
+	return frp, err
+}
+
+// buildLocked is build's work, under the request's key lock.
+func (q *Queue) buildLocked(ctx context.Context, edevID, frqID string, decision Decision) (sep2.FlowReservationResponse, error) {
 	key := queueKey(edevID, frqID)
 	unlock := q.lockKey(key)
 	defer func() {
@@ -399,9 +412,6 @@ func (q *Queue) build(ctx context.Context, edevID, frqID string, decision Decisi
 	}
 	q.mu.Unlock()
 
-	// Every created response, from the deadline hold, an operator answer or
-	// a client cancel's denial, passes here, so this is the one create hook.
-	q.notify.fire(ctx, edevID)
 	return frp, nil
 }
 

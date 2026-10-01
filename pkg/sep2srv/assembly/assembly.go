@@ -1391,18 +1391,13 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		// flowReservationResponses.Create, not the POST handler directly.
 		// #714: every grant it stores is checked against the fleet's
 		// commitments; a nil ledger refuses every grant with a window.
-		// #669: a nil notifier must stay a nil interface, not a typed nil.
-		var frpNotifier flowreservation.Notifier
-		if notifier != nil {
-			frpNotifier = notifier
-		}
 		flowReservationQueue := flowreservation.NewQueue(
 			stores.FlowReservationRequests, flowReservationResponses,
 			flowreservation.NewLedgerGate(stores.CommitmentLedger, commitment.Resolver{
 				Devices: stores.EndDevices, Managers: stores.EndDeviceManagers,
 			}),
 			flowreservation.Config{Deadline: frpDeadline}, pen,
-			flowreservation.WithNotifier(frpNotifier),
+			flowreservation.WithNotifier(notifier),
 		)
 
 		mux.HandleFunc("GET /edev/{id}/frq", scopedListHandler[sep2.FlowReservationRequest, sep2.FlowReservationRequestList](
@@ -1418,6 +1413,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 			servedResponses,
 			flowreservation.NewPendingCheck(stores.FlowReservationRequests, flowReservationResponses),
 			900, pendingPollRateSeconds(frpPendingPollRate),
+			notifier != nil && !store.IsAbsent(stores.Subscriptions),
 		))
 
 		// The two FlowReservation instances. One POST mints both
@@ -1442,7 +1438,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 			flowreservation.NewCanceller(
 				stores.FlowReservationRequests, flowReservationResponses, flowReservationQueue,
 				stores.CommitmentLedger, commitmentWriters(stores),
-				flowreservation.WithNotifier(frpNotifier),
+				flowreservation.WithNotifier(notifier),
 			),
 		))
 

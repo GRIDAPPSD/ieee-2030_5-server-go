@@ -2,8 +2,12 @@ package flowreservation_test
 
 import (
 	"context"
+	"encoding/xml"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,7 +15,9 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
+	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // Tests for GRIDAPPSD/ieee-2030_5-server-go#669: every change to an
@@ -22,6 +28,8 @@ type notification struct {
 	status uint8
 	// seen is what onNotify observed at the instant of the call.
 	seen string
+	// ctxErr is the context's error at the instant of the call.
+	ctxErr error
 }
 
 type recordingNotifier struct {
@@ -35,8 +43,8 @@ func newRecordingNotifier() *recordingNotifier {
 	return &recordingNotifier{signal: make(chan struct{}, 16)}
 }
 
-func (r *recordingNotifier) Notify(_ context.Context, href string, status uint8) {
-	n := notification{href: href, status: status}
+func (r *recordingNotifier) Notify(ctx context.Context, href string, status uint8) {
+	n := notification{href: href, status: status, ctxErr: ctx.Err()}
 	if r.onNotify != nil {
 		n.seen = r.onNotify()
 	}
@@ -279,5 +287,295 @@ func TestNewPendingCheck(t *testing.T) {
 				t.Errorf("pending = %v, err = %v; want %v, error %v", got, err, tc.want, tc.wantErr)
 			}
 		})
+	}
+}
+
+// blockingNotifier parks inside Notify once armed, standing in for a slow
+// subscriber lookup.
+type blockingNotifier struct {
+	armed   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newBlockingNotifier() *blockingNotifier {
+	return &blockingNotifier{entered: make(chan struct{}, 4), release: make(chan struct{})}
+}
+
+func (b *blockingNotifier) Notify(context.Context, string, uint8) {
+	if !b.armed.Load() {
+		return
+	}
+	b.entered <- struct{}{}
+	<-b.release
+}
+
+func (b *blockingNotifier) unblock() { b.once.Do(func() { close(b.release) }) }
+
+func (b *blockingNotifier) waitEntered(t *testing.T) {
+	t.Helper()
+	select {
+	case <-b.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the notifier was never called")
+	}
+}
+
+// within runs fn and fails the test if it does not return in 2s.
+func within(t *testing.T, what string, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { defer close(done); fn() }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("%s was blocked while a notification was in flight", what)
+	}
+}
+
+func TestNotify_SlowNotifierDuringACancelDoesNotHoldTheFleetLock(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	blk := newBlockingNotifier()
+	t.Cleanup(blk.unblock)
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	c := flowreservation.NewCanceller(f.frq, f.frp, f.queue, f.ledger, sources.NewWriters(f.issuer, f.frpLifecycles), flowreservation.WithNotifier(blk))
+	base := time.Now().Add(time.Hour).Unix()
+	storeRequest(t, f.frq, aggID, "R1", windowRequest("REQ-1", base, 3600, 10000))
+	if _, err := f.queue.Answer(ctx, aggID, "R1", flowreservation.Decision{}); err != nil {
+		t.Fatal(err)
+	}
+	blk.armed.Store(true)
+	cancelDone := make(chan error, 1)
+	go func() { cancelDone <- c.Cancel(ctx, aggID, "R1", cancelledStatus(time.Now().Unix())) }()
+	blk.waitEntered(t)
+
+	storeRequest(t, f.frq, aggID, "R2", windowRequest("REQ-2", base+7200, 3600, 10000))
+	within(t, "a grant for another request on the same fleet", func() {
+		if _, err := f.queue.Answer(ctx, aggID, "R2", flowreservation.Decision{}); err != nil {
+			t.Errorf("answer R2: %v", err)
+		}
+	})
+	blk.unblock()
+	if err := <-cancelDone; err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+}
+
+func TestNotify_SlowNotifierDuringAnAnswerDoesNotHoldTheRequestLock(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	blk := newBlockingNotifier()
+	t.Cleanup(blk.unblock)
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	gate := flowreservation.NewLedgerGate(f.ledger, commitment.Resolver{Devices: f.devices, Managers: f.managers})
+	q := flowreservation.NewQueue(f.frq, f.frp, gate, flowreservation.Config{Deadline: time.Hour}, nil, flowreservation.WithNotifier(blk))
+	t.Cleanup(q.Close)
+	storeRequest(t, f.frq, aggID, "R1", windowRequest("REQ-1", time.Now().Add(time.Hour).Unix(), 600, 10000))
+	blk.armed.Store(true)
+	answered := make(chan error, 1)
+	go func() { _, err := q.Answer(ctx, aggID, "R1", flowreservation.Decision{}); answered <- err }()
+	blk.waitEntered(t)
+
+	within(t, "a second answer for the same request", func() {
+		if _, err := q.Answer(ctx, aggID, "R1", flowreservation.Decision{}); !errors.Is(err, flowreservation.ErrAlreadyAnswered) {
+			t.Errorf("second answer = %v, want ErrAlreadyAnswered", err)
+		}
+	})
+	blk.unblock()
+	if err := <-answered; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type stubGrants struct{ err error }
+
+func (s stubGrants) MarkCancelled(context.Context, commitment.Grant, string, int64) error {
+	return s.err
+}
+
+func TestNotifyingWriters_FailedMarkCancelledDoesNotNotify(t *testing.T) {
+	t.Parallel()
+	rec := newRecordingNotifier()
+	boom := errors.New("lifecycle store down")
+	w := flowreservation.NotifyingWriters(commitment.Writers{Grants: stubGrants{err: boom}}, rec)
+
+	err := w.Grants.MarkCancelled(context.Background(), commitment.Grant{EndDeviceID: aggID}, "r", 1)
+
+	if !errors.Is(err, boom) {
+		t.Errorf("error = %v, want the inner failure", err)
+	}
+	if got := rec.all(); len(got) != 0 {
+		t.Errorf("notifications = %+v, want none after a failed write", got)
+	}
+}
+
+func TestNotify_ContextIsDetachedFromTheCaller(t *testing.T) {
+	t.Parallel()
+	cctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	direct := newRecordingNotifier()
+	w := flowreservation.NotifyingWriters(commitment.Writers{Grants: stubGrants{}}, direct)
+	if err := w.Grants.MarkCancelled(cctx, commitment.Grant{EndDeviceID: aggID}, "r", 1); err != nil {
+		t.Fatal(err)
+	}
+	deferred := newRecordingNotifier()
+	dw := flowreservation.NotifyingWriters(commitment.Writers{Grants: stubGrants{}}, deferred)
+	dctx, flush := flowreservation.DeferNotifications(cctx, deferred)
+	if err := dw.Grants.MarkCancelled(dctx, commitment.Grant{EndDeviceID: aggID}, "r", 1); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(deferred.all()); n != 0 {
+		t.Fatalf("a deferred notification fired before the flush: %d", n)
+	}
+	flush()
+
+	for name, rec := range map[string]*recordingNotifier{"direct": direct, "deferred": deferred} {
+		got := rec.all()
+		if len(got) != 1 {
+			t.Errorf("%s: notifications = %+v, want 1", name, got)
+			continue
+		}
+		if got[0].ctxErr != nil {
+			t.Errorf("%s: Notify saw a cancelled context (%v); the lookup of subscribers must outlive the request", name, got[0].ctxErr)
+		}
+	}
+}
+
+func TestNotify_SubmitHoldsWithoutNotifyingAndEachDeviceNotifiesItsOwnList(t *testing.T) {
+	t.Parallel()
+	rec := newRecordingNotifier()
+	f, q, _ := newNotifyFixture(t, flowreservation.Config{Deadline: time.Hour}, rec)
+	req := windowRequest("REQ-H", time.Now().Add(time.Hour).Unix(), 600, 10000)
+	storeRequest(t, f.frq, aggID, "R1", req)
+	q.Submit(aggID, "R1", req, time.Now().Unix())
+	if got := rec.all(); len(got) != 0 {
+		t.Fatalf("a held request notified: %+v", got)
+	}
+
+	storeRequest(t, f.frq, standaloneID, "R2", windowRequest("REQ-S", time.Now().Add(time.Hour).Unix(), 600, 10000))
+	for _, id := range []struct{ edev, frq string }{{aggID, "R1"}, {standaloneID, "R2"}} {
+		if _, err := q.Answer(context.Background(), id.edev, id.frq, flowreservation.Decision{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := rec.all()
+	if len(got) != 2 || got[0].href != "/edev/"+aggID+"/frp" || got[1].href != "/edev/"+standaloneID+"/frp" {
+		t.Errorf("notifications = %+v, want one per device, each naming its own list", got)
+	}
+}
+
+type errGetter struct{ err error }
+
+func (e errGetter) Get(context.Context, string, string) (sep2.FlowReservationResponse, error) {
+	return sep2.FlowReservationResponse{}, e.err
+}
+
+func TestNewPendingCheck_ResponseReadFailureAndMalformedHrefs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	mk := func(href string) pendingFRQ {
+		var r sep2.FlowReservationRequest
+		r.Href = href
+		return pendingFRQ{items: []sep2.FlowReservationRequest{r}}
+	}
+	boom := errors.New("response store down")
+
+	got, err := flowreservation.NewPendingCheck(mk("/edev/"+aggID+"/frq/R1"), errGetter{err: boom})(ctx, aggID)
+	if err == nil || !errors.Is(err, boom) || got {
+		t.Errorf("failed response Get: pending=%v err=%v, want an error and not pending", got, err)
+	}
+	for _, href := range []string{"/edev/" + aggID + "/frq/", "/edev/" + aggID + "/frq/a/b", "/edev/" + aggID + "/frq"} {
+		got, err := flowreservation.NewPendingCheck(mk(href), errGetter{err: store.ErrNotFound})(ctx, aggID)
+		if err == nil || got {
+			t.Errorf("href %q: pending=%v err=%v, want an error", href, got, err)
+		}
+	}
+}
+
+type fixedLister struct{ recs []memory.SubscriptionRecord }
+
+func (l fixedLister) ListByResource(_ context.Context, href string) ([]memory.SubscriptionRecord, error) {
+	var out []memory.SubscriptionRecord
+	for _, r := range l.recs {
+		if r.Subscription.SubscribedResource == href {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// A subscriber to the response list hears a supersede, through a real
+// subscription Manager, after the revision is stored and the old grant marked.
+func TestNotify_SubscriberHearsASupersede(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	start := time.Now().Add(time.Hour).Unix()
+	storeRequest(t, f.frq, aggID, "R1", windowRequest("REQ-SUP", start, 3600, 10000))
+	grant, err := f.queue.Answer(ctx, aggID, "R1", flowreservation.Decision{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revisedID := flowreservation.RevisionID("R1")
+
+	type seen struct {
+		note     sep2.Notification
+		revision bool
+		oldMark  bool
+	}
+	got := make(chan seen, 4)
+	rcv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var n sep2.Notification
+		if err := xml.NewDecoder(r.Body).Decode(&n); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_, revErr := f.frp.Get(ctx, aggID, revisedID)
+		lc, lcErr := f.frpLifecycles.Get(ctx, aggID, "R1")
+		got <- seen{note: n, revision: revErr == nil, oldMark: lcErr == nil && lc.CancelledAt != nil}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(rcv.Close)
+
+	var sub sep2.Subscription
+	sub.Href = "/edev/" + aggID + "/sub/1"
+	sub.SubscribedResource = flowreservation.ListHref(aggID)
+	sub.NotificationURI = rcv.URL
+	mgr := coresub.NewManager(fixedLister{recs: []memory.SubscriptionRecord{{ID: "s1", Subscription: sub}}}, 1, 8,
+		coresub.WithDestinationPolicy(coresub.DestinationPolicy{AllowLoopback: true}))
+	mctx, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); mgr.Start(mctx) }()
+	t.Cleanup(func() { stop(); <-done })
+
+	rctx, flush := flowreservation.DeferNotifications(ctx, mgr)
+	err = f.ledger.Revise(rctx, flowreservation.NotifyingWriters(sources.NewWriters(f.issuer, f.frpLifecycles), mgr),
+		grant.MRID, "revised", time.Now().Unix(),
+		func(commitment.Grant) (commitment.Replacement, error) {
+			rev := grant
+			rev.MRID = "REVISED-MRID"
+			rev.Href = "/edev/" + aggID + "/frp/" + revisedID
+			rev.CreationTime = grant.CreationTime + 1
+			rev.Interval = &sep2.DateTimeInterval{Start: start, Duration: 1800}
+			return sources.NewReplacement(f.frp, aggID, rev)
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	flush()
+
+	select {
+	case s := <-got:
+		if s.note.Href != flowreservation.ListHref(aggID) || s.note.SubscribedResource != flowreservation.ListHref(aggID) || s.note.Status != sep2.NotificationStatusChanged {
+			t.Errorf("notification = %+v, want a Changed on %s", s.note, flowreservation.ListHref(aggID))
+		}
+		if !s.revision || !s.oldMark {
+			t.Errorf("at delivery: revision stored=%v, old grant marked cancelled=%v; want both", s.revision, s.oldMark)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the subscriber heard nothing of the supersede")
 	}
 }

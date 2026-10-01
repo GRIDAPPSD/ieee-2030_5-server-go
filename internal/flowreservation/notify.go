@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
@@ -75,8 +76,49 @@ func (g notifyingGrants) MarkCancelled(ctx context.Context, grant commitment.Gra
 	if err := g.inner.MarkCancelled(ctx, grant, reason, now); err != nil {
 		return err
 	}
+	if d, ok := ctx.Value(deferredKey{}).(*deferredNotes); ok {
+		d.add(grant.EndDeviceID)
+		return nil
+	}
 	g.hook.fire(ctx, grant.EndDeviceID)
 	return nil
+}
+
+type deferredKey struct{}
+
+// deferredNotes collects the EndDevices whose list changed while a commitment
+// operation held the fleet lock, so they are notified once it is released.
+type deferredNotes struct {
+	mu    sync.Mutex
+	edevs []string
+}
+
+func (d *deferredNotes) add(edevID string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, e := range d.edevs {
+		if e == edevID {
+			return
+		}
+	}
+	d.edevs = append(d.edevs, edevID)
+}
+
+// DeferNotifications returns a context for a Ledger.CancelGrant or Revise call
+// whose notifying grant writer (NotifyingWriters) records instead of
+// notifying, and a flush to call once that call has returned and the fleet
+// lock is released. Without it the writer notifies at once, under the lock.
+func DeferNotifications(ctx context.Context, n Notifier) (context.Context, func()) {
+	d := &deferredNotes{}
+	return context.WithValue(ctx, deferredKey{}, d), func() {
+		d.mu.Lock()
+		edevs := append([]string(nil), d.edevs...)
+		d.mu.Unlock()
+		hook := notifyHook{n: n}
+		for _, e := range edevs {
+			hook.fire(ctx, e)
+		}
+	}
 }
 
 // FRQLister is the part of the request store Pending reads.

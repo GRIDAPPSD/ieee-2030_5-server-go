@@ -2,6 +2,7 @@ package flow_reservation
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -227,6 +228,114 @@ func HandlePostFlowReservationRequest(
 
 		w.Header().Set("Location", frq.Href)
 		encoding.WriteXML(w, http.StatusCreated, &frq)
+	}
+}
+
+// Canceller withdraws the request stored under (edevID, frqID): marks it
+// Cancelled with status, then settles its answer. Satisfied by
+// *internal/flowreservation.Canceller; this package depends on the
+// interface so a test can stub it.
+type Canceller interface {
+	Cancel(ctx context.Context, edevID, frqID string, status sep2.RequestStatus) error
+}
+
+var errRequestFieldChanged = errors.New("a PUT may change only RequestStatus")
+
+// changedField names the first client-owned field of body that differs from
+// stored, or "" when none does. href and creationTime are server-stamped,
+// so a body that omits or echoes them wrongly changes nothing the client
+// owns.
+func changedField(stored, body sep2.FlowReservationRequest) string {
+	switch {
+	case stored.MRID != body.MRID:
+		return "mRID"
+	case stored.Description != body.Description:
+		return "description"
+	case !ptrEqual(stored.Version, body.Version):
+		return "version"
+	case !ptrEqual(stored.EnergyRequested, body.EnergyRequested):
+		return "energyRequested"
+	case !ptrEqual(stored.PowerRequested, body.PowerRequested):
+		return "powerRequested"
+	case !ptrEqual(stored.IntervalRequested, body.IntervalRequested):
+		return "intervalRequested"
+	case !ptrEqual(stored.DurationRequested, body.DurationRequested):
+		return "durationRequested"
+	}
+	return ""
+}
+
+func ptrEqual[T comparable](a, b *T) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// HandlePutFlowReservationRequest returns a handler for PUT
+// /edev/{id}/frq/{frqId}, the one way a client withdraws a request
+// (10.9.3.1): a body equal to the stored request except RequestStatus.
+// Any other difference is 400 and changes nothing, as is an attempt to move
+// a Cancelled request back to Requested. A body that leaves the status
+// Requested changes nothing and is accepted.
+func HandlePutFlowReservationRequest(
+	frqStore store.ScopedStore[sep2.FlowReservationRequest],
+	canceller Canceller,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			encoding.MethodNotAllowed(w, "PUT")
+			return
+		}
+
+		edevID, frqID := r.PathValue("id"), r.PathValue("frqId")
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			http.Error(w, "read body failed", http.StatusBadRequest)
+			return
+		}
+		var frq sep2.FlowReservationRequest
+		if err := xml.Unmarshal(body, &frq); err != nil {
+			srverr.BadRequestMessage(w, r, "invalid XML", err)
+			return
+		}
+		if err := validateRequestStatus(body, frq); err != nil {
+			srverr.BadRequestMessage(w, r, "invalid RequestStatus", err)
+			return
+		}
+
+		stored, err := frqStore.Get(r.Context(), edevID, frqID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			srverr.Internal(w, r, err)
+			return
+		}
+		if field := changedField(stored, frq); field != "" {
+			srverr.BadRequestMessage(w, r, "only RequestStatus may change", fmt.Errorf("%w: %s differs", errRequestFieldChanged, field))
+			return
+		}
+
+		if frq.RequestStatus.RequestStatus != sep2.RequestStatusCancelled {
+			if stored.RequestStatus.RequestStatus == sep2.RequestStatusCancelled {
+				srverr.BadRequestMessage(w, r, "a cancelled request cannot be requested again", errRequestFieldChanged)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		if err := canceller.Cancel(r.Context(), edevID, frqID, frq.RequestStatus); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			srverr.Internal(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

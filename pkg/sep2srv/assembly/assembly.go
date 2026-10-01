@@ -51,6 +51,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	coreconfiguration "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/configuration"
@@ -1417,12 +1418,19 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		// answers 405 rather than 404, from http.ServeMux, which derives Allow
 		// from the registered method set.
 		//
-		// Read-only here. PUT on FlowReservationRequest is mode M
-		// (sep_wadl.xml:3963) and is NOT mounted; the missing Mandatory PUT is
-		// carried as a finding rather than mounted here.
+		// PUT on the request is the client's withdrawal (#667, mode M at
+		// sep_wadl.xml:3963): it changes only RequestStatus. POST and DELETE
+		// answer 405 from the registered method set.
 		frqInstance := scopedResourceHandler[sep2.FlowReservationRequest](
 			stores.FlowReservationRequests, "id", "frqId", itemMethods{}, nil)
 		mux.HandleFunc("GET /edev/{id}/frq/{frqId}", frqInstance)
+		mux.HandleFunc("PUT /edev/{id}/frq/{frqId}", coreflowrsv.HandlePutFlowReservationRequest(
+			stores.FlowReservationRequests,
+			flowreservation.NewCanceller(
+				stores.FlowReservationRequests, flowReservationResponses, flowReservationQueue,
+				stores.CommitmentLedger, commitmentWriters(stores),
+			),
+		))
 
 		frpInstance := scopedResourceHandler[sep2.FlowReservationResponse](
 			servedResponses, "id", "frpId", itemMethods{}, nil)
@@ -1489,6 +1497,24 @@ func responseSenderAuthorizer(identity func(ctx context.Context) (lfdi, sfdi str
 		allowed, err := coreedev.CurrentManagerOwns(r.Context(), managers, lfdi, caller)
 		return allowed, caller, err
 	}
+}
+
+// commitmentWriters builds the writers commitment.Ledger.CancelGrant cancels
+// through: DER control executions via a DER control issuer, and the response
+// cancel mark. When any store they write is absent it returns the zero
+// Writers, which CancelGrant refuses, so an answered cancel fails closed
+// rather than leaving a live execution under a cancelled grant.
+func commitmentWriters(stores *Stores) commitment.Writers {
+	if store.IsAbsent(stores.DERPrograms) || store.IsAbsent(stores.DERControls) ||
+		store.IsAbsent(stores.DERControlLifecycles) || store.IsAbsent(stores.FlowReservationResponseLifecycles) {
+		return commitment.Writers{}
+	}
+	issuer, err := dercontrol.NewIssuer(stores.DERPrograms, stores.DERControls, stores.DERControlLifecycles, dercontrol.Config{})
+	if err != nil {
+		log.Printf("assembly: DER control issuer for cancelling a flow reservation grant: %v; an answered request cannot be cancelled", err)
+		return commitment.Writers{}
+	}
+	return sources.NewWriters(issuer, stores.FlowReservationResponseLifecycles)
 }
 
 // servedFlowReservationResponses is responses as a reader sees them: with

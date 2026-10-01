@@ -228,6 +228,7 @@ func TestDelegable(t *testing.T) {
 		"PUT /edev/{id}/dstat":                        false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
 		"PUT /edev/{id}/ps":                           false, // refused: no aggregator text, IEEE 2030.5-2018 8.5.3 default
 		"POST /edev/{id}/frq":                         false, // refused: flow reservation appears in no aggregator text
+		"PUT /edev/{id}/frq/{frqId}":                  false, // refused: a client's own withdrawal, not an aggregator act (#667)
 		// A write pattern nobody has registered yet: proves the default is
 		// denied, not merely that today's five entries are granted.
 		"PUT /edev/{id}/notyetregistered": false,
@@ -294,6 +295,7 @@ var managerVerdicts = map[string]bool{
 	"GET /edev/{id}/frq":         true,
 	"GET /edev/{id}/frq/{frqId}": true,
 	"POST /edev/{id}/frq":        false, // flow reservation appears in no aggregator text
+	"PUT /edev/{id}/frq/{frqId}": false, // a client's own withdrawal (#667); an aggregator may not place a bid, so it may not cancel one
 	"GET /edev/{id}/frp":         true,
 	"GET /edev/{id}/frp/{frpId}": true,
 }

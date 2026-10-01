@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -24,10 +25,12 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2capture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -242,6 +245,20 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 
 	stores.CommitmentLedger = NewCommitmentLedger(stores)
 
+	// #763: one issuer for the admin DER control handler and the grant cancel
+	// writers, so a cancel and an admin write on one program share their locks.
+	issuer, err := assembly.NewDERControlIssuer(derPrograms, derControls, derControlLifecycles, stores.PEN)
+	if err != nil {
+		return nil, nil, fmt.Errorf("DER control issuer: %w", err)
+	}
+	stores.DERControlIssuer = issuer
+
+	deadline, err := cfg.EffectiveFlowReservationDeadline()
+	if err != nil {
+		return nil, nil, err
+	}
+	stores.FlowReservationDeadline = deadline
+
 	return stores, endDevices, nil
 }
 
@@ -378,6 +395,22 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		defer closeCapture()
 	}
 
+	// #763: the one flow reservation queue. Recovery re-arms the pending
+	// requests through it before either listener binds (sep2server.New binds).
+	// The deferred Close runs on every exit, after the protocol listener has
+	// drained; the admin listener is drained first only on the shutdown path.
+	coreNotifier := adaptNotifier(notifier)
+	frNotifier := flowreservation.Notifier(coreNotifier)
+	stores.FlowReservationQueue = newFlowReservationQueue(stores, coreNotifier)
+	defer stores.FlowReservationQueue.Close()
+	if _, err := recoverAtBoot(ctx, stores, stores.FlowReservationQueue, frNotifier, slog.Default(), time.Now()); err != nil {
+		if ctx.Err() != nil {
+			log.Printf("flow reservation recovery stopped by shutdown request: %v", err)
+			return nil
+		}
+		return fmt.Errorf("flow reservation recovery: %w", err)
+	}
+
 	// Build the embeddable protocol server: it binds the listener, derives
 	// the server identity (SFDI/LFDI) from the leaf cert BEFORE assembling the
 	// routes so /sdev and /sdev/sdi see non-empty values under both cipher
@@ -388,7 +421,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// and the build-tagged CSIP mutation mux, which is a no-op in production
 	// builds. ShutdownTimeout is left at zero, which drains without a bound,
 	// as this server has always done.
-	embedCfg := NewEmbedConfig(cfg, stores, notifier)
+	embedCfg := newEmbedConfig(cfg, stores, coreNotifier)
 	embedCfg.Addr = cfg.Addr
 	embedCfg.CertFile = cfg.CertFile
 	embedCfg.KeyFile = cfg.KeyFile
@@ -429,7 +462,6 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// the drain is ordered the same way whether the shutdown was requested or
 	// was forced by an admin or metrics listener failing to come up.
 	protocolCtx, stopProtocol := context.WithCancel(context.Background())
-	defer stopProtocol()
 
 	protocolDone := make(chan error, 1)
 	go func() {
@@ -439,12 +471,21 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// stopProtocolServer drains the protocol listener and reports, without
 	// returning, any error the drain produced. Used by the startup-abort paths
 	// below and by the shutdown branch, so all three drain the same way.
+	protocolDrained := false
 	stopProtocolServer := func() {
+		if protocolDrained {
+			return
+		}
+		protocolDrained = true
 		stopProtocol()
 		if err := <-protocolDone; err != nil {
 			log.Printf("protocol server shutdown error: %v", err)
 		}
 	}
+	// Every exit drains the protocol listener before the deferred queue Close
+	// above runs (defers run last in, first out), so a POST in flight is
+	// stored and submitted before the queue refuses submissions.
+	defer stopProtocolServer()
 
 	// Start mDNS if configured
 	if cfg.EnableMDNS {
@@ -584,6 +625,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		<-notifierDone
 		return nil
 	case err := <-protocolDone:
+		protocolDrained = true
 		// The protocol listener failed on its own; protocolCtx was never
 		// cancelled, so this is a real failure and not a drain. Surface it
 		// rather than logging it, exactly as the shared error channel did

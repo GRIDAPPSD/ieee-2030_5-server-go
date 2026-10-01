@@ -233,6 +233,10 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	flowReservationDeadline, err := config.ParseFlowReservationDeadlineSeconds(os.Getenv("SEP2_FLOW_RESERVATION_DEADLINE_SECONDS"))
+	if err != nil {
+		return nil, err
+	}
 
 	return &config.Config{
 		Addr:            envOr("SEP2_ADDR", ":443"),
@@ -310,6 +314,8 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		// #715 fix round 3 item 2: unset by default (empty string), which
 		// Config.EffectiveSEP2Edition resolves to "2018".
 		SEP2Edition: sep2Edition,
+
+		FlowReservationDeadline: flowReservationDeadline,
 	}, nil
 }
 

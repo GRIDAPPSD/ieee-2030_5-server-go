@@ -74,6 +74,10 @@ type Queue struct {
 	timers   map[string]timer
 	keyLocks map[string]*sync.Mutex
 
+	// running counts the timer callbacks past the closed check, so Close can
+	// wait for them. Add happens under mu, in fire.
+	running sync.WaitGroup
+
 	// givenUp counts requests the deadline fallback permanently failed to
 	// answer, read through GivenUpCount. Accessed with sync/atomic, not mu:
 	// it is incremented from retryOrGiveUp without holding mu across the
@@ -169,9 +173,23 @@ func (q *Queue) arm(op, edevID, frqID string, delay time.Duration) bool {
 		prev.Stop()
 	}
 	q.timers[key] = q.after(delay, func() {
-		q.attemptFallback(context.Background(), edevID, frqID, 1)
+		q.fire(func() { q.attemptFallback(context.Background(), edevID, frqID, 1) })
 	})
 	return true
+}
+
+// fire runs a timer callback unless the queue is closed, and lets Close wait
+// for it. A callback that lost the race with Close writes nothing.
+func (q *Queue) fire(f func()) {
+	q.mu.Lock()
+	if q.closed {
+		q.mu.Unlock()
+		return
+	}
+	q.running.Add(1)
+	q.mu.Unlock()
+	defer q.running.Done()
+	f()
 }
 
 // DeadlineAt is the Unix second the fallback decides frq: its creationTime
@@ -340,17 +358,20 @@ func (q *Queue) retryOrGiveUp(ctx context.Context, edevID, frqID string, attempt
 		q.forgetTimer(edevID, frqID)
 		return
 	}
-	log.Printf("flowreservation: deadline fallback: %s/%s: attempt %d failed, retrying in %s: %v", edevID, frqID, attempt, q.cfg.RetryBackoff, cause)
-
 	key := queueKey(edevID, frqID)
 	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.closed {
+	closed := q.closed
+	if !closed {
+		q.timers[key] = q.after(q.cfg.RetryBackoff, func() {
+			q.fire(func() { q.attemptFallback(ctx, edevID, frqID, attempt+1) })
+		})
+	}
+	q.mu.Unlock()
+	if closed {
+		log.Printf("flowreservation: deadline fallback: %s/%s: attempt %d failed after Close, not retrying: %v", edevID, frqID, attempt, cause)
 		return
 	}
-	q.timers[key] = q.after(q.cfg.RetryBackoff, func() {
-		q.attemptFallback(ctx, edevID, frqID, attempt+1)
-	})
+	log.Printf("flowreservation: deadline fallback: %s/%s: attempt %d failed, retrying in %s: %v", edevID, frqID, attempt, q.cfg.RetryBackoff, cause)
 }
 
 // grantRefused reports whether err is the gate refusing a grant, either
@@ -538,16 +559,19 @@ func (q *Queue) lockKey(key string) func() {
 }
 
 // Close marks the queue closed (Submit and a pending retry stop scheduling
-// new timers) and stops every pending deadline timer without answering the
-// requests they were scheduled for, so a test or a server shutdown leaves
-// no timer goroutine running past this call. Answered requests are
+// new timers), stops every pending deadline timer without answering the
+// requests they were scheduled for, and waits for a fallback already running
+// to finish, so nothing writes to the stores after it returns. It waits
+// rather than abandons because a fallback stopped between its response write
+// and its cleanup would leave a half-answered request. Answered requests are
 // unaffected: their timers were already stopped by build.
 func (q *Queue) Close() {
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	q.closed = true
 	for key, t := range q.timers {
 		t.Stop()
 		delete(q.timers, key)
 	}
+	q.mu.Unlock()
+	q.running.Wait()
 }

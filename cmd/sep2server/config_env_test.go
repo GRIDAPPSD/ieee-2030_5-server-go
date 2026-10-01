@@ -2,7 +2,9 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 )
@@ -350,4 +352,44 @@ func TestConfigFromEnvSEP2Edition(t *testing.T) {
 			t.Fatal("configFromEnv: want an error for SEP2_EDITION=2030, got nil")
 		}
 	})
+}
+
+// #763: SEP2_FLOW_RESERVATION_DEADLINE_SECONDS reaches the config as a
+// duration, and anything outside 1 to 3600 stops startup rather than being
+// replaced by the default.
+func TestConfigFromEnvFlowReservationDeadline(t *testing.T) {
+	resolver := func() *certDirResolver { return &certDirResolver{resolved: true, dir: "/test/certdir"} }
+
+	t.Run("a value in range is the hold", func(t *testing.T) {
+		t.Setenv("SEP2_FLOW_RESERVATION_DEADLINE_SECONDS", "90")
+		cfg, err := configFromEnv(resolver())
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if cfg.FlowReservationDeadline != 90*time.Second {
+			t.Errorf("FlowReservationDeadline = %v, want 1m30s", cfg.FlowReservationDeadline)
+		}
+	})
+
+	t.Run("unset leaves the default to the effective accessor", func(t *testing.T) {
+		t.Setenv("SEP2_FLOW_RESERVATION_DEADLINE_SECONDS", "")
+		cfg, err := configFromEnv(resolver())
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		got, err := cfg.EffectiveFlowReservationDeadline()
+		if err != nil || got != 300*time.Second {
+			t.Errorf("EffectiveFlowReservationDeadline = %v, %v, want 5m0s", got, err)
+		}
+	})
+
+	for _, bad := range []string{"0", "3601", "-1", "ten", "1.5"} {
+		t.Run("invalid "+bad+" is a startup error", func(t *testing.T) {
+			t.Setenv("SEP2_FLOW_RESERVATION_DEADLINE_SECONDS", bad)
+			_, err := configFromEnv(resolver())
+			if err == nil || !strings.Contains(err.Error(), "SEP2_FLOW_RESERVATION_DEADLINE_SECONDS") {
+				t.Fatalf("configFromEnv = %v, want an error naming SEP2_FLOW_RESERVATION_DEADLINE_SECONDS", err)
+			}
+		})
+	}
 }

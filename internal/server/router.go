@@ -1,10 +1,13 @@
 package server
 
 import (
+	"time"
+
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -121,6 +124,22 @@ type Stores struct {
 
 	// CommitmentLedger is the process's one commitment ledger (#714).
 	CommitmentLedger *commitment.Ledger
+
+	// FlowReservationQueue is the process's one flow reservation queue (#763),
+	// shared by the protocol routes and startup recovery, and closed by Run.
+	// Nil leaves the assembly to build a queue of its own, which nothing
+	// closes or recovers.
+	FlowReservationQueue *flowreservation.Queue
+
+	// FlowReservationDeadline is the hold the queue runs under. The admin read
+	// API computes each request's deadline from the same value (#763). Zero
+	// takes the queue's default.
+	FlowReservationDeadline time.Duration
+
+	// DERControlIssuer is the process's one DER control issuer (#763), shared
+	// by the admin DER control handler and the grant cancel writers. Nil makes
+	// each of them build its own.
+	DERControlIssuer *dercontrol.Issuer
 
 	// Sep2Edition is the config-declared IEEE 2030.5 edition (env
 	// SEP2_EDITION, internal/config.Config.EffectiveSEP2Edition), threaded

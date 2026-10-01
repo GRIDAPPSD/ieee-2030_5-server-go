@@ -12,6 +12,9 @@ func TestTestStoresWiresEveryStoresField(t *testing.T) {
 	unset := map[string]string{
 		"EndDeviceIndexes": "nil selects the process-local index these tests rely on",
 		"AdminFSAs":        "the admin plane is not mounted on the protocol router",
+
+		"FlowReservationQueue": "nil makes the assembly build a queue from RouterConfig.FlowReservationDeadline",
+		"DERControlIssuer":     "nil makes the assembly build an issuer from the stores",
 	}
 	v := reflect.ValueOf(testStores()).Elem()
 	seen := map[string]bool{}

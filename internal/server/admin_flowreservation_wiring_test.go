@@ -2,8 +2,8 @@ package server
 
 import (
 	"testing"
+	"time"
 
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -82,16 +82,22 @@ func TestNewAdminFlowReservationHandler_ReportsNotPersisted(t *testing.T) {
 	}
 }
 
-// The queue and the admin read API must run under one deadline: the queue
-// takes it from NewCoreRouterConfig, the handler from its own wiring.
+// The queue and the admin read API run under one deadline: both decide a
+// request created at 1000 at 1090 when the setting is 90 s, and the handler
+// reports 90 s.
 func TestAdminFlowReservationDeadlineIsTheQueuesDeadline(t *testing.T) {
-	queue := NewCoreRouterConfig(&config.Config{}).FlowReservationDeadline
-	h := newAdminFlowReservationHandler(fullyWiredFlowReservationStores())
-	if got := h.Deadline.Deadline; got != queue {
-		t.Errorf("admin deadline = %v, queue deadline = %v, want them equal", got, queue)
+	s := fullyWiredFlowReservationStores()
+	s.FlowReservationDeadline = 90 * time.Second
+	queue := newFlowReservationQueue(s, nil)
+	t.Cleanup(queue.Close)
+	h := newAdminFlowReservationHandler(s)
+
+	frq := sep2.FlowReservationRequest{CreationTime: 1000}
+	if got, want := flowreservation.DeadlineAt(h.Deadline, frq), queue.DeadlineAt(frq); got != want || got != 1090 {
+		t.Errorf("admin deadlineAt = %d, queue deadlineAt = %d, want both 1090", got, want)
 	}
-	if got, want := h.Deadline.EffectiveDeadline(), (flowreservation.Config{Deadline: queue}).EffectiveDeadline(); got != want {
-		t.Errorf("effective admin deadline = %v, want the queue's %v", got, want)
+	if got := h.Deadline.EffectiveDeadline(); got != 90*time.Second {
+		t.Errorf("effective admin deadline = %v, want 90s", got)
 	}
 }
 

@@ -274,6 +274,21 @@ type Stores struct {
 	// (commitment.ErrNoLedger), so a Stores built without one fails closed
 	// rather than passing.
 	CommitmentLedger *commitment.Ledger
+
+	// FlowReservationQueue is the queue the FlowReservationRequest routes
+	// submit to, built with NewFlowReservationQueue. A server that also
+	// recovers or answers requests elsewhere sets it once and owns Close and
+	// recovery. Nil makes the assembly build a queue of its own: an embedder
+	// outside this module cannot do better, because the queue type and
+	// flowreservation.Recover live in an internal package, so nothing closes
+	// that queue or re-arms its pending requests after a restart.
+	FlowReservationQueue *flowreservation.Queue
+
+	// DERControlIssuer is the issuer the grant cancel path writes DER
+	// controls through. A server sharing one issuer with its admin API sets
+	// it; nil builds one from the stores (NewDERControlIssuer), as an
+	// embedder with no admin API expects.
+	DERControlIssuer *dercontrol.Issuer
 }
 
 // RouterConfig carries the scalar configuration values the protocol router
@@ -1391,14 +1406,10 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		// flowReservationResponses.Create, not the POST handler directly.
 		// #714: every grant it stores is checked against the fleet's
 		// commitments; a nil ledger refuses every grant with a window.
-		flowReservationQueue := flowreservation.NewQueue(
-			stores.FlowReservationRequests, flowReservationResponses,
-			flowreservation.NewLedgerGate(stores.CommitmentLedger, commitment.Resolver{
-				Devices: stores.EndDevices, Managers: stores.EndDeviceManagers,
-			}),
-			flowreservation.Config{Deadline: frpDeadline}, pen,
-			flowreservation.WithNotifier(notifier),
-		)
+		flowReservationQueue := stores.FlowReservationQueue
+		if flowReservationQueue == nil {
+			flowReservationQueue = NewFlowReservationQueue(stores, pen, frpDeadline, notifier)
+		}
 
 		mux.HandleFunc("GET /edev/{id}/frq", scopedListHandler[sep2.FlowReservationRequest, sep2.FlowReservationRequestList](
 			stores.FlowReservationRequests, "id", coreflowrsv.BuildFlowReservationRequestList, 900,
@@ -1520,12 +1531,48 @@ func commitmentWriters(stores *Stores) commitment.Writers {
 		log.Print("assembly: a DER program, control or response lifecycle store is absent: cancelling an answered flow reservation request will answer 500")
 		return commitment.Writers{}
 	}
-	issuer, err := dercontrol.NewIssuer(stores.DERPrograms, stores.DERControls, stores.DERControlLifecycles, dercontrol.Config{})
-	if err != nil {
-		log.Printf("assembly: DER control issuer for cancelling a flow reservation grant: %v; an answered request cannot be cancelled", err)
-		return commitment.Writers{}
+	issuer := stores.DERControlIssuer
+	if issuer == nil {
+		var err error
+		issuer, err = NewDERControlIssuer(stores.DERPrograms, stores.DERControls, stores.DERControlLifecycles, nil)
+		if err != nil {
+			log.Printf("assembly: DER control issuer for cancelling a flow reservation grant: %v; an answered request cannot be cancelled", err)
+			return commitment.Writers{}
+		}
 	}
 	return sources.NewWriters(issuer, stores.FlowReservationResponseLifecycles)
+}
+
+// NewFlowReservationQueue is the one place a flow reservation queue is built:
+// requests and responses from stores, every grant checked against the
+// commitment ledger over the fleet, the deadline fallback held for deadline
+// (zero takes flowreservation.DefaultDeadline), and a response notified
+// through notifier when it is non-nil. The caller owns Close.
+func NewFlowReservationQueue(stores *Stores, pen *uint32, deadline time.Duration, notifier ResourceNotifier) *flowreservation.Queue {
+	var opts []flowreservation.Option
+	if notifier != nil {
+		opts = append(opts, flowreservation.WithNotifier(notifier))
+	}
+	return flowreservation.NewQueue(
+		stores.FlowReservationRequests, requireScoped(stores.FlowReservationResponses, "FlowReservationResponses"),
+		flowreservation.NewLedgerGate(stores.CommitmentLedger, commitment.Resolver{
+			Devices: stores.EndDevices, Managers: stores.EndDeviceManagers,
+		}),
+		flowreservation.Config{Deadline: deadline}, pen, opts...,
+	)
+}
+
+// NewDERControlIssuer is the one place a DER control issuer is built, so a
+// process that wants a single issuer (and its scope locks) over one store set
+// calls it once and shares the result. pen is the issuer's mRID PEN; nil
+// leaves Issue refusing, which a cancel-only issuer does not need.
+func NewDERControlIssuer(
+	programs store.ScopedStore[sep2.DERProgram],
+	controls store.ScopedStore[sep2.DERControl],
+	lifecycles store.ScopedStore[dercontrol.LifecycleRecord],
+	pen *uint32,
+) (*dercontrol.Issuer, error) {
+	return dercontrol.NewIssuer(programs, controls, lifecycles, dercontrol.Config{PEN: pen})
 }
 
 // pendingPollRateSeconds is d as whole seconds for a pollRate, 30 s when

@@ -1,9 +1,20 @@
 package config
 
 import (
+	"fmt"
 	"net"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
+)
+
+// Bounds on SEP2_FLOW_RESERVATION_DEADLINE_SECONDS. Zero in Config means
+// unset and takes DefaultFlowReservationDeadline.
+const (
+	MinFlowReservationDeadline     = time.Second
+	MaxFlowReservationDeadline     = time.Hour
+	DefaultFlowReservationDeadline = 300 * time.Second
 )
 
 // Config holds server configuration.
@@ -183,6 +194,43 @@ type Config struct {
 	// being applied before the sign (#715 fix round 1, item 2): only the
 	// wire's own sign is ever untrusted.
 	SEP2Edition string
+
+	// FlowReservationDeadline is how long a FlowReservationRequest waits for
+	// an operator answer before the fallback decides. Env:
+	// SEP2_FLOW_RESERVATION_DEADLINE_SECONDS, 1 to 3600. Zero means unset;
+	// use EffectiveFlowReservationDeadline.
+	FlowReservationDeadline time.Duration
+}
+
+// ParseFlowReservationDeadlineSeconds validates the value of
+// SEP2_FLOW_RESERVATION_DEADLINE_SECONDS: empty is unset (zero), anything
+// else must be whole seconds from 1 to 3600.
+func ParseFlowReservationDeadlineSeconds(v string) (time.Duration, error) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("SEP2_FLOW_RESERVATION_DEADLINE_SECONDS: %q is not a whole number of seconds", v)
+	}
+	d := time.Duration(n) * time.Second
+	if n < int64(MinFlowReservationDeadline/time.Second) || n > int64(MaxFlowReservationDeadline/time.Second) {
+		return 0, fmt.Errorf("SEP2_FLOW_RESERVATION_DEADLINE_SECONDS: %d is outside 1 to 3600", n)
+	}
+	return d, nil
+}
+
+// EffectiveFlowReservationDeadline resolves an unset deadline to the default
+// and refuses a value outside the bounds, so a Config built without the env
+// parser cannot start a queue with a hold the setting would have refused.
+func (c *Config) EffectiveFlowReservationDeadline() (time.Duration, error) {
+	if c.FlowReservationDeadline == 0 {
+		return DefaultFlowReservationDeadline, nil
+	}
+	if c.FlowReservationDeadline < MinFlowReservationDeadline || c.FlowReservationDeadline > MaxFlowReservationDeadline {
+		return 0, fmt.Errorf("flow reservation deadline %s is outside 1s to 1h", c.FlowReservationDeadline)
+	}
+	return c.FlowReservationDeadline, nil
 }
 
 // EffectivePEN normalizes PEN the way internal/dercontrol.Config already

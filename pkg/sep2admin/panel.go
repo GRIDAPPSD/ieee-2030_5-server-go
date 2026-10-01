@@ -10,32 +10,22 @@ import (
 // (ErrUnsupportedDescriptorVersion): a version drift is a boot failure,
 // not a rendering surprise discovered on the first request.
 //
-// Version 1 includes Descriptor's Body field and the two body shapes
-// (TableBody, DefinitionListBody) defined in descriptor.go. This is a
-// completion of version 1's shape, not a silent redefinition of a
-// shipped one: nothing in this repository calls a Panel's View yet (no
-// route mounts one, per #370), so no consumer has ever read a version-1
-// Descriptor that lacked a Body. A future incompatible change to the
-// body shapes bumps CurrentDescriptorVersion; adding this field did not
-// need to.
-const CurrentDescriptorVersion = 1
+// Version 2 replaced version 1's single Body with Sections and its
+// plain-text values with typed Cells (descriptor.go). No route served a
+// version 1 Descriptor, so nothing reads one.
+const CurrentDescriptorVersion = 2
 
-// Descriptor is the versioned payload a Panel's View produces. Its Body
-// carries the renderer-facing content, defined in descriptor.go: a table
-// shape and a definition-list shape, sealed to this package so a
-// Descriptor can hold at most one of them by construction. This package
-// fixes the contract; rendering it is a later issue's job.
+// Descriptor is the versioned, data-only payload a Panel's View produces:
+// an ordered list of Sections, each a table or a definition list. It
+// carries no markup, script or style, and a View never sees the request.
 type Descriptor struct {
 	// Version is the schema version this Descriptor was produced against.
 	// A renderer is expected to refuse anything other than
 	// CurrentDescriptorVersion rather than guess at an unknown shape.
 	Version int
 
-	// Body is this Descriptor's rendering payload: a TableBody, a
-	// DefinitionListBody, or the zero Body for none. See descriptor.go
-	// for why a Descriptor can never hold both at once, and why the seal
-	// survives embedding.
-	Body Body
+	// Sections render in order.
+	Sections []Section
 }
 
 // ViewFunc renders a Panel's content as a Descriptor. The server supplies

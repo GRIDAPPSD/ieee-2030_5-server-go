@@ -100,9 +100,8 @@ func TestDelivery_UncoveredSecondsAreNotFilled(t *testing.T) {
 	}
 }
 
-// Overlapping spans of one series count each second once, using the newest
-// receipt; spans of different series (mirrors or mRIDs) add, over the seconds
-// every series covers.
+// Overlapping spans of one leg count each second once, using the newest
+// receipt, whichever mirror or mRID carries them.
 func TestDelivery_OverlapWithinSeriesAndSumAcross(t *testing.T) {
 	avg := u8(dataQualifierAverage)
 	t.Run("one series", func(t *testing.T) {
@@ -117,17 +116,17 @@ func TestDelivery_OverlapWithinSeriesAndSumAcross(t *testing.T) {
 		approx(t, "deliveredWh", d.DeliveredWh, (100*200+400*200)/3600.0)
 		approx(t, "averageW", d.AverageW, (100*200+400*200)/400.0)
 	})
-	t.Run("two mirrors", func(t *testing.T) {
+	t.Run("two mirrors are one leg, never added", func(t *testing.T) {
 		m := []deviceMirror{
 			{isDER: true, readings: []sep2.MirrorMeterReading{wReading("A", 1300, 100, reverse, avg, &sep2.DateTimeInterval{Start: 1000, Duration: 300})}},
-			{isDER: true, readings: []sep2.MirrorMeterReading{wReading("A", 1400, 400, reverse, avg, &sep2.DateTimeInterval{Start: 1200, Duration: 200})}},
+			{isDER: true, readings: []sep2.MirrorMeterReading{wReading("B", 1400, 400, reverse, avg, &sep2.DateTimeInterval{Start: 1200, Duration: 200})}},
 		}
 		d := newDelivery("L", m, Edition2018, 0, 5000)
-		// Only [1200,1300) is covered by both mirrors.
-		if d.CoveredSeconds != 100 || d.Readings != 2 {
-			t.Fatalf("delivery = %+v, want 100 covered by 2 readings", d)
+		// [1000,1200) at 100 W, then the newer reading over [1200,1400).
+		if d.CoveredSeconds != 400 || d.Readings != 2 {
+			t.Fatalf("delivery = %+v, want 400 covered by 2 readings", d)
 		}
-		approx(t, "deliveredWh", d.DeliveredWh, (100+400)*100/3600.0)
+		approx(t, "deliveredWh", d.DeliveredWh, (100*200+400*200)/3600.0)
 	})
 	t.Run("non-DER mirror ignored", func(t *testing.T) {
 		m := []deviceMirror{{readings: []sep2.MirrorMeterReading{wReading("A", 1300, 100, reverse, avg, &sep2.DateTimeInterval{Start: 1000, Duration: 300})}}}
@@ -205,6 +204,8 @@ func TestDelivery_SignMatchesFleetMapping(t *testing.T) {
 		{Edition2018, false, forward, 360, -360, false},
 		{Edition2018, false, reverse, 360, 360, false},
 		{Edition2018, true, forward, 360, -360, false},
+		{Edition2018, true, forward, -500, -500, false}, // EPRI's signed Forward, kept under 2018
+		{Edition2018, true, forward, -500, -500, false}, // EPRI's signed Forward, kept under 2018
 		{Edition2018, true, reverse, 360, 360, false},   // 2018 Table E.2: DER active power is Reverse
 		{Edition2018, true, reverse, -360, -360, false}, // the sender's sign, kept under 2018
 		{Edition2023, false, reverse, 360, 360, false},

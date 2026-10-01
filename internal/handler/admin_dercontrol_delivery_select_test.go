@@ -31,6 +31,9 @@ type reading struct {
 	qual   *uint8
 	mult   *int8
 	period *sep2.DateTimeInterval
+	phase  *uint8
+	kind   *uint8
+	acc    *uint8
 }
 
 func (r reading) mmr() sep2.MirrorMeterReading {
@@ -43,7 +46,7 @@ func (r reading) mmr() sep2.MirrorMeterReading {
 		MRID:           r.mrid,
 		LastUpdateTime: r.at,
 		Reading:        &sep2.Reading{Value: &v, TimePeriod: r.period},
-		ReadingType:    &sep2.ReadingType{Uom: &uom, FlowDirection: r.dir, DataQualifier: r.qual, PowerOfTenMultiplier: r.mult},
+		ReadingType:    &sep2.ReadingType{Uom: &uom, FlowDirection: r.dir, DataQualifier: r.qual, PowerOfTenMultiplier: r.mult, Phase: r.phase, Kind: r.kind, AccumulationBehaviour: r.acc},
 	}
 }
 
@@ -109,24 +112,24 @@ func TestDERControlList_DeliveryIgnoresMaxMinAndVAr(t *testing.T) {
 	}
 }
 
-// Item 1: parallel series are summed, on one mirror (per phase) and across
-// two DER mirrors, rather than one standing for the whole.
-func TestDERControlList_DeliverySumsParallelSeries(t *testing.T) {
+// Phase legs are summed; a second DER mirror reporting phase A joins that
+// leg rather than adding to it.
+func TestDERControlList_DeliverySumsPhaseLegs(t *testing.T) {
 	d := newDeliveryHarness(t)
 	b := deliveryBase
 	d.seedReadings(t, "1", dcLFDI, roleIsDER, ptrU32(900),
-		reading{mrid: "PA", at: b, value: 1800, dir: reverseDir()},
-		reading{mrid: "PB", at: b, value: 1800, dir: reverseDir()},
+		reading{mrid: "PA", at: b, value: 1800, dir: reverseDir(), phase: dq(128)},
+		reading{mrid: "PB", at: b, value: 1800, dir: reverseDir(), phase: dq(64)},
 	)
-	d.seedReadings(t, "2", dcLFDI, roleIsDER, ptrU32(900), reading{mrid: "P", at: b, value: 3600, dir: reverseDir()})
+	d.seedReadings(t, "2", dcLFDI, roleIsDER, ptrU32(900), reading{mrid: "P", at: b, value: 1800, dir: reverseDir(), phase: dq(129)})
 	mrid := d.seedControl(t, "e", b, 900, dercontrol.LifecycleRecord{})
 
 	del := d.deliveryOf(t, mrid)
-	if del.CoveredSeconds != 900 || del.Readings != 3 {
-		t.Fatalf("delivery = %+v, want 900 covered seconds from 3 readings", *del)
+	if del.CoveredSeconds != 900 || del.Readings != 2 {
+		t.Fatalf("delivery = %+v, want 900 covered seconds from one A and one B reading", *del)
 	}
-	// 1800 + 1800 + 3600 W over 900 s.
-	wantWh(t, del.DeliveredWh, 1800)
+	// 1800 + 1800 W over 900 s.
+	wantWh(t, del.DeliveredWh, 900)
 }
 
 // Item 2: the hold is capped at 900 s whatever postRate a device declares.

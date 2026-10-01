@@ -34,6 +34,8 @@ var epriCases = []epriCase{
 	{"2023 reverse positive on a DER is import", handler.Edition2023, sep2.FlowDirectionReverse, 500, -500, false},
 	{"2023 zero with direction 0 is 0 W", handler.Edition2023, 0, 0, 0, false},
 	{"2023 nonzero with direction 0 is flagged", handler.Edition2023, 0, 7, 7, true},
+	{"2023 forward zero is 0 W", handler.Edition2023, sep2.FlowDirectionForward, 0, 0, false},
+	{"2023 forward zero is 0 W", handler.Edition2023, sep2.FlowDirectionForward, 0, 0, false},
 }
 
 // Item 1, fleet route: each EPRI-shaped P reading on a DER mirror is served
@@ -91,15 +93,15 @@ func TestDERControlList_DeliveryEPRISignedReadings(t *testing.T) {
 	}
 }
 
-// Item 2: a second covered by only some of the series that reported in the
-// window is not covered, and its energy is not counted.
+// A second covered by only some phase legs of a qualifier is not covered,
+// and its energy is not counted.
 func TestDERControlList_DeliveryPartialPhaseIsNotCovered(t *testing.T) {
 	d := newDeliveryHarness(t)
 	b := deliveryBase
 	avg := dq(2)
 	d.seedReadings(t, "1", dcLFDI, roleIsDER, ptrU32(900),
-		reading{mrid: "PA", at: b, value: 3600, dir: reverseDir()},
-		reading{mrid: "PB", at: b + 300, value: 7200, dir: reverseDir(), qual: avg, period: &sep2.DateTimeInterval{Start: b, Duration: 300}},
+		reading{mrid: "PA", at: b + 900, value: 3600, dir: reverseDir(), qual: avg, phase: dq(128), period: &sep2.DateTimeInterval{Start: b, Duration: 900}},
+		reading{mrid: "PB", at: b + 300, value: 7200, dir: reverseDir(), qual: avg, phase: dq(64), period: &sep2.DateTimeInterval{Start: b, Duration: 300}},
 	)
 	mrid := d.seedControl(t, "e", b, 900, dercontrol.LifecycleRecord{})
 

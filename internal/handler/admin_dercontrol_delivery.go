@@ -38,6 +38,15 @@ const (
 	dataQualifierAverage uint8 = 2
 )
 
+// KindType 37 is power; AccumulationBehaviourType 6 is indicating and 12 is
+// instantaneous (2018 Table E.2 gives DER active power kind 37 and
+// accumulation 12).
+const (
+	kindPower                 uint8 = 37
+	accumulationIndicating    uint8 = 6
+	accumulationInstantaneous uint8 = 12
+)
+
 // Hold bounds, INFERRED (#802): the standard sets no hold. 300 s is this
 // server's own default for a mirror with no postRate; 900 s is the postRate
 // 2023 assumes when none is given, used here as a ceiling so a device's
@@ -80,88 +89,128 @@ type powerSpan struct {
 	order      int
 }
 
-// countsAsDelivery reports whether a reading is DER real power that may be
-// integrated: uom W, instantaneous (no qualifier, or 0) or Average. Maximum
-// and Minimum series describe extremes, not energy.
-func countsAsDelivery(r sep2.MirrorMeterReading) bool {
-	rt := r.ReadingType
-	if rt == nil || rt.Uom == nil || *rt.Uom != sep2.UomWatts || r.Reading == nil || r.Reading.Value == nil {
-		return false
-	}
-	q := rt.DataQualifier
-	return q == nil || *q == dataQualifierNone || *q == dataQualifierAverage
+// leg is one quantity a device reports, whatever mRID or mirror carries it:
+// its qualifier (Average or instantaneous) and its phase (0 is the total).
+// The EPRI client posts every reading under a fresh mRID, and a client may
+// open a new mirror after a restart, so neither may split a leg.
+type leg struct {
+	average bool
+	phase   uint8
 }
 
-// powerSeries turns a device's DER real-power readings into spans, one slice
-// per series (a mirror and mRID; per-phase series are distinct mRIDs).
+// Phase legs (2018 PhaseCode): the total is absent, 0 or ABC (224); A is
+// 128 or AN 129, B 64 or BN 65, C 32 or CN 33. Line-to-line codes are not
+// read.
+const (
+	phaseTotal uint8 = iota
+	phaseA
+	phaseB
+	phaseC
+)
+
+// legOf reports the leg a reading belongs to, or false when it is not DER
+// real power that may be integrated: uom W; qualifier absent, 0 or Average
+// (Maximum and Minimum are extremes, not energy); kind absent, 0 or power;
+// accumulation absent, 0, indicating or instantaneous.
+func legOf(r sep2.MirrorMeterReading) (leg, bool) {
+	rt := r.ReadingType
+	if rt == nil || rt.Uom == nil || *rt.Uom != sep2.UomWatts || r.Reading == nil || r.Reading.Value == nil {
+		return leg{}, false
+	}
+	if q := rt.DataQualifier; q != nil && *q != dataQualifierNone && *q != dataQualifierAverage {
+		return leg{}, false
+	}
+	if k := rt.Kind; k != nil && *k != 0 && *k != kindPower {
+		return leg{}, false
+	}
+	if a := rt.AccumulationBehaviour; a != nil && *a != 0 && *a != accumulationIndicating && *a != accumulationInstantaneous {
+		return leg{}, false
+	}
+	l := leg{average: isAverage(rt)}
+	if rt.Phase != nil {
+		switch *rt.Phase {
+		case 0, 224:
+		case 128, 129:
+			l.phase = phaseA
+		case 64, 65:
+			l.phase = phaseB
+		case 32, 33:
+			l.phase = phaseC
+		default:
+			return leg{}, false
+		}
+	}
+	return l, true
+}
+
+// candidate is one leg reading with the hold of the mirror it came from.
+type candidate struct {
+	r    sep2.MirrorMeterReading
+	hold int64
+}
+
+// powerLegs turns a device's DER real-power readings into spans per leg.
 //
 // An Average reading covers its timePeriod. Without one (intervalLength is
 // not decoded by the vendored core) it covers the hold before its receipt,
-// back to no earlier than the previous reading of its series. An
-// instantaneous reading holds forward from its receipt until the next reading
-// of its series, for at most the hold. See holdSeconds.
+// back to no earlier than the previous reading of its leg. An instantaneous
+// reading holds forward from its receipt until the next reading of its leg,
+// for at most the hold. See holdSeconds. Another leg never cuts a span.
 //
 // Only isDER mirrors count: a premises mirror measures net site power, not
-// the DER output a control targets. A reading whose sign cannot be mapped
-// (exportPositive) yields no span and sets flagged when it would have covered
-// any part of [ws, we).
-func powerSeries(mirrors []deviceMirror, edition SEP2Edition, ws, we int64) (series [][]powerSpan, flagged bool) {
-	order := 0
+// the DER output a control targets. seen marks a leg with any reading whose
+// span reaches [ws, we). A reading whose sign cannot be mapped
+// (exportPositive) yields no span and sets flagged.
+func powerLegs(mirrors []deviceMirror, edition SEP2Edition, ws, we int64) (spans map[leg][]powerSpan, seen map[leg]bool, flagged bool) {
+	byLeg := map[leg][]candidate{}
 	for _, m := range mirrors {
 		if !m.isDER {
 			continue
 		}
 		hold := holdSeconds(m.postRate)
-		power := make([]sep2.MirrorMeterReading, 0, len(m.readings))
 		for _, r := range m.readings {
-			if countsAsDelivery(r) {
-				power = append(power, r)
+			if l, ok := legOf(r); ok {
+				byLeg[l] = append(byLeg[l], candidate{r: r, hold: hold})
 			}
 		}
-		slices.SortStableFunc(power, func(a, b sep2.MirrorMeterReading) int {
-			return cmp.Or(cmp.Compare(a.MRID, b.MRID), cmp.Compare(a.LastUpdateTime, b.LastUpdateTime))
-		})
-		var spans []powerSpan
-		for i, r := range power {
-			if i > 0 && power[i-1].MRID != r.MRID {
-				series = append(series, spans)
-				spans = nil
-			}
-			start, end := readingCoverage(power, i, hold)
+	}
+	spans, seen = map[leg][]powerSpan{}, map[leg]bool{}
+	order := 0
+	for l, cs := range byLeg {
+		slices.SortStableFunc(cs, func(a, b candidate) int { return cmp.Compare(a.r.LastUpdateTime, b.r.LastUpdateTime) })
+		for i, c := range cs {
+			start, end := readingCoverage(cs, i)
 			start, end = max(start, ws), min(end, we)
 			if start >= end {
 				continue
 			}
+			seen[l] = true
 			multiplier := int8(0)
-			if r.ReadingType.PowerOfTenMultiplier != nil {
-				multiplier = *r.ReadingType.PowerOfTenMultiplier
+			if c.r.ReadingType.PowerOfTenMultiplier != nil {
+				multiplier = *c.r.ReadingType.PowerOfTenMultiplier
 			}
-			watts, mapped := exportPositive(scaledValue(float64(*r.Reading.Value), multiplier), r.ReadingType.FlowDirection, edition, m.isDER)
+			watts, mapped := exportPositive(scaledValue(float64(*c.r.Reading.Value), multiplier), c.r.ReadingType.FlowDirection, edition, true)
 			if !mapped {
 				flagged = true
 				continue
 			}
-			spans = append(spans, powerSpan{start: start, end: end, watts: watts, received: r.LastUpdateTime, order: order})
+			spans[l] = append(spans[l], powerSpan{start: start, end: end, watts: watts, received: c.r.LastUpdateTime, order: order})
 			order++
 		}
-		series = append(series, spans)
 	}
-	return series, flagged
+	return spans, seen, flagged
 }
 
-// readingCoverage is the span power[i] covers before window clipping. power
-// is sorted by mRID, then receipt time.
-func readingCoverage(power []sep2.MirrorMeterReading, i int, hold int64) (start, end int64) {
-	r := power[i]
+// readingCoverage is the span cs[i] covers before window clipping. cs is one
+// leg, sorted by receipt time.
+func readingCoverage(cs []candidate, i int) (start, end int64) {
+	r, hold := cs[i].r, cs[i].hold
 	at := r.LastUpdateTime
 	if !isAverage(r.ReadingType) {
 		end = at + hold
-		for _, next := range power[i+1:] {
-			if next.MRID != r.MRID {
-				break
-			}
-			if next.LastUpdateTime > at {
-				end = min(end, next.LastUpdateTime)
+		for _, next := range cs[i+1:] {
+			if next.r.LastUpdateTime > at {
+				end = min(end, next.r.LastUpdateTime)
 				break
 			}
 		}
@@ -171,9 +220,9 @@ func readingCoverage(power []sep2.MirrorMeterReading, i int, hold int64) (start,
 		return tp.Start, tp.Start + int64(tp.Duration)
 	}
 	start = at - hold
-	for j := i - 1; j >= 0 && power[j].MRID == r.MRID; j-- {
-		if power[j].LastUpdateTime < at {
-			start = max(start, power[j].LastUpdateTime)
+	for j := i - 1; j >= 0; j-- {
+		if cs[j].r.LastUpdateTime < at {
+			start = max(start, cs[j].r.LastUpdateTime)
 			break
 		}
 	}
@@ -184,13 +233,13 @@ func isAverage(rt *sep2.ReadingType) bool {
 	return rt.DataQualifier != nil && *rt.DataQualifier == dataQualifierAverage
 }
 
-// piece is a stretch of one series' power, after its overlaps are resolved.
+// piece is a stretch of one leg's power, after its overlaps are resolved.
 type piece struct {
 	start, end int64
 	span       powerSpan
 }
 
-// resolveSeries splits one series' spans into disjoint pieces: where its own
+// resolveSeries splits one leg's spans into disjoint pieces: where its own
 // spans overlap, the most recently received one is used.
 func resolveSeries(spans []powerSpan) []piece {
 	if len(spans) == 0 {
@@ -223,54 +272,67 @@ func resolveSeries(spans []powerSpan) []piece {
 	return pieces
 }
 
-// integrate sums watt-seconds across series, since parallel series (phases,
-// several DER mirrors) are parts of one output. A second is covered only when
-// every series with a span in the window covers it: a second some series
-// miss would understate the output, so it is left uncovered and its energy
-// is not counted.
-func integrate(series [][]powerSpan) (wattSeconds float64, covered int64, used []powerSpan) {
-	var all []piece
-	reporting := 0
-	for _, spans := range series {
-		pieces := resolveSeries(spans)
-		if len(pieces) > 0 {
-			reporting++
-		}
-		all = append(all, pieces...)
-	}
-	if reporting == 0 {
-		return 0, 0, nil
-	}
+// integrate values each second by exactly one path, the highest ranked that
+// covers it; paths are never added together:
+//  1. the Average total;
+//  2. the instantaneous total;
+//  3. the Average phase sum;
+//  4. the instantaneous phase sum.
+//
+// Average ranks first because its span is the standard's ("Average over the
+// Interval", CSIP Table 3) while the instantaneous hold is inferred; the
+// total ranks above the phases because 2018 Table E.2 gives DER active power
+// with no phase. A phase sum covers a second only when every phase leg of
+// its qualifier seen in the window covers it: a dropped phase uncovers the
+// second and is never read as 0 W.
+func integrate(spans map[leg][]powerSpan, seen map[leg]bool) (wattSeconds float64, covered int64, used []powerSpan) {
 	type edge struct {
 		at    int64
-		piece int
+		leg   leg
+		piece piece
 		open  bool
 	}
-	edges := make([]edge, 0, 2*len(all))
-	for i, p := range all {
-		edges = append(edges, edge{p.start, i, true}, edge{p.end, i, false})
+	var edges []edge
+	for l, ss := range spans {
+		for _, p := range resolveSeries(ss) {
+			edges = append(edges, edge{p.start, l, p, true}, edge{p.end, l, p, false})
+		}
 	}
 	slices.SortFunc(edges, func(a, b edge) int { return cmp.Compare(a.at, b.at) })
+	phaseLegs := func(average bool) []leg {
+		var out []leg
+		for l := range seen {
+			if l.average == average && l.phase != phaseTotal {
+				out = append(out, l)
+			}
+		}
+		return out
+	}
+	avgPhases, instPhases := phaseLegs(true), phaseLegs(false)
 
-	// Pieces of one series are disjoint, so the active pieces belong to
-	// distinct series.
-	active := map[int]powerSpan{}
+	// Pieces of one leg are disjoint, so a leg has at most one active piece.
+	active := map[leg]powerSpan{}
 	usedOrder := map[int]bool{}
 	for i := 0; i < len(edges); {
 		x := edges[i].at
 		for ; i < len(edges) && edges[i].at == x; i++ {
-			if edges[i].open {
-				active[edges[i].piece] = all[edges[i].piece].span
-			} else {
-				delete(active, edges[i].piece)
+			e := edges[i]
+			if e.open {
+				active[e.leg] = e.piece.span
+			} else if cur, ok := active[e.leg]; ok && cur.order == e.piece.span.order {
+				delete(active, e.leg)
 			}
 		}
-		if i == len(edges) || len(active) < reporting {
+		if i == len(edges) {
+			break
+		}
+		path := pickPath(active, avgPhases, instPhases)
+		if len(path) == 0 {
 			continue
 		}
 		seconds := edges[i].at - x
 		covered += seconds
-		for _, sp := range active {
+		for _, sp := range path {
 			wattSeconds += sp.watts * float64(seconds)
 			if !usedOrder[sp.order] {
 				usedOrder[sp.order] = true
@@ -279,6 +341,32 @@ func integrate(series [][]powerSpan) (wattSeconds float64, covered int64, used [
 		}
 	}
 	return wattSeconds, covered, used
+}
+
+// pickPath returns the spans of the highest-ranked path active now, or none.
+func pickPath(active map[leg]powerSpan, avgPhases, instPhases []leg) []powerSpan {
+	for _, total := range []leg{{average: true}, {average: false}} {
+		if sp, ok := active[total]; ok {
+			return []powerSpan{sp}
+		}
+	}
+	for _, phases := range [][]leg{avgPhases, instPhases} {
+		if len(phases) == 0 {
+			continue
+		}
+		path := make([]powerSpan, 0, len(phases))
+		for _, l := range phases {
+			sp, ok := active[l]
+			if !ok {
+				break
+			}
+			path = append(path, sp)
+		}
+		if len(path) == len(phases) {
+			return path
+		}
+	}
+	return nil
 }
 
 // spanHeap keeps the most recently received span on top.
@@ -303,9 +391,9 @@ func (h *spanHeap) Pop() any {
 // newDelivery computes one control's delivery from its device's mirrors.
 func newDelivery(deviceLFDI string, mirrors []deviceMirror, edition SEP2Edition, ws, we int64) *DERControlDelivery {
 	d := &DERControlDelivery{WindowStart: ws, WindowEnd: we, DeviceLFDI: deviceLFDI}
-	series, flagged := powerSeries(mirrors, edition, ws, we)
+	spans, seen, flagged := powerLegs(mirrors, edition, ws, we)
 	d.DirectionUnknown = flagged
-	wattSeconds, covered, used := integrate(series)
+	wattSeconds, covered, used := integrate(spans, seen)
 	if covered == 0 {
 		return d
 	}

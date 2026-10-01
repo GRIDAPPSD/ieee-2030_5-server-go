@@ -614,7 +614,8 @@ func exportPositive(value float64, flowDirection *uint8, edition SEP2Edition, is
 			// is flagged. 2018 has no such clause, and by operator decision
 			// (2026-10-01) a negative value is the sender's own
 			// export-positive sign and is kept: the EPRI reference client
-			// posts a negative value under Forward.
+			// posts a negative value under Forward. INFERRED (#802): checked
+			// against that one client only.
 			return value, edition != Edition2023
 		}
 		export := *flowDirection == sep2.FlowDirectionReverse

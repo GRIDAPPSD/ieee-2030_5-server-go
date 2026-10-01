@@ -70,9 +70,21 @@
     refreshing = false
   }
 
+  // load never leaves `refreshing` set: a throw in any step reaches the
+  // same visible error as a failed fetch, unless a newer load owns the pane.
   async function load() {
     const seq = ++requestSeq
     refreshing = true
+    try {
+      await run(seq)
+    } catch (err) {
+      if (!lifetime.signal.aborted && seq === requestSeq) {
+        fail(err instanceof Error ? err.message : 'unexpected error', 0)
+      }
+    }
+  }
+
+  async function run(seq: number) {
     const fleets = await fetchJSON<unknown>('/api/derms/fleets', bounds)
     if (lifetime.signal.aborted || seq !== requestSeq) return
     if (!fleets.ok) return fail(fleets.error, fleets.status)
@@ -80,13 +92,19 @@
     if (lfdis === null) return fail('server returned an unexpected fleet list', 0)
 
     const results = await Promise.all(
-      lfdis.map((l) => fetchJSON<unknown>('/api/derms/flow-reservations?aggregatorLFDI=' + encodeURIComponent(l), bounds)),
+      lfdis.map(async (l) => {
+        const res = await fetchJSON<unknown>(
+          '/api/derms/flow-reservations?aggregatorLFDI=' + encodeURIComponent(l),
+          bounds,
+        )
+        return { res, arrivedAt: Date.now() }
+      }),
     )
     if (lifetime.signal.aborted || seq !== requestSeq) return
     const next: QueueView[] = []
     let succeeded = 0
     let firstFailure = { error: '', status: 0 }
-    for (const [i, res] of results.entries()) {
+    for (const [i, { res, arrivedAt }] of results.entries()) {
       const lfdi = lfdis[i]
       const prev = views.find((v) => v.lfdi === lfdi)
       let problem: { error: string; status: number } | null = null
@@ -103,7 +121,7 @@
             lfdi,
             queue: parsed.queue,
             serverNow: typeof own === 'number' ? own : header,
-            fetchedAtMs: Date.now(),
+            fetchedAtMs: arrivedAt,
             error: null,
           })
           succeeded++

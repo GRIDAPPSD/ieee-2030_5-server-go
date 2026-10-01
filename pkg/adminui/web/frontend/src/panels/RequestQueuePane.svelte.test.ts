@@ -518,3 +518,43 @@ describe('RequestQueuePane response ordering', () => {
     expect(screen.getAllByTestId('frq-row')).toHaveLength(1)
   })
 })
+
+describe('RequestQueuePane round 3', () => {
+  it('shows an out-of-range time as invalid instead of throwing', async () => {
+    const d = copy()
+    d.requests[0].request.intervalRequested.start = 1e13
+    d.requests[1].responses[0].interval.start = 1e13
+    mockOk(d)
+    render(RequestQueuePane)
+    const rows = await loaded()
+    expect(rows[0]).toHaveTextContent('interval time invalid')
+    expect(within(screen.getByTestId('frq-history')).getByText(/interval time invalid/)).toBeInTheDocument()
+    expect(screen.queryByTestId('frq-error')).toBeNull()
+  })
+
+  it('reaches a visible error, with Refresh enabled, when load throws', async () => {
+    mockRoutes(() => ({ ok: true, data: fixture }), { ok: true, data: [{ aggregatorLFDI: '\uD800' }] })
+    render(RequestQueuePane)
+    expect(await screen.findByTestId('frq-error')).toBeInTheDocument()
+    expect(screen.queryByTestId('frq-loading')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+  })
+
+  it('counts each aggregator down from its own response arrival', async () => {
+    const OTHER = 'CD'.repeat(20)
+    let release!: (r: Res) => void
+    const late = new Promise<Res>((r) => (release = r))
+    vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
+      if (path === '/api/derms/fleets') return { ok: true, data: [{ aggregatorLFDI: LFDI }, { aggregatorLFDI: OTHER }] }
+      return path.endsWith(OTHER) ? late : { ok: true, data: fixture }
+    }) as never)
+    render(RequestQueuePane)
+    await vi.advanceTimersByTimeAsync(10_000)
+    release({ ok: true, data: { ...copy(), aggregatorLFDI: OTHER } })
+    await vi.advanceTimersByTimeAsync(0)
+    await tick()
+    const [first, second] = screen.getAllByTestId('frq-countdown')
+    expect(first).toHaveTextContent('190s to deadline')
+    expect(second).toHaveTextContent('200s to deadline')
+  })
+})

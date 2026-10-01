@@ -145,7 +145,10 @@ export function formatInterval(i: Interval | null | undefined): string {
   if (i === null || i === undefined || !isFiniteNumber(i.start) || !isFiniteNumber(i.duration)) {
     return 'interval missing'
   }
-  const start = new Date(i.start * 1000).toISOString().replace('T', ' ').replace('.000Z', ' UTC')
+  // toISOString throws RangeError outside the Date range (about 8.64e15 ms).
+  const when = new Date(i.start * 1000)
+  if (Number.isNaN(when.getTime())) return 'interval time invalid'
+  const start = when.toISOString().replace('T', ' ').replace('.000Z', ' UTC')
   const mins = i.duration / 60
   const dur = Number.isInteger(mins) ? mins + ' min' : i.duration + ' s'
   return start + ' for ' + dur

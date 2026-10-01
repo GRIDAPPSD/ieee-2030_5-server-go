@@ -43,6 +43,7 @@ func newAdminDERControlHandler(stores *Stores) *handler.AdminDERControlHandler {
 		h.Responses = stores.Responses
 	}
 	h.Edition = stores.Sep2Edition
+	h.MirrorReadingRetention = stores.MirrorReadingRetention
 	if !store.IsAbsent(stores.MirrorUsagePoints) {
 		h.MirrorUsagePoints = stores.MirrorUsagePoints
 	}

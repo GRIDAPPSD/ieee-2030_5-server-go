@@ -26,3 +26,19 @@ func SetStartRetentionAtBoot(t testing.TB, fn StartRetentionFn) {
 	startRetentionAtBoot = fn
 	t.Cleanup(func() { startRetentionAtBoot = prev })
 }
+
+// StartMirrorRetentionFn is the shape of the mirror reading retention start
+// Run makes.
+type StartMirrorRetentionFn = func(context.Context, *Stores, *slog.Logger, func() time.Time) func()
+
+// StartMirrorReadingRetention is the production start, for a replacement to
+// call through.
+var StartMirrorReadingRetention StartMirrorRetentionFn = startMirrorReadingRetention
+
+// SetStartMirrorRetentionAtBoot replaces the mirror reading retention start
+// Run makes until t ends. Callers must not be parallel.
+func SetStartMirrorRetentionAtBoot(t testing.TB, fn StartMirrorRetentionFn) {
+	prev := startMirrorRetentionAtBoot
+	startMirrorRetentionAtBoot = fn
+	t.Cleanup(func() { startMirrorRetentionAtBoot = prev })
+}

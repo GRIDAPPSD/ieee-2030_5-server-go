@@ -60,7 +60,8 @@ export interface DERControlResponseCounts {
 
 // Metered export over the control's effective window (Unix seconds).
 // deliveredWh and averageW (watts over the covered seconds) are null when no
-// reading covers any second of it.
+// reading covers any second of it. readingsExpired is true when retention may
+// have removed readings the window needs; the figure is then null.
 export interface DERControlDelivery {
   windowStart: number
   windowEnd: number
@@ -71,6 +72,7 @@ export interface DERControlDelivery {
   directionUnknown: boolean
   deviceLFDI: string
   newestReadingTime: number | null
+  readingsExpired: boolean
 }
 
 export interface DERControlListItem extends DERControlView {

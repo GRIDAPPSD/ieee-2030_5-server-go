@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 )
 
@@ -36,5 +38,35 @@ func TestReadingsExpired_Boundary(t *testing.T) {
 		if got := readingsExpired(tc.ws, now, tc.ret); got != tc.want {
 			t.Errorf("%s: readingsExpired = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// ReadingLegs keys by leg and direction, never by mRID: an untyped reading
+// inherits its mRID's type, and a reading on no leg has the zero key.
+func TestReadingLegs(t *testing.T) {
+	w, v := sep2.UomWatts, sep2.UomVolts
+	fwd, rev := sep2.FlowDirectionForward, sep2.FlowDirectionReverse
+	val := int64(1)
+	rd := func(mrid string, rt *sep2.ReadingType) sep2.MirrorMeterReading {
+		return sep2.MirrorMeterReading{MRID: mrid, ReadingType: rt, Reading: &sep2.Reading{Value: &val}}
+	}
+	in := []sep2.MirrorMeterReading{
+		rd("A", &sep2.ReadingType{Uom: &w, FlowDirection: &rev}),
+		rd("B", &sep2.ReadingType{Uom: &w, FlowDirection: &rev}),
+		rd("A", nil),
+		rd("C", &sep2.ReadingType{Uom: &w, FlowDirection: &fwd}),
+		rd("D", &sep2.ReadingType{Uom: &v}),
+		rd("E", nil),
+	}
+	want := []ReadingLeg{
+		{"instantaneous total", rev}, {"instantaneous total", rev}, {"instantaneous total", rev},
+		{"instantaneous total", fwd}, {}, {},
+	}
+	got := ReadingLegs(in)
+	if !slices.Equal(got, want) {
+		t.Fatalf("ReadingLegs = %v, want %v", got, want)
+	}
+	if in[2].ReadingType != nil {
+		t.Fatal("ReadingLegs filled the caller's reading")
 	}
 }

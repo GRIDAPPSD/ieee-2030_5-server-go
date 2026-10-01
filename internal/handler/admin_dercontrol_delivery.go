@@ -146,6 +146,42 @@ func legOf(r sep2.MirrorMeterReading) (leg, bool) {
 	return l, true
 }
 
+// String names the leg for logs, for example "average phase A".
+func (l leg) String() string {
+	q := "instantaneous"
+	if l.average {
+		q = "average"
+	}
+	return q + " " + [...]string{"total", "phase A", "phase B", "phase C"}[l.phase]
+}
+
+// ReadingLeg is the delivery leg of one reading and its flowDirection. The
+// zero value is a reading on no leg.
+type ReadingLeg struct {
+	Leg           string
+	FlowDirection uint8
+}
+
+// ReadingLegs reports, for each of one mirror's readings, its leg once its
+// ReadingType is inherited by mRID. readings is not modified. Mirror retention
+// caps readings per ReadingLeg: the direction is kept apart there, unlike in
+// the figure, so a client posting Forward and Reverse together still adds one
+// reading per post to each key.
+func ReadingLegs(readings []sep2.MirrorMeterReading) []ReadingLeg {
+	typed := slices.Clone(readings)
+	inheritReadingTypeByMRID(typed)
+	out := make([]ReadingLeg, len(typed))
+	for i := range typed {
+		if l, ok := legOf(typed[i]); ok {
+			out[i].Leg = l.String()
+			if d := typed[i].ReadingType.FlowDirection; d != nil {
+				out[i].FlowDirection = *d
+			}
+		}
+	}
+	return out
+}
+
 // candidate is one leg reading with the hold of the mirror it came from.
 type candidate struct {
 	r    sep2.MirrorMeterReading

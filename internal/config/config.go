@@ -41,10 +41,12 @@ const (
 	DefaultMirrorReadingRetention = 25 * time.Hour
 )
 
-// Bounds on SEP2_MIRROR_READING_MAX_PER_SERIES, the readings kept per mirror
-// and mRID. The floor holds one reading every MirrorReadingCadence across
-// MinMirrorReadingRetention, ends included, so the cap never removes a reading
-// the time floor keeps at that rate. The ceiling is one reading a second
+// Bounds on SEP2_MIRROR_READING_MAX_PER_SERIES, the readings kept per mirror,
+// delivery leg and flowDirection, all readings on no leg being one series
+// (internal/mirrorretention). The floor holds one reading every
+// MirrorReadingCadence across MinMirrorReadingRetention, ends included, so the
+// cap never removes a reading the time floor keeps on a leg posted at that
+// rate. The ceiling is one reading a second
 // across MaxMirrorReadingRetention. The default, over the default retention,
 // is one reading every 4.5 s. Zero in Config means unset.
 const (
@@ -249,7 +251,7 @@ type Config struct {
 	// 87300 to 2592000. Zero means unset; use EffectiveMirrorReadingRetention.
 	MirrorReadingRetention time.Duration
 
-	// MirrorReadingMaxPerSeries caps the readings kept per mirror and mRID.
+	// MirrorReadingMaxPerSeries caps the readings kept per series.
 	// Env: SEP2_MIRROR_READING_MAX_PER_SERIES, 292 to 2592000. Zero means
 	// unset; use EffectiveMirrorReadingMaxPerSeries.
 	MirrorReadingMaxPerSeries int

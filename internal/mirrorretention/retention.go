@@ -1,10 +1,16 @@
 // Package mirrorretention bounds the out-of-band MirrorMeterReading store
 // (POST /mup/{id}/mr): readings older than a retention are removed, and a
-// count cap per series (mirror and mRID) removes the oldest beyond it.
-// Readings stored inline in a MirrorUsagePoint are not removed.
+// count cap per series removes the oldest beyond it. Readings stored inline
+// in a MirrorUsagePoint are not removed.
+//
+// A series is one mirror's readings on one delivery leg and flowDirection
+// (handler.ReadingLegs: W real power by qualifier and phase, whatever the
+// mRID), and every reading on no leg shares one series per mirror. Keying on
+// mRID instead would never cap a client that mints a fresh mRID per reading.
 package mirrorretention
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -16,6 +22,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -128,16 +135,23 @@ func (r *Retention) sweepMirror(ctx context.Context, mupID string, cutoff int64)
 		drop[i] = recs[i].reading.LastUpdateTime < cutoff
 	}
 	// Ids are fixed-width nanoseconds, so store order is age order and the
-	// cap takes each series' oldest survivors first.
-	perSeries := map[string]int{}
+	// cap takes each series' oldest survivors first. Inline readings go
+	// first, as the delivery figure gathers them, so types inherit alike.
+	all := make([]sep2.MirrorMeterReading, 0, len(inline)+len(recs))
+	all = append(all, inline...)
+	for i := range recs {
+		all = append(all, recs[i].reading)
+	}
+	series := handler.ReadingLegs(all)[len(inline):]
+	perSeries := map[handler.ReadingLeg]int{}
 	for i := range recs {
 		if !drop[i] {
-			perSeries[recs[i].reading.MRID]++
+			perSeries[series[i]]++
 		}
 	}
-	overCap := map[string]int{}
+	overCap := map[handler.ReadingLeg]int{}
 	for i := range recs {
-		m := recs[i].reading.MRID
+		m := series[i]
 		if !drop[i] && perSeries[m] > r.MaxPerSeries {
 			drop[i] = true
 			perSeries[m]--
@@ -163,9 +177,15 @@ func (r *Retention) sweepMirror(ctx context.Context, mupID string, cutoff int64)
 			failures++
 		}
 	}
-	for _, m := range slices.Sorted(maps.Keys(overCap)) {
+	for _, m := range slices.SortedFunc(maps.Keys(overCap), func(a, b handler.ReadingLeg) int {
+		return cmp.Or(cmp.Compare(a.Leg, b.Leg), cmp.Compare(a.FlowDirection, b.FlowDirection))
+	}) {
+		leg := m.Leg
+		if leg == "" {
+			leg = "none"
+		}
 		r.logger().Warn("mirrorretention: series over its reading cap, oldest removed",
-			"mirror", mupID, "mrid", m, "overCap", overCap[m], "maxPerSeries", r.MaxPerSeries)
+			"mirror", mupID, "leg", leg, "flowDirection", m.FlowDirection, "overCap", overCap[m], "maxPerSeries", r.MaxPerSeries)
 	}
 	return removed, failures
 }

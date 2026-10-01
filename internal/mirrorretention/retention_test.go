@@ -24,7 +24,8 @@ var sweepNow = time.Unix(1_800_000_000, 0)
 func put(t *testing.T, s *memory.ScopedStore[sep2.MirrorMeterReading], mupID string, nanos int64, mrid string, rt *sep2.ReadingType) string {
 	t.Helper()
 	id := fmt.Sprintf("%020d", nanos)
-	m := sep2.MirrorMeterReading{MRID: mrid, LastUpdateTime: time.Unix(0, nanos).Unix(), ReadingType: rt}
+	v := int64(1000)
+	m := sep2.MirrorMeterReading{MRID: mrid, LastUpdateTime: time.Unix(0, nanos).Unix(), ReadingType: rt, Reading: &sep2.Reading{Value: &v}}
 	m.Href = "/mup/" + mupID + "/mr/" + id
 	if err := s.Create(context.Background(), mupID, id, m); err != nil {
 		t.Fatal(err)
@@ -89,7 +90,7 @@ func TestSweep_KeepsReadingAtRetention(t *testing.T) {
 }
 
 // G/W/T 2: over the cap the oldest of the series goes, and one log line names
-// the mirror and the series.
+// the mirror and the leg.
 func TestSweep_CapRemovesOldestAndLogsMirror(t *testing.T) {
 	s := memory.NewScopedStore[sep2.MirrorMeterReading]()
 	const n = 20001
@@ -120,8 +121,8 @@ func TestSweep_CapRemovesOldestAndLogsMirror(t *testing.T) {
 			naming = append(naming, l)
 		}
 	}
-	if len(naming) != 1 || !strings.Contains(naming[0], "mrid=W") || !strings.Contains(naming[0], "overCap=1") || !strings.Contains(naming[0], "level=WARN") {
-		t.Fatalf("log lines naming m7 = %q, want one WARN for mrid W with overCap=1; all: %s", naming, logs.String())
+	if len(naming) != 1 || !strings.Contains(naming[0], `leg="instantaneous total"`) || !strings.Contains(naming[0], "overCap=1") || !strings.Contains(naming[0], "level=WARN") {
+		t.Fatalf("log lines naming m7 = %q, want one WARN for the instantaneous total leg with overCap=1; all: %s", naming, logs.String())
 	}
 }
 
@@ -198,30 +199,40 @@ func TestStart_SweepsEachTickAndStops(t *testing.T) {
 	stop()
 }
 
-// Fix round item 1: the cap counts each series on its own, so a mirror with
-// several series loses only the readings of the one over the cap.
+// Fix round item 1, keyed per leg: the cap counts each leg, and the readings
+// on no leg, on their own, so a mirror loses only the readings of the series
+// over the cap.
 func TestSweep_CapIsPerSeries(t *testing.T) {
 	s := memory.NewScopedStore[sep2.MirrorMeterReading]()
-	a := []string{
-		put(t, s, "1", secondsAgo(600, 0), "A", watts()),
-		put(t, s, "1", secondsAgo(500, 0), "A", watts()),
-		put(t, s, "1", secondsAgo(400, 0), "A", watts()),
+	phaseA := uint8(128)
+	volts := sep2.UomVolts
+	wA := watts()
+	wA.Phase = &phaseA
+	total := []string{
+		put(t, s, "1", secondsAgo(900, 0), "T1", watts()),
+		put(t, s, "1", secondsAgo(500, 0), "T2", watts()),
+		put(t, s, "1", secondsAgo(400, 0), "T3", watts()),
 	}
-	b := []string{
-		put(t, s, "1", secondsAgo(700, 0), "B", watts()),
-		put(t, s, "1", secondsAgo(300, 0), "B", watts()),
+	a := []string{
+		put(t, s, "1", secondsAgo(800, 0), "A1", wA),
+		put(t, s, "1", secondsAgo(300, 0), "A2", wA),
+	}
+	v := []string{
+		put(t, s, "1", secondsAgo(700, 0), "V1", &sep2.ReadingType{Uom: &volts}),
+		put(t, s, "1", secondsAgo(600, 0), "V2", &sep2.ReadingType{Uom: &volts}),
+		put(t, s, "1", secondsAgo(200, 0), "V3", &sep2.ReadingType{Uom: &volts}),
 	}
 	r := defaults()
 	r.Readings = s
 	r.MaxPerSeries = 2
-	if n, err := r.Sweep(context.Background(), sweepNow); err != nil || n != 1 {
-		t.Fatalf("Sweep = %d, %v, want 1 removed", n, err)
+	if n, err := r.Sweep(context.Background(), sweepNow); err != nil || n != 2 {
+		t.Fatalf("Sweep = %d, %v, want 2 removed", n, err)
 	}
 	var got []string
 	for _, m := range stored(t, s, "1") {
 		got = append(got, m.Href)
 	}
-	want := []string{"/mup/1/mr/" + b[0], "/mup/1/mr/" + a[1], "/mup/1/mr/" + a[2], "/mup/1/mr/" + b[1]}
+	want := []string{"/mup/1/mr/" + a[0], "/mup/1/mr/" + v[1], "/mup/1/mr/" + total[1], "/mup/1/mr/" + total[2], "/mup/1/mr/" + a[1], "/mup/1/mr/" + v[2]}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("stored = %v, want %v", got, want)
 	}
@@ -281,5 +292,38 @@ func TestSweep_MirrorReadFailureRemovesNothing(t *testing.T) {
 	r.Mirrors = failingMirrors{}
 	if n, err := r.Sweep(context.Background(), sweepNow); err != nil || n != 0 || len(stored(t, s, "1")) != 1 {
 		t.Fatalf("Sweep = %d, %v, want nothing removed", n, err)
+	}
+}
+
+// Fix round 2: a client minting a fresh mRID per reading, as the EPRI client
+// does, is still capped, because a series is a reading-type leg.
+func TestSweep_FreshMRIDPerReadingIsCapped(t *testing.T) {
+	s := memory.NewScopedStore[sep2.MirrorMeterReading]()
+	u, dir, v := sep2.UomWatts, sep2.FlowDirectionReverse, int64(1000)
+	const n = 30000
+	ids := make([]string, n)
+	for i := range n {
+		nanos := secondsAgo(3600, int64(i))
+		ids[i] = fmt.Sprintf("%020d", nanos)
+		m := sep2.MirrorMeterReading{
+			MRID:           fmt.Sprintf("FRESH%08d", i),
+			LastUpdateTime: time.Unix(0, nanos).Unix(),
+			Reading:        &sep2.Reading{Value: &v},
+			ReadingType:    &sep2.ReadingType{Uom: &u, FlowDirection: &dir},
+		}
+		m.Href = "/mup/1/mr/" + ids[i]
+		if err := s.Create(context.Background(), "1", ids[i], m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := defaults()
+	r.Readings = s
+	removed, err := r.Sweep(context.Background(), sweepNow)
+	if err != nil || removed != n-config.DefaultMirrorReadingMaxPerSeries {
+		t.Fatalf("Sweep = %d, %v, want %d removed", removed, err, n-config.DefaultMirrorReadingMaxPerSeries)
+	}
+	got := stored(t, s, "1")
+	if len(got) != config.DefaultMirrorReadingMaxPerSeries || got[0].Href != "/mup/1/mr/"+ids[10000] || got[len(got)-1].Href != "/mup/1/mr/"+ids[n-1] {
+		t.Fatalf("stored %d readings from %s, want the newest 20000 from %s", len(got), got[0].Href, ids[10000])
 	}
 }

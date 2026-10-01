@@ -44,7 +44,7 @@ func exportWatts() *sep2.ReadingType {
 }
 
 // Fix round item 1: a mirror carrying many series at a conforming rate keeps
-// every reading the time floor keeps. One W series and 17 others at 60 s
+// every reading of its power leg the time floor keeps. One W series and 17 others at 60 s
 // under a 24 h control, swept at its end with the defaults.
 func TestDERControlList_ManySeriesKeepFullCoverage(t *testing.T) {
 	d := newDeliveryHarness(t)
@@ -74,8 +74,11 @@ func TestDERControlList_ManySeriesKeepFullCoverage(t *testing.T) {
 		MaxPerSeries: config.DefaultMirrorReadingMaxPerSeries,
 		Log:          slog.New(slog.DiscardHandler),
 	}
-	if removed, err := ret.Sweep(context.Background(), time.Unix(start+day, 0)); err != nil || removed != 0 {
-		t.Errorf("Sweep = %d, %v, want nothing removed", removed, err)
+	// The 17 volt series are on no leg and share one per-mirror series, so
+	// only their oldest beyond the cap go; the W leg keeps every reading.
+	volts := 17 * int(day/60)
+	if removed, err := ret.Sweep(context.Background(), time.Unix(start+day, 0)); err != nil || removed != volts-config.DefaultMirrorReadingMaxPerSeries {
+		t.Errorf("Sweep = %d, %v, want %d volt readings removed", removed, err, volts-config.DefaultMirrorReadingMaxPerSeries)
 	}
 	del := d.deliveryOf(t, mrid)
 	if del == nil || del.CoveredSeconds != day || del.Readings != n {

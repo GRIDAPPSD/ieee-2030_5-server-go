@@ -344,6 +344,55 @@ describe('DispatchPane, refusals and unknown outcomes', () => {
     vi.useRealTimers()
   })
 
+  // The lock margin runs from the moment the outcome became unknown, not from
+  // the send: after a 20 s timeout the server may still be writing.
+  it('holds the lock for a full margin after the write timeout, and the read made at once does not lift it', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { w } = mockReads()
+    const post = vi.spyOn(api, 'postJSON').mockImplementation((() =>
+      new Promise<Res>((r) => setTimeout(() => r({ ok: false, status: 0, error: 'request timed out' }), 20_000))) as never)
+    mount()
+    await pickGrant()
+    await confirmAndWait()
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(await screen.findByTestId('dispatch-result')).toHaveTextContent('Outcome unknown')
+    await waitFor(() => expect(w.controlReads).toBeGreaterThanOrEqual(1))
+    await waitFor(() => expect(screen.getByTestId('dispatch-controls-age')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Review' })).toBeDisabled()
+    await vi.advanceTimersByTimeAsync(19_000)
+    expect(screen.getByRole('button', { name: 'Review' })).toBeDisabled()
+    await vi.advanceTimersByTimeAsync(2_000)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review' })).toBeEnabled())
+    expect(post).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  it.each([
+    ['a network error', { ok: false, status: 0, error: 'network error' } as Res],
+    ['a server error', { ok: false, status: 503, error: 'unavailable' } as Res],
+    ['Stop waiting', null],
+  ])('holds the lock for a full margin after %s that comes 5 s after the send', async (_name, reply) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    mockReads()
+    vi.spyOn(api, 'postJSON').mockImplementation((() =>
+      new Promise<Res>((r) => {
+        if (reply !== null) setTimeout(() => r(reply), 5_000)
+      })) as never)
+    mount()
+    await pickGrant()
+    await confirmAndWait()
+    await vi.advanceTimersByTimeAsync(5_000)
+    if (reply === null) await fireEvent.click(await screen.findByRole('button', { name: 'Stop waiting' }))
+    expect(await screen.findByTestId('dispatch-lock')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('dispatch-controls-age')).toBeInTheDocument())
+    // 19 s after the outcome became unknown, 24 s after the send.
+    await vi.advanceTimersByTimeAsync(19_000)
+    expect(screen.getByRole('button', { name: 'Review' })).toBeDisabled()
+    await vi.advanceTimersByTimeAsync(2_000)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Review' })).toBeEnabled())
+    vi.useRealTimers()
+  })
+
   it('a manual Reload before the unlock time does not lift the lock; one after it does', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const { w } = mockReads()

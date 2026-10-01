@@ -61,10 +61,10 @@
   let createdMRID = $state('')
   let unknownNote = $state('')
   // After an unknown outcome the lock lifts only on a controls read that
-  // started at or after unlockAt (the send time plus the write timeout): a
+  // started at or after unlockAt (the moment the outcome became unknown plus
+  // the write timeout): a
   // read that started earlier can land before a write that still commits.
   let unlockAt = $state<number | null>(null)
-  let lastSentAt = 0
   let unlockTimer: ReturnType<typeof setTimeout> | undefined
   let nowMs = $state(Date.now())
 
@@ -355,13 +355,15 @@
     }, Math.max(0, wait))
   }
 
-  // The immediate read only refreshes the table; the read that can lift the
-  // lock is the one scheduled for unlockAt.
+  // The server may still be writing when the page stops waiting (a timeout, an
+  // abort, a dropped connection, Stop waiting), so the margin runs from now,
+  // the moment the outcome became unknown. The read made at once only
+  // refreshes the table: it starts before unlockAt and cannot lift the lock.
   function markUnknown(note: string) {
     unknownNote = note
     result = note
     resultOk = false
-    unlockAt = lastSentAt + WRITE_TIMEOUT_MS
+    unlockAt = Date.now() + WRITE_TIMEOUT_MS
     void loadControls()
     void loadGrants()
     scheduleUnlockRead()
@@ -379,7 +381,6 @@
     const ctrl = new AbortController()
     writeCtrl = ctrl
     busy = true
-    lastSentAt = Date.now()
     const res = await submitDispatch(built.body, { signal: ctrl.signal, timeoutMs: WRITE_TIMEOUT_MS })
     if (lifetime.signal.aborted || seq !== writeSeq) return
     writeCtrl = null

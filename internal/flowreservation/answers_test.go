@@ -289,3 +289,101 @@ func TestAnswers_AttributionsOfReadsBothSides(t *testing.T) {
 		t.Errorf("nil Answers = %v %v %v, want nothing", by, cancelled, err)
 	}
 }
+
+// After a crash between an intent and its response, the pending request is
+// re-armed at startup and its fallback answer replaces the orphan record, so
+// the answer reads as the fallback's and not as the crashed writer's.
+func TestAnswers_OrphanRecordIsReplacedByTheAnswerAfterRecover(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: hold})
+	answers := recordingAnswers(f)
+	timers := f.queue.RecordTimers()
+	f.pendingRequest(t, "R1", time.Now().Unix()-50, windowRequest("REQ-1", time.Now().Add(time.Hour).Unix(), 600, 100))
+	must(t, answers.Create(ctx, aggID, "R1", flowreservation.AnswerRecord{Action: flowreservation.ActionAnswer, By: operator}))
+
+	counts, err := flowreservation.Recover(ctx, f.recoverDeps(), time.Now())
+	must(t, err)
+	live := timers.Live()
+	if counts.Rearmed != 1 || len(live) != 1 {
+		t.Fatalf("counts %+v timers %d, want the request re-armed", counts, len(live))
+	}
+	live[0].Fire()
+	by, cancelled, err := f.queue.Answers().AttributionsOf(ctx, aggID, "R1")
+	must(t, err)
+	if by == nil || by.Kind != flowreservation.KindDeadlineFallback || cancelled != nil {
+		t.Errorf("after recover and the fallback: answered %+v cancelled %+v, want the fallback and no cancel", by, cancelled)
+	}
+}
+
+// fixedGrants is a GrantSource that knows every grant by mRID whatever its
+// href, the way a ledger over another store would.
+type fixedGrants map[string]commitment.Grant
+
+func (g fixedGrants) GrantsInFleet(context.Context, string) ([]commitment.Grant, error) {
+	var out []commitment.Grant
+	for _, gr := range g {
+		out = append(out, gr)
+	}
+	return out, nil
+}
+
+func (g fixedGrants) Grant(_ context.Context, mrid string) (commitment.Grant, error) {
+	if gr, ok := g[mrid]; ok {
+		return gr, nil
+	}
+	return commitment.Grant{}, commitment.ErrNoGrant
+}
+
+type noControls struct{}
+
+func (noControls) ControlsInFleet(context.Context, string) ([]commitment.Control, error) {
+	return nil, nil
+}
+func (noControls) ExecutionsOf(context.Context, string) ([]commitment.Control, error) {
+	return nil, nil
+}
+
+type markingGrants struct{ marked []string }
+
+func (m *markingGrants) MarkCancelled(_ context.Context, g commitment.Grant, _ string, _ int64) error {
+	m.marked = append(m.marked, g.MRID)
+	return nil
+}
+
+type noExecutions struct{}
+
+func (noExecutions) CancelExecution(context.Context, commitment.Control, string) error { return nil }
+func (noExecutions) RelinkExecution(context.Context, commitment.Control, string) error { return nil }
+
+// A chain member's store id comes from the walk that read it, not from its
+// href, so one whose href does not parse is still cancelled and reported
+// with the id its record is kept under.
+func TestCancelGrants_IdComesFromTheChainWalkNotTheHref(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	w := &commitment.Window{Start: time.Now().Add(time.Hour).Unix(), Duration: 600}
+	frp := sep2.FlowReservationResponse{Subject: "REQ-1"}
+	frp.Interval = &sep2.DateTimeInterval{Start: w.Start, Duration: w.Duration}
+	frp.MRID, frp.Href = "GOOD", "/edev/"+aggID+"/frp/R1"
+	must(t, f.frp.Create(ctx, aggID, "R1", frp))
+	frp.MRID, frp.Href = "BAD-HREF", "not an href"
+	must(t, f.frp.Create(ctx, aggID, "R1-r1", frp))
+	grants := &markingGrants{}
+	ledger := commitment.NewLedger(fixedGrants{
+		"GOOD":     {MRID: "GOOD", FleetKey: aggLFDI, Window: w},
+		"BAD-HREF": {MRID: "BAD-HREF", FleetKey: aggLFDI, Window: w},
+	}, noControls{})
+	c := flowreservation.NewCanceller(f.frq, f.frp, f.queue, ledger, commitment.Writers{Executions: noExecutions{}, Grants: grants})
+
+	got, err := c.CancelGrants(ctx, aggID, "R1", "operator stop")
+	must(t, err)
+	want := []flowreservation.CancelledGrant{{ID: "R1", MRID: "GOOD"}, {ID: "R1-r1", MRID: "BAD-HREF"}}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("cancelled = %+v, want %+v", got, want)
+	}
+	if len(grants.marked) != 2 {
+		t.Errorf("grants marked = %v, want both", grants.marked)
+	}
+}

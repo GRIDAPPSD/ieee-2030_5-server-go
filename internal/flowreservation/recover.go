@@ -242,10 +242,10 @@ func recoverRequest(ctx context.Context, deps RecoverDeps, edevID string, frq se
 	}
 
 	if cancelled {
-		var live []sep2.FlowReservationResponse
-		for i, frp := range st.chain {
-			if !st.cancelled[i] && frp.Interval != nil && frp.Interval.Duration > 0 {
-				live = append(live, frp)
+		var live []chainMember
+		for i, m := range chainMembers(frqID, st.chain) {
+			if !st.cancelled[i] && m.frp.Interval != nil && m.frp.Interval.Duration > 0 {
+				live = append(live, m)
 			}
 		}
 		if len(live) > 0 {
@@ -254,7 +254,7 @@ func recoverRequest(ctx context.Context, deps RecoverDeps, edevID string, frq se
 			}
 			// The path Canceller takes: CancelGrant on each live member.
 			c := &Canceller{queue: deps.Queue, ledger: deps.Ledger, writers: deps.Writers}
-			done, gone, err := c.cancelChain(ctx, edevID, live, cancelReason)
+			done, gone, err := c.cancelChain(ctx, live, cancelReason)
 			c.recordCancels(ctx, edevID, done, Attribution{Kind: KindRecovery, At: now.Unix()})
 			if err != nil {
 				return errors.Join(reviseErr, fmt.Errorf("finish cancel: %w", err))

@@ -24,11 +24,11 @@ const maxCancelPasses = 4
 var ErrChainMoving = errors.New("flowreservation: response chain kept changing during the cancel")
 
 // UnresolvedGrantsError is ErrChainMoving for chain members the commitment
-// ledger did not know on any pass. The ledger reads a grant only through its
-// EndDevice's fleet, so this is a device that has left every fleet (no LFDI,
-// or no management pair). Its grants stay live until the device rejoins a
-// fleet and the cancel is repeated, or the EndDevice is deleted, which
-// removes its requests and responses with it.
+// ledger could not resolve on any pass. The ledger reaches a grant only
+// through its EndDevice's fleet, so this is a device that belongs to no
+// fleet: its LFDI is gone, or the device record is. Its grants stay live
+// until the device has an LFDI again and the cancel is repeated, or the
+// EndDevice is deleted, which removes its requests and responses with it.
 type UnresolvedGrantsError struct {
 	// MRIDs are the members' mRIDs, in chain order.
 	MRIDs []string
@@ -120,8 +120,10 @@ func (c *Canceller) Cancel(ctx context.Context, edevID, frqID string, status sep
 // rollback failed, so the whole chain is cancelled, not only its tip. It
 // returns the store ids of the responses it cancelled, so the caller can
 // record who cancelled them; a member already cancelled is not among them.
-// A request with no response returns store.ErrNotFound.
-func (c *Canceller) CancelGrants(ctx context.Context, edevID, frqID, reason string) (cancelled []string, err error) {
+// They are returned with any error too, since a cancel that fails part way
+// keeps what it cancelled. A request with no response returns
+// store.ErrNotFound.
+func (c *Canceller) CancelGrants(ctx context.Context, edevID, frqID, reason string) (cancelled []CancelledGrant, err error) {
 	// A revision (#668) stores a new response per change, so the request's
 	// answer is a chain, not one response.
 	//
@@ -141,7 +143,7 @@ func (c *Canceller) CancelGrants(ctx context.Context, edevID, frqID, reason stri
 		if len(chain) == 0 {
 			return cancelled, fmt.Errorf("flowreservation: get FlowReservationResponse %s/%s: %w", edevID, frqID, store.ErrNotFound)
 		}
-		done, gone, err := c.cancelChain(ctx, edevID, chain, reason)
+		done, gone, err := c.cancelChain(ctx, chainMembers(frqID, chain), reason)
 		cancelled = append(cancelled, done...)
 		if err != nil {
 			return cancelled, err
@@ -174,21 +176,48 @@ func (c *Canceller) answers() *Answers {
 	return c.queue.Answers()
 }
 
-// recordCancels records by as the canceller of each response in ids. The
+// CancelledGrant is one response a cancel marked cancelled: its store id and
+// its mRID.
+type CancelledGrant struct {
+	ID, MRID string
+}
+
+// recordCancels records by as the canceller of each response cancelled. The
 // cancels already happened, so a failed record is logged and the response
 // reads as unrecorded.
-func (c *Canceller) recordCancels(ctx context.Context, edevID string, ids []string, by Attribution) {
-	for _, id := range ids {
-		if err := c.answers().RecordCancel(context.WithoutCancel(ctx), edevID, id, by); err != nil {
-			log.Printf("ERROR: flowreservation: response %s/%s was cancelled, but by whom is unrecorded: %v", edevID, id, err)
+func (c *Canceller) recordCancels(ctx context.Context, edevID string, cancelled []CancelledGrant, by Attribution) {
+	for _, g := range cancelled {
+		if err := c.answers().RecordCancel(context.WithoutCancel(ctx), edevID, g.ID, by); err != nil {
+			log.Printf("ERROR: flowreservation: response %s/%s was cancelled, but by whom is unrecorded: %v", edevID, g.ID, err)
 		}
 	}
 }
 
-// cancelChain cancels every live grant in chain and returns the store ids of
-// those it cancelled. A member that is already cancelled is skipped.
-func (c *Canceller) cancelChain(ctx context.Context, edevID string, chain []sep2.FlowReservationResponse, reason string) (cancelled, gone []string, err error) {
-	for _, frp := range chain {
+// chainMember is a response with the store id the chain walk read it under.
+type chainMember struct {
+	id  string
+	frp sep2.FlowReservationResponse
+}
+
+// chainMembers pairs each response of ChainOf's result with its store id,
+// which the walk's position fixes, so no id is parsed back out of an href.
+func chainMembers(frqID string, chain []sep2.FlowReservationResponse) []chainMember {
+	members := make([]chainMember, len(chain))
+	id := frqID
+	for i, frp := range chain {
+		if i > 0 {
+			id = RevisionID(id)
+		}
+		members[i] = chainMember{id: id, frp: frp}
+	}
+	return members
+}
+
+// cancelChain cancels every live grant in members and returns those it
+// cancelled. A member that is already cancelled is skipped.
+func (c *Canceller) cancelChain(ctx context.Context, members []chainMember, reason string) (cancelled []CancelledGrant, gone []string, err error) {
+	for _, m := range members {
+		frp := m.frp
 		// A denial or a response with no interval commits nothing: there is
 		// no grant to cancel and no execution can name it.
 		if frp.Interval == nil || frp.Interval.Duration == 0 {
@@ -203,19 +232,16 @@ func (c *Canceller) cancelChain(ctx context.Context, edevID string, chain []sep2
 			continue
 		}
 		// A member seen mid-revision and rolled back cleanly is gone by now,
-		// and the pass is repeated to see what replaced it.
-		if errors.Is(err, commitment.ErrNoGrant) {
+		// and the pass is repeated to see what replaced it. A member whose
+		// EndDevice has no LFDI has no fleet to lock, which no pass changes.
+		if errors.Is(err, commitment.ErrNoGrant) || errors.Is(err, commitment.ErrNoLFDI) {
 			gone = append(gone, frp.MRID)
 			continue
 		}
 		if err != nil {
 			return cancelled, gone, err
 		}
-		id, ok := ResponseID(edevID, frp.Href)
-		if !ok {
-			return cancelled, gone, fmt.Errorf("flowreservation: response href %q has no store id", frp.Href)
-		}
-		cancelled = append(cancelled, id)
+		cancelled = append(cancelled, CancelledGrant{ID: m.id, MRID: frp.MRID})
 	}
 	return cancelled, gone, nil
 }

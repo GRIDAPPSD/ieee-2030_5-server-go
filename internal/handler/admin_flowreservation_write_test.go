@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -501,8 +502,8 @@ func TestFRWrite_ReasonIsCountedInCodePoints(t *testing.T) {
 	f := newFRWFixture(t)
 	ctx := context.Background()
 	f.granted("frq-1", "REQ-1")
-	// U+00E9 is two octets in UTF-8: 192 of them are 384 octets and still
-	// within the limit the page counts in characters.
+	// U+00E9 is two octets in UTF-8: 192 of them are 384 octets, within the
+	// limit the page counts in characters.
 	reason := strings.Repeat("\u00e9", 192)
 	body, err := json.Marshal(map[string]any{"reason": reason})
 	if err != nil {
@@ -511,8 +512,9 @@ func TestFRWrite_ReasonIsCountedInCodePoints(t *testing.T) {
 	if rec := f.post("cancel", "frq-1", string(body)); rec.Code != http.StatusOK {
 		t.Fatalf("192 code points: status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	if lc, err := f.lcs.Get(ctx, frwEdev, "frq-1"); err != nil || lc.CancelReason != reason {
-		t.Errorf("stored reason = %q (%v), want the 192 code points", lc.CancelReason, err)
+	// Accepted as 192 characters, stored reduced to 192 octets (String192).
+	if lc, err := f.lcs.Get(ctx, frwEdev, "frq-1"); err != nil || lc.CancelReason != strings.Repeat("\u00e9", 96) {
+		t.Errorf("stored reason has %d octets (%v), want the first 96 characters, 192 octets", len(lc.CancelReason), err)
 	}
 
 	f.granted("frq-2", "REQ-2")
@@ -531,7 +533,7 @@ func TestFRWrite_ReasonIsCountedInCodePoints(t *testing.T) {
 func TestFRWrite_LogLineHoldsNoReasonAndNoInjectedLine(t *testing.T) {
 	f := newFRWFixture(t)
 	f.granted("frq-1", "REQ-1")
-	body, err := json.Marshal(map[string]any{"decision": "grant", "reason": "SECRETREASON\r\nevent=forged\n", "interval": map[string]int64{"start": f.base, "duration": 1800}})
+	body, err := json.Marshal(map[string]any{"decision": "grant", "reason": "SECRETREASON event=forged", "interval": map[string]int64{"start": f.base, "duration": 1800}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -638,10 +640,15 @@ func (failingRequests) Get(context.Context, string, string) (sep2.FlowReservatio
 	return sep2.FlowReservationRequest{}, errors.New("request store down")
 }
 
-type unresolvedCanceller struct{ mrid string }
+// fakeCanceller answers CancelGrants with a fixed result, for the outcomes
+// the real canceller reaches only through a race.
+type fakeCanceller struct {
+	cancelled []flowreservation.CancelledGrant
+	err       error
+}
 
-func (c unresolvedCanceller) CancelGrants(context.Context, string, string, string) ([]string, error) {
-	return nil, &flowreservation.UnresolvedGrantsError{MRIDs: []string{c.mrid}}
+func (c fakeCanceller) CancelGrants(context.Context, string, string, string) ([]flowreservation.CancelledGrant, error) {
+	return c.cancelled, c.err
 }
 
 // frwSnapshot is every store a refused write must leave as it was, read
@@ -698,6 +705,15 @@ func TestFRWrite_EveryRefusalStoresNothing(t *testing.T) {
 	lit := func(s string) func(*frwFixture) string { return func(*frwFixture) string { return s } }
 	pendingOne := func(f *frwFixture) string { f.pending("frq-1", "REQ-1"); return "" }
 	grantedOne := func(f *frwFixture) string { f.granted("frq-1", "REQ-1"); return "" }
+	// The EndDevice loses its LFDI after the grant, so it belongs to no
+	// fleet and the ledger cannot reach the grant.
+	fleetless := func(f *frwFixture) string {
+		g := f.granted("frq-1", "REQ-1")
+		if err := f.devices.Update(context.Background(), frwEdev, sep2.EndDevice{}); err != nil {
+			f.t.Fatal(err)
+		}
+		return g.MRID
+	}
 	withExec := func(f *frwFixture) string {
 		g := f.granted("frq-1", "REQ-1")
 		return f.execute(g, f.base, -2000).Control.MRID
@@ -815,11 +831,18 @@ func TestFRWrite_EveryRefusalStoresNothing(t *testing.T) {
 			f.h.Canceller = nil
 			return ""
 		}, status: 503, code: "not_configured"},
-		{name: "grant_unresolved", op: "cancel", body: lit(`{}`), setup: func(f *frwFixture) string {
-			g := f.granted("frq-1", "REQ-1")
-			f.h.Canceller = unresolvedCanceller{mrid: g.MRID}
-			return g.MRID
-		}, status: 409, code: "grant_unresolved", wantFrqID: true},
+		{name: "grant_unresolved on cancel", op: "cancel", body: lit(`{}`), setup: fleetless, status: 409, code: "grant_unresolved", wantFrqID: true},
+		{name: "grant_unresolved on revise", op: "revise", body: lit(`{"decision":"deny"}`), setup: fleetless, status: 409, code: "grant_unresolved", wantFrqID: true},
+		{name: "chain_moving", op: "cancel", body: lit(`{}`), setup: func(f *frwFixture) string {
+			f.granted("frq-1", "REQ-1")
+			f.h.Canceller = fakeCanceller{err: flowreservation.ErrChainMoving}
+			return ""
+		}, status: 409, code: "chain_moving", wantFrqID: true},
+		{name: "multiplier_out_of_range energy", op: "answer", body: lit(`{"decision":"grant","energy":{"value":1,"multiplier":10}}`), setup: pendingOne, status: 400, code: "multiplier_out_of_range", wantFrqID: true},
+		{name: "multiplier_out_of_range power", op: "revise", body: lit(`{"decision":"grant","power":{"value":1,"multiplier":-10}}`), setup: grantedOne, status: 400, code: "multiplier_out_of_range", wantFrqID: true},
+		{name: "reason_invalid NUL", op: "cancel", body: lit(`{"reason":"stop\u0000now"}`), setup: grantedOne, status: 400, code: "reason_invalid"},
+		{name: "reason_invalid CR", op: "cancel", body: lit(`{"reason":"stop\rnow"}`), setup: grantedOne, status: 400, code: "reason_invalid"},
+		{name: "reason_invalid bidi override", op: "revise", body: lit(`{"decision":"deny","reason":"stop\u202enow"}`), setup: grantedOne, status: 400, code: "reason_invalid"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -910,5 +933,255 @@ func TestFRWrite_ReviseAndCancelNotifyOnlyAfterTheFleetLockIsReleased(t *testing
 	}
 	if calls, held := probe.counts(); calls != 2 || held != 0 {
 		t.Errorf("after cancel: notifications %d (%d under the lock), want 2 and 0", calls, held)
+	}
+}
+
+// A reason within 192 characters is accepted as the page counts it and
+// stored reduced to 192 octets, the String192 storage bound the DER control
+// cancel route holds its own reason to, on the grant and on its controls.
+func TestFRWrite_ReasonIsStoredInAtMost192Octets(t *testing.T) {
+	f := newFRWFixture(t)
+	ctx := context.Background()
+	g := f.granted("frq-1", "REQ-1")
+	exec := f.execute(g, f.base, -2000)
+	// U+65E5 is three octets: 100 of them are 300 octets.
+	reason := strings.Repeat("\u65e5", 100)
+	body, err := json.Marshal(map[string]any{"reason": reason})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := f.post("cancel", "frq-1", string(body)); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	want := strings.Repeat("\u65e5", 64)
+	lc, err := f.lcs.Get(ctx, frwEdev, "frq-1")
+	if err != nil || lc.CancelReason != want {
+		t.Errorf("grant reason = %q (%d octets, %v), want the first 64 characters, 192 octets", lc.CancelReason, len(lc.CancelReason), err)
+	}
+	clc, err := f.ctrlLcs.Get(ctx, exec.Scope.Key(), exec.ID)
+	if err != nil || clc.CancelReason != want {
+		t.Errorf("control reason = %q (%d octets, %v), want the same 192 octets", clc.CancelReason, len(clc.CancelReason), err)
+	}
+}
+
+func TestFRWrite_MultiplierNineIsAccepted(t *testing.T) {
+	f := newFRWFixture(t)
+	f.pending("frq-1", "REQ-1")
+	rec := f.post("answer", "frq-1", `{"decision":"grant","power":{"value":0,"multiplier":-9}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	if p := f.response("frq-1").PowerAvailable; p == nil || p.Multiplier != -9 {
+		t.Errorf("power = %+v, want multiplier -9", p)
+	}
+}
+
+type notFoundGrants struct{}
+
+func (notFoundGrants) MarkCancelled(context.Context, commitment.Grant, string, int64) error {
+	return fmt.Errorf("lifecycle: %w", store.ErrNotFound)
+}
+
+// A failed revise whose undo also failed may have left part of the change in
+// the stores. Its cause wraps NotFound, and it is still a 500 logged as an
+// undo failure, never a 404.
+func TestFRWrite_UndoFailureIsInternalWhateverItsCauseWraps(t *testing.T) {
+	f := newFRWFixture(t)
+	f.granted("frq-1", "REQ-1")
+	f.h.Revise.Writers.Grants = notFoundGrants{}
+	f.h.Revise.Replace = func(edevID string, frp sep2.FlowReservationResponse) (commitment.Replacement, error) {
+		rep, err := sources.NewReplacement(f.frps, edevID, frp)
+		rep.Delete = func(context.Context) error { return errors.New("delete refused") }
+		return rep, err
+	}
+	rec := f.post("revise", "frq-1", `{"decision":"grant","interval":{"start":`+itoa(f.base)+`,"duration":1800}}`)
+	r := decodeRefusal(t, rec)
+	if rec.Code != http.StatusInternalServerError || r.Code != "internal" {
+		t.Fatalf("revise with a failed undo = %d %+v, want 500 internal", rec.Code, r)
+	}
+	if logs := f.logs.String(); !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, "cause=undo_failed") {
+		t.Errorf("log = %q, want one ERROR line with cause=undo_failed", logs)
+	}
+}
+
+// overlayFRP is the response store with one extra response the ledger's own
+// store does not hold, so the ledger never resolves that chain member.
+type overlayFRP struct {
+	*memory.ScopedStore[sep2.FlowReservationResponse]
+	id  string
+	frp sep2.FlowReservationResponse
+}
+
+func (o overlayFRP) Get(ctx context.Context, parentID, id string) (sep2.FlowReservationResponse, error) {
+	if parentID == frwEdev && id == o.id {
+		return o.frp, nil
+	}
+	return o.ScopedStore.Get(ctx, parentID, id)
+}
+
+// A cancel that settles part of the chain answers with every mRID it
+// cancelled and every one it could not reach, never a bare write-failed, and
+// what it cancelled is recorded.
+func TestFRWrite_PartialCancelNamesWhatWasAndWasNotCancelled(t *testing.T) {
+	f := newFRWFixture(t)
+	ctx := context.Background()
+	g := f.granted("frq-1", "REQ-1")
+	ghost := g
+	ghost.MRID = "GHOST-REVISION"
+	ghost.Href = "/edev/4/frp/frq-1-r1"
+	ghost.CreationTime = g.CreationTime + 1
+	f.h.Canceller = flowreservation.NewCanceller(f.frqs, overlayFRP{ScopedStore: f.frps, id: "frq-1-r1", frp: ghost}, f.queue, f.ledger, sources.NewWriters(f.issuer, f.lcs))
+
+	rec := f.post("cancel", "frq-1", `{}`)
+	r := decodeRefusal(t, rec)
+	if rec.Code != http.StatusInternalServerError || r.Code != "cancel_partial" || r.FrqID != "frq-1" {
+		t.Fatalf("partial cancel = %d %+v, want 500 cancel_partial", rec.Code, r)
+	}
+	var full struct {
+		Cancelled  []string `json:"cancelled"`
+		Unresolved []string `json:"unresolved"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &full); err != nil {
+		t.Fatal(err)
+	}
+	if len(full.Cancelled) != 1 || full.Cancelled[0] != g.MRID || len(full.Unresolved) != 1 || full.Unresolved[0] != "GHOST-REVISION" {
+		t.Errorf("cancelled %v unresolved %v, want [%s] and [GHOST-REVISION]", full.Cancelled, full.Unresolved, g.MRID)
+	}
+	if lc, err := f.lcs.Get(ctx, frwEdev, "frq-1"); err != nil || lc.CancelledAt == nil {
+		t.Errorf("grant lifecycle = %+v (%v), want cancelled", lc, err)
+	}
+	if got := f.answerRecord("frq-1"); got.CancelledBy == nil || got.CancelledBy.Kind != "operator" {
+		t.Errorf("cancelledBy = %+v, want the operator", got.CancelledBy)
+	}
+	if logs := f.logs.String(); !strings.Contains(logs, "write_committed=partial") || !strings.Contains(logs, "unresolved_mrids=GHOST-REVISION") {
+		t.Errorf("log = %q, want the partial write and the unresolved mRID named", logs)
+	}
+}
+
+// A write that committed but whose view cannot be read says so, rather than
+// that the write failed.
+func TestFRWrite_ViewFailureAfterACommitSaysTheWriteStands(t *testing.T) {
+	f := newFRWFixture(t)
+	f.pending("frq-1", "REQ-1")
+	f.h.Lifecycles = failingLifecycles{}
+	rec := f.post("answer", "frq-1", `{"decision":"grant"}`)
+	r := decodeRefusal(t, rec)
+	if rec.Code != http.StatusInternalServerError || r.Code != "view_after_write" || r.FrqID != "frq-1" {
+		t.Fatalf("answer with an unreadable view = %d %+v, want 500 view_after_write", rec.Code, r)
+	}
+	f.response("frq-1")
+}
+
+type failingLifecycles struct{}
+
+func (failingLifecycles) Get(context.Context, string, string) (dercontrol.LifecycleRecord, error) {
+	return dercontrol.LifecycleRecord{}, errors.New("lifecycle store down")
+}
+
+// An answer over a record a crash left behind replaces it (design 5.7).
+func TestFRWrite_AnswerReplacesAnOrphanRecord(t *testing.T) {
+	f := newFRWFixture(t)
+	f.pending("frq-1", "REQ-1")
+	orphan := flowreservation.AnswerRecord{Action: flowreservation.ActionAnswer, By: flowreservation.Attribution{Kind: flowreservation.KindDeadlineFallback, At: 5},
+		CancelledBy: &flowreservation.Attribution{Kind: flowreservation.KindClient, At: 6}}
+	if err := f.answers.Create(context.Background(), frwEdev, "frq-1", orphan); err != nil {
+		t.Fatal(err)
+	}
+	if rec := f.post("answer", "frq-1", `{"decision":"grant"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	got := f.answerRecord("frq-1")
+	if got.By.Kind != "operator" || got.By.Principal != "admin-key" || got.CancelledBy != nil {
+		t.Errorf("record = %+v, want the operator's answer with no cancel", got)
+	}
+}
+
+func nonAdminCertificate(t *testing.T) *x509.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(9), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert
+}
+
+// A Bearer caller that also presents a verified certificate without the
+// admin policy is admitted by the key, so the key is what is recorded.
+func TestFRWrite_BearerWithACertificateRecordsTheAdminKey(t *testing.T) {
+	f := newFRWFixture(t)
+	f.pending("frq-1", "REQ-1")
+	req := httptest.NewRequest(http.MethodPost, "/api/derms/flow-reservations/4/frq-1/answer", strings.NewReader(`{"decision":"grant"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+frwKey)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{nonAdminCertificate(t)}}
+	rec := httptest.NewRecorder()
+	f.router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := f.answerRecord("frq-1"); got.By.Admission != "bearer" || got.By.Principal != "admin-key" {
+		t.Errorf("by = %+v, want bearer admin-key", got.By)
+	}
+}
+
+// After a failed undo leaves an earlier grant live and the tip has ended,
+// the cancel the refusal text points to still reaches the earlier grant.
+func TestFRWrite_EarlierLiveGrantIsCancellableAfterTheTipEnded(t *testing.T) {
+	f := newFRWFixture(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+	f.request(frqSpec{edev: frwEdev, id: "frq-1", mrid: "REQ-1", created: now - 900,
+		interval: &sep2.DateTimeInterval{Start: now - 600, Duration: 3600}, energy: &sep2.SignedRealEnergy{Value: 100}, power: &sep2.ActivePower{Value: 100}})
+	old, err := f.queue.Answer(ctx, frwEdev, "frq-1", flowreservation.Decision{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tip := old
+	tip.MRID = "ENDED-REVISION"
+	tip.CreationTime = old.CreationTime + 1
+	tip.Href = "/edev/4/frp/frq-1-r1"
+	tip.Interval = &sep2.DateTimeInterval{Start: now - 600, Duration: 300}
+	if err := f.frps.Create(ctx, frwEdev, "frq-1-r1", tip); err != nil {
+		t.Fatal(err)
+	}
+	rec := f.post("cancel", "frq-1", `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cancel = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if lc, err := f.lcs.Get(ctx, frwEdev, "frq-1"); err != nil || lc.CancelledAt == nil {
+		t.Errorf("earlier grant lifecycle = %+v (%v), want cancelled", lc, err)
+	}
+}
+
+// A revise refused by another request's grant is the plain window refusal,
+// not the earlier-answer one.
+func TestFRWrite_ReviseRefusedByAnotherRequestsGrant(t *testing.T) {
+	f := newFRWFixture(t)
+	other := f.granted("frq-1", "REQ-1")
+	f.request(frqSpec{edev: frwEdev, id: "frq-2", mrid: "REQ-2", created: time.Now().Unix(),
+		interval: &sep2.DateTimeInterval{Start: f.base, Duration: 7200}, energy: &sep2.SignedRealEnergy{Value: 100}, power: &sep2.ActivePower{Value: 100}})
+	if _, err := f.queue.Answer(context.Background(), frwEdev, "frq-2", flowreservation.Decision{Interval: &sep2.DateTimeInterval{Start: f.base + 3600, Duration: 3600}}); err != nil {
+		t.Fatal(err)
+	}
+	before := f.snapshot()
+	rec := f.post("revise", "frq-2", `{"decision":"grant","interval":{"start":`+itoa(f.base)+`,"duration":3600}}`)
+	r := decodeRefusal(t, rec)
+	if rec.Code != http.StatusConflict || r.Code != "fleet_window_committed" || r.MRID != other.MRID {
+		t.Fatalf("revise = %d %+v, want 409 fleet_window_committed naming %s", rec.Code, r, other.MRID)
+	}
+	if strings.Contains(r.Error, "earlier answer") {
+		t.Errorf("error = %q, want the plain window text: the conflict is another request's grant", r.Error)
+	}
+	if after := f.snapshot(); after != before {
+		t.Errorf("refused revise stored something")
 	}
 }

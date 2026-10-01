@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -33,9 +34,18 @@ import (
 // truncated.
 const frWriteMaxBody = 64 << 10
 
-// maxFRReasonRunes bounds reason in Unicode code points, the unit the admin
-// page counts in.
-const maxFRReasonRunes = 192
+// The operator's reason is a String192 (IEEE 2030.5 EventStatus reason): at
+// most 192 characters, and a string of multi-byte characters is reduced so it
+// is stored in 192 octets. The page counts in code points, so the server
+// refuses only above 192 of those and stores at most 192 octets of UTF-8,
+// the bound every CancelReason it reaches is held to.
+const (
+	maxFRReasonRunes  = 192
+	maxFRReasonOctets = 192
+)
+
+// PowerOfTenMultiplierType: a client need support only -9..9.
+const maxFRMultiplier = 9
 
 // FlowReservationAnswerer answers a pending request; *flowreservation.Queue
 // is the production one.
@@ -46,7 +56,7 @@ type FlowReservationAnswerer interface {
 // FlowReservationGrantCanceller cancels every live grant of a request's
 // answer; *flowreservation.Canceller is the production one.
 type FlowReservationGrantCanceller interface {
-	CancelGrants(ctx context.Context, edevID, frqID, reason string) (cancelled []string, err error)
+	CancelGrants(ctx context.Context, edevID, frqID, reason string) (cancelled []flowreservation.CancelledGrant, err error)
 }
 
 // FlowReservationCancelRecorder records who cancelled a response.
@@ -69,6 +79,8 @@ var (
 	frValueNegative      = frRefusalKind{http.StatusBadRequest, "value_negative", "energy and power are magnitudes and must be at least 0"}
 	frReasonTooLong      = frRefusalKind{http.StatusBadRequest, "reason_too_long", "reason is at most 192 characters"}
 	frReasonNotAllowed   = frRefusalKind{http.StatusBadRequest, "reason_not_allowed", "reason is accepted only when revising or cancelling"}
+	frReasonInvalid      = frRefusalKind{http.StatusBadRequest, "reason_invalid", "reason may not hold control or bidirectional override characters"}
+	frMultiplierRange    = frRefusalKind{http.StatusBadRequest, "multiplier_out_of_range", "a multiplier must be between -9 and 9"}
 	frOutsideWindow      = frRefusalKind{http.StatusBadRequest, "interval_outside_window", "the interval is outside the requested window"}
 	frNoWindow           = frRefusalKind{http.StatusBadRequest, "no_requested_window", "the request named no window to grant inside"}
 	frNoEnergy           = frRefusalKind{http.StatusBadRequest, "no_requested_energy", "the request named no energy"}
@@ -82,7 +94,10 @@ var (
 	frNotAnswered        = frRefusalKind{http.StatusConflict, "not_answered", "the request has no answer yet; deny it with answer"}
 	frGrantNotLive       = frRefusalKind{http.StatusConflict, "grant_not_live", "the answer is not a live grant: it is a denial, cancelled or ended"}
 	frEarlierAnswerLive  = frRefusalKind{http.StatusConflict, string(commitment.ConflictFleetWindow), "an earlier answer to this request is still live after an incomplete revision; cancel the request's grant to clear it"}
-	frGrantUnresolved    = frRefusalKind{http.StatusConflict, "grant_unresolved", "the grant's EndDevice belongs to no fleet, so its grant cannot be changed; restore the device's fleet and repeat, or delete the EndDevice"}
+	frGrantUnresolved    = frRefusalKind{http.StatusConflict, "grant_unresolved", "the grant's EndDevice belongs to no fleet, so its grant cannot be changed; give the device its LFDI back and repeat, or delete the EndDevice"}
+	frChainMoving        = frRefusalKind{http.StatusConflict, "chain_moving", "the request's answer kept changing during the cancel and nothing was cancelled; repeat the cancel"}
+	frCancelPartial      = frRefusalKind{http.StatusInternalServerError, "cancel_partial", "the cancel stopped part way: the grants named in cancelled are cancelled, the rest are not; read the request before acting again"}
+	frViewAfterWrite     = frRefusalKind{http.StatusInternalServerError, "view_after_write", "the write was committed but the request could not be read back; read it again before acting"}
 	frInternal           = frRefusalKind{http.StatusInternalServerError, "internal", "flow reservation write failed, see server log"}
 	frNotConfigured      = frRefusalKind{http.StatusServiceUnavailable, "not_configured", "flow reservation answers are not configured on this server"}
 	frGenericConflictMsg = "the change conflicts with the fleet's commitments"
@@ -210,17 +225,24 @@ func (h *AdminFlowReservationHandler) writeLine(r *http.Request, level slog.Leve
 // refuseWrite answers kind and writes the request's one line: WARN for a
 // refusal, ERROR for a 500. mrid names the conflicting resource, if any.
 func (h *AdminFlowReservationHandler) refuseWrite(w http.ResponseWriter, r *http.Request, op string, kind frRefusalKind, mrid, frqID string, l *frWriteLog) {
+	h.refuseWriteBody(w, r, op, kind, frRefusal{MRID: mrid, FrqID: frqID}, l)
+}
+
+// refuseWriteBody is refuseWrite for a body that carries more than an mRID;
+// its Error and Code are taken from kind.
+func (h *AdminFlowReservationHandler) refuseWriteBody(w http.ResponseWriter, r *http.Request, op string, kind frRefusalKind, body frRefusal, l *frWriteLog) {
 	l.add("code", kind.code)
 	l.add("status", kind.status)
-	if mrid != "" {
-		l.add("conflict_mrid", mrid)
+	if body.MRID != "" {
+		l.add("conflict_mrid", body.MRID)
 	}
 	level, msg, event := slog.LevelWarn, "admin: flow reservation write refused", "flow_reservation_"+op+"_refused"
 	if kind.status >= http.StatusInternalServerError && kind.status != http.StatusServiceUnavailable {
 		level, msg, event = slog.LevelError, "admin: flow reservation write failed", "flow_reservation_"+op+"_failed"
 	}
 	h.writeLine(r, level, msg, event, l)
-	writeFRJSON(w, kind.status, frRefusal{Error: kind.text, Code: kind.code, MRID: mrid, FrqID: frqID})
+	body.Error, body.Code = kind.text, kind.code
+	writeFRJSON(w, kind.status, body)
 }
 
 func (h *AdminFlowReservationHandler) refuseConflict(w http.ResponseWriter, r *http.Request, op string, c *commitment.ConflictError, frqID string, l *frWriteLog) {
@@ -269,11 +291,38 @@ func decodeFRBody(w http.ResponseWriter, r *http.Request, dst any, allowEmpty bo
 	return frRefusalKind{}, true
 }
 
-func reasonOf(p *string) (string, bool) {
+// reasonOf checks the operator's reason and returns it reduced to the
+// octets it is stored in. Control characters could break a reader's line,
+// and bidirectional controls could make it display as other text.
+func reasonOf(p *string) (string, frRefusalKind, bool) {
 	if p == nil {
-		return "", true
+		return "", frRefusalKind{}, true
 	}
-	return *p, utf8.RuneCountInString(*p) <= maxFRReasonRunes
+	reason := *p
+	for _, c := range reason {
+		if unicode.IsControl(c) || unicode.Is(unicode.Bidi_Control, c) {
+			return "", frReasonInvalid, false
+		}
+	}
+	if utf8.RuneCountInString(reason) > maxFRReasonRunes {
+		return "", frReasonTooLong, false
+	}
+	return truncateOctets(reason, maxFRReasonOctets), frRefusalKind{}, true
+}
+
+// truncateOctets cuts s to at most n octets at a character boundary.
+func truncateOctets(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
+func multiplierInRange(m int8) bool {
+	return m >= -maxFRMultiplier && m <= maxFRMultiplier
 }
 
 // decisionOf builds the queue's Decision from the body. Energy and power
@@ -292,6 +341,9 @@ func decisionOf(body frWriteBody, frq sep2.FlowReservationRequest) (flowreservat
 	}
 	if (body.Energy != nil && body.Energy.Value < 0) || (body.Power != nil && body.Power.Value < 0) {
 		return flowreservation.Decision{}, frValueNegative, false
+	}
+	if (body.Energy != nil && !multiplierInRange(body.Energy.Multiplier)) || (body.Power != nil && !multiplierInRange(body.Power.Multiplier)) {
+		return flowreservation.Decision{}, frMultiplierRange, false
 	}
 	d := flowreservation.Decision{Kind: flowreservation.Grant}
 	if body.Interval != nil {
@@ -324,14 +376,17 @@ func decisionRefusal(err error) (frRefusalKind, bool) {
 }
 
 // frTarget is the request a write addresses, read and placed in its fleet.
+// fleet is empty when the EndDevice belongs to no fleet.
 type frTarget struct {
 	edevID, frqID, fleet string
 	frq                  sep2.FlowReservationRequest
 }
 
 // target reads the addressed request. A request whose EndDevice belongs to
-// no fleet is not addressable, as on the read route.
-func (h *AdminFlowReservationHandler) target(w http.ResponseWriter, r *http.Request, op string, l *frWriteLog) (frTarget, bool) {
+// no fleet is not addressable for answer, as on the read route; revise and
+// cancel pass fleetless so a grant the device took with it when it left its
+// fleet is refused by name (grant_unresolved) rather than as not found.
+func (h *AdminFlowReservationHandler) target(w http.ResponseWriter, r *http.Request, op string, fleetless bool, l *frWriteLog) (frTarget, bool) {
 	t := frTarget{edevID: r.PathValue("edevId"), frqID: r.PathValue("frqId")}
 	l.add("edev_id", t.edevID)
 	l.add("frq_id", t.frqID)
@@ -352,7 +407,7 @@ func (h *AdminFlowReservationHandler) target(w http.ResponseWriter, r *http.Requ
 		h.refuseWrite(w, r, op, frInternal, "", "", l)
 		return t, false
 	}
-	if !held {
+	if !held && !fleetless {
 		h.refuseWrite(w, r, op, frNotFound, "", t.frqID, l)
 		return t, false
 	}
@@ -368,7 +423,7 @@ func (h *AdminFlowReservationHandler) reply(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		l.add("cause", "view_after_write")
 		l.add("write_committed", true)
-		h.refuseWrite(w, r, op, frInternal, "", "", l)
+		h.refuseWrite(w, r, op, frViewAfterWrite, "", t.frqID, l)
 		return
 	}
 	msg := "admin: flow reservation " + op
@@ -422,7 +477,7 @@ func (h *AdminFlowReservationHandler) HandleAnswer() http.HandlerFunc {
 			h.refuseWrite(w, r, op, frReasonNotAllowed, "", "", &l)
 			return
 		}
-		t, ok := h.target(w, r, op, &l)
+		t, ok := h.target(w, r, op, false, &l)
 		if !ok {
 			return
 		}
@@ -446,10 +501,21 @@ func (h *AdminFlowReservationHandler) HandleAnswer() http.HandlerFunc {
 	}
 }
 
+// internalFailure reports a failure that is the server's, whatever else it
+// wraps: a failed undo, or a commitment check that could not complete. Each
+// refuse mapper checks it first, since its cause can wrap a refusal's
+// sentinel (a NotFound inside a failed undo) and must never read as a 4xx.
+func internalFailure(err error) bool {
+	return errors.Is(err, commitment.ErrUndo) || errors.Is(err, flowreservation.ErrCommitmentCheck)
+}
+
 func (h *AdminFlowReservationHandler) refuseAnswer(w http.ResponseWriter, r *http.Request, err error, t frTarget, l *frWriteLog) {
 	const op = "answer"
 	var conflict *commitment.ConflictError
 	switch {
+	case internalFailure(err):
+		l.add("cause", causeOf(err))
+		h.refuseWrite(w, r, op, frInternal, "", "", l)
 	case errors.Is(err, flowreservation.ErrAlreadyAnswered):
 		_, tip, cerr := h.chainTip(r.Context(), t)
 		if cerr != nil {
@@ -511,12 +577,12 @@ func (h *AdminFlowReservationHandler) HandleRevise() http.HandlerFunc {
 			h.refuseWrite(w, r, op, kind, "", "", &l)
 			return
 		}
-		reason, ok := reasonOf(body.Reason)
+		reason, kind, ok := reasonOf(body.Reason)
 		if !ok {
-			h.refuseWrite(w, r, op, frReasonTooLong, "", "", &l)
+			h.refuseWrite(w, r, op, kind, "", "", &l)
 			return
 		}
-		t, ok := h.target(w, r, op, &l)
+		t, ok := h.target(w, r, op, true, &l)
 		if !ok {
 			return
 		}
@@ -568,7 +634,7 @@ func (h *AdminFlowReservationHandler) HandleRevise() http.HandlerFunc {
 			return
 		}
 		l.add("new_mrid", frp.MRID)
-		level := h.recordCancels(ctx, t.edevID, []string{tipID}, by, &l)
+		level := h.recordCancels(ctx, t.edevID, []flowreservation.CancelledGrant{{ID: tipID, MRID: tip.MRID}}, by, &l)
 		h.reply(w, r, op, "flow_reservation_revised", http.StatusCreated, t, &l, level)
 	}
 }
@@ -577,6 +643,9 @@ func (h *AdminFlowReservationHandler) refuseRevise(w http.ResponseWriter, r *htt
 	const op = "revise"
 	var conflict *commitment.ConflictError
 	switch {
+	case internalFailure(err):
+		l.add("cause", causeOf(err))
+		h.refuseWrite(w, r, op, frInternal, "", "", l)
 	case errors.As(err, &conflict):
 		// A revise whose undo could not relink every control keeps the
 		// revision live beside the grant it replaced, and the next revise is
@@ -590,7 +659,7 @@ func (h *AdminFlowReservationHandler) refuseRevise(w http.ResponseWriter, r *htt
 		h.refuseWrite(w, r, op, frNotAnswered, "", t.frqID, l)
 	case errors.Is(err, flowreservation.ErrRequestCancelled):
 		h.refuseWrite(w, r, op, frRequestCancelled, "", t.frqID, l)
-	case errors.Is(err, commitment.ErrNoGrant):
+	case errors.Is(err, commitment.ErrNoGrant), errors.Is(err, commitment.ErrNoLFDI):
 		h.refuseWrite(w, r, op, frGrantUnresolved, chain[len(chain)-1].MRID, t.frqID, l)
 	case errors.Is(err, commitment.ErrNoLedger):
 		h.refuseWrite(w, r, op, frNotConfigured, "", "", l)
@@ -618,14 +687,14 @@ func inChain(chain []sep2.FlowReservationResponse, mrid string) bool {
 // recordCancels records by as the canceller of each response, after the
 // cancel committed. A failure leaves the response reading "unrecorded" and
 // raises the write's line to ERROR, which it returns.
-func (h *AdminFlowReservationHandler) recordCancels(ctx context.Context, edevID string, ids []string, by flowreservation.Attribution, l *frWriteLog) slog.Level {
+func (h *AdminFlowReservationHandler) recordCancels(ctx context.Context, edevID string, cancelled []flowreservation.CancelledGrant, by flowreservation.Attribution, l *frWriteLog) slog.Level {
 	if h.CancelRecorder == nil {
 		return slog.LevelInfo
 	}
 	var failed []string
-	for _, id := range ids {
-		if err := h.CancelRecorder.RecordCancel(context.WithoutCancel(ctx), edevID, id, by); err != nil {
-			failed = append(failed, id)
+	for _, g := range cancelled {
+		if err := h.CancelRecorder.RecordCancel(context.WithoutCancel(ctx), edevID, g.ID, by); err != nil {
+			failed = append(failed, g.ID)
 		}
 	}
 	if len(failed) == 0 {
@@ -651,18 +720,18 @@ func (h *AdminFlowReservationHandler) HandleCancel() http.HandlerFunc {
 			h.refuseWrite(w, r, op, kind, "", "", &l)
 			return
 		}
-		reason, ok := reasonOf(body.Reason)
+		reason, kind, ok := reasonOf(body.Reason)
 		if !ok {
-			h.refuseWrite(w, r, op, frReasonTooLong, "", "", &l)
+			h.refuseWrite(w, r, op, kind, "", "", &l)
 			return
 		}
-		t, ok := h.target(w, r, op, &l)
+		t, ok := h.target(w, r, op, true, &l)
 		if !ok {
 			return
 		}
 		ctx := r.Context()
 		now := h.now()
-		_, tip, err := h.chainTip(ctx, t)
+		chain, tip, err := h.chainTip(ctx, t)
 		if err != nil {
 			l.add("cause", "chain_read")
 			h.refuseWrite(w, r, op, frInternal, "", "", &l)
@@ -673,7 +742,10 @@ func (h *AdminFlowReservationHandler) HandleCancel() http.HandlerFunc {
 			return
 		}
 		l.add("old_mrid", tip.MRID)
-		if !liveGrant(*tip, now) {
+		// Any live member is checked, not only the tip: a revise whose undo
+		// failed can leave an earlier grant live after the tip has ended, and
+		// a cancel is what clears it.
+		if !anyLiveGrant(chain, now) {
 			h.refuseWrite(w, r, op, frGrantNotLive, tip.MRID, t.frqID, &l)
 			return
 		}
@@ -684,7 +756,7 @@ func (h *AdminFlowReservationHandler) HandleCancel() http.HandlerFunc {
 		l.add("cancelled_count", len(cancelled))
 		level := h.recordCancels(ctx, t.edevID, cancelled, by, &l)
 		if err != nil {
-			h.refuseCancel(w, r, err, len(cancelled), t, &l)
+			h.refuseCancel(w, r, err, cancelled, t, &l)
 			return
 		}
 		if len(cancelled) == 0 {
@@ -696,18 +768,43 @@ func (h *AdminFlowReservationHandler) HandleCancel() http.HandlerFunc {
 	}
 }
 
-func (h *AdminFlowReservationHandler) refuseCancel(w http.ResponseWriter, r *http.Request, err error, cancelled int, t frTarget, l *frWriteLog) {
+func anyLiveGrant(chain []sep2.FlowReservationResponse, now int64) bool {
+	for _, frp := range chain {
+		if liveGrant(frp, now) {
+			return true
+		}
+	}
+	return false
+}
+
+// refuseCancel answers a CancelGrants error. Once anything was cancelled the
+// write is committed in part, so it is never answered as a refusal: the body
+// names every grant cancelled and every one the ledger could not reach.
+func (h *AdminFlowReservationHandler) refuseCancel(w http.ResponseWriter, r *http.Request, err error, cancelled []flowreservation.CancelledGrant, t frTarget, l *frWriteLog) {
 	const op = "cancel"
-	var unresolved *flowreservation.UnresolvedGrantsError
+	var unresolvedErr *flowreservation.UnresolvedGrantsError
+	var unresolved []string
+	if errors.As(err, &unresolvedErr) {
+		unresolved = unresolvedErr.MRIDs
+		l.add("unresolved_mrids", strings.Join(unresolved, ","))
+	}
 	switch {
-	case cancelled > 0:
-		// Part of the chain is cancelled, so this is no refusal: the write
-		// is partial and the log line names how far it got.
+	case len(cancelled) > 0:
+		mrids := make([]string, len(cancelled))
+		for i, g := range cancelled {
+			mrids[i] = g.MRID
+		}
+		l.add("cancelled_mrids", strings.Join(mrids, ","))
 		l.add("write_committed", "partial")
 		l.add("cause", causeOf(err))
+		h.refuseWriteBody(w, r, op, frCancelPartial, frRefusal{FrqID: t.frqID, Cancelled: mrids, Unresolved: unresolved}, l)
+	case internalFailure(err):
+		l.add("cause", causeOf(err))
 		h.refuseWrite(w, r, op, frInternal, "", "", l)
-	case errors.As(err, &unresolved):
-		h.refuseWrite(w, r, op, frGrantUnresolved, unresolved.MRIDs[0], t.frqID, l)
+	case len(unresolved) > 0:
+		h.refuseWriteBody(w, r, op, frGrantUnresolved, frRefusal{MRID: unresolved[0], FrqID: t.frqID, Unresolved: unresolved}, l)
+	case errors.Is(err, flowreservation.ErrChainMoving):
+		h.refuseWrite(w, r, op, frChainMoving, "", t.frqID, l)
 	case errors.Is(err, commitment.ErrNoLedger):
 		h.refuseWrite(w, r, op, frNotConfigured, "", "", l)
 	case errors.Is(err, store.ErrNotFound):

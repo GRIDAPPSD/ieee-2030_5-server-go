@@ -227,11 +227,15 @@ type FlowReservationGrantList struct {
 }
 
 // frRefusal is the one refusal body of the flow reservation admin API.
+// Cancelled and Unresolved appear only on a cancel that did not settle the
+// whole chain: the mRIDs it cancelled and those the ledger could not reach.
 type frRefusal struct {
-	Error string `json:"error"`
-	Code  string `json:"code"`
-	MRID  string `json:"mRID"`
-	FrqID string `json:"frqId"`
+	Error      string   `json:"error"`
+	Code       string   `json:"code"`
+	MRID       string   `json:"mRID"`
+	FrqID      string   `json:"frqId"`
+	Cancelled  []string `json:"cancelled,omitempty"`
+	Unresolved []string `json:"unresolved,omitempty"`
 }
 
 func writeFRRefusal(w http.ResponseWriter, status int, code, text, frqID string) {

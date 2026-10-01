@@ -3,11 +3,11 @@ package server_test
 import (
 	"context"
 	"flag"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -27,61 +27,19 @@ const adminBootRoutesGolden = "testdata/admin_boot_routes.golden"
 func TestAdminBootRouteListMatchesGolden(t *testing.T) {
 	buf := teeLogOutput(t)
 
-	c := newSplitListenerCerts(t)
-	cfg := &config.Config{
-		Addr:        c.sep2Probe,
-		CertFile:    c.certFile,
-		KeyFile:     c.keyFile,
-		CAFile:      c.caFile,
-		AdminListen: c.adminProbe,
-		AdminKey:    adminTestKey,
-		TZOffset:    -28800,
-		TimeQuality: sep2.TimeQualityNTP,
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	runErrCh := make(chan error, 1)
-	go func() { runErrCh <- server.Run(ctx, cfg, c.svc) }()
-
-	// The receive on runErrCh orders every log write by Run before the read
-	// of buf below.
-	var stopOnce sync.Once
-	stop := func() {
-		stopOnce.Do(func() {
-			cancel()
-			select {
-			case <-runErrCh:
-			case <-time.After(5 * time.Second):
-				t.Error("server.Run did not exit within 5s after cancel")
-			}
-		})
-	}
-	t.Cleanup(stop)
-
-	probe := &http.Client{Timeout: 500 * time.Millisecond}
-	deadline := time.Now().Add(5 * time.Second)
-	up := false
-	for time.Now().Before(deadline) && !up {
-		if resp, err := probe.Get("http://" + c.adminProbe + "/api/certs/ca"); err == nil {
-			_ = resp.Body.Close()
-			up = true
+	// A probed port can be taken again before Run binds it; that race says
+	// nothing about the route list, so a boot that loses it is retried.
+	var got string
+	for attempt := 1; ; attempt++ {
+		section, err := bootAdminRouteSection(t, buf)
+		if err == nil {
+			got = section
 			break
 		}
-		select {
-		case err := <-runErrCh:
-			t.Fatalf("server.Run exited during boot: %v", err)
-		default:
+		if !strings.Contains(err.Error(), "address already in use") || attempt == 3 {
+			t.Fatal(err)
 		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if !up {
-		t.Fatalf("admin listener never became ready on %s", c.adminProbe)
-	}
-	stop()
-
-	got, ok := adminRouteSection(buf.String(), c.adminProbe)
-	if !ok {
-		t.Fatalf("no admin route section for %s in the boot log\n---log---\n%s", c.adminProbe, buf.String())
+		t.Logf("boot attempt %d lost a port race, retrying: %v", attempt, err)
 	}
 
 	if *updateAdminBootRoutes {
@@ -99,6 +57,61 @@ func TestAdminBootRouteListMatchesGolden(t *testing.T) {
 	if got != string(want) {
 		t.Errorf("admin boot route list differs from %s\n---got---\n%s---want---\n%s", adminBootRoutesGolden, got, want)
 	}
+}
+
+// bootAdminRouteSection runs server.Run until its admin listener answers,
+// stops it, and returns the admin route section it logged.
+func bootAdminRouteSection(t *testing.T, buf *syncBuffer) (string, error) {
+	t.Helper()
+	c := newSplitListenerCerts(t)
+	cfg := &config.Config{
+		Addr:        c.sep2Probe,
+		CertFile:    c.certFile,
+		KeyFile:     c.keyFile,
+		CAFile:      c.caFile,
+		AdminListen: c.adminProbe,
+		AdminKey:    adminTestKey,
+		TZOffset:    -28800,
+		TimeQuality: sep2.TimeQualityNTP,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runErrCh := make(chan error, 1)
+	go func() { runErrCh <- server.Run(ctx, cfg, c.svc) }()
+
+	probe := &http.Client{Timeout: 500 * time.Millisecond}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if resp, err := probe.Get("http://" + c.adminProbe + "/api/certs/ca"); err == nil {
+			_ = resp.Body.Close()
+			break
+		}
+		select {
+		case err := <-runErrCh:
+			return "", fmt.Errorf("server.Run exited during boot: %w", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("admin listener never became ready on %s", c.adminProbe)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	// The receive on runErrCh orders every log write by Run before the read
+	// of buf below.
+	cancel()
+	select {
+	case <-runErrCh:
+	case <-time.After(5 * time.Second):
+		return "", fmt.Errorf("server.Run did not exit within 5s after cancel")
+	}
+
+	section, ok := adminRouteSection(buf.String(), c.adminProbe)
+	if !ok {
+		return "", fmt.Errorf("no admin route section for %s in the boot log\n---log---\n%s", c.adminProbe, buf.String())
+	}
+	return section, nil
 }
 
 // adminRouteSection returns the pattern lines logged under the admin listener

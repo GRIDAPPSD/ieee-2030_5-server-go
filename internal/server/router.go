@@ -110,14 +110,14 @@ type Stores struct {
 	PowerStatuses            *memory.ScopedStore[sep2.PowerStatus]
 	MessagingPrograms        *memory.Store[sep2.MessagingProgram]
 	TextMessages             *memory.ScopedStore[sep2.TextMessage]
-	FlowReservationRequests  *memory.ScopedStore[sep2.FlowReservationRequest]
-	FlowReservationResponses *memory.ScopedStore[sep2.FlowReservationResponse]
+	FlowReservationRequests  store.ScopedStore[sep2.FlowReservationRequest]
+	FlowReservationResponses store.ScopedStore[sep2.FlowReservationResponse]
 	ResponseSets             *memory.Store[sep2.ResponseSet]
 	Responses                *memory.ScopedStore[sep2.Response]
 
 	// FlowReservationResponseLifecycles holds each response's cancel mark
-	// (#714), keyed exactly as the response and memory-only like it.
-	FlowReservationResponseLifecycles *memory.ScopedStore[dercontrol.LifecycleRecord]
+	// (#714), keyed exactly as the response and persisted like it (#761).
+	FlowReservationResponseLifecycles store.ScopedStore[dercontrol.LifecycleRecord]
 
 	// CommitmentLedger is the process's one commitment ledger (#714).
 	CommitmentLedger *commitment.Ledger

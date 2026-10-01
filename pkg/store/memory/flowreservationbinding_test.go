@@ -2,6 +2,10 @@ package memory_test
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -468,5 +472,212 @@ func TestFlowReservationUnservedEndDeviceStore_DeleteCascadesWhatTheInnerLayerOw
 	if n, err := events.Count(ctx, "1"); err != nil || n != 0 {
 		t.Errorf("log events under the dead key %q = %d, %v, want 0, nil: the unserved arm must still "+
 			"delegate to the inner LogEvent cascade", "1", n, err)
+	}
+}
+
+// hrefRecords seeds one request and one response under edev whose hrefs end
+// in the store key, the shape this server writes, and returns what it stored.
+func hrefRecords(t *testing.T, reqs store.ScopedStore[sep2.FlowReservationRequest], resps store.ScopedStore[sep2.FlowReservationResponse], edev, key string) (sep2.FlowReservationRequest, sep2.FlowReservationResponse) {
+	t.Helper()
+	ctx := context.Background()
+	frq := sep2.FlowReservationRequest{MRID: "MRID-" + key, Description: "request " + key, CreationTime: 100}
+	frq.Href = "/edev/" + edev + "/frq/" + key
+	frq.IntervalRequested = &sep2.DateTimeInterval{Start: 5000, Duration: 600}
+	frp := sep2.FlowReservationResponse{Subject: "MRID-" + key}
+	frp.Href = "/edev/" + edev + "/frp/" + key
+	frp.MRID = "GRANT-" + key
+	frp.Interval = &sep2.DateTimeInterval{Start: 5000, Duration: 600}
+	if err := reqs.Create(ctx, edev, key, frq); err != nil {
+		t.Fatal(err)
+	}
+	if err := resps.Create(ctx, edev, key, frp); err != nil {
+		t.Fatal(err)
+	}
+	return frq, frp
+}
+
+// sabotageSnapshot makes the next write to path fail while leaving the
+// store's memory state alone: the atomic write renames a temp file over
+// path, which cannot replace a non-empty directory.
+func sabotageSnapshot(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(path, "keep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestFlowReservationLinkedEndDeviceStore_DeleteRestoresRequestsWhenOnlyTheResponsesSnapshotFails
+// pins the cascade-order trap of #761: requests cascade first, so a
+// responses snapshot failure used to leave them deleted and persisted while
+// the device stayed.
+func TestFlowReservationLinkedEndDeviceStore_DeleteRestoresRequestsWhenOnlyTheResponsesSnapshotFails(t *testing.T) {
+	ctx := context.Background()
+	reqs, resps, reqPath, respPath := newPersistentFlowStores(t)
+	inner := memory.NewEndDeviceStore()
+	devs := memory.NewFlowReservationLinkedEndDeviceStore(inner, reqs, resps)
+	dev := sep2.EndDevice{SFDI: "1111111111", LFDI: "AAAA"}
+	dev.Href = "/edev/1"
+	if err := devs.Create(ctx, "1", dev); err != nil {
+		t.Fatal(err)
+	}
+	wantFrq, wantFrp := hrefRecords(t, reqs, resps, "1", "frq-1")
+
+	sabotageSnapshot(t, respPath)
+	// Control: the sabotage makes a responses write fail and a requests write
+	// succeed, so only the responses snapshot is broken.
+	if err := resps.Create(ctx, "9", "probe", sep2.FlowReservationResponse{}); err == nil {
+		t.Fatal("control: a responses write succeeded after the sabotage")
+	}
+	if n, _ := resps.Count(ctx, "9"); n != 0 {
+		t.Fatalf("control: failed probe write left %d records", n)
+	}
+
+	if err := devs.Delete(ctx, "1"); err == nil {
+		t.Fatal("Delete succeeded although the responses snapshot cannot be written")
+	}
+
+	if _, err := inner.Get(ctx, "1"); err != nil {
+		t.Errorf("device after failed delete: %v, want still present", err)
+	}
+	gotFrq, err := reqs.Get(ctx, "1", "frq-1")
+	if err != nil || !reflect.DeepEqual(gotFrq, wantFrq) {
+		t.Errorf("request in memory = %+v, %v, want %+v", gotFrq, err, wantFrq)
+	}
+	gotFrp, err := resps.Get(ctx, "1", "frq-1")
+	if err != nil || !reflect.DeepEqual(gotFrp, wantFrp) {
+		t.Errorf("response in memory = %+v, %v, want %+v", gotFrp, err, wantFrp)
+	}
+	reloaded, err := memory.NewPersistentScopedStore[sep2.FlowReservationRequest](reqPath, "frq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotFrq, err = reloaded.Get(ctx, "1", "frq-1")
+	if err != nil || !reflect.DeepEqual(gotFrq, wantFrq) {
+		t.Errorf("request after reload = %+v, %v, want %+v: the failed delete left it deleted on disk", gotFrq, err, wantFrq)
+	}
+}
+
+// lifecycleCascadeFake is a response store that owns lifecycle records, with
+// a scripted outcome.
+type lifecycleCascadeFake struct {
+	store.ScopedStore[sep2.FlowReservationResponse]
+	err       error
+	gotParent string
+	gotIDs    []string
+	undone    bool
+}
+
+func (f *lifecycleCascadeFake) DeleteParent(ctx context.Context, parent string) (uint32, error) {
+	return f.ScopedStore.(*memory.PersistentScopedStore[sep2.FlowReservationResponse]).DeleteParent(ctx, parent)
+}
+
+func (f *lifecycleCascadeFake) CascadeResponseLifecycles(_ context.Context, parent string, ids []string) (func(context.Context) error, error) {
+	f.gotParent, f.gotIDs = parent, ids
+	if f.err != nil {
+		return nil, f.err
+	}
+	return func(context.Context) error { f.undone = true; return nil }, nil
+}
+
+func TestFlowReservationLinkedEndDeviceStore_DeleteCascadesLifecyclesAfterResponses(t *testing.T) {
+	ctx := context.Background()
+	reqs, resps, _, _ := newPersistentFlowStores(t)
+	fake := &lifecycleCascadeFake{ScopedStore: resps}
+	devs := memory.NewFlowReservationLinkedEndDeviceStore(memory.NewEndDeviceStore(), reqs, fake)
+	dev := sep2.EndDevice{SFDI: "1111111111", LFDI: "AAAA"}
+	dev.Href = "/edev/1"
+	if err := devs.Create(ctx, "1", dev); err != nil {
+		t.Fatal(err)
+	}
+	hrefRecords(t, reqs, resps, "1", "frq-1")
+	hrefRecords(t, reqs, resps, "1", "frq-2")
+
+	if err := devs.Delete(ctx, "1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if fake.gotParent != "1" || !reflect.DeepEqual(fake.gotIDs, []string{"frq-1", "frq-2"}) {
+		t.Errorf("lifecycle cascade got parent %q ids %v, want parent 1 ids [frq-1 frq-2]", fake.gotParent, fake.gotIDs)
+	}
+	if n, _ := resps.Count(ctx, "1"); n != 0 {
+		t.Errorf("responses left under the dead key: %d", n)
+	}
+	if fake.undone {
+		t.Error("a successful delete undid the lifecycle cascade")
+	}
+}
+
+// A lifecycle failure after both collections cascaded restores both, so a
+// restored cancelled grant is not served live.
+func TestFlowReservationLinkedEndDeviceStore_DeleteRestoresRequestsAndResponsesWhenLifecyclesFail(t *testing.T) {
+	ctx := context.Background()
+	reqs, resps, reqPath, respPath := newPersistentFlowStores(t)
+	boom := errors.New("lifecycle snapshot failed")
+	fake := &lifecycleCascadeFake{ScopedStore: resps, err: boom}
+	inner := memory.NewEndDeviceStore()
+	devs := memory.NewFlowReservationLinkedEndDeviceStore(inner, reqs, fake)
+	dev := sep2.EndDevice{SFDI: "1111111111", LFDI: "AAAA"}
+	dev.Href = "/edev/1"
+	if err := devs.Create(ctx, "1", dev); err != nil {
+		t.Fatal(err)
+	}
+	wantFrq, wantFrp := hrefRecords(t, reqs, resps, "1", "frq-1")
+
+	if err := devs.Delete(ctx, "1"); !errors.Is(err, boom) {
+		t.Fatalf("Delete = %v, want the lifecycle error", err)
+	}
+	if _, err := inner.Get(ctx, "1"); err != nil {
+		t.Errorf("device after failed delete: %v, want still present", err)
+	}
+	reqs2, err := memory.NewPersistentScopedStore[sep2.FlowReservationRequest](reqPath, "frq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resps2, err := memory.NewPersistentScopedStore[sep2.FlowReservationResponse](respPath, "frp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := reqs2.Get(ctx, "1", "frq-1"); err != nil || !reflect.DeepEqual(got, wantFrq) {
+		t.Errorf("request after reload = %+v, %v, want %+v", got, err, wantFrq)
+	}
+	if got, err := resps2.Get(ctx, "1", "frq-1"); err != nil || !reflect.DeepEqual(got, wantFrp) {
+		t.Errorf("response after reload = %+v, %v, want %+v", got, err, wantFrp)
+	}
+}
+
+// failingDeleteDevices is an EndDeviceStore whose Delete always fails, after
+// the cascade has already removed everything under the key.
+type failingDeleteDevices struct{ store.EndDeviceStore }
+
+func (failingDeleteDevices) Delete(context.Context, string) error {
+	return errors.New("device snapshot failed")
+}
+
+// The device removal is the last step of the cascade, and its failure puts
+// the requests and responses back too.
+func TestFlowReservationLinkedEndDeviceStore_DeleteRestoresCollectionsWhenTheDeviceRemovalFails(t *testing.T) {
+	ctx := context.Background()
+	reqs, resps, reqPath, respPath := newPersistentFlowStores(t)
+	devs := memory.NewFlowReservationLinkedEndDeviceStore(failingDeleteDevices{memory.NewEndDeviceStore()}, reqs, resps)
+	wantFrq, wantFrp := hrefRecords(t, reqs, resps, "1", "frq-1")
+
+	if err := devs.Delete(ctx, "1"); err == nil {
+		t.Fatal("Delete succeeded although the device removal failed")
+	}
+	reqs2, err := memory.NewPersistentScopedStore[sep2.FlowReservationRequest](reqPath, "frq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resps2, err := memory.NewPersistentScopedStore[sep2.FlowReservationResponse](respPath, "frp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := reqs2.Get(ctx, "1", "frq-1"); err != nil || !reflect.DeepEqual(got, wantFrq) {
+		t.Errorf("request after reload = %+v, %v, want %+v", got, err, wantFrq)
+	}
+	if got, err := resps2.Get(ctx, "1", "frq-1"); err != nil || !reflect.DeepEqual(got, wantFrp) {
+		t.Errorf("response after reload = %+v, %v, want %+v", got, err, wantFrp)
 	}
 }

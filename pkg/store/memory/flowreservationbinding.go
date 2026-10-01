@@ -2,8 +2,10 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"path"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -177,9 +179,68 @@ func (s *FlowReservationLinkedEndDeviceStore) probeDelete(ctx context.Context, i
 	return nil
 }
 
-// Delete cascades the device's flow reservation request and response
-// records before removing the device, so neither survives under the dead
-// key for a later device created at the same key to inherit
+// ResponseLifecycleCascader is implemented by a response store that also
+// owns each response's lifecycle record (the cancel mark). Delete removes
+// those records after the responses, and undoes that removal when a later
+// step fails, so a restored cancelled grant is still cancelled.
+type ResponseLifecycleCascader interface {
+	// CascadeResponseLifecycles removes the lifecycle records stored under
+	// parentID for each of ids, ignoring an id with no record. A failure
+	// leaves every record it removed in place. undo restores what a success
+	// removed.
+	CascadeResponseLifecycles(ctx context.Context, parentID string, ids []string) (undo func(context.Context) error, err error)
+}
+
+// keyedRecord is a record with the store key it was read under.
+type keyedRecord[T any] struct {
+	key   string
+	value T
+}
+
+// snapshotParent reads every record under parentID with the key it is stored
+// under. Neither store lists keys, so the key is recovered from the record's
+// own href, which this server always ends with the key. restorable is false
+// when a record's href yields no key.
+func snapshotParent[T store.Copier[T]](ctx context.Context, s store.ScopedStore[T], parentID string, hrefOf func(T) string) (recs []keyedRecord[T], restorable bool, err error) {
+	res, err := s.List(ctx, parentID, store.ListOptions{Unbounded: true})
+	if err != nil {
+		return nil, false, err
+	}
+	restorable = true
+	for _, v := range res.Items {
+		key := path.Base(hrefOf(v))
+		if key == "." || key == "/" {
+			restorable = false
+			continue
+		}
+		recs = append(recs, keyedRecord[T]{key: key, value: v})
+	}
+	return recs, restorable, nil
+}
+
+// cascadeStep is one removal the delete performs, with how to put back what
+// it removed.
+type cascadeStep struct {
+	what string
+	undo func(context.Context) error
+}
+
+// restoreParent returns an undo that recreates recs under parentID.
+func restoreParent[T store.Copier[T]](s store.ScopedStore[T], parentID string, recs []keyedRecord[T]) func(context.Context) error {
+	return func(ctx context.Context) error {
+		var errs []error
+		for _, r := range recs {
+			if err := s.Create(ctx, parentID, r.key, r.value); err != nil {
+				errs = append(errs, fmt.Errorf("record %q: %w", r.key, err))
+			}
+		}
+		return errors.Join(errs...)
+	}
+}
+
+// Delete cascades the device's flow reservation request, response and
+// response lifecycle records before removing the device, so none survives
+// under the dead key for a later device created at the same key to inherit
 // (GRIDAPPSD/ieee-2030_5-server-go#701). The unserved arm cascades nothing of
 // its own: its routes are never mounted, so nothing could have been created
 // for it to orphan; it still delegates to s.devs, whose own cascade (if any)
@@ -187,22 +248,96 @@ func (s *FlowReservationLinkedEndDeviceStore) probeDelete(ctx context.Context, i
 //
 // probeDelete runs first over the WHOLE chain, this layer and everything
 // s.devs owns, and nothing is mutated unless every layer reports it can
-// succeed. Without that, this layer's own cascade could complete and then
-// fail one layer down, leaving the device present with its flow reservation
-// records already gone.
+// succeed. The probe is a read check, so a persistent store can still fail
+// its snapshot write afterwards. The cascade therefore reads each
+// collection before removing it, and a failure at any later step, the
+// device removal included, puts every collection already removed back, in
+// reverse order. A collection holding a record with no key in its href cannot
+// be restored and is deleted without an undo, which is logged: every record
+// this server writes carries a key, so only a hand-built record lacks one.
 func (s *FlowReservationLinkedEndDeviceStore) Delete(ctx context.Context, id string) error {
 	if err := s.probeDelete(ctx, id); err != nil {
 		return err
 	}
-	if s.served {
-		if err := deleteScopedParent(ctx, s.reqs, id); err != nil {
-			return fmt.Errorf("cascading flow reservation requests for %q: %w", id, err)
-		}
-		if err := deleteScopedParent(ctx, s.resps, id); err != nil {
-			return fmt.Errorf("cascading flow reservation responses for %q: %w", id, err)
-		}
+	if !s.served {
+		return s.devs.Delete(ctx, id)
 	}
-	return s.devs.Delete(ctx, id)
+
+	reqHref := func(r sep2.FlowReservationRequest) string { return r.Href }
+	respHref := func(r sep2.FlowReservationResponse) string { return r.Href }
+	reqRecs, reqOK, err := snapshotParent(ctx, s.reqs, id, reqHref)
+	if err != nil {
+		return fmt.Errorf("reading flow reservation requests for %q: %w", id, err)
+	}
+	respRecs, respOK, err := snapshotParent(ctx, s.resps, id, respHref)
+	if err != nil {
+		return fmt.Errorf("reading flow reservation responses for %q: %w", id, err)
+	}
+	reqUndo, respUndo := restoreParent(s.reqs, id, reqRecs), restoreParent(s.resps, id, respRecs)
+	if !reqOK {
+		reqUndo = nil
+		log.Printf("memory: a flow reservation request under %q has no key in its href; deleting the device cannot undo the request cascade if a later step fails", id)
+	}
+	if !respOK {
+		respUndo = nil
+		log.Printf("memory: a flow reservation response under %q has no key in its href; deleting the device cannot undo the response cascade if a later step fails", id)
+	}
+
+	var done []cascadeStep
+	fail := func(err error) error {
+		// A cancelled request context must not stop the restore.
+		rctx := context.WithoutCancel(ctx)
+		for i := len(done) - 1; i >= 0; i-- {
+			if done[i].undo == nil {
+				continue
+			}
+			if uerr := done[i].undo(rctx); uerr != nil {
+				err = errors.Join(err, fmt.Errorf("restoring flow reservation %s for %q: %w", done[i].what, id, uerr))
+			}
+		}
+		return err
+	}
+
+	if err := deleteScopedParent(ctx, s.reqs, id); err != nil {
+		return fmt.Errorf("cascading flow reservation requests for %q: %w", id, err)
+	}
+	done = append(done, cascadeStep{"requests", reqUndo})
+
+	if err := deleteScopedParent(ctx, s.resps, id); err != nil {
+		return fail(fmt.Errorf("cascading flow reservation responses for %q: %w", id, err))
+	}
+	done = append(done, cascadeStep{"responses", respUndo})
+
+	if lc, ok := s.resps.(ResponseLifecycleCascader); ok {
+		// A response shares its request's id, so the union covers a cancel
+		// mark whose response was already gone.
+		seen := make(map[string]struct{}, len(respRecs)+len(reqRecs))
+		var ids []string
+		for _, key := range append(keysOf(respRecs), keysOf(reqRecs)...) {
+			if _, dup := seen[key]; !dup {
+				seen[key] = struct{}{}
+				ids = append(ids, key)
+			}
+		}
+		undo, err := lc.CascadeResponseLifecycles(ctx, id, ids)
+		if err != nil {
+			return fail(fmt.Errorf("cascading flow reservation response lifecycles for %q: %w", id, err))
+		}
+		done = append(done, cascadeStep{"response lifecycles", undo})
+	}
+
+	if err := s.devs.Delete(ctx, id); err != nil {
+		return fail(err)
+	}
+	return nil
+}
+
+func keysOf[T any](recs []keyedRecord[T]) []string {
+	out := make([]string, len(recs))
+	for i, r := range recs {
+		out[i] = r.key
+	}
+	return out
 }
 
 // Get returns the device stored under id with its links derived from id.

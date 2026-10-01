@@ -240,6 +240,7 @@ func (c *Controls) filter(ctx context.Context, keep func(commitment.Control) boo
 			if err != nil {
 				return nil, err
 			}
+			ctl.EndDeviceID = edevID
 			if keep(ctl) {
 				out = append(out, ctl)
 			}

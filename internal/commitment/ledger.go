@@ -161,12 +161,10 @@ func (v *view) CheckGrant(ctx context.Context, fleetKey string, w *Window, excep
 	if err != nil {
 		return fmt.Errorf("commitment: reading grants of fleet %s: %w", fleetKey, err)
 	}
-	live := make(map[string]bool, len(grants))
-	for _, g := range grants {
-		if g.CancelledAt != nil || g.Window == nil {
-			continue
-		}
-		live[g.MRID] = true
+	// Grants are checked before controls are read, so a grant conflict is
+	// refused even when the control read would fail.
+	live, _ := Live(grants, nil)
+	for _, g := range live {
 		if g.MRID != except && g.Window.Overlaps(*w) {
 			return &ConflictError{Code: ConflictFleetWindow, MRID: g.MRID}
 		}
@@ -176,21 +174,106 @@ func (v *view) CheckGrant(ctx context.Context, fleetKey string, w *Window, excep
 	if err != nil {
 		return fmt.Errorf("commitment: reading controls of fleet %s: %w", fleetKey, err)
 	}
-	for _, c := range controls {
-		if c.Cancelled {
-			continue
-		}
-		// An execution of a live grant sits inside that grant's window,
-		// already checked above. One whose grant is gone or cancelled
-		// counts as a plain dispatch (design 5.5), which fails closed.
-		if c.GrantMRID != "" && live[c.GrantMRID] {
-			continue
-		}
+	_, plain := Live(grants, controls)
+	for _, c := range plain {
 		if c.Window.Overlaps(*w) {
 			return &ConflictError{Code: ConflictFleetWindow, MRID: c.MRID}
 		}
 	}
 	return nil
+}
+
+// Live sorts a fleet's grants and controls into what the ledger enforces.
+// A grant is live while it is not cancelled and has an interval. A control
+// that is not cancelled is a plain dispatch unless it executes a live
+// grant: one whose grant is cancelled or gone counts as plain (design 5.5),
+// which fails closed. Executions of live grants sit inside their grant's
+// window and are in neither result. Both results keep their input order.
+func Live(grants []Grant, controls []Control) (live []Grant, plain []Control) {
+	liveMRIDs := make(map[string]bool, len(grants))
+	for _, g := range grants {
+		if g.CancelledAt != nil || g.Window == nil {
+			continue
+		}
+		liveMRIDs[g.MRID] = true
+		live = append(live, g)
+	}
+	for _, c := range controls {
+		if c.Cancelled || (c.GrantMRID != "" && liveMRIDs[c.GrantMRID]) {
+			continue
+		}
+		plain = append(plain, c)
+	}
+	return live, plain
+}
+
+// Commitments is what a fleet is committed to: its live grants, each with
+// its live executions, and its plain controls.
+type Commitments struct {
+	Grants []CommittedGrant
+	Plain  []Control
+}
+
+// CommittedGrant is a live grant with the executions that are not
+// cancelled, read the way an execution check reads them (ExecutionsOf).
+type CommittedGrant struct {
+	Grant
+	Executions []Control
+}
+
+// Commitments reads fleetKey's commitments under its fleet lock, so no
+// write lands between the grant and control reads, and keeps those whose
+// window covers an instant after now. Only the end decides: a commitment
+// that has not started yet is still one.
+func (l *Ledger) Commitments(ctx context.Context, fleetKey string, now int64) (Commitments, error) {
+	var out Commitments
+	err := l.Within(ctx, []string{fleetKey}, func(View) error {
+		grants, err := l.grants.GrantsInFleet(ctx, fleetKey)
+		if err != nil {
+			return fmt.Errorf("commitment: reading grants of fleet %s: %w", fleetKey, err)
+		}
+		controls, err := l.controls.ControlsInFleet(ctx, fleetKey)
+		if err != nil {
+			return fmt.Errorf("commitment: reading controls of fleet %s: %w", fleetKey, err)
+		}
+		live, plain := Live(grants, controls)
+		for _, g := range live {
+			if !coversAfter(*g.Window, now) {
+				continue
+			}
+			cg := CommittedGrant{Grant: g}
+			// ExecutionsOf refuses an empty mRID, and a control cannot link
+			// to a grant without one, so such a grant has no executions.
+			if g.MRID != "" {
+				execs, err := l.controls.ExecutionsOf(ctx, g.MRID)
+				if err != nil {
+					return fmt.Errorf("commitment: reading executions of grant %s: %w", g.MRID, err)
+				}
+				for _, c := range execs {
+					if !c.Cancelled {
+						cg.Executions = append(cg.Executions, c)
+					}
+				}
+			}
+			out.Grants = append(out.Grants, cg)
+		}
+		for _, c := range plain {
+			if coversAfter(c.Window, now) {
+				out.Plain = append(out.Plain, c)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return Commitments{}, err
+	}
+	return out, nil
+}
+
+// coversAfter reports whether w covers any instant after now. A window
+// clipped to zero duration by a supersede covers nothing.
+func coversAfter(w Window, now int64) bool {
+	return w.Duration > 0 && w.End() > now
 }
 
 func (v *view) CheckControl(ctx context.Context, p Proposal) error {
@@ -214,8 +297,9 @@ func (v *view) checkPlain(ctx context.Context, p Proposal) error {
 	if err != nil {
 		return fmt.Errorf("commitment: reading grants of fleet %s: %w", p.FleetKey, err)
 	}
-	for _, g := range grants {
-		if g.CancelledAt == nil && g.Window != nil && g.Window.Overlaps(p.Window) {
+	live, _ := Live(grants, nil)
+	for _, g := range live {
+		if g.Window.Overlaps(p.Window) {
 			return &ConflictError{Code: ConflictFleetWindow, MRID: g.MRID}
 		}
 	}

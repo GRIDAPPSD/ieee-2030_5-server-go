@@ -34,3 +34,21 @@ func TestRevisionID_IsAResponseID(t *testing.T) {
 		t.Fatalf("ResponseID of a revision href = (%q, %v), want (%q, true)", got, ok, id)
 	}
 }
+
+// RequestIDOf undoes every RevisionID step, and leaves an id without a
+// canonical revision suffix as it is.
+func TestRequestIDOf(t *testing.T) {
+	t.Parallel()
+	id := "frq-17"
+	for range 12 {
+		id = flowreservation.RevisionID(id)
+		if got := flowreservation.RequestIDOf(id); got != "frq-17" {
+			t.Errorf("RequestIDOf(%q) = %q, want frq-17", id, got)
+		}
+	}
+	for _, id := range []string{"frq-17", "frq-17-r01", "frq-17-r", "frq-17-r0"} {
+		if got := flowreservation.RequestIDOf(id); got != id {
+			t.Errorf("RequestIDOf(%q) = %q, want it unchanged", id, got)
+		}
+	}
+}

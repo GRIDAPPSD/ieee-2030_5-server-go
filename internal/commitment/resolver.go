@@ -51,3 +51,46 @@ func (r Resolver) FleetOf(ctx context.Context, endDeviceID string) (string, erro
 	}
 	return strings.ToUpper(manager), nil
 }
+
+// Fleets says whether a key names a fleet FleetOf can resolve to: an LFDI
+// that manages a device, or the LFDI of an EndDevice nobody manages.
+type Fleets struct {
+	Devices interface {
+		GetByLFDI(ctx context.Context, lfdi string) (sep2.EndDevice, error)
+	}
+	Managers store.EndDeviceManagementReader
+}
+
+// Known reports whether fleetKey, an upper-case LFDI, names a fleet. It
+// takes no ledger lock, so asking about any number of unknown keys leaves
+// the ledger's lock map as it was.
+func (f Fleets) Known(ctx context.Context, fleetKey string) (bool, error) {
+	managed, err := f.Managers.ManagedBy(ctx, fleetKey)
+	if err != nil {
+		return false, fmt.Errorf("commitment: devices managed by %s: %w", fleetKey, err)
+	}
+	if len(managed) > 0 {
+		return true, nil
+	}
+	// The LFDI index is exact and hexBinary allows either case; FleetOf
+	// upper-cases what it reads, so either stored form resolves here.
+	for _, lfdi := range []string{fleetKey, strings.ToLower(fleetKey)} {
+		_, err := f.Devices.GetByLFDI(ctx, lfdi)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("commitment: EndDevice with LFDI %s: %w", lfdi, err)
+		}
+		_, err = f.Managers.ManagerOf(ctx, fleetKey)
+		if errors.Is(err, store.ErrNotFound) {
+			return true, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("commitment: manager of %s: %w", fleetKey, err)
+		}
+		// A managed device belongs to its manager's fleet, not its own.
+		return false, nil
+	}
+	return false, nil
+}

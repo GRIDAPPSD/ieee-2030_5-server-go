@@ -343,6 +343,9 @@ func (noControls) ControlsInFleet(context.Context, string) ([]commitment.Control
 func (noControls) ExecutionsOf(context.Context, string) ([]commitment.Control, error) {
 	return nil, nil
 }
+func (noControls) ControlsAndExecutions(context.Context, string, []string) ([]commitment.Control, map[string][]commitment.Control, error) {
+	return nil, nil, nil
+}
 
 type markingGrants struct{ marked []string }
 

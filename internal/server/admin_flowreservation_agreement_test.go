@@ -159,6 +159,7 @@ func TestAdminFlowReservationRoutesAreReadOnly(t *testing.T) {
 		"/api/derms/flow-reservations?aggregatorLFDI=" + frAgreeLFDI,
 		"/api/derms/flow-reservations/dev/frq-active",
 		"/api/derms/grants?aggregatorLFDI=" + frAgreeLFDI + "&live=true",
+		"/api/derms/commitments?aggregatorLFDI=" + frAgreeLFDI,
 	} {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 			w := httptest.NewRecorder()
@@ -193,6 +194,7 @@ func TestAdminFlowReservationRoutesNeedACredential(t *testing.T) {
 		"/api/derms/flow-reservations?aggregatorLFDI=" + frAgreeLFDI,
 		"/api/derms/flow-reservations/dev/frq-active",
 		"/api/derms/grants?aggregatorLFDI=" + frAgreeLFDI + "&live=true",
+		"/api/derms/commitments?aggregatorLFDI=" + frAgreeLFDI,
 	} {
 		w := httptest.NewRecorder()
 		admin.ServeHTTP(w, bypassOnlyRequest(http.MethodGet, path))

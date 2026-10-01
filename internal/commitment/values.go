@@ -25,15 +25,16 @@ type Grant struct {
 
 // Control is an admin-issued DERControl as the ledger sees it.
 type Control struct {
-	MRID      string
-	ID        string // store id within Scope
-	Scope     string // edev/fsa/derp
-	FleetKey  string
-	Window    Window // already clipped at SupersededAt, see design 5.2
-	GrantMRID string // "" for a plain dispatch
-	TargetW   *sep2.ActivePower
-	Reach     int // managed devices of the fleet that read it
-	Cancelled bool
+	MRID        string
+	ID          string // store id within Scope
+	Scope       string // edev/fsa/derp
+	EndDeviceID string // the edev segment of Scope
+	FleetKey    string
+	Window      Window // already clipped at SupersededAt, see design 5.2
+	GrantMRID   string // "" for a plain dispatch
+	TargetW     *sep2.ActivePower
+	Reach       int // managed devices of the fleet that read it
+	Cancelled   bool
 }
 
 // ConflictCode names the bound a ConflictError refuses on. It is a fixed

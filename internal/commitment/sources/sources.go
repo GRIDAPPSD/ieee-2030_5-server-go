@@ -192,6 +192,30 @@ func (c *Controls) ExecutionsOf(ctx context.Context, grantMRID string) ([]commit
 	return c.filter(ctx, func(ctl commitment.Control) bool { return ctl.GrantMRID == grantMRID })
 }
 
+// ControlsAndExecutions walks the stores once for the fleet's controls and
+// the controls linked to each of grantMRIDs, from any fleet.
+func (c *Controls) ControlsAndExecutions(ctx context.Context, fleetKey string, grantMRIDs []string) ([]commitment.Control, map[string][]commitment.Control, error) {
+	execs := make(map[string][]commitment.Control, len(grantMRIDs))
+	for _, m := range grantMRIDs {
+		if m == "" {
+			return nil, nil, errors.New("sources: ControlsAndExecutions needs non-empty grant mRIDs")
+		}
+		execs[m] = nil
+	}
+	inFleet, err := c.filter(ctx, func(ctl commitment.Control) bool {
+		if ctl.GrantMRID != "" {
+			if list, ok := execs[ctl.GrantMRID]; ok {
+				execs[ctl.GrantMRID] = append(list, ctl)
+			}
+		}
+		return ctl.FleetKey == fleetKey
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return inFleet, execs, nil
+}
+
 func (c *Controls) filter(ctx context.Context, keep func(commitment.Control) bool) ([]commitment.Control, error) {
 	scopes, err := c.lifecycles.Parents(ctx)
 	if err != nil {
@@ -297,6 +321,10 @@ func (o *orphans) fleetOrGone(ctx context.Context, edevID string) (string, error
 // its lifecycle record. A record without a reach predates the link and
 // reaches the one device the control is stored under.
 func controlOf(scope, id, fleet string, ctrl sep2.DERControl, lc dercontrol.LifecycleRecord) (commitment.Control, error) {
+	edevID, ok := scopeEndDevice(scope)
+	if !ok {
+		return commitment.Control{}, fmt.Errorf("sources: control scope %q is not edev/fsa/derp", scope)
+	}
 	if ctrl.Interval == nil {
 		return commitment.Control{}, fmt.Errorf("sources: control %s in %s has no interval", ctrl.MRID, scope)
 	}
@@ -304,14 +332,15 @@ func controlOf(scope, id, fleet string, ctrl sep2.DERControl, lc dercontrol.Life
 		return commitment.Control{}, fmt.Errorf("sources: control %s in %s has reach %d", ctrl.MRID, scope, lc.Reach)
 	}
 	ctl := commitment.Control{
-		MRID:      ctrl.MRID,
-		ID:        id,
-		Scope:     scope,
-		FleetKey:  fleet,
-		Window:    commitment.Window{Start: ctrl.Interval.Start, Duration: ctrl.Interval.Duration},
-		GrantMRID: lc.GrantMRID,
-		Reach:     lc.Reach,
-		Cancelled: lc.CancelledAt != nil,
+		MRID:        ctrl.MRID,
+		ID:          id,
+		Scope:       scope,
+		EndDeviceID: edevID,
+		FleetKey:    fleet,
+		Window:      commitment.Window{Start: ctrl.Interval.Start, Duration: ctrl.Interval.Duration},
+		GrantMRID:   lc.GrantMRID,
+		Reach:       lc.Reach,
+		Cancelled:   lc.CancelledAt != nil,
 	}
 	if ctl.Reach == 0 {
 		ctl.Reach = 1

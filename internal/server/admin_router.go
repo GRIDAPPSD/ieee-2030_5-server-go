@@ -131,6 +131,12 @@ func buildAuthedAdminMux(adminKey string, svc *handler.AdminCertService, stores 
 		authed.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel", frH.HandleCancel())
 	}
 
+	// #801 DERMS read API: each fleet's live grants and plain controls, read
+	// through the ledger so the page never judges liveness itself.
+	if cH := newAdminCommitmentsHandler(stores); cH != nil {
+		authed.HandleFunc("GET /api/derms/commitments", cH.HandleList())
+	}
+
 	// #566 DER control API. Both POST routes change what a device does, so
 	// neither is on nonSensitiveAdminWrites: a real credential is required
 	// even from loopback.

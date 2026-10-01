@@ -762,22 +762,31 @@ func (h *AdminFlowReservationHandler) executionView(ctx context.Context, c commi
 // the figure the 409 rule enforces. A response with no executable grant
 // (a denial, or one with no energy) has nothing remaining.
 func energyFigures(resp sep2.FlowReservationResponse, live []commitment.Control) (committed, remaining *float64) {
-	wh := new(big.Rat).Quo(commitment.Committed(live), big.NewRat(3600, 1))
+	wh := committedWh(live)
 	c, _ := wh.Float64()
 	committed = &c
 	if resp.EnergyAvailable == nil || resp.Interval == nil || resp.Interval.Duration == 0 {
 		return committed, nil
 	}
-	available := new(big.Rat).SetInt64(resp.EnergyAvailable.Value)
-	available.Abs(available)
-	scale := new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(absInt8(resp.EnergyAvailable.Multiplier))), nil))
-	if resp.EnergyAvailable.Multiplier >= 0 {
-		available.Mul(available, scale)
-	} else {
-		available.Quo(available, scale)
-	}
+	available := scaledMagnitude(resp.EnergyAvailable.Value, resp.EnergyAvailable.Multiplier)
 	left, _ := available.Sub(available, wh).Float64()
 	return committed, &left
+}
+
+// committedWh is commitment.Committed in watt-hours.
+func committedWh(live []commitment.Control) *big.Rat {
+	return new(big.Rat).Quo(commitment.Committed(live), big.NewRat(3600, 1))
+}
+
+// scaledMagnitude is |value| x 10^multiplier, exact.
+func scaledMagnitude(value int64, multiplier int8) *big.Rat {
+	r := new(big.Rat).SetInt64(value)
+	r.Abs(r)
+	scale := new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(absInt8(multiplier))), nil))
+	if multiplier >= 0 {
+		return r.Mul(r, scale)
+	}
+	return r.Quo(r, scale)
 }
 
 func absInt8(v int8) int {

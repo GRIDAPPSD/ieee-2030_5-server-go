@@ -352,3 +352,103 @@ func reviseToDenial(ctx context.Context, w Writers, old Grant, rep Replacement, 
 	}
 	return nil
 }
+
+// CompleteRevision finishes a Revise that stopped between its writes, so the
+// request's chain holds the live responses oldMRIDs (oldest first) and the
+// newer tipMRID. It runs under the fleet lock of the tip. A tip that is a
+// denial rolls forward without a check, as Revise does: the old grants'
+// executions are cancelled and the old grants marked cancelled. Any other
+// tip is checked as Revise checked it, with every live execution of the old
+// grants and of the tip added; when they fit, executions still on an older
+// grant move to the tip and the older grants are marked cancelled
+// (rolledForward is true). When one does not fit, executions on the tip move
+// back to the newest older grant and deleteTip removes the tip.
+//
+// Each order of writes is the one Revise uses, so a failure part way leaves
+// a state a second call finishes. A grant that is already cancelled, the
+// tip included, is refused as not live.
+func (l *Ledger) CompleteRevision(ctx context.Context, w Writers, oldMRIDs []string, tipMRID string, now int64, deleteTip func(context.Context) error) (rolledForward bool, err error) {
+	if err := w.valid(); err != nil {
+		return false, err
+	}
+	if len(oldMRIDs) == 0 || tipMRID == "" || deleteTip == nil {
+		return false, errors.New("commitment: CompleteRevision needs the older grants, the tip and a way to delete it")
+	}
+	fleet, err := l.fleetOfGrant(ctx, tipMRID)
+	if err != nil {
+		return false, err
+	}
+	err = l.Within(ctx, []string{fleet}, func(View) error {
+		tip, err := l.liveGrant(ctx, tipMRID, fleet)
+		if err != nil {
+			return err
+		}
+		olds := make([]Grant, 0, len(oldMRIDs))
+		var onOld []Control
+		for _, mrid := range oldMRIDs {
+			g, err := l.liveGrant(ctx, mrid, fleet)
+			if err != nil {
+				return err
+			}
+			execs, err := l.liveExecutions(ctx, g.MRID)
+			if err != nil {
+				return err
+			}
+			olds = append(olds, g)
+			onOld = append(onOld, execs...)
+		}
+		onTip, err := l.liveExecutions(ctx, tip.MRID)
+		if err != nil {
+			return err
+		}
+
+		if tip.Window != nil && tip.Window.Duration == 0 {
+			if err := cancelExecutions(ctx, w.Executions, onOld, "revision completed after restart"); err != nil {
+				return err
+			}
+			rolledForward = true
+			return markAllCancelled(ctx, w, olds, "revision completed after restart", now)
+		}
+
+		all := slices.Concat(onOld, onTip)
+		slices.SortFunc(all, func(a, b Control) int {
+			return cmp.Or(cmp.Compare(a.Window.Start, b.Window.Start), cmp.Compare(a.MRID, b.MRID))
+		})
+		fitErr := fitsRevision(tip, all)
+		var conflict *ConflictError
+		if fitErr != nil && !errors.As(fitErr, &conflict) {
+			return fmt.Errorf("commitment: checking revision %s: %w", tip.MRID, fitErr)
+		}
+
+		if fitErr == nil {
+			for _, c := range onOld {
+				if err := w.Executions.RelinkExecution(ctx, c, tip.MRID); err != nil {
+					return fmt.Errorf("commitment: relinking execution %s to %s: %w", c.MRID, tip.MRID, unmarked(err))
+				}
+			}
+			rolledForward = true
+			return markAllCancelled(ctx, w, olds, "revision completed after restart", now)
+		}
+
+		newest := olds[len(olds)-1]
+		for _, c := range onTip {
+			if err := w.Executions.RelinkExecution(ctx, c, newest.MRID); err != nil {
+				return fmt.Errorf("commitment: relinking execution %s back to %s: %w", c.MRID, newest.MRID, unmarked(err))
+			}
+		}
+		if err := deleteTip(ctx); err != nil {
+			return fmt.Errorf("commitment: deleting revision %s: %w", tip.MRID, err)
+		}
+		return nil
+	})
+	return rolledForward && err == nil, err
+}
+
+func markAllCancelled(ctx context.Context, w Writers, grants []Grant, reason string, now int64) error {
+	for _, g := range grants {
+		if err := w.Grants.MarkCancelled(ctx, g, reason, now); err != nil {
+			return fmt.Errorf("commitment: marking grant %s cancelled: %w", g.MRID, err)
+		}
+	}
+	return nil
+}

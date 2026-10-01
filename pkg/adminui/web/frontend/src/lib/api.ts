@@ -99,12 +99,16 @@ export function fetchJSON<T>(path: string, opts?: RequestOptions): Promise<ApiRe
   return send<T>(path, { method: 'GET', headers: { Accept: 'application/json' } }, opts)
 }
 
-export function postJSON<T>(path: string, body: unknown): Promise<ApiResult<T>> {
-  return send<T>(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+export function postJSON<T>(path: string, body: unknown, opts?: RequestOptions): Promise<ApiResult<T>> {
+  return send<T>(
+    path,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    opts,
+  )
 }
 
 // postBody posts a raw string with an explicit content type. Used by the

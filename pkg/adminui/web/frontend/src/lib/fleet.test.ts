@@ -9,6 +9,7 @@ import {
   formatAge,
   formatContributionNote,
   formatValue,
+  isFleet,
   newestAvailReadingTime,
   newestPReadingTime,
   sumFigure,
@@ -186,5 +187,26 @@ describe('formatAge', () => {
   })
   it('renders unknown for a null age', () => {
     expect(formatAge(null)).toBe('unknown')
+  })
+})
+
+describe('isFleet', () => {
+  it('accepts a well-formed fleet', () => {
+    expect(isFleet(fleet())).toBe(true)
+  })
+
+  it.each([
+    ['null', null],
+    ['a string', 'x'],
+    ['an array', []],
+    ['no rollup', { ...fleet(), rollup: undefined }],
+    ['a rollup sum that is null', { ...fleet(), rollup: { ...fleet().rollup, p: null } }],
+    ['a non-numeric count', { ...fleet(), rollup: { ...fleet().rollup, deviceCount: '3' } }],
+    ['devices that is not an array', { ...fleet(), devices: null }],
+    ['a device that is null', { ...fleet(), devices: [null] }],
+    ['a device with no measurements', { ...fleet(), devices: [{ lfdi: 'a' }] }],
+    ['a non-string aggregator', { ...fleet(), aggregatorLFDI: 7 }],
+  ])('rejects %s', (_name, value) => {
+    expect(isFleet(value)).toBe(false)
   })
 })

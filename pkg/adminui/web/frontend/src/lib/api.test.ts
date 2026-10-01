@@ -84,4 +84,53 @@ describe('api', () => {
       body: 'PEM',
     })
   })
+
+  it('turns a request that outlives timeoutMs into a timed-out failure', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(
+        (_p, init) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+          }),
+      )
+
+      const pending = fetchJSON('/api/slow', { timeoutMs: 1000 })
+      await vi.advanceTimersByTimeAsync(1000)
+
+      expect(await pending).toEqual({ ok: false, error: 'request timed out', status: 0 })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports a caller abort as cancelled, not timed out', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      (_p, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+        }),
+    )
+    const ctrl = new AbortController()
+
+    const pending = fetchJSON('/api/slow', { signal: ctrl.signal, timeoutMs: 60_000 })
+    ctrl.abort()
+
+    expect(await pending).toEqual({ ok: false, error: 'request cancelled', status: 0 })
+  })
+
+  it('leaves a fast response untouched and clears its timeout timer', async () => {
+    vi.useFakeTimers()
+    try {
+      stubFetch({ ok: true, status: 200, json: () => Promise.resolve({ a: 1 }) })
+
+      const res = await fetchJSON('/api/fast', { timeoutMs: 1000 })
+
+      expect(res).toEqual({ ok: true, data: { a: 1 } })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

@@ -155,3 +155,30 @@ export function formatAge(seconds: number | null): string {
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
   return `${Math.floor(seconds / 86400)}d ago`
 }
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+function isFleetSum(v: unknown): boolean {
+  return (
+    isObject(v) && typeof v.sum === 'number' && typeof v.unreported === 'number' && typeof v.stale === 'number'
+  )
+}
+
+// isFleet checks exactly the fields FleetPane dereferences while rendering,
+// so an element that would throw there (null, a string, a missing rollup)
+// is rejected as a whole response shape error instead.
+export function isFleet(v: unknown): v is Fleet {
+  if (!isObject(v) || typeof v.aggregatorLFDI !== 'string') return false
+  if (!Array.isArray(v.devices)) return false
+  for (const d of v.devices) {
+    if (!isObject(d) || !isObject(d.measurements)) return false
+  }
+  const r = v.rollup
+  if (!isObject(r)) return false
+  for (const k of ['deviceCount', 'connected', 'alarmed', 'stale']) {
+    if (typeof r[k] !== 'number') return false
+  }
+  return isFleetSum(r.p) && isFleetSum(r.q) && isFleetSum(r.statWAvail) && isFleetSum(r.statVarAvail)
+}

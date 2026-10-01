@@ -8,6 +8,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
 // cancelReason is the reason recorded on a grant and its executions when the
@@ -77,10 +78,16 @@ func (c *Canceller) Cancel(ctx context.Context, edevID, frqID string, status sep
 		return err
 	}
 
-	frp, err := c.frp.Get(ctx, edevID, frqID)
+	// A revision (#668) replaces the response stored under frqID, so the
+	// live one is the chain's tip.
+	chain, err := ChainOf(ctx, c.frp, edevID, frqID)
 	if err != nil {
-		return fmt.Errorf("flowreservation: get FlowReservationResponse %s/%s: %w", edevID, frqID, err)
+		return err
 	}
+	if len(chain) == 0 {
+		return fmt.Errorf("flowreservation: get FlowReservationResponse %s/%s: %w", edevID, frqID, store.ErrNotFound)
+	}
+	frp := chain[len(chain)-1]
 	// A denial or a response with no interval commits nothing: there is no
 	// grant to cancel and no execution can name it.
 	if frp.Interval == nil || frp.Interval.Duration == 0 {

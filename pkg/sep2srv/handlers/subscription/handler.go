@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -40,6 +41,40 @@ var subscriptionRefuseCreate func(id string) bool
 // paths below both call this so the two can't drift apart (#435).
 func subscriptionHref(edevID, id string) string {
 	return fmt.Sprintf("/edev/%s/sub/%s", edevID, id)
+}
+
+// SubscriberEndDevice returns the EndDevice id a subscription href was minted
+// under by subscriptionHref, and false for any href not of that exact form.
+func SubscriberEndDevice(href string) (edevID string, ok bool) {
+	rest, found := strings.CutPrefix(href, "/edev/")
+	if !found {
+		return "", false
+	}
+	edevID, id, found := strings.Cut(rest, "/sub/")
+	if !found || edevID == "" || id == "" || strings.Contains(edevID, "/") || strings.Contains(id, "/") {
+		return "", false
+	}
+	return edevID, true
+}
+
+// ErrSubscribedResourceRefused is the error a ReadCheck wraps when the
+// subscriber may not read the subscribed resource, or the href names no
+// resource it could read. Any other ReadCheck error means the check could not
+// be completed.
+var ErrSubscribedResourceRefused = errors.New("subscribedResource refused")
+
+// ReadCheck reports whether the caller of r may read resource, the
+// subscribedResource of the Subscription r creates.
+type ReadCheck func(r *http.Request, resource string) error
+
+// maxLoggedResourceLen bounds a client-supplied subscribedResource in a log line.
+const maxLoggedResourceLen = 128
+
+func loggedResource(resource string) string {
+	if len(resource) > maxLoggedResourceLen {
+		return resource[:maxLoggedResourceLen]
+	}
+	return resource
 }
 
 // BuildSubscriptionList constructs a SubscriptionList from store results.
@@ -144,10 +179,17 @@ func pageSubscriptionRecords(records []memory.SubscriptionRecord, opts store.Lis
 // validate vets the notificationURI before anything is stored. Pass
 // (*Manager).ValidateNotificationURI so creation and delivery apply the same
 // DestinationPolicy; nil applies the default policy.
-func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(ctx context.Context, uri string) error) http.HandlerFunc {
+//
+// canRead decides whether the caller may read the subscribedResource. A nil
+// canRead refuses every create, since without it any resource could be
+// subscribed to.
+func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(ctx context.Context, uri string) error, canRead ReadCheck) http.HandlerFunc {
 	if validate == nil {
 		log.Print("subscription: no notificationURI validator wired; POST /edev/{id}/sub applies the default DestinationPolicy")
 		validate = DestinationPolicy{}.ValidateNotificationURI
+	}
+	if canRead == nil {
+		log.Print("subscription: no subscribedResource check wired; POST /edev/{id}/sub refuses every Subscription")
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -166,6 +208,23 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 		var sub sep2.Subscription
 		if err := xml.Unmarshal(body, &sub); err != nil {
 			srverr.BadRequestMessage(w, r, "invalid XML", err)
+			return
+		}
+
+		if canRead == nil {
+			srverr.Internal(w, r, errors.New("no subscribedResource check wired"))
+			return
+		}
+		if err := canRead(r, sub.SubscribedResource); err != nil {
+			if !errors.Is(err, ErrSubscribedResourceRefused) {
+				srverr.Internal(w, r, fmt.Errorf("checking subscribedResource: %w", err))
+				return
+			}
+			log.Printf("subscription: refused subscribedResource %q for EndDevice %q: %v", loggedResource(sub.SubscribedResource), edevID, err)
+			// IEEE 2030.5-2018 8.7.3.4 rule m: a Subscription the server
+			// cannot accept is answered 400. One body for an unreadable and a
+			// nonexistent resource, so the answer does not reveal which.
+			http.Error(w, "subscribedResource refused", http.StatusBadRequest)
 			return
 		}
 

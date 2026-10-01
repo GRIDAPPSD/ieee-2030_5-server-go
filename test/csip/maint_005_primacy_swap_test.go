@@ -40,6 +40,7 @@ import (
 
 const (
 	maint005EndDeviceID = "edev-maint005"
+	maint005FSAID       = "fsa-primacy"
 	maint005ProgramID   = "prog-primacy"
 	maint005FromPrimacy = uint8(1)
 	maint005ToPrimacy   = uint8(7)
@@ -60,7 +61,7 @@ func TestMAINT_005_PrimacySwap(t *testing.T) {
 
 	// Step 1a: seed EndDevice + DERProgram with primacy=1.
 	seedOwnedEndDevice(t, srv.Stores.EndDevices, maint005EndDeviceID, owner)
-	derpHref := "/edev/" + maint005EndDeviceID + "/derp/" + maint005ProgramID
+	derpHref := "/edev/" + maint005EndDeviceID + "/fsa/" + maint005FSAID + "/derp/" + maint005ProgramID
 	var prog sep2.DERProgram
 	prog.Href = derpHref
 	prog.Primacy = maint005FromPrimacy

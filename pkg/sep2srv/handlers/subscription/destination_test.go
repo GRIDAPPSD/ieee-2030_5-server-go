@@ -500,7 +500,7 @@ func TestCreateSubscriptionRefusesDestination(t *testing.T) {
 			mgr := newSeamedManager(t, store, fn)
 			transportDials := subscription.CountTransportDials(mgr)
 
-			rec := postSubscription(t, subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI), "1", "/edev/1/fsa", tc.uri)
+			rec := postSubscription(t, subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI, allowAnyResource), "1", "/edev/1/fsa", tc.uri)
 
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400", rec.Code)
@@ -540,7 +540,7 @@ func TestCreateSubscriptionNilValidatorAppliesDefaultPolicy(t *testing.T) {
 	t.Parallel()
 
 	store := memory.NewSubscriptionStore()
-	h := subscription.HandleCreateSubscription(store, nil)
+	h := subscription.HandleCreateSubscription(store, nil, allowAnyResource)
 
 	if rec := postSubscription(t, h, "1", "/edev/1/fsa", "http://127.0.0.1:8080/n"); rec.Code != http.StatusBadRequest {
 		t.Errorf("loopback status = %d, want 400", rec.Code)
@@ -574,7 +574,7 @@ func TestAllowedDestinationIsStoredAndDelivered(t *testing.T) {
 			mgr := newSeamedManager(t, store, fn)
 			uri := destURI(tc.host)
 
-			rec := postSubscription(t, subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI), "1", "/edev/1/fsa", uri)
+			rec := postSubscription(t, subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI, allowAnyResource), "1", "/edev/1/fsa", uri)
 			if rec.Code != http.StatusCreated {
 				t.Fatalf("status = %d, want 201; body=%s", rec.Code, rec.Body.String())
 			}
@@ -662,7 +662,7 @@ func TestDeliveryRechecksHostnameResolvedAfterCreation(t *testing.T) {
 	store := memory.NewSubscriptionStore()
 	mgr := newSeamedManager(t, store, fn)
 
-	rec := postSubscription(t, subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI), "1", "/edev/1/fsa", destURI("rebind.test"))
+	rec := postSubscription(t, subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI, allowAnyResource), "1", "/edev/1/fsa", destURI("rebind.test"))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create while rebind.test is allowed: status = %d, want 201", rec.Code)
 	}
@@ -825,7 +825,7 @@ func TestRefusalsAreLogged(t *testing.T) {
 	mgr := newSeamedManager(t, store, fn)
 
 	uri := destURI("loopback.test")
-	if rec := postSubscription(t, subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI), "1", "/edev/1/fsa", uri); rec.Code != http.StatusBadRequest {
+	if rec := postSubscription(t, subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI, allowAnyResource), "1", "/edev/1/fsa", uri); rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 	if want := `subscription: refused notificationURI "` + uri + `"`; !strings.Contains(logs.String(), want) {
@@ -874,7 +874,7 @@ func TestAllowLoopbackPolicyAdmitsOnlyLoopback(t *testing.T) {
 	fn := standardNet(sink, sink)
 	store := memory.NewSubscriptionStore()
 	mgr := newSeamedManager(t, store, fn, subscription.WithDestinationPolicy(subscription.DestinationPolicy{AllowLoopback: true}))
-	h := subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI)
+	h := subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI, allowAnyResource)
 
 	if rec := postSubscription(t, h, "1", "/edev/1/fsa", destURI("loopback.test")); rec.Code != http.StatusCreated {
 		t.Fatalf("loopback with AllowLoopback: status = %d, want 201", rec.Code)

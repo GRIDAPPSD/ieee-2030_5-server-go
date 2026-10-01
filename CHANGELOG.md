@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `subscription.HandleCreateSubscription` takes a read check on the
+  `subscribedResource` as its third argument, a `subscription.ReadCheck`;
+  nil refuses every create. `BuildProtocolRouter` passes its own.
+
 ### Deprecated
 
 ### Removed

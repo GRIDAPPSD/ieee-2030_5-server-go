@@ -23,7 +23,7 @@ func TestCreateSubscriptionUnresolvedAndRefusedResponsesMatch(t *testing.T) {
 	fn := standardNet(sink, sink)
 	store := memory.NewSubscriptionStore()
 	mgr := newSeamedManager(t, store, fn)
-	h := subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI)
+	h := subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI, allowAnyResource)
 
 	refused := postSubscription(t, h, "1", "/edev/1/fsa", destURI("loopback.test"))
 	if refused.Code != http.StatusBadRequest {
@@ -55,7 +55,7 @@ func TestCreationLogNamesTheResolutionOutcome(t *testing.T) {
 	store := memory.NewSubscriptionStore()
 	mgr := newSeamedManager(t, store, fn)
 	subscription.SetCreationResolveTimeout(mgr, 200*time.Millisecond)
-	h := subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI)
+	h := subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI, allowAnyResource)
 
 	refused := postSubscription(t, h, "refused", "/edev/1/fsa", destURI("loopback.test"))
 	if refused.Code != http.StatusBadRequest {

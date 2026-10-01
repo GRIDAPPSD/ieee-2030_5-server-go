@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -93,6 +94,30 @@ type Manager struct {
 	// ErrManagerClosed" (#460).
 	closeMu sync.RWMutex
 	closed  bool
+
+	// subscriberCheck holds the func set by SetSubscriberCheck; nil until set.
+	subscriberCheck   atomic.Pointer[SubscriberCheck]
+	uncheckedNotified sync.Once
+}
+
+// SubscriberCheck reports whether the device that owns sub may still read
+// sub.SubscribedResource. A nil error admits the delivery; any error,
+// including one from a check that could not complete, withholds it.
+type SubscriberCheck func(ctx context.Context, sub sep2.Subscription) error
+
+// SetSubscriberCheck sets the check Notify applies to every subscription
+// before delivering to it, so a subscription stored before an access change,
+// or written to the store directly, is held to the access its subscriber has
+// at delivery. The protocol router sets it; nil clears it.
+func (m *Manager) SetSubscriberCheck(fn SubscriberCheck) {
+	if m == nil {
+		return
+	}
+	if fn == nil {
+		m.subscriberCheck.Store(nil)
+		return
+	}
+	m.subscriberCheck.Store(&fn)
 }
 
 // ManagerOption configures a Manager at construction.
@@ -280,8 +305,21 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 		return
 	}
 
+	check := m.subscriberCheck.Load()
+	if check == nil && len(records) > 0 {
+		m.uncheckedNotified.Do(func() {
+			log.Print("notification: no subscriber check set; delivering on the stored subscription index alone")
+		})
+	}
+
 	for _, rec := range records {
 		sub := rec.Subscription
+		if check != nil {
+			if err := (*check)(ctx, sub); err != nil {
+				log.Printf("notification: not notifying subscription %q for %q: %v", sub.Href, loggedResource(sub.SubscribedResource), err)
+				continue
+			}
+		}
 		notification := sep2.Notification{
 			Resource:           sep2.Resource{Href: resourceHref},
 			SubscribedResource: sub.SubscribedResource,

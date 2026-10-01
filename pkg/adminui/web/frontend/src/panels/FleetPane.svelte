@@ -142,6 +142,9 @@
                   updated {formatAge(power.ageSeconds)}{formatContributionNote(power)}
                 </div>
               {/if}
+              {#if power.kind !== 'none'}
+                <div class="hint" data-testid="fleet-power-source">Source: mirror readings (server time)</div>
+              {/if}
             </td>
             <td data-testid="fleet-avail">
               <div data-testid="fleet-avail-active">
@@ -159,10 +162,14 @@
                 {/if}
               </div>
               <div class="hint">updated {formatAge(activeAvail.ageSeconds)}</div>
+              <div class="hint" data-testid="fleet-avail-source">Source: device reports (device clock)</div>
             </td>
           </tr>
         {/each}
       </tbody>
     </table>
+    <p class="hint" data-testid="fleet-counts-source">
+      Source: device status reports (DERStatus, device clock). Connected, alarmed, stale and unreported count devices by those reports.
+    </p>
   {/if}
 </div>

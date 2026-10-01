@@ -450,6 +450,7 @@
       {directionLabel(r.direction)},
       <span data-testid="response-power">{formatQuantity(scaledNumber(r.powerAvailable), 'W')}</span>
     </div>
+    <div class="hint" data-testid="response-source">Source: this server's grant record (not a reading)</div>
     <div class="hint" data-testid="response-answered">answered by {formatActor(r.answeredBy)}</div>
     {#if r.cancelledBy !== null || r.cancelReason !== null}
       <div class="hint" data-testid="response-cancelled">
@@ -460,11 +461,13 @@
       <div data-testid="response-commitment">
         energy committed {formatQuantity(r.energyCommittedWh, 'Wh')}, remaining
         {formatQuantity(r.energyRemainingWh, 'Wh')}
+        <div class="hint" data-testid="response-commitment-source">Source: computed by this server from its live controls</div>
       </div>
       {#each r.executions as ex (ex.mRID)}
         <div class="hint" data-testid="response-execution">
           control {ex.eventStatus?.status ?? 'status missing'}, {formatInterval(ex.interval)}, target
           {formatQuantity(scaledNumber(ex.targetW), 'W')} {directionLabel(r.direction)} (DER frame)
+          <div data-testid="response-execution-source">Source: this server's DER control record</div>
         </div>
       {/each}
     {/if}
@@ -542,6 +545,7 @@
                     {directionLabel(entry.request.direction)},
                     {formatQuantity(scaledNumber(entry.request.powerRequested), 'W')}
                   </div>
+                  <div class="hint" data-testid="frq-requested-source">Source: the aggregator's request</div>
                 </td>
                 <td>
                   <span data-testid="frq-state">{entry.state}</span>

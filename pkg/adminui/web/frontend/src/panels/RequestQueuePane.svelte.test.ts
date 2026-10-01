@@ -259,6 +259,37 @@ describe('RequestQueuePane content', () => {
     expect(within(history).queryByTestId('response-commitment')).toBeNull()
   })
 
+  it('names the source of requested and granted values, and gives a granted value no age', async () => {
+    mockOk(fixture)
+    render(RequestQueuePane)
+    const rows = await loaded()
+    expect(within(rows[0]).getByTestId('frq-requested-source')).toHaveTextContent("Source: the aggregator's request")
+    const tip = screen.getByTestId('frq-tip')
+    const granted = within(tip).getByTestId('response-source')
+    expect(granted).toHaveTextContent("Source: this server's grant record")
+    expect(granted.textContent).not.toMatch(/ago|updated|fetched/)
+    // The value's own cells carry no reading age; the label alone would not show one.
+    const noAge = /\bago\b|updated|fetched/
+    expect(within(tip).getByTestId('response-energy').textContent).not.toMatch(noAge)
+    expect(within(tip).getByTestId('response-power').textContent).not.toMatch(noAge)
+    expect(tip.textContent).not.toMatch(noAge)
+    expect(within(screen.getByTestId('frq-history')).getByTestId('response-source')).toHaveTextContent(
+      "Source: this server's grant record",
+    )
+  })
+
+  it('gives committed energy and each execution its own true source', async () => {
+    mockOk(fixture)
+    render(RequestQueuePane)
+    const tip = await screen.findByTestId('frq-tip')
+    expect(within(within(tip).getByTestId('response-commitment')).getByTestId('response-commitment-source')).toHaveTextContent(
+      'Source: computed by this server from its live controls',
+    )
+    expect(within(within(tip).getByTestId('response-execution')).getByTestId('response-execution-source')).toHaveTextContent(
+      "Source: this server's DER control record",
+    )
+  })
+
   it('shows a null quantity as missing, never as 0', async () => {
     const d = copy()
     d.requests[1].tip.energyRemainingWh = null

@@ -71,12 +71,24 @@ function goTags(structName: string): string[] {
   return [...block[1].matchAll(/`json:"([^",]+)/g)].map((m) => m[1])
 }
 
+// An exported field with no json tag is still sent, under its Go name, and
+// goTags would not see it; every field line in the block must carry a tag.
+function untaggedFields(structName: string): string[] {
+  const block = new RegExp(`type ${structName} struct \\{([\\s\\S]*?)\\n\\}`).exec(goSource)
+  if (!block) throw new Error(`struct ${structName} not found in admin_fleet.go`)
+  return block[1]
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('//') && !line.includes('json:"'))
+}
+
 describe('fleet wire types against admin_fleet.go json tags', () => {
   for (const [name, keys] of Object.entries(wireKeys)) {
     it(`${name} declares exactly the keys the Go struct sends`, () => {
       const tags = goTags(name)
       expect(tags.length).toBeGreaterThan(0)
       expect([...keys].sort()).toEqual([...tags].sort())
+      expect(untaggedFields(name)).toEqual([])
     })
   }
 })

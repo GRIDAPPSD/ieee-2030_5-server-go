@@ -72,7 +72,10 @@ async function send<T>(path: string, init: RequestInit, opts?: RequestOptions): 
   opts.signal?.addEventListener('abort', onCallerAbort)
   try {
     const result = await sendUnbounded<T>(path, { ...init, signal: ctrl.signal })
-    if (!result.ok && ctrl.signal.aborted) {
+    // Checked whatever result.ok says: when the abort lands after the 200
+    // headers, decode swallows the rejected body read into data null, which
+    // would otherwise come back as a success the caller never got.
+    if (ctrl.signal.aborted) {
       return { ok: false, error: timedOut ? 'request timed out' : 'request cancelled', status: 0 }
     }
     return result

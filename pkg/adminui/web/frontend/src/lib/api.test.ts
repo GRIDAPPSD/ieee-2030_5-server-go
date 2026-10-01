@@ -133,4 +133,60 @@ describe('api', () => {
       vi.useRealTimers()
     }
   })
+
+  it('reports a timeout that fires while the body is being read as timed out, not as null data', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(
+        (_p, init) =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            headers: new Headers(),
+            json: () =>
+              new Promise((_resolve, reject) => {
+                init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+              }),
+          } as Response),
+      )
+
+      const pending = fetchJSON('/api/stalled-body', { timeoutMs: 1000 })
+      await vi.advanceTimersByTimeAsync(1000)
+
+      expect(await pending).toEqual({ ok: false, error: 'request timed out', status: 0 })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops listening to the caller signal once the request has settled', async () => {
+    let sent: AbortSignal | undefined
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_p, init) => {
+      sent = init?.signal as AbortSignal
+      return Promise.resolve({ ok: true, status: 200, headers: new Headers(), json: () => Promise.resolve({}) } as Response)
+    })
+    const caller = new AbortController()
+
+    await fetchJSON('/api/done', { signal: caller.signal })
+    caller.abort()
+
+    // A listener left on the caller's long-lived signal would abort the
+    // finished request's own signal here.
+    expect(sent?.aborted).toBe(false)
+  })
+
+  it('aborts the outgoing request at once when the caller signal is already aborted', async () => {
+    let abortedAtSend: boolean | undefined
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_p, init) => {
+      abortedAtSend = init?.signal?.aborted
+      return Promise.resolve({ ok: true, status: 200, headers: new Headers(), json: () => Promise.resolve({ a: 1 }) } as Response)
+    })
+    const caller = new AbortController()
+    caller.abort()
+
+    const res = await fetchJSON('/api/never', { signal: caller.signal })
+
+    expect(abortedAtSend).toBe(true)
+    expect(res).toEqual({ ok: false, error: 'request cancelled', status: 0 })
+  })
 })

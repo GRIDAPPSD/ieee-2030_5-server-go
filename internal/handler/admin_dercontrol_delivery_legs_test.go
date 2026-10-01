@@ -198,3 +198,35 @@ func TestDeliveryLegs_EqualReceiptStillFlags(t *testing.T) {
 		t.Fatal("not flagged, want the directionless reading flagged")
 	}
 }
+
+// T11: phase A reported instantaneous and phase B reported Average form one
+// phase sum; neither phase is read as 0 W.
+func TestDeliveryLegs_T11MixedQualifierPhases(t *testing.T) {
+	d := newDeliveryHarness(t)
+	b := deliveryBase
+	d.seedReadings(t, "1", dcLFDI, roleIsDER, ptrU32(900),
+		reading{mrid: "A", at: b, value: 1000, dir: reverseDir(), phase: phaseA},
+		reading{mrid: "B", at: b + 600, value: 1000, dir: reverseDir(), qual: dq(2), phase: phaseB, period: &sep2.DateTimeInterval{Start: b, Duration: 600}},
+	)
+	mrid := d.seedControl(t, "e", b, 900, dercontrol.LifecycleRecord{})
+	// A covers [b, b+900), B [b, b+600): the sum covers [b, b+600) at 2000 W.
+	checkDelivery(t, d, mrid, 600, 2000)
+	if del := d.deliveryOf(t, mrid); del.Readings != 2 {
+		t.Fatalf("readings = %d, want 2", del.Readings)
+	}
+}
+
+// T11, second case: a phase reported both ways takes its Average reading
+// where one covers the second, and its instantaneous one elsewhere.
+func TestDeliveryLegs_T11PhasePrefersAverage(t *testing.T) {
+	d := newDeliveryHarness(t)
+	b := deliveryBase
+	d.seedReadings(t, "1", dcLFDI, roleIsDER, ptrU32(900),
+		reading{mrid: "AI", at: b, value: 1000, dir: reverseDir(), phase: phaseA},
+		reading{mrid: "AV", at: b + 600, value: 3000, dir: reverseDir(), qual: dq(2), phase: phaseA, period: &sep2.DateTimeInterval{Start: b, Duration: 600}},
+		reading{mrid: "B", at: b, value: 1000, dir: reverseDir(), phase: phaseB},
+	)
+	mrid := d.seedControl(t, "e", b, 900, dercontrol.LifecycleRecord{})
+	// [b, b+600) at 3000 + 1000 W, then [b+600, b+900) at 1000 + 1000 W.
+	checkDelivery(t, d, mrid, 900, (4000*600+2000*300)/900.0)
+}

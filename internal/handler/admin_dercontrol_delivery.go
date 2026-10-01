@@ -276,15 +276,16 @@ func resolveSeries(spans []powerSpan) []piece {
 // covers it; paths are never added together:
 //  1. the Average total;
 //  2. the instantaneous total;
-//  3. the Average phase sum;
-//  4. the instantaneous phase sum.
+//  3. the phase sum.
 //
 // Average ranks first because its span is the standard's ("Average over the
 // Interval", CSIP Table 3) while the instantaneous hold is inferred; the
 // total ranks above the phases because 2018 Table E.2 gives DER active power
-// with no phase. A phase sum covers a second only when every phase leg of
-// its qualifier seen in the window covers it: a dropped phase uncovers the
-// second and is never read as 0 W.
+// with no phase. The phase sum adds every phase seen in the window, of either
+// qualifier, each taking its Average reading where one covers the second and
+// its instantaneous one otherwise; phases never overlap, so mixing qualifiers
+// cannot double count. It covers a second only when every phase does: a
+// dropped phase uncovers the second and is never read as 0 W.
 func integrate(spans map[leg][]powerSpan, seen map[leg]bool) (wattSeconds float64, covered int64, used []powerSpan) {
 	type edge struct {
 		at    int64
@@ -299,16 +300,12 @@ func integrate(spans map[leg][]powerSpan, seen map[leg]bool) (wattSeconds float6
 		}
 	}
 	slices.SortFunc(edges, func(a, b edge) int { return cmp.Compare(a.at, b.at) })
-	phaseLegs := func(average bool) []leg {
-		var out []leg
-		for l := range seen {
-			if l.average == average && l.phase != phaseTotal {
-				out = append(out, l)
-			}
+	var phases []uint8
+	for l := range seen {
+		if l.phase != phaseTotal && !slices.Contains(phases, l.phase) {
+			phases = append(phases, l.phase)
 		}
-		return out
 	}
-	avgPhases, instPhases := phaseLegs(true), phaseLegs(false)
 
 	// Pieces of one leg are disjoint, so a leg has at most one active piece.
 	active := map[leg]powerSpan{}
@@ -326,7 +323,7 @@ func integrate(spans map[leg][]powerSpan, seen map[leg]bool) (wattSeconds float6
 		if i == len(edges) {
 			break
 		}
-		path := pickPath(active, avgPhases, instPhases)
+		path := pickPath(active, phases)
 		if len(path) == 0 {
 			continue
 		}
@@ -344,29 +341,27 @@ func integrate(spans map[leg][]powerSpan, seen map[leg]bool) (wattSeconds float6
 }
 
 // pickPath returns the spans of the highest-ranked path active now, or none.
-func pickPath(active map[leg]powerSpan, avgPhases, instPhases []leg) []powerSpan {
+func pickPath(active map[leg]powerSpan, phases []uint8) []powerSpan {
 	for _, total := range []leg{{average: true}, {average: false}} {
 		if sp, ok := active[total]; ok {
 			return []powerSpan{sp}
 		}
 	}
-	for _, phases := range [][]leg{avgPhases, instPhases} {
-		if len(phases) == 0 {
-			continue
-		}
-		path := make([]powerSpan, 0, len(phases))
-		for _, l := range phases {
-			sp, ok := active[l]
-			if !ok {
-				break
-			}
-			path = append(path, sp)
-		}
-		if len(path) == len(phases) {
-			return path
-		}
+	if len(phases) == 0 {
+		return nil
 	}
-	return nil
+	path := make([]powerSpan, 0, len(phases))
+	for _, p := range phases {
+		sp, ok := active[leg{average: true, phase: p}]
+		if !ok {
+			sp, ok = active[leg{average: false, phase: p}]
+		}
+		if !ok {
+			return nil
+		}
+		path = append(path, sp)
+	}
+	return path
 }
 
 // spanHeap keeps the most recently received span on top.

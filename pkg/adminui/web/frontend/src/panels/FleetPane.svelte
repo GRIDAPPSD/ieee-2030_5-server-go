@@ -202,14 +202,14 @@
               {:else if held.data.grants.length === 0 && held.data.plainControls.length === 0}
                 <span data-testid="fleet-commitments-none">none</span>
               {:else}
-                {#each held.data.grants as g (g.mRID)}
+                {#each held.data.grants as g, i (`${g.edevId}/${g.mRID}/${i}`)}
                   <div data-testid="fleet-grant">
                     Grant {formatInterval(g.window)}: {grantDirectionWord(g.direction)},
                     {g.powerW === null ? 'power not sent' : formatQuantity(g.powerW, 'W')},
                     {g.energyRemainingWh === null ? 'energy left not sent' : `${formatQuantity(g.energyRemainingWh, 'Wh')} left`}
                   </div>
                 {/each}
-                {#each held.data.plainControls as c (c.mRID)}
+                {#each held.data.plainControls as c, i (`${c.edevId}/${c.mRID}/${i}`)}
                   <div data-testid="fleet-control">
                     Control {formatInterval(c.window)}: target
                     {c.targetW === null ? 'not sent' : `${formatQuantity(c.targetW, 'W')} (discharge positive)`}

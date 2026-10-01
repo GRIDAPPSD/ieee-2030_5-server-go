@@ -3,7 +3,7 @@
 // "none" (an empty list says the fleet is free), and every sign and
 // direction is shown as the route sent it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/svelte'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import FleetPane from './FleetPane.svelte'
 import * as api from '../lib/api'
 import type { Fleet } from '../lib/fleet'
@@ -162,5 +162,48 @@ describe('FleetPane commitments column', () => {
     expect(grant).toHaveTextContent('power not sent')
     expect(grant).toHaveTextContent('energy left not sent')
     expect(grant).not.toHaveTextContent('0 W')
+  })
+
+  it('drops a superseded commitments reply that lands after a Refresh', async () => {
+    const calls: string[] = []
+    let releaseFirst: (v: unknown) => void = () => {}
+    const first = new Promise((resolve) => {
+      releaseFirst = resolve
+    })
+    vi.spyOn(api, 'fetchJSON').mockImplementation(((path: string) => {
+      if (path === '/api/derms/fleets') return Promise.resolve({ ok: true, data: [fleet('AGGR')] })
+      calls.push(path)
+      if (calls.length === 1) return first
+      return Promise.resolve({ ok: true, data: commitments('AGGR', { grants: [{ ...GRANT, mRID: 'NEW', powerW: 7000 }] }) })
+    }) as never)
+    render(FleetPane)
+    await waitFor(() => expect(calls).toHaveLength(1))
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    await waitFor(() => expect(screen.getByTestId('fleet-grant')).toHaveTextContent('7,000 W'))
+
+    releaseFirst({ ok: true, data: commitments('AGGR', { grants: [{ ...GRANT, mRID: 'OLD', powerW: 1000 }] }) })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(screen.getAllByTestId('fleet-grant')).toHaveLength(1)
+    expect(screen.getByTestId('fleet-grant')).toHaveTextContent('7,000 W')
+    expect(screen.getByTestId('fleet-grant')).not.toHaveTextContent('1,000 W')
+  })
+
+  it('renders every row when the route repeats an mRID', async () => {
+    mockRoutes([fleet('AGGD2')], {
+      AGGD2: {
+        ok: true,
+        data: commitments('AGGD2', {
+          grants: [GRANT, { ...GRANT, powerW: 6000 }],
+          plainControls: [
+            { mRID: 'C', edevId: 'E', window: { start: 1_700_000_000, duration: 600 }, targetW: 1 },
+            { mRID: 'C', edevId: 'E', window: { start: 1_700_000_000, duration: 600 }, targetW: 2 },
+          ],
+        }),
+      },
+    })
+    render(FleetPane)
+    expect(await screen.findAllByTestId('fleet-grant')).toHaveLength(2)
+    expect(screen.getAllByTestId('fleet-control')).toHaveLength(2)
   })
 })

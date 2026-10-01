@@ -404,6 +404,10 @@ jobs:
       - name: Rebuild frontend and diff against committed dist/
         run: make ui-check
 
+      # node_modules is already installed by `make ui-check` above.
+      - name: Type-check the frontend
+        run: cd pkg/adminui/web/frontend && npm run check
+
       - name: Run frontend component tests
         run: cd pkg/adminui/web/frontend && npm run test
 

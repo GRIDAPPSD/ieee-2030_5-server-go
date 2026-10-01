@@ -288,13 +288,20 @@ func reviseWrites(ctx context.Context, w Writers, old Grant, rep Replacement, ex
 	var touched []Control
 	undo := func(cause error) error {
 		var failed []error
+		relinkFailed := false
 		for _, c := range slices.Backward(touched) {
 			if err := undoStep(ctx, func(uctx context.Context) error { return w.Executions.RelinkExecution(uctx, c, old.MRID) }); err != nil {
+				relinkFailed = true
 				failed = append(failed, fmt.Errorf("relinking %s back to %s: %w", c.MRID, old.MRID, unmarked(err)))
 			}
 		}
-		if err := undoStep(ctx, rep.Delete); err != nil {
-			failed = append(failed, fmt.Errorf("deleting revision %s: %w", rep.Grant.MRID, err))
+		// An execution that may still name the revision keeps it stored:
+		// deleting it would leave the control pointing at a grant no walk
+		// of the request's responses can reach.
+		if !relinkFailed {
+			if err := undoStep(ctx, rep.Delete); err != nil {
+				failed = append(failed, fmt.Errorf("deleting revision %s: %w", rep.Grant.MRID, err))
+			}
 		}
 		if len(failed) > 0 {
 			return fmt.Errorf("%w: %w: %w", ErrUndo, cause, errors.Join(failed...))

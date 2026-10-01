@@ -4,11 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
+
+// maxCancelPasses bounds how often Cancel re-walks a chain that a concurrent
+// Revise keeps extending.
+const maxCancelPasses = 4
+
+// ErrChainMoving is returned when a request's revision chain kept growing
+// through every cancel pass; the request is Cancelled, so repeating the call
+// finishes the work.
+var ErrChainMoving = errors.New("flowreservation: response chain kept changing during the cancel")
 
 // cancelReason is the reason recorded on a grant and its executions when the
 // client withdraws the request that earned them.
@@ -77,29 +88,77 @@ func (c *Canceller) Cancel(ctx context.Context, edevID, frqID string, status sep
 		return err
 	}
 
-	frp, err := c.frp.Get(ctx, edevID, frqID)
-	if err != nil {
-		return fmt.Errorf("flowreservation: get FlowReservationResponse %s/%s: %w", edevID, frqID, err)
-	}
-	// A denial or a response with no interval commits nothing: there is no
-	// grant to cancel and no execution can name it.
-	if frp.Interval == nil || frp.Interval.Duration == 0 {
-		return nil
-	}
-	if c.ledger == nil {
-		return commitment.ErrNoLedger
-	}
-	// The grant writer notifies only after CancelGrant returns, once the
-	// fleet lock is released.
+	// A revision (#668) stores a new response per change, so the request's
+	// answer is a chain, not one response.
+	//
+	// Every pass's grant writes notify only after the passes end, once the
+	// fleet lock is released, and one device is notified once.
 	if c.notify.n != nil {
 		var flush func()
 		ctx, flush = DeferNotifications(ctx, c.notify.n)
 		defer flush()
 	}
-	err = c.ledger.CancelGrant(ctx, c.writers, frp.MRID, cancelReason, sep2time.Now().Unix())
-	var conflict *commitment.ConflictError
-	if errors.As(err, &conflict) && conflict.Code == commitment.ConflictGrantNotLive {
-		return nil
+	var unresolved []string
+	for range maxCancelPasses {
+		chain, err := ChainOf(ctx, c.frp, edevID, frqID)
+		if err != nil {
+			return err
+		}
+		if len(chain) == 0 {
+			return fmt.Errorf("flowreservation: get FlowReservationResponse %s/%s: %w", edevID, frqID, store.ErrNotFound)
+		}
+		gone, err := c.cancelChain(ctx, chain)
+		if err != nil {
+			return err
+		}
+		// A Revise that stored its response after the walk cancelled the
+		// member we held, so that member's cancel read as "not live" and
+		// the new tip is still live: walk again until the chain holds still.
+		// A member the ledger did not know means the walk saw a state that
+		// has since changed (another response may now hold its id), so that
+		// pass settles nothing even when the length is unchanged.
+		after, err := ChainOf(ctx, c.frp, edevID, frqID)
+		if err != nil {
+			return err
+		}
+		if len(gone) == 0 && len(after) == len(chain) {
+			return nil
+		}
+		unresolved = gone
 	}
-	return err
+	if len(unresolved) > 0 {
+		return fmt.Errorf("%w: not known to the ledger: %s", ErrChainMoving, strings.Join(unresolved, ", "))
+	}
+	return ErrChainMoving
+}
+
+// cancelChain cancels every live grant in chain. More than one can be live
+// after a Revise whose rollback failed, so the tip alone is not enough. A
+// member that is already cancelled is skipped.
+func (c *Canceller) cancelChain(ctx context.Context, chain []sep2.FlowReservationResponse) (gone []string, err error) {
+	for _, frp := range chain {
+		// A denial or a response with no interval commits nothing: there is
+		// no grant to cancel and no execution can name it.
+		if frp.Interval == nil || frp.Interval.Duration == 0 {
+			continue
+		}
+		if c.ledger == nil {
+			return gone, commitment.ErrNoLedger
+		}
+		err = c.ledger.CancelGrant(ctx, c.writers, frp.MRID, cancelReason, sep2time.Now().Unix())
+		var conflict *commitment.ConflictError
+		if errors.As(err, &conflict) && conflict.Code == commitment.ConflictGrantNotLive {
+			continue
+		}
+		// A member seen mid-revision and rolled back cleanly is gone by now,
+		// and the pass is repeated to see what replaced it.
+		if errors.Is(err, commitment.ErrNoGrant) {
+			gone = append(gone, frp.MRID)
+			continue
+		}
+		if err != nil {
+			return gone, err
+		}
+	}
+	return gone, nil
 }

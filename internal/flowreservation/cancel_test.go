@@ -2,6 +2,7 @@ package flowreservation_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -238,4 +239,75 @@ func TestCancel_RacesTheHoldDeadline(t *testing.T) {
 		grantedThenCancelled++
 	}
 	t.Logf("%d rounds: denied %d, granted then cancelled %d", rounds, denied, grantedThenCancelled)
+}
+
+// failingGrantWriter refuses the grant's cancel mark until ok is set.
+type failingGrantWriter struct {
+	inner commitment.GrantWriter
+	ok    bool
+}
+
+func (w *failingGrantWriter) MarkCancelled(ctx context.Context, g commitment.Grant, reason string, now int64) error {
+	if !w.ok {
+		return errors.New("boom: cancel mark refused")
+	}
+	return w.inner.MarkCancelled(ctx, g, reason, now)
+}
+
+// TestCancel_RetryFinishesWhatAFailedCancelLeft: the status write lands and
+// the grant's cancel fails, so the call errors with the request already
+// Cancelled; the same call again cancels the grant.
+func TestCancel_RetryFinishesWhatAFailedCancelLeft(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	storeRequest(t, f.frq, aggID, "R1", windowRequest("REQ-RETRY", time.Now().Add(time.Hour).Unix(), 3600, 10000))
+	_, err := f.queue.Answer(ctx, aggID, "R1", flowreservation.Decision{})
+	must(t, err)
+
+	real := sources.NewWriters(f.issuer, f.frpLifecycles)
+	marks := &failingGrantWriter{inner: real.Grants}
+	flaky := flowreservation.NewCanceller(f.frq, f.frp, f.queue, f.ledger, commitment.Writers{Executions: real.Executions, Grants: marks})
+
+	at := time.Now().Unix()
+	if err := flaky.Cancel(ctx, aggID, "R1", cancelledStatus(at)); err == nil {
+		t.Fatal("Cancel succeeded although the grant's cancel mark was refused")
+	}
+	if frq := f.storedRequest(t, "R1"); frq.RequestStatus != cancelledStatus(at) {
+		t.Fatalf("stored RequestStatus = %+v after the failed cancel, want %+v", frq.RequestStatus, cancelledStatus(at))
+	}
+	if lc, err := f.frpLifecycles.Get(ctx, aggID, "R1"); err == nil && lc.CancelledAt != nil {
+		t.Fatalf("grant already cancelled after the failed call: %+v", lc)
+	}
+
+	marks.ok = true
+	must(t, flaky.Cancel(ctx, aggID, "R1", cancelledStatus(at+5)))
+	lc, err := f.frpLifecycles.Get(ctx, aggID, "R1")
+	must(t, err)
+	if lc.CancelledAt == nil || lc.CancelReason != "client cancel" {
+		t.Errorf("response lifecycle after the retry = %+v, want cancelled with reason client cancel", lc)
+	}
+	if frq := f.storedRequest(t, "R1"); frq.RequestStatus.DateTime != at {
+		t.Errorf("the retry moved the status dateTime to %d, want %d", frq.RequestStatus.DateTime, at)
+	}
+}
+
+// TestCancel_NoLedgerRefusesAnAnsweredGrant fails closed: with no ledger an
+// answered grant cannot be cancelled, and the call says so.
+func TestCancel_NoLedgerRefusesAnAnsweredGrant(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	storeRequest(t, f.frq, aggID, "R1", windowRequest("REQ-NOLEDGER", time.Now().Add(time.Hour).Unix(), 3600, 10000))
+	_, err := f.queue.Answer(ctx, aggID, "R1", flowreservation.Decision{})
+	must(t, err)
+
+	bare := flowreservation.NewCanceller(f.frq, f.frp, f.queue, nil, commitment.Writers{})
+	err = bare.Cancel(ctx, aggID, "R1", cancelledStatus(time.Now().Unix()))
+	if !errors.Is(err, commitment.ErrNoLedger) {
+		t.Fatalf("Cancel err = %v, want commitment.ErrNoLedger", err)
+	}
+	if lc, err := f.frpLifecycles.Get(ctx, aggID, "R1"); err == nil && lc.CancelledAt != nil {
+		t.Errorf("a refused cancel marked the grant: %+v", lc)
+	}
 }

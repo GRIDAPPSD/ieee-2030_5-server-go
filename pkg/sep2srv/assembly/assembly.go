@@ -1507,6 +1507,7 @@ func responseSenderAuthorizer(identity func(ctx context.Context) (lfdi, sfdi str
 func commitmentWriters(stores *Stores) commitment.Writers {
 	if store.IsAbsent(stores.DERPrograms) || store.IsAbsent(stores.DERControls) ||
 		store.IsAbsent(stores.DERControlLifecycles) || store.IsAbsent(stores.FlowReservationResponseLifecycles) {
+		log.Print("assembly: a DER program, control or response lifecycle store is absent: cancelling an answered flow reservation request will answer 500")
 		return commitment.Writers{}
 	}
 	issuer, err := dercontrol.NewIssuer(stores.DERPrograms, stores.DERControls, stores.DERControlLifecycles, dercontrol.Config{})

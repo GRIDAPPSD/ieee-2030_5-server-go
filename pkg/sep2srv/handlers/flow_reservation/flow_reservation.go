@@ -242,9 +242,9 @@ type Canceller interface {
 var errRequestFieldChanged = errors.New("a PUT may change only RequestStatus")
 
 // changedField names the first client-owned field of body that differs from
-// stored, or "" when none does. href and creationTime are server-stamped,
-// so a body that omits or echoes them wrongly changes nothing the client
-// owns.
+// stored, or "" when none does. href and creationTime are server-stamped
+// (POST overwrites both), so they are ignored: a client echoing or omitting
+// them is not changing anything it owns, and 10.9.3.1 is read that way.
 func changedField(stored, body sep2.FlowReservationRequest) string {
 	switch {
 	case stored.MRID != body.MRID:

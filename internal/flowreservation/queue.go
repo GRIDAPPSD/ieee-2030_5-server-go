@@ -234,6 +234,11 @@ func (q *Queue) attemptFallback(ctx context.Context, edevID, frqID string, attem
 		log.Printf("flowreservation: deadline fallback: %s/%s: %s: %v; denying", edevID, frqID, why, err)
 		_, err = q.build(ctx, edevID, frqID, Decision{Kind: Deny})
 	}
+	// A cancel's status write can land between the read above and build's
+	// own read: the request is now withdrawn, which a denial answers.
+	if decision.Kind == Grant && errors.Is(err, ErrRequestCancelled) {
+		_, err = q.build(ctx, edevID, frqID, Decision{Kind: Deny})
+	}
 	if err != nil {
 		if errors.Is(err, ErrAlreadyAnswered) {
 			// An Answer call won between this attempt's failure and its

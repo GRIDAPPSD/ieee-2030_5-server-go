@@ -61,7 +61,12 @@ func getRequest(t *testing.T, srv *httptest.Server, href string) sep2.FlowReserv
 
 func putRequest(t *testing.T, srv *httptest.Server, href string, frq sep2.FlowReservationRequest) int {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPut, srv.URL+href, strings.NewReader(mustMarshal(t, &frq)))
+	return putRaw(t, srv, href, mustMarshal(t, &frq))
+}
+
+func putRaw(t *testing.T, srv *httptest.Server, href, body string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPut, srv.URL+href, strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("build PUT: %v", err)
 	}
@@ -155,11 +160,14 @@ func TestFlowReservationCancel_AnsweredGrantReadsCancelled(t *testing.T) {
 func TestFlowReservationCancel_ChangingAnyOtherFieldIs400(t *testing.T) {
 	t.Parallel()
 	cases := map[string]func(f *sep2.FlowReservationRequest){
-		"energy":   func(f *sep2.FlowReservationRequest) { f.EnergyRequested = &sep2.SignedRealEnergy{Value: 9999} },
-		"power":    func(f *sep2.FlowReservationRequest) { f.PowerRequested = &sep2.ActivePower{Value: 1} },
-		"interval": func(f *sep2.FlowReservationRequest) { f.IntervalRequested.Duration++ },
-		"duration": func(f *sep2.FlowReservationRequest) { d := uint16(901); f.DurationRequested = &d },
-		"mRID":     func(f *sep2.FlowReservationRequest) { f.MRID = "CAFE0000000000000000000000000002" },
+		"energy":         func(f *sep2.FlowReservationRequest) { f.EnergyRequested = &sep2.SignedRealEnergy{Value: 9999} },
+		"power":          func(f *sep2.FlowReservationRequest) { f.PowerRequested = &sep2.ActivePower{Value: 1} },
+		"interval":       func(f *sep2.FlowReservationRequest) { f.IntervalRequested.Duration++ },
+		"duration":       func(f *sep2.FlowReservationRequest) { d := uint16(901); f.DurationRequested = &d },
+		"mRID":           func(f *sep2.FlowReservationRequest) { f.MRID = "CAFE0000000000000000000000000002" },
+		"description":    func(f *sep2.FlowReservationRequest) { f.Description = "morning charge" },
+		"version":        func(f *sep2.FlowReservationRequest) { v := uint16(3); f.Version = &v },
+		"omitted energy": func(f *sep2.FlowReservationRequest) { f.EnergyRequested = nil },
 	}
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -180,7 +188,8 @@ func TestFlowReservationCancel_ChangingAnyOtherFieldIs400(t *testing.T) {
 			if after.RequestStatus != posted.RequestStatus {
 				t.Errorf("RequestStatus = %+v after a refused PUT, want the original %+v", after.RequestStatus, posted.RequestStatus)
 			}
-			if after.MRID != posted.MRID || *after.EnergyRequested != *posted.EnergyRequested ||
+			if after.MRID != posted.MRID || after.Description != posted.Description || after.Version != nil ||
+				*after.EnergyRequested != *posted.EnergyRequested ||
 				*after.PowerRequested != *posted.PowerRequested || *after.IntervalRequested != *posted.IntervalRequested ||
 				*after.DurationRequested != *posted.DurationRequested {
 				t.Errorf("a refused PUT changed the stored request: before %+v, after %+v", posted, after)
@@ -254,4 +263,59 @@ func TestFlowReservationCancel_OnlyTheOwnerMayPut(t *testing.T) {
 			t.Errorf("stored RequestStatus = %d after the manager's refused PUT, want Requested", stored.RequestStatus.RequestStatus)
 		}
 	})
+}
+
+// TestFlowReservationCancel_PutLeavingRequestedChangesNothing: an echoed
+// request whose status is still Requested is accepted and is not a cancel.
+func TestFlowReservationCancel_PutLeavingRequestedChangesNothing(t *testing.T) {
+	t.Parallel()
+	srv, _ := frqServerWithConfig(t, assembly.RouterConfig{FlowReservationDeadline: time.Hour})
+	href := postWindowRequest(t, srv, "e1")
+	posted := getRequest(t, srv, href)
+
+	if got := putRequest(t, srv, href, posted); got != http.StatusNoContent {
+		t.Fatalf("PUT of the unchanged request status = %d, want 204", got)
+	}
+	after := getRequest(t, srv, href)
+	if after.RequestStatus != posted.RequestStatus || after.RequestStatus.RequestStatus != sep2.RequestStatusRequested {
+		t.Errorf("RequestStatus = %+v, want the original Requested %+v", after.RequestStatus, posted.RequestStatus)
+	}
+	if n := len(listResponses(t, srv, "e1").FlowReservationResponse); n != 0 {
+		t.Errorf("a no-op PUT created %d response(s), want 0: it must not be read as a cancel", n)
+	}
+}
+
+func TestFlowReservationCancel_InvalidRequestStatusIs400(t *testing.T) {
+	t.Parallel()
+	srv, _ := frqServerWithConfig(t, assembly.RouterConfig{FlowReservationDeadline: time.Hour})
+	href := postWindowRequest(t, srv, "e1")
+	posted := getRequest(t, srv, href)
+
+	reserved := posted
+	reserved.RequestStatus = sep2.RequestStatus{DateTime: time.Now().Unix(), RequestStatus: 7}
+	if got := putRequest(t, srv, href, reserved); got != http.StatusBadRequest {
+		t.Errorf("PUT requestStatus 7 status = %d, want 400", got)
+	}
+	noStatus := `<FlowReservationRequest xmlns="urn:ieee:std:2030.5:ns"><mRID>` + posted.MRID + `</mRID></FlowReservationRequest>`
+	if got := putRaw(t, srv, href, noStatus); got != http.StatusBadRequest {
+		t.Errorf("PUT with no RequestStatus element status = %d, want 400", got)
+	}
+	if after := getRequest(t, srv, href); after.RequestStatus != posted.RequestStatus {
+		t.Errorf("RequestStatus = %+v after refused PUTs, want %+v", after.RequestStatus, posted.RequestStatus)
+	}
+	if n := len(listResponses(t, srv, "e1").FlowReservationResponse); n != 0 {
+		t.Errorf("refused PUTs created %d response(s), want 0", n)
+	}
+}
+
+func TestFlowReservationCancel_MissingRequestIs404(t *testing.T) {
+	t.Parallel()
+	srv, _ := frqServerWithConfig(t, assembly.RouterConfig{FlowReservationDeadline: time.Hour})
+	body := cancelled(sep2.FlowReservationRequest{}, time.Now().Unix())
+	if got := putRequest(t, srv, "/edev/e1/frq/frq-absent", body); got != http.StatusNotFound {
+		t.Errorf("PUT on a missing request status = %d, want 404", got)
+	}
+	if n := len(listResponses(t, srv, "e1").FlowReservationResponse); n != 0 {
+		t.Errorf("a PUT on a missing request created %d response(s), want 0", n)
+	}
 }

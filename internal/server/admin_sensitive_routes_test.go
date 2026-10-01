@@ -388,3 +388,70 @@ func TestEveryDefaultProtectedAdminWriteRefusesBypassOnly(t *testing.T) {
 		})
 	}
 }
+
+// isGrantControlOrAnswerWrite is the rule for a write route that must never
+// be exempt from the credential requirement (#800): it sits under the DERMS
+// family (flow reservation answer, revise, cancel and grants), under the DER
+// control family, or under /api/certs (key material), or it names an answer,
+// grant or control action in its last path segment. The route set is read
+// from the router, so a new route in any of those places is covered with no
+// name to add here.
+func isGrantControlOrAnswerWrite(path string) bool {
+	for _, prefix := range []string{"/api/derms/", "/api/der/", "/api/certs/"} {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	last := path[strings.LastIndex(path, "/")+1:]
+	switch last {
+	case "answer", "grant", "grants", "control", "controls":
+		return true
+	}
+	return false
+}
+
+// TestNoSensitiveAdminWriteIsListedAsNonSensitive fails when a route that
+// changes grants, controls or answers is in nonSensitiveAdminWrites (#800).
+// The loopback bypass refusal depends only on a route's absence from that
+// map, and the derived bypass test above drops exempt routes, so without
+// this check an exempt sensitive route fails nothing.
+func TestNoSensitiveAdminWriteIsListedAsNonSensitive(t *testing.T) {
+	patterns := server.AuthedAdminPatterns(
+		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
+		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
+		false, http.NotFoundHandler(),
+	)
+
+	sensitiveWrites := 0
+	sawAnswer := false
+	for _, p := range patterns {
+		method, path, ok := strings.Cut(p, " ")
+		if !ok {
+			t.Fatalf("pattern %q names no method", p)
+		}
+		switch method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			continue
+		}
+		if !isGrantControlOrAnswerWrite(path) {
+			continue
+		}
+		sensitiveWrites++
+		if strings.HasSuffix(path, "/answer") {
+			sawAnswer = true
+		}
+		if _, exempt := server.NonSensitiveAdminWrites[p]; exempt {
+			t.Errorf("%s changes grants, controls, answers or certificates but is listed in nonSensitiveAdminWrites", p)
+		}
+	}
+	// Control: the derivation must find the flow reservation answer route,
+	// or an empty match would pass every assertion above.
+	if !sawAnswer || sensitiveWrites == 0 {
+		t.Fatalf("derivation found %d sensitive write routes, answer route seen = %v; the router no longer exposes the routes this test guards", sensitiveWrites, sawAnswer)
+	}
+
+	// Control: the rule must be able to fire on the review's mutant.
+	if !isGrantControlOrAnswerWrite("/api/derms/flow-reservations/{edevId}/{frqId}/answer") {
+		t.Fatal("rule does not classify the flow reservation answer route as sensitive")
+	}
+}

@@ -48,7 +48,7 @@ func TestFlowReservationResponse_CancelledServesCancelled(t *testing.T) {
 	}
 
 	for _, id := range []string{"R1", "R2"} {
-		resp, err := http.Get(srv.URL + "/edev/e1/frp/" + id)
+		resp, err := srv.Client().Get(srv.URL + "/edev/e1/frp/" + id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +60,7 @@ func TestFlowReservationResponse_CancelledServesCancelled(t *testing.T) {
 		check(t, got)
 	}
 
-	resp, err := http.Get(srv.URL + "/edev/e1/frp")
+	resp, err := srv.Client().Get(srv.URL + "/edev/e1/frp")
 	if err != nil {
 		t.Fatal(err)
 	}

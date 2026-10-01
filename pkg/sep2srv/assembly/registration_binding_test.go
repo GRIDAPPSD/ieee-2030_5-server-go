@@ -332,7 +332,7 @@ func TestRegistrationBinding_ClientCannotForgeTheLinkByPUT(t *testing.T) {
 		t.Fatalf("build PUT: %v", err)
 	}
 	req.Header.Set("X-Test-LFDI", deviceLFDIA)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("PUT /edev/1: %v", err)
 	}

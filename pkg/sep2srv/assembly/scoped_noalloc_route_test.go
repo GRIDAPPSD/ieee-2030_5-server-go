@@ -182,7 +182,7 @@ func TestGetsForUnknownParentsCreateNoStoreState(t *testing.T) {
 				break
 			}
 
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := isolatedClient().Do(req)
 			if err != nil {
 				t.Errorf("%s: %v", pattern, err)
 				break
@@ -237,7 +237,7 @@ func TestListOfAnExistingButEmptyParentStillServesAnEmptyList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build DELETE %s: %v", loc, err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("DELETE %s: %v", loc, err)
 	}

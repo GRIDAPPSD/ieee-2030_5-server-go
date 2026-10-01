@@ -73,7 +73,7 @@ func TestEndDeviceDelete_CascadesFlowReservationAndLogEventRecords(t *testing.T)
 	if err != nil {
 		t.Fatalf("new DELETE request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("DELETE /edev/e1: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestEndDeviceDelete_FailsClosedWhenFlowReservationResponsesIsMiswired(t *te
 	if err != nil {
 		t.Fatalf("new DELETE request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("DELETE /edev/e1: %v", err)
 	}

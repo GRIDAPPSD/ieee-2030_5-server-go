@@ -60,7 +60,7 @@ func TestDERControlRoutesDeriveScheduledBeforeStart(t *testing.T) {
 	ctrl := seedIssuedDERControl(t, stores, testLFDI, "sched-0", creationTime, start, 900, dercontrol.LifecycleRecord{})
 	srv := derControlRouter(t, stores)
 
-	resp, err := http.Get(srv.URL + ctrl.Href)
+	resp, err := srv.Client().Get(srv.URL + ctrl.Href)
 	if err != nil {
 		t.Fatalf("GET single: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestDERControlRoutesDeriveScheduledBeforeStart(t *testing.T) {
 	decodeXML(t, resp, &single)
 	assertEventStatus(t, "single", single.EventStatus, sep2.EventStatusScheduled, creationTime)
 
-	listResp, err := http.Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1/derc")
+	listResp, err := srv.Client().Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1/derc")
 	if err != nil {
 		t.Fatalf("GET list: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestDERControlRoutesDeriveActiveAfterStart(t *testing.T) {
 	ctrl := seedIssuedDERControl(t, stores, testLFDI, "active-0", creationTime, start, 900, dercontrol.LifecycleRecord{})
 	srv := derControlRouter(t, stores)
 
-	resp, err := http.Get(srv.URL + ctrl.Href)
+	resp, err := srv.Client().Get(srv.URL + ctrl.Href)
 	if err != nil {
 		t.Fatalf("GET single: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestDERControlRoutesDeriveCancelled(t *testing.T) {
 	ctrl := seedIssuedDERControl(t, stores, testLFDI, "cancel-0", now-7200, now-3600, 900, lc)
 	srv := derControlRouter(t, stores)
 
-	resp, err := http.Get(srv.URL + ctrl.Href)
+	resp, err := srv.Client().Get(srv.URL + ctrl.Href)
 	if err != nil {
 		t.Fatalf("GET single: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestDERControlRoutesDeriveSuperseded(t *testing.T) {
 	ctrl := seedIssuedDERControl(t, stores, testLFDI, "super-0", now-7200, now-3600, 900, lc)
 	srv := derControlRouter(t, stores)
 
-	resp, err := http.Get(srv.URL + ctrl.Href)
+	resp, err := srv.Client().Get(srv.URL + ctrl.Href)
 	if err != nil {
 		t.Fatalf("GET single: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestDERControlWithNoLifecycleRecordServedUnchanged(t *testing.T) {
 	}
 	srv := derControlRouter(t, stores)
 
-	resp, err := http.Get(srv.URL + want.Href)
+	resp, err := srv.Client().Get(srv.URL + want.Href)
 	if err != nil {
 		t.Fatalf("GET single: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestDERControlWithNoLifecycleRecordServedUnchanged(t *testing.T) {
 	decodeXML(t, resp, &single)
 	assertEventStatus(t, "single (no lifecycle record)", single.EventStatus, want.EventStatus.CurrentStatus, want.EventStatus.DateTime)
 
-	listResp, err := http.Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1/derc")
+	listResp, err := srv.Client().Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1/derc")
 	if err != nil {
 		t.Fatalf("GET list: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestSingleDERControlBytesMatchListMemberWithLifecycleRecord(t *testing.T) {
 	ctrl := seedIssuedDERControl(t, stores, testLFDI, "match-0", now-7200, now-3600, 900, dercontrol.LifecycleRecord{})
 	srv := derControlRouter(t, stores)
 
-	singleResp, err := http.Get(srv.URL + ctrl.Href)
+	singleResp, err := srv.Client().Get(srv.URL + ctrl.Href)
 	if err != nil {
 		t.Fatalf("GET single: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestSingleDERControlBytesMatchListMemberWithLifecycleRecord(t *testing.T) {
 		t.Fatalf("single: EventStatus not derived as Active: %+v", single.EventStatus)
 	}
 
-	listResp, err := http.Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1/derc")
+	listResp, err := srv.Client().Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1/derc")
 	if err != nil {
 		t.Fatalf("GET list: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestDERProgramControlListLinkAllReflectsLiveControls(t *testing.T) {
 
 	getProgramAll := func(t *testing.T) uint32 {
 		t.Helper()
-		resp, err := http.Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1")
+		resp, err := srv.Client().Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1")
 		if err != nil {
 			t.Fatalf("GET single DERProgram: %v", err)
 		}
@@ -299,7 +299,7 @@ func TestDERProgramControlListLinkAllReflectsLiveControls(t *testing.T) {
 	}
 	getListAll := func(t *testing.T) uint32 {
 		t.Helper()
-		resp, err := http.Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp")
+		resp, err := srv.Client().Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp")
 		if err != nil {
 			t.Fatalf("GET DERProgramList: %v", err)
 		}
@@ -390,7 +390,7 @@ func TestDERControlListTable50Order(t *testing.T) {
 	}
 
 	srv := derControlRouter(t, stores)
-	resp, err := http.Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/p1/derc")
+	resp, err := srv.Client().Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/p1/derc")
 	if err != nil {
 		t.Fatalf("GET list: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestDERControlRoutesFailClosedOnLifecycleStoreError(t *testing.T) {
 	)
 	srv := derControlRouter(t, stores)
 
-	singleResp, err := http.Get(srv.URL + ctrl.Href)
+	singleResp, err := srv.Client().Get(srv.URL + ctrl.Href)
 	if err != nil {
 		t.Fatalf("GET single: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestDERControlRoutesFailClosedOnLifecycleStoreError(t *testing.T) {
 		t.Errorf("GET single = %d, want 500 (a broken lifecycle store must fail the request, not serve a control with no EventStatus)", singleResp.StatusCode)
 	}
 
-	listResp, err := http.Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1/derc")
+	listResp, err := srv.Client().Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1/derc")
 	if err != nil {
 		t.Fatalf("GET list: %v", err)
 	}
@@ -487,7 +487,7 @@ func TestDERControlRoutesServeUnchangedWhenLifecyclesUnwired(t *testing.T) {
 	}
 	srv := derControlRouter(t, stores)
 
-	resp, err := http.Get(srv.URL + want.Href)
+	resp, err := srv.Client().Get(srv.URL + want.Href)
 	if err != nil {
 		t.Fatalf("GET single: %v", err)
 	}
@@ -498,7 +498,7 @@ func TestDERControlRoutesServeUnchangedWhenLifecyclesUnwired(t *testing.T) {
 	decodeXML(t, resp, &single)
 	assertEventStatus(t, "single (DERControlLifecycles unwired)", single.EventStatus, want.EventStatus.CurrentStatus, want.EventStatus.DateTime)
 
-	listResp, err := http.Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1/derc")
+	listResp, err := srv.Client().Get(srv.URL + "/edev/" + testLFDI + "/fsa/1/derp/1/derc")
 	if err != nil {
 		t.Fatalf("GET list: %v", err)
 	}

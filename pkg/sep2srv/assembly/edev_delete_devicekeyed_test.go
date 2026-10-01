@@ -101,7 +101,7 @@ func TestEndDeviceDelete_CascadesTheDeviceKeyedFour(t *testing.T) {
 			if err != nil {
 				t.Fatalf("new DELETE request: %v", err)
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := srv.Client().Do(req)
 			if err != nil {
 				t.Fatalf("DELETE /edev/e1: %v", err)
 			}
@@ -146,7 +146,7 @@ func TestEndDeviceDelete_NewOccupantOfADeadKeyStartsWithNoFunctionSetAssignments
 	if err != nil {
 		t.Fatalf("new DELETE request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("DELETE /edev/e1: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestEndDeviceDelete_ClearsTheAdminFSAAssignmentThroughTheAssembledRouter(t 
 	if err != nil {
 		t.Fatalf("new DELETE request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("DELETE /edev/e1: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestEndDeviceDelete_ClearsTheAdminFSAAssignmentWhenItIsTheOnlyDeviceKeyedFa
 	if err != nil {
 		t.Fatalf("new DELETE request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("DELETE /edev/e1: %v", err)
 	}

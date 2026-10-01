@@ -42,7 +42,7 @@ func TestFlowReservationRequest_ConformingBodyIsAccepted(t *testing.T) {
 	srv, _ := frqServer(t)
 	body := conformingBody(t, "flow_reservation_request.xml")
 
-	resp, err := http.Post(srv.URL+"/edev/e1/frq", "application/sep+xml", strings.NewReader(string(body)))
+	resp, err := srv.Client().Post(srv.URL+"/edev/e1/frq", "application/sep+xml", strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatalf("POST /edev/e1/frq: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestFlowReservationRequest_ConformingBodyIsAccepted(t *testing.T) {
 		t.Fatal("POST returned no Location; there is no href to follow")
 	}
 
-	frqResp, err := http.Get(srv.URL + loc)
+	frqResp, err := srv.Client().Get(srv.URL + loc)
 	if err != nil {
 		t.Fatalf("GET %s: %v", loc, err)
 	}

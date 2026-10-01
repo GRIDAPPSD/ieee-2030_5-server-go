@@ -67,7 +67,7 @@ func TestTypedNilStoreHandleReadsAsUnwired(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/edev/0/lel")
+	resp, err := srv.Client().Get(srv.URL + "/edev/0/lel")
 	if err != nil {
 		t.Fatalf("GET /edev/0/lel: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestTypedNilStoreHandleReadsAsUnwired(t *testing.T) {
 		t.Errorf("GET /edev/0/lel = %d, want 404 from an unmounted route", resp.StatusCode)
 	}
 
-	list, err := http.Get(srv.URL + "/edev")
+	list, err := srv.Client().Get(srv.URL + "/edev")
 	if err != nil {
 		t.Fatalf("GET /edev: %v", err)
 	}

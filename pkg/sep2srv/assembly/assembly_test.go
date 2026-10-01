@@ -159,7 +159,7 @@ func TestAssembly_DCAPWired(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/dcap")
+	resp, err := srv.Client().Get(srv.URL + "/dcap")
 	if err != nil {
 		t.Fatalf("GET /dcap: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestAssembly_DeviceCapabilityLinkContract(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/dcap")
+	resp, err := srv.Client().Get(srv.URL + "/dcap")
 	if err != nil {
 		t.Fatalf("GET /dcap: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestAssembly_DeviceCapabilityLinkContract(t *testing.T) {
 			continue
 		}
 
-		linkResp, err := http.Get(srv.URL + href)
+		linkResp, err := srv.Client().Get(srv.URL + href)
 		if err != nil {
 			t.Fatalf("%s: GET %s: %v", tc.name, href, err)
 		}
@@ -349,7 +349,7 @@ func TestAssembly_EndDeviceCreateRoundTrip(t *testing.T) {
 	// POST /edev: create a device. The SEP2 XML namespace is required by the
 	// EndDevice struct's XMLName tag; a namespace-less body returns 400.
 	postBody := `<EndDevice xmlns="urn:ieee:std:2030.5:ns"/>`
-	resp, err := http.Post(srv.URL+"/edev", "application/sep+xml", strings.NewReader(postBody))
+	resp, err := srv.Client().Post(srv.URL+"/edev", "application/sep+xml", strings.NewReader(postBody))
 	if err != nil {
 		t.Fatalf("POST /edev: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestAssembly_EndDeviceCreateRoundTrip(t *testing.T) {
 	}
 
 	// GET /edev: list must contain the created device
-	resp2, err := http.Get(srv.URL + "/edev")
+	resp2, err := srv.Client().Get(srv.URL + "/edev")
 	if err != nil {
 		t.Fatalf("GET /edev: %v", err)
 	}
@@ -417,7 +417,7 @@ func TestAssembly_DERSingletonRoundTrip(t *testing.T) {
 
 	// First create an EndDevice so the edev ID exists in the path.
 	// Include the SEP2 namespace: the EndDevice XMLName tag requires it.
-	resp, err := http.Post(srv.URL+"/edev", "application/sep+xml",
+	resp, err := srv.Client().Post(srv.URL+"/edev", "application/sep+xml",
 		strings.NewReader(`<EndDevice xmlns="urn:ieee:std:2030.5:ns"/>`))
 	if err != nil {
 		t.Fatalf("POST /edev: %v", err)
@@ -443,7 +443,7 @@ func TestAssembly_DERSingletonRoundTrip(t *testing.T) {
 	putBody := `<DERCapability xmlns="urn:ieee:std:2030.5:ns"><rtgMaxW><multiplier>0</multiplier><value>10000</value></rtgMaxW></DERCapability>`
 	req, _ := http.NewRequest(http.MethodPut, dercapURL, strings.NewReader(putBody))
 	req.Header.Set("Content-Type", "application/sep+xml")
-	putResp, err := http.DefaultClient.Do(req)
+	putResp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("PUT %s: %v", dercapURL, err)
 	}
@@ -453,7 +453,7 @@ func TestAssembly_DERSingletonRoundTrip(t *testing.T) {
 	}
 
 	// GET DERCapability: assert RTGMaxW.Value == 10000
-	getResp, err := http.Get(dercapURL)
+	getResp, err := srv.Client().Get(dercapURL)
 	if err != nil {
 		t.Fatalf("GET %s: %v", dercapURL, err)
 	}
@@ -490,7 +490,7 @@ func TestAssembly_TimeScalarsFlowThroughRouterConfig(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/tm")
+	resp, err := srv.Client().Get(srv.URL + "/tm")
 	if err != nil {
 		t.Fatalf("GET /tm: %v", err)
 	}
@@ -579,7 +579,7 @@ func TestAssembly_ScopedListRoutesMounted(t *testing.T) {
 	defer srv.Close()
 
 	// GET /edev/{id}/fsa (scoped by device id)
-	resp, err := http.Get(srv.URL + "/edev/e1/fsa")
+	resp, err := srv.Client().Get(srv.URL + "/edev/e1/fsa")
 	if err != nil {
 		t.Fatalf("GET /edev/e1/fsa: %v", err)
 	}
@@ -589,7 +589,7 @@ func TestAssembly_ScopedListRoutesMounted(t *testing.T) {
 	}
 
 	// GET /edev/{id}/der (scoped list)
-	resp2, err := http.Get(srv.URL + "/edev/e1/der")
+	resp2, err := srv.Client().Get(srv.URL + "/edev/e1/der")
 	if err != nil {
 		t.Fatalf("GET /edev/e1/der: %v", err)
 	}
@@ -599,7 +599,7 @@ func TestAssembly_ScopedListRoutesMounted(t *testing.T) {
 	}
 
 	// GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc (scopedListHandlerDeep)
-	resp3, err := http.Get(srv.URL + "/edev/e1/fsa/f1/derp/p1/derc")
+	resp3, err := srv.Client().Get(srv.URL + "/edev/e1/fsa/f1/derp/p1/derc")
 	if err != nil {
 		t.Fatalf("GET /edev/e1/fsa/f1/derp/p1/derc: %v", err)
 	}
@@ -609,7 +609,7 @@ func TestAssembly_ScopedListRoutesMounted(t *testing.T) {
 	}
 
 	// GET /mup (mirror usage point list, exercises registerMirrorRoutes)
-	resp4, err := http.Get(srv.URL + "/mup")
+	resp4, err := srv.Client().Get(srv.URL + "/mup")
 	if err != nil {
 		t.Fatalf("GET /mup: %v", err)
 	}
@@ -619,7 +619,7 @@ func TestAssembly_ScopedListRoutesMounted(t *testing.T) {
 	}
 
 	// GET /upt (usage point list, exercises registerMeteringRoutes)
-	resp5, err := http.Get(srv.URL + "/upt")
+	resp5, err := srv.Client().Get(srv.URL + "/upt")
 	if err != nil {
 		t.Fatalf("GET /upt: %v", err)
 	}
@@ -657,7 +657,7 @@ func TestAssembly_DERProgramMemberHrefResolves(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
-	listResp, err := http.Get(srv.URL + "/edev/" + edevID + "/fsa/" + fsaID + "/derp")
+	listResp, err := srv.Client().Get(srv.URL + "/edev/" + edevID + "/fsa/" + fsaID + "/derp")
 	if err != nil {
 		t.Fatalf("GET DERProgramList: %v", err)
 	}
@@ -681,7 +681,7 @@ func TestAssembly_DERProgramMemberHrefResolves(t *testing.T) {
 		t.Errorf("member href = %q, want %q", memberHref, wantHref)
 	}
 
-	memberResp, err := http.Get(srv.URL + memberHref)
+	memberResp, err := srv.Client().Get(srv.URL + memberHref)
 	if err != nil {
 		t.Fatalf("GET member href %q: %v", memberHref, err)
 	}
@@ -738,7 +738,7 @@ func TestAssembly_DERProgramMemberStaysReadOnly(t *testing.T) {
 			if err != nil {
 				t.Fatalf("new request: %v", err)
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := srv.Client().Do(req)
 			if err != nil {
 				t.Fatalf("%s %s: %v", method, href, err)
 			}
@@ -754,7 +754,7 @@ func TestAssembly_DERProgramMemberStaysReadOnly(t *testing.T) {
 	}
 
 	t.Run("GET still resolves", func(t *testing.T) {
-		resp, err := http.Get(srv.URL + href)
+		resp, err := srv.Client().Get(srv.URL + href)
 		if err != nil {
 			t.Fatalf("GET %s: %v", href, err)
 		}
@@ -819,7 +819,7 @@ func TestAssembly_AsNotifyRemoved(t *testing.T) {
 	}
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, srv.URL+"/edev/e1/sub/s1", nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("DELETE /edev/e1/sub/s1: %v", err)
 	}
@@ -867,7 +867,7 @@ func TestAssembly_PostMirrorUsagePointReading_ViaLocationHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal MirrorUsagePoint: %v", err)
 	}
-	createResp, err := http.Post(srv.URL+"/mup", "application/xml", strings.NewReader(string(body)))
+	createResp, err := srv.Client().Post(srv.URL+"/mup", "application/xml", strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatalf("POST /mup: %v", err)
 	}
@@ -894,7 +894,7 @@ func TestAssembly_PostMirrorUsagePointReading_ViaLocationHeader(t *testing.T) {
 
 	// Follow the header value verbatim: the point under test is that our own
 	// advertised Location and our own accepted POST target agree.
-	postResp, err := http.Post(srv.URL+loc, "application/xml", strings.NewReader(string(mmrBody)))
+	postResp, err := srv.Client().Post(srv.URL+loc, "application/xml", strings.NewReader(string(mmrBody)))
 	if err != nil {
 		t.Fatalf("POST %s: %v", loc, err)
 	}
@@ -937,7 +937,7 @@ func TestAssembly_PostMirrorUsagePointReading_ViaLocationHeader(t *testing.T) {
 	}
 
 	// Rule (c) regression check against the real router.
-	getResp, err := http.Get(srv.URL + loc)
+	getResp, err := srv.Client().Get(srv.URL + loc)
 	if err != nil {
 		t.Fatalf("GET %s: %v", loc, err)
 	}
@@ -992,7 +992,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal MirrorUsagePoint: %v", err)
 	}
-	createResp, err := http.Post(ownerSrv.URL+"/mup", "application/xml", strings.NewReader(string(body)))
+	createResp, err := ownerSrv.Client().Post(ownerSrv.URL+"/mup", "application/xml", strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatalf("POST /mup: %v", err)
 	}
@@ -1019,7 +1019,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 	}
 
 	for _, path := range []string{ownedPath, ownedPath + "/mr"} {
-		resp, err := http.Post(otherSrv.URL+path, "application/xml", strings.NewReader(string(mmrBody)))
+		resp, err := otherSrv.Client().Post(otherSrv.URL+path, "application/xml", strings.NewReader(string(mmrBody)))
 		if err != nil {
 			t.Fatalf("POST %s: %v", path, err)
 		}
@@ -1033,7 +1033,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 		}
 	}
 
-	getResp, err := http.Get(otherSrv.URL + ownedPath)
+	getResp, err := otherSrv.Client().Get(otherSrv.URL + ownedPath)
 	if err != nil {
 		t.Fatalf("GET %s: %v", ownedPath, err)
 	}
@@ -1065,7 +1065,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 			t.Fatalf("build %s %s: %v", m.method, ownedPath, err)
 		}
 		req.Header.Set("Content-Type", "application/sep+xml")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := otherSrv.Client().Do(req)
 		if err != nil {
 			t.Fatalf("%s %s: %v", m.method, ownedPath, err)
 		}
@@ -1102,7 +1102,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 	}
 
 	// The creator is unaffected: same stores, same routes, 200 and 201.
-	okResp, err := http.Post(ownerSrv.URL+ownedPath, "application/xml", strings.NewReader(string(mmrBody)))
+	okResp, err := ownerSrv.Client().Post(ownerSrv.URL+ownedPath, "application/xml", strings.NewReader(string(mmrBody)))
 	if err != nil {
 		t.Fatalf("owner POST %s: %v", ownedPath, err)
 	}
@@ -1110,7 +1110,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 	if okResp.StatusCode != http.StatusCreated {
 		t.Errorf("owner POST %s status = %d, want 201", ownedPath, okResp.StatusCode)
 	}
-	ownerGet, err := http.Get(ownerSrv.URL + ownedPath)
+	ownerGet, err := ownerSrv.Client().Get(ownerSrv.URL + ownedPath)
 	if err != nil {
 		t.Fatalf("owner GET %s: %v", ownedPath, err)
 	}
@@ -1129,7 +1129,7 @@ func TestAssembly_MirrorOwnershipIsWiredOnEveryMupRoute(t *testing.T) {
 	// list scoping is permitted by 4.6.1 but is a separate design decision
 	// (CSIP 5.7.1 per-device MirrorUsagePointListLink URIs), deliberately not
 	// made here. Asserting it keeps the boundary of this change explicit.
-	listResp, err := http.Get(otherSrv.URL + "/mup")
+	listResp, err := otherSrv.Client().Get(otherSrv.URL + "/mup")
 	if err != nil {
 		t.Fatalf("GET /mup: %v", err)
 	}
@@ -1184,7 +1184,7 @@ func TestAssembly_SameMRIDFromTwoDevicesStaysIsolated(t *testing.T) {
 
 	create := func(srv *httptest.Server, who string) string {
 		t.Helper()
-		resp, err := http.Post(srv.URL+"/mup", "application/xml", strings.NewReader(string(body)))
+		resp, err := srv.Client().Post(srv.URL+"/mup", "application/xml", strings.NewReader(string(body)))
 		if err != nil {
 			t.Fatalf("%s POST /mup: %v", who, err)
 		}
@@ -1243,7 +1243,7 @@ func TestAssembly_SameMRIDFromTwoDevicesStaysIsolated(t *testing.T) {
 		t.Fatalf("marshal MirrorMeterReading: %v", err)
 	}
 	for _, path := range []string{locB, locB + "/mr"} {
-		resp, err := http.Post(deviceASrv.URL+path, "application/xml", strings.NewReader(string(mmrBody)))
+		resp, err := deviceASrv.Client().Post(deviceASrv.URL+path, "application/xml", strings.NewReader(string(mmrBody)))
 		if err != nil {
 			t.Fatalf("device A POST %s: %v", path, err)
 		}
@@ -1253,7 +1253,7 @@ func TestAssembly_SameMRIDFromTwoDevicesStaysIsolated(t *testing.T) {
 			t.Errorf("device A POST %s (device B's mirror): status = %d, want 403; body = %s", path, resp.StatusCode, respBody)
 		}
 	}
-	getResp, err := http.Get(deviceASrv.URL + locB)
+	getResp, err := deviceASrv.Client().Get(deviceASrv.URL + locB)
 	if err != nil {
 		t.Fatalf("device A GET %s: %v", locB, err)
 	}

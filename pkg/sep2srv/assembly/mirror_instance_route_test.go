@@ -42,7 +42,7 @@ func createMirror(t *testing.T, srv *httptest.Server, mrid string) string {
 	t.Helper()
 	body := `<MirrorUsagePoint xmlns="urn:ieee:std:2030.5:ns"><mRID>` + mrid + `</mRID>` +
 		`<description>created</description></MirrorUsagePoint>`
-	resp, err := http.Post(srv.URL+"/mup", "application/sep+xml", strings.NewReader(body))
+	resp, err := srv.Client().Post(srv.URL+"/mup", "application/sep+xml", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /mup: %v", err)
 	}
@@ -70,7 +70,7 @@ func doRequest(t *testing.T, method, url, body string) (*http.Response, []byte) 
 	if body != "" {
 		req.Header.Set("Content-Type", "application/sep+xml")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := isolatedClient().Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}

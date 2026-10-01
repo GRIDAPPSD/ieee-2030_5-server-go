@@ -95,7 +95,7 @@ func TestSingleDERControlRouteServesActivatedEventHref(t *testing.T) {
 	want := seedDERControl(t, stores, testLFDI, "active-0", 5417, 1785429793)
 	srv := derControlRouter(t, stores)
 
-	resp, err := http.Get(srv.URL + want.Href)
+	resp, err := srv.Client().Get(srv.URL + want.Href)
 	if err != nil {
 		t.Fatalf("GET %s: %v", want.Href, err)
 	}
@@ -155,7 +155,7 @@ func TestSingleDERControlBytesMatchListMember(t *testing.T) {
 	want := seedDERControl(t, stores, testLFDI, "active-3", 8149, 1785429900)
 	srv := derControlRouter(t, stores)
 
-	singleResp, err := http.Get(srv.URL + want.Href)
+	singleResp, err := srv.Client().Get(srv.URL + want.Href)
 	if err != nil {
 		t.Fatalf("GET single: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestSingleDERControlBytesMatchListMember(t *testing.T) {
 	decodeXML(t, singleResp, &single)
 
 	listHref := "/edev/" + testLFDI + "/fsa/1/derp/1/derc"
-	listResp, err := http.Get(srv.URL + listHref)
+	listResp, err := srv.Client().Get(srv.URL + listHref)
 	if err != nil {
 		t.Fatalf("GET list: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestSingleDERControlRouteScopesByPathNotJustID(t *testing.T) {
 
 	// Sanity: the control IS readable on its owner's path, so a 404 on
 	// device B's path below is scoping and not a broken seed.
-	ownerResp, err := http.Get(srv.URL + victim.Href)
+	ownerResp, err := srv.Client().Get(srv.URL + victim.Href)
 	if err != nil {
 		t.Fatalf("GET owner path: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestSingleDERControlRouteScopesByPathNotJustID(t *testing.T) {
 
 	// The attack: device B's path, device A's dercId.
 	crossHref := "/edev/" + deviceB + "/fsa/1/derp/1/derc/active-0"
-	crossResp, err := http.Get(srv.URL + crossHref)
+	crossResp, err := srv.Client().Get(srv.URL + crossHref)
 	if err != nil {
 		t.Fatalf("GET cross-device path: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestSingleDERControlRouteReturnsNotFoundForAbsentID(t *testing.T) {
 	srv := derControlRouter(t, stores)
 
 	absent := "/edev/" + testLFDI + "/fsa/1/derp/1/derc/active-999"
-	resp, err := http.Get(srv.URL + absent)
+	resp, err := srv.Client().Get(srv.URL + absent)
 	if err != nil {
 		t.Fatalf("GET absent: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestSingleDERControlRouteRejectsNonGET(t *testing.T) {
 		if err != nil {
 			t.Fatalf("build %s request: %v", method, err)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := srv.Client().Do(req)
 		if err != nil {
 			t.Fatalf("%s: %v", method, err)
 		}

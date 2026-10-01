@@ -103,7 +103,7 @@ func TestDefaultDERControl_PUTRefusalNamesTheServedMethods(t *testing.T) {
 		t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set(gateIdentityHeader, victimLFDI)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("PUT: %v", err)
 	}

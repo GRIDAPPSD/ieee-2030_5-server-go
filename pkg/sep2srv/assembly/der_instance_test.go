@@ -84,7 +84,7 @@ func derHref(edevID, derID string) string {
 func getDER(t *testing.T, srv *httptest.Server, path string) sep2.DER {
 	t.Helper()
 
-	resp, err := http.Get(srv.URL + path)
+	resp, err := srv.Client().Get(srv.URL + path)
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
@@ -185,7 +185,7 @@ func TestDERInstance_UnknownIDIsACleanNotFound(t *testing.T) {
 	srv, stores := derInstanceServer(t)
 	seedDER(t, stores, "7", "3")
 
-	resp, err := http.Get(srv.URL + derHref("7", "nosuch"))
+	resp, err := srv.Client().Get(srv.URL + derHref("7", "nosuch"))
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestDERInstance_ScopeBindsTheResourceToTheDeviceInThePath(t *testing.T) {
 	seedDER(t, stores, "deviceB", "9")
 
 	// The same derId, asked for under a different device.
-	resp, err := http.Get(srv.URL + derHref("deviceA", "9"))
+	resp, err := srv.Client().Get(srv.URL + derHref("deviceA", "9"))
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestDERInstance_UnservedMethodsGet405WithAnAccurateAllow(t *testing.T) {
 			if err != nil {
 				t.Fatalf("new request: %v", err)
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := isolatedClient().Do(req)
 			if err != nil {
 				t.Fatalf("%s: %v", method, err)
 			}
@@ -282,7 +282,7 @@ func TestDERInstance_HEADIsServedByTheGETPattern(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("HEAD: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestDERInstance_PUTStoresTheServersOwnHrefAndDropsUnservedLinks(t *testing.
 		t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/sep+xml")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("PUT: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestDERInstance_PUTCreatesAtTheIDThePathNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("PUT: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestDERInstance_MultipleDERsUnderOneEndDeviceStayIndependent(t *testing.T) 
 		if err != nil {
 			t.Fatalf("new request: %v", err)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := srv.Client().Do(req)
 		if err != nil {
 			t.Fatalf("PUT %s: %v", put, err)
 		}
@@ -429,7 +429,7 @@ func TestDERInstance_MultipleDERsUnderOneEndDeviceStayIndependent(t *testing.T) 
 	}
 
 	for _, tc := range ratings {
-		resp, err := http.Get(srv.URL + derHref("7", tc.derID) + "/dercap")
+		resp, err := srv.Client().Get(srv.URL + derHref("7", tc.derID) + "/dercap")
 		if err != nil {
 			t.Fatalf("GET dercap: %v", err)
 		}
@@ -481,7 +481,7 @@ func TestDERList_SeededOutputIsByteIdenticalToTheUnfilledBuild(t *testing.T) {
 		t.Errorf("link derivation changed the DERList bytes for a fully seeded DER.\n unfilled: %s\n   filled: %s", unfilled, filled)
 	}
 
-	resp, err := http.Get(srv.URL + listPath)
+	resp, err := srv.Client().Get(srv.URL + listPath)
 	if err != nil {
 		t.Fatalf("GET %s: %v", listPath, err)
 	}

@@ -38,7 +38,7 @@ func postWindowRequest(t *testing.T, srv *httptest.Server, edevID string) string
 		PowerRequested:    &sep2.ActivePower{Value: 3000},
 		IntervalRequested: &sep2.DateTimeInterval{Start: time.Now().Add(time.Hour).Unix(), Duration: 900},
 	})
-	resp, err := http.Post(srv.URL+"/edev/"+edevID+"/frq", "application/sep+xml", strings.NewReader(body))
+	resp, err := srv.Client().Post(srv.URL+"/edev/"+edevID+"/frq", "application/sep+xml", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST frq: %v", err)
 	}
@@ -51,7 +51,7 @@ func postWindowRequest(t *testing.T, srv *httptest.Server, edevID string) string
 
 func getRequest(t *testing.T, srv *httptest.Server, href string) sep2.FlowReservationRequest {
 	t.Helper()
-	resp, err := http.Get(srv.URL + href)
+	resp, err := srv.Client().Get(srv.URL + href)
 	if err != nil {
 		t.Fatalf("GET %s: %v", href, err)
 	}
@@ -72,7 +72,7 @@ func putRaw(t *testing.T, srv *httptest.Server, href, body string) int {
 		t.Fatalf("build PUT: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/sep+xml")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("PUT %s: %v", href, err)
 	}
@@ -87,7 +87,7 @@ func cancelled(frq sep2.FlowReservationRequest, at int64) sep2.FlowReservationRe
 
 func listResponses(t *testing.T, srv *httptest.Server, edevID string) sep2.FlowReservationResponseList {
 	t.Helper()
-	resp, err := http.Get(srv.URL + "/edev/" + edevID + "/frp")
+	resp, err := srv.Client().Get(srv.URL + "/edev/" + edevID + "/frp")
 	if err != nil {
 		t.Fatalf("GET frp: %v", err)
 	}

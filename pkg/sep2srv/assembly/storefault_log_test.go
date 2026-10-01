@@ -142,7 +142,7 @@ func TestEveryStoreFailureFiveHundredIsLoggedWithItsRoute(t *testing.T) {
 		}
 
 		buf.Reset()
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := isolatedClient().Do(req)
 		if err != nil {
 			t.Errorf("%s: %v", pattern, err)
 			continue

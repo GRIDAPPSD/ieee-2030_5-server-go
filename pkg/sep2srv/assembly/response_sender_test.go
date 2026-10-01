@@ -65,7 +65,7 @@ func TestPostResponseChecksEndDeviceLFDIAgainstSender(t *testing.T) {
 			}
 			srv := derControlRouter(t, stores)
 			href := coreresponse.ListHref(coreresponse.DefaultSetID)
-			resp, err := http.Post(srv.URL+href, "application/sep+xml", bytes.NewReader(tc.body))
+			resp, err := srv.Client().Post(srv.URL+href, "application/sep+xml", bytes.NewReader(tc.body))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -106,7 +106,7 @@ func TestPostResponseWithoutIdentityIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := http.Post(srv.URL+coreresponse.ListHref(coreresponse.DefaultSetID), "application/sep+xml", bytes.NewReader(body))
+	resp, err := srv.Client().Post(srv.URL+coreresponse.ListHref(coreresponse.DefaultSetID), "application/sep+xml", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}

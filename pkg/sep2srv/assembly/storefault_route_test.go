@@ -487,7 +487,7 @@ func TestEveryMountedRouteReportsAStoreFailureAsAServerError(t *testing.T) {
 			t.Errorf("%s: %v", pattern, err)
 			continue
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := srv.Client().Do(req)
 		if err != nil {
 			t.Errorf("%s: %v", pattern, err)
 			continue
@@ -510,7 +510,7 @@ func probeStatus(base, pattern string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := isolatedClient().Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -627,7 +627,7 @@ func TestFaultProbeRoutesAreServedWhileHealthy(t *testing.T) {
 			t.Errorf("%s: %v", pattern, err)
 			continue
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := isolatedClient().Do(req)
 		if err != nil {
 			t.Errorf("%s: %v", pattern, err)
 			continue

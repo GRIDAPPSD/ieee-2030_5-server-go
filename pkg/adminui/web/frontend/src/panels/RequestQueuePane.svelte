@@ -28,10 +28,15 @@
 
   // serverNow anchors a queue's countdown to the server's clock: the
   // payload's own `now`, else the response Date header, else null.
+  // One section per aggregator. queue is null when that aggregator has
+  // never loaded; error is set when its latest fetch failed, in which case
+  // a queue from an earlier fetch stays visible, marked stale.
   interface QueueView {
     lfdi: string
-    queue: FlowReservationQueue
+    queue: FlowReservationQueue | null
     serverNow: number | null
+    fetchedAtMs: number
+    error: string | null
   }
 
   let views = $state<QueueView[]>([])
@@ -57,7 +62,9 @@
   function fail(message: string, status: number) {
     if (!loaded && status === 404) {
       unavailable = true
+      error = ''
     } else {
+      unavailable = false
       error = message
     }
     refreshing = false
@@ -77,14 +84,45 @@
     )
     if (lifetime.signal.aborted || seq !== requestSeq) return
     const next: QueueView[] = []
+    let succeeded = 0
+    let firstFailure = { error: '', status: 0 }
     for (const [i, res] of results.entries()) {
-      if (!res.ok) return fail(res.error, res.status)
-      const parsed = normalizeQueue(res.data)
-      if ('error' in parsed) return fail('server returned an unexpected response shape: ' + parsed.error, 0)
-      const own = parsed.queue.now
-      const header = res.serverTime === undefined ? null : Math.floor(res.serverTime / 1000)
-      next.push({ lfdi: lfdis[i], queue: parsed.queue, serverNow: typeof own === 'number' ? own : header })
+      const lfdi = lfdis[i]
+      const prev = views.find((v) => v.lfdi === lfdi)
+      let problem: { error: string; status: number } | null = null
+      if (!res.ok) {
+        problem = { error: res.error, status: res.status }
+      } else {
+        const parsed = normalizeQueue(res.data)
+        if ('error' in parsed) {
+          problem = { error: 'server returned an unexpected response shape: ' + parsed.error, status: 0 }
+        } else {
+          const own = parsed.queue.now
+          const header = res.serverTime === undefined ? null : Math.floor(res.serverTime / 1000)
+          next.push({
+            lfdi,
+            queue: parsed.queue,
+            serverNow: typeof own === 'number' ? own : header,
+            fetchedAtMs: Date.now(),
+            error: null,
+          })
+          succeeded++
+        }
+      }
+      if (problem !== null) {
+        if (succeeded === 0 && firstFailure.error === '') firstFailure = problem
+        next.push({
+          lfdi,
+          queue: prev?.queue ?? null,
+          serverNow: prev?.serverNow ?? null,
+          fetchedAtMs: prev?.fetchedAtMs ?? Date.now(),
+          error: problem.error,
+        })
+      }
     }
+    // Every aggregator failing is a pane-level failure; one failing is
+    // only that aggregator's section.
+    if (lfdis.length > 0 && succeeded === 0) return fail(firstFailure.error, firstFailure.status)
     views = next
     loaded = true
     unavailable = false
@@ -110,8 +148,8 @@
     if (refreshTimer !== undefined) clearInterval(refreshTimer)
   })
 
-  function elapsedSeconds(): number {
-    return Math.max(0, Math.floor((nowMs - fetchedAtMs) / 1000))
+  function ageOf(since: number): number {
+    return Math.max(0, Math.floor((nowMs - since) / 1000))
   }
 </script>
 
@@ -151,9 +189,9 @@
 <div class="card full-width">
   <h2>Flow Reservation Requests</h2>
   <div class="hint">
-    <button class="btn btn-small" onclick={load} disabled={refreshing}>Refresh</button>
+    <button class="btn btn-small" onclick={load}>Refresh</button>
     {#if loaded}
-      <span data-testid="frq-age">fetched {formatAge(Math.max(0, Math.floor((nowMs - fetchedAtMs) / 1000)))}</span>
+      <span data-testid="frq-age">fetched {formatAge(ageOf(fetchedAtMs))}</span>
     {/if}
   </div>
   {#if !loaded && unavailable}
@@ -167,14 +205,20 @@
   {:else}
     {#if error !== ''}
       <div class="result err" data-testid="frq-stale">
-        Could not refresh requests: {error}. Showing the queue fetched {formatAge(elapsedSeconds())} (stale).
+        Could not refresh requests: {error}. Showing the queue fetched {formatAge(ageOf(fetchedAtMs))} (stale).
       </div>
     {/if}
-    {#if views.every((v) => v.queue.requests.length === 0)}
+    {#if views.every((v) => v.queue !== null && v.queue.requests.length === 0)}
       <p class="hint" data-testid="frq-empty">No flow reservation requests.</p>
     {/if}
     {#each views as view (view.lfdi)}
-      {#if view.queue.requests.length > 0}
+      {#if view.error !== null}
+        <div class="result err" data-testid="frq-section-error">
+          Could not load requests for <span class="mono">{view.lfdi.substring(0, 16)}...</span>: {view.error}.
+          {#if view.queue !== null}Showing the queue fetched {formatAge(ageOf(view.fetchedAtMs))} (stale).{/if}
+        </div>
+      {/if}
+      {#if view.queue !== null && view.queue.requests.length > 0}
         {#if view.queue.persisted === false}
           <p class="hint" data-testid="frq-not-persisted">
             This server does not persist requests; they are lost on restart.
@@ -205,7 +249,7 @@
                   <span data-testid="frq-state">{entry.state}</span>
                   {#if entry.state === 'pending'}
                     <div data-testid="frq-countdown">
-                      {formatCountdown(entry.deadlineAt, view.serverNow, elapsedSeconds())}
+                      {formatCountdown(entry.deadlineAt, view.serverNow, ageOf(view.fetchedAtMs))}
                     </div>
                   {/if}
                 </td>

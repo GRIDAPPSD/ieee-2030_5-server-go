@@ -204,6 +204,28 @@ function checkResponse(r: unknown, where: string): string | null {
   return null
 }
 
+// nullAbsent reads every nullable ResponseView field that a server may
+// omit instead of sending null as null, so a template that tests for null
+// cannot mistake an absent key for a present one.
+const NULLABLE_RESPONSE_FIELDS = [
+  'interval',
+  'energyAvailable',
+  'powerAvailable',
+  'direction',
+  'eventStatus',
+  'cancelReason',
+  'answeredBy',
+  'cancelledBy',
+  'energyCommittedWh',
+  'energyRemainingWh',
+]
+
+function nullAbsent(r: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...r }
+  for (const k of NULLABLE_RESPONSE_FIELDS) out[k] = r[k] ?? null
+  return out
+}
+
 // normalizeQueue checks, before anything renders, every field the pane
 // reads, because a throw during render leaves the pane stuck on its loading
 // state with nothing shown. It returns a copy with an undefined tip read as
@@ -236,7 +258,12 @@ export function normalizeQueue(data: unknown): { queue: FlowReservationQueue } |
       if (bad !== null) return { error: bad }
     }
     keys.push(e.requestHref)
-    requests.push({ ...(e as unknown as FlowReservationEntry), tip: tip as ResponseView | null })
+    requests.push({
+      ...(e as unknown as FlowReservationEntry),
+      deadlineAt: (e.deadlineAt ?? null) as number | null,
+      responses: (e.responses as Record<string, unknown>[]).map(nullAbsent) as unknown as ResponseView[],
+      tip: tip === null ? null : (nullAbsent(tip as Record<string, unknown>) as unknown as ResponseView),
+    })
   }
   const dup = dupKey(keys)
   if (dup !== null) return { error: 'queue repeats request ' + dup }

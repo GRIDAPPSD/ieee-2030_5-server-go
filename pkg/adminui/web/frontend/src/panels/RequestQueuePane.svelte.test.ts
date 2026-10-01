@@ -5,7 +5,7 @@
 // deadline counts down from the server's clock; and a failed refresh keeps
 // the last good queue, marked stale.
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, within, cleanup } from '@testing-library/svelte'
+import { render, screen, within, cleanup, fireEvent } from '@testing-library/svelte'
 import { tick } from 'svelte'
 import RequestQueuePane from './RequestQueuePane.svelte'
 import * as api from '../lib/api'
@@ -123,7 +123,7 @@ describe('RequestQueuePane states', () => {
     render(RequestQueuePane)
     await tick()
     expect(screen.getByTestId('frq-loading')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
     await vi.advanceTimersByTimeAsync(15_000)
     await tick()
     expect(screen.getByTestId('frq-error')).toHaveTextContent('request timed out')
@@ -377,5 +377,144 @@ describe('RequestQueuePane refresh', () => {
     expect(screen.getAllByTestId('frq-row')).toHaveLength(2)
     expect(screen.queryByTestId('frq-stale')).toBeNull()
     expect(screen.queryByTestId('frq-error')).toBeNull()
+  })
+})
+
+describe('RequestQueuePane absent nullable fields', () => {
+  it('reads an absent cancelledBy and cancelReason as not cancelled', async () => {
+    const d = copy()
+    for (const r of d.requests[1].responses) {
+      delete r.cancelledBy
+      delete r.cancelReason
+    }
+    delete d.requests[1].tip.cancelledBy
+    delete d.requests[1].tip.cancelReason
+    mockOk(d)
+    const { container } = render(RequestQueuePane)
+    await loaded()
+    expect(screen.queryByTestId('response-cancelled')).toBeNull()
+    expect(container.textContent).not.toContain('undefined')
+  })
+
+  it('still shows the cancel block when the server sends it (control)', async () => {
+    mockOk(fixture)
+    render(RequestQueuePane)
+    await loaded()
+    expect(screen.getAllByTestId('response-cancelled')).toHaveLength(1)
+  })
+})
+
+describe('RequestQueuePane unavailable then error', () => {
+  it('shows the 500 after a first-load 404, not the not-available text', async () => {
+    let status = 404
+    mockRoutes(() => ({ ok: false, error: 'boom', status }))
+    render(RequestQueuePane)
+    expect(await screen.findByTestId('frq-unavailable')).toBeInTheDocument()
+    status = 500
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(await screen.findByTestId('frq-error')).toHaveTextContent('boom')
+    expect(screen.queryByTestId('frq-unavailable')).toBeNull()
+  })
+})
+
+describe('RequestQueuePane one failing aggregator', () => {
+  const OTHER = 'CD'.repeat(20)
+  const TWO: Res = { ok: true, data: [{ aggregatorLFDI: LFDI }, { aggregatorLFDI: OTHER }] }
+
+  function twoAggregators(otherFails: () => boolean) {
+    return mockRoutes(
+      (path) => {
+        if (path.endsWith(OTHER)) {
+          return otherFails() ? { ok: false, error: 'boom', status: 500 } : { ok: true, data: { ...copy(), aggregatorLFDI: OTHER, requests: [] } }
+        }
+        return { ok: true, data: fixture }
+      },
+      TWO,
+    )
+  }
+
+  it('on first load shows the healthy aggregator and names the failing one', async () => {
+    twoAggregators(() => true)
+    render(RequestQueuePane)
+    const rows = await loaded()
+    expect(rows).toHaveLength(2)
+    const err = screen.getByTestId('frq-section-error')
+    expect(err).toHaveTextContent(OTHER.substring(0, 16))
+    expect(err).toHaveTextContent('boom')
+    expect(screen.queryByTestId('frq-error')).toBeNull()
+  })
+
+  it('on refresh keeps the failing aggregator\'s old queue, stale, beside the updated healthy one', async () => {
+    let fail = false
+    mockRoutes(
+      (path) => {
+        if (path.endsWith(OTHER)) return fail ? { ok: false, error: 'boom', status: 500 } : { ok: true, data: fixture }
+        return { ok: true, data: { ...copy(), requests: [] } }
+      },
+      TWO,
+    )
+    render(RequestQueuePane)
+    await loaded()
+    expect(screen.queryByTestId('frq-section-error')).toBeNull()
+    fail = true
+    await vi.advanceTimersByTimeAsync(30_000)
+    await tick()
+    expect(screen.getAllByTestId('frq-row')).toHaveLength(2)
+    const err = screen.getByTestId('frq-section-error')
+    expect(err).toHaveTextContent(OTHER.substring(0, 16))
+    expect(err).toHaveTextContent('(stale)')
+  })
+
+  it('when every aggregator fails the whole pane shows the error', async () => {
+    mockRoutes(() => ({ ok: false, error: 'boom', status: 500 }), TWO)
+    render(RequestQueuePane)
+    expect(await screen.findByTestId('frq-error')).toHaveTextContent('boom')
+    expect(screen.queryByTestId('frq-section-error')).toBeNull()
+  })
+})
+
+describe('RequestQueuePane response ordering', () => {
+  function deferred() {
+    let resolve!: (r: Res) => void
+    const promise = new Promise<Res>((r) => (resolve = r))
+    return { promise, resolve }
+  }
+  const NEWER = () => ({ ...copy(), requests: [copy().requests[0]] })
+
+  it('ignores an older fleet-list response that lands after a newer load finished', async () => {
+    const slow = deferred()
+    let fleetCalls = 0
+    let flowCalls = 0
+    vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
+      if (path === '/api/derms/fleets') return ++fleetCalls === 1 ? slow.promise : FLEETS
+      return ++flowCalls === 1 ? { ok: true, data: NEWER() } : { ok: true, data: fixture }
+    }) as never)
+    render(RequestQueuePane)
+    await tick()
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(await screen.findAllByTestId('frq-row')).toHaveLength(1)
+    slow.resolve(FLEETS)
+    await vi.advanceTimersByTimeAsync(0)
+    await tick()
+    expect(screen.getAllByTestId('frq-row')).toHaveLength(1)
+    // The overtaken load stops at the fleet list: it asks for no queues.
+    expect(flowCalls).toBe(1)
+  })
+
+  it('ignores an older queue response that lands after a newer load finished', async () => {
+    const slow = deferred()
+    let flowCalls = 0
+    vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
+      if (path === '/api/derms/fleets') return FLEETS
+      return ++flowCalls === 1 ? slow.promise : { ok: true, data: NEWER() }
+    }) as never)
+    render(RequestQueuePane)
+    await tick()
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(await screen.findAllByTestId('frq-row')).toHaveLength(1)
+    slow.resolve({ ok: true, data: fixture })
+    await vi.advanceTimersByTimeAsync(0)
+    await tick()
+    expect(screen.getAllByTestId('frq-row')).toHaveLength(1)
   })
 })

@@ -341,6 +341,9 @@ func (q *Queue) attemptFallback(ctx context.Context, edevID, frqID string, attem
 	}
 	if err != nil {
 		if errors.Is(err, ErrAlreadyAnswered) {
+			if errors.Is(err, ErrAnswerRecordTakeBack) {
+				logStrayRecord("deadline fallback", edevID, frqID, KindDeadlineFallback, err)
+			}
 			// An Answer call won between this attempt's failure and its
 			// retry being scheduled: the retry that just fired has nothing
 			// left to do, and forgetting it is what keeps timers from
@@ -551,7 +554,7 @@ func (q *Queue) store(ctx context.Context, edevID, frqID string, frp sep2.FlowRe
 		// exists. The answer record's own Create refusing one is a racing
 		// attempt that may still fail, so it stays a retryable failure.
 		if errors.Is(frpErr, store.ErrAlreadyExists) {
-			if errors.Is(createErr, errTakeBack) {
+			if errors.Is(createErr, ErrAnswerRecordTakeBack) {
 				return fmt.Errorf("%w: %w", ErrAlreadyAnswered, createErr)
 			}
 			return ErrAlreadyAnswered

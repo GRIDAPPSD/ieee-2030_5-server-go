@@ -160,6 +160,9 @@ type frCancelBody struct {
 // logSafe, and the reason is never added.
 type frWriteLog struct {
 	attrs []any
+	// fault logs a refusal at ERROR: the client's answer stands, but the
+	// server left something behind that an operator must see.
+	fault bool
 }
 
 func (l *frWriteLog) add(key string, value any) {
@@ -239,6 +242,8 @@ func (h *AdminFlowReservationHandler) refuseWriteBody(w http.ResponseWriter, r *
 	level, msg, event := slog.LevelWarn, "admin: flow reservation write refused", "flow_reservation_"+op+"_refused"
 	if kind.status >= http.StatusInternalServerError && kind.status != http.StatusServiceUnavailable {
 		level, msg, event = slog.LevelError, "admin: flow reservation write failed", "flow_reservation_"+op+"_failed"
+	} else if l.fault {
+		level = slog.LevelError
 	}
 	h.writeLine(r, level, msg, event, l)
 	body.Error, body.Code = kind.text, kind.code
@@ -522,6 +527,12 @@ func (h *AdminFlowReservationHandler) refuseAnswer(w http.ResponseWriter, r *htt
 			l.add("cause", "chain_read")
 			h.refuseWrite(w, r, op, frInternal, "", "", l)
 			return
+		}
+		// A response exists, so this is still a 409; the stray record that
+		// may name this operator is logged as the server's fault.
+		if errors.Is(err, flowreservation.ErrAnswerRecordTakeBack) {
+			l.add("cause", "answer_record_take_back")
+			l.fault = true
 		}
 		mrid := ""
 		if tip != nil {

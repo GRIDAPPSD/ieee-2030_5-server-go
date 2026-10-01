@@ -118,18 +118,28 @@ func (a *Answers) intend(ctx context.Context, edevID, id string, rec AnswerRecor
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		if err := a.store.Create(ctx, edevID, id, rec); err != nil {
-			return nil, fmt.Errorf("flowreservation: record answer %s/%s: %w", edevID, id, err)
+			return nil, fmt.Errorf("flowreservation: record answer %s/%s: %w", edevID, id, recordStoreErr(err))
 		}
-		return func(ctx context.Context) error { return a.store.Delete(ctx, edevID, id) }, nil
+		return func(ctx context.Context) error { return recordStoreErr(a.store.Delete(ctx, edevID, id)) }, nil
 	case err != nil:
 		return nil, fmt.Errorf("flowreservation: read answer record %s/%s: %w", edevID, id, err)
 	}
 	// A record left by a response that no longer exists (a crash after its
 	// intent, or a revision rolled back at startup) is replaced.
 	if err := a.store.Update(ctx, edevID, id, rec); err != nil {
-		return nil, fmt.Errorf("flowreservation: record answer %s/%s: %w", edevID, id, err)
+		return nil, fmt.Errorf("flowreservation: record answer %s/%s: %w", edevID, id, recordStoreErr(err))
 	}
-	return func(ctx context.Context) error { return a.store.Update(ctx, edevID, id, prev) }, nil
+	return func(ctx context.Context) error { return recordStoreErr(a.store.Update(ctx, edevID, id, prev)) }, nil
+}
+
+// recordStoreErr keeps the answer store's NotFound and AlreadyExists, which
+// another attempt's record causes, from reading to callers as the request
+// being gone or already answered.
+func recordStoreErr(err error) error {
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrAlreadyExists) {
+		return fmt.Errorf("%w: %v", errRecordMoved, err)
+	}
+	return err
 }
 
 // RecordCancel records by as the canceller of the response under (edevID,
@@ -153,9 +163,20 @@ func (a *Answers) RecordCancel(ctx context.Context, edevID, id string, by Attrib
 	return nil
 }
 
-// errTakeBack marks a failed undo of an answer record after its response's
-// create failed: the record may now name a response it did not create.
-var errTakeBack = errors.New("flowreservation: take back answer record")
+// errRecordMoved marks an answer record write that found the record created
+// or removed by another attempt since this one read it.
+var errRecordMoved = errors.New("flowreservation: answer record changed by another attempt")
+
+// ErrAnswerRecordTakeBack marks a failed undo of an answer record after its
+// response's create failed: the record may now name an answerer that did not
+// create the response stored under its id.
+var ErrAnswerRecordTakeBack = errors.New("flowreservation: take back answer record")
+
+// logStrayRecord logs, at ERROR, an answer record that op could not take back
+// after finding the request already answered; the record may name kind.
+func logStrayRecord(op, edevID, frqID, kind string, err error) {
+	log.Printf("ERROR: flowreservation: %s %s/%s: already answered, but its answer record may still name %s as the answerer (cause=answer_record_take_back): %v", op, edevID, frqID, kind, err)
+}
 
 // recorded wraps a response's create and delete so its record is written
 // just before the create and put back as it was if the create fails or the
@@ -171,7 +192,7 @@ func (a *Answers) recorded(edevID, id string, rec AnswerRecord, create, del func
 		undo = u
 		if err := create(ctx); err != nil {
 			if uerr := undo(context.WithoutCancel(ctx)); uerr != nil {
-				return errors.Join(err, fmt.Errorf("%w %s/%s: %w", errTakeBack, edevID, id, uerr))
+				return errors.Join(err, fmt.Errorf("%w %s/%s: %w", ErrAnswerRecordTakeBack, edevID, id, uerr))
 			}
 			return err
 		}

@@ -1,4 +1,4 @@
-package server
+package adminplane
 
 import (
 	"io/fs"

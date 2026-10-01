@@ -1,4 +1,4 @@
-package server
+package adminplane
 
 import (
 	"log"
@@ -25,9 +25,9 @@ import (
 // only runs for hosts the server claims.
 //
 // Status codes:
-//   - missing Host header on HTTP/1.1 → 400 (RFC 7230 §5.4 says it's mandatory)
-//   - empty Host on HTTP/1.0 or non-allowlisted Host on either → 421
-//     Misdirected Request (RFC 7540 §9.1.2 — "this server doesn't claim
+//   - missing Host header on HTTP/1.1 -> 400 (RFC 7230 section 5.4 says it's mandatory)
+//   - empty Host on HTTP/1.0 or non-allowlisted Host on either -> 421
+//     Misdirected Request (RFC 7540 section 9.1.2 - "this server doesn't claim
 //     this hostname")
 //
 // Allowlist entries are matched against BOTH bare host and host:port forms
@@ -52,7 +52,7 @@ func HostAllowlistMiddleware(allowed []string) func(http.Handler) http.Handler {
 
 			// Empty Host on HTTP/1.1 is a protocol violation. Empty on
 			// HTTP/1.0 is technically permitted but pointless on this
-			// surface — we don't claim "any host", so 421 either way is
+			// surface - we don't claim "any host", so 421 either way is
 			// defensible. We pick 400 on HTTP/1.1 (per RFC 7230) and 421
 			// on HTTP/1.0 (defense-in-depth).
 			if host == "" {
@@ -142,7 +142,7 @@ func ResolveAdminAllowedHosts(extras []string) []string {
 
 // allowedKeys returns the keys of m sorted lexicographically for log
 // output. Map iteration order in Go is randomized, so the previous
-// "insertion-stable order" claim was wrong — sorting gives diff-friendly
+// "insertion-stable order" claim was wrong - sorting gives diff-friendly
 // log lines across runs and lets operators eyeball-compare allowlists
 // from different boots.
 func allowedKeys(m map[string]struct{}) []string {

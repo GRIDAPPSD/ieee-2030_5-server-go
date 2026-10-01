@@ -2,7 +2,7 @@
 // behavior. These live in package server (not server_test) so they can
 // access the unexported notifierAdapter type directly without exporting
 // it as a test helper.
-package server
+package adminplane
 
 import (
 	"context"

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
@@ -32,7 +33,7 @@ func setupAdminRouter(t *testing.T) (*server.Stores, http.Handler) {
 		AdminFSAs:   memory.NewAdminFSAStore(),
 	}
 	tickets := auth.NewTicketStore(5 * time.Minute)
-	router, _ := server.BuildAdminRouter(adminKey, nil, stores, "GCM", tickets, nil, nil, false, nil)
+	router, _ := adminplane.BuildAdminRouter(adminKey, nil, stores, "GCM", tickets, nil, nil, false, nil)
 	return stores, router
 }
 

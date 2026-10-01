@@ -1,12 +1,12 @@
 // The legacy dashboard (SEP2_ADMIN_LEGACY_DASHBOARD) is a string constant in
-// internal/server/dashboard_html.go. This runs its script in jsdom against
+// internal/adminplane/dashboard_html.go. This runs its script in jsdom against
 // its own markup and feeds onSSEMessage a frame, so the rendered device table
 // is what is asserted.
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const source = readFileSync(resolve(__dirname, '../../../../../internal/server/dashboard_html.go'), 'utf8')
+const source = readFileSync(resolve(__dirname, '../../../../../internal/adminplane/dashboard_html.go'), 'utf8')
 const body = source.slice(source.indexOf('<body'), source.indexOf('<script>'))
 const script = source.slice(source.indexOf('<script>') + '<script>'.length, source.indexOf('</script>'))
 

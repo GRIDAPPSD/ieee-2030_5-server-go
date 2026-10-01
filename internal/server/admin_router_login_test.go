@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 // #159: ensure the admin router exposes /login + /auth/login outside the
@@ -20,7 +20,7 @@ func TestAdminRouterLoginPagePublic(t *testing.T) {
 	stores := newTestStores()
 	tickets := auth.NewTicketStore(5 * time.Minute)
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	r, _ := server.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, sessions, nil, false, nil)
+	r, _ := adminplane.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, sessions, nil, false, nil)
 
 	srv := httptest.NewServer(r)
 	defer srv.Close()
@@ -40,7 +40,7 @@ func TestAdminRouterLoginCookieGrantsAccess(t *testing.T) {
 	stores := newTestStores()
 	tickets := auth.NewTicketStore(5 * time.Minute)
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	r, _ := server.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, sessions, nil, false, nil)
+	r, _ := adminplane.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, sessions, nil, false, nil)
 
 	srv := httptest.NewServer(r)
 	defer srv.Close()
@@ -92,7 +92,7 @@ func TestAdminRouterApiCertsInfoBehindAuth(t *testing.T) {
 	stores := newTestStores()
 	tickets := auth.NewTicketStore(5 * time.Minute)
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	r, _ := server.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, sessions, nil, false, nil)
+	r, _ := adminplane.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, sessions, nil, false, nil)
 
 	srv := httptest.NewServer(r)
 	defer srv.Close()
@@ -121,7 +121,7 @@ func TestAdminRouterApiCertsDeviceTypesReachableWithoutCertService(t *testing.T)
 	stores := newTestStores()
 	tickets := auth.NewTicketStore(5 * time.Minute)
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	r, _ := server.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, sessions, nil, false, nil)
+	r, _ := adminplane.BuildAdminRouter("the-key", nil, stores, "GCM", tickets, sessions, nil, false, nil)
 
 	srv := httptest.NewServer(r)
 	defer srv.Close()

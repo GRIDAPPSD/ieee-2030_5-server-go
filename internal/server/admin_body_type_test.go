@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 // TestAdminBodyTypeRefusalLogsRefusalWithoutCredentialOrBody covers the
@@ -17,10 +17,10 @@ import (
 // and an accepted write (#416).
 func TestAdminBodyTypeRefusalLogsRefusalWithoutCredentialOrBody(t *testing.T) {
 	buf := captureSlogForLogin(t)
-	router, _ := server.BuildAdminRouter(
+	router, _ := adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		server.DefaultAdminAllowedHosts(), false, nil,
+		adminplane.DefaultAdminAllowedHosts(), false, nil,
 	)
 
 	const (

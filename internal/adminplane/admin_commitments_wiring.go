@@ -1,4 +1,4 @@
-package server
+package adminplane
 
 import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"

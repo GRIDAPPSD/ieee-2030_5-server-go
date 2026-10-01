@@ -1,4 +1,4 @@
-package server
+package adminplane
 
 import (
 	"net/http"
@@ -15,13 +15,13 @@ type routeRegistrar interface {
 
 // recordingMux is a thin wrapper around *http.ServeMux that captures
 // every pattern handed to HandleFunc / Handle. The Patterns method
-// returns a sorted, de-duplicated copy of the captured strings — used
+// returns a sorted, de-duplicated copy of the captured strings - used
 // by #272 to enumerate routes-per-listener at startup so a future
 // /api/certs/* mis-mount surfaces in the boot log instead of becoming
 // the next Leon CRITICAL.
 //
 // Sole writer is the constructor that builds the mux. Consumers read
-// Patterns once at boot. No locking — boot is single-goroutine for
+// Patterns once at boot. No locking - boot is single-goroutine for
 // router construction.
 type recordingMux struct {
 	mux      *http.ServeMux
@@ -57,7 +57,7 @@ func (r *recordingMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // Patterns returns a sorted, de-duplicated copy of every registered
 // pattern. Stable output keeps the boot log diff-friendly across runs.
 // (A pattern registered against multiple HTTP methods on the SAME
-// ServeMux is illegal — the stdlib panics — so duplicates here would
+// ServeMux is illegal - the stdlib panics - so duplicates here would
 // only come from a second registration on the same recordingMux, which
 // we collapse defensively.)
 func (r *recordingMux) Patterns() []string {

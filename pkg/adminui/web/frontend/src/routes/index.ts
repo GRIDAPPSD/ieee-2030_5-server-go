@@ -3,7 +3,7 @@
 // (src/lib/router.ts's Route interface).
 //
 // The dashboard is registered at both "/" and "/ui/": the admin listener
-// serves the built index.html at "/" (internal/server/dashboard.go) as
+// serves the built index.html at "/" (internal/adminplane/dashboard.go) as
 // well as under the SPA's own /ui/ mount, and the client side router
 // matches on the exact pathname, so both need an entry.
 //

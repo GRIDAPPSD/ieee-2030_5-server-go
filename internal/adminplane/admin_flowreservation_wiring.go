@@ -1,4 +1,4 @@
-package server
+package adminplane
 
 import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -31,14 +31,14 @@ func newAdminFlowReservationHandler(stores *Stores) *handler.AdminFlowReservatio
 		Responses:  flowreservation.NewDerivedStatusResponseStoreFor(stores.FlowReservationResponses, stores.FlowReservationResponseLifecycles, stores.Sep2Edition == handler.Edition2023),
 		Lifecycles: stores.FlowReservationResponseLifecycles,
 		Fleets:     fleets,
-		Deadline:   flowReservationConfig(stores.FlowReservationDeadline),
+		Deadline:   FlowReservationConfig(stores.FlowReservationDeadline),
 		Persisted:  persists(stores.FlowReservationRequests) && persists(stores.FlowReservationResponses) && persists(stores.FlowReservationResponseLifecycles),
 	}
 	if !store.IsAbsent(stores.DERControls) && !store.IsAbsent(stores.DERControlLifecycles) {
 		h.Controls = coreder.NewDerivedStatusControlStoreFor(stores.DERControls, stores.DERControlLifecycles, stores.Sep2Edition == handler.Edition2023)
 		h.Executions = sources.NewControls(stores.DERControls, stores.DERControlLifecycles, fleets)
 	}
-	if answers := flowReservationAnswers(stores); answers != nil {
+	if answers := FlowReservationAnswers(stores); answers != nil {
 		h.Attributions, h.CancelRecorder = answers, answers
 		h.Persisted = h.Persisted && persists(stores.FlowReservationAnswers)
 	}
@@ -59,7 +59,7 @@ func wireFlowReservationWrites(h *handler.AdminFlowReservationHandler, stores *S
 	if store.IsAbsent(stores.CommitmentLedger) || stores.DERControlIssuer == nil {
 		return
 	}
-	responses := flowReservationResponses(stores)
+	responses := FlowReservationResponses(stores)
 	notifier := adminFlowReservationNotifier(stores)
 	writers := flowreservation.NotifyingWriters(
 		sources.NewWriters(stores.DERControlIssuer, stores.FlowReservationResponseLifecycles), notifier)
@@ -84,7 +84,7 @@ func wireFlowReservationWrites(h *handler.AdminFlowReservationHandler, stores *S
 // adminFlowReservationNotifier is the admin notifier as the flow reservation
 // package takes it, or nil when none is wired.
 func adminFlowReservationNotifier(stores *Stores) flowreservation.Notifier {
-	n := adaptNotifier(stores.AdminNotifier)
+	n := AdaptNotifier(stores.AdminNotifier)
 	if n == nil {
 		return nil
 	}

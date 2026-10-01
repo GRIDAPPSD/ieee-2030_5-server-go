@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mirrorretention"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
 // startMirrorRetentionAtBoot is the call Run makes; tests replace it to
@@ -17,7 +18,7 @@ var startMirrorRetentionAtBoot = startMirrorReadingRetention
 // ticker. A failed boot sweep is logged, not fatal: the next tick retries it.
 // It takes no fleet lock, since no commitment guards a reading.
 func startMirrorReadingRetention(ctx context.Context, stores *Stores, logger *slog.Logger, now func() time.Time) (stop func()) {
-	if stores.MirrorMeterReadings == nil {
+	if store.IsAbsent(stores.MirrorMeterReadings) {
 		return func() {}
 	}
 	r := &mirrorretention.Retention{
@@ -28,7 +29,7 @@ func startMirrorReadingRetention(ctx context.Context, stores *Stores, logger *sl
 	}
 	// A nil mirror store leaves Mirrors nil, so every sweep refuses rather
 	// than removing a type an inline reading relies on.
-	if stores.MirrorUsagePoints != nil {
+	if !store.IsAbsent(stores.MirrorUsagePoints) {
 		r.Mirrors = stores.MirrorUsagePoints
 	}
 	if _, err := r.Sweep(ctx, now()); err != nil && ctx.Err() == nil {

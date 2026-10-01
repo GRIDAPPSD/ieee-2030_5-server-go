@@ -1,5 +1,5 @@
 // dashboard.ts holds the shape of the dashboard SSE payload
-// (internal/server/dashboard.go's DashboardData) and the connection
+// (internal/adminplane/dashboard.go's DashboardData) and the connection
 // logic that keeps it flowing: an auth-ticket exchange followed by an
 // EventSource on /dashboard/events, which pushes an update every 5
 // seconds.

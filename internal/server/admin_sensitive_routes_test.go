@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
@@ -41,10 +42,10 @@ func captureSlogForSensitiveRoutes(t *testing.T) *bytes.Buffer {
 
 func newSensitiveRoutesRouter(t *testing.T) http.Handler {
 	t.Helper()
-	router, _ := server.BuildAdminRouter(
+	router, _ := adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		server.DefaultAdminAllowedHosts(), false, http.NotFoundHandler(),
+		adminplane.DefaultAdminAllowedHosts(), false, http.NotFoundHandler(),
 	)
 	return router
 }
@@ -256,7 +257,7 @@ func TestSensitiveRoutesStillRefuseUnderNonLoopbackExposure(t *testing.T) {
 // half by driving a real request for every map entry instead of comparing
 // two static lists.
 func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
-	patterns := server.AuthedAdminPatterns(
+	patterns := adminplane.AuthedAdminPatterns(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
 		false, http.NotFoundHandler(),
@@ -286,7 +287,7 @@ func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
 	sort.Strings(want)
 
 	var got []string
-	for p := range server.SensitiveAdminPatterns {
+	for p := range adminplane.SensitiveAdminPatterns {
 		got = append(got, p)
 	}
 	sort.Strings(got)
@@ -309,7 +310,7 @@ func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
 func TestEverySensitiveAdminPatternRefusesBypassOnly(t *testing.T) {
 	router := newSensitiveRoutesRouter(t)
 
-	for pattern := range server.SensitiveAdminPatterns {
+	for pattern := range adminplane.SensitiveAdminPatterns {
 		method, path, ok := strings.Cut(pattern, " ")
 		if !ok {
 			t.Fatalf("pattern %q names no method", pattern)
@@ -345,7 +346,7 @@ func TestEverySensitiveAdminPatternRefusesBypassOnly(t *testing.T) {
 // refuse here, with no name to remember to add anywhere (#579 fix round 2,
 // MEDIUM, coverage lane).
 func TestEveryDefaultProtectedAdminWriteRefusesBypassOnly(t *testing.T) {
-	patterns := server.AuthedAdminPatterns(
+	patterns := adminplane.AuthedAdminPatterns(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
 		false, http.NotFoundHandler(),
@@ -361,10 +362,10 @@ func TestEveryDefaultProtectedAdminWriteRefusesBypassOnly(t *testing.T) {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 			continue
 		}
-		if _, sensitive := server.SensitiveAdminPatterns[p]; sensitive {
+		if _, sensitive := adminplane.SensitiveAdminPatterns[p]; sensitive {
 			continue
 		}
-		if _, exempt := server.NonSensitiveAdminWrites[p]; exempt {
+		if _, exempt := adminplane.NonSensitiveAdminWrites[p]; exempt {
 			continue
 		}
 		defaultProtected = append(defaultProtected, p)
@@ -416,7 +417,7 @@ func isGrantControlOrAnswerWrite(path string) bool {
 // map, and the derived bypass test above drops exempt routes, so without
 // this check an exempt sensitive route fails nothing.
 func TestNoSensitiveAdminWriteIsListedAsNonSensitive(t *testing.T) {
-	patterns := server.AuthedAdminPatterns(
+	patterns := adminplane.AuthedAdminPatterns(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
 		false, http.NotFoundHandler(),
@@ -440,7 +441,7 @@ func TestNoSensitiveAdminWriteIsListedAsNonSensitive(t *testing.T) {
 		if strings.HasSuffix(path, "/answer") {
 			sawAnswer = true
 		}
-		if _, exempt := server.NonSensitiveAdminWrites[p]; exempt {
+		if _, exempt := adminplane.NonSensitiveAdminWrites[p]; exempt {
 			t.Errorf("%s changes grants, controls, answers or certificates but is listed in nonSensitiveAdminWrites", p)
 		}
 	}

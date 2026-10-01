@@ -1,8 +1,8 @@
-package server
+package adminplane
 
 // loginHTML is the plain HTML form served at GET /login. The form POSTs to
 // /auth/login. On success the server sets the admin_ticket cookie and
-// redirects to /. This file deliberately ships no external JS/CSS — the
+// redirects to /. This file deliberately ships no external JS/CSS - the
 // page is operator tooling and stays static.
 const loginHTML = `<!DOCTYPE html>
 <html lang="en">

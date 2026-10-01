@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // Tests for GRIDAPPSD/ieee-2030_5-server-go#668: revising an answered request
@@ -381,5 +384,292 @@ func TestChainOf_EmptyBeforeAnyResponse(t *testing.T) {
 	must(t, err)
 	if len(chain) != 0 {
 		t.Errorf("chain = %+v, want empty", chain)
+	}
+}
+
+// frqHook and frpHook decorate a store's Get so a test can park a caller
+// between two steps or fail a read.
+type frqHook struct {
+	flowreservation.FRQReader
+	after func(id string, err error)
+}
+
+func (h frqHook) Get(ctx context.Context, parentID, id string) (sep2.FlowReservationRequest, error) {
+	frq, err := h.FRQReader.Get(ctx, parentID, id)
+	if h.after != nil {
+		h.after(id, err)
+	}
+	return frq, err
+}
+
+type frpHook struct {
+	flowreservation.FRPStore
+	get func(ctx context.Context, parentID, id string) (sep2.FlowReservationResponse, error)
+}
+
+func (h frpHook) Get(ctx context.Context, parentID, id string) (sep2.FlowReservationResponse, error) {
+	return h.get(ctx, parentID, id)
+}
+
+func waitFor(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+// TestCancel_RacingARevisionStillCancelsTheRevision parks Revise after it
+// has read the request and Cancel after its chain walk found only R1, then
+// lets Revise finish before Cancel continues. Cancel's cancel of R1 reads
+// "not live"; it must walk again and cancel R1-r1 and its control.
+func TestCancel_RacingARevisionStillCancelsTheRevision(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	base := time.Now().Add(time.Hour).Unix()
+	old := f.answered(t, base)
+	exec := f.issueExec(t, old, base, -2000)
+
+	reqRead, releaseRevise := make(chan struct{}), make(chan struct{})
+	walked, releaseCancel := make(chan struct{}), make(chan struct{})
+	var parkRevise, parkCancel sync.Once
+
+	deps := f.reviseDeps()
+	deps.FRQ = frqHook{FRQReader: f.frq, after: func(string, error) {
+		parkRevise.Do(func() { close(reqRead); <-releaseRevise })
+	}}
+	canceller := flowreservation.NewCanceller(f.frq, frpHook{FRPStore: f.frp, get: func(ctx context.Context, p, id string) (sep2.FlowReservationResponse, error) {
+		frp, err := f.frp.Get(ctx, p, id)
+		if id == "R1-r1" && errors.Is(err, store.ErrNotFound) {
+			parkCancel.Do(func() { close(walked); <-releaseCancel })
+		}
+		return frp, err
+	}}, f.queue, f.ledger, sources.NewWriters(f.issuer, f.frpLifecycles))
+
+	reviseDone, cancelDone := make(chan error, 1), make(chan error, 1)
+	go func() {
+		_, err := flowreservation.Revise(ctx, deps, aggID, "R1", shorten(base, 1800), "operator revise", flowreservation.Attribution{}, time.Now())
+		reviseDone <- err
+	}()
+	waitFor(t, reqRead, "Revise to read the request")
+	go func() { cancelDone <- canceller.Cancel(ctx, aggID, "R1", cancelledStatus(time.Now().Unix())) }()
+	waitFor(t, walked, "Cancel to walk the chain")
+
+	close(releaseRevise)
+	if err := <-reviseDone; err != nil {
+		t.Fatalf("Revise: %v", err)
+	}
+	close(releaseCancel)
+	if err := <-cancelDone; err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	rlc, err := f.frpLifecycles.Get(ctx, aggID, "R1-r1")
+	if err != nil || rlc.CancelledAt == nil || rlc.CancelReason != "client cancel" {
+		t.Errorf("revision lifecycle = %+v (err %v), want cancelled with reason client cancel", rlc, err)
+	}
+	lc, err := f.controlLifecycles.Get(ctx, exec.Scope.Key(), exec.ID)
+	must(t, err)
+	if lc.CancelledAt == nil {
+		t.Errorf("execution lifecycle = %+v, want cancelled", lc)
+	}
+}
+
+// A refused cancel mark plus a refused rollback delete leaves two live
+// responses in one chain.
+func TestCancel_CancelsEveryLiveResponseAfterAFailedUndo(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	base := time.Now().Add(time.Hour).Unix()
+	old := f.answered(t, base)
+	exec := f.issueExec(t, old, base, -2000)
+
+	real := sources.NewWriters(f.issuer, f.frpLifecycles)
+	deps := f.reviseDeps()
+	deps.Writers = commitment.Writers{Executions: real.Executions, Grants: &failingGrantWriter{inner: real.Grants}}
+	deps.Replace = func(edevID string, frp sep2.FlowReservationResponse) (commitment.Replacement, error) {
+		rep, err := sources.NewReplacement(f.frp, edevID, frp)
+		rep.Delete = func(context.Context) error { return errors.New("boom: delete refused") }
+		return rep, err
+	}
+	_, err := flowreservation.Revise(ctx, deps, aggID, "R1", shorten(base, 1800), "operator revise", flowreservation.Attribution{}, time.Now())
+	if !errors.Is(err, commitment.ErrUndo) {
+		t.Fatalf("Revise err = %v, want ErrUndo", err)
+	}
+	for _, id := range []string{"R1", "R1-r1"} {
+		if lc, err := f.frpLifecycles.Get(ctx, aggID, id); err == nil && lc.CancelledAt != nil {
+			t.Fatalf("setup: %s already cancelled: %+v", id, lc)
+		}
+	}
+
+	must(t, f.canceller.Cancel(ctx, aggID, "R1", cancelledStatus(time.Now().Unix())))
+
+	for _, id := range []string{"R1", "R1-r1"} {
+		lc, err := f.frpLifecycles.Get(ctx, aggID, id)
+		if err != nil || lc.CancelledAt == nil || lc.CancelReason != "client cancel" {
+			t.Errorf("%s lifecycle = %+v (err %v), want cancelled with reason client cancel", id, lc, err)
+		}
+	}
+	elc, err := f.controlLifecycles.Get(ctx, exec.Scope.Key(), exec.ID)
+	must(t, err)
+	if elc.CancelledAt == nil {
+		t.Errorf("execution lifecycle = %+v, want cancelled", elc)
+	}
+}
+
+func TestChainOf_ReadErrorIsReturnedNotTheEndOfTheChain(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	base := time.Now().Add(time.Hour).Unix()
+	f.answered(t, base)
+	_, err := flowreservation.Revise(ctx, f.reviseDeps(), aggID, "R1", shorten(base, 1800), "operator revise", flowreservation.Attribution{}, time.Now())
+	must(t, err)
+
+	boom := errors.New("boom: read refused")
+	flaky := frpHook{FRPStore: f.frp, get: func(ctx context.Context, p, id string) (sep2.FlowReservationResponse, error) {
+		if id == "R1-r1" {
+			return sep2.FlowReservationResponse{}, boom
+		}
+		return f.frp.Get(ctx, p, id)
+	}}
+	chain, err := flowreservation.ChainOf(ctx, flaky, aggID, "R1")
+	if !errors.Is(err, boom) || chain != nil {
+		t.Fatalf("ChainOf = (%d members, %v), want nil and the read error", len(chain), err)
+	}
+
+	canceller := flowreservation.NewCanceller(f.frq, flaky, f.queue, f.ledger, sources.NewWriters(f.issuer, f.frpLifecycles))
+	if err := canceller.Cancel(ctx, aggID, "R1", cancelledStatus(time.Now().Unix())); !errors.Is(err, boom) {
+		t.Errorf("Cancel err = %v, want the read error", err)
+	}
+	if lc, err := f.frpLifecycles.Get(ctx, aggID, "R1-r1"); err == nil && lc.CancelledAt != nil {
+		t.Errorf("a failed read still cancelled the revision: %+v", lc)
+	}
+}
+
+func TestRevise_NilDependenciesFailClosed(t *testing.T) {
+	t.Parallel()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	base := time.Now().Add(time.Hour).Unix()
+	f.answered(t, base)
+	revise := func(deps flowreservation.ReviseDeps) error {
+		_, err := flowreservation.Revise(context.Background(), deps, aggID, "R1", shorten(base, 1800), "x", flowreservation.Attribution{}, time.Now())
+		return err
+	}
+
+	noLedger := f.reviseDeps()
+	noLedger.Ledger = nil
+	if err := revise(noLedger); !errors.Is(err, commitment.ErrNoLedger) {
+		t.Errorf("nil Ledger: err = %v, want ErrNoLedger", err)
+	}
+	noReplace := f.reviseDeps()
+	noReplace.Replace = nil
+	if err := revise(noReplace); !errors.Is(err, flowreservation.ErrIncompleteDeps) {
+		t.Errorf("nil Replace: err = %v, want ErrIncompleteDeps", err)
+	}
+	if _, err := f.frp.Get(context.Background(), aggID, "R1-r1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("a refused revise stored R1-r1: err = %v", err)
+	}
+}
+
+func TestRevise_StoredEventStatusFollowsTheDerivedRuleForAStartedWindow(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	start := time.Now().Add(-10 * time.Minute).Unix()
+	old := f.answered(t, start)
+
+	// A later clock: the window and the revision have both started.
+	later := time.Unix(old.CreationTime+90, 0)
+	got, err := flowreservation.Revise(ctx, f.reviseDeps(), aggID, "R1", shorten(start, 1800), "operator revise", flowreservation.Attribution{}, later)
+	must(t, err)
+	wantLater := dercontrol.DeriveStatus(later.Unix(), got.CreationTime, start, dercontrol.LifecycleRecord{})
+	if wantLater.CurrentStatus != sep2.EventStatusActive {
+		t.Fatalf("setup: derived status %+v, want Active", wantLater)
+	}
+	if st := f.storedResponse(t, "R1-r1").EventStatus; st == nil || *st != wantLater {
+		t.Errorf("stored EventStatus = %+v, want %+v", st, wantLater)
+	}
+
+	// Same second as the response it replaces: creationTime is one second
+	// ahead of the clock, so the derived rule reads Scheduled, not Active.
+	same := time.Unix(got.CreationTime, 0)
+	got2, err := flowreservation.Revise(ctx, f.reviseDeps(), aggID, "R1", shorten(start, 900), "again", flowreservation.Attribution{}, same)
+	must(t, err)
+	wantSame := dercontrol.DeriveStatus(same.Unix(), got2.CreationTime, start, dercontrol.LifecycleRecord{})
+	if wantSame.CurrentStatus != sep2.EventStatusScheduled {
+		t.Fatalf("setup: derived status %+v, want Scheduled", wantSame)
+	}
+	if st := f.storedResponse(t, "R1-r2").EventStatus; st == nil || *st != wantSame {
+		t.Errorf("stored EventStatus = %+v, want %+v", st, wantSame)
+	}
+}
+
+func TestRevise_ToDenialCancelsTheOldGrant(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	base := time.Now().Add(time.Hour).Unix()
+	f.answered(t, base)
+	now := time.Now()
+	_, err := flowreservation.Revise(ctx, f.reviseDeps(), aggID, "R1", flowreservation.Decision{Kind: flowreservation.Deny}, "operator deny", flowreservation.Attribution{}, now)
+	must(t, err)
+
+	lc, err := f.frpLifecycles.Get(ctx, aggID, "R1")
+	if err != nil || lc.CancelledAt == nil || *lc.CancelledAt != now.Unix() || lc.CancelReason != "operator deny" {
+		t.Errorf("old lifecycle = %+v (err %v), want cancelled at %d with the reason", lc, err, now.Unix())
+	}
+}
+
+func TestRevise_RefusesATipWithNoStoreID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	storeRequest(t, f.frq, aggID, "R1", windowRequest("REQ-BADHREF", time.Now().Add(time.Hour).Unix(), 600, 10000))
+	must(t, f.frp.Create(ctx, aggID, "R1", sep2.FlowReservationResponse{}))
+
+	_, err := flowreservation.Revise(ctx, f.reviseDeps(), aggID, "R1", flowreservation.Decision{}, "x", flowreservation.Attribution{}, time.Now())
+	if err == nil || !strings.HasPrefix(err.Error(), "flowreservation: response href") {
+		t.Errorf("err = %v, want the no-store-id refusal", err)
+	}
+}
+
+func TestRevise_RequestReadErrorIsReturned(t *testing.T) {
+	t.Parallel()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	f.answered(t, time.Now().Add(time.Hour).Unix())
+	boom := errors.New("boom: request read refused")
+	deps := f.reviseDeps()
+	deps.FRQ = failingFRQ{boom}
+
+	_, err := flowreservation.Revise(context.Background(), deps, aggID, "R1", flowreservation.Decision{}, "x", flowreservation.Attribution{}, time.Now())
+	if !errors.Is(err, boom) {
+		t.Errorf("err = %v, want the read error", err)
+	}
+	if _, err := f.frp.Get(context.Background(), aggID, "R1-r1"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("a refused revise stored R1-r1: err = %v", err)
+	}
+}
+
+type failingFRQ struct{ err error }
+
+func (f failingFRQ) Get(context.Context, string, string) (sep2.FlowReservationRequest, error) {
+	return sep2.FlowReservationRequest{}, f.err
+}
+
+func TestCancel_EmptyChainAfterAnAnsweredRequestIsNotFound(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	f.answered(t, time.Now().Add(time.Hour).Unix())
+	emptyFRP := memory.NewScopedStore[sep2.FlowReservationResponse]()
+	canceller := flowreservation.NewCanceller(f.frq, emptyFRP, f.queue, f.ledger, sources.NewWriters(f.issuer, f.frpLifecycles))
+
+	err := canceller.Cancel(ctx, aggID, "R1", cancelledStatus(time.Now().Unix()))
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("err = %v, want store.ErrNotFound", err)
 	}
 }

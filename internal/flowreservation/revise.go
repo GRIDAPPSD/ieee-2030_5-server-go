@@ -15,6 +15,9 @@ import (
 // unanswered request is answered, not revised.
 var ErrNothingToRevise = errors.New("flowreservation: request has no response to revise")
 
+// ErrIncompleteDeps is returned when ReviseDeps lacks a store or Replace.
+var ErrIncompleteDeps = errors.New("flowreservation: ReviseDeps needs FRQ, FRP and Replace")
+
 // Attribution names who made a change: an mTLS certificate fingerprint when
 // the admission path verified one, otherwise "admin-key". Revise accepts it
 // so the admin route that records it does not change this signature; it is
@@ -56,6 +59,12 @@ type ReviseDeps struct {
 // must strictly increase along a chain (10.2.2.3 e), so a revision in the
 // same second as its predecessor is not the client's error.
 func Revise(ctx context.Context, deps ReviseDeps, edevID, frqID string, decision Decision, reason string, _ Attribution, now time.Time) (sep2.FlowReservationResponse, error) {
+	if deps.Ledger == nil {
+		return sep2.FlowReservationResponse{}, commitment.ErrNoLedger
+	}
+	if deps.FRQ == nil || deps.FRP == nil || deps.Replace == nil {
+		return sep2.FlowReservationResponse{}, ErrIncompleteDeps
+	}
 	chain, err := ChainOf(ctx, deps.FRP, edevID, frqID)
 	if err != nil {
 		return sep2.FlowReservationResponse{}, err

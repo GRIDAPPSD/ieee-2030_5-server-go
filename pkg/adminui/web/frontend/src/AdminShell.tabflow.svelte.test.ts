@@ -42,6 +42,7 @@ interface Fake {
   push: (frame: DashboardData) => void
   disconnect: Mock<() => void>
   connect: ReturnType<typeof vi.spyOn>
+  holdFsas: ((call: number) => Promise<void> | undefined) | null
 }
 
 function topologyOf(fake: Fake): TopologyNode {
@@ -74,6 +75,7 @@ function installFake(): Fake {
     push: () => {},
     disconnect: vi.fn<() => void>(),
     connect: undefined as never,
+    holdFsas: null,
   }
   const countGet = (path: string) => {
     fake.gets[path] = (fake.gets[path] ?? 0) + 1
@@ -82,7 +84,13 @@ function installFake(): Fake {
   vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string) => {
     countGet(path)
     if (path === '/dashboard/data') return { ok: true, data: dashboardData('09:00:00', fake.devices) } as never
-    if (path === '/api/fsas') return { ok: true, data: { fsas: structuredClone(fake.fsas) } } as never
+    if (path === '/api/fsas') {
+      // The snapshot is taken at call time, so a held call returns the
+      // list as it was when the request was made.
+      const snapshot = structuredClone(fake.fsas)
+      await fake.holdFsas?.(fake.gets[path])
+      return { ok: true, data: { fsas: snapshot } } as never
+    }
     if (path === '/api/topology') return { ok: true, data: topologyOf(fake) } as never
     if (path === '/api/certs/device-types') {
       return { ok: true, data: { deviceTypes: [{ value: 1, name: 'generic', label: 'Generic' }] } } as never
@@ -278,6 +286,27 @@ describe('AdminShell reloads FSAs and topology on entering Devices or FSAs (crit
     await waitFor(() => expect(reads(fake)).toEqual({ fsas: 1, topology: 1 }))
     await settle()
     expect(reads(fake)).toEqual({ fsas: 1, topology: 1 })
+  })
+})
+
+describe('AdminShell overlapping reloads (criterion 15)', () => {
+  it('keeps the newer FSA list when an older response lands after it', async () => {
+    const fake = installFake()
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    fake.holdFsas = (call) => (call === 1 ? gate : undefined)
+    await renderAt('/ui/devices', fake)
+    await waitFor(() => expect(fake.gets['/api/fsas']).toBe(1))
+
+    fake.fsas.push({ href: '/api/fsas/fsa-new', mRID: 'fsa-new', description: 'Feeder New', primacy: 0, programs: [], devices: [] })
+    await goto('fsas')
+    const mrids = () => screen.queryAllByTestId('fsa-catalog-mrid').map((e) => e.textContent)
+    await waitFor(() => expect(mrids()).toEqual(['fsa-a', 'fsa-new']))
+
+    release()
+    await settle()
+    await settle()
+    expect(mrids()).toEqual(['fsa-a', 'fsa-new'])
   })
 })
 

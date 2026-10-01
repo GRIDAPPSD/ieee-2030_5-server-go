@@ -101,11 +101,20 @@
   // whichever panel is not active.
   let mintedCert = $state<MintedCert | null>(null)
 
-  async function refresh() {
-    const list = await fetchJSON<AdminFSAList>('/api/fsas')
-    fsas = list.ok ? (list.data.fsas ?? []) : []
+  // Reloads overlap (every entry to Devices or FSAs starts one), so each
+  // result is applied only if no newer request for the same data started
+  // after it; an older response finishing late must not overwrite a newer.
+  let fsasSeq = 0
+  let topologySeq = 0
 
+  async function refresh() {
+    const fsasReq = ++fsasSeq
+    const list = await fetchJSON<AdminFSAList>('/api/fsas')
+    if (fsasReq === fsasSeq) fsas = list.ok ? (list.data.fsas ?? []) : []
+
+    const topologyReq = ++topologySeq
     const tree = await fetchJSON<TopologyNode>('/api/topology')
+    if (topologyReq !== topologySeq) return
     if (tree.ok) {
       topology = tree.data
       topologyError = ''

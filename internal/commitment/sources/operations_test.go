@@ -540,3 +540,21 @@ func TestRevise_RefusedRelinkIsNotErrUndo(t *testing.T) {
 		t.Errorf("revision read = %v, want it deleted by the undo", err)
 	}
 }
+
+// Relinking a plain dispatch is refused before any write, so the writer
+// reports it as nothing written and the stored record is as it was.
+func TestWriters_RelinkOfAPlainControlWroteNothing(t *testing.T) {
+	t.Parallel()
+	h := newOpsHarness(t)
+	plain := h.issue(t, "", h.base, 600, 1500)
+	before := h.lifecycle(t, plain)
+
+	c := commitment.Control{MRID: plain.Control.MRID, ID: plain.ID, Scope: plain.Scope.Key()}
+	err := h.writers().Executions.RelinkExecution(context.Background(), c, "GRANT-2")
+	if !errors.Is(err, commitment.ErrNothingWritten) || !errors.Is(err, dercontrol.ErrNotExecution) {
+		t.Fatalf("RelinkExecution(plain) = %v, want ErrNothingWritten wrapping ErrNotExecution", err)
+	}
+	if got := h.lifecycle(t, plain); got.GrantMRID != before.GrantMRID || got.CancelledAt != nil {
+		t.Errorf("lifecycle = %+v, want %+v unchanged", got, before)
+	}
+}

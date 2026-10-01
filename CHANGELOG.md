@@ -109,49 +109,49 @@ admin UI panes (`feature`) and changes several exported signatures
 
 ### Changed
 
-- **Breaking.** Exported handler and store constructors changed signature in
-  `pkg/sep2srv/handlers` and `pkg/store/memory`:
-  `subscription.HandleCreateSubscription` takes a `subscription.ReadCheck` as
-  its third argument (nil refuses every create; `BuildProtocolRouter` passes
-  its own); `flow_reservation.HandlePostResponse` takes a `ResponseSenderAuthorizer`;
-  the five mirror handlers `HandleCreateMirrorUsagePoint`,
+- **Breaking.** `subscription.HandleCreateSubscription` takes a
+  `subscription.ReadCheck` as its third argument; nil refuses every create,
+  and `BuildProtocolRouter` passes its own. Only `/edev` resources can now be
+  subscribed to: `/mup`, `/tm`, `/dcap` and every other non-`/edev` route are
+  refused. An embedder that calls the handler must update its call.
+  ([#830](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/830))
+- **Breaking.** `flow_reservation.HandlePostResponse` takes a
+  `ResponseSenderAuthorizer`. A posted DERControlResponse with no
+  `endDeviceLFDI`, or a malformed one, is now refused with 400, and a Response
+  whose `endDeviceLFDI` is not the sender's is refused with 403, where v0.7.0
+  accepted both. Other Response types that name no device are still stored.
+  ([#742](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/742))
+- **Breaking.** The five mirror handlers `HandleCreateMirrorUsagePoint`,
   `HandleMirrorUsagePoint`, `HandlePutMirrorUsagePoint`,
   `HandleDeleteMirrorUsagePoint` and `HandlePostMirrorMeterReading` take an
-  `EndDeviceManagementReader`; `HandlePostFlowReservationRequest` takes a
-  `Submitter` in place of the removed `FRPCreator`; and `NewFlowReservationLinkedEndDeviceStore` and
+  `EndDeviceManagementReader`. An embedder that calls them must update its
+  calls.
+  ([#722](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/722))
+- **Breaking.** `NewFlowReservationLinkedEndDeviceStore` and
   `NewLogEventLinkedEndDeviceStore` take additional stores.
-  An embedder that calls
-  these directly must update its call sites.
-  ([#718](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/718),
-  [#722](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/722),
-  [#736](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/736),
-  [#742](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/742),
-  [#830](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/830))
+  ([#718](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/718))
+- **Breaking.** The `flow_reservation.FRPCreator` interface is removed, and
+  `HandlePostFlowReservationRequest` takes a `Submitter` in place of the store.
+  ([#736](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/736))
 - **Breaking.** The admin UI descriptor in `pkg/sep2admin` is version 2:
-  `CurrentDescriptorVersion` is 2, `Row` is `[]Cell` (was `[]Value`), and
-  `ErrUnhandledBodyKind` now names `Section.Body`. A consumer that builds or
-  reads descriptors must update. `Descriptor.Body` became
-  `Descriptor.Sections`, and `DefinitionEntry.Value` is now a `Cell`. A chart
-  section is added in a later pull request.
+  `CurrentDescriptorVersion` is 2, `Row` is `[]Cell` (was `[]Value`),
+  `Descriptor.Body` became `Descriptor.Sections`, `DefinitionEntry.Value` is
+  now a `Cell`, and `ErrUnhandledBodyKind` now names `Section.Body`. A consumer
+  that builds or reads descriptors must update.
   ([#835](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/835))
-- A posted DERControlResponse with no `endDeviceLFDI`, or a malformed one, is
-  now refused with 400, and a Response whose `endDeviceLFDI` is not the
-  sender's is refused with 403. Other Response types that name no device are
-  still stored. A request that v0.7.0 accepted is therefore refused.
-  ([#742](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/742))
 - The admin plane moves into `internal/adminplane`; embedders use the new
   `pkg/sep2adminplane` facade.
   ([#834](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/834))
 - Adopts `ieee-2030_5-core-go` v0.21.0.
   ([#832](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/832))
-- Change notifications carry status 0, not 2.
+- Change notifications carry status 0 where v0.7.0 carried 2.
   ([#780](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/780))
 
 ### Fixed
 
 - Flow reservation: every server-built `FlowReservationResponse` gets a minted
-  mRID, and a request with a blank mRID is refused with 400; an
-  invalid `RequestStatus` is refused; an answer-record conflict is told apart
+  mRID; a request with a blank mRID is refused with 400 and one with an
+  invalid `RequestStatus` is refused, where v0.7.0 accepted both; an answer-record conflict is told apart
   from an existing response; `potentiallySuperseded` is edition-aware and
   status times are ordered; a refused relink rolls back cleanly and a stored
   revision is named on retry; and a cancel-log line names the control when a
@@ -163,7 +163,7 @@ admin UI panes (`feature`) and changes several exported signatures
   [#819](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/819),
   [#822](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/822))
 - Deleting an EndDevice now removes its flow reservation records, log events,
-  configuration, device status, power status, FSA links and leftover
+  configuration, device status, power status, FSA and FSA link records and leftover
   registrations. Its DER records and its subscriptions are still left behind;
   that is not fixed in this release and is tracked in
   [#721](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/721).
@@ -196,9 +196,12 @@ admin UI panes (`feature`) and changes several exported signatures
 - A subscription's `subscribedResource` is now checked against the same read
   decision the GET routes use. On create, a resource the caller could not GET
   is refused with 400; at delivery, each stored subscription is re-checked, so
-  a subscriber that can no longer read the resource is not notified. The
-  href is canonicalised first, and only `/edev` resources can be subscribed
-  to.
+  a subscriber that can no longer read the resource is not notified. Only
+  `/edev` resources can be subscribed to. Versions before 0.8.0 are affected;
+  0.8.0 fixes it. The subscription route is mounted whenever the subscription
+  store is present, which is the default store set, so no non-default
+  configuration is needed to be affected. Details will follow in a security
+  advisory.
   ([#830](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/830))
 
 ## [0.7.0] - 2026-09-25

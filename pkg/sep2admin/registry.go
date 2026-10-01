@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"sync"
 )
@@ -74,18 +75,12 @@ var ErrDisabled = errors.New("sep2admin: admin UI not configured, this is not a 
 // match.
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
-// coreTabIDs are the shell's own tab slugs, the paths under /ui/ in
-// pkg/adminui/web/frontend/src/routes/index.ts. A panel with one of these
-// IDs would claim a core tab's nav slot. TestCoreTabIDsMatchTheShell
-// reads that file, so the two lists cannot drift apart silently.
-var coreTabIDs = map[string]struct{}{
-	"overview":     {},
-	"devices":      {},
-	"fsas":         {},
-	"control":      {},
-	"certificates": {},
-	"derms":        {},
-}
+// coreTabs are the shell's own tab slugs, the paths under /ui/ in
+// pkg/adminui/web/frontend/src/routes/index.ts, in the shell's nav order.
+// NewRegistry seeds them into the core band, and Register refuses them as
+// reserved, so an extension can neither take nor displace a core tab.
+// TestCoreTabsMatchTheShell reads that file, so the lists cannot drift.
+var coreTabs = []string{"overview", "devices", "fsas", "control", "certificates", "derms"}
 
 // pathSegmentIDs are the admin listener's own top-level path segments.
 var pathSegmentIDs = map[string]struct{}{
@@ -140,9 +135,20 @@ type registry struct {
 	frozen bool
 }
 
-// NewRegistry returns an empty, unfrozen Registry.
+// NewRegistry returns an unfrozen Registry holding the shell's core tabs
+// in the core band. The seeds go straight into the map, bypassing
+// Register's reserved-ID check, and carry no View: the shell renders them
+// itself. ErrCorePanelsMissing still guards a registry built without them.
 func NewRegistry() Registry {
-	return &registry{panels: make(map[string]registeredPanel)}
+	r := &registry{panels: make(map[string]registeredPanel)}
+	for i, id := range coreTabs {
+		r.panels[id] = registeredPanel{
+			Panel: Panel{ID: id, Label: id, Placement: corePlacement(i), DescriptorVersion: CurrentDescriptorVersion},
+			seq:   r.next,
+		}
+		r.next++
+	}
+	return r
 }
 
 func (r *registry) Register(p Panel) error {
@@ -237,7 +243,7 @@ func validateID(id string) error {
 	if !idPattern.MatchString(id) {
 		return fmt.Errorf("%w: %q does not match the slug pattern", ErrInvalidID, id)
 	}
-	if _, reserved := coreTabIDs[id]; reserved {
+	if slices.Contains(coreTabs, id) {
 		return fmt.Errorf("%w: %q is a core tab", ErrInvalidID, id)
 	}
 	if _, reserved := pathSegmentIDs[id]; reserved {

@@ -7,6 +7,9 @@ export interface FleetMeasurement {
   value: number
   readingTime: number
   qualityFlags?: number
+  // True for a P or Q reading whose flowDirection was absent or not
+  // Forward or Reverse, so value is not export-positive (#733).
+  directionUnknown?: boolean
 }
 
 export interface FleetDeviceMeasurements {
@@ -45,6 +48,10 @@ export interface FleetSum {
   sum: number
   unreported: number
   stale: number
+  // directionUnknown is true when a contributing reading had no
+  // flowDirection, so the sign of sum cannot be read as export or import
+  // (#733). Absent is treated as unknown.
+  directionUnknown?: boolean
 }
 
 export interface FleetRollup {
@@ -84,6 +91,9 @@ export interface SumFigure {
   value: number
   unreported: number
   stale: number
+  // directionKnown is true only when the server says every contributing
+  // reading carried a flowDirection; directionWord is shown only then.
+  directionKnown: boolean
   // ageSeconds is the age of the newest reading among devices that
   // reported this quantity at all, which can include a reading the rollup
   // excluded from sum.sum for being stale: the per-device response carries
@@ -105,6 +115,7 @@ export function sumFigure(
     value: sum.sum,
     unreported: sum.unreported,
     stale: sum.stale,
+    directionKnown: sum.directionUnknown === false,
     ageSeconds: newestReadingTime === null ? null : Math.max(0, nowSeconds - newestReadingTime),
   }
 }

@@ -15,6 +15,7 @@ import {
   sumFigure,
   unreportedStatusCount,
   type Fleet,
+  type FleetSum,
 } from './fleet'
 
 function fleet(overrides: Partial<Fleet> = {}): Fleet {
@@ -55,7 +56,7 @@ describe('sumFigure', () => {
   it('is "reporting" once at least one device contributed', () => {
     const f = fleet({ rollup: { ...fleet().rollup, deviceCount: 3, p: { sum: 1500, unreported: 1, stale: 1 } } })
     const fig = sumFigure(f, f.rollup.p, 400, 1000)
-    expect(fig).toEqual({ kind: 'reporting', value: 1500, unreported: 1, stale: 1, ageSeconds: 600 })
+    expect(fig).toEqual({ kind: 'reporting', value: 1500, unreported: 1, stale: 1, directionKnown: false, ageSeconds: 600 })
   })
 
   it('floors a future-dated reading at age 0 rather than a negative age', () => {
@@ -76,7 +77,25 @@ describe('sumFigure', () => {
     // would render as "No devices reporting" instead of "0 W".
     const f = fleet({ rollup: { ...fleet().rollup, deviceCount: 1, p: { sum: 0, unreported: 0, stale: 0 } } })
     const fig = sumFigure(f, f.rollup.p, 900, 1000)
-    expect(fig).toEqual({ kind: 'reporting', value: 0, unreported: 0, stale: 0, ageSeconds: 100 })
+    expect(fig).toEqual({ kind: 'reporting', value: 0, unreported: 0, stale: 0, directionKnown: false, ageSeconds: 100 })
+  })
+})
+
+describe('sumFigure directionKnown (#733)', () => {
+  const base = fleet()
+  const withP = (p: FleetSum) => fleet({ rollup: { ...base.rollup, deviceCount: 1, p } })
+
+  it('is true only when the server reports directionUnknown false', () => {
+    const f = withP({ sum: 100, unreported: 0, stale: 0, directionUnknown: false })
+    expect(sumFigure(f, f.rollup.p, 900, 1000).directionKnown).toBe(true)
+  })
+  it('is false when the server reports directionUnknown true', () => {
+    const f = withP({ sum: 100, unreported: 0, stale: 0, directionUnknown: true })
+    expect(sumFigure(f, f.rollup.p, 900, 1000).directionKnown).toBe(false)
+  })
+  it('is false when the field is absent', () => {
+    const f = withP({ sum: 100, unreported: 0, stale: 0 })
+    expect(sumFigure(f, f.rollup.p, 900, 1000).directionKnown).toBe(false)
   })
 })
 
@@ -162,12 +181,12 @@ describe('formatValue', () => {
 
 describe('formatContributionNote', () => {
   it('names both unreported and stale when both are non-zero', () => {
-    const note = formatContributionNote({ kind: 'reporting', value: 1, unreported: 2, stale: 1, ageSeconds: 0 })
+    const note = formatContributionNote({ kind: 'reporting', value: 1, unreported: 2, stale: 1, directionKnown: false, ageSeconds: 0 })
     expect(note).toBe(' (2 unreported, 1 stale)')
   })
 
   it('is empty when nothing is missing', () => {
-    const note = formatContributionNote({ kind: 'reporting', value: 1, unreported: 0, stale: 0, ageSeconds: 0 })
+    const note = formatContributionNote({ kind: 'reporting', value: 1, unreported: 0, stale: 0, directionKnown: false, ageSeconds: 0 })
     expect(note).toBe('')
   })
 })

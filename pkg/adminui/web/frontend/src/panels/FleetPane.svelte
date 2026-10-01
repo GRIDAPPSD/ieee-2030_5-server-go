@@ -134,7 +134,7 @@
               {#if power.kind === 'none'}
                 No devices reporting
               {:else}
-                {formatValue(power.value)} W{directionWord(power.value) ? ` ${directionWord(power.value)}` : ''}
+                {formatValue(power.value)} W{power.directionKnown && directionWord(power.value) ? ` ${directionWord(power.value)}` : ''}
                 <div class="hint">
                   updated {formatAge(power.ageSeconds)}{formatContributionNote(power)}
                 </div>

@@ -42,6 +42,10 @@ type FleetMeasurement struct {
 	Value        float64 `json:"value"`
 	ReadingTime  int64   `json:"readingTime"`
 	QualityFlags *uint16 `json:"qualityFlags,omitempty"`
+	// DirectionUnknown is true for a P or Q reading whose flowDirection was absent
+	// or not Forward or Reverse, so Value is the raw wire magnitude and not
+	// export-positive (#733).
+	DirectionUnknown bool `json:"directionUnknown,omitempty"`
 }
 
 // FleetDeviceMeasurements holds the latest P, Q, V and f mirror readings for
@@ -108,6 +112,11 @@ type FleetSum struct {
 	// reported, since both would misstate what the fleet is actually
 	// delivering right now.
 	Stale int `json:"stale"`
+	// DirectionUnknown is true when a reading that contributed to Sum had
+	// no flowDirection. Sum is still the total of every contributing
+	// reading, but its sign then cannot be read as export or import (#733).
+	// Always false for the capacity sums, which carry no direction.
+	DirectionUnknown bool `json:"directionUnknown"`
 }
 
 // FleetRollup is one aggregator's fleet-wide roll-up. Connected, Alarmed and
@@ -503,7 +512,7 @@ func inheritReadingTypeByMRID(readings []sep2.MirrorMeterReading) {
 // value's sign cannot be trusted regardless of edition; only its magnitude
 // and the declared direction are (#715 fix round 1 item 2). A reading with
 // no flowDirection is passed through unmapped rather than guessing a
-// direction.
+// direction, and is marked DirectionUnknown (#733).
 func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReading, edition SEP2Edition, isDER bool) {
 	if mmr.ReadingType == nil || mmr.ReadingType.Uom == nil || mmr.Reading == nil || mmr.Reading.Value == nil {
 		return
@@ -529,6 +538,7 @@ func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReadi
 		multiplier = *rt.PowerOfTenMultiplier
 	}
 	value := scaledValue(float64(*mmr.Reading.Value), multiplier)
+	mapped := false
 	if directional && rt.FlowDirection != nil {
 		magnitude := math.Abs(value)
 		flipped := edition == Edition2023 && isDER
@@ -539,16 +549,22 @@ func considerMeasurement(out *FleetDeviceMeasurements, mmr sep2.MirrorMeterReadi
 			} else {
 				value = -magnitude
 			}
+			mapped = true
 		case sep2.FlowDirectionReverse:
 			if flipped {
 				value = -magnitude
 			} else {
 				value = magnitude
 			}
+			mapped = true
 		}
 	}
 
-	m := &FleetMeasurement{Value: value, ReadingTime: mmr.LastUpdateTime}
+	m := &FleetMeasurement{
+		Value:            value,
+		ReadingTime:      mmr.LastUpdateTime,
+		DirectionUnknown: directional && !mapped,
+	}
 	if mmr.Reading.QualityFlags != nil {
 		v := uint16(*mmr.Reading.QualityFlags)
 		m.QualityFlags = &v
@@ -606,10 +622,10 @@ func accumulateRollup(rollup *FleetRollup, dev FleetDevice, now int64) {
 	if dev.Availability != nil {
 		statW, statVar = dev.Availability.StatWAvail, dev.Availability.StatVarAvail
 	}
-	addToSum(&rollup.P, measurementValue(dev.Measurements.P), measurementStale(dev.Measurements.P, now))
-	addToSum(&rollup.Q, measurementValue(dev.Measurements.Q), measurementStale(dev.Measurements.Q, now))
-	addToSum(&rollup.StatWAvail, statW, availabilityStale)
-	addToSum(&rollup.StatVarAvail, statVar, availabilityStale)
+	addToSum(&rollup.P, measurementValue(dev.Measurements.P), measurementStale(dev.Measurements.P, now), measurementUndirected(dev.Measurements.P))
+	addToSum(&rollup.Q, measurementValue(dev.Measurements.Q), measurementStale(dev.Measurements.Q, now), measurementUndirected(dev.Measurements.Q))
+	addToSum(&rollup.StatWAvail, statW, availabilityStale, false)
+	addToSum(&rollup.StatVarAvail, statVar, availabilityStale, false)
 }
 
 // clientClockStale reports whether now minus a client-authored readingTime
@@ -665,13 +681,18 @@ func measurementValue(m *FleetMeasurement) *float64 {
 	return &m.Value
 }
 
+func measurementUndirected(m *FleetMeasurement) bool {
+	return m != nil && m.DirectionUnknown
+}
+
 // addToSum adds value to sum.Sum when the device is neither stale nor
 // missing the value. A stale device's value, if any, counts toward
 // sum.Stale instead of Sum, ahead of the unreported check: staleness is a
 // fact about the device's last known state, distinct from never having
 // reported at all. A missing value never contributes a synthesized zero to
-// Sum.
-func addToSum(sum *FleetSum, value *float64, stale bool) {
+// Sum. undirected marks a contributing value that had no flowDirection, which
+// flags the whole sum DirectionUnknown (#733).
+func addToSum(sum *FleetSum, value *float64, stale bool, undirected bool) {
 	switch {
 	case stale:
 		sum.Stale++
@@ -679,5 +700,8 @@ func addToSum(sum *FleetSum, value *float64, stale bool) {
 		sum.Unreported++
 	default:
 		sum.Sum += *value
+		if undirected {
+			sum.DirectionUnknown = true
+		}
 	}
 }

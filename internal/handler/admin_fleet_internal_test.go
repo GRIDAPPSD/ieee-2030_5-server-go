@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -914,7 +915,7 @@ func TestAccumulateRollup_AllFourSumsStale(t *testing.T) {
 func TestAddToSum_StaleTakesPrecedenceOverUnreported(t *testing.T) {
 	t.Parallel()
 	var sum FleetSum
-	addToSum(&sum, nil, true)
+	addToSum(&sum, nil, true, false)
 	if sum.Stale != 1 {
 		t.Errorf("Stale = %d, want 1", sum.Stale)
 	}
@@ -1162,5 +1163,68 @@ func TestDeviceMeasurements_EditionAndIsDERFromRoleFlags(t *testing.T) {
 				t.Errorf("Measurements.P = %+v, want value %v", got.P, tc.want)
 			}
 		})
+	}
+}
+
+// TestFleetRollup_UndirectedReadingMarksSumDirectionUnknown is #733: a
+// fleet with one undirected power reading still sums every contributing
+// reading, but flags the sum so its sign is not read as export or import.
+func TestFleetRollup_UndirectedReadingMarksSumDirectionUnknown(t *testing.T) {
+	t.Parallel()
+	now := int64(1000)
+	reverse := f8(sep2.FlowDirectionReverse)
+
+	build := func(undirectedFlow *uint8) FleetRollup {
+		var rollup FleetRollup
+		for _, flow := range []*uint8{reverse, undirectedFlow} {
+			var m FleetDeviceMeasurements
+			r := readingWithFlow(sep2.UomWatts, flow, 100)
+			r.LastUpdateTime = now
+			considerMeasurement(&m, r, Edition2018, false)
+			accumulateRollup(&rollup, FleetDevice{Measurements: m}, now)
+		}
+		return rollup
+	}
+
+	known := build(reverse)
+	if known.P.Sum != 200 || known.P.DirectionUnknown {
+		t.Errorf("all directed: P = %+v, want Sum 200 and DirectionUnknown false", known.P)
+	}
+
+	for name, flow := range map[string]*uint8{"absent": nil, "unrecognized": f8(12)} {
+		mixed := build(flow)
+		if mixed.P.Sum != 200 {
+			t.Errorf("%s: P.Sum = %v, want 200 (every contributing reading summed)", name, mixed.P.Sum)
+		}
+		if !mixed.P.DirectionUnknown {
+			t.Errorf("%s: P.DirectionUnknown = false, want true", name)
+		}
+		if mixed.Q.DirectionUnknown || mixed.StatWAvail.DirectionUnknown {
+			t.Errorf("%s: Q/StatWAvail must not be flagged: %+v %+v", name, mixed.Q, mixed.StatWAvail)
+		}
+	}
+
+	raw, err := json.Marshal(known.P)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"directionUnknown":false`) {
+		t.Errorf("serialized directed sum = %s, want an explicit directionUnknown:false", raw)
+	}
+}
+
+// TestFleetRollup_StaleUndirectedReadingDoesNotFlagSum: a stale reading is
+// excluded from Sum, so its missing direction cannot taint the sum.
+func TestFleetRollup_StaleUndirectedReadingDoesNotFlagSum(t *testing.T) {
+	t.Parallel()
+	now := int64(100000)
+	var m FleetDeviceMeasurements
+	r := readingWithFlow(sep2.UomWatts, nil, 100)
+	r.LastUpdateTime = 1
+	considerMeasurement(&m, r, Edition2018, false)
+	var rollup FleetRollup
+	accumulateRollup(&rollup, FleetDevice{Measurements: m}, now)
+	if rollup.P.Stale != 1 || rollup.P.Sum != 0 || rollup.P.DirectionUnknown {
+		t.Errorf("P = %+v, want Stale 1, Sum 0, DirectionUnknown false", rollup.P)
 	}
 }

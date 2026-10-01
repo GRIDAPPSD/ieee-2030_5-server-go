@@ -100,7 +100,7 @@ describe('FleetPane', () => {
         connected: 2,
         alarmed: 0,
         stale: 0,
-        p: { sum: 2000, unreported: 0, stale: 0 },
+        p: { sum: 2000, unreported: 0, stale: 0, directionUnknown: false },
         q: { sum: 0, unreported: 2, stale: 0 },
         statWAvail: { sum: 0, unreported: 2, stale: 0 },
         statVarAvail: { sum: 0, unreported: 2, stale: 0 },
@@ -133,7 +133,7 @@ describe('FleetPane', () => {
         connected: 0,
         alarmed: 0,
         stale: 0,
-        p: { sum: -300, unreported: 0, stale: 0 },
+        p: { sum: -300, unreported: 0, stale: 0, directionUnknown: false },
         q: { sum: 0, unreported: 1, stale: 0 },
         statWAvail: { sum: 0, unreported: 1, stale: 0 },
         statVarAvail: { sum: 0, unreported: 1, stale: 0 },
@@ -145,6 +145,31 @@ describe('FleetPane', () => {
 
     const power = await screen.findByTestId('fleet-power')
     expect(power).toHaveTextContent('300 W importing')
+  })
+
+  it('shows the figure without a direction word when the server marks the direction unknown (#733)', async () => {
+    const fleet: Fleet = {
+      aggregatorLFDI: 'AGG3',
+      devices: [{ lfdi: 'DEV1', measurements: { p: { value: 300, readingTime: 1_699_999_970 } } }],
+      rollup: {
+        deviceCount: 1,
+        connected: 0,
+        alarmed: 0,
+        stale: 0,
+        p: { sum: 300, unreported: 0, stale: 0, directionUnknown: true },
+        q: { sum: 0, unreported: 1, stale: 0 },
+        statWAvail: { sum: 0, unreported: 1, stale: 0 },
+        statVarAvail: { sum: 0, unreported: 1, stale: 0 },
+      },
+    }
+    mockFetchJSON({ ok: true, data: [fleet] })
+
+    render(FleetPane)
+
+    const power = await screen.findByTestId('fleet-power')
+    expect(power).toHaveTextContent('300 W')
+    expect(power).not.toHaveTextContent('exporting')
+    expect(power).not.toHaveTextContent('importing')
   })
 
   it('shows "no devices reporting" rather than 0 W when every device is unreported (the trap)', async () => {
@@ -268,7 +293,7 @@ describe('FleetPane', () => {
         connected: 0,
         alarmed: 0,
         stale: 1,
-        p: { sum: 900, unreported: 1, stale: 1 },
+        p: { sum: 900, unreported: 1, stale: 1, directionUnknown: false },
         q: { sum: 0, unreported: 3, stale: 0 },
         statWAvail: { sum: 0, unreported: 3, stale: 0 },
         statVarAvail: { sum: 0, unreported: 3, stale: 0 },

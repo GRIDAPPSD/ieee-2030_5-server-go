@@ -54,6 +54,10 @@ func (w executionWriter) RelinkExecution(ctx context.Context, c commitment.Contr
 		return err
 	}
 	_, err = w.issuer.Relink(ctx, scope, c.ID, grantMRID)
+	var refusal *dercontrol.RefusalError
+	if errors.As(err, &refusal) || errors.Is(err, dercontrol.ErrNotExecution) {
+		return fmt.Errorf("%w: %w", commitment.ErrNothingWritten, err)
+	}
 	return err
 }
 
@@ -90,6 +94,19 @@ func (w grantWriter) MarkCancelled(ctx context.Context, g commitment.Grant, reas
 	return w.lifecycles.Update(ctx, g.EndDeviceID, g.ID, rec)
 }
 
+// RevisionStoredError reports that a response already sits at the id a
+// revision would take: an earlier Revise whose undo failed left it
+// (commitment.ErrUndo). It unwraps to store.ErrAlreadyExists.
+type RevisionStoredError struct {
+	EndDeviceID, ID string
+}
+
+func (e *RevisionStoredError) Error() string {
+	return fmt.Sprintf("sources: revision %s/%s is already stored; an earlier revise whose undo failed left it", e.EndDeviceID, e.ID)
+}
+
+func (e *RevisionStoredError) Unwrap() error { return store.ErrAlreadyExists }
+
 type responseWriter interface {
 	Create(ctx context.Context, parentID, id string, frp sep2.FlowReservationResponse) error
 	Delete(ctx context.Context, parentID, id string) error
@@ -104,8 +121,14 @@ func NewReplacement(responses responseWriter, edevID string, frp sep2.FlowReserv
 		return commitment.Replacement{}, err
 	}
 	return commitment.Replacement{
-		Grant:  g,
-		Create: func(ctx context.Context) error { return responses.Create(ctx, edevID, g.ID, frp) },
+		Grant: g,
+		Create: func(ctx context.Context) error {
+			err := responses.Create(ctx, edevID, g.ID, frp)
+			if errors.Is(err, store.ErrAlreadyExists) {
+				return &RevisionStoredError{EndDeviceID: edevID, ID: g.ID}
+			}
+			return err
+		},
 		Delete: func(ctx context.Context) error { return responses.Delete(ctx, edevID, g.ID) },
 	}, nil
 }

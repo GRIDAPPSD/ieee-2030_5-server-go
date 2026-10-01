@@ -16,6 +16,10 @@ import (
 // executions cancelled under a live grant); calling again finishes it.
 var ErrUndo = errors.New("commitment: undo failed; the stores may hold part of the change")
 
+// ErrNothingWritten marks a write error from an ExecutionWriter that refused
+// the write before changing anything. Revise needs no undo for such a step.
+var ErrNothingWritten = errors.New("commitment: the write was refused and changed nothing")
+
 // ErrBadReplacement refuses a Revise whose replacement is not a revision of
 // the old response. It is the caller's error, never a conflict.
 var ErrBadReplacement = errors.New("commitment: not a revision of the grant")
@@ -25,7 +29,8 @@ type ExecutionWriter interface {
 	// CancelExecution stops c. One already cancelled, superseded or ended
 	// is done, not an error.
 	CancelExecution(ctx context.Context, c Control, reason string) error
-	// RelinkExecution moves c to grantMRID, changing nothing else.
+	// RelinkExecution moves c to grantMRID, changing nothing else. A refusal
+	// that wrote nothing wraps ErrNothingWritten.
 	RelinkExecution(ctx context.Context, c Control, grantMRID string) error
 }
 
@@ -254,9 +259,10 @@ func reviseWrites(ctx context.Context, w Writers, old Grant, rep Replacement, ex
 	if err := rep.Create(ctx); err != nil {
 		return fmt.Errorf("commitment: storing revision %s: %w", rep.Grant.MRID, err)
 	}
-	// touched includes an execution whose relink failed: a store whose own
-	// rollback failed may have kept the new link, and relinking a record
-	// that never moved back to the old grant is harmless.
+	// touched includes an execution whose relink failed, unless that was a
+	// refusal that wrote nothing: a store whose own rollback failed may have
+	// kept the new link, and relinking a record that never moved back to the
+	// old grant is harmless.
 	var touched []Control
 	undo := func(cause error) error {
 		var failed []error
@@ -275,8 +281,11 @@ func reviseWrites(ctx context.Context, w Writers, old Grant, rep Replacement, ex
 	}
 
 	for _, c := range execs {
-		touched = append(touched, c)
-		if err := w.Executions.RelinkExecution(ctx, c, rep.Grant.MRID); err != nil {
+		err := w.Executions.RelinkExecution(ctx, c, rep.Grant.MRID)
+		if err == nil || !errors.Is(err, ErrNothingWritten) {
+			touched = append(touched, c)
+		}
+		if err != nil {
 			return undo(fmt.Errorf("commitment: relinking execution %s to %s: %w", c.MRID, rep.Grant.MRID, err))
 		}
 	}

@@ -3,6 +3,7 @@ package commitment
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -25,6 +26,7 @@ type fakeWriters struct {
 	calls         []string
 	failOn        map[string]bool
 	applyThenFail map[string]bool
+	refuseRelink  map[string]bool
 	honorCtx      bool
 	cancelOnFail  context.CancelFunc
 }
@@ -74,6 +76,9 @@ func (f *fakeWriters) CancelExecution(ctx context.Context, c Control, _ string) 
 
 func (f *fakeWriters) RelinkExecution(ctx context.Context, c Control, grantMRID string) error {
 	apply, err := f.record(ctx, "relink:"+c.MRID+"->"+grantMRID)
+	if f.refuseRelink[c.MRID] {
+		return fmt.Errorf("%w: fake refusal", ErrNothingWritten)
+	}
 	if apply {
 		f.control(c.MRID).GrantMRID = grantMRID
 	}
@@ -388,6 +393,28 @@ func TestRevise_FailedUndoIsErrUndo(t *testing.T) {
 	})
 	if !errors.Is(err, ErrUndo) || !errors.Is(err, errWrite) {
 		t.Fatalf("Revise() error = %v, want ErrUndo wrapping errWrite", err)
+	}
+}
+
+// A relink refused before it wrote anything leaves the execution on the old
+// grant, so the rollback has nothing to restore for it and the clean
+// rollback is the refusal, not ErrUndo.
+func TestRevise_RefusedRelinkRollsBackCleanly(t *testing.T) {
+	t.Parallel()
+	l, w := opsFixture(t)
+	w.refuseRelink = map[string]bool{"ctrl-a": true}
+	err := l.Revise(context.Background(), w.writers(), "grant-1", "", 900, func(Grant) (Replacement, error) {
+		return w.replacement(revisedGrant(func(*Grant) {})), nil
+	})
+	if !errors.Is(err, ErrNothingWritten) || errors.Is(err, ErrUndo) {
+		t.Fatalf("Revise() error = %v, want the refusal and no ErrUndo", err)
+	}
+	if slices.Contains(w.calls, "relink:ctrl-a->grant-1") {
+		t.Errorf("calls = %v, want no relink back of an execution that never moved", w.calls)
+	}
+	if !slices.Contains(w.calls, "delete:grant-2") || len(w.grants.grants) != 1 ||
+		w.control("ctrl-a").GrantMRID != "grant-1" || w.control("ctrl-b").GrantMRID != "grant-1" {
+		t.Errorf("calls = %v grants = %+v, want the revision deleted and both executions on grant-1", w.calls, w.grants.grants)
 	}
 }
 

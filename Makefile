@@ -362,7 +362,11 @@ test-csip-race:           ## Race detector on the CSIP suite with csip_test_hook
 # out of ./internal/server/web, which `./internal/server/...` used to
 # match by prefix. Leaving it off would have quietly dropped that
 # package from the floor while the percentage held steady.
-CSIP_COVERPKG := ./test/csip/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/handler/...,./internal/server/...,./pkg/adminui/...,./pkg/sep2server/...,./pkg/sep2srv/...,./pkg/store,./pkg/store/memory
+#
+# #825 - ./internal/adminplane/... is listed for the same reason: the
+# admin router, its wiring and the dashboard MOVED there out of
+# ./internal/server/....
+CSIP_COVERPKG := ./test/csip/...,./internal/adminplane/...,./internal/auth/...,./internal/bootfixture/...,./internal/certs/...,./internal/config/...,./internal/discovery/...,./internal/handler/...,./internal/server/...,./pkg/adminui/...,./pkg/sep2server/...,./pkg/sep2srv/...,./pkg/store,./pkg/store/memory
 CSIP_COVER_THRESHOLD ?= 80
 
 # #387 - the -coverpkg list above is hand-maintained; a pattern that stops

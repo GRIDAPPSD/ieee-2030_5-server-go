@@ -299,7 +299,12 @@ func integrate(spans map[leg][]powerSpan, seen map[leg]bool) (wattSeconds float6
 			edges = append(edges, edge{p.start, l, p, true}, edge{p.end, l, p, false})
 		}
 	}
-	slices.SortFunc(edges, func(a, b edge) int { return cmp.Compare(a.at, b.at) })
+	// Closes sort before opens at one instant: resolveSeries can split one
+	// span into adjacent pieces, and closing the earlier piece after the
+	// later one opened would drop the leg.
+	slices.SortStableFunc(edges, func(a, b edge) int {
+		return cmp.Or(cmp.Compare(a.at, b.at), cmp.Compare(boolInt(a.open), boolInt(b.open)))
+	})
 	var phases []uint8
 	for l := range seen {
 		if l.phase != phaseTotal && !slices.Contains(phases, l.phase) {
@@ -338,6 +343,13 @@ func integrate(spans map[leg][]powerSpan, seen map[leg]bool) (wattSeconds float6
 		}
 	}
 	return wattSeconds, covered, used
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // pickPath returns the spans of the highest-ranked path active now, or none.

@@ -230,3 +230,48 @@ func TestDeliveryLegs_T11PhasePrefersAverage(t *testing.T) {
 	// [b, b+600) at 3000 + 1000 W, then [b+600, b+900) at 1000 + 1000 W.
 	checkDelivery(t, d, mrid, 900, (4000*600+2000*300)/900.0)
 }
+
+// A line-to-line phase code (132, AB) is no leg: it never becomes the total,
+// which would outrank A + B.
+func TestDeliveryLegs_LineToLinePhaseIgnored(t *testing.T) {
+	d := newDeliveryHarness(t)
+	b := deliveryBase
+	d.seedReadings(t, "1", dcLFDI, roleIsDER, ptrU32(900),
+		reading{mrid: "A", at: b, value: 1000, dir: reverseDir(), phase: phaseA},
+		reading{mrid: "B", at: b, value: 1000, dir: reverseDir(), phase: phaseB},
+		reading{mrid: "AB", at: b, value: 5000, dir: reverseDir(), phase: dq(132)},
+	)
+	mrid := d.seedControl(t, "e", b, 900, dercontrol.LifecycleRecord{})
+	checkDelivery(t, d, mrid, 900, 2000)
+}
+
+// Phase ABC (224) is the total.
+func TestDeliveryLegs_PhaseABCIsTotal(t *testing.T) {
+	d := newDeliveryHarness(t)
+	b := deliveryBase
+	d.seedReadings(t, "1", dcLFDI, roleIsDER, ptrU32(900), reading{mrid: "T", at: b, value: 3000, dir: reverseDir(), phase: dq(224)})
+	mrid := d.seedControl(t, "e", b, 900, dercontrol.LifecycleRecord{})
+	checkDelivery(t, d, mrid, 900, 3000)
+}
+
+// Phases AN (129), BN (65) and CN (33) are the A, B and C legs.
+func TestDeliveryLegs_NeutralPhaseCodes(t *testing.T) {
+	d := newDeliveryHarness(t)
+	b := deliveryBase
+	d.seedReadings(t, "1", dcLFDI, roleIsDER, ptrU32(900),
+		reading{mrid: "A", at: b, value: 1000, dir: reverseDir(), phase: dq(129)},
+		reading{mrid: "B", at: b, value: 2000, dir: reverseDir(), phase: dq(65)},
+		reading{mrid: "C", at: b, value: 4000, dir: reverseDir(), phase: dq(33)},
+	)
+	mrid := d.seedControl(t, "e", b, 900, dercontrol.LifecycleRecord{})
+	checkDelivery(t, d, mrid, 900, 7000)
+}
+
+// accumulationBehaviour 6 (indicating) is read as power.
+func TestDeliveryLegs_IndicatingAccumulation(t *testing.T) {
+	d := newDeliveryHarness(t)
+	b := deliveryBase
+	d.seedReadings(t, "1", dcLFDI, roleIsDER, ptrU32(900), reading{mrid: "T", at: b, value: 3000, dir: reverseDir(), acc: dq(6)})
+	mrid := d.seedControl(t, "e", b, 900, dercontrol.LifecycleRecord{})
+	checkDelivery(t, d, mrid, 900, 3000)
+}

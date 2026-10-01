@@ -55,6 +55,7 @@ func main() {
 		Stores:       sep2server.NewStores(),
 		AdminKey:     "outside-key-0123456789",
 		AllowedHosts: []string{"localhost"},
+		ReadOnly:     true,
 		Panels: []sep2admin.Panel{{
 			ID:                "outside-status",
 			Label:             "Outside",
@@ -84,6 +85,22 @@ func main() {
 	}
 	if rec := get(h, "/api/ui/panels/outside-status", true); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Outside heading") {
 		die("GET the registered panel: %d %q", rec.Code, rec.Body.String())
+	}
+	// ReadOnly: a write gets 404 or 405 even with the key, a GET panel 200.
+	for _, path := range []string{"/api/fsas", "/api/devices"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}"))
+		req.RemoteAddr = "127.0.0.1:40000"
+		req.Host = "localhost"
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer outside-key-0123456789")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			die("ReadOnly: POST %s = %d, want 404 or 405", path, rec.Code)
+		}
+	}
+	if rec := get(h, "/api/fsas", true); rec.Code != http.StatusOK {
+		die("ReadOnly: GET /api/fsas = %d, want 200", rec.Code)
 	}
 	fmt.Println("EXTERNAL PLANE OK")
 }

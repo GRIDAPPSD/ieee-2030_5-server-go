@@ -624,3 +624,52 @@ func TestHandleListFleets_DirectionUnknownOnTheWire(t *testing.T) {
 		t.Errorf("device A %q not found in the served fleet", fleetDeviceALFDI)
 	}
 }
+
+// #794: each served device carries the stored EndDevice's id and href; a
+// managed LFDI with no EndDevice record carries neither key.
+func TestHandleListFleets_DeviceCarriesEdevIDAndHref(t *testing.T) {
+	t.Parallel()
+	f := newFleetFixture(t)
+	f.assign(fleetAggregatorLFDI, fleetDeviceALFDI)
+	f.assign(fleetAggregatorLFDI, fleetDeviceBLFDI)
+	f.assign(fleetAggregatorLFDI, fleetOutsideLFDI)
+	f.seedDevice("3", fleetDeviceALFDI, "0")
+	f.seedDevice("17", fleetDeviceBLFDI, "0")
+
+	w := httptest.NewRecorder()
+	handler.HandleListFleets(f.handler())(w, httptest.NewRequest(http.MethodGet, "/api/derms/fleets", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var fleets []struct {
+		Devices []map[string]any `json:"devices"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &fleets); err != nil {
+		t.Fatal(err)
+	}
+	byLFDI := map[string]map[string]any{}
+	for _, d := range fleets[0].Devices {
+		byLFDI[d["lfdi"].(string)] = d
+	}
+	for lfdi, want := range map[string][2]string{
+		fleetDeviceALFDI: {"3", "/edev/3"},
+		fleetDeviceBLFDI: {"17", "/edev/17"},
+	} {
+		d, ok := byLFDI[lfdi]
+		if !ok {
+			t.Fatalf("no device %s in %v", lfdi, byLFDI)
+		}
+		if d["edevId"] != want[0] || d["href"] != want[1] {
+			t.Errorf("device %s edevId=%v href=%v, want %q %q", lfdi, d["edevId"], d["href"], want[0], want[1])
+		}
+	}
+	un, ok := byLFDI[fleetOutsideLFDI]
+	if !ok {
+		t.Fatalf("unregistered managed device missing from %v", byLFDI)
+	}
+	for _, key := range []string{"edevId", "href"} {
+		if _, has := un[key]; has {
+			t.Errorf("unregistered device carries %q = %v, want key absent", key, un[key])
+		}
+	}
+}

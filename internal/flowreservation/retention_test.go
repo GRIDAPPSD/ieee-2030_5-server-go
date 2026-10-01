@@ -534,7 +534,7 @@ func TestRetention_StartSweepsOnTheTickAndStops(t *testing.T) {
 	end := now.Unix() - int64(grace/time.Second) - 1
 	ids := f.seedChain(t, "R1", end-600, member{start: end - 600, dur: 600, created: end - 600})
 
-	stop := f.retention().Start(10*time.Millisecond, time.Now)
+	stop := f.retention().Start(context.Background(), 10*time.Millisecond, time.Now)
 	deadline := time.Now().Add(2 * time.Second)
 	for f.held(t, "R1", ids)["frq R1"] && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)

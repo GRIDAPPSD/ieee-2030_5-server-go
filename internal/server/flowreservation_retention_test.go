@@ -21,6 +21,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
@@ -43,6 +44,7 @@ func newFRRetentionEnv(t *testing.T) *frRetentionEnv {
 	ctx := context.Background()
 	stores := newTestStores()
 	stores.FlowReservationAnswers = memory.NewScopedStore[flowreservation.AnswerRecord]()
+	stores.FlowReservationRetentionGrace = config.DefaultFlowReservationRetentionGrace
 	if err := stores.EndDevices.Create(ctx, "dev", sep2.EndDevice{LFDI: frAgreeLFDI}); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +178,7 @@ func (e *frRetentionEnv) protocolGet(t *testing.T, path string) (int, []byte) {
 	return resp.StatusCode, body
 }
 
-const frGraceSeconds = int64(flowreservation.DefaultRetentionGrace / time.Second)
+const frGraceSeconds = int64(config.DefaultFlowReservationRetentionGrace / time.Second)
 
 // #672 criterion 1: an expired request is gone from both lists and is a 404
 // at its admin and protocol paths, never a 500.
@@ -403,20 +405,20 @@ func storedOldRequest(t *testing.T, e *frRunEnv) bool {
 }
 
 // The configured grace is the one the running sweep applies: a request that
-// ended 120 s ago is removed at boot under a 60 s grace, and kept under the
-// 1800 s default.
+// ended 1000 s ago is removed at boot under the 900 s floor, and kept under
+// the 1800 s default.
 func TestRun_RetentionGraceSettingReachesTheRunningSweep(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		grace    time.Duration
 		wantKept bool
 	}{
-		{"60 s grace removes it", 60 * time.Second, false},
+		{"900 s grace removes it", 900 * time.Second, false},
 		{"default grace keeps it", 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newFRRunEnv(t)
-			seedEndedRequest(t, e, 120*time.Second)
+			seedEndedRequest(t, e, 1000*time.Second)
 			cfg := e.config(0)
 			cfg.FlowReservationRetentionGrace = tc.grace
 			stop := e.start(t, cfg)
@@ -440,7 +442,7 @@ func TestRun_InvalidRetentionGraceStopsStartup(t *testing.T) {
 		return func() {}
 	})
 	cfg := e.config(0)
-	cfg.FlowReservationRetentionGrace = 1500 * time.Millisecond
+	cfg.FlowReservationRetentionGrace = 899 * time.Second
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

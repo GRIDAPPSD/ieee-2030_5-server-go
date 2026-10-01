@@ -17,17 +17,12 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
-// DefaultRetentionGrace is how long an ended chain stays readable: twice the
-// 900 s poll rate the response list advertises, so a client polling at that
-// rate reads the final state at least once.
-const DefaultRetentionGrace = 1800 * time.Second
-
 // RetentionInterval is the period of the sweep that follows the one at boot.
 const RetentionInterval = 60 * time.Second
 
 // ErrIncompleteRetention is returned by Sweep when a required dependency is
 // missing.
-var ErrIncompleteRetention = errors.New("flowreservation: Retention needs FRQ, FRP, Lifecycles, Ledger and Fleets")
+var ErrIncompleteRetention = errors.New("flowreservation: Retention needs FRQ, FRP, Lifecycles, Ledger, Fleets and a positive Grace")
 
 // RetentionFRQ is the part of the request store the sweep reads and deletes.
 type RetentionFRQ interface {
@@ -61,7 +56,9 @@ type Retention struct {
 	Answers RecordDeleter
 	Ledger  *commitment.Ledger
 	Fleets  FleetResolver
-	// Grace is added to a chain's end; zero takes DefaultRetentionGrace.
+	// Grace is added to a chain's end. It is required: the default and its
+	// bounds belong to the setting (internal/config), and a zero grace would
+	// remove a chain the instant it ends.
 	Grace time.Duration
 	// Notifier, when set, is told once per EndDevice whose response list
 	// lost a member, after every lock is released.
@@ -76,13 +73,6 @@ func (r *Retention) logger() *slog.Logger {
 		return r.Log
 	}
 	return slog.Default()
-}
-
-func (r *Retention) grace() time.Duration {
-	if r.Grace <= 0 {
-		return DefaultRetentionGrace
-	}
-	return r.Grace
 }
 
 // endsAt is when one response stops mattering: the end of its interval, or
@@ -133,9 +123,10 @@ func chainBase(id string) (base string, k int) {
 
 // Sweep removes every request whose chain has ended, then every response
 // whose request no longer exists (what a crash between two deletes leaves).
-// It returns the number of requests removed. Only a failure to enumerate the
-// requests or responses fails the pass; a request whose chain, fleet or
-// delete fails is logged, left as it is, and retried by the next sweep.
+// It returns the number of requests removed. A failure to enumerate the
+// requests or responses is returned, after the rest of the pass has run; a
+// request whose chain, fleet or delete fails is logged, left as it is, and
+// retried by the next sweep.
 //
 // Per request, the chain is read again under its fleet lock, so a revision
 // or a cancel cannot interleave, and deleted in an order whose every crash
@@ -149,12 +140,14 @@ func chainBase(id string) (base string, k int) {
 // cancel mark. The first response outlives the request because Recover reads
 // a request with no response as pending and would answer it again.
 func (r *Retention) Sweep(ctx context.Context, now time.Time) (int, error) {
-	if r.FRQ == nil || r.FRP == nil || r.Lifecycles == nil || r.Ledger == nil || r.Fleets == nil {
+	if r.FRQ == nil || r.FRP == nil || r.Lifecycles == nil || r.Ledger == nil || r.Fleets == nil || r.Grace <= 0 {
 		return 0, ErrIncompleteRetention
 	}
 	var (
 		removed  int
+		orphans  int
 		failures []error
+		passErrs []error
 		touched  []string
 	)
 	notifyLater := func(edevID string) {
@@ -162,21 +155,33 @@ func (r *Retention) Sweep(ctx context.Context, now time.Time) (int, error) {
 			touched = append(touched, edevID)
 		}
 	}
+	// Runs on every return, after every lock is released, so what was
+	// already removed is announced and what was skipped is logged.
 	defer func() {
 		hook := notifyHook{n: r.Notifier}
 		for _, e := range touched {
 			hook.fire(ctx, e)
 		}
+		for _, f := range failures {
+			r.logger().Warn("flowreservation: retention: left for the next sweep", "err", f)
+		}
+		if removed > 0 || orphans > 0 || len(failures) > 0 {
+			r.logger().Info("flowreservation: retention swept",
+				"requestsRemoved", removed, "orphanResponsesRemoved", orphans, "skipped", len(failures))
+		}
 	}()
 
+	// A request store that cannot be listed stops the request pass only:
+	// the orphan pass reads the response store and can still run.
 	parents, err := r.FRQ.Parents(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("flowreservation: retention: list request owners: %w", err)
+		passErrs = append(passErrs, fmt.Errorf("flowreservation: retention: list request owners: %w", err))
 	}
 	for _, edevID := range parents {
 		page, err := r.FRQ.List(ctx, edevID, store.ListOptions{Unbounded: true})
 		if err != nil {
-			return removed, fmt.Errorf("flowreservation: retention: list requests of %s: %w", edevID, err)
+			passErrs = append(passErrs, fmt.Errorf("flowreservation: retention: list requests of %s: %w", edevID, err))
+			continue
 		}
 		for _, frq := range page.Items {
 			if err := ctx.Err(); err != nil {
@@ -200,17 +205,13 @@ func (r *Retention) Sweep(ctx context.Context, now time.Time) (int, error) {
 		}
 	}
 
-	orphans, errs, err := r.sweepOrphans(ctx, notifyLater)
+	n, errs, err := r.sweepOrphans(ctx, notifyLater)
+	orphans = n
 	failures = append(failures, errs...)
-
-	for _, f := range failures {
-		r.logger().Warn("flowreservation: retention: left for the next sweep", "err", f)
+	if err != nil {
+		passErrs = append(passErrs, err)
 	}
-	if removed > 0 || orphans > 0 || len(failures) > 0 {
-		r.logger().Info("flowreservation: retention swept",
-			"requestsRemoved", removed, "orphanResponsesRemoved", orphans, "skipped", len(failures))
-	}
-	return removed, err
+	return removed, errors.Join(passErrs...)
 }
 
 // retire removes one request and its chain when the chain has ended. The
@@ -221,15 +222,11 @@ func (r *Retention) retire(ctx context.Context, edevID, frqID string, now time.T
 	if err != nil {
 		return false, err
 	}
-	if !ended(chain, r.grace(), now) {
+	if !ended(chain, r.Grace, now) {
 		return false, nil
 	}
-	fleet, err := r.Fleets.FleetOf(ctx, edevID)
-	if err != nil {
-		return false, fmt.Errorf("fleet: %w", err)
-	}
 	gone := false
-	err = r.Ledger.Within(ctx, []string{fleet}, func(commitment.View) error {
+	err = r.underFleetLock(ctx, edevID, func() error {
 		if _, err := r.FRQ.Get(ctx, edevID, frqID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return nil
@@ -240,7 +237,7 @@ func (r *Retention) retire(ctx context.Context, edevID, frqID string, now time.T
 		if err != nil {
 			return err
 		}
-		if !ended(chain, r.grace(), now) {
+		if !ended(chain, r.Grace, now) {
 			return nil
 		}
 		if err := r.deleteChain(ctx, edevID, frqID, len(chain)); err != nil {
@@ -355,9 +352,8 @@ func (r *Retention) sweepOrphans(ctx context.Context, touched func(string)) (int
 	return removed, failures, nil
 }
 
-// removeOrphanChain deletes ids when the request base is gone. It takes the
-// fleet lock when the device still resolves to one; a device that no longer
-// exists has no fleet whose writers could reach these records.
+// removeOrphanChain deletes ids when the request base is gone, under
+// underFleetLock.
 func (r *Retention) removeOrphanChain(ctx context.Context, edevID, base string, ids []string) (int, error) {
 	if exists, err := r.requestExists(ctx, edevID, base); err != nil || exists {
 		return 0, err
@@ -380,16 +376,25 @@ func (r *Retention) removeOrphanChain(ctx context.Context, edevID, base string, 
 		}
 		return nil
 	}
+	err := r.underFleetLock(ctx, edevID, func() error { return run(ctx) })
+	return removed, err
+}
+
+// underFleetLock runs fn under the fleet lock of edevID. A device that no
+// longer exists, or has no LFDI, has no fleet: every writer that could touch
+// its records (a grant, a revision, a cancel) resolves the same fleet and is
+// refused, so fn runs unlocked rather than being skipped and logged on every
+// sweep. Any other resolver error skips fn.
+func (r *Retention) underFleetLock(ctx context.Context, edevID string, fn func() error) error {
 	fleet, err := r.Fleets.FleetOf(ctx, edevID)
 	switch {
 	case err == nil:
-		err = r.Ledger.Within(ctx, []string{fleet}, func(commitment.View) error { return run(ctx) })
+		return r.Ledger.Within(ctx, []string{fleet}, func(commitment.View) error { return fn() })
 	case errors.Is(err, store.ErrNotFound) || errors.Is(err, commitment.ErrNoLFDI):
-		err = run(ctx)
+		return fn()
 	default:
-		err = fmt.Errorf("fleet: %w", err)
+		return fmt.Errorf("fleet: %w", err)
 	}
-	return removed, err
 }
 
 func (r *Retention) requestExists(ctx context.Context, edevID, frqID string) (bool, error) {
@@ -404,11 +409,15 @@ func (r *Retention) requestExists(ctx context.Context, edevID, frqID string) (bo
 	}
 }
 
-// Start runs Sweep every interval, with the time from now, until the returned
-// stop is called. stop cancels a sweep in progress, waits for it to return,
-// and is safe to call more than once.
-func (r *Retention) Start(interval time.Duration, now func() time.Time) (stop func()) {
-	ctx, cancel := context.WithCancel(context.Background())
+// Start runs Sweep every interval, with the time from now, until ctx ends or
+// the returned stop is called. An interval of zero or less takes
+// RetentionInterval. stop cancels a sweep in progress, waits for it to
+// return, and is safe to call more than once.
+func (r *Retention) Start(ctx context.Context, interval time.Duration, now func() time.Time) (stop func()) {
+	if interval <= 0 {
+		interval = RetentionInterval
+	}
+	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

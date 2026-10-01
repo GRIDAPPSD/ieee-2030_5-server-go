@@ -47,5 +47,5 @@ func startFlowReservationRetention(ctx context.Context, stores *Stores, notifier
 	if _, err := r.Sweep(ctx, now()); err != nil && ctx.Err() == nil {
 		logger.Error("flowreservation: retention: boot sweep failed, retried at the next tick", "err", err)
 	}
-	return r.Start(flowreservation.RetentionInterval, now)
+	return r.Start(ctx, flowreservation.RetentionInterval, now)
 }

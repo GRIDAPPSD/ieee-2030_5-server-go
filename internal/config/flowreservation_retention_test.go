@@ -13,7 +13,9 @@ func TestParseFlowReservationRetentionGraceSeconds(t *testing.T) {
 		wantErr bool
 	}{
 		{"", 0, false},
-		{"1", time.Second, false},
+		{"1", 0, true},
+		{"899", 0, true},
+		{"900", 900 * time.Second, false},
 		{"1800", 1800 * time.Second, false},
 		{"604800", 7 * 24 * time.Hour, false},
 		{"0", 0, true},
@@ -40,12 +42,12 @@ func TestEffectiveFlowReservationRetentionGrace(t *testing.T) {
 		wantErr bool
 	}{
 		{"unset takes 1800 s", 0, 1800 * time.Second, false},
-		{"configured value kept", 90 * time.Second, 90 * time.Second, false},
-		{"lower bound", time.Second, time.Second, false},
+		{"configured value kept", 3600 * time.Second, 3600 * time.Second, false},
+		{"lower bound", 900 * time.Second, 900 * time.Second, false},
 		{"upper bound", 7 * 24 * time.Hour, 7 * 24 * time.Hour, false},
-		{"below the lower bound", time.Second - 1, 0, true},
+		{"below the lower bound", 899 * time.Second, 0, true},
 		{"above the upper bound", 7*24*time.Hour + time.Second, 0, true},
-		{"not whole seconds", 1500 * time.Millisecond, 0, true},
+		{"not whole seconds", 900*time.Second + 500*time.Millisecond, 0, true},
 		{"negative", -time.Second, 0, true},
 	}
 	for _, tc := range tests {

@@ -18,9 +18,12 @@ const (
 )
 
 // Bounds on SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS. Zero in Config
-// means unset and takes DefaultFlowReservationRetentionGrace.
+// means unset and takes DefaultFlowReservationRetentionGrace. The floor is
+// the 900 s poll rate the response list advertises: a shorter grace lets a
+// client polling at that rate miss a chain's final state. The default is
+// twice that rate.
 const (
-	MinFlowReservationRetentionGrace     = time.Second
+	MinFlowReservationRetentionGrace     = 900 * time.Second
 	MaxFlowReservationRetentionGrace     = 7 * 24 * time.Hour
 	DefaultFlowReservationRetentionGrace = 1800 * time.Second
 )
@@ -211,7 +214,7 @@ type Config struct {
 
 	// FlowReservationRetentionGrace is how long an ended flow reservation
 	// stays readable before it is removed. Env:
-	// SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS, 1 to 604800. Zero means
+	// SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS, 900 to 604800. Zero means
 	// unset; use EffectiveFlowReservationRetentionGrace.
 	FlowReservationRetentionGrace time.Duration
 }
@@ -249,7 +252,7 @@ func (c *Config) EffectiveFlowReservationDeadline() (time.Duration, error) {
 
 // ParseFlowReservationRetentionGraceSeconds validates the value of
 // SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS: empty is unset (zero),
-// anything else must be whole seconds from 1 to 604800.
+// anything else must be whole seconds from 900 to 604800.
 func ParseFlowReservationRetentionGraceSeconds(v string) (time.Duration, error) {
 	if v == "" {
 		return 0, nil
@@ -259,7 +262,7 @@ func ParseFlowReservationRetentionGraceSeconds(v string) (time.Duration, error) 
 		return 0, fmt.Errorf("SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS: %q is not a whole number of seconds", v)
 	}
 	if n < int64(MinFlowReservationRetentionGrace/time.Second) || n > int64(MaxFlowReservationRetentionGrace/time.Second) {
-		return 0, fmt.Errorf("SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS: %d is outside 1 to 604800", n)
+		return 0, fmt.Errorf("SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS: %d is outside 900 to 604800", n)
 	}
 	return time.Duration(n) * time.Second, nil
 }
@@ -272,7 +275,7 @@ func (c *Config) EffectiveFlowReservationRetentionGrace() (time.Duration, error)
 		return DefaultFlowReservationRetentionGrace, nil
 	}
 	if g < MinFlowReservationRetentionGrace || g > MaxFlowReservationRetentionGrace || g%time.Second != 0 {
-		return 0, fmt.Errorf("flow reservation retention grace %s is not whole seconds from 1s to 168h", g)
+		return 0, fmt.Errorf("flow reservation retention grace %s is not whole seconds from 15m to 168h", g)
 	}
 	return g, nil
 }

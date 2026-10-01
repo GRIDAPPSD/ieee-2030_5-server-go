@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"slices"
 	"sync"
@@ -331,29 +332,63 @@ func (s *PersistentScopedStore[T]) Delete(ctx context.Context, parentID, id stri
 func (s *PersistentScopedStore[T]) DeleteParent(ctx context.Context, parentID string) (uint32, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	n, _, _, err := s.deleteParentLocked(ctx, parentID)
+	return n, err
+}
 
+// TakeParent is DeleteParent for a cascade that must be able to put the
+// records back when a later step fails: it removes the parent's collection,
+// flushes a snapshot, and returns an undo that recreates every removed record
+// under the key it was stored under. A failed removal is rolled back before
+// it returns and yields no undo.
+//
+// An undo that cannot restore a record logs that record's parent and id, since
+// the same failing snapshot that made the cascade fail is usually what fails
+// the restore, and the log is then the only trace of what was lost.
+func (s *PersistentScopedStore[T]) TakeParent(ctx context.Context, parentID string) (func(context.Context) error, uint32, error) {
+	s.writeMu.Lock()
+	n, ids, before, err := s.deleteParentLocked(ctx, parentID)
+	s.writeMu.Unlock()
+	if err != nil {
+		return nil, 0, err
+	}
+	return func(ctx context.Context) error {
+		var errs []error
+		for i, id := range ids {
+			if err := s.Create(ctx, parentID, id, before[i]); err != nil {
+				log.Printf("memory: %s: could not restore %s/%s after a failed cascade: %v", s.label, parentID, id, err)
+				errs = append(errs, fmt.Errorf("record %s/%s: %w", parentID, id, err))
+			}
+		}
+		return errors.Join(errs...)
+	}, n, nil
+}
+
+// deleteParentLocked is DeleteParent with writeMu already held, and with the
+// removed ids and records returned for TakeParent.
+func (s *PersistentScopedStore[T]) deleteParentLocked(ctx context.Context, parentID string) (n uint32, ids []string, before []T, err error) {
 	hadParent, err := s.inner.HasParent(ctx, parentID)
 	if err != nil {
-		return 0, err
+		return 0, nil, nil, err
 	}
 	if !hadParent {
-		return 0, nil
+		return 0, nil, nil, nil
 	}
 	s.keysMu.Lock()
-	ids := slices.Clone(s.keys[parentID])
+	ids = slices.Clone(s.keys[parentID])
 	s.keysMu.Unlock()
-	before := make([]T, 0, len(ids))
+	before = make([]T, 0, len(ids))
 	for _, id := range ids {
 		v, err := s.inner.Get(ctx, parentID, id)
 		if err != nil {
-			return 0, fmt.Errorf("%s persistence: read %s/%s before delete: %v", s.label, parentID, id, err)
+			return 0, nil, nil, fmt.Errorf("%s persistence: read %s/%s before delete: %v", s.label, parentID, id, err)
 		}
 		before = append(before, v)
 	}
 
-	n, err := s.inner.DeleteParent(ctx, parentID)
+	n, err = s.inner.DeleteParent(ctx, parentID)
 	if err != nil {
-		return 0, err
+		return 0, nil, nil, err
 	}
 	s.keysMu.Lock()
 	delete(s.keys, parentID)
@@ -373,7 +408,7 @@ func (s *PersistentScopedStore[T]) DeleteParent(ctx context.Context, parentID st
 					s.keys[parentID] = ids[:i]
 					s.keysMu.Unlock()
 				}
-				return 0, errors.Join(err, fmt.Errorf("%s persistence: rollback delete parent %s/%s: %w", s.label, parentID, id, rerr))
+				return 0, nil, nil, errors.Join(err, fmt.Errorf("%s persistence: rollback delete parent %s/%s: %w", s.label, parentID, id, rerr))
 			}
 		}
 		s.keysMu.Lock()
@@ -381,7 +416,7 @@ func (s *PersistentScopedStore[T]) DeleteParent(ctx context.Context, parentID st
 			s.keys[parentID] = ids
 		}
 		s.keysMu.Unlock()
-		return 0, err
+		return 0, nil, nil, err
 	}
-	return n, nil
+	return n, ids, before, nil
 }

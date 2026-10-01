@@ -144,6 +144,29 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("DERControl lifecycle persistence: %w", err)
 	}
+	// #761: flow reservation requests, responses and each response's cancel
+	// mark persist like the DER controls a grant is carried out by, so a
+	// restart does not forget a grant a persisted control names. No
+	// WithRecordID: the store key is not the mRID, and a load-time id check
+	// would refuse a snapshot this server wrote itself and fail the boot.
+	flowReservationRequests, err := memory.NewPersistentScopedStore[sep2.FlowReservationRequest](
+		cfg.EffectiveStorePath("flowreservation-requests", ""), "FlowReservationRequest",
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("FlowReservationRequest persistence: %w", err)
+	}
+	flowReservationResponses, err := memory.NewPersistentScopedStore[sep2.FlowReservationResponse](
+		cfg.EffectiveStorePath("flowreservation-responses", ""), "FlowReservationResponse",
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("FlowReservationResponse persistence: %w", err)
+	}
+	flowReservationLifecycles, err := dercontrol.NewLifecycleStoreWithPersistence(
+		cfg.EffectiveStorePath("flowreservation-response-lifecycles", ""),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("FlowReservationResponse lifecycle persistence: %w", err)
+	}
 	endDeviceManagers, err := memory.NewEndDeviceManagementStoreWithPersistence(
 		cfg.EffectiveStorePath("enddevicemanagement", ""),
 	)
@@ -201,12 +224,12 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 		PowerStatuses:            memory.NewScopedStore[sep2.PowerStatus](),
 		MessagingPrograms:        memory.NewStore[sep2.MessagingProgram](),
 		TextMessages:             memory.NewScopedStore[sep2.TextMessage](),
-		FlowReservationRequests:  memory.NewScopedStore[sep2.FlowReservationRequest](),
-		FlowReservationResponses: memory.NewScopedStore[sep2.FlowReservationResponse](),
+		FlowReservationRequests:  flowReservationRequests,
+		FlowReservationResponses: flowReservationResponses,
 		ResponseSets:             memory.NewStore[sep2.ResponseSet](),
 		Responses:                memory.NewScopedStore[sep2.Response](),
 
-		FlowReservationResponseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
+		FlowReservationResponseLifecycles: flowReservationLifecycles,
 
 		// #715 fix round 3 item 2: env SEP2_EDITION, default "2018" via
 		// EffectiveSEP2Edition.

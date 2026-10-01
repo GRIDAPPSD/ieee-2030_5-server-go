@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"os"
 	"slices"
@@ -27,7 +28,7 @@ import (
 // internal/bootfixture/seedrecord.go uses for its own record type, for the
 // same reason.
 type LifecycleStore struct {
-	inner store.ScopedStore[LifecycleRecord]
+	inner *memory.ScopedStore[LifecycleRecord]
 
 	keysMu sync.Mutex
 	keys   map[string][]string
@@ -324,6 +325,90 @@ func (s *LifecycleStore) Delete(ctx context.Context, parentID, id string) error 
 	}
 	return nil
 }
+
+// DeleteParent removes every lifecycle record under parentID with one
+// snapshot write, reports how many went, and restores them all if the write
+// fails (GRIDAPPSD/ieee-2030_5-server-go#761).
+func (s *LifecycleStore) DeleteParent(ctx context.Context, parentID string) (uint32, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, _, _, err := s.deleteParentLocked(ctx, parentID)
+	return n, err
+}
+
+// deleteParentLocked is DeleteParent with writeMu held, returning the removed
+// ids and records for TakeParent.
+func (s *LifecycleStore) deleteParentLocked(ctx context.Context, parentID string) (n uint32, ids []string, before []LifecycleRecord, err error) {
+	hadParent, err := s.inner.HasParent(ctx, parentID)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	if !hadParent {
+		return 0, nil, nil, nil
+	}
+	ids = s.idsUnder(parentID)
+	before = make([]LifecycleRecord, 0, len(ids))
+	for _, id := range ids {
+		rec, gerr := s.inner.Get(ctx, parentID, id)
+		if gerr != nil {
+			return 0, nil, nil, fmt.Errorf("dercontrol lifecycle persistence: read %s/%s before delete: %w", parentID, id, gerr)
+		}
+		before = append(before, rec)
+	}
+	n, err = s.inner.DeleteParent(ctx, parentID)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	s.keysMu.Lock()
+	delete(s.keys, parentID)
+	s.keysMu.Unlock()
+	if s.afterMutateBeforePersist != nil {
+		s.afterMutateBeforePersist()
+	}
+	if err := s.persistLocked(ctx); err != nil {
+		// ForParent re-establishes the parent even when it held no records.
+		s.inner.ForParent(parentID)
+		for i, id := range ids {
+			if rerr := s.inner.Create(ctx, parentID, id, before[i]); rerr != nil {
+				// The records restored so far are served, so their keys stay
+				// indexed or later snapshots would drop them.
+				for _, done := range ids[:i] {
+					s.addKey(parentID, done)
+				}
+				return 0, nil, nil, errors.Join(err, fmt.Errorf("dercontrol lifecycle persistence: rollback delete parent %s/%s: %w", parentID, id, rerr))
+			}
+		}
+		for _, id := range ids {
+			s.addKey(parentID, id)
+		}
+		return 0, nil, nil, err
+	}
+	return n, ids, before, nil
+}
+
+// TakeParent is DeleteParent that also returns an undo recreating each removed
+// record under its store key, for a cascade whose later step can fail. An undo
+// that cannot restore a record logs its parent and id.
+func (s *LifecycleStore) TakeParent(ctx context.Context, parentID string) (func(context.Context) error, uint32, error) {
+	s.writeMu.Lock()
+	n, ids, before, err := s.deleteParentLocked(ctx, parentID)
+	s.writeMu.Unlock()
+	if err != nil {
+		return nil, 0, err
+	}
+	return func(ctx context.Context) error {
+		var errs []error
+		for i, id := range ids {
+			if err := s.Create(ctx, parentID, id, before[i]); err != nil {
+				log.Printf("dercontrol: could not restore lifecycle %s/%s after a failed cascade: %v", parentID, id, err)
+				errs = append(errs, fmt.Errorf("lifecycle %s/%s: %w", parentID, id, err))
+			}
+		}
+		return errors.Join(errs...)
+	}, n, nil
+}
+
+var _ memory.ParentTaker = (*LifecycleStore)(nil)
 
 // compile-time proof LifecycleStore satisfies the lifecycleStore interface
 // the Issuer consumes, and the full store.ScopedStore contract.

@@ -579,3 +579,24 @@ func TestNotify_SubscriberHearsASupersede(t *testing.T) {
 		t.Fatal("the subscriber heard nothing of the supersede")
 	}
 }
+
+// One ledger call can mark more than one grant of the same device; the list
+// changed once, so it is notified once. Another device is notified on its own.
+func TestDeferNotifications_NotifiesEachDeviceOnce(t *testing.T) {
+	t.Parallel()
+	rec := newRecordingNotifier()
+	w := flowreservation.NotifyingWriters(commitment.Writers{Grants: stubGrants{}}, rec)
+	ctx, flush := flowreservation.DeferNotifications(context.Background(), rec)
+
+	for _, edev := range []string{aggID, aggID, standaloneID, aggID} {
+		if err := w.Grants.MarkCancelled(ctx, commitment.Grant{EndDeviceID: edev}, "r", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	flush()
+
+	got := rec.all()
+	if len(got) != 2 || got[0].href != "/edev/"+aggID+"/frp" || got[1].href != "/edev/"+standaloneID+"/frp" {
+		t.Errorf("notifications = %+v, want one for %s then one for %s", got, aggID, standaloneID)
+	}
+}

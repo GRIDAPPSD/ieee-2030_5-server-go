@@ -76,6 +76,20 @@ func (f *fakeControls) ExecutionsOf(_ context.Context, grantMRID string) ([]Cont
 	return out, nil
 }
 
+func (f *fakeControls) ControlsAndExecutions(ctx context.Context, fleetKey string, grantMRIDs []string) ([]Control, map[string][]Control, error) {
+	inFleet, err := f.ControlsInFleet(ctx, fleetKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	execs := make(map[string][]Control, len(grantMRIDs))
+	for _, m := range grantMRIDs {
+		if execs[m], err = f.ExecutionsOf(ctx, m); err != nil {
+			return nil, nil, err
+		}
+	}
+	return inFleet, execs, nil
+}
+
 var errStoreDown = errors.New("fake: store unreachable")
 
 func plainControl(mrid string, w Window) Control {

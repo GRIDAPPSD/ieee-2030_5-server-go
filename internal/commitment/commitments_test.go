@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 )
 
 func mridsOfGrants(gs []Grant) []string {
@@ -92,39 +93,103 @@ func TestCheckGrantRefusesWhatLiveCounts(t *testing.T) {
 	}
 	l := NewLedger(&fakeGrants{grants: grants}, &fakeControls{controls: controls})
 
-	for _, except := range []string{"", "g-old"} {
-		for start := int64(0); start <= 5000; start += 250 {
-			w := Window{Start: start, Duration: 300}
-			live, _ := Live(grants, nil)
-			_, plain := Live(grants, controls)
-			want := ""
-			for _, g := range live {
-				if g.MRID != except && g.Window.Overlaps(w) {
-					want = g.MRID
-					break
-				}
+	// Each probe is [start, start+300). Commitments: g-live [1000,1600),
+	// c-exec-cancelled-grant [2000,2600) as plain, c-plain [3500,4100) and
+	// g-old [4000,4600) with its execution under it.
+	cases := []struct {
+		start  int64
+		except string
+		want   string // "" for free
+	}{
+		{700, "", ""},
+		{800, "", "g-live"},
+		{1550, "", "g-live"},
+		{1600, "", ""},
+		{1900, "", "c-exec-cancelled-grant"},
+		{2600, "", ""},
+		{3000, "", ""},
+		{3400, "", "c-plain"},
+		{3900, "", "g-old"},
+		{3900, "g-old", "c-plain"},
+		{4200, "", "g-old"},
+		{4200, "g-old", ""},
+		{4600, "", ""},
+	}
+	for _, tc := range cases {
+		w := Window{Start: tc.start, Duration: 300}
+		err := checkGrant(t, l, "FLEET1", &w, tc.except)
+		if tc.want == "" {
+			if err != nil {
+				t.Errorf("except %q, window %+v: CheckGrant = %v, want free", tc.except, w, err)
 			}
-			if want == "" {
-				for _, c := range plain {
-					if c.Window.Overlaps(w) {
-						want = c.MRID
-						break
-					}
-				}
-			}
-
-			err := checkGrant(t, l, "FLEET1", &w, except)
-			if want == "" {
-				if err != nil {
-					t.Errorf("except %q, window %+v: CheckGrant = %v, want free", except, w, err)
-				}
-				continue
-			}
-			var ce *ConflictError
-			if !errors.As(err, &ce) || ce.Code != ConflictFleetWindow || ce.MRID != want {
-				t.Errorf("except %q, window %+v: CheckGrant = %v, want a conflict naming %s", except, w, err, want)
-			}
+			continue
 		}
+		var ce *ConflictError
+		if !errors.As(err, &ce) || ce.Code != ConflictFleetWindow || ce.MRID != tc.want {
+			t.Errorf("except %q, window %+v: CheckGrant = %v, want a conflict naming %s", tc.except, w, err, tc.want)
+		}
+	}
+}
+
+// A grant conflict is refused even when the control read fails, as it was
+// when grants were checked before controls were read.
+func TestCheckGrantRefusesAGrantConflictWhenControlsFail(t *testing.T) {
+	t.Parallel()
+	w := Window{Start: 1000, Duration: 600}
+	l := NewLedger(&fakeGrants{grants: []Grant{grantOn("g-live", w)}}, &fakeControls{err: errStoreDown})
+	wantConflict(t, checkGrant(t, l, "FLEET1", &w, ""), ConflictFleetWindow, "g-live")
+
+	// With no grant conflict the control failure still refuses.
+	free := Window{Start: 5000, Duration: 600}
+	if err := checkGrant(t, l, "FLEET1", &free, ""); !errors.Is(err, errStoreDown) {
+		t.Errorf("CheckGrant on a free window with controls down = %v, want errStoreDown", err)
+	}
+}
+
+// blockingControls holds its one-walk read open until released, so a test
+// can see whether the fleet lock is held meanwhile.
+type blockingControls struct {
+	fakeControls
+	entered, release chan struct{}
+}
+
+func (b *blockingControls) ControlsAndExecutions(ctx context.Context, fleetKey string, mrids []string) ([]Control, map[string][]Control, error) {
+	close(b.entered)
+	<-b.release
+	return b.fakeControls.ControlsAndExecutions(ctx, fleetKey, mrids)
+}
+
+// Commitments reads under the fleet lock: a Within on the same fleet waits
+// until the read returns.
+func TestLedgerCommitmentsHoldsTheFleetLock(t *testing.T) {
+	t.Parallel()
+	src := &blockingControls{entered: make(chan struct{}), release: make(chan struct{})}
+	l := NewLedger(&fakeGrants{}, src)
+	done := make(chan error, 1)
+	go func() {
+		_, err := l.Commitments(context.Background(), "FLEET1", 0)
+		done <- err
+	}()
+	<-src.entered
+
+	acquired := make(chan struct{})
+	go func() {
+		_ = l.Within(context.Background(), []string{"FLEET1"}, func(View) error { return nil })
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+		t.Error("Within on the same fleet ran while Commitments was reading")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(src.release)
+	if err := <-done; err != nil {
+		t.Fatalf("Commitments = %v", err)
+	}
+	select {
+	case <-acquired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Within never ran after Commitments returned")
 	}
 }
 
@@ -133,6 +198,10 @@ func TestLedgerCommitments(t *testing.T) {
 	const now = 2000
 	other := plainControl("c-other-fleet", Window{Start: 2500, Duration: 600})
 	other.FleetKey = "FLEET2"
+	// An execution stored in another fleet still counts against its grant,
+	// as an execution check counts it.
+	otherExec := executionOf("c-running-fleet2", "g-running", Window{Start: 1900, Duration: 200})
+	otherExec.FleetKey = "FLEET2"
 	grants := []Grant{
 		grantOn("g-future", Window{Start: 5000, Duration: 600}),  // not started: still committed
 		grantOn("g-running", Window{Start: 1500, Duration: 600}), // ends 2100
@@ -148,6 +217,7 @@ func TestLedgerCommitments(t *testing.T) {
 		plainControl("c-superseded-before-start", Window{Start: 2600}),
 		cancelledControl(plainControl("c-plain-cancelled", Window{Start: 2500, Duration: 600})),
 		other,
+		otherExec,
 	}
 	l := NewLedger(&fakeGrants{grants: grants}, &fakeControls{controls: controls})
 
@@ -164,8 +234,8 @@ func TestLedgerCommitments(t *testing.T) {
 	if want := []string{"g-future", "g-running"}; !slices.Equal(gotGrants, want) {
 		t.Errorf("grants = %v, want %v", gotGrants, want)
 	}
-	if want := []string{"c-running-1"}; !slices.Equal(execs["g-running"], want) {
-		t.Errorf("executions of g-running = %v, want %v (the cancelled one is not counted)", execs["g-running"], want)
+	if want := []string{"c-running-1", "c-running-fleet2"}; !slices.Equal(execs["g-running"], want) {
+		t.Errorf("executions of g-running = %v, want %v (the cancelled one is not counted, the other fleet's is)", execs["g-running"], want)
 	}
 	if len(execs["g-future"]) != 0 {
 		t.Errorf("executions of g-future = %v, want none", execs["g-future"])
@@ -175,11 +245,12 @@ func TestLedgerCommitments(t *testing.T) {
 	}
 }
 
-// executionsDown fails ExecutionsOf only, after both fleet reads succeed.
+// executionsDown fails the one-walk control read only; ControlsInFleet
+// alone still succeeds.
 type executionsDown struct{ fakeControls }
 
-func (executionsDown) ExecutionsOf(context.Context, string) ([]Control, error) {
-	return nil, errStoreDown
+func (executionsDown) ControlsAndExecutions(context.Context, string, []string) ([]Control, map[string][]Control, error) {
+	return nil, nil, errStoreDown
 }
 
 // A failed read fails the whole call: an empty answer would read as a free

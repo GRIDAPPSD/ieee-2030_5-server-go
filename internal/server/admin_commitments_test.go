@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -188,7 +189,10 @@ func TestAdminCommitmentsListsAnExecutionOfACancelledGrantAsPlain(t *testing.T) 
 
 // A fleet with nothing committed serves empty lists, never null.
 func TestAdminCommitmentsEmptyFleetServesEmptyLists(t *testing.T) {
-	_, admin, _ := frAgreementFixture(t)
+	_, admin, stores := frAgreementFixture(t)
+	if err := stores.EndDevices.Create(context.Background(), "free", sep2.EndDevice{LFDI: "BBBB000000000000000000000000000000000002"}); err != nil {
+		t.Fatal(err)
+	}
 	w := httptest.NewRecorder()
 	admin.ServeHTTP(w, bearerFromLoopbackRequest(http.MethodGet, "/api/derms/commitments?aggregatorLFDI=BBBB000000000000000000000000000000000002", "", ""))
 	var raw map[string]json.RawMessage
@@ -234,5 +238,47 @@ func TestAdminCommitmentsWritesNothing(t *testing.T) {
 	getCommitments(t, admin)
 	if after := snapshot(); after != before {
 		t.Errorf("records changed across two reads:\nbefore %s\nafter  %s", before, after)
+	}
+}
+
+// An aggregatorLFDI that names no fleet is a 404 with a fixed body, not the
+// empty lists a free fleet serves, and leaves the ledger's lock map as it
+// was however many such keys arrive. A managed device's own LFDI names no
+// fleet; a manager names one even with no EndDevice of its own.
+func TestAdminCommitmentsUnknownFleetIs404(t *testing.T) {
+	admin, stores, _ := commitmentsFixture(t)
+	ctx := context.Background()
+	const managed = "D001000000000000000000000000000000000001"
+	const manager = "E001000000000000000000000000000000000001"
+	if err := stores.EndDevices.Create(ctx, "managed", sep2.EndDevice{LFDI: managed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stores.EndDeviceManagers.Assign(ctx, manager, managed); err != nil {
+		t.Fatal(err)
+	}
+	get := func(lfdi string) (int, string, string) {
+		w := httptest.NewRecorder()
+		admin.ServeHTTP(w, bearerFromLoopbackRequest(http.MethodGet, "/api/derms/commitments?aggregatorLFDI="+lfdi, "", ""))
+		var body struct{ Error, Code string }
+		_ = json.Unmarshal(w.Body.Bytes(), &body)
+		return w.Code, body.Code, body.Error
+	}
+
+	getCommitments(t, admin) // the known fleet's lock exists before the count
+	before := stores.CommitmentLedger.FleetLockCount()
+	for i := range 500 {
+		lfdi := fmt.Sprintf("%040X", i+1)
+		if code, c, e := get(lfdi); code != http.StatusNotFound || c != "fleet_not_found" || e != "no such fleet" {
+			t.Fatalf("unknown fleet %s = %d %s %q, want 404 fleet_not_found", lfdi, code, c, e)
+		}
+	}
+	if code, c, _ := get(managed); code != http.StatusNotFound || c != "fleet_not_found" {
+		t.Errorf("a managed device's LFDI = %d %s, want 404", code, c)
+	}
+	if after := stores.CommitmentLedger.FleetLockCount(); after != before {
+		t.Errorf("fleet locks = %d after 501 unknown keys, want the %d before", after, before)
+	}
+	if code, _, _ := get(manager); code != http.StatusOK {
+		t.Errorf("a manager without its own EndDevice = %d, want 200", code)
 	}
 }

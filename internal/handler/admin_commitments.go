@@ -23,9 +23,18 @@ type FleetCommitments interface {
 	Commitments(ctx context.Context, fleetKey string, now int64) (commitment.Commitments, error)
 }
 
+// FleetDirectory says whether a key names a fleet; commitment.Fleets is
+// the production one.
+type FleetDirectory interface {
+	Known(ctx context.Context, fleetKey string) (bool, error)
+}
+
 // AdminCommitmentsHandler serves the commitments read route.
 type AdminCommitmentsHandler struct {
 	Ledger FleetCommitments
+	// Fleets is asked before Ledger: the ledger keeps a lock for every key
+	// it is given, so an unknown key must never reach it.
+	Fleets FleetDirectory
 	// Now is the clock that decides which windows have ended; nil uses the
 	// protocol clock.
 	Now func() int64
@@ -77,15 +86,29 @@ func (h *AdminCommitmentsHandler) HandleList() http.HandlerFunc {
 		if !ok {
 			return
 		}
+		known, err := h.Fleets.Known(r.Context(), agg)
+		if err != nil {
+			log.Printf("admin commitments: resolving fleet %s: %v", agg, err)
+			writeCommitmentsInternal(w)
+			return
+		}
+		if !known {
+			writeFRRefusal(w, http.StatusNotFound, "fleet_not_found", "no such fleet", "")
+			return
+		}
 		now := h.now()
 		c, err := h.Ledger.Commitments(r.Context(), agg, now)
 		if err != nil {
 			log.Printf("admin commitments: fleet %s: %v", agg, err)
-			writeFRInternal(w)
+			writeCommitmentsInternal(w)
 			return
 		}
 		writeFRJSON(w, http.StatusOK, commitmentsView(agg, now, c))
 	}
+}
+
+func writeCommitmentsInternal(w http.ResponseWriter) {
+	writeFRRefusal(w, http.StatusInternalServerError, "internal", "commitments read failed, see server log", "")
 }
 
 func commitmentsView(agg string, now int64, c commitment.Commitments) CommitmentsView {
@@ -149,4 +172,7 @@ func scaledFloat(value int64, multiplier int8) float64 {
 	return f
 }
 
-var _ FleetCommitments = (*commitment.Ledger)(nil)
+var (
+	_ FleetCommitments = (*commitment.Ledger)(nil)
+	_ FleetDirectory   = commitment.Fleets{}
+)

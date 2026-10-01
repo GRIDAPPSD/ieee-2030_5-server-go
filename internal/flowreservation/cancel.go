@@ -90,6 +90,7 @@ func (c *Canceller) Cancel(ctx context.Context, edevID, frqID string, status sep
 
 	// A revision (#668) stores a new response per change, so the request's
 	// answer is a chain, not one response.
+	//
 	// Every pass's grant writes notify only after the passes end, once the
 	// fleet lock is released, and one device is notified once.
 	if c.notify.n != nil {

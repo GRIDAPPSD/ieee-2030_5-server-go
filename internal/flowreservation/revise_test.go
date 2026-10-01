@@ -878,3 +878,74 @@ func TestCancel_MemberTheLedgerNeverKnowsIsAnErrorNamingIt(t *testing.T) {
 		t.Errorf("R1 lifecycle = %+v (err %v), want cancelled", lc, err)
 	}
 }
+
+// A Cancel over a two-member chain (a failed revise left both live) and two
+// passes (the first walk also lists a member the ledger does not know) must
+// notify the device's list once, after the fleet lock is free and with both
+// grants already cancelled.
+func TestCancel_NotifiesOncePerDeviceAfterTheLockIsFree(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	base := time.Now().Add(time.Hour).Unix()
+	old := f.answered(t, base)
+	f.issueExec(t, old, base, -2000)
+
+	real := sources.NewWriters(f.issuer, f.frpLifecycles)
+	deps := f.reviseDeps()
+	deps.Writers = commitment.Writers{Executions: real.Executions, Grants: &failingGrantWriter{inner: real.Grants}}
+	deps.Replace = func(edevID string, frp sep2.FlowReservationResponse) (commitment.Replacement, error) {
+		rep, err := sources.NewReplacement(f.frp, edevID, frp)
+		rep.Delete = func(context.Context) error { return errors.New("boom: delete refused") }
+		return rep, err
+	}
+	_, err := flowreservation.Revise(ctx, deps, aggID, "R1", shorten(base, 1800), "operator revise", flowreservation.Attribution{}, time.Now())
+	if !errors.Is(err, commitment.ErrUndo) {
+		t.Fatalf("Revise err = %v, want ErrUndo", err)
+	}
+
+	rec := newRecordingNotifier()
+	rec.onNotify = func() string {
+		done := make(chan error, 1)
+		go func() {
+			done <- f.ledger.Within(ctx, []string{aggLFDI}, func(commitment.View) error { return nil })
+		}()
+		select {
+		case err := <-done:
+			if err != nil {
+				return "lock error"
+			}
+		case <-time.After(2 * time.Second):
+			return "lock held"
+		}
+		for _, id := range []string{"R1", "R1-r1"} {
+			if lc, err := f.frpLifecycles.Get(ctx, aggID, id); err != nil || lc.CancelledAt == nil {
+				return id + " live"
+			}
+		}
+		return "free, both cancelled"
+	}
+	walks := 0
+	canceller := flowreservation.NewCanceller(f.frq, frpHook{FRPStore: f.frp, get: func(ctx context.Context, p, id string) (sep2.FlowReservationResponse, error) {
+		if id == "R1" {
+			walks++
+		}
+		if id == "R1-r1" && walks == 1 {
+			return sep2.FlowReservationResponse{}, store.ErrNotFound
+		}
+		return f.frp.Get(ctx, p, id)
+	}}, f.queue, f.ledger, real, flowreservation.WithNotifier(rec))
+
+	must(t, canceller.Cancel(ctx, aggID, "R1", cancelledStatus(time.Now().Unix())))
+
+	got := rec.all()
+	if len(got) != 1 {
+		t.Fatalf("notifications = %+v, want exactly 1", got)
+	}
+	if got[0].href != flowreservation.ListHref(aggID) || got[0].seen != "free, both cancelled" {
+		t.Errorf("notification = %+v, want the list href, sent with the lock free and both grants cancelled", got[0])
+	}
+	if walks < 3 {
+		t.Errorf("walks = %d, want at least 3 (two passes)", walks)
+	}
+}

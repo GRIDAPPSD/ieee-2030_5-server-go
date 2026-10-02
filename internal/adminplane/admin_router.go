@@ -242,6 +242,7 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	// reads (sensitiveAdminReadPrefixes): a View may disclose anything.
 	authed.HandleFunc("GET /api/ui/panels", panels.handleList())
 	authed.HandleFunc("GET /api/ui/panels/{id}", panels.handleGet())
+	authed.HandleFunc("GET /api/ui/panels/{id}/choices", panels.handleChoices())
 
 	// Admin UI (embedded Svelte SPA, pkg/adminui/web). Mounted at
 	// "/ui/", a more specific pattern than the dashboard's catch-all "GET

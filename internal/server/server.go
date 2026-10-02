@@ -339,7 +339,8 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// not a positive integer (no crash: warn and use the default).
 	subWorkers := resolveSubParam("SEP2_SUBSCRIPTION_WORKERS", subscriptionWorkers)
 	subQueueSize := resolveSubParam("SEP2_SUBSCRIPTION_QUEUE_SIZE", subscriptionQueueSize)
-	notifier := newSubscriptionNotifier(cfg, stores.Subscriptions, subWorkers, subQueueSize)
+	notifier := newSubscriptionNotifier(cfg, stores.Subscriptions, subWorkers, subQueueSize,
+		coresub.WithNotificationTimeouts(notificationTimeoutsFromEnv()))
 	notifier.SetObserver(obs.RecordNotification)
 	stores.AdminNotifier = notifier
 	notifierDone := make(chan struct{})

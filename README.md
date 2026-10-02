@@ -64,6 +64,15 @@ cloud metadata destinations are refused; private ranges are allowed. `SEP2_NOTIF
 allows loopback for a test receiver on the same host and must not be set in
 production. See [docs/csip.md](docs/csip.md#notification-destinations).
 
+Notification timeouts default to 30 s for a POST, 30 s for the connect, and 5 s
+for the DNS check at creation. Set `SEP2_NOTIFICATION_POST_TIMEOUT`,
+`SEP2_NOTIFICATION_DIAL_TIMEOUT` and `SEP2_NOTIFICATION_RESOLVE_TIMEOUT` to a Go
+duration such as `45s`; an unset, unparseable or non-positive value keeps the
+default and logs a warning. A program embedding the server passes
+`subscription.WithNotificationTimeouts(subscription.NotificationTimeouts{...})`
+to `subscription.NewManager`; zero fields keep the defaults, and `Validate`
+refuses a negative one by name.
+
 ## Test
 
 ```bash

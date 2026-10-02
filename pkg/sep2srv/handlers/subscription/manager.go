@@ -129,6 +129,51 @@ func WithDestinationPolicy(p DestinationPolicy) ManagerOption {
 	return func(m *Manager) { m.guard.policy = p }
 }
 
+// NotificationTimeouts sets the three durations that bound outbound
+// notification work. A zero field keeps the built-in value (Post 30 s, Dial
+// 30 s, CreationResolve 5 s); a negative field is invalid.
+type NotificationTimeouts struct {
+	// Post is the deadline for one notification POST.
+	Post time.Duration
+	// Dial is the connect timeout of the delivery dialer and the connect
+	// budget shared across a host's addresses.
+	Dial time.Duration
+	// CreationResolve bounds the DNS check a Subscription POST performs
+	// before anything is stored.
+	CreationResolve time.Duration
+}
+
+// Validate returns an error naming the first negative field.
+func (t NotificationTimeouts) Validate() error {
+	for _, f := range []struct {
+		name string
+		d    time.Duration
+	}{{"Post", t.Post}, {"Dial", t.Dial}, {"CreationResolve", t.CreationResolve}} {
+		if f.d < 0 {
+			return fmt.Errorf("notification timeout %s must not be negative, got %v", f.name, f.d)
+		}
+	}
+	return nil
+}
+
+// WithNotificationTimeouts overrides the notification timeouts. Zero fields
+// keep their defaults. A negative field is ignored here because an option
+// cannot return an error; call Validate first to refuse it.
+func WithNotificationTimeouts(t NotificationTimeouts) ManagerOption {
+	return func(m *Manager) {
+		if t.Post > 0 {
+			m.client.Timeout = t.Post
+		}
+		if t.Dial > 0 {
+			m.guard.dialer.Timeout = t.Dial
+			m.guard.dialTimeout = t.Dial
+		}
+		if t.CreationResolve > 0 {
+			m.guard.resolveTimeout = t.CreationResolve
+		}
+	}
+}
+
 // NewManager creates a NotificationManager with the given worker pool size.
 func NewManager(store SubscriptionLister, workerCount, queueSize int, opts ...ManagerOption) *Manager {
 	if workerCount < 1 {

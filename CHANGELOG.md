@@ -23,8 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 This entry covers `v0.8.0..v0.9.0` (2 merged pull requests). It is a MINOR
 release under the 0.x carve-out: the range adds an optional panel picker
-contract, a route and the shell control for it (`feature`). No exported
-identifier is removed or changes signature, so no row is `breaking`. Requires
+contract, a route and the shell control for it (`feature`), and one request
+that v0.8.0 answered 200 is now refused with 400 (`breaking`). Requires
 `ieee-2030_5-core-go` v0.21.0.
 
 ### Added
@@ -40,7 +40,7 @@ identifier is removed or changes signature, so no row is `breaking`. Requires
   unknown ID is dropped, and when every ID is dropped `View` answers. A
   selection holds at most 16 IDs, each matching `^[A-Za-z0-9_.:-]{1,64}$`
   with no duplicate. `Choices` accepts at most 256 entries with labels of 1 to
-  128 characters. `Choices` and `Select` run under the same one-at-a-time flag
+  128 characters; a duplicate choice ID or label is refused. `Choices` and `Select` run under the same one-at-a-time flag
   and timeout as `View`. A panel with no `Picker` keeps its wire shape.
   ([#848](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/848))
 - **Picker control in the admin shell.** A panel that declares a picker shows
@@ -53,12 +53,16 @@ identifier is removed or changes signature, so no row is `breaking`. Requires
 
 ### Changed
 
-- A request to `GET /api/ui/panels/{id}` that carries any query string is
-  refused with 400 and the body `{"error":"invalid selection"}` when the
-  panel has no `Picker`, where v0.8.0 ignored the query and answered 200. On a
-  panel that has a picker, a query with a key other than `sel`, a query over
-  2048 bytes, an ID outside the pattern, a duplicate ID or more than 16 IDs is
-  refused the same way. A request with no query is unchanged.
+- **Breaking.** A request to `GET /api/ui/panels/{id}` that carries a
+  non-empty query string is refused with 400 and the body
+  `{"error":"invalid selection"}` when the panel has no `Picker`, where v0.8.0
+  ignored the query and answered 200. On a panel that has a picker, a query
+  with a key other than `sel`, a query over 2048 bytes, an ID outside the
+  pattern, a duplicate ID or more than 16 IDs is refused the same way. A
+  request with no query is unchanged. One case, read from the code and not
+  exercised: a panel read authenticated by a one-time `?ticket=` parameter has
+  its ticket consumed and is then answered 400. The bridge sends no query and
+  is not affected.
   ([#848](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/848))
 
 ## [0.8.0] - 2026-10-01

@@ -46,22 +46,39 @@
     draft = next
   }
 
+  // Ids that left the choices stop counting toward the cap, so Apply
+  // never carries one.
+  $effect(() => {
+    const present = new Set(choices.map((c) => c.id))
+    untrack(() => {
+      if (draft.some((id) => !present.has(id))) draft = draft.filter((id) => present.has(id))
+    })
+  })
+
   function apply() {
-    const known = new Set(choices.map((c) => c.id))
-    onapply(draft.filter((id) => known.has(id)))
+    onapply([...draft])
   }
 </script>
 
 <div class="card picker" data-testid="picker">
   <div class="form-row">
     <input type="search" aria-label="Search choices" placeholder="Search" bind:value={query} />
-    <span class="hint" data-testid="picker-count">{draft.length} of {max}</span>
+    <span class="hint" role="status" data-testid="picker-count">{draft.length} of {max}</span>
     <button type="button" class="btn btn-small" onclick={() => (draft = [])}>Clear</button>
-    <button type="button" class="btn btn-small" disabled={!selectAllFits} onclick={selectAll}>Select all</button>
+    <button
+      type="button"
+      class="btn btn-small"
+      disabled={!selectAllFits}
+      aria-describedby={selectAllFits ? undefined : 'picker-select-all-reason'}
+      onclick={selectAll}
+    >Select all</button>
     <button type="button" class="btn btn-small btn-green" onclick={apply}>Apply</button>
   </div>
+  {#if !selectAllFits}
+    <span id="picker-select-all-reason" class="hint">Select all is off: the matches would go past the limit of {max}.</span>
+  {/if}
   {#if departed > 0}
-    <p class="hint" data-testid="picker-departed">{departed} saved {departed === 1 ? 'choice is' : 'choices are'} no longer available.</p>
+    <p class="hint" role="status" data-testid="picker-departed">{departed} saved {departed === 1 ? 'choice is' : 'choices are'} no longer available.</p>
   {/if}
   <ul class="picker-list">
     {#each matches as choice (choice.id)}

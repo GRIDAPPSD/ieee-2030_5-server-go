@@ -105,4 +105,34 @@ describe('PanelPicker', () => {
     expect(container.textContent).not.toMatch(/gone-id/)
     unmount()
   })
+
+  it('announces the counter and the departed note as polite status regions', () => {
+    const { unmount } = render(PanelPicker, { props: props({ departed: 2 }) })
+
+    expect(screen.getByTestId('picker-count')).toHaveAttribute('role', 'status')
+    expect(screen.getByTestId('picker-departed')).toHaveAttribute('role', 'status')
+    unmount()
+  })
+
+  it('gives the disabled Select all a readable reason naming the cap, and none when enabled', async () => {
+    const { unmount } = render(PanelPicker, { props: props() })
+    const all = screen.getByRole('button', { name: 'Select all' })
+
+    expect(all).toBeDisabled()
+    expect(all).toHaveAccessibleDescription('Select all is off: the matches would go past the limit of 16.')
+
+    await fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'battery 1' } })
+    expect(all).toBeEnabled()
+    expect(all).not.toHaveAccessibleDescription()
+    unmount()
+  })
+
+  it('drops draft ids that leave the choices, so they stop counting toward the cap', async () => {
+    const { rerender, unmount } = render(PanelPicker, { props: props({ applied: ['id1', 'id2', 'id3'] }) })
+    expect(screen.getByTestId('picker-count')).toHaveTextContent('3 of 16')
+
+    await rerender(props({ applied: ['id1', 'id2', 'id3'], choices: many(49).filter((c) => c.id !== 'id2') }))
+    expect(screen.getByTestId('picker-count')).toHaveTextContent('2 of 16')
+    unmount()
+  })
 })

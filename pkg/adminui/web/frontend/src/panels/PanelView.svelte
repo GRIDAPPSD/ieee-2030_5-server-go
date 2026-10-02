@@ -29,6 +29,7 @@
   let choices = $state<PickerChoice[] | null>(null)
   let known = $state<string[]>([])
   let departed = $state(0)
+  let choicesError = $state('')
   let shownId: string | undefined
 
   const max = $derived(picker?.max)
@@ -80,9 +81,12 @@
       choices = null
       known = []
       departed = 0
+      choicesError = ''
     }
 
-    // Returns the ids to send, or null when the choices could not be read.
+    // Returns the ids to send. When the choices cannot be read it says so
+    // beside the panel and returns the last good selection (none if there
+    // never was one), so the view keeps refreshing. Null means aborted.
     async function loadChoices(): Promise<string[] | null> {
       const res = await fetchJSON<unknown>(`/api/ui/panels/${encodeURIComponent(panelId)}/choices`, {
         signal: ctrl.signal,
@@ -91,9 +95,10 @@
       if (ctrl.signal.aborted) return null
       const parsed = res.ok ? parseChoices(res.data) : null
       if (parsed === null) {
-        error = res.ok ? 'The server sent a list of choices that could not be read.' : `Could not load the choices: ${res.error}`
-        return null
+        choicesError = res.ok ? 'The server sent a list of choices that could not be read.' : `Could not load the choices: ${res.error}`
+        return known
       }
+      choicesError = ''
       // A stored id that has left the choices is never sent, so a departed
       // device cannot turn every poll into a refused request.
       const present = new Set(parsed.choices.map((c) => c.id))
@@ -109,10 +114,7 @@
       if (hasPicker) {
         const ids = await loadChoices()
         if (ctrl.signal.aborted) return
-        if (ids === null) {
-          timer = setTimeout(load, PANEL_POLL_MS)
-          return
-        }
+        if (ids === null) return
         sel = ids
       }
       let path = `/api/ui/panels/${encodeURIComponent(panelId)}`
@@ -153,6 +155,9 @@
 
 {#if picker && choices}
   <PanelPicker {choices} max={picker.max} applied={known} {departed} {onapply} />
+{/if}
+{#if choicesError}
+  <div class="card result err" role="alert" data-testid="choices-error">{choicesError}</div>
 {/if}
 {#if error}
   <div class="card result err" role="alert" data-testid="panel-error">{error}</div>

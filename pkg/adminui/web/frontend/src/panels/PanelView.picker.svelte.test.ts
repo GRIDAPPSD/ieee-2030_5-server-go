@@ -228,6 +228,69 @@ describe('PanelView with a picker', () => {
   })
 })
 
+describe('PanelView picker, round 2', () => {
+  it('keeps refreshing the view with the last good selection when /choices fails, and says so in words', async () => {
+    localStorage.setItem(KEY, JSON.stringify(['id1', 'id2']))
+    let choicesOk = true
+    const spy = vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string) => {
+      if (path.includes('/choices')) {
+        return (choicesOk ? { ok: true, data: { max: 16, choices: choices(5) } } : { ok: false, status: 500, error: 'boom' }) as never
+      }
+      return { ok: true, data: descriptor('View') } as never
+    })
+    const { unmount } = render(PanelView, { props: { id: 'graph', picker: { max: 16 } } })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(screen.queryByTestId('choices-error')).toBeNull()
+
+    choicesOk = false
+    await vi.advanceTimersByTimeAsync(PANEL_POLL_MS)
+
+    expect(viewPaths(spy)).toEqual(['/api/ui/panels/graph?sel=id1&sel=id2', '/api/ui/panels/graph?sel=id1&sel=id2'])
+    expect(screen.getByTestId('choices-error')).toHaveTextContent('Could not load the choices: boom')
+    expect(screen.getByTestId('descriptor-heading')).toHaveTextContent('View')
+
+    choicesOk = true
+    await vi.advanceTimersByTimeAsync(PANEL_POLL_MS)
+    expect(screen.queryByTestId('choices-error')).toBeNull()
+    unmount()
+  })
+
+  it('refreshes the view with no query when /choices has never loaded', async () => {
+    localStorage.setItem(KEY, JSON.stringify(['id1']))
+    const spy = vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string) => {
+      if (path.includes('/choices')) return { ok: false, status: 500, error: 'boom' } as never
+      return { ok: true, data: descriptor('Default') } as never
+    })
+    const { unmount } = render(PanelView, { props: { id: 'graph', picker: { max: 16 } } })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(viewPaths(spy)).toEqual(['/api/ui/panels/graph'])
+    expect(screen.getByTestId('choices-error')).toBeInTheDocument()
+    unmount()
+  })
+
+  it('clears its poll timer on unmount: no read of either kind follows', async () => {
+    const spy = mockApi(5, () => ({ ok: true, data: descriptor('x') }))
+    const { unmount } = render(PanelView, { props: { id: 'graph', picker: { max: 16 } } })
+    await vi.advanceTimersByTimeAsync(0)
+    const before = spy.mock.calls.length
+
+    unmount()
+    await vi.advanceTimersByTimeAsync(PANEL_POLL_MS * 3)
+    expect(spy.mock.calls.length).toBe(before)
+  })
+
+  it('reads a stored selection with a repeated id once', async () => {
+    localStorage.setItem(KEY, JSON.stringify(['id1', 'id1', 'id2', 'id1']))
+    const spy = mockApi(5, () => ({ ok: true, data: descriptor('x') }))
+    const { unmount } = render(PanelView, { props: { id: 'graph', picker: { max: 16 } } })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(viewPaths(spy)).toEqual(['/api/ui/panels/graph?sel=id1&sel=id2'])
+    unmount()
+  })
+})
+
 describe('PanelView without a picker', () => {
   it('never reads choices, shows no control and sends no query, even with a value stored under its id', async () => {
     localStorage.setItem('adminui.picker.plain', JSON.stringify(['id1']))

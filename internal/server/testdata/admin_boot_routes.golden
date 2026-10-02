@@ -19,6 +19,7 @@
     GET /api/topology
     GET /api/ui/panels
     GET /api/ui/panels/{id}
+    GET /api/ui/panels/{id}/choices
     GET /dashboard/data
     GET /dashboard/events
     GET /login

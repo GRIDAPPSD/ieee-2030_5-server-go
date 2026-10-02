@@ -177,6 +177,9 @@ func (r *registry) Register(p Panel) error {
 	if p.Assets != nil {
 		return ErrAssetsNotImplemented
 	}
+	if p.Picker != nil && (p.Picker.Choices == nil || p.Picker.Select == nil) {
+		return ErrInvalidPicker
+	}
 	if p.DescriptorVersion != CurrentDescriptorVersion {
 		return fmt.Errorf("%w: got %d, want %d", ErrUnsupportedDescriptorVersion, p.DescriptorVersion, CurrentDescriptorVersion)
 	}

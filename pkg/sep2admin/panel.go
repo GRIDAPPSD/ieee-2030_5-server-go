@@ -65,4 +65,8 @@ type Panel struct {
 	// custom-element mechanism a real implementation would need is
 	// UNVERIFIED against this repository's pinned Svelte version.
 	Assets fs.FS
+
+	// Picker, when non-nil, lets the shell ask the panel to show a
+	// selected subset of its Choices. Nil keeps today's behavior.
+	Picker *Picker
 }

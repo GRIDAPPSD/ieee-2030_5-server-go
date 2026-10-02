@@ -34,8 +34,9 @@
 // name (neutral, info, ok, warn, error) listed here.
 // testdata/descriptor_v2.json is the wire shape.
 //
-// MAY grow without a version change: the sets of kinds and badge names.
-// A new one reaches the encoder and the shell in the same release, since
+// MAY grow without a version change: the optional Picker field on Panel
+// (nil keeps today's wire shape), and the sets of kinds and badge names.
+// A new kind or name reaches the encoder and the shell in the same release, since
 // the shell is served from this binary. Any other reader of a version 2
 // Descriptor can rely on the kinds above keeping their fields and
 // meaning, and must render around a value it does not know rather than

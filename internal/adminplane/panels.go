@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"sync/atomic"
 	"time"
 
@@ -68,25 +69,87 @@ func noPanels() *panelSet {
 }
 
 type panelEntry struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	ID     string       `json:"id"`
+	Label  string       `json:"label"`
+	Picker *pickerEntry `json:"picker,omitempty"`
+}
+
+type pickerEntry struct {
+	Max int `json:"max"`
 }
 
 // handleList answers GET /api/ui/panels with [{id, label}] in frozen
-// order, and [] when nothing is registered.
+// order, and [] when nothing is registered. A panel with a Picker also
+// carries {"picker":{"max":N}}.
 func (ps *panelSet) handleList() http.HandlerFunc {
 	entries := make([]panelEntry, 0, len(ps.panels))
 	for _, p := range ps.panels {
-		entries = append(entries, panelEntry{ID: p.ID, Label: p.Label})
+		e := panelEntry{ID: p.ID, Label: p.Label}
+		if p.Picker != nil {
+			e.Picker = &pickerEntry{Max: sep2admin.MaxSelection}
+		}
+		entries = append(entries, e)
 	}
 	return func(w http.ResponseWriter, _ *http.Request) {
 		writePanelJSON(w, http.StatusOK, entries)
 	}
 }
 
-// handleGet answers GET /api/ui/panels/{id} with the panel's Descriptor.
-// Error bodies never carry the View's error text: a recovered panic
-// embeds a stack with host paths, so the detail goes to the log only.
+// Selection query bounds. The raw query is capped before it is parsed.
+const (
+	maxSelectionQueryBytes = 2048
+	selectionRefusal       = "invalid selection"
+)
+
+// parseSelection returns the sel values of a panel request. Any refusal
+// is a bare error: the caller answers a fixed body, so no requested value
+// can reach a response or a log line.
+func parseSelection(p sep2admin.Panel, rawQuery string) ([]string, error) {
+	if rawQuery == "" {
+		return nil, nil
+	}
+	if p.Picker == nil || len(rawQuery) > maxSelectionQueryBytes {
+		return nil, sep2admin.ErrInvalidSelection
+	}
+	q, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return nil, sep2admin.ErrInvalidSelection
+	}
+	for k := range q {
+		if k != "sel" {
+			return nil, sep2admin.ErrInvalidSelection
+		}
+	}
+	ids := q["sel"]
+	if err := sep2admin.ValidateSelectionIDs(ids); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// selectionView is the one guarded call a selection request makes:
+// Choices, the match, then Select, or View when nothing matched.
+func selectionView(p sep2admin.Panel, ids []string) sep2admin.ViewFunc {
+	return func(ctx context.Context) (sep2admin.Descriptor, error) {
+		choices, err := p.Picker.Choices(ctx)
+		if err != nil {
+			return sep2admin.Descriptor{}, err
+		}
+		sel, err := sep2admin.NewSelection(ids, choices)
+		if err != nil {
+			return sep2admin.Descriptor{}, err
+		}
+		if sel.Len() == 0 {
+			return p.View(ctx)
+		}
+		return p.Picker.Select(ctx, sel)
+	}
+}
+
+// handleGet answers GET /api/ui/panels/{id}[?sel=...] with the panel's
+// Descriptor. Error bodies never carry the View's error text: a
+// recovered panic embeds a stack with host paths, so the detail goes to
+// the log only.
 func (ps *panelSet) handleGet() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -95,28 +158,17 @@ func (ps *panelSet) handleGet() http.HandlerFunc {
 			writePanelError(w, http.StatusNotFound, "no such panel")
 			return
 		}
-		// One View per panel at a time. A hung View keeps its goroutine
-		// until it returns, so without this each read would leak one more.
-		busy := ps.busy[id]
-		if !busy.CompareAndSwap(false, true) {
-			writePanelError(w, http.StatusGatewayTimeout, "panel is still answering an earlier request")
+		ids, err := parseSelection(p, r.URL.RawQuery)
+		if err != nil {
+			writePanelError(w, http.StatusBadRequest, selectionRefusal)
 			return
 		}
-		guarded, settle := oneAtATime(p, busy)
-		d, err := sep2admin.InvokeView(r.Context(), guarded, ps.timeout)
-		settle()
-		switch {
-		case err == nil:
-		case errors.Is(err, sep2admin.ErrViewTimedOut), errors.Is(err, sep2admin.ErrViewNotInvoked):
-			log.Printf("admin: panel %q: %v", id, err)
-			writePanelError(w, http.StatusGatewayTimeout, "panel did not answer in time")
-			return
-		case errors.Is(err, sep2admin.ErrViewCanceled):
-			writePanelError(w, http.StatusServiceUnavailable, "request canceled")
-			return
-		default:
-			log.Printf("admin: panel %q: %v", id, err)
-			writePanelError(w, http.StatusInternalServerError, "panel failed")
+		view := p.View
+		if len(ids) > 0 {
+			view = selectionView(p, ids)
+		}
+		d, ok := ps.invoke(w, r, p, view)
+		if !ok {
 			return
 		}
 		if d.Version != sep2admin.CurrentDescriptorVersion {
@@ -148,6 +200,78 @@ func (ps *panelSet) handleGet() http.HandlerFunc {
 		if _, err := w.Write(body); err != nil {
 			log.Printf("admin: panel %q: write: %v", id, err)
 		}
+	}
+}
+
+// invoke runs view for p under the panel's one-at-a-time flag and the
+// plane's timeout, and answers the failure itself, returning false.
+func (ps *panelSet) invoke(w http.ResponseWriter, r *http.Request, p sep2admin.Panel, view sep2admin.ViewFunc) (sep2admin.Descriptor, bool) {
+	id := p.ID
+	// One View per panel at a time. A hung View keeps its goroutine
+	// until it returns, so without this each read would leak one more.
+	busy := ps.busy[id]
+	if !busy.CompareAndSwap(false, true) {
+		writePanelError(w, http.StatusGatewayTimeout, "panel is still answering an earlier request")
+		return sep2admin.Descriptor{}, false
+	}
+	p.View = view
+	guarded, settle := oneAtATime(p, busy)
+	d, err := sep2admin.InvokeView(r.Context(), guarded, ps.timeout)
+	settle()
+	switch {
+	case err == nil:
+		return d, true
+	case errors.Is(err, sep2admin.ErrViewTimedOut), errors.Is(err, sep2admin.ErrViewNotInvoked):
+		log.Printf("admin: panel %q: %v", id, err)
+		writePanelError(w, http.StatusGatewayTimeout, "panel did not answer in time")
+	case errors.Is(err, sep2admin.ErrViewCanceled):
+		writePanelError(w, http.StatusServiceUnavailable, "request canceled")
+	default:
+		log.Printf("admin: panel %q: %v", id, err)
+		writePanelError(w, http.StatusInternalServerError, "panel failed")
+	}
+	return sep2admin.Descriptor{}, false
+}
+
+type choiceEntry struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// handleChoices answers GET /api/ui/panels/{id}/choices with
+// {"max":N,"choices":[{id,label}]}. The Choices call shares the panel's
+// busy flag and timeout with View, and its list is validated before it is
+// served.
+func (ps *panelSet) handleChoices() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, ok := ps.lookup(r.PathValue("id"))
+		if !ok || p.Picker == nil {
+			writePanelError(w, http.StatusNotFound, "no such panel")
+			return
+		}
+		var choices []sep2admin.Choice
+		_, ok = ps.invoke(w, r, p, func(ctx context.Context) (sep2admin.Descriptor, error) {
+			c, err := p.Picker.Choices(ctx)
+			if err != nil {
+				return sep2admin.Descriptor{}, err
+			}
+			if err := sep2admin.ValidateChoices(c); err != nil {
+				return sep2admin.Descriptor{}, err
+			}
+			choices = c
+			return sep2admin.Descriptor{}, nil
+		})
+		if !ok {
+			return
+		}
+		out := struct {
+			Max     int           `json:"max"`
+			Choices []choiceEntry `json:"choices"`
+		}{Max: sep2admin.MaxSelection, Choices: make([]choiceEntry, 0, len(choices))}
+		for _, c := range choices {
+			out.Choices = append(out.Choices, choiceEntry{ID: c.ID, Label: c.Label})
+		}
+		writePanelJSON(w, http.StatusOK, out)
 	}
 }
 

@@ -67,11 +67,16 @@ production. See [docs/csip.md](docs/csip.md#notification-destinations).
 Notification timeouts default to 30 s for a POST, 30 s for the connect, and 5 s
 for the DNS check at creation. Set `SEP2_NOTIFICATION_POST_TIMEOUT`,
 `SEP2_NOTIFICATION_DIAL_TIMEOUT` and `SEP2_NOTIFICATION_RESOLVE_TIMEOUT` to a Go
-duration such as `45s`; an unset, unparseable or non-positive value keeps the
-default and logs a warning. A program embedding the server passes
+duration such as `45s`. An unset or empty variable keeps the default silently;
+an unparseable or non-positive value keeps the default and logs a warning naming
+the variable. The connect budget is capped at the POST timeout, because a dial
+that outlives the POST keeps running after the worker has moved on.
+
+A program embedding the server passes
 `subscription.WithNotificationTimeouts(subscription.NotificationTimeouts{...})`
-to `subscription.NewManager`; zero fields keep the defaults, and `Validate`
-refuses a negative one by name.
+to `subscription.NewManager`. Zero fields keep the defaults. The option ignores a
+negative field; `NotificationTimeouts.Validate` is the only place one is refused,
+by name, so call it first.
 
 ## Test
 

@@ -1,6 +1,10 @@
 package server
 
 import (
+	"bytes"
+	"log"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,5 +27,24 @@ func TestNotificationTimeoutsFromEnvInvalidKeepsDefault(t *testing.T) {
 		if got := notificationTimeoutsFromEnv(); got.Post != 0 || got.Dial != 0 || got.CreationResolve != 0 {
 			t.Errorf("%q: got %+v, want all zero (defaults kept)", bad, got)
 		}
+	}
+}
+
+func TestNotificationTimeoutsFromEnvLogsWarningNamingVariable(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	t.Setenv("SEP2_NOTIFICATION_POST_TIMEOUT", "")
+	t.Setenv("SEP2_NOTIFICATION_DIAL_TIMEOUT", "soon")
+	t.Setenv("SEP2_NOTIFICATION_RESOLVE_TIMEOUT", "-5s")
+	notificationTimeoutsFromEnv()
+	out := buf.String()
+	for _, name := range []string{"SEP2_NOTIFICATION_DIAL_TIMEOUT", "SEP2_NOTIFICATION_RESOLVE_TIMEOUT"} {
+		if !strings.Contains(out, "WARNING: "+name+"=") {
+			t.Errorf("log %q has no warning naming %s", out, name)
+		}
+	}
+	if strings.Contains(out, "SEP2_NOTIFICATION_POST_TIMEOUT") {
+		t.Errorf("an empty variable logged a warning: %q", out)
 	}
 }

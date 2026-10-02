@@ -15,6 +15,11 @@ CLAUDE.md
 # could hold one.
 *.key
 *.pem
+# Anchored to the repo root on purpose: it hides only the folder an old
+# `make certs` left there (its .crt files match neither rule above). An
+# unanchored `certs/` would also hide internal/certs/ and any nested certs
+# folder.
+/certs/
 # The CSIP conformance test PKI is deliberately tracked (see
 # test/csip/README.md and the fixtures entry below): device_chain.pem,
 # device_key.pem and root_ca.pem under testdata/csip-pki/. Directory-scoped

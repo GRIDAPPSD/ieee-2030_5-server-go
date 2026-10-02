@@ -5,13 +5,13 @@
 [![Go](https://img.shields.io/badge/go-1.26.3-blue)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-Battelle%20BSD-blue)](LICENSE)
 
-No release badge yet; this repo has not cut a tagged release.
+Latest release: v0.9.0. See the [releases page](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/releases).
 
 Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server binary (`sep2server`) with TLS/mTLS, CSIP V1.2 CCM-8 cipher-suite support, an admin dashboard, and cert-generation subcommands.
 
-> **Server of record for the IEEE 2030.5 (SEP2) Go implementation.** This repository was previously named `github.com/GRIDAPPSD/ieee-2030_5-go`; GitHub redirects that name here. The `ieee-2030_5-core-go` library is an ordinary versioned Go module dependency, pinned in `go.mod` (`github.com/GRIDAPPSD/ieee-2030_5-core-go v0.19.0`); no `replace` directive is used.
+> **Core dependency.** The `ieee-2030_5-core-go` library is an ordinary versioned Go module dependency, pinned in `go.mod` (`github.com/GRIDAPPSD/ieee-2030_5-core-go v0.21.0`); no `replace` directive is used.
 
-> **EndDevice access control.** Every `/edev/{id}` route answers only the device whose certificate LFDI is stored on that EndDevice, or an aggregator provisioned to manage it, and `GET /edev` lists only those devices. Manager pairs are provisioned on the utility side; the server binary wires none yet, so aggregators have self access only until admin-plane provisioning lands ([#440](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/440)). Embedders that relied on any certificate reaching any EndDevice must change. See [docs/enddevice-access.md](docs/enddevice-access.md).
+> **EndDevice access control.** Every `/edev/{id}` route answers only the device whose certificate LFDI is stored on that EndDevice, or an aggregator provisioned to manage it, and `GET /edev` lists only those devices. Manager pairs are provisioned on the utility side through the admin plane. Embedders that relied on any certificate reaching any EndDevice must change. See [docs/enddevice-access.md](docs/enddevice-access.md).
 
 ## Documentation
 
@@ -46,7 +46,6 @@ Binaries land in `bin/`.
 
 ```bash
 make run           # builds, generates certs, serves on :8443 (CCM-8); admin on 127.0.0.1:8444 (loopback)
-make run-ccm       # alias for run, kept for existing muscle memory
 make run-full      # run, plus mDNS
 ```
 
@@ -58,11 +57,6 @@ needs both `SEP2_ADMIN_LISTEN=0.0.0.0:8444` and
 startup. See
 [docs/admin-listener.md](docs/admin-listener.md) for the bind matrix and
 [docs/admin.md](docs/admin.md) for the dashboard.
-
-The `SEP2_USE_CORE_ROUTER` env var selects the router at boot time. The
-default (unset) uses the in-tree protocol router. Set `SEP2_USE_CORE_ROUTER=1`
-to opt into the router provided by `ieee-2030_5-core`; the startup log records
-which value was read and which path was taken.
 
 Subscription `notificationURI`s are checked when a Subscription is created and
 again on every delivery. Loopback, link-local, unspecified, local multicast, and
@@ -152,17 +146,9 @@ described in [docs/csip.md](docs/csip.md).
 
 - `cmd/sep2server`: server binary entry point and cert subcommands (`serve`, `certs generate-*`, `version`)
 - `internal/`: auth and tickets, cert generation, env config, mDNS discovery, XML codec, per-function-set handlers, paging, router and dashboard, subscription plumbing, and TLS bits
-- `pkg/sep2`: public Go types for every IEEE 2030.5 resource (DER, FSA, metering, mirror, subscription, etc.)
 - `pkg/store`: `Store` interface plus an in-memory implementation
 - `e2e/`: Playwright dashboard tests
 - `docs/`: protocol, CSIP, admin, and listener references (see above)
-
-## Interop
-
-`make test-epri` runs the EPRI C client against a running server in CCM
-mode. It expects the EPRI client checked out at
-`~/repos/IEEE-2030.5-Client` and the server already running
-(`make run-ccm`). `make build-epri` builds the EPRI client locally.
 
 ## License
 

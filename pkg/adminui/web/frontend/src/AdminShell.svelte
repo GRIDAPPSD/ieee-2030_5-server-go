@@ -270,7 +270,7 @@
       <DispatchPane />
     {:else if activePanel}
       {#key activePanel.id}
-        <PanelView id={activePanel.id} />
+        <PanelView id={activePanel.id} picker={activePanel.picker} />
       {/key}
     {:else if activeTab === 'not-found' && !panelsLoaded}
       <p class="hint" data-testid="panels-pending">Loading...</p>

@@ -49,9 +49,24 @@ export interface Descriptor {
   sections: DescriptorSection[]
 }
 
+export interface PanelPickerInfo {
+  max: number
+}
+
 export interface PanelEntry {
   id: string
   label: string
+  picker?: PanelPickerInfo
+}
+
+export interface PickerChoice {
+  id: string
+  label: string
+}
+
+export interface PickerChoices {
+  max: number
+  choices: PickerChoice[]
 }
 
 // The closed badge set. A badge's class comes from this map and never
@@ -109,4 +124,47 @@ export interface DescriptorChartSeries {
 export interface DescriptorChartBody {
   unit: string
   series: DescriptorChartSeries[]
+}
+
+// Narrows a /choices reply. A reply that does not match is refused whole,
+// so a malformed entry never reaches the control.
+export function parseChoices(value: unknown): PickerChoices | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { max, choices } = value as Partial<PickerChoices>
+  if (typeof max !== 'number' || !Array.isArray(choices)) return null
+  for (const c of choices) {
+    if (typeof c !== 'object' || c === null || typeof c.id !== 'string' || typeof c.label !== 'string') return null
+  }
+  return { max, choices }
+}
+
+const SELECTION_KEY_PREFIX = 'adminui.picker.'
+
+// The stored selection is per viewer and per panel, never in the URL. Both
+// directions swallow storage failures (private mode, a blocked store, a
+// full quota) so the panel works without storage. Corrupt or foreign
+// content reads as no selection.
+export function readSelection(panelId: string, max: number): string[] {
+  try {
+    const raw = globalThis.localStorage.getItem(SELECTION_KEY_PREFIX + panelId)
+    if (raw === null) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const ids: string[] = []
+    for (const v of parsed) {
+      if (typeof v !== 'string') return []
+      if (!ids.includes(v)) ids.push(v)
+    }
+    return ids.slice(0, max)
+  } catch {
+    return []
+  }
+}
+
+export function writeSelection(panelId: string, ids: string[]): void {
+  try {
+    globalThis.localStorage.setItem(SELECTION_KEY_PREFIX + panelId, JSON.stringify(ids))
+  } catch {
+    // Storage unavailable: the selection still applies for this session.
+  }
 }

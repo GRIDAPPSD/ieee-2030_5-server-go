@@ -45,3 +45,9 @@ func CountTransportDials(m *Manager) *atomic.Int32 {
 	}
 	return n
 }
+
+// DeliveryTimeouts reports the values the Manager's client, dialer, connect
+// budget and creation resolve context are using.
+func DeliveryTimeouts(m *Manager) (post, dialer, dialBudget, resolve time.Duration) {
+	return m.client.Timeout, m.guard.dialer.Timeout, m.guard.dialTimeout, m.guard.resolveTimeout
+}

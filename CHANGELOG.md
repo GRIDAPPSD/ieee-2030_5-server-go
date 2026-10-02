@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Configurable notification timeouts.** `subscription.WithNotificationTimeouts`
+  sets the POST, dial and creation-resolve durations of a `Manager`; zero keeps
+  the 30 s, 30 s and 5 s defaults, and `NotificationTimeouts.Validate` refuses
+  a negative field by name; the dial budget is capped at the POST timeout.
+  The server binary reads
+  `SEP2_NOTIFICATION_POST_TIMEOUT`, `SEP2_NOTIFICATION_DIAL_TIMEOUT` and
+  `SEP2_NOTIFICATION_RESOLVE_TIMEOUT` as Go durations (#855).
+
 ### Changed
 
 ### Deprecated

@@ -129,6 +129,60 @@ func WithDestinationPolicy(p DestinationPolicy) ManagerOption {
 	return func(m *Manager) { m.guard.policy = p }
 }
 
+// NotificationTimeouts sets the three durations that bound outbound
+// notification work. A zero field keeps the built-in value (Post 30 s, Dial
+// 30 s, CreationResolve 5 s); a negative field is invalid and only Validate
+// refuses it.
+type NotificationTimeouts struct {
+	// Post is the deadline for one notification POST.
+	Post time.Duration
+	// Dial is the connect timeout of the delivery dialer and the connect
+	// budget shared across a host's addresses. It is capped at Post, since
+	// a dial that outlives the POST keeps running after the worker moves on.
+	Dial time.Duration
+	// CreationResolve bounds the DNS check a Subscription POST performs
+	// before anything is stored.
+	CreationResolve time.Duration
+}
+
+// Validate returns an error naming the first negative field.
+func (t NotificationTimeouts) Validate() error {
+	for _, f := range []struct {
+		name string
+		d    time.Duration
+	}{{"Post", t.Post}, {"Dial", t.Dial}, {"CreationResolve", t.CreationResolve}} {
+		if f.d < 0 {
+			return fmt.Errorf("notification timeout %s must not be negative, got %v", f.name, f.d)
+		}
+	}
+	return nil
+}
+
+// WithNotificationTimeouts overrides the notification timeouts. Zero fields
+// keep their defaults. A negative field is ignored here because an option
+// cannot return an error: Validate is the only place one is refused, so call
+// it first.
+func WithNotificationTimeouts(t NotificationTimeouts) ManagerOption {
+	return func(m *Manager) {
+		if t.Post > 0 {
+			m.client.Timeout = t.Post
+		}
+		dial := m.guard.dialTimeout
+		if t.Dial > 0 {
+			dial = t.Dial
+		}
+		// net/http detaches the dial from the request context, so a dial
+		// longer than the POST timeout would keep running after the worker
+		// has given up on the request. Cap it.
+		dial = min(dial, m.client.Timeout)
+		m.guard.dialer.Timeout = dial
+		m.guard.dialTimeout = dial
+		if t.CreationResolve > 0 {
+			m.guard.resolveTimeout = t.CreationResolve
+		}
+	}
+}
+
 // NewManager creates a NotificationManager with the given worker pool size.
 func NewManager(store SubscriptionLister, workerCount, queueSize int, opts ...ManagerOption) *Manager {
 	if workerCount < 1 {

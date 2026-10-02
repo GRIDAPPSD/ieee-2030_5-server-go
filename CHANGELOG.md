@@ -118,8 +118,8 @@ admin UI panes (`feature`) and changes several exported signatures
 - **Breaking.** `flow_reservation.HandlePostResponse` takes a
   `ResponseSenderAuthorizer`. A posted DERControlResponse with no
   `endDeviceLFDI`, or a malformed one, is now refused with 400, and a Response
-  whose `endDeviceLFDI` is not the sender's is refused with 403, where v0.7.0
-  accepted both. Other Response types that name no device are still stored.
+  whose `endDeviceLFDI` names neither the sender nor a device the sender
+  currently manages is refused with 403, where v0.7.0 accepted both. Other Response types that name no device are still stored.
   ([#742](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/742))
 - **Breaking.** The five mirror handlers `HandleCreateMirrorUsagePoint`,
   `HandleMirrorUsagePoint`, `HandlePutMirrorUsagePoint`,
@@ -197,8 +197,8 @@ admin UI panes (`feature`) and changes several exported signatures
   decision the GET routes use. On create, a resource the caller could not GET
   is refused with 400; at delivery, each stored subscription is re-checked, so
   a subscriber that can no longer read the resource is not notified. Only
-  `/edev` resources can be subscribed to. Versions before 0.8.0 are affected;
-  0.8.0 fixes it. The subscription route is mounted whenever the subscription
+  `/edev` resources can be subscribed to. Versions 0.2.0 through 0.7.0 are
+  affected; 0.8.0 fixes it. The subscription route is mounted whenever the subscription
   store is present, which is the default store set, so no non-default
   configuration is needed to be affected. Details will follow in a security
   advisory.

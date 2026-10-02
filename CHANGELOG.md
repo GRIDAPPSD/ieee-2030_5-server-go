@@ -40,8 +40,9 @@ that v0.8.0 answered 200 is now refused with 400 (`breaking`). Requires
   unknown ID is dropped, and when every ID is dropped `View` answers. A
   selection holds at most 16 IDs, each matching `^[A-Za-z0-9_.:-]{1,64}$`
   with no duplicate. `Choices` accepts at most 256 entries with labels of 1 to
-  128 characters; a duplicate choice ID or label is refused. `Choices` and `Select` run under the same one-at-a-time flag
-  and timeout as `View`. A panel with no `Picker` keeps its wire shape.
+  128 characters; a duplicate choice ID or label is refused. `Choices` and
+  `Select` run under the same one-at-a-time flag and timeout as `View`. A panel
+  with no `Picker` keeps its wire shape.
   ([#848](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/848))
 - **Picker control in the admin shell.** A panel that declares a picker shows
   a search box and checkboxes, with Clear, Select all and Apply. The applied
@@ -62,7 +63,11 @@ that v0.8.0 answered 200 is now refused with 400 (`breaking`). Requires
   request with no query is unchanged. One case, read from the code and not
   exercised: a panel read authenticated by a one-time `?ticket=` parameter has
   its ticket consumed and is then answered 400. The bridge sends no query and
-  is not affected.
+  is not affected. To adapt, send no query string to a panel that has no
+  picker, and send only `sel` to one that has. Authenticate panel reads with
+  the admin client certificate, the `Authorization: Bearer` header or the
+  session cookie, not `?ticket=`; the shell uses a ticket only for
+  `/dashboard/events`.
   ([#848](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/848))
 
 ## [0.8.0] - 2026-10-01

@@ -11,10 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `subscription.HandleCreateSubscription` takes a read check on the
-  `subscribedResource` as its third argument, a `subscription.ReadCheck`;
-  nil refuses every create. `BuildProtocolRouter` passes its own.
-
 ### Deprecated
 
 ### Removed
@@ -22,6 +18,191 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 ### Security
+
+## [0.8.0] - 2026-10-01
+
+This entry covers `v0.7.0..v0.8.0` (63 merged pull requests). It is a MINOR
+release under the 0.x carve-out: the range adds new routes, packages and
+admin UI panes (`feature`) and changes several exported signatures
+(`breaking`), neither of which can be a PATCH. Requires
+`ieee-2030_5-core-go` v0.21.0.
+
+### Added
+
+- **Flow reservation as a DERMS workflow.** A flow reservation request is held
+  for the operator's answer or a deadline fallback, answered, revised
+  (cancel-and-create) or cancelled through new admin routes, and cancelled by
+  the requesting client. Response list subscribers are notified, the list
+  advertises a short `pollRate` while a request is pending, ended reservations
+  are removed after a grace period, and pending requests and interrupted writes
+  are recovered at startup. Requests, responses and cancel marks persist, and
+  pending requests are recovered, only when `SEP2_DATA_DIR` is set; the default
+  is in-memory and loses them on restart.
+  ([#736](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/736),
+  [#755](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/755),
+  [#768](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/768),
+  [#770](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/770),
+  [#778](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/778),
+  [#781](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/781),
+  [#782](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/782),
+  [#789](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/789),
+  [#796](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/796),
+  [#811](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/811))
+- **Commitment ledger.** Fleet windows, grant fit rules and a ledger that
+  serializes check-then-write per fleet and reads grants and controls from
+  their own stores each time; it keeps no copy of any commitment. Every admin
+  DER control create, and every flow reservation grant whose interval has a
+  positive duration, is checked against it. A grant can be cancelled or
+  revised through it, and a read route serves each fleet's current
+  commitments.
+  ([#741](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/741),
+  [#747](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/747),
+  [#749](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/749),
+  [#750](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/750),
+  [#753](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/753),
+  [#809](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/809))
+- **DER controls.** DERControls and their lifecycle records persist;
+  `EventStatus` and `DERControlListLink.all` are derived at serve time; a
+  control links to a grant and carries a target power; admin routes create,
+  list and cancel controls; and each admin-issued control reports metered
+  delivery.
+  ([#725](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/725),
+  [#726](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/726),
+  [#742](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/742),
+  [#745](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/745),
+  [#808](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/808))
+- **Fleet read API.** Admin routes for aggregator status and measurements,
+  now carrying each fleet device's EndDevice id and href.
+  ([#719](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/719),
+  [#795](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/795))
+- **Admin UI.** The DERMS tab gains a fleet pane, a request queue pane with
+  answer, revise and cancel actions, and a dispatch pane that executes a live
+  grant or sends a plain dispatch and shows metered delivery; the Send DER
+  Control card is wired to the admin API; the fleet, request queue and dispatch
+  panes show `Source:` labels and show each fleet's commitments; entering the Devices or FSAs tab reloads
+  the FSA list and topology; and a chart section renders in panels. The admin UI type check now
+  runs in CI.
+  ([#730](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/730),
+  [#748](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/748),
+  [#765](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/765),
+  [#769](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/769),
+  [#790](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/790),
+  [#792](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/792),
+  [#807](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/807),
+  [#812](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/812),
+  [#814](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/814),
+  [#816](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/816),
+  [#838](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/838))
+- **Embeddable admin plane.** New public package `pkg/sep2adminplane`: a
+  facade over the admin plane with a loopback bypass switch, a `ReadOnly`
+  mode that mounts no admin write route except `POST /auth/login` and
+  `POST /auth/ticket`, and an exported `SettingsFromEnv` with its `Settings`
+  type. An embedder can register tabs that the shell renders.
+  ([#835](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/835),
+  [#837](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/837),
+  [#840](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/840),
+  [#843](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/843))
+- A generic persistent scoped store in `pkg/store/memory`, and a retention
+  bound on mirror meter readings.
+  ([#771](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/771),
+  [#823](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/823))
+
+### Changed
+
+- **Breaking.** `subscription.HandleCreateSubscription` takes a
+  `subscription.ReadCheck` as its third argument; nil refuses every create,
+  and `BuildProtocolRouter` passes its own. Only `/edev` resources can now be
+  subscribed to: `/mup`, `/tm`, `/dcap` and every other non-`/edev` route are
+  refused. An embedder that calls the handler must update its call.
+  ([#830](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/830))
+- **Breaking.** `flow_reservation.HandlePostResponse` takes a
+  `ResponseSenderAuthorizer`. A posted DERControlResponse with no
+  `endDeviceLFDI`, or a malformed one, is now refused with 400, and a Response
+  whose `endDeviceLFDI` names neither the sender nor a device the sender
+  currently manages is refused with 403, where v0.7.0 accepted both. Other Response types that name no device are still stored.
+  ([#742](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/742))
+- **Breaking.** The five mirror handlers `HandleCreateMirrorUsagePoint`,
+  `HandleMirrorUsagePoint`, `HandlePutMirrorUsagePoint`,
+  `HandleDeleteMirrorUsagePoint` and `HandlePostMirrorMeterReading` take an
+  `EndDeviceManagementReader`. An embedder that calls them must update its
+  calls.
+  ([#722](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/722))
+- **Breaking.** `NewFlowReservationLinkedEndDeviceStore` and
+  `NewLogEventLinkedEndDeviceStore` take additional stores.
+  ([#718](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/718))
+- **Breaking.** The `flow_reservation.FRPCreator` interface is removed, and
+  `HandlePostFlowReservationRequest` takes a `Submitter` in place of the store.
+  ([#736](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/736))
+- **Breaking.** The admin UI descriptor in `pkg/sep2admin` is version 2:
+  `CurrentDescriptorVersion` is 2, `Row` is `[]Cell` (was `[]Value`),
+  `Descriptor.Body` became `Descriptor.Sections`, `DefinitionEntry.Value` is
+  now a `Cell`, and `ErrUnhandledBodyKind` now names `Section.Body`. A consumer
+  that builds or reads descriptors must update.
+  ([#835](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/835))
+- The admin plane moves into `internal/adminplane`; embedders use the new
+  `pkg/sep2adminplane` facade.
+  ([#834](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/834))
+- Adopts `ieee-2030_5-core-go` v0.21.0.
+  ([#832](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/832))
+- Change notifications carry status 0 where v0.7.0 carried 2.
+  ([#780](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/780))
+
+### Fixed
+
+- Flow reservation: every server-built `FlowReservationResponse` gets a minted
+  mRID; a request with a blank mRID is refused with 400 and one with an
+  invalid `RequestStatus` is refused, where v0.7.0 accepted both; an answer-record conflict is told apart
+  from an existing response; `potentiallySuperseded` is edition-aware and
+  status times are ordered; a refused relink rolls back cleanly and a stored
+  revision is named on retry; and a cancel-log line names the control when a
+  DER cancel runs unlocked.
+  ([#717](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/717),
+  [#723](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/723),
+  [#759](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/759),
+  [#767](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/767),
+  [#819](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/819),
+  [#822](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/822))
+- Deleting an EndDevice now removes its flow reservation records, log events,
+  configuration, device status, power status, FSA and FSA link records and leftover
+  registrations. Its DER records and its subscriptions are still left behind;
+  that is not fixed in this release and is tracked in
+  [#721](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/issues/721).
+  ([#718](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/718),
+  [#724](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/724))
+- An aggregator's mirror usage point is attributed to the managed device, and
+  seeded DER programs get the runtime href shape.
+  ([#722](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/722),
+  [#746](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/746))
+- Fleet reads fail with 500 when a store read fails, flag a sum whose
+  direction is unknown, and map Net `flowDirection` for 2023 DER readings; the
+  dashboard device list reports store errors and every device.
+  ([#758](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/758),
+  [#774](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/774),
+  [#787](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/787),
+  [#818](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/818))
+- Admin UI: the fleet pane bounds its fetch, the queue pane shows every
+  failure and the cancel-requested flag, and delivery shows small values and
+  open windows truthfully.
+  ([#757](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/757),
+  [#786](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/786),
+  [#817](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/817))
+- Two flaky tests are made deterministic, and a test now fails when a
+  sensitive admin write is listed as non-sensitive. No runtime change.
+  ([#788](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/788),
+  [#820](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/820))
+
+### Security
+
+- A subscription's `subscribedResource` is now checked against the same read
+  decision the GET routes use. On create, a resource the caller could not GET
+  is refused with 400; at delivery, each stored subscription is re-checked, so
+  a subscriber that can no longer read the resource is not notified. Only
+  `/edev` resources can be subscribed to. Versions 0.7.0 and earlier are
+  affected; 0.8.0 fixes it. The subscription route is mounted whenever the subscription
+  store is present, which is the default store set, so no non-default
+  configuration is needed to be affected. See GHSA-95gm-c948-4xxm
+  (https://github.com/GRIDAPPSD/ieee-2030_5-server-go/security/advisories/GHSA-95gm-c948-4xxm).
+  ([#830](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/830))
 
 ## [0.7.0] - 2026-09-25
 
@@ -324,4 +505,5 @@ read both releases first.
 [0.3.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.2.0...v0.3.0
 [0.6.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.5.0...v0.6.0
 [0.7.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.6.0...v0.7.0
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.7.0...HEAD
+[0.8.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.7.0...v0.8.0
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.8.0...HEAD

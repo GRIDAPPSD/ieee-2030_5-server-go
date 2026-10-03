@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.10.0] - 2026-10-03
 
-This entry covers `v0.9.0..v0.10.0` (4 merged pull requests). It is a MINOR
+This entry covers `v0.9.0..v0.10.0` (5 merged pull requests: four feature and
+maintenance changes and this release-preparation change). It is a MINOR
 release under the 0.x carve-out: the range adds a configuration surface and an
 exported option (`feature`), and the rest is `chore` and `documentation`. No
 exported identifier is removed or changed, and no request or response changes
@@ -36,8 +37,9 @@ shape, so nothing is `breaking`. Requires `ieee-2030_5-core-go` v0.22.0.
   `internal/certs/` and nested `certs` folders are no longer hidden from
   `git status`.
   ([#852](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/852))
-- README: removed stale sections, documented the notification timeouts and
-  corrected the release and core version statements.
+- README: removed the `SEP2_USE_CORE_ROUTER` toggle text, the `pkg/sep2` line,
+  the Interop section and the `make run-ccm` line; documented the notification
+  timeouts; corrected the release and core version statements.
   ([#854](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/854))
 
 ## [0.9.0] - 2026-10-01

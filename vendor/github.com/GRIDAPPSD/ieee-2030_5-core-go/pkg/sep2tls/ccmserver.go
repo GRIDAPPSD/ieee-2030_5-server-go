@@ -166,11 +166,10 @@ func CCMIdentityMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// ccmHandshakeTimeout bounds the per-connection handshake WrapCCMListener
-// runs, so a peer that opens the TCP connection and never speaks TLS cannot
-// hold a goroutine indefinitely. A var, not a const, so export_test.go can
-// shrink it for a test; production code never assigns to it.
-var ccmHandshakeTimeout = 10 * time.Second
+// DefaultCCMHandshakeTimeout is the per-connection handshake bound
+// WrapCCMListener applies, and the value a zero timeout selects in
+// WrapCCMListenerWithTimeout.
+const DefaultCCMHandshakeTimeout = 10 * time.Second
 
 // WrapCCMListener wraps a gotls listener so a handshake failure is logged
 // the way net/http logs one for *tls.Conn (net/http's own "TLS handshake
@@ -184,28 +183,50 @@ var ccmHandshakeTimeout = 10 * time.Second
 // A temporary Accept error is returned to the caller and accepting continues,
 // so net/http's retry works. Close cancels handshakes in flight and returns
 // once every goroutine the listener started has exited.
+//
+// Each handshake is bounded by DefaultCCMHandshakeTimeout; use
+// WrapCCMListenerWithTimeout to choose another bound.
 func WrapCCMListener(inner net.Listener, errorLog *log.Logger) net.Listener {
+	// A zero timeout is never refused, so the error is impossible here.
+	l, _ := WrapCCMListenerWithTimeout(inner, errorLog, 0)
+	return l
+}
+
+// WrapCCMListenerWithTimeout is WrapCCMListener with a caller-chosen bound on
+// each connection's handshake, so a peer that opens TCP and never speaks TLS
+// is dropped after handshakeTimeout. Zero selects DefaultCCMHandshakeTimeout;
+// a negative value is refused with an error.
+func WrapCCMListenerWithTimeout(inner net.Listener, errorLog *log.Logger, handshakeTimeout time.Duration) (net.Listener, error) {
+	if handshakeTimeout < 0 {
+		return nil, fmt.Errorf("sep2tls: negative CCM handshake timeout %v", handshakeTimeout)
+	}
+	if handshakeTimeout == 0 {
+		handshakeTimeout = DefaultCCMHandshakeTimeout
+	}
 	if errorLog == nil {
 		errorLog = log.Default()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	l := &ccmLoggingListener{
-		Listener: inner,
-		errorLog: errorLog,
-		conns:    make(chan net.Conn),
-		errs:     make(chan error),
-		stopped:  make(chan struct{}),
-		done:     ctx.Done(),
-		cancel:   cancel,
+		Listener:         inner,
+		errorLog:         errorLog,
+		handshakeTimeout: handshakeTimeout,
+		conns:            make(chan net.Conn),
+		errs:             make(chan error),
+		stopped:          make(chan struct{}),
+		done:             ctx.Done(),
+		cancel:           cancel,
 	}
 	l.wg.Add(1)
 	go l.acceptLoop(ctx)
-	return l
+	return l, nil
 }
 
 type ccmLoggingListener struct {
 	net.Listener
 	errorLog *log.Logger
+
+	handshakeTimeout time.Duration
 
 	conns chan net.Conn
 	errs  chan error // temporary Accept errors, for the caller to retry
@@ -254,7 +275,7 @@ func isTemporary(err error) bool {
 func (l *ccmLoggingListener) handshake(ctx context.Context, c net.Conn) {
 	defer l.wg.Done()
 	if gc, ok := c.(*gotls.Conn); ok {
-		hsCtx, cancel := context.WithTimeout(ctx, ccmHandshakeTimeout)
+		hsCtx, cancel := context.WithTimeout(ctx, l.handshakeTimeout)
 		err := gc.HandshakeContext(hsCtx)
 		cancel()
 		if err != nil {

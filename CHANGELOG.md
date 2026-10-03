@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Moved to `ieee-2030_5-core-go` v0.22.0, which adds a configurable CCM handshake timeout (#859).
+
 ### Deprecated
 
 ### Removed

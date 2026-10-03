@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-03
+
+This entry covers `v0.9.0..v0.10.0` (5 merged pull requests: four feature and
+maintenance changes and this release-preparation change). It is a MINOR
+release under the 0.x carve-out: the range adds a configuration surface and an
+exported option (`feature`), and the rest is `chore` and `documentation`. No
+exported identifier is removed or changed, and no request or response changes
+shape, so nothing is `breaking`. Requires `ieee-2030_5-core-go` v0.22.0.
+
 ### Added
 
 - **Configurable notification timeouts.** `subscription.WithNotificationTimeouts`
@@ -15,19 +24,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a negative field by name; the dial budget is capped at the POST timeout.
   The server binary reads
   `SEP2_NOTIFICATION_POST_TIMEOUT`, `SEP2_NOTIFICATION_DIAL_TIMEOUT` and
-  `SEP2_NOTIFICATION_RESOLVE_TIMEOUT` as Go durations (#855).
+  `SEP2_NOTIFICATION_RESOLVE_TIMEOUT` as Go durations; an unparseable or
+  non-positive value keeps the default and logs a warning naming the variable.
+  ([#856](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/856))
 
 ### Changed
 
-- Moved to `ieee-2030_5-core-go` v0.22.0, which adds a configurable CCM handshake timeout (#859).
-
-### Deprecated
-
-### Removed
-
-### Fixed
-
-### Security
+- Moved to `ieee-2030_5-core-go` v0.22.0, which adds a configurable CCM
+  handshake timeout.
+  ([#860](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/860))
+- `.gitignore` ignores only the repository-root `certs/` folder, so
+  `internal/certs/` and nested `certs` folders are no longer hidden from
+  `git status`.
+  ([#852](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/852))
+- README: removed the `SEP2_USE_CORE_ROUTER` toggle text, the `pkg/sep2` line,
+  the Interop section and the `make run-ccm` line; documented the notification
+  timeouts; corrected the release and core version statements.
+  ([#854](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/854))
 
 ## [0.9.0] - 2026-10-01
 
@@ -568,4 +581,5 @@ read both releases first.
 [0.7.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.6.0...v0.7.0
 [0.8.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.7.0...v0.8.0
 [0.9.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.8.0...v0.9.0
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.9.0...HEAD
+[0.10.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.9.0...v0.10.0
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.10.0...HEAD

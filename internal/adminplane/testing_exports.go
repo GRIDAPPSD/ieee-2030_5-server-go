@@ -18,8 +18,8 @@ import (
 // AuthedAdminPatterns is the authenticated inner mux's own pattern list: the
 // guard's actual domain, distinct from BuildAdminRouter's merged list, which
 // also carries the public outer mux's routes (#579 MEDIUM-3).
-func AuthedAdminPatterns(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, legacyDashboard bool, trafficHandler http.Handler) []string {
-	authed, _ := buildAuthedAdminMux(runConfig(adminKey, svc, stores, tlsMode, tickets, sessions, legacyDashboard, trafficHandler), noPanels())
+func AuthedAdminPatterns(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, trafficHandler http.Handler) []string {
+	authed, _ := buildAuthedAdminMux(runConfig(adminKey, svc, stores, tlsMode, tickets, sessions, trafficHandler), noPanels())
 	return authed.Patterns()
 }
 

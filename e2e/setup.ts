@@ -16,8 +16,7 @@ export function getCertDir(): string {
 }
 
 // extraEnv is merged over the harness defaults below, so a spec can boot
-// the server in a non-default posture (for example
-// SEP2_ADMIN_LEGACY_DASHBOARD=true) without duplicating the cert and port
+// the server in a non-default posture without duplicating the cert and port
 // setup. Omitted, the harness behaves exactly as before.
 export async function startServer(extraEnv: Record<string, string> = {}): Promise<string> {
   certDir = mkdtempSync(join(tmpdir(), 'sep2-e2e-'));

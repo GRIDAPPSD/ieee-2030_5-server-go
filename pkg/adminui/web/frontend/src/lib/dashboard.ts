@@ -5,6 +5,12 @@
 // seconds.
 
 import { postJSON } from './api'
+import { commsOnlineCount } from './comms'
+
+// The server's comms states for one device: a request seen within the
+// offline threshold, one seen but older, none since the server started, or
+// no recorder wired at all.
+export type CommsState = 'online' | 'offline' | 'not_seen' | 'unknown'
 
 export interface DashboardDevice {
   sfdi: string
@@ -12,6 +18,10 @@ export interface DashboardDevice {
   href: string
   // null when the EndDevice has no enabled flag.
   enabled: boolean | null
+  // Server-clock time (RFC 3339, UTC) of the device's last request, or null
+  // when none was recorded since the server started.
+  lastRequest: string | null
+  comms: CommsState
 }
 
 export interface DashboardData {
@@ -21,6 +31,8 @@ export interface DashboardData {
   tlsMode: string
   uptime: string
   devices: DashboardDevice[] | null
+  // The threshold each device's comms was judged against.
+  commsOfflineAfterSeconds: number
   // Set when the server could not read the device list; devices is then null.
   error?: string
 }
@@ -34,6 +46,7 @@ export interface HistoryPoint {
   time: string
   devices: number
   mups: number
+  commsOnline: number
 }
 
 const RECONNECT_DELAY_MS = 3000
@@ -97,6 +110,11 @@ export function connectDashboard(onData: (data: DashboardData) => void): () => v
 // trimmed to HISTORY_LIMIT. Pure so the chart panel and its test share
 // the same trimming rule.
 export function appendHistory(history: HistoryPoint[], data: DashboardData): HistoryPoint[] {
-  const next = [...history, { time: data.timestamp, devices: data.deviceCount, mups: data.mupCount }]
+  const next = [...history, {
+      time: data.timestamp,
+      devices: data.deviceCount,
+      mups: data.mupCount,
+      commsOnline: commsOnlineCount(data.devices ?? []),
+    }]
   return next.length > HISTORY_LIMIT ? next.slice(next.length - HISTORY_LIMIT) : next
 }

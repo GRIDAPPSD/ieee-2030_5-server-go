@@ -11,6 +11,7 @@ describe('ServerInfo', () => {
       mupCount: 0,
       tlsMode: 'TLS_CHACHA20_POLY1305_SHA256',
       uptime: '42s',
+      commsOfflineAfterSeconds: 300,
       devices: null,
     }
 

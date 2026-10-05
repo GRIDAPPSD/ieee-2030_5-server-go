@@ -6,7 +6,7 @@
 // asserted in api.test.ts rather than duplicated here.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as api from './api'
-import { appendHistory, connectDashboard, HISTORY_LIMIT, type DashboardData } from './dashboard'
+import { appendHistory, connectDashboard, HISTORY_LIMIT, type CommsState, type DashboardData } from './dashboard'
 
 const sample = (timestamp: string, devices: number, mups: number): DashboardData => ({
   timestamp,
@@ -15,6 +15,7 @@ const sample = (timestamp: string, devices: number, mups: number): DashboardData
   tlsMode: 'GCM',
   uptime: '1s',
   devices: [],
+  commsOfflineAfterSeconds: 300,
 })
 
 class FakeEventSource {
@@ -37,7 +38,14 @@ class FakeEventSource {
 describe('appendHistory', () => {
   it('appends the sample values from the payload', () => {
     const history = appendHistory([], sample('00:00:05', 4, 2))
-    expect(history).toEqual([{ time: '00:00:05', devices: 4, mups: 2 }])
+    expect(history).toEqual([{ time: '00:00:05', devices: 4, mups: 2, commsOnline: 0 }])
+  })
+
+  it('samples how many devices are comms online', () => {
+    const dev = (comms: CommsState) => ({ sfdi: '1', lfdi: '1', href: '/edev/1', enabled: true, lastRequest: null, comms })
+    const frame = { ...sample('00:00:10', 3, 0), devices: [dev('online'), dev('offline'), dev('online')] }
+    expect(appendHistory([], frame)[0].commsOnline).toBe(2)
+    expect(appendHistory([], { ...frame, devices: null })[0].commsOnline).toBe(0)
   })
 
   it('trims to the history limit, dropping the oldest sample', () => {

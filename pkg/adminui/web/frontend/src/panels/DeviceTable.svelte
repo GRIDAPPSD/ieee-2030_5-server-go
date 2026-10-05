@@ -5,6 +5,7 @@
   import { postJSON } from '../lib/api'
   import { deviceIdFromHref, type AdminFSA } from '../lib/fsa'
   import type { DashboardDevice } from '../lib/dashboard'
+  import { commsClass, commsLabel, formatAge } from '../lib/comms'
 
   let {
     devices,
@@ -45,11 +46,11 @@
   <h2>End Devices</h2>
   <table>
     <thead>
-      <tr><th>SFDI</th><th>LFDI</th><th>Enabled</th><th>Href</th><th>Assign FSA</th></tr>
+      <tr><th>SFDI</th><th>LFDI</th><th>Enabled</th><th>Comms</th><th>Last request</th><th>Href</th><th>Assign FSA</th></tr>
     </thead>
     <tbody id="deviceTable">
       {#if devices.length === 0}
-        <tr><td colspan="5" class="stat-label">No devices registered</td></tr>
+        <tr><td colspan="7" class="stat-label">No devices registered</td></tr>
       {:else}
         {#each devices as device (device.href)}
           {@const deviceID = deviceIdFromHref(device.href)}
@@ -57,6 +58,12 @@
             <td class="mono" data-testid="device-sfdi">{device.sfdi}</td>
             <td class="mono" data-testid="device-lfdi">{(device.lfdi ?? '').substring(0, 16)}...</td>
             <td class={device.enabled === true ? 'online' : 'offline'} data-testid="device-enabled">{enabledLabel(device.enabled)}</td>
+            <td class={commsClass(device.comms)} data-testid="device-comms">{commsLabel(device.comms)}</td>
+            <td data-testid="device-last-request">
+              {#if device.lastRequest !== null}
+                <time datetime={device.lastRequest} title={device.lastRequest}>{formatAge(device.lastRequest, Date.now())}</time>
+              {/if}
+            </td>
             <td class="mono">{device.href}</td>
             <td>
               <select id="assignSel-{deviceID}" bind:value={selected[deviceID]}>

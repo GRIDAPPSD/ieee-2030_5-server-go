@@ -78,7 +78,7 @@ func TestEveryAdminWriteRouteIsCovered(t *testing.T) {
 	router, patterns := adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		adminplane.DefaultAdminAllowedHosts(), false, nil,
+		adminplane.DefaultAdminAllowedHosts(), nil,
 	)
 
 	var writes []string

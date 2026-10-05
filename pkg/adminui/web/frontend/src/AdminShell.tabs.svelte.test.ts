@@ -21,8 +21,9 @@ const data: DashboardData = {
   mupCount: 0,
   tlsMode: 'TLS_AES_256_GCM_SHA384',
   uptime: '1m0s',
+  commsOfflineAfterSeconds: 300,
   devices: [
-    { sfdi: '167261211635', lfdi: '3E4F45AB31EDFE5B67E343E5E4562E31984E23E5', href: '/edev/1', enabled: true },
+    { sfdi: '167261211635', lfdi: '3E4F45AB31EDFE5B67E343E5E4562E31984E23E5', href: '/edev/1', enabled: true, lastRequest: null, comms: 'not_seen' },
   ],
 }
 

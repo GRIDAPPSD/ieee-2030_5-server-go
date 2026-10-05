@@ -141,5 +141,4 @@ should know about them:
   `GET /api/topology`; collapse state is held in the component.
 - The chart is no longer loaded from a public CDN, so `#activityChart`
   contains a `canvas` on a host with no outbound network. The pre-Svelte
-  page, still reachable behind `SEP2_ADMIN_LEGACY_DASHBOARD=true`, loads
-  no chart library at all and therefore renders no `canvas`.
+  page and its `SEP2_ADMIN_LEGACY_DASHBOARD` flag have been removed.

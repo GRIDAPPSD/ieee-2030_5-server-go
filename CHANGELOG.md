@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The admin UI Devices tab shows a Comms column (Online, Offline, Not seen,
+  Unknown) and a Last request column (relative age, absolute UTC time on
+  hover). The Overview shows "Comms online N of M" and the activity chart
+  gains a "Comms online" series.
+
+### Removed
+
+- The pre-Svelte dashboard page and the `SEP2_ADMIN_LEGACY_DASHBOARD` flag
+  that served it at `GET /`. The embedded admin UI is the only page.
+
 ## [0.11.1] - 2026-10-05
 
 This entry covers `v0.11.0..v0.11.1` (one bug fix, plus release preparation).

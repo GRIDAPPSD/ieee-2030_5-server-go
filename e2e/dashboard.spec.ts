@@ -140,6 +140,8 @@ test('dashboard renders all UI sections', async ({ page }) => {
   await expect(page.locator('th:has-text("SFDI")')).toBeVisible();
   await expect(page.locator('th:has-text("LFDI")')).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Enabled' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Comms' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Last request' })).toBeVisible();
   await expect(page.getByText('ONLINE', { exact: true })).toHaveCount(0);
   await expect(page.getByText('OFFLINE', { exact: true })).toHaveCount(0);
 
@@ -147,4 +149,21 @@ test('dashboard renders all UI sections', async ({ page }) => {
   await page.getByTestId('tab-overview').click();
   await expect(page.getByText('DEVICE ACTIVITY')).toBeVisible();
   await expect(page.locator('#activityChart')).toBeVisible();
+});
+
+// 6. A fresh server has heard from no client, so every device reads Not seen
+// with no last-request time, and the Overview counts none online. The
+// harness issues only admin-plane requests, which the comms recorder does
+// not see, so this holds however many specs ran before it.
+test('a fresh server shows Not seen for every device and 0 online', async ({ page }) => {
+  await page.goto(baseUrl + '/?token=e2e-test-key');
+  await page.waitForLoadState('domcontentloaded');
+
+  await expect(page.locator('#commsOnline')).toHaveText('0 of 1');
+
+  await page.getByTestId('tab-devices').click();
+  const comms = page.getByTestId('device-comms');
+  await expect(comms).toHaveCount(1);
+  await expect(comms.first()).toHaveText('Not seen');
+  await expect(page.getByTestId('device-last-request').first()).toHaveText('');
 });

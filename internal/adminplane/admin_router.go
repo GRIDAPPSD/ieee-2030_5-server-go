@@ -15,15 +15,14 @@ import (
 // Config is what Build assembles the admin router from. Each field is the
 // BuildAdminRouter parameter of the same role.
 type Config struct {
-	AdminKey        string
-	CertService     *handler.AdminCertService
-	Stores          *Stores
-	TLSMode         string
-	Tickets         *auth.TicketStore
-	Sessions        *auth.SessionStore
-	AllowedHosts    []string
-	LegacyDashboard bool
-	Traffic         http.Handler
+	AdminKey     string
+	CertService  *handler.AdminCertService
+	Stores       *Stores
+	TLSMode      string
+	Tickets      *auth.TicketStore
+	Sessions     *auth.SessionStore
+	AllowedHosts []string
+	Traffic      http.Handler
 	// Panels are an embedder's extra tabs, served after the shell's own
 	// under /api/ui/panels. Run registers none.
 	Panels []sep2admin.Panel
@@ -118,8 +117,8 @@ func Build(cfg Config) (http.Handler, []string, error) {
 // Test callers that don't need the pattern list discard the second
 // return value with `_`. It builds what Run builds: the loopback bypass on
 // and the control writes mounted.
-func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, allowedHosts []string, legacyDashboard bool, trafficHandler http.Handler) (http.Handler, []string) {
-	cfg := runConfig(adminKey, svc, stores, tlsMode, tickets, sessions, legacyDashboard, trafficHandler)
+func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, allowedHosts []string, trafficHandler http.Handler) (http.Handler, []string) {
+	cfg := runConfig(adminKey, svc, stores, tlsMode, tickets, sessions, trafficHandler)
 	cfg.AllowedHosts = allowedHosts
 	authed, authedWithMiddleware := buildAuthedAdminMux(cfg, noPanels())
 	return buildOuterAdminRouter(cfg, authed, authedWithMiddleware)
@@ -127,18 +126,17 @@ func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *St
 
 // runConfig is the Config BuildAdminRouter's parameters describe, with Run's
 // loopback bypass and control writes.
-func runConfig(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, legacyDashboard bool, trafficHandler http.Handler) Config {
+func runConfig(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, trafficHandler http.Handler) Config {
 	return Config{
-		AdminKey:        adminKey,
-		CertService:     svc,
-		Stores:          stores,
-		TLSMode:         tlsMode,
-		Tickets:         tickets,
-		Sessions:        sessions,
-		LegacyDashboard: legacyDashboard,
-		Traffic:         trafficHandler,
-		LoopbackBypass:  true,
-		ControlWrites:   true,
+		AdminKey:       adminKey,
+		CertService:    svc,
+		Stores:         stores,
+		TLSMode:        tlsMode,
+		Tickets:        tickets,
+		Sessions:       sessions,
+		Traffic:        trafficHandler,
+		LoopbackBypass: true,
+		ControlWrites:  true,
 	}
 }
 
@@ -256,11 +254,10 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		}))
 	}
 
-	// Admin dashboard. legacyDashboard decides which page GET / returns
-	// (see handleDashboardPage); the route pattern is the same either way,
-	// so the boot-time route list does not change with the flag.
+	// Admin dashboard: GET / serves the embedded admin UI, and the SSE and JSON
+	// routes feed it.
 	if stores != nil {
-		dashboard := NewDashboardHandler(stores, cfg.TLSMode, cfg.LegacyDashboard).WithActivity(cfg.Activity, cfg.CommsOfflineAfter)
+		dashboard := NewDashboardHandler(stores, cfg.TLSMode).WithActivity(cfg.Activity, cfg.CommsOfflineAfter)
 		dashboard.RegisterRoutes(authed)
 	}
 

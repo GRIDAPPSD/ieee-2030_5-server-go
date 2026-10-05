@@ -36,7 +36,7 @@ func dashboardTestStores(t *testing.T, devs store.EndDeviceStore) *Stores {
 
 func getDashboardData(t *testing.T, s *Stores) (int, map[string]any) {
 	t.Helper()
-	h := NewDashboardHandler(s, "TLS", false)
+	h := NewDashboardHandler(s, "TLS")
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	rec := httptest.NewRecorder()
@@ -101,7 +101,7 @@ func TestDashboardData_ListsEveryDevicePastFiftyWithNoError(t *testing.T) {
 }
 
 func TestDashboardSSE_FrameCarriesStoreError(t *testing.T) {
-	h := NewDashboardHandler(dashboardTestStores(t, failingListEndDevices{memory.NewEndDeviceStore()}), "TLS", false)
+	h := NewDashboardHandler(dashboardTestStores(t, failingListEndDevices{memory.NewEndDeviceStore()}), "TLS")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // handleSSE writes its first frame, then returns on the done context
 	rec := httptest.NewRecorder()

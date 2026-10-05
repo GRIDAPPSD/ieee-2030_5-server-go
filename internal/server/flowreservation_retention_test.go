@@ -70,7 +70,7 @@ func newFRRetentionEnv(t *testing.T) *frRetentionEnv {
 	admin, _ := adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), stores, "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		adminplane.DefaultAdminAllowedHosts(), false, nil,
+		adminplane.DefaultAdminAllowedHosts(), nil,
 	)
 	return &frRetentionEnv{device: device, admin: admin, stores: stores}
 }

@@ -2,7 +2,7 @@
 // rendered per row and the assignment POST is keyed off the href's
 // trailing segment, so both the rendered values and the request body are
 // asserted against what was supplied.
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import DeviceTable from './DeviceTable.svelte'
 import * as api from '../lib/api'
@@ -15,18 +15,32 @@ const devices: DashboardDevice[] = [
     lfdi: '0123456789ABCDEF0123456789ABCDEF01234567',
     href: '/edev/3',
     enabled: true,
+    lastRequest: '2026-10-05T11:59:30Z',
+    comms: 'online',
   },
   {
     sfdi: '210987654321',
     lfdi: 'FEDCBA9876543210FEDCBA9876543210FEDCBA98',
     href: '/edev/4',
     enabled: false,
+    lastRequest: '2026-10-05T11:30:00Z',
+    comms: 'offline',
   },
   {
     sfdi: '555555555555',
     lfdi: '5555555555555555555555555555555555555555',
     href: '/edev/5',
     enabled: null,
+    lastRequest: null,
+    comms: 'not_seen',
+  },
+  {
+    sfdi: '777777777777',
+    lfdi: '7777777777777777777777777777777777777777',
+    href: '/edev/6',
+    enabled: true,
+    lastRequest: null,
+    comms: 'unknown',
   },
 ]
 
@@ -36,6 +50,15 @@ const fsas: AdminFSA[] = [
 ]
 
 describe('DeviceTable', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-05T12:00:00Z'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('renders each supplied SFDI, the truncated LFDI, and the enabled state', () => {
     render(DeviceTable, { props: { devices, fsas, onChanged: () => {} } })
 
@@ -48,10 +71,33 @@ describe('DeviceTable', () => {
     expect(lfdiCells[1]).toHaveTextContent('FEDCBA9876543210...')
 
     const enabledCells = screen.getAllByTestId('device-enabled')
-    expect(enabledCells.map((c) => c.textContent)).toEqual(['Yes', 'No', 'Not set'])
+    expect(enabledCells.map((c) => c.textContent)).toEqual(['Yes', 'No', 'Not set', 'Yes'])
     expect(screen.getByRole('columnheader', { name: 'Enabled' })).toBeInTheDocument()
     expect(screen.queryByText('ONLINE')).not.toBeInTheDocument()
     expect(screen.queryByText('OFFLINE')).not.toBeInTheDocument()
+  })
+
+  it('shows Comms as its own column with one label and style per state, Not seen not styled as Offline', () => {
+    render(DeviceTable, { props: { devices, fsas, onChanged: () => {} } })
+
+    expect(screen.getByRole('columnheader', { name: 'Comms' })).toBeInTheDocument()
+    const cells = screen.getAllByTestId('device-comms')
+    expect(cells.map((c) => c.textContent)).toEqual(['Online', 'Offline', 'Not seen', 'Unknown'])
+    expect(cells.map((c) => c.className)).toEqual(['online', 'offline', 'not-seen', 'comms-unknown'])
+    expect(cells[2].className).not.toContain('offline')
+  })
+
+  it('shows the last request as an age with the absolute UTC time on hover, and nothing for a never-seen device', () => {
+    render(DeviceTable, { props: { devices, fsas, onChanged: () => {} } })
+
+    expect(screen.getByRole('columnheader', { name: 'Last request' })).toBeInTheDocument()
+    const cells = screen.getAllByTestId('device-last-request')
+    expect(cells.map((c) => c.textContent?.trim())).toEqual(['30s ago', '30m ago', '', ''])
+    const times = cells.map((c) => c.querySelector('time'))
+    expect(times[0]?.getAttribute('title')).toBe('2026-10-05T11:59:30Z')
+    expect(times[1]?.getAttribute('title')).toBe('2026-10-05T11:30:00Z')
+    expect(times[2]).toBeNull()
+    expect(times[3]).toBeNull()
   })
 
   it('offers every FSA mRID as an assignment target on a per-device select', () => {

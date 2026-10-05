@@ -157,6 +157,16 @@ td {
   color: var(--red);
 }
 
+/* Comms states that are neither a recent request nor a lapsed one: amber
+   for a device never heard from, dim for "no recorder wired". */
+.not-seen {
+  color: #f59e0b;
+}
+
+.comms-unknown {
+  color: var(--dim);
+}
+
 .chart-container {
   height: 200px;
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 )
 
 // Bounds on SEP2_FLOW_RESERVATION_DEADLINE_SECONDS. Zero in Config means
@@ -28,6 +29,14 @@ const (
 	MinFlowReservationRetentionGrace     = 900 * time.Second
 	MaxFlowReservationRetentionGrace     = 7 * 24 * time.Hour
 	DefaultFlowReservationRetentionGrace = 1800 * time.Second
+)
+
+// Bounds on SEP2_COMMS_OFFLINE_AFTER_SECONDS. Zero in Config means unset and
+// takes DefaultCommsOfflineAfter, which is activity.DefaultOfflineAfter.
+const (
+	MinCommsOfflineAfter     = time.Second
+	MaxCommsOfflineAfter     = 24 * time.Hour
+	DefaultCommsOfflineAfter = activity.DefaultOfflineAfter
 )
 
 // Bounds on SEP2_MIRROR_READING_RETENTION_SECONDS. The floor keeps every
@@ -246,6 +255,11 @@ type Config struct {
 	// unset; use EffectiveFlowReservationRetentionGrace.
 	FlowReservationRetentionGrace time.Duration
 
+	// CommsOfflineAfter is the silence after which the admin Devices payload
+	// calls a device offline. Env: SEP2_COMMS_OFFLINE_AFTER_SECONDS, 1 to
+	// 86400. Zero means unset; use EffectiveCommsOfflineAfter.
+	CommsOfflineAfter time.Duration
+
 	// MirrorReadingRetention is how long a MirrorMeterReading is kept after
 	// the server received it. Env: SEP2_MIRROR_READING_RETENTION_SECONDS,
 	// 87300 to 2592000. Zero means unset; use EffectiveMirrorReadingRetention.
@@ -343,6 +357,32 @@ func (c *Config) EffectiveFlowReservationRetentionGrace() (time.Duration, error)
 		return 0, fmt.Errorf("flow reservation retention grace %s is not whole seconds from 15m to 168h", g)
 	}
 	return g, nil
+}
+
+// ParseCommsOfflineAfterSeconds validates the value of
+// SEP2_COMMS_OFFLINE_AFTER_SECONDS: empty is unset (zero), anything else must
+// be whole seconds from 1 to 86400.
+func ParseCommsOfflineAfterSeconds(v string) (time.Duration, error) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("SEP2_COMMS_OFFLINE_AFTER_SECONDS: %q is not a whole number of seconds", v)
+	}
+	if n < int64(MinCommsOfflineAfter/time.Second) || n > int64(MaxCommsOfflineAfter/time.Second) {
+		return 0, fmt.Errorf("SEP2_COMMS_OFFLINE_AFTER_SECONDS: %d is outside 1 to 86400", n)
+	}
+	return time.Duration(n) * time.Second, nil
+}
+
+// EffectiveCommsOfflineAfter resolves an unset or non-positive threshold to
+// the default, so it never returns a negative value.
+func (c *Config) EffectiveCommsOfflineAfter() time.Duration {
+	if c.CommsOfflineAfter <= 0 {
+		return DefaultCommsOfflineAfter
+	}
+	return c.CommsOfflineAfter
 }
 
 // ParseMirrorReadingRetentionSeconds validates the value of

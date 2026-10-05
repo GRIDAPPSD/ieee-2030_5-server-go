@@ -54,6 +54,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	coreconfiguration "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/configuration"
 	coredcap "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/dcap"
 	coreder "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
@@ -345,6 +346,13 @@ type RouterConfig struct {
 	// FlowReservationResponseList advertises while one of its requests has no
 	// response yet; the list advertises 900 s otherwise (#669). Zero takes 30 s.
 	FlowReservationPendingPollRate time.Duration
+
+	// Activity, when set, records each request that gets past
+	// AuthPolicy.Wrap, keyed by the LFDI AuthPolicy.Identity reports. Nil
+	// records nothing. It sits inside Wrap so a request the identity or ACL
+	// layer refused never counts as the device being in contact. It is a
+	// field here, not a parameter, so no existing caller changes.
+	Activity *activity.Recorder
 }
 
 // AuthPolicy bundles the three auth touch points the protocol router and the
@@ -451,11 +459,14 @@ func BuildProtocolRouter(
 		setSubscriberCheck(notifier, gated.checkSubscriber)
 	}
 
-	var protocolChain http.Handler
+	// Inside Wrap, so only requests that passed identity and the ACL count.
+	var inner http.Handler = protocolMux
+	if cfg.Activity != nil {
+		inner = cfg.Activity.Middleware(authPolicy.Identity)(inner)
+	}
+	protocolChain := inner
 	if authPolicy.Wrap != nil {
-		protocolChain = authPolicy.Wrap(protocolMux)
-	} else {
-		protocolChain = protocolMux
+		protocolChain = authPolicy.Wrap(inner)
 	}
 
 	for _, prefix := range topLevelMounts {

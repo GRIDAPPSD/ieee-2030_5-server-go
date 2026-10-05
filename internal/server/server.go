@@ -32,6 +32,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2capture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -454,6 +455,10 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// builds. ShutdownTimeout is left at zero, which drains without a bound,
 	// as this server has always done.
 	embedCfg := newEmbedConfig(cfg, stores, coreNotifier)
+	// One recorder for both listeners: the protocol router writes it, the
+	// admin Devices payload reads it.
+	comms := activity.New()
+	embedCfg.Router.Activity = comms
 	embedCfg.Addr = cfg.Addr
 	embedCfg.CertFile = cfg.CertFile
 	embedCfg.KeyFile = cfg.KeyFile
@@ -576,7 +581,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		if captureStore != nil {
 			trafficHandler = captureStore.Handler()
 		}
-		adminSrv, adminTLSDesc, adminAddr, adminRoutes, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh, trafficHandler)
+		adminSrv, adminTLSDesc, adminAddr, adminRoutes, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh, trafficHandler, comms)
 		if err != nil {
 			stopProtocolServer()
 			return fmt.Errorf("admin server: %w", err)
@@ -680,7 +685,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 // Path A still works for cert-bearing operators while Bearer/cookie clients
 // can connect without presenting a cert. The SEP2 protocol listener keeps
 // its own RequireAnyClientCert + manual-verify posture untouched.
-func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error, trafficHandler http.Handler) (*http.Server, string, string, []string, error) {
+func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error, trafficHandler http.Handler, comms *activity.Recorder) (*http.Server, string, string, []string, error) {
 	// #268: resolve the operator-supplied env value into the actual
 	// bind string. A bare ":<port>" gets a loopback default so the admin
 	// listener is safe-by-default; any explicit host (0.0.0.0, an LAN IP,
@@ -754,6 +759,9 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		Traffic:         trafficHandler,
 		LoopbackBypass:  true,
 		ControlWrites:   true,
+
+		Activity:          comms,
+		CommsOfflineAfter: cfg.EffectiveCommsOfflineAfter(),
 	})
 	if err != nil {
 		return nil, "", "", nil, fmt.Errorf("admin router: %w", err)

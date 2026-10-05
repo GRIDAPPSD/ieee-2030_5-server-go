@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-05
+
+This entry covers `v0.11.0..v0.11.1` (1 merged pull request). It is a PATCH
+release under the 0.x carve-out: the only entry is a `bug fix`, and no exported
+identifier changes.
+
+### Fixed
+
+- The admin UI Devices column shows the EndDevice enabled flag as "Enabled"
+  instead of "ONLINE", and the Overview card reads "Registered devices". The
+  dashboard JSON `enabled` field is now `null` when the EndDevice has no enabled
+  flag, so the UI can tell "not set" from "disabled"; `DashboardDevice` is in
+  `internal/adminplane`, so no exported Go identifier changes.
+  ([#876](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/876))
+
 ## [0.11.0] - 2026-10-05
 
 This entry covers `v0.10.0..v0.11.0` (6 merged pull requests: five feature and
@@ -653,4 +668,5 @@ read both releases first.
 [0.9.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.8.0...v0.9.0
 [0.10.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.9.0...v0.10.0
 [0.11.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.10.0...v0.11.0
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.11.0...HEAD
+[0.11.1]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.11.0...v0.11.1
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.11.1...HEAD

@@ -53,10 +53,16 @@ export interface PanelPickerInfo {
   max: number
 }
 
+export interface PanelStreamInfo {
+  maxLen: number
+  charset: string
+}
+
 export interface PanelEntry {
   id: string
   label: string
   picker?: PanelPickerInfo
+  stream?: PanelStreamInfo
 }
 
 export interface PickerChoice {

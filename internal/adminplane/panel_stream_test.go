@@ -391,7 +391,7 @@ func TestPanelStreamOverflowClosesWithAFinalStatus(t *testing.T) {
 	r := bufio.NewReader(resp.Body)
 	frames, _ := readFrames(t, r, 1)
 	got := frames[0]
-	if got.hasID || got.data.ID != "" || got.data.Kind != "status" || got.data.Text != "stream closed: reader too slow" {
+	if got.hasID || got.data.ID != "" || got.data.Kind != "status" || got.data.Text != "stream closed: reader too slow" || !got.data.Final {
 		t.Fatalf("frame = %+v, want only the id-less slow-reader status", got)
 	}
 	expectEOF(t, r)
@@ -436,7 +436,7 @@ func TestPanelStreamSlowReaderOverRealTCP(t *testing.T) {
 			t.Fatalf("event %d has id %q, want %d with the full text", n, last.id, n)
 		}
 	}
-	if last.hasID || last.data.Text != "stream closed: reader too slow" {
+	if last.hasID || last.data.Text != "stream closed: reader too slow" || !last.data.Final {
 		t.Fatalf("final frame = %+v, want the slow-reader status", last)
 	}
 	if n == 0 || n >= sent {
@@ -529,7 +529,7 @@ func TestPanelStreamRefusesAnInvalidEvent(t *testing.T) {
 			}
 			r := bufio.NewReader(resp.Body)
 			frames, _ := readFrames(t, r, 1)
-			if frames[0].hasID || frames[0].data.Text != "stream closed: panel sent an invalid event" {
+			if frames[0].hasID || frames[0].data.Text != "stream closed: panel sent an invalid event" || !frames[0].data.Final {
 				t.Fatalf("frame = %+v, want the invalid-event status", frames[0])
 			}
 			expectEOF(t, r)
@@ -687,7 +687,7 @@ func TestStreamsDoneEndsOpenStreamsBeforeShutdown(t *testing.T) {
 
 	close(done)
 	frames, _ := readFrames(t, r, 1)
-	if frames[0].hasID || frames[0].data.Kind != "status" || frames[0].data.Text != "stream closed: server shutting down" {
+	if frames[0].hasID || frames[0].data.Kind != "status" || frames[0].data.Text != "stream closed: server shutting down" || !frames[0].data.Final {
 		t.Fatalf("frame = %+v, want the id-less shutdown status", frames[0])
 	}
 	expectEOF(t, r)

@@ -18,7 +18,7 @@ import (
 
 // Action rate: one a second for the whole plane, with a burst of five, so
 // an operator's few quick clicks pass and a script or a stuck key does not
-// drive the embedder. Vars so a test can drive a clock.
+// drive the embedder.
 const (
 	actionBurst        = 5
 	actionRefillPeriod = time.Second
@@ -100,6 +100,15 @@ func (ps *panelSet) handleActions() http.HandlerFunc {
 			writePanelError(w, http.StatusNotFound, "no such panel")
 			return
 		}
+		if ps.stopping() {
+			writePanelError(w, http.StatusServiceUnavailable, "plane is shutting down")
+			return
+		}
+		if !ps.actionLimit.allow() {
+			w.Header().Set("Retry-After", "1")
+			writePanelError(w, http.StatusTooManyRequests, "too many panel actions")
+			return
+		}
 		out := make([]actionEntry, 0, len(p.Actions))
 		_, ok = ps.invoke(w, r, p, func(ctx context.Context) (sep2admin.Descriptor, error) {
 			for _, a := range p.Actions {
@@ -151,9 +160,25 @@ func findAction(p sep2admin.Panel, id string) (sep2admin.Action, bool) {
 }
 
 const (
-	actionInvalidRefusal = "invalid action values"
-	actionFailedMessage  = "action failed"
+	actionInvalidRefusal  = "invalid action values"
+	actionFailedMessage   = "action failed"
+	actionUnknownOutcome  = "action did not answer in time; it may still complete, so do not retry blindly"
+	actionCanceledOutcome = "request canceled; the action may still complete, so do not retry blindly"
 )
+
+// refuseAction answers a request the plane refused before Run, and leaves
+// one audit line for it the way the cross-origin refusal does. The line
+// names who and what, never a submitted value.
+func refuseAction(w http.ResponseWriter, r *http.Request, p sep2admin.Panel, a sep2admin.Action, status int, reason, msg string) {
+	log.Printf("admin: panel %q action %q: refused reason=%s status=%d admission=%s remote=%s",
+		p.ID, a.ID, reason, status, auth.AdmissionPath(r), r.RemoteAddr)
+	writePanelError(w, status, msg)
+}
+
+// auditAction writes one outcome line for an action that reached Run.
+func auditAction(r *http.Request, p sep2admin.Panel, a sep2admin.Action, outcome string) {
+	log.Printf("admin: panel %q action %q: outcome=%s admission=%s remote=%s", p.ID, a.ID, outcome, auth.AdmissionPath(r), r.RemoteAddr)
+}
 
 // panelActionsOff answers a POST to the action path with 404 while
 // PanelActions is off. The route is not mounted then, and without this the
@@ -176,7 +201,7 @@ func panelActionsOff(next http.Handler) http.Handler {
 // run cheapest and most decisive first: the route exists, the credential is
 // not a ticket, the request is same-site, the plane is not closing, the
 // rate allows it, the body fits the cap and the schema; only then does the
-// embedder run, under the panel's busy flag.
+// embedder run, under the panel's busy flag. Every refusal leaves a log line.
 func (ps *panelSet) handleAction() http.HandlerFunc {
 	crossOrigin := http.NewCrossOriginProtection()
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -193,33 +218,32 @@ func (ps *panelSet) handleAction() http.HandlerFunc {
 		// A ticket is one-time and travels in a URL; a state change must not
 		// be reachable with one, however the route was guarded upstream.
 		if auth.AdmittedViaTicket(r) {
-			writePanelError(w, http.StatusUnauthorized, "panel actions do not accept a ticket")
+			refuseAction(w, r, p, a, http.StatusUnauthorized, "ticket", "panel actions do not accept a ticket")
 			return
 		}
 		// The outer router already refuses a cross-site write; repeated here
 		// so this handler does not depend on where it is mounted.
 		if err := crossOrigin.Check(r); err != nil {
-			log.Printf("admin: panel %q action %q: cross-site request refused", p.ID, a.ID)
-			writePanelError(w, http.StatusForbidden, "cross-origin admin request refused")
+			refuseAction(w, r, p, a, http.StatusForbidden, "cross-site", "cross-origin admin request refused")
 			return
 		}
 		if ps.stopping() {
-			writePanelError(w, http.StatusServiceUnavailable, "plane is shutting down")
+			refuseAction(w, r, p, a, http.StatusServiceUnavailable, "shutting-down", "plane is shutting down")
 			return
 		}
 		if !ps.actionLimit.allow() {
 			w.Header().Set("Retry-After", "1")
-			writePanelError(w, http.StatusTooManyRequests, "too many panel actions")
+			refuseAction(w, r, p, a, http.StatusTooManyRequests, "rate-limited", "too many panel actions")
 			return
 		}
-		body, status, msg := readActionBody(w, r)
+		body, status, reason, msg := readActionBody(w, r)
 		if status != 0 {
-			writePanelError(w, status, msg)
+			refuseAction(w, r, p, a, status, reason, msg)
 			return
 		}
 		vals, err := a.Parse(body)
 		if err != nil {
-			writeActionInvalid(w, err)
+			refuseInvalid(w, r, p, a, err)
 			return
 		}
 		ps.runAction(w, r, p, a, vals)
@@ -228,22 +252,24 @@ func (ps *panelSet) handleAction() http.HandlerFunc {
 
 // readActionBody reads the whole body under the cap. A declared length over
 // the cap is refused before a byte is read.
-func readActionBody(w http.ResponseWriter, r *http.Request) ([]byte, int, string) {
+func readActionBody(w http.ResponseWriter, r *http.Request) (body []byte, status int, reason, msg string) {
 	if r.ContentLength > sep2admin.MaxActionBodyBytes {
-		return nil, http.StatusRequestEntityTooLarge, "request body too large"
+		return nil, http.StatusRequestEntityTooLarge, "body-too-large", "request body too large"
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, sep2admin.MaxActionBodyBytes))
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			return nil, http.StatusRequestEntityTooLarge, "request body too large"
+			return nil, http.StatusRequestEntityTooLarge, "body-too-large", "request body too large"
 		}
-		return nil, http.StatusBadRequest, "request body unreadable"
+		return nil, http.StatusBadRequest, "body-unreadable", "request body unreadable"
 	}
-	return body, 0, ""
+	return body, 0, "", ""
 }
 
-func writeActionInvalid(w http.ResponseWriter, err error) {
+// refuseInvalid answers a refused submission with the declared field it is
+// about, and logs the refusal.
+func refuseInvalid(w http.ResponseWriter, r *http.Request, p sep2admin.Panel, a sep2admin.Action, err error) {
 	var ve *sep2admin.ActionValueError
 	body := struct {
 		Error string `json:"error"`
@@ -252,6 +278,8 @@ func writeActionInvalid(w http.ResponseWriter, err error) {
 	if errors.As(err, &ve) {
 		body.Field = ve.Field
 	}
+	log.Printf("admin: panel %q action %q: refused reason=invalid status=%d field=%q admission=%s remote=%s",
+		p.ID, a.ID, http.StatusBadRequest, body.Field, auth.AdmissionPath(r), r.RemoteAddr)
 	writePanelJSON(w, http.StatusBadRequest, body)
 }
 
@@ -259,6 +287,11 @@ func writeActionInvalid(w http.ResponseWriter, err error) {
 // context that ends on the request or on plane shutdown. The embedder's
 // refusals and the plane's own are told apart by what the closure captured,
 // since InvokeView only carries a Descriptor and an error.
+//
+// A Run that ignores its context can outlive the request, so the attempt is
+// logged before Run, the outcome after, and a Run that returns after the
+// answer was sent logs a late outcome. The running count covers it for
+// Plane.Close.
 func (ps *panelSet) runAction(w http.ResponseWriter, r *http.Request, p sep2admin.Panel, a sep2admin.Action, vals sep2admin.ActionValues) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -271,11 +304,12 @@ func (ps *panelSet) runAction(w http.ResponseWriter, r *http.Request, p sep2admi
 	}()
 
 	var (
-		result  sep2admin.ActionResult
-		invalid error
-		refusal *sep2admin.ActionRefusal
+		result   sep2admin.ActionResult
+		invalid  error
+		refusal  *sep2admin.ActionRefusal
+		answered atomic.Bool
 	)
-	_, ok := ps.invoke(w, r.WithContext(ctx), p, func(ctx context.Context) (sep2admin.Descriptor, error) {
+	_, err := ps.run(r.WithContext(ctx), p, func(ctx context.Context) (sep2admin.Descriptor, error) {
 		if err := a.CheckChoices(ctx, vals); err != nil {
 			var ve *sep2admin.ActionValueError
 			if errors.As(err, &ve) {
@@ -284,22 +318,48 @@ func (ps *panelSet) runAction(w http.ResponseWriter, r *http.Request, p sep2admi
 			}
 			return sep2admin.Descriptor{}, err
 		}
+		ps.running.n.Add(1)
+		defer ps.running.n.Add(-1)
+		auditAction(r, p, a, "started")
 		res, err := a.Run(ctx, vals)
-		if errors.As(err, &refusal) {
+		var late string
+		if answered.Load() {
+			late = "late-"
+		}
+		switch {
+		case errors.As(err, &refusal):
+			auditAction(r, p, a, late+"refused")
 			return sep2admin.Descriptor{}, nil
+		case err != nil:
+			auditAction(r, p, a, late+"failed")
+		default:
+			auditAction(r, p, a, late+"ok")
 		}
 		result = res
 		return sep2admin.Descriptor{}, err
 	})
-	if !ok {
+	answered.Store(true)
+	switch {
+	case errors.Is(err, errPanelBusy):
+		refuseAction(w, r, p, a, http.StatusGatewayTimeout, "busy", "panel is still answering an earlier request")
+		return
+	case errors.Is(err, sep2admin.ErrViewTimedOut), errors.Is(err, sep2admin.ErrViewNotInvoked):
+		auditAction(r, p, a, "timeout")
+		writePanelError(w, http.StatusGatewayTimeout, actionUnknownOutcome)
+		return
+	case errors.Is(err, sep2admin.ErrViewCanceled):
+		auditAction(r, p, a, "canceled")
+		writePanelError(w, http.StatusServiceUnavailable, actionCanceledOutcome)
+		return
+	case err != nil:
+		ps.failure(p, err) // logs the detail
+		writePanelError(w, http.StatusInternalServerError, actionFailedMessage)
 		return
 	}
 	if invalid != nil {
-		writeActionInvalid(w, invalid)
+		refuseInvalid(w, r, p, a, invalid)
 		return
 	}
-	// Names the credential kind and the caller, never a submitted value.
-	log.Printf("admin: panel %q action %q: admission=%s remote=%s refused=%t", p.ID, a.ID, auth.AdmissionPath(r), r.RemoteAddr, refusal != nil)
 	if refusal != nil {
 		writePanelJSON(w, http.StatusUnprocessableEntity, struct {
 			Error string `json:"error"`

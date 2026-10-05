@@ -68,6 +68,12 @@ func TestParseRefusesWhatTheSchemaForbids(t *testing.T) {
 		{"text over max", `{"device":"dev-1","multiplier":0,"connect":true,"publishing":true,"raw":"` + strings.Repeat("a", 33) + `"}`, "raw"},
 		{"text with NUL", `{"device":"dev-1","multiplier":0,"connect":true,"publishing":true,"raw":"a\u0000b"}`, "raw"},
 		{"text with escape", `{"device":"dev-1","multiplier":0,"connect":true,"publishing":true,"raw":"a\u001bb"}`, "raw"},
+		{"text with C1 CSI", `{"device":"dev-1","multiplier":0,"connect":true,"publishing":true,"raw":"a\u009bb"}`, "raw"},
+		{"text with C1 NEL", `{"device":"dev-1","multiplier":0,"connect":true,"publishing":true,"raw":"a\u0085b"}`, "raw"},
+		{"text with right-to-left override", `{"device":"dev-1","multiplier":0,"connect":true,"publishing":true,"raw":"a\u202eb"}`, "raw"},
+		{"text with bidi isolate", `{"device":"dev-1","multiplier":0,"connect":true,"publishing":true,"raw":"a\u2066b"}`, "raw"},
+		{"text with bidi isolate pop", `{"device":"dev-1","multiplier":0,"connect":true,"publishing":true,"raw":"a\u2069b"}`, "raw"},
+		{"text with embedding start", `{"device":"dev-1","multiplier":0,"connect":true,"publishing":true,"raw":"a\u202ab"}`, "raw"},
 		{"missing field", `{"device":"dev-1","multiplier":0,"connect":true,"publishing":true,"extra":"x"}`, "raw"},
 		{"unknown field", `{` + ok + `,"extra":1}`, ""},
 		{"duplicate key", `{` + ok + `,"multiplier":1}`, ""},
@@ -200,4 +206,42 @@ func TestRegisterRefusesAnInvalidAction(t *testing.T) {
 
 func nilView(context.Context) (Descriptor, error) {
 	return Descriptor{Version: CurrentDescriptorVersion}, nil
+}
+
+func TestTextKeepsOrdinaryUnicodeAndWhitespace(t *testing.T) {
+	a := Action{ID: "a", Label: "A", Run: okRun, Fields: []ActionField{{Name: "t", Label: "T", Kind: ActionText, MaxLen: 64}}}
+	for _, body := range []string{`{"t":"caf\u00e9 \u4e2d\u6587"}`, `{"t":"a\tb\r\nc"}`, `{"t":"\u00a0x\u2028"}`, `{"t":"\u2065 \u202f"}`} {
+		if _, err := a.Parse([]byte(body)); err != nil {
+			t.Errorf("Parse(%s) = %v, want accepted", body, err)
+		}
+	}
+}
+
+func TestAccessorsRefuseAnUndeclaredNameOrTheWrongKind(t *testing.T) {
+	v, err := formAction().Parse([]byte(`{"device":"dev-1","multiplier":1,"connect":true,"publishing":false,"raw":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, f := range map[string]func(){
+		"undeclared int":    func() { v.Int("multipler") },
+		"undeclared bool":   func() { v.Bool("conect") },
+		"undeclared string": func() { v.String("devcie") },
+		"int of a bool":     func() { v.Int("connect") },
+		"bool of an int":    func() { v.Bool("multiplier") },
+		"string of an int":  func() { v.String("multiplier") },
+		"zero values":       func() { ActionValues{}.Int("multiplier") },
+	} {
+		func() {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Errorf("%s: no panic", name)
+				}
+			}()
+			f()
+		}()
+	}
+	if v.Int("multiplier") != 1 || !v.Bool("connect") || v.String("device") != "dev-1" {
+		t.Error("declared accessors changed")
+	}
 }

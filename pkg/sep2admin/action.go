@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"regexp"
 	"strconv"
@@ -171,19 +172,47 @@ func validActionLabel(s string) bool {
 	return utf8.ValidString(s) && n >= 1 && n <= MaxActionLabel
 }
 
-// ActionValues are a validated submission. The accessors return the zero
-// value for a name the Action does not declare.
+// ActionValues are a validated submission. An accessor panics for a name
+// the Action does not declare or declares as another kind, so a misspelled
+// name in Run fails the action loudly (the plane answers 500 and logs the
+// name) instead of reading as 0, false or "".
 type ActionValues struct{ v map[string]any }
 
+func (a ActionValues) get(name, kind string) any {
+	v, ok := a.v[name]
+	if !ok {
+		panic(fmt.Sprintf("sep2admin: ActionValues.%s: no field %q", kind, name))
+	}
+	return v
+}
+
 // Int returns an ActionInteger field's value.
-func (a ActionValues) Int(name string) int64 { n, _ := a.v[name].(int64); return n }
+func (a ActionValues) Int(name string) int64 {
+	n, ok := a.get(name, "Int").(int64)
+	if !ok {
+		panic(fmt.Sprintf("sep2admin: ActionValues.Int: field %q is not an integer", name))
+	}
+	return n
+}
 
 // Bool returns an ActionBoolean or ActionToggle field's value.
-func (a ActionValues) Bool(name string) bool { b, _ := a.v[name].(bool); return b }
+func (a ActionValues) Bool(name string) bool {
+	b, ok := a.get(name, "Bool").(bool)
+	if !ok {
+		panic(fmt.Sprintf("sep2admin: ActionValues.Bool: field %q is not a boolean", name))
+	}
+	return b
+}
 
 // String returns an ActionChoice field's chosen ID or an ActionText
 // field's text.
-func (a ActionValues) String(name string) string { s, _ := a.v[name].(string); return s }
+func (a ActionValues) String(name string) string {
+	s, ok := a.get(name, "String").(string)
+	if !ok {
+		panic(fmt.Sprintf("sep2admin: ActionValues.String: field %q is not a choice or text", name))
+	}
+	return s
+}
 
 // Parse checks body against the declared fields, short of an ActionChoice
 // field's membership, which needs the embedder (CheckChoices). Body must be
@@ -282,14 +311,18 @@ func (f ActionField) parse(lit json.RawMessage) (any, error) {
 }
 
 // validActionText accepts 1 to maxLen bytes of valid UTF-8 with no control
-// character but tab, newline and carriage return. A NUL or escape in a
-// text a Run forwards would otherwise travel on.
+// character but tab, newline and carriage return. It refuses the C0 set, DEL,
+// the C1 set (U+009B is a CSI to a terminal) and the bidirectional
+// embedding, override and isolate controls, which reorder text on screen: a
+// text a Run forwards or an operator reads back would otherwise carry them.
 func validActionText(s string, maxLen int) bool {
 	if len(s) < 1 || len(s) > maxLen || !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {
-		if r < 0x20 && r != '\n' && r != '\r' && r != '\t' || r == 0x7F {
+		switch {
+		case r < 0x20 && r != '\n' && r != '\r' && r != '\t', r >= 0x7F && r <= 0x9F,
+			r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069:
 			return false
 		}
 	}

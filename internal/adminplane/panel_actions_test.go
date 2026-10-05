@@ -5,9 +5,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -85,10 +88,12 @@ func post(h http.Handler, path, body string, mut ...func(*http.Request)) *httpte
 
 func TestPanelActionsOffAnswer404AndAreNotListed(t *testing.T) {
 	var rec actionRecorder
-	h := buildActions(t, Config{}, actionPanel(rec.run(sep2admin.ActionResult{}, nil)))
+	// Stores set, so the dashboard's catch-all "GET /" is mounted and an
+	// unmounted POST would be a 405 unless panelActionsOff answers it.
+	h := buildActions(t, Config{Stores: &Stores{}}, actionPanel(rec.run(sep2admin.ActionResult{}, nil)))
 
-	if r := post(h, actionPath, goodActionBody); r.Code != http.StatusNotFound {
-		t.Errorf("POST with actions off = %d, want 404; body %s", r.Code, r.Body)
+	if r := post(h, actionPath, goodActionBody); r.Code != http.StatusNotFound || r.Body.String() != `{"error":"panel actions are off"}` {
+		t.Errorf("POST with actions off = %d %s, want 404 panel actions are off", r.Code, r.Body)
 	}
 	if r := get(h, "/api/ui/panels/bus/actions", true); r.Code != http.StatusNotFound {
 		t.Errorf("GET actions with actions off = %d, want 404", r.Code)
@@ -196,8 +201,8 @@ func TestPanelActionAnswersTheEmbedderRefusalAndFailure(t *testing.T) {
 		var rec actionRecorder
 		h := buildActions(t, Config{PanelActions: true}, actionPanel(rec.run(sep2admin.ActionResult{}, errors.New("dial tcp 10.0.0.7:61613: refused"))))
 		r := post(h, actionPath, goodActionBody)
-		if r.Code != http.StatusInternalServerError || r.Body.String() != `{"error":"panel failed"}` {
-			t.Fatalf("POST = %d %s, want 500 panel failed", r.Code, r.Body)
+		if r.Code != http.StatusInternalServerError || r.Body.String() != `{"error":"action failed"}` {
+			t.Fatalf("POST = %d %s, want 500 action failed", r.Code, r.Body)
 		}
 		if strings.Contains(r.Body.String(), "10.0.0.7") {
 			t.Error("the embedder's error text reached the response")
@@ -205,10 +210,10 @@ func TestPanelActionAnswersTheEmbedderRefusalAndFailure(t *testing.T) {
 	})
 	t.Run("a panic is contained", func(t *testing.T) {
 		h := buildActions(t, Config{PanelActions: true}, actionPanel(func(context.Context, sep2admin.ActionValues) (sep2admin.ActionResult, error) {
-			panic("boom /home/x")
+			panic("boom /srv/x")
 		}))
 		r := post(h, actionPath, goodActionBody)
-		if r.Code != http.StatusInternalServerError || strings.Contains(r.Body.String(), "/home/x") {
+		if r.Code != http.StatusInternalServerError || strings.Contains(r.Body.String(), "/srv/x") {
 			t.Fatalf("POST = %d %s, want 500 without the panic text", r.Code, r.Body)
 		}
 	})
@@ -538,5 +543,182 @@ func TestPanelActionBodyIsNotReadForAnUnknownAction(t *testing.T) {
 	}
 	if r := post(h, "/api/ui/panels/nope/actions/send", goodActionBody); r.Code != http.StatusNotFound {
 		t.Errorf("unknown panel = %d, want 404", r.Code)
+	}
+}
+
+// logBuffer is a log sink a handler goroutine and a test can share.
+type logBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *logBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *logBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// captureLog routes the standard logger, which slog's default handler also
+// uses, into a buffer for the test.
+func captureLog(t *testing.T) *logBuffer {
+	t.Helper()
+	buf := &logBuffer{}
+	log.SetOutput(buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	return buf
+}
+
+func TestTimedOutActionIsAuditedAndTellsTheOperatorItMayComplete(t *testing.T) {
+	logs := captureLog(t)
+	release := make(chan struct{})
+	returned := make(chan struct{})
+	run := func(context.Context, sep2admin.ActionValues) (sep2admin.ActionResult, error) {
+		defer close(returned)
+		<-release // ignores ctx: the action keeps going after the 504
+		return sep2admin.ActionResult{}, nil
+	}
+	ps, err := newPanelSet([]sep2admin.Panel{actionPanel(run)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps.actions = true
+	ps.timeout = 50 * time.Millisecond
+	cfg := runConfig(panelTestKey, nil, nil, "GCM", nil, nil, false, nil)
+	authed, withMW := buildAuthedAdminMux(cfg, ps)
+	h, _ := buildOuterAdminRouter(cfg, authed, withMW)
+
+	r := post(h, actionPath, goodActionBody)
+	want := `{"error":"action did not answer in time; it may still complete, so do not retry blindly"}`
+	if r.Code != http.StatusGatewayTimeout || r.Body.String() != want {
+		t.Fatalf("POST = %d %s, want 504 %s", r.Code, r.Body, want)
+	}
+	for _, frag := range []string{`panel "bus" action "send"`, "admission=bearer", "remote=127.0.0.1:40000", "outcome=timeout"} {
+		if !strings.Contains(logs.String(), frag) {
+			t.Errorf("log lacks %q after a timed-out action:\n%s", frag, logs.String())
+		}
+	}
+	if !strings.Contains(logs.String(), "outcome=started") {
+		t.Errorf("log lacks the attempt line (outcome=started):\n%s", logs.String())
+	}
+	close(release)
+	<-returned
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(logs.String(), "outcome=late-ok") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !strings.Contains(logs.String(), "outcome=late-ok") {
+		t.Errorf("log lacks the late completion line (outcome=late-ok):\n%s", logs.String())
+	}
+}
+
+func TestEveryRefusalIsLogged(t *testing.T) {
+	cases := []struct {
+		name string
+		do   func(h http.Handler) *httptest.ResponseRecorder
+		code int
+		frag string
+	}{
+		{"unknown values", func(h http.Handler) *httptest.ResponseRecorder {
+			return post(h, actionPath, `{"device":"dev-1","multiplier":99,"on":true,"raw":"x"}`)
+		}, http.StatusBadRequest, "reason=invalid"},
+		{"oversize body", func(h http.Handler) *httptest.ResponseRecorder {
+			return post(h, actionPath, strings.Repeat("a", sep2admin.MaxActionBodyBytes+1))
+		}, http.StatusRequestEntityTooLarge, "reason=body-too-large"},
+		{"ticket", func(h http.Handler) *httptest.ResponseRecorder {
+			return post(h, actionPath, goodActionBody, func(r *http.Request) {
+				r.Header.Del("Authorization")
+				r.URL.RawQuery = "ticket=" + testTicket(t)
+			})
+		}, http.StatusUnauthorized, "reason=ticket"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			logs := captureLog(t)
+			tickets = auth.NewTicketStore(AdminTicketTTL)
+			h := buildActions(t, Config{PanelActions: true, Tickets: tickets}, actionPanel(okRunFn))
+			r := c.do(h)
+			if r.Code != c.code {
+				t.Fatalf("status = %d %s, want %d", r.Code, r.Body, c.code)
+			}
+			for _, frag := range []string{`panel "bus" action "send"`, c.frag, "remote=127.0.0.1:40000"} {
+				if !strings.Contains(logs.String(), frag) {
+					t.Errorf("log lacks %q:\n%s", frag, logs.String())
+				}
+			}
+		})
+	}
+
+	t.Run("rate limit", func(t *testing.T) {
+		logs := captureLog(t)
+		h := buildActions(t, Config{PanelActions: true}, actionPanel(okRunFn))
+		var last *httptest.ResponseRecorder
+		for i := 0; i <= actionBurst; i++ {
+			last = post(h, actionPath, goodActionBody)
+		}
+		if last.Code != http.StatusTooManyRequests {
+			t.Fatalf("status = %d, want 429", last.Code)
+		}
+		if !strings.Contains(logs.String(), "reason=rate-limited") {
+			t.Errorf("log lacks reason=rate-limited:\n%s", logs.String())
+		}
+	})
+}
+
+var tickets *auth.TicketStore
+
+func testTicket(t *testing.T) string {
+	t.Helper()
+	tk, err := tickets.Issue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tk
+}
+
+func TestActionSchemaReadFollowsShutdownAndTheSharedRate(t *testing.T) {
+	t.Run("shutdown", func(t *testing.T) {
+		done := make(chan struct{})
+		h := buildActions(t, Config{PanelActions: true, StreamsDone: done}, actionPanel(okRunFn))
+		if r := get(h, "/api/ui/panels/bus/actions", true); r.Code != http.StatusOK {
+			t.Fatalf("control: schema read before shutdown = %d, want 200", r.Code)
+		}
+		close(done)
+		if r := get(h, "/api/ui/panels/bus/actions", true); r.Code != http.StatusServiceUnavailable {
+			t.Errorf("schema read after shutdown = %d %s, want 503", r.Code, r.Body)
+		}
+	})
+	t.Run("rate", func(t *testing.T) {
+		h := buildActions(t, Config{PanelActions: true}, actionPanel(okRunFn))
+		for i := 0; i < actionBurst; i++ {
+			if r := get(h, "/api/ui/panels/bus/actions", true); r.Code != http.StatusOK {
+				t.Fatalf("read %d = %d, want 200", i+1, r.Code)
+			}
+		}
+		if r := get(h, "/api/ui/panels/bus/actions", true); r.Code != http.StatusTooManyRequests {
+			t.Errorf("read %d = %d, want 429", actionBurst+1, r.Code)
+		}
+		if r := post(h, actionPath, goodActionBody); r.Code != http.StatusTooManyRequests {
+			t.Errorf("an action after the reads spent the burst = %d, want 429 (shared bucket)", r.Code)
+		}
+	})
+}
+
+func TestAnUndeclaredFieldNameInRunIsNotASilentZero(t *testing.T) {
+	logs := captureLog(t)
+	h := buildActions(t, Config{PanelActions: true}, actionPanel(func(_ context.Context, v sep2admin.ActionValues) (sep2admin.ActionResult, error) {
+		return sep2admin.ActionResult{Message: strconv.FormatInt(v.Int("multipler"), 10)}, nil // typo
+	}))
+	r := post(h, actionPath, goodActionBody)
+	if r.Code != http.StatusInternalServerError || r.Body.String() != `{"error":"action failed"}` {
+		t.Fatalf("POST = %d %s, want 500 action failed", r.Code, r.Body)
+	}
+	if !strings.Contains(logs.String(), `"multipler"`) {
+		t.Errorf("log does not name the undeclared field:\n%s", logs.String())
 	}
 }

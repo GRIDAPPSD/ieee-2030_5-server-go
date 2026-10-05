@@ -3,6 +3,7 @@ package sep2adminplane_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -68,4 +69,36 @@ func TestPanelActionsWorkOnAReadOnlyPlaneAndStopOnClose(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("Run called after Close: %v", got)
 	}
+}
+
+func TestCloseWaitsBoundedForARunThatIgnoresItsContext(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	cfg := actionConfig(nil)
+	cfg.Panels[0].Actions[0].Run = func(context.Context, sep2admin.ActionValues) (sep2admin.ActionResult, error) {
+		close(entered)
+		<-release // ignores ctx on purpose
+		return sep2admin.ActionResult{}, nil
+	}
+	cfg.PanelActions = true
+	p := newPlane(t, cfg)
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- send(p, http.MethodPost, "/api/ui/panels/switch/actions/publishing", `{"on":true}`, true)
+	}()
+	<-entered
+
+	start := time.Now()
+	if n := p.Close(50 * time.Millisecond); n != 1 {
+		t.Fatalf("Close with a stuck action = %d running, want 1", n)
+	}
+	if el := time.Since(start); el < 40*time.Millisecond || el > 2*time.Second {
+		t.Errorf("Close waited %v, want about the 50ms bound", el)
+	}
+	close(release)
+	if n := p.Close(2 * time.Second); n != 0 {
+		t.Fatalf("Close after the action returned = %d running, want 0", n)
+	}
+	<-done
 }

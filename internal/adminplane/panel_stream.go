@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -189,6 +190,15 @@ func (ps *panelSet) handleStream() http.HandlerFunc {
 		asWrite := r.WithContext(r.Context())
 		asWrite.Method = http.MethodPost
 		if err := crossOrigin.Check(asWrite); err != nil {
+			slog.Warn("admin: cross-origin request refused",
+				"event", "admin_cross_origin_refused",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"remote_addr", r.RemoteAddr,
+				"sec_fetch_site", r.Header.Get("Sec-Fetch-Site"),
+				"origin", r.Header.Get("Origin"),
+				"err", err.Error(),
+			)
 			writePanelError(w, http.StatusForbidden, "cross-origin admin request refused")
 			return
 		}

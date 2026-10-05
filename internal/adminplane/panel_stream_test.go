@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -154,7 +155,7 @@ func refusal(t *testing.T, sp *streamPlane, path string, header map[string]strin
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	resp := sp.open(t, ctx, path, header)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.Header.Get("Content-Type") == "text/event-stream" {
 		return "(a stream opened)", resp.StatusCode
 	}
@@ -199,7 +200,7 @@ func TestPanelStreamWithSessionCookie(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param="+url.QueryEscape("/topic/a.b"), nil)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/event-stream" {
 		t.Fatalf("status %d, Content-Type %q; want 200 text/event-stream", resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
@@ -234,7 +235,7 @@ func TestPanelStreamRefusesATicket(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized || string(body) != `{"error":"panel streams do not accept a ticket"}` {
 		t.Fatalf("ticket stream = %d %s, want 401 with the ticket refusal", resp.StatusCode, body)
 	}
@@ -250,7 +251,7 @@ func TestPanelStreamRefusesATicket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("Bearer stream = %d, want 200", resp.StatusCode)
 	}
@@ -263,7 +264,7 @@ func TestPanelStreamRefusesWithNoCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized || f.opens.Load() != 0 {
 		t.Fatalf("no credential = %d with %d opens, want 401 and none", resp.StatusCode, f.opens.Load())
 	}
@@ -296,7 +297,7 @@ func TestPanelStreamRefusesAParameterBeforeOpen(t *testing.T) {
 	}
 	for _, path := range []string{"/api/ui/panels/plain/stream?param=a", "/api/ui/panels/nope/stream?param=a"} {
 		resp := sp.open(t, context.Background(), path, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
 			t.Errorf("GET %s = %d, want 404", path, resp.StatusCode)
 		}
@@ -305,7 +306,7 @@ func TestPanelStreamRefusesAParameterBeforeOpen(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param=/topic/abc.d_e-f", nil)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	recvSend(t, f)
 	if resp.StatusCode != http.StatusOK || f.lastReq().Param != "/topic/abc.d_e-f" {
 		t.Fatalf("valid parameter = %d, Open got %q", resp.StatusCode, f.lastReq().Param)
@@ -347,7 +348,7 @@ func TestPanelStreamCapIsEightPerPlane(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancels = append(cancels, cancel)
 		resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param=a", nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
 			break
 		}
@@ -376,7 +377,7 @@ func TestPanelStreamOverflowClosesWithAFinalStatus(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param=a", nil)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	mu.Lock()
 	defer mu.Unlock()
 	if len(results) != maxStreamQueueEvents+2 {
@@ -405,7 +406,7 @@ func TestPanelStreamSlowReaderOverRealTCP(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param=a", nil)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	send := recvSend(t, f)
 	text := strings.Repeat("y", 60<<10)
 	sent := 0
@@ -459,7 +460,7 @@ func TestPanelStreamResumesFromLastEventID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param=a", map[string]string{"Last-Event-ID": "41"})
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK || f.lastReq().After != 41 {
 		t.Fatalf("status %d, Open After %d; want 200 and 41", resp.StatusCode, f.lastReq().After)
 	}
@@ -487,7 +488,7 @@ func TestPanelStreamOutlivesTheWriteTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param=a", nil)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	send := recvSend(t, f)
 	sent := make(chan bool, 1)
 	go func() {
@@ -521,7 +522,7 @@ func TestPanelStreamRefusesAnInvalidEvent(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param=a", nil)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			send := recvSend(t, f)
 			if send(ev) {
 				t.Fatal("invalid event accepted")
@@ -540,7 +541,7 @@ func TestPanelStreamRefusesAnInvalidEvent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param=a", nil)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	send := recvSend(t, f)
 	overhead := len(`{"id":"1","time":"2026-10-05T11:00:00.123Z","kind":"message","text":""}`)
 	fit := strings.Repeat("z", sep2admin.MaxStreamEventBytes-overhead)
@@ -676,7 +677,7 @@ func TestStreamsDoneEndsOpenStreamsBeforeShutdown(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param=a", nil)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	send := recvSend(t, f)
 	if !send(msg(1, "before")) {
 		t.Fatal("send refused on an open stream")
@@ -717,7 +718,7 @@ func TestStreamsDoneCutsAStalledWrite(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param=a", nil)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	send := recvSend(t, f)
 	text := strings.Repeat("y", 60<<10)
 	// Paced, so the handler drains the queue into the socket until the
@@ -743,6 +744,10 @@ func TestPanelStreamRefusesCrossSite(t *testing.T) {
 		"foreign Origin":         {"Origin": "http://evil.example"},
 		"cross-site, own Origin": {"Sec-Fetch-Site": "cross-site", "Origin": "http://" + host},
 	}
+	var logBuf syncBuffer
+	saved := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logBuf, nil)))
+	defer slog.SetDefault(saved)
 	for name, h := range refused {
 		t.Run(name, func(t *testing.T) {
 			body, code := refusal(t, sp, path, h)
@@ -750,6 +755,17 @@ func TestPanelStreamRefusesCrossSite(t *testing.T) {
 				t.Fatalf("= %d %s, want 403 cross-origin refusal", code, body)
 			}
 		})
+	}
+	logged := 0
+	for _, raw := range strings.Split(strings.TrimSpace(logBuf.String()), "\n") {
+		var line map[string]any
+		if json.Unmarshal([]byte(raw), &line) == nil && line["event"] == "admin_cross_origin_refused" &&
+			line["method"] == http.MethodGet && line["path"] == "/api/ui/panels/bus/stream" {
+			logged++
+		}
+	}
+	if logged != len(refused) {
+		t.Fatalf("%d admin_cross_origin_refused lines for %d refusals; log: %s", logged, len(refused), logBuf.String())
 	}
 	if n := f.opens.Load(); n != 0 {
 		t.Fatalf("Open ran %d times for cross-site requests", n)
@@ -764,11 +780,30 @@ func TestPanelStreamRefusesCrossSite(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			resp := sp.open(t, ctx, path, h)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			recvSend(t, f)
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("= %d, want 200", resp.StatusCode)
 			}
 		})
 	}
+}
+
+// syncBuffer is a strings.Builder safe for the server's handler goroutines to
+// log into while the test reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

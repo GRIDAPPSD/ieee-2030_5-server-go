@@ -3,9 +3,10 @@
   // teardown closes the stream when Stop, a new submit, a panel or tab
   // change, or unmount ends it, so a swap never leaves a stream open
   // holding one of the server's few stream slots.
+  import { tick } from 'svelte'
   import type { PanelStreamInfo } from '../lib/descriptor'
   import {
-    appendLine,
+    appendLines,
     parseStreamEvent,
     streamURL,
     validateStreamParam,
@@ -14,19 +15,37 @@
 
   let { id, label, stream }: { id: string; label: string; stream: PanelStreamInfo } = $props()
 
+  type Connection = 'idle' | 'open' | 'reconnecting' | 'ended' | 'error'
+
   let param = $state('')
   let validation = $state('')
   let run = $state<{ param: string; n: number } | null>(null)
   let lines = $state.raw<StreamLine[]>([])
-  let connection = $state<'idle' | 'open' | 'reconnecting' | 'closed'>('idle')
+  let connection = $state<Connection>('idle')
+  let endedReason = $state('')
+  let logEl = $state<HTMLOListElement>()
   let nextKey = 0
+  let pending: StreamLine[] = []
+  let flushScheduled = false
+  // Follow the newest line until the operator scrolls up from the bottom.
+  let follow = true
+
+  const connectionText = $derived(
+    connection === 'ended'
+      ? `ended: ${endedReason}`
+      : connection === 'error'
+        ? 'The stream was refused or closed by the server.'
+        : connection,
+  )
 
   function submit(event: SubmitEvent) {
     event.preventDefault()
     const problem = validateStreamParam(param, stream)
     validation = problem ?? ''
     if (problem !== null) return
+    pending = []
     lines = []
+    follow = true
     run = { param, n: (run?.n ?? 0) + 1 }
   }
 
@@ -34,8 +53,28 @@
     run = null
   }
 
+  function onscroll() {
+    if (logEl) follow = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 8
+  }
+
+  function flush() {
+    flushScheduled = false
+    if (pending.length === 0) return
+    lines = appendLines(lines, pending)
+    pending = []
+    if (follow) {
+      void tick().then(() => {
+        if (follow && logEl) logEl.scrollTop = logEl.scrollHeight
+      })
+    }
+  }
+
   function add(kind: StreamLine['kind'], text: string, time: string) {
-    lines = appendLine(lines, { key: nextKey++, kind, text, time })
+    pending.push({ key: nextKey++, kind, text, time })
+    if (!flushScheduled) {
+      flushScheduled = true
+      queueMicrotask(flush)
+    }
   }
 
   $effect(() => {
@@ -50,21 +89,33 @@
     }
     source.onmessage = (ev: MessageEvent) => {
       const parsed = parseStreamEvent(ev.data)
-      if (parsed === null) add('status', 'The server sent an event that could not be read.', '')
-      else add(parsed.kind, parsed.text, parsed.time)
+      if (parsed === null) {
+        add('status', 'The server sent an event that could not be read.', '')
+        return
+      }
+      add(parsed.kind, parsed.text, parsed.time)
+      // A bare close makes the browser reconnect, so the plane's last
+      // status is the only thing that ends this stream for good.
+      if (parsed.final) {
+        source.close()
+        endedReason = parsed.text
+        connection = 'ended'
+      }
     }
     // The browser retries a dropped stream by itself and resumes from the
-    // last event id; a CLOSED source is a refusal it will not retry.
+    // last event id. EventSource hides the status code, so a CLOSED source
+    // (a refusal it will not retry) cannot be told apart by cause.
     source.onerror = () => {
       if (source.readyState === EventSource.CLOSED) {
-        connection = 'closed'
-        add('status', 'The server refused this stream or closed it. Check the value and submit again.', '')
+        connection = 'error'
+        add('status', 'The stream was refused or closed by the server.', '')
       } else {
         connection = 'reconnecting'
       }
     }
     return () => {
       source.close()
+      pending = []
     }
   })
 </script>
@@ -88,8 +139,8 @@
   {#if validation}
     <div class="result err" role="alert" data-testid="stream-validation">{validation}</div>
   {/if}
-  <div class="result" data-testid="stream-connection">{connection}</div>
-  <ol class="stream-log" data-testid="stream-log" aria-label="Stream output">
+  <div class="result" data-testid="stream-connection" data-state={connection}>{connectionText}</div>
+  <ol class="stream-log" data-testid="stream-log" aria-label="Stream output" aria-live="polite" bind:this={logEl} {onscroll}>
     {#each lines as line (line.key)}
       <li class="stream-line" class:stream-status={line.kind === 'status'} data-kind={line.kind}>
         {#if line.time}<time class="mono" datetime={line.time}>{line.time}</time>{/if}

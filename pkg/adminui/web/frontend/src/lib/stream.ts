@@ -25,8 +25,9 @@ export function validateStreamParam(value: string, info: PanelStreamInfo): strin
   return null
 }
 
-export function appendLine(lines: StreamLine[], line: StreamLine, cap: number = STREAM_LOG_CAP): StreamLine[] {
-  const next = [...lines, line]
+// One copy per batch rather than per event, so a burst costs one array.
+export function appendLines(lines: StreamLine[], batch: StreamLine[], cap: number = STREAM_LOG_CAP): StreamLine[] {
+  const next = [...lines, ...batch]
   return next.length > cap ? next.slice(next.length - cap) : next
 }
 
@@ -38,6 +39,8 @@ export interface StreamEventData {
   time: string
   kind: 'message' | 'status'
   text: string
+  // The plane's own last status: the stream is over and must not reconnect.
+  final: boolean
 }
 
 // Null for data that is not an event this build understands; the caller
@@ -54,5 +57,5 @@ export function parseStreamEvent(data: unknown): StreamEventData | null {
   const e = v as Record<string, unknown>
   if (typeof e.text !== 'string' || typeof e.time !== 'string') return null
   if (e.kind !== 'message' && e.kind !== 'status') return null
-  return { time: e.time, kind: e.kind, text: e.text }
+  return { time: e.time, kind: e.kind, text: e.text, final: e.final === true }
 }

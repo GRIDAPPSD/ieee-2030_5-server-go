@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { STREAM_LOG_CAP, appendLine, parseStreamEvent, streamURL, validateStreamParam, type StreamLine } from './stream'
+import { STREAM_LOG_CAP, appendLines, parseStreamEvent, streamURL, validateStreamParam, type StreamLine } from './stream'
 
 const info = { maxLen: 5, charset: 'abc-' }
 
@@ -23,10 +23,10 @@ describe('validateStreamParam', () => {
 
 const line = (key: number): StreamLine => ({ key, kind: 'message', text: `m${key}`, time: 't' })
 
-describe('appendLine', () => {
+describe('appendLines', () => {
   it('keeps exactly the newest cap lines, oldest dropped first', () => {
     let lines: StreamLine[] = []
-    for (let i = 0; i < STREAM_LOG_CAP + 25; i++) lines = appendLine(lines, line(i))
+    for (let i = 0; i < STREAM_LOG_CAP + 25; i++) lines = appendLines(lines, [line(i)])
     expect(lines).toHaveLength(1000)
     expect(lines[0].key).toBe(25)
     expect(lines[999].key).toBe(1024)
@@ -34,9 +34,17 @@ describe('appendLine', () => {
 
   it('does not mutate the list it was given', () => {
     const before = [line(1)]
-    appendLine(before, line(2))
+    appendLines(before, [line(2)])
     expect(before).toHaveLength(1)
   })
+})
+
+it('appends a batch in order and caps across the batch', () => {
+  const batch = Array.from({ length: 1005 }, (_, i) => line(i))
+  const out = appendLines([line(-1)], batch)
+  expect(out).toHaveLength(1000)
+  expect(out[0].key).toBe(5)
+  expect(out[999].key).toBe(1004)
 })
 
 describe('streamURL', () => {
@@ -51,8 +59,11 @@ describe('parseStreamEvent', () => {
       time: '2026-10-05T00:00:00Z',
       kind: 'message',
       text: 'hi',
+      final: false,
     })
-    expect(parseStreamEvent('{"time":"t","kind":"status","text":"over"}')?.kind).toBe('status')
+    expect(parseStreamEvent('{"time":"t","kind":"status","text":"over"}')).toMatchObject({ kind: 'status', final: false })
+    expect(parseStreamEvent('{"time":"t","kind":"status","text":"over","final":true}')?.final).toBe(true)
+    expect(parseStreamEvent('{"time":"t","kind":"status","text":"over","final":"yes"}')?.final).toBe(false)
   })
 
   it.each(['not json', '{"time":"t","kind":"other","text":"x"}', '{"time":"t","kind":"message"}', '[]', 'null'])(

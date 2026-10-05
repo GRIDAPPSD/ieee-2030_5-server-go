@@ -23,6 +23,14 @@ class FakeEventSource {
     this.closed = true
     this.readyState = 2
   }
+  open() {
+    this.readyState = 1
+    this.onopen?.()
+  }
+  fail(readyState: number) {
+    this.readyState = readyState
+    this.onerror?.()
+  }
   emit(data: string) {
     this.onmessage?.(new MessageEvent('message', { data }))
   }
@@ -30,6 +38,8 @@ class FakeEventSource {
 
 const stream = { maxLen: 8, charset: 'abc123' }
 const ev = (kind: string, text: string, i = 1) => JSON.stringify({ id: String(i), time: '2026-10-05T00:00:00Z', kind, text })
+const finalEv = (text: string) => JSON.stringify({ time: '2026-10-05T00:00:01Z', kind: 'status', text, final: true })
+const state = () => screen.getByTestId('stream-connection')
 
 beforeEach(() => {
   FakeEventSource.instances = []
@@ -124,15 +134,102 @@ describe('StreamPanel', () => {
     unmount()
   })
 
-  it('says so when the server refuses the stream', async () => {
+  it('shows each connection state as the stream moves through it', async () => {
+    const { unmount } = render(StreamPanel, { props: { id: 'p', label: 'Feed', stream } })
+    expect(state()).toHaveAttribute('data-state', 'idle')
+    await start('abc')
+    const src = FakeEventSource.instances[0]
+    expect(state()).toHaveAttribute('data-state', 'reconnecting')
+    expect(state()).toHaveTextContent('reconnecting')
+    src.open()
+    await tick()
+    expect(state()).toHaveAttribute('data-state', 'open')
+    expect(state()).toHaveTextContent('open')
+    src.fail(0)
+    await tick()
+    expect(state()).toHaveAttribute('data-state', 'reconnecting')
+    src.open()
+    await tick()
+    expect(state()).toHaveAttribute('data-state', 'open')
+    unmount()
+  })
+
+  it('ends for good on the plane\'s final status: closes the source and shows the reason', async () => {
     const { unmount } = render(StreamPanel, { props: { id: 'p', label: 'Feed', stream } })
     await start('abc')
     const src = FakeEventSource.instances[0]
-    src.readyState = FakeEventSource.CLOSED
-    src.onerror?.()
+    src.open()
+    src.emit(finalEv('stream closed: reader too slow'))
     await tick()
-    expect(screen.getByTestId('stream-connection')).toHaveTextContent('closed')
-    expect(screen.getByRole('listitem')).toHaveTextContent('refused')
+    expect(src.closed).toBe(true)
+    expect(state()).toHaveAttribute('data-state', 'ended')
+    expect(state()).toHaveTextContent('ended: stream closed: reader too slow')
+    expect(screen.getByRole('listitem')).toHaveTextContent('reader too slow')
+    expect(FakeEventSource.instances).toHaveLength(1)
     unmount()
+  })
+
+  it('does not end on a status the source itself sent', async () => {
+    const { unmount } = render(StreamPanel, { props: { id: 'p', label: 'Feed', stream } })
+    await start('abc')
+    const src = FakeEventSource.instances[0]
+    src.open()
+    src.emit(ev('status', 'replay done'))
+    await tick()
+    expect(src.closed).toBe(false)
+    expect(state()).toHaveAttribute('data-state', 'open')
+    unmount()
+  })
+
+  it('says the stream was refused or closed, without blaming the value, when the browser gives up', async () => {
+    const { unmount } = render(StreamPanel, { props: { id: 'p', label: 'Feed', stream } })
+    await start('abc')
+    FakeEventSource.instances[0].fail(FakeEventSource.CLOSED)
+    await tick()
+    expect(state()).toHaveAttribute('data-state', 'error')
+    expect(state()).toHaveTextContent('The stream was refused or closed by the server.')
+    expect(screen.getByRole('listitem')).toHaveTextContent('refused or closed')
+    expect(document.body.textContent).not.toContain('Check the value')
+    unmount()
+  })
+
+  describe('log', () => {
+    function geometry(el: HTMLElement, scrollHeight: number, clientHeight: number) {
+      Object.defineProperty(el, 'scrollHeight', { configurable: true, value: scrollHeight })
+      Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight })
+    }
+
+    it('is a polite live region', async () => {
+      const { unmount } = render(StreamPanel, { props: { id: 'p', label: 'Feed', stream } })
+      expect(screen.getByTestId('stream-log')).toHaveAttribute('aria-live', 'polite')
+      unmount()
+    })
+
+    it('follows the newest line until the operator scrolls up, then leaves the position alone', async () => {
+      const { unmount } = render(StreamPanel, { props: { id: 'p', label: 'Feed', stream } })
+      const log = screen.getByTestId('stream-log')
+      geometry(log, 1000, 100)
+      await start('abc')
+      const src = FakeEventSource.instances[0]
+      src.emit(ev('message', 'one', 1))
+      await tick()
+      await tick()
+      expect(log.scrollTop).toBe(1000)
+
+      log.scrollTop = 0
+      await fireEvent.scroll(log)
+      src.emit(ev('message', 'two', 2))
+      await tick()
+      await tick()
+      expect(log.scrollTop).toBe(0)
+
+      log.scrollTop = 900
+      await fireEvent.scroll(log)
+      src.emit(ev('message', 'three', 3))
+      await tick()
+      await tick()
+      expect(log.scrollTop).toBe(1000)
+      unmount()
+    })
   })
 })

@@ -10,7 +10,8 @@ export interface DashboardDevice {
   sfdi: string
   lfdi: string
   href: string
-  enabled: boolean
+  // null when the EndDevice has no enabled flag.
+  enabled: boolean | null
 }
 
 export interface DashboardData {

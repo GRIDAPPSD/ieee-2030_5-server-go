@@ -22,6 +22,12 @@ const devices: DashboardDevice[] = [
     href: '/edev/4',
     enabled: false,
   },
+  {
+    sfdi: '555555555555',
+    lfdi: '5555555555555555555555555555555555555555',
+    href: '/edev/5',
+    enabled: null,
+  },
 ]
 
 const fsas: AdminFSA[] = [
@@ -41,8 +47,11 @@ describe('DeviceTable', () => {
     expect(lfdiCells[0]).toHaveTextContent('0123456789ABCDEF...')
     expect(lfdiCells[1]).toHaveTextContent('FEDCBA9876543210...')
 
-    expect(screen.getByText('ONLINE')).toBeInTheDocument()
-    expect(screen.getByText('OFFLINE')).toBeInTheDocument()
+    const enabledCells = screen.getAllByTestId('device-enabled')
+    expect(enabledCells.map((c) => c.textContent)).toEqual(['Yes', 'No', 'Not set'])
+    expect(screen.getByRole('columnheader', { name: 'Enabled' })).toBeInTheDocument()
+    expect(screen.queryByText('ONLINE')).not.toBeInTheDocument()
+    expect(screen.queryByText('OFFLINE')).not.toBeInTheDocument()
   })
 
   it('offers every FSA mRID as an assignment target on a per-device select', () => {

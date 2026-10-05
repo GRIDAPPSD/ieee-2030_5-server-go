@@ -197,11 +197,13 @@ zero is a real, meaningful reading, not a placeholder waiting for data.
 
 No corresponding IEEE 2030.5 resource; nothing here changes anything.
 
-### Connected Devices (Overview)
+### Registered devices (Overview)
 
 A summary count of registered EndDevices and Mirror Usage Points (MUPs).
+The count says nothing about whether a device is communicating or
+electrically connected.
 
-![Connected Devices](images/admin-ui-connected-devices.png)
+![Registered devices](images/admin-ui-connected-devices.png)
 
 Corresponds to the EndDevice and MirrorUsagePoint resources. The count
 shown here is a rollup, not a mutation surface; nothing on this card
@@ -328,14 +330,15 @@ not hidden behind a click. Mutating: attach/detach DER programs
 
 ### End Devices (table)
 
-Every registered EndDevice, its status, its LFDI (truncated for display),
+Every registered EndDevice, its enabled flag, its LFDI (truncated for display),
 and, if any FSA template exists, an "Assign FSA" control per row.
 
 ![End Devices table](images/admin-ui-end-devices-table.png)
 
 An empty table reads "No devices registered"; a populated table shows
-each device as `ONLINE` or otherwise, with its LFDI shown as the first 16
-characters plus `...`.
+each device's enabled flag as `Yes`, `No` or `Not set`, with its LFDI
+shown as the first 16 characters plus `...`. The Enabled column is the
+EndDevice's configured flag; it is not a connection status.
 
 Corresponds to the EndDevice resource list. Mutating:
 `POST /api/devices/{id}/fsa-assignment` (assign, via the row's own

@@ -16,6 +16,12 @@
     onChanged: () => void
   } = $props()
 
+  function enabledLabel(enabled: boolean | null): string {
+    if (enabled === true) return 'Yes'
+    if (enabled === false) return 'No'
+    return 'Not set'
+  }
+
   let selected = $state<Record<string, string>>({})
   let error = $state('')
 
@@ -39,7 +45,7 @@
   <h2>End Devices</h2>
   <table>
     <thead>
-      <tr><th>SFDI</th><th>LFDI</th><th>Status</th><th>Href</th><th>Assign FSA</th></tr>
+      <tr><th>SFDI</th><th>LFDI</th><th>Enabled</th><th>Href</th><th>Assign FSA</th></tr>
     </thead>
     <tbody id="deviceTable">
       {#if devices.length === 0}
@@ -50,7 +56,7 @@
           <tr>
             <td class="mono" data-testid="device-sfdi">{device.sfdi}</td>
             <td class="mono" data-testid="device-lfdi">{(device.lfdi ?? '').substring(0, 16)}...</td>
-            <td class={device.enabled ? 'online' : 'offline'}>{device.enabled ? 'ONLINE' : 'OFFLINE'}</td>
+            <td class={device.enabled === true ? 'online' : 'offline'} data-testid="device-enabled">{enabledLabel(device.enabled)}</td>
             <td class="mono">{device.href}</td>
             <td>
               <select id="assignSel-{deviceID}" bind:value={selected[deviceID]}>

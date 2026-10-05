@@ -67,7 +67,7 @@ describe('AdminShell', () => {
     // test) is on the devices tab, and is covered there, alongside the
     // other eight cards' headings, by AdminShell.tabs.svelte.test.ts.
     const headings = Array.from(container.querySelectorAll('.grid h2')).map((h) => h.textContent)
-    expect(headings).toEqual(['Connected Devices', 'Server Info', 'Device Activity'])
+    expect(headings).toEqual(['Registered devices', 'Server Info', 'Device Activity'])
   })
 
   it('closes the stream when the shell is unmounted', async () => {

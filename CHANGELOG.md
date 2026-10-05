@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.11.0] - 2026-10-05
 
-This entry covers `v0.10.0..v0.11.0` (5 merged pull requests: four feature and
+This entry covers `v0.10.0..v0.11.0` (6 merged pull requests: five feature and
 maintenance changes and this release-preparation change). It is a MINOR
 release under the 0.x carve-out: the range adds a streaming panel kind and
 typed panel actions to `pkg/sep2admin`, with the plane setting and shutdown
-methods that serve them (`feature`), and the rest is `bug fix`, `chore` and
+methods that serve them, and the admin UI renders both (`feature`), and the rest is `bug fix`, `chore` and
 `test`. No exported identifier is removed or changed (the additions are new
 types, a new `Panel` field pair, a new `Config` field and two new `Plane`
 methods), so nothing is `breaking` under the repository's API policy. The
@@ -46,6 +46,10 @@ Go 1.26.8 or newer. Requires `ieee-2030_5-core-go` v0.23.0.
 - **Admin UI renders streaming panels.** The shell shows a stream panel's live
   feed and its state, and ends it on the final status event.
   ([#870](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/870))
+- **Admin UI renders panel actions.** The shell shows a panel's typed actions
+  as forms and runs them; the action toggle state, reload and timeout are
+  handled.
+  ([#872](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/872))
 
 ### Changed
 

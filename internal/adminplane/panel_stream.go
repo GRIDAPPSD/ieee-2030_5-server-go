@@ -56,6 +56,9 @@ type streamEventJSON struct {
 	Time string `json:"time"`
 	Kind string `json:"kind"`
 	Text string `json:"text"`
+	// Final marks the plane's own last status, after which it closes the
+	// stream: a client must not reconnect, which a bare close invites.
+	Final bool `json:"final,omitempty"`
 }
 
 // streamQueue is the non-blocking hand-off between a panel's source and
@@ -156,10 +159,10 @@ func encodeStreamEvent(ev sep2admin.StreamEvent) ([]byte, error) {
 	return []byte("id: " + id + "\ndata: " + string(data) + "\n\n"), nil
 }
 
-// statusFrame is the plane's own final event. It carries no id, so a
-// client's Last-Event-ID stays on the last event the source sent.
+// statusFrame is the plane's own final event, marked Final. It carries no
+// id, so a client's Last-Event-ID stays on the last event the source sent.
 func statusFrame(text string) []byte {
-	data, _ := json.Marshal(streamEventJSON{Time: time.Now().UTC().Format(time.RFC3339Nano), Kind: string(sep2admin.StreamStatus), Text: text}) // a struct of strings always encodes
+	data, _ := json.Marshal(streamEventJSON{Time: time.Now().UTC().Format(time.RFC3339Nano), Kind: string(sep2admin.StreamStatus), Text: text, Final: true}) // a struct of strings always encodes
 	return []byte("data: " + string(data) + "\n\n")
 }
 

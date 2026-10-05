@@ -63,6 +63,9 @@ export interface PanelEntry {
   label: string
   picker?: PanelPickerInfo
   stream?: PanelStreamInfo
+  // Present when the plane serves panel actions; the fields come from
+  // GET /api/ui/panels/{id}/actions.
+  actions?: { id: string; label: string }[]
 }
 
 export interface PickerChoice {

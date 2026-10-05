@@ -7,6 +7,7 @@
   import { onDestroy } from 'svelte'
   import { postJSON } from '../lib/api'
   import {
+    ACTION_TIMEOUT_MS,
     actionURL,
     bodyTooLarge,
     buildBody,
@@ -17,7 +18,11 @@
     type Outcome,
   } from '../lib/actions'
 
-  let { panelId, action }: { panelId: string; action: ActionSpec } = $props()
+  let {
+    panelId,
+    action,
+    onbusy,
+  }: { panelId: string; action: ActionSpec; onbusy?: (busy: boolean) => void } = $props()
 
   const fields = $derived(action.fields)
   // A lone switch is the whole action: one click sends the flipped value.
@@ -28,9 +33,11 @@
   let outcome = $state<Outcome | null>(null)
   let inFlight = $state(false)
   let destroyed = false
+  const ctrl = new AbortController()
 
   onDestroy(() => {
     destroyed = true
+    ctrl.abort()
   })
 
   function initial(kind: string): FieldValue {
@@ -53,15 +60,22 @@
       return
     }
     inFlight = true
-    const res = await postJSON<unknown>(actionURL(panelId, action.id), body)
+    onbusy?.(true)
+    const res = await postJSON<unknown>(actionURL(panelId, action.id), body, {
+      signal: ctrl.signal,
+      timeoutMs: ACTION_TIMEOUT_MS,
+    })
     if (destroyed) return
     inFlight = false
+    onbusy?.(false)
     const result = describeOutcome(res, fields.map((f) => f.name))
     outcome = result
     if (result.kind === 'refused' && result.field !== undefined) {
       fieldErrors = { [result.field]: result.text }
     }
     if (result.kind === 'ok') onOk?.()
+    // The server may have flipped it, so the last accepted state is stale.
+    if (result.kind === 'unknown' && loneToggle) values[fields[0].name] = undefined
   }
 
   function submit(event: SubmitEvent) {
@@ -72,17 +86,17 @@
     void send(sent)
   }
 
-  function flip(name: string) {
+  // The shown state changes only when the server accepts the value.
+  function set(name: string, next: boolean) {
     if (inFlight) return
-    const next = value(name, 'toggle') !== true
-    if (loneToggle) {
-      // The shown state changes only when the server accepts the flip.
-      void send({ [name]: next }, () => {
-        values[name] = next
-      })
-    } else {
+    void send({ [name]: next }, () => {
       values[name] = next
-    }
+    })
+  }
+
+  function flip(name: string) {
+    if (loneToggle) set(name, value(name, 'toggle') !== true)
+    else if (!inFlight) values[name] = value(name, 'toggle') !== true
   }
 
   function bytes(text: string): number {
@@ -96,9 +110,17 @@
     {@const inputId = `action-${action.id}-${f.name}`}
     {@const err = fieldErrors[f.name]}
     <div class="form-row action-field">
-      {#if f.kind === 'toggle'}
+      {#if f.problem}
+        <span id={inputId + '-label'}>{f.label}</span>
+        <span class="result err" role="alert" data-testid={inputId + '-problem'}>{f.problem}</span>
+      {:else if f.kind === 'toggle'}
         {@const state = value(f.name, f.kind)}
         <span id={inputId + '-label'}>{f.label}</span>
+        {#if loneToggle && state === undefined}
+          <span class="hint" data-testid={inputId + '-unknown'}>Unknown</span>
+          <button type="button" class="btn" disabled={inFlight} onclick={() => set(f.name, true)}>On</button>
+          <button type="button" class="btn" disabled={inFlight} onclick={() => set(f.name, false)}>Off</button>
+        {:else}
         <button
           type="button"
           class="btn"
@@ -109,6 +131,7 @@
           disabled={inFlight}
           onclick={() => flip(f.name)}
         >{state === undefined ? 'Unknown' : state ? 'On' : 'Off'}</button>
+        {/if}
       {:else if f.kind === 'boolean'}
         <label>
           <input type="checkbox" id={inputId} checked={value(f.name, f.kind) === true} onchange={(e) => (values[f.name] = e.currentTarget.checked)} />

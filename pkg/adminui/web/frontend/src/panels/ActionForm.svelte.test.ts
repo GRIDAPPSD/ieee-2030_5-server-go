@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/svelte'
 import ActionForm from './ActionForm.svelte'
 import * as api from '../lib/api'
-import type { ActionSpec } from '../lib/actions'
+import { ACTION_TIMEOUT_MS, type ActionSpec } from '../lib/actions'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -135,26 +135,33 @@ describe('ActionForm', () => {
     unmount()
   })
 
-  it('shows a lone toggle as unknown, flips with one click, and shows the new state only once the server accepts', async () => {
-    const d = deferred()
-    const spy = vi.spyOn(api, 'postJSON').mockReturnValue(d.promise)
+  it('offers explicit On and Off while the state is unknown, and sends the one clicked', async () => {
+    const spy = vi.spyOn(api, 'postJSON').mockResolvedValue({ ok: true, data: { ok: true, message: 'publishing off' } })
     const { unmount } = render(ActionForm, { props: { panelId: 'p', action: lone } })
-    const sw = screen.getByRole('switch', { name: 'Publishing' })
-    expect(sw).toHaveTextContent('Unknown')
-    expect(sw).toHaveAttribute('aria-checked', 'false')
-    await fireEvent.click(sw)
-    expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy.mock.calls[0][1]).toEqual({ on: true })
-    expect(sw).toBeDisabled()
-    expect(sw).toHaveTextContent('Unknown')
-    d.resolve({ ok: true, data: { ok: true, message: 'publishing on' } })
-    await screen.findByText('publishing on')
+    expect(screen.getByTestId('action-pub-on-unknown')).toHaveTextContent('Unknown')
+    expect(screen.queryByRole('switch')).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: 'Off' }))
+    expect(spy.mock.calls[0][1]).toEqual({ on: false })
+    await screen.findByText('publishing off')
+    expect(screen.getByRole('switch', { name: 'Publishing' })).toHaveTextContent('Off')
+    unmount()
+  })
+
+  it('flips a known toggle with one click, and shows the new state only once the server accepts', async () => {
+    const d = deferred()
+    const spy = vi.spyOn(api, 'postJSON').mockResolvedValueOnce({ ok: true, data: { ok: true, message: 'publishing on' } })
+    const { unmount } = render(ActionForm, { props: { panelId: 'p', action: lone } })
+    await fireEvent.click(screen.getByRole('button', { name: 'On' }))
+    const sw = await screen.findByRole('switch', { name: 'Publishing' })
     expect(sw).toHaveTextContent('On')
     expect(sw).toHaveAttribute('aria-checked', 'true')
 
-    spy.mockResolvedValue({ ok: true, data: { ok: true, message: 'publishing off' } })
+    spy.mockReturnValue(d.promise)
     await fireEvent.click(sw)
     expect(spy.mock.calls[1][1]).toEqual({ on: false })
+    expect(sw).toBeDisabled()
+    expect(sw).toHaveTextContent('On')
+    d.resolve({ ok: true, data: { ok: true, message: 'publishing off' } })
     await screen.findByText('publishing off')
     expect(sw).toHaveTextContent('Off')
     unmount()
@@ -163,13 +170,55 @@ describe('ActionForm', () => {
   it('leaves a toggle where it was when the server refuses the flip', async () => {
     const spy = vi.spyOn(api, 'postJSON').mockResolvedValueOnce({ ok: true, data: { ok: true, message: 'on' } })
     const { unmount } = render(ActionForm, { props: { panelId: 'p', action: lone } })
-    const sw = screen.getByRole('switch')
-    await fireEvent.click(sw)
-    await screen.findByText('on')
+    await fireEvent.click(screen.getByRole('button', { name: 'On' }))
+    const sw = await screen.findByRole('switch')
     spy.mockResolvedValueOnce(fail(422, 'cannot switch off'))
     await fireEvent.click(sw)
     await screen.findByText('cannot switch off')
     expect(sw).toHaveTextContent('On')
+    unmount()
+  })
+
+  it.each([
+    ['a 504', fail(504, 'action did not answer in time; it may still complete, so do not retry blindly')],
+    ['an aborted request', fail(0, 'request timed out')],
+    ['a 503 cancel', fail(503, 'request canceled; the action may still complete, so do not retry blindly')],
+  ])('goes back to Unknown after %s, since the server may have flipped', async (_name, res) => {
+    const spy = vi.spyOn(api, 'postJSON').mockResolvedValueOnce({ ok: true, data: { ok: true, message: 'on' } })
+    const { unmount } = render(ActionForm, { props: { panelId: 'p', action: lone } })
+    await fireEvent.click(screen.getByRole('button', { name: 'On' }))
+    const sw = await screen.findByRole('switch')
+    expect(sw).toHaveTextContent('On')
+    spy.mockResolvedValueOnce(res)
+    await fireEvent.click(sw)
+    expect(await screen.findByTestId('action-pub-on-unknown')).toHaveTextContent('Unknown')
+    expect(screen.queryByRole('switch')).toBeNull()
+    unmount()
+  })
+
+  it('bounds the request and aborts it when the form is unmounted', async () => {
+    const spy = vi.spyOn(api, 'postJSON').mockReturnValue(new Promise(() => {}))
+    const { unmount } = render(ActionForm, { props: { panelId: 'p', action: multi } })
+    await fill()
+    await run()
+    const opts = spy.mock.calls[0][2]
+    expect(opts?.timeoutMs).toBe(ACTION_TIMEOUT_MS)
+    expect(opts?.signal?.aborted).toBe(false)
+    unmount()
+    expect(opts?.signal?.aborted).toBe(true)
+  })
+
+  it('tells its owner when a request starts and ends', async () => {
+    const d = deferred()
+    vi.spyOn(api, 'postJSON').mockReturnValue(d.promise)
+    const onbusy = vi.fn()
+    const { unmount } = render(ActionForm, { props: { panelId: 'p', action: multi, onbusy } })
+    await fill()
+    await run()
+    expect(onbusy.mock.calls).toEqual([[true]])
+    d.resolve({ ok: true, data: { ok: true, message: 'done' } })
+    await screen.findByText('done')
+    expect(onbusy.mock.calls).toEqual([[true], [false]])
     unmount()
   })
 

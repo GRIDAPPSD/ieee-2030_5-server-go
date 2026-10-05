@@ -54,4 +54,32 @@ describe('ActionsPanel', () => {
     expect(screen.queryByTestId('action-x')).toBeNull()
     unmount()
   })
+
+  it('disables Reload while any form is in flight, so a reload cannot drop its outcome', async () => {
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: schema })
+    let settle!: (r: Awaited<ReturnType<typeof api.postJSON>>) => void
+    vi.spyOn(api, 'postJSON').mockReturnValue(new Promise((r) => (settle = r)))
+    const { unmount } = render(ActionsPanel, { props: { id: 'bridge' } })
+    await fireEvent.click(await screen.findByRole('button', { name: 'On' }))
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeDisabled()
+    settle({ ok: true, data: { ok: true, message: 'pub done' } })
+    await screen.findByText('pub done')
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeEnabled()
+    unmount()
+  })
+
+  it('keeps the rest of the panel usable when one field is wider than the form can hold', async () => {
+    const wide = {
+      actions: [
+        { id: 'big', label: 'Big', fields: [{ name: 'n', label: 'N', kind: 'integer', min: -9223372036854775808, max: 9223372036854775807 }] },
+        schema.actions[1],
+      ],
+    }
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: wide })
+    const { unmount } = render(ActionsPanel, { props: { id: 'bridge' } })
+    expect(await screen.findByTestId('action-pub')).toBeInTheDocument()
+    expect(screen.getByTestId('action-big-n-problem')).toHaveTextContent('too wide')
+    expect(screen.queryByTestId('actions-error')).toBeNull()
+    unmount()
+  })
 })

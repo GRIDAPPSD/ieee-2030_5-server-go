@@ -43,10 +43,13 @@ describe('validateField', () => {
 
   it('refuses empty text and the control characters the server refuses, but not tab or newline', () => {
     expect(validateField(text, '')).toBe('Enter some text.')
-    for (const bad of ['a\u0000', 'a\u007f', 'a\u009b', 'a\u202e', 'a\u2067']) {
+    const refused = ['\u0000', '\u001f', '\u007f', '\u0080', '\u009f', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '\u2066', '\u2067', '\u2068', '\u2069']
+    for (const bad of refused.map((c) => 'a' + c)) {
       expect(validateField(text, bad)).toBe('The text holds a control character this action does not accept.')
     }
     expect(validateField(text, 'a\tb\r\n')).toBeNull()
+    // The characters just outside each refused range are accepted.
+    for (const ok of ['\u0020', '\u00a0', '\u2029', '\u202f', '\u2065', '\u206a']) expect(validateField(text, 'a' + ok)).toBeNull()
   })
 
   it('accepts only a choice listed in the schema', () => {
@@ -102,6 +105,14 @@ describe('parseActions', () => {
     ])
   })
 
+  it('keeps an int64-wide integer field, with a reason, instead of refusing the whole schema', () => {
+    const got = parseActions({
+      actions: [{ id: 'g', label: 'G', fields: [{ name: 'n', label: 'N', kind: 'integer', min: 0, max: 9223372036854775807 }] }],
+    })
+    expect(got?.[0].fields[0].problem).toMatch(/too wide/)
+    expect(validateField(got?.[0].fields[0] as ActionField, '5')).toMatch(/too wide/)
+  })
+
   it('returns null for an integer without bounds, an unknown kind, or a non-object', () => {
     expect(parseActions({ actions: [{ id: 'g', label: 'G', fields: [{ name: 'n', label: 'N', kind: 'integer' }] }] })).toBeNull()
     expect(parseActions({ actions: [{ id: 'g', label: 'G', fields: [{ name: 'n', label: 'N', kind: 'color' }] }] })).toBeNull()
@@ -137,6 +148,17 @@ describe('describeOutcome', () => {
   it('keeps the server sentence on a 504 and marks the outcome unknown', () => {
     const s = 'action did not answer in time; it may still complete, so do not retry blindly'
     expect(describeOutcome(fail(504, s), names)).toEqual({ kind: 'unknown', text: s })
+  })
+
+  it('says a busy 504 means the action did not run, and keeps a timeout 504 unknown', () => {
+    const busy = describeOutcome(fail(504, 'panel is still answering an earlier request'), names)
+    expect(busy.kind).toBe('error')
+    expect(busy.text).toMatch(/did not run/)
+    expect(describeOutcome(fail(504, 'something else'), names).kind).toBe('unknown')
+  })
+
+  it('treats a cancel 503 as unknown, since the action may still complete', () => {
+    expect(describeOutcome(fail(503, 'request canceled'), names).kind).toBe('unknown')
   })
 
   it('treats a request that never finished as unknown, not as failed', () => {

@@ -17,6 +17,9 @@ export interface ActionField {
   max?: number
   maxLen?: number
   choices?: ActionChoice[]
+  // Set when the schema holds a field this form cannot send exactly; the
+  // field shows the reason and the rest of the panel stays usable.
+  problem?: string
 }
 
 export interface ActionSpec {
@@ -30,6 +33,15 @@ export interface ActionSpec {
 export type FieldValue = string | boolean | undefined
 
 export const MAX_ACTION_BODY_BYTES = 16 << 10
+
+// Above the plane's own action timeout (5 s unless the embedder sets
+// another), so the server's answer normally arrives first.
+export const ACTION_TIMEOUT_MS = 60_000
+
+// The 504 the server sends when it refused to start the action because an
+// earlier request still held the panel. The body carries no code, so the
+// sentence is matched; a reworded sentence falls back to "may have run".
+const BUSY_REFUSAL = 'panel is still answering an earlier request'
 
 export function actionURL(panelId: string, actionId?: string): string {
   const base = `/api/ui/panels/${encodeURIComponent(panelId)}/actions`
@@ -46,9 +58,13 @@ function parseField(v: unknown): ActionField | null {
   }
   const out: ActionField = { name: f.name, label: f.label, kind: f.kind as ActionField['kind'] }
   if (out.kind === 'integer') {
-    if (!Number.isSafeInteger(f.min) || !Number.isSafeInteger(f.max)) return null
-    out.min = f.min as number
-    out.max = f.max as number
+    if (typeof f.min !== 'number' || typeof f.max !== 'number') return null
+    if (Number.isSafeInteger(f.min) && Number.isSafeInteger(f.max)) {
+      out.min = f.min
+      out.max = f.max
+    } else {
+      out.problem = 'This number range is too wide for this form, so this action cannot be run here.'
+    }
   }
   if (out.kind === 'text') {
     if (!Number.isSafeInteger(f.maxLen) || (f.maxLen as number) < 1) return null
@@ -106,6 +122,7 @@ const INTEGER_LITERAL = /^-?(0|[1-9][0-9]*)$/
 
 // The message to show for a value the server would refuse, or null.
 export function validateField(f: ActionField, value: FieldValue): string | null {
+  if (f.problem !== undefined) return f.problem
   switch (f.kind) {
     case 'integer': {
       const text = typeof value === 'string' ? value.trim() : ''
@@ -206,8 +223,12 @@ export function describeOutcome(
     case 429:
       return { kind: 'error', text: 'Too many actions in a short time. Wait a few seconds, then try again.' }
     case 503:
-      return { kind: 'error', text: `The server is shutting down or canceled the request: ${res.error}` }
+      // A canceled request may have started the action.
+      return { kind: 'unknown', text: `The server is shutting down or canceled the request: ${res.error}` }
     case 504:
+      if (res.error === BUSY_REFUSAL) {
+        return { kind: 'error', text: `The panel is still answering an earlier request. The action did not run; try again in a moment.` }
+      }
       return { kind: 'unknown', text: res.error }
     case 0:
       return {

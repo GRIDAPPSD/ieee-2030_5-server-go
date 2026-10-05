@@ -12,6 +12,10 @@
   let specs = $state<ActionSpec[] | null>(null)
   let error = $state('')
   let reloads = $state(0)
+  // Reload rebuilds every form, which would drop an outcome the operator has
+  // not yet seen, so it waits for every request to end.
+  let busy = $state<Record<string, boolean>>({})
+  const anyBusy = $derived(Object.values(busy).some(Boolean))
 
   function describe(status: number, message: string): string {
     switch (status) {
@@ -36,6 +40,7 @@
     const ctrl = new AbortController()
     specs = null
     error = ''
+    busy = {}
     void fetchJSON<unknown>(actionURL(panelId), { signal: ctrl.signal, timeoutMs: PANEL_REQUEST_TIMEOUT_MS }).then((res) => {
       if (ctrl.signal.aborted) return
       if (!res.ok) {
@@ -59,10 +64,10 @@
   {/if}
   {#if specs}
     {#each specs as spec (spec.id)}
-      <ActionForm panelId={id} action={spec} />
+      <ActionForm panelId={id} action={spec} onbusy={(b) => (busy[spec.id] = b)} />
     {/each}
   {/if}
   <div class="form-row">
-    <button class="btn" type="button" onclick={() => reloads++}>Reload</button>
+    <button class="btn" type="button" disabled={anyBusy} onclick={() => reloads++}>Reload</button>
   </div>
 </div>

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Move to Go 1.26.8, `ieee-2030_5-core-go` v0.23.0 and current `golang.org/x` modules, clearing the standard-library and `x/crypto`, `x/net` advisories govulncheck reported at the old pins (#869).
+
 ## [0.10.0] - 2026-10-03
 
 This entry covers `v0.9.0..v0.10.0` (5 merged pull requests: four feature and

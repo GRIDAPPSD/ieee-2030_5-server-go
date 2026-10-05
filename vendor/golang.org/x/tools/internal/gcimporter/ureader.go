@@ -13,8 +13,8 @@ import (
 	"sort"
 	"strings"
 
-	"golang.org/x/tools/internal/aliases"
 	"golang.org/x/tools/internal/pkgbits"
+	// This package is dependency-restricted; see x/tools/go/gcexportdata.TestDeps.
 )
 
 // A pkgReader holds the shared state for reading a unified IR package
@@ -26,7 +26,6 @@ type pkgReader struct {
 
 	ctxt    *types.Context
 	imports map[string]*types.Package // previously imported packages, indexed by path
-	aliases bool                      // create types.Alias nodes
 
 	// lazily initialized arrays corresponding to the unified IR
 	// PosBase, Pkg, and Type sections, respectively.
@@ -36,6 +35,10 @@ type pkgReader struct {
 
 	// laterFns holds functions that need to be invoked at the end of
 	// import reading.
+	//
+	// TODO(mdempsky): Is it safe to have a single "later" slice or do
+	// we need to have multiple passes? See comments on CL 386002 and
+	// go.dev/issue/52104.
 	laterFns []func()
 	// laterFors is used in case of 'type A B' to ensure that B is processed before A.
 	laterFors map[types.Type]int
@@ -52,8 +55,7 @@ func (pr *pkgReader) later(fn func()) {
 
 // See cmd/compile/internal/noder.derivedInfo.
 type derivedInfo struct {
-	idx    pkgbits.Index
-	needed bool
+	idx pkgbits.Index
 }
 
 // See cmd/compile/internal/noder.typeInfo.
@@ -72,7 +74,6 @@ func UImportData(fset *token.FileSet, imports map[string]*types.Package, data []
 	}
 
 	s := string(data)
-	s = s[:strings.LastIndex(s, "\n$$\n")]
 	input := pkgbits.NewPkgDecoder(path, s)
 	pkg = readUnifiedPackage(fset, nil, imports, input)
 	return
@@ -100,7 +101,6 @@ func readUnifiedPackage(fset *token.FileSet, ctxt *types.Context, imports map[st
 
 		ctxt:    ctxt,
 		imports: imports,
-		aliases: aliases.Enabled(),
 
 		posBases: make([]string, input.NumElems(pkgbits.RelocPosBase)),
 		pkgs:     make([]*types.Package, input.NumElems(pkgbits.RelocPkg)),
@@ -110,13 +110,17 @@ func readUnifiedPackage(fset *token.FileSet, ctxt *types.Context, imports map[st
 
 	r := pr.newReader(pkgbits.RelocMeta, pkgbits.PublicRootIdx, pkgbits.SyncPublic)
 	pkg := r.pkg()
-	r.Bool() // has init
+	if r.Version().Has(pkgbits.HasInit) {
+		r.Bool()
+	}
 
 	for i, n := 0, r.Len(); i < n; i++ {
 		// As if r.obj(), but avoiding the Scope.Lookup call,
 		// to avoid eager loading of imports.
 		r.Sync(pkgbits.SyncObject)
-		assert(!r.Bool())
+		if r.Version().Has(pkgbits.DerivedFuncInstance) {
+			assert(!r.Bool())
+		}
 		r.p.objIdx(r.Reloc(pkgbits.RelocObj))
 		assert(r.Len() == 0)
 	}
@@ -158,14 +162,13 @@ type reader struct {
 // A readerDict holds the state for type parameters that parameterize
 // the current unified IR element.
 type readerDict struct {
-	// bounds is a slice of typeInfos corresponding to the underlying
-	// bounds of the element's type parameters.
-	bounds []typeInfo
+	rtbounds []typeInfo         // contains constraint types for each parameter in rtparams
+	rtparams []*types.TypeParam // contains receiver type parameters for an element
 
-	// tparams is a slice of the constructed TypeParams for the element.
-	tparams []*types.TypeParam
+	tbounds []typeInfo         // contains constraint types for each parameter in tparams
+	tparams []*types.TypeParam // contains type parameters for an element
 
-	// devived is a slice of types derived from tparams, which may be
+	// derived is a slice of types derived from tparams, which may be
 	// instantiated while reading the current element.
 	derived      []derivedInfo
 	derivedTypes []types.Type // lazily instantiated from derived
@@ -263,7 +266,12 @@ func (pr *pkgReader) pkgIdx(idx pkgbits.Index) *types.Package {
 func (r *reader) doPkg() *types.Package {
 	path := r.String()
 	switch path {
-	case "":
+	// cmd/compile emits path="main" for main packages because
+	// that's the linker symbol prefix it used; but we need
+	// the package's path as it would be reported by go list,
+	// hence "main" below.
+	// See test at go/packages.TestMainPackagePathInModeTypes.
+	case "", "main":
 		path = r.p.PkgPath()
 	case "builtin":
 		return nil // universe
@@ -348,7 +356,11 @@ func (r *reader) doTyp() (res types.Type) {
 		return name.Type()
 
 	case pkgbits.TypeTypeParam:
-		return r.dict.tparams[r.Len()]
+		n := r.Len()
+		if n < len(r.dict.rtbounds) {
+			return r.dict.rtparams[n]
+		}
+		return r.dict.tparams[n-len(r.dict.rtbounds)]
 
 	case pkgbits.TypeArray:
 		len := int64(r.Uint64())
@@ -471,7 +483,9 @@ func (r *reader) param() *types.Var {
 func (r *reader) obj() (types.Object, []types.Type) {
 	r.Sync(pkgbits.SyncObject)
 
-	assert(!r.Bool())
+	if r.Version().Has(pkgbits.DerivedFuncInstance) {
+		assert(!r.Bool())
+	}
 
 	pkg, name := r.p.objIdx(r.Reloc(pkgbits.RelocObj))
 	obj := pkgScope(pkg).Lookup(name)
@@ -509,6 +523,12 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
 		return objPkg, objName
 	}
 
+	// TODO(mark): This, like the above splitVargenSuffix, is not ideal.
+	// Ignore generic methods promoted to global scope.
+	if strings.Contains(objName, ".") {
+		return objPkg, objName
+	}
+
 	if objPkg.Scope().Lookup(objName) == nil {
 		dict := pr.objDictIdx(idx)
 
@@ -525,8 +545,14 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
 
 		case pkgbits.ObjAlias:
 			pos := r.pos()
+			var tparams []*types.TypeParam
+			if r.Version().Has(pkgbits.AliasTypeParamNames) {
+				tparams = r.typeParamNames(false)
+			}
 			typ := r.typ()
-			declare(aliases.NewAlias(r.p.aliases, pos, objPkg, objName, typ))
+			tname := types.NewTypeName(pos, objPkg, objName, nil)
+			types.NewAlias(tname, typ).SetTypeParams(tparams)
+			declare(tname)
 
 		case pkgbits.ObjConst:
 			pos := r.pos()
@@ -536,7 +562,10 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
 
 		case pkgbits.ObjFunc:
 			pos := r.pos()
-			tparams := r.typeParamNames()
+			if r.Version().Has(pkgbits.GenericMethods) {
+				assert(!r.Bool()) // generic methods are read in their defining type
+			}
+			tparams := r.typeParamNames(false)
 			sig := r.signature(nil, nil, tparams)
 			declare(types.NewFunc(pos, objPkg, objName, sig))
 
@@ -547,20 +576,21 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
 			named := types.NewNamed(obj, nil, nil)
 			declare(obj)
 
-			named.SetTypeParams(r.typeParamNames())
+			named.SetTypeParams(r.typeParamNames(false))
 
 			setUnderlying := func(underlying types.Type) {
 				// If the underlying type is an interface, we need to
 				// duplicate its methods so we can replace the receiver
 				// parameter's type (#49906).
-				if iface, ok := aliases.Unalias(underlying).(*types.Interface); ok && iface.NumExplicitMethods() != 0 {
+				if iface, ok := types.Unalias(underlying).(*types.Interface); ok && iface.NumExplicitMethods() != 0 {
 					methods := make([]*types.Func, iface.NumExplicitMethods())
 					for i := range methods {
 						fn := iface.ExplicitMethod(i)
 						sig := fn.Type().(*types.Signature)
 
 						recv := types.NewVar(fn.Pos(), fn.Pkg(), "", named)
-						methods[i] = types.NewFunc(fn.Pos(), fn.Pkg(), fn.Name(), types.NewSignature(recv, sig.Params(), sig.Results(), sig.Variadic()))
+						recv.SetKind(types.RecvVar)
+						methods[i] = types.NewFunc(fn.Pos(), fn.Pkg(), fn.Name(), types.NewSignatureType(recv, nil, nil, sig.Params(), sig.Results(), sig.Variadic()))
 					}
 
 					embeds := make([]types.Type, iface.NumEmbeddeds())
@@ -600,14 +630,74 @@ func (pr *pkgReader) objIdx(idx pkgbits.Index) (*types.Package, string) {
 				})
 			}
 
-			for i, n := 0, r.Len(); i < n; i++ {
-				named.AddMethod(r.method())
+			if r.Version().Has(pkgbits.GenericMethods) {
+				// V4 (go1.27.0) emitted all non-generic methods
+				// before all generic ones, discarding source
+				// order: a bug (go.dev/issue/81188).
+				// V5 (go1.27.x) fixes it by emitting an explicit
+				// index along with each method.
+				type indexedMethod struct {
+					index int // (or -1 in V4)
+					fn    *types.Func
+				}
+
+				var methods []indexedMethod
+
+				// ordinary methods
+				for range r.Len() {
+					idx, m := r.method()
+					methods = append(methods, indexedMethod{idx, m})
+				}
+
+				// generic methods
+				for range r.Len() {
+					// Careful: objIdx is used to read in package-scoped declarations, which
+					// methods are not. Instead, decode it here. This makes it easier to
+					// associate it with the type and avoids the main objIdx loop.
+					idx := r.Reloc(pkgbits.RelocObj)
+
+					r := pr.tempReader(pkgbits.RelocObj, idx, pkgbits.SyncObject1)
+					r.dict = pr.objDictIdx(idx)
+
+					pos := r.pos()
+					assert(r.Bool()) // generic method
+					pkg, name := r.selector()
+					rtparams := r.typeParamNames(true)
+					recv := r.param()
+					methodIdx := -1
+					if r.Version().Has(pkgbits.PreserveMethodOrder) {
+						methodIdx = r.Len()
+					}
+					tparams := r.typeParamNames(false)
+					sig := r.signature(recv, rtparams, tparams)
+
+					pr.retireReader(r)
+					methods = append(methods, indexedMethod{methodIdx, types.NewFunc(pos, pkg, name, sig)})
+				}
+
+				if r.Version().Has(pkgbits.PreserveMethodOrder) {
+					sort.Slice(methods, func(i, j int) bool {
+						return methods[i].index < methods[j].index
+					})
+				}
+
+				for _, m := range methods {
+					named.AddMethod(m.fn)
+				}
+
+			} else {
+				for range r.Len() {
+					_, m := r.method()
+					named.AddMethod(m)
+				}
 			}
 
 		case pkgbits.ObjVar:
 			pos := r.pos()
 			typ := r.typ()
-			declare(types.NewVar(pos, objPkg, objName, typ))
+			v := types.NewVar(pos, objPkg, objName, typ)
+			v.SetKind(types.PackageVar)
+			declare(v)
 		}
 	}
 
@@ -624,15 +714,29 @@ func (pr *pkgReader) objDictIdx(idx pkgbits.Index) *readerDict {
 			errorf("unexpected object with %v implicit type parameter(s)", implicits)
 		}
 
-		dict.bounds = make([]typeInfo, r.Len())
-		for i := range dict.bounds {
-			dict.bounds[i] = r.typInfo()
+		nreceivers := 0
+		if r.Version().Has(pkgbits.GenericMethods) {
+			nreceivers = r.Len()
+		}
+		nexplicits := r.Len()
+
+		dict.rtbounds = make([]typeInfo, nreceivers)
+		for i := range dict.rtbounds {
+			dict.rtbounds[i] = r.typInfo()
+		}
+
+		dict.tbounds = make([]typeInfo, nexplicits)
+		for i := range dict.tbounds {
+			dict.tbounds[i] = r.typInfo()
 		}
 
 		dict.derived = make([]derivedInfo, r.Len())
 		dict.derivedTypes = make([]types.Type, len(dict.derived))
 		for i := range dict.derived {
-			dict.derived[i] = derivedInfo{r.Reloc(pkgbits.RelocType), r.Bool()}
+			dict.derived[i] = derivedInfo{idx: r.Reloc(pkgbits.RelocType)}
+			if r.Version().Has(pkgbits.DerivedInfoNeeded) {
+				assert(!r.Bool())
+			}
 		}
 
 		pr.retireReader(r)
@@ -642,15 +746,24 @@ func (pr *pkgReader) objDictIdx(idx pkgbits.Index) *readerDict {
 	return &dict
 }
 
-func (r *reader) typeParamNames() []*types.TypeParam {
+func (r *reader) typeParamNames(isGenMeth bool) []*types.TypeParam {
 	r.Sync(pkgbits.SyncTypeParamNames)
 
-	// Note: This code assumes it only processes objects without
-	// implement type parameters. This is currently fine, because
-	// reader is only used to read in exported declarations, which are
-	// always package scoped.
+	// Note: This code assumes there are no implicit type parameters.
+	// This is fine since it only reads exported declarations, which
+	// never have implicits.
 
-	if len(r.dict.bounds) == 0 {
+	var in []typeInfo
+	var out *[]*types.TypeParam
+	if isGenMeth {
+		in = r.dict.rtbounds
+		out = &r.dict.rtparams
+	} else {
+		in = r.dict.tbounds
+		out = &r.dict.tparams
+	}
+
+	if len(in) == 0 {
 		return nil
 	}
 
@@ -659,52 +772,50 @@ func (r *reader) typeParamNames() []*types.TypeParam {
 	// create all the TypeNames and TypeParams, then we construct and
 	// set the bound type.
 
-	r.dict.tparams = make([]*types.TypeParam, len(r.dict.bounds))
-	for i := range r.dict.bounds {
+	// We have to save tparams outside of the closure, because typeParamNames
+	// can be called multiple times with the same dictionary instance.
+	tparams := make([]*types.TypeParam, len(in))
+	*out = tparams
+
+	for i := range in {
 		pos := r.pos()
 		pkg, name := r.localIdent()
 
 		tname := types.NewTypeName(pos, pkg, name, nil)
-		r.dict.tparams[i] = types.NewTypeParam(tname, nil)
+		tparams[i] = types.NewTypeParam(tname, nil)
 	}
 
-	typs := make([]types.Type, len(r.dict.bounds))
-	for i, bound := range r.dict.bounds {
-		typs[i] = r.p.typIdx(bound, r.dict)
+	// The reader dictionary will continue mutating before we have time
+	// to call delayed functions; make a local copy of the constraints.
+	types := make([]types.Type, len(in))
+	for i, info := range in {
+		types[i] = r.p.typIdx(info, r.dict)
 	}
 
-	// TODO(mdempsky): This is subtle, elaborate further.
-	//
-	// We have to save tparams outside of the closure, because
-	// typeParamNames() can be called multiple times with the same
-	// dictionary instance.
-	//
-	// Also, this needs to happen later to make sure SetUnderlying has
-	// been called.
-	//
-	// TODO(mdempsky): Is it safe to have a single "later" slice or do
-	// we need to have multiple passes? See comments on CL 386002 and
-	// go.dev/issue/52104.
-	tparams := r.dict.tparams
+	// This needs to happen later to make sure SetUnderlying has been called.
 	r.p.later(func() {
-		for i, typ := range typs {
+		for i, typ := range types {
 			tparams[i].SetConstraint(typ)
 		}
 	})
 
-	return r.dict.tparams
+	return tparams
 }
 
-func (r *reader) method() *types.Func {
+func (r *reader) method() (int, *types.Func) {
 	r.Sync(pkgbits.SyncMethod)
+	idx := -1
+	if r.Version().Has(pkgbits.PreserveMethodOrder) {
+		idx = r.Len()
+	}
 	pos := r.pos()
 	pkg, name := r.selector()
 
-	rparams := r.typeParamNames()
+	rparams := r.typeParamNames(false)
 	sig := r.signature(r.param(), rparams, nil)
 
 	_ = r.pos() // TODO(mdempsky): Remove; this is a hacker for linker.go.
-	return types.NewFunc(pos, pkg, name, sig)
+	return idx, types.NewFunc(pos, pkg, name, sig)
 }
 
 func (r *reader) qualifiedIdent() (*types.Package, string) { return r.ident(pkgbits.SyncSym) }
@@ -725,4 +836,18 @@ func pkgScope(pkg *types.Package) *types.Scope {
 		return pkg.Scope()
 	}
 	return types.Universe
+}
+
+// See cmd/compile/internal/types.SplitVargenSuffix.
+func splitVargenSuffix(name string) (base, suffix string) {
+	i := len(name)
+	for i > 0 && name[i-1] >= '0' && name[i-1] <= '9' {
+		i--
+	}
+	const dot = "·"
+	if i >= len(dot) && name[i-len(dot):i] == dot {
+		i -= len(dot)
+		return name[:i], name[i:]
+	}
+	return name, ""
 }

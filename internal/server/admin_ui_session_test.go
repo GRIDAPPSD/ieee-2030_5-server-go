@@ -66,7 +66,7 @@ func newUIRouter(t *testing.T) (http.Handler, *auth.SessionStore) {
 	router, _ := adminplane.BuildAdminRouter(
 		"the-key", nil, newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), sessions,
-		[]string{testUIHost}, false, nil,
+		[]string{testUIHost}, nil,
 	)
 	return router, sessions
 }

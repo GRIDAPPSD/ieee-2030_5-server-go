@@ -33,7 +33,7 @@ func TestTrafficRoutePatternPresentOnlyWithHandler(t *testing.T) {
 		_, patterns := adminplane.BuildAdminRouter(
 			"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 			auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-			adminplane.DefaultAdminAllowedHosts(), false, trafficHandler,
+			adminplane.DefaultAdminAllowedHosts(), trafficHandler,
 		)
 		return patterns
 	}
@@ -69,7 +69,7 @@ func TestTrafficRouteAbsentWithCaptureOff(t *testing.T) {
 	router, _ := adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		adminplane.DefaultAdminAllowedHosts(), false, nil,
+		adminplane.DefaultAdminAllowedHosts(), nil,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/traffic/clients", nil)
@@ -100,7 +100,7 @@ func TestTrafficRouteRefusesNonGETMethod(t *testing.T) {
 	router, _ := adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		adminplane.DefaultAdminAllowedHosts(), false, http.NotFoundHandler(),
+		adminplane.DefaultAdminAllowedHosts(), http.NotFoundHandler(),
 	)
 
 	for _, method := range []string{http.MethodPost, http.MethodDelete} {

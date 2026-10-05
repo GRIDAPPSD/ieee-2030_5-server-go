@@ -82,7 +82,7 @@ func runOrphanedResponse(t *testing.T, remove func(*testing.T, *httptest.Server,
 	admin, _ := adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), stores, "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		adminplane.DefaultAdminAllowedHosts(), false, nil,
+		adminplane.DefaultAdminAllowedHosts(), nil,
 	)
 
 	start := sep2time.Now().Unix() + 600

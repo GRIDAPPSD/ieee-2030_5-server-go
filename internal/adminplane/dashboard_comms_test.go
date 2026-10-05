@@ -32,7 +32,7 @@ func commsDashboard(t *testing.T, rec *activity.Recorder, offlineAfter time.Dura
 			t.Fatal(err)
 		}
 	}
-	h := NewDashboardHandler(dashboardTestStores(t, mem), "TLS", false).WithActivity(rec, offlineAfter)
+	h := NewDashboardHandler(dashboardTestStores(t, mem), "TLS").WithActivity(rec, offlineAfter)
 	h.now = func() time.Time { return now }
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
@@ -136,7 +136,7 @@ func TestDashboardComms_StoredLowercaseLFDIMatchesCertificateCase(t *testing.T) 
 	if err := mem.Create(context.Background(), "1", sep2.EndDevice{SFDI: "s1", LFDI: "abcdef0123456789abcdef0123456789abcdef01"}); err != nil {
 		t.Fatal(err)
 	}
-	h := NewDashboardHandler(dashboardTestStores(t, mem), "TLS", false).WithActivity(rec, 0)
+	h := NewDashboardHandler(dashboardTestStores(t, mem), "TLS").WithActivity(rec, 0)
 	h.now = func() time.Time { return now }
 	d := h.collectData().Devices
 	if len(d) != 1 || d[0].Comms != "online" {

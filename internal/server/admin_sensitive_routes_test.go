@@ -45,7 +45,7 @@ func newSensitiveRoutesRouter(t *testing.T) http.Handler {
 	router, _ := adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		adminplane.DefaultAdminAllowedHosts(), false, http.NotFoundHandler(),
+		adminplane.DefaultAdminAllowedHosts(), http.NotFoundHandler(),
 	)
 	return router
 }
@@ -260,7 +260,7 @@ func TestSensitiveAdminPatternsMatchRouterFamilies(t *testing.T) {
 	patterns := adminplane.AuthedAdminPatterns(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		false, http.NotFoundHandler(),
+		http.NotFoundHandler(),
 	)
 
 	var want []string
@@ -349,7 +349,7 @@ func TestEveryDefaultProtectedAdminWriteRefusesBypassOnly(t *testing.T) {
 	patterns := adminplane.AuthedAdminPatterns(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		false, http.NotFoundHandler(),
+		http.NotFoundHandler(),
 	)
 
 	var defaultProtected []string
@@ -420,7 +420,7 @@ func TestNoSensitiveAdminWriteIsListedAsNonSensitive(t *testing.T) {
 	patterns := adminplane.AuthedAdminPatterns(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		false, http.NotFoundHandler(),
+		http.NotFoundHandler(),
 	)
 
 	sensitiveWrites := 0

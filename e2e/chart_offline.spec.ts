@@ -128,39 +128,3 @@ test.describe('admin UI with the chart library bundled', () => {
     expect(attempted).toContain(probeUrl);
   });
 });
-
-test.describe('legacy dashboard behind the rollback flag', () => {
-  let baseUrl: string;
-
-  test.beforeAll(async () => {
-    baseUrl = await startServer({ SEP2_ADMIN_LEGACY_DASHBOARD: 'true' });
-  });
-
-  test.afterAll(() => {
-    stopServer();
-  });
-
-  test.beforeEach(async ({ page }) => {
-    await page.setExtraHTTPHeaders({ Authorization: 'Bearer e2e-test-key' });
-  });
-
-  test('serves the pre-Svelte page, which draws no chart and fetches no CDN', async ({ page }) => {
-    const attempted = await blockExternalOrigins(page);
-
-    await page.goto(baseUrl + '/');
-    await page.waitForLoadState('domcontentloaded');
-
-    // The rollback really is the old page.
-    await expect(page.locator('#hwSerial')).toBeVisible();
-    await expect(page.locator('#chartNote')).toContainText('/ui/');
-
-    // The discriminating control for the assertion above: this page has no
-    // chart library, so no canvas is created. A canvas assertion that
-    // passed here would prove nothing about the bundle.
-    await expect(page.locator('#activityChart canvas')).toHaveCount(0);
-
-    // The CDN script tag is gone from this page too, so even the rollback
-    // path makes no external request.
-    expect(attempted).toEqual([]);
-  });
-});

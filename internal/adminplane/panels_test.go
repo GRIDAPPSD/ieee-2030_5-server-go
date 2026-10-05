@@ -94,7 +94,7 @@ func TestHungPanelViewAnswers504(t *testing.T) {
 		t.Fatalf("newPanelSet: %v", err)
 	}
 	ps.timeout = 50 * time.Millisecond
-	cfg := runConfig(panelTestKey, nil, nil, "GCM", nil, nil, false, nil)
+	cfg := runConfig(panelTestKey, nil, nil, "GCM", nil, nil, nil)
 	authed, withMW := buildAuthedAdminMux(cfg, ps)
 	h, _ := buildOuterAdminRouter(cfg, authed, withMW)
 

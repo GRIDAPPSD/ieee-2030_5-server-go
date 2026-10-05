@@ -241,7 +241,7 @@ the dashboard form (where one exists) submits to it.
 | Feature | Status | Description | Source |
 |---|---|---|---|
 | Login form | Complete | `GET /login` renders the form; `POST /auth/login` validates the key and issues the cookie. The dashboard shows the same form in place of the panels when its first authenticated read returns 401, so an expired session does not present an empty page. | [`internal/server/login.go`](../internal/server/login.go), [`internal/server/login_html.go`](../internal/server/login_html.go), [`frontend/src/panels/LoginPanel.svelte`](../pkg/adminui/web/frontend/src/panels/LoginPanel.svelte) |
-| Dashboard page | Complete | `GET /` renders the operator dashboard: the embedded Svelte admin UI, or the pre-Svelte page with `SEP2_ADMIN_LEGACY_DASHBOARD=true`. | [`internal/server/dashboard.go`](../internal/server/dashboard.go), [`frontend/src/AdminShell.svelte`](../pkg/adminui/web/frontend/src/AdminShell.svelte) |
+| Dashboard page | Complete | `GET /` renders the operator dashboard: the embedded Svelte admin UI. | [`internal/server/dashboard.go`](../internal/server/dashboard.go), [`frontend/src/AdminShell.svelte`](../pkg/adminui/web/frontend/src/AdminShell.svelte) |
 | Live dashboard data | Complete | `GET /dashboard/data` returns JSON; `GET /dashboard/events` is the SSE stream pushing 5-second updates. | [`internal/server/dashboard.go`](../internal/server/dashboard.go), [`frontend/src/lib/dashboard.ts`](../pkg/adminui/web/frontend/src/lib/dashboard.ts) |
 | Auth ticket exchange | Complete | `POST /auth/ticket` exchanges a valid admin session for a one-time-use ticket. Used by SSE clients. | [`internal/server/admin_router.go`](../internal/server/admin_router.go), [`internal/auth/ticket.go`](../internal/auth/ticket.go), [`frontend/src/lib/dashboard.ts`](../pkg/adminui/web/frontend/src/lib/dashboard.ts) |
 | Cert management API | Complete | `GET /api/certs/ca` (download CA), `POST /api/certs/server`, `POST /api/certs/device`. The dashboard's "Certificate Management" card reaches the CA download and the device cert. `POST /api/certs/server` is CLI and curl only by design: it returns a server private key, which a browser panel has no business receiving. | [`internal/handler/admin_certs.go`](../internal/handler/admin_certs.go), [`frontend/src/panels/CertPanel.svelte`](../pkg/adminui/web/frontend/src/panels/CertPanel.svelte) |
@@ -375,19 +375,6 @@ second click: clicking it opens an inline confirmation (with an optional
 reason) before `POST /api/der/controls/{mrid}/cancel` runs. The table
 reloads afterward, so a cancelled control's status and button update in
 place.
-
-### Rolling back to the previous page
-
-```bash
-SEP2_ADMIN_LEGACY_DASHBOARD=true   # GET / serves the pre-Svelte page
-```
-
-The pre-Svelte dashboard is still compiled in
-(`internal/server/dashboard_html.go`) and this flag serves it at `GET /`,
-so a page that breaks an operator's workflow does not need a binary
-downgrade. That page no longer loads a chart library at all, so it renders
-every panel except the activity chart. `/ui/` always serves the Svelte UI
-regardless of the flag.
 
 ## mTLS cert flow for the admin path
 

@@ -51,7 +51,7 @@ func TestNoAuthedRouteMintsATicketForTicketOnlyAdmission(t *testing.T) {
 	patterns := adminplane.AuthedAdminPatterns(
 		"the-key", newScopeTestCertService(t), newTestStores(), "GCM",
 		auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-		false, http.NotFoundHandler(),
+		http.NotFoundHandler(),
 	)
 	// Control: the walk must find the one route known to mint, or every
 	// assertion below passes vacuously (the shape #641 itself, and #579

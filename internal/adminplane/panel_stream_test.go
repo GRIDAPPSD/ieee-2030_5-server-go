@@ -600,7 +600,7 @@ func TestHungStreamOpenCannotMultiply(t *testing.T) {
 		t.Fatal(err)
 	}
 	ps.timeout = 20 * time.Millisecond
-	cfg := runConfig(panelTestKey, nil, nil, "GCM", nil, nil, false, nil)
+	cfg := runConfig(panelTestKey, nil, nil, "GCM", nil, nil, nil)
 	authed, withMW := buildAuthedAdminMux(cfg, ps)
 	h, _ := buildOuterAdminRouter(cfg, authed, withMW)
 

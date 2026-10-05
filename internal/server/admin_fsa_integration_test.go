@@ -33,7 +33,7 @@ func setupAdminRouter(t *testing.T) (*server.Stores, http.Handler) {
 		AdminFSAs:   memory.NewAdminFSAStore(),
 	}
 	tickets := auth.NewTicketStore(5 * time.Minute)
-	router, _ := adminplane.BuildAdminRouter(adminKey, nil, stores, "GCM", tickets, nil, nil, false, nil)
+	router, _ := adminplane.BuildAdminRouter(adminKey, nil, stores, "GCM", tickets, nil, nil, nil)
 	return stores, router
 }
 

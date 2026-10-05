@@ -11,7 +11,7 @@ import AdminShell from './AdminShell.svelte'
 import * as api from './lib/api'
 import * as dash from './lib/dashboard'
 import * as router from './lib/router'
-import type { DashboardData } from './lib/dashboard'
+import type { DashboardData, DashboardDevice } from './lib/dashboard'
 import type { AdminFSA, TopologyNode } from './lib/fsa'
 import { installCanvasStub } from './test-canvas-stub'
 
@@ -24,15 +24,18 @@ function dashboardData(timestamp: string, devices: DashboardData['devices']): Da
     mupCount: 0,
     tlsMode: 'TLS_AES_256_GCM_SHA384',
     uptime: '1m0s',
+    commsOfflineAfterSeconds: 300,
     devices,
   }
 }
 
-const DEVICE_1 = {
+const DEVICE_1: DashboardDevice = {
   sfdi: '167261211635',
   lfdi: '3E4F45AB31EDFE5B67E343E5E4562E31984E23E5',
   href: '/edev/1',
   enabled: true,
+  lastRequest: null,
+  comms: 'not_seen',
 }
 
 interface Fake {
@@ -109,7 +112,7 @@ function installFake(): Fake {
   vi.spyOn(api, 'postJSON').mockImplementation(async (path: string, body: unknown) => {
     const payload = body as Record<string, unknown>
     if (path === '/api/devices') {
-      const device = { sfdi: String(payload.sfdi), lfdi: String(payload.lfdi), href: '/edev/2', enabled: true }
+      const device = { sfdi: String(payload.sfdi), lfdi: String(payload.lfdi), href: '/edev/2', enabled: true, lastRequest: null, comms: 'not_seen' as const }
       fake.devices.push(device)
       return { ok: true, data: device } as never
     }

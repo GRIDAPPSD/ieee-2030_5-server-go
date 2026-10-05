@@ -62,7 +62,7 @@ func TestDERControlCreateRouteUsesCommitmentLedger(t *testing.T) {
 			router, _ := adminplane.BuildAdminRouter(
 				"the-key", newScopeTestCertService(t), stores, "GCM",
 				auth.NewTicketStore(30*time.Second), auth.NewSessionStore(30*time.Minute, 8*time.Hour),
-				adminplane.DefaultAdminAllowedHosts(), false, nil,
+				adminplane.DefaultAdminAllowedHosts(), nil,
 			)
 
 			w := serveDERControl(router, http.MethodPost, "/api/der/controls", derControlRouteRequest{remote: "127.0.0.1:4000", contentType: "application/json", bearer: "the-key", body: body})

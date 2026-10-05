@@ -54,6 +54,14 @@
         data: [] as number[],
       },
       {
+        name: 'Comms online',
+        type: 'line' as const,
+        smooth: true,
+        symbol: 'none' as const,
+        lineStyle: { width: 2, color: '#f59e0b' },
+        data: [] as number[],
+      },
+      {
         name: 'MUPs',
         type: 'line' as const,
         smooth: true,
@@ -98,7 +106,11 @@
     if (chart === null) return
     chart.setOption({
       xAxis: { data: points.map((p) => p.time) },
-      series: [{ data: points.map((p) => p.devices) }, { data: points.map((p) => p.mups) }],
+      series: [
+        { data: points.map((p) => p.devices) },
+        { data: points.map((p) => p.commsOnline) },
+        { data: points.map((p) => p.mups) },
+      ],
     })
   })
 </script>

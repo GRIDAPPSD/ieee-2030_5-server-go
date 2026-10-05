@@ -99,7 +99,7 @@ jobs:
 
       - name: Lint
         # golangci-lint v2.12.2 is built with go1.26.2 and supports modules
-        # declaring `go 1.26.3` in go.mod. Earlier releases (through v2.9.0)
+        # declaring `go 1.26.8` in go.mod. Earlier releases (through v2.9.0)
         # were compiled with go1.25 and reject go1.26 modules at startup.
         # Config schema is unchanged (v2). See `.golangci.yml`.
         # The action installs the binary (cached across runs) and runs it.

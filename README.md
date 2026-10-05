@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/actions/workflows/github-code-scanning/codeql)
-[![Go](https://img.shields.io/badge/go-1.26.3-blue)](https://go.dev/)
+[![Go](https://img.shields.io/badge/go-1.26.8-blue)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-Battelle%20BSD-blue)](LICENSE)
 
 Latest release: v0.10.0. See the [releases page](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/releases).

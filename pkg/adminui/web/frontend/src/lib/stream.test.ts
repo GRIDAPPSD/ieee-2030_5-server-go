@@ -16,8 +16,8 @@ describe('validateStreamParam', () => {
   })
 
   it('counts bytes, as the server does, not characters', () => {
-    const wide = { maxLen: 2, charset: 'aé' }
-    expect(validateStreamParam('aé', wide)).toBe('The value can be at most 2 characters.')
+    const wide = { maxLen: 2, charset: 'a\u00e9' }
+    expect(validateStreamParam('a\u00e9', wide)).toBe('The value can be at most 2 characters.')
   })
 })
 

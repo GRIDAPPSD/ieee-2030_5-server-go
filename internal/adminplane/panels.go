@@ -36,6 +36,8 @@ type panelSet struct {
 	panels  []sep2admin.Panel
 	busy    map[string]*atomic.Bool
 	timeout time.Duration
+	// openStreams counts this plane's open panel streams (panel_stream.go).
+	openStreams atomic.Int32
 }
 
 // newPanelSet registers and freezes panels. Any refusal fails the build,
@@ -72,6 +74,14 @@ type panelEntry struct {
 	ID     string       `json:"id"`
 	Label  string       `json:"label"`
 	Picker *pickerEntry `json:"picker,omitempty"`
+	Stream *streamEntry `json:"stream,omitempty"`
+}
+
+// streamEntry tells the shell the stream parameter's bounds, so it can
+// refuse a value before asking.
+type streamEntry struct {
+	MaxLen  int    `json:"maxLen"`
+	Charset string `json:"charset"`
 }
 
 type pickerEntry struct {
@@ -80,13 +90,17 @@ type pickerEntry struct {
 
 // handleList answers GET /api/ui/panels with [{id, label}] in frozen
 // order, and [] when nothing is registered. A panel with a Picker also
-// carries {"picker":{"max":N}}.
+// carries {"picker":{"max":N}}, and one with a Stream
+// {"stream":{"maxLen":N,"charset":"..."}}.
 func (ps *panelSet) handleList() http.HandlerFunc {
 	entries := make([]panelEntry, 0, len(ps.panels))
 	for _, p := range ps.panels {
 		e := panelEntry{ID: p.ID, Label: p.Label}
 		if p.Picker != nil {
 			e.Picker = &pickerEntry{Max: sep2admin.MaxSelection}
+		}
+		if p.Stream != nil {
+			e.Stream = &streamEntry{MaxLen: p.Stream.Param.MaxLen, Charset: p.Stream.Param.Charset}
 		}
 		entries = append(entries, e)
 	}

@@ -180,6 +180,11 @@ func (r *registry) Register(p Panel) error {
 	if p.Picker != nil && (p.Picker.Choices == nil || p.Picker.Select == nil) {
 		return ErrInvalidPicker
 	}
+	if p.Stream != nil {
+		if err := p.Stream.validate(); err != nil {
+			return err
+		}
+	}
 	if p.DescriptorVersion != CurrentDescriptorVersion {
 		return fmt.Errorf("%w: got %d, want %d", ErrUnsupportedDescriptorVersion, p.DescriptorVersion, CurrentDescriptorVersion)
 	}

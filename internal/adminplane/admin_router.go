@@ -238,11 +238,12 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	}
 
 	// #829 embedder panels. Mounted with no panels too, so the shell can
-	// tell "none" ([]) from an older server (404). Both are sensitive
+	// tell "none" ([]) from an older server (404). All are sensitive
 	// reads (sensitiveAdminReadPrefixes): a View may disclose anything.
 	authed.HandleFunc("GET /api/ui/panels", panels.handleList())
 	authed.HandleFunc("GET /api/ui/panels/{id}", panels.handleGet())
 	authed.HandleFunc("GET /api/ui/panels/{id}/choices", panels.handleChoices())
+	authed.HandleFunc("GET /api/ui/panels/{id}/stream", panels.handleStream())
 
 	// Admin UI (embedded Svelte SPA, pkg/adminui/web). Mounted at
 	// "/ui/", a more specific pattern than the dashboard's catch-all "GET

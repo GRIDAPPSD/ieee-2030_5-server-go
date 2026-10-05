@@ -513,3 +513,41 @@ func TestConfigFromEnvMirrorReadingMaxPerSeries(t *testing.T) {
 		})
 	}
 }
+
+// SEP2_COMMS_OFFLINE_AFTER_SECONDS reaches the config as a duration, and
+// anything outside 1 to 86400 stops startup instead of taking the default.
+func TestConfigFromEnvCommsOfflineAfter(t *testing.T) {
+	resolver := func() *certDirResolver { return &certDirResolver{resolved: true, dir: "/test/certdir"} }
+
+	t.Run("a value in range is the threshold", func(t *testing.T) {
+		t.Setenv("SEP2_COMMS_OFFLINE_AFTER_SECONDS", "90")
+		cfg, err := configFromEnv(resolver())
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if cfg.CommsOfflineAfter != 90*time.Second {
+			t.Errorf("CommsOfflineAfter = %v, want 1m30s", cfg.CommsOfflineAfter)
+		}
+	})
+
+	t.Run("unset resolves to five minutes", func(t *testing.T) {
+		t.Setenv("SEP2_COMMS_OFFLINE_AFTER_SECONDS", "")
+		cfg, err := configFromEnv(resolver())
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if got := cfg.EffectiveCommsOfflineAfter(); got != 5*time.Minute {
+			t.Errorf("EffectiveCommsOfflineAfter = %v, want 5m0s", got)
+		}
+	})
+
+	for _, bad := range []string{"0", "-1", "86401", "five", "1.5"} {
+		t.Run("invalid "+bad+" is a startup error", func(t *testing.T) {
+			t.Setenv("SEP2_COMMS_OFFLINE_AFTER_SECONDS", bad)
+			cfg, err := configFromEnv(resolver())
+			if err == nil || !strings.Contains(err.Error(), "SEP2_COMMS_OFFLINE_AFTER_SECONDS") {
+				t.Fatalf("configFromEnv = %+v, %v, want an error naming SEP2_COMMS_OFFLINE_AFTER_SECONDS", cfg, err)
+			}
+		})
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -20,6 +21,9 @@ type DashboardData struct {
 	TLSMode     string            `json:"tlsMode"`
 	Uptime      string            `json:"uptime"`
 	Devices     []DashboardDevice `json:"devices"`
+	// CommsOfflineAfterSeconds is the threshold each device's Comms was
+	// judged against.
+	CommsOfflineAfterSeconds int `json:"commsOfflineAfterSeconds"`
 	// Error is set when the device list could not be read. Devices is then
 	// null rather than an empty list, so a failed read never looks like a
 	// server with no devices.
@@ -34,6 +38,12 @@ type DashboardDevice struct {
 	// Enabled is null when the EndDevice has no enabled flag, so a UI can
 	// tell "not set" apart from "disabled".
 	Enabled *bool `json:"enabled"`
+	// LastRequest is the server-clock time (RFC 3339, UTC) of the device's
+	// last request, null when none was recorded since the server started.
+	LastRequest *string `json:"lastRequest"`
+	// Comms is one of the activity.Comms values: online, offline, not_seen,
+	// or unknown when no recorder is wired.
+	Comms string `json:"comms"`
 }
 
 // DashboardHandler serves the admin dashboard and SSE endpoint.
@@ -42,6 +52,10 @@ type DashboardHandler struct {
 	startTime time.Time
 	tlsMode   string
 	legacyUI  bool
+
+	activity     *activity.Recorder
+	offlineAfter time.Duration
+	now          func() time.Time
 }
 
 // NewDashboardHandler creates a dashboard handler backed by the server's
@@ -54,7 +68,22 @@ func NewDashboardHandler(stores *Stores, tlsMode string, legacyUI bool) *Dashboa
 		startTime: time.Now(),
 		tlsMode:   tlsMode,
 		legacyUI:  legacyUI,
+
+		offlineAfter: activity.DefaultOfflineAfter,
+		now:          time.Now,
 	}
+}
+
+// WithActivity makes the dashboard report each device's comms state from rec,
+// judged against offlineAfter (zero takes activity.DefaultOfflineAfter). A
+// nil rec leaves every device "unknown". It returns d so construction chains.
+func (d *DashboardHandler) WithActivity(rec *activity.Recorder, offlineAfter time.Duration) *DashboardHandler {
+	d.activity = rec
+	d.offlineAfter = offlineAfter
+	if d.offlineAfter == 0 {
+		d.offlineAfter = activity.DefaultOfflineAfter
+	}
+	return d
 }
 
 // RegisterRoutes adds dashboard routes to the admin mux. Accepts the
@@ -131,6 +160,7 @@ func (d *DashboardHandler) collectData() DashboardData {
 	// silently past a page size.
 	result, listErr := d.stores.EndDevices.List(ctx, store.ListOptions{Unbounded: true})
 	var devices []DashboardDevice
+	now := d.now()
 	if listErr != nil {
 		note("device list", listErr)
 	}
@@ -140,11 +170,18 @@ func (d *DashboardHandler) collectData() DashboardData {
 			v := *dev.Enabled
 			enabled = &v
 		}
+		var lastRequest *string
+		if at, _, ok := d.activity.Last(dev.LFDI); ok {
+			v := at.UTC().Format(time.RFC3339)
+			lastRequest = &v
+		}
 		devices = append(devices, DashboardDevice{
-			SFDI:    dev.SFDI,
-			LFDI:    dev.LFDI,
-			Href:    dev.Href,
-			Enabled: enabled,
+			SFDI:        dev.SFDI,
+			LFDI:        dev.LFDI,
+			Href:        dev.Href,
+			Enabled:     enabled,
+			LastRequest: lastRequest,
+			Comms:       string(d.activity.State(dev.LFDI, now, d.offlineAfter)),
 		})
 	}
 
@@ -157,7 +194,9 @@ func (d *DashboardHandler) collectData() DashboardData {
 		TLSMode:     d.tlsMode,
 		Uptime:      uptime.String(),
 		Devices:     devices,
-		Error:       strings.Join(problems, "; "),
+
+		CommsOfflineAfterSeconds: int(d.offlineAfter / time.Second),
+		Error:                    strings.Join(problems, "; "),
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 )
 
@@ -40,6 +41,8 @@ var (
 	// ErrReadOnlyWithControlWrites: ReadOnly and ControlWrites are both set,
 	// and they ask for opposite things.
 	ErrReadOnlyWithControlWrites = errors.New("sep2adminplane: ReadOnly and ControlWrites are both set")
+	// ErrBadCommsOfflineAfter: CommsOfflineAfter is negative.
+	ErrBadCommsOfflineAfter = errors.New("sep2adminplane: CommsOfflineAfter is negative")
 )
 
 // MinAdminKeyLength is the shortest AdminKey New accepts, in characters.
@@ -99,6 +102,14 @@ type Config struct {
 	// stores. Call Plane.Close before shutting the listener so a running
 	// action is told to stop and is waited for.
 	PanelActions bool
+	// Activity is the recorder the protocol router was given in
+	// assembly.RouterConfig.Activity; the Devices payload reads each device's
+	// comms state and last request from it. Nil reports every device
+	// "unknown".
+	Activity *activity.Recorder
+	// CommsOfflineAfter is the silence after which a device reads offline.
+	// Zero means activity.DefaultOfflineAfter; negative is refused.
+	CommsOfflineAfter time.Duration
 }
 
 // Plane is a built admin plane.
@@ -133,6 +144,9 @@ func New(cfg Config) (*Plane, error) {
 	if cfg.ReadOnly && cfg.ControlWrites {
 		return nil, ErrReadOnlyWithControlWrites
 	}
+	if cfg.CommsOfflineAfter < 0 {
+		return nil, ErrBadCommsOfflineAfter
+	}
 	edition, deadline, grace, err := resolveSettings(cfg)
 	if err != nil {
 		return nil, err
@@ -158,6 +172,9 @@ func New(cfg Config) (*Plane, error) {
 		ReadOnly:       cfg.ReadOnly,
 		PanelActions:   cfg.PanelActions,
 		ActionTracker:  actions,
+
+		Activity:          cfg.Activity,
+		CommsOfflineAfter: cfg.CommsOfflineAfter,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sep2adminplane: %w", err)

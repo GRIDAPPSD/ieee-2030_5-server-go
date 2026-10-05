@@ -240,6 +240,10 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	commsOfflineAfter, err := config.ParseCommsOfflineAfterSeconds(os.Getenv("SEP2_COMMS_OFFLINE_AFTER_SECONDS"))
+	if err != nil {
+		return nil, err
+	}
 	mirrorReadingRetention, err := config.ParseMirrorReadingRetentionSeconds(os.Getenv("SEP2_MIRROR_READING_RETENTION_SECONDS"))
 	if err != nil {
 		return nil, err
@@ -331,6 +335,9 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		// #672: unset by default (zero), which
 		// Config.EffectiveFlowReservationRetentionGrace resolves to 1800 s.
 		FlowReservationRetentionGrace: flowReservationRetentionGrace,
+
+		// #875: unset by default (zero), which resolves to 300 s.
+		CommsOfflineAfter: commsOfflineAfter,
 
 		// #806: unset by default (zero), which resolves to 90000 s and 20000
 		// readings per series.

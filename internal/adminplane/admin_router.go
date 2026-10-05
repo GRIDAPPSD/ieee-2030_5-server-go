@@ -3,10 +3,12 @@ package adminplane
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -52,6 +54,12 @@ type Config struct {
 	// executing, so a caller can wait for them at shutdown. StreamsDone also
 	// ends running actions and refuses new ones.
 	ActionTracker *ActionTracker
+	// Activity is the per-device request recorder the dashboard reads each
+	// device's Comms and lastRequest from. Nil reports every device
+	// "unknown". CommsOfflineAfter is the silence after which a device reads
+	// offline; zero takes activity.DefaultOfflineAfter.
+	Activity          *activity.Recorder
+	CommsOfflineAfter time.Duration
 }
 
 // Build is the admin router Run serves, with its route list for the boot
@@ -252,7 +260,7 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	// (see handleDashboardPage); the route pattern is the same either way,
 	// so the boot-time route list does not change with the flag.
 	if stores != nil {
-		dashboard := NewDashboardHandler(stores, cfg.TLSMode, cfg.LegacyDashboard)
+		dashboard := NewDashboardHandler(stores, cfg.TLSMode, cfg.LegacyDashboard).WithActivity(cfg.Activity, cfg.CommsOfflineAfter)
 		dashboard.RegisterRoutes(authed)
 	}
 

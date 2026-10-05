@@ -41,8 +41,9 @@ var (
 	// ErrReadOnlyWithControlWrites: ReadOnly and ControlWrites are both set,
 	// and they ask for opposite things.
 	ErrReadOnlyWithControlWrites = errors.New("sep2adminplane: ReadOnly and ControlWrites are both set")
-	// ErrBadCommsOfflineAfter: CommsOfflineAfter is negative.
-	ErrBadCommsOfflineAfter = errors.New("sep2adminplane: CommsOfflineAfter is negative")
+	// ErrBadCommsOfflineAfter: CommsOfflineAfter is negative or under one
+	// second, which the payload would report as 0 seconds.
+	ErrBadCommsOfflineAfter = errors.New("sep2adminplane: CommsOfflineAfter is under one second")
 )
 
 // MinAdminKeyLength is the shortest AdminKey New accepts, in characters.
@@ -108,7 +109,8 @@ type Config struct {
 	// "unknown".
 	Activity *activity.Recorder
 	// CommsOfflineAfter is the silence after which a device reads offline.
-	// Zero means activity.DefaultOfflineAfter; negative is refused.
+	// Zero means activity.DefaultOfflineAfter; a value under one
+	// second is refused.
 	CommsOfflineAfter time.Duration
 }
 
@@ -144,7 +146,7 @@ func New(cfg Config) (*Plane, error) {
 	if cfg.ReadOnly && cfg.ControlWrites {
 		return nil, ErrReadOnlyWithControlWrites
 	}
-	if cfg.CommsOfflineAfter < 0 {
+	if cfg.CommsOfflineAfter != 0 && cfg.CommsOfflineAfter < time.Second {
 		return nil, ErrBadCommsOfflineAfter
 	}
 	edition, deadline, grace, err := resolveSettings(cfg)

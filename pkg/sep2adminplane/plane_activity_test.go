@@ -72,10 +72,19 @@ func TestPlaneWithoutActivityReportsUnknown(t *testing.T) {
 	}
 }
 
-func TestNewRefusesNegativeCommsOfflineAfter(t *testing.T) {
-	cfg := baseConfig()
-	cfg.CommsOfflineAfter = -time.Second
-	if _, err := sep2adminplane.New(cfg); !errors.Is(err, sep2adminplane.ErrBadCommsOfflineAfter) {
-		t.Errorf("New(negative CommsOfflineAfter) = %v, want ErrBadCommsOfflineAfter", err)
+func TestNewRefusesCommsOfflineAfterUnderOneSecond(t *testing.T) {
+	for _, d := range []time.Duration{-time.Second, time.Nanosecond, 999 * time.Millisecond} {
+		cfg := baseConfig()
+		cfg.CommsOfflineAfter = d
+		if _, err := sep2adminplane.New(cfg); !errors.Is(err, sep2adminplane.ErrBadCommsOfflineAfter) {
+			t.Errorf("New(CommsOfflineAfter %v) = %v, want ErrBadCommsOfflineAfter", d, err)
+		}
+	}
+	for _, d := range []time.Duration{0, time.Second} {
+		cfg := baseConfig()
+		cfg.CommsOfflineAfter = d
+		if _, err := sep2adminplane.New(cfg); err != nil {
+			t.Errorf("New(CommsOfflineAfter %v) = %v, want accepted", d, err)
+		}
 	}
 }

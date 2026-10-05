@@ -11,12 +11,12 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 )
 
-type lfdiKey struct{}
-
-// activityPolicy identifies a caller by the X-Test-LFDI header and refuses,
-// as the ACL would, any request carrying X-Test-Deny. Both run in Wrap, so
-// the recorder under test sits inside them exactly as in production.
-func activityPolicy() assembly.AuthPolicy {
+// activityPolicy resolves every request to the one identity lfdi, so the
+// identity is available wherever the recorder sits, and refuses any request
+// carrying X-Test-Deny from inside Wrap, as the ACL does. The only thing
+// that can keep a refused request out of the recorder is its position inside
+// Wrap, which is what the refusal test pins.
+func activityPolicy(lfdi string) assembly.AuthPolicy {
 	return assembly.AuthPolicy{
 		Wrap: func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,21 +24,16 @@ func activityPolicy() assembly.AuthPolicy {
 					http.Error(w, "refused", http.StatusForbidden)
 					return
 				}
-				ctx := context.WithValue(r.Context(), lfdiKey{}, r.Header.Get("X-Test-LFDI"))
-				next.ServeHTTP(w, r.WithContext(ctx))
+				next.ServeHTTP(w, r)
 			})
 		},
-		Identity: func(ctx context.Context) (string, string, bool) {
-			v, _ := ctx.Value(lfdiKey{}).(string)
-			return v, "", v != ""
-		},
+		Identity: func(context.Context) (string, string, bool) { return lfdi, "", true },
 	}
 }
 
-func activityGet(t *testing.T, h http.Handler, lfdi string, deny bool) int {
+func activityGet(t *testing.T, h http.Handler, deny bool) int {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/dcap", nil)
-	req.Header.Set("X-Test-LFDI", lfdi)
 	if deny {
 		req.Header.Set("X-Test-Deny", "1")
 	}
@@ -50,9 +45,9 @@ func activityGet(t *testing.T, h http.Handler, lfdi string, deny bool) int {
 func TestRouterRecordsRequestsThatPassWrap(t *testing.T) {
 	t.Parallel()
 	rec := activity.New()
-	h, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{Activity: rec}, nil, activityPolicy(), "sfdi", "lfdi", nil)
+	h, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{Activity: rec}, nil, activityPolicy("caller-lfdi"), "sfdi", "lfdi", nil)
 
-	if code := activityGet(t, h, "caller-lfdi", false); code != http.StatusOK {
+	if code := activityGet(t, h, false); code != http.StatusOK {
 		t.Fatalf("GET /dcap status = %d, want 200", code)
 	}
 	if _, n, ok := rec.Last("caller-lfdi"); !ok || n != 1 {
@@ -63,25 +58,23 @@ func TestRouterRecordsRequestsThatPassWrap(t *testing.T) {
 func TestRouterDoesNotRecordRefusedRequests(t *testing.T) {
 	t.Parallel()
 	rec := activity.New()
-	h, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{Activity: rec}, nil, activityPolicy(), "sfdi", "lfdi", nil)
+	h, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{Activity: rec}, nil, activityPolicy("refused-lfdi"), "sfdi", "lfdi", nil)
 
-	if code := activityGet(t, h, "refused-lfdi", true); code != http.StatusForbidden {
+	if code := activityGet(t, h, true); code != http.StatusForbidden {
 		t.Fatalf("control: refused request status = %d, want 403", code)
 	}
 	if _, n, ok := rec.Last("refused-lfdi"); ok || n != 0 {
 		t.Errorf("refused request recorded: count = %d ok=%v, want none", n, ok)
 	}
-	if got := rec.State("refused-lfdi", timeNow(), 0); got != activity.NotSeen {
+	if got := rec.State("refused-lfdi", time.Now(), time.Minute); got != activity.NotSeen {
 		t.Errorf("refused device State = %q, want %q", got, activity.NotSeen)
 	}
 }
 
 func TestRouterWithNilActivityServes(t *testing.T) {
 	t.Parallel()
-	h, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{}, nil, activityPolicy(), "sfdi", "lfdi", nil)
-	if code := activityGet(t, h, "caller-lfdi", false); code != http.StatusOK {
+	h, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{}, nil, activityPolicy("caller-lfdi"), "sfdi", "lfdi", nil)
+	if code := activityGet(t, h, false); code != http.StatusOK {
 		t.Errorf("GET /dcap with no recorder: status = %d, want 200", code)
 	}
 }
-
-func timeNow() time.Time { return time.Now() }

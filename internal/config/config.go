@@ -376,9 +376,10 @@ func ParseCommsOfflineAfterSeconds(v string) (time.Duration, error) {
 	return time.Duration(n) * time.Second, nil
 }
 
-// EffectiveCommsOfflineAfter resolves an unset threshold to the default.
+// EffectiveCommsOfflineAfter resolves an unset or non-positive threshold to
+// the default, so it never returns a negative value.
 func (c *Config) EffectiveCommsOfflineAfter() time.Duration {
-	if c.CommsOfflineAfter == 0 {
+	if c.CommsOfflineAfter <= 0 {
 		return DefaultCommsOfflineAfter
 	}
 	return c.CommsOfflineAfter

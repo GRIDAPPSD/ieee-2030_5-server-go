@@ -110,3 +110,36 @@ func TestDashboardComms_NilRecorderIsUnknown(t *testing.T) {
 		t.Errorf("devices = %d, want 2", len(p.Devices))
 	}
 }
+
+// The recorder's clock may be in any zone; lastRequest is always UTC, so a
+// UI parses one form.
+func TestDashboardComms_LastRequestIsUTCFromANonUTCClock(t *testing.T) {
+	zone := time.FixedZone("UTC+5", 5*3600)
+	at := time.Date(2026, 10, 5, 17, 0, 0, 0, zone)
+	rec := activity.NewWithClock(func() time.Time { return at })
+	rec.Record("seen")
+	p := commsDashboard(t, rec, 0, at)
+	got := byLFDI(t, p)["seen"].LastRequest
+	if got == nil || *got != "2026-10-05T12:00:00Z" {
+		t.Errorf("lastRequest = %v, want 2026-10-05T12:00:00Z", got)
+	}
+}
+
+// A stored EndDevice may hold its LFDI in lowercase while the certificate
+// yields uppercase; the device must still read online.
+func TestDashboardComms_StoredLowercaseLFDIMatchesCertificateCase(t *testing.T) {
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	rec := activity.NewWithClock(func() time.Time { return now })
+	rec.Record("ABCDEF0123456789ABCDEF0123456789ABCDEF01")
+
+	mem := memory.NewEndDeviceStore()
+	if err := mem.Create(context.Background(), "1", sep2.EndDevice{SFDI: "s1", LFDI: "abcdef0123456789abcdef0123456789abcdef01"}); err != nil {
+		t.Fatal(err)
+	}
+	h := NewDashboardHandler(dashboardTestStores(t, mem), "TLS", false).WithActivity(rec, 0)
+	h.now = func() time.Time { return now }
+	d := h.collectData().Devices
+	if len(d) != 1 || d[0].Comms != "online" {
+		t.Errorf("devices = %+v, want one online device", d)
+	}
+}

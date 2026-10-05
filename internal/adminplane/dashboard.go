@@ -75,12 +75,12 @@ func NewDashboardHandler(stores *Stores, tlsMode string, legacyUI bool) *Dashboa
 }
 
 // WithActivity makes the dashboard report each device's comms state from rec,
-// judged against offlineAfter (zero takes activity.DefaultOfflineAfter). A
+// judged against offlineAfter (zero or negative takes activity.DefaultOfflineAfter). A
 // nil rec leaves every device "unknown". It returns d so construction chains.
 func (d *DashboardHandler) WithActivity(rec *activity.Recorder, offlineAfter time.Duration) *DashboardHandler {
 	d.activity = rec
 	d.offlineAfter = offlineAfter
-	if d.offlineAfter == 0 {
+	if d.offlineAfter <= 0 {
 		d.offlineAfter = activity.DefaultOfflineAfter
 	}
 	return d

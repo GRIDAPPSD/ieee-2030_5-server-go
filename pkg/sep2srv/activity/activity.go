@@ -7,6 +7,7 @@ package activity
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -29,10 +30,12 @@ const (
 // the operator has not set a threshold.
 const DefaultOfflineAfter = 5 * time.Minute
 
-// Recorder keeps the last request time and a request count per LFDI. The
-// map holds only LFDIs that passed identity and the ACL, so it is bounded by
-// the device fleet, not by request volume. The zero value is not usable; a
-// nil *Recorder is, and reports Unknown.
+// Recorder keeps the last request time and a request count per LFDI. LFDIs
+// are compared uppercase, the form a certificate yields, so a record that
+// stores another case still matches. The map gains one entry per distinct
+// certificate that chains to a trusted CA and passes the ACL, registered or
+// not, and entries are never removed. The zero value is not usable; a nil
+// *Recorder is, and reports Unknown.
 type Recorder struct {
 	now func() time.Time
 
@@ -59,10 +62,12 @@ func (r *Recorder) Record(lfdi string) {
 	if r == nil || lfdi == "" {
 		return
 	}
-	at := r.now()
+	lfdi = strings.ToUpper(lfdi)
+	// The clock is read under the lock so a slower caller cannot store an
+	// older time over a newer one.
 	r.mu.Lock()
 	e := r.devices[lfdi]
-	e.last, e.count = at, e.count+1
+	e.last, e.count = r.now(), e.count+1
 	r.devices[lfdi] = e
 	r.mu.Unlock()
 }
@@ -74,7 +79,7 @@ func (r *Recorder) Last(lfdi string) (time.Time, uint64, bool) {
 		return time.Time{}, 0, false
 	}
 	r.mu.Lock()
-	e, ok := r.devices[lfdi]
+	e, ok := r.devices[strings.ToUpper(lfdi)]
 	r.mu.Unlock()
 	return e.last, e.count, ok
 }

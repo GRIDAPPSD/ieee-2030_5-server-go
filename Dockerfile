@@ -12,7 +12,7 @@
 # label to the Loki "service" label.
 
 # --- Builder ------------------------------------------------------
-FROM golang:1.26.3 AS builder
+FROM golang:1.26.8 AS builder
 
 WORKDIR /src
 

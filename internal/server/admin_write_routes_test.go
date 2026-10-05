@@ -103,6 +103,11 @@ func TestEveryAdminWriteRouteIsCovered(t *testing.T) {
 		}
 	}
 	for p := range adminplane.AdminBodyTypes() {
+		// Mounted only when PanelActions is on, which this router leaves off;
+		// internal/adminplane's own tests drive it with the setting on.
+		if p == adminplane.PanelActionPattern {
+			continue
+		}
 		if !slices.Contains(writes, p) {
 			t.Errorf("body-type table names %s, which is not a registered admin write route", p)
 		}

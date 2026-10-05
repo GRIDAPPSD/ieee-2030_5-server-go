@@ -69,4 +69,8 @@ type Panel struct {
 	// Picker, when non-nil, lets the shell ask the panel to show a
 	// selected subset of its Choices. Nil keeps today's behavior.
 	Picker *Picker
+
+	// Actions are typed forms the shell offers beside View. They are served
+	// only when the plane's PanelActions setting is on (action.go).
+	Actions []Action
 }

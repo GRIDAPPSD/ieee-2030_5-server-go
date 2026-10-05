@@ -23,6 +23,11 @@ func AuthedAdminPatterns(adminKey string, svc *handler.AdminCertService, stores 
 	return authed.Patterns()
 }
 
+// PanelActionPattern is the one admin write route mounted only when
+// Config.PanelActions is on. Its body-type entry is therefore in the table
+// while no default router lists the route (#863).
+const PanelActionPattern = "POST /api/ui/panels/{id}/actions/{action}"
+
 // The three guard tables below are returned as copies: the router consults
 // the originals on every request, so a caller that could edit them could
 // remove a credential requirement from a live server.

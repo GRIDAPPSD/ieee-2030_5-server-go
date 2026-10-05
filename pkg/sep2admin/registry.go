@@ -184,6 +184,10 @@ func (r *registry) Register(p Panel) error {
 		return fmt.Errorf("%w: got %d, want %d", ErrUnsupportedDescriptorVersion, p.DescriptorVersion, CurrentDescriptorVersion)
 	}
 
+	if err := validateActions(p.Actions); err != nil {
+		return err
+	}
+
 	r.panels[p.ID] = registeredPanel{Panel: p, seq: r.next}
 	r.next++
 	return nil

@@ -1,6 +1,7 @@
 package sep2adminplane
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -92,12 +93,19 @@ type Config struct {
 	// Panels are extra tabs the shell shows after its own. A panel the
 	// registry refuses makes New fail.
 	Panels []sep2admin.Panel
+	// PanelActions serves the typed actions the panels declare, under
+	// /api/ui/panels/{id}/actions. Off, those routes answer 404. It works
+	// with ReadOnly: an action changes what its embedder does, not the
+	// stores. Call Plane.Close before shutting the listener so a running
+	// action is told to stop.
+	PanelActions bool
 }
 
 // Plane is a built admin plane.
 type Plane struct {
 	handler  http.Handler
 	patterns []string
+	close    context.CancelFunc
 }
 
 // New builds the plane. It refuses a blank or short AdminKey, an empty
@@ -133,6 +141,7 @@ func New(cfg Config) (*Plane, error) {
 		return nil, err
 	}
 
+	shutdown, closePlane := context.WithCancel(context.Background())
 	h, patterns, err := adminplane.Build(adminplane.Config{
 		AdminKey:       cfg.AdminKey,
 		Stores:         stores,
@@ -143,11 +152,14 @@ func New(cfg Config) (*Plane, error) {
 		LoopbackBypass: cfg.LoopbackBypass,
 		ControlWrites:  cfg.ControlWrites,
 		ReadOnly:       cfg.ReadOnly,
+		PanelActions:   cfg.PanelActions,
+		Shutdown:       shutdown,
 	})
 	if err != nil {
+		closePlane()
 		return nil, fmt.Errorf("sep2adminplane: %w", err)
 	}
-	return &Plane{handler: h, patterns: patterns}, nil
+	return &Plane{handler: h, patterns: patterns, close: closePlane}, nil
 }
 
 // resolveSettings turns the edition, deadline and grace of cfg into the values
@@ -213,6 +225,15 @@ func resolveEdition(edition string, stores2023 bool) (handler.SEP2Edition, error
 
 // Handler serves the admin UI at /ui/ and the admin API under /api/.
 func (p *Plane) Handler() http.Handler { return p.handler }
+
+// Close ends every running panel action and makes the plane refuse new ones
+// with 503. It does not stop the listener, which the caller owns, and it is
+// safe to call more than once.
+func (p *Plane) Close() {
+	if p.close != nil {
+		p.close()
+	}
+}
 
 // Patterns lists every route mounted under the plane, sorted. The slice is
 // the caller's.

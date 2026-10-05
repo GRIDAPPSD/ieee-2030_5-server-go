@@ -33,6 +33,13 @@ const (
 // panels the shell adds after its own tabs. The core band holds the
 // shell's tabs, which the shell renders itself, so it is never served.
 type panelSet struct {
+	// shutdown ends when the plane is closed; panel actions (panel_actions.go)
+	// stop on it. actionLimit is the plane-wide action rate, and actions is
+	// true when the plane serves them.
+	shutdown    context.Context
+	actionLimit *tokenBucket
+	actions     bool
+
 	panels  []sep2admin.Panel
 	busy    map[string]*atomic.Bool
 	timeout time.Duration
@@ -65,13 +72,21 @@ func newPanelSet(panels []sep2admin.Panel) (*panelSet, error) {
 // noPanels is the set BuildAdminRouter mounts: the routes exist and list
 // nothing.
 func noPanels() *panelSet {
-	return &panelSet{panels: []sep2admin.Panel{}, busy: map[string]*atomic.Bool{}, timeout: panelViewTimeout}
+	return &panelSet{
+		panels:      []sep2admin.Panel{},
+		shutdown:    context.Background(),
+		actionLimit: newTokenBucket(time.Now),
+		busy:        map[string]*atomic.Bool{},
+		timeout:     panelViewTimeout,
+	}
 }
 
 type panelEntry struct {
 	ID     string       `json:"id"`
 	Label  string       `json:"label"`
 	Picker *pickerEntry `json:"picker,omitempty"`
+	// Actions is set only when the plane serves panel actions.
+	Actions []actionEntry `json:"actions,omitempty"`
 }
 
 type pickerEntry struct {
@@ -80,13 +95,17 @@ type pickerEntry struct {
 
 // handleList answers GET /api/ui/panels with [{id, label}] in frozen
 // order, and [] when nothing is registered. A panel with a Picker also
-// carries {"picker":{"max":N}}.
+// carries {"picker":{"max":N}}, and with actions on, one that has Actions
+// carries {"actions":[{id,label}]}.
 func (ps *panelSet) handleList() http.HandlerFunc {
 	entries := make([]panelEntry, 0, len(ps.panels))
 	for _, p := range ps.panels {
 		e := panelEntry{ID: p.ID, Label: p.Label}
 		if p.Picker != nil {
 			e.Picker = &pickerEntry{Max: sep2admin.MaxSelection}
+		}
+		if ps.actions {
+			e.Actions = actionEntries(p)
 		}
 		entries = append(entries, e)
 	}

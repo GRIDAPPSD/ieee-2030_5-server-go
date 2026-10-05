@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -181,6 +183,8 @@ func (d *DashboardHandler) collectData() DashboardData {
 		})
 	}
 
+	sortDevicesByHref(devices)
+
 	uptime := time.Since(d.startTime).Round(time.Second)
 
 	return DashboardData{
@@ -194,6 +198,32 @@ func (d *DashboardHandler) collectData() DashboardData {
 		CommsOfflineAfterSeconds: int(d.offlineAfter / time.Second),
 		Error:                    strings.Join(problems, "; "),
 	}
+}
+
+// sortDevicesByHref orders devices by the trailing integer of their href, so
+// /edev/2 precedes /edev/10. Hrefs with no trailing integer follow the
+// numbered ones, ordered by href text. Doing it in the payload keeps every
+// consumer of the dashboard feed in the same order.
+func sortDevicesByHref(devices []DashboardDevice) {
+	sort.SliceStable(devices, func(i, j int) bool {
+		ni, oki := hrefNumber(devices[i].Href)
+		nj, okj := hrefNumber(devices[j].Href)
+		switch {
+		case oki && okj && ni != nj:
+			return ni < nj
+		case oki != okj:
+			return oki
+		case !oki:
+			return devices[i].Href < devices[j].Href
+		}
+		return false
+	})
+}
+
+// hrefNumber returns the integer after the last "/" of href.
+func hrefNumber(href string) (uint64, bool) {
+	n, err := strconv.ParseUint(href[strings.LastIndex(href, "/")+1:], 10, 64)
+	return n, err == nil
 }
 
 // handleDashboardPage answers GET / with the embedded admin UI

@@ -183,3 +183,25 @@ func TestDashboardData_EnabledFlagKeepsNotSetApartFromFalse(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardData_DevicesOrderedByHrefNumber(t *testing.T) {
+	mem := memory.NewEndDeviceStore()
+	for _, href := range []string{"/edev/10", "/edev/2", "/edev/zeta", "/edev/1", "/edev/alpha", "/edev/11"} {
+		id := href[strings.LastIndex(href, "/")+1:]
+		dev := sep2.EndDevice{SFDI: "s" + id, LFDI: "l" + id}
+		dev.Href = href
+		if err := mem.Create(context.Background(), id, dev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, body := getDashboardData(t, dashboardTestStores(t, mem))
+
+	var got []string
+	for _, d := range body["devices"].([]any) {
+		got = append(got, d.(map[string]any)["href"].(string))
+	}
+	want := []string{"/edev/1", "/edev/2", "/edev/10", "/edev/11", "/edev/alpha", "/edev/zeta"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("order = %v, want %v", got, want)
+	}
+}

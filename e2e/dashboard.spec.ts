@@ -115,7 +115,8 @@ test('dashboard renders all UI sections', async ({ page }) => {
   await page.waitForLoadState('domcontentloaded');
 
   // Overview card
-  await expect(page.getByText('CONNECTED DEVICES')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Registered devices' })).toBeVisible();
+  await expect(page.getByText('Connected Devices')).toHaveCount(0);
   await expect(page.getByText('Mirror Usage Points')).toBeVisible();
 
   // Server info card
@@ -138,6 +139,9 @@ test('dashboard renders all UI sections', async ({ page }) => {
   await expect(page.getByText('END DEVICES')).toBeVisible();
   await expect(page.locator('th:has-text("SFDI")')).toBeVisible();
   await expect(page.locator('th:has-text("LFDI")')).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Enabled' })).toBeVisible();
+  await expect(page.getByText('ONLINE', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('OFFLINE', { exact: true })).toHaveCount(0);
 
   // Activity chart
   await page.getByTestId('tab-overview').click();

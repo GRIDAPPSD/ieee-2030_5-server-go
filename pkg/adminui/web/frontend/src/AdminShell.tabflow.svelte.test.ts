@@ -62,7 +62,7 @@ function topologyOf(fake: Fake): TopologyNode {
       label: d.href,
       sfdi: d.sfdi,
       lfdi: d.lfdi,
-      enabled: d.enabled,
+      enabled: d.enabled ?? undefined,
     })),
   }
 }

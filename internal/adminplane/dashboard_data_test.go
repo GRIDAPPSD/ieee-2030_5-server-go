@@ -156,3 +156,30 @@ func TestDashboardData_ListErrorIsLoggedOncePerRead(t *testing.T) {
 		t.Errorf("list error logged %d times in %q, want 1", got, buf.String())
 	}
 }
+
+func TestDashboardData_EnabledFlagKeepsNotSetApartFromFalse(t *testing.T) {
+	yes, no := true, false
+	mem := memory.NewEndDeviceStore()
+	for id, enabled := range map[string]*bool{"a": &yes, "b": &no, "c": nil} {
+		if err := mem.Create(context.Background(), id, sep2.EndDevice{SFDI: "sfdi-" + id, LFDI: "lfdi-" + id, Enabled: enabled}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, body := getDashboardData(t, dashboardTestStores(t, mem))
+
+	got := map[string]any{}
+	for _, d := range body["devices"].([]any) {
+		dev := d.(map[string]any)
+		enabled, present := dev["enabled"]
+		if !present {
+			t.Fatalf("device %v has no enabled key", dev["sfdi"])
+		}
+		got[dev["sfdi"].(string)] = enabled
+	}
+	want := map[string]any{"sfdi-a": true, "sfdi-b": false, "sfdi-c": nil}
+	for sfdi, w := range want {
+		if got[sfdi] != w {
+			t.Errorf("enabled for %s = %v, want %v", sfdi, got[sfdi], w)
+		}
+	}
+}

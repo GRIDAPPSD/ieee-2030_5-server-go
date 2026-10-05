@@ -55,7 +55,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
 <div class="grid">
   <div class="card">
-    <h2>Connected Devices</h2>
+    <h2>Registered devices</h2>
     <div class="big-number" id="bigDeviceCount">0</div>
     <div class="stat-row"><span class="stat-label">Mirror Usage Points</span><span id="mupCount">0</span></div>
   </div>
@@ -157,7 +157,7 @@ const dashboardHTML = `<!DOCTYPE html>
   <div class="card full-width">
     <h2>End Devices</h2>
     <table>
-      <thead><tr><th>SFDI</th><th>LFDI</th><th>Status</th><th>Href</th><th>Assign FSA</th></tr></thead>
+      <thead><tr><th>SFDI</th><th>LFDI</th><th>Enabled</th><th>Href</th><th>Assign FSA</th></tr></thead>
       <tbody id="deviceTable"><tr><td colspan="5" style="color: var(--dim);">No devices registered</td></tr></tbody>
     </table>
   </div>
@@ -188,7 +188,7 @@ try {
         { type: 'value', name: 'MUPs', axisLabel: { color: '#94a3b8' }, splitLine: { show: false } }
       ],
       series: [
-        { name: 'Devices', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2, color: '#3b82f6' }, areaStyle: { color: 'rgba(59,130,246,0.1)' }, data: [] },
+        { name: 'Registered', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2, color: '#3b82f6' }, areaStyle: { color: 'rgba(59,130,246,0.1)' }, data: [] },
         { name: 'MUPs', type: 'line', smooth: true, symbol: 'none', yAxisIndex: 1, lineStyle: { width: 2, color: '#22c55e' }, data: [] }
       ],
       legend: { textStyle: { color: '#94a3b8' }, top: 0 },
@@ -261,7 +261,7 @@ function onSSEMessage(event) {
       var tr = document.createElement('tr');
       appendCell(tr, dev.sfdi, 'mono');
       appendCell(tr, (dev.lfdi || '').substring(0, 16) + '...', 'mono');
-      appendCell(tr, dev.enabled ? 'ONLINE' : 'OFFLINE', dev.enabled ? 'online' : 'offline');
+      appendCell(tr, dev.enabled === true ? 'Yes' : dev.enabled === false ? 'No' : 'Not set', dev.enabled === true ? 'online' : 'offline');
       appendCell(tr, dev.href, 'mono');
       // #163: assign-FSA cell.
       var assignTd = document.createElement('td');

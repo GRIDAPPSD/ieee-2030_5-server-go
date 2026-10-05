@@ -103,7 +103,7 @@ func TestAdminListenerRealUnmatchedAPIPathIsNotShadowedBySPA(t *testing.T) {
 	if strings.Contains(rec.Body.String(), `<div id="app">`) {
 		t.Fatalf("GET /api/does-not-exist body looks like the SPA shell; the real /api surface must never fall to the /ui/ handler: body = %q", rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "Connected Devices") {
+	if strings.Contains(rec.Body.String(), "Registered devices") {
 		t.Fatalf("GET /api/does-not-exist body looks like the dashboard page; body = %q", rec.Body.String())
 	}
 }
@@ -116,7 +116,7 @@ func TestAdminListenerRealUnmatchedAPIPathIsNotShadowedBySPA(t *testing.T) {
 // other page.
 //
 // The two bodies are also asserted to be different pages, not just
-// non-empty: "#app is present" and "Connected Devices is present" would
+// non-empty: "#app is present" and "Registered devices is present" would
 // both hold for a single page that happened to contain both strings.
 func TestAdminListenerDashboardFlagServesBothBranches(t *testing.T) {
 	stores := newTestStores()
@@ -142,7 +142,7 @@ func TestAdminListenerDashboardFlagServesBothBranches(t *testing.T) {
 		if !strings.Contains(body, `<div id="app">`) {
 			t.Fatalf("GET / did not serve the SPA index (missing #app mount point); body = %q", body)
 		}
-		if strings.Contains(body, "Connected Devices") {
+		if strings.Contains(body, "Registered devices") {
 			t.Fatalf("GET / served the legacy string-constant dashboard with the flag off; body = %q", body)
 		}
 	})
@@ -150,7 +150,7 @@ func TestAdminListenerDashboardFlagServesBothBranches(t *testing.T) {
 	t.Run("flag on serves the legacy string-constant dashboard", func(t *testing.T) {
 		body := getRoot(t, true)
 
-		if !strings.Contains(body, "Connected Devices") {
+		if !strings.Contains(body, "Registered devices") {
 			t.Fatalf("GET / did not serve the legacy dashboard with the flag on; body = %q", body)
 		}
 		if strings.Contains(body, `<div id="app">`) {

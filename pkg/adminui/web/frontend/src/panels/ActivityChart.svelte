@@ -45,7 +45,7 @@
     ],
     series: [
       {
-        name: 'Devices',
+        name: 'Registered',
         type: 'line' as const,
         smooth: true,
         symbol: 'none' as const,

@@ -26,7 +26,7 @@ test.beforeEach(async ({ page }) => {
 // own cards rather than falling back to overview (issue 561's per-tab
 // card partition, criterion 1, landed in step A).
 const TAB_HEADING: Record<string, string> = {
-  overview: 'Connected Devices',
+  overview: 'Registered devices',
   devices: 'End Devices',
   fsas: 'Create FSA Template',
   control: 'Send DER Control',

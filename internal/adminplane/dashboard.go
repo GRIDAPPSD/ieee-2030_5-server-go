@@ -28,10 +28,12 @@ type DashboardData struct {
 
 // DashboardDevice represents a device in the dashboard.
 type DashboardDevice struct {
-	SFDI    string `json:"sfdi"`
-	LFDI    string `json:"lfdi"`
-	Href    string `json:"href"`
-	Enabled bool   `json:"enabled"`
+	SFDI string `json:"sfdi"`
+	LFDI string `json:"lfdi"`
+	Href string `json:"href"`
+	// Enabled is null when the EndDevice has no enabled flag, so a UI can
+	// tell "not set" apart from "disabled".
+	Enabled *bool `json:"enabled"`
 }
 
 // DashboardHandler serves the admin dashboard and SSE endpoint.
@@ -133,7 +135,11 @@ func (d *DashboardHandler) collectData() DashboardData {
 		note("device list", listErr)
 	}
 	for _, dev := range result.Items {
-		enabled := dev.Enabled != nil && *dev.Enabled
+		var enabled *bool
+		if dev.Enabled != nil {
+			v := *dev.Enabled
+			enabled = &v
+		}
 		devices = append(devices, DashboardDevice{
 			SFDI:    dev.SFDI,
 			LFDI:    dev.LFDI,

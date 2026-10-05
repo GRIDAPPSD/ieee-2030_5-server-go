@@ -25,6 +25,11 @@ type Config struct {
 	// Panels are an embedder's extra tabs, served after the shell's own
 	// under /api/ui/panels. Run registers none.
 	Panels []sep2admin.Panel
+	// StreamsDone, when closed, ends every open panel stream with a final
+	// status event and refuses new ones. Close it before the listener's
+	// Shutdown: Shutdown does not cancel request contexts, so an open
+	// stream would otherwise hold it to its deadline.
+	StreamsDone <-chan struct{}
 	// LoopbackBypass admits a loopback request with no forwarded header and
 	// no credential (#246). Run sets it; the zero value requires a
 	// credential from every address.
@@ -47,6 +52,7 @@ func Build(cfg Config) (http.Handler, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	panels.streamsDone = cfg.StreamsDone
 	authed, authedWithMiddleware := buildAuthedAdminMux(cfg, panels)
 	h, patterns := buildOuterAdminRouter(cfg, authed, authedWithMiddleware)
 	return h, patterns, nil
@@ -238,11 +244,12 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	}
 
 	// #829 embedder panels. Mounted with no panels too, so the shell can
-	// tell "none" ([]) from an older server (404). Both are sensitive
+	// tell "none" ([]) from an older server (404). All are sensitive
 	// reads (sensitiveAdminReadPrefixes): a View may disclose anything.
 	authed.HandleFunc("GET /api/ui/panels", panels.handleList())
 	authed.HandleFunc("GET /api/ui/panels/{id}", panels.handleGet())
 	authed.HandleFunc("GET /api/ui/panels/{id}/choices", panels.handleChoices())
+	authed.HandleFunc("GET /api/ui/panels/{id}/stream", panels.handleStream())
 
 	// Admin UI (embedded Svelte SPA, pkg/adminui/web). Mounted at
 	// "/ui/", a more specific pattern than the dashboard's catch-all "GET

@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.11.1] - 2026-10-05
 
-This entry covers `v0.11.0..v0.11.1` (1 merged pull request). It is a PATCH
-release under the 0.x carve-out: the only entry is a `bug fix`, and no exported
-identifier changes.
+This entry covers `v0.11.0..v0.11.1` (one bug fix, plus release preparation).
+It is a PATCH release under the 0.x carve-out: the only entry is a `bug fix`,
+and no exported identifier changes.
 
 ### Fixed
 

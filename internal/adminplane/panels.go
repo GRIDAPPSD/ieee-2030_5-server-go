@@ -33,16 +33,20 @@ const (
 // panels the shell adds after its own tabs. The core band holds the
 // shell's tabs, which the shell renders itself, so it is never served.
 type panelSet struct {
-	// shutdown ends when the plane is closed; panel actions (panel_actions.go)
-	// stop on it. actionLimit is the plane-wide action rate, and actions is
-	// true when the plane serves them.
-	shutdown    context.Context
-	actionLimit *tokenBucket
+	// actions is true when the plane serves panel actions
+	// (panel_actions.go); actionLimit is their plane-wide rate, shared with
+	// the schema read, and running counts the Run calls still executing.
 	actions     bool
+	actionLimit *tokenBucket
+	running     *ActionTracker
 
 	panels  []sep2admin.Panel
 	busy    map[string]*atomic.Bool
 	timeout time.Duration
+	// openStreams counts this plane's open panel streams (panel_stream.go).
+	openStreams atomic.Int32
+	// streamsDone is Config.StreamsDone; nil never closes.
+	streamsDone <-chan struct{}
 }
 
 // newPanelSet registers and freezes panels. Any refusal fails the build,
@@ -74,8 +78,8 @@ func newPanelSet(panels []sep2admin.Panel) (*panelSet, error) {
 func noPanels() *panelSet {
 	return &panelSet{
 		panels:      []sep2admin.Panel{},
-		shutdown:    context.Background(),
 		actionLimit: newTokenBucket(time.Now),
+		running:     &ActionTracker{},
 		busy:        map[string]*atomic.Bool{},
 		timeout:     panelViewTimeout,
 	}
@@ -85,8 +89,16 @@ type panelEntry struct {
 	ID     string       `json:"id"`
 	Label  string       `json:"label"`
 	Picker *pickerEntry `json:"picker,omitempty"`
+	Stream *streamEntry `json:"stream,omitempty"`
 	// Actions is set only when the plane serves panel actions.
 	Actions []actionEntry `json:"actions,omitempty"`
+}
+
+// streamEntry tells the shell the stream parameter's bounds, so it can
+// refuse a value before asking.
+type streamEntry struct {
+	MaxLen  int    `json:"maxLen"`
+	Charset string `json:"charset"`
 }
 
 type pickerEntry struct {
@@ -95,14 +107,18 @@ type pickerEntry struct {
 
 // handleList answers GET /api/ui/panels with [{id, label}] in frozen
 // order, and [] when nothing is registered. A panel with a Picker also
-// carries {"picker":{"max":N}}, and with actions on, one that has Actions
-// carries {"actions":[{id,label}]}.
+// carries {"picker":{"max":N}}, one with a Stream
+// {"stream":{"maxLen":N,"charset":"..."}}, and with actions on, one that has
+// Actions {"actions":[{id,label}]}.
 func (ps *panelSet) handleList() http.HandlerFunc {
 	entries := make([]panelEntry, 0, len(ps.panels))
 	for _, p := range ps.panels {
 		e := panelEntry{ID: p.ID, Label: p.Label}
 		if p.Picker != nil {
 			e.Picker = &pickerEntry{Max: sep2admin.MaxSelection}
+		}
+		if p.Stream != nil {
+			e.Stream = &streamEntry{MaxLen: p.Stream.Param.MaxLen, Charset: p.Stream.Param.Charset}
 		}
 		if ps.actions {
 			e.Actions = actionEntries(p)

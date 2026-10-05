@@ -470,8 +470,8 @@ func TestPanelActionRunsUnderTheViewsOneAtATimeFlag(t *testing.T) {
 }
 
 func TestPanelActionEndsWhenThePlaneShutsDown(t *testing.T) {
-	shutdown, closePlane := context.WithCancel(context.Background())
-	defer closePlane()
+	shutdown := make(chan struct{})
+	closePlane := func() { close(shutdown) }
 	entered := make(chan struct{})
 	ended := make(chan error, 1)
 	run := func(ctx context.Context, _ sep2admin.ActionValues) (sep2admin.ActionResult, error) {
@@ -484,7 +484,7 @@ func TestPanelActionEndsWhenThePlaneShutsDown(t *testing.T) {
 		}
 		return sep2admin.ActionResult{}, ctx.Err()
 	}
-	h := buildActions(t, Config{PanelActions: true, Shutdown: shutdown}, actionPanel(run))
+	h := buildActions(t, Config{PanelActions: true, StreamsDone: shutdown}, actionPanel(run))
 
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() { done <- post(h, actionPath, goodActionBody) }()

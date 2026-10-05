@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2adminplane"
@@ -57,8 +58,10 @@ func TestPanelActionsWorkOnAReadOnlyPlaneAndStopOnClose(t *testing.T) {
 		t.Fatalf("Run saw %v, want [true]", got)
 	}
 
-	p.Close()
-	p.Close() // safe to repeat
+	if n := p.Close(time.Second); n != 0 {
+		t.Fatalf("Close reported %d running actions, want 0", n)
+	}
+	p.Close(0) // safe to repeat
 	if rec := send(p, http.MethodPost, "/api/ui/panels/switch/actions/publishing", `{"on":false}`, true); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("POST after Close = %d %s, want 503", rec.Code, rec.Body)
 	}

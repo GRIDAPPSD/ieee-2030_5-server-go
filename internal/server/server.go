@@ -15,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -739,7 +740,9 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	// #270: resolve the admin host-header allowlist from the static
 	// defaults plus operator-supplied SEP2_ADMIN_ALLOWED_HOSTS extras.
 	allowedHosts := adminplane.ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
+	streamsDone := make(chan struct{})
 	adminRouter, adminRoutes, err := adminplane.Build(adminplane.Config{
+		StreamsDone:     streamsDone,
 		AdminKey:        cfg.AdminKey,
 		CertService:     svc,
 		Stores:          stores,
@@ -774,6 +777,10 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	}
 
 	adminSrv := newAdminServer(adminRouter)
+	// Shutdown does not cancel request contexts, so open panel streams are
+	// ended here, at its start, rather than holding it to its deadline.
+	var endStreams sync.Once
+	adminSrv.RegisterOnShutdown(func() { endStreams.Do(func() { close(streamsDone) }) })
 
 	go func() {
 		log.Printf("Admin server listening on %s (%s)", addr, tlsModeDescription)

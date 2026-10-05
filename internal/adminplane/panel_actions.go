@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -50,6 +51,14 @@ func (b *tokenBucket) allow() bool {
 	b.tokens--
 	return true
 }
+
+// ActionTracker counts the panel action Run calls still executing. A Run
+// that ignores its context outlives the request that started it, so the
+// count is the plane's own, not the request's.
+type ActionTracker struct{ n atomic.Int64 }
+
+// Running is how many Run calls have started and not yet returned.
+func (t *ActionTracker) Running() int { return int(t.n.Load()) }
 
 type actionFieldEntry struct {
 	Name    string                    `json:"name"`
@@ -194,7 +203,7 @@ func (ps *panelSet) handleAction() http.HandlerFunc {
 			writePanelError(w, http.StatusForbidden, "cross-origin admin request refused")
 			return
 		}
-		if ps.shutdown.Err() != nil {
+		if ps.stopping() {
 			writePanelError(w, http.StatusServiceUnavailable, "plane is shutting down")
 			return
 		}
@@ -253,8 +262,13 @@ func writeActionInvalid(w http.ResponseWriter, err error) {
 func (ps *panelSet) runAction(w http.ResponseWriter, r *http.Request, p sep2admin.Panel, a sep2admin.Action, vals sep2admin.ActionValues) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	stop := context.AfterFunc(ps.shutdown, cancel)
-	defer stop()
+	go func() {
+		select {
+		case <-ps.streamsDone:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 
 	var (
 		result  sep2admin.ActionResult

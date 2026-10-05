@@ -33,6 +33,13 @@ const (
 // panels the shell adds after its own tabs. The core band holds the
 // shell's tabs, which the shell renders itself, so it is never served.
 type panelSet struct {
+	// actions is true when the plane serves panel actions
+	// (panel_actions.go); actionLimit is their plane-wide rate, shared with
+	// the schema read, and running counts the Run calls still executing.
+	actions     bool
+	actionLimit *tokenBucket
+	running     *ActionTracker
+
 	panels  []sep2admin.Panel
 	busy    map[string]*atomic.Bool
 	timeout time.Duration
@@ -69,7 +76,13 @@ func newPanelSet(panels []sep2admin.Panel) (*panelSet, error) {
 // noPanels is the set BuildAdminRouter mounts: the routes exist and list
 // nothing.
 func noPanels() *panelSet {
-	return &panelSet{panels: []sep2admin.Panel{}, busy: map[string]*atomic.Bool{}, timeout: panelViewTimeout}
+	return &panelSet{
+		panels:      []sep2admin.Panel{},
+		actionLimit: newTokenBucket(time.Now),
+		running:     &ActionTracker{},
+		busy:        map[string]*atomic.Bool{},
+		timeout:     panelViewTimeout,
+	}
 }
 
 type panelEntry struct {
@@ -77,6 +90,8 @@ type panelEntry struct {
 	Label  string       `json:"label"`
 	Picker *pickerEntry `json:"picker,omitempty"`
 	Stream *streamEntry `json:"stream,omitempty"`
+	// Actions is set only when the plane serves panel actions.
+	Actions []actionEntry `json:"actions,omitempty"`
 }
 
 // streamEntry tells the shell the stream parameter's bounds, so it can
@@ -92,8 +107,9 @@ type pickerEntry struct {
 
 // handleList answers GET /api/ui/panels with [{id, label}] in frozen
 // order, and [] when nothing is registered. A panel with a Picker also
-// carries {"picker":{"max":N}}, and one with a Stream
-// {"stream":{"maxLen":N,"charset":"..."}}.
+// carries {"picker":{"max":N}}, one with a Stream
+// {"stream":{"maxLen":N,"charset":"..."}}, and with actions on, one that has
+// Actions {"actions":[{id,label}]}.
 func (ps *panelSet) handleList() http.HandlerFunc {
 	entries := make([]panelEntry, 0, len(ps.panels))
 	for _, p := range ps.panels {
@@ -103,6 +119,9 @@ func (ps *panelSet) handleList() http.HandlerFunc {
 		}
 		if p.Stream != nil {
 			e.Stream = &streamEntry{MaxLen: p.Stream.Param.MaxLen, Charset: p.Stream.Param.Charset}
+		}
+		if ps.actions {
+			e.Actions = actionEntries(p)
 		}
 		entries = append(entries, e)
 	}
@@ -219,34 +238,52 @@ func (ps *panelSet) handleGet() http.HandlerFunc {
 	}
 }
 
-// invoke runs view for p under the panel's one-at-a-time flag and the
-// plane's timeout, and answers the failure itself, returning false.
-func (ps *panelSet) invoke(w http.ResponseWriter, r *http.Request, p sep2admin.Panel, view sep2admin.ViewFunc) (sep2admin.Descriptor, bool) {
-	id := p.ID
+// errPanelBusy is run's refusal when an earlier call still holds the
+// panel's flag. The view was not started.
+var errPanelBusy = errors.New("admin: panel is still answering an earlier request")
+
+// run runs view for p under the panel's one-at-a-time flag and the plane's
+// timeout. A returned error is errPanelBusy or one of InvokeView's.
+func (ps *panelSet) run(r *http.Request, p sep2admin.Panel, view sep2admin.ViewFunc) (sep2admin.Descriptor, error) {
 	// One View per panel at a time. A hung View keeps its goroutine
 	// until it returns, so without this each read would leak one more.
-	busy := ps.busy[id]
+	busy := ps.busy[p.ID]
 	if !busy.CompareAndSwap(false, true) {
-		writePanelError(w, http.StatusGatewayTimeout, "panel is still answering an earlier request")
-		return sep2admin.Descriptor{}, false
+		return sep2admin.Descriptor{}, errPanelBusy
 	}
 	p.View = view
 	guarded, settle := oneAtATime(p, busy)
 	d, err := sep2admin.InvokeView(r.Context(), guarded, ps.timeout)
 	settle()
-	switch {
-	case err == nil:
+	return d, err
+}
+
+// invoke is run, answering the failure itself and returning false.
+func (ps *panelSet) invoke(w http.ResponseWriter, r *http.Request, p sep2admin.Panel, view sep2admin.ViewFunc) (sep2admin.Descriptor, bool) {
+	d, err := ps.run(r, p, view)
+	if err == nil {
 		return d, true
-	case errors.Is(err, sep2admin.ErrViewTimedOut), errors.Is(err, sep2admin.ErrViewNotInvoked):
-		log.Printf("admin: panel %q: %v", id, err)
-		writePanelError(w, http.StatusGatewayTimeout, "panel did not answer in time")
-	case errors.Is(err, sep2admin.ErrViewCanceled):
-		writePanelError(w, http.StatusServiceUnavailable, "request canceled")
-	default:
-		log.Printf("admin: panel %q: %v", id, err)
-		writePanelError(w, http.StatusInternalServerError, "panel failed")
 	}
+	status, msg := ps.failure(p, err)
+	writePanelError(w, status, msg)
 	return sep2admin.Descriptor{}, false
+}
+
+// failure maps a run error to its status and fixed body text, logging the
+// detail. The text never carries the View's error.
+func (ps *panelSet) failure(p sep2admin.Panel, err error) (int, string) {
+	switch {
+	case errors.Is(err, errPanelBusy):
+		return http.StatusGatewayTimeout, "panel is still answering an earlier request"
+	case errors.Is(err, sep2admin.ErrViewTimedOut), errors.Is(err, sep2admin.ErrViewNotInvoked):
+		log.Printf("admin: panel %q: %v", p.ID, err)
+		return http.StatusGatewayTimeout, "panel did not answer in time"
+	case errors.Is(err, sep2admin.ErrViewCanceled):
+		return http.StatusServiceUnavailable, "request canceled"
+	default:
+		log.Printf("admin: panel %q: %v", p.ID, err)
+		return http.StatusInternalServerError, "panel failed"
+	}
 }
 
 type choiceEntry struct {

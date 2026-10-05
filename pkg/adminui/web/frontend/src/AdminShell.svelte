@@ -35,6 +35,7 @@
   import RequestQueuePane from './panels/RequestQueuePane.svelte'
   import DispatchPane from './panels/DispatchPane.svelte'
   import PanelView from './panels/PanelView.svelte'
+  import StreamPanel from './panels/StreamPanel.svelte'
 
   // The tabs and the card each owns (issue 561's Context section, plus
   // issue 671's DERMS tab). "/" and "/ui/" are not tab paths of their own:
@@ -270,7 +271,11 @@
       <DispatchPane />
     {:else if activePanel}
       {#key activePanel.id}
-        <PanelView id={activePanel.id} picker={activePanel.picker} />
+        {#if activePanel.stream}
+          <StreamPanel id={activePanel.id} label={activePanel.label} stream={activePanel.stream} />
+        {:else}
+          <PanelView id={activePanel.id} picker={activePanel.picker} />
+        {/if}
       {/key}
     {:else if activeTab === 'not-found' && !panelsLoaded}
       <p class="hint" data-testid="panels-pending">Loading...</p>

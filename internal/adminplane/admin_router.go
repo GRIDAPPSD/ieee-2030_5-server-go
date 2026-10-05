@@ -43,6 +43,15 @@ type Config struct {
 	// /auth/ticket). It wins over ControlWrites, so a route is never mounted
 	// and then filtered. Run leaves it false.
 	ReadOnly bool
+	// PanelActions serves the typed actions a panel declares, under
+	// /api/ui/panels/{id}/actions. Off, the routes are absent (404) and the
+	// panel list names no action. Actions are not gated by ReadOnly: they
+	// change the embedder's state, not the plane's stores.
+	PanelActions bool
+	// ActionTracker, when set, counts the panel action Run calls still
+	// executing, so a caller can wait for them at shutdown. StreamsDone also
+	// ends running actions and refuses new ones.
+	ActionTracker *ActionTracker
 }
 
 // Build is the admin router Run serves, with its route list for the boot
@@ -52,7 +61,11 @@ func Build(cfg Config) (http.Handler, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	panels.actions = cfg.PanelActions
 	panels.streamsDone = cfg.StreamsDone
+	if cfg.ActionTracker != nil {
+		panels.running = cfg.ActionTracker
+	}
 	authed, authedWithMiddleware := buildAuthedAdminMux(cfg, panels)
 	h, patterns := buildOuterAdminRouter(cfg, authed, authedWithMiddleware)
 	return h, patterns, nil
@@ -257,6 +270,16 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	// unless the legacy flag routes that one to the old page.
 	authed.Handle("GET /ui/", http.StripPrefix("/ui", spaHandler()))
 
+	// #863 panel actions. Not a mountWrite: ReadOnly freezes the plane's own
+	// stores, and an action changes only what its embedder does. The POST is
+	// on neither nonSensitiveAdminWrites nor a read prefix, so the
+	// credential guard covers it as a sensitive write, and the body-type
+	// check refuses anything but JSON.
+	if panels.actions {
+		authed.HandleFunc("GET /api/ui/panels/{id}/actions", panels.handleActions())
+		authed.HandleFunc("POST /api/ui/panels/{id}/actions/{action}", panels.handleAction())
+	}
+
 	// Auth ticket endpoint - exchanges valid admin auth for a short-lived
 	// ticket. RequireNonTicketAdmission (#641) refuses when the admission
 	// that reached it was itself a ticket: every other real credential
@@ -266,8 +289,12 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		authed.Handle("POST /auth/ticket", auth.RequireNonTicketAdmission(handleIssueTicket(tickets)))
 	}
 
+	routed := requireAdminBodyTypes(authed)
+	if !panels.actions {
+		routed = panelActionsOff(routed)
+	}
 	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets, sessions, cfg.LoopbackBypass)(
-		requireCredentialForSensitiveRoutes(authed, auth.RequireRealCredential(adminKey, tickets, sessions), requireAdminBodyTypes(authed)),
+		requireCredentialForSensitiveRoutes(authed, auth.RequireRealCredential(adminKey, tickets, sessions), routed),
 	)
 
 	return authed, authedWithMiddleware

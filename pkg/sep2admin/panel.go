@@ -72,4 +72,8 @@ type Panel struct {
 
 	// Stream, when non-nil, serves a live feed beside View (stream.go).
 	Stream *Stream
+
+	// Actions are typed forms the shell offers beside View. They are served
+	// only when the plane's PanelActions setting is on (action.go).
+	Actions []Action
 }

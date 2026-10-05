@@ -93,6 +93,12 @@ type Config struct {
 	// Panels are extra tabs the shell shows after its own. A panel the
 	// registry refuses makes New fail.
 	Panels []sep2admin.Panel
+	// PanelActions serves the typed actions the panels declare, under
+	// /api/ui/panels/{id}/actions. Off, those routes answer 404. It works
+	// with ReadOnly: an action changes what its embedder does, not the
+	// stores. Call Plane.Close before shutting the listener so a running
+	// action is told to stop and is waited for.
+	PanelActions bool
 }
 
 // Plane is a built admin plane.
@@ -101,6 +107,7 @@ type Plane struct {
 	patterns    []string
 	streamsDone chan struct{}
 	closeOnce   sync.Once
+	actions     *adminplane.ActionTracker
 }
 
 // New builds the plane. It refuses a blank or short AdminKey, an empty
@@ -137,6 +144,7 @@ func New(cfg Config) (*Plane, error) {
 	}
 
 	streamsDone := make(chan struct{})
+	actions := &adminplane.ActionTracker{}
 	h, patterns, err := adminplane.Build(adminplane.Config{
 		StreamsDone:    streamsDone,
 		AdminKey:       cfg.AdminKey,
@@ -148,11 +156,13 @@ func New(cfg Config) (*Plane, error) {
 		LoopbackBypass: cfg.LoopbackBypass,
 		ControlWrites:  cfg.ControlWrites,
 		ReadOnly:       cfg.ReadOnly,
+		PanelActions:   cfg.PanelActions,
+		ActionTracker:  actions,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sep2adminplane: %w", err)
 	}
-	return &Plane{handler: h, patterns: patterns, streamsDone: streamsDone}, nil
+	return &Plane{handler: h, patterns: patterns, streamsDone: streamsDone, actions: actions}, nil
 }
 
 // resolveSettings turns the edition, deadline and grace of cfg into the values
@@ -225,6 +235,25 @@ func (p *Plane) CloseStreams() { p.closeOnce.Do(func() { close(p.streamsDone) })
 
 // Handler serves the admin UI at /ui/ and the admin API under /api/.
 func (p *Plane) Handler() http.Handler { return p.handler }
+
+// Close does what CloseStreams does, which also tells every running panel
+// action to stop and makes the plane refuse new ones with 503, then waits up
+// to wait for the running actions to return. It returns how many were still
+// running at the bound, 0 when all had returned. A Run that ignores its
+// context is not stopped, only counted, so a nonzero result means an action
+// may still take effect after Close returns. It does not stop the listener,
+// which the caller owns, and is safe to call more than once.
+func (p *Plane) Close(wait time.Duration) int {
+	p.CloseStreams()
+	deadline := time.Now().Add(wait)
+	for {
+		n := p.actions.Running()
+		if n == 0 || !time.Now().Before(deadline) {
+			return n
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
 
 // Patterns lists every route mounted under the plane, sorted. The slice is
 // the caller's.

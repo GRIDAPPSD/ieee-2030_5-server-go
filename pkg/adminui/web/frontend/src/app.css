@@ -271,3 +271,23 @@ textarea {
 a {
   color: var(--accent);
 }
+
+.stream-log {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 400px;
+  overflow-y: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.stream-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.stream-status {
+  color: var(--dim);
+  font-style: italic;
+}

@@ -7,9 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-05
+
+This entry covers `v0.10.0..v0.11.0` (5 merged pull requests: four feature and
+maintenance changes and this release-preparation change). It is a MINOR
+release under the 0.x carve-out: the range adds a streaming panel kind and
+typed panel actions to `pkg/sep2admin`, with the plane setting and shutdown
+methods that serve them (`feature`), and the rest is `bug fix`, `chore` and
+`test`. No exported identifier is removed or changed (the additions are new
+types, a new `Panel` field pair, a new `Config` field and two new `Plane`
+methods), so nothing is `breaking` under the repository's API policy. The
+module's `go` directive moves from 1.26.3 to 1.26.8, so building it needs
+Go 1.26.8 or newer. Requires `ieee-2030_5-core-go` v0.23.0.
+
+### Added
+
+- **Streaming panels.** A `sep2admin.Panel` can set the new optional `Stream`
+  field to serve a live feed over server-sent events beside its `View`.
+  `Stream`, `StreamParam`, `StreamRequest`, `StreamEvent`, `StreamEventKind`,
+  `StreamOpenFunc` and `StreamSendFunc` are new, and `Register` refuses a
+  malformed `Stream`. Opens are bounded, the final status event is marked so
+  clients stop reconnecting, and refused cross-origin streams are logged.
+  `Plane.CloseStreams` ends every open stream with a final status and refuses
+  new ones; call it before the serving `http.Server`'s `Shutdown`.
+  ([#866](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/866))
+- **Typed panel actions.** A `sep2admin.Panel` can set the new optional
+  `Actions` field, typed forms the shell offers beside `View`. `Action`,
+  `ActionField`, `ActionFieldKind`, `ActionResult`, `ActionRefusal`,
+  `ActionValueError` and `ActionValues` are new, and `Register` refuses
+  malformed actions. They are served under `/api/ui/panels/{id}/actions` only
+  when the new `sep2adminplane.Config.PanelActions` is set; off, those routes
+  answer 404. Every action is audited, refusals are logged, and a running
+  action is counted from admission. `Plane.Close(wait)` does what
+  `CloseStreams` does, tells running actions to stop, refuses new ones with 503
+  and returns how many were still running after `wait`; it is a new method, so
+  no existing signature changes.
+  ([#868](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/868))
+- **Admin UI renders streaming panels.** The shell shows a stream panel's live
+  feed and its state, and ends it on the final status event.
+  ([#870](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/870))
+
 ### Changed
 
-- Move to Go 1.26.8, `ieee-2030_5-core-go` v0.23.0 and current `golang.org/x` modules, clearing the standard-library and `x/crypto`, `x/net` advisories govulncheck reported at the old pins (#869).
+- Moved to Go 1.26.8, `ieee-2030_5-core-go` v0.23.0 and current `golang.org/x`
+  modules, clearing the standard-library and `x/crypto`, `x/net` advisories
+  govulncheck reported at the old pins. The `Dockerfile` builder image and the
+  CI note move with it.
+  ([#871](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/871))
+- README: latest-release and core-pin statements corrected to v0.11.0 and
+  v0.23.0.
 
 ## [0.10.0] - 2026-10-03
 
@@ -586,4 +632,5 @@ read both releases first.
 [0.8.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.7.0...v0.8.0
 [0.9.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.8.0...v0.9.0
 [0.10.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.9.0...v0.10.0
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.10.0...HEAD
+[0.11.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.10.0...v0.11.0
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.11.0...HEAD

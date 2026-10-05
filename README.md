@@ -5,11 +5,11 @@
 [![Go](https://img.shields.io/badge/go-1.26.8-blue)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-Battelle%20BSD-blue)](LICENSE)
 
-Latest release: v0.10.0. See the [releases page](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/releases).
+Latest release: v0.11.0. See the [releases page](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/releases).
 
 Go implementation of IEEE 2030.5 (SEP2), the smart energy profile spec for utility-to-DER communication. Ships a server binary (`sep2server`) with TLS/mTLS, CSIP V1.2 CCM-8 cipher-suite support, an admin dashboard, and cert-generation subcommands.
 
-> **Core dependency.** The `ieee-2030_5-core-go` library is an ordinary versioned Go module dependency, pinned in `go.mod` (`github.com/GRIDAPPSD/ieee-2030_5-core-go v0.22.0`); no `replace` directive is used.
+> **Core dependency.** The `ieee-2030_5-core-go` library is an ordinary versioned Go module dependency, pinned in `go.mod` (`github.com/GRIDAPPSD/ieee-2030_5-core-go v0.23.0`); no `replace` directive is used.
 
 > **EndDevice access control.** Every `/edev/{id}` route answers only the device whose certificate LFDI is stored on that EndDevice, or an aggregator provisioned to manage it, and `GET /edev` lists only those devices. Manager pairs are provisioned on the utility side through the admin plane. Embedders that relied on any certificate reaching any EndDevice must change. See [docs/enddevice-access.md](docs/enddevice-access.md).
 

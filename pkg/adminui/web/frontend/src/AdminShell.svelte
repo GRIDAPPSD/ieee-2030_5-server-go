@@ -36,6 +36,7 @@
   import DispatchPane from './panels/DispatchPane.svelte'
   import PanelView from './panels/PanelView.svelte'
   import StreamPanel from './panels/StreamPanel.svelte'
+  import ActionsPanel from './panels/ActionsPanel.svelte'
 
   // The tabs and the card each owns (issue 561's Context section, plus
   // issue 671's DERMS tab). "/" and "/ui/" are not tab paths of their own:
@@ -275,6 +276,9 @@
           <StreamPanel id={activePanel.id} label={activePanel.label} stream={activePanel.stream} />
         {:else}
           <PanelView id={activePanel.id} picker={activePanel.picker} />
+        {/if}
+        {#if activePanel.actions && activePanel.actions.length > 0}
+          <ActionsPanel id={activePanel.id} />
         {/if}
       {/key}
     {:else if activeTab === 'not-found' && !panelsLoaded}

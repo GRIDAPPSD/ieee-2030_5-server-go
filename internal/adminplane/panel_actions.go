@@ -308,8 +308,22 @@ func (ps *panelSet) runAction(w http.ResponseWriter, r *http.Request, p sep2admi
 		invalid  error
 		refusal  *sep2admin.ActionRefusal
 		answered atomic.Bool
+		entered  atomic.Bool
+		skipped  atomic.Bool
 	)
+	// Counted from here, not from Run: Plane.Close must wait for an action
+	// that is still resolving choices, since Run can start after it returns.
+	// The count ends when the closure returns, or here if it never started.
+	ps.running.n.Add(1)
+	release := sync.OnceFunc(func() { ps.running.n.Add(-1) })
+	defer func() {
+		if !entered.Load() {
+			release()
+		}
+	}()
 	_, err := ps.run(r.WithContext(ctx), p, func(ctx context.Context) (sep2admin.Descriptor, error) {
+		entered.Store(true)
+		defer release()
 		if err := a.CheckChoices(ctx, vals); err != nil {
 			var ve *sep2admin.ActionValueError
 			if errors.As(err, &ve) {
@@ -318,14 +332,31 @@ func (ps *panelSet) runAction(w http.ResponseWriter, r *http.Request, p sep2admi
 			}
 			return sep2admin.Descriptor{}, err
 		}
-		ps.running.n.Add(1)
-		defer ps.running.n.Add(-1)
-		auditAction(r, p, a, "started")
-		res, err := a.Run(ctx, vals)
-		var late string
-		if answered.Load() {
-			late = "late-"
+		// Choices can outlast a Close, so closure is checked again here.
+		if ctx.Err() != nil || ps.stopping() {
+			skipped.Store(true)
+			auditAction(r, p, a, "skipped-closing")
+			return sep2admin.Descriptor{}, nil
 		}
+		auditAction(r, p, a, "started")
+		lateSuffix := func() string {
+			if answered.Load() {
+				return "late-"
+			}
+			return ""
+		}
+		// A panic leaves no return to log from; the outcome line carries
+		// only the panel, action and caller, and the detail line from
+		// InvokeView carries the panic value.
+		returned := false
+		defer func() {
+			if !returned {
+				auditAction(r, p, a, lateSuffix()+"panic")
+			}
+		}()
+		res, err := a.Run(ctx, vals)
+		returned = true
+		late := lateSuffix()
 		switch {
 		case errors.As(err, &refusal):
 			auditAction(r, p, a, late+"refused")
@@ -339,6 +370,10 @@ func (ps *panelSet) runAction(w http.ResponseWriter, r *http.Request, p sep2admi
 		return sep2admin.Descriptor{}, err
 	})
 	answered.Store(true)
+	if skipped.Load() {
+		refuseAction(w, r, p, a, http.StatusServiceUnavailable, "shutting-down", "plane is shutting down")
+		return
+	}
 	switch {
 	case errors.Is(err, errPanelBusy):
 		refuseAction(w, r, p, a, http.StatusGatewayTimeout, "busy", "panel is still answering an earlier request")

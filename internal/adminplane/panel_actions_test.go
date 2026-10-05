@@ -722,3 +722,25 @@ func TestAnUndeclaredFieldNameInRunIsNotASilentZero(t *testing.T) {
 		t.Errorf("log does not name the undeclared field:\n%s", logs.String())
 	}
 }
+
+func TestAPanickingRunLogsAnOutcomeLineWithoutThePanicText(t *testing.T) {
+	logs := captureLog(t)
+	h := buildActions(t, Config{PanelActions: true}, actionPanel(func(context.Context, sep2admin.ActionValues) (sep2admin.ActionResult, error) {
+		panic("secret-token-123")
+	}))
+	if r := post(h, actionPath, goodActionBody); r.Code != http.StatusInternalServerError {
+		t.Fatalf("POST = %d %s, want 500", r.Code, r.Body)
+	}
+	var outcome string
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, "outcome=panic") {
+			outcome = line
+		}
+	}
+	if !strings.Contains(outcome, `panel "bus" action "send"`) || !strings.Contains(outcome, "admission=bearer") {
+		t.Fatalf("no outcome=panic line naming the panel and action:\n%s", logs.String())
+	}
+	if strings.Contains(outcome, "secret-token-123") {
+		t.Errorf("the outcome line carries the panic text: %s", outcome)
+	}
+}

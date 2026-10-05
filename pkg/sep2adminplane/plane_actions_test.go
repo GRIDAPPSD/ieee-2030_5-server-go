@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -101,4 +102,56 @@ func TestCloseWaitsBoundedForARunThatIgnoresItsContext(t *testing.T) {
 		t.Fatalf("Close after the action returned = %d running, want 0", n)
 	}
 	<-done
+}
+
+func TestCloseCountsAnActionStillInChoicesAndRunNeverStarts(t *testing.T) {
+	inChoices := make(chan struct{})
+	releaseChoices := make(chan struct{})
+	var runs atomic.Int32
+	cfg := baseConfig()
+	cfg.PanelActions = true
+	cfg.Panels = []sep2admin.Panel{{
+		ID:                "switch",
+		Label:             "Switch",
+		Placement:         sep2admin.ExtensionSlot(1),
+		DescriptorVersion: sep2admin.CurrentDescriptorVersion,
+		View: func(context.Context) (sep2admin.Descriptor, error) {
+			return sep2admin.Descriptor{Version: sep2admin.CurrentDescriptorVersion}, nil
+		},
+		Actions: []sep2admin.Action{{
+			ID:    "pick",
+			Label: "Pick",
+			Fields: []sep2admin.ActionField{{Name: "dev", Label: "Dev", Kind: sep2admin.ActionChoice, Choices: func(context.Context) ([]sep2admin.Choice, error) {
+				close(inChoices)
+				<-releaseChoices // ignores ctx: a slow registry
+				return []sep2admin.Choice{{ID: "d1", Label: "D1"}}, nil
+			}}},
+			Run: func(context.Context, sep2admin.ActionValues) (sep2admin.ActionResult, error) {
+				runs.Add(1)
+				return sep2admin.ActionResult{Message: "ran"}, nil
+			},
+		}},
+	}}
+	p := newPlane(t, cfg)
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- send(p, http.MethodPost, "/api/ui/panels/switch/actions/pick", `{"dev":"d1"}`, true) }()
+	<-inChoices
+
+	if n := p.Close(50 * time.Millisecond); n != 1 {
+		t.Fatalf("Close with a request inside Choices = %d running, want 1", n)
+	}
+	close(releaseChoices)
+	r := <-done
+	if r.Code != http.StatusServiceUnavailable {
+		t.Errorf("response after Close = %d %s, want 503", r.Code, r.Body)
+	}
+	// The response can be sent while Choices is still running, so wait for
+	// the count to reach 0 before asking whether Run started.
+	if n := p.Close(time.Second); n != 0 {
+		t.Errorf("Close after the request ended = %d running, want 0", n)
+	}
+	if n := runs.Load(); n != 0 {
+		t.Errorf("Run started %d times after Close, want 0", n)
+	}
 }

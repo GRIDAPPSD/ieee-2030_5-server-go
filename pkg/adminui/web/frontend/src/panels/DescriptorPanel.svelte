@@ -37,7 +37,7 @@
   <p class="hint" data-testid="descriptor-empty">This panel has no content.</p>
 {:else}
   {#each descriptor.sections as section, i (i)}
-    <div class="card" data-testid="descriptor-section">
+    <div class="card" class:card-wide={section.kind === 'table'} data-testid="descriptor-section">
       {#if section.heading}
         <h2 data-testid="descriptor-heading">{section.heading}</h2>
       {/if}

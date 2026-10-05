@@ -9,6 +9,7 @@
   let { body, empty = '' }: { body: DescriptorTableBody; empty?: string } = $props()
 </script>
 
+<div class="table-scroll">
 <table>
   <thead>
     <tr>
@@ -39,6 +40,7 @@
     {/if}
   </tbody>
 </table>
+</div>
 
 <style>
   .row-mismatch td {

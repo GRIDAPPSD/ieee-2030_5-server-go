@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -25,7 +26,15 @@ import (
 var (
 	panelStreamWriteDeadline     = 60 * time.Second
 	panelStreamHeartbeatInterval = 10 * time.Second
+	// panelStreamShutdownGrace bounds the final write once StreamsDone
+	// closes, so a reader that stopped reading cannot hold Shutdown.
+	panelStreamShutdownGrace = time.Second
 )
+
+// crossOrigin applies the write routes' cross-origin rule to a stream GET,
+// which the plane's middleware passes as a safe method: a stream runs the
+// embedder's Open and holds a slot, so a cross-site page must not start one.
+var crossOrigin = http.NewCrossOriginProtection()
 
 // Stream bounds. The queue holds what a source sent and the reader has not
 // yet been written; it is sized above a replay of a few hundred events, and
@@ -38,6 +47,7 @@ const (
 	streamParamRefusal     = "invalid stream parameter"
 	streamReaderTooSlow    = "stream closed: reader too slow"
 	streamInvalidEventText = "stream closed: panel sent an invalid event"
+	streamShuttingDown     = "stream closed: server shutting down"
 )
 
 type streamEventJSON struct {
@@ -174,6 +184,14 @@ func parseStreamParam(p *sep2admin.Stream, rawQuery string) (string, error) {
 // are all checked before the panel's Open runs.
 func (ps *panelSet) handleStream() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Check refuses only unsafe methods, so it is asked about a POST
+		// carrying this request's headers.
+		asWrite := r.WithContext(r.Context())
+		asWrite.Method = http.MethodPost
+		if err := crossOrigin.Check(asWrite); err != nil {
+			writePanelError(w, http.StatusForbidden, "cross-origin admin request refused")
+			return
+		}
 		p, ok := ps.lookup(r.PathValue("id"))
 		if !ok || p.Stream == nil {
 			writePanelError(w, http.StatusNotFound, "no such panel")
@@ -203,18 +221,32 @@ func (ps *panelSet) handleStream() http.HandlerFunc {
 			writePanelError(w, http.StatusInternalServerError, "streaming not supported")
 			return
 		}
+		if ps.stopping() {
+			writePanelError(w, http.StatusServiceUnavailable, "server shutting down")
+			return
+		}
 		if ps.openStreams.Add(1) > maxOpenPanelStreams {
 			ps.openStreams.Add(-1)
 			writePanelError(w, http.StatusServiceUnavailable, "too many open panel streams")
 			return
 		}
-		defer ps.openStreams.Add(-1)
+		// The slot has two owners, this handler and Open, and is freed when
+		// both are done: a hung Open keeps its goroutine past a 504, and must
+		// keep counting against the cap or each retry would add another.
+		var owners atomic.Int32
+		owners.Store(2)
+		free := func() {
+			if owners.Add(-1) == 0 {
+				ps.openStreams.Add(-1)
+			}
+		}
+		defer free()
 
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 		q := newStreamQueue(after)
 		defer q.close()
-		if !ps.openStream(ctx, w, r, p, sep2admin.StreamRequest{Param: param, After: after}, q) {
+		if !ps.openStream(ctx, w, r, p, sep2admin.StreamRequest{Param: param, After: after}, q, free) {
 			return
 		}
 		ps.serveStream(w, r, flusher, p.ID, q)
@@ -223,13 +255,22 @@ func (ps *panelSet) handleStream() http.HandlerFunc {
 
 // openStream runs Open under the panel timeout and panic recovery that
 // View gets, and answers the failure itself, returning false. ctx outlives
-// the call: it is the stream's own lifetime.
-func (ps *panelSet) openStream(ctx context.Context, w http.ResponseWriter, r *http.Request, p sep2admin.Panel, req sep2admin.StreamRequest, q *streamQueue) bool {
+// the call: it is the stream's own lifetime. free runs once Open returns,
+// or at once if InvokeView never starts it.
+func (ps *panelSet) openStream(ctx context.Context, w http.ResponseWriter, r *http.Request, p sep2admin.Panel, req sep2admin.StreamRequest, q *streamQueue, free func()) bool {
 	open := p.Stream.Open
+	var started atomic.Bool
 	p.View = func(context.Context) (sep2admin.Descriptor, error) {
+		if !started.CompareAndSwap(false, true) {
+			return sep2admin.Descriptor{}, context.Canceled
+		}
+		defer free()
 		return sep2admin.Descriptor{}, open(ctx, req, q.send(p.ID))
 	}
 	_, err := sep2admin.InvokeView(r.Context(), p, ps.timeout)
+	if started.CompareAndSwap(false, true) {
+		free()
+	}
 	switch {
 	case err == nil:
 		return true
@@ -247,14 +288,29 @@ func (ps *panelSet) openStream(ctx context.Context, w http.ResponseWriter, r *ht
 
 func (ps *panelSet) serveStream(w http.ResponseWriter, r *http.Request, flusher http.Flusher, id string, q *streamQueue) {
 	rc := http.NewResponseController(w)
-	var deadlineLogged bool
-	write := func(b []byte) bool {
-		if err := rc.SetWriteDeadline(time.Now().Add(panelStreamWriteDeadline)); err != nil && !deadlineLogged {
+	var (
+		dlMu           sync.Mutex
+		closing        bool
+		deadlineLogged bool
+	)
+	// extend sets the next write's deadline. Under dlMu so it cannot undo
+	// the shutdown watcher's shorter deadline set from another goroutine.
+	extend := func() {
+		dlMu.Lock()
+		defer dlMu.Unlock()
+		d := panelStreamWriteDeadline
+		if closing {
+			d = panelStreamShutdownGrace
+		}
+		if err := rc.SetWriteDeadline(time.Now().Add(d)); err != nil && !deadlineLogged {
 			// Without the extension the listener's WriteTimeout ends the
 			// stream; logged once per stream rather than per write.
 			deadlineLogged = true
 			log.Printf("admin: panel %q: stream write-deadline extension failed: %v", id, err)
 		}
+	}
+	write := func(b []byte) bool {
+		extend()
 		if _, err := w.Write(b); err != nil {
 			return false
 		}
@@ -262,12 +318,32 @@ func (ps *panelSet) serveStream(w http.ResponseWriter, r *http.Request, flusher 
 		return true
 	}
 
+	if ps.streamsDone != nil {
+		// A write already blocked on a reader that stopped reading would
+		// otherwise hold Shutdown for the full write deadline.
+		watchDone := make(chan struct{})
+		var watcher sync.WaitGroup
+		watcher.Add(1)
+		go func() {
+			defer watcher.Done()
+			select {
+			case <-ps.streamsDone:
+				dlMu.Lock()
+				closing = true
+				dlMu.Unlock()
+				extend()
+			case <-watchDone:
+			}
+		}()
+		defer func() {
+			close(watchDone)
+			watcher.Wait()
+		}()
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
-	if err := rc.SetWriteDeadline(time.Now().Add(panelStreamWriteDeadline)); err != nil {
-		deadlineLogged = true
-		log.Printf("admin: panel %q: stream write-deadline extension failed: %v", id, err)
-	}
+	extend()
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
@@ -277,6 +353,10 @@ func (ps *panelSet) serveStream(w http.ResponseWriter, r *http.Request, flusher 
 		select {
 		case <-r.Context().Done():
 			return
+		case <-ps.streamsDone:
+			// Best effort: the stream ends whether or not this arrives.
+			write(statusFrame(streamShuttingDown))
+			return
 		case <-q.ready:
 			frames, end := q.take()
 			for _, f := range frames {
@@ -285,6 +365,7 @@ func (ps *panelSet) serveStream(w http.ResponseWriter, r *http.Request, flusher 
 				}
 			}
 			if end != "" {
+				// Best effort: the stream ends whether or not this arrives.
 				write(statusFrame(end))
 				return
 			}
@@ -293,5 +374,15 @@ func (ps *panelSet) serveStream(w http.ResponseWriter, r *http.Request, flusher 
 				return
 			}
 		}
+	}
+}
+
+// stopping reports whether StreamsDone has closed.
+func (ps *panelSet) stopping() bool {
+	select {
+	case <-ps.streamsDone:
+		return true
+	default:
+		return false
 	}
 }

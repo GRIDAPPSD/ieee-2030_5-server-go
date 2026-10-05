@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -96,8 +97,10 @@ type Config struct {
 
 // Plane is a built admin plane.
 type Plane struct {
-	handler  http.Handler
-	patterns []string
+	handler     http.Handler
+	patterns    []string
+	streamsDone chan struct{}
+	closeOnce   sync.Once
 }
 
 // New builds the plane. It refuses a blank or short AdminKey, an empty
@@ -133,7 +136,9 @@ func New(cfg Config) (*Plane, error) {
 		return nil, err
 	}
 
+	streamsDone := make(chan struct{})
 	h, patterns, err := adminplane.Build(adminplane.Config{
+		StreamsDone:    streamsDone,
 		AdminKey:       cfg.AdminKey,
 		Stores:         stores,
 		Tickets:        auth.NewTicketStore(adminplane.AdminTicketTTL),
@@ -147,7 +152,7 @@ func New(cfg Config) (*Plane, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sep2adminplane: %w", err)
 	}
-	return &Plane{handler: h, patterns: patterns}, nil
+	return &Plane{handler: h, patterns: patterns, streamsDone: streamsDone}, nil
 }
 
 // resolveSettings turns the edition, deadline and grace of cfg into the values
@@ -210,6 +215,13 @@ func resolveEdition(edition string, stores2023 bool) (handler.SEP2Edition, error
 	}
 	return e, nil
 }
+
+// CloseStreams ends every open panel stream with a final status event and
+// refuses new ones. Call it before the serving http.Server's Shutdown, or
+// register it with RegisterOnShutdown: Shutdown does not cancel request
+// contexts, so an open stream would otherwise hold it to its deadline.
+// Calling it more than once is safe.
+func (p *Plane) CloseStreams() { p.closeOnce.Do(func() { close(p.streamsDone) }) }
 
 // Handler serves the admin UI at /ui/ and the admin API under /api/.
 func (p *Plane) Handler() http.Handler { return p.handler }

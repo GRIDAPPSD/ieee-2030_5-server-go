@@ -574,3 +574,201 @@ func TestPanelListCarriesStreamBounds(t *testing.T) {
 		t.Fatalf("list = %d %s, want %s", rec.Code, rec.Body, want)
 	}
 }
+
+// TestHungStreamOpenCannotMultiply sends two waves of 8 streams at a panel
+// whose Open never returns until released: the cap counts an Open until it
+// returns, not until its request gave up on it, so no more than 8 run.
+func TestHungStreamOpenCannotMultiply(t *testing.T) {
+	release := make(chan struct{})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	var running, opens atomic.Int32
+	p := testPanel("bus", 1, okView)
+	p.Stream = &sep2admin.Stream{
+		Param: sep2admin.StreamParam{MaxLen: 4, Charset: "a"},
+		Open: func(context.Context, sep2admin.StreamRequest, sep2admin.StreamSendFunc) error {
+			opens.Add(1)
+			running.Add(1)
+			defer running.Add(-1)
+			<-release
+			return nil
+		},
+	}
+	ps, err := newPanelSet([]sep2admin.Panel{p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps.timeout = 20 * time.Millisecond
+	cfg := runConfig(panelTestKey, nil, nil, "GCM", nil, nil, false, nil)
+	authed, withMW := buildAuthedAdminMux(cfg, ps)
+	h, _ := buildOuterAdminRouter(cfg, authed, withMW)
+
+	wave := func(want int) {
+		t.Helper()
+		var wg sync.WaitGroup
+		codes := make([]int, maxOpenPanelStreams)
+		for i := range maxOpenPanelStreams {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				codes[i] = get(h, "/api/ui/panels/bus/stream?param=a", true).Code
+			}()
+		}
+		wg.Wait()
+		for i, c := range codes {
+			if c != want {
+				t.Fatalf("request %d = %d, want %d", i+1, c, want)
+			}
+		}
+	}
+	wave(http.StatusGatewayTimeout)
+	wave(http.StatusServiceUnavailable)
+	if n := running.Load(); n != maxOpenPanelStreams || opens.Load() != maxOpenPanelStreams {
+		t.Fatalf("%d Opens running of %d started, want %d of %d", n, opens.Load(), maxOpenPanelStreams, maxOpenPanelStreams)
+	}
+	once.Do(func() { close(release) })
+	deadline := time.Now().Add(5 * time.Second)
+	for ps.openStreams.Load() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d slots still held after every Open returned", ps.openStreams.Load())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func newClosablePlane(t *testing.T, done <-chan struct{}, panels ...sep2admin.Panel) *streamPlane {
+	t.Helper()
+	sp := &streamPlane{tickets: auth.NewTicketStore(30 * time.Second), sessions: auth.NewSessionStore(time.Minute, time.Hour)}
+	h, _, err := Build(Config{AdminKey: panelTestKey, Panels: panels, Tickets: sp.tickets, Sessions: sp.sessions, StreamsDone: done})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if sp.cookie, err = sp.sessions.Issue(); err != nil {
+		t.Fatal(err)
+	}
+	sp.srv = httptest.NewServer(h)
+	t.Cleanup(sp.srv.Close)
+	return sp
+}
+
+func shutdownWithin(t *testing.T, sp *streamPlane, bound time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+	start := time.Now()
+	if err := sp.srv.Config.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown after %s: %v", time.Since(start), err)
+	}
+}
+
+func TestStreamsDoneEndsOpenStreamsBeforeShutdown(t *testing.T) {
+	done := make(chan struct{})
+	f := newStreamFake()
+	var openCtx context.Context
+	var mu sync.Mutex
+	f.onOpen = func(ctx context.Context, _ sep2admin.StreamRequest, _ sep2admin.StreamSendFunc) error {
+		mu.Lock()
+		openCtx = ctx
+		mu.Unlock()
+		return nil
+	}
+	sp := newClosablePlane(t, done, f.panel("bus"))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param=a", nil)
+	defer resp.Body.Close()
+	send := recvSend(t, f)
+	if !send(msg(1, "before")) {
+		t.Fatal("send refused on an open stream")
+	}
+	r := bufio.NewReader(resp.Body)
+	readFrames(t, r, 1)
+
+	close(done)
+	frames, _ := readFrames(t, r, 1)
+	if frames[0].hasID || frames[0].data.Kind != "status" || frames[0].data.Text != "stream closed: server shutting down" {
+		t.Fatalf("frame = %+v, want the id-less shutdown status", frames[0])
+	}
+	expectEOF(t, r)
+	mu.Lock()
+	octx := openCtx
+	mu.Unlock()
+	select {
+	case <-octx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("Open's context was not cancelled when the stream ended")
+	}
+	if body, code := refusal(t, sp, "/api/ui/panels/bus/stream?param=a", nil); code != http.StatusServiceUnavailable || body != `{"error":"server shutting down"}` {
+		t.Fatalf("stream after StreamsDone = %d %s, want 503 server shutting down", code, body)
+	}
+	if n := f.opens.Load(); n != 1 {
+		t.Fatalf("Open ran %d times, want 1: the late stream must be refused before Open", n)
+	}
+	shutdownWithin(t, sp, time.Second)
+}
+
+// TestStreamsDoneCutsAStalledWrite closes StreamsDone while the handler is
+// blocked writing to a reader that stopped reading: the write deadline is
+// pulled in, so Shutdown is not held for the full write deadline.
+func TestStreamsDoneCutsAStalledWrite(t *testing.T) {
+	done := make(chan struct{})
+	f := newStreamFake()
+	sp := newClosablePlane(t, done, f.panel("bus"))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param=a", nil)
+	defer resp.Body.Close()
+	send := recvSend(t, f)
+	text := strings.Repeat("y", 60<<10)
+	// Paced, so the handler drains the queue into the socket until the
+	// socket is full and its write blocks, before the queue overflows.
+	for id := uint64(1); send(msg(id, text)); id++ {
+		if id > 5000 {
+			t.Fatal("send never failed with nobody reading")
+		}
+		time.Sleep(200 * time.Microsecond)
+	}
+	close(done)
+	shutdownWithin(t, sp, 3*time.Second)
+}
+
+func TestPanelStreamRefusesCrossSite(t *testing.T) {
+	f := newStreamFake()
+	sp := newStreamPlane(t, 0, f.panel("bus"))
+	const path = "/api/ui/panels/bus/stream?param=a"
+	host := strings.TrimPrefix(sp.srv.URL, "http://")
+	refused := map[string]map[string]string{
+		"cross-site":             {"Sec-Fetch-Site": "cross-site"},
+		"same-site":              {"Sec-Fetch-Site": "same-site"},
+		"foreign Origin":         {"Origin": "http://evil.example"},
+		"cross-site, own Origin": {"Sec-Fetch-Site": "cross-site", "Origin": "http://" + host},
+	}
+	for name, h := range refused {
+		t.Run(name, func(t *testing.T) {
+			body, code := refusal(t, sp, path, h)
+			if code != http.StatusForbidden || body != `{"error":"cross-origin admin request refused"}` {
+				t.Fatalf("= %d %s, want 403 cross-origin refusal", code, body)
+			}
+		})
+	}
+	if n := f.opens.Load(); n != 0 {
+		t.Fatalf("Open ran %d times for cross-site requests", n)
+	}
+	allowed := map[string]map[string]string{
+		"same-origin":    {"Sec-Fetch-Site": "same-origin"},
+		"own Origin":     {"Origin": "http://" + host},
+		"neither (curl)": nil,
+	}
+	for name, h := range allowed {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			resp := sp.open(t, ctx, path, h)
+			defer resp.Body.Close()
+			recvSend(t, f)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("= %d, want 200", resp.StatusCode)
+			}
+		})
+	}
+}

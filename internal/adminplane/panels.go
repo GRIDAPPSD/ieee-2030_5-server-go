@@ -38,6 +38,8 @@ type panelSet struct {
 	timeout time.Duration
 	// openStreams counts this plane's open panel streams (panel_stream.go).
 	openStreams atomic.Int32
+	// streamsDone is Config.StreamsDone; nil never closes.
+	streamsDone <-chan struct{}
 }
 
 // newPanelSet registers and freezes panels. Any refusal fails the build,

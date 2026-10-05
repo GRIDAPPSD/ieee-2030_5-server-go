@@ -25,6 +25,11 @@ type Config struct {
 	// Panels are an embedder's extra tabs, served after the shell's own
 	// under /api/ui/panels. Run registers none.
 	Panels []sep2admin.Panel
+	// StreamsDone, when closed, ends every open panel stream with a final
+	// status event and refuses new ones. Close it before the listener's
+	// Shutdown: Shutdown does not cancel request contexts, so an open
+	// stream would otherwise hold it to its deadline.
+	StreamsDone <-chan struct{}
 	// LoopbackBypass admits a loopback request with no forwarded header and
 	// no credential (#246). Run sets it; the zero value requires a
 	// credential from every address.
@@ -47,6 +52,7 @@ func Build(cfg Config) (http.Handler, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	panels.streamsDone = cfg.StreamsDone
 	authed, authedWithMiddleware := buildAuthedAdminMux(cfg, panels)
 	h, patterns := buildOuterAdminRouter(cfg, authed, authedWithMiddleware)
 	return h, patterns, nil

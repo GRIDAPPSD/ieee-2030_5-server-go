@@ -33,8 +33,8 @@ changed. Requires `ieee-2030_5-core-go` v0.24.0, up from v0.23.0.
 - **Devices tab columns for reported status.** The Devices tab shows a DER
   connection column and an inverter state column from the payload above, with
   Stale, No reading time, Clock ahead and "Last known, <age> old" markers, and a
-  per-device error shown on its own row. The Overview shows "DERs reporting
-  connected: N, stale K".
+  per-device error shown on its own row. The Overview shows "DERs (reported)"
+  with "N connected, M disconnected, K stale, L last known".
   ([#888](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/888))
 - **Embedder columns.** `sep2admin.DeviceColumnSource` (`Columns` and `Cells`)
   and `sep2adminplane.Config.DeviceColumns` let an embedder add columns to the
@@ -50,7 +50,8 @@ changed. Requires `ieee-2030_5-core-go` v0.24.0, up from v0.23.0.
 - **Breaking, DERMS.** The DERStatus stale limit moves from 900 s to 1860 s.
   Storage devices and 2030.5-2023 devices now count as connected. A hybrid
   device counts as connected if either side is. A future-dated status is now
-  stale rather than connected. A DERStatus read failure no longer returns 500.
+  stale rather than connected. The DERMS fleet routes still return 500 when a store read fails; only the
+  dashboard payload now marks the one device and stays 200.
   DERAvailability and mirror readings keep their 15 minute limit.
   ([#887](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/887))
 - `ieee-2030_5-core-go` v0.23.0 to v0.24.0 (re-vendored), which adds

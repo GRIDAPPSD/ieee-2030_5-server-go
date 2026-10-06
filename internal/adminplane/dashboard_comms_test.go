@@ -138,7 +138,7 @@ func TestDashboardComms_StoredLowercaseLFDIMatchesCertificateCase(t *testing.T) 
 	}
 	h := NewDashboardHandler(dashboardTestStores(t, mem), "TLS").WithActivity(rec, 0)
 	h.now = func() time.Time { return now }
-	d := h.collectData().Devices
+	d := h.collectData(context.Background()).Devices
 	if len(d) != 1 || d[0].Comms != "online" {
 		t.Errorf("devices = %+v, want one online device", d)
 	}

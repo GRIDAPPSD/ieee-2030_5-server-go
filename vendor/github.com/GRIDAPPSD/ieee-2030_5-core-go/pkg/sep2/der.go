@@ -413,6 +413,15 @@ type ConnectStatusType struct {
 	Value    HexBinary8 `xml:"value"`
 }
 
+// ConnectStatusType2 is the IEEE 2030.5-2023 connect status (sep.xsd
+// ConnectStatusType2). Value is a HexBinary8 bitmap: bit 0 connected
+// (implies galvanic isolation when clear), bit 1 energized; other bits are
+// reserved.
+type ConnectStatusType2 struct {
+	DateTime int64      `xml:"dateTime"`
+	Value    HexBinary8 `xml:"value"`
+}
+
 // InverterStatusType reports inverter state.
 type InverterStatusType struct {
 	DateTime int64 `xml:"dateTime"`
@@ -446,24 +455,39 @@ type StorageModeStatusType struct {
 // DERStatus reports current DER operational status.
 //
 // Field order matches the sep.xsd DERStatus sequence (subset present
-// here): alarmStatus, genConnectStatus, inverterStatus,
+// here): alarmStatus, connectStatus, genConnectStatus, inverterStatus,
 // operationalModeStatus, readingTime, stateOfChargeStatus,
-// storageModeStatus.
+// storageModeStatus, storConnectStatus.
+//
+// ConnectStatus exists only in 2030.5-2023, which deprecates
+// GenConnectStatus; a 2018 document carries GenConnectStatus or
+// StorConnectStatus. Each field is emitted only when set, so the edition on
+// the wire follows what the caller populates.
 type DERStatus struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERStatus"`
 	SubscribableResource
 	AlarmStatus           *HexBinary32               `xml:"alarmStatus,omitempty"`
+	ConnectStatus         *ConnectStatusType2        `xml:"connectStatus,omitempty"`
 	GenConnectStatus      *ConnectStatusType         `xml:"genConnectStatus,omitempty"`
 	InverterStatus        *InverterStatusType        `xml:"inverterStatus,omitempty"`
 	OperationalModeStatus *OperationalModeStatusType `xml:"operationalModeStatus,omitempty"`
 	ReadingTime           int64                      `xml:"readingTime,omitempty"`
 	StateOfChargeStatus   *StateOfChargeStatusType   `xml:"stateOfChargeStatus,omitempty"`
 	StorageModeStatus     *StorageModeStatusType     `xml:"storageModeStatus,omitempty"`
+	StorConnectStatus     *ConnectStatusType         `xml:"storConnectStatus,omitempty"`
 }
 
 // Copy returns an independent copy.
 func (d DERStatus) Copy() DERStatus {
 	c := d
+	if d.ConnectStatus != nil {
+		v := *d.ConnectStatus
+		c.ConnectStatus = &v
+	}
+	if d.StorConnectStatus != nil {
+		v := *d.StorConnectStatus
+		c.StorConnectStatus = &v
+	}
 	if d.GenConnectStatus != nil {
 		v := *d.GenConnectStatus
 		c.GenConnectStatus = &v

@@ -53,6 +53,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	coreconfiguration "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/configuration"
@@ -958,7 +959,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	}
 
 	mux.HandleFunc("GET /edev/{id}/der", scopedListHandler[sep2.DER, sep2.DERList](
-		stores.DERs, "id", coreder.DERListBuilder(derLinks), 900,
+		stores.DERs, "id", coreder.DERListBuilder(derLinks), derstatus.DefaultPollRateSeconds,
 	))
 
 	// The DER instance itself. Every DERList member carries this

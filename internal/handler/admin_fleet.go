@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -209,17 +210,10 @@ type AdminFleetHandler struct {
 	Edition SEP2Edition
 }
 
-// staleAfterSeconds is how old a DERStatus reading may be before a device
-// counts as stale rather than connected. 15 minutes: long enough to absorb a
-// missed reporting interval at typical DER post rates, short enough that an
-// operator sees a gone-quiet fleet within one tab refresh. No product
-// decision has set this; it is a placeholder default, not a tuned value.
+// staleAfterSeconds is how old a DERAvailability or mirror reading may be
+// before it counts as stale. It is a placeholder default, not a tuned value.
+// DERStatus is judged by derstatus.Assess instead, from its pollRate.
 const staleAfterSeconds = 15 * 60
-
-// connectStatusConnectedBit is ConnectStatusType.value bit 0 (IEEE 2030.5
-// Annex B "ConnectStatusType"): the device reports itself connected to the
-// grid.
-const connectStatusConnectedBit = 1 << 0
 
 // HandleListFleets returns a handler for GET /api/derms/fleets: one entry
 // per aggregator (an LFDI that manages at least one device), each with its
@@ -358,8 +352,8 @@ func (h *AdminFleetHandler) latestStatus(ctx context.Context, parentKey string) 
 		return nil, fmt.Errorf("DERStatuses.Get(%q): %w", parentKey, err)
 	}
 	out := &FleetDeviceStatus{ReadingTime: s.ReadingTime}
-	if s.GenConnectStatus != nil {
-		connected := s.GenConnectStatus.Value&connectStatusConnectedBit != 0
+	if c := derstatus.ConnectOf(s); c != nil {
+		connected := c.AnyConnected()
 		out.Connected = &connected
 	}
 	if s.OperationalModeStatus != nil {
@@ -655,12 +649,16 @@ func scaledValue(value float64, multiplier int8) float64 {
 // item 1): before this, a fresh DERAvailability under a stale DERStatus was
 // dropped, and a stale DERAvailability under a fresh DERStatus was summed as
 // current, neither of which is a fact about DERAvailability's own age.
+//
+// deviceStale uses the DERStatus rule (derstatus.Assess: 2 x pollRate + 60 s,
+// a status with no readingTime or a clock-ahead one stale); availabilityStale keeps the fixed
+// staleAfterSeconds.
 func accumulateRollup(rollup *FleetRollup, dev FleetDevice, now int64) {
 	// A device with no status at all is never-reported, not stale: it is
 	// not counted in any of connected/alarmed/stale, and its sums land in
 	// Unreported below, the same as any other missing value. The same rule
 	// applies to availabilityStale below for DERAvailability.
-	deviceStale := dev.Status != nil && clientClockStale(dev.Status.ReadingTime, now)
+	deviceStale := dev.Status != nil && derstatus.Assess(dev.Status.ReadingTime, now, derstatus.DefaultPollRateSeconds).Stale
 
 	switch {
 	case dev.Status == nil:

@@ -1079,12 +1079,10 @@ func TestClampedAge_PastIsUnaffected(t *testing.T) {
 	}
 }
 
-// TestAccumulateRollup_StatusDatedYear2100IsNotStaleAndConnectedWorks pins
-// the end-to-end outcome the design names: a DERStatus dated in the future
-// (here, year 2100) reads as not stale, and the Connected bit is still
-// honored normally - the future date does not corrupt anything downstream
-// of the staleness check.
-func TestAccumulateRollup_StatusDatedYear2100IsNotStaleAndConnectedWorks(t *testing.T) {
+// TestAccumulateRollup_StatusDatedYear2100IsStaleNotConnected pins that a
+// DERStatus dated far in the future cannot be aged: it counts as stale and
+// never as connected, rather than reading as the freshest report possible.
+func TestAccumulateRollup_StatusDatedYear2100IsStaleNotConnected(t *testing.T) {
 	t.Parallel()
 	now := int64(1732900000)      // an ordinary "now", late 2024
 	year2100 := int64(4102444800) // 2100-01-01T00:00:00Z
@@ -1093,11 +1091,11 @@ func TestAccumulateRollup_StatusDatedYear2100IsNotStaleAndConnectedWorks(t *test
 	var rollup FleetRollup
 	accumulateRollup(&rollup, dev, now)
 
-	if rollup.Stale != 0 {
-		t.Errorf("Stale = %d, want 0", rollup.Stale)
+	if rollup.Stale != 1 {
+		t.Errorf("Stale = %d, want 1", rollup.Stale)
 	}
-	if rollup.Connected != 1 {
-		t.Errorf("Connected = %d, want 1", rollup.Connected)
+	if rollup.Connected != 0 {
+		t.Errorf("Connected = %d, want 0", rollup.Connected)
 	}
 }
 
@@ -1400,5 +1398,46 @@ func TestAccumulateRollup_NoReadingTimeIsStale(t *testing.T) {
 	accumulateRollup(&rollup, FleetDevice{Status: &FleetDeviceStatus{Connected: boolPtr(true)}}, 1_000_000)
 	if rollup.Stale != 1 || rollup.Connected != 0 {
 		t.Errorf("Stale=%d Connected=%d, want 1 and 0", rollup.Stale, rollup.Connected)
+	}
+}
+
+// A clock-ahead status cannot be aged, so it is stale and never counted
+// connected; skew inside one pollRate is still current.
+func TestAccumulateRollup_ClockAheadIsNotConnected(t *testing.T) {
+	t.Parallel()
+	now := int64(1_000_000)
+	cases := []struct {
+		name          string
+		ahead         int64
+		wantStale     int
+		wantConnected int
+	}{
+		{"one pollRate ahead is skew", 900, 0, 1},
+		{"one pollRate plus 1 s ahead", 901, 1, 0},
+	}
+	for _, tc := range cases {
+		var rollup FleetRollup
+		status := &FleetDeviceStatus{Connected: boolPtr(true), ReadingTime: now + tc.ahead}
+		accumulateRollup(&rollup, FleetDevice{Status: status}, now)
+		if rollup.Stale != tc.wantStale || rollup.Connected != tc.wantConnected {
+			t.Errorf("%s: Stale=%d Connected=%d, want %d and %d", tc.name, rollup.Stale, rollup.Connected, tc.wantStale, tc.wantConnected)
+		}
+	}
+}
+
+// DERAvailability keeps the 15 minute rule: at 1000 s old it is stale, where
+// the 1860 s DERStatus rule would call it current.
+func TestAccumulateRollup_AvailabilityKeepsFifteenMinuteRule(t *testing.T) {
+	t.Parallel()
+	now := int64(1_000_000)
+	statW := 700.0
+	dev := FleetDevice{
+		Status:       &FleetDeviceStatus{ReadingTime: now},
+		Availability: &FleetDeviceAvailability{StatWAvail: &statW, ReadingTime: now - 1000},
+	}
+	var rollup FleetRollup
+	accumulateRollup(&rollup, dev, now)
+	if rollup.StatWAvail.Stale != 1 || rollup.StatWAvail.Sum != 0 {
+		t.Errorf("StatWAvail = %+v, want Stale 1, Sum 0 at 1000 s old", rollup.StatWAvail)
 	}
 }

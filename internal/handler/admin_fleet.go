@@ -353,7 +353,7 @@ func (h *AdminFleetHandler) latestStatus(ctx context.Context, parentKey string) 
 	}
 	out := &FleetDeviceStatus{ReadingTime: s.ReadingTime}
 	if c := derstatus.ConnectOf(s); c != nil {
-		connected := c.Connected
+		connected := c.AnyConnected()
 		out.Connected = &connected
 	}
 	if s.OperationalModeStatus != nil {
@@ -651,7 +651,7 @@ func scaledValue(value float64, multiplier int8) float64 {
 // current, neither of which is a fact about DERAvailability's own age.
 //
 // deviceStale uses the DERStatus rule (derstatus.Assess: 2 x pollRate + 60 s,
-// a status with no readingTime stale); availabilityStale keeps the fixed
+// a status with no readingTime or a clock-ahead one stale); availabilityStale keeps the fixed
 // staleAfterSeconds.
 func accumulateRollup(rollup *FleetRollup, dev FleetDevice, now int64) {
 	// A device with no status at all is never-reported, not stale: it is

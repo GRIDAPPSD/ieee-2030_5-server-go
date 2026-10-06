@@ -22,6 +22,7 @@ type statusPayload struct {
 		LFDI      string `json:"lfdi"`
 		Comms     string `json:"comms"`
 		LastKnown bool   `json:"lastKnown"`
+		DERError  string `json:"derError"`
 		DERs      []struct {
 			ID       string `json:"id"`
 			Reported bool   `json:"reported"`
@@ -36,6 +37,11 @@ type statusPayload struct {
 				Test         bool   `json:"test"`
 				Fault        bool   `json:"fault"`
 				ReservedBits uint8  `json:"reservedBits"`
+				Also         *struct {
+					Source    string `json:"source"`
+					Raw       uint8  `json:"raw"`
+					Connected bool   `json:"connected"`
+				} `json:"also"`
 			} `json:"connect"`
 			Inverter *struct {
 				Code  uint8 `json:"code"`
@@ -208,7 +214,7 @@ func TestDashboardStatus_NoReadingTimeAndClockAhead(t *testing.T) {
 	if !none.NoReadingTime || none.AgeSeconds != 0 || !none.Stale || none.ClockAhead {
 		t.Errorf("readingTime 0 = %+v", none)
 	}
-	if !ahead.ClockAhead || ahead.AgeSeconds != 0 || ahead.Stale || ahead.NoReadingTime {
+	if !ahead.ClockAhead || ahead.AgeSeconds != 0 || !ahead.Stale || ahead.NoReadingTime {
 		t.Errorf("clock ahead = %+v", ahead)
 	}
 }
@@ -272,23 +278,176 @@ func TestDashboardStatus_NoDERsIsEmptyListNotNull(t *testing.T) {
 	}
 }
 
+func TestDashboardStatus_BothStorageAndGeneratorFieldsInPayload(t *testing.T) {
+	f := newStatusFixture(t)
+	f.device("1", "hybrid")
+	f.der("1", "1", &sep2.DERStatus{
+		ReadingTime:       statusNow.Unix(),
+		GenConnectStatus:  &sep2.ConnectStatusType{Value: 0x00},
+		StorConnectStatus: &sep2.ConnectStatusType{Value: 0x03},
+	})
+	_, _, p := f.get(nil, statusNow)
+	c := p.Devices[0].DERs[0].Connect
+	if c == nil || c.Source != "genConnectStatus" || c.Connected || c.Also == nil ||
+		c.Also.Source != "storConnectStatus" || c.Also.Raw != 3 || !c.Also.Connected {
+		t.Errorf("connect = %+v, want generator primary and storage in also", c)
+	}
+}
+
+// Two DERs on one device report different statuses; each must come back
+// under its own id, which fails if the status key is not built from the DER id.
+func TestDashboardStatus_EachDERReadsItsOwnStatus(t *testing.T) {
+	f := newStatusFixture(t)
+	f.device("1", "two")
+	f.der("1", "1", &sep2.DERStatus{ReadingTime: statusNow.Unix(), GenConnectStatus: &sep2.ConnectStatusType{Value: 0x01}, InverterStatus: &sep2.InverterStatusType{Value: 4}})
+	f.der("1", "2", &sep2.DERStatus{ReadingTime: statusNow.Unix() - 10, GenConnectStatus: &sep2.ConnectStatusType{Value: 0x10}, InverterStatus: &sep2.InverterStatusType{Value: 7}})
+	_, _, p := f.get(nil, statusNow)
+	ders := p.Devices[0].DERs
+	if len(ders) != 2 {
+		t.Fatalf("ders = %d, want 2", len(ders))
+	}
+	byID := map[string]int{}
+	for i, d := range ders {
+		byID[d.ID] = i
+	}
+	one, two := ders[byID["1"]], ders[byID["2"]]
+	if !one.Reported || !one.Connect.Connected || one.Connect.Fault || one.Inverter.Code != 4 || one.AgeSeconds != 0 {
+		t.Errorf("DER 1 = %+v", one)
+	}
+	if !two.Reported || two.Connect.Connected || !two.Connect.Fault || two.Inverter.Code != 7 || two.AgeSeconds != 10 {
+		t.Errorf("DER 2 = %+v", two)
+	}
+}
+
 type failingStatuses struct {
+	store.ScopedStore[sep2.DERStatus]
+	failKey string
+}
+
+func (f failingStatuses) Get(ctx context.Context, parent, key string) (sep2.DERStatus, error) {
+	if parent == f.failKey {
+		return sep2.DERStatus{}, errors.New("disk gone")
+	}
+	return f.ScopedStore.Get(ctx, parent, key)
+}
+
+type failingDERs struct {
+	store.ScopedStore[sep2.DER]
+	failParent string
+}
+
+func (f failingDERs) List(ctx context.Context, parent string, opts store.ListOptions) (store.ListResult[sep2.DER], error) {
+	if parent == f.failParent {
+		return store.ListResult[sep2.DER]{}, errors.New("list broke")
+	}
+	return f.ScopedStore.List(ctx, parent, opts)
+}
+
+func TestDashboardStatus_ReadFailuresMarkOnlyTheirDevice(t *testing.T) {
+	f := newStatusFixture(t)
+	st := func() *sep2.DERStatus {
+		return &sep2.DERStatus{ReadingTime: statusNow.Unix(), GenConnectStatus: &sep2.ConnectStatusType{Value: 1}}
+	}
+	f.device("1", "listfail")
+	f.der("1", "1", st())
+	f.device("2", "getfail")
+	f.der("2", "1", st())
+	f.der("2", "2", st())
+	f.der("2", "3", st())
+	f.device("3", "healthy")
+	f.der("3", "1", st())
+	f.der("3", "2", st())
+
+	stores := dashboardTestStores(t, f.edevs)
+	stores.DERs = failingDERs{f.ders, "1"}
+	stores.DERStatuses = failingStatuses{f.statuses, "2/2"}
+	h := NewDashboardHandler(stores, "TLS")
+	h.now = func() time.Time { return statusNow }
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/dashboard/data", nil))
+	var p statusPayload
+	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || p.Error != "" {
+		t.Errorf("code %d error %q: a per-device read failure must not fail the payload", w.Code, p.Error)
+	}
+	byL := map[string]int{}
+	for i, d := range p.Devices {
+		byL[d.LFDI] = i
+	}
+	lf, gf, ok := p.Devices[byL["listfail"]], p.Devices[byL["getfail"]], p.Devices[byL["healthy"]]
+	if !strings.Contains(lf.DERError, "list broke") || len(lf.DERs) != 0 {
+		t.Errorf("list failure device: derError %q ders %d, want the error and an empty list", lf.DERError, len(lf.DERs))
+	}
+	if !strings.Contains(gf.DERError, "disk gone") || !strings.Contains(gf.DERError, "2") {
+		t.Errorf("get failure device derError = %q, want it to name DER 2 and the cause", gf.DERError)
+	}
+	ids := []string{}
+	for _, d := range gf.DERs {
+		ids = append(ids, d.ID)
+	}
+	if strings.Join(ids, ",") != "1,3" && strings.Join(ids, ",") != "3,1" {
+		t.Errorf("get failure device kept DERs %v, want 1 and 3", ids)
+	}
+	if ok.DERError != "" || len(ok.DERs) != 2 {
+		t.Errorf("healthy device = derError %q, %d DERs, want none and 2", ok.DERError, len(ok.DERs))
+	}
+}
+
+type stallStatuses struct {
 	store.ScopedStore[sep2.DERStatus]
 }
 
-func (failingStatuses) Get(context.Context, string, string) (sep2.DERStatus, error) {
-	return sep2.DERStatus{}, errors.New("disk gone")
+func (stallStatuses) Get(ctx context.Context, _, _ string) (sep2.DERStatus, error) {
+	<-ctx.Done()
+	return sep2.DERStatus{}, ctx.Err()
 }
 
-func TestDashboardStatus_StatusReadFailureReachesPayloadError(t *testing.T) {
+func stalledHandler(t *testing.T) *DashboardHandler {
+	t.Helper()
 	f := newStatusFixture(t)
 	f.device("1", "d")
 	f.der("1", "1", nil)
 	stores := dashboardTestStores(t, f.edevs)
 	stores.DERs = f.ders
-	stores.DERStatuses = failingStatuses{f.statuses}
-	code, body := getDashboardData(t, stores)
-	if code != http.StatusInternalServerError || !strings.Contains(body["error"].(string), "disk gone") {
-		t.Errorf("code %d body %v, want 500 naming the read failure", code, body)
+	stores.DERStatuses = stallStatuses{f.statuses}
+	return NewDashboardHandler(stores, "TLS")
+}
+
+func TestDashboardCollect_StalledStoreIsBounded(t *testing.T) {
+	h := stalledHandler(t)
+	h.collectTimeout = 50 * time.Millisecond
+	start := time.Now()
+	data := h.collectData(context.Background())
+	if el := time.Since(start); el > 3*time.Second {
+		t.Fatalf("collectData took %v with a stalled store, want it bounded by the 50ms timeout", el)
+	}
+	if len(data.Devices) != 1 || data.Devices[0].DERError == "" {
+		t.Errorf("devices = %+v, want the stalled device marked with a derError", data.Devices)
+	}
+}
+
+func TestDashboardCollect_ClientCancelStopsIt(t *testing.T) {
+	h := stalledHandler(t)
+	h.collectTimeout = time.Minute
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	h.collectData(ctx)
+	if el := time.Since(start); el > 3*time.Second {
+		t.Fatalf("collectData took %v after cancel, want it to stop at once", el)
+	}
+}
+
+func TestDashboardCollect_DefaultTimeoutIsFourSeconds(t *testing.T) {
+	h := NewDashboardHandler(dashboardTestStores(t, memory.NewEndDeviceStore()), "TLS")
+	if h.collectTimeout != 4*time.Second {
+		t.Errorf("collectTimeout = %v, want 4s", h.collectTimeout)
 	}
 }

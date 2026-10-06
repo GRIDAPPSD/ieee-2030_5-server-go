@@ -48,12 +48,23 @@ type Connect struct {
 	Test         bool  `json:"test"`
 	Fault        bool  `json:"fault"`
 	ReservedBits uint8 `json:"reservedBits"`
+	// Also is the storConnectStatus of a DER that reports it beside
+	// genConnectStatus (a PV plus battery unit): the 2018 fields are
+	// separate, so neither stands for the other.
+	Also *Connect `json:"also,omitempty"`
 }
 
-// ConnectOf reads the connection status from the first of connectStatus
-// (2023), genConnectStatus, storConnectStatus that the status carries, nil
-// when it carries none. A DER reporting both a generator and a storage field
-// is shown by the generator one.
+// AnyConnected reports whether the DER says it is connected in any field it
+// reported. Counting a PV-plus-battery unit as disconnected because one half
+// is would hide a connected, exporting battery.
+func (c *Connect) AnyConnected() bool {
+	return c.Connected || (c.Also != nil && c.Also.Connected)
+}
+
+// ConnectOf reads the connection status: connectStatus (2023) when present,
+// since it supersedes both 2018 fields; otherwise genConnectStatus, with
+// storConnectStatus in Also when both are reported; otherwise
+// storConnectStatus. It returns nil when the status carries none.
 func ConnectOf(s sep2.DERStatus) *Connect {
 	switch {
 	case s.ConnectStatus != nil:
@@ -65,7 +76,11 @@ func ConnectOf(s sep2.DERStatus) *Connect {
 			ReservedBits: raw & reserved2023,
 		}
 	case s.GenConnectStatus != nil:
-		return connect2018(SourceGenConnectStatus, *s.GenConnectStatus)
+		c := connect2018(SourceGenConnectStatus, *s.GenConnectStatus)
+		if s.StorConnectStatus != nil {
+			c.Also = connect2018(SourceStorConnectStatus, *s.StorConnectStatus)
+		}
+		return c
 	case s.StorConnectStatus != nil:
 		return connect2018(SourceStorConnectStatus, *s.StorConnectStatus)
 	}
@@ -119,8 +134,9 @@ func StaleAfterSeconds(pollRate uint32) int64 {
 
 // Assess judges readingTime against now (both Unix seconds). A reading with
 // no time cannot be aged and counts as stale. A reading dated more than one
-// pollRate ahead of now is flagged ClockAhead and is not stale: the client
-// clock is wrong, which is a different fact from the client being quiet.
+// pollRate ahead of now is flagged ClockAhead and is also stale: it cannot be
+// aged either, and must never read as fresh or connected. Skew inside one
+// pollRate is treated as current.
 func Assess(readingTime, now int64, pollRate uint32) Freshness {
 	if pollRate == 0 {
 		pollRate = DefaultPollRateSeconds
@@ -134,6 +150,7 @@ func Assess(readingTime, now int64, pollRate uint32) Freshness {
 	age := now - readingTime
 	if age < 0 {
 		f.ClockAhead = -age > int64(pollRate)
+		f.Stale = f.ClockAhead
 		return f
 	}
 	f.AgeSeconds = age

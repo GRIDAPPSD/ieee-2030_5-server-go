@@ -686,6 +686,10 @@ func TestHandleListFleets_ConnectedFromEveryStatusField(t *testing.T) {
 		{"storConnectStatus bit 0 set", sep2.DERStatus{StorConnectStatus: &sep2.ConnectStatusType{Value: 0x03}}, true},
 		{"storConnectStatus bit 0 clear", sep2.DERStatus{StorConnectStatus: &sep2.ConnectStatusType{Value: 0x02}}, false},
 		{"connectStatus bit 0 set", sep2.DERStatus{ConnectStatus: &sep2.ConnectStatusType2{Value: 0x01}}, true},
+		{"PV disconnected, battery connected", sep2.DERStatus{
+			GenConnectStatus:  &sep2.ConnectStatusType{Value: 0x00},
+			StorConnectStatus: &sep2.ConnectStatusType{Value: 0x01},
+		}, true},
 		{"connectStatus energized only", sep2.DERStatus{ConnectStatus: &sep2.ConnectStatusType2{Value: 0x02}}, false},
 	}
 	for _, tc := range cases {

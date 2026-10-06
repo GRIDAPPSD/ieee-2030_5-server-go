@@ -71,7 +71,7 @@ func TestConnectOf_FieldByField(t *testing.T) {
 			want: &Connect{Source: SourceConnectStatus, Raw: 0, Since: 900, Energized: ptr(false)},
 		},
 		{
-			name: "genConnectStatus wins over storConnectStatus",
+			name: "both 2018 fields: generator is primary, storage rides along",
 			status: sep2.DERStatus{
 				GenConnectStatus:  &sep2.ConnectStatusType{DateTime: 10, Value: 0x01},
 				StorConnectStatus: &sep2.ConnectStatusType{DateTime: 20, Value: 0x00},
@@ -203,8 +203,8 @@ func TestAssess_ClockAhead(t *testing.T) {
 		if f.AgeSeconds != 0 {
 			t.Errorf("%s: AgeSeconds = %d, want 0 floor for a future reading", tc.name, f.AgeSeconds)
 		}
-		if f.Stale {
-			t.Errorf("%s: Stale = true for a future reading", tc.name)
+		if f.Stale != tc.want {
+			t.Errorf("%s: Stale = %v, want %v: a clock-ahead reading cannot be aged, so it is not fresh", tc.name, f.Stale, tc.want)
 		}
 	}
 }
@@ -225,5 +225,48 @@ func TestDecode_CombinesAllParts(t *testing.T) {
 	}
 	if d.ReadingTime != 990 || d.AgeSeconds != 10 || d.Stale {
 		t.Errorf("freshness = %+v, want readingTime 990 age 10 fresh", d.Freshness)
+	}
+}
+
+func TestAnyConnected_PVPlusBattery(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		status sep2.DERStatus
+		want   bool
+	}{
+		{"PV disconnected, battery connected", sep2.DERStatus{
+			GenConnectStatus:  &sep2.ConnectStatusType{Value: 0x00},
+			StorConnectStatus: &sep2.ConnectStatusType{DateTime: 7, Value: 0x01},
+		}, true},
+		{"PV connected, battery disconnected", sep2.DERStatus{
+			GenConnectStatus:  &sep2.ConnectStatusType{Value: 0x01},
+			StorConnectStatus: &sep2.ConnectStatusType{Value: 0x00},
+		}, true},
+		{"both disconnected", sep2.DERStatus{
+			GenConnectStatus:  &sep2.ConnectStatusType{Value: 0x00},
+			StorConnectStatus: &sep2.ConnectStatusType{Value: 0x10},
+		}, false},
+		{"connectStatus supersedes both 2018 fields", sep2.DERStatus{
+			ConnectStatus:     &sep2.ConnectStatusType2{Value: 0x00},
+			GenConnectStatus:  &sep2.ConnectStatusType{Value: 0x01},
+			StorConnectStatus: &sep2.ConnectStatusType{Value: 0x01},
+		}, false},
+	}
+	for _, tc := range cases {
+		c := ConnectOf(tc.status)
+		if c == nil || c.AnyConnected() != tc.want {
+			t.Errorf("%s: AnyConnected = %v, want %v (%+v)", tc.name, c != nil && c.AnyConnected(), tc.want, c)
+		}
+	}
+	c := ConnectOf(sep2.DERStatus{
+		GenConnectStatus:  &sep2.ConnectStatusType{Value: 0x00},
+		StorConnectStatus: &sep2.ConnectStatusType{DateTime: 7, Value: 0x0B},
+	})
+	if c.Also == nil || c.Also.Source != SourceStorConnectStatus || c.Also.Raw != 0x0B || c.Also.Since != 7 || !c.Also.Connected {
+		t.Errorf("Also = %+v, want the storConnectStatus decode", c.Also)
+	}
+	if ConnectOf(sep2.DERStatus{GenConnectStatus: &sep2.ConnectStatusType{Value: 1}}).Also != nil {
+		t.Error("Also set with only one 2018 field")
 	}
 }

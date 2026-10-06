@@ -99,7 +99,7 @@ type DashboardHandler struct {
 
 	columnSources []*columnSourceState
 	logMu         sync.Mutex
-	logged        map[string]bool
+	logged        map[logKey]bool
 	activity      *activity.Recorder
 	offlineAfter  time.Duration
 	now           func() time.Time
@@ -284,32 +284,47 @@ func (d *DashboardHandler) collectData(parent context.Context) DashboardData {
 }
 
 // columnSourceState is one registered source plus what the dashboard keeps
-// between passes: whether a call is still running, and the last columns and
-// cells the source returned without error.
+// between passes: the call in flight, and the last columns and cells the
+// source returned without error.
 type columnSourceState struct {
 	src sep2admin.DeviceColumnSource
 
-	mu      sync.Mutex
-	running bool
-	// asked is what the running call's Columns returned, kept so a call that
-	// times out in Cells still has named columns to show.
-	asked []sep2admin.DeviceColumn
+	mu    sync.Mutex
+	cur   *columnCall
 	cols  []sep2admin.DeviceColumn
 	cells map[string]map[string]string
 }
 
+// columnCall is one call to a source. Every pass that arrives while it runs
+// waits on done and shares res.
+type columnCall struct {
+	started time.Time
+	done    chan struct{}
+	res     columnResult
+	// asked is what Columns returned, kept so a call that times out in Cells
+	// still has named columns to show. Guarded by the state's mu.
+	asked []sep2admin.DeviceColumn
+}
+
 // columnResult is one pass's outcome for one source. cols may be empty when
-// the source never answered Columns.
+// the source never answered Columns. busyFor is non-zero when the source's
+// call has run longer than its bound and cols and cells are its last good
+// ones.
 type columnResult struct {
-	cols  []sep2admin.DeviceColumn
-	cells map[string]map[string]string
-	err   error
+	cols    []sep2admin.DeviceColumn
+	cells   map[string]map[string]string
+	err     error
+	busyFor time.Duration
 }
 
 // defaultColumnTimeout bounds each embedder source on its own, separate from
 // the store reads, so neither a slow store nor a slow source starves the
 // other.
 const defaultColumnTimeout = 2 * time.Second
+
+// placeholderID names the stand-in column of source i. It starts with "~",
+// outside validColumnID, so it can never equal an ID a source declares.
+func placeholderID(i int) string { return "~source-" + strconv.Itoa(i+1) }
 
 // validColumnID limits column IDs to a set that is safe as a map key and as
 // a test id in the UI.
@@ -328,24 +343,30 @@ func IsNilSource(src sep2admin.DeviceColumnSource) bool {
 	return false
 }
 
-// call asks the source for its columns and cells. At most one call per
-// source is in flight, across every pass and every client: a source that
-// ignores ctx is not called again until its previous call returns, and busy
-// is then true with the last good columns and cells. Otherwise the call runs
-// in its own goroutine so a panic is recovered and the wait ends at ctx's
-// deadline.
-func (s *columnSourceState) call(ctx context.Context, lfdis []string) (res columnResult, busy bool) {
+// call returns the source's columns and cells. At most one call per source
+// is in flight, across every pass and every client. A pass that arrives while
+// one runs shares its result, waiting at most until ctx ends, so concurrent
+// clients of a healthy slow source all see its cells. Once the in-flight call
+// is older than bound the source is busy: later passes do not wait or start
+// another call, and get the last good columns and cells with busyFor set. The
+// call runs in its own goroutine so a panic is recovered and the wait ends at
+// ctx's deadline.
+func (s *columnSourceState) call(ctx context.Context, lfdis []string, bound time.Duration) columnResult {
 	s.mu.Lock()
-	if s.running {
-		res = columnResult{cols: s.cols, cells: s.cells}
+	c := s.cur
+	if c != nil {
+		if age := time.Since(c.started); age >= bound {
+			res := columnResult{cols: s.cols, cells: s.cells, busyFor: age}
+			s.mu.Unlock()
+			return res
+		}
 		s.mu.Unlock()
-		return res, true
+		return s.wait(ctx, c)
 	}
-	s.running = true
-	s.asked = nil
+	c = &columnCall{started: time.Now(), done: make(chan struct{})}
+	s.cur = c
 	s.mu.Unlock()
 
-	done := make(chan columnResult, 1)
 	go func() {
 		var r columnResult
 		defer func() {
@@ -354,46 +375,88 @@ func (s *columnSourceState) call(ctx context.Context, lfdis []string) (res colum
 				r.err = fmt.Errorf("source panicked: %v", p)
 			}
 			s.mu.Lock()
-			s.running = false
 			if r.err == nil {
 				s.cols, s.cells = r.cols, r.cells
 			}
+			c.res = r
+			s.cur = nil
 			s.mu.Unlock()
-			done <- r
+			close(c.done)
 		}()
 		r.cols = s.src.Columns()
 		s.mu.Lock()
-		s.asked = r.cols
+		c.asked = r.cols
 		s.mu.Unlock()
 		r.cells, r.err = s.src.Cells(ctx, lfdis)
 		if r.err != nil {
 			r.cells = nil
 		}
 	}()
+	return s.wait(ctx, c)
+}
+
+// wait blocks for c or ctx. On the deadline it reports the call as too slow,
+// with whatever columns the call had named by then.
+func (s *columnSourceState) wait(ctx context.Context, c *columnCall) columnResult {
 	select {
-	case r := <-done:
-		return r, false
+	case <-c.done:
+		return c.res
 	case <-ctx.Done():
 		s.mu.Lock()
-		cols := s.asked
+		cols := c.asked
 		s.mu.Unlock()
-		return columnResult{cols: cols, err: fmt.Errorf("source did not answer in time: %w", ctx.Err())}, false
+		return columnResult{cols: cols, err: fmt.Errorf("source did not answer in time: %w", ctx.Err())}
 	}
 }
 
-// logOnce logs msg the first time it is seen, so a fixed configuration
-// mistake does not repeat on every 5 s pass.
-func (d *DashboardHandler) logOnce(msg string) {
+// logKey identifies one kind of failure of one source.
+type logKey struct {
+	source int
+	kind   string
+}
+
+// logOnce logs msg the first time the failure kind is seen for a source and
+// stays quiet until clearLogged says that kind is gone. The table holds at
+// most one entry per source and kind, whatever the error text.
+func (d *DashboardHandler) logOnce(k logKey, msg string) {
 	d.logMu.Lock()
 	defer d.logMu.Unlock()
-	if d.logged[msg] {
+	if d.logged[k] {
 		return
 	}
 	if d.logged == nil {
-		d.logged = map[string]bool{}
+		d.logged = map[logKey]bool{}
 	}
-	d.logged[msg] = true
+	d.logged[k] = true
 	log.Print(msg)
+}
+
+// clearLogged forgets every failure kind of source other than those in
+// present, so a failure that recovers and returns is logged again.
+func (d *DashboardHandler) clearLogged(source int, present map[string]bool) {
+	d.logMu.Lock()
+	defer d.logMu.Unlock()
+	for k := range d.logged {
+		if k.source == source && !present[k.kind] {
+			delete(d.logged, k)
+		}
+	}
+}
+
+// uniqueColumnIDs drops any later column that repeats an earlier ID, a last
+// guard so the keyed list in the UI never sees a duplicate.
+func uniqueColumnIDs(cols []DashboardColumn) []DashboardColumn {
+	seen := make(map[string]bool, len(cols))
+	out := cols[:0:0]
+	for _, c := range cols {
+		if seen[c.ID] {
+			log.Printf("dashboard: duplicate device column id %q dropped", c.ID)
+			continue
+		}
+		seen[c.ID] = true
+		out = append(out, c)
+	}
+	return out
 }
 
 // fillColumns runs every source concurrently, each under its own
@@ -414,7 +477,6 @@ func (d *DashboardHandler) fillColumns(parent context.Context, devices []Dashboa
 		lfdis[i] = dev.LFDI
 	}
 	results := make([]columnResult, len(d.columnSources))
-	busy := make([]bool, len(d.columnSources))
 	var wg sync.WaitGroup
 	for i, st := range d.columnSources {
 		wg.Add(1)
@@ -422,7 +484,7 @@ func (d *DashboardHandler) fillColumns(parent context.Context, devices []Dashboa
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(parent, d.columnTimeout)
 			defer cancel()
-			results[i], busy[i] = st.call(ctx, lfdis)
+			results[i] = st.call(ctx, lfdis, d.columnTimeout)
 		}()
 	}
 	wg.Wait()
@@ -430,34 +492,42 @@ func (d *DashboardHandler) fillColumns(parent context.Context, devices []Dashboa
 	seen := map[string]bool{}
 	for i, res := range results {
 		errText := ""
+		present := map[string]bool{}
+		src := "dashboard: device column source " + strconv.Itoa(i+1) + ": "
 		switch {
-		case busy[i]:
-			errText = "source still busy with the previous call"
+		case res.busyFor > 0:
+			errText = "source still busy: previous call running for " + res.busyFor.Round(100*time.Millisecond).String()
 		case res.err != nil:
 			errText = res.err.Error()
-			d.logOnce("dashboard: device column source " + strconv.Itoa(i+1) + ": " + errText)
+			present["failure"] = true
+			d.logOnce(logKey{i, "failure"}, src+errText)
 		}
-		var problems []string
+		var problems, kinds []string
 		var mine []int
 		for _, c := range res.cols {
 			switch {
 			case c.ID == "":
 				problems = append(problems, "column with an empty id ignored")
+				kinds = append(kinds, "empty-id")
 			case !validColumnID.MatchString(c.ID):
 				problems = append(problems, fmt.Sprintf("column id %q ignored: use lowercase letters, digits, - and _", c.ID))
+				kinds = append(kinds, "bad-id:"+c.ID)
 			case seen[c.ID]:
 				problems = append(problems, fmt.Sprintf("duplicate column id %q ignored", c.ID))
+				kinds = append(kinds, "duplicate:"+c.ID)
 			default:
 				seen[c.ID] = true
 				columns = append(columns, DashboardColumn{ID: c.ID, Label: c.Label})
 				mine = append(mine, len(columns)-1)
 			}
 		}
-		for _, p := range problems {
-			d.logOnce("dashboard: device column source " + strconv.Itoa(i+1) + ": " + p)
+		for j, p := range problems {
+			present[kinds[j]] = true
+			d.logOnce(logKey{i, kinds[j]}, src+p)
 		}
+		d.clearLogged(i, present)
 		if len(mine) == 0 && (errText != "" || len(problems) > 0 || len(res.cols) == 0) {
-			id := "source-" + strconv.Itoa(i+1)
+			id := placeholderID(i)
 			columns = append(columns, DashboardColumn{ID: id, Label: "Source " + strconv.Itoa(i+1)})
 			mine = append(mine, len(columns)-1)
 			seen[id] = true
@@ -477,7 +547,7 @@ func (d *DashboardHandler) fillColumns(parent context.Context, devices []Dashboa
 			}
 		}
 	}
-	return columns
+	return uniqueColumnIDs(columns)
 }
 
 func nonEmpty(s string) []string {

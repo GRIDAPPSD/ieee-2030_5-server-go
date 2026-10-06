@@ -11,7 +11,7 @@
 
   let {
     devices,
-    columns = [],
+    columns: columnList = [],
     fsas,
     onChanged,
   }: {
@@ -21,6 +21,11 @@
     fsas: AdminFSA[]
     onChanged: () => void
   } = $props()
+
+  // The each block is keyed by column id, which throws on a repeat, so a
+  // repeated id (the server drops them, but the wire is not trusted) keeps its
+  // first column only.
+  const columns = $derived(columnList.filter((c, i) => columnList.findIndex((o) => o.id === c.id) === i))
 
   function enabledLabel(enabled: boolean | null): string {
     if (enabled === true) return 'Yes'

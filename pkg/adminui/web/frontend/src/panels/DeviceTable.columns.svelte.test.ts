@@ -72,6 +72,13 @@ describe('DeviceTable embedder columns', () => {
     expect(screen.getByTestId('device-column-constructor').textContent?.trim()).toBe('-')
   })
 
+  it('renders a repeated column id once instead of failing the keyed list', () => {
+    renderTable([device('/edev/1', { a: 'x' })], [{ id: 'a', label: 'First' }, { id: 'a', label: 'Second' }])
+    expect(headers()).toContain('First')
+    expect(headers()).not.toContain('Second')
+    expect(screen.getAllByTestId('device-column-a')).toHaveLength(1)
+  })
+
   it('escapes cell text instead of rendering markup', () => {
     const { container } = renderTable([device('/edev/1', { name: '<b>x</b>' })], [{ id: 'name', label: 'Name' }])
     expect(screen.getByTestId('device-column-name').textContent).toBe('<b>x</b>')

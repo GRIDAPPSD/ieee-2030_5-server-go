@@ -17,8 +17,9 @@ type DeviceColumn struct {
 // Each source is bounded on its own and the sources run concurrently. A
 // source must honor ctx: the server stops waiting at the deadline, but a call
 // that ignores ctx keeps running until it returns, and no second call to that
-// source starts meanwhile (its columns then read "still busy" and show its
-// last good cells). A source that returns an error, panics or overruns the
+// source starts meanwhile. Passes that arrive while a call is younger than
+// its bound share its result; once it is older, they show the source's last
+// good cells with a "still busy" error naming how long the call has run. A source that returns an error, panics or overruns the
 // deadline never removes a row; cells it returned with an error are
 // discarded, so its columns show "-" in every cell and carry the error.
 // Column IDs must match [a-z0-9_-]{1,64} and be unique across sources; a

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -170,15 +172,15 @@ func TestDashboardColumns_PanickingColumnsShowsError(t *testing.T) {
 	if len(p.Devices) != 2 {
 		t.Fatalf("devices = %d, want 2", len(p.Devices))
 	}
-	if len(p.Columns) != 2 || p.Columns[0].ID != "source-1" || p.Columns[1].ID != "name" {
+	if len(p.Columns) != 2 || p.Columns[0].ID != "~source-1" || p.Columns[1].ID != "name" {
 		t.Fatalf("columns = %+v, want a source-1 placeholder then name", p.Columns)
 	}
 	if !strings.Contains(p.Columns[0].Error, "panicked") || p.Columns[1].Error != "" {
 		t.Errorf("column errors = %q / %q, want the panic shown on the placeholder only", p.Columns[0].Error, p.Columns[1].Error)
 	}
 	for _, d := range p.Devices {
-		if d.Cells["source-1"] != "-" {
-			t.Errorf("%s placeholder cell = %q, want -", d.LFDI, d.Cells["source-1"])
+		if d.Cells["~source-1"] != "-" {
+			t.Errorf("%s placeholder cell = %q, want -", d.LFDI, d.Cells["~source-1"])
 		}
 	}
 }
@@ -365,5 +367,142 @@ func TestDashboardColumns_InvalidAndDuplicateIDsShowOnColumnAndLogOnce(t *testin
 	}
 	if n := strings.Count(buf.String(), "duplicate"); n != 1 {
 		t.Errorf("duplicate logged %d times over 2 passes, want once", n)
+	}
+}
+
+func TestDashboardColumns_PlaceholderIDNeverCollidesWithRealID(t *testing.T) {
+	real := fakeSource{
+		cols: []sep2admin.DeviceColumn{{ID: "source-2", Label: "Real"}},
+		cells: func(context.Context, []string) (map[string]map[string]string, error) {
+			return map[string]map[string]string{"AA": {"source-2": "real-value"}}, nil
+		},
+	}
+	failing := nameColumn(func(context.Context, []string) (map[string]map[string]string, error) {
+		return nil, errors.New("down")
+	})
+	failing.cols = nil // columns unknown, so source 2 shows a placeholder
+	p, _ := columnsDashboard(t, 0, real, failing)
+	seen := map[string]bool{}
+	for _, c := range p.Columns {
+		if seen[c.ID] {
+			t.Fatalf("duplicate column id %q in %+v", c.ID, p.Columns)
+		}
+		seen[c.ID] = true
+	}
+	if len(p.Columns) != 2 || p.Columns[0].ID != "source-2" {
+		t.Fatalf("columns = %+v, want the real column then a placeholder", p.Columns)
+	}
+	for _, d := range p.Devices {
+		if d.LFDI == "AA" && d.Cells["source-2"] != "real-value" {
+			t.Errorf("real column cell = %q, want real-value", d.Cells["source-2"])
+		}
+	}
+}
+
+func TestUniqueColumnIDsDropsLaterDuplicates(t *testing.T) {
+	got := uniqueColumnIDs([]DashboardColumn{{ID: "a", Label: "1"}, {ID: "b"}, {ID: "a", Label: "2"}})
+	if len(got) != 2 || got[0].Label != "1" || got[1].ID != "b" {
+		t.Errorf("uniqueColumnIDs = %+v", got)
+	}
+}
+
+func TestDashboardColumns_SlowHealthySourceSharedByConcurrentClients(t *testing.T) {
+	var calls atomic.Int32
+	src := nameColumn(func(context.Context, []string) (map[string]map[string]string, error) {
+		calls.Add(1)
+		time.Sleep(200 * time.Millisecond)
+		return map[string]map[string]string{"AA": {"name": "alpha"}}, nil
+	})
+	h := columnsHandler(t, 0, src)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	var wg sync.WaitGroup
+	bodies := make([]string, 2)
+	for i := range bodies {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/dashboard/data", nil))
+			bodies[i] = w.Body.String()
+		}()
+	}
+	wg.Wait()
+	for i, b := range bodies {
+		var p columnsPayload
+		if err := json.Unmarshal([]byte(b), &p); err != nil {
+			t.Fatalf("client %d body %q: %v", i, b, err)
+		}
+		if len(p.Columns) != 1 || p.Columns[0].ID != "name" || p.Columns[0].Error != "" {
+			t.Errorf("client %d columns = %+v, want name with no error", i, p.Columns)
+		}
+		got := ""
+		for _, d := range p.Devices {
+			if d.LFDI == "AA" {
+				got = d.Cells["name"]
+			}
+		}
+		if got != "alpha" {
+			t.Errorf("client %d cell = %q, want alpha", i, got)
+		}
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("Cells called %d times for 2 concurrent clients, want 1 shared call", n)
+	}
+}
+
+func TestDashboardColumns_BusyErrorNamesAge(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	src := nameColumn(func(context.Context, []string) (map[string]map[string]string, error) {
+		<-release
+		return nil, nil
+	})
+	h := columnsHandler(t, 30*time.Millisecond, src)
+	columnsPass(t, h)
+	p, _ := columnsPass(t, h)
+	if len(p.Columns) != 1 || !strings.Contains(p.Columns[0].Error, "busy") || !strings.Contains(p.Columns[0].Error, "running for") {
+		t.Errorf("columns = %+v, want a busy error naming how long the call has run", p.Columns)
+	}
+}
+
+func TestDashboardColumns_LogOnceBoundedAndRearmed(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	var n atomic.Int32
+	var fail atomic.Bool
+	fail.Store(true)
+	src := nameColumn(func(context.Context, []string) (map[string]map[string]string, error) {
+		if fail.Load() {
+			return nil, fmt.Errorf("down %d", n.Add(1))
+		}
+		return map[string]map[string]string{"AA": {"name": "alpha"}}, nil
+	})
+	h := columnsHandler(t, 0, src)
+	for range 50 {
+		columnsPass(t, h)
+	}
+	if got := strings.Count(buf.String(), "device column source 1"); got != 1 {
+		t.Errorf("logged %d lines for 50 distinct error texts, want 1", got)
+	}
+	h.logMu.Lock()
+	size := len(h.logged)
+	h.logMu.Unlock()
+	if size != 1 {
+		t.Errorf("log-once table holds %d entries after 50 passes, want 1", size)
+	}
+	fail.Store(false)
+	columnsPass(t, h)
+	h.logMu.Lock()
+	size = len(h.logged)
+	h.logMu.Unlock()
+	if size != 0 {
+		t.Errorf("table holds %d entries after the source recovered, want 0", size)
+	}
+	fail.Store(true)
+	columnsPass(t, h)
+	if got := strings.Count(buf.String(), "device column source 1"); got != 2 {
+		t.Errorf("logged %d lines after a recover-and-fail-again, want 2", got)
 	}
 }

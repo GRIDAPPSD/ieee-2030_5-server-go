@@ -14,13 +14,18 @@ type DeviceColumn struct {
 // cell per registered EndDevice. The server passes every device's LFDI in one
 // call, so a source answers from one read instead of one per row.
 //
-// A source must honor ctx: the server bounds each pass and stops waiting at
-// the deadline, but a call that ignores ctx keeps running until it returns.
-// A source that returns an error, panics or overruns the deadline never
-// removes a row; its columns show "-" in every cell and carry the error.
+// Each source is bounded on its own and the sources run concurrently. A
+// source must honor ctx: the server stops waiting at the deadline, but a call
+// that ignores ctx keeps running until it returns, and no second call to that
+// source starts meanwhile (its columns then read "still busy" and show its
+// last good cells). A source that returns an error, panics or overruns the
+// deadline never removes a row; cells it returned with an error are
+// discarded, so its columns show "-" in every cell and carry the error.
+// Column IDs must match [a-z0-9_-]{1,64} and be unique across sources; a
+// refused column is dropped and the reason shows on the source's columns.
 type DeviceColumnSource interface {
 	// Columns lists the columns this source supplies, in display order. It
-	// is read on every pass and must not block.
+	// is called on every pass, inside the same bounded call as Cells.
 	Columns() []DeviceColumn
 	// Cells returns text per LFDI and column ID. A missing LFDI or column
 	// shows "-".

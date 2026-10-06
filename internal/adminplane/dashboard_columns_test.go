@@ -1,12 +1,18 @@
 package adminplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
+	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,7 +48,7 @@ func nameColumn(cells func(context.Context, []string) (map[string]map[string]str
 	return fakeSource{cols: []sep2admin.DeviceColumn{{ID: "name", Label: "Name"}}, cells: cells}
 }
 
-func columnsDashboard(t *testing.T, collectTimeout time.Duration, srcs ...sep2admin.DeviceColumnSource) (columnsPayload, time.Duration) {
+func columnsHandler(t *testing.T, columnTimeout time.Duration, srcs ...sep2admin.DeviceColumnSource) *DashboardHandler {
 	t.Helper()
 	mem := memory.NewEndDeviceStore()
 	for id, lfdi := range map[string]string{"1": "AA", "2": "BB"} {
@@ -51,9 +57,19 @@ func columnsDashboard(t *testing.T, collectTimeout time.Duration, srcs ...sep2ad
 		}
 	}
 	h := NewDashboardHandler(dashboardTestStores(t, mem), "TLS").WithDeviceColumns(srcs...)
-	if collectTimeout > 0 {
-		h.collectTimeout = collectTimeout
+	if columnTimeout > 0 {
+		h.columnTimeout = columnTimeout
 	}
+	return h
+}
+
+func columnsDashboard(t *testing.T, columnTimeout time.Duration, srcs ...sep2admin.DeviceColumnSource) (columnsPayload, time.Duration) {
+	t.Helper()
+	return columnsPass(t, columnsHandler(t, columnTimeout, srcs...))
+}
+
+func columnsPass(t *testing.T, h *DashboardHandler) (columnsPayload, time.Duration) {
+	t.Helper()
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	w := httptest.NewRecorder()
@@ -146,17 +162,46 @@ func TestDashboardColumns_PanickingSourceKeepsRows(t *testing.T) {
 	assertRowsKeptWithDash(t, p)
 }
 
-func TestDashboardColumns_PanickingColumnsKeepsRows(t *testing.T) {
+func TestDashboardColumns_PanickingColumnsShowsError(t *testing.T) {
 	good := nameColumn(func(context.Context, []string) (map[string]map[string]string, error) {
 		return map[string]map[string]string{"AA": {"name": "alpha"}}, nil
 	})
-	bad := panicColumns{}
-	p, _ := columnsDashboard(t, 0, bad, good)
+	p, _ := columnsDashboard(t, 0, panicColumns{}, good)
 	if len(p.Devices) != 2 {
 		t.Fatalf("devices = %d, want 2", len(p.Devices))
 	}
-	if len(p.Columns) != 1 || p.Columns[0].ID != "name" {
-		t.Errorf("columns = %+v, want only the healthy source's column", p.Columns)
+	if len(p.Columns) != 2 || p.Columns[0].ID != "source-1" || p.Columns[1].ID != "name" {
+		t.Fatalf("columns = %+v, want a source-1 placeholder then name", p.Columns)
+	}
+	if !strings.Contains(p.Columns[0].Error, "panicked") || p.Columns[1].Error != "" {
+		t.Errorf("column errors = %q / %q, want the panic shown on the placeholder only", p.Columns[0].Error, p.Columns[1].Error)
+	}
+	for _, d := range p.Devices {
+		if d.Cells["source-1"] != "-" {
+			t.Errorf("%s placeholder cell = %q, want -", d.LFDI, d.Cells["source-1"])
+		}
+	}
+}
+
+type blockingColumns struct{ release chan struct{} }
+
+func (b blockingColumns) Columns() []sep2admin.DeviceColumn {
+	<-b.release
+	return nil
+}
+func (blockingColumns) Cells(context.Context, []string) (map[string]map[string]string, error) {
+	return nil, nil
+}
+
+func TestDashboardColumns_BlockingColumnsBounded(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	p, elapsed := columnsDashboard(t, 100*time.Millisecond, blockingColumns{release})
+	if elapsed > time.Second {
+		t.Fatalf("pass took %v, want it bounded near 100ms", elapsed)
+	}
+	if len(p.Devices) != 2 || len(p.Columns) != 1 || p.Columns[0].Error == "" {
+		t.Errorf("devices %d, columns %+v, want rows kept and an errored placeholder", len(p.Devices), p.Columns)
 	}
 }
 
@@ -175,7 +220,7 @@ func TestDashboardColumns_SlowSourceBoundedByContext(t *testing.T) {
 		return nil, nil
 	})
 	p, elapsed := columnsDashboard(t, 100*time.Millisecond, src)
-	if elapsed > 2*time.Second {
+	if elapsed > time.Second {
 		t.Fatalf("pass took %v, want it bounded near the 100ms context", elapsed)
 	}
 	assertRowsKeptWithDash(t, p)
@@ -202,5 +247,123 @@ func TestDashboardColumns_TwoSourcesOneFails(t *testing.T) {
 		if d.LFDI == "AA" && d.Cells["identity"] != "cert" {
 			t.Errorf("healthy source cell = %q, want cert", d.Cells["identity"])
 		}
+	}
+}
+
+func TestDashboardColumns_IgnoringSourceHasOneCallInFlight(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	var calls atomic.Int32
+	src := nameColumn(func(context.Context, []string) (map[string]map[string]string, error) {
+		calls.Add(1)
+		<-release
+		return nil, nil
+	})
+	h := columnsHandler(t, 20*time.Millisecond, src)
+	before := runtime.NumGoroutine()
+	var last columnsPayload
+	for range 12 {
+		last, _ = columnsPass(t, h)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("Cells called %d times over 12 passes, want 1 while the first is in flight", n)
+	}
+	if grew := runtime.NumGoroutine() - before; grew > 3 {
+		t.Errorf("goroutines grew by %d over 12 passes, want a bounded few", grew)
+	}
+	if len(last.Columns) != 1 || !strings.Contains(last.Columns[0].Error, "busy") {
+		t.Errorf("columns = %+v, want a still-busy error", last.Columns)
+	}
+	if len(last.Devices) != 2 {
+		t.Errorf("devices = %d, want rows kept", len(last.Devices))
+	}
+}
+
+func TestDashboardColumns_BusyKeepsLastGoodCells(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	var calls atomic.Int32
+	src := nameColumn(func(context.Context, []string) (map[string]map[string]string, error) {
+		if calls.Add(1) == 1 {
+			return map[string]map[string]string{"AA": {"name": "alpha"}}, nil
+		}
+		<-release
+		return nil, nil
+	})
+	h := columnsHandler(t, 30*time.Millisecond, src)
+	columnsPass(t, h)
+	columnsPass(t, h) // times out, call stays in flight
+	p, _ := columnsPass(t, h)
+	if len(p.Columns) != 1 || !strings.Contains(p.Columns[0].Error, "busy") {
+		t.Fatalf("columns = %+v, want still busy", p.Columns)
+	}
+	for _, d := range p.Devices {
+		want := map[string]string{"AA": "alpha", "BB": "-"}[d.LFDI]
+		if d.Cells["name"] != want {
+			t.Errorf("%s cell = %q, want last good %q", d.LFDI, d.Cells["name"], want)
+		}
+	}
+}
+
+func TestDashboardColumns_SlowSourceDoesNotStarveFast(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	slow := nameColumn(func(context.Context, []string) (map[string]map[string]string, error) {
+		<-release
+		return nil, nil
+	})
+	fast := fakeSource{
+		cols: []sep2admin.DeviceColumn{{ID: "identity", Label: "Identity"}},
+		cells: func(context.Context, []string) (map[string]map[string]string, error) {
+			return map[string]map[string]string{"AA": {"identity": "cert"}}, nil
+		},
+	}
+	p, _ := columnsDashboard(t, 100*time.Millisecond, slow, fast)
+	if len(p.Columns) != 2 || p.Columns[1].Error != "" {
+		t.Fatalf("columns = %+v, want the fast source clean", p.Columns)
+	}
+	for _, d := range p.Devices {
+		if d.LFDI == "AA" && d.Cells["identity"] != "cert" {
+			t.Errorf("fast cell = %q, want cert", d.Cells["identity"])
+		}
+	}
+}
+
+func TestDashboardColumns_ErrorDiscardsReturnedCells(t *testing.T) {
+	src := nameColumn(func(context.Context, []string) (map[string]map[string]string, error) {
+		return map[string]map[string]string{"AA": {"name": "alpha"}}, errors.New("partial")
+	})
+	p, _ := columnsDashboard(t, 0, src)
+	assertRowsKeptWithDash(t, p)
+}
+
+func TestDashboardColumns_InvalidAndDuplicateIDsShowOnColumnAndLogOnce(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	src := fakeSource{
+		cols: []sep2admin.DeviceColumn{
+			{ID: "constructor", Label: "Ctor"},
+			{ID: "constructor", Label: "Again"},
+			{ID: "", Label: "Empty"},
+			{ID: "Bad Id", Label: "Bad"},
+		},
+		cells: func(context.Context, []string) (map[string]map[string]string, error) {
+			return map[string]map[string]string{"AA": {"constructor": "x"}}, nil
+		},
+	}
+	h := columnsHandler(t, 0, src)
+	p, _ := columnsPass(t, h)
+	columnsPass(t, h)
+	if len(p.Columns) != 1 || p.Columns[0].ID != "constructor" {
+		t.Fatalf("columns = %+v, want only the first valid one", p.Columns)
+	}
+	for _, want := range []string{"duplicate", "empty", "Bad Id"} {
+		if !strings.Contains(p.Columns[0].Error, want) {
+			t.Errorf("column error %q lacks %q", p.Columns[0].Error, want)
+		}
+	}
+	if n := strings.Count(buf.String(), "duplicate"); n != 1 {
+		t.Errorf("duplicate logged %d times over 2 passes, want once", n)
 	}
 }

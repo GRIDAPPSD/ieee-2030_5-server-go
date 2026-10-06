@@ -54,3 +54,19 @@ func TestNewRefusesNilDeviceColumnSource(t *testing.T) {
 		t.Errorf("New = %v, want ErrNilDeviceColumnSource", err)
 	}
 }
+
+func TestNewRefusesTypedNilDeviceColumnSource(t *testing.T) {
+	var typed *typedNilSource
+	cfg := baseConfig()
+	cfg.DeviceColumns = []sep2admin.DeviceColumnSource{typed}
+	if _, err := sep2adminplane.New(cfg); !errors.Is(err, sep2adminplane.ErrNilDeviceColumnSource) {
+		t.Errorf("New = %v, want ErrNilDeviceColumnSource", err)
+	}
+}
+
+type typedNilSource struct{}
+
+func (*typedNilSource) Columns() []sep2admin.DeviceColumn { return nil }
+func (*typedNilSource) Cells(context.Context, []string) (map[string]map[string]string, error) {
+	return nil, nil
+}

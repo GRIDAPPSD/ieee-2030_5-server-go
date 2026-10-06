@@ -67,6 +67,11 @@ describe('DeviceTable embedder columns', () => {
     expect(screen.getAllByTestId('device-column-name').map((c) => c.textContent?.trim())).toEqual(['Pump A', '-', '-'])
   })
 
+  it('reads only own cells, so an id like constructor does not show an inherited member', () => {
+    renderTable([device('/edev/1', {})], [{ id: 'constructor', label: 'Ctor' }])
+    expect(screen.getByTestId('device-column-constructor').textContent?.trim()).toBe('-')
+  })
+
   it('escapes cell text instead of rendering markup', () => {
     const { container } = renderTable([device('/edev/1', { name: '<b>x</b>' })], [{ id: 'name', label: 'Name' }])
     expect(screen.getByTestId('device-column-name').textContent).toBe('<b>x</b>')

@@ -72,7 +72,7 @@
             <ReportedCell view={deviceConnectionView(device)} testid="device-der-connection" errorTestid="device-der-error" />
             <ReportedCell view={deviceInverterView(device)} testid="device-inverter" />
             {#each columns as col (col.id)}
-              <td data-testid="device-column-{col.id}">{device.cells?.[col.id] ?? '-'}</td>
+              <td data-testid="device-column-{col.id}">{device.cells && Object.hasOwn(device.cells, col.id) ? device.cells[col.id] : '-'}</td>
             {/each}
             <td class="mono">{device.href}</td>
             <td>

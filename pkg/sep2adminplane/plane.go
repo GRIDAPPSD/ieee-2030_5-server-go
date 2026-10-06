@@ -156,7 +156,7 @@ func New(cfg Config) (*Plane, error) {
 	if cfg.CommsOfflineAfter != 0 && cfg.CommsOfflineAfter < time.Second {
 		return nil, ErrBadCommsOfflineAfter
 	}
-	if slices.Contains(cfg.DeviceColumns, nil) {
+	if slices.ContainsFunc(cfg.DeviceColumns, adminplane.IsNilSource) {
 		return nil, ErrNilDeviceColumnSource
 	}
 	edition, deadline, grace, err := resolveSettings(cfg)

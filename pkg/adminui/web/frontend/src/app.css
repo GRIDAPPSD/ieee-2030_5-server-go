@@ -88,6 +88,21 @@ body {
   padding: 16px;
 }
 
+/* A grid track's min-content floor lets a wide child push past its track;
+   min-width 0 lets the card shrink and its table wrapper scroll instead. */
+.grid > * {
+  min-width: 0;
+}
+
+/* A section that holds a table takes the whole row. */
+.card-wide {
+  grid-column: 1 / -1;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);

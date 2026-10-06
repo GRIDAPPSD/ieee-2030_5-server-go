@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -28,11 +29,26 @@ type DashboardData struct {
 	// CommsOfflineAfterSeconds is the threshold each device's Comms was
 	// judged against.
 	CommsOfflineAfterSeconds int `json:"commsOfflineAfterSeconds"`
+	// Columns are the extra Devices-tab columns embedder sources supplied,
+	// in registration order; each device's Cells holds one entry per column.
+	// It is an empty list, never null, when no source is wired.
+	Columns []DashboardColumn `json:"columns"`
 	// Error is set when the device list could not be read. Devices is then
 	// null rather than an empty list, so a failed read never looks like a
 	// server with no devices.
 	Error string `json:"error,omitempty"`
 }
+
+// DashboardColumn is one embedder-supplied Devices-tab column. Error is set
+// when its source failed this pass, in which case every cell reads "-".
+type DashboardColumn struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Error string `json:"error,omitempty"`
+}
+
+// noCell is what a cell shows when its source has nothing for the device.
+const noCell = "-"
 
 // DashboardDevice represents a device in the dashboard.
 type DashboardDevice struct {
@@ -58,6 +74,9 @@ type DashboardDevice struct {
 	// DERs then holds only what did read, and an empty list with DERError set
 	// means "unreadable", not "no DERs".
 	DERError string `json:"derError,omitempty"`
+	// Cells maps a DashboardColumn ID to the text for this device. It is
+	// never null: with no source wired it is empty.
+	Cells map[string]string `json:"cells"`
 }
 
 // DashboardDER is one DER's reported status, decoded by internal/derstatus.
@@ -75,9 +94,10 @@ type DashboardHandler struct {
 	startTime time.Time
 	tlsMode   string
 
-	activity     *activity.Recorder
-	offlineAfter time.Duration
-	now          func() time.Time
+	columnSources []sep2admin.DeviceColumnSource
+	activity      *activity.Recorder
+	offlineAfter  time.Duration
+	now           func() time.Time
 	// collectTimeout bounds one pass over the stores.
 	collectTimeout time.Duration
 }
@@ -108,6 +128,19 @@ func (d *DashboardHandler) WithActivity(rec *activity.Recorder, offlineAfter tim
 	d.offlineAfter = offlineAfter
 	if d.offlineAfter <= 0 {
 		d.offlineAfter = activity.DefaultOfflineAfter
+	}
+	return d
+}
+
+// WithDeviceColumns registers embedder sources whose columns are added to
+// every device row. Nil entries are skipped. It returns d so construction
+// chains.
+func (d *DashboardHandler) WithDeviceColumns(srcs ...sep2admin.DeviceColumnSource) *DashboardHandler {
+	d.columnSources = d.columnSources[:0:0]
+	for _, s := range srcs {
+		if s != nil {
+			d.columnSources = append(d.columnSources, s)
+		}
 	}
 	return d
 }
@@ -219,10 +252,12 @@ func (d *DashboardHandler) collectData(parent context.Context) DashboardData {
 			LastKnown:   comms == activity.Offline || comms == activity.NotSeen,
 			DERs:        ders,
 			DERError:    derError,
+			Cells:       map[string]string{},
 		})
 	}
 
 	sortDevicesByHref(devices)
+	columns := d.fillColumns(ctx, devices)
 
 	uptime := time.Since(d.startTime).Round(time.Second)
 
@@ -233,9 +268,100 @@ func (d *DashboardHandler) collectData(parent context.Context) DashboardData {
 		TLSMode:     d.tlsMode,
 		Uptime:      uptime.String(),
 		Devices:     devices,
+		Columns:     columns,
 
 		CommsOfflineAfterSeconds: int(d.offlineAfter / time.Second),
 		Error:                    strings.Join(problems, "; "),
+	}
+}
+
+// fillColumns asks each registered source for its columns and cells and
+// writes them into devices. A source's failure is confined to its own
+// columns: they read "-" and carry the error, and no row is touched
+// otherwise. The returned list is never nil.
+func (d *DashboardHandler) fillColumns(ctx context.Context, devices []DashboardDevice) []DashboardColumn {
+	columns := []DashboardColumn{}
+	if len(d.columnSources) == 0 {
+		return columns
+	}
+	lfdis := make([]string, len(devices))
+	for i, dev := range devices {
+		lfdis[i] = dev.LFDI
+	}
+	seen := map[string]bool{}
+	for _, src := range d.columnSources {
+		cols, err := sourceColumns(src)
+		if err != nil {
+			log.Printf("dashboard: device column source columns: %v", err)
+			continue
+		}
+		var mine []int
+		for _, c := range cols {
+			if seen[c.ID] {
+				log.Printf("dashboard: duplicate device column %q ignored", c.ID)
+				continue
+			}
+			seen[c.ID] = true
+			columns = append(columns, DashboardColumn{ID: c.ID, Label: c.Label})
+			mine = append(mine, len(columns)-1)
+		}
+		if len(mine) == 0 {
+			continue
+		}
+		cells, err := sourceCells(ctx, src, lfdis)
+		if err != nil {
+			log.Printf("dashboard: device column source: %v", err)
+		}
+		for _, i := range mine {
+			if err != nil {
+				columns[i].Error = err.Error()
+			}
+			for j := range devices {
+				text := noCell
+				if v, ok := cells[devices[j].LFDI][columns[i].ID]; ok {
+					text = v
+				}
+				devices[j].Cells[columns[i].ID] = text
+			}
+		}
+	}
+	return columns
+}
+
+// sourceColumns reads src.Columns, turning a panic into an error.
+func sourceColumns(src sep2admin.DeviceColumnSource) (cols []sep2admin.DeviceColumn, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("Columns panicked: %v", r)
+		}
+	}()
+	return src.Columns(), nil
+}
+
+// sourceCells runs src.Cells in its own goroutine so a panic is recovered
+// and a call that ignores ctx cannot hold the pass past its deadline. The
+// goroutine of such a call is left to finish on its own; the buffered
+// channel lets it exit when it does.
+func sourceCells(ctx context.Context, src sep2admin.DeviceColumnSource, lfdis []string) (map[string]map[string]string, error) {
+	type result struct {
+		cells map[string]map[string]string
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- result{err: fmt.Errorf("Cells panicked: %v", r)}
+			}
+		}()
+		cells, err := src.Cells(ctx, lfdis)
+		done <- result{cells: cells, err: err}
+	}()
+	select {
+	case r := <-done:
+		return r.cells, r.err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("Cells did not answer in time: %w", ctx.Err())
 	}
 }
 

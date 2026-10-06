@@ -44,6 +44,8 @@ var (
 	// ErrBadCommsOfflineAfter: CommsOfflineAfter is negative or under one
 	// second, which the payload would report as 0 seconds.
 	ErrBadCommsOfflineAfter = errors.New("sep2adminplane: CommsOfflineAfter is under one second")
+	// ErrNilDeviceColumnSource: a DeviceColumns entry is nil.
+	ErrNilDeviceColumnSource = errors.New("sep2adminplane: DeviceColumns has a nil source")
 )
 
 // MinAdminKeyLength is the shortest AdminKey New accepts, in characters.
@@ -112,6 +114,11 @@ type Config struct {
 	// Zero means activity.DefaultOfflineAfter; a value under one
 	// second is refused.
 	CommsOfflineAfter time.Duration
+	// DeviceColumns add columns to the Devices tab, in the order given. A
+	// source that fails keeps every row (see sep2admin.DeviceColumnSource).
+	// Nil adds none, and the payload's column list is then empty. A nil
+	// entry makes New fail.
+	DeviceColumns []sep2admin.DeviceColumnSource
 }
 
 // Plane is a built admin plane.
@@ -149,6 +156,9 @@ func New(cfg Config) (*Plane, error) {
 	if cfg.CommsOfflineAfter != 0 && cfg.CommsOfflineAfter < time.Second {
 		return nil, ErrBadCommsOfflineAfter
 	}
+	if slices.Contains(cfg.DeviceColumns, nil) {
+		return nil, ErrNilDeviceColumnSource
+	}
 	edition, deadline, grace, err := resolveSettings(cfg)
 	if err != nil {
 		return nil, err
@@ -177,6 +187,7 @@ func New(cfg Config) (*Plane, error) {
 
 		Activity:          cfg.Activity,
 		CommsOfflineAfter: cfg.CommsOfflineAfter,
+		DeviceColumns:     slices.Clone(cfg.DeviceColumns),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sep2adminplane: %w", err)

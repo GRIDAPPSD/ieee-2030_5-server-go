@@ -20,7 +20,7 @@ const data: DashboardData = {
   uptime: '3m21s',
   commsOfflineAfterSeconds: 300,
   devices: [
-    { sfdi: '167261211635', lfdi: '3E4F45AB31EDFE5B67E343E5E4562E31984E23E5', href: '/edev/1', enabled: true, lastRequest: null, comms: 'not_seen' },
+    { sfdi: '167261211635', lfdi: '3E4F45AB31EDFE5B67E343E5E4562E31984E23E5', href: '/edev/1', enabled: true, lastRequest: null, comms: 'not_seen', lastKnown: true, ders: [] },
   ],
 }
 

@@ -22,6 +22,53 @@ export interface DashboardDevice {
   // when none was recorded since the server started.
   lastRequest: string | null
   comms: CommsState
+  // True when the DER status below is what the device last reported rather
+  // than a live reading (comms offline or not seen since start).
+  lastKnown: boolean
+  // Never null: a device with no DERs has an empty list.
+  ders: DashboardDER[]
+  // Set when this device's DER data could not be read in full. An empty
+  // ders with derError set means unreadable, not "no DERs".
+  derError?: string
+}
+
+// DerConnect is one connection-status field as the DER reported it
+// (internal/derstatus Connect). Unix times are seconds.
+export interface DerConnect {
+  // The DERStatus element it was read from: connectStatus,
+  // genConnectStatus or storConnectStatus.
+  source: string
+  raw: number
+  since: number
+  connected: boolean
+  // Present only for connectStatus (2023).
+  energized?: boolean
+  available: boolean
+  operating: boolean
+  test: boolean
+  fault: boolean
+  reservedBits: number
+  // The storConnectStatus of a DER that reports it beside genConnectStatus.
+  also?: DerConnect
+}
+
+export interface DerInverter {
+  code: number
+  since: number
+}
+
+// DashboardDER is one DER's decoded DERStatus. When reported is false the
+// server holds no DERStatus and the other fields mean nothing.
+export interface DashboardDER {
+  id: string
+  reported: boolean
+  connect: DerConnect | null
+  inverter: DerInverter | null
+  readingTime: number
+  ageSeconds: number
+  stale: boolean
+  noReadingTime: boolean
+  clockAhead: boolean
 }
 
 export interface DashboardData {

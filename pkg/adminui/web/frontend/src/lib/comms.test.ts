@@ -25,6 +25,8 @@ describe('commsOnlineCount', () => {
       enabled: null,
       lastRequest: null,
       comms,
+      lastKnown: false,
+      ders: [],
     })
     expect(commsOnlineCount([dev('online'), dev('offline'), dev('not_seen'), dev('unknown'), dev('online')])).toBe(2)
     expect(commsOnlineCount([])).toBe(0)

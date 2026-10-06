@@ -42,7 +42,7 @@ describe('appendHistory', () => {
   })
 
   it('samples how many devices are comms online', () => {
-    const dev = (comms: CommsState) => ({ sfdi: '1', lfdi: '1', href: '/edev/1', enabled: true, lastRequest: null, comms })
+    const dev = (comms: CommsState) => ({ sfdi: '1', lfdi: '1', href: '/edev/1', enabled: true, lastRequest: null, comms, lastKnown: false, ders: [] })
     const frame = { ...sample('00:00:10', 3, 0), devices: [dev('online'), dev('offline'), dev('online')] }
     expect(appendHistory([], frame)[0].commsOnline).toBe(2)
     expect(appendHistory([], { ...frame, devices: null })[0].commsOnline).toBe(0)

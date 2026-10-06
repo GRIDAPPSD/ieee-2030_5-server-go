@@ -6,6 +6,8 @@
   import { deviceIdFromHref, type AdminFSA } from '../lib/fsa'
   import type { DashboardDevice } from '../lib/dashboard'
   import { commsClass, commsLabel, formatAge } from '../lib/comms'
+  import { deviceConnectionView, deviceInverterView } from '../lib/derstatus'
+  import ReportedCell from './ReportedCell.svelte'
 
   let {
     devices,
@@ -46,11 +48,11 @@
   <h2>End Devices</h2>
   <table>
     <thead>
-      <tr><th>SFDI</th><th>LFDI</th><th>Enabled</th><th>Comms</th><th>Last request</th><th>Href</th><th>Assign FSA</th></tr>
+      <tr><th>SFDI</th><th>LFDI</th><th>Enabled</th><th>Comms</th><th>Last request</th><th>DER connection (reported)</th><th>Inverter state (reported)</th><th>Href</th><th>Assign FSA</th></tr>
     </thead>
     <tbody id="deviceTable">
       {#if devices.length === 0}
-        <tr><td colspan="7" class="stat-label">No devices registered</td></tr>
+        <tr><td colspan="9" class="stat-label">No devices registered</td></tr>
       {:else}
         {#each devices as device (device.href)}
           {@const deviceID = deviceIdFromHref(device.href)}
@@ -64,6 +66,8 @@
                 <time datetime={device.lastRequest} title={device.lastRequest}>{formatAge(device.lastRequest, Date.now())}</time>
               {/if}
             </td>
+            <ReportedCell view={deviceConnectionView(device)} testid="device-der-connection" errorTestid="device-der-error" />
+            <ReportedCell view={deviceInverterView(device)} testid="device-inverter" />
             <td class="mono">{device.href}</td>
             <td>
               <select id="assignSel-{deviceID}" bind:value={selected[deviceID]}>

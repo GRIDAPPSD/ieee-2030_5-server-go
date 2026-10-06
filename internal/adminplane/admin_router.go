@@ -59,6 +59,8 @@ type Config struct {
 	// offline; zero takes activity.DefaultOfflineAfter.
 	Activity          *activity.Recorder
 	CommsOfflineAfter time.Duration
+	// DeviceColumns add columns to the Devices tab. Nil adds none.
+	DeviceColumns []sep2admin.DeviceColumnSource
 }
 
 // Build is the admin router Run serves, with its route list for the boot
@@ -257,7 +259,7 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	// Admin dashboard: GET / serves the embedded admin UI, and the SSE and JSON
 	// routes feed it.
 	if stores != nil {
-		dashboard := NewDashboardHandler(stores, cfg.TLSMode).WithActivity(cfg.Activity, cfg.CommsOfflineAfter)
+		dashboard := NewDashboardHandler(stores, cfg.TLSMode).WithActivity(cfg.Activity, cfg.CommsOfflineAfter).WithDeviceColumns(cfg.DeviceColumns...)
 		dashboard.RegisterRoutes(authed)
 	}
 

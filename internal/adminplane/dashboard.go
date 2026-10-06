@@ -7,12 +7,16 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -28,11 +32,26 @@ type DashboardData struct {
 	// CommsOfflineAfterSeconds is the threshold each device's Comms was
 	// judged against.
 	CommsOfflineAfterSeconds int `json:"commsOfflineAfterSeconds"`
+	// Columns are the extra Devices-tab columns embedder sources supplied,
+	// in registration order; each device's Cells holds one entry per column.
+	// It is an empty list, never null, when no source is wired.
+	Columns []DashboardColumn `json:"columns"`
 	// Error is set when the device list could not be read. Devices is then
 	// null rather than an empty list, so a failed read never looks like a
 	// server with no devices.
 	Error string `json:"error,omitempty"`
 }
+
+// DashboardColumn is one embedder-supplied Devices-tab column. Error is set
+// when its source failed this pass, in which case every cell reads "-".
+type DashboardColumn struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Error string `json:"error,omitempty"`
+}
+
+// noCell is what a cell shows when its source has nothing for the device.
+const noCell = "-"
 
 // DashboardDevice represents a device in the dashboard.
 type DashboardDevice struct {
@@ -58,6 +77,9 @@ type DashboardDevice struct {
 	// DERs then holds only what did read, and an empty list with DERError set
 	// means "unreadable", not "no DERs".
 	DERError string `json:"derError,omitempty"`
+	// Cells maps a DashboardColumn ID to the text for this device. It is
+	// never null: with no source wired it is empty.
+	Cells map[string]string `json:"cells"`
 }
 
 // DashboardDER is one DER's reported status, decoded by internal/derstatus.
@@ -75,11 +97,16 @@ type DashboardHandler struct {
 	startTime time.Time
 	tlsMode   string
 
-	activity     *activity.Recorder
-	offlineAfter time.Duration
-	now          func() time.Time
+	columnSources []*columnSourceState
+	logMu         sync.Mutex
+	logged        map[logKey]bool
+	activity      *activity.Recorder
+	offlineAfter  time.Duration
+	now           func() time.Time
 	// collectTimeout bounds one pass over the stores.
 	collectTimeout time.Duration
+	// columnTimeout bounds each embedder column source on its own.
+	columnTimeout time.Duration
 }
 
 // defaultCollectTimeout keeps a stalled store from holding a dashboard pass
@@ -97,6 +124,7 @@ func NewDashboardHandler(stores *Stores, tlsMode string) *DashboardHandler {
 		offlineAfter:   activity.DefaultOfflineAfter,
 		now:            time.Now,
 		collectTimeout: defaultCollectTimeout,
+		columnTimeout:  defaultColumnTimeout,
 	}
 }
 
@@ -108,6 +136,19 @@ func (d *DashboardHandler) WithActivity(rec *activity.Recorder, offlineAfter tim
 	d.offlineAfter = offlineAfter
 	if d.offlineAfter <= 0 {
 		d.offlineAfter = activity.DefaultOfflineAfter
+	}
+	return d
+}
+
+// WithDeviceColumns registers embedder sources whose columns are added to
+// every device row. Nil entries, typed nil ones included, are skipped. It
+// returns d so construction chains.
+func (d *DashboardHandler) WithDeviceColumns(srcs ...sep2admin.DeviceColumnSource) *DashboardHandler {
+	d.columnSources = nil
+	for _, s := range srcs {
+		if !IsNilSource(s) {
+			d.columnSources = append(d.columnSources, &columnSourceState{src: s})
+		}
 	}
 	return d
 }
@@ -219,10 +260,12 @@ func (d *DashboardHandler) collectData(parent context.Context) DashboardData {
 			LastKnown:   comms == activity.Offline || comms == activity.NotSeen,
 			DERs:        ders,
 			DERError:    derError,
+			Cells:       map[string]string{},
 		})
 	}
 
 	sortDevicesByHref(devices)
+	columns := d.fillColumns(parent, devices)
 
 	uptime := time.Since(d.startTime).Round(time.Second)
 
@@ -233,10 +276,285 @@ func (d *DashboardHandler) collectData(parent context.Context) DashboardData {
 		TLSMode:     d.tlsMode,
 		Uptime:      uptime.String(),
 		Devices:     devices,
+		Columns:     columns,
 
 		CommsOfflineAfterSeconds: int(d.offlineAfter / time.Second),
 		Error:                    strings.Join(problems, "; "),
 	}
+}
+
+// columnSourceState is one registered source plus what the dashboard keeps
+// between passes: the call in flight, and the last columns and cells the
+// source returned without error.
+type columnSourceState struct {
+	src sep2admin.DeviceColumnSource
+
+	mu    sync.Mutex
+	cur   *columnCall
+	cols  []sep2admin.DeviceColumn
+	cells map[string]map[string]string
+}
+
+// columnCall is one call to a source. Every pass that arrives while it runs
+// waits on done and shares res.
+type columnCall struct {
+	started time.Time
+	done    chan struct{}
+	res     columnResult
+	// asked is what Columns returned, kept so a call that times out in Cells
+	// still has named columns to show. Guarded by the state's mu.
+	asked []sep2admin.DeviceColumn
+}
+
+// columnResult is one pass's outcome for one source. cols may be empty when
+// the source never answered Columns. busyFor is non-zero when the source's
+// call has run longer than its bound and cols and cells are its last good
+// ones.
+type columnResult struct {
+	cols    []sep2admin.DeviceColumn
+	cells   map[string]map[string]string
+	err     error
+	busyFor time.Duration
+}
+
+// defaultColumnTimeout bounds each embedder source on its own, separate from
+// the store reads, so neither a slow store nor a slow source starves the
+// other.
+const defaultColumnTimeout = 2 * time.Second
+
+// placeholderID names the stand-in column of source i. It starts with "~",
+// outside validColumnID, so it can never equal an ID a source declares.
+func placeholderID(i int) string { return "~source-" + strconv.Itoa(i+1) }
+
+// validColumnID limits column IDs to a set that is safe as a map key and as
+// a test id in the UI.
+var validColumnID = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
+
+// IsNilSource reports whether src is nil or an interface holding a nil
+// pointer, map, slice or func, which would panic on first use.
+func IsNilSource(src sep2admin.DeviceColumnSource) bool {
+	if src == nil {
+		return true
+	}
+	switch v := reflect.ValueOf(src); v.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Interface, reflect.Chan:
+		return v.IsNil()
+	}
+	return false
+}
+
+// call returns the source's columns and cells. At most one call per source
+// is in flight, across every pass and every client. A pass that arrives while
+// one runs shares its result, waiting at most until ctx ends, so concurrent
+// clients of a healthy slow source all see its cells. Once the in-flight call
+// is older than bound the source is busy: later passes do not wait or start
+// another call, and get the last good columns and cells with busyFor set. The
+// call runs in its own goroutine so a panic is recovered and the wait ends at
+// ctx's deadline.
+func (s *columnSourceState) call(ctx context.Context, lfdis []string, bound time.Duration) columnResult {
+	s.mu.Lock()
+	c := s.cur
+	if c != nil {
+		if age := time.Since(c.started); age >= bound {
+			res := columnResult{cols: s.cols, cells: s.cells, busyFor: age}
+			s.mu.Unlock()
+			return res
+		}
+		s.mu.Unlock()
+		return s.wait(ctx, c)
+	}
+	c = &columnCall{started: time.Now(), done: make(chan struct{})}
+	s.cur = c
+	s.mu.Unlock()
+
+	go func() {
+		var r columnResult
+		defer func() {
+			if p := recover(); p != nil {
+				r.cells = nil
+				r.err = fmt.Errorf("source panicked: %v", p)
+			}
+			s.mu.Lock()
+			if r.err == nil {
+				s.cols, s.cells = r.cols, r.cells
+			}
+			c.res = r
+			s.cur = nil
+			s.mu.Unlock()
+			close(c.done)
+		}()
+		r.cols = s.src.Columns()
+		s.mu.Lock()
+		c.asked = r.cols
+		s.mu.Unlock()
+		r.cells, r.err = s.src.Cells(ctx, lfdis)
+		if r.err != nil {
+			r.cells = nil
+		}
+	}()
+	return s.wait(ctx, c)
+}
+
+// wait blocks for c or ctx. On the deadline it reports the call as too slow,
+// with whatever columns the call had named by then.
+func (s *columnSourceState) wait(ctx context.Context, c *columnCall) columnResult {
+	select {
+	case <-c.done:
+		return c.res
+	case <-ctx.Done():
+		s.mu.Lock()
+		cols := c.asked
+		s.mu.Unlock()
+		return columnResult{cols: cols, err: fmt.Errorf("source did not answer in time: %w", ctx.Err())}
+	}
+}
+
+// logKey identifies one kind of failure of one source.
+type logKey struct {
+	source int
+	kind   string
+}
+
+// logOnce logs msg the first time the failure kind is seen for a source and
+// stays quiet until clearLogged says that kind is gone. The table holds at
+// most one entry per source and kind, whatever the error text.
+func (d *DashboardHandler) logOnce(k logKey, msg string) {
+	d.logMu.Lock()
+	defer d.logMu.Unlock()
+	if d.logged[k] {
+		return
+	}
+	if d.logged == nil {
+		d.logged = map[logKey]bool{}
+	}
+	d.logged[k] = true
+	log.Print(msg)
+}
+
+// clearLogged forgets every failure kind of source other than those in
+// present, so a failure that recovers and returns is logged again.
+func (d *DashboardHandler) clearLogged(source int, present map[string]bool) {
+	d.logMu.Lock()
+	defer d.logMu.Unlock()
+	for k := range d.logged {
+		if k.source == source && !present[k.kind] {
+			delete(d.logged, k)
+		}
+	}
+}
+
+// uniqueColumnIDs drops any later column that repeats an earlier ID, a last
+// guard so the keyed list in the UI never sees a duplicate.
+func uniqueColumnIDs(cols []DashboardColumn) []DashboardColumn {
+	seen := make(map[string]bool, len(cols))
+	out := cols[:0:0]
+	for _, c := range cols {
+		if seen[c.ID] {
+			log.Printf("dashboard: duplicate device column id %q dropped", c.ID)
+			continue
+		}
+		seen[c.ID] = true
+		out = append(out, c)
+	}
+	return out
+}
+
+// fillColumns runs every source concurrently, each under its own
+// columnTimeout bound derived from parent, and writes the columns and cells
+// into devices. Each pass calls every source once per client, so a source
+// serves one call per SSE client per 5 s tick. A source's failure stays on
+// its own columns: they read "-" (cells returned alongside an error are
+// discarded) and carry the error, and no row is touched otherwise. A source
+// whose columns are unknown, or all refused, shows one placeholder column
+// "source-N" carrying the error. The returned list is never nil.
+func (d *DashboardHandler) fillColumns(parent context.Context, devices []DashboardDevice) []DashboardColumn {
+	columns := []DashboardColumn{}
+	if len(d.columnSources) == 0 {
+		return columns
+	}
+	lfdis := make([]string, len(devices))
+	for i, dev := range devices {
+		lfdis[i] = dev.LFDI
+	}
+	results := make([]columnResult, len(d.columnSources))
+	var wg sync.WaitGroup
+	for i, st := range d.columnSources {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(parent, d.columnTimeout)
+			defer cancel()
+			results[i] = st.call(ctx, lfdis, d.columnTimeout)
+		}()
+	}
+	wg.Wait()
+
+	seen := map[string]bool{}
+	for i, res := range results {
+		errText := ""
+		present := map[string]bool{}
+		src := "dashboard: device column source " + strconv.Itoa(i+1) + ": "
+		switch {
+		case res.busyFor > 0:
+			errText = "source still busy: previous call running for " + res.busyFor.Round(100*time.Millisecond).String()
+		case res.err != nil:
+			errText = res.err.Error()
+			present["failure"] = true
+			d.logOnce(logKey{i, "failure"}, src+errText)
+		}
+		var problems, kinds []string
+		var mine []int
+		for _, c := range res.cols {
+			switch {
+			case c.ID == "":
+				problems = append(problems, "column with an empty id ignored")
+				kinds = append(kinds, "empty-id")
+			case !validColumnID.MatchString(c.ID):
+				problems = append(problems, fmt.Sprintf("column id %q ignored: use lowercase letters, digits, - and _", c.ID))
+				kinds = append(kinds, "bad-id:"+c.ID)
+			case seen[c.ID]:
+				problems = append(problems, fmt.Sprintf("duplicate column id %q ignored", c.ID))
+				kinds = append(kinds, "duplicate:"+c.ID)
+			default:
+				seen[c.ID] = true
+				columns = append(columns, DashboardColumn{ID: c.ID, Label: c.Label})
+				mine = append(mine, len(columns)-1)
+			}
+		}
+		for j, p := range problems {
+			present[kinds[j]] = true
+			d.logOnce(logKey{i, kinds[j]}, src+p)
+		}
+		d.clearLogged(i, present)
+		if len(mine) == 0 && (errText != "" || len(problems) > 0 || len(res.cols) == 0) {
+			id := placeholderID(i)
+			columns = append(columns, DashboardColumn{ID: id, Label: "Source " + strconv.Itoa(i+1)})
+			mine = append(mine, len(columns)-1)
+			seen[id] = true
+		}
+		if len(mine) == 0 {
+			continue
+		}
+		errText = strings.Join(append(nonEmpty(errText), problems...), "; ")
+		for _, ci := range mine {
+			columns[ci].Error = errText
+			for j := range devices {
+				text := noCell
+				if v, ok := res.cells[devices[j].LFDI][columns[ci].ID]; ok {
+					text = v
+				}
+				devices[j].Cells[columns[ci].ID] = text
+			}
+		}
+	}
+	return uniqueColumnIDs(columns)
+}
+
+func nonEmpty(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return []string{s}
 }
 
 // collectDERs reads every DER of the EndDevice at edevHref and decodes its

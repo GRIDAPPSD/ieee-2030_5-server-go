@@ -255,7 +255,7 @@
       <ServerInfo {data} />
       <ActivityChart {history} />
     {:else if activeTab === 'devices'}
-      <DeviceTable devices={data?.devices ?? []} {fsas} onChanged={refresh} />
+      <DeviceTable devices={data?.devices ?? []} columns={data?.columns ?? []} {fsas} onChanged={refresh} />
       <AddDevice onAdded={refresh} pending={mintedCert} />
       <LookupDevice />
     {:else if activeTab === 'fsas'}

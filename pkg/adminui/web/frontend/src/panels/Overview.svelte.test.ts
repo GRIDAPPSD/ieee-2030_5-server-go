@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { render } from '@testing-library/svelte'
 import Overview from './Overview.svelte'
-import type { CommsState, DashboardData } from '../lib/dashboard'
+import type { CommsState, DashboardDER, DashboardData, DashboardDevice } from '../lib/dashboard'
 
 const device = (comms: CommsState) => ({
   sfdi: '1',
@@ -10,6 +10,8 @@ const device = (comms: CommsState) => ({
   enabled: true,
   lastRequest: null,
   comms,
+  lastKnown: false,
+  ders: [],
 })
 
 const data: DashboardData = {
@@ -62,5 +64,79 @@ describe('Overview', () => {
     expect(container.querySelector('#bigDeviceCount')).toHaveTextContent('0')
     expect(container.querySelector('#mupCount')).toHaveTextContent('0')
     expect(container.querySelector('#commsOnline')).toHaveTextContent('0 of 0')
+  })
+})
+
+describe('Overview DER stat', () => {
+  const der = (over: Partial<DashboardDER> = {}): DashboardDER => ({
+    id: '0',
+    reported: true,
+    connect: { source: 'genConnectStatus', raw: 1, since: 0, connected: true, available: false, operating: false, test: false, fault: false, reservedBits: 0 },
+    inverter: null,
+    readingTime: 1,
+    ageSeconds: 5,
+    stale: false,
+    noReadingTime: false,
+    clockAhead: false,
+    ...over,
+  })
+  const dev = (ders: DashboardDER[], over: Partial<DashboardDevice> = {}): DashboardDevice => ({
+    ...device('online'),
+    lastKnown: false,
+    ders,
+    ...over,
+  })
+  const text = (d: DashboardData) => {
+    const { container } = render(Overview, { props: { data: d } })
+    return container.querySelector('#derConnected')?.textContent?.replace(/\s+/g, ' ').trim()
+  }
+
+  it('counts fresh connected DERs and separately the stale ones', () => {
+    const connectedDown = der({ connect: { ...der().connect!, raw: 0, connected: false } })
+    const d: DashboardData = {
+      ...data,
+      deviceCount: 3,
+      devices: [dev([der()]), dev([der({ stale: true, ageSeconds: 4000 })]), dev([connectedDown])],
+    }
+    expect(text(d)).toBe('1 connected, 1 disconnected, 1 stale, 0 last known')
+  })
+
+  it('counts a hybrid connected through also only', () => {
+    const c = { ...der().connect!, raw: 0, connected: false, also: { ...der().connect!, source: 'storConnectStatus' } }
+    expect(text({ ...data, deviceCount: 1, devices: [dev([der({ connect: c })])] })).toBe('1 connected, 0 disconnected, 0 stale, 0 last known')
+  })
+
+  it('does not count a last-known DER of an offline device as reporting connected', () => {
+    expect(text({ ...data, deviceCount: 1, devices: [dev([der()], { comms: 'offline', lastKnown: true })] })).toBe('0 connected, 0 disconnected, 0 stale, 1 last known')
+  })
+
+  it('says Not reported when a DER has no status', () => {
+    expect(text({ ...data, deviceCount: 1, devices: [dev([der({ reported: false, connect: null })])] })).toBe('Not reported')
+  })
+
+  it('says Not reported when no device has a DER', () => {
+    expect(text({ ...data, deviceCount: 1, devices: [dev([])] })).toBe('Not reported')
+  })
+
+  it('counts a fresh DER on a last-known device as last known, and every reported DER once', () => {
+    const d: DashboardData = {
+      ...data,
+      deviceCount: 2,
+      devices: [
+        dev([der(), der({ id: '1', stale: true })], { comms: 'offline', lastKnown: true }),
+        dev([der()]),
+      ],
+    }
+    expect(text(d)).toBe('1 connected, 0 disconnected, 1 stale, 1 last known')
+  })
+
+  it('says how many devices could not be read, even when no DER read at all', () => {
+    expect(text({ ...data, deviceCount: 2, devices: [dev([], { derError: 'boom' }), dev([], { derError: 'bang' })] })).toBe('2 devices unreadable')
+  })
+
+  it('shows unreadable devices beside the counts of the ones that read', () => {
+    expect(text({ ...data, deviceCount: 2, devices: [dev([der()]), dev([], { derError: 'boom' })] })).toBe(
+      '1 connected, 0 disconnected, 0 stale, 0 last known, 1 device unreadable',
+    )
   })
 })

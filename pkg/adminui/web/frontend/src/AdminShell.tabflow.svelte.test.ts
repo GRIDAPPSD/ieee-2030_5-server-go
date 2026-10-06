@@ -36,6 +36,8 @@ const DEVICE_1: DashboardDevice = {
   enabled: true,
   lastRequest: null,
   comms: 'not_seen',
+  lastKnown: true,
+  ders: [],
 }
 
 interface Fake {
@@ -112,7 +114,7 @@ function installFake(): Fake {
   vi.spyOn(api, 'postJSON').mockImplementation(async (path: string, body: unknown) => {
     const payload = body as Record<string, unknown>
     if (path === '/api/devices') {
-      const device = { sfdi: String(payload.sfdi), lfdi: String(payload.lfdi), href: '/edev/2', enabled: true, lastRequest: null, comms: 'not_seen' as const }
+      const device = { sfdi: String(payload.sfdi), lfdi: String(payload.lfdi), href: '/edev/2', enabled: true, lastRequest: null, comms: 'not_seen' as const, lastKnown: true, ders: [] }
       fake.devices.push(device)
       return { ok: true, data: device } as never
     }

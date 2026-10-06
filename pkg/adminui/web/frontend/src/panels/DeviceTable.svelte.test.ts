@@ -17,6 +17,8 @@ const devices: DashboardDevice[] = [
     enabled: true,
     lastRequest: '2026-10-05T11:59:30Z',
     comms: 'online',
+    lastKnown: false,
+    ders: [],
   },
   {
     sfdi: '210987654321',
@@ -25,6 +27,8 @@ const devices: DashboardDevice[] = [
     enabled: false,
     lastRequest: '2026-10-05T11:30:00Z',
     comms: 'offline',
+    lastKnown: false,
+    ders: [],
   },
   {
     sfdi: '555555555555',
@@ -33,6 +37,8 @@ const devices: DashboardDevice[] = [
     enabled: null,
     lastRequest: null,
     comms: 'not_seen',
+    lastKnown: false,
+    ders: [],
   },
   {
     sfdi: '777777777777',
@@ -41,6 +47,8 @@ const devices: DashboardDevice[] = [
     enabled: true,
     lastRequest: null,
     comms: 'unknown',
+    lastKnown: false,
+    ders: [],
   },
 ]
 

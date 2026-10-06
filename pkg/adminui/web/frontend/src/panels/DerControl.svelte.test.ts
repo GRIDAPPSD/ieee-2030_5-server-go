@@ -12,8 +12,8 @@ import type {
 } from '../lib/dercontrol'
 
 const devices: DashboardDevice[] = [
-  { sfdi: '167261211635', lfdi: 'D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1', href: '/edev/0', enabled: true, lastRequest: null, comms: 'not_seen' },
-  { sfdi: '222222222222', lfdi: 'D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2', href: '/edev/1', enabled: true, lastRequest: null, comms: 'not_seen' },
+  { sfdi: '167261211635', lfdi: 'D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1', href: '/edev/0', enabled: true, lastRequest: null, comms: 'not_seen', lastKnown: true, ders: [] },
+  { sfdi: '222222222222', lfdi: 'D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2D2', href: '/edev/1', enabled: true, lastRequest: null, comms: 'not_seen', lastKnown: true, ders: [] },
 ]
 
 const PROG_A = '/edev/0/fsa/0/derp/0'

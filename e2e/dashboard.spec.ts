@@ -142,6 +142,8 @@ test('dashboard renders all UI sections', async ({ page }) => {
   await expect(page.getByRole('columnheader', { name: 'Enabled' })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Comms' })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Last request' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'DER connection (reported)' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Inverter state (reported)' })).toBeVisible();
   await expect(page.getByText('ONLINE', { exact: true })).toHaveCount(0);
   await expect(page.getByText('OFFLINE', { exact: true })).toHaveCount(0);
 

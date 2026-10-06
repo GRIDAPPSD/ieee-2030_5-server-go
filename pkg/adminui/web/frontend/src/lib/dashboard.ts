@@ -30,6 +30,17 @@ export interface DashboardDevice {
   // Set when this device's DER data could not be read in full. An empty
   // ders with derError set means unreadable, not "no DERs".
   derError?: string
+  // Text per DashboardColumn id from an embedder's column source. Absent
+  // from older servers; a missing id renders "-".
+  cells?: Record<string, string>
+}
+
+// DashboardColumn is one extra Devices-tab column an embedder supplied.
+// error is set when its source failed: every cell then reads "-".
+export interface DashboardColumn {
+  id: string
+  label: string
+  error?: string
 }
 
 // DerConnect is one connection-status field as the DER reported it
@@ -80,6 +91,8 @@ export interface DashboardData {
   devices: DashboardDevice[] | null
   // The threshold each device's comms was judged against.
   commsOfflineAfterSeconds: number
+  // Embedder columns in display order; empty when no source is wired.
+  columns?: DashboardColumn[]
   // Set when the server could not read the device list; devices is then null.
   error?: string
 }

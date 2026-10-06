@@ -4,17 +4,20 @@
   // the untruncated value is available through Lookup Device by LFDI.
   import { postJSON } from '../lib/api'
   import { deviceIdFromHref, type AdminFSA } from '../lib/fsa'
-  import type { DashboardDevice } from '../lib/dashboard'
+  import type { DashboardColumn, DashboardDevice } from '../lib/dashboard'
   import { commsClass, commsLabel, formatAge } from '../lib/comms'
   import { deviceConnectionView, deviceInverterView } from '../lib/derstatus'
   import ReportedCell from './ReportedCell.svelte'
 
   let {
     devices,
+    columns = [],
     fsas,
     onChanged,
   }: {
     devices: DashboardDevice[]
+    // Embedder columns, rendered after the reported columns in order.
+    columns?: DashboardColumn[]
     fsas: AdminFSA[]
     onChanged: () => void
   } = $props()
@@ -48,11 +51,11 @@
   <h2>End Devices</h2>
   <table>
     <thead>
-      <tr><th>SFDI</th><th>LFDI</th><th>Enabled</th><th>Comms</th><th>Last request</th><th>DER connection (reported)</th><th>Inverter state (reported)</th><th>Href</th><th>Assign FSA</th></tr>
+      <tr><th>SFDI</th><th>LFDI</th><th>Enabled</th><th>Comms</th><th>Last request</th><th>DER connection (reported)</th><th>Inverter state (reported)</th>{#each columns as col (col.id)}<th>{col.label}{#if col.error}<span style="color: #f59e0b; cursor: help" title={col.error} data-testid="device-column-error-{col.id}" role="img" aria-label="Column failed: {col.error}"> (!)</span>{/if}</th>{/each}<th>Href</th><th>Assign FSA</th></tr>
     </thead>
     <tbody id="deviceTable">
       {#if devices.length === 0}
-        <tr><td colspan="9" class="stat-label">No devices registered</td></tr>
+        <tr><td colspan={9 + columns.length} class="stat-label">No devices registered</td></tr>
       {:else}
         {#each devices as device (device.href)}
           {@const deviceID = deviceIdFromHref(device.href)}
@@ -68,6 +71,9 @@
             </td>
             <ReportedCell view={deviceConnectionView(device)} testid="device-der-connection" errorTestid="device-der-error" />
             <ReportedCell view={deviceInverterView(device)} testid="device-inverter" />
+            {#each columns as col (col.id)}
+              <td data-testid="device-column-{col.id}">{device.cells?.[col.id] ?? '-'}</td>
+            {/each}
             <td class="mono">{device.href}</td>
             <td>
               <select id="assignSel-{deviceID}" bind:value={selected[deviceID]}>

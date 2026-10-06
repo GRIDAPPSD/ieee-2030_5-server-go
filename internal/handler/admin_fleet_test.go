@@ -486,11 +486,10 @@ func TestHandleListFleets_UsesRealWallClockForStaleness(t *testing.T) {
 	}
 }
 
-// staleAfterSecondsForTest mirrors admin_fleet.go's unexported
-// staleAfterSeconds (15 minutes); duplicated here because handler_test is a
-// separate package and the two must not silently drift, so the value is
-// named, not guessed, at each use.
-const staleAfterSecondsForTest = 15 * 60
+// staleAfterSecondsForTest is the DERStatus stale limit: 2 x the served 900 s
+// pollRate plus 60 s. It is duplicated because handler_test is a separate
+// package and the two must not silently drift.
+const staleAfterSecondsForTest = 2*900 + 60
 
 // TestHandleListFleets_ConnectBitClearIsNotConnected kills "connected :=
 // true" replacing the bit test: a GenConnectStatus with bit 0 clear (here
@@ -671,5 +670,48 @@ func TestHandleListFleets_DeviceCarriesEdevIDAndHref(t *testing.T) {
 		if _, has := un[key]; has {
 			t.Errorf("unregistered device carries %q = %v, want key absent", key, un[key])
 		}
+	}
+}
+
+// DERMS reads connection through the shared decode, so a storage device
+// (storConnectStatus) and a 2023 device (connectStatus) count like a 2018
+// generator.
+func TestHandleListFleets_ConnectedFromEveryStatusField(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		status sep2.DERStatus
+		want   bool
+	}{
+		{"storConnectStatus bit 0 set", sep2.DERStatus{StorConnectStatus: &sep2.ConnectStatusType{Value: 0x03}}, true},
+		{"storConnectStatus bit 0 clear", sep2.DERStatus{StorConnectStatus: &sep2.ConnectStatusType{Value: 0x02}}, false},
+		{"connectStatus bit 0 set", sep2.DERStatus{ConnectStatus: &sep2.ConnectStatusType2{Value: 0x01}}, true},
+		{"connectStatus energized only", sep2.DERStatus{ConnectStatus: &sep2.ConnectStatusType2{Value: 0x02}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFleetFixture(t)
+			f.assign(fleetAggregatorLFDI, fleetDeviceALFDI)
+			f.seedDevice("3", fleetDeviceALFDI, "1")
+			tc.status.ReadingTime = handlerTestNow()
+			f.setStatus("3", "1", tc.status)
+
+			fleets := fetchFleets(t, f.handler())
+			dev := findDevice(t, fleets[0], fleetDeviceALFDI)
+			if dev.Status == nil || dev.Status.Connected == nil {
+				t.Fatal("Status.Connected is nil, want a reported value")
+			}
+			if *dev.Status.Connected != tc.want {
+				t.Errorf("Connected = %v, want %v", *dev.Status.Connected, tc.want)
+			}
+			wantRollup := 0
+			if tc.want {
+				wantRollup = 1
+			}
+			if fleets[0].Rollup.Connected != wantRollup {
+				t.Errorf("Rollup.Connected = %d, want %d", fleets[0].Rollup.Connected, wantRollup)
+			}
+		})
 	}
 }

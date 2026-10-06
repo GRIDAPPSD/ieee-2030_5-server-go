@@ -3,6 +3,7 @@ package adminplane
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -46,6 +48,21 @@ type DashboardDevice struct {
 	// Comms is one of the activity.Comms values: online, offline, not_seen,
 	// or unknown when no recorder is wired.
 	Comms string `json:"comms"`
+	// LastKnown is true when Comms says the device is not currently talking
+	// (offline or not seen since start), so its DER status is what it last
+	// reported rather than a live reading. It stays false for "unknown".
+	LastKnown bool `json:"lastKnown"`
+	// DERs is never null: a device with no DERs gets an empty list.
+	DERs []DashboardDER `json:"ders"`
+}
+
+// DashboardDER is one DER's reported status, decoded by internal/derstatus.
+// Reported is false when the server holds no DERStatus for it, in which case
+// the decoded fields are zero and mean nothing.
+type DashboardDER struct {
+	ID       string `json:"id"`
+	Reported bool   `json:"reported"`
+	derstatus.Decoded
 }
 
 // DashboardHandler serves the admin dashboard and SSE endpoint.
@@ -173,13 +190,20 @@ func (d *DashboardHandler) collectData() DashboardData {
 			v := at.UTC().Format(time.RFC3339)
 			lastRequest = &v
 		}
+		comms := d.activity.State(dev.LFDI, now, d.offlineAfter)
+		ders, err := d.collectDERs(ctx, dev.Href, now.Unix())
+		if err != nil {
+			note("DER status for "+dev.LFDI, err)
+		}
 		devices = append(devices, DashboardDevice{
 			SFDI:        dev.SFDI,
 			LFDI:        dev.LFDI,
 			Href:        dev.Href,
 			Enabled:     enabled,
 			LastRequest: lastRequest,
-			Comms:       string(d.activity.State(dev.LFDI, now, d.offlineAfter)),
+			Comms:       string(comms),
+			LastKnown:   comms == activity.Offline || comms == activity.NotSeen,
+			DERs:        ders,
 		})
 	}
 
@@ -199,6 +223,41 @@ func (d *DashboardHandler) collectData() DashboardData {
 		Error:                    strings.Join(problems, "; "),
 	}
 }
+
+// collectDERs reads every DER of the EndDevice at edevHref and decodes its
+// DERStatus against now (Unix seconds). A DER with no status is listed with
+// Reported false; any other read failure fails the device's list so a broken
+// store is not shown as DERs that never reported. Absent DER stores yield an
+// empty list.
+func (d *DashboardHandler) collectDERs(ctx context.Context, edevHref string, now int64) ([]DashboardDER, error) {
+	out := []DashboardDER{}
+	if store.IsAbsent(d.stores.DERs) || store.IsAbsent(d.stores.DERStatuses) {
+		return out, nil
+	}
+	edevID := edevHref[strings.LastIndex(edevHref, "/")+1:]
+	ders, err := d.stores.DERs.List(ctx, edevID, store.ListOptions{Unbounded: true})
+	if err != nil {
+		return out, fmt.Errorf("DERs.List(%q): %w", edevID, err)
+	}
+	for _, der := range ders.Items {
+		derID := der.Href[strings.LastIndex(der.Href, "/")+1:]
+		entry := DashboardDER{ID: derID}
+		s, err := d.stores.DERStatuses.Get(ctx, edevID+"/"+derID, derStatusKey)
+		switch {
+		case err == nil:
+			entry.Reported = true
+			entry.Decoded = derstatus.Decode(s, now, derstatus.DefaultPollRateSeconds)
+		case errors.Is(err, store.ErrNotFound):
+		default:
+			return out, fmt.Errorf("DERStatuses.Get(%q/%q): %w", edevID, derID, err)
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+// derStatusKey is the singleton key DERStatus is stored under.
+const derStatusKey = "default"
 
 // sortDevicesByHref orders devices by the trailing integer of their href, so
 // /edev/2 precedes /edev/10. Hrefs with no trailing integer follow the

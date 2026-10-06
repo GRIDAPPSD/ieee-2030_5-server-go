@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -216,7 +217,7 @@ func TestAccumulateRollup_AlarmZeroVsNonzero(t *testing.T) {
 func TestAccumulateRollup_StaleButConnected(t *testing.T) {
 	t.Parallel()
 	now := int64(100000)
-	status := &FleetDeviceStatus{Connected: boolPtr(true), ReadingTime: now - staleAfterSeconds - 1}
+	status := &FleetDeviceStatus{Connected: boolPtr(true), ReadingTime: now - derStatusStaleAfter - 1}
 
 	var rollup FleetRollup
 	accumulateRollup(&rollup, FleetDevice{Status: status}, now)
@@ -230,7 +231,7 @@ func TestAccumulateRollup_StaleButConnected(t *testing.T) {
 }
 
 // TestStaleness_BothSidesOfBoundary pins the exact edge: the comparison is
-// strictly greater-than, so a reading exactly staleAfterSeconds old is NOT
+// strictly greater-than, so a reading exactly the DERStatus limit old is NOT
 // yet stale, and one second past it is.
 func TestStaleness_BothSidesOfBoundary(t *testing.T) {
 	t.Parallel()
@@ -238,7 +239,7 @@ func TestStaleness_BothSidesOfBoundary(t *testing.T) {
 
 	t.Run("exactly at the boundary is not stale", func(t *testing.T) {
 		var rollup FleetRollup
-		status := &FleetDeviceStatus{Connected: boolPtr(true), ReadingTime: now - staleAfterSeconds}
+		status := &FleetDeviceStatus{Connected: boolPtr(true), ReadingTime: now - derStatusStaleAfter}
 		accumulateRollup(&rollup, FleetDevice{Status: status}, now)
 		if rollup.Stale != 0 || rollup.Connected != 1 {
 			t.Errorf("Stale = %d, Connected = %d; want 0, 1 at exactly the boundary", rollup.Stale, rollup.Connected)
@@ -247,7 +248,7 @@ func TestStaleness_BothSidesOfBoundary(t *testing.T) {
 
 	t.Run("one second past the boundary is stale", func(t *testing.T) {
 		var rollup FleetRollup
-		status := &FleetDeviceStatus{Connected: boolPtr(true), ReadingTime: now - staleAfterSeconds - 1}
+		status := &FleetDeviceStatus{Connected: boolPtr(true), ReadingTime: now - derStatusStaleAfter - 1}
 		accumulateRollup(&rollup, FleetDevice{Status: status}, now)
 		if rollup.Stale != 1 || rollup.Connected != 0 {
 			t.Errorf("Stale = %d, Connected = %d; want 1, 0 one second past the boundary", rollup.Stale, rollup.Connected)
@@ -311,7 +312,7 @@ func TestAccumulateRollup_AvailabilityStalenessIsItsOwnClock(t *testing.T) {
 	now := int64(1000000)
 	fresh := now
 	twoDaysOld := now - 2*24*60*60
-	staleTime := now - staleAfterSeconds - 1
+	staleTime := now - derStatusStaleAfter - 1
 
 	t.Run("fresh status, 2-day-old availability: stale", func(t *testing.T) {
 		statW := 700.0
@@ -367,7 +368,7 @@ func TestAccumulateRollup_MeasurementStalenessIsPerValueNotDeviceStatus(t *testi
 
 	t.Run("fresh P survives a stale DERStatus", func(t *testing.T) {
 		dev := FleetDevice{
-			Status:       &FleetDeviceStatus{ReadingTime: now - staleAfterSeconds - 1}, // stale
+			Status:       &FleetDeviceStatus{ReadingTime: now - derStatusStaleAfter - 1}, // stale
 			Measurements: FleetDeviceMeasurements{P: &FleetMeasurement{Value: 700, ReadingTime: now}},
 		}
 		var rollup FleetRollup
@@ -882,7 +883,7 @@ func TestHandleListFleets_InlineCreateThenOutOfBandFollowUpInheritsType(t *testi
 func TestAccumulateRollup_AllFourSumsStale(t *testing.T) {
 	t.Parallel()
 	now := int64(100000)
-	oldTime := now - staleAfterSeconds - 1
+	oldTime := now - derStatusStaleAfter - 1
 	statW, statVar := 111.0, 222.0
 	dev := FleetDevice{
 		Status: &FleetDeviceStatus{ReadingTime: oldTime},
@@ -1137,7 +1138,7 @@ func TestAccumulateRollup_QStalenessIndependentOfPAndDeviceStatus(t *testing.T) 
 	t.Parallel()
 	now := int64(1000000)
 	fresh := now
-	oldTime := now - staleAfterSeconds - 1
+	oldTime := now - derStatusStaleAfter - 1
 
 	dev := FleetDevice{
 		// deviceStale: stale (disagrees with Q, which is fresh).
@@ -1357,5 +1358,47 @@ func TestFleetRollup_StaleUndirectedReadingDoesNotFlagSum(t *testing.T) {
 	accumulateRollup(&rollup, FleetDevice{Measurements: m}, now)
 	if rollup.P.Stale != 1 || rollup.P.Sum != 0 || rollup.P.DirectionUnknown {
 		t.Errorf("P = %+v, want Stale 1, Sum 0, DirectionUnknown false", rollup.P)
+	}
+}
+
+// derStatusStaleAfter is the DERStatus stale limit (2 x pollRate + 60 s at the
+// served 900 s pollRate); DERAvailability and mirror readings keep
+// staleAfterSeconds.
+var derStatusStaleAfter = derstatus.StaleAfterSeconds(derstatus.DefaultPollRateSeconds)
+
+// TestAccumulateRollup_StatusStaleUsesPollRateRule pins the change from the
+// fixed 15 minute rule: a status 1000 s old was stale and is now current, and
+// the limit is 1860 s.
+func TestAccumulateRollup_StatusStaleUsesPollRateRule(t *testing.T) {
+	t.Parallel()
+	now := int64(1_000_000)
+	cases := []struct {
+		name          string
+		age           int64
+		wantStale     int
+		wantConnected int
+	}{
+		{"1000 s old, stale under the old 900 s rule, now current", 1000, 0, 1},
+		{"limit minus 1 s is current", 1859, 0, 1},
+		{"limit plus 1 s is stale", 1861, 1, 0},
+	}
+	for _, tc := range cases {
+		var rollup FleetRollup
+		status := &FleetDeviceStatus{Connected: boolPtr(true), ReadingTime: now - tc.age}
+		accumulateRollup(&rollup, FleetDevice{Status: status}, now)
+		if rollup.Stale != tc.wantStale || rollup.Connected != tc.wantConnected {
+			t.Errorf("%s: Stale=%d Connected=%d, want %d and %d", tc.name, rollup.Stale, rollup.Connected, tc.wantStale, tc.wantConnected)
+		}
+	}
+}
+
+// A status with no readingTime cannot be aged, so it is stale and never
+// counted connected.
+func TestAccumulateRollup_NoReadingTimeIsStale(t *testing.T) {
+	t.Parallel()
+	var rollup FleetRollup
+	accumulateRollup(&rollup, FleetDevice{Status: &FleetDeviceStatus{Connected: boolPtr(true)}}, 1_000_000)
+	if rollup.Stale != 1 || rollup.Connected != 0 {
+		t.Errorf("Stale=%d Connected=%d, want 1 and 0", rollup.Stale, rollup.Connected)
 	}
 }

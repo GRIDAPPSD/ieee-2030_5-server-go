@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-05
+
+This entry covers `v0.12.0..v0.13.0`. It is a MINOR release under the 0.x
+carve-out: the range adds device-reported connection and inverter status to the
+admin UI and its payload (`feature`), and adds a public extension point for
+Devices tab columns (`feature`). It also changes how the DERMS surface decides
+that a device is connected (see Changed), which is operator-visible and is
+recorded as `breaking`. No existing exported Go identifier is removed or
+changed. Requires `ieee-2030_5-core-go` v0.24.0, up from v0.23.0.
+
+### Added
+
+- **Device-reported connection and inverter status.** A new internal decoder
+  reads `connectStatus` (2030.5-2023, taken first), `genConnectStatus` and
+  `storConnectStatus`, and the inverter code, from a device's DERStatus. When
+  both 2018 fields are present the generator is primary and storage is reported
+  alongside it, and the DER counts as connected if either is. A reading is
+  stale after twice the pollRate plus 60 seconds (pollRate default 900 s, so
+  1860 s); a reading with no `readingTime` is stale, and one dated more than
+  one pollRate ahead is stale and flagged `clockAhead`. The dashboard payload
+  gains `lastKnown`, a per-DER `ders` list and a per-device `derError`; a DER
+  list or status read failure marks only that device and the payload stays 200.
+  ([#887](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/887))
+- **Devices tab columns for reported status.** The Devices tab shows a DER
+  connection column and an inverter state column from the payload above, with
+  Stale, No reading time, Clock ahead and "Last known, <age> old" markers, and a
+  per-device error shown on its own row. The Overview shows "DERs reporting
+  connected: N, stale K".
+  ([#888](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/888))
+- **Embedder columns.** `sep2admin.DeviceColumnSource` (`Columns` and `Cells`)
+  and `sep2adminplane.Config.DeviceColumns` let an embedder add columns to the
+  Devices tab; a nil entry is refused with `ErrNilDeviceColumnSource`. The
+  payload gains top-level `columns` and per-device `cells`, both empty when no
+  source is wired, so a standalone server is unchanged. A source that errors,
+  panics or overruns its per-pass timeout never removes rows: its cells show
+  "-" and its column carries the error.
+  ([#889](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/889))
+
+### Changed
+
+- **Breaking, DERMS.** The DERStatus stale limit moves from 900 s to 1860 s.
+  Storage devices and 2030.5-2023 devices now count as connected. A hybrid
+  device counts as connected if either side is. A future-dated status is now
+  stale rather than connected. A DERStatus read failure no longer returns 500.
+  DERAvailability and mirror readings keep their 15 minute limit.
+  ([#887](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/887))
+- `ieee-2030_5-core-go` v0.23.0 to v0.24.0 (re-vendored), which adds
+  `DERStatus.StorConnectStatus` and the 2023 `ConnectStatus`.
+  ([#887](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/887))
+
 ## [0.12.0] - 2026-10-05
 
 This entry covers `v0.11.1..v0.12.0`. It is a MINOR release under the 0.x
@@ -718,4 +768,5 @@ read both releases first.
 [0.11.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.10.0...v0.11.0
 [0.11.1]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.11.0...v0.11.1
 [0.12.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.11.1...v0.12.0
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.12.0...HEAD
+[0.13.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.12.0...v0.13.0
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.13.0...HEAD

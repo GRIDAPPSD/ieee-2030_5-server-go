@@ -214,4 +214,59 @@ describe('DeviceTable device-reported columns', () => {
     expect(connCell()).toHaveTextContent('No DERs')
     expect(screen.queryByTestId('device-der-error')).not.toBeInTheDocument()
   })
+
+  it('keeps a Fault warning on the mixed chip and each DER hover line, with the tooltips', () => {
+    renderOne(device({
+      ders: [der({ id: '0', connect: connect(0x01) }), der({ id: '1', connect: connect(0x11), inverter: { code: 8, since: 0 } })],
+    }))
+    expect(chips(connCell())).toEqual(['mixed'])
+    expect(connCell().querySelector('.chip.warn')?.textContent?.trim()).toBe('mixed')
+    const title = connCell().getAttribute('title') ?? ''
+    expect(title).toContain('DER 1: Connected - Fault')
+    expect(title).toContain('Does not mean energized or exporting')
+    expect(invCell().querySelector('.chip.warn')?.textContent?.trim()).toBe('mixed')
+    expect(invCell().getAttribute('title')).toContain('Output may be energized while in service')
+  })
+
+  it('leaves the mixed chip unstyled when no DER carries a warning', () => {
+    renderOne(device({ ders: [der({ id: '0', connect: connect(0x01) }), der({ id: '1', connect: connect(0x00) })] }))
+    expect(connCell().querySelectorAll('.chip.warn')).toHaveLength(0)
+  })
+
+  it('styles inverter code 7 and code 8 as warnings and code 4 as not', () => {
+    const warn = (code: number) => {
+      const { unmount } = renderOne(device({ ders: [der({ inverter: { code, since: 0 } })] }))
+      const w = invCell().querySelectorAll('.chip.warn').length
+      unmount()
+      return w
+    }
+    expect([warn(4), warn(7), warn(8)]).toEqual([0, 1, 1])
+  })
+
+  it('shows Not energized for a 2023 report with the Energized bit clear, and Energized when set', () => {
+    const c = (raw: number) => connect(raw, { source: 'connectStatus', energized: (raw & 0x02) !== 0, available: false, reservedBits: 0 })
+    const { unmount } = renderOne(device({ ders: [der({ connect: c(0x01) })] }))
+    expect(chips(connCell())).toEqual(['Connected', 'Not energized'])
+    unmount()
+    renderOne(device({ ders: [der({ connect: c(0x03) })] }))
+    expect(chips(connCell())).toEqual(['Connected', 'Energized'])
+  })
+
+  it('does not invent an energized state for a 2018 report', () => {
+    renderOne(device({ ders: [der({ connect: connect(0x01) })] }))
+    expect(connCell()).not.toHaveTextContent('energized')
+  })
+
+  it('names the stale DER and its age when one DER is stale beside a fresh one', () => {
+    renderOne(device({
+      ders: [der({ id: '0', ageSeconds: 10 }), der({ id: '1', stale: true, ageSeconds: 2400 })],
+    }))
+    expect(connCell()).toHaveTextContent('1 of 2 stale, oldest 40m old')
+    expect(connCell()).not.toHaveTextContent('Stale, 10s old')
+  })
+
+  it('gives the stale age, not the fresh one, when every DER is stale', () => {
+    renderOne(device({ ders: [der({ id: '0', stale: true, ageSeconds: 2000 }), der({ id: '1', stale: true, ageSeconds: 3600 })] }))
+    expect(connCell()).toHaveTextContent('Stale, 1h old')
+  })
 })

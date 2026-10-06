@@ -44,7 +44,10 @@ export function connectChips(c: DerConnect): Chip[] {
   const any = (pick: (p: DerConnect) => boolean) => parts.some(pick)
   const chips: Chip[] = [{ label: anyConnected(c) ? 'Connected' : 'Disconnected', warn: false }]
   if (any((p) => p.available)) chips.push({ label: 'Available', warn: false })
+  // Only connectStatus (2023) reports Energized; for it a clear bit is a
+  // positive "not energized". A 2018 field leaves energized undefined.
   if (any((p) => p.energized === true)) chips.push({ label: 'Energized', warn: false })
+  else if (any((p) => p.energized === false)) chips.push({ label: 'Not energized', warn: false })
   if (any((p) => p.operating)) chips.push({ label: 'Operating', warn: false })
   if (any((p) => p.test)) chips.push({ label: 'Test', warn: true })
   if (any((p) => p.fault)) chips.push({ label: 'Fault', warn: true })
@@ -111,20 +114,26 @@ function inverterOne(der: DashboardDER): One {
   const label = inverterLabel(der.inverter.code)
   const lines = [`inverterStatus ${der.inverter.code}`]
   if (der.inverter.code === 8) lines.push(STANDBY_TIP)
-  const warn = der.inverter.code === 7 || der.inverter.code === 9
+  // Code 8 warns because output may be energized while in service.
+  const warn = [7, 8, 9].includes(der.inverter.code)
   return { chips: [{ label, warn }], text: label, title: lines.join('\n') }
 }
 
-// freshnessNotes covers the whole device. The age shown is the freshest
-// reading's, so a device is not described as older than its newest report.
+// freshnessNotes covers the whole device. Stale names the stale DERs' age
+// (the oldest), never a fresh neighbour's; Last known uses the freshest
+// reading, so a device is not described as older than its newest report.
 function freshnessNotes(device: DashboardDevice): string[] {
   const reported = device.ders.filter((d) => d.reported)
   const notes: string[] = []
   const aged = reported.filter((d) => !d.noReadingTime && !d.clockAhead)
   const age = aged.length > 0 ? Math.min(...aged.map((d) => d.ageSeconds)) : null
+  const stale = aged.filter((d) => d.stale)
   if (reported.some((d) => d.noReadingTime)) notes.push('No reading time')
   if (reported.some((d) => d.clockAhead)) notes.push('Clock ahead')
-  if (aged.some((d) => d.stale) && age !== null) notes.push(`Stale, ${formatSeconds(age)} old`)
+  if (stale.length > 0) {
+    const oldest = formatSeconds(Math.max(...stale.map((d) => d.ageSeconds)))
+    notes.push(stale.length === reported.length ? `Stale, ${oldest} old` : `${stale.length} of ${reported.length} stale, oldest ${oldest} old`)
+  }
   if (device.lastKnown) notes.push(age !== null ? `Last known, ${formatSeconds(age)} old` : 'Last known')
   return notes
 }
@@ -141,28 +150,52 @@ function deviceView(device: DashboardDevice, one: (d: DashboardDER) => One, erro
     const v = views[0]
     return { chips: v.chips, text: v.chips.length > 0 ? '' : v.text, title: v.title, notes, error }
   }
-  const title = views.map((v, i) => `DER ${device.ders[i].id}: ${v.text}`).join('\n')
-  return { chips: [{ label: 'mixed', warn: false }], text: '', title, notes, error }
+  // The mixed chip carries the strongest warning of any DER it summarises,
+  // and the hover keeps every DER's own tooltips.
+  const warn = views.some((v) => v.chips.some((c) => c.warn))
+  const title = views.map((v, i) => [`DER ${device.ders[i].id}: ${v.text}`, v.title].filter(Boolean).join('\n')).join('\n')
+  return { chips: [{ label: 'mixed', warn }], text: '', title, notes, error }
 }
 
 export const deviceConnectionView = (device: DashboardDevice): CellView => deviceView(device, connectOne, (e) => `DER status unreadable: ${e}`)
 export const deviceInverterView = (device: DashboardDevice): CellView => deviceView(device, inverterOne, () => 'Unreadable')
 
-// derConnectedCounts is the Overview's DERs-reporting-connected stat. A DER
-// counts as connected only on a fresh reading from a device that is talking:
-// a stale or last-known "Connected" is not a live report. Stale DERs are
-// counted separately so they are not silently absent.
-export function derConnectedCounts(devices: DashboardDevice[]): { connected: number; stale: number; reported: number } {
-  let connected = 0
-  let stale = 0
-  let reported = 0
+export interface DerCounts {
+  connected: number
+  disconnected: number
+  stale: number
+  lastKnown: number
+  unreadable: number
+  reported: number
+}
+
+// derCounts partitions every reported DER into exactly one bucket: stale
+// (judged from its own readingTime), else last known (a fresh reading on a
+// device that is not talking), else connected or disconnected by the
+// combined rule. A stale or last-known "Connected" is not a live report, so
+// it is never counted connected. unreadable counts devices whose DER read
+// failed, which are otherwise missing from every bucket.
+export function derCounts(devices: DashboardDevice[]): DerCounts {
+  const n: DerCounts = { connected: 0, disconnected: 0, stale: 0, lastKnown: 0, unreadable: 0, reported: 0 }
   for (const device of devices) {
+    if (device.derError) n.unreadable++
     for (const der of device.ders) {
       if (!der.reported || der.connect === null) continue
-      reported++
-      if (der.stale) stale++
-      else if (!device.lastKnown && anyConnected(der.connect)) connected++
+      n.reported++
+      if (der.stale) n.stale++
+      else if (device.lastKnown) n.lastKnown++
+      else if (anyConnected(der.connect)) n.connected++
+      else n.disconnected++
     }
   }
-  return { connected, stale, reported }
+  return n
+}
+
+// derSummary is the Overview's DER stat text.
+export function derSummary(devices: DashboardDevice[]): string {
+  const n = derCounts(devices)
+  const unreadable = n.unreadable === 0 ? '' : `${n.unreadable} ${n.unreadable === 1 ? 'device' : 'devices'} unreadable`
+  if (n.reported === 0) return unreadable || 'Not reported'
+  const counts = `${n.connected} connected, ${n.disconnected} disconnected, ${n.stale} stale, ${n.lastKnown} last known`
+  return unreadable ? `${counts}, ${unreadable}` : counts
 }

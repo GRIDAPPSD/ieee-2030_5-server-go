@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { DashboardData } from '../lib/dashboard'
   import { commsOnlineCount } from '../lib/comms'
-  import { derConnectedCounts } from '../lib/derstatus'
+  import { derSummary } from '../lib/derstatus'
 
   let { data }: { data: DashboardData | null } = $props()
 
@@ -15,10 +15,7 @@
 
   // Counted per DER from the status each device reported. "Connected" is the
   // DER's own power connection and does not imply it is exporting.
-  const derText = $derived.by(() => {
-    const c = derConnectedCounts(data?.devices ?? [])
-    return c.reported === 0 ? 'Not reported' : `${c.connected}, stale ${c.stale}`
-  })
+  const derText = $derived(derSummary(data?.devices ?? []))
 </script>
 
 <div class="card">
@@ -28,7 +25,7 @@
     <span class="stat-label">Comms online</span><span id="commsOnline">{commsText}</span>
   </div>
   <div class="stat-row">
-    <span class="stat-label" title="DERs whose own latest report says power-connected. Does not mean energized or exporting.">DERs reporting connected</span><span id="derConnected">{derText}</span>
+    <span class="stat-label" title="Each DER counted once, from its own latest report. Connected is its power connection and does not mean energized or exporting.">DERs (reported)</span><span id="derConnected">{derText}</span>
   </div>
   <div class="stat-row">
     <span class="stat-label">Mirror Usage Points</span><span id="mupCount">{data ? data.mupCount : 0}</span>

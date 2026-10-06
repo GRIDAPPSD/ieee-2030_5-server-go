@@ -7,17 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-05
+
+This entry covers `v0.11.1..v0.12.0`. It is a MINOR release under the 0.x
+carve-out: the range adds a per-device comms recorder and the admin UI columns
+that show it (`feature`), fixes two admin UI display faults (`bug fix`), and
+removes the legacy dashboard page and its `SEP2_ADMIN_LEGACY_DASHBOARD`
+setting (`breaking`, operator-facing). No exported Go identifier is removed or
+changed; the removed configuration field was in `internal/config`. Requires
+`ieee-2030_5-core-go` v0.23.0, unchanged.
+
 ### Added
 
-- The admin UI Devices tab shows a Comms column (Online, Offline, Not seen,
-  Unknown) and a Last request column (relative age, absolute UTC time on
-  hover). The Overview shows "Comms online N of M" and the activity chart
-  gains a "Comms online" series.
+- **Per-device comms recorder.** The new package `pkg/sep2srv/activity`
+  records the last request time and a request count per device LFDI, in memory
+  only, so after a restart no device has been seen. It adds `Recorder`, `New`,
+  `NewWithClock`, the `Comms` states (`Online`, `Offline`, `NotSeen`,
+  `Unknown`) and `DefaultOfflineAfter` (5 minutes). `assembly.RouterConfig`
+  gains an optional `Activity` field and `sep2adminplane.Config` gains
+  `Activity` and `CommsOfflineAfter`; both default to nil or zero, so no
+  existing caller changes, and a nil recorder reports Unknown. Only requests
+  that pass the identity and ACL layers count. The server reads
+  `SEP2_COMMS_OFFLINE_AFTER_SECONDS` (whole seconds, 1 to 86400, default 300)
+  and refuses a value outside that range at startup.
+  ([#879](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/879))
+- **Comms and Last request columns.** The admin UI Devices tab shows a Comms
+  column (Online, Offline, Not seen, Unknown) and a Last request column
+  (relative age, absolute UTC time on hover). The Overview shows "Comms online
+  N of M" and the activity chart gains a "Comms online" series.
+  ([#882](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/882))
+
+### Fixed
+
+- The dashboard payload orders devices by the trailing integer of their href
+  (`/edev/1`, `/edev/2`, `/edev/10`) instead of by text (`/edev/1`, `/edev/10`,
+  `/edev/2`), so the REST, SSE and UI lists agree. Hrefs with no trailing number
+  come after, by text.
+  ([#883](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/883))
+- Wide tables in admin UI panels stay inside their card instead of overflowing
+  it. ([#885](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/885))
 
 ### Removed
 
-- The pre-Svelte dashboard page and the `SEP2_ADMIN_LEGACY_DASHBOARD` flag
-  that served it at `GET /`. The embedded admin UI is the only page.
+- **Breaking.** The pre-Svelte dashboard page and the
+  `SEP2_ADMIN_LEGACY_DASHBOARD` setting that served it at `GET /`. The embedded
+  admin UI is the only page. A deployment that sets the variable keeps starting
+  (the variable is simply no longer read) but `GET /` now serves the embedded
+  admin UI instead of the old page. ([#882](https://github.com/GRIDAPPSD/ieee-2030_5-server-go/pull/882))
 
 ## [0.11.1] - 2026-10-05
 
@@ -681,4 +717,5 @@ read both releases first.
 [0.10.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.9.0...v0.10.0
 [0.11.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.10.0...v0.11.0
 [0.11.1]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.11.0...v0.11.1
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.11.1...HEAD
+[0.12.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.11.1...v0.12.0
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.12.0...HEAD

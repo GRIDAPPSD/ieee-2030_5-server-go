@@ -773,3 +773,23 @@ describe('FleetPane', () => {
     expect(screen.getByTestId('fleet-avail-reactive')).toHaveTextContent('No devices reporting reactive')
   })
 })
+
+describe('FleetPane sign help (#892)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('opens from its button and lists the 2018 rows', async () => {
+    mockFetchJSON({ ok: true, data: [minimalFleet('AGG1')] })
+    render(FleetPane)
+    await waitFor(() => expect(screen.getByTestId('fleet-help-button')).toBeInTheDocument())
+    expect(screen.queryByTestId('fleet-sign-help')).not.toBeInTheDocument()
+    await fireEvent.click(screen.getByTestId('fleet-help-button'))
+    const help = screen.getByTestId('fleet-sign-help')
+    expect(screen.getByTestId('fleet-help-button')).toHaveAttribute('aria-expanded', 'true')
+    const rows = within(help).getAllByTestId('fleet-sign-help-row').map((r) => r.textContent ?? '')
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toContain('import')
+    expect(rows[1]).toContain('export')
+    expect(within(help).getByTestId('fleet-sign-help-edition')).toHaveTextContent('2018 clients')
+    expect(help.textContent).toContain('no flowDirection is shown as direction unknown')
+  })
+})

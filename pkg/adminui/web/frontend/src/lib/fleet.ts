@@ -196,3 +196,38 @@ export function isFleet(v: unknown): v is Fleet {
   }
   return isFleetSum(r.p) && isFleetSum(r.q) && isFleetSum(r.statWAvail) && isFleetSum(r.statVarAvail)
 }
+
+// SignHelpRow is one line of a sign help section: a flowDirection value and
+// what the server shows for it.
+export interface SignHelpRow {
+  flowDirection: string
+  meaning: string
+}
+
+// SignHelpSection is the help for one SEP2 edition. A new edition is one more
+// entry in SIGN_HELP_SECTIONS; the pane renders whatever the list holds.
+// 2023 is not listed yet.
+export interface SignHelpSection {
+  edition: string
+  rows: SignHelpRow[]
+  notes: string[]
+}
+
+// Restates admin_fleet.go's exportPositive for Edition2018; pinned by
+// TestExportPositive_HelpMapping and fleetHelp.test.ts.
+export const SIGN_HELP_SECTIONS: SignHelpSection[] = [
+  {
+    edition: '2018 clients',
+    rows: [
+      { flowDirection: '1 (Forward)', meaning: 'import (delivered to the customer)' },
+      { flowDirection: '19 (Reverse)', meaning: 'export (received from the customer)' },
+      { flowDirection: '4 (Net)', meaning: 'direction unknown (not defined in 2018)' },
+    ],
+    notes: [
+      'Values are positive; the flowDirection carries the direction. Power is then shown export-positive: positive is exporting, negative is importing.',
+      'A reading with no flowDirection is shown as direction unknown, with its value as sent.',
+      'flowDirection 0 (not applicable): a value of 0 W is a reading; any other value is direction unknown.',
+      "A negative value under 1 or 19 is kept as the sender's own export-positive sign.",
+    ],
+  },
+]

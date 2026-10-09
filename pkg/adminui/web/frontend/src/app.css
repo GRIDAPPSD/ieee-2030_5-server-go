@@ -101,6 +101,15 @@ body {
 
 .table-scroll {
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: 480px;
+}
+
+/* The header stays visible while a long table scrolls under it. */
+.table-scroll th {
+  position: sticky;
+  top: 0;
+  background: var(--card);
 }
 
 .card {
@@ -184,6 +193,12 @@ td {
 
 .chart-container {
   height: 200px;
+}
+
+/* Descriptor charts carry a legend and axis labels for up to a fleet of series. */
+.chart-container.chart-tall {
+  height: 380px;
+  width: 100%;
 }
 
 .full-width {

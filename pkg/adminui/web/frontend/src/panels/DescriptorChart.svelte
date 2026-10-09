@@ -48,11 +48,17 @@
         backgroundColor: 'transparent',
         animation: false,
         tooltip: { trigger: 'axis', renderMode: 'richText', formatter: chartTooltip(body.unit) },
-        legend: { textStyle: { color: textColor }, top: 0 },
-        grid: { left: 60, right: 30, top: 40, bottom: 30 },
-        xAxis: { type: 'time', axisLabel: { color: textColor } },
+        legend: { type: 'scroll', textStyle: { color: textColor }, pageTextStyle: { color: textColor }, top: 0 },
+        grid: { left: 60, right: 30, top: 56, bottom: 30 },
+        xAxis: {
+          type: 'time',
+          splitNumber: 4,
+          axisLabel: { color: textColor, formatter: '{HH}:{mm}:{ss}', hideOverlap: true },
+        },
         yAxis: {
           type: 'value',
+          scale: true,
+          boundaryGap: ['5%', '5%'],
           name: richTextSafe(body.unit),
           nameTextStyle: { color: textColor },
           axisLabel: { color: textColor },
@@ -71,7 +77,7 @@
 </script>
 
 {#if hasPoints}
-  <div class="chart-container" data-testid="descriptor-chart" bind:this={container}></div>
+  <div class="chart-container chart-tall" data-testid="descriptor-chart" bind:this={container}></div>
   {#if initError}
     <div class="result err" data-testid="descriptor-chart-error">Chart unavailable: {initError}</div>
   {/if}

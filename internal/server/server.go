@@ -1192,18 +1192,10 @@ func parsePort(addr string) int {
 	return 443
 }
 
-// adminCrossOriginPolicy parses SEP2_ADMIN_TRUSTED_ORIGINS and, when the value
-// turns the check off, logs the warning the operator must see at boot (#897).
+// adminCrossOriginPolicy parses SEP2_ADMIN_TRUSTED_ORIGINS and warns when the
+// value turns the check off (#897).
 func adminCrossOriginPolicy(raw string) (*auth.CrossOriginPolicy, error) {
-	p, err := auth.ParseTrustedOrigins(raw)
-	if err != nil {
-		return nil, err
-	}
-	if p.Disabled() {
-		slog.Warn("admin: cross-origin protection is disabled for the admin plane (SEP2_ADMIN_TRUSTED_ORIGINS=*); any web page the operator visits can send admin writes",
-			"event", "admin_cross_origin_disabled")
-	}
-	return p, nil
+	return auth.LoadTrustedOrigins(raw)
 }
 
 // validateAdminExposure refuses an admin bind that is reachable from outside

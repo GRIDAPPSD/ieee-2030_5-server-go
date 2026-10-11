@@ -119,6 +119,12 @@ type Config struct {
 	// Nil adds none, and the payload's column list is then empty. A nil
 	// entry makes New fail.
 	DeviceColumns []sep2admin.DeviceColumnSource
+	// TrustedOrigins is the SEP2_ADMIN_TRUSTED_ORIGINS value: a comma-separated
+	// list of origins (scheme://host[:port], lowercase, no path) whose
+	// cross-site writes the plane admits, or "*" to turn the cross-origin
+	// check off, which logs a WARN at New. Empty trusts nothing. A malformed
+	// value makes New fail with an error naming the setting.
+	TrustedOrigins string
 }
 
 // Plane is a built admin plane.
@@ -163,6 +169,10 @@ func New(cfg Config) (*Plane, error) {
 	if err != nil {
 		return nil, err
 	}
+	crossOrigin, err := auth.LoadTrustedOrigins(cfg.TrustedOrigins)
+	if err != nil {
+		return nil, fmt.Errorf("sep2adminplane: %w", err)
+	}
 
 	stores, err := adminStores(cfg, edition, deadline, grace)
 	if err != nil {
@@ -184,6 +194,7 @@ func New(cfg Config) (*Plane, error) {
 		ReadOnly:       cfg.ReadOnly,
 		PanelActions:   cfg.PanelActions,
 		ActionTracker:  actions,
+		CrossOrigin:    crossOrigin,
 
 		Activity:          cfg.Activity,
 		CommsOfflineAfter: cfg.CommsOfflineAfter,

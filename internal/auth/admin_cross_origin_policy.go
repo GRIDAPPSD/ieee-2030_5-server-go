@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -52,6 +53,22 @@ func ParseTrustedOrigins(raw string) (*CrossOriginPolicy, error) {
 		if reason := unmatchableOrigin(e); reason != "" {
 			return nil, fmt.Errorf("SEP2_ADMIN_TRUSTED_ORIGINS: origin %q: %s", e, reason)
 		}
+	}
+	return p, nil
+}
+
+// LoadTrustedOrigins parses a SEP2_ADMIN_TRUSTED_ORIGINS value as
+// ParseTrustedOrigins does and, when the value turns the check off, logs the
+// warning the operator must see at boot. The standalone server and the
+// embedded plane both start the plane through it, so the wording is one.
+func LoadTrustedOrigins(raw string) (*CrossOriginPolicy, error) {
+	p, err := ParseTrustedOrigins(raw)
+	if err != nil {
+		return nil, err
+	}
+	if p.Disabled() {
+		slog.Warn("admin: cross-origin protection is disabled for the admin plane (SEP2_ADMIN_TRUSTED_ORIGINS=*); any web page the operator visits can send admin writes",
+			"event", "admin_cross_origin_disabled")
 	}
 	return p, nil
 }

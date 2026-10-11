@@ -279,6 +279,38 @@ relied upon to send a particular `Host` header, and the SEP2 wire is
 already protected by `RequireAnyClientCert` plus a manual chain walk.
 This gate is admin-mux-only.
 
+## Cross-origin writes (`SEP2_ADMIN_TRUSTED_ORIGINS`, #897)
+
+The admin plane refuses a state-changing request that a browser marks as
+sent from another origin, with `{"error":"cross-origin admin request refused"}`.
+An operator who reaches the UI by IP, or through a proxy that changes the
+origin, is refused too, even on the sign-in POST.
+
+`SEP2_ADMIN_TRUSTED_ORIGINS` is a CSV of origins to trust, each
+`scheme://host[:port]` with no path:
+
+```bash
+export SEP2_ADMIN_TRUSTED_ORIGINS=http://192.168.177.10:18444,https://admin.example.com
+```
+
+* Unset or empty keeps the default: nothing is trusted.
+* A malformed origin refuses startup and the error names it. So does an entry
+  a browser Origin header could never equal: a wildcard host, an uppercase
+  scheme or host, an explicit default port (`:80` on http, `:443` on https),
+  userinfo, or a path, query or fragment.
+* The value `*` (surrounding whitespace ignored) turns the cross-origin check
+  off for the admin plane, and startup logs a WARN saying so. Any other value
+  containing `*`, such as `*,` or `https://*.example.com`, refuses startup.
+
+WARNING: `*` removes the protection against a web page the operator visits
+sending admin requests. The plane grants no CORS preflight, so JSON writes and
+DELETEs from another origin still fail. Requests that need no preflight can
+still be sent: `POST /auth/ticket`, `POST /auth/login`, `POST /api/certs/info`
+(multipart, read-only) and a panel stream GET. They are carried by the loopback
+bypass, an installed admin client certificate, or a session cookie sent from a
+same-site origin. Prefer listing origins; use `*` only on a network you control
+end to end.
+
 ## Quick start
 
 ```bash

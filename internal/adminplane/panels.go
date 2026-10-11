@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 )
 
@@ -47,6 +48,8 @@ type panelSet struct {
 	openStreams atomic.Int32
 	// streamsDone is Config.StreamsDone; nil never closes.
 	streamsDone <-chan struct{}
+	// crossOrigin is Config.CrossOrigin; nil is the default policy.
+	crossOrigin *auth.CrossOriginPolicy
 }
 
 // newPanelSet registers and freezes panels. Any refusal fails the build,

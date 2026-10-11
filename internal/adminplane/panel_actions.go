@@ -203,7 +203,6 @@ func panelActionsOff(next http.Handler) http.Handler {
 // rate allows it, the body fits the cap and the schema; only then does the
 // embedder run, under the panel's busy flag. Every refusal leaves a log line.
 func (ps *panelSet) handleAction() http.HandlerFunc {
-	crossOrigin := http.NewCrossOriginProtection()
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, ok := ps.lookup(r.PathValue("id"))
 		if !ok {
@@ -223,7 +222,7 @@ func (ps *panelSet) handleAction() http.HandlerFunc {
 		}
 		// The outer router already refuses a cross-site write; repeated here
 		// so this handler does not depend on where it is mounted.
-		if err := crossOrigin.Check(r); err != nil {
+		if err := ps.crossOrigin.Check(r); err != nil {
 			refuseAction(w, r, p, a, http.StatusForbidden, "cross-site", "cross-origin admin request refused")
 			return
 		}

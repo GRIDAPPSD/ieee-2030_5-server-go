@@ -32,11 +32,6 @@ var (
 	panelStreamShutdownGrace = time.Second
 )
 
-// crossOrigin applies the write routes' cross-origin rule to a stream GET,
-// which the plane's middleware passes as a safe method: a stream runs the
-// embedder's Open and holds a slot, so a cross-site page must not start one.
-var crossOrigin = http.NewCrossOriginProtection()
-
 // Stream bounds. The queue holds what a source sent and the reader has not
 // yet been written; it is sized above a replay of a few hundred events, and
 // a source that overruns it is a reader too slow to keep up.
@@ -188,11 +183,13 @@ func parseStreamParam(p *sep2admin.Stream, rawQuery string) (string, error) {
 // are all checked before the panel's Open runs.
 func (ps *panelSet) handleStream() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Check refuses only unsafe methods, so it is asked about a POST
-		// carrying this request's headers.
+		// The middleware passes a GET, but a stream runs the embedder's Open and
+		// holds a slot, so a cross-site page must not start one. Check refuses
+		// only unsafe methods, so it is asked about a POST carrying this
+		// request's headers.
 		asWrite := r.WithContext(r.Context())
 		asWrite.Method = http.MethodPost
-		if err := crossOrigin.Check(asWrite); err != nil {
+		if err := ps.crossOrigin.Check(asWrite); err != nil {
 			slog.Warn("admin: cross-origin request refused",
 				"event", "admin_cross_origin_refused",
 				"method", r.Method,

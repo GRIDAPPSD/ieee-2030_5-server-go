@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `SEP2_ADMIN_TRUSTED_ORIGINS` lists origins the admin plane's cross-origin
+  check admits; `*` turns the check off and logs a startup warning (#897).
+
 ## [0.13.0] - 2026-10-05
 
 This entry covers `v0.12.0..v0.13.0`. It is a MINOR release under the 0.x

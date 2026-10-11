@@ -551,3 +551,17 @@ func TestConfigFromEnvCommsOfflineAfter(t *testing.T) {
 		})
 	}
 }
+
+// TestConfigFromEnvAdminTrustedOrigins pins that the raw value reaches the
+// config unaltered; the server parses it at admin startup (#897).
+func TestConfigFromEnvAdminTrustedOrigins(t *testing.T) {
+	t.Setenv("SEP2_ADMIN_TRUSTED_ORIGINS", "http://192.168.177.10:18444,https://a.example")
+
+	cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+	if err != nil {
+		t.Fatalf("configFromEnv: %v", err)
+	}
+	if got := cfg.AdminTrustedOrigins; got != "http://192.168.177.10:18444,https://a.example" {
+		t.Errorf("AdminTrustedOrigins = %q, want the env value verbatim", got)
+	}
+}

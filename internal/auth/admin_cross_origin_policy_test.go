@@ -68,6 +68,16 @@ func TestTrustedOriginsRefusesStartup(t *testing.T) {
 		{"bad entry after a good one", "http://ok.example,not an origin", "not an origin"},
 		{"star beside an origin", "*,http://ok.example", "*"},
 		{"origin beside star", "http://ok.example, *", "*"},
+		{"star with trailing comma", "*,", "*"},
+		{"star with leading comma", ",*", "*"},
+		{"wildcard host", "https://*.example.com", "https://*.example.com"},
+		{"uppercase scheme", "HTTP://host.example", "HTTP://host.example"},
+		{"uppercase host", "http://Host.Example", "http://Host.Example"},
+		{"explicit https default port", "https://a.example:443", "https://a.example:443"},
+		{"explicit http default port", "http://a.example:80", "http://a.example:80"},
+		{"userinfo", "http://u@a.example", "http://u@a.example"},
+		{"query", "http://a.example?x=1", "http://a.example?x=1"},
+		{"fragment", "http://a.example#f", "http://a.example#f"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p, err := auth.ParseTrustedOrigins(tc.raw)
@@ -78,5 +88,29 @@ func TestTrustedOriginsRefusesStartup(t *testing.T) {
 				t.Errorf("error %q does not name the setting and %q", err, tc.mention)
 			}
 		})
+	}
+}
+
+func TestStarWithSurroundingWhitespaceDisablesTheCheck(t *testing.T) {
+	p, err := auth.ParseTrustedOrigins(" \t*\n ")
+	if err != nil {
+		t.Fatalf("ParseTrustedOrigins: %v", err)
+	}
+	if !p.Disabled() {
+		t.Error("whitespace around a lone * should still disable the check")
+	}
+}
+
+func TestZeroValuePolicyIsTheDefault(t *testing.T) {
+	var zero auth.CrossOriginPolicy
+	headers := map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": "http://attacker.example"}
+	if policyResponse(t, &zero, headers) {
+		t.Error("zero-value policy admitted a cross-site POST")
+	}
+	if zero.Disabled() {
+		t.Error("zero-value policy reports the check off")
+	}
+	if !policyResponse(t, &zero, map[string]string{"Sec-Fetch-Site": "same-origin"}) {
+		t.Error("zero-value policy refused a same-origin POST")
 	}
 }

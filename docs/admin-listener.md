@@ -311,6 +311,12 @@ bypass, an installed admin client certificate, or a session cookie sent from a
 same-site origin. Prefer listing origins; use `*` only on a network you control
 end to end.
 
+An embedder using `pkg/sep2adminplane` sets the same value through
+`SettingsFromEnv`, which reads `SEP2_ADMIN_TRUSTED_ORIGINS` into
+`Settings.TrustedOrigins` and refuses a malformed one by name. It then copies
+that field to `Config.TrustedOrigins` before calling `New`. `*` logs the same
+WARN once, at `New`.
+
 ## Quick start
 
 ```bash

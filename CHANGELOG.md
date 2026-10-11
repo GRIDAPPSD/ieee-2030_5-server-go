@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pkg/sep2adminplane` honors `SEP2_ADMIN_TRUSTED_ORIGINS`: `SettingsFromEnv`
+  parses it into `Settings.TrustedOrigins`, `Config.TrustedOrigins` carries it
+  into `New`, and `*` logs the `admin_cross_origin_disabled` WARN once at `New`
+  (#900).
+
 ## [0.14.0] - 2026-10-10
 
 This entry covers `v0.13.0..v0.14.0`. It is a MINOR release under the 0.x

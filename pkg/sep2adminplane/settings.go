@@ -3,10 +3,11 @@ package sep2adminplane
 import (
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 )
 
-// Settings holds the four admin-plane values the standalone server reads
+// Settings holds the five admin-plane values the standalone server reads
 // from its environment, parsed by the same functions it uses.
 //
 // Settings alone does not make a 2023 server. The caller also sets
@@ -27,9 +28,15 @@ type Settings struct {
 	// RetentionGrace is whole seconds from 15m to 168h, or zero. Env:
 	// SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS.
 	RetentionGrace time.Duration
+	// TrustedOrigins is the raw SEP2_ADMIN_TRUSTED_ORIGINS value, checked by
+	// SettingsFromEnv and parsed again by New; copy it to
+	// Config.TrustedOrigins. Empty means unset: nothing is trusted. It is a
+	// string because the parsed policy is an internal type an embedder cannot
+	// name.
+	TrustedOrigins string
 }
 
-// SettingsFromEnv parses the four settings through getenv. An invalid value
+// SettingsFromEnv parses the five settings through getenv. An invalid value
 // returns an error that names its variable.
 func SettingsFromEnv(getenv func(string) string) (Settings, error) {
 	var s Settings
@@ -46,5 +53,10 @@ func SettingsFromEnv(getenv func(string) string) (Settings, error) {
 	if s.RetentionGrace, err = config.ParseFlowReservationRetentionGraceSeconds(getenv("SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS")); err != nil {
 		return Settings{}, err
 	}
+	raw := getenv("SEP2_ADMIN_TRUSTED_ORIGINS")
+	if _, err = auth.ParseTrustedOrigins(raw); err != nil {
+		return Settings{}, err
+	}
+	s.TrustedOrigins = raw
 	return s, nil
 }

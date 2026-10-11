@@ -11,6 +11,9 @@
 // like any other, and [Config.ControlWrites] is off, so the DER control and
 // flow reservation write routes are not mounted.
 //
+// A browser reaching the plane from another origin is refused unless the
+// embedder passes [Settings.TrustedOrigins] on as [Config.TrustedOrigins].
+//
 // # Stability
 //
 // This package is a sibling of pkg/sep2admin and carries its weaker

@@ -279,6 +279,31 @@ relied upon to send a particular `Host` header, and the SEP2 wire is
 already protected by `RequireAnyClientCert` plus a manual chain walk.
 This gate is admin-mux-only.
 
+## Cross-origin writes (`SEP2_ADMIN_TRUSTED_ORIGINS`, #897)
+
+The admin plane refuses a state-changing request that a browser marks as
+sent from another origin, with `{"error":"cross-origin admin request refused"}`.
+An operator who reaches the UI by IP, or through a proxy that changes the
+origin, is refused too, even on the sign-in POST.
+
+`SEP2_ADMIN_TRUSTED_ORIGINS` is a CSV of origins to trust, each
+`scheme://host[:port]` with no path:
+
+```bash
+export SEP2_ADMIN_TRUSTED_ORIGINS=http://192.168.177.10:18444,https://admin.example.com
+```
+
+* Unset or empty keeps the default: nothing is trusted.
+* A malformed origin refuses startup and the error names it.
+* The value `*` turns the cross-origin check off for the admin plane, and
+  startup logs a WARN saying so. It cannot be combined with other entries.
+
+WARNING: `*` removes the protection against a web page the operator visits
+sending admin writes (the CSRF-style defense). Any page open in the operator's
+browser can then change admin state wherever the credential is ambient: the
+loopback bypass, an installed client certificate, or a session cookie. Prefer
+listing origins; use `*` only on a network you control end to end.
+
 ## Quick start
 
 ```bash

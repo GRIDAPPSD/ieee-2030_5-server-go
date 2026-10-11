@@ -708,6 +708,12 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		return nil, "", "", nil, err
 	}
 
+	// #897: a malformed SEP2_ADMIN_TRUSTED_ORIGINS refuses startup by name.
+	crossOrigin, err := adminCrossOriginPolicy(cfg.AdminTrustedOrigins)
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+
 	// #269: warn loudly when the admin listener is bound to a non-
 	// loopback address WITHOUT a proxy hint. Without an upstream proxy
 	// injecting X-Forwarded-For/Forwarded, AdminAuthMiddleware Path 0
@@ -747,6 +753,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	allowedHosts := adminplane.ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
 	streamsDone := make(chan struct{})
 	adminRouter, adminRoutes, err := adminplane.Build(adminplane.Config{
+		CrossOrigin:    crossOrigin,
 		StreamsDone:    streamsDone,
 		AdminKey:       cfg.AdminKey,
 		CertService:    svc,
@@ -1183,6 +1190,20 @@ func parsePort(addr string) int {
 		}
 	}
 	return 443
+}
+
+// adminCrossOriginPolicy parses SEP2_ADMIN_TRUSTED_ORIGINS and, when the value
+// turns the check off, logs the warning the operator must see at boot (#897).
+func adminCrossOriginPolicy(raw string) (*auth.CrossOriginPolicy, error) {
+	p, err := auth.ParseTrustedOrigins(raw)
+	if err != nil {
+		return nil, err
+	}
+	if p.Disabled() {
+		slog.Warn("admin: cross-origin protection is disabled for the admin plane (SEP2_ADMIN_TRUSTED_ORIGINS=*); any web page the operator visits can send admin writes",
+			"event", "admin_cross_origin_disabled")
+	}
+	return p, nil
 }
 
 // validateAdminExposure refuses an admin bind that is reachable from outside

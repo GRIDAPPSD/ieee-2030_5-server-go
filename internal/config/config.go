@@ -180,6 +180,11 @@ type Config struct {
 	// defaults are NEVER opted out by setting this var.
 	AdminAllowedHosts []string // env SEP2_ADMIN_ALLOWED_HOSTS
 
+	// AdminTrustedOrigins is the raw SEP2_ADMIN_TRUSTED_ORIGINS value: a CSV of
+	// origins the admin plane's cross-origin check admits, or "*" to turn the
+	// check off (#897). Parsed at admin startup; empty keeps the default.
+	AdminTrustedOrigins string
+
 	// MetricsAddr is the bind address for the dedicated plain-HTTP Prometheus
 	// metrics listener (env SEP2_METRICS_ADDR, e.g. ":9100"). Empty disables
 	// the metrics listener entirely (default OFF). The listener serves ONLY

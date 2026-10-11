@@ -744,3 +744,90 @@ func TestAPanickingRunLogsAnOutcomeLineWithoutThePanicText(t *testing.T) {
 		t.Errorf("the outcome line carries the panic text: %s", outcome)
 	}
 }
+
+// Both panel refusals honor the plane's setting, from the same policy the
+// middleware uses (#897).
+func TestPanelRefusalsHonorTrustedOrigins(t *testing.T) {
+	const trusted = "http://192.168.177.10:18444"
+	for _, tc := range []struct {
+		name   string
+		raw    string
+		origin string
+		admits bool
+	}{
+		{"unset refuses", "", trusted, false},
+		{"trusted origin passes", trusted, trusted, true},
+		{"untrusted origin refused", trusted, "http://attacker.example", false},
+		{"star passes", "*", "http://attacker.example", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policy, err := auth.ParseTrustedOrigins(tc.raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rec actionRecorder
+			ps, err := newPanelSet([]sep2admin.Panel{actionPanel(rec.run(sep2admin.ActionResult{}, nil))})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ps.actions = true
+			ps.crossOrigin = policy
+
+			req := httptest.NewRequest(http.MethodPost, actionPath, strings.NewReader(goodActionBody))
+			req.SetPathValue("id", "bus")
+			req.SetPathValue("action", "send")
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Sec-Fetch-Site", "cross-site")
+			req.Header.Set("Origin", tc.origin)
+			rr := httptest.NewRecorder()
+			ps.handleAction().ServeHTTP(rr, req)
+			if admitted := rr.Code != http.StatusForbidden; admitted != tc.admits {
+				t.Errorf("action: status %d, admitted = %v, want %v", rr.Code, admitted, tc.admits)
+			}
+			if tc.admits && rr.Code != http.StatusOK {
+				t.Errorf("action: status %d, want 200 when admitted", rr.Code)
+			}
+
+			sreq := httptest.NewRequest(http.MethodGet, "/api/ui/panels/bus/stream?param=a", nil)
+			sreq.SetPathValue("id", "bus")
+			sreq.Header.Set("Sec-Fetch-Site", "cross-site")
+			sreq.Header.Set("Origin", tc.origin)
+			srr := httptest.NewRecorder()
+			ps.handleStream().ServeHTTP(srr, sreq)
+			refused := srr.Code == http.StatusForbidden && srr.Body.String() == `{"error":"cross-origin admin request refused"}`
+			if refused == tc.admits {
+				t.Errorf("stream: status %d body %s, refused = %v, want %v", srr.Code, srr.Body, refused, !tc.admits)
+			}
+		})
+	}
+}
+
+// The router's outer middleware takes the same policy as the panels (#897).
+func TestBuildThreadsTrustedOriginsToTheRouter(t *testing.T) {
+	const trusted = "http://192.168.177.10:18444"
+	for _, tc := range []struct {
+		name, raw, origin string
+		want              int
+	}{
+		{"unset refuses", "", trusted, http.StatusForbidden},
+		{"trusted passes", trusted, trusted, http.StatusOK},
+		{"untrusted refused", trusted, "http://attacker.example", http.StatusForbidden},
+		{"star passes", "*", "http://attacker.example", http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policy, err := auth.ParseTrustedOrigins(tc.raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rec actionRecorder
+			h := buildActions(t, Config{PanelActions: true, CrossOrigin: policy}, actionPanel(rec.run(sep2admin.ActionResult{}, nil)))
+			r := post(h, actionPath, goodActionBody, func(r *http.Request) {
+				r.Header.Set("Sec-Fetch-Site", "cross-site")
+				r.Header.Set("Origin", tc.origin)
+			})
+			if r.Code != tc.want {
+				t.Errorf("status = %d, want %d (body %s)", r.Code, tc.want, r.Body)
+			}
+		})
+	}
+}

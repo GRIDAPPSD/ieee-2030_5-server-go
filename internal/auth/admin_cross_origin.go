@@ -11,14 +11,18 @@ import (
 // certificate both admit a request the operator never chose to send (#416).
 // GET, HEAD and OPTIONS pass through; admin routes change no state on them.
 func AdminCrossOriginMiddleware() func(http.Handler) http.Handler {
-	protection := http.NewCrossOriginProtection()
+	return (*CrossOriginPolicy)(nil).Middleware()
+}
+
+// Middleware is AdminCrossOriginMiddleware under this policy.
+func (p *CrossOriginPolicy) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Sec-Fetch-Site other than same-origin or none is refused. Without it,
 			// Origin must match Host, and a request carrying neither is admitted:
 			// curl and other tools send neither, and a browser that omits
 			// Sec-Fetch-Site still sends Origin on a cross-origin POST or DELETE.
-			if err := protection.Check(r); err != nil {
+			if err := p.Check(r); err != nil {
 				slog.Warn("admin: cross-origin request refused",
 					"event", "admin_cross_origin_refused",
 					"method", r.Method,

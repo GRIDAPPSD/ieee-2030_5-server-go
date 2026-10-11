@@ -23,6 +23,9 @@ type Config struct {
 	Sessions     *auth.SessionStore
 	AllowedHosts []string
 	Traffic      http.Handler
+	// CrossOrigin is the plane's cross-origin decision (SEP2_ADMIN_TRUSTED_ORIGINS).
+	// Nil refuses every cross-origin write.
+	CrossOrigin *auth.CrossOriginPolicy
 	// Panels are an embedder's extra tabs, served after the shell's own
 	// under /api/ui/panels. Run registers none.
 	Panels []sep2admin.Panel
@@ -72,6 +75,7 @@ func Build(cfg Config) (http.Handler, []string, error) {
 	}
 	panels.actions = cfg.PanelActions
 	panels.streamsDone = cfg.StreamsDone
+	panels.crossOrigin = cfg.CrossOrigin
 	if cfg.ActionTracker != nil {
 		panels.running = cfg.ActionTracker
 	}
@@ -348,7 +352,7 @@ func buildOuterAdminRouter(cfg Config, authed *recordingMux, authedWithMiddlewar
 	// of which Host headers reach the handlers.
 	// Outside both muxes so the login submit is covered too; inside the Host
 	// gate so a misdirected request is still answered 421.
-	var h http.Handler = auth.AdminCrossOriginMiddleware()(outer)
+	var h http.Handler = cfg.CrossOrigin.Middleware()(outer)
 	if len(allowedHosts) > 0 {
 		h = HostAllowlistMiddleware(allowedHosts)(h)
 	} else {

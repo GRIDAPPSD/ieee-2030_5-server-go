@@ -286,6 +286,9 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		// against DNS rebinding). CSV; appended to the static defaults.
 		AdminAllowedHosts: parseCSV(os.Getenv("SEP2_ADMIN_ALLOWED_HOSTS")),
 
+		// #897: origins the admin cross-origin check admits, or "*" for none.
+		AdminTrustedOrigins: os.Getenv("SEP2_ADMIN_TRUSTED_ORIGINS"),
+
 		// #165: single-knob persistence. Empty SEP2_DATA_DIR keeps the
 		// historical pure in-memory behavior. SEP2_SUBSCRIPTION_STORE_PATH
 		// is preserved for back-compat and wins over the derived datadir

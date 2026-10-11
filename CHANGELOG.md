@@ -7,10 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-10
+
+This entry covers `v0.13.0..v0.14.0`. It is a MINOR release under the 0.x
+carve-out: the range adds a DERMS tab sign-help view (`feature`) and a setting
+for the admin plane's cross-origin check (`feature`), and fixes descriptor chart
+and table layout at fleet size (`bug fix`). No exported Go identifier is
+removed or changed, and `ieee-2030_5-core-go` is unchanged.
+
 ### Added
 
+- DERMS tab "Sign help" button: an in-tab table of how a 2018 client's reading
+  is shown (flowDirection 1 as import, 19 as export, 4 or missing as direction
+  unknown). 2023 follows in its own issue (#892).
 - `SEP2_ADMIN_TRUSTED_ORIGINS` lists origins the admin plane's cross-origin
   check admits; `*` turns the check off and logs a startup warning (#897).
+
+### Fixed
+
+- Descriptor charts and tables from the bridge are usable at fleet size: taller
+  charts with a scrolling legend and readable time axis, and tables with their
+  own scroll area and sticky header (#895).
 
 ## [0.13.0] - 2026-10-05
 
@@ -775,4 +792,5 @@ read both releases first.
 [0.11.1]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.11.0...v0.11.1
 [0.12.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.11.1...v0.12.0
 [0.13.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.12.0...v0.13.0
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.13.0...HEAD
+[0.14.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.13.0...v0.14.0
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.14.0...HEAD

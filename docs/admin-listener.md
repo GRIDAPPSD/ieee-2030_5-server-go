@@ -294,15 +294,22 @@ export SEP2_ADMIN_TRUSTED_ORIGINS=http://192.168.177.10:18444,https://admin.exam
 ```
 
 * Unset or empty keeps the default: nothing is trusted.
-* A malformed origin refuses startup and the error names it.
-* The value `*` turns the cross-origin check off for the admin plane, and
-  startup logs a WARN saying so. It cannot be combined with other entries.
+* A malformed origin refuses startup and the error names it. So does an entry
+  a browser Origin header could never equal: a wildcard host, an uppercase
+  scheme or host, an explicit default port (`:80` on http, `:443` on https),
+  userinfo, or a path, query or fragment.
+* The value `*` (surrounding whitespace ignored) turns the cross-origin check
+  off for the admin plane, and startup logs a WARN saying so. Any other value
+  containing `*`, such as `*,` or `https://*.example.com`, refuses startup.
 
 WARNING: `*` removes the protection against a web page the operator visits
-sending admin writes (the CSRF-style defense). Any page open in the operator's
-browser can then change admin state wherever the credential is ambient: the
-loopback bypass, an installed client certificate, or a session cookie. Prefer
-listing origins; use `*` only on a network you control end to end.
+sending admin requests. The plane grants no CORS preflight, so JSON writes and
+DELETEs from another origin still fail. Requests that need no preflight can
+still be sent: `POST /auth/ticket`, `POST /auth/login`, `POST /api/certs/info`
+(multipart, read-only) and a panel stream GET. They are carried by the loopback
+bypass, an installed admin client certificate, or a session cookie sent from a
+same-site origin. Prefer listing origins; use `*` only on a network you control
+end to end.
 
 ## Quick start
 

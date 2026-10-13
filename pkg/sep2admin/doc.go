@@ -64,7 +64,9 @@
 // Header floor: every request needs the plane's credential (a loopback
 // bypass does not reach a page), passes its Host and cross-origin checks,
 // and gets no body-type check, so the Page decodes and bounds its own
-// bodies. Every response carries frame-ancestors 'self',
+// bodies. The Page never sees that credential: the Authorization header,
+// the admin_ticket cookie and the ticket query parameter are removed
+// before it runs. Every response carries frame-ancestors 'self',
 // X-Frame-Options: SAMEORIGIN, nosniff, Referrer-Policy: no-referrer and
 // Cache-Control: no-store, applied after the Page sets its headers. The
 // Page's own Content-Security-Policy is kept, minus any frame-ancestors.

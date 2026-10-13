@@ -314,3 +314,75 @@ func TestPagePatternsAreMountedOnlyWithAPagePanel(t *testing.T) {
 		}
 	}
 }
+
+// credentialSeen is what the page handler saw of the plane's credentials.
+type credentialSeen struct {
+	authorization, cookies, query string
+}
+
+// The plane admits a request on its own credential and then hands the Page
+// none of it: a page that logged or forwarded a request would otherwise
+// leak the admin key, the HttpOnly session id or a ticket.
+func TestPageNeverSeesThePlaneCredential(t *testing.T) {
+	var seen []credentialSeen
+	cfg := baseConfig()
+	cfg.Panels = []sep2admin.Panel{{
+		ID:                "tool",
+		Label:             "Tool",
+		Placement:         sep2admin.ExtensionSlot(1),
+		DescriptorVersion: sep2admin.CurrentDescriptorVersion,
+		Page: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var names []string
+			for _, c := range r.Cookies() {
+				names = append(names, c.Name+"="+c.Value)
+			}
+			seen = append(seen, credentialSeen{r.Header.Get("Authorization"), strings.Join(names, ","), r.URL.RawQuery})
+		}),
+	}}
+	p := newPlane(t, cfg)
+	session := login(t, p)
+
+	tr := send(p, http.MethodPost, "/auth/ticket", "", true)
+	var issued struct{ Ticket string }
+	if err := json.Unmarshal(tr.Body.Bytes(), &issued); err != nil || issued.Ticket == "" {
+		t.Fatalf("POST /auth/ticket = %d %s", tr.Code, tr.Body)
+	}
+
+	cases := []struct {
+		name  string
+		build func() *http.Request
+	}{
+		{"bearer", func() *http.Request {
+			req := pageRequest(http.MethodGet, "/apps/tool/?keep=1", "")
+			req.Header.Set("Authorization", "Bearer "+testKey)
+			req.AddCookie(&http.Cookie{Name: "theme", Value: "dark"})
+			return req
+		}},
+		{"session", func() *http.Request {
+			req := pageRequest(http.MethodGet, "/apps/tool/?keep=1", "")
+			req.AddCookie(session)
+			req.AddCookie(&http.Cookie{Name: "theme", Value: "dark"})
+			return req
+		}},
+		{"ticket", func() *http.Request {
+			req := pageRequest(http.MethodGet, "/apps/tool/?ticket="+issued.Ticket+"&keep=1", "")
+			req.AddCookie(&http.Cookie{Name: "theme", Value: "dark"})
+			return req
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before := len(seen)
+			if rec := serve(p, tc.build()); rec.Code != http.StatusOK {
+				t.Fatalf("GET = %d %s, want 200", rec.Code, rec.Body)
+			}
+			if len(seen) != before+1 {
+				t.Fatalf("page handler ran %d times, want 1", len(seen)-before)
+			}
+			want := credentialSeen{"", "theme=dark", "keep=1"}
+			if got := seen[len(seen)-1]; got != want {
+				t.Fatalf("page saw %+v, want %+v", got, want)
+			}
+		})
+	}
+}

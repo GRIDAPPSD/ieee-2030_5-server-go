@@ -2,8 +2,11 @@ package adminplane
 
 import (
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 )
 
 // pagePrefix is where a page panel is mounted: /apps/{id}/.
@@ -43,7 +46,7 @@ func (ps *panelSet) mountPages(authed *recordingMux) {
 	pages := map[string]http.Handler{}
 	for _, p := range ps.panels {
 		if p.Page != nil {
-			pages[p.ID] = pageFloor(http.StripPrefix(strings.TrimSuffix(pageURL(p.ID), "/"), p.Page))
+			pages[p.ID] = pageFloor(withoutCredentials(http.StripPrefix(strings.TrimSuffix(pageURL(p.ID), "/"), p.Page)))
 		}
 	}
 	if len(pages) == 0 {
@@ -60,6 +63,62 @@ func (ps *panelSet) mountPages(authed *recordingMux) {
 	for _, pattern := range pagePatterns {
 		authed.HandleFunc(pattern, serve)
 	}
+}
+
+// withoutCredentials hands next a copy of the request carrying none of the
+// plane's credentials: no Authorization header, no admin_ticket cookie and
+// no ticket query parameter. Admission has already happened, and a page
+// that logged or forwarded its request would otherwise leak the admin key,
+// the HttpOnly session id or a ticket.
+func withoutCredentials(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r2 := r.Clone(r.Context())
+		r2.Header.Del("Authorization")
+		if cookies := keptCookies(r2.Header.Values("Cookie")); cookies == "" {
+			r2.Header.Del("Cookie")
+		} else {
+			r2.Header.Set("Cookie", cookies)
+		}
+		r2.URL.RawQuery = withoutTicket(r2.URL.RawQuery)
+		r2.RequestURI = r2.URL.RequestURI()
+		next.ServeHTTP(w, r2)
+	})
+}
+
+// keptCookies joins every cookie pair but admin_ticket, keeping each pair's
+// bytes as sent.
+func keptCookies(lines []string) string {
+	var kept []string
+	for _, line := range lines {
+		for _, pair := range strings.Split(line, ";") {
+			pair = strings.TrimSpace(pair)
+			name, _, _ := strings.Cut(pair, "=")
+			if pair == "" || strings.TrimSpace(name) == auth.AdminTicketCookieName {
+				continue
+			}
+			kept = append(kept, pair)
+		}
+	}
+	return strings.Join(kept, "; ")
+}
+
+// withoutTicket drops every ticket parameter from a raw query and keeps the
+// rest as sent. Keys are compared decoded, as the auth chain's own
+// url.Values lookup decodes them; a key that does not decode is one that
+// lookup skips, so it cannot be the ticket.
+func withoutTicket(rawQuery string) string {
+	if rawQuery == "" {
+		return ""
+	}
+	var kept []string
+	for _, pair := range strings.Split(rawQuery, "&") {
+		key, _, _ := strings.Cut(pair, "=")
+		if k, err := url.QueryUnescape(key); err == nil && k == "ticket" {
+			continue
+		}
+		kept = append(kept, pair)
+	}
+	return strings.Join(kept, "&")
 }
 
 // pageFloor wraps a page handler so its response carries the plane's header

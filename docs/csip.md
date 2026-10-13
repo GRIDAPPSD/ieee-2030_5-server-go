@@ -271,10 +271,10 @@ Two ready-made CSIP-flavored boot profiles ship under Make targets:
   self-minted test device root appended to `ClientCAs` and a pre-seeded
   EndDevice matching the test device's LFDI/SFDI. The test device cert is
   CSIP section 6.11-compliant. `TESTDEVICE_ADDR=host:port` overrides the bind.
-- `make run-sunspec` - CCM-8 server trusting the SunSpec CSIP test PKI
-  roots via `SEP2_EXTRA_CLIENT_CAS`. Override `SUNSPEC_ROOTS=...` to
-  relocate the trust bundle (default points at the operator's Knowledge
-  workspace, which is gitignored).
+- `make run-sunspec` - CCM-8 server presenting the SunSpec server chain and
+  trusting the SunSpec client CAs. It takes four required variables with no
+  default; see "Running on the SunSpec test PKI" in
+  [operator-guide.md](operator-guide.md).
 
 Both targets print a connection-details banner at boot (#206).
 

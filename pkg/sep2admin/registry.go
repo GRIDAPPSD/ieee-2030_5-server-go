@@ -50,7 +50,13 @@ var (
 	// which is exactly the rendering surprise CurrentDescriptorVersion's
 	// own boot-failure rule forbids: refusing it here makes a missing
 	// View a boot failure instead of a first-request one.
-	ErrNilView = errors.New("sep2admin: panel has a nil View")
+	// A Page in place of the View satisfies it.
+	ErrNilView = errors.New("sep2admin: panel has a nil View and no Page")
+
+	// ErrViewAndPage is returned by Register when a Panel sets both View
+	// and Page: the shell renders one or the other, so the second would
+	// be silently ignored.
+	ErrViewAndPage = errors.New("sep2admin: panel sets both View and Page")
 
 	// ErrAssetsNotImplemented is returned by Register when a Panel's
 	// Assets field is non-nil. Nothing in this package mounts an Assets
@@ -93,6 +99,8 @@ var pathSegmentIDs = map[string]struct{}{
 	// The SPA's built asset directory; its other top-level files have a
 	// "." and cannot match idPattern.
 	"assets": {},
+	// Page panels mount under /apps/{id}/.
+	"apps": {},
 }
 
 // Registry is the add-only contract a Panel is registered through. Its
@@ -171,8 +179,11 @@ func (r *registry) Register(p Panel) error {
 	if _, exists := r.panels[p.ID]; exists {
 		return fmt.Errorf("%w: %q", ErrDuplicateID, p.ID)
 	}
-	if p.View == nil {
+	if p.View == nil && p.Page == nil {
 		return ErrNilView
+	}
+	if p.View != nil && p.Page != nil {
+		return ErrViewAndPage
 	}
 	if p.Assets != nil {
 		return ErrAssetsNotImplemented

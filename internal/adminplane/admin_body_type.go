@@ -62,6 +62,13 @@ func requireAdminBodyTypes(mux *recordingMux) http.Handler {
 			mux.ServeHTTP(w, r)
 			return
 		}
+		if isPagePattern(pattern) {
+			// A page handler decodes its own body, so the plane cannot declare
+			// its types; the cross-origin check has already refused a
+			// cross-site write.
+			mux.ServeHTTP(w, r)
+			return
+		}
 		types, declared := adminBodyTypes[pattern]
 		if declared && (types == nil || declaresMediaType(r.Header.Get("Content-Type"), types)) {
 			mux.ServeHTTP(w, r)

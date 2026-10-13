@@ -3,6 +3,7 @@ package sep2admin
 import (
 	"context"
 	"io/fs"
+	"net/http"
 )
 
 // CurrentDescriptorVersion is the schema version Register requires a
@@ -54,8 +55,14 @@ type Panel struct {
 	// CurrentDescriptorVersion.
 	DescriptorVersion int
 
-	// View renders the panel.
+	// View renders the panel. Exactly one of View and Page is set.
 	View ViewFunc
+
+	// Page, set instead of View, serves the panel's own page, assets and
+	// routes. The plane mounts it at /apps/{ID}/ with that prefix stripped,
+	// behind the plane's own authentication; see the package doc for what
+	// the plane guarantees around it and what it does not.
+	Page http.Handler
 
 	// Assets is the escape hatch for a panel that cannot be expressed as
 	// a descriptor: a filesystem the shell would serve under the panel's

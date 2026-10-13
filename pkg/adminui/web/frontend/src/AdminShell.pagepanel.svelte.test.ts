@@ -6,7 +6,7 @@ import AdminShell from './AdminShell.svelte'
 import * as api from './lib/api'
 import * as dash from './lib/dashboard'
 import type { DashboardData } from './lib/dashboard'
-import type { PanelEntry } from './lib/descriptor'
+import { isSameOriginPath, type PanelEntry } from './lib/descriptor'
 import { installCanvasStub } from './test-canvas-stub'
 
 installCanvasStub()
@@ -113,5 +113,28 @@ describe('AdminShell page panels', () => {
     await fireEvent.click(screen.getByTestId('tab-proto'))
     await waitFor(() => expect(screen.getByTestId('tab-proto')).toHaveAttribute('aria-current', 'page'))
     expect(document.querySelector('iframe')).toBeNull()
+  })
+})
+
+describe('isSameOriginPath', () => {
+  it.each(['/apps/sim/', '/apps/sim/?a=1#x', '/ui/overview'])('accepts %j', (page) => {
+    expect(isSameOriginPath(page)).toBe(true)
+  })
+
+  // The URL parser strips tab, LF and CR anywhere in its input, so the
+  // first three resolve to https://example.com/ despite starting with "/".
+  it.each([
+    ['tab', '/\t/example.com'],
+    ['LF', '/\n/example.com'],
+    ['CR', '/\r/example.com'],
+    ['backslash', '/\\example.com'],
+    ['double slash', '//example.com/x'],
+    ['https', 'https://example.com/'],
+    ['relative', 'apps/sim/'],
+    ['space', '/apps/sim /'],
+    ['NUL', '/apps/\u0000sim/'],
+    ['empty', ''],
+  ])('rejects %s', (_name, page) => {
+    expect(isSameOriginPath(page)).toBe(false)
   })
 })

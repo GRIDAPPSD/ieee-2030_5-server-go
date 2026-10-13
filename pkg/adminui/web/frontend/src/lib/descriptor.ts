@@ -71,11 +71,17 @@ export interface PanelEntry {
   page?: string
 }
 
-// A page is framed only when it is an absolute path on this origin; a
-// scheme-qualified, protocol-relative or backslash form could point the
-// authenticated shell's frame elsewhere.
+// A page is framed only when it is a path that parses to this origin.
+// The URL parser strips tab, LF and CR anywhere, so "/<TAB>/host" would
+// pass a prefix check yet resolve off-origin; control characters and
+// whitespace are refused first, then the parsed origin is compared.
 export function isSameOriginPath(page: string): boolean {
-  return page.startsWith('/') && !page.startsWith('//') && !page.startsWith('/\\')
+  if (!page.startsWith('/') || /[\x00-\x20\x7f]/.test(page)) return false
+  try {
+    return new URL(page, window.location.origin).origin === window.location.origin
+  } catch {
+    return false
+  }
 }
 
 export interface PickerChoice {

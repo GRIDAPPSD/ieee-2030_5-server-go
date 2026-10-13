@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Page panels refuse a write admitted by a one-time ticket: a POST, PUT, PATCH
+  or DELETE to `/apps/{id}/` with only `?ticket=` now gets 401 before the Page
+  runs. GET and HEAD with a ticket, and session or Bearer writes, are unchanged
+  (#908).
+
 ## [0.16.0] - 2026-10-12
 
 This entry covers `v0.15.0..v0.16.0`. It is a MINOR release under the 0.x

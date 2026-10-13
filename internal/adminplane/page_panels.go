@@ -1,6 +1,7 @@
 package adminplane
 
 import (
+	"log"
 	"net/http"
 	"net/url"
 	"slices"
@@ -56,6 +57,14 @@ func (ps *panelSet) mountPages(authed *recordingMux) {
 		h, ok := pages[r.PathValue("id")]
 		if !ok {
 			http.NotFound(w, r)
+			return
+		}
+		// A ticket is one-time and travels in a URL; it may open a page but
+		// must not change state through one, as with a panel action.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && auth.AdmittedViaTicket(r) {
+			log.Printf("admin: page %q: refused reason=ticket method=%s status=%d admission=%s remote=%s",
+				r.PathValue("id"), r.Method, http.StatusUnauthorized, auth.AdmissionPath(r), r.RemoteAddr)
+			writePanelError(w, http.StatusUnauthorized, "page writes do not accept a ticket")
 			return
 		}
 		h.ServeHTTP(w, r)

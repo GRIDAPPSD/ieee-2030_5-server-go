@@ -295,3 +295,19 @@ func TestDelivery_ExcludedReadingsByCause(t *testing.T) {
 		})
 	}
 }
+
+// #813 I-a trap: an Average reading with no timePeriod looks back over an
+// inferred hold, so after a restart its reach into the old mirror's time is
+// not concurrency.
+func TestDeliveryMirrors_InferredLookBackIsNotConcurrency(t *testing.T) {
+	d := newDeliveryHarness(t)
+	b := deliveryBase
+	d.seedReadings(t, "1", dcLFDI, roleIsDER, ptrU32(300), every("I", true, b, 60, 4, reading{value: 1000, dir: reverseDir()})...)
+	d.seedReadings(t, "2", dcLFDI, roleIsDER, ptrU32(300), every("V", true, b+300, 60, 8, reading{value: 1000, dir: reverseDir(), qual: dq(2)})...)
+	mrid := d.seedControl(t, "e", b, 1000, dercontrol.LifecycleRecord{})
+
+	if del := d.deliveryOf(t, mrid); del.ConcurrentMirrors {
+		t.Fatalf("delivery = %+v, want a restarted mirror not flagged", *del)
+	}
+	checkDelivery(t, d, mrid, 720, 1000)
+}

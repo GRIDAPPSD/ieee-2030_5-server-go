@@ -66,7 +66,9 @@
 // and gets no body-type check, so the Page decodes and bounds its own
 // bodies. The Page never sees that credential: the Authorization header,
 // the admin_ticket cookie and the ticket query parameter are removed
-// before it runs. Every response carries frame-ancestors 'self',
+// before it runs. A request admitted by a one-time ticket may only GET or
+// HEAD: any other method gets 401 before the Page runs, as a panel action
+// does, so a ticket in a URL cannot change state. Every response carries frame-ancestors 'self',
 // X-Frame-Options: SAMEORIGIN, nosniff, Referrer-Policy: no-referrer and
 // Cache-Control: no-store, applied after the Page sets its headers, in
 // whatever case it spelled them. The Page's own Content-Security-Policy

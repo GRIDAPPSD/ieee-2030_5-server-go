@@ -433,3 +433,76 @@ func TestPageFloorReplacesNonCanonicalHeaderKeys(t *testing.T) {
 		t.Errorf("frame-ancestors on the wire = %q, want exactly ['self']", got)
 	}
 }
+
+// mintTicket returns a fresh one-time ticket; each request needs its own.
+func mintTicket(t *testing.T, p *sep2adminplane.Plane) string {
+	t.Helper()
+	tr := send(p, http.MethodPost, "/auth/ticket", "", true)
+	var issued struct{ Ticket string }
+	if err := json.Unmarshal(tr.Body.Bytes(), &issued); err != nil || issued.Ticket == "" {
+		t.Fatalf("POST /auth/ticket = %d %s", tr.Code, tr.Body)
+	}
+	return issued.Ticket
+}
+
+// A ticket travels in a URL and is one-time, so it may open a page but must
+// not change state through one.
+func TestPageRefusesTicketAdmittedWrites(t *testing.T) {
+	var hits []pageHit
+	p := newPlane(t, pageConfig(&hits, writeOK))
+	session := login(t, p)
+
+	for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		t.Run("ticket "+m+" refused", func(t *testing.T) {
+			req := pageRequest(m, "/apps/tool/save?ticket="+mintTicket(t, p), "a=1")
+			rec := serve(p, req)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("%s with a ticket = %d %s, want 401", m, rec.Code, rec.Body)
+			}
+			if got := rec.Body.String(); !strings.Contains(got, "page writes do not accept a ticket") {
+				t.Fatalf("%s body = %q, want the ticket refusal message", m, got)
+			}
+			if len(hits) != 0 {
+				t.Fatalf("the page handler ran for a ticket %s: %+v", m, hits)
+			}
+		})
+	}
+
+	t.Run("ticket GET and HEAD still served", func(t *testing.T) {
+		for _, m := range []string{http.MethodGet, http.MethodHead} {
+			before := len(hits)
+			rec := serve(p, pageRequest(m, "/apps/tool/?ticket="+mintTicket(t, p), ""))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s with a ticket = %d %s, want 200", m, rec.Code, rec.Body)
+			}
+			if len(hits) != before+1 || hits[len(hits)-1].method != m {
+				t.Fatalf("%s did not reach the handler once: %+v", m, hits)
+			}
+		}
+	})
+
+	t.Run("session POST served", func(t *testing.T) {
+		req := pageRequest(http.MethodPost, "/apps/tool/save", "a=1")
+		req.AddCookie(session)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		before := len(hits)
+		if rec := serve(p, req); rec.Code != http.StatusOK {
+			t.Fatalf("session POST = %d %s, want 200", rec.Code, rec.Body)
+		}
+		if got := hits[len(hits)-1]; len(hits) != before+1 || got != (pageHit{http.MethodPost, "/save", "a=1"}) {
+			t.Fatalf("handler saw %+v, want POST /save a=1", got)
+		}
+	})
+
+	t.Run("Bearer POST served", func(t *testing.T) {
+		req := pageRequest(http.MethodPost, "/apps/tool/save", "b=2")
+		req.Header.Set("Authorization", "Bearer "+testKey)
+		before := len(hits)
+		if rec := serve(p, req); rec.Code != http.StatusOK {
+			t.Fatalf("Bearer POST = %d %s, want 200", rec.Code, rec.Body)
+		}
+		if got := hits[len(hits)-1]; len(hits) != before+1 || got != (pageHit{http.MethodPost, "/save", "b=2"}) {
+			t.Fatalf("handler saw %+v, want POST /save b=2", got)
+		}
+	})
+}

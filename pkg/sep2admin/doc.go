@@ -68,8 +68,9 @@
 // the admin_ticket cookie and the ticket query parameter are removed
 // before it runs. Every response carries frame-ancestors 'self',
 // X-Frame-Options: SAMEORIGIN, nosniff, Referrer-Policy: no-referrer and
-// Cache-Control: no-store, applied after the Page sets its headers. The
-// Page's own Content-Security-Policy is kept, minus any frame-ancestors.
+// Cache-Control: no-store, applied after the Page sets its headers, in
+// whatever case it spelled them. The Page's own Content-Security-Policy
+// is kept, minus any frame-ancestors.
 //
 // # What this package does not implement yet
 //

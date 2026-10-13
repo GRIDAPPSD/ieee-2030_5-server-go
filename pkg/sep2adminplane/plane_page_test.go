@@ -386,3 +386,50 @@ func TestPageNeverSeesThePlaneCredential(t *testing.T) {
 		})
 	}
 }
+
+// A handler can write a header map key in any case, and net/http sends it
+// as written, so the floor must replace every spelling, not only the
+// canonical one.
+func TestPageFloorReplacesNonCanonicalHeaderKeys(t *testing.T) {
+	var hits []pageHit
+	p := newPlane(t, pageConfig(&hits, func(w http.ResponseWriter) {
+		h := w.Header()
+		h["content-security-policy"] = []string{"frame-ancestors *"}
+		h["x-frame-options"] = []string{"ALLOWALL"}
+		h["x-content-type-options"] = []string{"sniff"}
+		h["referrer-policy"] = []string{"unsafe-url"}
+		h["cache-control"] = []string{"public, max-age=3600"}
+		writeOK(w)
+	}))
+	srv := httptest.NewServer(p.Handler())
+	defer srv.Close()
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/apps/tool/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "localhost"
+	req.Header.Set("Authorization", "Bearer "+testKey)
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET = %d, want 200", resp.StatusCode)
+	}
+	// The client canonicalizes what came over the wire, so a second line in
+	// any case shows up as a second value here.
+	for k, want := range map[string]string{
+		"X-Frame-Options":        "SAMEORIGIN",
+		"X-Content-Type-Options": "nosniff",
+		"Referrer-Policy":        "no-referrer",
+		"Cache-Control":          "no-store",
+	} {
+		if got := resp.Header.Values(k); !slices.Equal(got, []string{want}) {
+			t.Errorf("%s on the wire = %q, want [%s]", k, got, want)
+		}
+	}
+	if got := cspFrameAncestors(resp.Header); !slices.Equal(got, []string{"frame-ancestors 'self'"}) {
+		t.Errorf("frame-ancestors on the wire = %q, want exactly ['self']", got)
+	}
+}

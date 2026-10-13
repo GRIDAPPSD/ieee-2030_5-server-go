@@ -185,17 +185,36 @@ func (w *floorWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 // policy but can be framed only by its own origin. X-Frame-Options has no
 // per-origin form beyond SAMEORIGIN, which matches.
 func applyPageFloor(h http.Header) {
-	csp := make([]string, 0, len(h.Values("Content-Security-Policy"))+1)
-	for _, v := range h.Values("Content-Security-Policy") {
+	handlerCSP := takeAnyCase(h, "Content-Security-Policy")
+	csp := make([]string, 0, len(handlerCSP)+1)
+	for _, v := range handlerCSP {
 		if kept := withoutFrameAncestors(v); kept != "" {
 			csp = append(csp, kept)
 		}
 	}
 	h["Content-Security-Policy"] = append(csp, "frame-ancestors 'self'")
+	for _, k := range []string{"X-Frame-Options", "X-Content-Type-Options", "Referrer-Policy", "Cache-Control"} {
+		takeAnyCase(h, k)
+	}
 	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cache-Control", "no-store")
+}
+
+// takeAnyCase removes every key of h that spells name in any case and
+// returns their values. A handler may write the map directly, and net/http
+// sends a non-canonical key as its own header line, so replacing only the
+// canonical key would leave the handler's line on the wire beside the floor.
+func takeAnyCase(h http.Header, name string) []string {
+	var values []string
+	for k, v := range h {
+		if strings.EqualFold(k, name) {
+			values = append(values, v...)
+			delete(h, k)
+		}
+	}
+	return values
 }
 
 // withoutFrameAncestors returns policy with every frame-ancestors directive

@@ -187,9 +187,8 @@ func TestDeliveryMirrors_ComponentsOnDifferentLegsAreFlagged(t *testing.T) {
 }
 
 // #813 I-a under 2023: Forward and Reverse from two concurrent mirrors are
-// two components, so they are flagged and never netted; the newest reading
-// holds, as for any overlap of concurrent mirrors. A net would give 4000 W.
-func TestDelivery2023_ForwardReverseFromConcurrentMirrorsAreNotSummed(t *testing.T) {
+// netted, |Forward| - |Reverse| (2023 B.4.3), and the pair is still flagged.
+func TestDelivery2023_ForwardReverseFromConcurrentMirrorsAreNetted(t *testing.T) {
 	d := newDeliveryHarness(t)
 	d.h.Edition = handler.Edition2023
 	b := deliveryBase
@@ -200,10 +199,10 @@ func TestDelivery2023_ForwardReverseFromConcurrentMirrorsAreNotSummed(t *testing
 	mrid := d.seedControl(t, "e", b, 1000, dercontrol.LifecycleRecord{})
 
 	del := d.deliveryOf(t, mrid)
-	if !del.ConcurrentMirrors || del.Readings != 1 || *del.NewestReadingTime != b+1001 {
-		t.Fatalf("delivery = %+v, want concurrentMirrors and the newer Forward reading alone", *del)
+	if !del.ConcurrentMirrors || del.Readings != 2 {
+		t.Fatalf("delivery = %+v, want concurrentMirrors beside both readings", *del)
 	}
-	checkDelivery(t, d, mrid, 1000, 5000)
+	checkDelivery(t, d, mrid, 1000, 4000)
 }
 
 // #813 I-a trap under 2023: a mirror opened after a restart is the same DER,

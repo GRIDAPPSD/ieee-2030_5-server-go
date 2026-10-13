@@ -137,7 +137,7 @@ func TestIntegrateMatchesPerSecondBruteForce(t *testing.T) {
 			return out
 		}
 		wantWS, wantCov, wantUsed := bruteIntegrate(copyOf(), seen)
-		gotWS, gotCov, usedSpans := integrate(copyOf(), seen, nil)
+		gotWS, gotCov, usedSpans := integrate(copyOf(), seen)
 		gotUsed := make([]int, 0, len(usedSpans))
 		for _, s := range usedSpans {
 			gotUsed = append(gotUsed, s.order)

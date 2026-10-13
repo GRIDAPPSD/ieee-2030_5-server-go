@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-12
+
+This entry covers `v0.15.0..v0.16.0`. It is a MINOR release under the 0.x
+carve-out: the range adds embedder page panels to the admin plane (`feature`)
+and shows them as tabs in the admin UI (`feature`), with a new exported field
+`sep2admin.Panel.Page` and an additive `"page"` kind in `GET /api/ui/panels`.
+No exported Go identifier is removed or changed, `apps` joins the reserved panel
+IDs, and `ieee-2030_5-core-go` is unchanged.
+
 ### Added
 
 - `sep2admin.Panel.Page`: a panel can carry an `http.Handler` instead of a
@@ -14,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Host and cross-origin checks, lets only its own origin frame it, and names it
   as `"page"` in `GET /api/ui/panels`. `Register` refuses a panel with both or
   neither of View and Page, and `apps` joins the reserved panel IDs (#903).
+- Admin UI shows each page panel as a same-origin iframe tab, so an embedder's
+  page appears beside the built-in tabs without a separate login (#904).
 
 ## [0.15.0] - 2026-10-10
 
@@ -817,4 +828,5 @@ read both releases first.
 [0.13.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.12.0...v0.13.0
 [0.14.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.13.0...v0.14.0
 [0.15.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.14.0...v0.15.0
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.15.0...HEAD
+[0.16.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.15.0...v0.16.0
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.16.0...HEAD

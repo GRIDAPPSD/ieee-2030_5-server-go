@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 // #413: neither of this defect's two visible symptoms is observable through
@@ -77,27 +77,27 @@ func TestLoginHandlersNeverWriteHeaderBeforeSettingHeaders(t *testing.T) {
 		{
 			name: "GET /login normal render",
 			req:  httptest.NewRequest(http.MethodGet, "/login", nil),
-			h:    server.HandleLoginPage(""),
+			h:    adminplane.HandleLoginPage(""),
 		},
 		{
 			name: "GET /login with an error message",
 			req:  httptest.NewRequest(http.MethodGet, "/login", nil),
-			h:    server.HandleLoginPage("Invalid admin key."),
+			h:    adminplane.HandleLoginPage("Invalid admin key."),
 		},
 		{
 			name: "POST /auth/login wrong key",
 			req:  formReq("wrong"),
-			h:    server.HandleLoginSubmit("the-secret", sessions),
+			h:    adminplane.HandleLoginSubmit("the-secret", sessions),
 		},
 		{
 			name: "POST /auth/login blank key",
 			req:  formReq("   "),
-			h:    server.HandleLoginSubmit("the-secret", sessions),
+			h:    adminplane.HandleLoginSubmit("the-secret", sessions),
 		},
 		{
 			name: "POST /auth/login correct key",
 			req:  formReq("the-secret"),
-			h:    server.HandleLoginSubmit("the-secret", sessions),
+			h:    adminplane.HandleLoginSubmit("the-secret", sessions),
 		},
 		{
 			name: "POST /auth/login form parse error",
@@ -106,17 +106,17 @@ func TestLoginHandlersNeverWriteHeaderBeforeSettingHeaders(t *testing.T) {
 				r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 				return r
 			}(),
-			h: server.HandleLoginSubmit("the-secret", sessions),
+			h: adminplane.HandleLoginSubmit("the-secret", sessions),
 		},
 		{
 			name: "POST /auth/login no admin key configured",
 			req:  formReq("anything"),
-			h:    server.HandleLoginSubmit("", sessions),
+			h:    adminplane.HandleLoginSubmit("", sessions),
 		},
 		{
 			name: "GET /auth/login method not allowed",
 			req:  httptest.NewRequest(http.MethodGet, "/auth/login", nil),
-			h:    server.HandleLoginSubmit("the-secret", sessions),
+			h:    adminplane.HandleLoginSubmit("the-secret", sessions),
 		},
 	}
 

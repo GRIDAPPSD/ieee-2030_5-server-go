@@ -203,8 +203,13 @@ func recoverRequest(ctx context.Context, deps RecoverDeps, edevID string, frq se
 		if cancelled {
 			// Answer notifies through the queue's own hook, outside its key lock.
 			by := Attribution{Kind: KindRecovery, At: now.Unix()}
-			if _, err := deps.Queue.Answer(ctx, edevID, frqID, Decision{Kind: Deny, By: by}); err != nil && !errors.Is(err, ErrAlreadyAnswered) {
+			_, err := deps.Queue.Answer(ctx, edevID, frqID, Decision{Kind: Deny, By: by})
+			switch {
+			case err != nil && !errors.Is(err, ErrAlreadyAnswered):
 				return fmt.Errorf("deny cancelled request: %w", err)
+			case errors.Is(err, ErrAnswerRecordTakeBack):
+				deps.logger().Error("flowreservation: recover: request already answered, but its answer record may still name the recovery pass as the answerer",
+					"endDevice", edevID, "request", frqID, "cause", "answer_record_take_back", "attribution_kind", KindRecovery, "err", err)
 			}
 			counts.DeniedCancelled++
 			return nil

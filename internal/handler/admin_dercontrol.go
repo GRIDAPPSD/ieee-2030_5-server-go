@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -141,6 +142,11 @@ type AdminDERControlHandler struct {
 	MirrorUsagePoints   store.ResourceReader[sep2.MirrorUsagePoint]
 	MirrorMeterReadings store.ScopedReader[sep2.MirrorMeterReading]
 	Edition             SEP2Edition
+
+	// MirrorReadingRetention is how long the server keeps a reading. A
+	// window needing an older one gets readingsExpired and no figure; zero
+	// means unknown and never marks one.
+	MirrorReadingRetention time.Duration
 
 	// Persisted reports whether both the control and lifecycle stores write
 	// through to disk, echoed in the create response.
@@ -854,6 +860,12 @@ func (h *AdminDERControlHandler) HandleList() http.HandlerFunc {
 					Responses:      counts.forMRID(ctrl.MRID),
 				}
 				if ctrl.Interval != nil {
+					ws, we := effectiveWindow(*ctrl.Interval, lc, now)
+					if readingsExpired(ws, now, h.MirrorReadingRetention) {
+						item.Delivery = &DERControlDelivery{WindowStart: ws, WindowEnd: we, DeviceLFDI: edev.LFDI, ReadingsExpired: true}
+						items = append(items, item)
+						continue
+					}
 					if !mirrorsRead {
 						mirrors, err = mirrorReadingsFor(ctx, "admin GET /api/der/controls", h.MirrorUsagePoints, h.MirrorMeterReadings, func(device string) bool {
 							return strings.EqualFold(device, edev.LFDI)
@@ -864,7 +876,6 @@ func (h *AdminDERControlHandler) HandleList() http.HandlerFunc {
 						}
 						mirrorsRead = true
 					}
-					ws, we := effectiveWindow(*ctrl.Interval, lc, now)
 					item.Delivery = newDelivery(edev.LFDI, mirrors, h.Edition, ws, we)
 				}
 				items = append(items, item)

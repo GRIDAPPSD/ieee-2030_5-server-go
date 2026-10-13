@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -431,5 +432,136 @@ func TestConfigFromEnvFlowReservationRetentionGrace(t *testing.T) {
 				t.Fatalf("configFromEnv = %+v, %v, want an error naming SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS", cfg, err)
 			}
 		})
+	}
+}
+
+// #806: SEP2_MIRROR_READING_RETENTION_SECONDS reaches the config as a
+// duration. Below the floor, the longest control plus the furthest one reading
+// reaches, startup stops and names the setting.
+func TestConfigFromEnvMirrorReadingRetention(t *testing.T) {
+	resolver := func() *certDirResolver { return &certDirResolver{resolved: true, dir: "/test/certdir"} }
+
+	t.Run("the floor is the retention", func(t *testing.T) {
+		t.Setenv("SEP2_MIRROR_READING_RETENTION_SECONDS", "87300")
+		cfg, err := configFromEnv(resolver())
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if cfg.MirrorReadingRetention != 87300*time.Second {
+			t.Errorf("MirrorReadingRetention = %v, want 24h15m0s", cfg.MirrorReadingRetention)
+		}
+	})
+
+	t.Run("unset resolves to 90000 s", func(t *testing.T) {
+		t.Setenv("SEP2_MIRROR_READING_RETENTION_SECONDS", "")
+		cfg, err := configFromEnv(resolver())
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		got, err := cfg.EffectiveMirrorReadingRetention()
+		if err != nil || got != 90000*time.Second {
+			t.Errorf("EffectiveMirrorReadingRetention = %v, %v, want 25h0m0s", got, err)
+		}
+	})
+
+	for _, bad := range []string{"87299", "86400", "0", "2592001", "-1", "ten", "1.5"} {
+		t.Run("invalid "+bad+" is a startup error", func(t *testing.T) {
+			t.Setenv("SEP2_MIRROR_READING_RETENTION_SECONDS", bad)
+			cfg, err := configFromEnv(resolver())
+			if err == nil || !strings.Contains(err.Error(), "SEP2_MIRROR_READING_RETENTION_SECONDS") {
+				t.Fatalf("configFromEnv = %+v, %v, want an error naming SEP2_MIRROR_READING_RETENTION_SECONDS", cfg, err)
+			}
+		})
+	}
+}
+
+// #806: SEP2_MIRROR_READING_MAX_PER_SERIES reaches the config as a count, and
+// a cap that cannot hold a 300 s cadence across the retention floor, or one
+// above the ceiling, stops startup naming the setting.
+func TestConfigFromEnvMirrorReadingMaxPerSeries(t *testing.T) {
+	resolver := func() *certDirResolver { return &certDirResolver{resolved: true, dir: "/test/certdir"} }
+
+	for _, ok := range []int{292, 2592000} {
+		t.Run(fmt.Sprintf("%d is the cap", ok), func(t *testing.T) {
+			t.Setenv("SEP2_MIRROR_READING_MAX_PER_SERIES", fmt.Sprint(ok))
+			cfg, err := configFromEnv(resolver())
+			if err != nil || cfg.MirrorReadingMaxPerSeries != ok {
+				t.Fatalf("configFromEnv = %+v, %v, want MirrorReadingMaxPerSeries %d", cfg, err, ok)
+			}
+		})
+	}
+
+	t.Run("unset resolves to 20000", func(t *testing.T) {
+		t.Setenv("SEP2_MIRROR_READING_MAX_PER_SERIES", "")
+		cfg, err := configFromEnv(resolver())
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		got, err := cfg.EffectiveMirrorReadingMaxPerSeries()
+		if err != nil || got != 20000 {
+			t.Errorf("EffectiveMirrorReadingMaxPerSeries = %v, %v, want 20000", got, err)
+		}
+	})
+
+	for _, bad := range []string{"1", "291", "2592001", "0", "-1", "ten", "1.5"} {
+		t.Run("invalid "+bad+" is a startup error", func(t *testing.T) {
+			t.Setenv("SEP2_MIRROR_READING_MAX_PER_SERIES", bad)
+			cfg, err := configFromEnv(resolver())
+			if err == nil || !strings.Contains(err.Error(), "SEP2_MIRROR_READING_MAX_PER_SERIES") {
+				t.Fatalf("configFromEnv = %+v, %v, want an error naming SEP2_MIRROR_READING_MAX_PER_SERIES", cfg, err)
+			}
+		})
+	}
+}
+
+// SEP2_COMMS_OFFLINE_AFTER_SECONDS reaches the config as a duration, and
+// anything outside 1 to 86400 stops startup instead of taking the default.
+func TestConfigFromEnvCommsOfflineAfter(t *testing.T) {
+	resolver := func() *certDirResolver { return &certDirResolver{resolved: true, dir: "/test/certdir"} }
+
+	t.Run("a value in range is the threshold", func(t *testing.T) {
+		t.Setenv("SEP2_COMMS_OFFLINE_AFTER_SECONDS", "90")
+		cfg, err := configFromEnv(resolver())
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if cfg.CommsOfflineAfter != 90*time.Second {
+			t.Errorf("CommsOfflineAfter = %v, want 1m30s", cfg.CommsOfflineAfter)
+		}
+	})
+
+	t.Run("unset resolves to five minutes", func(t *testing.T) {
+		t.Setenv("SEP2_COMMS_OFFLINE_AFTER_SECONDS", "")
+		cfg, err := configFromEnv(resolver())
+		if err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if got := cfg.EffectiveCommsOfflineAfter(); got != 5*time.Minute {
+			t.Errorf("EffectiveCommsOfflineAfter = %v, want 5m0s", got)
+		}
+	})
+
+	for _, bad := range []string{"0", "-1", "86401", "five", "1.5"} {
+		t.Run("invalid "+bad+" is a startup error", func(t *testing.T) {
+			t.Setenv("SEP2_COMMS_OFFLINE_AFTER_SECONDS", bad)
+			cfg, err := configFromEnv(resolver())
+			if err == nil || !strings.Contains(err.Error(), "SEP2_COMMS_OFFLINE_AFTER_SECONDS") {
+				t.Fatalf("configFromEnv = %+v, %v, want an error naming SEP2_COMMS_OFFLINE_AFTER_SECONDS", cfg, err)
+			}
+		})
+	}
+}
+
+// TestConfigFromEnvAdminTrustedOrigins pins that the raw value reaches the
+// config unaltered; the server parses it at admin startup (#897).
+func TestConfigFromEnvAdminTrustedOrigins(t *testing.T) {
+	t.Setenv("SEP2_ADMIN_TRUSTED_ORIGINS", "http://192.168.177.10:18444,https://a.example")
+
+	cfg, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"})
+	if err != nil {
+		t.Fatalf("configFromEnv: %v", err)
+	}
+	if got := cfg.AdminTrustedOrigins; got != "http://192.168.177.10:18444,https://a.example" {
+		t.Errorf("AdminTrustedOrigins = %q, want the env value verbatim", got)
 	}
 }

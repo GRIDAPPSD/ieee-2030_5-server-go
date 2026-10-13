@@ -1,16 +1,85 @@
 // dashboard.ts holds the shape of the dashboard SSE payload
-// (internal/server/dashboard.go's DashboardData) and the connection
+// (internal/adminplane/dashboard.go's DashboardData) and the connection
 // logic that keeps it flowing: an auth-ticket exchange followed by an
 // EventSource on /dashboard/events, which pushes an update every 5
 // seconds.
 
 import { postJSON } from './api'
+import { commsOnlineCount } from './comms'
+
+// The server's comms states for one device: a request seen within the
+// offline threshold, one seen but older, none since the server started, or
+// no recorder wired at all.
+export type CommsState = 'online' | 'offline' | 'not_seen' | 'unknown'
 
 export interface DashboardDevice {
   sfdi: string
   lfdi: string
   href: string
-  enabled: boolean
+  // null when the EndDevice has no enabled flag.
+  enabled: boolean | null
+  // Server-clock time (RFC 3339, UTC) of the device's last request, or null
+  // when none was recorded since the server started.
+  lastRequest: string | null
+  comms: CommsState
+  // True when the DER status below is what the device last reported rather
+  // than a live reading (comms offline or not seen since start).
+  lastKnown: boolean
+  // Never null: a device with no DERs has an empty list.
+  ders: DashboardDER[]
+  // Set when this device's DER data could not be read in full. An empty
+  // ders with derError set means unreadable, not "no DERs".
+  derError?: string
+  // Text per DashboardColumn id from an embedder's column source. Absent
+  // from older servers; a missing id renders "-".
+  cells?: Record<string, string>
+}
+
+// DashboardColumn is one extra Devices-tab column an embedder supplied.
+// error is set when its source failed: every cell then reads "-".
+export interface DashboardColumn {
+  id: string
+  label: string
+  error?: string
+}
+
+// DerConnect is one connection-status field as the DER reported it
+// (internal/derstatus Connect). Unix times are seconds.
+export interface DerConnect {
+  // The DERStatus element it was read from: connectStatus,
+  // genConnectStatus or storConnectStatus.
+  source: string
+  raw: number
+  since: number
+  connected: boolean
+  // Present only for connectStatus (2023).
+  energized?: boolean
+  available: boolean
+  operating: boolean
+  test: boolean
+  fault: boolean
+  reservedBits: number
+  // The storConnectStatus of a DER that reports it beside genConnectStatus.
+  also?: DerConnect
+}
+
+export interface DerInverter {
+  code: number
+  since: number
+}
+
+// DashboardDER is one DER's decoded DERStatus. When reported is false the
+// server holds no DERStatus and the other fields mean nothing.
+export interface DashboardDER {
+  id: string
+  reported: boolean
+  connect: DerConnect | null
+  inverter: DerInverter | null
+  readingTime: number
+  ageSeconds: number
+  stale: boolean
+  noReadingTime: boolean
+  clockAhead: boolean
 }
 
 export interface DashboardData {
@@ -20,6 +89,12 @@ export interface DashboardData {
   tlsMode: string
   uptime: string
   devices: DashboardDevice[] | null
+  // The threshold each device's comms was judged against.
+  commsOfflineAfterSeconds: number
+  // Embedder columns in display order; empty when no source is wired.
+  columns?: DashboardColumn[]
+  // Set when the server could not read the device list; devices is then null.
+  error?: string
 }
 
 // HISTORY_LIMIT caps the in-memory activity series at 5 minutes of
@@ -31,6 +106,7 @@ export interface HistoryPoint {
   time: string
   devices: number
   mups: number
+  commsOnline: number
 }
 
 const RECONNECT_DELAY_MS = 3000
@@ -94,6 +170,11 @@ export function connectDashboard(onData: (data: DashboardData) => void): () => v
 // trimmed to HISTORY_LIMIT. Pure so the chart panel and its test share
 // the same trimming rule.
 export function appendHistory(history: HistoryPoint[], data: DashboardData): HistoryPoint[] {
-  const next = [...history, { time: data.timestamp, devices: data.deviceCount, mups: data.mupCount }]
+  const next = [...history, {
+      time: data.timestamp,
+      devices: data.deviceCount,
+      mups: data.mupCount,
+      commsOnline: commsOnlineCount(data.devices ?? []),
+    }]
   return next.length > HISTORY_LIMIT ? next.slice(next.length - HISTORY_LIMIT) : next
 }

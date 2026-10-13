@@ -108,6 +108,9 @@ func (c *Canceller) Cancel(ctx context.Context, edevID, frqID string, status sep
 	if !errors.Is(err, ErrAlreadyAnswered) {
 		return err
 	}
+	if errors.Is(err, ErrAnswerRecordTakeBack) {
+		logStrayRecord("cancel", edevID, frqID, KindClient, err)
+	}
 
 	cancelled, err := c.CancelGrants(ctx, edevID, frqID, cancelReason)
 	c.recordCancels(ctx, edevID, cancelled, client)

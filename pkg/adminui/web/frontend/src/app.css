@@ -88,6 +88,30 @@ body {
   padding: 16px;
 }
 
+/* A grid track's min-content floor lets a wide child push past its track;
+   min-width 0 lets the card shrink and its table wrapper scroll instead. */
+.grid > * {
+  min-width: 0;
+}
+
+/* A section that holds a table takes the whole row. */
+.card-wide {
+  grid-column: 1 / -1;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 480px;
+}
+
+/* The header stays visible while a long table scrolls under it. */
+.table-scroll th {
+  position: sticky;
+  top: 0;
+  background: var(--card);
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -157,8 +181,24 @@ td {
   color: var(--red);
 }
 
+/* Comms states that are neither a recent request nor a lapsed one: amber
+   for a device never heard from, dim for "no recorder wired". */
+.not-seen {
+  color: #f59e0b;
+}
+
+.comms-unknown {
+  color: var(--dim);
+}
+
 .chart-container {
   height: 200px;
+}
+
+/* Descriptor charts carry a legend and axis labels for up to a fleet of series. */
+.chart-container.chart-tall {
+  height: 380px;
+  width: 100%;
 }
 
 .full-width {
@@ -270,4 +310,36 @@ textarea {
 
 a {
   color: var(--accent);
+}
+
+.stream-log {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 400px;
+  overflow-y: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.stream-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.stream-status {
+  color: var(--dim);
+  font-style: italic;
+}
+
+/* A page panel's frame spans the content grid and takes the viewport
+   height left under the nav and tab bars. */
+.page-panel {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: calc(100vh - 140px);
+  min-height: 400px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
 }

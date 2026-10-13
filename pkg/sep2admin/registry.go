@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -48,7 +50,13 @@ var (
 	// which is exactly the rendering surprise CurrentDescriptorVersion's
 	// own boot-failure rule forbids: refusing it here makes a missing
 	// View a boot failure instead of a first-request one.
-	ErrNilView = errors.New("sep2admin: panel has a nil View")
+	// A Page in place of the View satisfies it.
+	ErrNilView = errors.New("sep2admin: panel has a nil View and no Page")
+
+	// ErrViewAndPage is returned by Register when a Panel sets both View
+	// and Page: the shell renders one or the other, so the second would
+	// be silently ignored.
+	ErrViewAndPage = errors.New("sep2admin: panel sets both View and Page")
 
 	// ErrAssetsNotImplemented is returned by Register when a Panel's
 	// Assets field is non-nil. Nothing in this package mounts an Assets
@@ -74,25 +82,25 @@ var ErrDisabled = errors.New("sep2admin: admin UI not configured, this is not a 
 // match.
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 
-// reservedIDs are names this repository's own routes already use, or has
-// committed to using. A panel ID colliding with one of these would shadow
-// a server-owned route rather than merely occupying URL space, so
-// Register refuses it the same way it refuses a malformed ID. This set
-// includes the admin UI's core tab slugs and its top-level path segments,
-// so the two lists cannot drift apart silently.
-var reservedIDs = map[string]struct{}{
-	// Core tab slugs.
-	"overview":     {},
-	"devices":      {},
-	"fsas":         {},
-	"control":      {},
-	"certificates": {},
-	// Top-level path segments.
+// coreTabs are the shell's own tab slugs, the paths under /ui/ in
+// pkg/adminui/web/frontend/src/routes/index.ts, in the shell's nav order.
+// NewRegistry seeds them into the core band, and Register refuses them as
+// reserved, so an extension can neither take nor displace a core tab.
+// TestCoreTabsMatchTheShell reads that file, so the lists cannot drift.
+var coreTabs = []string{"overview", "devices", "fsas", "control", "certificates", "derms"}
+
+// pathSegmentIDs are the admin listener's own top-level path segments.
+var pathSegmentIDs = map[string]struct{}{
 	"ui":        {},
 	"api":       {},
 	"auth":      {},
 	"login":     {},
 	"dashboard": {},
+	// The SPA's built asset directory; its other top-level files have a
+	// "." and cannot match idPattern.
+	"assets": {},
+	// Page panels mount under /apps/{id}/.
+	"apps": {},
 }
 
 // Registry is the add-only contract a Panel is registered through. Its
@@ -139,9 +147,20 @@ type registry struct {
 	frozen bool
 }
 
-// NewRegistry returns an empty, unfrozen Registry.
+// NewRegistry returns an unfrozen Registry holding the shell's core tabs
+// in the core band. The seeds go straight into the map, bypassing
+// Register's reserved-ID check, and carry no View: the shell renders them
+// itself. ErrCorePanelsMissing still guards a registry built without them.
 func NewRegistry() Registry {
-	return &registry{panels: make(map[string]registeredPanel)}
+	r := &registry{panels: make(map[string]registeredPanel)}
+	for i, id := range coreTabs {
+		r.panels[id] = registeredPanel{
+			Panel: Panel{ID: id, Label: id, Placement: corePlacement(i), DescriptorVersion: CurrentDescriptorVersion},
+			seq:   r.next,
+		}
+		r.next++
+	}
+	return r
 }
 
 func (r *registry) Register(p Panel) error {
@@ -160,14 +179,29 @@ func (r *registry) Register(p Panel) error {
 	if _, exists := r.panels[p.ID]; exists {
 		return fmt.Errorf("%w: %q", ErrDuplicateID, p.ID)
 	}
-	if p.View == nil {
+	if p.View == nil && p.Page == nil {
 		return ErrNilView
+	}
+	if p.View != nil && p.Page != nil {
+		return ErrViewAndPage
 	}
 	if p.Assets != nil {
 		return ErrAssetsNotImplemented
 	}
+	if p.Picker != nil && (p.Picker.Choices == nil || p.Picker.Select == nil) {
+		return ErrInvalidPicker
+	}
+	if p.Stream != nil {
+		if err := p.Stream.validate(); err != nil {
+			return err
+		}
+	}
 	if p.DescriptorVersion != CurrentDescriptorVersion {
 		return fmt.Errorf("%w: got %d, want %d", ErrUnsupportedDescriptorVersion, p.DescriptorVersion, CurrentDescriptorVersion)
+	}
+
+	if err := validateActions(p.Actions); err != nil {
+		return err
 	}
 
 	r.panels[p.ID] = registeredPanel{Panel: p, seq: r.next}
@@ -236,8 +270,14 @@ func validateID(id string) error {
 	if !idPattern.MatchString(id) {
 		return fmt.Errorf("%w: %q does not match the slug pattern", ErrInvalidID, id)
 	}
-	if _, reserved := reservedIDs[id]; reserved {
-		return fmt.Errorf("%w: %q is a reserved name", ErrInvalidID, id)
+	if slices.Contains(coreTabs, id) {
+		return fmt.Errorf("%w: %q is a core tab", ErrInvalidID, id)
+	}
+	if strings.HasPrefix(id, "api") {
+		return fmt.Errorf("%w: %q starts with api, which the SPA handler answers as an API path", ErrInvalidID, id)
+	}
+	if _, reserved := pathSegmentIDs[id]; reserved {
+		return fmt.Errorf("%w: %q is a reserved path segment", ErrInvalidID, id)
 	}
 	return nil
 }

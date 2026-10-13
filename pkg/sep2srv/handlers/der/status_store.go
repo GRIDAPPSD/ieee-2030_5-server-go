@@ -27,9 +27,18 @@ type DerivedStatusControlStore = dercontrol.DerivedStatusStore[sep2.DERControl]
 // no absent-lifecycles arm because the plain, undecorated controls store
 // already is that arm.
 func NewDerivedStatusControlStore(controls store.ScopedStore[sep2.DERControl], lifecycles LifecycleReader) *DerivedStatusControlStore {
+	return NewDerivedStatusControlStoreFor(controls, lifecycles, false)
+}
+
+// NewDerivedStatusControlStoreFor is NewDerivedStatusControlStore for a
+// server running as the given edition: edition2023 serves
+// potentiallySuperseded true on every status, as 2023 requires.
+func NewDerivedStatusControlStoreFor(controls store.ScopedStore[sep2.DERControl], lifecycles LifecycleReader, edition2023 bool) *DerivedStatusControlStore {
 	return dercontrol.NewDerivedStatusStore(controls, lifecycles, dercontrol.StatusPolicy[sep2.DERControl]{
 		Event: func(c *sep2.DERControl) *sep2.Event { return &c.Event },
 		ID:    func(_ string, c sep2.DERControl) (string, bool) { return derhref.ControlID(c.Href) },
+
+		AlwaysPotentiallySuperseded: edition2023,
 	})
 }
 

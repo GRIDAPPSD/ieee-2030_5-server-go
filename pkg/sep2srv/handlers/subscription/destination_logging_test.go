@@ -53,7 +53,7 @@ func TestLogsRedactNotificationURICredentials(t *testing.T) {
 	fn.route("192.0.2.61", destPort, gone)
 	store := memory.NewSubscriptionStore()
 	mgr := newSeamedManager(t, store, fn)
-	h := subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI)
+	h := subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI, allowAnyResource)
 
 	for _, uri := range []string{
 		withSecrets("loopback.test"),
@@ -126,7 +126,7 @@ func TestCreateSubscriptionNilValidatorLogsFallbackOnce(t *testing.T) {
 	const marker = "no notificationURI validator wired"
 
 	store := memory.NewSubscriptionStore()
-	h := subscription.HandleCreateSubscription(store, nil)
+	h := subscription.HandleCreateSubscription(store, nil, allowAnyResource)
 	for range 2 {
 		if rec := postSubscription(t, h, "1", "/edev/1/fsa", "http://127.0.0.1:8080/n"); rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400", rec.Code)
@@ -137,7 +137,7 @@ func TestCreateSubscriptionNilValidatorLogsFallbackOnce(t *testing.T) {
 	}
 
 	mgr := subscription.NewManager(store, 1, 1)
-	_ = subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI)
+	_ = subscription.HandleCreateSubscription(store, mgr.ValidateNotificationURI, allowAnyResource)
 	if n := strings.Count(logs.String(), marker); n != 1 {
 		t.Errorf("a wired validator logged the fallback (count now %d)", n)
 	}

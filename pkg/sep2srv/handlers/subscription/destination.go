@@ -28,6 +28,9 @@ var errRedirectRefused = fmt.Errorf("%w: receiver redirected; redirects are not 
 // before anything is stored.
 const creationResolveTimeout = 5 * time.Second
 
+// defaultDialTimeout is the connect timeout of the delivery dialer.
+const defaultDialTimeout = 30 * time.Second
+
 // minAddressDialTimeout is the least connect time one resolved address gets
 // while that much time remains, matching net.Dialer.
 const minAddressDialTimeout = 2 * time.Second
@@ -158,6 +161,7 @@ type destinationGuard struct {
 	policy      DestinationPolicy
 	lookup      func(ctx context.Context, host string) ([]netip.Addr, error)
 	dial        func(ctx context.Context, network, address string) (net.Conn, error)
+	dialer      *net.Dialer
 	dialTimeout time.Duration
 	// resolveTimeout bounds the lookup performed at creation.
 	resolveTimeout time.Duration
@@ -165,8 +169,8 @@ type destinationGuard struct {
 
 func newDestinationGuard(p DestinationPolicy) *destinationGuard {
 	g := &destinationGuard{policy: p, lookup: systemLookup, dialTimeout: notificationClientTimeout, resolveTimeout: creationResolveTimeout}
-	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: g.control}
-	g.dial = d.DialContext
+	g.dialer = &net.Dialer{Timeout: defaultDialTimeout, KeepAlive: 30 * time.Second, Control: g.control}
+	g.dial = g.dialer.DialContext
 	return g
 }
 

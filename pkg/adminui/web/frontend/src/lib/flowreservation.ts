@@ -111,6 +111,18 @@ export function formatQuantity(n: number | null | undefined, unit: string): stri
   return (rounded < 0 ? '-' : '') + text + ' ' + unit
 }
 
+// formatMeasured is formatQuantity for a metered figure: a non-zero value
+// below 10 units keeps one decimal, and one too small for that reads "<0.1",
+// so it never shows as the "0" of a measured zero. A true 0 still reads 0.
+export function formatMeasured(n: number | null | undefined, unit: string): string {
+  if (!isFiniteNumber(n)) return 'missing'
+  const abs = Math.abs(n)
+  if (abs === 0 || abs >= 9.95) return formatQuantity(n, unit)
+  const sign = n < 0 ? '-' : ''
+  if (abs < 0.05) return sign + '<0.1 ' + unit
+  return sign + abs.toFixed(1) + ' ' + unit
+}
+
 export function directionLabel(direction: string | null | undefined): string {
   if (direction === 'charge' || direction === 'discharge') return direction
   return 'direction missing'

@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 )
 
 // Bounds on SEP2_FLOW_RESERVATION_DEADLINE_SECONDS. Zero in Config means
@@ -26,6 +29,40 @@ const (
 	MinFlowReservationRetentionGrace     = 900 * time.Second
 	MaxFlowReservationRetentionGrace     = 7 * 24 * time.Hour
 	DefaultFlowReservationRetentionGrace = 1800 * time.Second
+)
+
+// Bounds on SEP2_COMMS_OFFLINE_AFTER_SECONDS. Zero in Config means unset and
+// takes DefaultCommsOfflineAfter, which is activity.DefaultOfflineAfter.
+const (
+	MinCommsOfflineAfter     = time.Second
+	MaxCommsOfflineAfter     = 24 * time.Hour
+	DefaultCommsOfflineAfter = activity.DefaultOfflineAfter
+)
+
+// Bounds on SEP2_MIRROR_READING_RETENTION_SECONDS. The floor keeps every
+// reading the DER control delivery figure can still use: the longest control
+// the issuer accepts plus the furthest one reading reaches. Zero in Config
+// means unset and takes DefaultMirrorReadingRetention.
+const (
+	MirrorReadingMaxHold          = 900 * time.Second
+	MinMirrorReadingRetention     = dercontrol.DefaultMaxDuration + MirrorReadingMaxHold
+	MaxMirrorReadingRetention     = 30 * 24 * time.Hour
+	DefaultMirrorReadingRetention = 25 * time.Hour
+)
+
+// Bounds on SEP2_MIRROR_READING_MAX_PER_SERIES, the readings kept per mirror,
+// delivery leg and flowDirection, all readings on no leg being one series
+// (internal/mirrorretention). The floor holds one reading every
+// MirrorReadingCadence across MinMirrorReadingRetention, ends included, so the
+// cap never removes a reading the time floor keeps on a leg posted at that
+// rate. The ceiling is one reading a second
+// across MaxMirrorReadingRetention. The default, over the default retention,
+// is one reading every 4.5 s. Zero in Config means unset.
+const (
+	MirrorReadingCadence             = 300 * time.Second
+	MinMirrorReadingMaxPerSeries     = int(MinMirrorReadingRetention/MirrorReadingCadence) + 1
+	MaxMirrorReadingMaxPerSeries     = int(MaxMirrorReadingRetention / time.Second)
+	DefaultMirrorReadingMaxPerSeries = 20000
 )
 
 // Config holds server configuration.
@@ -143,12 +180,10 @@ type Config struct {
 	// defaults are NEVER opted out by setting this var.
 	AdminAllowedHosts []string // env SEP2_ADMIN_ALLOWED_HOSTS
 
-	// AdminLegacyDashboard serves the pre-Svelte string-constant dashboard
-	// at GET / instead of the embedded admin UI. The rollback path for the
-	// dashboard rewrite: an operator whose workflow the new page breaks
-	// sets this and gets the old page back without a downgrade. Env:
-	// SEP2_ADMIN_LEGACY_DASHBOARD.
-	AdminLegacyDashboard bool
+	// AdminTrustedOrigins is the raw SEP2_ADMIN_TRUSTED_ORIGINS value: a CSV of
+	// origins the admin plane's cross-origin check admits, or "*" to turn the
+	// check off (#897). Parsed at admin startup; empty keeps the default.
+	AdminTrustedOrigins string
 
 	// MetricsAddr is the bind address for the dedicated plain-HTTP Prometheus
 	// metrics listener (env SEP2_METRICS_ADDR, e.g. ":9100"). Empty disables
@@ -217,6 +252,48 @@ type Config struct {
 	// SEP2_FLOW_RESERVATION_RETENTION_GRACE_SECONDS, 900 to 604800. Zero means
 	// unset; use EffectiveFlowReservationRetentionGrace.
 	FlowReservationRetentionGrace time.Duration
+
+	// CommsOfflineAfter is the silence after which the admin Devices payload
+	// calls a device offline. Env: SEP2_COMMS_OFFLINE_AFTER_SECONDS, 1 to
+	// 86400. Zero means unset; use EffectiveCommsOfflineAfter.
+	CommsOfflineAfter time.Duration
+
+	// MirrorReadingRetention is how long a MirrorMeterReading is kept after
+	// the server received it. Env: SEP2_MIRROR_READING_RETENTION_SECONDS,
+	// 87300 to 2592000. Zero means unset; use EffectiveMirrorReadingRetention.
+	MirrorReadingRetention time.Duration
+
+	// MirrorReadingMaxPerSeries caps the readings kept per series.
+	// Env: SEP2_MIRROR_READING_MAX_PER_SERIES, 292 to 2592000. Zero means
+	// unset; use EffectiveMirrorReadingMaxPerSeries.
+	MirrorReadingMaxPerSeries int
+}
+
+// ParsePEN validates the value of SEP2_PEN: empty is unset (nil), anything
+// else must be a base-10 uint32. An unparseable value is an error rather
+// than a silently ignored setting.
+func ParsePEN(v string) (*uint32, error) {
+	if v == "" {
+		return nil, nil
+	}
+	n, err := strconv.ParseUint(v, 10, 32)
+	if err != nil {
+		return nil, fmt.Errorf("SEP2_PEN: %q is not a valid uint32: %w", v, err)
+	}
+	pen := uint32(n)
+	return &pen, nil
+}
+
+// ParseSEP2Edition validates the value of SEP2_EDITION: empty (unset,
+// resolved by Config.EffectiveSEP2Edition) or one of the two declared
+// editions. An unrecognized value is an error, not the default.
+func ParseSEP2Edition(v string) (string, error) {
+	switch v {
+	case "", "2018", "2023":
+		return v, nil
+	default:
+		return "", fmt.Errorf(`SEP2_EDITION: %q is not "2018" or "2023"`, v)
+	}
 }
 
 // ParseFlowReservationDeadlineSeconds validates the value of
@@ -278,6 +355,93 @@ func (c *Config) EffectiveFlowReservationRetentionGrace() (time.Duration, error)
 		return 0, fmt.Errorf("flow reservation retention grace %s is not whole seconds from 15m to 168h", g)
 	}
 	return g, nil
+}
+
+// ParseCommsOfflineAfterSeconds validates the value of
+// SEP2_COMMS_OFFLINE_AFTER_SECONDS: empty is unset (zero), anything else must
+// be whole seconds from 1 to 86400.
+func ParseCommsOfflineAfterSeconds(v string) (time.Duration, error) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("SEP2_COMMS_OFFLINE_AFTER_SECONDS: %q is not a whole number of seconds", v)
+	}
+	if n < int64(MinCommsOfflineAfter/time.Second) || n > int64(MaxCommsOfflineAfter/time.Second) {
+		return 0, fmt.Errorf("SEP2_COMMS_OFFLINE_AFTER_SECONDS: %d is outside 1 to 86400", n)
+	}
+	return time.Duration(n) * time.Second, nil
+}
+
+// EffectiveCommsOfflineAfter resolves an unset or non-positive threshold to
+// the default, so it never returns a negative value.
+func (c *Config) EffectiveCommsOfflineAfter() time.Duration {
+	if c.CommsOfflineAfter <= 0 {
+		return DefaultCommsOfflineAfter
+	}
+	return c.CommsOfflineAfter
+}
+
+// ParseMirrorReadingRetentionSeconds validates the value of
+// SEP2_MIRROR_READING_RETENTION_SECONDS: empty is unset (zero), anything else
+// must be whole seconds within the bounds.
+func ParseMirrorReadingRetentionSeconds(v string) (time.Duration, error) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("SEP2_MIRROR_READING_RETENTION_SECONDS: %q is not a whole number of seconds", v)
+	}
+	lo, hi := int64(MinMirrorReadingRetention/time.Second), int64(MaxMirrorReadingRetention/time.Second)
+	if n < lo || n > hi {
+		return 0, fmt.Errorf("SEP2_MIRROR_READING_RETENTION_SECONDS: %d is outside %d to %d", n, lo, hi)
+	}
+	return time.Duration(n) * time.Second, nil
+}
+
+// EffectiveMirrorReadingRetention resolves an unset retention to the default
+// and refuses a value outside the bounds.
+func (c *Config) EffectiveMirrorReadingRetention() (time.Duration, error) {
+	r := c.MirrorReadingRetention
+	if r == 0 {
+		return DefaultMirrorReadingRetention, nil
+	}
+	if r < MinMirrorReadingRetention || r > MaxMirrorReadingRetention || r%time.Second != 0 {
+		return 0, fmt.Errorf("mirror reading retention %s is not whole seconds from %s to %s", r, MinMirrorReadingRetention, MaxMirrorReadingRetention)
+	}
+	return r, nil
+}
+
+// ParseMirrorReadingMaxPerSeries validates the value of
+// SEP2_MIRROR_READING_MAX_PER_SERIES: empty is unset (zero), anything else
+// must be a whole number within the bounds.
+func ParseMirrorReadingMaxPerSeries(v string) (int, error) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("SEP2_MIRROR_READING_MAX_PER_SERIES: %q is not a whole number", v)
+	}
+	if n < MinMirrorReadingMaxPerSeries || n > MaxMirrorReadingMaxPerSeries {
+		return 0, fmt.Errorf("SEP2_MIRROR_READING_MAX_PER_SERIES: %d is outside %d to %d", n, MinMirrorReadingMaxPerSeries, MaxMirrorReadingMaxPerSeries)
+	}
+	return n, nil
+}
+
+// EffectiveMirrorReadingMaxPerSeries resolves an unset cap to the default and
+// refuses a value outside the bounds.
+func (c *Config) EffectiveMirrorReadingMaxPerSeries() (int, error) {
+	n := c.MirrorReadingMaxPerSeries
+	if n == 0 {
+		return DefaultMirrorReadingMaxPerSeries, nil
+	}
+	if n < MinMirrorReadingMaxPerSeries || n > MaxMirrorReadingMaxPerSeries {
+		return 0, fmt.Errorf("mirror reading cap %d is outside %d to %d", n, MinMirrorReadingMaxPerSeries, MaxMirrorReadingMaxPerSeries)
+	}
+	return n, nil
 }
 
 // EffectivePEN normalizes PEN the way internal/dercontrol.Config already

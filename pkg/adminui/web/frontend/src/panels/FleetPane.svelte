@@ -24,6 +24,7 @@
     sumFigure,
     unreportedStatusCount,
     isFleet,
+    SIGN_HELP_SECTIONS,
     type Fleet,
   } from '../lib/fleet'
 
@@ -36,6 +37,7 @@
   // Refresh disabled; past this the request is aborted into the error state.
   const FETCH_TIMEOUT_MS = 15_000
 
+  let helpOpen = $state(false)
   let fleets = $state<Fleet[]>([])
   let status = $state<'loading' | 'ready' | 'error'>('loading')
   let error = $state('')
@@ -123,7 +125,32 @@
   <h2>DERMS Fleets</h2>
   <div class="hint">
     <button class="btn btn-small" onclick={load} disabled={status === 'loading'}>Refresh</button>
+    <button
+      class="btn btn-small"
+      onclick={() => (helpOpen = !helpOpen)}
+      aria-expanded={helpOpen}
+      aria-controls="fleet-sign-help"
+      data-testid="fleet-help-button">Sign help</button>
   </div>
+  {#if helpOpen}
+    <div id="fleet-sign-help" data-testid="fleet-sign-help">
+      <p class="hint">How the import and export sign is decided, by the client's SEP2 edition and the reading's flowDirection. Only 2018 is covered so far.</p>
+      {#each SIGN_HELP_SECTIONS as section (section.edition)}
+        <h3 data-testid="fleet-sign-help-edition">{section.edition}</h3>
+        <table>
+          <thead><tr><th>flowDirection</th><th>Shown as</th></tr></thead>
+          <tbody>
+            {#each section.rows as row (row.flowDirection)}
+              <tr data-testid="fleet-sign-help-row"><td>{row.flowDirection}</td><td>{row.meaning}</td></tr>
+            {/each}
+          </tbody>
+        </table>
+        <ul class="hint">
+          {#each section.notes as note (note)}<li>{note}</li>{/each}
+        </ul>
+      {/each}
+    </div>
+  {/if}
   {#if status === 'loading'}
     <p class="hint" data-testid="fleet-loading">Loading fleets...</p>
   {:else if status === 'error'}

@@ -2,7 +2,7 @@
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 
-// The shell is mounted at /ui/ on the admin listener (internal/server/spa.go),
+// The shell is mounted at /ui/ on the admin listener (internal/adminplane/spa.go),
 // alongside the existing dashboard at "/", so base must match that mount
 // point or every built asset URL resolves one level too high.
 //

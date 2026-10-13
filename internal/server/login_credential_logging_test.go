@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 // #413: internal/auth's own tests prove LogFailedAdminCredential and
@@ -35,7 +35,7 @@ func captureSlogForLogin(t *testing.T) *bytes.Buffer {
 func TestLoginSubmitWrongKeyLogsFailureViaAuth(t *testing.T) {
 	buf := captureSlogForLogin(t)
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	h := server.HandleLoginSubmit("the-secret", sessions)
+	h := adminplane.HandleLoginSubmit("the-secret", sessions)
 
 	// The submitted key avoids the literal "wrong": the log's own outcome
 	// field reads "wrong_credential", and a substring check against that
@@ -64,7 +64,7 @@ func TestLoginSubmitWrongKeyLogsFailureViaAuth(t *testing.T) {
 func TestLoginSubmitBlankKeyDoesNotLogFailure(t *testing.T) {
 	buf := captureSlogForLogin(t)
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	h := server.HandleLoginSubmit("the-secret", sessions)
+	h := adminplane.HandleLoginSubmit("the-secret", sessions)
 
 	form := url.Values{"key": []string{"   "}}
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))
@@ -80,7 +80,7 @@ func TestLoginSubmitBlankKeyDoesNotLogFailure(t *testing.T) {
 func TestLoginSubmitCorrectKeyLogsSuccessViaAuth(t *testing.T) {
 	buf := captureSlogForLogin(t)
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	h := server.HandleLoginSubmit("the-secret", sessions)
+	h := adminplane.HandleLoginSubmit("the-secret", sessions)
 
 	form := url.Values{"key": []string{"the-secret"}}
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))

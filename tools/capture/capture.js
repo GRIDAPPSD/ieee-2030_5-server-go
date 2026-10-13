@@ -64,7 +64,7 @@ async function main() {
   // 2. NavBar / Overview / ServerInfo.
   await page.locator('nav.navbar').screenshot({ path: outPath('admin-ui-navbar.png') });
   log('captured admin-ui-navbar.png');
-  await shootCard(page, 'Connected Devices', 'admin-ui-connected-devices.png');
+  await shootCard(page, 'Registered devices', 'admin-ui-connected-devices.png');
   await shootCard(page, 'Server Info', 'admin-ui-server-info.png');
 
   // 3. Certificate Management: blank, then post-generate.

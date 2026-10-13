@@ -18,12 +18,20 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
+// wireSubscriberID is the EndDevice every wireAnyHref subscription is held
+// under; routerWithWireManager seeds it, and the devices the tests notify
+// about, with one owner, so the delivery-time read check admits them.
+const (
+	wireSubscriberID   = "wire-subscriber"
+	wireSubscriberLFDI = "0000000000000000000000000000000000000077"
+)
+
 // wireAnyHref subscribes one receiver to every resource href.
 type wireAnyHref struct{ uri string }
 
 func (l wireAnyHref) ListByResource(_ context.Context, href string) ([]memory.SubscriptionRecord, error) {
 	var sub sep2.Subscription
-	sub.Href = "/sub/1"
+	sub.Href = "/edev/" + wireSubscriberID + "/sub/1"
 	sub.SubscribedResource = href
 	sub.NotificationURI = l.uri
 	return []memory.SubscriptionRecord{{ID: "s1", Subscription: sub}}, nil
@@ -48,6 +56,11 @@ func routerWithWireManager(t *testing.T) (http.Handler, *server.Stores, func() s
 	go func() { defer close(done); mgr.Start(ctx) }()
 	t.Cleanup(func() { stop(); <-done })
 	stores := newTestStores()
+	for _, id := range []string{wireSubscriberID, "edev-7", "42"} {
+		if err := stores.EndDevices.Create(context.Background(), id, sep2.EndDevice{LFDI: wireSubscriberLFDI}); err != nil {
+			t.Fatalf("seed EndDevice %q: %v", id, err)
+		}
+	}
 	h, _ := server.BuildProtocolRouter(&config.Config{}, stores, nil, "", "", mgr)
 	return h, stores, func() string {
 		t.Helper()

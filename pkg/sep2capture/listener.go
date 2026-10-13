@@ -41,7 +41,7 @@ type handshaker interface {
 // defaultHandshakeTimeout bounds the per-connection handshake this listener
 // drives, so a peer that opens the TCP connection and never speaks TLS
 // cannot hold a goroutine indefinitely. Matches core's own
-// ccmHandshakeTimeout (vendor/.../sep2tls/ccmserver.go), whose accept-loop
+// DefaultCCMHandshakeTimeout (vendor/.../sep2tls/ccmserver.go), whose accept-loop
 // shape this listener mirrors.
 const defaultHandshakeTimeout = 10 * time.Second
 

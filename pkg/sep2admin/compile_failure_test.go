@@ -66,6 +66,7 @@ func TestGraftCannotSetAnyBodyField(t *testing.T) {
 		{field: "kind", dir: "graftcannotsetbodykind"},
 		{field: "table", dir: "graftcannotsettable"},
 		{field: "definitionList", dir: "graftcannotsetdefinitionlist"},
+		{field: "chart", dir: "graftcannotsetchart"},
 	}
 
 	if got, want := reflect.TypeOf(sep2admin.Body{}).NumField(), len(cases); got != want {
@@ -134,7 +135,7 @@ func TestBodyConstructorsRejectPointers(t *testing.T) {
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err == nil {
-		t.Fatalf("graftcannotpassbodypointer compiled; a *TableBody can reach Descriptor.Body again:\n%s", out)
+		t.Fatalf("graftcannotpassbodypointer compiled; a *TableBody can reach Section.Body again:\n%s", out)
 	}
 	const wantPtr = "as sep2admin.TableBody value in argument to sep2admin.NewTableBody"
 	if !strings.Contains(string(out), wantPtr) {

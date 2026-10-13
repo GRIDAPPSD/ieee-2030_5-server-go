@@ -22,6 +22,7 @@ const data: DashboardData = {
   mupCount: 0,
   tlsMode: 'TLS_AES_256_GCM_SHA384',
   uptime: '1m0s',
+  commsOfflineAfterSeconds: 300,
   devices: [],
 }
 

@@ -53,7 +53,9 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	coreconfiguration "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/configuration"
 	coredcap "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/dcap"
 	coreder "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
@@ -289,6 +291,12 @@ type Stores struct {
 	// it; nil builds one from the stores (NewDERControlIssuer), as an
 	// embedder with no admin API expects.
 	DERControlIssuer *dercontrol.Issuer
+
+	// Edition2023 is true when the server runs as IEEE 2030.5-2023. It makes
+	// the served DERControl and FlowReservationResponse EventStatus carry
+	// potentiallySuperseded true, which 2023 requires; false (the default) is
+	// the 2018 rule.
+	Edition2023 bool
 }
 
 // RouterConfig carries the scalar configuration values the protocol router
@@ -339,6 +347,13 @@ type RouterConfig struct {
 	// FlowReservationResponseList advertises while one of its requests has no
 	// response yet; the list advertises 900 s otherwise (#669). Zero takes 30 s.
 	FlowReservationPendingPollRate time.Duration
+
+	// Activity, when set, records each request that gets past
+	// AuthPolicy.Wrap, keyed by the LFDI AuthPolicy.Identity reports. Nil
+	// records nothing. It sits inside Wrap so a request the identity or ACL
+	// layer refused never counts as the device being in contact. It is a
+	// field here, not a parameter, so no existing caller changes.
+	Activity *activity.Recorder
 }
 
 // AuthPolicy bundles the three auth touch points the protocol router and the
@@ -441,21 +456,18 @@ func BuildProtocolRouter(
 	protocolMux.HandleFunc("GET /sdev/sdi", coredevinfo.HandleDeviceInformation(serverLFDI))
 
 	if stores != nil {
-		// Every helper registers through the ownership gate, so each
-		// /edev/{id}-scoped route is bound to the caller wherever it is mounted.
-		gated := newOwnershipGate(protocolMux, stores.EndDevices, stores.EndDeviceManagers, authPolicy.Identity)
-		registerEndDeviceRoutes(gated, stores, authPolicy, notifier)
-		registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
-		registerDERRoutes(gated, stores)
-		registerMeteringRoutes(gated, stores)
-		registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, notifier)
+		gated := registerGatedRoutes(protocolMux, cfg, stores, authPolicy, notifier)
+		setSubscriberCheck(notifier, gated.checkSubscriber)
 	}
 
-	var protocolChain http.Handler
+	// Inside Wrap, so only requests that passed identity and the ACL count.
+	var inner http.Handler = protocolMux
+	if cfg.Activity != nil {
+		inner = cfg.Activity.Middleware(authPolicy.Identity)(inner)
+	}
+	protocolChain := inner
 	if authPolicy.Wrap != nil {
-		protocolChain = authPolicy.Wrap(protocolMux)
-	} else {
-		protocolChain = protocolMux
+		protocolChain = authPolicy.Wrap(inner)
 	}
 
 	for _, prefix := range topLevelMounts {
@@ -463,6 +475,44 @@ func BuildProtocolRouter(
 	}
 
 	return bufferContentLength(encoding.NamespaceMiddleware(top)), protocolMux.Patterns()
+}
+
+// registerGatedRoutes registers every store-backed route on next through one
+// ownership gate and returns the gate.
+func registerGatedRoutes(next routeRegistrar, cfg RouterConfig, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier) *ownershipGate {
+	// Every helper registers through the ownership gate, so each
+	// /edev/{id}-scoped route is bound to the caller wherever it is mounted.
+	gated := newOwnershipGate(next, stores.EndDevices, stores.EndDeviceManagers, authPolicy.Identity)
+	registerEndDeviceRoutes(gated, stores, authPolicy, notifier, gated.checkSubscribe)
+	registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
+	registerDERRoutes(gated, stores)
+	registerMeteringRoutes(gated, stores)
+	registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, notifier)
+	return gated
+}
+
+// discardRegistrar takes route registrations and serves none of them.
+type discardRegistrar struct{}
+
+func (discardRegistrar) HandleFunc(string, func(http.ResponseWriter, *http.Request)) {}
+
+// NewSubscriberCheck returns the delivery-time subscriber check that
+// BuildProtocolRouter installs on its notifier, decided over the same routes.
+// It is for a caller that notifies before the router is built, such as a
+// server recovering state at boot; pass the cfg and stores the router will
+// get. The routes it registers are never served, so a flow reservation
+// queue or DER control issuer it builds for a nil Stores field is unused.
+func NewSubscriberCheck(cfg RouterConfig, stores *Stores) coresub.SubscriberCheck {
+	if stores == nil {
+		return func(context.Context, sep2.Subscription) error {
+			return errors.New("subscriber check has no stores")
+		}
+	}
+	deny := AuthPolicy{
+		Identity:   func(context.Context) (string, string, bool) { return "", "", false },
+		SFDIPrefix: func(string) (string, error) { return "", errors.New("SFDIPrefix not configured: deny") },
+	}
+	return registerGatedRoutes(discardRegistrar{}, cfg, stores, deny, nil).checkSubscriber
 }
 
 // topLevelMounts are the prefixes under which the protocol mux is mounted on
@@ -553,6 +603,25 @@ func asNotifyRemoved(n ResourceNotifier) func(context.Context, sep2.Subscription
 // create route vets a notificationURI under the same policy delivery uses.
 type notificationURIValidator interface {
 	ValidateNotificationURI(ctx context.Context, uri string) error
+}
+
+// subscriberCheckSetter is satisfied by *subscription.Manager.
+type subscriberCheckSetter interface {
+	SetSubscriberCheck(fn coresub.SubscriberCheck)
+}
+
+// setSubscriberCheck hands n the delivery-time subscriber check. A notifier
+// that cannot take one delivers on its stored index alone, which is logged.
+func setSubscriberCheck(n ResourceNotifier, check coresub.SubscriberCheck) {
+	if n == nil {
+		return
+	}
+	s, ok := n.(subscriberCheckSetter)
+	if !ok {
+		log.Printf("assembly: notifier %T takes no subscriber check; notifications are not re-checked at delivery", n)
+		return
+	}
+	s.SetSubscriberCheck(check)
 }
 
 // asNotificationURIValidator returns n's validator, or nil so the create
@@ -706,7 +775,7 @@ func ownedEndDevices(stores *Stores) store.EndDeviceStore {
 	return requireEndDevices(flowReservationLinkedEndDevices(deviceKeyedCascadeEndDevices(logEventLinkedEndDevices(registrationBoundEndDevices(stores), stores), stores), stores))
 }
 
-func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier) {
+func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier, canRead coresub.ReadCheck) {
 	// A nil index allocator is substituted rather than rejected so a
 	// zero-value Stores stays usable, but the substitute is process-local:
 	// log it, because on a production server it means every device is
@@ -758,7 +827,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	// Subscription endpoints
 	if !store.IsAbsent(stores.Subscriptions) {
 		mux.HandleFunc("GET /edev/{id}/sub", coresub.HandleListSubscriptionsByDevice(stores.Subscriptions, 900))
-		mux.HandleFunc("POST /edev/{id}/sub", coresub.HandleCreateSubscription(stores.Subscriptions, asNotificationURIValidator(notifier)))
+		mux.HandleFunc("POST /edev/{id}/sub", coresub.HandleCreateSubscription(stores.Subscriptions, asNotificationURIValidator(notifier), canRead))
 		mux.HandleFunc("DELETE /edev/{id}/sub/{subId}", coresub.HandleDeleteSubscription(stores.Subscriptions, asNotifyRemoved(notifier)))
 	}
 }
@@ -858,7 +927,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// only when present is what keeps every existing deployment (no issuer
 	// yet) served exactly as before.
 	if !store.IsAbsent(stores.DERControlLifecycles) {
-		derControls = coreder.NewDerivedStatusControlStore(derControls, stores.DERControlLifecycles)
+		derControls = coreder.NewDerivedStatusControlStoreFor(derControls, stores.DERControlLifecycles, stores.Edition2023)
 	}
 
 	// DERProgram.DERControlListLink.all is always derived from the live
@@ -890,7 +959,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	}
 
 	mux.HandleFunc("GET /edev/{id}/der", scopedListHandler[sep2.DER, sep2.DERList](
-		stores.DERs, "id", coreder.DERListBuilder(derLinks), 900,
+		stores.DERs, "id", coreder.DERListBuilder(derLinks), derstatus.DefaultPollRateSeconds,
 	))
 
 	// The DER instance itself. Every DERList member carries this
@@ -1591,5 +1660,5 @@ func servedFlowReservationResponses(responses store.ScopedStore[sep2.FlowReserva
 	if store.IsAbsent(stores.FlowReservationResponseLifecycles) {
 		return responses
 	}
-	return flowreservation.NewDerivedStatusResponseStore(responses, stores.FlowReservationResponseLifecycles)
+	return flowreservation.NewDerivedStatusResponseStoreFor(responses, stores.FlowReservationResponseLifecycles, stores.Edition2023)
 }

@@ -104,7 +104,7 @@ const wrongBearerKey = "wrong-key-guess"
 func TestBearerWrongKeyLogsFailureWithoutTheKey(t *testing.T) {
 	buf := captureSlog(t)
 
-	handler := auth.AdminAuthMiddleware("the-real-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("the-real-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.Header.Set("Authorization", "Bearer "+wrongBearerKey)
 	w := httptest.NewRecorder()
@@ -144,7 +144,7 @@ func TestBearerWrongKeyLogsFailureWithoutTheKey(t *testing.T) {
 func TestBearerAbsentDoesNotLogFailure(t *testing.T) {
 	buf := captureSlog(t)
 
-	handler := auth.AdminAuthMiddleware("the-real-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("the-real-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
@@ -163,7 +163,7 @@ func TestBearerAbsentDoesNotLogFailure(t *testing.T) {
 func TestBearerCorrectKeyLogsSuccess(t *testing.T) {
 	buf := captureSlog(t)
 
-	handler := auth.AdminAuthMiddleware("the-real-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("the-real-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.Header.Set("Authorization", "Bearer the-real-key")
 	w := httptest.NewRecorder()
@@ -189,9 +189,9 @@ func TestMTLSAdminCertLogsSuccess(t *testing.T) {
 	buf := captureSlog(t)
 	adminCert := generateAdminCert(t)
 
-	handler := auth.AdminAuthMiddleware("test-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{adminCert}}
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{adminCert}, VerifiedChains: [][]*x509.Certificate{{adminCert}}}
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
@@ -217,9 +217,9 @@ func TestMTLSDeviceCertDoesNotLogFailure(t *testing.T) {
 	buf := captureSlog(t)
 	deviceCert := generateDeviceCert(t)
 
-	handler := auth.AdminAuthMiddleware("test-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{deviceCert}}
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{deviceCert}, VerifiedChains: [][]*x509.Certificate{{deviceCert}}}
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 

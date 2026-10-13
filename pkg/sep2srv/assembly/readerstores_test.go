@@ -142,6 +142,7 @@ var readerStoresExcludedFields = map[string]string{
 	"FlowReservationResponseLifecycles": "optional like DERControlLifecycles, " +
 		"and only the serve-time status derivation reads it",
 	"CommitmentLedger":     "a lock-holding check service, not resource data",
+	"Edition2023":          "edition config read by the serve-time status derivation, not a store",
 	"FlowReservationQueue": "a timer-holding service the server closes, not resource data",
 	"DERControlIssuer":     "a lock-holding write service, not resource data",
 }

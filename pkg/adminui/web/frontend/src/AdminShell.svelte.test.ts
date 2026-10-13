@@ -18,8 +18,9 @@ const data: DashboardData = {
   mupCount: 5,
   tlsMode: 'TLS_AES_256_GCM_SHA384',
   uptime: '3m21s',
+  commsOfflineAfterSeconds: 300,
   devices: [
-    { sfdi: '167261211635', lfdi: '3E4F45AB31EDFE5B67E343E5E4562E31984E23E5', href: '/edev/1', enabled: true },
+    { sfdi: '167261211635', lfdi: '3E4F45AB31EDFE5B67E343E5E4562E31984E23E5', href: '/edev/1', enabled: true, lastRequest: null, comms: 'not_seen', lastKnown: true, ders: [] },
   ],
 }
 
@@ -67,7 +68,7 @@ describe('AdminShell', () => {
     // test) is on the devices tab, and is covered there, alongside the
     // other eight cards' headings, by AdminShell.tabs.svelte.test.ts.
     const headings = Array.from(container.querySelectorAll('.grid h2')).map((h) => h.textContent)
-    expect(headings).toEqual(['Connected Devices', 'Server Info', 'Device Activity'])
+    expect(headings).toEqual(['Registered devices', 'Server Info', 'Device Activity'])
   })
 
   it('closes the stream when the shell is unmounted', async () => {
@@ -111,5 +112,35 @@ describe('AdminShell', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(connect).not.toHaveBeenCalled()
+  })
+
+  it('shows the server error for a failed device read and clears it on a good frame', async () => {
+    vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string) => {
+      if (path === '/dashboard/data') {
+        return { ok: false, error: 'device list unavailable: backend down', status: 500 } as never
+      }
+      if (path === '/api/fsas') return { ok: true, data: { fsas: [] } } as never
+      return { ok: true, data: { kind: 'SY', id: 'sy', label: 'System' } } as never
+    })
+    let push: ((d: DashboardData) => void) | undefined
+    vi.spyOn(dash, 'connectDashboard').mockImplementation((cb) => {
+      push = cb
+      return () => {}
+    })
+
+    render(AdminShell)
+
+    const banner = await screen.findByTestId('dashboard-error')
+    expect(banner).toHaveTextContent('device list unavailable: backend down')
+
+    push?.({ ...data, devices: null, error: 'device list unavailable: still down' })
+    await waitFor(() => {
+      expect(screen.getByTestId('dashboard-error')).toHaveTextContent('still down')
+    })
+
+    push?.(data)
+    await waitFor(() => {
+      expect(screen.queryByTestId('dashboard-error')).toBeNull()
+    })
   })
 })

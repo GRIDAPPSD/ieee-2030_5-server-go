@@ -15,7 +15,7 @@ const refusalBody = `{"error":"admin authentication required"}`
 // bearerOnlyMiddleware wires the middleware with no ticket and no session
 // store, so the Bearer branch is the only credential branch that can admit.
 func bearerOnlyMiddleware(adminKey string) http.Handler {
-	return auth.AdminAuthMiddleware(adminKey, nil, nil)(okHandler())
+	return auth.AdminAuthMiddleware(adminKey, nil, nil, true)(okHandler())
 }
 
 // nonLoopbackRequest builds a request the loopback bypass declines, so the

@@ -17,10 +17,10 @@ import (
 func TestAdminAuthMTLSWithAdminCert(t *testing.T) {
 	adminCert := generateAdminCert(t)
 
-	handler := auth.AdminAuthMiddleware("test-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.TLS = &tls.ConnectionState{
-		PeerCertificates: []*x509.Certificate{adminCert},
+		PeerCertificates: []*x509.Certificate{adminCert}, VerifiedChains: [][]*x509.Certificate{{adminCert}},
 	}
 
 	w := httptest.NewRecorder()
@@ -34,10 +34,10 @@ func TestAdminAuthMTLSWithAdminCert(t *testing.T) {
 func TestAdminAuthMTLSWithDeviceCert(t *testing.T) {
 	deviceCert := generateDeviceCert(t)
 
-	handler := auth.AdminAuthMiddleware("test-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.TLS = &tls.ConnectionState{
-		PeerCertificates: []*x509.Certificate{deviceCert},
+		PeerCertificates: []*x509.Certificate{deviceCert}, VerifiedChains: [][]*x509.Certificate{{deviceCert}},
 	}
 
 	w := httptest.NewRecorder()
@@ -49,7 +49,7 @@ func TestAdminAuthMTLSWithDeviceCert(t *testing.T) {
 }
 
 func TestAdminAuthBearerCorrectKey(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("my-secret-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("my-secret-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.Header.Set("Authorization", "Bearer my-secret-key")
 
@@ -62,7 +62,7 @@ func TestAdminAuthBearerCorrectKey(t *testing.T) {
 }
 
 func TestAdminAuthBearerWrongKey(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("my-secret-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("my-secret-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.Header.Set("Authorization", "Bearer wrong-key")
 
@@ -75,7 +75,7 @@ func TestAdminAuthBearerWrongKey(t *testing.T) {
 }
 
 func TestAdminAuthBearerDisabledWhenEmpty(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.Header.Set("Authorization", "Bearer anything")
 
@@ -89,7 +89,7 @@ func TestAdminAuthBearerDisabledWhenEmpty(t *testing.T) {
 }
 
 func TestAdminAuthNoCredentials(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("test-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 
 	w := httptest.NewRecorder()
@@ -101,7 +101,7 @@ func TestAdminAuthNoCredentials(t *testing.T) {
 }
 
 func TestAdminAuthBearerMalformedHeader(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("test-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
 
@@ -120,7 +120,7 @@ func TestAdminAuthTicketValid(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler := auth.AdminAuthMiddleware("test-key", tickets, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", tickets, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/events?ticket="+ticket, nil)
 
 	w := httptest.NewRecorder()
@@ -138,7 +138,7 @@ func TestAdminAuthTicketOneTimeUse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler := auth.AdminAuthMiddleware("test-key", tickets, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", tickets, nil, true)(okHandler())
 
 	// First request succeeds
 	req1 := httptest.NewRequest(http.MethodGet, "/dashboard/events?ticket="+ticket, nil)
@@ -159,7 +159,7 @@ func TestAdminAuthTicketOneTimeUse(t *testing.T) {
 
 func TestAdminAuthTicketInvalid(t *testing.T) {
 	tickets := auth.NewTicketStore(30 * time.Second)
-	handler := auth.AdminAuthMiddleware("test-key", tickets, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", tickets, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/events?ticket=bogus", nil)
 
 	w := httptest.NewRecorder()
@@ -172,7 +172,7 @@ func TestAdminAuthTicketInvalid(t *testing.T) {
 
 func TestAdminAuthQueryTokenNoLongerAccepted(t *testing.T) {
 	tickets := auth.NewTicketStore(30 * time.Second)
-	handler := auth.AdminAuthMiddleware("test-key", tickets, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", tickets, nil, true)(okHandler())
 	// Pass the admin key as ?token= (old pattern) — must be rejected
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/events?token=test-key", nil)
 
@@ -190,7 +190,7 @@ func TestAdminAuthQueryTokenNoLongerAccepted(t *testing.T) {
 // bypass declines and the normal Bearer/cookie/mTLS chain runs.
 
 func TestAdminAuth_LoopbackBypass(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("test-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
 
@@ -203,7 +203,7 @@ func TestAdminAuth_LoopbackBypass(t *testing.T) {
 }
 
 func TestAdminAuth_LoopbackWithXFF_FallsThrough(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("test-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
 	req.Header.Set("X-Forwarded-For", "1.2.3.4")
@@ -217,7 +217,7 @@ func TestAdminAuth_LoopbackWithXFF_FallsThrough(t *testing.T) {
 }
 
 func TestAdminAuth_NonLoopback_FallsThrough(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("test-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.RemoteAddr = "192.168.1.10:54321"
 
@@ -229,8 +229,32 @@ func TestAdminAuth_NonLoopback_FallsThrough(t *testing.T) {
 	}
 }
 
+// With the bypass off, a loopback request needs a credential like any other,
+// and a credentialed one is still admitted.
+func TestAdminAuth_LoopbackBypassOff(t *testing.T) {
+	handler := auth.AdminAuthMiddleware("test-key", nil, nil, false)(okHandler())
+	for _, remote := range []string{"127.0.0.1:54321", "[::1]:54321"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/fsas", nil)
+		req.RemoteAddr = remote
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("bypass off, %s with no credential = %d, want 401", remote, w.Code)
+		}
+
+		req = httptest.NewRequest(http.MethodGet, "/api/fsas", nil)
+		req.RemoteAddr = remote
+		req.Header.Set("Authorization", "Bearer test-key")
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("bypass off, %s with the key = %d, want 200", remote, w.Code)
+		}
+	}
+}
+
 func TestAdminAuth_IPv6Loopback(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("test-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.RemoteAddr = "[::1]:54321"
 
@@ -243,7 +267,7 @@ func TestAdminAuth_IPv6Loopback(t *testing.T) {
 }
 
 func TestAdminAuth_LoopbackWithForwardedRFC7239(t *testing.T) {
-	handler := auth.AdminAuthMiddleware("test-key", nil, nil)(okHandler())
+	handler := auth.AdminAuthMiddleware("test-key", nil, nil, true)(okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/api/certs/ca", nil)
 	req.RemoteAddr = "127.0.0.1:54321"
 	req.Header.Set("Forwarded", "for=1.2.3.4")

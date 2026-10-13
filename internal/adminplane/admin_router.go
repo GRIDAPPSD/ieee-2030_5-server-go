@@ -1,0 +1,442 @@
+package adminplane
+
+import (
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
+)
+
+// Config is what Build assembles the admin router from. Each field is the
+// BuildAdminRouter parameter of the same role.
+type Config struct {
+	AdminKey     string
+	CertService  *handler.AdminCertService
+	Stores       *Stores
+	TLSMode      string
+	Tickets      *auth.TicketStore
+	Sessions     *auth.SessionStore
+	AllowedHosts []string
+	Traffic      http.Handler
+	// CrossOrigin is the plane's cross-origin decision (SEP2_ADMIN_TRUSTED_ORIGINS).
+	// Nil refuses every cross-origin write.
+	CrossOrigin *auth.CrossOriginPolicy
+	// Panels are an embedder's extra tabs, served after the shell's own
+	// under /api/ui/panels. Run registers none.
+	Panels []sep2admin.Panel
+	// StreamsDone, when closed, ends every open panel stream with a final
+	// status event and refuses new ones. Close it before the listener's
+	// Shutdown: Shutdown does not cancel request contexts, so an open
+	// stream would otherwise hold it to its deadline.
+	StreamsDone <-chan struct{}
+	// LoopbackBypass admits a loopback request with no forwarded header and
+	// no credential (#246). Run sets it; the zero value requires a
+	// credential from every address.
+	LoopbackBypass bool
+	// ControlWrites mounts five routes: DER control create and cancel, and
+	// flow reservation answer, revise and cancel. Run sets it; the zero value
+	// unmounts only those five, and every other write, FSA program attach
+	// and device FSA assignment among them, stays.
+	ControlWrites bool
+	// ReadOnly mounts no write route but the two auth POSTs (/auth/login and
+	// /auth/ticket). It wins over ControlWrites, so a route is never mounted
+	// and then filtered. Run leaves it false.
+	ReadOnly bool
+	// PanelActions serves the typed actions a panel declares, under
+	// /api/ui/panels/{id}/actions. Off, the routes are absent (404) and the
+	// panel list names no action. Actions are not gated by ReadOnly: they
+	// change the embedder's state, not the plane's stores.
+	PanelActions bool
+	// ActionTracker, when set, counts the panel action Run calls still
+	// executing, so a caller can wait for them at shutdown. StreamsDone also
+	// ends running actions and refuses new ones.
+	ActionTracker *ActionTracker
+	// Activity is the per-device request recorder the dashboard reads each
+	// device's Comms and lastRequest from. Nil reports every device
+	// "unknown". CommsOfflineAfter is the silence after which a device reads
+	// offline; zero takes activity.DefaultOfflineAfter.
+	Activity          *activity.Recorder
+	CommsOfflineAfter time.Duration
+	// DeviceColumns add columns to the Devices tab. Nil adds none.
+	DeviceColumns []sep2admin.DeviceColumnSource
+}
+
+// Build is the admin router Run serves, with its route list for the boot
+// log. It fails when a panel is refused at registration.
+func Build(cfg Config) (http.Handler, []string, error) {
+	panels, err := newPanelSet(cfg.Panels)
+	if err != nil {
+		return nil, nil, err
+	}
+	panels.actions = cfg.PanelActions
+	panels.streamsDone = cfg.StreamsDone
+	panels.crossOrigin = cfg.CrossOrigin
+	if cfg.ActionTracker != nil {
+		panels.running = cfg.ActionTracker
+	}
+	authed, authedWithMiddleware := buildAuthedAdminMux(cfg, panels)
+	h, patterns := buildOuterAdminRouter(cfg, authed, authedWithMiddleware)
+	return h, patterns, nil
+}
+
+// BuildAdminRouter creates the admin router AND returns the canonical
+// pattern list mounted under it. Layers, outermost first:
+//  1. Host-header allowlist (#270) - rejects any request whose Host
+//     header isn't a hostname this server claims (loopback, localhost, the
+//     #246 mDNS hostname, plus operator-extended entries from
+//     SEP2_ADMIN_ALLOWED_HOSTS). DNS-rebinding defense-in-depth at the
+//     admin boundary; runs BEFORE auth so a wrong-Host request never
+//     reaches the auth chain. allowedHosts nil/empty disables the gate
+//     (test paths only - the production caller in startAdminServer
+//     always supplies the resolved defaults; an empty allowlist logs a
+//     loud WARNING at construction time).
+//  2. Cross-origin refusal (#416): a state-changing request a browser marks
+//     as from another origin is refused before any credential is consulted.
+//  3. Public outer mux - /login, /auth/login (login form + submit). These
+//     routes are unauthenticated by design: the operator cannot reach the
+//     dashboard without first hitting them.
+//  4. Authenticated inner mux - everything else (dashboard, /api/*, SSE,
+//     ticket exchange). Guarded by AdminAuthMiddleware which supports mTLS,
+//     Bearer, the query-param ticket from tickets, and the #159
+//     admin_ticket cookie session from sessions. Those last two are
+//     separate stores: see AdminAuthMiddleware for why. After auth, a write
+//     whose Content-Type its route does not decode is refused (adminBodyTypes).
+//
+// Patterns from BOTH the public outer mux (login routes) and the authed
+// inner mux are merged into one sorted, deduplicated list - callers
+// (the boot-time route enumerator) want a single flat view of every
+// admin-listener route. The #270 host-header allowlist wraps the
+// outer mux when allowedHosts is non-empty; the returned pattern list
+// reflects routes mounted under the listener regardless of host gating.
+//
+// trafficHandler, when non-nil, is the traffic-capture read API (#611):
+// mounted at "/api/traffic/" on the authenticated inner mux, so it gets the
+// same auth chain as every other admin API route, the one-time ticket path
+// included (Path D above covers GET /api/traffic/stream the same as any
+// other authed GET). Nil mounts nothing, which is what capture-off leaves.
+//
+// Test callers that don't need the pattern list discard the second
+// return value with `_`. It builds what Run builds: the loopback bypass on
+// and the control writes mounted.
+func BuildAdminRouter(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, allowedHosts []string, trafficHandler http.Handler) (http.Handler, []string) {
+	cfg := runConfig(adminKey, svc, stores, tlsMode, tickets, sessions, trafficHandler)
+	cfg.AllowedHosts = allowedHosts
+	authed, authedWithMiddleware := buildAuthedAdminMux(cfg, noPanels())
+	return buildOuterAdminRouter(cfg, authed, authedWithMiddleware)
+}
+
+// runConfig is the Config BuildAdminRouter's parameters describe, with Run's
+// loopback bypass and control writes.
+func runConfig(adminKey string, svc *handler.AdminCertService, stores *Stores, tlsMode string, tickets *auth.TicketStore, sessions *auth.SessionStore, trafficHandler http.Handler) Config {
+	return Config{
+		AdminKey:       adminKey,
+		CertService:    svc,
+		Stores:         stores,
+		TLSMode:        tlsMode,
+		Tickets:        tickets,
+		Sessions:       sessions,
+		Traffic:        trafficHandler,
+		LoopbackBypass: true,
+		ControlWrites:  true,
+	}
+}
+
+// buildAuthedAdminMux constructs the authenticated inner mux (dashboard,
+// /api/*, SSE, ticket exchange) and the middleware chain wrapped around it:
+// AdminAuthMiddleware, then requireCredentialForSensitiveRoutes, then
+// requireAdminBodyTypes. This is the guard's own domain (#579 MEDIUM-3,
+// test coverage lane): requireCredentialForSensitiveRoutes matches every
+// request pattern against authed and no other mux, so a route mounted on
+// the public outer mux instead never reaches this chain at all, however its
+// pattern string looks. Split out of BuildAdminRouter so a test that needs
+// "what can the guard actually see" reads authed.Patterns() here rather
+// than BuildAdminRouter's merged list, which also carries the outer mux's
+// routes and so overstates the guard's reach.
+func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Handler) {
+	adminKey, svc, stores, tickets, sessions, trafficHandler := cfg.AdminKey, cfg.CertService, cfg.Stores, cfg.Tickets, cfg.Sessions, cfg.Traffic
+	authed := newRecordingMux()
+	// A write route mounts through mountWrite, so ReadOnly leaves it out of
+	// the mux and of the pattern list alike.
+	mountWrite := func(pattern string, h http.HandlerFunc) {
+		if !cfg.ReadOnly {
+			authed.HandleFunc(pattern, h)
+		}
+	}
+	controlWrites := cfg.ControlWrites && !cfg.ReadOnly
+
+	if trafficHandler != nil {
+		authed.Handle("GET /api/traffic/", http.StripPrefix("/api/traffic", trafficHandler))
+	}
+
+	// Certificate management API
+	if svc != nil {
+		authed.HandleFunc("GET /api/certs/ca", svc.HandleGetCA())
+		mountWrite("POST /api/certs/server", svc.HandleCreateServerCert())
+		mountWrite("POST /api/certs/device", svc.HandleCreateDeviceCert())
+	}
+
+	// #594: the device type vocabulary a device cert is minted against.
+	// Needs no CA state, so it stays reachable even when svc is nil.
+	authed.HandleFunc("GET /api/certs/device-types", handler.HandleCertDeviceTypes())
+
+	// #159 registration-assistant API
+	mountWrite("POST /api/certs/info", handler.HandleCertInfo())
+	if stores != nil {
+		authed.HandleFunc("GET /api/devices/by-lfdi/{lfdi}", handler.HandleDeviceLookupByLFDI(stores.EndDevices))
+		if !store.IsAbsent(stores.Registrations) {
+			mountWrite("POST /api/devices", handler.HandleAddEndDevice(stores.EndDevices, stores.Registrations))
+		}
+	}
+
+	// #163 FSA hierarchy management API.
+	if fsaH := newAdminFSAHandler(stores); fsaH != nil {
+		mountWrite("POST /api/fsas", fsaH.HandleCreateAdminFSA())
+		authed.HandleFunc("GET /api/fsas", fsaH.HandleListAdminFSAs())
+		authed.HandleFunc("GET /api/fsas/{id}", fsaH.HandleGetAdminFSA())
+		mountWrite("DELETE /api/fsas/{id}", fsaH.HandleDeleteAdminFSA())
+		mountWrite("POST /api/fsas/{id}/programs", fsaH.HandleAttachProgram())
+		mountWrite("DELETE /api/fsas/{id}/programs", fsaH.HandleDetachProgram())
+		mountWrite("POST /api/devices/{id}/fsa-assignment", fsaH.HandleAssignDeviceFSA())
+		mountWrite("DELETE /api/devices/{id}/fsa-assignment", fsaH.HandleUnassignDeviceFSA())
+		authed.HandleFunc("GET /api/topology", handler.HandleTopology(stores.AdminFSAs, stores.EndDevices))
+	}
+
+	// #440 management-pair API: who may manage which EndDevice.
+	if mgmtH := newAdminManagementHandler(stores); mgmtH != nil {
+		mountWrite("POST /api/management-pairs", mgmtH.HandleCreateManagementPair())
+		authed.HandleFunc("GET /api/management-pairs", mgmtH.HandleListManagementPairs())
+		mountWrite("DELETE /api/management-pairs", mgmtH.HandleRemoveManagementPair())
+		mountWrite("POST /api/management-pairs/rekey", mgmtH.HandleRekeyManagementPair())
+	}
+
+	// #715 DERMS read API: per-aggregator fleet status, measurements and
+	// availability. Read-only; the same management-pair store above decides
+	// fleet membership.
+	if fleetH := newAdminFleetHandler(stores); fleetH != nil {
+		authed.HandleFunc("GET /api/derms/fleets", handler.HandleListFleets(fleetH))
+	}
+
+	// #764 DERMS read API: a fleet's flow reservation requests, their
+	// responses and executions, and the live grants a dispatch can carry out.
+	// #670 adds the writes that answer, revise and cancel them. They change
+	// what devices are told and do, so none is on nonSensitiveAdminWrites: a
+	// real credential is required even from loopback.
+	if frH := newAdminFlowReservationHandler(stores); frH != nil {
+		authed.HandleFunc("GET /api/derms/flow-reservations", frH.HandleList())
+		authed.HandleFunc("GET /api/derms/flow-reservations/{edevId}/{frqId}", frH.HandleGet())
+		authed.HandleFunc("GET /api/derms/grants", frH.HandleGrants())
+		if controlWrites {
+			mountWrite("POST /api/derms/flow-reservations/{edevId}/{frqId}/answer", frH.HandleAnswer())
+			mountWrite("POST /api/derms/flow-reservations/{edevId}/{frqId}/revise", frH.HandleRevise())
+			mountWrite("POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel", frH.HandleCancel())
+		}
+	}
+
+	// #801 DERMS read API: each fleet's live grants and plain controls, read
+	// through the ledger so the page never judges liveness itself.
+	if cH := newAdminCommitmentsHandler(stores); cH != nil {
+		authed.HandleFunc("GET /api/derms/commitments", cH.HandleList())
+	}
+
+	// #566 DER control API. Both POST routes change what a device does, so
+	// neither is on nonSensitiveAdminWrites: a real credential is required
+	// even from loopback.
+	if derH := newAdminDERControlHandler(stores); derH != nil {
+		authed.HandleFunc("GET /api/der/controls", derH.HandleList())
+		if controlWrites {
+			mountWrite("POST /api/der/controls", derH.HandleCreate())
+			mountWrite("POST /api/der/controls/{mrid}/cancel", derH.HandleCancel())
+		}
+		// "GET /api/devices/{id}/der-programs" would conflict with "GET
+		// /api/devices/by-lfdi/{lfdi}" (neither is more specific), so the
+		// device sub-collection is matched by a wildcard and dispatched here.
+		authed.HandleFunc("GET /api/devices/{id}/{collection}", deviceCollections(map[string]http.Handler{
+			"der-programs": derH.HandleListPrograms(),
+		}))
+	}
+
+	// Admin dashboard: GET / serves the embedded admin UI, and the SSE and JSON
+	// routes feed it.
+	if stores != nil {
+		dashboard := NewDashboardHandler(stores, cfg.TLSMode).WithActivity(cfg.Activity, cfg.CommsOfflineAfter).WithDeviceColumns(cfg.DeviceColumns...)
+		dashboard.RegisterRoutes(authed)
+	}
+
+	// #829 embedder panels. Mounted with no panels too, so the shell can
+	// tell "none" ([]) from an older server (404). All are sensitive
+	// reads (sensitiveAdminReadPrefixes): a View may disclose anything.
+	authed.HandleFunc("GET /api/ui/panels", panels.handleList())
+	authed.HandleFunc("GET /api/ui/panels/{id}", panels.handleGet())
+	authed.HandleFunc("GET /api/ui/panels/{id}/choices", panels.handleChoices())
+	authed.HandleFunc("GET /api/ui/panels/{id}/stream", panels.handleStream())
+	// #903 page panels, under /apps/{id}/ (page_panels.go). Sensitive for
+	// every method: requireCredentialForSensitiveRoutes checks the path.
+	panels.mountPages(authed)
+
+	// Admin UI (embedded Svelte SPA, pkg/adminui/web). Mounted at
+	// "/ui/", a more specific pattern than the dashboard's catch-all "GET
+	// /" above. The SPA is reachable at both paths: "/ui/" always, and "/"
+	// unless the legacy flag routes that one to the old page.
+	authed.Handle("GET /ui/", http.StripPrefix("/ui", spaHandler()))
+
+	// #863 panel actions. Not a mountWrite: ReadOnly freezes the plane's own
+	// stores, and an action changes only what its embedder does. The POST is
+	// on neither nonSensitiveAdminWrites nor a read prefix, so the
+	// credential guard covers it as a sensitive write, and the body-type
+	// check refuses anything but JSON.
+	if panels.actions {
+		authed.HandleFunc("GET /api/ui/panels/{id}/actions", panels.handleActions())
+		authed.HandleFunc("POST /api/ui/panels/{id}/actions/{action}", panels.handleAction())
+	}
+
+	// Auth ticket endpoint - exchanges valid admin auth for a short-lived
+	// ticket. RequireNonTicketAdmission (#641) refuses when the admission
+	// that reached it was itself a ticket: every other real credential
+	// (mTLS, Bearer, cookie session) still mints one, but a ticket must
+	// never be sufficient to mint its own successor.
+	if tickets != nil {
+		authed.Handle("POST /auth/ticket", auth.RequireNonTicketAdmission(handleIssueTicket(tickets)))
+	}
+
+	routed := requireAdminBodyTypes(authed)
+	if !panels.actions {
+		routed = panelActionsOff(routed)
+	}
+	authedWithMiddleware := auth.AdminAuthMiddleware(adminKey, tickets, sessions, cfg.LoopbackBypass)(
+		requireCredentialForSensitiveRoutes(authed, auth.RequireRealCredential(adminKey, tickets, sessions), routed),
+	)
+
+	return authed, authedWithMiddleware
+}
+
+// buildOuterAdminRouter wraps authedWithMiddleware in the public outer mux
+// (login routes), the host-header allowlist, the cross-origin refusal, and
+// the shared no-store/security-header wrappers, and assembles the merged
+// pattern list BuildAdminRouter returns. Split from buildAuthedAdminMux so
+// the two mux's patterns stay independently readable: authed.Patterns() is
+// the guard's own domain, and the merged list here is everything mounted
+// under the listener regardless of which mux or guard a given route sits
+// behind.
+func buildOuterAdminRouter(cfg Config, authed *recordingMux, authedWithMiddleware http.Handler) (http.Handler, []string) {
+	adminKey, sessions, allowedHosts := cfg.AdminKey, cfg.Sessions, cfg.AllowedHosts
+	// Outer mux: login routes are public; everything else is authed.
+	// #270 (bundle B) wraps authedWithMiddleware with a Host-allowlist
+	// middleware at the `outer.Handle("/", ...)` line - leave that wrap
+	// point clean. A recordingMux, not a plain ServeMux, so a write route
+	// registered here directly (bypassing authed and its body-type check)
+	// still shows up in the pattern list below instead of going uncounted
+	// (#416).
+	outer := newRecordingMux()
+	outer.HandleFunc("GET /login", HandleLoginPage(""))
+	outer.HandleFunc("POST /auth/login", HandleLoginSubmit(adminKey, sessions))
+	outer.Handle("/", authedWithMiddleware)
+
+	// #272: assemble the final pattern list from both muxes' own records,
+	// not a fixed outer list, so a route added to either mux changes this
+	// list (#416). "/" is the authed mount point, not a route of its own.
+	merged := authed.Patterns()
+	for _, p := range outer.Patterns() {
+		if p != "/" {
+			merged = append(merged, p)
+		}
+	}
+	sortDedupePatterns(&merged)
+
+	// #270: wrap the entire outer mux in the host-header allowlist
+	// when the caller supplied one. The gate runs BEFORE login routes so
+	// /login and /auth/login are protected from DNS-rebinding too. The
+	// returned route list reflects what is mounted under the listener
+	// regardless of host gating - boot-log enumeration is independent
+	// of which Host headers reach the handlers.
+	// Outside both muxes so the login submit is covered too; inside the Host
+	// gate so a misdirected request is still answered 421.
+	var h http.Handler = cfg.CrossOrigin.Middleware()(outer)
+	if len(allowedHosts) > 0 {
+		h = HostAllowlistMiddleware(allowedHosts)(h)
+	} else {
+		// Wren MED-5: empty allowlist disables the DNS-rebinding gate.
+		// The production caller in startAdminServer always supplies the
+		// resolved defaults; this branch is reachable only by direct
+		// callers (test fixtures, future unscoped callers). Log loudly
+		// at construction so the only opt-out path leaves a tripwire in
+		// the boot log.
+		log.Printf("WARNING: admin: host-allowlist gate DISABLED (BuildAdminRouter called with empty allowedHosts) - DNS-rebinding defense is OFF for this admin router")
+	}
+	// no-store wraps everything, including the host-gate and login-route
+	// refusals. A cookie-authenticated GET gets none of the shared-cache
+	// suppression RFC 9111 gives an Authorization-bearing one, so without this
+	// an intermediary fronting the listener may store the admin shell or a
+	// topology response and serve it to a client that presented no credential.
+	// adminSecurityHeaders wraps it, adding the framing/sniff/referrer
+	// refusal to the same everything. Admin plane only: the protocol
+	// listener's bytes are a conformance surface and are built elsewhere
+	// (BuildProtocolRouter).
+	return adminSecurityHeaders(adminNoStore(h)), merged
+}
+
+// adminNoStore sets Cache-Control: no-store on every admin response. The header
+// is written before the wrapped handler runs, so a handler that calls
+// WriteHeader before setting its own headers still emits it.
+func adminNoStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// adminSecurityHeaders sets the admin plane's browser-facing response
+// headers: a framing refusal, a MIME-sniff refusal, and a referrer policy
+// that stops a URL-borne credential (the SSE ticket) from reaching a
+// cross-origin Referer. Composed around adminNoStore rather than folded into
+// it, since the no-store wrapper's own comment is about caching and this is
+// a different concern; both set their headers before the wrapped handler
+// runs, for the same reason adminNoStore does (#413).
+//
+// Both a CSP frame-ancestors and X-Frame-Options are set for the framing
+// refusal: CSP is the normative control and the only one a future
+// per-origin relaxation could target, but X-Frame-Options: ALLOW-FROM was
+// never interoperably implemented, so X-Frame-Options stays DENY-or-nothing.
+// A relaxation must edit both, or the second header keeps silently refusing;
+// the page panel subtree's does (pageFloor).
+func adminSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func handleIssueTicket(tickets *auth.TicketStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ticket, err := tickets.Issue()
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"failed to issue ticket"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ticket":"` + ticket + `"}`))
+	}
+}
+
+// deviceCollections serves GET /api/devices/{id}/{collection} from the named
+// handlers and answers 404 for any other collection.
+func deviceCollections(handlers map[string]http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h, ok := handlers[r.PathValue("collection")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		h.ServeHTTP(w, r)
+	}
+}

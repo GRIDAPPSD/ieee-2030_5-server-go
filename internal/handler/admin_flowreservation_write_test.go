@@ -119,7 +119,7 @@ func (f *frwFixture) router() http.Handler {
 	mux.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/answer", f.h.HandleAnswer())
 	mux.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/revise", f.h.HandleRevise())
 	mux.HandleFunc("POST /api/derms/flow-reservations/{edevId}/{frqId}/cancel", f.h.HandleCancel())
-	return auth.AdminAuthMiddleware(frwKey, nil, nil)(mux)
+	return auth.AdminAuthMiddleware(frwKey, nil, nil, true)(mux)
 }
 
 func (f *frwFixture) post(op, frqID, body string) *httptest.ResponseRecorder {
@@ -339,7 +339,7 @@ func TestFRWrite_MTLSAnswerRecordsTheCertificateFingerprint(t *testing.T) {
 	cert := adminCertificate(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/derms/flow-reservations/4/frq-1/answer", strings.NewReader(`{"decision":"grant"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}, VerifiedChains: [][]*x509.Certificate{{cert}}}
 	rec := httptest.NewRecorder()
 	f.router().ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
@@ -1123,7 +1123,8 @@ func TestFRWrite_BearerWithACertificateRecordsTheAdminKey(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/derms/flow-reservations/4/frq-1/answer", strings.NewReader(`{"decision":"grant"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+frwKey)
-	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{nonAdminCertificate(t)}}
+	nonAdmin := nonAdminCertificate(t)
+	req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{nonAdmin}, VerifiedChains: [][]*x509.Certificate{{nonAdmin}}}
 	rec := httptest.NewRecorder()
 	f.router().ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
@@ -1276,5 +1277,24 @@ func TestFRWrite_InternalFailureIsNeverAnsweredAsARefusal(t *testing.T) {
 				t.Errorf("log = %q, want an ERROR line with cause=%s", logs, c.cause)
 			}
 		})
+	}
+}
+
+// A response exists, so the answer still gets 409, but an answer record the
+// queue could not take back is the server's fault and is logged at ERROR
+// with its own cause.
+func TestFRWrite_AnswerTakeBackFailureIs409LoggedAtError(t *testing.T) {
+	f := newFRWFixture(t)
+	f.pending("frq-1", "REQ-1")
+	f.h.Queue = fakeAnswerer{fmt.Errorf("%w: %w", flowreservation.ErrAlreadyAnswered, flowreservation.ErrAnswerRecordTakeBack)}
+	f.logs.Reset()
+	rec := f.post("answer", "frq-1", `{"decision":"grant"}`)
+	if r := decodeRefusal(t, rec); rec.Code != http.StatusConflict || r.Code != "already_answered" {
+		t.Fatalf("answer = %d %+v, want 409 already_answered", rec.Code, r)
+	}
+	logs := f.logs.String()
+	assertOneSafeLine(t, logs, "event=flow_reservation_answer_refused")
+	if !strings.Contains(logs, "level=ERROR") || !strings.Contains(logs, "cause=answer_record_take_back") {
+		t.Errorf("log = %q, want an ERROR line with cause=answer_record_take_back", logs)
 	}
 }

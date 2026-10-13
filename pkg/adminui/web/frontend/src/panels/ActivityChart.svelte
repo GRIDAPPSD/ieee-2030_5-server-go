@@ -45,12 +45,20 @@
     ],
     series: [
       {
-        name: 'Devices',
+        name: 'Registered',
         type: 'line' as const,
         smooth: true,
         symbol: 'none' as const,
         lineStyle: { width: 2, color: '#3b82f6' },
         areaStyle: { color: 'rgba(59,130,246,0.1)' },
+        data: [] as number[],
+      },
+      {
+        name: 'Comms online',
+        type: 'line' as const,
+        smooth: true,
+        symbol: 'none' as const,
+        lineStyle: { width: 2, color: '#f59e0b' },
         data: [] as number[],
       },
       {
@@ -98,7 +106,11 @@
     if (chart === null) return
     chart.setOption({
       xAxis: { data: points.map((p) => p.time) },
-      series: [{ data: points.map((p) => p.devices) }, { data: points.map((p) => p.mups) }],
+      series: [
+        { data: points.map((p) => p.devices) },
+        { data: points.map((p) => p.commsOnline) },
+        { data: points.map((p) => p.mups) },
+      ],
     })
   })
 </script>

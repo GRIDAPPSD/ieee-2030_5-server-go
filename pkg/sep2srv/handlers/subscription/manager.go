@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -93,6 +94,30 @@ type Manager struct {
 	// ErrManagerClosed" (#460).
 	closeMu sync.RWMutex
 	closed  bool
+
+	// subscriberCheck holds the func set by SetSubscriberCheck; nil until set.
+	subscriberCheck   atomic.Pointer[SubscriberCheck]
+	uncheckedNotified sync.Once
+}
+
+// SubscriberCheck reports whether the device that owns sub may still read
+// sub.SubscribedResource. A nil error admits the delivery; any error,
+// including one from a check that could not complete, withholds it.
+type SubscriberCheck func(ctx context.Context, sub sep2.Subscription) error
+
+// SetSubscriberCheck sets the check Notify applies to every subscription
+// before delivering to it, so a subscription stored before an access change,
+// or written to the store directly, is held to the access its subscriber has
+// at delivery. The protocol router sets it; nil clears it.
+func (m *Manager) SetSubscriberCheck(fn SubscriberCheck) {
+	if m == nil {
+		return
+	}
+	if fn == nil {
+		m.subscriberCheck.Store(nil)
+		return
+	}
+	m.subscriberCheck.Store(&fn)
 }
 
 // ManagerOption configures a Manager at construction.
@@ -102,6 +127,60 @@ type ManagerOption func(*Manager)
 // ValidateNotificationURI. Without it the zero-value DestinationPolicy applies.
 func WithDestinationPolicy(p DestinationPolicy) ManagerOption {
 	return func(m *Manager) { m.guard.policy = p }
+}
+
+// NotificationTimeouts sets the three durations that bound outbound
+// notification work. A zero field keeps the built-in value (Post 30 s, Dial
+// 30 s, CreationResolve 5 s); a negative field is invalid and only Validate
+// refuses it.
+type NotificationTimeouts struct {
+	// Post is the deadline for one notification POST.
+	Post time.Duration
+	// Dial is the connect timeout of the delivery dialer and the connect
+	// budget shared across a host's addresses. It is capped at Post, since
+	// a dial that outlives the POST keeps running after the worker moves on.
+	Dial time.Duration
+	// CreationResolve bounds the DNS check a Subscription POST performs
+	// before anything is stored.
+	CreationResolve time.Duration
+}
+
+// Validate returns an error naming the first negative field.
+func (t NotificationTimeouts) Validate() error {
+	for _, f := range []struct {
+		name string
+		d    time.Duration
+	}{{"Post", t.Post}, {"Dial", t.Dial}, {"CreationResolve", t.CreationResolve}} {
+		if f.d < 0 {
+			return fmt.Errorf("notification timeout %s must not be negative, got %v", f.name, f.d)
+		}
+	}
+	return nil
+}
+
+// WithNotificationTimeouts overrides the notification timeouts. Zero fields
+// keep their defaults. A negative field is ignored here because an option
+// cannot return an error: Validate is the only place one is refused, so call
+// it first.
+func WithNotificationTimeouts(t NotificationTimeouts) ManagerOption {
+	return func(m *Manager) {
+		if t.Post > 0 {
+			m.client.Timeout = t.Post
+		}
+		dial := m.guard.dialTimeout
+		if t.Dial > 0 {
+			dial = t.Dial
+		}
+		// net/http detaches the dial from the request context, so a dial
+		// longer than the POST timeout would keep running after the worker
+		// has given up on the request. Cap it.
+		dial = min(dial, m.client.Timeout)
+		m.guard.dialer.Timeout = dial
+		m.guard.dialTimeout = dial
+		if t.CreationResolve > 0 {
+			m.guard.resolveTimeout = t.CreationResolve
+		}
+	}
 }
 
 // NewManager creates a NotificationManager with the given worker pool size.
@@ -280,8 +359,21 @@ func (m *Manager) Notify(ctx context.Context, resourceHref string, status uint8)
 		return
 	}
 
+	check := m.subscriberCheck.Load()
+	if check == nil && len(records) > 0 {
+		m.uncheckedNotified.Do(func() {
+			log.Print("notification: no subscriber check set; delivering on the stored subscription index alone")
+		})
+	}
+
 	for _, rec := range records {
 		sub := rec.Subscription
+		if check != nil {
+			if err := (*check)(ctx, sub); err != nil {
+				log.Printf("notification: not notifying subscription %q for %q: %v", sub.Href, loggedResource(sub.SubscribedResource), err)
+				continue
+			}
+		}
 		notification := sep2.Notification{
 			Resource:           sep2.Resource{Href: resourceHref},
 			SubscribedResource: sub.SubscribedResource,

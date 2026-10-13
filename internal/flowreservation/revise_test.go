@@ -3,8 +3,10 @@ package flowreservation_test
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -947,5 +949,40 @@ func TestCancel_NotifiesOncePerDeviceAfterTheLockIsFree(t *testing.T) {
 	}
 	if walks < 3 {
 		t.Errorf("walks = %d, want at least 3 (two passes)", walks)
+	}
+}
+
+// #798: a same-second revise, then a cancel in that same second. creationTime
+// is old+1 (the chain must strictly increase) and the Cancelled dateTime is
+// the later of creationTime and the cancel time, so it never precedes
+// creationTime. Read from the response's wire XML.
+func TestRevise_SameSecondReviseThenCancelOrdersStatusTimes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	base := time.Now().Add(time.Hour).Unix()
+	old := f.answered(t, base)
+
+	at := time.Unix(old.CreationTime, 0)
+	_, err := flowreservation.Revise(ctx, f.reviseDeps(), aggID, "R1", shorten(base, 1800), "operator revise", flowreservation.Attribution{}, at)
+	must(t, err)
+
+	cancelledAt := at.Unix()
+	must(t, f.frpLifecycles.Create(ctx, aggID, "R1-r1", dercontrol.LifecycleRecord{CancelledAt: &cancelledAt}))
+
+	served, err := flowreservation.NewDerivedStatusResponseStore(f.frp, f.frpLifecycles).Get(ctx, aggID, "R1-r1")
+	must(t, err)
+	wire, err := xml.Marshal(&served)
+	must(t, err)
+	x := string(wire)
+	wantCreation := old.CreationTime + 1
+	for _, want := range []string{
+		"<creationTime>" + strconv.FormatInt(wantCreation, 10) + "</creationTime>",
+		"<currentStatus>" + strconv.Itoa(int(sep2.EventStatusCancelled)) + "</currentStatus>",
+		"<dateTime>" + strconv.FormatInt(wantCreation, 10) + "</dateTime>",
+	} {
+		if !strings.Contains(x, want) {
+			t.Errorf("wire lacks %s: %s", want, x)
+		}
 	}
 }

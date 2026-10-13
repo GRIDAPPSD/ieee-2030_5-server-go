@@ -21,8 +21,9 @@ const data: DashboardData = {
   mupCount: 0,
   tlsMode: 'TLS_AES_256_GCM_SHA384',
   uptime: '1m0s',
+  commsOfflineAfterSeconds: 300,
   devices: [
-    { sfdi: '167261211635', lfdi: '3E4F45AB31EDFE5B67E343E5E4562E31984E23E5', href: '/edev/1', enabled: true },
+    { sfdi: '167261211635', lfdi: '3E4F45AB31EDFE5B67E343E5E4562E31984E23E5', href: '/edev/1', enabled: true, lastRequest: null, comms: 'not_seen', lastKnown: true, ders: [] },
   ],
 }
 
@@ -61,7 +62,7 @@ async function renderOnPath(path: string) {
 // name "FSA Tree"; the assertion below matches the rendered DOM text, so
 // that mismatch does not make the FSAs case a false failure.
 const TAB_HEADINGS: Record<string, string[]> = {
-  overview: ['Connected Devices', 'Server Info', 'Device Activity'],
+  overview: ['Registered devices', 'Server Info', 'Device Activity'],
   devices: ['End Devices', 'Add End Device', 'Lookup Device by LFDI'],
   fsas: ['Create FSA Template', 'FSA Templates', 'FSA Tree (SY -> FD -> SP -> DEV)'],
   control: ['Send DER Control'],

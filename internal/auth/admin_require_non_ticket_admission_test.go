@@ -19,7 +19,7 @@ import (
 
 func mintChain(adminKey string, tickets *auth.TicketStore, sessions *auth.SessionStore, reached *bool) http.Handler {
 	inner := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { *reached = true })
-	return auth.AdminAuthMiddleware(adminKey, tickets, sessions)(
+	return auth.AdminAuthMiddleware(adminKey, tickets, sessions, true)(
 		auth.RequireRealCredential(adminKey, tickets, sessions)(
 			auth.RequireNonTicketAdmission(inner),
 		),
@@ -108,7 +108,7 @@ func TestRequireNonTicketAdmissionAdmitsEveryOtherCredential(t *testing.T) {
 	}{
 		{"bearer", func(r *http.Request) { r.Header.Set("Authorization", "Bearer test-key") }},
 		{"mtls", func(r *http.Request) {
-			r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{adminCert}}
+			r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{adminCert}, VerifiedChains: [][]*x509.Certificate{{adminCert}}}
 		}},
 		{"cookie session", func(r *http.Request) {
 			r.AddCookie(&http.Cookie{Name: auth.AdminTicketCookieName, Value: sessionID})
@@ -165,7 +165,7 @@ func TestTicketAlongsideEachCredentialAdmitsByTheOtherCredential(t *testing.T) {
 	}{
 		{"bearer", func(r *http.Request) { r.Header.Set("Authorization", "Bearer test-key") }},
 		{"mtls", func(r *http.Request) {
-			r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{adminCert}}
+			r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{adminCert}, VerifiedChains: [][]*x509.Certificate{{adminCert}}}
 		}},
 		{"cookie session", func(r *http.Request) {
 			r.AddCookie(&http.Cookie{Name: auth.AdminTicketCookieName, Value: sessionID})

@@ -47,7 +47,9 @@ func newFRPFixture(start int64) frpFixture {
 	f.cancelled.CreationTime = start - 100
 	f.cancelled.Interval = &sep2.DateTimeInterval{Start: start, Duration: 600}
 
-	at := int64(777)
+	// The cancel mark is after the response's own creationTime, so the served
+	// dateTime is the mark itself.
+	at := f.cancelled.CreationTime + 7
 	f.cancelledMark = dercontrol.LifecycleRecord{CancelledAt: &at, CancelReason: "operator cancel"}
 	return f
 }
@@ -123,8 +125,8 @@ func TestFlowReservationStores_SurviveARestart(t *testing.T) {
 	ctx := context.Background()
 	cancelled, err := served.Get(ctx, frpDevice, "frq-3")
 	if err != nil || cancelled.EventStatus == nil ||
-		cancelled.EventStatus.CurrentStatus != sep2.EventStatusCancelled || cancelled.EventStatus.DateTime != 777 {
-		t.Errorf("cancelled grant served %+v, %v, want Cancelled at 777", cancelled.EventStatus, err)
+		cancelled.EventStatus.CurrentStatus != sep2.EventStatusCancelled || cancelled.EventStatus.DateTime != fx.cancelled.CreationTime+7 {
+		t.Errorf("cancelled grant served %+v, %v, want Cancelled at %d", cancelled.EventStatus, err, fx.cancelled.CreationTime+7)
 	}
 	future, err := served.Get(ctx, frpDevice, "frq-2")
 	if err != nil || future.EventStatus == nil || future.EventStatus.CurrentStatus != sep2.EventStatusScheduled {

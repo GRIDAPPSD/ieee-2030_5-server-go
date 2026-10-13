@@ -18,7 +18,7 @@
     type GrantView,
   } from '../lib/dispatch'
   import { formatAge, isFleet, type Fleet } from '../lib/fleet'
-  import { directionLabel, formatInterval, formatQuantity, scaledNumber } from '../lib/flowreservation'
+  import { directionLabel, formatInterval, formatMeasured, formatQuantity, scaledNumber } from '../lib/flowreservation'
 
   const TICK_MS = 1000
   const FETCH_TIMEOUT_MS = 15_000
@@ -429,6 +429,13 @@
     return Math.max(0, d.windowEnd - d.windowStart)
   }
 
+  // The server ends the window at its own current time while a control runs,
+  // so a control that is active and whose window ends before its interval
+  // does is still open. A cancel or supersede changes the status instead.
+  function windowOpen(c: DERControlListItem, d: DERControlDelivery): boolean {
+    return c.eventStatus.status === 'active' && d.windowEnd < c.interval.start + c.interval.duration
+  }
+
   function grantLabel(g: GrantView): string {
     return `request ${g.frqId} on device ${g.edevId}: ${formatInterval(g.response.interval)}, ${directionLabel(g.response.direction)}`
   }
@@ -631,10 +638,10 @@
                   {@const d = c.delivery}
                   <div data-testid="dispatch-delivery-wh">
                     {#if d.directionUnknown}Delivered{:else}Delivered (export-positive){/if}:
-                    {d.deliveredWh === null ? NO_READINGS : formatQuantity(d.deliveredWh, 'Wh')}
+                    {d.deliveredWh === null ? NO_READINGS : formatMeasured(d.deliveredWh, 'Wh')}
                   </div>
-                  <div data-testid="dispatch-delivery-avg">Average over covered seconds: {d.averageW === null ? NO_READINGS : formatQuantity(d.averageW, 'W')}</div>
-                  <div data-testid="dispatch-delivery-covered">Covered {d.coveredSeconds} s of {windowSeconds(d)} s</div>
+                  <div data-testid="dispatch-delivery-avg">Average over covered seconds: {d.averageW === null ? NO_READINGS : formatMeasured(d.averageW, 'W')}</div>
+                  <div data-testid="dispatch-delivery-covered">Covered {d.coveredSeconds} s of {windowSeconds(d)} s{#if windowOpen(c, d)}{" "}so far (control still running){/if}</div>
                   <div data-testid="dispatch-delivery-newest">
                     Newest reading:
                     {#if d.newestReadingTime === null}{NO_READINGS}{:else}{fmtTime(d.newestReadingTime)} ({formatAge(ageOf(d.newestReadingTime * 1000))}){/if}

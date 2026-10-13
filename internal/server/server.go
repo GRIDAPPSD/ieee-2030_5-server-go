@@ -15,10 +15,12 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
@@ -30,6 +32,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2capture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -270,6 +273,12 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 		return nil, nil, err
 	}
 	stores.FlowReservationRetentionGrace = grace
+	if stores.MirrorReadingRetention, err = cfg.EffectiveMirrorReadingRetention(); err != nil {
+		return nil, nil, err
+	}
+	if stores.MirrorReadingMaxPerSeries, err = cfg.EffectiveMirrorReadingMaxPerSeries(); err != nil {
+		return nil, nil, err
+	}
 
 	return stores, endDevices, nil
 }
@@ -332,7 +341,8 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// not a positive integer (no crash: warn and use the default).
 	subWorkers := resolveSubParam("SEP2_SUBSCRIPTION_WORKERS", subscriptionWorkers)
 	subQueueSize := resolveSubParam("SEP2_SUBSCRIPTION_QUEUE_SIZE", subscriptionQueueSize)
-	notifier := newSubscriptionNotifier(cfg, stores.Subscriptions, subWorkers, subQueueSize)
+	notifier := newSubscriptionNotifier(cfg, stores.Subscriptions, subWorkers, subQueueSize,
+		coresub.WithNotificationTimeouts(notificationTimeoutsFromEnv()))
 	notifier.SetObserver(obs.RecordNotification)
 	stores.AdminNotifier = notifier
 	notifierDone := make(chan struct{})
@@ -411,10 +421,14 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// requests through it before either listener binds (sep2server.New binds).
 	// The deferred Close runs on every exit, after the protocol listener has
 	// drained; the admin listener is drained first only on the shutdown path.
-	coreNotifier := adaptNotifier(notifier)
+	coreNotifier := adminplane.AdaptNotifier(notifier)
 	frNotifier := flowreservation.Notifier(coreNotifier)
 	stores.FlowReservationQueue = newFlowReservationQueue(stores, coreNotifier)
 	defer stores.FlowReservationQueue.Close()
+	// Recovery and retention can notify before sep2server.New builds the
+	// router, so the router's subscriber check is installed now; the router
+	// installs its own, decided over the same routes, when it is built.
+	notifier.SetSubscriberCheck(assembly.NewSubscriberCheck(NewCoreRouterConfig(cfg), NewCoreStores(stores)))
 	if _, err := recoverAtBoot(ctx, stores, stores.FlowReservationQueue, frNotifier, slog.Default(), time.Now()); err != nil {
 		if ctx.Err() != nil {
 			log.Printf("flow reservation recovery stopped by shutdown request: %v", err)
@@ -426,6 +440,9 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// Deferred after the queue's Close, so it stops first.
 	stopRetention := startRetentionAtBoot(ctx, stores, frNotifier, slog.Default(), time.Now)
 	defer stopRetention()
+	// #806: mirror readings are swept the same way, at boot and every minute.
+	stopMirrorRetention := startMirrorRetentionAtBoot(ctx, stores, slog.Default(), time.Now)
+	defer stopMirrorRetention()
 
 	// Build the embeddable protocol server: it binds the listener, derives
 	// the server identity (SFDI/LFDI) from the leaf cert BEFORE assembling the
@@ -438,6 +455,10 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	// builds. ShutdownTimeout is left at zero, which drains without a bound,
 	// as this server has always done.
 	embedCfg := newEmbedConfig(cfg, stores, coreNotifier)
+	// One recorder for both listeners: the protocol router writes it, the
+	// admin Devices payload reads it.
+	comms := activity.New()
+	embedCfg.Router.Activity = comms
 	embedCfg.Addr = cfg.Addr
 	embedCfg.CertFile = cfg.CertFile
 	embedCfg.KeyFile = cfg.KeyFile
@@ -560,7 +581,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		if captureStore != nil {
 			trafficHandler = captureStore.Handler()
 		}
-		adminSrv, adminTLSDesc, adminAddr, adminRoutes, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh, trafficHandler)
+		adminSrv, adminTLSDesc, adminAddr, adminRoutes, err = startAdminServer(cfg, svc, stores, tlsModeName, errCh, trafficHandler, comms)
 		if err != nil {
 			stopProtocolServer()
 			return fmt.Errorf("admin server: %w", err)
@@ -652,14 +673,6 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	}
 }
 
-// Browser admin session lifetimes. The idle window is what an operator
-// notices; the absolute cap is what a stolen cookie runs into, and it is
-// never extended by use.
-const (
-	adminSessionIdleTimeout     = 30 * time.Minute
-	adminSessionAbsoluteTimeout = 8 * time.Hour
-)
-
 // startAdminServer brings up the admin listener on its own port. #161:
 // the listener selection matrix is
 //
@@ -672,7 +685,7 @@ const (
 // Path A still works for cert-bearing operators while Bearer/cookie clients
 // can connect without presenting a cert. The SEP2 protocol listener keeps
 // its own RequireAnyClientCert + manual-verify posture untouched.
-func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error, trafficHandler http.Handler) (*http.Server, string, string, []string, error) {
+func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores *Stores, tlsMode string, errCh chan error, trafficHandler http.Handler, comms *activity.Recorder) (*http.Server, string, string, []string, error) {
 	// #268: resolve the operator-supplied env value into the actual
 	// bind string. A bare ":<port>" gets a loopback default so the admin
 	// listener is safe-by-default; any explicit host (0.0.0.0, an LAN IP,
@@ -692,6 +705,12 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	// to set one. Silently disabling Bearer auth hides the typo behind a
 	// later connection refusal; a startup error names the variable to fix.
 	if err := validateAdminKey(cfg.AdminKey); err != nil {
+		return nil, "", "", nil, err
+	}
+
+	// #897: a malformed SEP2_ADMIN_TRUSTED_ORIGINS refuses startup by name.
+	crossOrigin, err := adminCrossOriginPolicy(cfg.AdminTrustedOrigins)
+	if err != nil {
 		return nil, "", "", nil, err
 	}
 
@@ -727,12 +746,32 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 			addr)
 	}
 
-	tickets := auth.NewTicketStore(30 * time.Second)
-	sessions := auth.NewSessionStore(adminSessionIdleTimeout, adminSessionAbsoluteTimeout)
+	tickets := auth.NewTicketStore(adminplane.AdminTicketTTL)
+	sessions := auth.NewSessionStore(adminplane.AdminSessionIdleTimeout, adminplane.AdminSessionAbsoluteTimeout)
 	// #270: resolve the admin host-header allowlist from the static
 	// defaults plus operator-supplied SEP2_ADMIN_ALLOWED_HOSTS extras.
-	allowedHosts := ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
-	adminRouter, adminRoutes := BuildAdminRouter(cfg.AdminKey, svc, stores, tlsMode, tickets, sessions, allowedHosts, cfg.AdminLegacyDashboard, trafficHandler)
+	allowedHosts := adminplane.ResolveAdminAllowedHosts(cfg.AdminAllowedHosts)
+	streamsDone := make(chan struct{})
+	adminRouter, adminRoutes, err := adminplane.Build(adminplane.Config{
+		CrossOrigin:    crossOrigin,
+		StreamsDone:    streamsDone,
+		AdminKey:       cfg.AdminKey,
+		CertService:    svc,
+		Stores:         stores,
+		TLSMode:        tlsMode,
+		Tickets:        tickets,
+		Sessions:       sessions,
+		AllowedHosts:   allowedHosts,
+		Traffic:        trafficHandler,
+		LoopbackBypass: true,
+		ControlWrites:  true,
+
+		Activity:          comms,
+		CommsOfflineAfter: cfg.EffectiveCommsOfflineAfter(),
+	})
+	if err != nil {
+		return nil, "", "", nil, fmt.Errorf("admin router: %w", err)
+	}
 
 	adminListener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -752,6 +791,10 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 	}
 
 	adminSrv := newAdminServer(adminRouter)
+	// Shutdown does not cancel request contexts, so open panel streams are
+	// ended here, at its start, rather than holding it to its deadline.
+	var endStreams sync.Once
+	adminSrv.RegisterOnShutdown(func() { endStreams.Do(func() { close(streamsDone) }) })
 
 	go func() {
 		log.Printf("Admin server listening on %s (%s)", addr, tlsModeDescription)
@@ -1147,6 +1190,12 @@ func parsePort(addr string) int {
 		}
 	}
 	return 443
+}
+
+// adminCrossOriginPolicy parses SEP2_ADMIN_TRUSTED_ORIGINS and warns when the
+// value turns the check off (#897).
+func adminCrossOriginPolicy(raw string) (*auth.CrossOriginPolicy, error) {
+	return auth.LoadTrustedOrigins(raw)
 }
 
 // validateAdminExposure refuses an admin bind that is reachable from outside

@@ -140,3 +140,22 @@ func TestDeriveStatusSupersededBeforeOwnStart(t *testing.T) {
 			atSupersede.CurrentStatus, atSupersede.DateTime, sep2.EventStatusSuperseded, supersededAt)
 	}
 }
+
+// #798 fix round: creationTime + 1 accumulates across a same-second burst of
+// controls in one scope (issuer.go), so a cancelled status dateTime runs
+// ahead of the cancel time by as far as the last creationTime does, not by
+// 1 s. It never precedes creationTime.
+func TestDeriveStatus_CancelDateTimeAfterSameSecondBurstEqualsLastCreationTime(t *testing.T) {
+	t.Parallel()
+	const burst = 6
+	now := int64(1_000_000)
+	creation := now
+	for i := 1; i < burst; i++ {
+		creation++ // the issuer's creationTime + 1 for each further control in the second
+	}
+	cancelledAt := now
+	got := DeriveStatus(now, creation, creation, LifecycleRecord{CancelledAt: &cancelledAt})
+	if got.CurrentStatus != sep2.EventStatusCancelled || got.DateTime != now+burst-1 {
+		t.Fatalf("EventStatus = %+v, want Cancelled at creationTime %d (cancel time + %d)", got, now+burst-1, burst-1)
+	}
+}

@@ -1,13 +1,19 @@
 package flowreservation_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
+	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -388,5 +394,99 @@ func TestCancelGrants_IdComesFromTheChainWalkNotTheHref(t *testing.T) {
 	}
 	if len(grants.marked) != 2 {
 		t.Errorf("grants marked = %v, want both", grants.marked)
+	}
+}
+
+// duplicateFRP refuses every Create as a duplicate, as a store does when a
+// racing attempt stored the response first.
+type duplicateFRP struct {
+	*memory.ScopedStore[sep2.FlowReservationResponse]
+}
+
+func (duplicateFRP) Create(context.Context, string, string, sep2.FlowReservationResponse) error {
+	return store.ErrAlreadyExists
+}
+
+// undeletableAnswers cannot delete a record, so no take-back succeeds.
+type undeletableAnswers struct {
+	*memory.ScopedStore[flowreservation.AnswerRecord]
+}
+
+func (undeletableAnswers) Delete(context.Context, string, string) error {
+	return errors.New("boom: delete answer record")
+}
+
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// takeBackQueue is a queue whose every answer finds a duplicate response and
+// leaves its answer record behind.
+func takeBackQueue(t *testing.T, f *cancelFixture) *flowreservation.Queue {
+	t.Helper()
+	q := f.queueOver(t, duplicateFRP{f.frp}, flowreservation.Config{Deadline: time.Hour})
+	q.RecordTimers()
+	q.RecordAnswers(flowreservation.NewAnswers(undeletableAnswers{memory.NewScopedStore[flowreservation.AnswerRecord]()}))
+	return q
+}
+
+// A client cancel whose denial finds the request answered logs, at ERROR,
+// the answer record it could not take back.
+func TestCancel_LogsAFailedTakeBackAtError(t *testing.T) {
+	var buf syncBuffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+	f := newCancelFixture(t, flowreservation.Config{Deadline: time.Hour})
+	q := takeBackQueue(t, f)
+	c := flowreservation.NewCanceller(f.frq, f.frp, q, f.ledger, sources.NewWriters(f.issuer, f.frpLifecycles))
+	storeRequest(t, f.frq, aggID, "R1", windowRequest("REQ-1", time.Now().Add(time.Hour).Unix(), 600, 100))
+
+	_ = c.Cancel(context.Background(), aggID, "R1", cancelledStatus(time.Now().Unix()))
+
+	got := buf.String()
+	for _, want := range []string{"ERROR", "cause=answer_record_take_back", aggID + "/R1", flowreservation.KindClient, "boom: delete answer record"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log = %q, want it to contain %q", got, want)
+		}
+	}
+}
+
+// Recover denying a cancelled request that turns out answered logs, at
+// ERROR, the answer record it could not take back.
+func TestRecover_LogsAFailedTakeBackAtError(t *testing.T) {
+	t.Parallel()
+	f := newCancelFixture(t, flowreservation.Config{Deadline: hold})
+	f.pendingRequest(t, "R1", time.Now().Unix()-50, windowRequest("REQ-CANCELLED", time.Now().Add(time.Hour).Unix(), 600, 10000))
+	f.cancelRequest(t, "R1", time.Now().Unix()-20)
+	var buf syncBuffer
+	deps := f.recoverDeps()
+	deps.Queue = takeBackQueue(t, f)
+	deps.Log = slog.New(slog.NewTextHandler(&buf, nil))
+
+	counts, err := flowreservation.Recover(context.Background(), deps, time.Now())
+	must(t, err)
+
+	if counts.DeniedCancelled != 1 || counts.Failed != 0 {
+		t.Errorf("counts = %+v, want the cancelled request settled", counts)
+	}
+	got := buf.String()
+	for _, want := range []string{"level=ERROR", "cause=answer_record_take_back", "request=R1", "attribution_kind=" + flowreservation.KindRecovery} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log = %q, want it to contain %q", got, want)
+		}
 	}
 }

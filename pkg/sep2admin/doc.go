@@ -19,30 +19,60 @@
 // This package's promise is weaker than pkg/sep2server's, stated in terms
 // rather than as the word "weaker":
 //
-// MAY change without a major version: TableBody's and DefinitionListBody's
-// own fields as rendering needs grow (added fields only: a renderer reads
-// known keys and ignores the rest), nav-ordering internals beyond the
+// MAY change without a major version: nav-ordering internals beyond the
 // stated (group, Rank, ID) sort key, theme token names and their
 // compiled-in defaults once a Theme carries any, and the reserved-ID list
-// as this repository adds routes of its own.
+// as this repository adds routes or tabs of its own.
 //
 // MAY NOT change without a major version: the Registry method set
 // (Register, SetTheme, Freeze) and INV-1, the add-only guarantee those
 // three methods exist to hold; the Panel and Placement type signatures;
-// ExtensionSlot's signature, since a graft's call sites depend on it
-// directly; NewTableBody's and NewDefinitionListBody's signatures, for
-// the same reason: they are the only functions outside this package that
-// produce a non-zero Body, so a graft's call sites depend on them exactly
-// as they depend on ExtensionSlot's; the Descriptor type and its exported
-// field names (Version, Body); every JSON field name on the wire (version,
-// kind, body, columns, rows, groups, heading, entries, key, value); and
-// the two kind values a Descriptor's body can ever carry, table and
-// definitionList. A third
-// Body shape is a major-version change even though NewTableBody and
-// NewDefinitionListBody would stay additive from a Go caller's side: a
-// renderer that switches exhaustively on kind, which is the whole point
-// of naming it explicitly rather than inferring the shape, must never
-// receive a kind value it was not built to handle.
+// ExtensionSlot's signature; the Body and Cell constructors' signatures;
+// the Descriptor type and its exported field names; every JSON field name
+// on the wire; and the fields and meaning of every section kind (table,
+// definitionList, chart), cell kind (text, badge, time, link) and badge
+// name (neutral, info, ok, warn, error) listed here.
+// testdata/descriptor_v2.json is the wire shape.
+//
+// MAY grow without a version change: the optional Picker and Page fields on
+// Panel (nil keeps today's wire shape), and the sets of kinds and badge names.
+// A new kind or name reaches the encoder and the shell in the same release, since
+// the shell is served from this binary. Any other reader of a version 2
+// Descriptor can rely on the kinds above keeping their fields and
+// meaning, and must render around a value it does not know rather than
+// refuse the payload. The shell shows an unknown section kind as
+// unsupported, an unknown cell kind as its text and an unknown badge as
+// neutral. Removing a kind or changing its fields is a new
+// CurrentDescriptorVersion.
+//
+// # Page panels
+//
+// A panel sets Page instead of View when its content fits no descriptor
+// kind. The plane serves it at /apps/{ID}/, prefix stripped, and the panel
+// list names that path as "page". The contract:
+//
+// Trust: page script runs in the plane's origin with the operator's
+// session, so it can call every admin API that session can. A Page is code
+// compiled into the embedder's binary, which already holds the stores; it
+// must never proxy or serve content from a party the embedder does not
+// trust.
+//
+// ReadOnly: a page acts on its embedder, not the plane's stores, so a
+// ReadOnly plane still serves every method a Page answers, as it does
+// panel actions. A Page that must not write refuses the method itself.
+//
+// Header floor: every request needs the plane's credential (a loopback
+// bypass does not reach a page), passes its Host and cross-origin checks,
+// and gets no body-type check, so the Page decodes and bounds its own
+// bodies. The Page never sees that credential: the Authorization header,
+// the admin_ticket cookie and the ticket query parameter are removed
+// before it runs. A request admitted by a one-time ticket may only GET or
+// HEAD: any other method gets 401 before the Page runs, as a panel action
+// does, so a ticket in a URL cannot change state. Every response carries frame-ancestors 'self',
+// X-Frame-Options: SAMEORIGIN, nosniff, Referrer-Policy: no-referrer and
+// Cache-Control: no-store, applied after the Page sets its headers, in
+// whatever case it spelled them. The Page's own Content-Security-Policy
+// is kept, minus any frame-ancestors.
 //
 // # What this package does not implement yet
 //
@@ -50,49 +80,14 @@
 // to grow a breaking field later, and Register refuses it when set (see
 // ErrAssetsNotImplemented): the custom-element mechanism a real
 // implementation would need is UNVERIFIED against this repository's
-// pinned Svelte version. Theme's parsed fields, the shell's actual
-// renderer for TableBody and DefinitionListBody, and route mounting land
-// in later issues; this package fixes their contract, not their
-// behavior.
+// pinned Svelte version. Theme's parsed fields land in a later issue.
 //
-// # Known schema gaps (#368 criterion 2 REFUSAL)
+// # Known schema gaps
 //
-// Measured against the bridge's 6 route components at
-// gridappsd-ieee-2030_5-go's b5f633f, recorded rather than worked around;
-// criterion 2 asks for this server's own inexpressible panels by name,
-// and closing #368 means resolving that scope gap, not this list:
-//
-//   - Multiple tables on one route. ServedResources (2 tables) and
-//     ConnectedClients (3) each need more than one table where a
-//     Descriptor carries exactly one Body. That is 2 of the 4
-//     table-bearing components measured, not a remote edge case, so a
-//     Tables []TableBody-shaped version bump is near-certain.
-//   - Prose. All 6 of 6 components open with an explanatory paragraph
-//     (32 <p> elements measured in total). Neither TableBody nor
-//     DefinitionListBody has anywhere to put one, so even a
-//     single-table or single-group panel is not fully expressible today.
-//   - A link with a dynamic href. Health.svelte renders one; Value has
-//     no link shape. Health is this package's own stated example of an
-//     "expressible" single-group definition list, and that claim holds
-//     only for its key-value pairs, not for this link.
-//   - ControlFlow's counters strip (Applied, Skipped) and its idle
-//     message. Its two connection-topic and last-applied-delta groups
-//     are expressible as two DefinitionGroups; the counters and the
-//     idle message are not definition entries and are not covered by
-//     that shape.
-//   - Per-section empty-state text ("No registry entries yet."),
-//     distinct from a zero-row table.
-//   - A caption above a table. DefinitionGroup has Heading;
-//     TableBody has no equivalent field.
-//   - Status badges. ConnectedClients.svelte (6) and Registry.svelte (2)
-//     render 8 `<span class="badge ...">` cells whose class carries the
-//     meaning (connected/never-connected, accepted/rejected,
-//     placeholder/certificate). A Value is plain text, so a renderer
-//     reading {"value":"rejected"} can only recover the variant by
-//     string-matching the text.
-//   - A cell with a machine value distinct from its display text.
-//     ConnectedClients.svelte:154 and :247 each render
-//     <time datetime={v}>{humanized}</time>: an ISO timestamp for
-//     machines and a humanized string for the eye, in one cell. Value is
-//     one string.
+// Version 2 adds the shapes version 1 was measured to lack for the
+// bridge's six views: several tables per route, prose, empty text,
+// captions, badges, links, and time cells with a machine value. No bridge
+// view has been rebuilt on it yet. Two gaps remain: ControlFlow's counters
+// strip is expressible only as definition entries, and nothing enforces
+// that a Row has one Cell per column.
 package sep2admin

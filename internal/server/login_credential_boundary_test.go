@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
 // postLogin drives HandleLoginSubmit the way its caller does: a POST with a
@@ -18,7 +18,7 @@ import (
 func postLogin(t *testing.T, adminKey, submitted string) (*httptest.ResponseRecorder, *auth.SessionStore) {
 	t.Helper()
 	sessions := auth.NewSessionStore(30*time.Minute, 8*time.Hour)
-	h := server.HandleLoginSubmit(adminKey, sessions)
+	h := adminplane.HandleLoginSubmit(adminKey, sessions)
 
 	form := url.Values{"key": []string{submitted}}
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(form.Encode()))

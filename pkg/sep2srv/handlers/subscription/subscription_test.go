@@ -32,7 +32,7 @@ func TestHandleCreateSubscriptionInvalidXMLDoesNotLeakDecoderDetail(t *testing.T
 	})
 
 	store := memory.NewSubscriptionStore()
-	h := subscription.HandleCreateSubscription(store, nil)
+	h := subscription.HandleCreateSubscription(store, nil, allowAnyResource)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /edev/{id}/sub", h)

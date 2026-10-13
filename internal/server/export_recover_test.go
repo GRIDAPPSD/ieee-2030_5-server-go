@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 )
 
@@ -14,7 +15,7 @@ type RecoverFn = func(context.Context, *Stores, *flowreservation.Queue, flowrese
 
 // RecoverFlowReservations is the production recovery pass, for a replacement
 // to call through.
-var RecoverFlowReservations RecoverFn = recoverFlowReservations
+var RecoverFlowReservations RecoverFn = adminplane.RecoverFlowReservations
 
 // SetRecoverAtBoot replaces the recovery call Run makes until t ends.
 // Callers must not be parallel.

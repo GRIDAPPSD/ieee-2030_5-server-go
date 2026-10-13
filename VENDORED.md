@@ -75,7 +75,7 @@ this gate.
 
 Vendoring `ieee-2030_5-core-go` and its dependencies removes the need to fetch
 those MODULES from the network on a fresh `GOMODCACHE`. It does not remove the
-Go toolchain fetch: `go.mod` pins `go 1.26.3` with no `toolchain` line, so a
+Go toolchain fetch: `go.mod` pins `go 1.26.8` with no `toolchain` line, so a
 host whose installed `go` is older (e.g. 1.24.4) and whose `GOMODCACHE` has
 never cached a 1.26.x toolchain will still try to download one under
 `GOTOOLCHAIN=auto`, and that download fails closed under `GOPROXY=off`. An

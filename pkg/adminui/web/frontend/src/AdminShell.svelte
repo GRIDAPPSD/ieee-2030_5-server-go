@@ -16,6 +16,7 @@
   } from './lib/dashboard'
   import type { AdminFSA, AdminFSAList, TopologyNode } from './lib/fsa'
   import type { MintedCert } from './lib/deviceCert'
+  import { isSameOriginPath, PANEL_REQUEST_TIMEOUT_MS, type PanelEntry } from './lib/descriptor'
   import { currentPath, navigate, replace } from './lib/router'
   import NavBar from './panels/NavBar.svelte'
   import Overview from './panels/Overview.svelte'
@@ -33,6 +34,9 @@
   import FleetPane from './panels/FleetPane.svelte'
   import RequestQueuePane from './panels/RequestQueuePane.svelte'
   import DispatchPane from './panels/DispatchPane.svelte'
+  import PanelView from './panels/PanelView.svelte'
+  import StreamPanel from './panels/StreamPanel.svelte'
+  import ActionsPanel from './panels/ActionsPanel.svelte'
 
   // The tabs and the card each owns (issue 561's Context section, plus
   // issue 671's DERMS tab). "/" and "/ui/" are not tab paths of their own:
@@ -65,6 +69,28 @@
 
   let activeTab = $derived(tabForPath($currentPath))
 
+  // Tabs an embedder registered, read once at load. They sit after the
+  // core tabs and never take a core tab's path: the server refuses a
+  // panel whose id is a core slug, and tabForPath matches core slugs
+  // first.
+  let panels = $state<PanelEntry[]>([])
+  let panelsLoaded = $state(false)
+  let panelsError = $state('')
+  let activePanel = $derived(
+    activeTab === 'not-found' ? panels.find((panel) => $currentPath === `/ui/${panel.id}` || $currentPath === `/ui/${panel.id}/`) : undefined,
+  )
+
+  async function loadPanels() {
+    const res = await fetchJSON<PanelEntry[]>('/api/ui/panels', { timeoutMs: PANEL_REQUEST_TIMEOUT_MS })
+    if (destroyed) return
+    if (res.ok) {
+      panels = Array.isArray(res.data) ? res.data : []
+    } else {
+      panelsError = `Could not load the registered tabs: ${res.error}`
+    }
+    panelsLoaded = true
+  }
+
   // Renders the correct tab immediately from tabForPath above; this effect
   // only fixes the address bar afterward, as a replace so a trailing-slash
   // entry never lands in history for back to stop on. "/ui/" itself is the
@@ -77,6 +103,14 @@
     if (TABS.some((tab) => tab.slug === slug)) replace(`/ui/${slug}`)
   })
 
+  // Panel paths normalize the same way, once the panel list is known.
+  $effect(() => {
+    const path = $currentPath
+    if (!path.startsWith('/ui/') || !path.endsWith('/')) return
+    const slug = path.slice('/ui/'.length, -1)
+    if (panels.some((panel) => panel.id === slug)) replace(`/ui/${slug}`)
+  })
+
   function onTabClick(event: MouseEvent, slug: TabSlug) {
     // A modifier key or a non-primary button asks the browser for its own
     // handling (new tab, new window); only a plain click becomes a
@@ -87,12 +121,23 @@
     navigate(`/ui/${slug}`)
   }
 
+  function onPanelClick(event: MouseEvent, id: string) {
+    if (event.defaultPrevented || event.button !== 0) return
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    event.preventDefault()
+    navigate(`/ui/${id}`)
+  }
+
   let data = $state<DashboardData | null>(null)
   let history = $state<HistoryPoint[]>([])
   let fsas = $state<AdminFSA[]>([])
   let topology = $state<TopologyNode | null>(null)
   let topologyError = $state('')
   let unauthorized = $state('')
+  // Why the device list is missing, when the server could not read it. The
+  // 500 probe body and an SSE frame both carry it; a good frame clears it.
+  let probeError = $state('')
+  const dashboardError = $derived(data?.error || probeError)
   let streaming = $state(false)
   let disconnect: (() => void) | null = null
   let destroyed = false
@@ -143,10 +188,14 @@
     if (probe.ok) {
       data = probe.data
       history = appendHistory(history, probe.data)
+    } else {
+      probeError = probe.error
     }
 
+    void loadPanels()
     disconnect = connectDashboard((next) => {
       data = next
+      probeError = ''
       history = appendHistory(history, next)
     })
     streaming = true
@@ -185,14 +234,28 @@
         onclick={(event) => onTabClick(event, tab.slug)}
       >{tab.label}</a>
     {/each}
+    {#each panels as panel (panel.id)}
+      <a
+        href="/ui/{panel.id}"
+        data-testid="tab-{panel.id}"
+        aria-current={activePanel?.id === panel.id ? 'page' : undefined}
+        onclick={(event) => onPanelClick(event, panel.id)}
+      >{panel.label}</a>
+    {/each}
   </nav>
+  {#if panelsError}
+    <div class="card result err" role="alert" data-testid="panels-error">{panelsError}</div>
+  {/if}
+  {#if dashboardError}
+    <div class="card result err" role="alert" data-testid="dashboard-error">{dashboardError}</div>
+  {/if}
   <div class="grid">
     {#if activeTab === 'overview'}
       <Overview {data} />
       <ServerInfo {data} />
       <ActivityChart {history} />
     {:else if activeTab === 'devices'}
-      <DeviceTable devices={data?.devices ?? []} {fsas} onChanged={refresh} />
+      <DeviceTable devices={data?.devices ?? []} columns={data?.columns ?? []} {fsas} onChanged={refresh} />
       <AddDevice onAdded={refresh} pending={mintedCert} />
       <LookupDevice />
     {:else if activeTab === 'fsas'}
@@ -207,6 +270,32 @@
       <FleetPane />
       <RequestQueuePane />
       <DispatchPane />
+    {:else if activePanel}
+      {#key activePanel.id}
+        {#if activePanel.page !== undefined}
+          {#if isSameOriginPath(activePanel.page)}
+            <iframe
+              class="page-panel"
+              data-testid="page-panel-{activePanel.id}"
+              title={activePanel.label}
+              src={activePanel.page}
+            ></iframe>
+          {:else}
+            <div class="card result err" role="alert" data-testid="page-panel-error">
+              {activePanel.label} names a page outside this server and is not shown.
+            </div>
+          {/if}
+        {:else if activePanel.stream}
+          <StreamPanel id={activePanel.id} label={activePanel.label} stream={activePanel.stream} />
+        {:else}
+          <PanelView id={activePanel.id} picker={activePanel.picker} />
+        {/if}
+        {#if activePanel.actions && activePanel.actions.length > 0}
+          <ActionsPanel id={activePanel.id} />
+        {/if}
+      {/key}
+    {:else if activeTab === 'not-found' && !panelsLoaded}
+      <p class="hint" data-testid="panels-pending">Loading...</p>
     {:else if activeTab === 'not-found'}
       <div class="card" data-testid="not-found">
         <h2>Not Found</h2>

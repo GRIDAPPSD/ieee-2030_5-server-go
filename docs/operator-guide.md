@@ -197,11 +197,13 @@ zero is a real, meaningful reading, not a placeholder waiting for data.
 
 No corresponding IEEE 2030.5 resource; nothing here changes anything.
 
-### Connected Devices (Overview)
+### Registered devices (Overview)
 
 A summary count of registered EndDevices and Mirror Usage Points (MUPs).
+The count says nothing about whether a device is communicating or
+electrically connected.
 
-![Connected Devices](images/admin-ui-connected-devices.png)
+![Registered devices](images/admin-ui-connected-devices.png)
 
 Corresponds to the EndDevice and MirrorUsagePoint resources. The count
 shown here is a rollup, not a mutation surface; nothing on this card
@@ -328,14 +330,15 @@ not hidden behind a click. Mutating: attach/detach DER programs
 
 ### End Devices (table)
 
-Every registered EndDevice, its status, its LFDI (truncated for display),
+Every registered EndDevice, its enabled flag, its LFDI (truncated for display),
 and, if any FSA template exists, an "Assign FSA" control per row.
 
 ![End Devices table](images/admin-ui-end-devices-table.png)
 
 An empty table reads "No devices registered"; a populated table shows
-each device as `ONLINE` or otherwise, with its LFDI shown as the first 16
-characters plus `...`.
+each device's enabled flag as `Yes`, `No` or `Not set`, with its LFDI
+shown as the first 16 characters plus `...`. The Enabled column is the
+EndDevice's configured flag; it is not a connection status.
 
 Corresponds to the EndDevice resource list. Mutating:
 `POST /api/devices/{id}/fsa-assignment` (assign, via the row's own
@@ -385,6 +388,50 @@ the forwarded-for header `admin.md` describes.
 No corresponding IEEE 2030.5 resource; this is the admin-plane session
 mechanism, and it is unrelated to device identity (SFDI/LFDI). Mutating:
 `POST /auth/login` (a session, not domain data).
+
+## Running on the SunSpec test PKI
+
+`make run-sunspec` runs the standalone server with the SunSpec server
+certificate chain and trusts the SunSpec client CAs. The SunSpec archives
+and the files extracted from them are never committed to any repository:
+keep them in a directory outside every checkout (mode 0700, files 0600).
+
+Build four PEM files from the SunSpec server and client sets:
+
+| File | Contents, in this order |
+|---|---|
+| server chain | server leaf, MICA 2, MCA 2 (leaf first, so a client receives the intermediates) |
+| server key | the server leaf's private key |
+| client CAs | MICA 1, MCA 1, SunSpec root |
+| server CA bundle | MICA 2, MCA 2, SunSpec root |
+
+```
+make run-sunspec \
+  SUNSPEC_SERVER_CHAIN=<server chain> SUNSPEC_SERVER_KEY=<server key> \
+  SUNSPEC_CLIENT_CAS=<client CAs> SUNSPEC_SERVER_CA_BUNDLE=<server CA bundle>
+```
+
+All four variables are required and have no default; the target refuses to
+start when one is unset or not a file. The chain and key become `SEP2_CERT`
+and `SEP2_KEY`, and the client CAs become `SEP2_EXTRA_CLIENT_CAS`. The
+startup banner prints each file in use and the `--ca` bundle a client must
+use.
+
+- **Local dev CA stays.** The target still passes the local dev CA from
+  `make certs` as `SEP2_CA`/`SEP2_CA_KEY`, because the admin listener starts
+  only when a CA role has a usable key and SunSpec supplies no CA key. The
+  server therefore also trusts device certificates from the local CA.
+- **A client presents its whole chain.** Pass the SunSpec client chain file
+  (device, MICA 1, MCA 1) as `--cert`, its key as `--key`, and the server CA
+  bundle as `--ca`.
+- **No IP or DNS SAN on the server leaf.** The SunSpec server leaf has an
+  empty subject and no IP or DNS SAN, so a client that checks the hostname
+  rejects it. The client-go client verifies the chain only, so
+  `--server https://<address>:8443` works as is.
+- **`GET /api/certs/ca` returns the local CA**, not the SunSpec anchor. Use
+  the server CA bundle for a client's `--ca`.
+- Enroll each SunSpec client certificate as an end device before it connects
+  (see "Enroll the device through the admin UI" above).
 
 ## Known limitations
 

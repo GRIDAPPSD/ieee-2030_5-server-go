@@ -1,5 +1,5 @@
 // api.ts is the SPA's single client for the admin listener's JSON
-// endpoints (internal/server/admin_router.go). Every panel goes through
+// endpoints (internal/adminplane/admin_router.go). Every panel goes through
 // these helpers rather than calling fetch directly, so the error shape,
 // the same-origin credential mode, and the "204 has no body" case stay
 // consistent as panels are added.

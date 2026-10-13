@@ -15,7 +15,7 @@ describe('ActivityChart', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
 
     const { container } = render(ActivityChart, {
-      props: { history: [{ time: '00:00:05', devices: 2, mups: 1 }] },
+      props: { history: [{ time: '00:00:05', devices: 2, mups: 1, commsOnline: 1 }] },
     })
 
     const mount = container.querySelector('#activityChart') as HTMLElement

@@ -66,6 +66,16 @@ export interface PanelEntry {
   // Present when the plane serves panel actions; the fields come from
   // GET /api/ui/panels/{id}/actions.
   actions?: { id: string; label: string }[]
+  // Present for a page panel: the same-origin path (/apps/{id}/) the
+  // shell frames in place of a descriptor.
+  page?: string
+}
+
+// A page is framed only when it is an absolute path on this origin; a
+// scheme-qualified, protocol-relative or backslash form could point the
+// authenticated shell's frame elsewhere.
+export function isSameOriginPath(page: string): boolean {
+  return page.startsWith('/') && !page.startsWith('//') && !page.startsWith('/\\')
 }
 
 export interface PickerChoice {

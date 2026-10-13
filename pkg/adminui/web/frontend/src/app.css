@@ -331,3 +331,15 @@ a {
   color: var(--dim);
   font-style: italic;
 }
+
+/* A page panel's frame spans the content grid and takes the viewport
+   height left under the nav and tab bars. */
+.page-panel {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: calc(100vh - 140px);
+  min-height: 400px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}

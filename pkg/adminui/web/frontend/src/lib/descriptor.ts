@@ -66,6 +66,22 @@ export interface PanelEntry {
   // Present when the plane serves panel actions; the fields come from
   // GET /api/ui/panels/{id}/actions.
   actions?: { id: string; label: string }[]
+  // Present for a page panel: the same-origin path (/apps/{id}/) the
+  // shell frames in place of a descriptor.
+  page?: string
+}
+
+// A page is framed only when it is a path that parses to this origin.
+// The URL parser strips tab, LF and CR anywhere, so "/<TAB>/host" would
+// pass a prefix check yet resolve off-origin; control characters and
+// whitespace are refused first, then the parsed origin is compared.
+export function isSameOriginPath(page: string): boolean {
+  if (!page.startsWith('/') || /[\x00-\x20\x7f]/.test(page)) return false
+  try {
+    return new URL(page, window.location.origin).origin === window.location.origin
+  } catch {
+    return false
+  }
 }
 
 export interface PickerChoice {

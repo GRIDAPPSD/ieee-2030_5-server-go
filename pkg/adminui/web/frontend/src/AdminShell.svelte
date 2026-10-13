@@ -16,7 +16,7 @@
   } from './lib/dashboard'
   import type { AdminFSA, AdminFSAList, TopologyNode } from './lib/fsa'
   import type { MintedCert } from './lib/deviceCert'
-  import { PANEL_REQUEST_TIMEOUT_MS, type PanelEntry } from './lib/descriptor'
+  import { isSameOriginPath, PANEL_REQUEST_TIMEOUT_MS, type PanelEntry } from './lib/descriptor'
   import { currentPath, navigate, replace } from './lib/router'
   import NavBar from './panels/NavBar.svelte'
   import Overview from './panels/Overview.svelte'
@@ -272,7 +272,20 @@
       <DispatchPane />
     {:else if activePanel}
       {#key activePanel.id}
-        {#if activePanel.stream}
+        {#if activePanel.page !== undefined}
+          {#if isSameOriginPath(activePanel.page)}
+            <iframe
+              class="page-panel"
+              data-testid="page-panel-{activePanel.id}"
+              title={activePanel.label}
+              src={activePanel.page}
+            ></iframe>
+          {:else}
+            <div class="card result err" role="alert" data-testid="page-panel-error">
+              {activePanel.label} names a page outside this server and is not shown.
+            </div>
+          {/if}
+        {:else if activePanel.stream}
           <StreamPanel id={activePanel.id} label={activePanel.label} stream={activePanel.stream} />
         {:else}
           <PanelView id={activePanel.id} picker={activePanel.picker} />

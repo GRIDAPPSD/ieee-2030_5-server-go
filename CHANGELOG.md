@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-13
+
+This entry covers `v0.16.0..v0.16.1`. It is a PATCH release under the 0.x
+carve-out: the range holds one `bug fix` (a security fix) and no `feature` or
+`breaking` entry. No exported Go identifier is added, removed or changed, and
+`ieee-2030_5-core-go` is unchanged.
+
 ### Security
 
 - Page panels refuse a write admitted by a one-time ticket: a POST, PUT, PATCH
@@ -836,4 +843,5 @@ read both releases first.
 [0.14.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.13.0...v0.14.0
 [0.15.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.14.0...v0.15.0
 [0.16.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.15.0...v0.16.0
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.16.0...HEAD
+[0.16.1]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.16.0...v0.16.1
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.16.1...HEAD

@@ -389,6 +389,50 @@ No corresponding IEEE 2030.5 resource; this is the admin-plane session
 mechanism, and it is unrelated to device identity (SFDI/LFDI). Mutating:
 `POST /auth/login` (a session, not domain data).
 
+## Running on the SunSpec test PKI
+
+`make run-sunspec` runs the standalone server with the SunSpec server
+certificate chain and trusts the SunSpec client CAs. The SunSpec archives
+and the files extracted from them are never committed to any repository:
+keep them in a directory outside every checkout (mode 0700, files 0600).
+
+Build four PEM files from the SunSpec server and client sets:
+
+| File | Contents, in this order |
+|---|---|
+| server chain | server leaf, MICA 2, MCA 2 (leaf first, so a client receives the intermediates) |
+| server key | the server leaf's private key |
+| client CAs | MICA 1, MCA 1, SunSpec root |
+| server CA bundle | MICA 2, MCA 2, SunSpec root |
+
+```
+make run-sunspec \
+  SUNSPEC_SERVER_CHAIN=<server chain> SUNSPEC_SERVER_KEY=<server key> \
+  SUNSPEC_CLIENT_CAS=<client CAs> SUNSPEC_SERVER_CA_BUNDLE=<server CA bundle>
+```
+
+All four variables are required and have no default; the target refuses to
+start when one is unset or not a file. The chain and key become `SEP2_CERT`
+and `SEP2_KEY`, and the client CAs become `SEP2_EXTRA_CLIENT_CAS`. The
+startup banner prints each file in use and the `--ca` bundle a client must
+use.
+
+- **Local dev CA stays.** The target still passes the local dev CA from
+  `make certs` as `SEP2_CA`/`SEP2_CA_KEY`, because the admin listener starts
+  only when a CA role has a usable key and SunSpec supplies no CA key. The
+  server therefore also trusts device certificates from the local CA.
+- **A client presents its whole chain.** Pass the SunSpec client chain file
+  (device, MICA 1, MCA 1) as `--cert`, its key as `--key`, and the server CA
+  bundle as `--ca`.
+- **No IP or DNS SAN on the server leaf.** The SunSpec server leaf has an
+  empty subject and no IP or DNS SAN, so a client that checks the hostname
+  rejects it. The client-go client verifies the chain only, so
+  `--server https://<address>:8443` works as is.
+- **`GET /api/certs/ca` returns the local CA**, not the SunSpec anchor. Use
+  the server CA bundle for a client's `--ca`.
+- Enroll each SunSpec client certificate as an end device before it connects
+  (see "Enroll the device through the admin UI" above).
+
 ## Known limitations
 
 - **The admin listener's mTLS path has no supported way to trust a private

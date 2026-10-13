@@ -3,7 +3,7 @@
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
        coverage-scope-check \
        lint gofmt-check vet clean run run-ccm run-journald run-ccm-journald \
-       run-testdevice run-sunspec certs new-device \
+       run-testdevice run-sunspec sunspec-check certs new-device \
        serve help stress-pretest vendor bump-core ui-build ui-check \
        ci-local ci-local-drift-check
 
@@ -251,38 +251,45 @@ run-testdevice: build certs   ## Start server with test device root + EndDevice 
 	SEP2_BOOT_FIXTURE=test/csip/fixtures/testdevice-edev.yaml \
 	./$(SERVER) serve
 
-# SunSpec CSIP test PKI profile (#204).
+# SunSpec CSIP test PKI profile (#204, #911).
 #
-# Boots the server in CCM-8 mode on :8443 with the SunSpec CSIP test PKI's
-# trust roots loaded as extra client CAs via SEP2_EXTRA_CLIENT_CAS. The
-# server still presents its own local-CA-signed leaf - the SunSpec roots
-# only authenticate inverter client certs issued under that test PKI.
+# Boots the server in CCM-8 mode on :8443 presenting the SunSpec server
+# chain, and trusts the SunSpec client CAs through SEP2_EXTRA_CLIENT_CAS.
+# The local dev CA is kept (SEP2_CA/SEP2_CA_KEY) only so the admin plane
+# starts: it needs a CA role with a usable key, which SunSpec does not give
+# us. A side effect is that the server also trusts local-CA device certs.
 #
-# The default SUNSPEC_ROOTS path lives in the operator's Knowledge
-# workspace (gitignored). Override SUNSPEC_ROOTS=... to relocate, or fetch
-# the SunSpec CSIP test PKI to that path before running.
-#
-# Device side (manual): point the inverter at https://localhost:8443 with
-# its SunSpec-issued client cert/key (e.g. sunspec/cert.pem + sunspec/key.pem
-# from the same test PKI bundle).
-SUNSPEC_ROOTS ?= $(HOME)/knowledge/projects/ieee-2030_5-go/artifacts/inputs/csip-test-pki/sunspec/roots.pem
+# All four SUNSPEC_* variables are required and have no default, so no path
+# outside the repository is ever assumed. Keep the files outside every
+# checkout; the SunSpec archives are never committed.
+#   SUNSPEC_SERVER_CHAIN      server leaf, MICA2, MCA2 (PEM, leaf first)
+#   SUNSPEC_SERVER_KEY        the server leaf's private key
+#   SUNSPEC_CLIENT_CAS        MICA1, MCA1, root (PEM bundle, trusted for clients)
+#   SUNSPEC_SERVER_CA_BUNDLE  MICA2, MCA2, root (PEM bundle; the client's --ca)
+SUNSPEC_VARS := SUNSPEC_SERVER_CHAIN SUNSPEC_SERVER_KEY SUNSPEC_CLIENT_CAS SUNSPEC_SERVER_CA_BUNDLE
 
-run-sunspec: build certs   ## Start server trusting SunSpec CSIP test PKI roots (override SUNSPEC_ROOTS to relocate)
-	@test -f $(SUNSPEC_ROOTS) || (echo "ERROR: SUNSPEC_ROOTS not found at $(SUNSPEC_ROOTS); set SUNSPEC_ROOTS=... or fetch the SunSpec CSIP test PKI to that path" && exit 1)
+sunspec-check:
+	@for v in $(SUNSPEC_VARS); do \
+		eval "f=\$$$$v"; \
+		if [ -z "$$f" ]; then echo "ERROR: $$v is not set; run: make run-sunspec $(foreach v,$(SUNSPEC_VARS),$(v)=<file>)" >&2; exit 1; fi; \
+		if [ ! -f "$$f" ]; then echo "ERROR: $$v=$$f is not a file" >&2; exit 1; fi; \
+	done
+
+run-sunspec: sunspec-check build certs   ## Start server on the SunSpec test PKI (set SUNSPEC_SERVER_CHAIN, SUNSPEC_SERVER_KEY, SUNSPEC_CLIENT_CAS, SUNSPEC_SERVER_CA_BUNDLE)
 	@echo "# SunSpec profile: binding :8443 (CCM-8)"
-	@echo "# Server cert: local CA chain ($(CERT_DIR)/server.crt)"
-	@echo "# Trusted extra client CAs: $(SUNSPEC_ROOTS)"
-	@echo "# Device-side cert (CSIP V1.2 SunSpec test PKI):"
-	@echo "#   --cert $(subst roots.pem,cert.pem,$(SUNSPEC_ROOTS))"
-	@echo "#   --key  $(subst roots.pem,key.pem,$(SUNSPEC_ROOTS))"
-	@echo "#   --ca   $(CERT_DIR)/ca.crt   (server's CA - what the device must trust)"
+	@echo "# Server chain:  $(SUNSPEC_SERVER_CHAIN)"
+	@echo "# Server key:    $(SUNSPEC_SERVER_KEY)"
+	@echo "# Trusted client CAs (SEP2_EXTRA_CLIENT_CAS): $(SUNSPEC_CLIENT_CAS)"
+	@echo "# Local dev CA kept for the admin plane: $(CERT_DIR)/ca.crt"
+	@echo "# Client side (SunSpec client set, chain file as --cert):"
+	@echo "#   --ca   $(SUNSPEC_SERVER_CA_BUNDLE)   (MICA2, MCA2, root)"
 	@echo "# Server prints a full connection-details banner at boot (#206)."
 	SEP2_ADDR=:8443 \
-	SEP2_CERT=$(CERT_DIR)/server.crt \
-	SEP2_KEY=$(CERT_DIR)/server.key \
+	SEP2_CERT=$(SUNSPEC_SERVER_CHAIN) \
+	SEP2_KEY=$(SUNSPEC_SERVER_KEY) \
 	SEP2_CA=$(CERT_DIR)/ca.crt \
 	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
-	SEP2_EXTRA_CLIENT_CAS=$(SUNSPEC_ROOTS) \
+	SEP2_EXTRA_CLIENT_CAS=$(SUNSPEC_CLIENT_CAS) \
 	./$(SERVER) serve
 
 serve: run                 ## Alias for run

@@ -95,6 +95,9 @@ type panelEntry struct {
 	Stream *streamEntry `json:"stream,omitempty"`
 	// Actions is set only when the plane serves panel actions.
 	Actions []actionEntry `json:"actions,omitempty"`
+	// Page is set only for a page panel, so a descriptor panel's entry
+	// keeps its shape.
+	Page string `json:"page,omitempty"`
 }
 
 // streamEntry tells the shell the stream parameter's bounds, so it can
@@ -112,7 +115,7 @@ type pickerEntry struct {
 // order, and [] when nothing is registered. A panel with a Picker also
 // carries {"picker":{"max":N}}, one with a Stream
 // {"stream":{"maxLen":N,"charset":"..."}}, and with actions on, one that has
-// Actions {"actions":[{id,label}]}.
+// Actions {"actions":[{id,label}]}. A page panel carries {"page":"/apps/{id}/"}.
 func (ps *panelSet) handleList() http.HandlerFunc {
 	entries := make([]panelEntry, 0, len(ps.panels))
 	for _, p := range ps.panels {
@@ -125,6 +128,9 @@ func (ps *panelSet) handleList() http.HandlerFunc {
 		}
 		if ps.actions {
 			e.Actions = actionEntries(p)
+		}
+		if p.Page != nil {
+			e.Page = pageURL(p.ID)
 		}
 		entries = append(entries, e)
 	}
@@ -192,7 +198,8 @@ func (ps *panelSet) handleGet() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		p, ok := ps.lookup(id)
-		if !ok {
+		if !ok || p.View == nil {
+			// A page panel has no Descriptor; the shell loads its page.
 			writePanelError(w, http.StatusNotFound, "no such panel")
 			return
 		}

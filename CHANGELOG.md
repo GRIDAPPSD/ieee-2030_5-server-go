@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `sep2admin.Panel.Page`: a panel can carry an `http.Handler` instead of a
+  View. The admin plane serves it at `/apps/{id}/` behind its own credential,
+  Host and cross-origin checks, lets only its own origin frame it, and names it
+  as `"page"` in `GET /api/ui/panels`. `Register` refuses a panel with both or
+  neither of View and Page, and `apps` joins the reserved panel IDs (#903).
+
 ## [0.15.0] - 2026-10-10
 
 This entry covers `v0.14.0..v0.15.0`. It is a MINOR release under the 0.x

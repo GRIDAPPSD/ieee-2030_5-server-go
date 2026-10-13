@@ -274,6 +274,9 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	authed.HandleFunc("GET /api/ui/panels/{id}", panels.handleGet())
 	authed.HandleFunc("GET /api/ui/panels/{id}/choices", panels.handleChoices())
 	authed.HandleFunc("GET /api/ui/panels/{id}/stream", panels.handleStream())
+	// #903 page panels, under /apps/{id}/ (page_panels.go). Sensitive for
+	// every method: requireCredentialForSensitiveRoutes checks the path.
+	panels.mountPages(authed)
 
 	// Admin UI (embedded Svelte SPA, pkg/adminui/web). Mounted at
 	// "/ui/", a more specific pattern than the dashboard's catch-all "GET
@@ -398,7 +401,8 @@ func adminNoStore(next http.Handler) http.Handler {
 // refusal: CSP is the normative control and the only one a future
 // per-origin relaxation could target, but X-Frame-Options: ALLOW-FROM was
 // never interoperably implemented, so X-Frame-Options stays DENY-or-nothing.
-// A relaxation must edit both, or the second header keeps silently refusing.
+// A relaxation must edit both, or the second header keeps silently refusing;
+// the page panel subtree's does (pageFloor).
 func adminSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()

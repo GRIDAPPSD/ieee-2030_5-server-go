@@ -34,8 +34,8 @@
 // name (neutral, info, ok, warn, error) listed here.
 // testdata/descriptor_v2.json is the wire shape.
 //
-// MAY grow without a version change: the optional Picker field on Panel
-// (nil keeps today's wire shape), and the sets of kinds and badge names.
+// MAY grow without a version change: the optional Picker and Page fields on
+// Panel (nil keeps today's wire shape), and the sets of kinds and badge names.
 // A new kind or name reaches the encoder and the shell in the same release, since
 // the shell is served from this binary. Any other reader of a version 2
 // Descriptor can rely on the kinds above keeping their fields and
@@ -44,6 +44,30 @@
 // unsupported, an unknown cell kind as its text and an unknown badge as
 // neutral. Removing a kind or changing its fields is a new
 // CurrentDescriptorVersion.
+//
+// # Page panels
+//
+// A panel sets Page instead of View when its content fits no descriptor
+// kind. The plane serves it at /apps/{ID}/, prefix stripped, and the panel
+// list names that path as "page". The contract:
+//
+// Trust: page script runs in the plane's origin with the operator's
+// session, so it can call every admin API that session can. A Page is code
+// compiled into the embedder's binary, which already holds the stores; it
+// must never proxy or serve content from a party the embedder does not
+// trust.
+//
+// ReadOnly: a page acts on its embedder, not the plane's stores, so a
+// ReadOnly plane still serves every method a Page answers, as it does
+// panel actions. A Page that must not write refuses the method itself.
+//
+// Header floor: every request needs the plane's credential (a loopback
+// bypass does not reach a page), passes its Host and cross-origin checks,
+// and gets no body-type check, so the Page decodes and bounds its own
+// bodies. Every response carries frame-ancestors 'self',
+// X-Frame-Options: SAMEORIGIN, nosniff, Referrer-Policy: no-referrer and
+// Cache-Control: no-store, applied after the Page sets its headers. The
+// Page's own Content-Security-Policy is kept, minus any frame-ancestors.
 //
 // # What this package does not implement yet
 //

@@ -96,6 +96,12 @@ func requireCredentialForSensitiveRoutes(mux *recordingMux, guard func(http.Hand
 	guarded := guard(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, pattern := mux.mux.Handler(r)
+		// A page panel may disclose or change anything, for any method,
+		// OPTIONS included, so no bypass admission reaches it.
+		if isPagePath(r.URL.Path) || isPagePattern(pattern) {
+			guarded.ServeHTTP(w, r)
+			return
+		}
 		if _, sensitive := sensitiveAdminPatterns[pattern]; sensitive {
 			guarded.ServeHTTP(w, r)
 			return

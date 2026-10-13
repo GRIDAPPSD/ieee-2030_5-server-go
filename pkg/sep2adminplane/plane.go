@@ -97,7 +97,11 @@ type Config struct {
 	// be combined with ControlWrites.
 	ReadOnly bool
 	// Panels are extra tabs the shell shows after its own. A panel the
-	// registry refuses makes New fail.
+	// registry refuses makes New fail. A panel with a Page is served at
+	// /apps/{ID}/ behind the plane's credential, Host and cross-origin
+	// checks, under the contract in the sep2admin package doc: its script
+	// holds the operator's session, ReadOnly does not filter its methods,
+	// and its responses may be framed by the plane's own origin only.
 	Panels []sep2admin.Panel
 	// PanelActions serves the typed actions the panels declare, under
 	// /api/ui/panels/{id}/actions. Off, those routes answer 404. It works
@@ -274,7 +278,8 @@ func resolveEdition(edition string, stores2023 bool) (handler.SEP2Edition, error
 // Calling it more than once is safe.
 func (p *Plane) CloseStreams() { p.closeOnce.Do(func() { close(p.streamsDone) }) }
 
-// Handler serves the admin UI at /ui/ and the admin API under /api/.
+// Handler serves the admin UI at /ui/, the admin API under /api/, and
+// page panels under /apps/.
 func (p *Plane) Handler() http.Handler { return p.handler }
 
 // Close does what CloseStreams does, which also tells every running panel

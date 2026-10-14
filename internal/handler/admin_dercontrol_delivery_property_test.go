@@ -9,7 +9,9 @@ import (
 
 // bruteIntegrate values each second on its own: per leg, the covering span
 // received last (then the later order) wins; then the totals, Average first,
-// else the phase sum over every seen phase, Average preferred per phase.
+// else the phase sum over every seen phase, Average preferred per phase. A
+// leg is its main series, else its Forward plus Reverse, which needs both
+// once both are seen, else whichever direction it has.
 func bruteIntegrate(spans map[leg][]powerSpan, seen map[leg]bool) (wattSeconds float64, covered int64, used []int) {
 	lo, hi := int64(1<<62), int64(-1<<62)
 	for _, ss := range spans {
@@ -37,22 +39,41 @@ func bruteIntegrate(spans map[leg][]powerSpan, seen map[leg]bool) (wattSeconds f
 				}
 			}
 		}
+		value := func(base leg) []powerSpan {
+			if s, ok := winner[base]; ok {
+				return []powerSpan{s}
+			}
+			f, fok := winner[leg{average: base.average, phase: base.phase, dir: dirForward}]
+			r, rok := winner[leg{average: base.average, phase: base.phase, dir: dirReverse}]
+			bothSeen := seen[leg{average: base.average, phase: base.phase, dir: dirForward}] && seen[leg{average: base.average, phase: base.phase, dir: dirReverse}]
+			switch {
+			case fok && rok:
+				return []powerSpan{f, r}
+			case bothSeen:
+				return nil
+			case fok:
+				return []powerSpan{f}
+			case rok:
+				return []powerSpan{r}
+			}
+			return nil
+		}
 		var path []powerSpan
-		if s, ok := winner[leg{average: true}]; ok {
-			path = []powerSpan{s}
-		} else if s, ok := winner[leg{}]; ok {
-			path = []powerSpan{s}
+		if s := value(leg{average: true}); s != nil {
+			path = s
+		} else if s := value(leg{}); s != nil {
+			path = s
 		} else if len(phases) > 0 {
 			for _, p := range phases {
-				s, ok := winner[leg{average: true, phase: p}]
-				if !ok {
-					s, ok = winner[leg{phase: p}]
+				s := value(leg{average: true, phase: p})
+				if s == nil {
+					s = value(leg{phase: p})
 				}
-				if !ok {
+				if s == nil {
 					path = nil
 					break
 				}
-				path = append(path, s)
+				path = append(path, s...)
 			}
 		}
 		if len(path) == 0 {
@@ -75,7 +96,10 @@ func bruteIntegrate(spans map[leg][]powerSpan, seen map[leg]bool) (wattSeconds f
 // random spans, including overlapping Average periods on one leg, whose
 // resolved pieces meet at the same instant.
 func TestIntegrateMatchesPerSecondBruteForce(t *testing.T) {
-	legs := []leg{{average: true}, {}, {average: true, phase: phaseA}, {phase: phaseA}, {phase: phaseB}, {average: true, phase: phaseC}}
+	legs := []leg{
+		{average: true}, {}, {average: true, phase: phaseA}, {phase: phaseA}, {phase: phaseB}, {average: true, phase: phaseC},
+		{dir: dirForward}, {dir: dirReverse}, {average: true, dir: dirForward}, {phase: phaseB, dir: dirReverse}, {phase: phaseB, dir: dirForward},
+	}
 	r := rand.New(rand.NewPCG(802, 5))
 	for c := range 400 {
 		spans := map[leg][]powerSpan{}
@@ -86,6 +110,10 @@ func TestIntegrateMatchesPerSecondBruteForce(t *testing.T) {
 				continue
 			}
 			seen[l] = true
+			// A leg seen with no span is one whose readings were all flagged.
+			if r.IntN(5) == 0 {
+				continue
+			}
 			for range 1 + r.IntN(5) {
 				start := int64(r.IntN(200))
 				spans[l] = append(spans[l], powerSpan{

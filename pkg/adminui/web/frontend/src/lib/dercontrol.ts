@@ -62,6 +62,9 @@ export interface DERControlResponseCounts {
 // deliveredWh and averageW (watts over the covered seconds) are null when no
 // reading covers any second of it. readingsExpired is true when retention may
 // have removed readings the window needs; the figure is then null.
+// concurrentMirrors: two DER mirrors of the
+// device covered one second, so the figure may undercount; excludedReadings:
+// DER W readings in the window the figure could not read.
 export interface DERControlDelivery {
   windowStart: number
   windowEnd: number
@@ -70,6 +73,8 @@ export interface DERControlDelivery {
   coveredSeconds: number
   readings: number
   directionUnknown: boolean
+  concurrentMirrors: boolean
+  excludedReadings: number
   deviceLFDI: string
   newestReadingTime: number | null
   readingsExpired: boolean

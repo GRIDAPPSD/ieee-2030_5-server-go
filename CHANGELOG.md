@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-13
+
+This entry covers `v0.16.1..v0.17.0`. It is a MINOR release under the 0.x
+carve-out: the range adds two fields to the admin delivery wire (`feature`) and
+changes how `make run-sunspec` is configured (`feature`). No exported Go
+identifier is added, removed or changed, and `ieee-2030_5-core-go` is
+unchanged.
+
+### Added
+
+- Admin DER control delivery reports `concurrentMirrors` (two DER mirrors of a
+  device overlapped, so the figure may undercount; separate component mirrors
+  are flagged, never summed) and `excludedReadings` (DER W readings in the
+  window the figure could not read). Under 2023, Forward and Reverse readings
+  are netted as |Forward| - |Reverse|; same-direction readings from concurrent
+  mirrors are never summed. A restarted client is not flagged. 2018 is
+  unchanged (#813).
+
+### Changed
+
+- `make run-sunspec` runs the server on the SunSpec test PKI: it takes the
+  SunSpec server chain, key and client CA bundle as required variables with no
+  default, keeps the local dev CA so the admin plane starts, and prints the
+  `--ca` bundle a client must use. The `SUNSPEC_ROOTS` default is gone. See the
+  operator guide (#911).
+
 ## [0.16.1] - 2026-10-13
 
 This entry covers `v0.16.0..v0.16.1`. It is a PATCH release under the 0.x
@@ -844,4 +870,5 @@ read both releases first.
 [0.15.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.14.0...v0.15.0
 [0.16.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.15.0...v0.16.0
 [0.16.1]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.16.0...v0.16.1
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.16.1...HEAD
+[0.17.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.16.1...v0.17.0
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.17.0...HEAD

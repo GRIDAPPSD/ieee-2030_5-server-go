@@ -57,10 +57,11 @@ func isSensitiveAdminReadPath(path string) bool {
 }
 
 // nonSensitiveAdminWrites is the explicit, reviewed allowlist of admin WRITE
-// routes that do not need a real credential: FSA and end-device management,
-// which create or delete configuration rows and never return key material, a
-// captured header, or a ticket. Every other write route on the authed mux
-// requires a real credential by default (#579 fix round 2, MEDIUM, coverage
+// routes that do not need a real credential: end-device creation, which adds
+// a configuration row and never returns key material, a captured header, or a
+// ticket. The FSA writes are not here (#930): they change what devices are
+// told, so they require a real credential from loopback too. Every other
+// write route on the authed mux requires a real credential by default (#579 fix round 2, MEDIUM, coverage
 // lane): #579 HIGH-1 found POST /auth/ticket credential-minting and absent
 // from sensitiveAdminPatterns, which only ever grew by someone remembering
 // to add a new route's exact name to two hand-written lists (the map here
@@ -71,13 +72,7 @@ func isSensitiveAdminReadPath(path string) bool {
 // direction for content types. GET routes are unaffected and keep the
 // sensitiveAdminPatterns allowlist above unchanged.
 var nonSensitiveAdminWrites = map[string]struct{}{
-	"POST /api/devices":                       {},
-	"POST /api/devices/{id}/fsa-assignment":   {},
-	"DELETE /api/devices/{id}/fsa-assignment": {},
-	"POST /api/fsas":                          {},
-	"DELETE /api/fsas/{id}":                   {},
-	"POST /api/fsas/{id}/programs":            {},
-	"DELETE /api/fsas/{id}/programs":          {},
+	"POST /api/devices": {},
 }
 
 // requireCredentialForSensitiveRoutes routes a sensitiveAdminPatterns

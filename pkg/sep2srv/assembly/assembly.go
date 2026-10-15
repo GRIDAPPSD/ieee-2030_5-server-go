@@ -1001,14 +1001,15 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	//
 	// Each FSA lists only its own programs (#916): CSIP IG v2 5.2.3 has one
 	// FSA point to the topology programs and others to non-topology ones.
-	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp", derProgramListHandler(derPrograms))
+	unscoped := newUnscopedProgramWarnings(log.Printf)
+	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp", derProgramListHandler(derPrograms, unscoped))
 
 	// A DERProgram's own href, so the FSA-to-DERProgramList-to-member link
 	// walk CSIP v2.0 s5.2.3.1 requires actually resolves. A program of another
 	// FSA is a 404 here, as it is absent from this FSA's list. Read-only: core
 	// exposes no write route for a single DERProgram, mirroring the DERControl
 	// single-resource route just below.
-	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}", derProgramHandler(derPrograms))
+	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}", derProgramHandler(derPrograms, unscoped))
 
 	// DERControl under DERProgram
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc",

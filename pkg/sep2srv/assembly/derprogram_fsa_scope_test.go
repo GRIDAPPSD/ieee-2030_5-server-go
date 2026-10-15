@@ -33,10 +33,15 @@ func seedTwoFSAPrograms(t *testing.T) *httptest.Server {
 		{"e1", "f2", "p2", "b2", 0},
 		{"e2", "f1", "q1", "c1", 0},
 		{"e2", "f1", "q2", "c2", 5},
+		// An href with no FSA segment, as written before #743: no FSA lists it.
+		{"e1", "", "old", "z9", 0},
 	}
 	for _, p := range programs {
 		prog := sep2.DERProgram{MRID: p.mrid, Primacy: p.primacy}
 		prog.Href = coreder.DERProgramHref(p.edev, p.fsa, p.id)
+		if p.fsa == "" {
+			prog.Href = "/edev/" + p.edev + "/derp/" + p.id
+		}
 		if err := stores.DERPrograms.Create(ctx, p.edev, p.id, prog); err != nil {
 			t.Fatalf("seed DERProgram %s/%s: %v", p.edev, p.id, err)
 		}
@@ -100,6 +105,7 @@ func TestDERProgramMember_OtherFSAIsNotFound(t *testing.T) {
 		{"/edev/e1/fsa/f1/derp/p2", http.StatusNotFound, ""},
 		{"/edev/e1/fsa/f9/derp/p1", http.StatusNotFound, ""},
 		{"/edev/e1/fsa/f1/derp/q1", http.StatusNotFound, ""},
+		{"/edev/e1/fsa/f1/derp/old", http.StatusNotFound, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {

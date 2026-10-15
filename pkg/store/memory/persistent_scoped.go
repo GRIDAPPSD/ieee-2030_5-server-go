@@ -144,6 +144,13 @@ func (s *PersistentScopedStore[T]) addKey(parentID, id string) {
 	}
 }
 
+// IDs returns the record ids under parentID, ascending.
+func (s *PersistentScopedStore[T]) IDs(parentID string) []string {
+	s.keysMu.Lock()
+	defer s.keysMu.Unlock()
+	return slices.Clone(s.keys[parentID])
+}
+
 func (s *PersistentScopedStore[T]) dropKey(parentID, id string) {
 	s.keysMu.Lock()
 	defer s.keysMu.Unlock()

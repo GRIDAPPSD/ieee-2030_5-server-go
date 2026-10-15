@@ -465,8 +465,11 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 				return
 			}
 			if len(held) > 0 {
-				writeError(w, http.StatusConflict, fmt.Sprintf(
-					"device programs sit under this fsa; delete them first: %s", strings.Join(held, ", ")))
+				writeJSON(w, http.StatusConflict, deviceProgramsPresent{
+					Error:    "device programs sit under this fsa and must be deleted before the device is unassigned: " + strings.Join(held, ", "),
+					Code:     "device_programs_present",
+					Programs: held,
+				})
 				return
 			}
 		}
@@ -525,6 +528,14 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "unassign: "+err.Error())
 		}
 	}
+}
+
+// deviceProgramsPresent is the 409 body of an unassign refused by device
+// programs; Programs lists their ids.
+type deviceProgramsPresent struct {
+	Error    string   `json:"error"`
+	Code     string   `json:"code"`
+	Programs []string `json:"programs"`
 }
 
 // assignIncomplete answers an assignment whose rollback stopped partway: the

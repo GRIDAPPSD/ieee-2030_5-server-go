@@ -365,7 +365,7 @@ func TestAssignDeviceFSA_FailedCopyUndoesTheWholeAssign(t *testing.T) {
 	f.faulty().failCreateAt = 2
 
 	w := f.do(http.MethodPost, "/api/devices/3/fsa-assignment", `{"fsaHref":"/api/fsas/fsa-A"}`)
-	if w.Code != http.StatusInternalServerError || errorBody(t, w.Body.Bytes()) != "program template write failed" {
+	if w.Code != http.StatusInternalServerError || errorBody(t, w.Body.Bytes()) != "program write failed" {
 		t.Fatalf("assign: %d %s, want 500 with the fixed message", w.Code, w.Body.String())
 	}
 	ctx := context.Background()

@@ -42,6 +42,8 @@ type OriginStore interface {
 	Get(ctx context.Context, deviceID, programID string) (memory.ProgramOrigin, error)
 	Create(ctx context.Context, deviceID, programID string, o memory.ProgramOrigin) error
 	Delete(ctx context.Context, deviceID, programID string) error
+	Parents(ctx context.Context) ([]string, error)
+	IDs(deviceID string) []string
 }
 
 // Copies are the stores a template copy spans. Every write path uses Ensure,
@@ -316,6 +318,38 @@ func ReconcileCopies(ctx context.Context, admin *memory.AdminFSAStore, copies Co
 					return fmt.Errorf("rebuild program template %q of FSA %q for device %q: %w", t.ID, fsaID, deviceID, err)
 				}
 			}
+		}
+	}
+	return copies.removeDeviceProgramPartials(ctx, logf)
+}
+
+// removeDeviceProgramPartials deletes what a failed device-program create
+// left behind: a device origin whose program is gone. Every removal deletes
+// the origin last, so any partial undo leaves the origin to find it by. A
+// device origin with its program is a whole program and stays.
+func (c Copies) removeDeviceProgramPartials(ctx context.Context, logf func(format string, args ...any)) error {
+	devices, err := c.Origins.Parents(ctx)
+	if err != nil {
+		return fmt.Errorf("listing devices with program origins: %w", err)
+	}
+	for _, deviceID := range devices {
+		for _, programID := range c.Origins.IDs(deviceID) {
+			origin, err := c.Origins.Get(ctx, deviceID, programID)
+			if errors.Is(err, store.ErrNotFound) || (err == nil && origin.Kind != memory.ProgramOriginDevice) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("reading origin %s/%s: %w", deviceID, programID, err)
+			}
+			if _, err := c.Programs.Get(ctx, deviceID, programID); err == nil {
+				continue
+			} else if !errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("reading program %s/%s: %w", deviceID, programID, err)
+			}
+			if err := c.deleteParts(ctx, deviceID, origin.FSAID, programID, []string{PartOrigin, PartDefault, PartProgram}); err != nil {
+				return fmt.Errorf("removing the partial device program %s on device %s: %w", programID, deviceID, err)
+			}
+			logf("removed the partial device program %q of device %q left by a failed create", programID, deviceID)
 		}
 	}
 	return nil

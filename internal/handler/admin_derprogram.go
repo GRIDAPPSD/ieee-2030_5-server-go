@@ -38,7 +38,7 @@ const maxDeviceProgramsPerFSA = 16
 
 // templateInternalError is the whole body of every 500 here; the cause is
 // logged, never returned, since store errors can carry paths (#541).
-const templateInternalError = "program template write failed"
+const templateInternalError = "program write failed"
 
 type programTemplateBody struct {
 	Description    *string             `json:"description"`
@@ -337,6 +337,16 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 			h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
 			return
 		}
+		if !validHrefSegment(deviceID) || !validHrefSegment(fsaID) {
+			writeError(w, http.StatusConflict, "device or fsa id cannot form a program href")
+			return
+		}
+
+		h.programMu.Lock()
+		defer h.programMu.Unlock()
+
+		// Under the lock, so an unassign cannot remove the device's FSA
+		// between this check and the write.
 		if _, err := h.DeviceFSAs.Get(r.Context(), deviceID, fsaID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				writeError(w, http.StatusNotFound, "fsa not found on this device")
@@ -345,13 +355,6 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 			h.templateFailed(w, r, "fsa_lookup", err)
 			return
 		}
-		if !validHrefSegment(deviceID) || !validHrefSegment(fsaID) {
-			writeError(w, http.StatusConflict, "device or fsa id cannot form a program href")
-			return
-		}
-
-		h.programMu.Lock()
-		defer h.programMu.Unlock()
 
 		held, err := h.Copies.DevicePrograms(r.Context(), deviceID, fsaID)
 		if err != nil {
@@ -407,7 +410,7 @@ func (h *AdminFSAHandler) copyRefused(w http.ResponseWriter, r *http.Request, er
 }
 
 func (h *AdminFSAHandler) templateFailed(w http.ResponseWriter, r *http.Request, cause string, err error) {
-	h.logged(r).ErrorContext(r.Context(), "admin: DER program template write failed", "event", "der_program_template_failed",
+	h.logged(r).ErrorContext(r.Context(), "admin: DER program write failed", "event", "der_program_template_failed",
 		"cause", cause, "path", r.URL.Path, "error", err)
 	writeError(w, http.StatusInternalServerError, templateInternalError)
 }
@@ -448,7 +451,7 @@ func (h *AdminFSAHandler) rollbackAfter(r *http.Request, cause error, steps []ro
 }
 
 func (h *AdminFSAHandler) logUndoFailed(r *http.Request, device, template, part string, err error) {
-	h.logged(r).ErrorContext(r.Context(), "admin: DER program template undo incomplete", "event", "der_program_template_undo_failed",
+	h.logged(r).ErrorContext(r.Context(), "admin: DER program undo incomplete", "event", "der_program_template_undo_failed",
 		"path", r.URL.Path, "device", device, "template", template, "part", part, "error", err)
 }
 

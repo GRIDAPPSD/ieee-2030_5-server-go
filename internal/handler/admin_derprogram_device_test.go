@@ -3,14 +3,17 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -245,8 +248,16 @@ func TestUnassign_RefusedWhileDeviceProgramsSitUnderTheFSA(t *testing.T) {
 	f.notifier.take()
 
 	w := f.do(http.MethodDelete, "/api/devices/1/fsa-assignment?fsaHref=/api/fsas/fsa-A", "")
-	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), v.ID) {
-		t.Fatalf("unassign: %d %s, want 409 naming %s", w.Code, w.Body.String(), v.ID)
+	var refusal struct {
+		Error    string   `json:"error"`
+		Code     string   `json:"code"`
+		Programs []string `json:"programs"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &refusal); err != nil {
+		t.Fatalf("unassign body %s: %v", w.Body.String(), err)
+	}
+	if w.Code != http.StatusConflict || refusal.Code != "device_programs_present" || !slices.Equal(refusal.Programs, []string{v.ID}) || !strings.Contains(refusal.Error, v.ID) {
+		t.Fatalf("unassign: %d %+v, want 409 device_programs_present listing %s", w.Code, refusal, v.ID)
 	}
 	if devs := f.h.AdminFSAs.Devices(context.Background(), "fsa-A"); !slices.Equal(devs, []string{"1"}) {
 		t.Errorf("devices of fsa-A = %v, want [1]: the refusal must leave the assignment", devs)
@@ -325,3 +336,181 @@ func TestCreateDeviceProgram_AControlCanBeIssuedOnIt(t *testing.T) {
 }
 
 var _ handler.EndDeviceReader = (*memory.EndDeviceStore)(nil)
+
+// gatedDeviceFSAs holds a Get of one device until gate closes, so a test can
+// run another request while a create is paused at its FSA lookup.
+type gatedDeviceFSAs struct {
+	handler.DeviceFSAWriter
+	device  string
+	gate    chan struct{}
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (g *gatedDeviceFSAs) Get(ctx context.Context, parentID, id string) (sep2.FunctionSetAssignments, error) {
+	fsa, err := g.DeviceFSAWriter.Get(ctx, parentID, id)
+	if parentID == g.device {
+		g.once.Do(func() { close(g.entered) })
+		<-g.gate
+	}
+	return fsa, err
+}
+
+// An unassign that lands while a create is at its FSA lookup must not leave
+// a device program under an FSA the device no longer has: either the unassign
+// waits and is then refused, or the create is refused.
+func TestCreateDeviceProgram_ConcurrentUnassignCannotOrphanTheProgram(t *testing.T) {
+	t.Parallel()
+	f := newTemplateFixture(t)
+	f.assign(t, "1", "fsa-A")
+	g := &gatedDeviceFSAs{DeviceFSAWriter: f.h.DeviceFSAs, device: "1", gate: make(chan struct{}), entered: make(chan struct{})}
+	f.h.DeviceFSAs = g
+
+	created := make(chan int, 1)
+	go func() { created <- f.do(http.MethodPost, deviceProgramPath("1", "fsa-A"), voltSupportBody).Code }()
+	<-g.entered
+	unassigned := make(chan int, 1)
+	go func() {
+		unassigned <- f.do(http.MethodDelete, "/api/devices/1/fsa-assignment?fsaHref=/api/fsas/fsa-A", "").Code
+	}()
+	var unassignCode int
+	select {
+	case unassignCode = <-unassigned:
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(g.gate)
+	createCode := <-created
+	if unassignCode == 0 {
+		unassignCode = <-unassigned
+	}
+
+	programs := programIDsInFSA(t, f, "1", "fsa-A")
+	_, fsaErr := f.h.DeviceFSAs.Get(context.Background(), "1", "fsa-A")
+	if len(programs) > 0 && fsaErr != nil {
+		t.Errorf("device programs %v sit under fsa-A, which the device no longer has (create %d, unassign %d)", programs, createCode, unassignCode)
+	}
+	if createCode == http.StatusCreated && unassignCode != http.StatusConflict {
+		t.Errorf("create %d then unassign %d, want the unassign refused", createCode, unassignCode)
+	}
+}
+
+func TestCreateDeviceProgram_WriteFailure_500FixedMessage_NothingStored(t *testing.T) {
+	t.Parallel()
+	f := newTemplateFixture(t)
+	f.assign(t, "1", "fsa-A")
+	f.notifier.take()
+	f.faulty().failCreateAt = 1
+
+	w := f.do(http.MethodPost, deviceProgramPath("1", "fsa-A"), voltSupportBody)
+	if w.Code != http.StatusInternalServerError || errorBody(t, w.Body.Bytes()) != "program write failed" {
+		t.Fatalf("create: %d %s, want 500 with the fixed message", w.Code, w.Body.String())
+	}
+	assertNoDeviceCopy(t, f.copies, "1")
+	if ids := f.copies.Origins.IDs("1"); len(ids) != 0 {
+		t.Errorf("origins left: %v", ids)
+	}
+	if got := f.notifier.take(); len(got) != 0 {
+		t.Errorf("notifications = %+v, want none", got)
+	}
+}
+
+// faultyDefaults fails Delete on the default control store while fail is set.
+type faultyDefaults struct {
+	fsaprogram.CopyDefaultStore
+	mu   sync.Mutex
+	fail bool
+}
+
+func (s *faultyDefaults) Delete(ctx context.Context, parentID, id string) error {
+	s.mu.Lock()
+	fail := s.fail
+	s.mu.Unlock()
+	if fail {
+		return errInjected
+	}
+	return s.CopyDefaultStore.Delete(ctx, parentID, id)
+}
+
+// A create whose undo fails leaves an origin and a default and no program.
+// The boot rebuild removes them, and leaves a whole device program alone.
+func TestCreateDeviceProgram_FailedUndoIsRemovedByTheRebuild(t *testing.T) {
+	t.Parallel()
+	f := newTemplateFixture(t)
+	f.assign(t, "1", "fsa-A")
+	whole := f.createDeviceProgram(t, "1", "fsa-A", voltSupportBody)
+	logs := f.logs()
+	f.faulty().failCreateAt = 1
+	fd := &faultyDefaults{CopyDefaultStore: f.copies.Defaults, fail: true}
+	f.h.Copies.Defaults = fd
+
+	w := f.do(http.MethodPost, deviceProgramPath("1", "fsa-A"), voltSupportBody)
+	if w.Code != http.StatusInternalServerError || errorBody(t, w.Body.Bytes()) != "program write failed" {
+		t.Fatalf("create: %d %s, want 500 with the fixed message", w.Code, w.Body.String())
+	}
+	if !strings.Contains(logs.String(), `"part":"default"`) {
+		t.Errorf("no undo-failed log line for the default in:\n%s", logs.String())
+	}
+	ids := f.copies.Origins.IDs("1")
+	var partial string
+	for _, id := range ids {
+		if id != whole.ID {
+			partial = id
+		}
+	}
+	if len(ids) != 2 || partial == "" {
+		t.Fatalf("origins = %v, want the whole program's and one partial", ids)
+	}
+	ctx := context.Background()
+	if _, err := f.copies.Programs.Get(ctx, "1", partial); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("control: the partial has a program: %v", err)
+	}
+	if _, err := f.copies.Defaults.Get(ctx, "1/fsa-A/"+partial, coresingleton.SingletonKey); err != nil {
+		t.Fatalf("control: the partial's default should still be stored: %v", err)
+	}
+
+	fd.mu.Lock()
+	fd.fail = false
+	fd.mu.Unlock()
+	f.reconcile(t)
+	if _, err := f.copies.Origins.Get(ctx, "1", partial); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("partial origin after the rebuild: %v", err)
+	}
+	if _, err := f.copies.Defaults.Get(ctx, "1/fsa-A/"+partial, coresingleton.SingletonKey); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("partial default after the rebuild: %v", err)
+	}
+	if o, err := f.copies.Origins.Get(ctx, "1", whole.ID); err != nil || o.Kind != memory.ProgramOriginDevice {
+		t.Errorf("whole program's origin after the rebuild: %+v, %v", o, err)
+	}
+	if _, err := f.copies.Programs.Get(ctx, "1", whole.ID); err != nil {
+		t.Errorf("whole program after the rebuild: %v", err)
+	}
+	if _, err := f.copies.Defaults.Get(ctx, "1/fsa-A/"+whole.ID, coresingleton.SingletonKey); err != nil {
+		t.Errorf("whole program's default after the rebuild: %v", err)
+	}
+}
+
+func TestCreateDeviceProgram_UnknownDevice_404EvenWithAnFSA(t *testing.T) {
+	t.Parallel()
+	f := newTemplateFixture(t)
+	if err := f.h.DeviceFSAs.Create(context.Background(), "9", "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A"}); err != nil {
+		t.Fatal(err)
+	}
+	w := f.do(http.MethodPost, deviceProgramPath("9", "fsa-A"), voltSupportBody)
+	if w.Code != http.StatusNotFound || errorBody(t, w.Body.Bytes()) != "device not found" {
+		t.Fatalf("create: %d %s, want 404 device not found", w.Code, w.Body.String())
+	}
+	assertNoDeviceCopy(t, f.copies, "9")
+}
+
+// A device FSA id is operator text, and the program href is built from it.
+func TestCreateDeviceProgram_FSAIDThatCannotFormAnHref_409(t *testing.T) {
+	t.Parallel()
+	f := newTemplateFixture(t)
+	if err := f.h.DeviceFSAs.Create(context.Background(), "1", "roof fleet", sep2.FunctionSetAssignments{MRID: "roof fleet"}); err != nil {
+		t.Fatal(err)
+	}
+	if w := f.do(http.MethodPost, deviceProgramPath("1", "roof%20fleet"), voltSupportBody); w.Code != http.StatusConflict {
+		t.Fatalf("create: %d %s, want 409", w.Code, w.Body.String())
+	}
+	assertNoDeviceCopy(t, f.copies, "1")
+}

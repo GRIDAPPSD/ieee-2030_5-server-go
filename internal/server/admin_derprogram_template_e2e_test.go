@@ -167,7 +167,7 @@ func bootForTemplateTest(t *testing.T, c *splitListenerCerts, cfg *config.Config
 		}
 	}
 	t.Cleanup(stop)
-	if msg, ok := waitForListenersReady(c.sep2Probe, c.adminProbe, 5*time.Second, deviceTLS); !ok {
+	if msg, ok := waitForListenersReady(c.sep2Probe, c.adminProbe, 5*time.Second, deviceTLS, runErr); !ok {
 		t.Fatal(msg)
 	}
 	return stop

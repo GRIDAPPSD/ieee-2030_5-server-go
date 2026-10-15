@@ -111,28 +111,16 @@ func bootCaptureListener(t *testing.T) *captureListenerEnv {
 	runErrCh := make(chan error, 1)
 	go func() { runErrCh <- server.Run(ctx, cfg, c.svc) }()
 
-	if !waitForServerReady(c.sep2Probe, 3*time.Second, clientTLSCfg) {
+	if !waitForServerReady(c.sep2Probe, adminReadyTimeout, clientTLSCfg) {
 		cancel()
 		<-runErrCh
 		t.Fatalf("SEP2 listener never became ready on %s", c.sep2Probe)
 	}
 
-	probeClient := &http.Client{Timeout: 500 * time.Millisecond}
-	deadline := time.Now().Add(3 * time.Second)
-	ready := false
-	for time.Now().Before(deadline) {
-		resp, err := probeClient.Get("http://" + c.adminProbe + "/api/certs/ca")
-		if err == nil {
-			_ = resp.Body.Close()
-			ready = true
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if !ready {
+	if msg, ok := waitForAdminReady(c.adminProbe, false, adminReadyTimeout, runErrCh); !ok {
 		cancel()
 		<-runErrCh
-		t.Fatalf("admin listener never became ready on %s", c.adminProbe)
+		t.Fatalf("%s on %s", msg, c.adminProbe)
 	}
 
 	env := &captureListenerEnv{

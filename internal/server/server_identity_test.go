@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -313,10 +314,24 @@ func waitForServerReady(addr string, timeout time.Duration, clientTLSCfg *gotls.
 // the listener binds well after the protocol listener, so 3s was too tight.
 const adminReadyTimeout = 10 * time.Second
 
+// runExited reports Run's return without consuming it: the value is put
+// back so the test's cleanup still sees the exit.
+func runExited(runErr chan error) (error, bool) {
+	select {
+	case err := <-runErr:
+		runErr <- err
+		return err, true
+	default:
+		return nil, false
+	}
+}
+
 // waitForAdminReady polls the admin listener until it answers an HTTP
-// request with any status. A bare TCP connect can race the goroutine that
-// calls Serve, so this requires a real response.
-func waitForAdminReady(addr string, useTLS bool, timeout time.Duration) bool {
+// request with a status this server can produce. A bare TCP connect can race the goroutine that
+// calls Serve, so this requires a real response. It stops at once with
+// Run's error if Run returns first (a bind failure), instead of waiting out
+// the timeout.
+func waitForAdminReady(addr string, useTLS bool, timeout time.Duration, runErr chan error) (string, bool) {
 	scheme := "http"
 	transport := &http.Transport{DisableKeepAlives: true}
 	if useTLS {
@@ -326,24 +341,34 @@ func waitForAdminReady(addr string, useTLS bool, timeout time.Duration) bool {
 	client := &http.Client{Transport: transport, Timeout: time.Second}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		if err, done := runExited(runErr); done {
+			return fmt.Sprintf("server.Run returned before the admin listener answered: %v", err), false
+		}
 		resp, err := client.Get(scheme + "://" + addr + "/api/certs/ca")
 		if err == nil {
 			_ = resp.Body.Close()
-			return true
+			// /api/certs/ca is a registered route, so this server never
+			// answers it 404 or 400; those mean a foreign listener holds the
+			// port, and Run's bind error is on its way.
+			if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest {
+				time.Sleep(25 * time.Millisecond)
+				continue
+			}
+			return "", true
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	return false
+	return "admin listener never became ready", false
 }
 
 // waitForListenersReady waits for the protocol listener and then a plain
 // HTTP admin listener, so a test never uses either before it is bound.
-func waitForListenersReady(sep2Addr, adminAddr string, timeout time.Duration, clientTLSCfg *gotls.Config) (string, bool) {
+func waitForListenersReady(sep2Addr, adminAddr string, timeout time.Duration, clientTLSCfg *gotls.Config, runErr chan error) (string, bool) {
 	if !waitForServerReady(sep2Addr, timeout, clientTLSCfg) {
+		if err, done := runExited(runErr); done {
+			return fmt.Sprintf("SEP2 listener never became ready, Run returned: %v", err), false
+		}
 		return "SEP2 listener never became ready", false
 	}
-	if !waitForAdminReady(adminAddr, false, adminReadyTimeout) {
-		return "admin listener never became ready", false
-	}
-	return "", true
+	return waitForAdminReady(adminAddr, false, adminReadyTimeout, runErr)
 }

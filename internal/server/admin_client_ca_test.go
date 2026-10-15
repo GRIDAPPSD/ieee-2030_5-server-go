@@ -103,12 +103,13 @@ func bootAdminClientCAListener(t *testing.T, c *splitListenerCerts, configure fu
 		}
 	})
 
-	if waitForAdminReady(c.adminProbe, true, adminReadyTimeout) {
+	msg, ok := waitForAdminReady(c.adminProbe, true, adminReadyTimeout, runErrCh)
+	if ok {
 		return c.adminProbe
 	}
 	cancel()
 	<-runErrCh
-	t.Fatal("admin listener never became ready")
+	t.Fatal(msg)
 	return ""
 }
 

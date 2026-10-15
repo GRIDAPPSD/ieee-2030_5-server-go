@@ -177,7 +177,7 @@ func TestProtocolListenerTrustsOnlyTheDeviceCAUnderCCM(t *testing.T) {
 	}
 
 	goodClientCfg := ccmClientConfig(goodDeviceCertPEM, goodDeviceKeyPEM)
-	if !waitForServerReady(sep2Addr, 3*time.Second, goodClientCfg) {
+	if !waitForServerReady(sep2Addr, adminReadyTimeout, goodClientCfg) {
 		t.Fatal("CCM protocol listener never became ready for the device-CA-signed client")
 	}
 

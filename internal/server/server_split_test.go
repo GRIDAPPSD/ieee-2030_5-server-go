@@ -278,7 +278,7 @@ func TestAdminListenerOperatorCert(t *testing.T) {
 
 	// Poll until the operator-cert HTTPS listener accepts a chain-validated
 	// connection.
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(adminReadyTimeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		req, _ := http.NewRequest(http.MethodPost, "https://"+c.adminProbe+"/api/certs/info", nil)
@@ -400,38 +400,17 @@ func bootSplitListener(t *testing.T, opts splitListenerOpts) *splitListenerEnv {
 	go func() { runErrCh <- server.Run(ctx, cfg, c.svc) }()
 
 	// Wait for SEP2 listener (full TLS handshake with a device cert).
-	if !waitForServerReady(c.sep2Probe, 3*time.Second, clientTLSCfg) {
+	if !waitForServerReady(c.sep2Probe, adminReadyTimeout, clientTLSCfg) {
 		cancel()
 		<-runErrCh
 		t.Fatalf("SEP2 listener never became ready on %s", c.sep2Probe)
 	}
 
-	// Wait for admin listener (HTTP- or HTTPS-level probe depending on
-	// AdminTLS). A plain TCP connect would race against the goroutine that
-	// calls Serve, so we hit /api/certs/ca with a tight timeout and accept
-	// any HTTP status as proof-of-life.
-	scheme := "http"
-	transport := &http.Transport{}
-	if opts.adminTLS {
-		scheme = "https"
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-	probeClient := &http.Client{Transport: transport, Timeout: 500 * time.Millisecond}
-	probeDeadline := time.Now().Add(3 * time.Second)
-	adminReady := false
-	for time.Now().Before(probeDeadline) {
-		resp, err := probeClient.Get(scheme + "://" + c.adminProbe + "/api/certs/ca")
-		if err == nil {
-			_ = resp.Body.Close()
-			adminReady = true
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if !adminReady {
+	// Wait for the admin listener, HTTP or HTTPS per AdminTLS.
+	if msg, ok := waitForAdminReady(c.adminProbe, opts.adminTLS, adminReadyTimeout, runErrCh); !ok {
 		cancel()
 		<-runErrCh
-		t.Fatalf("admin listener never became ready on %s", c.adminProbe)
+		t.Fatalf("%s on %s", msg, c.adminProbe)
 	}
 
 	t.Cleanup(func() {

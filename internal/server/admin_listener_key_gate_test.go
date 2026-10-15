@@ -14,7 +14,6 @@ package server_test
 
 import (
 	"context"
-	"net/http"
 	"testing"
 	"time"
 
@@ -86,24 +85,8 @@ func TestAdminListenerRequiresAUsableKeyNotJustACertificate(t *testing.T) {
 			})
 
 			if tt.wantListen {
-				probe := &http.Client{Timeout: 500 * time.Millisecond}
-				deadline := time.Now().Add(3 * time.Second)
-				reached := false
-				for time.Now().Before(deadline) {
-					if resp, err := probe.Get("http://" + adminAddr + "/api/certs/ca"); err == nil {
-						_ = resp.Body.Close()
-						reached = true
-						break
-					}
-					select {
-					case err := <-runErrCh:
-						t.Fatalf("server.Run exited during boot: %v", err)
-					default:
-					}
-					time.Sleep(25 * time.Millisecond)
-				}
-				if !reached {
-					t.Fatalf("admin listener at %s never answered; want it to start with a usable key", adminAddr)
+				if msg, ok := waitForAdminReady(adminAddr, false, adminReadyTimeout, runErrCh); !ok {
+					t.Fatalf("%s at %s; want it to start with a usable key", msg, adminAddr)
 				}
 				return
 			}

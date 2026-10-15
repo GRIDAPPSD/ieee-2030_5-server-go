@@ -62,7 +62,7 @@ func TestStalledManagementWriteDoesNotBlockUnrelatedEndDeviceList(t *testing.T) 
 		}
 	})
 
-	if msg, ok := waitForListenersReady(c.sep2Probe, c.adminProbe, 3*time.Second, bystander.tlsConfig); !ok {
+	if msg, ok := waitForListenersReady(c.sep2Probe, c.adminProbe, 3*time.Second, bystander.tlsConfig, runErrCh); !ok {
 		t.Fatal(msg)
 	}
 	adminClient := &http.Client{Timeout: 3 * time.Second}

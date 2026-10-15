@@ -515,6 +515,13 @@ func (i *Issuer) restoreLifecycle(ctx context.Context, scope Scope, id, mrid str
 	return before, fmt.Errorf("dercontrol: %s: %w", step, cause)
 }
 
+// ControlBase returns the DERControlBase Issue would build from req's Type
+// and value, or the *RefusalError it would refuse them with. It reads no
+// other field, so a program's default control is checked the same way.
+func ControlBase(req CreateRequest) (*sep2.DERControlBase, error) {
+	return buildBase(req)
+}
+
 // buildBase maps a request's type and value to the closed set of
 // DERControlBase shapes IEEE 2030.5-2018 defines for them (acceptance
 // criterion 5). It never reads or sets randomizeStart, randomizeDuration,

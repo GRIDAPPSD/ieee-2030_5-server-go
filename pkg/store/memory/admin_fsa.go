@@ -312,14 +312,16 @@ func (s *AdminFSAStore) FSAsForDevice(_ context.Context, deviceID string) []stri
 }
 
 // ProgramTemplate is a DERProgram defined on an admin FSA and copied, with
-// the same ID and mRID, to every device assigned to that FSA. Version is
-// stored here for the server to increment; it is not served yet.
+// the same ID and mRID, to every device assigned to that FSA. Every copy
+// carries Version. DefaultMRID is the mRID of each copy's DefaultDERControl,
+// kept here so a rebuilt copy keeps its identity.
 type ProgramTemplate struct {
 	ID                 string              `json:"id"`
 	MRID               string              `json:"mRID"`
 	Description        string              `json:"description,omitempty"`
 	Primacy            uint8               `json:"primacy"`
 	Version            uint16              `json:"version"`
+	DefaultMRID        string              `json:"defaultMRID,omitempty"`
 	DefaultControlBase sep2.DERControlBase `json:"defaultControlBase"`
 }
 

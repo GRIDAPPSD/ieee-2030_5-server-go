@@ -6,12 +6,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -26,6 +31,8 @@ import (
 //	GET    /api/fsas/{id}                         single
 //	DELETE /api/fsas/{id}                         delete (404/409)
 //	POST   /api/fsas/{id}/programs                attach DERProgram by href
+//	POST   /api/fsas/{id}/der-programs            create a program template (admin_derprogram.go)
+//	GET    /api/fsas/{id}/der-programs            list program templates
 //	DELETE /api/fsas/{id}/programs?href=<enc>     detach
 //	POST   /api/devices/{id}/fsa-assignment       assign device to FSA
 //	DELETE /api/devices/{id}/fsa-assignment?fsaHref=<enc>  unassign
@@ -44,6 +51,23 @@ type AdminFSAHandler struct {
 	DeviceFSAs  DeviceFSAWriter
 	EndDevices  EndDeviceReader
 	DERPrograms DERProgramHrefValidator
+
+	// Copies are the stores a program template is copied into. Nil leaves
+	// the template routes unmounted, and an assignment to an FSA that has
+	// templates answers 500.
+	Copies *fsaprogram.Copies
+	// Notifier is told of every program list and FSA list a template create
+	// or an assignment changes. Nil sends nothing.
+	Notifier ResourceNotifier
+	// PEN is the low 32 bits of every minted mRID; nil mints all 128 bits.
+	PEN *uint32
+	// Logger receives the template and copy write log lines; nil uses
+	// slog's default.
+	Logger *slog.Logger
+
+	// programMu serializes template creates with assignments, so a device
+	// assigned while a template is created gets exactly one copy of it.
+	programMu sync.Mutex
 }
 
 // DeviceFSAWriter mirrors the slice of *memory.ScopedStore[FSA] surface
@@ -328,6 +352,27 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 			return
 		}
 
+		h.programMu.Lock()
+		defer h.programMu.Unlock()
+
+		// Every template copy is checked before anything is written, so a
+		// conflict refuses the assignment with nothing to undo.
+		tmpls := h.AdminFSAs.Templates(r.Context(), fsaID)
+		if len(tmpls) > 0 && h.Copies == nil {
+			h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+			return
+		}
+		for _, t := range tmpls {
+			if _, err := h.Copies.Check(r.Context(), deviceID, fsaID, t); err != nil {
+				if errors.Is(err, fsaprogram.ErrCopyConflict) {
+					writeError(w, http.StatusConflict, "device already holds a program with the id or mRID of one of this fsa's templates")
+					return
+				}
+				h.templateFailed(w, r, "copy_check", err)
+				return
+			}
+		}
+
 		// Record the assignment.
 		if err := h.AdminFSAs.AssignDevice(r.Context(), fsaID, deviceID); err != nil {
 			if errors.Is(err, store.ErrAlreadyExists) {
@@ -341,15 +386,44 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 		// Materialize into the device-scoped store so /edev/{id}/fsa lists it.
 		// The scoped href differs from the admin href: the spec surface lives
 		// under the device's edev tree.
+		// The assignment is undone last, so a write whose undo fails still
+		// has its assignment, and the boot rebuild completes it.
+		steps := []rollbackStep{{device: deviceID, part: "assignment", undo: func(ctx context.Context) error {
+			return h.AdminFSAs.UnassignDevice(ctx, fsaID, deviceID)
+		}}}
 		if h.DeviceFSAs != nil {
 			scoped := fsaprogram.Scoped(deviceID, fsaID, fsa)
-			if err := h.DeviceFSAs.Create(r.Context(), deviceID, fsaID, scoped); err != nil && !errors.Is(err, store.ErrAlreadyExists) {
-				// Best-effort: undo the link record if we can't persist.
-				_ = h.AdminFSAs.UnassignDevice(r.Context(), fsaID, deviceID)
+			switch err := h.DeviceFSAs.Create(r.Context(), deviceID, fsaID, scoped); {
+			case err == nil:
+				steps = append(steps, rollbackStep{device: deviceID, part: "fsa", undo: func(ctx context.Context) error {
+					return h.DeviceFSAs.Delete(ctx, deviceID, fsaID)
+				}})
+			case errors.Is(err, store.ErrAlreadyExists):
+			default:
+				if !h.rollbackAfter(r, err, steps) {
+					h.assignIncomplete(w, deviceID, fsaID)
+					return
+				}
 				writeError(w, http.StatusInternalServerError, "scope materialize: "+err.Error())
 				return
 			}
 		}
+		for _, t := range tmpls {
+			undo, err := h.Copies.Ensure(r.Context(), deviceID, fsaID, t)
+			if err == nil {
+				steps = append(steps, rollbackStep{device: deviceID, template: t.ID, part: "copy", undo: undo})
+				continue
+			}
+			if !h.rollbackAfter(r, err, steps) {
+				h.assignIncomplete(w, deviceID, fsaID)
+				return
+			}
+			h.copyRefused(w, r, err)
+			return
+		}
+
+		h.notify(r.Context(), "/edev/"+deviceID+"/fsa")
+		h.notify(r.Context(), programListHref(deviceID, fsaID))
 
 		writeJSON(w, http.StatusOK, map[string]string{
 			"device":  deviceID,
@@ -373,16 +447,61 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 			return
 		}
 
+		h.programMu.Lock()
+		defer h.programMu.Unlock()
+
+		if !slices.Contains(h.AdminFSAs.Devices(r.Context(), fsaID), deviceID) {
+			writeError(w, http.StatusNotFound, "assignment not found")
+			return
+		}
+
+		// Copies go before the assignment, so a removal that fails leaves
+		// the device assigned and the boot rebuild restores its copies.
+		tmpls := h.AdminFSAs.Templates(r.Context(), fsaID)
+		if len(tmpls) > 0 && h.Copies == nil {
+			h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+			return
+		}
+		var removed []string
+		notifyRemoved := func() {
+			for _, href := range removed {
+				h.notifyStatus(r.Context(), href, sep2.NotificationStatusCanceledDeleted)
+			}
+			if len(removed) > 0 {
+				h.notify(r.Context(), programListHref(deviceID, fsaID))
+			}
+		}
+		for _, t := range tmpls {
+			ok, err := h.Copies.Remove(r.Context(), deviceID, fsaID, t)
+			if err != nil {
+				var part *fsaprogram.PartError
+				if errors.As(err, &part) {
+					h.logUndoFailed(r, part.DeviceID, part.TemplateID, part.Part, err)
+				} else {
+					h.logUndoFailed(r, deviceID, t.ID, "copy", err)
+				}
+				notifyRemoved()
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf(
+					"unassign failed; device %s stays assigned to fsa %s, and its template copies are restored at the next restart", deviceID, fsaID))
+				return
+			}
+			if ok {
+				removed = append(removed, der.DERProgramHref(deviceID, fsaID, t.ID))
+			}
+		}
+
 		err := h.AdminFSAs.UnassignDevice(r.Context(), fsaID, deviceID)
+		notifyRemoved()
 		switch {
 		case err == nil:
-			// Best-effort cleanup of the scoped materialization.
 			if h.DeviceFSAs != nil {
 				if delErr := h.DeviceFSAs.Delete(r.Context(), deviceID, fsaID); delErr != nil && !errors.Is(delErr, store.ErrNotFound) {
-					// Logging only - the link record is already gone.
-					_ = delErr
+					// The assignment is gone; the in-memory FSA goes at the next restart.
+					h.logged(r).ErrorContext(r.Context(), "admin: device FSA left after unassign", "event", "device_fsa_delete_failed",
+						"device", deviceID, "fsa", fsaID, "error", delErr)
 				}
 			}
+			h.notify(r.Context(), "/edev/"+deviceID+"/fsa")
 			w.WriteHeader(http.StatusNoContent)
 		case errors.Is(err, store.ErrNotFound):
 			writeError(w, http.StatusNotFound, "assignment not found")
@@ -390,6 +509,13 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "unassign: "+err.Error())
 		}
 	}
+}
+
+// assignIncomplete answers an assignment whose rollback stopped partway: the
+// device stays assigned, and the boot rebuild completes its FSA and copies.
+func (h *AdminFSAHandler) assignIncomplete(w http.ResponseWriter, deviceID, fsaID string) {
+	writeError(w, http.StatusInternalServerError, fmt.Sprintf(
+		"assign failed; device %s stays assigned to fsa %s, and its template copies are completed at the next restart", deviceID, fsaID))
 }
 
 // extractFSAID parses /api/fsas/{id} into id, or returns "".

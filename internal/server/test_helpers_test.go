@@ -45,6 +45,11 @@ func newTestStores() *server.Stores {
 
 		FlowReservationResponseLifecycles: memory.NewScopedStore[dercontrol.LifecycleRecord](),
 	}
+	origins, err := memory.NewProgramOriginStore("")
+	if err != nil {
+		panic(err)
+	}
+	s.ProgramOrigins = origins
 	s.CommitmentLedger = server.NewCommitmentLedger(s)
 	return s
 }

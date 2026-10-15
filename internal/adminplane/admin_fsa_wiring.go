@@ -5,6 +5,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -61,5 +62,21 @@ func newAdminFSAHandler(stores *Stores) *handler.AdminFSAHandler {
 		DeviceFSAs:  stores.FSAs,
 		EndDevices:  stores.EndDevices,
 		DERPrograms: &derProgramHrefValidator{programs: stores.DERPrograms},
+		Copies:      templateCopies(stores),
+		Notifier:    stores.AdminNotifier,
+		PEN:         stores.PEN,
+	}
+}
+
+// templateCopies is the store set a program template is copied into, or nil
+// when any of them is unset, which leaves the template routes unmounted.
+func templateCopies(stores *Stores) *fsaprogram.Copies {
+	if store.IsAbsent(stores.DERPrograms) || store.IsAbsent(stores.DefaultDERControls) || stores.ProgramOrigins == nil {
+		return nil
+	}
+	return &fsaprogram.Copies{
+		Programs: stores.DERPrograms,
+		Defaults: stores.DefaultDERControls,
+		Origins:  stores.ProgramOrigins,
 	}
 }

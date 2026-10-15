@@ -1220,15 +1220,7 @@ func validProgramHref(href string) bool {
 	if !ok || strings.TrimSpace(href) != href {
 		return false
 	}
-	for _, seg := range []string{edev, fsa, derp} {
-		for i := 0; i < len(seg); i++ {
-			c := seg[i]
-			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '.' || c == '_' || c == '-') {
-				return false
-			}
-		}
-	}
-	return true
+	return validHrefSegment(edev) && validHrefSegment(fsa) && validHrefSegment(derp)
 }
 
 // normalizeMRID accepts exactly 32 hex digits, either case, and returns them
@@ -1256,19 +1248,7 @@ func newDERControlView(scope dercontrol.Scope, ctrl sep2.DERControl, lc dercontr
 		Description:        ctrl.Description,
 		CreationTime:       ctrl.CreationTime,
 	}
-	if b := ctrl.DERControlBase; b != nil {
-		v.DERControlBase = DERControlBaseView{OpModConnect: b.OpModConnect, OpModEnergize: b.OpModEnergize}
-		if b.OpModMaxLimW != nil {
-			m := uint16(*b.OpModMaxLimW)
-			v.DERControlBase.OpModMaxLimW = &m
-		}
-		if pf := b.OpModFixedPFInjectW; pf != nil {
-			v.DERControlBase.OpModFixedPFInjectW = &FixedPowerFactorView{Displacement: pf.Displacement, Excitation: pf.Excitation, Multiplier: pf.Multiplier}
-		}
-		if tw := b.OpModTargetW; tw != nil {
-			v.DERControlBase.OpModTargetW = &ActivePowerView{Value: tw.Value, Multiplier: tw.Multiplier}
-		}
-	}
+	v.DERControlBase = newDERControlBaseView(ctrl.DERControlBase)
 	if lc.GrantMRID != "" {
 		grant := lc.GrantMRID
 		v.ExecutesGrant = &grant
@@ -1277,6 +1257,24 @@ func newDERControlView(scope dercontrol.Scope, ctrl sep2.DERControl, lc dercontr
 		v.Interval = IntervalView{Start: ctrl.Interval.Start, Duration: ctrl.Interval.Duration}
 		st := dercontrol.DeriveStatus(now, ctrl.CreationTime, ctrl.Interval.Start, lc)
 		v.EventStatus = EventStatusView{CurrentStatus: st.CurrentStatus, Status: eventStatusName(st.CurrentStatus), DateTime: st.DateTime}
+	}
+	return v
+}
+
+func newDERControlBaseView(b *sep2.DERControlBase) DERControlBaseView {
+	if b == nil {
+		return DERControlBaseView{}
+	}
+	v := DERControlBaseView{OpModConnect: b.OpModConnect, OpModEnergize: b.OpModEnergize}
+	if b.OpModMaxLimW != nil {
+		m := uint16(*b.OpModMaxLimW)
+		v.OpModMaxLimW = &m
+	}
+	if pf := b.OpModFixedPFInjectW; pf != nil {
+		v.OpModFixedPFInjectW = &FixedPowerFactorView{Displacement: pf.Displacement, Excitation: pf.Excitation, Multiplier: pf.Multiplier}
+	}
+	if tw := b.OpModTargetW; tw != nil {
+		v.OpModTargetW = &ActivePowerView{Value: tw.Value, Multiplier: tw.Multiplier}
 	}
 	return v
 }

@@ -36,6 +36,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -128,7 +129,17 @@ func seedStores(ctx context.Context, cfg *config.Config, stores *Stores) error {
 		log.Printf("boot fixture loaded: %s", cfg.BootFixtureFile)
 	}
 
-	return fsaprogram.Reconcile(ctx, stores.AdminFSAs, stores.FSAs)
+	if err := fsaprogram.Reconcile(ctx, stores.AdminFSAs, stores.FSAs); err != nil {
+		return err
+	}
+	// A nil *ProgramOriginStore inside the interface would not compare
+	// equal to nil, so it is checked before it is wrapped.
+	if store.IsAbsent(stores.DERPrograms) || store.IsAbsent(stores.DefaultDERControls) || stores.ProgramOrigins == nil {
+		log.Printf("program template copies not rebuilt: a program store is not wired")
+		return nil
+	}
+	copies := fsaprogram.Copies{Programs: stores.DERPrograms, Defaults: stores.DefaultDERControls, Origins: stores.ProgramOrigins}
+	return fsaprogram.ReconcileCopies(ctx, stores.AdminFSAs, copies, log.Printf)
 }
 
 // newRunStores builds the stores Run serves, with the one commitment ledger

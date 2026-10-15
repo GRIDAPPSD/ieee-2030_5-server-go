@@ -167,6 +167,9 @@ func TestProgramOrigin_OnDiskShape(t *testing.T) {
 }
 
 func TestProgramOrigin_WriteRollsBackWhenPersistFails(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission checks do not apply when running as root")
+	}
 	t.Parallel()
 	ctx := context.Background()
 	dir := t.TempDir()

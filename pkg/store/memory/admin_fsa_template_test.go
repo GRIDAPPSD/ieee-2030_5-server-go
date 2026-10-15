@@ -312,6 +312,9 @@ func TestAdminFSATemplate_InvalidSnapshotRefused(t *testing.T) {
 // Each template write mutates memory before persisting; a write that cannot
 // reach disk must leave memory exactly as it was.
 func TestAdminFSATemplate_WriteRollsBackMemoryWhenPersistFails(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission checks do not apply when running as root")
+	}
 	t.Parallel()
 	orig := mkTemplate("derp-1", "MR1", "orig", 1, 0, 5000)
 
@@ -383,5 +386,60 @@ func TestAdminFSATemplate_WriteRollsBackMemoryWhenPersistFails(t *testing.T) {
 				t.Errorf("reloaded Templates(fsa-A) after a failed %s = %+v, want %+v", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestAdminFSATemplate_UpdateStoresACopy(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _ := seededFSA(t)
+	if err := s.CreateTemplate(ctx, "fsa-A", mkTemplate("derp-1", "MR1", "before", 1, 0, 5000)); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	updated := mkTemplate("derp-1", "MR1", "after", 1, 1, 6000)
+	if err := s.UpdateTemplate(ctx, "fsa-A", updated); err != nil {
+		t.Fatalf("UpdateTemplate: %v", err)
+	}
+	// The caller's value must not alias the stored one after an update.
+	*updated.DefaultControlBase.OpModMaxLimW = 1
+
+	got, err := s.Template(ctx, "fsa-A", "derp-1")
+	if err != nil {
+		t.Fatalf("Template: %v", err)
+	}
+	if v := *got.DefaultControlBase.OpModMaxLimW; v != 6000 {
+		t.Errorf("stored opModMaxLimW = %d, want 6000 untouched by the caller", v)
+	}
+}
+
+// A snapshot edited by hand may list templates out of id order; lookups rely
+// on the order, so the load must sort them.
+func TestAdminFSATemplate_UnsortedSnapshotLoadsSorted(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "fsas.json")
+	body := `{"version":1,"records":[{"id":"fsa-A","fsa":{},"templates":[` +
+		`{"id":"derp-3","mRID":"MR3"},{"id":"derp-1","mRID":"MR1"},{"id":"derp-2","mRID":"MR2"}]}]}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s, err := memory.NewAdminFSAStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	var ids []string
+	for _, tmpl := range s.Templates(ctx, "fsa-A") {
+		ids = append(ids, tmpl.ID)
+	}
+	if !equalSlices(ids, []string{"derp-1", "derp-2", "derp-3"}) {
+		t.Errorf("Templates(fsa-A) ids = %v, want id order", ids)
+	}
+	for _, id := range []string{"derp-1", "derp-2", "derp-3"} {
+		if got, err := s.Template(ctx, "fsa-A", id); err != nil || got.ID != id {
+			t.Errorf("Template(%s) = %+v, %v", id, got, err)
+		}
+	}
+	if err := s.DeleteTemplate(ctx, "fsa-A", "derp-1"); err != nil {
+		t.Errorf("DeleteTemplate(derp-1): %v", err)
 	}
 }

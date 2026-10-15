@@ -4,6 +4,7 @@ import DerControl from './DerControl.svelte'
 import * as api from '../lib/api'
 import type { DashboardDevice } from '../lib/dashboard'
 import { fmtTime } from '../lib/dercontrol'
+import { takeProgramsRequest } from '../lib/programsRequest'
 import type {
   DERControlCreated,
   DERControlListItem,
@@ -633,6 +634,31 @@ describe('DerControl: no DER programs (criterion 6)', () => {
     const note = await screen.findByTestId('der-control-no-programs')
     await fireEvent.click(within(note).getByRole('link', { name: 'FSAs tab' }))
     expect(window.location.pathname).toBe('/ui/fsas')
+  })
+
+  it('asks the Devices tab to open the chosen device Programs drawer when its link is clicked', async () => {
+    mockApi({ programsFor: () => ({ ok: true, data: { device: '0', programs: [] } }) })
+    window.history.pushState({}, '', '/ui/control')
+    takeProgramsRequest()
+    const { container } = render(DerControl, { devices })
+    await fireEvent.change(sel(container, '#controlDevice'), { target: { value: '0' } })
+
+    const note = await screen.findByTestId('der-control-no-programs')
+    await fireEvent.click(within(note).getByRole('link', { name: 'Devices tab' }))
+    expect(window.location.pathname).toBe('/ui/devices')
+    expect(takeProgramsRequest()).toBe('0')
+  })
+
+  it('leaves no request when the Devices link is modifier-clicked', async () => {
+    mockApi({ programsFor: () => ({ ok: true, data: { device: '0', programs: [] } }) })
+    window.history.pushState({}, '', '/ui/control')
+    takeProgramsRequest()
+    const { container } = render(DerControl, { devices })
+    await fireEvent.change(sel(container, '#controlDevice'), { target: { value: '0' } })
+
+    const note = await screen.findByTestId('der-control-no-programs')
+    await fireEvent.click(within(note).getByRole('link', { name: 'Devices tab' }), { ctrlKey: true })
+    expect(takeProgramsRequest()).toBe('')
   })
 
   it.each([

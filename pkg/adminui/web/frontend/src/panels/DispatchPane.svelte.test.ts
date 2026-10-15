@@ -8,6 +8,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/svelte'
 import DispatchPane from './DispatchPane.svelte'
 import * as api from '../lib/api'
+import { takeProgramsRequest } from '../lib/programsRequest'
 
 type Res =
   | { ok: true; data: unknown; serverTime?: number }
@@ -569,6 +570,17 @@ describe('DispatchPane, what the operator sees', () => {
     expect(note).toHaveTextContent('Add a program template on the FSAs tab')
     expect(within(note).getByRole('link', { name: 'FSAs tab' })).toHaveAttribute('href', '/ui/fsas')
     expect(within(note).getByRole('link', { name: 'Devices tab' })).toHaveAttribute('href', '/ui/devices')
+  })
+
+  it('asks the Devices tab to open the grant device Programs drawer when its link is clicked', async () => {
+    mockReads({ programs: [] })
+    mount()
+    takeProgramsRequest()
+    await pickGrantOnly()
+    const note = await screen.findByTestId('dispatch-no-programs')
+    await fireEvent.click(within(note).getByRole('link', { name: 'Devices tab' }))
+    expect(window.location.pathname).toBe('/ui/devices')
+    expect(takeProgramsRequest()).toBe('4')
   })
 
   it('shows an error, not an empty list, for a programs reply with no list', async () => {

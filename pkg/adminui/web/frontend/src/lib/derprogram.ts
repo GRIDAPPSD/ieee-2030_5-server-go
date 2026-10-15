@@ -306,3 +306,55 @@ export async function listAllPrograms(opts?: { signal?: AbortSignal }): Promise<
   }
   return { ok: true, data: { persists, programs } }
 }
+
+// A program's origin, as GET /api/der-programs reports it. A template copy
+// is owned by its FSA's template and is edited there; the other two are
+// edited on the device.
+export function isDeviceEditable(p: Pick<ProgramListItem, 'origin'>): boolean {
+  return p.origin === 'device' || p.origin === 'fixture'
+}
+
+const ORIGIN_LABELS: Record<string, string> = {
+  template: 'Template copy',
+  fixture: 'Fixture',
+  device: 'Device',
+}
+
+const RESTART_LABELS: Record<string, string> = {
+  kept: 'Kept on restart',
+  reseeded: 'Reseeded on restart',
+  gone: 'Lost on restart',
+}
+
+// An origin or onRestart value this build does not know is shown as the
+// server sent it, never as a guess.
+export function originLabel(origin: string): string {
+  return ORIGIN_LABELS[origin] ?? origin
+}
+
+export function restartLabel(onRestart: string): string {
+  return RESTART_LABELS[onRestart] ?? onRestart
+}
+
+export interface FsaGroup {
+  fsa: string
+  programs: ProgramListItem[]
+}
+
+// groupByFsa takes one device's programs from the whole catalog and groups
+// them by FSA, in first-seen order. assignedFsas adds the FSAs the device is
+// assigned to that hold no program yet, so a device program can be added
+// there.
+export function groupByFsa(items: ProgramListItem[], deviceId: string, assignedFsas: string[]): FsaGroup[] {
+  const groups = new Map<string, ProgramListItem[]>()
+  for (const p of items) {
+    if (p.device !== deviceId) continue
+    const list = groups.get(p.fsa)
+    if (list) list.push(p)
+    else groups.set(p.fsa, [p])
+  }
+  for (const fsa of assignedFsas) {
+    if (!groups.has(fsa)) groups.set(fsa, [])
+  }
+  return [...groups].map(([fsa, programs]) => ({ fsa, programs }))
+}

@@ -15,9 +15,13 @@ import {
   deleteTemplate,
   emptyForm,
   formFromProgram,
+  groupByFsa,
+  isDeviceEditable,
   listAllPrograms,
   listTemplates,
+  originLabel,
   refusalOf,
+  restartLabel,
   updateDeviceProgram,
   updateTemplate,
   type DefaultControlView,
@@ -403,5 +407,43 @@ describe('wire keys match the Go json tags', () => {
   it('reads the Go sources it compares against (the parser can fail)', () => {
     expect(tags(derprogramListGo, 'ProgramListReply')).toEqual(['limit', 'persists', 'programs', 'start', 'total'])
     expect(() => tags(derprogramGo, 'NoSuchStruct')).toThrow('not found')
+  })
+})
+
+describe('program origin helpers', () => {
+  const at = (over: Partial<ProgramListItem>): ProgramListItem => ({
+    device: '7', fsa: 'fsa-a', id: 'p', href: '/edev/7/fsa/fsa-a/derp/p', mRID: 'M', description: 'd',
+    primacy: 1, version: 1, origin: 'device', onRestart: 'kept', ...over,
+  })
+
+  it('offers device edit for device and fixture programs only', () => {
+    expect(isDeviceEditable({ origin: 'device' })).toBe(true)
+    expect(isDeviceEditable({ origin: 'fixture' })).toBe(true)
+    expect(isDeviceEditable({ origin: 'template' })).toBe(false)
+    expect(isDeviceEditable({ origin: 'imported' })).toBe(false)
+  })
+
+  it('words the known origins and restart values, and passes others through', () => {
+    expect(originLabel('template')).toBe('Template copy')
+    expect(originLabel('fixture')).toBe('Fixture')
+    expect(originLabel('device')).toBe('Device')
+    expect(originLabel('other')).toBe('other')
+    expect(restartLabel('kept')).toBe('Kept on restart')
+    expect(restartLabel('reseeded')).toBe('Reseeded on restart')
+    expect(restartLabel('gone')).toBe('Lost on restart')
+    expect(restartLabel('later')).toBe('later')
+  })
+
+  it('groups one device by FSA in first-seen order and adds assigned FSAs with no program', () => {
+    const groups = groupByFsa(
+      [at({ id: 'a' }), at({ id: 'x', device: '8' }), at({ id: 'b', fsa: 'fsa-b' }), at({ id: 'c' })],
+      '7',
+      ['fsa-b', 'fsa-z'],
+    )
+    expect(groups.map((g) => [g.fsa, g.programs.map((p) => p.id)])).toEqual([
+      ['fsa-a', ['a', 'c']],
+      ['fsa-b', ['b']],
+      ['fsa-z', []],
+    ])
   })
 })

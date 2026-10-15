@@ -27,14 +27,14 @@ describe('DeviceTable embedder columns', () => {
     const { container } = renderTable([device('/edev/1')], [])
     expect(headers()).toEqual([
       'SFDI', 'LFDI', 'Enabled', 'Comms', 'Last request',
-      'DER connection (reported)', 'Inverter state (reported)', 'Href', 'Assign FSA',
+      'DER connection (reported)', 'Inverter state (reported)', 'Href', 'Programs', 'Assign FSA',
     ])
-    expect(container.querySelectorAll('tbody tr:first-child td')).toHaveLength(9)
+    expect(container.querySelectorAll('tbody tr:first-child td')).toHaveLength(10)
   })
 
   it('treats an undefined columns prop like an empty list', () => {
     renderTable([device('/edev/1')])
-    expect(headers()).toHaveLength(9)
+    expect(headers()).toHaveLength(10)
   })
 
   it('adds one header per column in order, and the cell text in that column', () => {
@@ -45,7 +45,7 @@ describe('DeviceTable embedder columns', () => {
     const hs = headers()
     expect(hs).toContain('Name')
     expect(hs.indexOf('Name')).toBeLessThan(hs.indexOf('Site'))
-    expect(hs).toHaveLength(11)
+    expect(hs).toHaveLength(12)
     const nameCells = screen.getAllByTestId('device-column-name').map((c) => c.textContent?.trim())
     const siteCells = screen.getAllByTestId('device-column-site').map((c) => c.textContent?.trim())
     expect(nameCells).toEqual(['Pump A', 'Pump B'])
@@ -59,7 +59,7 @@ describe('DeviceTable embedder columns', () => {
 
   it('keeps the empty-state row spanning every column', () => {
     const { container } = renderTable([], [{ id: 'name', label: 'Name' }])
-    expect(container.querySelector('tbody td')?.getAttribute('colspan')).toBe('10')
+    expect(container.querySelector('tbody td')?.getAttribute('colspan')).toBe('11')
   })
 
   it('shows - for a device with no entry for the column', () => {

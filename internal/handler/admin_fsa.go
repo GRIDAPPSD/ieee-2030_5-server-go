@@ -35,7 +35,8 @@ import (
 //	GET    /api/fsas/{id}/der-programs            list program templates
 //	DELETE /api/fsas/{id}/programs?href=<enc>     detach
 //	POST   /api/devices/{id}/fsa-assignment       assign device to FSA
-//	DELETE /api/devices/{id}/fsa-assignment?fsaHref=<enc>  unassign
+//	DELETE /api/devices/{id}/fsa-assignment?fsaHref=<enc>  unassign (409 while device programs sit under it)
+//	POST   /api/devices/{id}/fsas/{fsaId}/der-programs     create a device program (admin_derprogram.go)
 //	GET    /api/topology                          SY -> FD -> SP -> DEV tree
 //
 // Two-store split: the management plane lives in *memory.AdminFSAStore.
@@ -455,6 +456,24 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 			return
 		}
 
+		// A device program is the operator's own, so unlike a template copy
+		// it is never removed on the operator's behalf (#921).
+		if h.Copies != nil {
+			held, err := h.Copies.DevicePrograms(r.Context(), deviceID, fsaID)
+			if err != nil {
+				h.templateFailed(w, r, "device_programs", err)
+				return
+			}
+			if len(held) > 0 {
+				writeJSON(w, http.StatusConflict, deviceProgramsPresent{
+					Error:    "device programs sit under this fsa and must be deleted before the device is unassigned: " + strings.Join(held, ", "),
+					Code:     "device_programs_present",
+					Programs: held,
+				})
+				return
+			}
+		}
+
 		// Copies go before the assignment, so a removal that fails leaves
 		// the device assigned and the boot rebuild restores its copies.
 		tmpls := h.AdminFSAs.Templates(r.Context(), fsaID)
@@ -509,6 +528,14 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "unassign: "+err.Error())
 		}
 	}
+}
+
+// deviceProgramsPresent is the 409 body of an unassign refused by device
+// programs; Programs lists their ids.
+type deviceProgramsPresent struct {
+	Error    string   `json:"error"`
+	Code     string   `json:"code"`
+	Programs []string `json:"programs"`
 }
 
 // assignIncomplete answers an assignment whose rollback stopped partway: the

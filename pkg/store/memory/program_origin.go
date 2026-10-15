@@ -116,3 +116,13 @@ func (s *ProgramOriginStore) Update(ctx context.Context, deviceID, programID str
 func (s *ProgramOriginStore) Delete(ctx context.Context, deviceID, programID string) error {
 	return s.inner.Delete(ctx, deviceID, programID)
 }
+
+// Parents returns the device ids that hold an origin, ascending.
+func (s *ProgramOriginStore) Parents(ctx context.Context) ([]string, error) {
+	return s.inner.Parents(ctx)
+}
+
+// IDs returns the program ids of deviceID that have an origin, ascending.
+func (s *ProgramOriginStore) IDs(deviceID string) []string {
+	return s.inner.IDs(deviceID)
+}

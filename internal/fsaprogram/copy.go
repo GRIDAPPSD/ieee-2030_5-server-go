@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -40,6 +42,8 @@ type OriginStore interface {
 	Get(ctx context.Context, deviceID, programID string) (memory.ProgramOrigin, error)
 	Create(ctx context.Context, deviceID, programID string, o memory.ProgramOrigin) error
 	Delete(ctx context.Context, deviceID, programID string) error
+	Parents(ctx context.Context) ([]string, error)
+	IDs(deviceID string) []string
 }
 
 // Copies are the stores a template copy spans. Every write path uses Ensure,
@@ -178,11 +182,27 @@ func (c Copies) deleteParts(ctx context.Context, deviceID, fsaID, programID stri
 // parts this call wrote are deleted again; an undo that fails returns a
 // *PartError and leaves a prefix of the copy for Ensure to complete.
 func (c Copies) Ensure(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate) (undo func(context.Context) error, err error) {
+	return c.ensure(ctx, deviceID, fsaID, t, memory.ProgramOrigin{Kind: memory.ProgramOriginTemplate, FSAID: fsaID, TemplateID: t.ID})
+}
+
+// EnsureDevice writes the program t describes on deviceID alone, recorded as a
+// device program. Unlike Ensure it never completes a partial write: an id or
+// mRID the device already holds in any form is ErrCopyConflict. The undo
+// contract is Ensure's.
+func (c Copies) EnsureDevice(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate) (undo func(context.Context) error, err error) {
+	return c.ensure(ctx, deviceID, fsaID, t, memory.ProgramOrigin{Kind: memory.ProgramOriginDevice, FSAID: fsaID})
+}
+
+func (c Copies) ensure(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate, origin memory.ProgramOrigin) (undo func(context.Context) error, err error) {
 	if t.DefaultMRID == "" {
 		return nil, fmt.Errorf("program template %s has no default control mRID", t.ID)
 	}
-	if _, err := c.Check(ctx, deviceID, fsaID, t); err != nil {
+	present, err := c.Check(ctx, deviceID, fsaID, t)
+	if err != nil {
 		return nil, err
+	}
+	if present && origin.Kind == memory.ProgramOriginDevice {
+		return nil, fmt.Errorf("%w: program id %s is taken on device %s", ErrCopyConflict, t.ID, deviceID)
 	}
 	var written []string
 	undo = func(ctx context.Context) error {
@@ -201,7 +221,7 @@ func (c Copies) Ensure(ctx context.Context, deviceID, fsaID string, t memory.Pro
 		{PartOrigin,
 			func() error { _, err := c.Origins.Get(ctx, deviceID, t.ID); return err },
 			func() error {
-				return c.Origins.Create(ctx, deviceID, t.ID, memory.ProgramOrigin{Kind: memory.ProgramOriginTemplate, FSAID: fsaID, TemplateID: t.ID})
+				return c.Origins.Create(ctx, deviceID, t.ID, origin)
 			}},
 		{PartDefault,
 			func() error { _, err := c.Defaults.Get(ctx, scope, coresingleton.SingletonKey); return err },
@@ -248,6 +268,35 @@ func (c Copies) Remove(ctx context.Context, deviceID, fsaID string, t memory.Pro
 	return true, nil
 }
 
+// DevicePrograms returns the ids of the device programs recorded under fsaID
+// on deviceID. A recorded origin whose program is gone is not listed: it has
+// nothing to protect from an unassign.
+func (c Copies) DevicePrograms(ctx context.Context, deviceID, fsaID string) ([]string, error) {
+	list, err := c.Programs.List(ctx, deviceID, store.ListOptions{Unbounded: true})
+	if err != nil {
+		return nil, fmt.Errorf("listing programs of device %s: %w", deviceID, err)
+	}
+	var ids []string
+	for _, p := range list.Items {
+		_, _, id, ok := derhref.Program(p.Href)
+		if !ok {
+			continue
+		}
+		origin, err := c.Origins.Get(ctx, deviceID, id)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading origin %s/%s: %w", deviceID, id, err)
+		}
+		if origin.Kind == memory.ProgramOriginDevice && origin.FSAID == fsaID {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids, nil
+}
+
 // ReconcileCopies writes every missing part of every template copy for every
 // recorded assignment. A copy that conflicts with a fixture or device program
 // is logged and skipped, so one collision does not stop the boot; any other
@@ -269,6 +318,38 @@ func ReconcileCopies(ctx context.Context, admin *memory.AdminFSAStore, copies Co
 					return fmt.Errorf("rebuild program template %q of FSA %q for device %q: %w", t.ID, fsaID, deviceID, err)
 				}
 			}
+		}
+	}
+	return copies.removeDeviceProgramPartials(ctx, logf)
+}
+
+// removeDeviceProgramPartials deletes what a failed device-program create
+// left behind: a device origin whose program is gone. Every removal deletes
+// the origin last, so any partial undo leaves the origin to find it by. A
+// device origin with its program is a whole program and stays.
+func (c Copies) removeDeviceProgramPartials(ctx context.Context, logf func(format string, args ...any)) error {
+	devices, err := c.Origins.Parents(ctx)
+	if err != nil {
+		return fmt.Errorf("listing devices with program origins: %w", err)
+	}
+	for _, deviceID := range devices {
+		for _, programID := range c.Origins.IDs(deviceID) {
+			origin, err := c.Origins.Get(ctx, deviceID, programID)
+			if errors.Is(err, store.ErrNotFound) || (err == nil && origin.Kind != memory.ProgramOriginDevice) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("reading origin %s/%s: %w", deviceID, programID, err)
+			}
+			if _, err := c.Programs.Get(ctx, deviceID, programID); err == nil {
+				continue
+			} else if !errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("reading program %s/%s: %w", deviceID, programID, err)
+			}
+			if err := c.deleteParts(ctx, deviceID, origin.FSAID, programID, []string{PartOrigin, PartDefault, PartProgram}); err != nil {
+				return fmt.Errorf("removing the partial device program %s on device %s: %w", programID, deviceID, err)
+			}
+			logf("removed the partial device program %q of device %q left by a failed create", programID, deviceID)
 		}
 	}
 	return nil

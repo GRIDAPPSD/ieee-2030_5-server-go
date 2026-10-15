@@ -72,7 +72,7 @@ type Stores struct {
 	// #566 admin DER control routes write it through
 	// internal/dercontrol.Issuer. Nil leaves those routes unmounted.
 	DERControlLifecycles store.ScopedStore[dercontrol.LifecycleRecord]
-	DefaultDERControls   *memory.ScopedStore[sep2.DefaultDERControl]
+	DefaultDERControls   store.ScopedStore[sep2.DefaultDERControl]
 	DERCurves            *memory.Store[sep2.DERCurve]
 
 	// FSA store

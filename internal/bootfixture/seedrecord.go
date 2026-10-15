@@ -19,6 +19,10 @@ const (
 	// tracking would retry Create on a record the first boot already wrote,
 	// and fail with ErrAlreadyExists (acceptance criterion 3).
 	kindDERControl = "DERControl"
+	// kindDefaultDERControl (GRIDAPPSD/ieee-2030_5-server-go#917): a program's
+	// default control persists, so a fixture default an operator edited must
+	// not be recreated over the edit.
+	kindDefaultDERControl = "DefaultDERControl"
 
 	seedRecordVersion = 1
 )
@@ -72,7 +76,7 @@ func readSeedRecord(path string) (map[seedKey]struct{}, error) {
 }
 
 // wellFormed reports whether the key has the shape its kind is written with:
-// an EndDevice has no parent and a DERProgram always has one.
+// an EndDevice has no parent and every other kind always has one.
 func (k seedKey) wellFormed() bool {
 	if k.ID == "" {
 		return false
@@ -80,7 +84,7 @@ func (k seedKey) wellFormed() bool {
 	switch k.Kind {
 	case kindEndDevice:
 		return k.Parent == ""
-	case kindDERProgram, kindDERControl:
+	case kindDERProgram, kindDERControl, kindDefaultDERControl:
 		return k.Parent != ""
 	default:
 		return false

@@ -12,7 +12,7 @@ import (
 // #163 wiring: build the *handler.AdminFSAHandler from the server's
 // stores plus a tiny adapter that turns the existing DERProgram scoped
 // store into a DERProgramHrefValidator (the program href shape is
-// `/edev/{id}/fsa/{fsaId}/derp/{derpId}`: we parse to (edev, derp) and
+// `/edev/{id}/fsa/{fsaId}/derp/{derpId}`: we parse to (edev, fsa, derp) and
 // probe the store).
 
 // derProgramHrefValidator adapts a scoped DERProgram store to
@@ -30,19 +30,23 @@ type derProgramHrefValidator struct {
 
 // HasProgram returns true if href resolves to an existing DERProgram.
 // Spec-shape href: /edev/{id}/fsa/{fsaId}/derp/{derpId}. Anything else
-// falls through as "not found": the admin endpoint will surface 404.
+// falls through as "not found": the admin endpoint will surface 404. The
+// FSA segment must be the one the stored program's own href names, since
+// the protocol route serves a program under that FSA only (#916).
 func (v *derProgramHrefValidator) HasProgram(ctx context.Context, href string) bool {
 	if v == nil || v.programs == nil {
 		return false
 	}
-	edevID, _, derpID, ok := derhref.Program(href)
+	edevID, fsaID, derpID, ok := derhref.Program(href)
 	if !ok {
 		return false
 	}
-	if _, err := v.programs.Get(ctx, edevID, derpID); err != nil {
+	prog, err := v.programs.Get(ctx, edevID, derpID)
+	if err != nil {
 		return false
 	}
-	return true
+	_, ownFSA, _, ok := derhref.Program(prog.Href)
+	return ok && ownFSA == fsaID
 }
 
 // newAdminFSAHandler builds the handler from the server's stores. Returns

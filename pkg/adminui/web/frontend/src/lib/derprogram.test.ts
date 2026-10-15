@@ -1,0 +1,407 @@
+// The body builder mirrors the server's validation (internal/handler
+// admin_derprogram.go buildProgramEdit), so each rule is pinned by the
+// message the server would have sent. The request wrappers are asserted by
+// the method, path and body that reach fetch, since a wrong verb or an
+// unescaped id would only show against a live server.
+/// <reference types="node" />
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  buildProgramBody,
+  createDeviceProgram,
+  createTemplate,
+  deleteDeviceProgram,
+  deleteTemplate,
+  emptyForm,
+  formFromProgram,
+  listAllPrograms,
+  listTemplates,
+  refusalOf,
+  updateDeviceProgram,
+  updateTemplate,
+  type DefaultControlView,
+  type ProgramBody,
+  type ProgramFormValues,
+  type ProgramListItem,
+  type ProgramTemplate,
+} from './derprogram'
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+function form(over: Partial<ProgramFormValues> = {}): ProgramFormValues {
+  return { ...emptyForm(), description: 'roof fleet', primacy: '65', controlType: 'connect', ...over }
+}
+
+function fetchSpy(status: number, body: unknown) {
+  return vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => (body === undefined ? Promise.reject(new Error('empty')) : Promise.resolve(body)),
+  } as Response)
+}
+
+describe('buildProgramBody', () => {
+  it('builds a connect template body with no value fields', () => {
+    expect(buildProgramBody(form(), { requireDefault: true })).toEqual({
+      ok: true,
+      body: { description: 'roof fleet', primacy: 65, defaultControl: { type: 'connect' } },
+    })
+  })
+
+  it('sends an mRID only when one was typed, trimmed', () => {
+    const r = buildProgramBody(form({ mRID: '  0123456789abcdef0123456789abcdef ' }), { requireDefault: true })
+    expect(r.ok && r.body.mRID).toBe('0123456789abcdef0123456789abcdef')
+  })
+
+  it('maps each control type to the value shape the server reads', () => {
+    const max = buildProgramBody(form({ controlType: 'maxLimW', maxLimW: '5000' }), { requireDefault: true })
+    expect(max.ok && max.body.defaultControl).toEqual({ type: 'maxLimW', maxLimW: 5000 })
+
+    const pf = buildProgramBody(
+      form({ controlType: 'fixedPFInjectW', displacement: '950', excitation: 'true' }),
+      { requireDefault: true },
+    )
+    expect(pf.ok && pf.body.defaultControl).toEqual({
+      type: 'fixedPFInjectW',
+      powerFactor: { displacement: 950, excitation: true },
+    })
+
+    const tw = buildProgramBody(
+      form({ controlType: 'targetW', targetValue: '-1200', targetMultiplier: '-1' }),
+      { requireDefault: true },
+    )
+    expect(tw.ok && tw.body.defaultControl).toEqual({ type: 'targetW', targetW: { value: -1200, multiplier: -1 } })
+  })
+
+  it('leaves a blank target multiplier to the server default of 0', () => {
+    const tw = buildProgramBody(form({ controlType: 'targetW', targetValue: '7' }), { requireDefault: true })
+    expect(tw.ok && tw.body.defaultControl).toEqual({ type: 'targetW', targetW: { value: 7 } })
+  })
+
+  it.each<[string, Partial<ProgramFormValues>, string]>([
+    ['blank description', { description: '' }, 'description: 1 to 32 printable ASCII characters required'],
+    ['33-octet description', { description: 'x'.repeat(33) }, 'description: 1 to 32 printable ASCII characters required'],
+    ['non-ASCII description', { description: 'caf\u00e9' }, 'description: 1 to 32 printable ASCII characters required'],
+    ['blank primacy', { primacy: '' }, 'primacy: must be 0, 1, 2 or 65 to 191'],
+    ['primacy 3', { primacy: '3' }, 'primacy: must be 0, 1, 2 or 65 to 191'],
+    ['primacy 192', { primacy: '192' }, 'primacy: must be 0, 1, 2 or 65 to 191'],
+    ['fractional primacy', { primacy: '65.5' }, 'primacy: must be 0, 1, 2 or 65 to 191'],
+    ['short mRID', { mRID: 'abc' }, 'mRID: must be 32 hex digits, not the reserved form whose first 24 digits are F'],
+    [
+      'reserved mRID',
+      { mRID: 'FFFFFFFFFFFFFFFFFFFFFFFF00000001' },
+      'mRID: must be 32 hex digits, not the reserved form whose first 24 digits are F',
+    ],
+    ['no control type', { controlType: '' }, 'defaultControl.type: required'],
+    ['maxLimW blank', { controlType: 'maxLimW' }, 'defaultControl.maxLimW: required for type maxLimW'],
+    ['maxLimW 10001', { controlType: 'maxLimW', maxLimW: '10001' }, 'defaultControl.maxLimW: must be 0 to 10000'],
+    [
+      'displacement 0',
+      { controlType: 'fixedPFInjectW', displacement: '0' },
+      'defaultControl.powerFactor.displacement: must be 1 to 1000',
+    ],
+    [
+      'displacement blank',
+      { controlType: 'fixedPFInjectW' },
+      'defaultControl.powerFactor.displacement: required',
+    ],
+    [
+      'targetW blank',
+      { controlType: 'targetW' },
+      'defaultControl.targetW.value: required',
+    ],
+    [
+      'targetW out of range',
+      { controlType: 'targetW', targetValue: '32768' },
+      'defaultControl.targetW.value: must be -32768 to 32767',
+    ],
+    [
+      'multiplier 10',
+      { controlType: 'targetW', targetValue: '1', targetMultiplier: '10' },
+      'defaultControl.targetW.multiplier: must be -9 to 9',
+    ],
+  ])('refuses %s with the server wording', (_name, over, message) => {
+    expect(buildProgramBody(form(over), { requireDefault: true })).toEqual({ ok: false, error: message })
+  })
+
+  it.each<[string, Partial<ProgramFormValues>, unknown]>([
+    ['primacy 0', { primacy: '0' }, { primacy: 0 }],
+    ['primacy 1', { primacy: '1' }, { primacy: 1 }],
+    ['primacy 2', { primacy: '2' }, { primacy: 2 }],
+    ['primacy 65', { primacy: '65' }, { primacy: 65 }],
+    ['primacy 191', { primacy: '191' }, { primacy: 191 }],
+    ['32-octet description', { description: 'x'.repeat(32) }, { description: 'x'.repeat(32) }],
+    ['1-octet description', { description: 'x' }, { description: 'x' }],
+    ['maxLimW 0', { controlType: 'maxLimW', maxLimW: '0' }, { defaultControl: { type: 'maxLimW', maxLimW: 0 } }],
+    [
+      'maxLimW 10000',
+      { controlType: 'maxLimW', maxLimW: '10000' },
+      { defaultControl: { type: 'maxLimW', maxLimW: 10000 } },
+    ],
+    [
+      'displacement 1',
+      { controlType: 'fixedPFInjectW', displacement: '1' },
+      { defaultControl: { type: 'fixedPFInjectW', powerFactor: { displacement: 1, excitation: false } } },
+    ],
+    [
+      'displacement 1000',
+      { controlType: 'fixedPFInjectW', displacement: '1000' },
+      { defaultControl: { type: 'fixedPFInjectW', powerFactor: { displacement: 1000, excitation: false } } },
+    ],
+    [
+      'targetW -32768',
+      { controlType: 'targetW', targetValue: '-32768' },
+      { defaultControl: { type: 'targetW', targetW: { value: -32768 } } },
+    ],
+    [
+      'targetW 32767',
+      { controlType: 'targetW', targetValue: '32767' },
+      { defaultControl: { type: 'targetW', targetW: { value: 32767 } } },
+    ],
+    [
+      'multiplier -9',
+      { controlType: 'targetW', targetValue: '1', targetMultiplier: '-9' },
+      { defaultControl: { type: 'targetW', targetW: { value: 1, multiplier: -9 } } },
+    ],
+    [
+      'multiplier 9',
+      { controlType: 'targetW', targetValue: '1', targetMultiplier: '9' },
+      { defaultControl: { type: 'targetW', targetW: { value: 1, multiplier: 9 } } },
+    ],
+    [
+      'mRID just short of the reserved form',
+      { mRID: 'FFFFFFFFFFFFFFFFFFFFFFFE00000001' },
+      { mRID: 'FFFFFFFFFFFFFFFFFFFFFFFE00000001' },
+    ],
+  ])('accepts the edge value %s', (_name, over, expected) => {
+    const r = buildProgramBody(form(over), { requireDefault: true })
+    expect(r.ok).toBe(true)
+    expect(r.ok && r.body).toMatchObject(expected as object)
+  })
+
+  it.each<[string, string]>([
+    ['a lowercase reserved mRID', 'ffffffffffffffffffffffff00000001'],
+    ['a 33-digit mRID', '0123456789abcdef0123456789abcdef0'],
+  ])('refuses %s', (_name, mRID) => {
+    expect(buildProgramBody(form({ mRID }), { requireDefault: true }).ok).toBe(false)
+  })
+
+  it('omits the default control on an edit that does not ask for one', () => {
+    const r = buildProgramBody(form({ controlType: '' }), { requireDefault: false })
+    expect(r).toEqual({ ok: true, body: { description: 'roof fleet', primacy: 65 } })
+  })
+})
+
+describe('formFromProgram', () => {
+  const tmpl = (base: ProgramTemplate['defaultControl']['derControlBase'], type: string): ProgramTemplate => ({
+    id: 'derp-1',
+    mRID: 'AB',
+    description: 'd',
+    primacy: 1,
+    version: 3,
+    defaultControl: { mRID: 'CD', type, derControlBase: base },
+    copies: [],
+  })
+
+  it('round-trips a stored default control through the form into the same body', () => {
+    const t = tmpl({ opModFixedPFInjectW: { displacement: 900, excitation: true, multiplier: -3 } }, 'fixedPFInjectW')
+    const r = buildProgramBody(formFromProgram(t), { requireDefault: true })
+    expect(r.ok && r.body).toEqual({
+      description: 'd',
+      primacy: 1,
+      defaultControl: { type: 'fixedPFInjectW', powerFactor: { displacement: 900, excitation: true } },
+    })
+  })
+
+  it('reads maxLimW and targetW back as strings the inputs show', () => {
+    const m = formFromProgram(tmpl({ opModMaxLimW: 7500 }, 'maxLimW'))
+    expect([m.controlType, m.maxLimW]).toEqual(['maxLimW', '7500'])
+    const w = formFromProgram(tmpl({ opModTargetW: { value: -5, multiplier: 2 } }, 'targetW'))
+    expect([w.controlType, w.targetValue, w.targetMultiplier]).toEqual(['targetW', '-5', '2'])
+  })
+
+  it('leaves the control blank for a program with no default control view', () => {
+    const f = formFromProgram({ id: 'x', mRID: 'AB', description: 'd', primacy: 0, version: 1 })
+    expect(f.controlType).toBe('')
+  })
+})
+
+describe('refusalOf', () => {
+  it('keeps the code and the live controls of a delete conflict', () => {
+    const r = refusalOf({
+      ok: false,
+      status: 409,
+      error: 'cancel these controls, or wait for them to end, before deleting the program',
+      body: { error: 'x', code: 'live_controls', controls: ['C1', 'C2'] },
+    })
+    expect(r).toEqual({
+      status: 409,
+      message: 'cancel these controls, or wait for them to end, before deleting the program',
+      code: 'live_controls',
+      controls: ['C1', 'C2'],
+    })
+  })
+
+  it('has no code and no controls for a plain error', () => {
+    expect(refusalOf({ ok: false, status: 404, error: 'fsa not found', body: { error: 'fsa not found' } })).toEqual({
+      status: 404,
+      message: 'fsa not found',
+      code: undefined,
+      controls: [],
+    })
+  })
+})
+
+describe('template requests', () => {
+  it('lists, creates, updates and deletes against the escaped FSA path', async () => {
+    const spy = fetchSpy(200, { templates: [] })
+    await listTemplates('fsa/a')
+    expect(spy.mock.calls[0][0]).toBe('/api/fsas/fsa%2Fa/der-programs')
+    expect((spy.mock.calls[0][1] as RequestInit).method).toBe('GET')
+
+    await createTemplate('fsa-a', { description: 'd', primacy: 1 })
+    expect(spy.mock.calls[1][0]).toBe('/api/fsas/fsa-a/der-programs')
+    expect((spy.mock.calls[1][1] as RequestInit).method).toBe('POST')
+
+    await updateTemplate('fsa-a', 'derp-1', { description: 'e', primacy: 2 })
+    expect(spy.mock.calls[2][0]).toBe('/api/fsas/fsa-a/der-programs/derp-1')
+    expect((spy.mock.calls[2][1] as RequestInit).method).toBe('PUT')
+
+    await deleteTemplate('fsa-a', 'derp-1')
+    expect(spy.mock.calls[3][0]).toBe('/api/fsas/fsa-a/der-programs/derp-1')
+    expect((spy.mock.calls[3][1] as RequestInit).method).toBe('DELETE')
+  })
+})
+
+describe('device program requests', () => {
+  it('uses the device routes, not the template routes', async () => {
+    const spy = fetchSpy(200, {})
+    await createDeviceProgram('7', 'fsa-a', { description: 'd', primacy: 1 })
+    expect(spy.mock.calls[0][0]).toBe('/api/devices/7/fsas/fsa-a/der-programs')
+    expect((spy.mock.calls[0][1] as RequestInit).method).toBe('POST')
+
+    await updateDeviceProgram('7', 'derp-9', { description: 'd', primacy: 1 })
+    expect(spy.mock.calls[1][0]).toBe('/api/devices/7/der-programs/derp-9')
+    expect((spy.mock.calls[1][1] as RequestInit).method).toBe('PUT')
+
+    await deleteDeviceProgram('7', 'derp-9')
+    expect(spy.mock.calls[2][0]).toBe('/api/devices/7/der-programs/derp-9')
+    expect((spy.mock.calls[2][1] as RequestInit).method).toBe('DELETE')
+  })
+})
+
+describe('listAllPrograms', () => {
+  const item = (id: string) => ({
+    device: '7', fsa: 'fsa-a', id, href: `/edev/7/fsa/fsa-a/derp/${id}`, mRID: id, description: id,
+    primacy: 1, version: 1, origin: 'template', onRestart: 'kept',
+  })
+
+  it('pages until every program is read and reports the persists flag', async () => {
+    const pages = [
+      { persists: true, total: 3, start: 0, limit: 2, programs: [item('a'), item('b')] },
+      { persists: true, total: 3, start: 2, limit: 2, programs: [item('c')] },
+    ]
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(pages.shift()) } as Response),
+    )
+
+    const res = await listAllPrograms()
+
+    expect(res.ok && res.data.programs.map((p) => p.id)).toEqual(['a', 'b', 'c'])
+    expect(res.ok && res.data.persists).toBe(true)
+    expect(spy.mock.calls.map((c) => c[0])).toEqual([
+      '/api/der-programs?limit=500&start=0',
+      '/api/der-programs?limit=500&start=2',
+    ])
+  })
+
+  it('stops on an empty page instead of looping when the total over-counts', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ persists: false, total: 9, start: 0, limit: 500, programs: [] }),
+    } as Response)
+
+    const res = await listAllPrograms()
+
+    expect(res.ok && res.data.programs).toEqual([])
+    expect(res.ok && res.data.persists).toBe(false)
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops after 100 pages when the total never converges', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ persists: true, total: 1e9, programs: [item('x')] }),
+      } as Response),
+    )
+
+    const res = await listAllPrograms()
+
+    expect(spy).toHaveBeenCalledTimes(100)
+    expect(res.ok && res.data.programs).toHaveLength(100)
+  })
+
+  it('returns the refusal of a failed page as given', async () => {
+    fetchSpy(500, { error: 'program list failed' })
+    const res = await listAllPrograms()
+    expect(res).toMatchObject({ ok: false, status: 500, error: 'program list failed' })
+  })
+
+  it('rejects a reply with no programs list rather than reading it as empty', async () => {
+    fetchSpy(200, { persists: true, total: 1 })
+    const res = await listAllPrograms()
+    expect(res).toMatchObject({ ok: false, error: 'the program list reply has no programs list' })
+  })
+})
+
+// The TypeScript wire shapes are written by hand, so each one is held to the
+// json tags of the Go struct that serializes it. A renamed tag on either side
+// fails here instead of surfacing as an undefined field in the panel.
+describe('wire keys match the Go json tags', () => {
+  const goSource = (name: string) =>
+    readFileSync(resolve(import.meta.dirname, '../../../../../../internal/handler', name), 'utf8')
+  const derprogramGo = goSource('admin_derprogram.go')
+  const derprogramListGo = goSource('admin_derprogram_list.go')
+
+  function tags(source: string, struct: string): string[] {
+    const m = new RegExp(`type ${struct} struct \\{([\\s\\S]*?)\\n\\}`).exec(source)
+    if (!m) throw new Error(`struct ${struct} not found`)
+    return [...m[1].matchAll(/json:"([^",]+)/g)].map((t) => t[1]).sort()
+  }
+
+  // A Record over keyof makes the compiler reject a key added to or dropped
+  // from the interface without updating this list.
+  const templateKeys: Record<keyof ProgramTemplate, true> = {
+    id: true, mRID: true, description: true, primacy: true, version: true, defaultControl: true, copies: true,
+  }
+  const listItemKeys: Record<keyof ProgramListItem, true> = {
+    device: true, fsa: true, id: true, href: true, mRID: true, description: true, primacy: true, version: true,
+    origin: true, templateId: true, onRestart: true,
+  }
+  const bodyKeys: Record<keyof Required<ProgramBody>, true> = {
+    description: true, primacy: true, mRID: true, defaultControl: true,
+  }
+  const defaultControlKeys: Record<keyof DefaultControlView, true> = { mRID: true, type: true, derControlBase: true }
+  const keys = (r: Record<string, true>) => Object.keys(r).sort()
+
+  it('ProgramTemplate, DefaultControlView and ProgramBody match admin_derprogram.go', () => {
+    expect(keys(templateKeys)).toEqual(tags(derprogramGo, 'ProgramTemplateView'))
+    expect(keys(defaultControlKeys)).toEqual(tags(derprogramGo, 'ProgramDefaultControlView'))
+    expect(keys(bodyKeys)).toEqual(tags(derprogramGo, 'programTemplateBody'))
+  })
+
+  it('ProgramListItem matches admin_derprogram_list.go', () => {
+    expect(keys(listItemKeys)).toEqual(tags(derprogramListGo, 'ProgramListItem'))
+  })
+
+  it('reads the Go sources it compares against (the parser can fail)', () => {
+    expect(tags(derprogramListGo, 'ProgramListReply')).toEqual(['limit', 'persists', 'programs', 'start', 'total'])
+    expect(() => tags(derprogramGo, 'NoSuchStruct')).toThrow('not found')
+  })
+})

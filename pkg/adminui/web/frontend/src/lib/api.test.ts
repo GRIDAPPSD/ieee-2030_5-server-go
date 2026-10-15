@@ -2,7 +2,7 @@
 // with no body at all, and feeding an empty body to json() rejects, which
 // would turn a successful delete into a reported failure.
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { deleteJSON, fetchJSON, postBody, postJSON } from './api'
+import { deleteJSON, fetchJSON, postBody, postJSON, putJSON } from './api'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -188,5 +188,19 @@ describe('api', () => {
 
     expect(abortedAtSend).toBe(true)
     expect(res).toEqual({ ok: false, error: 'request cancelled', status: 0 })
+  })
+})
+
+describe('putJSON', () => {
+  it('sends a JSON body with the PUT method', async () => {
+    const spy = stubFetch({ ok: true, status: 200, json: () => Promise.resolve({ version: 2 }) })
+
+    const res = await putJSON('/api/fsas/a/der-programs/p', { description: 'd' })
+
+    expect(res).toEqual({ ok: true, data: { version: 2 } })
+    const init = spy.mock.calls[0][1] as RequestInit
+    expect(init.method).toBe('PUT')
+    expect(init.body).toBe('{"description":"d"}')
+    expect(init.headers).toEqual({ 'Content-Type': 'application/json' })
   })
 })

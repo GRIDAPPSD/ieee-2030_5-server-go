@@ -69,4 +69,23 @@ describe('FsaCatalog', () => {
     expect(screen.getByTestId('fsa-catalog-empty')).toHaveTextContent('No FSA templates created yet.')
     expect(screen.queryByTestId('fsa-catalog-table')).toBeNull()
   })
+
+  it('reads each FSA templates by its mRID, not its href', async () => {
+    const get = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ templates: [] }),
+    } as Response)
+
+    render(FsaCatalog, { props: { fsas, onChanged: () => {} } })
+
+    expect(await screen.findByTestId('fsa-templates-fsa-a')).toBeInTheDocument()
+    expect(screen.getByTestId('fsa-templates-fsa-b')).toBeInTheDocument()
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2))
+    expect(get.mock.calls.map((c) => c[0]).sort()).toEqual([
+      '/api/fsas/fsa-a/der-programs',
+      '/api/fsas/fsa-b/der-programs',
+    ])
+    get.mockRestore()
+  })
 })

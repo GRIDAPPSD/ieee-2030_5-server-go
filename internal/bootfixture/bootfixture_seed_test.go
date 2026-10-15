@@ -706,6 +706,10 @@ der_controls:
     fsa_id: f1
     der_program_id: p1
     id: c1
+default_der_controls:
+  - end_device_id: "1"
+    fsa_id: f1
+    der_program_id: p1
 `
 	h.mustBoot(fixtureBoot1)
 
@@ -737,7 +741,9 @@ der_controls:
 		assertNotFound(t, err, bootName+": FSA (1, f1)")
 		_, err = target.DERControls.Get(ctx, "1/f1/p1", "c1")
 		assertNotFound(t, err, bootName+": DERControl c1")
-		h.assertSeedKeys(edevKey("1"), derpKey("1", "p1"), dercKey("1/f1/p1", "c1"))
+		_, err = target.DefaultDERControls.Get(ctx, "1/f1/p1", dderControlSingletonKey)
+		assertNotFound(t, err, bootName+": DefaultDERControl under p1")
+		h.assertSeedKeys(edevKey("1"), derpKey("1", "p1"), dercKey("1/f1/p1", "c1"), ddercKey("1/f1/p1"))
 	}
 	h.requireLog(`EndDevice id="1"`, "id now held by another identity")
 	h.assertNoLFDIInLogs()
@@ -880,6 +886,9 @@ func TestReconcileRejectsUntrustedSeedRecord(t *testing.T) {
 		{name: "unknown version", body: `{"version":2,"records":[]}`},
 		{name: "empty file", body: ""},
 		{name: "unknown kind", body: `{"version":1,"records":[{"kind":"Widget","parent":"","id":"e1"}]}`},
+		{name: "DERProgram without a parent", body: `{"version":1,"records":[{"kind":"DERProgram","parent":"","id":"p1"}]}`},
+		{name: "DERControl without a parent", body: `{"version":1,"records":[{"kind":"DERControl","parent":"","id":"c1"}]}`},
+		{name: "DefaultDERControl without a parent", body: `{"version":1,"records":[{"kind":"DefaultDERControl","parent":"","id":"default"}]}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

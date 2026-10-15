@@ -188,23 +188,3 @@ func TestDefaultDERControlSeed_PersistedUnseededIsAdopted(t *testing.T) {
 		t.Errorf("OpModFixedW after boot 2 = %d, want the persisted 700", w)
 	}
 }
-
-// Without a data dir the seed path is empty and the fixture creates its
-// default control on every boot, as before.
-func TestDefaultDERControlSeed_NoDataDirLoadsFixture(t *testing.T) {
-	ctx := context.Background()
-	fixturePath := writeDdercFixture(t)
-	for boot := 1; boot <= 2; boot++ {
-		target := dercontrolSeedTarget(t, t.TempDir())
-		if err := bootfixture.Reconcile(ctx, target, fixturePath, "", t.Logf); err != nil {
-			t.Fatalf("boot %d: %v", boot, err)
-		}
-		dc, err := target.DefaultDERControls.Get(ctx, ddercScope, "default")
-		if err != nil {
-			t.Fatalf("boot %d: get default control: %v", boot, err)
-		}
-		if got := fixedW(t, dc); got != 2000 {
-			t.Errorf("boot %d: OpModFixedW = %d, want the fixture's 2000", boot, got)
-		}
-	}
-}

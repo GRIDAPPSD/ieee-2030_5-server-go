@@ -2,8 +2,11 @@
   // The flat FSA template list from GET /api/fsas, which is the only
   // surface that reports which devices an FSA is assigned to: the
   // topology tree carries the FSAs but not their device assignments, so
-  // unassigning is done from here.
+  // unassigning is done from here. Each FSA row also carries that FSA's
+  // program templates, which are keyed by the FSA mRID like the other FSA
+  // routes.
   import { deleteJSON } from '../lib/api'
+  import FsaTemplates from './FsaTemplates.svelte'
   import type { AdminFSA } from '../lib/fsa'
 
   let {
@@ -61,6 +64,9 @@
                 {/each}
               {/if}
             </td>
+          </tr>
+          <tr>
+            <td colspan="5"><FsaTemplates fsaId={fsa.mRID} {onChanged} /></td>
           </tr>
         {/each}
       </tbody>

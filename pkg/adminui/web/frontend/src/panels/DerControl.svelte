@@ -289,8 +289,8 @@
     <div class="result err" data-testid="der-control-programs-error">{programsError}</div>
   {:else if selectedDeviceId && programsChecked && programs.length === 0}
     <p class="hint" data-testid="der-control-no-programs">
-      This device has no DER programs. For now, add a program template with POST /api/fsas/{'{id}'}/der-programs
-      (a form on the <TabLink path="/ui/fsas">FSAs tab</TabLink> is planned), then assign the device to that FSA on the
+      This device has no DER programs. Add a program template on the <TabLink path="/ui/fsas">FSAs tab</TabLink>,
+      then assign the device to that FSA on the
       <TabLink path="/ui/devices">Devices tab</TabLink>.
     </p>
   {/if}

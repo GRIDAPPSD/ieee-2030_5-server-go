@@ -111,6 +111,18 @@ export function postJSON<T>(path: string, body: unknown, opts?: RequestOptions):
   )
 }
 
+export function putJSON<T>(path: string, body: unknown, opts?: RequestOptions): Promise<ApiResult<T>> {
+  return send<T>(
+    path,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    opts,
+  )
+}
+
 // postBody posts a raw string with an explicit content type. Used by the
 // cert parser, which takes a PEM body as application/x-pem-file rather
 // than JSON (internal/handler/admin_register.go's HandleCertInfo).

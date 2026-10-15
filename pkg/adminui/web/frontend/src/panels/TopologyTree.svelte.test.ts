@@ -112,8 +112,12 @@ describe('TopologyTree', () => {
     render(TopologyTree, { props: { tree, error: '', onRefresh } })
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
 
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
-    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+    // The tree also reads the program list for its picker, so the delete is
+    // picked out by its method.
+    const deletes = () =>
+      fetchSpy.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === 'DELETE') as [string, RequestInit][]
+    await waitFor(() => expect(deletes()).toHaveLength(1))
+    const [url, init] = deletes()[0]
     expect(url).toBe('/api/fsas/fsa-a')
     expect(init.method).toBe('DELETE')
     expect(init.credentials).toBe('same-origin')
@@ -161,5 +165,75 @@ describe('TopologyTree', () => {
     expect(screen.getByTestId('topology-error')).toHaveTextContent(
       'Error loading topology: request failed with status 500',
     )
+  })
+
+  describe('program picker', () => {
+    const item = (over: Record<string, unknown>) => ({
+      device: '7', fsa: 'fsa-a', id: 'derp-1', href: '/edev/7/fsa/fsa-a/derp/derp-1', mRID: 'AB',
+      description: 'roof fleet', primacy: 65, version: 2, origin: 'template', onRestart: 'kept', ...over,
+    })
+
+    function catalogReply(programs: unknown[]) {
+      return vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ persists: true, total: programs.length, start: 0, limit: 500, programs }),
+      } as Response)
+    }
+
+    it('offers the programs GET /api/der-programs returns, by href, on the attach input', async () => {
+      const get = catalogReply([
+        item({}),
+        item({ id: 'derp-2', href: '/edev/8/fsa/fsa-b/derp/derp-2', device: '8', fsa: 'fsa-b', description: 'night' }),
+      ])
+      const { container } = render(TopologyTree, { props: { tree, error: '', onRefresh: () => {} } })
+
+      await waitFor(() => expect(container.querySelectorAll('datalist#attachPrograms option')).toHaveLength(2))
+      const options = Array.from(container.querySelectorAll('datalist#attachPrograms option'))
+      expect(options.map((o) => o.getAttribute('value'))).toEqual([
+        '/edev/7/fsa/fsa-a/derp/derp-1',
+        '/edev/8/fsa/fsa-b/derp/derp-2',
+      ])
+      expect(options[0].getAttribute('label')).toBe('roof fleet (device 7, fsa-a, template)')
+      expect(get.mock.calls[0][0]).toBe('/api/der-programs?limit=500&start=0')
+      const input = container.querySelector('#attachInp-fsa-a') as HTMLInputElement
+      expect(input.getAttribute('list')).toBe('attachPrograms')
+    })
+
+    it('attaches the href picked from the list and keeps the result span', async () => {
+      catalogReply([item({})])
+      const post = vi.spyOn(api, 'postJSON').mockResolvedValue({
+        ok: true,
+        data: { programHref: '/edev/7/fsa/fsa-a/derp/derp-1' },
+      })
+      const { container } = render(TopologyTree, { props: { tree, error: '', onRefresh: () => {} } })
+      await waitFor(() => expect(container.querySelectorAll('datalist#attachPrograms option')).toHaveLength(1))
+
+      await fireEvent.input(container.querySelector('#attachInp-fsa-a') as HTMLInputElement, {
+        target: { value: '/edev/7/fsa/fsa-a/derp/derp-1' },
+      })
+      await fireEvent.click(screen.getByRole('button', { name: 'Attach program' }))
+
+      await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+      expect(post).toHaveBeenCalledWith('/api/fsas/fsa-a/programs', { programHref: '/edev/7/fsa/fsa-a/derp/derp-1' })
+      expect(container.querySelector('#attachResult-fsa-a')).toHaveTextContent(
+        'Attached /edev/7/fsa/fsa-a/derp/derp-1',
+      )
+    })
+
+    it('says so when the program list cannot be read, and still accepts a typed href', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: () => Promise.resolve({ error: 'program list failed' }),
+      } as Response)
+      const { container } = render(TopologyTree, { props: { tree, error: '', onRefresh: () => {} } })
+
+      expect(await screen.findByTestId('program-picker-error')).toHaveTextContent(
+        'Could not load the program list (500): program list failed',
+      )
+      expect(container.querySelector('#attachInp-fsa-a')).not.toBeNull()
+      expect(container.querySelectorAll('datalist#attachPrograms option')).toHaveLength(0)
+    })
   })
 })

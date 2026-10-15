@@ -83,7 +83,13 @@
   {/each}
 
   <div class="controls">
-    <input id="attachInp-{fsa.mRID}" type="text" placeholder="programHref to attach" bind:value={programHref} />
+    <input
+      id="attachInp-{fsa.mRID}"
+      type="text"
+      list="attachPrograms"
+      placeholder="pick or type a program href"
+      bind:value={programHref}
+    />
     <button class="btn btn-small" onclick={attachProgram}>Attach program</button>
     {#if allowDelete}
       <button class="btn btn-red btn-small" onclick={deleteFSA}>Delete</button>

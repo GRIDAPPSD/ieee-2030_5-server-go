@@ -1,8 +1,20 @@
 package memory
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // ErrAdminFSAInUse is returned when an admin FSA cannot be deleted because
 // it still has programs attached or devices assigned. The caller must
 // detach/unlink first; the store never silently cascades.
 var ErrAdminFSAInUse = errors.New("admin FSA still has programs or devices attached")
+
+// ErrAdminFSAHasTemplates is returned when an admin FSA cannot be deleted
+// because program templates still live on it. It matches ErrAdminFSAInUse
+// too, so a caller that only knows the older error still refuses.
+var ErrAdminFSAHasTemplates = fmt.Errorf("%w: program templates remain", ErrAdminFSAInUse)
+
+// ErrInvalidProgramTemplate is returned for a template the store will not
+// hold: an empty id or mRID, or an update that changes the mRID.
+var ErrInvalidProgramTemplate = errors.New("invalid program template")

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 )
@@ -24,6 +25,9 @@ type adminFSARecord struct {
 	FSA      sep2.FunctionSetAssignments `json:"fsa"`
 	Programs []string                    `json:"programs,omitempty"`
 	Devices  []string                    `json:"devices,omitempty"`
+	// Templates is absent from snapshots written before templates existed,
+	// which therefore load with none.
+	Templates []ProgramTemplate `json:"templates,omitempty"`
 }
 
 // NewAdminFSAStoreWithPersistence builds an AdminFSAStore wired to a JSON
@@ -70,6 +74,19 @@ func (s *AdminFSAStore) loadFromFile(path string) error {
 			slices.Sort(devs)
 			s.deviceLinks[r.ID] = devs
 		}
+		var tmpls []ProgramTemplate
+		for _, t := range r.Templates {
+			// The write path's own check, so a snapshot cannot hold a
+			// template set the store would have refused.
+			if err := checkTemplateAdd(tmpls, t); err != nil {
+				return fmt.Errorf("FSA %q template %q: %w", r.ID, t.ID, err)
+			}
+			tmpls = append(tmpls, t.Copy())
+		}
+		if len(tmpls) > 0 {
+			slices.SortFunc(tmpls, func(a, b ProgramTemplate) int { return strings.Compare(a.ID, b.ID) })
+			s.templates[r.ID] = tmpls
+		}
 	}
 	slices.Sort(s.keys)
 	return nil
@@ -92,6 +109,9 @@ func (s *AdminFSAStore) snapshotRecords() []adminFSARecord {
 		}
 		if devs := s.deviceLinks[k]; len(devs) > 0 {
 			rec.Devices = append([]string(nil), devs...)
+		}
+		for _, t := range s.templates[k] {
+			rec.Templates = append(rec.Templates, t.Copy())
 		}
 		out = append(out, rec)
 	}

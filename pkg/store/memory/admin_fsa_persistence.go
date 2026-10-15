@@ -44,6 +44,9 @@ func NewAdminFSAStoreWithPersistence(path string) (*AdminFSAStore, error) {
 	return store, nil
 }
 
+// Persists reports whether the store is wired to a snapshot path.
+func (s *AdminFSAStore) Persists() bool { return s.persistPath != "" }
+
 func (s *AdminFSAStore) loadFromFile(path string) error {
 	env, err := readSnapshotEnvelope(path)
 	if err != nil {

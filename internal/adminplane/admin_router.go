@@ -221,6 +221,13 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		authed.HandleFunc("GET /api/topology", handler.HandleTopology(stores.AdminFSAs, stores.EndDevices))
 	}
 
+	// #923 every DER program with its origin and restart behavior. A read on
+	// the authed mux, like GET /api/fsas: the admin session or the loopback
+	// bypass admits it.
+	if listH := newAdminProgramListHandler(stores); listH != nil {
+		authed.HandleFunc("GET /api/der-programs", listH.HandleList())
+	}
+
 	// #440 management-pair API: who may manage which EndDevice.
 	if mgmtH := newAdminManagementHandler(stores); mgmtH != nil {
 		mountWrite("POST /api/management-pairs", mgmtH.HandleCreateManagementPair())

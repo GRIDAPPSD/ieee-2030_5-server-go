@@ -102,3 +102,24 @@ func templateCopies(stores *Stores) *fsaprogram.Copies {
 		Origins:  stores.ProgramOrigins,
 	}
 }
+
+// newAdminProgramListHandler builds the GET /api/der-programs handler, or
+// returns nil when the program stores are not wired, which leaves the route
+// unmounted. The DERProgram store must enumerate its devices.
+func newAdminProgramListHandler(stores *Stores) *handler.AdminProgramListHandler {
+	if stores == nil || store.IsAbsent(stores.DERPrograms) || stores.ProgramOrigins == nil {
+		return nil
+	}
+	programs, ok := stores.DERPrograms.(handler.ProgramLister)
+	if !ok {
+		slog.Warn("admin: GET /api/der-programs not mounted: the DERProgram store cannot list its devices", "event", "der_program_list_unmounted")
+		return nil
+	}
+	h := &handler.AdminProgramListHandler{Programs: programs, Origins: stores.ProgramOrigins}
+	if p, ok := stores.DERPrograms.(handler.Persister); ok {
+		h.Persist = p
+	} else {
+		slog.Warn("admin: DER program store does not report persistence; GET /api/der-programs reports every program as not surviving a restart", "event", "der_program_list_persists_unknown")
+	}
+	return h
+}

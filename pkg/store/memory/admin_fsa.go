@@ -35,10 +35,17 @@ type AdminFSAStore struct {
 	// Durable persistence (GRIDAPPSD/ieee-2030_5-server-go#165). Empty
 	// persistPath = pure in-memory (the historical AdminFSAStore
 	// behavior). When set, every mutation
-	// flushes a snapshot under persistMu. Held separately from mu so the
-	// disk syscall does not block readers/writers on the in-memory state.
+	// flushes a snapshot. A writer holds persistMu across its mutation,
+	// the flush and any undo; mu is held only around the in-memory change,
+	// so the disk syscall does not block readers.
 	persistMu   sync.Mutex
 	persistPath string
+
+	// Test hooks, nil in production: afterMutateBeforePersist pauses a
+	// writer between its in-memory change and the snapshot, and persistFault
+	// fails a snapshot write on demand.
+	afterMutateBeforePersist func()
+	persistFault             func() error
 }
 
 // NewAdminFSAStore returns an empty store.
@@ -59,8 +66,15 @@ func NewAdminFSAStore() *AdminFSAStore {
 // example) finds the in-memory mutation already applied, does nothing on
 // the retry, and the change never reaches disk at all. undo must not call
 // persist itself.
+//
+// The caller holds persistMu from before its mutation, so no other writer
+// can commit, or snapshot, between that mutation and this undo; readers
+// still take only mu and are never blocked on the disk write.
 func (s *AdminFSAStore) persistOrRollback(undo func()) error {
-	if err := s.persist(); err != nil {
+	if s.afterMutateBeforePersist != nil {
+		s.afterMutateBeforePersist()
+	}
+	if err := s.persistLocked(); err != nil {
 		s.mu.Lock()
 		undo()
 		s.mu.Unlock()
@@ -71,6 +85,8 @@ func (s *AdminFSAStore) persistOrRollback(undo func()) error {
 
 // Create persists an admin FSA. Returns ErrAlreadyExists if id is taken.
 func (s *AdminFSAStore) Create(_ context.Context, id string, fsa sep2.FunctionSetAssignments) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
 	if _, exists := s.fsas[id]; exists {
 		s.mu.Unlock()
@@ -127,6 +143,8 @@ func (s *AdminFSAStore) IDs(_ context.Context) []string {
 // or devices assigned: the caller must remove them first; the store does NOT
 // silently cascade.
 func (s *AdminFSAStore) Delete(_ context.Context, id string) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
 	fsa, exists := s.fsas[id]
 	if !exists {
@@ -157,6 +175,8 @@ func (s *AdminFSAStore) Delete(_ context.Context, id string) error {
 // AttachProgram links a DERProgram href to an FSA. ErrNotFound if FSA is
 // absent; ErrAlreadyExists if the program is already attached.
 func (s *AdminFSAStore) AttachProgram(_ context.Context, fsaID, programHref string) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
 	if _, ok := s.fsas[fsaID]; !ok {
 		s.mu.Unlock()
@@ -182,6 +202,8 @@ func (s *AdminFSAStore) AttachProgram(_ context.Context, fsaID, programHref stri
 // FSA is absent OR the program is not attached: the caller does not need
 // to distinguish (operator UX: "the link is gone either way").
 func (s *AdminFSAStore) DetachProgram(_ context.Context, fsaID, programHref string) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
 	if _, ok := s.fsas[fsaID]; !ok {
 		s.mu.Unlock()
@@ -216,6 +238,8 @@ func (s *AdminFSAStore) Programs(_ context.Context, fsaID string) []string {
 // AssignDevice links a device id to an FSA. ErrNotFound if FSA absent;
 // ErrAlreadyExists if the device is already assigned.
 func (s *AdminFSAStore) AssignDevice(_ context.Context, fsaID, deviceID string) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
 	if _, ok := s.fsas[fsaID]; !ok {
 		s.mu.Unlock()
@@ -239,6 +263,8 @@ func (s *AdminFSAStore) AssignDevice(_ context.Context, fsaID, deviceID string) 
 
 // UnassignDevice unlinks a device from an FSA. ErrNotFound if no such link.
 func (s *AdminFSAStore) UnassignDevice(_ context.Context, fsaID, deviceID string) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
 	if _, ok := s.fsas[fsaID]; !ok {
 		s.mu.Unlock()
@@ -326,6 +352,8 @@ func checkTemplateAdd(tmpls []ProgramTemplate, tmpl ProgramTemplate) error {
 // CreateTemplate adds a program template to an FSA. ErrNotFound if the FSA
 // is absent; ErrAlreadyExists if its ID or mRID is taken on that FSA.
 func (s *AdminFSAStore) CreateTemplate(_ context.Context, fsaID string, tmpl ProgramTemplate) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
 	if _, ok := s.fsas[fsaID]; !ok {
 		s.mu.Unlock()
@@ -377,6 +405,8 @@ func (s *AdminFSAStore) Templates(_ context.Context, fsaID string) []ProgramTemp
 // or the template is absent. IEEE 2030.5 keeps an object's mRID across
 // modifications, so a changed mRID is refused with ErrInvalidProgramTemplate.
 func (s *AdminFSAStore) UpdateTemplate(_ context.Context, fsaID string, tmpl ProgramTemplate) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
 	tmpls := s.templates[fsaID]
 	idx, found := slices.BinarySearchFunc(tmpls, tmpl.ID, compareTemplateID)
@@ -402,6 +432,8 @@ func (s *AdminFSAStore) UpdateTemplate(_ context.Context, fsaID string, tmpl Pro
 // DeleteTemplate removes one template. ErrNotFound if the FSA or the
 // template is absent.
 func (s *AdminFSAStore) DeleteTemplate(_ context.Context, fsaID, id string) error {
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
 	s.mu.Lock()
 	tmpls := s.templates[fsaID]
 	idx, found := slices.BinarySearchFunc(tmpls, id, compareTemplateID)

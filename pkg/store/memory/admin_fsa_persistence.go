@@ -118,15 +118,17 @@ func (s *AdminFSAStore) snapshotRecords() []adminFSARecord {
 	return out
 }
 
-// persist flushes the snapshot to disk if persistence is configured.
-// No-op for in-memory stores.
-func (s *AdminFSAStore) persist() error {
+// persistLocked flushes the snapshot to disk if persistence is configured.
+// No-op for in-memory stores. The caller holds persistMu.
+func (s *AdminFSAStore) persistLocked() error {
 	if s.persistPath == "" {
 		return nil
 	}
-	s.persistMu.Lock()
-	defer s.persistMu.Unlock()
-
+	if s.persistFault != nil {
+		if err := s.persistFault(); err != nil {
+			return fmt.Errorf("admin FSA persistence: %w", err)
+		}
+	}
 	records := s.snapshotRecords()
 	if err := writeSnapshotEnvelope(s.persistPath, records); err != nil {
 		return fmt.Errorf("admin FSA persistence: %w", err)

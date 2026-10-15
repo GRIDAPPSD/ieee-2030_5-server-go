@@ -28,6 +28,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	coresep2time "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
+	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -1494,5 +1495,144 @@ func TestStressNotify_Unauthorized(t *testing.T) {
 	rr := postJSON(t, h, tmStressNotify, "", map[string]any{"href": "/edev/1/fsa"})
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+}
+
+// --- program version (#919) ---
+
+func TestDERProgPrimacy_IncrementsVersionOnlyOnChange(t *testing.T) {
+	h, stores := newRouterWithTokenAndStores(t)
+	ctx := context.Background()
+	if err := stores.DERPrograms.Create(ctx, "edev-1", "prog-1", sep2.DERProgram{Primacy: 1}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	for _, step := range []struct {
+		primacy uint8
+		version int
+	}{{7, 1}, {8, 2}, {8, 2}} {
+		rr := postJSON(t, h, tmPrimacy, tmTestToken, map[string]any{
+			"end_device_id": "edev-1", "program_id": "prog-1", "primacy": step.primacy,
+		})
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("primacy %d: status = %d: %s", step.primacy, rr.Code, rr.Body.String())
+		}
+		got, err := stores.DERPrograms.Get(ctx, "edev-1", "prog-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Primacy != step.primacy || got.Version == nil || int(*got.Version) != step.version {
+			t.Errorf("after primacy %d: primacy=%d version=%v, want version %d",
+				step.primacy, got.Primacy, got.Version, step.version)
+		}
+	}
+}
+
+func TestDERProgPrimacy_ExhaustedVersionIs409(t *testing.T) {
+	h, stores := newRouterWithTokenAndStores(t)
+	ctx := context.Background()
+	max := uint16(65535)
+	if err := stores.DERPrograms.Create(ctx, "edev-1", "prog-1", sep2.DERProgram{Primacy: 1, Version: &max}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	rr := postJSON(t, h, tmPrimacy, tmTestToken, map[string]any{
+		"end_device_id": "edev-1", "program_id": "prog-1", "primacy": 9,
+	})
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "version_exhausted") {
+		t.Fatalf("status = %d body %q, want 409 version_exhausted", rr.Code, rr.Body.String())
+	}
+	got, _ := stores.DERPrograms.Get(ctx, "edev-1", "prog-1")
+	if got.Primacy != 1 || *got.Version != 65535 {
+		t.Errorf("refused edit changed the program: primacy=%d version=%d", got.Primacy, *got.Version)
+	}
+}
+
+func TestFSASwap_ProgramAndDefaultVersionsIncrement(t *testing.T) {
+	h, stores := newRouterWithTokenAndStores(t)
+	ctx := context.Background()
+	seedEndDevice(t, stores, "edev-1")
+	seedFSA(t, stores, "edev-1", "fsa-old")
+	prog := sep2.DERProgram{
+		SubscribableResource:  sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/edev-1/fsa/fsa-old/derp/p1"}},
+		DefaultDERControlLink: &sep2.Link{Href: "/edev/edev-1/fsa/fsa-old/derp/p1/dderc"},
+	}
+	if err := stores.DERPrograms.Create(ctx, "edev-1", "p1", prog); err != nil {
+		t.Fatal(err)
+	}
+	oldScope := "edev-1/fsa-old/p1"
+	dd := sep2.DefaultDERControl{SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/edev-1/fsa/fsa-old/derp/p1/dderc"}}}
+	if err := stores.DefaultDERControls.Create(ctx, oldScope, coresingleton.SingletonKey, dd); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := postJSON(t, h, tmFSASwap, tmTestToken, map[string]any{
+		"end_device_id": "edev-1", "from_fsa": "fsa-old", "to_fsa": "fsa-new",
+	})
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	gotP, err := stores.DERPrograms.Get(ctx, "edev-1", "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotP.Href != "/edev/edev-1/fsa/fsa-new/derp/p1" || gotP.Version == nil || *gotP.Version != 1 {
+		t.Errorf("program href=%q version=%v, want the new href and version 1", gotP.Href, gotP.Version)
+	}
+	gotD, err := stores.DefaultDERControls.Get(ctx, "edev-1/fsa-new/p1", coresingleton.SingletonKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotD.Href != "/edev/edev-1/fsa/fsa-new/derp/p1/dderc" || gotD.Version == nil || *gotD.Version != 1 {
+		t.Errorf("default href=%q version=%v, want the new href and version 1", gotD.Href, gotD.Version)
+	}
+}
+
+func TestFSASwap_ExhaustedVersionIs409AndMovesNothing(t *testing.T) {
+	for name, versions := range map[string][2]uint16{"program": {65535, 1}, "default": {1, 65535}} {
+		t.Run(name, func(t *testing.T) {
+			h, stores := newRouterWithTokenAndStores(t)
+			ctx := context.Background()
+			seedEndDevice(t, stores, "edev-1")
+			seedFSA(t, stores, "edev-1", "fsa-old")
+			oldHref := "/edev/edev-1/fsa/fsa-old/derp/p1"
+			pv, dv := versions[0], versions[1]
+			prog := sep2.DERProgram{
+				SubscribableResource:  sep2.SubscribableResource{Resource: sep2.Resource{Href: oldHref}},
+				DefaultDERControlLink: &sep2.Link{Href: oldHref + "/dderc"},
+				Version:               &pv,
+			}
+			if err := stores.DERPrograms.Create(ctx, "edev-1", "p1", prog); err != nil {
+				t.Fatal(err)
+			}
+			dd := sep2.DefaultDERControl{
+				SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: oldHref + "/dderc"}},
+				Version:              &dv,
+			}
+			if err := stores.DefaultDERControls.Create(ctx, "edev-1/fsa-old/p1", coresingleton.SingletonKey, dd); err != nil {
+				t.Fatal(err)
+			}
+
+			rr := postJSON(t, h, tmFSASwap, tmTestToken, map[string]any{
+				"end_device_id": "edev-1", "from_fsa": "fsa-old", "to_fsa": "fsa-new",
+			})
+			if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "version_exhausted") {
+				t.Fatalf("status = %d body %q, want 409 version_exhausted", rr.Code, rr.Body.String())
+			}
+			if _, err := stores.FSAs.Get(ctx, "edev-1", "fsa-new"); !errors.Is(err, store.ErrNotFound) {
+				t.Errorf("new fsa exists after a refused swap: %v", err)
+			}
+			if _, err := stores.FSAs.Get(ctx, "edev-1", "fsa-old"); err != nil {
+				t.Errorf("old fsa lost: %v", err)
+			}
+			gotP, _ := stores.DERPrograms.Get(ctx, "edev-1", "p1")
+			if gotP.Href != oldHref || *gotP.Version != pv {
+				t.Errorf("program changed: href=%q version=%d", gotP.Href, *gotP.Version)
+			}
+			if _, err := stores.DefaultDERControls.Get(ctx, "edev-1/fsa-old/p1", coresingleton.SingletonKey); err != nil {
+				t.Errorf("default left its scope: %v", err)
+			}
+			if _, err := stores.DefaultDERControls.Get(ctx, "edev-1/fsa-new/p1", coresingleton.SingletonKey); !errors.Is(err, store.ErrNotFound) {
+				t.Errorf("default exists under the new scope: %v", err)
+			}
+		})
 	}
 }

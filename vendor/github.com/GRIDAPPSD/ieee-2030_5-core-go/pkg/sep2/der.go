@@ -183,6 +183,7 @@ type DefaultDERControl struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DefaultDERControl"`
 	SubscribableResource
 	MRID           string          `xml:"mRID,omitempty"`
+	Version        *uint16         `xml:"version,omitempty"`
 	DERControlBase *DERControlBase `xml:"DERControlBase,omitempty"`
 	SetGradW       *uint16         `xml:"setGradW,omitempty"`
 	SetSoftGradW   *uint16         `xml:"setSoftGradW,omitempty"`
@@ -191,6 +192,10 @@ type DefaultDERControl struct {
 // Copy returns an independent copy.
 func (d DefaultDERControl) Copy() DefaultDERControl {
 	c := d
+	if d.Version != nil {
+		v := *d.Version
+		c.Version = &v
+	}
 	if d.DERControlBase != nil {
 		cb := d.DERControlBase.Copy()
 		c.DERControlBase = &cb
@@ -209,15 +214,15 @@ func (d DefaultDERControl) Copy() DefaultDERControl {
 // DERProgram contains controls and curves for DER devices.
 //
 // Field order matches the SubscribableIdentifiedObject + DERProgram
-// combined xsd:sequence: mRID, description (base; version omitted, not
-// yet modeled) THEN ActiveDERControlListLink, DefaultDERControlLink,
-// DERControlListLink, DERCurveListLink, primacy (DERProgram's own
-// sequence, primacy LAST).
+// combined xsd:sequence: mRID, description, version (base) THEN
+// ActiveDERControlListLink, DefaultDERControlLink, DERControlListLink,
+// DERCurveListLink, primacy (DERProgram's own sequence, primacy LAST).
 type DERProgram struct {
 	XMLName xml.Name `xml:"urn:ieee:std:2030.5:ns DERProgram"`
 	SubscribableResource
-	MRID        string `xml:"mRID,omitempty"`
-	Description string `xml:"description,omitempty"`
+	MRID        string  `xml:"mRID,omitempty"`
+	Description string  `xml:"description,omitempty"`
+	Version     *uint16 `xml:"version,omitempty"`
 
 	ActiveDERControlListLink *ListLink `xml:"ActiveDERControlListLink,omitempty"`
 	DefaultDERControlLink    *Link     `xml:"DefaultDERControlLink,omitempty"`
@@ -229,6 +234,10 @@ type DERProgram struct {
 // Copy returns an independent copy.
 func (p DERProgram) Copy() DERProgram {
 	c := p
+	if p.Version != nil {
+		v := *p.Version
+		c.Version = &v
+	}
 	if p.ActiveDERControlListLink != nil {
 		l := *p.ActiveDERControlListLink
 		c.ActiveDERControlListLink = &l

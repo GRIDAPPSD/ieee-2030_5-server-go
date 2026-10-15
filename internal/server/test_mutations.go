@@ -37,6 +37,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	coresep2time "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
@@ -192,23 +193,19 @@ func handleDERProgPrimacy(stores *Stores) http.HandlerFunc {
 		}
 
 		ctx := r.Context()
-		// Address the program by (parent, id) on the store itself. This
-		// used to take a per-parent handle via ForParent, which core
-		// withdrew: that method was promoted by an embedded field and was
-		// never part of the store.ScopedStore contract, so reaching for
-		// it bypassed the persistence wrapper.
-		programs := stores.DERPrograms
-		existing, err := programs.Get(ctx, req.EndDeviceID, req.ProgramID)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "der program not found", http.StatusNotFound)
-				return
-			}
-			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+		ref := fsaprogram.Ref{DeviceID: req.EndDeviceID, ProgramID: req.ProgramID}
+		err := fsaprogram.Edit(ctx, stores.DERPrograms, ref, func(p *sep2.DERProgram) error {
+			p.Primacy = *req.Primacy
+			return nil
+		})
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			http.Error(w, "der program not found", http.StatusNotFound)
 			return
-		}
-		existing.Primacy = *req.Primacy
-		if err := programs.Update(ctx, req.EndDeviceID, req.ProgramID, existing); err != nil {
+		case errors.Is(err, fsaprogram.ErrVersionExhausted):
+			http.Error(w, "version_exhausted", http.StatusConflict)
+			return
+		case err != nil:
 			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -484,6 +481,17 @@ func handleFSASwap(stores *Stores) http.HandlerFunc {
 			return
 		}
 
+		// Refuse before the new FSA exists or anything moves: a version that
+		// cannot be raised would otherwise fail part way and split the tree.
+		if err := checkSwapVersionRoom(ctx, stores, req.EndDeviceID, req.FromFSA); err != nil {
+			if errors.Is(err, fsaprogram.ErrVersionExhausted) {
+				http.Error(w, "version_exhausted", http.StatusConflict)
+				return
+			}
+			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		// Re-stamp Href on the copy. The store returns an independent
 		// copy (Copier contract), so this mutation does not leak back
 		// into the source record before the Delete below.
@@ -530,6 +538,42 @@ func handleFSASwap(stores *Stores) http.HandlerFunc {
 	}
 }
 
+// checkSwapVersionRoom returns fsaprogram.ErrVersionExhausted when any program
+// of FSA from, or its default control, is at the version ceiling, because the
+// move re-stamps both and would fail after partly applying.
+func checkSwapVersionRoom(ctx context.Context, stores *Stores, edev, from string) error {
+	if stores.DERPrograms == nil {
+		return nil
+	}
+	programs, err := stores.DERPrograms.List(ctx, edev, store.ListOptions{Unbounded: true})
+	if err != nil {
+		return fmt.Errorf("listing programs: %w", err)
+	}
+	for _, p := range programs.Items {
+		_, fsa, derp, ok := derhref.Program(p.Href)
+		if !ok || fsa != from {
+			continue
+		}
+		if _, err := fsaprogram.NextVersion(p.Version); err != nil {
+			return fmt.Errorf("program %s: %w", derp, err)
+		}
+		if stores.DefaultDERControls == nil {
+			continue
+		}
+		dd, err := stores.DefaultDERControls.Get(ctx, derControlScope(edev, from, derp), coresingleton.SingletonKey)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("program %s: default control: %w", derp, err)
+		}
+		if _, err := fsaprogram.NextVersion(dd.Version); err != nil {
+			return fmt.Errorf("program %s: default control: %w", derp, err)
+		}
+	}
+	return nil
+}
+
 // moveFSAPrograms moves every program of FSA from under edev to FSA to,
 // with the controls, lifecycle records and default control stored under
 // each program's edev/fsa/derp scope. Hrefs and links that name the old FSA
@@ -562,16 +606,19 @@ func moveFSAPrograms(ctx context.Context, stores *Stores, edev, from, to string)
 		if err := moveDefaultControl(ctx, stores, oldScope, newScope, restamp); err != nil {
 			return fmt.Errorf("program %s: %w", derp, err)
 		}
-		p.Href = restamp(p.Href)
-		if p.DefaultDERControlLink != nil {
-			p.DefaultDERControlLink.Href = restamp(p.DefaultDERControlLink.Href)
-		}
-		for _, l := range []*sep2.ListLink{p.ActiveDERControlListLink, p.DERControlListLink, p.DERCurveListLink} {
-			if l != nil {
-				l.Href = restamp(l.Href)
+		err := fsaprogram.Edit(ctx, stores.DERPrograms, fsaprogram.Ref{DeviceID: edev, ProgramID: derp}, func(p *sep2.DERProgram) error {
+			p.Href = restamp(p.Href)
+			if p.DefaultDERControlLink != nil {
+				p.DefaultDERControlLink.Href = restamp(p.DefaultDERControlLink.Href)
 			}
-		}
-		if err := stores.DERPrograms.Update(ctx, edev, derp, p); err != nil {
+			for _, l := range []*sep2.ListLink{p.ActiveDERControlListLink, p.DERControlListLink, p.DERCurveListLink} {
+				if l != nil {
+					l.Href = restamp(l.Href)
+				}
+			}
+			return nil
+		})
+		if err != nil {
 			return fmt.Errorf("program %s: updating: %w", derp, err)
 		}
 	}
@@ -655,7 +702,12 @@ func moveDefaultControl(ctx context.Context, stores *Stores, oldScope, newScope 
 	if err != nil {
 		return fmt.Errorf("default control: reading: %w", err)
 	}
-	dd.Href = restamp(dd.Href)
+	if href := restamp(dd.Href); href != dd.Href {
+		dd.Href = href
+		if dd.Version, err = fsaprogram.NextVersion(dd.Version); err != nil {
+			return fmt.Errorf("default control: %w", err)
+		}
+	}
 	if err := stores.DefaultDERControls.Create(ctx, newScope, coresingleton.SingletonKey, dd); err != nil {
 		return fmt.Errorf("default control: creating: %w", err)
 	}

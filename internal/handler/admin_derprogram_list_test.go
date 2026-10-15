@@ -1,17 +1,22 @@
 package handler_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -45,21 +50,25 @@ type programListReply struct {
 // program, which has no origin entry.
 func newProgramListHandler(t *testing.T, dir string) *handler.AdminProgramListHandler {
 	t.Helper()
-	path := func(name string) string {
+	return newProgramListHandlerDirs(t, dir, dir, dir)
+}
+
+// newProgramListHandlerDirs persists each store under its own directory, or
+// keeps it in memory when that directory is empty, so a partly persisted set
+// can be built.
+func newProgramListHandlerDirs(t *testing.T, programsDir, originsDir, fsasDir string) *handler.AdminProgramListHandler {
+	t.Helper()
+	path := func(dir, name string) string {
 		if dir == "" {
 			return ""
 		}
 		return filepath.Join(dir, name+".json")
 	}
-	programs, err := memory.NewDERProgramStoreWithPersistence(path("derprograms"))
+	programs, err := memory.NewDERProgramStoreWithPersistence(path(programsDir, "derprograms"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	origins, err := memory.NewProgramOriginStore(path("program-origins"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	fsas, err := memory.NewAdminFSAStoreWithPersistence(path("fsas"))
+	origins, err := memory.NewProgramOriginStore(path(originsDir, "program-origins"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +94,7 @@ func newProgramListHandler(t *testing.T, dir string) *handler.AdminProgramListHa
 	return &handler.AdminProgramListHandler{
 		Programs: programs,
 		Origins:  origins,
-		Persist:  handler.ProgramPersistence{Programs: programs, Origins: origins, Templates: fsas},
+		Persist:  programs,
 	}
 }
 
@@ -219,5 +228,176 @@ func TestListPrograms_ABoundedReplyForManyPrograms(t *testing.T) {
 	_, got, _ := getPrograms(t, h, "")
 	if got.Total != 133 || len(got.Programs) != 100 || got.Limit != 100 {
 		t.Errorf("default page = total %d, %d programs, limit %d; want 133, 100, 100", got.Total, len(got.Programs), got.Limit)
+	}
+}
+
+// Only the program store decides whether a program survives a restart: the
+// boot rebuild (fsaprogram.ReconcileCopies) skips a copy it cannot rebuild
+// and removes only a device origin whose program is missing, so an
+// unpersisted origin index or template store changes how a program is listed
+// afterwards, not whether it is kept.
+func TestListPrograms_PartlyPersistedStores(t *testing.T) {
+	t.Parallel()
+	for _, programs := range []bool{false, true} {
+		for _, origins := range []bool{false, true} {
+			for _, fsas := range []bool{false, true} {
+				dir := func(on bool) string {
+					if on {
+						return t.TempDir()
+					}
+					return ""
+				}
+				h := newProgramListHandlerDirs(t, dir(programs), dir(origins), dir(fsas))
+				_, got, _ := getPrograms(t, h, "")
+				want := map[string]string{"device": "gone", "template": "gone", "fixture": "reseeded"}
+				if programs {
+					want = map[string]string{"device": "kept", "template": "kept", "fixture": "kept"}
+				}
+				if got.Persists != programs {
+					t.Errorf("programs=%v origins=%v fsas=%v: persists = %v", programs, origins, fsas, got.Persists)
+				}
+				assertListed(t, got.Programs, wantPrograms(want))
+			}
+		}
+	}
+}
+
+// A program with no origin entry is listed as a fixture whatever its id looks
+// like, so a device program whose origin entry was lost reads as fixture.
+func TestListPrograms_NoOriginEntryIsAFixtureWhateverItsId(t *testing.T) {
+	t.Parallel()
+	h := newProgramListHandler(t, t.TempDir())
+	p := sep2.DERProgram{MRID: "EEEE0000000000000000000000000001", Primacy: 2}
+	p.Href = "/edev/4/fsa/fsa-A/derp/derp-00000000000000ab"
+	if err := h.Programs.(*memory.DERProgramStore).Create(context.Background(), "4", "derp-00000000000000ab", p); err != nil {
+		t.Fatal(err)
+	}
+	_, got, _ := getPrograms(t, h, "")
+	last := got.Programs[len(got.Programs)-1]
+	if last.ID != "derp-00000000000000ab" || last.Origin != "fixture" || last.OnRestart != "kept" || last.TemplateID != "" {
+		t.Errorf("program = %+v, want origin fixture, kept", last)
+	}
+}
+
+type persistStub bool
+
+func (p persistStub) Persists() bool { return bool(p) }
+
+func TestListPrograms_PersistsReadsTheProgramStore(t *testing.T) {
+	t.Parallel()
+	h := newProgramListHandler(t, "")
+	h.Persist = persistStub(true)
+	if _, got, _ := getPrograms(t, h, ""); !got.Persists {
+		t.Error("persists = false with a persisting program store")
+	}
+	h.Persist = nil
+	if _, got, _ := getPrograms(t, h, ""); got.Persists {
+		t.Error("persists = true with no program store persistence")
+	}
+}
+
+func TestListPrograms_OrderedByHrefAcrossFSAsOnOneDevice(t *testing.T) {
+	t.Parallel()
+	h := newProgramListHandler(t, "")
+	ctx := context.Background()
+	for _, c := range []struct{ fsa, id string }{{"fsa-B", "a"}, {"fsa-A", "z"}} {
+		p := sep2.DERProgram{MRID: "FFFF00000000000000000000000000" + c.id + "0", Primacy: 2}
+		p.Href = "/edev/0/fsa/" + c.fsa + "/derp/" + c.id
+		if err := h.Programs.(*memory.DERProgramStore).Create(ctx, "0", c.id, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, got, _ := getPrograms(t, h, "?limit=2")
+	if len(got.Programs) != 2 || got.Programs[0].Href != "/edev/0/fsa/fsa-A/derp/z" || got.Programs[1].Href != "/edev/0/fsa/fsa-B/derp/a" {
+		t.Errorf("order = %+v, want fsa-A then fsa-B", got.Programs)
+	}
+}
+
+func TestListPrograms_RepeatedStartRefused(t *testing.T) {
+	t.Parallel()
+	h := newProgramListHandler(t, "")
+	if code, _, _ := getPrograms(t, h, "?start=1&start=2"); code != http.StatusBadRequest {
+		t.Errorf("status %d, want 400", code)
+	}
+}
+
+type failingLister struct {
+	parentsErr, listErr error
+	handler.ProgramLister
+}
+
+func (f failingLister) Parents(ctx context.Context) ([]string, error) {
+	if f.parentsErr != nil {
+		return nil, f.parentsErr
+	}
+	return f.ProgramLister.Parents(ctx)
+}
+
+func (f failingLister) List(ctx context.Context, parent string, opts store.ListOptions) (store.ListResult[sep2.DERProgram], error) {
+	if f.listErr != nil {
+		return store.ListResult[sep2.DERProgram]{}, f.listErr
+	}
+	return f.ProgramLister.List(ctx, parent, opts)
+}
+
+type failingOrigins struct{ err error }
+
+func (f failingOrigins) Get(context.Context, string, string) (memory.ProgramOrigin, error) {
+	return memory.ProgramOrigin{}, f.err
+}
+
+func TestListPrograms_StoreFailuresAre500WithAFixedBodyAndANamedLog(t *testing.T) {
+	t.Parallel()
+	boom := errors.New("disk /secret/path exploded")
+	cases := []struct {
+		name    string
+		mutate  func(h *handler.AdminProgramListHandler)
+		wantLog []string
+	}{
+		{"parents", func(h *handler.AdminProgramListHandler) {
+			h.Programs = failingLister{parentsErr: boom, ProgramLister: h.Programs}
+		}, []string{"step=parents"}},
+		{"list", func(h *handler.AdminProgramListHandler) {
+			h.Programs = failingLister{listErr: boom, ProgramLister: h.Programs}
+		}, []string{"step=list", "device=1"}},
+		{"origin", func(h *handler.AdminProgramListHandler) { h.Origins = failingOrigins{err: boom} },
+			[]string{"step=origin", "device=1", "program=derp-d1"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newProgramListHandler(t, "")
+			var logs bytes.Buffer
+			h.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+			c.mutate(h)
+			code, _, body := getPrograms(t, h, "")
+			if code != http.StatusInternalServerError || strings.TrimSpace(body) != `{"error":"program list failed"}` {
+				t.Errorf("status %d body %q, want 500 and the fixed message", code, body)
+			}
+			for _, w := range c.wantLog {
+				if !strings.Contains(logs.String(), w) {
+					t.Errorf("log %q lacks %q", logs.String(), w)
+				}
+			}
+		})
+	}
+}
+
+func TestListPrograms_UnparsableHrefIsLogged(t *testing.T) {
+	t.Parallel()
+	h := newProgramListHandler(t, "")
+	var logs bytes.Buffer
+	h.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	p := sep2.DERProgram{MRID: "ABAB0000000000000000000000000001", Primacy: 2}
+	p.Href = "/edev/9/derp/odd"
+	if err := h.Programs.(*memory.DERProgramStore).Create(context.Background(), "9", "odd", p); err != nil {
+		t.Fatal(err)
+	}
+	_, got, _ := getPrograms(t, h, "")
+	last := got.Programs[len(got.Programs)-1]
+	if last.ID != "odd" || last.FSA != "" || last.Origin != "fixture" {
+		t.Errorf("program = %+v", last)
+	}
+	if !strings.Contains(logs.String(), "der_program_list_bad_href") || !strings.Contains(logs.String(), "device=9") {
+		t.Errorf("log %q lacks the bad-href line naming device 9", logs.String())
 	}
 }

@@ -112,14 +112,14 @@ func newAdminProgramListHandler(stores *Stores) *handler.AdminProgramListHandler
 	}
 	programs, ok := stores.DERPrograms.(handler.ProgramLister)
 	if !ok {
+		slog.Warn("admin: GET /api/der-programs not mounted: the DERProgram store cannot list its devices", "event", "der_program_list_unmounted")
 		return nil
 	}
-	persist := handler.ProgramPersistence{Origins: stores.ProgramOrigins}
+	h := &handler.AdminProgramListHandler{Programs: programs, Origins: stores.ProgramOrigins}
 	if p, ok := stores.DERPrograms.(handler.Persister); ok {
-		persist.Programs = p
+		h.Persist = p
+	} else {
+		slog.Warn("admin: DER program store does not report persistence; GET /api/der-programs reports every program as not surviving a restart", "event", "der_program_list_persists_unknown")
 	}
-	if stores.AdminFSAs != nil {
-		persist.Templates = stores.AdminFSAs
-	}
-	return &handler.AdminProgramListHandler{Programs: programs, Origins: stores.ProgramOrigins, Persist: persist}
+	return h
 }

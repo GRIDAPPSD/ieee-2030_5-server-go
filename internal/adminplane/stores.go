@@ -83,6 +83,10 @@ type Stores struct {
 	// the spec-facing scoped surface.
 	AdminFSAs *memory.AdminFSAStore
 
+	// ProgramOrigins says, per (device, program id), whether a DERProgram is
+	// a template copy or a device program; no entry means fixture (#918).
+	ProgramOrigins *memory.ProgramOriginStore
+
 	// Subscription store
 	Subscriptions *memory.SubscriptionStore
 

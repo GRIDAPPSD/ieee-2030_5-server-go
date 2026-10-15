@@ -36,6 +36,7 @@
     POST /api/derms/flow-reservations/{edevId}/{frqId}/revise
     POST /api/devices
     POST /api/devices/{id}/fsa-assignment
+    POST /api/devices/{id}/fsas/{fsaId}/der-programs
     POST /api/fsas
     POST /api/fsas/{id}/der-programs
     POST /api/fsas/{id}/programs

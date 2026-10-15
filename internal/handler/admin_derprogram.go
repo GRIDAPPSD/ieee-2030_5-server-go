@@ -23,10 +23,18 @@ import (
 //
 //	POST /api/fsas/{id}/der-programs   create a template and copy it to every assigned device
 //	GET  /api/fsas/{id}/der-programs   list the FSA's templates
+//
+// #921: a program on one device.
+//
+//	POST /api/devices/{id}/fsas/{fsaId}/der-programs   create a device program
 
 // maxTemplatesPerFSA bounds the issuer's per-scope locks, which are never
 // evicted: each template adds one scope per assigned device.
 const maxTemplatesPerFSA = 16
+
+// maxDeviceProgramsPerFSA bounds device programs under one device and FSA for
+// the same reason: each is one more never-evicted issuer scope.
+const maxDeviceProgramsPerFSA = 16
 
 // templateInternalError is the whole body of every 500 here; the cause is
 // logged, never returned, since store errors can carry paths (#541).
@@ -257,19 +265,14 @@ func (h *AdminFSAHandler) mintTemplateIDs(t *memory.ProgramTemplate) error {
 }
 
 func (h *AdminFSAHandler) templateView(ctx context.Context, fsaID string, t memory.ProgramTemplate) ProgramTemplateView {
-	base := t.DefaultControlBase
 	v := ProgramTemplateView{
-		ID:          t.ID,
-		MRID:        t.MRID,
-		Description: t.Description,
-		Primacy:     t.Primacy,
-		Version:     t.Version,
-		DefaultControl: ProgramDefaultControlView{
-			MRID:           t.DefaultMRID,
-			Type:           controlTypeName(&base),
-			DERControlBase: newDERControlBaseView(&base),
-		},
-		Copies: []string{},
+		ID:             t.ID,
+		MRID:           t.MRID,
+		Description:    t.Description,
+		Primacy:        t.Primacy,
+		Version:        t.Version,
+		DefaultControl: programDefaultControlView(t),
+		Copies:         []string{},
 	}
 	if h.Copies == nil {
 		return v
@@ -280,6 +283,117 @@ func (h *AdminFSAHandler) templateView(ctx context.Context, fsaID string, t memo
 		}
 	}
 	return v
+}
+
+func programDefaultControlView(t memory.ProgramTemplate) ProgramDefaultControlView {
+	base := t.DefaultControlBase
+	return ProgramDefaultControlView{
+		MRID:           t.DefaultMRID,
+		Type:           controlTypeName(&base),
+		DERControlBase: newDERControlBaseView(&base),
+	}
+}
+
+// DeviceProgramView is one device program as the admin API reports it.
+type DeviceProgramView struct {
+	ID             string                    `json:"id"`
+	Href           string                    `json:"href"`
+	MRID           string                    `json:"mRID"`
+	Description    string                    `json:"description"`
+	Primacy        uint8                     `json:"primacy"`
+	Version        uint16                    `json:"version"`
+	DefaultControl ProgramDefaultControlView `json:"defaultControl"`
+}
+
+// HandleCreateDeviceProgram returns a handler for POST
+// /api/devices/{id}/fsas/{fsaId}/der-programs. The FSA must be in the
+// device's own FSA store: the wire serves a default FSA for any id, so the
+// store, not the wire, says what the device has.
+func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		deviceID, fsaID := r.PathValue("id"), r.PathValue("fsaId")
+		var body programTemplateBody
+		if ref, ok := decodeDERControlBody(w, r, &body, false); !ok {
+			writeError(w, ref.status, ref.message)
+			return
+		}
+		prog, msg, ok := buildTemplate(body)
+		if !ok {
+			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
+
+		if h.EndDevices != nil {
+			if _, err := h.EndDevices.Get(r.Context(), deviceID); err != nil {
+				if errors.Is(err, store.ErrNotFound) {
+					writeError(w, http.StatusNotFound, "device not found")
+					return
+				}
+				h.templateFailed(w, r, "device_lookup", err)
+				return
+			}
+		}
+		if h.DeviceFSAs == nil || h.Copies == nil {
+			h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+			return
+		}
+		if _, err := h.DeviceFSAs.Get(r.Context(), deviceID, fsaID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "fsa not found on this device")
+				return
+			}
+			h.templateFailed(w, r, "fsa_lookup", err)
+			return
+		}
+		if !validHrefSegment(deviceID) || !validHrefSegment(fsaID) {
+			writeError(w, http.StatusConflict, "device or fsa id cannot form a program href")
+			return
+		}
+
+		h.programMu.Lock()
+		defer h.programMu.Unlock()
+
+		held, err := h.Copies.DevicePrograms(r.Context(), deviceID, fsaID)
+		if err != nil {
+			h.templateFailed(w, r, "device_programs", err)
+			return
+		}
+		if len(held) >= maxDeviceProgramsPerFSA {
+			writeError(w, http.StatusConflict, fmt.Sprintf("device already has %d programs of its own under this fsa", maxDeviceProgramsPerFSA))
+			return
+		}
+		if err := h.mintTemplateIDs(&prog); err != nil {
+			h.templateFailed(w, r, "mint", err)
+			return
+		}
+
+		if _, err := h.Copies.EnsureDevice(r.Context(), deviceID, fsaID, prog); err != nil {
+			var part *fsaprogram.PartError
+			switch {
+			case errors.Is(err, fsaprogram.ErrCopyConflict):
+				writeError(w, http.StatusConflict, "the device already holds a program with this id or mRID")
+			case errors.As(err, &part):
+				h.logUndoFailed(r, part.DeviceID, part.TemplateID, part.Part, err)
+				writeError(w, http.StatusInternalServerError, templateInternalError)
+			default:
+				h.templateFailed(w, r, "program_write", err)
+			}
+			return
+		}
+
+		h.notify(r.Context(), programListHref(deviceID, fsaID))
+		h.logged(r).InfoContext(r.Context(), "admin: DER device program created", "event", "der_device_program_created",
+			"device", deviceID, "fsa", fsaID, "program", prog.ID, "mrid", prog.MRID)
+		writeJSON(w, http.StatusCreated, DeviceProgramView{
+			ID:             prog.ID,
+			Href:           der.DERProgramHref(deviceID, fsaID, prog.ID),
+			MRID:           prog.MRID,
+			Description:    prog.Description,
+			Primacy:        prog.Primacy,
+			Version:        prog.Version,
+			DefaultControl: programDefaultControlView(prog),
+		})
+	}
 }
 
 // copyRefused answers a copy that conflicts with a device's own program as

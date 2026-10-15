@@ -206,6 +206,9 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		if fsaH.Copies != nil {
 			mountWrite("POST /api/fsas/{id}/der-programs", fsaH.HandleCreateProgramTemplate())
 			authed.HandleFunc("GET /api/fsas/{id}/der-programs", fsaH.HandleListProgramTemplates())
+			// #921: like the template create, it changes what a device is
+			// told, so it is off nonSensitiveAdminWrites too.
+			mountWrite("POST /api/devices/{id}/fsas/{fsaId}/der-programs", fsaH.HandleCreateDeviceProgram())
 		}
 		mountWrite("POST /api/devices/{id}/fsa-assignment", fsaH.HandleAssignDeviceFSA())
 		mountWrite("DELETE /api/devices/{id}/fsa-assignment", fsaH.HandleUnassignDeviceFSA())

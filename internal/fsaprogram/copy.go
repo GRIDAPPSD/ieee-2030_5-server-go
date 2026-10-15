@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -178,11 +180,27 @@ func (c Copies) deleteParts(ctx context.Context, deviceID, fsaID, programID stri
 // parts this call wrote are deleted again; an undo that fails returns a
 // *PartError and leaves a prefix of the copy for Ensure to complete.
 func (c Copies) Ensure(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate) (undo func(context.Context) error, err error) {
+	return c.ensure(ctx, deviceID, fsaID, t, memory.ProgramOrigin{Kind: memory.ProgramOriginTemplate, FSAID: fsaID, TemplateID: t.ID})
+}
+
+// EnsureDevice writes the program t describes on deviceID alone, recorded as a
+// device program. Unlike Ensure it never completes a partial write: an id or
+// mRID the device already holds in any form is ErrCopyConflict. The undo
+// contract is Ensure's.
+func (c Copies) EnsureDevice(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate) (undo func(context.Context) error, err error) {
+	return c.ensure(ctx, deviceID, fsaID, t, memory.ProgramOrigin{Kind: memory.ProgramOriginDevice, FSAID: fsaID})
+}
+
+func (c Copies) ensure(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate, origin memory.ProgramOrigin) (undo func(context.Context) error, err error) {
 	if t.DefaultMRID == "" {
 		return nil, fmt.Errorf("program template %s has no default control mRID", t.ID)
 	}
-	if _, err := c.Check(ctx, deviceID, fsaID, t); err != nil {
+	present, err := c.Check(ctx, deviceID, fsaID, t)
+	if err != nil {
 		return nil, err
+	}
+	if present && origin.Kind == memory.ProgramOriginDevice {
+		return nil, fmt.Errorf("%w: program id %s is taken on device %s", ErrCopyConflict, t.ID, deviceID)
 	}
 	var written []string
 	undo = func(ctx context.Context) error {
@@ -201,7 +219,7 @@ func (c Copies) Ensure(ctx context.Context, deviceID, fsaID string, t memory.Pro
 		{PartOrigin,
 			func() error { _, err := c.Origins.Get(ctx, deviceID, t.ID); return err },
 			func() error {
-				return c.Origins.Create(ctx, deviceID, t.ID, memory.ProgramOrigin{Kind: memory.ProgramOriginTemplate, FSAID: fsaID, TemplateID: t.ID})
+				return c.Origins.Create(ctx, deviceID, t.ID, origin)
 			}},
 		{PartDefault,
 			func() error { _, err := c.Defaults.Get(ctx, scope, coresingleton.SingletonKey); return err },
@@ -246,6 +264,35 @@ func (c Copies) Remove(ctx context.Context, deviceID, fsaID string, t memory.Pro
 		return false, err
 	}
 	return true, nil
+}
+
+// DevicePrograms returns the ids of the device programs recorded under fsaID
+// on deviceID. A recorded origin whose program is gone is not listed: it has
+// nothing to protect from an unassign.
+func (c Copies) DevicePrograms(ctx context.Context, deviceID, fsaID string) ([]string, error) {
+	list, err := c.Programs.List(ctx, deviceID, store.ListOptions{Unbounded: true})
+	if err != nil {
+		return nil, fmt.Errorf("listing programs of device %s: %w", deviceID, err)
+	}
+	var ids []string
+	for _, p := range list.Items {
+		_, _, id, ok := derhref.Program(p.Href)
+		if !ok {
+			continue
+		}
+		origin, err := c.Origins.Get(ctx, deviceID, id)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading origin %s/%s: %w", deviceID, id, err)
+		}
+		if origin.Kind == memory.ProgramOriginDevice && origin.FSAID == fsaID {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids, nil
 }
 
 // ReconcileCopies writes every missing part of every template copy for every

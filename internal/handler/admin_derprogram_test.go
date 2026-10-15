@@ -32,25 +32,32 @@ const templatePEN = uint32(0xA0B1)
 
 func newTemplateFixture(t *testing.T) *templateFixture {
 	t.Helper()
+	devs := map[string]sep2.EndDevice{}
+	for _, id := range []string{"1", "2", "3"} {
+		devs[id] = sep2.EndDevice{}
+	}
+	return newTemplateFixtureWith(t, memory.NewDERProgramStore(), &stubEndDevices{devs: devs})
+}
+
+// newTemplateFixtureWith builds the fixture over the given program store and
+// device reader, so a test can share them with the DER control handler.
+func newTemplateFixtureWith(t *testing.T, programs *memory.DERProgramStore, devices handler.EndDeviceReader) *templateFixture {
+	t.Helper()
 	origins, err := memory.NewProgramOriginStore("")
 	if err != nil {
 		t.Fatal(err)
 	}
 	copies := fsaprogram.Copies{
-		Programs: memory.NewDERProgramStore(),
+		Programs: programs,
 		Defaults: memory.NewScopedStore[sep2.DefaultDERControl](),
 		Origins:  origins,
-	}
-	devs := map[string]sep2.EndDevice{}
-	for _, id := range []string{"1", "2", "3"} {
-		devs[id] = sep2.EndDevice{}
 	}
 	pen := templatePEN
 	n := &recordingNotifier{}
 	h := &handler.AdminFSAHandler{
 		AdminFSAs:   memory.NewAdminFSAStore(),
 		DeviceFSAs:  memory.NewScopedStore[sep2.FunctionSetAssignments](),
-		EndDevices:  &stubEndDevices{devs: devs},
+		EndDevices:  devices,
 		DERPrograms: &stubPrograms{known: map[string]bool{}},
 		Copies:      &copies,
 		Notifier:    n,
@@ -64,6 +71,7 @@ func newTemplateFixture(t *testing.T) *templateFixture {
 	mux.HandleFunc("GET /api/fsas/{id}/der-programs", h.HandleListProgramTemplates())
 	mux.HandleFunc("POST /api/devices/{id}/fsa-assignment", h.HandleAssignDeviceFSA())
 	mux.HandleFunc("DELETE /api/devices/{id}/fsa-assignment", h.HandleUnassignDeviceFSA())
+	mux.HandleFunc("POST /api/devices/{id}/fsas/{fsaId}/der-programs", h.HandleCreateDeviceProgram())
 	return &templateFixture{h: h, copies: copies, notifier: n, mux: mux}
 }
 

@@ -112,12 +112,12 @@ describe('TopologyTree', () => {
     render(TopologyTree, { props: { tree, error: '', onRefresh } })
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
 
-    // The tree also reads the program list for its picker, so the delete is
-    // picked out by its method.
-    const deletes = () =>
-      fetchSpy.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === 'DELETE') as [string, RequestInit][]
-    await waitFor(() => expect(deletes()).toHaveLength(1))
-    const [url, init] = deletes()[0]
+    // The tree also reads the program list for its picker, so that GET is
+    // set aside and every other request must be the one DELETE.
+    const others = () =>
+      fetchSpy.mock.calls.filter((c) => !String(c[0]).startsWith('/api/der-programs')) as [string, RequestInit][]
+    await waitFor(() => expect(others()).toHaveLength(1))
+    const [url, init] = others()[0]
     expect(url).toBe('/api/fsas/fsa-a')
     expect(init.method).toBe('DELETE')
     expect(init.credentials).toBe('same-origin')
@@ -219,6 +219,58 @@ describe('TopologyTree', () => {
       expect(container.querySelector('#attachResult-fsa-a')).toHaveTextContent(
         'Attached /edev/7/fsa/fsa-a/derp/derp-1',
       )
+    })
+
+    function pending() {
+      const reqs: { signal: AbortSignal; resolve: (programs: unknown[]) => void }[] = []
+      vi.spyOn(globalThis, 'fetch').mockImplementation(
+        (_url, init) =>
+          new Promise((done) =>
+            reqs.push({
+              signal: init?.signal as AbortSignal,
+              resolve: (programs) =>
+                done({
+                  ok: true,
+                  status: 200,
+                  json: () => Promise.resolve({ persists: true, total: programs.length, programs }),
+                } as Response),
+            }),
+          ),
+      )
+      return reqs
+    }
+
+    it('reads the list again when the tree changes, aborts the old read, and ignores its late answer', async () => {
+      const reqs = pending()
+      const { container, rerender } = render(TopologyTree, { props: { tree, error: '', onRefresh: () => {} } })
+      await waitFor(() => expect(reqs).toHaveLength(1))
+
+      await rerender({ tree: { ...tree }, error: '', onRefresh: () => {} })
+      await waitFor(() => expect(reqs).toHaveLength(2))
+      expect(reqs[0].signal.aborted).toBe(true)
+      expect(reqs[1].signal.aborted).toBe(false)
+
+      reqs[1].resolve([item({ id: 'new', href: '/edev/7/fsa/fsa-a/derp/new' })])
+      await waitFor(() => expect(container.querySelectorAll('datalist#attachPrograms option')).toHaveLength(1))
+      reqs[0].resolve([item({ id: 'old', href: '/edev/7/fsa/fsa-a/derp/old' })])
+      await new Promise((r) => setTimeout(r, 30))
+
+      const values = Array.from(container.querySelectorAll('datalist#attachPrograms option')).map((o) =>
+        o.getAttribute('value'),
+      )
+      expect(values).toEqual(['/edev/7/fsa/fsa-a/derp/new'])
+      expect(screen.queryByTestId('program-picker-error')).toBeNull()
+    })
+
+    it('aborts the program read when the tree unmounts', async () => {
+      const reqs = pending()
+      const { unmount } = render(TopologyTree, { props: { tree, error: '', onRefresh: () => {} } })
+      await waitFor(() => expect(reqs).toHaveLength(1))
+      expect(reqs[0].signal.aborted).toBe(false)
+
+      unmount()
+
+      expect(reqs[0].signal.aborted).toBe(true)
     })
 
     it('says so when the program list cannot be read, and still accepts a typed href', async () => {

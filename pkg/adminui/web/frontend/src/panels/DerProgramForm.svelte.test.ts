@@ -65,6 +65,20 @@ describe('DerProgramForm create', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
+  it('moves focus to the error when one appears, validation or refusal', async () => {
+    mountCreate(() => Promise.resolve({ ok: false, message: 'Error (409): taken' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Add template' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveFocus())
+    expect(screen.getByRole('alert')).toHaveTextContent('description')
+
+    await fill('Description', 'd')
+    await fill('Primacy', '1')
+    await pick('Default control', 'connect')
+    await fireEvent.click(screen.getByRole('button', { name: 'Add template' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Error (409): taken'))
+    expect(screen.getByRole('alert')).toHaveFocus()
+  })
+
   it('requires a default control on create', async () => {
     const onSubmit = mountCreate()
     await fill('Description', 'roof fleet')

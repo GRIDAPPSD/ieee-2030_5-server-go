@@ -37,19 +37,22 @@ interface Call {
 
 // fake answers each "METHOD /path" from a table; a reply can be a function so
 // one route can change between calls (a list that grows after a create).
-function fake(routes: Record<string, Reply | (() => Reply)>) {
+function fake(routes: Record<string, Reply | (() => Reply | Promise<Reply>)>) {
   const calls: Call[] = []
   vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
     const method = init?.method ?? 'GET'
     const path = String(input)
     calls.push({ method, path, body: init?.body ? JSON.parse(String(init.body)) : undefined })
     const hit = routes[`${method} ${path}`]
-    const reply: Reply = typeof hit === 'function' ? hit() : (hit ?? { status: 404, body: { error: 'no route' } })
-    return Promise.resolve({
-      ok: reply.status >= 200 && reply.status < 300,
-      status: reply.status,
-      json: () => (reply.body === undefined ? Promise.reject(new Error('empty')) : Promise.resolve(reply.body)),
-    } as Response)
+    const reply = typeof hit === 'function' ? hit() : (hit ?? { status: 404, body: { error: 'no route' } })
+    return Promise.resolve(reply).then(
+      (r) =>
+        ({
+          ok: r.status >= 200 && r.status < 300,
+          status: r.status,
+          json: () => (r.body === undefined ? Promise.reject(new Error('empty')) : Promise.resolve(r.body)),
+        }) as Response,
+    )
   })
   return calls
 }
@@ -280,5 +283,165 @@ describe('FsaTemplates delete', () => {
     expect(await screen.findByTestId('template-delete-error-derp-1')).toHaveTextContent(
       'Delete failed (404): request failed with status 404',
     )
+  })
+})
+
+// A reply the test releases by hand, so two requests can finish out of order.
+function deferred() {
+  let resolve: (r: Reply) => void = () => {}
+  const promise = new Promise<Reply>((r) => (resolve = r))
+  return { promise, resolve }
+}
+
+describe('FsaTemplates ordering and teardown', () => {
+  it('keeps the newer FSA list when an older read finishes last', async () => {
+    const a = deferred()
+    const b = deferred()
+    fake({
+      'GET /api/fsas/fsa-a/der-programs': () => a.promise,
+      'GET /api/fsas/fsa-b/der-programs': () => b.promise,
+    })
+    const { rerender } = render(FsaTemplates, { props: { fsaId: 'fsa-a', onChanged: () => {} } })
+    await rerender({ fsaId: 'fsa-b', onChanged: () => {} })
+
+    b.resolve({ status: 200, body: { templates: [template({ id: 'derp-b', description: 'from b' })] } })
+    expect(await screen.findByTestId('template-row-derp-b')).toBeInTheDocument()
+    a.resolve({ status: 200, body: { templates: [template({ id: 'derp-a', description: 'from a' })] } })
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(screen.queryByTestId('template-row-derp-a')).toBeNull()
+    expect(screen.getByTestId('template-row-derp-b')).toBeInTheDocument()
+  })
+
+  it('does not let a failed older read replace the newer list with an error', async () => {
+    const a = deferred()
+    const b = deferred()
+    fake({
+      'GET /api/fsas/fsa-a/der-programs': () => a.promise,
+      'GET /api/fsas/fsa-b/der-programs': () => b.promise,
+    })
+    const { rerender } = render(FsaTemplates, { props: { fsaId: 'fsa-a', onChanged: () => {} } })
+    await rerender({ fsaId: 'fsa-b', onChanged: () => {} })
+
+    b.resolve({ status: 200, body: { templates: [template({ id: 'derp-b' })] } })
+    await screen.findByTestId('template-row-derp-b')
+    a.resolve({ status: 500, body: { error: 'late failure' } })
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(screen.queryByTestId('templates-error-fsa-b')).toBeNull()
+    expect(screen.getByTestId('template-row-derp-b')).toBeInTheDocument()
+  })
+})
+
+describe('FsaTemplates in-flight actions', () => {
+  const two = [template(), template({ id: 'derp-2', description: 'night', mRID: '00112233445566778899AABBCCDDEEFF' })]
+
+  it('sends one DELETE for two confirm clicks and disables the action while it is out', async () => {
+    const del = deferred()
+    const calls = fake({
+      [LIST]: { status: 200, body: { templates: two } },
+      'DELETE /api/fsas/fsa-a/der-programs/derp-1': () => del.promise,
+    })
+    mount()
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete roof fleet' }))
+    const confirm = screen.getByRole('button', { name: 'Confirm delete roof fleet' })
+    await fireEvent.click(confirm)
+    await waitFor(() => expect(confirm).toBeDisabled())
+    await fireEvent.click(confirm)
+
+    expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(1)
+    del.resolve({ status: 204 })
+    await waitFor(() => expect(calls.filter((c) => c.method === 'GET')).toHaveLength(2))
+  })
+
+  it('leaves another row form open when an earlier save finishes', async () => {
+    const put = deferred()
+    fake({
+      [LIST]: { status: 200, body: { templates: two } },
+      'PUT /api/fsas/fsa-a/der-programs/derp-1': () => put.promise,
+    })
+    mount()
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit roof fleet' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Save template' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit night' }))
+    expect(screen.getByLabelText('Description')).toHaveValue('night')
+
+    put.resolve({ status: 200, body: template({ version: 3 }) })
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(screen.getByTestId('program-form')).toBeInTheDocument()
+    expect(screen.getByLabelText('Description')).toHaveValue('night')
+  })
+
+  it('does not reload or tell the page after a delete the server refused', async () => {
+    const onChanged = vi.fn()
+    const calls = fake({
+      [LIST]: { status: 200, body: { templates: two } },
+      'DELETE /api/fsas/fsa-a/der-programs/derp-1': {
+        status: 409,
+        body: { error: 'blocked', code: 'live_controls', controls: ['C1'] },
+      },
+    })
+    mount(onChanged)
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete roof fleet' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete roof fleet' }))
+    await screen.findByTestId('template-conflict-derp-1')
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(calls.filter((c) => c.method === 'GET')).toHaveLength(1)
+    expect(onChanged).not.toHaveBeenCalled()
+  })
+})
+
+describe('FsaTemplates accessibility', () => {
+  const two = [template(), template({ id: 'derp-2', description: 'night' })]
+
+  it('names each row action after its template', async () => {
+    fake({ [LIST]: { status: 200, body: { templates: two } } })
+    mount()
+    await screen.findByTestId('template-row-derp-2')
+
+    for (const d of ['roof fleet', 'night']) {
+      expect(screen.getByRole('button', { name: `Edit ${d}` })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: `Delete ${d}` })).toBeInTheDocument()
+    }
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete night' }))
+    expect(screen.getByRole('button', { name: 'Confirm delete night' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Keep night' })).toBeInTheDocument()
+  })
+
+  it('moves focus to Confirm when Delete swaps to it, and back to Delete on Keep', async () => {
+    fake({ [LIST]: { status: 200, body: { templates: two } } })
+    mount()
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete night' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm delete night' })).toHaveFocus())
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep night' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Delete night' })).toHaveFocus())
+  })
+
+  it('moves focus to a delete error when one appears', async () => {
+    fake({
+      [LIST]: { status: 200, body: { templates: two } },
+      'DELETE /api/fsas/fsa-a/der-programs/derp-2': { status: 404 },
+    })
+    mount()
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Delete night' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete night' }))
+
+    const err = await screen.findByTestId('template-delete-error-derp-2')
+    await waitFor(() => expect(err).toHaveFocus())
+  })
+
+  it('moves focus to a load error when one appears', async () => {
+    fake({ [LIST]: { status: 500, body: { error: 'boom' } } })
+    mount()
+    const err = await screen.findByTestId('templates-error-fsa-a')
+    await waitFor(() => expect(err).toHaveFocus())
   })
 })

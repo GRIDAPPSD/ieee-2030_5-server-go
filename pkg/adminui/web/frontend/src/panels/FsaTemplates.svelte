@@ -3,8 +3,9 @@
   // GET /api/fsas/{id}/der-programs with Add, Edit and Delete. Every device
   // assigned to the FSA holds a copy of each template, so an edit or delete
   // here reaches all of them; the device count shown is how many copies exist.
-  import { onDestroy } from 'svelte'
+  import { onDestroy, tick } from 'svelte'
   import DerProgramForm from './DerProgramForm.svelte'
+  import { focusOnMount } from '../lib/focus'
   import {
     createTemplate,
     deleteTemplate,
@@ -23,6 +24,8 @@
   let adding = $state(false)
   let editing = $state('')
   let confirming = $state('')
+  let deleting = $state('')
+  let deleteButtons: Record<string, HTMLButtonElement | undefined> = {}
   let deleteError = $state<{ id: string; message: string; controls: string[] } | null>(null)
 
   // A newer load, or the panel going away, makes an older answer stale.
@@ -70,15 +73,25 @@
   async function save(id: string, body: ProgramBody) {
     const res = await updateTemplate(fsaId, id, body)
     if (!res.ok) return { ok: false as const, message: `Error (${res.status}): ${res.error}` }
-    editing = ''
+    // The operator may have opened another row while this save was out.
+    if (editing === id) editing = ''
     await changed()
     return { ok: true as const }
   }
 
-  async function remove(id: string) {
+  async function keep(id: string) {
     confirming = ''
+    await tick()
+    deleteButtons[id]?.focus()
+  }
+
+  async function remove(id: string) {
+    if (deleting !== '') return
+    deleting = id
     deleteError = null
     const res = await deleteTemplate(fsaId, id)
+    deleting = ''
+    confirming = ''
     if (!res.ok) {
       const r = refusalOf(res)
       deleteError =
@@ -114,7 +127,9 @@
   </div>
 
   {#if loadError}
-    <div class="result err" role="alert" data-testid="templates-error-{fsaId}">{loadError}</div>
+    <div class="result err" role="alert" tabindex="-1" use:focusOnMount data-testid="templates-error-{fsaId}">
+      {loadError}
+    </div>
   {:else if templates === null}
     <p class="hint">Loading program templates...</p>
   {:else if templates.length === 0}
@@ -136,6 +151,7 @@
               <button
                 class="btn btn-small"
                 data-testid="template-edit-{t.id}"
+                aria-label="Edit {t.description}"
                 onclick={() => {
                   editing = editing === t.id ? '' : t.id
                   adding = false
@@ -145,13 +161,23 @@
                 <button
                   class="btn btn-red btn-small"
                   data-testid="template-delete-confirm-{t.id}"
-                  onclick={() => remove(t.id)}>Confirm delete</button
+                  aria-label="Confirm delete {t.description}"
+                  disabled={deleting !== ''}
+                  use:focusOnMount
+                  onclick={() => remove(t.id)}>{deleting === t.id ? 'Deleting...' : 'Confirm delete'}</button
                 >
-                <button class="btn btn-small" onclick={() => (confirming = '')}>Keep</button>
+                <button
+                  class="btn btn-small"
+                  aria-label="Keep {t.description}"
+                  disabled={deleting === t.id}
+                  onclick={() => keep(t.id)}>Keep</button
+                >
               {:else}
                 <button
                   class="btn btn-red btn-small"
                   data-testid="template-delete-{t.id}"
+                  aria-label="Delete {t.description}"
+                  bind:this={deleteButtons[t.id]}
                   onclick={() => {
                     confirming = t.id
                     deleteError = null
@@ -160,7 +186,7 @@
               {/if}
               {#if deleteError?.id === t.id}
                 {#if deleteError.controls.length > 0}
-                  <div class="result err" role="alert" data-testid="template-conflict-{t.id}">
+                  <div class="result err" role="alert" tabindex="-1" use:focusOnMount data-testid="template-conflict-{t.id}">
                     {deleteError.message}
                     <ul>
                       {#each deleteError.controls as c (c)}
@@ -169,7 +195,7 @@
                     </ul>
                   </div>
                 {:else}
-                  <div class="result err" role="alert" data-testid="template-delete-error-{t.id}">
+                  <div class="result err" role="alert" tabindex="-1" use:focusOnMount data-testid="template-delete-error-{t.id}">
                     {deleteError.message}
                   </div>
                 {/if}

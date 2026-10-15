@@ -4,7 +4,13 @@
   // which route the body goes to, so the FSAs tab (templates) and the
   // device Programs drawer share it. onSubmit reports a refusal as the text
   // to show, which keeps the server's wording in front of the operator.
+  //
+  // `initial` is read once, when the form mounts: to edit a different
+  // program, mount a fresh form (key it on the program id). `noun` names the
+  // thing in the submit button and defaults to "template"; a caller adding a
+  // device program passes its own.
   import { untrack } from 'svelte'
+  import { focusOnMount } from '../lib/focus'
   import {
     buildProgramBody,
     CONTROL_KINDS,
@@ -115,6 +121,8 @@
     {/if}
   </div>
   {#if error}
-    <div class="result err" role="alert" data-testid="program-form-error">{error}</div>
+    {#key error}
+      <div class="result err" role="alert" tabindex="-1" use:focusOnMount data-testid="program-form-error">{error}</div>
+    {/key}
   {/if}
 </form>

@@ -18,23 +18,25 @@ func TestScoped_Fields(t *testing.T) {
 	}
 }
 
-func TestReconcile(t *testing.T) {
+func adminWith(t *testing.T, key, mrid string, devices ...string) *memory.AdminFSAStore {
+	t.Helper()
 	ctx := context.Background()
 	admin := memory.NewAdminFSAStore()
-	if err := admin.Create(ctx, "f", sep2.FunctionSetAssignments{MRID: "f", Description: "d"}); err != nil {
+	if err := admin.Create(ctx, key, sep2.FunctionSetAssignments{MRID: mrid, Description: "d"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, d := range []string{"1", "2"} {
-		if err := admin.AssignDevice(ctx, "f", d); err != nil {
+	for _, d := range devices {
+		if err := admin.AssignDevice(ctx, key, d); err != nil {
 			t.Fatal(err)
 		}
 	}
+	return admin
+}
 
+func TestReconcile(t *testing.T) {
+	ctx := context.Background()
+	admin := adminWith(t, "f", "f", "1", "2")
 	dev := memory.NewScopedStore[sep2.FunctionSetAssignments]()
-	// A record already present must not turn the rebuild into a failure.
-	if err := dev.Create(ctx, "1", "f", Scoped("1", "f", sep2.FunctionSetAssignments{MRID: "f", Description: "d"})); err != nil {
-		t.Fatal(err)
-	}
 	if err := Reconcile(ctx, admin, dev); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -49,9 +51,61 @@ func TestReconcile(t *testing.T) {
 	}
 }
 
+func TestReconcile_ReplacesExistingRecord(t *testing.T) {
+	ctx := context.Background()
+	admin := adminWith(t, "f", "f", "1")
+	dev := memory.NewScopedStore[sep2.FunctionSetAssignments]()
+	if err := dev.Create(ctx, "1", "f", sep2.FunctionSetAssignments{MRID: "other", Description: "stale"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Reconcile(ctx, admin, dev); err != nil {
+		t.Fatal(err)
+	}
+	got, err := dev.Get(ctx, "1", "f")
+	if err != nil || got.MRID != "f" || got.Description != "d" {
+		t.Errorf("record = %+v, %v, want the admin record", got, err)
+	}
+}
+
+func TestReconcile_KeyDiffersFromMRID(t *testing.T) {
+	ctx := context.Background()
+	admin := adminWith(t, "key-A", "MRa", "1")
+	dev := memory.NewScopedStore[sep2.FunctionSetAssignments]()
+	if err := Reconcile(ctx, admin, dev); err != nil {
+		t.Fatal(err)
+	}
+	got, err := dev.Get(ctx, "1", "key-A")
+	if err != nil || got.Href != "/edev/1/fsa/key-A" || got.MRID != "MRa" {
+		t.Errorf("record = %+v, %v, want one under the store key", got, err)
+	}
+}
+
 func TestReconcile_EmptyIsNoop(t *testing.T) {
 	dev := memory.NewScopedStore[sep2.FunctionSetAssignments]()
 	if err := Reconcile(context.Background(), memory.NewAdminFSAStore(), dev); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type failingWriter struct{ createErr, deleteErr error }
+
+func (w failingWriter) Create(context.Context, string, string, sep2.FunctionSetAssignments) error {
+	return w.createErr
+}
+func (w failingWriter) Delete(context.Context, string, string) error { return w.deleteErr }
+
+func TestReconcile_WriteErrorReachesCaller(t *testing.T) {
+	boom := errors.New("disk full")
+	admin := adminWith(t, "f", "f", "1")
+	for name, w := range map[string]failingWriter{
+		"create fails":                {createErr: boom},
+		"delete fails after conflict": {createErr: store.ErrAlreadyExists, deleteErr: boom},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := Reconcile(context.Background(), admin, w)
+			if !errors.Is(err, boom) {
+				t.Fatalf("err = %v, want it to wrap %v", err, boom)
+			}
+		})
 	}
 }

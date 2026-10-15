@@ -16,6 +16,7 @@ import (
 // DeviceFSAWriter is the slice of the device-scoped FSA store Reconcile writes.
 type DeviceFSAWriter interface {
 	Create(ctx context.Context, parentID, id string, resource sep2.FunctionSetAssignments) error
+	Delete(ctx context.Context, parentID, id string) error
 }
 
 // Scoped returns the FSA served under the device's edev tree for an admin
@@ -32,15 +33,24 @@ func Scoped(deviceID, fsaID string, admin sep2.FunctionSetAssignments) sep2.Func
 }
 
 // Reconcile re-materializes every recorded device assignment into the
-// device-scoped store, which is in-memory only. Records already present are
-// left alone, and an admin store with no assignments is a no-op.
+// device-scoped store, which is in-memory only. A record already present for
+// the same device and id is replaced, because the admin record is the one an
+// operator last changed. An admin store with no assignments is a no-op.
 func Reconcile(ctx context.Context, admin *memory.AdminFSAStore, devices DeviceFSAWriter) error {
-	for _, fsa := range admin.List(ctx) {
-		// The admin store keys FSAs by mRID (see HandleCreateAdminFSA).
-		fsaID := fsa.MRID
+	for _, fsaID := range admin.IDs(ctx) {
+		fsa, err := admin.Get(ctx, fsaID)
+		if err != nil {
+			return fmt.Errorf("rebuild FSA %q: %w", fsaID, err)
+		}
 		for _, deviceID := range admin.Devices(ctx, fsaID) {
-			err := devices.Create(ctx, deviceID, fsaID, Scoped(deviceID, fsaID, fsa))
-			if err != nil && !errors.Is(err, store.ErrAlreadyExists) {
+			scoped := Scoped(deviceID, fsaID, fsa)
+			err := devices.Create(ctx, deviceID, fsaID, scoped)
+			if errors.Is(err, store.ErrAlreadyExists) {
+				if err = devices.Delete(ctx, deviceID, fsaID); err == nil {
+					err = devices.Create(ctx, deviceID, fsaID, scoped)
+				}
+			}
+			if err != nil {
 				return fmt.Errorf("rebuild FSA %q for device %q: %w", fsaID, deviceID, err)
 			}
 		}

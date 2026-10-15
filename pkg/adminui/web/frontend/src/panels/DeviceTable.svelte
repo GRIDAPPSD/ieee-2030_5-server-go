@@ -2,12 +2,15 @@
   // The registered EndDevice list, plus the per-device FSA assignment
   // control. The LFDI cell is truncated for width, as it always has been;
   // the untruncated value is available through Lookup Device by LFDI.
+  import { untrack } from 'svelte'
   import { fetchJSON, postJSON } from '../lib/api'
+  import { takeProgramsRequest } from '../lib/programsRequest'
   import { deviceIdFromHref, type AdminFSA } from '../lib/fsa'
   import type { DashboardColumn, DashboardDevice } from '../lib/dashboard'
   import { commsClass, commsLabel, formatAge } from '../lib/comms'
   import { deviceConnectionView, deviceInverterView } from '../lib/derstatus'
   import ReportedCell from './ReportedCell.svelte'
+  import DevicePrograms from './DevicePrograms.svelte'
 
   let {
     devices,
@@ -65,6 +68,10 @@
     return `${mRID} (${n} ${n === 1 ? 'program template' : 'program templates'})`
   }
 
+  // The device whose Programs drawer is open. A link from another tab may
+  // have asked for one; that request is read once, on mount.
+  let programsFor = $state(untrack(() => takeProgramsRequest()))
+
   let selected = $state<Record<string, string>>({})
   let error = $state('')
 
@@ -88,11 +95,11 @@
   <h2>End Devices</h2>
   <table>
     <thead>
-      <tr><th>SFDI</th><th>LFDI</th><th>Enabled</th><th>Comms</th><th>Last request</th><th>DER connection (reported)</th><th>Inverter state (reported)</th>{#each columns as col (col.id)}<th>{col.label}{#if col.error}<span style="color: #f59e0b; cursor: help" title={col.error} data-testid="device-column-error-{col.id}" role="img" aria-label="Column failed: {col.error}"> (!)</span>{/if}</th>{/each}<th>Href</th><th>Assign FSA</th></tr>
+      <tr><th>SFDI</th><th>LFDI</th><th>Enabled</th><th>Comms</th><th>Last request</th><th>DER connection (reported)</th><th>Inverter state (reported)</th>{#each columns as col (col.id)}<th>{col.label}{#if col.error}<span style="color: #f59e0b; cursor: help" title={col.error} data-testid="device-column-error-{col.id}" role="img" aria-label="Column failed: {col.error}"> (!)</span>{/if}</th>{/each}<th>Href</th><th>Programs</th><th>Assign FSA</th></tr>
     </thead>
     <tbody id="deviceTable">
       {#if devices.length === 0}
-        <tr><td colspan={9 + columns.length} class="stat-label">No devices registered</td></tr>
+        <tr><td colspan={10 + columns.length} class="stat-label">No devices registered</td></tr>
       {:else}
         {#each devices as device (device.href)}
           {@const deviceID = deviceIdFromHref(device.href)}
@@ -113,6 +120,15 @@
             {/each}
             <td class="mono">{device.href}</td>
             <td>
+              <button
+                class="btn btn-small"
+                data-testid="device-programs-toggle-{deviceID}"
+                aria-expanded={programsFor === deviceID}
+                aria-label="Programs of device {deviceID}"
+                onclick={() => (programsFor = programsFor === deviceID ? '' : deviceID)}>Programs</button
+              >
+            </td>
+            <td>
               <select id="assignSel-{deviceID}" bind:value={selected[deviceID]}>
                 <option value="">(pick FSA)</option>
                 {#each fsas as fsa (fsa.mRID)}
@@ -122,6 +138,13 @@
               <button class="btn btn-small" onclick={() => assign(deviceID)}>Assign</button>
             </td>
           </tr>
+          {#if programsFor === deviceID}
+            <tr data-testid="device-programs-row-{deviceID}">
+              <td colspan={10 + columns.length}>
+                <DevicePrograms deviceId={deviceID} {fsas} onClose={() => (programsFor = '')} />
+              </td>
+            </tr>
+          {/if}
         {/each}
       {/if}
     </tbody>

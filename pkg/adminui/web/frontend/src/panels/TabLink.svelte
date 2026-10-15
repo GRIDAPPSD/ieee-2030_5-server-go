@@ -5,14 +5,17 @@
   import type { Snippet } from 'svelte'
   import { navigate } from '../lib/router'
 
-  let { path, children }: { path: string; children: Snippet } = $props()
+  // onNavigate runs just before a plain click navigates, for a caller that
+  // must leave a request for the tab it is moving to.
+  let { path, testid, onNavigate, children }: { path: string; testid?: string; onNavigate?: () => void; children: Snippet } = $props()
 
   function onClick(event: MouseEvent) {
     if (event.defaultPrevented || event.button !== 0) return
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault()
+    onNavigate?.()
     navigate(path)
   }
 </script>
 
-<a href={path} onclick={onClick}>{@render children()}</a>
+<a href={path} data-testid={testid} onclick={onClick}>{@render children()}</a>

@@ -5,6 +5,7 @@
   // of delivery (criterion 3): devices pull this list, so "stored" is the
   // only thing the server can promise at response time.
   import TabLink from './TabLink.svelte'
+  import { requestPrograms } from '../lib/programsRequest'
   import { fetchJSON, postJSON } from '../lib/api'
   import { deviceIdFromHref } from '../lib/fsa'
   import type { DashboardDevice } from '../lib/dashboard'
@@ -291,7 +292,9 @@
     <p class="hint" data-testid="der-control-no-programs">
       This device has no DER programs. Add a program template on the <TabLink path="/ui/fsas">FSAs tab</TabLink>,
       then assign the device to that FSA on the
-      <TabLink path="/ui/devices">Devices tab</TabLink>.
+      <TabLink path="/ui/devices" testid="der-control-devices-link" onNavigate={() => requestPrograms(selectedDeviceId)}
+        >Devices tab</TabLink
+      >.
     </p>
   {/if}
 

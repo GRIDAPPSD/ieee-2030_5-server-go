@@ -6,6 +6,7 @@
   // sending until the controls list has been read again, so the same write is
   // never sent twice on a guess.
   import TabLink from './TabLink.svelte'
+  import { requestPrograms } from '../lib/programsRequest'
   import { onDestroy, onMount } from 'svelte'
   import { fetchJSON } from '../lib/api'
   import { fmtTime, type DERControlDelivery, type DERControlListItem, type DERControlListResponse, type DERProgramListResponse, type DERProgramView } from '../lib/dercontrol'
@@ -560,7 +561,9 @@
           <p class="hint" data-testid="dispatch-no-programs">
             This device has no DER programs. Add a program template on the <TabLink path="/ui/fsas">FSAs tab</TabLink>,
             then assign the device to that FSA on the
-            <TabLink path="/ui/devices">Devices tab</TabLink>.
+            <TabLink path="/ui/devices" testid="dispatch-devices-link" onNavigate={() => requestPrograms(deviceId)}
+              >Devices tab</TabLink
+            >.
           </p>
         {/if}
         {#if prefillNote}

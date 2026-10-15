@@ -27,18 +27,14 @@
 #                   `-- DEV-EDB2 (device, primacy 3)  -> EDB2
 #
 #   Per managed inverter the 4 FSAs (SY/FDx/SPxx/DEV) are hung off that
-#   inverter's EndDevice. Each FSA points to ONE DERProgram. The total
-#   distinct DERPrograms across the topology is 7:
-#     SY (1), FDA + FDB (2), SPA1 + SPA2 + SPB1 + SPB2 (4) = 7 nodes.
-#   Per-inverter device-level DERPrograms are 4 additional (DEV-EDA1..B2)
-#   but they are scoped under each inverter's EndDevice - the spec models
-#   the "node" tree above as the shared utility/feeder/service-point
-#   hierarchy, while the device program is per-inverter. Total DERPrograms
-#   stored = 7 shared nodes x 4 inverters (each inverter sees the chain
-#   from its perspective via FSA->DERProgramList) + 4 device-level
-#   programs. Each FSA lists only its own node's program, so walking all
-#   four FSAs of a managed inverter surfaces the full SY->FDx->SPxx->DEV
-#   priority chain.
+#   inverter's EndDevice. Each FSA points to ONE DERProgram. The node
+#   tree has 7 shared nodes (SY, FDA, FDB, SPA1, SPA2, SPB1, SPB2), but
+#   the store keys programs by EndDevice, so each managed inverter holds
+#   its own copy of the 3 nodes above it plus its device program: 4 per
+#   inverter, 16 for the 4 inverters, and 17 with the aggregator's own
+#   program below. Each FSA lists only its own node's program, so walking
+#   all four FSAs of a managed inverter surfaces the full
+#   SY->FDx->SPxx->DEV priority chain.
 #
 # The Aggregator EDFI (id="0") gets a single FSA -> its own DERProgram so
 # UTIL-002's "find own EDFI" step has something coherent to discover.

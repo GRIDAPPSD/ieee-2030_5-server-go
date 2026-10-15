@@ -5,6 +5,11 @@
 // mRID to find priority, step 8 GETs the chosen FSA's DERProgramList, and
 // step 9 picks the highest priority program in it.
 //
+// The fixture does not follow that grouping: CSIP IG v2 has one FSA list
+// every topology program, while this fixture gives each of its fifteen
+// levels, topology or not, its own FSA and one program. It exercises
+// fifteen FSAs, not the recommended grouping.
+//
 // The fixture is fifteen-level-fsa.yaml: one EndDevice, fifteen FSAs, one
 // DERProgram per FSA with primacy 0..14. FSA ids are zero-padded ("00".."14")
 // so store-key order is the priority chain. Each FSA lists only its own

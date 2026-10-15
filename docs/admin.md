@@ -178,11 +178,11 @@ defense in depth):
    admission is logged.
 
    **Every admin write route refuses this bypass on its own by default
-   (#579, #631), with a named exemption list:** the exceptions are the
-   end-device and FSA management routes (create, delete, and their
-   program and assignment routes), because those routes only create or
-   delete configuration rows and never return key material, a captured
-   header, or a ticket. A write route not on that list requires a real
+   (#579, #631), with a named exemption list:** the one exception is
+   `POST /api/devices` (end-device creation). The FSA routes (create,
+   delete, program attach and detach, and device assignment and
+   unassignment) are not exempt (#930): they change what devices are
+   told, so they need a real credential even from loopback. A write route not on that list requires a real
    credential (paths 1 to 4 below) even from a loopback address, so a new
    route is protected the moment it exists rather than only once someone
    remembers to add it to a list. The DER control create and cancel routes

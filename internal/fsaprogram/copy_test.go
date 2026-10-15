@@ -241,3 +241,108 @@ func TestReconcileCopies_RestoresMissingParts(t *testing.T) {
 		t.Errorf("log = %q, want one line naming device 3", logged)
 	}
 }
+
+type failingDefaultDelete struct {
+	CopyDefaultStore
+	err error
+}
+
+func (f failingDefaultDelete) Delete(context.Context, string, string) error { return f.err }
+
+func TestRemove_DeletesEveryPartOfTheCopy(t *testing.T) {
+	ctx := context.Background()
+	c := newCopies(t)
+	tmpl := testTemplate()
+	if _, err := c.Ensure(ctx, "7", "fsa-A", tmpl); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := c.Remove(ctx, "7", "fsa-A", tmpl)
+	if err != nil || !removed {
+		t.Fatalf("Remove = %v, %v, want true, nil", removed, err)
+	}
+	assertNoCopy(t, c, "7", "fsa-A", tmpl.ID)
+}
+
+func TestRemove_LeavesProgramsThatAreNotTheCopy(t *testing.T) {
+	ctx := context.Background()
+	tmpl := testTemplate()
+	for name, origin := range map[string]*memory.ProgramOrigin{
+		"fixture program":                nil,
+		"device program":                 {Kind: memory.ProgramOriginDevice, FSAID: "fsa-A"},
+		"copy of another FSA's template": {Kind: memory.ProgramOriginTemplate, FSAID: "fsa-B", TemplateID: tmpl.ID},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := newCopies(t)
+			p := sep2.DERProgram{MRID: "0000000000000000000000000000BEEF"}
+			p.Href = "/edev/7/fsa/fsa-A/derp/" + tmpl.ID
+			if err := c.Programs.Create(ctx, "7", tmpl.ID, p); err != nil {
+				t.Fatal(err)
+			}
+			if origin != nil {
+				if err := c.Origins.Create(ctx, "7", tmpl.ID, *origin); err != nil {
+					t.Fatal(err)
+				}
+			}
+			removed, err := c.Remove(ctx, "7", "fsa-A", tmpl)
+			if err != nil || removed {
+				t.Fatalf("Remove = %v, %v, want false, nil", removed, err)
+			}
+			if got, err := c.Programs.Get(ctx, "7", tmpl.ID); err != nil || got.MRID != p.MRID {
+				t.Errorf("program = %+v, %v, want it untouched", got, err)
+			}
+		})
+	}
+}
+
+// A removal that fails stops, so what stays is a prefix of the write order
+// (origin, default, program) that Ensure recognizes and completes.
+func TestRemove_StopsAtTheFirstFailure(t *testing.T) {
+	ctx := context.Background()
+	boom := errors.New("disk full")
+	c := newCopies(t)
+	tmpl := testTemplate()
+	if _, err := c.Ensure(ctx, "7", "fsa-A", tmpl); err != nil {
+		t.Fatal(err)
+	}
+	broken := c
+	broken.Defaults = failingDefaultDelete{CopyDefaultStore: c.Defaults, err: boom}
+	_, err := broken.Remove(ctx, "7", "fsa-A", tmpl)
+	var part *PartError
+	if !errors.Is(err, boom) || !errors.As(err, &part) || part.Part != "default" || part.DeviceID != "7" || part.TemplateID != tmpl.ID {
+		t.Fatalf("Remove err = %v, want a PartError for the default control wrapping %v", err, boom)
+	}
+	if _, err := c.Programs.Get(ctx, "7", tmpl.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("program err = %v, want it removed before the failure", err)
+	}
+	if _, err := c.Origins.Get(ctx, "7", tmpl.ID); err != nil {
+		t.Errorf("origin err = %v, want it kept after the failure", err)
+	}
+	if _, err := c.Ensure(ctx, "7", "fsa-A", tmpl); err != nil {
+		t.Fatalf("Ensure over the remainder: %v", err)
+	}
+	assertCopy(t, c, "7", "fsa-A", tmpl)
+}
+
+// Ensure's own undo stops at its first failure too, and both errors reach
+// the caller.
+func TestEnsure_FailedUndoKeepsAPrefixAndJoinsBothErrors(t *testing.T) {
+	ctx := context.Background()
+	writeErr, undoErr := errors.New("program write failed"), errors.New("default delete failed")
+	c := newCopies(t)
+	broken := c
+	broken.Programs = failingProgramCreate{CopyProgramStore: c.Programs, err: writeErr}
+	broken.Defaults = failingDefaultDelete{CopyDefaultStore: c.Defaults, err: undoErr}
+	tmpl := testTemplate()
+	_, err := broken.Ensure(ctx, "7", "fsa-A", tmpl)
+	var part *PartError
+	if !errors.Is(err, writeErr) || !errors.Is(err, undoErr) || !errors.As(err, &part) || part.Part != "default" {
+		t.Fatalf("Ensure err = %v, want both errors and a PartError for the default", err)
+	}
+	if _, err := c.Origins.Get(ctx, "7", tmpl.ID); err != nil {
+		t.Errorf("origin err = %v, want it kept", err)
+	}
+	if _, err := c.Ensure(ctx, "7", "fsa-A", tmpl); err != nil {
+		t.Fatalf("Ensure over the remainder: %v", err)
+	}
+	assertCopy(t, c, "7", "fsa-A", tmpl)
+}

@@ -117,10 +117,66 @@ func (c Copies) Check(ctx context.Context, deviceID, fsaID string, t memory.Prog
 	return present, nil
 }
 
+// The parts of a copy, in the order Ensure writes them. Every removal runs
+// in reverse and stops at its first failure, so the parts left stored are
+// always a prefix of this order: an origin naming the template, which Check
+// reads as the copy and Ensure completes.
+const (
+	PartOrigin  = "origin"
+	PartDefault = "default"
+	PartProgram = "program"
+)
+
+// PartError names the part of a template copy a removal could not delete.
+// Every part written before it in Ensure's order is still stored.
+type PartError struct {
+	DeviceID   string
+	TemplateID string
+	Part       string
+	Err        error
+}
+
+func (e *PartError) Error() string {
+	return fmt.Sprintf("removing the %s of template %s's copy on device %s: %v", e.Part, e.TemplateID, e.DeviceID, e.Err)
+}
+
+func (e *PartError) Unwrap() error { return e.Err }
+
+// deletePart deletes one part of a copy; a part already gone counts as
+// deleted.
+func (c Copies) deletePart(ctx context.Context, deviceID, fsaID, programID, part string) error {
+	var err error
+	switch part {
+	case PartOrigin:
+		err = c.Origins.Delete(ctx, deviceID, programID)
+	case PartDefault:
+		err = c.Defaults.Delete(ctx, DefaultScope(deviceID, fsaID, programID), coresingleton.SingletonKey)
+	case PartProgram:
+		err = c.Programs.Delete(ctx, deviceID, programID)
+	default:
+		err = fmt.Errorf("unknown copy part %q", part)
+	}
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return &PartError{DeviceID: deviceID, TemplateID: programID, Part: part, Err: err}
+	}
+	return nil
+}
+
+// deleteParts deletes parts in reverse order and stops at the first failure.
+func (c Copies) deleteParts(ctx context.Context, deviceID, fsaID, programID string, parts []string) error {
+	for i := len(parts) - 1; i >= 0; i-- {
+		if err := c.deletePart(ctx, deviceID, fsaID, programID, parts[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Ensure writes whatever part of t's copy on deviceID is missing: the origin,
 // then the default control, then the program. A part already present is left
-// as it is. On error, or when the caller later calls the returned undo,
-// exactly the parts this call wrote are deleted again.
+// as it is. On error, or when the caller later calls the returned undo, the
+// parts this call wrote are deleted again; an undo that fails returns a
+// *PartError and leaves a prefix of the copy for Ensure to complete.
 func (c Copies) Ensure(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate) (undo func(context.Context) error, err error) {
 	if t.DefaultMRID == "" {
 		return nil, fmt.Errorf("program template %s has no default control mRID", t.ID)
@@ -128,52 +184,68 @@ func (c Copies) Ensure(ctx context.Context, deviceID, fsaID string, t memory.Pro
 	if _, err := c.Check(ctx, deviceID, fsaID, t); err != nil {
 		return nil, err
 	}
-	var undos []func(context.Context) error
+	var written []string
 	undo = func(ctx context.Context) error {
-		var errs []error
-		for i := len(undos) - 1; i >= 0; i-- {
-			if err := undos[i](ctx); err != nil && !errors.Is(err, store.ErrNotFound) {
-				errs = append(errs, err)
-			}
-		}
-		return errors.Join(errs...)
+		return c.deleteParts(ctx, deviceID, fsaID, t.ID, written)
 	}
 	fail := func(err error) (func(context.Context) error, error) {
-		if uerr := undo(ctx); uerr != nil {
-			return nil, fmt.Errorf("%w; undoing the copy: %v", err, uerr)
-		}
-		return nil, err
-	}
-
-	if _, err := c.Origins.Get(ctx, deviceID, t.ID); errors.Is(err, store.ErrNotFound) {
-		origin := memory.ProgramOrigin{Kind: memory.ProgramOriginTemplate, FSAID: fsaID, TemplateID: t.ID}
-		if err := c.Origins.Create(ctx, deviceID, t.ID, origin); err != nil {
-			return fail(fmt.Errorf("recording origin %s/%s: %w", deviceID, t.ID, err))
-		}
-		undos = append(undos, func(ctx context.Context) error { return c.Origins.Delete(ctx, deviceID, t.ID) })
-	} else if err != nil {
-		return fail(fmt.Errorf("reading origin %s/%s: %w", deviceID, t.ID, err))
+		return nil, errors.Join(err, undo(ctx))
 	}
 
 	scope := DefaultScope(deviceID, fsaID, t.ID)
-	if _, err := c.Defaults.Get(ctx, scope, coresingleton.SingletonKey); errors.Is(err, store.ErrNotFound) {
-		if err := c.Defaults.Create(ctx, scope, coresingleton.SingletonKey, CopyDefault(deviceID, fsaID, t)); err != nil {
-			return fail(fmt.Errorf("writing default control %s: %w", scope, err))
-		}
-		undos = append(undos, func(ctx context.Context) error { return c.Defaults.Delete(ctx, scope, coresingleton.SingletonKey) })
-	} else if err != nil {
-		return fail(fmt.Errorf("reading default control %s: %w", scope, err))
+	writes := []struct {
+		part   string
+		get    func() error
+		create func() error
+	}{
+		{PartOrigin,
+			func() error { _, err := c.Origins.Get(ctx, deviceID, t.ID); return err },
+			func() error {
+				return c.Origins.Create(ctx, deviceID, t.ID, memory.ProgramOrigin{Kind: memory.ProgramOriginTemplate, FSAID: fsaID, TemplateID: t.ID})
+			}},
+		{PartDefault,
+			func() error { _, err := c.Defaults.Get(ctx, scope, coresingleton.SingletonKey); return err },
+			func() error {
+				return c.Defaults.Create(ctx, scope, coresingleton.SingletonKey, CopyDefault(deviceID, fsaID, t))
+			}},
+		{PartProgram,
+			func() error { _, err := c.Programs.Get(ctx, deviceID, t.ID); return err },
+			func() error { return c.Programs.Create(ctx, deviceID, t.ID, CopyProgram(deviceID, fsaID, t)) }},
 	}
-
-	if _, err := c.Programs.Get(ctx, deviceID, t.ID); errors.Is(err, store.ErrNotFound) {
-		if err := c.Programs.Create(ctx, deviceID, t.ID, CopyProgram(deviceID, fsaID, t)); err != nil {
-			return fail(fmt.Errorf("writing program %s/%s: %w", deviceID, t.ID, err))
+	for _, w := range writes {
+		switch err := w.get(); {
+		case err == nil:
+		case errors.Is(err, store.ErrNotFound):
+			if err := w.create(); err != nil {
+				return fail(fmt.Errorf("writing the %s of template %s's copy on device %s: %w", w.part, t.ID, deviceID, err))
+			}
+			written = append(written, w.part)
+		default:
+			return fail(fmt.Errorf("reading the %s of template %s's copy on device %s: %w", w.part, t.ID, deviceID, err))
 		}
-		undos = append(undos, func(ctx context.Context) error { return c.Programs.Delete(ctx, deviceID, t.ID) })
-	} else if err != nil {
-		return fail(fmt.Errorf("reading program %s/%s: %w", deviceID, t.ID, err))
 	}
 	return undo, nil
+}
+
+// Remove deletes t's copy from deviceID: the program, then the default
+// control, then the origin. A program under t's id that is not t's copy (a
+// fixture or device program) is left alone and removed is false. A failure
+// stops the removal with a *PartError, leaving a prefix Ensure can complete.
+func (c Copies) Remove(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate) (removed bool, err error) {
+	origin, err := c.Origins.Get(ctx, deviceID, t.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reading the origin of template %s's copy on device %s: %w", t.ID, deviceID, err)
+	}
+	if origin.Kind != memory.ProgramOriginTemplate || origin.FSAID != fsaID || origin.TemplateID != t.ID {
+		return false, nil
+	}
+	if err := c.deleteParts(ctx, deviceID, fsaID, t.ID, []string{PartOrigin, PartDefault, PartProgram}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ReconcileCopies writes every missing part of every template copy for every

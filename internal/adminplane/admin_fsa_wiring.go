@@ -2,7 +2,7 @@ package adminplane
 
 import (
 	"context"
-	"log"
+	"log/slog"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
@@ -84,7 +84,7 @@ func programRetirer(stores *Stores) handler.ProgramRetirer {
 	}
 	issuer, err := assembly.NewDERControlIssuer(stores.DERPrograms, stores.DERControls, stores.DERControlLifecycles, stores.PEN)
 	if err != nil {
-		log.Printf("server: DER control issuer for program deletes: %v: every program delete answers 500", err)
+		slog.Error("admin: no DER control issuer for program deletes; every program delete answers 500", "event", "program_retirer_unavailable", "error", err)
 		return nil
 	}
 	return issuer

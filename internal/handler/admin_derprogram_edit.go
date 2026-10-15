@@ -94,11 +94,8 @@ func (h *AdminFSAHandler) HandleUpdateProgramTemplate() http.HandlerFunc {
 		if e.defaultBase != nil {
 			next.DefaultControlBase = e.defaultBase.Copy()
 		}
-		if reflect.DeepEqual(old, next) {
-			writeJSON(w, http.StatusOK, h.templateView(r.Context(), fsaID, old))
-			return
-		}
-		if !reflect.DeepEqual(old.DefaultControlBase, next.DefaultControlBase) {
+		edited := !reflect.DeepEqual(old, next)
+		if edited && !reflect.DeepEqual(old.DefaultControlBase, next.DefaultControlBase) {
 			v, err := fsaprogram.NextVersion(&old.DefaultVersion)
 			if err != nil {
 				refuseProgram(w, "version_exhausted", "the default control's version is at 65535")
@@ -106,52 +103,65 @@ func (h *AdminFSAHandler) HandleUpdateProgramTemplate() http.HandlerFunc {
 			}
 			next.DefaultVersion = *v
 		}
-		v, err := fsaprogram.NextVersion(&old.Version)
-		if err != nil {
-			refuseProgram(w, "version_exhausted", "the program's version is at 65535")
-			return
+		if edited {
+			v, err := fsaprogram.NextVersion(&old.Version)
+			if err != nil {
+				refuseProgram(w, "version_exhausted", "the program's version is at 65535")
+				return
+			}
+			next.Version = *v
 		}
-		next.Version = *v
 
 		devices, ok := h.copyHolders(w, r, fsaID, old)
 		if !ok {
 			return
 		}
-		var steps []rollbackStep
-		for _, dev := range devices {
-			undo, err := h.Copies.Sync(r.Context(), dev, fsaID, next)
-			if err == nil {
-				steps = append(steps, rollbackStep{device: dev, template: id, part: "copy", undo: undo})
-				continue
+		// The template is written first and is never rolled back: it is the
+		// revision every copy converges to, here, on a retry, or in the boot
+		// rebuild, and its versions only rise, so none is reused.
+		if edited {
+			if err := h.AdminFSAs.UpdateTemplate(r.Context(), fsaID, next); err != nil {
+				h.templateFailed(w, r, "template_write", err)
+				return
 			}
-			h.editFailed(w, r, fsaID, id, err, steps)
-			return
 		}
-		if err := h.AdminFSAs.UpdateTemplate(r.Context(), fsaID, next); err != nil {
-			h.editFailed(w, r, fsaID, id, err, steps)
-			return
-		}
-
+		var behind []string
 		for _, dev := range devices {
-			h.notify(r.Context(), programListHref(dev, fsaID))
+			ch, err := h.Copies.Sync(r.Context(), dev, fsaID, next)
+			h.notifyEdited(r.Context(), dev, fsaID, id, ch)
+			if err != nil {
+				h.logged(r).ErrorContext(r.Context(), "admin: DER program template copy left at an older revision", "event", "der_program_template_copy_behind",
+					"fsa", fsaID, "template", id, "device", dev, "error", err)
+				behind = append(behind, dev)
+			}
 		}
-		h.logged(r).InfoContext(r.Context(), "admin: DER program template edited", "event", "der_program_template_edited",
-			"fsa", fsaID, "template", id, "version", next.Version, "copies", len(devices))
+		if len(behind) > 0 {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf(
+				"program template %s on fsa %s is saved, but the copies on devices %s are not yet; repeat the request, or restart, to update them",
+				id, fsaID, strings.Join(behind, ", ")))
+			return
+		}
+		if edited {
+			h.logged(r).InfoContext(r.Context(), "admin: DER program template edited", "event", "der_program_template_edited",
+				"fsa", fsaID, "template", id, "version", next.Version, "copies", len(devices))
+		}
 		writeJSON(w, http.StatusOK, h.templateView(r.Context(), fsaID, next))
 	}
 }
 
-// editFailed undoes a template edit's copy writes after cause. A write whose
-// undo fails stays at the new content, and says so.
-func (h *AdminFSAHandler) editFailed(w http.ResponseWriter, r *http.Request, fsaID, id string, cause error, steps []rollbackStep) {
-	h.logged(r).ErrorContext(r.Context(), "admin: DER program template edit failed", "event", "der_program_template_edit_failed",
-		"fsa", fsaID, "template", id, "error", cause)
-	if !h.rollbackAfter(r, cause, steps) {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf(
-			"program template edit failed; template %s on fsa %s is unchanged, but some of its device copies carry the edit", id, fsaID))
-		return
+// notifyEdited tells the subscribers of each representation an edit wrote,
+// and the program's FSA list, since lists are per FSA.
+func (h *AdminFSAHandler) notifyEdited(ctx context.Context, deviceID, fsaID, id string, ch fsaprogram.Changes) {
+	href := der.DERProgramHref(deviceID, fsaID, id)
+	if ch.Program {
+		h.notify(ctx, href)
 	}
-	writeError(w, http.StatusInternalServerError, templateInternalError)
+	if ch.Default {
+		h.notify(ctx, href+"/dderc")
+	}
+	if ch.Program || ch.Default {
+		h.notify(ctx, programListHref(deviceID, fsaID))
+	}
 }
 
 // HandleDeleteProgramTemplate returns a handler for DELETE
@@ -181,14 +191,22 @@ func (h *AdminFSAHandler) HandleDeleteProgramTemplate() http.HandlerFunc {
 		}
 
 		// Copies go before the template, so a removal that fails leaves the
-		// template, and the boot rebuild restores every copy it names.
+		// template, and the boot rebuild writes back every copy it names.
 		var removed []string
+		failed := "template"
 		err := h.Retirer.Retire(r.Context(), scopes, func(ctx context.Context) error {
 			for _, dev := range devices {
-				if _, err := h.Copies.Remove(ctx, dev, fsaID, t); err != nil {
+				_, err := h.Copies.Remove(ctx, dev, fsaID, t)
+				var part *fsaprogram.PartError
+				// Remove deletes the program first, so a later part failing
+				// still leaves the device without it.
+				if err == nil || (errors.As(err, &part) && part.Part != fsaprogram.PartProgram) {
+					removed = append(removed, dev)
+				}
+				if err != nil {
+					failed = "copy on device " + dev
 					return err
 				}
-				removed = append(removed, dev)
 			}
 			return h.AdminFSAs.DeleteTemplate(ctx, fsaID, id)
 		})
@@ -199,14 +217,13 @@ func (h *AdminFSAHandler) HandleDeleteProgramTemplate() http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			var part *fsaprogram.PartError
-			if errors.As(err, &part) {
-				h.logUndoFailed(r, part.DeviceID, part.TemplateID, part.Part, err)
-			} else {
-				h.logUndoFailed(r, "", id, "template", err)
+			h.logged(r).ErrorContext(r.Context(), "admin: DER program template delete failed", "event", "der_program_template_delete_failed",
+				"fsa", fsaID, "template", id, "failed", failed, "removed", removed, "error", err)
+			msg := fmt.Sprintf("program template delete failed at the %s; template %s is kept on fsa %s", failed, id, fsaID)
+			if len(removed) > 0 {
+				msg += fmt.Sprintf(", and the boot rebuild writes back its copies removed from devices %s", strings.Join(removed, ", "))
 			}
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf(
-				"program template delete failed; template %s was kept on fsa %s, and its device copies are restored at the next restart", id, fsaID))
+			writeError(w, http.StatusInternalServerError, msg)
 			return
 		}
 		h.logged(r).InfoContext(r.Context(), "admin: DER program template deleted", "event", "der_program_template_deleted",
@@ -230,11 +247,16 @@ func (h *AdminFSAHandler) lookupTemplate(w http.ResponseWriter, r *http.Request,
 }
 
 // copyHolders returns the assigned devices that hold t's copy. A device whose
-// copy is missing gets the edited template from the boot rebuild.
+// copy is missing gets the edited template from the boot rebuild. A device
+// whose own program conflicts with t holds no copy, as the boot rebuild
+// treats it, so it neither blocks nor is touched by an edit or delete.
 func (h *AdminFSAHandler) copyHolders(w http.ResponseWriter, r *http.Request, fsaID string, t memory.ProgramTemplate) ([]string, bool) {
 	var out []string
 	for _, dev := range h.AdminFSAs.Devices(r.Context(), fsaID) {
 		present, err := h.Copies.Check(r.Context(), dev, fsaID, t)
+		if errors.Is(err, fsaprogram.ErrCopyConflict) {
+			continue
+		}
 		if err != nil {
 			h.templateFailed(w, r, "copy_check", err)
 			return nil, false
@@ -284,7 +306,7 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 				return nil
 			}
 		}
-		changed, err := fsaprogram.EditWithDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults,
+		ch, err := fsaprogram.EditWithDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults,
 			fsaprogram.Ref{DeviceID: deviceID, ProgramID: id}, scope,
 			func(p *sep2.DERProgram) error {
 				p.Description, p.Primacy = e.description, e.primacy
@@ -300,8 +322,8 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 			return
 		}
 
-		if changed {
-			h.notify(r.Context(), programListHref(deviceID, fsaID))
+		h.notifyEdited(r.Context(), deviceID, fsaID, id, ch)
+		if ch.Program {
 			h.logged(r).InfoContext(r.Context(), "admin: DER device program edited", "event", "der_device_program_edited",
 				"device", deviceID, "program", id)
 		}
@@ -345,7 +367,8 @@ func (h *AdminFSAHandler) HandleDeleteDeviceProgram() http.HandlerFunc {
 		err := h.Retirer.Retire(r.Context(), scopes, func(ctx context.Context) error {
 			err := h.Copies.RemoveProgram(ctx, deviceID, fsaID, id)
 			var part *fsaprogram.PartError
-			programGone = err == nil || (errors.As(err, &part) && part.Part != fsaprogram.PartProgram)
+			// RemoveProgram deletes the default, the program, then the origin.
+			programGone = err == nil || (errors.As(err, &part) && part.Part == fsaprogram.PartOrigin)
 			return err
 		})
 		if programGone {
@@ -421,10 +444,14 @@ func (h *AdminFSAHandler) retireRefused(w http.ResponseWriter, err error) bool {
 	return true
 }
 
-// notifyDeleted tells the program's subscribers it is gone, and its FSA's
-// list subscribers that the list changed.
+// notifyDeleted tells the subscribers of the program, its default control
+// and its control list that they are gone, and its FSA's list subscribers
+// that the list changed.
 func (h *AdminFSAHandler) notifyDeleted(ctx context.Context, deviceID, fsaID, id string) {
-	h.notifyStatus(ctx, der.DERProgramHref(deviceID, fsaID, id), sep2.NotificationStatusCanceledDeleted)
+	href := der.DERProgramHref(deviceID, fsaID, id)
+	for _, gone := range []string{href, href + "/dderc", href + "/derc"} {
+		h.notifyStatus(ctx, gone, sep2.NotificationStatusCanceledDeleted)
+	}
 	h.notify(ctx, programListHref(deviceID, fsaID))
 }
 

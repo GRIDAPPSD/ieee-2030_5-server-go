@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,26 @@ func defaultOf(t *testing.T, f *templateFixture, dev, fsa, id string) sep2.Defau
 	return d
 }
 
+// edited is what an edit of the program at href notifies: the program, its
+// default control when that changed, and its FSA's list.
+func edited(href string, withDefault bool) []recordedNotification {
+	out := []recordedNotification{{href, sep2.NotificationStatusDefault}}
+	if withDefault {
+		out = append(out, recordedNotification{href + "/dderc", sep2.NotificationStatusDefault})
+	}
+	return append(out, recordedNotification{href[:strings.LastIndex(href, "/")], sep2.NotificationStatusDefault})
+}
+
+// deleted is what a delete of the program at href notifies.
+func deleted(href string) []recordedNotification {
+	return []recordedNotification{
+		{href, sep2.NotificationStatusCanceledDeleted},
+		{href + "/dderc", sep2.NotificationStatusCanceledDeleted},
+		{href + "/derc", sep2.NotificationStatusCanceledDeleted},
+		{href[:strings.LastIndex(href, "/")], sep2.NotificationStatusDefault},
+	}
+}
+
 func versionNum(v *uint16) int {
 	if v == nil {
 		return -1
@@ -87,7 +108,10 @@ func TestUpdateProgramTemplate_RaisesVersionsAndRewritesEveryCopy(t *testing.T) 
 			t.Errorf("device %s default version = %d, want 1", dev, versionNum(d.Version))
 		}
 	}
-	want := []recordedNotification{{"/edev/1/fsa/fsa-A/derp", sep2.NotificationStatusDefault}, {"/edev/2/fsa/fsa-A/derp", sep2.NotificationStatusDefault}}
+	var want []recordedNotification
+	for _, dev := range []string{"1", "2"} {
+		want = append(want, edited("/edev/"+dev+"/fsa/fsa-A/derp/"+v.ID, true)...)
+	}
 	if got := f.notifier.take(); !slices.Equal(got, want) {
 		t.Errorf("notifications = %+v, want %+v", got, want)
 	}
@@ -103,6 +127,10 @@ func TestUpdateProgramTemplate_RaisesVersionsAndRewritesEveryCopy(t *testing.T) 
 	}
 	if p, _ := f.copies.Programs.Get(context.Background(), "2", v.ID); versionNum(p.Version) != 2 || p.Primacy != 71 {
 		t.Errorf("device 2 copy = version %d primacy %d, want 2 and 71", versionNum(p.Version), p.Primacy)
+	}
+	want = append(edited("/edev/1/fsa/fsa-A/derp/"+v.ID, false), edited("/edev/2/fsa/fsa-A/derp/"+v.ID, false)...)
+	if got := f.notifier.take(); !slices.Equal(got, want) {
+		t.Errorf("notifications after a program-only edit = %+v, want %+v", got, want)
 	}
 }
 
@@ -207,8 +235,7 @@ func TestUpdateDeviceProgram_RaisesVersionsOnce(t *testing.T) {
 	if d := defaultOf(t, f, "1", "fsa-A", created.ID); versionNum(d.Version) != 1 || uint16(*d.DERControlBase.OpModMaxLimW) != 4000 || d.MRID != created.DefaultControl.MRID {
 		t.Errorf("stored default = %+v", d)
 	}
-	want := []recordedNotification{{"/edev/1/fsa/fsa-A/derp", sep2.NotificationStatusDefault}}
-	if got := f.notifier.take(); !slices.Equal(got, want) {
+	if got, want := f.notifier.take(), edited(created.Href, true); !slices.Equal(got, want) {
 		t.Errorf("notifications = %+v, want %+v", got, want)
 	}
 	if o, _ := f.copies.Origins.Get(context.Background(), "1", created.ID); o.Kind != memory.ProgramOriginDevice {
@@ -318,10 +345,7 @@ func TestDeleteDeviceProgram_RemovesEveryPartAndNotifies(t *testing.T) {
 			t.Errorf("origin of %s: %v, want gone", p.id, err)
 		}
 	}
-	want := []recordedNotification{
-		{created.Href, sep2.NotificationStatusCanceledDeleted}, {"/edev/1/fsa/fsa-A/derp", sep2.NotificationStatusDefault},
-		{fixtureHref, sep2.NotificationStatusCanceledDeleted}, {"/edev/1/fsa/0/derp", sep2.NotificationStatusDefault},
-	}
+	want := append(deleted(created.Href), deleted(fixtureHref)...)
 	if got := f.notifier.take(); !slices.Equal(got, want) {
 		t.Errorf("notifications = %+v, want %+v", got, want)
 	}
@@ -350,10 +374,7 @@ func TestDeleteProgramTemplate_RemovesItsCopies(t *testing.T) {
 	}
 	assertNoDeviceCopy(t, f.copies, "1")
 	assertNoDeviceCopy(t, f.copies, "2")
-	want := []recordedNotification{
-		{"/edev/1/fsa/fsa-A/derp/" + v.ID, sep2.NotificationStatusCanceledDeleted}, {"/edev/1/fsa/fsa-A/derp", sep2.NotificationStatusDefault},
-		{"/edev/2/fsa/fsa-A/derp/" + v.ID, sep2.NotificationStatusCanceledDeleted}, {"/edev/2/fsa/fsa-A/derp", sep2.NotificationStatusDefault},
-	}
+	want := append(deleted("/edev/1/fsa/fsa-A/derp/"+v.ID), deleted("/edev/2/fsa/fsa-A/derp/"+v.ID)...)
 	if got := f.notifier.take(); !slices.Equal(got, want) {
 		t.Errorf("notifications = %+v, want %+v", got, want)
 	}

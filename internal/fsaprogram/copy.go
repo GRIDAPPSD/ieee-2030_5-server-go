@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -275,55 +276,56 @@ func (c Copies) Remove(ctx context.Context, deviceID, fsaID string, t memory.Pro
 	return true, nil
 }
 
-// Sync rewrites deviceID's copy of t to t's content and versions: the
-// default control, then the program. The template's own edit raised those
-// versions, so every copy carries the same ones. A failed program write puts
-// the default back; when that fails too, the error is a *PartError naming the
-// default, which is left at t's content. The returned undo writes both parts
-// as they were, under the same contract.
-func (c Copies) Sync(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate) (undo func(context.Context) error, err error) {
+// Sync rewrites deviceID's copy of t to t's content and versions when it
+// differs: the default control, then the program. Every part therefore holds
+// a content and version some revision of t held, and t's versions only rise,
+// so no version is reused for other content. A failed program write puts the
+// default back; when that fails too, the default is left at t's revision,
+// and a later Sync, at the latest the boot rebuild, finishes the copy.
+// The returned Changes name the parts written, on error too.
+func (c Copies) Sync(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate) (Changes, error) {
 	editMu.Lock()
 	defer editMu.Unlock()
 
 	scope := DefaultScope(deviceID, fsaID, t.ID)
 	dBefore, err := c.Defaults.Get(ctx, scope, coresingleton.SingletonKey)
 	if err != nil {
-		return nil, fmt.Errorf("reading the default of template %s's copy on device %s: %w", t.ID, deviceID, err)
+		return Changes{}, fmt.Errorf("reading the default of template %s's copy on device %s: %w", t.ID, deviceID, err)
 	}
 	pBefore, err := c.Programs.Get(ctx, deviceID, t.ID)
 	if err != nil {
-		return nil, fmt.Errorf("reading template %s's copy on device %s: %w", t.ID, deviceID, err)
+		return Changes{}, fmt.Errorf("reading template %s's copy on device %s: %w", t.ID, deviceID, err)
 	}
-	write := func(ctx context.Context, d sep2.DefaultDERControl, p sep2.DERProgram, prior sep2.DefaultDERControl) error {
-		if err := c.Defaults.Update(ctx, scope, coresingleton.SingletonKey, d); err != nil {
-			return fmt.Errorf("writing the default of template %s's copy on device %s: %w", t.ID, deviceID, err)
+	dAfter, pAfter := CopyDefault(deviceID, fsaID, t), CopyProgram(deviceID, fsaID, t)
+	dStale, pStale := !reflect.DeepEqual(dBefore, dAfter), !reflect.DeepEqual(pBefore, pAfter)
+	if dStale {
+		if err := c.Defaults.Update(ctx, scope, coresingleton.SingletonKey, dAfter); err != nil {
+			return Changes{}, fmt.Errorf("writing the default of template %s's copy on device %s: %w", t.ID, deviceID, err)
 		}
-		if err := c.Programs.Update(ctx, deviceID, t.ID, p); err != nil {
+	}
+	if pStale {
+		if err := c.Programs.Update(ctx, deviceID, t.ID, pAfter); err != nil {
 			err = fmt.Errorf("writing template %s's copy on device %s: %w", t.ID, deviceID, err)
-			if rerr := c.Defaults.Update(ctx, scope, coresingleton.SingletonKey, prior); rerr != nil {
-				return &PartError{DeviceID: deviceID, TemplateID: t.ID, Part: PartDefault, Err: errors.Join(err, rerr)}
+			if !dStale {
+				return Changes{}, err
 			}
-			return err
+			if rerr := c.Defaults.Update(ctx, scope, coresingleton.SingletonKey, dBefore); rerr != nil {
+				return Changes{Default: true}, errors.Join(err, fmt.Errorf("restoring the default: %w", rerr))
+			}
+			return Changes{}, err
 		}
-		return nil
 	}
-	dAfter := CopyDefault(deviceID, fsaID, t)
-	if err := write(ctx, dAfter, CopyProgram(deviceID, fsaID, t), dBefore); err != nil {
-		return nil, err
-	}
-	return func(ctx context.Context) error {
-		editMu.Lock()
-		defer editMu.Unlock()
-		return write(ctx, dBefore, pBefore, dAfter)
-	}, nil
+	return Changes{Program: pStale, Default: dStale}, nil
 }
 
-// RemoveProgram deletes a device or fixture program from deviceID: the
-// program, then its default control, then its origin, if any. A failure
-// stops the removal with a *PartError; a device program's origin is deleted
-// last, so the boot cleanup finds and finishes a partial removal.
+// RemoveProgram deletes a device or fixture program from deviceID: its
+// default control, then the program, then its origin, if any. A failure stops
+// the removal with a *PartError. Until the program is gone a retry finds it
+// and finishes; after that only a device program's origin can be left, and
+// the boot cleanup finds and removes it. A fixture program has no origin, so
+// its default must not outlive it.
 func (c Copies) RemoveProgram(ctx context.Context, deviceID, fsaID, programID string) error {
-	return c.deleteParts(ctx, deviceID, fsaID, programID, []string{PartOrigin, PartDefault, PartProgram})
+	return c.deleteParts(ctx, deviceID, fsaID, programID, []string{PartOrigin, PartProgram, PartDefault})
 }
 
 // DevicePrograms returns the ids of the device programs recorded under fsaID
@@ -356,9 +358,9 @@ func (c Copies) DevicePrograms(ctx context.Context, deviceID, fsaID string) ([]s
 }
 
 // ReconcileCopies writes every missing part of every template copy for every
-// recorded assignment. A copy that conflicts with a fixture or device program
-// is logged and skipped, so one collision does not stop the boot; any other
-// store error is returned.
+// recorded assignment, and rewrites a copy at an older revision. A copy that
+// conflicts with a fixture or device program is logged and skipped, so one
+// collision does not stop the boot; any other store error is returned.
 func ReconcileCopies(ctx context.Context, admin *memory.AdminFSAStore, copies Copies, logf func(format string, args ...any)) error {
 	for _, fsaID := range admin.IDs(ctx) {
 		tmpls := admin.Templates(ctx, fsaID)
@@ -374,6 +376,15 @@ func ReconcileCopies(ctx context.Context, admin *memory.AdminFSAStore, copies Co
 				}
 				if err != nil {
 					return fmt.Errorf("rebuild program template %q of FSA %q for device %q: %w", t.ID, fsaID, deviceID, err)
+				}
+				// A template edit that failed partway left this copy at an
+				// older revision; Ensure never rewrites a present part.
+				synced, err := copies.Sync(ctx, deviceID, fsaID, t)
+				if err != nil {
+					return fmt.Errorf("sync program template %q of FSA %q to device %q: %w", t.ID, fsaID, deviceID, err)
+				}
+				if synced.Program || synced.Default {
+					logf("synced program template %q of FSA %q to device %q, whose copy was at an older revision", t.ID, fsaID, deviceID)
 				}
 			}
 		}

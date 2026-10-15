@@ -9,6 +9,8 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -102,5 +104,23 @@ func TestProgramEditRoutes_AbsentOnAReadOnlyPlane(t *testing.T) {
 		if r := post(h, rt.path, editBody, withMethod(rt.method)); r.Code != http.StatusNotFound && r.Code != http.StatusMethodNotAllowed {
 			t.Errorf("%s %s on a read-only plane = %d, want 404 or 405", rt.method, rt.path, r.Code)
 		}
+	}
+}
+
+// Program deletes and control creates must lock the same scopes, so the FSA
+// handler takes the process's one issuer when the stores carry it.
+func TestProgramRetirer_IsTheControlRoutesIssuer(t *testing.T) {
+	stores := programEditStores(t)
+	issuer, err := assembly.NewDERControlIssuer(stores.DERPrograms, stores.DERControls, stores.DERControlLifecycles, stores.PEN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stores.DERControlIssuer = issuer
+	fsaH := newAdminFSAHandler(stores)
+	if fsaH.Retirer != handler.ProgramRetirer(issuer) {
+		t.Errorf("FSA handler retirer = %v, want the stores' issuer %p", fsaH.Retirer, issuer)
+	}
+	if derH := newAdminDERControlHandler(stores); derH.Issuer != handler.DERControlIssuer(issuer) {
+		t.Errorf("control handler issuer = %v, want the stores' issuer %p", derH.Issuer, issuer)
 	}
 }

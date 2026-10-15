@@ -79,73 +79,81 @@ func EditDefault(ctx context.Context, programs ProgramStore, defaults DefaultSto
 	return err
 }
 
+// Changes says which representations an edit wrote. The program is written
+// whenever anything changed, since its version is raised either way.
+type Changes struct {
+	Program bool
+	Default bool
+}
+
 // EditWithDefault is one edit of a program and of the default control stored
 // under scope; a nil mutate leaves that side alone. The program's version is
 // raised once when either side changed, and the default's when it changed.
-// changed reports whether anything was written. Both versions are checked
-// before either write, and a failed program write puts the default back.
+// Both versions are checked before either write, and a failed program write
+// puts the default back.
 func EditWithDefault(ctx context.Context, programs ProgramStore, defaults DefaultStore, ref Ref, scope string,
-	mutateProgram func(*sep2.DERProgram) error, mutateDefault func(*sep2.DefaultDERControl) error) (changed bool, err error) {
+	mutateProgram func(*sep2.DERProgram) error, mutateDefault func(*sep2.DefaultDERControl) error) (Changes, error) {
 	editMu.Lock()
 	defer editMu.Unlock()
 
 	var dBefore, dAfter sep2.DefaultDERControl
+	var err error
 	dChanged := false
 	if mutateDefault != nil {
 		if dBefore, err = defaults.Get(ctx, scope, coresingleton.SingletonKey); err != nil {
-			return false, fmt.Errorf("reading default control %s: %w", scope, err)
+			return Changes{}, fmt.Errorf("reading default control %s: %w", scope, err)
 		}
 		dAfter = dBefore.Copy()
 		dAfter.Subscribable = cloneUint8(dAfter.Subscribable)
 		if err := mutateDefault(&dAfter); err != nil {
-			return false, err
+			return Changes{}, err
 		}
 		dChanged = !reflect.DeepEqual(dBefore, dAfter)
 		if !dChanged && mutateProgram == nil {
-			return false, nil
+			return Changes{}, nil
 		}
 	}
 
 	pBefore, err := programs.Get(ctx, ref.DeviceID, ref.ProgramID)
 	if err != nil {
-		return false, fmt.Errorf("reading program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
+		return Changes{}, fmt.Errorf("reading program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
 	}
 	pAfter := pBefore.Copy()
 	pAfter.Subscribable = cloneUint8(pAfter.Subscribable)
 	if mutateProgram != nil {
 		if err := mutateProgram(&pAfter); err != nil {
-			return false, err
+			return Changes{}, err
 		}
 	}
 	if !dChanged && reflect.DeepEqual(pBefore, pAfter) {
-		return false, nil
+		return Changes{}, nil
 	}
 	if dChanged {
 		if dAfter.Version, err = NextVersion(dBefore.Version); err != nil {
-			return false, err
+			return Changes{}, err
 		}
 	}
 	if pAfter.Version, err = NextVersion(pBefore.Version); err != nil {
-		return false, err
+		return Changes{}, err
 	}
 
 	if dChanged {
 		if err := defaults.Update(ctx, scope, coresingleton.SingletonKey, dAfter); err != nil {
-			return false, fmt.Errorf("writing default control %s: %w", scope, err)
+			return Changes{}, fmt.Errorf("writing default control %s: %w", scope, err)
 		}
 	}
 	if err := programs.Update(ctx, ref.DeviceID, ref.ProgramID, pAfter); err != nil {
 		err = fmt.Errorf("writing program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
 		if !dChanged {
-			return false, err
+			return Changes{}, err
 		}
 		if rerr := defaults.Update(ctx, scope, coresingleton.SingletonKey, dBefore); rerr != nil {
 			// %v, not %w: the causes must not match store sentinels.
-			return false, fmt.Errorf("%w: default control %s is at the new content: %v; restoring it: %v", ErrHalfApplied, scope, err, rerr)
+			return Changes{}, fmt.Errorf("%w: default control %s is at the new content: %v; restoring it: %v", ErrHalfApplied, scope, err, rerr)
 		}
-		return false, err
+		return Changes{}, err
 	}
-	return true, nil
+	return Changes{Program: true, Default: dChanged}, nil
 }
 
 // cloneUint8 copies the Subscribable attribute, which core's Copy shares, so a

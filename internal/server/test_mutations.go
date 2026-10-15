@@ -37,6 +37,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	coresep2time "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
@@ -192,23 +193,19 @@ func handleDERProgPrimacy(stores *Stores) http.HandlerFunc {
 		}
 
 		ctx := r.Context()
-		// Address the program by (parent, id) on the store itself. This
-		// used to take a per-parent handle via ForParent, which core
-		// withdrew: that method was promoted by an embedded field and was
-		// never part of the store.ScopedStore contract, so reaching for
-		// it bypassed the persistence wrapper.
-		programs := stores.DERPrograms
-		existing, err := programs.Get(ctx, req.EndDeviceID, req.ProgramID)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				http.Error(w, "der program not found", http.StatusNotFound)
-				return
-			}
-			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+		ref := fsaprogram.Ref{DeviceID: req.EndDeviceID, ProgramID: req.ProgramID}
+		err := fsaprogram.Edit(ctx, stores.DERPrograms, ref, func(p *sep2.DERProgram) error {
+			p.Primacy = *req.Primacy
+			return nil
+		})
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			http.Error(w, "der program not found", http.StatusNotFound)
 			return
-		}
-		existing.Primacy = *req.Primacy
-		if err := programs.Update(ctx, req.EndDeviceID, req.ProgramID, existing); err != nil {
+		case errors.Is(err, fsaprogram.ErrVersionExhausted):
+			http.Error(w, "version_exhausted", http.StatusConflict)
+			return
+		case err != nil:
 			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -562,16 +559,19 @@ func moveFSAPrograms(ctx context.Context, stores *Stores, edev, from, to string)
 		if err := moveDefaultControl(ctx, stores, oldScope, newScope, restamp); err != nil {
 			return fmt.Errorf("program %s: %w", derp, err)
 		}
-		p.Href = restamp(p.Href)
-		if p.DefaultDERControlLink != nil {
-			p.DefaultDERControlLink.Href = restamp(p.DefaultDERControlLink.Href)
-		}
-		for _, l := range []*sep2.ListLink{p.ActiveDERControlListLink, p.DERControlListLink, p.DERCurveListLink} {
-			if l != nil {
-				l.Href = restamp(l.Href)
+		err := fsaprogram.Edit(ctx, stores.DERPrograms, fsaprogram.Ref{DeviceID: edev, ProgramID: derp}, func(p *sep2.DERProgram) error {
+			p.Href = restamp(p.Href)
+			if p.DefaultDERControlLink != nil {
+				p.DefaultDERControlLink.Href = restamp(p.DefaultDERControlLink.Href)
 			}
-		}
-		if err := stores.DERPrograms.Update(ctx, edev, derp, p); err != nil {
+			for _, l := range []*sep2.ListLink{p.ActiveDERControlListLink, p.DERControlListLink, p.DERCurveListLink} {
+				if l != nil {
+					l.Href = restamp(l.Href)
+				}
+			}
+			return nil
+		})
+		if err != nil {
 			return fmt.Errorf("program %s: updating: %w", derp, err)
 		}
 	}
@@ -655,7 +655,12 @@ func moveDefaultControl(ctx context.Context, stores *Stores, oldScope, newScope 
 	if err != nil {
 		return fmt.Errorf("default control: reading: %w", err)
 	}
-	dd.Href = restamp(dd.Href)
+	if href := restamp(dd.Href); href != dd.Href {
+		dd.Href = href
+		if dd.Version, err = fsaprogram.NextVersion(dd.Version); err != nil {
+			return fmt.Errorf("default control: %w", err)
+		}
+	}
 	if err := stores.DefaultDERControls.Create(ctx, newScope, coresingleton.SingletonKey, dd); err != nil {
 		return fmt.Errorf("default control: creating: %w", err)
 	}

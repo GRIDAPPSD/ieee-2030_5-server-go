@@ -2,6 +2,7 @@ package memory_test
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -269,5 +270,60 @@ func TestDERProgramPersistence_ConcurrentMutations(t *testing.T) {
 		if _, err := revived.Get(ctx, parent, id); err != nil {
 			t.Errorf("%s/%s missing: %v", parent, id, err)
 		}
+	}
+}
+
+// A program version survives a restart, and a snapshot written before the
+// field existed loads and serves with no version element (#919).
+func TestDERProgramPersistence_VersionRoundTripAndLegacyFile(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, path := newPersistedDERProgramStore(t)
+	v := uint16(7)
+	versioned := mkProgram("MR1", "versioned", 1)
+	versioned.Version = &v
+	if err := store.Create(ctx, "dev-1", "p1", versioned); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Create(ctx, "dev-1", "p2", mkProgram("MR2", "legacy", 2)); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.ReplaceAll(string(raw), `"Version":null,`, "")
+	if strings.Count(legacy, `"Version"`) != 1 {
+		t.Fatalf("could not strip the unset Version from the snapshot:\n%s", raw)
+	}
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := memory.NewDERProgramStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	p1, err := reloaded.Get(ctx, "dev-1", "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1.Version == nil || *p1.Version != 7 {
+		t.Errorf("p1 version = %v, want 7", p1.Version)
+	}
+	p2, err := reloaded.Get(ctx, "dev-1", "p2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p2.Version != nil {
+		t.Errorf("p2 version = %d, want none", *p2.Version)
+	}
+	wire, err := xml.Marshal(p2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(wire), "<version") {
+		t.Errorf("unversioned program serves a version element: %s", wire)
 	}
 }

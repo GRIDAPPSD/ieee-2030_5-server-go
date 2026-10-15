@@ -213,6 +213,9 @@ func (s *DERProgramStore) HasParent(ctx context.Context, parentID string) (bool,
 	return s.inner.HasParent(ctx, parentID)
 }
 
+// Persists reports whether the store is wired to a snapshot path.
+func (s *DERProgramStore) Persists() bool { return s.persistPath != "" }
+
 // Parents returns the parent ids the collection knows, ascending.
 func (s *DERProgramStore) Parents(ctx context.Context) ([]string, error) {
 	return s.inner.Parents(ctx)

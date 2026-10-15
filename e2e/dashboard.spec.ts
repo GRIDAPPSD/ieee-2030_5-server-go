@@ -137,8 +137,11 @@ test('dashboard renders all UI sections', async ({ page }) => {
   // Device table
   await page.getByTestId('tab-devices').click();
   await expect(page.getByText('END DEVICES')).toBeVisible();
-  await expect(page.locator('th:has-text("SFDI")')).toBeVisible();
-  await expect(page.locator('th:has-text("LFDI")')).toBeVisible();
+  // Scoped to the End Devices table: the Management Pairs card on the same
+  // tab has its own "Manager LFDI" and "Managed LFDI" headers.
+  const deviceTable = page.locator('table').filter({ has: page.locator('#deviceTable') });
+  await expect(deviceTable.getByRole('columnheader', { name: 'SFDI', exact: true })).toBeVisible();
+  await expect(deviceTable.getByRole('columnheader', { name: 'LFDI', exact: true })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Enabled' })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Comms' })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Last request' })).toBeVisible();

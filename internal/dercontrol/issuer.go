@@ -207,6 +207,15 @@ func (i *Issuer) issue(ctx context.Context, req CreateRequest, fleet Fleet) (Res
 	unlock := i.lockScope(scopeKey)
 	defer unlock()
 
+	// Retire may have removed the program after the read above, and a
+	// control stored now would be one its check never saw.
+	if _, err := i.programs.Get(ctx, reqEdev, reqDerp); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return Result{}, refuse(RefusalProgramNotFound)
+		}
+		return Result{}, fmt.Errorf("dercontrol: load program: %w", err)
+	}
+
 	existing, err := i.controls.List(ctx, scopeKey, store.ListOptions{Unbounded: true})
 	if err != nil {
 		return Result{}, fmt.Errorf("dercontrol: list scope: %w", err)

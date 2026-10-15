@@ -233,7 +233,7 @@ func planReconcile(ctx context.Context, target *Target, spec *Spec, seeded map[s
 		case !errors.Is(err, store.ErrNotFound):
 			return nil, fmt.Errorf("default_der_controls[%d] (scope=%q): read persisted DefaultDERControl: %w", i, scope, err)
 		case wasSeeded:
-			p.skip("DefaultDERControl scope=%q: deleted since seeded", scope)
+			p.skip("DefaultDERControl scope=%q: seeded but absent from the persisted store", scope)
 		default:
 			p.defaultDERControls = append(p.defaultDERControls, indexed[DefaultDERControlSpec]{i, d})
 			p.record(key)

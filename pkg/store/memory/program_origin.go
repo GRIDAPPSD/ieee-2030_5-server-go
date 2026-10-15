@@ -32,7 +32,8 @@ type ProgramOrigin struct {
 	TemplateID string `json:"templateID,omitempty"`
 }
 
-// Copy returns an independent copy.
+// Copy is a plain value copy, since every field is a string; it exists to
+// satisfy store.Copier.
 func (o ProgramOrigin) Copy() ProgramOrigin { return o }
 
 // Validate reports whether o is an origin the index may hold.

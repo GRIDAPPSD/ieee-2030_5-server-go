@@ -1,12 +1,12 @@
-# #60 fixture — 7 DERPrograms hung off 7 FSAs for CORE-013.
+# #60 fixture - 7 DERPrograms hung off 7 FSAs for CORE-013.
 #
-# CSIP V1.2 §6.6 — DER Program advanced. One EndDevice; seven
+# CSIP V1.2 section 6.6 - DER Program advanced. One EndDevice; seven
 # FunctionSetAssignments, each pointing at a DERProgramList carrying
 # exactly one DERProgram. DERProgram primacy values ascend 0..6
-# (lower primacy = higher priority per spec §10.2).
+# (lower primacy = higher priority per spec section 10.2).
 #
 # CORE-013 procedure metadata (asserted by the test, not by the
-# loader — DefaultDERControl carries no DateTimeInterval field by
+# loader - DefaultDERControl carries no DateTimeInterval field by
 # spec, and DERControl PUT is not wired into the server today, so
 # the test seeds DefaultDERControls programmatically with the
 # opModFixedPFInjectW values and proves the per-program scope
@@ -24,7 +24,7 @@
 #
 # Why no default_der_controls in the YAML: the #52 loader's
 # DERControlBaseSpec covers opModConnect/Energize/FixedW/MaxLimW/
-# TargetW/VoltVar/FreqDroop only — opModFixedPFInjectW (FixedPowerFactor
+# TargetW/VoltVar/FreqDroop only - opModFixedPFInjectW (FixedPowerFactor
 # shape) is not in the schema today. Per the #60 ticket Pike does
 # not touch csiptest internals, so the test seeds DefaultDERControls
 # via the public store API in-test, then asserts wire fidelity via the

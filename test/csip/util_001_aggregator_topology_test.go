@@ -1,30 +1,30 @@
-// CSIP V1.2 §9.1 — UTIL-001 Utility Server Startup + Group Assignment.
+// CSIP V1.2 section 9.1 - UTIL-001 Utility Server Startup + Group Assignment.
 //
 // UTIL-001 proves that an aggregator topology seeded into the CSIP
-// server is discoverable end-to-end via the standard /dcap → /edev →
-// FSA → DERProgram walk. The fixture is aggregator-topology.yaml
+// server is discoverable end-to-end via the standard /dcap -> /edev ->
+// FSA -> DERProgram walk. The fixture is aggregator-topology.yaml
 // (#139): 5 EndDevices (aggregator EDFI + 4 managed inverters
 // EDA1/EDA2/EDB1/EDB2), a 4-level FSA chain per managed inverter
-// (SY → FDx → SPxx → DEV), 4 DERPrograms per inverter at primacy
+// (SY -> FDx -> SPxx -> DEV), 4 DERPrograms per inverter at primacy
 // 0..3 in priority-chain order.
 //
-// Procedure step → assertion mapping (per V1.2 §9.1):
+// Procedure step -> assertion mapping (per V1.2 section 9.1):
 //
 //	Step 1: Server is up with the aggregator topology pre-loaded.
-//	        ──► fixture load + BootServer; GET /dcap returns a
+//	        -> fixture load + BootServer; GET /dcap returns a
 //	            non-empty EndDeviceListLink.
 //	Step 2: Client GETs /edev and discovers 5 EndDevices.
-//	        ──► WalkLink EndDeviceList; len == 5; the aggregator
+//	        -> WalkLink EndDeviceList; len == 5; the aggregator
 //	            EDFI (id="0") + the 4 managed inverters (ids 1..4)
 //	            are present in store-key order.
 //	Step 3: For each managed inverter, walk its FSA chain.
-//	        ──► For each of EDA1..EDB2, WalkLink FunctionSetAssignments-
+//	        -> For each of EDA1..EDB2, WalkLink FunctionSetAssignments-
 //	            ListLink; assert len == 4 (SY/FDx/SPxx/DEV) and
 //	            descriptions match the fixture per
 //	            aggInverterDescriptions.
 //	Step 4: For each managed inverter, walk one FSA's DERProgramList
 //	        and assert the priority chain.
-//	        ──► WalkLink the first FSA's DERProgramListLink; the
+//	        -> WalkLink the first FSA's DERProgramListLink; the
 //	            server scopes DERPrograms by EndDevice (CORE-010
 //	            documented this), so the response carries all 4
 //	            programs for the inverter. Assert primacy values
@@ -44,7 +44,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 )
 
-// TestUTIL_001_AggregatorTopology implements CSIP V1.2 §9.1.
+// TestUTIL_001_AggregatorTopology implements CSIP V1.2 section 9.1.
 func TestUTIL_001_AggregatorTopology(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

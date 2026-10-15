@@ -128,7 +128,11 @@ func seedStores(ctx context.Context, cfg *config.Config, stores *Stores) error {
 		log.Printf("boot fixture loaded: %s", cfg.BootFixtureFile)
 	}
 
-	return fsaprogram.Reconcile(ctx, stores.AdminFSAs, stores.FSAs)
+	if err := fsaprogram.Reconcile(ctx, stores.AdminFSAs, stores.FSAs); err != nil {
+		return err
+	}
+	copies := fsaprogram.Copies{Programs: stores.DERPrograms, Defaults: stores.DefaultDERControls, Origins: stores.ProgramOrigins}
+	return fsaprogram.ReconcileCopies(ctx, stores.AdminFSAs, copies, log.Printf)
 }
 
 // newRunStores builds the stores Run serves, with the one commitment ledger

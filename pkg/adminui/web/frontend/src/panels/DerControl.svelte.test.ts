@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import DerControl from './DerControl.svelte'
 import * as api from '../lib/api'
 import type { DashboardDevice } from '../lib/dashboard'
@@ -606,15 +606,30 @@ describe('DerControl: stale-response guards (fix round item 2)', () => {
 })
 
 describe('DerControl: no DER programs (criterion 6)', () => {
-  it('tells the operator programs come from the boot fixture', async () => {
+  it('points at FSA program templates and links the FSAs and Devices tabs', async () => {
     mockApi({ programsFor: () => ({ ok: true, data: { device: '0', programs: [] } }) })
     const { container } = render(DerControl, { devices })
     await fireEvent.change(sel(container, '#controlDevice'), { target: { value: '0' } })
 
     const note = await screen.findByTestId('der-control-no-programs')
-    expect(note).toHaveTextContent('boot fixture')
-    expect(note).toHaveTextContent('cannot be created in the admin UI')
+    expect(note).toHaveTextContent('no DER programs')
+    expect(note).toHaveTextContent('program template')
+    expect(note).not.toHaveTextContent('boot fixture')
+    expect(note).not.toHaveTextContent('cannot be created')
+    expect(within(note).getByRole('link', { name: 'FSAs tab' })).toHaveAttribute('href', '/ui/fsas')
+    expect(within(note).getByRole('link', { name: 'Devices tab' })).toHaveAttribute('href', '/ui/devices')
     expect(screen.queryByTestId('der-control-programs-error')).toBeNull()
+  })
+
+  it('moves to the FSAs tab on a plain click of its link', async () => {
+    mockApi({ programsFor: () => ({ ok: true, data: { device: '0', programs: [] } }) })
+    window.history.pushState({}, '', '/ui/control')
+    const { container } = render(DerControl, { devices })
+    await fireEvent.change(sel(container, '#controlDevice'), { target: { value: '0' } })
+
+    const note = await screen.findByTestId('der-control-no-programs')
+    await fireEvent.click(within(note).getByRole('link', { name: 'FSAs tab' }))
+    expect(window.location.pathname).toBe('/ui/fsas')
   })
 })
 

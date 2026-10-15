@@ -117,6 +117,64 @@ describe('DeviceTable', () => {
     expect(values).toEqual(['', '/api/fsas/fsa-a', '/api/fsas/fsa-b'])
   })
 
+  it('labels each FSA in the select with its template count, and says when it has none', async () => {
+    const get = vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
+      if (path === '/api/fsas/fsa-a/der-programs') return { ok: true, data: { templates: [] } }
+      if (path === '/api/fsas/fsa-b/der-programs') return { ok: true, data: { templates: [{ id: 'p1' }] } }
+      if (path === '/api/fsas/fsa-c/der-programs') return { ok: true, data: { templates: [{ id: 'p1' }, { id: 'p2' }] } }
+      return { ok: false, error: 'unexpected request', status: 500 }
+    }) as never)
+    const three = [...fsas, { href: '/api/fsas/fsa-c', mRID: 'fsa-c', description: 'C', primacy: 3 }]
+    const { container } = render(DeviceTable, { props: { devices, fsas: three, onChanged: () => {} } })
+
+    const select = container.querySelector('#assignSel-3') as HTMLSelectElement
+    await waitFor(() =>
+      expect(Array.from(select.options).map((o) => o.textContent?.trim())).toEqual([
+        '(pick FSA)',
+        'fsa-a (no templates)',
+        'fsa-b (1 template)',
+        'fsa-c (2 templates)',
+      ]),
+    )
+    // The option value is still the href the assignment POST sends.
+    expect(Array.from(select.options).map((o) => o.value)).toEqual([
+      '',
+      '/api/fsas/fsa-a',
+      '/api/fsas/fsa-b',
+      '/api/fsas/fsa-c',
+    ])
+    expect(get.mock.calls.map((c) => c[0]).sort()).toEqual([
+      '/api/fsas/fsa-a/der-programs',
+      '/api/fsas/fsa-b/der-programs',
+      '/api/fsas/fsa-c/der-programs',
+    ])
+  })
+
+  it('shows the bare mRID, not a false "no templates", for an FSA whose templates could not be read', async () => {
+    vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
+      if (path === '/api/fsas/fsa-a/der-programs') return { ok: false, error: 'boom', status: 500 }
+      return { ok: true, data: { templates: [{ id: 'p1' }] } }
+    }) as never)
+    const { container } = render(DeviceTable, { props: { devices, fsas, onChanged: () => {} } })
+
+    const select = container.querySelector('#assignSel-3') as HTMLSelectElement
+    await waitFor(() => expect(select.options[2]?.textContent?.trim()).toBe('fsa-b (1 template)'))
+    expect(select.options[1]?.textContent?.trim()).toBe('fsa-a')
+  })
+
+  it('cancels its template reads when the table unmounts', async () => {
+    const signals: AbortSignal[] = []
+    vi.spyOn(api, 'fetchJSON').mockImplementation(((_path: string, opts?: { signal?: AbortSignal }) => {
+      if (opts?.signal) signals.push(opts.signal)
+      return new Promise(() => {})
+    }) as never)
+    const { unmount } = render(DeviceTable, { props: { devices, fsas, onChanged: () => {} } })
+    await waitFor(() => expect(signals.length).toBe(2))
+    expect(signals.every((s) => !s.aborted)).toBe(true)
+    unmount()
+    expect(signals.every((s) => s.aborted)).toBe(true)
+  })
+
   it('assigns the selected FSA to the device id taken from the href, not the row index', async () => {
     const post = vi.spyOn(api, 'postJSON').mockResolvedValue({ ok: true, data: {} })
     const onChanged = vi.fn()

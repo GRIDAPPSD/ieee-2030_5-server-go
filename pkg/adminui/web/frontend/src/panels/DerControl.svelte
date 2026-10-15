@@ -4,6 +4,7 @@
   // The result area always reports what the server stored, never a claim
   // of delivery (criterion 3): devices pull this list, so "stored" is the
   // only thing the server can promise at response time.
+  import TabLink from './TabLink.svelte'
   import { fetchJSON, postJSON } from '../lib/api'
   import { deviceIdFromHref } from '../lib/fsa'
   import type { DashboardDevice } from '../lib/dashboard'
@@ -288,7 +289,9 @@
     <div class="result err" data-testid="der-control-programs-error">{programsError}</div>
   {:else if selectedDeviceId && programsChecked && programs.length === 0}
     <p class="hint" data-testid="der-control-no-programs">
-      This device has no DER programs. Programs come from the boot fixture; they cannot be created in the admin UI.
+      This device has no DER programs. Add a program template to an FSA on the <TabLink path="/ui/fsas">FSAs tab</TabLink>
+      (until that form exists, POST /api/fsas/{'{id}'}/der-programs), then assign the device to that FSA on the
+      <TabLink path="/ui/devices">Devices tab</TabLink>.
     </p>
   {/if}
 

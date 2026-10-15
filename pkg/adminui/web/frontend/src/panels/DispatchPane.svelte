@@ -5,6 +5,7 @@
   // the page cannot know (no answer, a 5xx) closes the confirm step and locks
   // sending until the controls list has been read again, so the same write is
   // never sent twice on a guess.
+  import TabLink from './TabLink.svelte'
   import { onDestroy, onMount } from 'svelte'
   import { fetchJSON } from '../lib/api'
   import { fmtTime, type DERControlDelivery, type DERControlListItem, type DERControlListResponse, type DERProgramListResponse, type DERProgramView } from '../lib/dercontrol'
@@ -557,7 +558,9 @@
           <div class="result err" data-testid="dispatch-programs-error">{programsError}</div>
         {:else if deviceId !== '' && programsChecked && programs.length === 0}
           <p class="hint" data-testid="dispatch-no-programs">
-            This device has no DER programs. Programs come from the boot fixture; they cannot be created in the admin UI.
+            This device has no DER programs. Add a program template to an FSA on the <TabLink path="/ui/fsas">FSAs tab</TabLink>
+            (until that form exists, POST /api/fsas/{'{id}'}/der-programs), then assign the device to that FSA on the
+            <TabLink path="/ui/devices">Devices tab</TabLink>.
           </p>
         {/if}
         {#if prefillNote}

@@ -78,7 +78,7 @@ describe('buildProgramBody', () => {
   it.each<[string, Partial<ProgramFormValues>, string]>([
     ['blank description', { description: '' }, 'description: 1 to 32 printable ASCII characters required'],
     ['33-octet description', { description: 'x'.repeat(33) }, 'description: 1 to 32 printable ASCII characters required'],
-    ['non-ASCII description', { description: 'café' }, 'description: 1 to 32 printable ASCII characters required'],
+    ['non-ASCII description', { description: 'caf\u00e9' }, 'description: 1 to 32 printable ASCII characters required'],
     ['blank primacy', { primacy: '' }, 'primacy: must be 0, 1, 2 or 65 to 191'],
     ['primacy 3', { primacy: '3' }, 'primacy: must be 0, 1, 2 or 65 to 191'],
     ['primacy 192', { primacy: '192' }, 'primacy: must be 0, 1, 2 or 65 to 191'],

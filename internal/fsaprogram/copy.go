@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -25,6 +26,7 @@ var ErrCopyConflict = errors.New("fsaprogram: device holds a conflicting program
 type CopyProgramStore interface {
 	Get(ctx context.Context, parentID, id string) (sep2.DERProgram, error)
 	Create(ctx context.Context, parentID, id string, resource sep2.DERProgram) error
+	Update(ctx context.Context, parentID, id string, resource sep2.DERProgram) error
 	Delete(ctx context.Context, parentID, id string) error
 	List(ctx context.Context, parentID string, opts store.ListOptions) (store.ListResult[sep2.DERProgram], error)
 }
@@ -34,6 +36,7 @@ type CopyProgramStore interface {
 type CopyDefaultStore interface {
 	Get(ctx context.Context, parentID, id string) (sep2.DefaultDERControl, error)
 	Create(ctx context.Context, parentID, id string, resource sep2.DefaultDERControl) error
+	Update(ctx context.Context, parentID, id string, resource sep2.DefaultDERControl) error
 	Delete(ctx context.Context, parentID, id string) error
 }
 
@@ -76,6 +79,11 @@ func CopyProgram(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DERProgr
 func CopyDefault(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DefaultDERControl {
 	base := t.DefaultControlBase.Copy()
 	d := sep2.DefaultDERControl{MRID: t.DefaultMRID, DERControlBase: &base}
+	// 0 is left absent, as on every copy written before defaults had versions.
+	if t.DefaultVersion != 0 {
+		v := t.DefaultVersion
+		d.Version = &v
+	}
 	d.Href = der.DERProgramHref(deviceID, fsaID, t.ID) + "/dderc"
 	return d
 }
@@ -268,6 +276,58 @@ func (c Copies) Remove(ctx context.Context, deviceID, fsaID string, t memory.Pro
 	return true, nil
 }
 
+// Sync rewrites deviceID's copy of t to t's content and versions when it
+// differs: the default control, then the program. Every part therefore holds
+// a content and version some revision of t held, and t's versions only rise,
+// so no version is reused for other content. A failed program write puts the
+// default back; when that fails too, the default is left at t's revision,
+// and a later Sync, at the latest the boot rebuild, finishes the copy.
+// The returned Changes name the parts written, on error too.
+func (c Copies) Sync(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate) (Changes, error) {
+	editMu.Lock()
+	defer editMu.Unlock()
+
+	scope := DefaultScope(deviceID, fsaID, t.ID)
+	dBefore, err := c.Defaults.Get(ctx, scope, coresingleton.SingletonKey)
+	if err != nil {
+		return Changes{}, fmt.Errorf("reading the default of template %s's copy on device %s: %w", t.ID, deviceID, err)
+	}
+	pBefore, err := c.Programs.Get(ctx, deviceID, t.ID)
+	if err != nil {
+		return Changes{}, fmt.Errorf("reading template %s's copy on device %s: %w", t.ID, deviceID, err)
+	}
+	dAfter, pAfter := CopyDefault(deviceID, fsaID, t), CopyProgram(deviceID, fsaID, t)
+	dStale, pStale := !reflect.DeepEqual(dBefore, dAfter), !reflect.DeepEqual(pBefore, pAfter)
+	if dStale {
+		if err := c.Defaults.Update(ctx, scope, coresingleton.SingletonKey, dAfter); err != nil {
+			return Changes{}, fmt.Errorf("writing the default of template %s's copy on device %s: %w", t.ID, deviceID, err)
+		}
+	}
+	if pStale {
+		if err := c.Programs.Update(ctx, deviceID, t.ID, pAfter); err != nil {
+			err = fmt.Errorf("writing template %s's copy on device %s: %w", t.ID, deviceID, err)
+			if !dStale {
+				return Changes{}, err
+			}
+			if rerr := c.Defaults.Update(ctx, scope, coresingleton.SingletonKey, dBefore); rerr != nil {
+				return Changes{Default: true}, errors.Join(err, fmt.Errorf("restoring the default: %w", rerr))
+			}
+			return Changes{}, err
+		}
+	}
+	return Changes{Program: pStale, Default: dStale}, nil
+}
+
+// RemoveProgram deletes a device or fixture program from deviceID: its
+// default control, then the program, then its origin, if any. A failure stops
+// the removal with a *PartError. Until the program is gone a retry finds it
+// and finishes; after that only a device program's origin can be left, and
+// the boot cleanup finds and removes it. A fixture program has no origin, so
+// its default must not outlive it.
+func (c Copies) RemoveProgram(ctx context.Context, deviceID, fsaID, programID string) error {
+	return c.deleteParts(ctx, deviceID, fsaID, programID, []string{PartOrigin, PartProgram, PartDefault})
+}
+
 // DevicePrograms returns the ids of the device programs recorded under fsaID
 // on deviceID. A recorded origin whose program is gone is not listed: it has
 // nothing to protect from an unassign.
@@ -298,9 +358,9 @@ func (c Copies) DevicePrograms(ctx context.Context, deviceID, fsaID string) ([]s
 }
 
 // ReconcileCopies writes every missing part of every template copy for every
-// recorded assignment. A copy that conflicts with a fixture or device program
-// is logged and skipped, so one collision does not stop the boot; any other
-// store error is returned.
+// recorded assignment, and rewrites a copy at an older revision. A copy that
+// conflicts with a fixture or device program is logged and skipped, so one
+// collision does not stop the boot; any other store error is returned.
 func ReconcileCopies(ctx context.Context, admin *memory.AdminFSAStore, copies Copies, logf func(format string, args ...any)) error {
 	for _, fsaID := range admin.IDs(ctx) {
 		tmpls := admin.Templates(ctx, fsaID)
@@ -316,6 +376,15 @@ func ReconcileCopies(ctx context.Context, admin *memory.AdminFSAStore, copies Co
 				}
 				if err != nil {
 					return fmt.Errorf("rebuild program template %q of FSA %q for device %q: %w", t.ID, fsaID, deviceID, err)
+				}
+				// A template edit that failed partway left this copy at an
+				// older revision; Ensure never rewrites a present part.
+				synced, err := copies.Sync(ctx, deviceID, fsaID, t)
+				if err != nil {
+					return fmt.Errorf("sync program template %q of FSA %q to device %q: %w", t.ID, fsaID, deviceID, err)
+				}
+				if synced.Program || synced.Default {
+					logf("synced program template %q of FSA %q to device %q, whose copy was at an older revision", t.ID, fsaID, deviceID)
 				}
 			}
 		}

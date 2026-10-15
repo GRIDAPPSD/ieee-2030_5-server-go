@@ -18,8 +18,10 @@ import (
 // optional service wired. A route added or removed changes this list on
 // purpose, so the coverage below is re-read rather than silently widened.
 var wantAdminWriteRoutes = []string{
+	"DELETE /api/devices/{id}/der-programs/{derpId}",
 	"DELETE /api/devices/{id}/fsa-assignment",
 	"DELETE /api/fsas/{id}",
+	"DELETE /api/fsas/{id}/der-programs/{derpId}",
 	"DELETE /api/fsas/{id}/programs",
 	"DELETE /api/management-pairs",
 	"POST /api/certs/device",
@@ -40,6 +42,8 @@ var wantAdminWriteRoutes = []string{
 	"POST /api/management-pairs/rekey",
 	"POST /auth/login",
 	"POST /auth/ticket",
+	"PUT /api/devices/{id}/der-programs/{derpId}",
+	"PUT /api/fsas/{id}/der-programs/{derpId}",
 }
 
 // loginPattern decodes only form-encoded bodies (ParseForm ignores any other
@@ -60,6 +64,10 @@ var wantAdminBodyTypes = map[string][]string{
 	"POST /api/fsas/{id}/der-programs":                 {"application/json"},
 	"POST /api/devices/{id}/fsa-assignment":            {"application/json"},
 	"POST /api/devices/{id}/fsas/{fsaId}/der-programs": {"application/json"},
+	"PUT /api/fsas/{id}/der-programs/{derpId}":         {"application/json"},
+	"PUT /api/devices/{id}/der-programs/{derpId}":      {"application/json"},
+	"DELETE /api/fsas/{id}/der-programs/{derpId}":      nil,
+	"DELETE /api/devices/{id}/der-programs/{derpId}":   nil,
 	"DELETE /api/fsas/{id}":                            nil,
 	"DELETE /api/fsas/{id}/programs":                   nil,
 	"DELETE /api/devices/{id}/fsa-assignment":          nil,

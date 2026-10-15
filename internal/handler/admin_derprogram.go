@@ -196,45 +196,69 @@ func (h *AdminFSAHandler) HandleListProgramTemplates() http.HandlerFunc {
 // the 400 message naming the first bad field.
 func buildTemplate(body programTemplateBody) (memory.ProgramTemplate, string, bool) {
 	var t memory.ProgramTemplate
+	e, msg, ok := buildProgramEdit(body)
+	if !ok {
+		return t, msg, false
+	}
+	if e.defaultBase == nil {
+		return t, "defaultControl: required", false
+	}
+	t.Description, t.Primacy, t.MRID, t.DefaultControlBase = e.description, e.primacy, e.mRID, *e.defaultBase
+	return t, "", true
+}
+
+// programEdit is a validated program body. mRID is "" and defaultBase nil
+// when the body omits them.
+type programEdit struct {
+	description string
+	primacy     uint8
+	mRID        string
+	defaultBase *sep2.DERControlBase
+}
+
+// buildProgramEdit validates body, or returns the 400 message naming the
+// first bad field.
+func buildProgramEdit(body programTemplateBody) (programEdit, string, bool) {
+	var e programEdit
 	if body.Description == nil || !validTemplateDescription(*body.Description) {
-		return t, "description: 1 to 32 printable ASCII characters required", false
+		return e, "description: 1 to 32 printable ASCII characters required", false
 	}
-	t.Description = *body.Description
+	e.description = *body.Description
 	if body.Primacy == nil || !validPrimacy(*body.Primacy) {
-		return t, "primacy: must be 0, 1, 2 or 65 to 191", false
+		return e, "primacy: must be 0, 1, 2 or 65 to 191", false
 	}
-	t.Primacy = uint8(*body.Primacy)
+	e.primacy = uint8(*body.Primacy)
 	if body.MRID != nil {
 		m, ok := normalizeMRID(*body.MRID)
 		// mRIDType reserves the high 96 bits all F, for any PEN.
 		if !ok || strings.HasPrefix(m, "FFFFFFFFFFFFFFFFFFFFFFFF") {
-			return t, "mRID: must be 32 hex digits, not the reserved form whose first 24 digits are F", false
+			return e, "mRID: must be 32 hex digits, not the reserved form whose first 24 digits are F", false
 		}
-		t.MRID = m
+		e.mRID = m
 	}
 
 	dc := body.DefaultControl
 	if dc == nil {
-		return t, "defaultControl: required", false
+		return e, "", true
 	}
 	if dc.Type == nil || *dc.Type == "" {
-		return t, "defaultControl." + refuseTypeRequired.message, false
+		return e, "defaultControl." + refuseTypeRequired.message, false
 	}
 	typ, ok := controlTypes[*dc.Type]
 	if !ok {
-		return t, "defaultControl." + refuseTypeUnknown.message, false
+		return e, "defaultControl." + refuseTypeUnknown.message, false
 	}
 	req := dercontrol.CreateRequest{Type: typ}
 	values := derControlCreateBody{MaxLimW: dc.MaxLimW, PowerFactor: dc.PowerFactor, TargetW: dc.TargetW}
 	if ref, ok := buildValue(typ, values, &req, &derControlLog{}); !ok {
-		return t, "defaultControl." + ref.message, false
+		return e, "defaultControl." + ref.message, false
 	}
 	base, err := dercontrol.ControlBase(req)
 	if err != nil {
-		return t, "defaultControl: invalid value", false
+		return e, "defaultControl: invalid value", false
 	}
-	t.DefaultControlBase = *base
-	return t, "", true
+	e.defaultBase = base
+	return e, "", true
 }
 
 // mintTemplateIDs fills the server-chosen id, the program mRID when the
@@ -296,13 +320,13 @@ func programDefaultControlView(t memory.ProgramTemplate) ProgramDefaultControlVi
 
 // DeviceProgramView is one device program as the admin API reports it.
 type DeviceProgramView struct {
-	ID             string                    `json:"id"`
-	Href           string                    `json:"href"`
-	MRID           string                    `json:"mRID"`
-	Description    string                    `json:"description"`
-	Primacy        uint8                     `json:"primacy"`
-	Version        uint16                    `json:"version"`
-	DefaultControl ProgramDefaultControlView `json:"defaultControl"`
+	ID             string                     `json:"id"`
+	Href           string                     `json:"href"`
+	MRID           string                     `json:"mRID"`
+	Description    string                     `json:"description"`
+	Primacy        uint8                      `json:"primacy"`
+	Version        uint16                     `json:"version"`
+	DefaultControl *ProgramDefaultControlView `json:"defaultControl,omitempty"`
 }
 
 // HandleCreateDeviceProgram returns a handler for POST
@@ -385,6 +409,7 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 		}
 
 		h.notify(r.Context(), programListHref(deviceID, fsaID))
+		dflt := programDefaultControlView(prog)
 		h.logged(r).InfoContext(r.Context(), "admin: DER device program created", "event", "der_device_program_created",
 			"device", deviceID, "fsa", fsaID, "program", prog.ID, "mrid", prog.MRID)
 		writeJSON(w, http.StatusCreated, DeviceProgramView{
@@ -394,7 +419,7 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 			Description:    prog.Description,
 			Primacy:        prog.Primacy,
 			Version:        prog.Version,
-			DefaultControl: programDefaultControlView(prog),
+			DefaultControl: &dflt,
 		})
 	}
 }

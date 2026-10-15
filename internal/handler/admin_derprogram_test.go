@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
@@ -54,6 +55,10 @@ func newTemplateFixtureWith(t *testing.T, programs *memory.DERProgramStore, devi
 	}
 	pen := templatePEN
 	n := &recordingNotifier{}
+	retirer, err := dercontrol.NewIssuer(programs, memory.NewDERControlStore(), dercontrol.NewLifecycleStore(), dercontrol.Config{PEN: &pen})
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := &handler.AdminFSAHandler{
 		AdminFSAs:   memory.NewAdminFSAStore(),
 		DeviceFSAs:  memory.NewScopedStore[sep2.FunctionSetAssignments](),
@@ -62,6 +67,7 @@ func newTemplateFixtureWith(t *testing.T, programs *memory.DERProgramStore, devi
 		Copies:      &copies,
 		Notifier:    n,
 		PEN:         &pen,
+		Retirer:     retirer,
 	}
 	if err := h.AdminFSAs.Create(context.Background(), "fsa-A", sep2.FunctionSetAssignments{MRID: "fsa-A", Description: "roof"}); err != nil {
 		t.Fatal(err)
@@ -72,6 +78,10 @@ func newTemplateFixtureWith(t *testing.T, programs *memory.DERProgramStore, devi
 	mux.HandleFunc("POST /api/devices/{id}/fsa-assignment", h.HandleAssignDeviceFSA())
 	mux.HandleFunc("DELETE /api/devices/{id}/fsa-assignment", h.HandleUnassignDeviceFSA())
 	mux.HandleFunc("POST /api/devices/{id}/fsas/{fsaId}/der-programs", h.HandleCreateDeviceProgram())
+	mux.HandleFunc("PUT /api/fsas/{id}/der-programs/{derpId}", h.HandleUpdateProgramTemplate())
+	mux.HandleFunc("DELETE /api/fsas/{id}/der-programs/{derpId}", h.HandleDeleteProgramTemplate())
+	mux.HandleFunc("PUT /api/devices/{id}/der-programs/{derpId}", h.HandleUpdateDeviceProgram())
+	mux.HandleFunc("DELETE /api/devices/{id}/der-programs/{derpId}", h.HandleDeleteDeviceProgram())
 	return &templateFixture{h: h, copies: copies, notifier: n, mux: mux}
 }
 

@@ -2,11 +2,13 @@ package adminplane
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -65,7 +67,27 @@ func newAdminFSAHandler(stores *Stores) *handler.AdminFSAHandler {
 		Copies:      templateCopies(stores),
 		Notifier:    stores.AdminNotifier,
 		PEN:         stores.PEN,
+		Retirer:     programRetirer(stores),
 	}
+}
+
+// programRetirer is the process's DER control issuer, so a program delete
+// and a control create lock the same scopes. A Stores built without one gets
+// its own, which only tests do; nil (every delete answers 500) when the
+// control stores are unset.
+func programRetirer(stores *Stores) handler.ProgramRetirer {
+	if stores.DERControlIssuer != nil {
+		return stores.DERControlIssuer
+	}
+	if store.IsAbsent(stores.DERPrograms) || stores.DERControls == nil || store.IsAbsent(stores.DERControlLifecycles) {
+		return nil
+	}
+	issuer, err := assembly.NewDERControlIssuer(stores.DERPrograms, stores.DERControls, stores.DERControlLifecycles, stores.PEN)
+	if err != nil {
+		slog.Error("admin: no DER control issuer for program deletes; every program delete answers 500", "event", "program_retirer_unavailable", "error", err)
+		return nil
+	}
+	return issuer
 }
 
 // templateCopies is the store set a program template is copied into, or nil

@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"encoding/xml"
@@ -306,4 +307,43 @@ func waitForServerReady(addr string, timeout time.Duration, clientTLSCfg *gotls.
 		time.Sleep(25 * time.Millisecond)
 	}
 	return false
+}
+
+// adminReadyTimeout bounds the admin listener wait. Under a loaded CI runner
+// the listener binds well after the protocol listener, so 3s was too tight.
+const adminReadyTimeout = 10 * time.Second
+
+// waitForAdminReady polls the admin listener until it answers an HTTP
+// request with any status. A bare TCP connect can race the goroutine that
+// calls Serve, so this requires a real response.
+func waitForAdminReady(addr string, useTLS bool, timeout time.Duration) bool {
+	scheme := "http"
+	transport := &http.Transport{DisableKeepAlives: true}
+	if useTLS {
+		scheme = "https"
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	client := &http.Client{Transport: transport, Timeout: time.Second}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(scheme + "://" + addr + "/api/certs/ca")
+		if err == nil {
+			_ = resp.Body.Close()
+			return true
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return false
+}
+
+// waitForListenersReady waits for the protocol listener and then a plain
+// HTTP admin listener, so a test never uses either before it is bound.
+func waitForListenersReady(sep2Addr, adminAddr string, timeout time.Duration, clientTLSCfg *gotls.Config) (string, bool) {
+	if !waitForServerReady(sep2Addr, timeout, clientTLSCfg) {
+		return "SEP2 listener never became ready", false
+	}
+	if !waitForAdminReady(adminAddr, false, adminReadyTimeout) {
+		return "admin listener never became ready", false
+	}
+	return "", true
 }

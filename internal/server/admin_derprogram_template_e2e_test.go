@@ -167,8 +167,8 @@ func bootForTemplateTest(t *testing.T, c *splitListenerCerts, cfg *config.Config
 		}
 	}
 	t.Cleanup(stop)
-	if !waitForServerReady(c.sep2Probe, 5*time.Second, deviceTLS) {
-		t.Fatal("SEP2 listener never became ready")
+	if msg, ok := waitForListenersReady(c.sep2Probe, c.adminProbe, 5*time.Second, deviceTLS); !ok {
+		t.Fatal(msg)
 	}
 	return stop
 }

@@ -24,10 +24,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -523,13 +526,35 @@ func newSplitListenerCerts(t *testing.T) *splitListenerCerts {
 	}
 }
 
+// probePortsHanded records ports already returned in this process, so two
+// parallel tests never share one.
+var (
+	probePortsMu     sync.Mutex
+	probePortsHanded = map[int]bool{}
+)
+
+// mustProbePort returns a loopback address that was free a moment ago. Run
+// binds it later, so a kernel-assigned port (which sits in the ephemeral
+// range other connections draw from) can be taken in between; ports are
+// instead drawn from below that range and never repeated within a process.
 func mustProbePort(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("probe listen: %v", err)
+	probePortsMu.Lock()
+	defer probePortsMu.Unlock()
+	for range 200 {
+		port := 20000 + rand.IntN(10000)
+		if probePortsHanded[port] {
+			continue
+		}
+		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			continue
+		}
+		_ = l.Close()
+		probePortsHanded[port] = true
+		return addr
 	}
-	addr := l.Addr().String()
-	_ = l.Close()
-	return addr
+	t.Fatal("no free probe port in 20000-29999")
+	return ""
 }

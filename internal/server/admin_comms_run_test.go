@@ -52,8 +52,8 @@ func TestRunJoinsProtocolActivityToTheDevicesPayload(t *testing.T) {
 			t.Error("server.Run did not exit within 5s after cancel")
 		}
 	})
-	if !waitForServerReady(c.sep2Probe, 5*time.Second, device.tlsConfig) {
-		t.Fatal("SEP2 listener never became ready")
+	if msg, ok := waitForListenersReady(c.sep2Probe, c.adminProbe, 5*time.Second, device.tlsConfig); !ok {
+		t.Fatal(msg)
 	}
 
 	type payload struct {

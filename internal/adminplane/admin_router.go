@@ -201,6 +201,12 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		mountWrite("DELETE /api/fsas/{id}", fsaH.HandleDeleteAdminFSA())
 		mountWrite("POST /api/fsas/{id}/programs", fsaH.HandleAttachProgram())
 		mountWrite("DELETE /api/fsas/{id}/programs", fsaH.HandleDetachProgram())
+		// #920: a template becomes a program on every assigned device, so the
+		// create is not on nonSensitiveAdminWrites: it needs a real credential.
+		if fsaH.Copies != nil {
+			mountWrite("POST /api/fsas/{id}/der-programs", fsaH.HandleCreateProgramTemplate())
+			authed.HandleFunc("GET /api/fsas/{id}/der-programs", fsaH.HandleListProgramTemplates())
+		}
 		mountWrite("POST /api/devices/{id}/fsa-assignment", fsaH.HandleAssignDeviceFSA())
 		mountWrite("DELETE /api/devices/{id}/fsa-assignment", fsaH.HandleUnassignDeviceFSA())
 		authed.HandleFunc("GET /api/topology", handler.HandleTopology(stores.AdminFSAs, stores.EndDevices))

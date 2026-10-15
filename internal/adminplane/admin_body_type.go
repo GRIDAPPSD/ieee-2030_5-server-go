@@ -19,6 +19,7 @@ var adminBodyTypes = map[string][]string{
 	"POST /api/devices":                       {"application/json"},
 	"POST /api/fsas":                          {"application/json"},
 	"POST /api/fsas/{id}/programs":            {"application/json"},
+	"POST /api/fsas/{id}/der-programs":        {"application/json"},
 	"POST /api/devices/{id}/fsa-assignment":   {"application/json"},
 	"DELETE /api/fsas/{id}":                   nil,
 	"DELETE /api/fsas/{id}/programs":          nil,

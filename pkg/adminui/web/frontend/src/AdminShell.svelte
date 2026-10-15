@@ -259,7 +259,7 @@
       <DeviceTable devices={data?.devices ?? []} columns={data?.columns ?? []} {fsas} onChanged={refresh} />
       <AddDevice onAdded={refresh} pending={mintedCert} />
       <LookupDevice />
-      <ManagementPairs devices={data?.devices ?? []} />
+      <ManagementPairs devices={data?.devices ?? []} ready={data !== null || probeError !== ''} />
     {:else if activeTab === 'fsas'}
       <CreateFsa onCreated={refresh} />
       <FsaCatalog {fsas} onChanged={refresh} />

@@ -68,6 +68,7 @@ test('create and remove a management pair from the Devices tab', async ({ page, 
 
   // Control: nothing is paired before the panel acts.
   const before = await request.get(`${baseUrl}/api/management-pairs?manager=${managerLFDI}`, { headers: AUTH });
+  expect(before.status()).toBe(200);
   expect((await before.json()).managedLFDIs ?? []).toEqual([]);
 
   await page.goto(baseUrl + '/ui/devices?token=e2e-test-key');

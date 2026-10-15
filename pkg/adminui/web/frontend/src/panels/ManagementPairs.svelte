@@ -8,18 +8,23 @@
   import type { DashboardDevice } from '../lib/dashboard'
   import { createPair, listPairs, pairsKey, removePair, type ManagementPair } from '../lib/management'
 
-  let { devices }: { devices: DashboardDevice[] } = $props()
+  // ready is false until the shell has received its first device list, so an
+  // empty list before then is not mistaken for a server with no devices.
+  let { devices, ready }: { devices: DashboardDevice[]; ready: boolean } = $props()
 
   let pairs = $state<ManagementPair[]>([])
   let loaded = $state(false)
   let listError = $state('')
   let manager = $state('')
   let managed = $state('')
+  let busy = $state(false)
   let result = $state('')
   let ok = $state(false)
 
   const lfdis = $derived(devices.map((d) => d.lfdi))
-  const devicesKey = $derived(pairsKey(lfdis))
+  // null until the device list is ready; a string equal across reorders and
+  // case changes, so the effect below reruns only when the LFDI set does.
+  const loadKey = $derived(ready ? pairsKey(lfdis) : null)
 
   // A newer load, or the panel going away, makes an older answer stale.
   let loadSeq = 0
@@ -38,8 +43,18 @@
   }
 
   $effect(() => {
-    void devicesKey
+    if (loadKey === null) return
     untrack(() => void load(lfdis))
+  })
+
+  // A chosen device that leaves the list must not be posted from a select
+  // that no longer shows it.
+  $effect(() => {
+    const present = new Set(lfdis)
+    untrack(() => {
+      if (manager && !present.has(manager)) manager = ''
+      if (managed && !present.has(managed)) managed = ''
+    })
   })
 
   onDestroy(() => {
@@ -47,6 +62,7 @@
   })
 
   async function create() {
+    if (busy) return
     if (!manager || !managed) {
       ok = false
       result = 'Choose a manager and a managed device.'
@@ -57,28 +73,39 @@
       result = 'A device cannot manage itself.'
       return
     }
-    const res = await createPair(manager, managed)
-    if (!res.ok) {
-      ok = false
-      result = `Error (${res.status}): ${res.error}`
-      return
+    busy = true
+    try {
+      const res = await createPair(manager, managed)
+      if (!res.ok) {
+        ok = false
+        result = `Error (${res.status}): ${res.error}`
+        return
+      }
+      ok = true
+      result = `Paired ${res.data.managedLFDI} under ${res.data.managerLFDI}.`
+      managed = ''
+      await load(lfdis)
+    } finally {
+      busy = false
     }
-    ok = true
-    result = `Paired ${res.data.managedLFDI} under ${res.data.managerLFDI}.`
-    managed = ''
-    await load(lfdis)
   }
 
   async function remove(pair: ManagementPair) {
-    const res = await removePair(pair.managedLFDI)
-    if (!res.ok) {
-      ok = false
-      result = `Error (${res.status}): ${res.error}`
-      return
+    if (busy) return
+    busy = true
+    try {
+      const res = await removePair(pair.managedLFDI)
+      if (!res.ok) {
+        ok = false
+        result = `Error (${res.status}): ${res.error}`
+        return
+      }
+      ok = true
+      result = `Removed the pair for ${pair.managedLFDI}.`
+      await load(lfdis)
+    } finally {
+      busy = false
     }
-    ok = true
-    result = `Removed the pair for ${pair.managedLFDI}.`
-    await load(lfdis)
   }
 
   function option(d: DashboardDevice): string {
@@ -100,10 +127,16 @@
         <tr data-testid="pair-row">
           <td class="mono" data-testid="pair-manager">{pair.managerLFDI}</td>
           <td class="mono" data-testid="pair-managed">{pair.managedLFDI}</td>
-          <td><button class="btn btn-small" onclick={() => remove(pair)}>Remove</button></td>
+          <td><button
+              class="btn btn-small"
+              disabled={busy}
+              aria-label="Remove pair for {pair.managedLFDI}"
+              onclick={() => remove(pair)}>Remove</button></td>
         </tr>
       {/each}
-      {#if loaded && !listError && pairs.length === 0}
+      {#if !ready || !loaded}
+        <tr><td colspan="3" class="stat-label" data-testid="pairs-loading">Loading...</td></tr>
+      {:else if !listError && pairs.length === 0}
         <tr><td colspan="3" class="stat-label" data-testid="pairs-empty">No management pairs</td></tr>
       {/if}
     </tbody>
@@ -126,7 +159,7 @@
         <option value={d.lfdi}>{option(d)}</option>
       {/each}
     </select>
-    <button class="btn btn-green" onclick={create}>Create pair</button>
+    <button class="btn btn-green" disabled={busy} onclick={create}>Create pair</button>
   </div>
   {#if result}
     <div class="result" class:ok class:err={!ok} role={ok ? 'status' : 'alert'} data-testid="pairs-result">{result}</div>

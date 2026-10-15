@@ -3,6 +3,7 @@
 // the LFDI) and the rows the panel shows afterwards, against a fake
 // /api/management-pairs that keeps real state.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { tick } from 'svelte'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import ManagementPairs from './ManagementPairs.svelte'
 import * as api from '../lib/api'
@@ -71,7 +72,7 @@ describe('ManagementPairs', () => {
     pairs.set(DEV_A, AGG)
     pairs.set(DEV_B, AGG)
 
-    render(ManagementPairs, { props: { devices } })
+    render(ManagementPairs, { props: { devices, ready: true } })
 
     const rows = await screen.findAllByTestId('pair-row')
     expect(rows).toHaveLength(2)
@@ -81,14 +82,14 @@ describe('ManagementPairs', () => {
   })
 
   it('shows an empty state when no pair exists', async () => {
-    render(ManagementPairs, { props: { devices } })
+    render(ManagementPairs, { props: { devices, ready: true } })
 
     expect(await screen.findByTestId('pairs-empty')).toBeInTheDocument()
     expect(screen.queryAllByTestId('pair-row')).toHaveLength(0)
   })
 
   it('offers only registered devices in both selects', async () => {
-    render(ManagementPairs, { props: { devices } })
+    render(ManagementPairs, { props: { devices, ready: true } })
     await screen.findByTestId('pairs-empty')
 
     for (const label of ['Manager', 'Managed device']) {
@@ -100,7 +101,7 @@ describe('ManagementPairs', () => {
   })
 
   it('posts the chosen pair and lists it afterwards', async () => {
-    render(ManagementPairs, { props: { devices } })
+    render(ManagementPairs, { props: { devices, ready: true } })
     await screen.findByTestId('pairs-empty')
 
     await choose('Manager', AGG)
@@ -119,7 +120,7 @@ describe('ManagementPairs', () => {
     pairs.set(DEV_A, DEV_B)
     refuseCreate = { status: 409, error: 'device already has a different manager' }
 
-    render(ManagementPairs, { props: { devices } })
+    render(ManagementPairs, { props: { devices, ready: true } })
     await screen.findByTestId('pair-row')
 
     await choose('Manager', AGG)
@@ -135,7 +136,7 @@ describe('ManagementPairs', () => {
   })
 
   it('refuses a device paired with itself without posting', async () => {
-    render(ManagementPairs, { props: { devices } })
+    render(ManagementPairs, { props: { devices, ready: true } })
     await screen.findByTestId('pairs-empty')
 
     await choose('Manager', AGG)
@@ -147,7 +148,7 @@ describe('ManagementPairs', () => {
   })
 
   it('refuses a missing choice without posting', async () => {
-    render(ManagementPairs, { props: { devices } })
+    render(ManagementPairs, { props: { devices, ready: true } })
     await screen.findByTestId('pairs-empty')
 
     await choose('Manager', AGG)
@@ -161,9 +162,9 @@ describe('ManagementPairs', () => {
     pairs.set(DEV_A, AGG)
     pairs.set(DEV_B, AGG)
 
-    render(ManagementPairs, { props: { devices } })
+    render(ManagementPairs, { props: { devices, ready: true } })
     const rows = await screen.findAllByTestId('pair-row')
-    await fireEvent.click(within(rows[0]).getByRole('button', { name: 'Remove' }))
+    await fireEvent.click(within(rows[0]).getByRole('button', { name: /^Remove pair for/ }))
 
     await waitFor(() => expect(api.deleteJSON).toHaveBeenCalledTimes(1))
     expect(api.deleteJSON).toHaveBeenCalledWith(`/api/management-pairs?managed=${DEV_A}`)
@@ -175,21 +176,180 @@ describe('ManagementPairs', () => {
 
   it('shows a failed removal as given and keeps the row', async () => {
     pairs.set(DEV_A, AGG)
-    render(ManagementPairs, { props: { devices } })
+    render(ManagementPairs, { props: { devices, ready: true } })
     const row = await screen.findByTestId('pair-row')
     pairs.clear()
 
-    await fireEvent.click(within(row).getByRole('button', { name: 'Remove' }))
+    await fireEvent.click(within(row).getByRole('button', { name: /^Remove pair for/ }))
 
     expect(await screen.findByTestId('pairs-result')).toHaveTextContent('Error (404): device is not managed')
+    const rows = screen.getAllByTestId('pair-row')
+    expect(rows).toHaveLength(1)
+    expect(within(rows[0]).getByTestId('pair-managed')).toHaveTextContent(DEV_A)
   })
 
   it('reports a list failure instead of an empty table', async () => {
     vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: false, error: 'list: request failed, see server log', status: 500 })
 
-    render(ManagementPairs, { props: { devices } })
+    render(ManagementPairs, { props: { devices, ready: true } })
 
     expect(await screen.findByTestId('pairs-list-error')).toHaveTextContent('list: request failed, see server log')
     expect(screen.queryByTestId('pairs-empty')).not.toBeInTheDocument()
+  })
+  it.each([
+    [500, 'create: request failed, see server log'],
+    [0, 'Failed to fetch'],
+  ])('shows a create failure with status %i as given and lists no pair', async (status, error) => {
+    refuseCreate = { status, error }
+
+    render(ManagementPairs, { props: { devices, ready: true } })
+    await screen.findByTestId('pairs-empty')
+
+    await choose('Manager', AGG)
+    await choose('Managed device', DEV_A)
+    await fireEvent.click(screen.getByRole('button', { name: 'Create pair' }))
+
+    const result = await screen.findByTestId('pairs-result')
+    expect(result).toHaveTextContent(`Error (${status}): ${error}`)
+    expect(result).toHaveAttribute('role', 'alert')
+    expect(screen.queryAllByTestId('pair-row')).toHaveLength(0)
+  })
+
+  it('shows a loading state, not the empty state, until the device list has arrived', async () => {
+    const { rerender } = render(ManagementPairs, { props: { devices: [], ready: false } })
+    await tick()
+
+    expect(screen.getByTestId('pairs-loading')).toBeInTheDocument()
+    expect(screen.queryByTestId('pairs-empty')).not.toBeInTheDocument()
+    expect(api.fetchJSON).not.toHaveBeenCalled()
+
+    pairs.set(DEV_A, AGG)
+    await rerender({ devices, ready: true })
+
+    expect(await screen.findByTestId('pair-row')).toBeInTheDocument()
+    expect(screen.queryByTestId('pairs-loading')).not.toBeInTheDocument()
+  })
+
+  it('shows the empty state for a ready server with no devices', async () => {
+    render(ManagementPairs, { props: { devices: [], ready: true } })
+
+    expect(await screen.findByTestId('pairs-empty')).toBeInTheDocument()
+  })
+
+  it('reloads only when the set of LFDIs changes, not on a reorder or a case change', async () => {
+    const { rerender } = render(ManagementPairs, { props: { devices: [devices[0], devices[1]], ready: true } })
+    await screen.findByTestId('pairs-empty')
+    expect(api.fetchJSON).toHaveBeenCalledTimes(2)
+
+    const lower = (d: DashboardDevice) => ({ ...d, lfdi: d.lfdi.toLowerCase() })
+    await rerender({ devices: [lower(devices[1]), lower(devices[0])], ready: true })
+    await tick()
+    await Promise.resolve()
+    expect(api.fetchJSON).toHaveBeenCalledTimes(2)
+
+    await rerender({ devices: [devices[0], devices[1], devices[2]], ready: true })
+    await waitFor(() => expect(api.fetchJSON).toHaveBeenCalledTimes(5))
+  })
+
+  it('drops a list answer that a newer load has replaced', async () => {
+    pairs.set(DEV_A, AGG)
+    let release!: (v: Awaited<ReturnType<typeof api.fetchJSON>>) => void
+    const held = new Promise<Awaited<ReturnType<typeof api.fetchJSON>>>((r) => (release = r))
+    const live = vi.mocked(api.fetchJSON).getMockImplementation()!
+    vi.mocked(api.fetchJSON).mockImplementationOnce(() => held)
+    vi.mocked(api.fetchJSON).mockImplementation(live)
+
+    const { rerender } = render(ManagementPairs, { props: { devices: [devices[0]], ready: true } })
+    await rerender({ devices: [devices[0], devices[1]], ready: true })
+    expect(await screen.findByTestId('pair-row')).toBeInTheDocument()
+
+    release({ ok: true, data: { managerLFDI: AGG, managedLFDIs: [] } } as never)
+    for (let i = 0; i < 5; i++) await tick()
+
+    const rows = screen.getAllByTestId('pair-row')
+    expect(rows).toHaveLength(1)
+    expect(within(rows[0]).getByTestId('pair-managed')).toHaveTextContent(DEV_A)
+  })
+
+  it('sends one create request while the first is pending and disables the button', async () => {
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    const live = vi.mocked(api.postJSON).getMockImplementation()!
+    vi.mocked(api.postJSON).mockImplementation(async (path, body) => {
+      await held
+      return live(path, body)
+    })
+
+    render(ManagementPairs, { props: { devices, ready: true } })
+    await screen.findByTestId('pairs-empty')
+    await choose('Manager', AGG)
+    await choose('Managed device', DEV_A)
+    const button = screen.getByRole('button', { name: 'Create pair' })
+    await fireEvent.click(button)
+    await fireEvent.click(button)
+
+    expect(button).toBeDisabled()
+    expect(api.postJSON).toHaveBeenCalledTimes(1)
+    release()
+    await waitFor(() => expect(button).toBeEnabled())
+    expect(api.postJSON).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends one remove request while the first is pending and disables the buttons', async () => {
+    pairs.set(DEV_A, AGG)
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    const live = vi.mocked(api.deleteJSON).getMockImplementation()!
+    vi.mocked(api.deleteJSON).mockImplementation(async (path) => {
+      await held
+      return live(path)
+    })
+
+    render(ManagementPairs, { props: { devices, ready: true } })
+    const button = await screen.findByRole('button', { name: /^Remove pair for/ })
+    await fireEvent.click(button)
+    await fireEvent.click(button)
+
+    expect(button).toBeDisabled()
+    expect(api.deleteJSON).toHaveBeenCalledTimes(1)
+    release()
+    await waitFor(() => expect(screen.queryAllByTestId('pair-row')).toHaveLength(0))
+    expect(api.deleteJSON).toHaveBeenCalledTimes(1)
+  })
+
+  it('names each Remove button for the device it removes', async () => {
+    pairs.set(DEV_A, AGG)
+    pairs.set(DEV_B, AGG)
+
+    render(ManagementPairs, { props: { devices, ready: true } })
+
+    expect(await screen.findByRole('button', { name: `Remove pair for ${DEV_A}` })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: `Remove pair for ${DEV_B}` })).toBeInTheDocument()
+  })
+
+  it('forgets a chosen device that leaves the list, so it is never posted', async () => {
+    const { rerender } = render(ManagementPairs, { props: { devices, ready: true } })
+    await screen.findByTestId('pairs-empty')
+    await choose('Manager', AGG)
+    await choose('Managed device', DEV_A)
+
+    await rerender({ devices: [devices[1], devices[2]], ready: true })
+    await tick()
+    await choose('Managed device', DEV_B)
+    await fireEvent.click(screen.getByRole('button', { name: 'Create pair' }))
+
+    expect(await screen.findByTestId('pairs-result')).toHaveTextContent('Choose a manager and a managed device.')
+    expect(api.postJSON).not.toHaveBeenCalled()
+  })
+
+  it('keeps a chosen device that stays in the list', async () => {
+    const { rerender } = render(ManagementPairs, { props: { devices, ready: true } })
+    await screen.findByTestId('pairs-empty')
+    await choose('Manager', AGG)
+
+    await rerender({ devices: [devices[0], devices[1]], ready: true })
+    await tick()
+
+    expect((screen.getByLabelText('Manager') as HTMLSelectElement).value).toBe(AGG)
   })
 })

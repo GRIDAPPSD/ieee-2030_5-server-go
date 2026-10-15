@@ -2,8 +2,11 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"regexp"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -86,5 +89,71 @@ func TestProgramTemplateRoutesUnderReadOnly(t *testing.T) {
 	w := serveDERControl(router, http.MethodPost, "/api/fsas/fsa-A/der-programs", derControlRouteRequest{remote: "127.0.0.1:4000", contentType: "application/json", bearer: "the-key", body: templateCreateBody})
 	if w.Code != http.StatusNotFound && w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("ReadOnly POST with Bearer: status = %d, want 404 or 405", w.Code)
+	}
+}
+
+type templateNotifier struct {
+	mu   sync.Mutex
+	sent []string
+}
+
+func (n *templateNotifier) Notify(_ context.Context, href string, status uint8) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.sent = append(n.sent, href+" "+string(rune('0'+status)))
+}
+
+func (n *templateNotifier) take() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := n.sent
+	n.sent = nil
+	return out
+}
+
+// The admin plane wires the server's notifier and PEN into the template
+// handler: the notifications and minted mRIDs below come through Build, not
+// through a hand-built handler.
+func TestProgramTemplateWiringNotifiesAndMintsUnderThePEN(t *testing.T) {
+	cfg := templateRouteConfig(t)
+	n := &templateNotifier{}
+	pen := uint32(0x0000B1C2)
+	cfg.Stores.AdminNotifier = n
+	cfg.Stores.PEN = &pen
+	if err := cfg.Stores.EndDevices.Create(context.Background(), "0", sep2.EndDevice{SFDI: "1", LFDI: "65DE1159BA8C8897D5A7F94997D22544EB90A2B7"}); err != nil {
+		t.Fatal(err)
+	}
+	router, _, err := adminplane.Build(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	send := func(method, target, body string) []byte {
+		t.Helper()
+		w := serveDERControl(router, method, target, derControlRouteRequest{remote: "127.0.0.1:4000", contentType: "application/json", bearer: "the-key", body: body})
+		if w.Code/100 != 2 {
+			t.Fatalf("%s %s: %d %s", method, target, w.Code, w.Body.String())
+		}
+		return w.Body.Bytes()
+	}
+
+	send(http.MethodPost, "/api/devices/0/fsa-assignment", `{"fsaHref":"/api/fsas/fsa-A"}`)
+	if got, want := n.take(), []string{"/edev/0/fsa 0", "/edev/0/fsa/fsa-A/derp 0"}; !slices.Equal(got, want) {
+		t.Errorf("assign notifications = %q, want %q", got, want)
+	}
+	var v struct {
+		MRID           string `json:"mRID"`
+		DefaultControl struct {
+			MRID string `json:"mRID"`
+		} `json:"defaultControl"`
+	}
+	if err := json.Unmarshal(send(http.MethodPost, "/api/fsas/fsa-A/der-programs", templateCreateBody), &v); err != nil {
+		t.Fatal(err)
+	}
+	underPEN := regexp.MustCompile(`^[0-9A-F]{24}0000B1C2$`)
+	if !underPEN.MatchString(v.MRID) || !underPEN.MatchString(v.DefaultControl.MRID) {
+		t.Errorf("mRIDs %q and %q, want both to end in the PEN 0000B1C2", v.MRID, v.DefaultControl.MRID)
+	}
+	if got, want := n.take(), []string{"/edev/0/fsa/fsa-A/derp 0"}; !slices.Equal(got, want) {
+		t.Errorf("create notifications = %q, want %q", got, want)
 	}
 }

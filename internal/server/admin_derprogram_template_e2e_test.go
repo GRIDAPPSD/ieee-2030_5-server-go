@@ -121,6 +121,29 @@ func TestProgramTemplateWithNoFixtureCarriesAControlToTheDevice(t *testing.T) {
 	}
 	bootForTemplateTest(t, c, cfg, device.tlsConfig)
 	assertDeviceReadsCopy(t, proto, c.sep2Probe, devID, programHref, tmpl.MRID, tmpl.DefaultControl.MRID, control.MRID)
+
+	// Unassigning removes the copy from the wire and from the control API.
+	if status, body := adminDo(http.MethodDelete, "/api/devices/"+devID+"/fsa-assignment?fsaHref=/api/fsas/fsa-roof", ""); status != http.StatusNoContent {
+		t.Fatalf("unassign: %d %s", status, body)
+	}
+	var after sep2.DERProgramList
+	protoGetXML(t, proto, c.sep2Probe, "/edev/"+devID+"/fsa/fsa-roof/derp", &after)
+	if len(after.DERProgram) != 0 {
+		t.Errorf("program list after unassign = %+v, want empty", after.DERProgram)
+	}
+	if code := adminMgmtProtoGET(t, proto, "https://"+c.sep2Probe+programHref); code != http.StatusNotFound {
+		t.Errorf("device GET %s after unassign: status %d, want 404", programHref, code)
+	}
+	// The dderc route answers every path with an empty default when none is
+	// stored, so the stored one being gone shows as no mRID and no base.
+	var dflt sep2.DefaultDERControl
+	protoGetXML(t, proto, c.sep2Probe, programHref+"/dderc", &dflt)
+	if dflt.MRID != "" || dflt.DERControlBase != nil {
+		t.Errorf("default after unassign = %+v, want the route's empty default", dflt)
+	}
+	if status, body := adminDo(http.MethodPost, "/api/der/controls", strings.Replace(create, "6000", "5000", 1)); status != http.StatusNotFound {
+		t.Errorf("control on the removed copy: %d %s, want 404", status, body)
+	}
 }
 
 // bootForTemplateTest runs the server until the returned stop is called or the

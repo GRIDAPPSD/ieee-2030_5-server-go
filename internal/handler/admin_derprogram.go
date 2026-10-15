@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
@@ -100,7 +102,7 @@ func (h *AdminFSAHandler) HandleCreateProgramTemplate() http.HandlerFunc {
 		defer h.programMu.Unlock()
 
 		if len(h.AdminFSAs.Templates(r.Context(), fsaID)) >= maxTemplatesPerFSA {
-			writeError(w, http.StatusConflict, "fsa already has 16 program templates")
+			writeError(w, http.StatusConflict, fmt.Sprintf("fsa already has %d program templates", maxTemplatesPerFSA))
 			return
 		}
 		if err := h.mintTemplateIDs(&tmpl); err != nil {
@@ -129,24 +131,32 @@ func (h *AdminFSAHandler) HandleCreateProgramTemplate() http.HandlerFunc {
 			return
 		}
 
-		var undos []func(context.Context) error
+		// The template is undone last, so a copy whose undo fails still has
+		// its template, and the boot rebuild completes that copy.
+		steps := []rollbackStep{{template: tmpl.ID, part: "template", undo: func(ctx context.Context) error {
+			return h.AdminFSAs.DeleteTemplate(ctx, fsaID, tmpl.ID)
+		}}}
 		for _, dev := range devices {
 			undo, err := h.Copies.Ensure(r.Context(), dev, fsaID, tmpl)
-			if err != nil {
-				undos = append(undos, func(ctx context.Context) error {
-					return h.AdminFSAs.DeleteTemplate(ctx, fsaID, tmpl.ID)
-				})
-				h.undoCopies(r, undos)
-				h.copyRefused(w, r, err)
+			if err == nil {
+				steps = append(steps, rollbackStep{device: dev, template: tmpl.ID, part: "copy", undo: undo})
+				continue
+			}
+			if !h.rollbackAfter(r, err, steps) {
+				h.logged(r).ErrorContext(r.Context(), "admin: DER program template create left partly applied", "event", "der_program_template_incomplete",
+					"fsa", fsaID, "template", tmpl.ID, "error", err)
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf(
+					"program template write failed; template %s was kept on fsa %s and its device copies are completed at the next restart", tmpl.ID, fsaID))
 				return
 			}
-			undos = append(undos, undo)
+			h.copyRefused(w, r, err)
+			return
 		}
 
 		for _, dev := range devices {
 			h.notify(r.Context(), programListHref(dev, fsaID))
 		}
-		slog.InfoContext(r.Context(), "admin: DER program template created", "event", "der_program_template_created",
+		h.logged(r).InfoContext(r.Context(), "admin: DER program template created", "event", "der_program_template_created",
 			"fsa", fsaID, "template", tmpl.ID, "mrid", tmpl.MRID, "copies", len(devices))
 		writeJSON(w, http.StatusCreated, h.templateView(r.Context(), fsaID, tmpl))
 	}
@@ -188,8 +198,9 @@ func buildTemplate(body programTemplateBody) (memory.ProgramTemplate, string, bo
 	t.Primacy = uint8(*body.Primacy)
 	if body.MRID != nil {
 		m, ok := normalizeMRID(*body.MRID)
-		if !ok || m == "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF" {
-			return t, "mRID: must be 32 hex digits, not all F", false
+		// mRIDType reserves the high 96 bits all F, for any PEN.
+		if !ok || strings.HasPrefix(m, "FFFFFFFFFFFFFFFFFFFFFFFF") {
+			return t, "mRID: must be 32 hex digits, not the reserved form whose first 24 digits are F", false
 		}
 		t.MRID = m
 	}
@@ -282,26 +293,66 @@ func (h *AdminFSAHandler) copyRefused(w http.ResponseWriter, r *http.Request, er
 }
 
 func (h *AdminFSAHandler) templateFailed(w http.ResponseWriter, r *http.Request, cause string, err error) {
-	slog.ErrorContext(r.Context(), "admin: DER program template write failed", "event", "der_program_template_failed",
+	h.logged(r).ErrorContext(r.Context(), "admin: DER program template write failed", "event", "der_program_template_failed",
 		"cause", cause, "path", r.URL.Path, "error", err)
 	writeError(w, http.StatusInternalServerError, templateInternalError)
 }
 
-// undoCopies runs undos newest first and logs any it could not finish: the
-// stores then hold part of a copy, which the boot rebuild completes.
-func (h *AdminFSAHandler) undoCopies(r *http.Request, undos []func(context.Context) error) {
+// rollbackStep undoes one write of a template create, assign or unassign.
+// device, template and part name what the write touched, for the log line
+// written when the undo fails.
+type rollbackStep struct {
+	device, template, part string
+	undo                   func(context.Context) error
+}
+
+// rollbackAfter undoes steps newest first after cause and reports whether
+// every write was undone. It stops at the first undo that fails, and at once
+// when cause is an Ensure whose own undo failed, so every write older than
+// the failure stays: the admin record is always the oldest write, and the
+// boot rebuild completes every copy it names. Each write left is logged with
+// its device, template and part.
+func (h *AdminFSAHandler) rollbackAfter(r *http.Request, cause error, steps []rollbackStep) bool {
 	ctx := context.WithoutCancel(r.Context())
-	for i := len(undos) - 1; i >= 0; i-- {
-		if err := undos[i](ctx); err != nil {
-			slog.ErrorContext(ctx, "admin: DER program template undo incomplete", "event", "der_program_template_undo_failed",
-				"path", r.URL.Path, "error", err)
+	var part *fsaprogram.PartError
+	if errors.As(cause, &part) {
+		h.logUndoFailed(r, part.DeviceID, part.TemplateID, part.Part, cause)
+		return false
+	}
+	for i := len(steps) - 1; i >= 0; i-- {
+		st := steps[i]
+		if err := st.undo(ctx); err != nil {
+			if errors.As(err, &part) {
+				h.logUndoFailed(r, part.DeviceID, part.TemplateID, part.Part, err)
+			} else {
+				h.logUndoFailed(r, st.device, st.template, st.part, err)
+			}
+			return false
 		}
 	}
+	return true
+}
+
+func (h *AdminFSAHandler) logUndoFailed(r *http.Request, device, template, part string, err error) {
+	h.logged(r).ErrorContext(r.Context(), "admin: DER program template undo incomplete", "event", "der_program_template_undo_failed",
+		"path", r.URL.Path, "device", device, "template", template, "part", part, "error", err)
+}
+
+// logged is the handler's logger, or slog's default when none is set.
+func (h *AdminFSAHandler) logged(*http.Request) *slog.Logger {
+	if h.Logger != nil {
+		return h.Logger
+	}
+	return slog.Default()
 }
 
 func (h *AdminFSAHandler) notify(ctx context.Context, href string) {
+	h.notifyStatus(ctx, href, sep2.NotificationStatusDefault)
+}
+
+func (h *AdminFSAHandler) notifyStatus(ctx context.Context, href string, status uint8) {
 	if h.Notifier != nil {
-		h.Notifier.Notify(ctx, href, sep2.NotificationStatusDefault)
+		h.Notifier.Notify(ctx, href, status)
 	}
 }
 

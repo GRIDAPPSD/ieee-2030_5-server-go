@@ -217,38 +217,50 @@ func TestCreateProgramTemplate_SuppliedMRIDIsKeptUppercase(t *testing.T) {
 func TestCreateProgramTemplate_BadInput_400(t *testing.T) {
 	t.Parallel()
 	dc := `"defaultControl":{"type":"connect"}`
-	cases := map[string]string{
-		"description missing":          `{"primacy":1,` + dc + `}`,
-		"description empty":            `{"description":"","primacy":1,` + dc + `}`,
-		"description 33 characters":    `{"description":"` + strings.Repeat("d", 33) + `","primacy":1,` + dc + `}`,
-		"description not ASCII":        `{"description":"caf\u00e9","primacy":1,` + dc + `}`,
-		"description control char":     `{"description":"a\tb","primacy":1,` + dc + `}`,
-		"primacy missing":              `{"description":"d",` + dc + `}`,
-		"primacy 3":                    `{"description":"d","primacy":3,` + dc + `}`,
-		"primacy 64":                   `{"description":"d","primacy":64,` + dc + `}`,
-		"primacy 192":                  `{"description":"d","primacy":192,` + dc + `}`,
-		"primacy negative":             `{"description":"d","primacy":-1,` + dc + `}`,
-		"primacy not a number":         `{"description":"d","primacy":"1",` + dc + `}`,
-		"mRID 31 digits":               `{"description":"d","primacy":1,"mRID":"` + strings.Repeat("A", 31) + `",` + dc + `}`,
-		"mRID not hex":                 `{"description":"d","primacy":1,"mRID":"` + strings.Repeat("G", 32) + `",` + dc + `}`,
-		"mRID all F":                   `{"description":"d","primacy":1,"mRID":"` + strings.Repeat("f", 32) + `",` + dc + `}`,
-		"defaultControl missing":       `{"description":"d","primacy":1}`,
-		"defaultControl type unknown":  `{"description":"d","primacy":1,"defaultControl":{"type":"boost"}}`,
-		"defaultControl value missing": `{"description":"d","primacy":1,"defaultControl":{"type":"maxLimW"}}`,
-		"defaultControl out of range":  `{"description":"d","primacy":1,"defaultControl":{"type":"maxLimW","maxLimW":10001}}`,
-		"unknown field":                `{"description":"d","primacy":1,"version":4,` + dc + `}`,
-		"invalid JSON":                 `{"description":`,
-		"trailing data":                `{"description":"d","primacy":1,` + dc + `}{}`,
+	const (
+		descMsg    = "description: 1 to 32 printable ASCII characters required"
+		primacyMsg = "primacy: must be 0, 1, 2 or 65 to 191"
+		mridMsg    = "mRID: must be 32 hex digits, not the reserved form whose first 24 digits are F"
+	)
+	type badCase struct{ body, msg string }
+	cases := map[string]badCase{
+		"description missing":          {`{"primacy":1,` + dc + `}`, descMsg},
+		"description empty":            {`{"description":"","primacy":1,` + dc + `}`, descMsg},
+		"description 33 characters":    {`{"description":"` + strings.Repeat("d", 33) + `","primacy":1,` + dc + `}`, descMsg},
+		"description not ASCII":        {`{"description":"caf\u00e9","primacy":1,` + dc + `}`, descMsg},
+		"description control char":     {`{"description":"a\tb","primacy":1,` + dc + `}`, descMsg},
+		"description 0x1F":             {`{"description":"a\u001fb","primacy":1,` + dc + `}`, descMsg},
+		"description 0x7F":             {`{"description":"a\u007fb","primacy":1,` + dc + `}`, descMsg},
+		"primacy missing":              {`{"description":"d",` + dc + `}`, primacyMsg},
+		"primacy 3":                    {`{"description":"d","primacy":3,` + dc + `}`, primacyMsg},
+		"primacy 64":                   {`{"description":"d","primacy":64,` + dc + `}`, primacyMsg},
+		"primacy 192":                  {`{"description":"d","primacy":192,` + dc + `}`, primacyMsg},
+		"primacy negative":             {`{"description":"d","primacy":-1,` + dc + `}`, primacyMsg},
+		"primacy not a number":         {`{"description":"d","primacy":"1",` + dc + `}`, "invalid JSON"},
+		"mRID 31 digits":               {`{"description":"d","primacy":1,"mRID":"` + strings.Repeat("A", 31) + `",` + dc + `}`, mridMsg},
+		"mRID not hex":                 {`{"description":"d","primacy":1,"mRID":"` + strings.Repeat("G", 32) + `",` + dc + `}`, mridMsg},
+		"mRID all F":                   {`{"description":"d","primacy":1,"mRID":"` + strings.Repeat("f", 32) + `",` + dc + `}`, mridMsg},
+		"mRID reserved with a PEN":     {`{"description":"d","primacy":1,"mRID":"` + strings.Repeat("F", 24) + `0000B1C2",` + dc + `}`, mridMsg},
+		"defaultControl missing":       {`{"description":"d","primacy":1}`, "defaultControl: required"},
+		"defaultControl type unknown":  {`{"description":"d","primacy":1,"defaultControl":{"type":"boost"}}`, "defaultControl.type: unknown control type"},
+		"defaultControl value missing": {`{"description":"d","primacy":1,"defaultControl":{"type":"maxLimW"}}`, "defaultControl.maxLimW: required for type maxLimW"},
+		"defaultControl out of range":  {`{"description":"d","primacy":1,"defaultControl":{"type":"maxLimW","maxLimW":10001}}`, "defaultControl.maxLimW: must be 0 to 10000"},
+		"unknown field":                {`{"description":"d","primacy":1,"version":4,` + dc + `}`, "unknown field"},
+		"invalid JSON":                 {`{"description":`, "invalid JSON"},
+		"trailing data":                {`{"description":"d","primacy":1,` + dc + `}{}`, "invalid JSON"},
 	}
-	for name, body := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f := newTemplateFixture(t)
 			f.assign(t, "1", "fsa-A")
 			f.notifier.take()
-			w := f.do(http.MethodPost, "/api/fsas/fsa-A/der-programs", body)
+			w := f.do(http.MethodPost, "/api/fsas/fsa-A/der-programs", tc.body)
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d body %s, want 400", w.Code, w.Body.String())
+			}
+			if msg := errorBody(t, w.Body.Bytes()); msg != tc.msg {
+				t.Errorf("message = %q, want %q", msg, tc.msg)
 			}
 			if n := len(f.h.AdminFSAs.Templates(context.Background(), "fsa-A")); n != 0 {
 				t.Errorf("%d templates stored after a refusal", n)

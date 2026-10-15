@@ -33,10 +33,14 @@ import (
 //	POST   /api/fsas/{id}/programs                attach DERProgram by href
 //	POST   /api/fsas/{id}/der-programs            create a program template (admin_derprogram.go)
 //	GET    /api/fsas/{id}/der-programs            list program templates
+//	PUT    /api/fsas/{id}/der-programs/{derpId}   edit a template and its copies (admin_derprogram_edit.go)
+//	DELETE /api/fsas/{id}/der-programs/{derpId}   delete a template and its copies
 //	DELETE /api/fsas/{id}/programs?href=<enc>     detach
 //	POST   /api/devices/{id}/fsa-assignment       assign device to FSA
 //	DELETE /api/devices/{id}/fsa-assignment?fsaHref=<enc>  unassign (409 while device programs sit under it)
 //	POST   /api/devices/{id}/fsas/{fsaId}/der-programs     create a device program (admin_derprogram.go)
+//	PUT    /api/devices/{id}/der-programs/{derpId}         edit a device or fixture program
+//	DELETE /api/devices/{id}/der-programs/{derpId}         delete a device or fixture program
 //	GET    /api/topology                          SY -> FD -> SP -> DEV tree
 //
 // Two-store split: the management plane lives in *memory.AdminFSAStore.
@@ -65,8 +69,11 @@ type AdminFSAHandler struct {
 	// Logger receives the template and copy write log lines; nil uses
 	// slog's default.
 	Logger *slog.Logger
+	// Retirer gates every program delete on its control scopes. Nil
+	// answers every delete 500.
+	Retirer ProgramRetirer
 
-	// programMu serializes template creates with assignments, so a device
+	// programMu serializes every program write with assignments, so a device
 	// assigned while a template is created gets exactly one copy of it.
 	programMu sync.Mutex
 }

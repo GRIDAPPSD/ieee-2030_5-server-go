@@ -1,5 +1,7 @@
+    DELETE /api/devices/{id}/der-programs/{derpId}
     DELETE /api/devices/{id}/fsa-assignment
     DELETE /api/fsas/{id}
+    DELETE /api/fsas/{id}/der-programs/{derpId}
     DELETE /api/fsas/{id}/programs
     DELETE /api/management-pairs
     GET /
@@ -44,3 +46,5 @@
     POST /api/management-pairs/rekey
     POST /auth/login
     POST /auth/ticket
+    PUT /api/devices/{id}/der-programs/{derpId}
+    PUT /api/fsas/{id}/der-programs/{derpId}

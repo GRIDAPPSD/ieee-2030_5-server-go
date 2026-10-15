@@ -155,8 +155,13 @@ type walkExpectation struct {
 // links from /edev rather than building hrefs, and asserts what is served.
 func walkAsAggregator(t *testing.T, proto *http.Client, addr string, w walkExpectation) {
 	t.Helper()
+	var dcap sep2.DeviceCapability
+	protoGetXML(t, proto, addr, "/dcap", &dcap)
+	if dcap.EndDeviceListLink == nil {
+		t.Fatalf("DeviceCapability = %+v, want an EndDeviceListLink", dcap)
+	}
 	var devs sep2.EndDeviceList
-	protoGetXML(t, proto, addr, "/edev", &devs)
+	protoGetXML(t, proto, addr, dcap.EndDeviceListLink.Href, &devs)
 	if len(devs.EndDevice) != 1 || devs.EndDevice[0].Href != "/edev/"+w.devID ||
 		devs.EndDevice[0].FunctionSetAssignmentsListLink == nil || devs.EndDevice[0].FunctionSetAssignmentsListLink.Href != "/edev/"+w.devID+"/fsa" {
 		t.Fatalf("aggregator EndDeviceList = %+v, want only /edev/%s with its FSA list link", devs.EndDevice, w.devID)
@@ -178,7 +183,9 @@ func walkAsAggregator(t *testing.T, proto *http.Client, addr string, w walkExpec
 		href, mrid, description string
 		primacy                 uint8
 		version                 uint16
+		maxLimW                 int16
 	}
+	controlList := map[string]string{}
 	check := func(fsa string, want ...served) {
 		t.Helper()
 		var list sep2.DERProgramList
@@ -187,6 +194,7 @@ func walkAsAggregator(t *testing.T, proto *http.Client, addr string, w walkExpec
 			t.Fatalf("%s program list holds %d programs (%+v), want %d", fsa, len(list.DERProgram), list.DERProgram, len(want))
 		}
 		for _, wp := range want {
+			controlList[wp.href] = ""
 			var got *sep2.DERProgram
 			for i := range list.DERProgram {
 				if list.DERProgram[i].Href == wp.href {
@@ -200,15 +208,27 @@ func walkAsAggregator(t *testing.T, proto *http.Client, addr string, w walkExpec
 			if got.MRID != wp.mrid || got.Description != wp.description || got.Primacy != wp.primacy || got.Version == nil || *got.Version != wp.version {
 				t.Errorf("%s served %+v, want mRID %s %q primacy %d version %d", wp.href, got, wp.mrid, wp.description, wp.primacy, wp.version)
 			}
+			if got.DERControlListLink != nil {
+				controlList[wp.href] = got.DERControlListLink.Href
+			}
+			if got.DefaultDERControlLink == nil {
+				t.Errorf("%s serves no DefaultDERControlLink", wp.href)
+				continue
+			}
+			var dflt sep2.DefaultDERControl
+			protoGetXML(t, proto, addr, got.DefaultDERControlLink.Href, &dflt)
+			if dflt.MRID == "" || dflt.DERControlBase == nil || dflt.DERControlBase.OpModMaxLimW == nil || int16(*dflt.DERControlBase.OpModMaxLimW) != wp.maxLimW {
+				t.Errorf("%s default control = %+v, want a mRID and opModMaxLimW %d", wp.href, dflt, wp.maxLimW)
+			}
 		}
 	}
-	check("fsa-a", served{w.hrefA, w.mridA, "template a edited", 2, 1})
+	check("fsa-a", served{w.hrefA, w.mridA, "template a edited", 2, 1, 5000})
 	check("fsa-b",
-		served{w.hrefB, w.mridB, "template b", 1, 0},
-		served{w.hrefDev, w.mridDev, "device program edited", 65, 1})
+		served{w.hrefB, w.mridB, "template b", 1, 0, 9000},
+		served{w.hrefDev, w.mridDev, "device program edited", 65, 1, 6500})
 
 	var controls sep2.DERControlList
-	protoGetXML(t, proto, addr, w.hrefA+"/derc", &controls)
+	protoGetXML(t, proto, addr, controlList[w.hrefA], &controls)
 	var found *sep2.DERControl
 	for i := range controls.DERControl {
 		if controls.DERControl[i].MRID == w.controlMRID {
@@ -221,7 +241,7 @@ func walkAsAggregator(t *testing.T, proto *http.Client, addr string, w walkExpec
 	}
 	for _, other := range []string{w.hrefB, w.hrefDev} {
 		var none sep2.DERControlList
-		protoGetXML(t, proto, addr, other+"/derc", &none)
+		protoGetXML(t, proto, addr, controlList[other], &none)
 		if len(none.DERControl) != 0 {
 			t.Errorf("%s/derc serves %+v, want no controls: the control belongs to fsa-a", other, none.DERControl)
 		}

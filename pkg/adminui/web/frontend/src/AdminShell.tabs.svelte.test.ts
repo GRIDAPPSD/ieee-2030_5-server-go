@@ -63,7 +63,7 @@ async function renderOnPath(path: string) {
 // that mismatch does not make the FSAs case a false failure.
 const TAB_HEADINGS: Record<string, string[]> = {
   overview: ['Registered devices', 'Server Info', 'Device Activity'],
-  devices: ['End Devices', 'Add End Device', 'Lookup Device by LFDI'],
+  devices: ['End Devices', 'Add End Device', 'Lookup Device by LFDI', 'Management Pairs'],
   fsas: ['Create FSA Template', 'FSA Templates', 'FSA Tree (SY -> FD -> SP -> DEV)'],
   control: ['Send DER Control'],
   certificates: ['Certificate Management'],

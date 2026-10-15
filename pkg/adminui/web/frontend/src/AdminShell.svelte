@@ -25,6 +25,7 @@
   import DerControl from './panels/DerControl.svelte'
   import AddDevice from './panels/AddDevice.svelte'
   import LookupDevice from './panels/LookupDevice.svelte'
+  import ManagementPairs from './panels/ManagementPairs.svelte'
   import CreateFsa from './panels/CreateFsa.svelte'
   import FsaCatalog from './panels/FsaCatalog.svelte'
   import TopologyTree from './panels/TopologyTree.svelte'
@@ -258,6 +259,7 @@
       <DeviceTable devices={data?.devices ?? []} columns={data?.columns ?? []} {fsas} onChanged={refresh} />
       <AddDevice onAdded={refresh} pending={mintedCert} />
       <LookupDevice />
+      <ManagementPairs devices={data?.devices ?? []} />
     {:else if activeTab === 'fsas'}
       <CreateFsa onCreated={refresh} />
       <FsaCatalog {fsas} onChanged={refresh} />

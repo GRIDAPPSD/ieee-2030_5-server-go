@@ -42,21 +42,18 @@ test('a device Programs drawer lists, adds, edits and deletes device programs', 
   await drawer.getByLabel('Default control').selectOption('connect');
   await drawer.getByRole('button', { name: 'Add device program' }).click();
 
-  const added = drawer.getByTestId('program-description').filter({ hasText: 'added by e2e' });
-  await expect(added).toBeVisible();
-  const addedRow = drawer.locator('tr').filter({ has: added });
+  const addedRow = drawer.getByRole('row').filter({ hasText: 'added by e2e' });
+  await expect(addedRow).toBeVisible();
   await expect(addedRow.getByTestId('program-origin')).toHaveText('Device');
 
   await addedRow.getByRole('button', { name: 'Edit added by e2e' }).click();
   await drawer.getByLabel('Description').fill('renamed by e2e');
   await drawer.getByRole('button', { name: 'Save device program' }).click();
-  const renamed = drawer.getByTestId('program-description').filter({ hasText: 'renamed by e2e' });
-  await expect(renamed).toBeVisible();
-
-  const renamedRow = drawer.locator('tr').filter({ has: renamed });
+  const renamedRow = drawer.getByRole('row').filter({ hasText: 'renamed by e2e' });
+  await expect(renamedRow).toBeVisible();
   await renamedRow.getByRole('button', { name: 'Delete renamed by e2e' }).click();
   await renamedRow.getByRole('button', { name: 'Confirm delete renamed by e2e' }).click();
-  await expect(renamed).toHaveCount(0);
+  await expect(renamedRow).toHaveCount(0);
   await expect(fixtureRow).toBeVisible();
 });
 

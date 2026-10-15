@@ -14,7 +14,9 @@ import (
 // with the extraction.
 func TestDERProgramHrefValidator_HasProgram(t *testing.T) {
 	programs := memory.NewScopedStore[sep2.DERProgram]()
-	if err := programs.Create(context.Background(), "dev1", "p1", sep2.DERProgram{}); err != nil {
+	prog := sep2.DERProgram{}
+	prog.Href = "/edev/dev1/fsa/0/derp/p1"
+	if err := programs.Create(context.Background(), "dev1", "p1", prog); err != nil {
 		t.Fatalf("seed program: %v", err)
 	}
 	v := &derProgramHrefValidator{programs: programs}
@@ -26,6 +28,8 @@ func TestDERProgramHrefValidator_HasProgram(t *testing.T) {
 	}{
 		{"resolves", "/edev/dev1/fsa/0/derp/p1", true},
 		{"unknown program", "/edev/dev1/fsa/0/derp/p2", false},
+		// The protocol route serves p1 only under the FSA its href names.
+		{"program of another FSA", "/edev/dev1/fsa/f2/derp/p1", false},
 		{"malformed href", "/not/a/program/href", false},
 		{"empty fsa segment", "/edev/dev1/fsa//derp/p1", false},
 	}

@@ -2,14 +2,12 @@
 //
 // CORE-013 proves that a server seeded with the 7-program fixture
 // (derprogram-7.yaml - #60 ships this fixture) renders the
-// priority chain correctly:
+// priority chain correctly. Setup step 1 constructs one DERProgramList
+// holding all seven programs, reached through the client's one FSA:
 //
-//	/dcap -> /edev -> /edev/0 -> /edev/0/fsa (list, all=7)
-//	  `-> each FSA -> DERProgramListLink (the 7 programs are
-//	        scoped by EndDevice id only in this implementation -
-//	        see internal/server/router.go scopedListHandler - so
-//	        every FSA's DERProgramList returns all 7 programs in
-//	        primacy order)
+//	/dcap -> /edev -> /edev/0 -> /edev/0/fsa (list, all=1)
+//	  `-> the FSA -> DERProgramListLink (all 7 programs, Table 50
+//	        order: primacy ascending)
 //	        `-> for each program -> DERControlListLink -> single
 //	              DERControl with
 //	                |-> Interval.Start = T0 + N minutes
@@ -19,14 +17,6 @@
 // The primacy chain is ascending: program N has primacy N. The test
 // asserts both the chain ordering and the per-program DERControl
 // payload survives the wire roundtrip.
-//
-// Procedure note on store scoping: the in-memory DERProgram store
-// keys by EndDevice id only (see loader.go DERProgramSpec doc-comment
-// and router.go scopedListHandler). FSA position is decorative in
-// today's server; the test asserts the actual server semantic - every
-// FSA's DERProgramList returns the full 7-program set - and proves
-// the per-program DERControlList (scoped by edev/fsa/derp tuple at
-// the handler) still routes correctly to the seeded controls.
 //
 // Procedure note on seeding: the #52 fixture loader's
 // DERControlBaseSpec does not currently carry opModFixedPFInjectW
@@ -42,7 +32,7 @@
 //
 //	Step 1 (server has 7 DERPrograms, primacy 0..6) -> fixture + store seed
 //	Step 2 (client walks /dcap -> /edev -> /fsa)      -> walkAllFSAs
-//	Step 3 (client follows DERProgramListLink)      -> walkProgramListForFirstFSA
+//	Step 3 (the FSA's DERProgramList holds all 7)   -> assertFSAProgramList
 //	Step 4 (assert primacy chain ascending 0..6)    -> assertPrimacyChain
 //	Step 5 (for each program, follow DERControlList) -> walkAndAssertControl
 //	Step 6 (each DERControl carries FixedPFInjectW)  -> assertFixedPFInjectW
@@ -104,27 +94,20 @@ func runCORE013(t *testing.T, extraOpts []csiptest.BootOption) {
 	ctx := context.Background()
 	client := srv.Client()
 
-	// Step 2: walk to the FSA list.
+	// Step 2: walk to the FSA list: the one FSA the program list is
+	// assigned through.
 	fsaList := walkAllFSAs(t, ctx, client)
-	if fsaList.All != core013ProgramCount {
-		t.Fatalf("FunctionSetAssignmentsList.All = %d, want %d", fsaList.All, core013ProgramCount)
-	}
-	if len(fsaList.FunctionSetAssignments) != core013ProgramCount {
-		t.Fatalf("len(FunctionSetAssignmentsList.FunctionSetAssignments) = %d, want %d",
-			len(fsaList.FunctionSetAssignments), core013ProgramCount)
+	if fsaList.All != 1 || len(fsaList.FunctionSetAssignments) != 1 {
+		t.Fatalf("FunctionSetAssignmentsList all=%d len=%d, want the one FSA",
+			fsaList.All, len(fsaList.FunctionSetAssignments))
 	}
 
-	// Step 3 + 4: follow the first FSA's DERProgramListLink - in this
-	// implementation the DERProgram store is scoped by EndDevice id
-	// only, so every FSA's list returns the full 7-program set. We
-	// also assert every FSA advertises an equivalent link to catch a
-	// regression that loses the link on any individual FSA.
-	for i, fsa := range fsaList.FunctionSetAssignments {
-		if fsa.DERProgramListLink == nil {
-			t.Fatalf("FSA[%d].DERProgramListLink is nil", i)
-		}
+	// Step 3 + 4: the FSA's DERProgramList holds all seven programs.
+	want := make([]wantProgram, core013ProgramCount)
+	for n := range want {
+		want[n] = wantProgram{mrid: fmt.Sprintf("CORE-013-DERP-%d", n), primacy: uint8(n)}
 	}
-	programs := walkProgramListForFirstFSA(t, ctx, client, fsaList)
+	programs := assertFSAProgramList(t, ctx, client, fsaList.FunctionSetAssignments[0], want)
 	assertPrimacyChain(t, programs)
 
 	// Step 5 + 6: for each program, follow DERControlList and assert
@@ -137,7 +120,7 @@ func runCORE013(t *testing.T, extraOpts []csiptest.BootOption) {
 }
 
 // walkAllFSAs walks /dcap -> /edev -> first EndDevice -> /fsa, returning
-// the FSA list. CORE-013 expects 7 FSAs in the list.
+// the FSA list.
 func walkAllFSAs(t *testing.T, ctx context.Context, c *csiptest.Client) sep2.FunctionSetAssignmentsList {
 	t.Helper()
 
@@ -166,35 +149,6 @@ func walkAllFSAs(t *testing.T, ctx context.Context, c *csiptest.Client) sep2.Fun
 		t.Fatalf("walk FunctionSetAssignmentsListLink: %v", err)
 	}
 	return fsaList
-}
-
-// walkProgramListForFirstFSA follows the first FSA's DERProgramListLink
-// and returns the resulting list of DERPrograms. The store-scope quirk
-// described in the package-level doc-comment means this list carries
-// all 7 programs for this EndDevice - that is the actual server
-// semantic and the test asserts it directly.
-func walkProgramListForFirstFSA(
-	t *testing.T,
-	ctx context.Context,
-	c *csiptest.Client,
-	fsaList sep2.FunctionSetAssignmentsList,
-) []sep2.DERProgram {
-	t.Helper()
-
-	fsa := fsaList.FunctionSetAssignments[0]
-	var progList sep2.DERProgramList
-	if err := c.WalkLink(ctx, sep2.Link{Href: fsa.DERProgramListLink.Href}, &progList); err != nil {
-		t.Fatalf("walk DERProgramListLink %s: %v", fsa.DERProgramListLink.Href, err)
-	}
-	if progList.All != core013ProgramCount {
-		t.Fatalf("DERProgramList.All = %d, want %d (store is scoped by EndDevice id only)",
-			progList.All, core013ProgramCount)
-	}
-	if len(progList.DERProgram) != core013ProgramCount {
-		t.Fatalf("len(DERProgramList.DERProgram) = %d, want %d",
-			len(progList.DERProgram), core013ProgramCount)
-	}
-	return progList.DERProgram
 }
 
 // assertPrimacyChain asserts the 7 programs ascend strictly in primacy
@@ -300,13 +254,11 @@ func bootWithSevenProgramsAndControls(t *testing.T, extraOpts []csiptest.BootOpt
 		t.Fatalf("load %s: %v", fixture, err)
 	}
 
-	// Seed one DERControl per program. The scope key matches the server's
-	// composite key for DERControls under (edev, fsa, derp) - see
-	// internal/server/router.go scopedListHandlerDeep. EndDevice id is "0"
-	// across the fixture; FSA id and DERProgram id both equal primacy N.
+	// Seed one DERControl per program, under the (edev, fsa, derp) scope
+	// its DERControlListLink names: EndDevice "0", FSA "0", DERProgram N.
 	ctx := context.Background()
 	for n := 0; n < core013ProgramCount; n++ {
-		scope := fmt.Sprintf("0/%d/%d", n, n)
+		scope := fmt.Sprintf("0/0/%d", n)
 		ctrlID := fmt.Sprintf("ctrl-%d", n)
 		ctrl := buildCORE013Control(n)
 		if err := stores.DERControls.Create(ctx, scope, ctrlID, ctrl); err != nil {

@@ -334,6 +334,11 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	if err := seedStores(ctx, cfg, stores); err != nil {
 		return err
 	}
+	// After the fixture, which moves the programs it names to their FSA: a
+	// program whose href still names no FSA would be served under none (#916).
+	if err := bootfixture.CheckDERProgramHrefs(ctx, stores.DERPrograms); err != nil {
+		return err
+	}
 
 	// Seed the index only now: endDevices can hold both the reload above and
 	// boot-fixture records, neither of which is known to the allocator's own

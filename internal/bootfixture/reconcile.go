@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -62,6 +63,9 @@ func Reconcile(ctx context.Context, target *Target, fixturePath, seedPath string
 	for _, line := range plan.skips {
 		logf("boot fixture: skipping %s", line)
 	}
+	for _, line := range plan.migrated {
+		logf("boot fixture: migrating %s", line)
+	}
 	if err := plan.apply(ctx, target, time.Now().Unix()); err != nil {
 		return fmt.Errorf("bootfixture: apply fixture %s: %w", fixturePath, err)
 	}
@@ -98,6 +102,12 @@ type reconcilePlan struct {
 	defaultDERControls []indexed[DefaultDERControlSpec]
 	derControls        []indexed[DERControlSpec]
 	derCurves          []indexed[DERCurveSpec]
+
+	// migrations are persisted programs whose href named no FSA, already
+	// moved to the fixture's FSA; migrationIDs holds each one's (edev, id).
+	migrations   []sep2.DERProgram
+	migrationIDs [][2]string
+	migrated     []string
 
 	seeded      map[seedKey]struct{}
 	seedChanged bool
@@ -169,10 +179,18 @@ func planReconcile(ctx context.Context, target *Target, spec *Spec, seeded map[s
 			continue
 		}
 		_, wasSeeded := seeded[key]
-		_, err := target.DERPrograms.Get(ctx, d.EndDeviceID, d.ID)
+		prog, err := target.DERPrograms.Get(ctx, d.EndDeviceID, d.ID)
 		switch {
 		case err == nil: // keep, or adopt if unseeded
 			p.record(key)
+			// An href written before #743 names no FSA, so no FSA would list
+			// the program; the fixture's fsa_id is where it was created.
+			if _, _, _, ok := derhref.Program(prog.Href); !ok {
+				p.migrations = append(p.migrations, migratedProgram(prog, d.EndDeviceID, d.FSAID, d.ID))
+				p.migrationIDs = append(p.migrationIDs, [2]string{d.EndDeviceID, d.ID})
+				p.migrated = append(p.migrated, fmt.Sprintf("DERProgram edev=%q id=%q: href %q names no FSA; moving it to the fixture's fsa_id %q",
+					d.EndDeviceID, d.ID, prog.Href, d.FSAID))
+			}
 		case !errors.Is(err, store.ErrNotFound):
 			return nil, fmt.Errorf("der_programs[%d] (id=%q): read persisted DERProgram: %w", i, d.ID, err)
 		case wasSeeded:
@@ -295,6 +313,12 @@ func (p *reconcilePlan) apply(ctx context.Context, target *Target, loadTime int6
 	for _, r := range p.derPrograms {
 		if err := createDERProgram(ctx, target, r.i, r.spec); err != nil {
 			return err
+		}
+	}
+	for i, prog := range p.migrations {
+		edev, id := p.migrationIDs[i][0], p.migrationIDs[i][1]
+		if err := target.DERPrograms.Update(ctx, edev, id, prog); err != nil {
+			return fmt.Errorf("migrate DERProgram edev=%q id=%q: %w", edev, id, err)
 		}
 	}
 	for _, r := range p.defaultDERControls {

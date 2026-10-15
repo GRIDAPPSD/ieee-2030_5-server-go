@@ -71,9 +71,9 @@ func TestAdminFSAIntegration_FullLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := stores.DERPrograms.Create(ctx, "dev-X", "p1", sep2.DERProgram{
-		MRID: "prog-1",
-	}); err != nil {
+	prog := sep2.DERProgram{MRID: "prog-1"}
+	prog.Href = "/edev/dev-X/fsa/anyfsa/derp/p1"
+	if err := stores.DERPrograms.Create(ctx, "dev-X", "p1", prog); err != nil {
 		t.Fatal(err)
 	}
 
@@ -222,7 +222,11 @@ func TestAdminFSAIntegration_ListAfterCreate(t *testing.T) {
 func TestProgramHrefValidator_ShapeCases(t *testing.T) {
 	t.Parallel()
 	stores, router := setupAdminRouter(t)
-	_ = stores.DERPrograms.Create(context.Background(), "dev-Y", "p-real", sep2.DERProgram{})
+	real := sep2.DERProgram{}
+	real.Href = "/edev/dev-Y/fsa/anyfsa/derp/p-real"
+	if err := stores.DERPrograms.Create(context.Background(), "dev-Y", "p-real", real); err != nil {
+		t.Fatalf("seed program: %v", err)
+	}
 
 	// Seed an FSA so attach can reach the validator.
 	wc := authedDo(t, router, http.MethodPost, "/api/fsas",
@@ -240,6 +244,7 @@ func TestProgramHrefValidator_ShapeCases(t *testing.T) {
 		{"wrong-prefix", "/wrong/dev-Y/fsa/anyfsa/derp/p-real", http.StatusNotFound},
 		{"missing-segment", "/edev/dev-Y/derp/p-real", http.StatusNotFound},
 		{"unknown-program", "/edev/dev-Y/fsa/anyfsa/derp/ghost", http.StatusNotFound},
+		{"program-of-another-fsa", "/edev/dev-Y/fsa/other/derp/p-real", http.StatusNotFound},
 		{"empty-href", "", http.StatusBadRequest},
 	}
 	for _, c := range cases {

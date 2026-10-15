@@ -11,7 +11,7 @@
 //
 //	Step 1 (server has 2 DERP + 2 DDERC + 2 DERC overlap similar reversed) -> fixture load
 //	Step 2 (walk /dcap -> /edev -> /fsa list, expect 2 FSAs)                  -> walkToFirstEDevFSAList
-//	Step 3 (each FSA renders its DERProgram in primacy order)               -> assertBASIC022ProgramList
+//	Step 3 (each FSA lists only its own DERProgram)                          -> assertFSAProgramList
 //	Step 4 (SP DDERC + SY DDERC carry expected opModFixedW)                 -> assertBASIC022DDERCs
 //	Step 5 (SP and SY DERControlLists each have 1 event)                    -> assertBASIC022Events
 //	Step 6 (Rendered event intervals overlap; SP wins Section 10.10)               -> assertOverlapResolution
@@ -29,12 +29,11 @@ import (
 
 const basic022FixtureName = "basic-022-overlap-similar-sp-then-sy.yaml"
 
-var basic022Programs = []struct {
-	mrid    string
-	primacy uint8
-}{
-	{mrid: "BASIC-022-DERP-SP", primacy: 0},
-	{mrid: "BASIC-022-DERP-SY", primacy: 1},
+// basic022Programs is the one program each FSA's DERProgramList holds:
+// the procedure GETs an SY DERProgramList and an SP DERProgramList.
+var basic022Programs = map[string]wantProgram{
+	"BASIC-022-FSA-SP": {mrid: "BASIC-022-DERP-SP", primacy: 0},
+	"BASIC-022-FSA-SY": {mrid: "BASIC-022-DERP-SY", primacy: 1},
 }
 
 var basic022DDERCs = map[string]struct {
@@ -84,12 +83,9 @@ func runBASIC022(t *testing.T, extraOpts []csiptest.BootOption) {
 		}
 	}
 
-	for i, fsa := range fsaList.FunctionSetAssignments {
-		if fsa.DERProgramListLink == nil {
-			t.Fatalf("FSA[%d] missing DERProgramListLink", i)
-		}
-		progList := walkProgramListByHref(t, ctx, client, fsa.DERProgramListLink.Href)
-		assertBASIC022ProgramList(t, fsa.MRID, progList)
+	// Step 3: the SY and SP DERProgramLists each hold only their own program.
+	for _, fsa := range fsaList.FunctionSetAssignments {
+		assertFSAProgramList(t, ctx, client, fsa, []wantProgram{basic022Programs[fsa.MRID]})
 	}
 
 	assertBASIC022DDERCs(t, ctx, client)
@@ -104,26 +100,6 @@ func runBASIC022(t *testing.T, extraOpts []csiptest.BootOption) {
 	} else if got != "BASIC-022-DERC-SP-A" {
 		t.Errorf("Section 10.10 winner for %q = %q, want %q",
 			pairKey, got, "BASIC-022-DERC-SP-A")
-	}
-}
-
-func assertBASIC022ProgramList(t *testing.T, fsaLabel string, progList sep2.DERProgramList) {
-	t.Helper()
-
-	if got := len(progList.DERProgram); got != len(basic022Programs) {
-		t.Fatalf("[%s] DERProgramList len = %d, want %d",
-			fsaLabel, got, len(basic022Programs))
-	}
-	for i, want := range basic022Programs {
-		got := progList.DERProgram[i]
-		if got.MRID != want.mrid {
-			t.Errorf("[%s] DERProgram[%d].MRID = %q, want %q",
-				fsaLabel, i, got.MRID, want.mrid)
-		}
-		if got.Primacy != want.primacy {
-			t.Errorf("[%s] DERProgram[%d].Primacy = %d, want %d",
-				fsaLabel, i, got.Primacy, want.primacy)
-		}
 	}
 }
 

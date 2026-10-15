@@ -1,34 +1,32 @@
-// CSIP V1.2 §9.1 — UTIL-001 Utility Server Startup + Group Assignment.
+// CSIP V1.2 section 9.1 - UTIL-001 Utility Server Startup + Group Assignment.
 //
 // UTIL-001 proves that an aggregator topology seeded into the CSIP
-// server is discoverable end-to-end via the standard /dcap → /edev →
-// FSA → DERProgram walk. The fixture is aggregator-topology.yaml
+// server is discoverable end-to-end via the standard /dcap -> /edev ->
+// FSA -> DERProgram walk. The fixture is aggregator-topology.yaml
 // (#139): 5 EndDevices (aggregator EDFI + 4 managed inverters
 // EDA1/EDA2/EDB1/EDB2), a 4-level FSA chain per managed inverter
-// (SY → FDx → SPxx → DEV), 4 DERPrograms per inverter at primacy
+// (SY -> FDx -> SPxx -> DEV), 4 DERPrograms per inverter at primacy
 // 0..3 in priority-chain order.
 //
-// Procedure step → assertion mapping (per V1.2 §9.1):
+// Procedure step -> assertion mapping (per V1.2 section 9.1):
 //
 //	Step 1: Server is up with the aggregator topology pre-loaded.
-//	        ──► fixture load + BootServer; GET /dcap returns a
+//	        -> fixture load + BootServer; GET /dcap returns a
 //	            non-empty EndDeviceListLink.
 //	Step 2: Client GETs /edev and discovers 5 EndDevices.
-//	        ──► WalkLink EndDeviceList; len == 5; the aggregator
+//	        -> WalkLink EndDeviceList; len == 5; the aggregator
 //	            EDFI (id="0") + the 4 managed inverters (ids 1..4)
 //	            are present in store-key order.
 //	Step 3: For each managed inverter, walk its FSA chain.
-//	        ──► For each of EDA1..EDB2, WalkLink FunctionSetAssignments-
+//	        -> For each of EDA1..EDB2, WalkLink FunctionSetAssignments-
 //	            ListLink; assert len == 4 (SY/FDx/SPxx/DEV) and
 //	            descriptions match the fixture per
 //	            aggInverterDescriptions.
-//	Step 4: For each managed inverter, walk one FSA's DERProgramList
-//	        and assert the priority chain.
-//	        ──► WalkLink the first FSA's DERProgramListLink; the
-//	            server scopes DERPrograms by EndDevice (CORE-010
-//	            documented this), so the response carries all 4
-//	            programs for the inverter. Assert primacy values
-//	            {0,1,2,3} are present exactly once.
+//	Step 4: For each FSA, GET all the DERPrograms from its DERProgramList;
+//	        each EndDevice reaches the programs of all its parent nodes.
+//	        -> each FSA lists only its own node's program; across the
+//	            inverter's four FSAs, primacy values {0,1,2,3} are
+//	            reached exactly once.
 //
 // Out of scope (UTIL-002..004):
 //   - PUTting DERCapability/DERSettings/DERStatus/DERAvailability for
@@ -39,12 +37,13 @@ package csip_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 )
 
-// TestUTIL_001_AggregatorTopology implements CSIP V1.2 §9.1.
+// TestUTIL_001_AggregatorTopology implements CSIP V1.2 section 9.1.
 func TestUTIL_001_AggregatorTopology(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -118,21 +117,16 @@ func TestUTIL_001_AggregatorTopology(t *testing.T) {
 				}
 			}
 
-			// Step 4: walk the first FSA's DERProgramList; server scopes
-			// DERPrograms by EndDevice (see CORE-010 doc comment), so
-			// the response carries all 4 programs for this inverter.
-			progHref := fsaList.FunctionSetAssignments[0].DERProgramListLink.Href + "?l=255"
-			var progList sep2.DERProgramList
-			if err := client.WalkLink(ctx, sep2.Link{Href: progHref}, &progList); err != nil {
-				t.Fatalf("step 4: WalkLink %s: %v", progHref, err)
-			}
-			if len(progList.DERProgram) != aggDERPCount {
-				t.Fatalf("step 4: edev=%q DERProgramList len = %d, want %d",
-					edevID, len(progList.DERProgram), aggDERPCount)
-			}
+			// Step 4: each FSA lists only its node's program, named after
+			// the FSA; the four lists together are the inverter's chain.
 			primacySeen := map[uint8]bool{}
-			for _, prog := range progList.DERProgram {
-				primacySeen[prog.Primacy] = true
+			for i, fsa := range fsaList.FunctionSetAssignments {
+				node, ok := strings.CutSuffix(fsa.MRID, "-FSA")
+				if !ok {
+					t.Fatalf("step 4: edev=%q FSA[%d].MRID = %q, want a node name ending -FSA", edevID, i, fsa.MRID)
+				}
+				progs := assertFSAProgramList(t, ctx, client, fsa, []wantProgram{{mrid: node + "-DERP", primacy: uint8(i)}})
+				primacySeen[progs[0].Primacy] = true
 			}
 			for level := uint8(0); level < aggDERPCount; level++ {
 				if !primacySeen[level] {

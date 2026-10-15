@@ -12,7 +12,7 @@
 //
 //	Step 1 (server has 2 DERP + 2 DDERC + 2 DERC overlap indep rev) --> fixture load
 //	Step 2 (walk /dcap -> /edev -> /fsa list, expect 2 FSAs)          --> walkToFirstEDevFSAList
-//	Step 3 (each FSA renders its DERProgram in primacy order)       --> assertBASIC025ProgramList
+//	Step 3 (each FSA lists only its own DERProgram)                  --> assertFSAProgramList
 //	Step 4 (SP DDERC carries opModFixedW; SY carries opModMaxLimW)  --> assertBASIC025DDERCs
 //	Step 5 (SP renders FixedW event; SY renders MaxLimW event)      --> assertBASIC025Events
 //	Step 6 (Rendered intervals overlap; no Section 10.10 winner)           --> assertOverlapResolution
@@ -30,12 +30,11 @@ import (
 
 const basic025FixtureName = "basic-025-overlap-independent-sp-then-sy.yaml"
 
-var basic025Programs = []struct {
-	mrid    string
-	primacy uint8
-}{
-	{mrid: "BASIC-025-DERP-SP", primacy: 0},
-	{mrid: "BASIC-025-DERP-SY", primacy: 1},
+// basic025Programs is the one program each FSA's DERProgramList holds:
+// the procedure GETs an SY DERProgramList and an SP DERProgramList.
+var basic025Programs = map[string]wantProgram{
+	"BASIC-025-FSA-SP": {mrid: "BASIC-025-DERP-SP", primacy: 0},
+	"BASIC-025-FSA-SY": {mrid: "BASIC-025-DERP-SY", primacy: 1},
 }
 
 var basic025DDERCs = map[string]struct {
@@ -87,12 +86,9 @@ func runBASIC025(t *testing.T, extraOpts []csiptest.BootOption) {
 		}
 	}
 
-	for i, fsa := range fsaList.FunctionSetAssignments {
-		if fsa.DERProgramListLink == nil {
-			t.Fatalf("FSA[%d] missing DERProgramListLink", i)
-		}
-		progList := walkProgramListByHref(t, ctx, client, fsa.DERProgramListLink.Href)
-		assertBASIC025ProgramList(t, fsa.MRID, progList)
+	// Step 3: the SY and SP DERProgramLists each hold only their own program.
+	for _, fsa := range fsaList.FunctionSetAssignments {
+		assertFSAProgramList(t, ctx, client, fsa, []wantProgram{basic025Programs[fsa.MRID]})
 	}
 
 	assertBASIC025DDERCs(t, ctx, client)
@@ -102,26 +98,6 @@ func runBASIC025(t *testing.T, extraOpts []csiptest.BootOption) {
 	winners := assertOverlapResolution(t, entries)
 	if len(winners) != 0 {
 		t.Errorf("independent overlap: expected empty winners map, got %v", winners)
-	}
-}
-
-func assertBASIC025ProgramList(t *testing.T, fsaLabel string, progList sep2.DERProgramList) {
-	t.Helper()
-
-	if got := len(progList.DERProgram); got != len(basic025Programs) {
-		t.Fatalf("[%s] DERProgramList len = %d, want %d",
-			fsaLabel, got, len(basic025Programs))
-	}
-	for i, want := range basic025Programs {
-		got := progList.DERProgram[i]
-		if got.MRID != want.mrid {
-			t.Errorf("[%s] DERProgram[%d].MRID = %q, want %q",
-				fsaLabel, i, got.MRID, want.mrid)
-		}
-		if got.Primacy != want.primacy {
-			t.Errorf("[%s] DERProgram[%d].Primacy = %d, want %d",
-				fsaLabel, i, got.Primacy, want.primacy)
-		}
 	}
 }
 

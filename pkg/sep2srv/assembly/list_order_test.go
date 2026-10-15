@@ -8,6 +8,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	coreder "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -55,6 +56,7 @@ func seedOrderFixtures(t *testing.T, stores *assembly.Stores) {
 	}{{"a", 2}, {"b", 0}, {"c", 1}, {"d", 0}, {"e", 2}}
 	for _, p := range programs {
 		prog := sep2.DERProgram{MRID: "0" + p.id, Primacy: p.primacy}
+		prog.Href = coreder.DERProgramHref(orderEdev, "f1", p.id)
 		if err := stores.DERPrograms.Create(ctx, orderEdev, p.id, prog); err != nil {
 			t.Fatalf("seed DERProgram %s: %v", p.id, err)
 		}

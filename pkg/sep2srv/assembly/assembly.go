@@ -998,21 +998,18 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// the persistence wrapper embedded, which was correct only because the
 	// wrapper shadows no read method and would have quietly bypassed one that
 	// it did.
-	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp", scopedListHandler[sep2.DERProgram, sep2.DERProgramList](
-		store.OrderedScoped(derPrograms, coreder.CompareDERProgram), "id", store.SortByListOrdering, coreder.BuildDERProgramList, 900,
-	))
+	//
+	// Each FSA lists only its own programs (#916): CSIP IG v2 5.2.3 has one
+	// FSA point to the topology programs and others to non-topology ones.
+	unscoped := newUnscopedProgramWarnings(log.Printf)
+	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp", derProgramListHandler(derPrograms, unscoped))
 
 	// A DERProgram's own href, so the FSA-to-DERProgramList-to-member link
-	// walk CSIP v2.0 s5.2.3.1 requires actually resolves.
-	// Scoped by device {id} only, matching the list route above (and the
-	// DERProgram store's own scoping): {fsaId} is part of the mounted path
-	// shape, not a filter on which programs are visible under it. Read-only:
-	// core exposes no write route for a single DERProgram, mirroring the
-	// DERControl single-resource route just below. The empty itemMethods is
-	// what says so, and it renders exactly the Allow this route answered with
-	// before the method set became declarative: GET, HEAD.
-	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}",
-		scopedResourceHandler[sep2.DERProgram](derPrograms, "id", "derpId", itemMethods{}, nil))
+	// walk CSIP v2.0 s5.2.3.1 requires actually resolves. A program of another
+	// FSA is a 404 here, as it is absent from this FSA's list. Read-only: core
+	// exposes no write route for a single DERProgram, mirroring the DERControl
+	// single-resource route just below.
+	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}", derProgramHandler(derPrograms, unscoped))
 
 	// DERControl under DERProgram
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc",

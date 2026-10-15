@@ -13,8 +13,9 @@
 //
 //	Step 1 (server has 2 DERPrograms SP@0, SY@1)         -> fixture load
 //	Step 2 (client walks /dcap -> /edev -> /fsa list)      -> walkToFirstEDevFSAList
-//	Step 3 (each FSA's DERProgramList renders both       -> assertBASIC016ProgramList
-//	         programs in primacy order)
+//	Step 3 (SY and SP DERProgramList and DERProgram GETs; -> assertFSAProgramList
+//	         each FSA lists only its own program, and SP
+//	         outranks SY by primacy)
 //	Step 4 (SP DDERC carries opModFixedW = 4000 (40.00%))         -> assertBASIC016DDERCPayload (SP)
 //	Step 5 (SY DDERC carries opModFixedW = 2000 (20.00%))         -> assertBASIC016DDERCPayload (SY)
 //	Step 6 (no DERControl events on either program)      -> assertBASIC016NoEvents
@@ -36,11 +37,12 @@ import (
 // place rather than per-cipher.
 const basic016FixtureName = "basic-016-2derp-2dderc-0derc.yaml"
 
-// basic016ProgramCount is the expected DERProgram count rendered at
-// each FSA's DERProgramList. Per the server's scopedListHandler the
-// program list scopes by EndDevice id only (see BASIC-002 / CORE-010
-// doc), so EVERY FSA path returns both programs.
-const basic016ProgramCount = 2
+// basic016Programs is the one program each FSA's DERProgramList holds:
+// the procedure GETs an SY DERProgramList and an SP DERProgramList.
+var basic016Programs = map[string]wantProgram{
+	"BASIC-016-FSA-SP": {mrid: "BASIC-016-DERP-SP", primacy: 0},
+	"BASIC-016-FSA-SY": {mrid: "BASIC-016-DERP-SY", primacy: 1},
+}
 
 // basic016SPFixedW is the opModFixedW value seeded by the SP DDERC
 // per the fixture (4000, 40.00%).
@@ -83,15 +85,18 @@ func runBASIC016(t *testing.T, extraOpts []csiptest.BootOption) {
 		}
 	}
 
-	// Step 3: each FSA's DERProgramList renders BOTH programs (store
-	// scopes by EndDevice id only). Assert primacy chain is intact at
-	// each FSA path.
-	for i, fsa := range fsaList.FunctionSetAssignments {
-		if fsa.DERProgramListLink == nil {
-			t.Fatalf("FSA[%d] missing DERProgramListLink", i)
+	// Step 3: the SY and SP DERProgramLists each hold their own program,
+	// and SP outranks SY (lower primacy), so its default is the one applied.
+	byFSA := map[string]sep2.DERProgram{}
+	for _, fsa := range fsaList.FunctionSetAssignments {
+		progs := assertFSAProgramList(t, ctx, client, fsa, []wantProgram{basic016Programs[fsa.MRID]})
+		if progs[0].DefaultDERControlLink == nil {
+			t.Errorf("[%s] DERProgram %s missing DefaultDERControlLink", fsa.MRID, progs[0].MRID)
 		}
-		progList := walkProgramListByHref(t, ctx, client, fsa.DERProgramListLink.Href)
-		assertBASIC016ProgramList(t, fsa.MRID, progList)
+		byFSA[fsa.MRID] = progs[0]
+	}
+	if sp, sy := byFSA["BASIC-016-FSA-SP"], byFSA["BASIC-016-FSA-SY"]; sp.Primacy >= sy.Primacy {
+		t.Errorf("SP primacy %d does not outrank SY primacy %d", sp.Primacy, sy.Primacy)
 	}
 
 	// Steps 4 + 5: walk SP and SY DDERC links directly and assert the
@@ -112,44 +117,6 @@ func runBASIC016(t *testing.T, extraOpts []csiptest.BootOption) {
 		if len(list.DERControl) != 0 {
 			t.Errorf("%s DERControlList.DERControl len = %d, want 0",
 				prog, len(list.DERControl))
-		}
-	}
-}
-
-// assertBASIC016ProgramList asserts a DERProgramList renders both
-// programs (SP@0, SY@1) in primacy order with the expected MRIDs.
-func assertBASIC016ProgramList(t *testing.T, fsaLabel string, progList sep2.DERProgramList) {
-	t.Helper()
-
-	if got := int(progList.All); got != basic016ProgramCount {
-		t.Errorf("[%s] DERProgramList.All = %d, want %d",
-			fsaLabel, got, basic016ProgramCount)
-	}
-	if got := len(progList.DERProgram); got != basic016ProgramCount {
-		t.Fatalf("[%s] len(DERProgramList.DERProgram) = %d, want %d",
-			fsaLabel, got, basic016ProgramCount)
-	}
-	// Store-key sort is lex: "sp" < "sy", so SP renders first.
-	wantPrograms := []struct {
-		mrid    string
-		primacy uint8
-	}{
-		{mrid: "BASIC-016-DERP-SP", primacy: 0},
-		{mrid: "BASIC-016-DERP-SY", primacy: 1},
-	}
-	for i, want := range wantPrograms {
-		got := progList.DERProgram[i]
-		if got.MRID != want.mrid {
-			t.Errorf("[%s] DERProgram[%d].MRID = %q, want %q",
-				fsaLabel, i, got.MRID, want.mrid)
-		}
-		if got.Primacy != want.primacy {
-			t.Errorf("[%s] DERProgram[%d].Primacy = %d, want %d",
-				fsaLabel, i, got.Primacy, want.primacy)
-		}
-		if got.DefaultDERControlLink == nil {
-			t.Errorf("[%s] DERProgram[%d] (%s) missing DefaultDERControlLink",
-				fsaLabel, i, got.MRID)
 		}
 	}
 }

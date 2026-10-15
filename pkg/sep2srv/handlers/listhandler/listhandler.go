@@ -20,14 +20,29 @@ func ListHandler[T store.Copier[T], L any](
 	buildList func(href string, result store.ListResult[T], pollRate uint32) L,
 	pollRate uint32,
 ) http.HandlerFunc {
+	return SortedListHandler(s, store.SortByIDAsc, buildList, pollRate)
+}
+
+// SortedListHandler is [ListHandler] serving the list in the order sort names.
+// A list with a normative ordering asks for [store.SortByListOrdering], and s
+// must then provide it (see [store.Ordered]); a store that cannot answers
+// [store.ErrUnsupportedSort], which is served as a 500 rather than as a list
+// in some other order.
+func SortedListHandler[T store.Copier[T], L any](
+	s store.ResourceStore[T],
+	sort store.SortKey,
+	buildList func(href string, result store.ListResult[T], pollRate uint32) L,
+	pollRate uint32,
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			encoding.MethodNotAllowed(w, "GET, HEAD")
 			return
 		}
 
-		params := paging.ParseQuery(r.URL.Query())
-		result, err := s.List(r.Context(), params.ToListOptions())
+		opts := paging.ParseQuery(r.URL.Query()).ToListOptions()
+		opts.Sort = sort
+		result, err := s.List(r.Context(), opts)
 		if err != nil {
 			srverr.Internal(w, r, err)
 			return

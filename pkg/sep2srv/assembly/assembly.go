@@ -819,7 +819,7 @@ func registerEndDeviceRoutes(mux routeRegistrar, stores *Stores, authPolicy Auth
 	// FSA endpoints
 	if !store.IsAbsent(stores.FSAs) {
 		mux.HandleFunc("GET /edev/{id}/fsa", scopedListHandler[sep2.FunctionSetAssignments, sep2.FunctionSetAssignmentsList](
-			stores.FSAs, "id", corefsa.BuildFSAList, 900,
+			stores.FSAs, "id", store.SortByIDAsc, corefsa.BuildFSAList, 900,
 		))
 		mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}", corefsa.HandleFSA(stores.FSAs))
 	}
@@ -958,8 +958,10 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 		Availability: true,
 	}
 
+	// The four DER lists below are served in the Table 50 order section 4.6.1
+	// requires, applied over the store rather than trusted to it.
 	mux.HandleFunc("GET /edev/{id}/der", scopedListHandler[sep2.DER, sep2.DERList](
-		stores.DERs, "id", coreder.DERListBuilder(derLinks), derstatus.DefaultPollRateSeconds,
+		store.OrderedScoped(stores.DERs, coreder.CompareDER), "id", store.SortByListOrdering, coreder.DERListBuilder(derLinks), derstatus.DefaultPollRateSeconds,
 	))
 
 	// The DER instance itself. Every DERList member carries this
@@ -997,7 +999,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// wrapper shadows no read method and would have quietly bypassed one that
 	// it did.
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp", scopedListHandler[sep2.DERProgram, sep2.DERProgramList](
-		derPrograms, "id", coreder.BuildDERProgramList, 900,
+		store.OrderedScoped(derPrograms, coreder.CompareDERProgram), "id", store.SortByListOrdering, coreder.BuildDERProgramList, 900,
 	))
 
 	// A DERProgram's own href, so the FSA-to-DERProgramList-to-member link
@@ -1015,7 +1017,7 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 	// DERControl under DERProgram
 	mux.HandleFunc("GET /edev/{id}/fsa/{fsaId}/derp/{derpId}/derc",
 		scopedListHandlerDeep[sep2.DERControl, sep2.DERControlList](
-			derControls, coreder.BuildDERControlList, 900,
+			store.OrderedScoped(derControls, coreder.CompareDERControl), store.SortByListOrdering, coreder.BuildDERControlList, 900,
 		))
 
 	// A DERControl's own href, so an activated event resolves. A client that
@@ -1046,8 +1048,8 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 		coreder.DefaultDERControlHandler(defaultDERControls))
 
 	// Global DERCurve
-	mux.HandleFunc("GET /dc", corelisthandler.ListHandler[sep2.DERCurve, sep2.DERCurveList](
-		derCurves, coreder.BuildDERCurveList, 900,
+	mux.HandleFunc("GET /dc", corelisthandler.SortedListHandler[sep2.DERCurve, sep2.DERCurveList](
+		store.Ordered(derCurves, coreder.CompareDERCurve), store.SortByListOrdering, coreder.BuildDERCurveList, 900,
 	))
 }
 
@@ -1067,13 +1069,14 @@ func registerDERRoutes(mux routeRegistrar, stores *Stores) {
 func scopedListHandler[T store.Copier[T], L any](
 	scopedStore store.ScopedStore[T],
 	parentParam string,
+	sort store.SortKey,
 	buildList func(href string, result store.ListResult[T], pollRate uint32) L,
 	pollRate uint32,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		parentID := r.PathValue(parentParam)
 		st := store.Under(scopedStore, parentID)
-		h := corelisthandler.ListHandler[T, L](st, buildList, pollRate)
+		h := corelisthandler.SortedListHandler[T, L](st, sort, buildList, pollRate)
 		h.ServeHTTP(w, r)
 	}
 }
@@ -1081,13 +1084,14 @@ func scopedListHandler[T store.Copier[T], L any](
 // scopedListHandlerDeep creates a list handler scoped by composite key id/fsaId/derpId.
 func scopedListHandlerDeep[T store.Copier[T], L any](
 	scopedStore store.ScopedStore[T],
+	sort store.SortKey,
 	buildList func(href string, result store.ListResult[T], pollRate uint32) L,
 	pollRate uint32,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := deepScopeKey(r)
 		st := store.Under(scopedStore, key)
-		h := corelisthandler.ListHandler[T, L](st, buildList, pollRate)
+		h := corelisthandler.SortedListHandler[T, L](st, sort, buildList, pollRate)
 		h.ServeHTTP(w, r)
 	}
 }
@@ -1343,7 +1347,7 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /upt/{uptId}", coremetering.HandleUsagePoint(stores.UsagePoints))
 
 	mux.HandleFunc("GET /upt/{uptId}/mr", scopedListHandler[sep2.MeterReading, sep2.MeterReadingList](
-		meterReadings, "uptId", coremetering.BuildMeterReadingList, 900,
+		meterReadings, "uptId", store.SortByIDAsc, coremetering.BuildMeterReadingList, 900,
 	))
 
 	mux.HandleFunc("GET /upt/{uptId}/mr/{mrId}/r", func(w http.ResponseWriter, r *http.Request) {
@@ -1412,7 +1416,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		// enforced by ownershipGate, and scopedResourceHandler adds none of its
 		// own. It is mounted because the WADL declares it Mandatory.
 		mux.HandleFunc("GET /edev/{id}/lel", scopedListHandler[sep2.LogEvent, sep2.LogEventList](
-			stores.LogEvents, "id", corelogevent.BuildLogEventList, 900,
+			stores.LogEvents, "id", store.SortByIDAsc, corelogevent.BuildLogEventList, 900,
 		))
 		mux.HandleFunc("POST /edev/{id}/lel", corelogevent.HandlePostLogEvent(stores.LogEvents))
 
@@ -1436,7 +1440,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		))
 		mux.HandleFunc("GET /msg/{msgId}", coremessaging.HandleMessagingProgram(stores.MessagingPrograms))
 		mux.HandleFunc("GET /msg/{msgId}/tm", scopedListHandler[sep2.TextMessage, sep2.TextMessageList](
-			textMessages, "msgId", coremessaging.BuildTextMessageList, 900,
+			textMessages, "msgId", store.SortByIDAsc, coremessaging.BuildTextMessageList, 900,
 		))
 		mux.HandleFunc("POST /msg/{msgId}/tm", coremessaging.HandlePostTextMessage(textMessages))
 
@@ -1481,7 +1485,7 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		}
 
 		mux.HandleFunc("GET /edev/{id}/frq", scopedListHandler[sep2.FlowReservationRequest, sep2.FlowReservationRequestList](
-			stores.FlowReservationRequests, "id", coreflowrsv.BuildFlowReservationRequestList, 900,
+			stores.FlowReservationRequests, "id", store.SortByIDAsc, coreflowrsv.BuildFlowReservationRequestList, 900,
 		))
 		mux.HandleFunc("POST /edev/{id}/frq", coreflowrsv.HandlePostFlowReservationRequest(
 			stores.FlowReservationRequests, flowReservationQueue,

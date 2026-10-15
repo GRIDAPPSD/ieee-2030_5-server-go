@@ -23,11 +23,11 @@ var ErrIdentityConflict = errors.New("boot fixture EndDevice conflicts with a pe
 type Logf func(format string, args ...any)
 
 // Reconcile applies the fixture at fixturePath as a seed that yields to
-// persisted state (#352). seedPath is the seed record: the EndDevice and
-// DERProgram records a fixture has already created or adopted in this
-// data_dir. Each of those is applied at most once, so edits and deletes made
-// between boots survive. The in-memory kinds load on every boot unless their
-// EndDevice or DERProgram was skipped.
+// persisted state (#352). seedPath is the seed record: the EndDevice,
+// DERProgram, DERControl and DefaultDERControl records a fixture has already
+// created or adopted in this data_dir. Each of those is applied at most once,
+// so edits and deletes made between boots survive. The in-memory kinds load
+// on every boot unless their EndDevice or DERProgram was skipped.
 //
 // An empty seedPath means no data_dir, and Reconcile is exactly Load.
 //
@@ -214,16 +214,34 @@ func planReconcile(ctx context.Context, target *Target, spec *Spec, seeded map[s
 			p.fsas = append(p.fsas, indexed[FSASpec]{i, f})
 		}
 	}
+	// A default control persists (#917), so it takes the same seed-once
+	// tracking as a DERControl below: an operator edit or delete survives a
+	// restart instead of being replayed from the fixture.
 	for i, d := range spec.DefaultDERControls {
-		if !underSkipped(d.EndDeviceID, d.DERProgramID) {
+		scope := compositeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
+		key := seedKey{Kind: kindDefaultDERControl, Parent: scope, ID: singletonKey}
+		if underSkipped(d.EndDeviceID, d.DERProgramID) {
+			p.record(key)
+			p.skip("DefaultDERControl scope=%q: parent DERProgram skipped", scope)
+			continue
+		}
+		_, wasSeeded := seeded[key]
+		_, err := target.DefaultDERControls.Get(ctx, scope, singletonKey)
+		switch {
+		case err == nil: // keep, or adopt if unseeded
+			p.record(key)
+		case !errors.Is(err, store.ErrNotFound):
+			return nil, fmt.Errorf("default_der_controls[%d] (scope=%q): read persisted DefaultDERControl: %w", i, scope, err)
+		case wasSeeded:
+			p.skip("DefaultDERControl scope=%q: deleted since seeded", scope)
+		default:
 			p.defaultDERControls = append(p.defaultDERControls, indexed[DefaultDERControlSpec]{i, d})
+			p.record(key)
 		}
 	}
-	// DERControls now persist (#565), so unlike DefaultDERControls above
-	// (still in-memory-only, recreated every boot) each one needs the same
-	// seed-once tracking DERPrograms uses above: without it, reconciling the
-	// same fixture against an already-persisted control retries Create and
-	// fails with ErrAlreadyExists.
+	// DERControls persist (#565): without seed-once tracking, reconciling
+	// the same fixture against an already-persisted control retries Create
+	// and fails with ErrAlreadyExists.
 	for i, c := range spec.DERControls {
 		scope := compositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
 		key := seedKey{Kind: kindDERControl, Parent: scope, ID: c.ID}

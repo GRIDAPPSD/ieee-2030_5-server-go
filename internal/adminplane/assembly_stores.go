@@ -58,7 +58,7 @@ func StoresFromAssembly(s *assembly.Stores) (*Stores, error) {
 		DERPrograms:          s.DERPrograms,
 		DERControls:          derControls,
 		DERControlLifecycles: s.DERControlLifecycles,
-		DefaultDERControls:   concrete[*memory.ScopedStore[sep2.DefaultDERControl]](s.DefaultDERControls),
+		DefaultDERControls:   s.DefaultDERControls,
 		DERCurves:            concrete[*memory.Store[sep2.DERCurve]](s.DERCurves),
 		FSAs:                 fsas,
 		AdminFSAs:            s.AdminFSAs,

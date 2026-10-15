@@ -26,6 +26,7 @@ const (
 	endDevicesFile  = "enddevices.json"
 	derProgramsFile = "derprograms.json"
 	derControlsFile = "dercontrols.json"
+	defaultsFile    = "defaultdercontrols.json"
 	seedRecordFile  = "bootfixture-seed.json"
 )
 
@@ -120,10 +121,16 @@ func (h *seedHarness) bootWithSeedPath(fixture, seedPath string) (*bootfixture.T
 	if err != nil {
 		return nil, fmt.Errorf("open DERControl store: %w", err)
 	}
+	// #917: DefaultDERControls persist as well.
+	dderc, err := memory.NewPersistentScopedStore[sep2.DefaultDERControl](h.path(defaultsFile), "DefaultDERControl")
+	if err != nil {
+		return nil, fmt.Errorf("open DefaultDERControl store: %w", err)
+	}
 	target := freshTarget()
 	target.EndDevices = edevs
 	target.DERPrograms = derps
 	target.DERControls = dercs
+	target.DefaultDERControls = dderc
 
 	h.boots++
 	fixturePath := filepath.Join(h.fixtureDir, fmt.Sprintf("fixture-%d.yaml", h.boots))
@@ -265,6 +272,10 @@ func sortSeedKeys(keys []seedKey) {
 	slices.SortFunc(keys, func(a, b seedKey) int {
 		return strings.Compare(a.Kind+"\x00"+a.Parent+"\x00"+a.ID, b.Kind+"\x00"+b.Parent+"\x00"+b.ID)
 	})
+}
+
+func ddercKey(parent string) seedKey {
+	return seedKey{Kind: "DefaultDERControl", Parent: parent, ID: "default"}
 }
 
 func edevKey(id string) seedKey { return seedKey{Kind: "EndDevice", ID: id} }
@@ -550,10 +561,14 @@ func TestReconcileKeepsDeletesAndSkipsChildren(t *testing.T) {
 	if dflt.MRID != "D1D1D1D1D1D1D1D1" {
 		t.Errorf("DefaultDERControl under p1 MRID = %q, want D1D1D1D1D1D1D1D1", dflt.MRID)
 	}
-	_, err = target.DefaultDERControls.Get(ctx, "e1/f1/p3", dderControlSingletonKey)
-	assertNotFound(t, err, "DefaultDERControl under deleted p3")
-	_, err = target.DefaultDERControls.Get(ctx, "e2/f2/p2", dderControlSingletonKey)
-	assertNotFound(t, err, "DefaultDERControl under deleted e2")
+	// Like c2 and c3 above, the defaults persisted on boot 1 under p3 and e2
+	// are orphaned, not cascade-deleted.
+	if _, err := target.DefaultDERControls.Get(ctx, "e1/f1/p3", dderControlSingletonKey); err != nil {
+		t.Errorf("DefaultDERControl under deleted p3: %v, want it still present (orphaned)", err)
+	}
+	if _, err := target.DefaultDERControls.Get(ctx, "e2/f2/p2", dderControlSingletonKey); err != nil {
+		t.Errorf("DefaultDERControl under deleted e2: %v, want it still present (orphaned)", err)
+	}
 
 	curve, err := target.DERCurves.Get(ctx, "k1")
 	if err != nil {
@@ -565,7 +580,8 @@ func TestReconcileKeepsDeletesAndSkipsChildren(t *testing.T) {
 
 	h.assertSeedKeys(edevKey("e1"), edevKey("e2"),
 		derpKey("e1", "p1"), derpKey("e1", "p3"), derpKey("e2", "p2"),
-		dercKey("e1/f1/p1", "c1"), dercKey("e1/f1/p3", "c3"), dercKey("e2/f2/p2", "c2"))
+		dercKey("e1/f1/p1", "c1"), dercKey("e1/f1/p3", "c3"), dercKey("e2/f2/p2", "c2"),
+		ddercKey("e1/f1/p1"), ddercKey("e1/f1/p3"), ddercKey("e2/f2/p2"))
 
 	h.requireLog(`EndDevice id="e2"`, "deleted since seeded")
 	h.requireLog(`DERProgram edev="e1" id="p3"`, "deleted since seeded")

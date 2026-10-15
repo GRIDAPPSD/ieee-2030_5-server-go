@@ -42,8 +42,8 @@ der_controls:
 
 // dercontrolSeedTarget opens fresh, persisted store handles on the files
 // under dataDir, exactly as a server restart would: a new process, the same
-// data_dir. FSAs and DefaultDERControls stay in-memory-only, matching
-// production (neither persists).
+// data_dir. FSAs stay in-memory-only, matching production. DefaultDERControls
+// stay in memory here too; ddercSeedTarget swaps in the persisted store.
 func dercontrolSeedTarget(t *testing.T, dataDir string) *bootfixture.Target {
 	t.Helper()
 	edevs, err := memory.NewEndDeviceStoreWithPersistence(filepath.Join(dataDir, "enddevices.json"))

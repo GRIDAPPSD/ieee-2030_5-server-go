@@ -28,6 +28,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2capture"
@@ -254,6 +255,12 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 	}
 
 	stores.CommitmentLedger = NewCommitmentLedger(stores)
+
+	// The device-scoped FSA store is memory-only while the admin record
+	// persists, so rebuild what /edev/{id}/fsa serves (#915).
+	if err := fsaprogram.Reconcile(context.Background(), adminFSAs, stores.FSAs); err != nil {
+		return nil, nil, err
+	}
 
 	// #763: one issuer for the admin DER control handler and the grant cancel
 	// writers, so a cancel and an admin write on one program share their locks.

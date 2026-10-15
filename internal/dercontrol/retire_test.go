@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
@@ -70,6 +72,9 @@ func TestRetire_JudgesEachControl(t *testing.T) {
 		{"superseded later", &sep2.DateTimeInterval{Start: past, Duration: 600}, &LifecycleRecord{SupersededAt: &future}, nil, true},
 		{"not issued here, scheduled", &sep2.DateTimeInterval{Start: future, Duration: 60}, nil, nil, true},
 		{"not issued here, cancelled", &sep2.DateTimeInterval{Start: future, Duration: 60}, nil, &sep2.EventStatus{CurrentStatus: sep2.EventStatusCancelled}, false},
+		{"not issued here, cancelled with randomization", &sep2.DateTimeInterval{Start: future, Duration: 60}, nil, &sep2.EventStatus{CurrentStatus: 3}, false},
+		{"not issued here, superseded", &sep2.DateTimeInterval{Start: future, Duration: 60}, nil, &sep2.EventStatus{CurrentStatus: sep2.EventStatusSuperseded}, false},
+		{"not issued here, active", &sep2.DateTimeInterval{Start: past, Duration: 600}, nil, &sep2.EventStatus{CurrentStatus: sep2.EventStatusActive}, true},
 		{"no interval", nil, nil, nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,5 +160,90 @@ func TestIssue_RefusesAProgramRetiredAfterItsFirstRead(t *testing.T) {
 	assertRefusal(t, <-issued, RefusalProgramNotFound)
 	if list, err := h.controls.List(context.Background(), scope.Key(), store.ListOptions{Unbounded: true}); err != nil || len(list.Items) != 0 {
 		t.Errorf("controls after the refused Issue = %+v, %v; want none", list.Items, err)
+	}
+}
+
+// A control is live up to, and not at, the second its interval ends.
+func TestLiveControls_IntervalEndSecond(t *testing.T) {
+	const now = int64(1_800_000_000)
+	for _, tc := range []struct {
+		end  int64
+		live bool
+	}{{now + 1, true}, {now, false}} {
+		h := newHarness(t, Config{PEN: testPEN(1)})
+		c := sep2.DERControl{}
+		c.Interval = &sep2.DateTimeInterval{Start: tc.end - 60, Duration: 60}
+		c.Href = controlListHref("dev1", "0", "p1") + "/c1"
+		if err := h.controls.Create(context.Background(), "dev1/0/p1", "c1", c); err != nil {
+			t.Fatal(err)
+		}
+		live, err := h.issuer.liveControls(context.Background(), "dev1/0/p1", now)
+		if err != nil || (len(live) == 1) != tc.live {
+			t.Errorf("end %d at now %d: live = %v, %v; want live %v", tc.end, now, live, err, tc.live)
+		}
+	}
+}
+
+// gatedControls pauses the first List of one scope until gate closes. Issue
+// lists a scope while holding its lock, after its program re-read.
+type gatedControls struct {
+	controlStore
+	scope   string
+	gate    chan struct{}
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (g *gatedControls) List(ctx context.Context, parentID string, opts store.ListOptions) (store.ListResult[sep2.DERControl], error) {
+	if parentID == g.scope {
+		first := false
+		g.once.Do(func() { first = true })
+		if first {
+			close(g.entered)
+			<-g.gate
+		}
+	}
+	return g.controlStore.List(ctx, parentID, opts)
+}
+
+// A Retire that starts while an Issue holds the scope waits for it, and then
+// sees the control the Issue stored.
+func TestRetire_WaitsForAnIssueHoldingTheScope(t *testing.T) {
+	h := newHarness(t, Config{PEN: testPEN(1)})
+	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
+	scope := Scope{EndDeviceID: "dev1", FSAID: "0", DERProgramID: "p1"}
+	g := &gatedControls{controlStore: h.controls, scope: scope.Key(), gate: make(chan struct{}), entered: make(chan struct{})}
+	h.issuer.controls = g
+
+	issued := make(chan error, 1)
+	go func() {
+		start := sep2time.Now().Unix() + 1000
+		_, err := h.issuer.Issue(context.Background(), CreateRequest{
+			DERProgramHref: programHref("dev1", "0", "p1"), Type: Connect, Start: &start, DurationSeconds: 1000,
+		})
+		issued <- err
+	}()
+	<-g.entered
+
+	removed := false
+	retired := make(chan error, 1)
+	go func() {
+		retired <- h.issuer.Retire(context.Background(), []Scope{scope}, func(context.Context) error {
+			removed = true
+			return nil
+		})
+	}()
+	select {
+	case err := <-retired:
+		t.Fatalf("Retire returned %v while Issue held the scope", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(g.gate)
+	if err := <-issued; err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	var live *LiveControlsError
+	if err := <-retired; !errors.As(err, &live) || removed {
+		t.Fatalf("Retire = %v, removed %v; want *LiveControlsError and no removal", err, removed)
 	}
 }

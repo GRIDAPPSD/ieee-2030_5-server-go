@@ -123,6 +123,8 @@ func TestAdminFSATemplate_CreateRefusals(t *testing.T) {
 		{"absent FSA", "fsa-missing", mkTemplate("derp-2", "MR2", "d", 1, 0, 1), store.ErrNotFound},
 		{"duplicate id", "fsa-A", mkTemplate("derp-1", "MR2", "d", 1, 0, 1), store.ErrAlreadyExists},
 		{"duplicate mRID", "fsa-A", mkTemplate("derp-2", "MR1", "d", 1, 0, 1), store.ErrAlreadyExists},
+		// mRIDs are hex; case does not make a second identity.
+		{"duplicate mRID in lower case", "fsa-A", mkTemplate("derp-2", "mr1", "d", 1, 0, 1), store.ErrAlreadyExists},
 		{"empty id", "fsa-A", mkTemplate("", "MR3", "d", 1, 0, 1), memory.ErrInvalidProgramTemplate},
 		{"empty mRID", "fsa-A", mkTemplate("derp-3", "", "d", 1, 0, 1), memory.ErrInvalidProgramTemplate},
 	}
@@ -290,10 +292,11 @@ func TestAdminFSATemplate_PreTemplateSnapshotLoadsWithNone(t *testing.T) {
 func TestAdminFSATemplate_InvalidSnapshotRefused(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"empty template id": `{"version":1,"records":[{"id":"fsa-A","fsa":{},"templates":[{"id":"","mRID":"MR1"}]}]}`,
-		"empty mRID":        `{"version":1,"records":[{"id":"fsa-A","fsa":{},"templates":[{"id":"derp-1","mRID":""}]}]}`,
-		"duplicate id":      `{"version":1,"records":[{"id":"fsa-A","fsa":{},"templates":[{"id":"derp-1","mRID":"MR1"},{"id":"derp-1","mRID":"MR2"}]}]}`,
-		"duplicate mRID":    `{"version":1,"records":[{"id":"fsa-A","fsa":{},"templates":[{"id":"derp-1","mRID":"MR1"},{"id":"derp-2","mRID":"MR1"}]}]}`,
+		"empty template id":        `{"version":1,"records":[{"id":"fsa-A","fsa":{},"templates":[{"id":"","mRID":"MR1"}]}]}`,
+		"empty mRID":               `{"version":1,"records":[{"id":"fsa-A","fsa":{},"templates":[{"id":"derp-1","mRID":""}]}]}`,
+		"duplicate id":             `{"version":1,"records":[{"id":"fsa-A","fsa":{},"templates":[{"id":"derp-1","mRID":"MR1"},{"id":"derp-1","mRID":"MR2"}]}]}`,
+		"duplicate mRID":           `{"version":1,"records":[{"id":"fsa-A","fsa":{},"templates":[{"id":"derp-1","mRID":"MR1"},{"id":"derp-2","mRID":"MR1"}]}]}`,
+		"mRIDs equal but for case": `{"version":1,"records":[{"id":"fsa-A","fsa":{},"templates":[{"id":"derp-1","mRID":"ab01"},{"id":"derp-2","mRID":"AB01"}]}]}`,
 	}
 	for name, body := range cases {
 		path := filepath.Join(t.TempDir(), "fsas.json")

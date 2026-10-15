@@ -336,13 +336,13 @@ func compareTemplateID(t ProgramTemplate, id string) int {
 
 // checkTemplateAdd reports why tmpl cannot join tmpls. Every template of one
 // FSA lands on the same devices, so an mRID shared by two of them would name
-// two programs on each device.
+// two programs on each device. mRIDs are hex, so case is not identity.
 func checkTemplateAdd(tmpls []ProgramTemplate, tmpl ProgramTemplate) error {
 	if tmpl.ID == "" || tmpl.MRID == "" {
 		return fmt.Errorf("%w: id and mRID are required", ErrInvalidProgramTemplate)
 	}
 	for _, t := range tmpls {
-		if t.ID == tmpl.ID || t.MRID == tmpl.MRID {
+		if t.ID == tmpl.ID || strings.EqualFold(t.MRID, tmpl.MRID) {
 			return store.ErrAlreadyExists
 		}
 	}

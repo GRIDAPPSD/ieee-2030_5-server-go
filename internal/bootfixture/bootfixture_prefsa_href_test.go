@@ -100,3 +100,28 @@ func TestCheckDERProgramHrefsRefusesProgramsWithoutFSA(t *testing.T) {
 		t.Errorf("clean store: err = %v, want nil", err)
 	}
 }
+
+// The href move is a change to the program, so it raises the version once and
+// a second boot leaves it alone (#919).
+func TestReconcileMigrationRaisesProgramVersionOnce(t *testing.T) {
+	t.Parallel()
+	h := newSeedHarness(t)
+	ctx := context.Background()
+	h.mustBoot(fixtureV1)
+
+	_, derps := h.reopen()
+	prog := mustProgram(t, derps, "e1", "p1")
+	prog.Href = "/edev/e1/derp/p1"
+	if err := derps.Update(ctx, "e1", "p1", prog); err != nil {
+		t.Fatalf("write pre-#743 href: %v", err)
+	}
+
+	for boot := 1; boot <= 2; boot++ {
+		h.mustBoot(fixtureV1)
+		_, derps = h.reopen()
+		got := mustProgram(t, derps, "e1", "p1")
+		if got.Version == nil || *got.Version != 1 {
+			t.Errorf("after boot %d: version = %v, want 1", boot, got.Version)
+		}
+	}
+}

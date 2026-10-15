@@ -10,6 +10,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -335,7 +336,11 @@ func (p *reconcilePlan) apply(ctx context.Context, target *Target, loadTime int6
 	}
 	for i, prog := range p.migrations {
 		edev, id := p.migrationIDs[i][0], p.migrationIDs[i][1]
-		if err := target.DERPrograms.Update(ctx, edev, id, prog); err != nil {
+		err := fsaprogram.Edit(ctx, target.DERPrograms, fsaprogram.Ref{DeviceID: edev, ProgramID: id}, func(p *sep2.DERProgram) error {
+			*p = prog
+			return nil
+		})
+		if err != nil {
 			return fmt.Errorf("migrate DERProgram edev=%q id=%q: %w", edev, id, err)
 		}
 	}

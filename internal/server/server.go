@@ -157,6 +157,12 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("AdminFSA persistence: %w", err)
 	}
+	programOrigins, err := memory.NewProgramOriginStore(
+		cfg.EffectiveStorePath("program-origins", ""),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ProgramOrigin persistence: %w", err)
+	}
 	derPrograms, err := memory.NewDERProgramStoreWithPersistence(
 		cfg.EffectiveStorePath("derprograms", ""),
 	)
@@ -261,6 +267,7 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 		DERCurves:                memory.NewStore[sep2.DERCurve](),
 		FSAs:                     memory.NewScopedStore[sep2.FunctionSetAssignments](),
 		AdminFSAs:                adminFSAs,
+		ProgramOrigins:           programOrigins,
 		Subscriptions:            subStore,
 		UsagePoints:              memory.NewStore[sep2.UsagePoint](),
 		MeterReadings:            memory.NewScopedStore[sep2.MeterReading](),

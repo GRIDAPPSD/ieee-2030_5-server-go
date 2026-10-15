@@ -23,6 +23,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -31,11 +32,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	coresep2time "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
+	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -423,13 +427,11 @@ type fsaSwapRequest struct {
 // new path. Used by CSIP BASIC-003 (feeder swap) and MAINT-003 (EndDevice->
 // FSA reassignment).
 //
-// Reassignment shape chosen: re-key the FSA list entry under the EndDevice
-// scope (option (a) in the #123 ticket). The other materialization,
-// re-keying DERControls under the composite edev/fsa/derp scope, is
-// intentionally not performed here: DERPrograms are keyed by EndDevice
-// alone (not by FSA), and BASIC-003's feeder-swap procedure is satisfied
-// by the FSA list rescoping alone. A harness needing fresh controls under
-// the new FSA can chain a derctl-add mutation.
+// The FSA's programs move with it (#916): each FSA lists only the programs
+// whose href names it, so they are re-stamped to the new id, and their
+// DERControls, lifecycle records and DefaultDERControls are re-keyed to the
+// new edev/fsa/derp scope. The move is not transactional; a store failure
+// part way is a 500 that leaves the records moved so far where they are.
 func handleFSASwap(stores *Stores) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req fsaSwapRequest
@@ -502,6 +504,10 @@ func handleFSASwap(stores *Stores) http.HandlerFunc {
 			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if err := moveFSAPrograms(ctx, stores, req.EndDeviceID, req.FromFSA, req.ToFSA); err != nil {
+			http.Error(w, "internal error: moving programs: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 		if err := fsas.Delete(ctx, req.FromFSA); err != nil {
 			// Best-effort rollback of the new entry. ErrNotFound on the
 			// source between Get and Delete would be a race against a
@@ -512,6 +518,136 @@ func handleFSASwap(stores *Stores) http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// moveFSAPrograms moves every program of FSA from under edev to FSA to,
+// with the controls, lifecycle records and default control stored under
+// each program's edev/fsa/derp scope. Hrefs and links that name the old FSA
+// are re-stamped; any other link, such as the global /dc curve list, is kept.
+func moveFSAPrograms(ctx context.Context, stores *Stores, edev, from, to string) error {
+	if stores.DERPrograms == nil {
+		return nil
+	}
+	programs, err := stores.DERPrograms.List(ctx, edev, store.ListOptions{Unbounded: true})
+	if err != nil {
+		return fmt.Errorf("listing programs: %w", err)
+	}
+	oldPrefix := "/edev/" + edev + "/fsa/" + from + "/"
+	newPrefix := "/edev/" + edev + "/fsa/" + to + "/"
+	restamp := func(href string) string {
+		if rest, ok := strings.CutPrefix(href, oldPrefix); ok {
+			return newPrefix + rest
+		}
+		return href
+	}
+	for _, p := range programs.Items {
+		_, fsa, derp, ok := derhref.Program(p.Href)
+		if !ok || fsa != from {
+			continue
+		}
+		oldScope, newScope := derControlScope(edev, from, derp), derControlScope(edev, to, derp)
+		if err := moveControls(ctx, stores, oldScope, newScope, restamp); err != nil {
+			return fmt.Errorf("program %s: %w", derp, err)
+		}
+		if err := moveDefaultControl(ctx, stores, oldScope, newScope, restamp); err != nil {
+			return fmt.Errorf("program %s: %w", derp, err)
+		}
+		p.Href = restamp(p.Href)
+		if p.DefaultDERControlLink != nil {
+			p.DefaultDERControlLink.Href = restamp(p.DefaultDERControlLink.Href)
+		}
+		for _, l := range []*sep2.ListLink{p.ActiveDERControlListLink, p.DERControlListLink, p.DERCurveListLink} {
+			if l != nil {
+				l.Href = restamp(l.Href)
+			}
+		}
+		if err := stores.DERPrograms.Update(ctx, edev, derp, p); err != nil {
+			return fmt.Errorf("program %s: updating: %w", derp, err)
+		}
+	}
+	return nil
+}
+
+// moveControls re-keys every DERControl under oldScope, and its lifecycle
+// record, to newScope. Delete comes before Create because the control
+// store indexes each mRID to one scope and refuses a second owner.
+func moveControls(ctx context.Context, stores *Stores, oldScope, newScope string, restamp func(string) string) error {
+	if stores.DERControls == nil {
+		return nil
+	}
+	controls, err := stores.DERControls.List(ctx, oldScope, store.ListOptions{Unbounded: true})
+	if err != nil {
+		return fmt.Errorf("listing controls: %w", err)
+	}
+	ids, err := controlIDs(controls.Items)
+	if err != nil {
+		return err
+	}
+	for i, c := range controls.Items {
+		id := ids[i]
+		if err := stores.DERControls.Delete(ctx, oldScope, id); err != nil {
+			return fmt.Errorf("control %s: deleting: %w", id, err)
+		}
+		c.Href = restamp(c.Href)
+		if err := stores.DERControls.Create(ctx, newScope, id, c); err != nil {
+			return fmt.Errorf("control %s: creating: %w", id, err)
+		}
+		if stores.DERControlLifecycles == nil {
+			continue
+		}
+		rec, err := stores.DERControlLifecycles.Get(ctx, oldScope, id)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("lifecycle %s: reading: %w", id, err)
+		}
+		if err := stores.DERControlLifecycles.Create(ctx, newScope, id, rec); err != nil {
+			return fmt.Errorf("lifecycle %s: creating: %w", id, err)
+		}
+		if err := stores.DERControlLifecycles.Delete(ctx, oldScope, id); err != nil {
+			return fmt.Errorf("lifecycle %s: deleting: %w", id, err)
+		}
+	}
+	return nil
+}
+
+// controlIDs recovers each control's store id from its own href, which is
+// the only place a listed control carries it. A control whose href does not
+// end in its id cannot be re-keyed and refuses the whole move.
+func controlIDs(controls []sep2.DERControl) ([]string, error) {
+	ids := make([]string, len(controls))
+	for i, c := range controls {
+		id, ok := derhref.ControlID(c.Href)
+		if !ok {
+			return nil, fmt.Errorf("control mRID %q: href %q names no control id", c.MRID, c.Href)
+		}
+		ids[i] = id
+	}
+	return ids, nil
+}
+
+// moveDefaultControl re-keys the program's DefaultDERControl, when it has
+// one, from oldScope to newScope.
+func moveDefaultControl(ctx context.Context, stores *Stores, oldScope, newScope string, restamp func(string) string) error {
+	if stores.DefaultDERControls == nil {
+		return nil
+	}
+	dd, err := stores.DefaultDERControls.Get(ctx, oldScope, coresingleton.SingletonKey)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("default control: reading: %w", err)
+	}
+	dd.Href = restamp(dd.Href)
+	if err := stores.DefaultDERControls.Create(ctx, newScope, coresingleton.SingletonKey, dd); err != nil {
+		return fmt.Errorf("default control: creating: %w", err)
+	}
+	if err := stores.DefaultDERControls.Delete(ctx, oldScope, coresingleton.SingletonKey); err != nil {
+		return fmt.Errorf("default control: deleting: %w", err)
+	}
+	return nil
 }
 
 // --- /test/mutations/subscription-cancel (#126, MAINT-006) ---

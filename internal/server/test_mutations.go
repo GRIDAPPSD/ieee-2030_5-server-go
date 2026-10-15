@@ -430,8 +430,10 @@ type fsaSwapRequest struct {
 // The FSA's programs move with it (#916): each FSA lists only the programs
 // whose href names it, so they are re-stamped to the new id, and their
 // DERControls, lifecycle records and DefaultDERControls are re-keyed to the
-// new edev/fsa/derp scope. The move is not transactional; a store failure
-// part way is a 500 that leaves the records moved so far where they are.
+// new edev/fsa/derp scope. The move is not transactional: a store failure
+// part way is a 500, programs moved so far stay moved and are listed under
+// the new FSA, which then exists beside the old one, and the control whose
+// move failed is put back.
 func handleFSASwap(stores *Stores) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req fsaSwapRequest
@@ -509,10 +511,18 @@ func handleFSASwap(stores *Stores) http.HandlerFunc {
 			return
 		}
 		if err := fsas.Delete(ctx, req.FromFSA); err != nil {
-			// Best-effort rollback of the new entry. ErrNotFound on the
-			// source between Get and Delete would be a race against a
+			// Roll back: programs first, then the new entry, so no program
+			// is left naming an FSA that no longer exists. ErrNotFound on
+			// the source between Get and Delete would be a race against a
 			// concurrent mutation : surface it instead of swallowing.
-			_ = fsas.Delete(ctx, req.ToFSA)
+			if berr := moveFSAPrograms(ctx, stores, req.EndDeviceID, req.ToFSA, req.FromFSA); berr != nil {
+				http.Error(w, "internal error: "+err.Error()+"; moving programs back: "+berr.Error(), http.StatusInternalServerError)
+				return
+			}
+			if derr := fsas.Delete(ctx, req.ToFSA); derr != nil {
+				http.Error(w, "internal error: "+err.Error()+"; removing new fsa: "+derr.Error(), http.StatusInternalServerError)
+				return
+			}
 			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -569,8 +579,9 @@ func moveFSAPrograms(ctx context.Context, stores *Stores, edev, from, to string)
 }
 
 // moveControls re-keys every DERControl under oldScope, and its lifecycle
-// record, to newScope. Delete comes before Create because the control
-// store indexes each mRID to one scope and refuses a second owner.
+// record, to newScope. Create cannot come first: the control store indexes
+// each mRID to one scope and refuses a second owner. So a control whose
+// Create fails is put back under oldScope, and the move stops there.
 func moveControls(ctx context.Context, stores *Stores, oldScope, newScope string, restamp func(string) string) error {
 	if stores.DERControls == nil {
 		return nil
@@ -588,8 +599,12 @@ func moveControls(ctx context.Context, stores *Stores, oldScope, newScope string
 		if err := stores.DERControls.Delete(ctx, oldScope, id); err != nil {
 			return fmt.Errorf("control %s: deleting: %w", id, err)
 		}
-		c.Href = restamp(c.Href)
-		if err := stores.DERControls.Create(ctx, newScope, id, c); err != nil {
+		moved := c
+		moved.Href = restamp(c.Href)
+		if err := stores.DERControls.Create(ctx, newScope, id, moved); err != nil {
+			if rerr := stores.DERControls.Create(ctx, oldScope, id, c); rerr != nil {
+				return fmt.Errorf("control %s: creating: %w; restoring it: %w", id, err, rerr)
+			}
 			return fmt.Errorf("control %s: creating: %w", id, err)
 		}
 		if stores.DERControlLifecycles == nil {

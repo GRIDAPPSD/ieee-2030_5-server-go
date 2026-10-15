@@ -26,6 +26,7 @@ func seedProgramInFSA(t *testing.T, stores *server.Stores, edevID, fsaID, derpID
 	prog.DefaultDERControlLink = &sep2.Link{Href: base + "/dderc"}
 	prog.DERControlListLink = &sep2.ListLink{Href: base + "/derc", All: 1}
 	prog.DERCurveListLink = &sep2.ListLink{Href: "/dc", All: 2}
+	prog.ActiveDERControlListLink = &sep2.ListLink{Href: base + "/actderc", All: 0}
 	if err := stores.DERPrograms.Create(ctx, edevID, derpID, prog); err != nil {
 		t.Fatalf("seed program %s: %v", derpID, err)
 	}
@@ -86,6 +87,9 @@ func TestFSASwap_MovesProgramsWithTheirFSA(t *testing.T) {
 	if p1.DERControlListLink == nil || p1.DERControlListLink.Href != moved+"/derc" {
 		t.Errorf("p1 DERControlListLink = %+v, want %q", p1.DERControlListLink, moved+"/derc")
 	}
+	if p1.ActiveDERControlListLink == nil || p1.ActiveDERControlListLink.Href != moved+"/actderc" {
+		t.Errorf("p1 ActiveDERControlListLink = %+v, want %q", p1.ActiveDERControlListLink, moved+"/actderc")
+	}
 	if p1.DERCurveListLink == nil || p1.DERCurveListLink.Href != "/dc" || p1.DERCurveListLink.All != 2 {
 		t.Errorf("p1 DERCurveListLink = %+v, want the global /dc link untouched", p1.DERCurveListLink)
 	}
@@ -128,5 +132,39 @@ func TestFSASwap_MovesProgramsWithTheirFSA(t *testing.T) {
 	}
 	if _, err := stores.DERControls.Get(ctx, "edev-1/fsa-keep/p2", "c-p2"); err != nil {
 		t.Errorf("p2's control moved or lost: %v", err)
+	}
+}
+
+// A control that cannot be re-created under the new scope stays where it
+// was, with its lifecycle record, and the swap reports the failure.
+func TestFSASwap_FailedControlMoveLeavesControlInPlace(t *testing.T) {
+	h, stores := newRouterWithTokenAndStores(t)
+	ctx := context.Background()
+	seedEndDevice(t, stores, "edev-1")
+	seedFSA(t, stores, "edev-1", "fsa-old")
+	seedProgramInFSA(t, stores, "edev-1", "fsa-old", "p1")
+	occupant := sep2.DERControl{}
+	occupant.MRID = "OCCUPANT"
+	if err := stores.DERControls.Create(ctx, "edev-1/fsa-new/p1", "c-p1", occupant); err != nil {
+		t.Fatalf("seed occupant: %v", err)
+	}
+
+	rr := postJSON(t, h, tmFSASwap, tmTestToken, map[string]any{
+		"end_device_id": "edev-1",
+		"from_fsa":      "fsa-old",
+		"to_fsa":        "fsa-new",
+	})
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500: %s", rr.Code, rr.Body.String())
+	}
+	ctrl, err := stores.DERControls.Get(ctx, "edev-1/fsa-old/p1", "c-p1")
+	if err != nil || ctrl.MRID != "CTRL-p1" || ctrl.Href != "/edev/edev-1/fsa/fsa-old/derp/p1/derc/c-p1" {
+		t.Errorf("control at old scope = mRID %q href %q, %v; want CTRL-p1 left in place", ctrl.MRID, ctrl.Href, err)
+	}
+	if _, _, _, err := stores.DERControls.ByMRID(ctx, "CTRL-p1"); err != nil {
+		t.Errorf("ByMRID(CTRL-p1): %v", err)
+	}
+	if rec, err := stores.DERControlLifecycles.Get(ctx, "edev-1/fsa-old/p1", "c-p1"); err != nil || rec.CancelReason != "kept-p1" {
+		t.Errorf("lifecycle at old scope = %+v, %v; want it left in place", rec, err)
 	}
 }

@@ -62,22 +62,10 @@ func TestStalledManagementWriteDoesNotBlockUnrelatedEndDeviceList(t *testing.T) 
 		}
 	})
 
-	if !waitForServerReady(c.sep2Probe, 3*time.Second, bystander.tlsConfig) {
-		t.Fatal("SEP2 listener never became ready")
+	if msg, ok := waitForListenersReady(c.sep2Probe, c.adminProbe, 3*time.Second, bystander.tlsConfig, runErrCh); !ok {
+		t.Fatal(msg)
 	}
 	adminClient := &http.Client{Timeout: 3 * time.Second}
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		resp, err := adminClient.Get("http://" + c.adminProbe + "/api/certs/ca")
-		if err == nil {
-			_ = resp.Body.Close()
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("admin listener never became ready")
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
 
 	// Register the bystander so GET /edev has an unambiguous identity to
 	// answer for: this device manages nothing and is managed by nobody, so

@@ -103,22 +103,13 @@ func bootAdminClientCAListener(t *testing.T, c *splitListenerCerts, configure fu
 		}
 	})
 
-	probeClient := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		Timeout:   500 * time.Millisecond,
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := probeClient.Get("https://" + c.adminProbe + "/api/certs/ca")
-		if err == nil {
-			_ = resp.Body.Close()
-			return c.adminProbe
-		}
-		time.Sleep(25 * time.Millisecond)
+	msg, ok := waitForAdminReady(c.adminProbe, true, adminReadyTimeout, runErrCh)
+	if ok {
+		return c.adminProbe
 	}
 	cancel()
 	<-runErrCh
-	t.Fatal("admin listener never became ready")
+	t.Fatal(msg)
 	return ""
 }
 
@@ -412,9 +403,9 @@ func bootAdminListener(t *testing.T, cfg *config.Config, svc *handler.AdminCertS
 
 	probeClient := &http.Client{
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		Timeout:   500 * time.Millisecond,
+		Timeout:   time.Second,
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(adminReadyTimeout)
 	for time.Now().Before(deadline) {
 		select {
 		case runErr := <-runErrCh:

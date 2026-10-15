@@ -99,22 +99,10 @@ func TestManagementPairTakesEffectAndRevokesOverTheProtocolListener(t *testing.T
 		}
 	})
 
-	if !waitForServerReady(c.sep2Probe, 3*time.Second, child.tlsConfig) {
-		t.Fatal("SEP2 listener never became ready")
+	if msg, ok := waitForListenersReady(c.sep2Probe, c.adminProbe, 3*time.Second, child.tlsConfig, runErrCh); !ok {
+		t.Fatal(msg)
 	}
 	adminClient := &http.Client{Timeout: 3 * time.Second}
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		resp, err := adminClient.Get("http://" + c.adminProbe + "/api/certs/ca")
-		if err == nil {
-			_ = resp.Body.Close()
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("admin listener never became ready")
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
 
 	// Register the child as an EndDevice through the admin plane: the gate
 	// answers 404 before it ever reaches the self/management check for an

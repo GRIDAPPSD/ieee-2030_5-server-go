@@ -104,8 +104,8 @@ func (e *frRunEnv) start(t *testing.T, cfg *config.Config) (stop func() error) {
 			t.Errorf("server.Run: %v", err)
 		}
 	})
-	if !waitForServerReady(e.c.sep2Probe, 5*time.Second, e.device.tlsConfig) {
-		t.Fatal("SEP2 listener never became ready")
+	if msg, ok := waitForListenersReady(e.c.sep2Probe, e.c.adminProbe, 5*time.Second, e.device.tlsConfig, runErr); !ok {
+		t.Fatal(msg)
 	}
 	return stop
 }

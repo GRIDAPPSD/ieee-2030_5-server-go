@@ -36,9 +36,8 @@
 #   hierarchy, while the device program is per-inverter. Total DERPrograms
 #   stored = 7 shared nodes x 4 inverters (each inverter sees the chain
 #   from its perspective via FSA->DERProgramList) + 4 device-level
-#   programs. The loader keys DERPrograms by EndDevice (see csiptest
-#   loader doc); we replicate the per-inverter chain so each managed
-#   inverter's FSA->DERProgram walk surfaces the full SY->FDx->SPxx->DEV
+#   programs. Each FSA lists only its own node's program, so walking all
+#   four FSAs of a managed inverter surfaces the full SY->FDx->SPxx->DEV
 #   priority chain.
 #
 # The Aggregator EDFI (id="0") gets a single FSA -> its own DERProgram so

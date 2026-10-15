@@ -9,21 +9,20 @@
 //     re-walks to discover the per-inverter DERProgramList href via
 //     FSA chain).
 //  2. For each managed inverter (EDA1..EDB2):
-//     - Walk /edev/{id}/fsa -> DERProgramListLink for the SY FSA (the
-//     top-level chain entry; the server scopes DERPrograms by
-//     EndDevice so any FSA's link works - see CORE-010).
+//     - Walk /edev/{id}/fsa and GET the DERProgramList of every FSA
+//     (procedure step 3); each FSA lists only its own node's program.
 //     - POST a Subscription, on the aggregator's own list, targeting
-//     that DERProgramList URL.
+//     each of those DERProgramList URLs (procedure step 4).
 //  3. Server returns 201 Created + Location header for each.
 //  4. GET the aggregator's own /edev/{id}/sub returns the just-created
 //     Subscription.
 //
 // What the test pins down:
-//   - POST /edev/{aggID}/sub accepts a Subscription naming each of the
-//     4 managed inverters' DERProgramList in parallel (the spec allows
-//     concurrent subscriptions; we run the 4 subtests with t.Parallel()
-//     to surface any race in the SubscriptionStore, since all 4 now
-//     write the same aggregator subscription list).
+//   - POST /edev/{aggID}/sub accepts a Subscription naming each FSA's
+//     DERProgramList of the 4 managed inverters in parallel (the spec
+//     allows concurrent subscriptions; the 16 subtests run with
+//     t.Parallel() to surface any race in the SubscriptionStore, since
+//     all of them write the same aggregator subscription list).
 //   - The server preserves the subscribedResource URI on the wire.
 //
 // #12 (subscription deliver context) is the hard prerequisite for
@@ -43,6 +42,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -62,33 +62,34 @@ func TestUTIL_003_GroupAssignmentRetrieval(t *testing.T) {
 	client := srv.Client()
 	rawClient := srv.HTTPClient()
 
-	// Step 1: collect per-inverter DERProgramList Hrefs.
-	progHrefs := map[string]string{}
+	// Step 1: GET every FSA's DERProgramList for each inverter. Each holds
+	// only its node's program, so the aggregator needs all of them.
+	var progHrefs []string
 	for _, edevID := range aggManagedInverters {
 		fsaHref := fmt.Sprintf("/edev/%s/fsa?l=255", edevID)
 		var fsaList sep2.FunctionSetAssignmentsList
 		if err := client.WalkLink(ctx, sep2.Link{Href: fsaHref}, &fsaList); err != nil {
 			t.Fatalf("step 1: WalkLink %s: %v", fsaHref, err)
 		}
-		if len(fsaList.FunctionSetAssignments) == 0 {
-			t.Fatalf("step 1: edev=%q has empty FSAList", edevID)
+		if len(fsaList.FunctionSetAssignments) != aggFSACount {
+			t.Fatalf("step 1: edev=%q has %d FSAs, want %d", edevID, len(fsaList.FunctionSetAssignments), aggFSACount)
 		}
-		// SY-level FSA is at index 0 (store-key order).
-		link := fsaList.FunctionSetAssignments[0].DERProgramListLink
-		if link == nil || link.Href == "" {
-			t.Fatalf("step 1: edev=%q SY-FSA missing DERProgramListLink", edevID)
+		for i, fsa := range fsaList.FunctionSetAssignments {
+			node, ok := strings.CutSuffix(fsa.MRID, "-FSA")
+			if !ok {
+				t.Fatalf("step 1: edev=%q FSA[%d].MRID = %q, want a node name ending -FSA", edevID, i, fsa.MRID)
+			}
+			assertFSAProgramList(t, ctx, client, fsa, []wantProgram{{mrid: node + "-DERP", primacy: uint8(i)}})
+			progHrefs = append(progHrefs, fsa.DERProgramListLink.Href)
 		}
-		progHrefs[edevID] = link.Href
 	}
 
-	// Step 2 + 3: POST a Subscription per inverter in parallel - surfaces
-	// SubscriptionStore races under -race.
-	for _, edevID := range aggManagedInverters {
-		edevID := edevID
-		subscribedResource := progHrefs[edevID]
-		t.Run("subscribe_edev_"+edevID, func(t *testing.T) {
+	// Step 2 + 3: POST a Subscription per DERProgramList in parallel -
+	// surfaces SubscriptionStore races under -race.
+	for _, href := range progHrefs {
+		t.Run("subscribe"+strings.ReplaceAll(href, "/", "_"), func(t *testing.T) {
 			t.Parallel()
-			postAndVerifySubscription(t, ctx, rawClient, srv.BaseURL, aggEDFI, subscribedResource)
+			postAndVerifySubscription(t, ctx, rawClient, srv.BaseURL, aggEDFI, href)
 		})
 	}
 }

@@ -265,13 +265,13 @@ der_programs:
 	}
 }
 
-// TestDERProgramScopeIgnoresFSAID pins a structural asymmetry: DERControls
+// TestDERProgramIDsAreUniquePerDevice pins a structural asymmetry: DERControls
 // and DefaultDERControls are keyed by the (edev, fsa, derp) triple, but
-// DERPrograms are keyed by EndDeviceID alone. The declared fsa_id affects
-// neither the store key nor the href, so two programs that differ only by
-// FSA collide. Reported as a finding; asserted here so the collapse is
-// visible rather than surfacing as a confusing boot failure.
-func TestDERProgramScopeIgnoresFSAID(t *testing.T) {
+// DERPrograms are keyed by EndDeviceID alone. The declared fsa_id goes into
+// the program's href, which decides the FSA list that serves it, but not into
+// the store key, so two programs that differ only by FSA collide at load
+// rather than one silently replacing the other.
+func TestDERProgramIDsAreUniquePerDevice(t *testing.T) {
 	t.Parallel()
 
 	_, err := loadYAML(t, `

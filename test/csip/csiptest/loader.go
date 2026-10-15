@@ -136,12 +136,11 @@ type FSASpec struct {
 	DERProgramListLink *ListRef `yaml:"der_program_list_link,omitempty"`
 }
 
-// DERProgramSpec describes one DERProgram scoped under an EndDevice
-// (matching the server's scopedListHandler which keys DERPrograms by
-// the path's {id} segment alone; the store scope key is just the
-// EndDevice). FSAID is required (#743): it is part of the program's own
-// href, the same shape der.DERProgramHref builds for a runtime-created
-// program, and downstream tests also use it to assert the priority chain.
+// DERProgramSpec describes one DERProgram stored under an EndDevice; the
+// store scope key is just the EndDevice. FSAID is required (#743): it is
+// part of the program's own href, the same shape der.DERProgramHref builds
+// for a runtime-created program, and that href decides which FSA's
+// DERProgramList serves the program (#916).
 type DERProgramSpec struct {
 	EndDeviceID           string   `yaml:"end_device_id"`
 	FSAID                 string   `yaml:"fsa_id"`

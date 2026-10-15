@@ -1,9 +1,10 @@
-# #60 fixture - 7 DERPrograms hung off 7 FSAs for CORE-013.
+# #60 fixture - 7 DERPrograms in one DERProgramList for CORE-013.
 #
-# CSIP V1.2 section 6.6 - DER Program advanced. One EndDevice; seven
-# FunctionSetAssignments, each pointing at a DERProgramList carrying
-# exactly one DERProgram. DERProgram primacy values ascend 0..6
-# (lower primacy = higher priority per spec section 10.2).
+# CSIP V1.2 section 6.6 - DER Program advanced. Setup step 1 constructs
+# one DERProgramList holding seven DERPrograms, assigned to the client
+# through its FSA: one EndDevice, one FunctionSetAssignments, and seven
+# DERPrograms under it. Primacy values ascend 0..6 (lower primacy =
+# higher priority per spec section 10.2).
 #
 # CORE-013 procedure metadata (asserted by the test, not by the
 # loader - DefaultDERControl carries no DateTimeInterval field by
@@ -39,58 +40,16 @@ end_devices:
     registration_link: "/edev/0/rg"
     function_set_assignments_list_link:
       href: "/edev/0/fsa"
-      all: 7
+      all: 1
 
 fsas:
   - end_device_id: "0"
     id: "0"
-    mrid: "CORE-013-FSA-0"
-    description: "primacy-0"
+    mrid: "CORE-013-FSA"
+    description: "CORE-013 program list"
     der_program_list_link:
       href: "/edev/0/fsa/0/derp"
-      all: 1
-  - end_device_id: "0"
-    id: "1"
-    mrid: "CORE-013-FSA-1"
-    description: "primacy-1"
-    der_program_list_link:
-      href: "/edev/0/fsa/1/derp"
-      all: 1
-  - end_device_id: "0"
-    id: "2"
-    mrid: "CORE-013-FSA-2"
-    description: "primacy-2"
-    der_program_list_link:
-      href: "/edev/0/fsa/2/derp"
-      all: 1
-  - end_device_id: "0"
-    id: "3"
-    mrid: "CORE-013-FSA-3"
-    description: "primacy-3"
-    der_program_list_link:
-      href: "/edev/0/fsa/3/derp"
-      all: 1
-  - end_device_id: "0"
-    id: "4"
-    mrid: "CORE-013-FSA-4"
-    description: "primacy-4"
-    der_program_list_link:
-      href: "/edev/0/fsa/4/derp"
-      all: 1
-  - end_device_id: "0"
-    id: "5"
-    mrid: "CORE-013-FSA-5"
-    description: "primacy-5"
-    der_program_list_link:
-      href: "/edev/0/fsa/5/derp"
-      all: 1
-  - end_device_id: "0"
-    id: "6"
-    mrid: "CORE-013-FSA-6"
-    description: "primacy-6"
-    der_program_list_link:
-      href: "/edev/0/fsa/6/derp"
-      all: 1
+      all: 7
 
 der_programs:
   - end_device_id: "0"
@@ -104,62 +63,62 @@ der_programs:
       href: "/edev/0/fsa/0/derp/0/derc"
       all: 0
   - end_device_id: "0"
-    fsa_id: "1"
+    fsa_id: "0"
     id: "1"
     mrid: "CORE-013-DERP-1"
     description: "primacy-1"
     primacy: 1
-    default_der_control_link: "/edev/0/fsa/1/derp/1/dderc"
+    default_der_control_link: "/edev/0/fsa/0/derp/1/dderc"
     der_control_list_link:
-      href: "/edev/0/fsa/1/derp/1/derc"
+      href: "/edev/0/fsa/0/derp/1/derc"
       all: 0
   - end_device_id: "0"
-    fsa_id: "2"
+    fsa_id: "0"
     id: "2"
     mrid: "CORE-013-DERP-2"
     description: "primacy-2"
     primacy: 2
-    default_der_control_link: "/edev/0/fsa/2/derp/2/dderc"
+    default_der_control_link: "/edev/0/fsa/0/derp/2/dderc"
     der_control_list_link:
-      href: "/edev/0/fsa/2/derp/2/derc"
+      href: "/edev/0/fsa/0/derp/2/derc"
       all: 0
   - end_device_id: "0"
-    fsa_id: "3"
+    fsa_id: "0"
     id: "3"
     mrid: "CORE-013-DERP-3"
     description: "primacy-3"
     primacy: 3
-    default_der_control_link: "/edev/0/fsa/3/derp/3/dderc"
+    default_der_control_link: "/edev/0/fsa/0/derp/3/dderc"
     der_control_list_link:
-      href: "/edev/0/fsa/3/derp/3/derc"
+      href: "/edev/0/fsa/0/derp/3/derc"
       all: 0
   - end_device_id: "0"
-    fsa_id: "4"
+    fsa_id: "0"
     id: "4"
     mrid: "CORE-013-DERP-4"
     description: "primacy-4"
     primacy: 4
-    default_der_control_link: "/edev/0/fsa/4/derp/4/dderc"
+    default_der_control_link: "/edev/0/fsa/0/derp/4/dderc"
     der_control_list_link:
-      href: "/edev/0/fsa/4/derp/4/derc"
+      href: "/edev/0/fsa/0/derp/4/derc"
       all: 0
   - end_device_id: "0"
-    fsa_id: "5"
+    fsa_id: "0"
     id: "5"
     mrid: "CORE-013-DERP-5"
     description: "primacy-5"
     primacy: 5
-    default_der_control_link: "/edev/0/fsa/5/derp/5/dderc"
+    default_der_control_link: "/edev/0/fsa/0/derp/5/dderc"
     der_control_list_link:
-      href: "/edev/0/fsa/5/derp/5/derc"
+      href: "/edev/0/fsa/0/derp/5/derc"
       all: 0
   - end_device_id: "0"
-    fsa_id: "6"
+    fsa_id: "0"
     id: "6"
     mrid: "CORE-013-DERP-6"
     description: "primacy-6"
     primacy: 6
-    default_der_control_link: "/edev/0/fsa/6/derp/6/dderc"
+    default_der_control_link: "/edev/0/fsa/0/derp/6/dderc"
     der_control_list_link:
-      href: "/edev/0/fsa/6/derp/6/derc"
+      href: "/edev/0/fsa/0/derp/6/derc"
       all: 0

@@ -13,7 +13,7 @@
 //
 //	Step 1 (server has 2 DERP + 2 DDERC + 2 DERC non-overlap)  -> fixture load
 //	Step 2 (walk /dcap -> /edev -> /fsa list, expect 2 FSAs)     -> walkToFirstEDevFSAList
-//	Step 3 (each FSA's DERProgramList renders both programs)   -> assertBASIC020ProgramList
+//	Step 3 (each FSA lists only its own DERProgram)            -> assertFSAProgramList
 //	Step 4 (SP DDERC + SY DDERC carry expected opModFixedW)    -> assertBASIC020DDERCs
 //	Step 5 (SP and SY DERControlLists each have 1 event)       -> assertBASIC020Events
 //	Step 6 (Concatenated event intervals are pairwise disjoint) -> assertDisjointIntervals
@@ -31,15 +31,11 @@ import (
 
 const basic020FixtureName = "basic-020-2derp-2dderc-2derc-nonoverlap.yaml"
 
-// basic020Programs is the expected per-FSA DERProgramList payload,
-// in lex-id order ("sp" < "sy"). Each FSA's program list scopes by
-// EndDevice id only, so both programs render at each FSA path.
-var basic020Programs = []struct {
-	mrid    string
-	primacy uint8
-}{
-	{mrid: "BASIC-020-DERP-SP", primacy: 0},
-	{mrid: "BASIC-020-DERP-SY", primacy: 1},
+// basic020Programs is the one program each FSA's DERProgramList holds:
+// the procedure GETs an SY DERProgramList and an SP DERProgramList.
+var basic020Programs = map[string]wantProgram{
+	"BASIC-020-FSA-SP": {mrid: "BASIC-020-DERP-SP", primacy: 0},
+	"BASIC-020-FSA-SY": {mrid: "BASIC-020-DERP-SY", primacy: 1},
 }
 
 // basic020DDERCs is the expected DDERC payload per program key. Keyed
@@ -92,14 +88,9 @@ func runBASIC020(t *testing.T, extraOpts []csiptest.BootOption) {
 		}
 	}
 
-	// Step 3: each FSA's DERProgramList renders both programs in
-	// primacy order (store scopes by EndDevice id only).
-	for i, fsa := range fsaList.FunctionSetAssignments {
-		if fsa.DERProgramListLink == nil {
-			t.Fatalf("FSA[%d] missing DERProgramListLink", i)
-		}
-		progList := walkProgramListByHref(t, ctx, client, fsa.DERProgramListLink.Href)
-		assertBASIC020ProgramList(t, fsa.MRID, progList)
+	// Step 3: the SY and SP DERProgramLists each hold only their own program.
+	for _, fsa := range fsaList.FunctionSetAssignments {
+		assertFSAProgramList(t, ctx, client, fsa, []wantProgram{basic020Programs[fsa.MRID]})
 	}
 
 	// Step 4: DDERCs.
@@ -113,28 +104,6 @@ func runBASIC020(t *testing.T, extraOpts []csiptest.BootOption) {
 	// Step 6: every pair of DERControls across the full set is
 	// time-disjoint - the BASIC-020 non-overlap invariant.
 	assertDisjointIntervals(t, allEvents)
-}
-
-// assertBASIC020ProgramList asserts each FSA's DERProgramList renders
-// both programs in primacy order with the expected MRIDs.
-func assertBASIC020ProgramList(t *testing.T, fsaLabel string, progList sep2.DERProgramList) {
-	t.Helper()
-
-	if got := len(progList.DERProgram); got != len(basic020Programs) {
-		t.Fatalf("[%s] DERProgramList len = %d, want %d",
-			fsaLabel, got, len(basic020Programs))
-	}
-	for i, want := range basic020Programs {
-		got := progList.DERProgram[i]
-		if got.MRID != want.mrid {
-			t.Errorf("[%s] DERProgram[%d].MRID = %q, want %q",
-				fsaLabel, i, got.MRID, want.mrid)
-		}
-		if got.Primacy != want.primacy {
-			t.Errorf("[%s] DERProgram[%d].Primacy = %d, want %d",
-				fsaLabel, i, got.Primacy, want.primacy)
-		}
-	}
 }
 
 // assertBASIC020DDERCs walks each program's DDERC link and asserts

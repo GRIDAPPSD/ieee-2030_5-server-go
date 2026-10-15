@@ -18,8 +18,8 @@
 // POST /test/mutations/fsa-swap (build-tag-gated under csip_test_hooks,
 // token-authenticated). #123 chose reassignment shape (a): re-key
 // the FSA list entry under the EndDevice scope, preserving content and
-// re-stamping Href + DERProgramListLink.Href. DERPrograms are scoped by
-// EndDevice only - they ride along untouched.
+// re-stamping Href + DERProgramListLink.Href. Each FSA lists only its own
+// programs (#916), so the feeder's program moves with it.
 //
 // Procedure step -> assertion mapping (V1.2 section 8.3):
 //
@@ -56,14 +56,14 @@
 //	        -> Assert post-swap len(FSAList) == 7 and the six
 //	            non-feeder FSAs match the pre-swap snapshot byte-for-
 //	            byte on (mRID, Description, Href).
-//	Step 6: the underlying DERProgram references re-key correctly per
-//	        #123's resolution: option (a), DER-
-//	        Programs are scoped by EndDevice only (not by FSA), so
-//	        every FSA's DERProgramListLink returns the same full set.
-//	        The swap leaves DERPrograms untouched.
-//	        -> WalkLink the new feeder FSA's DERProgramListLink and
-//	            assert it returns all 7 DERPrograms with primacy 0..6
-//	            (mirrors CORE-010's chain assertion).
+//	Step 6: the client re-walks the updated FSAList and its
+//	        subordinate resources (procedure step 4). The feeder
+//	        node's program moves with its FSA.
+//	        -> the new feeder FSA lists only L2-FEEDER-DERP, under
+//	            /edev/0/fsa/2-new, and its DERControlList and
+//	            DefaultDERControl links resolve under that path; the
+//	            old path lists nothing; every other FSA still lists
+//	            only its own level's program.
 //
 // Build tag: this test exercises a /test/mutations/* endpoint and only
 // builds under `-tags csip_test_hooks`. The mutation surface also
@@ -77,6 +77,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -261,32 +262,50 @@ func TestBASIC_003_AdvancedGroupManagement(t *testing.T) {
 		}
 	}
 
-	// Step 6: the priority chain is intact. WalkLink the new feeder's
-	// DERProgramListLink and assert it returns all 7 DERPrograms with
-	// primacy 0..6 - #123 leaves DERPrograms untouched because
-	// they're scoped by EndDevice only. This mirrors CORE-010's chain
-	// assertion to make the "DERProgram references re-key correctly"
-	// exit criterion concrete.
-	var derpList sep2.DERProgramList
-	if err := client.WalkLink(ctx,
-		sep2.Link{Href: postFeeder.DERProgramListLink.Href + "?l=255"},
-		&derpList); err != nil {
-		t.Fatalf("WalkLink post-swap feeder DERProgramList: %v", err)
-	}
-	if len(derpList.DERProgram) != 7 {
-		t.Errorf("post-swap feeder DERProgramList len = %d, want 7 "+
-			"(DERPrograms are scoped by EndDevice; swap must not drop any)",
-			len(derpList.DERProgram))
-	}
-	primacySeen := map[uint8]bool{}
-	for _, prog := range derpList.DERProgram {
-		primacySeen[prog.Primacy] = true
-	}
-	for level := uint8(0); level < 7; level++ {
-		if !primacySeen[level] {
-			t.Errorf("post-swap primacy chain missing level %d", level)
+	// Step 6: the feeder's program moved with its FSA; every other FSA
+	// still lists only its own level's program.
+	for _, fsa := range postList.FunctionSetAssignments {
+		level, ok := strings.CutSuffix(fsa.MRID, "-FSA")
+		if !ok {
+			t.Fatalf("post-swap FSA mRID %q, want a level name ending -FSA", fsa.MRID)
+		}
+		primacy := basic003LevelPrimacy[level]
+		progs := assertFSAProgramList(t, ctx, client, fsa, []wantProgram{{mrid: level + "-DERP", primacy: primacy}})
+		if fsa.MRID != basic003FeederMRID {
+			continue
+		}
+		const movedProgram = "/edev/0/fsa/2-new/derp/2"
+		feeder := progs[0]
+		if feeder.Href != movedProgram {
+			t.Errorf("post-swap feeder program Href = %q, want %q", feeder.Href, movedProgram)
+		}
+		if feeder.DefaultDERControlLink == nil || feeder.DefaultDERControlLink.Href != movedProgram+"/dderc" {
+			t.Errorf("post-swap feeder DefaultDERControlLink = %+v, want %q", feeder.DefaultDERControlLink, movedProgram+"/dderc")
+		}
+		if feeder.DERControlListLink == nil || feeder.DERControlListLink.Href != movedProgram+"/derc" {
+			t.Fatalf("post-swap feeder DERControlListLink = %+v, want %q", feeder.DERControlListLink, movedProgram+"/derc")
+		}
+		var ctrls sep2.DERControlList
+		if err := client.WalkLink(ctx, sep2.Link{Href: feeder.DERControlListLink.Href}, &ctrls); err != nil {
+			t.Errorf("WalkLink moved feeder DERControlList: %v", err)
 		}
 	}
+	var oldList sep2.DERProgramList
+	if err := client.WalkLink(ctx, sep2.Link{Href: "/edev/0/fsa/2/derp?l=255"}, &oldList); err != nil {
+		t.Fatalf("WalkLink old feeder DERProgramList: %v", err)
+	}
+	if oldList.All != 0 || len(oldList.DERProgram) != 0 {
+		t.Errorf("old feeder path /edev/0/fsa/2/derp lists %d programs (all=%d), want none after the swap",
+			len(oldList.DERProgram), oldList.All)
+	}
+}
+
+// basic003LevelPrimacy is each level's program primacy in
+// seven-level-fsa.yaml, keyed by the level name its FSA and program mRIDs
+// share.
+var basic003LevelPrimacy = map[string]uint8{
+	"L0-SYSTEM": 0, "L1-SUBSTATION": 1, "L2-FEEDER": 2, "L3-TRANSFORMER": 3,
+	"L4-SERVICE-POINT": 4, "L5-METER": 5, "L6-DEVICE": 6,
 }
 
 // walkBasic003FSAList GETs the FSA list with l=255 so all 7 entries

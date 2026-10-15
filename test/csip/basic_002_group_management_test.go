@@ -7,13 +7,11 @@
 // levels (L0..L5) advertise their links but carry empty/missing
 // DERControl payloads.
 //
-// CSIP V1.2 Section 8.2 wording: "the Service Point closest to inverter has
-// highest priority DERProgram + DefaultDERControl." On the server side
-// "highest priority" is decorative in today's implementation - the
-// store keys DERPrograms by EndDevice id only (router.go
-// scopedListHandler) so every FSA's walk returns all 7 programs in
-// primacy order. The procedural assertion CORE-010 already pins down
-// is re-asserted here as a regression guard; what BASIC-002 adds is:
+// Setup step 4 builds seven FunctionSetAssignments, one per topology node,
+// each with its own DERProgram, and procedure steps 4 and 5 GET each FSA's
+// DERProgramList and find the highest priority program across them. So each
+// FSA lists only its own level's program, and the walk reaches primacy 0..6
+// once each. Beyond that, BASIC-002 asserts:
 //
 //  1. A populated DefaultDERControl on L6 (opModMaxLimW = 4000 (40.00%)) and
 //     an empty DefaultDERControl on each of L0..L5 (the handler
@@ -24,9 +22,9 @@
 //
 // V1.2 procedure step -> assertion mapping (per V1.2 Section 8.2):
 //
-//	Step 1 (server has 7 FSAs, primacy 0..6)        -> assertSevenLevelPriorityChain
+//	Step 1 (server has 7 FSAs, primacy 0..6)        -> fixture load, FSAList.All
 //	Step 2 (client walks /dcap -> /edev -> /fsa)      -> walkAllFSAsBasic002
-//	Step 3 (client follows each FSA's program list) -> assertProgramsScopedByEDev
+//	Step 3 (each FSA lists only its own program)    -> assertFSAProgramList
 //	Step 4 (L6 DefaultDERControl carries opModMaxLimW = 4000 (40.00%))
 //	                                                 -> assertL6DefaultControlPopulated
 //	Step 5 (L0..L5 DefaultDERControl is the empty
@@ -50,6 +48,13 @@ import (
 
 // basic002LevelCount is the level count of the BASIC-002 fixture.
 const basic002LevelCount = 7
+
+// basic002Levels names the seven topology levels in priority order; level i
+// is FSA i, holding DERProgram i at primacy i.
+var basic002Levels = []string{
+	"L0-SYSTEM", "L1-SUBSTATION", "L2-FEEDER", "L3-TRANSFORMER",
+	"L4-SERVICE-POINT", "L5-METER", "L6-DEVICE",
+}
 
 // basic002ClosestLevelID is the FSA / DERProgram id of the closest-to-
 // inverter level (L6-device). The id encodes the priority chain
@@ -101,15 +106,13 @@ func runBASIC002(t *testing.T, extraOpts []csiptest.BootOption) {
 			got, basic002LevelCount)
 	}
 
-	// Step 3: every FSA's DERProgramList renders the full 7-program
-	// chain (store is scoped by EndDevice id only - see CORE-010 doc).
-	// Asserts the priority chain is intact across all FSA paths.
+	// Step 3: FSA i (store-key order) lists only the level-i program; the
+	// highest priority program is found across the seven lists.
 	for i, fsa := range fsaList.FunctionSetAssignments {
-		if fsa.DERProgramListLink == nil {
-			t.Fatalf("FSA[%d] missing DERProgramListLink", i)
+		if want := basic002Levels[i] + "-FSA"; fsa.MRID != want {
+			t.Errorf("FSA[%d].MRID = %q, want %q", i, fsa.MRID, want)
 		}
-		progs := walkDERProgramListBasic002(t, ctx, client, fsa.DERProgramListLink.Href)
-		assertSevenLevelPriorityChain(t, i, progs)
+		assertFSAProgramList(t, ctx, client, fsa, []wantProgram{{mrid: basic002Levels[i] + "-DERP", primacy: uint8(i)}})
 	}
 
 	// Step 4: L6 DefaultDERControl carries opModMaxLimW = 4000 (40.00%).
@@ -170,43 +173,6 @@ func walkAllFSAsBasic002(
 		t.Fatalf("walk FSAList: %v", err)
 	}
 	return fsaList
-}
-
-// walkDERProgramListBasic002 fetches a DERProgramList with l=255 so
-// all 7 programs come back in one response.
-func walkDERProgramListBasic002(
-	t *testing.T,
-	ctx context.Context,
-	c *csiptest.Client,
-	href string,
-) []sep2.DERProgram {
-	t.Helper()
-
-	var list sep2.DERProgramList
-	if err := c.WalkLink(ctx, sep2.Link{Href: href + "?l=255"}, &list); err != nil {
-		t.Fatalf("walk DERProgramList %s: %v", href, err)
-	}
-	return list.DERProgram
-}
-
-// assertSevenLevelPriorityChain asserts the 7 programs cover primacy
-// 0..6 exactly once in the order produced by store-key sort (single-
-// digit ids "0".."6" sort lex == numeric, so the wire order matches
-// the priority chain).
-func assertSevenLevelPriorityChain(t *testing.T, fsaIdx int, programs []sep2.DERProgram) {
-	t.Helper()
-
-	if got := len(programs); got != basic002LevelCount {
-		t.Fatalf("FSA[%d] DERProgram count = %d, want %d "+
-			"(store scopes by EndDevice id only - every FSA path returns all 7)",
-			fsaIdx, got, basic002LevelCount)
-	}
-	for i, prog := range programs {
-		if got := int(prog.Primacy); got != i {
-			t.Errorf("FSA[%d] DERProgram[%d].Primacy = %d, want %d",
-				fsaIdx, i, got, i)
-		}
-	}
 }
 
 // assertL6DefaultControlPopulated walks the L6 DefaultDERControl link

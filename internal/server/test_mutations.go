@@ -481,6 +481,17 @@ func handleFSASwap(stores *Stores) http.HandlerFunc {
 			return
 		}
 
+		// Refuse before the new FSA exists or anything moves: a version that
+		// cannot be raised would otherwise fail part way and split the tree.
+		if err := checkSwapVersionRoom(ctx, stores, req.EndDeviceID, req.FromFSA); err != nil {
+			if errors.Is(err, fsaprogram.ErrVersionExhausted) {
+				http.Error(w, "version_exhausted", http.StatusConflict)
+				return
+			}
+			http.Error(w, "internal error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		// Re-stamp Href on the copy. The store returns an independent
 		// copy (Copier contract), so this mutation does not leak back
 		// into the source record before the Delete below.
@@ -525,6 +536,42 @@ func handleFSASwap(stores *Stores) http.HandlerFunc {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// checkSwapVersionRoom returns fsaprogram.ErrVersionExhausted when any program
+// of FSA from, or its default control, is at the version ceiling, because the
+// move re-stamps both and would fail after partly applying.
+func checkSwapVersionRoom(ctx context.Context, stores *Stores, edev, from string) error {
+	if stores.DERPrograms == nil {
+		return nil
+	}
+	programs, err := stores.DERPrograms.List(ctx, edev, store.ListOptions{Unbounded: true})
+	if err != nil {
+		return fmt.Errorf("listing programs: %w", err)
+	}
+	for _, p := range programs.Items {
+		_, fsa, derp, ok := derhref.Program(p.Href)
+		if !ok || fsa != from {
+			continue
+		}
+		if _, err := fsaprogram.NextVersion(p.Version); err != nil {
+			return fmt.Errorf("program %s: %w", derp, err)
+		}
+		if stores.DefaultDERControls == nil {
+			continue
+		}
+		dd, err := stores.DefaultDERControls.Get(ctx, derControlScope(edev, from, derp), coresingleton.SingletonKey)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("program %s: default control: %w", derp, err)
+		}
+		if _, err := fsaprogram.NextVersion(dd.Version); err != nil {
+			return fmt.Errorf("program %s: default control: %w", derp, err)
+		}
+	}
+	return nil
 }
 
 // moveFSAPrograms moves every program of FSA from under edev to FSA to,

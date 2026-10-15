@@ -1585,3 +1585,54 @@ func TestFSASwap_ProgramAndDefaultVersionsIncrement(t *testing.T) {
 		t.Errorf("default href=%q version=%v, want the new href and version 1", gotD.Href, gotD.Version)
 	}
 }
+
+func TestFSASwap_ExhaustedVersionIs409AndMovesNothing(t *testing.T) {
+	for name, versions := range map[string][2]uint16{"program": {65535, 1}, "default": {1, 65535}} {
+		t.Run(name, func(t *testing.T) {
+			h, stores := newRouterWithTokenAndStores(t)
+			ctx := context.Background()
+			seedEndDevice(t, stores, "edev-1")
+			seedFSA(t, stores, "edev-1", "fsa-old")
+			oldHref := "/edev/edev-1/fsa/fsa-old/derp/p1"
+			pv, dv := versions[0], versions[1]
+			prog := sep2.DERProgram{
+				SubscribableResource:  sep2.SubscribableResource{Resource: sep2.Resource{Href: oldHref}},
+				DefaultDERControlLink: &sep2.Link{Href: oldHref + "/dderc"},
+				Version:               &pv,
+			}
+			if err := stores.DERPrograms.Create(ctx, "edev-1", "p1", prog); err != nil {
+				t.Fatal(err)
+			}
+			dd := sep2.DefaultDERControl{
+				SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: oldHref + "/dderc"}},
+				Version:              &dv,
+			}
+			if err := stores.DefaultDERControls.Create(ctx, "edev-1/fsa-old/p1", coresingleton.SingletonKey, dd); err != nil {
+				t.Fatal(err)
+			}
+
+			rr := postJSON(t, h, tmFSASwap, tmTestToken, map[string]any{
+				"end_device_id": "edev-1", "from_fsa": "fsa-old", "to_fsa": "fsa-new",
+			})
+			if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "version_exhausted") {
+				t.Fatalf("status = %d body %q, want 409 version_exhausted", rr.Code, rr.Body.String())
+			}
+			if _, err := stores.FSAs.Get(ctx, "edev-1", "fsa-new"); !errors.Is(err, store.ErrNotFound) {
+				t.Errorf("new fsa exists after a refused swap: %v", err)
+			}
+			if _, err := stores.FSAs.Get(ctx, "edev-1", "fsa-old"); err != nil {
+				t.Errorf("old fsa lost: %v", err)
+			}
+			gotP, _ := stores.DERPrograms.Get(ctx, "edev-1", "p1")
+			if gotP.Href != oldHref || *gotP.Version != pv {
+				t.Errorf("program changed: href=%q version=%d", gotP.Href, *gotP.Version)
+			}
+			if _, err := stores.DefaultDERControls.Get(ctx, "edev-1/fsa-old/p1", coresingleton.SingletonKey); err != nil {
+				t.Errorf("default left its scope: %v", err)
+			}
+			if _, err := stores.DefaultDERControls.Get(ctx, "edev-1/fsa-new/p1", coresingleton.SingletonKey); !errors.Is(err, store.ErrNotFound) {
+				t.Errorf("default exists under the new scope: %v", err)
+			}
+		})
+	}
+}

@@ -660,6 +660,10 @@ func moveDefaultControl(ctx context.Context, stores *Stores, oldScope, newScope 
 		return fmt.Errorf("default control: creating: %w", err)
 	}
 	if err := stores.DefaultDERControls.Delete(ctx, oldScope, coresingleton.SingletonKey); err != nil {
+		// The store persists, so a leftover copy at newScope would survive a restart.
+		if undoErr := stores.DefaultDERControls.Delete(ctx, newScope, coresingleton.SingletonKey); undoErr != nil {
+			return fmt.Errorf("default control: deleting: %w (undoing the create also failed: %v)", err, undoErr)
+		}
 		return fmt.Errorf("default control: deleting: %w", err)
 	}
 	return nil

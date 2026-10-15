@@ -68,7 +68,7 @@ type Target struct {
 	// DERPrograms is (GRIDAPPSD/ieee-2030_5-server-go#565): the server hands
 	// over *memory.DERControlStore once a data directory is configured.
 	DERControls        store.ScopedStore[sep2.DERControl]
-	DefaultDERControls *memory.ScopedStore[sep2.DefaultDERControl]
+	DefaultDERControls store.ScopedStore[sep2.DefaultDERControl]
 	DERCurves          *memory.Store[sep2.DERCurve]
 }
 

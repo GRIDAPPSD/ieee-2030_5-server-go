@@ -178,6 +178,14 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("DERControl lifecycle persistence: %w", err)
 	}
+	// #917: a program's default control persists too; the boot fixture seeds
+	// it once, so an operator edit survives a restart.
+	defaultDERControls, err := memory.NewPersistentScopedStore[sep2.DefaultDERControl](
+		cfg.EffectiveStorePath("defaultdercontrols", ""), "DefaultDERControl",
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("DefaultDERControl persistence: %w", err)
+	}
 	// #761: flow reservation requests, responses and each response's cancel
 	// mark persist like the DER controls a grant is carried out by, so a
 	// restart does not forget a grant a persisted control names. No
@@ -249,7 +257,7 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 		DERPrograms:              derPrograms,
 		DERControls:              derControls,
 		DERControlLifecycles:     derControlLifecycles,
-		DefaultDERControls:       memory.NewScopedStore[sep2.DefaultDERControl](),
+		DefaultDERControls:       defaultDERControls,
 		DERCurves:                memory.NewStore[sep2.DERCurve](),
 		FSAs:                     memory.NewScopedStore[sep2.FunctionSetAssignments](),
 		AdminFSAs:                adminFSAs,

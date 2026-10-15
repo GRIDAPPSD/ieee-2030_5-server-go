@@ -74,6 +74,7 @@ func TestAdminTrustedOriginsReachTheServedRouter(t *testing.T) {
 		post := func(origin string) (int, string) {
 			code, _, body := doAdmin(t, http.MethodPost, "http://"+loopbackBind+"/api/fsas", `{}`, map[string]string{
 				"Content-Type":   "application/json",
+				"Authorization":  "Bearer " + adminTestKey,
 				"Sec-Fetch-Site": "cross-site",
 				"Origin":         origin,
 			})
@@ -83,8 +84,10 @@ func TestAdminTrustedOriginsReachTheServedRouter(t *testing.T) {
 		if code, body := post("http://attacker.example"); code != http.StatusForbidden || body != crossOriginRefusalBody {
 			t.Errorf("untrusted origin: status %d body %q, want 403 %q", code, body, crossOriginRefusalBody)
 		}
-		if code, body := post(trustedOriginBootValue); code == http.StatusForbidden || body == crossOriginRefusalBody {
-			t.Errorf("trusted origin was refused by the cross-origin check: status %d body %q", code, body)
+		// The handler's own 400 shows the request cleared the cross-origin
+		// check and the credential guard; a 401 or 403 would not.
+		if code, body := post(trustedOriginBootValue); code != http.StatusBadRequest || !strings.Contains(body, "description required") {
+			t.Errorf("trusted origin: status %d body %q, want the handler's 400 description required", code, body)
 		}
 	})
 

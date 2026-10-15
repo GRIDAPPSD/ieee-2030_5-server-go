@@ -19,7 +19,10 @@ import (
 // #930: the FSA writes change what devices are told, so a loopback request
 // with no credential is refused, per route, and leaves the stores untouched.
 
-const fsaProgramHref = "/edev/dev-X/fsa/anyfsa/derp/p1"
+const (
+	fsaProgramHref  = "/edev/dev-X/fsa/anyfsa/derp/p1"
+	fsaProgram2Href = "/edev/dev-X/fsa/anyfsa/derp/p2"
+)
 
 func fsaWriteStores(t *testing.T) *server.Stores {
 	t.Helper()
@@ -30,6 +33,22 @@ func fsaWriteStores(t *testing.T) *server.Stores {
 		AdminFSAs:   memory.NewAdminFSAStore(),
 	}
 	ctx := context.Background()
+	for id, href := range map[string]string{"p1": fsaProgramHref, "p2": fsaProgram2Href} {
+		prog := sep2.DERProgram{MRID: id}
+		prog.Href = href
+		if err := stores.DERPrograms.Create(ctx, "dev-X", id, prog); err != nil {
+			t.Fatal(err)
+		}
+	}
+	enabled := true
+	if err := stores.EndDevices.Create(ctx, "dev-Y", sep2.EndDevice{
+		SubscribableResource: sep2.SubscribableResource{Resource: sep2.Resource{Href: "/edev/dev-Y"}},
+		SFDI:                 "343434343434",
+		LFDI:                 "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+		Enabled:              &enabled,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := stores.AdminFSAs.Create(ctx, "fsa-solar", sep2.FunctionSetAssignments{MRID: "fsa-solar", Description: "Solar template"}); err != nil {
 		t.Fatal(err)
 	}
@@ -71,9 +90,9 @@ func TestFSAWritesRefuseLoopbackWithoutCredential(t *testing.T) {
 	}{
 		{"POST /api/fsas", http.MethodPost, "/api/fsas", `{"description":"New","mRID":"fsa-new"}`, http.StatusCreated},
 		{"DELETE /api/fsas/{id}", http.MethodDelete, "/api/fsas/fsa-solar", "", http.StatusConflict},
-		{"POST /api/fsas/{id}/programs", http.MethodPost, "/api/fsas/fsa-solar/programs", `{"programHref":"` + fsaProgramHref + `2"}`, http.StatusNotFound},
+		{"POST /api/fsas/{id}/programs", http.MethodPost, "/api/fsas/fsa-solar/programs", `{"programHref":"` + fsaProgram2Href + `"}`, http.StatusCreated},
 		{"DELETE /api/fsas/{id}/programs", http.MethodDelete, "/api/fsas/fsa-solar/programs?href=%2Fedev%2Fdev-X%2Ffsa%2Fanyfsa%2Fderp%2Fp1", "", http.StatusNoContent},
-		{"POST /api/devices/{id}/fsa-assignment", http.MethodPost, "/api/devices/dev-Y/fsa-assignment", `{"fsaHref":"/api/fsas/fsa-solar"}`, http.StatusNotFound},
+		{"POST /api/devices/{id}/fsa-assignment", http.MethodPost, "/api/devices/dev-Y/fsa-assignment", `{"fsaHref":"/api/fsas/fsa-solar"}`, http.StatusOK},
 		{"DELETE /api/devices/{id}/fsa-assignment", http.MethodDelete, "/api/devices/dev-X/fsa-assignment?fsaHref=%2Fapi%2Ffsas%2Ffsa-solar", "", http.StatusNoContent},
 	}
 
@@ -112,7 +131,7 @@ func TestFSAWritesRefuseLoopbackWithoutCredential(t *testing.T) {
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, fsaLoopbackRequest(tc.method, tc.target, tc.body, false))
 			if rec.Code != http.StatusUnauthorized || rec.Body.String() != sensitiveRefusalBody {
-				t.Fatalf("%s with no credential: status = %d body = %q, want 401 %q", tc.pattern, rec.Code, rec.Body.String(), sensitiveRefusalBody)
+				t.Errorf("%s with no credential: status = %d body = %q, want 401 %q", tc.pattern, rec.Code, rec.Body.String(), sensitiveRefusalBody)
 			}
 
 			if _, err := stores.AdminFSAs.Get(ctx, "fsa-new"); err == nil {
@@ -128,11 +147,22 @@ func TestFSAWritesRefuseLoopbackWithoutCredential(t *testing.T) {
 				t.Errorf("%s: devices = %v, want [dev-X]", tc.pattern, got)
 			}
 
-			// Control: the same request with a real credential reaches the handler.
+			// Control: the same request with a real credential reaches the
+			// handler, and the two POSTs that seeded a target land a write.
 			ctl := httptest.NewRecorder()
 			router.ServeHTTP(ctl, fsaLoopbackRequest(tc.method, tc.target, tc.body, true))
 			if ctl.Code != tc.wantWithBearer {
 				t.Errorf("%s with a valid Bearer: status = %d, want %d; body = %q", tc.pattern, ctl.Code, tc.wantWithBearer, ctl.Body.String())
+			}
+			switch tc.pattern {
+			case "POST /api/fsas/{id}/programs":
+				if got := stores.AdminFSAs.Programs(ctx, "fsa-solar"); !slices.Contains(got, fsaProgram2Href) {
+					t.Errorf("%s with a valid Bearer: programs = %v, want %s attached", tc.pattern, got, fsaProgram2Href)
+				}
+			case "POST /api/devices/{id}/fsa-assignment":
+				if got := stores.AdminFSAs.Devices(ctx, "fsa-solar"); !slices.Contains(got, "dev-Y") {
+					t.Errorf("%s with a valid Bearer: devices = %v, want dev-Y assigned", tc.pattern, got)
+				}
 			}
 		})
 	}

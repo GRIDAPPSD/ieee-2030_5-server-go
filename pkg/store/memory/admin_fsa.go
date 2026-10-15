@@ -110,6 +110,14 @@ func (s *AdminFSAStore) List(_ context.Context) []sep2.FunctionSetAssignments {
 	return out
 }
 
+// IDs returns the store keys in sorted order. List returns the records
+// without them, and a record's key need not equal its mRID.
+func (s *AdminFSAStore) IDs(_ context.Context) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return slices.Clone(s.keys)
+}
+
 // Delete removes an FSA. ErrNotFound if absent. ErrInUse if the FSA still
 // has programs attached or devices assigned: the caller must detach/unlink
 // first; the store does NOT silently cascade.

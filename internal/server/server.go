@@ -28,6 +28,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/discovery"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2capture"
@@ -101,6 +102,33 @@ func newAdminServer(handler http.Handler) *http.Server {
 		WriteTimeout:      serverWriteTimeout,
 		IdleTimeout:       serverIdleTimeout,
 	}
+}
+
+// seedStores fills the memory-only stores after newRunStores: the boot
+// fixture first, then the persisted admin FSA assignments. The assignments go
+// last so an admin change wins over a fixture FSA on the same device and id
+// (#915).
+func seedStores(ctx context.Context, cfg *config.Config, stores *Stores) error {
+	if cfg.BootFixtureFile != "" {
+		target := &bootfixture.Target{
+			EndDevices:         stores.EndDevices,
+			FSAs:               stores.FSAs,
+			DERPrograms:        stores.DERPrograms,
+			DERControls:        stores.DERControls,
+			DefaultDERControls: stores.DefaultDERControls,
+			DERCurves:          stores.DERCurves,
+		}
+		// With a data_dir the fixture seeds once and yields to persisted
+		// state; without one the seed path is empty and every record is
+		// created, as before (#352).
+		seedPath := cfg.EffectiveStorePath("bootfixture-seed", "")
+		if err := bootfixture.Reconcile(ctx, target, cfg.BootFixtureFile, seedPath, log.Printf); err != nil {
+			return fmt.Errorf("load boot fixture %q: %w", cfg.BootFixtureFile, err)
+		}
+		log.Printf("boot fixture loaded: %s", cfg.BootFixtureFile)
+	}
+
+	return fsaprogram.Reconcile(ctx, stores.AdminFSAs, stores.FSAs)
 }
 
 // newRunStores builds the stores Run serves, with the one commitment ledger
@@ -303,23 +331,8 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 		return err
 	}
 
-	if cfg.BootFixtureFile != "" {
-		target := &bootfixture.Target{
-			EndDevices:         stores.EndDevices,
-			FSAs:               stores.FSAs,
-			DERPrograms:        stores.DERPrograms,
-			DERControls:        stores.DERControls,
-			DefaultDERControls: stores.DefaultDERControls,
-			DERCurves:          stores.DERCurves,
-		}
-		// With a data_dir the fixture seeds once and yields to persisted
-		// state; without one the seed path is empty and every record is
-		// created, as before (#352).
-		seedPath := cfg.EffectiveStorePath("bootfixture-seed", "")
-		if err := bootfixture.Reconcile(ctx, target, cfg.BootFixtureFile, seedPath, log.Printf); err != nil {
-			return fmt.Errorf("load boot fixture %q: %w", cfg.BootFixtureFile, err)
-		}
-		log.Printf("boot fixture loaded: %s", cfg.BootFixtureFile)
+	if err := seedStores(ctx, cfg, stores); err != nil {
+		return err
 	}
 
 	// Seed the index only now: endDevices can hold both the reload above and

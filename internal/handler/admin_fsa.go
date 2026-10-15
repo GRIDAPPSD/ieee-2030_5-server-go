@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -342,13 +342,7 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 		// The scoped href differs from the admin href: the spec surface lives
 		// under the device's edev tree.
 		if h.DeviceFSAs != nil {
-			scopedHref := fmt.Sprintf("/edev/%s/fsa/%s", deviceID, fsaID)
-			scoped := sep2.FunctionSetAssignments{
-				Resource:           sep2.Resource{Href: scopedHref},
-				MRID:               fsa.MRID,
-				Description:        fsa.Description,
-				DERProgramListLink: &sep2.ListLink{Href: scopedHref + "/derp"},
-			}
+			scoped := fsaprogram.Scoped(deviceID, fsaID, fsa)
 			if err := h.DeviceFSAs.Create(r.Context(), deviceID, fsaID, scoped); err != nil && !errors.Is(err, store.ErrAlreadyExists) {
 				// Best-effort: undo the link record if we can't persist.
 				_ = h.AdminFSAs.UnassignDevice(r.Context(), fsaID, deviceID)

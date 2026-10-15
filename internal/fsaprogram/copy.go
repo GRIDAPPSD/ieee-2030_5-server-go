@@ -25,6 +25,7 @@ var ErrCopyConflict = errors.New("fsaprogram: device holds a conflicting program
 type CopyProgramStore interface {
 	Get(ctx context.Context, parentID, id string) (sep2.DERProgram, error)
 	Create(ctx context.Context, parentID, id string, resource sep2.DERProgram) error
+	Update(ctx context.Context, parentID, id string, resource sep2.DERProgram) error
 	Delete(ctx context.Context, parentID, id string) error
 	List(ctx context.Context, parentID string, opts store.ListOptions) (store.ListResult[sep2.DERProgram], error)
 }
@@ -34,6 +35,7 @@ type CopyProgramStore interface {
 type CopyDefaultStore interface {
 	Get(ctx context.Context, parentID, id string) (sep2.DefaultDERControl, error)
 	Create(ctx context.Context, parentID, id string, resource sep2.DefaultDERControl) error
+	Update(ctx context.Context, parentID, id string, resource sep2.DefaultDERControl) error
 	Delete(ctx context.Context, parentID, id string) error
 }
 
@@ -76,6 +78,11 @@ func CopyProgram(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DERProgr
 func CopyDefault(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DefaultDERControl {
 	base := t.DefaultControlBase.Copy()
 	d := sep2.DefaultDERControl{MRID: t.DefaultMRID, DERControlBase: &base}
+	// 0 is left absent, as on every copy written before defaults had versions.
+	if t.DefaultVersion != 0 {
+		v := t.DefaultVersion
+		d.Version = &v
+	}
 	d.Href = der.DERProgramHref(deviceID, fsaID, t.ID) + "/dderc"
 	return d
 }
@@ -266,6 +273,57 @@ func (c Copies) Remove(ctx context.Context, deviceID, fsaID string, t memory.Pro
 		return false, err
 	}
 	return true, nil
+}
+
+// Sync rewrites deviceID's copy of t to t's content and versions: the
+// default control, then the program. The template's own edit raised those
+// versions, so every copy carries the same ones. A failed program write puts
+// the default back; when that fails too, the error is a *PartError naming the
+// default, which is left at t's content. The returned undo writes both parts
+// as they were, under the same contract.
+func (c Copies) Sync(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate) (undo func(context.Context) error, err error) {
+	editMu.Lock()
+	defer editMu.Unlock()
+
+	scope := DefaultScope(deviceID, fsaID, t.ID)
+	dBefore, err := c.Defaults.Get(ctx, scope, coresingleton.SingletonKey)
+	if err != nil {
+		return nil, fmt.Errorf("reading the default of template %s's copy on device %s: %w", t.ID, deviceID, err)
+	}
+	pBefore, err := c.Programs.Get(ctx, deviceID, t.ID)
+	if err != nil {
+		return nil, fmt.Errorf("reading template %s's copy on device %s: %w", t.ID, deviceID, err)
+	}
+	write := func(ctx context.Context, d sep2.DefaultDERControl, p sep2.DERProgram, prior sep2.DefaultDERControl) error {
+		if err := c.Defaults.Update(ctx, scope, coresingleton.SingletonKey, d); err != nil {
+			return fmt.Errorf("writing the default of template %s's copy on device %s: %w", t.ID, deviceID, err)
+		}
+		if err := c.Programs.Update(ctx, deviceID, t.ID, p); err != nil {
+			err = fmt.Errorf("writing template %s's copy on device %s: %w", t.ID, deviceID, err)
+			if rerr := c.Defaults.Update(ctx, scope, coresingleton.SingletonKey, prior); rerr != nil {
+				return &PartError{DeviceID: deviceID, TemplateID: t.ID, Part: PartDefault, Err: errors.Join(err, rerr)}
+			}
+			return err
+		}
+		return nil
+	}
+	dAfter := CopyDefault(deviceID, fsaID, t)
+	if err := write(ctx, dAfter, CopyProgram(deviceID, fsaID, t), dBefore); err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context) error {
+		editMu.Lock()
+		defer editMu.Unlock()
+		return write(ctx, dBefore, pBefore, dAfter)
+	}, nil
+}
+
+// RemoveProgram deletes a device or fixture program from deviceID: the
+// program, then its default control, then its origin, if any. A failure
+// stops the removal with a *PartError; a device program's origin is deleted
+// last, so the boot cleanup finds and finishes a partial removal.
+func (c Copies) RemoveProgram(ctx context.Context, deviceID, fsaID, programID string) error {
+	return c.deleteParts(ctx, deviceID, fsaID, programID, []string{PartOrigin, PartDefault, PartProgram})
 }
 
 // DevicePrograms returns the ids of the device programs recorded under fsaID

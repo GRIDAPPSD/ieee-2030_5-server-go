@@ -17,7 +17,7 @@ import (
 // distinct per revision, so the edit is refused instead.
 var ErrVersionExhausted = errors.New("fsaprogram: version exhausted")
 
-// ErrHalfApplied is returned when EditDefault wrote the default control, could
+// ErrHalfApplied is returned when an edit wrote the default control, could
 // not write the program, and could not put the default back. The two stores
 // disagree; it deliberately does not match store.ErrNotFound or any other
 // cause, so a caller cannot answer it as a clean refusal.
@@ -62,30 +62,11 @@ func NextVersion(v *uint16) (*uint16, error) {
 // Edit applies mutate to the program at ref and stores the result with
 // its version raised by one. A mutate that leaves the program unchanged
 // writes nothing and keeps the version. Every program edit goes through here
-// so none can skip the increment (the boot href migration included).
+// or EditWithDefault so none can skip the increment (the boot href migration
+// included).
 func Edit(ctx context.Context, programs ProgramStore, ref Ref, mutate func(*sep2.DERProgram) error) error {
-	editMu.Lock()
-	defer editMu.Unlock()
-
-	before, err := programs.Get(ctx, ref.DeviceID, ref.ProgramID)
-	if err != nil {
-		return fmt.Errorf("reading program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
-	}
-	after := before.Copy()
-	after.Subscribable = cloneUint8(after.Subscribable)
-	if err := mutate(&after); err != nil {
-		return err
-	}
-	if reflect.DeepEqual(before, after) {
-		return nil
-	}
-	if after.Version, err = NextVersion(before.Version); err != nil {
-		return err
-	}
-	if err := programs.Update(ctx, ref.DeviceID, ref.ProgramID, after); err != nil {
-		return fmt.Errorf("writing program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
-	}
-	return nil
+	_, err := EditWithDefault(ctx, programs, nil, ref, "", mutate, nil)
+	return err
 }
 
 // EditDefault applies mutate to the default control stored under scope. A
@@ -94,43 +75,77 @@ func Edit(ctx context.Context, programs ProgramStore, ref Ref, mutate func(*sep2
 // versions are checked before either write, and a failed program write puts the
 // default back.
 func EditDefault(ctx context.Context, programs ProgramStore, defaults DefaultStore, ref Ref, scope string, mutate func(*sep2.DefaultDERControl) error) error {
+	_, err := EditWithDefault(ctx, programs, defaults, ref, scope, nil, mutate)
+	return err
+}
+
+// EditWithDefault is one edit of a program and of the default control stored
+// under scope; a nil mutate leaves that side alone. The program's version is
+// raised once when either side changed, and the default's when it changed.
+// changed reports whether anything was written. Both versions are checked
+// before either write, and a failed program write puts the default back.
+func EditWithDefault(ctx context.Context, programs ProgramStore, defaults DefaultStore, ref Ref, scope string,
+	mutateProgram func(*sep2.DERProgram) error, mutateDefault func(*sep2.DefaultDERControl) error) (changed bool, err error) {
 	editMu.Lock()
 	defer editMu.Unlock()
 
-	before, err := defaults.Get(ctx, scope, coresingleton.SingletonKey)
-	if err != nil {
-		return fmt.Errorf("reading default control %s: %w", scope, err)
-	}
-	after := before.Copy()
-	after.Subscribable = cloneUint8(after.Subscribable)
-	if err := mutate(&after); err != nil {
-		return err
-	}
-	if reflect.DeepEqual(before, after) {
-		return nil
-	}
-	program, err := programs.Get(ctx, ref.DeviceID, ref.ProgramID)
-	if err != nil {
-		return fmt.Errorf("reading program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
-	}
-	if after.Version, err = NextVersion(before.Version); err != nil {
-		return err
-	}
-	if program.Version, err = NextVersion(program.Version); err != nil {
-		return err
-	}
-	if err := defaults.Update(ctx, scope, coresingleton.SingletonKey, after); err != nil {
-		return fmt.Errorf("writing default control %s: %w", scope, err)
-	}
-	if err := programs.Update(ctx, ref.DeviceID, ref.ProgramID, program); err != nil {
-		err = fmt.Errorf("writing program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
-		if rerr := defaults.Update(ctx, scope, coresingleton.SingletonKey, before); rerr != nil {
-			// %v, not %w: the causes must not match store sentinels.
-			return fmt.Errorf("%w: default control %s is at the new content: %v; restoring it: %v", ErrHalfApplied, scope, err, rerr)
+	var dBefore, dAfter sep2.DefaultDERControl
+	dChanged := false
+	if mutateDefault != nil {
+		if dBefore, err = defaults.Get(ctx, scope, coresingleton.SingletonKey); err != nil {
+			return false, fmt.Errorf("reading default control %s: %w", scope, err)
 		}
-		return err
+		dAfter = dBefore.Copy()
+		dAfter.Subscribable = cloneUint8(dAfter.Subscribable)
+		if err := mutateDefault(&dAfter); err != nil {
+			return false, err
+		}
+		dChanged = !reflect.DeepEqual(dBefore, dAfter)
+		if !dChanged && mutateProgram == nil {
+			return false, nil
+		}
 	}
-	return nil
+
+	pBefore, err := programs.Get(ctx, ref.DeviceID, ref.ProgramID)
+	if err != nil {
+		return false, fmt.Errorf("reading program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
+	}
+	pAfter := pBefore.Copy()
+	pAfter.Subscribable = cloneUint8(pAfter.Subscribable)
+	if mutateProgram != nil {
+		if err := mutateProgram(&pAfter); err != nil {
+			return false, err
+		}
+	}
+	if !dChanged && reflect.DeepEqual(pBefore, pAfter) {
+		return false, nil
+	}
+	if dChanged {
+		if dAfter.Version, err = NextVersion(dBefore.Version); err != nil {
+			return false, err
+		}
+	}
+	if pAfter.Version, err = NextVersion(pBefore.Version); err != nil {
+		return false, err
+	}
+
+	if dChanged {
+		if err := defaults.Update(ctx, scope, coresingleton.SingletonKey, dAfter); err != nil {
+			return false, fmt.Errorf("writing default control %s: %w", scope, err)
+		}
+	}
+	if err := programs.Update(ctx, ref.DeviceID, ref.ProgramID, pAfter); err != nil {
+		err = fmt.Errorf("writing program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
+		if !dChanged {
+			return false, err
+		}
+		if rerr := defaults.Update(ctx, scope, coresingleton.SingletonKey, dBefore); rerr != nil {
+			// %v, not %w: the causes must not match store sentinels.
+			return false, fmt.Errorf("%w: default control %s is at the new content: %v; restoring it: %v", ErrHalfApplied, scope, err, rerr)
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // cloneUint8 copies the Subscribable attribute, which core's Copy shares, so a

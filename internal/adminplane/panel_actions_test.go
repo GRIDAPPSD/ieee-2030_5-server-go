@@ -355,8 +355,8 @@ func TestPanelActionIsGuardedAsASensitiveWrite(t *testing.T) {
 	var rec actionRecorder
 	h := buildActions(t, Config{PanelActions: true}, actionPanel(rec.run(sep2admin.ActionResult{}, nil)))
 
-	// Control: the bypass is on, so an exempt write from loopback with no
-	// credential gets past the guard (it is then refused as a bad body, not 401).
+	// Control: the bypass is on, so a write the guard does not cover gets past
+	// it with no credential (anything but 401).
 	noKey := func(r *http.Request) { r.Header.Del("Authorization") }
 	if r := post(h, "/api/fsas", `{}`, noKey); r.Code == http.StatusUnauthorized {
 		t.Fatalf("control: loopback POST /api/fsas with no credential = 401, want it admitted by the bypass")

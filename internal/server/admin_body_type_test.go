@@ -24,7 +24,7 @@ func TestAdminBodyTypeRefusalLogsRefusalWithoutCredentialOrBody(t *testing.T) {
 	)
 
 	const (
-		bearer = "marker-bearer-body-8e21"
+		bearer = "the-key"
 		body   = "marker-body-body-c40a"
 	)
 	req := httptest.NewRequest(http.MethodPost, "/api/fsas", strings.NewReader(`{"description":"`+body+`"}`))

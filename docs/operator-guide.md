@@ -22,8 +22,13 @@ You need:
 - The admin listener reachable in a browser. The rest of this walkthrough
   uses the plain-HTTP loopback default described in `admin.md`'s
   [Reaching the admin surface](admin.md#reaching-the-admin-surface)
-  section: `http://127.0.0.1:8444/`, admitted with no login step by the
-  `#246` loopback bypass. If you already run the admin listener behind
+  section: `http://127.0.0.1:8444/`. The `#246` loopback bypass admits reads and
+  end-device creation with no login step, but the FSA cards (Create FSA,
+  FSA Templates, FSA Tree, and the End Devices "Assign FSA" control) and
+  the DER controls need a real credential: open
+  `http://127.0.0.1:8444/login` first and submit `SEP2_ADMIN_KEY`. The
+  dashboard shell does not show its login form on loopback, so without
+  that step those cards answer `Error (401)`. If you already run the admin listener behind
   TLS or a login, everything past "enroll the device" still applies; only
   the URL and the login step change. If a reverse proxy fronts this same
   host, the loopback bypass admits any relayed request unless the proxy
@@ -296,7 +301,8 @@ description field clears itself on success, so the result line, not the
 form, is the evidence the create worked.
 
 Corresponds to a FunctionSetAssignments (FSA) template. Mutating:
-`POST /api/fsas`.
+`POST /api/fsas`, which needs a real credential (log in at `/login`
+first; see "Before you start").
 
 ### FSA Templates (catalog)
 

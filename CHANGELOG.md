@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The FSA admin writes (create, delete, program attach and detach, and device
+  FSA assignment and unassignment) now require a real credential from
+  loopback: a request admitted only by the loopback bypass gets 401. Operators
+  who used these routes or the FSA cards without logging in must log in at
+  `/login` or send the admin key as a Bearer token. `POST /api/devices` is
+  unchanged (#930).
+
 ## [0.17.0] - 2026-10-13
 
 This entry covers `v0.16.1..v0.17.0`. It is a MINOR release under the 0.x

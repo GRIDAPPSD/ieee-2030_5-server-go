@@ -69,17 +69,17 @@ func send(p *sep2adminplane.Plane, method, path, body string, withKey bool) *htt
 }
 
 func TestBypassOffRefusesLoopbackWithoutCredential(t *testing.T) {
-	rec := send(newPlane(t, baseConfig()), http.MethodPost, "/api/fsas", `{"description":"x"}`, false)
+	rec := send(newPlane(t, baseConfig()), http.MethodPost, "/api/devices", `{}`, false)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("bypass off: loopback POST /api/fsas with no credential = %d, want 401; body %s", rec.Code, rec.Body)
+		t.Fatalf("bypass off: loopback POST /api/devices with no credential = %d, want 401; body %s", rec.Code, rec.Body)
 	}
 
 	// The control: the same request with the bypass on is admitted, so the
 	// 401 above comes from the switch and not from the route.
 	on := baseConfig()
 	on.LoopbackBypass = true
-	if rec := send(newPlane(t, on), http.MethodPost, "/api/fsas", `{"description":"x"}`, false); rec.Code == http.StatusUnauthorized {
-		t.Fatalf("bypass on: loopback POST /api/fsas = 401, want it admitted; body %s", rec.Body)
+	if rec := send(newPlane(t, on), http.MethodPost, "/api/devices", `{}`, false); rec.Code == http.StatusUnauthorized || rec.Code == http.StatusNotFound {
+		t.Fatalf("bypass on: loopback POST /api/devices = %d, want it admitted to the handler; body %s", rec.Code, rec.Body)
 	}
 }
 

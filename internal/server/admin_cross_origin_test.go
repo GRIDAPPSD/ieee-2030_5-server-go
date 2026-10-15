@@ -134,7 +134,7 @@ func TestCrossOriginFSACreateIsRefusedOverSocket(t *testing.T) {
 		{
 			name:       "no provenance headers, mislabelled body",
 			mrid:       "fsa-no-headers",
-			headers:    map[string]string{"Content-Type": "text/plain;charset=UTF-8"},
+			headers:    map[string]string{"Content-Type": "text/plain;charset=UTF-8", "Authorization": "Bearer the-key"},
 			wantStatus: http.StatusUnsupportedMediaType,
 			wantBody:   unsupportedMediaTypeBody,
 		},
@@ -162,8 +162,8 @@ func TestCrossOriginFSACreateIsRefusedOverSocket(t *testing.T) {
 		})
 	}
 
-	// Requests a browser cannot be shown to have sent cross-origin still land,
-	// and landing is what makes the 404 read-backs above mean "not created"
+	// Requests a browser cannot be shown to have sent cross-origin still land
+	// when they carry the real credential (#930), and landing is what makes the 404 read-backs above mean "not created"
 	// rather than "read path broken".
 	for _, tc := range []struct {
 		name    string
@@ -171,13 +171,13 @@ func TestCrossOriginFSACreateIsRefusedOverSocket(t *testing.T) {
 		headers map[string]string
 	}{
 		{name: "current browser on the admin UI", mrid: "fsa-same-origin", headers: map[string]string{
-			"Content-Type": "application/json", "Sec-Fetch-Site": "same-origin", "Origin": srv.URL,
+			"Content-Type": "application/json", "Sec-Fetch-Site": "same-origin", "Origin": srv.URL, "Authorization": "Bearer the-key",
 		}},
 		{name: "older browser on the admin UI, Origin matches Host", mrid: "fsa-old-browser", headers: map[string]string{
-			"Content-Type": "application/json", "Origin": srv.URL,
+			"Content-Type": "application/json", "Origin": srv.URL, "Authorization": "Bearer the-key",
 		}},
 		{name: "curl-style tool, no provenance headers", mrid: "fsa-curl", headers: map[string]string{
-			"Content-Type": "application/json",
+			"Content-Type": "application/json", "Authorization": "Bearer the-key",
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

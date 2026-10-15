@@ -17,6 +17,12 @@ import (
 // distinct per revision, so the edit is refused instead.
 var ErrVersionExhausted = errors.New("fsaprogram: version exhausted")
 
+// ErrHalfApplied is returned when EditDefault wrote the default control, could
+// not write the program, and could not put the default back. The two stores
+// disagree; it deliberately does not match store.ErrNotFound or any other
+// cause, so a caller cannot answer it as a clean refusal.
+var ErrHalfApplied = errors.New("fsaprogram: edit half applied")
+
 // Ref addresses a program in the DERProgram store.
 type Ref struct {
 	DeviceID  string
@@ -56,7 +62,7 @@ func NextVersion(v *uint16) (*uint16, error) {
 // Edit applies mutate to the program at ref and stores the result with
 // its version raised by one. A mutate that leaves the program unchanged
 // writes nothing and keeps the version. Every program edit goes through here
-// so none can skip the increment.
+// so none can skip the increment (the boot href migration included).
 func Edit(ctx context.Context, programs ProgramStore, ref Ref, mutate func(*sep2.DERProgram) error) error {
 	editMu.Lock()
 	defer editMu.Unlock()
@@ -66,6 +72,7 @@ func Edit(ctx context.Context, programs ProgramStore, ref Ref, mutate func(*sep2
 		return fmt.Errorf("reading program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
 	}
 	after := before.Copy()
+	after.Subscribable = cloneUint8(after.Subscribable)
 	if err := mutate(&after); err != nil {
 		return err
 	}
@@ -95,6 +102,7 @@ func EditDefault(ctx context.Context, programs ProgramStore, defaults DefaultSto
 		return fmt.Errorf("reading default control %s: %w", scope, err)
 	}
 	after := before.Copy()
+	after.Subscribable = cloneUint8(after.Subscribable)
 	if err := mutate(&after); err != nil {
 		return err
 	}
@@ -117,9 +125,21 @@ func EditDefault(ctx context.Context, programs ProgramStore, defaults DefaultSto
 	if err := programs.Update(ctx, ref.DeviceID, ref.ProgramID, program); err != nil {
 		err = fmt.Errorf("writing program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
 		if rerr := defaults.Update(ctx, scope, coresingleton.SingletonKey, before); rerr != nil {
-			return errors.Join(err, fmt.Errorf("restoring default control %s: %w", scope, rerr))
+			// %v, not %w: the causes must not match store sentinels.
+			return fmt.Errorf("%w: default control %s is at the new content: %v; restoring it: %v", ErrHalfApplied, scope, err, rerr)
 		}
 		return err
 	}
 	return nil
+}
+
+// cloneUint8 copies the Subscribable attribute, which core's Copy shares, so a
+// mutate that changes it in place cannot also change the "before" it is
+// compared with.
+func cloneUint8(v *uint8) *uint8 {
+	if v == nil {
+		return nil
+	}
+	c := *v
+	return &c
 }

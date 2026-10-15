@@ -2,7 +2,7 @@
   // The registered EndDevice list, plus the per-device FSA assignment
   // control. The LFDI cell is truncated for width, as it always has been;
   // the untruncated value is available through Lookup Device by LFDI.
-  import { postJSON } from '../lib/api'
+  import { fetchJSON, postJSON } from '../lib/api'
   import { deviceIdFromHref, type AdminFSA } from '../lib/fsa'
   import type { DashboardColumn, DashboardDevice } from '../lib/dashboard'
   import { commsClass, commsLabel, formatAge } from '../lib/comms'
@@ -31,6 +31,38 @@
     if (enabled === true) return 'Yes'
     if (enabled === false) return 'No'
     return 'Not set'
+  }
+
+  // Template count per FSA mRID, from GET /api/fsas/{id}/der-programs. A
+  // refresh keeps the last counts until the new reads land, so labels do not
+  // flicker. An FSA whose read failed or never ran has no entry, and the
+  // select shows its bare mRID rather than a "no program templates" it has not
+  // established.
+  let templateCounts = $state<Record<string, number>>({})
+
+  $effect(() => {
+    const ids = fsas.map((f) => f.mRID)
+    const ctrl = new AbortController()
+    for (const id of ids) {
+      void fetchJSON<{ templates?: unknown[] | null }>(`/api/fsas/${encodeURIComponent(id)}/der-programs`, {
+        signal: ctrl.signal,
+      }).then((res) => {
+        if (ctrl.signal.aborted) return
+        if (!res.ok || !Array.isArray(res.data?.templates)) {
+          delete templateCounts[id]
+          return
+        }
+        templateCounts[id] = res.data.templates.length
+      })
+    }
+    return () => ctrl.abort()
+  })
+
+  function fsaLabel(mRID: string): string {
+    const n = templateCounts[mRID]
+    if (n === undefined) return mRID
+    if (n === 0) return `${mRID} (no program templates)`
+    return `${mRID} (${n} ${n === 1 ? 'program template' : 'program templates'})`
   }
 
   let selected = $state<Record<string, string>>({})
@@ -84,7 +116,7 @@
               <select id="assignSel-{deviceID}" bind:value={selected[deviceID]}>
                 <option value="">(pick FSA)</option>
                 {#each fsas as fsa (fsa.mRID)}
-                  <option value={'/api/fsas/' + fsa.mRID}>{fsa.mRID}</option>
+                  <option value={'/api/fsas/' + fsa.mRID}>{fsaLabel(fsa.mRID)}</option>
                 {/each}
               </select>
               <button class="btn btn-small" onclick={() => assign(deviceID)}>Assign</button>
@@ -106,6 +138,6 @@
     color: var(--text);
     padding: 2px 4px;
     font-size: 12px;
-    max-width: 120px;
+    max-width: 200px;
   }
 </style>

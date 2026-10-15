@@ -5,7 +5,7 @@
 // unknown outcome is never re-sent and locks sending until the controls list
 // is read again; a missing value shows as missing.
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/svelte'
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/svelte'
 import DispatchPane from './DispatchPane.svelte'
 import * as api from '../lib/api'
 
@@ -559,7 +559,13 @@ describe('DispatchPane, what the operator sees', () => {
     mockReads({ programs: [] })
     mount()
     await pickGrantOnly()
-    expect(await screen.findByTestId('dispatch-no-programs')).toHaveTextContent('no DER programs')
+    const note = await screen.findByTestId('dispatch-no-programs')
+    expect(note).toHaveTextContent('no DER programs')
+    expect(note).toHaveTextContent('program template')
+    expect(note).not.toHaveTextContent('boot fixture')
+    expect(note).not.toHaveTextContent('cannot be created')
+    expect(within(note).getByRole('link', { name: 'FSAs tab' })).toHaveAttribute('href', '/ui/fsas')
+    expect(within(note).getByRole('link', { name: 'Devices tab' })).toHaveAttribute('href', '/ui/devices')
   })
 
   it('shows an error, not an empty list, for a programs reply with no list', async () => {

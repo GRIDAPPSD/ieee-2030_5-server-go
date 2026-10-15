@@ -131,9 +131,9 @@ describe('DeviceTable', () => {
     await waitFor(() =>
       expect(Array.from(select.options).map((o) => o.textContent?.trim())).toEqual([
         '(pick FSA)',
-        'fsa-a (no templates)',
-        'fsa-b (1 template)',
-        'fsa-c (2 templates)',
+        'fsa-a (no program templates)',
+        'fsa-b (1 program template)',
+        'fsa-c (2 program templates)',
       ]),
     )
     // The option value is still the href the assignment POST sends.
@@ -150,7 +150,7 @@ describe('DeviceTable', () => {
     ])
   })
 
-  it('shows the bare mRID, not a false "no templates", for an FSA whose templates could not be read', async () => {
+  it('shows the bare mRID, not a false "no program templates", for an FSA whose templates could not be read', async () => {
     vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
       if (path === '/api/fsas/fsa-a/der-programs') return { ok: false, error: 'boom', status: 500 }
       return { ok: true, data: { templates: [{ id: 'p1' }] } }
@@ -158,8 +158,25 @@ describe('DeviceTable', () => {
     const { container } = render(DeviceTable, { props: { devices, fsas, onChanged: () => {} } })
 
     const select = container.querySelector('#assignSel-3') as HTMLSelectElement
-    await waitFor(() => expect(select.options[2]?.textContent?.trim()).toBe('fsa-b (1 template)'))
+    await waitFor(() => expect(select.options[2]?.textContent?.trim()).toBe('fsa-b (1 program template)'))
     expect(select.options[1]?.textContent?.trim()).toBe('fsa-a')
+  })
+
+  it('reads the counts again for a new fsas array', async () => {
+    const counts: Record<string, number> = { 'fsa-a': 0, 'fsa-b': 1 }
+    const get = vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
+      const id = /\/api\/fsas\/([^/]+)\/der-programs/.exec(path)?.[1] ?? ''
+      return { ok: true, data: { templates: Array.from({ length: counts[id] ?? 0 }, (_, i) => ({ id: `p${i}` })) } }
+    }) as never)
+    const { container, rerender } = render(DeviceTable, { props: { devices, fsas, onChanged: () => {} } })
+    const select = container.querySelector('#assignSel-3') as HTMLSelectElement
+    await waitFor(() => expect(select.options[2]?.textContent?.trim()).toBe('fsa-b (1 program template)'))
+    expect(get).toHaveBeenCalledTimes(2)
+
+    counts['fsa-b'] = 3
+    await rerender({ devices, fsas: [...fsas], onChanged: () => {} })
+    await waitFor(() => expect(select.options[2]?.textContent?.trim()).toBe('fsa-b (3 program templates)'))
+    expect(get).toHaveBeenCalledTimes(4)
   })
 
   it('cancels its template reads when the table unmounts', async () => {

@@ -631,6 +631,23 @@ describe('DerControl: no DER programs (criterion 6)', () => {
     await fireEvent.click(within(note).getByRole('link', { name: 'FSAs tab' }))
     expect(window.location.pathname).toBe('/ui/fsas')
   })
+
+  it.each([
+    ['ctrl-click', { ctrlKey: true }],
+    ['meta-click', { metaKey: true }],
+    ['shift-click', { shiftKey: true }],
+    ['alt-click', { altKey: true }],
+    ['middle-click', { button: 1 }],
+  ])('leaves the browser to handle a %s on a tab link', async (_name, init) => {
+    mockApi({ programsFor: () => ({ ok: true, data: { device: '0', programs: [] } }) })
+    window.history.pushState({}, '', '/ui/control')
+    const { container } = render(DerControl, { devices })
+    await fireEvent.change(sel(container, '#controlDevice'), { target: { value: '0' } })
+
+    const note = await screen.findByTestId('der-control-no-programs')
+    await fireEvent.click(within(note).getByRole('link', { name: 'FSAs tab' }), init)
+    expect(window.location.pathname).toBe('/ui/control')
+  })
 })
 
 describe('DerControl: ids and the removed stub (criterion 7)', () => {

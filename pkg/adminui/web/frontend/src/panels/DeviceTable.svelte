@@ -36,7 +36,7 @@
   // Template count per FSA mRID, from GET /api/fsas/{id}/der-programs. A
   // refresh keeps the last counts until the new reads land, so labels do not
   // flicker. An FSA whose read failed or never ran has no entry, and the
-  // select shows its bare mRID rather than a "no templates" it has not
+  // select shows its bare mRID rather than a "no program templates" it has not
   // established.
   let templateCounts = $state<Record<string, number>>({})
 
@@ -61,8 +61,8 @@
   function fsaLabel(mRID: string): string {
     const n = templateCounts[mRID]
     if (n === undefined) return mRID
-    if (n === 0) return `${mRID} (no templates)`
-    return `${mRID} (${n} ${n === 1 ? 'template' : 'templates'})`
+    if (n === 0) return `${mRID} (no program templates)`
+    return `${mRID} (${n} ${n === 1 ? 'program template' : 'program templates'})`
   }
 
   let selected = $state<Record<string, string>>({})

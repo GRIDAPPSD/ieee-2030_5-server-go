@@ -209,11 +209,10 @@ type ScopedStore[T Copier[T]] interface {
 // Ordering is part of the contract rather than an implementation detail.
 // IEEE 2030.5 section 4.6.1 requires each list resource to be returned in a
 // defined order, and the paging parameters address positions within that
-// order, so a page number means nothing without it. Today the ordering is an
-// emergent property of the in-memory store's sorted key slice: a durable
-// backend would be free to return rows in whatever order the query planner
-// chose, satisfy every method signature here, and silently fail the list
-// ordering requirements (DER-PRG-001 through DER-PRG-004, MTR-GEN-010).
+// order, so a page number means nothing without it. A list whose standard
+// ordering is a function of the resource's fields asks for
+// [SortByListOrdering] through [Ordered] or [OrderedScoped], so that order
+// holds whatever order a backend returns rows in.
 type SortKey uint8
 
 const (
@@ -226,6 +225,13 @@ const (
 	// implementation that cannot provide it MUST return ErrUnsupportedSort
 	// rather than serve a different order.
 	SortByIDDesc
+
+	// SortByListOrdering orders by the list ordering IEEE 2030.5 specifies for
+	// the resource type, such as Table 50 of the 2018 edition for the DER
+	// lists. It is a property of the resource's fields, so a generic
+	// implementation cannot provide it and MUST return ErrUnsupportedSort;
+	// [Ordered] and [OrderedScoped] provide it over any implementation.
+	SortByListOrdering
 )
 
 // String implements fmt.Stringer.
@@ -235,6 +241,8 @@ func (k SortKey) String() string {
 		return "id-asc"
 	case SortByIDDesc:
 		return "id-desc"
+	case SortByListOrdering:
+		return "list-ordering"
 	default:
 		return "unknown"
 	}

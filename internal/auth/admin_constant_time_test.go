@@ -15,7 +15,7 @@ func TestConstantTimeEqual(t *testing.T) {
 		{"prefix is not equal", "0123456789abcdef", "0123456789abcdef0", false},
 		{"longer vs shorter", "x", "0123456789abcdef", false},
 		{"empty vs non-empty", "", "x", false},
-		{"multibyte equal", "éé", "éé", true},
+		{"multibyte equal", "\u00e9\u00e9", "\u00e9\u00e9", true},
 	}
 	for _, tc := range tests {
 		if got := ConstantTimeEqual(tc.a, tc.b); got != tc.want {

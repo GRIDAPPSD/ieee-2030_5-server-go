@@ -80,7 +80,7 @@ func TestCheckAdminKey(t *testing.T) {
 		{"unset", "", ErrAdminKeyUnset},
 		{"blank", "   \t", ErrAdminKeyBlank},
 		{"one short of the floor", "0123456789abcde", ErrAdminKeyShort},
-		{"multibyte counted as characters", "éééééééé", ErrAdminKeyShort},
+		{"multibyte counted as characters", "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9", ErrAdminKeyShort},
 		{"at the floor", "0123456789abcdef", nil},
 		{"leading and trailing space still counts", " 0123456789abcde ", nil},
 	}

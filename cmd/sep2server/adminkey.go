@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 )
 
@@ -33,6 +34,9 @@ type adminKeyResult struct {
 // only on the file path, so an env-keyed start needs no $HOME.
 func resolveAdminKey(r *certDirResolver) (adminKeyResult, error) {
 	if k := os.Getenv("SEP2_ADMIN_KEY"); k != "" {
+		if err := auth.CheckAdminKey(k); err != nil {
+			return adminKeyResult{}, fmt.Errorf("SEP2_ADMIN_KEY is not a usable admin key (%s): set it to a token of at least %d characters", unusableReason(err), auth.MinAdminKeyLength)
+		}
 		res := adminKeyResult{Key: k, Source: "SEP2_ADMIN_KEY"}
 		// Lstat only: a stale file must be visible in the log, not read. A
 		// throwaway resolver keeps an unresolvable $HOME from failing a start
@@ -84,6 +88,9 @@ func adminSecretPath(r *certDirResolver) (string, error) {
 // absent. Losing the create race to another starter falls back to reading
 // the winner's key.
 func loadOrCreateAdminKey(path string) (key string, generated bool, err error) {
+	if keyFileUnsupported != nil {
+		return "", false, keyFileUnsupported
+	}
 	for attempt := 0; attempt < 2; attempt++ {
 		key, err = readSettledAdminKeyFile(path)
 		if err == nil {
@@ -122,30 +129,42 @@ func readSettledAdminKeyFile(path string) (string, error) {
 	}
 }
 
-// readAdminKeyFile checks the file itself before reading it: a symlink,
-// another owner's file, or a group/other-accessible file is refused.
+// readAdminKeyFile opens the file once, without following a symlink, and
+// checks the open descriptor before reading it: acting on the path twice would
+// let a swap between the check and the read defeat the checks. A symlink,
+// another owner's file, or a group/other-accessible file is refused, and so is
+// a key that serve would refuse.
 func readAdminKeyFile(path string) (string, error) {
-	fi, err := os.Lstat(path)
+	f, err := openKeyFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", err
 		}
+		if errors.Is(err, errKeyFileSymlink) {
+			return "", fmt.Errorf("admin key file %s is a symbolic link: replace it with a regular file (rm %s, then restart to create a new key)", path, path)
+		}
 		return "", fmt.Errorf("admin key file %s: %w", path, err)
 	}
-	if fi.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("admin key file %s is a symbolic link: replace it with a regular file (rm %s, then restart to create a new key)", path, path)
+	// Read-only descriptor: a close failure loses nothing.
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return "", fmt.Errorf("admin key file %s: %w", path, err)
 	}
 	if !fi.Mode().IsRegular() {
 		return "", fmt.Errorf("admin key file %s is not a regular file", path)
 	}
 	owned, err := fileOwnedByCurrentUser(fi)
-	if err != nil || !owned {
+	if err != nil {
+		return "", fmt.Errorf("admin key file %s: checking its owner: %w", path, err)
+	}
+	if !owned {
 		return "", fmt.Errorf("admin key file %s is not owned by the current user: run it as the owner or remove the file to create a new key", path)
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
 		return "", fmt.Errorf("admin key file %s is accessible to group or other (mode %04o): chmod 600 %s", path, fi.Mode().Perm(), path)
 	}
-	b, err := os.ReadFile(path)
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return "", fmt.Errorf("admin key file %s: %w", path, err)
 	}
@@ -158,8 +177,25 @@ func readAdminKeyFile(path string) (string, error) {
 	} else if strings.HasSuffix(s, "\n") {
 		s = s[:len(s)-1]
 	}
+	if err := auth.CheckAdminKey(s); err != nil {
+		return "", fmt.Errorf("admin key file %s does not hold a usable key (%s): remove it and restart to create a new key", path, unusableReason(err))
+	}
 	return s, nil
 }
+
+// unusableReason words an auth.CheckAdminKey failure without the key.
+func unusableReason(err error) string {
+	switch {
+	case errors.Is(err, auth.ErrAdminKeyBlank):
+		return "whitespace only"
+	case errors.Is(err, auth.ErrAdminKeyShort):
+		return fmt.Sprintf("shorter than %d characters", auth.MinAdminKeyLength)
+	}
+	return "empty"
+}
+
+// syncKeyFile is a variable so a test can fail the sync of a created file.
+var syncKeyFile = func(f *os.File) error { return f.Sync() }
 
 func createAdminKeyFile(path string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -177,19 +213,32 @@ func createAdminKeyFile(path string) (string, error) {
 		}
 		return "", fmt.Errorf("admin key file %s: %w", path, err)
 	}
-	if _, err := io.WriteString(f, key+"\n"); err != nil {
+	// Past O_EXCL the file is ours: a failure below must not leave an empty
+	// or partial file for the next start to adopt or trip over.
+	fail := func(what string, err error) (string, error) {
 		_ = f.Close()
-		return "", fmt.Errorf("admin key file %s: writing: %w", path, err)
+		// Best effort: the write error is the one worth reporting.
+		_ = os.Remove(path)
+		return "", fmt.Errorf("admin key file %s: %s: %w", path, what, err)
 	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return "", fmt.Errorf("admin key file %s: sync: %w", path, err)
+	if _, err := io.WriteString(f, key+"\n"); err != nil {
+		return fail("writing", err)
+	}
+	if err := syncKeyFile(f); err != nil {
+		return fail("sync", err)
 	}
 	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
 		return "", fmt.Errorf("admin key file %s: close: %w", path, err)
 	}
 	return key, nil
 }
+
+const adminKeyUsage = `Usage: sep2server admin-key
+
+Print the admin key from the key file (SEP2_ADMIN_SECRET_FILE, default <cert dir>/admin.secret).
+SEP2_ADMIN_KEY is ignored. The file is never created here; the server creates it on first start.
+`
 
 // runAdminKey implements `sep2server admin-key`: read-only, so the running
 // server is the only writer of the file.
@@ -197,13 +246,17 @@ func runAdminKey(out io.Writer, args []string, r *certDirResolver) error {
 	fs := flag.NewFlagSet("admin-key", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "Usage: sep2server admin-key")
-		fmt.Fprintln(fs.Output(), "")
-		fmt.Fprintln(fs.Output(), "Print the admin key from the key file (SEP2_ADMIN_SECRET_FILE, default <cert dir>/admin.secret).")
-		fmt.Fprintln(fs.Output(), "SEP2_ADMIN_KEY is ignored. The file is never created here; the server creates it on first start.")
+		// A failed write of usage text to stderr has nowhere to be reported.
+		_, _ = fmt.Fprint(fs.Output(), adminKeyUsage)
 	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
+	}
+	if keyFileUnsupported != nil {
+		return keyFileUnsupported
 	}
 	p, err := adminSecretPath(r)
 	if err != nil {

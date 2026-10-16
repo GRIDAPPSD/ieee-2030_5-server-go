@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 )
@@ -222,6 +225,8 @@ func TestResolveAdminKeyRefusesUnsafeFile(t *testing.T) {
 		{"group readable", func(t *testing.T, p string) { mk(t, p, 0o640) }, "chmod 600 "},
 		{"other readable", func(t *testing.T, p string) { mk(t, p, 0o604) }, "chmod 600 "},
 		{"group writable", func(t *testing.T, p string) { mk(t, p, 0o620) }, "chmod 600 "},
+		{"group executable", func(t *testing.T, p string) { mk(t, p, 0o610) }, "chmod 600 "},
+		{"other executable", func(t *testing.T, p string) { mk(t, p, 0o601) }, "chmod 600 "},
 		{"symlink", func(t *testing.T, p string) {
 			real := p + ".real"
 			mk(t, real, 0o600)
@@ -369,4 +374,291 @@ func TestApplyAdminKey(t *testing.T) {
 			t.Errorf("cfg = %+v", cfg)
 		}
 	})
+}
+
+// unusableKeyFiles are file contents that must never resolve as a key.
+var unusableKeyFiles = []struct{ name, content string }{
+	{"newline only", "\n"},
+	{"crlf only", "\r\n"},
+	{"whitespace only", "   \n"},
+	{"under 16 characters", "short-key-9f2\n"},
+}
+
+func writeKeyFile(t *testing.T, p, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResolveAdminKeyRefusesUnusableFileKey(t *testing.T) {
+	for _, tc := range unusableKeyFiles {
+		t.Run(tc.name, func(t *testing.T) {
+			p := secretPath(t)
+			writeKeyFile(t, p, tc.content)
+			_, err := resolveAdminKey(&certDirResolver{})
+			if err == nil {
+				t.Fatal("resolveAdminKey = nil error, want a refusal")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, p) {
+				t.Errorf("refusal does not name the key file %s\n%s", p, msg)
+			}
+			if strings.Contains(msg, "SEP2_ADMIN_KEY") {
+				t.Errorf("refusal blames the env variable for a file key\n%s", msg)
+			}
+			if strings.Contains(msg, "short-key-9f2") {
+				t.Errorf("refusal echoes the key\n%s", msg)
+			}
+		})
+	}
+}
+
+func TestResolveAdminKeyRefusesUnusableEnvKey(t *testing.T) {
+	for _, tc := range []struct{ name, val string }{
+		{"whitespace only", "   "},
+		{"under 16 characters", "short-env-9f2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := secretPath(t)
+			t.Setenv("SEP2_ADMIN_KEY", tc.val)
+			_, err := resolveAdminKey(&certDirResolver{})
+			if err == nil {
+				t.Fatal("resolveAdminKey = nil error, want a refusal")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "SEP2_ADMIN_KEY") {
+				t.Errorf("refusal does not name the variable\n%s", msg)
+			}
+			if strings.Contains(msg, p) || strings.Contains(msg, "short-env-9f2") {
+				t.Errorf("refusal names the file or echoes the key\n%s", msg)
+			}
+			if _, statErr := os.Lstat(p); !os.IsNotExist(statErr) {
+				t.Errorf("key file touched by an env-keyed start: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestReadAdminKeyCommandRefusesUnusableKey(t *testing.T) {
+	for _, tc := range unusableKeyFiles {
+		t.Run(tc.name, func(t *testing.T) {
+			p := secretPath(t)
+			writeKeyFile(t, p, tc.content)
+			var out bytes.Buffer
+			err := runAdminKey(&out, nil, &certDirResolver{})
+			if err == nil {
+				t.Fatalf("runAdminKey = nil error, stdout %q; want the refusal serve gives", out.String())
+			}
+			if !strings.Contains(err.Error(), p) {
+				t.Errorf("refusal does not name %s: %v", p, err)
+			}
+			if out.Len() != 0 {
+				t.Errorf("stdout = %q, want empty on refusal", out.String())
+			}
+			_, serveErr := resolveAdminKey(&certDirResolver{})
+			if serveErr == nil || serveErr.Error() != err.Error() {
+				t.Errorf("admin-key and serve disagree\nadmin-key: %v\nserve:     %v", err, serveErr)
+			}
+		})
+	}
+}
+
+func TestReadAdminKeyCommandHelpExitsCleanly(t *testing.T) {
+	var out bytes.Buffer
+	if err := runAdminKey(&out, []string{"-h"}, &certDirResolver{}); err != nil {
+		t.Fatalf("runAdminKey -h = %v, want nil", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want empty (usage goes to stderr)", out.String())
+	}
+}
+
+// TestReadAdminKeyFileNeverReturnsASwappedInKey flips the path between the
+// real 0600 key file and a symlink to a 0644 file holding a planted key while
+// reads run. A check-then-reopen read returns the planted key in a small
+// fraction of reads; opening once with O_NOFOLLOW and reading the checked
+// descriptor never does.
+func TestReadAdminKeyFileNeverReturnsASwappedInKey(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "admin.secret")
+	real, planted := filepath.Join(dir, "real"), filepath.Join(dir, "planted")
+	writeKeyFile(t, real, "the-real-key-0123456789\n")
+	if err := os.WriteFile(planted, []byte("planted-key-abcdefghij\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(planted, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(planted, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(real, p); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = os.Rename(link, p) // swap in the symlink
+			_ = os.Remove(p)
+			_ = os.Link(real, p) // and back to the real file
+			_ = os.Symlink(planted, link)
+		}
+	}()
+	deadline := time.Now().Add(3 * time.Second)
+	reads, hits := 0, 0
+	for time.Now().Before(deadline) {
+		key, err := readAdminKeyFile(p)
+		reads++
+		if err == nil && key == "planted-key-abcdefghij" {
+			hits++
+		}
+	}
+	close(stop)
+	<-done
+	if hits != 0 {
+		t.Fatalf("%d of %d reads returned the planted key through a swapped path", hits, reads)
+	}
+	if reads < 1000 {
+		t.Fatalf("only %d reads ran; the probe did not exercise the race", reads)
+	}
+}
+
+// serveEnv points a serve start at a temp cert directory holding a CA pair
+// (with its key when withCAKey) and an admin listener, with the key env
+// cleared. It returns the key file path.
+func serveEnv(t *testing.T, withCAKey bool) string {
+	t.Helper()
+	unsetCAEnv(t)
+	dir := t.TempDir()
+	writeTestCAPair(t, dir, "prepareServe CA", "ca.crt", "ca.key")
+	if !withCAKey {
+		if err := os.Remove(filepath.Join(dir, "ca.key")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, k := range []string{"SEP2_CA", "SEP2_SERVING_CA", "SEP2_DEVICE_CA", "SEP2_ADMIN_ADDR"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("SEP2_CERT_DIR", dir)
+	t.Setenv("SEP2_ADMIN_LISTEN", "127.0.0.1:0")
+	p := filepath.Join(dir, "admin.secret")
+	t.Setenv("SEP2_ADMIN_SECRET_FILE", p)
+	t.Setenv("SEP2_ADMIN_KEY", "")
+	return p
+}
+
+// TestPrepareServeResolvesTheKeyFileIntoTheConfig drives the serve wiring
+// with the key env unset: the file is created and its key lands in the config
+// the server runs with. A serve that never called applyAdminKey would leave
+// AdminKey empty and refuse every keyless start.
+func TestPrepareServeResolvesTheKeyFileIntoTheConfig(t *testing.T) {
+	p := serveEnv(t, true)
+	cfg, svc, err := prepareServe(&certDirResolver{})
+	if err != nil {
+		t.Fatalf("prepareServe: %v", err)
+	}
+	if svc == nil || !svc.CanMint() {
+		t.Fatal("test setup: the CA service cannot mint")
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("key file not created: %v", err)
+	}
+	if !hex64.MatchString(cfg.AdminKey) || string(b) != cfg.AdminKey+"\n" {
+		t.Errorf("cfg.AdminKey = %q, file = %q; want the 64-hex key from the file", cfg.AdminKey, b)
+	}
+	if cfg.AdminKeySource != p || !cfg.AdminKeyGenerated {
+		t.Errorf("source = %q generated = %v, want %q and true", cfg.AdminKeySource, cfg.AdminKeyGenerated, p)
+	}
+}
+
+func TestPrepareServeRefusesAnUnusableKeyFileBeforeServing(t *testing.T) {
+	p := serveEnv(t, true)
+	writeKeyFile(t, p, "short-key-9f2\n")
+	cfg, svc, err := prepareServe(&certDirResolver{})
+	if err == nil || !strings.Contains(err.Error(), p) {
+		t.Fatalf("prepareServe = %v, %v; want a refusal naming %s", cfg, err, p)
+	}
+	if cfg != nil || svc != nil {
+		t.Errorf("prepareServe returned a config or service alongside the refusal")
+	}
+}
+
+// A start whose admin listener will not open (no CA key to mint with)
+// neither creates nor reads the key file.
+func TestPrepareServeLeavesTheKeyFileAloneWhenTheAdminListenerWillNotStart(t *testing.T) {
+	p := serveEnv(t, false)
+	cfg, svc, err := prepareServe(&certDirResolver{})
+	if err != nil {
+		t.Fatalf("prepareServe: %v", err)
+	}
+	if svc == nil || svc.CanMint() {
+		t.Fatal("test setup: expected a CA service that cannot mint")
+	}
+	if cfg.AdminKey != "" {
+		t.Errorf("cfg.AdminKey = %q, want empty", cfg.AdminKey)
+	}
+	if _, err := os.Lstat(p); !os.IsNotExist(err) {
+		t.Errorf("key file touched by a start with no admin listener: %v", err)
+	}
+
+	// An unusable file there must not abort the start either.
+	writeKeyFile(t, p, "short-key-9f2\n")
+	if _, _, err := prepareServe(&certDirResolver{}); err != nil {
+		t.Errorf("prepareServe refused over a key file the admin plane would never read: %v", err)
+	}
+}
+
+func TestCreateAdminKeyFileRemovesTheFileWhenSyncFails(t *testing.T) {
+	p := secretPath(t)
+	orig := syncKeyFile
+	syncKeyFile = func(*os.File) error { return errors.New("disk full") }
+	t.Cleanup(func() { syncKeyFile = orig })
+
+	_, err := resolveAdminKey(&certDirResolver{})
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("resolveAdminKey = %v, want the sync error", err)
+	}
+	if _, statErr := os.Lstat(p); !os.IsNotExist(statErr) {
+		t.Errorf("a partial key file was left behind: %v", statErr)
+	}
+	syncKeyFile = orig
+	if _, err := resolveAdminKey(&certDirResolver{}); err != nil {
+		t.Errorf("the next start cannot create the key: %v", err)
+	}
+}
+
+func TestApplyAdminKeyLogsThatAnExistingFileIsIgnored(t *testing.T) {
+	p := secretPath(t)
+	writeKeyFile(t, p, "left-over-file-key-0123\n")
+	t.Setenv("SEP2_ADMIN_KEY", "an-env-key-of-16plus")
+	var buf bytes.Buffer
+	prev, flags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev); log.SetFlags(flags) })
+
+	cfg := &config.Config{AdminListen: ":8444"}
+	if err := applyAdminKey(cfg, &certDirResolver{}); err != nil {
+		t.Fatal(err)
+	}
+	want := "admin key from SEP2_ADMIN_KEY; " + p + " exists and is ignored"
+	if !strings.Contains(buf.String(), want) {
+		t.Errorf("log lacks %q\n%s", want, buf.String())
+	}
+	if strings.Contains(buf.String(), "an-env-key-of-16plus") || strings.Contains(buf.String(), "left-over-file-key") {
+		t.Errorf("log carries a key\n%s", buf.String())
+	}
 }

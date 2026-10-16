@@ -28,7 +28,12 @@ Where the key comes from:
   absent the first start creates it with 32 random bytes (64 hex characters),
   mode 0600. The server refuses to start if the file is a symlink, is not
   owned by the user running it, or is readable by group or other
-  (`chmod 600 <path>`).
+  (`chmod 600 <path>`), or holds a key under 16 characters or only
+  whitespace; the refusal names the file and comes before any listener opens.
+  The key file is unix-only: elsewhere the server refuses to start without
+  `SEP2_ADMIN_KEY`.
+- The key file is read, and created, only when the admin listener will start
+  (a CA key that can mint certificates is loaded).
 
 The server logs one line at startup with the sign-in URL and the key's source
 (never the key). Print the file's key with `sep2server admin-key` or

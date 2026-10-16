@@ -17,7 +17,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
@@ -1266,14 +1265,14 @@ func validateAdminExposure(addr string, allowNonLoopback bool) error {
 // The errors describe the value without echoing it, so no configured
 // credential can reach a log line by way of a startup failure.
 func validateAdminKey(adminKey string) error {
-	switch {
-	case adminKey == "":
+	switch err := auth.CheckAdminKey(adminKey); {
+	case errors.Is(err, auth.ErrAdminKeyUnset):
 		return errors.New("no admin key is configured: set SEP2_ADMIN_KEY, or " +
 			"let sep2server serve create the key file (SEP2_ADMIN_SECRET_FILE)")
-	case auth.IsBlankCredential(adminKey):
+	case errors.Is(err, auth.ErrAdminKeyBlank):
 		return errors.New("SEP2_ADMIN_KEY is set to whitespace only, which is not " +
 			"a usable credential: set it to a token of at least 16 characters")
-	case utf8.RuneCountInString(adminKey) < auth.MinAdminKeyLength:
+	case errors.Is(err, auth.ErrAdminKeyShort):
 		return fmt.Errorf("the admin key is shorter than %d characters: use a longer key",
 			auth.MinAdminKeyLength)
 	}

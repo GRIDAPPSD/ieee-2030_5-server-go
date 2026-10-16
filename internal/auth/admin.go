@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
 	"log"
 	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
@@ -593,6 +595,28 @@ func ConstantTimeEqual(a, b string) bool {
 
 // MinAdminKeyLength is the shortest admin key any bind accepts, in characters.
 const MinAdminKeyLength = 16
+
+// The ways an admin key can be unusable. CheckAdminKey returns them bare so
+// each caller words the refusal for where its key came from.
+var (
+	ErrAdminKeyUnset = errors.New("admin key is not set")
+	ErrAdminKeyBlank = errors.New("admin key is whitespace only")
+	ErrAdminKeyShort = errors.New("admin key is shorter than the minimum length")
+)
+
+// CheckAdminKey reports why key cannot be an admin credential, or nil. It
+// never includes the key in the error.
+func CheckAdminKey(key string) error {
+	switch {
+	case key == "":
+		return ErrAdminKeyUnset
+	case IsBlankCredential(key):
+		return ErrAdminKeyBlank
+	case utf8.RuneCountInString(key) < MinAdminKeyLength:
+		return ErrAdminKeyShort
+	}
+	return nil
+}
 
 // isLoopbackRemote reports whether r.RemoteAddr is a loopback address (IPv4
 // 127.0.0.0/8 or IPv6 ::1). httptest.NewRequest sets RemoteAddr to

@@ -3,13 +3,14 @@ import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { readFileSync } from 'fs';
 import { startServer, stopServer, getCertDir } from './setup';
+import { ADMIN_KEY } from './adminKey';
 
 // #929: the operator's whole flow from an empty server, UI only. Every write
 // below is a click or a keystroke in the admin UI; the API is read for
 // assertions and never written. The server boots with no boot fixture, so
 // there is no device, FSA or program until the UI makes one.
 
-const KEY = 'e2e-test-key';
+const KEY = ADMIN_KEY;
 const AUTH = { Authorization: `Bearer ${KEY}` };
 const FSA_MRID = 'e2e-runtime-fsa';
 const TEMPLATE = 'runtime template';

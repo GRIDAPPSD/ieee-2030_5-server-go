@@ -15,6 +15,8 @@ CLAUDE.md
 # could hold one.
 *.key
 *.pem
+# The generated admin key (SEP2_CERT_DIR can point inside the tree).
+admin.secret
 # Anchored to the repo root on purpose: it hides only the folder an old
 # `make certs` left there (its .crt files match neither rule above). An
 # unanchored `certs/` would also hide internal/certs/ and any nested certs

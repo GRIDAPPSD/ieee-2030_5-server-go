@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { join } from 'path';
 import { startServer, stopServer } from './setup';
+import { ADMIN_KEY } from './adminKey';
 
 let baseUrl: string;
 
@@ -21,13 +22,13 @@ test.afterAll(() => {
 // Set auth headers for all requests
 test.beforeEach(async ({ page }) => {
   await page.setExtraHTTPHeaders({
-    'Authorization': 'Bearer e2e-test-key',
+    'Authorization': `Bearer ${ADMIN_KEY}`,
   });
 });
 
 // 1. Dashboard loads and shows server info
 test('dashboard loads and shows server info', async ({ page }) => {
-  await page.goto(baseUrl + '/?token=e2e-test-key');
+  await page.goto(baseUrl + `/?token=${ADMIN_KEY}`);
   await page.waitForLoadState('domcontentloaded');
 
   await expect(page).toHaveTitle(/IEEE 2030.5/);
@@ -45,7 +46,7 @@ test('dashboard loads and shows server info', async ({ page }) => {
 
 // 2. Device table updates when a device registers
 test('device table shows data', async ({ page }) => {
-  await page.goto(baseUrl + '/?token=e2e-test-key');
+  await page.goto(baseUrl + `/?token=${ADMIN_KEY}`);
   await page.waitForLoadState('domcontentloaded');
 
   const deviceCount = page.locator('#bigDeviceCount');
@@ -64,7 +65,7 @@ test('device table shows data', async ({ page }) => {
 
 // 3. Certificate generation form works
 test('certificate generation form works', async ({ page }) => {
-  await page.goto(baseUrl + '/ui/certificates?token=e2e-test-key');
+  await page.goto(baseUrl + `/ui/certificates?token=${ADMIN_KEY}`);
   await page.waitForLoadState('domcontentloaded');
 
   const serialInput = page.locator('#hwSerial');
@@ -83,7 +84,7 @@ test('certificate generation form works', async ({ page }) => {
 // e2e/fixtures/der-control.yaml seeds the device, FSA and DER program this
 // picks).
 test('DER control panel creates a control and lists it in the table', async ({ page }) => {
-  await page.goto(baseUrl + '/ui/control?token=e2e-test-key');
+  await page.goto(baseUrl + `/ui/control?token=${ADMIN_KEY}`);
   await page.waitForLoadState('domcontentloaded');
 
   await page.locator('#controlDevice').selectOption({ label: '222222222222' });
@@ -111,7 +112,7 @@ test('DER control panel creates a control and lists it in the table', async ({ p
 
 // 5. Dashboard renders all sections correctly
 test('dashboard renders all UI sections', async ({ page }) => {
-  await page.goto(baseUrl + '/?token=e2e-test-key');
+  await page.goto(baseUrl + `/?token=${ADMIN_KEY}`);
   await page.waitForLoadState('domcontentloaded');
 
   // Overview card
@@ -161,7 +162,7 @@ test('dashboard renders all UI sections', async ({ page }) => {
 // harness issues only admin-plane requests, which the comms recorder does
 // not see, so this holds however many specs ran before it.
 test('a fresh server shows Not seen for every device and 0 online', async ({ page }) => {
-  await page.goto(baseUrl + '/?token=e2e-test-key');
+  await page.goto(baseUrl + `/?token=${ADMIN_KEY}`);
   await page.waitForLoadState('domcontentloaded');
 
   await expect(page.locator('#commsOnline')).toHaveText('0 of 1');

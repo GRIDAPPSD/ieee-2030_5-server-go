@@ -1,4 +1,4 @@
-.PHONY: build test test-cover test-race test-verbose test-e2e \
+.PHONY: admin-key build test test-cover test-race test-verbose test-e2e \
        test-csip-server \
        test-csip test-csip-hooks test-csip-race test-csip-cover coverage-gate \
        coverage-scope-check \
@@ -171,9 +171,11 @@ run: build certs           ## Build, generate certs, and start server (CCM-8, th
 	SEP2_CA=$(CERT_DIR)/ca.crt \
 	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
 	SEP2_ADMIN_ADDR=:8444 \
-	SEP2_ADMIN_KEY=admin \
 	SEP2_METRICS_ADDR=0.0.0.0:9100 \
 	./$(SERVER) serve
+
+admin-key: build           ## Print the local admin key (created by the first make run)
+	@./$(SERVER) admin-key
 
 run-ccm: run               ## Alias for run (CCM-8 is the server's only mode; kept for muscle memory and existing docs)
 
@@ -194,14 +196,12 @@ run-ccm: run               ## Alias for run (CCM-8 is the server's only mode; ke
 #
 # Inspect the captured JSON with:   journalctl -t sep2server -o json -f
 run-journald: build certs  ## Like run, but ship stdout+stderr to journald as SYSLOG_IDENTIFIER=sep2server
-	@# SEP2_ADMIN_KEY=admin is a local-dev default; MUST be overridden for any non-dev/bare-metal deployment
 	SEP2_ADDR=:8443 \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
 	SEP2_CA=$(CERT_DIR)/ca.crt \
 	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
 	SEP2_ADMIN_ADDR=:8444 \
-	SEP2_ADMIN_KEY=admin \
 	systemd-cat -t sep2server ./$(SERVER) serve
 
 run-ccm-journald: run-journald  ## Alias for run-journald (CCM-8 is the server's only mode; kept for muscle memory and existing docs)
@@ -213,7 +213,6 @@ run-full: build certs      ## Start with mDNS + admin dashboard (admin on loopba
 	SEP2_CA=$(CERT_DIR)/ca.crt \
 	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
 	SEP2_ADMIN_ADDR=:8444 \
-	SEP2_ADMIN_KEY=admin \
 	SEP2_MDNS=true \
 	./$(SERVER) serve
 

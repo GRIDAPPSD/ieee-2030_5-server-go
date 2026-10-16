@@ -745,9 +745,8 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 		return nil, "", "", nil, err
 	}
 
-	// #365: an operator who typed whitespace into the admin key was trying
-	// to set one. Silently disabling Bearer auth hides the typo behind a
-	// later connection refusal; a startup error names the variable to fix.
+	// The admin plane never starts keyless: a blank, whitespace-only or
+	// short key refuses startup before any socket opens (#365, #646).
 	if err := validateAdminKey(cfg.AdminKey); err != nil {
 		return nil, "", "", nil, err
 	}
@@ -842,11 +841,7 @@ func startAdminServer(cfg *config.Config, svc *handler.AdminCertService, stores 
 
 	go func() {
 		log.Printf("Admin server listening on %s (%s)", addr, tlsModeDescription)
-		if cfg.AdminKey != "" {
-			log.Println("Admin API key configured")
-		} else {
-			log.Println("WARNING: No admin API key set (SEP2_ADMIN_KEY). Bearer auth disabled.")
-		}
+		log.Print(adminSignInHint(cfg, addr))
 		errCh <- adminSrv.Serve(serveListener)
 	}()
 
@@ -1263,20 +1258,58 @@ func validateAdminExposure(addr string, allowNonLoopback bool) error {
 		addr)
 }
 
-// validateAdminKey refuses a configured admin key that carries no credential
-// material. An unset key is the deliberate "Bearer auth disabled" state and is
-// left alone; whitespace-only is a typo, and it is distinguished from unset
-// rather than folded into it.
+// validateAdminKey refuses an admin key that is missing, carries no
+// credential material, or is shorter than auth.MinAdminKeyLength, on every
+// bind. Whitespace-only is a typo and is told apart from unset.
 //
-// The error describes the value without echoing it, so no configured
+// The errors describe the value without echoing it, so no configured
 // credential can reach a log line by way of a startup failure.
 func validateAdminKey(adminKey string) error {
-	if adminKey == "" || !auth.IsBlankCredential(adminKey) {
-		return nil
+	switch err := auth.CheckAdminKey(adminKey); {
+	case errors.Is(err, auth.ErrAdminKeyUnset):
+		return errors.New("no admin key is configured: set SEP2_ADMIN_KEY, or " +
+			"let sep2server serve create the key file (SEP2_ADMIN_SECRET_FILE)")
+	case errors.Is(err, auth.ErrAdminKeyBlank):
+		return errors.New("SEP2_ADMIN_KEY is set to whitespace only, which is not " +
+			"a usable credential: set it to a token of at least 16 characters")
+	case errors.Is(err, auth.ErrAdminKeyShort):
+		return fmt.Errorf("the admin key is shorter than %d characters: use a longer key",
+			auth.MinAdminKeyLength)
 	}
-	return errors.New("SEP2_ADMIN_KEY is set to whitespace only, which is not " +
-		"a usable credential: set it to a non-blank token, or leave " +
-		"SEP2_ADMIN_KEY unset to disable Bearer auth deliberately")
+	return nil
+}
+
+// adminSignInHint is the one startup line that tells an operator where to
+// sign in and where the key lives. It names the key's source, never the key.
+func adminSignInHint(cfg *config.Config, addr string) string {
+	scheme := "http"
+	if cfg.AdminTLS {
+		scheme = "https"
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		host, port = addr, ""
+	}
+	if host == "::1" || host == "localhost" {
+		host = "127.0.0.1"
+	}
+	hostport := net.JoinHostPort(host, port)
+	if port == "" {
+		hostport = host
+	}
+	hint := fmt.Sprintf("admin sign-in: %s://%s/login, ", scheme, hostport)
+	switch src := cfg.AdminKeySource; {
+	case src == "":
+		return hint + "key from the configuration"
+	case src == "SEP2_ADMIN_KEY":
+		return hint + "key from " + src
+	default:
+		gen := ""
+		if cfg.AdminKeyGenerated {
+			gen = " (generated now)"
+		}
+		return hint + "key in " + src + gen + " (print it with: sep2server admin-key)"
+	}
 }
 
 // adminProxyWarning returns the #269 startup-warning text when the

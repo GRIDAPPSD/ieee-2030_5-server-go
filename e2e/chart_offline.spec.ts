@@ -12,6 +12,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import { startServer, stopServer } from './setup';
+import { ADMIN_KEY } from './adminKey';
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
@@ -50,7 +51,7 @@ test.describe('admin UI with the chart library bundled', () => {
   // goes in a query string: the middleware does not read one there, and a
   // URL-borne secret lands in logs and history.
   test.beforeEach(async ({ page }) => {
-    await page.setExtraHTTPHeaders({ Authorization: 'Bearer e2e-test-key' });
+    await page.setExtraHTTPHeaders({ Authorization: `Bearer ${ADMIN_KEY}` });
   });
 
   test('the activity chart draws with every external origin blocked', async ({ page }) => {

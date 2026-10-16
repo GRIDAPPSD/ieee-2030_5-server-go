@@ -2,13 +2,16 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
 	"log"
 	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/obs"
@@ -178,7 +181,7 @@ func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, se
 	// all, so only a non-blank mismatch logs a failure (#413).
 	if !IsBlankCredential(adminKey) {
 		if token, ok := bearerToken(r.Header.Get("Authorization")); ok && !IsBlankCredential(token) {
-			if constantTimeEqual(token, adminKey) {
+			if ConstantTimeEqual(token, adminKey) {
 				LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathBearer)
 				redeemPresentedTicket(r, tickets)
 				return true, credentialPathBearer
@@ -582,11 +585,37 @@ func bearerToken(header string) (string, bool) {
 	return header[len(scheme)+1:], true
 }
 
-func constantTimeEqual(a, b string) bool {
-	if len(a) != len(b) {
-		return false
+// ConstantTimeEqual compares two credentials without revealing, through
+// timing, how long the expected one is: both sides are hashed to a fixed
+// length first, so a length mismatch costs the same as any other mismatch.
+func ConstantTimeEqual(a, b string) bool {
+	ha, hb := sha256.Sum256([]byte(a)), sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(ha[:], hb[:]) == 1
+}
+
+// MinAdminKeyLength is the shortest admin key any bind accepts, in characters.
+const MinAdminKeyLength = 16
+
+// The ways an admin key can be unusable. CheckAdminKey returns them bare so
+// each caller words the refusal for where its key came from.
+var (
+	ErrAdminKeyUnset = errors.New("admin key is not set")
+	ErrAdminKeyBlank = errors.New("admin key is whitespace only")
+	ErrAdminKeyShort = errors.New("admin key is shorter than the minimum length")
+)
+
+// CheckAdminKey reports why key cannot be an admin credential, or nil. It
+// never includes the key in the error.
+func CheckAdminKey(key string) error {
+	switch {
+	case key == "":
+		return ErrAdminKeyUnset
+	case IsBlankCredential(key):
+		return ErrAdminKeyBlank
+	case utf8.RuneCountInString(key) < MinAdminKeyLength:
+		return ErrAdminKeyShort
 	}
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+	return nil
 }
 
 // isLoopbackRemote reports whether r.RemoteAddr is a loopback address (IPv4

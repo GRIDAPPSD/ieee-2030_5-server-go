@@ -2,6 +2,7 @@ import { execFileSync, spawn, ChildProcess } from 'child_process';
 import { existsSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { ADMIN_KEY } from './adminKey';
 
 let serverProcess: ChildProcess | null = null;
 let adminUrl: string = '';
@@ -61,7 +62,7 @@ export async function startServer(extraEnv: Record<string, string> = {}): Promis
       SEP2_CA: join(certDir, 'ca.crt'),
       SEP2_CA_KEY: join(certDir, 'ca.key'),
       SEP2_ADMIN_ADDR: `:${adminPort}`,
-      SEP2_ADMIN_KEY: 'e2e-test-key',
+      SEP2_ADMIN_KEY: ADMIN_KEY,
       // #161: admin listener defaults to plain HTTP. Force HTTPS with
       // self-signed cert so the e2e dashboard URL keeps the `https://...`
       // shape it used pre-split.

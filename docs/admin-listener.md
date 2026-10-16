@@ -208,24 +208,32 @@ server bug rather than a configuration gap; both are in the troubleshooting
 table under
 [Opening the admin UI in a browser from another machine](admin.md#opening-the-admin-ui-in-a-browser-from-another-machine).
 
-## Admin Bearer key (`SEP2_ADMIN_KEY`, #365)
+## Admin Bearer key (`SEP2_ADMIN_KEY`, `SEP2_ADMIN_SECRET_FILE`)
 
-Three states, deliberately distinguished:
+The admin listener never starts keyless. When `SEP2_ADMIN_LISTEN` is set:
 
 | `SEP2_ADMIN_KEY` | Behavior |
 |---|---|
-| unset | Bearer auth disabled; mTLS, ticket and cookie paths still work |
+| unset or empty | the key file is read, or created if absent (below) |
 | whitespace only (a space, tab, newline, or any mix) | HARD startup error, no socket opens |
-| anything with a non-whitespace character | Bearer auth enabled with that value |
+| shorter than 16 characters | HARD startup error, no socket opens |
+| 16 or more characters | used as given; the key file is not read, created or changed |
 
-Whitespace-only is a startup failure rather than a silent disable. An operator
-who typed a space was trying to set a key, and silently disabling Bearer auth
-turns that typo into a connection refusal much later, in a place that does not
-name the cause. The error names `SEP2_ADMIN_KEY` and never echoes the value.
+The key file is `SEP2_ADMIN_SECRET_FILE`, default `<cert dir>/admin.secret`
+(`SEP2_CERT_DIR`, else `~/tls`). It is created on first start with 32 random
+bytes (64 hex characters) and mode 0600, using an exclusive create so two
+servers starting at once agree on one key. A file that is a symlink, not owned
+by the running user, or readable by group or other is refused before any
+socket opens; the error names the path. `sep2server admin-key` prints the key
+and never creates the file. Rotate by stopping the server, deleting the file
+and starting it again.
+
+Errors name the variable, the path or the 16-character floor, and never echo
+the key.
 
 ### The key is matched byte-for-byte
 
-A non-blank key is never trimmed. `SEP2_ADMIN_KEY="s3cret "` is the seven-byte
+A non-blank key is never trimmed. `SEP2_ADMIN_KEY="s3cret-0123456789 "` is the 17-byte
 value including the trailing space, and only a caller presenting those exact
 bytes is admitted. Trimming it would change the secret the server accepts
 without saying so.
@@ -323,7 +331,7 @@ WARN once, at `New`.
 # Caddy mode: plain HTTP on the admin port, Caddy terminates externally
 export SEP2_ADMIN_LISTEN=127.0.0.1:9443
 export SEP2_ADMIN_TLS=false
-export SEP2_ADMIN_KEY=<bearer-token>
+export SEP2_ADMIN_KEY=<bearer-token>        # 16+ characters; omit to use <cert dir>/admin.secret
 
 # Direct HTTPS with self-signed cert (dev / kiosk)
 export SEP2_ADMIN_LISTEN=:9443

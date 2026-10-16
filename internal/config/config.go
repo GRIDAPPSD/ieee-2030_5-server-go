@@ -138,10 +138,15 @@ type Config struct {
 	// resolve which value the server should bind to.
 	AdminListen  string // admin listener address (e.g., ":9443"); empty = falls back to AdminAddr
 	AdminAddr    string // DEPRECATED alias for AdminListen; preserved for back-compat
-	AdminKey     string // Bearer token for admin API (empty = Bearer auth disabled)
+	AdminKey     string // Bearer token for admin API; required whenever the admin listener is configured
 	AdminTLS     bool   // true = HTTPS on admin listener; false = plain HTTP (Caddy mode)
 	AdminCert    string // admin listener cert PEM path; empty + AdminTLS = self-signed
 	AdminKeyFile string // admin listener key PEM path; required when AdminCert is set
+
+	// AdminKeySource names where AdminKey came from (an env var name or a
+	// file path) for the startup hint; it never holds the key.
+	AdminKeySource    string
+	AdminKeyGenerated bool // the key file was created by this start
 
 	// #624: the trust anchor for the admin listener's client-certificate
 	// verification (its ClientCAs pool). Empty falls back to the serving CA

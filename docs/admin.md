@@ -16,15 +16,34 @@ entirely. The Make targets bind it on `:8444`:
 
 ```bash
 SEP2_ADMIN_LISTEN=:8444
-SEP2_ADMIN_KEY="$(openssl rand -hex 32)"   # bearer secret; do NOT ship "admin"
 ```
 
-`SEP2_ADMIN_KEY` is the Bearer token the login form validates against
-(constant-time compare). It is distinct from `SEP2_ADMIN_KEY_FILE`,
-which is the admin listener's TLS private key path - see
-[`admin-listener.md`](admin-listener.md). Any non-loopback deployment
-MUST set `SEP2_ADMIN_KEY` to a high-entropy value; the literal string
-`admin` is fine for `make run` on localhost only.
+The admin plane never starts without a key of at least 16 characters.
+Where the key comes from:
+
+- `SEP2_ADMIN_KEY`, if set. It is used as given and the key file is not read,
+  created or changed. Use this for containers, secret managers and tests.
+- Otherwise the key file, `<cert dir>/admin.secret` (`SEP2_CERT_DIR`, else
+  `~/tls`). `SEP2_ADMIN_SECRET_FILE` overrides the path. If the file is
+  absent the first start creates it with 32 random bytes (64 hex characters),
+  mode 0600. The server refuses to start if the file is a symlink, is not
+  owned by the user running it, or is readable by group or other
+  (`chmod 600 <path>`), or holds a key under 16 characters or only
+  whitespace; the refusal names the file and comes before any listener opens.
+  The key file is unix-only: elsewhere the server refuses to start without
+  `SEP2_ADMIN_KEY`.
+- The key file is read, and created, only when the admin listener will start
+  (a CA key that can mint certificates is loaded).
+
+The server logs one line at startup with the sign-in URL and the key's source
+(never the key). Print the file's key with `sep2server admin-key` or
+`make admin-key`; the command never creates the file. To rotate, stop the
+server, delete the file, and start it again; a key changed in the file while
+the server runs is not picked up until restart.
+
+`SEP2_ADMIN_SECRET_FILE` names the key file; `SEP2_ADMIN_KEY_FILE` is the
+admin listener's TLS private key path - see
+[`admin-listener.md`](admin-listener.md). `make run` sets no key.
 
 | Profile | Command |
 |---|---|
@@ -77,8 +96,7 @@ export SEP2_ADMIN_LISTEN=0.0.0.0:8444        # or a specific interface IP
 export SEP2_ADMIN_ALLOW_NON_LOOPBACK=true    # without this the server does NOT start
 export SEP2_ADMIN_TLS=true                   # the session cookie is Secure; see below
 export SEP2_ADMIN_ALLOWED_HOSTS=admin.example.com,192.168.1.10
-export SEP2_ADMIN_KEY="$(openssl rand -hex 32)"
-sep2server serve
+sep2server serve   # creates <cert dir>/admin.secret on first start; read it with: sep2server admin-key
 ```
 
 - `SEP2_ADMIN_ALLOW_NON_LOOPBACK=true` is mandatory for any bind that is
@@ -100,8 +118,9 @@ sep2server serve
   `localhost`, `127.0.0.1`, `::1` and `ieee2030-5.local` only, so a
   request that arrives with `Host: 192.168.1.10:8444` is rejected before
   the login form is reached.
-- `SEP2_ADMIN_KEY` is what the operator types into the form. Use a
-  high-entropy value: this listener is now reachable from the network.
+- The admin key is what the operator types into the form (`sep2server
+  admin-key` prints the generated one). This listener is now reachable from
+  the network, so keep the key file private.
 
 With `SEP2_ADMIN_TLS=true` and no `SEP2_ADMIN_CERT` / `SEP2_ADMIN_KEY_FILE`,
 the server generates a self-signed certificate at startup, and the browser
@@ -124,7 +143,7 @@ operator-issued cert to avoid it.
    **IEEE 2030.5 Admin**, with the line "Sign in to access the server
    dashboard.", one masked field labelled **ADMIN KEY**, and a **Sign in**
    button.
-3. **Type the `SEP2_ADMIN_KEY` value into the Admin Key field** and press
+3. **Type the admin key into the Admin Key field** (`make admin-key`) and press
    **Sign in**. Nothing else is entered anywhere: there is no username,
    and no header or token to paste.
 4. **The dashboard renders.** A successful sign-in returns you to `/` and
@@ -152,7 +171,9 @@ rows: both look like a broken server rather than a configuration gap.
 | What you see | Cause | Fix |
 |---|---|---|
 | The server exits at startup: `admin listener refuses to bind non-loopback address "0.0.0.0:8444"` | Non-loopback bind with no opt-in. No socket was opened. | Set `SEP2_ADMIN_ALLOW_NON_LOOPBACK=true`, or use a bare `:8444` for a loopback-only admin plane. |
-| The server exits at startup: `SEP2_ADMIN_KEY is set to whitespace only` | The key is a space, tab or newline. Whitespace is a typo, not a way to disable Bearer auth. | Set a non-blank key, or leave `SEP2_ADMIN_KEY` unset to disable Bearer auth deliberately. |
+| The server exits at startup: `SEP2_ADMIN_KEY is set to whitespace only` | The key is a space, tab or newline. | Set a token of at least 16 characters, or unset `SEP2_ADMIN_KEY` to use the generated key file. |
+| The server exits at startup: `the admin key is shorter than 16 characters` | The key from `SEP2_ADMIN_KEY` or the key file is too short. | Use a longer key; for the file, delete it and restart to generate one. |
+| The server exits at startup naming `admin.secret` and `chmod 600` or `symbolic link` or `not owned by the current user` | The key file failed its safety check. Nothing was read from it. | `chmod 600` the file, replace the symlink with a regular file, or delete the file to generate a new key. |
 | Sign in appears to succeed, then every page shows the sign-in form again | The admin listener is plain HTTP on a non-loopback address, so the browser discarded the `Secure` session cookie. The server logged `WARNING: admin listener is plain HTTP on non-loopback address ...` at startup: check the boot log before suspecting the login. | Set `SEP2_ADMIN_TLS=true`, or terminate TLS in a proxy and set `SEP2_ADMIN_BEHIND_PROXY=true`. |
 | `421 Misdirected Request` | The `Host` header is not on the allowlist. The gate runs before authentication, so this is not a credential problem and the sign-in page is never reached. The boot log names the allowlist it compared against. | Add the hostname or IP you typed to `SEP2_ADMIN_ALLOWED_HOSTS`. |
 | `400 Bad Request: missing Host header` | An HTTP/1.1 request arrived with no `Host`. No browser does this; a hand-built client or a misconfigured proxy does. | Send a `Host` header. |
@@ -207,8 +228,8 @@ defense in depth):
 1. **[mTLS](glossary.md)** - peer cert with the IEEE 2030.5 admin policy OID
    `1.3.6.1.4.1.40732.2.5` (matched by
    [`certs.HasPolicyOID`](../internal/certs/oids.go)).
-2. **Bearer** - `Authorization: Bearer <SEP2_ADMIN_KEY>`. Disabled when
-   `SEP2_ADMIN_KEY` is empty.
+2. **Bearer** - `Authorization: Bearer <admin key>`. The key is always set:
+   the server does not start without one.
 3. **Query-param ticket** - `?ticket=<value>` redeemed against the
    `TicketStore`. One-time use. Used by browser SSE / EventSource
    clients that cannot send `Authorization` headers.
@@ -411,9 +432,11 @@ curl -f --cacert certs/ca.crt \
      https://localhost:8444/api/certs/ca
 
 # HTTPS admin listener with Bearer (no client cert needed):
-curl -f https://localhost:8444/api/certs/ca \
-     --cacert certs/ca.crt \
-     -H "Authorization: Bearer $SEP2_ADMIN_KEY"
+# -H @- reads the header from stdin, so the key never appears in argv.
+printf 'Authorization: Bearer %s\n' "$(sep2server admin-key)" |
+  curl -f https://localhost:8444/api/certs/ca \
+       --cacert certs/ca.crt \
+       -H @-
 ```
 
 `-f` makes curl fail on a non-2xx response instead of writing the error

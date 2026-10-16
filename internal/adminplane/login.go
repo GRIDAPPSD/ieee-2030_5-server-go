@@ -1,7 +1,6 @@
 package adminplane
 
 import (
-	"crypto/subtle"
 	"log"
 	"net/http"
 	"strings"
@@ -73,7 +72,7 @@ func HandleLoginSubmit(adminKey string, sessions *auth.SessionStore) http.Handle
 			HandleLoginPage("Invalid admin key.")(w, r)
 			return
 		}
-		if !constantTimeEqual(submitted, adminKey) {
+		if !auth.ConstantTimeEqual(submitted, adminKey) {
 			// Logged after the compare has already returned, never from a
 			// branch keyed on how much of the key matched, so the log write
 			// itself carries no timing signal (#413).
@@ -95,16 +94,6 @@ func HandleLoginSubmit(adminKey string, sessions *auth.SessionStore) http.Handle
 		http.SetCookie(w, auth.NewAdminTicketCookie(id))
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	}
-}
-
-// constantTimeEqual compares two strings in constant time. Duplicated here
-// from internal/auth so server doesn't depend on auth's unexported helper;
-// each comparison is small and the duplication is bounded.
-func constantTimeEqual(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // htmlEscape is a minimal HTML-attribute-safe escape for the error message

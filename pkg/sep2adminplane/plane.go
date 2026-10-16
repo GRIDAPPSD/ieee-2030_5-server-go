@@ -50,7 +50,7 @@ var (
 
 // MinAdminKeyLength is the shortest AdminKey New accepts, in characters.
 // With the loopback bypass off the key is the only barrier to the plane.
-const MinAdminKeyLength = 16
+const MinAdminKeyLength = auth.MinAdminKeyLength
 
 // Config is what New builds the plane from.
 type Config struct {

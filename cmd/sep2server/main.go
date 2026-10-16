@@ -35,6 +35,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
+	case "admin-key":
+		if err := runAdminKey(os.Stdout, os.Args[2:], &certDirResolver{}); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	case "certs":
 		if err := runCerts(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -50,6 +55,10 @@ func runServe() error {
 	resolver := &certDirResolver{}
 	cfg, err := configFromEnv(resolver)
 	if err != nil {
+		return err
+	}
+
+	if err := applyAdminKey(cfg, resolver); err != nil {
 		return err
 	}
 
@@ -379,6 +388,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  serve    Start the IEEE 2030.5 server")
+	fmt.Fprintln(os.Stderr, "  admin-key  Print the admin key")
 	fmt.Fprintln(os.Stderr, "  certs    Certificate management")
 	fmt.Fprintln(os.Stderr, "  version  Print version")
 }

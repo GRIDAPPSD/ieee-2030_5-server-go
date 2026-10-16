@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"log"
 	"log/slog"
@@ -178,7 +179,7 @@ func credentialAdmits(r *http.Request, adminKey string, tickets *TicketStore, se
 	// all, so only a non-blank mismatch logs a failure (#413).
 	if !IsBlankCredential(adminKey) {
 		if token, ok := bearerToken(r.Header.Get("Authorization")); ok && !IsBlankCredential(token) {
-			if constantTimeEqual(token, adminKey) {
+			if ConstantTimeEqual(token, adminKey) {
 				LogSuccessfulAdminCredential(r, obs.AdminAdmissionPathBearer)
 				redeemPresentedTicket(r, tickets)
 				return true, credentialPathBearer
@@ -582,12 +583,16 @@ func bearerToken(header string) (string, bool) {
 	return header[len(scheme)+1:], true
 }
 
-func constantTimeEqual(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+// ConstantTimeEqual compares two credentials without revealing, through
+// timing, how long the expected one is: both sides are hashed to a fixed
+// length first, so a length mismatch costs the same as any other mismatch.
+func ConstantTimeEqual(a, b string) bool {
+	ha, hb := sha256.Sum256([]byte(a)), sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(ha[:], hb[:]) == 1
 }
+
+// MinAdminKeyLength is the shortest admin key any bind accepts, in characters.
+const MinAdminKeyLength = 16
 
 // isLoopbackRemote reports whether r.RemoteAddr is a loopback address (IPv4
 // 127.0.0.0/8 or IPv6 ::1). httptest.NewRequest sets RemoteAddr to

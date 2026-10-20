@@ -152,15 +152,26 @@ new-device:                ## Mint a new device cert (DEVICE_NAME= SERIAL= requi
 
 # --- Run ----------------------------------------------------------
 
-# Listen addresses for every run target. Each is overridable from the
+# Listen addresses for the run targets. Each is overridable from the
 # environment or the make command line (make run SEP2_ADMIN_ADDR=:28444),
 # which is how to dodge a port another process already owns (for example a
-# Windows portproxy rule under WSL2). The admin listener is plain HTTP, so
-# its URL is http://localhost:<port>. run-testdevice binds TESTDEVICE_ADDR
-# instead of SEP2_ADDR.
+# Windows portproxy rule under WSL2). An empty value falls back to the
+# default. The admin listener is plain HTTP, so its URL is
+# http://localhost:<port>. run-testdevice binds TESTDEVICE_ADDR instead of
+# SEP2_ADDR. SEP2_METRICS_ADDR applies to run only.
 SEP2_ADDR         ?= :8443
 SEP2_ADMIN_ADDR   ?= :8444
 SEP2_METRICS_ADDR ?= 0.0.0.0:9100
+# override: a command-line `VAR=` would otherwise beat this assignment.
+ifeq ($(strip $(SEP2_ADDR)),)
+override SEP2_ADDR := :8443
+endif
+ifeq ($(strip $(SEP2_ADMIN_ADDR)),)
+override SEP2_ADMIN_ADDR := :8444
+endif
+ifeq ($(strip $(SEP2_METRICS_ADDR)),)
+override SEP2_METRICS_ADDR := 0.0.0.0:9100
+endif
 
 # #268: SEP2_ADMIN_ADDR=:8444 binds admin to 127.0.0.1:8444 by default
 # (loopback). #365: an off-box bind ALSO needs an explicit opt-in or
@@ -262,7 +273,7 @@ run-testdevice: build certs   ## Start server with test device root + EndDevice 
 
 # SunSpec CSIP test PKI profile (#204, #911).
 #
-# Boots the server in CCM-8 mode on :8443 presenting the SunSpec server
+# Boots the server in CCM-8 mode on SEP2_ADDR (default :8443) presenting the SunSpec server
 # chain, and trusts the SunSpec client CAs through SEP2_EXTRA_CLIENT_CAS.
 # The local dev CA is kept (SEP2_CA/SEP2_CA_KEY) only so the admin plane
 # starts: it needs a CA role with a usable key, which SunSpec does not give

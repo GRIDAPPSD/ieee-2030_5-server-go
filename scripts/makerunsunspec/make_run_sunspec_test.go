@@ -58,9 +58,28 @@ type run struct {
 	err     error
 }
 
+// hermeticEnv returns the process environment without any SEP2_* variable,
+// so a developer's exported address cannot change what the recipe sees.
+func hermeticEnv() []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "SEP2_") {
+			env = append(env, kv)
+		}
+	}
+	return env
+}
+
 // runMake runs `make run-sunspec` from the repo root with the given
 // variable assignments and returns combined output and the stub's env dump.
 func runMake(t *testing.T, assigns ...string) run {
+	t.Helper()
+	return runMakeEnv(t, nil, assigns...)
+}
+
+// runMakeEnv is runMake with extra environment variables, which reach make
+// as exported variables rather than command-line assignments.
+func runMakeEnv(t *testing.T, extraEnv []string, assigns ...string) run {
 	t.Helper()
 	root := repoRoot(t)
 	dir := t.TempDir()
@@ -76,7 +95,7 @@ func runMake(t *testing.T, assigns ...string) run {
 	}
 	args := append([]string{"-C", root, "-o", "build", "-o", "certs", "run-sunspec", "SERVER=" + rel, "CERT_DIR=/local-ca"}, assigns...)
 	cmd := exec.Command("make", args...)
-	cmd.Env = append(os.Environ(), "HOME="+dir)
+	cmd.Env = append(append(hermeticEnv(), "HOME="+dir), extraEnv...)
 	out, err := cmd.CombinedOutput()
 	dump, _ := os.ReadFile(envDump)
 	return run{out: string(out), envDump: string(dump), err: err}
@@ -114,6 +133,36 @@ func TestRunSunspecPassesVariablesToServerEnv(t *testing.T) {
 		if !strings.Contains(r.out, want) {
 			t.Errorf("banner missing %q; got:\n%s", want, r.out)
 		}
+	}
+}
+
+func TestRunSunspecAddrOverridesAndEmptyFallback(t *testing.T) {
+	d := t.TempDir()
+	pem := filepath.Join(d, "x.pem")
+	writeSyntheticPEM(t, pem)
+	sunspec := []string{"SUNSPEC_SERVER_CHAIN=" + pem, "SUNSPEC_SERVER_KEY=" + pem,
+		"SUNSPEC_CLIENT_CAS=" + pem, "SUNSPEC_SERVER_CA_BUNDLE=" + pem}
+	cases := []struct {
+		name    string
+		env     []string
+		assigns []string
+		want    string
+	}{
+		{"exported value", []string{"SEP2_ADDR=:9443"}, nil, "SEP2_ADDR=:9443"},
+		{"command line value", nil, []string{"SEP2_ADDR=:9444"}, "SEP2_ADDR=:9444"},
+		{"empty exported value falls back", []string{"SEP2_ADDR="}, nil, "SEP2_ADDR=:8443"},
+		{"empty command line value falls back", nil, []string{"SEP2_ADDR="}, "SEP2_ADDR=:8443"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := runMakeEnv(t, c.env, append(sunspec, c.assigns...)...)
+			if r.err != nil {
+				t.Fatalf("make failed: %v\n%s", r.err, r.out)
+			}
+			if !strings.Contains(r.envDump, c.want+"\n") {
+				t.Errorf("server env missing %q; got:\n%s", c.want, r.envDump)
+			}
+		})
 	}
 }
 

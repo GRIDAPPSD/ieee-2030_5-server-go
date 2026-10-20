@@ -152,6 +152,16 @@ new-device:                ## Mint a new device cert (DEVICE_NAME= SERIAL= requi
 
 # --- Run ----------------------------------------------------------
 
+# Listen addresses for every run target. Each is overridable from the
+# environment or the make command line (make run SEP2_ADMIN_ADDR=:28444),
+# which is how to dodge a port another process already owns (for example a
+# Windows portproxy rule under WSL2). The admin listener is plain HTTP, so
+# its URL is http://localhost:<port>. run-testdevice binds TESTDEVICE_ADDR
+# instead of SEP2_ADDR.
+SEP2_ADDR         ?= :8443
+SEP2_ADMIN_ADDR   ?= :8444
+SEP2_METRICS_ADDR ?= 0.0.0.0:9100
+
 # #268: SEP2_ADMIN_ADDR=:8444 binds admin to 127.0.0.1:8444 by default
 # (loopback). #365: an off-box bind ALSO needs an explicit opt-in or
 # startup refuses; see docs/admin-listener.md. To reach admin off-box:
@@ -164,14 +174,14 @@ new-device:                ## Mint a new device cert (DEVICE_NAME= SERIAL= requi
 # the EXPLICIT routable form 0.0.0.0:9100 so the scrape works. This exposes
 # /metrics on ALL interfaces and MUST sit behind a host firewall / trusted
 # network; the server logs a non-loopback startup WARNING to make that visible.
-run: build certs           ## Build, generate certs, and start server (CCM-8, the server's only mode; admin on loopback :8444, metrics on 0.0.0.0:9100)
-	SEP2_ADDR=:8443 \
+run: build certs           ## Build, generate certs, and start server (CCM-8, the server's only mode; ports from SEP2_ADDR, SEP2_ADMIN_ADDR, SEP2_METRICS_ADDR; admin is plain http://localhost:<port>)
+	SEP2_ADDR=$(SEP2_ADDR) \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
 	SEP2_CA=$(CERT_DIR)/ca.crt \
 	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
-	SEP2_ADMIN_ADDR=:8444 \
-	SEP2_METRICS_ADDR=0.0.0.0:9100 \
+	SEP2_ADMIN_ADDR=$(SEP2_ADMIN_ADDR) \
+	SEP2_METRICS_ADDR=$(SEP2_METRICS_ADDR) \
 	./$(SERVER) serve
 
 admin-key: build           ## Print the local admin key (created by the first make run)
@@ -196,23 +206,23 @@ run-ccm: run               ## Alias for run (CCM-8 is the server's only mode; ke
 #
 # Inspect the captured JSON with:   journalctl -t sep2server -o json -f
 run-journald: build certs  ## Like run, but ship stdout+stderr to journald as SYSLOG_IDENTIFIER=sep2server
-	SEP2_ADDR=:8443 \
+	SEP2_ADDR=$(SEP2_ADDR) \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
 	SEP2_CA=$(CERT_DIR)/ca.crt \
 	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
-	SEP2_ADMIN_ADDR=:8444 \
+	SEP2_ADMIN_ADDR=$(SEP2_ADMIN_ADDR) \
 	systemd-cat -t sep2server ./$(SERVER) serve
 
 run-ccm-journald: run-journald  ## Alias for run-journald (CCM-8 is the server's only mode; kept for muscle memory and existing docs)
 
-run-full: build certs      ## Start with mDNS + admin dashboard (admin on loopback :8444)
-	SEP2_ADDR=:8443 \
+run-full: build certs      ## Start with mDNS + admin dashboard (ports from SEP2_ADDR, SEP2_ADMIN_ADDR; admin is plain http://localhost:<port>)
+	SEP2_ADDR=$(SEP2_ADDR) \
 	SEP2_CERT=$(CERT_DIR)/server.crt \
 	SEP2_KEY=$(CERT_DIR)/server.key \
 	SEP2_CA=$(CERT_DIR)/ca.crt \
 	SEP2_CA_KEY=$(CERT_DIR)/ca.key \
-	SEP2_ADMIN_ADDR=:8444 \
+	SEP2_ADMIN_ADDR=$(SEP2_ADMIN_ADDR) \
 	SEP2_MDNS=true \
 	./$(SERVER) serve
 
@@ -275,7 +285,7 @@ sunspec-check:
 	done
 
 run-sunspec: sunspec-check build certs   ## Start server on the SunSpec test PKI (set SUNSPEC_SERVER_CHAIN, SUNSPEC_SERVER_KEY, SUNSPEC_CLIENT_CAS, SUNSPEC_SERVER_CA_BUNDLE)
-	@echo "# SunSpec profile: binding :8443 (CCM-8)"
+	@echo "# SunSpec profile: binding $(SEP2_ADDR) (CCM-8)"
 	@echo "# Server chain:  $(SUNSPEC_SERVER_CHAIN)"
 	@echo "# Server key:    $(SUNSPEC_SERVER_KEY)"
 	@echo "# Trusted client CAs (SEP2_EXTRA_CLIENT_CAS): $(SUNSPEC_CLIENT_CAS)"
@@ -283,7 +293,7 @@ run-sunspec: sunspec-check build certs   ## Start server on the SunSpec test PKI
 	@echo "# Client side (SunSpec client set, chain file as --cert):"
 	@echo "#   --ca   $(SUNSPEC_SERVER_CA_BUNDLE)   (MICA2, MCA2, root)"
 	@echo "# Server prints a full connection-details banner at boot (#206)."
-	SEP2_ADDR=:8443 \
+	SEP2_ADDR=$(SEP2_ADDR) \
 	SEP2_CERT=$(SUNSPEC_SERVER_CHAIN) \
 	SEP2_KEY=$(SUNSPEC_SERVER_KEY) \
 	SEP2_CA=$(CERT_DIR)/ca.crt \

@@ -47,6 +47,7 @@ Binaries land in `bin/`.
 ```bash
 make run           # builds, generates certs, serves on :8443 (CCM-8); admin on 127.0.0.1:8444 (loopback)
 make run-full      # run, plus mDNS
+# ports: make run SEP2_ADDR=:18443 SEP2_ADMIN_ADDR=:28444 (or export them); admin is plain http://localhost:<port>
 ```
 
 The operator profiles (`run-testdevice`, `run-sunspec`) are covered in

@@ -48,7 +48,10 @@ function mintCert(name: string): string {
 async function addDeviceInUI(page: Page, name: string): Promise<{ sfdi: string; lfdi: string }> {
   await page.locator('#addDevCert').fill(mintCert(name));
   await page.getByRole('button', { name: 'Parse Cert' }).click();
-  await expect(page.locator('#addDevSFDI')).not.toHaveValue('', { timeout: 5000 });
+  // The readonly fields keep the previous device's values until the parse
+  // response lands, so a non-empty field proves nothing on the second call.
+  // The result line is set in the same tick as both fields.
+  await expect(page.locator('#addDevResult')).toContainText(/Parsed cert\./, { timeout: 5000 });
   const sfdi = await page.locator('#addDevSFDI').inputValue();
   const lfdi = await page.locator('#addDevLFDI').inputValue();
   await page.locator('#addDevDesc').fill(name);

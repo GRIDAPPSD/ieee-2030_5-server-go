@@ -4,6 +4,7 @@
 // jsdom has no layout.
 import { test, expect } from '@playwright/test';
 import { startServer, stopServer } from './setup';
+import { ADMIN_KEY } from './adminKey';
 
 let baseUrl: string;
 
@@ -49,7 +50,7 @@ const descriptor = {
 };
 
 test.beforeEach(async ({ page }) => {
-  await page.setExtraHTTPHeaders({ Authorization: 'Bearer e2e-test-key' });
+  await page.setExtraHTTPHeaders({ Authorization: `Bearer ${ADMIN_KEY}` });
   await page.route('**/api/ui/panels', (route) =>
     route.fulfill({ json: [{ id: 'wide', label: 'Wide' }] }),
   );
@@ -58,7 +59,7 @@ test.beforeEach(async ({ page }) => {
 
 test('a seven-column table stays inside its card and clear of the other cards', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto(baseUrl + '/ui/wide?token=e2e-test-key');
+  await page.goto(baseUrl + `/ui/wide?token=${ADMIN_KEY}`);
 
   const cards = page.getByTestId('descriptor-section');
   await expect(cards).toHaveCount(3);

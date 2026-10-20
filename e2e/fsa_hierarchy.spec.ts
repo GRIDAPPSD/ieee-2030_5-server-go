@@ -5,9 +5,10 @@
 
 import { test, expect, Page } from '@playwright/test';
 import { startServer, stopServer } from './setup';
+import { ADMIN_KEY } from './adminKey';
 
 let baseUrl: string;
-const adminKey = 'e2e-test-key';
+const adminKey = ADMIN_KEY;
 const authHeaders = { Authorization: 'Bearer ' + adminKey };
 
 test.beforeAll(async () => {

@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { join } from 'path';
 import { startServer, stopServer } from './setup';
+import { ADMIN_KEY } from './adminKey';
 
 // Acceptance criterion 8: a cancel test, in its own spec file so the create
 // flow in dashboard.spec.ts stays independent of it. Seeds the same fixture
@@ -20,12 +21,12 @@ test.afterAll(() => {
 
 test.beforeEach(async ({ page }) => {
   await page.setExtraHTTPHeaders({
-    'Authorization': 'Bearer e2e-test-key',
+    'Authorization': `Bearer ${ADMIN_KEY}`,
   });
 });
 
 test('cancelling a scheduled control requires confirmation, then the row shows cancelled', async ({ page }) => {
-  await page.goto(baseUrl + '/ui/control?token=e2e-test-key');
+  await page.goto(baseUrl + `/ui/control?token=${ADMIN_KEY}`);
   await page.waitForLoadState('domcontentloaded');
 
   await page.locator('#controlDevice').selectOption({ label: '222222222222' });

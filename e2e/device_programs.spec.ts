@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { join } from 'path';
 import { startServer, stopServer } from './setup';
+import { ADMIN_KEY } from './adminKey';
 
 // The Programs drawer of a device (#925), against the boot fixture of
 // e2e/fixtures/der-control.yaml: device e2e0, FSA "0", fixture program p1.
@@ -20,12 +21,12 @@ test.afterAll(() => {
 
 test.beforeEach(async ({ page }) => {
   await page.setExtraHTTPHeaders({
-    'Authorization': 'Bearer e2e-test-key',
+    'Authorization': `Bearer ${ADMIN_KEY}`,
   });
 });
 
 test('a device Programs drawer lists, adds, edits and deletes device programs', async ({ page }) => {
-  await page.goto(baseUrl + '/ui/devices?token=e2e-test-key');
+  await page.goto(baseUrl + `/ui/devices?token=${ADMIN_KEY}`);
   await page.getByRole('button', { name: 'Programs of device e2e0' }).click();
 
   const drawer = page.getByTestId('device-programs-e2e0');
@@ -58,7 +59,7 @@ test('a device Programs drawer lists, adds, edits and deletes device programs', 
 });
 
 test('the Control tab note about no programs opens the device drawer', async ({ page }) => {
-  await page.goto(baseUrl + '/ui/devices?token=e2e-test-key');
+  await page.goto(baseUrl + `/ui/devices?token=${ADMIN_KEY}`);
   await page.getByRole('button', { name: 'Programs of device e2e0' }).click();
   const drawer = page.getByTestId('device-programs-e2e0');
   await drawer.getByRole('button', { name: 'Delete e2e der control program' }).click();

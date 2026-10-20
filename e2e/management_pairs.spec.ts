@@ -3,6 +3,7 @@ import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { readFileSync } from 'fs';
 import { startServer, stopServer, getCertDir } from './setup';
+import { ADMIN_KEY } from './adminKey';
 
 // #926: pair an aggregator with a managed device from the Devices tab, then
 // read the pair back through GET /api/management-pairs, the endpoint a
@@ -10,7 +11,7 @@ import { startServer, stopServer, getCertDir } from './setup';
 // that API rather than its own table, so a panel that showed a pair it never
 // stored would fail here.
 
-const AUTH = { Authorization: 'Bearer e2e-test-key' };
+const AUTH = { Authorization: `Bearer ${ADMIN_KEY}` };
 
 let baseUrl: string;
 
@@ -71,7 +72,7 @@ test('create and remove a management pair from the Devices tab', async ({ page, 
   expect(before.status()).toBe(200);
   expect((await before.json()).managedLFDIs ?? []).toEqual([]);
 
-  await page.goto(baseUrl + '/ui/devices?token=e2e-test-key');
+  await page.goto(baseUrl + `/ui/devices?token=${ADMIN_KEY}`);
   await page.waitForLoadState('domcontentloaded');
 
   // Both choices come from the device list; the option value is the LFDI.

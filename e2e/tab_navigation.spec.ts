@@ -5,6 +5,7 @@
 // "new tab tests go in a new spec file".
 import { test, expect } from '@playwright/test';
 import { startServer, stopServer } from './setup';
+import { ADMIN_KEY } from './adminKey';
 
 let baseUrl: string;
 
@@ -18,7 +19,7 @@ test.afterAll(() => {
 
 test.beforeEach(async ({ page }) => {
   await page.setExtraHTTPHeaders({
-    Authorization: 'Bearer e2e-test-key',
+    Authorization: `Bearer ${ADMIN_KEY}`,
   });
 });
 
@@ -36,7 +37,7 @@ const TAB_HEADING: Record<string, string> = {
 
 // 1. Back and forward across three tabs follows aria-current (criterion 4)
 test('back and forward across tabs keeps the URL and aria-current in step', async ({ page }) => {
-  await page.goto(baseUrl + '/ui/overview?token=e2e-test-key');
+  await page.goto(baseUrl + `/ui/overview?token=${ADMIN_KEY}`);
   await expect(page.getByTestId('tab-overview')).toHaveAttribute('aria-current', 'page');
 
   await page.getByTestId('tab-devices').click();
@@ -59,7 +60,7 @@ test('back and forward across tabs keeps the URL and aria-current in step', asyn
 // 2. A hard reload of each of the five tab paths renders that tab (criterion 5)
 for (const [slug, heading] of Object.entries(TAB_HEADING)) {
   test(`hard reload of /ui/${slug} renders the ${slug} tab`, async ({ page }) => {
-    await page.goto(baseUrl + `/ui/${slug}?token=e2e-test-key`);
+    await page.goto(baseUrl + `/ui/${slug}?token=${ADMIN_KEY}`);
 
     await expect(page.getByTestId(`tab-${slug}`)).toHaveAttribute('aria-current', 'page');
     await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();

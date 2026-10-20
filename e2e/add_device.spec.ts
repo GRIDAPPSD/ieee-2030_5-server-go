@@ -3,6 +3,7 @@ import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { readFileSync } from 'fs';
 import { startServer, stopServer, getCertDir } from './setup';
+import { ADMIN_KEY } from './adminKey';
 
 // #159: Add EndDevice flow.
 // Paste a freshly generated device cert -> Parse Cert auto-fills SFDI/LFDI ->
@@ -25,7 +26,7 @@ test.afterAll(() => {
 
 test.beforeEach(async ({ page }) => {
   await page.setExtraHTTPHeaders({
-    'Authorization': 'Bearer e2e-test-key',
+    'Authorization': `Bearer ${ADMIN_KEY}`,
   });
 });
 
@@ -46,7 +47,7 @@ test('add device from pasted certificate', async ({ page }) => {
   ], { stdio: 'pipe' });
   const devicePEM = readFileSync(join(certDir, 'e2e-test-device.crt'), 'utf8');
 
-  await page.goto(baseUrl + '/ui/devices?token=e2e-test-key');
+  await page.goto(baseUrl + `/ui/devices?token=${ADMIN_KEY}`);
   await page.waitForLoadState('domcontentloaded');
 
   // 1) Paste cert.
@@ -76,7 +77,7 @@ test('add device from pasted certificate', async ({ page }) => {
 });
 
 test('lookup unknown LFDI returns found:false', async ({ page }) => {
-  await page.goto(baseUrl + '/ui/devices?token=e2e-test-key');
+  await page.goto(baseUrl + `/ui/devices?token=${ADMIN_KEY}`);
   await page.waitForLoadState('domcontentloaded');
 
   // 40 hex chars that won't match anything.

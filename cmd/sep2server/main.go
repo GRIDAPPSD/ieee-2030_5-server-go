@@ -35,6 +35,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
+	case "admin-key":
+		if err := runAdminKey(os.Stdout, os.Args[2:], &certDirResolver{}); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	case "certs":
 		if err := runCerts(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -47,13 +52,7 @@ func main() {
 }
 
 func runServe() error {
-	resolver := &certDirResolver{}
-	cfg, err := configFromEnv(resolver)
-	if err != nil {
-		return err
-	}
-
-	svc, err := loadAdminCertService(cfg, resolver)
+	cfg, svc, err := prepareServe(&certDirResolver{})
 	if err != nil {
 		return err
 	}
@@ -62,6 +61,30 @@ func runServe() error {
 	defer stop()
 
 	return server.Run(ctx, cfg, svc)
+}
+
+// prepareServe builds everything serve needs short of opening a socket, so a
+// refusal here (an unusable admin key included) happens before any listener
+// starts.
+func prepareServe(resolver *certDirResolver) (*config.Config, *handler.AdminCertService, error) {
+	cfg, err := configFromEnv(resolver)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	svc, err := loadAdminCertService(cfg, resolver)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// The admin listener starts only when svc can mint (server.Run); a start
+	// that will never open it neither creates nor reads the key file.
+	if svc != nil && svc.CanMint() {
+		if err := applyAdminKey(cfg, resolver); err != nil {
+			return nil, nil, err
+		}
+	}
+	return cfg, svc, nil
 }
 
 // loadAdminCertService resolves the CA key settings and loads both CA pairs
@@ -379,6 +402,7 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  serve    Start the IEEE 2030.5 server")
+	fmt.Fprintln(os.Stderr, "  admin-key  Print the admin key")
 	fmt.Fprintln(os.Stderr, "  certs    Certificate management")
 	fmt.Fprintln(os.Stderr, "  version  Print version")
 }

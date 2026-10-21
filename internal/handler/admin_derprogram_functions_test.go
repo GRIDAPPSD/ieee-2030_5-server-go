@@ -3,6 +3,8 @@ package handler_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -149,4 +151,85 @@ func TestDeviceProgram_DefaultControlFunctionsCreateAndEdit(t *testing.T) {
 	if err != nil || p.Version == nil || *p.Version != 1 {
 		t.Errorf("program after edit = %+v, %v, want version 1", p, err)
 	}
+}
+
+// #1037: every view that serves a program's default control also serves the
+// functions in the shape a form sends, curve ids included.
+
+const defaultFunctionsSent = `{"opModMaxLimW":6000,"opModFixedPFInjectW":{"displacement":900,"excitation":true},"opModVoltVar":"c11"}`
+
+type defaultControlRead struct {
+	MRID           string         `json:"mRID"`
+	Type           string         `json:"type"`
+	Functions      map[string]any `json:"functions"`
+	DERControlBase map[string]any `json:"derControlBase"`
+}
+
+func requireSentFunctions(t *testing.T, where string, got defaultControlRead) {
+	t.Helper()
+	var want map[string]any
+	if err := json.Unmarshal([]byte(defaultFunctionsSent), &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Functions, want) {
+		t.Errorf("%s: functions = %v, want %v", where, got.Functions, want)
+	}
+	if got.Type != "combined" || got.MRID == "" {
+		t.Errorf("%s: type %q mRID %q, want combined and a minted mRID", where, got.Type, got.MRID)
+	}
+	if got.DERControlBase["opModMaxLimW"] != float64(6000) {
+		t.Errorf("%s: derControlBase = %v, want opModMaxLimW 6000", where, got.DERControlBase)
+	}
+	if link, _ := got.DERControlBase["opModVoltVar"].(map[string]any); link["href"] != "/dc/c11" {
+		t.Errorf("%s: derControlBase opModVoltVar = %v, want the curve href", where, got.DERControlBase["opModVoltVar"])
+	}
+}
+
+func TestProgramDefaultControl_FunctionsServedByEveryView(t *testing.T) {
+	t.Parallel()
+	f := newTemplateFixture(t)
+	f.h.Curves = storedCurves(t)
+	f.assign(t, "1", "fsa-A")
+	body := functionsDefaultBody(defaultFunctionsSent)
+
+	type withDefault struct {
+		ID             string             `json:"id"`
+		DefaultControl defaultControlRead `json:"defaultControl"`
+	}
+	decode := func(w *httptest.ResponseRecorder, want int) withDefault {
+		t.Helper()
+		if w.Code != want {
+			t.Fatalf("status %d body %s, want %d", w.Code, w.Body.String(), want)
+		}
+		var v withDefault
+		if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+
+	tmpl := decode(f.do(http.MethodPost, "/api/fsas/fsa-A/der-programs", body), http.StatusCreated)
+	requireSentFunctions(t, "template create", tmpl.DefaultControl)
+
+	w := f.do(http.MethodGet, "/api/fsas/fsa-A/der-programs", "")
+	var list struct {
+		Templates []withDefault `json:"templates"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatalf("list: %v %s", err, w.Body.String())
+	}
+	listed := list.Templates
+	if len(listed) != 1 {
+		t.Fatalf("listed %d templates, want 1: %s", len(listed), w.Body.String())
+	}
+	requireSentFunctions(t, "template list", listed[0].DefaultControl)
+
+	edited := decode(f.do(http.MethodPut, "/api/fsas/fsa-A/der-programs/"+tmpl.ID, body), http.StatusOK)
+	requireSentFunctions(t, "template edit", edited.DefaultControl)
+
+	dev := decode(f.do(http.MethodPost, "/api/devices/1/fsas/fsa-A/der-programs", body), http.StatusCreated)
+	requireSentFunctions(t, "device program create", dev.DefaultControl)
+
+	devEdited := decode(f.do(http.MethodPut, "/api/devices/1/der-programs/"+dev.ID, body), http.StatusOK)
+	requireSentFunctions(t, "device program edit", devEdited.DefaultControl)
 }

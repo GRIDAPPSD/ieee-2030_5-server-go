@@ -5,8 +5,9 @@
   // programs can be edited and deleted here, and a device program added.
   // The list is the whole catalog (GET /api/der-programs) filtered to this
   // device, because the server has no per-device filter.
-  import { onDestroy, tick } from 'svelte'
+  import { onDestroy } from 'svelte'
   import DerProgramForm from './DerProgramForm.svelte'
+  import ConfirmAction from './ConfirmAction.svelte'
   import TabLink from './TabLink.svelte'
   import { focusOnMount } from '../lib/focus'
   import {
@@ -22,18 +23,27 @@
     type ProgramBody,
     type ProgramCatalog,
   } from '../lib/derprogram'
-  import type { AdminFSA } from '../lib/fsa'
+  import type { ApiResult } from '../lib/api'
+  import { unassignDeviceFsa, unassignFailure, type AdminFSA } from '../lib/fsa'
 
-  let { deviceId, fsas, onClose }: { deviceId: string; fsas: AdminFSA[]; onClose: () => void } = $props()
+  // onFsaChanged reloads the FSA list the shell holds, since an unassign
+  // changes which FSAs this device is assigned to; it is awaited so the group
+  // does not show as empty while still assigned.
+  let {
+    deviceId,
+    fsas,
+    onClose,
+    onFsaChanged,
+  }: { deviceId: string; fsas: AdminFSA[]; onClose: () => void; onFsaChanged: () => void | Promise<void> } = $props()
 
   let catalog = $state<ProgramCatalog | null>(null)
   let loadError = $state('')
   let adding = $state('')
   let editing = $state('')
-  let confirming = $state('')
-  let deleting = $state('')
-  let deleteButtons: Record<string, HTMLButtonElement | undefined> = {}
-  let deleteError = $state<{ id: string; message: string; controls: string[] } | null>(null)
+  // One action is out at a time, keyed 'program:<id>' or 'fsa:<mRID>'; every
+  // confirm button of the panel is held while it is.
+  let pending = $state('')
+  let failure = $state<{ key: string; message: string; controls: string[] } | null>(null)
 
   // A newer read, a device switch or the drawer closing makes an older answer
   // stale: the sequence number drops it, the controller cancels its request,
@@ -101,31 +111,78 @@
     return { ok: true as const }
   }
 
-  async function keep(id: string) {
-    confirming = ''
-    await tick()
-    deleteButtons[id]?.focus()
+  // act runs one confirmed action: it guards against a second while one is
+  // out, records a refusal under its key, and reloads after a success. The
+  // guard is held through the reload and released even if the call throws.
+  async function act(
+    key: string,
+    call: () => Promise<ApiResult<void>>,
+    refuse: (res: Extract<ApiResult<void>, { ok: false }>) => { message: string; controls: string[] },
+    after: () => Promise<void>,
+  ) {
+    if (pending !== '') return
+    pending = key
+    failure = null
+    try {
+      const res = await call()
+      if (closed) return
+      if (!res.ok) {
+        failure = { key, ...refuse(res) }
+        return
+      }
+      await after()
+    } finally {
+      pending = ''
+    }
+  }
+
+  // A 404 means the thing is already gone, which is what the operator asked
+  // for, so it reloads like a success and drops the stale row.
+  function goneIs404(res: ApiResult<void>): ApiResult<void> {
+    return !res.ok && res.status === 404 ? { ok: true, data: undefined } : res
   }
 
   async function remove(id: string) {
-    if (deleting !== '') return
-    deleting = id
-    deleteError = null
-    const res = await deleteDeviceProgram(deviceId, id)
-    if (closed) return
-    deleting = ''
-    confirming = ''
-    if (!res.ok) {
-      const r = refusalOf(res)
-      deleteError =
-        r.code === 'live_controls'
-          ? { id, message: r.message, controls: r.controls }
-          : { id, message: `Delete failed (${r.status}): ${r.message}`, controls: [] }
-      return
-    }
-    await changed()
+    await act(
+      `program:${id}`,
+      async () => goneIs404(await deleteDeviceProgram(deviceId, id)),
+      (res) => {
+        const r = refusalOf(res)
+        return r.code === 'live_controls'
+          ? { message: r.message, controls: r.controls }
+          : { message: `Delete failed (${r.status}): ${r.message}`, controls: [] }
+      },
+      changed,
+    )
+  }
+
+  function unassign(fsaId: string) {
+    return act(
+      `fsa:${fsaId}`,
+      async () => goneIs404(await unassignDeviceFsa(deviceId, fsaId)),
+      (res) => ({ message: unassignFailure(res), controls: [] }),
+      async () => {
+        await onFsaChanged()
+        await changed()
+      },
+    )
   }
 </script>
+
+{#snippet failureBox(testid: string)}
+  {#if failure}
+    <div class="result err" role="alert" tabindex="-1" use:focusOnMount data-testid={testid}>
+      {failure.message}
+      {#if failure.controls.length > 0}
+        <ul>
+          {#each failure.controls as c (c)}
+            <li class="mono">{c}</li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
 
 <div class="programs" data-testid="device-programs-{deviceId}">
   <div class="programs-head">
@@ -159,7 +216,26 @@
               editing = ''
             }}>Add program</button
           >
+          {#if group.fsa !== '' && assigned.includes(group.fsa)}
+            <ConfirmAction
+              triggerId="fsa-unassign-{group.fsa}"
+              confirmId="fsa-unassign-confirm-{group.fsa}"
+              trigger="Unassign from FSA"
+              triggerLabel="Unassign from FSA {fsaName(group.fsa)}"
+              confirm="Confirm unassign"
+              confirmLabel="Confirm unassign from {fsaName(group.fsa)}"
+              busyText="Unassigning..."
+              keepLabel="Keep assignment to {fsaName(group.fsa)}"
+              busy={pending === `fsa:${group.fsa}`}
+              disabled={pending !== ''}
+              onOpen={() => (failure = null)}
+              onConfirm={() => unassign(group.fsa)}
+            />
+          {/if}
         </div>
+        {#if failure?.key === `fsa:${group.fsa}`}
+          {@render failureBox(`fsa-unassign-error-${group.fsa}`)}
+        {/if}
         {#if group.programs.length === 0}
           <p class="hint">No programs from this FSA yet.</p>
         {:else}
@@ -186,51 +262,25 @@
                           adding = ''
                         }}>Edit</button
                       >
-                      {#if confirming === p.id}
-                        <button
-                          class="btn btn-red btn-small"
-                          data-testid="program-delete-confirm-{p.id}"
-                          aria-label="Confirm delete {p.description}"
-                          disabled={deleting !== ''}
-                          use:focusOnMount
-                          onclick={() => remove(p.id)}>{deleting === p.id ? 'Deleting...' : 'Confirm delete'}</button
-                        >
-                        <button
-                          class="btn btn-small"
-                          aria-label="Keep {p.description}"
-                          disabled={deleting === p.id}
-                          onclick={() => keep(p.id)}>Keep</button
-                        >
-                      {:else}
-                        <button
-                          class="btn btn-red btn-small"
-                          data-testid="program-delete-{p.id}"
-                          aria-label="Delete {p.description}"
-                          bind:this={deleteButtons[p.id]}
-                          onclick={() => {
-                            confirming = p.id
-                            deleteError = null
-                          }}>Delete</button
-                        >
-                      {/if}
+                      <ConfirmAction
+                        triggerId="program-delete-{p.id}"
+                        confirmId="program-delete-confirm-{p.id}"
+                        trigger="Delete"
+                        triggerLabel="Delete {p.description}"
+                        confirm="Confirm delete"
+                        confirmLabel="Confirm delete {p.description}"
+                        busyText="Deleting..."
+                        keepLabel="Keep {p.description}"
+                        busy={pending === `program:${p.id}`}
+                        disabled={pending !== ''}
+                        onOpen={() => (failure = null)}
+                        onConfirm={() => remove(p.id)}
+                      />
                     {:else}
                       <span>Edit the template on the <TabLink path="/ui/fsas" testid="program-fsa-link-{p.id}">FSAs tab</TabLink></span>
                     {/if}
-                    {#if deleteError?.id === p.id}
-                      {#if deleteError.controls.length > 0}
-                        <div class="result err" role="alert" tabindex="-1" use:focusOnMount data-testid="program-conflict-{p.id}">
-                          {deleteError.message}
-                          <ul>
-                            {#each deleteError.controls as c (c)}
-                              <li class="mono">{c}</li>
-                            {/each}
-                          </ul>
-                        </div>
-                      {:else}
-                        <div class="result err" role="alert" tabindex="-1" use:focusOnMount data-testid="program-delete-error-{p.id}">
-                          {deleteError.message}
-                        </div>
-                      {/if}
+                    {#if failure?.key === `program:${p.id}`}
+                      {@render failureBox(failure.controls.length > 0 ? `program-conflict-${p.id}` : `program-delete-error-${p.id}`)}
                     {/if}
                   </td>
                 </tr>

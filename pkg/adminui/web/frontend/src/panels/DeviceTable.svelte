@@ -25,7 +25,7 @@
     // Embedder columns, rendered after the reported columns in order.
     columns?: DashboardColumn[]
     fsas: AdminFSA[]
-    onChanged: () => void
+    onChanged: () => void | Promise<void>
   } = $props()
 
   // The each block is keyed by column id, which throws on a repeat, so a
@@ -266,7 +266,7 @@
           {#if programsFor === deviceID}
             <tr data-testid="device-programs-row-{deviceID}">
               <td colspan={10 + columns.length}>
-                <DevicePrograms deviceId={deviceID} {fsas} onClose={() => (programsFor = '')} />
+                <DevicePrograms deviceId={deviceID} {fsas} onFsaChanged={onChanged} onClose={() => (programsFor = '')} />
               </td>
             </tr>
           {/if}

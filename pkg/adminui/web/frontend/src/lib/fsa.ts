@@ -5,6 +5,7 @@
 // optional here rather than defaulted: an absent "children" and an empty
 // one mean the same thing to the tree, but only the server decides which
 // it sends.
+import { deleteJSON, type ApiResult } from './api'
 
 export interface AdminFSA {
   href: string
@@ -61,4 +62,19 @@ export function deviceIdFromHref(href: string): string {
   if (!href) return ''
   const i = href.lastIndexOf('/')
   return i < 0 ? href : href.substring(i + 1)
+}
+
+// unassignDeviceFsa takes a device off an FSA by the FSA's mRID, which is
+// its identity on the wire. The server refuses with a 409 while the device
+// still holds programs of its own under that FSA, naming them in the error.
+export function unassignDeviceFsa(deviceId: string, fsaMRID: string): Promise<ApiResult<void>> {
+  return deleteJSON(
+    `/api/devices/${encodeURIComponent(deviceId)}/fsa-assignment?fsaHref=${encodeURIComponent(`/api/fsas/${fsaMRID}`)}`,
+  )
+}
+
+// unassignFailure is the one wording of a refused unassign, shown wherever
+// the call is made.
+export function unassignFailure(res: { status: number; error: string }): string {
+  return `Unassign failed (${res.status}): ${res.error}`
 }

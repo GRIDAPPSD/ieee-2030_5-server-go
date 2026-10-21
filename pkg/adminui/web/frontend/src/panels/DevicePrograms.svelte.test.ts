@@ -71,9 +71,9 @@ function catalog(programs: ProgramListItem[], persists = true): Reply {
   return { status: 200, body: { persists, total: programs.length, start: 0, limit: 500, programs } }
 }
 
-function mount(props: { deviceId?: string; fsas?: AdminFSA[]; onClose?: () => void } = {}) {
+function mount(props: { deviceId?: string; fsas?: AdminFSA[]; onClose?: () => void; onFsaChanged?: () => void } = {}) {
   return render(DevicePrograms, {
-    props: { deviceId: '7', fsas: [fsa()], onClose: () => {}, ...props },
+    props: { deviceId: '7', fsas: [fsa()], onClose: () => {}, onFsaChanged: () => {}, ...props },
   })
 }
 
@@ -295,6 +295,44 @@ describe('DevicePrograms delete', () => {
     await waitFor(() => expect(calls.filter((c) => c.method === 'GET').length).toBeGreaterThan(1))
   })
 
+  it('keeps Confirm disabled through the reload that follows a delete', async () => {
+    let release: (r: Reply) => void = () => {}
+    let reads = 0
+    const calls = fake({
+      [LIST]: () => (++reads === 1 ? catalog(THREE) : new Promise<Reply>((res) => (release = res))),
+      'DELETE /api/devices/7/der-programs/derp-d': { status: 204 },
+    })
+    mount()
+    await fireEvent.click(await screen.findByTestId('program-delete-derp-d'))
+    const confirm = screen.getByTestId('program-delete-confirm-derp-d')
+    await fireEvent.click(confirm)
+    await waitFor(() => expect(reads).toBe(2))
+
+    expect(confirm).toBeDisabled()
+    await fireEvent.click(confirm)
+    expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(1)
+    release(catalog(THREE.slice(0, 2)))
+    await waitFor(() => expect(screen.queryByTestId('program-row-derp-d')).toBeNull())
+    expect(screen.queryByTestId('program-delete-error-derp-d')).toBeNull()
+  })
+
+  it('treats a 404 on delete as already gone: reloads and shows no error', async () => {
+    let list = catalog(THREE)
+    fake({
+      [LIST]: () => list,
+      'DELETE /api/devices/7/der-programs/derp-d': () => {
+        list = catalog(THREE.slice(0, 2))
+        return { status: 404, body: { error: 'program not found' } }
+      },
+    })
+    mount()
+    await fireEvent.click(await screen.findByTestId('program-delete-derp-d'))
+    await fireEvent.click(screen.getByTestId('program-delete-confirm-derp-d'))
+
+    await waitFor(() => expect(screen.queryByTestId('program-row-derp-d')).toBeNull())
+    expect(screen.queryByTestId('program-delete-error-derp-d')).toBeNull()
+  })
+
   it('shows a refusal as sent, with the live controls that blocked it', async () => {
     fake({
       [LIST]: catalog(THREE),
@@ -420,5 +458,104 @@ describe('DevicePrograms close', () => {
     await screen.findByTestId('program-row-derp-t')
     await fireEvent.click(screen.getByRole('button', { name: 'Close programs' }))
     expect(onClose).toHaveBeenCalledOnce()
+  })
+})
+
+describe('DevicePrograms unassign from FSA', () => {
+  it('names the FSA, asks to confirm, then deletes the assignment by mRID and reloads', async () => {
+    let list = catalog(THREE)
+    const calls = fake({
+      [LIST]: () => list,
+      'DELETE /api/devices/7/fsa-assignment?fsaHref=%2Fapi%2Ffsas%2Ffsa-a': () => {
+        list = catalog([])
+        return { status: 200, body: { device: '7' } }
+      },
+    })
+    // The shell reloads its FSA list; the device is no longer on the FSA.
+    const onFsaChanged = vi.fn(async () => {
+      await view.rerender({ fsas: [fsa({ devices: [] })] })
+    })
+    const view = mount({ onFsaChanged })
+
+    const button = await screen.findByTestId('fsa-unassign-fsa-a')
+    expect(button).toHaveAccessibleName('Unassign from FSA roof (fsa-a)')
+    await fireEvent.click(button)
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false)
+    await fireEvent.click(screen.getByTestId('fsa-unassign-confirm-fsa-a'))
+
+    await waitFor(() => expect(screen.queryByTestId('programs-fsa-fsa-a')).toBeNull())
+    expect(screen.queryByTestId('program-row-derp-t')).toBeNull()
+    expect(onFsaChanged).toHaveBeenCalledTimes(1)
+    const dels = calls.filter((c) => c.method === 'DELETE')
+    expect(dels.map((c) => c.path)).toEqual(['/api/devices/7/fsa-assignment?fsaHref=%2Fapi%2Ffsas%2Ffsa-a'])
+    expect(onFsaChanged).toHaveBeenCalledTimes(1)
+  })
+
+  it('Keep sends nothing and closes the confirmation', async () => {
+    const calls = fake({ [LIST]: catalog(THREE) })
+    mount()
+    await fireEvent.click(await screen.findByTestId('fsa-unassign-fsa-a'))
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep assignment to roof (fsa-a)' }))
+    expect(screen.getByTestId('fsa-unassign-fsa-a')).toBeInTheDocument()
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false)
+  })
+
+  it('shows a 409 as sent, naming the blocking program, and keeps the programs', async () => {
+    const onFsaChanged = vi.fn()
+    fake({
+      [LIST]: catalog(THREE),
+      'DELETE /api/devices/7/fsa-assignment?fsaHref=%2Fapi%2Ffsas%2Ffsa-a': {
+        status: 409,
+        body: {
+          error: 'device programs sit under this fsa and must be deleted before the device is unassigned: derp-d',
+          code: 'device_programs_present',
+          programs: ['derp-d'],
+        },
+      },
+    })
+    mount({ onFsaChanged })
+    await fireEvent.click(await screen.findByTestId('fsa-unassign-fsa-a'))
+    await fireEvent.click(screen.getByTestId('fsa-unassign-confirm-fsa-a'))
+
+    expect(await screen.findByTestId('fsa-unassign-error-fsa-a')).toHaveTextContent(
+      'Unassign failed (409): device programs sit under this fsa and must be deleted before the device is unassigned: derp-d',
+    )
+    expect(screen.getByTestId('program-row-derp-d')).toBeInTheDocument()
+    expect(onFsaChanged).not.toHaveBeenCalled()
+  })
+
+  it('treats a 404 as already unassigned: reloads the FSA list and shows no error', async () => {
+    const onFsaChanged = vi.fn()
+    fake({
+      [LIST]: catalog([]),
+      'DELETE /api/devices/7/fsa-assignment?fsaHref=%2Fapi%2Ffsas%2Ffsa-a': {
+        status: 404,
+        body: { error: 'assignment not found' },
+      },
+    })
+    mount({ onFsaChanged })
+    await fireEvent.click(await screen.findByTestId('fsa-unassign-fsa-a'))
+    await fireEvent.click(screen.getByTestId('fsa-unassign-confirm-fsa-a'))
+
+    await waitFor(() => expect(onFsaChanged).toHaveBeenCalledTimes(1))
+    expect(screen.queryByTestId('fsa-unassign-error-fsa-a')).toBeNull()
+  })
+
+  it('holds every group unassign button while one unassign is out', async () => {
+    let release: (r: Reply) => void = () => {}
+    const calls = fake({
+      [LIST]: catalog([item({ id: 'a1' }), item({ id: 'b1', fsa: 'fsa-b', href: '/edev/7/fsa/fsa-b/derp/b1' })]),
+      'DELETE /api/devices/7/fsa-assignment?fsaHref=%2Fapi%2Ffsas%2Ffsa-a': () => new Promise<Reply>((res) => (release = res)),
+    })
+    mount({ fsas: [fsa(), fsa({ href: '/api/fsas/fsa-b', mRID: 'fsa-b', description: 'barn' })] })
+    await fireEvent.click(await screen.findByTestId('fsa-unassign-fsa-a'))
+    const confirm = screen.getByTestId('fsa-unassign-confirm-fsa-a')
+    await fireEvent.click(confirm)
+
+    expect(confirm).toBeDisabled()
+    expect(screen.getByTestId('fsa-unassign-fsa-b')).toBeDisabled()
+    expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(1)
+    release({ status: 200, body: {} })
+    await waitFor(() => expect(screen.getByTestId('fsa-unassign-fsa-b')).toBeEnabled())
   })
 })

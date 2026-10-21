@@ -5,9 +5,8 @@
   // unassigning is done from here. Each FSA row also carries that FSA's
   // program templates, which are keyed by the FSA mRID like the other FSA
   // routes.
-  import { deleteJSON } from '../lib/api'
   import FsaTemplates from './FsaTemplates.svelte'
-  import type { AdminFSA } from '../lib/fsa'
+  import { unassignDeviceFsa, unassignFailure, type AdminFSA } from '../lib/fsa'
 
   let {
     fsas,
@@ -20,11 +19,9 @@
   let error = $state('')
 
   async function unassign(fsa: AdminFSA, deviceID: string) {
-    const res = await deleteJSON<void>(
-      `/api/devices/${encodeURIComponent(deviceID)}/fsa-assignment?fsaHref=${encodeURIComponent(`/api/fsas/${fsa.mRID}`)}`,
-    )
+    const res = await unassignDeviceFsa(deviceID, fsa.mRID)
     if (!res.ok) {
-      error = `Unassign failed (${res.status}): ${res.error}`
+      error = unassignFailure(res)
       return
     }
     error = ''

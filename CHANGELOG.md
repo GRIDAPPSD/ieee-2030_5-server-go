@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GET /api/device-profiles` and `PUT /api/device-profiles/{lfdi}`;
   `POST /api/devices` takes `name` and `kind` in place of `description` (#1032).
   A device's stored kind gates management pairs: pair create and rekey answer
-  409 for a manager stored as `device` (#1033).
+  409 for a manager stored as `device`, and a profile PUT answers 409 on a kind
+  change that contradicts existing pairs (#1033).
 - Admin UI: manage management pairs from the Devices tab (#926); program
   templates on the FSAs tab (#924); a device Programs drawer with origin and
   restart badges (#925); empty states that point at template creation (#927);
@@ -42,9 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SEP2_ADMIN_SECRET_FILE`), creating it with mode 0600 on first start, and
   refuses a symlink, a file with loose permissions or owner, an empty file or a
   key under 16 characters before the admin port opens. `make admin-key` prints
-  the key. The Make targets no longer set `SEP2_ADMIN_KEY=admin` (#646).
+  the key. The Make targets no longer set `SEP2_ADMIN_KEY=admin`.
+  **Operator action:** an operator who ran without a key must set
+  `SEP2_ADMIN_KEY` (16 characters or more) or let the server generate
+  `admin.secret`, and log in with that key (#646).
 
-- Core is now `ieee-2030_5-core-go` v0.27.0 (v0.26.0 in #998, v0.27.0 in #1012). DER curve modes are served as
+- The server requires `ieee-2030_5-core-go` v0.27.0 (#998, #1012). v0.27.0 adds
+  only a vendored decode file, with no server change. DER curve modes are served as
   links (`<opModVoltVar href="/dc/3"></opModVoltVar>`), `opModFixedVar` as a FixedVar
   (`refType`, `value`) and `opModFreqDroop` as a FreqDroopType (`dBOF`,
   `dBUF`, `kOF`, `kUF`, `openLoopTms`). In a boot fixture a curve mode names
@@ -67,12 +72,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- DER lists are served in Table 50 order over any backend (#485).
+- DER lists are served in Table 50 order over any backend. The `a` (after)
+  query parameter is now ignored on DER lists (#485).
 - Device FSAs are rebuilt from admin assignments at boot (#915), and each FSA
   lists only its own DER programs (#916).
 - A program's default control can be removed and set again (#1043).
 - Server-made IDs have one owner instead of separate generators (#1010).
-- Log values at the first call sites are escaped through one helper (#1000).
+- Log values at the first call sites are escaped through one helper; the work
+  is partial (part of #1000).
 
 ### Security
 
@@ -81,7 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loopback: a request admitted only by the loopback bypass gets 401. Operators
   who used these routes or the FSA cards without logging in must log in at
   `/login` or send the admin key as a Bearer token. `POST /api/devices` is
-  unchanged (#930).
+  unchanged (#930). The admin listener also now requires a key; see the
+  Changed entry for #646.
 
 ## [0.17.0] - 2026-10-13
 

@@ -296,26 +296,37 @@ func newControl(base *sep2.DERControlBase, mrid, description string, creationTim
 
 // planCopy decides what writing ctrl to t's scope takes, before the first
 // write: the controls it supersedes, found among existing, and the fleet's
-// commitment check, which runs after the supersede scan so it can discount
-// the controls this one replaces. A refusal leaves nothing to undo.
+// commitment check. A refusal leaves nothing to undo.
 func (i *Issuer) planCopy(ctx context.Context, t Target, ctrl sep2.DERControl, existing []sep2.DERControl, grant string) (copyPlan, error) {
-	start := ctrl.Interval.Start
-	candidates, err := i.computeSupersedes(ctx, t.Scope.Key(), existing, ctrl.DERControlBase, start, intervalEnd(ctrl.Interval))
+	candidates, err := i.computeSupersedes(ctx, t.Scope.Key(), existing, ctrl.DERControlBase, ctrl.Interval.Start, IntervalEnd(ctrl.Interval))
 	if err != nil {
 		return copyPlan{}, err
 	}
+	link := LifecycleRecord{GrantMRID: grant, FleetKey: t.Fleet.Key, Reach: t.Fleet.Reach}
+	return i.finishPlan(ctx, t, ctrl, grant, candidates, link)
+}
+
+// finishPlan is the tail every plan shares: the fleet's commitment check,
+// which runs after the supersede scan so it can discount the controls this
+// one replaces, then the plan itself. A nil Check, which only a single-device
+// Issue passes, skips the check.
+func (i *Issuer) finishPlan(ctx context.Context, t Target, ctrl sep2.DERControl, grant string, candidates []supersedeCandidate, link LifecycleRecord) (copyPlan, error) {
 	if t.Fleet.Check != nil {
 		if err := t.Fleet.Check(ctx, newProposal(t.Scope, ctrl, grant, t.Fleet, candidates)); err != nil {
 			return copyPlan{}, err
 		}
 	}
-	link := LifecycleRecord{GrantMRID: grant, FleetKey: t.Fleet.Key, Reach: t.Fleet.Reach}
 	return copyPlan{target: t, ctrl: ctrl, candidates: candidates, link: link}, nil
 }
 
-// intervalEnd is the first second after the interval.
-func intervalEnd(iv *sep2.DateTimeInterval) int64 {
+// IntervalEnd is the first second after the interval.
+func IntervalEnd(iv *sep2.DateTimeInterval) int64 {
 	return iv.Start + int64(iv.Duration)
+}
+
+// IntervalEnded reports whether the interval is over at now.
+func IntervalEnded(iv *sep2.DateTimeInterval, now int64) bool {
+	return now >= IntervalEnd(iv)
 }
 
 // overlaps reports whether [aStart, aEnd) and [bStart, bEnd) share a second;
@@ -324,15 +335,15 @@ func overlaps(aStart, aEnd, bStart, bEnd int64) bool {
 	return aStart < bEnd && bStart < aEnd
 }
 
-// supersedes reports whether older, an event with an interval, is replaced by
+// replacedBy reports whether older, an event with an interval, is replaced by
 // a newer one with function set set over [start, end): only an equal function
 // set supersedes, and a partial overlap is not marked (potentiallySuperseded
 // is a later issue).
-func supersedes(older sep2.DERControl, set string, start, end int64) bool {
+func replacedBy(older sep2.DERControl, set string, start, end int64) bool {
 	if older.Interval == nil || functionSetKey(older.DERControlBase) != set {
 		return false
 	}
-	return overlaps(older.Interval.Start, intervalEnd(older.Interval), start, end)
+	return overlaps(older.Interval.Start, IntervalEnd(older.Interval), start, end)
 }
 
 // supersedeCandidate is an existing control eligible to be marked
@@ -375,7 +386,7 @@ func (i *Issuer) computeSupersedes(ctx context.Context, scopeKey string, existin
 		if !lc.supersedeEligible(newStart) {
 			continue
 		}
-		if !supersedes(c, newSet, newStart, newEnd) {
+		if !replacedBy(c, newSet, newStart, newEnd) {
 			continue
 		}
 		candidates = append(candidates, supersedeCandidate{id: id, mrid: c.MRID, before: lc})
@@ -527,7 +538,7 @@ func (i *Issuer) Cancel(ctx context.Context, scope Scope, id string, reason stri
 	if ctrl.Interval == nil {
 		return before, fmt.Errorf("dercontrol: control has no interval")
 	}
-	if now >= intervalEnd(ctrl.Interval) {
+	if IntervalEnded(ctrl.Interval, now) {
 		return LifecycleRecord{}, refuse(RefusalEnded)
 	}
 

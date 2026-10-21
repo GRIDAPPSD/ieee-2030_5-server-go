@@ -554,7 +554,7 @@ func chainState(tip *FlowReservationResponseView, now, deadlineAt int64) string 
 		return frStateDenied
 	case tip.EventStatus != nil && tip.EventStatus.CurrentStatus == sep2.EventStatusCancelled:
 		return frStateCancelled
-	case now >= tip.Interval.Start+int64(tip.Interval.Duration):
+	case dercontrol.IntervalEnded(&sep2.DateTimeInterval{Start: tip.Interval.Start, Duration: tip.Interval.Duration}, now):
 		return frStateEnded
 	default:
 		return frStateGranted

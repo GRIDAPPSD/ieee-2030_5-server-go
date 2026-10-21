@@ -84,7 +84,7 @@ func holdSeconds(postRate *uint32) int64 {
 // and now. It never ends before it starts.
 func effectiveWindow(interval sep2.DateTimeInterval, lc dercontrol.LifecycleRecord, now int64) (start, end int64) {
 	start = interval.Start
-	end = interval.Start + int64(interval.Duration)
+	end = dercontrol.IntervalEnd(&interval)
 	if lc.SupersededAt != nil {
 		end = min(end, *lc.SupersededAt)
 	}
@@ -386,7 +386,7 @@ func readingCoverage(cs []candidate, i int) (start, end int64) {
 	}
 	if r.Reading != nil && r.Reading.TimePeriod != nil && r.Reading.TimePeriod.Duration > 0 {
 		tp := r.Reading.TimePeriod
-		return tp.Start, tp.Start + int64(tp.Duration)
+		return tp.Start, dercontrol.IntervalEnd(tp)
 	}
 	start = at - hold
 	for j := i - 1; j >= 0; j-- {

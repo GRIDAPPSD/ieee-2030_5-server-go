@@ -46,7 +46,7 @@ type RecordWriter func(ctx context.Context, id string, ctrl sep2.DERControl) (un
 
 // IssueAcross validates req, then, holding every target's scope lock, writes
 // record and then one copy of the control to each target: its lifecycle
-// record, the control and its supersede marks, as Issue writes them. The
+// record, the control and its supersede marks, in that order. The
 // creationTime is one more than the largest in any target scope, so the copy
 // is the newest event in each.
 //
@@ -199,7 +199,7 @@ func (i *Issuer) planReplica(ctx context.Context, r Replica) (copyPlan, bool, er
 	}
 	ctrl := copyOf(r.Control, scope, r.ID)
 	start := ctrl.Interval.Start
-	end := intervalEnd(ctrl.Interval)
+	end := IntervalEnd(ctrl.Interval)
 
 	// Only an older event is superseded by this one; a newer event already
 	// in the scope supersedes it instead, from that event's start.
@@ -220,10 +220,8 @@ func (i *Issuer) planReplica(ctx context.Context, r Replica) (copyPlan, bool, er
 	if err := i.supersededByNewer(ctx, scopeKey, newer, ctrl, &link); err != nil {
 		return copyPlan{}, false, err
 	}
-	if err := r.Target.Fleet.Check(ctx, newProposal(scope, ctrl, "", r.Target.Fleet, candidates)); err != nil {
-		return copyPlan{}, false, err
-	}
-	return copyPlan{target: r.Target, ctrl: ctrl, candidates: candidates, link: link}, false, nil
+	plan, err := i.finishPlan(ctx, r.Target, ctrl, "", candidates, link)
+	return plan, false, err
 }
 
 // supersededByNewer marks lc superseded by the earliest-starting event among
@@ -234,9 +232,9 @@ func (i *Issuer) planReplica(ctx context.Context, r Replica) (copyPlan, bool, er
 func (i *Issuer) supersededByNewer(ctx context.Context, scopeKey string, newer []sep2.DERControl, ctrl sep2.DERControl, lc *LifecycleRecord) error {
 	set := functionSetKey(ctrl.DERControlBase)
 	start := ctrl.Interval.Start
-	end := intervalEnd(ctrl.Interval)
+	end := IntervalEnd(ctrl.Interval)
 	for _, c := range newer {
-		if !supersedes(c, set, start, end) {
+		if !replacedBy(c, set, start, end) {
 			continue
 		}
 		id, ok := derhref.ControlID(c.Href)
@@ -277,7 +275,12 @@ type writtenCopy struct {
 }
 
 // writeCopies writes each plan in order: the lifecycle record, the control,
-// then the marks, as Issue does. On the first failure it undoes that copy's
+// then the marks. Every prefix of that sequence stays legal: an orphan
+// lifecycle record is legal and unreachable, and once the control is stored
+// every stored control has its lifecycle record for the rest of the call. An
+// orphan left by a failed undo can carry a grant link, so anything counting
+// commitments must start from stored controls, never from lifecycle records
+// alone. On the first failure it undoes that copy's
 // own writes and returns the copies written before it with the error: a
 // plain error when the failed copy left nothing, a *UndoError when it did.
 func (i *Issuer) writeCopies(ctx context.Context, plans []copyPlan, id string) ([]writtenCopy, error) {

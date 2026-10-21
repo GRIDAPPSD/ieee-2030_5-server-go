@@ -1357,7 +1357,7 @@ func newDERControlView(scope dercontrol.Scope, ctrl sep2.DERControl, lc dercontr
 	}
 	if ctrl.Interval != nil {
 		v.Interval = IntervalView{Start: ctrl.Interval.Start, Duration: ctrl.Interval.Duration}
-		v.Ended = now >= ctrl.Interval.Start+int64(ctrl.Interval.Duration)
+		v.Ended = dercontrol.IntervalEnded(ctrl.Interval, now)
 		st := dercontrol.DeriveStatus(now, ctrl.CreationTime, ctrl.Interval.Start, lc)
 		v.EventStatus = EventStatusView{CurrentStatus: st.CurrentStatus, Status: eventStatusName(st.CurrentStatus), DateTime: st.DateTime}
 	}

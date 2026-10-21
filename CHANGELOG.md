@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-21
+
+This entry covers `v0.17.0..v0.18.0`. It is a MINOR release under the 0.x
+carve-out: the range adds runtime DER programs, device profiles and multi-function
+controls (`feature`) and changes admin startup and stored-control loading
+(`breaking`, see Changed). `ieee-2030_5-core-go` moves from v0.24.0 to v0.27.0.
+
 ### Added
 
 - Runtime DER programs. An admin can create DER program templates on an FSA
@@ -35,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a checkbox on programs (#1036, #1044); device names shown everywhere
   (#1034); choose aggregator or device when adding (#1035).
 - `make` takes its run ports from the environment (#960).
+- Admin UI: unassign a device from an FSA in its Programs drawer, per FSA, with
+  the server's refusal text shown when programs block it (#1053).
 
 ### Changed
 
@@ -80,6 +89,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Server-made IDs have one owner instead of separate generators (#1010).
 - Log values at the first call sites are escaped through one helper; the work
   is partial (part of #1000).
+- The e2e suite no longer races on a stale device field, a `datetime-local`
+  value at :00 or server start (#964, #1048, #958), and several timing-sensitive Go
+  tests wait on signals instead of wall-clock timing (#857).
+
+### Internal
+
+No wire or API change: DER control building, the write path, FSA assignment,
+refusal logging, scope keys and the boot fixture now share one implementation
+each (#989, #990, #991, #992, #993, #1008, #1020); CodeQL runs as an advanced
+workflow that skips `e2e/` (#1030); `golangci-lint-action` is pinned to a commit
+(#1004); the admin UI lockfile alerts are cleared (#1007); the README no longer
+carries version numbers that go stale (#1056).
 
 ### Security
 
@@ -955,4 +976,5 @@ read both releases first.
 [0.16.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.15.0...v0.16.0
 [0.16.1]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.16.0...v0.16.1
 [0.17.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.16.1...v0.17.0
-[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.17.0...HEAD
+[0.18.0]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.17.0...v0.18.0
+[Unreleased]: https://github.com/GRIDAPPSD/ieee-2030_5-server-go/compare/v0.18.0...HEAD

@@ -287,7 +287,7 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 		if !ok || !checkMRID(w, e, prog.MRID) {
 			return
 		}
-		scope := fsaprogram.DefaultScope(deviceID, fsaID, id)
+		scope := derhref.ScopeKey(deviceID, fsaID, id)
 		var mutateDefault func(*sep2.DefaultDERControl) error
 		if e.defaultBase != nil {
 			if _, err := h.Copies.Defaults.Get(r.Context(), scope, coresingleton.SingletonKey); errors.Is(err, store.ErrNotFound) {
@@ -460,7 +460,7 @@ func (h *AdminFSAHandler) deviceProgramView(ctx context.Context, deviceID, fsaID
 	if p.Version != nil {
 		v.Version = *p.Version
 	}
-	d, err := h.Copies.Defaults.Get(ctx, fsaprogram.DefaultScope(deviceID, fsaID, id), coresingleton.SingletonKey)
+	d, err := h.Copies.Defaults.Get(ctx, derhref.ScopeKey(deviceID, fsaID, id), coresingleton.SingletonKey)
 	switch {
 	case err == nil:
 		var base sep2.DERControlBase

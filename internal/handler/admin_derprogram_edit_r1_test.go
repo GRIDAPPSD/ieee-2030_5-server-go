@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -73,7 +74,7 @@ func TestUpdateDeviceProgram_VersionExhausted409(t *testing.T) {
 	}
 	d := defaultOf(t, f, "2", "0", "0")
 	d.Version = ptrU16(65535)
-	if err := f.copies.Defaults.Update(ctx, fsaprogram.DefaultScope("2", "0", "0"), coresingleton.SingletonKey, d); err != nil {
+	if err := f.copies.Defaults.Update(ctx, derhref.ScopeKey("2", "0", "0"), coresingleton.SingletonKey, d); err != nil {
 		t.Fatal(err)
 	}
 	for dev, body := range map[string]string{
@@ -313,7 +314,7 @@ func TestDeleteDeviceProgram_APartialFixtureDeleteIsRetried(t *testing.T) {
 	if w := f.do(http.MethodDelete, devicePath("1", "0"), ""); w.Code != http.StatusNoContent {
 		t.Fatalf("retry: %d %s, want 204", w.Code, w.Body.String())
 	}
-	if _, err := f.copies.Defaults.Get(ctx, fsaprogram.DefaultScope("1", "0", "0"), coresingleton.SingletonKey); !errors.Is(err, store.ErrNotFound) {
+	if _, err := f.copies.Defaults.Get(ctx, derhref.ScopeKey("1", "0", "0"), coresingleton.SingletonKey); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("default after the retry: %v, want gone", err)
 	}
 	if got, want := f.notifier.take(), deleted(href); !slices.Equal(got, want) {

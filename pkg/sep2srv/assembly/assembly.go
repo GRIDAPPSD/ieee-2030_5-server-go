@@ -53,6 +53,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derstatus"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
@@ -1107,7 +1108,7 @@ func scopedListHandlerDeep[T store.Copier[T], L any](
 // properties, and this function implements only the former. Caller ownership
 // of {id} is enforced before any handler runs, by ownershipGate.
 func deepScopeKey(r *http.Request) string {
-	return r.PathValue("id") + "/" + r.PathValue("fsaId") + "/" + r.PathValue("derpId")
+	return derhref.ScopeKey(r.PathValue("id"), r.PathValue("fsaId"), r.PathValue("derpId"))
 }
 
 // scopedResourceHandlerDeep creates a read-only single-resource handler scoped

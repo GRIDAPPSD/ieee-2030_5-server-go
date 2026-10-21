@@ -13,7 +13,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -43,7 +43,7 @@ func decodeCoded(t *testing.T, body []byte) codedError {
 
 func defaultOf(t *testing.T, f *templateFixture, dev, fsa, id string) sep2.DefaultDERControl {
 	t.Helper()
-	d, err := f.copies.Defaults.Get(context.Background(), fsaprogram.DefaultScope(dev, fsa, id), coresingleton.SingletonKey)
+	d, err := f.copies.Defaults.Get(context.Background(), derhref.ScopeKey(dev, fsa, id), coresingleton.SingletonKey)
 	if err != nil {
 		t.Fatalf("default of %s/%s/%s: %v", dev, fsa, id, err)
 	}
@@ -257,7 +257,7 @@ func seedFixtureProgram(t *testing.T, f *templateFixture, dev, fsa, id string, w
 	if withDefault {
 		d := sep2.DefaultDERControl{MRID: "0000000000000000000000000000D1C5", SetGradW: ptrU16(50)}
 		d.Href = href + "/dderc"
-		if err := f.copies.Defaults.Create(context.Background(), fsaprogram.DefaultScope(dev, fsa, id), coresingleton.SingletonKey, d); err != nil {
+		if err := f.copies.Defaults.Create(context.Background(), derhref.ScopeKey(dev, fsa, id), coresingleton.SingletonKey, d); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -338,7 +338,7 @@ func TestDeleteDeviceProgram_RemovesEveryPartAndNotifies(t *testing.T) {
 		if _, err := f.copies.Programs.Get(ctx, "1", p.id); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("program %s: %v, want gone", p.id, err)
 		}
-		if _, err := f.copies.Defaults.Get(ctx, fsaprogram.DefaultScope("1", p.fsa, p.id), coresingleton.SingletonKey); !errors.Is(err, store.ErrNotFound) {
+		if _, err := f.copies.Defaults.Get(ctx, derhref.ScopeKey("1", p.fsa, p.id), coresingleton.SingletonKey); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("default of %s: %v, want gone", p.id, err)
 		}
 		if _, err := f.copies.Origins.Get(ctx, "1", p.id); !errors.Is(err, store.ErrNotFound) {

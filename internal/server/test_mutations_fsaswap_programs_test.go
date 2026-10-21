@@ -10,6 +10,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -30,7 +31,7 @@ func seedProgramInFSA(t *testing.T, stores *server.Stores, edevID, fsaID, derpID
 	if err := stores.DERPrograms.Create(ctx, edevID, derpID, prog); err != nil {
 		t.Fatalf("seed program %s: %v", derpID, err)
 	}
-	scope := edevID + "/" + fsaID + "/" + derpID
+	scope := derhref.ScopeKey(edevID, fsaID, derpID)
 	ctrl := sep2.DERControl{}
 	ctrl.MRID = "CTRL-" + derpID
 	ctrl.Href = base + "/derc/c-" + derpID

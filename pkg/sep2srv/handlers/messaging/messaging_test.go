@@ -13,6 +13,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/messaging"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint/idminttest"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -133,4 +134,14 @@ func TestHandlePostTextMessage_InvalidXMLDoesNotLeakDecoderDetail(t *testing.T) 
 	if logged := buf.String(); !strings.Contains(logged, marker) {
 		t.Errorf("log = %q; the decoder detail did not reach the operator", logged)
 	}
+}
+
+// Not parallel: it holds the process-wide id clock still (#1010).
+func TestHandlePostTextMessage_ParallelPostsGetDistinctIDs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /msg/{msgId}/tm", messaging.HandlePostTextMessage(memory.NewScopedStore[sep2.TextMessage]()))
+	body, _ := xml.Marshal(&sep2.TextMessage{})
+	idminttest.AssertParallelCreatesDistinct(t, mux, 16, func() *http.Request {
+		return httptest.NewRequest(http.MethodPost, "/msg/m1/tm", bytes.NewReader(body))
+	})
 }

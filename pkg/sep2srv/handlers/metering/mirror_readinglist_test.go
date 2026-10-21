@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint/idminttest"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -407,5 +408,22 @@ func TestHandlePostMirrorMeterReading_MalformedBodiesRejected(t *testing.T) {
 				t.Errorf("stored reading count = %d, want 0 for a rejected body", count)
 			}
 		})
+	}
+}
+
+// Not parallel: it holds the process-wide id clock still (#1010). Each POST
+// stores one reading under the shared parent; a reading id is minted from the
+// clock, so equal readings must not share one.
+func TestHandlePostMirrorMeterReading_ParallelPostsGetDistinctIDs(t *testing.T) {
+	const ownerLFDI = "DEVICE_A_LFDI"
+	mupStore := memory.NewStore[sep2.MirrorUsagePoint]()
+	mmrStore := memory.NewScopedStore[sep2.MirrorMeterReading]()
+	seedOwnedMirror(t, mupStore, "device-a", "DEVICE_A", ownerLFDI)
+	mux := mirrorPostMux(mupStore, mmrStore, ownerLFDI)
+	idminttest.AssertParallelCreatesDistinct(t, mux, 16, func() *http.Request {
+		return httptest.NewRequest(http.MethodPost, "/mup/device-a/mr", bytes.NewReader(readingBody(t, "MMR_A", 7)))
+	})
+	if n, err := mmrStore.Count(context.Background(), "device-a"); err != nil || n != 16 {
+		t.Errorf("stored readings = %d (err %v), want 16", n, err)
 	}
 }

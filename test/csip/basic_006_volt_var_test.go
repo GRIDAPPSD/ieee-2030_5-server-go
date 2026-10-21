@@ -10,7 +10,7 @@
 //	         curve reference, plus 1 DERCurve in /dc)        -> fixture load
 //	Step 2 (client walks /dcap -> /edev -> /fsa -> DERProgram -> DERControl)
 //	                                                          -> basicModeWalk
-//	Step 3 (DERControl.OpModVoltVar matches fixture int32)    -> assertVoltVarRef
+//	Step 3 (DERControl.OpModVoltVar links the fixture curve)  -> assertCurveRef
 //	Step 4 (global /dc carries 1 Volt/Var curve with the seeded
 //	         CurveData round-tripped)                         -> walkSingleCurveBasic
 package csip_test
@@ -23,10 +23,10 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// basic006VoltVarRef is the opModVoltVar int32 the fixture seeds
-// (a reference to the DERCurve with id "0"). The procedure asserts
-// this exact value round-trips on the wire.
-const basic006VoltVarRef int32 = 0
+// basic006VoltVarRef is the opModVoltVar href the fixture seeds (a link
+// to the DERCurve with id "0"). The procedure asserts this exact value
+// round-trips on the wire.
+const basic006VoltVarRef = "/dc/0"
 
 // TestBASIC_006_VoltVar implements CSIP V1.2 Section 8.6.
 func TestBASIC_006_VoltVar(t *testing.T) {
@@ -46,13 +46,8 @@ func TestBASIC_006_VoltVar(t *testing.T) {
 			if dc.DERControlBase == nil {
 				t.Fatalf("[%s] DERControl.DERControlBase is nil", cipher)
 			}
-			if dc.DERControlBase.OpModVoltVar == nil {
-				t.Fatalf("[%s] DERControl.OpModVoltVar is nil - fixture dropped", cipher)
-			}
-			if got := *dc.DERControlBase.OpModVoltVar; got != basic006VoltVarRef {
-				t.Errorf("[%s] DERControl.OpModVoltVar = %d, want %d",
-					cipher, got, basic006VoltVarRef)
-			}
+			assertCurveRef(t, cipher, "opModVoltVar",
+				dc.DERControlBase.OpModVoltVar, basic006VoltVarRef)
 
 			// Step 4: global /dc carries the Volt/Var curve.
 			curve := walkSingleCurveBasic(t, context.Background(), c, sep2.CurveTypeOpModVoltVar, 1)

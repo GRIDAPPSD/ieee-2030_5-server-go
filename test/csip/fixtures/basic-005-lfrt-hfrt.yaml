@@ -46,8 +46,8 @@ der_controls:
     id: "0"
     mrid: "BASIC-005-DERC"
     der_control_base:
-      op_mod_lfrt_must_trip: 0
-      op_mod_hfrt_must_trip: 1
+      op_mod_lfrt_must_trip: "0"  # -> /dc/0
+      op_mod_hfrt_must_trip: "1"  # -> /dc/1
 
 der_curves:
   - id: "0"

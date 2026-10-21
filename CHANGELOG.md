@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Core is now `ieee-2030_5-core-go` v0.26.0. DER curve modes are served as
+  links (`<opModVoltVar href="/dc/3"></opModVoltVar>`), `opModFixedVar` as a FixedVar
+  (`refType`, `value`) and `opModFreqDroop` as a FreqDroopType (`dBOF`,
+  `dBUF`, `kOF`, `kUF`, `openLoopTms`). In a boot fixture a curve mode names
+  a `der_curves` id (`op_mod_volt_var: "3"`; an unquoted number still works),
+  and `op_mod_freq_droop` is a mapping of `db_of`, `db_uf`, `k_of`, `k_uf` and
+  `open_loop_tms`, all required (#998).
+
+- **Upgrade:** with `SEP2_DATA_DIR`, a stored DER control written by an
+  earlier release with a curve mode, `opModFixedVar` or `opModFreqDroop` no
+  longer loads. The server exits at boot naming the file, the record and the
+  field, and the current shape. Rewrite each such record in that shape or
+  remove it, then restart; the load stops at the first old record, so check
+  the later ones too. A curve number N becomes `{"Href":"/dc/N"}`. A fixed var
+  cannot be converted mechanically: its new `Value` is hundredths of a percent
+  of the device rating `RefType` names, so it needs that rating. The records
+  sit in `dercontrols.json`, `defaultdercontrols.json` and `fsas.json`. In
+  `fsas.json` a record is a whole FSA with its templates and controls, so
+  removing it drops all of them. When unsure, start from a clean data
+  directory (#998).
+
 ### Security
 
 - The FSA admin writes (create, delete, program attach and detach, and device

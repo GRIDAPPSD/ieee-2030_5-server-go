@@ -29,26 +29,11 @@ type Temperature struct {
 // Copy returns an independent copy.
 func (d DeviceStatus) Copy() DeviceStatus {
 	c := d
-	if d.OnCount != nil {
-		v := *d.OnCount
-		c.OnCount = &v
-	}
-	if d.OpState != nil {
-		v := *d.OpState
-		c.OpState = &v
-	}
-	if d.OpTime != nil {
-		v := *d.OpTime
-		c.OpTime = &v
-	}
-	if d.TimeLink != nil {
-		l := *d.TimeLink
-		c.TimeLink = &l
-	}
-	if d.Temperature != nil {
-		c.Temperature = make([]Temperature, len(d.Temperature))
-		copy(c.Temperature, d.Temperature)
-	}
+	c.OnCount = clonePtr(d.OnCount)
+	c.OpState = clonePtr(d.OpState)
+	c.OpTime = clonePtr(d.OpTime)
+	c.TimeLink = clonePtr(d.TimeLink)
+	c.Temperature = cloneSlice(d.Temperature)
 	return c
 }
 

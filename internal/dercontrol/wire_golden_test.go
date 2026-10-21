@@ -25,16 +25,16 @@ func TestBuildBase_WireBytes(t *testing.T) {
 		{"legacy fixedPFInjectW over-excited", CreateRequest{Type: FixedPFInjectW, PowerFactor: &PowerFactorValue{Displacement: 900, Excitation: &over}}, `<DERControlBase><opModFixedPFInjectW><displacement>900</displacement><excitation>true</excitation><multiplier>-3</multiplier></opModFixedPFInjectW></DERControlBase>`},
 		{"legacy fixedPFInjectW under-excited", CreateRequest{Type: FixedPFInjectW, PowerFactor: &PowerFactorValue{Displacement: 900, Excitation: &under}}, `<DERControlBase><opModFixedPFInjectW><displacement>900</displacement><excitation>false</excitation><multiplier>-3</multiplier></opModFixedPFInjectW></DERControlBase>`},
 		{"legacy targetW", CreateRequest{Type: TargetW, TargetW: &sep2.ActivePower{Value: -1500, Multiplier: 1}}, `<DERControlBase><opModTargetW><multiplier>1</multiplier><value>-1500</value></opModTargetW></DERControlBase>`},
-		{"two functions", CreateRequest{Functions: &FunctionSet{
-			MaxLimW:     uint16ptr(5000),
-			PowerFactor: &PowerFactorValue{Displacement: 900, Excitation: &under},
+		{"two functions", CreateRequest{Functions: &sep2.DERControlBase{
+			OpModMaxLimW:        pct(5000),
+			OpModFixedPFInjectW: thousandths(900, false),
 		}}, `<DERControlBase><opModFixedPFInjectW><displacement>900</displacement><excitation>false</excitation><multiplier>-3</multiplier></opModFixedPFInjectW><opModMaxLimW>5000</opModMaxLimW></DERControlBase>`},
-		{"five functions", CreateRequest{Functions: &FunctionSet{
-			Connect:     boolPtr(true),
-			Energize:    boolPtr(false),
-			MaxLimW:     uint16ptr(5000),
-			PowerFactor: &PowerFactorValue{Displacement: 900, Excitation: &over},
-			TargetW:     &sep2.ActivePower{Value: 500},
+		{"five functions", CreateRequest{Functions: &sep2.DERControlBase{
+			OpModConnect:        boolPtr(true),
+			OpModEnergize:       boolPtr(false),
+			OpModMaxLimW:        pct(5000),
+			OpModFixedPFInjectW: thousandths(900, true),
+			OpModTargetW:        &sep2.ActivePower{Value: 500},
 		}}, `<DERControlBase><opModConnect>true</opModConnect><opModEnergize>false</opModEnergize><opModFixedPFInjectW><displacement>900</displacement><excitation>true</excitation><multiplier>-3</multiplier></opModFixedPFInjectW><opModMaxLimW>5000</opModMaxLimW><opModTargetW><multiplier>0</multiplier><value>500</value></opModTargetW></DERControlBase>`},
 	}
 	for _, tc := range tests {

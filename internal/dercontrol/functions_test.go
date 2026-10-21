@@ -11,15 +11,24 @@ import (
 
 func boolPtr(v bool) *bool { return &v }
 
+func pct(v uint16) *sep2.PerCent {
+	p := sep2.PerCent(v)
+	return &p
+}
+
+func thousandths(displacement uint16, excitation bool) *sep2.FixedPowerFactor {
+	return &sep2.FixedPowerFactor{Displacement: displacement, Excitation: excitation, Multiplier: -3}
+}
+
 func TestIssue_Functions_TwoFunctionsCarryBothElements(t *testing.T) {
 	h := newHarness(t, Config{PEN: testPEN(1)})
 	h.seedProgram(t, "dev1", "p1", controlListHref("dev1", "0", "p1"))
 
 	res, err := issueWith(t, h, func(r *CreateRequest) {
 		r.Type = ""
-		r.Functions = &FunctionSet{
-			MaxLimW:     uint16ptr(5000),
-			PowerFactor: &PowerFactorValue{Displacement: 900, Excitation: boolPtr(true)},
+		r.Functions = &sep2.DERControlBase{
+			OpModMaxLimW:        pct(5000),
+			OpModFixedPFInjectW: thousandths(900, true),
 		}
 	})
 	if err != nil {
@@ -44,7 +53,7 @@ func TestIssue_Functions_ConnectAndEnergizeAreIndependent(t *testing.T) {
 
 	res, err := issueWith(t, h, func(r *CreateRequest) {
 		r.Type = ""
-		r.Functions = &FunctionSet{Connect: boolPtr(true), Energize: boolPtr(false)}
+		r.Functions = &sep2.DERControlBase{OpModConnect: boolPtr(true), OpModEnergize: boolPtr(false)}
 	})
 	if err != nil {
 		t.Fatalf("Issue() error = %v", err)
@@ -76,13 +85,14 @@ func TestBuildBase_FunctionsRefusals(t *testing.T) {
 		req  CreateRequest
 		want RefusalCode
 	}{
-		{"type and functions", CreateRequest{Type: Connect, Functions: &FunctionSet{Connect: boolPtr(true)}}, RefusalTypeAndFunctions},
-		{"empty functions", CreateRequest{Functions: &FunctionSet{}}, RefusalMissingValue},
-		{"maxLimW above range", CreateRequest{Functions: &FunctionSet{MaxLimW: uint16ptr(10001)}}, RefusalValueOutOfRange},
-		{"pf displacement zero", CreateRequest{Functions: &FunctionSet{PowerFactor: &PowerFactorValue{Displacement: 0, Excitation: boolPtr(false)}}}, RefusalValueOutOfRange},
-		{"pf without excitation", CreateRequest{Functions: &FunctionSet{PowerFactor: &PowerFactorValue{Displacement: 900}}}, RefusalMissingValue},
-		{"targetW multiplier out of range", CreateRequest{Functions: &FunctionSet{TargetW: &sep2.ActivePower{Value: 1, Multiplier: 10}}}, RefusalValueOutOfRange},
-		{"top-level value beside functions", CreateRequest{Functions: &FunctionSet{Connect: boolPtr(true)}, MaxLimW: uint16ptr(1)}, RefusalUnexpectedValue},
+		{"type and functions", CreateRequest{Type: Connect, Functions: &sep2.DERControlBase{OpModConnect: boolPtr(true)}}, RefusalTypeAndFunctions},
+		{"empty functions", CreateRequest{Functions: &sep2.DERControlBase{}}, RefusalMissingValue},
+		{"maxLimW above range", CreateRequest{Functions: &sep2.DERControlBase{OpModMaxLimW: pct(10001)}}, RefusalValueOutOfRange},
+		{"pf displacement zero", CreateRequest{Functions: &sep2.DERControlBase{OpModFixedPFInjectW: thousandths(0, false)}}, RefusalValueOutOfRange},
+		{"pf in other than thousandths", CreateRequest{Functions: &sep2.DERControlBase{OpModFixedPFInjectW: &sep2.FixedPowerFactor{Displacement: 900}}}, RefusalValueOutOfRange},
+		{"element outside the catalog", CreateRequest{Functions: &sep2.DERControlBase{OpModConnect: boolPtr(true), OpModFixedW: new(sep2.SignedPerCent)}}, RefusalUnexpectedValue},
+		{"targetW multiplier out of range", CreateRequest{Functions: &sep2.DERControlBase{OpModTargetW: &sep2.ActivePower{Value: 1, Multiplier: 10}}}, RefusalValueOutOfRange},
+		{"top-level value beside functions", CreateRequest{Functions: &sep2.DERControlBase{OpModConnect: boolPtr(true)}, MaxLimW: uint16ptr(1)}, RefusalUnexpectedValue},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,7 +105,7 @@ func TestBuildBase_FunctionsRefusals(t *testing.T) {
 func TestIssue_Supersede_FunctionSets(t *testing.T) {
 	two := func(r *CreateRequest) {
 		r.Type = ""
-		r.Functions = &FunctionSet{MaxLimW: uint16ptr(5000), PowerFactor: &PowerFactorValue{Displacement: 900, Excitation: boolPtr(false)}}
+		r.Functions = &sep2.DERControlBase{OpModMaxLimW: pct(5000), OpModFixedPFInjectW: thousandths(900, false)}
 	}
 	tests := []struct {
 		name      string
@@ -105,7 +115,7 @@ func TestIssue_Supersede_FunctionSets(t *testing.T) {
 	}{
 		{"equal two-function sets supersede", two, func(r *CreateRequest) {
 			r.Type = ""
-			r.Functions = &FunctionSet{MaxLimW: uint16ptr(4000), PowerFactor: &PowerFactorValue{Displacement: 800, Excitation: boolPtr(true)}}
+			r.Functions = &sep2.DERControlBase{OpModMaxLimW: pct(4000), OpModFixedPFInjectW: thousandths(800, true)}
 		}, true},
 		{"single function against a superset does not", func(r *CreateRequest) {
 			r.Type = MaxLimW
@@ -120,21 +130,21 @@ func TestIssue_Supersede_FunctionSets(t *testing.T) {
 			r.MaxLimW = uint16ptr(5000)
 		}, func(r *CreateRequest) {
 			r.Type = ""
-			r.Functions = &FunctionSet{MaxLimW: uint16ptr(3000)}
+			r.Functions = &sep2.DERControlBase{OpModMaxLimW: pct(3000)}
 		}, true},
 		{"legacy connect against connect and energize functions supersede", func(r *CreateRequest) {
 			r.Type = Connect
 		}, func(r *CreateRequest) {
 			r.Type = ""
-			r.Functions = &FunctionSet{Connect: boolPtr(false), Energize: boolPtr(false)}
+			r.Functions = &sep2.DERControlBase{OpModConnect: boolPtr(false), OpModEnergize: boolPtr(false)}
 		}, true},
 		{"different two-function sets do not", two, func(r *CreateRequest) {
 			r.Type = ""
-			r.Functions = &FunctionSet{MaxLimW: uint16ptr(5000), TargetW: &sep2.ActivePower{Value: 1}}
+			r.Functions = &sep2.DERControlBase{OpModMaxLimW: pct(5000), OpModTargetW: &sep2.ActivePower{Value: 1}}
 		}, false},
 		{"disjoint two-function sets do not", two, func(r *CreateRequest) {
 			r.Type = ""
-			r.Functions = &FunctionSet{Connect: boolPtr(true), TargetW: &sep2.ActivePower{Value: 1}}
+			r.Functions = &sep2.DERControlBase{OpModConnect: boolPtr(true), OpModTargetW: &sep2.ActivePower{Value: 1}}
 		}, false},
 		{"two functions against legacy connect do not", two, func(r *CreateRequest) {
 			r.Type = Connect
@@ -144,7 +154,7 @@ func TestIssue_Supersede_FunctionSets(t *testing.T) {
 		}, two, false},
 		{"connect alone against connect and energize does not", func(r *CreateRequest) {
 			r.Type = ""
-			r.Functions = &FunctionSet{Connect: boolPtr(true)}
+			r.Functions = &sep2.DERControlBase{OpModConnect: boolPtr(true)}
 		}, func(r *CreateRequest) {
 			r.Type = Disconnect
 		}, false},

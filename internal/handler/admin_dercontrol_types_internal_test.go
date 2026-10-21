@@ -32,8 +32,8 @@ func TestControlTypeName_LegacyShapesOnlyElseCombined(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := controlTypeName(tc.base); got != tc.want {
-				t.Errorf("controlTypeName = %q, want %q", got, tc.want)
+			if got := dercontrol.TypeName(tc.base); got != tc.want {
+				t.Errorf("TypeName = %q, want %q", got, tc.want)
 			}
 		})
 	}

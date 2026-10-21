@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"math"
 	"net/http"
 	"slices"
 	"strconv"
@@ -187,17 +186,6 @@ var (
 	refuseFunctionsType       = derControlRefusal{http.StatusBadRequest, "functions_type", "functions: must be an object"}
 	refuseFunctionsEmpty      = derControlRefusal{http.StatusBadRequest, "functions_empty", "functions: at least one function required"}
 	refuseFunctionUnknown     = derControlRefusal{http.StatusBadRequest, "function_unknown", "functions: unknown function"}
-	refuseMaxLimWBesideFns    = derControlRefusal{http.StatusBadRequest, "max_lim_w_beside_functions", "maxLimW: not allowed with functions"}
-	refusePFBesideFns         = derControlRefusal{http.StatusBadRequest, "power_factor_beside_functions", "powerFactor: not allowed with functions"}
-	refuseTargetWBesideFns    = derControlRefusal{http.StatusBadRequest, "target_w_beside_functions", "targetW: not allowed with functions"}
-	refuseMaxLimWRequired     = derControlRefusal{http.StatusBadRequest, "max_lim_w_required", "maxLimW: required for type maxLimW"}
-	refuseMaxLimWRange        = derControlRefusal{http.StatusBadRequest, "max_lim_w_range", "maxLimW: must be 0 to 10000"}
-	refuseMaxLimWNotAllowed   = derControlRefusal{http.StatusBadRequest, "max_lim_w_not_allowed", "maxLimW: not allowed for this type"}
-	refusePFRequired          = derControlRefusal{http.StatusBadRequest, "power_factor_required", "powerFactor: required for type fixedPFInjectW"}
-	refusePFNotAllowed        = derControlRefusal{http.StatusBadRequest, "power_factor_not_allowed", "powerFactor: not allowed for this type"}
-	refuseDisplacementReq     = derControlRefusal{http.StatusBadRequest, "displacement_required", "powerFactor.displacement: required"}
-	refuseDisplacementRange   = derControlRefusal{http.StatusBadRequest, "displacement_range", "powerFactor.displacement: must be 1 to 1000"}
-	refuseExcitationRequired  = derControlRefusal{http.StatusBadRequest, "excitation_required", "powerFactor.excitation: required"}
 	refuseValueInvalid        = derControlRefusal{http.StatusBadRequest, "value_invalid", "value: invalid for this type"}
 	refuseDurationRequired    = derControlRefusal{http.StatusBadRequest, "duration_required", "durationSeconds: required"}
 	refuseDurationRange       = derControlRefusal{http.StatusBadRequest, "duration_range", "durationSeconds: out of range"}
@@ -207,11 +195,6 @@ var (
 	refuseDescription         = derControlRefusal{http.StatusBadRequest, "description_invalid", "description: at most 32 octets"}
 	refuseProgramNotFound     = derControlRefusal{http.StatusNotFound, "program_not_found", "derProgramHref: DERProgram not found"}
 	refuseNoControlListLink   = derControlRefusal{http.StatusConflict, "no_der_control_list_link", "derProgramHref: DERProgram has no usable DERControlListLink"}
-	refuseTargetWRequired     = derControlRefusal{http.StatusBadRequest, "target_w_required", "targetW: required for type targetW"}
-	refuseTargetWNotAllowed   = derControlRefusal{http.StatusBadRequest, "target_w_not_allowed", "targetW: not allowed for this type"}
-	refuseTargetWValueReq     = derControlRefusal{http.StatusBadRequest, "target_w_value_required", "targetW.value: required"}
-	refuseTargetWValueRange   = derControlRefusal{http.StatusBadRequest, "target_w_value_range", "targetW.value: must be -32768 to 32767"}
-	refuseTargetWMultRange    = derControlRefusal{http.StatusBadRequest, "target_w_multiplier_range", "targetW.multiplier: must be -9 to 9"}
 	refuseExecutesGrantFormat = derControlRefusal{http.StatusBadRequest, "executes_grant_invalid", "executesGrant: invalid format"}
 	refusePENNotConfigured    = derControlRefusal{http.StatusServiceUnavailable, "pen_not_configured", "server PEN not configured"}
 	refuseInternal            = derControlRefusal{http.StatusInternalServerError, "internal_error", "internal error"}
@@ -285,44 +268,17 @@ type derControlCreateBody struct {
 	Description     *string `json:"description"`
 }
 
-// derControlTargetW is opModTargetW. A missing multiplier is 0.
-type derControlTargetW struct {
-	Value      *int64 `json:"value"`
-	Multiplier *int64 `json:"multiplier"`
-}
-
-type derControlPowerFactor struct {
-	Displacement *int64 `json:"displacement"`
-	Excitation   *bool  `json:"excitation"`
-}
-
 type derControlCancelBody struct {
 	Reason *string `json:"reason"`
 }
 
-// DERControlBaseView is the JSON form of the DERControlBase values this API
-// creates. Only the fields of the control's own type are present.
-type DERControlBaseView struct {
-	OpModConnect        *bool                 `json:"opModConnect,omitempty"`
-	OpModEnergize       *bool                 `json:"opModEnergize,omitempty"`
-	OpModMaxLimW        *uint16               `json:"opModMaxLimW,omitempty"`
-	OpModFixedPFInjectW *FixedPowerFactorView `json:"opModFixedPFInjectW,omitempty"`
-	OpModTargetW        *ActivePowerView      `json:"opModTargetW,omitempty"`
-}
-
-// ActivePowerView is opModTargetW: value x 10^multiplier watts, discharge
-// positive.
-type ActivePowerView struct {
-	Value      int16 `json:"value"`
-	Multiplier int8  `json:"multiplier"`
-}
-
-// FixedPowerFactorView is opModFixedPFInjectW.
-type FixedPowerFactorView struct {
-	Displacement uint16 `json:"displacement"`
-	Excitation   bool   `json:"excitation"`
-	Multiplier   int8   `json:"multiplier"`
-}
+// DERControlBaseView, ActivePowerView and FixedPowerFactorView are the
+// catalog's views, named here as the admin API has always named them.
+type (
+	DERControlBaseView   = dercontrol.DERControlBaseView
+	ActivePowerView      = dercontrol.ActivePowerView
+	FixedPowerFactorView = dercontrol.FixedPowerFactorView
+)
 
 // IntervalView is a control's interval, Unix seconds.
 type IntervalView struct {
@@ -1104,9 +1060,10 @@ func decodeRefusal(err error) derControlRefusal {
 	}
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(err, &typeErr) {
-		// The decoder prefixes a promoted field with the embedded struct's
+		// The decoder prefixes a promoted field with each embedded struct's
 		// name, which the table keys do not carry.
-		if ref, ok := wrongTypeRefusals[strings.TrimPrefix(typeErr.Field, "controlValuesBody.")]; ok {
+		field := strings.TrimPrefix(strings.TrimPrefix(typeErr.Field, "controlValuesBody."), "LegacyValues.")
+		if ref, ok := wrongTypeRefusals[field]; ok {
 			return ref
 		}
 		return refuseInvalidJSON
@@ -1137,127 +1094,11 @@ var wrongTypeRefusals = map[string]derControlRefusal{
 	"reason":                   {http.StatusBadRequest, "reason_type", "reason: must be a string"},
 }
 
-// controlTypes is the closed set of request types, keyed by their wire name.
-var controlTypes = map[string]dercontrol.ControlType{
-	string(dercontrol.Connect):        dercontrol.Connect,
-	string(dercontrol.Disconnect):     dercontrol.Disconnect,
-	string(dercontrol.MaxLimW):        dercontrol.MaxLimW,
-	string(dercontrol.FixedPFInjectW): dercontrol.FixedPFInjectW,
-	string(dercontrol.TargetW):        dercontrol.TargetW,
-}
-
-func buildValue(typ dercontrol.ControlType, body controlValuesBody, req *dercontrol.CreateRequest, l *derControlLog) (derControlRefusal, bool) {
-	if typ != dercontrol.TargetW && body.TargetW != nil {
-		return refuseTargetWNotAllowed, false
-	}
-	switch typ {
-	case dercontrol.MaxLimW:
-		if body.PowerFactor != nil {
-			return refusePFNotAllowed, false
-		}
-		if body.MaxLimW == nil {
-			return refuseMaxLimWRequired, false
-		}
-		v, ref, ok := maxLimWValue(*body.MaxLimW)
-		if !ok {
-			return ref, false
-		}
-		req.MaxLimW = &v
-		l.add("value", v)
-	case dercontrol.FixedPFInjectW:
-		if body.MaxLimW != nil {
-			return refuseMaxLimWNotAllowed, false
-		}
-		if body.PowerFactor == nil {
-			return refusePFRequired, false
-		}
-		pf, ref, ok := powerFactorValue(body.PowerFactor)
-		if !ok {
-			return ref, false
-		}
-		req.PowerFactor = pf
-		l.add("value", pf.Displacement)
-		l.add("excitation", *pf.Excitation)
-	case dercontrol.TargetW:
-		if body.MaxLimW != nil {
-			return refuseMaxLimWNotAllowed, false
-		}
-		if body.PowerFactor != nil {
-			return refusePFNotAllowed, false
-		}
-		if body.TargetW == nil {
-			return refuseTargetWRequired, false
-		}
-		tw, ref, ok := targetWValue(body.TargetW)
-		if !ok {
-			return ref, false
-		}
-		req.TargetW = tw
-		l.add("value", tw.Value)
-		l.add("multiplier", tw.Multiplier)
-	default: // Connect and Disconnect carry no value.
-		if body.MaxLimW != nil {
-			return refuseMaxLimWNotAllowed, false
-		}
-		if body.PowerFactor != nil {
-			return refusePFNotAllowed, false
-		}
-	}
-	return derControlRefusal{}, true
-}
-
-func maxLimWValue(v int64) (uint16, derControlRefusal, bool) {
-	if v < 0 || v > 10000 {
-		return 0, refuseMaxLimWRange, false
-	}
-	return uint16(v), derControlRefusal{}, true
-}
-
-func powerFactorValue(pf *derControlPowerFactor) (*dercontrol.PowerFactorValue, derControlRefusal, bool) {
-	if pf.Displacement == nil {
-		return nil, refuseDisplacementReq, false
-	}
-	if pf.Excitation == nil {
-		return nil, refuseExcitationRequired, false
-	}
-	if *pf.Displacement < 1 || *pf.Displacement > 1000 {
-		return nil, refuseDisplacementRange, false
-	}
-	excitation := *pf.Excitation
-	return &dercontrol.PowerFactorValue{Displacement: uint16(*pf.Displacement), Excitation: &excitation}, derControlRefusal{}, true
-}
-
-func targetWValue(tw *derControlTargetW) (*sep2.ActivePower, derControlRefusal, bool) {
-	if tw.Value == nil {
-		return nil, refuseTargetWValueReq, false
-	}
-	if *tw.Value < math.MinInt16 || *tw.Value > math.MaxInt16 {
-		return nil, refuseTargetWValueRange, false
-	}
-	var mult int64
-	if tw.Multiplier != nil {
-		mult = *tw.Multiplier
-	}
-	if mult < -9 || mult > 9 {
-		return nil, refuseTargetWMultRange, false
-	}
-	return &sep2.ActivePower{Value: int16(*tw.Value), Multiplier: int8(mult)}, derControlRefusal{}, true
-}
-
 // addBaseToLog records a stored control's type, value and interval.
 func addBaseToLog(l *derControlLog, ctrl sep2.DERControl) {
-	l.add("type", controlTypeName(ctrl.DERControlBase))
-	if b := ctrl.DERControlBase; b != nil {
-		switch {
-		case b.OpModMaxLimW != nil:
-			l.add("value", uint16(*b.OpModMaxLimW))
-		case b.OpModFixedPFInjectW != nil:
-			l.add("value", b.OpModFixedPFInjectW.Displacement)
-			l.add("excitation", b.OpModFixedPFInjectW.Excitation)
-		case b.OpModTargetW != nil:
-			l.add("value", b.OpModTargetW.Value)
-			l.add("multiplier", b.OpModTargetW.Multiplier)
-		}
+	l.add("type", dercontrol.TypeName(ctrl.DERControlBase))
+	for _, a := range dercontrol.LogAttrs(ctrl.DERControlBase) {
+		l.add(a.Key, a.Value)
 	}
 	if ctrl.Interval != nil {
 		l.add("start", ctrl.Interval.Start)
@@ -1318,55 +1159,7 @@ func newDERControlView(scope dercontrol.Scope, ctrl sep2.DERControl, lc dercontr
 // controlBaseViews is a control base as its views report it: the type name,
 // the base and the functions set. A view that omits one drops it.
 func controlBaseViews(b *sep2.DERControlBase) (string, DERControlBaseView, FunctionsView) {
-	return controlTypeName(b), newDERControlBaseView(b), newFunctionsView(b)
-}
-
-func newDERControlBaseView(b *sep2.DERControlBase) DERControlBaseView {
-	if b == nil {
-		return DERControlBaseView{}
-	}
-	v := DERControlBaseView{OpModConnect: b.OpModConnect, OpModEnergize: b.OpModEnergize}
-	if b.OpModMaxLimW != nil {
-		m := uint16(*b.OpModMaxLimW)
-		v.OpModMaxLimW = &m
-	}
-	if pf := b.OpModFixedPFInjectW; pf != nil {
-		v.OpModFixedPFInjectW = &FixedPowerFactorView{Displacement: pf.Displacement, Excitation: pf.Excitation, Multiplier: pf.Multiplier}
-	}
-	if tw := b.OpModTargetW; tw != nil {
-		v.OpModTargetW = &ActivePowerView{Value: tw.Value, Multiplier: tw.Multiplier}
-	}
-	return v
-}
-
-// controlTypeName names a stored control's type by the request type that
-// builds exactly that DERControlBase shape, and "combined" for every other
-// set of functions, so a lone opModConnect or opModEnergize is not mistaken
-// for a legacy connect.
-func controlTypeName(b *sep2.DERControlBase) string {
-	if b == nil {
-		return ""
-	}
-	names := dercontrol.FunctionNames(b)
-	switch {
-	case len(names) == 0:
-		return "other"
-	case len(names) == 2 && b.OpModConnect != nil && b.OpModEnergize != nil && *b.OpModConnect == *b.OpModEnergize:
-		if *b.OpModConnect {
-			return string(dercontrol.Connect)
-		}
-		return string(dercontrol.Disconnect)
-	case len(names) > 1:
-		return "combined"
-	case b.OpModMaxLimW != nil:
-		return string(dercontrol.MaxLimW)
-	case b.OpModFixedPFInjectW != nil:
-		return string(dercontrol.FixedPFInjectW)
-	case b.OpModTargetW != nil:
-		return string(dercontrol.TargetW)
-	default:
-		return "combined"
-	}
+	return dercontrol.TypeName(b), dercontrol.BaseView(b), FunctionsView(dercontrol.FunctionValues(b))
 }
 
 func eventStatusName(s uint8) string {

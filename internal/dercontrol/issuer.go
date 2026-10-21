@@ -578,86 +578,17 @@ func ControlBase(req CreateRequest) (*sep2.DERControlBase, error) {
 }
 
 // buildBase maps a request's type and value, or its function set, to a
-// DERControlBase (acceptance
-// criterion 5). It never reads or sets randomizeStart, randomizeDuration,
-// EventStatus, replyTo, responseRequired, mRID or creationTime, because
-// CreateRequest carries none of them.
+// DERControlBase (acceptance criterion 5). It never reads or sets
+// randomizeStart, randomizeDuration, EventStatus, replyTo, responseRequired,
+// mRID or creationTime, because CreateRequest carries none of them.
 func buildBase(req CreateRequest) (*sep2.DERControlBase, error) {
 	if req.Functions != nil {
 		if req.Type != "" {
 			return nil, refuse(RefusalTypeAndFunctions)
 		}
-		if req.MaxLimW != nil || req.PowerFactor != nil || req.TargetW != nil {
-			return nil, refuse(RefusalUnexpectedValue)
-		}
-		return baseFromFunctions(req.Functions)
+		return baseFromFunctions(req)
 	}
-	if req.Type != TargetW && req.TargetW != nil {
-		return nil, refuse(RefusalUnexpectedValue)
-	}
-	switch req.Type {
-	case Connect:
-		if req.MaxLimW != nil || req.PowerFactor != nil {
-			return nil, refuse(RefusalUnexpectedValue)
-		}
-		t := true
-		return &sep2.DERControlBase{OpModConnect: &t, OpModEnergize: &t}, nil
-	case Disconnect:
-		if req.MaxLimW != nil || req.PowerFactor != nil {
-			return nil, refuse(RefusalUnexpectedValue)
-		}
-		f := false
-		return &sep2.DERControlBase{OpModConnect: &f, OpModEnergize: &f}, nil
-	case MaxLimW:
-		if req.PowerFactor != nil {
-			return nil, refuse(RefusalUnexpectedValue)
-		}
-		if req.MaxLimW == nil {
-			return nil, refuse(RefusalMissingValue)
-		}
-		if *req.MaxLimW > 10000 {
-			return nil, refuse(RefusalValueOutOfRange)
-		}
-		v := sep2.PerCent(*req.MaxLimW)
-		return &sep2.DERControlBase{OpModMaxLimW: &v}, nil
-	case FixedPFInjectW:
-		if req.MaxLimW != nil {
-			return nil, refuse(RefusalUnexpectedValue)
-		}
-		if req.PowerFactor == nil {
-			return nil, refuse(RefusalMissingValue)
-		}
-		if req.PowerFactor.Excitation == nil {
-			// A missing excitation must be refused like a missing
-			// displacement, not silently taken as false (over-excited):
-			// the two directions inject and absorb reactive power.
-			return nil, refuse(RefusalMissingValue)
-		}
-		if req.PowerFactor.Displacement < 1 || req.PowerFactor.Displacement > 1000 {
-			return nil, refuse(RefusalValueOutOfRange)
-		}
-		return &sep2.DERControlBase{OpModFixedPFInjectW: &sep2.FixedPowerFactor{
-			Displacement: req.PowerFactor.Displacement,
-			Excitation:   *req.PowerFactor.Excitation,
-			Multiplier:   -3,
-		}}, nil
-	case TargetW:
-		if req.MaxLimW != nil || req.PowerFactor != nil {
-			return nil, refuse(RefusalUnexpectedValue)
-		}
-		if req.TargetW == nil {
-			return nil, refuse(RefusalMissingValue)
-		}
-		// Value is bounded by its int16 type; the multiplier is an Int8 the
-		// standard limits to -9..9 (PowerOfTenMultiplierType).
-		if req.TargetW.Multiplier < -9 || req.TargetW.Multiplier > 9 {
-			return nil, refuse(RefusalValueOutOfRange)
-		}
-		v := *req.TargetW
-		return &sep2.DERControlBase{OpModTargetW: &v}, nil
-	default:
-		return nil, refuse(RefusalUnknownType)
-	}
+	return buildLegacy(req)
 }
 
 // nameUndo returns a pass-through that records scope and mrid on an

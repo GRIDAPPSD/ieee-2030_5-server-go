@@ -222,7 +222,7 @@ type programEdit struct {
 // which answers 500, never 400.
 func buildProgramEdit(ctx context.Context, curves dercontrol.CurveReader, body programTemplateBody) (programEdit, string, bool, error) {
 	var e programEdit
-	if body.Description == nil || !validTemplateDescription(*body.Description) {
+	if body.Description == nil || !validAdminText(*body.Description) {
 		return e, "description: 1 to 32 printable ASCII characters required", false, nil
 	}
 	e.description = *body.Description
@@ -546,9 +546,10 @@ func programListHref(deviceID, fsaID string) string {
 	return "/edev/" + deviceID + "/fsa/" + fsaID + "/derp"
 }
 
-// validTemplateDescription is IEEE 2030.5 String32, narrowed to printable
-// ASCII so the admin UI and logs show exactly what a device receives.
-func validTemplateDescription(s string) bool {
+// validAdminText is IEEE 2030.5 String32, narrowed to printable ASCII so the
+// admin UI and logs show exactly what a device receives. It is the one owner
+// of the character and length rule for program descriptions and device names.
+func validAdminText(s string) bool {
 	if len(s) == 0 || len(s) > maxDescriptionOctets {
 		return false
 	}

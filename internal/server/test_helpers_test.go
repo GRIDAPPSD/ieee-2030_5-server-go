@@ -11,6 +11,7 @@ func newTestStores() *server.Stores {
 	s := &server.Stores{
 		EndDevices:               memory.NewEndDeviceStore(),
 		EndDeviceManagers:        memory.NewEndDeviceManagementStore(),
+		DeviceProfiles:           memory.NewDeviceProfileStore(),
 		EndDeviceIndexes:         memory.NewEndDeviceIndex(),
 		Registrations:            memory.NewRegistrationStore(),
 		MirrorUsagePoints:        memory.NewStore[sep2.MirrorUsagePoint](),

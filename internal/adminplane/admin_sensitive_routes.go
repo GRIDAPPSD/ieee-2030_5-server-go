@@ -35,6 +35,8 @@ var sensitiveAdminPatterns = map[string]struct{}{
 //     aggregator's full managed fleet. The WRITE routes (create, remove,
 //     rekey) are unaffected here: they already require a real credential by
 //     default, since they are not on nonSensitiveAdminWrites below.
+//   - /api/device-profiles (#1032): GET lists every device's LFDI, name and
+//     kind, the same disclosure as the pair list.
 //   - /api/derms/ (#715 fix round 1, HIGH, all four review lanes, then #764):
 //     the fleet read discloses every aggregator's managed LFDIs, DER status
 //     and measurements, a wider disclosure than /api/management-pairs, which
@@ -43,7 +45,7 @@ var sensitiveAdminPatterns = map[string]struct{}{
 //     the whole family is covered by prefix, not route by route.
 //   - /api/ui/panels (#829): an embedder's panel View may disclose
 //     anything, and the plane cannot tell what.
-var sensitiveAdminReadPrefixes = []string{"/api/management-pairs", "/api/derms/", "/api/ui/panels"}
+var sensitiveAdminReadPrefixes = []string{"/api/management-pairs", "/api/device-profiles", "/api/derms/", "/api/ui/panels"}
 
 // isSensitiveAdminReadPath reports whether path falls under one of
 // sensitiveAdminReadPrefixes.

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -36,6 +38,8 @@ import (
 // consumer per the Pike rule.
 type RegistrationWriter interface {
 	Create(ctx context.Context, id string, resource sep2.Registration) error
+	// Delete undoes a Create when a later step of the add fails.
+	Delete(ctx context.Context, id string) error
 }
 
 // certInfoResponse is the shape returned by POST /api/certs/info.
@@ -162,11 +166,12 @@ func HandleDeviceLookupByLFDI(s store.EndDeviceStore) http.HandlerFunc {
 
 // addDeviceRequest is the JSON body for POST /api/devices.
 type addDeviceRequest struct {
-	SFDI        string `json:"sfdi"`
-	LFDI        string `json:"lfdi"`
-	Description string `json:"description"`
-	PIN         uint32 `json:"pin"`
-	Enabled     bool   `json:"enabled"`
+	SFDI    string `json:"sfdi"`
+	LFDI    string `json:"lfdi"`
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`
+	PIN     uint32 `json:"pin"`
+	Enabled bool   `json:"enabled"`
 }
 
 // addDeviceResponse is the success body for POST /api/devices.
@@ -177,13 +182,18 @@ type addDeviceResponse struct {
 }
 
 // HandleAddEndDevice returns a handler for POST /api/devices. Validates
-// SFDI/LFDI/PIN, rejects LFDI collisions with 409, persists EndDevice +
-// Registration. The registrations writer may be nil; in that case the
+// SFDI/LFDI/PIN and the optional name and kind, rejects LFDI and name
+// collisions with 409, persists EndDevice + Registration + profile. The
+// registrations writer and the profile store may be nil; in that case the
 // handler returns 503 (we refuse to half-create).
-func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter) http.HandlerFunc {
+func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter, profiles store.DeviceProfileStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if regs == nil {
 			writeError(w, http.StatusServiceUnavailable, "registration store not configured")
+			return
+		}
+		if store.IsAbsent(profiles) {
+			writeError(w, http.StatusServiceUnavailable, "device profile store not configured")
 			return
 		}
 
@@ -202,6 +212,10 @@ func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter) http.Ha
 		}
 		if !validLFDI(req.LFDI) {
 			writeError(w, http.StatusBadRequest, "lfdi must be 40 hex characters")
+			return
+		}
+		if msg := deviceProfileInputRefusal(req.Name, req.Kind); msg != "" {
+			writeError(w, http.StatusBadRequest, msg)
 			return
 		}
 		// PIN: uint32 already constrains range. Empty body decodes to 0 which
@@ -251,11 +265,24 @@ func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter) http.Ha
 			PIN:                req.PIN,
 		}
 		if err := regs.Create(r.Context(), id, reg); err != nil {
-			// EndDevice exists but Registration write failed. Best-effort
-			// rollback so we don't leave a device without a Registration.
-			_ = s.Delete(r.Context(), id)
+			// EndDevice exists but Registration write failed: undo it so we
+			// don't leave a device without a Registration.
+			rollbackAddedDevice(r.Context(), s, regs, id)
 			writeError(w, http.StatusInternalServerError, "create registration: "+err.Error())
 			return
+		}
+
+		// The profile goes last so a refused name or a failed write can undo
+		// both records: a device with no Registration, or one the operator
+		// named and never got, is worse than no device.
+		if req.Name != "" || req.Kind != "" {
+			profile := store.DeviceProfile{LFDI: lfdiUpper, Name: req.Name, Kind: req.Kind}
+			if err := profiles.Put(r.Context(), profile); err != nil {
+				rollbackAddedDevice(r.Context(), s, regs, id)
+				writeDeviceProfileError(w, "add device", err)
+				return
+			}
+			logDeviceProfileSet(profile)
 		}
 
 		w.Header().Set("Location", dev.Href)
@@ -276,4 +303,25 @@ func validLFDI(s string) bool {
 	}
 	_, err := hex.DecodeString(s)
 	return err == nil
+}
+
+// rollbackBound limits how long a rollback may run once the request is gone.
+const rollbackBound = 5 * time.Second
+
+// rollbackAddedDevice removes the Registration and EndDevice a failed add
+// created. Both deletes are needed: the admin plane is wired with the plain
+// EndDevice store, whose Delete leaves the Registration alone, while a
+// RegisteredEndDeviceStore removes it too and then answers ErrNotFound here,
+// which is ignored. It runs on a context the request cannot cancel, so a
+// client that disconnects mid-add cannot leave a half-created device. A failed
+// rollback is logged, since the response already reports the cause.
+func rollbackAddedDevice(reqCtx context.Context, s store.EndDeviceStore, regs RegistrationWriter, id string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), rollbackBound)
+	defer cancel()
+	if err := regs.Delete(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
+		log.Printf("admin add device: rollback registration %s: %v", logsafe.Str(id), logsafe.Err(err))
+	}
+	if err := s.Delete(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
+		log.Printf("admin add device: rollback end device %s: %v", logsafe.Str(id), logsafe.Err(err))
+	}
 }

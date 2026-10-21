@@ -45,7 +45,7 @@ async function registerDevice(
 
   const added = await request.post(baseUrl + '/api/devices', {
     headers: AUTH,
-    data: { sfdi, lfdi, description: name, pin: 424242, enabled: true },
+    data: { sfdi, lfdi, name, pin: 424242, enabled: true },
   });
   expect(added.status()).toBe(201);
   return { sfdi, lfdi };

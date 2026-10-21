@@ -22,6 +22,10 @@ type Stores struct {
 	// gate consults. Run wires an empty store until the admin plane can
 	// provision pairs, so aggregators reach only their own EndDevice.
 	EndDeviceManagers store.EndDeviceManagementStore
+	// DeviceProfiles holds the server-only name and kind of each device,
+	// keyed by LFDI. Nil leaves the profile routes unmounted and makes
+	// POST /api/devices answer 503.
+	DeviceProfiles store.DeviceProfileStore
 	// EndDeviceIndexes allocates the opaque, server-chosen index that
 	// addresses an EndDevice in resource URLs ("/edev/3/rg"). core v0.10.0
 	// added this field to assembly.Stores; a nil value degrades to a

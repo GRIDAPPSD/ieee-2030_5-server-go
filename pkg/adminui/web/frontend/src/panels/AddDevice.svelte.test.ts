@@ -76,7 +76,7 @@ describe('AddDevice', () => {
     expect(post).toHaveBeenCalledWith('/api/devices', {
       sfdi: SFDI,
       lfdi: LFDI,
-      description: 'roof inverter',
+      name: 'roof inverter',
       pin: 424242,
       enabled: true,
     })
@@ -167,7 +167,7 @@ describe('AddDevice', () => {
     expect(post).toHaveBeenCalledWith('/api/devices', {
       sfdi: MINTED.sfdi,
       lfdi: MINTED.lfdi,
-      description: '',
+      name: '',
       pin: 9000,
       enabled: true,
     })

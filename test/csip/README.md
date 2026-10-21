@@ -1,9 +1,11 @@
 # CSIP Conformance Harness
 
 This directory holds the CSIP (SunSpec Common Smart Inverter Profile V1.2)
-conformance test suite for `ieee-2030_5-server-go`. Today the suite is one
-end-to-end smoke test; the 25 SunSpec V1.2 conformance requirements land
-incrementally on top of this scaffold.
+conformance test suite for `ieee-2030_5-server-go`. It holds the named
+SunSpec V1.2 conformance tests (files prefixed `core_`, `basic_`, `agg_`,
+`comm_`, `maint_` and `err_`, each named for the requirement it covers) plus
+the TLS handshake smoke tests. List the full set with
+`go test ./test/csip/ -list '.*'`.
 
 CSIP lives in this repository as an opt-in profile, not a separate module;
 see [`docs/csip.md`](../../docs/csip.md) for how to run in CSIP mode.
@@ -32,7 +34,7 @@ regeneration commands. The test device cert is CSIP section 6.11-compliant.
 ## Running the harness
 
 The Make target invokes the test driver, which boots an in-process spec
-server in CCM mode and runs the smoke against it:
+server in CCM mode and runs the suite against it:
 
 ```sh
 make test-csip-server
@@ -149,10 +151,11 @@ Either path works; pick whichever fits your workflow.
 - **Application layer:** `GET /dcap` returns HTTP 200 and a parseable
   `DeviceCapability` XML body.
 
-### What it does NOT assert (yet)
+### Where the rest of the coverage lives
 
-- The 25 SunSpec V1.2 conformance requirements. Those will be added as
-  sibling tests once the scaffold lands.
+The named conformance tests sit beside the smoke test as sibling files in
+this directory; each file's name identifies the requirement it covers. Use
+`ls test/csip/` or `go test ./test/csip/ -list '.*'` to see them all.
 
 ## Related
 

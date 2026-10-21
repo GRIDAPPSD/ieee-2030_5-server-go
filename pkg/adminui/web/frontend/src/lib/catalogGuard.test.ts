@@ -3,6 +3,7 @@
 // file starts naming a control function again or reads a row's prose value.
 /// <reference types="node" />
 import { readdirSync, readFileSync } from 'node:fs'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 // vitest runs with the frontend directory as cwd.
@@ -20,10 +21,6 @@ function sourceFiles(dir: string): string[] {
 
 // A control function is an element named opMod followed by a capital.
 export const ELEMENT = /\bopMod[A-Z]\w*/
-
-// A catalog row read for its prose `value`: a row-like identifier followed by
-// .value, or a row's value used as an index.
-export const ROW_VALUE = /\b(row|fn|func|fun|catalogRow|definition|spec)\??\.value\b/
 
 // The two files below are bound to one element by design and are not part of
 // the control form: the Dispatch tab sends target power only, and the FSAs
@@ -48,22 +45,54 @@ describe('the control form names no control function', () => {
     expect(named).toEqual(Object.keys(ELEMENT_ALLOWED).sort())
   })
 
-  it('no non-test file reads a catalog row\'s value text', () => {
-    const reading = files.filter((f) => ROW_VALUE.test(readFileSync(f, 'utf8')))
-    expect(reading).toEqual([])
-  })
-
-  it('the catalog row type has no value member to read', () => {
+  it('the catalog row type has no value member and no index signature to read one through', () => {
     const src = readFileSync('src/lib/controlcatalog.ts', 'utf8')
     const row = /export interface CatalogRow \{([\s\S]*?)\n\}/.exec(src)
     expect(row).not.toBeNull()
     expect(/^\s*value\??:/m.test(row?.[1] ?? '')).toBe(false)
+    expect(/\[\s*\w+\s*:\s*string\s*\]/.test(row?.[1] ?? '')).toBe(false)
+  })
+})
+
+// readsValue type-checks a snippet against the real CatalogRow and returns
+// its diagnostics. Any read of a row's value, by whatever name the row has
+// or however it is destructured, is a compile error because the type has no
+// such member; this test only type-checks these snippets, and the tree itself is
+// enforced by the separate npm run check step in CI.
+function diagnostics(snippet: string): string[] {
+  const probe = 'src/lib/__probe.ts'
+  const options: ts.CompilerOptions = {
+    strict: true,
+    noEmit: true,
+    skipLibCheck: true,
+    target: ts.ScriptTarget.ES2022,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    types: [],
+  }
+  const host = ts.createCompilerHost(options)
+  const getSourceFile = host.getSourceFile.bind(host)
+  host.getSourceFile = (name, lang, ...rest) =>
+    name.endsWith(probe) ? ts.createSourceFile(name, snippet, lang) : getSourceFile(name, lang, ...rest)
+  const fileExists = host.fileExists.bind(host)
+  host.fileExists = (name) => name.endsWith(probe) || fileExists(name)
+  const program = ts.createProgram([probe], options, host)
+  return ts.getPreEmitDiagnostics(program).map((d) => ts.flattenDiagnosticMessageText(d.messageText, '\n'))
+}
+
+describe('reading a catalog row\'s value text is a compile error', () => {
+  const head = "import type { CatalogRow, CatalogResponse } from './controlcatalog'\ndeclare const r: CatalogRow\ndeclare const resp: CatalogResponse\n"
+
+  it('a clean snippet has no diagnostics, so the check can pass', () => {
+    expect(diagnostics(head + 'export const ok = [r.kind, r.name, resp.functions.map((x) => x.kind)]\n')).toEqual([])
   })
 
-  it('the checks can fail: each pattern matches a line it must catch and skips one it must not', () => {
-    expect(ELEMENT.test('const k = "opModMaxLimW"')).toBe(true)
-    expect(ELEMENT.test('opMode is not an element')).toBe(false)
-    expect(ROW_VALUE.test('const text = row.value')).toBe(true)
-    expect(ROW_VALUE.test('const text = input.value')).toBe(false)
+  it.each([
+    ['property read under another name', 'export const x = r.value'],
+    ['destructuring', 'export const { value } = r'],
+    ['read through the response list', 'export const x = resp.functions[0]?.value'],
+    ['read in a callback', 'export const x = resp.functions.map((q) => q.value)'],
+  ])('%s fails to compile', (_name, code) => {
+    expect(diagnostics(head + code + '\n').length).toBeGreaterThan(0)
   })
 })

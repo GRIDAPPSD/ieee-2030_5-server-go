@@ -80,6 +80,7 @@ interface Mocks {
   catalogReply?: Reply
   curvesReply?: Reply
   programsFor?: (device: string) => Reply
+  defaultFor?: (device: string) => Reply
   controlsFor?: (device: string) => Reply
 }
 
@@ -90,6 +91,11 @@ function mockApi(m: Mocks = {}) {
     const url = new URL(path, 'http://x')
     if (url.pathname === '/api/der/control-functions') return m.catalogReply ?? { ok: true, data: catalog }
     if (url.pathname === '/api/der/curves') return m.curvesReply ?? { ok: true, data: curves }
+    const dflt = /\/api\/devices\/([^/]+)\/default-control/.exec(url.pathname)
+    if (dflt) {
+      const id = decodeURIComponent(dflt[1] ?? '')
+      return m.defaultFor ? m.defaultFor(id) : { ok: false, error: 'device has no default control', status: 404 }
+    }
     const dev = /\/api\/devices\/([^/]+)\/der-programs/.exec(url.pathname)
     if (dev) {
       const id = decodeURIComponent(dev[1] ?? '')
@@ -383,6 +389,63 @@ describe('DerControl: a default control', () => {
     await screen.findByTestId('der-control-default-row')
     await fireEvent.change(sel(container, '#controlDevice'), { target: { value: '1' } })
     await waitFor(() => expect(screen.queryByTestId('der-control-default-row')).toBeNull())
+  })
+})
+
+describe('DerControl: the stored default is read from the server', () => {
+  const stored = { ok: true, data: { mRID: 'SSSS', type: 'combined', derControlBase: { someElement: 4000 } } }
+
+  it('shows a stored default on load, first in the table, with no program claimed', async () => {
+    const { container, get } = await mount({ defaultFor: () => stored })
+    await pickDevice(container)
+    const row = await screen.findByTestId('der-control-default-row')
+    expect(row).toHaveTextContent('someElement=4000')
+    expect(row.querySelectorAll('td')[2]?.textContent?.trim()).toBe('-')
+    expect(get.mock.calls.map((c) => c[0])).toContain('/api/devices/0/default-control')
+    expect(container.querySelector('#derControlsTable tbody tr')).toBe(row)
+  })
+
+  it('a 404 shows no default and no error', async () => {
+    const { container } = await mount()
+    await pickDevice(container)
+    await waitFor(() => expect(screen.getAllByTestId('der-control-program-row').length).toBeGreaterThan(0))
+    expect(screen.queryByTestId('der-control-default-row')).toBeNull()
+    expect(screen.queryByTestId('der-control-default-error')).toBeNull()
+  })
+
+  it('any other failure is shown as an error, not as no default', async () => {
+    const { container } = await mount({ defaultFor: () => ({ ok: false, error: 'store down', status: 500 }) })
+    await pickDevice(container)
+    expect(await screen.findByTestId('der-control-default-error')).toHaveTextContent('store down')
+    expect(screen.queryByTestId('der-control-default-row')).toBeNull()
+  })
+
+  it('a device switch discards a stale reply, even when the same device is picked again', async () => {
+    const slow = deferred<unknown>()
+    let calls = 0
+    const { container } = await mount({
+      defaultFor: () => (++calls === 1 ? slow.promise : { ok: false, error: 'none', status: 404 }),
+    })
+    await fireEvent.change(sel(container, '#controlDevice'), { target: { value: '0' } })
+    await fireEvent.change(sel(container, '#controlDevice'), { target: { value: '1' } })
+    await fireEvent.change(sel(container, '#controlDevice'), { target: { value: '0' } })
+    await waitFor(() => expect(calls).toBe(3))
+    await waitFor(() => expect(screen.getAllByTestId('der-control-program-row').length).toBeGreaterThan(0))
+    slow.resolve(stored)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.queryByTestId('der-control-default-row')).toBeNull()
+  })
+
+  it('a default send replaces what was read and names its program', async () => {
+    const { post, container } = await mount({ defaultFor: () => stored })
+    post.mockResolvedValue(defaultReply())
+    await pickDevice(container)
+    await screen.findByTestId('der-control-default-row')
+    await fireEvent.click(tid('control-mode-default'))
+    await tick('fnFlag')
+    await sendAndConfirm()
+    await waitFor(() => expect(tid('der-control-default-row')).toHaveTextContent('someElement=7'))
+    expect(tid('der-control-default-row')).toHaveTextContent(PROG_B)
   })
 })
 

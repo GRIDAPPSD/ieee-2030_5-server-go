@@ -66,6 +66,23 @@ describe('buildValue per kind', () => {
     })
   })
 
+  it('an optional boolean never set is omitted; once set, true or false is sent; a required one is always sent', () => {
+    const row: CatalogRow = {
+      name: 'rowF',
+      description: '',
+      kind: 'object',
+      fields: [
+        { name: 'amount', kind: 'integer', required: true, min: 0, max: 9 },
+        { name: 'flag', kind: 'boolean' },
+        { name: 'must', kind: 'boolean', required: true },
+      ],
+    }
+    expect(initialValue(row)).toEqual({ amount: '', flag: '', must: false })
+    expect(buildValue(row, { amount: '3', flag: '', must: false })).toEqual({ ok: true, value: { amount: 3, must: false } })
+    expect(buildValue(row, { amount: '3', flag: true, must: true })).toEqual({ ok: true, value: { amount: 3, flag: true, must: true } })
+    expect(buildValue(row, { amount: '3', flag: false, must: false })).toEqual({ ok: true, value: { amount: 3, flag: false, must: false } })
+  })
+
   it('object refuses an empty required member and an out-of-range member, naming it', () => {
     expect(buildValue(pair, { amount: '', sign: false, scale: '' })).toEqual({ ok: false, error: 'rowC: amount is required.' })
     expect(buildValue(pair, { amount: '1001', sign: false, scale: '' })).toEqual({

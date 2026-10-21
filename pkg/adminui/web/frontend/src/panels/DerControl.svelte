@@ -68,10 +68,11 @@
   let primacyLine = $state('')
   let ok = $state(false)
 
-  // The default last saved from this page for the selected device. The
-  // device's programs are listed without their defaults, so this is the only
-  // default the page can show, and it says so.
-  let savedDefault = $state<{ deviceId: string; programHref: string; type: string; base: Record<string, unknown> } | null>(null)
+  // The selected device's stored default, read from the server on a device
+  // switch and set from the reply of a default send. programHref is null when
+  // it came from the read, which does not say which program holds it.
+  let storedDefault = $state<{ deviceId: string; programHref: string | null; type: string; base: Record<string, unknown> } | null>(null)
+  let defaultError = $state('')
 
   let controls = $state<DERControlListItem[]>([])
   let controlsError = $state('')
@@ -92,14 +93,21 @@
   // remembers the value it was sent under; a reply that finds it changed is
   // shown named with its own device, not as the new selection's.
   let selectionSeq = 0
+  let defaultSeq = 0
+  // Cleared on unmount so a reply that lands afterwards writes nothing.
+  let mounted = true
 
   onMount(() => {
     void loadCatalog()
     void loadCurves()
+    return () => {
+      mounted = false
+    }
   })
 
   async function loadCatalog() {
     const res = await fetchJSON<CatalogResponse>('/api/der/control-functions')
+    if (!mounted) return
     if (!res.ok) {
       catalogError = res.error
       return
@@ -114,6 +122,7 @@
 
   async function loadCurves() {
     const res = await fetchJSON<CurveListResponse>('/api/der/curves')
+    if (!mounted) return
     if (!res.ok) {
       curvesError = `Stored curves could not be read: ${res.error}`
       return
@@ -145,9 +154,13 @@
     dropSelectionState()
     const pseq = ++programSeq
     const cseq = ++controlSeq
+    const dseq = ++defaultSeq
+    storedDefault = null
+    defaultError = ''
     if (!id) return
     void loadPrograms(id, pseq)
     void loadControls(id, cseq)
+    void loadDefault(id, dseq)
   })
 
   async function loadPrograms(deviceId: string, seq: number) {
@@ -161,6 +174,19 @@
     }
     programsError = ''
     programs = res.data.programs ?? []
+  }
+
+  async function loadDefault(deviceId: string, seq: number) {
+    const res = await fetchJSON<{ mRID: string; type: string; derControlBase: Record<string, unknown> }>(
+      `/api/devices/${encodeURIComponent(deviceId)}/default-control`,
+    )
+    if (seq !== defaultSeq) return
+    if (!res.ok) {
+      // 404 is the answer for a device with no default: nothing to show.
+      if (res.status !== 404) defaultError = `The stored default could not be read: ${res.error}`
+      return
+    }
+    storedDefault = { deviceId, programHref: null, type: res.data.type, base: res.data.derControlBase }
   }
 
   async function loadControls(deviceId: string, seq: number) {
@@ -282,7 +308,9 @@
     } else if (d.defaultControl) {
       result = `${prefix}Stored the default control ${d.defaultControl.mRID} on program ${d.programHref}. It is in force now, has no end, and devices send no responses.`
       if (!stale) {
-        savedDefault = { deviceId, programHref: d.programHref, type: d.defaultControl.type, base: d.defaultControl.derControlBase }
+        defaultSeq++
+        defaultError = ''
+        storedDefault = { deviceId, programHref: d.programHref, type: d.defaultControl.type, base: d.defaultControl.derControlBase }
       }
     } else {
       result = `${prefix}Stored on program ${d.programHref}.`
@@ -334,7 +362,7 @@
   }
 
   const shownControls = $derived(programFilter ? controls.filter((c) => c.derProgramHref === programFilter) : controls)
-  const shownDefault = $derived(savedDefault && savedDefault.deviceId === selectedDeviceId ? savedDefault : null)
+  const shownDefault = $derived(storedDefault && storedDefault.deviceId === selectedDeviceId ? storedDefault : null)
   const primacyOf = (href: string): string => {
     const p = programs.find((x) => x.href === href)
     return p ? String(p.primacy) : '-'
@@ -448,6 +476,10 @@
     </div>
   {/if}
 
+  {#if defaultError}
+    <div class="result err" data-testid="der-control-default-error">{defaultError}</div>
+  {/if}
+
   {#if selectedDeviceId}
     <table id="derControlsTable">
       <thead>
@@ -467,8 +499,8 @@
           <tr data-testid="der-control-default-row">
             <td>default</td>
             <td>{functionsText(shownDefault.base)}</td>
-            <td>{shownDefault.programHref} ({primacyOf(shownDefault.programHref)})</td>
-            <td colspan="5" class="stat-label">Set from this page; in force now, no end, no responses</td>
+            <td>{shownDefault.programHref ? `${shownDefault.programHref} (${primacyOf(shownDefault.programHref)})` : '-'}</td>
+            <td colspan="5" class="stat-label">Stored default; in force now, no end, no responses</td>
           </tr>
         {/if}
         {#if controlsError}

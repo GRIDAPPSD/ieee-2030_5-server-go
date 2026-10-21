@@ -72,3 +72,9 @@ export function unassignDeviceFsa(deviceId: string, fsaMRID: string): Promise<Ap
     `/api/devices/${encodeURIComponent(deviceId)}/fsa-assignment?fsaHref=${encodeURIComponent(`/api/fsas/${fsaMRID}`)}`,
   )
 }
+
+// unassignFailure is the one wording of a refused unassign, shown wherever
+// the call is made.
+export function unassignFailure(res: { status: number; error: string }): string {
+  return `Unassign failed (${res.status}): ${res.error}`
+}

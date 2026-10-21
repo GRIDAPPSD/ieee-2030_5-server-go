@@ -25,7 +25,7 @@
     // Embedder columns, rendered after the reported columns in order.
     columns?: DashboardColumn[]
     fsas: AdminFSA[]
-    onChanged: () => void
+    onChanged: () => void | Promise<void>
   } = $props()
 
   // The each block is keyed by column id, which throws on a repeat, so a

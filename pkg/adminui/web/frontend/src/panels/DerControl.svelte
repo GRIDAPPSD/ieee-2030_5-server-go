@@ -1,16 +1,28 @@
 <script lang="ts">
-  // Send DER Control: pick a device, choose a default or a scheduled control,
-  // tick functions and fill their values, then Send shows a one-sentence
-  // summary and only Confirm posts. The form is built from the control
+  // Send DER Control: pick a device, or an FSA and one of its program
+  // templates, choose a default or a scheduled control, tick functions and
+  // fill their values, then Send shows a one-sentence summary and only
+  // Confirm posts. One form serves both targets. The form is built from the control
   // function catalog by value kind, so this file names no function. The result
   // area reports what the server stored, never a claim of delivery: devices
   // pull their control list, so "stored" is all the server can promise.
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import FunctionField from './FunctionField.svelte'
   import TabLink from './TabLink.svelte'
   import { requestPrograms } from '../lib/programsRequest'
   import { fetchJSON, postJSON } from '../lib/api'
-  import { deviceIdFromHref } from '../lib/fsa'
+  import { deviceIdFromHref, type AdminFSA, type AdminFSAList } from '../lib/fsa'
+  import { listTemplates, type ProgramTemplate } from '../lib/derprogram'
+  import {
+    cancelFsaControl,
+    canCancelFsaControl,
+    createFsaControl,
+    fsaControlStatus,
+    holdingText,
+    listFsaControls,
+    saveFsaDefault,
+    type FsaControlView,
+  } from '../lib/fsacontrol'
   import type { DashboardDevice } from '../lib/dashboard'
   import {
     buildDeviceControl,
@@ -41,6 +53,14 @@
 
   let { devices }: { devices: DashboardDevice[] } = $props()
 
+  let target = $state<'device' | 'fsa'>('device')
+  // This panel owns the FSA list and reads it each time the FSA target is
+  // chosen, never on entering the tab, so an FSA or assignment changed on
+  // another tab is neither missing nor counted stale.
+  let fsas = $state<AdminFSA[]>([])
+  let fsasError = $state('')
+  let fsasSeq = 0
+
   let catalog = $state<CatalogRow[]>([])
   let catalogError = $state('')
   let curves = $state<CurveInfo[]>([])
@@ -52,6 +72,16 @@
   let programsError = $state('')
   // The table shows the controls of one program, or of all when blank.
   let programFilter = $state('')
+
+  // The FSA target: the FSA, one of its program templates, and the controls
+  // the FSA holds on that template.
+  let selectedFsaId = $state('')
+  let templates = $state<ProgramTemplate[]>([])
+  let templatesChecked = $state(false)
+  let templatesError = $state('')
+  let selectedTemplateId = $state('')
+  let fsaControls = $state<FsaControlView[]>([])
+  let fsaControlsError = $state('')
 
   let mode = $state<'scheduled' | 'default'>('scheduled')
   let ticked = $state<Record<string, boolean>>({})
@@ -89,9 +119,11 @@
   // must not let a stale response overwrite a newer selection.
   let programSeq = 0
   let controlSeq = 0
-  // selectionSeq advances on every device change. A create or cancel
-  // remembers the value it was sent under; a reply that finds it changed is
-  // shown named with its own device, not as the new selection's.
+  let templateSeq = 0
+  let fsaControlSeq = 0
+  // selectionSeq advances on every device, FSA or program change. A create
+  // or cancel remembers the value it was sent under; a reply that finds it
+  // changed is shown named with its own target, not as the new selection's.
   let selectionSeq = 0
   let defaultSeq = 0
   // Cleared on unmount so a reply that lands afterwards writes nothing.
@@ -118,6 +150,25 @@
       ticked[row.name] = false
       values[row.name] = initialValue(row)
     }
+  }
+
+  async function loadFsas() {
+    const seq = ++fsasSeq
+    const res = await fetchJSON<AdminFSAList>('/api/fsas')
+    if (!mounted || seq !== fsasSeq) return
+    if (!res.ok) {
+      fsasError = `FSAs could not be read: ${res.error}`
+      return
+    }
+    fsasError = ''
+    fsas = res.data.fsas ?? []
+  }
+
+  function switchTarget(next: 'device' | 'fsa') {
+    if (next === target) return
+    target = next
+    dropSelectionState()
+    if (next === 'fsa') void loadFsas()
   }
 
   async function loadCurves() {
@@ -163,6 +214,55 @@
     void loadDefault(id, dseq)
   })
 
+  $effect(() => {
+    const id = selectedFsaId
+    templates = []
+    templatesChecked = false
+    templatesError = ''
+    selectedTemplateId = ''
+    fsaControls = []
+    fsaControlsError = ''
+    dropSelectionState()
+    const seq = ++templateSeq
+    if (!id) return
+    void loadTemplates(id, seq)
+  })
+
+  $effect(() => {
+    const templateId = selectedTemplateId
+    const fsaId = untrack(() => selectedFsaId)
+    fsaControls = []
+    fsaControlsError = ''
+    dropSelectionState()
+    const seq = ++fsaControlSeq
+    if (!fsaId || !templateId) return
+    void loadFsaControls(fsaId, templateId, seq)
+  })
+
+  async function loadTemplates(fsaId: string, seq: number) {
+    const res = await listTemplates(fsaId)
+    if (seq !== templateSeq) return
+    templatesChecked = true
+    if (!res.ok) {
+      templatesError = res.error
+      templates = []
+      return
+    }
+    templates = res.data.templates ?? []
+  }
+
+  async function loadFsaControls(fsaId: string, templateId: string, seq: number) {
+    const res = await listFsaControls(fsaId, templateId)
+    if (seq !== fsaControlSeq) return
+    if (!res.ok) {
+      fsaControlsError = res.error
+      fsaControls = []
+      return
+    }
+    fsaControlsError = ''
+    fsaControls = res.data.controls ?? []
+  }
+
   async function loadPrograms(deviceId: string, seq: number) {
     const res = await fetchJSON<DERProgramListResponse>(`/api/devices/${encodeURIComponent(deviceId)}/der-programs`)
     if (seq !== programSeq) return
@@ -202,10 +302,27 @@
     controls = res.data.controls ?? []
   }
 
-  function reload() {
+  // reload re-reads the tables of the target a write was made for, which a
+  // target switch while the write was in flight may no longer be the current
+  // one.
+  function reload(forTarget: 'device' | 'fsa' = target) {
+    if (forTarget === 'fsa') {
+      if (!selectedFsaId) return
+      void loadTemplates(selectedFsaId, ++templateSeq)
+      if (selectedTemplateId) void loadFsaControls(selectedFsaId, selectedTemplateId, ++fsaControlSeq)
+      return
+    }
     if (!selectedDeviceId) return
     void loadPrograms(selectedDeviceId, ++programSeq)
     void loadControls(selectedDeviceId, ++controlSeq)
+  }
+
+  const selectedTemplate = $derived(templates.find((t) => t.id === selectedTemplateId))
+
+  // targetText names the selection in the summary and in a late reply.
+  function targetText(): string {
+    if (target === 'fsa') return `FSA ${selectedFsaId}, program ${selectedTemplate?.description ?? selectedTemplateId}`
+    return `device ${deviceLabel()}`
   }
 
   function deviceLabel(): string {
@@ -221,7 +338,7 @@
     const built = fns.ok
       ? buildDeviceControl({
           mode,
-          deviceLabel: deviceLabel(),
+          target: targetText(),
           functions: fns.functions,
           startNow,
           startAtLocal: startAt,
@@ -229,9 +346,14 @@
           description,
         })
       : fns
-    if (!selectedDeviceId && built.ok) {
+    if (built.ok && target === 'device' && !selectedDeviceId) {
       ok = false
       result = 'Pick a device first.'
+      return
+    }
+    if (built.ok && target === 'fsa' && !selectedTemplate) {
+      ok = false
+      result = 'Pick an FSA and one of its programs first.'
       return
     }
     if (!built.ok) {
@@ -255,36 +377,40 @@
   // For a create 500, the server says the control may be live. stale means
   // the table now on screen belongs to another device.
   function keptCreateText(kept: { mRID: string; href: string }, stale: boolean): string {
-    const where = stale ? 'Select that device to see it in the table' : 'Cancel it from the table if it is not wanted'
+    const where = stale ? 'Select that target to see it in the table' : 'Cancel it from the table if it is not wanted'
     return `The control was kept and may be live: ${kept.mRID} (${kept.href}). ${where}.`
   }
 
   // For a cancel 500, only what the server says: the cancellation may or may
   // not have taken, so the control still exists and its status is unknown.
   function keptCancelText(kept: { mRID: string; href: string }, stale: boolean): string {
-    const where = stale ? 'Select that device to see its status' : 'The reloaded table shows its status'
+    const where = stale ? 'Select that target to see its status' : 'The reloaded table shows its status'
     return `The control ${kept.mRID} (${kept.href}) still exists. ${where}.`
   }
 
   async function confirmSend() {
     if (!pendingBody || posting) return
+    if (target === 'fsa') {
+      await confirmFsaSend(pendingBody)
+      return
+    }
     posting = true
     const body = pendingBody
     const deviceId = selectedDeviceId
     const sentUnder = selectionSeq
-    const target = `device ${deviceLabel()}`
+    const sentTo = targetText()
     pendingBody = null
     pendingSummary = ''
     const res = await postJSON<DeviceControlCreated>(`/api/devices/${encodeURIComponent(deviceId)}/controls`, body)
     posting = false
     const stale = sentUnder !== selectionSeq
-    const prefix = stale ? `For ${target}: ` : ''
+    const prefix = stale ? `For ${sentTo}: ` : ''
     if (!res.ok) {
       ok = false
       const kept = keptControl(res.body)
       result = `${prefix}Error: ${res.error}` + (kept ? `. ${keptCreateText(kept, stale)}` : '')
       primacyLine = ''
-      reload()
+      reload('device')
       return
     }
     ok = true
@@ -316,7 +442,57 @@
       result = `${prefix}Stored on program ${d.programHref}.`
     }
     if (!stale) programFilter = ''
-    reload()
+    reload('device')
+  }
+
+  type FsaSent = { ok: true; text: string } | { ok: false; error: string; body?: unknown }
+
+  async function postFsaSend(fsaId: string, template: ProgramTemplate, body: DeviceControlBody): Promise<FsaSent> {
+    if (body.kind === 'default') {
+      const saved = await saveFsaDefault(fsaId, template, body.functions)
+      if (!saved.ok) return saved
+      return {
+        ok: true,
+        text: `Stored the default control on program ${template.description} of FSA ${fsaId}. Every device assigned to the FSA takes it; it is in force now, has no end, and devices send no responses.`,
+      }
+    }
+    const created = await createFsaControl(fsaId, template.id, body)
+    if (!created.ok) return created
+    const c = created.data
+    return {
+      ok: true,
+      text:
+        `Stored ${c.mRID} at ${fmtTime(c.creationTime)}; starts ${fmtTime(c.interval.start)}. ` +
+        `Held by ${holdingText(c)}.` +
+        (c.persisted ? '' : ' A server restart forgets this control.'),
+    }
+  }
+
+  // confirmFsaSend posts to the FSA's program: a default through the
+  // template's edit route, a scheduled control to the FSA control route.
+  async function confirmFsaSend(body: DeviceControlBody) {
+    const template = selectedTemplate
+    if (!template) return
+    posting = true
+    const fsaId = selectedFsaId
+    const sentUnder = selectionSeq
+    const sentTo = targetText()
+    pendingBody = null
+    pendingSummary = ''
+    const res = await postFsaSend(fsaId, template, body)
+    posting = false
+    const stale = sentUnder !== selectionSeq
+    const prefix = stale ? `For ${sentTo}: ` : ''
+    if (!res.ok) {
+      ok = false
+      const kept = keptControl(res.body)
+      result = `${prefix}Error: ${res.error}` + (kept ? `. ${keptCreateText(kept, stale)}` : '')
+      reload('fsa')
+      return
+    }
+    ok = true
+    result = prefix + res.text
+    reload('fsa')
   }
 
   function startCancel(mrid: string) {
@@ -338,10 +514,14 @@
     if (cancelPosting) return
     cancelPosting = true
     const sentUnder = selectionSeq
-    const target = `device ${deviceLabel()}`
+    const sentTo = targetText()
     const body: { reason?: string } = {}
     if (cancelReason) body.reason = cancelReason
-    const res = await postJSON<DERControlView>(`/api/der/controls/${encodeURIComponent(mrid)}/cancel`, body)
+    // An FSA cancel reaches the control on every device the FSA holds it on.
+    const fsaControl = target === 'fsa' ? fsaControls.find((c) => c.mRID === mrid) : undefined
+    const res = fsaControl
+      ? await cancelFsaControl(selectedFsaId, selectedTemplateId, fsaControl.id, cancelReason)
+      : await postJSON<DERControlView>(`/api/der/controls/${encodeURIComponent(mrid)}/cancel`, body)
     cancelPosting = false
     cancelTarget = null
     const stale = sentUnder !== selectionSeq
@@ -351,14 +531,14 @@
       if (stale) {
         // The table and its cancel box now belong to another device.
         ok = false
-        result = `For ${target}, control ${mrid}: ${text}`
+        result = `For ${sentTo}, control ${mrid}: ${text}`
       } else {
         cancelResult = text
       }
     } else if (!stale) {
       cancelResult = ''
     }
-    reload()
+    reload(fsaControl ? 'fsa' : 'device')
   }
 
   const shownControls = $derived(programFilter ? controls.filter((c) => c.derProgramHref === programFilter) : controls)
@@ -367,26 +547,84 @@
     const p = programs.find((x) => x.href === href)
     return p ? String(p.primacy) : '-'
   }
+  const shownFsaDefault = $derived(selectedTemplate?.defaultControl ?? null)
   const programName = (p: DERProgramView): string => p.description || p.mRID
   const controlCount = (href: string): number => controls.filter((c) => c.derProgramHref === href).length
 </script>
+
+{#snippet cancelCell(mrid: string)}
+  {#if cancelTarget === mrid}
+    <input type="text" placeholder="reason (optional)" style="max-width: 100px;" bind:value={cancelReason} />
+    <button
+      class="btn btn-red btn-small"
+      data-testid="der-control-confirm-cancel-{mrid}"
+      disabled={cancelPosting}
+      onclick={() => confirmCancel(mrid)}>Confirm Cancel</button
+    >
+    <button class="btn btn-small" disabled={cancelPosting} onclick={abortCancel}>Back</button>
+  {:else}
+    <button class="btn btn-red btn-small" data-testid="der-control-cancel-{mrid}" onclick={() => startCancel(mrid)}>Cancel</button
+    >
+  {/if}
+{/snippet}
 
 <div class="card full-width">
   <h2>Send DER Control</h2>
 
   <div class="form-row">
     <span class="stat-label">Target</span>
-    <select id="controlDevice" bind:value={selectedDeviceId} disabled={posting || cancelPosting}>
-      <option value="">(pick device)</option>
-      {#each devices as device (device.href)}
-        <option value={deviceIdFromHref(device.href)}>{device.sfdi}</option>
-      {/each}
-    </select>
+    <label>
+      <input type="radio" name="controlTarget" data-testid="control-target-device" checked={target === 'device'} onchange={() => switchTarget('device')} />
+      Device
+    </label>
+    <label>
+      <input type="radio" name="controlTarget" data-testid="control-target-fsa" checked={target === 'fsa'} onchange={() => switchTarget('fsa')} />
+      FSA
+    </label>
+    {#if target === 'device'}
+      <select id="controlDevice" aria-label="Device" bind:value={selectedDeviceId} disabled={posting || cancelPosting}>
+        <option value="">(pick device)</option>
+        {#each devices as device (device.href)}
+          <option value={deviceIdFromHref(device.href)}>{device.sfdi}</option>
+        {/each}
+      </select>
+    {:else}
+      <select id="controlFsa" aria-label="FSA" bind:value={selectedFsaId} disabled={posting || cancelPosting}>
+        <option value="">(pick FSA)</option>
+        {#each fsas as fsa (fsa.mRID)}
+          <option value={fsa.mRID}>{fsa.description || fsa.mRID}</option>
+        {/each}
+      </select>
+      <select id="controlFsaProgram" aria-label="Program" bind:value={selectedTemplateId} disabled={posting || cancelPosting || !selectedFsaId}>
+        <option value="">(pick program)</option>
+        {#each templates as template (template.id)}
+          <option value={template.id}>{template.description}</option>
+        {/each}
+      </select>
+    {/if}
   </div>
 
-  {#if programsError}
+  {#if target === 'fsa'}
+    {#if fsasError}
+      <div class="result err" data-testid="fsa-control-fsas-error">{fsasError}</div>
+    {/if}
+    {#if templatesError}
+      <div class="result err" data-testid="fsa-control-templates-error">{templatesError}</div>
+    {:else if selectedFsaId && templatesChecked && templates.length === 0}
+      <p class="hint" data-testid="fsa-control-no-templates">
+        This FSA has no program templates yet. Add one on the <TabLink path="/ui/fsas">FSAs tab</TabLink>.
+      </p>
+    {/if}
+    {#if selectedFsaId}
+      <p class="hint" data-testid="fsa-control-reach">
+        Reaches the {fsas.find((f) => f.mRID === selectedFsaId)?.devices?.length ?? 0} devices assigned to this FSA, and any assigned later.
+      </p>
+    {/if}
+  {/if}
+
+  {#if target === 'device' && programsError}
     <div class="result err" data-testid="der-control-programs-error">{programsError}</div>
-  {:else if selectedDeviceId && programsChecked && programs.length === 0}
+  {:else if target === 'device' && selectedDeviceId && programsChecked && programs.length === 0}
     <p class="hint" data-testid="der-control-no-programs">
       This device has no DER programs yet; sending a control creates one for this device alone. Program templates are
       added on the <TabLink path="/ui/fsas">FSAs tab</TabLink>, and a device's programs are managed on the
@@ -451,7 +689,7 @@
     <div class="hint" data-testid="der-control-primacy">{primacyLine}</div>
   {/if}
 
-  {#if selectedDeviceId && programs.length > 0}
+  {#if target === 'device' && selectedDeviceId && programs.length > 0}
     <table id="derProgramsTable">
       <thead>
         <tr><th>Program</th><th>Primacy</th><th>Controls</th></tr>
@@ -476,11 +714,11 @@
     </div>
   {/if}
 
-  {#if defaultError}
+  {#if target === 'device' && defaultError}
     <div class="result err" data-testid="der-control-default-error">{defaultError}</div>
   {/if}
 
-  {#if selectedDeviceId}
+  {#if target === 'device' && selectedDeviceId}
     <table id="derControlsTable">
       <thead>
         <tr>
@@ -528,27 +766,7 @@
               </td>
               <td>
                 {#if canCancel(ctrl.eventStatus.status, ctrl.interval.start, ctrl.interval.duration, serverNow)}
-                  {#if cancelTarget === ctrl.mRID}
-                    <input
-                      type="text"
-                      placeholder="reason (optional)"
-                      style="max-width: 100px;"
-                      bind:value={cancelReason}
-                    />
-                    <button
-                      class="btn btn-red btn-small"
-                      data-testid="der-control-confirm-cancel-{ctrl.mRID}"
-                      disabled={cancelPosting}
-                      onclick={() => confirmCancel(ctrl.mRID)}>Confirm Cancel</button
-                    >
-                    <button class="btn btn-small" disabled={cancelPosting} onclick={abortCancel}>Back</button>
-                  {:else}
-                    <button
-                      class="btn btn-red btn-small"
-                      data-testid="der-control-cancel-{ctrl.mRID}"
-                      onclick={() => startCancel(ctrl.mRID)}>Cancel</button
-                    >
-                  {/if}
+                  {@render cancelCell(ctrl.mRID)}
                 {/if}
               </td>
             </tr>
@@ -556,8 +774,57 @@
         {/if}
       </tbody>
     </table>
-    {#if cancelResult}
-      <div class="result err" data-testid="der-control-cancel-result">{cancelResult}</div>
-    {/if}
+  {/if}
+
+  {#if target === 'fsa' && selectedTemplate}
+    <table id="fsaControlsTable">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Value</th>
+          <th>Start</th>
+          <th>End</th>
+          <th>Status</th>
+          <th>Held by</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {#if shownFsaDefault}
+          <tr data-testid="fsa-control-default-row">
+            <td>default</td>
+            <td>{functionsText(shownFsaDefault.derControlBase)}</td>
+            <td colspan="5" class="stat-label">Stored default; in force now, no end, no responses</td>
+          </tr>
+        {/if}
+        {#if fsaControlsError}
+          <tr>
+            <td colspan="7" class="result err" data-testid="fsa-control-controls-error">{fsaControlsError}</td>
+          </tr>
+        {:else if fsaControls.length === 0}
+          <tr><td colspan="7" class="stat-label">No admin-issued controls for this program</td></tr>
+        {:else}
+          {#each fsaControls as ctrl (ctrl.id)}
+            <tr data-testid="fsa-control-row" data-mrid={ctrl.mRID}>
+              <td>{ctrl.type}</td>
+              <td>{functionsText(ctrl.functions)}</td>
+              <td>{fmtTime(ctrl.interval.start)}</td>
+              <td>{fmtTime(ctrl.interval.start + ctrl.interval.duration)}</td>
+              <td data-testid="fsa-control-status">{fsaControlStatus(ctrl)}</td>
+              <td data-testid="fsa-control-holding">{holdingText(ctrl)}</td>
+              <td>
+                {#if canCancelFsaControl(ctrl)}
+                  {@render cancelCell(ctrl.mRID)}
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        {/if}
+      </tbody>
+    </table>
+  {/if}
+
+  {#if cancelResult}
+    <div class="result err" data-testid="der-control-cancel-result">{cancelResult}</div>
   {/if}
 </div>

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createServer, type Server } from 'net';
-import { startServer, stopServer, getAdminUrl, getProtocolPort, type PortKind } from './setup';
+import { startServer, stopServer, randomPortIn, getAdminUrl, getProtocolPort, type PortKind } from './setup';
 
 // A start whose first ports are taken must come up on fresh ones: the server
 // exits on a bind failure and the harness retries with new ports.
@@ -17,17 +17,18 @@ function close(s: Server): Promise<void> {
   return new Promise((resolve) => s.close(() => resolve()));
 }
 
-const free = () => 24000 + Math.floor(Math.random() * 3000);
+const RANGE_BASE = 24000;
+const RANGE_SPAN = 3000;
 
 for (const taken of ['admin', 'protocol'] as PortKind[]) {
   test(`a taken ${taken} port is replaced on retry`, async () => {
-    const busy = free();
+    const busy = randomPortIn(RANGE_BASE, RANGE_SPAN);
     const blocker = await occupy(busy, taken === 'admin' ? '127.0.0.1' : '::');
     const picked: Record<PortKind, number[]> = { admin: [], protocol: [] };
     try {
       await startServer({ SEP2_PEN: '12345' }, (kind) => {
         const first = picked[kind].length === 0;
-        const port = first && kind === taken ? busy : free() + (kind === 'admin' ? 0 : 3000);
+        const port = first && kind === taken ? busy : randomPortIn(kind === 'admin' ? RANGE_BASE : RANGE_BASE + RANGE_SPAN, RANGE_SPAN, [busy]);
         picked[kind].push(port);
         return port;
       });

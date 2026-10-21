@@ -17,8 +17,16 @@ const PORT_SPAN = 1000;
 export type PortKind = 'admin' | 'protocol';
 export type PortPicker = (kind: PortKind) => number;
 
+// A random port in [base, base + span), never one of exclude.
+export function randomPortIn(base: number, span: number, exclude: number[] = []): number {
+  for (;;) {
+    const port = base + Math.floor(Math.random() * span);
+    if (!exclude.includes(port)) return port;
+  }
+}
+
 const randomPort: PortPicker = (kind) =>
-  (kind === 'admin' ? ADMIN_PORT_BASE : PROTOCOL_PORT_BASE) + Math.floor(Math.random() * PORT_SPAN);
+  randomPortIn(kind === 'admin' ? ADMIN_PORT_BASE : PROTOCOL_PORT_BASE, PORT_SPAN);
 
 export function getAdminUrl(): string {
   return adminUrl;

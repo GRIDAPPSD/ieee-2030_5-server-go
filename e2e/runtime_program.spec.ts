@@ -130,6 +130,11 @@ test('an empty server becomes controllable from the UI alone', async ({ page, re
   const zeroSeconds = localInput(new Date(2026, 9, 21, 19, 14, 0));
   await page.locator('#controlStartAt').fill(zeroSeconds);
   await expect(page.locator('#controlStartAt')).toHaveValue(zeroSeconds);
+  // step="1" is what makes a non-zero seconds value valid; the default step rejects it.
+  const withSeconds = localInput(new Date(2026, 9, 21, 19, 14, 7));
+  await page.locator('#controlStartAt').fill(withSeconds);
+  await expect(page.locator('#controlStartAt')).toHaveValue(withSeconds);
+  expect(await page.locator('#controlStartAt').evaluate((el: HTMLInputElement) => el.validity.stepMismatch)).toBe(false);
   await page.locator('#controlStartAt').fill(localInput(new Date(Date.now() + 3600 * 1000)));
   await page.locator('#controlDuration').fill('30');
   await page.getByRole('button', { name: 'Send' }).click();

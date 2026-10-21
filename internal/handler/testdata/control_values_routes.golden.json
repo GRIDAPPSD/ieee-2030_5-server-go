@@ -1,0 +1,1525 @@
+{
+  "der-controls/connect": {
+    "status": 201,
+    "body": {
+      "creationTime": 0,
+      "derControlBase": {
+        "opModConnect": true,
+        "opModEnergize": true
+      },
+      "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
+      "derProgramHref": "/edev/0/fsa/0/derp/0",
+      "description": "",
+      "ended": false,
+      "eventStatus": {
+        "currentStatus": 0,
+        "dateTime": 0,
+        "status": "scheduled"
+      },
+      "executesGrant": null,
+      "functions": {
+        "opModConnect": true,
+        "opModEnergize": true
+      },
+      "href": "/edev/0/fsa/0/derp/0/derc/MINTED-ID",
+      "interval": {
+        "duration": 600,
+        "start": 0
+      },
+      "mRID": "MINTED-ID",
+      "notificationAttempted": true,
+      "persisted": false,
+      "supersedes": [],
+      "type": "connect"
+    }
+  },
+  "der-controls/displacementNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "powerFactor.displacement: must be an integer"
+    }
+  },
+  "der-controls/fixedPF": {
+    "status": 201,
+    "body": {
+      "creationTime": 0,
+      "derControlBase": {
+        "opModFixedPFInjectW": {
+          "displacement": 900,
+          "excitation": true,
+          "multiplier": -3
+        }
+      },
+      "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
+      "derProgramHref": "/edev/0/fsa/0/derp/0",
+      "description": "",
+      "ended": false,
+      "eventStatus": {
+        "currentStatus": 0,
+        "dateTime": 0,
+        "status": "scheduled"
+      },
+      "executesGrant": null,
+      "functions": {
+        "opModFixedPFInjectW": {
+          "displacement": 900,
+          "excitation": true
+        }
+      },
+      "href": "/edev/0/fsa/0/derp/0/derc/MINTED-ID",
+      "interval": {
+        "duration": 600,
+        "start": 0
+      },
+      "mRID": "MINTED-ID",
+      "notificationAttempted": true,
+      "persisted": false,
+      "supersedes": [],
+      "type": "fixedPFInjectW"
+    }
+  },
+  "der-controls/functions": {
+    "status": 201,
+    "body": {
+      "creationTime": 0,
+      "derControlBase": {
+        "opModMaxLimW": 5000,
+        "opModTargetW": {
+          "multiplier": 0,
+          "value": 500
+        }
+      },
+      "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
+      "derProgramHref": "/edev/0/fsa/0/derp/0",
+      "description": "",
+      "ended": false,
+      "eventStatus": {
+        "currentStatus": 0,
+        "dateTime": 0,
+        "status": "scheduled"
+      },
+      "executesGrant": null,
+      "functions": {
+        "opModMaxLimW": 5000,
+        "opModTargetW": {
+          "multiplier": 0,
+          "value": 500
+        }
+      },
+      "href": "/edev/0/fsa/0/derp/0/derc/MINTED-ID",
+      "interval": {
+        "duration": 600,
+        "start": 0
+      },
+      "mRID": "MINTED-ID",
+      "notificationAttempted": true,
+      "persisted": false,
+      "supersedes": [],
+      "type": "combined"
+    }
+  },
+  "der-controls/maxLimW": {
+    "status": 201,
+    "body": {
+      "creationTime": 0,
+      "derControlBase": {
+        "opModMaxLimW": 4000
+      },
+      "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
+      "derProgramHref": "/edev/0/fsa/0/derp/0",
+      "description": "",
+      "ended": false,
+      "eventStatus": {
+        "currentStatus": 0,
+        "dateTime": 0,
+        "status": "scheduled"
+      },
+      "executesGrant": null,
+      "functions": {
+        "opModMaxLimW": 4000
+      },
+      "href": "/edev/0/fsa/0/derp/0/derc/MINTED-ID",
+      "interval": {
+        "duration": 600,
+        "start": 0
+      },
+      "mRID": "MINTED-ID",
+      "notificationAttempted": true,
+      "persisted": false,
+      "supersedes": [],
+      "type": "maxLimW"
+    }
+  },
+  "der-controls/maxLimWNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "maxLimW: must be an integer"
+    }
+  },
+  "der-controls/maxLimWRange": {
+    "status": 400,
+    "body": {
+      "error": "maxLimW: must be 0 to 10000"
+    }
+  },
+  "der-controls/targetW": {
+    "status": 201,
+    "body": {
+      "creationTime": 0,
+      "derControlBase": {
+        "opModTargetW": {
+          "multiplier": 0,
+          "value": 500
+        }
+      },
+      "derControlListHref": "/edev/0/fsa/0/derp/0/derc",
+      "derProgramHref": "/edev/0/fsa/0/derp/0",
+      "description": "",
+      "ended": false,
+      "eventStatus": {
+        "currentStatus": 0,
+        "dateTime": 0,
+        "status": "scheduled"
+      },
+      "executesGrant": null,
+      "functions": {
+        "opModTargetW": {
+          "multiplier": 0,
+          "value": 500
+        }
+      },
+      "href": "/edev/0/fsa/0/derp/0/derc/MINTED-ID",
+      "interval": {
+        "duration": 600,
+        "start": 0
+      },
+      "mRID": "MINTED-ID",
+      "notificationAttempted": true,
+      "persisted": false,
+      "supersedes": [],
+      "type": "targetW"
+    }
+  },
+  "der-controls/targetWValueNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "targetW.value: must be an integer"
+    }
+  },
+  "der-controls/typeAndFunctions": {
+    "status": 400,
+    "body": {
+      "error": "type and functions: give one, not both"
+    }
+  },
+  "der-controls/typeRequired": {
+    "status": 400,
+    "body": {
+      "error": "type or functions: give one"
+    }
+  },
+  "der-controls/typeUnknown": {
+    "status": 400,
+    "body": {
+      "error": "type: unknown control type"
+    }
+  },
+  "der-controls/unknownField": {
+    "status": 400,
+    "body": {
+      "error": "unknown field"
+    }
+  },
+  "device-default/connect": {
+    "status": 201,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModConnect": true,
+          "opModEnergize": true
+        },
+        "mRID": "MINTED-ID",
+        "type": "connect"
+      },
+      "fsa": "MINTED-ID",
+      "kind": "default",
+      "primacy": 0,
+      "primacyReason": "0 is the largest value below the others (the lowest primacy of its other programs is 1); it lies outside the user-defined range 65 to 191 because no value there is below them, and 3 to 64 are reserved",
+      "program": "MINTED-PROGRAM",
+      "programHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM"
+    }
+  },
+  "device-default/displacementNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "powerFactor.displacement: must be an integer"
+    }
+  },
+  "device-default/fixedPF": {
+    "status": 201,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModFixedPFInjectW": {
+            "displacement": 900,
+            "excitation": true,
+            "multiplier": -3
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "fixedPFInjectW"
+      },
+      "fsa": "MINTED-ID",
+      "kind": "default",
+      "primacy": 0,
+      "primacyReason": "0 is the largest value below the others (the lowest primacy of its other programs is 1); it lies outside the user-defined range 65 to 191 because no value there is below them, and 3 to 64 are reserved",
+      "program": "MINTED-PROGRAM",
+      "programHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM"
+    }
+  },
+  "device-default/functions": {
+    "status": 201,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModMaxLimW": 5000,
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "combined"
+      },
+      "fsa": "MINTED-ID",
+      "kind": "default",
+      "primacy": 0,
+      "primacyReason": "0 is the largest value below the others (the lowest primacy of its other programs is 1); it lies outside the user-defined range 65 to 191 because no value there is below them, and 3 to 64 are reserved",
+      "program": "MINTED-PROGRAM",
+      "programHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM"
+    }
+  },
+  "device-default/maxLimW": {
+    "status": 201,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModMaxLimW": 4000
+        },
+        "mRID": "MINTED-ID",
+        "type": "maxLimW"
+      },
+      "fsa": "MINTED-ID",
+      "kind": "default",
+      "primacy": 0,
+      "primacyReason": "0 is the largest value below the others (the lowest primacy of its other programs is 1); it lies outside the user-defined range 65 to 191 because no value there is below them, and 3 to 64 are reserved",
+      "program": "MINTED-PROGRAM",
+      "programHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM"
+    }
+  },
+  "device-default/maxLimWNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "maxLimW: must be an integer"
+    }
+  },
+  "device-default/maxLimWRange": {
+    "status": 400,
+    "body": {
+      "error": "maxLimW: must be 0 to 10000"
+    }
+  },
+  "device-default/targetW": {
+    "status": 201,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "targetW"
+      },
+      "fsa": "MINTED-ID",
+      "kind": "default",
+      "primacy": 0,
+      "primacyReason": "0 is the largest value below the others (the lowest primacy of its other programs is 1); it lies outside the user-defined range 65 to 191 because no value there is below them, and 3 to 64 are reserved",
+      "program": "MINTED-PROGRAM",
+      "programHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM"
+    }
+  },
+  "device-default/targetWValueNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "targetW.value: must be an integer"
+    }
+  },
+  "device-default/typeAndFunctions": {
+    "status": 400,
+    "body": {
+      "error": "type and functions: give one, not both"
+    }
+  },
+  "device-default/typeRequired": {
+    "status": 400,
+    "body": {
+      "error": "type or functions: give one"
+    }
+  },
+  "device-default/typeUnknown": {
+    "status": 400,
+    "body": {
+      "error": "type: unknown control type"
+    }
+  },
+  "device-default/unknownField": {
+    "status": 400,
+    "body": {
+      "error": "unknown field"
+    }
+  },
+  "device-program-create/connect": {
+    "status": 201,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModConnect": true,
+          "opModEnergize": true
+        },
+        "mRID": "MINTED-ID",
+        "type": "connect"
+      },
+      "description": "cv",
+      "href": "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 0
+    }
+  },
+  "device-program-create/displacementNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "invalid JSON"
+    }
+  },
+  "device-program-create/fixedPF": {
+    "status": 201,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModFixedPFInjectW": {
+            "displacement": 900,
+            "excitation": true,
+            "multiplier": -3
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "fixedPFInjectW"
+      },
+      "description": "cv",
+      "href": "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 0
+    }
+  },
+  "device-program-create/functions": {
+    "status": 201,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModMaxLimW": 5000,
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "combined"
+      },
+      "description": "cv",
+      "href": "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 0
+    }
+  },
+  "device-program-create/maxLimW": {
+    "status": 201,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModMaxLimW": 4000
+        },
+        "mRID": "MINTED-ID",
+        "type": "maxLimW"
+      },
+      "description": "cv",
+      "href": "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 0
+    }
+  },
+  "device-program-create/maxLimWNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "invalid JSON"
+    }
+  },
+  "device-program-create/maxLimWRange": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.maxLimW: must be 0 to 10000"
+    }
+  },
+  "device-program-create/targetW": {
+    "status": 201,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "targetW"
+      },
+      "description": "cv",
+      "href": "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 0
+    }
+  },
+  "device-program-create/targetWValueNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "invalid JSON"
+    }
+  },
+  "device-program-create/typeAndFunctions": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.type and functions: give one, not both"
+    }
+  },
+  "device-program-create/typeRequired": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.type or functions: give one"
+    }
+  },
+  "device-program-create/typeUnknown": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.type: unknown control type"
+    }
+  },
+  "device-program-create/unknownField": {
+    "status": 400,
+    "body": {
+      "error": "unknown field"
+    }
+  },
+  "device-program-edit/connect": {
+    "status": 200,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModConnect": true,
+          "opModEnergize": true
+        },
+        "mRID": "MINTED-ID",
+        "type": "connect"
+      },
+      "description": "cv",
+      "href": "/edev/1/fsa/0/derp/0",
+      "id": "0",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 1
+    }
+  },
+  "device-program-edit/displacementNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "invalid JSON"
+    }
+  },
+  "device-program-edit/fixedPF": {
+    "status": 200,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModFixedPFInjectW": {
+            "displacement": 900,
+            "excitation": true,
+            "multiplier": -3
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "fixedPFInjectW"
+      },
+      "description": "cv",
+      "href": "/edev/1/fsa/0/derp/0",
+      "id": "0",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 1
+    }
+  },
+  "device-program-edit/functions": {
+    "status": 200,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModMaxLimW": 5000,
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "combined"
+      },
+      "description": "cv",
+      "href": "/edev/1/fsa/0/derp/0",
+      "id": "0",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 1
+    }
+  },
+  "device-program-edit/maxLimW": {
+    "status": 200,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModMaxLimW": 4000
+        },
+        "mRID": "MINTED-ID",
+        "type": "maxLimW"
+      },
+      "description": "cv",
+      "href": "/edev/1/fsa/0/derp/0",
+      "id": "0",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 1
+    }
+  },
+  "device-program-edit/maxLimWNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "invalid JSON"
+    }
+  },
+  "device-program-edit/maxLimWRange": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.maxLimW: must be 0 to 10000"
+    }
+  },
+  "device-program-edit/targetW": {
+    "status": 200,
+    "body": {
+      "defaultControl": {
+        "derControlBase": {
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "targetW"
+      },
+      "description": "cv",
+      "href": "/edev/1/fsa/0/derp/0",
+      "id": "0",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 1
+    }
+  },
+  "device-program-edit/targetWValueNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "invalid JSON"
+    }
+  },
+  "device-program-edit/typeAndFunctions": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.type and functions: give one, not both"
+    }
+  },
+  "device-program-edit/typeRequired": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.type or functions: give one"
+    }
+  },
+  "device-program-edit/typeUnknown": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.type: unknown control type"
+    }
+  },
+  "device-program-edit/unknownField": {
+    "status": 400,
+    "body": {
+      "error": "unknown field"
+    }
+  },
+  "device-scheduled/connect": {
+    "status": 201,
+    "body": {
+      "control": {
+        "creationTime": 0,
+        "derControlBase": {
+          "opModConnect": true,
+          "opModEnergize": true
+        },
+        "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
+        "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
+        "description": "",
+        "ended": false,
+        "eventStatus": {
+          "currentStatus": 0,
+          "dateTime": 0,
+          "status": "scheduled"
+        },
+        "executesGrant": null,
+        "functions": {
+          "opModConnect": true,
+          "opModEnergize": true
+        },
+        "href": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc/MINTED-ID",
+        "interval": {
+          "duration": 600,
+          "start": 0
+        },
+        "mRID": "MINTED-ID",
+        "notificationAttempted": true,
+        "persisted": false,
+        "supersedes": [],
+        "type": "connect"
+      },
+      "fsa": "MINTED-ID",
+      "kind": "scheduled",
+      "primacy": 0,
+      "primacyReason": "0 is the largest value below the others (the lowest primacy of its other programs is 1); it lies outside the user-defined range 65 to 191 because no value there is below them, and 3 to 64 are reserved",
+      "program": "MINTED-PROGRAM",
+      "programHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM"
+    }
+  },
+  "device-scheduled/displacementNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "powerFactor.displacement: must be an integer"
+    }
+  },
+  "device-scheduled/fixedPF": {
+    "status": 201,
+    "body": {
+      "control": {
+        "creationTime": 0,
+        "derControlBase": {
+          "opModFixedPFInjectW": {
+            "displacement": 900,
+            "excitation": true,
+            "multiplier": -3
+          }
+        },
+        "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
+        "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
+        "description": "",
+        "ended": false,
+        "eventStatus": {
+          "currentStatus": 0,
+          "dateTime": 0,
+          "status": "scheduled"
+        },
+        "executesGrant": null,
+        "functions": {
+          "opModFixedPFInjectW": {
+            "displacement": 900,
+            "excitation": true
+          }
+        },
+        "href": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc/MINTED-ID",
+        "interval": {
+          "duration": 600,
+          "start": 0
+        },
+        "mRID": "MINTED-ID",
+        "notificationAttempted": true,
+        "persisted": false,
+        "supersedes": [],
+        "type": "fixedPFInjectW"
+      },
+      "fsa": "MINTED-ID",
+      "kind": "scheduled",
+      "primacy": 0,
+      "primacyReason": "0 is the largest value below the others (the lowest primacy of its other programs is 1); it lies outside the user-defined range 65 to 191 because no value there is below them, and 3 to 64 are reserved",
+      "program": "MINTED-PROGRAM",
+      "programHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM"
+    }
+  },
+  "device-scheduled/functions": {
+    "status": 201,
+    "body": {
+      "control": {
+        "creationTime": 0,
+        "derControlBase": {
+          "opModMaxLimW": 5000,
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
+        "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
+        "description": "",
+        "ended": false,
+        "eventStatus": {
+          "currentStatus": 0,
+          "dateTime": 0,
+          "status": "scheduled"
+        },
+        "executesGrant": null,
+        "functions": {
+          "opModMaxLimW": 5000,
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "href": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc/MINTED-ID",
+        "interval": {
+          "duration": 600,
+          "start": 0
+        },
+        "mRID": "MINTED-ID",
+        "notificationAttempted": true,
+        "persisted": false,
+        "supersedes": [],
+        "type": "combined"
+      },
+      "fsa": "MINTED-ID",
+      "kind": "scheduled",
+      "primacy": 0,
+      "primacyReason": "0 is the largest value below the others (the lowest primacy of its other programs is 1); it lies outside the user-defined range 65 to 191 because no value there is below them, and 3 to 64 are reserved",
+      "program": "MINTED-PROGRAM",
+      "programHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM"
+    }
+  },
+  "device-scheduled/maxLimW": {
+    "status": 201,
+    "body": {
+      "control": {
+        "creationTime": 0,
+        "derControlBase": {
+          "opModMaxLimW": 4000
+        },
+        "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
+        "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
+        "description": "",
+        "ended": false,
+        "eventStatus": {
+          "currentStatus": 0,
+          "dateTime": 0,
+          "status": "scheduled"
+        },
+        "executesGrant": null,
+        "functions": {
+          "opModMaxLimW": 4000
+        },
+        "href": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc/MINTED-ID",
+        "interval": {
+          "duration": 600,
+          "start": 0
+        },
+        "mRID": "MINTED-ID",
+        "notificationAttempted": true,
+        "persisted": false,
+        "supersedes": [],
+        "type": "maxLimW"
+      },
+      "fsa": "MINTED-ID",
+      "kind": "scheduled",
+      "primacy": 0,
+      "primacyReason": "0 is the largest value below the others (the lowest primacy of its other programs is 1); it lies outside the user-defined range 65 to 191 because no value there is below them, and 3 to 64 are reserved",
+      "program": "MINTED-PROGRAM",
+      "programHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM"
+    }
+  },
+  "device-scheduled/maxLimWNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "maxLimW: must be an integer"
+    }
+  },
+  "device-scheduled/maxLimWRange": {
+    "status": 400,
+    "body": {
+      "error": "maxLimW: must be 0 to 10000"
+    }
+  },
+  "device-scheduled/targetW": {
+    "status": 201,
+    "body": {
+      "control": {
+        "creationTime": 0,
+        "derControlBase": {
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "derControlListHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc",
+        "derProgramHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM",
+        "description": "",
+        "ended": false,
+        "eventStatus": {
+          "currentStatus": 0,
+          "dateTime": 0,
+          "status": "scheduled"
+        },
+        "executesGrant": null,
+        "functions": {
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "href": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM/derc/MINTED-ID",
+        "interval": {
+          "duration": 600,
+          "start": 0
+        },
+        "mRID": "MINTED-ID",
+        "notificationAttempted": true,
+        "persisted": false,
+        "supersedes": [],
+        "type": "targetW"
+      },
+      "fsa": "MINTED-ID",
+      "kind": "scheduled",
+      "primacy": 0,
+      "primacyReason": "0 is the largest value below the others (the lowest primacy of its other programs is 1); it lies outside the user-defined range 65 to 191 because no value there is below them, and 3 to 64 are reserved",
+      "program": "MINTED-PROGRAM",
+      "programHref": "/edev/1/fsa/MINTED-ID/derp/MINTED-PROGRAM"
+    }
+  },
+  "device-scheduled/targetWValueNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "targetW.value: must be an integer"
+    }
+  },
+  "device-scheduled/typeAndFunctions": {
+    "status": 400,
+    "body": {
+      "error": "type and functions: give one, not both"
+    }
+  },
+  "device-scheduled/typeRequired": {
+    "status": 400,
+    "body": {
+      "error": "type or functions: give one"
+    }
+  },
+  "device-scheduled/typeUnknown": {
+    "status": 400,
+    "body": {
+      "error": "type: unknown control type"
+    }
+  },
+  "device-scheduled/unknownField": {
+    "status": 400,
+    "body": {
+      "error": "unknown field"
+    }
+  },
+  "fsa-control/connect": {
+    "status": 201,
+    "body": {
+      "cancelled": false,
+      "cancelledAt": null,
+      "copies": [
+        {
+          "device": "1",
+          "eventStatus": {
+            "currentStatus": 0,
+            "dateTime": 0,
+            "status": "scheduled"
+          },
+          "href": "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM/derc/MINTED-ID"
+        }
+      ],
+      "creationTime": 0,
+      "derControlBase": {
+        "opModConnect": true,
+        "opModEnergize": true
+      },
+      "description": "",
+      "ended": false,
+      "functions": {
+        "opModConnect": true,
+        "opModEnergize": true
+      },
+      "id": "MINTED-ID",
+      "interval": {
+        "duration": 600,
+        "start": 0
+      },
+      "mRID": "MINTED-ID",
+      "notificationAttempted": true,
+      "persisted": false,
+      "type": "connect"
+    }
+  },
+  "fsa-control/displacementNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "powerFactor.displacement: must be an integer"
+    }
+  },
+  "fsa-control/fixedPF": {
+    "status": 201,
+    "body": {
+      "cancelled": false,
+      "cancelledAt": null,
+      "copies": [
+        {
+          "device": "1",
+          "eventStatus": {
+            "currentStatus": 0,
+            "dateTime": 0,
+            "status": "scheduled"
+          },
+          "href": "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM/derc/MINTED-ID"
+        }
+      ],
+      "creationTime": 0,
+      "derControlBase": {
+        "opModFixedPFInjectW": {
+          "displacement": 900,
+          "excitation": true,
+          "multiplier": -3
+        }
+      },
+      "description": "",
+      "ended": false,
+      "functions": {
+        "opModFixedPFInjectW": {
+          "displacement": 900,
+          "excitation": true
+        }
+      },
+      "id": "MINTED-ID",
+      "interval": {
+        "duration": 600,
+        "start": 0
+      },
+      "mRID": "MINTED-ID",
+      "notificationAttempted": true,
+      "persisted": false,
+      "type": "fixedPFInjectW"
+    }
+  },
+  "fsa-control/functions": {
+    "status": 201,
+    "body": {
+      "cancelled": false,
+      "cancelledAt": null,
+      "copies": [
+        {
+          "device": "1",
+          "eventStatus": {
+            "currentStatus": 0,
+            "dateTime": 0,
+            "status": "scheduled"
+          },
+          "href": "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM/derc/MINTED-ID"
+        }
+      ],
+      "creationTime": 0,
+      "derControlBase": {
+        "opModMaxLimW": 5000,
+        "opModTargetW": {
+          "multiplier": 0,
+          "value": 500
+        }
+      },
+      "description": "",
+      "ended": false,
+      "functions": {
+        "opModMaxLimW": 5000,
+        "opModTargetW": {
+          "multiplier": 0,
+          "value": 500
+        }
+      },
+      "id": "MINTED-ID",
+      "interval": {
+        "duration": 600,
+        "start": 0
+      },
+      "mRID": "MINTED-ID",
+      "notificationAttempted": true,
+      "persisted": false,
+      "type": "combined"
+    }
+  },
+  "fsa-control/maxLimW": {
+    "status": 201,
+    "body": {
+      "cancelled": false,
+      "cancelledAt": null,
+      "copies": [
+        {
+          "device": "1",
+          "eventStatus": {
+            "currentStatus": 0,
+            "dateTime": 0,
+            "status": "scheduled"
+          },
+          "href": "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM/derc/MINTED-ID"
+        }
+      ],
+      "creationTime": 0,
+      "derControlBase": {
+        "opModMaxLimW": 4000
+      },
+      "description": "",
+      "ended": false,
+      "functions": {
+        "opModMaxLimW": 4000
+      },
+      "id": "MINTED-ID",
+      "interval": {
+        "duration": 600,
+        "start": 0
+      },
+      "mRID": "MINTED-ID",
+      "notificationAttempted": true,
+      "persisted": false,
+      "type": "maxLimW"
+    }
+  },
+  "fsa-control/maxLimWNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "maxLimW: must be an integer"
+    }
+  },
+  "fsa-control/maxLimWRange": {
+    "status": 400,
+    "body": {
+      "error": "maxLimW: must be 0 to 10000"
+    }
+  },
+  "fsa-control/targetW": {
+    "status": 201,
+    "body": {
+      "cancelled": false,
+      "cancelledAt": null,
+      "copies": [
+        {
+          "device": "1",
+          "eventStatus": {
+            "currentStatus": 0,
+            "dateTime": 0,
+            "status": "scheduled"
+          },
+          "href": "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM/derc/MINTED-ID"
+        }
+      ],
+      "creationTime": 0,
+      "derControlBase": {
+        "opModTargetW": {
+          "multiplier": 0,
+          "value": 500
+        }
+      },
+      "description": "",
+      "ended": false,
+      "functions": {
+        "opModTargetW": {
+          "multiplier": 0,
+          "value": 500
+        }
+      },
+      "id": "MINTED-ID",
+      "interval": {
+        "duration": 600,
+        "start": 0
+      },
+      "mRID": "MINTED-ID",
+      "notificationAttempted": true,
+      "persisted": false,
+      "type": "targetW"
+    }
+  },
+  "fsa-control/targetWValueNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "targetW.value: must be an integer"
+    }
+  },
+  "fsa-control/typeAndFunctions": {
+    "status": 400,
+    "body": {
+      "error": "type and functions: give one, not both"
+    }
+  },
+  "fsa-control/typeRequired": {
+    "status": 400,
+    "body": {
+      "error": "type or functions: give one"
+    }
+  },
+  "fsa-control/typeUnknown": {
+    "status": 400,
+    "body": {
+      "error": "type: unknown control type"
+    }
+  },
+  "fsa-control/unknownField": {
+    "status": 400,
+    "body": {
+      "error": "unknown field"
+    }
+  },
+  "fsa-program-create/connect": {
+    "status": 201,
+    "body": {
+      "copies": [
+        "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM"
+      ],
+      "defaultControl": {
+        "derControlBase": {
+          "opModConnect": true,
+          "opModEnergize": true
+        },
+        "mRID": "MINTED-ID",
+        "type": "connect"
+      },
+      "description": "cv",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 0
+    }
+  },
+  "fsa-program-create/displacementNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "invalid JSON"
+    }
+  },
+  "fsa-program-create/fixedPF": {
+    "status": 201,
+    "body": {
+      "copies": [
+        "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM"
+      ],
+      "defaultControl": {
+        "derControlBase": {
+          "opModFixedPFInjectW": {
+            "displacement": 900,
+            "excitation": true,
+            "multiplier": -3
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "fixedPFInjectW"
+      },
+      "description": "cv",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 0
+    }
+  },
+  "fsa-program-create/functions": {
+    "status": 201,
+    "body": {
+      "copies": [
+        "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM"
+      ],
+      "defaultControl": {
+        "derControlBase": {
+          "opModMaxLimW": 5000,
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "combined"
+      },
+      "description": "cv",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 0
+    }
+  },
+  "fsa-program-create/maxLimW": {
+    "status": 201,
+    "body": {
+      "copies": [
+        "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM"
+      ],
+      "defaultControl": {
+        "derControlBase": {
+          "opModMaxLimW": 4000
+        },
+        "mRID": "MINTED-ID",
+        "type": "maxLimW"
+      },
+      "description": "cv",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 0
+    }
+  },
+  "fsa-program-create/maxLimWNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "invalid JSON"
+    }
+  },
+  "fsa-program-create/maxLimWRange": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.maxLimW: must be 0 to 10000"
+    }
+  },
+  "fsa-program-create/targetW": {
+    "status": 201,
+    "body": {
+      "copies": [
+        "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM"
+      ],
+      "defaultControl": {
+        "derControlBase": {
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "targetW"
+      },
+      "description": "cv",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 0
+    }
+  },
+  "fsa-program-create/targetWValueNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "invalid JSON"
+    }
+  },
+  "fsa-program-create/typeAndFunctions": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.type and functions: give one, not both"
+    }
+  },
+  "fsa-program-create/typeRequired": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.type or functions: give one"
+    }
+  },
+  "fsa-program-create/typeUnknown": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.type: unknown control type"
+    }
+  },
+  "fsa-program-create/unknownField": {
+    "status": 400,
+    "body": {
+      "error": "unknown field"
+    }
+  },
+  "fsa-program-edit/connect": {
+    "status": 200,
+    "body": {
+      "copies": [
+        "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM"
+      ],
+      "defaultControl": {
+        "derControlBase": {
+          "opModConnect": true,
+          "opModEnergize": true
+        },
+        "mRID": "MINTED-ID",
+        "type": "connect"
+      },
+      "description": "cv",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 1
+    }
+  },
+  "fsa-program-edit/displacementNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "invalid JSON"
+    }
+  },
+  "fsa-program-edit/fixedPF": {
+    "status": 200,
+    "body": {
+      "copies": [
+        "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM"
+      ],
+      "defaultControl": {
+        "derControlBase": {
+          "opModFixedPFInjectW": {
+            "displacement": 900,
+            "excitation": true,
+            "multiplier": -3
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "fixedPFInjectW"
+      },
+      "description": "cv",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 1
+    }
+  },
+  "fsa-program-edit/functions": {
+    "status": 200,
+    "body": {
+      "copies": [
+        "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM"
+      ],
+      "defaultControl": {
+        "derControlBase": {
+          "opModMaxLimW": 5000,
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "combined"
+      },
+      "description": "cv",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 1
+    }
+  },
+  "fsa-program-edit/maxLimW": {
+    "status": 200,
+    "body": {
+      "copies": [
+        "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM"
+      ],
+      "defaultControl": {
+        "derControlBase": {
+          "opModMaxLimW": 4000
+        },
+        "mRID": "MINTED-ID",
+        "type": "maxLimW"
+      },
+      "description": "cv",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 1
+    }
+  },
+  "fsa-program-edit/maxLimWNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "invalid JSON"
+    }
+  },
+  "fsa-program-edit/maxLimWRange": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.maxLimW: must be 0 to 10000"
+    }
+  },
+  "fsa-program-edit/targetW": {
+    "status": 200,
+    "body": {
+      "copies": [
+        "/edev/1/fsa/fsa-A/derp/MINTED-PROGRAM"
+      ],
+      "defaultControl": {
+        "derControlBase": {
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "mRID": "MINTED-ID",
+        "type": "targetW"
+      },
+      "description": "cv",
+      "id": "MINTED-PROGRAM",
+      "mRID": "MINTED-ID",
+      "primacy": 1,
+      "version": 1
+    }
+  },
+  "fsa-program-edit/targetWValueNotInteger": {
+    "status": 400,
+    "body": {
+      "error": "invalid JSON"
+    }
+  },
+  "fsa-program-edit/typeAndFunctions": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.type and functions: give one, not both"
+    }
+  },
+  "fsa-program-edit/typeRequired": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.type or functions: give one"
+    }
+  },
+  "fsa-program-edit/typeUnknown": {
+    "status": 400,
+    "body": {
+      "error": "defaultControl.type: unknown control type"
+    }
+  },
+  "fsa-program-edit/unknownField": {
+    "status": 400,
+    "body": {
+      "error": "unknown field"
+    }
+  }
+}

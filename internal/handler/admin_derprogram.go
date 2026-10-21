@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
@@ -42,18 +40,10 @@ const maxDeviceProgramsPerFSA = 16
 const templateInternalError = "program write failed"
 
 type programTemplateBody struct {
-	Description    *string             `json:"description"`
-	Primacy        *int64              `json:"primacy"`
-	MRID           *string             `json:"mRID"`
-	DefaultControl *defaultControlBody `json:"defaultControl"`
-}
-
-type defaultControlBody struct {
-	Type        *string                `json:"type"`
-	Functions   json.RawMessage        `json:"functions"`
-	MaxLimW     *int64                 `json:"maxLimW"`
-	PowerFactor *derControlPowerFactor `json:"powerFactor"`
-	TargetW     *derControlTargetW     `json:"targetW"`
+	Description    *string            `json:"description"`
+	Primacy        *int64             `json:"primacy"`
+	MRID           *string            `json:"mRID"`
+	DefaultControl *controlValuesBody `json:"defaultControl"`
 }
 
 // ProgramTemplateView is one template as the admin API reports it. Copies
@@ -244,12 +234,10 @@ func buildProgramEdit(body programTemplateBody) (programEdit, string, bool) {
 	if dc == nil {
 		return e, "", true
 	}
-	var req dercontrol.CreateRequest
-	values := derControlCreateBody{MaxLimW: dc.MaxLimW, PowerFactor: dc.PowerFactor, TargetW: dc.TargetW}
-	if ref, ok := buildControlValues(dc.Type, dc.Functions, values, &req, &derControlLog{}); !ok {
+	base, ref, ok, err := controlBaseFromValues(*dc, &derControlLog{})
+	if !ok {
 		return e, "defaultControl." + ref.message, false
 	}
-	base, err := dercontrol.ControlBase(req)
 	if err != nil {
 		return e, "defaultControl: invalid value", false
 	}
@@ -307,11 +295,8 @@ func (h *AdminFSAHandler) templateView(ctx context.Context, fsaID string, t memo
 
 func programDefaultControlView(t memory.ProgramTemplate) ProgramDefaultControlView {
 	base := t.DefaultControlBase
-	return ProgramDefaultControlView{
-		MRID:           t.DefaultMRID,
-		Type:           controlTypeName(&base),
-		DERControlBase: newDERControlBaseView(&base),
-	}
+	typ, baseView, _ := controlBaseViews(&base)
+	return ProgramDefaultControlView{MRID: t.DefaultMRID, Type: typ, DERControlBase: baseView}
 }
 
 // DeviceProgramView is one device program as the admin API reports it.

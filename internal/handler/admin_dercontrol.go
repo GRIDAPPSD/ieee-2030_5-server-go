@@ -277,16 +277,12 @@ type DERControlConflict struct {
 // derControlCreateBody is the POST /api/der/controls body. Every field is a
 // pointer so "absent" and "zero" are told apart.
 type derControlCreateBody struct {
-	DERProgramHref  *string                `json:"derProgramHref"`
-	Type            *string                `json:"type"`
-	Functions       json.RawMessage        `json:"functions"`
-	MaxLimW         *int64                 `json:"maxLimW"`
-	PowerFactor     *derControlPowerFactor `json:"powerFactor"`
-	TargetW         *derControlTargetW     `json:"targetW"`
-	ExecutesGrant   *string                `json:"executesGrant"`
-	StartTime       *int64                 `json:"startTime"`
-	DurationSeconds *int64                 `json:"durationSeconds"`
-	Description     *string                `json:"description"`
+	controlValuesBody
+	DERProgramHref  *string `json:"derProgramHref"`
+	ExecutesGrant   *string `json:"executesGrant"`
+	StartTime       *int64  `json:"startTime"`
+	DurationSeconds *int64  `json:"durationSeconds"`
+	Description     *string `json:"description"`
 }
 
 // derControlTargetW is opModTargetW. A missing multiplier is 0.
@@ -1108,7 +1104,9 @@ func decodeRefusal(err error) derControlRefusal {
 	}
 	var typeErr *json.UnmarshalTypeError
 	if errors.As(err, &typeErr) {
-		if ref, ok := wrongTypeRefusals[typeErr.Field]; ok {
+		// The decoder prefixes a promoted field with the embedded struct's
+		// name, which the table keys do not carry.
+		if ref, ok := wrongTypeRefusals[strings.TrimPrefix(typeErr.Field, "controlValuesBody.")]; ok {
 			return ref
 		}
 		return refuseInvalidJSON
@@ -1148,59 +1146,7 @@ var controlTypes = map[string]dercontrol.ControlType{
 	string(dercontrol.TargetW):        dercontrol.TargetW,
 }
 
-// buildCreateRequest validates body field by field so each refusal names
-// its field, and records the validated values on l as it goes.
-func buildCreateRequest(body derControlCreateBody, l *derControlLog) (dercontrol.CreateRequest, derControlRefusal, bool) {
-	var req dercontrol.CreateRequest
-	if body.DERProgramHref == nil || *body.DERProgramHref == "" {
-		return req, refuseProgramHrefRequired, false
-	}
-	if !validProgramHref(*body.DERProgramHref) {
-		return req, refuseProgramHrefFormat, false
-	}
-	req.DERProgramHref = *body.DERProgramHref
-
-	if ref, ok := buildControlValues(body.Type, body.Functions, body, &req, l); !ok {
-		return req, ref, false
-	}
-
-	if body.ExecutesGrant != nil {
-		grant, ok := normalizeMRID(*body.ExecutesGrant)
-		if !ok {
-			return req, refuseExecutesGrantFormat, false
-		}
-		req.ExecutesGrant = grant
-	}
-
-	if body.DurationSeconds == nil {
-		return req, refuseDurationRequired, false
-	}
-	if *body.DurationSeconds <= 0 || *body.DurationSeconds > int64(^uint32(0)) {
-		return req, refuseDurationRange, false
-	}
-	req.DurationSeconds = uint32(*body.DurationSeconds)
-	l.add("duration", req.DurationSeconds)
-
-	if body.StartTime != nil {
-		if *body.StartTime < 0 {
-			return req, refuseStartRange, false
-		}
-		start := *body.StartTime
-		req.Start = &start
-		l.add("start", start)
-	}
-
-	if body.Description != nil {
-		d := *body.Description
-		if !validString(d, maxDescriptionOctets) {
-			return req, refuseDescription, false
-		}
-		req.Description = d
-	}
-	return req, derControlRefusal{}, true
-}
-
-func buildValue(typ dercontrol.ControlType, body derControlCreateBody, req *dercontrol.CreateRequest, l *derControlLog) (derControlRefusal, bool) {
+func buildValue(typ dercontrol.ControlType, body controlValuesBody, req *dercontrol.CreateRequest, l *derControlLog) (derControlRefusal, bool) {
 	if typ != dercontrol.TargetW && body.TargetW != nil {
 		return refuseTargetWNotAllowed, false
 	}
@@ -1352,12 +1298,10 @@ func newDERControlView(scope dercontrol.Scope, ctrl sep2.DERControl, lc dercontr
 		Href:               ctrl.Href,
 		DERProgramHref:     scope.ProgramHref(),
 		DERControlListHref: scope.ControlListHref(),
-		Type:               controlTypeName(ctrl.DERControlBase),
 		Description:        ctrl.Description,
 		CreationTime:       ctrl.CreationTime,
 	}
-	v.DERControlBase = newDERControlBaseView(ctrl.DERControlBase)
-	v.Functions = newFunctionsView(ctrl.DERControlBase)
+	v.Type, v.DERControlBase, v.Functions = controlBaseViews(ctrl.DERControlBase)
 	if lc.GrantMRID != "" {
 		grant := lc.GrantMRID
 		v.ExecutesGrant = &grant
@@ -1369,6 +1313,12 @@ func newDERControlView(scope dercontrol.Scope, ctrl sep2.DERControl, lc dercontr
 		v.EventStatus = EventStatusView{CurrentStatus: st.CurrentStatus, Status: eventStatusName(st.CurrentStatus), DateTime: st.DateTime}
 	}
 	return v
+}
+
+// controlBaseViews is a control base as its views report it: the type name,
+// the base and the functions set. A view that omits one drops it.
+func controlBaseViews(b *sep2.DERControlBase) (string, DERControlBaseView, FunctionsView) {
+	return controlTypeName(b), newDERControlBaseView(b), newFunctionsView(b)
 }
 
 func newDERControlBaseView(b *sep2.DERControlBase) DERControlBaseView {

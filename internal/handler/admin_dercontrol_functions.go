@@ -55,31 +55,55 @@ func (h *AdminDERControlHandler) HandleFunctions() http.HandlerFunc {
 	}
 }
 
+// controlValuesBody is the control value members every route that takes
+// control values declares: a type with its value, or a functions set. A body
+// struct embeds it, so the members parse and refuse the same on every route.
+type controlValuesBody struct {
+	Type        *string                `json:"type"`
+	Functions   json.RawMessage        `json:"functions"`
+	MaxLimW     *int64                 `json:"maxLimW"`
+	PowerFactor *derControlPowerFactor `json:"powerFactor"`
+	TargetW     *derControlTargetW     `json:"targetW"`
+}
+
+// controlBaseFromValues is the default-control parse: the values as the
+// DERControlBase a program default carries. ok false means the values were
+// refused and ref says why; ok true with a non-nil err means they parsed but
+// did not form a base, and the caller words that refusal.
+func controlBaseFromValues(v controlValuesBody, l *derControlLog) (base *sep2.DERControlBase, ref derControlRefusal, ok bool, err error) {
+	var req dercontrol.CreateRequest
+	if ref, ok := buildControlValues(v, &req, l); !ok {
+		return nil, ref, false, nil
+	}
+	base, err = dercontrol.ControlBase(req)
+	return base, derControlRefusal{}, true, err
+}
+
 // buildControlValues fills req from a request's type or functions member,
 // exactly one of which must be present. A body with neither answers the
 // type-required refusal it always has, so a request that names no type
 // behaves as before.
-func buildControlValues(typeName *string, functions json.RawMessage, body derControlCreateBody, req *dercontrol.CreateRequest, l *derControlLog) (derControlRefusal, bool) {
-	hasFunctions := len(functions) > 0 && !bytes.Equal(bytes.TrimSpace(functions), []byte("null"))
-	if hasFunctions && typeName != nil {
+func buildControlValues(v controlValuesBody, req *dercontrol.CreateRequest, l *derControlLog) (derControlRefusal, bool) {
+	hasFunctions := len(v.Functions) > 0 && !bytes.Equal(bytes.TrimSpace(v.Functions), []byte("null"))
+	if hasFunctions && v.Type != nil {
 		return refuseTypeAndFunctions, false
 	}
 	if hasFunctions {
-		return buildFunctions(functions, body, req, l)
+		return buildFunctions(v.Functions, v, req, l)
 	}
-	if typeName == nil || *typeName == "" {
+	if v.Type == nil || *v.Type == "" {
 		return refuseTypeRequired, false
 	}
-	typ, ok := controlTypes[*typeName]
+	typ, ok := controlTypes[*v.Type]
 	if !ok {
 		return refuseTypeUnknown, false
 	}
 	req.Type = typ
 	l.add("type", string(typ))
-	return buildValue(typ, body, req, l)
+	return buildValue(typ, v, req, l)
 }
 
-func buildFunctions(raw json.RawMessage, body derControlCreateBody, req *dercontrol.CreateRequest, l *derControlLog) (derControlRefusal, bool) {
+func buildFunctions(raw json.RawMessage, body controlValuesBody, req *dercontrol.CreateRequest, l *derControlLog) (derControlRefusal, bool) {
 	if body.MaxLimW != nil {
 		return refuseMaxLimWBesideFns, false
 	}
@@ -181,4 +205,56 @@ func decodeStrict(raw json.RawMessage, dst any) bool {
 	}
 	_, err := dec.Token()
 	return errors.Is(err, io.EOF)
+}
+
+// buildCreateRequest validates body field by field so each refusal names
+// its field, and records the validated values on l as it goes.
+func buildCreateRequest(body derControlCreateBody, l *derControlLog) (dercontrol.CreateRequest, derControlRefusal, bool) {
+	var req dercontrol.CreateRequest
+	if body.DERProgramHref == nil || *body.DERProgramHref == "" {
+		return req, refuseProgramHrefRequired, false
+	}
+	if !validProgramHref(*body.DERProgramHref) {
+		return req, refuseProgramHrefFormat, false
+	}
+	req.DERProgramHref = *body.DERProgramHref
+
+	if ref, ok := buildControlValues(body.controlValuesBody, &req, l); !ok {
+		return req, ref, false
+	}
+
+	if body.ExecutesGrant != nil {
+		grant, ok := normalizeMRID(*body.ExecutesGrant)
+		if !ok {
+			return req, refuseExecutesGrantFormat, false
+		}
+		req.ExecutesGrant = grant
+	}
+
+	if body.DurationSeconds == nil {
+		return req, refuseDurationRequired, false
+	}
+	if *body.DurationSeconds <= 0 || *body.DurationSeconds > int64(^uint32(0)) {
+		return req, refuseDurationRange, false
+	}
+	req.DurationSeconds = uint32(*body.DurationSeconds)
+	l.add("duration", req.DurationSeconds)
+
+	if body.StartTime != nil {
+		if *body.StartTime < 0 {
+			return req, refuseStartRange, false
+		}
+		start := *body.StartTime
+		req.Start = &start
+		l.add("start", start)
+	}
+
+	if body.Description != nil {
+		d := *body.Description
+		if !validString(d, maxDescriptionOctets) {
+			return req, refuseDescription, false
+		}
+		req.Description = d
+	}
+	return req, derControlRefusal{}, true
 }

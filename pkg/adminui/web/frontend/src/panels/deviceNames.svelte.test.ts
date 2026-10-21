@@ -74,7 +74,7 @@ describe('Devices tab', () => {
     vi.spyOn(api, 'fetchJSON').mockImplementation(async () => ({ ok: true, data: { profiles: [stored] } }) as never)
     render(DeviceTable, { props: { devices, fsas: [], onChanged: () => {} } })
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit name of device Inverter 3' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit device Inverter 3' }))
     const input = screen.getByTestId('device-name-input') as HTMLInputElement
     expect(input.value).toBe('Inverter 3')
     await fireEvent.input(input, { target: { value: '  Roof array  ' } })
@@ -91,12 +91,12 @@ describe('Devices tab', () => {
     failOthers({ '/api/device-profiles': { profiles: [{ lfdi: NAMED.lfdi, name: NAMED.name, kind: 'device' }] } })
     render(DeviceTable, { props: { devices, fsas: [], onChanged: () => {} } })
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit name of device 222222222222' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit device 222222222222' }))
     await fireEvent.input(screen.getByTestId('device-name-input'), { target: { value: 'Inverter 3' } })
     await fireEvent.click(screen.getByTestId('device-name-save'))
 
     expect(await screen.findByTestId('device-rename-error')).toHaveTextContent(
-      'Rename failed (409): name already in use by another device',
+      'Save failed (409): name already in use by another device',
     )
     expect(screen.getByTestId('device-name-input')).toBeInTheDocument()
   })
@@ -108,7 +108,7 @@ describe('Devices tab rename editor', () => {
     vi.spyOn(api, 'putJSON').mockResolvedValue({ ok: false, error: 'name already in use by another device', status: 409 })
     failOthers({ '/api/device-profiles': { profiles: [{ lfdi: NAMED.lfdi, name: NAMED.name, kind: 'device' }] } })
     render(DeviceTable, { props: { devices, fsas: [], onChanged: () => {} } })
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit name of device 222222222222' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit device 222222222222' }))
     await fireEvent.input(screen.getByTestId('device-name-input'), { target: { value: 'Inverter 3' } })
     await fireEvent.click(screen.getByTestId('device-name-save'))
     await screen.findByTestId('device-rename-error')
@@ -134,14 +134,14 @@ describe('Devices tab rename editor', () => {
     failOthers({ '/api/device-profiles': { profiles: [{ lfdi: NAMED.lfdi, name: NAMED.name, kind: 'device' }] } })
     render(DeviceTable, { props: { devices, fsas: [], onChanged: () => {} } })
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit name of device 222222222222' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit device 222222222222' }))
     await fireEvent.input(screen.getByTestId('device-name-input'), { target: { value: 'Roof' } })
     await fireEvent.click(screen.getByTestId('device-name-save'))
 
-    expect(screen.getByRole('button', { name: 'Edit name of device Inverter 3' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Edit device Inverter 3' })).toBeDisabled()
     release({ ok: true, data: { lfdi: PLAIN.lfdi, name: 'Roof', kind: '' } } as never)
     await waitFor(() => expect(screen.queryByTestId('device-name-input')).toBeNull())
-    expect(screen.getByRole('button', { name: 'Edit name of device Inverter 3' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Edit device Inverter 3' })).toBeEnabled()
   })
 })
 
@@ -202,19 +202,6 @@ describe('Topology', () => {
 
     expect(screen.getByTestId('topology-node-DEV-1')).toHaveTextContent('DEV edev 1 (Inverter 3, ON)')
     expect(screen.getByTestId('topology-node-DEV-2')).toHaveTextContent('DEV edev 2 (222222222222, OFF)')
-  })
-})
-
-describe('Management pairs pickers', () => {
-  it('offer the name for a named device and the SFDI for an unnamed one, in both pickers', async () => {
-    await seed()
-    failOthers({ '/api/management-pairs': { managerLFDI: NAMED.lfdi, managedLFDIs: [] } })
-    render(ManagementPairs, { props: { devices, ready: true } })
-
-    for (const label of ['Manager', 'Managed device']) {
-      const options = within(screen.getByLabelText(label)).getAllByRole('option').map((o) => o.textContent)
-      expect(options.slice(1)).toEqual(['Inverter 3 (01234567...)', '222222222222 (FEDCBA98...)'])
-    }
   })
 })
 

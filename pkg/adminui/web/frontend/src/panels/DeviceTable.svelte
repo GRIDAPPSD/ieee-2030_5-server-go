@@ -9,9 +9,11 @@
   import type { DashboardColumn, DashboardDevice } from '../lib/dashboard'
   import { commsClass, commsLabel, formatAge } from '../lib/comms'
   import { deviceConnectionView, deviceInverterView } from '../lib/derstatus'
-  import { deviceLabel, deviceName, renameDevice } from '../lib/devices'
+  import { deviceKind, deviceLabel, deviceLabelIn, deviceName, saveDeviceProfile } from '../lib/devices'
+  import { applyPairs, pairFailures, pairFailureText } from '../lib/management'
   import ReportedCell from './ReportedCell.svelte'
   import DevicePrograms from './DevicePrograms.svelte'
+  import DevicePicker from './DevicePicker.svelte'
 
   let {
     devices,
@@ -76,17 +78,31 @@
   let selected = $state<Record<string, string>>({})
   let error = $state('')
 
-  // The device whose name is being edited, and the draft text. One at a time,
-  // so a second Edit name closes the first without saving it.
+  // The device being edited, and its drafts: name, kind and, for an
+  // aggregator, the picked devices. One at a time, so a second Edit closes
+  // the first without saving it.
   let editingLfdi = $state('')
   let draftName = $state('')
+  let draftKind = $state('')
+  let initialKind = $state('')
+  let picked = $state<string[]>([])
+  let held = $state<string[]>([])
+  let pickerLoaded = $state(false)
+  let pickerReload = $state(0)
   let renameError = $state('')
+  let pairError = $state('')
   let renaming = $state(false)
 
   function startRename(lfdi: string) {
     editingLfdi = lfdi
     draftName = deviceName(lfdi)
+    initialKind = deviceKind(lfdi)
+    draftKind = initialKind
+    picked = []
+    held = []
+    pickerLoaded = false
     renameError = ''
+    pairError = ''
   }
 
   function cancelRename() {
@@ -97,13 +113,40 @@
   async function saveRename() {
     if (renaming || editingLfdi === '') return
     const saving = editingLfdi
+    const label = (l: string) => deviceLabelIn(devices, l)
+    const aggregator = draftKind === 'aggregator'
+    // Pairs are diffed only when the picker read them: an unread pair list
+    // must not block a rename, and no tick could have been made without it.
+    const add = pickerLoaded && aggregator ? picked.filter((l) => !held.includes(l)) : []
+    const remove = pickerLoaded ? held.filter((l) => !picked.includes(l)) : []
     renaming = true
     try {
-      const res = await renameDevice(saving, draftName.trim())
+      // A kind change away from aggregator is refused while pairs are held,
+      // so the unticked ones go first; an aggregator needs its kind stored
+      // before pairs can be added.
+      let failed: string[] = []
+      let removed: string[] = []
+      if (!aggregator && remove.length > 0) {
+        const outcomes = await applyPairs(saving, [], remove)
+        failed = pairFailures(outcomes, label)
+        removed = outcomes.filter((o) => o.result.ok).map((o) => o.lfdi)
+      }
+      const res = await saveDeviceProfile(saving, draftName.trim(), draftKind === initialKind ? undefined : draftKind)
+      if (failed.length > 0) pairError = pairFailureText(failed)
       if (!res.ok) {
-        renameError = `Rename failed (${res.status}): ${res.error}`
+        renameError = `Save failed (${res.status}): ${res.error}`
+        if (removed.length > 0) {
+          renameError += ` Already removed: ${removed.map(label).join(', ')}.`
+          pickerReload++
+        }
+        if (remove.length > 0) onChanged()
         return
       }
+      if (aggregator && (add.length > 0 || remove.length > 0)) {
+        failed = pairFailures(await applyPairs(saving, add, remove), label)
+        if (failed.length > 0) pairError = pairFailureText(failed)
+      }
+      if (add.length > 0 || remove.length > 0) onChanged()
       if (editingLfdi === saving) cancelRename()
     } finally {
       renaming = false
@@ -153,15 +196,37 @@
                     if (e.key === 'Escape' && !renaming) cancelRename()
                   }}
                 />
-                <button class="btn btn-small" disabled={renaming} data-testid="device-name-save" onclick={saveRename}>Save</button>
+                <select
+                  aria-label="Kind of device {deviceLabel(device.lfdi, device.sfdi)}"
+                  data-testid="device-kind-select"
+                  bind:value={draftKind}
+                >
+                  {#if initialKind === ''}<option value="">(not set)</option>{/if}
+                  <option value="device">Device</option>
+                  <option value="aggregator">Aggregator</option>
+                </select>
+                <DevicePicker
+                  {devices}
+                  manager={device.lfdi}
+                  asAggregator={draftKind === 'aggregator'}
+                  bind:selected={picked}
+                  bind:held
+                  bind:loaded={pickerLoaded}
+                  reloadKey={pickerReload}
+                />
+                <button
+                  class="btn btn-small"
+                  disabled={renaming}
+                  data-testid="device-name-save"
+                  onclick={saveRename}>Save</button>
                 <button class="btn btn-small" disabled={renaming} data-testid="device-name-cancel" onclick={cancelRename}>Cancel</button>
               {:else}
                 <span class="mono" data-testid="device-label">{deviceLabel(device.lfdi, device.sfdi)}</span>
                 <button
                   class="btn btn-small"
                   data-testid="device-name-edit-{deviceID}"
-                  aria-label="Edit name of device {deviceLabel(device.lfdi, device.sfdi)}"
-                  disabled={!device.lfdi || renaming} onclick={() => startRename(device.lfdi)}>Edit name</button
+                  aria-label="Edit device {deviceLabel(device.lfdi, device.sfdi)}"
+                  disabled={!device.lfdi || renaming} onclick={() => startRename(device.lfdi)}>Edit</button
                 >
               {/if}
             </td>
@@ -211,6 +276,9 @@
   </table>
   {#if error}
     <div class="result err" data-testid="device-table-error">{error}</div>
+  {/if}
+  {#if pairError}
+    <div class="result err" role="alert" data-testid="device-pair-error">{pairError}</div>
   {/if}
   {#if renameError}
     <div class="result err" role="alert" data-testid="device-rename-error">{renameError}</div>

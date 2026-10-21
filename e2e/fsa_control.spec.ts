@@ -2,7 +2,8 @@ import { test, expect } from '@playwright/test';
 import { join } from 'path';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
-import { mintDeviceCert, readWire, type DeviceCert } from './fixtures/fsa_wire';
+import { mintDeviceCert, type DeviceCert } from './fixtures/device_cert';
+import { readWire } from './fixtures/fsa_wire';
 
 // #973: a control sent to an FSA's program from the Control tab reaches every
 // device assigned to the FSA. The devices need certificates the server's CA
@@ -85,7 +86,8 @@ test('an FSA control from the Control tab is on both devices\' wire lists, and c
   for (const d of devices) {
     const before = await readWire(PROTOCOL_PORT, getCertDir(), d.cert, listHref(d.id));
     expect(before.status).toBe(200);
-    expect(before.body).not.toContain('<DERControl ');
+    expect(before.body).toMatch(/<DERControlList [^>]*results="0"/);
+    expect(before.body).not.toMatch(/<DERControl[\s>]/);
   }
 
   // Send the control from the Control tab, scheduled an hour ahead.

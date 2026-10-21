@@ -1,9 +1,8 @@
 import { test, expect } from '@playwright/test';
-import { execFileSync } from 'child_process';
 import { join } from 'path';
-import { readFileSync } from 'fs';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
+import { mintDeviceCert } from './fixtures/device_cert';
 
 // #159: Add EndDevice flow.
 // Paste a freshly generated device cert -> Parse Cert auto-fills SFDI/LFDI ->
@@ -36,16 +35,7 @@ test('add device from pasted certificate', async ({ page }) => {
   const projectRoot = join(__dirname, '..');
   const sep2server = join(projectRoot, 'sep2server');
 
-  execFileSync(sep2server, [
-    'certs', 'generate-device',
-    '--ca', join(certDir, 'ca.crt'),
-    '--ca-key', join(certDir, 'ca.key'),
-    '--hw-serial', 'add-device-E2E',
-    '--hw-type', '1.3.6.1.4.1.40732.99',
-    '--out', certDir,
-    '--name', 'e2e-test-device',
-  ], { stdio: 'pipe' });
-  const devicePEM = readFileSync(join(certDir, 'e2e-test-device.crt'), 'utf8');
+  const devicePEM = mintDeviceCert(sep2server, certDir, 'e2e-test-device', 'add-device-E2E').certPEM;
 
   await page.goto(baseUrl + `/ui/devices?token=${ADMIN_KEY}`);
   await page.waitForLoadState('domcontentloaded');

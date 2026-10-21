@@ -265,7 +265,7 @@
       <FsaCatalog {fsas} onChanged={refresh} />
       <TopologyTree tree={topology} error={topologyError} onRefresh={refresh} />
     {:else if activeTab === 'control'}
-      <DerControl devices={data?.devices ?? []} {fsas} />
+      <DerControl devices={data?.devices ?? []} />
     {:else if activeTab === 'certificates'}
       <CertPanel onMinted={(cert) => (mintedCert = cert)} />
     {:else if activeTab === 'derms'}

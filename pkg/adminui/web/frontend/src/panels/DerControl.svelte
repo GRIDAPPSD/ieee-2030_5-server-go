@@ -11,7 +11,7 @@
   import TabLink from './TabLink.svelte'
   import { requestPrograms } from '../lib/programsRequest'
   import { fetchJSON, postJSON } from '../lib/api'
-  import { deviceIdFromHref, type AdminFSA } from '../lib/fsa'
+  import { deviceIdFromHref, type AdminFSA, type AdminFSAList } from '../lib/fsa'
   import { listTemplates, type ProgramTemplate } from '../lib/derprogram'
   import {
     cancelFsaControl,
@@ -21,7 +21,6 @@
     holdingText,
     listFsaControls,
     saveFsaDefault,
-    type FsaControlCreated,
     type FsaControlView,
   } from '../lib/fsacontrol'
   import type { DashboardDevice } from '../lib/dashboard'
@@ -52,9 +51,15 @@
     type DeviceControlCreated,
   } from '../lib/dercontrol'
 
-  let { devices, fsas = [] }: { devices: DashboardDevice[]; fsas?: AdminFSA[] } = $props()
+  let { devices }: { devices: DashboardDevice[] } = $props()
 
   let target = $state<'device' | 'fsa'>('device')
+  // This panel owns the FSA list and reads it each time the FSA target is
+  // chosen, never on entering the tab, so an FSA or assignment changed on
+  // another tab is neither missing nor counted stale.
+  let fsas = $state<AdminFSA[]>([])
+  let fsasError = $state('')
+  let fsasSeq = 0
 
   let catalog = $state<CatalogRow[]>([])
   let catalogError = $state('')
@@ -145,6 +150,25 @@
       ticked[row.name] = false
       values[row.name] = initialValue(row)
     }
+  }
+
+  async function loadFsas() {
+    const seq = ++fsasSeq
+    const res = await fetchJSON<AdminFSAList>('/api/fsas')
+    if (!mounted || seq !== fsasSeq) return
+    if (!res.ok) {
+      fsasError = `FSAs could not be read: ${res.error}`
+      return
+    }
+    fsasError = ''
+    fsas = res.data.fsas ?? []
+  }
+
+  function switchTarget(next: 'device' | 'fsa') {
+    if (next === target) return
+    target = next
+    dropSelectionState()
+    if (next === 'fsa') void loadFsas()
   }
 
   async function loadCurves() {
@@ -278,8 +302,11 @@
     controls = res.data.controls ?? []
   }
 
-  function reload() {
-    if (target === 'fsa') {
+  // reload re-reads the tables of the target a write was made for, which a
+  // target switch while the write was in flight may no longer be the current
+  // one.
+  function reload(forTarget: 'device' | 'fsa' = target) {
+    if (forTarget === 'fsa') {
       if (!selectedFsaId) return
       void loadTemplates(selectedFsaId, ++templateSeq)
       if (selectedTemplateId) void loadFsaControls(selectedFsaId, selectedTemplateId, ++fsaControlSeq)
@@ -383,7 +410,7 @@
       const kept = keptControl(res.body)
       result = `${prefix}Error: ${res.error}` + (kept ? `. ${keptCreateText(kept, stale)}` : '')
       primacyLine = ''
-      reload()
+      reload('device')
       return
     }
     ok = true
@@ -415,7 +442,30 @@
       result = `${prefix}Stored on program ${d.programHref}.`
     }
     if (!stale) programFilter = ''
-    reload()
+    reload('device')
+  }
+
+  type FsaSent = { ok: true; text: string } | { ok: false; error: string; body?: unknown }
+
+  async function postFsaSend(fsaId: string, template: ProgramTemplate, body: DeviceControlBody): Promise<FsaSent> {
+    if (body.kind === 'default') {
+      const saved = await saveFsaDefault(fsaId, template, body.functions)
+      if (!saved.ok) return saved
+      return {
+        ok: true,
+        text: `Stored the default control on program ${template.description} of FSA ${fsaId}. Every device assigned to the FSA takes it; it is in force now, has no end, and devices send no responses.`,
+      }
+    }
+    const created = await createFsaControl(fsaId, template.id, body)
+    if (!created.ok) return created
+    const c = created.data
+    return {
+      ok: true,
+      text:
+        `Stored ${c.mRID} at ${fmtTime(c.creationTime)}; starts ${fmtTime(c.interval.start)}. ` +
+        `Held by ${holdingText(c)}.` +
+        (c.persisted ? '' : ' A server restart forgets this control.'),
+    }
   }
 
   // confirmFsaSend posts to the FSA's program: a default through the
@@ -429,10 +479,7 @@
     const sentTo = targetText()
     pendingBody = null
     pendingSummary = ''
-    const res =
-      body.kind === 'default'
-        ? await saveFsaDefault(fsaId, template, body.functions)
-        : await createFsaControl(fsaId, template.id, body)
+    const res = await postFsaSend(fsaId, template, body)
     posting = false
     const stale = sentUnder !== selectionSeq
     const prefix = stale ? `For ${sentTo}: ` : ''
@@ -440,21 +487,12 @@
       ok = false
       const kept = keptControl(res.body)
       result = `${prefix}Error: ${res.error}` + (kept ? `. ${keptCreateText(kept, stale)}` : '')
-      reload()
+      reload('fsa')
       return
     }
     ok = true
-    if (body.kind === 'default') {
-      result = `${prefix}Stored the default control on program ${template.description} of FSA ${fsaId}. Every device assigned to the FSA takes it; it is in force now, has no end, and devices send no responses.`
-    } else {
-      const c = res.data as FsaControlCreated
-      result =
-        prefix +
-        `Stored ${c.mRID} at ${fmtTime(c.creationTime)}; starts ${fmtTime(c.interval.start)}. ` +
-        `Held by ${holdingText(c)}.` +
-        (c.persisted ? '' : ' A server restart forgets this control.')
-    }
-    reload()
+    result = prefix + res.text
+    reload('fsa')
   }
 
   function startCancel(mrid: string) {
@@ -500,7 +538,7 @@
     } else if (!stale) {
       cancelResult = ''
     }
-    reload()
+    reload(fsaControl ? 'fsa' : 'device')
   }
 
   const shownControls = $derived(programFilter ? controls.filter((c) => c.derProgramHref === programFilter) : controls)
@@ -536,11 +574,11 @@
   <div class="form-row">
     <span class="stat-label">Target</span>
     <label>
-      <input type="radio" name="controlTarget" value="device" data-testid="control-target-device" bind:group={target} onchange={dropSelectionState} />
+      <input type="radio" name="controlTarget" data-testid="control-target-device" checked={target === 'device'} onchange={() => switchTarget('device')} />
       Device
     </label>
     <label>
-      <input type="radio" name="controlTarget" value="fsa" data-testid="control-target-fsa" bind:group={target} onchange={dropSelectionState} />
+      <input type="radio" name="controlTarget" data-testid="control-target-fsa" checked={target === 'fsa'} onchange={() => switchTarget('fsa')} />
       FSA
     </label>
     {#if target === 'device'}
@@ -567,6 +605,9 @@
   </div>
 
   {#if target === 'fsa'}
+    {#if fsasError}
+      <div class="result err" data-testid="fsa-control-fsas-error">{fsasError}</div>
+    {/if}
     {#if templatesError}
       <div class="result err" data-testid="fsa-control-templates-error">{templatesError}</div>
     {:else if selectedFsaId && templatesChecked && templates.length === 0}

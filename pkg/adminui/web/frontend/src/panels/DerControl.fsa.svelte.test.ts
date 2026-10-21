@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import DerControl from './DerControl.svelte'
 import * as api from '../lib/api'
 import type { AdminFSA } from '../lib/fsa'
+import type { DashboardDevice } from '../lib/dashboard'
 import type { CatalogResponse } from '../lib/controlcatalog'
 import type { FsaControlCreated, FsaControlView } from '../lib/fsacontrol'
 import type { ProgramTemplate } from '../lib/derprogram'
@@ -65,6 +66,7 @@ function mockWorld(w: World) {
     const url = new URL(path, 'http://x')
     if (url.pathname === '/api/der/control-functions') return { ok: true, data: catalog }
     if (url.pathname === '/api/der/curves') return { ok: true, data: { curves: [] } }
+    if (url.pathname === '/api/fsas') return { ok: true, data: { fsas } }
     if (url.pathname === '/api/fsas/fsa-A/der-programs') return w.templatesReply ?? { ok: true, data: { templates: w.templates } }
     if (url.pathname === '/api/fsas/fsa-B/der-programs') return { ok: true, data: { templates: [] } }
     if (url.pathname === '/api/fsas/fsa-A/der-programs/t1/controls') {
@@ -79,9 +81,10 @@ function mockWorld(w: World) {
 
 async function mountFsa(w: World) {
   const mocks = mockWorld(w)
-  const view = render(DerControl, { devices: [], fsas })
+  const view = render(DerControl, { devices: [] })
   await screen.findByTestId('control-fn-fnFlag')
   await fireEvent.click(screen.getByTestId('control-target-fsa'))
+  await waitFor(() => expect(screen.getByRole('option', { name: 'feeder A' })).toBeInTheDocument())
   return { ...mocks, container: view.container }
 }
 
@@ -253,5 +256,57 @@ describe('DerControl, FSA target: program choice', () => {
     const { container } = await mountFsa({ templates: [template()], controls: [] })
     await fireEvent.change(container.querySelector('#controlFsa') as HTMLSelectElement, { target: { value: 'fsa-A' } })
     expect(await screen.findByTestId('fsa-control-reach')).toHaveTextContent('Reaches the 2 devices')
+  })
+})
+
+describe('DerControl: a target switch while a send is in flight', () => {
+  it('reloads the device table the send was made for, so switching back shows the new control', async () => {
+    const state: { controls: unknown[] } = { controls: [] }
+    vi.spyOn(api, 'fetchJSON').mockImplementation((async (path: string) => {
+      const url = new URL(path, 'http://x')
+      if (url.pathname === '/api/der/control-functions') return { ok: true, data: catalog }
+      if (url.pathname === '/api/der/curves') return { ok: true, data: { curves: [] } }
+      if (url.pathname === '/api/fsas') return { ok: true, data: { fsas } }
+      if (url.pathname === '/api/devices/0/der-programs') return { ok: true, data: { device: '0', programs: [] } }
+      if (url.pathname === '/api/devices/0/default-control') return { ok: false, error: 'none', status: 404 }
+      if (url.pathname === '/api/der/controls') return { ok: true, data: { device: '0', controls: state.controls } }
+      if (url.pathname === '/api/fsas/fsa-A/der-programs') return { ok: true, data: { templates: [] } }
+      return { ok: false, error: 'unexpected path: ' + path, status: 404 }
+    }) as never)
+    let release!: (v: unknown) => void
+    const post = vi.spyOn(api, 'postJSON').mockImplementation((() => new Promise((r) => (release = r))) as never)
+    const devices: DashboardDevice[] = [
+      { sfdi: '167261211635', lfdi: 'D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1D1', href: '/edev/0', enabled: true, lastRequest: null, comms: 'not_seen', lastKnown: true, ders: [] },
+    ]
+    const { container } = render(DerControl, { devices })
+    await screen.findByTestId('control-fn-fnFlag')
+    await fireEvent.change(container.querySelector('#controlDevice') as HTMLSelectElement, { target: { value: '0' } })
+    await fireEvent.click(tid('control-fn-fnFlag'))
+    await fireEvent.input(container.querySelector('#controlDuration') as HTMLInputElement, { target: { value: '5' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }))
+    expect(post).toHaveBeenCalledTimes(1)
+
+    await fireEvent.click(tid('control-target-fsa'))
+    state.controls = [
+      {
+        mRID: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        href: '/edev/0/fsa/f/derp/p/derc/c',
+        derProgramHref: '/edev/0/fsa/f/derp/p',
+        derControlListHref: '/edev/0/fsa/f/derp/p/derc',
+        type: 'fnFlag',
+        description: '',
+        derControlBase: {},
+        functions: { fnFlag: true },
+        creationTime: 1000,
+        interval: { start: 5000, duration: 300 },
+        eventStatus: { currentStatus: 0, status: 'scheduled', dateTime: 1000 },
+        responses: { total: 0, byStatus: {} },
+      },
+    ]
+    release({ ok: true, data: { kind: 'scheduled', fsa: 'f', program: 'p', programHref: '/edev/0/fsa/f/derp/p', primacy: 1, primacyReason: 'r' } })
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+    await fireEvent.click(tid('control-target-device'))
+    expect(await screen.findByTestId('der-control-row')).toHaveAttribute('data-mrid', 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB')
   })
 })

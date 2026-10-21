@@ -24,13 +24,16 @@ const (
 var (
 	rowConnect = row(FuncConnect, "Connect (true) or disconnect (false) the DER.", booleanKind,
 		func(b *sep2.DERControlBase) **bool { return &b.OpModConnect },
+		func(s *FunctionSet) **bool { return &s.OpModConnect },
 		func(v *DERControlBaseView) **bool { return &v.OpModConnect })
 	rowEnergize = row(FuncEnergize, "Energize (true) or de-energize (false) the DER.", booleanKind,
 		func(b *sep2.DERControlBase) **bool { return &b.OpModEnergize },
+		func(s *FunctionSet) **bool { return &s.OpModEnergize },
 		func(v *DERControlBaseView) **bool { return &v.OpModEnergize })
 	rowMaxLimW = row(FuncMaxLimW, "Active power ceiling in hundredths of a percent of setMaxW.",
 		perCentKind(intRange{min: 0, max: 10000}),
 		func(b *sep2.DERControlBase) **sep2.PerCent { return &b.OpModMaxLimW },
+		func(s *FunctionSet) **int64 { return &s.OpModMaxLimW },
 		func(v *DERControlBaseView) **uint16 { return &v.OpModMaxLimW }).
 		worded(label{path: "maxLimW", code: "max_lim_w"})
 	// The displacement is in thousandths, which is what the fixed multiplier
@@ -38,6 +41,7 @@ var (
 	rowFixedPFInjectW = row(FuncFixedPFInjectW, "Fixed power factor while injecting active power; displacement is thousandths.",
 		powerFactorKind(intRange{min: 1, max: 1000}, -3),
 		func(b *sep2.DERControlBase) **sep2.FixedPowerFactor { return &b.OpModFixedPFInjectW },
+		func(s *FunctionSet) **PowerFactorInput { return &s.OpModFixedPFInjectW },
 		func(v *DERControlBaseView) **FixedPowerFactorView { return &v.OpModFixedPFInjectW }).
 		worded(label{path: "powerFactor", code: "power_factor", fields: map[string]label{
 			"displacement": {path: "powerFactor.displacement", code: "displacement"},
@@ -48,6 +52,7 @@ var (
 	rowTargetW = row(FuncTargetW, "Active power target, value x 10^multiplier watts, discharge positive.",
 		activePowerKind(intRange{min: math.MinInt16, max: math.MaxInt16, typeName: "int16"}, intRange{min: -9, max: 9}),
 		func(b *sep2.DERControlBase) **sep2.ActivePower { return &b.OpModTargetW },
+		func(s *FunctionSet) **ActivePowerInput { return &s.OpModTargetW },
 		func(v *DERControlBaseView) **ActivePowerView { return &v.OpModTargetW }).
 		worded(label{path: "targetW", code: "target_w", fields: map[string]label{
 			"value":      {path: "targetW.value", code: "target_w_value"},
@@ -59,8 +64,20 @@ var (
 // /api/der/control-functions lists them and the views report them.
 var catalog = []function{rowConnect, rowEnergize, rowMaxLimW, rowFixedPFInjectW, rowTargetW}
 
+// FunctionSet is the set of functions one control carries, each in the
+// shape a request gives it, so a member left out is refused as missing and
+// never read as zero. Its fields follow catalog order;
+// TestStructsFollowCatalog fails if a row has no field here.
+type FunctionSet struct {
+	OpModConnect        *bool             `json:"opModConnect,omitempty"`
+	OpModEnergize       *bool             `json:"opModEnergize,omitempty"`
+	OpModMaxLimW        *int64            `json:"opModMaxLimW,omitempty"`
+	OpModFixedPFInjectW *PowerFactorInput `json:"opModFixedPFInjectW,omitempty"`
+	OpModTargetW        *ActivePowerInput `json:"opModTargetW,omitempty"`
+}
+
 // DERControlBaseView is the JSON form of the DERControlBase values the admin
-// API creates. Its fields follow catalog order; TestBaseViewFollowsCatalog
+// API creates. Its fields follow catalog order; TestStructsFollowCatalog
 // fails if a row has no field here.
 type DERControlBaseView struct {
 	OpModConnect        *bool                 `json:"opModConnect,omitempty"`
@@ -149,60 +166,56 @@ var (
 
 // booleanKind is a true or false element.
 var booleanKind = kind[bool, bool, bool]{
-	shape:    shape{kind: "boolean"},
+	shape:    shape{kind: kindBoolean},
 	parse:    func(in bool) (bool, *fault) { return in, nil },
-	check:    func(bool) RefusalCode { return "" },
-	view:     func(v bool) any { return v },
+	input:    func(v bool) bool { return v },
 	baseView: func(v bool) bool { return v },
 }
 
 // perCentKind is a PerCent element, hundredths of a percent, within r.
 func perCentKind(r intRange) kind[int64, sep2.PerCent, uint16] {
 	return kind[int64, sep2.PerCent, uint16]{
-		shape: shape{kind: "integer", bounds: r},
+		shape: shape{kind: kindInteger, bounds: r},
 		parse: func(in int64) (sep2.PerCent, *fault) {
 			if !r.contains(in) {
 				return 0, &fault{bounds: r}
 			}
 			return sep2.PerCent(in), nil
 		},
-		check:    func(v sep2.PerCent) RefusalCode { return r.check(int64(v)) },
-		view:     func(v sep2.PerCent) any { return uint16(v) },
+		input:    func(v sep2.PerCent) int64 { return int64(v) },
 		baseView: func(v sep2.PerCent) uint16 { return uint16(v) },
 		log:      func(v sep2.PerCent) []LogAttr { return []LogAttr{{"value", uint16(v)}} },
 	}
 }
 
-// PowerFactorInput is a fixed power factor as a request carries it.
+// PowerFactorInput is a fixed power factor as a request carries it, and as
+// the functions view reports it. It has no multiplier: the kind fixes it.
 type PowerFactorInput struct {
 	Displacement *int64 `json:"displacement"`
 	Excitation   *bool  `json:"excitation"`
 }
 
-// FunctionPowerFactorView is a fixed power factor in the functions view, the
-// shape a request takes.
-type FunctionPowerFactorView struct {
-	Displacement uint16 `json:"displacement"`
-	Excitation   bool   `json:"excitation"`
-}
-
-// FixedPowerFactorView is a fixed power factor in the derControlBase view.
+// FixedPowerFactorView is a fixed power factor in the derControlBase view,
+// which reports the element as the wire carries it, multiplier included.
 type FixedPowerFactorView struct {
 	Displacement uint16 `json:"displacement"`
 	Excitation   bool   `json:"excitation"`
 	Multiplier   int8   `json:"multiplier"`
 }
 
-// powerFactorKind is a FixedPowerFactor element whose displacement is within d
-// and whose power of ten is always multiplier. Excitation has no safe
-// default, since its two values inject and absorb reactive power, so a
-// request must give it.
+// powerFactorKind is a FixedPowerFactor element whose displacement is within
+// d and whose power of ten is always multiplier. Excitation has no safe
+// default, since its two values inject and absorb reactive power, so it is
+// required.
 func powerFactorKind(d intRange, multiplier int8) kind[PowerFactorInput, sep2.FixedPowerFactor, FixedPowerFactorView] {
 	return kind[PowerFactorInput, sep2.FixedPowerFactor, FixedPowerFactorView]{
-		shape: shape{kind: "object", fields: []field{
-			{name: "displacement", shape: shape{kind: "integer", bounds: d}},
-			{name: "excitation", shape: shape{kind: "boolean"}},
-		}},
+		shape: shape{kind: kindObject,
+			fields: []field{
+				{name: "displacement", required: true, shape: shape{kind: kindInteger, bounds: d}},
+				{name: "excitation", required: true, shape: shape{kind: kindBoolean}},
+			},
+			fixed: []constant{{name: "multiplier", value: int64(multiplier)}},
+		},
 		parse: func(in PowerFactorInput) (sep2.FixedPowerFactor, *fault) {
 			switch {
 			case in.Displacement == nil:
@@ -214,14 +227,9 @@ func powerFactorKind(d intRange, multiplier int8) kind[PowerFactorInput, sep2.Fi
 			}
 			return sep2.FixedPowerFactor{Displacement: uint16(*in.Displacement), Excitation: *in.Excitation, Multiplier: multiplier}, nil
 		},
-		check: func(v sep2.FixedPowerFactor) RefusalCode {
-			if v.Multiplier != multiplier {
-				return RefusalValueOutOfRange
-			}
-			return d.check(int64(v.Displacement))
-		},
-		view: func(v sep2.FixedPowerFactor) any {
-			return FunctionPowerFactorView{Displacement: v.Displacement, Excitation: v.Excitation}
+		input: func(v sep2.FixedPowerFactor) PowerFactorInput {
+			d, e := int64(v.Displacement), v.Excitation
+			return PowerFactorInput{Displacement: &d, Excitation: &e}
 		},
 		baseView: func(v sep2.FixedPowerFactor) FixedPowerFactorView {
 			return FixedPowerFactorView{Displacement: v.Displacement, Excitation: v.Excitation, Multiplier: v.Multiplier}
@@ -232,27 +240,27 @@ func powerFactorKind(d intRange, multiplier int8) kind[PowerFactorInput, sep2.Fi
 	}
 }
 
-// ActivePowerInput is an active power as a request carries it. A missing
-// multiplier is 0.
+// ActivePowerInput is an active power as a request carries it, and as the
+// functions view reports it. A missing multiplier is 0.
 type ActivePowerInput struct {
 	Value      *int64 `json:"value"`
 	Multiplier *int64 `json:"multiplier"`
 }
 
-// ActivePowerView is an active power, value x 10^multiplier watts, discharge
-// positive.
+// ActivePowerView is an active power in the derControlBase view, value x
+// 10^multiplier watts, discharge positive.
 type ActivePowerView struct {
 	Value      int16 `json:"value"`
 	Multiplier int8  `json:"multiplier"`
 }
 
-// activePowerKind is an ActivePower element with its value within value and its
-// multiplier within multiplier.
+// activePowerKind is an ActivePower element with its value within value and
+// its multiplier within multiplier.
 func activePowerKind(value, multiplier intRange) kind[ActivePowerInput, sep2.ActivePower, ActivePowerView] {
 	return kind[ActivePowerInput, sep2.ActivePower, ActivePowerView]{
-		shape: shape{kind: "object", fields: []field{
-			{name: "value", shape: shape{kind: "integer", bounds: value}},
-			{name: "multiplier", shape: shape{kind: "integer", bounds: multiplier}},
+		shape: shape{kind: kindObject, fields: []field{
+			{name: "value", required: true, shape: shape{kind: kindInteger, bounds: value}},
+			{name: "multiplier", shape: shape{kind: kindInteger, bounds: multiplier}},
 		}},
 		parse: func(in ActivePowerInput) (sep2.ActivePower, *fault) {
 			if in.Value == nil {
@@ -270,13 +278,10 @@ func activePowerKind(value, multiplier intRange) kind[ActivePowerInput, sep2.Act
 			}
 			return sep2.ActivePower{Value: int16(*in.Value), Multiplier: int8(m)}, nil
 		},
-		check: func(v sep2.ActivePower) RefusalCode {
-			if code := value.check(int64(v.Value)); code != "" {
-				return code
-			}
-			return multiplier.check(int64(v.Multiplier))
+		input: func(v sep2.ActivePower) ActivePowerInput {
+			x, m := int64(v.Value), int64(v.Multiplier)
+			return ActivePowerInput{Value: &x, Multiplier: &m}
 		},
-		view: func(v sep2.ActivePower) any { return ActivePowerView{Value: v.Value, Multiplier: v.Multiplier} },
 		baseView: func(v sep2.ActivePower) ActivePowerView {
 			return ActivePowerView{Value: v.Value, Multiplier: v.Multiplier}
 		},
@@ -295,48 +300,87 @@ type intRange struct {
 
 func (r intRange) contains(v int64) bool { return v >= r.min && v <= r.max }
 
-func (r intRange) check(v int64) RefusalCode {
-	if !r.contains(v) {
-		return RefusalValueOutOfRange
+func (r intRange) String() string { return fmt.Sprintf("%d to %d", r.min, r.max) }
+
+// valueKind is the kind of a value or of an object member. The zero value is
+// no kind; TestShapesHaveKinds refuses a row or member that has it.
+type valueKind uint8
+
+const (
+	kindBoolean valueKind = iota + 1
+	kindInteger
+	kindObject
+)
+
+func (k valueKind) String() string {
+	switch k {
+	case kindBoolean:
+		return "boolean"
+	case kindInteger:
+		return "integer"
+	case kindObject:
+		return "object"
 	}
 	return ""
 }
 
-func (r intRange) String() string { return fmt.Sprintf("%d to %d", r.min, r.max) }
-
-// shape is a value kind's structure and bounds: the catalog's value text is
-// formatted from it.
-type shape struct {
-	kind   string // "boolean", "integer" or "object"
-	bounds intRange
-	fields []field
+// noun is the kind as a wrong-type refusal names it.
+func (k valueKind) noun() string {
+	switch k {
+	case kindBoolean:
+		return "a boolean"
+	case kindInteger:
+		return "an integer"
+	case kindObject:
+		return "an object"
+	}
+	return ""
 }
 
-// field is one member of an object value; name is its request key.
+// shape describes a value kind: its kind, an integer's bounds, an object's
+// members in request order, and the members an object always carries on the
+// wire whatever the request says. The catalog's value text is formatted
+// from it.
+type shape struct {
+	kind   valueKind
+	bounds intRange
+	fields []field
+	fixed  []constant
+}
+
+// field is one member of an object value; name is its request key, and a
+// required member a request leaves out is refused.
 type field struct {
+	name     string
+	required bool
+	shape    shape
+}
+
+// constant is a member an object always carries with one value.
+type constant struct {
 	name  string
-	shape shape
+	value int64
 }
 
 // text is the catalog's value text: "boolean", "integer <min> to <max>", or
 // "object {name shape, ...}".
 func (s shape) text() string {
 	switch s.kind {
-	case "integer":
+	case kindInteger:
 		return "integer " + s.bounds.String()
-	case "object":
+	case kindObject:
 		parts := make([]string, len(s.fields))
 		for i, f := range s.fields {
 			parts[i] = f.name + " " + f.shape.memberText()
 		}
 		return "object {" + strings.Join(parts, ", ") + "}"
 	}
-	return s.kind
+	return s.kind.String()
 }
 
 func (s shape) memberText() string {
-	if s.kind != "integer" {
-		return s.kind
+	if s.kind != kindInteger {
+		return s.kind.String()
 	}
 	if s.bounds.typeName != "" {
 		return s.bounds.typeName

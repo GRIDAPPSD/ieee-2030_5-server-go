@@ -1076,24 +1076,24 @@ func decodeRefusal(err error) derControlRefusal {
 }
 
 // wrongTypeRefusals names each decodable field, so a type error reports the
-// field from this fixed table and never from the decoder's own text.
-var wrongTypeRefusals = map[string]derControlRefusal{
-	"kind":                     {http.StatusBadRequest, "kind_type", "kind: must be a string"},
-	"derProgramHref":           {http.StatusBadRequest, "program_href_type", "derProgramHref: must be a string"},
-	"type":                     {http.StatusBadRequest, "type_type", "type: must be a string"},
-	"maxLimW":                  {http.StatusBadRequest, "max_lim_w_type", "maxLimW: must be an integer"},
-	"powerFactor":              {http.StatusBadRequest, "power_factor_type", "powerFactor: must be an object"},
-	"powerFactor.displacement": {http.StatusBadRequest, "displacement_type", "powerFactor.displacement: must be an integer"},
-	"powerFactor.excitation":   {http.StatusBadRequest, "excitation_type", "powerFactor.excitation: must be a boolean"},
-	"startTime":                {http.StatusBadRequest, "start_type", "startTime: must be an integer"},
-	"durationSeconds":          {http.StatusBadRequest, "duration_type", "durationSeconds: must be an integer"},
-	"description":              {http.StatusBadRequest, "description_type", "description: must be a string"},
-	"targetW":                  {http.StatusBadRequest, "target_w_type", "targetW: must be an object"},
-	"targetW.value":            {http.StatusBadRequest, "target_w_value_type", "targetW.value: must be an integer"},
-	"targetW.multiplier":       {http.StatusBadRequest, "target_w_multiplier_type", "targetW.multiplier: must be an integer"},
-	"executesGrant":            {http.StatusBadRequest, "executes_grant_type", "executesGrant: must be a string"},
-	"reason":                   {http.StatusBadRequest, "reason_type", "reason: must be a string"},
-}
+// field from this fixed table and never from the decoder's own text. The
+// control value members take the catalog's wording.
+var wrongTypeRefusals = func() map[string]derControlRefusal {
+	m := map[string]derControlRefusal{
+		"kind":            {http.StatusBadRequest, "kind_type", "kind: must be a string"},
+		"derProgramHref":  {http.StatusBadRequest, "program_href_type", "derProgramHref: must be a string"},
+		"type":            {http.StatusBadRequest, "type_type", "type: must be a string"},
+		"startTime":       {http.StatusBadRequest, "start_type", "startTime: must be an integer"},
+		"durationSeconds": {http.StatusBadRequest, "duration_type", "durationSeconds: must be an integer"},
+		"description":     {http.StatusBadRequest, "description_type", "description: must be a string"},
+		"executesGrant":   {http.StatusBadRequest, "executes_grant_type", "executesGrant: must be a string"},
+		"reason":          {http.StatusBadRequest, "reason_type", "reason: must be a string"},
+	}
+	for path, r := range dercontrol.WrongTypeRefusals() {
+		m[path] = valueRefusal(&r)
+	}
+	return m
+}()
 
 // addBaseToLog records a stored control's type, value and interval.
 func addBaseToLog(l *derControlLog, ctrl sep2.DERControl) {

@@ -1,6 +1,7 @@
 package dercontrol
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -8,14 +9,19 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 )
 
-// elementIdent matches a Go identifier naming a DERControlBase element.
-var elementIdent = regexp.MustCompile(`^(OpMod[A-Za-z]+|RampTms)$`)
+// elementIdent matches a Go identifier naming a DERControlBase element, and
+// elementText an element's wire name inside a string literal.
+var (
+	elementIdent = regexp.MustCompile(`^(OpMod[A-Za-z]+|RampTms)$`)
+	elementText  = regexp.MustCompile(`\b(opMod[A-Za-z]+|rampTms)\b`)
+)
 
 // elementOwners are the only non-test files that may name a DERControlBase
 // element. link.go reads opModTargetW for what it means to a grant, not as a
@@ -23,8 +29,9 @@ var elementIdent = regexp.MustCompile(`^(OpMod[A-Za-z]+|RampTms)$`)
 var elementOwners = map[string]bool{"catalog.go": true, "link.go": true}
 
 // A function is one catalog row: any other non-test file in this package or
-// the admin handler package that names an element is a second copy of a
-// function the catalog owns.
+// the admin handler package that names an element, as an identifier or in a
+// string literal, is a second copy of a function the catalog owns. Its scope
+// is those two packages, the catalog's consumers; comments are not read.
 func TestNoElementOutsideCatalog(t *testing.T) {
 	var found []string
 	scanned := 0
@@ -44,8 +51,22 @@ func TestNoElementOutsideCatalog(t *testing.T) {
 				t.Fatal(err)
 			}
 			ast.Inspect(af, func(n ast.Node) bool {
-				if id, ok := n.(*ast.Ident); ok && elementIdent.MatchString(id.Name) {
-					found = append(found, fset.Position(id.Pos()).String()+": "+id.Name)
+				switch x := n.(type) {
+				case *ast.Ident:
+					if elementIdent.MatchString(x.Name) {
+						found = append(found, fset.Position(x.Pos()).String()+": "+x.Name)
+					}
+				case *ast.BasicLit:
+					if x.Kind != token.STRING {
+						break
+					}
+					text, err := strconv.Unquote(x.Value)
+					if err != nil {
+						t.Fatalf("%s: %v", fset.Position(x.Pos()), err)
+					}
+					if elementText.MatchString(text) {
+						found = append(found, fset.Position(x.Pos()).String()+": "+x.Value)
+					}
 				}
 				return true
 			})
@@ -128,21 +149,84 @@ func TestCatalogOwnsElements(t *testing.T) {
 	}
 }
 
-// The derControlBase view has one field per row, in catalog order, named as
-// the row is.
-func TestBaseViewFollowsCatalog(t *testing.T) {
-	typ := reflect.TypeFor[DERControlBaseView]()
-	var fields []string
-	for i := range typ.NumField() {
-		name, _, _ := strings.Cut(typ.Field(i).Tag.Get("json"), ",")
-		fields = append(fields, name)
-	}
+// The functions set and the derControlBase view have one field per row, in
+// catalog order, named as the row is.
+func TestStructsFollowCatalog(t *testing.T) {
 	var names []string
 	for _, f := range Catalog() {
 		names = append(names, f.Name)
 	}
-	if !reflect.DeepEqual(fields, names) {
-		t.Fatalf("DERControlBaseView fields = %v, catalog = %v", fields, names)
+	for _, typ := range []reflect.Type{reflect.TypeFor[FunctionSet](), reflect.TypeFor[DERControlBaseView]()} {
+		var fields []string
+		for i := range typ.NumField() {
+			name, _, _ := strings.Cut(typ.Field(i).Tag.Get("json"), ",")
+			fields = append(fields, name)
+		}
+		if !reflect.DeepEqual(fields, names) {
+			t.Errorf("%s fields = %v, catalog = %v", typ.Name(), fields, names)
+		}
+	}
+}
+
+// Every row's value, and every member of an object value, has a kind, so a
+// descriptor built from the shapes never meets one it cannot name.
+func TestShapesHaveKinds(t *testing.T) {
+	var walk func(where string, s shape)
+	walk = func(where string, s shape) {
+		if s.kind.String() == "" || s.kind.noun() == "" {
+			t.Errorf("%s: no kind", where)
+		}
+		switch s.kind {
+		case kindInteger:
+			if s.bounds.min > s.bounds.max {
+				t.Errorf("%s: bounds %s", where, s.bounds)
+			}
+		case kindObject:
+			if len(s.fields) == 0 {
+				t.Errorf("%s: object with no members", where)
+			}
+		}
+		for _, f := range s.fields {
+			walk(where+"."+f.name, f.shape)
+		}
+	}
+	for _, f := range catalog {
+		walk(f.info().Name, f.shapeOf())
+	}
+}
+
+// A member the shape marks required is refused as missing when a request
+// leaves it out, and any other member may be left out.
+func TestObjectMembersRequiredAsMarked(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		shape shape
+		full  map[string]any
+	}{
+		{FuncFixedPFInjectW, rowFixedPFInjectW.kind.shape, map[string]any{"displacement": 900, "excitation": true}},
+		{FuncTargetW, rowTargetW.kind.shape, map[string]any{"value": 1, "multiplier": 1}},
+	} {
+		for _, f := range tc.shape.fields {
+			value := map[string]any{}
+			for k, v := range tc.full {
+				if k != f.name {
+					value[k] = v
+				}
+			}
+			raw, err := json.Marshal(map[string]any{tc.name: value})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var members map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &members); err != nil {
+				t.Fatal(err)
+			}
+			_, ref := DecodeFunctions(members)
+			refusedMissing := ref != nil && strings.HasSuffix(ref.Code, "_required")
+			if refusedMissing != f.required {
+				t.Errorf("%s without %s: refusal %+v, required %v", tc.name, f.name, ref, f.required)
+			}
+		}
 	}
 }
 
@@ -165,7 +249,7 @@ func TestObjectKindsNameTheirRequestKeys(t *testing.T) {
 		for _, f := range tc.shape.fields {
 			fields = append(fields, f.name)
 		}
-		if tc.shape.kind != "object" || !reflect.DeepEqual(fields, keys) {
+		if tc.shape.kind != kindObject || !reflect.DeepEqual(fields, keys) {
 			t.Errorf("%s: kind %q fields %v, request keys %v", tc.name, tc.shape.kind, fields, keys)
 		}
 	}

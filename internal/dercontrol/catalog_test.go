@@ -2,24 +2,34 @@ package dercontrol
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 )
 
+func pct(v uint16) *sep2.PerCent {
+	p := sep2.PerCent(v)
+	return &p
+}
+
+func thousandths(displacement uint16, excitation bool) *sep2.FixedPowerFactor {
+	return &sep2.FixedPowerFactor{Displacement: displacement, Excitation: excitation, Multiplier: -3}
+}
+
 func TestDecodeFunctions_ValuesAndRefusals(t *testing.T) {
 	tests := []struct {
 		name    string
 		members string
-		want    *sep2.DERControlBase
+		want    *FunctionSet
 		refusal *ValueRefusal
 	}{
 		{"every function", `{"opModConnect":true,"opModEnergize":false,"opModMaxLimW":10000,"opModFixedPFInjectW":{"displacement":1,"excitation":true},"opModTargetW":{"value":-32768,"multiplier":-9}}`,
-			&sep2.DERControlBase{OpModConnect: boolPtr(true), OpModEnergize: boolPtr(false), OpModMaxLimW: pct(10000),
-				OpModFixedPFInjectW: thousandths(1, true), OpModTargetW: &sep2.ActivePower{Value: -32768, Multiplier: -9}}, nil},
-		{"missing multiplier is 0", `{"opModTargetW":{"value":32767}}`,
-			&sep2.DERControlBase{OpModTargetW: &sep2.ActivePower{Value: 32767}}, nil},
+			&FunctionSet{OpModConnect: boolPtr(true), OpModEnergize: boolPtr(false), OpModMaxLimW: i64(10000),
+				OpModFixedPFInjectW: pfIn(1, true), OpModTargetW: &ActivePowerInput{Value: i64(-32768), Multiplier: i64(-9)}}, nil},
+		{"missing multiplier stays missing", `{"opModTargetW":{"value":32767}}`,
+			&FunctionSet{OpModTargetW: &ActivePowerInput{Value: i64(32767)}}, nil},
 		{"wrong type", `{"opModMaxLimW":"x"}`, nil, &ValueRefusal{"function_value_type", "functions.opModMaxLimW: wrong value type"}},
 		{"null", `{"opModConnect":null}`, nil, &ValueRefusal{"function_value_type", "functions.opModConnect: wrong value type"}},
 		{"unknown key", `{"opModTargetW":{"value":1,"watts":1}}`, nil, &ValueRefusal{"function_value_type", "functions.opModTargetW: wrong value type"}},
@@ -120,11 +130,10 @@ func TestViewsAndLogFollowTheRows(t *testing.T) {
 	if got := BaseView(b); !reflect.DeepEqual(got, wantBase) {
 		t.Errorf("BaseView = %+v, want %+v", got, wantBase)
 	}
-	wantFns := map[string]any{FuncConnect: true, FuncMaxLimW: uint16(5000),
-		FuncFixedPFInjectW: FunctionPowerFactorView{Displacement: 950, Excitation: true},
-		FuncTargetW:        ActivePowerView{Value: 7, Multiplier: 2}}
-	if got := FunctionValues(b); !reflect.DeepEqual(got, wantFns) {
-		t.Errorf("FunctionValues = %+v, want %+v", got, wantFns)
+	// The functions view reports each value as a request gives it.
+	wantFns := `{"opModConnect":true,"opModFixedPFInjectW":{"displacement":950,"excitation":true},"opModMaxLimW":5000,"opModTargetW":{"value":7,"multiplier":2}}`
+	if got, err := json.Marshal(FunctionValues(b)); err != nil || string(got) != wantFns {
+		t.Errorf("FunctionValues = %s (%v), want %s", got, err, wantFns)
 	}
 	if got := FunctionValues(nil); got == nil || len(got) != 0 {
 		t.Errorf("FunctionValues(nil) = %#v, want an empty map", got)
@@ -147,4 +156,34 @@ func TestViewsAndLogFollowTheRows(t *testing.T) {
 func TestBuildBase_UnknownTypeBeforeItsMembers(t *testing.T) {
 	_, err := buildBase(CreateRequest{Type: ControlType("opModFixedW"), TargetW: &sep2.ActivePower{Value: 1}, MaxLimW: uint16ptr(1)})
 	assertRefusal(t, err, RefusalUnknownType)
+}
+
+// A Go caller's functions set is checked as a request's is: a member it
+// leaves out is refused as missing, never read as zero, and the refusal
+// carries the member's own wording.
+func TestBuildBase_FunctionSetMissingMembers(t *testing.T) {
+	tests := []struct {
+		name   string
+		set    FunctionSet
+		code   RefusalCode
+		detail ValueRefusal
+	}{
+		{"no excitation", FunctionSet{OpModFixedPFInjectW: &PowerFactorInput{Displacement: i64(900)}}, RefusalMissingValue,
+			ValueRefusal{"excitation_required", "powerFactor.excitation: required"}},
+		{"no displacement", FunctionSet{OpModFixedPFInjectW: &PowerFactorInput{Excitation: boolPtr(false)}}, RefusalMissingValue,
+			ValueRefusal{"displacement_required", "powerFactor.displacement: required"}},
+		{"no target value", FunctionSet{OpModTargetW: &ActivePowerInput{Multiplier: i64(1)}}, RefusalMissingValue,
+			ValueRefusal{"target_w_value_required", "targetW.value: required"}},
+		{"displacement out of range", FunctionSet{OpModFixedPFInjectW: pfIn(1001, true)}, RefusalValueOutOfRange,
+			ValueRefusal{"displacement_range", "powerFactor.displacement: must be 1 to 1000"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := buildBase(CreateRequest{Functions: &tc.set})
+			var ref *RefusalError
+			if !errors.As(err, &ref) || ref.Code != tc.code || ref.Detail == nil || *ref.Detail != tc.detail {
+				t.Fatalf("err = %v (%+v), want %s with %+v", err, ref, tc.code, tc.detail)
+			}
+		})
+	}
 }

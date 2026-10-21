@@ -17,9 +17,6 @@ import (
 // so the JSON is {} and not null for a control with none.
 type FunctionsView map[string]any
 
-// FunctionPowerFactorView is opModFixedPFInjectW as a request carries it.
-type FunctionPowerFactorView = dercontrol.FunctionPowerFactorView
-
 // HandleFunctions returns the handler for GET /api/der/control-functions.
 func (h *AdminDERControlHandler) HandleFunctions() http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {

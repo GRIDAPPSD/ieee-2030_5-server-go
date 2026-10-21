@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"reflect"
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -33,13 +32,13 @@ type LogAttr struct {
 }
 
 // kind is one value shape: I is how a request carries it, T the core type
-// of its element and V its derControlBase view. Its bounds live in its
-// closures' captured ranges and in shape, built from the same intRange.
+// of its element and V its derControlBase view. Its bounds live in shape and
+// in its closures' captured ranges, built from the same intRange. Every
+// value, from a request body or a Go caller, is checked by parse.
 type kind[I, T, V any] struct {
 	shape    shape
 	parse    func(in I) (T, *fault)
-	check    func(v T) RefusalCode // for a value that did not come through parse
-	view     func(v T) any         // the functions view value
+	input    func(v T) I // the value as a request gives it: the functions view
 	baseView func(v T) V
 	log      func(v T) []LogAttr // nil logs nothing
 }
@@ -52,11 +51,13 @@ type fault struct {
 	bounds  intRange
 }
 
-func (f *fault) code() RefusalCode {
+// refusal is the issuer's refusal for f, carrying l's wording as Detail.
+func (f *fault) refusal(l label) *RefusalError {
+	code := RefusalValueOutOfRange
 	if f.missing {
-		return RefusalMissingValue
+		code = RefusalMissingValue
 	}
-	return RefusalValueOutOfRange
+	return &RefusalError{Code: code, Detail: l.refusal(f)}
 }
 
 // label is the wording of a row's value refusals: path prefixes the message
@@ -84,14 +85,19 @@ func (l label) refusal(f *fault) *ValueRefusal {
 	return &ValueRefusal{l.code + "_range", l.path + ": must be " + f.bounds.String()}
 }
 
+// wrongType is the refusal for a member at l whose JSON type is not k.
+func (l label) wrongType(k valueKind) ValueRefusal {
+	return ValueRefusal{l.code + "_type", l.path + ": must be " + k.noun()}
+}
+
 // function is a catalog row with its value types erased.
 type function interface {
 	info() FunctionInfo
+	shapeOf() shape
 	present(b *sep2.DERControlBase) bool
-	clear(b *sep2.DERControlBase)
-	decode(raw json.RawMessage, dst *sep2.DERControlBase) *ValueRefusal
-	check(b *sep2.DERControlBase) RefusalCode
-	copyTo(dst, src *sep2.DERControlBase)
+	inSet(s *FunctionSet) bool
+	decode(raw json.RawMessage, dst *FunctionSet) *ValueRefusal
+	build(src *FunctionSet, dst *sep2.DERControlBase) error
 	value(b *sep2.DERControlBase) any
 	setView(b *sep2.DERControlBase, v *DERControlBaseView)
 	logAttrs(b *sep2.DERControlBase) []LogAttr
@@ -102,13 +108,14 @@ type typedRow[I, T, V any] struct {
 	kind              kind[I, T, V]
 	label             label
 	elem              func(*sep2.DERControlBase) **T
+	member            func(*FunctionSet) **I
 	view              func(*DERControlBaseView) **V
 }
 
 // row is one catalog function. Its refusals are worded "functions.<name>"
 // with code stem "function_value" unless worded says otherwise.
-func row[I, T, V any](name, description string, k kind[I, T, V], elem func(*sep2.DERControlBase) **T, view func(*DERControlBaseView) **V) *typedRow[I, T, V] {
-	return &typedRow[I, T, V]{name: name, description: description, kind: k, elem: elem, view: view,
+func row[I, T, V any](name, description string, k kind[I, T, V], elem func(*sep2.DERControlBase) **T, member func(*FunctionSet) **I, view func(*DERControlBaseView) **V) *typedRow[I, T, V] {
+	return &typedRow[I, T, V]{name: name, description: description, kind: k, elem: elem, member: member, view: view,
 		label: label{path: "functions." + name, code: "function_value"}}
 }
 
@@ -125,31 +132,34 @@ func (r *typedRow[I, T, V]) info() FunctionInfo {
 
 func (r *typedRow[I, T, V]) present(b *sep2.DERControlBase) bool { return *r.elem(b) != nil }
 
-func (r *typedRow[I, T, V]) clear(b *sep2.DERControlBase) { *r.elem(b) = nil }
+func (r *typedRow[I, T, V]) shapeOf() shape { return r.kind.shape }
 
-func (r *typedRow[I, T, V]) decode(raw json.RawMessage, dst *sep2.DERControlBase) *ValueRefusal {
+func (r *typedRow[I, T, V]) inSet(s *FunctionSet) bool { return *r.member(s) != nil }
+
+// decode reads a request's value into dst, refusing it in the row's wording
+// before the issuer sees it.
+func (r *typedRow[I, T, V]) decode(raw json.RawMessage, dst *FunctionSet) *ValueRefusal {
 	var in *I
 	if !decodeStrict(raw, &in) || in == nil {
 		return &ValueRefusal{"function_value_type", "functions." + r.name + ": wrong value type"}
 	}
-	v, f := r.kind.parse(*in)
-	if f != nil {
+	if _, f := r.kind.parse(*in); f != nil {
 		return r.label.refusal(f)
+	}
+	*r.member(dst) = in
+	return nil
+}
+
+func (r *typedRow[I, T, V]) build(src *FunctionSet, dst *sep2.DERControlBase) error {
+	v, f := r.kind.parse(**r.member(src))
+	if f != nil {
+		return f.refusal(r.label)
 	}
 	*r.elem(dst) = &v
 	return nil
 }
 
-func (r *typedRow[I, T, V]) check(b *sep2.DERControlBase) RefusalCode {
-	return r.kind.check(**r.elem(b))
-}
-
-func (r *typedRow[I, T, V]) copyTo(dst, src *sep2.DERControlBase) {
-	v := **r.elem(src)
-	*r.elem(dst) = &v
-}
-
-func (r *typedRow[I, T, V]) value(b *sep2.DERControlBase) any { return r.kind.view(**r.elem(b)) }
+func (r *typedRow[I, T, V]) value(b *sep2.DERControlBase) any { return r.kind.input(**r.elem(b)) }
 
 func (r *typedRow[I, T, V]) setView(b *sep2.DERControlBase, v *DERControlBaseView) {
 	x := r.kind.baseView(**r.elem(b))
@@ -180,10 +190,11 @@ func decodeStrict(raw json.RawMessage, dst any) bool {
 type legacyValue struct {
 	row       function
 	label     label
+	shape     shape
 	inRequest func(CreateRequest) bool
 	inBody    func(LegacyValues) bool
 	// build sets the request's value on dst, or returns why it cannot.
-	build func(req CreateRequest, dst *sep2.DERControlBase) RefusalCode
+	build func(req CreateRequest, dst *sep2.DERControlBase) error
 	// take parses the body's value into req, worded as the row's refusals.
 	take func(v LegacyValues, req *CreateRequest) ([]LogAttr, *ValueRefusal)
 }
@@ -195,15 +206,16 @@ func legacy[I, T, V any](r *typedRow[I, T, V], fromRequest func(CreateRequest) *
 	return &legacyValue{
 		row:       r,
 		label:     r.label,
+		shape:     r.kind.shape,
 		inRequest: func(req CreateRequest) bool { return fromRequest(req) != nil },
 		inBody:    func(v LegacyValues) bool { return fromBody(v) != nil },
-		build: func(req CreateRequest, dst *sep2.DERControlBase) RefusalCode {
+		build: func(req CreateRequest, dst *sep2.DERControlBase) error {
 			v, f := r.kind.parse(*fromRequest(req))
 			if f != nil {
-				return f.code()
+				return f.refusal(r.label)
 			}
 			*r.elem(dst) = &v
-			return ""
+			return nil
 		},
 		take: func(body LegacyValues, req *CreateRequest) ([]LogAttr, *ValueRefusal) {
 			v, f := r.kind.parse(*fromBody(body))
@@ -318,12 +330,12 @@ func functionSetKey(b *sep2.DERControlBase) string {
 	return "other"
 }
 
-// DecodeFunctions decodes a request's functions member into the draft base
-// a CreateRequest's Functions carries, in catalog order. A name outside the
+// DecodeFunctions decodes a request's functions member into the set a
+// CreateRequest's Functions carries, in catalog order. A name outside the
 // catalog is skipped: the caller refuses unknown names first, with
 // IsFunction.
-func DecodeFunctions(members map[string]json.RawMessage) (*sep2.DERControlBase, *ValueRefusal) {
-	draft := &sep2.DERControlBase{}
+func DecodeFunctions(members map[string]json.RawMessage) (*FunctionSet, *ValueRefusal) {
+	draft := &FunctionSet{}
 	for _, f := range catalog {
 		raw, ok := members[f.info().Name]
 		if !ok {
@@ -362,6 +374,21 @@ func TakeLegacy(name string, v LegacyValues, req *CreateRequest) (known bool, at
 	return true, attrs, ref
 }
 
+// WrongTypeRefusals is the refusal for each legacy value member, and each
+// member of one, whose JSON type is wrong, keyed by its path in the body.
+func WrongTypeRefusals() map[string]ValueRefusal {
+	out := map[string]ValueRefusal{}
+	for _, m := range legacyBesideFunctionsOrder {
+		s := m.shape
+		out[m.label.path] = m.label.wrongType(s.kind)
+		for _, f := range s.fields {
+			l := m.label.member(f.name)
+			out[l.path] = l.wrongType(f.shape.kind)
+		}
+	}
+	return out
+}
+
 // RefuseBesideFunctions returns the refusal for the first legacy value
 // member v carries, which a body with a functions member may not.
 func RefuseBesideFunctions(v LegacyValues) *ValueRefusal {
@@ -392,39 +419,33 @@ func buildLegacy(req CreateRequest) (*sep2.DERControlBase, error) {
 		if !t.value.inRequest(req) {
 			return nil, refuse(RefusalMissingValue)
 		}
-		if code := t.value.build(req, b); code != "" {
-			return nil, refuse(code)
+		if err := t.value.build(req, b); err != nil {
+			return nil, err
 		}
 	}
 	return b, nil
 }
 
-// baseFromFunctions builds the base for a functions set: every element it
-// carries must be a catalog function within its bounds.
+// baseFromFunctions builds the base for a functions set, checking each
+// member as a request body's would be.
 func baseFromFunctions(req CreateRequest) (*sep2.DERControlBase, error) {
 	for _, m := range legacyBesideFunctionsOrder {
 		if m.inRequest(req) {
 			return nil, refuse(RefusalUnexpectedValue)
 		}
 	}
-	draft := req.Functions
-	rest := draft.Copy()
 	b := &sep2.DERControlBase{}
+	empty := true
 	for _, f := range catalog {
-		if !f.present(draft) {
+		if !f.inSet(req.Functions) {
 			continue
 		}
-		if code := f.check(draft); code != "" {
-			return nil, refuse(code)
+		if err := f.build(req.Functions, b); err != nil {
+			return nil, err
 		}
-		f.copyTo(b, draft)
-		f.clear(&rest)
+		empty = false
 	}
-	// Copying only the catalog's elements would silently drop any other.
-	if !reflect.ValueOf(rest).IsZero() {
-		return nil, refuse(RefusalUnexpectedValue)
-	}
-	if len(FunctionNames(b)) == 0 {
+	if empty {
 		return nil, refuse(RefusalMissingValue)
 	}
 	return b, nil

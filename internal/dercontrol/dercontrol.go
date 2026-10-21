@@ -49,11 +49,10 @@ type CreateRequest struct {
 	// Functions is set.
 	Type ControlType
 
-	// Functions is the draft base of the functions the control carries, as
-	// an alternative to Type. Issue copies its catalog elements after
-	// checking each, and refuses any element outside the catalog. The
-	// top-level value fields below stay unset when it is used.
-	Functions *sep2.DERControlBase
+	// Functions is the set of functions the control carries, as an
+	// alternative to Type. The top-level value fields below stay unset
+	// when it is used.
+	Functions *FunctionSet
 
 	// MaxLimW is required for, and only for, Type == MaxLimW, in hundredths
 	// of a percent of setMaxW.
@@ -206,6 +205,11 @@ var RefusalCodes = []RefusalCode{
 // can never leak operator input (acceptance criterion 9).
 type RefusalError struct {
 	Code RefusalCode
+
+	// Detail is the value refusal's own wording, such as
+	// excitation_required, when a control value was refused. Like Code it
+	// carries no request text.
+	Detail *ValueRefusal
 }
 
 func (e *RefusalError) Error() string {

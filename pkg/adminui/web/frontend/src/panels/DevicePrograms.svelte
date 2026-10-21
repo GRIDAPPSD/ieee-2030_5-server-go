@@ -22,9 +22,16 @@
     type ProgramBody,
     type ProgramCatalog,
   } from '../lib/derprogram'
-  import type { AdminFSA } from '../lib/fsa'
+  import { unassignDeviceFsa, type AdminFSA } from '../lib/fsa'
 
-  let { deviceId, fsas, onClose }: { deviceId: string; fsas: AdminFSA[]; onClose: () => void } = $props()
+  // onFsaChanged reloads the FSA list the shell holds, since an unassign
+  // changes which FSAs this device is assigned to.
+  let {
+    deviceId,
+    fsas,
+    onClose,
+    onFsaChanged,
+  }: { deviceId: string; fsas: AdminFSA[]; onClose: () => void; onFsaChanged: () => void } = $props()
 
   let catalog = $state<ProgramCatalog | null>(null)
   let loadError = $state('')
@@ -33,6 +40,9 @@
   let confirming = $state('')
   let deleting = $state('')
   let deleteButtons: Record<string, HTMLButtonElement | undefined> = {}
+  let confirmingFsa = $state('')
+  let unassigning = $state(false)
+  let unassignError = $state<{ fsa: string; message: string } | null>(null)
   let deleteError = $state<{ id: string; message: string; controls: string[] } | null>(null)
 
   // A newer read, a device switch or the drawer closing makes an older answer
@@ -125,6 +135,22 @@
     }
     await changed()
   }
+
+  async function unassign(fsaId: string) {
+    if (unassigning) return
+    unassigning = true
+    unassignError = null
+    const res = await unassignDeviceFsa(deviceId, fsaId)
+    if (closed) return
+    unassigning = false
+    confirmingFsa = ''
+    if (!res.ok) {
+      unassignError = { fsa: fsaId, message: `Unassign failed (${res.status}): ${res.error}` }
+      return
+    }
+    onFsaChanged()
+    await changed()
+  }
 </script>
 
 <div class="programs" data-testid="device-programs-{deviceId}">
@@ -159,7 +185,40 @@
               editing = ''
             }}>Add program</button
           >
+          {#if group.fsa !== '' && assigned.includes(group.fsa)}
+            {#if confirmingFsa === group.fsa}
+              <button
+                class="btn btn-red btn-small"
+                data-testid="fsa-unassign-confirm-{group.fsa}"
+                aria-label="Confirm unassign from {fsaName(group.fsa)}"
+                disabled={unassigning}
+                use:focusOnMount
+                onclick={() => unassign(group.fsa)}>{unassigning ? 'Unassigning...' : 'Confirm unassign'}</button
+              >
+              <button
+                class="btn btn-small"
+                aria-label="Keep assignment to {fsaName(group.fsa)}"
+                disabled={unassigning}
+                onclick={() => (confirmingFsa = '')}>Keep</button
+              >
+            {:else}
+              <button
+                class="btn btn-red btn-small"
+                data-testid="fsa-unassign-{group.fsa}"
+                aria-label="Unassign from FSA {fsaName(group.fsa)}"
+                onclick={() => {
+                  confirmingFsa = group.fsa
+                  unassignError = null
+                }}>Unassign from FSA</button
+              >
+            {/if}
+          {/if}
         </div>
+        {#if unassignError?.fsa === group.fsa}
+          <div class="result err" role="alert" tabindex="-1" use:focusOnMount data-testid="fsa-unassign-error-{group.fsa}">
+            {unassignError.message}
+          </div>
+        {/if}
         {#if group.programs.length === 0}
           <p class="hint">No programs from this FSA yet.</p>
         {:else}

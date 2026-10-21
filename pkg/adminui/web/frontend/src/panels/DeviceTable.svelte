@@ -266,7 +266,7 @@
           {#if programsFor === deviceID}
             <tr data-testid="device-programs-row-{deviceID}">
               <td colspan={10 + columns.length}>
-                <DevicePrograms deviceId={deviceID} {fsas} onClose={() => (programsFor = '')} />
+                <DevicePrograms deviceId={deviceID} {fsas} onFsaChanged={onChanged} onClose={() => (programsFor = '')} />
               </td>
             </tr>
           {/if}

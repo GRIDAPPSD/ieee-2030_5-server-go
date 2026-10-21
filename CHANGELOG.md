@@ -36,7 +36,12 @@ controls (`feature`) and changes admin startup and stored-control loading
   and rekey answer 409 for a manager stored as `device`, for a manager that is
   itself managed, and for a managed LFDI that is an aggregator (stored or
   derived from managing a device), and a profile PUT answers 409 on a kind
-  change that contradicts existing pairs (#1033).
+  change that contradicts existing pairs (#1033). `kind` is `aggregator` or
+  `device` and is optional: an empty kind follows the pairs. A device with no
+  profile reads as an aggregator if it manages any device, else as a device, so
+  pairs written before this release keep working; existing pairs are not
+  re-checked at upgrade, and the gate applies when a pair or profile is
+  written.
 - Admin UI: manage management pairs from the Devices tab (#926); program
   templates on the FSAs tab (#924); a device Programs drawer with origin and
   restart badges (#925); empty states that point at template creation (#927);
@@ -61,11 +66,14 @@ controls (`feature`) and changes admin startup and stored-control loading
   mode 0600 on first start, and refuses a symlink, a file with loose
   permissions or owner, an empty file or a key under 16 characters before the
   admin port opens. With no admin listener configured, nothing is read,
-  created or required. `make admin-key` prints the key. The Make targets no
+  created or required. An admin listener is configured by `SEP2_ADMIN_LISTEN`
+  (or its deprecated alias `SEP2_ADMIN_ADDR`), and the cert directory is
+  `SEP2_CERT_DIR`, default `~/tls`. `make admin-key` prints the key. The Make targets no
   longer set `SEP2_ADMIN_KEY=admin`.
   **Operator action:** an operator who ran without a key, or with a key under
   16 characters, must set `SEP2_ADMIN_KEY` to 16 characters or more or let the
-  server generate `admin.secret`, and log in with that key (#646).
+  server generate `admin.secret`, and log in at `/login` with that key or send
+  it as a Bearer token (#646).
 
 - The server requires `ieee-2030_5-core-go` v0.27.0 (#998, #1012). v0.27.0 adds
   only a vendored decode file, with no server change. DER curve modes are served as
@@ -91,8 +99,9 @@ controls (`feature`) and changes admin startup and stored-control loading
 
 ### Fixed
 
-- DER lists are served in Table 50 order over any backend. The `a` (after)
-  query parameter is now ignored on DER lists (#485).
+- DER lists are served in IEEE 2030.5 Table 50 order over any backend. The `a`
+  (after) query parameter is now ignored on DER lists (#485). This ordering
+  change broke two tests in a consumer (the bridge).
 - Device FSAs are rebuilt from admin assignments at boot (#915), and each FSA
   lists only its own DER programs (#916).
 - A program's default control can be removed and set again (#1043).
@@ -119,7 +128,7 @@ carries version numbers that go stale (#1056).
 
 ### Security
 
-- The FSA admin writes (create, delete, program attach and detach, and device
+- Security tightening: the FSA admin writes (create, delete, program attach and detach, and device
   FSA assignment and unassignment) now require a real credential from
   loopback: a request admitted only by the loopback bypass gets 401. Operators
   who used these routes or the FSA cards without logging in must log in at

@@ -372,8 +372,7 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 		// Every template copy is checked before anything is written, so a
 		// conflict refuses the assignment with nothing to undo.
 		tmpls := h.AdminFSAs.Templates(r.Context(), fsaID)
-		if len(tmpls) > 0 && h.Copies == nil {
-			h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+		if !h.storesWired(w, r, len(tmpls) == 0 || h.Copies != nil) {
 			return
 		}
 		for _, t := range tmpls {
@@ -406,7 +405,7 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 				}
 				return
 			}
-			if !h.rollbackAfter(r, err, steps) {
+			if !h.partial(r, err, steps, nil) {
 				h.assignIncomplete(w, deviceID, fsaID)
 				return
 			}
@@ -419,7 +418,7 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 				steps = append(steps, rollbackStep{device: deviceID, template: t.ID, part: "copy", undo: undo})
 				continue
 			}
-			if !h.rollbackAfter(r, err, steps) {
+			if !h.partial(r, err, steps, nil) {
 				h.assignIncomplete(w, deviceID, fsaID)
 				return
 			}
@@ -485,8 +484,7 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 		// Copies go before the assignment, so a removal that fails leaves
 		// the device assigned and the boot rebuild restores its copies.
 		tmpls := h.AdminFSAs.Templates(r.Context(), fsaID)
-		if len(tmpls) > 0 && (h.Copies == nil || h.Retirer == nil) {
-			h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+		if !h.storesWired(w, r, len(tmpls) == 0 || (h.Copies != nil && h.Retirer != nil)) {
 			return
 		}
 		var removed []string
@@ -591,7 +589,7 @@ func (h *AdminFSAHandler) replicateControls(w http.ResponseWriter, r *http.Reque
 		h.assignIncomplete(w, deviceID, fsaID)
 		return false
 	}
-	if !h.rollbackAfter(r, err, steps) {
+	if !h.partial(r, err, steps, nil) {
 		h.assignIncomplete(w, deviceID, fsaID)
 		return false
 	}

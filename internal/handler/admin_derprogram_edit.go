@@ -77,8 +77,7 @@ func (h *AdminFSAHandler) HandleUpdateProgramTemplate() http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if h.Copies == nil {
-			h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+		if !h.storesWired(w, r, h.Copies != nil) {
 			return
 		}
 
@@ -169,8 +168,7 @@ func (h *AdminFSAHandler) notifyEdited(ctx context.Context, deviceID, fsaID, id 
 func (h *AdminFSAHandler) HandleDeleteProgramTemplate() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		fsaID, id := r.PathValue("id"), r.PathValue("derpId")
-		if h.Copies == nil || h.Retirer == nil {
-			h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+		if !h.storesWired(w, r, h.Copies != nil && h.Retirer != nil) {
 			return
 		}
 
@@ -278,8 +276,7 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if h.Copies == nil {
-			h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+		if !h.storesWired(w, r, h.Copies != nil) {
 			return
 		}
 
@@ -342,8 +339,7 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 func (h *AdminFSAHandler) HandleDeleteDeviceProgram() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		deviceID, id := r.PathValue("id"), r.PathValue("derpId")
-		if h.Copies == nil || h.Retirer == nil {
-			h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+		if !h.storesWired(w, r, h.Copies != nil && h.Retirer != nil) {
 			return
 		}
 

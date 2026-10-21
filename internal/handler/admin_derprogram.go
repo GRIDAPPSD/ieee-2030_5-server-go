@@ -106,8 +106,7 @@ func (h *AdminFSAHandler) HandleCreateProgramTemplate() http.HandlerFunc {
 			writeError(w, http.StatusConflict, "fsa id cannot form a program href; create the FSA with an mRID of letters, digits, '.', '_' or '-'")
 			return
 		}
-		if h.Copies == nil {
-			h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+		if !h.storesWired(w, r, h.Copies != nil) {
 			return
 		}
 
@@ -155,9 +154,8 @@ func (h *AdminFSAHandler) HandleCreateProgramTemplate() http.HandlerFunc {
 				steps = append(steps, rollbackStep{device: dev, template: tmpl.ID, part: "copy", undo: undo})
 				continue
 			}
-			if !h.rollbackAfter(r, err, steps) {
-				h.logged(r).ErrorContext(r.Context(), "admin: DER program template create left partly applied", "event", "der_program_template_incomplete",
-					"fsa", fsaID, "template", tmpl.ID, "error", err)
+			if !h.partial(r, err, steps, &incompleteLog{"admin: DER program template create left partly applied", "der_program_template_incomplete",
+				[]any{"fsa", fsaID, "template", tmpl.ID, "error", err}}) {
 				writeError(w, http.StatusInternalServerError, fmt.Sprintf(
 					"program template write failed; template %s was kept on fsa %s and its device copies are completed at the next restart", tmpl.ID, fsaID))
 				return
@@ -230,7 +228,7 @@ func buildProgramEdit(body programTemplateBody) (programEdit, string, bool) {
 	}
 	e.description = *body.Description
 	if body.Primacy == nil || !validPrimacy(*body.Primacy) {
-		return e, "primacy: must be 0, 1, 2 or 65 to 191", false
+		return e, primacyRefusalText, false
 	}
 	e.primacy = uint8(*body.Primacy)
 	if body.MRID != nil {
@@ -355,8 +353,7 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 				return
 			}
 		}
-		if h.DeviceFSAs == nil || h.Copies == nil {
-			h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+		if !h.storesWired(w, r, h.DeviceFSAs != nil && h.Copies != nil) {
 			return
 		}
 		if !validHrefSegment(deviceID) || !validHrefSegment(fsaID) {
@@ -438,6 +435,15 @@ func (h *AdminFSAHandler) copyRefused(w http.ResponseWriter, r *http.Request, er
 	h.templateFailed(w, r, "copy_write", err)
 }
 
+// storesWired reports whether the program stores a route needs are wired. When
+// they are not it answers a logged 500 and the caller returns.
+func (h *AdminFSAHandler) storesWired(w http.ResponseWriter, r *http.Request, wired bool) bool {
+	if !wired {
+		h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+	}
+	return wired
+}
+
 func (h *AdminFSAHandler) templateFailed(w http.ResponseWriter, r *http.Request, cause string, err error) {
 	h.logged(r).ErrorContext(r.Context(), "admin: DER program write failed", "event", "der_program_template_failed",
 		"cause", cause, "path", r.URL.Path, "error", err)
@@ -477,6 +483,26 @@ func (h *AdminFSAHandler) rollbackAfter(r *http.Request, cause error, steps []ro
 		}
 	}
 	return true
+}
+
+// incompleteLog is the audit line of a write that could not be undone: its
+// message, its event name and the attributes that name what is left.
+type incompleteLog struct {
+	msg, event string
+	attrs      []any
+}
+
+// partial undoes steps after cause and reports whether every write was
+// undone. When one was not, it logs note when there is one, and the caller
+// answers. It is the one place a rollback's failure is turned into a log line.
+func (h *AdminFSAHandler) partial(r *http.Request, cause error, steps []rollbackStep, note *incompleteLog) bool {
+	if h.rollbackAfter(r, cause, steps) {
+		return true
+	}
+	if note != nil {
+		h.logged(r).ErrorContext(r.Context(), note.msg, append([]any{"event", note.event}, note.attrs...)...)
+	}
+	return false
 }
 
 func (h *AdminFSAHandler) logUndoFailed(r *http.Request, device, template, part string, err error) {
@@ -522,10 +548,24 @@ func validTemplateDescription(s string) bool {
 	return true
 }
 
-// validPrimacy accepts the PrimacyType values IEEE 2030.5-2018 defines (0 to
-// 2) and the range it leaves to the implementer (65 to 191).
+// Primacy bounds. IEEE 2030.5-2018 defines 0 to definedPrimacyHigh and leaves
+// userPrimacyLow to userPrimacyHigh to the implementer; the device path
+// prefers the user range and falls back below it only when no value there
+// outranks the device's other programs.
+const (
+	definedPrimacyHigh = 2
+	userPrimacyLow     = 65
+	userPrimacyHigh    = 191
+)
+
+// primacyRefusalText is the 400 message of a program write whose primacy is
+// outside the allowed values.
+var primacyRefusalText = fmt.Sprintf("primacy: must be 0, 1, %d or %d to %d", definedPrimacyHigh, userPrimacyLow, userPrimacyHigh)
+
+// validPrimacy accepts the PrimacyType values IEEE 2030.5-2018 defines and
+// the range it leaves to the implementer.
 func validPrimacy(p int64) bool {
-	return (p >= 0 && p <= 2) || (p >= 65 && p <= 191)
+	return (p >= 0 && p <= definedPrimacyHigh) || (p >= userPrimacyLow && p <= userPrimacyHigh)
 }
 
 // validHrefSegment reports whether s can be a segment of a program href the

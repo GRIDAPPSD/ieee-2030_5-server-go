@@ -32,6 +32,7 @@ type AdminFSAStore struct {
 	deviceLinks  map[string][]string          // fsaID -> sorted device ids
 	templates    map[string][]ProgramTemplate // fsaID -> templates sorted by ID
 	deviceOnly   map[string]string            // fsaID -> the one device it is bound to
+	controls     map[string][]FSAControl      // fsaID -> control records sorted by template id, then id
 
 	// Durable persistence (GRIDAPPSD/ieee-2030_5-server-go#165). Empty
 	// persistPath = pure in-memory (the historical AdminFSAStore
@@ -57,6 +58,7 @@ func NewAdminFSAStore() *AdminFSAStore {
 		deviceLinks:  make(map[string][]string),
 		templates:    make(map[string][]ProgramTemplate),
 		deviceOnly:   make(map[string]string),
+		controls:     make(map[string][]FSAControl),
 	}
 }
 
@@ -499,8 +501,8 @@ func (s *AdminFSAStore) UpdateTemplate(_ context.Context, fsaID string, tmpl Pro
 	})
 }
 
-// DeleteTemplate removes one template. ErrNotFound if the FSA or the
-// template is absent.
+// DeleteTemplate removes one template and its control records. ErrNotFound
+// if the FSA or the template is absent.
 func (s *AdminFSAStore) DeleteTemplate(_ context.Context, fsaID, id string) error {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
@@ -513,12 +515,15 @@ func (s *AdminFSAStore) DeleteTemplate(_ context.Context, fsaID, id string) erro
 	}
 	before := tmpls[idx]
 	s.setTemplates(fsaID, slices.Delete(tmpls, idx, idx+1))
+	ctrlsBefore := s.controls[fsaID]
+	s.setFSAControls(fsaID, slices.DeleteFunc(slices.Clone(ctrlsBefore), func(c FSAControl) bool { return c.TemplateID == id }))
 	s.mu.Unlock()
 	return s.persistOrRollback(func() {
 		tmpls := s.templates[fsaID]
 		if idx, found := slices.BinarySearchFunc(tmpls, before.ID, compareTemplateID); !found {
 			s.templates[fsaID] = slices.Insert(tmpls, idx, before)
 		}
+		s.setFSAControls(fsaID, ctrlsBefore)
 	})
 }
 

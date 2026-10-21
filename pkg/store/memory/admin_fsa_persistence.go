@@ -32,6 +32,9 @@ type adminFSARecord struct {
 	// ordinary FSA, which is also what a snapshot written before device-only
 	// FSAs existed holds.
 	DeviceOnly string `json:"deviceOnly,omitempty"`
+	// Controls are the FSA's control records (#972); absent from snapshots
+	// written before they existed.
+	Controls []FSAControl `json:"controls,omitempty"`
 }
 
 // NewAdminFSAStoreWithPersistence builds an AdminFSAStore wired to a JSON
@@ -107,6 +110,20 @@ func (s *AdminFSAStore) loadFromFile(path string) error {
 			slices.SortFunc(tmpls, func(a, b ProgramTemplate) int { return strings.Compare(a.ID, b.ID) })
 			s.templates[r.ID] = tmpls
 		}
+		var ctrls []FSAControl
+		for _, c := range r.Controls {
+			if _, found := slices.BinarySearchFunc(tmpls, c.TemplateID, compareTemplateID); !found {
+				return fmt.Errorf("FSA %q control %q names no template %q", r.ID, c.ID, c.TemplateID)
+			}
+			if err := checkFSAControlAdd(ctrls, c); err != nil {
+				return fmt.Errorf("FSA %q control %q: %w", r.ID, c.ID, err)
+			}
+			ctrls = append(ctrls, c.Copy())
+		}
+		if len(ctrls) > 0 {
+			slices.SortFunc(ctrls, func(a, b FSAControl) int { return compareFSAControlKey(a, fsaControlKey(b.TemplateID, b.ID)) })
+			s.controls[r.ID] = ctrls
+		}
 	}
 	slices.Sort(s.keys)
 	return nil
@@ -133,6 +150,9 @@ func (s *AdminFSAStore) snapshotRecords() []adminFSARecord {
 		}
 		for _, t := range s.templates[k] {
 			rec.Templates = append(rec.Templates, t.Copy())
+		}
+		for _, c := range s.controls[k] {
+			rec.Controls = append(rec.Controls, c.Copy())
 		}
 		out = append(out, rec)
 	}

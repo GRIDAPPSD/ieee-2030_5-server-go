@@ -27,13 +27,13 @@ package bootfixture
 import (
 	"bytes"
 	"context"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol/dercurve"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
@@ -193,9 +193,9 @@ type FreqDroopSpec struct {
 	OpenLoopTms *uint16 `yaml:"open_loop_tms"`
 }
 
-// FreqDroop converts an op_mod_freq_droop spec, naming the first missing
-// field. A nil spec gives nil: the mode is absent.
-func FreqDroop(s *FreqDroopSpec) (*sep2.FreqDroopType, error) {
+// FreqDroop converts an op_mod_freq_droop spec to the catalog's input,
+// naming the first missing field. A nil spec gives nil: the mode is absent.
+func FreqDroop(s *FreqDroopSpec) (*dercontrol.FreqDroopInput, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -210,28 +210,25 @@ func FreqDroop(s *FreqDroopSpec) (*sep2.FreqDroopType, error) {
 			return nil, fmt.Errorf("op_mod_freq_droop: %s is required", f.name)
 		}
 	}
-	return &sep2.FreqDroopType{
-		DBOF: *s.DBOF, DBUF: *s.DBUF, KOF: *s.KOF, KUF: *s.KUF, OpenLoopTms: *s.OpenLoopTms,
+	return &dercontrol.FreqDroopInput{
+		DBOF: asInt64(*s.DBOF), DBUF: asInt64(*s.DBUF), KOF: asInt64(*s.KOF),
+		KUF: asInt64(*s.KUF), OpenLoopTms: asInt64(*s.OpenLoopTms),
 	}, nil
 }
 
-// ValidatePerCents refuses a percent the XML encoder would refuse, so an
+func asInt64[T ~int8 | ~int16 | ~uint16 | ~uint32](v T) *int64 {
+	n := int64(v)
+	return &n
+}
+
+// ValidatePerCents refuses a percent the catalog refuses, so an
 // out-of-range fixture fails at load instead of when the control is served.
 func (s *DERControlBaseSpec) ValidatePerCents() error {
 	if s == nil {
 		return nil
 	}
-	if s.OpModFixedW != nil {
-		if _, err := xml.Marshal(*s.OpModFixedW); err != nil {
-			return fmt.Errorf("op_mod_fixed_w: %w", err)
-		}
-	}
-	if s.OpModMaxLimW != nil {
-		if _, err := xml.Marshal(*s.OpModMaxLimW); err != nil {
-			return fmt.Errorf("op_mod_max_lim_w: %w", err)
-		}
-	}
-	return nil
+	_, err := BuildDERControlBase(DERControlBaseSpec{OpModFixedW: s.OpModFixedW, OpModMaxLimW: s.OpModMaxLimW})
+	return err
 }
 
 // ActivePowerSpec is the YAML shape of sep2.ActivePower. Value is int16
@@ -562,43 +559,73 @@ func buildDERControl(s DERControlSpec) (sep2.DERControl, error) {
 	return dc, nil
 }
 
-// BuildDERControlBase maps a DERControlBaseSpec onto sep2.DERControlBase.
-// The CSIP loader builds its larger spec's shared fields through it.
+// specKeys names each fixture field by its YAML key, for the refusals the
+// catalog words in its own terms.
+var specKeys = map[string]string{
+	dercontrol.FuncConnect:   "op_mod_connect",
+	dercontrol.FuncEnergize:  "op_mod_energize",
+	dercontrol.FuncFixedW:    "op_mod_fixed_w",
+	dercontrol.FuncMaxLimW:   "op_mod_max_lim_w",
+	dercontrol.FuncTargetW:   "op_mod_target_w",
+	dercontrol.FuncVoltVar:   "op_mod_volt_var",
+	dercontrol.FuncFreqDroop: "op_mod_freq_droop",
+	dercontrol.FuncRampTms:   "ramp_tms",
+}
+
+// BuildDERControlBase maps a DERControlBaseSpec onto sep2.DERControlBase
+// through the control catalog, so a value the admin routes refuse is refused
+// here in the same words, after the fixture's YAML key. The CSIP loader
+// builds its larger spec's shared fields through it.
 func BuildDERControlBase(s DERControlBaseSpec) (sep2.DERControlBase, error) {
-	var base sep2.DERControlBase
-	if s.OpModConnect != nil {
-		v := *s.OpModConnect
-		base.OpModConnect = &v
-	}
-	if s.OpModEnergize != nil {
-		v := *s.OpModEnergize
-		base.OpModEnergize = &v
+	set := dercontrol.FunctionSet{
+		OpModConnect:  s.OpModConnect,
+		OpModEnergize: s.OpModEnergize,
+		OpModVoltVar:  s.OpModVoltVar,
 	}
 	if s.OpModFixedW != nil {
-		v := *s.OpModFixedW
-		base.OpModFixedW = &v
+		set.OpModFixedW = asInt64(*s.OpModFixedW)
 	}
 	if s.OpModMaxLimW != nil {
-		v := *s.OpModMaxLimW
-		base.OpModMaxLimW = &v
+		set.OpModMaxLimW = asInt64(*s.OpModMaxLimW)
 	}
 	if s.OpModTargetW != nil {
-		base.OpModTargetW = &sep2.ActivePower{Multiplier: s.OpModTargetW.Multiplier, Value: s.OpModTargetW.Value}
+		set.OpModTargetW = &dercontrol.ActivePowerInput{
+			Value: asInt64(s.OpModTargetW.Value), Multiplier: asInt64(s.OpModTargetW.Multiplier),
+		}
 	}
-	if err := dercurve.SetLinks(s, &base); err != nil {
-		return sep2.DERControlBase{}, err
+	// The catalog words a blank curve id as a missing value; the fixture
+	// names the curve error itself.
+	if s.OpModVoltVar != nil {
+		if _, err := dercurve.Link(*s.OpModVoltVar); err != nil {
+			return sep2.DERControlBase{}, fmt.Errorf("%s: %w", specKeys[dercontrol.FuncVoltVar], err)
+		}
 	}
 	fd, err := FreqDroop(s.OpModFreqDroop)
 	if err != nil {
 		return sep2.DERControlBase{}, err
 	}
-	base.OpModFreqDroop = fd
+	set.OpModFreqDroop = fd
 	if s.RampTms != nil {
-		v := *s.RampTms
-		base.RampTms = &v
+		set.RampTms = asInt64(*s.RampTms)
 	}
-	return base, nil
+	base, err := dercontrol.BuildBase(&set)
+	var refused *dercontrol.MemberRefusal
+	if errors.As(err, &refused) && refused.Detail != nil {
+		return sep2.DERControlBase{}, &specRefusal{key: specKeys[refused.Function], refusal: refused}
+	}
+	return base, err
 }
+
+// specRefusal is a fixture field the catalog refused. Its text is the YAML
+// key and the catalog's wording; the refusal stays reachable with errors.As.
+type specRefusal struct {
+	key     string
+	refusal *dercontrol.MemberRefusal
+}
+
+func (e *specRefusal) Error() string { return e.key + ": " + e.refusal.Detail.Message }
+
+func (e *specRefusal) Unwrap() error { return e.refusal }
 
 // BuildDERCurve maps a DERCurveSpec onto sep2.DERCurve. CreationTime
 // follows the spec's value when given; otherwise it is loadTime, the time

@@ -172,17 +172,10 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 		defer tx.finish(fh, r)
 
 		ctx := r.Context()
-		fsaID, hasFSA := fh.AdminFSAs.DeviceOnlyFSA(deviceID)
-		progID := ""
-		if hasFSA {
-			held, err := fh.Copies.DevicePrograms(ctx, deviceID, fsaID)
-			if err != nil {
-				fh.templateFailed(w, r, "device_programs", err)
-				return
-			}
-			if len(held) > 0 {
-				progID = held[0]
-			}
+		fsaID, hasFSA, progID, err := fh.deviceOwnProgram(ctx, deviceID)
+		if err != nil {
+			fh.templateFailed(w, r, "device_programs", err)
+			return
 		}
 
 		primacy, err := fh.choosePrimacy(ctx, deviceID, fsaID, progID)
@@ -263,6 +256,67 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 		writeJSON(w, http.StatusCreated, reply)
 	}
 }
+
+// deviceOwnProgram finds deviceID's device-only FSA and its one program. hasFSA
+// is false when the device has no device-only FSA, and progID is empty when
+// the FSA holds no program.
+func (h *AdminFSAHandler) deviceOwnProgram(ctx context.Context, deviceID string) (fsaID string, hasFSA bool, progID string, err error) {
+	if fsaID, hasFSA = h.AdminFSAs.DeviceOnlyFSA(deviceID); !hasFSA {
+		return "", false, "", nil
+	}
+	held, err := h.Copies.DevicePrograms(ctx, deviceID, fsaID)
+	if err != nil || len(held) == 0 {
+		return fsaID, true, "", err
+	}
+	return fsaID, true, held[0], nil
+}
+
+// HandleGetDefault returns the handler for GET /api/devices/{id}/default-control:
+// the default control a kind default send set, as the view that send's reply
+// carries. A device with no default, or only the empty one a scheduled send
+// leaves, answers 404.
+func (h *AdminDeviceControlHandler) HandleGetDefault() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		deviceID := r.PathValue("id")
+		if _, ok := h.Controls.loadDevice(w, r, deviceID); !ok {
+			return
+		}
+		fh := h.FSAs
+		if !fh.storesWired(w, r, fh.AdminFSAs != nil && fh.Copies != nil) {
+			return
+		}
+		ctx := r.Context()
+		fsaID, _, progID, err := fh.deviceOwnProgram(ctx, deviceID)
+		if err != nil {
+			fh.templateFailed(w, r, "device_programs", err)
+			return
+		}
+		if progID == "" {
+			writeError(w, http.StatusNotFound, noDeviceDefault)
+			return
+		}
+		d, err := fh.Copies.Defaults.Get(ctx, derhref.ScopeKey(deviceID, fsaID, progID), coresingleton.SingletonKey)
+		if errors.Is(err, store.ErrNotFound) || (err == nil && (d.DERControlBase == nil || len(dercontrol.FunctionNames(d.DERControlBase)) == 0)) {
+			writeError(w, http.StatusNotFound, noDeviceDefault)
+			return
+		}
+		if err != nil {
+			fh.templateFailed(w, r, "default_lookup", err)
+			return
+		}
+		view, err := fh.deviceProgramView(ctx, deviceID, fsaID, progID)
+		if err != nil || view.DefaultControl == nil {
+			if err == nil {
+				err = errors.New("default control missing")
+			}
+			fh.templateFailed(w, r, "program_read", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, view.DefaultControl)
+	}
+}
+
+const noDeviceDefault = "device has no default control"
 
 // deviceTxn collects what one device-control request wrote, so a request
 // that fails after its first write can undo all of it, and what it should

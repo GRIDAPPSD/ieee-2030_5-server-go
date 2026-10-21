@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
@@ -38,6 +39,7 @@ func newDeviceControlFixture(t *testing.T) *deviceControlFixture {
 func wireDeviceControl(d *dcHarness, f *templateFixture) *deviceControlFixture {
 	dh := &handler.AdminDeviceControlHandler{FSAs: f.h, Controls: d.h}
 	f.mux.HandleFunc("POST /api/devices/{id}/controls", dh.HandleCreate())
+	f.mux.HandleFunc("GET /api/devices/{id}/default-control", dh.HandleGetDefault())
 	return &deviceControlFixture{dc: d, f: f, mux: f.mux}
 }
 
@@ -449,5 +451,103 @@ func TestDeviceControl_SurvivesARestartWithADataDir(t *testing.T) {
 	w := y.f.do(http.MethodPost, "/api/devices/0/fsa-assignment", `{"fsaHref":"/api/fsas/`+first.FSA+`"}`)
 	if code := decodeCode(t, w, http.StatusConflict); code != "fsa_device_only" {
 		t.Errorf("assigning another device after restart: code %q, want fsa_device_only", code)
+	}
+}
+
+// #1026: GET /api/devices/{id}/default-control returns the default the send
+// reply returned.
+
+func (x *deviceControlFixture) getDefault(dev string) *httptest.ResponseRecorder {
+	return x.f.do(http.MethodGet, "/api/devices/"+dev+"/default-control", "")
+}
+
+func TestDeviceControl_GetDefault_ReturnsTheViewTheSendReplyUses(t *testing.T) {
+	x := newDeviceControlFixture(t)
+	sent := decodeDeviceControl(t, x.post("1", defaultBody(4000)))
+
+	w := x.getDefault("1")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s, want 200", w.Code, w.Body.String())
+	}
+	var got handler.ProgramDefaultControlView
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v (%s)", err, w.Body.String())
+	}
+	if got.Type != "maxLimW" || got.DERControlBase.OpModMaxLimW == nil || *got.DERControlBase.OpModMaxLimW != 4000 {
+		t.Errorf("default = %+v, want a maxLimW 4000 default control", got)
+	}
+	if sent.DefaultControl == nil || got.Type != sent.DefaultControl.Type {
+		t.Errorf("get type %q, send reply %+v, want the same view", got.Type, sent.DefaultControl)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"mRID", "type", "derControlBase"} {
+		if _, ok := raw[k]; !ok {
+			t.Errorf("body lacks %q: %s", k, w.Body.String())
+		}
+	}
+
+	x.post("1", defaultBody(2500))
+	var after handler.ProgramDefaultControlView
+	if err := json.Unmarshal(x.getDefault("1").Body.Bytes(), &after); err != nil || *after.DERControlBase.OpModMaxLimW != 2500 {
+		t.Errorf("default after a second send = %+v, %v, want 2500", after, err)
+	}
+}
+
+func TestDeviceControl_GetDefault_NotFound(t *testing.T) {
+	x := newDeviceControlFixture(t)
+	if w := x.getDefault("nope"); w.Code != http.StatusNotFound {
+		t.Errorf("unknown device = %d %s, want 404", w.Code, w.Body.String())
+	}
+	if w := x.getDefault("1"); w.Code != http.StatusNotFound {
+		t.Errorf("device with no program = %d %s, want 404", w.Code, w.Body.String())
+	}
+	// A scheduled send leaves the program's default empty, which is no default.
+	decodeDeviceControl(t, x.post("1", scheduledBody(t, 5000)))
+	if w := x.getDefault("1"); w.Code != http.StatusNotFound {
+		t.Errorf("device with only an empty default = %d %s, want 404", w.Code, w.Body.String())
+	}
+	x.nothingWrittenByGet(t)
+}
+
+// nothingWrittenByGet fails when a read changed the stored control count.
+func (x *deviceControlFixture) nothingWrittenByGet(t *testing.T) {
+	t.Helper()
+	if c, _ := x.dc.storedCounts(t); c != 1 {
+		t.Errorf("stored controls = %d after reads, want the 1 the scheduled send wrote", c)
+	}
+}
+
+// The 404 for an empty default follows the base's own function set, so a
+// default with any function is served and one with none is not, whatever
+// type name the view gives them.
+func TestDeviceControl_GetDefault_EmptinessFollowsTheBaseFunctions(t *testing.T) {
+	x := newDeviceControlFixture(t)
+	ctx := context.Background()
+	sent := decodeDeviceControl(t, x.post("1", scheduledBody(t, 5000)))
+	scope := derhref.ScopeKey("1", sent.FSA, sent.Program)
+	d, err := x.f.copies.Defaults.Get(ctx, scope, coresingleton.SingletonKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(dercontrol.FunctionNames(d.DERControlBase)); n != 0 {
+		t.Fatalf("scheduled send left a default with %d functions, want 0", n)
+	}
+	if w := x.getDefault("1"); w.Code != http.StatusNotFound {
+		t.Fatalf("empty default = %d, want 404", w.Code)
+	}
+
+	on := true
+	d.DERControlBase = &sep2.DERControlBase{OpModConnect: &on}
+	if err := x.f.copies.Defaults.Update(ctx, scope, coresingleton.SingletonKey, d); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(dercontrol.FunctionNames(d.DERControlBase)); n != 1 {
+		t.Fatalf("seeded default has %d functions, want 1", n)
+	}
+	if w := x.getDefault("1"); w.Code != http.StatusOK {
+		t.Errorf("default with opModConnect = %d %s, want 200", w.Code, w.Body.String())
 	}
 }

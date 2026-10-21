@@ -299,9 +299,15 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		// "GET /api/devices/{id}/der-programs" would conflict with "GET
 		// /api/devices/by-lfdi/{lfdi}" (neither is more specific), so the
 		// device sub-collection is matched by a wildcard and dispatched here.
-		authed.HandleFunc("GET /api/devices/{id}/{collection}", deviceCollections(map[string]http.Handler{
+		collections := map[string]http.Handler{
 			"der-programs": derH.HandleListPrograms(),
-		}))
+		}
+		// #1026: a literal "GET /api/devices/{id}/default-control" would
+		// conflict with by-lfdi the same way, so it is a collection too.
+		if fsaH != nil && fsaH.Copies != nil {
+			collections["default-control"] = (&handler.AdminDeviceControlHandler{FSAs: fsaH, Controls: derH}).HandleGetDefault()
+		}
+		authed.HandleFunc("GET /api/devices/{id}/{collection}", deviceCollections(collections))
 	}
 
 	// Admin dashboard: GET / serves the embedded admin UI, and the SSE and JSON

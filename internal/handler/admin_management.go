@@ -38,7 +38,8 @@ type AdminManagementHandler struct {
 	Managers *memory.EndDeviceManagementStore
 
 	// Profiles supplies each LFDI's stored kind for the create and rekey
-	// kind gate. Nil leaves the gate off.
+	// kind gate. Nil leaves only the stored-kind rules off; the rules that
+	// read pairs alone still run.
 	Profiles store.DeviceProfileReader
 }
 
@@ -85,8 +86,8 @@ func (h *AdminManagementHandler) HandleCreateManagementPair() http.HandlerFunc {
 			return
 		}
 
-		if !h.kindAllowedManager(w, r.Context(), "create", managerLFDI) ||
-			!h.kindAllowedManaged(w, r.Context(), "create", managedLFDI) {
+		if !h.kindAllowedManager(r.Context(), w, "create", managerLFDI) ||
+			!h.kindAllowedManaged(r.Context(), w, "create", managedLFDI) {
 			return
 		}
 		if err := h.Managers.Assign(r.Context(), managerLFDI, managedLFDI); err != nil {
@@ -210,10 +211,10 @@ func (h *AdminManagementHandler) HandleRekeyManagementPair() http.HandlerFunc {
 		// managed; rekeying a managed device makes "to" the managed side
 		// of its existing manager.
 		if req.Role == "manager" {
-			if !h.kindAllowedManager(w, r.Context(), "rekey", to) {
+			if !h.kindAllowedManager(r.Context(), w, "rekey", to) {
 				return
 			}
-		} else if !h.kindAllowedManaged(w, r.Context(), "rekey", to) {
+		} else if !h.kindAllowedManaged(r.Context(), w, "rekey", to) {
 			return
 		}
 
@@ -232,16 +233,20 @@ func (h *AdminManagementHandler) HandleRekeyManagementPair() http.HandlerFunc {
 }
 
 // kindAllowedManager and kindAllowedManaged write a 409 and return false when
-// the LFDI's effective kind contradicts its role in a pair, or a 500 when a
-// lookup fails. Create checks both sides, rekey the side that changes.
-func (h *AdminManagementHandler) kindAllowedManager(w http.ResponseWriter, ctx context.Context, op, manager string) bool {
-	msg, err := managerKindRefusal(ctx, h.Profiles, h.Managers, manager)
+// a pair would break a kind rule, or a 500 when a lookup fails. Create checks
+// both sides, rekey the side that changes.
+func (h *AdminManagementHandler) kindAllowedManager(ctx context.Context, w http.ResponseWriter, op, manager string) bool {
+	msg, err := h.kindGate().managerRefusal(ctx, manager)
 	return h.writeKindRefusal(w, op, msg, err)
 }
 
-func (h *AdminManagementHandler) kindAllowedManaged(w http.ResponseWriter, ctx context.Context, op, managed string) bool {
-	msg, err := managedKindRefusal(ctx, h.Profiles, h.Managers, managed)
+func (h *AdminManagementHandler) kindAllowedManaged(ctx context.Context, w http.ResponseWriter, op, managed string) bool {
+	msg, err := h.kindGate().managedRefusal(ctx, managed)
 	return h.writeKindRefusal(w, op, msg, err)
+}
+
+func (h *AdminManagementHandler) kindGate() kindGate {
+	return kindGate{profiles: h.Profiles, managers: h.Managers}
 }
 
 func (h *AdminManagementHandler) writeKindRefusal(w http.ResponseWriter, op, msg string, err error) bool {

@@ -1,7 +1,11 @@
 package handler_test
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -17,6 +21,7 @@ const (
 	kgDevB = "D200000000000000000000000000000000000002"
 	kgNew  = "E100000000000000000000000000000000000001"
 	kgDevC = "D300000000000000000000000000000000000003"
+	kgDevD = "D400000000000000000000000000000000000004"
 )
 
 type kindFixture struct {
@@ -122,8 +127,8 @@ func TestCreatePairKeepsLegacyAndUnclassifiedWorking(t *testing.T) {
 		t.Fatalf("pair for unclassified manager = %d %s, want 201", code, body)
 	}
 	// A profile with no kind set is not a device.
-	f.setKind(t, kgDevB, "")
-	if code, body := f.create(t, kgDevB, kgDevC); code != http.StatusCreated {
+	f.setKind(t, kgDevC, "")
+	if code, body := f.create(t, kgDevC, kgDevD); code != http.StatusCreated {
 		t.Fatalf("pair for manager with empty kind = %d %s, want 201", code, body)
 	}
 }
@@ -226,5 +231,165 @@ func TestKindGateOffWithoutItsStore(t *testing.T) {
 	ph := &handler.AdminDeviceProfileHandler{Profiles: ps}
 	if w := putProfile(ph.HandlePutDeviceProfile(), kgDevA, `{"kind":"aggregator"}`); w.Code != http.StatusOK {
 		t.Errorf("PUT with no pair store = %d %s, want 200", w.Code, w.Body.String())
+	}
+}
+
+func TestCreatePairRefusesManagerThatIsManaged(t *testing.T) {
+	for _, order := range []string{"parent first", "child first"} {
+		f := newKindFixture(t)
+		var code int
+		var body string
+		if order == "parent first" {
+			if code, body = f.create(t, kgAggA, kgDevA); code != http.StatusCreated {
+				t.Fatalf("seed = %d %s", code, body)
+			}
+			code, body = f.create(t, kgDevA, kgDevB)
+		} else {
+			if code, body = f.create(t, kgDevA, kgDevB); code != http.StatusCreated {
+				t.Fatalf("seed = %d %s", code, body)
+			}
+			code, body = f.create(t, kgAggA, kgDevA)
+		}
+		if code != http.StatusConflict || !strings.Contains(body, kgDevA) {
+			t.Errorf("%s: second pair = %d %s, want 409 naming %s", order, code, body, kgDevA)
+		}
+	}
+}
+
+func TestRekeyManagerRefusesManagedTarget(t *testing.T) {
+	f := newKindFixture(t)
+	if err := f.pairs.Assign(t.Context(), kgAggA, kgDevA); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pairs.Assign(t.Context(), kgAggB, kgDevB); err != nil {
+		t.Fatal(err)
+	}
+	code, body := f.rekey(t, "manager", kgAggA, kgDevB)
+	if code != http.StatusConflict || !strings.Contains(body, kgDevB) {
+		t.Errorf("rekey manager onto a managed LFDI = %d %s, want 409 naming %s", code, body, kgDevB)
+	}
+	f.assertManagerOf(t, kgDevA, kgAggA)
+}
+
+func TestTwoLevelRuleRunsWithoutProfileStore(t *testing.T) {
+	pairs := memory.NewEndDeviceManagementStore()
+	h := &handler.AdminManagementHandler{Managers: pairs}
+	if err := pairs.Assign(t.Context(), kgAggB, kgDevB); err != nil {
+		t.Fatal(err)
+	}
+	if err := pairs.Assign(t.Context(), kgAggA, kgDevA); err != nil {
+		t.Fatal(err)
+	}
+	create := func(manager, managed string) *httptestResult {
+		w := doJSON(t, h.HandleCreateManagementPair(), http.MethodPost, "/api/management-pairs",
+			`{"managerLFDI":"`+manager+`","managedLFDI":"`+managed+`"}`)
+		return &httptestResult{w.Code, w.Body.String()}
+	}
+	if r := create(kgDevA, kgDevC); r.code != http.StatusConflict {
+		t.Errorf("managed manager = %d %s, want 409", r.code, r.body)
+	}
+	if r := create(kgAggA, kgAggB); r.code != http.StatusConflict {
+		t.Errorf("managed aggregator = %d %s, want 409", r.code, r.body)
+	}
+}
+
+type httptestResult struct {
+	code int
+	body string
+}
+
+// errProfiles fails every profile read.
+type errProfiles struct{ store.DeviceProfileStore }
+
+func (errProfiles) Get(context.Context, string) (store.DeviceProfile, error) {
+	return store.DeviceProfile{}, errors.New("profile backend down")
+}
+
+// errPairs fails every pair read.
+type errPairs struct {
+	store.EndDeviceManagementReader
+}
+
+func (errPairs) ManagerOf(context.Context, string) (string, error) {
+	return "", errors.New("pair backend down")
+}
+
+func (errPairs) ManagedBy(context.Context, string) ([]string, error) {
+	return nil, errors.New("pair backend down")
+}
+
+func TestKindLookupFailureOnCreateAnswers500AndWritesNothing(t *testing.T) {
+	f := newKindFixture(t)
+	f.mgmt.Profiles = errProfiles{f.store}
+	code, body := f.create(t, kgAggA, kgDevA)
+	if code != http.StatusInternalServerError || strings.Contains(body, "backend down") {
+		t.Fatalf("create = %d %s, want 500 without the error text", code, body)
+	}
+	f.assertManagerOf(t, kgDevA, "")
+	code, body = f.rekey(t, "manager", kgAggA, kgAggB)
+	if code != http.StatusInternalServerError {
+		t.Errorf("rekey = %d %s, want 500", code, body)
+	}
+}
+
+func TestPairLookupFailureOnKindChangeAnswers500AndStoresNothing(t *testing.T) {
+	f := newKindFixture(t)
+	f.profiles.Managers = errPairs{}
+	for _, kind := range []string{"aggregator", "device"} {
+		w := putProfile(f.profiles.HandlePutDeviceProfile(), kgDevA, `{"kind":"`+kind+`"}`)
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("PUT kind=%s = %d %s, want 500", kind, w.Code, w.Body.String())
+		}
+	}
+	if _, err := f.store.Get(t.Context(), kgDevA); err == nil {
+		t.Error("a failed pair lookup let the profile be stored")
+	}
+}
+
+func addDeviceBody(t *testing.T, lfdi, kind string) string {
+	t.Helper()
+	sfdi, _ := freshAddDeviceCert(t)
+	return fmt.Sprintf(`{"sfdi":%q,"lfdi":%q,"name":"Roof","kind":%q,"pin":1,"enabled":true}`, sfdi, lfdi, kind)
+}
+
+func postAddDeviceKind(t *testing.T, devs store.EndDeviceStore, regs *stubRegs, profiles store.DeviceProfileStore, pairs store.EndDeviceManagementReader, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/devices", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.HandleAddEndDevice(devs, regs, profiles, pairs)(w, req)
+	return w
+}
+
+func TestAddEndDeviceKindChecksPairs(t *testing.T) {
+	_, lfdi := freshAddDeviceCert(t)
+	cases := []struct {
+		name, kind string
+		manager    bool // lfdi manages kgDevA, else it is managed by kgAggA
+		pairs      func(*memory.EndDeviceManagementStore)
+		code       int
+		wantInBody string
+	}{
+		{"pre-managed registered as aggregator", "aggregator", false, func(p *memory.EndDeviceManagementStore) { _ = p.Assign(context.Background(), kgAggA, lfdi) }, http.StatusConflict, kgAggA},
+		{"pre-managing registered as device", "device", true, func(p *memory.EndDeviceManagementStore) { _ = p.Assign(context.Background(), lfdi, kgDevA) }, http.StatusConflict, kgDevA},
+		{"pre-managed registered as device", "device", false, func(p *memory.EndDeviceManagementStore) { _ = p.Assign(context.Background(), kgAggA, lfdi) }, http.StatusCreated, ""},
+		{"pre-managing registered as aggregator", "aggregator", true, func(p *memory.EndDeviceManagementStore) { _ = p.Assign(context.Background(), lfdi, kgDevA) }, http.StatusCreated, ""},
+	}
+	for _, c := range cases {
+		devs, regs, profiles, pairs := memory.NewEndDeviceStore(), &stubRegs{}, memory.NewDeviceProfileStore(), memory.NewEndDeviceManagementStore()
+		c.pairs(pairs)
+		w := postAddDeviceKind(t, devs, regs, profiles, pairs, addDeviceBody(t, lfdi, c.kind))
+		if w.Code != c.code || !strings.Contains(w.Body.String(), c.wantInBody) {
+			t.Errorf("%s = %d %s, want %d containing %q", c.name, w.Code, w.Body.String(), c.code, c.wantInBody)
+		}
+		_, gerr := profiles.Get(t.Context(), lfdi)
+		if (c.code == http.StatusConflict) != (gerr != nil) || (c.code == http.StatusConflict && regs.created) {
+			t.Errorf("%s: profile err = %v, registration created = %v", c.name, gerr, regs.created)
+		}
+	}
+	// A failed pair read refuses the registration.
+	devs, regs, profiles := memory.NewEndDeviceStore(), &stubRegs{}, memory.NewDeviceProfileStore()
+	if w := postAddDeviceKind(t, devs, regs, profiles, errPairs{}, addDeviceBody(t, lfdi, "device")); w.Code != http.StatusInternalServerError || regs.created {
+		t.Errorf("failed pair read = %d, registration created = %v; want 500 and none", w.Code, regs.created)
 	}
 }

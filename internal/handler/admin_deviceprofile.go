@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,7 +18,8 @@ import (
 //	PUT /api/device-profiles/{lfdi}   set the name and kind of one device
 //
 // POST /api/devices writes the same record through deviceProfileInputRefusal
-// and DeviceProfileStore.Put, so the rules live in one place.
+// and DeviceProfileStore.Put, and both routes check a kind against the pairs
+// with kindGate.profileKindRefusal, so the rules live in one place.
 
 // AdminDeviceProfileHandler is the dependency surface of the profile routes.
 type AdminDeviceProfileHandler struct {
@@ -89,7 +89,7 @@ func (h *AdminDeviceProfileHandler) HandlePutDeviceProfile() http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, msg)
 			return
 		}
-		if msg, err := h.kindChangeRefusal(r.Context(), lfdi, body.Kind); err != nil {
+		if msg, err := (kindGate{managers: h.Managers}).profileKindRefusal(r.Context(), lfdi, body.Kind); err != nil {
 			writeDeviceProfileError(w, "put", err)
 			return
 		} else if msg != "" {
@@ -104,36 +104,6 @@ func (h *AdminDeviceProfileHandler) HandlePutDeviceProfile() http.HandlerFunc {
 		logDeviceProfileSet(profile)
 		writeJSON(w, http.StatusOK, profile)
 	}
-}
-
-// kindChangeRefusal returns the 409 message when setting kind on lfdi
-// contradicts its pairs, or "". A managed device cannot become an aggregator
-// and an aggregator that manages devices cannot become a device. Clearing the
-// kind is always allowed: the derived kind then follows the pairs.
-func (h *AdminDeviceProfileHandler) kindChangeRefusal(ctx context.Context, lfdi, kind string) (string, error) {
-	if store.IsAbsent(h.Managers) {
-		return "", nil
-	}
-	switch kind {
-	case store.DeviceKindAggregator:
-		manager, err := h.Managers.ManagerOf(ctx, lfdi)
-		if errors.Is(err, store.ErrNotFound) {
-			return "", nil
-		}
-		if err != nil {
-			return "", err
-		}
-		return "device is managed by " + manager, nil
-	case store.DeviceKindDevice:
-		managed, err := h.Managers.ManagedBy(ctx, lfdi)
-		if err != nil {
-			return "", err
-		}
-		if len(managed) > 0 {
-			return "device manages " + managed[0], nil
-		}
-	}
-	return "", nil
 }
 
 // logDeviceProfileSet records a profile write by LFDI and escaped name.

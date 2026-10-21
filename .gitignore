@@ -22,6 +22,8 @@ admin.secret
 # unanchored `certs/` would also hide internal/certs/ and any nested certs
 # folder.
 /certs/
+# The binary e2e/global-setup.ts builds at the repo root for the Playwright run.
+/sep2server
 # The CSIP conformance test PKI is deliberately tracked (see
 # test/csip/README.md and the fixtures entry below): device_chain.pem,
 # device_key.pem and root_ca.pem under testdata/csip-pki/. Directory-scoped

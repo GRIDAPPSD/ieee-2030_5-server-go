@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
 import { join } from 'path';
-import { startServer, stopServer, getCertDir } from './setup';
+import { startServer, stopServer, getCertDir, getProtocolPort } from './setup';
 import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert, type DeviceCert } from './fixtures/device_cert';
 import { readWire } from './fixtures/fsa_wire';
+import { localInput } from './fixtures/local_input';
 
 // #973: a control sent to an FSA's program from the Control tab reaches every
 // device assigned to the FSA. The devices need certificates the server's CA
@@ -17,13 +18,11 @@ const FSA_MRID = 'e2e-fsa-control';
 const FSA_LABEL = 'fsa control FSA';
 const TEMPLATE = 'fsa control program';
 const SERVER = join(__dirname, '..', 'sep2server');
-// Outside the 18443-20442 range setup.ts picks its own ports from.
-const PROTOCOL_PORT = 21000 + Math.floor(Math.random() * 1000);
 
 let baseUrl: string;
 
 test.beforeAll(async () => {
-  baseUrl = await startServer({ SEP2_ADDR: `:${PROTOCOL_PORT}`, SEP2_PEN: '12345' });
+  baseUrl = await startServer({ SEP2_PEN: '12345' });
 });
 
 test.afterAll(() => {
@@ -33,11 +32,6 @@ test.afterAll(() => {
 test.beforeEach(async ({ page }) => {
   await page.setExtraHTTPHeaders(AUTH);
 });
-
-function localInput(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
 
 test('an FSA control from the Control tab is on both devices\' wire lists, and cancel reaches both', async ({ page, request }) => {
   await expect
@@ -84,7 +78,7 @@ test('an FSA control from the Control tab is on both devices\' wire lists, and c
   // Control: before the send, neither device's program list holds a control.
   const listHref = (id: string) => `/edev/${id}/fsa/${FSA_MRID}/derp/${templateId}/derc`;
   for (const d of devices) {
-    const before = await readWire(PROTOCOL_PORT, getCertDir(), d.cert, listHref(d.id));
+    const before = await readWire(getProtocolPort(), getCertDir(), d.cert, listHref(d.id));
     expect(before.status).toBe(200);
     expect(before.body).toMatch(/<DERControlList [^>]*results="0"/);
     expect(before.body).not.toMatch(/<DERControl[\s>]/);
@@ -114,7 +108,7 @@ test('an FSA control from the Control tab is on both devices\' wire lists, and c
 
   // Each device reads the same control on its own wire list.
   for (const d of devices) {
-    const wire = await readWire(PROTOCOL_PORT, getCertDir(), d.cert, listHref(d.id));
+    const wire = await readWire(getProtocolPort(), getCertDir(), d.cert, listHref(d.id));
     expect(wire.status).toBe(200);
     expect(wire.body).toContain(`<mRID>${mrid}</mRID>`);
     expect(wire.body).toContain('<currentStatus>0</currentStatus>');
@@ -128,7 +122,7 @@ test('an FSA control from the Control tab is on both devices\' wire lists, and c
   await expect(page.getByTestId(`der-control-cancel-${mrid}`)).toHaveCount(0);
 
   for (const d of devices) {
-    const wire = await readWire(PROTOCOL_PORT, getCertDir(), d.cert, listHref(d.id));
+    const wire = await readWire(getProtocolPort(), getCertDir(), d.cert, listHref(d.id));
     expect(wire.body).toContain(`<mRID>${mrid}</mRID>`);
     expect(wire.body).toContain('<currentStatus>2</currentStatus>');
   }

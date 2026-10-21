@@ -3,6 +3,7 @@ import { join } from 'path';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert } from './fixtures/device_cert';
+import { localInput } from './fixtures/local_input';
 
 // #929: the operator's whole flow from an empty server, UI only. Every write
 // below is a click or a keystroke in the admin UI; the API is read for
@@ -61,12 +62,6 @@ async function addDeviceInUI(page: Page, name: string, manages: string[] = []): 
   }
   await expect(page.getByTestId('device-label').filter({ hasText: name })).toHaveCount(1, { timeout: 5000 });
   return { sfdi, lfdi };
-}
-
-// localInput formats a Date the way a datetime-local input takes it.
-function localInput(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 test('an empty server becomes controllable from the UI alone', async ({ page, request }) => {
@@ -136,6 +131,15 @@ test('an empty server becomes controllable from the UI alone', async ({ page, re
   await page.getByTestId('control-fn-opModConnect').check();
   await page.getByTestId('control-fv-opModConnect').check();
   await page.locator('#controlStartNow').uncheck();
+  // A :00 value is the one Chromium rewrites; the app's own field must keep it.
+  const zeroSeconds = localInput(new Date(2026, 9, 21, 19, 14, 0));
+  await page.locator('#controlStartAt').fill(zeroSeconds);
+  await expect(page.locator('#controlStartAt')).toHaveValue(zeroSeconds);
+  // step="1" is what makes a non-zero seconds value valid; the default step rejects it.
+  const withSeconds = localInput(new Date(2026, 9, 21, 19, 14, 7));
+  await page.locator('#controlStartAt').fill(withSeconds);
+  await expect(page.locator('#controlStartAt')).toHaveValue(withSeconds);
+  expect(await page.locator('#controlStartAt').evaluate((el: HTMLInputElement) => el.validity.stepMismatch)).toBe(false);
   await page.locator('#controlStartAt').fill(localInput(new Date(Date.now() + 3600 * 1000)));
   await page.locator('#controlDuration').fill('30');
   await page.getByRole('button', { name: 'Send' }).click();

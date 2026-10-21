@@ -158,8 +158,9 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 			return
 		}
 		if !validHrefSegment(deviceID) {
-			logRefusal(fh.logged(r), r, deviceControlRefusedEvent, derControlRefusal{http.StatusConflict, "device_href_invalid", "device id cannot form a program href"}, &logged)
-			writeError(w, http.StatusConflict, "device id cannot form a program href")
+			ref := derControlRefusal{http.StatusConflict, "device_href_invalid", "device id cannot form a program href"}
+			logRefusal(fh.logged(r), r, deviceControlRefusedEvent, ref, &logged)
+			writeError(w, ref.status, ref.message)
 			return
 		}
 
@@ -190,7 +191,7 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 			if errors.As(err, &none) {
 				logged.add("device", deviceID)
 				logged.add("program_href", none.href)
-				logRefusal(fh.logged(r), r, deviceControlRefusedEvent, derControlRefusal{http.StatusConflict, "primacy_cannot_outrank", none.Error()}, &logged)
+				logRefusal(fh.logged(r), r, deviceControlRefusedEvent, derControlRefusal{status: http.StatusConflict, code: "primacy_cannot_outrank"}, &logged)
 				writeJSON(w, http.StatusConflict, programRefusal{Error: none.Error(), Code: "primacy_cannot_outrank"})
 				return
 			}
@@ -286,7 +287,7 @@ func (t *deviceTxn) finish(h *AdminFSAHandler, r *http.Request) {
 	if len(t.steps) == 0 {
 		return
 	}
-	h.partial(r, errors.New("device control request failed"), t.steps,
+	h.rolledBack(r, errors.New("device control request failed"), t.steps,
 		&incompleteLog{"admin: device control left partly applied", "device_control_incomplete", []any{"path", r.URL.Path}})
 }
 
@@ -315,7 +316,8 @@ func allowedPrimacy(p uint8) bool { return validPrimacy(int64(p)) }
 // outrankPrimacy picks the primacy of a program that must beat every other
 // program of its device when the lowest of theirs is lowest (noOtherProgram
 // when there are none): the largest allowed value below lowest, preferring
-// the user-defined range 65 to 191 and then 2, 1, 0. Lower numbers win in
+// the user-defined range (userPrimacyLow to userPrimacyHigh) and then
+// definedPrimacyHigh down to 0. Lower numbers win in
 // 2030.5, and a value below every other program's cannot tie with one. ok is
 // false when lowest is 0.
 func outrankPrimacy(lowest int) (value uint8, userRange, ok bool) {
@@ -400,7 +402,7 @@ func (h *AdminFSAHandler) ensureDeviceOnlyFSA(w http.ResponseWriter, r *http.Req
 	ctx := r.Context()
 	var steps []rollbackStep
 	fail := func(cause string, err error) (string, bool) {
-		h.partial(r, err, steps, &incompleteLog{"admin: device-only FSA left partly applied", "device_only_fsa_incomplete",
+		h.rolledBack(r, err, steps, &incompleteLog{"admin: device-only FSA left partly applied", "device_only_fsa_incomplete",
 			[]any{"device", deviceID, "fsa", fsaID, "cause", cause, "error", err}})
 		h.templateFailed(w, r, cause, err)
 		return "", false

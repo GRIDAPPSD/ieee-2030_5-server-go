@@ -470,8 +470,10 @@ func (h *AdminDERControlHandler) log(r *http.Request, level slog.Level, msg, eve
 	auditLog(h.logger(), r, level, msg, event, attrs)
 }
 
+// auditLog is the one builder of an audit line's base fields. The address is
+// passed through logSafe, since a client can shape it on some transports.
 func auditLog(lg *slog.Logger, r *http.Request, level slog.Level, msg, event string, attrs []any) {
-	base := []any{"event", event, "remote_addr", r.RemoteAddr, "admission", auth.AdmissionPath(r)}
+	base := []any{"event", event, "remote_addr", logSafe(r.RemoteAddr), "admission", auth.AdmissionPath(r)}
 	lg.Log(r.Context(), level, msg, append(base, attrs...)...)
 }
 
@@ -1034,12 +1036,7 @@ func (h *AdminDERControlHandler) loadDevice(w http.ResponseWriter, r *http.Reque
 // failed operation and route the mux pattern; the store's error text is not
 // logged because it may carry a request-derived id.
 func (h *AdminDERControlHandler) internal(w http.ResponseWriter, r *http.Request, step string) {
-	h.logger().Error("admin: DER control read failed",
-		"event", "der_control_read_failed",
-		"step", step,
-		"route", r.Pattern,
-		"remote_addr", r.RemoteAddr,
-	)
+	h.log(r, slog.LevelError, "admin: DER control read failed", "der_control_read_failed", []any{"step", step, "route", r.Pattern})
 	writeError(w, refuseInternal.status, refuseInternal.message)
 }
 

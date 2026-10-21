@@ -405,7 +405,7 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 				}
 				return
 			}
-			if !h.partial(r, err, steps, nil) {
+			if !h.rolledBack(r, err, steps, nil) {
 				h.assignIncomplete(w, deviceID, fsaID)
 				return
 			}
@@ -418,7 +418,7 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 				steps = append(steps, rollbackStep{device: deviceID, template: t.ID, part: "copy", undo: undo})
 				continue
 			}
-			if !h.partial(r, err, steps, nil) {
+			if !h.rolledBack(r, err, steps, nil) {
 				h.assignIncomplete(w, deviceID, fsaID)
 				return
 			}
@@ -532,7 +532,7 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 		notifyRemoved()
 		var live *dercontrol.LiveControlsError
 		if errors.As(err, &live) {
-			h.logged(r).WarnContext(r.Context(), "admin: device unassign refused", "event", "der_fsa_unassign_refused",
+			h.audit(r, slog.LevelWarn, "admin: device unassign refused", "der_fsa_unassign_refused",
 				"code", "live_controls", "device", deviceID, "fsa", fsaID, "controls", live.Controls)
 			writeJSON(w, http.StatusConflict, programRefusal{
 				Error:    "cancel these controls, or wait for them to end, before unassigning the device",
@@ -589,7 +589,7 @@ func (h *AdminFSAHandler) replicateControls(w http.ResponseWriter, r *http.Reque
 		h.assignIncomplete(w, deviceID, fsaID)
 		return false
 	}
-	if !h.partial(r, err, steps, nil) {
+	if !h.rolledBack(r, err, steps, nil) {
 		h.assignIncomplete(w, deviceID, fsaID)
 		return false
 	}
@@ -599,7 +599,7 @@ func (h *AdminFSAHandler) replicateControls(w http.ResponseWriter, r *http.Reque
 		if !ok {
 			message = "a control of this fsa conflicts with a commitment of the device's fleet"
 		}
-		h.logged(r).WarnContext(r.Context(), "admin: device assignment refused", "event", "der_fsa_assign_refused",
+		h.audit(r, slog.LevelWarn, "admin: device assignment refused", "der_fsa_assign_refused",
 			"code", string(conflict.Code), "conflict_mrid", conflict.MRID, "device", deviceID, "fsa", fsaID)
 		writeJSON(w, http.StatusConflict, DERControlConflict{Error: message, Code: string(conflict.Code), MRID: conflict.MRID})
 		return false

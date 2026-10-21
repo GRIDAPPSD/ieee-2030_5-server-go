@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,4 +213,67 @@ func TestAuditEvents_DeviceOnlyFSA_IncompleteKeepsItsEventName(t *testing.T) {
 	}
 	rec := oneAudit(t, &fsa, "device_only_fsa_incomplete")
 	wantFields(t, rec, map[string]any{"level": "ERROR", "msg": "admin: device-only FSA left partly applied", "device": "1"})
+}
+
+// The audit base line carries the client's address, which a client chooses on
+// some transports; a control character in it must not reach the log.
+func TestAuditEvents_RemoteAddrIsLoggedSafely(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	var ctl bytes.Buffer
+	d.h.Logger = jsonLogger(&ctl)
+	req := httptest.NewRequest(http.MethodPost, "/api/der/controls", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "192.0.2.7:4000\nevent=forged"
+	d.mux.ServeHTTP(httptest.NewRecorder(), req)
+	rec := oneAudit(t, &ctl, "der_control_create_refused")
+	got, _ := rec["remote_addr"].(string)
+	if got == "" || strings.ContainsAny(got, "\r\n") || strings.Contains(got, "event=") {
+		t.Errorf("remote_addr = %q, want the address with its newline and event= removed", got)
+	}
+}
+
+// auditBase checks the fields every audit line shares.
+func auditBase(t *testing.T, rec map[string]any) {
+	t.Helper()
+	for _, k := range []string{"remote_addr", "admission"} {
+		if s, _ := rec[k].(string); s == "" {
+			t.Errorf("audit line lacks %q: %v", k, rec)
+		}
+	}
+}
+
+func TestAuditEvents_UnassignRefusedByLiveControls_KeepsItsEventName(t *testing.T) {
+	f, d := liveFixture(t)
+	var fsa bytes.Buffer
+	f.h.Logger = jsonLogger(&fsa)
+	f.assign(t, dcDevice, "fsa-A")
+	tmpl := f.createTemplate(t)
+	issueOn(t, d, "/edev/"+dcDevice+"/fsa/fsa-A/derp/"+tmpl.ID)
+
+	w := f.do(http.MethodDelete, "/api/devices/"+dcDevice+"/fsa-assignment?fsaHref=/api/fsas/fsa-A", "")
+	if w.Code != http.StatusConflict {
+		t.Fatalf("unassign = %d %s, want 409", w.Code, w.Body.String())
+	}
+	rec := oneAudit(t, &fsa, "der_fsa_unassign_refused")
+	wantFields(t, rec, map[string]any{"level": "WARN", "msg": "admin: device unassign refused", "code": "live_controls", "device": dcDevice, "fsa": "fsa-A"})
+	auditBase(t, rec)
+}
+
+func TestAuditEvents_AssignRefusedByFleetCommitment_KeepsItsEventName(t *testing.T) {
+	x := newFSAControlFixture(t)
+	var fsa bytes.Buffer
+	x.f.h.Logger = jsonLogger(&fsa)
+	if w := x.f.do(http.MethodPost, x.path(), fsaControlBody()); w.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", w.Code, w.Body.String())
+	}
+	x.dc.seedFleet(t)
+	x.dc.seedGrant(t, grantSpec{start: futureStart(600), duration: 3600, energyWh: 100, powerW: ptrI16(5000)})
+
+	w := x.f.do(http.MethodPost, "/api/devices/"+dcDevice+"/fsa-assignment", `{"fsaHref":"/api/fsas/fsa-A"}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("assign = %d %s, want 409", w.Code, w.Body.String())
+	}
+	rec := oneAudit(t, &fsa, "der_fsa_assign_refused")
+	wantFields(t, rec, map[string]any{"level": "WARN", "msg": "admin: device assignment refused", "code": "fleet_window_committed", "device": dcDevice, "fsa": "fsa-A"})
+	auditBase(t, rec)
 }

@@ -74,10 +74,10 @@ func TestOneOwner_RefusalEventsAreNotSpelledByHand(t *testing.T) {
 	}
 }
 
-func TestOneOwner_RollbackFailureIsLoggedByPartial(t *testing.T) {
+func TestOneOwner_RollbackFailureIsLoggedByRolledBack(t *testing.T) {
 	_, calls := sourceUses(t, "", "rollbackAfter")
 	if total(calls) != 1 || calls["admin_derprogram.go"] != 1 {
-		t.Errorf("rollbackAfter is called from %v, want once in admin_derprogram.go (partial)", calls)
+		t.Errorf("rollbackAfter is called from %v, want once in admin_derprogram.go (rolledBack)", calls)
 	}
 }
 

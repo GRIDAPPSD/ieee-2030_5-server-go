@@ -154,7 +154,7 @@ func (h *AdminFSAHandler) HandleCreateProgramTemplate() http.HandlerFunc {
 				steps = append(steps, rollbackStep{device: dev, template: tmpl.ID, part: "copy", undo: undo})
 				continue
 			}
-			if !h.partial(r, err, steps, &incompleteLog{"admin: DER program template create left partly applied", "der_program_template_incomplete",
+			if !h.rolledBack(r, err, steps, &incompleteLog{"admin: DER program template create left partly applied", "der_program_template_incomplete",
 				[]any{"fsa", fsaID, "template", tmpl.ID, "error", err}}) {
 				writeError(w, http.StatusInternalServerError, fmt.Sprintf(
 					"program template write failed; template %s was kept on fsa %s and its device copies are completed at the next restart", tmpl.ID, fsaID))
@@ -492,10 +492,10 @@ type incompleteLog struct {
 	attrs      []any
 }
 
-// partial undoes steps after cause and reports whether every write was
+// rolledBack undoes steps after cause and reports whether every write was
 // undone. When one was not, it logs note when there is one, and the caller
 // answers. It is the one place a rollback's failure is turned into a log line.
-func (h *AdminFSAHandler) partial(r *http.Request, cause error, steps []rollbackStep, note *incompleteLog) bool {
+func (h *AdminFSAHandler) rolledBack(r *http.Request, cause error, steps []rollbackStep, note *incompleteLog) bool {
 	if h.rollbackAfter(r, cause, steps) {
 		return true
 	}
@@ -508,6 +508,11 @@ func (h *AdminFSAHandler) partial(r *http.Request, cause error, steps []rollback
 func (h *AdminFSAHandler) logUndoFailed(r *http.Request, device, template, part string, err error) {
 	h.logged(r).ErrorContext(r.Context(), "admin: DER program undo incomplete", "event", "der_program_template_undo_failed",
 		"path", r.URL.Path, "device", device, "template", template, "part", part, "error", err)
+}
+
+// audit writes an audit line with the base fields every audit line shares.
+func (h *AdminFSAHandler) audit(r *http.Request, level slog.Level, msg, event string, attrs ...any) {
+	auditLog(h.logged(r), r, level, msg, event, attrs)
 }
 
 // logged is the handler's logger, or slog's default when none is set.

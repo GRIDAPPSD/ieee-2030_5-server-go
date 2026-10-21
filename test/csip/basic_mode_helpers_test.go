@@ -250,17 +250,16 @@ func formatGap(test, missingField string) string {
 		test, missingField)
 }
 
-// assertCurveRef checks that a *int32 curve-reference field on a
-// DERControlBase survived the wire roundtrip with the expected
-// value. Shared by BASIC-004 (4 refs), BASIC-005 (2 refs), BASIC-011
-// (1 ref), and BASIC-012 (1 ref).
-func assertCurveRef(t *testing.T, cipher, field string, got *int32, want int32) {
+// assertCurveRef checks that a DERCurveLink field on a DERControlBase
+// survived the wire roundtrip with the expected href. Shared by the
+// BASIC-004, 005, 006, 011, 012 and 015 curve-mode tests.
+func assertCurveRef(t *testing.T, cipher, field string, got *sep2.DERCurveLink, wantHref string) {
 	t.Helper()
 	if got == nil {
 		t.Fatalf("[%s] DERControlBase.%s is nil - fixture dropped or wire-decode lost field", cipher, field)
 	}
-	if *got != want {
-		t.Errorf("[%s] DERControlBase.%s = %d, want %d", cipher, field, *got, want)
+	if got.Href != wantHref {
+		t.Errorf("[%s] DERControlBase.%s.Href = %q, want %q", cipher, field, got.Href, wantHref)
 	}
 }
 

@@ -35,6 +35,8 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -252,25 +254,26 @@ type CurveDataSpec struct {
 // curve-reference fields (LVRT/HVRT/LFRT/HFRT, VoltWatt, FreqWatt) and
 // flipped the BASIC-004/005/007/011/012 skips to active assertions.
 // SetGradW/SetSoftGradW live on DefaultDERControlSpec, not here, per
-// IEEE 2030.5 Section 10.11.
+// IEEE 2030.5 Section 10.11. A curve mode names the id of a der_curves
+// entry and is served as a DERCurveLink to that curve.
 type DERControlBaseSpec struct {
-	OpModConnect                *bool                 `yaml:"op_mod_connect,omitempty"`
-	OpModEnergize               *bool                 `yaml:"op_mod_energize,omitempty"`
-	OpModFixedW                 *sep2.SignedPerCent   `yaml:"op_mod_fixed_w,omitempty"`
-	OpModFixedPFInjectW         *FixedPowerFactorSpec `yaml:"op_mod_fixed_pf_inject_w,omitempty"`
-	OpModFreqDroop              *uint16               `yaml:"op_mod_freq_droop,omitempty"`
-	OpModFreqWatt               *int32                `yaml:"op_mod_freq_watt,omitempty"`
-	OpModHFRTMustTrip           *int32                `yaml:"op_mod_hfrt_must_trip,omitempty"`
-	OpModHVRTMomentaryCessation *int32                `yaml:"op_mod_hvrt_momentary_cessation,omitempty"`
-	OpModHVRTMustTrip           *int32                `yaml:"op_mod_hvrt_must_trip,omitempty"`
-	OpModLFRTMustTrip           *int32                `yaml:"op_mod_lfrt_must_trip,omitempty"`
-	OpModLVRTMomentaryCessation *int32                `yaml:"op_mod_lvrt_momentary_cessation,omitempty"`
-	OpModLVRTMustTrip           *int32                `yaml:"op_mod_lvrt_must_trip,omitempty"`
-	OpModMaxLimW                *sep2.PerCent         `yaml:"op_mod_max_lim_w,omitempty"`
-	OpModTargetW                *ActivePowerSpec      `yaml:"op_mod_target_w,omitempty"`
-	OpModVoltVar                *int32                `yaml:"op_mod_volt_var,omitempty"`
-	OpModVoltWatt               *int32                `yaml:"op_mod_volt_watt,omitempty"`
-	RampTms                     *uint16               `yaml:"ramp_tms,omitempty"`
+	OpModConnect                *bool                      `yaml:"op_mod_connect,omitempty"`
+	OpModEnergize               *bool                      `yaml:"op_mod_energize,omitempty"`
+	OpModFixedW                 *sep2.SignedPerCent        `yaml:"op_mod_fixed_w,omitempty"`
+	OpModFixedPFInjectW         *FixedPowerFactorSpec      `yaml:"op_mod_fixed_pf_inject_w,omitempty"`
+	OpModFreqDroop              *bootfixture.FreqDroopSpec `yaml:"op_mod_freq_droop,omitempty"`
+	OpModFreqWatt               *string                    `yaml:"op_mod_freq_watt,omitempty"`
+	OpModHFRTMustTrip           *string                    `yaml:"op_mod_hfrt_must_trip,omitempty"`
+	OpModHVRTMomentaryCessation *string                    `yaml:"op_mod_hvrt_momentary_cessation,omitempty"`
+	OpModHVRTMustTrip           *string                    `yaml:"op_mod_hvrt_must_trip,omitempty"`
+	OpModLFRTMustTrip           *string                    `yaml:"op_mod_lfrt_must_trip,omitempty"`
+	OpModLVRTMomentaryCessation *string                    `yaml:"op_mod_lvrt_momentary_cessation,omitempty"`
+	OpModLVRTMustTrip           *string                    `yaml:"op_mod_lvrt_must_trip,omitempty"`
+	OpModMaxLimW                *sep2.PerCent              `yaml:"op_mod_max_lim_w,omitempty"`
+	OpModTargetW                *ActivePowerSpec           `yaml:"op_mod_target_w,omitempty"`
+	OpModVoltVar                *string                    `yaml:"op_mod_volt_var,omitempty"`
+	OpModVoltWatt               *string                    `yaml:"op_mod_volt_watt,omitempty"`
+	RampTms                     *uint16                    `yaml:"ramp_tms,omitempty"`
 }
 
 // validatePerCents refuses a percent the XML encoder would refuse, so an
@@ -481,7 +484,10 @@ func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOptio
 			return fmt.Errorf("default_der_controls[%d]: %w", i, err)
 		}
 		key := compositeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
-		dc := buildDefaultDERControl(d)
+		dc, err := buildDefaultDERControl(d)
+		if err != nil {
+			return fmt.Errorf("default_der_controls[%d] (scope=%q): %w", i, key, err)
+		}
 		if err := target.DefaultDERControls.Create(ctx, key, singletonKey, dc); err != nil {
 			return fmt.Errorf("default_der_controls[%d] (scope=%q): create: %w", i, key, err)
 		}
@@ -498,7 +504,10 @@ func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOptio
 			return fmt.Errorf("der_controls[%d] (id=%q): %w", i, c.ID, err)
 		}
 		key := compositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
-		dc := buildDERControl(c)
+		dc, err := buildDERControl(c)
+		if err != nil {
+			return fmt.Errorf("der_controls[%d] (id=%q, scope=%q): %w", i, c.ID, key, err)
+		}
 		if err := target.DERControls.Create(ctx, key, c.ID, dc); err != nil {
 			return fmt.Errorf("der_controls[%d] (id=%q, scope=%q): create: %w", i, c.ID, key, err)
 		}
@@ -642,11 +651,14 @@ func buildDERProgram(s DERProgramSpec) sep2.DERProgram {
 	return prog
 }
 
-func buildDefaultDERControl(s DefaultDERControlSpec) sep2.DefaultDERControl {
+func buildDefaultDERControl(s DefaultDERControlSpec) (sep2.DefaultDERControl, error) {
 	dc := sep2.DefaultDERControl{MRID: s.MRID}
 	dc.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/dderc", s.EndDeviceID, s.FSAID, s.DERProgramID)
 	if s.DERControlBase != nil {
-		base := buildDERControlBase(*s.DERControlBase)
+		base, err := buildDERControlBase(*s.DERControlBase)
+		if err != nil {
+			return sep2.DefaultDERControl{}, err
+		}
 		dc.DERControlBase = &base
 	}
 	if s.SetGradW != nil {
@@ -657,10 +669,10 @@ func buildDefaultDERControl(s DefaultDERControlSpec) sep2.DefaultDERControl {
 		v := *s.SetSoftGradW
 		dc.SetSoftGradW = &v
 	}
-	return dc
+	return dc, nil
 }
 
-func buildDERControl(s DERControlSpec) sep2.DERControl {
+func buildDERControl(s DERControlSpec) (sep2.DERControl, error) {
 	dc := sep2.DERControl{}
 	dc.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/derc/%s",
 		s.EndDeviceID, s.FSAID, s.DERProgramID, s.ID)
@@ -680,13 +692,16 @@ func buildDERControl(s DERControlSpec) sep2.DERControl {
 		dc.Interval = &iv
 	}
 	if s.DERControlBase != nil {
-		base := buildDERControlBase(*s.DERControlBase)
+		base, err := buildDERControlBase(*s.DERControlBase)
+		if err != nil {
+			return sep2.DERControl{}, err
+		}
 		dc.DERControlBase = &base
 	}
-	return dc
+	return dc, nil
 }
 
-func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
+func buildDERControlBase(s DERControlBaseSpec) (sep2.DERControlBase, error) {
 	var base sep2.DERControlBase
 	if s.OpModConnect != nil {
 		v := *s.OpModConnect
@@ -714,51 +729,42 @@ func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
 	if s.OpModTargetW != nil {
 		base.OpModTargetW = &sep2.ActivePower{Multiplier: s.OpModTargetW.Multiplier, Value: s.OpModTargetW.Value}
 	}
-	if s.OpModVoltVar != nil {
-		v := *s.OpModVoltVar
-		base.OpModVoltVar = &v
-	}
-	if s.OpModVoltWatt != nil {
-		v := *s.OpModVoltWatt
-		base.OpModVoltWatt = &v
-	}
 	if s.OpModFreqDroop != nil {
-		v := *s.OpModFreqDroop
-		base.OpModFreqDroop = &v
+		fd, err := s.OpModFreqDroop.FreqDroopType()
+		if err != nil {
+			return sep2.DERControlBase{}, fmt.Errorf("op_mod_freq_droop: %w", err)
+		}
+		base.OpModFreqDroop = fd
 	}
-	if s.OpModFreqWatt != nil {
-		v := *s.OpModFreqWatt
-		base.OpModFreqWatt = &v
-	}
-	if s.OpModLVRTMustTrip != nil {
-		v := *s.OpModLVRTMustTrip
-		base.OpModLVRTMustTrip = &v
-	}
-	if s.OpModLVRTMomentaryCessation != nil {
-		v := *s.OpModLVRTMomentaryCessation
-		base.OpModLVRTMomentaryCessation = &v
-	}
-	if s.OpModHVRTMustTrip != nil {
-		v := *s.OpModHVRTMustTrip
-		base.OpModHVRTMustTrip = &v
-	}
-	if s.OpModHVRTMomentaryCessation != nil {
-		v := *s.OpModHVRTMomentaryCessation
-		base.OpModHVRTMomentaryCessation = &v
-	}
-	if s.OpModLFRTMustTrip != nil {
-		v := *s.OpModLFRTMustTrip
-		base.OpModLFRTMustTrip = &v
-	}
-	if s.OpModHFRTMustTrip != nil {
-		v := *s.OpModHFRTMustTrip
-		base.OpModHFRTMustTrip = &v
+	for _, m := range []struct {
+		yaml string
+		ref  *string
+		dst  **sep2.DERCurveLink
+	}{
+		{"op_mod_volt_var", s.OpModVoltVar, &base.OpModVoltVar},
+		{"op_mod_volt_watt", s.OpModVoltWatt, &base.OpModVoltWatt},
+		{"op_mod_freq_watt", s.OpModFreqWatt, &base.OpModFreqWatt},
+		{"op_mod_lvrt_must_trip", s.OpModLVRTMustTrip, &base.OpModLVRTMustTrip},
+		{"op_mod_lvrt_momentary_cessation", s.OpModLVRTMomentaryCessation, &base.OpModLVRTMomentaryCessation},
+		{"op_mod_hvrt_must_trip", s.OpModHVRTMustTrip, &base.OpModHVRTMustTrip},
+		{"op_mod_hvrt_momentary_cessation", s.OpModHVRTMomentaryCessation, &base.OpModHVRTMomentaryCessation},
+		{"op_mod_lfrt_must_trip", s.OpModLFRTMustTrip, &base.OpModLFRTMustTrip},
+		{"op_mod_hfrt_must_trip", s.OpModHFRTMustTrip, &base.OpModHFRTMustTrip},
+	} {
+		if m.ref == nil {
+			continue
+		}
+		link, err := dercontrol.CurveLink(*m.ref)
+		if err != nil {
+			return sep2.DERControlBase{}, fmt.Errorf("%s: %w", m.yaml, err)
+		}
+		*m.dst = link
 	}
 	if s.RampTms != nil {
 		v := *s.RampTms
 		base.RampTms = &v
 	}
-	return base
+	return base, nil
 }
 
 // buildDERCurve maps a DERCurveSpec onto sep2.DERCurve. CreationTime
@@ -776,7 +782,7 @@ func buildDERCurve(s DERCurveSpec, loadTime int64) sep2.DERCurve {
 		CurveType:    s.CurveType,
 		CreationTime: creationTime,
 	}
-	curve.Href = fmt.Sprintf("/dc/%s", s.ID)
+	curve.Href = dercontrol.CurveHref(s.ID)
 	if len(s.CurveData) > 0 {
 		curve.CurveData = make([]sep2.CurveData, len(s.CurveData))
 		for i, p := range s.CurveData {

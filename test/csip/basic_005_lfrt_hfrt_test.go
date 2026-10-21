@@ -25,11 +25,11 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// basic005 LFRT/HFRT curve-ref values (fixture seeds these). Maps
-// to der_curves: 0=LFRT-must-trip, 1=HFRT-must-trip.
+// basic005 LFRT/HFRT curve-link hrefs. The fixture names der_curves
+// 0=LFRT-must-trip and 1=HFRT-must-trip.
 const (
-	basic005LFRTMustTrip int32 = 0
-	basic005HFRTMustTrip int32 = 1
+	basic005LFRTMustTrip = "/dc/0"
+	basic005HFRTMustTrip = "/dc/1"
 )
 
 // TestBASIC_005_LFRTHFRT implements CSIP V1.2 Section 8.5.

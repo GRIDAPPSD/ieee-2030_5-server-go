@@ -46,7 +46,7 @@ der_controls:
     id: "0"
     mrid: "BASIC-012-DERC"
     der_control_base:
-      op_mod_freq_watt: 0  # -> der_curves[0].id
+      op_mod_freq_watt: "0"  # -> der_curves[0].id, served as /dc/0
 
 der_curves:
   - id: "0"

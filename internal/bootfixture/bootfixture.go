@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -170,15 +171,46 @@ type CurveDataSpec struct {
 //
 // OpModFixedW and OpModMaxLimW are bare integers in hundredths of a percent
 // (4000 = 40.00%), not watts; a multiplier/value mapping fails to decode.
+// A curve mode such as OpModVoltVar names the id of a der_curves entry and
+// is served as a link to that curve.
 type DERControlBaseSpec struct {
 	OpModConnect   *bool               `yaml:"op_mod_connect,omitempty"`
 	OpModEnergize  *bool               `yaml:"op_mod_energize,omitempty"`
 	OpModFixedW    *sep2.SignedPerCent `yaml:"op_mod_fixed_w,omitempty"`
 	OpModMaxLimW   *sep2.PerCent       `yaml:"op_mod_max_lim_w,omitempty"`
 	OpModTargetW   *ActivePowerSpec    `yaml:"op_mod_target_w,omitempty"`
-	OpModVoltVar   *int32              `yaml:"op_mod_volt_var,omitempty"`
-	OpModFreqDroop *uint16             `yaml:"op_mod_freq_droop,omitempty"`
+	OpModVoltVar   *string             `yaml:"op_mod_volt_var,omitempty"`
+	OpModFreqDroop *FreqDroopSpec      `yaml:"op_mod_freq_droop,omitempty"`
 	RampTms        *uint16             `yaml:"ramp_tms,omitempty"`
+}
+
+// FreqDroopSpec is the YAML shape of sep2.FreqDroopType. Every field is
+// required by the schema, so a missing one is refused rather than served
+// as zero. The CSIP loader uses this type too.
+type FreqDroopSpec struct {
+	DBOF        *uint32 `yaml:"db_of"`
+	DBUF        *uint32 `yaml:"db_uf"`
+	KOF         *uint16 `yaml:"k_of"`
+	KUF         *uint16 `yaml:"k_uf"`
+	OpenLoopTms *uint16 `yaml:"open_loop_tms"`
+}
+
+// FreqDroopType converts the spec, naming the first missing field.
+func (s FreqDroopSpec) FreqDroopType() (*sep2.FreqDroopType, error) {
+	for _, f := range []struct {
+		name    string
+		missing bool
+	}{
+		{"db_of", s.DBOF == nil}, {"db_uf", s.DBUF == nil}, {"k_of", s.KOF == nil},
+		{"k_uf", s.KUF == nil}, {"open_loop_tms", s.OpenLoopTms == nil},
+	} {
+		if f.missing {
+			return nil, fmt.Errorf("%s is required", f.name)
+		}
+	}
+	return &sep2.FreqDroopType{
+		DBOF: *s.DBOF, DBUF: *s.DBUF, KOF: *s.KOF, KUF: *s.KUF, OpenLoopTms: *s.OpenLoopTms,
+	}, nil
 }
 
 // validatePerCents refuses a percent the XML encoder would refuse, so an
@@ -382,7 +414,11 @@ func createDERProgram(ctx context.Context, target *Target, i int, p DERProgramSp
 
 func createDefaultDERControl(ctx context.Context, target *Target, i int, d DefaultDERControlSpec) error {
 	key := compositeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
-	if err := target.DefaultDERControls.Create(ctx, key, singletonKey, buildDefaultDERControl(d)); err != nil {
+	dc, err := buildDefaultDERControl(d)
+	if err != nil {
+		return fmt.Errorf("default_der_controls[%d] (scope=%q): %w", i, key, err)
+	}
+	if err := target.DefaultDERControls.Create(ctx, key, singletonKey, dc); err != nil {
 		return fmt.Errorf("default_der_controls[%d] (scope=%q): create: %w", i, key, err)
 	}
 	return nil
@@ -390,7 +426,11 @@ func createDefaultDERControl(ctx context.Context, target *Target, i int, d Defau
 
 func createDERControl(ctx context.Context, target *Target, i int, c DERControlSpec) error {
 	key := compositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
-	if err := target.DERControls.Create(ctx, key, c.ID, buildDERControl(c)); err != nil {
+	dc, err := buildDERControl(c)
+	if err != nil {
+		return fmt.Errorf("der_controls[%d] (id=%q, scope=%q): %w", i, c.ID, key, err)
+	}
+	if err := target.DERControls.Create(ctx, key, c.ID, dc); err != nil {
 		return fmt.Errorf("der_controls[%d] (id=%q, scope=%q): create: %w", i, c.ID, key, err)
 	}
 	return nil
@@ -472,29 +512,35 @@ func buildDERProgram(s DERProgramSpec) sep2.DERProgram {
 	return prog
 }
 
-func buildDefaultDERControl(s DefaultDERControlSpec) sep2.DefaultDERControl {
+func buildDefaultDERControl(s DefaultDERControlSpec) (sep2.DefaultDERControl, error) {
 	dc := sep2.DefaultDERControl{MRID: s.MRID}
 	dc.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/dderc", s.EndDeviceID, s.FSAID, s.DERProgramID)
 	if s.DERControlBase != nil {
-		base := buildDERControlBase(*s.DERControlBase)
+		base, err := buildDERControlBase(*s.DERControlBase)
+		if err != nil {
+			return sep2.DefaultDERControl{}, err
+		}
 		dc.DERControlBase = &base
 	}
-	return dc
+	return dc, nil
 }
 
-func buildDERControl(s DERControlSpec) sep2.DERControl {
+func buildDERControl(s DERControlSpec) (sep2.DERControl, error) {
 	dc := sep2.DERControl{}
 	dc.MRID = s.MRID
 	dc.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/derc/%s",
 		s.EndDeviceID, s.FSAID, s.DERProgramID, s.ID)
 	if s.DERControlBase != nil {
-		base := buildDERControlBase(*s.DERControlBase)
+		base, err := buildDERControlBase(*s.DERControlBase)
+		if err != nil {
+			return sep2.DERControl{}, err
+		}
 		dc.DERControlBase = &base
 	}
-	return dc
+	return dc, nil
 }
 
-func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
+func buildDERControlBase(s DERControlBaseSpec) (sep2.DERControlBase, error) {
 	var base sep2.DERControlBase
 	if s.OpModConnect != nil {
 		v := *s.OpModConnect
@@ -516,18 +562,24 @@ func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
 		base.OpModTargetW = &sep2.ActivePower{Multiplier: s.OpModTargetW.Multiplier, Value: s.OpModTargetW.Value}
 	}
 	if s.OpModVoltVar != nil {
-		v := *s.OpModVoltVar
-		base.OpModVoltVar = &v
+		link, err := dercontrol.CurveLink(*s.OpModVoltVar)
+		if err != nil {
+			return sep2.DERControlBase{}, fmt.Errorf("op_mod_volt_var: %w", err)
+		}
+		base.OpModVoltVar = link
 	}
 	if s.OpModFreqDroop != nil {
-		v := *s.OpModFreqDroop
-		base.OpModFreqDroop = &v
+		fd, err := s.OpModFreqDroop.FreqDroopType()
+		if err != nil {
+			return sep2.DERControlBase{}, fmt.Errorf("op_mod_freq_droop: %w", err)
+		}
+		base.OpModFreqDroop = fd
 	}
 	if s.RampTms != nil {
 		v := *s.RampTms
 		base.RampTms = &v
 	}
-	return base
+	return base, nil
 }
 
 // buildDERCurve maps a DERCurveSpec onto sep2.DERCurve. CreationTime
@@ -545,7 +597,7 @@ func buildDERCurve(s DERCurveSpec, loadTime int64) sep2.DERCurve {
 		CurveType:    s.CurveType,
 		CreationTime: creationTime,
 	}
-	curve.Href = fmt.Sprintf("/dc/%s", s.ID)
+	curve.Href = dercontrol.CurveHref(s.ID)
 	if len(s.CurveData) > 0 {
 		curve.CurveData = make([]sep2.CurveData, len(s.CurveData))
 		for i, p := range s.CurveData {

@@ -6,6 +6,10 @@
   // certificate, never an operator-typed value that could disagree with
   // the cert the device will present.
   import { postBody, postJSON } from '../lib/api'
+  import type { DashboardDevice } from '../lib/dashboard'
+  import { canon, deviceLabel } from '../lib/devices'
+  import { applyPairs, pairFailures } from '../lib/management'
+  import DevicePicker from './DevicePicker.svelte'
   import { downloadText, PEM_MIME } from '../lib/download'
   import type { MintedCert } from '../lib/deviceCert'
 
@@ -24,12 +28,18 @@
   // pending is a mint carried from the Certificates tab (issue 594),
   // through AdminShell's hoisted state. undefined/null means no mint is
   // waiting, and the paste path below is unaffected.
-  let { onAdded, pending }: { onAdded?: () => void; pending?: MintedCert | null } = $props()
+  let {
+    onAdded,
+    pending,
+    devices = [],
+  }: { onAdded?: () => void; pending?: MintedCert | null; devices?: DashboardDevice[] } = $props()
 
   let pem = $state('')
   let sfdi = $state('')
   let lfdi = $state('')
   let name = $state('')
+  let kind = $state<'device' | 'aggregator'>('device')
+  let picked = $state<string[]>([])
   let pin = $state<number | null>(null)
   let enabled = $state(true)
   let result = $state('')
@@ -90,6 +100,7 @@
       sfdi,
       lfdi,
       name,
+      kind,
       pin,
       enabled,
     })
@@ -100,6 +111,19 @@
     }
     ok = true
     result = `Created ${res.data.href} (PIN persisted).`
+    if (kind === 'aggregator' && picked.length > 0) {
+      // The device is already stored; a refused pair names its device and
+      // leaves the aggregator and the pairs that worked in place.
+      const label = (l: string) => deviceLabel(l, devices.find((d) => canon(d.lfdi) === canon(l))?.sfdi)
+      const outcomes = await applyPairs(res.data.lfdi, picked, [])
+      const failed = pairFailures(outcomes, label)
+      const paired = outcomes.length - failed.length
+      result += ` Paired ${paired} of ${outcomes.length} devices.`
+      if (failed.length > 0) {
+        ok = false
+        result += ` Pair failed for ${failed.join('; ')}`
+      }
+    }
     onAdded?.()
   }
 </script>
@@ -139,7 +163,15 @@
     <label>
       <input type="checkbox" id="addDevEnabled" bind:checked={enabled} /> Enabled
     </label>
+    <label for="addDevKind">Kind</label>
+    <select id="addDevKind" bind:value={kind}>
+      <option value="device">Device</option>
+      <option value="aggregator">Aggregator</option>
+    </select>
     <button class="btn btn-green" onclick={addDevice}>Add Device</button>
   </div>
+  {#if kind === 'aggregator'}
+    <DevicePicker {devices} bind:selected={picked} />
+  {/if}
   <div class="result" class:ok class:err={result !== '' && !ok} id="addDevResult">{result}</div>
 </div>

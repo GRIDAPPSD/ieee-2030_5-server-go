@@ -60,17 +60,27 @@ export async function loadDeviceProfiles(opts?: RequestOptions): Promise<ApiResu
   return { ok: true, data: list }
 }
 
-// renameDevice sets one device's name. The PUT replaces the whole profile, so
-// the kind is read from the server immediately before it and sent back
-// unchanged: a rename must not clear a kind, and with no readable kind the
-// rename is refused rather than sent blind.
-export async function renameDevice(lfdi: string, name: string): Promise<ApiResult<DeviceProfile>> {
-  const fresh = await loadDeviceProfiles()
-  if (!fresh.ok) return fresh
-  const kind = fresh.data.find((p) => canon(p.lfdi) === canon(lfdi))?.kind ?? ''
-  const res = await putJSON<DeviceProfile>(`${PATH}/${encodeURIComponent(canon(lfdi))}`, { name, kind })
+// saveDeviceProfile sets one device's name, and its kind when one is given.
+// The PUT replaces the whole profile, so with no kind given it is read from
+// the server immediately before the PUT and sent back unchanged: a rename
+// must not clear a kind, and with no readable kind it is refused rather than
+// sent blind. A 409 (a duplicate name, a kind that contradicts its pairs)
+// comes back as the failure for the caller to show.
+export async function saveDeviceProfile(lfdi: string, name: string, kind?: string): Promise<ApiResult<DeviceProfile>> {
+  let sendKind = kind
+  if (sendKind === undefined) {
+    const fresh = await loadDeviceProfiles()
+    if (!fresh.ok) return fresh
+    sendKind = fresh.data.find((p) => canon(p.lfdi) === canon(lfdi))?.kind ?? ''
+  }
+  const res = await putJSON<DeviceProfile>(`${PATH}/${encodeURIComponent(canon(lfdi))}`, { name, kind: sendKind })
   if (res.ok && isProfile(res.data)) profiles.set(canon(lfdi), res.data)
   return res
+}
+
+// deviceKind is the held stored kind for one device, or '' when none is set.
+export function deviceKind(lfdi: string): string {
+  return profiles.get(canon(lfdi))?.kind ?? ''
 }
 
 // deviceName is the held name for one device, or '' when it has none.

@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import FsaTemplates from './FsaTemplates.svelte'
+import { CATALOG_ROUTES } from '../lib/controlcatalog.fixture'
 import type { ProgramTemplate } from '../lib/derprogram'
 
 afterEach(() => {
@@ -18,7 +19,12 @@ function template(over: Partial<ProgramTemplate> = {}): ProgramTemplate {
     description: 'roof fleet',
     primacy: 65,
     version: 2,
-    defaultControl: { mRID: 'DEF', type: 'maxLimW', derControlBase: { opModMaxLimW: 5000 } },
+    defaultControl: {
+      mRID: 'DEF',
+      type: 'maxLimW',
+      derControlBase: {},
+      functions: { fnLevel: 5000, fnPair: { amount: 950, sign: true } },
+    },
     copies: ['/edev/7/fsa/fsa-a/derp/derp-1', '/edev/8/fsa/fsa-a/derp/derp-1'],
     ...over,
   }
@@ -43,7 +49,7 @@ function fake(routes: Record<string, Reply | (() => Reply | Promise<Reply>)>) {
     const method = init?.method ?? 'GET'
     const path = String(input)
     calls.push({ method, path, body: init?.body ? JSON.parse(String(init.body)) : undefined })
-    const hit = routes[`${method} ${path}`]
+    const hit = { ...CATALOG_ROUTES, ...routes }[`${method} ${path}`]
     const reply = typeof hit === 'function' ? hit() : (hit ?? { status: 404, body: { error: 'no route' } })
     return Promise.resolve(reply).then(
       (r) =>
@@ -63,10 +69,14 @@ function mount(onChanged: () => void = () => {}) {
   return render(FsaTemplates, { props: { fsaId: 'fsa-a', onChanged } })
 }
 
-async function fillForm(over: { description?: string; primacy?: string; type?: string } = {}) {
+async function fillForm(over: { description?: string; primacy?: string } = {}) {
   await fireEvent.input(screen.getByLabelText('Description'), { target: { value: over.description ?? 'new one' } })
   await fireEvent.input(screen.getByLabelText('Primacy'), { target: { value: over.primacy ?? '1' } })
-  await fireEvent.change(screen.getByLabelText('Default control'), { target: { value: over.type ?? 'connect' } })
+  // The default control is the catalog's functions, which arrive after the form mounts.
+  await fireEvent.click(await screen.findByTestId('control-fn-fnFlag'))
+  await fireEvent.click(screen.getByTestId('control-fv-fnFlag'))
+  await fireEvent.click(screen.getByTestId('control-fn-fnLevel'))
+  await fireEvent.input(screen.getByTestId('control-fv-fnLevel'), { target: { value: '4000' } })
 }
 
 describe('FsaTemplates list', () => {
@@ -135,7 +145,11 @@ describe('FsaTemplates add', () => {
 
     expect(await screen.findByTestId('template-row-derp-new')).toBeInTheDocument()
     const post = calls.find((c) => c.method === 'POST')
-    expect(post?.body).toEqual({ description: 'new one', primacy: 1, defaultControl: { type: 'connect' } })
+    expect(post?.body).toEqual({
+      description: 'new one',
+      primacy: 1,
+      defaultControl: { functions: { fnFlag: true, fnLevel: 4000 } },
+    })
     expect(onChanged).toHaveBeenCalledTimes(1)
     expect(screen.queryByTestId('program-form')).toBeNull()
   })
@@ -189,7 +203,8 @@ describe('FsaTemplates edit', () => {
     mount(onChanged)
 
     await fireEvent.click(await screen.findByTestId('template-edit-derp-1'))
-    expect(screen.getByLabelText('Max limit')).toHaveValue('5000')
+    expect(await screen.findByTestId('control-fv-fnLevel')).toHaveValue('5000')
+    expect(screen.getByTestId('control-fv-fnPair-amount')).toHaveValue('950')
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'renamed' } })
     await fireEvent.click(screen.getByRole('button', { name: 'Save template' }))
 
@@ -198,9 +213,9 @@ describe('FsaTemplates edit', () => {
     expect(put?.body).toEqual({
       description: 'renamed',
       primacy: 65,
-      defaultControl: { type: 'maxLimW', maxLimW: 5000 },
+      defaultControl: { functions: { fnLevel: 5000, fnPair: { amount: 950, sign: true } } },
     })
-    expect(calls.filter((c) => c.method === 'GET')).toHaveLength(2)
+    expect(calls.filter((c) => `${c.method} ${c.path}` === LIST)).toHaveLength(2)
   })
 
   it('shows a refusal such as version_exhausted as sent', async () => {

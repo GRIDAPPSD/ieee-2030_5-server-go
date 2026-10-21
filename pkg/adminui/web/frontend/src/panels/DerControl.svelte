@@ -29,12 +29,12 @@
     buildFunctions,
     functionsText,
     initialValue,
+    loadCatalog as loadControlCatalog,
+    loadCurves as loadStoredCurves,
     primacyText,
-    type CatalogResponse,
     type CatalogRow,
     type CurveInfo,
     type DeviceControlBody,
-    type CurveListResponse,
     type FieldValue,
   } from '../lib/controlcatalog'
   import {
@@ -138,14 +138,14 @@
   })
 
   async function loadCatalog() {
-    const res = await fetchJSON<CatalogResponse>('/api/der/control-functions')
+    const res = await loadControlCatalog()
     if (!mounted) return
     if (!res.ok) {
       catalogError = res.error
       return
     }
     catalogError = ''
-    catalog = res.data.functions ?? []
+    catalog = res.data
     for (const row of catalog) {
       ticked[row.name] = false
       values[row.name] = initialValue(row)
@@ -172,14 +172,14 @@
   }
 
   async function loadCurves() {
-    const res = await fetchJSON<CurveListResponse>('/api/der/curves')
+    const res = await loadStoredCurves()
     if (!mounted) return
     if (!res.ok) {
-      curvesError = `Stored curves could not be read: ${res.error}`
+      curvesError = res.error
       return
     }
     curvesError = ''
-    curves = res.data.curves ?? []
+    curves = res.data
   }
 
   // A pending confirmation, a shown result and an open cancel belong to the

@@ -37,5 +37,5 @@ func newAdminManagementHandler(stores *Stores) *handler.AdminManagementHandler {
 		log.Printf("server: Stores.EndDeviceManagers is %T, not *memory.EndDeviceManagementStore: no management-pair admin routes mounted", stores.EndDeviceManagers)
 		return nil
 	}
-	return &handler.AdminManagementHandler{Managers: managers}
+	return &handler.AdminManagementHandler{Managers: managers, Profiles: stores.DeviceProfiles}
 }

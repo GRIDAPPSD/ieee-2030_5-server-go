@@ -185,8 +185,9 @@ type addDeviceResponse struct {
 // SFDI/LFDI/PIN and the optional name and kind, rejects LFDI and name
 // collisions with 409, persists EndDevice + Registration + profile. The
 // registrations writer and the profile store may be nil; in that case the
-// handler returns 503 (we refuse to half-create).
-func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter, profiles store.DeviceProfileStore) http.HandlerFunc {
+// handler returns 503 (we refuse to half-create). A kind that contradicts
+// the LFDI's management pairs answers 409; managers may be nil to skip that.
+func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter, profiles store.DeviceProfileStore, managers store.EndDeviceManagementReader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if regs == nil {
 			writeError(w, http.StatusServiceUnavailable, "registration store not configured")
@@ -216,6 +217,13 @@ func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter, profile
 		}
 		if msg := deviceProfileInputRefusal(req.Name, req.Kind); msg != "" {
 			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
+		if msg, err := (kindGate{managers: managers}).profileKindRefusal(r.Context(), strings.ToUpper(req.LFDI), req.Kind); err != nil {
+			writeDeviceProfileError(w, "add device", err)
+			return
+		} else if msg != "" {
+			writeError(w, http.StatusConflict, msg)
 			return
 		}
 		// PIN: uint32 already constrains range. Empty body decodes to 0 which

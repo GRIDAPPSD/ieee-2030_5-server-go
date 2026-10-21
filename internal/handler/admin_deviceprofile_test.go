@@ -37,7 +37,7 @@ func postAddDevice(t *testing.T, devs store.EndDeviceStore, regs handler.Registr
 	req := httptest.NewRequest(http.MethodPost, "/api/devices", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	handler.HandleAddEndDevice(devs, regs, profiles)(w, req)
+	handler.HandleAddEndDevice(devs, regs, profiles, nil)(w, req)
 	return w, lfdi
 }
 
@@ -246,7 +246,7 @@ func TestAddEndDeviceRollbackSurvivesCancelledRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/devices", strings.NewReader(body)).WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	handler.HandleAddEndDevice(devs, regs, profiles)(w, req)
+	handler.HandleAddEndDevice(devs, regs, profiles, nil)(w, req)
 
 	if ctx.Err() == nil {
 		t.Fatal("control: the request context was never cancelled")

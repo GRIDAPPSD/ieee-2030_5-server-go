@@ -3,6 +3,7 @@
 // at once, so the panel's list is one lookup per registered device.
 
 import { deleteJSON, fetchJSON, postJSON, type ApiResult } from './api'
+import { canon } from './devices'
 
 export interface ManagementPair {
   managerLFDI: string
@@ -15,10 +16,6 @@ interface ManagedList {
 }
 
 const PATH = '/api/management-pairs'
-
-// The server answers with uppercase LFDIs whatever case it was sent, so the
-// panel compares and sends uppercase throughout.
-const canon = (lfdi: string) => lfdi.toUpperCase()
 
 // pairsKey is stable across reorderings, so a device list that arrives in a
 // new order with the same members does not trigger a reload.

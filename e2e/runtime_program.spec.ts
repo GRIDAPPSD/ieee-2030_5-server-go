@@ -47,7 +47,7 @@ async function addDeviceInUI(page: Page, name: string): Promise<{ sfdi: string; 
   await page.locator('#addDevPIN').fill('424242');
   await page.getByRole('button', { name: 'Add Device' }).click();
   await expect(page.locator('#addDevResult')).toContainText(/Created \/edev\//, { timeout: 5000 });
-  await expect(page.getByTestId('device-sfdi').filter({ hasText: sfdi })).toHaveCount(1, { timeout: 5000 });
+  await expect(page.getByTestId('device-label').filter({ hasText: name })).toHaveCount(1, { timeout: 5000 });
   return { sfdi, lfdi };
 }
 
@@ -84,9 +84,9 @@ test('an empty server becomes controllable from the UI alone', async ({ page, re
   // 2) Pair them from the Devices tab.
   const manager = page.getByLabel('Manager', { exact: true });
   const managedSel = page.getByLabel('Managed device', { exact: true });
-  await expect(manager.locator('option', { hasText: aggregator.sfdi })).toHaveCount(1, { timeout: 10000 });
-  await manager.selectOption({ value: (await manager.locator('option', { hasText: aggregator.sfdi }).getAttribute('value'))! });
-  await managedSel.selectOption({ value: (await managedSel.locator('option', { hasText: managed.sfdi }).getAttribute('value'))! });
+  await expect(manager.locator('option', { hasText: 'runtime-aggregator' })).toHaveCount(1, { timeout: 10000 });
+  await manager.selectOption({ value: (await manager.locator('option', { hasText: 'runtime-aggregator' }).getAttribute('value'))! });
+  await managedSel.selectOption({ value: (await managedSel.locator('option', { hasText: 'runtime-managed' }).getAttribute('value'))! });
   await page.getByRole('button', { name: 'Create pair' }).click();
   await expect(page.getByTestId('pairs-result')).toContainText('Paired', { timeout: 5000 });
   const pair = await request.get(
@@ -114,7 +114,7 @@ test('an empty server becomes controllable from the UI alone', async ({ page, re
 
   // 4) Assign the managed device to the FSA from the Devices tab.
   await page.getByTestId('tab-devices').click();
-  const row = page.getByRole('row').filter({ has: page.getByTestId('device-sfdi').filter({ hasText: managed.sfdi }) });
+  const row = page.getByRole('row').filter({ has: page.getByTestId('device-label').filter({ hasText: 'runtime-managed' }) });
   await row.getByRole('combobox').selectOption({ value: `/api/fsas/${FSA_MRID}` });
   await row.getByRole('button', { name: 'Assign' }).click();
   await expect(page.getByTestId('device-table-error')).toHaveCount(0);
@@ -126,7 +126,7 @@ test('an empty server becomes controllable from the UI alone', async ({ page, re
 
   // 5) Send a control scheduled an hour ahead from the Control tab.
   await page.getByTestId('tab-control').click();
-  await page.locator('#controlDevice').selectOption({ label: managed.sfdi });
+  await page.locator('#controlDevice').selectOption({ label: 'runtime-managed' });
   await page.locator('#controlProgram').selectOption({ label: TEMPLATE });
   await page.getByTestId('control-fn-opModConnect').check();
   await page.getByTestId('control-fv-opModConnect').check();

@@ -11,6 +11,7 @@
   import TabLink from './TabLink.svelte'
   import { requestPrograms } from '../lib/programsRequest'
   import { fetchJSON, postJSON } from '../lib/api'
+  import { deviceLabel } from '../lib/devices'
   import { deviceIdFromHref, type AdminFSA, type AdminFSAList } from '../lib/fsa'
   import { listTemplates, type ProgramTemplate } from '../lib/derprogram'
   import {
@@ -322,12 +323,12 @@
   // targetText names the selection in the summary and in a late reply.
   function targetText(): string {
     if (target === 'fsa') return `FSA ${selectedFsaId}, program ${selectedTemplate?.description ?? selectedTemplateId}`
-    return `device ${deviceLabel()}`
+    return `device ${selectedDeviceText()}`
   }
 
-  function deviceLabel(): string {
+  function selectedDeviceText(): string {
     const device = devices.find((d) => deviceIdFromHref(d.href) === selectedDeviceId)
-    return device?.sfdi ?? selectedDeviceId
+    return device === undefined ? selectedDeviceId : deviceLabel(device.lfdi, device.sfdi)
   }
 
   // send only builds and shows the pending request; it never posts. Only
@@ -585,7 +586,7 @@
       <select id="controlDevice" aria-label="Device" bind:value={selectedDeviceId} disabled={posting || cancelPosting}>
         <option value="">(pick device)</option>
         {#each devices as device (device.href)}
-          <option value={deviceIdFromHref(device.href)}>{device.sfdi}</option>
+          <option value={deviceIdFromHref(device.href)}>{deviceLabel(device.lfdi, device.sfdi)}</option>
         {/each}
       </select>
     {:else}

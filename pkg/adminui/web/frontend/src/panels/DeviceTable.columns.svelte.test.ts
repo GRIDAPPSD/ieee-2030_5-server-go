@@ -26,7 +26,7 @@ describe('DeviceTable embedder columns', () => {
   it('renders the same headers and colspan as before when there are no columns', () => {
     const { container } = renderTable([device('/edev/1')], [])
     expect(headers()).toEqual([
-      'SFDI', 'LFDI', 'Enabled', 'Comms', 'Last request',
+      'Device', 'LFDI', 'Enabled', 'Comms', 'Last request',
       'DER connection (reported)', 'Inverter state (reported)', 'Href', 'Programs', 'Assign FSA',
     ])
     expect(container.querySelectorAll('tbody tr:first-child td')).toHaveLength(10)

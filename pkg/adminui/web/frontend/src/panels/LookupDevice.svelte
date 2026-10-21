@@ -4,6 +4,7 @@
   // device is registered needs to tell "not registered" apart from
   // "the lookup failed".
   import { fetchJSON } from '../lib/api'
+  import { deviceLabel } from '../lib/devices'
 
   interface LookupResponse {
     found: boolean
@@ -16,29 +17,38 @@
   }
 
   let lfdi = $state('')
-  let result = $state('')
+  let message = $state('')
+  let foundDevice = $state<NonNullable<LookupResponse['device']> | null>(null)
+  // The found line is derived so a name loaded or changed after the lookup
+  // shows without a second click.
+  const result = $derived(
+    foundDevice === null
+      ? message
+      : `Found: ${foundDevice.href} ${deviceLabel(foundDevice.lfdi, foundDevice.sfdi)} enabled=${foundDevice.enabled}`,
+  )
   let outcome = $state<'idle' | 'ok' | 'missing' | 'error'>('idle')
 
   async function lookup() {
+    foundDevice = null
     if (!lfdi) {
       outcome = 'error'
-      result = 'Enter an LFDI to look up.'
+      message = 'Enter an LFDI to look up.'
       return
     }
     const res = await fetchJSON<LookupResponse>(`/api/devices/by-lfdi/${encodeURIComponent(lfdi)}`)
     if (!res.ok) {
       outcome = 'error'
-      result = `Error (${res.status}): ${res.error}`
+      message = `Error (${res.status}): ${res.error}`
       return
     }
     if (!res.data.found || !res.data.device) {
       outcome = 'missing'
-      result = 'No device registered for that LFDI.'
+      message = 'No device registered for that LFDI.'
       return
     }
     const dev = res.data.device
     outcome = 'ok'
-    result = `Found: ${dev.href} SFDI=${dev.sfdi} enabled=${dev.enabled}`
+    foundDevice = dev
   }
 </script>
 

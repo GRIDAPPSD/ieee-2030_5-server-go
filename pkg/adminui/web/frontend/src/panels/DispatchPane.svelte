@@ -9,6 +9,7 @@
   import { requestPrograms } from '../lib/programsRequest'
   import { onDestroy, onMount } from 'svelte'
   import { fetchJSON } from '../lib/api'
+  import { deviceLabel, deviceName } from '../lib/devices'
   import { fmtTime, type DERControlDelivery, type DERControlListItem, type DERControlListResponse, type DERProgramListResponse, type DERProgramView } from '../lib/dercontrol'
   import {
     buildDispatch,
@@ -98,8 +99,15 @@
     return Math.max(0, Math.floor((nowMs - sinceMs) / 1000))
   }
 
-  function short(lfdi: string): string {
-    return lfdi.substring(0, 16) + '...'
+  // chosenName is the device's entered name, or '' when it has none.
+  function chosenName(c: DeviceChoice): string {
+    return deviceName(c.lfdi)
+  }
+
+  // choiceText names a device in the picker: its name when it has one,
+  // otherwise its EndDevice id and the LFDI prefix.
+  function choiceText(c: DeviceChoice): string {
+    return chosenName(c) || c.label + (c.lfdi === '' ? '' : ' (' + deviceLabel(c.lfdi) + ')')
   }
 
   async function loadFleets() {
@@ -333,10 +341,10 @@
         ? 'A plain dispatch, carrying out no grant.'
         : `Carrying out grant ${grant.response.mRID} (request ${grant.frqId}, ${directionLabel(grant.response.direction)}).`
     const dev = choices.find((c) => c.id === deviceId)
-    const device = dev === undefined ? `device ${deviceId}` : `device ${dev.label}${dev.lfdi === '' ? '' : ` (LFDI ${dev.lfdi})`}`
+    const device = dev === undefined ? `device ${deviceId}` : `device ${chosenName(dev) || dev.label}${dev.lfdi === '' ? '' : ` (LFDI ${dev.lfdi})`}`
     const watts = b.targetW.value * Math.pow(10, b.targetW.multiplier)
     return (
-      `Send a control to ${device} of fleet ${short(fleet.aggregatorLFDI)} through program ${program?.description || program?.mRID || programHref}. It reaches that device only, not the whole fleet. ` +
+      `Send a control to ${device} of fleet ${deviceLabel(fleet.aggregatorLFDI)} through program ${program?.description || program?.mRID || programHref}. It reaches that device only, not the whole fleet. ` +
       `target power ${formatQuantity(watts, 'W')} (DER frame: positive discharges, negative charges), ` +
       `${when}${b.startTime === undefined ? ` for ${b.durationSeconds} s` : ''}. ${carrying}`
     )
@@ -463,7 +471,7 @@
         >
           <option value="">(pick fleet)</option>
           {#each fleets as f (f.aggregatorLFDI)}
-            <option value={f.aggregatorLFDI}>{short(f.aggregatorLFDI)} ({f.rollup.deviceCount} devices)</option>
+            <option value={f.aggregatorLFDI}>{deviceLabel(f.aggregatorLFDI)} ({f.rollup.deviceCount} devices)</option>
           {/each}
         </select>
       </label>
@@ -537,7 +545,7 @@
             <select data-testid="dispatch-device" value={deviceId} disabled={locked} onchange={(e) => setDevice(e.currentTarget.value)}>
               <option value="">(pick device)</option>
               {#each choices as c (c.id)}
-                <option value={c.id}>{c.label}{c.lfdi === '' ? '' : ' (' + short(c.lfdi) + ')'}</option>
+                <option value={c.id}>{choiceText(c)}</option>
               {/each}
             </select>
           </label>

@@ -9,6 +9,7 @@
   import type { DashboardColumn, DashboardDevice } from '../lib/dashboard'
   import { commsClass, commsLabel, formatAge } from '../lib/comms'
   import { deviceConnectionView, deviceInverterView } from '../lib/derstatus'
+  import { deviceLabel, deviceName, renameDevice } from '../lib/devices'
   import ReportedCell from './ReportedCell.svelte'
   import DevicePrograms from './DevicePrograms.svelte'
 
@@ -75,6 +76,40 @@
   let selected = $state<Record<string, string>>({})
   let error = $state('')
 
+  // The device whose name is being edited, and the draft text. One at a time,
+  // so a second Edit name closes the first without saving it.
+  let editingLfdi = $state('')
+  let draftName = $state('')
+  let renameError = $state('')
+  let renaming = $state(false)
+
+  function startRename(lfdi: string) {
+    editingLfdi = lfdi
+    draftName = deviceName(lfdi)
+    renameError = ''
+  }
+
+  function cancelRename() {
+    editingLfdi = ''
+    renameError = ''
+  }
+
+  async function saveRename() {
+    if (renaming || editingLfdi === '') return
+    const saving = editingLfdi
+    renaming = true
+    try {
+      const res = await renameDevice(saving, draftName.trim())
+      if (!res.ok) {
+        renameError = `Rename failed (${res.status}): ${res.error}`
+        return
+      }
+      if (editingLfdi === saving) cancelRename()
+    } finally {
+      renaming = false
+    }
+  }
+
   async function assign(deviceID: string) {
     const fsaHref = selected[deviceID]
     if (!fsaHref) return
@@ -95,7 +130,7 @@
   <h2>End Devices</h2>
   <table>
     <thead>
-      <tr><th>SFDI</th><th>LFDI</th><th>Enabled</th><th>Comms</th><th>Last request</th><th>DER connection (reported)</th><th>Inverter state (reported)</th>{#each columns as col (col.id)}<th>{col.label}{#if col.error}<span style="color: #f59e0b; cursor: help" title={col.error} data-testid="device-column-error-{col.id}" role="img" aria-label="Column failed: {col.error}"> (!)</span>{/if}</th>{/each}<th>Href</th><th>Programs</th><th>Assign FSA</th></tr>
+      <tr><th>Device</th><th>LFDI</th><th>Enabled</th><th>Comms</th><th>Last request</th><th>DER connection (reported)</th><th>Inverter state (reported)</th>{#each columns as col (col.id)}<th>{col.label}{#if col.error}<span style="color: #f59e0b; cursor: help" title={col.error} data-testid="device-column-error-{col.id}" role="img" aria-label="Column failed: {col.error}"> (!)</span>{/if}</th>{/each}<th>Href</th><th>Programs</th><th>Assign FSA</th></tr>
     </thead>
     <tbody id="deviceTable">
       {#if devices.length === 0}
@@ -104,7 +139,32 @@
         {#each devices as device (device.href)}
           {@const deviceID = deviceIdFromHref(device.href)}
           <tr>
-            <td class="mono" data-testid="device-sfdi">{device.sfdi}</td>
+            <td data-testid="device-label-cell">
+              {#if editingLfdi !== '' && editingLfdi === device.lfdi}
+                <input
+                  type="text"
+                  maxlength="32"
+                  aria-label="Name of device {deviceLabel(device.lfdi, device.sfdi)}"
+                  data-testid="device-name-input"
+                  placeholder="Name (empty clears it)"
+                  bind:value={draftName}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') void saveRename()
+                    if (e.key === 'Escape' && !renaming) cancelRename()
+                  }}
+                />
+                <button class="btn btn-small" disabled={renaming} data-testid="device-name-save" onclick={saveRename}>Save</button>
+                <button class="btn btn-small" disabled={renaming} data-testid="device-name-cancel" onclick={cancelRename}>Cancel</button>
+              {:else}
+                <span class="mono" data-testid="device-label">{deviceLabel(device.lfdi, device.sfdi)}</span>
+                <button
+                  class="btn btn-small"
+                  data-testid="device-name-edit-{deviceID}"
+                  aria-label="Edit name of device {deviceLabel(device.lfdi, device.sfdi)}"
+                  disabled={!device.lfdi || renaming} onclick={() => startRename(device.lfdi)}>Edit name</button
+                >
+              {/if}
+            </td>
             <td class="mono" data-testid="device-lfdi">{(device.lfdi ?? '').substring(0, 16)}...</td>
             <td class={device.enabled === true ? 'online' : 'offline'} data-testid="device-enabled">{enabledLabel(device.enabled)}</td>
             <td class={commsClass(device.comms)} data-testid="device-comms">{commsLabel(device.comms)}</td>
@@ -151,6 +211,9 @@
   </table>
   {#if error}
     <div class="result err" data-testid="device-table-error">{error}</div>
+  {/if}
+  {#if renameError}
+    <div class="result err" role="alert" data-testid="device-rename-error">{renameError}</div>
   {/if}
 </div>
 

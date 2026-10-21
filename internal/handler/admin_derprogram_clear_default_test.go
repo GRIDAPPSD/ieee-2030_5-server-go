@@ -309,3 +309,47 @@ func TestUpdateDeviceProgram_NullOnAFixtureProgram(t *testing.T) {
 		t.Errorf("version = %d, want it untouched", versionNum(p.Version))
 	}
 }
+
+// #1043: a program whose default was removed takes one again, with a newly
+// minted mRID and a version above the removed default's.
+func TestUpdateDeviceProgram_ClearThenSetServesANewDefault(t *testing.T) {
+	t.Parallel()
+	f := newTemplateFixture(t)
+	f.assign(t, "1", "fsa-A")
+	created := f.createDeviceProgram(t, "1", "fsa-A", voltSupportBody)
+	if w := f.do(http.MethodPut, devicePath("1", created.ID), setBody); w.Code != http.StatusOK {
+		t.Fatalf("set: %d %s", w.Code, w.Body.String())
+	}
+	removed := defaultOf(t, f, "1", "fsa-A", created.ID)
+	if w := f.do(http.MethodPut, devicePath("1", created.ID), clearBody); w.Code != http.StatusOK {
+		t.Fatalf("clear: %d %s", w.Code, w.Body.String())
+	}
+	requireNoDefault(t, f, "1", "fsa-A", created.ID)
+	f.notifier.take()
+
+	w := f.do(http.MethodPut, devicePath("1", created.ID), `{"description":"peak shave","primacy":70,"defaultControl":{"type":"maxLimW","maxLimW":2500}}`)
+	if w.Code != http.StatusOK || !hasDefaultKey(t, w.Body.Bytes()) {
+		t.Fatalf("set again: %d %s", w.Code, w.Body.String())
+	}
+	d := defaultOf(t, f, "1", "fsa-A", created.ID)
+	p, _ := f.copies.Programs.Get(context.Background(), "1", created.ID)
+	if !penMRIDPattern.MatchString(d.MRID) || d.MRID == p.MRID {
+		t.Errorf("default mRID = %q, want a minted mRID distinct from the program's %q", d.MRID, p.MRID)
+	}
+	if d.DERControlBase == nil || uint16(*d.DERControlBase.OpModMaxLimW) != 2500 || d.Href != "/edev/1/fsa/fsa-A/derp/"+created.ID+"/dderc" {
+		t.Errorf("default = %+v", d)
+	}
+	if versionNum(d.Version) <= versionNum(removed.Version) || versionNum(d.Version) != versionNum(p.Version) {
+		t.Errorf("default version %d, program version %d, removed default version %d: want it above the removed one", versionNum(d.Version), versionNum(p.Version), versionNum(removed.Version))
+	}
+	if p.DefaultDERControlLink == nil || p.DefaultDERControlLink.Href != d.Href {
+		t.Errorf("program link = %+v, want %s", p.DefaultDERControlLink, d.Href)
+	}
+	requireDefaultServed(t, f, "1", "fsa-A", created.ID)
+	if !strings.Contains(wireDefault(f, "1", "fsa-A", created.ID), d.MRID) {
+		t.Errorf("wire default does not carry mRID %s", d.MRID)
+	}
+	if got, want := f.notifier.take(), edited("/edev/1/fsa/fsa-A/derp/"+created.ID, true); !slices.Equal(got, want) {
+		t.Errorf("notifications = %+v, want %+v", got, want)
+	}
+}

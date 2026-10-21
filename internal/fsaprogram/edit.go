@@ -117,6 +117,57 @@ func EditClearingDefault(ctx context.Context, programs ProgramStore, defaults De
 	return editLocked(ctx, programs, defaults, defaults.Delete, ref, scope, mutateProgram, nil)
 }
 
+// DefaultCreator is the slice of the DefaultDERControl store a first default
+// needs.
+type DefaultCreator interface {
+	Create(ctx context.Context, parentID, id string, resource sep2.DefaultDERControl) error
+	Delete(ctx context.Context, parentID, id string) error
+}
+
+// EditCreatingDefault edits a program that has no default control and gives it
+// seed as one. The program links to it at its own href plus "/dderc" and its
+// version is raised once. The default's version is the program's new version,
+// which is above every version an earlier default of this program held, since
+// a default's version only rises with the program's. The default is written
+// first and removed again if the program write fails.
+func EditCreatingDefault(ctx context.Context, programs ProgramStore, defaults DefaultCreator, ref Ref, scope string,
+	mutateProgram func(*sep2.DERProgram) error, seed sep2.DefaultDERControl) (Changes, error) {
+	editMu.Lock()
+	defer editMu.Unlock()
+
+	pBefore, err := programs.Get(ctx, ref.DeviceID, ref.ProgramID)
+	if err != nil {
+		return Changes{}, fmt.Errorf("reading program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
+	}
+	pAfter := pBefore.Copy()
+	pAfter.Subscribable = cloneUint8(pAfter.Subscribable)
+	if mutateProgram != nil {
+		if err := mutateProgram(&pAfter); err != nil {
+			return Changes{}, err
+		}
+	}
+	if pAfter.Version, err = NextVersion(pBefore.Version); err != nil {
+		return Changes{}, err
+	}
+	href := pBefore.Href + "/dderc"
+	pAfter.DefaultDERControlLink = &sep2.Link{Href: href}
+	seed.Href = href
+	v := *pAfter.Version
+	seed.Version = &v
+
+	if err := defaults.Create(ctx, scope, coresingleton.SingletonKey, seed); err != nil {
+		return Changes{}, fmt.Errorf("writing default control %s: %w", scope, err)
+	}
+	if err := programs.Update(ctx, ref.DeviceID, ref.ProgramID, pAfter); err != nil {
+		err = fmt.Errorf("writing program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
+		if rerr := defaults.Delete(ctx, scope, coresingleton.SingletonKey); rerr != nil {
+			return Changes{}, fmt.Errorf("%w: default control %s was created: %v; removing it: %v", ErrHalfApplied, scope, err, rerr)
+		}
+		return Changes{}, err
+	}
+	return Changes{Program: true, Default: true}, nil
+}
+
 // editLocked is EditWithDefault under editMu. A non-nil remove deletes the
 // stored default after the program is written, and unlinks it from the program.
 func editLocked(ctx context.Context, programs ProgramStore, defaults DefaultStore,

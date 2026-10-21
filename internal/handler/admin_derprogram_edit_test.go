@@ -299,12 +299,18 @@ func TestUpdateDeviceProgram_EditsAFixtureProgram(t *testing.T) {
 		t.Errorf("program version = %d, want 2", versionNum(p.Version))
 	}
 
+	// A program with no default takes one when a value is sent (#1043).
 	w = f.do(http.MethodPut, devicePath("2", "0"), `{"description":"x","primacy":1,"defaultControl":{"type":"maxLimW","maxLimW":3000}}`)
-	if w.Code != http.StatusConflict || decodeCoded(t, w.Body.Bytes()).Code != "no_default_control" {
-		t.Errorf("default edit on a program with none: %d %s, want 409 no_default_control", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("default set on a program with none: %d %s, want 200", w.Code, w.Body.String())
 	}
-	if p, _ := f.copies.Programs.Get(context.Background(), "2", "0"); p.Version != nil || p.Description != "fixture" {
-		t.Errorf("device 2 program = %+v, want it untouched", p)
+	p2, _ := f.copies.Programs.Get(context.Background(), "2", "0")
+	if p2.Description != "x" || versionNum(p2.Version) != 1 || p2.MRID != "0000000000000000000000000000F1C5" {
+		t.Errorf("device 2 program = %+v", p2)
+	}
+	d2 := defaultOf(t, f, "2", "0", "0")
+	if d2.DERControlBase == nil || uint16(*d2.DERControlBase.OpModMaxLimW) != 3000 || versionNum(d2.Version) != 1 || d2.MRID == "" || d2.MRID == p2.MRID {
+		t.Errorf("device 2 default = %+v", d2)
 	}
 }
 

@@ -298,21 +298,6 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 			return
 		}
 		scope := derhref.ScopeKey(deviceID, fsaID, id)
-		var mutateDefault func(*sep2.DefaultDERControl) error
-		if e.defaultBase != nil {
-			if _, err := h.Copies.Defaults.Get(r.Context(), scope, coresingleton.SingletonKey); errors.Is(err, store.ErrNotFound) {
-				refuseProgram(w, "no_default_control", "this program has no default control to edit")
-				return
-			} else if err != nil {
-				h.templateFailed(w, r, "default_lookup", err)
-				return
-			}
-			mutateDefault = func(d *sep2.DefaultDERControl) error {
-				base := e.defaultBase.Copy()
-				d.DERControlBase = &base
-				return nil
-			}
-		}
 		mutateProgram := func(p *sep2.DERProgram) error {
 			p.Description, p.Primacy = e.description, e.primacy
 			return nil
@@ -320,10 +305,13 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 		ref := fsaprogram.Ref{DeviceID: deviceID, ProgramID: id}
 		var ch fsaprogram.Changes
 		var err error
-		if e.clearDefault {
+		switch {
+		case e.clearDefault:
 			ch, err = fsaprogram.EditClearingDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram)
-		} else {
-			ch, err = fsaprogram.EditWithDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram, mutateDefault)
+		case e.defaultBase != nil:
+			ch, err = h.setDeviceDefault(r, ref, scope, prog.MRID, e.defaultBase, mutateProgram)
+		default:
+			ch, err = fsaprogram.EditWithDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram, nil)
 		}
 		switch {
 		case err == nil:
@@ -346,6 +334,32 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, view)
+	}
+}
+
+// setDeviceDefault replaces the program's default control, or gives a program
+// that has none a new one with a freshly minted mRID.
+func (h *AdminFSAHandler) setDeviceDefault(r *http.Request, ref fsaprogram.Ref, scope, programMRID string, base *sep2.DERControlBase,
+	mutateProgram func(*sep2.DERProgram) error) (fsaprogram.Changes, error) {
+	_, err := h.Copies.Defaults.Get(r.Context(), scope, coresingleton.SingletonKey)
+	switch {
+	case err == nil:
+		return fsaprogram.EditWithDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram,
+			func(d *sep2.DefaultDERControl) error {
+				b := base.Copy()
+				d.DERControlBase = &b
+				return nil
+			})
+	case errors.Is(err, store.ErrNotFound):
+		m, err := h.mintDefaultMRID(programMRID)
+		if err != nil {
+			return fsaprogram.Changes{}, fmt.Errorf("minting the default control mRID: %w", err)
+		}
+		b := base.Copy()
+		return fsaprogram.EditCreatingDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram,
+			sep2.DefaultDERControl{MRID: m, DERControlBase: &b})
+	default:
+		return fsaprogram.Changes{}, fmt.Errorf("reading default control %s: %w", scope, err)
 	}
 }
 

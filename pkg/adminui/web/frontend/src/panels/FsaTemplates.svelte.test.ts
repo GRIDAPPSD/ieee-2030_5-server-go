@@ -92,6 +92,17 @@ describe('FsaTemplates list', () => {
     expect(within(row).getByTestId('template-devices')).toHaveTextContent('2')
   })
 
+  it('shows a template whose default control was removed, without crashing the list', async () => {
+    const { defaultControl: _removed, ...bare } = template({ id: 'derp-2', description: 'no default' })
+    fake({ [LIST]: { status: 200, body: { templates: [template(), bare] } } })
+    mount()
+
+    const row = await screen.findByTestId('template-row-derp-2')
+    expect(within(row).getByTestId('template-control')).toHaveTextContent('No default control')
+    expect(within(row).getByTestId('template-devices')).toHaveTextContent('2')
+    expect(within(screen.getByTestId('template-row-derp-1')).getByTestId('template-control')).toHaveTextContent('maxLimW')
+  })
+
   it('says there are no templates only after a successful empty read', async () => {
     fake({ [LIST]: { status: 200, body: { templates: [] } } })
     mount()

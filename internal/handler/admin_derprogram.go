@@ -301,14 +301,24 @@ func (h *AdminFSAHandler) mintTemplateIDs(t *memory.ProgramTemplate) error {
 		}
 		t.MRID = m
 	}
+	m, err := h.mintDefaultMRID(t.MRID)
+	if err != nil {
+		return err
+	}
+	t.DefaultMRID = m
+	return nil
+}
+
+// mintDefaultMRID returns a new mRID for a default control, never equal to its
+// program's.
+func (h *AdminFSAHandler) mintDefaultMRID(programMRID string) (string, error) {
 	for {
 		m, err := mrid.New(rand.Read, h.PEN)
 		if err != nil {
-			return err
+			return "", err
 		}
-		if m != t.MRID {
-			t.DefaultMRID = m
-			return nil
+		if m != programMRID {
+			return m, nil
 		}
 	}
 }

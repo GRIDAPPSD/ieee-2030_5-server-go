@@ -145,7 +145,7 @@
             <td data-testid="template-description">{t.description}</td>
             <td data-testid="template-primacy">{t.primacy}</td>
             <td data-testid="template-version">{t.version}</td>
-            <td data-testid="template-control">{t.defaultControl.type}</td>
+            <td data-testid="template-control">{t.defaultControl?.type ?? 'No default control'}</td>
             <td data-testid="template-devices">{t.copies.length}</td>
             <td>
               <button

@@ -138,7 +138,8 @@ test('an empty server becomes controllable from the UI alone', async ({ page, re
   await page.getByTestId('tab-control').click();
   await page.locator('#controlDevice').selectOption({ label: managed.sfdi });
   await page.locator('#controlProgram').selectOption({ label: TEMPLATE });
-  await page.locator('#controlType').selectOption('connect');
+  await page.getByTestId('control-fn-opModConnect').check();
+  await page.getByTestId('control-fv-opModConnect').check();
   await page.locator('#controlStartNow').uncheck();
   await page.locator('#controlStartAt').fill(localInput(new Date(Date.now() + 3600 * 1000)));
   await page.locator('#controlDuration').fill('30');

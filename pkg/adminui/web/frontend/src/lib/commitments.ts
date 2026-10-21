@@ -15,7 +15,7 @@ export interface CommittedGrant {
   energyRemainingWh: number | null
 }
 
-// targetW is opModTargetW as stored, discharge positive.
+// targetW is the target power setpoint as stored, discharge positive.
 export interface CommittedControl {
   mRID: string
   edevId: string

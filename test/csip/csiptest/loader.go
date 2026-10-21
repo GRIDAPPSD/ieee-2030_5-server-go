@@ -36,6 +36,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol/dercurve"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -418,7 +419,7 @@ func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOptio
 		if err := validatePerCents(d.DERControlBase); err != nil {
 			return fmt.Errorf("default_der_controls[%d]: %w", i, err)
 		}
-		key := bootfixture.CompositeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
+		key := derhref.ScopeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
 		dc, err := buildDefaultDERControl(d)
 		if err != nil {
 			return fmt.Errorf("%s: %w", bootfixture.DefaultDERControlEntry(i, key), err)
@@ -438,7 +439,7 @@ func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOptio
 		if err := validatePerCents(c.DERControlBase); err != nil {
 			return fmt.Errorf("der_controls[%d] (id=%q): %w", i, c.ID, err)
 		}
-		key := bootfixture.CompositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
+		key := derhref.ScopeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
 		dc, err := buildDERControl(c)
 		if err != nil {
 			return fmt.Errorf("%s: %w", bootfixture.DERControlEntry(i, c.ID, key), err)

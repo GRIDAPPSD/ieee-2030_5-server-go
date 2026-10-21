@@ -93,7 +93,7 @@ func TestCancel_DiskWriteFails_ReturnsDefiniteNotUndoError(t *testing.T) {
 		}
 	}
 
-	scopeKey := scopeKeyOf(res.Scope)
+	scopeKey := res.Scope.Key()
 	lc, gerr := h.lifecycles.Get(context.Background(), scopeKey, res.ID)
 	if gerr != nil {
 		t.Fatalf("Get lifecycle after the failed Cancel: %v", gerr)

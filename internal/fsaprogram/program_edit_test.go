@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -148,7 +149,7 @@ func TestSync_WritesOnlyAStaleCopy(t *testing.T) {
 		t.Fatalf("Sync = %+v, %v", ch, err)
 	}
 	assertCopy(t, c, "7", "fsa-A", after)
-	d, _ := c.Defaults.Get(ctx, DefaultScope("7", "fsa-A", after.ID), coresingleton.SingletonKey)
+	d, _ := c.Defaults.Get(ctx, derhref.ScopeKey("7", "fsa-A", after.ID), coresingleton.SingletonKey)
 	if versionOf(d.Version) != 1 {
 		t.Errorf("default version = %d, want 1", versionOf(d.Version))
 	}
@@ -174,7 +175,7 @@ func TestSync_PartialFailureLeavesRevisionsThatTheNextSyncFinishes(t *testing.T)
 		t.Fatalf("Sync = %+v, %v; want the default written and %v", ch, err, boom)
 	}
 	p, _ := healthyP.Get(ctx, "7", after.ID)
-	d, _ := healthyD.Get(ctx, DefaultScope("7", "fsa-A", after.ID), coresingleton.SingletonKey)
+	d, _ := healthyD.Get(ctx, derhref.ScopeKey("7", "fsa-A", after.ID), coresingleton.SingletonKey)
 	if versionOf(p.Version) != int(before.Version) || p.Description != before.Description ||
 		versionOf(d.Version) != 1 || *d.DERControlBase.OpModMaxLimW != 4000 {
 		t.Fatalf("after the failure: program v%d %q, default v%d %v", versionOf(p.Version), p.Description, versionOf(d.Version), *d.DERControlBase.OpModMaxLimW)
@@ -263,7 +264,7 @@ func seedFixture(t *testing.T, c Copies, dev, fsa, id string) {
 	if err := c.Programs.Create(ctx, dev, id, fixture); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Defaults.Create(ctx, DefaultScope(dev, fsa, id), coresingleton.SingletonKey, sep2.DefaultDERControl{MRID: "D0"}); err != nil {
+	if err := c.Defaults.Create(ctx, derhref.ScopeKey(dev, fsa, id), coresingleton.SingletonKey, sep2.DefaultDERControl{MRID: "D0"}); err != nil {
 		t.Fatal(err)
 	}
 }

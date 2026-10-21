@@ -31,7 +31,7 @@ func (e *LiveControlsError) Error() string {
 func (i *Issuer) Retire(ctx context.Context, scopes []Scope, remove func(context.Context) error) error {
 	keys := make([]string, 0, len(scopes))
 	for _, s := range scopes {
-		keys = append(keys, scopeKeyOf(s))
+		keys = append(keys, s.Key())
 	}
 	// Sorted, so two Retires over overlapping scopes cannot deadlock; Issue
 	// and Cancel each hold one scope lock at a time.

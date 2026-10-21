@@ -143,3 +143,31 @@ func TestControlListScope(t *testing.T) {
 		t.Fatal("ControlListScope on a program href (no /derc suffix): ok = true, want false")
 	}
 }
+
+// The scope key is the store parent key every DER program's controls,
+// lifecycles and default control live under; the stores and the issuer
+// must derive the same string for the same program.
+func TestScopeKeyFormat(t *testing.T) {
+	cases := []struct{ edev, fsa, derp, want string }{
+		{"dev1", "0", "p1", "dev1/0/p1"},
+		{"3", "1", "7", "3/1/7"},
+		{"a/b", "c", "d", "a/b/c/d"},
+	}
+	for _, tc := range cases {
+		if got := ScopeKey(tc.edev, tc.fsa, tc.derp); got != tc.want {
+			t.Errorf("ScopeKey(%q, %q, %q) = %q, want %q", tc.edev, tc.fsa, tc.derp, got, tc.want)
+		}
+	}
+}
+
+func TestSplitScopeKey(t *testing.T) {
+	edev, fsa, derp, ok := SplitScopeKey(ScopeKey("3", "1", "7"))
+	if !ok || edev != "3" || fsa != "1" || derp != "7" {
+		t.Fatalf("SplitScopeKey round trip = %q, %q, %q, %v; want 3, 1, 7, true", edev, fsa, derp, ok)
+	}
+	for _, bad := range []string{"", "3/1", "3/1/7/9", "3//7", "/1/7", "3/1/"} {
+		if _, _, _, ok := SplitScopeKey(bad); ok {
+			t.Errorf("SplitScopeKey(%q) ok = true, want false", bad)
+		}
+	}
+}

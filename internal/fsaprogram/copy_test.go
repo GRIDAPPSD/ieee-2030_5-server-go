@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -63,7 +64,7 @@ func assertCopy(t *testing.T, c Copies, dev, fsa string, tmpl memory.ProgramTemp
 	if p.DERCurveListLink != nil || p.ActiveDERControlListLink != nil {
 		t.Errorf("curve or active list link set: %+v %+v", p.DERCurveListLink, p.ActiveDERControlListLink)
 	}
-	d, err := c.Defaults.Get(ctx, dev+"/"+fsa+"/"+tmpl.ID, coresingleton.SingletonKey)
+	d, err := c.Defaults.Get(ctx, derhref.ScopeKey(dev, fsa, tmpl.ID), coresingleton.SingletonKey)
 	if err != nil {
 		t.Fatalf("default control: %v", err)
 	}
@@ -85,7 +86,7 @@ func assertNoCopy(t *testing.T, c Copies, dev, fsa, id string) {
 	if _, err := c.Programs.Get(ctx, dev, id); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("program %s/%s err = %v, want ErrNotFound", dev, id, err)
 	}
-	if _, err := c.Defaults.Get(ctx, dev+"/"+fsa+"/"+id, coresingleton.SingletonKey); !errors.Is(err, store.ErrNotFound) {
+	if _, err := c.Defaults.Get(ctx, derhref.ScopeKey(dev, fsa, id), coresingleton.SingletonKey); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("default %s/%s/%s err = %v, want ErrNotFound", dev, fsa, id, err)
 	}
 	if _, err := c.Origins.Get(ctx, dev, id); !errors.Is(err, store.ErrNotFound) {

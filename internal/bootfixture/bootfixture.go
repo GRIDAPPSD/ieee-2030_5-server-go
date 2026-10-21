@@ -35,6 +35,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol/dercurve"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -414,7 +415,7 @@ func createDERProgram(ctx context.Context, target *Target, i int, p DERProgramSp
 }
 
 func createDefaultDERControl(ctx context.Context, target *Target, i int, d DefaultDERControlSpec) error {
-	key := CompositeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
+	key := derhref.ScopeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
 	dc, err := buildDefaultDERControl(d)
 	if err != nil {
 		return fmt.Errorf("%s: %w", DefaultDERControlEntry(i, key), err)
@@ -426,7 +427,7 @@ func createDefaultDERControl(ctx context.Context, target *Target, i int, d Defau
 }
 
 func createDERControl(ctx context.Context, target *Target, i int, c DERControlSpec) error {
-	key := CompositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
+	key := derhref.ScopeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
 	dc, err := buildDERControl(c)
 	if err != nil {
 		return fmt.Errorf("%s: %w", DERControlEntry(i, c.ID, key), err)
@@ -626,9 +627,4 @@ func BuildDERCurve(s DERCurveSpec, loadTime int64) (sep2.DERCurve, error) {
 		}
 	}
 	return curve, nil
-}
-
-// CompositeKey is the scope key a program's controls are stored under.
-func CompositeKey(edev, fsa, derp string) string {
-	return edev + "/" + fsa + "/" + derp
 }

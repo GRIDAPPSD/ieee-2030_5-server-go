@@ -61,10 +61,6 @@ func NewIssuer(programs programStore, controls controlStore, lifecycles lifecycl
 	}, nil
 }
 
-func scopeKeyOf(s Scope) string {
-	return s.EndDeviceID + "/" + s.FSAID + "/" + s.DERProgramID
-}
-
 // undoTimeout bounds the whole undo sequence following one failed forward
 // write, however many stores it touches: one budget per call, not one
 // per write.
@@ -186,7 +182,7 @@ func (i *Issuer) issue(ctx context.Context, req CreateRequest, fleet Fleet) (Res
 	if err != nil {
 		return Result{}, err
 	}
-	scopeKey := scopeKeyOf(scope)
+	scopeKey := scope.Key()
 
 	unlock := i.lockScope(scopeKey)
 	defer unlock()
@@ -509,7 +505,7 @@ func (i *Issuer) revertMarks(ctx context.Context, scopeKey string, candidates []
 // *UndoError naming the control; the record may or may not carry the
 // cancellation.
 func (i *Issuer) Cancel(ctx context.Context, scope Scope, id string, reason string) (LifecycleRecord, error) {
-	scopeKey := scopeKeyOf(scope)
+	scopeKey := scope.Key()
 
 	unlock := i.lockScope(scopeKey)
 	defer unlock()
@@ -567,7 +563,7 @@ func (i *Issuer) restoreLifecycle(ctx context.Context, scope Scope, id, mrid str
 	if !skipCompensation(i.lifecycles) {
 		uctx, cancel := undoContext(ctx)
 		defer cancel()
-		if rerr := i.lifecycles.Update(uctx, scopeKeyOf(scope), id, before); !undoWriteOK(rerr) {
+		if rerr := i.lifecycles.Update(uctx, scope.Key(), id, before); !undoWriteOK(rerr) {
 			return LifecycleRecord{}, &UndoError{Step: step, ControlKept: true, LifecycleKept: true, ID: id, Scope: scope, MRID: mrid, cause: cause, reverts: []error{rerr}}
 		}
 	}

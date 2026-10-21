@@ -11,6 +11,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
@@ -494,7 +495,7 @@ func (h *AdminFSAHandler) updateDeviceOnlyProgram(w http.ResponseWriter, r *http
 		}
 	}
 	ctx := r.Context()
-	scope := fsaprogram.DefaultScope(deviceID, fsaID, progID)
+	scope := derhref.ScopeKey(deviceID, fsaID, progID)
 	pBefore, err := h.Copies.Programs.Get(ctx, deviceID, progID)
 	if err != nil {
 		h.templateFailed(w, r, "program_lookup", err)

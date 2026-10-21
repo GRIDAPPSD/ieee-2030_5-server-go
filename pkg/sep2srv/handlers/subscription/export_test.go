@@ -51,11 +51,3 @@ func CountTransportDials(m *Manager) *atomic.Int32 {
 func DeliveryTimeouts(m *Manager) (post, dialer, dialBudget, resolve time.Duration) {
 	return m.client.Timeout, m.guard.dialer.Timeout, m.guard.dialTimeout, m.guard.resolveTimeout
 }
-
-// HoldClock fixes the time source for server-made subscription IDs at t and
-// returns a restore func. Not safe alongside parallel creates.
-func HoldClock(t time.Time) (restore func()) {
-	prev := subscriptionClock
-	subscriptionClock = func() time.Time { return t }
-	return func() { subscriptionClock = prev }
-}

@@ -21,6 +21,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
 	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -83,7 +84,7 @@ type PostRateProvider func(lfdi string) (rate uint32, ok bool)
 // from the same instant as the id rather than from a second clock read, so a
 // record's timestamp and its ordering key can never disagree.
 func stampMirrorMeterReading(mmr *sep2.MirrorMeterReading, parentID string, nanos int64) string {
-	id := fmt.Sprintf("%020d", nanos)
+	id := idmint.Format20(nanos)
 	mmr.Href = fmt.Sprintf("/mup/%s/mr/%s", parentID, id)
 	mmr.LastUpdateTime = time.Unix(0, nanos).Unix()
 	return id
@@ -174,7 +175,7 @@ func stampServerOwnedMirrorFields(mup *sep2.MirrorUsagePoint, id, device string,
 
 	mup.Href = MirrorHref(id)
 
-	baseNanos := time.Now().UnixNano()
+	baseNanos := idmint.Reserve(len(mup.MirrorMeterReading))
 	for i := range mup.MirrorMeterReading {
 		stampMirrorMeterReading(&mup.MirrorMeterReading[i], id, baseNanos+int64(i))
 	}
@@ -1430,7 +1431,7 @@ func HandlePostMirrorMeterReading(
 		// readings. The id is the store's ordering key, so distinct ids are
 		// required, and deriving lastUpdateTime from the same instant keeps a
 		// record's timestamp and its ordering key from disagreeing.
-		baseNanos := time.Now().UnixNano()
+		baseNanos := idmint.Reserve(len(readings))
 		ids := make([]string, len(readings))
 		for i := range readings {
 			ids[i] = stampMirrorMeterReading(&readings[i], parentID, baseNanos+int64(i))

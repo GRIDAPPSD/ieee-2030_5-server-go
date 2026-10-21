@@ -10,6 +10,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -87,7 +88,7 @@ func HandlePostTextMessage(tmStore store.ScopedStore[sep2.TextMessage]) http.Han
 		}
 
 		now := time.Now()
-		id := fmt.Sprintf("tm-%d", now.UnixNano())
+		id := idmint.Prefixed("tm")
 		tm.Href = fmt.Sprintf("/msg/%s/tm/%s", msgID, id)
 
 		// creationTime is required on every Event-derived resource (TextMessage

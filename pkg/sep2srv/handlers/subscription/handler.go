@@ -10,11 +10,10 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync/atomic"
-	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/paging"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -36,14 +35,6 @@ var subscriptionIDOverride func(r *http.Request) string
 // /test/mutations/subscription-cancel call). Set only when the
 // csip_test_hooks build tag is present. Nil in production builds.
 var subscriptionRefuseCreate func(id string) bool
-
-// subscriptionClock is the time source for server-made subscription IDs;
-// tests replace it to hold the reading still.
-var subscriptionClock = time.Now
-
-// subscriptionSeq makes IDs unique within a process when two POSTs read the
-// same clock value; the clock part keeps them apart across restarts.
-var subscriptionSeq atomic.Uint64
 
 // subscriptionHref builds the href a subscription created under EndDevice
 // edevID with storage id id carries on the wire. The create and delete
@@ -268,7 +259,7 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 			id = subscriptionIDOverride(r)
 		}
 		if id == "" {
-			id = fmt.Sprintf("sub-%d-%d", subscriptionClock().UnixNano(), subscriptionSeq.Add(1))
+			id = idmint.Prefixed("sub")
 		}
 
 		// Tombstone check (csip_test_hooks only). Refuses re-creation of

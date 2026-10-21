@@ -11,11 +11,31 @@ import (
 )
 
 // FunctionInfo describes one catalog function for GET
-// /api/der/control-functions. Value names the request value's shape.
+// /api/der/control-functions. Value names the request value's shape in prose
+// and the embedded Descriptor names it for a program.
 type FunctionInfo struct {
 	Name        string `json:"name"`
 	Value       string `json:"value"`
 	Description string `json:"description"`
+	Descriptor
+}
+
+// Descriptor is a value kind as the catalog serves it: an integer carries
+// Min and Max, an object its Fields in request order, a curve its CurveType.
+type Descriptor struct {
+	Kind      string      `json:"kind"`
+	Min       *int64      `json:"min,omitempty"`
+	Max       *int64      `json:"max,omitempty"`
+	Fields    []FieldInfo `json:"fields,omitempty"`
+	CurveType *uint8      `json:"curveType,omitempty"`
+}
+
+// FieldInfo is one member of an object value, named as a request names it.
+type FieldInfo struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	Min  *int64 `json:"min,omitempty"`
+	Max  *int64 `json:"max,omitempty"`
 }
 
 // ValueRefusal is a refused request value as wire text: Code is the stable
@@ -127,7 +147,7 @@ func (r *typedRow[I, T, V]) worded(l label) *typedRow[I, T, V] {
 }
 
 func (r *typedRow[I, T, V]) info() FunctionInfo {
-	return FunctionInfo{Name: r.name, Value: r.kind.shape.text(), Description: r.description}
+	return FunctionInfo{Name: r.name, Value: r.kind.shape.text(), Description: r.description, Descriptor: r.kind.shape.describe()}
 }
 
 func (r *typedRow[I, T, V]) present(b *sep2.DERControlBase) bool { return *r.elem(b) != nil }

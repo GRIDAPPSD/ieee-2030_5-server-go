@@ -310,6 +310,9 @@ const (
 	kindBoolean valueKind = iota + 1
 	kindInteger
 	kindObject
+	kindCurve
+	// kindCount ends the range, so a test can visit every kind.
+	kindCount
 )
 
 func (k valueKind) String() string {
@@ -320,6 +323,8 @@ func (k valueKind) String() string {
 		return "integer"
 	case kindObject:
 		return "object"
+	case kindCurve:
+		return "curve"
 	}
 	return ""
 }
@@ -333,19 +338,22 @@ func (k valueKind) noun() string {
 		return "an integer"
 	case kindObject:
 		return "an object"
+	case kindCurve:
+		return "a curve id"
 	}
 	return ""
 }
 
 // shape describes a value kind: its kind, an integer's bounds, an object's
-// members in request order, and the members an object always carries on the
-// wire whatever the request says. The catalog's value text is formatted
-// from it.
+// members in request order, the members an object always carries on the
+// wire whatever the request says, and a curve's DERCurveType. The catalog's
+// value text and descriptor are both read from it.
 type shape struct {
-	kind   valueKind
-	bounds intRange
-	fields []field
-	fixed  []constant
+	kind      valueKind
+	bounds    intRange
+	fields    []field
+	fixed     []constant
+	curveType uint8
 }
 
 // field is one member of an object value; name is its request key, and a
@@ -386,4 +394,23 @@ func (s shape) memberText() string {
 		return s.bounds.typeName
 	}
 	return s.bounds.String()
+}
+
+// describe is the descriptor the catalog serves for s: the same kind and
+// bounds that parse enforces and text prints.
+func (s shape) describe() Descriptor {
+	d := Descriptor{Kind: s.kind.String()}
+	switch s.kind {
+	case kindInteger:
+		d.Min, d.Max = &s.bounds.min, &s.bounds.max
+	case kindObject:
+		d.Fields = make([]FieldInfo, len(s.fields))
+		for i, f := range s.fields {
+			m := f.shape.describe()
+			d.Fields[i] = FieldInfo{Name: f.name, Kind: m.Kind, Min: m.Min, Max: m.Max}
+		}
+	case kindCurve:
+		d.CurveType = &s.curveType
+	}
+	return d
 }

@@ -18,6 +18,10 @@ import (
 // would be "/dc/", the DERCurve list, not a curve.
 var ErrBlankID = errors.New("dercurve: curve id is required")
 
+// hrefPrefix is the path GET /dc/{id} serves a curve under; Href and ID
+// both read it, so they cannot disagree.
+const hrefPrefix = "/dc/"
+
 // Href is the href of the DERCurve stored under id, the one path GET
 // /dc/{id} serves it at. A curve's own href and every link to it are
 // built here so the two cannot disagree.
@@ -25,13 +29,13 @@ func Href(id string) (string, error) {
 	if strings.TrimSpace(id) == "" {
 		return "", ErrBlankID
 	}
-	return "/dc/" + id, nil
+	return hrefPrefix + id, nil
 }
 
 // ID is the id a curve href names, the inverse of Href. ok is false for an
 // href Href could not have built.
 func ID(href string) (id string, ok bool) {
-	id, ok = strings.CutPrefix(href, "/dc/")
+	id, ok = strings.CutPrefix(href, hrefPrefix)
 	if !ok || strings.TrimSpace(id) == "" {
 		return "", false
 	}

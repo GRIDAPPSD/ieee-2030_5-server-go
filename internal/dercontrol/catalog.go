@@ -79,7 +79,7 @@ var (
 		func(b *sep2.DERControlBase) **sep2.SignedPerCent { return &b.OpModFixedW },
 		func(s *FunctionSet) **int64 { return &s.OpModFixedW },
 		func(v *DERControlBaseView) **int16 { return &v.OpModFixedW })
-	rowFreqDroop = row(FuncFreqDroop, "Frequency droop: dead bands dBOF and dBUF, droops kOF and kUF, open loop response time openLoopTms.",
+	rowFreqDroop = row(FuncFreqDroop, "Frequency droop: dead bands dBOF and dBUF in thousandths of a hertz, droops kOF and kUF in thousandths (unitless), open loop response time openLoopTms in hundredths of a second, 0 for no limit.",
 		freqDroopKind(intRange{min: 0, max: math.MaxUint32, typeName: "uint32"}, uint16Range),
 		func(b *sep2.DERControlBase) **sep2.FreqDroopType { return &b.OpModFreqDroop },
 		func(s *FunctionSet) **FreqDroopInput { return &s.OpModFreqDroop },
@@ -458,6 +458,9 @@ func freqDroopKind(band, small intRange) kind[FreqDroopInput, sep2.FreqDroopType
 		},
 		baseView: func(v sep2.FreqDroopType) FreqDroopView {
 			return FreqDroopView(v)
+		},
+		log: func(v sep2.FreqDroopType) []LogAttr {
+			return []LogAttr{{"dBOF", v.DBOF}, {"dBUF", v.DBUF}, {"kOF", v.KOF}, {"kUF", v.KUF}, {"openLoopTms", v.OpenLoopTms}}
 		},
 	}
 }

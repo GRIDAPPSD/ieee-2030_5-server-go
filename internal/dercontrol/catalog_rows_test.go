@@ -129,4 +129,20 @@ func TestAddedRows_Refusals(t *testing.T) {
 	}
 }
 
+// A control carrying only a droop logs the droop values as its audit value.
+func TestFreqDroopAuditValue(t *testing.T) {
+	draft, ref := DecodeFunctions(map[string]json.RawMessage{FuncFreqDroop: json.RawMessage(`{"dBOF":36,"dBUF":37,"kOF":5,"kUF":6,"openLoopTms":500}`)})
+	if ref != nil {
+		t.Fatalf("decode refused: %+v", ref)
+	}
+	base, err := buildBase(CreateRequest{Functions: draft})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []LogAttr{{"dBOF", uint32(36)}, {"dBUF", uint32(37)}, {"kOF", uint16(5)}, {"kUF", uint16(6)}, {"openLoopTms", uint16(500)}}
+	if got := LogAttrs(base); !reflect.DeepEqual(got, want) {
+		t.Errorf("LogAttrs = %+v, want %+v", got, want)
+	}
+}
+
 func int16ptr(v int16) *int16 { return &v }

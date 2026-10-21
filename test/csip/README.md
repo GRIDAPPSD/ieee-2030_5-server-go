@@ -1,8 +1,8 @@
 # CSIP Conformance Harness
 
 This directory holds the CSIP (SunSpec Common Smart Inverter Profile V1.2)
-conformance test suite for `ieee-2030_5-server-go`. Today the suite is one
-end-to-end smoke test; the 25 SunSpec V1.2 conformance requirements land
+conformance test suite for `ieee-2030_5-server-go`. It starts from an
+end-to-end smoke test; SunSpec V1.2 conformance requirements land
 incrementally on top of this scaffold.
 
 CSIP lives in this repository as an opt-in profile, not a separate module;
@@ -151,7 +151,7 @@ Either path works; pick whichever fits your workflow.
 
 ### What it does NOT assert (yet)
 
-- The 25 SunSpec V1.2 conformance requirements. Those will be added as
+- The SunSpec V1.2 conformance requirements. Those will be added as
   sibling tests once the scaffold lands.
 
 ## Related

@@ -467,7 +467,8 @@ func (h *AdminFSAHandler) deviceProgramView(ctx context.Context, deviceID, fsaID
 		if d.DERControlBase != nil {
 			base = *d.DERControlBase
 		}
-		v.DefaultControl = &ProgramDefaultControlView{MRID: d.MRID, Type: controlTypeName(&base), DERControlBase: newDERControlBaseView(&base)}
+		typ, baseView, _ := controlBaseViews(&base)
+		v.DefaultControl = &ProgramDefaultControlView{MRID: d.MRID, Type: typ, DERControlBase: baseView}
 	case !errors.Is(err, store.ErrNotFound):
 		return DeviceProgramView{}, err
 	}

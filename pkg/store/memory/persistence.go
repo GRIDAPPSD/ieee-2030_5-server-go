@@ -1,10 +1,13 @@
 package memory
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/atomicfile"
 )
@@ -101,4 +104,97 @@ func writeSnapshotEnvelope(path string, records any) error {
 	// (e.g. "derprogram persistence: %w"); adding one here would
 	// double-label every caller but the one it was copied from.
 	return atomicfile.Write(path, payload)
+}
+
+// decodeSnapshotRecords decodes a snapshot's records one at a time, so a
+// record that does not decode is refused by its position and id instead of
+// failing the whole file anonymously. Every store's load path calls it.
+func decodeSnapshotRecords[R any](raw json.RawMessage) ([]R, error) {
+	var elems []json.RawMessage
+	if err := json.Unmarshal(raw, &elems); err != nil {
+		return nil, fmt.Errorf("decode records: %w", err)
+	}
+	records := make([]R, 0, len(elems))
+	for i, elem := range elems {
+		var r R
+		if err := json.Unmarshal(elem, &r); err != nil {
+			if field := preV026DERControlBaseField(elem); field != "" {
+				err = fmt.Errorf("%s is in the DERControlBase shape written before core v0.26.0, which this server cannot read or convert; rewrite or remove the record: %w", field, err)
+			}
+			return nil, fmt.Errorf("decode record %d%s: %w", i, recordName(elem), err)
+		}
+		records = append(records, r)
+	}
+	return records, nil
+}
+
+// recordName is " (parent/id)" or " (id)" for a record carrying those keys,
+// else "". It only labels an error, so a record it cannot read gets no label.
+func recordName(elem json.RawMessage) string {
+	var key struct {
+		Parent string `json:"parent"`
+		ID     string `json:"id"`
+	}
+	if json.Unmarshal(elem, &key) != nil || key.ID == "" {
+		return ""
+	}
+	if key.Parent != "" {
+		return fmt.Sprintf(" (%s/%s)", key.Parent, key.ID)
+	}
+	return fmt.Sprintf(" (%s)", key.ID)
+}
+
+// preV026CurveFields are the DERControlBase curve modes core v0.25.0 stored
+// as a bare curve number and v0.26.0 stores as a DERCurveLink.
+var preV026CurveFields = []string{
+	"OpModFreqWatt", "OpModHFRTMustTrip", "OpModHVRTMomentaryCessation", "OpModHVRTMustTrip",
+	"OpModLFRTMustTrip", "OpModLVRTMomentaryCessation", "OpModLVRTMustTrip", "OpModVoltVar", "OpModVoltWatt",
+}
+
+// preV026DERControlBaseField returns the path of the first DERControlBase
+// mode in elem stored in the core v0.25.0 shape: a curve as a number,
+// OpModFixedVar as a ReactivePower (Multiplier and Value), or OpModFreqDroop
+// as a number. "" when there is none.
+func preV026DERControlBaseField(elem json.RawMessage) string {
+	dec := json.NewDecoder(bytes.NewReader(elem))
+	dec.UseNumber()
+	var v any
+	if dec.Decode(&v) != nil {
+		return ""
+	}
+	return findPreV026Field(v, "")
+}
+
+func findPreV026Field(v any, path string) string {
+	switch t := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			child := strings.TrimPrefix(path+"."+k, ".")
+			_, isNumber := t[k].(json.Number)
+			obj, isObject := t[k].(map[string]any)
+			switch {
+			case isNumber && (k == "OpModFreqDroop" || slices.Contains(preV026CurveFields, k)):
+				return child
+			case isObject && k == "OpModFixedVar":
+				if _, old := obj["Multiplier"]; old {
+					return child
+				}
+			}
+			if found := findPreV026Field(t[k], child); found != "" {
+				return found
+			}
+		}
+	case []any:
+		for i, e := range t {
+			if found := findPreV026Field(e, fmt.Sprintf("%s[%d]", path, i)); found != "" {
+				return found
+			}
+		}
+	}
+	return ""
 }

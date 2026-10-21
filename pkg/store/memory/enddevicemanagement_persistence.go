@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 )
@@ -63,9 +62,9 @@ func (s *EndDeviceManagementStore) loadFromFile(path string) error {
 	if env == nil || len(env.Records) == 0 {
 		return nil
 	}
-	var records []managementPairRecord
-	if err := json.Unmarshal(env.Records, &records); err != nil {
-		return fmt.Errorf("decode records: %w", err)
+	records, err := decodeSnapshotRecords[managementPairRecord](env.Records)
+	if err != nil {
+		return err
 	}
 
 	managerOf := make(map[string]string, len(records))

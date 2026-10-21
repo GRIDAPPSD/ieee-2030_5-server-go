@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/stalltest"
 )
 
 // TestShutdownRecordsInFlightExchange is Q5 item 1: the exchange open when
@@ -75,7 +77,7 @@ func TestShutdownRecordsInFlightExchange(t *testing.T) {
 // are handed directly to the shared queue (bypassing a real connection) so
 // the scenario does not depend on timing four TLS dials against the gate.
 // The gate stays shut until cleanup, so each call is judged by returning
-// at all, within stalledCallBound, rather than by a wall-clock budget, and
+// at all, within stalltest.CallBound, rather than by a wall-clock budget, and
 // the listener's close is judged by Serve returning rather than by
 // re-dialing a released port another test may already hold (#857).
 //
@@ -121,8 +123,8 @@ func TestHungSinkDoesNotBlockServerShutdownOrClose(t *testing.T) {
 	}
 
 	var shutdownErr error
-	returnsWhileStalled(t, "srv.Shutdown", func() {
-		ctx, cancel := context.WithTimeout(context.Background(), stalledCallBound)
+	stalltest.Returns(t, "srv.Shutdown", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), stalltest.CallBound)
 		defer cancel()
 		shutdownErr = srv.Shutdown(ctx)
 	})
@@ -135,12 +137,12 @@ func TestHungSinkDoesNotBlockServerShutdownOrClose(t *testing.T) {
 		if !errors.Is(err, http.ErrServerClosed) {
 			t.Errorf("Serve returned %v, want http.ErrServerClosed", err)
 		}
-	case <-time.After(stalledCallBound):
-		t.Fatalf("Serve still running %v after Shutdown returned, want the listener closed", stalledCallBound)
+	case <-time.After(stalltest.CallBound):
+		t.Fatalf("Serve still running %v after Shutdown returned, want the listener closed", stalltest.CallBound)
 	}
 
 	var closeErr error
-	returnsWhileStalled(t, "Recorder.Close", func() {
+	stalltest.Returns(t, "Recorder.Close", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
 		closeErr = rec.Close(ctx)

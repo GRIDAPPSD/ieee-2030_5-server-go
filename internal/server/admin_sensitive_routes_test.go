@@ -132,6 +132,8 @@ func TestSensitiveRoutesRefuseBypassAdmission(t *testing.T) {
 		{name: "GET /api/traffic/ (clients sub-route)", method: http.MethodGet, path: "/api/traffic/clients", wantReachedStatus: http.StatusNotFound},
 		{name: "GET /api/traffic/ (stats sub-route)", method: http.MethodGet, path: "/api/traffic/stats", wantReachedStatus: http.StatusNotFound},
 		{name: "GET /api/management-pairs", method: http.MethodGet, path: "/api/management-pairs?manager=AAAA000000000000000000000000000000000001", wantReachedStatus: http.StatusOK},
+		// #1032: the profile list discloses every device's LFDI and name.
+		{name: "GET /api/device-profiles", method: http.MethodGet, path: "/api/device-profiles", wantReachedStatus: http.StatusOK},
 		// #677 fix round item 4: a GET under this path with no route
 		// registered for it yet must still be refused, not fall through to
 		// the mux's own 404 unauthenticated. wantReachedStatus is 404

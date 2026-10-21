@@ -8,10 +8,13 @@ package server_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -20,6 +23,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/stalltest"
 )
 
 // TestStalledManagementWriteDoesNotBlockUnrelatedEndDeviceList is item 1's
@@ -62,7 +66,7 @@ func TestStalledManagementWriteDoesNotBlockUnrelatedEndDeviceList(t *testing.T) 
 		}
 	})
 
-	if msg, ok := waitForListenersReady(c.sep2Probe, c.adminProbe, 3*time.Second, bystander.tlsConfig, runErrCh); !ok {
+	if msg, ok := waitForListenersReady(c.sep2Probe, c.adminProbe, bystander.tlsConfig, runErrCh); !ok {
 		t.Fatal(msg)
 	}
 	adminClient := &http.Client{Timeout: 3 * time.Second}
@@ -72,7 +76,7 @@ func TestStalledManagementWriteDoesNotBlockUnrelatedEndDeviceList(t *testing.T) 
 	// callerDevices calls ManagedBy purely to find that it lists nothing.
 	adminMgmtRegisterDevice(t, adminClient, c.adminProbe, bystander.sfdi, bystander.lfdi)
 
-	bystanderClient := ccmHTTPClient(bystander.tlsConfig, 2*time.Second)
+	bystanderClient := ccmHTTPClient(bystander.tlsConfig, stalltest.CallBound)
 
 	// Healthy baseline, before any write ever touches the store: proves the
 	// timed comparison below is measuring the stall, not routine handler
@@ -113,9 +117,12 @@ func TestStalledManagementWriteDoesNotBlockUnrelatedEndDeviceList(t *testing.T) 
 		createErrCh <- doErr
 	}()
 
-	// Give the create request time to reach atomicfile.Write's open() and
-	// block on the FIFO before measuring the bystander's request.
-	time.Sleep(300 * time.Millisecond)
+	// Measure only once the create is parked in atomicfile.Write's open() of
+	// the FIFO: a create still on its way would pass the GET vacuously, then
+	// block forever on a FIFO whose reader has already come and gone.
+	if msg, ok := pollReady("stalled admin create", adminReadyTimeout, runErrCh, goroutineBlockedIn("internal/atomicfile.Write(", "os.OpenFile(")); !ok {
+		t.Fatal(msg)
+	}
 
 	// #677 fix round item 1: the timing assertions below pass even if the
 	// create never reached the FIFO at all (a fast success or failure looks
@@ -129,8 +136,13 @@ func TestStalledManagementWriteDoesNotBlockUnrelatedEndDeviceList(t *testing.T) 
 	default:
 	}
 
+	// The write stays stalled until the reader below opens the FIFO, so a
+	// GET that waits on it cannot return inside the bound however loaded
+	// the host is.
 	stalledStart := time.Now()
-	resp, err = bystanderClient.Get("https://" + c.sep2Probe + "/edev")
+	stalltest.Returns(t, "GET /edev while an admin write is stalled", func() {
+		resp, err = bystanderClient.Get("https://" + c.sep2Probe + "/edev")
+	})
 	stalled := time.Since(stalledStart)
 	if err != nil {
 		t.Fatalf("GET /edev while an admin write is stalled: %v (took %s; healthy request took %s): a reader unrelated to the write must not wait on it", err, stalled, healthy)
@@ -138,9 +150,6 @@ func TestStalledManagementWriteDoesNotBlockUnrelatedEndDeviceList(t *testing.T) 
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /edev while an admin write is stalled: status = %d, want 200", resp.StatusCode)
-	}
-	if stalled > time.Second {
-		t.Fatalf("GET /edev while an admin write is stalled took %s (healthy request took %s): a reader unrelated to the write must not wait on it", stalled, healthy)
 	}
 
 	// Unblock the stalled write by opening a reader on the FIFO and
@@ -174,5 +183,26 @@ func TestStalledManagementWriteDoesNotBlockUnrelatedEndDeviceList(t *testing.T) 
 	case <-readerDone:
 	case <-time.After(5 * time.Second):
 		t.Error("FIFO reader goroutine did not finish within 5s of the writer closing")
+	}
+}
+
+// goroutineBlockedIn is a pollReady probe that succeeds once some goroutine's
+// stack holds every one of frames.
+func goroutineBlockedIn(frames ...string) func() error {
+	return func() error {
+		buf := make([]byte, 1<<20)
+		for n := runtime.Stack(buf, true); ; n = runtime.Stack(buf, true) {
+			if n < len(buf) {
+				buf = buf[:n]
+				break
+			}
+			buf = make([]byte, 2*len(buf))
+		}
+		for g := range strings.SplitSeq(string(buf), "\n\n") {
+			if !slices.ContainsFunc(frames, func(f string) bool { return !strings.Contains(g, f) }) {
+				return nil
+			}
+		}
+		return fmt.Errorf("no goroutine is inside all of %q", frames)
 	}
 }

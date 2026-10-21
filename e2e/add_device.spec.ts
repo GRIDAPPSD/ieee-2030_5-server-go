@@ -6,7 +6,7 @@ import { mintDeviceCert } from './fixtures/device_cert';
 
 // #159: Add EndDevice flow.
 // Paste a freshly generated device cert -> Parse Cert auto-fills SFDI/LFDI ->
-// fill PIN + description -> click Add Device -> device appears in the list.
+// fill PIN + name -> click Add Device -> device appears in the list.
 //
 // We auth via Bearer (the e2e harness's standard path) so this exercises
 // the new /api/certs/info, /api/devices, and /api/devices/by-lfdi endpoints
@@ -52,7 +52,7 @@ test('add device from pasted certificate', async ({ page }) => {
   expect(sfdi).toMatch(/^\d{12}$/);
   expect(lfdi).toMatch(/^[0-9A-Fa-f]{40}$/);
 
-  // 3) Fill description + PIN, leave Enabled checked.
+  // 3) Fill name + PIN, leave Enabled checked.
   await page.locator('#addDevDesc').fill('add-device E2E test device');
   await page.locator('#addDevPIN').fill('424242');
 

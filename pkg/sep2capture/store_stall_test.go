@@ -3,6 +3,8 @@ package sep2capture
 import (
 	"fmt"
 	"testing"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/stalltest"
 )
 
 // TestStalledWriterNeverBlocksRecordAndCountsDrops is Q7 item 3's third
@@ -11,14 +13,14 @@ import (
 // called: every call must return while the writer is still held, and once
 // the byte-bounded queue fills, DroppedQueueFull must be counted rather
 // than the call blocking. The writer is released only at cleanup, so a
-// Record that waits on it can never return inside stalledCallBound. There
+// Record that waits on it can never return inside stalltest.CallBound. There
 // is no wall-clock budget per call, since CPU load alone can exceed one.
 //
 // Mutants (store.go, Record):
 //   - replacing the byte-cap admission loop's drop with a wait for room
 //     (`time.Sleep(time.Millisecond); continue` in place of
 //     `s.droppedQueueFull.Add(1); return`) blocks Record behind the
-//     stalled writer, and this goes RED on stalledCallBound;
+//     stalled writer, and this goes RED on stalltest.CallBound;
 //   - replacing that loop with an unconditional `s.inFlightBytes.Add(size)`
 //     goes RED on DroppedQueueFull staying 0.
 func TestStalledWriterNeverBlocksRecordAndCountsDrops(t *testing.T) {
@@ -57,7 +59,7 @@ func TestStalledWriterNeverBlocksRecordAndCountsDrops(t *testing.T) {
 	for i := 2; i <= 40; i++ {
 		id := uint64(i)
 		ex := makeExchange(id, id, "client-1", bigDirection, bigDirection)
-		returnsWhileStalled(t, fmt.Sprintf("Record(%d)", id), func() { st.Record(ex) })
+		stalltest.Returns(t, fmt.Sprintf("Record(%d)", id), func() { st.Record(ex) })
 		if st.Stats().DroppedQueueFull > 0 {
 			sawDrop = true
 			break

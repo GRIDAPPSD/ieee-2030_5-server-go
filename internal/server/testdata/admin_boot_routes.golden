@@ -16,6 +16,7 @@
     GET /api/derms/flow-reservations
     GET /api/derms/flow-reservations/{edevId}/{frqId}
     GET /api/derms/grants
+    GET /api/device-profiles
     GET /api/devices/by-lfdi/{lfdi}
     GET /api/devices/{id}/{collection}
     GET /api/fsas
@@ -53,5 +54,6 @@
     POST /api/management-pairs/rekey
     POST /auth/login
     POST /auth/ticket
+    PUT /api/device-profiles/{lfdi}
     PUT /api/devices/{id}/der-programs/{derpId}
     PUT /api/fsas/{id}/der-programs/{derpId}

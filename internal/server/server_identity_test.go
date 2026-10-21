@@ -387,9 +387,11 @@ func waitForAdminReady(addr string, useTLS bool, timeout time.Duration, runErr c
 }
 
 // waitForListenersReady waits for the protocol listener and then a plain
-// HTTP admin listener, so a test never uses either before it is bound.
-func waitForListenersReady(sep2Addr, adminAddr string, timeout time.Duration, clientTLSCfg *gotls.Config, runErr chan error) (string, bool) {
-	if msg, ok := pollReady("SEP2 listener", timeout, runErr, sep2HandshakeProbe(sep2Addr, clientTLSCfg)); !ok {
+// HTTP admin listener, so a test never uses either before it is bound. Both
+// waits take adminReadyTimeout: Run's exit ends them early, so a tighter
+// bound only adds failures under load.
+func waitForListenersReady(sep2Addr, adminAddr string, clientTLSCfg *gotls.Config, runErr chan error) (string, bool) {
+	if msg, ok := pollReady("SEP2 listener", adminReadyTimeout, runErr, sep2HandshakeProbe(sep2Addr, clientTLSCfg)); !ok {
 		return msg, false
 	}
 	return waitForAdminReady(adminAddr, false, adminReadyTimeout, runErr)

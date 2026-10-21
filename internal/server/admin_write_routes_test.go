@@ -45,6 +45,7 @@ var wantAdminWriteRoutes = []string{
 	"POST /api/management-pairs/rekey",
 	"POST /auth/login",
 	"POST /auth/ticket",
+	"PUT /api/device-profiles/{lfdi}",
 	"PUT /api/devices/{id}/der-programs/{derpId}",
 	"PUT /api/fsas/{id}/der-programs/{derpId}",
 }
@@ -77,6 +78,7 @@ var wantAdminBodyTypes = map[string][]string{
 	"POST /api/management-pairs":                       {"application/json"},
 	"DELETE /api/management-pairs":                     nil,
 	"POST /api/management-pairs/rekey":                 {"application/json"},
+	"PUT /api/device-profiles/{lfdi}":                  {"application/json"},
 	"POST /auth/ticket":                                nil,
 	"POST /api/der/controls":                           {"application/json"},
 	"POST /api/der/controls/{mrid}/cancel":             {"application/json"},

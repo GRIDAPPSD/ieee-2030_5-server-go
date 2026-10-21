@@ -458,8 +458,17 @@ func TestDashboardColumns_BusyErrorNamesAge(t *testing.T) {
 		<-release
 		return nil, nil
 	})
-	h := columnsHandler(t, 30*time.Millisecond, src)
+	const bound = 30 * time.Millisecond
+	h := columnsHandler(t, bound, src)
 	columnsPass(t, h)
+	// The second pass is busy only once the held call is older than bound.
+	// The call's clock starts after the first pass's deadline clock, so the
+	// first pass returning does not prove that age; wait for it here.
+	st := h.columnSources[0]
+	st.mu.Lock()
+	started := st.cur.started
+	st.mu.Unlock()
+	time.Sleep(time.Until(started.Add(bound)))
 	p, _ := columnsPass(t, h)
 	if len(p.Columns) != 1 || !strings.Contains(p.Columns[0].Error, "busy") || !strings.Contains(p.Columns[0].Error, "running for") {
 		t.Errorf("columns = %+v, want a busy error naming how long the call has run", p.Columns)

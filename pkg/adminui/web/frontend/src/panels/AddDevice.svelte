@@ -29,7 +29,7 @@
   let pem = $state('')
   let sfdi = $state('')
   let lfdi = $state('')
-  let description = $state('')
+  let name = $state('')
   let pin = $state<number | null>(null)
   let enabled = $state(true)
   let result = $state('')
@@ -89,7 +89,7 @@
     const res = await postJSON<AddDeviceResponse>('/api/devices', {
       sfdi,
       lfdi,
-      description,
+      name,
       pin,
       enabled,
     })
@@ -107,7 +107,7 @@
 <div class="card full-width">
   <h2>Add End Device</h2>
   <p class="hint">
-    Paste the device certificate (PEM). The server derives SFDI and LFDI; you supply PIN and description.
+    Paste the device certificate (PEM). The server derives SFDI and LFDI; you supply PIN and an optional name (1 to 32 printable ASCII characters, unique).
   </p>
   {#if pending}
     <div class="form-row" data-testid="pending-mint">
@@ -134,7 +134,7 @@
     <input type="text" id="addDevLFDI" placeholder="LFDI (40 hex chars)" readonly value={lfdi} />
   </div>
   <div class="form-row">
-    <input type="text" id="addDevDesc" placeholder="Description" bind:value={description} />
+    <input type="text" id="addDevDesc" placeholder="Name (optional)" maxlength="32" bind:value={name} />
     <input type="number" id="addDevPIN" placeholder="PIN (uint32)" min="0" max="4294967295" bind:value={pin} />
     <label>
       <input type="checkbox" id="addDevEnabled" bind:checked={enabled} /> Enabled

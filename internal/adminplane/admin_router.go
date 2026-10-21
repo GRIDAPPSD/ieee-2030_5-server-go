@@ -189,8 +189,15 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	if stores != nil {
 		authed.HandleFunc("GET /api/devices/by-lfdi/{lfdi}", handler.HandleDeviceLookupByLFDI(stores.EndDevices))
 		if !store.IsAbsent(stores.Registrations) {
-			mountWrite("POST /api/devices", handler.HandleAddEndDevice(stores.EndDevices, stores.Registrations))
+			mountWrite("POST /api/devices", handler.HandleAddEndDevice(stores.EndDevices, stores.Registrations, stores.DeviceProfiles))
 		}
+	}
+
+	// #1032 device profiles: a name and kind per device, off
+	// nonSensitiveAdminWrites like the pair writes.
+	if profH := newAdminDeviceProfileHandler(stores); profH != nil {
+		authed.HandleFunc("GET /api/device-profiles", profH.HandleListDeviceProfiles())
+		mountWrite("PUT /api/device-profiles/{lfdi}", profH.HandlePutDeviceProfile())
 	}
 
 	// #163 FSA hierarchy management API.

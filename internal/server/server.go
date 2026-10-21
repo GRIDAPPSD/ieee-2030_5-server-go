@@ -242,6 +242,12 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("EndDeviceManagement persistence: %w", err)
 	}
+	deviceProfiles, err := memory.NewDeviceProfileStoreWithPersistence(
+		cfg.EffectiveStorePath("deviceprofiles", ""),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("DeviceProfile persistence: %w", err)
+	}
 
 	// #224: build the subscription store with optional durable
 	// persistence. #171 routes the path through
@@ -263,6 +269,7 @@ func newRunStores(cfg *config.Config) (*Stores, *memory.EndDeviceStore, error) {
 	stores := &Stores{
 		EndDevices:        endDevices,
 		EndDeviceManagers: endDeviceManagers,
+		DeviceProfiles:    deviceProfiles,
 		// EndDeviceIndexes is seeded below, once every startup writer of
 		// EndDevice records (the persisted reload above, and the boot
 		// fixture that follows) has run; see the comment there.

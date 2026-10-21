@@ -270,6 +270,7 @@ type stubRegs struct {
 		reg sep2.Registration
 	}
 	createErr error
+	created   bool
 }
 
 func (s *stubRegs) Create(_ context.Context, id string, reg sep2.Registration) error {
@@ -280,6 +281,18 @@ func (s *stubRegs) Create(_ context.Context, id string, reg sep2.Registration) e
 	}
 	s.last.id = id
 	s.last.reg = reg
+	s.created = true
+	return nil
+}
+
+// Delete forgets the Registration Create recorded, as the real store does.
+func (s *stubRegs) Delete(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.created || s.last.id != id {
+		return store.ErrNotFound
+	}
+	s.created = false
 	return nil
 }
 
@@ -292,14 +305,15 @@ func freshAddDeviceCert(t *testing.T) (sfdi, lfdi string) {
 func TestAddEndDevicePersistsRegistration(t *testing.T) {
 	devStore := memory.NewEndDeviceStore()
 	regs := &stubRegs{}
+	profiles := memory.NewDeviceProfileStore()
 
 	sfdi, lfdi := freshAddDeviceCert(t)
-	body := fmt.Sprintf(`{"sfdi":%q,"lfdi":%q,"description":"Test inverter","pin":123456,"enabled":true}`, sfdi, lfdi)
+	body := fmt.Sprintf(`{"sfdi":%q,"lfdi":%q,"name":"Test inverter","kind":"device","pin":123456,"enabled":true}`, sfdi, lfdi)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/devices", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	handler.HandleAddEndDevice(devStore, regs)(w, req)
+	handler.HandleAddEndDevice(devStore, regs, profiles)(w, req)
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d body=%s", w.Code, w.Body.String())
@@ -332,6 +346,15 @@ func TestAddEndDevicePersistsRegistration(t *testing.T) {
 	if got.Enabled == nil || !*got.Enabled {
 		t.Error("end device must be enabled per request")
 	}
+
+	// The operator's text is stored, not dropped.
+	profile, err := profiles.Get(context.Background(), strings.ToUpper(lfdi))
+	if err != nil {
+		t.Fatalf("profile Get: %v", err)
+	}
+	if want := (store.DeviceProfile{LFDI: strings.ToUpper(lfdi), Name: "Test inverter", Kind: store.DeviceKindDevice}); profile != want {
+		t.Errorf("profile = %+v, want %+v", profile, want)
+	}
 }
 
 func TestAddEndDeviceCollisionOnLFDI(t *testing.T) {
@@ -349,11 +372,11 @@ func TestAddEndDeviceCollisionOnLFDI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := fmt.Sprintf(`{"sfdi":%q,"lfdi":%q,"description":"dup","pin":1,"enabled":true}`, sfdi, lfdi)
+	body := fmt.Sprintf(`{"sfdi":%q,"lfdi":%q,"name":"dup","pin":1,"enabled":true}`, sfdi, lfdi)
 	req := httptest.NewRequest(http.MethodPost, "/api/devices", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	handler.HandleAddEndDevice(devStore, regs)(w, req)
+	handler.HandleAddEndDevice(devStore, regs, memory.NewDeviceProfileStore())(w, req)
 
 	if w.Code != http.StatusConflict {
 		t.Errorf("expected 409 on LFDI collision, got %d", w.Code)
@@ -381,7 +404,7 @@ func TestAddEndDeviceValidation(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/devices", strings.NewReader(c.body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
-			handler.HandleAddEndDevice(memory.NewEndDeviceStore(), &stubRegs{})(w, req)
+			handler.HandleAddEndDevice(memory.NewEndDeviceStore(), &stubRegs{}, memory.NewDeviceProfileStore())(w, req)
 			if w.Code != c.code {
 				t.Errorf("case %s: expected %d, got %d body=%s", c.name, c.code, w.Code, w.Body.String())
 			}
@@ -410,7 +433,7 @@ func TestAddEndDeviceInvalidJSONDoesNotLeakDecoderDetail(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/devices", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	handler.HandleAddEndDevice(memory.NewEndDeviceStore(), &stubRegs{})(w, req)
+	handler.HandleAddEndDevice(memory.NewEndDeviceStore(), &stubRegs{}, memory.NewDeviceProfileStore())(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", w.Code)
@@ -428,11 +451,11 @@ func TestAddEndDeviceRegistrationFailureRollsBack(t *testing.T) {
 	regs := &stubRegs{createErr: fmt.Errorf("regs down")}
 
 	sfdi, lfdi := freshAddDeviceCert(t)
-	body := fmt.Sprintf(`{"sfdi":%q,"lfdi":%q,"description":"x","pin":1,"enabled":true}`, sfdi, lfdi)
+	body := fmt.Sprintf(`{"sfdi":%q,"lfdi":%q,"name":"x","pin":1,"enabled":true}`, sfdi, lfdi)
 	req := httptest.NewRequest(http.MethodPost, "/api/devices", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	handler.HandleAddEndDevice(devStore, regs)(w, req)
+	handler.HandleAddEndDevice(devStore, regs, memory.NewDeviceProfileStore())(w, req)
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500 when regs.Create fails, got %d", w.Code)
@@ -450,7 +473,7 @@ func TestAddEndDeviceRequiresRegsStore(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/devices", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	handler.HandleAddEndDevice(devStore, nil)(w, req)
+	handler.HandleAddEndDevice(devStore, nil, memory.NewDeviceProfileStore())(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503 when regs writer is nil, got %d", w.Code)
 	}

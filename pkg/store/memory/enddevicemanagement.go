@@ -309,10 +309,16 @@ func (s *EndDeviceManagementStore) RekeyManaged(_ context.Context, oldManagedLFD
 // handler), but a value the API refuses must never arrive from disk and
 // become an entry no API call can address again.
 func checkCanonicalLFDI(role, lfdi string) error {
-	if lfdi == "" || lfdi != strings.TrimSpace(lfdi) || lfdi != strings.ToUpper(lfdi) || !isHex40(lfdi) {
+	if !isCanonicalLFDI(lfdi) {
 		return fmt.Errorf("enddevice management: %s LFDI %q is not in canonical form: %w", role, lfdi, store.ErrInvalidManagementPair)
 	}
 	return nil
+}
+
+// isCanonicalLFDI reports whether lfdi is non-empty, upper case, unpadded
+// 40-digit hex: the one form every LFDI-keyed store accepts.
+func isCanonicalLFDI(lfdi string) bool {
+	return lfdi != "" && lfdi == strings.TrimSpace(lfdi) && lfdi == strings.ToUpper(lfdi) && isHex40(lfdi)
 }
 
 // isHex40 reports whether s is exactly 40 hex characters: the canonical

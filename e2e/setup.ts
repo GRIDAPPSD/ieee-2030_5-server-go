@@ -7,9 +7,27 @@ import { ADMIN_KEY } from './adminKey';
 let serverProcess: ChildProcess | null = null;
 let adminUrl: string = '';
 let certDir: string = '';
+let protocolPort: number = 0;
+
+// Admin and protocol listeners draw from adjacent, non-overlapping ranges.
+const ADMIN_PORT_BASE = 18443;
+const PROTOCOL_PORT_BASE = 19443;
+const PORT_SPAN = 1000;
+
+export type PortKind = 'admin' | 'protocol';
+export type PortPicker = (kind: PortKind) => number;
+
+const randomPort: PortPicker = (kind) =>
+  (kind === 'admin' ? ADMIN_PORT_BASE : PROTOCOL_PORT_BASE) + Math.floor(Math.random() * PORT_SPAN);
 
 export function getAdminUrl(): string {
   return adminUrl;
+}
+
+// The protocol port of the running server; a spec reads it here rather than
+// choosing its own, so a retry on fresh ports cannot leave it stale.
+export function getProtocolPort(): number {
+  return protocolPort;
 }
 
 export function getCertDir(): string {
@@ -18,8 +36,13 @@ export function getCertDir(): string {
 
 // extraEnv is merged over the harness defaults below, so a spec can boot
 // the server in a non-default posture without duplicating the cert and port
-// setup. Omitted, the harness behaves exactly as before.
-export async function startServer(extraEnv: Record<string, string> = {}): Promise<string> {
+// setup. It must not set SEP2_ADDR or SEP2_ADMIN_ADDR: the harness owns the
+// ports and re-picks both on a retry. pickPort exists so a test can force a
+// collision.
+export async function startServer(
+  extraEnv: Record<string, string> = {},
+  pickPort: PortPicker = randomPort,
+): Promise<string> {
   certDir = mkdtempSync(join(tmpdir(), 'sep2-e2e-'));
   const projectRoot = join(__dirname, '..');
   const sep2server = join(projectRoot, 'sep2server');
@@ -51,8 +74,8 @@ export async function startServer(extraEnv: Record<string, string> = {}): Promis
   // exits on bind, so a start that dies early is retried on fresh ports.
   const attempts = 3;
   for (let attempt = 1; ; attempt++) {
-    const adminPort = 18443 + Math.floor(Math.random() * 1000);
-    const protocolPort = 19443 + Math.floor(Math.random() * 1000);
+    const adminPort = pickPort('admin');
+    protocolPort = pickPort('protocol');
     adminUrl = `https://localhost:${adminPort}`;
 
     serverProcess = spawn(sep2server, ['serve'], {
@@ -115,6 +138,10 @@ function waitForReady(proc: ChildProcess, readyLine: RegExp, timeoutMs: number):
     };
     proc.stdout?.on('data', onData);
     proc.stderr?.on('data', onData);
+    proc.once('error', (err) => {
+      clearTimeout(timer);
+      reject(new Error(`Server failed to start: ${err.message}`));
+    });
     proc.once('exit', (code, signal) => {
       clearTimeout(timer);
       reject(new ServerExitedError(`Server exited (code ${code}, signal ${signal}) before ready. Output:\n${output}`));

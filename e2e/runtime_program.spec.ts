@@ -126,6 +126,10 @@ test('an empty server becomes controllable from the UI alone', async ({ page, re
   await page.getByTestId('control-fn-opModConnect').check();
   await page.getByTestId('control-fv-opModConnect').check();
   await page.locator('#controlStartNow').uncheck();
+  // A :00 value is the one Chromium rewrites; the app's own field must keep it.
+  const zeroSeconds = localInput(new Date(2026, 9, 21, 19, 14, 0));
+  await page.locator('#controlStartAt').fill(zeroSeconds);
+  await expect(page.locator('#controlStartAt')).toHaveValue(zeroSeconds);
   await page.locator('#controlStartAt').fill(localInput(new Date(Date.now() + 3600 * 1000)));
   await page.locator('#controlDuration').fill('30');
   await page.getByRole('button', { name: 'Send' }).click();

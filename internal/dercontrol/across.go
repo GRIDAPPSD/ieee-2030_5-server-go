@@ -138,7 +138,7 @@ func (i *Issuer) IssueAcross(ctx context.Context, req CreateRequest, targets []T
 	res := AcrossResult{ID: id, Control: recordCtrl}
 	written, err := i.writeCopies(ctx, plans, id)
 	if err != nil {
-		return AcrossResult{}, i.undoAcross(ctx, written, err, undoRecord)
+		return AcrossResult{}, i.undoAcross(ctx, written, err, &recordUndo{id: id, mrid: mrid, undo: undoRecord})
 	}
 	for _, w := range written {
 		res.Copies = append(res.Copies, Result{Scope: w.plan.target.Scope, ID: id, Href: w.plan.ctrl.Href, Control: w.plan.ctrl, Supersedes: w.marked})
@@ -327,11 +327,17 @@ func (i *Issuer) writeCopies(ctx context.Context, plans []copyPlan, id string) (
 	return written, nil
 }
 
+// recordUndo removes the record IssueAcross wrote, naming it if it cannot.
+type recordUndo struct {
+	id, mrid string
+	undo     func(context.Context) error
+}
+
 // undoAcross answers a fan-out or replication whose writes stopped at cause.
 // A *UndoError cause keeps everything already written. Otherwise the written
 // copies are removed newest first, and then the record; the first removal
 // that fails is returned as a *UndoError and keeps what it has not reached.
-func (i *Issuer) undoAcross(ctx context.Context, written []writtenCopy, cause error, undoRecord func(context.Context) error) error {
+func (i *Issuer) undoAcross(ctx context.Context, written []writtenCopy, cause error, record *recordUndo) error {
 	var undo *UndoError
 	if errors.As(cause, &undo) {
 		return cause
@@ -343,9 +349,9 @@ func (i *Issuer) undoAcross(ctx context.Context, written []writtenCopy, cause er
 			return err
 		}
 	}
-	if undoRecord != nil {
-		if err := undoRecord(uctx); err != nil {
-			return &UndoError{Step: UndoStepStoreRecord, cause: cause, reverts: []error{err}}
+	if record != nil {
+		if err := record.undo(uctx); err != nil {
+			return &UndoError{Step: UndoStepStoreRecord, ID: record.id, MRID: record.mrid, cause: cause, reverts: []error{err}}
 		}
 	}
 	return cause

@@ -220,3 +220,33 @@ func TestReplicate_WritesOnceAndOrdersSupersede(t *testing.T) {
 		t.Errorf("second Replicate = %+v, %v; want nothing written", again, err)
 	}
 }
+
+// A replica that fails undoes the ones the same call wrote before it, so an
+// assignment rolled back leaves no control on the device.
+func TestReplicate_LaterFailureUndoesEarlierReplicas(t *testing.T) {
+	inner := memory.NewScopedStore[sep2.DERControl]()
+	issuer, _, lifecycles, targets := acrossHarness(t, &failOnParent{ScopedStore: inner, parent: "d2/fsa/tmpl"}, "d1", "d2")
+	ctx := context.Background()
+	start := sep2time.Now().Unix() + 600
+	mk := func(mrid string) sep2.DERControl {
+		c := sep2.DERControl{DERControlBase: &sep2.DERControlBase{OpModMaxLimW: (*sep2.PerCent)(uint16ptr(1000))}}
+		c.MRID, c.CreationTime = mrid, start-60
+		c.Interval = &sep2.DateTimeInterval{Start: start, Duration: 600}
+		return c
+	}
+	_, err := issuer.Replicate(ctx, []Replica{
+		{Target: targets[0], ID: "r1", Control: mk("R1")},
+		{Target: targets[1], ID: "r2", Control: mk("R2")},
+	})
+	if err == nil {
+		t.Fatal("Replicate succeeded with the second replica failing")
+	}
+	for _, key := range []string{"d1/fsa/tmpl", "d2/fsa/tmpl"} {
+		if list, _ := inner.List(ctx, key, store.ListOptions{Unbounded: true}); len(list.Items) != 0 {
+			t.Errorf("scope %s holds %d controls after the failed replication, want 0", key, len(list.Items))
+		}
+		if lcs, _ := lifecycles.List(ctx, key, store.ListOptions{Unbounded: true}); len(lcs.Items) != 0 {
+			t.Errorf("scope %s holds %d lifecycle records, want 0", key, len(lcs.Items))
+		}
+	}
+}

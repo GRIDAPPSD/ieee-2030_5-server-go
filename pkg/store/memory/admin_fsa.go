@@ -31,6 +31,7 @@ type AdminFSAStore struct {
 	programLinks map[string][]string          // fsaID -> sorted program hrefs
 	deviceLinks  map[string][]string          // fsaID -> sorted device ids
 	templates    map[string][]ProgramTemplate // fsaID -> templates sorted by ID
+	deviceOnly   map[string]string            // fsaID -> the one device it is bound to
 
 	// Durable persistence (GRIDAPPSD/ieee-2030_5-server-go#165). Empty
 	// persistPath = pure in-memory (the historical AdminFSAStore
@@ -55,6 +56,7 @@ func NewAdminFSAStore() *AdminFSAStore {
 		programLinks: make(map[string][]string),
 		deviceLinks:  make(map[string][]string),
 		templates:    make(map[string][]ProgramTemplate),
+		deviceOnly:   make(map[string]string),
 	}
 }
 
@@ -104,6 +106,61 @@ func (s *AdminFSAStore) Create(_ context.Context, id string, fsa sep2.FunctionSe
 			s.keys = slices.Delete(s.keys, idx, idx+1)
 		}
 	})
+}
+
+// CreateDeviceOnly persists an admin FSA bound to deviceID alone: no other
+// device can be assigned to it (ErrAdminFSADeviceOnly), and the binding is
+// part of the FSA's snapshot record. ErrAlreadyExists if id is taken, or if
+// deviceID already has a device-only FSA, so a device has at most one.
+func (s *AdminFSAStore) CreateDeviceOnly(_ context.Context, id string, fsa sep2.FunctionSetAssignments, deviceID string) error {
+	if deviceID == "" {
+		return fmt.Errorf("%w: a device-only FSA needs its device", ErrInvalidDeviceOnly)
+	}
+	s.persistMu.Lock()
+	defer s.persistMu.Unlock()
+	s.mu.Lock()
+	if _, exists := s.fsas[id]; exists {
+		s.mu.Unlock()
+		return store.ErrAlreadyExists
+	}
+	for _, bound := range s.deviceOnly {
+		if bound == deviceID {
+			s.mu.Unlock()
+			return store.ErrAlreadyExists
+		}
+	}
+	s.fsas[id] = fsa.Copy()
+	s.deviceOnly[id] = deviceID
+	idx, _ := slices.BinarySearch(s.keys, id)
+	s.keys = slices.Insert(s.keys, idx, id)
+	s.mu.Unlock()
+	return s.persistOrRollback(func() {
+		delete(s.fsas, id)
+		delete(s.deviceOnly, id)
+		if idx, found := slices.BinarySearch(s.keys, id); found {
+			s.keys = slices.Delete(s.keys, idx, idx+1)
+		}
+	})
+}
+
+// DeviceOnlyDevice returns the device fsaID is bound to, or "" when the FSA
+// is not device-only.
+func (s *AdminFSAStore) DeviceOnlyDevice(fsaID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.deviceOnly[fsaID]
+}
+
+// DeviceOnlyFSA returns the id of the device-only FSA bound to deviceID.
+func (s *AdminFSAStore) DeviceOnlyFSA(deviceID string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for id, bound := range s.deviceOnly {
+		if bound == deviceID {
+			return id, true
+		}
+	}
+	return "", false
 }
 
 // Get returns an independent copy of the FSA. ErrNotFound if absent.
@@ -160,12 +217,17 @@ func (s *AdminFSAStore) Delete(_ context.Context, id string) error {
 		return ErrAdminFSAInUse
 	}
 	delete(s.fsas, id)
+	bound, wasDeviceOnly := s.deviceOnly[id]
+	delete(s.deviceOnly, id)
 	if idx, found := slices.BinarySearch(s.keys, id); found {
 		s.keys = slices.Delete(s.keys, idx, idx+1)
 	}
 	s.mu.Unlock()
 	return s.persistOrRollback(func() {
 		s.fsas[id] = fsa
+		if wasDeviceOnly {
+			s.deviceOnly[id] = bound
+		}
 		if idx, found := slices.BinarySearch(s.keys, id); !found {
 			s.keys = slices.Insert(s.keys, idx, id)
 		}
@@ -244,6 +306,10 @@ func (s *AdminFSAStore) AssignDevice(_ context.Context, fsaID, deviceID string) 
 	if _, ok := s.fsas[fsaID]; !ok {
 		s.mu.Unlock()
 		return store.ErrNotFound
+	}
+	if bound, ok := s.deviceOnly[fsaID]; ok && bound != deviceID {
+		s.mu.Unlock()
+		return ErrAdminFSADeviceOnly
 	}
 	devs := s.deviceLinks[fsaID]
 	idx, found := slices.BinarySearch(devs, deviceID)

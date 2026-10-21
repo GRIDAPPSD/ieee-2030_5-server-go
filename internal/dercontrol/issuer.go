@@ -340,7 +340,7 @@ func (i *Issuer) computeSupersedes(ctx context.Context, scopeKey string, existin
 			continue
 		}
 		if functionSetKey(c.DERControlBase) != newSet {
-			continue // disjoint control sets never supersede (2018 rule t)
+			continue // only an equal function set supersedes; a partial overlap is not marked (potentiallySuperseded is a later issue)
 		}
 		cEnd := c.Interval.Start + int64(c.Interval.Duration)
 		if !(c.Interval.Start < newEnd && newStart < cEnd) {

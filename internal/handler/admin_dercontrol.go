@@ -1306,21 +1306,24 @@ func newDERControlBaseView(b *sep2.DERControlBase) DERControlBaseView {
 }
 
 // controlTypeName names a stored control's type by the request type that
-// builds that DERControlBase shape, or "combined" for any other set of
-// functions.
+// builds exactly that DERControlBase shape, and "combined" for every other
+// set of functions, so a lone opModConnect or opModEnergize is not mistaken
+// for a legacy connect.
 func controlTypeName(b *sep2.DERControlBase) string {
 	if b == nil {
 		return ""
 	}
-	switch names := dercontrol.FunctionNames(b); {
-	case len(names) > 2, len(names) == 2 && !(b.OpModConnect != nil && b.OpModEnergize != nil && *b.OpModConnect == *b.OpModEnergize):
-		return "combined"
-	}
+	names := dercontrol.FunctionNames(b)
 	switch {
-	case b.OpModConnect != nil && *b.OpModConnect:
-		return string(dercontrol.Connect)
-	case b.OpModConnect != nil:
+	case len(names) == 0:
+		return "other"
+	case len(names) == 2 && b.OpModConnect != nil && b.OpModEnergize != nil && *b.OpModConnect == *b.OpModEnergize:
+		if *b.OpModConnect {
+			return string(dercontrol.Connect)
+		}
 		return string(dercontrol.Disconnect)
+	case len(names) > 1:
+		return "combined"
 	case b.OpModMaxLimW != nil:
 		return string(dercontrol.MaxLimW)
 	case b.OpModFixedPFInjectW != nil:
@@ -1328,7 +1331,7 @@ func controlTypeName(b *sep2.DERControlBase) string {
 	case b.OpModTargetW != nil:
 		return string(dercontrol.TargetW)
 	default:
-		return "other"
+		return "combined"
 	}
 }
 

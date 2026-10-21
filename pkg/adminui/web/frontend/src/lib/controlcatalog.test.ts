@@ -1,12 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildDeviceControl,
   buildFunctions,
   buildValue,
   curvesOfType,
+  emptyFieldState,
+  fieldStateFromFunctions,
   functionsText,
   initialValue,
+  loadCatalog,
+  loadCurves,
   primacyText,
+  uneditableFunctions,
   type CatalogRow,
   type ControlFormInput,
   type FieldValue,
@@ -196,5 +201,75 @@ describe('display helpers', () => {
 
   it('primacyText states the number and the server reason', () => {
     expect(primacyText(3, 'outranks the others')).toBe('Primacy 3: outranks the others')
+  })
+})
+
+describe('fieldStateFromFunctions', () => {
+  it('ticks and fills what the functions name, so buildFunctions returns the same functions', () => {
+    const functions = { rowA: true, rowB: -3, rowC: { amount: 950, sign: false, scale: 2 }, rowD: 'cv7' }
+    const state = fieldStateFromFunctions(rows, functions)
+    expect(state.ticked).toEqual({ rowA: true, rowB: true, rowC: true, rowD: true })
+    expect(state.values).toEqual({ rowA: true, rowB: '-3', rowC: { amount: '950', sign: false, scale: '2' }, rowD: 'cv7' })
+    const built = buildFunctions(rows, state.ticked, state.values)
+    expect(built.ok && built.functions).toEqual(functions)
+  })
+
+  it('leaves a row the functions omit unticked, and an optional object member unset', () => {
+    const state = fieldStateFromFunctions(rows, { rowC: { amount: 5, sign: true } })
+    expect(state.ticked).toEqual({ rowA: false, rowB: false, rowC: true, rowD: false })
+    const built = buildFunctions(rows, state.ticked, state.values)
+    expect(built.ok && built.functions).toEqual({ rowC: { amount: 5, sign: true } })
+  })
+
+  it('ignores a stored name the catalog lacks and a row of an unsupported kind', () => {
+    const odd: CatalogRow = { name: 'rowE', description: 'odd', kind: 'matrix' }
+    const state = fieldStateFromFunctions([flag, odd], { rowE: 1, gone: 2 })
+    expect(state.ticked).toEqual({ rowA: false, rowE: false })
+  })
+
+  it('is the empty state when there are no functions', () => {
+    expect(fieldStateFromFunctions(rows, undefined)).toEqual(emptyFieldState(rows))
+  })
+})
+
+describe('loading the catalog and the curves', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+  function reply(status: number, body: unknown) {
+    return vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: status >= 200 && status < 300,
+      status,
+      json: () => Promise.resolve(body),
+    } as Response)
+  }
+
+  it('reads the catalog rows from the catalog route', async () => {
+    const spy = reply(200, { functions: [flag] })
+    expect(await loadCatalog()).toEqual({ ok: true, data: [flag] })
+    expect(String(spy.mock.calls[0]?.[0])).toBe('/api/der/control-functions')
+  })
+
+  it('reads a reply with no functions as empty and a failure as its error', async () => {
+    reply(200, {})
+    expect(await loadCatalog()).toEqual({ ok: true, data: [] })
+    reply(500, { error: 'down' })
+    expect(await loadCatalog()).toEqual({ ok: false, error: 'down' })
+  })
+
+  it('words a curve read failure with its cause', async () => {
+    reply(500, { error: 'no store' })
+    expect(await loadCurves()).toEqual({ ok: false, error: 'Stored curves could not be read: no store' })
+    reply(200, { curves: [{ id: 'c', curveType: 7, description: 'd' }] })
+    expect(await loadCurves()).toEqual({ ok: true, data: [{ id: 'c', curveType: 7, description: 'd' }] })
+  })
+})
+
+describe('uneditableFunctions', () => {
+  it('returns the stored names the catalog lacks and those of an unsupported kind, with their values', () => {
+    const odd: CatalogRow = { name: 'rowE', description: 'odd', kind: 'matrix' }
+    expect(uneditableFunctions([flag, odd], { rowA: true, rowE: [1], gone: 2 })).toEqual({ rowE: [1], gone: 2 })
+    expect(uneditableFunctions([flag], { rowA: true })).toEqual({})
+    expect(uneditableFunctions([flag], undefined)).toEqual({})
   })
 })

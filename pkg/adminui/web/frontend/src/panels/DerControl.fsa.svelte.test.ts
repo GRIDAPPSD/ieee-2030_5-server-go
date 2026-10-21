@@ -27,7 +27,7 @@ function template(over: Partial<ProgramTemplate> = {}): ProgramTemplate {
     description: 'tmpl one',
     primacy: 5,
     version: 1,
-    defaultControl: { mRID: 'DD', type: 'combined', derControlBase: { fnOld: 3 } as never },
+    defaultControl: { mRID: 'DD', type: 'combined', derControlBase: { fnOld: 3 } as never, functions: { fnOld: 3 } },
     copies: ['d1', 'd2'],
     ...over,
   }
@@ -169,7 +169,7 @@ describe('DerControl, FSA target: a default', () => {
     const w: World = { templates: [template()], controls: [] }
     const { post, put, container } = await mountFsa(w)
     put.mockImplementation((async () => {
-      w.templates = [template({ version: 2, defaultControl: { mRID: 'DD', type: 'combined', derControlBase: { fnNew: 7 } as never } })]
+      w.templates = [template({ version: 2, defaultControl: { mRID: 'DD', type: 'combined', derControlBase: { fnNew: 7 } as never, functions: { fnNew: 7 } } })]
       return { ok: true, data: w.templates[0] }
     }) as never)
     await pickProgram(container)

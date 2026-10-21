@@ -40,7 +40,8 @@ test('a device Programs drawer lists, adds, edits and deletes device programs', 
   await drawer.getByTestId('program-add-0').click();
   await drawer.getByLabel('Description').fill('added by e2e');
   await drawer.getByLabel('Primacy').fill('1');
-  await drawer.getByLabel('Default control').selectOption('connect');
+  await drawer.getByTestId('control-fn-opModConnect').check();
+  await drawer.getByTestId('control-fv-opModConnect').check();
   await drawer.getByRole('button', { name: 'Add device program' }).click();
 
   const addedRow = drawer.getByRole('row').filter({ hasText: 'added by e2e' });

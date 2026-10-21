@@ -264,6 +264,54 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 	}
 }
 
+// emptyDefaultType is the type name of a default control with no function
+// set, which is what a scheduled send leaves in a new device program.
+const emptyDefaultType = "other"
+
+// HandleGetDefault returns the handler for GET /api/devices/{id}/default-control:
+// the default control a kind default send set, as the view that send's reply
+// carries. A device with no default, or only the empty one a scheduled send
+// leaves, answers 404.
+func (h *AdminDeviceControlHandler) HandleGetDefault() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		deviceID := r.PathValue("id")
+		if _, ok := h.Controls.loadDevice(w, r, deviceID); !ok {
+			return
+		}
+		fh := h.FSAs
+		if !fh.storesWired(w, r, fh.AdminFSAs != nil && fh.Copies != nil) {
+			return
+		}
+		ctx := r.Context()
+		fsaID, ok := fh.AdminFSAs.DeviceOnlyFSA(deviceID)
+		if !ok {
+			writeError(w, http.StatusNotFound, noDeviceDefault)
+			return
+		}
+		held, err := fh.Copies.DevicePrograms(ctx, deviceID, fsaID)
+		if err != nil {
+			fh.templateFailed(w, r, "device_programs", err)
+			return
+		}
+		if len(held) == 0 {
+			writeError(w, http.StatusNotFound, noDeviceDefault)
+			return
+		}
+		view, err := fh.deviceProgramView(ctx, deviceID, fsaID, held[0])
+		if err != nil {
+			fh.templateFailed(w, r, "program_read", err)
+			return
+		}
+		if view.DefaultControl == nil || view.DefaultControl.Type == emptyDefaultType {
+			writeError(w, http.StatusNotFound, noDeviceDefault)
+			return
+		}
+		writeJSON(w, http.StatusOK, view.DefaultControl)
+	}
+}
+
+const noDeviceDefault = "device has no default control"
+
 // deviceTxn collects what one device-control request wrote, so a request
 // that fails after its first write can undo all of it, and what it should
 // tell devices and the log only once it has succeeded.

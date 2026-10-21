@@ -3,6 +3,7 @@ import { join } from 'path';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert } from './fixtures/device_cert';
+import { localInput } from './fixtures/local_input';
 
 // #929: the operator's whole flow from an empty server, UI only. Every write
 // below is a click or a keystroke in the admin UI; the API is read for
@@ -49,12 +50,6 @@ async function addDeviceInUI(page: Page, name: string): Promise<{ sfdi: string; 
   await expect(page.locator('#addDevResult')).toContainText(/Created \/edev\//, { timeout: 5000 });
   await expect(page.getByTestId('device-label').filter({ hasText: name })).toHaveCount(1, { timeout: 5000 });
   return { sfdi, lfdi };
-}
-
-// localInput formats a Date the way a datetime-local input takes it.
-function localInput(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 test('an empty server becomes controllable from the UI alone', async ({ page, request }) => {

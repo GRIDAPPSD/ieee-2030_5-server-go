@@ -4,6 +4,7 @@ import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
 import { mintDeviceCert, type DeviceCert } from './fixtures/device_cert';
 import { readWire } from './fixtures/fsa_wire';
+import { localInput } from './fixtures/local_input';
 
 // #973: a control sent to an FSA's program from the Control tab reaches every
 // device assigned to the FSA. The devices need certificates the server's CA
@@ -33,11 +34,6 @@ test.afterAll(() => {
 test.beforeEach(async ({ page }) => {
   await page.setExtraHTTPHeaders(AUTH);
 });
-
-function localInput(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
 
 test('an FSA control from the Control tab is on both devices\' wire lists, and cancel reaches both', async ({ page, request }) => {
   await expect

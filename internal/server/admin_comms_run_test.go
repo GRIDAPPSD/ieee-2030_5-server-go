@@ -52,7 +52,7 @@ func TestRunJoinsProtocolActivityToTheDevicesPayload(t *testing.T) {
 			t.Error("server.Run did not exit within 5s after cancel")
 		}
 	})
-	if msg, ok := waitForListenersReady(c.sep2Probe, c.adminProbe, 5*time.Second, device.tlsConfig, runErr); !ok {
+	if msg, ok := waitForListenersReady(c.sep2Probe, c.adminProbe, device.tlsConfig, runErr); !ok {
 		t.Fatal(msg)
 	}
 

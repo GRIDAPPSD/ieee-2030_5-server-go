@@ -192,7 +192,7 @@ func TestIssue_Supersede_FunctionSets(t *testing.T) {
 	}
 }
 
-func TestCatalog_ListsTheFourBuiltFunctions(t *testing.T) {
+func TestCatalog_ListsTheBuiltFunctions(t *testing.T) {
 	var names []string
 	for _, f := range Catalog() {
 		names = append(names, f.Name)
@@ -200,7 +200,8 @@ func TestCatalog_ListsTheFourBuiltFunctions(t *testing.T) {
 			t.Errorf("%s: empty value shape", f.Name)
 		}
 	}
-	want := []string{"opModConnect", "opModEnergize", "opModMaxLimW", "opModFixedPFInjectW", "opModTargetW"}
+	want := []string{"opModConnect", "opModEnergize", "opModMaxLimW", "opModFixedPFInjectW", "opModTargetW",
+		"opModFixedPFAbsorbW", "opModFixedVar", "opModFixedW", "opModFreqDroop", "opModTargetVar", "rampTms"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("catalog names = %v, want %v", names, want)
 	}

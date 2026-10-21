@@ -129,8 +129,11 @@ func integerBounds(t *testing.T) (out []intBound) {
 // min and max pass, and one past each is refused.
 func TestServedIntegerBoundsAreEnforced(t *testing.T) {
 	bounds := integerBounds(t)
-	if len(bounds) != 4 {
-		t.Fatalf("served %d integer bounds, want 4 (maxLimW, displacement, targetW value, targetW multiplier)", len(bounds))
+	// maxLimW, both displacements, targetW and targetVar value and
+	// multiplier, fixedVar refType and value, fixedW, the five droop
+	// members and rampTms.
+	if len(bounds) != 16 {
+		t.Fatalf("served %d integer bounds, want 16", len(bounds))
 	}
 	decodes := func(b intBound, v int64) bool {
 		name, _, _ := strings.Cut(b.where, ".")
@@ -181,7 +184,7 @@ func TestServedRequiredMatchesDecode(t *testing.T) {
 			checked++
 		}
 	}
-	if checked != 4 {
-		t.Errorf("checked %d object fields, want 4", checked)
+	if checked != 15 {
+		t.Errorf("checked %d object fields, want 15", checked)
 	}
 }

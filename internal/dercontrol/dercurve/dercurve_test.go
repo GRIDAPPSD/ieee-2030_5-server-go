@@ -110,3 +110,18 @@ func TestSetLinks(t *testing.T) {
 		t.Error("a *string field named like a non-link DERControlBase field was accepted")
 	}
 }
+
+func TestIDInvertsHref(t *testing.T) {
+	href, err := Href("vv1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, ok := ID(href); !ok || id != "vv1" {
+		t.Errorf("ID(%q) = %q, %v, want vv1, true", href, id, ok)
+	}
+	for _, bad := range []string{"", "/dc/", "/dc/ ", "/elsewhere/vv1", "dc/vv1"} {
+		if id, ok := ID(bad); ok {
+			t.Errorf("ID(%q) = %q, true, want refused", bad, id)
+		}
+	}
+}

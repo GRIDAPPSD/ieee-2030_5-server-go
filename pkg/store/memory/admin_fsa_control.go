@@ -32,6 +32,11 @@ type FSAControl struct {
 	Base         sep2.DERControlBase `json:"derControlBase"`
 	CancelledAt  *int64              `json:"cancelledAt,omitempty"`
 	CancelReason string              `json:"cancelReason,omitempty"`
+
+	// Held is true for a record HoldFSAControl kept from replication: one a
+	// failed write left in a state other than the one the operator was told.
+	// It is never persisted, so it lasts until the next restart.
+	Held bool `json:"-"`
 }
 
 // Copy returns an independent copy.
@@ -89,6 +94,7 @@ func (s *AdminFSAStore) CreateFSAControl(_ context.Context, fsaID string, c FSAC
 	}
 	key := fsaControlKey(c.TemplateID, c.ID)
 	idx, _ := slices.BinarySearchFunc(ctrls, key, compareFSAControlKey)
+	c.Held = false
 	s.controls[fsaID] = slices.Insert(ctrls, idx, c.Copy())
 	s.mu.Unlock()
 	return s.persistOrRollback(func() {
@@ -99,6 +105,33 @@ func (s *AdminFSAStore) CreateFSAControl(_ context.Context, fsaID string, c FSAC
 	})
 }
 
+func fsaControlHeldKey(fsaID, templateID, id string) string {
+	return fsaID + "/" + templateID + "/" + id
+}
+
+// HoldFSAControl keeps a record from being replicated until the next restart
+// or its next successful update or delete. It writes nothing to disk, so it
+// works when the snapshot cannot be written.
+func (s *AdminFSAStore) HoldFSAControl(fsaID, templateID, id string) {
+	s.heldMu.Lock()
+	defer s.heldMu.Unlock()
+	s.held[fsaControlHeldKey(fsaID, templateID, id)] = true
+}
+
+func (s *AdminFSAStore) release(fsaID, templateID, id string) {
+	s.heldMu.Lock()
+	defer s.heldMu.Unlock()
+	delete(s.held, fsaControlHeldKey(fsaID, templateID, id))
+}
+
+// withHeld is c with its Held mark.
+func (s *AdminFSAStore) withHeld(fsaID string, c FSAControl) FSAControl {
+	s.heldMu.Lock()
+	defer s.heldMu.Unlock()
+	c.Held = s.held[fsaControlHeldKey(fsaID, c.TemplateID, c.ID)]
+	return c
+}
+
 // FSAControls returns independent copies of the records on one template,
 // oldest creationTime first, the order a device assigned later receives them.
 func (s *AdminFSAStore) FSAControls(_ context.Context, fsaID, templateID string) []FSAControl {
@@ -107,7 +140,7 @@ func (s *AdminFSAStore) FSAControls(_ context.Context, fsaID, templateID string)
 	out := []FSAControl{}
 	for _, c := range s.controls[fsaID] {
 		if c.TemplateID == templateID {
-			out = append(out, c.Copy())
+			out = append(out, s.withHeld(fsaID, c.Copy()))
 		}
 	}
 	slices.SortStableFunc(out, func(a, b FSAControl) int {
@@ -125,7 +158,7 @@ func (s *AdminFSAStore) FSAControl(_ context.Context, fsaID, templateID, id stri
 	if !found {
 		return FSAControl{}, store.ErrNotFound
 	}
-	return ctrls[idx].Copy(), nil
+	return s.withHeld(fsaID, ctrls[idx].Copy()), nil
 }
 
 // FSAControlByMRID returns the FSA holding the record whose mRID is mrid, in
@@ -136,7 +169,7 @@ func (s *AdminFSAStore) FSAControlByMRID(mrid string) (string, FSAControl, bool)
 	for fsaID, ctrls := range s.controls {
 		for _, c := range ctrls {
 			if strings.EqualFold(c.MRID, mrid) {
-				return fsaID, c.Copy(), true
+				return fsaID, s.withHeld(fsaID, c.Copy()), true
 			}
 		}
 	}
@@ -162,14 +195,19 @@ func (s *AdminFSAStore) UpdateFSAControl(_ context.Context, fsaID string, c FSAC
 		s.mu.Unlock()
 		return fmt.Errorf("%w: mRID and creationTime cannot change", ErrInvalidFSAControl)
 	}
+	c.Held = false
 	ctrls[idx] = c.Copy()
 	s.mu.Unlock()
-	return s.persistOrRollback(func() {
+	if err := s.persistOrRollback(func() {
 		ctrls := s.controls[fsaID]
 		if idx, found := slices.BinarySearchFunc(ctrls, key, compareFSAControlKey); found {
 			ctrls[idx] = before
 		}
-	})
+	}); err != nil {
+		return err
+	}
+	s.release(fsaID, c.TemplateID, c.ID)
+	return nil
 }
 
 // DeleteFSAControl removes one record. ErrNotFound if it is absent.
@@ -187,12 +225,16 @@ func (s *AdminFSAStore) DeleteFSAControl(_ context.Context, fsaID, templateID, i
 	before := ctrls[idx]
 	s.setFSAControls(fsaID, slices.Delete(ctrls, idx, idx+1))
 	s.mu.Unlock()
-	return s.persistOrRollback(func() {
+	if err := s.persistOrRollback(func() {
 		ctrls := s.controls[fsaID]
 		if idx, found := slices.BinarySearchFunc(ctrls, key, compareFSAControlKey); !found {
 			s.controls[fsaID] = slices.Insert(ctrls, idx, before)
 		}
-	})
+	}); err != nil {
+		return err
+	}
+	s.release(fsaID, templateID, id)
+	return nil
 }
 
 // setFSAControls stores ctrls under fsaID, dropping the key when it empties.

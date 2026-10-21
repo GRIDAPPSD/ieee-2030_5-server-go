@@ -33,6 +33,8 @@ type AdminFSAStore struct {
 	templates    map[string][]ProgramTemplate // fsaID -> templates sorted by ID
 	deviceOnly   map[string]string            // fsaID -> the one device it is bound to
 	controls     map[string][]FSAControl      // fsaID -> control records sorted by template id, then id
+	heldMu       sync.Mutex
+	held         map[string]bool // fsaControlHeldKey -> record held back from replication, in memory only
 
 	// Durable persistence (GRIDAPPSD/ieee-2030_5-server-go#165). Empty
 	// persistPath = pure in-memory (the historical AdminFSAStore
@@ -59,6 +61,7 @@ func NewAdminFSAStore() *AdminFSAStore {
 		templates:    make(map[string][]ProgramTemplate),
 		deviceOnly:   make(map[string]string),
 		controls:     make(map[string][]FSAControl),
+		held:         make(map[string]bool),
 	}
 }
 

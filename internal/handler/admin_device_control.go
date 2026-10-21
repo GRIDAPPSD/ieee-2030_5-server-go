@@ -15,6 +15,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
+	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -166,12 +167,18 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 			return
 		}
 		if !validHrefSegment(deviceID) {
+			fh.logged(r).WarnContext(r.Context(), "admin: device control refused", "event", "der_device_control_refused",
+				"code", "device_href_invalid", "status", http.StatusConflict)
 			writeError(w, http.StatusConflict, "device id cannot form a program href")
 			return
 		}
 
+		// The lock is held through the issue: the writes before it are undone
+		// if the issue fails, and nothing else may see or edit them meanwhile.
 		fh.programMu.Lock()
 		defer fh.programMu.Unlock()
+		tx := &deviceTxn{}
+		defer tx.finish(fh, r)
 
 		ctx := r.Context()
 		fsaID, hasFSA := fh.AdminFSAs.DeviceOnlyFSA(deviceID)
@@ -191,6 +198,8 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 		if err != nil {
 			var none *noOutrankError
 			if errors.As(err, &none) {
+				fh.logged(r).WarnContext(ctx, "admin: device control refused", "event", "der_device_control_refused",
+					"code", "primacy_cannot_outrank", "status", http.StatusConflict, "device", deviceID, "program_href", none.href)
 				writeJSON(w, http.StatusConflict, programRefusal{Error: none.Error(), Code: "primacy_cannot_outrank"})
 				return
 			}
@@ -200,17 +209,17 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 
 		if !hasFSA || !fh.deviceAssigned(ctx, fsaID, deviceID) {
 			var ok bool
-			if fsaID, ok = fh.ensureDeviceOnlyFSA(w, r, deviceID, fsaID); !ok {
+			if fsaID, ok = fh.ensureDeviceOnlyFSA(w, r, tx, deviceID, fsaID); !ok {
 				return
 			}
 		}
 
 		if progID == "" {
 			var ok bool
-			if progID, ok = fh.createDeviceOnlyProgram(w, r, deviceID, fsaID, primacy.value, defaultBase); !ok {
+			if progID, ok = fh.createDeviceOnlyProgram(w, r, tx, deviceID, fsaID, primacy.value, defaultBase); !ok {
 				return
 			}
-		} else if ok := fh.updateDeviceOnlyProgram(w, r, deviceID, fsaID, progID, primacy, kind == kindDefault, defaultBase); !ok {
+		} else if ok := fh.updateDeviceOnlyProgram(w, r, tx, deviceID, fsaID, progID, primacy, kind == kindDefault, defaultBase); !ok {
 			return
 		}
 
@@ -218,22 +227,34 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 		reply := DeviceControlCreated{Kind: kind, FSA: fsaID, Program: progID, ProgramHref: programHref, Primacy: primacy.value, PrimacyReason: primacy.reason}
 		if kind == kindDefault {
 			view, err := fh.deviceProgramView(ctx, deviceID, fsaID, progID)
-			if err != nil || view.DefaultControl == nil {
-				fh.templateFailed(w, r, "program_read", errors.Join(err, errors.New("default control missing")))
+			if err == nil && view.DefaultControl == nil {
+				err = errors.New("default control missing")
+			}
+			if err != nil {
+				fh.templateFailed(w, r, "program_read", err)
 				return
 			}
 			reply.DefaultControl = view.DefaultControl
-			fh.logged(r).InfoContext(ctx, "admin: DER device default set", "event", "der_device_default_set",
-				"device", deviceID, "fsa", fsaID, "program", progID, "primacy", primacy.value)
+			tx.committed = true
+			tx.after(func() {
+				fh.logged(r).InfoContext(ctx, "admin: DER device default set", "event", "der_device_default_set",
+					"device", deviceID, "fsa", fsaID, "program", progID, "primacy", primacy.value)
+			})
 			writeJSON(w, http.StatusCreated, reply)
 			return
 		}
 
 		req.DERProgramHref = programHref
-		res, ok := h.Controls.issue(w, r, req, &logged)
+		res, ok, kept := h.Controls.issue(w, r, "device_control", req, &logged)
+		if kept {
+			// A control that could not be undone may be live, so the program
+			// it sits in stays.
+			tx.committed = true
+		}
 		if !ok {
 			return
 		}
+		tx.committed = true
 		h.Controls.notify(ctx, res.Scope)
 		supersedes := res.Supersedes
 		if supersedes == nil {
@@ -248,6 +269,34 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 		}
 		w.Header().Set("Location", res.Href)
 		writeJSON(w, http.StatusCreated, reply)
+	}
+}
+
+// deviceTxn collects what one device-control request wrote, so a request
+// that fails after its first write can undo all of it, and what it should
+// tell devices and the log only once it has succeeded.
+type deviceTxn struct {
+	steps     []rollbackStep
+	later     []func()
+	committed bool
+}
+
+func (t *deviceTxn) after(f func()) { t.later = append(t.later, f) }
+
+// finish flushes the deferred notifications and log lines of a committed
+// request, or undoes the writes of one that was not.
+func (t *deviceTxn) finish(h *AdminFSAHandler, r *http.Request) {
+	if t.committed {
+		for _, f := range t.later {
+			f()
+		}
+		return
+	}
+	if len(t.steps) == 0 {
+		return
+	}
+	if !h.rollbackAfter(r, errors.New("device control request failed"), t.steps) {
+		h.logged(r).ErrorContext(r.Context(), "admin: device control left partly applied", "event", "device_control_incomplete", "path", r.URL.Path)
 	}
 }
 
@@ -267,16 +316,22 @@ func (e *noOutrankError) Error() string {
 	return "no primacy outranks program " + e.href + ", which holds primacy 0; change or remove that program first"
 }
 
+// allowedPrimacy reports whether sep.xsd's PrimacyType assigns p to a
+// provider: 0 to 2 are defined, 65 to 191 are user-defined, and 3 to 64 and
+// 192 to 255 are reserved. It is validPrimacy for a uint8.
+func allowedPrimacy(p uint8) bool { return validPrimacy(int64(p)) }
+
 // outrankPrimacy picks the primacy of a program that must beat every other
 // program of its device when the lowest of theirs is lowest (noOtherProgram
-// when there are none): the largest value in 65 to 191 below lowest, else the
-// largest value below lowest. Lower numbers win in 2030.5, and a value below
-// every other program's cannot tie with one. ok is false when lowest is 0.
+// when there are none): the largest allowed value below lowest, preferring
+// the user-defined range 65 to 191 and then 2, 1, 0. Lower numbers win in
+// 2030.5, and a value below every other program's cannot tie with one. ok is
+// false when lowest is 0.
 func outrankPrimacy(lowest int) (value uint8, userRange, ok bool) {
 	if v := min(lowest-1, userPrimacyHigh); v >= userPrimacyLow {
 		return uint8(v), true, true
 	}
-	if v := min(lowest-1, userPrimacyLow-1); v >= 0 {
+	if v := min(lowest-1, 2); v >= 0 {
 		return uint8(v), false, true
 	}
 	return 0, false, false
@@ -317,7 +372,7 @@ func (h *AdminFSAHandler) choosePrimacy(ctx context.Context, deviceID, fsaID, pr
 	if lowestHref != "" {
 		others = fmt.Sprintf("the lowest primacy of its other programs is %d", lowest)
 	}
-	if current != nil && int(*current) < lowest {
+	if current != nil && int(*current) < lowest && allowedPrimacy(*current) {
 		return chosenPrimacy{value: *current, reason: fmt.Sprintf("kept %d: it still outranks the device's other programs (%s)", *current, others)}, nil
 	}
 	value, userRange, ok := outrankPrimacy(lowest)
@@ -326,7 +381,7 @@ func (h *AdminFSAHandler) choosePrimacy(ctx context.Context, deviceID, fsaID, pr
 	}
 	reason := fmt.Sprintf("%d is the largest user-defined primacy (65 to 191) below the others (%s)", value, others)
 	if !userRange {
-		reason = fmt.Sprintf("%d is the largest value below the others (%s); it lies outside the user-defined range 65 to 191 because no value there is below them", value, others)
+		reason = fmt.Sprintf("%d is the largest value below the others (%s); it lies outside the user-defined range 65 to 191 because no value there is below them, and 3 to 64 are reserved", value, others)
 	}
 	if current != nil {
 		reason = fmt.Sprintf("re-picked %d (was %d): %s", value, *current, reason)
@@ -346,9 +401,10 @@ func (h *AdminFSAHandler) deviceAssigned(ctx context.Context, fsaID, deviceID st
 
 // ensureDeviceOnlyFSA creates deviceID's device-only FSA when fsaID is empty,
 // assigns the device, and materializes the FSA into the device's own store,
-// completing whatever part a restart or an earlier failure left missing. It
-// answers the request and returns false on failure.
-func (h *AdminFSAHandler) ensureDeviceOnlyFSA(w http.ResponseWriter, r *http.Request, deviceID, fsaID string) (string, bool) {
+// completing whatever part a restart or an earlier failure left missing. The
+// writes are recorded in tx. It answers the request and returns false on
+// failure.
+func (h *AdminFSAHandler) ensureDeviceOnlyFSA(w http.ResponseWriter, r *http.Request, tx *deviceTxn, deviceID, fsaID string) (string, bool) {
 	ctx := r.Context()
 	var steps []rollbackStep
 	fail := func(cause string, err error) (string, bool) {
@@ -408,13 +464,14 @@ func (h *AdminFSAHandler) ensureDeviceOnlyFSA(w http.ResponseWriter, r *http.Req
 	default:
 		return fail("scope_materialize", err)
 	}
-	h.notify(ctx, "/edev/"+deviceID+"/fsa")
+	tx.steps = append(tx.steps, steps...)
+	tx.after(func() { h.notify(ctx, "/edev/"+deviceID+"/fsa") })
 	return fsaID, true
 }
 
 // createDeviceOnlyProgram writes the device's one program in fsaID, with
 // defaultBase as its default control or an empty one, and returns its id.
-func (h *AdminFSAHandler) createDeviceOnlyProgram(w http.ResponseWriter, r *http.Request, deviceID, fsaID string, primacy uint8, defaultBase *sep2.DERControlBase) (string, bool) {
+func (h *AdminFSAHandler) createDeviceOnlyProgram(w http.ResponseWriter, r *http.Request, tx *deviceTxn, deviceID, fsaID string, primacy uint8, defaultBase *sep2.DERControlBase) (string, bool) {
 	prog := memory.ProgramTemplate{Description: deviceProgramDescription, Primacy: primacy}
 	if defaultBase != nil {
 		prog.DefaultControlBase = defaultBase.Copy()
@@ -423,7 +480,8 @@ func (h *AdminFSAHandler) createDeviceOnlyProgram(w http.ResponseWriter, r *http
 		h.templateFailed(w, r, "mint", err)
 		return "", false
 	}
-	if _, err := h.Copies.EnsureDevice(r.Context(), deviceID, fsaID, prog); err != nil {
+	undo, err := h.Copies.EnsureDevice(r.Context(), deviceID, fsaID, prog)
+	if err != nil {
 		var part *fsaprogram.PartError
 		switch {
 		case errors.Is(err, fsaprogram.ErrCopyConflict):
@@ -436,15 +494,18 @@ func (h *AdminFSAHandler) createDeviceOnlyProgram(w http.ResponseWriter, r *http
 		}
 		return "", false
 	}
-	h.notify(r.Context(), programListHref(deviceID, fsaID))
-	h.logged(r).InfoContext(r.Context(), "admin: DER device-only program created", "event", "der_device_program_created",
-		"device", deviceID, "fsa", fsaID, "program", prog.ID, "mrid", prog.MRID, "primacy", primacy)
+	tx.steps = append(tx.steps, rollbackStep{device: deviceID, template: prog.ID, part: "program", undo: undo})
+	tx.after(func() {
+		h.notify(r.Context(), programListHref(deviceID, fsaID))
+		h.logged(r).InfoContext(r.Context(), "admin: DER device-only program created", "event", "der_device_program_created",
+			"device", deviceID, "fsa", fsaID, "program", prog.ID, "mrid", prog.MRID, "primacy", primacy)
+	})
 	return prog.ID, true
 }
 
 // updateDeviceOnlyProgram applies a re-picked primacy and, for kind default,
 // the new default control, as one edit that raises the versions it changes.
-func (h *AdminFSAHandler) updateDeviceOnlyProgram(w http.ResponseWriter, r *http.Request, deviceID, fsaID, progID string, primacy chosenPrimacy, setDefault bool, defaultBase *sep2.DERControlBase) bool {
+func (h *AdminFSAHandler) updateDeviceOnlyProgram(w http.ResponseWriter, r *http.Request, tx *deviceTxn, deviceID, fsaID, progID string, primacy chosenPrimacy, setDefault bool, defaultBase *sep2.DERControlBase) bool {
 	if !primacy.changed && !setDefault {
 		return true
 	}
@@ -463,8 +524,20 @@ func (h *AdminFSAHandler) updateDeviceOnlyProgram(w http.ResponseWriter, r *http
 			return nil
 		}
 	}
-	ch, err := fsaprogram.EditWithDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults,
-		fsaprogram.Ref{DeviceID: deviceID, ProgramID: progID}, fsaprogram.DefaultScope(deviceID, fsaID, progID), mutateProgram, mutateDefault)
+	ctx := r.Context()
+	scope := fsaprogram.DefaultScope(deviceID, fsaID, progID)
+	pBefore, err := h.Copies.Programs.Get(ctx, deviceID, progID)
+	if err != nil {
+		h.templateFailed(w, r, "program_lookup", err)
+		return false
+	}
+	dBefore, err := h.Copies.Defaults.Get(ctx, scope, coresingleton.SingletonKey)
+	if err != nil {
+		h.templateFailed(w, r, "default_lookup", err)
+		return false
+	}
+	ch, err := fsaprogram.EditWithDefault(ctx, h.Copies.Programs, h.Copies.Defaults,
+		fsaprogram.Ref{DeviceID: deviceID, ProgramID: progID}, scope, mutateProgram, mutateDefault)
 	switch {
 	case err == nil:
 	case errors.Is(err, fsaprogram.ErrVersionExhausted):
@@ -474,11 +547,22 @@ func (h *AdminFSAHandler) updateDeviceOnlyProgram(w http.ResponseWriter, r *http
 		h.templateFailed(w, r, "program_edit", err)
 		return false
 	}
-	h.notifyEdited(r.Context(), deviceID, fsaID, progID, ch)
-	if ch.Program {
-		h.logged(r).InfoContext(r.Context(), "admin: DER device-only program edited", "event", "der_device_program_edited",
-			"device", deviceID, "program", progID, "primacy", primacy.value)
+	if ch.Program || ch.Default {
+		// The stored values go back as they were, versions included.
+		tx.steps = append(tx.steps, rollbackStep{device: deviceID, template: progID, part: "program_edit", undo: func(ctx context.Context) error {
+			if err := h.Copies.Defaults.Update(ctx, scope, coresingleton.SingletonKey, dBefore); err != nil {
+				return err
+			}
+			return h.Copies.Programs.Update(ctx, deviceID, progID, pBefore)
+		}})
 	}
+	tx.after(func() {
+		h.notifyEdited(ctx, deviceID, fsaID, progID, ch)
+		if ch.Program {
+			h.logged(r).InfoContext(ctx, "admin: DER device-only program edited", "event", "der_device_program_edited",
+				"device", deviceID, "program", progID, "primacy", primacy.value)
+		}
+	})
 	return true
 }
 

@@ -222,7 +222,7 @@ func TestDeviceControl_PrimacyOutranksTheDevicesOtherPrograms(t *testing.T) {
 		{"above the user range", 200, 191, true},
 		{"top of the user range", 191, 190, true},
 		{"just above the floor", 66, 65, true},
-		{"at the floor of the user range", 65, 64, false},
+		{"at the floor of the user range", 65, 2, false},
 		{"standard primacy 2", 2, 1, false},
 		{"standard primacy 1", 1, 0, false},
 	}

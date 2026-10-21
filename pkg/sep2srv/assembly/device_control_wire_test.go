@@ -111,4 +111,8 @@ func TestDeviceControl_IsReadOnTheWireByThatDevicesPoll(t *testing.T) {
 	if other := getList[sep2.FunctionSetAssignmentsList](t, srv, "/edev/e2/fsa?l=255"); other.All != 0 {
 		t.Errorf("e2 FSA list all=%d, want 0", other.All)
 	}
+	// Nor does e2's program list under the same FSA id serve e1's program.
+	if other := getList[sep2.DERProgramList](t, srv, "/edev/e2/fsa/"+fsaID+"/derp?l=255"); other.All != 0 || len(other.DERProgram) != 0 {
+		t.Errorf("e2 program list under e1's FSA all=%d items=%d, want 0", other.All, len(other.DERProgram))
+	}
 }

@@ -415,8 +415,11 @@ and the `control` or `defaultControl`.
 The program outranks every other program the device has, because
 `inverterclient` follows only the lowest-primacy program. Lower numbers win,
 so the server takes the largest unused value below all of theirs, preferring
-65 to 191, then 0 to 64 with the reason saying so. If another program holds
-0 the answer is 409 `primacy_cannot_outrank`. On reuse the primacy is kept
+65 to 191, then 2, 1 or 0 (3 to 64 are reserved by the schema) with the
+reason saying so. If no allowed value is below the others, such as another
+program at 0, the answer is 409 `primacy_cannot_outrank`. A request that
+fails after the FSA or program was written undoes those writes and tells
+no device. On reuse the primacy is kept
 while it still outranks the others, otherwise it is re-picked and the
 program's `version` rises. Assigning any other device to that FSA, or
 creating a template on it, is 409 `fsa_device_only`. The binding is stored

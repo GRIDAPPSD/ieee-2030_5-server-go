@@ -22,12 +22,10 @@ function sourceFiles(dir: string): string[] {
 // A control function is an element named opMod followed by a capital.
 export const ELEMENT = /\bopMod[A-Z]\w*/
 
-// The two files below are bound to one element by design and are not part of
-// the control form: the Dispatch tab sends target power only, and the FSAs
-// tab edits the stored default of a template by its legacy type. Each entry
-// must still name an element, so the list shrinks when the names go.
+// The file below is bound to one element by design and is not part of the
+// control form: the Dispatch tab sends target power only. Each entry must
+// still name an element, so the list shrinks when the names go.
 const ELEMENT_ALLOWED: Record<string, string> = {
-  'src/lib/derprogram.ts': 'FSA template default control, read by legacy type',
   'src/panels/DispatchPane.svelte': 'Dispatch tab reads the target power of a control',
 }
 
@@ -40,7 +38,7 @@ describe('the control form names no control function', () => {
     expect(files).toContain('src/lib/controlcatalog.ts')
   })
 
-  it('no non-test file under src names an element, except the allowed two', () => {
+  it('no non-test file under src names an element, except the allowed one', () => {
     const named = files.filter((f) => ELEMENT.test(readFileSync(f, 'utf8')))
     expect(named).toEqual(Object.keys(ELEMENT_ALLOWED).sort())
   })

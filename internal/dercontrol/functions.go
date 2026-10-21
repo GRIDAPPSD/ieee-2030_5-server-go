@@ -470,19 +470,45 @@ func baseFromFunctions(req CreateRequest) (*sep2.DERControlBase, error) {
 			return nil, refuse(RefusalUnexpectedValue)
 		}
 	}
-	b := &sep2.DERControlBase{}
-	empty := true
+	b, err := BuildBase(req.Functions)
+	if err != nil {
+		return nil, err
+	}
+	if len(FunctionNames(&b)) == 0 {
+		return nil, refuse(RefusalMissingValue)
+	}
+	return &b, nil
+}
+
+// MemberRefusal is a function set's member refused by BuildBase: Function is
+// the catalog name of the member, and the wrapped *RefusalError carries the
+// wording the admin routes give the same value.
+type MemberRefusal struct {
+	Function string
+	*RefusalError
+}
+
+func (e *MemberRefusal) Unwrap() error { return e.RefusalError }
+
+// BuildBase builds the base a functions set carries, checking each member
+// against the catalog as a request body's would be. A set with no members
+// builds the empty base. A refused member is a *MemberRefusal.
+func BuildBase(set *FunctionSet) (sep2.DERControlBase, error) {
+	var b sep2.DERControlBase
+	if set == nil {
+		return b, nil
+	}
 	for _, f := range catalog {
-		if !f.inSet(req.Functions) {
+		if !f.inSet(set) {
 			continue
 		}
-		if err := f.build(req.Functions, b); err != nil {
-			return nil, err
+		if err := f.build(set, &b); err != nil {
+			var ref *RefusalError
+			if errors.As(err, &ref) {
+				return sep2.DERControlBase{}, &MemberRefusal{Function: f.info().Name, RefusalError: ref}
+			}
+			return sep2.DERControlBase{}, err
 		}
-		empty = false
-	}
-	if empty {
-		return nil, refuse(RefusalMissingValue)
 	}
 	return b, nil
 }

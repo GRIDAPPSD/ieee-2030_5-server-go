@@ -1,9 +1,8 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import { execFileSync } from 'child_process';
 import { join } from 'path';
-import { readFileSync } from 'fs';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
+import { mintDeviceCert } from './fixtures/device_cert';
 
 // #926: pair an aggregator with a managed device from the Devices tab, then
 // read the pair back through GET /api/management-pairs, the endpoint a
@@ -35,16 +34,7 @@ async function registerDevice(
   name: string,
 ): Promise<{ sfdi: string; lfdi: string }> {
   const certDir = getCertDir();
-  execFileSync(join(__dirname, '..', 'sep2server'), [
-    'certs', 'generate-device',
-    '--ca', join(certDir, 'ca.crt'),
-    '--ca-key', join(certDir, 'ca.key'),
-    '--hw-serial', `${name}-serial`,
-    '--hw-type', '1.3.6.1.4.1.40732.99',
-    '--out', certDir,
-    '--name', name,
-  ], { stdio: 'pipe' });
-  const pem = readFileSync(join(certDir, `${name}.crt`), 'utf8');
+  const pem = mintDeviceCert(join(__dirname, '..', 'sep2server'), certDir, name).certPEM;
 
   const info = await request.post(baseUrl + '/api/certs/info', {
     headers: { ...AUTH, 'Content-Type': 'application/x-pem-file' },

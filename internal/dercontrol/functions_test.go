@@ -2,6 +2,7 @@ package dercontrol
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -220,4 +221,47 @@ func TestFunctionNames_ReadsTheElementsPresent(t *testing.T) {
 	if got := FunctionNames(nil); len(got) != 0 {
 		t.Fatalf("FunctionNames(nil) = %v, want none", got)
 	}
+}
+
+func TestBuildBase(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty set builds the empty base", func(t *testing.T) {
+		t.Parallel()
+		b, err := BuildBase(&FunctionSet{})
+		if err != nil || len(FunctionNames(&b)) != 0 {
+			t.Fatalf("BuildBase(empty) = %+v, %v; want the empty base", b, err)
+		}
+	})
+
+	t.Run("members build the values the admin route builds", func(t *testing.T) {
+		t.Parallel()
+		v, m, w := int64(-300), int64(-1), int64(4000)
+		b, err := BuildBase(&FunctionSet{OpModTargetW: &ActivePowerInput{Value: &v, Multiplier: &m}, OpModFixedW: &w})
+		if err != nil {
+			t.Fatalf("BuildBase: %v", err)
+		}
+		if b.OpModTargetW == nil || b.OpModTargetW.Value != -300 || b.OpModTargetW.Multiplier != -1 {
+			t.Errorf("OpModTargetW = %+v, want value -300 multiplier -1", b.OpModTargetW)
+		}
+		if b.OpModFixedW == nil || *b.OpModFixedW != 4000 {
+			t.Errorf("OpModFixedW = %v, want 4000", b.OpModFixedW)
+		}
+	})
+
+	t.Run("a refused member names its function and keeps the admin wording", func(t *testing.T) {
+		t.Parallel()
+		w := int64(10001)
+		_, err := BuildBase(&FunctionSet{OpModMaxLimW: &w})
+		var ref *MemberRefusal
+		if !errors.As(err, &ref) {
+			t.Fatalf("error %v is not a *MemberRefusal", err)
+		}
+		if ref.Function != FuncMaxLimW || ref.Code != RefusalValueOutOfRange {
+			t.Errorf("Function = %q, Code = %q", ref.Function, ref.Code)
+		}
+		if ref.Detail == nil || ref.Detail.Message != "maxLimW: must be 0 to 10000" {
+			t.Errorf("Detail = %+v", ref.Detail)
+		}
+	})
 }

@@ -1,9 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
-import { execFileSync } from 'child_process';
 import { join } from 'path';
-import { readFileSync } from 'fs';
 import { startServer, stopServer, getCertDir } from './setup';
 import { ADMIN_KEY } from './adminKey';
+import { mintDeviceCert } from './fixtures/device_cert';
 
 // #929: the operator's whole flow from an empty server, UI only. Every write
 // below is a click or a keystroke in the admin UI; the API is read for
@@ -30,17 +29,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 function mintCert(name: string): string {
-  const certDir = getCertDir();
-  execFileSync(join(__dirname, '..', 'sep2server'), [
-    'certs', 'generate-device',
-    '--ca', join(certDir, 'ca.crt'),
-    '--ca-key', join(certDir, 'ca.key'),
-    '--hw-serial', `${name}-serial`,
-    '--hw-type', '1.3.6.1.4.1.40732.99',
-    '--out', certDir,
-    '--name', name,
-  ], { stdio: 'pipe' });
-  return readFileSync(join(certDir, `${name}.crt`), 'utf8');
+  return mintDeviceCert(join(__dirname, '..', 'sep2server'), getCertDir(), name).certPEM;
 }
 
 // addDeviceInUI pastes a certificate into the Add End Device card and
@@ -118,7 +107,8 @@ test('an empty server becomes controllable from the UI alone', async ({ page, re
   await templates.getByRole('button', { name: 'New template' }).click();
   await templates.getByLabel('Description').fill(TEMPLATE);
   await templates.getByLabel('Primacy').fill('1');
-  await templates.getByLabel('Default control').selectOption('connect');
+  await templates.getByTestId('control-fn-opModConnect').check();
+  await templates.getByTestId('control-fv-opModConnect').check();
   await templates.getByRole('button', { name: 'Add template' }).click();
   await expect(templates.getByTestId('template-description')).toHaveText(TEMPLATE, { timeout: 5000 });
 

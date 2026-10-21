@@ -24,6 +24,7 @@ import {
   restartLabel,
   updateDeviceProgram,
   updateTemplate,
+  type DefaultControlInput,
   type DefaultControlView,
   type ProgramBody,
   type ProgramFormValues,
@@ -36,8 +37,14 @@ afterEach(() => {
 })
 
 function form(over: Partial<ProgramFormValues> = {}): ProgramFormValues {
-  return { ...emptyForm(), description: 'roof fleet', primacy: '65', controlType: 'connect', ...over }
+  return { ...emptyForm(), description: 'roof fleet', primacy: '65', ...over }
 }
+
+// What the form's ticked fields hand the builder: the functions a control
+// form would send.
+const CONNECT: DefaultControlInput = { ok: true, functions: { fnFlag: true } }
+const create = (over: Partial<ProgramFormValues> = {}, defaultControl: DefaultControlInput = CONNECT) =>
+  buildProgramBody(form(over), { requireDefault: true, defaultControl })
 
 function fetchSpy(status: number, body: unknown) {
   return vi.spyOn(globalThis, 'fetch').mockResolvedValue({
@@ -48,41 +55,19 @@ function fetchSpy(status: number, body: unknown) {
 }
 
 describe('buildProgramBody', () => {
-  it('builds a connect template body with no value fields', () => {
-    expect(buildProgramBody(form(), { requireDefault: true })).toEqual({
+  it('sends the ticked functions and their values as the default control', () => {
+    const functions = { fnFlag: true, fnNum: 5000, fnObj: { a: 950, b: true } }
+    expect(create({}, { ok: true, functions })).toEqual({
       ok: true,
-      body: { description: 'roof fleet', primacy: 65, defaultControl: { type: 'connect' } },
+      body: { description: 'roof fleet', primacy: 65, defaultControl: { functions } },
     })
   })
 
   it('sends an mRID only when one was typed, trimmed', () => {
-    const r = buildProgramBody(form({ mRID: '  0123456789abcdef0123456789abcdef ' }), { requireDefault: true })
+    const r = create({ mRID: '  0123456789abcdef0123456789abcdef ' })
     expect(r.ok && r.body.mRID).toBe('0123456789abcdef0123456789abcdef')
-  })
-
-  it('maps each control type to the value shape the server reads', () => {
-    const max = buildProgramBody(form({ controlType: 'maxLimW', maxLimW: '5000' }), { requireDefault: true })
-    expect(max.ok && max.body.defaultControl).toEqual({ type: 'maxLimW', maxLimW: 5000 })
-
-    const pf = buildProgramBody(
-      form({ controlType: 'fixedPFInjectW', displacement: '950', excitation: 'true' }),
-      { requireDefault: true },
-    )
-    expect(pf.ok && pf.body.defaultControl).toEqual({
-      type: 'fixedPFInjectW',
-      powerFactor: { displacement: 950, excitation: true },
-    })
-
-    const tw = buildProgramBody(
-      form({ controlType: 'targetW', targetValue: '-1200', targetMultiplier: '-1' }),
-      { requireDefault: true },
-    )
-    expect(tw.ok && tw.body.defaultControl).toEqual({ type: 'targetW', targetW: { value: -1200, multiplier: -1 } })
-  })
-
-  it('leaves a blank target multiplier to the server default of 0', () => {
-    const tw = buildProgramBody(form({ controlType: 'targetW', targetValue: '7' }), { requireDefault: true })
-    expect(tw.ok && tw.body.defaultControl).toEqual({ type: 'targetW', targetW: { value: 7 } })
+    const none = create()
+    expect(none.ok && 'mRID' in none.body).toBe(false)
   })
 
   it.each<[string, Partial<ProgramFormValues>, string]>([
@@ -99,36 +84,16 @@ describe('buildProgramBody', () => {
       { mRID: 'FFFFFFFFFFFFFFFFFFFFFFFF00000001' },
       'mRID: must be 32 hex digits, not the reserved form whose first 24 digits are F',
     ],
-    ['no control type', { controlType: '' }, 'defaultControl.type: required'],
-    ['maxLimW blank', { controlType: 'maxLimW' }, 'defaultControl.maxLimW: required for type maxLimW'],
-    ['maxLimW 10001', { controlType: 'maxLimW', maxLimW: '10001' }, 'defaultControl.maxLimW: must be 0 to 10000'],
-    [
-      'displacement 0',
-      { controlType: 'fixedPFInjectW', displacement: '0' },
-      'defaultControl.powerFactor.displacement: must be 1 to 1000',
-    ],
-    [
-      'displacement blank',
-      { controlType: 'fixedPFInjectW' },
-      'defaultControl.powerFactor.displacement: required',
-    ],
-    [
-      'targetW blank',
-      { controlType: 'targetW' },
-      'defaultControl.targetW.value: required',
-    ],
-    [
-      'targetW out of range',
-      { controlType: 'targetW', targetValue: '32768' },
-      'defaultControl.targetW.value: must be -32768 to 32767',
-    ],
-    [
-      'multiplier 10',
-      { controlType: 'targetW', targetValue: '1', targetMultiplier: '10' },
-      'defaultControl.targetW.multiplier: must be -9 to 9',
-    ],
   ])('refuses %s with the server wording', (_name, over, message) => {
-    expect(buildProgramBody(form(over), { requireDefault: true })).toEqual({ ok: false, error: message })
+    expect(create(over)).toEqual({ ok: false, error: message })
+  })
+
+  it('refuses a create with nothing ticked, and shows why the functions could not be built', () => {
+    expect(create({}, null)).toEqual({ ok: false, error: 'defaultControl: tick at least one function' })
+    expect(create({}, { ok: false, error: 'fnNum must be a whole number.' })).toEqual({
+      ok: false,
+      error: 'fnNum must be a whole number.',
+    })
   })
 
   it.each<[string, Partial<ProgramFormValues>, unknown]>([
@@ -139,49 +104,13 @@ describe('buildProgramBody', () => {
     ['primacy 191', { primacy: '191' }, { primacy: 191 }],
     ['32-octet description', { description: 'x'.repeat(32) }, { description: 'x'.repeat(32) }],
     ['1-octet description', { description: 'x' }, { description: 'x' }],
-    ['maxLimW 0', { controlType: 'maxLimW', maxLimW: '0' }, { defaultControl: { type: 'maxLimW', maxLimW: 0 } }],
-    [
-      'maxLimW 10000',
-      { controlType: 'maxLimW', maxLimW: '10000' },
-      { defaultControl: { type: 'maxLimW', maxLimW: 10000 } },
-    ],
-    [
-      'displacement 1',
-      { controlType: 'fixedPFInjectW', displacement: '1' },
-      { defaultControl: { type: 'fixedPFInjectW', powerFactor: { displacement: 1, excitation: false } } },
-    ],
-    [
-      'displacement 1000',
-      { controlType: 'fixedPFInjectW', displacement: '1000' },
-      { defaultControl: { type: 'fixedPFInjectW', powerFactor: { displacement: 1000, excitation: false } } },
-    ],
-    [
-      'targetW -32768',
-      { controlType: 'targetW', targetValue: '-32768' },
-      { defaultControl: { type: 'targetW', targetW: { value: -32768 } } },
-    ],
-    [
-      'targetW 32767',
-      { controlType: 'targetW', targetValue: '32767' },
-      { defaultControl: { type: 'targetW', targetW: { value: 32767 } } },
-    ],
-    [
-      'multiplier -9',
-      { controlType: 'targetW', targetValue: '1', targetMultiplier: '-9' },
-      { defaultControl: { type: 'targetW', targetW: { value: 1, multiplier: -9 } } },
-    ],
-    [
-      'multiplier 9',
-      { controlType: 'targetW', targetValue: '1', targetMultiplier: '9' },
-      { defaultControl: { type: 'targetW', targetW: { value: 1, multiplier: 9 } } },
-    ],
     [
       'mRID just short of the reserved form',
       { mRID: 'FFFFFFFFFFFFFFFFFFFFFFFE00000001' },
       { mRID: 'FFFFFFFFFFFFFFFFFFFFFFFE00000001' },
     ],
   ])('accepts the edge value %s', (_name, over, expected) => {
-    const r = buildProgramBody(form(over), { requireDefault: true })
+    const r = create(over)
     expect(r.ok).toBe(true)
     expect(r.ok && r.body).toMatchObject(expected as object)
   })
@@ -190,46 +119,23 @@ describe('buildProgramBody', () => {
     ['a lowercase reserved mRID', 'ffffffffffffffffffffffff00000001'],
     ['a 33-digit mRID', '0123456789abcdef0123456789abcdef0'],
   ])('refuses %s', (_name, mRID) => {
-    expect(buildProgramBody(form({ mRID }), { requireDefault: true }).ok).toBe(false)
+    expect(create({ mRID }).ok).toBe(false)
   })
 
-  it('omits the default control on an edit that does not ask for one', () => {
-    const r = buildProgramBody(form({ controlType: '' }), { requireDefault: false })
-    expect(r).toEqual({ ok: true, body: { description: 'roof fleet', primacy: 65 } })
+  it('omits the default control on an edit that ticks nothing, but sends what an edit ticks', () => {
+    expect(buildProgramBody(form(), { requireDefault: false, defaultControl: null })).toEqual({
+      ok: true,
+      body: { description: 'roof fleet', primacy: 65 },
+    })
+    const r = buildProgramBody(form(), { requireDefault: false, defaultControl: CONNECT })
+    expect(r.ok && r.body.defaultControl).toEqual({ functions: { fnFlag: true } })
   })
 })
 
 describe('formFromProgram', () => {
-  const tmpl = (base: ProgramTemplate['defaultControl']['derControlBase'], type: string): ProgramTemplate => ({
-    id: 'derp-1',
-    mRID: 'AB',
-    description: 'd',
-    primacy: 1,
-    version: 3,
-    defaultControl: { mRID: 'CD', type, derControlBase: base },
-    copies: [],
-  })
-
-  it('round-trips a stored default control through the form into the same body', () => {
-    const t = tmpl({ opModFixedPFInjectW: { displacement: 900, excitation: true, multiplier: -3 } }, 'fixedPFInjectW')
-    const r = buildProgramBody(formFromProgram(t), { requireDefault: true })
-    expect(r.ok && r.body).toEqual({
-      description: 'd',
-      primacy: 1,
-      defaultControl: { type: 'fixedPFInjectW', powerFactor: { displacement: 900, excitation: true } },
-    })
-  })
-
-  it('reads maxLimW and targetW back as strings the inputs show', () => {
-    const m = formFromProgram(tmpl({ opModMaxLimW: 7500 }, 'maxLimW'))
-    expect([m.controlType, m.maxLimW]).toEqual(['maxLimW', '7500'])
-    const w = formFromProgram(tmpl({ opModTargetW: { value: -5, multiplier: 2 } }, 'targetW'))
-    expect([w.controlType, w.targetValue, w.targetMultiplier]).toEqual(['targetW', '-5', '2'])
-  })
-
-  it('leaves the control blank for a program with no default control view', () => {
-    const f = formFromProgram({ id: 'x', mRID: 'AB', description: 'd', primacy: 0, version: 1 })
-    expect(f.controlType).toBe('')
+  it('reads the description and primacy and leaves the mRID blank', () => {
+    const f = formFromProgram({ id: 'x', mRID: 'AB', description: 'd', primacy: 7, version: 1 })
+    expect(f).toEqual({ description: 'd', primacy: '7', mRID: '' })
   })
 })
 
@@ -391,7 +297,9 @@ describe('wire keys match the Go json tags', () => {
   const bodyKeys: Record<keyof Required<ProgramBody>, true> = {
     description: true, primacy: true, mRID: true, defaultControl: true,
   }
-  const defaultControlKeys: Record<keyof DefaultControlView, true> = { mRID: true, type: true, derControlBase: true }
+  const defaultControlKeys: Record<keyof DefaultControlView, true> = {
+    mRID: true, type: true, functions: true, derControlBase: true,
+  }
   const keys = (r: Record<string, true>) => Object.keys(r).sort()
 
   it('ProgramTemplate, DefaultControlView and ProgramBody match admin_derprogram.go', () => {

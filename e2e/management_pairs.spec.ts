@@ -68,9 +68,9 @@ test('create and remove a management pair from the Devices tab', async ({ page, 
   // Both choices come from the device list; the option value is the LFDI.
   const manager = page.getByLabel('Manager', { exact: true });
   const managedSel = page.getByLabel('Managed device', { exact: true });
-  await expect(manager.locator('option', { hasText: aggregator.sfdi })).toHaveCount(1, { timeout: 10000 });
-  await manager.selectOption({ value: (await manager.locator('option', { hasText: aggregator.sfdi }).getAttribute('value'))! });
-  await managedSel.selectOption({ value: (await managedSel.locator('option', { hasText: managed.sfdi }).getAttribute('value'))! });
+  await expect(manager.locator('option', { hasText: 'pairs-aggregator' })).toHaveCount(1, { timeout: 10000 });
+  await manager.selectOption({ value: (await manager.locator('option', { hasText: 'pairs-aggregator' }).getAttribute('value'))! });
+  await managedSel.selectOption({ value: (await managedSel.locator('option', { hasText: 'pairs-managed' }).getAttribute('value'))! });
   await page.getByRole('button', { name: 'Create pair' }).click();
 
   await expect(page.getByTestId('pairs-result')).toContainText('Paired', { timeout: 5000 });

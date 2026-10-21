@@ -12,6 +12,7 @@
   // returned rather than re-derived.
   import { onDestroy, onMount } from 'svelte'
   import { fetchJSON } from '../lib/api'
+  import { deviceLabel } from '../lib/devices'
   import { formatInterval, formatQuantity } from '../lib/flowreservation'
   import { grantDirectionWord, isCommitments, type Commitments } from '../lib/commitments'
   import {
@@ -181,7 +182,7 @@
           {@const held = commitments[fleet.aggregatorLFDI]}
           {@const neitherAvail = activeAvail.kind === 'none' && reactiveAvail.kind === 'none'}
           <tr data-testid="fleet-row">
-            <td class="mono" title={fleet.aggregatorLFDI}>{fleet.aggregatorLFDI.substring(0, 16)}...</td>
+            <td class="mono" title={fleet.aggregatorLFDI}>{deviceLabel(fleet.aggregatorLFDI)}</td>
             <td>{fleet.rollup.deviceCount}</td>
             <td>{fleet.rollup.connected}</td>
             <td>{fleet.rollup.alarmed}</td>

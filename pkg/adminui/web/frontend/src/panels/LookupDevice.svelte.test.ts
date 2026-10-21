@@ -6,7 +6,7 @@ import * as api from '../lib/api'
 const LFDI = '0123456789ABCDEF0123456789ABCDEF01234567'
 
 describe('LookupDevice', () => {
-  it('renders the found device href, SFDI and enabled state from the response', async () => {
+  it('renders the found device href, label (SFDI when unnamed) and enabled state from the response', async () => {
     const get = vi.spyOn(api, 'fetchJSON').mockResolvedValue({
       ok: true,
       data: { found: true, device: { sfdi: '167261211635', lfdi: LFDI, href: '/edev/2', enabled: true } },
@@ -20,7 +20,7 @@ describe('LookupDevice', () => {
 
     await waitFor(() => {
       expect(container.querySelector('#lookupResult')).toHaveTextContent(
-        'Found: /edev/2 SFDI=167261211635 enabled=true',
+        'Found: /edev/2 167261211635 enabled=true',
       )
     })
     expect(get).toHaveBeenCalledWith(`/api/devices/by-lfdi/${LFDI}`)

@@ -348,7 +348,7 @@ describe('AdminShell mutations reach the other tab that shows the result (criter
 
     await goto('fsas')
     const node = await screen.findByTestId('topology-node-DEV-2')
-    expect(node).toHaveTextContent('SFDI=311635167262, ON')
+    expect(node).toHaveTextContent('311635167262, ON')
   })
 
   it('create FSA: the End Devices assign select offers the new FSA', async () => {

@@ -67,10 +67,10 @@ describe('DeviceTable', () => {
     vi.useRealTimers()
   })
 
-  it('renders each supplied SFDI, the truncated LFDI, and the enabled state', () => {
+  it('renders the SFDI of each unnamed device, the truncated LFDI, and the enabled state', () => {
     render(DeviceTable, { props: { devices, fsas, onChanged: () => {} } })
 
-    const sfdiCells = screen.getAllByTestId('device-sfdi')
+    const sfdiCells = screen.getAllByTestId('device-label')
     expect(sfdiCells[0]).toHaveTextContent('123456789012')
     expect(sfdiCells[1]).toHaveTextContent('210987654321')
 

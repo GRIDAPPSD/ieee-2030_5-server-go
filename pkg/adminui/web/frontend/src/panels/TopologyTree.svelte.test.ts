@@ -50,7 +50,7 @@ describe('TopologyTree', () => {
     expect(rendered.textContent).toContain('SY System')
     expect(rendered.textContent).toContain('FD Feeder')
     expect(rendered.textContent).toContain('SP ServicePoint')
-    expect(rendered.textContent).toContain('DEV edev 7 (SFDI=167261211635, ON)')
+    expect(rendered.textContent).toContain('DEV edev 7 (167261211635, ON)')
   })
 
   it('renders the FSA mRID, description and attached program href', () => {

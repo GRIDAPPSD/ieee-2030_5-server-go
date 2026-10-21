@@ -510,36 +510,8 @@ func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
 			h.refuse(w, r, "create", mapIssuerError(err, &logged), &logged)
 			return
 		}
-		res, err := h.issueInFleet(r.Context(), req)
-		if err != nil {
-			var conflict *commitment.ConflictError
-			if errors.As(err, &conflict) {
-				h.refuseConflict(w, r, conflict, &logged)
-				return
-			}
-			var failure *commitmentFailure
-			if errors.As(err, &failure) {
-				// The href passed validProgramHref, so its segments are
-				// plain ASCII and safe to log.
-				edevID, _, _, _ := derhref.Program(req.DERProgramHref)
-				logged.add("cause", "commitment_check_failed")
-				logged.add("sub_cause", failure.sub)
-				logged.add("device_id", edevID)
-				logged.add("program_href", req.DERProgramHref)
-				h.refuse(w, r, "create", refuseInternal, &logged)
-				return
-			}
-			if isContextErr(err) && r.Context().Err() != nil {
-				logged.add("cause", "client_gone")
-				h.refuse(w, r, "create", refuseClientGone, &logged)
-				return
-			}
-			var undo *dercontrol.UndoError
-			if errors.As(err, &undo) && undo.ControlKept {
-				h.incomplete(w, r, "create", "control may be live: its write could not be undone", undo)
-				return
-			}
-			h.refuse(w, r, "create", mapIssuerError(err, &logged), &logged)
+		res, ok := h.issue(w, r, req, &logged)
+		if !ok {
 			return
 		}
 
@@ -559,6 +531,44 @@ func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
 			Persisted:             h.Persisted,
 		})
 	}
+}
+
+// issue runs req through the fleet check and the issuer, answering every
+// refusal and failure itself. It reports whether res holds a created control.
+func (h *AdminDERControlHandler) issue(w http.ResponseWriter, r *http.Request, req dercontrol.CreateRequest, logged *derControlLog) (dercontrol.Result, bool) {
+	res, err := h.issueInFleet(r.Context(), req)
+	if err != nil {
+		var conflict *commitment.ConflictError
+		if errors.As(err, &conflict) {
+			h.refuseConflict(w, r, conflict, logged)
+			return dercontrol.Result{}, false
+		}
+		var failure *commitmentFailure
+		if errors.As(err, &failure) {
+			// The href passed validProgramHref, so its segments are
+			// plain ASCII and safe to log.
+			edevID, _, _, _ := derhref.Program(req.DERProgramHref)
+			logged.add("cause", "commitment_check_failed")
+			logged.add("sub_cause", failure.sub)
+			logged.add("device_id", edevID)
+			logged.add("program_href", req.DERProgramHref)
+			h.refuse(w, r, "create", refuseInternal, logged)
+			return dercontrol.Result{}, false
+		}
+		if isContextErr(err) && r.Context().Err() != nil {
+			logged.add("cause", "client_gone")
+			h.refuse(w, r, "create", refuseClientGone, logged)
+			return dercontrol.Result{}, false
+		}
+		var undo *dercontrol.UndoError
+		if errors.As(err, &undo) && undo.ControlKept {
+			h.incomplete(w, r, "create", "control may be live: its write could not be undone", undo)
+			return dercontrol.Result{}, false
+		}
+		h.refuse(w, r, "create", mapIssuerError(err, logged), logged)
+		return dercontrol.Result{}, false
+	}
+	return res, true
 }
 
 // issueInFleet runs the issuer inside the commitment lock of the program's
@@ -1039,6 +1049,7 @@ func decodeRefusal(err error) derControlRefusal {
 // wrongTypeRefusals names each decodable field, so a type error reports the
 // field from this fixed table and never from the decoder's own text.
 var wrongTypeRefusals = map[string]derControlRefusal{
+	"kind":                     {http.StatusBadRequest, "kind_type", "kind: must be a string"},
 	"derProgramHref":           {http.StatusBadRequest, "program_href_type", "derProgramHref: must be a string"},
 	"type":                     {http.StatusBadRequest, "type_type", "type: must be a string"},
 	"maxLimW":                  {http.StatusBadRequest, "max_lim_w_type", "maxLimW: must be an integer"},

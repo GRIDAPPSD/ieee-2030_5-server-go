@@ -399,6 +399,31 @@ reason) before `POST /api/der/controls/{mrid}/cancel` runs. The table
 reloads afterward, so a cancelled control's status and button update in
 place.
 
+### Sending a control to one device
+
+IEEE 2030.5 reaches a single device only through an FSA assigned to that
+device alone. `POST /api/devices/{id}/controls` does that for you: the body
+is a `POST /api/der/controls` body without `derProgramHref`, plus
+`"kind": "scheduled"` (needs `durationSeconds`, issues a control) or
+`"kind": "default"` (takes the same `type` or `functions` and sets the
+program's default control; `startTime`, `durationSeconds`, `description`
+and `executesGrant` are refused). The server creates or reuses one
+device-only FSA for the device and one program in it, so repeat calls share
+both. The 201 reply carries `fsa`, `program`, `primacy`, `primacyReason`
+and the `control` or `defaultControl`.
+
+The program outranks every other program the device has, because
+`inverterclient` follows only the lowest-primacy program. Lower numbers win,
+so the server takes the largest unused value below all of theirs, preferring
+65 to 191, then 0 to 64 with the reason saying so. If another program holds
+0 the answer is 409 `primacy_cannot_outrank`. On reuse the primacy is kept
+while it still outranks the others, otherwise it is re-picked and the
+program's `version` rises. Assigning any other device to that FSA, or
+creating a template on it, is 409 `fsa_device_only`. The binding is stored
+with the FSA snapshot, so it holds across a restart with a data dir. The
+route needs a real credential even from loopback and is off when control
+writes are off.
+
 ## mTLS cert flow for the admin path
 
 `make certs` issues four artifacts into `certs/`:

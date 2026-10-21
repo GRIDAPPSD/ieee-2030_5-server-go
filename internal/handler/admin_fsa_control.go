@@ -12,6 +12,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -185,11 +186,24 @@ func (h *AdminFSAControlHandler) HandleCreate() http.HandlerFunc {
 			if err := fh.AdminFSAs.CreateFSAControl(ctx, fsaID, rec); err != nil {
 				return nil, err
 			}
-			return func(ctx context.Context) error { return fh.AdminFSAs.DeleteFSAControl(ctx, fsaID, t.ID, id) }, nil
+			return func(ctx context.Context) error {
+				err := fh.AdminFSAs.DeleteFSAControl(ctx, fsaID, t.ID, id)
+				if err != nil {
+					// Reported as failed, so no device assigned later may get it.
+					fh.AdminFSAs.HoldFSAControl(fsaID, t.ID, id)
+				}
+				return err
+			}, nil
 		}
+		routeHref := "/api/fsas/" + fsaID + "/der-programs/" + t.ID + "/controls"
 		res, err := h.issueAcross(ctx, req, devices, fsaID, t.ID, record)
+		var undo *dercontrol.UndoError
+		if errors.As(err, &undo) && undo.Step == dercontrol.UndoStepStoreRecord {
+			h.recordKept(w, r, routeHref, undo)
+			return
+		}
 		if err != nil {
-			ch.issueFailed(w, r, fsaControlOp, err, "", "/api/fsas/"+fsaID+"/der-programs/"+t.ID, &logged)
+			ch.issueFailed(w, r, fsaControlOp, err, "", routeHref, &logged)
 			return
 		}
 
@@ -361,13 +375,35 @@ func (h *AdminFSAControlHandler) HandleCancel() http.HandlerFunc {
 		at := now
 		rec.CancelledAt, rec.CancelReason = &at, reason
 		if err := fh.AdminFSAs.UpdateFSAControl(ctx, fsaID, rec); err != nil {
-			fh.templateFailed(w, r, "record_cancel", err)
+			// Every copy is cancelled, so no device assigned later may get it
+			// as live while the record says otherwise.
+			fh.AdminFSAs.HoldFSAControl(fsaID, t.ID, rec.ID)
+			logged.add("cause", "record_cancel_failed")
+			ch.logRefusal(r, "fsa_cancel", refuseInternal, &logged)
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf(
+				"every copy of control %s is cancelled, but its record could not be written; it is not sent to devices assigned meanwhile, so retry the cancel", rec.MRID))
 			return
 		}
 		ch.log(r, slog.LevelInfo, "admin: FSA DER control cancelled", "der_fsa_control_cancelled", []any{
 			"mrid", rec.MRID, "fsa", fsaID, "template", t.ID, "copies", len(cancelled)})
 		writeJSON(w, http.StatusOK, h.view(ctx, fsaID, rec, devices, sep2time.Now().Unix()))
 	}
+}
+
+// recordKept answers a fan-out that failed and removed every copy but not its
+// record. The record is held from replication until the next restart, which
+// replicates it unless it is cancelled first.
+func (h *AdminFSAControlHandler) recordKept(w http.ResponseWriter, r *http.Request, routeHref string, undo *dercontrol.UndoError) {
+	cancelHref := routeHref + "/" + undo.ID + "/cancel"
+	h.Controls.log(r, slog.LevelError, "admin: FSA DER control record left after a failed create", "der_fsa_control_record_kept", []any{
+		"code", refuseInternal.code, "mrid", undo.MRID, "record", routeHref + "/" + undo.ID, "error", undo,
+	})
+	writeJSON(w, http.StatusInternalServerError, DERControlIncomplete{
+		Error: "the create failed and no device holds the control, but its record could not be removed; it is not sent to devices assigned before the next restart, " +
+			"and is sent at that restart unless cancelled with POST " + cancelHref,
+		MRID: undo.MRID,
+		Href: routeHref + "/" + undo.ID,
+	})
 }
 
 // cancelStopped answers a cancel that failed at dev's copy. The copies before
@@ -456,8 +492,9 @@ func controlOf(rec memory.FSAControl) sep2.DERControl {
 // *commitment.ConflictError from the device's fleet.
 func (h *AdminFSAControlHandler) ReplicateTo(ctx context.Context, deviceID, fsaID string) error {
 	replicas := liveReplicas(ctx, h.FSAs.AdminFSAs, deviceID, fsaID, sep2time.Now().Unix())
-	if len(replicas) == 0 {
-		return nil
+	replicas, err := h.heldCopies(ctx, deviceID, fsaID, replicas)
+	if err != nil || len(replicas) == 0 {
+		return err
 	}
 	if h.Issuer == nil || h.Controls == nil {
 		return errors.New("fsa controls cannot be replicated: no issuer wired")
@@ -475,6 +512,43 @@ func (h *AdminFSAControlHandler) ReplicateTo(ctx context.Context, deviceID, fsaI
 	})
 }
 
+// heldCopies keeps the replicas whose template deviceID holds a copy of. The
+// boot rebuild skips a copy that conflicts with a program the device already
+// holds, and its controls are skipped with it, logged once per template.
+func (h *AdminFSAControlHandler) heldCopies(ctx context.Context, deviceID, fsaID string, replicas []dercontrol.Replica) ([]dercontrol.Replica, error) {
+	if h.FSAs == nil || h.FSAs.Copies == nil {
+		return replicas, nil
+	}
+	held := map[string]bool{}
+	out := replicas[:0:0]
+	for _, rep := range replicas {
+		tmplID := rep.Target.Scope.DERProgramID
+		ok, seen := held[tmplID]
+		if !seen {
+			t, err := h.FSAs.AdminFSAs.Template(ctx, fsaID, tmplID)
+			if err != nil {
+				return nil, fmt.Errorf("reading template %s of fsa %s: %w", tmplID, fsaID, err)
+			}
+			present, err := h.FSAs.Copies.Check(ctx, deviceID, fsaID, t)
+			switch {
+			case errors.Is(err, fsaprogram.ErrCopyConflict):
+			case err != nil:
+				return nil, err
+			}
+			ok = present
+			held[tmplID] = ok
+			if !ok {
+				h.FSAs.logged(nil).WarnContext(ctx, "admin: FSA controls not replicated to a device without the copy", "event", "fsa_control_replica_skipped",
+					"device", deviceID, "fsa", fsaID, "template", tmplID, "reason", fmt.Sprint(err))
+			}
+		}
+		if ok {
+			out = append(out, rep)
+		}
+	}
+	return out, nil
+}
+
 // liveReplicas lists the controls of fsaID's templates still to be carried
 // out at now, as replicas into deviceID's copies, each template's oldest
 // first.
@@ -482,7 +556,7 @@ func liveReplicas(ctx context.Context, admin *memory.AdminFSAStore, deviceID, fs
 	var out []dercontrol.Replica
 	for _, t := range admin.Templates(ctx, fsaID) {
 		for _, rec := range admin.FSAControls(ctx, fsaID, t.ID) {
-			if rec.CancelledAt != nil || rec.Ended(now) {
+			if rec.CancelledAt != nil || rec.Held || rec.Ended(now) {
 				continue
 			}
 			out = append(out, dercontrol.Replica{

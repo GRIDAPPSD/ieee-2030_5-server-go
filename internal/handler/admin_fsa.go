@@ -552,6 +552,8 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 		notifyRemoved()
 		var live *dercontrol.LiveControlsError
 		if errors.As(err, &live) {
+			h.logged(r).WarnContext(r.Context(), "admin: device unassign refused", "event", "der_fsa_unassign_refused",
+				"code", "live_controls", "device", deviceID, "fsa", fsaID, "controls", live.Controls)
 			writeJSON(w, http.StatusConflict, programRefusal{
 				Error:    "cancel these controls, or wait for them to end, before unassigning the device",
 				Code:     "live_controls",
@@ -599,7 +601,15 @@ func (h *AdminFSAHandler) replicateControls(w http.ResponseWriter, r *http.Reque
 		return true
 	}
 	var undo *dercontrol.UndoError
-	if errors.As(err, &undo) || !h.rollbackAfter(r, err, steps) {
+	if errors.As(err, &undo) {
+		// The copies and the assignment stay, so the replica is not orphaned.
+		h.logged(r).ErrorContext(r.Context(), "admin: FSA control replica may be left after a failed assign", "event", "assign_replica_incomplete",
+			"device", deviceID, "fsa", fsaID, "scope", undo.Scope.Key(), "mrid", undo.MRID, "undo_step", string(undo.Step),
+			"control_kept", undo.ControlKept, "lifecycle_kept", undo.LifecycleKept, "error", err)
+		h.assignIncomplete(w, deviceID, fsaID)
+		return false
+	}
+	if !h.rollbackAfter(r, err, steps) {
 		h.assignIncomplete(w, deviceID, fsaID)
 		return false
 	}
@@ -609,6 +619,8 @@ func (h *AdminFSAHandler) replicateControls(w http.ResponseWriter, r *http.Reque
 		if !ok {
 			message = "a control of this fsa conflicts with a commitment of the device's fleet"
 		}
+		h.logged(r).WarnContext(r.Context(), "admin: device assignment refused", "event", "der_fsa_assign_refused",
+			"code", string(conflict.Code), "conflict_mrid", conflict.MRID, "device", deviceID, "fsa", fsaID)
 		writeJSON(w, http.StatusConflict, DERControlConflict{Error: message, Code: string(conflict.Code), MRID: conflict.MRID})
 		return false
 	}

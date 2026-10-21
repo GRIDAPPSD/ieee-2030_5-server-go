@@ -33,6 +33,10 @@ export interface ProgramBody {
 export interface DefaultControlView {
   mRID: string
   type: string
+  // The default's functions in the request shape, as a control form sends
+  // them. The server always sends it; it is optional here only so fixtures
+  // in other test files still type-check.
+  functions?: Record<string, unknown>
   derControlBase: {
     opModConnect?: boolean
     opModEnergize?: boolean

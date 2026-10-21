@@ -238,6 +238,10 @@
           "opModConnect": true,
           "opModEnergize": true
         },
+        "functions": {
+          "opModConnect": true,
+          "opModEnergize": true
+        },
         "mRID": "MINTED-ID",
         "type": "connect"
       },
@@ -266,6 +270,12 @@
             "multiplier": -3
           }
         },
+        "functions": {
+          "opModFixedPFInjectW": {
+            "displacement": 900,
+            "excitation": true
+          }
+        },
         "mRID": "MINTED-ID",
         "type": "fixedPFInjectW"
       },
@@ -288,6 +298,13 @@
             "value": 500
           }
         },
+        "functions": {
+          "opModMaxLimW": 5000,
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
         "mRID": "MINTED-ID",
         "type": "combined"
       },
@@ -304,6 +321,9 @@
     "body": {
       "defaultControl": {
         "derControlBase": {
+          "opModMaxLimW": 4000
+        },
+        "functions": {
           "opModMaxLimW": 4000
         },
         "mRID": "MINTED-ID",
@@ -334,6 +354,12 @@
     "body": {
       "defaultControl": {
         "derControlBase": {
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "functions": {
           "opModTargetW": {
             "multiplier": 0,
             "value": 500
@@ -388,6 +414,10 @@
           "opModConnect": true,
           "opModEnergize": true
         },
+        "functions": {
+          "opModConnect": true,
+          "opModEnergize": true
+        },
         "mRID": "MINTED-ID",
         "type": "connect"
       },
@@ -416,6 +446,12 @@
             "multiplier": -3
           }
         },
+        "functions": {
+          "opModFixedPFInjectW": {
+            "displacement": 900,
+            "excitation": true
+          }
+        },
         "mRID": "MINTED-ID",
         "type": "fixedPFInjectW"
       },
@@ -438,6 +474,13 @@
             "value": 500
           }
         },
+        "functions": {
+          "opModMaxLimW": 5000,
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
         "mRID": "MINTED-ID",
         "type": "combined"
       },
@@ -454,6 +497,9 @@
     "body": {
       "defaultControl": {
         "derControlBase": {
+          "opModMaxLimW": 4000
+        },
+        "functions": {
           "opModMaxLimW": 4000
         },
         "mRID": "MINTED-ID",
@@ -484,6 +530,12 @@
     "body": {
       "defaultControl": {
         "derControlBase": {
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "functions": {
           "opModTargetW": {
             "multiplier": 0,
             "value": 500
@@ -538,6 +590,10 @@
           "opModConnect": true,
           "opModEnergize": true
         },
+        "functions": {
+          "opModConnect": true,
+          "opModEnergize": true
+        },
         "mRID": "MINTED-ID",
         "type": "connect"
       },
@@ -566,6 +622,12 @@
             "multiplier": -3
           }
         },
+        "functions": {
+          "opModFixedPFInjectW": {
+            "displacement": 900,
+            "excitation": true
+          }
+        },
         "mRID": "MINTED-ID",
         "type": "fixedPFInjectW"
       },
@@ -588,6 +650,13 @@
             "value": 500
           }
         },
+        "functions": {
+          "opModMaxLimW": 5000,
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
         "mRID": "MINTED-ID",
         "type": "combined"
       },
@@ -604,6 +673,9 @@
     "body": {
       "defaultControl": {
         "derControlBase": {
+          "opModMaxLimW": 4000
+        },
+        "functions": {
           "opModMaxLimW": 4000
         },
         "mRID": "MINTED-ID",
@@ -634,6 +706,12 @@
     "body": {
       "defaultControl": {
         "derControlBase": {
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "functions": {
           "opModTargetW": {
             "multiplier": 0,
             "value": 500
@@ -1213,6 +1291,10 @@
           "opModConnect": true,
           "opModEnergize": true
         },
+        "functions": {
+          "opModConnect": true,
+          "opModEnergize": true
+        },
         "mRID": "MINTED-ID",
         "type": "connect"
       },
@@ -1243,6 +1325,12 @@
             "multiplier": -3
           }
         },
+        "functions": {
+          "opModFixedPFInjectW": {
+            "displacement": 900,
+            "excitation": true
+          }
+        },
         "mRID": "MINTED-ID",
         "type": "fixedPFInjectW"
       },
@@ -1267,6 +1355,13 @@
             "value": 500
           }
         },
+        "functions": {
+          "opModMaxLimW": 5000,
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
         "mRID": "MINTED-ID",
         "type": "combined"
       },
@@ -1285,6 +1380,9 @@
       ],
       "defaultControl": {
         "derControlBase": {
+          "opModMaxLimW": 4000
+        },
+        "functions": {
           "opModMaxLimW": 4000
         },
         "mRID": "MINTED-ID",
@@ -1317,6 +1415,12 @@
       ],
       "defaultControl": {
         "derControlBase": {
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "functions": {
           "opModTargetW": {
             "multiplier": 0,
             "value": 500
@@ -1373,6 +1477,10 @@
           "opModConnect": true,
           "opModEnergize": true
         },
+        "functions": {
+          "opModConnect": true,
+          "opModEnergize": true
+        },
         "mRID": "MINTED-ID",
         "type": "connect"
       },
@@ -1403,6 +1511,12 @@
             "multiplier": -3
           }
         },
+        "functions": {
+          "opModFixedPFInjectW": {
+            "displacement": 900,
+            "excitation": true
+          }
+        },
         "mRID": "MINTED-ID",
         "type": "fixedPFInjectW"
       },
@@ -1427,6 +1541,13 @@
             "value": 500
           }
         },
+        "functions": {
+          "opModMaxLimW": 5000,
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
         "mRID": "MINTED-ID",
         "type": "combined"
       },
@@ -1445,6 +1566,9 @@
       ],
       "defaultControl": {
         "derControlBase": {
+          "opModMaxLimW": 4000
+        },
+        "functions": {
           "opModMaxLimW": 4000
         },
         "mRID": "MINTED-ID",
@@ -1477,6 +1601,12 @@
       ],
       "defaultControl": {
         "derControlBase": {
+          "opModTargetW": {
+            "multiplier": 0,
+            "value": 500
+          }
+        },
+        "functions": {
           "opModTargetW": {
             "multiplier": 0,
             "value": 500

@@ -391,7 +391,9 @@ describe('wire keys match the Go json tags', () => {
   const bodyKeys: Record<keyof Required<ProgramBody>, true> = {
     description: true, primacy: true, mRID: true, defaultControl: true,
   }
-  const defaultControlKeys: Record<keyof DefaultControlView, true> = { mRID: true, type: true, derControlBase: true }
+  const defaultControlKeys: Record<keyof DefaultControlView, true> = {
+    mRID: true, type: true, functions: true, derControlBase: true,
+  }
   const keys = (r: Record<string, true>) => Object.keys(r).sort()
 
   it('ProgramTemplate, DefaultControlView and ProgramBody match admin_derprogram.go', () => {

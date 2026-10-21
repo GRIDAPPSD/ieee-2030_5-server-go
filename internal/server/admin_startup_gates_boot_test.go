@@ -5,7 +5,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -121,19 +120,8 @@ func TestAdminListenerRefusesNonLoopbackBindWithoutOptIn(t *testing.T) {
 			}
 		})
 
-		probe := &http.Client{Timeout: 500 * time.Millisecond}
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			if resp, err := probe.Get("http://" + loopbackProbe + "/api/certs/ca"); err == nil {
-				_ = resp.Body.Close()
-				break
-			}
-			select {
-			case err := <-runErrCh:
-				t.Fatalf("server.Run exited during boot: %v", err)
-			default:
-			}
-			time.Sleep(25 * time.Millisecond)
+		if msg, ok := waitForAdminReady(loopbackProbe, false, adminReadyTimeout, runErrCh); !ok {
+			t.Fatalf("%s on %s", msg, loopbackProbe)
 		}
 
 		ok, bindErr := bindable(wildcardProbe)

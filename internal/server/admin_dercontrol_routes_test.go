@@ -13,6 +13,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/adminplane"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 )
 
@@ -22,7 +23,10 @@ import (
 
 const derControlTestMRID = "0123456789ABCDEF0123456789ABCDEF"
 
-func newDERControlRouter(t *testing.T) http.Handler {
+// newDERControlRouter builds the admin router over test stores holding one
+// device and its program. Each seed then adds to the stores before the
+// router is built.
+func newDERControlRouter(t *testing.T, seeds ...func(*server.Stores)) http.Handler {
 	t.Helper()
 	stores := newTestStores()
 	pen := uint32(0xA0B1)
@@ -35,6 +39,9 @@ func newDERControlRouter(t *testing.T) http.Handler {
 	program.Href = "/edev/0/fsa/0/derp/0"
 	if err := stores.DERPrograms.Create(ctx, "0", "0", program); err != nil {
 		t.Fatal(err)
+	}
+	for _, seed := range seeds {
+		seed(stores)
 	}
 	router, _ := adminplane.BuildAdminRouter(
 		"the-key", newScopeTestCertService(t), stores, "GCM",

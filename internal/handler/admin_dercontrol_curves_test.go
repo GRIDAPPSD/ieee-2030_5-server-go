@@ -1,10 +1,12 @@
 package handler_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -165,23 +167,32 @@ func TestControlValues_CurveCheckedOnEveryRoute(t *testing.T) {
 	}
 }
 
+const unreadableCause = "curve store unreadable"
+
 type unreadableCurves struct{}
 
 func (unreadableCurves) Get(context.Context, string) (sep2.DERCurve, error) {
-	return sep2.DERCurve{}, errors.New("curve store unreadable")
+	return sep2.DERCurve{}, errors.New(unreadableCause)
 }
 
 // A curve store that cannot be read answers 500 on every route, never a 400
-// that would tell the operator the curve is wrong.
+// that would tell the operator the curve is wrong, and its cause stays out
+// of the response. A program route logs the cause.
 func TestControlValues_UnreadableCurveStoreIs500(t *testing.T) {
 	for _, rt := range cvRoutes() {
 		x := newControlValuesFixture(t)
 		withCurves(x, unreadableCurves{})
+		var programLog bytes.Buffer
+		x.f.h.Logger = slog.New(slog.NewTextHandler(&programLog, nil))
 		w := x.f.do(rt.method, rt.path(x), rt.body(`"functions":{"opModVoltVar":"c11"}`))
-		if w.Code != http.StatusInternalServerError {
-			t.Errorf("%s: status %d body %s, want 500", rt.name, w.Code, w.Body.String())
+		if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), unreadableCause) {
+			t.Errorf("%s: status %d body %s, want 500 without the cause", rt.name, w.Code, w.Body.String())
 		}
-		if !isProgramRoute(rt) && !strings.Contains(x.dc.logs.String(), "cause=curve_read_failed") {
+		if isProgramRoute(rt) {
+			if !strings.Contains(programLog.String(), unreadableCause) {
+				t.Errorf("%s: program log lacks the cause:\n%s", rt.name, programLog.String())
+			}
+		} else if !strings.Contains(x.dc.logs.String(), "cause=curve_read_failed") {
 			t.Errorf("%s: audit log lacks cause=curve_read_failed:\n%s", rt.name, x.dc.logs.String())
 		}
 	}

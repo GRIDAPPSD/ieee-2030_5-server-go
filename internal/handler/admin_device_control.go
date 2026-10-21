@@ -142,6 +142,10 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 				h.Controls.refuse(w, r, "device_control", ref, &logged)
 				return
 			}
+			if readFailed(err) {
+				h.Controls.refuse(w, r, "device_control", controlValuesReadFailed(&logged), &logged)
+				return
+			}
 			if err != nil {
 				h.Controls.refuse(w, r, "device_control", mapIssuerError(err, &logged), &logged)
 				return

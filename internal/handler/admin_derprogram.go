@@ -214,10 +214,6 @@ type programEdit struct {
 	defaultBase *sep2.DERControlBase
 }
 
-// errDefaultControlUnchecked is a default control whose values could not be
-// checked because a store they name could not be read.
-var errDefaultControlUnchecked = errors.New("default control values could not be checked")
-
 // buildProgramEdit validates body, or returns the 400 message naming the
 // first bad field. An error means the default control could not be checked,
 // which answers 500, never 400.
@@ -246,10 +242,10 @@ func buildProgramEdit(ctx context.Context, curves dercontrol.CurveReader, body p
 	}
 	base, ref, ok, err := controlBaseFromValues(ctx, curves, *dc, &derControlLog{})
 	if !ok {
-		if ref.status >= http.StatusInternalServerError {
-			return e, "", false, errDefaultControlUnchecked
-		}
 		return e, "defaultControl." + ref.message, false, nil
+	}
+	if readFailed(err) {
+		return e, "", false, fmt.Errorf("default control: %w", err)
 	}
 	if err != nil {
 		return e, "defaultControl: invalid value", false, nil

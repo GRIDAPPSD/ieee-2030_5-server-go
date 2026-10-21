@@ -64,6 +64,9 @@ type ProgramDefaultControlView struct {
 	MRID           string             `json:"mRID"`
 	Type           string             `json:"type"`
 	DERControlBase DERControlBaseView `json:"derControlBase"`
+	// Functions is the default's functions in the request shape, so a form
+	// can read a default back without naming control elements.
+	Functions FunctionsView `json:"functions"`
 }
 
 // HandleCreateProgramTemplate returns a handler for POST
@@ -304,8 +307,14 @@ func (h *AdminFSAHandler) templateView(ctx context.Context, fsaID string, t memo
 
 func programDefaultControlView(t memory.ProgramTemplate) ProgramDefaultControlView {
 	base := t.DefaultControlBase
-	typ, baseView, _ := controlBaseViews(&base)
-	return ProgramDefaultControlView{MRID: t.DefaultMRID, Type: typ, DERControlBase: baseView}
+	return newProgramDefaultControlView(t.DefaultMRID, &base)
+}
+
+// newProgramDefaultControlView is the one place a stored default control
+// becomes its view.
+func newProgramDefaultControlView(mrid string, base *sep2.DERControlBase) ProgramDefaultControlView {
+	typ, baseView, functions := controlBaseViews(base)
+	return ProgramDefaultControlView{MRID: mrid, Type: typ, DERControlBase: baseView, Functions: functions}
 }
 
 // DeviceProgramView is one device program as the admin API reports it.

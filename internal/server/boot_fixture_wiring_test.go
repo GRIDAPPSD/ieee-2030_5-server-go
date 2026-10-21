@@ -135,7 +135,7 @@ startLoop:
 
 		readyCh := make(chan bool, 1)
 		go func() {
-			readyCh <- waitForServerReady(addr, 2*time.Second, clientTLSCfg)
+			readyCh <- waitForServerReady(addr, adminReadyTimeout, clientTLSCfg)
 		}()
 		select {
 		case ok := <-readyCh:

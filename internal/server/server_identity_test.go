@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -319,6 +320,28 @@ func pollReady(what string, timeout time.Duration, runErr chan error, probe func
 			return fmt.Sprintf("%s never became ready: %v", what, err), false
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// bindAttempts is how many times bootWithBindRetry boots before giving up.
+const bindAttempts = 3
+
+// bootWithBindRetry runs boot until it returns an env or fails for a reason
+// other than a lost port. mustProbePort cannot see another test process, so
+// a port it handed out can be taken before Run binds it; Run then ends with
+// a bind error and the boot is repeated on fresh ports (#857). boot returns
+// a failure message with a nil env, having stopped Run.
+func bootWithBindRetry[E any](t *testing.T, boot func() (*E, string)) *E {
+	t.Helper()
+	for attempt := 1; ; attempt++ {
+		env, failure := boot()
+		if env != nil {
+			return env
+		}
+		if attempt == bindAttempts || !strings.Contains(failure, "address already in use") {
+			t.Fatal(failure)
+		}
+		t.Logf("boot attempt %d lost a port to another process, retrying: %s", attempt, failure)
 	}
 }
 

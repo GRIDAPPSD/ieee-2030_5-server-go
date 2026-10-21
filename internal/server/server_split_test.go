@@ -23,6 +23,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"net"
@@ -160,7 +161,7 @@ func TestAdminListenerBackCompatAdminAddr(t *testing.T) {
 
 	adminClient := &http.Client{
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		Timeout:   2 * time.Second,
+		Timeout:   readyProbeTimeout,
 	}
 	req, _ := http.NewRequest(http.MethodPost, "https://"+env.adminAddr+"/api/certs/info", nil)
 	req.Header.Set("Authorization", "Bearer "+adminTestKey)
@@ -357,6 +358,13 @@ type splitListenerEnv struct {
 // t.Fatals on timeout.
 func bootSplitListener(t *testing.T, opts splitListenerOpts) *splitListenerEnv {
 	t.Helper()
+	return bootWithBindRetry(t, func() (*splitListenerEnv, string) { return tryBootSplitListener(t, opts) })
+}
+
+// tryBootSplitListener is one boot attempt; a readiness failure comes back
+// as a message with a nil env and Run already stopped.
+func tryBootSplitListener(t *testing.T, opts splitListenerOpts) (*splitListenerEnv, string) {
+	t.Helper()
 
 	c := newSplitListenerCerts(t)
 
@@ -399,18 +407,16 @@ func bootSplitListener(t *testing.T, opts splitListenerOpts) *splitListenerEnv {
 	runErrCh := make(chan error, 1)
 	go func() { runErrCh <- server.Run(ctx, cfg, c.svc) }()
 
-	// Wait for SEP2 listener (full TLS handshake with a device cert).
-	if !waitForServerReady(c.sep2Probe, adminReadyTimeout, clientTLSCfg) {
-		cancel()
-		<-runErrCh
-		t.Fatalf("SEP2 listener never became ready on %s", c.sep2Probe)
+	// SEP2 listener first (full TLS handshake with a device cert), then the
+	// admin listener, HTTP or HTTPS per AdminTLS.
+	msg, ok := pollReady("SEP2 listener", adminReadyTimeout, runErrCh, sep2HandshakeProbe(c.sep2Probe, clientTLSCfg))
+	if ok {
+		msg, ok = waitForAdminReady(c.adminProbe, opts.adminTLS, adminReadyTimeout, runErrCh)
 	}
-
-	// Wait for the admin listener, HTTP or HTTPS per AdminTLS.
-	if msg, ok := waitForAdminReady(c.adminProbe, opts.adminTLS, adminReadyTimeout, runErrCh); !ok {
+	if !ok {
 		cancel()
 		<-runErrCh
-		t.Fatalf("%s on %s", msg, c.adminProbe)
+		return nil, fmt.Sprintf("%s (SEP2 %s, admin %s)", msg, c.sep2Probe, c.adminProbe)
 	}
 
 	t.Cleanup(func() {
@@ -427,7 +433,7 @@ func bootSplitListener(t *testing.T, opts splitListenerOpts) *splitListenerEnv {
 		adminAddr: c.adminProbe,
 		cancel:    cancel,
 		runErrCh:  runErrCh,
-	}
+	}, ""
 }
 
 // splitListenerCerts bundles the on-disk + in-memory bits needed by every

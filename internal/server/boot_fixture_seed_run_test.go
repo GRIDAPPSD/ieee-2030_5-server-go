@@ -184,7 +184,7 @@ func startSeedRun(t *testing.T, newConfig func(addr string) *config.Config, clie
 		go func() { runErrCh <- server.Run(ctx, newConfig(addr), nil) }()
 
 		readyCh := make(chan bool, 1)
-		go func() { readyCh <- waitForServerReady(addr, 2*time.Second, clientTLSCfg) }()
+		go func() { readyCh <- waitForServerReady(addr, adminReadyTimeout, clientTLSCfg) }()
 		select {
 		case ok := <-readyCh:
 			if !ok {

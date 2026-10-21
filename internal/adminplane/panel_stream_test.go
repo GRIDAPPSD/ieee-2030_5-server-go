@@ -481,7 +481,9 @@ func TestPanelStreamResumesFromLastEventID(t *testing.T) {
 func TestPanelStreamOutlivesTheWriteTimeout(t *testing.T) {
 	savedDeadline, savedBeat := panelStreamWriteDeadline, panelStreamHeartbeatInterval
 	panelStreamWriteDeadline, panelStreamHeartbeatInterval = 300*time.Millisecond, 50*time.Millisecond
-	defer func() { panelStreamWriteDeadline, panelStreamHeartbeatInterval = savedDeadline, savedBeat }()
+	// A cleanup, registered before the plane, runs after the plane's server
+	// close has waited for the stream handler that reads these vars.
+	t.Cleanup(func() { panelStreamWriteDeadline, panelStreamHeartbeatInterval = savedDeadline, savedBeat })
 
 	f := newStreamFake()
 	sp := newStreamPlane(t, 200*time.Millisecond, f.panel("bus"))

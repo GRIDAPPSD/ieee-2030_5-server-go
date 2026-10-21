@@ -118,7 +118,7 @@ func TestRuntimeProgramsWalkedByAnAggregator(t *testing.T) {
 		devID: devID, hrefA: hrefA, hrefB: hrefB, hrefDev: hrefDev, controlMRID: control.MRID,
 		mridA: tmplA.MRID, mridB: tmplB.MRID, mridDev: devProg.MRID,
 	}
-	proto := ccmHTTPClient(manager.tlsConfig, 3*time.Second)
+	proto := ccmHTTPClient(manager.tlsConfig, readyProbeTimeout)
 	walkAsAggregator(t, proto, c.sep2Probe, want)
 
 	stop()

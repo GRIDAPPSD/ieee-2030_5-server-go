@@ -126,7 +126,7 @@ func editedTemplate(before memory.ProgramTemplate) memory.ProgramTemplate {
 	after := before.Copy()
 	after.Description, after.Primacy, after.Version, after.DefaultVersion = "peak shave", 70, before.Version+1, before.DefaultVersion+1
 	limit := sep2.PerCent(4000)
-	after.DefaultControlBase = sep2.DERControlBase{OpModMaxLimW: &limit}
+	after.DefaultControlBase = &sep2.DERControlBase{OpModMaxLimW: &limit}
 	return after
 }
 

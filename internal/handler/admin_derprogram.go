@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -41,22 +43,45 @@ const maxDeviceProgramsPerFSA = 16
 const templateInternalError = "program write failed"
 
 type programTemplateBody struct {
-	Description    *string            `json:"description"`
-	Primacy        *int64             `json:"primacy"`
-	MRID           *string            `json:"mRID"`
-	DefaultControl *controlValuesBody `json:"defaultControl"`
+	Description    *string         `json:"description"`
+	Primacy        *int64          `json:"primacy"`
+	MRID           *string         `json:"mRID"`
+	DefaultControl optionalControl `json:"defaultControl"`
+}
+
+// optionalControl tells a defaultControl that is null from one that is
+// missing: a pointer decodes both to nil, so Present is set by UnmarshalJSON,
+// which the decoder calls only when the key is in the body. Value is nil for
+// null.
+type optionalControl struct {
+	Present bool
+	Value   *controlValuesBody
+}
+
+func (o *optionalControl) UnmarshalJSON(data []byte) error {
+	o.Present = true
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		o.Value = nil
+		return nil
+	}
+	// A nested decode does not inherit the outer decoder's strictness.
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	o.Value = new(controlValuesBody)
+	return dec.Decode(o.Value)
 }
 
 // ProgramTemplateView is one template as the admin API reports it. Copies
-// lists the href of every device copy, so it is [] and never null.
+// lists the href of every device copy, so it is [] and never null. A template
+// with no default control has no defaultControl key.
 type ProgramTemplateView struct {
-	ID             string                    `json:"id"`
-	MRID           string                    `json:"mRID"`
-	Description    string                    `json:"description"`
-	Primacy        uint8                     `json:"primacy"`
-	Version        uint16                    `json:"version"`
-	DefaultControl ProgramDefaultControlView `json:"defaultControl"`
-	Copies         []string                  `json:"copies"`
+	ID             string                     `json:"id"`
+	MRID           string                     `json:"mRID"`
+	Description    string                     `json:"description"`
+	Primacy        uint8                      `json:"primacy"`
+	Version        uint16                     `json:"version"`
+	DefaultControl *ProgramDefaultControlView `json:"defaultControl,omitempty"`
+	Copies         []string                   `json:"copies"`
 }
 
 // ProgramDefaultControlView is a template's DefaultDERControl.
@@ -204,17 +229,20 @@ func buildTemplate(ctx context.Context, curves dercontrol.CurveReader, body prog
 	if e.defaultBase == nil {
 		return t, "defaultControl: required", false, nil
 	}
-	t.Description, t.Primacy, t.MRID, t.DefaultControlBase = e.description, e.primacy, e.mRID, *e.defaultBase
+	base := e.defaultBase.Copy()
+	t.Description, t.Primacy, t.MRID, t.DefaultControlBase = e.description, e.primacy, e.mRID, &base
 	return t, "", true, nil
 }
 
 // programEdit is a validated program body. mRID is "" and defaultBase nil
-// when the body omits them.
+// when the body omits them. clearDefault is set by "defaultControl": null,
+// never with a defaultBase.
 type programEdit struct {
-	description string
-	primacy     uint8
-	mRID        string
-	defaultBase *sep2.DERControlBase
+	description  string
+	primacy      uint8
+	mRID         string
+	defaultBase  *sep2.DERControlBase
+	clearDefault bool
 }
 
 // buildProgramEdit validates body, or returns the 400 message naming the
@@ -239,8 +267,9 @@ func buildProgramEdit(ctx context.Context, curves dercontrol.CurveReader, body p
 		e.mRID = m
 	}
 
-	dc := body.DefaultControl
+	dc := body.DefaultControl.Value
 	if dc == nil {
+		e.clearDefault = body.DefaultControl.Present
 		return e, "", true, nil
 	}
 	base, ref, ok, err := controlBaseFromValues(ctx, curves, *dc, &derControlLog{})
@@ -305,9 +334,13 @@ func (h *AdminFSAHandler) templateView(ctx context.Context, fsaID string, t memo
 	return v
 }
 
-func programDefaultControlView(t memory.ProgramTemplate) ProgramDefaultControlView {
-	base := t.DefaultControlBase
-	return newProgramDefaultControlView(t.DefaultMRID, &base)
+// programDefaultControlView is nil for a template with no default control.
+func programDefaultControlView(t memory.ProgramTemplate) *ProgramDefaultControlView {
+	if t.DefaultControlBase == nil {
+		return nil
+	}
+	view := newProgramDefaultControlView(t.DefaultMRID, t.DefaultControlBase)
+	return &view
 }
 
 // newProgramDefaultControlView is the one place a stored default control
@@ -402,7 +435,6 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 		}
 
 		h.notify(r.Context(), programListHref(deviceID, fsaID))
-		dflt := programDefaultControlView(prog)
 		h.logged(r).InfoContext(r.Context(), "admin: DER device program created", "event", "der_device_program_created",
 			"device", deviceID, "fsa", fsaID, "program", prog.ID, "mrid", prog.MRID)
 		writeJSON(w, http.StatusCreated, DeviceProgramView{
@@ -412,7 +444,7 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 			Description:    prog.Description,
 			Primacy:        prog.Primacy,
 			Version:        prog.Version,
-			DefaultControl: &dflt,
+			DefaultControl: programDefaultControlView(prog),
 		})
 	}
 }

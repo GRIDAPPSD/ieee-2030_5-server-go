@@ -16,7 +16,7 @@ export interface ProgramBody {
   description: string
   primacy: number
   mRID?: string
-  defaultControl?: DefaultControlBody
+  defaultControl?: DefaultControlBody | null
 }
 
 export interface DefaultControlView {

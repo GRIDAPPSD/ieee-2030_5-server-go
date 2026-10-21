@@ -22,7 +22,7 @@ func mkTemplate(id, mRID, desc string, primacy uint8, version uint16, limW uint1
 		Description: desc,
 		Primacy:     primacy,
 		Version:     version,
-		DefaultControlBase: sep2.DERControlBase{
+		DefaultControlBase: &sep2.DERControlBase{
 			OpModConnect: &connect,
 			OpModMaxLimW: &lim,
 		},
@@ -441,5 +441,33 @@ func TestAdminFSATemplate_UnsortedSnapshotLoadsSorted(t *testing.T) {
 	}
 	if err := s.DeleteTemplate(ctx, "fsa-A", "derp-1"); err != nil {
 		t.Errorf("DeleteTemplate(derp-1): %v", err)
+	}
+}
+
+// #1043: a template with no default control keeps its default's identity and
+// version, and reads back from disk with no default.
+func TestAdminFSATemplate_NoDefaultSurvivesAReload(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, path := seededFSA(t)
+	tmpl := mkTemplate("derp-1", "MR1", "d", 1, 2, 5000)
+	tmpl.DefaultMRID, tmpl.DefaultVersion = "DM1", 3
+	tmpl.DefaultControlBase = nil
+	if err := s.CreateTemplate(ctx, "fsa-A", tmpl); err != nil {
+		t.Fatalf("CreateTemplate: %v", err)
+	}
+	revived, err := memory.NewAdminFSAStoreWithPersistence(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	got, err := revived.Template(ctx, "fsa-A", "derp-1")
+	if err != nil {
+		t.Fatalf("Template: %v", err)
+	}
+	if got.DefaultControlBase != nil || got.DefaultMRID != "DM1" || got.DefaultVersion != 3 || got.Version != 2 {
+		t.Errorf("reloaded template = %+v, want no default, DM1, default version 3, version 2", got)
+	}
+	if c := got.Copy(); c.DefaultControlBase != nil {
+		t.Errorf("Copy invented a default: %+v", c)
 	}
 }

@@ -94,11 +94,17 @@ func (h *AdminFSAHandler) HandleUpdateProgramTemplate() http.HandlerFunc {
 		}
 		next := old.Copy()
 		next.Description, next.Primacy = e.description, e.primacy
-		if e.defaultBase != nil {
-			next.DefaultControlBase = e.defaultBase.Copy()
+		switch {
+		case e.defaultBase != nil:
+			base := e.defaultBase.Copy()
+			next.DefaultControlBase = &base
+		case e.clearDefault:
+			next.DefaultControlBase = nil
 		}
 		edited := !reflect.DeepEqual(old, next)
-		if edited && !reflect.DeepEqual(old.DefaultControlBase, next.DefaultControlBase) {
+		// A removed default keeps its version: a default set again is the next
+		// revision, so no version is reused for other content.
+		if edited && next.DefaultControlBase != nil && !reflect.DeepEqual(old.DefaultControlBase, next.DefaultControlBase) {
 			v, err := fsaprogram.NextVersion(&old.DefaultVersion)
 			if err != nil {
 				refuseProgram(w, "version_exhausted", "the default control's version is at 65535")
@@ -307,12 +313,18 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 				return nil
 			}
 		}
-		ch, err := fsaprogram.EditWithDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults,
-			fsaprogram.Ref{DeviceID: deviceID, ProgramID: id}, scope,
-			func(p *sep2.DERProgram) error {
-				p.Description, p.Primacy = e.description, e.primacy
-				return nil
-			}, mutateDefault)
+		mutateProgram := func(p *sep2.DERProgram) error {
+			p.Description, p.Primacy = e.description, e.primacy
+			return nil
+		}
+		ref := fsaprogram.Ref{DeviceID: deviceID, ProgramID: id}
+		var ch fsaprogram.Changes
+		var err error
+		if e.clearDefault {
+			ch, err = fsaprogram.EditClearingDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram)
+		} else {
+			ch, err = fsaprogram.EditWithDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram, mutateDefault)
+		}
 		switch {
 		case err == nil:
 		case errors.Is(err, fsaprogram.ErrVersionExhausted):

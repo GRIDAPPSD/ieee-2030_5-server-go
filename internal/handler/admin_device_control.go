@@ -505,9 +505,11 @@ func (h *AdminFSAHandler) ensureDeviceOnlyFSA(w http.ResponseWriter, r *http.Req
 // defaultBase as its default control or an empty one, and returns its id.
 func (h *AdminFSAHandler) createDeviceOnlyProgram(w http.ResponseWriter, r *http.Request, tx *deviceTxn, deviceID, fsaID string, primacy uint8, defaultBase *sep2.DERControlBase) (string, bool) {
 	prog := memory.ProgramTemplate{Description: deviceProgramDescription, Primacy: primacy}
+	base := sep2.DERControlBase{}
 	if defaultBase != nil {
-		prog.DefaultControlBase = defaultBase.Copy()
+		base = defaultBase.Copy()
 	}
+	prog.DefaultControlBase = &base
 	if err := h.mintTemplateIDs(&prog); err != nil {
 		h.templateFailed(w, r, "mint", err)
 		return "", false

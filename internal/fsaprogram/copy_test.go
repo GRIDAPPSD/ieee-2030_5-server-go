@@ -23,7 +23,7 @@ func testTemplate() memory.ProgramTemplate {
 		Primacy:            2,
 		Version:            3,
 		DefaultMRID:        "0000000000000000000000000000D001",
-		DefaultControlBase: sep2.DERControlBase{OpModMaxLimW: &limit},
+		DefaultControlBase: &sep2.DERControlBase{OpModMaxLimW: &limit},
 	}
 }
 

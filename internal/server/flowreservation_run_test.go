@@ -104,7 +104,7 @@ func (e *frRunEnv) start(t *testing.T, cfg *config.Config) (stop func() error) {
 			t.Errorf("server.Run: %v", err)
 		}
 	})
-	if msg, ok := waitForListenersReady(e.c.sep2Probe, e.c.adminProbe, 5*time.Second, e.device.tlsConfig, runErr); !ok {
+	if msg, ok := waitForListenersReady(e.c.sep2Probe, e.c.adminProbe, e.device.tlsConfig, runErr); !ok {
 		t.Fatal(msg)
 	}
 	return stop
@@ -301,20 +301,26 @@ func TestRun_StopDuringRecoveryIsACleanStop(t *testing.T) {
 // the protocol listener started would find its address taken.
 func TestRun_RecoveryRunsBeforeEitherListenerBinds(t *testing.T) {
 	e := newFRRunEnv(t)
-	var free map[string]bool
+	// The hook runs on Run's goroutine; the channel orders its write before
+	// the read below, which readiness over a socket does not.
+	freeAtRecovery := make(chan map[string]bool, 1)
 	server.SetRecoverAtBoot(t, func(ctx context.Context, s *server.Stores, q *flowreservation.Queue, n flowreservation.Notifier, l *slog.Logger, now time.Time) (flowreservation.RecoverCounts, error) {
-		free = map[string]bool{}
+		free := map[string]bool{}
 		for name, addr := range map[string]string{"protocol": e.c.sep2Probe, "admin": e.c.adminProbe} {
 			if ln, err := net.Listen("tcp", addr); err == nil {
 				free[name] = true
 				_ = ln.Close()
 			}
 		}
+		freeAtRecovery <- free
 		return server.RecoverFlowReservations(ctx, s, q, n, l, now)
 	})
 
 	e.start(t, e.config(0))
-	if free == nil {
+	var free map[string]bool
+	select {
+	case free = <-freeAtRecovery:
+	default:
 		t.Fatal("the recovery hook never ran")
 	}
 	if !free["protocol"] || !free["admin"] {
@@ -338,13 +344,16 @@ func TestRun_NoQueueTimerSurvivesAnErrorExitAfterRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := e.config(time.Second)
+	// The remaining hold is counted in whole seconds, so a 2s bound leaves at
+	// least 1s even when recovery runs in the second after the seed; a 1s
+	// bound could leave 0 and fire before Run's error path closes the queue.
+	cfg := e.config(2 * time.Second)
 	cfg.BootFixtureFile = ""
 	cfg.CertFile = filepath.Join(t.TempDir(), "missing.pem")
 	if err := server.Run(context.Background(), cfg, e.c.svc); err == nil {
 		t.Fatal("Run with a missing server certificate returned nil, want the error that ends this boot after recovery")
 	}
-	if got := e.waitForStoredResponse(t, 2500*time.Millisecond); len(got) != 0 {
+	if got := e.waitForStoredResponse(t, 3500*time.Millisecond); len(got) != 0 {
 		t.Fatalf("%d responses stored after Run failed, want none: the re-armed hold outlived Run", len(got))
 	}
 }

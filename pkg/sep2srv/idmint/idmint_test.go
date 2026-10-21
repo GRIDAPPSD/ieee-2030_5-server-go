@@ -14,8 +14,10 @@ func TestNumbersAreUniqueAndIncreasingUnderAHeldClock(t *testing.T) {
 	t.Cleanup(idmint.SwapClock(func() time.Time { return time.Unix(1700000000, 42) }))
 
 	first := idmint.Next()
-	if want := int64(1700000000)*1e9 + 42; first != want {
-		t.Errorf("first number = %d, want the clock reading %d", first, want)
+	// At least the clock reading: an earlier number from a real clock in this
+	// process (another test, or -count above 1) may already be higher.
+	if want := int64(1700000000)*1e9 + 42; first < want {
+		t.Errorf("first number = %d, want at least the clock reading %d", first, want)
 	}
 	if second := idmint.Next(); second != first+1 {
 		t.Errorf("second number = %d, want %d", second, first+1)
@@ -73,4 +75,28 @@ func TestConcurrentNumbersAreDistinct(t *testing.T) {
 		}
 		seen[v] = true
 	}
+}
+
+// Run with -race: swapping the clock while another goroutine mints must not
+// be a data race.
+func TestSwapClockWhileMinting(t *testing.T) {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				idmint.Next()
+			}
+		}
+	}()
+	for range 5000 {
+		restore := idmint.SwapClock(time.Now)
+		restore()
+	}
+	close(stop)
+	<-done
 }

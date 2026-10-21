@@ -19,12 +19,17 @@ var (
 )
 
 // SwapClock replaces the time source and returns a func that restores it.
-// Tests use it to hold the clock still. It is not safe to call while other
-// goroutines mint.
+// Tests use it to hold the clock still.
 func SwapClock(f func() time.Time) (restore func()) {
+	mu.Lock()
+	defer mu.Unlock()
 	prev := clock
 	clock = f
-	return func() { clock = prev }
+	return func() {
+		mu.Lock()
+		defer mu.Unlock()
+		clock = prev
+	}
 }
 
 // Next returns one unique id number.

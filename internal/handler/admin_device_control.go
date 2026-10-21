@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -49,16 +48,12 @@ type AdminDeviceControlHandler struct {
 // deviceControlBody is the request body: a control body without
 // derProgramHref (the server chooses the program) and with kind.
 type deviceControlBody struct {
-	Kind            *string                `json:"kind"`
-	Type            *string                `json:"type"`
-	Functions       json.RawMessage        `json:"functions"`
-	MaxLimW         *int64                 `json:"maxLimW"`
-	PowerFactor     *derControlPowerFactor `json:"powerFactor"`
-	TargetW         *derControlTargetW     `json:"targetW"`
-	ExecutesGrant   *string                `json:"executesGrant"`
-	StartTime       *int64                 `json:"startTime"`
-	DurationSeconds *int64                 `json:"durationSeconds"`
-	Description     *string                `json:"description"`
+	controlValuesBody
+	Kind            *string `json:"kind"`
+	ExecutesGrant   *string `json:"executesGrant"`
+	StartTime       *int64  `json:"startTime"`
+	DurationSeconds *int64  `json:"durationSeconds"`
+	Description     *string `json:"description"`
 }
 
 // DeviceControlCreated is the 201 body. Exactly one of Control (kind
@@ -113,8 +108,8 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 		}
 
 		cb := derControlCreateBody{
-			Type: body.Type, Functions: body.Functions, MaxLimW: body.MaxLimW, PowerFactor: body.PowerFactor, TargetW: body.TargetW,
-			ExecutesGrant: body.ExecutesGrant, StartTime: body.StartTime, DurationSeconds: body.DurationSeconds, Description: body.Description,
+			controlValuesBody: body.controlValuesBody,
+			ExecutesGrant:     body.ExecutesGrant, StartTime: body.StartTime, DurationSeconds: body.DurationSeconds, Description: body.Description,
 		}
 		var req dercontrol.CreateRequest
 		var defaultBase *sep2.DERControlBase
@@ -141,11 +136,11 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 					return
 				}
 			}
-			if ref, ok := buildControlValues(cb.Type, cb.Functions, cb, &req, &logged); !ok {
+			base, ref, ok, err := controlBaseFromValues(body.controlValuesBody, &logged)
+			if !ok {
 				h.Controls.refuse(w, r, "device_control", ref, &logged)
 				return
 			}
-			base, err := dercontrol.ControlBase(req)
 			if err != nil {
 				h.Controls.refuse(w, r, "device_control", mapIssuerError(err, &logged), &logged)
 				return

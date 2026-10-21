@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -62,14 +61,10 @@ type FSAControlFinder interface {
 // since the template names the program, and no executesGrant, since a grant
 // is carried out by one device.
 type fsaControlBody struct {
-	Type            *string                `json:"type"`
-	Functions       json.RawMessage        `json:"functions"`
-	MaxLimW         *int64                 `json:"maxLimW"`
-	PowerFactor     *derControlPowerFactor `json:"powerFactor"`
-	TargetW         *derControlTargetW     `json:"targetW"`
-	StartTime       *int64                 `json:"startTime"`
-	DurationSeconds *int64                 `json:"durationSeconds"`
-	Description     *string                `json:"description"`
+	controlValuesBody
+	StartTime       *int64  `json:"startTime"`
+	DurationSeconds *int64  `json:"durationSeconds"`
+	Description     *string `json:"description"`
 }
 
 // FSAControlCopyView is one assigned device's copy of an FSA control.
@@ -143,8 +138,8 @@ func (h *AdminFSAControlHandler) HandleCreate() http.HandlerFunc {
 		}
 		href := dercontrol.UnscopedProgramHref
 		req, ref, ok := buildCreateRequest(derControlCreateBody{
-			DERProgramHref: &href, Type: body.Type, Functions: body.Functions, MaxLimW: body.MaxLimW, PowerFactor: body.PowerFactor,
-			TargetW: body.TargetW, StartTime: body.StartTime, DurationSeconds: body.DurationSeconds, Description: body.Description,
+			controlValuesBody: body.controlValuesBody,
+			DERProgramHref:    &href, StartTime: body.StartTime, DurationSeconds: body.DurationSeconds, Description: body.Description,
 		}, &logged)
 		if !ok {
 			ch.refuse(w, r, fsaControlOp, ref, &logged)
@@ -429,13 +424,14 @@ func (h *AdminFSAControlHandler) cancelStopped(w http.ResponseWriter, r *http.Re
 // view is rec with the copy held by each of devices.
 func (h *AdminFSAControlHandler) view(ctx context.Context, fsaID string, rec memory.FSAControl, devices []string, now int64) FSAControlView {
 	base := rec.Base.Copy()
+	typ, baseView, fns := controlBaseViews(&base)
 	v := FSAControlView{
 		ID:             rec.ID,
 		MRID:           rec.MRID,
-		Type:           controlTypeName(&base),
+		Type:           typ,
 		Description:    rec.Description,
-		DERControlBase: newDERControlBaseView(&base),
-		Functions:      newFunctionsView(&base),
+		DERControlBase: baseView,
+		Functions:      fns,
 		CreationTime:   rec.CreationTime,
 		Interval:       IntervalView{Start: rec.Start, Duration: rec.Duration},
 		Ended:          rec.Ended(now),

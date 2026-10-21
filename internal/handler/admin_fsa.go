@@ -15,8 +15,11 @@ import (
 	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -72,6 +75,10 @@ type AdminFSAHandler struct {
 	// Retirer gates every program delete on its control scopes. Nil
 	// answers every delete 500.
 	Retirer ProgramRetirer
+	// Replicas writes an FSA's live controls to a device it is assigned.
+	// Nil refuses an assignment to an FSA whose templates carry a live
+	// control, rather than leave the device without it.
+	Replicas FSAControlReplicator
 
 	// programMu serializes every program write with assignments, so a device
 	// assigned while a template is created gets exactly one copy of it.
@@ -437,6 +444,10 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 			h.copyRefused(w, r, err)
 			return
 		}
+		// Last, so nothing after it can need the replicas undone.
+		if !h.replicateControls(w, r, deviceID, fsaID, steps) {
+			return
+		}
 
 		h.notify(r.Context(), "/edev/"+deviceID+"/fsa")
 		h.notify(r.Context(), programListHref(deviceID, fsaID))
@@ -492,7 +503,7 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 		// Copies go before the assignment, so a removal that fails leaves
 		// the device assigned and the boot rebuild restores its copies.
 		tmpls := h.AdminFSAs.Templates(r.Context(), fsaID)
-		if len(tmpls) > 0 && h.Copies == nil {
+		if len(tmpls) > 0 && (h.Copies == nil || h.Retirer == nil) {
 			h.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
 			return
 		}
@@ -505,27 +516,54 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 				h.notify(r.Context(), programListHref(deviceID, fsaID))
 			}
 		}
+		// Removing a copy takes its controls off the device without
+		// cancelling them, so a copy holding a live one refuses the unassign
+		// (#972); Retire also keeps a control from landing meanwhile.
+		scopes := make([]dercontrol.Scope, 0, len(tmpls))
 		for _, t := range tmpls {
-			ok, err := h.Copies.Remove(r.Context(), deviceID, fsaID, t)
-			if err != nil {
-				var part *fsaprogram.PartError
-				if errors.As(err, &part) {
-					h.logUndoFailed(r, part.DeviceID, part.TemplateID, part.Part, err)
-				} else {
-					h.logUndoFailed(r, deviceID, t.ID, "copy", err)
-				}
-				notifyRemoved()
-				writeError(w, http.StatusInternalServerError, fmt.Sprintf(
-					"unassign failed; device %s stays assigned to fsa %s, and its template copies are restored at the next restart", deviceID, fsaID))
-				return
-			}
-			if ok {
-				removed = append(removed, der.DERProgramHref(deviceID, fsaID, t.ID))
-			}
+			scopes = append(scopes, dercontrol.Scope{EndDeviceID: deviceID, FSAID: fsaID, DERProgramID: t.ID})
 		}
-
-		err := h.AdminFSAs.UnassignDevice(r.Context(), fsaID, deviceID)
+		copyFailed := false
+		removeAll := func(ctx context.Context) error {
+			for _, t := range tmpls {
+				ok, err := h.Copies.Remove(ctx, deviceID, fsaID, t)
+				if err != nil {
+					var part *fsaprogram.PartError
+					if errors.As(err, &part) {
+						h.logUndoFailed(r, part.DeviceID, part.TemplateID, part.Part, err)
+					} else {
+						h.logUndoFailed(r, deviceID, t.ID, "copy", err)
+					}
+					copyFailed = true
+					return err
+				}
+				if ok {
+					removed = append(removed, der.DERProgramHref(deviceID, fsaID, t.ID))
+				}
+			}
+			return h.AdminFSAs.UnassignDevice(ctx, fsaID, deviceID)
+		}
+		var err error
+		if len(tmpls) == 0 {
+			err = removeAll(r.Context())
+		} else {
+			err = h.Retirer.Retire(r.Context(), scopes, removeAll)
+		}
 		notifyRemoved()
+		var live *dercontrol.LiveControlsError
+		if errors.As(err, &live) {
+			writeJSON(w, http.StatusConflict, programRefusal{
+				Error:    "cancel these controls, or wait for them to end, before unassigning the device",
+				Code:     "live_controls",
+				Controls: slices.Clone(live.Controls),
+			})
+			return
+		}
+		if copyFailed {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf(
+				"unassign failed; device %s stays assigned to fsa %s, and its template copies are restored at the next restart", deviceID, fsaID))
+			return
+		}
 		switch {
 		case err == nil:
 			if h.DeviceFSAs != nil {
@@ -543,6 +581,39 @@ func (h *AdminFSAHandler) HandleUnassignDeviceFSA() http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "unassign: "+err.Error())
 		}
 	}
+}
+
+// replicateControls writes the FSA's live controls to the device's new copies
+// and reports whether the assignment may complete. On failure it undoes
+// steps and answers: 409 for a commitment conflict in the device's fleet,
+// 500 otherwise, and the incomplete answer when a replica may be stored.
+func (h *AdminFSAHandler) replicateControls(w http.ResponseWriter, r *http.Request, deviceID, fsaID string, steps []rollbackStep) bool {
+	if len(liveReplicas(r.Context(), h.AdminFSAs, deviceID, fsaID, sep2time.Now().Unix())) == 0 {
+		return true
+	}
+	err := errors.New("fsa controls cannot be replicated: no replicator wired")
+	if h.Replicas != nil {
+		err = h.Replicas.ReplicateTo(r.Context(), deviceID, fsaID)
+	}
+	if err == nil {
+		return true
+	}
+	var undo *dercontrol.UndoError
+	if errors.As(err, &undo) || !h.rollbackAfter(r, err, steps) {
+		h.assignIncomplete(w, deviceID, fsaID)
+		return false
+	}
+	var conflict *commitment.ConflictError
+	if errors.As(err, &conflict) {
+		message, ok := conflictMessages[conflict.Code]
+		if !ok {
+			message = "a control of this fsa conflicts with a commitment of the device's fleet"
+		}
+		writeJSON(w, http.StatusConflict, DERControlConflict{Error: message, Code: string(conflict.Code), MRID: conflict.MRID})
+		return false
+	}
+	h.templateFailed(w, r, "replicate_controls", err)
+	return false
 }
 
 // deviceProgramsPresent is the 409 body of an unassign refused by device

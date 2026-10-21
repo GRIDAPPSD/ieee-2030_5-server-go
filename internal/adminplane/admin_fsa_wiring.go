@@ -2,9 +2,12 @@ package adminplane
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
@@ -122,4 +125,50 @@ func newAdminProgramListHandler(stores *Stores) *handler.AdminProgramListHandler
 		slog.Warn("admin: DER program store does not report persistence; GET /api/der-programs reports every program as not surviving a restart", "event", "der_program_list_persists_unknown")
 	}
 	return h
+}
+
+// newAdminFSAControlHandler builds the FSA control handler over the FSA and
+// DER control handlers, and wires it as the FSA handler's replicator and the
+// control handler's finder of FSA controls. Nil, mounting no routes, when
+// either handler or the template stores are missing, or when the control
+// handler's issuer cannot write across scopes.
+func newAdminFSAControlHandler(fsaH *handler.AdminFSAHandler, derH *handler.AdminDERControlHandler) *handler.AdminFSAControlHandler {
+	if fsaH == nil || fsaH.Copies == nil || derH == nil {
+		return nil
+	}
+	issuer, ok := derH.Issuer.(handler.FSAControlIssuer)
+	if !ok {
+		slog.Error("admin: FSA control routes not mounted: the DER control issuer cannot write across scopes", "event", "fsa_control_unmounted")
+		return nil
+	}
+	h := &handler.AdminFSAControlHandler{FSAs: fsaH, Controls: derH, Issuer: issuer}
+	fsaH.Replicas = h
+	derH.FSAControls = fsaH.AdminFSAs
+	return h
+}
+
+// CompleteFSAControlReplicas writes every live FSA control to each assigned
+// device's copy that lacks it: the boot rebuild of a fan-out or an assignment
+// that stopped before its last copy. It runs after the template copies are
+// rebuilt. A replica its device's fleet refuses is logged and skipped, so one
+// conflict does not stop the boot; any other failure is returned.
+func CompleteFSAControlReplicas(ctx context.Context, stores *Stores, logf func(format string, args ...any)) error {
+	h := newAdminFSAControlHandler(newAdminFSAHandler(stores), newAdminDERControlHandler(stores))
+	if h == nil {
+		return nil
+	}
+	for _, fsaID := range stores.AdminFSAs.IDs(ctx) {
+		for _, dev := range stores.AdminFSAs.Devices(ctx, fsaID) {
+			err := h.ReplicateTo(ctx, dev, fsaID)
+			var conflict *commitment.ConflictError
+			if errors.As(err, &conflict) {
+				logf("FSA %q controls not replicated to device %q: %s conflicts with %s", fsaID, dev, conflict.Code, conflict.MRID)
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("replicate FSA %q controls to device %q: %w", fsaID, dev, err)
+			}
+		}
+	}
+	return nil
 }

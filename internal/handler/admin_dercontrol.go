@@ -22,6 +22,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
 // #566: admin API for DER controls.
@@ -151,6 +152,10 @@ type AdminDERControlHandler struct {
 	// Persisted reports whether both the control and lifecycle stores write
 	// through to disk, echoed in the create response.
 	Persisted bool
+
+	// FSAControls finds the FSA control a copy belongs to, so the cancel
+	// route refuses a copy and points at the FSA route. Nil finds none.
+	FSAControls FSAControlFinder
 
 	Logger *slog.Logger
 }
@@ -540,37 +545,44 @@ func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
 func (h *AdminDERControlHandler) issue(w http.ResponseWriter, r *http.Request, op string, req dercontrol.CreateRequest, logged *derControlLog) (res dercontrol.Result, ok, kept bool) {
 	res, err := h.issueInFleet(r.Context(), req)
 	if err != nil {
-		var conflict *commitment.ConflictError
-		if errors.As(err, &conflict) {
-			h.refuseConflict(w, r, op, conflict, logged)
-			return dercontrol.Result{}, false, false
-		}
-		var failure *commitmentFailure
-		if errors.As(err, &failure) {
-			// The href passed validProgramHref, so its segments are
-			// plain ASCII and safe to log.
-			edevID, _, _, _ := derhref.Program(req.DERProgramHref)
-			logged.add("cause", "commitment_check_failed")
-			logged.add("sub_cause", failure.sub)
-			logged.add("device_id", edevID)
-			logged.add("program_href", req.DERProgramHref)
-			h.refuse(w, r, op, refuseInternal, logged)
-			return dercontrol.Result{}, false, false
-		}
-		if isContextErr(err) && r.Context().Err() != nil {
-			logged.add("cause", "client_gone")
-			h.refuse(w, r, op, refuseClientGone, logged)
-			return dercontrol.Result{}, false, false
-		}
-		var undo *dercontrol.UndoError
-		if errors.As(err, &undo) && undo.ControlKept {
-			h.incomplete(w, r, op, "control may be live: its write could not be undone", undo)
-			return dercontrol.Result{}, false, true
-		}
-		h.refuse(w, r, op, mapIssuerError(err, logged), logged)
-		return dercontrol.Result{}, false, false
+		// The href passed validProgramHref, so its segments are plain ASCII
+		// and safe to log.
+		edevID, _, _, _ := derhref.Program(req.DERProgramHref)
+		return dercontrol.Result{}, false, h.issueFailed(w, r, op, err, edevID, req.DERProgramHref, logged)
 	}
 	return res, true, false
+}
+
+// issueFailed answers a create the fleet check or the issuer did not
+// complete, and reports whether a control may be live despite it. deviceID
+// and programHref name what the request aimed at, for the log line.
+func (h *AdminDERControlHandler) issueFailed(w http.ResponseWriter, r *http.Request, op string, err error, deviceID, programHref string, logged *derControlLog) (kept bool) {
+	var conflict *commitment.ConflictError
+	if errors.As(err, &conflict) {
+		h.refuseConflict(w, r, op, conflict, logged)
+		return false
+	}
+	var failure *commitmentFailure
+	if errors.As(err, &failure) {
+		logged.add("cause", "commitment_check_failed")
+		logged.add("sub_cause", failure.sub)
+		logged.add("device_id", deviceID)
+		logged.add("program_href", programHref)
+		h.refuse(w, r, op, refuseInternal, logged)
+		return false
+	}
+	if isContextErr(err) && r.Context().Err() != nil {
+		logged.add("cause", "client_gone")
+		h.refuse(w, r, op, refuseClientGone, logged)
+		return false
+	}
+	var undo *dercontrol.UndoError
+	if errors.As(err, &undo) && undo.ControlKept {
+		h.incomplete(w, r, op, "control may be live: its write could not be undone", undo)
+		return true
+	}
+	h.refuse(w, r, op, mapIssuerError(err, logged), logged)
+	return false
 }
 
 // issueInFleet runs the issuer inside the commitment lock of the program's
@@ -593,40 +605,68 @@ func (h *AdminDERControlHandler) issueInFleet(ctx context.Context, req dercontro
 	if !ok {
 		return dercontrol.Result{}, &dercontrol.RefusalError{Code: dercontrol.RefusalInvalidProgramHref}
 	}
-	fleetKey, err := h.Fleets.FleetOf(ctx, edevID)
-	switch {
-	case err == nil:
-	case errors.Is(err, store.ErrNotFound):
-		// A program cannot be stored under an EndDevice that does not
-		// exist, so this is the issuer's own 404.
-		return dercontrol.Result{}, &dercontrol.RefusalError{Code: dercontrol.RefusalProgramNotFound}
-	case errors.Is(err, commitment.ErrNoLFDI):
-		return dercontrol.Result{}, &commitmentFailure{sub: "device_without_lfdi", err: err}
-	default:
-		return dercontrol.Result{}, &commitmentFailure{sub: "fleet_resolve_failed", err: err}
+	fleetKey, err := h.fleetOf(ctx, edevID)
+	if err != nil {
+		return dercontrol.Result{}, err
 	}
-
 	var res dercontrol.Result
-	ran := false
-	err = h.Ledger.Within(ctx, []string{fleetKey}, func(v commitment.View) error {
-		ran = true
+	err = h.withinFleets(ctx, []string{fleetKey}, func(v commitment.View) error {
 		var err error
 		res, err = h.Issuer.IssueInFleet(ctx, req, dercontrol.Fleet{Key: fleetKey, Reach: controlReach, Check: checkIn(v)})
 		return err
 	})
+	if err != nil {
+		return dercontrol.Result{}, err
+	}
+	return res, nil
+}
+
+// fleetOf resolves an EndDevice's commitment fleet key, as a
+// *commitmentFailure when it cannot.
+func (h *AdminDERControlHandler) fleetOf(ctx context.Context, edevID string) (string, error) {
+	if h.Fleets == nil {
+		return "", &commitmentFailure{sub: "no_resolver"}
+	}
+	fleetKey, err := h.Fleets.FleetOf(ctx, edevID)
+	switch {
+	case err == nil:
+		return fleetKey, nil
+	case errors.Is(err, store.ErrNotFound):
+		// A program cannot be stored under an EndDevice that does not
+		// exist, so this is the issuer's own 404.
+		return "", &dercontrol.RefusalError{Code: dercontrol.RefusalProgramNotFound}
+	case errors.Is(err, commitment.ErrNoLFDI):
+		return "", &commitmentFailure{sub: "device_without_lfdi", err: err}
+	default:
+		return "", &commitmentFailure{sub: "fleet_resolve_failed", err: err}
+	}
+}
+
+// withinFleets runs fn inside the commitment lock of every fleet in keys and
+// returns its error. A ledger that did not run fn is a *commitmentFailure,
+// or the context error of a client that went away.
+func (h *AdminDERControlHandler) withinFleets(ctx context.Context, keys []string, fn func(commitment.View) error) error {
+	if h.Ledger == nil {
+		return &commitmentFailure{sub: "no_ledger"}
+	}
+	ran := false
+	err := h.Ledger.Within(ctx, keys, func(v commitment.View) error {
+		ran = true
+		return fn(v)
+	})
 	if ran {
-		return res, err
+		return err
 	}
 	switch {
 	case err == nil:
-		// Nothing was issued, so there is no control to report as created.
-		return dercontrol.Result{}, &commitmentFailure{sub: "ledger_did_not_run"}
+		// fn wrote nothing, so there is nothing to report as done.
+		return &commitmentFailure{sub: "ledger_did_not_run"}
 	case errors.Is(err, commitment.ErrNoLedger):
-		return dercontrol.Result{}, &commitmentFailure{sub: "no_ledger", err: err}
+		return &commitmentFailure{sub: "no_ledger", err: err}
 	case isContextErr(err):
-		return dercontrol.Result{}, err
+		return err
 	default:
-		return dercontrol.Result{}, &commitmentFailure{sub: "ledger_failed", err: err}
+		return &commitmentFailure{sub: "ledger_failed", err: err}
 	}
 }
 
@@ -764,6 +804,12 @@ func (h *AdminDERControlHandler) HandleCancel() http.HandlerFunc {
 			h.refuse(w, r, "cancel", refuseMRIDFormat, &logged)
 			return
 		}
+		if h.FSAControls != nil {
+			if fsaID, rec, ok := h.FSAControls.FSAControlByMRID(mrid); ok {
+				h.refuseFSAControl(w, r, fsaID, rec.TemplateID, rec.ID, &logged)
+				return
+			}
+		}
 
 		// A stored Event is never edited (IEEE 2030.5-2018 line 5470), so
 		// the copy read here is the control Cancel acts on, and the view is
@@ -773,6 +819,12 @@ func (h *AdminDERControlHandler) HandleCancel() http.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				h.refuse(w, r, "cancel", refuseControlNotFound, &logged)
+				return
+			}
+			if errors.Is(err, memory.ErrMRIDShared) {
+				// Copies of one control on several devices with no FSA
+				// record left to name: refused like a recorded one.
+				h.refuseFSAControl(w, r, "", "", "", &logged)
 				return
 			}
 			logged.add("cause", "store_error")
@@ -811,6 +863,18 @@ func (h *AdminDERControlHandler) HandleCancel() http.HandlerFunc {
 		h.logSuccess(r, "der_control_cancelled", "admin: DER control cancelled", scope, ctrl)
 		writeJSON(w, http.StatusOK, newDERControlView(scope, ctrl, lc, sep2time.Now().Unix()))
 	}
+}
+
+// refuseFSAControl answers a cancel of one device's copy of an FSA control:
+// cancelling one copy would leave the FSA's record, and every device
+// assigned later, still carrying it.
+func (h *AdminDERControlHandler) refuseFSAControl(w http.ResponseWriter, r *http.Request, fsaID, tmplID, id string, l *derControlLog) {
+	msg := "this control was sent to an FSA; cancel it with POST /api/fsas/{id}/der-programs/{derpId}/controls/{controlId}/cancel"
+	if fsaID != "" {
+		msg = "this control was sent to an FSA; cancel it with POST /api/fsas/" + fsaID + "/der-programs/" + tmplID + "/controls/" + id + "/cancel"
+	}
+	h.logRefusal(r, "cancel", derControlRefusal{http.StatusConflict, "fsa_control", msg}, l)
+	writeJSON(w, http.StatusConflict, programRefusal{Error: msg, Code: "fsa_control"})
 }
 
 // HandleList returns the handler for GET /api/der/controls.

@@ -8,6 +8,7 @@
 package cilocal_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,8 +78,28 @@ func TestDriftCheck_DefaultArgumentScansTheRealWorkflowDirectory(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("exit code: got %d, want 0; output=%q", exit, out)
 	}
-	if !strings.Contains(out, "across 2 workflow file(s)") {
-		t.Fatalf("output missing 'across 2 workflow file(s)' (expected ci.yml, core-freshness.yml); got=%q", out)
+	// Derived from the real directory, the same *.yml/*.yaml set the script
+	// scans, so adding a workflow does not break the test but a scan that
+	// misses the directory does.
+	entries, err := os.ReadDir(filepath.Dir(realWorkflowPath(t)))
+	if err != nil {
+		t.Fatalf("read workflow directory: %v", err)
+	}
+	want := 0
+	for _, e := range entries {
+		if ext := filepath.Ext(e.Name()); !e.IsDir() && (ext == ".yml" || ext == ".yaml") {
+			want++
+		}
+	}
+	if want < 2 {
+		t.Fatalf("workflow directory lists %d workflow file(s), want at least ci.yml and core-freshness.yml", want)
+	}
+	wantMsg := fmt.Sprintf("across %d workflow file(s)", want)
+	if !strings.Contains(out, wantMsg) {
+		t.Fatalf("output missing %q; got=%q", wantMsg, out)
+	}
+	if !strings.Contains(out, "OK: all 13 make target(s)") {
+		t.Fatalf("output missing the expected 13-target OK line; got=%q", out)
 	}
 }
 

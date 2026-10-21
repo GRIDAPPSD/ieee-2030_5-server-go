@@ -66,7 +66,7 @@ func (i *Issuer) liveControls(ctx context.Context, scopeKey string, now int64) (
 	for _, c := range list.Items {
 		// An event with no interval never runs; the supersede scan skips
 		// one for the same reason. A boot fixture control has none.
-		if c.Interval == nil || now >= c.Interval.Start+int64(c.Interval.Duration) {
+		if c.Interval == nil || now >= intervalEnd(c.Interval) {
 			continue
 		}
 		lc, err := i.lifecycles.Get(ctx, scopeKey, controlIDOf(c.Href))

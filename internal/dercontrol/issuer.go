@@ -181,27 +181,10 @@ func (i *Issuer) issue(ctx context.Context, req CreateRequest, fleet Fleet) (Res
 		return Result{}, err
 	}
 	reqEdev, _, reqDerp, _ := parseProgramHref(req.DERProgramHref)
-	durationSeconds := int64(req.DurationSeconds)
-
-	program, err := i.programs.Get(ctx, reqEdev, reqDerp)
+	scope, err := i.resolveScope(ctx, reqEdev, reqDerp)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return Result{}, refuse(RefusalProgramNotFound)
-		}
-		return Result{}, fmt.Errorf("dercontrol: load program: %w", err)
+		return Result{}, err
 	}
-	if program.DERControlListLink == nil {
-		return Result{}, refuse(RefusalNoControlListLink)
-	}
-	linkEdev, linkFsa, linkDerp, ok := parseControlListHref(program.DERControlListLink.Href)
-	if !ok || linkEdev != reqEdev || linkDerp != reqDerp {
-		// The link is absent in shape, or names a different device or
-		// program than the one we just loaded it from: acceptance
-		// criterion 1 requires refusing both, since neither is a link a
-		// device could ever have followed here.
-		return Result{}, refuse(RefusalNoControlListLink)
-	}
-	scope := Scope{EndDeviceID: reqEdev, FSAID: linkFsa, DERProgramID: reqDerp}
 	scopeKey := scopeKeyOf(scope)
 
 	unlock := i.lockScope(scopeKey)
@@ -209,24 +192,15 @@ func (i *Issuer) issue(ctx context.Context, req CreateRequest, fleet Fleet) (Res
 
 	// Retire may have removed the program after the read above, and a
 	// control stored now would be one its check never saw.
-	if _, err := i.programs.Get(ctx, reqEdev, reqDerp); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return Result{}, refuse(RefusalProgramNotFound)
-		}
-		return Result{}, fmt.Errorf("dercontrol: load program: %w", err)
+	if _, err := i.loadProgram(ctx, reqEdev, reqDerp); err != nil {
+		return Result{}, err
 	}
 
 	existing, err := i.controls.List(ctx, scopeKey, store.ListOptions{Unbounded: true})
 	if err != nil {
 		return Result{}, fmt.Errorf("dercontrol: list scope: %w", err)
 	}
-
-	creationTime := now
-	for _, c := range existing.Items {
-		if c.CreationTime >= creationTime {
-			creationTime = c.CreationTime + 1
-		}
-	}
+	creationTime := nextCreationTime(now, existing.Items)
 
 	start := creationTime
 	if req.Start != nil {
@@ -238,65 +212,127 @@ func (i *Issuer) issue(ctx context.Context, req CreateRequest, fleet Fleet) (Res
 		return Result{}, fmt.Errorf("dercontrol: generate mRID: %w", err)
 	}
 	id := sortableID(start, creationTime, mrid)
-	href := "/edev/" + scope.EndDeviceID + "/fsa/" + scope.FSAID + "/derp/" + scope.DERProgramID + "/derc/" + id
+	ctrl := newControl(base, mrid, req.Description, creationTime, start, req.DurationSeconds)
+	ctrl.Href = scope.ControlHref(id)
 
-	ctrl := sep2.DERControl{DERControlBase: base}
-	ctrl.Href = href
-	ctrl.MRID = mrid
-	ctrl.Description = req.Description
-	ctrl.CreationTime = creationTime
-	ctrl.Interval = &sep2.DateTimeInterval{Start: start, Duration: uint32(req.DurationSeconds)}
-
-	// Candidates are computed before either store is written, so the marks
-	// applySupersedes writes always name an mRID that is already stored: no
-	// write below can leave a mark referring to a control this call failed
-	// to create.
-	candidates, err := i.computeSupersedes(ctx, scopeKey, existing.Items, base, start, start+durationSeconds)
+	plan, err := i.planCopy(ctx, Target{Scope: scope, Fleet: fleet}, ctrl, existing.Items, req.ExecutesGrant)
 	if err != nil {
 		return Result{}, err
 	}
-
-	// The check runs after the supersede scan, so it can discount the
-	// controls this one replaces, and before the first write, so a refusal
-	// leaves nothing to undo.
-	if fleet.Check != nil {
-		if err := fleet.Check(ctx, newProposal(scope, ctrl, req.ExecutesGrant, fleet, candidates)); err != nil {
-			return Result{}, err
-		}
-	}
-
 	if err := ctx.Err(); err != nil {
 		// Nothing has been written yet, so nothing needs undoing.
 		return Result{}, err
 	}
 
-	// Forward order: lifecycle record, then control, then marks. Every
-	// prefix of this sequence stays legal: an orphan lifecycle record is
-	// legal and unreachable, and once the control is stored, every
-	// stored control has its lifecycle record for the rest of the call.
-	// An orphan left by a failed undo carries the grant link, so anything
-	// counting commitments must start from stored controls, never from
-	// lifecycle records alone.
-	link := LifecycleRecord{GrantMRID: req.ExecutesGrant, FleetKey: fleet.Key, Reach: fleet.Reach}
-	if err := i.lifecycles.Create(ctx, scopeKey, id, link); err != nil {
-		return nameUndo(scope, mrid)(i.undoLifecycleCreateFailure(ctx, scopeKey, id, err))
-	}
-	if err := i.controls.Create(ctx, scopeKey, id, ctrl); err != nil {
-		return nameUndo(scope, mrid)(i.undoControlCreateFailure(ctx, scopeKey, id, err))
-	}
-
-	supersedes, attempted, err := i.applySupersedes(ctx, scopeKey, candidates, start, mrid)
+	written, err := i.writeCopies(ctx, []copyPlan{plan}, id)
 	if err != nil {
-		return nameUndo(scope, mrid)(i.undoMarkFailure(ctx, scopeKey, id, attempted, err))
+		return Result{}, err
 	}
-
 	return Result{
 		Scope:      scope,
 		ID:         id,
-		Href:       href,
+		Href:       ctrl.Href,
 		Control:    ctrl,
-		Supersedes: supersedes,
+		Supersedes: written[0].marked,
 	}, nil
+}
+
+// resolveScope loads the program at (edev, derp) and returns the scope its
+// control list link names, refusing a program with no link or a link naming
+// another device or program: neither is a link a device could ever have
+// followed here.
+func (i *Issuer) resolveScope(ctx context.Context, edev, derp string) (Scope, error) {
+	program, err := i.loadProgram(ctx, edev, derp)
+	if err != nil {
+		return Scope{}, err
+	}
+	if program.DERControlListLink == nil {
+		return Scope{}, refuse(RefusalNoControlListLink)
+	}
+	linkEdev, linkFsa, linkDerp, ok := parseControlListHref(program.DERControlListLink.Href)
+	if !ok || linkEdev != edev || linkDerp != derp {
+		return Scope{}, refuse(RefusalNoControlListLink)
+	}
+	return Scope{EndDeviceID: edev, FSAID: linkFsa, DERProgramID: derp}, nil
+}
+
+// loadProgram reads a program, mapping a missing one to its refusal.
+func (i *Issuer) loadProgram(ctx context.Context, edev, derp string) (sep2.DERProgram, error) {
+	program, err := i.programs.Get(ctx, edev, derp)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return sep2.DERProgram{}, refuse(RefusalProgramNotFound)
+		}
+		return sep2.DERProgram{}, fmt.Errorf("dercontrol: load program: %w", err)
+	}
+	return program, nil
+}
+
+// nextCreationTime is now, or one more than the largest creationTime among
+// the controls of every scope the new control is written to, so it is the
+// newest event in each.
+func nextCreationTime(now int64, scopes ...[]sep2.DERControl) int64 {
+	creationTime := now
+	for _, controls := range scopes {
+		for _, c := range controls {
+			if c.CreationTime >= creationTime {
+				creationTime = c.CreationTime + 1
+			}
+		}
+	}
+	return creationTime
+}
+
+// newControl is the control every copy of one request stores, before an href
+// is set.
+func newControl(base *sep2.DERControlBase, mrid, description string, creationTime, start int64, durationSeconds uint32) sep2.DERControl {
+	ctrl := sep2.DERControl{DERControlBase: base}
+	ctrl.MRID = mrid
+	ctrl.Description = description
+	ctrl.CreationTime = creationTime
+	ctrl.Interval = &sep2.DateTimeInterval{Start: start, Duration: durationSeconds}
+	return ctrl
+}
+
+// planCopy decides what writing ctrl to t's scope takes, before the first
+// write: the controls it supersedes, found among existing, and the fleet's
+// commitment check, which runs after the supersede scan so it can discount
+// the controls this one replaces. A refusal leaves nothing to undo.
+func (i *Issuer) planCopy(ctx context.Context, t Target, ctrl sep2.DERControl, existing []sep2.DERControl, grant string) (copyPlan, error) {
+	start := ctrl.Interval.Start
+	candidates, err := i.computeSupersedes(ctx, t.Scope.Key(), existing, ctrl.DERControlBase, start, intervalEnd(ctrl.Interval))
+	if err != nil {
+		return copyPlan{}, err
+	}
+	if t.Fleet.Check != nil {
+		if err := t.Fleet.Check(ctx, newProposal(t.Scope, ctrl, grant, t.Fleet, candidates)); err != nil {
+			return copyPlan{}, err
+		}
+	}
+	link := LifecycleRecord{GrantMRID: grant, FleetKey: t.Fleet.Key, Reach: t.Fleet.Reach}
+	return copyPlan{target: t, ctrl: ctrl, candidates: candidates, link: link}, nil
+}
+
+// intervalEnd is the first second after the interval.
+func intervalEnd(iv *sep2.DateTimeInterval) int64 {
+	return iv.Start + int64(iv.Duration)
+}
+
+// overlaps reports whether [aStart, aEnd) and [bStart, bEnd) share a second;
+// adjacent intervals do not.
+func overlaps(aStart, aEnd, bStart, bEnd int64) bool {
+	return aStart < bEnd && bStart < aEnd
+}
+
+// supersedes reports whether older, an event with an interval, is replaced by
+// a newer one with function set set over [start, end): only an equal function
+// set supersedes, and a partial overlap is not marked (potentiallySuperseded
+// is a later issue).
+func supersedes(older sep2.DERControl, set string, start, end int64) bool {
+	if older.Interval == nil || functionSetKey(older.DERControlBase) != set {
+		return false
+	}
+	return overlaps(older.Interval.Start, intervalEnd(older.Interval), start, end)
 }
 
 // supersedeCandidate is an existing control eligible to be marked
@@ -339,12 +375,8 @@ func (i *Issuer) computeSupersedes(ctx context.Context, scopeKey string, existin
 		if !lc.supersedeEligible(newStart) {
 			continue
 		}
-		if functionSetKey(c.DERControlBase) != newSet {
-			continue // only an equal function set supersedes; a partial overlap is not marked (potentiallySuperseded is a later issue)
-		}
-		cEnd := c.Interval.Start + int64(c.Interval.Duration)
-		if !(c.Interval.Start < newEnd && newStart < cEnd) {
-			continue // no overlap; adjacent (cEnd == newStart) excluded by strict '<'
+		if !supersedes(c, newSet, newStart, newEnd) {
+			continue
 		}
 		candidates = append(candidates, supersedeCandidate{id: id, mrid: c.MRID, before: lc})
 	}
@@ -417,24 +449,14 @@ func (i *Issuer) undoMarkFailure(ctx context.Context, scopeKey, id string, attem
 	uctx, cancel := undoContext(ctx)
 	defer cancel()
 
-	var unrevertedIDs []string
-	var reverts []error
 	// applySupersedes's contract puts the candidate whose OWN mark-write
 	// failed (the write that is `cause`) last in attempted; every earlier
-	// candidate's mark-write succeeded and its revert here is a genuine
-	// action. For the last one, when the store self-rolls back, its own
-	// failure already restored cand.before: skip the redundant re-write so
-	// a second, unrelated failure there cannot be misreported as "not
-	// reverted" when it is already known to be (round 2, item 1).
-	for n, cand := range attempted {
-		if n == len(attempted)-1 && skipCompensation(i.lifecycles) {
-			continue
-		}
-		if rerr := i.lifecycles.Update(uctx, scopeKey, cand.id, cand.before); !undoWriteOK(rerr) {
-			unrevertedIDs = append(unrevertedIDs, cand.id)
-			reverts = append(reverts, rerr)
-		}
-	}
+	// candidate's mark-write succeeded and its revert is a genuine action.
+	// For the last one, when the store self-rolls back, its own failure
+	// already restored cand.before, so the redundant re-write is skipped: a
+	// second, unrelated failure there cannot be misreported as "not
+	// reverted" when it is already known to be.
+	unrevertedIDs, reverts := i.revertMarks(uctx, scopeKey, attempted, skipCompensation(i.lifecycles))
 	if len(unrevertedIDs) > 0 {
 		return Result{}, &UndoError{Step: UndoStepMarkSuperseded, ControlKept: true, LifecycleKept: true, ID: id, UnrevertedIDs: unrevertedIDs, cause: cause, reverts: reverts}
 	}
@@ -446,6 +468,22 @@ func (i *Issuer) undoMarkFailure(ctx context.Context, scopeKey, id string, attem
 		return Result{}, &UndoError{Step: UndoStepMarkSuperseded, LifecycleKept: true, ID: id, cause: cause, reverts: []error{derr}}
 	}
 	return Result{}, fmt.Errorf("dercontrol: mark superseded: %w", cause)
+}
+
+// revertMarks restores every candidate to its prior lifecycle record,
+// attempting all of them, and returns the ids it could not restore with the
+// errors. skipLast leaves the final candidate alone.
+func (i *Issuer) revertMarks(ctx context.Context, scopeKey string, candidates []supersedeCandidate, skipLast bool) (unreverted []string, reverts []error) {
+	for n, cand := range candidates {
+		if skipLast && n == len(candidates)-1 {
+			continue
+		}
+		if err := i.lifecycles.Update(ctx, scopeKey, cand.id, cand.before); !undoWriteOK(err) {
+			unreverted = append(unreverted, cand.id)
+			reverts = append(reverts, err)
+		}
+	}
+	return unreverted, reverts
 }
 
 // Cancel records cancellation of the control at (scope, id). It refuses a
@@ -489,7 +527,7 @@ func (i *Issuer) Cancel(ctx context.Context, scope Scope, id string, reason stri
 	if ctrl.Interval == nil {
 		return before, fmt.Errorf("dercontrol: control has no interval")
 	}
-	if end := ctrl.Interval.Start + int64(ctrl.Interval.Duration); now >= end {
+	if now >= intervalEnd(ctrl.Interval) {
 		return LifecycleRecord{}, refuse(RefusalEnded)
 	}
 

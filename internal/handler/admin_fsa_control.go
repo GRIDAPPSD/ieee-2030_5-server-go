@@ -141,7 +141,7 @@ func (h *AdminFSAControlHandler) HandleCreate() http.HandlerFunc {
 			ch.refuse(w, r, fsaControlOp, ref, &logged)
 			return
 		}
-		href := placeholderProgramHref
+		href := dercontrol.UnscopedProgramHref
 		req, ref, ok := buildCreateRequest(derControlCreateBody{
 			DERProgramHref: &href, Type: body.Type, Functions: body.Functions, MaxLimW: body.MaxLimW, PowerFactor: body.PowerFactor,
 			TargetW: body.TargetW, StartTime: body.StartTime, DurationSeconds: body.DurationSeconds, Description: body.Description,
@@ -446,7 +446,7 @@ func (h *AdminFSAControlHandler) view(ctx context.Context, fsaID string, rec mem
 	}
 	for _, dev := range devices {
 		scope := dercontrol.Scope{EndDeviceID: dev, FSAID: fsaID, DERProgramID: rec.TemplateID}
-		cv := FSAControlCopyView{Device: dev, Href: scope.ControlListHref() + "/" + rec.ID}
+		cv := FSAControlCopyView{Device: dev, Href: scope.ControlHref(rec.ID)}
 		if lc, err := h.Controls.Lifecycles.Get(ctx, scope.Key(), rec.ID); err == nil {
 			st := dercontrol.DeriveStatus(now, rec.CreationTime, rec.Start, lc)
 			cv.EventStatus = &EventStatusView{CurrentStatus: st.CurrentStatus, Status: eventStatusName(st.CurrentStatus), DateTime: st.DateTime}

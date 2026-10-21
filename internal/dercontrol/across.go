@@ -44,10 +44,6 @@ type AcrossResult struct {
 // record.
 type RecordWriter func(ctx context.Context, id string, ctrl sep2.DERControl) (undo func(context.Context) error, err error)
 
-// acrossPlaceholderHref lets validate run its href-free checks for a
-// fan-out, whose scopes come from the targets rather than the request.
-const acrossPlaceholderHref = "/edev/0/fsa/0/derp/0"
-
 // IssueAcross validates req, then, holding every target's scope lock, writes
 // record and then one copy of the control to each target: its lifecycle
 // record, the control and its supersede marks, as Issue writes them. The
@@ -70,19 +66,17 @@ func (i *Issuer) IssueAcross(ctx context.Context, req CreateRequest, targets []T
 		return AcrossResult{}, err
 	}
 	now := sep2time.Now().Unix()
-	req.DERProgramHref = acrossPlaceholderHref
+	req.DERProgramHref = UnscopedProgramHref
 	base, err := i.validate(req, now)
 	if err != nil {
 		return AcrossResult{}, err
 	}
-	durationSeconds := int64(req.DurationSeconds)
 
 	for _, k := range targetKeys(targets) {
 		defer i.lockScope(k)()
 	}
 
 	existing := make([][]sep2.DERControl, len(targets))
-	creationTime := now
 	for n, t := range targets {
 		if err := i.checkProgram(ctx, t.Scope); err != nil {
 			return AcrossResult{}, err
@@ -92,12 +86,8 @@ func (i *Issuer) IssueAcross(ctx context.Context, req CreateRequest, targets []T
 			return AcrossResult{}, fmt.Errorf("dercontrol: list scope: %w", err)
 		}
 		existing[n] = list.Items
-		for _, c := range list.Items {
-			if c.CreationTime >= creationTime {
-				creationTime = c.CreationTime + 1
-			}
-		}
 	}
+	creationTime := nextCreationTime(now, existing...)
 
 	start := creationTime
 	if req.Start != nil {
@@ -108,23 +98,14 @@ func (i *Issuer) IssueAcross(ctx context.Context, req CreateRequest, targets []T
 		return AcrossResult{}, fmt.Errorf("dercontrol: generate mRID: %w", err)
 	}
 	id := sortableID(start, creationTime, mrid)
-	recordCtrl := sep2.DERControl{DERControlBase: base}
-	recordCtrl.MRID = mrid
-	recordCtrl.Description = req.Description
-	recordCtrl.CreationTime = creationTime
-	recordCtrl.Interval = &sep2.DateTimeInterval{Start: start, Duration: req.DurationSeconds}
+	recordCtrl := newControl(base, mrid, req.Description, creationTime, start, req.DurationSeconds)
 
 	plans := make([]copyPlan, len(targets))
 	for n, t := range targets {
-		ctrl := copyOf(recordCtrl, t.Scope, id)
-		candidates, err := i.computeSupersedes(ctx, t.Scope.Key(), existing[n], base, start, start+durationSeconds)
+		plans[n], err = i.planCopy(ctx, t, copyOf(recordCtrl, t.Scope, id), existing[n], "")
 		if err != nil {
 			return AcrossResult{}, err
 		}
-		if err := t.Fleet.Check(ctx, newProposal(t.Scope, ctrl, "", t.Fleet, candidates)); err != nil {
-			return AcrossResult{}, err
-		}
-		plans[n] = copyPlan{target: t, ctrl: ctrl, candidates: candidates, link: LifecycleRecord{FleetKey: t.Fleet.Key, Reach: t.Fleet.Reach}}
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -218,7 +199,7 @@ func (i *Issuer) planReplica(ctx context.Context, r Replica) (copyPlan, bool, er
 	}
 	ctrl := copyOf(r.Control, scope, r.ID)
 	start := ctrl.Interval.Start
-	end := start + int64(ctrl.Interval.Duration)
+	end := intervalEnd(ctrl.Interval)
 
 	// Only an older event is superseded by this one; a newer event already
 	// in the scope supersedes it instead, from that event's start.
@@ -253,13 +234,9 @@ func (i *Issuer) planReplica(ctx context.Context, r Replica) (copyPlan, bool, er
 func (i *Issuer) supersededByNewer(ctx context.Context, scopeKey string, newer []sep2.DERControl, ctrl sep2.DERControl, lc *LifecycleRecord) error {
 	set := functionSetKey(ctrl.DERControlBase)
 	start := ctrl.Interval.Start
-	end := start + int64(ctrl.Interval.Duration)
+	end := intervalEnd(ctrl.Interval)
 	for _, c := range newer {
-		if c.Interval == nil || functionSetKey(c.DERControlBase) != set {
-			continue
-		}
-		cEnd := c.Interval.Start + int64(c.Interval.Duration)
-		if !(c.Interval.Start < end && start < cEnd) {
+		if !supersedes(c, set, start, end) {
 			continue
 		}
 		id, ok := derhref.ControlID(c.Href)
@@ -368,14 +345,7 @@ func (i *Issuer) removeCopy(ctx context.Context, w writtenCopy, cause error) err
 		return &UndoError{Step: UndoStepStoreControl, ControlKept: controlKept, LifecycleKept: true, ID: w.id,
 			Scope: scope, MRID: w.plan.ctrl.MRID, UnrevertedIDs: unreverted, cause: cause, reverts: reverts}
 	}
-	var unreverted []string
-	var reverts []error
-	for _, cand := range w.plan.candidates {
-		if err := i.lifecycles.Update(ctx, scopeKey, cand.id, cand.before); !undoWriteOK(err) {
-			unreverted = append(unreverted, cand.id)
-			reverts = append(reverts, err)
-		}
-	}
+	unreverted, reverts := i.revertMarks(ctx, scopeKey, w.plan.candidates, false)
 	if len(unreverted) > 0 {
 		return fail(true, unreverted, reverts)
 	}
@@ -391,18 +361,11 @@ func (i *Issuer) removeCopy(ctx context.Context, w writtenCopy, cause error) err
 // checkProgram refuses a scope whose program is gone or whose control list
 // link names another scope, the checks Issue makes before writing.
 func (i *Issuer) checkProgram(ctx context.Context, scope Scope) error {
-	program, err := i.programs.Get(ctx, scope.EndDeviceID, scope.DERProgramID)
+	got, err := i.resolveScope(ctx, scope.EndDeviceID, scope.DERProgramID)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return refuse(RefusalProgramNotFound)
-		}
-		return fmt.Errorf("dercontrol: load program: %w", err)
+		return err
 	}
-	if program.DERControlListLink == nil {
-		return refuse(RefusalNoControlListLink)
-	}
-	edev, fsa, derp, ok := parseControlListHref(program.DERControlListLink.Href)
-	if !ok || edev != scope.EndDeviceID || fsa != scope.FSAID || derp != scope.DERProgramID {
+	if got != scope {
 		return refuse(RefusalNoControlListLink)
 	}
 	return nil
@@ -419,7 +382,7 @@ func copyOf(ctrl sep2.DERControl, scope Scope, id string) sep2.DERControl {
 		iv := *ctrl.Interval
 		c.Interval = &iv
 	}
-	c.Href = scope.ControlListHref() + "/" + id
+	c.Href = scope.ControlHref(id)
 	return c
 }
 

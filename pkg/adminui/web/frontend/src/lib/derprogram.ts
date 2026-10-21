@@ -132,11 +132,13 @@ export type DefaultControlInput = { ok: true; functions: Record<string, unknown>
 // buildProgramBody validates the form the way the server does and words each
 // refusal the way it would, so the operator sees one message whether the
 // check ran here or there. requireDefault is true on create, where the
-// server demands a default control, and false on an edit, where ticking
-// nothing keeps the stored control.
+// server demands a default control. clearDefault, on an edit, sends
+// "defaultControl": null to remove the stored default; with a null
+// defaultControl and no clearDefault the body omits the key and the stored
+// default stays.
 export function buildProgramBody(
   v: ProgramFormValues,
-  opts: { requireDefault: boolean; defaultControl: DefaultControlInput },
+  opts: { requireDefault: boolean; defaultControl: DefaultControlInput; clearDefault?: boolean },
 ): BuiltBody {
   const description = v.description
   if (description.length < 1 || description.length > 32 || !/^[\x20-\x7e]+$/.test(description)) {
@@ -156,6 +158,10 @@ export function buildProgramBody(
     body.mRID = mRID
   }
 
+  if (opts.clearDefault) {
+    body.defaultControl = null
+    return { ok: true, body }
+  }
   const control = opts.defaultControl
   if (control === null) {
     return opts.requireDefault ? { ok: false, error: 'defaultControl: tick at least one function' } : { ok: true, body }

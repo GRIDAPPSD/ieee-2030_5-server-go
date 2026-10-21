@@ -130,6 +130,12 @@ describe('buildProgramBody', () => {
     const r = buildProgramBody(form(), { requireDefault: false, defaultControl: CONNECT })
     expect(r.ok && r.body.defaultControl).toEqual({ functions: { fnFlag: true } })
   })
+
+  it('sends an explicit null to remove the default when clearDefault is set', () => {
+    const r = buildProgramBody(form(), { requireDefault: false, defaultControl: null, clearDefault: true })
+    expect(r).toEqual({ ok: true, body: { description: 'roof fleet', primacy: 65, defaultControl: null } })
+    expect(r.ok && 'defaultControl' in r.body).toBe(true)
+  })
 })
 
 describe('formFromProgram', () => {

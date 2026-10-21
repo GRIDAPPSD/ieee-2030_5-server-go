@@ -159,6 +159,13 @@ describe('DerProgramForm create', () => {
     await waitFor(() => expect(button).toBeEnabled())
   })
 
+  it('shows the Default control box ticked and locked on create, because the server requires one', async () => {
+    await mountCreate()
+    const box = screen.getByRole('checkbox', { name: 'Default control' })
+    expect(box).toBeChecked()
+    expect(box).toBeDisabled()
+  })
+
   it('says so when the catalog cannot be read, and sends nothing', async () => {
     serveCatalog({ ...CATALOG_ROUTES, 'GET /api/der/control-functions': { status: 500, body: { error: 'catalog down' } } })
     const onSubmit = vi.fn(() => Promise.resolve({ ok: true } as Result))
@@ -191,7 +198,10 @@ describe('DerProgramForm edit', () => {
     serveCatalog()
     const spy = vi.fn(onSubmit)
     render(DerProgramForm, { props: { mode: 'edit', initial, onSubmit: spy } })
-    await screen.findByTestId('control-fn-fnFlag')
+    // The functions are hidden while the box is unticked, so a program with no
+    // default has nothing to wait on but the box.
+    if (initial.defaultControl) await screen.findByTestId('control-fn-fnFlag')
+    else await screen.findByRole('checkbox', { name: 'Default control' })
     return spy
   }
 
@@ -238,13 +248,83 @@ describe('DerProgramForm edit', () => {
     })
   })
 
-  it('keeps the stored default, by sending none, when every function is unticked', async () => {
+  it('refuses a ticked default with no function selected, says why, and sends nothing', async () => {
     const onSubmit = await mountEdit(stored)
     for (const name of ['fnFlag', 'fnLevel', 'fnPair', 'fnCurve']) await tick(name)
     await fireEvent.click(screen.getByRole('button', { name: 'Save template' }))
 
+    expect(await screen.findByRole('alert')).toHaveTextContent('defaultControl: tick at least one function')
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('ticks the Default control box for a program with a default and shows its functions', async () => {
+    await mountEdit(stored)
+    expect(screen.getByRole('checkbox', { name: 'Default control' })).toBeChecked()
+    expect(screen.getByTestId('control-fn-fnFlag')).toBeVisible()
+  })
+
+  it('leaves the box unticked and the functions hidden for a program with no default', async () => {
+    const { defaultControl: _gone, ...bare } = stored
+    await mountEdit(bare)
+    expect(screen.getByRole('checkbox', { name: 'Default control' })).not.toBeChecked()
+    expect(screen.queryByTestId('control-fn-fnFlag')).toBeNull()
+  })
+
+  it('sends "defaultControl": null once when the box is unticked on a program with a default', async () => {
+    const onSubmit = await mountEdit(stored)
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Default control' }))
+    expect(screen.queryByTestId('control-fn-fnFlag')).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: 'Save template' }))
+
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
-    expect(onSubmit).toHaveBeenCalledWith({ description: 'roof fleet', primacy: 65 })
+    expect(onSubmit).toHaveBeenCalledWith({ description: 'roof fleet', primacy: 65, defaultControl: null })
+    expect(Object.keys(onSubmit.mock.calls[0][0]).filter((k) => k === 'defaultControl')).toHaveLength(1)
+  })
+
+  it('sends the default again, as stored, when the box is unticked and ticked back', async () => {
+    const onSubmit = await mountEdit(stored)
+    const box = screen.getByRole('checkbox', { name: 'Default control' })
+    await fireEvent.click(box)
+    await fireEvent.click(box)
+    await fireEvent.click(screen.getByRole('button', { name: 'Save template' }))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    expect(onSubmit).toHaveBeenCalledWith({
+      description: 'roof fleet',
+      primacy: 65,
+      defaultControl: {
+        functions: { fnFlag: true, fnLevel: 7500, fnPair: { amount: 950, sign: true, scale: -3 }, fnCurve: 'cv11' },
+      },
+    })
+  })
+
+  it('never sends a default the operator did not tick on a program that has none', async () => {
+    const { defaultControl: _gone, ...bare } = stored
+    const onSubmit = await mountEdit(bare)
+    await fill('Description', 'renamed')
+    await fireEvent.click(screen.getByRole('button', { name: 'Save template' }))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    const body = onSubmit.mock.calls[0][0]
+    expect(body.description).toBe('renamed')
+    expect('defaultControl' in body).toBe(false)
+  })
+
+  it('sets a default on a program with none once the box is ticked and a function chosen', async () => {
+    const { defaultControl: _gone, ...bare } = stored
+    const onSubmit = await mountEdit(bare)
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Default control' }))
+    await screen.findByTestId('control-fn-fnLevel')
+    await tick('fnLevel')
+    await fireEvent.input(screen.getByTestId('control-fv-fnLevel'), { target: { value: '42' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Save template' }))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    expect(onSubmit).toHaveBeenCalledWith({
+      description: 'roof fleet',
+      primacy: 65,
+      defaultControl: { functions: { fnLevel: 42 } },
+    })
   })
 
   describe('a stored function the form cannot edit', () => {

@@ -3,7 +3,6 @@ package adminplane
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -150,8 +149,9 @@ func newAdminFSAControlHandler(fsaH *handler.AdminFSAHandler, derH *handler.Admi
 // CompleteFSAControlReplicas writes every live FSA control to each assigned
 // device's copy that lacks it: the boot rebuild of a fan-out or an assignment
 // that stopped before its last copy. It runs after the template copies are
-// rebuilt. A replica its device's fleet refuses is logged and skipped, so one
-// conflict does not stop the boot; any other failure is returned.
+// rebuilt, and skips a copy that rebuild skipped. Every per-device failure is
+// logged and skipped, as the copy rebuild does, so a device that cannot take
+// its controls never stops the boot and the admin API can reach it.
 func CompleteFSAControlReplicas(ctx context.Context, stores *Stores, logf func(format string, args ...any)) error {
 	h := newAdminFSAControlHandler(newAdminFSAHandler(stores), newAdminDERControlHandler(stores))
 	if h == nil {
@@ -161,12 +161,12 @@ func CompleteFSAControlReplicas(ctx context.Context, stores *Stores, logf func(f
 		for _, dev := range stores.AdminFSAs.Devices(ctx, fsaID) {
 			err := h.ReplicateTo(ctx, dev, fsaID)
 			var conflict *commitment.ConflictError
-			if errors.As(err, &conflict) {
+			switch {
+			case err == nil:
+			case errors.As(err, &conflict):
 				logf("FSA %q controls not replicated to device %q: %s conflicts with %s", fsaID, dev, conflict.Code, conflict.MRID)
-				continue
-			}
-			if err != nil {
-				return fmt.Errorf("replicate FSA %q controls to device %q: %w", fsaID, dev, err)
+			default:
+				logf("FSA %q controls not replicated to device %q: %v", fsaID, dev, err)
 			}
 		}
 	}

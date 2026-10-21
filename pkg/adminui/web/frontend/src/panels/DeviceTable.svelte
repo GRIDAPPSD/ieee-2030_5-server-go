@@ -10,7 +10,7 @@
   import { commsClass, commsLabel, formatAge } from '../lib/comms'
   import { deviceConnectionView, deviceInverterView } from '../lib/derstatus'
   import { deviceKind, deviceLabel, deviceLabelIn, deviceName, saveDeviceProfile } from '../lib/devices'
-  import { applyPairs, pairFailures } from '../lib/management'
+  import { applyPairs, pairFailures, pairFailureText } from '../lib/management'
   import ReportedCell from './ReportedCell.svelte'
   import DevicePrograms from './DevicePrograms.svelte'
   import DevicePicker from './DevicePicker.svelte'
@@ -88,6 +88,7 @@
   let picked = $state<string[]>([])
   let held = $state<string[]>([])
   let pickerLoaded = $state(false)
+  let pickerReload = $state(0)
   let renameError = $state('')
   let pairError = $state('')
   let renaming = $state(false)
@@ -124,17 +125,26 @@
       // so the unticked ones go first; an aggregator needs its kind stored
       // before pairs can be added.
       let failed: string[] = []
-      if (!aggregator && remove.length > 0) failed = pairFailures(await applyPairs(saving, [], remove), label)
+      let removed: string[] = []
+      if (!aggregator && remove.length > 0) {
+        const outcomes = await applyPairs(saving, [], remove)
+        failed = pairFailures(outcomes, label)
+        removed = outcomes.filter((o) => o.result.ok).map((o) => o.lfdi)
+      }
       const res = await saveDeviceProfile(saving, draftName.trim(), draftKind === initialKind ? undefined : draftKind)
-      if (failed.length > 0) pairError = `Pair failed for ${failed.join('; ')}`
+      if (failed.length > 0) pairError = pairFailureText(failed)
       if (!res.ok) {
         renameError = `Save failed (${res.status}): ${res.error}`
+        if (removed.length > 0) {
+          renameError += ` Already removed: ${removed.map(label).join(', ')}.`
+          pickerReload++
+        }
         if (remove.length > 0) onChanged()
         return
       }
       if (aggregator && (add.length > 0 || remove.length > 0)) {
         failed = pairFailures(await applyPairs(saving, add, remove), label)
-        if (failed.length > 0) pairError = `Pair failed for ${failed.join('; ')}`
+        if (failed.length > 0) pairError = pairFailureText(failed)
       }
       if (add.length > 0 || remove.length > 0) onChanged()
       if (editingLfdi === saving) cancelRename()
@@ -202,6 +212,7 @@
                   bind:selected={picked}
                   bind:held
                   bind:loaded={pickerLoaded}
+                  reloadKey={pickerReload}
                 />
                 <button
                   class="btn btn-small"

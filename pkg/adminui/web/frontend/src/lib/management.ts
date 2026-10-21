@@ -89,3 +89,8 @@ export function pairFailures(outcomes: PairOutcome[], label: (lfdi: string) => s
     o.result.ok ? [] : [`${label(o.lfdi)}: ${o.result.error} (${o.result.status})`],
   )
 }
+
+// pairFailureText is the one sentence every form shows for refused pairs.
+export function pairFailureText(failed: string[]): string {
+  return `Pair failed for ${failed.join('; ')}`
+}

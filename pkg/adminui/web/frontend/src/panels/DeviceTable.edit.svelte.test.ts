@@ -192,3 +192,26 @@ describe('Devices tab Edit: picker lifetime', () => {
     expect(calls).toEqual([`remove ${DEV_A}`, `put /api/device-profiles/${AGG} device`])
   })
 })
+
+describe('Devices tab Edit: failed kind change after removals', () => {
+  it('reloads the held pairs and names the removed ones, so a second Save does not remove again', async () => {
+    serverKind = 'aggregator'
+    await seedDeviceProfiles([{ lfdi: AGG, name: 'Agg', kind: 'aggregator' }])
+    pairs.set(DEV_A, AGG)
+    refuseProfile = 'device manages other devices'
+    await edit('Agg')
+    await waitFor(() => expect(screen.getAllByTestId('device-picker-option')).toHaveLength(2))
+    await fireEvent.change(screen.getByTestId('device-kind-select'), { target: { value: 'device' } })
+    await fireEvent.click(screen.getByRole('checkbox', { name: '222222222222' }))
+    await fireEvent.click(screen.getByTestId('device-name-save'))
+
+    const err = await screen.findByTestId('device-rename-error')
+    expect(err).toHaveTextContent('Save failed (409): device manages other devices')
+    expect(err).toHaveTextContent('Already removed: 222222222222')
+    await waitFor(() => expect(screen.queryByTestId('device-picker')).toBeNull())
+
+    await fireEvent.click(screen.getByTestId('device-name-save'))
+    await waitFor(() => expect(calls.filter((c) => c.startsWith('put'))).toHaveLength(2))
+    expect(calls.filter((c) => c.startsWith('remove'))).toEqual([`remove ${DEV_A}`])
+  })
+})

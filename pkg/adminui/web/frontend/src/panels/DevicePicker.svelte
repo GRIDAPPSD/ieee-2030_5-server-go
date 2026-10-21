@@ -16,6 +16,7 @@
     held = $bindable([]),
     loaded = $bindable(false),
     asAggregator = true,
+    reloadKey = 0,
   }: {
     devices: DashboardDevice[]
     manager?: string
@@ -25,6 +26,8 @@
     // false offers only the devices already held, so they can be unticked
     // while the kind is being changed away from aggregator.
     asAggregator?: boolean
+    // Bump to re-read the pairs after the parent changed them.
+    reloadKey?: number
   } = $props()
 
   let pairs = $state<ManagementPair[]>([])
@@ -69,6 +72,7 @@
 
   $effect(() => {
     void loadKey
+    void reloadKey
     untrack(() => void load(lfdis))
   })
 

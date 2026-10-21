@@ -8,7 +8,7 @@
   import { postBody, postJSON } from '../lib/api'
   import type { DashboardDevice } from '../lib/dashboard'
   import { deviceLabelIn } from '../lib/devices'
-  import { applyPairs, pairFailures } from '../lib/management'
+  import { applyPairs, pairFailures, pairFailureText } from '../lib/management'
   import DevicePicker from './DevicePicker.svelte'
   import { downloadText, PEM_MIME } from '../lib/download'
   import type { MintedCert } from '../lib/deviceCert'
@@ -134,7 +134,7 @@
       result += ` Paired ${paired} of ${outcomes.length} devices.`
       if (failed.length > 0) {
         ok = false
-        result += ` Pair failed for ${failed.join('; ')}`
+        result += ` ${pairFailureText(failed)}`
       }
     }
     onAdded?.()

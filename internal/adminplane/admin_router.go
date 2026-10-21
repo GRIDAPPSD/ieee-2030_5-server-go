@@ -270,6 +270,7 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	// even from loopback.
 	if derH := newAdminDERControlHandler(stores); derH != nil {
 		authed.HandleFunc("GET /api/der/controls", derH.HandleList())
+		authed.HandleFunc("GET /api/der/control-functions", derH.HandleFunctions())
 		if controlWrites {
 			mountWrite("POST /api/der/controls", derH.HandleCreate())
 			mountWrite("POST /api/der/controls/{mrid}/cancel", derH.HandleCancel())

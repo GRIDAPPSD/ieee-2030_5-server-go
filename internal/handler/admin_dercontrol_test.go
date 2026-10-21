@@ -319,7 +319,7 @@ func TestDERControlCreate_Refusals(t *testing.T) {
 		{"href missing", ptrU32(dcPEN), `{"type":"connect","durationSeconds":300}`, 400, "derProgramHref: required"},
 		{"href wrong type", ptrU32(dcPEN), `{"derProgramHref":7}`, 400, "derProgramHref: must be a string"},
 		{"href bad format", ptrU32(dcPEN), `{"derProgramHref":"/edev/` + marker + `","type":"connect","durationSeconds":300}`, 400, "derProgramHref: invalid format"},
-		{"type missing", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","durationSeconds":300}`, 400, "type: required"},
+		{"type missing", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","durationSeconds":300}`, 400, "type or functions: give one"},
 		{"type unknown", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"` + marker + `","durationSeconds":300}`, 400, "type: unknown control type"},
 		{"maxLimW missing", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"maxLimW","durationSeconds":300}`, 400, "maxLimW: required for type maxLimW"},
 		{"maxLimW over range", ptrU32(dcPEN), `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"maxLimW","maxLimW":10001,"durationSeconds":300}`, 400, "maxLimW: must be 0 to 10000"},

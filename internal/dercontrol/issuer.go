@@ -319,7 +319,7 @@ type supersedeCandidate struct {
 // no status for it, so it cannot be superseded by way of a status this
 // package never asserts.
 func (i *Issuer) computeSupersedes(ctx context.Context, scopeKey string, existing []sep2.DERControl, newBase *sep2.DERControlBase, newStart, newEnd int64) ([]supersedeCandidate, error) {
-	newShape := controlShape(newBase)
+	newSet := functionSetKey(newBase)
 	var candidates []supersedeCandidate
 	for _, c := range existing {
 		if c.Interval == nil {
@@ -339,8 +339,8 @@ func (i *Issuer) computeSupersedes(ctx context.Context, scopeKey string, existin
 		if !lc.supersedeEligible(newStart) {
 			continue
 		}
-		if controlShape(c.DERControlBase) != newShape {
-			continue // disjoint control sets never supersede (2018 rule t)
+		if functionSetKey(c.DERControlBase) != newSet {
+			continue // only an equal function set supersedes; a partial overlap is not marked (potentiallySuperseded is a later issue)
 		}
 		cEnd := c.Interval.Start + int64(c.Interval.Duration)
 		if !(c.Interval.Start < newEnd && newStart < cEnd) {
@@ -531,12 +531,21 @@ func ControlBase(req CreateRequest) (*sep2.DERControlBase, error) {
 	return buildBase(req)
 }
 
-// buildBase maps a request's type and value to the closed set of
-// DERControlBase shapes IEEE 2030.5-2018 defines for them (acceptance
+// buildBase maps a request's type and value, or its function set, to a
+// DERControlBase (acceptance
 // criterion 5). It never reads or sets randomizeStart, randomizeDuration,
 // EventStatus, replyTo, responseRequired, mRID or creationTime, because
 // CreateRequest carries none of them.
 func buildBase(req CreateRequest) (*sep2.DERControlBase, error) {
+	if req.Functions != nil {
+		if req.Type != "" {
+			return nil, refuse(RefusalTypeAndFunctions)
+		}
+		if req.MaxLimW != nil || req.PowerFactor != nil || req.TargetW != nil {
+			return nil, refuse(RefusalUnexpectedValue)
+		}
+		return baseFromFunctions(req.Functions)
+	}
 	if req.Type != TargetW && req.TargetW != nil {
 		return nil, refuse(RefusalUnexpectedValue)
 	}
@@ -602,29 +611,6 @@ func buildBase(req CreateRequest) (*sep2.DERControlBase, error) {
 		return &sep2.DERControlBase{OpModTargetW: &v}, nil
 	default:
 		return nil, refuse(RefusalUnknownType)
-	}
-}
-
-// controlShape reduces a DERControlBase to the closed set of shapes the
-// five request types produce, for the supersede scan's control-set equality
-// test. A switch over the five shapes is enough because only controls this
-// package created ever carry a lifecycle record, and buildBase produces
-// only these five.
-func controlShape(b *sep2.DERControlBase) string {
-	if b == nil {
-		return ""
-	}
-	switch {
-	case b.OpModConnect != nil || b.OpModEnergize != nil:
-		return "connect_energize"
-	case b.OpModMaxLimW != nil:
-		return "max_lim_w"
-	case b.OpModFixedPFInjectW != nil:
-		return "fixed_pf_inject_w"
-	case b.OpModTargetW != nil:
-		return "target_w"
-	default:
-		return "other"
 	}
 }
 

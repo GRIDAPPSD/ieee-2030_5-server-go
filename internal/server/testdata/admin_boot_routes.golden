@@ -20,6 +20,7 @@
     GET /api/fsas
     GET /api/fsas/{id}
     GET /api/fsas/{id}/der-programs
+    GET /api/fsas/{id}/der-programs/{derpId}/controls
     GET /api/management-pairs
     GET /api/topology
     GET /api/ui/panels
@@ -44,6 +45,8 @@
     POST /api/devices/{id}/fsas/{fsaId}/der-programs
     POST /api/fsas
     POST /api/fsas/{id}/der-programs
+    POST /api/fsas/{id}/der-programs/{derpId}/controls
+    POST /api/fsas/{id}/der-programs/{derpId}/controls/{controlId}/cancel
     POST /api/fsas/{id}/programs
     POST /api/management-pairs
     POST /api/management-pairs/rekey

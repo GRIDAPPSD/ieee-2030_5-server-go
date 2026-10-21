@@ -139,7 +139,11 @@ func seedStores(ctx context.Context, cfg *config.Config, stores *Stores) error {
 		return nil
 	}
 	copies := fsaprogram.Copies{Programs: stores.DERPrograms, Defaults: stores.DefaultDERControls, Origins: stores.ProgramOrigins}
-	return fsaprogram.ReconcileCopies(ctx, stores.AdminFSAs, copies, log.Printf)
+	if err := fsaprogram.ReconcileCopies(ctx, stores.AdminFSAs, copies, log.Printf); err != nil {
+		return err
+	}
+	// After the copies, which the FSA controls are written into (#972).
+	return adminplane.CompleteFSAControlReplicas(ctx, stores, log.Printf)
 }
 
 // newRunStores builds the stores Run serves, with the one commitment ledger

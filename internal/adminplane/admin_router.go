@@ -282,6 +282,16 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 				mountWrite("POST /api/devices/{id}/controls", (&handler.AdminDeviceControlHandler{FSAs: fsaH, Controls: derH}).HandleCreate())
 			}
 		}
+		// #972: a control on an FSA template reaches every assigned device.
+		// The assign route replicates the FSA's live controls whether or not
+		// control writes are on, since they may predate the setting.
+		if fsaCtlH := newAdminFSAControlHandler(fsaH, derH); fsaCtlH != nil {
+			authed.HandleFunc("GET /api/fsas/{id}/der-programs/{derpId}/controls", fsaCtlH.HandleList())
+			if controlWrites {
+				mountWrite("POST /api/fsas/{id}/der-programs/{derpId}/controls", fsaCtlH.HandleCreate())
+				mountWrite("POST /api/fsas/{id}/der-programs/{derpId}/controls/{controlId}/cancel", fsaCtlH.HandleCancel())
+			}
+		}
 		// "GET /api/devices/{id}/der-programs" would conflict with "GET
 		// /api/devices/by-lfdi/{lfdi}" (neither is more specific), so the
 		// device sub-collection is matched by a wildcard and dispatched here.

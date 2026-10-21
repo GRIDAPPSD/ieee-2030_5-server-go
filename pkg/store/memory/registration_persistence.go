@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -100,9 +99,9 @@ func (s *RegistrationStore) loadFromFile(path string) error {
 	if env == nil || len(env.Records) == 0 {
 		return nil
 	}
-	var records []registrationRecord
-	if err := json.Unmarshal(env.Records, &records); err != nil {
-		return fmt.Errorf("decode records: %w", err)
+	records, err := decodeSnapshotRecords[registrationRecord](env.Records)
+	if err != nil {
+		return err
 	}
 	ctx := context.Background()
 	for _, r := range records {

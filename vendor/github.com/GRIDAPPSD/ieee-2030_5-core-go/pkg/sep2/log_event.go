@@ -22,10 +22,7 @@ type LogEvent struct {
 // Copy returns an independent copy.
 func (l LogEvent) Copy() LogEvent {
 	c := l
-	if l.ExtendedData != nil {
-		v := *l.ExtendedData
-		c.ExtendedData = &v
-	}
+	c.ExtendedData = clonePtr(l.ExtendedData)
 	return c
 }
 

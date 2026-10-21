@@ -37,6 +37,14 @@ type SubscribableResource struct {
 	Subscribable *uint8 `xml:"subscribable,attr,omitempty"`
 }
 
+// Copy returns an independent copy. Types that embed SubscribableResource
+// call it so the Subscribable pointer has one copy site.
+func (s SubscribableResource) Copy() SubscribableResource {
+	c := s
+	c.Subscribable = clonePtr(s.Subscribable)
+	return c
+}
+
 // ListResource is the base type for all list resources.
 // It supports paging via the all/results attributes and
 // the s (start), l (limit), a (after) query parameters.

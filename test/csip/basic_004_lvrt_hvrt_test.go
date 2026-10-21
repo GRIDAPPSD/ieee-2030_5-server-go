@@ -27,14 +27,14 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// basic004 LVRT/HVRT curve-ref values (fixture seeds these). The
-// fixture maps each ref to the corresponding DERCurve id in /dc:
+// basic004 LVRT/HVRT curve-link hrefs. The fixture names each curve by
+// its DERCurve id in /dc:
 // 0=LVRT-must-trip, 1=LVRT-momentary, 2=HVRT-must-trip, 3=HVRT-momentary.
 const (
-	basic004LVRTMustTrip           int32 = 0
-	basic004LVRTMomentaryCessation int32 = 1
-	basic004HVRTMustTrip           int32 = 2
-	basic004HVRTMomentaryCessation int32 = 3
+	basic004LVRTMustTrip           = "/dc/0"
+	basic004LVRTMomentaryCessation = "/dc/1"
+	basic004HVRTMustTrip           = "/dc/2"
+	basic004HVRTMomentaryCessation = "/dc/3"
 )
 
 // TestBASIC_004_LVRTHVRT implements CSIP V1.2 Section 8.4.

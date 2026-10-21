@@ -1,7 +1,7 @@
 # #135 fixture - BASIC-006 Volt/Var (CSIP V1.2 Section 8.6).
 #
 # Minimal topology: 1 EndDevice, 1 FSA, 1 DERProgram, 1 DERControl
-# carrying opModVoltVar (an int32 reference into a Volt/Var DERCurve).
+# carrying opModVoltVar (a DERCurveLink to a Volt/Var DERCurve).
 # The global DERCurve store carries one Volt/Var curve (curveType=11
 # per sep2.CurveTypeOpModVoltVar) so the assertion includes the
 # field-on-DERControl AND a sanity walk of /dc to confirm the curve
@@ -54,7 +54,7 @@ der_controls:
     id: "0"
     mrid: "BASIC-006-DERC"
     der_control_base:
-      op_mod_volt_var: 0  # int32 reference; the curve at id "0" is the V-Var curve.
+      op_mod_volt_var: "0"  # curve id; served as a link to /dc/0, the V-Var curve.
 
 der_curves:
   - id: "0"

@@ -3,9 +3,6 @@ package sep2
 import (
 	"encoding/json"
 	"encoding/xml"
-	"fmt"
-	"strconv"
-	"strings"
 )
 
 // EventStatus describes the current state of an event.
@@ -20,10 +17,7 @@ type EventStatus struct {
 // Copy returns an independent copy.
 func (e EventStatus) Copy() EventStatus {
 	c := e
-	if e.PotentiallySupersededTime != nil {
-		v := *e.PotentiallySupersededTime
-		c.PotentiallySupersededTime = &v
-	}
+	c.PotentiallySupersededTime = clonePtr(e.PotentiallySupersededTime)
 	return c
 }
 
@@ -34,7 +28,7 @@ func (e EventStatus) Copy() EventStatus {
 // `responseRequired` as XML ATTRIBUTES, not child elements (sep.xsd:5435 and
 // sep.xsd:5440 declare both with `<xs:attribute>`). Element order for the
 // remaining child elements matches the XSD: identified-object fields (`mRID`,
-// `description`), then `creationTime`, `EventStatus`, `interval`. Field
+// `description`), then `version`, `creationTime`, `EventStatus`, `interval`. Field
 // declaration order in this struct controls `encoding/xml` marshal order for
 // the ELEMENTS; attributes are emitted on the start tag regardless of
 // position, so the two attribute fields stay declared first to mirror the
@@ -75,6 +69,17 @@ type Event struct {
 	MRID        string `xml:"mRID,omitempty"`
 	Description string `xml:"description,omitempty"`
 
+	// Version is the VersionType revision of this event: a child ELEMENT
+	// declared minOccurs="0" maxOccurs="1" after description and before
+	// creationTime (sep.xsd:5474, inherited from
+	// RespondableSubscribableIdentifiedObject; type VersionType, a UInt16,
+	// sep.xsd:6231). The standard says an absent version means 0 and that a
+	// modification keeps the mRID and increments the version.
+	//
+	// The pointer is load-bearing: omitempty omits only nil, so an explicit
+	// version 0 still reaches the wire and stays distinguishable from unset.
+	Version *uint16 `xml:"version,omitempty"`
+
 	// CreationTime is the TimeType instant at which the server created
 	// this event. It is a REQUIRED element: the 2023 XSD declares
 	// `creationTime` minOccurs="1" maxOccurs="1" as the FIRST child
@@ -103,6 +108,18 @@ type Event struct {
 	Interval    *DateTimeInterval `xml:"interval,omitempty"`
 }
 
+// Copy returns an independent copy of the Event's pointer fields. Types that
+// embed Event call it so each pointer field has one copy site.
+func (e Event) Copy() Event {
+	c := e
+	c.SubscribableResource = e.SubscribableResource.Copy()
+	c.ResponseRequired = clonePtr(e.ResponseRequired)
+	c.Version = clonePtr(e.Version)
+	c.EventStatus = cloneCopyPtr(e.EventStatus)
+	c.Interval = clonePtr(e.Interval)
+	return c
+}
+
 // RandomizableEvent extends Event with randomization parameters.
 type RandomizableEvent struct {
 	Event
@@ -125,69 +142,58 @@ const (
 
 // UnmarshalXML refuses element text outside OneHourRangeType's range.
 func (o *OneHourRange) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
-	var text string
-	if err := d.DecodeElement(&text, &start); err != nil {
-		return fmt.Errorf("sep2: OneHourRange: %w", err)
-	}
-	v, err := parseOneHourRange(text)
+	v, err := decodeBoundedXML(d, start, "OneHourRange", minOneHourRange, maxOneHourRange, narrowInt16)
 	if err != nil {
 		return err
 	}
-	*o = v
+	*o = OneHourRange(v)
 	return nil
-}
-
-func parseOneHourRange(text string) (OneHourRange, error) {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return 0, fmt.Errorf("sep2: OneHourRange: empty or non-scalar element")
-	}
-	n, err := strconv.ParseInt(trimmed, 10, 16)
-	if err != nil {
-		return 0, fmt.Errorf("sep2: OneHourRange: %q: %w", trimmed, err)
-	}
-	if n < minOneHourRange || n > maxOneHourRange {
-		return 0, fmt.Errorf("sep2: OneHourRange %d out of range [%d, %d]", n, minOneHourRange, maxOneHourRange)
-	}
-	return OneHourRange(n), nil
 }
 
 // MarshalXML rejects a value outside OneHourRangeType's range rather than
 // serializing an illegal wire value, mirroring SignedPerCent's guard.
 func (o OneHourRange) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
-	if o < minOneHourRange || o > maxOneHourRange {
-		return fmt.Errorf("sep2: OneHourRange %d out of range [%d, %d]", int16(o), minOneHourRange, maxOneHourRange)
+	if err := checkBounded("OneHourRange", int64(o), minOneHourRange, maxOneHourRange); err != nil {
+		return err
 	}
 	return e.EncodeElement(int16(o), start)
 }
 
-// UnmarshalJSON applies the same range refusal as UnmarshalXML; server-go
-// ingests JSON fixtures for this package's types.
+// UnmarshalJSON applies the same range refusal as UnmarshalXML.
 func (o *OneHourRange) UnmarshalJSON(data []byte) error {
-	var n int64
-	if err := json.Unmarshal(data, &n); err != nil {
-		return fmt.Errorf("sep2: OneHourRange: %w", err)
+	v, err := decodeBoundedJSON(data, "OneHourRange", minOneHourRange, maxOneHourRange, narrowInt16)
+	if err != nil {
+		return err
 	}
-	if n < minOneHourRange || n > maxOneHourRange {
-		return fmt.Errorf("sep2: OneHourRange %d out of range [%d, %d]", n, minOneHourRange, maxOneHourRange)
-	}
-	*o = OneHourRange(n)
+	*o = OneHourRange(v)
 	return nil
 }
 
 // MarshalJSON mirrors MarshalXML's range guard.
 func (o OneHourRange) MarshalJSON() ([]byte, error) {
-	if o < minOneHourRange || o > maxOneHourRange {
-		return nil, fmt.Errorf("sep2: OneHourRange %d out of range [%d, %d]", int16(o), minOneHourRange, maxOneHourRange)
+	if err := checkBounded("OneHourRange", int64(o), minOneHourRange, maxOneHourRange); err != nil {
+		return nil, err
 	}
 	return json.Marshal(int16(o))
 }
 
-// EventStatus current status values per spec.
+// EventStatus currentStatus values. The 2018 edition of IEEE 2030.5 defines
+// 0 through 4 and reserves every other value; the 2023 edition adds 5.
 const (
-	EventStatusScheduled  uint8 = 0
-	EventStatusActive     uint8 = 1
-	EventStatusCancelled  uint8 = 2
+	// EventStatusScheduled is defined by IEEE 2030.5-2018 and 2023.
+	EventStatusScheduled uint8 = 0
+	// EventStatusActive is defined by IEEE 2030.5-2018 and 2023.
+	EventStatusActive uint8 = 1
+	// EventStatusCancelled is defined by IEEE 2030.5-2018 and 2023.
+	EventStatusCancelled uint8 = 2
+	// EventStatusCancelledWithRandomization is defined by IEEE 2030.5-2018 and
+	// 2023. Only specializations of RandomizableEvent use it.
+	EventStatusCancelledWithRandomization uint8 = 3
+	// EventStatusSuperseded is defined by IEEE 2030.5-2018. The 2023 edition
+	// deprecates it for servers, but clients can still receive it from older
+	// servers.
 	EventStatusSuperseded uint8 = 4
-	EventStatusComplete   uint8 = 5
+	// EventStatusComplete is defined by IEEE 2030.5-2023 only; the 2018
+	// edition has no value 5.
+	EventStatusComplete uint8 = 5
 )

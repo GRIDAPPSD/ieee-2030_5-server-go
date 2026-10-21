@@ -57,7 +57,9 @@ export function initialValue(row: CatalogRow): FieldValue {
       return false
     case 'object': {
       const out: Record<string, boolean | string> = {}
-      for (const f of row.fields ?? []) out[f.name] = f.kind === 'boolean' ? false : ''
+      // An optional boolean starts unset (''), so it is sent only once the
+      // operator has touched it; a required one starts false.
+      for (const f of row.fields ?? []) out[f.name] = f.kind === 'boolean' && f.required ? false : ''
       return out
     }
     default:
@@ -104,7 +106,8 @@ export function buildValue(row: CatalogRow, value: FieldValue | undefined): Pars
       for (const f of row.fields ?? []) {
         const v = given[f.name]
         if (f.kind === 'boolean') {
-          out[f.name] = v === true
+          if (typeof v === 'boolean') out[f.name] = v
+          else if (f.required) out[f.name] = false
           continue
         }
         const text = typeof v === 'string' ? v.trim() : ''

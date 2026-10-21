@@ -326,24 +326,8 @@ func TestAdminSecureCookieWarningIsWiredIntoBoot(t *testing.T) {
 			}
 			t.Cleanup(stop)
 
-			probe := &http.Client{Timeout: 500 * time.Millisecond}
-			deadline := time.Now().Add(5 * time.Second)
-			up := false
-			for time.Now().Before(deadline) {
-				if resp, err := probe.Get("http://" + readyProbe + "/api/certs/ca"); err == nil {
-					_ = resp.Body.Close()
-					up = true
-					break
-				}
-				select {
-				case err := <-runErrCh:
-					t.Fatalf("server.Run exited during boot: %v", err)
-				default:
-				}
-				time.Sleep(25 * time.Millisecond)
-			}
-			if !up {
-				t.Fatalf("admin listener never became ready on %s", readyProbe)
+			if msg, ok := waitForAdminReady(readyProbe, false, adminReadyTimeout, runErrCh); !ok {
+				t.Fatalf("%s on %s", msg, readyProbe)
 			}
 
 			stop()

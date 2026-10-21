@@ -194,7 +194,8 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	}
 
 	// #163 FSA hierarchy management API.
-	if fsaH := newAdminFSAHandler(stores); fsaH != nil {
+	fsaH := newAdminFSAHandler(stores)
+	if fsaH != nil {
 		mountWrite("POST /api/fsas", fsaH.HandleCreateAdminFSA())
 		authed.HandleFunc("GET /api/fsas", fsaH.HandleListAdminFSAs())
 		authed.HandleFunc("GET /api/fsas/{id}", fsaH.HandleGetAdminFSA())
@@ -274,6 +275,12 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		if controlWrites {
 			mountWrite("POST /api/der/controls", derH.HandleCreate())
 			mountWrite("POST /api/der/controls/{mrid}/cancel", derH.HandleCancel())
+			// #970: reaches one device through a device-only FSA, so it
+			// changes what a device does and is off nonSensitiveAdminWrites
+			// like the other control writes.
+			if fsaH != nil && fsaH.Copies != nil {
+				mountWrite("POST /api/devices/{id}/controls", (&handler.AdminDeviceControlHandler{FSAs: fsaH, Controls: derH}).HandleCreate())
+			}
 		}
 		// "GET /api/devices/{id}/der-programs" would conflict with "GET
 		// /api/devices/by-lfdi/{lfdi}" (neither is more specific), so the

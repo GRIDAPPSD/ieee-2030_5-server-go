@@ -78,10 +78,17 @@ type dcHarness struct {
 
 func newDCHarness(t *testing.T, pen *uint32) *dcHarness {
 	t.Helper()
+	return newDCHarnessWith(t, pen, memory.NewDERProgramStore())
+}
+
+// newDCHarnessWith is newDCHarness over the given program store, which may
+// already hold the seeded program when it was loaded from a data dir.
+func newDCHarnessWith(t *testing.T, pen *uint32, programs *memory.DERProgramStore) *dcHarness {
+	t.Helper()
 	d := &dcHarness{
 		controls:   memory.NewDERControlStore(),
 		lifecycles: dercontrol.NewLifecycleStore(),
-		programs:   memory.NewDERProgramStore(),
+		programs:   programs,
 		devices:    memory.NewEndDeviceStore(),
 		responses:  memory.NewScopedStore[sep2.Response](),
 		managers:   memory.NewEndDeviceManagementStore(),
@@ -118,7 +125,9 @@ func newDCHarness(t *testing.T, pen *uint32) *dcHarness {
 			t.Fatalf("seed device: %v", err)
 		}
 	}
-	d.seedProgram(t, dcDevice, "0", "0", "PROGRAM-0", 1, true)
+	if _, err := d.programs.Get(ctx, dcDevice, "0"); errors.Is(err, store.ErrNotFound) {
+		d.seedProgram(t, dcDevice, "0", "0", "PROGRAM-0", 1, true)
+	}
 	return d
 }
 

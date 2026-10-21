@@ -114,6 +114,8 @@ type fsaResponse struct {
 	Primacy     uint8    `json:"primacy"`
 	Programs    []string `json:"programs,omitempty"`
 	Devices     []string `json:"devices,omitempty"`
+	// DeviceOnly names the one device a device-only FSA is bound to.
+	DeviceOnly string `json:"deviceOnly,omitempty"`
 }
 
 // HandleCreateAdminFSA returns a handler for POST /api/fsas.
@@ -174,6 +176,7 @@ func (h *AdminFSAHandler) HandleListAdminFSAs() http.HandlerFunc {
 				Description: f.Description,
 				Programs:    h.AdminFSAs.Programs(r.Context(), f.MRID),
 				Devices:     h.AdminFSAs.Devices(r.Context(), f.MRID),
+				DeviceOnly:  h.AdminFSAs.DeviceOnlyDevice(f.MRID),
 			})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"fsas": out})
@@ -203,6 +206,7 @@ func (h *AdminFSAHandler) HandleGetAdminFSA() http.HandlerFunc {
 			Description: fsa.Description,
 			Programs:    h.AdminFSAs.Programs(r.Context(), id),
 			Devices:     h.AdminFSAs.Devices(r.Context(), id),
+			DeviceOnly:  h.AdminFSAs.DeviceOnlyDevice(id),
 		})
 	}
 }
@@ -383,6 +387,10 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 
 		// Record the assignment.
 		if err := h.AdminFSAs.AssignDevice(r.Context(), fsaID, deviceID); err != nil {
+			if errors.Is(err, memory.ErrAdminFSADeviceOnly) {
+				h.deviceOnlyRefused(w, fsaID)
+				return
+			}
 			if errors.Is(err, store.ErrAlreadyExists) {
 				writeError(w, http.StatusConflict, "device already assigned to this FSA")
 				return

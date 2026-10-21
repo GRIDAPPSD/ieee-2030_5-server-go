@@ -28,6 +28,10 @@ type adminFSARecord struct {
 	// Templates is absent from snapshots written before templates existed,
 	// which therefore load with none.
 	Templates []ProgramTemplate `json:"templates,omitempty"`
+	// DeviceOnly names the one device the FSA is bound to; absent for an
+	// ordinary FSA, which is also what a snapshot written before device-only
+	// FSAs existed holds.
+	DeviceOnly string `json:"deviceOnly,omitempty"`
 }
 
 // NewAdminFSAStoreWithPersistence builds an AdminFSAStore wired to a JSON
@@ -65,6 +69,19 @@ func (s *AdminFSAStore) loadFromFile(path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, r := range records {
+		if r.DeviceOnly != "" {
+			// The write path's own rules, so a snapshot cannot hold a
+			// binding the store would have refused.
+			for _, bound := range s.deviceOnly {
+				if bound == r.DeviceOnly {
+					return fmt.Errorf("FSA %q: device %q already has a device-only FSA", r.ID, r.DeviceOnly)
+				}
+			}
+			if slices.ContainsFunc(r.Devices, func(d string) bool { return d != r.DeviceOnly }) {
+				return fmt.Errorf("FSA %q is bound to device %q but lists other devices", r.ID, r.DeviceOnly)
+			}
+			s.deviceOnly[r.ID] = r.DeviceOnly
+		}
 		s.fsas[r.ID] = r.FSA.Copy()
 		s.keys = append(s.keys, r.ID)
 		if len(r.Programs) > 0 {
@@ -104,8 +121,9 @@ func (s *AdminFSAStore) snapshotRecords() []adminFSARecord {
 	out := make([]adminFSARecord, 0, len(s.keys))
 	for _, k := range s.keys {
 		rec := adminFSARecord{
-			ID:  k,
-			FSA: s.fsas[k].Copy(),
+			ID:         k,
+			FSA:        s.fsas[k].Copy(),
+			DeviceOnly: s.deviceOnly[k],
 		}
 		if hrefs := s.programLinks[k]; len(hrefs) > 0 {
 			rec.Programs = append([]string(nil), hrefs...)

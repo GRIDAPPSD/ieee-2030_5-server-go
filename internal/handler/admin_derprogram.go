@@ -99,6 +99,9 @@ func (h *AdminFSAHandler) HandleCreateProgramTemplate() http.HandlerFunc {
 			h.templateFailed(w, r, "fsa_lookup", err)
 			return
 		}
+		if h.deviceOnlyRefused(w, fsaID) {
+			return
+		}
 		if !validHrefSegment(fsaID) {
 			writeError(w, http.StatusConflict, "fsa id cannot form a program href; create the FSA with an mRID of letters, digits, '.', '_' or '-'")
 			return

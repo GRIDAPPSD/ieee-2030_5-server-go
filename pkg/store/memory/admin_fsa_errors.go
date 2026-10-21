@@ -18,3 +18,11 @@ var ErrAdminFSAHasTemplates = fmt.Errorf("%w: program templates remain", ErrAdmi
 // ErrInvalidProgramTemplate is returned for a template the store will not
 // hold: an empty id or mRID, or an update that changes the mRID.
 var ErrInvalidProgramTemplate = errors.New("invalid program template")
+
+// ErrAdminFSADeviceOnly is returned when a device is assigned to a
+// device-only FSA bound to a different device.
+var ErrAdminFSADeviceOnly = errors.New("admin FSA is bound to one device")
+
+// ErrInvalidDeviceOnly is returned for a device-only binding the store will
+// not hold, such as one with no device.
+var ErrInvalidDeviceOnly = errors.New("invalid device-only FSA")

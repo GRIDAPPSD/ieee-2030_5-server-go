@@ -35,6 +35,7 @@ var adminBodyTypes = map[string][]string{
 	"POST /auth/ticket":                                nil,
 	"POST /api/der/controls":                           {"application/json"},
 	"POST /api/der/controls/{mrid}/cancel":             {"application/json"},
+	"POST /api/devices/{id}/controls":                  {"application/json"},
 
 	"POST /api/derms/flow-reservations/{edevId}/{frqId}/answer": {"application/json"},
 	"POST /api/derms/flow-reservations/{edevId}/{frqId}/revise": {"application/json"},

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -58,123 +59,156 @@ const (
 	maxSignedPerCent = 10000
 )
 
-// UnmarshalXML refuses anything but bare integer element text in range.
-// Without this, encoding/xml's default scalar decode skips unrecognized
-// child elements (the pre-fix ActivePower multiplier+value shape) and
-// silently yields a zero value with a nil error.
-func (p *PerCent) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
-	var text string
-	if err := d.DecodeElement(&text, &start); err != nil {
-		return fmt.Errorf("sep2: PerCent: %w", err)
+// checkBounded is the semantic range check for the bounded integer simple
+// types (PerCent, SignedPerCent, OneHourRange); rangeError owns the message.
+func checkBounded(name string, n, lo, hi int64) error {
+	if n < lo || n > hi {
+		return rangeError(name, n, lo, hi)
 	}
-	v, err := parsePerCent(text)
-	if err != nil {
-		return err
-	}
-	*p = v
 	return nil
 }
 
-func parsePerCent(text string) (PerCent, error) {
+func rangeError(name string, n, lo, hi int64) error {
+	return fmt.Errorf("sep2: %s %d out of range [%d, %d]", name, n, lo, hi)
+}
+
+// narrowInt16 and narrowUint16 are the only places a parsed value is
+// converted to a 16-bit type. Each checks the semantic range, then guards
+// against the target type's own limits immediately before the conversion.
+func narrowInt16(name string, n, lo, hi int64) (int16, error) {
+	if err := checkBounded(name, n, lo, hi); err != nil {
+		return 0, err
+	}
+	if n < math.MinInt16 || n > math.MaxInt16 {
+		return 0, rangeError(name, n, lo, hi)
+	}
+	return int16(n), nil
+}
+
+func narrowUint16(name string, n, lo, hi int64) (uint16, error) {
+	if err := checkBounded(name, n, lo, hi); err != nil {
+		return 0, err
+	}
+	if n < 0 || n > math.MaxUint16 {
+		return 0, rangeError(name, n, lo, hi)
+	}
+	return uint16(n), nil
+}
+
+// narrowFunc is narrowInt16 or narrowUint16.
+type narrowFunc[T int16 | uint16] func(name string, n, lo, hi int64) (T, error)
+
+// parseBounded trims element text, parses it as a decimal integer and
+// narrows it with the supplied narrowing function.
+func parseBounded[T int16 | uint16](name, text string, lo, hi int64, narrow narrowFunc[T]) (T, error) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
-		return 0, fmt.Errorf("sep2: PerCent: empty or non-scalar element")
+		return 0, fmt.Errorf("sep2: %s: empty or non-scalar element", name)
 	}
-	n, err := strconv.ParseUint(trimmed, 10, 16)
+	n, err := strconv.ParseInt(trimmed, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("sep2: PerCent: %q: %w", trimmed, err)
+		return 0, fmt.Errorf("sep2: %s: %q: %w", name, trimmed, err)
 	}
-	if n > maxPerCent {
-		return 0, fmt.Errorf("sep2: PerCent %d out of range [0, %d]", n, maxPerCent)
+	return narrow(name, n, lo, hi)
+}
+
+// decodeBoundedXML reads element text only. Without that, encoding/xml's
+// default scalar decode skips unrecognized child elements (the pre-fix
+// ActivePower multiplier+value shape) and silently yields a zero value with
+// a nil error.
+func decodeBoundedXML[T int16 | uint16](d *xml.Decoder, start xml.StartElement, name string, lo, hi int64, narrow narrowFunc[T]) (T, error) {
+	var text string
+	if err := d.DecodeElement(&text, &start); err != nil {
+		return 0, fmt.Errorf("sep2: %s: %w", name, err)
 	}
-	return PerCent(n), nil
+	return parseBounded(name, text, lo, hi, narrow)
+}
+
+// decodeBoundedJSON applies the same range refusal as decodeBoundedXML;
+// server-go ingests JSON fixtures for this package's types.
+func decodeBoundedJSON[T int16 | uint16](data []byte, name string, lo, hi int64, narrow narrowFunc[T]) (T, error) {
+	var n int64
+	if err := json.Unmarshal(data, &n); err != nil {
+		return 0, fmt.Errorf("sep2: %s: %w", name, err)
+	}
+	return narrow(name, n, lo, hi)
+}
+
+// UnmarshalXML refuses anything but bare integer element text in range.
+func (p *PerCent) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	v, err := decodeBoundedXML(d, start, "PerCent", 0, maxPerCent, narrowUint16)
+	if err != nil {
+		return err
+	}
+	*p = PerCent(v)
+	return nil
 }
 
 // MarshalXML rejects a value outside PerCent's XSD range rather than
 // serializing an illegal wire value, mirroring RealEnergy's guard.
 func (p PerCent) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
-	if p > maxPerCent {
-		return fmt.Errorf("sep2: PerCent %d out of range [0, %d]", uint16(p), maxPerCent)
+	if err := checkBounded("PerCent", int64(p), 0, maxPerCent); err != nil {
+		return err
 	}
 	return e.EncodeElement(uint16(p), start)
 }
 
-// UnmarshalJSON applies the same range refusal as UnmarshalXML; server-go
-// ingests JSON fixtures for this package's types.
+// UnmarshalJSON applies the same range refusal as UnmarshalXML.
 func (p *PerCent) UnmarshalJSON(data []byte) error {
-	var n int64
-	if err := json.Unmarshal(data, &n); err != nil {
-		return fmt.Errorf("sep2: PerCent: %w", err)
+	v, err := decodeBoundedJSON(data, "PerCent", 0, maxPerCent, narrowUint16)
+	if err != nil {
+		return err
 	}
-	if n < 0 || n > maxPerCent {
-		return fmt.Errorf("sep2: PerCent %d out of range [0, %d]", n, maxPerCent)
-	}
-	*p = PerCent(n)
+	*p = PerCent(v)
 	return nil
 }
 
 // MarshalJSON mirrors MarshalXML's range guard.
 func (p PerCent) MarshalJSON() ([]byte, error) {
-	if p > maxPerCent {
-		return nil, fmt.Errorf("sep2: PerCent %d out of range [0, %d]", uint16(p), maxPerCent)
+	if err := checkBounded("PerCent", int64(p), 0, maxPerCent); err != nil {
+		return nil, err
 	}
 	return json.Marshal(uint16(p))
 }
 
+// parseSignedPerCent is kept for callers elsewhere in the package.
+func parseSignedPerCent(text string) (SignedPerCent, error) {
+	v, err := parseBounded("SignedPerCent", text, minSignedPerCent, maxSignedPerCent, narrowInt16)
+	return SignedPerCent(v), err
+}
+
 // UnmarshalXML mirrors PerCent.UnmarshalXML for the signed range.
 func (s *SignedPerCent) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
-	var text string
-	if err := d.DecodeElement(&text, &start); err != nil {
-		return fmt.Errorf("sep2: SignedPerCent: %w", err)
-	}
-	v, err := parseSignedPerCent(text)
+	v, err := decodeBoundedXML(d, start, "SignedPerCent", minSignedPerCent, maxSignedPerCent, narrowInt16)
 	if err != nil {
 		return err
 	}
-	*s = v
+	*s = SignedPerCent(v)
 	return nil
-}
-
-func parseSignedPerCent(text string) (SignedPerCent, error) {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return 0, fmt.Errorf("sep2: SignedPerCent: empty or non-scalar element")
-	}
-	n, err := strconv.ParseInt(trimmed, 10, 16)
-	if err != nil {
-		return 0, fmt.Errorf("sep2: SignedPerCent: %q: %w", trimmed, err)
-	}
-	if n < minSignedPerCent || n > maxSignedPerCent {
-		return 0, fmt.Errorf("sep2: SignedPerCent %d out of range [%d, %d]", n, minSignedPerCent, maxSignedPerCent)
-	}
-	return SignedPerCent(n), nil
 }
 
 // MarshalXML mirrors PerCent.MarshalXML for the signed range.
 func (s SignedPerCent) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
-	if s < minSignedPerCent || s > maxSignedPerCent {
-		return fmt.Errorf("sep2: SignedPerCent %d out of range [%d, %d]", int16(s), minSignedPerCent, maxSignedPerCent)
+	if err := checkBounded("SignedPerCent", int64(s), minSignedPerCent, maxSignedPerCent); err != nil {
+		return err
 	}
 	return e.EncodeElement(int16(s), start)
 }
 
 // UnmarshalJSON mirrors PerCent.UnmarshalJSON for the signed range.
 func (s *SignedPerCent) UnmarshalJSON(data []byte) error {
-	var n int64
-	if err := json.Unmarshal(data, &n); err != nil {
-		return fmt.Errorf("sep2: SignedPerCent: %w", err)
+	v, err := decodeBoundedJSON(data, "SignedPerCent", minSignedPerCent, maxSignedPerCent, narrowInt16)
+	if err != nil {
+		return err
 	}
-	if n < minSignedPerCent || n > maxSignedPerCent {
-		return fmt.Errorf("sep2: SignedPerCent %d out of range [%d, %d]", n, minSignedPerCent, maxSignedPerCent)
-	}
-	*s = SignedPerCent(n)
+	*s = SignedPerCent(v)
 	return nil
 }
 
 // MarshalJSON mirrors MarshalXML's range guard.
 func (s SignedPerCent) MarshalJSON() ([]byte, error) {
-	if s < minSignedPerCent || s > maxSignedPerCent {
-		return nil, fmt.Errorf("sep2: SignedPerCent %d out of range [%d, %d]", int16(s), minSignedPerCent, maxSignedPerCent)
+	if err := checkBounded("SignedPerCent", int64(s), minSignedPerCent, maxSignedPerCent); err != nil {
+		return nil, err
 	}
 	return json.Marshal(int16(s))
 }

@@ -25,10 +25,7 @@ type Response struct {
 // Copy returns an independent copy.
 func (r Response) Copy() Response {
 	c := r
-	if r.Status != nil {
-		v := *r.Status
-		c.Status = &v
-	}
+	c.Status = clonePtr(r.Status)
 	return c
 }
 
@@ -53,14 +50,8 @@ type ResponseSet struct {
 // Copy returns an independent copy.
 func (r ResponseSet) Copy() ResponseSet {
 	c := r
-	if r.Version != nil {
-		v := *r.Version
-		c.Version = &v
-	}
-	if r.ResponseListLink != nil {
-		l := *r.ResponseListLink
-		c.ResponseListLink = &l
-	}
+	c.Version = clonePtr(r.Version)
+	c.ResponseListLink = clonePtr(r.ResponseListLink)
 	return c
 }
 
@@ -91,10 +82,7 @@ type DERControlResponse struct {
 func (d DERControlResponse) Copy() DERControlResponse {
 	c := d
 	c.Response = d.Response.Copy()
-	if d.ModesResponded != nil {
-		v := *d.ModesResponded
-		c.ModesResponded = &v
-	}
+	c.ModesResponded = clonePtr(d.ModesResponded)
 	return c
 }
 

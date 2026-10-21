@@ -93,30 +93,12 @@ func (s SignedRealEnergy) MarshalXML(e *xml.Encoder, start xml.StartElement) err
 // Copy returns an independent copy.
 func (p PowerStatus) Copy() PowerStatus {
 	c := p
-	if p.BatteryStatus != nil {
-		v := *p.BatteryStatus
-		c.BatteryStatus = &v
-	}
-	if p.EstimatedChargeRemaining != nil {
-		v := *p.EstimatedChargeRemaining
-		c.EstimatedChargeRemaining = &v
-	}
-	if p.EstimatedTimeRemaining != nil {
-		v := *p.EstimatedTimeRemaining
-		c.EstimatedTimeRemaining = &v
-	}
-	if p.PEVInfo != nil {
-		pev := *p.PEVInfo
-		c.PEVInfo = &pev
-	}
-	if p.SessionTimeOnBattery != nil {
-		v := *p.SessionTimeOnBattery
-		c.SessionTimeOnBattery = &v
-	}
-	if p.TotalTimeOnBattery != nil {
-		v := *p.TotalTimeOnBattery
-		c.TotalTimeOnBattery = &v
-	}
+	c.BatteryStatus = clonePtr(p.BatteryStatus)
+	c.EstimatedChargeRemaining = clonePtr(p.EstimatedChargeRemaining)
+	c.EstimatedTimeRemaining = clonePtr(p.EstimatedTimeRemaining)
+	c.PEVInfo = clonePtr(p.PEVInfo)
+	c.SessionTimeOnBattery = clonePtr(p.SessionTimeOnBattery)
+	c.TotalTimeOnBattery = clonePtr(p.TotalTimeOnBattery)
 	return c
 }
 

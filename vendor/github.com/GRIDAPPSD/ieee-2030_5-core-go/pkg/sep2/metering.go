@@ -19,14 +19,8 @@ type UsagePoint struct {
 // Copy returns an independent copy.
 func (u UsagePoint) Copy() UsagePoint {
 	c := u
-	if u.Subscribable != nil {
-		v := *u.Subscribable
-		c.Subscribable = &v
-	}
-	if u.MeterReadingListLink != nil {
-		l := *u.MeterReadingListLink
-		c.MeterReadingListLink = &l
-	}
+	c.SubscribableResource = u.SubscribableResource.Copy()
+	c.MeterReadingListLink = clonePtr(u.MeterReadingListLink)
 	return c
 }
 
@@ -52,22 +46,10 @@ type MeterReading struct {
 // Copy returns an independent copy.
 func (m MeterReading) Copy() MeterReading {
 	c := m
-	if m.Subscribable != nil {
-		v := *m.Subscribable
-		c.Subscribable = &v
-	}
-	if m.ReadingTypeLink != nil {
-		l := *m.ReadingTypeLink
-		c.ReadingTypeLink = &l
-	}
-	if m.ReadingLink != nil {
-		l := *m.ReadingLink
-		c.ReadingLink = &l
-	}
-	if m.ReadingSetListLink != nil {
-		l := *m.ReadingSetListLink
-		c.ReadingSetListLink = &l
-	}
+	c.SubscribableResource = m.SubscribableResource.Copy()
+	c.ReadingTypeLink = clonePtr(m.ReadingTypeLink)
+	c.ReadingLink = clonePtr(m.ReadingLink)
+	c.ReadingSetListLink = clonePtr(m.ReadingSetListLink)
 	return c
 }
 
@@ -110,22 +92,10 @@ type Reading struct {
 // Copy returns an independent copy.
 func (r Reading) Copy() Reading {
 	c := r
-	if r.Value != nil {
-		v := *r.Value
-		c.Value = &v
-	}
-	if r.TimePeriod != nil {
-		tp := *r.TimePeriod
-		c.TimePeriod = &tp
-	}
-	if r.QualityFlags != nil {
-		q := *r.QualityFlags
-		c.QualityFlags = &q
-	}
-	if r.LocalID != nil {
-		l := *r.LocalID
-		c.LocalID = &l
-	}
+	c.Value = clonePtr(r.Value)
+	c.TimePeriod = clonePtr(r.TimePeriod)
+	c.QualityFlags = clonePtr(r.QualityFlags)
+	c.LocalID = clonePtr(r.LocalID)
 	return c
 }
 
@@ -174,42 +144,15 @@ type ReadingType struct {
 // Copy returns an independent copy.
 func (rt ReadingType) Copy() ReadingType {
 	c := rt
-	if rt.AccumulationBehaviour != nil {
-		v := *rt.AccumulationBehaviour
-		c.AccumulationBehaviour = &v
-	}
-	if rt.Commodity != nil {
-		v := *rt.Commodity
-		c.Commodity = &v
-	}
-	if rt.DataQualifier != nil {
-		v := *rt.DataQualifier
-		c.DataQualifier = &v
-	}
-	if rt.FlowDirection != nil {
-		v := *rt.FlowDirection
-		c.FlowDirection = &v
-	}
-	if rt.IntervalLength != nil {
-		v := *rt.IntervalLength
-		c.IntervalLength = &v
-	}
-	if rt.Kind != nil {
-		v := *rt.Kind
-		c.Kind = &v
-	}
-	if rt.Phase != nil {
-		v := *rt.Phase
-		c.Phase = &v
-	}
-	if rt.PowerOfTenMultiplier != nil {
-		v := *rt.PowerOfTenMultiplier
-		c.PowerOfTenMultiplier = &v
-	}
-	if rt.Uom != nil {
-		v := *rt.Uom
-		c.Uom = &v
-	}
+	c.AccumulationBehaviour = clonePtr(rt.AccumulationBehaviour)
+	c.Commodity = clonePtr(rt.Commodity)
+	c.DataQualifier = clonePtr(rt.DataQualifier)
+	c.FlowDirection = clonePtr(rt.FlowDirection)
+	c.IntervalLength = clonePtr(rt.IntervalLength)
+	c.Kind = clonePtr(rt.Kind)
+	c.Phase = clonePtr(rt.Phase)
+	c.PowerOfTenMultiplier = clonePtr(rt.PowerOfTenMultiplier)
+	c.Uom = clonePtr(rt.Uom)
 	return c
 }
 

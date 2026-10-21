@@ -96,25 +96,8 @@ func TestBootFixtureWiring(t *testing.T) {
 	}
 	clientTLSCfg := ccmClientTLSConfig(t, deviceCertPEM, deviceKeyPEM, caCertPEM)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var (
-		addr     string
-		runErrCh chan error
-	)
-	const startAttempts = 8
-	started := false
-startLoop:
-	for attempt := 0; attempt < startAttempts; attempt++ {
-		probe, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("probe listen: %v", err)
-		}
-		addr = probe.Addr().String()
-		_ = probe.Close()
-
-		cfg := &config.Config{
+	newConfig := func(addr string) *config.Config {
+		return &config.Config{
 			Addr:            addr,
 			CertFile:        certFile,
 			KeyFile:         keyFile,
@@ -127,31 +110,8 @@ startLoop:
 			DSTEnd:          1604214000,
 			TimeQuality:     sep2.TimeQualityNTP,
 		}
-
-		runErrCh = make(chan error, 1)
-		go func(c *config.Config) {
-			runErrCh <- server.Run(ctx, c, nil)
-		}(cfg)
-
-		readyCh := make(chan bool, 1)
-		go func() {
-			readyCh <- waitForServerReady(addr, adminReadyTimeout, clientTLSCfg)
-		}()
-		select {
-		case ok := <-readyCh:
-			if ok {
-				started = true
-				break startLoop
-			}
-			t.Fatalf("server did not start accepting TLS on %s (attempt %d)", addr, attempt+1)
-		case err := <-runErrCh:
-			t.Logf("server.Run start attempt %d failed (%v); retrying", attempt+1, err)
-			go func() { <-readyCh }()
-		}
 	}
-	if !started {
-		t.Fatalf("server failed to start after %d attempts", startAttempts)
-	}
+	addr, stop := startRunOnFreePort(t, newConfig, clientTLSCfg)
 
 	client := ccmHTTPClient(clientTLSCfg, 3*time.Second)
 
@@ -187,15 +147,7 @@ startLoop:
 		t.Errorf("EndDevice.SFDI = %q, want %q", dev.SFDI, want)
 	}
 
-	cancel()
-	select {
-	case err := <-runErrCh:
-		if err != nil {
-			t.Errorf("server.Run returned error after cancel: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Error("server.Run did not return within 3s after context cancel")
-	}
+	stop()
 }
 
 // TestBootFixtureMissingFileFailsRun asserts server.Run aborts (rather

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -151,29 +152,8 @@ func runServerIdentityTest(t *testing.T) {
 	// device cert even for the probe.
 	clientTLSCfg := ccmClientTLSConfig(t, deviceCertPEM, deviceKeyPEM, caCertPEM)
 
-	// Start the server with a port-pick retry to absorb the port-reuse race
-	// when two subtests run back-to-back (ephemeral ports cycle through
-	// TIME_WAIT). We pick a port via probe-and-close, hand it to Run, and
-	// retry if Run fails to listen.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var (
-		addr     string
-		runErrCh chan error
-	)
-	const startAttempts = 8
-	started := false
-startLoop:
-	for attempt := 0; attempt < startAttempts; attempt++ {
-		probe, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("probe listen: %v", err)
-		}
-		addr = probe.Addr().String()
-		_ = probe.Close()
-
-		cfg := &config.Config{
+	newConfig := func(addr string) *config.Config {
+		return &config.Config{
 			Addr:        addr,
 			CertFile:    certFile,
 			KeyFile:     keyFile,
@@ -184,35 +164,8 @@ startLoop:
 			DSTEnd:      1604214000,
 			TimeQuality: sep2.TimeQualityNTP,
 		}
-
-		runErrCh = make(chan error, 1)
-		go func(c *config.Config) {
-			runErrCh <- server.Run(ctx, c, nil)
-		}(cfg)
-
-		// Race readiness against early Run failure. waitForServerReady
-		// polls TLS handshake; if Run died first (port already bound),
-		// runErrCh fires before the timeout.
-		readyCh := make(chan bool, 1)
-		go func() {
-			readyCh <- waitForServerReady(addr, 2*time.Second, clientTLSCfg)
-		}()
-		select {
-		case ok := <-readyCh:
-			if ok {
-				started = true
-				break startLoop
-			}
-			t.Fatalf("server did not start accepting TLS on %s after retries (attempt %d)", addr, attempt+1)
-		case err := <-runErrCh:
-			t.Logf("server.Run start attempt %d failed (%v); retrying with new port", attempt+1, err)
-			// Drain the ready goroutine to avoid a leak.
-			go func() { <-readyCh }()
-		}
 	}
-	if !started {
-		t.Fatalf("server failed to start after %d attempts", startAttempts)
-	}
+	addr, stop := startRunOnFreePort(t, newConfig, clientTLSCfg)
 
 	// Build a client. The server offers CCM-8 only, so the client dials
 	// through the fork; net/http never populates resp.TLS for a connection
@@ -279,15 +232,7 @@ startLoop:
 	}
 
 	// Shut the server down and verify it exits cleanly.
-	cancel()
-	select {
-	case err := <-runErrCh:
-		if err != nil {
-			t.Errorf("server.Run returned error after cancel: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Error("server.Run did not return within 3s after context cancel")
-	}
+	stop()
 }
 
 // adminReadyTimeout bounds every listener readiness wait that uses it. Under
@@ -343,6 +288,47 @@ func bootWithBindRetry[E any](t *testing.T, boot func() (*E, string)) *E {
 		}
 		t.Logf("boot attempt %d lost a port to another process, retrying: %s", attempt, failure)
 	}
+}
+
+// startRunOnFreePort starts server.Run on a probed port, waits until it
+// completes a TLS handshake, and returns the address and a stop that cancels
+// Run and checks it exits cleanly. Only a lost port is retried (see
+// bootWithBindRetry): any other Run error is the failure under test. stop is
+// also registered as a cleanup and runs once, so a test may call it early.
+func startRunOnFreePort(t *testing.T, newConfig func(addr string) *config.Config, clientTLSCfg *gotls.Config) (string, func()) {
+	t.Helper()
+	type started struct {
+		addr string
+		stop func()
+	}
+	run := bootWithBindRetry(t, func() (*started, string) {
+		addr := mustProbePort(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		runErrCh := make(chan error, 1)
+		go func() { runErrCh <- server.Run(ctx, newConfig(addr), nil) }()
+		if msg, ok := pollReady("SEP2 listener", adminReadyTimeout, runErrCh, sep2HandshakeProbe(addr, clientTLSCfg)); !ok {
+			cancel()
+			<-runErrCh
+			return nil, fmt.Sprintf("%s (%s)", msg, addr)
+		}
+		var once sync.Once
+		stop := func() {
+			once.Do(func() {
+				cancel()
+				select {
+				case err := <-runErrCh:
+					if err != nil {
+						t.Errorf("server.Run returned error after cancel: %v", err)
+					}
+				case <-time.After(3 * time.Second):
+					t.Error("server.Run did not return within 3s after context cancel")
+				}
+			})
+		}
+		return &started{addr, stop}, ""
+	})
+	t.Cleanup(run.stop)
+	return run.addr, run.stop
 }
 
 // sep2HandshakeProbe completes a full TLS handshake against addr. A plain

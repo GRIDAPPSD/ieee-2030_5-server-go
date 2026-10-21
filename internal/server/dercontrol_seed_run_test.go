@@ -121,10 +121,10 @@ der_controls:
 		}
 	}
 
-	_, stop := startSeedRun(t, newConfig, clientTLSCfg)
+	_, stop := startRunOnFreePort(t, newConfig, clientTLSCfg)
 	stop()
 
-	_, stop = startSeedRun(t, newConfig, clientTLSCfg)
+	_, stop = startRunOnFreePort(t, newConfig, clientTLSCfg)
 	stop()
 
 	dercs, err := memory.NewDERControlStoreWithPersistence(filepath.Join(dataDir, "dercontrols.json"))

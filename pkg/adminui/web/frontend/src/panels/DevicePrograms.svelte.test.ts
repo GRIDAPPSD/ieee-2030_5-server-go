@@ -5,6 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import DevicePrograms from './DevicePrograms.svelte'
+import { CATALOG_ROUTES } from '../lib/controlcatalog.fixture'
 import type { ProgramListItem } from '../lib/derprogram'
 import type { AdminFSA } from '../lib/fsa'
 
@@ -50,7 +51,7 @@ function fake(routes: Record<string, Reply | (() => Reply | Promise<Reply>)>) {
     const method = init?.method ?? 'GET'
     const path = String(input)
     calls.push({ method, path, body: init?.body ? JSON.parse(String(init.body)) : undefined, signal: init?.signal })
-    const hit = routes[`${method} ${path}`]
+    const hit = { ...CATALOG_ROUTES, ...routes }[`${method} ${path}`]
     const reply = typeof hit === 'function' ? hit() : (hit ?? { status: 404, body: { error: 'no route' } })
     return Promise.resolve(reply).then(
       (r) =>
@@ -182,12 +183,19 @@ describe('DevicePrograms add', () => {
     await fireEvent.click(await screen.findByTestId('program-add-fsa-a'))
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'added' } })
     await fireEvent.input(screen.getByLabelText('Primacy'), { target: { value: '1' } })
-    await fireEvent.change(screen.getByLabelText('Default control'), { target: { value: 'connect' } })
+    await fireEvent.click(await screen.findByTestId('control-fn-fnFlag'))
+    await fireEvent.click(screen.getByTestId('control-fv-fnFlag'))
+    await fireEvent.click(screen.getByTestId('control-fn-fnLevel'))
+    await fireEvent.input(screen.getByTestId('control-fv-fnLevel'), { target: { value: '4000' } })
     await fireEvent.click(screen.getByRole('button', { name: 'Add device program' }))
 
     expect(await screen.findByTestId('program-row-new1')).toBeInTheDocument()
     const post = calls.find((c) => c.method === 'POST')
-    expect(post?.body).toEqual({ description: 'added', primacy: 1, defaultControl: { type: 'connect' } })
+    expect(post?.body).toEqual({
+      description: 'added',
+      primacy: 1,
+      defaultControl: { functions: { fnFlag: true, fnLevel: 4000 } },
+    })
     expect(screen.queryByTestId('program-form')).toBeNull()
   })
 
@@ -200,7 +208,7 @@ describe('DevicePrograms add', () => {
     await fireEvent.click(await screen.findByTestId('program-add-fsa-a'))
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'x' } })
     await fireEvent.input(screen.getByLabelText('Primacy'), { target: { value: '1' } })
-    await fireEvent.change(screen.getByLabelText('Default control'), { target: { value: 'connect' } })
+    await fireEvent.click(await screen.findByTestId('control-fn-fnFlag'))
     await fireEvent.click(screen.getByRole('button', { name: 'Add device program' }))
 
     expect(await screen.findByTestId('program-form-error')).toHaveTextContent(
@@ -388,7 +396,7 @@ describe('DevicePrograms stale replies and teardown', () => {
     await fireEvent.click(await screen.findByTestId('program-add-fsa-a'))
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'x' } })
     await fireEvent.input(screen.getByLabelText('Primacy'), { target: { value: '1' } })
-    await fireEvent.change(screen.getByLabelText('Default control'), { target: { value: 'connect' } })
+    await fireEvent.click(await screen.findByTestId('control-fn-fnFlag'))
     await fireEvent.click(screen.getByRole('button', { name: 'Add device program' }))
     await waitFor(() => expect(n).toBe(2))
     // A delete meanwhile reloads again, and that third read answers first.
@@ -400,7 +408,7 @@ describe('DevicePrograms stale replies and teardown', () => {
     await new Promise((r) => setTimeout(r, 0))
     expect(screen.queryByTestId('program-row-stale')).toBeNull()
     expect(screen.getByTestId('program-row-fresh')).toBeInTheDocument()
-    expect(calls.filter((c) => c.method === 'GET')).toHaveLength(3)
+    expect(calls.filter((c) => `${c.method} ${c.path}` === LIST)).toHaveLength(3)
   })
 })
 

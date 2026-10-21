@@ -1,16 +1,36 @@
 // The form is shared by the FSAs tab and the device Programs drawer, so the
 // tests pin what it hands its caller (the exact request body) and what it
-// shows when the caller reports a refusal, not how it is laid out.
-import { describe, expect, it, vi } from 'vitest'
+// shows when the caller reports a refusal, not how it is laid out. Its default
+// control is built from the catalog, so each test serves one.
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import DerProgramForm from './DerProgramForm.svelte'
+import { CATALOG_ROUTES } from '../lib/controlcatalog.fixture'
 import type { ProgramBody, ProgramView } from '../lib/derprogram'
 
 type Result = { ok: true } | { ok: false; message: string }
 
-function mountCreate(onSubmit: (b: ProgramBody) => Promise<Result> = () => Promise.resolve({ ok: true })) {
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+function serveCatalog(routes: Record<string, { status: number; body?: unknown }> = CATALOG_ROUTES) {
+  vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+    const r = routes[`${init?.method ?? 'GET'} ${String(input)}`] ?? { status: 404, body: { error: 'no route' } }
+    return Promise.resolve({
+      ok: r.status >= 200 && r.status < 300,
+      status: r.status,
+      json: () => Promise.resolve(r.body),
+    } as Response)
+  })
+}
+
+async function mountCreate(onSubmit: (b: ProgramBody) => Promise<Result> = () => Promise.resolve({ ok: true })) {
+  serveCatalog()
   const spy = vi.fn(onSubmit)
   render(DerProgramForm, { props: { mode: 'create', onSubmit: spy } })
+  // The catalog arrives after mount; its rows are the default control.
+  await screen.findByTestId('control-fn-fnFlag')
   return spy
 }
 
@@ -18,18 +38,29 @@ async function fill(label: string, value: string) {
   await fireEvent.input(screen.getByLabelText(label), { target: { value } })
 }
 
-async function pick(label: string, value: string) {
-  await fireEvent.change(screen.getByLabelText(label), { target: { value } })
+async function tick(name: string) {
+  await fireEvent.click(screen.getByTestId(`control-fn-${name}`))
+}
+
+async function fillBasics() {
+  await fill('Description', 'roof fleet')
+  await fill('Primacy', '65')
 }
 
 describe('DerProgramForm create', () => {
-  it('submits the typed description, primacy, optional mRID and default control', async () => {
-    const onSubmit = mountCreate()
-    await fill('Description', 'roof fleet')
-    await fill('Primacy', '65')
+  it('submits the typed description, primacy, optional mRID and every ticked function with its value', async () => {
+    const onSubmit = await mountCreate()
+    await fillBasics()
     await fill('mRID (optional)', '0123456789ABCDEF0123456789ABCDEF')
-    await pick('Default control', 'maxLimW')
-    await fill('Max limit', '5000')
+    await tick('fnFlag')
+    await fireEvent.click(screen.getByTestId('control-fv-fnFlag'))
+    await tick('fnLevel')
+    await fireEvent.input(screen.getByTestId('control-fv-fnLevel'), { target: { value: '5000' } })
+    await tick('fnPair')
+    await fireEvent.input(screen.getByTestId('control-fv-fnPair-amount'), { target: { value: '950' } })
+    await fireEvent.click(screen.getByTestId('control-fv-fnPair-sign'))
+    await tick('fnCurve')
+    await fireEvent.change(screen.getByTestId('control-fv-fnCurve'), { target: { value: 'cv11' } })
     await fireEvent.click(screen.getByRole('button', { name: 'Add template' }))
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
@@ -37,28 +68,37 @@ describe('DerProgramForm create', () => {
       description: 'roof fleet',
       primacy: 65,
       mRID: '0123456789ABCDEF0123456789ABCDEF',
-      defaultControl: { type: 'maxLimW', maxLimW: 5000 },
+      defaultControl: {
+        functions: { fnFlag: true, fnLevel: 5000, fnPair: { amount: 950, sign: true }, fnCurve: 'cv11' },
+      },
     })
   })
 
-  it('shows only the value fields of the chosen control type', async () => {
-    mountCreate()
-    expect(screen.queryByLabelText('Max limit')).toBeNull()
-    await pick('Default control', 'fixedPFInjectW')
-    expect(screen.getByLabelText('Displacement')).toBeInTheDocument()
-    expect(screen.getByLabelText('Excitation')).toBeInTheDocument()
-    expect(screen.queryByLabelText('Max limit')).toBeNull()
-    await pick('Default control', 'targetW')
-    expect(screen.getByLabelText('Target value')).toBeInTheDocument()
-    expect(screen.getByLabelText('Multiplier')).toBeInTheDocument()
-    expect(screen.queryByLabelText('Displacement')).toBeNull()
+  it('shows the value field of a function only while it is ticked', async () => {
+    await mountCreate()
+    expect(screen.queryByTestId('control-fv-fnLevel')).toBeNull()
+    await tick('fnLevel')
+    expect(screen.getByTestId('control-fv-fnLevel')).toBeInTheDocument()
+    await tick('fnLevel')
+    expect(screen.queryByTestId('control-fv-fnLevel')).toBeNull()
+  })
+
+  it('refuses a bad value with the control form wording and does not call the caller', async () => {
+    const onSubmit = await mountCreate()
+    await fillBasics()
+    await tick('fnLevel')
+    await fireEvent.input(screen.getByTestId('control-fv-fnLevel'), { target: { value: '10001' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Add template' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('fnLevel must be a whole number from 0 to 10000.')
+    expect(onSubmit).not.toHaveBeenCalled()
   })
 
   it('refuses invalid input with the server wording and does not call the caller', async () => {
-    const onSubmit = mountCreate()
+    const onSubmit = await mountCreate()
     await fill('Description', 'roof fleet')
     await fill('Primacy', '3')
-    await pick('Default control', 'connect')
+    await tick('fnFlag')
     await fireEvent.click(screen.getByRole('button', { name: 'Add template' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('primacy: must be 0, 1, 2 or 65 to 191')
@@ -66,36 +106,34 @@ describe('DerProgramForm create', () => {
   })
 
   it('moves focus to the error when one appears, validation or refusal', async () => {
-    mountCreate(() => Promise.resolve({ ok: false, message: 'Error (409): taken' }))
+    await mountCreate(() => Promise.resolve({ ok: false, message: 'Error (409): taken' }))
     await fireEvent.click(screen.getByRole('button', { name: 'Add template' }))
     await waitFor(() => expect(screen.getByRole('alert')).toHaveFocus())
     expect(screen.getByRole('alert')).toHaveTextContent('description')
 
     await fill('Description', 'd')
     await fill('Primacy', '1')
-    await pick('Default control', 'connect')
+    await tick('fnFlag')
     await fireEvent.click(screen.getByRole('button', { name: 'Add template' }))
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Error (409): taken'))
     expect(screen.getByRole('alert')).toHaveFocus()
   })
 
-  it('requires a default control on create', async () => {
-    const onSubmit = mountCreate()
-    await fill('Description', 'roof fleet')
-    await fill('Primacy', '65')
+  it('requires a ticked function on create', async () => {
+    const onSubmit = await mountCreate()
+    await fillBasics()
     await fireEvent.click(screen.getByRole('button', { name: 'Add template' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('defaultControl.type: required')
+    expect(await screen.findByRole('alert')).toHaveTextContent('defaultControl: tick at least one function')
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
   it('shows a refusal exactly as the caller reports it and keeps what was typed', async () => {
-    const onSubmit = mountCreate(() =>
+    const onSubmit = await mountCreate(() =>
       Promise.resolve({ ok: false, message: 'Error (409): a template with this mRID already exists on this fsa' }),
     )
-    await fill('Description', 'roof fleet')
-    await fill('Primacy', '65')
-    await pick('Default control', 'connect')
+    await fillBasics()
+    await tick('fnFlag')
     await fireEvent.click(screen.getByRole('button', { name: 'Add template' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -107,10 +145,10 @@ describe('DerProgramForm create', () => {
 
   it('disables the submit button while the request is out, so one click sends one request', async () => {
     let release: (r: Result) => void = () => {}
-    const onSubmit = mountCreate(() => new Promise<Result>((resolve) => (release = resolve)))
+    const onSubmit = await mountCreate(() => new Promise<Result>((resolve) => (release = resolve)))
     await fill('Description', 'd')
     await fill('Primacy', '1')
-    await pick('Default control', 'connect')
+    await tick('fnFlag')
     const button = screen.getByRole('button', { name: 'Add template' })
     await fireEvent.click(button)
 
@@ -119,6 +157,18 @@ describe('DerProgramForm create', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1)
     release({ ok: true })
     await waitFor(() => expect(button).toBeEnabled())
+  })
+
+  it('says so when the catalog cannot be read, and sends nothing', async () => {
+    serveCatalog({ ...CATALOG_ROUTES, 'GET /api/der/control-functions': { status: 500, body: { error: 'catalog down' } } })
+    const onSubmit = vi.fn(() => Promise.resolve({ ok: true } as Result))
+    render(DerProgramForm, { props: { mode: 'create', onSubmit } })
+
+    expect(await screen.findByTestId('program-form-catalog-error')).toHaveTextContent('catalog down')
+    await fillBasics()
+    await fireEvent.click(screen.getByRole('button', { name: 'Add template' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('defaultControl: tick at least one function')
+    expect(onSubmit).not.toHaveBeenCalled()
   })
 })
 
@@ -131,20 +181,34 @@ describe('DerProgramForm edit', () => {
     version: 4,
     defaultControl: {
       mRID: 'DEF',
-      type: 'fixedPFInjectW',
-      derControlBase: { opModFixedPFInjectW: { displacement: 950, excitation: true, multiplier: -3 } },
+      type: 'combined',
+      derControlBase: {},
+      functions: { fnFlag: true, fnLevel: 7500, fnPair: { amount: 950, sign: true, scale: -3 }, fnCurve: 'cv11' },
     },
   }
 
-  it('prefills from the stored program, shows its mRID read-only, and never sends an mRID', async () => {
-    const onSubmit = vi.fn(() => Promise.resolve({ ok: true } as Result))
-    render(DerProgramForm, { props: { mode: 'edit', initial: stored, onSubmit } })
+  async function mountEdit(initial: ProgramView, onSubmit: (b: ProgramBody) => Promise<Result> = () => Promise.resolve({ ok: true })) {
+    serveCatalog()
+    const spy = vi.fn(onSubmit)
+    render(DerProgramForm, { props: { mode: 'edit', initial, onSubmit: spy } })
+    await screen.findByTestId('control-fn-fnFlag')
+    return spy
+  }
+
+  it('reads a stored multi-function default back into the same ticks and values, and saves the same functions', async () => {
+    const onSubmit = await mountEdit(stored)
 
     expect(screen.getByLabelText('Description')).toHaveValue('roof fleet')
     expect(screen.getByLabelText('Primacy')).toHaveValue('65')
-    expect(screen.getByLabelText('Displacement')).toHaveValue('950')
     expect(screen.queryByLabelText('mRID (optional)')).toBeNull()
     expect(screen.getByTestId('program-form-mrid')).toHaveTextContent('ABCDEF0123456789ABCDEF0123456789')
+    expect(screen.getByTestId('control-fn-fnFlag')).toBeChecked()
+    expect(screen.getByTestId('control-fv-fnFlag')).toBeChecked()
+    expect(screen.getByTestId('control-fv-fnLevel')).toHaveValue('7500')
+    expect(screen.getByTestId('control-fv-fnPair-amount')).toHaveValue('950')
+    expect(screen.getByTestId('control-fv-fnPair-sign')).toBeChecked()
+    expect(screen.getByTestId('control-fv-fnPair-scale')).toHaveValue('-3')
+    expect(screen.getByTestId('control-fv-fnCurve')).toHaveValue('cv11')
 
     await fill('Description', 'roof fleet 2')
     await fireEvent.click(screen.getByRole('button', { name: 'Save template' }))
@@ -153,11 +217,38 @@ describe('DerProgramForm edit', () => {
     expect(onSubmit).toHaveBeenCalledWith({
       description: 'roof fleet 2',
       primacy: 65,
-      defaultControl: { type: 'fixedPFInjectW', powerFactor: { displacement: 950, excitation: true } },
+      defaultControl: {
+        functions: { fnFlag: true, fnLevel: 7500, fnPair: { amount: 950, sign: true, scale: -3 }, fnCurve: 'cv11' },
+      },
     })
   })
 
+  it('sends the edited set: an unticked function is dropped and a changed value is sent', async () => {
+    const onSubmit = await mountEdit(stored)
+    await tick('fnFlag')
+    await tick('fnCurve')
+    await fireEvent.input(screen.getByTestId('control-fv-fnLevel'), { target: { value: '100' } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Save template' }))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    expect(onSubmit).toHaveBeenCalledWith({
+      description: 'roof fleet',
+      primacy: 65,
+      defaultControl: { functions: { fnLevel: 100, fnPair: { amount: 950, sign: true, scale: -3 } } },
+    })
+  })
+
+  it('keeps the stored default, by sending none, when every function is unticked', async () => {
+    const onSubmit = await mountEdit(stored)
+    for (const name of ['fnFlag', 'fnLevel', 'fnPair', 'fnCurve']) await tick(name)
+    await fireEvent.click(screen.getByRole('button', { name: 'Save template' }))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    expect(onSubmit).toHaveBeenCalledWith({ description: 'roof fleet', primacy: 65 })
+  })
+
   it('calls the cancel handler', async () => {
+    serveCatalog()
     const onCancel = vi.fn()
     render(DerProgramForm, { props: { mode: 'edit', initial: stored, onSubmit: () => Promise.resolve({ ok: true } as Result), onCancel } })
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))

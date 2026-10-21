@@ -7,6 +7,8 @@
 // and no function name is spelled in this file, so a new catalog row needs no
 // frontend change.
 
+import { fetchJSON } from './api'
+
 export interface CatalogField {
   name: string
   kind: 'boolean' | 'integer'
@@ -237,4 +239,77 @@ export function buildDeviceControl(input: ControlFormInput): BuildResult {
 // from the reply's own two fields.
 export function primacyText(primacy: number, reason: string): string {
   return `Primacy ${primacy}: ${reason}`
+}
+
+export type Loaded<T> = { ok: true; data: T } | { ok: false; error: string }
+
+// loadCatalog reads the control function catalog, for every form that sets
+// control values: the control window and the program form.
+export async function loadCatalog(): Promise<Loaded<CatalogRow[]>> {
+  const res = await fetchJSON<CatalogResponse>('/api/der/control-functions')
+  if (!res.ok) return { ok: false, error: res.error }
+  return { ok: true, data: res.data.functions ?? [] }
+}
+
+// loadCurves reads the stored curves a curve field may pick.
+export async function loadCurves(): Promise<Loaded<CurveInfo[]>> {
+  const res = await fetchJSON<CurveListResponse>('/api/der/curves')
+  if (!res.ok) return { ok: false, error: `Stored curves could not be read: ${res.error}` }
+  return { ok: true, data: res.data.curves ?? [] }
+}
+
+export interface FieldState {
+  ticked: Record<string, boolean>
+  values: Record<string, FieldValue>
+}
+
+// emptyFieldState is every row unticked with its initial value.
+export function emptyFieldState(rows: CatalogRow[]): FieldState {
+  const state: FieldState = { ticked: {}, values: {} }
+  for (const row of rows) {
+    state.ticked[row.name] = false
+    state.values[row.name] = initialValue(row)
+  }
+  return state
+}
+
+function textOf(v: unknown): string {
+  return typeof v === 'number' ? String(v) : ''
+}
+
+// fieldStateFromFunctions is the inverse of buildFunctions: it ticks each
+// supported row the stored functions name and fills its field from the
+// stored value, so a saved default reads back into the form it was made
+// with. A stored name the catalog lacks, or a row of an unsupported kind, is
+// left unticked.
+export function fieldStateFromFunctions(rows: CatalogRow[], functions: Record<string, unknown> | undefined): FieldState {
+  const state = emptyFieldState(rows)
+  for (const row of rows) {
+    if (!functions || !(row.name in functions) || !isSupportedKind(row.kind)) continue
+    const v = functions[row.name]
+    state.ticked[row.name] = true
+    switch (row.kind) {
+      case 'boolean':
+        state.values[row.name] = v === true
+        break
+      case 'integer':
+        state.values[row.name] = textOf(v)
+        break
+      case 'curve':
+        state.values[row.name] = typeof v === 'string' ? v : ''
+        break
+      case 'object': {
+        const given = v && typeof v === 'object' ? (v as Record<string, unknown>) : {}
+        const out: Record<string, boolean | string> = {}
+        for (const f of row.fields ?? []) {
+          const x = given[f.name]
+          if (f.kind === 'boolean') out[f.name] = typeof x === 'boolean' ? x : f.required ? false : ''
+          else out[f.name] = textOf(x)
+        }
+        state.values[row.name] = out
+        break
+      }
+    }
+  }
+  return state
 }

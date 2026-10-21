@@ -1,6 +1,7 @@
 <script lang="ts">
-  // The add and edit form for one DER program. It validates and builds the
-  // request body but sends nothing: the caller supplies onSubmit and decides
+  // The add and edit form for one DER program. Its default control is set
+  // from the control function catalog with the control window's field
+  // components. It validates and builds the request body but sends nothing: the caller supplies onSubmit and decides
   // which route the body goes to, so the FSAs tab (templates) and the
   // device Programs drawer share it. onSubmit reports a refusal as the text
   // to show, which keeps the server's wording in front of the operator.
@@ -9,14 +10,24 @@
   // program, mount a fresh form (key it on the program id). `noun` names the
   // thing in the submit button and defaults to "template"; a caller adding a
   // device program passes its own.
-  import { untrack } from 'svelte'
+  import { onMount, untrack } from 'svelte'
+  import FunctionField from './FunctionField.svelte'
   import { focusOnMount } from '../lib/focus'
   import {
+    buildFunctions,
+    emptyFieldState,
+    fieldStateFromFunctions,
+    loadCatalog,
+    loadCurves,
+    type CatalogRow,
+    type CurveInfo,
+    type FieldValue,
+  } from '../lib/controlcatalog'
+  import {
     buildProgramBody,
-    CONTROL_KINDS,
     emptyForm,
     formFromProgram,
-    type ControlKind,
+    type DefaultControlInput,
     type ProgramBody,
     type ProgramView,
   } from '../lib/derprogram'
@@ -41,10 +52,57 @@
   let error = $state('')
   let busy = $state(false)
 
+  // The default control is set from the control function catalog, with the
+  // same field components as the control window. An edit starts with the
+  // stored default's functions ticked and filled.
+  let catalog = $state<CatalogRow[]>([])
+  let catalogError = $state('')
+  let curves = $state<CurveInfo[]>([])
+  let curvesError = $state('')
+  let ticked = $state<Record<string, boolean>>({})
+  let fieldValues = $state<Record<string, FieldValue>>({})
+  // Cleared on unmount so a reply that lands afterwards writes nothing.
+  let mounted = true
+
+  onMount(() => {
+    void load()
+    return () => {
+      mounted = false
+    }
+  })
+
+  async function load() {
+    const [cat, cur] = await Promise.all([loadCatalog(), loadCurves()])
+    if (!mounted) return
+    if (!cat.ok) {
+      catalogError = cat.error
+    } else {
+      catalogError = ''
+      catalog = cat.data
+      const state = untrack(() =>
+        initial?.defaultControl ? fieldStateFromFunctions(cat.data, initial.defaultControl.functions) : emptyFieldState(cat.data),
+      )
+      ticked = state.ticked
+      fieldValues = state.values
+    }
+    if (!cur.ok) {
+      curvesError = cur.error
+    } else {
+      curvesError = ''
+      curves = cur.data
+    }
+  }
+
+  function defaultControl(): DefaultControlInput {
+    if (!catalog.some((row) => ticked[row.name])) return null
+    const built = buildFunctions(catalog, ticked, fieldValues)
+    return built.ok ? { ok: true, functions: built.functions } : built
+  }
+
   async function submit(event: SubmitEvent) {
     event.preventDefault()
     if (busy) return
-    const built = buildProgramBody(values, { requireDefault: mode === 'create' })
+    const built = buildProgramBody(values, { requireDefault: mode === 'create', defaultControl: defaultControl() })
     if (!built.ok) {
       error = built.error
       return
@@ -77,41 +135,18 @@
       </label>
     {/if}
   </div>
-  <div class="form-row">
-    <label>Default control
-      <select
-        value={values.controlType}
-        onchange={(e) => (values.controlType = e.currentTarget.value as ControlKind | '')}
-      >
-        <option value="">{mode === 'create' ? '(pick a type)' : '(keep the current control)'}</option>
-        {#each CONTROL_KINDS as c (c.kind)}
-          <option value={c.kind}>{c.label}</option>
-        {/each}
-      </select>
-    </label>
-    {#if values.controlType === 'maxLimW'}
-      <label>Max limit
-        <input type="text" inputmode="numeric" bind:value={values.maxLimW} />
-      </label>
-    {:else if values.controlType === 'fixedPFInjectW'}
-      <label>Displacement
-        <input type="text" inputmode="numeric" placeholder="1 to 1000 (thousandths)" bind:value={values.displacement} />
-      </label>
-      <label>Excitation
-        <select bind:value={values.excitation}>
-          <option value="false">Over-excited: DER injects reactive power</option>
-          <option value="true">Under-excited: DER absorbs reactive power</option>
-        </select>
-      </label>
-    {:else if values.controlType === 'targetW'}
-      <label>Target value
-        <input type="text" inputmode="numeric" bind:value={values.targetValue} />
-      </label>
-      <label>Multiplier
-        <input type="text" inputmode="numeric" placeholder="-9 to 9, 0 if blank" bind:value={values.targetMultiplier} />
-      </label>
+  <fieldset class="default-control" data-testid="program-form-default">
+    <legend>Default control</legend>
+    {#if mode === 'edit'}
+      <p class="hint">Untick every function to keep the current default control.</p>
     {/if}
-  </div>
+    {#if catalogError}
+      <div class="result err" data-testid="program-form-catalog-error">Functions could not be read: {catalogError}</div>
+    {/if}
+    {#each catalog as row (row.name)}
+      <FunctionField {row} bind:ticked={ticked[row.name]} bind:value={fieldValues[row.name]} {curves} {curvesError} />
+    {/each}
+  </fieldset>
   <div class="form-row">
     <button class="btn btn-green" type="submit" disabled={busy}>
       {mode === 'create' ? 'Add' : 'Save'} {noun}

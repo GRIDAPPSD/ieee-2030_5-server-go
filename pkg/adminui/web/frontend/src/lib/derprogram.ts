@@ -6,21 +6,10 @@
 
 import { deleteJSON, fetchJSON, postJSON, putJSON, type ApiResult } from './api'
 
-export type ControlKind = 'connect' | 'disconnect' | 'maxLimW' | 'fixedPFInjectW' | 'targetW'
-
-export const CONTROL_KINDS: { kind: ControlKind; label: string }[] = [
-  { kind: 'connect', label: 'Connect' },
-  { kind: 'disconnect', label: 'Disconnect' },
-  { kind: 'maxLimW', label: 'Max power limit (hundredths of a percent of setMaxW)' },
-  { kind: 'fixedPFInjectW', label: 'Fixed power factor' },
-  { kind: 'targetW', label: 'Target power' },
-]
-
+// A program's default control as the program routes take it: the catalog's
+// functions with their values, the same `functions` member a control sends.
 export interface DefaultControlBody {
-  type: ControlKind
-  maxLimW?: number
-  powerFactor?: { displacement: number; excitation: boolean }
-  targetW?: { value: number; multiplier?: number }
+  functions: Record<string, unknown>
 }
 
 export interface ProgramBody {
@@ -34,16 +23,9 @@ export interface DefaultControlView {
   mRID: string
   type: string
   // The default's functions in the request shape, as a control form sends
-  // them. The server always sends it; it is optional here only so fixtures
-  // in other test files still type-check.
-  functions?: Record<string, unknown>
-  derControlBase: {
-    opModConnect?: boolean
-    opModEnergize?: boolean
-    opModMaxLimW?: number
-    opModFixedPFInjectW?: { displacement: number; excitation: boolean; multiplier: number }
-    opModTargetW?: { value: number; multiplier: number }
-  }
+  // them, so the form reads a default back without naming control elements.
+  functions: Record<string, unknown>
+  derControlBase: Record<string, unknown>
 }
 
 // A device program's defaultControl is absent when it has none.
@@ -119,57 +101,18 @@ export interface ProgramFormValues {
   description: string
   primacy: string
   mRID: string
-  controlType: ControlKind | ''
-  maxLimW: string
-  displacement: string
-  excitation: 'false' | 'true'
-  targetValue: string
-  targetMultiplier: string
 }
 
 export function emptyForm(): ProgramFormValues {
-  return {
-    description: '',
-    primacy: '',
-    mRID: '',
-    controlType: '',
-    maxLimW: '',
-    displacement: '',
-    excitation: 'false',
-    targetValue: '',
-    targetMultiplier: '',
-  }
+  return { description: '', primacy: '', mRID: '' }
 }
 
 // formFromProgram prefills an edit form from a stored program. The mRID
 // field stays blank: the server refuses a changed mRID, so an edit never
-// sends one and the stored mRID is shown beside the form instead.
+// sends one and the stored mRID is shown beside the form instead. The
+// default control's fields are filled by the form from the catalog.
 export function formFromProgram(p: ProgramView): ProgramFormValues {
-  const f = { ...emptyForm(), description: p.description, primacy: String(p.primacy) }
-  const base = p.defaultControl?.derControlBase
-  const type = p.defaultControl?.type
-  if (!base || !type) return f
-  switch (type) {
-    case 'connect':
-    case 'disconnect':
-      f.controlType = type
-      break
-    case 'maxLimW':
-      f.controlType = type
-      f.maxLimW = String(base.opModMaxLimW ?? '')
-      break
-    case 'fixedPFInjectW':
-      f.controlType = type
-      f.displacement = String(base.opModFixedPFInjectW?.displacement ?? '')
-      f.excitation = base.opModFixedPFInjectW?.excitation ? 'true' : 'false'
-      break
-    case 'targetW':
-      f.controlType = type
-      f.targetValue = String(base.opModTargetW?.value ?? '')
-      f.targetMultiplier = String(base.opModTargetW?.multiplier ?? '')
-      break
-  }
-  return f
+  return { ...emptyForm(), description: p.description, primacy: String(p.primacy) }
 }
 
 const WHOLE_NUMBER = /^-?[0-9]+$/
@@ -182,12 +125,19 @@ function wholeNumber(s: string): number | undefined {
 
 export type BuiltBody = { ok: true; body: ProgramBody } | { ok: false; error: string }
 
+// The default control as the form's ticked fields built it: the functions,
+// the reason they could not be built, or null when nothing is ticked.
+export type DefaultControlInput = { ok: true; functions: Record<string, unknown> } | { ok: false; error: string } | null
+
 // buildProgramBody validates the form the way the server does and words each
 // refusal the way it would, so the operator sees one message whether the
 // check ran here or there. requireDefault is true on create, where the
-// server demands a default control, and false on an edit, where leaving the
-// type blank keeps the stored control.
-export function buildProgramBody(v: ProgramFormValues, opts: { requireDefault: boolean }): BuiltBody {
+// server demands a default control, and false on an edit, where ticking
+// nothing keeps the stored control.
+export function buildProgramBody(
+  v: ProgramFormValues,
+  opts: { requireDefault: boolean; defaultControl: DefaultControlInput },
+): BuiltBody {
   const description = v.description
   if (description.length < 1 || description.length > 32 || !/^[\x20-\x7e]+$/.test(description)) {
     return { ok: false, error: 'description: 1 to 32 printable ASCII characters required' }
@@ -206,55 +156,12 @@ export function buildProgramBody(v: ProgramFormValues, opts: { requireDefault: b
     body.mRID = mRID
   }
 
-  if (v.controlType === '') {
-    return opts.requireDefault ? { ok: false, error: 'defaultControl.type: required' } : { ok: true, body }
+  const control = opts.defaultControl
+  if (control === null) {
+    return opts.requireDefault ? { ok: false, error: 'defaultControl: tick at least one function' } : { ok: true, body }
   }
-  switch (v.controlType) {
-    case 'connect':
-    case 'disconnect':
-      body.defaultControl = { type: v.controlType }
-      break
-    case 'maxLimW': {
-      const n = wholeNumber(v.maxLimW)
-      if (v.maxLimW.trim() === '') return { ok: false, error: 'defaultControl.maxLimW: required for type maxLimW' }
-      if (n === undefined || n < 0 || n > 10000) {
-        return { ok: false, error: 'defaultControl.maxLimW: must be 0 to 10000' }
-      }
-      body.defaultControl = { type: 'maxLimW', maxLimW: n }
-      break
-    }
-    case 'fixedPFInjectW': {
-      const n = wholeNumber(v.displacement)
-      if (v.displacement.trim() === '') {
-        return { ok: false, error: 'defaultControl.powerFactor.displacement: required' }
-      }
-      if (n === undefined || n < 1 || n > 1000) {
-        return { ok: false, error: 'defaultControl.powerFactor.displacement: must be 1 to 1000' }
-      }
-      body.defaultControl = {
-        type: 'fixedPFInjectW',
-        powerFactor: { displacement: n, excitation: v.excitation === 'true' },
-      }
-      break
-    }
-    case 'targetW': {
-      const n = wholeNumber(v.targetValue)
-      if (v.targetValue.trim() === '') return { ok: false, error: 'defaultControl.targetW.value: required' }
-      if (n === undefined || n < -32768 || n > 32767) {
-        return { ok: false, error: 'defaultControl.targetW.value: must be -32768 to 32767' }
-      }
-      const targetW: { value: number; multiplier?: number } = { value: n }
-      if (v.targetMultiplier.trim() !== '') {
-        const m = wholeNumber(v.targetMultiplier)
-        if (m === undefined || m < -9 || m > 9) {
-          return { ok: false, error: 'defaultControl.targetW.multiplier: must be -9 to 9' }
-        }
-        targetW.multiplier = m
-      }
-      body.defaultControl = { type: 'targetW', targetW }
-      break
-    }
-  }
+  if (!control.ok) return { ok: false, error: control.error }
+  body.defaultControl = { functions: control.functions }
   return { ok: true, body }
 }
 

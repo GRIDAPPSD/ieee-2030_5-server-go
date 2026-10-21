@@ -107,7 +107,8 @@ test('an empty server becomes controllable from the UI alone', async ({ page, re
   await templates.getByRole('button', { name: 'New template' }).click();
   await templates.getByLabel('Description').fill(TEMPLATE);
   await templates.getByLabel('Primacy').fill('1');
-  await templates.getByLabel('Default control').selectOption('connect');
+  await templates.getByTestId('control-fn-opModConnect').check();
+  await templates.getByTestId('control-fv-opModConnect').check();
   await templates.getByRole('button', { name: 'Add template' }).click();
   await expect(templates.getByTestId('template-description')).toHaveText(TEMPLATE, { timeout: 5000 });
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	corefsa "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/fsa"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint/idminttest"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -164,4 +165,13 @@ func TestBuildFSAList(t *testing.T) {
 	if len(list.FunctionSetAssignments) != 2 {
 		t.Errorf("len(FunctionSetAssignments) = %d, want 2", len(list.FunctionSetAssignments))
 	}
+}
+
+// Not parallel: it holds the process-wide id clock still (#1010).
+func TestHandleCreateFSA_ParallelPostsGetDistinctIDs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/fsa", corefsa.HandleCreateFSA(memory.NewScopedStore[sep2.FunctionSetAssignments]()))
+	idminttest.AssertParallelCreatesDistinct(t, mux, 16, func() *http.Request {
+		return httptest.NewRequest(http.MethodPost, "/api/fsa?edevId=e1", nil)
+	})
 }

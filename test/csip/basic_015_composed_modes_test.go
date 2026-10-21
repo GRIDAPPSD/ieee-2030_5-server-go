@@ -33,23 +33,22 @@ package csip_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// basic015 curve-ref values the fixture seeds; each must survive
+// basic015 curve-link hrefs the fixture seeds; each must survive
 // the wire roundtrip exactly. The mapping is:
 //
 //	opModVoltVar  -> der_curves[0] (curveType 11, V-Var)
 //	opModVoltWatt -> der_curves[1] (curveType 12, V-Watt)
 //	opModFreqWatt -> der_curves[2] (curveType 0, F-Watt)
 const (
-	basic015VoltVarRef  int32 = 0
-	basic015VoltWattRef int32 = 1
-	basic015FreqWattRef int32 = 2
+	basic015VoltVarRef  = "/dc/0"
+	basic015VoltWattRef = "/dc/1"
+	basic015FreqWattRef = "/dc/2"
 )
 
 // basic015 immediate-control values per the fixture.
@@ -165,29 +164,28 @@ func TestBASIC_015_ComposedModes(t *testing.T) {
 			// The type set alone does not prove which curve each opMod
 			// field points at: a fixture-side type swap between two of
 			// the three curves leaves the set unchanged (#555). Resolve
-			// each ref (its href is "/dc/{ref}") to the curve it names
-			// and check that curve's own type.
+			// each link's href to the curve it names and check that
+			// curve's own type.
 			byHref := make(map[string]uint8, len(curves.DERCurve))
 			for _, cv := range curves.DERCurve {
 				byHref[cv.Href] = cv.CurveType
 			}
 			for _, ref := range []struct {
 				field     string
-				id        int32
+				href      string
 				curveType uint8
 			}{
 				{"opModVoltVar", basic015VoltVarRef, sep2.CurveTypeOpModVoltVar},
 				{"opModVoltWatt", basic015VoltWattRef, sep2.CurveTypeOpModVoltWatt},
 				{"opModFreqWatt", basic015FreqWattRef, sep2.CurveTypeOpModFreqWatt},
 			} {
-				href := fmt.Sprintf("/dc/%d", ref.id)
-				got, ok := byHref[href]
+				got, ok := byHref[ref.href]
 				if !ok {
-					t.Errorf("[%s] %s references %s, not present in DERCurveList", cipher, ref.field, href)
+					t.Errorf("[%s] %s references %s, not present in DERCurveList", cipher, ref.field, ref.href)
 					continue
 				}
 				if got != ref.curveType {
-					t.Errorf("[%s] %s -> %s CurveType = %d, want %d", cipher, ref.field, href, got, ref.curveType)
+					t.Errorf("[%s] %s -> %s CurveType = %d, want %d", cipher, ref.field, ref.href, got, ref.curveType)
 				}
 			}
 		})

@@ -28,13 +28,15 @@ package csiptest
 import (
 	"bytes"
 	"context"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol/dercurve"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -101,12 +103,12 @@ func NewTarget() *Target {
 // rejected (strict decode) so a typo in a fixture surfaces as a
 // loader error, not as silently missing topology.
 type Spec struct {
-	EndDevices         []EndDeviceSpec         `yaml:"end_devices"`
-	FSAs               []FSASpec               `yaml:"fsas"`
-	DERPrograms        []DERProgramSpec        `yaml:"der_programs"`
-	DefaultDERControls []DefaultDERControlSpec `yaml:"default_der_controls"`
-	DERControls        []DERControlSpec        `yaml:"der_controls"`
-	DERCurves          []DERCurveSpec          `yaml:"der_curves"`
+	EndDevices         []EndDeviceSpec            `yaml:"end_devices"`
+	FSAs               []FSASpec                  `yaml:"fsas"`
+	DERPrograms        []DERProgramSpec           `yaml:"der_programs"`
+	DefaultDERControls []DefaultDERControlSpec    `yaml:"default_der_controls"`
+	DERControls        []DERControlSpec           `yaml:"der_controls"`
+	DERCurves          []bootfixture.DERCurveSpec `yaml:"der_curves"`
 }
 
 // EndDeviceSpec describes one EndDevice. ID is the store key, also
@@ -163,13 +165,13 @@ type DERProgramSpec struct {
 // default ramp rates, not per-event overrides. #140 wired these
 // through after #135's BASIC-007 skip-flip.
 type DefaultDERControlSpec struct {
-	EndDeviceID    string              `yaml:"end_device_id"`
-	FSAID          string              `yaml:"fsa_id"`
-	DERProgramID   string              `yaml:"der_program_id"`
-	MRID           string              `yaml:"mrid,omitempty"`
-	DERControlBase *DERControlBaseSpec `yaml:"der_control_base,omitempty"`
-	SetGradW       *uint16             `yaml:"set_grad_w,omitempty"`
-	SetSoftGradW   *uint16             `yaml:"set_soft_grad_w,omitempty"`
+	EndDeviceID    string           `yaml:"end_device_id"`
+	FSAID          string           `yaml:"fsa_id"`
+	DERProgramID   string           `yaml:"der_program_id"`
+	MRID           string           `yaml:"mrid,omitempty"`
+	DERControlBase *ControlBaseSpec `yaml:"der_control_base,omitempty"`
+	SetGradW       *uint16          `yaml:"set_grad_w,omitempty"`
+	SetSoftGradW   *uint16          `yaml:"set_soft_grad_w,omitempty"`
 }
 
 // DERControlSpec describes one DERControl scoped under
@@ -183,15 +185,15 @@ type DefaultDERControlSpec struct {
 // rendered DERControl - #143 plumbs that through buildDERControl
 // too (latent bug fix in scope).
 type DERControlSpec struct {
-	EndDeviceID    string              `yaml:"end_device_id"`
-	FSAID          string              `yaml:"fsa_id"`
-	DERProgramID   string              `yaml:"der_program_id"`
-	ID             string              `yaml:"id"`
-	MRID           string              `yaml:"mrid,omitempty"`
-	Description    string              `yaml:"description,omitempty"`
-	EventStatus    *EventStatusSpec    `yaml:"event_status,omitempty"`
-	Interval       *IntervalSpec       `yaml:"interval,omitempty"`
-	DERControlBase *DERControlBaseSpec `yaml:"der_control_base,omitempty"`
+	EndDeviceID    string           `yaml:"end_device_id"`
+	FSAID          string           `yaml:"fsa_id"`
+	DERProgramID   string           `yaml:"der_program_id"`
+	ID             string           `yaml:"id"`
+	MRID           string           `yaml:"mrid,omitempty"`
+	Description    string           `yaml:"description,omitempty"`
+	EventStatus    *EventStatusSpec `yaml:"event_status,omitempty"`
+	Interval       *IntervalSpec    `yaml:"interval,omitempty"`
+	DERControlBase *ControlBaseSpec `yaml:"der_control_base,omitempty"`
 }
 
 // EventStatusSpec is the YAML shape of sep2.EventStatus. The
@@ -218,88 +220,25 @@ type IntervalSpec struct {
 	Duration uint32 `yaml:"duration"`
 }
 
-// DERCurveSpec describes one DERCurve in the global curve store.
-//
-// CreationTime is optional. When the spec omits it, the served curve
-// carries the time the fixture was loaded rather than 0: DERCurve's
-// creationTime is a required element, and an unset one round-trips as a
-// schema-valid but wrong claim that the curve was created at the Unix
-// epoch (#539). When given, it must be positive: zero or negative values
-// are refused at load, the same as any other invalid fixture value
-// (#555).
-type DERCurveSpec struct {
-	ID           string          `yaml:"id"`
-	MRID         string          `yaml:"mrid,omitempty"`
-	Description  string          `yaml:"description,omitempty"`
-	CurveType    uint8           `yaml:"curve_type"`
-	CreationTime *int64          `yaml:"creation_time,omitempty"`
-	CurveData    []CurveDataSpec `yaml:"curve_data,omitempty"`
-}
-
-// CurveDataSpec is one (x, y) point on a DERCurve.
-type CurveDataSpec struct {
-	X int32 `yaml:"x"`
-	Y int32 `yaml:"y"`
-}
-
-// DERControlBaseSpec captures the subset of DERControlBase fields the
-// CSIP V1.2 fixture set needs today. Add fields incrementally as new
-// tests require them - keeping the surface narrow makes each fixture
-// readable.
-//
-// #135 (BASIC-002 + BASIC-004..012) extended this with
-// op_mod_fixed_pf_inject_w. #140 wired the remaining per-mode
-// curve-reference fields (LVRT/HVRT/LFRT/HFRT, VoltWatt, FreqWatt) and
-// flipped the BASIC-004/005/007/011/012 skips to active assertions.
+// ControlBaseSpec is the CSIP fixture shape of a DERControlBase: the boot
+// fixture's DERControlBaseSpec, whose fields it inlines, plus the modes only
+// the CSIP procedures use. The boot fixture refuses these extras, so they
+// stay here rather than widening what a production fixture accepts. A curve
+// mode names the id of a der_curves entry and is served as a DERCurveLink.
 // SetGradW/SetSoftGradW live on DefaultDERControlSpec, not here, per
 // IEEE 2030.5 Section 10.11.
-type DERControlBaseSpec struct {
-	OpModConnect                *bool                 `yaml:"op_mod_connect,omitempty"`
-	OpModEnergize               *bool                 `yaml:"op_mod_energize,omitempty"`
-	OpModFixedW                 *sep2.SignedPerCent   `yaml:"op_mod_fixed_w,omitempty"`
+type ControlBaseSpec struct {
+	bootfixture.DERControlBaseSpec `yaml:",inline"`
+
 	OpModFixedPFInjectW         *FixedPowerFactorSpec `yaml:"op_mod_fixed_pf_inject_w,omitempty"`
-	OpModFreqDroop              *uint16               `yaml:"op_mod_freq_droop,omitempty"`
-	OpModFreqWatt               *int32                `yaml:"op_mod_freq_watt,omitempty"`
-	OpModHFRTMustTrip           *int32                `yaml:"op_mod_hfrt_must_trip,omitempty"`
-	OpModHVRTMomentaryCessation *int32                `yaml:"op_mod_hvrt_momentary_cessation,omitempty"`
-	OpModHVRTMustTrip           *int32                `yaml:"op_mod_hvrt_must_trip,omitempty"`
-	OpModLFRTMustTrip           *int32                `yaml:"op_mod_lfrt_must_trip,omitempty"`
-	OpModLVRTMomentaryCessation *int32                `yaml:"op_mod_lvrt_momentary_cessation,omitempty"`
-	OpModLVRTMustTrip           *int32                `yaml:"op_mod_lvrt_must_trip,omitempty"`
-	OpModMaxLimW                *sep2.PerCent         `yaml:"op_mod_max_lim_w,omitempty"`
-	OpModTargetW                *ActivePowerSpec      `yaml:"op_mod_target_w,omitempty"`
-	OpModVoltVar                *int32                `yaml:"op_mod_volt_var,omitempty"`
-	OpModVoltWatt               *int32                `yaml:"op_mod_volt_watt,omitempty"`
-	RampTms                     *uint16               `yaml:"ramp_tms,omitempty"`
-}
-
-// validatePerCents refuses a percent the XML encoder would refuse, so an
-// out-of-range fixture fails at load instead of when the control is served.
-// OpModFixedW and OpModMaxLimW are hundredths of a percent (4000 = 40.00%).
-func (s *DERControlBaseSpec) validatePerCents() error {
-	if s == nil {
-		return nil
-	}
-	if s.OpModFixedW != nil {
-		if _, err := xml.Marshal(*s.OpModFixedW); err != nil {
-			return fmt.Errorf("op_mod_fixed_w: %w", err)
-		}
-	}
-	if s.OpModMaxLimW != nil {
-		if _, err := xml.Marshal(*s.OpModMaxLimW); err != nil {
-			return fmt.Errorf("op_mod_max_lim_w: %w", err)
-		}
-	}
-	return nil
-}
-
-// ActivePowerSpec is the YAML shape of sep2.ActivePower. Value is int16
-// (not int64) because sep2.ActivePower.Value is xs:short (XSD Int16,
-// -32768..32767) per sep.xsd: see ieee-2030_5-core-go's ActivePower doc
-// comment for the rationale.
-type ActivePowerSpec struct {
-	Multiplier int8  `yaml:"multiplier"`
-	Value      int16 `yaml:"value"`
+	OpModFreqWatt               *string               `yaml:"op_mod_freq_watt,omitempty"`
+	OpModHFRTMustTrip           *string               `yaml:"op_mod_hfrt_must_trip,omitempty"`
+	OpModHVRTMomentaryCessation *string               `yaml:"op_mod_hvrt_momentary_cessation,omitempty"`
+	OpModHVRTMustTrip           *string               `yaml:"op_mod_hvrt_must_trip,omitempty"`
+	OpModLFRTMustTrip           *string               `yaml:"op_mod_lfrt_must_trip,omitempty"`
+	OpModLVRTMomentaryCessation *string               `yaml:"op_mod_lvrt_momentary_cessation,omitempty"`
+	OpModLVRTMustTrip           *string               `yaml:"op_mod_lvrt_must_trip,omitempty"`
+	OpModVoltWatt               *string               `yaml:"op_mod_volt_watt,omitempty"`
 }
 
 // FixedPowerFactorSpec is the YAML shape of sep2.FixedPowerFactor.
@@ -477,13 +416,16 @@ func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOptio
 		if d.EndDeviceID == "" || d.FSAID == "" || d.DERProgramID == "" {
 			return fmt.Errorf("default_der_controls[%d]: end_device_id, fsa_id, der_program_id all required", i)
 		}
-		if err := d.DERControlBase.validatePerCents(); err != nil {
+		if err := validatePerCents(d.DERControlBase); err != nil {
 			return fmt.Errorf("default_der_controls[%d]: %w", i, err)
 		}
-		key := compositeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
-		dc := buildDefaultDERControl(d)
+		key := derhref.ScopeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
+		dc, err := buildDefaultDERControl(d)
+		if err != nil {
+			return fmt.Errorf("%s: %w", bootfixture.DefaultDERControlEntry(i, key), err)
+		}
 		if err := target.DefaultDERControls.Create(ctx, key, singletonKey, dc); err != nil {
-			return fmt.Errorf("default_der_controls[%d] (scope=%q): create: %w", i, key, err)
+			return fmt.Errorf("%s: create: %w", bootfixture.DefaultDERControlEntry(i, key), err)
 		}
 	}
 
@@ -494,13 +436,16 @@ func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOptio
 		if c.EndDeviceID == "" || c.FSAID == "" || c.DERProgramID == "" {
 			return fmt.Errorf("der_controls[%d] (id=%q): end_device_id, fsa_id, der_program_id all required", i, c.ID)
 		}
-		if err := c.DERControlBase.validatePerCents(); err != nil {
+		if err := validatePerCents(c.DERControlBase); err != nil {
 			return fmt.Errorf("der_controls[%d] (id=%q): %w", i, c.ID, err)
 		}
-		key := compositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
-		dc := buildDERControl(c)
+		key := derhref.ScopeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
+		dc, err := buildDERControl(c)
+		if err != nil {
+			return fmt.Errorf("%s: %w", bootfixture.DERControlEntry(i, c.ID, key), err)
+		}
 		if err := target.DERControls.Create(ctx, key, c.ID, dc); err != nil {
-			return fmt.Errorf("der_controls[%d] (id=%q, scope=%q): create: %w", i, c.ID, key, err)
+			return fmt.Errorf("%s: create: %w", bootfixture.DERControlEntry(i, c.ID, key), err)
 		}
 	}
 
@@ -512,9 +457,12 @@ func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOptio
 		if c.CreationTime != nil && *c.CreationTime <= 0 {
 			return fmt.Errorf("der_curves[%d] (id=%q): creation_time must be positive, got %d", i, c.ID, *c.CreationTime)
 		}
-		cur := buildDERCurve(c, loadTime)
+		cur, err := bootfixture.BuildDERCurve(c, loadTime)
+		if err != nil {
+			return fmt.Errorf("%s: %w", bootfixture.DERCurveEntry(i, c.ID), err)
+		}
 		if err := target.DERCurves.Create(ctx, c.ID, cur); err != nil {
-			return fmt.Errorf("der_curves[%d] (id=%q): create: %w", i, c.ID, err)
+			return fmt.Errorf("%s: create: %w", bootfixture.DERCurveEntry(i, c.ID), err)
 		}
 	}
 
@@ -642,11 +590,14 @@ func buildDERProgram(s DERProgramSpec) sep2.DERProgram {
 	return prog
 }
 
-func buildDefaultDERControl(s DefaultDERControlSpec) sep2.DefaultDERControl {
+func buildDefaultDERControl(s DefaultDERControlSpec) (sep2.DefaultDERControl, error) {
 	dc := sep2.DefaultDERControl{MRID: s.MRID}
 	dc.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/dderc", s.EndDeviceID, s.FSAID, s.DERProgramID)
 	if s.DERControlBase != nil {
-		base := buildDERControlBase(*s.DERControlBase)
+		base, err := buildControlBase(*s.DERControlBase)
+		if err != nil {
+			return sep2.DefaultDERControl{}, err
+		}
 		dc.DERControlBase = &base
 	}
 	if s.SetGradW != nil {
@@ -657,10 +608,10 @@ func buildDefaultDERControl(s DefaultDERControlSpec) sep2.DefaultDERControl {
 		v := *s.SetSoftGradW
 		dc.SetSoftGradW = &v
 	}
-	return dc
+	return dc, nil
 }
 
-func buildDERControl(s DERControlSpec) sep2.DERControl {
+func buildDERControl(s DERControlSpec) (sep2.DERControl, error) {
 	dc := sep2.DERControl{}
 	dc.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/derc/%s",
 		s.EndDeviceID, s.FSAID, s.DERProgramID, s.ID)
@@ -680,25 +631,21 @@ func buildDERControl(s DERControlSpec) sep2.DERControl {
 		dc.Interval = &iv
 	}
 	if s.DERControlBase != nil {
-		base := buildDERControlBase(*s.DERControlBase)
+		base, err := buildControlBase(*s.DERControlBase)
+		if err != nil {
+			return sep2.DERControl{}, err
+		}
 		dc.DERControlBase = &base
 	}
-	return dc
+	return dc, nil
 }
 
-func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
-	var base sep2.DERControlBase
-	if s.OpModConnect != nil {
-		v := *s.OpModConnect
-		base.OpModConnect = &v
-	}
-	if s.OpModEnergize != nil {
-		v := *s.OpModEnergize
-		base.OpModEnergize = &v
-	}
-	if s.OpModFixedW != nil {
-		v := *s.OpModFixedW
-		base.OpModFixedW = &v
+// buildControlBase builds the shared fields through the boot fixture's
+// builder, then the CSIP-only modes.
+func buildControlBase(s ControlBaseSpec) (sep2.DERControlBase, error) {
+	base, err := bootfixture.BuildDERControlBase(s.DERControlBaseSpec)
+	if err != nil {
+		return sep2.DERControlBase{}, err
 	}
 	if s.OpModFixedPFInjectW != nil {
 		base.OpModFixedPFInjectW = &sep2.FixedPowerFactor{
@@ -707,85 +654,17 @@ func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
 			Multiplier:   s.OpModFixedPFInjectW.Multiplier,
 		}
 	}
-	if s.OpModMaxLimW != nil {
-		v := *s.OpModMaxLimW
-		base.OpModMaxLimW = &v
+	if err := dercurve.SetLinks(s, &base); err != nil {
+		return sep2.DERControlBase{}, err
 	}
-	if s.OpModTargetW != nil {
-		base.OpModTargetW = &sep2.ActivePower{Multiplier: s.OpModTargetW.Multiplier, Value: s.OpModTargetW.Value}
-	}
-	if s.OpModVoltVar != nil {
-		v := *s.OpModVoltVar
-		base.OpModVoltVar = &v
-	}
-	if s.OpModVoltWatt != nil {
-		v := *s.OpModVoltWatt
-		base.OpModVoltWatt = &v
-	}
-	if s.OpModFreqDroop != nil {
-		v := *s.OpModFreqDroop
-		base.OpModFreqDroop = &v
-	}
-	if s.OpModFreqWatt != nil {
-		v := *s.OpModFreqWatt
-		base.OpModFreqWatt = &v
-	}
-	if s.OpModLVRTMustTrip != nil {
-		v := *s.OpModLVRTMustTrip
-		base.OpModLVRTMustTrip = &v
-	}
-	if s.OpModLVRTMomentaryCessation != nil {
-		v := *s.OpModLVRTMomentaryCessation
-		base.OpModLVRTMomentaryCessation = &v
-	}
-	if s.OpModHVRTMustTrip != nil {
-		v := *s.OpModHVRTMustTrip
-		base.OpModHVRTMustTrip = &v
-	}
-	if s.OpModHVRTMomentaryCessation != nil {
-		v := *s.OpModHVRTMomentaryCessation
-		base.OpModHVRTMomentaryCessation = &v
-	}
-	if s.OpModLFRTMustTrip != nil {
-		v := *s.OpModLFRTMustTrip
-		base.OpModLFRTMustTrip = &v
-	}
-	if s.OpModHFRTMustTrip != nil {
-		v := *s.OpModHFRTMustTrip
-		base.OpModHFRTMustTrip = &v
-	}
-	if s.RampTms != nil {
-		v := *s.RampTms
-		base.RampTms = &v
-	}
-	return base
+	return base, nil
 }
 
-// buildDERCurve maps a DERCurveSpec onto sep2.DERCurve. CreationTime
-// follows the spec's value when given; otherwise it is loadTime, the time
-// the enclosing fixture was loaded, so a served curve never claims the
-// Unix epoch (#539).
-func buildDERCurve(s DERCurveSpec, loadTime int64) sep2.DERCurve {
-	creationTime := loadTime
-	if s.CreationTime != nil {
-		creationTime = *s.CreationTime
+// validatePerCents applies the boot fixture's percent check; the CSIP-only
+// modes carry no percent. A nil base has nothing to check.
+func validatePerCents(s *ControlBaseSpec) error {
+	if s == nil {
+		return nil
 	}
-	curve := sep2.DERCurve{
-		MRID:         s.MRID,
-		Description:  s.Description,
-		CurveType:    s.CurveType,
-		CreationTime: creationTime,
-	}
-	curve.Href = fmt.Sprintf("/dc/%s", s.ID)
-	if len(s.CurveData) > 0 {
-		curve.CurveData = make([]sep2.CurveData, len(s.CurveData))
-		for i, p := range s.CurveData {
-			curve.CurveData[i] = sep2.CurveData{XValue: p.X, YValue: p.Y}
-		}
-	}
-	return curve
-}
-
-func compositeKey(edev, fsa, derp string) string {
-	return edev + "/" + fsa + "/" + derp
+	return s.ValidatePerCents()
 }

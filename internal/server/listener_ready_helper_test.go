@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
+	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
@@ -59,5 +61,44 @@ func TestWaitForAdminReadyFailsFastWhenRunCannotBind(t *testing.T) {
 	}
 	if elapsed > adminReadyTimeout/2 {
 		t.Errorf("took %v, want a fast failure well under %v", elapsed, adminReadyTimeout)
+	}
+}
+
+// A protocol listener with a slow handshake is still ready. An attempt bound
+// shorter than the handshake fails every attempt, whatever the overall
+// timeout, which is how a loaded -race run reports a bound listener as
+// never ready.
+func TestWaitForServerReadyToleratesASlowHandshake(t *testing.T) {
+	const handshakeDelay = 400 * time.Millisecond
+
+	c := newSplitListenerCerts(t)
+	srvCfg, err := sepTLS.NewCCMServerConfig(c.certFile, c.keyFile, c.caFile)
+	if err != nil {
+		t.Fatalf("NewCCMServerConfig: %v", err)
+	}
+	device := newManagementE2EDevice(t, c, "slow-handshake-probe")
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				time.Sleep(handshakeDelay)
+				// The probe's side reports the outcome; this side only serves it.
+				_ = gotls.Server(conn, srvCfg).Handshake()
+			}()
+		}
+	}()
+
+	if !waitForServerReady(ln.Addr().String(), adminReadyTimeout, device.tlsConfig) {
+		t.Fatalf("waitForServerReady = not ready, want ready: the handshake completes after %v", handshakeDelay)
 	}
 }

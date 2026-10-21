@@ -10,10 +10,10 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/paging"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -259,7 +259,7 @@ func HandleCreateSubscription(subStore *memory.SubscriptionStore, validate func(
 			id = subscriptionIDOverride(r)
 		}
 		if id == "" {
-			id = fmt.Sprintf("sub-%d", time.Now().UnixNano())
+			id = idmint.Prefixed("sub")
 		}
 
 		// Tombstone check (csip_test_hooks only). Refuses re-creation of

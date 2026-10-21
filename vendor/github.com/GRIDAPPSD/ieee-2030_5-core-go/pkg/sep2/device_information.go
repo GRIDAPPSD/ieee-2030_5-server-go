@@ -34,9 +34,6 @@ type DeviceInformation struct {
 // Copy returns an independent copy.
 func (d DeviceInformation) Copy() DeviceInformation {
 	c := d
-	if d.FunctionsImplemented != nil {
-		v := *d.FunctionsImplemented
-		c.FunctionsImplemented = &v
-	}
+	c.FunctionsImplemented = clonePtr(d.FunctionsImplemented)
 	return c
 }

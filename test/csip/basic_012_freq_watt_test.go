@@ -25,8 +25,8 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// basic012FreqWattRef is the opModFreqWatt curve ref the fixture seeds.
-const basic012FreqWattRef int32 = 0
+// basic012FreqWattRef is the opModFreqWatt curve-link href the fixture seeds.
+const basic012FreqWattRef = "/dc/0"
 
 // TestBASIC_012_FreqWatt implements CSIP V1.2 Section 8.12.
 func TestBASIC_012_FreqWatt(t *testing.T) {

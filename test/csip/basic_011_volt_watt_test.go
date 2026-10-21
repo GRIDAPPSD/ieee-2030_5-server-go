@@ -24,8 +24,8 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
-// basic011VoltWattRef is the opModVoltWatt curve ref the fixture seeds.
-const basic011VoltWattRef int32 = 0
+// basic011VoltWattRef is the opModVoltWatt curve-link href the fixture seeds.
+const basic011VoltWattRef = "/dc/0"
 
 // TestBASIC_011_VoltWatt implements CSIP V1.2 Section 8.11.
 func TestBASIC_011_VoltWatt(t *testing.T) {

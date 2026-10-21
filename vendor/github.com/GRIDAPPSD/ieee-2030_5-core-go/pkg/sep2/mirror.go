@@ -55,16 +55,8 @@ type MirrorUsagePoint struct {
 // Copy returns an independent copy.
 func (m MirrorUsagePoint) Copy() MirrorUsagePoint {
 	c := m
-	if m.PostRate != nil {
-		v := *m.PostRate
-		c.PostRate = &v
-	}
-	if m.MirrorMeterReading != nil {
-		c.MirrorMeterReading = make([]MirrorMeterReading, len(m.MirrorMeterReading))
-		for i, r := range m.MirrorMeterReading {
-			c.MirrorMeterReading[i] = r.Copy()
-		}
-	}
+	c.PostRate = clonePtr(m.PostRate)
+	c.MirrorMeterReading = cloneCopySlice(m.MirrorMeterReading)
 	return c
 }
 
@@ -106,20 +98,9 @@ type MirrorMeterReading struct {
 // Copy returns an independent copy.
 func (m MirrorMeterReading) Copy() MirrorMeterReading {
 	c := m
-	if m.MirrorReadingSet != nil {
-		c.MirrorReadingSet = make([]MirrorReadingSet, len(m.MirrorReadingSet))
-		for i, rs := range m.MirrorReadingSet {
-			c.MirrorReadingSet[i] = rs.Copy()
-		}
-	}
-	if m.ReadingType != nil {
-		rt := m.ReadingType.Copy()
-		c.ReadingType = &rt
-	}
-	if m.Reading != nil {
-		r := m.Reading.Copy()
-		c.Reading = &r
-	}
+	c.MirrorReadingSet = cloneCopySlice(m.MirrorReadingSet)
+	c.ReadingType = cloneCopyPtr(m.ReadingType)
+	c.Reading = cloneCopyPtr(m.Reading)
 	return c
 }
 
@@ -158,11 +139,6 @@ type MirrorReadingSet struct {
 // Copy returns an independent copy.
 func (m MirrorReadingSet) Copy() MirrorReadingSet {
 	c := m
-	if m.Reading != nil {
-		c.Reading = make([]Reading, len(m.Reading))
-		for i, r := range m.Reading {
-			c.Reading[i] = r.Copy()
-		}
-	}
+	c.Reading = cloneCopySlice(m.Reading)
 	return c
 }

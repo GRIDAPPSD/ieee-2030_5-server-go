@@ -1,12 +1,16 @@
 package memory
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/atomicfile"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol/dercurve"
 )
 
 // Shared persistence machinery for admin-mutated stores
@@ -101,4 +105,103 @@ func writeSnapshotEnvelope(path string, records any) error {
 	// (e.g. "derprogram persistence: %w"); adding one here would
 	// double-label every caller but the one it was copied from.
 	return atomicfile.Write(path, payload)
+}
+
+// decodeSnapshotRecords decodes a snapshot's records one at a time, so a
+// record that does not decode is refused by its position and id instead of
+// failing the whole file anonymously. The snapshot stores in this package
+// that keep a {"version", "records"} envelope load through it.
+func decodeSnapshotRecords[R any](raw json.RawMessage) ([]R, error) {
+	var elems []json.RawMessage
+	if err := json.Unmarshal(raw, &elems); err != nil {
+		return nil, fmt.Errorf("decode records: %w", err)
+	}
+	records := make([]R, 0, len(elems))
+	for i, elem := range elems {
+		var r R
+		if err := json.Unmarshal(elem, &r); err != nil {
+			if field, shape := preV026DERControlBaseField(elem); field != "" {
+				err = fmt.Errorf("%s is in the DERControlBase shape written before core v0.26.0, which this server cannot read or convert; "+
+					"rewrite it as %s or remove the record, and check the later records too: %w", field, shape, err)
+			}
+			return nil, fmt.Errorf("decode record %d%s: %w", i, recordName(elem), err)
+		}
+		records = append(records, r)
+	}
+	return records, nil
+}
+
+// recordName is " (parent/id)" or " (id)" for a record carrying those keys,
+// else "". It only labels an error, so a record it cannot read gets no label.
+func recordName(elem json.RawMessage) string {
+	var key struct {
+		Parent string `json:"parent"`
+		ID     string `json:"id"`
+	}
+	if json.Unmarshal(elem, &key) != nil || key.ID == "" {
+		return ""
+	}
+	if key.Parent != "" {
+		return fmt.Sprintf(" (%s/%s)", key.Parent, key.ID)
+	}
+	return fmt.Sprintf(" (%s)", key.ID)
+}
+
+// The current shapes of the modes core v0.26.0 changed, as the refusal
+// states them.
+const (
+	curveShape     = `{"Href":"/dc/<curve id>"}`
+	fixedVarShape  = `{"RefType":1|2|3,"Value":<hundredths of a percent of the device rating RefType names>}`
+	freqDroopShape = `{"DBOF":n,"DBUF":n,"KOF":n,"KUF":n,"OpenLoopTms":n}`
+)
+
+// preV026DERControlBaseField returns the path of the first DERControlBase
+// mode in elem stored in the core v0.25.0 shape (a curve link as a number,
+// OpModFixedVar as a ReactivePower with Multiplier and Value, or
+// OpModFreqDroop as a number) and that mode's current shape. "" when there
+// is none.
+func preV026DERControlBaseField(elem json.RawMessage) (field, shape string) {
+	dec := json.NewDecoder(bytes.NewReader(elem))
+	dec.UseNumber()
+	var v any
+	if dec.Decode(&v) != nil {
+		return "", ""
+	}
+	return findPreV026Field(v, "", dercurve.LinkFields())
+}
+
+func findPreV026Field(v any, path string, curveFields []string) (field, shape string) {
+	switch t := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			child := strings.TrimPrefix(path+"."+k, ".")
+			_, isNumber := t[k].(json.Number)
+			obj, isObject := t[k].(map[string]any)
+			switch {
+			case isNumber && slices.Contains(curveFields, k):
+				return child, curveShape
+			case isNumber && k == "OpModFreqDroop":
+				return child, freqDroopShape
+			case isObject && k == "OpModFixedVar":
+				if _, old := obj["Multiplier"]; old {
+					return child, fixedVarShape
+				}
+			}
+			if field, shape := findPreV026Field(t[k], child, curveFields); field != "" {
+				return field, shape
+			}
+		}
+	case []any:
+		for i, e := range t {
+			if field, shape := findPreV026Field(e, fmt.Sprintf("%s[%d]", path, i), curveFields); field != "" {
+				return field, shape
+			}
+		}
+	}
+	return "", ""
 }

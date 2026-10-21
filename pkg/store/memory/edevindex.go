@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"maps"
@@ -168,9 +167,9 @@ func (x *EndDeviceIndex) loadFromFile(path string) error {
 	if env == nil || len(env.Records) == 0 {
 		return nil // cold boot
 	}
-	var records []edevIndexRecord
-	if err := json.Unmarshal(env.Records, &records); err != nil {
-		return fmt.Errorf("decode records: %w", err)
+	records, err := decodeSnapshotRecords[edevIndexRecord](env.Records)
+	if err != nil {
+		return err
 	}
 
 	highest := uint64(0)

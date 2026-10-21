@@ -32,6 +32,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -47,22 +48,18 @@ func TestAGG_002_Event2DERP2DDERC0DERC(t *testing.T) {
 	for _, edevID := range aggManagedInverters {
 		spec.DefaultDERControls = append(spec.DefaultDERControls,
 			csiptest.DefaultDERControlSpec{
-				EndDeviceID:  edevID,
-				FSAID:        aggFSAIDSY,
-				DERProgramID: aggFSAIDSY,
-				MRID:         aggMRIDPrefix("002-DDERC-SY-") + edevID,
-				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModMaxLimW: ptrTo[sep2.PerCent](5000),
-				},
+				EndDeviceID:    edevID,
+				FSAID:          aggFSAIDSY,
+				DERProgramID:   aggFSAIDSY,
+				MRID:           aggMRIDPrefix("002-DDERC-SY-") + edevID,
+				DERControlBase: &csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModMaxLimW: ptrTo[sep2.PerCent](5000)}},
 			},
 			csiptest.DefaultDERControlSpec{
-				EndDeviceID:  edevID,
-				FSAID:        aggFSAIDFD,
-				DERProgramID: aggFSAIDFD,
-				MRID:         aggMRIDPrefix("002-DDERC-FD-") + edevID,
-				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModMaxLimW: ptrTo[sep2.PerCent](4000),
-				},
+				EndDeviceID:    edevID,
+				FSAID:          aggFSAIDFD,
+				DERProgramID:   aggFSAIDFD,
+				MRID:           aggMRIDPrefix("002-DDERC-FD-") + edevID,
+				DERControlBase: &csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModMaxLimW: ptrTo[sep2.PerCent](4000)}},
 			},
 		)
 	}

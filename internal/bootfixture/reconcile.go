@@ -219,7 +219,7 @@ func planReconcile(ctx context.Context, target *Target, spec *Spec, seeded map[s
 	// tracking as a DERControl below: an operator edit or delete survives a
 	// restart instead of being replayed from the fixture.
 	for i, d := range spec.DefaultDERControls {
-		scope := compositeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
+		scope := derhref.ScopeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
 		key := seedKey{Kind: kindDefaultDERControl, Parent: scope, ID: singletonKey}
 		if underSkipped(d.EndDeviceID, d.DERProgramID) {
 			p.record(key)
@@ -244,7 +244,7 @@ func planReconcile(ctx context.Context, target *Target, spec *Spec, seeded map[s
 	// the same fixture against an already-persisted control retries Create
 	// and fails with ErrAlreadyExists.
 	for i, c := range spec.DERControls {
-		scope := compositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
+		scope := derhref.ScopeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
 		key := seedKey{Kind: kindDERControl, Parent: scope, ID: c.ID}
 		if underSkipped(c.EndDeviceID, c.DERProgramID) {
 			p.record(key)

@@ -1,26 +1,27 @@
 package sep2capture
 
 import (
+	"fmt"
 	"testing"
-	"time"
 )
 
 // TestStalledWriterNeverBlocksRecordAndCountsDrops is Q7 item 3's third
 // acceptance. testBeforeWrite holds the writer goroutine on a channel the
 // test controls, standing in for a stalled disk, while Record keeps being
-// called: every call must return well inside recordBudget, and once the
-// byte-bounded queue fills, DroppedQueueFull must be counted rather than
-// the call blocking.
+// called: every call must return while the writer is still held, and once
+// the byte-bounded queue fills, DroppedQueueFull must be counted rather
+// than the call blocking. The writer is released only at cleanup, so a
+// Record that waits on it can never return inside stalledCallBound. There
+// is no wall-clock budget per call, since CPU load alone can exceed one.
 //
-// Mutant (store.go, Record): replacing the byte-cap admission loop
-// (`for { cur := s.inFlightBytes.Load(); if cur+size > writeQueueByteCap
-// {...}; if CAS ... }`) with an unconditional `s.inFlightBytes.Add(size)`
-// makes this RED: nothing ever refuses admission at this test's volume, so
-// every record reaches the (still non-blocking) channel send and
-// DroppedQueueFull stays 0.
+// Mutants (store.go, Record):
+//   - replacing the byte-cap admission loop's drop with a wait for room
+//     (`time.Sleep(time.Millisecond); continue` in place of
+//     `s.droppedQueueFull.Add(1); return`) blocks Record behind the
+//     stalled writer, and this goes RED on stalledCallBound;
+//   - replacing that loop with an unconditional `s.inFlightBytes.Add(size)`
+//     goes RED on DroppedQueueFull staying 0.
 func TestStalledWriterNeverBlocksRecordAndCountsDrops(t *testing.T) {
-	const recordBudget = 200 * time.Millisecond
-
 	dir := t.TempDir()
 	st, err := NewStore(StoreConfig{Dir: dir, CapBytes: 8 * 1024 * 1024, SegmentBytes: 1024 * 1024})
 	if err != nil {
@@ -55,11 +56,8 @@ func TestStalledWriterNeverBlocksRecordAndCountsDrops(t *testing.T) {
 	sawDrop := false
 	for i := 2; i <= 40; i++ {
 		id := uint64(i)
-		start := time.Now()
-		st.Record(makeExchange(id, id, "client-1", bigDirection, bigDirection))
-		if elapsed := time.Since(start); elapsed > recordBudget {
-			t.Fatalf("Record(%d) took %v with the writer stalled, want < %v", id, elapsed, recordBudget)
-		}
+		ex := makeExchange(id, id, "client-1", bigDirection, bigDirection)
+		returnsWhileStalled(t, fmt.Sprintf("Record(%d)", id), func() { st.Record(ex) })
 		if st.Stats().DroppedQueueFull > 0 {
 			sawDrop = true
 			break

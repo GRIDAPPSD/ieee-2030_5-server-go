@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -615,7 +616,7 @@ end_devices:
 	}
 }
 
-// --- buildDERControlBase --------------------------------------------
+// --- BuildDERControlBase --------------------------------------------
 
 func TestBuildDERControlBaseAllSupportedFields(t *testing.T) {
 	t.Parallel()
@@ -640,7 +641,12 @@ der_controls:
         multiplier: -1
         value: -300
       op_mod_volt_var: 42
-      op_mod_freq_droop: 55
+      op_mod_freq_droop:
+        db_of: 1
+        db_uf: 2
+        k_of: 3
+        k_uf: 4
+        open_loop_tms: 5
       ramp_tms: 66
 `)
 
@@ -670,11 +676,13 @@ der_controls:
 	if got := deref(t, base.OpModTargetW, "OpModTargetW"); got.Multiplier != -1 || got.Value != -300 {
 		t.Errorf("OpModTargetW = %+v, want {Multiplier:-1 Value:-300}", got)
 	}
-	if got := deref(t, base.OpModVoltVar, "OpModVoltVar"); got != 42 {
-		t.Errorf("OpModVoltVar = %d, want 42", got)
+	// An unquoted curve id still names the curve stored under "42".
+	if got := deref(t, base.OpModVoltVar, "OpModVoltVar"); got.Href != "/dc/42" {
+		t.Errorf("OpModVoltVar.Href = %q, want /dc/42", got.Href)
 	}
-	if got := deref(t, base.OpModFreqDroop, "OpModFreqDroop"); got != 55 {
-		t.Errorf("OpModFreqDroop = %d, want 55", got)
+	want := sep2.FreqDroopType{DBOF: 1, DBUF: 2, KOF: 3, KUF: 4, OpenLoopTms: 5}
+	if got := deref(t, base.OpModFreqDroop, "OpModFreqDroop"); got != want {
+		t.Errorf("OpModFreqDroop = %+v, want %+v", got, want)
 	}
 	if got := deref(t, base.RampTms, "RampTms"); got != 66 {
 		t.Errorf("RampTms = %d, want 66", got)
@@ -702,10 +710,11 @@ der_controls:
 	}
 }
 
-// TestPerCentFieldsRefuseInvalidValues pins that an out-of-range percent, a
-// negative PerCent, and the old multiplier/value mapping each fail the load
-// and store no DERControl, rather than loading as some other setpoint.
-func TestPerCentFieldsRefuseInvalidValues(t *testing.T) {
+// TestDERControlBaseRefusesInvalidValues pins that an out-of-range percent, a
+// negative PerCent, the old multiplier/value mapping, an empty curve id and
+// a freq droop that is a scalar or misses a field each fail the load and
+// store no DERControl, rather than loading as some other setpoint.
+func TestDERControlBaseRefusesInvalidValues(t *testing.T) {
 	t.Parallel()
 
 	const head = `
@@ -732,6 +741,10 @@ der_controls:
 		{"negative op_mod_max_lim_w", "      op_mod_max_lim_w: -1\n", "decode fixture"},
 		{"op_mod_fixed_w as multiplier and value", "      op_mod_fixed_w:\n        multiplier: 0\n        value: 2000\n", "decode fixture"},
 		{"op_mod_max_lim_w as multiplier and value", "      op_mod_max_lim_w:\n        multiplier: 0\n        value: 2000\n", "decode fixture"},
+		{"empty curve id", "      op_mod_volt_var: \"\"\n", `der_controls[0] (id="a", scope="e1/f1/p1"): op_mod_volt_var: dercurve: curve id is required`},
+		{"blank curve id", "      op_mod_volt_var: \" \"\n", `der_controls[0] (id="a", scope="e1/f1/p1"): op_mod_volt_var: dercurve: curve id is required`},
+		{"op_mod_freq_droop as a scalar", "      op_mod_freq_droop: 55\n", "decode fixture"},
+		{"op_mod_freq_droop missing open_loop_tms", "      op_mod_freq_droop:\n        db_of: 1\n        db_uf: 2\n        k_of: 3\n        k_uf: 4\n", `der_controls[0] (id="a", scope="e1/f1/p1"): op_mod_freq_droop: open_loop_tms is required`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -782,7 +795,7 @@ der_controls:
 	}
 }
 
-// --- buildDERCurve --------------------------------------------------
+// --- BuildDERCurve --------------------------------------------------
 
 func TestBuildDERCurveValues(t *testing.T) {
 	t.Parallel()
@@ -906,7 +919,7 @@ der_curves:
 	}
 }
 
-// --- compositeKey ---------------------------------------------------
+// --- CompositeKey ---------------------------------------------------
 
 // TestCompositeKeyDistinctness asserts what makes two scoped entries
 // distinct: all three of (edev, fsa, derp) participate, so the same inner
@@ -966,7 +979,7 @@ der_controls:
 	}
 }
 
-// TestCompositeKeyAliasingCollision pins that compositeKey joins the three
+// TestCompositeKeyAliasingCollision pins that CompositeKey joins the three
 // components with an unescaped "/", so a component containing a slash
 // aliases onto a different triple. Two logically distinct scopes produce
 // one key. Reported as a finding; when the key gains escaping this test
@@ -995,7 +1008,7 @@ der_controls:
     id: "x"
 `)
 	if err == nil {
-		t.Fatal("expected the known key-aliasing collision, got nil; if compositeKey now escapes its components, update this test")
+		t.Fatal("expected the known key-aliasing collision, got nil; if CompositeKey now escapes its components, update this test")
 	}
 	if !errors.Is(err, store.ErrAlreadyExists) {
 		t.Errorf("error chain lacks store.ErrAlreadyExists: %v", err)
@@ -1136,6 +1149,11 @@ end_devices:
 			yaml:     "der_curves:\n  - id: \"c1\"\n    curve_type: 0\n  - id: \"c1\"\n    curve_type: 0\n",
 			wantMsg:  `der_curves[1] (id="c1")`,
 			wantDupe: true,
+		},
+		{
+			name:    "der curve blank id",
+			yaml:    "der_curves:\n  - id: \" \"\n    curve_type: 0\n",
+			wantMsg: `der_curves[0] (id=" "): dercurve: curve id is required`,
 		},
 		{
 			name:    "der curve creation_time zero",

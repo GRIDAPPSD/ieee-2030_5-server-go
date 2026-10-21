@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -59,7 +59,7 @@ func HandlePostLogEvent(logStore store.ScopedStore[sep2.LogEvent]) http.HandlerF
 			return
 		}
 
-		id := fmt.Sprintf("%020d", time.Now().UnixNano())
+		id := idmint.Sortable()
 		logEvent.Href = fmt.Sprintf("/edev/%s/lel/%s", edevID, id)
 
 		if err := logStore.Create(r.Context(), edevID, id, logEvent); err != nil {

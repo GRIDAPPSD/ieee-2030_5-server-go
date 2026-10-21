@@ -33,6 +33,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -282,42 +283,34 @@ func runAggregatorOverlapSimilar(t *testing.T, testID string, plan aggOverlapPla
 	for _, edevID := range aggManagedInverters {
 		spec.DefaultDERControls = append(spec.DefaultDERControls,
 			csiptest.DefaultDERControlSpec{
-				EndDeviceID:  edevID,
-				FSAID:        aggFSAIDSY,
-				DERProgramID: aggFSAIDSY,
-				MRID:         aggMRIDPrefix(testID+"-DDERC-SY-") + edevID,
-				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModFixedW: ptrTo(plan.SYValue + 500),
-				},
+				EndDeviceID:    edevID,
+				FSAID:          aggFSAIDSY,
+				DERProgramID:   aggFSAIDSY,
+				MRID:           aggMRIDPrefix(testID+"-DDERC-SY-") + edevID,
+				DERControlBase: &csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModFixedW: ptrTo(plan.SYValue + 500)}},
 			},
 			csiptest.DefaultDERControlSpec{
-				EndDeviceID:  edevID,
-				FSAID:        aggFSAIDFD,
-				DERProgramID: aggFSAIDFD,
-				MRID:         aggMRIDPrefix(testID+"-DDERC-FD-") + edevID,
-				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModFixedW: ptrTo(plan.XfmrValue + 500),
-				},
+				EndDeviceID:    edevID,
+				FSAID:          aggFSAIDFD,
+				DERProgramID:   aggFSAIDFD,
+				MRID:           aggMRIDPrefix(testID+"-DDERC-FD-") + edevID,
+				DERControlBase: &csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModFixedW: ptrTo(plan.XfmrValue + 500)}},
 			},
 		)
 		spec.DERControls = append(spec.DERControls,
 			csiptest.DERControlSpec{
-				EndDeviceID:  edevID,
-				FSAID:        aggFSAIDSY,
-				DERProgramID: aggFSAIDSY,
-				ID:           "agg" + testID + "-" + edevID + "-sy",
-				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModFixedW: ptrTo(plan.SYValue),
-				},
+				EndDeviceID:    edevID,
+				FSAID:          aggFSAIDSY,
+				DERProgramID:   aggFSAIDSY,
+				ID:             "agg" + testID + "-" + edevID + "-sy",
+				DERControlBase: &csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModFixedW: ptrTo(plan.SYValue)}},
 			},
 			csiptest.DERControlSpec{
-				EndDeviceID:  edevID,
-				FSAID:        aggFSAIDFD,
-				DERProgramID: aggFSAIDFD,
-				ID:           "agg" + testID + "-" + edevID + "-fd",
-				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModFixedW: ptrTo(plan.XfmrValue),
-				},
+				EndDeviceID:    edevID,
+				FSAID:          aggFSAIDFD,
+				DERProgramID:   aggFSAIDFD,
+				ID:             "agg" + testID + "-" + edevID + "-fd",
+				DERControlBase: &csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModFixedW: ptrTo(plan.XfmrValue)}},
 			},
 		)
 	}
@@ -384,47 +377,39 @@ func runAggregatorOverlapIndependent(t *testing.T, testID string, plan aggOverla
 		// SY: DDERC + DERControl with OpModFixedW.
 		spec.DefaultDERControls = append(spec.DefaultDERControls,
 			csiptest.DefaultDERControlSpec{
-				EndDeviceID:  edevID,
-				FSAID:        aggFSAIDSY,
-				DERProgramID: aggFSAIDSY,
-				MRID:         aggMRIDPrefix(testID+"-DDERC-SY-") + edevID,
-				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModFixedW: ptrTo(plan.SYValue + 1000),
-				},
+				EndDeviceID:    edevID,
+				FSAID:          aggFSAIDSY,
+				DERProgramID:   aggFSAIDSY,
+				MRID:           aggMRIDPrefix(testID+"-DDERC-SY-") + edevID,
+				DERControlBase: &csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModFixedW: ptrTo(plan.SYValue + 1000)}},
 			},
 		)
 		spec.DERControls = append(spec.DERControls,
 			csiptest.DERControlSpec{
-				EndDeviceID:  edevID,
-				FSAID:        aggFSAIDSY,
-				DERProgramID: aggFSAIDSY,
-				ID:           "agg" + testID + "-" + edevID + "-sy",
-				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModFixedW: ptrTo(plan.SYValue),
-				},
+				EndDeviceID:    edevID,
+				FSAID:          aggFSAIDSY,
+				DERProgramID:   aggFSAIDSY,
+				ID:             "agg" + testID + "-" + edevID + "-sy",
+				DERControlBase: &csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModFixedW: ptrTo(plan.SYValue)}},
 			},
 		)
 		// FDx: DDERC + DERControl with OpModConnect (independent mode).
 		spec.DefaultDERControls = append(spec.DefaultDERControls,
 			csiptest.DefaultDERControlSpec{
-				EndDeviceID:  edevID,
-				FSAID:        aggFSAIDFD,
-				DERProgramID: aggFSAIDFD,
-				MRID:         aggMRIDPrefix(testID+"-DDERC-FD-") + edevID,
-				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModConnect: &connect,
-				},
+				EndDeviceID:    edevID,
+				FSAID:          aggFSAIDFD,
+				DERProgramID:   aggFSAIDFD,
+				MRID:           aggMRIDPrefix(testID+"-DDERC-FD-") + edevID,
+				DERControlBase: &csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModConnect: &connect}},
 			},
 		)
 		spec.DERControls = append(spec.DERControls,
 			csiptest.DERControlSpec{
-				EndDeviceID:  edevID,
-				FSAID:        aggFSAIDFD,
-				DERProgramID: aggFSAIDFD,
-				ID:           "agg" + testID + "-" + edevID + "-fd",
-				DERControlBase: &csiptest.DERControlBaseSpec{
-					OpModConnect: &connect,
-				},
+				EndDeviceID:    edevID,
+				FSAID:          aggFSAIDFD,
+				DERProgramID:   aggFSAIDFD,
+				ID:             "agg" + testID + "-" + edevID + "-fd",
+				DERControlBase: &csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModConnect: &connect}},
 			},
 		)
 	}

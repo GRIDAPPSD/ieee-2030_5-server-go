@@ -289,30 +289,61 @@ startLoop:
 	}
 }
 
-// waitForServerReady polls a TLS handshake against addr until it succeeds
-// or the timeout elapses. A plain TCP connect can succeed against a stale
-// TIME_WAIT socket from a sibling test even when the new Run failed to
-// bind, so this checks the full TLS handshake. The caller is responsible
-// for separately observing Run's exit channel after this returns false.
-// Dials through the fork since the server offers CCM-8 only.
-func waitForServerReady(addr string, timeout time.Duration, clientTLSCfg *gotls.Config) bool {
+// adminReadyTimeout bounds every listener readiness wait that uses it. Under
+// a loaded CI runner the listeners bind well after Run starts, so the bound
+// is generous: a ready listener ends the wait at once, and a failed bind
+// ends it through Run's exit.
+const adminReadyTimeout = 30 * time.Second
+
+// readyProbeTimeout bounds one readiness attempt, TLS handshake included. A
+// loaded -race run can take longer than 200ms to finish a CCM handshake,
+// and an attempt bound below that never succeeds however long the overall
+// wait runs (#857).
+const readyProbeTimeout = 5 * time.Second
+
+// pollReady is the one readiness loop behind the helpers below: it calls
+// probe until it returns nil, Run exits, or timeout passes, and on failure
+// returns a message naming what never became ready and why. runErr may be
+// nil when the caller cannot observe Run.
+func pollReady(what string, timeout time.Duration, runErr chan error, probe func() error) (string, bool) {
 	deadline := time.Now().Add(timeout)
-	dialer := &net.Dialer{Timeout: 200 * time.Millisecond}
-	probeCfg := clientTLSCfg.Clone()
-	for time.Now().Before(deadline) {
-		conn, err := gotls.DialWithDialer(dialer, "tcp", addr, probeCfg)
+	for {
+		if err, done := runExited(runErr); done {
+			return fmt.Sprintf("server.Run returned before the %s answered: %v", what, err), false
+		}
+		err := probe()
 		if err == nil {
-			_ = conn.Close()
-			return true
+			return "", true
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Sprintf("%s never became ready: %v", what, err), false
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	return false
 }
 
-// adminReadyTimeout bounds the admin listener wait. Under a loaded CI runner
-// the listener binds well after the protocol listener, so 3s was too tight.
-const adminReadyTimeout = 10 * time.Second
+// sep2HandshakeProbe completes a full TLS handshake against addr. A plain
+// TCP connect can succeed against a stale TIME_WAIT socket from a sibling
+// test even when the new Run failed to bind. Dials through the fork since
+// the server offers CCM-8 only.
+func sep2HandshakeProbe(addr string, clientTLSCfg *gotls.Config) func() error {
+	dialer := &net.Dialer{Timeout: readyProbeTimeout}
+	return func() error {
+		conn, err := gotls.DialWithDialer(dialer, "tcp", addr, clientTLSCfg.Clone())
+		if err != nil {
+			return err
+		}
+		return conn.Close()
+	}
+}
+
+// waitForServerReady waits for the protocol listener on addr to complete a
+// TLS handshake. The caller is responsible for separately observing Run's
+// exit channel after this returns false.
+func waitForServerReady(addr string, timeout time.Duration, clientTLSCfg *gotls.Config) bool {
+	_, ok := pollReady("SEP2 listener", timeout, nil, sep2HandshakeProbe(addr, clientTLSCfg))
+	return ok
+}
 
 // runExited reports Run's return without consuming it: the value is put
 // back so the test's cleanup still sees the exit.
@@ -327,10 +358,10 @@ func runExited(runErr chan error) (error, bool) {
 }
 
 // waitForAdminReady polls the admin listener until it answers an HTTP
-// request with a status this server can produce. A bare TCP connect can race the goroutine that
-// calls Serve, so this requires a real response. It stops at once with
-// Run's error if Run returns first (a bind failure), instead of waiting out
-// the timeout.
+// request with a status this server can produce. A bare TCP connect can
+// race the goroutine that calls Serve, so this requires a real response.
+// It stops at once with Run's error if Run returns first (a bind failure),
+// instead of waiting out the timeout.
 func waitForAdminReady(addr string, useTLS bool, timeout time.Duration, runErr chan error) (string, bool) {
 	scheme := "http"
 	transport := &http.Transport{DisableKeepAlives: true}
@@ -338,37 +369,28 @@ func waitForAdminReady(addr string, useTLS bool, timeout time.Duration, runErr c
 		scheme = "https"
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
-	client := &http.Client{Transport: transport, Timeout: time.Second}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if err, done := runExited(runErr); done {
-			return fmt.Sprintf("server.Run returned before the admin listener answered: %v", err), false
-		}
+	client := &http.Client{Transport: transport, Timeout: readyProbeTimeout}
+	return pollReady("admin listener", timeout, runErr, func() error {
 		resp, err := client.Get(scheme + "://" + addr + "/api/certs/ca")
-		if err == nil {
-			_ = resp.Body.Close()
-			// /api/certs/ca is a registered route, so this server never
-			// answers it 404 or 400; those mean a foreign listener holds the
-			// port, and Run's bind error is on its way.
-			if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest {
-				time.Sleep(25 * time.Millisecond)
-				continue
-			}
-			return "", true
+		if err != nil {
+			return err
 		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	return "admin listener never became ready", false
+		_ = resp.Body.Close()
+		// /api/certs/ca is a registered route, so this server never answers
+		// it 404 or 400; those mean a foreign listener holds the port, and
+		// Run's bind error is on its way.
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest {
+			return fmt.Errorf("status %d from a listener that is not this server's", resp.StatusCode)
+		}
+		return nil
+	})
 }
 
 // waitForListenersReady waits for the protocol listener and then a plain
 // HTTP admin listener, so a test never uses either before it is bound.
 func waitForListenersReady(sep2Addr, adminAddr string, timeout time.Duration, clientTLSCfg *gotls.Config, runErr chan error) (string, bool) {
-	if !waitForServerReady(sep2Addr, timeout, clientTLSCfg) {
-		if err, done := runExited(runErr); done {
-			return fmt.Sprintf("SEP2 listener never became ready, Run returned: %v", err), false
-		}
-		return "SEP2 listener never became ready", false
+	if msg, ok := pollReady("SEP2 listener", timeout, runErr, sep2HandshakeProbe(sep2Addr, clientTLSCfg)); !ok {
+		return msg, false
 	}
 	return waitForAdminReady(adminAddr, false, adminReadyTimeout, runErr)
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/flow_reservation"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint/idminttest"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -501,4 +502,24 @@ func TestHandlePostFlowReservationRequest_RequestStatusValidValuesAccepted(t *te
 			}
 		})
 	}
+}
+
+// Not parallel: they hold the process-wide id clock still (#1010).
+func TestHandlePostFlowReservationRequest_ParallelPostsGetDistinctIDs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /edev/{id}/frq", flow_reservation.HandlePostFlowReservationRequest(memory.NewScopedStore[sep2.FlowReservationRequest](), &stubSubmitter{}))
+	energy := sep2.SignedRealEnergy{Value: 10000}
+	body, _ := xml.Marshal(&sep2.FlowReservationRequest{MRID: "FRQ001", EnergyRequested: &energy})
+	idminttest.AssertParallelCreatesDistinct(t, mux, 16, func() *http.Request {
+		return httptest.NewRequest(http.MethodPost, "/edev/dev1/frq", bytes.NewReader(body))
+	})
+}
+
+func TestHandlePostResponse_ParallelPostsGetDistinctIDs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /rsps/{rspsId}/rsp", flow_reservation.HandlePostResponse(memory.NewScopedStore[sep2.Response](), nil))
+	body, _ := xml.Marshal(&sep2.Response{Subject: "SUBJ001"})
+	idminttest.AssertParallelCreatesDistinct(t, mux, 16, func() *http.Request {
+		return httptest.NewRequest(http.MethodPost, "/rsps/set1/rsp", bytes.NewReader(body))
+	})
 }

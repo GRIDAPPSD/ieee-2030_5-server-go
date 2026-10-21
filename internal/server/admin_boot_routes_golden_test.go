@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,22 +79,8 @@ func bootAdminRouteSection(t *testing.T, buf *syncBuffer) (string, error) {
 	runErrCh := make(chan error, 1)
 	go func() { runErrCh <- server.Run(ctx, cfg, c.svc) }()
 
-	probe := &http.Client{Timeout: 500 * time.Millisecond}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if resp, err := probe.Get("http://" + c.adminProbe + "/api/certs/ca"); err == nil {
-			_ = resp.Body.Close()
-			break
-		}
-		select {
-		case err := <-runErrCh:
-			return "", fmt.Errorf("server.Run exited during boot: %w", err)
-		default:
-		}
-		if time.Now().After(deadline) {
-			return "", fmt.Errorf("admin listener never became ready on %s", c.adminProbe)
-		}
-		time.Sleep(25 * time.Millisecond)
+	if msg, ok := waitForAdminReady(c.adminProbe, false, adminReadyTimeout, runErrCh); !ok {
+		return "", fmt.Errorf("%s on %s", msg, c.adminProbe)
 	}
 
 	// The receive on runErrCh orders every log write by Run before the read

@@ -12,6 +12,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/logevent"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint/idminttest"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -154,5 +155,20 @@ func TestBuildLogEventList(t *testing.T) {
 	}
 	if result.LogEvent[0].LogEventCode != 1 {
 		t.Errorf("LogEvent[0].LogEventCode = %d, want 1", result.LogEvent[0].LogEventCode)
+	}
+}
+
+// Not parallel: it holds the process-wide id clock still (#1010).
+func TestHandlePostLogEvent_ParallelPostsGetDistinctIDs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /edev/{id}/lel", logevent.HandlePostLogEvent(memory.NewScopedStore[sep2.LogEvent]()))
+	body, _ := xml.Marshal(&sep2.LogEvent{LogEventCode: 1, LogEventID: 42})
+	locs := idminttest.AssertParallelCreatesDistinct(t, mux, 16, func() *http.Request {
+		return httptest.NewRequest(http.MethodPost, "/edev/dev1/lel", bytes.NewReader(body))
+	})
+	for _, l := range locs {
+		if id := strings.TrimPrefix(l, "/edev/dev1/lel/"); len(id) != 20 {
+			t.Errorf("Location %q: id %q is not the fixed 20-digit width the listing sorts on", l, id)
+		}
 	}
 }

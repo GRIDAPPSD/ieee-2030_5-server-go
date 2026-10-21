@@ -36,7 +36,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol/dercurve"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -486,10 +486,10 @@ func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOptio
 		key := compositeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
 		dc, err := buildDefaultDERControl(d)
 		if err != nil {
-			return fmt.Errorf("default_der_controls[%d] (scope=%q): %w", i, key, err)
+			return fmt.Errorf("%s: %w", bootfixture.DefaultDERControlEntry(i, key), err)
 		}
 		if err := target.DefaultDERControls.Create(ctx, key, singletonKey, dc); err != nil {
-			return fmt.Errorf("default_der_controls[%d] (scope=%q): create: %w", i, key, err)
+			return fmt.Errorf("%s: create: %w", bootfixture.DefaultDERControlEntry(i, key), err)
 		}
 	}
 
@@ -506,10 +506,10 @@ func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOptio
 		key := compositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
 		dc, err := buildDERControl(c)
 		if err != nil {
-			return fmt.Errorf("der_controls[%d] (id=%q, scope=%q): %w", i, c.ID, key, err)
+			return fmt.Errorf("%s: %w", bootfixture.DERControlEntry(i, c.ID, key), err)
 		}
 		if err := target.DERControls.Create(ctx, key, c.ID, dc); err != nil {
-			return fmt.Errorf("der_controls[%d] (id=%q, scope=%q): create: %w", i, c.ID, key, err)
+			return fmt.Errorf("%s: create: %w", bootfixture.DERControlEntry(i, c.ID, key), err)
 		}
 	}
 
@@ -521,9 +521,12 @@ func applySpec(ctx context.Context, target *Target, spec *Spec, opts []LoadOptio
 		if c.CreationTime != nil && *c.CreationTime <= 0 {
 			return fmt.Errorf("der_curves[%d] (id=%q): creation_time must be positive, got %d", i, c.ID, *c.CreationTime)
 		}
-		cur := buildDERCurve(c, loadTime)
+		cur, err := buildDERCurve(c, loadTime)
+		if err != nil {
+			return fmt.Errorf("%s: %w", bootfixture.DERCurveEntry(i, c.ID), err)
+		}
 		if err := target.DERCurves.Create(ctx, c.ID, cur); err != nil {
-			return fmt.Errorf("der_curves[%d] (id=%q): create: %w", i, c.ID, err)
+			return fmt.Errorf("%s: create: %w", bootfixture.DERCurveEntry(i, c.ID), err)
 		}
 	}
 
@@ -729,36 +732,13 @@ func buildDERControlBase(s DERControlBaseSpec) (sep2.DERControlBase, error) {
 	if s.OpModTargetW != nil {
 		base.OpModTargetW = &sep2.ActivePower{Multiplier: s.OpModTargetW.Multiplier, Value: s.OpModTargetW.Value}
 	}
-	if s.OpModFreqDroop != nil {
-		fd, err := s.OpModFreqDroop.FreqDroopType()
-		if err != nil {
-			return sep2.DERControlBase{}, fmt.Errorf("op_mod_freq_droop: %w", err)
-		}
-		base.OpModFreqDroop = fd
+	fd, err := bootfixture.FreqDroop(s.OpModFreqDroop)
+	if err != nil {
+		return sep2.DERControlBase{}, err
 	}
-	for _, m := range []struct {
-		yaml string
-		ref  *string
-		dst  **sep2.DERCurveLink
-	}{
-		{"op_mod_volt_var", s.OpModVoltVar, &base.OpModVoltVar},
-		{"op_mod_volt_watt", s.OpModVoltWatt, &base.OpModVoltWatt},
-		{"op_mod_freq_watt", s.OpModFreqWatt, &base.OpModFreqWatt},
-		{"op_mod_lvrt_must_trip", s.OpModLVRTMustTrip, &base.OpModLVRTMustTrip},
-		{"op_mod_lvrt_momentary_cessation", s.OpModLVRTMomentaryCessation, &base.OpModLVRTMomentaryCessation},
-		{"op_mod_hvrt_must_trip", s.OpModHVRTMustTrip, &base.OpModHVRTMustTrip},
-		{"op_mod_hvrt_momentary_cessation", s.OpModHVRTMomentaryCessation, &base.OpModHVRTMomentaryCessation},
-		{"op_mod_lfrt_must_trip", s.OpModLFRTMustTrip, &base.OpModLFRTMustTrip},
-		{"op_mod_hfrt_must_trip", s.OpModHFRTMustTrip, &base.OpModHFRTMustTrip},
-	} {
-		if m.ref == nil {
-			continue
-		}
-		link, err := dercontrol.CurveLink(*m.ref)
-		if err != nil {
-			return sep2.DERControlBase{}, fmt.Errorf("%s: %w", m.yaml, err)
-		}
-		*m.dst = link
+	base.OpModFreqDroop = fd
+	if err := dercurve.SetLinks(s, &base); err != nil {
+		return sep2.DERControlBase{}, err
 	}
 	if s.RampTms != nil {
 		v := *s.RampTms
@@ -771,7 +751,7 @@ func buildDERControlBase(s DERControlBaseSpec) (sep2.DERControlBase, error) {
 // follows the spec's value when given; otherwise it is loadTime, the time
 // the enclosing fixture was loaded, so a served curve never claims the
 // Unix epoch (#539).
-func buildDERCurve(s DERCurveSpec, loadTime int64) sep2.DERCurve {
+func buildDERCurve(s DERCurveSpec, loadTime int64) (sep2.DERCurve, error) {
 	creationTime := loadTime
 	if s.CreationTime != nil {
 		creationTime = *s.CreationTime
@@ -782,14 +762,18 @@ func buildDERCurve(s DERCurveSpec, loadTime int64) sep2.DERCurve {
 		CurveType:    s.CurveType,
 		CreationTime: creationTime,
 	}
-	curve.Href = dercontrol.CurveHref(s.ID)
+	href, err := dercurve.Href(s.ID)
+	if err != nil {
+		return sep2.DERCurve{}, err
+	}
+	curve.Href = href
 	if len(s.CurveData) > 0 {
 		curve.CurveData = make([]sep2.CurveData, len(s.CurveData))
 		for i, p := range s.CurveData {
 			curve.CurveData[i] = sep2.CurveData{XValue: p.X, YValue: p.Y}
 		}
 	}
-	return curve
+	return curve, nil
 }
 
 func compositeKey(edev, fsa, derp string) string {

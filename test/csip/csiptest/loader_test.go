@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
@@ -424,13 +425,16 @@ func TestLoadSpec_DERProgramUnknownFSAID_Errors(t *testing.T) {
 	}
 }
 
-// TestLoadSpec_PerCentOutOfRange_Errors pins that a percent the XML encoder
-// would refuse fails the load and stores no control, on both control paths.
-func TestLoadSpec_PerCentOutOfRange_Errors(t *testing.T) {
+// TestLoadSpec_InvalidBase_Errors pins that a percent the XML encoder would
+// refuse, a blank curve id and an incomplete freq droop each fail the load
+// and store no control, on both control paths.
+func TestLoadSpec_InvalidBase_Errors(t *testing.T) {
 	t.Parallel()
 
 	over := sep2.PerCent(10001)
 	under := sep2.SignedPerCent(-10001)
+	blank := " "
+	one := uint32(1)
 	cases := []struct {
 		name    string
 		dderc   bool
@@ -440,6 +444,12 @@ func TestLoadSpec_PerCentOutOfRange_Errors(t *testing.T) {
 		{"default control op_mod_max_lim_w above 10000", true, csiptest.DERControlBaseSpec{OpModMaxLimW: &over}, "default_der_controls[0]: op_mod_max_lim_w"},
 		{"control op_mod_max_lim_w above 10000", false, csiptest.DERControlBaseSpec{OpModMaxLimW: &over}, `der_controls[0] (id="a"): op_mod_max_lim_w`},
 		{"control op_mod_fixed_w below -10000", false, csiptest.DERControlBaseSpec{OpModFixedW: &under}, `der_controls[0] (id="a"): op_mod_fixed_w`},
+		{"default control blank curve id", true, csiptest.DERControlBaseSpec{OpModLVRTMustTrip: &blank},
+			`default_der_controls[0] (scope="0/0/0"): op_mod_lvrt_must_trip: dercurve: curve id is required`},
+		{"control blank curve id", false, csiptest.DERControlBaseSpec{OpModHFRTMustTrip: &blank},
+			`der_controls[0] (id="a", scope="0/0/0"): op_mod_hfrt_must_trip: dercurve: curve id is required`},
+		{"control freq droop missing fields", false, csiptest.DERControlBaseSpec{OpModFreqDroop: &bootfixture.FreqDroopSpec{DBOF: &one}},
+			`der_controls[0] (id="a", scope="0/0/0"): op_mod_freq_droop: db_uf is required`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

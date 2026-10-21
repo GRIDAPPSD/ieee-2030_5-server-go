@@ -19,6 +19,7 @@ func currentBase() sep2.DERControlBase {
 	maxLim := sep2.PerCent(5000)
 	return sep2.DERControlBase{
 		OpModVoltVar:   &sep2.DERCurveLink{Href: "/dc/3"},
+		OpModWattPF:    &sep2.DERCurveLink{Href: "/dc/4"},
 		OpModFixedVar:  &sep2.FixedVar{RefType: 2, Value: 5000},
 		OpModFreqDroop: &sep2.FreqDroopType{DBOF: 1, DBUF: 2, KOF: 3, KUF: 4, OpenLoopTms: 5},
 		OpModMaxLimW:   &maxLim,
@@ -29,11 +30,14 @@ func currentBase() sep2.DERControlBase {
 // it, so an old-shape snapshot is the server's own file with one mode put
 // back in the old form.
 var preV026Shapes = []struct {
-	name, current, old, field string
+	name, current, old, field, newShape string
 }{
-	{"curve as a number", `"OpModVoltVar":{"Href":"/dc/3"}`, `"OpModVoltVar":3`, "OpModVoltVar"},
-	{"fixed var as ReactivePower", `"OpModFixedVar":{"RefType":2,"Value":5000}`, `"OpModFixedVar":{"Multiplier":0,"Value":500}`, "OpModFixedVar"},
-	{"freq droop as a number", `"OpModFreqDroop":{"DBOF":1,"DBUF":2,"KOF":3,"KUF":4,"OpenLoopTms":5}`, `"OpModFreqDroop":55`, "OpModFreqDroop"},
+	{"curve as a number", `"OpModVoltVar":{"Href":"/dc/3"}`, `"OpModVoltVar":3`, "OpModVoltVar", `{"Href":"/dc/<curve id>"}`},
+	// A curve mode v0.25.0 lacked gets the same hint: the curve list is read
+	// from the DERControlBase type, not kept by hand.
+	{"curve core added in v0.26.0 as a number", `"OpModWattPF":{"Href":"/dc/4"}`, `"OpModWattPF":4`, "OpModWattPF", `{"Href":"/dc/<curve id>"}`},
+	{"fixed var as ReactivePower", `"OpModFixedVar":{"RefType":2,"Value":5000}`, `"OpModFixedVar":{"Multiplier":0,"Value":500}`, "OpModFixedVar", `{"RefType":1|2|3,"Value":`},
+	{"freq droop as a number", `"OpModFreqDroop":{"DBOF":1,"DBUF":2,"KOF":3,"KUF":4,"OpenLoopTms":5}`, `"OpModFreqDroop":55`, "OpModFreqDroop", `{"DBOF":n,"DBUF":n,"KOF":n,"KUF":n,"OpenLoopTms":n}`},
 }
 
 type baseStore struct {
@@ -213,7 +217,8 @@ func TestPreV026DERControlBaseRefused(t *testing.T) {
 				if err == nil {
 					t.Fatalf("old-shape snapshot loaded: %+v", got)
 				}
-				for _, want := range []string{path, st.record, st.field + shape.field, "before core v0.26.0"} {
+				for _, want := range []string{path, st.record, st.field + shape.field, "before core v0.26.0",
+					"rewrite it as " + shape.newShape, "check the later records too"} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("error %q does not name %q", err, want)
 					}

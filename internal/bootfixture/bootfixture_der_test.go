@@ -741,7 +741,8 @@ der_controls:
 		{"negative op_mod_max_lim_w", "      op_mod_max_lim_w: -1\n", "decode fixture"},
 		{"op_mod_fixed_w as multiplier and value", "      op_mod_fixed_w:\n        multiplier: 0\n        value: 2000\n", "decode fixture"},
 		{"op_mod_max_lim_w as multiplier and value", "      op_mod_max_lim_w:\n        multiplier: 0\n        value: 2000\n", "decode fixture"},
-		{"empty curve id", "      op_mod_volt_var: \"\"\n", `der_controls[0] (id="a", scope="e1/f1/p1"): op_mod_volt_var: dercontrol: curve id is required`},
+		{"empty curve id", "      op_mod_volt_var: \"\"\n", `der_controls[0] (id="a", scope="e1/f1/p1"): op_mod_volt_var: dercurve: curve id is required`},
+		{"blank curve id", "      op_mod_volt_var: \" \"\n", `der_controls[0] (id="a", scope="e1/f1/p1"): op_mod_volt_var: dercurve: curve id is required`},
 		{"op_mod_freq_droop as a scalar", "      op_mod_freq_droop: 55\n", "decode fixture"},
 		{"op_mod_freq_droop missing open_loop_tms", "      op_mod_freq_droop:\n        db_of: 1\n        db_uf: 2\n        k_of: 3\n        k_uf: 4\n", `der_controls[0] (id="a", scope="e1/f1/p1"): op_mod_freq_droop: open_loop_tms is required`},
 	}
@@ -1148,6 +1149,11 @@ end_devices:
 			yaml:     "der_curves:\n  - id: \"c1\"\n    curve_type: 0\n  - id: \"c1\"\n    curve_type: 0\n",
 			wantMsg:  `der_curves[1] (id="c1")`,
 			wantDupe: true,
+		},
+		{
+			name:    "der curve blank id",
+			yaml:    "der_curves:\n  - id: \" \"\n    curve_type: 0\n",
+			wantMsg: `der_curves[0] (id=" "): dercurve: curve id is required`,
 		},
 		{
 			name:    "der curve creation_time zero",

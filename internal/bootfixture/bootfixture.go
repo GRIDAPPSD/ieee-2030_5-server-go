@@ -37,7 +37,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol/dercurve"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -186,7 +186,7 @@ type DERControlBaseSpec struct {
 
 // FreqDroopSpec is the YAML shape of sep2.FreqDroopType. Every field is
 // required by the schema, so a missing one is refused rather than served
-// as zero. The CSIP loader uses this type too.
+// as zero. The CSIP loader uses this type and FreqDroop too.
 type FreqDroopSpec struct {
 	DBOF        *uint32 `yaml:"db_of"`
 	DBUF        *uint32 `yaml:"db_uf"`
@@ -195,8 +195,12 @@ type FreqDroopSpec struct {
 	OpenLoopTms *uint16 `yaml:"open_loop_tms"`
 }
 
-// FreqDroopType converts the spec, naming the first missing field.
-func (s FreqDroopSpec) FreqDroopType() (*sep2.FreqDroopType, error) {
+// FreqDroop converts an op_mod_freq_droop spec, naming the first missing
+// field. A nil spec gives nil: the mode is absent.
+func FreqDroop(s *FreqDroopSpec) (*sep2.FreqDroopType, error) {
+	if s == nil {
+		return nil, nil
+	}
 	for _, f := range []struct {
 		name    string
 		missing bool
@@ -205,7 +209,7 @@ func (s FreqDroopSpec) FreqDroopType() (*sep2.FreqDroopType, error) {
 		{"k_uf", s.KUF == nil}, {"open_loop_tms", s.OpenLoopTms == nil},
 	} {
 		if f.missing {
-			return nil, fmt.Errorf("%s is required", f.name)
+			return nil, fmt.Errorf("op_mod_freq_droop: %s is required", f.name)
 		}
 	}
 	return &sep2.FreqDroopType{
@@ -416,10 +420,10 @@ func createDefaultDERControl(ctx context.Context, target *Target, i int, d Defau
 	key := compositeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
 	dc, err := buildDefaultDERControl(d)
 	if err != nil {
-		return fmt.Errorf("default_der_controls[%d] (scope=%q): %w", i, key, err)
+		return fmt.Errorf("%s: %w", DefaultDERControlEntry(i, key), err)
 	}
 	if err := target.DefaultDERControls.Create(ctx, key, singletonKey, dc); err != nil {
-		return fmt.Errorf("default_der_controls[%d] (scope=%q): create: %w", i, key, err)
+		return fmt.Errorf("%s: create: %w", DefaultDERControlEntry(i, key), err)
 	}
 	return nil
 }
@@ -428,19 +432,39 @@ func createDERControl(ctx context.Context, target *Target, i int, c DERControlSp
 	key := compositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
 	dc, err := buildDERControl(c)
 	if err != nil {
-		return fmt.Errorf("der_controls[%d] (id=%q, scope=%q): %w", i, c.ID, key, err)
+		return fmt.Errorf("%s: %w", DERControlEntry(i, c.ID, key), err)
 	}
 	if err := target.DERControls.Create(ctx, key, c.ID, dc); err != nil {
-		return fmt.Errorf("der_controls[%d] (id=%q, scope=%q): create: %w", i, c.ID, key, err)
+		return fmt.Errorf("%s: create: %w", DERControlEntry(i, c.ID, key), err)
 	}
 	return nil
 }
 
 func createDERCurve(ctx context.Context, target *Target, i int, c DERCurveSpec, loadTime int64) error {
-	if err := target.DERCurves.Create(ctx, c.ID, buildDERCurve(c, loadTime)); err != nil {
-		return fmt.Errorf("der_curves[%d] (id=%q): create: %w", i, c.ID, err)
+	curve, err := buildDERCurve(c, loadTime)
+	if err != nil {
+		return fmt.Errorf("%s: %w", DERCurveEntry(i, c.ID), err)
+	}
+	if err := target.DERCurves.Create(ctx, c.ID, curve); err != nil {
+		return fmt.Errorf("%s: create: %w", DERCurveEntry(i, c.ID), err)
 	}
 	return nil
+}
+
+// DefaultDERControlEntry, DERControlEntry and DERCurveEntry name a failing
+// fixture entry, so this loader and the CSIP loader report it alike.
+func DefaultDERControlEntry(i int, scope string) string {
+	return fmt.Sprintf("default_der_controls[%d] (scope=%q)", i, scope)
+}
+
+// DERControlEntry: see DefaultDERControlEntry.
+func DERControlEntry(i int, id, scope string) string {
+	return fmt.Sprintf("der_controls[%d] (id=%q, scope=%q)", i, id, scope)
+}
+
+// DERCurveEntry: see DefaultDERControlEntry.
+func DERCurveEntry(i int, id string) string {
+	return fmt.Sprintf("der_curves[%d] (id=%q)", i, id)
 }
 
 func buildEndDevice(s EndDeviceSpec) sep2.EndDevice {
@@ -561,20 +585,14 @@ func buildDERControlBase(s DERControlBaseSpec) (sep2.DERControlBase, error) {
 	if s.OpModTargetW != nil {
 		base.OpModTargetW = &sep2.ActivePower{Multiplier: s.OpModTargetW.Multiplier, Value: s.OpModTargetW.Value}
 	}
-	if s.OpModVoltVar != nil {
-		link, err := dercontrol.CurveLink(*s.OpModVoltVar)
-		if err != nil {
-			return sep2.DERControlBase{}, fmt.Errorf("op_mod_volt_var: %w", err)
-		}
-		base.OpModVoltVar = link
+	if err := dercurve.SetLinks(s, &base); err != nil {
+		return sep2.DERControlBase{}, err
 	}
-	if s.OpModFreqDroop != nil {
-		fd, err := s.OpModFreqDroop.FreqDroopType()
-		if err != nil {
-			return sep2.DERControlBase{}, fmt.Errorf("op_mod_freq_droop: %w", err)
-		}
-		base.OpModFreqDroop = fd
+	fd, err := FreqDroop(s.OpModFreqDroop)
+	if err != nil {
+		return sep2.DERControlBase{}, err
 	}
+	base.OpModFreqDroop = fd
 	if s.RampTms != nil {
 		v := *s.RampTms
 		base.RampTms = &v
@@ -586,7 +604,7 @@ func buildDERControlBase(s DERControlBaseSpec) (sep2.DERControlBase, error) {
 // follows the spec's value when given; otherwise it is loadTime, the time
 // the enclosing fixture was loaded, so a served curve never claims the
 // Unix epoch (#539).
-func buildDERCurve(s DERCurveSpec, loadTime int64) sep2.DERCurve {
+func buildDERCurve(s DERCurveSpec, loadTime int64) (sep2.DERCurve, error) {
 	creationTime := loadTime
 	if s.CreationTime != nil {
 		creationTime = *s.CreationTime
@@ -597,14 +615,18 @@ func buildDERCurve(s DERCurveSpec, loadTime int64) sep2.DERCurve {
 		CurveType:    s.CurveType,
 		CreationTime: creationTime,
 	}
-	curve.Href = dercontrol.CurveHref(s.ID)
+	href, err := dercurve.Href(s.ID)
+	if err != nil {
+		return sep2.DERCurve{}, err
+	}
+	curve.Href = href
 	if len(s.CurveData) > 0 {
 		curve.CurveData = make([]sep2.CurveData, len(s.CurveData))
 		for i, p := range s.CurveData {
 			curve.CurveData[i] = sep2.CurveData{XValue: p.X, YValue: p.Y}
 		}
 	}
-	return curve
+	return curve, nil
 }
 
 func compositeKey(edev, fsa, derp string) string {

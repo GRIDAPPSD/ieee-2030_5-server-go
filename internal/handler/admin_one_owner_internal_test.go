@@ -88,3 +88,19 @@ func TestOneOwner_PrimacyBoundsAreNotRespelled(t *testing.T) {
 		}
 	}
 }
+
+// A string value in a flow-reservation write line is escaped, not deleted.
+func TestFRWriteLogEscapesStrings(t *testing.T) {
+	var l frWriteLog
+	l.add("principal", "a\r\nevent=forged")
+	l.add("n", 7)
+	want := []any{"principal", `a\r\nevent=forged`, "n", 7}
+	if len(l.attrs) != len(want) {
+		t.Fatalf("attrs = %v, want %v", l.attrs, want)
+	}
+	for i := range want {
+		if l.attrs[i] != want[i] {
+			t.Errorf("attrs[%d] = %#v, want %#v", i, l.attrs[i], want[i])
+		}
+	}
+}

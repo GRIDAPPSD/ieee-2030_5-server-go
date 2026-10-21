@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -35,6 +36,10 @@ import (
 // provisioning-plane operation like re-key is not one of them.
 type AdminManagementHandler struct {
 	Managers *memory.EndDeviceManagementStore
+
+	// Profiles supplies each LFDI's stored kind for the create and rekey
+	// kind gate. Nil leaves the gate off.
+	Profiles store.DeviceProfileReader
 }
 
 // managementPairRequest is the body for POST /api/management-pairs.
@@ -80,6 +85,10 @@ func (h *AdminManagementHandler) HandleCreateManagementPair() http.HandlerFunc {
 			return
 		}
 
+		if !h.kindAllowedManager(w, r.Context(), "create", managerLFDI) ||
+			!h.kindAllowedManaged(w, r.Context(), "create", managedLFDI) {
+			return
+		}
 		if err := h.Managers.Assign(r.Context(), managerLFDI, managedLFDI); err != nil {
 			writeManagementPairError(w, "create", err)
 			return
@@ -197,6 +206,17 @@ func (h *AdminManagementHandler) HandleRekeyManagementPair() http.HandlerFunc {
 			return
 		}
 
+		// Rekeying a manager makes "to" the manager of everything "from"
+		// managed; rekeying a managed device makes "to" the managed side
+		// of its existing manager.
+		if req.Role == "manager" {
+			if !h.kindAllowedManager(w, r.Context(), "rekey", to) {
+				return
+			}
+		} else if !h.kindAllowedManaged(w, r.Context(), "rekey", to) {
+			return
+		}
+
 		var opErr error
 		if req.Role == "manager" {
 			opErr = h.Managers.RekeyManager(r.Context(), from, to)
@@ -209,6 +229,31 @@ func (h *AdminManagementHandler) HandleRekeyManagementPair() http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"role": req.Role, "from": from, "to": to})
 	}
+}
+
+// kindAllowedManager and kindAllowedManaged write a 409 and return false when
+// the LFDI's effective kind contradicts its role in a pair, or a 500 when a
+// lookup fails. Create checks both sides, rekey the side that changes.
+func (h *AdminManagementHandler) kindAllowedManager(w http.ResponseWriter, ctx context.Context, op, manager string) bool {
+	msg, err := managerKindRefusal(ctx, h.Profiles, h.Managers, manager)
+	return h.writeKindRefusal(w, op, msg, err)
+}
+
+func (h *AdminManagementHandler) kindAllowedManaged(w http.ResponseWriter, ctx context.Context, op, managed string) bool {
+	msg, err := managedKindRefusal(ctx, h.Profiles, h.Managers, managed)
+	return h.writeKindRefusal(w, op, msg, err)
+}
+
+func (h *AdminManagementHandler) writeKindRefusal(w http.ResponseWriter, op, msg string, err error) bool {
+	if err != nil {
+		writeManagementInternalError(w, op, err)
+		return false
+	}
+	if msg != "" {
+		writeError(w, http.StatusConflict, msg)
+		return false
+	}
+	return true
 }
 
 // normalizeLFDI trims and upper-cases s, refusing anything that is not a

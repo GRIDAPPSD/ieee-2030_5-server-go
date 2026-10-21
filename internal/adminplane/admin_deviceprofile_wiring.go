@@ -11,5 +11,5 @@ func newAdminDeviceProfileHandler(stores *Stores) *handler.AdminDeviceProfileHan
 	if stores == nil || store.IsAbsent(stores.DeviceProfiles) {
 		return nil
 	}
-	return &handler.AdminDeviceProfileHandler{Profiles: stores.DeviceProfiles}
+	return &handler.AdminDeviceProfileHandler{Profiles: stores.DeviceProfiles, Managers: stores.EndDeviceManagers}
 }

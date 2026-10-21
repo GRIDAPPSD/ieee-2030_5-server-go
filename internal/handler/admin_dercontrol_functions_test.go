@@ -89,7 +89,7 @@ func TestDERControlCreate_FunctionsRefusals(t *testing.T) {
 		message string
 	}{
 		{"type and functions", `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","functions":{"opModConnect":true},"durationSeconds":300}`, "type and functions: give one, not both"},
-		{"neither", `{"derProgramHref":"/edev/0/fsa/0/derp/0","durationSeconds":300}`, "type: required"},
+		{"neither", `{"derProgramHref":"/edev/0/fsa/0/derp/0","durationSeconds":300}`, "type or functions: give one"},
 		{"empty functions", functionsBody(0, `{}`), "functions: at least one function required"},
 		{"unknown function", functionsBody(0, `{"opModBogus":1}`), "functions: unknown function"},
 		{"not an object", functionsBody(0, `[1]`), "functions: must be an object"},

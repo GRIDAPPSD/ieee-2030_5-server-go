@@ -176,7 +176,7 @@ var (
 	refuseUnknownField        = derControlRefusal{http.StatusBadRequest, "unknown_field", "unknown field"}
 	refuseProgramHrefRequired = derControlRefusal{http.StatusBadRequest, "program_href_required", "derProgramHref: required"}
 	refuseProgramHrefFormat   = derControlRefusal{http.StatusBadRequest, "program_href_invalid", "derProgramHref: invalid format"}
-	refuseTypeRequired        = derControlRefusal{http.StatusBadRequest, "type_required", "type: required"}
+	refuseTypeRequired        = derControlRefusal{http.StatusBadRequest, "type_required", "type or functions: give one"}
 	refuseTypeUnknown         = derControlRefusal{http.StatusBadRequest, "type_unknown", "type: unknown control type"}
 	refuseTypeAndFunctions    = derControlRefusal{http.StatusBadRequest, "type_and_functions", "type and functions: give one, not both"}
 	refuseFunctionsType       = derControlRefusal{http.StatusBadRequest, "functions_type", "functions: must be an object"}

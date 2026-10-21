@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 )
 
@@ -17,7 +18,7 @@ import (
 // route derive their store scope this way, which is what keeps one device's
 // controls unreachable from another device's path.
 func derControlScopeKey(edevID, fsaID, derpID string) string {
-	return edevID + "/" + fsaID + "/" + derpID
+	return derhref.ScopeKey(edevID, fsaID, derpID)
 }
 
 // seedDERControl stores one DERControl under the (edev, fsa, derp) scope and

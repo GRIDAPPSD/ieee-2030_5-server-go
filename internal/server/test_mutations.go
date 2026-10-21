@@ -268,7 +268,7 @@ func handleDERControlAdd(stores *Stores, notifier handler.ResourceNotifier) http
 		// DERControls are stored under the composite key (EndDeviceID,
 		// FSAID, DERProgramID). This three-level scope is the contract
 		// that core's DER-control handlers and bootfixture both follow.
-		key := derControlScope(req.EndDeviceID, req.FSAID, req.DERProgramID)
+		key := derhref.ScopeKey(req.EndDeviceID, req.FSAID, req.DERProgramID)
 		if err := stores.DERControls.Create(ctx, key, req.ControlID, req.Control); err != nil {
 			if errors.Is(err, store.ErrAlreadyExists) {
 				http.Error(w, "control already exists", http.StatusConflict)
@@ -298,13 +298,6 @@ func handleDERControlAdd(stores *Stores, notifier handler.ResourceNotifier) http
 // that becomes a typed constant this helper consumes it).
 func derProgramListHref(edev, fsa string) string {
 	return "/edev/" + edev + "/fsa/" + fsa + "/derp"
-}
-
-// derControlScope mirrors internal/bootfixture.compositeKey. Duplicated
-// (one line) rather than exported across an internal/ package boundary;
-// flag for dedup if a third caller appears.
-func derControlScope(edev, fsa, derp string) string {
-	return edev + "/" + fsa + "/" + derp
 }
 
 // --- /test/mutations/time-advance (#28, CORE-006) ---
@@ -560,7 +553,7 @@ func checkSwapVersionRoom(ctx context.Context, stores *Stores, edev, from string
 		if stores.DefaultDERControls == nil {
 			continue
 		}
-		dd, err := stores.DefaultDERControls.Get(ctx, derControlScope(edev, from, derp), coresingleton.SingletonKey)
+		dd, err := stores.DefaultDERControls.Get(ctx, derhref.ScopeKey(edev, from, derp), coresingleton.SingletonKey)
 		if errors.Is(err, store.ErrNotFound) {
 			continue
 		}
@@ -599,7 +592,7 @@ func moveFSAPrograms(ctx context.Context, stores *Stores, edev, from, to string)
 		if !ok || fsa != from {
 			continue
 		}
-		oldScope, newScope := derControlScope(edev, from, derp), derControlScope(edev, to, derp)
+		oldScope, newScope := derhref.ScopeKey(edev, from, derp), derhref.ScopeKey(edev, to, derp)
 		if err := moveControls(ctx, stores, oldScope, newScope, restamp); err != nil {
 			return fmt.Errorf("program %s: %w", derp, err)
 		}

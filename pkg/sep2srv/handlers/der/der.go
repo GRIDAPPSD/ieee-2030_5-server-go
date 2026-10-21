@@ -12,6 +12,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	coreresponse "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/response"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -196,7 +197,7 @@ func DERSingletonHandlers(
 func DefaultDERControlHandler(ddercStore store.ScopedStore[sep2.DefaultDERControl]) http.HandlerFunc {
 	readOnly := coresingleton.HandleSingletonGetPut[sep2.DefaultDERControl](ddercStore,
 		func(r *http.Request) string {
-			return r.PathValue("id") + "/" + r.PathValue("fsaId") + "/" + r.PathValue("derpId")
+			return derhref.ScopeKey(r.PathValue("id"), r.PathValue("fsaId"), r.PathValue("derpId"))
 		},
 		func(r *http.Request) sep2.DefaultDERControl {
 			s := sep2.DefaultDERControl{}

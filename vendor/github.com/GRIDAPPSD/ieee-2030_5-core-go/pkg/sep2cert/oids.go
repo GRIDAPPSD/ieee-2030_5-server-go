@@ -3,6 +3,7 @@ package sep2cert
 import (
 	"crypto/x509"
 	"encoding/asn1"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -97,26 +98,71 @@ type HardwareModuleName struct {
 	HWSerialNum []byte                // hwSerialNum, raw OCTET STRING bytes
 }
 
+// sanGeneralNames returns the content of a SAN extension's outer GeneralNames
+// SEQUENCE. Both HMN readers go through it so neither can accept a SAN whose
+// outer element is not a constructed universal SEQUENCE.
+func sanGeneralNames(ext []byte) ([]byte, bool) {
+	var seq asn1.RawValue
+	if _, err := asn1.Unmarshal(ext, &seq); err != nil {
+		return nil, false
+	}
+	if seq.Class != asn1.ClassUniversal || seq.Tag != asn1.TagSequence || !seq.IsCompound {
+		return nil, false
+	}
+	return seq.Bytes, true
+}
+
+// parseOtherNameHMN is the only decoder of a SAN otherName carrying an RFC 4108
+// HardwareModuleName. isHMN is false with a nil error when gn is not an
+// otherName or its TypeID is not OIDHardwareModuleName; a non-nil error means
+// gn claims to be an HMN otherName but is malformed.
+func parseOtherNameHMN(gn asn1.RawValue) (hmn HardwareModuleName, isHMN bool, err error) {
+	if gn.Class != asn1.ClassContextSpecific || gn.Tag != 0 {
+		return HardwareModuleName{}, false, nil
+	}
+	var on struct {
+		TypeID asn1.ObjectIdentifier
+		Value  asn1.RawValue
+	}
+	if _, err := asn1.UnmarshalWithParams(gn.FullBytes, &on, "tag:0"); err != nil {
+		return HardwareModuleName{}, false, fmt.Errorf("decoding otherName: %w", err)
+	}
+	if !on.TypeID.Equal(OIDHardwareModuleName) {
+		return HardwareModuleName{}, false, nil
+	}
+	var inner struct {
+		HWType      asn1.ObjectIdentifier
+		HWSerialNum asn1.RawValue
+	}
+	if _, err := asn1.Unmarshal(on.Value.Bytes, &inner); err != nil {
+		return HardwareModuleName{}, false, fmt.Errorf("decoding HardwareModuleName: %w", err)
+	}
+	if len(inner.HWType) == 0 {
+		return HardwareModuleName{}, false, errors.New("HardwareModuleName has empty hwType")
+	}
+	if inner.HWSerialNum.Tag != asn1.TagOctetString || inner.HWSerialNum.Class != asn1.ClassUniversal {
+		return HardwareModuleName{}, false, errors.New("HardwareModuleName hwSerialNum is not an OCTET STRING")
+	}
+	return HardwareModuleName{HWType: inner.HWType, HWSerialNum: inner.HWSerialNum.Bytes}, true, nil
+}
+
 // ExtractHardwareModuleName walks a parsed certificate's SubjectAlternativeName
 // extension looking for an otherName with TypeID == OIDHardwareModuleName
-// (RFC 4108 §5). It returns the parsed HardwareModuleName and ok=true on the
-// first match.
+// (RFC 4108 section 5). It returns the parsed HardwareModuleName and ok=true on
+// the first match.
 //
-// The function is intentionally conservative: any ASN.1 parse failure or a
-// malformed inner SEQUENCE returns ok=false. This is the canonical extractor;
-// callers that need a presence-only check should rely on the boolean ok
-// without inspecting the returned struct.
+// The function is intentionally conservative: any ASN.1 parse failure, a
+// malformed outer GeneralNames SEQUENCE or a malformed inner SEQUENCE returns
+// ok=false. Other GeneralName forms and non-HMN otherNames are skipped.
 func ExtractHardwareModuleName(cert *x509.Certificate) (HardwareModuleName, bool) {
 	for _, ext := range cert.Extensions {
 		if !ext.Id.Equal(OIDSubjectAltName) {
 			continue
 		}
-
-		var seq asn1.RawValue
-		if _, err := asn1.Unmarshal(ext.Value, &seq); err != nil {
+		rest, ok := sanGeneralNames(ext.Value)
+		if !ok {
 			return HardwareModuleName{}, false
 		}
-		rest := seq.Bytes
 		for len(rest) > 0 {
 			var gn asn1.RawValue
 			var err error
@@ -124,36 +170,13 @@ func ExtractHardwareModuleName(cert *x509.Certificate) (HardwareModuleName, bool
 			if err != nil {
 				return HardwareModuleName{}, false
 			}
-			if gn.Class != asn1.ClassContextSpecific || gn.Tag != 0 {
-				continue
-			}
-			var on struct {
-				TypeID asn1.ObjectIdentifier
-				Value  asn1.RawValue
-			}
-			if _, err := asn1.UnmarshalWithParams(gn.FullBytes, &on, "tag:0"); err != nil {
+			hmn, isHMN, err := parseOtherNameHMN(gn)
+			if err != nil {
 				return HardwareModuleName{}, false
 			}
-			if !on.TypeID.Equal(OIDHardwareModuleName) {
-				continue
+			if isHMN {
+				return hmn, true
 			}
-			var hmn struct {
-				HWType      asn1.ObjectIdentifier
-				HWSerialNum asn1.RawValue
-			}
-			if _, err := asn1.Unmarshal(on.Value.Bytes, &hmn); err != nil {
-				return HardwareModuleName{}, false
-			}
-			if len(hmn.HWType) == 0 {
-				return HardwareModuleName{}, false
-			}
-			if hmn.HWSerialNum.Tag != asn1.TagOctetString || hmn.HWSerialNum.Class != asn1.ClassUniversal {
-				return HardwareModuleName{}, false
-			}
-			return HardwareModuleName{
-				HWType:      hmn.HWType,
-				HWSerialNum: hmn.HWSerialNum.Bytes,
-			}, true
 		}
 	}
 	return HardwareModuleName{}, false
@@ -161,41 +184,31 @@ func ExtractHardwareModuleName(cert *x509.Certificate) (HardwareModuleName, bool
 
 // SANAllOtherNamesAreHardwareModuleName reports whether the cert's
 // SubjectAlternativeName extension is a well-formed GeneralNames SEQUENCE
-// AND every otherName entry inside is a well-formed RFC 4108 §5
-// HardwareModuleName (TypeID == OIDHardwareModuleName, inner value parses as
-// the HMN SEQUENCE).
+// AND every entry inside is a well-formed RFC 4108 section 5
+// HardwareModuleName otherName.
 //
 // Returns:
-//   - (true, true)  — SAN present, well-formed, every otherName is HMN.
-//   - (false, true) — SAN present but malformed, OR contains an otherName
-//     that is NOT HMN, OR has zero otherName entries. The caller MUST treat
-//     the SAN as unacknowledged.
-//   - (false, false) — no SAN extension on the cert at all.
+//   - (true, true)  - SAN present, well-formed, every otherName is HMN.
+//   - (false, true) - SAN present but malformed, OR contains an entry that is
+//     NOT an HMN otherName, OR has zero entries. The caller MUST treat the SAN
+//     as unacknowledged.
+//   - (false, false) - no SAN extension on the cert at all.
 //
 // Non-otherName GeneralName forms (dNSName, iPAddress, etc.) cause this to
 // return false: a CSIP device cert SAN is otherName-only, and the verifier
-// path that consults this helper is acknowledge-only for the HMN case. Any
-// other SAN content remains unhandled and must trip x509.Verify.
+// path that consults this helper is acknowledge-only for the HMN case.
 //
 // This is the strict counterpart to ExtractHardwareModuleName, which returns
-// the first HMN match and is the right tool for callers that just want to
-// read the HMN payload off a known-good cert.
+// the first HMN match and skips other entries.
 func SANAllOtherNamesAreHardwareModuleName(cert *x509.Certificate) (allHMN bool, sanPresent bool) {
 	for _, ext := range cert.Extensions {
 		if !ext.Id.Equal(OIDSubjectAltName) {
 			continue
 		}
-		// SAN extension found — every return below is (_, true).
-
-		var seq asn1.RawValue
-		if _, err := asn1.Unmarshal(ext.Value, &seq); err != nil {
+		rest, ok := sanGeneralNames(ext.Value)
+		if !ok {
 			return false, true
 		}
-		if seq.Class != asn1.ClassUniversal || seq.Tag != asn1.TagSequence || !seq.IsCompound {
-			return false, true
-		}
-
-		rest := seq.Bytes
 		entries := 0
 		for len(rest) > 0 {
 			var gn asn1.RawValue
@@ -205,42 +218,11 @@ func SANAllOtherNamesAreHardwareModuleName(cert *x509.Certificate) (allHMN bool,
 				return false, true
 			}
 			entries++
-			// Every GeneralName must be an otherName ([0] IMPLICIT) AND
-			// every otherName must be a well-formed HMN. Any non-otherName
-			// GeneralName (dNSName, iPAddress, etc.) means the SAN as a
-			// whole still carries content the verifier should not silently
-			// acknowledge.
-			if gn.Class != asn1.ClassContextSpecific || gn.Tag != 0 {
-				return false, true
-			}
-			var on struct {
-				TypeID asn1.ObjectIdentifier
-				Value  asn1.RawValue
-			}
-			if _, err := asn1.UnmarshalWithParams(gn.FullBytes, &on, "tag:0"); err != nil {
-				return false, true
-			}
-			if !on.TypeID.Equal(OIDHardwareModuleName) {
-				return false, true
-			}
-			var hmn struct {
-				HWType      asn1.ObjectIdentifier
-				HWSerialNum asn1.RawValue
-			}
-			if _, err := asn1.Unmarshal(on.Value.Bytes, &hmn); err != nil {
-				return false, true
-			}
-			if len(hmn.HWType) == 0 {
-				return false, true
-			}
-			if hmn.HWSerialNum.Tag != asn1.TagOctetString || hmn.HWSerialNum.Class != asn1.ClassUniversal {
+			if _, isHMN, err := parseOtherNameHMN(gn); err != nil || !isHMN {
 				return false, true
 			}
 		}
-		if entries == 0 {
-			return false, true
-		}
-		return true, true
+		return entries > 0, true
 	}
 	return false, false
 }

@@ -27,18 +27,9 @@ type FunctionSetAssignments struct {
 // Copy returns an independent copy.
 func (f FunctionSetAssignments) Copy() FunctionSetAssignments {
 	c := f
-	if f.DERProgramListLink != nil {
-		l := *f.DERProgramListLink
-		c.DERProgramListLink = &l
-	}
-	if f.UsagePointListLink != nil {
-		l := *f.UsagePointListLink
-		c.UsagePointListLink = &l
-	}
-	if f.DemandResponseProgramListLink != nil {
-		l := *f.DemandResponseProgramListLink
-		c.DemandResponseProgramListLink = &l
-	}
+	c.DERProgramListLink = clonePtr(f.DERProgramListLink)
+	c.UsagePointListLink = clonePtr(f.UsagePointListLink)
+	c.DemandResponseProgramListLink = clonePtr(f.DemandResponseProgramListLink)
 	return c
 }
 

@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -93,7 +94,7 @@ func TestMAINT_004_MaintenanceOfControls(t *testing.T) {
 	}
 
 	// Store assertion: the control is under the composite scope.
-	scope := maint004EndDeviceID + "/" + maint004FSAID + "/" + maint004ProgramID
+	scope := derhref.ScopeKey(maint004EndDeviceID, maint004FSAID, maint004ProgramID)
 	if _, err := srv.Stores.DERControls.Get(ctx, scope, maint004ControlID); err != nil {
 		t.Errorf("MAINT-004 Step 2: control not found at composite scope %q: %v", scope, err)
 	}

@@ -66,12 +66,29 @@ func ControlList(href string) (edev, fsa, derp string, ok bool) {
 }
 
 // ControlListScope is [ControlList] composed into the single scope key
-// string the DERControl store is keyed by ("edev/fsa/derp"), the same join
-// [internal/dercontrol.Scope]'s own key uses.
+// string the DERControl store is keyed by, via [ScopeKey].
 func ControlListScope(href string) (string, bool) {
 	edev, fsa, derp, ok := ControlList(href)
 	if !ok {
 		return "", false
 	}
-	return edev + "/" + fsa + "/" + derp, true
+	return ScopeKey(edev, fsa, derp), true
+}
+
+// ScopeKey is the store parent key a DER program's controls, lifecycle
+// records and default control are kept under ("edev/fsa/derp"). It is the
+// only place the join is written, so the stores and the issuer cannot
+// disagree on which program a record belongs to.
+func ScopeKey(edev, fsa, derp string) string {
+	return edev + "/" + fsa + "/" + derp
+}
+
+// SplitScopeKey is the inverse of [ScopeKey]. ok is false unless key has
+// exactly three non-empty segments.
+func SplitScopeKey(key string) (edev, fsa, derp string, ok bool) {
+	parts := strings.Split(key, "/")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return "", "", "", false
+	}
+	return parts[0], parts[1], parts[2], true
 }

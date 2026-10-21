@@ -38,6 +38,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
@@ -86,7 +87,7 @@ func TestCORE_021_RandomizedEvents(t *testing.T) {
 		derpID = "0"
 		dercID = "rnd-1"
 	)
-	scopeKey := edevID + "/" + fsaID + "/" + derpID
+	scopeKey := derhref.ScopeKey(edevID, fsaID, derpID)
 	dercStore := store.Under(stores.DERControls, scopeKey)
 	derc, err := dercStore.Get(ctx, dercID)
 	if err != nil {

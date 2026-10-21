@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -80,9 +79,9 @@ func (s *EndDeviceStore) loadFromFile(path string) error {
 	if len(env.Records) == 0 {
 		return nil // empty records
 	}
-	var records []endDeviceRecord
-	if err := json.Unmarshal(env.Records, &records); err != nil {
-		return fmt.Errorf("decode records: %w", err)
+	records, err := decodeSnapshotRecords[endDeviceRecord](env.Records)
+	if err != nil {
+		return err
 	}
 
 	ctx := context.Background()

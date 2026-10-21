@@ -47,11 +47,11 @@ der_controls:
     id: "0"
     mrid: "BASIC-004-DERC"
     der_control_base:
-      # Curve IDs reference der_curves[].id below. #140 fields.
-      op_mod_lvrt_must_trip: 0
-      op_mod_lvrt_momentary_cessation: 1
-      op_mod_hvrt_must_trip: 2
-      op_mod_hvrt_momentary_cessation: 3
+      # Each names a der_curves[].id below and is served as a link to /dc/<id>.
+      op_mod_lvrt_must_trip: "0"
+      op_mod_lvrt_momentary_cessation: "1"
+      op_mod_hvrt_must_trip: "2"
+      op_mod_hvrt_momentary_cessation: "3"
 
 # Four curves: LVRT-must-trip, LVRT-momentary-cessation, HVRT-must-trip,
 # HVRT-momentary-cessation. Each uses its own DERCurveType constant from

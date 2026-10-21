@@ -4,127 +4,71 @@ import "encoding/xml"
 
 // DERControlBase contains all DER operating mode parameters.
 // Spec reference: IEEE 2030.5 section 10.10.
-//
-// Curve-reference fields (OpModVoltVar, OpModVoltWatt, OpModFreqWatt,
-// OpModLVRT*, OpModHVRT*, OpModLFRT*, OpModHFRT*) are typed as *int32
-// to match the established project convention introduced with
-// OpModVoltVar: the value names the referenced DERCurve resource by
-// the int32 hash/ID the global /dc store keys on. Per IEEE 2030.5 the
-// schema element is a DERCurveLink (Link to a DERCurve); the project
-// trades wire fidelity for an integer ref keyed off the same /dc store.
 type DERControlBase struct {
 	OpModConnect        *bool             `xml:"opModConnect,omitempty"`
 	OpModEnergize       *bool             `xml:"opModEnergize,omitempty"`
 	OpModFixedPFAbsorbW *FixedPowerFactor `xml:"opModFixedPFAbsorbW,omitempty"`
 	OpModFixedPFInjectW *FixedPowerFactor `xml:"opModFixedPFInjectW,omitempty"`
-	OpModFixedVar       *ReactivePower    `xml:"opModFixedVar,omitempty"`
+	OpModFixedVar       *FixedVar         `xml:"opModFixedVar,omitempty"`
 	// OpModFixedW is a signed percentage of %setMaxChargeRateW when
 	// negative, or %setMaxW / %setMaxDischargeRateW when positive, in
 	// hundredths of a percent. IEEE 2030.5-2018 Annex B.2.22, opModFixedW
 	// attribute (SignedPerCent).
 	OpModFixedW                 *SignedPerCent `xml:"opModFixedW,omitempty"`
-	OpModFreqDroop              *uint16        `xml:"opModFreqDroop,omitempty"`
-	OpModFreqWatt               *int32         `xml:"opModFreqWatt,omitempty"`
-	OpModHFRTMustTrip           *int32         `xml:"opModHFRTMustTrip,omitempty"`
-	OpModHVRTMomentaryCessation *int32         `xml:"opModHVRTMomentaryCessation,omitempty"`
-	OpModHVRTMustTrip           *int32         `xml:"opModHVRTMustTrip,omitempty"`
-	OpModLFRTMustTrip           *int32         `xml:"opModLFRTMustTrip,omitempty"`
-	OpModLVRTMomentaryCessation *int32         `xml:"opModLVRTMomentaryCessation,omitempty"`
-	OpModLVRTMustTrip           *int32         `xml:"opModLVRTMustTrip,omitempty"`
+	OpModFreqDroop              *FreqDroopType `xml:"opModFreqDroop,omitempty"`
+	OpModFreqWatt               *DERCurveLink  `xml:"opModFreqWatt,omitempty"`
+	OpModHFRTMayTrip            *DERCurveLink  `xml:"opModHFRTMayTrip,omitempty"`
+	OpModHFRTMustTrip           *DERCurveLink  `xml:"opModHFRTMustTrip,omitempty"`
+	OpModHVRTMayTrip            *DERCurveLink  `xml:"opModHVRTMayTrip,omitempty"`
+	OpModHVRTMomentaryCessation *DERCurveLink  `xml:"opModHVRTMomentaryCessation,omitempty"`
+	OpModHVRTMustTrip           *DERCurveLink  `xml:"opModHVRTMustTrip,omitempty"`
+	OpModLFRTMayTrip            *DERCurveLink  `xml:"opModLFRTMayTrip,omitempty"`
+	OpModLFRTMustTrip           *DERCurveLink  `xml:"opModLFRTMustTrip,omitempty"`
+	OpModLVRTMayTrip            *DERCurveLink  `xml:"opModLVRTMayTrip,omitempty"`
+	OpModLVRTMomentaryCessation *DERCurveLink  `xml:"opModLVRTMomentaryCessation,omitempty"`
+	OpModLVRTMustTrip           *DERCurveLink  `xml:"opModLVRTMustTrip,omitempty"`
 	// OpModMaxLimW is a percentage of %setMaxW, in hundredths of a
 	// percent, capping active power generation at the coupling point.
 	// IEEE 2030.5-2018 Annex B.2.22, opModMaxLimW attribute (PerCent).
 	OpModMaxLimW   *PerCent       `xml:"opModMaxLimW,omitempty"`
 	OpModTargetVar *ReactivePower `xml:"opModTargetVar,omitempty"`
 	OpModTargetW   *ActivePower   `xml:"opModTargetW,omitempty"`
-	OpModVoltVar   *int32         `xml:"opModVoltVar,omitempty"`
-	OpModVoltWatt  *int32         `xml:"opModVoltWatt,omitempty"`
+	OpModVoltVar   *DERCurveLink  `xml:"opModVoltVar,omitempty"`
+	OpModVoltWatt  *DERCurveLink  `xml:"opModVoltWatt,omitempty"`
+	OpModWattPF    *DERCurveLink  `xml:"opModWattPF,omitempty"`
+	OpModWattVar   *DERCurveLink  `xml:"opModWattVar,omitempty"`
 	RampTms        *uint16        `xml:"rampTms,omitempty"`
 }
 
 // Copy returns an independent copy.
 func (d DERControlBase) Copy() DERControlBase {
 	c := d
-	if d.OpModConnect != nil {
-		v := *d.OpModConnect
-		c.OpModConnect = &v
-	}
-	if d.OpModEnergize != nil {
-		v := *d.OpModEnergize
-		c.OpModEnergize = &v
-	}
-	if d.OpModFixedPFAbsorbW != nil {
-		v := *d.OpModFixedPFAbsorbW
-		c.OpModFixedPFAbsorbW = &v
-	}
-	if d.OpModFixedPFInjectW != nil {
-		v := *d.OpModFixedPFInjectW
-		c.OpModFixedPFInjectW = &v
-	}
-	if d.OpModFixedW != nil {
-		v := *d.OpModFixedW
-		c.OpModFixedW = &v
-	}
-	if d.OpModFixedVar != nil {
-		v := *d.OpModFixedVar
-		c.OpModFixedVar = &v
-	}
-	if d.OpModFreqDroop != nil {
-		v := *d.OpModFreqDroop
-		c.OpModFreqDroop = &v
-	}
-	if d.OpModFreqWatt != nil {
-		v := *d.OpModFreqWatt
-		c.OpModFreqWatt = &v
-	}
-	if d.OpModHFRTMustTrip != nil {
-		v := *d.OpModHFRTMustTrip
-		c.OpModHFRTMustTrip = &v
-	}
-	if d.OpModHVRTMomentaryCessation != nil {
-		v := *d.OpModHVRTMomentaryCessation
-		c.OpModHVRTMomentaryCessation = &v
-	}
-	if d.OpModHVRTMustTrip != nil {
-		v := *d.OpModHVRTMustTrip
-		c.OpModHVRTMustTrip = &v
-	}
-	if d.OpModLFRTMustTrip != nil {
-		v := *d.OpModLFRTMustTrip
-		c.OpModLFRTMustTrip = &v
-	}
-	if d.OpModLVRTMomentaryCessation != nil {
-		v := *d.OpModLVRTMomentaryCessation
-		c.OpModLVRTMomentaryCessation = &v
-	}
-	if d.OpModLVRTMustTrip != nil {
-		v := *d.OpModLVRTMustTrip
-		c.OpModLVRTMustTrip = &v
-	}
-	if d.OpModMaxLimW != nil {
-		v := *d.OpModMaxLimW
-		c.OpModMaxLimW = &v
-	}
-	if d.OpModTargetW != nil {
-		v := *d.OpModTargetW
-		c.OpModTargetW = &v
-	}
-	if d.OpModTargetVar != nil {
-		v := *d.OpModTargetVar
-		c.OpModTargetVar = &v
-	}
-	if d.OpModVoltVar != nil {
-		v := *d.OpModVoltVar
-		c.OpModVoltVar = &v
-	}
-	if d.OpModVoltWatt != nil {
-		v := *d.OpModVoltWatt
-		c.OpModVoltWatt = &v
-	}
-	if d.RampTms != nil {
-		v := *d.RampTms
-		c.RampTms = &v
-	}
+	c.OpModConnect = clonePtr(d.OpModConnect)
+	c.OpModEnergize = clonePtr(d.OpModEnergize)
+	c.OpModFixedPFAbsorbW = clonePtr(d.OpModFixedPFAbsorbW)
+	c.OpModFixedPFInjectW = clonePtr(d.OpModFixedPFInjectW)
+	c.OpModFixedW = clonePtr(d.OpModFixedW)
+	c.OpModFixedVar = clonePtr(d.OpModFixedVar)
+	c.OpModFreqDroop = clonePtr(d.OpModFreqDroop)
+	c.OpModFreqWatt = clonePtr(d.OpModFreqWatt)
+	c.OpModHFRTMayTrip = clonePtr(d.OpModHFRTMayTrip)
+	c.OpModHFRTMustTrip = clonePtr(d.OpModHFRTMustTrip)
+	c.OpModHVRTMayTrip = clonePtr(d.OpModHVRTMayTrip)
+	c.OpModHVRTMomentaryCessation = clonePtr(d.OpModHVRTMomentaryCessation)
+	c.OpModHVRTMustTrip = clonePtr(d.OpModHVRTMustTrip)
+	c.OpModLFRTMayTrip = clonePtr(d.OpModLFRTMayTrip)
+	c.OpModLFRTMustTrip = clonePtr(d.OpModLFRTMustTrip)
+	c.OpModLVRTMayTrip = clonePtr(d.OpModLVRTMayTrip)
+	c.OpModLVRTMomentaryCessation = clonePtr(d.OpModLVRTMomentaryCessation)
+	c.OpModLVRTMustTrip = clonePtr(d.OpModLVRTMustTrip)
+	c.OpModMaxLimW = clonePtr(d.OpModMaxLimW)
+	c.OpModTargetW = clonePtr(d.OpModTargetW)
+	c.OpModTargetVar = clonePtr(d.OpModTargetVar)
+	c.OpModVoltVar = clonePtr(d.OpModVoltVar)
+	c.OpModVoltWatt = clonePtr(d.OpModVoltWatt)
+	c.OpModWattPF = clonePtr(d.OpModWattPF)
+	c.OpModWattVar = clonePtr(d.OpModWattVar)
+	c.RampTms = clonePtr(d.RampTms)
 	return c
 }
 
@@ -138,30 +82,10 @@ type DERControl struct {
 // Copy returns an independent copy.
 func (d DERControl) Copy() DERControl {
 	c := d
-	if d.ResponseRequired != nil {
-		v := *d.ResponseRequired
-		c.ResponseRequired = &v
-	}
-	if d.EventStatus != nil {
-		es := d.EventStatus.Copy()
-		c.EventStatus = &es
-	}
-	if d.Interval != nil {
-		i := *d.Interval
-		c.Interval = &i
-	}
-	if d.RandomizeDuration != nil {
-		v := *d.RandomizeDuration
-		c.RandomizeDuration = &v
-	}
-	if d.RandomizeStart != nil {
-		v := *d.RandomizeStart
-		c.RandomizeStart = &v
-	}
-	if d.DERControlBase != nil {
-		cb := d.DERControlBase.Copy()
-		c.DERControlBase = &cb
-	}
+	c.Event = d.Event.Copy()
+	c.RandomizeDuration = clonePtr(d.RandomizeDuration)
+	c.RandomizeStart = clonePtr(d.RandomizeStart)
+	c.DERControlBase = cloneCopyPtr(d.DERControlBase)
 	return c
 }
 
@@ -192,22 +116,11 @@ type DefaultDERControl struct {
 // Copy returns an independent copy.
 func (d DefaultDERControl) Copy() DefaultDERControl {
 	c := d
-	if d.Version != nil {
-		v := *d.Version
-		c.Version = &v
-	}
-	if d.DERControlBase != nil {
-		cb := d.DERControlBase.Copy()
-		c.DERControlBase = &cb
-	}
-	if d.SetGradW != nil {
-		v := *d.SetGradW
-		c.SetGradW = &v
-	}
-	if d.SetSoftGradW != nil {
-		v := *d.SetSoftGradW
-		c.SetSoftGradW = &v
-	}
+	c.SubscribableResource = d.SubscribableResource.Copy()
+	c.Version = clonePtr(d.Version)
+	c.DERControlBase = cloneCopyPtr(d.DERControlBase)
+	c.SetGradW = clonePtr(d.SetGradW)
+	c.SetSoftGradW = clonePtr(d.SetSoftGradW)
 	return c
 }
 
@@ -234,26 +147,12 @@ type DERProgram struct {
 // Copy returns an independent copy.
 func (p DERProgram) Copy() DERProgram {
 	c := p
-	if p.Version != nil {
-		v := *p.Version
-		c.Version = &v
-	}
-	if p.ActiveDERControlListLink != nil {
-		l := *p.ActiveDERControlListLink
-		c.ActiveDERControlListLink = &l
-	}
-	if p.DefaultDERControlLink != nil {
-		l := *p.DefaultDERControlLink
-		c.DefaultDERControlLink = &l
-	}
-	if p.DERControlListLink != nil {
-		l := *p.DERControlListLink
-		c.DERControlListLink = &l
-	}
-	if p.DERCurveListLink != nil {
-		l := *p.DERCurveListLink
-		c.DERCurveListLink = &l
-	}
+	c.SubscribableResource = p.SubscribableResource.Copy()
+	c.Version = clonePtr(p.Version)
+	c.ActiveDERControlListLink = clonePtr(p.ActiveDERControlListLink)
+	c.DefaultDERControlLink = clonePtr(p.DefaultDERControlLink)
+	c.DERControlListLink = clonePtr(p.DERControlListLink)
+	c.DERCurveListLink = clonePtr(p.DERCurveListLink)
 	return c
 }
 
@@ -278,26 +177,12 @@ type DER struct {
 // Copy returns an independent copy.
 func (d DER) Copy() DER {
 	c := d
-	if d.AssociatedDERProgramListLink != nil {
-		l := *d.AssociatedDERProgramListLink
-		c.AssociatedDERProgramListLink = &l
-	}
-	if d.DERAvailabilityLink != nil {
-		l := *d.DERAvailabilityLink
-		c.DERAvailabilityLink = &l
-	}
-	if d.DERCapabilityLink != nil {
-		l := *d.DERCapabilityLink
-		c.DERCapabilityLink = &l
-	}
-	if d.DERSettingsLink != nil {
-		l := *d.DERSettingsLink
-		c.DERSettingsLink = &l
-	}
-	if d.DERStatusLink != nil {
-		l := *d.DERStatusLink
-		c.DERStatusLink = &l
-	}
+	c.SubscribableResource = d.SubscribableResource.Copy()
+	c.AssociatedDERProgramListLink = clonePtr(d.AssociatedDERProgramListLink)
+	c.DERAvailabilityLink = clonePtr(d.DERAvailabilityLink)
+	c.DERCapabilityLink = clonePtr(d.DERCapabilityLink)
+	c.DERSettingsLink = clonePtr(d.DERSettingsLink)
+	c.DERStatusLink = clonePtr(d.DERStatusLink)
 	return c
 }
 
@@ -332,42 +217,15 @@ type DERCapability struct {
 // Copy returns an independent copy.
 func (d DERCapability) Copy() DERCapability {
 	c := d
-	if d.ModesSupported != nil {
-		v := *d.ModesSupported
-		c.ModesSupported = &v
-	}
-	if d.RTGMaxW != nil {
-		v := *d.RTGMaxW
-		c.RTGMaxW = &v
-	}
-	if d.RTGMaxA != nil {
-		v := *d.RTGMaxA
-		c.RTGMaxA = &v
-	}
-	if d.RTGMaxVar != nil {
-		v := *d.RTGMaxVar
-		c.RTGMaxVar = &v
-	}
-	if d.RTGMaxChargeRateW != nil {
-		v := *d.RTGMaxChargeRateW
-		c.RTGMaxChargeRateW = &v
-	}
-	if d.RTGMaxDischargeRateW != nil {
-		v := *d.RTGMaxDischargeRateW
-		c.RTGMaxDischargeRateW = &v
-	}
-	if d.RTGMaxV != nil {
-		v := *d.RTGMaxV
-		c.RTGMaxV = &v
-	}
-	if d.RTGMaxVA != nil {
-		v := *d.RTGMaxVA
-		c.RTGMaxVA = &v
-	}
-	if d.Type != nil {
-		v := *d.Type
-		c.Type = &v
-	}
+	c.ModesSupported = clonePtr(d.ModesSupported)
+	c.RTGMaxW = clonePtr(d.RTGMaxW)
+	c.RTGMaxA = clonePtr(d.RTGMaxA)
+	c.RTGMaxVar = clonePtr(d.RTGMaxVar)
+	c.RTGMaxChargeRateW = clonePtr(d.RTGMaxChargeRateW)
+	c.RTGMaxDischargeRateW = clonePtr(d.RTGMaxDischargeRateW)
+	c.RTGMaxV = clonePtr(d.RTGMaxV)
+	c.RTGMaxVA = clonePtr(d.RTGMaxVA)
+	c.Type = clonePtr(d.Type)
 	return c
 }
 
@@ -390,26 +248,12 @@ type DERSettings struct {
 // Copy returns an independent copy.
 func (d DERSettings) Copy() DERSettings {
 	c := d
-	if d.ModesEnabled != nil {
-		v := *d.ModesEnabled
-		c.ModesEnabled = &v
-	}
-	if d.SetMaxW != nil {
-		v := *d.SetMaxW
-		c.SetMaxW = &v
-	}
-	if d.SetMaxVar != nil {
-		v := *d.SetMaxVar
-		c.SetMaxVar = &v
-	}
-	if d.SetMaxChargeRateW != nil {
-		v := *d.SetMaxChargeRateW
-		c.SetMaxChargeRateW = &v
-	}
-	if d.SetMaxDischargeRateW != nil {
-		v := *d.SetMaxDischargeRateW
-		c.SetMaxDischargeRateW = &v
-	}
+	c.SubscribableResource = d.SubscribableResource.Copy()
+	c.ModesEnabled = clonePtr(d.ModesEnabled)
+	c.SetMaxW = clonePtr(d.SetMaxW)
+	c.SetMaxVar = clonePtr(d.SetMaxVar)
+	c.SetMaxChargeRateW = clonePtr(d.SetMaxChargeRateW)
+	c.SetMaxDischargeRateW = clonePtr(d.SetMaxDischargeRateW)
 	return c
 }
 
@@ -489,38 +333,15 @@ type DERStatus struct {
 // Copy returns an independent copy.
 func (d DERStatus) Copy() DERStatus {
 	c := d
-	if d.ConnectStatus != nil {
-		v := *d.ConnectStatus
-		c.ConnectStatus = &v
-	}
-	if d.StorConnectStatus != nil {
-		v := *d.StorConnectStatus
-		c.StorConnectStatus = &v
-	}
-	if d.GenConnectStatus != nil {
-		v := *d.GenConnectStatus
-		c.GenConnectStatus = &v
-	}
-	if d.InverterStatus != nil {
-		v := *d.InverterStatus
-		c.InverterStatus = &v
-	}
-	if d.OperationalModeStatus != nil {
-		v := *d.OperationalModeStatus
-		c.OperationalModeStatus = &v
-	}
-	if d.AlarmStatus != nil {
-		v := *d.AlarmStatus
-		c.AlarmStatus = &v
-	}
-	if d.StateOfChargeStatus != nil {
-		v := *d.StateOfChargeStatus
-		c.StateOfChargeStatus = &v
-	}
-	if d.StorageModeStatus != nil {
-		v := *d.StorageModeStatus
-		c.StorageModeStatus = &v
-	}
+	c.SubscribableResource = d.SubscribableResource.Copy()
+	c.ConnectStatus = clonePtr(d.ConnectStatus)
+	c.StorConnectStatus = clonePtr(d.StorConnectStatus)
+	c.GenConnectStatus = clonePtr(d.GenConnectStatus)
+	c.InverterStatus = clonePtr(d.InverterStatus)
+	c.OperationalModeStatus = clonePtr(d.OperationalModeStatus)
+	c.AlarmStatus = clonePtr(d.AlarmStatus)
+	c.StateOfChargeStatus = clonePtr(d.StateOfChargeStatus)
+	c.StorageModeStatus = clonePtr(d.StorageModeStatus)
 	return c
 }
 
@@ -550,30 +371,13 @@ type DERAvailability struct {
 // Copy returns an independent copy.
 func (d DERAvailability) Copy() DERAvailability {
 	c := d
-	if d.AvailabilityDuration != nil {
-		v := *d.AvailabilityDuration
-		c.AvailabilityDuration = &v
-	}
-	if d.MaxChargeDuration != nil {
-		v := *d.MaxChargeDuration
-		c.MaxChargeDuration = &v
-	}
-	if d.ReserveChargePercent != nil {
-		v := *d.ReserveChargePercent
-		c.ReserveChargePercent = &v
-	}
-	if d.ReservePercent != nil {
-		v := *d.ReservePercent
-		c.ReservePercent = &v
-	}
-	if d.StatVarAvail != nil {
-		v := *d.StatVarAvail
-		c.StatVarAvail = &v
-	}
-	if d.StatWAvail != nil {
-		v := *d.StatWAvail
-		c.StatWAvail = &v
-	}
+	c.SubscribableResource = d.SubscribableResource.Copy()
+	c.AvailabilityDuration = clonePtr(d.AvailabilityDuration)
+	c.MaxChargeDuration = clonePtr(d.MaxChargeDuration)
+	c.ReserveChargePercent = clonePtr(d.ReserveChargePercent)
+	c.ReservePercent = clonePtr(d.ReservePercent)
+	c.StatVarAvail = clonePtr(d.StatVarAvail)
+	c.StatWAvail = clonePtr(d.StatWAvail)
 	return c
 }
 
@@ -608,22 +412,10 @@ type DERCurve struct {
 // Copy returns an independent copy.
 func (d DERCurve) Copy() DERCurve {
 	c := d
-	if d.CurveData != nil {
-		c.CurveData = make([]CurveData, len(d.CurveData))
-		copy(c.CurveData, d.CurveData)
-	}
-	if d.RampDecTms != nil {
-		v := *d.RampDecTms
-		c.RampDecTms = &v
-	}
-	if d.RampIncTms != nil {
-		v := *d.RampIncTms
-		c.RampIncTms = &v
-	}
-	if d.RampPT1Tms != nil {
-		v := *d.RampPT1Tms
-		c.RampPT1Tms = &v
-	}
+	c.CurveData = cloneSlice(d.CurveData)
+	c.RampDecTms = clonePtr(d.RampDecTms)
+	c.RampIncTms = clonePtr(d.RampIncTms)
+	c.RampPT1Tms = clonePtr(d.RampPT1Tms)
 	return c
 }
 

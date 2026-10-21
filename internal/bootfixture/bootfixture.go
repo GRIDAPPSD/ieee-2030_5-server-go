@@ -18,13 +18,10 @@
 //     data_dir it seeds each persisted record once and yields to persisted
 //     state (#352).
 //
-// Schema duplication: bootfixture intentionally duplicates the YAML schema
-// from test/csip/csiptest/loader.go rather than depending on the test
-// package (production code under internal/ cannot import test/). The two
-// schemas are kept in sync by convention; flagged as future-work in the
-// #75 journal entry. Either both move into bootfixture (csiptest
-// re-exports) or stay duplicated - that decision belongs to a follow-up
-// ticket once a third consumer appears.
+// Shared schema: the CSIP loader in test/csip/csiptest uses this package's
+// DER control base, curve and active power shapes and their builders, and
+// inlines DERControlBaseSpec into its larger control base. The other fixture
+// shapes are still declared in both places and kept in sync by convention.
 package bootfixture
 
 import (
@@ -37,6 +34,8 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol/dercurve"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -170,20 +169,55 @@ type CurveDataSpec struct {
 //
 // OpModFixedW and OpModMaxLimW are bare integers in hundredths of a percent
 // (4000 = 40.00%), not watts; a multiplier/value mapping fails to decode.
+// A curve mode such as OpModVoltVar names the id of a der_curves entry and
+// is served as a link to that curve.
 type DERControlBaseSpec struct {
 	OpModConnect   *bool               `yaml:"op_mod_connect,omitempty"`
 	OpModEnergize  *bool               `yaml:"op_mod_energize,omitempty"`
 	OpModFixedW    *sep2.SignedPerCent `yaml:"op_mod_fixed_w,omitempty"`
 	OpModMaxLimW   *sep2.PerCent       `yaml:"op_mod_max_lim_w,omitempty"`
 	OpModTargetW   *ActivePowerSpec    `yaml:"op_mod_target_w,omitempty"`
-	OpModVoltVar   *int32              `yaml:"op_mod_volt_var,omitempty"`
-	OpModFreqDroop *uint16             `yaml:"op_mod_freq_droop,omitempty"`
+	OpModVoltVar   *string             `yaml:"op_mod_volt_var,omitempty"`
+	OpModFreqDroop *FreqDroopSpec      `yaml:"op_mod_freq_droop,omitempty"`
 	RampTms        *uint16             `yaml:"ramp_tms,omitempty"`
 }
 
-// validatePerCents refuses a percent the XML encoder would refuse, so an
+// FreqDroopSpec is the YAML shape of sep2.FreqDroopType. Every field is
+// required by the schema, so a missing one is refused rather than served
+// as zero. The CSIP loader uses this type and FreqDroop too.
+type FreqDroopSpec struct {
+	DBOF        *uint32 `yaml:"db_of"`
+	DBUF        *uint32 `yaml:"db_uf"`
+	KOF         *uint16 `yaml:"k_of"`
+	KUF         *uint16 `yaml:"k_uf"`
+	OpenLoopTms *uint16 `yaml:"open_loop_tms"`
+}
+
+// FreqDroop converts an op_mod_freq_droop spec, naming the first missing
+// field. A nil spec gives nil: the mode is absent.
+func FreqDroop(s *FreqDroopSpec) (*sep2.FreqDroopType, error) {
+	if s == nil {
+		return nil, nil
+	}
+	for _, f := range []struct {
+		name    string
+		missing bool
+	}{
+		{"db_of", s.DBOF == nil}, {"db_uf", s.DBUF == nil}, {"k_of", s.KOF == nil},
+		{"k_uf", s.KUF == nil}, {"open_loop_tms", s.OpenLoopTms == nil},
+	} {
+		if f.missing {
+			return nil, fmt.Errorf("op_mod_freq_droop: %s is required", f.name)
+		}
+	}
+	return &sep2.FreqDroopType{
+		DBOF: *s.DBOF, DBUF: *s.DBUF, KOF: *s.KOF, KUF: *s.KUF, OpenLoopTms: *s.OpenLoopTms,
+	}, nil
+}
+
+// ValidatePerCents refuses a percent the XML encoder would refuse, so an
 // out-of-range fixture fails at load instead of when the control is served.
-func (s *DERControlBaseSpec) validatePerCents() error {
+func (s *DERControlBaseSpec) ValidatePerCents() error {
 	if s == nil {
 		return nil
 	}
@@ -317,7 +351,7 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		if d.EndDeviceID == "" || d.FSAID == "" || d.DERProgramID == "" {
 			return fmt.Errorf("default_der_controls[%d]: end_device_id, fsa_id, der_program_id all required", i)
 		}
-		if err := d.DERControlBase.validatePerCents(); err != nil {
+		if err := d.DERControlBase.ValidatePerCents(); err != nil {
 			return fmt.Errorf("default_der_controls[%d]: %w", i, err)
 		}
 		if err := createDefaultDERControl(ctx, target, i, d); err != nil {
@@ -332,7 +366,7 @@ func applySpec(ctx context.Context, target *Target, spec *Spec) error {
 		if c.EndDeviceID == "" || c.FSAID == "" || c.DERProgramID == "" {
 			return fmt.Errorf("der_controls[%d] (id=%q): end_device_id, fsa_id, der_program_id all required", i, c.ID)
 		}
-		if err := c.DERControlBase.validatePerCents(); err != nil {
+		if err := c.DERControlBase.ValidatePerCents(); err != nil {
 			return fmt.Errorf("der_controls[%d] (id=%q): %w", i, c.ID, err)
 		}
 		if err := createDERControl(ctx, target, i, c); err != nil {
@@ -381,26 +415,54 @@ func createDERProgram(ctx context.Context, target *Target, i int, p DERProgramSp
 }
 
 func createDefaultDERControl(ctx context.Context, target *Target, i int, d DefaultDERControlSpec) error {
-	key := compositeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
-	if err := target.DefaultDERControls.Create(ctx, key, singletonKey, buildDefaultDERControl(d)); err != nil {
-		return fmt.Errorf("default_der_controls[%d] (scope=%q): create: %w", i, key, err)
+	key := derhref.ScopeKey(d.EndDeviceID, d.FSAID, d.DERProgramID)
+	dc, err := buildDefaultDERControl(d)
+	if err != nil {
+		return fmt.Errorf("%s: %w", DefaultDERControlEntry(i, key), err)
+	}
+	if err := target.DefaultDERControls.Create(ctx, key, singletonKey, dc); err != nil {
+		return fmt.Errorf("%s: create: %w", DefaultDERControlEntry(i, key), err)
 	}
 	return nil
 }
 
 func createDERControl(ctx context.Context, target *Target, i int, c DERControlSpec) error {
-	key := compositeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
-	if err := target.DERControls.Create(ctx, key, c.ID, buildDERControl(c)); err != nil {
-		return fmt.Errorf("der_controls[%d] (id=%q, scope=%q): create: %w", i, c.ID, key, err)
+	key := derhref.ScopeKey(c.EndDeviceID, c.FSAID, c.DERProgramID)
+	dc, err := buildDERControl(c)
+	if err != nil {
+		return fmt.Errorf("%s: %w", DERControlEntry(i, c.ID, key), err)
+	}
+	if err := target.DERControls.Create(ctx, key, c.ID, dc); err != nil {
+		return fmt.Errorf("%s: create: %w", DERControlEntry(i, c.ID, key), err)
 	}
 	return nil
 }
 
 func createDERCurve(ctx context.Context, target *Target, i int, c DERCurveSpec, loadTime int64) error {
-	if err := target.DERCurves.Create(ctx, c.ID, buildDERCurve(c, loadTime)); err != nil {
-		return fmt.Errorf("der_curves[%d] (id=%q): create: %w", i, c.ID, err)
+	curve, err := BuildDERCurve(c, loadTime)
+	if err != nil {
+		return fmt.Errorf("%s: %w", DERCurveEntry(i, c.ID), err)
+	}
+	if err := target.DERCurves.Create(ctx, c.ID, curve); err != nil {
+		return fmt.Errorf("%s: create: %w", DERCurveEntry(i, c.ID), err)
 	}
 	return nil
+}
+
+// DefaultDERControlEntry, DERControlEntry and DERCurveEntry name a failing
+// fixture entry, so this loader and the CSIP loader report it alike.
+func DefaultDERControlEntry(i int, scope string) string {
+	return fmt.Sprintf("default_der_controls[%d] (scope=%q)", i, scope)
+}
+
+// DERControlEntry: see DefaultDERControlEntry.
+func DERControlEntry(i int, id, scope string) string {
+	return fmt.Sprintf("der_controls[%d] (id=%q, scope=%q)", i, id, scope)
+}
+
+// DERCurveEntry: see DefaultDERControlEntry.
+func DERCurveEntry(i int, id string) string {
+	return fmt.Sprintf("der_curves[%d] (id=%q)", i, id)
 }
 
 func buildEndDevice(s EndDeviceSpec) sep2.EndDevice {
@@ -472,29 +534,37 @@ func buildDERProgram(s DERProgramSpec) sep2.DERProgram {
 	return prog
 }
 
-func buildDefaultDERControl(s DefaultDERControlSpec) sep2.DefaultDERControl {
+func buildDefaultDERControl(s DefaultDERControlSpec) (sep2.DefaultDERControl, error) {
 	dc := sep2.DefaultDERControl{MRID: s.MRID}
 	dc.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/dderc", s.EndDeviceID, s.FSAID, s.DERProgramID)
 	if s.DERControlBase != nil {
-		base := buildDERControlBase(*s.DERControlBase)
+		base, err := BuildDERControlBase(*s.DERControlBase)
+		if err != nil {
+			return sep2.DefaultDERControl{}, err
+		}
 		dc.DERControlBase = &base
 	}
-	return dc
+	return dc, nil
 }
 
-func buildDERControl(s DERControlSpec) sep2.DERControl {
+func buildDERControl(s DERControlSpec) (sep2.DERControl, error) {
 	dc := sep2.DERControl{}
 	dc.MRID = s.MRID
 	dc.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/derc/%s",
 		s.EndDeviceID, s.FSAID, s.DERProgramID, s.ID)
 	if s.DERControlBase != nil {
-		base := buildDERControlBase(*s.DERControlBase)
+		base, err := BuildDERControlBase(*s.DERControlBase)
+		if err != nil {
+			return sep2.DERControl{}, err
+		}
 		dc.DERControlBase = &base
 	}
-	return dc
+	return dc, nil
 }
 
-func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
+// BuildDERControlBase maps a DERControlBaseSpec onto sep2.DERControlBase.
+// The CSIP loader builds its larger spec's shared fields through it.
+func BuildDERControlBase(s DERControlBaseSpec) (sep2.DERControlBase, error) {
 	var base sep2.DERControlBase
 	if s.OpModConnect != nil {
 		v := *s.OpModConnect
@@ -515,26 +585,26 @@ func buildDERControlBase(s DERControlBaseSpec) sep2.DERControlBase {
 	if s.OpModTargetW != nil {
 		base.OpModTargetW = &sep2.ActivePower{Multiplier: s.OpModTargetW.Multiplier, Value: s.OpModTargetW.Value}
 	}
-	if s.OpModVoltVar != nil {
-		v := *s.OpModVoltVar
-		base.OpModVoltVar = &v
+	if err := dercurve.SetLinks(s, &base); err != nil {
+		return sep2.DERControlBase{}, err
 	}
-	if s.OpModFreqDroop != nil {
-		v := *s.OpModFreqDroop
-		base.OpModFreqDroop = &v
+	fd, err := FreqDroop(s.OpModFreqDroop)
+	if err != nil {
+		return sep2.DERControlBase{}, err
 	}
+	base.OpModFreqDroop = fd
 	if s.RampTms != nil {
 		v := *s.RampTms
 		base.RampTms = &v
 	}
-	return base
+	return base, nil
 }
 
-// buildDERCurve maps a DERCurveSpec onto sep2.DERCurve. CreationTime
+// BuildDERCurve maps a DERCurveSpec onto sep2.DERCurve. CreationTime
 // follows the spec's value when given; otherwise it is loadTime, the time
 // the enclosing fixture was loaded, so a served curve never claims the
 // Unix epoch (#539).
-func buildDERCurve(s DERCurveSpec, loadTime int64) sep2.DERCurve {
+func BuildDERCurve(s DERCurveSpec, loadTime int64) (sep2.DERCurve, error) {
 	creationTime := loadTime
 	if s.CreationTime != nil {
 		creationTime = *s.CreationTime
@@ -545,16 +615,16 @@ func buildDERCurve(s DERCurveSpec, loadTime int64) sep2.DERCurve {
 		CurveType:    s.CurveType,
 		CreationTime: creationTime,
 	}
-	curve.Href = fmt.Sprintf("/dc/%s", s.ID)
+	href, err := dercurve.Href(s.ID)
+	if err != nil {
+		return sep2.DERCurve{}, err
+	}
+	curve.Href = href
 	if len(s.CurveData) > 0 {
 		curve.CurveData = make([]sep2.CurveData, len(s.CurveData))
 		for i, p := range s.CurveData {
 			curve.CurveData[i] = sep2.CurveData{XValue: p.X, YValue: p.Y}
 		}
 	}
-	return curve
-}
-
-func compositeKey(edev, fsa, derp string) string {
-	return edev + "/" + fsa + "/" + derp
+	return curve, nil
 }

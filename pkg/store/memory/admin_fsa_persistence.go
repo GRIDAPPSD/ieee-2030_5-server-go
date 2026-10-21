@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -62,9 +61,9 @@ func (s *AdminFSAStore) loadFromFile(path string) error {
 	if env == nil || len(env.Records) == 0 {
 		return nil
 	}
-	var records []adminFSARecord
-	if err := json.Unmarshal(env.Records, &records); err != nil {
-		return fmt.Errorf("decode records: %w", err)
+	records, err := decodeSnapshotRecords[adminFSARecord](env.Records)
+	if err != nil {
+		return err
 	}
 
 	// Rehydrate directly into the maps so we keep the sorted-keys

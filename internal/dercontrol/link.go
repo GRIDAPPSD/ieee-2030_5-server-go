@@ -90,7 +90,7 @@ var ErrRelinkNotStarted = errors.New("dercontrol: relink stopped before writing"
 // Relink read, and a plain error returns that record (zero when the read
 // itself failed). A failed restore is a *UndoError.
 func (i *Issuer) Relink(ctx context.Context, scope Scope, id, grantMRID string) (LifecycleRecord, error) {
-	scopeKey := scopeKeyOf(scope)
+	scopeKey := scope.Key()
 	unlock := i.lockScope(scopeKey)
 	defer unlock()
 

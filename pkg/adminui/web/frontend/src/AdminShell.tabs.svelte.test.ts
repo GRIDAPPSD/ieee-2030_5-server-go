@@ -90,13 +90,13 @@ describe('AdminShell threads its shell state to the tab that owns it', () => {
   it('shows the fetched device row on the devices tab and nowhere else', async () => {
     const { container } = await renderOnPath('/ui/devices')
     await waitFor(() => {
-      expect(container.querySelector('[data-testid="device-sfdi"]')).toHaveTextContent('167261211635')
+      expect(container.querySelector('[data-testid="device-label"]')).toHaveTextContent('167261211635')
     })
 
     router.navigate('/')
     await tick()
 
-    expect(container.querySelector('[data-testid="device-sfdi"]')).toBeNull()
+    expect(container.querySelector('[data-testid="device-label"]')).toBeNull()
   })
 })
 

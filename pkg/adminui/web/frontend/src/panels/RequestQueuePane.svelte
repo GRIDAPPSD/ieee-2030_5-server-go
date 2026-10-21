@@ -9,6 +9,7 @@
   // view the server returns, never patched here.
   import { onDestroy, onMount } from 'svelte'
   import { fetchJSON } from '../lib/api'
+  import { deviceLabel } from '../lib/devices'
   import { formatAge } from '../lib/fleet'
   import {
     REASON_MAX,
@@ -515,7 +516,7 @@
     {#each views as view (view.lfdi)}
       {#if view.error !== null}
         <div class="result err" data-testid="frq-section-error">
-          Could not load requests for <span class="mono">{view.lfdi.substring(0, 16)}...</span>: {reason(view.error)}.
+          Could not load requests for <span class="mono">{deviceLabel(view.lfdi)}</span>: {reason(view.error)}.
           {#if view.queue !== null}Showing the queue fetched {formatAge(ageOf(view.fetchedAtMs))} (stale).{/if}
         </div>
       {/if}
@@ -537,7 +538,7 @@
           <tbody>
             {#each view.queue.requests as entry (entry.requestHref)}
               <tr data-testid="frq-row">
-                <td class="mono" title={entry.aggregatorLFDI}>{entry.aggregatorLFDI.substring(0, 16)}...</td>
+                <td class="mono" title={entry.aggregatorLFDI}>{deviceLabel(entry.aggregatorLFDI)}</td>
                 <td>
                   {formatInterval(entry.request.intervalRequested)}
                   <div data-testid="frq-requested">

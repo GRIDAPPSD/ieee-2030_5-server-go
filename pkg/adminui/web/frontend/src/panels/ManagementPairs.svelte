@@ -6,6 +6,7 @@
   // name a device the server does not hold.
   import { onDestroy, untrack } from 'svelte'
   import type { DashboardDevice } from '../lib/dashboard'
+  import { canon, deviceLabel } from '../lib/devices'
   import { createPair, listPairs, pairsKey, removePair, type ManagementPair } from '../lib/management'
 
   // ready is false until the shell has received its first device list, so an
@@ -108,8 +109,15 @@
     }
   }
 
+  // pairLabel names a pair's device from the registered list, so its SFDI is
+  // used when it has no name; a LFDI not in the list falls back to its prefix.
+  function pairLabel(lfdi: string): string {
+    const d = devices.find((x) => canon(x.lfdi) === canon(lfdi))
+    return deviceLabel(lfdi, d?.sfdi)
+  }
+
   function option(d: DashboardDevice): string {
-    return `${d.sfdi} (${d.lfdi.substring(0, 8)}...)`
+    return `${deviceLabel(d.lfdi, d.sfdi)} (${d.lfdi.substring(0, 8)}...)`
   }
 </script>
 
@@ -120,11 +128,13 @@
   </p>
   <table>
     <thead>
-      <tr><th>Manager LFDI</th><th>Managed LFDI</th><th></th></tr>
+      <tr><th>Manager</th><th>Managed device</th><th>Manager LFDI</th><th>Managed LFDI</th><th></th></tr>
     </thead>
     <tbody>
       {#each pairs as pair (pair.managedLFDI)}
         <tr data-testid="pair-row">
+          <td data-testid="pair-manager-label">{pairLabel(pair.managerLFDI)}</td>
+          <td data-testid="pair-managed-label">{pairLabel(pair.managedLFDI)}</td>
           <td class="mono" data-testid="pair-manager">{pair.managerLFDI}</td>
           <td class="mono" data-testid="pair-managed">{pair.managedLFDI}</td>
           <td><button
@@ -135,9 +145,9 @@
         </tr>
       {/each}
       {#if !ready || !loaded}
-        <tr><td colspan="3" class="stat-label" data-testid="pairs-loading">Loading...</td></tr>
+        <tr><td colspan="5" class="stat-label" data-testid="pairs-loading">Loading...</td></tr>
       {:else if !listError && pairs.length === 0}
-        <tr><td colspan="3" class="stat-label" data-testid="pairs-empty">No management pairs</td></tr>
+        <tr><td colspan="5" class="stat-label" data-testid="pairs-empty">No management pairs</td></tr>
       {/if}
     </tbody>
   </table>

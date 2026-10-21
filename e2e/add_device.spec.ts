@@ -63,7 +63,7 @@ test('add device from pasted certificate', async ({ page }) => {
   // 5) Verify lookup-by-LFDI returns the new device.
   await page.locator('#lookupLFDI').fill(lfdi);
   await page.getByRole('button', { name: 'Lookup' }).click();
-  await expect(page.locator('#lookupResult')).toContainText(`SFDI=${sfdi}`, { timeout: 5000 });
+  await expect(page.locator('#lookupResult')).toContainText('add-device E2E test device', { timeout: 5000 });
 });
 
 test('lookup unknown LFDI returns found:false', async ({ page }) => {

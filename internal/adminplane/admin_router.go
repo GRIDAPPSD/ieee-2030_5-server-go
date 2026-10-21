@@ -189,7 +189,7 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	if stores != nil {
 		authed.HandleFunc("GET /api/devices/by-lfdi/{lfdi}", handler.HandleDeviceLookupByLFDI(stores.EndDevices))
 		if !store.IsAbsent(stores.Registrations) {
-			mountWrite("POST /api/devices", handler.HandleAddEndDevice(stores.EndDevices, stores.Registrations, stores.DeviceProfiles))
+			mountWrite("POST /api/devices", handler.HandleAddEndDevice(stores.EndDevices, stores.Registrations, stores.DeviceProfiles, stores.EndDeviceManagers))
 		}
 	}
 

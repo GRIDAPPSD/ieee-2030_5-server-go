@@ -18,11 +18,16 @@ import (
 //	PUT /api/device-profiles/{lfdi}   set the name and kind of one device
 //
 // POST /api/devices writes the same record through deviceProfileInputRefusal
-// and DeviceProfileStore.Put, so the rules live in one place.
+// and DeviceProfileStore.Put, and both routes check a kind against the pairs
+// with kindGate.profileKindRefusal, so the rules live in one place.
 
 // AdminDeviceProfileHandler is the dependency surface of the profile routes.
 type AdminDeviceProfileHandler struct {
 	Profiles store.DeviceProfileStore
+
+	// Managers supplies the pairs a kind change is checked against. Nil
+	// leaves the check off.
+	Managers store.EndDeviceManagementReader
 }
 
 // deviceProfileBody is the body of PUT /api/device-profiles/{lfdi}.
@@ -82,6 +87,13 @@ func (h *AdminDeviceProfileHandler) HandlePutDeviceProfile() http.HandlerFunc {
 		}
 		if msg := deviceProfileInputRefusal(body.Name, body.Kind); msg != "" {
 			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
+		if msg, err := (kindGate{managers: h.Managers}).profileKindRefusal(r.Context(), lfdi, body.Kind); err != nil {
+			writeDeviceProfileError(w, "put", err)
+			return
+		} else if msg != "" {
+			writeError(w, http.StatusConflict, msg)
 			return
 		}
 		profile := store.DeviceProfile{LFDI: lfdi, Name: body.Name, Kind: body.Kind}

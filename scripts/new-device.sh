@@ -141,7 +141,7 @@ RULE="$(printf '%.0s=' {1..79})"
 printf '\n%s\n' "$RULE"
 printf ' Paste the PEM block below into the admin dashboard'\''s "Add End Device" textarea\n'
 printf ' (http://localhost:8444/ - Path 0 loopback bypass admits without creds).\n'
-printf ' Then fill in Description and PIN, and click Add Device.\n'
+printf ' Then fill in Name (optional) and PIN, and click Add Device.\n'
 printf '%s\n' "$RULE"
 cat "$CERT_PATH"
 printf '%s\n' "$RULE"

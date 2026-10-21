@@ -6,6 +6,7 @@
   import Self from './TopologyNodeView.svelte'
   import FsaNode from './FsaNode.svelte'
   import { nodeColor, type TopologyNode } from '../lib/fsa'
+  import { deviceLabel } from '../lib/devices'
 
   let {
     node,
@@ -22,7 +23,7 @@
   let hasChildren = $derived((node.children?.length ?? 0) > 0 || (node.fsas?.length ?? 0) > 0)
   let prefix = $derived(hasChildren ? (collapsed ? '[+] ' : '[-] ') : '    ')
   let suffix = $derived(
-    node.kind === 'DEV' ? ` (SFDI=${node.sfdi || '-'}, ${node.enabled ? 'ON' : 'OFF'})` : '',
+    node.kind === 'DEV' ? ` (${deviceLabel(node.lfdi, node.sfdi) || '-'}, ${node.enabled ? 'ON' : 'OFF'})` : '',
   )
 </script>
 

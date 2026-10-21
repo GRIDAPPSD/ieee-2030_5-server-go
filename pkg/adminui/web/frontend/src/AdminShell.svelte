@@ -8,6 +8,7 @@
   // assign/mint in any panel updates every panel that shows the result.
   import { onDestroy, onMount, untrack } from 'svelte'
   import { fetchJSON } from './lib/api'
+  import { loadDeviceProfiles } from './lib/devices'
   import {
     appendHistory,
     connectDashboard,
@@ -212,6 +213,28 @@
     }
   })
 
+  // Device names label every device view, so they load on every tab entry.
+  // A device added here reloads straight away (onAdded below); a device set
+  // that changes any other way shows its SFDI until the next tab entry. A
+  // failed read keeps the names already held and says so, since a missing
+  // name shows as an SFDI and could be read as "no name set". Only the
+  // newest load sets or clears that message.
+  let deviceNamesError = $state('')
+  let namesSeq = 0
+
+  async function loadNames() {
+    const seq = ++namesSeq
+    const res = await loadDeviceProfiles()
+    if (destroyed || seq !== namesSeq) return
+    deviceNamesError = res.ok ? '' : res.error
+  }
+
+  $effect(() => {
+    if (!streaming) return
+    void activeTab
+    untrack(() => void loadNames())
+  })
+
   onDestroy(() => {
     destroyed = true
     disconnect?.()
@@ -247,6 +270,9 @@
   {#if panelsError}
     <div class="card result err" role="alert" data-testid="panels-error">{panelsError}</div>
   {/if}
+  {#if deviceNamesError}
+    <div class="card hint" data-testid="device-names-error">Device names could not be loaded ({deviceNamesError}); devices show their SFDI.</div>
+  {/if}
   {#if dashboardError}
     <div class="card result err" role="alert" data-testid="dashboard-error">{dashboardError}</div>
   {/if}
@@ -257,7 +283,7 @@
       <ActivityChart {history} />
     {:else if activeTab === 'devices'}
       <DeviceTable devices={data?.devices ?? []} columns={data?.columns ?? []} {fsas} onChanged={refresh} />
-      <AddDevice onAdded={refresh} pending={mintedCert} />
+      <AddDevice onAdded={() => { void refresh(); void loadNames() }} pending={mintedCert} />
       <LookupDevice />
       <ManagementPairs devices={data?.devices ?? []} ready={data !== null || probeError !== ''} />
     {:else if activeTab === 'fsas'}

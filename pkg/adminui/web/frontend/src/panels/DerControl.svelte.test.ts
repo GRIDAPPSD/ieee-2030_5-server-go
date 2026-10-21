@@ -436,13 +436,13 @@ describe('DerControl: result area and primacy', () => {
     expect(result(container)).toHaveTextContent('A server restart forgets this control.')
   })
 
-  it('on refusal shows the server error text, no primacy, and reloads the table', async () => {
+  it('a device whose program holds primacy 0 gets the server\'s refusal as written, no primacy line, and a reloaded table', async () => {
     const { post, container, controlGets } = await mount()
-    post.mockResolvedValue({ ok: false, error: 'primacy cannot outrank the other programs', status: 409 })
+    post.mockResolvedValue({ ok: false, error: 'no primacy outranks program /edev/0/fsa/0/derp/p1, which holds primacy 0; change or remove that program first', status: 409, body: { code: 'primacy_cannot_outrank' } })
     await fillFlagSchedule(container)
     const before = controlGets()
     await sendAndConfirm()
-    await waitFor(() => expect(result(container)).toHaveTextContent('Error: primacy cannot outrank the other programs'))
+    await waitFor(() => expect(result(container)).toHaveTextContent('Error: no primacy outranks program /edev/0/fsa/0/derp/p1, which holds primacy 0; change or remove that program first'))
     expect(screen.queryByTestId('der-control-primacy')).toBeNull()
     await waitFor(() => expect(controlGets()).toBeGreaterThan(before))
   })

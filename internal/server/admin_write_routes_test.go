@@ -38,6 +38,8 @@ var wantAdminWriteRoutes = []string{
 	"POST /api/devices/{id}/fsas/{fsaId}/der-programs",
 	"POST /api/fsas",
 	"POST /api/fsas/{id}/der-programs",
+	"POST /api/fsas/{id}/der-programs/{derpId}/controls",
+	"POST /api/fsas/{id}/der-programs/{derpId}/controls/{controlId}/cancel",
 	"POST /api/fsas/{id}/programs",
 	"POST /api/management-pairs",
 	"POST /api/management-pairs/rekey",
@@ -79,6 +81,9 @@ var wantAdminBodyTypes = map[string][]string{
 	"POST /api/der/controls":                           {"application/json"},
 	"POST /api/der/controls/{mrid}/cancel":             {"application/json"},
 	"POST /api/devices/{id}/controls":                  {"application/json"},
+
+	"POST /api/fsas/{id}/der-programs/{derpId}/controls":                    {"application/json"},
+	"POST /api/fsas/{id}/der-programs/{derpId}/controls/{controlId}/cancel": {"application/json"},
 
 	"POST /api/derms/flow-reservations/{edevId}/{frqId}/answer": {"application/json"},
 	"POST /api/derms/flow-reservations/{edevId}/{frqId}/revise": {"application/json"},

@@ -122,6 +122,17 @@ func TestProgramTemplateWithNoFixtureCarriesAControlToTheDevice(t *testing.T) {
 	bootForTemplateTest(t, c, cfg, device.tlsConfig)
 	assertDeviceReadsCopy(t, proto, c.sep2Probe, devID, programHref, tmpl.MRID, tmpl.DefaultControl.MRID, control.MRID)
 
+	// Unassigning would take the live control off the device without
+	// cancelling it, so it is refused until the control is cancelled (#972).
+	status, body = adminDo(http.MethodDelete, "/api/devices/"+devID+"/fsa-assignment?fsaHref=/api/fsas/fsa-roof", "")
+	if status != http.StatusConflict || !strings.Contains(string(body), `"code":"live_controls"`) || !strings.Contains(string(body), programHref+"/derc/") {
+		t.Fatalf("unassign with a live control: %d %s, want 409 live_controls naming the control", status, body)
+	}
+	assertDeviceReadsCopy(t, proto, c.sep2Probe, devID, programHref, tmpl.MRID, tmpl.DefaultControl.MRID, control.MRID)
+	if status, body := adminDo(http.MethodPost, "/api/der/controls/"+control.MRID+"/cancel", `{}`); status != http.StatusOK {
+		t.Fatalf("cancel the control: %d %s", status, body)
+	}
+
 	// Unassigning removes the copy from the wire and from the control API.
 	if status, body := adminDo(http.MethodDelete, "/api/devices/"+devID+"/fsa-assignment?fsaHref=/api/fsas/fsa-roof", ""); status != http.StatusNoContent {
 		t.Fatalf("unassign: %d %s", status, body)

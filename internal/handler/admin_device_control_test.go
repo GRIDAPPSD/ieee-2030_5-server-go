@@ -3,6 +3,7 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -549,5 +550,33 @@ func TestDeviceControl_GetDefault_EmptinessFollowsTheBaseFunctions(t *testing.T)
 	}
 	if w := x.getDefault("1"); w.Code != http.StatusOK {
 		t.Errorf("default with opModConnect = %d %s, want 200", w.Code, w.Body.String())
+	}
+}
+
+// #1043 round 1: a device program whose default was cleared is an operator
+// state, not a server fault.
+func TestDeviceControl_ClearedDefault_IsAConflictForDefaultAndNoObstacleForPrimacy(t *testing.T) {
+	x := newDeviceControlFixture(t)
+	first := decodeDeviceControl(t, x.post("1", defaultBody(4000)))
+	if w := x.f.do(http.MethodPut, devicePath("1", first.Program), clearBody); w.Code != http.StatusOK {
+		t.Fatalf("clear: %d %s", w.Code, w.Body.String())
+	}
+
+	w := x.post("1", defaultBody(2500))
+	if code := decodeCode(t, w, http.StatusConflict); code != "no_default_control" {
+		t.Errorf("kind default after a clear: code = %q, want no_default_control", code)
+	}
+	if _, err := x.f.copies.Defaults.Get(context.Background(), derhref.ScopeKey("1", first.FSA, first.Program), coresingleton.SingletonKey); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("a refused default wrote one: %v", err)
+	}
+
+	x.dc.seedProgram(t, "1", "0", "late", "LATE-PROGRAM", 50, true)
+	second := decodeDeviceControl(t, x.post("1", scheduledBody(t, 3000)))
+	if second.Program != first.Program || second.Primacy != 2 {
+		t.Errorf("scheduled after a clear = program %s primacy %d, want program %s primacy 2", second.Program, second.Primacy, first.Program)
+	}
+	p, _ := x.f.copies.Programs.Get(context.Background(), "1", first.Program)
+	if p.Primacy != 2 || p.DefaultDERControlLink != nil {
+		t.Errorf("program primacy %d link %+v, want 2 and no link", p.Primacy, p.DefaultDERControlLink)
 	}
 }

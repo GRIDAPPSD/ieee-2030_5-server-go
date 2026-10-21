@@ -123,6 +123,10 @@ var valueRootedHrefs = map[string]string{
 	// upt.Href is UsagePointHref(id), which is "/upt/" + id.
 	"{}/mr": "/upt/{}/mr",
 
+	// der/der.go: DefaultHref appends to a DERProgram href, which is
+	// DERProgramHref(edev, fsa, derp).
+	"{}/dderc": "/edev/{}/fsa/{}/derp/{}/dderc",
+
 	// der/links.go: FillAbsentDERLinks derives each DER sub-resource link from
 	// base, the DER's own canonical href, which is "/edev/{id}/der/{derId}".
 	// These four are what make the acknowledgement rule bite on that function: a

@@ -16,7 +16,7 @@ export interface ProgramBody {
   description: string
   primacy: number
   mRID?: string
-  defaultControl?: DefaultControlBody
+  defaultControl?: DefaultControlBody | null
 }
 
 export interface DefaultControlView {
@@ -28,7 +28,8 @@ export interface DefaultControlView {
   derControlBase: Record<string, unknown>
 }
 
-// A device program's defaultControl is absent when it has none.
+// A program's defaultControl is absent when it has none: a device program,
+// or a template whose default was removed.
 export interface ProgramView {
   id: string
   mRID: string
@@ -39,7 +40,6 @@ export interface ProgramView {
 }
 
 export interface ProgramTemplate extends ProgramView {
-  defaultControl: DefaultControlView
   copies: string[]
 }
 

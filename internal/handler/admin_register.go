@@ -265,9 +265,9 @@ func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter, profile
 			PIN:                req.PIN,
 		}
 		if err := regs.Create(r.Context(), id, reg); err != nil {
-			// EndDevice exists but Registration write failed. Best-effort
-			// rollback so we don't leave a device without a Registration.
-			_ = s.Delete(r.Context(), id)
+			// EndDevice exists but Registration write failed: undo it so we
+			// don't leave a device without a Registration.
+			rollbackAddedDevice(r.Context(), s, regs, id)
 			writeError(w, http.StatusInternalServerError, "create registration: "+err.Error())
 			return
 		}
@@ -305,10 +305,19 @@ func validLFDI(s string) bool {
 	return err == nil
 }
 
+// rollbackBound limits how long a rollback may run once the request is gone.
+const rollbackBound = 5 * time.Second
+
 // rollbackAddedDevice removes the Registration and EndDevice a failed add
-// created. A failed rollback is logged, since the response already reports
-// the failure that caused it.
-func rollbackAddedDevice(ctx context.Context, s store.EndDeviceStore, regs RegistrationWriter, id string) {
+// created. Both deletes are needed: the admin plane is wired with the plain
+// EndDevice store, whose Delete leaves the Registration alone, while a
+// RegisteredEndDeviceStore removes it too and then answers ErrNotFound here,
+// which is ignored. It runs on a context the request cannot cancel, so a
+// client that disconnects mid-add cannot leave a half-created device. A failed
+// rollback is logged, since the response already reports the cause.
+func rollbackAddedDevice(reqCtx context.Context, s store.EndDeviceStore, regs RegistrationWriter, id string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), rollbackBound)
+	defer cancel()
 	if err := regs.Delete(ctx, id); err != nil && !errors.Is(err, store.ErrNotFound) {
 		log.Printf("admin add device: rollback registration %s: %v", logsafe.Str(id), logsafe.Err(err))
 	}

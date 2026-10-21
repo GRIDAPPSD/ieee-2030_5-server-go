@@ -286,7 +286,10 @@ func (s *stubRegs) Create(_ context.Context, id string, reg sep2.Registration) e
 }
 
 // Delete forgets the Registration Create recorded, as the real store does.
-func (s *stubRegs) Delete(_ context.Context, id string) error {
+func (s *stubRegs) Delete(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.created || s.last.id != id {

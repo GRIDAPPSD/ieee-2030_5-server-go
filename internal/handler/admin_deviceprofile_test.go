@@ -1,10 +1,12 @@
 package handler_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -230,5 +232,88 @@ func TestPutDeviceProfileStoreFailureAnswers500WithoutText(t *testing.T) {
 	w := putProfile(h.HandlePutDeviceProfile(), profileLFDIA, `{"name":"x"}`)
 	if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "/var/x") {
 		t.Errorf("status = %d body = %s; want 500 without the error text", w.Code, w.Body.String())
+	}
+}
+
+func TestAddEndDeviceRollbackSurvivesCancelledRequest(t *testing.T) {
+	devs := memory.NewEndDeviceStore()
+	regs := &stubRegs{}
+	sfdi, lfdi := freshAddDeviceCert(t)
+	body := fmt.Sprintf(`{"sfdi":%q,"lfdi":%q,"name":"Roof","pin":1,"enabled":true}`, sfdi, lfdi)
+	ctx, cancel := context.WithCancel(context.Background())
+	// The client is gone by the time the profile write fails.
+	profiles := cancellingProfiles{cancel: cancel}
+	req := httptest.NewRequest(http.MethodPost, "/api/devices", strings.NewReader(body)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.HandleAddEndDevice(devs, regs, profiles)(w, req)
+
+	if ctx.Err() == nil {
+		t.Fatal("control: the request context was never cancelled")
+	}
+	if regs.created {
+		t.Error("Registration survived because the rollback ran on the cancelled request context")
+	}
+	if _, err := devs.GetByLFDI(context.Background(), lfdi); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("EndDevice survived: err = %v", err)
+	}
+}
+
+// cancellingProfiles cancels the request, then fails the Put.
+type cancellingProfiles struct {
+	store.DeviceProfileStore
+	cancel context.CancelFunc
+}
+
+func (c cancellingProfiles) Put(context.Context, store.DeviceProfile) error {
+	c.cancel()
+	return errors.New("client gone")
+}
+
+func TestAddEndDeviceFailedAddLeavesNeitherRecordInWiredStores(t *testing.T) {
+	// The admin plane is wired with the plain EndDevice store and the plain
+	// Registration store, so the rollback must remove both itself.
+	devs := memory.NewEndDeviceStore()
+	regs := memory.NewRegistrationStore()
+	profiles := failingProfiles{DeviceProfileStore: memory.NewDeviceProfileStore(), err: errors.New("disk full")}
+
+	w, lfdi := postAddDevice(t, devs, regs, profiles, `,"name":"Roof"`)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d; body = %s", w.Code, w.Body.String())
+	}
+	if _, err := devs.GetByLFDI(context.Background(), lfdi); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("EndDevice survived: err = %v", err)
+	}
+	list, err := regs.List(context.Background(), store.ListOptions{Unbounded: true})
+	if err != nil || list.All != 0 {
+		t.Errorf("registrations after a failed add = %d, %v; want 0", list.All, err)
+	}
+}
+
+// failingDeleteDevices refuses Delete, as a store that cannot undo a Create.
+type failingDeleteDevices struct{ store.EndDeviceStore }
+
+func (failingDeleteDevices) Delete(context.Context, string) error {
+	return errors.New("delete refused")
+}
+
+func TestAddEndDeviceRegistrationFailureLogsFailedRollback(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	devs := failingDeleteDevices{memory.NewEndDeviceStore()}
+	regs := &stubRegs{createErr: errors.New("regs down")}
+	w, _ := postAddDevice(t, devs, regs, memory.NewDeviceProfileStore(), ``)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d; body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(buf.String(), "rollback end device") {
+		t.Errorf("a failed rollback was not logged: %q", buf.String())
 	}
 }

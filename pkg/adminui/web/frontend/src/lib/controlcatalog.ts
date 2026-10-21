@@ -313,3 +313,15 @@ export function fieldStateFromFunctions(rows: CatalogRow[], functions: Record<st
   }
   return state
 }
+
+// uneditableFunctions is the part of a stored default the form has no field
+// for: a name the catalog lacks, or a row of an unsupported kind. A form that
+// saves a default sends these back unchanged so a save never drops them.
+export function uneditableFunctions(rows: CatalogRow[], functions: Record<string, unknown> | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [name, value] of Object.entries(functions ?? {})) {
+    const row = rows.find((r) => r.name === name)
+    if (!row || !isSupportedKind(row.kind)) out[name] = value
+  }
+  return out
+}

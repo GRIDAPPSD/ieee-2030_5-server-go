@@ -11,6 +11,7 @@ import {
   loadCatalog,
   loadCurves,
   primacyText,
+  uneditableFunctions,
   type CatalogRow,
   type ControlFormInput,
   type FieldValue,
@@ -261,5 +262,14 @@ describe('loading the catalog and the curves', () => {
     expect(await loadCurves()).toEqual({ ok: false, error: 'Stored curves could not be read: no store' })
     reply(200, { curves: [{ id: 'c', curveType: 7, description: 'd' }] })
     expect(await loadCurves()).toEqual({ ok: true, data: [{ id: 'c', curveType: 7, description: 'd' }] })
+  })
+})
+
+describe('uneditableFunctions', () => {
+  it('returns the stored names the catalog lacks and those of an unsupported kind, with their values', () => {
+    const odd: CatalogRow = { name: 'rowE', description: 'odd', kind: 'matrix' }
+    expect(uneditableFunctions([flag, odd], { rowA: true, rowE: [1], gone: 2 })).toEqual({ rowE: [1], gone: 2 })
+    expect(uneditableFunctions([flag], { rowA: true })).toEqual({})
+    expect(uneditableFunctions([flag], undefined)).toEqual({})
   })
 })

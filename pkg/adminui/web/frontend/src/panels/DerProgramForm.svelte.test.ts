@@ -5,7 +5,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
 import DerProgramForm from './DerProgramForm.svelte'
-import { CATALOG_ROUTES } from '../lib/controlcatalog.fixture'
+import { CATALOG_ROUTES, FIXTURE_ROWS } from '../lib/controlcatalog.fixture'
 import type { ProgramBody, ProgramView } from '../lib/derprogram'
 
 type Result = { ok: true } | { ok: false; message: string }
@@ -245,6 +245,54 @@ describe('DerProgramForm edit', () => {
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
     expect(onSubmit).toHaveBeenCalledWith({ description: 'roof fleet', primacy: 65 })
+  })
+
+  describe('a stored function the form cannot edit', () => {
+    const withExtra: ProgramView = {
+      ...stored,
+      defaultControl: {
+        mRID: 'DEF',
+        type: 'combined',
+        derControlBase: {},
+        functions: { fnFlag: true, fnGone: 7, fnOdd: { x: 1 } },
+      },
+    }
+    // fnOdd is in the catalog with a kind the form has no field for.
+    function serveWithOdd() {
+      const rows = [...FIXTURE_ROWS, { name: 'fnOdd', description: 'odd', kind: 'matrix' }]
+      serveCatalog({ ...CATALOG_ROUTES, 'GET /api/der/control-functions': { status: 200, body: { functions: rows } } })
+    }
+
+    it('lists each one in a visible note, a name the catalog lacks and a kind it cannot edit', async () => {
+      serveWithOdd()
+      render(DerProgramForm, { props: { mode: 'edit', initial: withExtra, onSubmit: () => Promise.resolve({ ok: true } as Result) } })
+      const note = await screen.findByTestId('program-form-uneditable')
+      expect(note).toHaveTextContent('fnGone')
+      expect(note).toHaveTextContent('fnOdd')
+      expect(note).not.toHaveTextContent('fnFlag')
+    })
+
+    it('keeps them in the saved body when the operator changes something else', async () => {
+      serveWithOdd()
+      const onSubmit = vi.fn(() => Promise.resolve({ ok: true } as Result))
+      render(DerProgramForm, { props: { mode: 'edit', initial: withExtra, onSubmit } })
+      await screen.findByTestId('program-form-uneditable')
+      await tick('fnLevel')
+      await fireEvent.input(screen.getByTestId('control-fv-fnLevel'), { target: { value: '9' } })
+      await fireEvent.click(screen.getByRole('button', { name: 'Save template' }))
+
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+      expect(onSubmit).toHaveBeenCalledWith({
+        description: 'roof fleet',
+        primacy: 65,
+        defaultControl: { functions: { fnFlag: true, fnLevel: 9, fnGone: 7, fnOdd: { x: 1 } } },
+      })
+    })
+
+    it('shows no note when every stored function is editable', async () => {
+      await mountEdit(stored)
+      expect(screen.queryByTestId('program-form-uneditable')).toBeNull()
+    })
   })
 
   it('calls the cancel handler', async () => {

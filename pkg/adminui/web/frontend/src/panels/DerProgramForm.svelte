@@ -19,6 +19,7 @@
     fieldStateFromFunctions,
     loadCatalog,
     loadCurves,
+    uneditableFunctions,
     type CatalogRow,
     type CurveInfo,
     type FieldValue,
@@ -61,6 +62,9 @@
   let curvesError = $state('')
   let ticked = $state<Record<string, boolean>>({})
   let fieldValues = $state<Record<string, FieldValue>>({})
+  // Stored functions the catalog cannot edit here. Saving a changed default
+  // sends them back as they are, so a save never drops one.
+  let kept = $state<Record<string, unknown>>({})
   // Cleared on unmount so a reply that lands afterwards writes nothing.
   let mounted = true
 
@@ -83,6 +87,7 @@
         initial?.defaultControl ? fieldStateFromFunctions(cat.data, initial.defaultControl.functions) : emptyFieldState(cat.data),
       )
       ticked = state.ticked
+      kept = untrack(() => uneditableFunctions(cat.data, initial?.defaultControl?.functions))
       fieldValues = state.values
     }
     if (!cur.ok) {
@@ -96,7 +101,7 @@
   function defaultControl(): DefaultControlInput {
     if (!catalog.some((row) => ticked[row.name])) return null
     const built = buildFunctions(catalog, ticked, fieldValues)
-    return built.ok ? { ok: true, functions: built.functions } : built
+    return built.ok ? { ok: true, functions: { ...built.functions, ...kept } } : built
   }
 
   async function submit(event: SubmitEvent) {
@@ -139,6 +144,12 @@
     <legend>Default control</legend>
     {#if mode === 'edit'}
       <p class="hint">Untick every function to keep the current default control.</p>
+    {/if}
+    {#if Object.keys(kept).length > 0}
+      <p class="hint" data-testid="program-form-uneditable">
+        This default also holds {Object.keys(kept).join(', ')}, which this form cannot edit. Saving a changed default keeps
+        {Object.keys(kept).length === 1 ? 'it' : 'them'} as stored.
+      </p>
     {/if}
     {#if catalogError}
       <div class="result err" data-testid="program-form-catalog-error">Functions could not be read: {catalogError}</div>

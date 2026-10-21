@@ -30,8 +30,10 @@ func routerFor(t *testing.T, timeout time.Duration, panels ...sep2admin.Panel) h
 }
 
 // goroutineGrowth reads 40 times and reports how many goroutines remain
-// above the starting count once the count settles.
-func goroutineGrowth(t *testing.T, h http.Handler, path string, wantStatus int) int {
+// above the starting count, waiting for the count to fall to allowed. A View
+// goroutine can still be exiting after its answer is sent, so a single count
+// is not enough.
+func goroutineGrowth(t *testing.T, h http.Handler, path string, wantStatus, allowed int) int {
 	t.Helper()
 	before := runtime.NumGoroutine()
 	for i := range 40 {
@@ -40,7 +42,7 @@ func goroutineGrowth(t *testing.T, h http.Handler, path string, wantStatus int) 
 		}
 	}
 	growth := runtime.NumGoroutine() - before
-	for deadline := time.Now().Add(2 * time.Second); growth > 1 && time.Now().Before(deadline); {
+	for deadline := time.Now().Add(2 * time.Second); growth > allowed && time.Now().Before(deadline); {
 		time.Sleep(20 * time.Millisecond)
 		growth = runtime.NumGoroutine() - before
 	}
@@ -58,7 +60,7 @@ func TestHungPanelViewRunsAtMostOnceAtATime(t *testing.T) {
 	})
 	h := routerFor(t, 20*time.Millisecond, hung)
 
-	if growth := goroutineGrowth(t, h, "/api/ui/panels/hung", http.StatusGatewayTimeout); growth > 1 {
+	if growth := goroutineGrowth(t, h, "/api/ui/panels/hung", http.StatusGatewayTimeout, 1); growth > 1 {
 		t.Fatalf("40 reads of a hung View left %d goroutines, want at most 1", growth)
 	}
 	if n := calls.Load(); n != 1 {
@@ -68,7 +70,7 @@ func TestHungPanelViewRunsAtMostOnceAtATime(t *testing.T) {
 
 func TestOrdinaryPanelLeavesNoGoroutines(t *testing.T) {
 	h := routerFor(t, time.Second, testPanel("fine", 1, okView))
-	if growth := goroutineGrowth(t, h, "/api/ui/panels/fine", http.StatusOK); growth > 0 {
+	if growth := goroutineGrowth(t, h, "/api/ui/panels/fine", http.StatusOK, 0); growth > 0 {
 		t.Fatalf("40 reads of an ordinary View left %d goroutines, want 0", growth)
 	}
 }

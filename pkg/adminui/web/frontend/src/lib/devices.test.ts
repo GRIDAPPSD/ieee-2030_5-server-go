@@ -94,8 +94,12 @@ describe('loadDeviceProfiles', () => {
 })
 
 describe('renameDevice', () => {
-  it('puts the new name with the held kind, so a rename does not clear the kind', async () => {
-    await seedDeviceProfiles([{ lfdi: LFDI, name: 'Old', kind: 'aggregator' }])
+  function serverHolds(list: unknown) {
+    return vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: { profiles: list } } as never)
+  }
+
+  it('puts the new name with the kind the server holds now, so a rename does not clear the kind', async () => {
+    serverHolds([{ lfdi: LFDI, name: 'Old', kind: 'aggregator' }])
     const put = vi.spyOn(api, 'putJSON').mockResolvedValue({
       ok: true,
       data: { lfdi: LFDI, name: 'Roof', kind: 'aggregator' },
@@ -108,8 +112,29 @@ describe('renameDevice', () => {
     expect(deviceLabel(LFDI, '1')).toBe('Roof')
   })
 
+  it('uses the server kind even when the held profiles were stale', async () => {
+    await seedDeviceProfiles([{ lfdi: LFDI, name: 'Old', kind: 'device' }])
+    serverHolds([{ lfdi: LFDI, name: 'Old', kind: 'aggregator' }])
+    const put = vi.spyOn(api, 'putJSON').mockResolvedValue({ ok: true, data: { lfdi: LFDI, name: 'X', kind: 'aggregator' } })
+
+    await renameDevice(LFDI, 'X')
+
+    expect(put).toHaveBeenCalledWith(`/api/device-profiles/${LFDI}`, { name: 'X', kind: 'aggregator' })
+  })
+
+  it('sends no PUT when the profiles cannot be read, so a kind is never cleared blind', async () => {
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: false, error: 'down', status: 500 })
+    const put = vi.spyOn(api, 'putJSON')
+
+    const res = await renameDevice(LFDI, 'Roof')
+
+    expect(res).toEqual({ ok: false, error: 'down', status: 500 })
+    expect(put).not.toHaveBeenCalled()
+  })
+
   it('leaves the held name alone when the server refuses', async () => {
     await seedDeviceProfiles([{ lfdi: LFDI, name: 'Old', kind: '' }])
+    serverHolds([{ lfdi: LFDI, name: 'Old', kind: '' }])
     vi.spyOn(api, 'putJSON').mockResolvedValue({ ok: false, error: 'name already in use by another device', status: 409 })
 
     const res = await renameDevice(LFDI, 'Taken')
@@ -118,7 +143,8 @@ describe('renameDevice', () => {
     expect(deviceName(LFDI)).toBe('Old')
   })
 
-  it('sends an empty kind for a device with no profile yet', async () => {
+  it('sends an empty kind for a device the server has no profile for', async () => {
+    serverHolds([])
     const put = vi.spyOn(api, 'putJSON').mockResolvedValue({ ok: true, data: { lfdi: LFDI, name: 'First', kind: '' } })
 
     await renameDevice(LFDI, 'First')

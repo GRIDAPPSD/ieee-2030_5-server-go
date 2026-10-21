@@ -213,23 +213,25 @@
     }
   })
 
-  // Device names label every device view, so they load for every tab and
-  // again when the device set changes (a device added from the Devices tab).
-  // A failed read keeps the names already held and says so, since a missing
-  // name shows as an SFDI and could be read as "no name set".
+  // Device names label every device view, so they load on every tab entry.
+  // A device added here reloads straight away (onAdded below); a device set
+  // that changes any other way shows its SFDI until the next tab entry. A
+  // failed read keeps the names already held and says so, since a missing
+  // name shows as an SFDI and could be read as "no name set". Only the
+  // newest load sets or clears that message.
   let deviceNamesError = $state('')
-  const deviceSetKey = $derived((data?.devices ?? []).map((d) => d.lfdi).sort().join(','))
+  let namesSeq = 0
 
   async function loadNames() {
+    const seq = ++namesSeq
     const res = await loadDeviceProfiles()
-    if (destroyed) return
+    if (destroyed || seq !== namesSeq) return
     deviceNamesError = res.ok ? '' : res.error
   }
 
   $effect(() => {
     if (!streaming) return
     void activeTab
-    void deviceSetKey
     untrack(() => void loadNames())
   })
 

@@ -99,12 +99,15 @@
     return Math.max(0, Math.floor((nowMs - sinceMs) / 1000))
   }
 
+  // chosenName is the device's entered name, or '' when it has none.
+  function chosenName(c: DeviceChoice): string {
+    return deviceName(c.lfdi)
+  }
+
   // choiceText names a device in the picker: its name when it has one,
   // otherwise its EndDevice id and the LFDI prefix.
   function choiceText(c: DeviceChoice): string {
-    const name = c.lfdi === '' ? '' : deviceName(c.lfdi)
-    if (name !== '') return name
-    return c.label + (c.lfdi === '' ? '' : ' (' + deviceLabel(c.lfdi) + ')')
+    return chosenName(c) || c.label + (c.lfdi === '' ? '' : ' (' + deviceLabel(c.lfdi) + ')')
   }
 
   async function loadFleets() {
@@ -338,7 +341,7 @@
         ? 'A plain dispatch, carrying out no grant.'
         : `Carrying out grant ${grant.response.mRID} (request ${grant.frqId}, ${directionLabel(grant.response.direction)}).`
     const dev = choices.find((c) => c.id === deviceId)
-    const device = dev === undefined ? `device ${deviceId}` : `device ${dev.lfdi === '' ? dev.label : deviceName(dev.lfdi) || dev.label}${dev.lfdi === '' ? '' : ` (LFDI ${dev.lfdi})`}`
+    const device = dev === undefined ? `device ${deviceId}` : `device ${chosenName(dev) || dev.label}${dev.lfdi === '' ? '' : ` (LFDI ${dev.lfdi})`}`
     const watts = b.targetW.value * Math.pow(10, b.targetW.multiplier)
     return (
       `Send a control to ${device} of fleet ${deviceLabel(fleet.aggregatorLFDI)} through program ${program?.description || program?.mRID || programHref}. It reaches that device only, not the whole fleet. ` +

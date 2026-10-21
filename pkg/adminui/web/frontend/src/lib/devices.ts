@@ -14,8 +14,9 @@ export interface DeviceProfile {
 
 const PATH = '/api/device-profiles'
 
-// The server answers with uppercase LFDIs, so lookups compare uppercase.
-const canon = (lfdi: string) => lfdi.toUpperCase()
+// The server answers with uppercase LFDIs, so every lookup and send uses
+// uppercase; this is the one place that rule lives.
+export const canon = (lfdi: string) => lfdi.toUpperCase()
 
 // A SvelteMap, so a template or effect that calls deviceLabel re-runs when a
 // profile is loaded or renamed.
@@ -60,9 +61,13 @@ export async function loadDeviceProfiles(opts?: RequestOptions): Promise<ApiResu
 }
 
 // renameDevice sets one device's name. The PUT replaces the whole profile, so
-// the held kind is sent back unchanged: a rename must not clear it.
+// the kind is read from the server immediately before it and sent back
+// unchanged: a rename must not clear a kind, and with no readable kind the
+// rename is refused rather than sent blind.
 export async function renameDevice(lfdi: string, name: string): Promise<ApiResult<DeviceProfile>> {
-  const kind = profiles.get(canon(lfdi))?.kind ?? ''
+  const fresh = await loadDeviceProfiles()
+  if (!fresh.ok) return fresh
+  const kind = fresh.data.find((p) => canon(p.lfdi) === canon(lfdi))?.kind ?? ''
   const res = await putJSON<DeviceProfile>(`${PATH}/${encodeURIComponent(canon(lfdi))}`, { name, kind })
   if (res.ok && isProfile(res.data)) profiles.set(canon(lfdi), res.data)
   return res

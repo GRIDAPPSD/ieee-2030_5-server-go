@@ -88,7 +88,7 @@ describe('Devices tab', () => {
   it('shows the server refusal and keeps the editor open when a name is taken', async () => {
     await seed()
     vi.spyOn(api, 'putJSON').mockResolvedValue({ ok: false, error: 'name already in use by another device', status: 409 })
-    failOthers()
+    failOthers({ '/api/device-profiles': { profiles: [{ lfdi: NAMED.lfdi, name: NAMED.name, kind: 'device' }] } })
     render(DeviceTable, { props: { devices, fsas: [], onChanged: () => {} } })
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit name of device 222222222222' }))
@@ -99,6 +99,49 @@ describe('Devices tab', () => {
       'Rename failed (409): name already in use by another device',
     )
     expect(screen.getByTestId('device-name-input')).toBeInTheDocument()
+  })
+})
+
+describe('Devices tab rename editor', () => {
+  async function refused() {
+    await seed()
+    vi.spyOn(api, 'putJSON').mockResolvedValue({ ok: false, error: 'name already in use by another device', status: 409 })
+    failOthers({ '/api/device-profiles': { profiles: [{ lfdi: NAMED.lfdi, name: NAMED.name, kind: 'device' }] } })
+    render(DeviceTable, { props: { devices, fsas: [], onChanged: () => {} } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit name of device 222222222222' }))
+    await fireEvent.input(screen.getByTestId('device-name-input'), { target: { value: 'Inverter 3' } })
+    await fireEvent.click(screen.getByTestId('device-name-save'))
+    await screen.findByTestId('device-rename-error')
+  }
+
+  it('clears a rename error on Cancel', async () => {
+    await refused()
+    await fireEvent.click(screen.getByTestId('device-name-cancel'))
+    expect(screen.queryByTestId('device-rename-error')).toBeNull()
+  })
+
+  it('clears a rename error on Escape', async () => {
+    await refused()
+    await fireEvent.keyDown(screen.getByTestId('device-name-input'), { key: 'Escape' })
+    expect(screen.queryByTestId('device-rename-error')).toBeNull()
+    expect(screen.queryByTestId('device-name-input')).toBeNull()
+  })
+
+  it('disables every other row Edit name while a save is in flight, and closes only its own editor', async () => {
+    await seed()
+    let release: (v: never) => void = () => {}
+    vi.spyOn(api, 'putJSON').mockReturnValue(new Promise((resolve) => (release = resolve as never)))
+    failOthers({ '/api/device-profiles': { profiles: [{ lfdi: NAMED.lfdi, name: NAMED.name, kind: 'device' }] } })
+    render(DeviceTable, { props: { devices, fsas: [], onChanged: () => {} } })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit name of device 222222222222' }))
+    await fireEvent.input(screen.getByTestId('device-name-input'), { target: { value: 'Roof' } })
+    await fireEvent.click(screen.getByTestId('device-name-save'))
+
+    expect(screen.getByRole('button', { name: 'Edit name of device Inverter 3' })).toBeDisabled()
+    release({ ok: true, data: { lfdi: PLAIN.lfdi, name: 'Roof', kind: '' } } as never)
+    await waitFor(() => expect(screen.queryByTestId('device-name-input')).toBeNull())
+    expect(screen.getByRole('button', { name: 'Edit name of device Inverter 3' })).toBeEnabled()
   })
 })
 

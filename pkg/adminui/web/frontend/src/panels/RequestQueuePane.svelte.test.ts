@@ -10,6 +10,8 @@ import { tick } from 'svelte'
 import RequestQueuePane from './RequestQueuePane.svelte'
 import * as api from '../lib/api'
 import fixture from '../lib/flowreservation.fixture.json'
+import { resetDeviceProfiles } from '../lib/devices'
+import { seedDeviceProfiles } from '../lib/devices.fixture'
 
 type Res = { ok: true; data: unknown; serverTime?: number } | { ok: false; error: string; status: number }
 
@@ -42,6 +44,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  resetDeviceProfiles()
   cleanup()
   vi.useRealTimers()
   vi.restoreAllMocks()
@@ -670,5 +673,36 @@ describe('RequestQueuePane cancel requested on a live grant', () => {
       'cancel requested, grant still active',
     )
     expect(within(rows[1]).queryByTestId('frq-cancel-requested')).toBeNull()
+  })
+})
+
+describe('RequestQueuePane device names', () => {
+  it('names a named aggregator in its rows', async () => {
+    await seedDeviceProfiles([{ lfdi: LFDI, name: 'Roof fleet', kind: 'aggregator' }])
+    mockOk(fixture)
+    render(RequestQueuePane)
+    const rows = await loaded()
+    expect(within(rows[0]).getAllByRole('cell')[0].textContent).toBe('Roof fleet')
+  })
+
+  it('names a named aggregator in a section error', async () => {
+    await seedDeviceProfiles([{ lfdi: LFDI, name: 'Roof fleet', kind: 'aggregator' }])
+    const other = 'AB'.repeat(20)
+    mockRoutes(
+      (path) =>
+        path.endsWith(LFDI)
+          ? { ok: false, error: 'boom', status: 500 }
+          : { ok: true, data: { ...copy(), aggregatorLFDI: other, requests: [] } },
+      { ok: true, data: [{ aggregatorLFDI: LFDI }, { aggregatorLFDI: other }] },
+    )
+    render(RequestQueuePane)
+    expect(await screen.findByTestId('frq-section-error')).toHaveTextContent('Could not load requests for Roof fleet:')
+  })
+
+  it('shows the LFDI prefix for an unnamed aggregator', async () => {
+    mockOk(fixture)
+    render(RequestQueuePane)
+    const rows = await loaded()
+    expect(within(rows[0]).getAllByRole('cell')[0].textContent).toBe(LFDI.substring(0, 16) + '...')
   })
 })

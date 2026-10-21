@@ -9,7 +9,7 @@
   import type { DashboardColumn, DashboardDevice } from '../lib/dashboard'
   import { commsClass, commsLabel, formatAge } from '../lib/comms'
   import { deviceConnectionView, deviceInverterView } from '../lib/derstatus'
-  import { deviceLabel, deviceName, loadDeviceProfiles, renameDevice } from '../lib/devices'
+  import { deviceLabel, deviceName, renameDevice } from '../lib/devices'
   import ReportedCell from './ReportedCell.svelte'
   import DevicePrograms from './DevicePrograms.svelte'
 
@@ -89,19 +89,22 @@
     renameError = ''
   }
 
+  function cancelRename() {
+    editingLfdi = ''
+    renameError = ''
+  }
+
   async function saveRename() {
     if (renaming || editingLfdi === '') return
+    const saving = editingLfdi
     renaming = true
     try {
-      const res = await renameDevice(editingLfdi, draftName.trim())
+      const res = await renameDevice(saving, draftName.trim())
       if (!res.ok) {
         renameError = `Rename failed (${res.status}): ${res.error}`
         return
       }
-      editingLfdi = ''
-      renameError = ''
-      // Another admin may have renamed other devices since the last load.
-      void loadDeviceProfiles()
+      if (editingLfdi === saving) cancelRename()
     } finally {
       renaming = false
     }
@@ -147,18 +150,18 @@
                   bind:value={draftName}
                   onkeydown={(e) => {
                     if (e.key === 'Enter') void saveRename()
-                    if (e.key === 'Escape') editingLfdi = ''
+                    if (e.key === 'Escape' && !renaming) cancelRename()
                   }}
                 />
                 <button class="btn btn-small" disabled={renaming} data-testid="device-name-save" onclick={saveRename}>Save</button>
-                <button class="btn btn-small" disabled={renaming} data-testid="device-name-cancel" onclick={() => (editingLfdi = '')}>Cancel</button>
+                <button class="btn btn-small" disabled={renaming} data-testid="device-name-cancel" onclick={cancelRename}>Cancel</button>
               {:else}
                 <span class="mono" data-testid="device-label">{deviceLabel(device.lfdi, device.sfdi)}</span>
                 <button
                   class="btn btn-small"
                   data-testid="device-name-edit-{deviceID}"
                   aria-label="Edit name of device {deviceLabel(device.lfdi, device.sfdi)}"
-                  disabled={!device.lfdi} onclick={() => startRename(device.lfdi)}>Edit name</button
+                  disabled={!device.lfdi || renaming} onclick={() => startRename(device.lfdi)}>Edit name</button
                 >
               {/if}
             </td>

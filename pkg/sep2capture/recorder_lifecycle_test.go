@@ -74,6 +74,16 @@ func TestShutdownRecordsInFlightExchange(t *testing.T) {
 // One exchange is stuck inside Sink.Record when both are called; three more
 // are handed directly to the shared queue (bypassing a real connection) so
 // the scenario does not depend on timing four TLS dials against the gate.
+// The gate stays shut until cleanup, so each call is judged by returning
+// at all, within stalledCallBound, rather than by a wall-clock budget, and
+// the listener's close is judged by Serve returning rather than by
+// re-dialing a released port another test may already hold (#857).
+//
+// Mutants: making recordingListener.Close wait while dispatch is inside
+// Sink.Record (`for l.att.r.inFlightNow() { time.Sleep(time.Millisecond) }`)
+// goes RED on Shutdown; so does making it return nil without closing
+// inner, since Shutdown waits for Serve's accept loop to exit; making
+// Recorder.Close wait on dispatchDone without ctx goes RED on Close.
 func TestHungSinkDoesNotBlockServerShutdownOrClose(t *testing.T) {
 	m := newMaterial(t)
 	sink := &gatedSink{gate: make(chan struct{})}
@@ -85,7 +95,8 @@ func TestHungSinkDoesNotBlockServerShutdownOrClose(t *testing.T) {
 	srv := &http.Server{Handler: okHandler("ok")}
 	rec := NewRecorder(sink, nil)
 	wrapped := rec.Attach(srv, ln)
-	go func() { _ = srv.Serve(wrapped) }()
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- srv.Serve(wrapped) }()
 
 	conn := rawDial(t, m, tcpLn.Addr().String())
 	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\nHost: t\r\n\r\n")); err != nil {
@@ -109,27 +120,31 @@ func TestHungSinkDoesNotBlockServerShutdownOrClose(t *testing.T) {
 		filler.finish(b)
 	}
 
-	shutdownStart := time.Now()
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer shutdownCancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		t.Fatalf("Shutdown: %v", err)
-	}
-	if elapsed := time.Since(shutdownStart); elapsed >= 1*time.Second {
-		t.Errorf("Shutdown took %s, want under 1s", elapsed)
-	}
-
-	if _, err := net.DialTimeout("tcp", tcpLn.Addr().String(), 500*time.Millisecond); err == nil {
-		t.Error("dial after Shutdown succeeded, want the listener refused")
+	var shutdownErr error
+	returnsWhileStalled(t, "srv.Shutdown", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), stalledCallBound)
+		defer cancel()
+		shutdownErr = srv.Shutdown(ctx)
+	})
+	if shutdownErr != nil {
+		t.Fatalf("Shutdown: %v", shutdownErr)
 	}
 
-	closeStart := time.Now()
-	closeCtx, closeCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer closeCancel()
-	closeErr := rec.Close(closeCtx)
-	if elapsed := time.Since(closeStart); elapsed >= 1*time.Second {
-		t.Errorf("Close took %s, want under 1s", elapsed)
+	select {
+	case err := <-serveDone:
+		if !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("Serve returned %v, want http.ErrServerClosed", err)
+		}
+	case <-time.After(stalledCallBound):
+		t.Fatalf("Serve still running %v after Shutdown returned, want the listener closed", stalledCallBound)
 	}
+
+	var closeErr error
+	returnsWhileStalled(t, "Recorder.Close", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		closeErr = rec.Close(ctx)
+	})
 	if !errors.Is(closeErr, context.DeadlineExceeded) {
 		t.Fatalf("Close error: got %v, want context.DeadlineExceeded", closeErr)
 	}

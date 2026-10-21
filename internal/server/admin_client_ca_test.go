@@ -402,25 +402,9 @@ func bootAdminListener(t *testing.T, cfg *config.Config, svc *handler.AdminCertS
 		}
 	})
 
-	probeClient := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		Timeout:   time.Second,
+	if msg, ok := waitForAdminReady(cfg.AdminListen, true, adminReadyTimeout, runErrCh); !ok {
+		t.Fatal(msg)
 	}
-	deadline := time.Now().Add(adminReadyTimeout)
-	for time.Now().Before(deadline) {
-		select {
-		case runErr := <-runErrCh:
-			t.Fatalf("server.Run returned before the admin listener answered: %v", runErr)
-		default:
-		}
-		resp, err := probeClient.Get("https://" + cfg.AdminListen + "/login")
-		if err == nil {
-			_ = resp.Body.Close()
-			return
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	t.Fatal("admin listener never became ready")
 }
 
 // TestAdminListenerDeviceCAOnlyBoots is #657 design section 3 test 1. A

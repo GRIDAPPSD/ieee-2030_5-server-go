@@ -38,7 +38,7 @@ func TestRuntimeProgramsWalkedByAnAggregator(t *testing.T) {
 		DataDir:                   t.TempDir(),
 		NotificationAllowLoopback: true,
 	}
-	stop := bootForWalkTest(t, c, cfg, manager)
+	stop := bootForTemplateTest(t, c, cfg, manager.tlsConfig)
 
 	admin := &http.Client{Timeout: 3 * time.Second}
 	adminJSON := func(method, path, body string, want int, into any) {
@@ -122,28 +122,8 @@ func TestRuntimeProgramsWalkedByAnAggregator(t *testing.T) {
 	walkAsAggregator(t, proto, c.sep2Probe, want)
 
 	stop()
-	bootForWalkTest(t, c, cfg, manager)
+	bootForTemplateTest(t, c, cfg, manager.tlsConfig)
 	walkAsAggregator(t, proto, c.sep2Probe, want)
-}
-
-// bootForWalkTest boots the server and waits for both listeners, since the
-// shared helper waits only for the protocol one.
-func bootForWalkTest(t *testing.T, c *splitListenerCerts, cfg *config.Config, dev managementE2EDevice) func() {
-	t.Helper()
-	stop := bootForTemplateTest(t, c, cfg, dev.tlsConfig)
-	hc := &http.Client{Timeout: time.Second}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		resp, err := hc.Get("http://" + c.adminProbe + "/api/certs/ca")
-		if err == nil {
-			_ = resp.Body.Close()
-			return stop
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("admin listener never became ready: %v", err)
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
 }
 
 type walkExpectation struct {

@@ -97,3 +97,26 @@ func dirSize(t testing.TB, dir string) int64 {
 	}
 	return total
 }
+
+// stalledCallBound is how long a call gets to return while the test holds
+// the write path (the Store writer or a Recorder's Sink). It only has to
+// separate "returned" from "waits for the held path", which is released at
+// cleanup, so it is far above any scheduling delay.
+const stalledCallBound = 10 * time.Second
+
+// returnsWhileStalled runs call and fails the test if it has not returned
+// within stalledCallBound. The call runs on its own goroutine so a blocked
+// call fails the test instead of hanging it.
+func returnsWhileStalled(t *testing.T, what string, call func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		call()
+	}()
+	select {
+	case <-done:
+	case <-time.After(stalledCallBound):
+		t.Fatalf("%s did not return within %v while the write path was held", what, stalledCallBound)
+	}
+}

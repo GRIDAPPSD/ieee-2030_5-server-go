@@ -75,6 +75,16 @@ func TestDERControlCreate_FunctionsAllFour(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var view struct {
+		Functions map[string]json.RawMessage `json:"functions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if string(view.Functions["opModTargetW"]) != `{"value":-1500,"multiplier":1}` ||
+		string(view.Functions["opModConnect"]) != "true" || string(view.Functions["opModEnergize"]) != "false" {
+		t.Errorf("view functions = %v, want connect true, energize false and targetW -1500e1", view.Functions)
+	}
 	b := stored.DERControlBase
 	if b.OpModConnect == nil || !*b.OpModConnect || b.OpModEnergize == nil || *b.OpModEnergize ||
 		b.OpModTargetW == nil || *b.OpModTargetW != (sep2.ActivePower{Value: -1500, Multiplier: 1}) {
@@ -89,6 +99,7 @@ func TestDERControlCreate_FunctionsRefusals(t *testing.T) {
 		message string
 	}{
 		{"type and functions", `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","functions":{"opModConnect":true},"durationSeconds":300}`, "type and functions: give one, not both"},
+		{"empty type beside functions", `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"","functions":{"opModConnect":true},"durationSeconds":300}`, "type and functions: give one, not both"},
 		{"neither", `{"derProgramHref":"/edev/0/fsa/0/derp/0","durationSeconds":300}`, "type or functions: give one"},
 		{"empty functions", functionsBody(0, `{}`), "functions: at least one function required"},
 		{"unknown function", functionsBody(0, `{"opModBogus":1}`), "functions: unknown function"},
@@ -201,5 +212,17 @@ func TestDERControlList_EndedFollowsTheInterval(t *testing.T) {
 	want := map[string]bool{"/edev/0/fsa/0/derp/0/derc/past": true, "/edev/0/fsa/0/derp/0/derc/running": false}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("ended by control = %v, want %v", got, want)
+	}
+}
+
+func TestDERControlCreate_NullFunctionsBesideTypeIsTheLegacyRequest(t *testing.T) {
+	d := newDCHarness(t, ptrU32(dcPEN))
+	body := fmt.Sprintf(`{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","functions":null,"startTime":%d,"durationSeconds":300}`, futureStart(600))
+	w := d.do(t, http.MethodPost, "/api/der/controls", body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d body = %s, want 201", w.Code, w.Body.String())
+	}
+	if got := decodeCreated(t, w); got.Type != "connect" {
+		t.Errorf("type = %q, want connect", got.Type)
 	}
 }

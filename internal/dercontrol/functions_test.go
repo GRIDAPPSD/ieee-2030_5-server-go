@@ -128,6 +128,20 @@ func TestIssue_Supersede_FunctionSets(t *testing.T) {
 			r.Type = ""
 			r.Functions = &FunctionSet{Connect: boolPtr(false), Energize: boolPtr(false)}
 		}, true},
+		{"different two-function sets do not", two, func(r *CreateRequest) {
+			r.Type = ""
+			r.Functions = &FunctionSet{MaxLimW: uint16ptr(5000), TargetW: &sep2.ActivePower{Value: 1}}
+		}, false},
+		{"disjoint two-function sets do not", two, func(r *CreateRequest) {
+			r.Type = ""
+			r.Functions = &FunctionSet{Connect: boolPtr(true), TargetW: &sep2.ActivePower{Value: 1}}
+		}, false},
+		{"two functions against legacy connect do not", two, func(r *CreateRequest) {
+			r.Type = Connect
+		}, false},
+		{"legacy connect against two functions do not", func(r *CreateRequest) {
+			r.Type = Connect
+		}, two, false},
 		{"connect alone against connect and energize does not", func(r *CreateRequest) {
 			r.Type = ""
 			r.Functions = &FunctionSet{Connect: boolPtr(true)}

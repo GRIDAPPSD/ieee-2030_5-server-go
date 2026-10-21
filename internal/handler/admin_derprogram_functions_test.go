@@ -111,3 +111,42 @@ func TestUpdateProgramTemplate_DefaultControlFunctions(t *testing.T) {
 		t.Errorf("edited default = %+v, want connect false, maxLimW 100, no energize", b)
 	}
 }
+
+func TestDeviceProgram_DefaultControlFunctionsCreateAndEdit(t *testing.T) {
+	t.Parallel()
+	f := newTemplateFixture(t)
+	f.assign(t, "1", "fsa-A")
+
+	w := f.do(http.MethodPost, "/api/devices/1/fsas/fsa-A/der-programs", functionsDefaultBody(`{"opModMaxLimW":6000,"opModTargetW":{"value":500,"multiplier":0}}`))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	var v deviceProgramView
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.DefaultControl.Type != "combined" {
+		t.Errorf("created default type = %q, want combined", v.DefaultControl.Type)
+	}
+	key := "1/fsa-A/" + v.ID
+	d, err := f.copies.Defaults.Get(t.Context(), key, coresingleton.SingletonKey)
+	if err != nil || d.DERControlBase == nil || d.DERControlBase.OpModMaxLimW == nil || *d.DERControlBase.OpModMaxLimW != 6000 ||
+		d.DERControlBase.OpModTargetW == nil || d.DERControlBase.OpModTargetW.Value != 500 {
+		t.Fatalf("stored default after create = %+v, %v, want maxLimW 6000 and targetW 500", d, err)
+	}
+
+	w = f.do(http.MethodPut, "/api/devices/1/der-programs/"+v.ID, functionsDefaultBody(`{"opModConnect":false,"opModEnergize":false}`))
+	if w.Code != http.StatusOK {
+		t.Fatalf("edit: %d %s", w.Code, w.Body.String())
+	}
+	d, err = f.copies.Defaults.Get(t.Context(), key, coresingleton.SingletonKey)
+	b := d.DERControlBase
+	if err != nil || b == nil || b.OpModConnect == nil || *b.OpModConnect || b.OpModEnergize == nil || *b.OpModEnergize ||
+		b.OpModMaxLimW != nil || b.OpModTargetW != nil {
+		t.Fatalf("stored default after edit = %+v, %v, want disconnect pair only", d, err)
+	}
+	p, err := f.copies.Programs.Get(t.Context(), "1", v.ID)
+	if err != nil || p.Version == nil || *p.Version != 1 {
+		t.Errorf("program after edit = %+v, %v, want version 1", p, err)
+	}
+}

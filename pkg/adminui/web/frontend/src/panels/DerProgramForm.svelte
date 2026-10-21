@@ -110,9 +110,8 @@
     // Until the catalog loads it cannot show the stored default, so an edit
     // leaves it alone rather than refusing the save.
     if (!catalogReady && mode === 'edit') return null
-    if (!catalog.some((row) => ticked[row.name]) && Object.keys(kept).length === 0) {
-      return { ok: false, error: 'defaultControl: tick at least one function' }
-    }
+    // Nothing ticked is for buildProgramBody to refuse, so its wording is the only copy.
+    if (!catalog.some((row) => ticked[row.name])) return { ok: true, functions: { ...kept } }
     const built = buildFunctions(catalog, ticked, fieldValues)
     return built.ok ? { ok: true, functions: { ...built.functions, ...kept } } : built
   }
@@ -159,10 +158,11 @@
   </div>
   <fieldset class="default-control" data-testid="program-form-default">
     <label>
-      <input type="checkbox" bind:checked={hasDefault} disabled={mode === 'create'} data-testid="program-form-has-default" />
+      <input type="checkbox" bind:checked={hasDefault} disabled={mode === 'create' || (!catalogReady && !initial?.defaultControl)}
+        data-testid="program-form-has-default" />
       Default control
     </label>
-    {#if mode === 'edit' && !hasDefault}
+    {#if mode === 'edit' && !hasDefault && initial?.defaultControl}
       <p class="hint">Saving removes this program's default control.</p>
     {/if}
     {#if hasDefault && Object.keys(kept).length > 0}
@@ -171,10 +171,10 @@
         {Object.keys(kept).length === 1 ? 'it' : 'them'} as stored.
       </p>
     {/if}
+    {#if catalogError}
+      <div class="result err" data-testid="program-form-catalog-error">Functions could not be read: {catalogError}</div>
+    {/if}
     {#if hasDefault}
-      {#if catalogError}
-        <div class="result err" data-testid="program-form-catalog-error">Functions could not be read: {catalogError}</div>
-      {/if}
       {#each catalog as row (row.name)}
         <FunctionField {row} bind:ticked={ticked[row.name]} bind:value={fieldValues[row.name]} {curves} {curvesError} />
       {/each}

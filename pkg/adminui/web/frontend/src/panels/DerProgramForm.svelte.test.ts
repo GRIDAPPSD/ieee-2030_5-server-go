@@ -310,6 +310,41 @@ describe('DerProgramForm edit', () => {
     expect('defaultControl' in body).toBe(false)
   })
 
+  it('keeps the box disabled until the catalog loads on a program with no default, so a tick cannot be lost', async () => {
+    const { defaultControl: _gone, ...bare } = stored
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      await gate
+      const r = CATALOG_ROUTES[`${init?.method ?? 'GET'} ${String(input)}`] ?? { status: 404, body: {} }
+      return { ok: r.status === 200, status: r.status, json: () => Promise.resolve(r.body) } as Response
+    })
+    render(DerProgramForm, { props: { mode: 'edit', initial: bare, onSubmit: () => Promise.resolve({ ok: true } as Result) } })
+    expect(screen.getByRole('checkbox', { name: 'Default control' })).toBeDisabled()
+    release()
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Default control' })).toBeEnabled())
+  })
+
+  it('says why the box stays disabled when the catalog cannot be read', async () => {
+    const { defaultControl: _gone, ...bare } = stored
+    serveCatalog({ ...CATALOG_ROUTES, 'GET /api/der/control-functions': { status: 500, body: { error: 'catalog down' } } })
+    render(DerProgramForm, { props: { mode: 'edit', initial: bare, onSubmit: () => Promise.resolve({ ok: true } as Result) } })
+    expect(await screen.findByTestId('program-form-catalog-error')).toHaveTextContent('catalog down')
+    expect(screen.getByRole('checkbox', { name: 'Default control' })).toBeDisabled()
+  })
+
+  it('shows the removal hint only when a stored default would be removed', async () => {
+    const { defaultControl: _gone, ...bare } = stored
+    await mountEdit(bare)
+    expect(screen.queryByText(/Saving removes/)).toBeNull()
+  })
+
+  it('shows the removal hint after unticking a program that has a default', async () => {
+    await mountEdit(stored)
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Default control' }))
+    expect(screen.getByText(/Saving removes/)).toBeInTheDocument()
+  })
+
   it('sets a default on a program with none once the box is ticked and a function chosen', async () => {
     const { defaultControl: _gone, ...bare } = stored
     const onSubmit = await mountEdit(bare)

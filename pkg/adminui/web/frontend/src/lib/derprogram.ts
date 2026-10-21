@@ -123,6 +123,8 @@ function wholeNumber(s: string): number | undefined {
   return WHOLE_NUMBER.test(t) ? Number(t) : undefined
 }
 
+const NO_FUNCTION = 'defaultControl: tick at least one function'
+
 export type BuiltBody = { ok: true; body: ProgramBody } | { ok: false; error: string }
 
 // The default control as the form's ticked fields built it: the functions,
@@ -164,9 +166,10 @@ export function buildProgramBody(
   }
   const control = opts.defaultControl
   if (control === null) {
-    return opts.requireDefault ? { ok: false, error: 'defaultControl: tick at least one function' } : { ok: true, body }
+    return opts.requireDefault ? { ok: false, error: NO_FUNCTION } : { ok: true, body }
   }
   if (!control.ok) return { ok: false, error: control.error }
+  if (Object.keys(control.functions).length === 0) return { ok: false, error: NO_FUNCTION }
   body.defaultControl = { functions: control.functions }
   return { ok: true, body }
 }

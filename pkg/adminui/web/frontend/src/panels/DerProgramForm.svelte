@@ -53,11 +53,17 @@
   let error = $state('')
   let busy = $state(false)
 
+  // Whether the program has a default control. A create always has one (the
+  // server refuses a program without), so its box is ticked and locked; an
+  // edit starts from what is stored, and unticking removes the default.
+  let hasDefault = $state(untrack(() => mode === 'create' || Boolean(initial?.defaultControl)))
+
   // The default control is set from the control function catalog, with the
   // same field components as the control window. An edit starts with the
   // stored default's functions ticked and filled.
   let catalog = $state<CatalogRow[]>([])
   let catalogError = $state('')
+  let catalogReady = $state(false)
   let curves = $state<CurveInfo[]>([])
   let curvesError = $state('')
   let ticked = $state<Record<string, boolean>>({})
@@ -82,6 +88,7 @@
       catalogError = cat.error
     } else {
       catalogError = ''
+      catalogReady = true
       catalog = cat.data
       const state = untrack(() =>
         initial?.defaultControl ? fieldStateFromFunctions(cat.data, initial.defaultControl.functions) : emptyFieldState(cat.data),
@@ -99,7 +106,12 @@
   }
 
   function defaultControl(): DefaultControlInput {
-    if (!catalog.some((row) => ticked[row.name])) return null
+    if (!hasDefault) return null
+    // Until the catalog loads it cannot show the stored default, so an edit
+    // leaves it alone rather than refusing the save.
+    if (!catalogReady && mode === 'edit') return null
+    // Nothing ticked is for buildProgramBody to refuse, so its wording is the only copy.
+    if (!catalog.some((row) => ticked[row.name])) return { ok: true, functions: { ...kept } }
     const built = buildFunctions(catalog, ticked, fieldValues)
     return built.ok ? { ok: true, functions: { ...built.functions, ...kept } } : built
   }
@@ -107,7 +119,11 @@
   async function submit(event: SubmitEvent) {
     event.preventDefault()
     if (busy) return
-    const built = buildProgramBody(values, { requireDefault: mode === 'create', defaultControl: defaultControl() })
+    const built = buildProgramBody(values, {
+      requireDefault: mode === 'create',
+      defaultControl: defaultControl(),
+      clearDefault: mode === 'edit' && !hasDefault && Boolean(initial?.defaultControl),
+    })
     if (!built.ok) {
       error = built.error
       return
@@ -141,11 +157,15 @@
     {/if}
   </div>
   <fieldset class="default-control" data-testid="program-form-default">
-    <legend>Default control</legend>
-    {#if mode === 'edit'}
-      <p class="hint">Untick every function to keep the current default control.</p>
+    <label>
+      <input type="checkbox" bind:checked={hasDefault} disabled={mode === 'create' || (!catalogReady && !initial?.defaultControl)}
+        data-testid="program-form-has-default" />
+      Default control
+    </label>
+    {#if mode === 'edit' && !hasDefault && initial?.defaultControl}
+      <p class="hint">Saving removes this program's default control.</p>
     {/if}
-    {#if Object.keys(kept).length > 0}
+    {#if hasDefault && Object.keys(kept).length > 0}
       <p class="hint" data-testid="program-form-uneditable">
         This default also holds {Object.keys(kept).join(', ')}, which this form cannot edit. Saving a changed default keeps
         {Object.keys(kept).length === 1 ? 'it' : 'them'} as stored.
@@ -154,9 +174,11 @@
     {#if catalogError}
       <div class="result err" data-testid="program-form-catalog-error">Functions could not be read: {catalogError}</div>
     {/if}
-    {#each catalog as row (row.name)}
-      <FunctionField {row} bind:ticked={ticked[row.name]} bind:value={fieldValues[row.name]} {curves} {curvesError} />
-    {/each}
+    {#if hasDefault}
+      {#each catalog as row (row.name)}
+        <FunctionField {row} bind:ticked={ticked[row.name]} bind:value={fieldValues[row.name]} {curves} {curvesError} />
+      {/each}
+    {/if}
   </fieldset>
   <div class="form-row">
     <button class="btn btn-green" type="submit" disabled={busy}>

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
@@ -131,5 +132,25 @@ func TestFSAControl_CancelRefusals(t *testing.T) {
 	}
 	if !x.dc.controlCancelled(t, got.MRID) {
 		t.Error("the device copy is not cancelled")
+	}
+}
+
+// With one device the copy's mRID is not shared, so only the record says it
+// is an FSA control; the device route must still refuse it.
+func TestFSAControl_DeviceCancelOfALoneCopyRefused(t *testing.T) {
+	x := newFSAControlFixture(t)
+	x.f.assign(t, dcDevice, "fsa-A")
+	w := x.f.do(http.MethodPost, x.path(), fsaControlBody())
+	var got handler.FSAControlCreated
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", w.Code, w.Body.String())
+	}
+	w = x.dc.do(t, http.MethodPost, x.dc.cancelPath(got.MRID), `{}`)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"code":"fsa_control"`) ||
+		!strings.Contains(w.Body.String(), x.path()+"/"+got.ID+"/cancel") {
+		t.Fatalf("device cancel of a lone copy = %d %s, want 409 fsa_control naming the FSA route", w.Code, w.Body.String())
+	}
+	if x.dc.controlCancelled(t, got.MRID) {
+		t.Error("the refused cancel cancelled the copy")
 	}
 }

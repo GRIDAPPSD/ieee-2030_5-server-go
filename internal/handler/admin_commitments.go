@@ -10,6 +10,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 )
 
@@ -88,7 +89,7 @@ func (h *AdminCommitmentsHandler) HandleList() http.HandlerFunc {
 		}
 		known, err := h.Fleets.Known(r.Context(), agg)
 		if err != nil {
-			log.Printf("admin commitments: resolving fleet %s: %v", agg, err)
+			log.Printf("admin commitments: resolving fleet %s: %v", logsafe.Str(agg), logsafe.Err(err))
 			writeCommitmentsInternal(w)
 			return
 		}
@@ -99,7 +100,7 @@ func (h *AdminCommitmentsHandler) HandleList() http.HandlerFunc {
 		now := h.now()
 		c, err := h.Ledger.Commitments(r.Context(), agg, now)
 		if err != nil {
-			log.Printf("admin commitments: fleet %s: %v", agg, err)
+			log.Printf("admin commitments: fleet %s: %v", logsafe.Str(agg), logsafe.Err(err))
 			writeCommitmentsInternal(w)
 			return
 		}

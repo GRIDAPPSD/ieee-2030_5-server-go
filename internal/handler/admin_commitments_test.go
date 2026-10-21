@@ -1,11 +1,14 @@
 package handler_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
@@ -177,5 +180,59 @@ func TestAdminCommitmentsViewValues(t *testing.T) {
 	p := got.PlainControls[0]
 	if p.MRID != "P1" || p.EdevID != "m1" || p.TargetW == nil || *p.TargetW != -12.5 {
 		t.Errorf("plain control = %s %s %v, want P1 m1 -12.5", p.MRID, p.EdevID, p.TargetW)
+	}
+}
+
+// An error text that carries a line break must not start a second log line
+// in a text log. Not parallel: it swaps the process-wide log writer.
+func TestAdminCommitmentsLogEscapesErrorText(t *testing.T) {
+	const forged = "x\n2026/10/21 00:00:00 admin_auth_success FORGED"
+	tests := []struct {
+		name string
+		h    *handler.AdminCommitmentsHandler
+		want string
+	}{
+		{
+			name: "fleet lookup error",
+			h: &handler.AdminCommitmentsHandler{
+				Ledger: commitmentsFunc(func(context.Context, string, int64) (commitment.Commitments, error) {
+					return commitment.Commitments{}, nil
+				}),
+				Fleets: knownFunc(func(context.Context, string) (bool, error) { return false, errors.New(forged) }),
+				Now:    func() int64 { return frNow },
+			},
+			want: "admin commitments: resolving fleet " + frAggLFDI + ": x\\n2026/10/21 00:00:00 admin_auth_success FORGED\n",
+		},
+		{
+			name: "ledger read error",
+			h: &handler.AdminCommitmentsHandler{
+				Ledger: commitmentsFunc(func(context.Context, string, int64) (commitment.Commitments, error) {
+					return commitment.Commitments{}, errors.New(forged)
+				}),
+				Fleets: everyFleetKnown,
+				Now:    func() int64 { return frNow },
+			},
+			want: "admin commitments: fleet " + frAggLFDI + ": x\\n2026/10/21 00:00:00 admin_auth_success FORGED\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			prevOut, prevFlags := log.Writer(), log.Flags()
+			log.SetFlags(0)
+			log.SetOutput(&buf)
+			t.Cleanup(func() {
+				log.SetOutput(prevOut)
+				log.SetFlags(prevFlags)
+			})
+			w := httptest.NewRecorder()
+			tc.h.HandleList()(w, httptest.NewRequest(http.MethodGet, "/api/derms/commitments?aggregatorLFDI="+frAggLFDI, nil))
+			if got := buf.String(); got != tc.want {
+				t.Errorf("log output = %q, want %q", got, tc.want)
+			}
+			if n := strings.Count(buf.String(), "\n"); n != 1 {
+				t.Errorf("log wrote %d lines, want 1", n)
+			}
+		})
 	}
 }

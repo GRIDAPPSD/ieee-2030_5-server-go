@@ -19,6 +19,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -158,7 +159,7 @@ type frCancelBody struct {
 }
 
 // frWriteLog gathers one write's audit line. Every string is passed through
-// logSafe, and the reason is never added.
+// logsafe.Str, and the reason is never added.
 type frWriteLog struct {
 	attrs []any
 	// fault logs a refusal at ERROR: the client's answer stands, but the
@@ -168,23 +169,9 @@ type frWriteLog struct {
 
 func (l *frWriteLog) add(key string, value any) {
 	if s, ok := value.(string); ok {
-		value = logSafe(s)
+		value = logsafe.Str(s)
 	}
 	l.attrs = append(l.attrs, key, value)
-}
-
-// logSafe removes CR, LF and "event=" from s, so a value cannot start a
-// second line or forge the event key in a text log. Removal repeats until
-// nothing is left to remove, since removing one occurrence can join two
-// halves into another.
-func logSafe(s string) string {
-	for {
-		t := strings.NewReplacer("\r", "", "\n", "", "event=", "").Replace(s)
-		if t == s {
-			return s
-		}
-		s = t
-	}
 }
 
 func (l *frWriteLog) addAttribution(a flowreservation.Attribution) {

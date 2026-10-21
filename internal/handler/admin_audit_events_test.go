@@ -216,7 +216,7 @@ func TestAuditEvents_DeviceOnlyFSA_IncompleteKeepsItsEventName(t *testing.T) {
 }
 
 // The audit base line carries the client's address, which a client chooses on
-// some transports; a control character in it must not reach the log.
+// some transports; a control character in it is escaped, not removed, so the attempt stays visible.
 func TestAuditEvents_RemoteAddrIsLoggedSafely(t *testing.T) {
 	d := newDCHarness(t, ptrU32(dcPEN))
 	var ctl bytes.Buffer
@@ -227,8 +227,8 @@ func TestAuditEvents_RemoteAddrIsLoggedSafely(t *testing.T) {
 	d.mux.ServeHTTP(httptest.NewRecorder(), req)
 	rec := oneAudit(t, &ctl, "der_control_create_refused")
 	got, _ := rec["remote_addr"].(string)
-	if got == "" || strings.ContainsAny(got, "\r\n") || strings.Contains(got, "event=") {
-		t.Errorf("remote_addr = %q, want the address with its newline and event= removed", got)
+	if want := `192.0.2.7:4000\nevent=forged`; got != want {
+		t.Errorf("remote_addr = %q, want %q (newline escaped, text kept)", got, want)
 	}
 }
 

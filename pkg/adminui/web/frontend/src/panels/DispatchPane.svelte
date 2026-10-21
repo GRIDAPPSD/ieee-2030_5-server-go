@@ -418,7 +418,7 @@
   }
 
   function targetText(c: DERControlListItem): string {
-    const t = c.derControlBase.opModTargetW
+    const t = c.derControlBase.opModTargetW as { value: number; multiplier: number } | undefined
     if (t === undefined) return '-'
     return formatQuantity(scaledNumber(t), 'W') + ' (DER frame)'
   }

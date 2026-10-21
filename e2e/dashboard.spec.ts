@@ -90,9 +90,11 @@ test('DER control panel creates a control and lists it in the table', async ({ p
   await page.locator('#controlDevice').selectOption({ label: '222222222222' });
   await page.locator('#controlProgram').selectOption({ label: 'e2e der control program' });
 
-  const controlSelect = page.locator('#controlType');
-  await expect(controlSelect).toBeVisible();
-  await controlSelect.selectOption('disconnect');
+  // Ticking the connect function and leaving its value unchecked sends
+  // false, the disconnect.
+  const connectFn = page.getByTestId('control-fn-opModConnect');
+  await expect(connectFn).toBeVisible();
+  await connectFn.check();
   await page.locator('#controlDuration').fill('5');
 
   const sendButton = page.getByRole('button', { name: 'Send' });
@@ -107,7 +109,7 @@ test('DER control panel creates a control and lists it in the table', async ({ p
 
   const row = page.locator(`[data-testid="der-control-row"][data-mrid="${mrid}"]`);
   await expect(row).toBeVisible();
-  await expect(row).toContainText('disconnect');
+  await expect(row).toContainText('opModConnect=false');
 });
 
 // 5. Dashboard renders all sections correctly
@@ -133,7 +135,7 @@ test('dashboard renders all UI sections', async ({ page }) => {
   // DER control card
   await page.getByTestId('tab-control').click();
   await expect(page.getByText('SEND DER CONTROL')).toBeVisible();
-  await expect(page.locator('#controlType')).toBeVisible();
+  await expect(page.locator('#controlDevice')).toBeVisible();
 
   // Device table
   await page.getByTestId('tab-devices').click();

@@ -31,7 +31,8 @@ test('cancelling a scheduled control requires confirmation, then the row shows c
 
   await page.locator('#controlDevice').selectOption({ label: '222222222222' });
   await page.locator('#controlProgram').selectOption({ label: 'e2e der control program' });
-  await page.locator('#controlType').selectOption('connect');
+  await page.getByTestId('control-fn-opModConnect').check();
+  await page.getByTestId('control-fv-opModConnect').check();
   await page.locator('#controlDuration').fill('60');
 
   await page.getByRole('button', { name: 'Send' }).click();

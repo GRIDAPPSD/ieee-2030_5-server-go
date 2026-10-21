@@ -84,7 +84,7 @@ export interface TargetBody {
   multiplier: number
 }
 
-// encodeTarget turns the typed watts into opModTargetW's value and
+// encodeTarget turns the typed watts into the target power value and
 // multiplier: the smallest multiplier from 0 to 9 at which the value is a
 // whole int16. The sign is the operator's, passed through unchanged.
 export function encodeTarget(text: string): { ok: true; target: TargetBody } | { ok: false; error: string } {

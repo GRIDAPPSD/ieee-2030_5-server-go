@@ -2,6 +2,9 @@
 # (dashboard.spec.ts's DER control test, der_control_cancel.spec.ts).
 # der_control_list_link is required: the admin create route refuses a
 # program that has none (admin_dercontrol.go refuseNoControlListLink).
+# primacy is 100, not 0: a control sent to a device is stored in a device-only
+# program that must outrank the device's other programs, and nothing can
+# outrank primacy 0.
 end_devices:
   - id: e2e0
     sfdi: "222222222222"
@@ -19,7 +22,7 @@ der_programs:
     id: p1
     mrid: "D2D2D2D2D2D2D2D2"
     description: "e2e der control program"
-    primacy: 0
+    primacy: 100
     der_control_list_link:
       href: "/edev/e2e0/fsa/0/derp/p1/derc"
       all: 0

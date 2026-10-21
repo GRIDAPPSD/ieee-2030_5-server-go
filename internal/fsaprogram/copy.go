@@ -57,11 +57,6 @@ type Copies struct {
 	Origins  OriginStore
 }
 
-// DefaultHref is the href of the default control of the program at programHref.
-// It is the one place that suffix is built, so a program's link, its default's
-// own href and the notifications for either cannot drift apart.
-func DefaultHref(programHref string) string { return programHref + "/dderc" }
-
 // CopyProgram is the DERProgram a device assigned to fsaID serves for t. The
 // issuer requires DERControlListLink to be the program href plus "/derc".
 func CopyProgram(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DERProgram {
@@ -75,7 +70,7 @@ func CopyProgram(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DERProgr
 		Primacy:            t.Primacy,
 	}
 	if t.DefaultControlBase != nil {
-		p.DefaultDERControlLink = &sep2.Link{Href: DefaultHref(href)}
+		p.DefaultDERControlLink = &sep2.Link{Href: der.DefaultHref(href)}
 	}
 	p.Href = href
 	return p
@@ -91,7 +86,7 @@ func CopyDefault(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DefaultD
 		v := t.DefaultVersion
 		d.Version = &v
 	}
-	d.Href = DefaultHref(der.DERProgramHref(deviceID, fsaID, t.ID))
+	d.Href = der.DefaultHref(der.DERProgramHref(deviceID, fsaID, t.ID))
 	return d
 }
 

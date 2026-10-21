@@ -13,12 +13,6 @@ import (
 // #1043 round 1: an orphaned default is replaced, a half-applied create has
 // one contract, and the default href has one owner.
 
-func TestDefaultHref_IsTheProgramHrefPlusDderc(t *testing.T) {
-	if got, want := DefaultHref("/edev/1/fsa/f/derp/p"), "/edev/1/fsa/f/derp/p/dderc"; got != want {
-		t.Errorf("DefaultHref = %q, want %q", got, want)
-	}
-}
-
 func TestEditCreatingDefault_ReplacesAnOrphanedDefaultAndLinksIt(t *testing.T) {
 	ctx := context.Background()
 	f := seedDefault(t, u16(4), u16(2))
@@ -107,5 +101,25 @@ func TestHalfAppliedCreate_OneContractFromBothCallers(t *testing.T) {
 	}
 	if errors.Is(err, store.ErrNotFound) {
 		t.Errorf("a half-applied sync matches ErrNotFound: %v", err)
+	}
+}
+
+// A retry over a default that a failed create left behind must not reuse its
+// version for different content.
+func TestEditCreatingDefault_OrphanVersionIsNeverReused(t *testing.T) {
+	ctx := context.Background()
+	f := seedDefault(t, u16(4), u16(5))
+	p, _ := f.programs.Get(ctx, "e1", "p1")
+	p.Href = "/edev/e1/fsa/f/derp/p1"
+	if err := f.programs.Update(ctx, "e1", "p1", p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EditCreatingDefault(ctx, f.programs, f.defaults, f.ref, "scope", nil, sep2.DefaultDERControl{SetGradW: u16(9)}); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := f.defaults.Get(ctx, "scope", coresingleton.SingletonKey)
+	p, _ = f.programs.Get(ctx, "e1", "p1")
+	if versionOf(d.Version) != 6 || *d.SetGradW != 9 || versionOf(p.Version) != 5 {
+		t.Errorf("default version %d setGradW %d program version %d, want 6, 9 and 5", versionOf(d.Version), *d.SetGradW, versionOf(p.Version))
 	}
 }

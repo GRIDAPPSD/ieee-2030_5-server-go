@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -118,8 +119,7 @@ func EditClearingDefault(ctx context.Context, programs ProgramStore, defaults De
 }
 
 // DefaultCreator is the slice of the DefaultDERControl store a first default
-// needs. Get and Update are for a default already stored that no program
-// links, which a first default replaces.
+// needs; Get and Update serve replacing a stored default that nothing links.
 type DefaultCreator interface {
 	Get(ctx context.Context, parentID, id string) (sep2.DefaultDERControl, error)
 	Create(ctx context.Context, parentID, id string, resource sep2.DefaultDERControl) error
@@ -128,12 +128,11 @@ type DefaultCreator interface {
 }
 
 // EditCreatingDefault edits a program that links no default control and gives
-// it seed as one. The program links to it at its own href plus "/dderc" and its
-// version is raised once. The default's version is the program's new version,
-// which is above every version an earlier default of this program held, since
-// a default's version only rises with the program's. The default is written
-// first and put back (removed, or restored when it replaced a stored default
-// that nothing linked, whose mRID is kept) if the program write fails.
+// it seed as one. The program's version is raised once. The default takes the
+// program's new version, or one above a stored unlinked default it replaces
+// (whose mRID is kept) when that is higher, so no version is reused for other
+// content. The default is written first and put back if the program write
+// fails.
 func EditCreatingDefault(ctx context.Context, programs ProgramStore, defaults DefaultCreator, ref Ref, scope string,
 	mutateProgram func(*sep2.DERProgram) error, seed sep2.DefaultDERControl) (Changes, error) {
 	editMu.Lock()
@@ -146,7 +145,7 @@ func EditCreatingDefault(ctx context.Context, programs ProgramStore, defaults De
 	if pAfter.Version, err = NextVersion(pBefore.Version); err != nil {
 		return Changes{}, err
 	}
-	href := DefaultHref(pBefore.Href)
+	href := der.DefaultHref(pBefore.Href)
 	pAfter.DefaultDERControlLink = &sep2.Link{Href: href}
 	seed.Href = href
 	v := *pAfter.Version
@@ -158,6 +157,11 @@ func EditCreatingDefault(ctx context.Context, programs ProgramStore, defaults De
 	switch {
 	case err == nil:
 		seed.MRID = orphan.MRID
+		if next, err := NextVersion(orphan.Version); err != nil {
+			return Changes{}, err
+		} else if *next > v {
+			seed.Version = next
+		}
 		write = func(ctx context.Context) error { return defaults.Update(ctx, scope, coresingleton.SingletonKey, seed) }
 		undo = func(ctx context.Context) error {
 			return defaults.Update(ctx, scope, coresingleton.SingletonKey, orphan)
@@ -168,8 +172,6 @@ func EditCreatingDefault(ctx context.Context, programs ProgramStore, defaults De
 	return applyDefaultAndProgram(ctx, programs, ref, scope, write, undo, &pAfter)
 }
 
-// loadProgram reads the program at ref and returns it with the copy mutate
-// edits.
 func loadProgram(ctx context.Context, programs ProgramStore, ref Ref, mutate func(*sep2.DERProgram) error) (before, after sep2.DERProgram, err error) {
 	before, err = programs.Get(ctx, ref.DeviceID, ref.ProgramID)
 	if err != nil {
@@ -185,9 +187,9 @@ func loadProgram(ctx context.Context, programs ProgramStore, ref Ref, mutate fun
 	return before, after, nil
 }
 
-// applyDefaultAndProgram is the one "write the default, write the program,
-// put the default back on failure" sequence. A nil write skips the default and
-// a nil pAfter skips the program. A failed undo returns ErrHalfApplied with the
+// applyDefaultAndProgram writes the default, then the program, and undoes the
+// default if the program write fails. A nil write skips the default and a nil
+// pAfter skips the program. A failed undo returns ErrHalfApplied with the
 // default counted as written; its causes use %v so they cannot match store
 // sentinels.
 func applyDefaultAndProgram(ctx context.Context, programs ProgramStore, ref Ref, scope string,
@@ -217,10 +219,9 @@ func applyDefaultAndProgram(ctx context.Context, programs ProgramStore, ref Ref,
 }
 
 // writeProgramThenDeleteDefault writes pAfter when writeProgram is set, then
-// deletes the default under scope with del when it is non-nil, tolerating
-// ErrNotFound. The program is written first so its link never dangles; a
-// failed delete leaves an unlinked default and the returned Changes still name
-// the program write.
+// deletes the default with del when it is non-nil, tolerating ErrNotFound. The
+// program goes first so its link never dangles; a failed delete leaves an
+// unlinked default and the Changes still name the program write.
 func writeProgramThenDeleteDefault(ctx context.Context, programs ProgramStore, ref Ref, scope string,
 	pAfter sep2.DERProgram, writeProgram bool, del func(ctx context.Context, parentID, id string) error) (Changes, error) {
 	ch := Changes{Program: writeProgram}

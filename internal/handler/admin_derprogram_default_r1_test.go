@@ -3,10 +3,12 @@ package handler_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"testing"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
@@ -121,5 +123,43 @@ func TestDeviceControl_Default_RelinksAnUnlinkedStoredDefault(t *testing.T) {
 	requireDefaultServed(t, x.f, "1", first.FSA, first.Program)
 	if d := defaultOf(t, x.f, "1", first.FSA, first.Program); *d.DERControlBase.OpModMaxLimW != 2500 {
 		t.Errorf("default = %+v, want 2500", d)
+	}
+}
+
+// failingUpdates fails every program Update, and every default Update after
+// the first, so a write lands and its undo does not.
+type failingProgramUpdate struct{ fsaprogram.CopyProgramStore }
+
+func (failingProgramUpdate) Update(context.Context, string, string, sep2.DERProgram) error {
+	return errInjected
+}
+
+type failingSecondDefaultUpdate struct {
+	fsaprogram.CopyDefaultStore
+	calls int
+}
+
+func (s *failingSecondDefaultUpdate) Update(ctx context.Context, p, id string, d sep2.DefaultDERControl) error {
+	s.calls++
+	if s.calls > 1 {
+		return errInjected
+	}
+	return s.CopyDefaultStore.Update(ctx, p, id, d)
+}
+
+func TestDeviceControl_Default_PartialWriteIsNotified(t *testing.T) {
+	x := newDeviceControlFixture(t)
+	first := decodeDeviceControl(t, x.post("1", defaultBody(4000)))
+	x.f.h.Copies.Programs = failingProgramUpdate{x.f.copies.Programs}
+	x.f.h.Copies.Defaults = &failingSecondDefaultUpdate{CopyDefaultStore: x.f.copies.Defaults}
+	x.f.notifier.take()
+
+	if w := x.post("1", defaultBody(2500)); w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d %s, want 500", w.Code, w.Body.String())
+	}
+	base := fmt.Sprintf("/edev/1/fsa/%s/derp/%s", first.FSA, first.Program)
+	want := []recordedNotification{{base + "/dderc", sep2.NotificationStatusDefault}, {base[:len(base)-len(first.Program)-1], sep2.NotificationStatusDefault}}
+	if got := x.f.notifier.take(); !slices.Equal(got, want) {
+		t.Errorf("notifications = %+v, want %+v", got, want)
 	}
 }

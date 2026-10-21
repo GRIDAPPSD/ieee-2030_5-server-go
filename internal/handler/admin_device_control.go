@@ -562,9 +562,8 @@ func (h *AdminFSAHandler) updateDeviceOnlyProgram(w http.ResponseWriter, r *http
 		h.templateFailed(w, r, "default_lookup", err)
 		return false
 	}
-	// A cleared default is an operator state: a kind default send does not
-	// bring it back (the program edit route does), and a primacy change does
-	// not need one.
+	// A cleared default is an operator state, not a fault: only a program edit
+	// brings one back.
 	if setDefault && !hadDefault {
 		refuseProgram(w, "no_default_control", "the program has no default control; set one with a program edit first")
 		return false
@@ -585,6 +584,7 @@ func (h *AdminFSAHandler) updateDeviceOnlyProgram(w http.ResponseWriter, r *http
 		refuseProgram(w, "version_exhausted", "the program's or its default control's version is at 65535")
 		return false
 	default:
+		h.notifyEdited(ctx, deviceID, fsaID, progID, ch)
 		h.templateFailed(w, r, "program_edit", err)
 		return false
 	}

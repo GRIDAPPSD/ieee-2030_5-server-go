@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -80,12 +78,8 @@ func startRunForNotificationPolicy(t *testing.T, allowLoopback bool) (string, *h
 		t.Fatalf("write boot fixture: %v", err)
 	}
 
-	// The port is probed and released before Run binds it, so another process
-	// can take it in between; retry with a fresh port when that happens.
-	const startAttempts = 8
-	for attempt := 1; attempt <= startAttempts; attempt++ {
-		addr := mustProbePort(t)
-		cfg := &config.Config{
+	run := startRun(t, func(addr string) *config.Config {
+		return &config.Config{
 			Addr:                      addr,
 			CertFile:                  c.certFile,
 			KeyFile:                   c.keyFile,
@@ -95,31 +89,8 @@ func startRunForNotificationPolicy(t *testing.T, allowLoopback bool) (string, *h
 			NotificationAllowLoopback: allowLoopback,
 			BootFixtureFile:           fixture,
 		}
-		ctx, cancel := context.WithCancel(context.Background())
-		runErrCh := make(chan error, 1)
-		go func() { runErrCh <- server.Run(ctx, cfg, c.svc) }()
-		readyCh := make(chan bool, 1)
-		go func() { readyCh <- waitForServerReady(addr, 5*time.Second, clientTLSCfg) }()
-
-		select {
-		case ready := <-readyCh:
-			if !ready {
-				cancel()
-				t.Fatalf("protocol listener never became ready on %s", addr)
-			}
-			client := ccmHTTPClient(clientTLSCfg, 5*time.Second)
-			return addr, client, cancel, runErrCh
-		case err := <-runErrCh:
-			cancel()
-			go func() { <-readyCh }()
-			if !errors.Is(err, syscall.EADDRINUSE) && !strings.Contains(err.Error(), "address already in use") {
-				t.Fatalf("server.Run exited before the protocol listener was ready: %v", err)
-			}
-			t.Logf("server.Run attempt %d could not bind %s (%v); retrying with a new port", attempt, addr, err)
-		}
-	}
-	t.Fatalf("server.Run could not bind a free port in %d attempts", startAttempts)
-	return "", nil, nil, nil
+	}, c.svc, clientTLSCfg)
+	return run.addr, ccmHTTPClient(clientTLSCfg, 5*time.Second), run.cancel, run.runErrCh
 }
 
 // Not parallel: it swaps the process-wide log output.

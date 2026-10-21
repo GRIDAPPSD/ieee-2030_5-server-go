@@ -22,6 +22,7 @@ import (
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
@@ -290,45 +291,55 @@ func bootWithBindRetry[E any](t *testing.T, boot func() (*E, string)) *E {
 	}
 }
 
-// startRunOnFreePort starts server.Run on a probed port, waits until it
-// completes a TLS handshake, and returns the address and a stop that cancels
-// Run and checks it exits cleanly. Only a lost port is retried (see
-// bootWithBindRetry): any other Run error is the failure under test. stop is
-// also registered as a cleanup and runs once, so a test may call it early.
-func startRunOnFreePort(t *testing.T, newConfig func(addr string) *config.Config, clientTLSCfg *gotls.Config) (string, func()) {
+// runHandle is a server.Run that has completed a TLS handshake on addr. The
+// caller cancels it and reads runErrCh.
+type runHandle struct {
+	addr     string
+	cancel   context.CancelFunc
+	runErrCh chan error
+}
+
+// startRun starts server.Run on a probed port with svc and waits until it
+// completes a TLS handshake. Only a lost port is retried (see
+// bootWithBindRetry): any other Run error is the failure under test.
+func startRun(t *testing.T, newConfig func(addr string) *config.Config, svc *handler.AdminCertService, clientTLSCfg *gotls.Config) *runHandle {
 	t.Helper()
-	type started struct {
-		addr string
-		stop func()
-	}
-	run := bootWithBindRetry(t, func() (*started, string) {
+	return bootWithBindRetry(t, func() (*runHandle, string) {
 		addr := mustProbePort(t)
 		ctx, cancel := context.WithCancel(context.Background())
 		runErrCh := make(chan error, 1)
-		go func() { runErrCh <- server.Run(ctx, newConfig(addr), nil) }()
+		go func() { runErrCh <- server.Run(ctx, newConfig(addr), svc) }()
 		if msg, ok := pollReady("SEP2 listener", adminReadyTimeout, runErrCh, sep2HandshakeProbe(addr, clientTLSCfg)); !ok {
 			cancel()
 			<-runErrCh
 			return nil, fmt.Sprintf("%s (%s)", msg, addr)
 		}
-		var once sync.Once
-		stop := func() {
-			once.Do(func() {
-				cancel()
-				select {
-				case err := <-runErrCh:
-					if err != nil {
-						t.Errorf("server.Run returned error after cancel: %v", err)
-					}
-				case <-time.After(3 * time.Second):
-					t.Error("server.Run did not return within 3s after context cancel")
-				}
-			})
-		}
-		return &started{addr, stop}, ""
+		return &runHandle{addr: addr, cancel: cancel, runErrCh: runErrCh}, ""
 	})
-	t.Cleanup(run.stop)
-	return run.addr, run.stop
+}
+
+// startRunOnFreePort is startRun with no admin cert service, plus a stop
+// that cancels Run and checks it exits cleanly. stop is also registered as a
+// cleanup and runs once, so a test may call it early.
+func startRunOnFreePort(t *testing.T, newConfig func(addr string) *config.Config, clientTLSCfg *gotls.Config) (string, func()) {
+	t.Helper()
+	run := startRun(t, newConfig, nil, clientTLSCfg)
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			run.cancel()
+			select {
+			case err := <-run.runErrCh:
+				if err != nil {
+					t.Errorf("server.Run returned error after cancel: %v", err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Error("server.Run did not return within 3s after context cancel")
+			}
+		})
+	}
+	t.Cleanup(stop)
+	return run.addr, stop
 }
 
 // sep2HandshakeProbe completes a full TLS handshake against addr. A plain

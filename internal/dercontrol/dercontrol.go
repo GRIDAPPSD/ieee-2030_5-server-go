@@ -23,8 +23,8 @@ const (
 )
 
 // ControlType selects which DERControlBase shape Issue builds. The set is
-// closed: IEEE 2030.5-2018 defines other opMod fields, but only these five
-// are supported.
+// closed; a control that needs another combination of functions carries a
+// FunctionSet instead.
 type ControlType string
 
 const (
@@ -57,7 +57,14 @@ type CreateRequest struct {
 	// program's own DERControlListLink names (acceptance criterion 1).
 	DERProgramHref string
 
+	// Type selects a legacy control shape. Exactly one of Type and
+	// Functions is set.
 	Type ControlType
+
+	// Functions is the set of functions the control carries, as an
+	// alternative to Type. The top-level value fields below stay unset
+	// when it is used.
+	Functions *FunctionSet
 
 	// MaxLimW is required for, and only for, Type == MaxLimW: 0 to 10000
 	// hundredths of a percent of setMaxW.
@@ -170,6 +177,7 @@ const (
 	RefusalAlreadySuperseded  RefusalCode = "already_superseded"
 	RefusalEnded              RefusalCode = "ended"
 	RefusalInvalidDescription RefusalCode = "invalid_description"
+	RefusalTypeAndFunctions   RefusalCode = "type_and_functions"
 )
 
 // RefusalError is returned when Issue or Cancel declines. Error() carries

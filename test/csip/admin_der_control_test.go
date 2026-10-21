@@ -88,6 +88,34 @@ func TestAdminCreatedControl_BASIC_008_009_010(t *testing.T) {
 				}
 			},
 		},
+		{
+			// #968: one event carrying two functions, read back by the device.
+			name:     "BASIC-010-two-functions",
+			fixture:  "basic-010-limit-max-active-p.yaml",
+			typeJSON: `"functions":{"opModMaxLimW":6000,"opModFixedPFInjectW":{"displacement":900,"excitation":false}}`,
+			assert: func(t *testing.T, cipher string, base *sep2.DERControlBase) {
+				t.Helper()
+				if base.OpModMaxLimW == nil || *base.OpModMaxLimW != 6000 {
+					t.Errorf("[%s] opModMaxLimW = %v, want 6000", cipher, base.OpModMaxLimW)
+				}
+				pf := base.OpModFixedPFInjectW
+				if pf == nil || pf.Displacement != 900 || pf.Excitation || pf.Multiplier != -3 {
+					t.Errorf("[%s] opModFixedPFInjectW = %+v, want displacement 900 excitation false multiplier -3", cipher, pf)
+				}
+				if base.OpModConnect != nil || base.OpModEnergize != nil || base.OpModTargetW != nil {
+					t.Errorf("[%s] base carries functions that were not sent: %+v", cipher, base)
+				}
+				raw, err := xml.Marshal(base)
+				if err != nil {
+					t.Fatalf("marshal base: %v", err)
+				}
+				for _, el := range []string{"<opModMaxLimW>", "<opModFixedPFInjectW>"} {
+					if !bytes.Contains(raw, []byte(el)) {
+						t.Errorf("[%s] wire base %s lacks %s", cipher, raw, el)
+					}
+				}
+			},
+		},
 	}
 
 	// The harness offers CCM-8 only (csiptest.BootServer); the mode table

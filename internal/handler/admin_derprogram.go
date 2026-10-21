@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -49,6 +50,7 @@ type programTemplateBody struct {
 
 type defaultControlBody struct {
 	Type        *string                `json:"type"`
+	Functions   json.RawMessage        `json:"functions"`
 	MaxLimW     *int64                 `json:"maxLimW"`
 	PowerFactor *derControlPowerFactor `json:"powerFactor"`
 	TargetW     *derControlTargetW     `json:"targetW"`
@@ -241,16 +243,9 @@ func buildProgramEdit(body programTemplateBody) (programEdit, string, bool) {
 	if dc == nil {
 		return e, "", true
 	}
-	if dc.Type == nil || *dc.Type == "" {
-		return e, "defaultControl." + refuseTypeRequired.message, false
-	}
-	typ, ok := controlTypes[*dc.Type]
-	if !ok {
-		return e, "defaultControl." + refuseTypeUnknown.message, false
-	}
-	req := dercontrol.CreateRequest{Type: typ}
+	var req dercontrol.CreateRequest
 	values := derControlCreateBody{MaxLimW: dc.MaxLimW, PowerFactor: dc.PowerFactor, TargetW: dc.TargetW}
-	if ref, ok := buildValue(typ, values, &req, &derControlLog{}); !ok {
+	if ref, ok := buildControlValues(dc.Type, dc.Functions, values, &req, &derControlLog{}); !ok {
 		return e, "defaultControl." + ref.message, false
 	}
 	base, err := dercontrol.ControlBase(req)

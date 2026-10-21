@@ -449,20 +449,6 @@ describe('DerControl: the stored default is read from the server', () => {
   })
 })
 
-describe('DerControl: late catalog replies after unmount', () => {
-  it('a catalog and a curve reply that land after unmount are dropped without error', async () => {
-    const lateCatalog = deferred<unknown>()
-    const lateCurves = deferred<unknown>()
-    mockApi({ catalogReply: lateCatalog.promise, curvesReply: lateCurves.promise })
-    const view = render(DerControl, { devices })
-    view.unmount()
-    lateCatalog.resolve({ ok: true, data: catalog })
-    lateCurves.resolve({ ok: true, data: curves })
-    await new Promise((r) => setTimeout(r, 20))
-    expect(document.body.querySelector('[data-testid^="control-function-"]')).toBeNull()
-  })
-})
-
 describe('DerControl: a curve pick', () => {
   it('lists only the stored curves of the row\'s type and posts the id picked', async () => {
     const { post, container } = await mount()

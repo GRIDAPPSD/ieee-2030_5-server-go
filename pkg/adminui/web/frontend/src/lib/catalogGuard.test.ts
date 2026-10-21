@@ -57,7 +57,8 @@ describe('the control form names no control function', () => {
 // readsValue type-checks a snippet against the real CatalogRow and returns
 // its diagnostics. Any read of a row's value, by whatever name the row has
 // or however it is destructured, is a compile error because the type has no
-// such member; this proves that, and npm run check enforces it on the tree.
+// such member; this test only type-checks these snippets, and the tree itself is
+// enforced by the separate npm run check step in CI.
 function diagnostics(snippet: string): string[] {
   const probe = 'src/lib/__probe.ts'
   const options: ts.CompilerOptions = {

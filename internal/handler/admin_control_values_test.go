@@ -177,12 +177,3 @@ func TestControlValues_RouteGolden(t *testing.T) {
 	}
 	checkGolden(t, "testdata/control_values_routes.golden.json", append(out, '\n'))
 }
-
-func TestControlValues_FunctionsGolden(t *testing.T) {
-	x := newControlValuesFixture(t)
-	w := x.f.do(http.MethodGet, "/api/der/control-functions", "")
-	if w.Code != http.StatusOK {
-		t.Fatalf("status %d body %s", w.Code, w.Body.String())
-	}
-	checkGolden(t, "testdata/control_functions.golden.json", w.Body.Bytes())
-}

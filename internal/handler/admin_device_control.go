@@ -172,17 +172,10 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 		defer tx.finish(fh, r)
 
 		ctx := r.Context()
-		fsaID, hasFSA := fh.AdminFSAs.DeviceOnlyFSA(deviceID)
-		progID := ""
-		if hasFSA {
-			held, err := fh.Copies.DevicePrograms(ctx, deviceID, fsaID)
-			if err != nil {
-				fh.templateFailed(w, r, "device_programs", err)
-				return
-			}
-			if len(held) > 0 {
-				progID = held[0]
-			}
+		fsaID, hasFSA, progID, err := fh.deviceOwnProgram(ctx, deviceID)
+		if err != nil {
+			fh.templateFailed(w, r, "device_programs", err)
+			return
 		}
 
 		primacy, err := fh.choosePrimacy(ctx, deviceID, fsaID, progID)
@@ -264,9 +257,19 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 	}
 }
 
-// emptyDefaultType is the type name of a default control with no function
-// set, which is what a scheduled send leaves in a new device program.
-const emptyDefaultType = "other"
+// deviceOwnProgram finds deviceID's device-only FSA and its one program. hasFSA
+// is false when the device has no device-only FSA, and progID is empty when
+// the FSA holds no program.
+func (h *AdminFSAHandler) deviceOwnProgram(ctx context.Context, deviceID string) (fsaID string, hasFSA bool, progID string, err error) {
+	if fsaID, hasFSA = h.AdminFSAs.DeviceOnlyFSA(deviceID); !hasFSA {
+		return "", false, "", nil
+	}
+	held, err := h.Copies.DevicePrograms(ctx, deviceID, fsaID)
+	if err != nil || len(held) == 0 {
+		return fsaID, true, "", err
+	}
+	return fsaID, true, held[0], nil
+}
 
 // HandleGetDefault returns the handler for GET /api/devices/{id}/default-control:
 // the default control a kind default send set, as the view that send's reply
@@ -283,27 +286,30 @@ func (h *AdminDeviceControlHandler) HandleGetDefault() http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
-		fsaID, ok := fh.AdminFSAs.DeviceOnlyFSA(deviceID)
-		if !ok {
-			writeError(w, http.StatusNotFound, noDeviceDefault)
-			return
-		}
-		held, err := fh.Copies.DevicePrograms(ctx, deviceID, fsaID)
+		fsaID, _, progID, err := fh.deviceOwnProgram(ctx, deviceID)
 		if err != nil {
 			fh.templateFailed(w, r, "device_programs", err)
 			return
 		}
-		if len(held) == 0 {
+		if progID == "" {
 			writeError(w, http.StatusNotFound, noDeviceDefault)
 			return
 		}
-		view, err := fh.deviceProgramView(ctx, deviceID, fsaID, held[0])
+		d, err := fh.Copies.Defaults.Get(ctx, derhref.ScopeKey(deviceID, fsaID, progID), coresingleton.SingletonKey)
+		if errors.Is(err, store.ErrNotFound) || (err == nil && (d.DERControlBase == nil || len(dercontrol.FunctionNames(d.DERControlBase)) == 0)) {
+			writeError(w, http.StatusNotFound, noDeviceDefault)
+			return
+		}
 		if err != nil {
-			fh.templateFailed(w, r, "program_read", err)
+			fh.templateFailed(w, r, "default_lookup", err)
 			return
 		}
-		if view.DefaultControl == nil || view.DefaultControl.Type == emptyDefaultType {
-			writeError(w, http.StatusNotFound, noDeviceDefault)
+		view, err := fh.deviceProgramView(ctx, deviceID, fsaID, progID)
+		if err != nil || view.DefaultControl == nil {
+			if err == nil {
+				err = errors.New("default control missing")
+			}
+			fh.templateFailed(w, r, "program_read", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, view.DefaultControl)

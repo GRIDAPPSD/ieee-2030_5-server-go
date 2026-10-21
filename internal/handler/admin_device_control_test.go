@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
@@ -516,5 +517,37 @@ func (x *deviceControlFixture) nothingWrittenByGet(t *testing.T) {
 	t.Helper()
 	if c, _ := x.dc.storedCounts(t); c != 1 {
 		t.Errorf("stored controls = %d after reads, want the 1 the scheduled send wrote", c)
+	}
+}
+
+// The 404 for an empty default follows the base's own function set, so a
+// default with any function is served and one with none is not, whatever
+// type name the view gives them.
+func TestDeviceControl_GetDefault_EmptinessFollowsTheBaseFunctions(t *testing.T) {
+	x := newDeviceControlFixture(t)
+	ctx := context.Background()
+	sent := decodeDeviceControl(t, x.post("1", scheduledBody(t, 5000)))
+	scope := derhref.ScopeKey("1", sent.FSA, sent.Program)
+	d, err := x.f.copies.Defaults.Get(ctx, scope, coresingleton.SingletonKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(dercontrol.FunctionNames(d.DERControlBase)); n != 0 {
+		t.Fatalf("scheduled send left a default with %d functions, want 0", n)
+	}
+	if w := x.getDefault("1"); w.Code != http.StatusNotFound {
+		t.Fatalf("empty default = %d, want 404", w.Code)
+	}
+
+	on := true
+	d.DERControlBase = &sep2.DERControlBase{OpModConnect: &on}
+	if err := x.f.copies.Defaults.Update(ctx, scope, coresingleton.SingletonKey, d); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(dercontrol.FunctionNames(d.DERControlBase)); n != 1 {
+		t.Fatalf("seeded default has %d functions, want 1", n)
+	}
+	if w := x.getDefault("1"); w.Code != http.StatusOK {
+		t.Errorf("default with opModConnect = %d %s, want 200", w.Code, w.Body.String())
 	}
 }

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"maps"
 	"net/http"
@@ -37,9 +38,9 @@ type controlValuesBody struct {
 // DERControlBase a program default carries. ok false means the values were
 // refused and ref says why; ok true with a non-nil err means they parsed but
 // did not form a base, and the caller words that refusal.
-func controlBaseFromValues(v controlValuesBody, l *derControlLog) (base *sep2.DERControlBase, ref derControlRefusal, ok bool, err error) {
+func controlBaseFromValues(ctx context.Context, curves dercontrol.CurveReader, v controlValuesBody, l *derControlLog) (base *sep2.DERControlBase, ref derControlRefusal, ok bool, err error) {
 	var req dercontrol.CreateRequest
-	if ref, ok := buildControlValues(v, &req, l); !ok {
+	if ref, ok := buildControlValues(ctx, curves, v, &req, l); !ok {
 		return nil, ref, false, nil
 	}
 	base, err = dercontrol.ControlBase(req)
@@ -49,14 +50,14 @@ func controlBaseFromValues(v controlValuesBody, l *derControlLog) (base *sep2.DE
 // buildControlValues fills req from a request's type or functions member,
 // exactly one of which must be present. A body with neither answers the
 // type-required refusal it always has, so a request that names no type
-// behaves as before.
-func buildControlValues(v controlValuesBody, req *dercontrol.CreateRequest, l *derControlLog) (derControlRefusal, bool) {
+// behaves as before. A curve value is checked against curves.
+func buildControlValues(ctx context.Context, curves dercontrol.CurveReader, v controlValuesBody, req *dercontrol.CreateRequest, l *derControlLog) (derControlRefusal, bool) {
 	hasFunctions := len(v.Functions) > 0 && !bytes.Equal(bytes.TrimSpace(v.Functions), []byte("null"))
 	if hasFunctions && v.Type != nil {
 		return refuseTypeAndFunctions, false
 	}
 	if hasFunctions {
-		return buildFunctions(v.Functions, v, req, l)
+		return buildFunctions(ctx, curves, v.Functions, v, req, l)
 	}
 	if v.Type == nil || *v.Type == "" {
 		return refuseTypeRequired, false
@@ -75,7 +76,7 @@ func buildControlValues(v controlValuesBody, req *dercontrol.CreateRequest, l *d
 	return derControlRefusal{}, true
 }
 
-func buildFunctions(raw json.RawMessage, body controlValuesBody, req *dercontrol.CreateRequest, l *derControlLog) (derControlRefusal, bool) {
+func buildFunctions(ctx context.Context, curves dercontrol.CurveReader, raw json.RawMessage, body controlValuesBody, req *dercontrol.CreateRequest, l *derControlLog) (derControlRefusal, bool) {
 	if ref := dercontrol.RefuseBesideFunctions(body.LegacyValues); ref != nil {
 		return valueRefusal(ref), false
 	}
@@ -91,7 +92,12 @@ func buildFunctions(raw json.RawMessage, body controlValuesBody, req *dercontrol
 			return refuseFunctionUnknown, false
 		}
 	}
-	draft, ref := dercontrol.DecodeFunctions(members)
+	draft, ref, err := dercontrol.DecodeFunctions(ctx, members, curves)
+	if err != nil {
+		// The cause is not logged: a store error can carry a path.
+		l.add("cause", "curve_read_failed")
+		return refuseInternal, false
+	}
 	if ref != nil {
 		return valueRefusal(ref), false
 	}
@@ -108,7 +114,7 @@ func valueRefusal(r *dercontrol.ValueRefusal) derControlRefusal {
 
 // buildCreateRequest validates body field by field so each refusal names
 // its field, and records the validated values on l as it goes.
-func buildCreateRequest(body derControlCreateBody, l *derControlLog) (dercontrol.CreateRequest, derControlRefusal, bool) {
+func buildCreateRequest(ctx context.Context, curves dercontrol.CurveReader, body derControlCreateBody, l *derControlLog) (dercontrol.CreateRequest, derControlRefusal, bool) {
 	var req dercontrol.CreateRequest
 	if body.DERProgramHref == nil || *body.DERProgramHref == "" {
 		return req, refuseProgramHrefRequired, false
@@ -118,7 +124,7 @@ func buildCreateRequest(body derControlCreateBody, l *derControlLog) (dercontrol
 	}
 	req.DERProgramHref = *body.DERProgramHref
 
-	if ref, ok := buildControlValues(body.controlValuesBody, &req, l); !ok {
+	if ref, ok := buildControlValues(ctx, curves, body.controlValuesBody, &req, l); !ok {
 		return req, ref, false
 	}
 

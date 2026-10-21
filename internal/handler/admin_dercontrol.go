@@ -157,6 +157,10 @@ type AdminDERControlHandler struct {
 	// route refuses a copy and points at the FSA route. Nil finds none.
 	FSAControls FSAControlFinder
 
+	// Curves holds the curves a curve value may name. Nil holds none, so
+	// every curve value is refused as unknown.
+	Curves dercontrol.CurveReader
+
 	Logger *slog.Logger
 }
 
@@ -468,7 +472,7 @@ func (h *AdminDERControlHandler) HandleCreate() http.HandlerFunc {
 			h.refuse(w, r, "create", ref, &logged)
 			return
 		}
-		req, ref, ok := buildCreateRequest(body, &logged)
+		req, ref, ok := buildCreateRequest(r.Context(), h.Curves, body, &logged)
 		if !ok {
 			h.refuse(w, r, "create", ref, &logged)
 			return

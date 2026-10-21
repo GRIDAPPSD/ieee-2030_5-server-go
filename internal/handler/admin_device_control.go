@@ -119,7 +119,7 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 			cb.DERProgramHref = &href
 			var ref derControlRefusal
 			var ok bool
-			if req, ref, ok = buildCreateRequest(cb, &logged); !ok {
+			if req, ref, ok = buildCreateRequest(r.Context(), h.Controls.Curves, cb, &logged); !ok {
 				h.Controls.refuse(w, r, "device_control", ref, &logged)
 				return
 			}
@@ -137,7 +137,7 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 					return
 				}
 			}
-			base, ref, ok, err := controlBaseFromValues(body.controlValuesBody, &logged)
+			base, ref, ok, err := controlBaseFromValues(r.Context(), h.Controls.Curves, body.controlValuesBody, &logged)
 			if !ok {
 				h.Controls.refuse(w, r, "device_control", ref, &logged)
 				return

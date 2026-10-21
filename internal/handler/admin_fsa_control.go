@@ -137,7 +137,7 @@ func (h *AdminFSAControlHandler) HandleCreate() http.HandlerFunc {
 			return
 		}
 		href := dercontrol.UnscopedProgramHref
-		req, ref, ok := buildCreateRequest(derControlCreateBody{
+		req, ref, ok := buildCreateRequest(r.Context(), ch.Curves, derControlCreateBody{
 			controlValuesBody: body.controlValuesBody,
 			DERProgramHref:    &href, StartTime: body.StartTime, DurationSeconds: body.DurationSeconds, Description: body.Description,
 		}, &logged)

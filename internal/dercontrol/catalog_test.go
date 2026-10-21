@@ -50,7 +50,7 @@ func TestDecodeFunctions_ValuesAndRefusals(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.members), &members); err != nil {
 				t.Fatal(err)
 			}
-			got, ref := DecodeFunctions(members)
+			got, ref := decodeNoCurves(t, members)
 			if !reflect.DeepEqual(ref, tc.refusal) {
 				t.Fatalf("refusal = %+v, want %+v", ref, tc.refusal)
 			}
@@ -186,4 +186,15 @@ func TestBuildBase_FunctionSetMissingMembers(t *testing.T) {
 			}
 		})
 	}
+}
+
+// decodeNoCurves is DecodeFunctions with no curve store, which holds no
+// curve, so it decodes everything but a curve value as the handler would.
+func decodeNoCurves(t *testing.T, members map[string]json.RawMessage) (*FunctionSet, *ValueRefusal) {
+	t.Helper()
+	draft, ref, err := DecodeFunctions(t.Context(), members, nil)
+	if err != nil {
+		t.Fatalf("DecodeFunctions with no curve store: %v", err)
+	}
+	return draft, ref
 }

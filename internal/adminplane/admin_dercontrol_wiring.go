@@ -38,6 +38,7 @@ func newAdminDERControlHandler(stores *Stores) *handler.AdminDERControlHandler {
 		EndDevices: stores.EndDevices,
 		Notifier:   stores.AdminNotifier,
 		Persisted:  persists(stores.DERControls) && persists(stores.DERControlLifecycles),
+		Curves:     curveReader(stores),
 	}
 	if !store.IsAbsent(stores.Responses) {
 		h.Responses = stores.Responses

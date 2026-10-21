@@ -32,7 +32,7 @@ func TestAddedRows_WireBytesAndViews(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			draft, ref := DecodeFunctions(map[string]json.RawMessage{tc.name: json.RawMessage(tc.value)})
+			draft, ref := decodeNoCurves(t, map[string]json.RawMessage{tc.name: json.RawMessage(tc.value)})
 			if ref != nil {
 				t.Fatalf("decode refused: %+v", ref)
 			}
@@ -80,7 +80,7 @@ func TestServedIntegerBoundsEncode(t *testing.T) {
 	for _, b := range bounds {
 		for _, v := range []int64{b.min, b.max} {
 			name, _, _ := strings.Cut(b.where, ".")
-			draft, ref := DecodeFunctions(map[string]json.RawMessage{name: json.RawMessage(b.body(v))})
+			draft, ref := decodeNoCurves(t, map[string]json.RawMessage{name: json.RawMessage(b.body(v))})
 			if ref != nil {
 				t.Errorf("%s = %d: refused %+v", b.where, v, ref)
 				continue
@@ -122,7 +122,7 @@ func TestAddedRows_Refusals(t *testing.T) {
 		if err := json.Unmarshal([]byte(tc.members), &members); err != nil {
 			t.Fatal(err)
 		}
-		draft, ref := DecodeFunctions(members)
+		draft, ref := decodeNoCurves(t, members)
 		if draft != nil || ref == nil || *ref != tc.refusal {
 			t.Errorf("%s: draft %+v refusal %+v, want %+v", tc.members, draft, ref, tc.refusal)
 		}
@@ -131,7 +131,7 @@ func TestAddedRows_Refusals(t *testing.T) {
 
 // A control carrying only a droop logs the droop values as its audit value.
 func TestFreqDroopAuditValue(t *testing.T) {
-	draft, ref := DecodeFunctions(map[string]json.RawMessage{FuncFreqDroop: json.RawMessage(`{"dBOF":36,"dBUF":37,"kOF":5,"kUF":6,"openLoopTms":500}`)})
+	draft, ref := decodeNoCurves(t, map[string]json.RawMessage{FuncFreqDroop: json.RawMessage(`{"dBOF":36,"dBUF":37,"kOF":5,"kUF":6,"openLoopTms":500}`)})
 	if ref != nil {
 		t.Fatalf("decode refused: %+v", ref)
 	}

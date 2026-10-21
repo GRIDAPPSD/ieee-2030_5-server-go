@@ -182,3 +182,13 @@ func NewCommitmentLedger(s *Stores) *commitment.Ledger {
 		s.DERControls, s.DERControlLifecycles,
 	)
 }
+
+// curveReader is the curve store every route that takes control values
+// checks a curve value against, or nil, which holds no curve, when s has
+// none. A typed-nil store is nil here too, so it is never called.
+func curveReader(s *Stores) dercontrol.CurveReader {
+	if store.IsAbsent(s.DERCurves) {
+		return nil
+	}
+	return s.DERCurves
+}

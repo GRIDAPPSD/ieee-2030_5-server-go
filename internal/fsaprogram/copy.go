@@ -63,19 +63,21 @@ func CopyProgram(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DERProgr
 	href := der.DERProgramHref(deviceID, fsaID, t.ID)
 	version := t.Version
 	p := sep2.DERProgram{
-		MRID:                  t.MRID,
-		Description:           t.Description,
-		Version:               &version,
-		DefaultDERControlLink: &sep2.Link{Href: href + "/dderc"},
-		DERControlListLink:    &sep2.ListLink{Href: href + "/derc"},
-		Primacy:               t.Primacy,
+		MRID:               t.MRID,
+		Description:        t.Description,
+		Version:            &version,
+		DERControlListLink: &sep2.ListLink{Href: href + "/derc"},
+		Primacy:            t.Primacy,
+	}
+	if t.DefaultControlBase != nil {
+		p.DefaultDERControlLink = &sep2.Link{Href: der.DefaultHref(href)}
 	}
 	p.Href = href
 	return p
 }
 
 // CopyDefault is the DefaultDERControl CopyProgram's DefaultDERControlLink
-// names.
+// names. It is only meaningful when t has a default control.
 func CopyDefault(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DefaultDERControl {
 	base := t.DefaultControlBase.Copy()
 	d := sep2.DefaultDERControl{MRID: t.DefaultMRID, DERControlBase: &base}
@@ -84,7 +86,7 @@ func CopyDefault(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DefaultD
 		v := t.DefaultVersion
 		d.Version = &v
 	}
-	d.Href = der.DERProgramHref(deviceID, fsaID, t.ID) + "/dderc"
+	d.Href = der.DefaultHref(der.DERProgramHref(deviceID, fsaID, t.ID))
 	return d
 }
 
@@ -196,7 +198,7 @@ func (c Copies) EnsureDevice(ctx context.Context, deviceID, fsaID string, t memo
 }
 
 func (c Copies) ensure(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate, origin memory.ProgramOrigin) (undo func(context.Context) error, err error) {
-	if t.DefaultMRID == "" {
+	if t.DefaultControlBase != nil && t.DefaultMRID == "" {
 		return nil, fmt.Errorf("program template %s has no default control mRID", t.ID)
 	}
 	present, err := c.Check(ctx, deviceID, fsaID, t)
@@ -235,6 +237,9 @@ func (c Copies) ensure(ctx context.Context, deviceID, fsaID string, t memory.Pro
 			func() error { return c.Programs.Create(ctx, deviceID, t.ID, CopyProgram(deviceID, fsaID, t)) }},
 	}
 	for _, w := range writes {
+		if w.part == PartDefault && t.DefaultControlBase == nil {
+			continue
+		}
 		switch err := w.get(); {
 		case err == nil:
 		case errors.Is(err, store.ErrNotFound):
@@ -276,6 +281,9 @@ func (c Copies) Remove(ctx context.Context, deviceID, fsaID string, t memory.Pro
 // so no version is reused for other content. A failed program write puts the
 // default back; when that fails too, the default is left at t's revision,
 // and a later Sync, at the latest the boot rebuild, finishes the copy.
+// A template with no default control gets its copy's default deleted after
+// the program stops linking to it, so the link never dangles; a failed delete
+// leaves an unlinked default that the next Sync removes.
 // The returned Changes name the parts written, on error too.
 func (c Copies) Sync(ctx context.Context, deviceID, fsaID string, t memory.ProgramTemplate) (Changes, error) {
 	editMu.Lock()
@@ -283,33 +291,46 @@ func (c Copies) Sync(ctx context.Context, deviceID, fsaID string, t memory.Progr
 
 	scope := derhref.ScopeKey(deviceID, fsaID, t.ID)
 	dBefore, err := c.Defaults.Get(ctx, scope, coresingleton.SingletonKey)
-	if err != nil {
+	hadDefault := err == nil
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return Changes{}, fmt.Errorf("reading the default of template %s's copy on device %s: %w", t.ID, deviceID, err)
 	}
+	ref := Ref{DeviceID: deviceID, ProgramID: t.ID}
 	pBefore, err := c.Programs.Get(ctx, deviceID, t.ID)
 	if err != nil {
 		return Changes{}, fmt.Errorf("reading template %s's copy on device %s: %w", t.ID, deviceID, err)
 	}
-	dAfter, pAfter := CopyDefault(deviceID, fsaID, t), CopyProgram(deviceID, fsaID, t)
-	dStale, pStale := !reflect.DeepEqual(dBefore, dAfter), !reflect.DeepEqual(pBefore, pAfter)
-	if dStale {
-		if err := c.Defaults.Update(ctx, scope, coresingleton.SingletonKey, dAfter); err != nil {
-			return Changes{}, fmt.Errorf("writing the default of template %s's copy on device %s: %w", t.ID, deviceID, err)
+	pAfter := CopyProgram(deviceID, fsaID, t)
+	pStale := !reflect.DeepEqual(pBefore, pAfter)
+
+	if t.DefaultControlBase == nil {
+		var del func(ctx context.Context, parentID, id string) error
+		if hadDefault {
+			del = c.Defaults.Delete
+		}
+		return writeProgramThenDeleteDefault(ctx, c.Programs, ref, scope, pAfter, pStale, del)
+	}
+
+	dAfter := CopyDefault(deviceID, fsaID, t)
+	var write, undo func(context.Context) error
+	if !hadDefault {
+		write = func(ctx context.Context) error {
+			return c.Defaults.Create(ctx, scope, coresingleton.SingletonKey, dAfter)
+		}
+		undo = func(ctx context.Context) error { return c.Defaults.Delete(ctx, scope, coresingleton.SingletonKey) }
+	} else if !reflect.DeepEqual(dBefore, dAfter) {
+		write = func(ctx context.Context) error {
+			return c.Defaults.Update(ctx, scope, coresingleton.SingletonKey, dAfter)
+		}
+		undo = func(ctx context.Context) error {
+			return c.Defaults.Update(ctx, scope, coresingleton.SingletonKey, dBefore)
 		}
 	}
+	var program *sep2.DERProgram
 	if pStale {
-		if err := c.Programs.Update(ctx, deviceID, t.ID, pAfter); err != nil {
-			err = fmt.Errorf("writing template %s's copy on device %s: %w", t.ID, deviceID, err)
-			if !dStale {
-				return Changes{}, err
-			}
-			if rerr := c.Defaults.Update(ctx, scope, coresingleton.SingletonKey, dBefore); rerr != nil {
-				return Changes{Default: true}, errors.Join(err, fmt.Errorf("restoring the default: %w", rerr))
-			}
-			return Changes{}, err
-		}
+		program = &pAfter
 	}
-	return Changes{Program: pStale, Default: dStale}, nil
+	return applyDefaultAndProgram(ctx, c.Programs, ref, scope, write, undo, program)
 }
 
 // RemoveProgram deletes a device or fixture program from deviceID: its

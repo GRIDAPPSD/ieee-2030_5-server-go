@@ -380,22 +380,28 @@ func (s *AdminFSAStore) FSAsForDevice(_ context.Context, deviceID string) []stri
 // the same ID and mRID, to every device assigned to that FSA. Every copy
 // carries Version, and its DefaultDERControl carries DefaultVersion.
 // DefaultMRID is the mRID of each copy's DefaultDERControl, kept here so a
-// rebuilt copy keeps its identity.
+// rebuilt copy keeps its identity. A nil DefaultControlBase means the program
+// has no default control: no copy carries a DefaultDERControl or a link to
+// one, and DefaultMRID and DefaultVersion are kept so a default set later
+// reuses the identity and never reuses a version.
 type ProgramTemplate struct {
-	ID                 string              `json:"id"`
-	MRID               string              `json:"mRID"`
-	Description        string              `json:"description,omitempty"`
-	Primacy            uint8               `json:"primacy"`
-	Version            uint16              `json:"version"`
-	DefaultMRID        string              `json:"defaultMRID,omitempty"`
-	DefaultVersion     uint16              `json:"defaultVersion,omitempty"`
-	DefaultControlBase sep2.DERControlBase `json:"defaultControlBase"`
+	ID                 string               `json:"id"`
+	MRID               string               `json:"mRID"`
+	Description        string               `json:"description,omitempty"`
+	Primacy            uint8                `json:"primacy"`
+	Version            uint16               `json:"version"`
+	DefaultMRID        string               `json:"defaultMRID,omitempty"`
+	DefaultVersion     uint16               `json:"defaultVersion,omitempty"`
+	DefaultControlBase *sep2.DERControlBase `json:"defaultControlBase"`
 }
 
 // Copy returns an independent copy.
 func (t ProgramTemplate) Copy() ProgramTemplate {
 	c := t
-	c.DefaultControlBase = t.DefaultControlBase.Copy()
+	if t.DefaultControlBase != nil {
+		base := t.DefaultControlBase.Copy()
+		c.DefaultControlBase = &base
+	}
 	return c
 }
 

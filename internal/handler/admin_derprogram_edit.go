@@ -94,11 +94,17 @@ func (h *AdminFSAHandler) HandleUpdateProgramTemplate() http.HandlerFunc {
 		}
 		next := old.Copy()
 		next.Description, next.Primacy = e.description, e.primacy
-		if e.defaultBase != nil {
-			next.DefaultControlBase = e.defaultBase.Copy()
+		switch {
+		case e.defaultBase != nil:
+			base := e.defaultBase.Copy()
+			next.DefaultControlBase = &base
+		case e.clearDefault:
+			next.DefaultControlBase = nil
 		}
 		edited := !reflect.DeepEqual(old, next)
-		if edited && !reflect.DeepEqual(old.DefaultControlBase, next.DefaultControlBase) {
+		// A removed default keeps its version: a default set again is the next
+		// revision, so no version is reused for other content.
+		if edited && next.DefaultControlBase != nil && !reflect.DeepEqual(old.DefaultControlBase, next.DefaultControlBase) {
 			v, err := fsaprogram.NextVersion(&old.DefaultVersion)
 			if err != nil {
 				refuseProgram(w, "version_exhausted", "the default control's version is at 65535")
@@ -160,7 +166,7 @@ func (h *AdminFSAHandler) notifyEdited(ctx context.Context, deviceID, fsaID, id 
 		h.notify(ctx, href)
 	}
 	if ch.Default {
-		h.notify(ctx, href+"/dderc")
+		h.notify(ctx, der.DefaultHref(href))
 	}
 	if ch.Program || ch.Default {
 		h.notify(ctx, programListHref(deviceID, fsaID))
@@ -292,33 +298,28 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 			return
 		}
 		scope := derhref.ScopeKey(deviceID, fsaID, id)
-		var mutateDefault func(*sep2.DefaultDERControl) error
-		if e.defaultBase != nil {
-			if _, err := h.Copies.Defaults.Get(r.Context(), scope, coresingleton.SingletonKey); errors.Is(err, store.ErrNotFound) {
-				refuseProgram(w, "no_default_control", "this program has no default control to edit")
-				return
-			} else if err != nil {
-				h.templateFailed(w, r, "default_lookup", err)
-				return
-			}
-			mutateDefault = func(d *sep2.DefaultDERControl) error {
-				base := e.defaultBase.Copy()
-				d.DERControlBase = &base
-				return nil
-			}
+		mutateProgram := func(p *sep2.DERProgram) error {
+			p.Description, p.Primacy = e.description, e.primacy
+			return nil
 		}
-		ch, err := fsaprogram.EditWithDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults,
-			fsaprogram.Ref{DeviceID: deviceID, ProgramID: id}, scope,
-			func(p *sep2.DERProgram) error {
-				p.Description, p.Primacy = e.description, e.primacy
-				return nil
-			}, mutateDefault)
+		ref := fsaprogram.Ref{DeviceID: deviceID, ProgramID: id}
+		var ch fsaprogram.Changes
+		var err error
+		switch {
+		case e.clearDefault:
+			ch, err = fsaprogram.EditClearingDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram)
+		case e.defaultBase != nil:
+			ch, err = h.setDeviceDefault(r, ref, scope, prog, e.defaultBase, mutateProgram)
+		default:
+			ch, err = fsaprogram.EditWithDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram, nil)
+		}
 		switch {
 		case err == nil:
 		case errors.Is(err, fsaprogram.ErrVersionExhausted):
 			refuseProgram(w, "version_exhausted", "the program's or its default control's version is at 65535")
 			return
 		default:
+			h.notifyEdited(r.Context(), deviceID, fsaID, id, ch)
 			h.templateFailed(w, r, "program_edit", err)
 			return
 		}
@@ -335,6 +336,33 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, view)
 	}
+}
+
+// setDeviceDefault replaces the default of a program that links one, and
+// otherwise gives it one, replacing a stored default nothing links (left by a
+// failed clear or create) so a retry converges. The link decides, not the store.
+func (h *AdminFSAHandler) setDeviceDefault(r *http.Request, ref fsaprogram.Ref, scope string, prog sep2.DERProgram, base *sep2.DERControlBase,
+	mutateProgram func(*sep2.DERProgram) error) (fsaprogram.Changes, error) {
+	_, err := h.Copies.Defaults.Get(r.Context(), scope, coresingleton.SingletonKey)
+	stored := err == nil
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return fsaprogram.Changes{}, fmt.Errorf("reading default control %s: %w", scope, err)
+	}
+	if stored && prog.DefaultDERControlLink != nil {
+		return fsaprogram.EditWithDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram,
+			func(d *sep2.DefaultDERControl) error {
+				b := base.Copy()
+				d.DERControlBase = &b
+				return nil
+			})
+	}
+	m, err := h.mintDefaultMRID(prog.MRID)
+	if err != nil {
+		return fsaprogram.Changes{}, fmt.Errorf("minting the default control mRID: %w", err)
+	}
+	b := base.Copy()
+	return fsaprogram.EditCreatingDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram,
+		sep2.DefaultDERControl{MRID: m, DERControlBase: &b})
 }
 
 // HandleDeleteDeviceProgram returns a handler for DELETE
@@ -449,7 +477,7 @@ func (h *AdminFSAHandler) retireRefused(w http.ResponseWriter, err error) bool {
 // that the list changed.
 func (h *AdminFSAHandler) notifyDeleted(ctx context.Context, deviceID, fsaID, id string) {
 	href := der.DERProgramHref(deviceID, fsaID, id)
-	for _, gone := range []string{href, href + "/dderc", href + "/derc"} {
+	for _, gone := range []string{href, der.DefaultHref(href), href + "/derc"} {
 		h.notifyStatus(ctx, gone, sep2.NotificationStatusCanceledDeleted)
 	}
 	h.notify(ctx, programListHref(deviceID, fsaID))

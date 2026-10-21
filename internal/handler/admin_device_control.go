@@ -505,9 +505,11 @@ func (h *AdminFSAHandler) ensureDeviceOnlyFSA(w http.ResponseWriter, r *http.Req
 // defaultBase as its default control or an empty one, and returns its id.
 func (h *AdminFSAHandler) createDeviceOnlyProgram(w http.ResponseWriter, r *http.Request, tx *deviceTxn, deviceID, fsaID string, primacy uint8, defaultBase *sep2.DERControlBase) (string, bool) {
 	prog := memory.ProgramTemplate{Description: deviceProgramDescription, Primacy: primacy}
+	base := sep2.DERControlBase{}
 	if defaultBase != nil {
-		prog.DefaultControlBase = defaultBase.Copy()
+		base = defaultBase.Copy()
 	}
+	prog.DefaultControlBase = &base
 	if err := h.mintTemplateIDs(&prog); err != nil {
 		h.templateFailed(w, r, "mint", err)
 		return "", false
@@ -555,26 +557,44 @@ func (h *AdminFSAHandler) updateDeviceOnlyProgram(w http.ResponseWriter, r *http
 		return false
 	}
 	dBefore, err := h.Copies.Defaults.Get(ctx, scope, coresingleton.SingletonKey)
-	if err != nil {
+	hadDefault := err == nil
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		h.templateFailed(w, r, "default_lookup", err)
 		return false
 	}
-	ch, err := fsaprogram.EditWithDefault(ctx, h.Copies.Programs, h.Copies.Defaults,
-		fsaprogram.Ref{DeviceID: deviceID, ProgramID: progID}, scope, mutateProgram, mutateDefault)
+	// A cleared default is an operator state, not a fault: only a program edit
+	// brings one back.
+	if setDefault && !hadDefault {
+		refuseProgram(w, "no_default_control", "the program has no default control; set one with a program edit first")
+		return false
+	}
+	ref := fsaprogram.Ref{DeviceID: deviceID, ProgramID: progID}
+	var ch fsaprogram.Changes
+	if setDefault && pBefore.DefaultDERControlLink == nil {
+		// Stored but unlinked: the send replaces it and links it again.
+		b := defaultBase.Copy()
+		ch, err = fsaprogram.EditCreatingDefault(ctx, h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram,
+			sep2.DefaultDERControl{DERControlBase: &b})
+	} else {
+		ch, err = fsaprogram.EditWithDefault(ctx, h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram, mutateDefault)
+	}
 	switch {
 	case err == nil:
 	case errors.Is(err, fsaprogram.ErrVersionExhausted):
 		refuseProgram(w, "version_exhausted", "the program's or its default control's version is at 65535")
 		return false
 	default:
+		h.notifyEdited(ctx, deviceID, fsaID, progID, ch)
 		h.templateFailed(w, r, "program_edit", err)
 		return false
 	}
 	if ch.Program || ch.Default {
 		// The stored values go back as they were, versions included.
 		tx.steps = append(tx.steps, rollbackStep{device: deviceID, template: progID, part: "program_edit", undo: func(ctx context.Context) error {
-			if err := h.Copies.Defaults.Update(ctx, scope, coresingleton.SingletonKey, dBefore); err != nil {
-				return err
+			if hadDefault {
+				if err := h.Copies.Defaults.Update(ctx, scope, coresingleton.SingletonKey, dBefore); err != nil {
+					return err
+				}
 			}
 			return h.Copies.Programs.Update(ctx, deviceID, progID, pBefore)
 		}})

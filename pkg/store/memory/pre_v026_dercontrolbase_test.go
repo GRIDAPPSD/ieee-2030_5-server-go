@@ -130,7 +130,7 @@ func baseStores() []baseStore {
 					if err := s.Create(ctx, id, sep2.FunctionSetAssignments{MRID: "FSA-" + id}); err != nil {
 						t.Fatal(err)
 					}
-					if err := s.CreateTemplate(ctx, id, memory.ProgramTemplate{ID: "t", MRID: "T-" + id, DefaultControlBase: base}); err != nil {
+					if err := s.CreateTemplate(ctx, id, memory.ProgramTemplate{ID: "t", MRID: "T-" + id, DefaultControlBase: &base}); err != nil {
 						t.Fatal(err)
 					}
 					if err := s.CreateFSAControl(ctx, id, memory.FSAControl{TemplateID: "t", ID: "c", MRID: "C-" + id, Base: base}); err != nil {
@@ -153,7 +153,7 @@ func baseStores() []baseStore {
 					if err != nil {
 						return nil, err
 					}
-					out = append(out, tmpl.DefaultControlBase, c.Base)
+					out = append(out, *tmpl.DefaultControlBase, c.Base)
 				}
 				return out, nil
 			},

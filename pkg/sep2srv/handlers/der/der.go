@@ -104,6 +104,11 @@ func DERProgramHref(edevID, fsaID, derpID string) string {
 	return fmt.Sprintf("/edev/%s/fsa/%s/derp/%s", edevID, fsaID, derpID)
 }
 
+// DefaultHref is the href of the DefaultDERControl of the program at
+// programHref. The served default and the program's DefaultDERControlLink must
+// agree, so every site that builds one calls this.
+func DefaultHref(programHref string) string { return programHref + "/dderc" }
+
 // BuildDERControlList constructs a DERControlList from store results.
 //
 // Every member is stamped with the response request (see StampResponseRequest)
@@ -201,8 +206,7 @@ func DefaultDERControlHandler(ddercStore store.ScopedStore[sep2.DefaultDERContro
 		},
 		func(r *http.Request) sep2.DefaultDERControl {
 			s := sep2.DefaultDERControl{}
-			s.Href = fmt.Sprintf("/edev/%s/fsa/%s/derp/%s/dderc",
-				r.PathValue("id"), r.PathValue("fsaId"), r.PathValue("derpId"))
+			s.Href = DefaultHref(DERProgramHref(r.PathValue("id"), r.PathValue("fsaId"), r.PathValue("derpId")))
 			return s
 		})
 

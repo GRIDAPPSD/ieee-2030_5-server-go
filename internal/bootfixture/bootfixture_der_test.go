@@ -616,7 +616,7 @@ end_devices:
 	}
 }
 
-// --- buildDERControlBase --------------------------------------------
+// --- BuildDERControlBase --------------------------------------------
 
 func TestBuildDERControlBaseAllSupportedFields(t *testing.T) {
 	t.Parallel()
@@ -795,7 +795,7 @@ der_controls:
 	}
 }
 
-// --- buildDERCurve --------------------------------------------------
+// --- BuildDERCurve --------------------------------------------------
 
 func TestBuildDERCurveValues(t *testing.T) {
 	t.Parallel()
@@ -919,7 +919,7 @@ der_curves:
 	}
 }
 
-// --- compositeKey ---------------------------------------------------
+// --- CompositeKey ---------------------------------------------------
 
 // TestCompositeKeyDistinctness asserts what makes two scoped entries
 // distinct: all three of (edev, fsa, derp) participate, so the same inner
@@ -979,7 +979,7 @@ der_controls:
 	}
 }
 
-// TestCompositeKeyAliasingCollision pins that compositeKey joins the three
+// TestCompositeKeyAliasingCollision pins that CompositeKey joins the three
 // components with an unescaped "/", so a component containing a slash
 // aliases onto a different triple. Two logically distinct scopes produce
 // one key. Reported as a finding; when the key gains escaping this test
@@ -1008,7 +1008,7 @@ der_controls:
     id: "x"
 `)
 	if err == nil {
-		t.Fatal("expected the known key-aliasing collision, got nil; if compositeKey now escapes its components, update this test")
+		t.Fatal("expected the known key-aliasing collision, got nil; if CompositeKey now escapes its components, update this test")
 	}
 	if !errors.Is(err, store.ErrAlreadyExists) {
 		t.Errorf("error chain lacks store.ErrAlreadyExists: %v", err)

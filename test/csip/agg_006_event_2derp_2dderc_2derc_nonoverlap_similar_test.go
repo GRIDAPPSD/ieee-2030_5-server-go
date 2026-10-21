@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/bootfixture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/test/csip/csiptest"
 )
 
@@ -46,25 +47,21 @@ func TestAGG_006_Event2DERP2DDERC2DERCNonOverlapSimilar(t *testing.T) {
 		for _, n := range nodes {
 			spec.DefaultDERControls = append(spec.DefaultDERControls,
 				csiptest.DefaultDERControlSpec{
-					EndDeviceID:  edevID,
-					FSAID:        n.fsaID,
-					DERProgramID: n.fsaID,
-					MRID:         aggMRIDPrefix("006-DDERC-") + n.fsaID + "-" + edevID,
-					DERControlBase: &csiptest.DERControlBaseSpec{
-						OpModMaxLimW: ptrTo(n.maxLimW),
-					},
+					EndDeviceID:    edevID,
+					FSAID:          n.fsaID,
+					DERProgramID:   n.fsaID,
+					MRID:           aggMRIDPrefix("006-DDERC-") + n.fsaID + "-" + edevID,
+					DERControlBase: &csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModMaxLimW: ptrTo(n.maxLimW)}},
 				},
 			)
 			spec.DERControls = append(spec.DERControls,
 				csiptest.DERControlSpec{
-					EndDeviceID:  edevID,
-					FSAID:        n.fsaID,
-					DERProgramID: n.fsaID,
-					ID:           "agg006-" + edevID + "-" + n.fsaID,
-					MRID:         aggMRIDPrefix("006-DERC-") + n.fsaID + "-" + edevID,
-					DERControlBase: &csiptest.DERControlBaseSpec{
-						OpModFixedW: ptrTo(n.fixedW),
-					},
+					EndDeviceID:    edevID,
+					FSAID:          n.fsaID,
+					DERProgramID:   n.fsaID,
+					ID:             "agg006-" + edevID + "-" + n.fsaID,
+					MRID:           aggMRIDPrefix("006-DERC-") + n.fsaID + "-" + edevID,
+					DERControlBase: &csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModFixedW: ptrTo(n.fixedW)}},
 				},
 			)
 		}

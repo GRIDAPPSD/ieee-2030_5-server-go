@@ -438,17 +438,17 @@ func TestLoadSpec_InvalidBase_Errors(t *testing.T) {
 	cases := []struct {
 		name    string
 		dderc   bool
-		base    csiptest.DERControlBaseSpec
+		base    csiptest.ControlBaseSpec
 		wantMsg string
 	}{
-		{"default control op_mod_max_lim_w above 10000", true, csiptest.DERControlBaseSpec{OpModMaxLimW: &over}, "default_der_controls[0]: op_mod_max_lim_w"},
-		{"control op_mod_max_lim_w above 10000", false, csiptest.DERControlBaseSpec{OpModMaxLimW: &over}, `der_controls[0] (id="a"): op_mod_max_lim_w`},
-		{"control op_mod_fixed_w below -10000", false, csiptest.DERControlBaseSpec{OpModFixedW: &under}, `der_controls[0] (id="a"): op_mod_fixed_w`},
-		{"default control blank curve id", true, csiptest.DERControlBaseSpec{OpModLVRTMustTrip: &blank},
+		{"default control op_mod_max_lim_w above 10000", true, csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModMaxLimW: &over}}, "default_der_controls[0]: op_mod_max_lim_w"},
+		{"control op_mod_max_lim_w above 10000", false, csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModMaxLimW: &over}}, `der_controls[0] (id="a"): op_mod_max_lim_w`},
+		{"control op_mod_fixed_w below -10000", false, csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModFixedW: &under}}, `der_controls[0] (id="a"): op_mod_fixed_w`},
+		{"default control blank curve id", true, csiptest.ControlBaseSpec{OpModLVRTMustTrip: &blank},
 			`default_der_controls[0] (scope="0/0/0"): op_mod_lvrt_must_trip: dercurve: curve id is required`},
-		{"control blank curve id", false, csiptest.DERControlBaseSpec{OpModHFRTMustTrip: &blank},
+		{"control blank curve id", false, csiptest.ControlBaseSpec{OpModHFRTMustTrip: &blank},
 			`der_controls[0] (id="a", scope="0/0/0"): op_mod_hfrt_must_trip: dercurve: curve id is required`},
-		{"control freq droop missing fields", false, csiptest.DERControlBaseSpec{OpModFreqDroop: &bootfixture.FreqDroopSpec{DBOF: &one}},
+		{"control freq droop missing fields", false, csiptest.ControlBaseSpec{DERControlBaseSpec: bootfixture.DERControlBaseSpec{OpModFreqDroop: &bootfixture.FreqDroopSpec{DBOF: &one}}},
 			`der_controls[0] (id="a", scope="0/0/0"): op_mod_freq_droop: db_uf is required`},
 	}
 	for _, tc := range cases {
@@ -498,7 +498,7 @@ func TestLoadSpec_DERCurveCreationTime(t *testing.T) {
 	given := int64(1700000000)
 	before := time.Now().Unix()
 	spec := &csiptest.Spec{
-		DERCurves: []csiptest.DERCurveSpec{
+		DERCurves: []bootfixture.DERCurveSpec{
 			{ID: "with-time", CurveType: 11, CreationTime: &given},
 			{ID: "no-time", CurveType: 0},
 		},
@@ -551,7 +551,7 @@ func TestLoadSpec_DERCurveCreationTimeRejectsNonPositive(t *testing.T) {
 			t.Parallel()
 			given := tc.time
 			spec := &csiptest.Spec{
-				DERCurves: []csiptest.DERCurveSpec{
+				DERCurves: []bootfixture.DERCurveSpec{
 					{ID: "c1", CurveType: 0, CreationTime: &given},
 				},
 			}
@@ -591,5 +591,60 @@ func TestLoad_UnknownYAMLKey_Errors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "decode fixture") {
 		t.Errorf("Load(typo): error = %v, want 'decode fixture' prefix", err)
+	}
+}
+
+// TestLoad_ControlBaseInlinesBootFixtureSpec pins that a CSIP control base
+// reads the boot fixture's keys and the CSIP-only keys from one YAML mapping,
+// and that an unknown key in it is still refused.
+func TestLoad_ControlBaseInlinesBootFixtureSpec(t *testing.T) {
+	t.Parallel()
+	const head = `
+der_controls:
+  - end_device_id: "0"
+    fsa_id: "0"
+    der_program_id: "0"
+    id: "a"
+    der_control_base:
+      op_mod_max_lim_w: 4000
+      op_mod_volt_var: "1"
+      op_mod_volt_watt: "2"
+      op_mod_fixed_pf_inject_w:
+        displacement: 95
+        excitation: true
+`
+	path := filepath.Join(t.TempDir(), "inline.yaml")
+	if err := os.WriteFile(path, []byte(head), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	target := csiptest.NewTarget()
+	if err := csiptest.Load(ctx, target, path); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	dc, err := target.DERControls.Get(ctx, "0/0/0", "a")
+	if err != nil {
+		t.Fatalf("DERControls.Get: %v", err)
+	}
+	b := dc.DERControlBase
+	if b == nil || b.OpModMaxLimW == nil || *b.OpModMaxLimW != 4000 {
+		t.Fatalf("op_mod_max_lim_w (boot fixture key) not loaded: %+v", b)
+	}
+	if b.OpModVoltVar == nil || b.OpModVoltVar.Href != "/dc/1" {
+		t.Errorf("OpModVoltVar = %+v, want /dc/1", b.OpModVoltVar)
+	}
+	if b.OpModVoltWatt == nil || b.OpModVoltWatt.Href != "/dc/2" {
+		t.Errorf("OpModVoltWatt = %+v, want /dc/2", b.OpModVoltWatt)
+	}
+	if pf := b.OpModFixedPFInjectW; pf == nil || pf.Displacement != 95 || !pf.Excitation {
+		t.Errorf("OpModFixedPFInjectW = %+v, want displacement 95, excitation true", pf)
+	}
+
+	bad := filepath.Join(t.TempDir(), "unknown.yaml")
+	if err := os.WriteFile(bad, []byte(head+"      op_mod_bogus: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := csiptest.Load(ctx, csiptest.NewTarget(), bad); err == nil || !strings.Contains(err.Error(), "op_mod_bogus") {
+		t.Errorf("unknown key error = %v, want a decode refusal naming op_mod_bogus", err)
 	}
 }

@@ -557,12 +557,28 @@ func (h *AdminFSAHandler) updateDeviceOnlyProgram(w http.ResponseWriter, r *http
 		return false
 	}
 	dBefore, err := h.Copies.Defaults.Get(ctx, scope, coresingleton.SingletonKey)
-	if err != nil {
+	hadDefault := err == nil
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		h.templateFailed(w, r, "default_lookup", err)
 		return false
 	}
-	ch, err := fsaprogram.EditWithDefault(ctx, h.Copies.Programs, h.Copies.Defaults,
-		fsaprogram.Ref{DeviceID: deviceID, ProgramID: progID}, scope, mutateProgram, mutateDefault)
+	// A cleared default is an operator state: a kind default send does not
+	// bring it back (the program edit route does), and a primacy change does
+	// not need one.
+	if setDefault && !hadDefault {
+		refuseProgram(w, "no_default_control", "the program has no default control; set one with a program edit first")
+		return false
+	}
+	ref := fsaprogram.Ref{DeviceID: deviceID, ProgramID: progID}
+	var ch fsaprogram.Changes
+	if setDefault && pBefore.DefaultDERControlLink == nil {
+		// Stored but unlinked: the send replaces it and links it again.
+		b := defaultBase.Copy()
+		ch, err = fsaprogram.EditCreatingDefault(ctx, h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram,
+			sep2.DefaultDERControl{DERControlBase: &b})
+	} else {
+		ch, err = fsaprogram.EditWithDefault(ctx, h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram, mutateDefault)
+	}
 	switch {
 	case err == nil:
 	case errors.Is(err, fsaprogram.ErrVersionExhausted):
@@ -575,8 +591,10 @@ func (h *AdminFSAHandler) updateDeviceOnlyProgram(w http.ResponseWriter, r *http
 	if ch.Program || ch.Default {
 		// The stored values go back as they were, versions included.
 		tx.steps = append(tx.steps, rollbackStep{device: deviceID, template: progID, part: "program_edit", undo: func(ctx context.Context) error {
-			if err := h.Copies.Defaults.Update(ctx, scope, coresingleton.SingletonKey, dBefore); err != nil {
-				return err
+			if hadDefault {
+				if err := h.Copies.Defaults.Update(ctx, scope, coresingleton.SingletonKey, dBefore); err != nil {
+					return err
+				}
 			}
 			return h.Copies.Programs.Update(ctx, deviceID, progID, pBefore)
 		}})

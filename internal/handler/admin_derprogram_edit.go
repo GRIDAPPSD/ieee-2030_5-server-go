@@ -166,7 +166,7 @@ func (h *AdminFSAHandler) notifyEdited(ctx context.Context, deviceID, fsaID, id 
 		h.notify(ctx, href)
 	}
 	if ch.Default {
-		h.notify(ctx, href+"/dderc")
+		h.notify(ctx, fsaprogram.DefaultHref(href))
 	}
 	if ch.Program || ch.Default {
 		h.notify(ctx, programListHref(deviceID, fsaID))
@@ -309,7 +309,7 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 		case e.clearDefault:
 			ch, err = fsaprogram.EditClearingDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram)
 		case e.defaultBase != nil:
-			ch, err = h.setDeviceDefault(r, ref, scope, prog.MRID, e.defaultBase, mutateProgram)
+			ch, err = h.setDeviceDefault(r, ref, scope, prog, e.defaultBase, mutateProgram)
 		default:
 			ch, err = fsaprogram.EditWithDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram, nil)
 		}
@@ -319,6 +319,8 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 			refuseProgram(w, "version_exhausted", "the program's or its default control's version is at 65535")
 			return
 		default:
+			// A write that landed before the failure is still a change.
+			h.notifyEdited(r.Context(), deviceID, fsaID, id, ch)
 			h.templateFailed(w, r, "program_edit", err)
 			return
 		}
@@ -337,30 +339,32 @@ func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 	}
 }
 
-// setDeviceDefault replaces the program's default control, or gives a program
-// that has none a new one with a freshly minted mRID.
-func (h *AdminFSAHandler) setDeviceDefault(r *http.Request, ref fsaprogram.Ref, scope, programMRID string, base *sep2.DERControlBase,
+// setDeviceDefault replaces the default control of a program that links one,
+// and otherwise gives the program a default: a stored default that no program
+// links (a failed clear or create left it) is replaced and linked, so a retry
+// converges. The program's link decides, not the store.
+func (h *AdminFSAHandler) setDeviceDefault(r *http.Request, ref fsaprogram.Ref, scope string, prog sep2.DERProgram, base *sep2.DERControlBase,
 	mutateProgram func(*sep2.DERProgram) error) (fsaprogram.Changes, error) {
 	_, err := h.Copies.Defaults.Get(r.Context(), scope, coresingleton.SingletonKey)
-	switch {
-	case err == nil:
+	stored := err == nil
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return fsaprogram.Changes{}, fmt.Errorf("reading default control %s: %w", scope, err)
+	}
+	if stored && prog.DefaultDERControlLink != nil {
 		return fsaprogram.EditWithDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram,
 			func(d *sep2.DefaultDERControl) error {
 				b := base.Copy()
 				d.DERControlBase = &b
 				return nil
 			})
-	case errors.Is(err, store.ErrNotFound):
-		m, err := h.mintDefaultMRID(programMRID)
-		if err != nil {
-			return fsaprogram.Changes{}, fmt.Errorf("minting the default control mRID: %w", err)
-		}
-		b := base.Copy()
-		return fsaprogram.EditCreatingDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram,
-			sep2.DefaultDERControl{MRID: m, DERControlBase: &b})
-	default:
-		return fsaprogram.Changes{}, fmt.Errorf("reading default control %s: %w", scope, err)
 	}
+	m, err := h.mintDefaultMRID(prog.MRID)
+	if err != nil {
+		return fsaprogram.Changes{}, fmt.Errorf("minting the default control mRID: %w", err)
+	}
+	b := base.Copy()
+	return fsaprogram.EditCreatingDefault(r.Context(), h.Copies.Programs, h.Copies.Defaults, ref, scope, mutateProgram,
+		sep2.DefaultDERControl{MRID: m, DERControlBase: &b})
 }
 
 // HandleDeleteDeviceProgram returns a handler for DELETE
@@ -475,7 +479,7 @@ func (h *AdminFSAHandler) retireRefused(w http.ResponseWriter, err error) bool {
 // that the list changed.
 func (h *AdminFSAHandler) notifyDeleted(ctx context.Context, deviceID, fsaID, id string) {
 	href := der.DERProgramHref(deviceID, fsaID, id)
-	for _, gone := range []string{href, href + "/dderc", href + "/derc"} {
+	for _, gone := range []string{href, fsaprogram.DefaultHref(href), href + "/derc"} {
 		h.notifyStatus(ctx, gone, sep2.NotificationStatusCanceledDeleted)
 	}
 	h.notify(ctx, programListHref(deviceID, fsaID))

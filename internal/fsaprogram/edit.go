@@ -118,54 +118,125 @@ func EditClearingDefault(ctx context.Context, programs ProgramStore, defaults De
 }
 
 // DefaultCreator is the slice of the DefaultDERControl store a first default
-// needs.
+// needs. Get and Update are for a default already stored that no program
+// links, which a first default replaces.
 type DefaultCreator interface {
+	Get(ctx context.Context, parentID, id string) (sep2.DefaultDERControl, error)
 	Create(ctx context.Context, parentID, id string, resource sep2.DefaultDERControl) error
+	Update(ctx context.Context, parentID, id string, resource sep2.DefaultDERControl) error
 	Delete(ctx context.Context, parentID, id string) error
 }
 
-// EditCreatingDefault edits a program that has no default control and gives it
-// seed as one. The program links to it at its own href plus "/dderc" and its
+// EditCreatingDefault edits a program that links no default control and gives
+// it seed as one. The program links to it at its own href plus "/dderc" and its
 // version is raised once. The default's version is the program's new version,
 // which is above every version an earlier default of this program held, since
 // a default's version only rises with the program's. The default is written
-// first and removed again if the program write fails.
+// first and put back (removed, or restored when it replaced a stored default
+// that nothing linked, whose mRID is kept) if the program write fails.
 func EditCreatingDefault(ctx context.Context, programs ProgramStore, defaults DefaultCreator, ref Ref, scope string,
 	mutateProgram func(*sep2.DERProgram) error, seed sep2.DefaultDERControl) (Changes, error) {
 	editMu.Lock()
 	defer editMu.Unlock()
 
-	pBefore, err := programs.Get(ctx, ref.DeviceID, ref.ProgramID)
+	pBefore, pAfter, err := loadProgram(ctx, programs, ref, mutateProgram)
 	if err != nil {
-		return Changes{}, fmt.Errorf("reading program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
-	}
-	pAfter := pBefore.Copy()
-	pAfter.Subscribable = cloneUint8(pAfter.Subscribable)
-	if mutateProgram != nil {
-		if err := mutateProgram(&pAfter); err != nil {
-			return Changes{}, err
-		}
+		return Changes{}, err
 	}
 	if pAfter.Version, err = NextVersion(pBefore.Version); err != nil {
 		return Changes{}, err
 	}
-	href := pBefore.Href + "/dderc"
+	href := DefaultHref(pBefore.Href)
 	pAfter.DefaultDERControlLink = &sep2.Link{Href: href}
 	seed.Href = href
 	v := *pAfter.Version
 	seed.Version = &v
 
-	if err := defaults.Create(ctx, scope, coresingleton.SingletonKey, seed); err != nil {
-		return Changes{}, fmt.Errorf("writing default control %s: %w", scope, err)
+	write := func(ctx context.Context) error { return defaults.Create(ctx, scope, coresingleton.SingletonKey, seed) }
+	undo := func(ctx context.Context) error { return defaults.Delete(ctx, scope, coresingleton.SingletonKey) }
+	orphan, err := defaults.Get(ctx, scope, coresingleton.SingletonKey)
+	switch {
+	case err == nil:
+		seed.MRID = orphan.MRID
+		write = func(ctx context.Context) error { return defaults.Update(ctx, scope, coresingleton.SingletonKey, seed) }
+		undo = func(ctx context.Context) error {
+			return defaults.Update(ctx, scope, coresingleton.SingletonKey, orphan)
+		}
+	case !errors.Is(err, store.ErrNotFound):
+		return Changes{}, fmt.Errorf("reading default control %s: %w", scope, err)
 	}
-	if err := programs.Update(ctx, ref.DeviceID, ref.ProgramID, pAfter); err != nil {
+	return applyDefaultAndProgram(ctx, programs, ref, scope, write, undo, &pAfter)
+}
+
+// loadProgram reads the program at ref and returns it with the copy mutate
+// edits.
+func loadProgram(ctx context.Context, programs ProgramStore, ref Ref, mutate func(*sep2.DERProgram) error) (before, after sep2.DERProgram, err error) {
+	before, err = programs.Get(ctx, ref.DeviceID, ref.ProgramID)
+	if err != nil {
+		return before, after, fmt.Errorf("reading program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
+	}
+	after = before.Copy()
+	after.Subscribable = cloneUint8(after.Subscribable)
+	if mutate != nil {
+		if err := mutate(&after); err != nil {
+			return before, after, err
+		}
+	}
+	return before, after, nil
+}
+
+// applyDefaultAndProgram is the one "write the default, write the program,
+// put the default back on failure" sequence. A nil write skips the default and
+// a nil pAfter skips the program. A failed undo returns ErrHalfApplied with the
+// default counted as written; its causes use %v so they cannot match store
+// sentinels.
+func applyDefaultAndProgram(ctx context.Context, programs ProgramStore, ref Ref, scope string,
+	write, undo func(context.Context) error, pAfter *sep2.DERProgram) (Changes, error) {
+	var ch Changes
+	if write != nil {
+		if err := write(ctx); err != nil {
+			return Changes{}, fmt.Errorf("writing default control %s: %w", scope, err)
+		}
+		ch.Default = true
+	}
+	if pAfter == nil {
+		return ch, nil
+	}
+	if err := programs.Update(ctx, ref.DeviceID, ref.ProgramID, *pAfter); err != nil {
 		err = fmt.Errorf("writing program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
-		if rerr := defaults.Delete(ctx, scope, coresingleton.SingletonKey); rerr != nil {
-			return Changes{}, fmt.Errorf("%w: default control %s was created: %v; removing it: %v", ErrHalfApplied, scope, err, rerr)
+		if write == nil {
+			return Changes{}, err
+		}
+		if rerr := undo(ctx); rerr != nil {
+			return ch, fmt.Errorf("%w: default control %s was written: %v; putting it back: %v", ErrHalfApplied, scope, err, rerr)
 		}
 		return Changes{}, err
 	}
-	return Changes{Program: true, Default: true}, nil
+	ch.Program = true
+	return ch, nil
+}
+
+// writeProgramThenDeleteDefault writes pAfter when writeProgram is set, then
+// deletes the default under scope with del when it is non-nil, tolerating
+// ErrNotFound. The program is written first so its link never dangles; a
+// failed delete leaves an unlinked default and the returned Changes still name
+// the program write.
+func writeProgramThenDeleteDefault(ctx context.Context, programs ProgramStore, ref Ref, scope string,
+	pAfter sep2.DERProgram, writeProgram bool, del func(ctx context.Context, parentID, id string) error) (Changes, error) {
+	ch := Changes{Program: writeProgram}
+	if writeProgram {
+		if err := programs.Update(ctx, ref.DeviceID, ref.ProgramID, pAfter); err != nil {
+			return Changes{}, fmt.Errorf("writing program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
+		}
+	}
+	if del == nil {
+		return ch, nil
+	}
+	if err := del(ctx, scope, coresingleton.SingletonKey); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return ch, fmt.Errorf("removing default control %s: %w", scope, err)
+	}
+	ch.Default = true
+	return ch, nil
 }
 
 // editLocked is EditWithDefault under editMu. A non-nil remove deletes the
@@ -202,16 +273,9 @@ func editLocked(ctx context.Context, programs ProgramStore, defaults DefaultStor
 		}
 	}
 
-	pBefore, err := programs.Get(ctx, ref.DeviceID, ref.ProgramID)
+	pBefore, pAfter, err := loadProgram(ctx, programs, ref, mutateProgram)
 	if err != nil {
-		return Changes{}, fmt.Errorf("reading program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
-	}
-	pAfter := pBefore.Copy()
-	pAfter.Subscribable = cloneUint8(pAfter.Subscribable)
-	if mutateProgram != nil {
-		if err := mutateProgram(&pAfter); err != nil {
-			return Changes{}, err
-		}
+		return Changes{}, err
 	}
 	if remove != nil {
 		pAfter.DefaultDERControlLink = nil
@@ -219,7 +283,7 @@ func editLocked(ctx context.Context, programs ProgramStore, defaults DefaultStor
 	if !dChanged && reflect.DeepEqual(pBefore, pAfter) {
 		return Changes{}, nil
 	}
-	if dChanged && remove == nil {
+	if remove == nil && dChanged {
 		if dAfter.Version, err = NextVersion(dBefore.Version); err != nil {
 			return Changes{}, err
 		}
@@ -227,29 +291,20 @@ func editLocked(ctx context.Context, programs ProgramStore, defaults DefaultStor
 	if pAfter.Version, err = NextVersion(pBefore.Version); err != nil {
 		return Changes{}, err
 	}
-
-	if dChanged && remove == nil {
-		if err := defaults.Update(ctx, scope, coresingleton.SingletonKey, dAfter); err != nil {
-			return Changes{}, fmt.Errorf("writing default control %s: %w", scope, err)
-		}
-	}
-	if err := programs.Update(ctx, ref.DeviceID, ref.ProgramID, pAfter); err != nil {
-		err = fmt.Errorf("writing program %s/%s: %w", ref.DeviceID, ref.ProgramID, err)
-		if !dChanged || remove != nil {
-			return Changes{}, err
-		}
-		if rerr := defaults.Update(ctx, scope, coresingleton.SingletonKey, dBefore); rerr != nil {
-			// %v, not %w: the causes must not match store sentinels.
-			return Changes{}, fmt.Errorf("%w: default control %s is at the new content: %v; restoring it: %v", ErrHalfApplied, scope, err, rerr)
-		}
-		return Changes{}, err
-	}
 	if remove != nil {
-		if err := remove(ctx, scope, coresingleton.SingletonKey); err != nil && !errors.Is(err, store.ErrNotFound) {
-			return Changes{Program: true}, fmt.Errorf("removing default control %s: %w", scope, err)
+		return writeProgramThenDeleteDefault(ctx, programs, ref, scope, pAfter, true, remove)
+	}
+
+	var write, undo func(context.Context) error
+	if dChanged {
+		write = func(ctx context.Context) error {
+			return defaults.Update(ctx, scope, coresingleton.SingletonKey, dAfter)
+		}
+		undo = func(ctx context.Context) error {
+			return defaults.Update(ctx, scope, coresingleton.SingletonKey, dBefore)
 		}
 	}
-	return Changes{Program: true, Default: dChanged}, nil
+	return applyDefaultAndProgram(ctx, programs, ref, scope, write, undo, &pAfter)
 }
 
 // cloneUint8 copies the Subscribable attribute, which core's Copy shares, so a

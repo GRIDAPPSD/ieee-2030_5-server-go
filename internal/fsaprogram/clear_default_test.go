@@ -165,3 +165,14 @@ func TestReconcileCopies_FinishesARemovalThatLeftAnUnlinkedDefault(t *testing.T)
 		t.Errorf("program link after the rebuild = %v, want none", p.DefaultDERControlLink)
 	}
 }
+
+// A partial clear (program written, default delete failed) reports the
+// program as written so the caller can notify it.
+func TestEditClearingDefault_FailedDeleteReportsTheProgramWrite(t *testing.T) {
+	ctx := context.Background()
+	f := seedDefault(t, u16(4), u16(2))
+	ch, err := EditClearingDefault(ctx, f.programs, failingRemover{f.defaults.(DefaultRemover)}, f.ref, "scope", nil)
+	if err == nil || ch != (Changes{Program: true}) {
+		t.Errorf("EditClearingDefault = %+v, %v, want Changes{Program: true} and an error", ch, err)
+	}
+}

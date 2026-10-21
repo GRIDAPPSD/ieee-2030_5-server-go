@@ -257,6 +257,10 @@ func seedFixtureProgram(t *testing.T, f *templateFixture, dev, fsa, id string, w
 	if withDefault {
 		d := sep2.DefaultDERControl{MRID: "0000000000000000000000000000D1C5", SetGradW: ptrU16(50)}
 		d.Href = href + "/dderc"
+		p.DefaultDERControlLink = &sep2.Link{Href: d.Href}
+		if err := f.copies.Programs.Update(context.Background(), dev, id, p); err != nil {
+			t.Fatal(err)
+		}
 		if err := f.copies.Defaults.Create(context.Background(), derhref.ScopeKey(dev, fsa, id), coresingleton.SingletonKey, d); err != nil {
 			t.Fatal(err)
 		}

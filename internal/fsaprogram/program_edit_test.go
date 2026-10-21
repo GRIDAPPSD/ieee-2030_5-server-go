@@ -171,8 +171,8 @@ func TestSync_PartialFailureLeavesRevisionsThatTheNextSyncFinishes(t *testing.T)
 	c.Defaults = &countingDefaults{CopyDefaultStore: healthyD, failFrom: 2}
 	after := editedTemplate(before)
 	ch, err := c.Sync(ctx, "7", "fsa-A", after)
-	if !errors.Is(err, boom) || ch != (Changes{Default: true}) {
-		t.Fatalf("Sync = %+v, %v; want the default written and %v", ch, err, boom)
+	if !errors.Is(err, ErrHalfApplied) || !strings.Contains(err.Error(), boom.Error()) || ch != (Changes{Default: true}) {
+		t.Fatalf("Sync = %+v, %v; want the default written, ErrHalfApplied and %v", ch, err, boom)
 	}
 	p, _ := healthyP.Get(ctx, "7", after.ID)
 	d, _ := healthyD.Get(ctx, derhref.ScopeKey("7", "fsa-A", after.ID), coresingleton.SingletonKey)

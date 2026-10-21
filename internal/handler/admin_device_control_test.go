@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
@@ -162,7 +163,7 @@ func TestDeviceControl_Scheduled_CreatesAServedDeviceOnlyProgram(t *testing.T) {
 	if err != nil || o.Kind != memory.ProgramOriginDevice || o.FSAID != fsaID {
 		t.Errorf("origin = %+v, %v, want a device origin under %s", o, err, fsaID)
 	}
-	if _, err := x.f.copies.Defaults.Get(ctx, fsaprogram.DefaultScope("1", fsaID, got.Program), coresingleton.SingletonKey); err != nil {
+	if _, err := x.f.copies.Defaults.Get(ctx, derhref.ScopeKey("1", fsaID, got.Program), coresingleton.SingletonKey); err != nil {
 		t.Errorf("the program has no default control: %v", err)
 	}
 
@@ -173,7 +174,7 @@ func TestDeviceControl_Scheduled_CreatesAServedDeviceOnlyProgram(t *testing.T) {
 	if err != nil || stored.DERControlBase == nil || stored.DERControlBase.OpModMaxLimW == nil || uint16(*stored.DERControlBase.OpModMaxLimW) != 5000 {
 		t.Errorf("stored control = %+v, %v", stored, err)
 	}
-	page, err := x.dc.controls.List(ctx, "1/"+fsaID+"/"+got.Program, store.ListOptions{Unbounded: true})
+	page, err := x.dc.controls.List(ctx, derhref.ScopeKey("1", fsaID, got.Program), store.ListOptions{Unbounded: true})
 	if err != nil || len(page.Items) != 1 {
 		t.Errorf("controls in the program's scope = %d, %v, want 1", len(page.Items), err)
 	}
@@ -204,7 +205,7 @@ func TestDeviceControl_TwoCallsReuseOneFSAAndProgram(t *testing.T) {
 	if !strings.Contains(second.PrimacyReason, "kept") {
 		t.Errorf("primacyReason = %q, want it to say the primacy was kept", second.PrimacyReason)
 	}
-	page, err := x.dc.controls.List(ctx, "1/"+first.FSA+"/"+first.Program, store.ListOptions{Unbounded: true})
+	page, err := x.dc.controls.List(ctx, derhref.ScopeKey("1", first.FSA, first.Program), store.ListOptions{Unbounded: true})
 	if err != nil || len(page.Items) != 2 {
 		t.Errorf("controls in the scope = %d, %v, want 2", len(page.Items), err)
 	}
@@ -298,7 +299,7 @@ func TestDeviceControl_Default_SetsTheProgramDefault(t *testing.T) {
 		first.DefaultControl.DERControlBase.OpModMaxLimW == nil || *first.DefaultControl.DERControlBase.OpModMaxLimW != 4000 {
 		t.Fatalf("reply = %+v, want only a maxLimW 4000 default control", first)
 	}
-	scope := fsaprogram.DefaultScope("1", first.FSA, first.Program)
+	scope := derhref.ScopeKey("1", first.FSA, first.Program)
 	d, err := x.f.copies.Defaults.Get(ctx, scope, coresingleton.SingletonKey)
 	if err != nil || d.DERControlBase == nil || d.DERControlBase.OpModMaxLimW == nil || uint16(*d.DERControlBase.OpModMaxLimW) != 4000 {
 		t.Fatalf("stored default = %+v, %v, want maxLimW 4000", d, err)
@@ -324,7 +325,7 @@ func TestDeviceControl_Default_SetsTheProgramDefault(t *testing.T) {
 func TestDeviceControl_ScheduledOnANewProgramLeavesAnEmptyDefault(t *testing.T) {
 	x := newDeviceControlFixture(t)
 	got := decodeDeviceControl(t, x.post("1", scheduledBody(t, 5000)))
-	d, err := x.f.copies.Defaults.Get(context.Background(), fsaprogram.DefaultScope("1", got.FSA, got.Program), coresingleton.SingletonKey)
+	d, err := x.f.copies.Defaults.Get(context.Background(), derhref.ScopeKey("1", got.FSA, got.Program), coresingleton.SingletonKey)
 	if err != nil || d.DERControlBase == nil {
 		t.Fatalf("default = %+v, %v, want a stored default with an empty DERControlBase", d, err)
 	}

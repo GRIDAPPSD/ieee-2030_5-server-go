@@ -13,6 +13,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
@@ -141,7 +142,7 @@ func assertDeviceCopy(t *testing.T, c fsaprogram.Copies, dev, fsa string, v temp
 		p.DefaultDERControlLink == nil || p.DefaultDERControlLink.Href != href+"/dderc" {
 		t.Errorf("device %s program = %+v, want the copy of %+v at %s", dev, p, v, href)
 	}
-	d, err := c.Defaults.Get(ctx, dev+"/"+fsa+"/"+v.ID, coresingleton.SingletonKey)
+	d, err := c.Defaults.Get(ctx, derhref.ScopeKey(dev, fsa, v.ID), coresingleton.SingletonKey)
 	if err != nil {
 		t.Fatalf("device %s default control: %v", dev, err)
 	}

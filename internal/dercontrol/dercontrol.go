@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -113,17 +114,17 @@ const maxDescriptionOctets = 32
 // Key is the store parent key the scope's controls and lifecycle records
 // are kept under ("edev/fsa/derp").
 func (s Scope) Key() string {
-	return scopeKeyOf(s)
+	return derhref.ScopeKey(s.EndDeviceID, s.FSAID, s.DERProgramID)
 }
 
 // ScopeFromKey is the inverse of [Scope.Key]. ok is false unless key has
 // exactly three non-empty segments.
 func ScopeFromKey(key string) (Scope, bool) {
-	parts := strings.Split(key, "/")
-	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+	edev, fsa, derp, ok := derhref.SplitScopeKey(key)
+	if !ok {
 		return Scope{}, false
 	}
-	return Scope{EndDeviceID: parts[0], FSAID: parts[1], DERProgramID: parts[2]}, true
+	return Scope{EndDeviceID: edev, FSAID: fsa, DERProgramID: derp}, true
 }
 
 // ProgramListHref is the DERProgramList href the scope's program is listed

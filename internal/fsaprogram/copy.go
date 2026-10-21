@@ -88,12 +88,6 @@ func CopyDefault(deviceID, fsaID string, t memory.ProgramTemplate) sep2.DefaultD
 	return d
 }
 
-// DefaultScope is the DefaultDERControl store key the protocol route reads a
-// program's default control from.
-func DefaultScope(deviceID, fsaID, programID string) string {
-	return deviceID + "/" + fsaID + "/" + programID
-}
-
 // Check reports whether deviceID already holds the copy of t under fsaID
 // (present), or ErrCopyConflict when another program holds its id or mRID.
 // The origin is written first, so a program with no origin entry was never a
@@ -162,7 +156,7 @@ func (c Copies) deletePart(ctx context.Context, deviceID, fsaID, programID, part
 	case PartOrigin:
 		err = c.Origins.Delete(ctx, deviceID, programID)
 	case PartDefault:
-		err = c.Defaults.Delete(ctx, DefaultScope(deviceID, fsaID, programID), coresingleton.SingletonKey)
+		err = c.Defaults.Delete(ctx, derhref.ScopeKey(deviceID, fsaID, programID), coresingleton.SingletonKey)
 	case PartProgram:
 		err = c.Programs.Delete(ctx, deviceID, programID)
 	default:
@@ -220,7 +214,7 @@ func (c Copies) ensure(ctx context.Context, deviceID, fsaID string, t memory.Pro
 		return nil, errors.Join(err, undo(ctx))
 	}
 
-	scope := DefaultScope(deviceID, fsaID, t.ID)
+	scope := derhref.ScopeKey(deviceID, fsaID, t.ID)
 	writes := []struct {
 		part   string
 		get    func() error
@@ -287,7 +281,7 @@ func (c Copies) Sync(ctx context.Context, deviceID, fsaID string, t memory.Progr
 	editMu.Lock()
 	defer editMu.Unlock()
 
-	scope := DefaultScope(deviceID, fsaID, t.ID)
+	scope := derhref.ScopeKey(deviceID, fsaID, t.ID)
 	dBefore, err := c.Defaults.Get(ctx, scope, coresingleton.SingletonKey)
 	if err != nil {
 		return Changes{}, fmt.Errorf("reading the default of template %s's copy on device %s: %w", t.ID, deviceID, err)

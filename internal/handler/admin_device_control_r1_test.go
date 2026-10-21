@@ -16,6 +16,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment/sources"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -234,7 +235,7 @@ func TestDeviceControl_Default_ReadAfterEditFailureLogsItsCauseAndUndoesTheEdit(
 		t.Errorf("log = %q, want the real cause", logs.String())
 	}
 	x.f.h.Copies.Defaults = x.f.copies.Defaults
-	d, err := x.f.copies.Defaults.Get(context.Background(), fsaprogram.DefaultScope("1", first.FSA, first.Program), coresingleton.SingletonKey)
+	d, err := x.f.copies.Defaults.Get(context.Background(), derhref.ScopeKey("1", first.FSA, first.Program), coresingleton.SingletonKey)
 	if err != nil || uint16(*d.DERControlBase.OpModMaxLimW) != 4000 {
 		t.Errorf("default after the failed call = %+v, %v, want the earlier 4000", d, err)
 	}
@@ -301,11 +302,11 @@ func TestDeviceControl_RestartWithBootRebuildKeepsControlDefaultAndOrigin(t *tes
 	if err != nil || o.Kind != memory.ProgramOriginDevice || o.FSAID != sent.FSA {
 		t.Errorf("origin after rebuild = %+v, %v", o, err)
 	}
-	d, err := y.f.copies.Defaults.Get(ctx, fsaprogram.DefaultScope("1", sent.FSA, sent.Program), coresingleton.SingletonKey)
+	d, err := y.f.copies.Defaults.Get(ctx, derhref.ScopeKey("1", sent.FSA, sent.Program), coresingleton.SingletonKey)
 	if err != nil || d.DERControlBase == nil || d.DERControlBase.OpModMaxLimW == nil || uint16(*d.DERControlBase.OpModMaxLimW) != 4000 {
 		t.Errorf("default after rebuild = %+v, %v, want maxLimW 4000", d, err)
 	}
-	page, err := y.dc.controls.List(ctx, "1/"+sent.FSA+"/"+sent.Program, store.ListOptions{Unbounded: true})
+	page, err := y.dc.controls.List(ctx, derhref.ScopeKey("1", sent.FSA, sent.Program), store.ListOptions{Unbounded: true})
 	if err != nil || len(page.Items) != 1 || page.Items[0].DERControlBase == nil || page.Items[0].DERControlBase.OpModMaxLimW == nil ||
 		uint16(*page.Items[0].DERControlBase.OpModMaxLimW) != 5000 {
 		t.Errorf("controls after restart = %+v, %v, want the maxLimW 5000 control", page.Items, err)

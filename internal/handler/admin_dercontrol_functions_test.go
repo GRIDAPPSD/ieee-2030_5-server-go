@@ -184,7 +184,8 @@ func TestDERControlFunctions_ListsTheCatalog(t *testing.T) {
 		}
 		names = append(names, f.Name)
 	}
-	want := []string{"opModConnect", "opModEnergize", "opModMaxLimW", "opModFixedPFInjectW", "opModTargetW"}
+	want := []string{"opModConnect", "opModEnergize", "opModMaxLimW", "opModFixedPFInjectW", "opModTargetW",
+		"opModFixedPFAbsorbW", "opModFixedVar", "opModFixedW", "opModFreqDroop", "opModTargetVar", "rampTms"}
 	if fmt.Sprint(names) != fmt.Sprint(want) {
 		t.Errorf("names = %v, want %v", names, want)
 	}

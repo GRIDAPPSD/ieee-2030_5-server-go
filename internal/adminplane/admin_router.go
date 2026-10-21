@@ -272,6 +272,10 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 	if derH := newAdminDERControlHandler(stores); derH != nil {
 		authed.HandleFunc("GET /api/der/controls", derH.HandleList())
 		authed.HandleFunc("GET /api/der/control-functions", derH.HandleFunctions())
+		// #969: the curves a curve function may name.
+		if stores.DERCurves != nil {
+			authed.HandleFunc("GET /api/der/curves", handler.HandleListCurves(stores.DERCurves))
+		}
 		if controlWrites {
 			mountWrite("POST /api/der/controls", derH.HandleCreate())
 			mountWrite("POST /api/der/controls/{mrid}/cancel", derH.HandleCancel())

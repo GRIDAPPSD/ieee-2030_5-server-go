@@ -19,6 +19,12 @@ const (
 	FuncMaxLimW        = "opModMaxLimW"
 	FuncFixedPFInjectW = "opModFixedPFInjectW"
 	FuncTargetW        = "opModTargetW"
+	FuncFixedPFAbsorbW = "opModFixedPFAbsorbW"
+	FuncFixedVar       = "opModFixedVar"
+	FuncFixedW         = "opModFixedW"
+	FuncFreqDroop      = "opModFreqDroop"
+	FuncTargetVar      = "opModTargetVar"
+	FuncRampTms        = "rampTms"
 )
 
 var (
@@ -31,15 +37,13 @@ var (
 		func(s *FunctionSet) **bool { return &s.OpModEnergize },
 		func(v *DERControlBaseView) **bool { return &v.OpModEnergize })
 	rowMaxLimW = row(FuncMaxLimW, "Active power ceiling in hundredths of a percent of setMaxW.",
-		perCentKind(intRange{min: 0, max: 10000}),
+		integerKind[sep2.PerCent, uint16](perCent),
 		func(b *sep2.DERControlBase) **sep2.PerCent { return &b.OpModMaxLimW },
 		func(s *FunctionSet) **int64 { return &s.OpModMaxLimW },
 		func(v *DERControlBaseView) **uint16 { return &v.OpModMaxLimW }).
 		worded(label{path: "maxLimW", code: "max_lim_w"})
-	// The displacement is in thousandths, which is what the fixed multiplier
-	// says on the wire.
 	rowFixedPFInjectW = row(FuncFixedPFInjectW, "Fixed power factor while injecting active power; displacement is thousandths.",
-		powerFactorKind(intRange{min: 1, max: 1000}, -3),
+		thousandthsPF,
 		func(b *sep2.DERControlBase) **sep2.FixedPowerFactor { return &b.OpModFixedPFInjectW },
 		func(s *FunctionSet) **PowerFactorInput { return &s.OpModFixedPFInjectW },
 		func(v *DERControlBaseView) **FixedPowerFactorView { return &v.OpModFixedPFInjectW }).
@@ -50,7 +54,7 @@ var (
 	// The multiplier is a PowerOfTenMultiplierType, within the range the
 	// standard allows.
 	rowTargetW = row(FuncTargetW, "Active power target, value x 10^multiplier watts, discharge positive.",
-		activePowerKind(intRange{min: math.MinInt16, max: math.MaxInt16, typeName: "int16"}, intRange{min: -9, max: 9}),
+		powerKind[sep2.ActivePower](int16Range, powerOfTen),
 		func(b *sep2.DERControlBase) **sep2.ActivePower { return &b.OpModTargetW },
 		func(s *FunctionSet) **ActivePowerInput { return &s.OpModTargetW },
 		func(v *DERControlBaseView) **ActivePowerView { return &v.OpModTargetW }).
@@ -58,11 +62,59 @@ var (
 			"value":      {path: "targetW.value", code: "target_w_value"},
 			"multiplier": {path: "targetW.multiplier", code: "target_w_multiplier"},
 		}})
+	// Rows added after the first five follow them, so the catalog list, the
+	// views and the audit value of every existing control keep their order.
+	rowFixedPFAbsorbW = row(FuncFixedPFAbsorbW, "Fixed power factor while absorbing active power; displacement is thousandths.",
+		thousandthsPF,
+		func(b *sep2.DERControlBase) **sep2.FixedPowerFactor { return &b.OpModFixedPFAbsorbW },
+		func(s *FunctionSet) **PowerFactorInput { return &s.OpModFixedPFAbsorbW },
+		func(v *DERControlBaseView) **FixedPowerFactorView { return &v.OpModFixedPFAbsorbW })
+	rowFixedVar = row(FuncFixedVar, "Reactive power setpoint in hundredths of a percent of what refType names: 1 setMaxW, 2 setMaxVar, 3 statVarAvail.",
+		fixedVarKind(intRange{min: 1, max: 3}, signedPerCent),
+		func(b *sep2.DERControlBase) **sep2.FixedVar { return &b.OpModFixedVar },
+		func(s *FunctionSet) **FixedVarInput { return &s.OpModFixedVar },
+		func(v *DERControlBaseView) **FixedVarView { return &v.OpModFixedVar })
+	rowFixedW = row(FuncFixedW, "Active power setpoint in hundredths of a percent, discharge positive.",
+		integerKind[sep2.SignedPerCent, int16](signedPerCent),
+		func(b *sep2.DERControlBase) **sep2.SignedPerCent { return &b.OpModFixedW },
+		func(s *FunctionSet) **int64 { return &s.OpModFixedW },
+		func(v *DERControlBaseView) **int16 { return &v.OpModFixedW })
+	rowFreqDroop = row(FuncFreqDroop, "Frequency droop: dead bands dBOF and dBUF, droops kOF and kUF, open loop response time openLoopTms.",
+		freqDroopKind(intRange{min: 0, max: math.MaxUint32, typeName: "uint32"}, uint16Range),
+		func(b *sep2.DERControlBase) **sep2.FreqDroopType { return &b.OpModFreqDroop },
+		func(s *FunctionSet) **FreqDroopInput { return &s.OpModFreqDroop },
+		func(v *DERControlBaseView) **FreqDroopView { return &v.OpModFreqDroop })
+	rowTargetVar = row(FuncTargetVar, "Reactive power target, value x 10^multiplier var.",
+		powerKind[sep2.ReactivePower](int16Range, powerOfTen),
+		func(b *sep2.DERControlBase) **sep2.ReactivePower { return &b.OpModTargetVar },
+		func(s *FunctionSet) **ActivePowerInput { return &s.OpModTargetVar },
+		func(v *DERControlBaseView) **ActivePowerView { return &v.OpModTargetVar })
+	rowRampTms = row(FuncRampTms, "Ramp time to the control's settings, in hundredths of a second.",
+		integerKind[uint16, uint16](uint16Range),
+		func(b *sep2.DERControlBase) **uint16 { return &b.RampTms },
+		func(s *FunctionSet) **int64 { return &s.RampTms },
+		func(v *DERControlBaseView) **uint16 { return &v.RampTms })
+)
+
+// Bounds shared by more than one row. PerCent and SignedPerCent copy core's,
+// which core enforces when it encodes; TestServedIntegerBoundsEncode fails
+// if one here is wider. PowerOfTenMultiplierType is the range the standard
+// allows.
+var (
+	perCent       = intRange{min: 0, max: 10000}
+	signedPerCent = intRange{min: -10000, max: 10000}
+	powerOfTen    = intRange{min: -9, max: 9}
+	int16Range    = intRange{min: math.MinInt16, max: math.MaxInt16, typeName: "int16"}
+	uint16Range   = intRange{min: 0, max: math.MaxUint16, typeName: "uint16"}
+	// The displacement is in thousandths, which is what the fixed multiplier
+	// says on the wire.
+	thousandthsPF = powerFactorKind(intRange{min: 1, max: 1000}, -3)
 )
 
 // catalog is every function a control can carry, in the order GET
 // /api/der/control-functions lists them and the views report them.
-var catalog = []function{rowConnect, rowEnergize, rowMaxLimW, rowFixedPFInjectW, rowTargetW}
+var catalog = []function{rowConnect, rowEnergize, rowMaxLimW, rowFixedPFInjectW, rowTargetW,
+	rowFixedPFAbsorbW, rowFixedVar, rowFixedW, rowFreqDroop, rowTargetVar, rowRampTms}
 
 // FunctionSet is the set of functions one control carries, each in the
 // shape a request gives it, so a member left out is refused as missing and
@@ -74,6 +126,12 @@ type FunctionSet struct {
 	OpModMaxLimW        *int64            `json:"opModMaxLimW,omitempty"`
 	OpModFixedPFInjectW *PowerFactorInput `json:"opModFixedPFInjectW,omitempty"`
 	OpModTargetW        *ActivePowerInput `json:"opModTargetW,omitempty"`
+	OpModFixedPFAbsorbW *PowerFactorInput `json:"opModFixedPFAbsorbW,omitempty"`
+	OpModFixedVar       *FixedVarInput    `json:"opModFixedVar,omitempty"`
+	OpModFixedW         *int64            `json:"opModFixedW,omitempty"`
+	OpModFreqDroop      *FreqDroopInput   `json:"opModFreqDroop,omitempty"`
+	OpModTargetVar      *ActivePowerInput `json:"opModTargetVar,omitempty"`
+	RampTms             *int64            `json:"rampTms,omitempty"`
 }
 
 // DERControlBaseView is the JSON form of the DERControlBase values the admin
@@ -85,6 +143,12 @@ type DERControlBaseView struct {
 	OpModMaxLimW        *uint16               `json:"opModMaxLimW,omitempty"`
 	OpModFixedPFInjectW *FixedPowerFactorView `json:"opModFixedPFInjectW,omitempty"`
 	OpModTargetW        *ActivePowerView      `json:"opModTargetW,omitempty"`
+	OpModFixedPFAbsorbW *FixedPowerFactorView `json:"opModFixedPFAbsorbW,omitempty"`
+	OpModFixedVar       *FixedVarView         `json:"opModFixedVar,omitempty"`
+	OpModFixedW         *int16                `json:"opModFixedW,omitempty"`
+	OpModFreqDroop      *FreqDroopView        `json:"opModFreqDroop,omitempty"`
+	OpModTargetVar      *ActivePowerView      `json:"opModTargetVar,omitempty"`
+	RampTms             *uint16               `json:"rampTms,omitempty"`
 }
 
 // ControlType selects a legacy control shape. The set is closed: a control
@@ -172,19 +236,25 @@ var booleanKind = kind[bool, bool, bool]{
 	baseView: func(v bool) bool { return v },
 }
 
-// perCentKind is a PerCent element, hundredths of a percent, within r.
-func perCentKind(r intRange) kind[int64, sep2.PerCent, uint16] {
-	return kind[int64, sep2.PerCent, uint16]{
+// wireInt is the core integer types an integer element or its view takes.
+type wireInt interface {
+	~uint16 | ~int16
+}
+
+// integerKind is an integer element of core type T, within r, that the
+// derControlBase view reports as V.
+func integerKind[T, V wireInt](r intRange) kind[int64, T, V] {
+	return kind[int64, T, V]{
 		shape: shape{kind: kindInteger, bounds: r},
-		parse: func(in int64) (sep2.PerCent, *fault) {
+		parse: func(in int64) (T, *fault) {
 			if !r.contains(in) {
 				return 0, &fault{bounds: r}
 			}
-			return sep2.PerCent(in), nil
+			return T(in), nil
 		},
-		input:    func(v sep2.PerCent) int64 { return int64(v) },
-		baseView: func(v sep2.PerCent) uint16 { return uint16(v) },
-		log:      func(v sep2.PerCent) []LogAttr { return []LogAttr{{"value", uint16(v)}} },
+		input:    func(v T) int64 { return int64(v) },
+		baseView: func(v T) V { return V(v) },
+		log:      func(v T) []LogAttr { return []LogAttr{{"value", V(v)}} },
 	}
 }
 
@@ -240,53 +310,154 @@ func powerFactorKind(d intRange, multiplier int8) kind[PowerFactorInput, sep2.Fi
 	}
 }
 
-// ActivePowerInput is an active power as a request carries it, and as the
-// functions view reports it. A missing multiplier is 0.
+// ActivePowerInput is an active or reactive power as a request carries it,
+// and as the functions view reports it. A missing multiplier is 0.
 type ActivePowerInput struct {
 	Value      *int64 `json:"value"`
 	Multiplier *int64 `json:"multiplier"`
 }
 
-// ActivePowerView is an active power in the derControlBase view, value x
-// 10^multiplier watts, discharge positive.
+// ActivePowerView is an active or reactive power in the derControlBase view,
+// value x 10^multiplier watts or var.
 type ActivePowerView struct {
 	Value      int16 `json:"value"`
 	Multiplier int8  `json:"multiplier"`
 }
 
-// activePowerKind is an ActivePower element with its value within value and
-// its multiplier within multiplier.
-func activePowerKind(value, multiplier intRange) kind[ActivePowerInput, sep2.ActivePower, ActivePowerView] {
-	return kind[ActivePowerInput, sep2.ActivePower, ActivePowerView]{
+// powerParts is the shape core gives ActivePower and ReactivePower, so one
+// kind serves both.
+type powerParts = struct {
+	Multiplier int8  `xml:"multiplier"`
+	Value      int16 `xml:"value"`
+}
+
+type power interface{ ~powerParts }
+
+// powerKind is an ActivePower or ReactivePower element with its value within
+// value and its multiplier within multiplier.
+func powerKind[T power](value, multiplier intRange) kind[ActivePowerInput, T, ActivePowerView] {
+	return kind[ActivePowerInput, T, ActivePowerView]{
 		shape: shape{kind: kindObject, fields: []field{
 			{name: "value", required: true, shape: shape{kind: kindInteger, bounds: value}},
 			{name: "multiplier", shape: shape{kind: kindInteger, bounds: multiplier}},
 		}},
-		parse: func(in ActivePowerInput) (sep2.ActivePower, *fault) {
+		parse: func(in ActivePowerInput) (T, *fault) {
 			if in.Value == nil {
-				return sep2.ActivePower{}, &fault{field: "value", missing: true}
+				return T{}, &fault{field: "value", missing: true}
 			}
 			if !value.contains(*in.Value) {
-				return sep2.ActivePower{}, &fault{field: "value", bounds: value}
+				return T{}, &fault{field: "value", bounds: value}
 			}
 			var m int64
 			if in.Multiplier != nil {
 				m = *in.Multiplier
 			}
 			if !multiplier.contains(m) {
-				return sep2.ActivePower{}, &fault{field: "multiplier", bounds: multiplier}
+				return T{}, &fault{field: "multiplier", bounds: multiplier}
 			}
-			return sep2.ActivePower{Value: int16(*in.Value), Multiplier: int8(m)}, nil
+			return T(powerParts{Value: int16(*in.Value), Multiplier: int8(m)}), nil
 		},
-		input: func(v sep2.ActivePower) ActivePowerInput {
-			x, m := int64(v.Value), int64(v.Multiplier)
+		input: func(v T) ActivePowerInput {
+			p := powerParts(v)
+			x, m := int64(p.Value), int64(p.Multiplier)
 			return ActivePowerInput{Value: &x, Multiplier: &m}
 		},
-		baseView: func(v sep2.ActivePower) ActivePowerView {
-			return ActivePowerView{Value: v.Value, Multiplier: v.Multiplier}
+		baseView: func(v T) ActivePowerView {
+			p := powerParts(v)
+			return ActivePowerView{Value: p.Value, Multiplier: p.Multiplier}
 		},
-		log: func(v sep2.ActivePower) []LogAttr {
-			return []LogAttr{{"value", v.Value}, {"multiplier", v.Multiplier}}
+		log: func(v T) []LogAttr {
+			p := powerParts(v)
+			return []LogAttr{{"value", p.Value}, {"multiplier", p.Multiplier}}
+		},
+	}
+}
+
+// FixedVarInput is a FixedVar as a request carries it, and as the functions
+// view reports it.
+type FixedVarInput struct {
+	RefType *int64 `json:"refType"`
+	Value   *int64 `json:"value"`
+}
+
+// FixedVarView is a FixedVar in the derControlBase view.
+type FixedVarView struct {
+	RefType uint8 `json:"refType"`
+	Value   int16 `json:"value"`
+}
+
+// fixedVarKind is a FixedVar element. refTypes is the DERUnitRefType values
+// opModFixedVar allows, which core also enforces when it encodes one.
+func fixedVarKind(refTypes, value intRange) kind[FixedVarInput, sep2.FixedVar, FixedVarView] {
+	s := shape{kind: kindObject, fields: []field{
+		{name: "refType", required: true, shape: shape{kind: kindInteger, bounds: refTypes}},
+		{name: "value", required: true, shape: shape{kind: kindInteger, bounds: value}},
+	}}
+	return kind[FixedVarInput, sep2.FixedVar, FixedVarView]{
+		shape: s,
+		parse: func(in FixedVarInput) (sep2.FixedVar, *fault) {
+			if f := s.checkIntegers(in.RefType, in.Value); f != nil {
+				return sep2.FixedVar{}, f
+			}
+			return sep2.FixedVar{RefType: uint8(*in.RefType), Value: sep2.SignedPerCent(*in.Value)}, nil
+		},
+		input: func(v sep2.FixedVar) FixedVarInput {
+			r, x := int64(v.RefType), int64(v.Value)
+			return FixedVarInput{RefType: &r, Value: &x}
+		},
+		baseView: func(v sep2.FixedVar) FixedVarView {
+			return FixedVarView{RefType: v.RefType, Value: int16(v.Value)}
+		},
+		log: func(v sep2.FixedVar) []LogAttr {
+			return []LogAttr{{"refType", v.RefType}, {"value", int16(v.Value)}}
+		},
+	}
+}
+
+// FreqDroopInput is a FreqDroopType as a request carries it, and as the
+// functions view reports it.
+type FreqDroopInput struct {
+	DBOF        *int64 `json:"dBOF"`
+	DBUF        *int64 `json:"dBUF"`
+	KOF         *int64 `json:"kOF"`
+	KUF         *int64 `json:"kUF"`
+	OpenLoopTms *int64 `json:"openLoopTms"`
+}
+
+// FreqDroopView is a FreqDroopType in the derControlBase view.
+type FreqDroopView struct {
+	DBOF        uint32 `json:"dBOF"`
+	DBUF        uint32 `json:"dBUF"`
+	KOF         uint16 `json:"kOF"`
+	KUF         uint16 `json:"kUF"`
+	OpenLoopTms uint16 `json:"openLoopTms"`
+}
+
+// freqDroopKind is a FreqDroopType element: its dead bands within band and
+// its droops and response time within small, the integer types the schema
+// gives them.
+func freqDroopKind(band, small intRange) kind[FreqDroopInput, sep2.FreqDroopType, FreqDroopView] {
+	s := shape{kind: kindObject, fields: []field{
+		{name: "dBOF", required: true, shape: shape{kind: kindInteger, bounds: band}},
+		{name: "dBUF", required: true, shape: shape{kind: kindInteger, bounds: band}},
+		{name: "kOF", required: true, shape: shape{kind: kindInteger, bounds: small}},
+		{name: "kUF", required: true, shape: shape{kind: kindInteger, bounds: small}},
+		{name: "openLoopTms", required: true, shape: shape{kind: kindInteger, bounds: small}},
+	}}
+	return kind[FreqDroopInput, sep2.FreqDroopType, FreqDroopView]{
+		shape: s,
+		parse: func(in FreqDroopInput) (sep2.FreqDroopType, *fault) {
+			if f := s.checkIntegers(in.DBOF, in.DBUF, in.KOF, in.KUF, in.OpenLoopTms); f != nil {
+				return sep2.FreqDroopType{}, f
+			}
+			return sep2.FreqDroopType{DBOF: uint32(*in.DBOF), DBUF: uint32(*in.DBUF), KOF: uint16(*in.KOF), KUF: uint16(*in.KUF), OpenLoopTms: uint16(*in.OpenLoopTms)}, nil
+		},
+		input: func(v sep2.FreqDroopType) FreqDroopInput {
+			a, b, c, d, e := int64(v.DBOF), int64(v.DBUF), int64(v.KOF), int64(v.KUF), int64(v.OpenLoopTms)
+			return FreqDroopInput{DBOF: &a, DBUF: &b, KOF: &c, KUF: &d, OpenLoopTms: &e}
+		},
+		baseView: func(v sep2.FreqDroopType) FreqDroopView {
+			return FreqDroopView(v)
 		},
 	}
 }
@@ -394,6 +565,22 @@ func (s shape) memberText() string {
 		return s.bounds.typeName
 	}
 	return s.bounds.String()
+}
+
+// checkIntegers checks an object whose members are all integers, given in
+// field order: a required member left out first, then one out of bounds.
+func (s shape) checkIntegers(values ...*int64) *fault {
+	for i, f := range s.fields {
+		if values[i] == nil && f.required {
+			return &fault{field: f.name, missing: true}
+		}
+	}
+	for i, f := range s.fields {
+		if values[i] != nil && !f.shape.bounds.contains(*values[i]) {
+			return &fault{field: f.name, bounds: f.shape.bounds}
+		}
+	}
+	return nil
 }
 
 // describe is the descriptor the catalog serves for s: the same kind and

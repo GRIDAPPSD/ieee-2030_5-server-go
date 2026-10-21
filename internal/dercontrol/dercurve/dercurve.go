@@ -28,6 +28,16 @@ func Href(id string) (string, error) {
 	return "/dc/" + id, nil
 }
 
+// ID is the id a curve href names, the inverse of Href. ok is false for an
+// href Href could not have built.
+func ID(href string) (id string, ok bool) {
+	id, ok = strings.CutPrefix(href, "/dc/")
+	if !ok || strings.TrimSpace(id) == "" {
+		return "", false
+	}
+	return id, true
+}
+
 // Link links a curve mode to the DERCurve stored under id.
 func Link(id string) (*sep2.DERCurveLink, error) {
 	href, err := Href(id)

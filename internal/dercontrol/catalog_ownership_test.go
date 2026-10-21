@@ -84,10 +84,6 @@ func TestNoElementOutsideCatalog(t *testing.T) {
 // notOffered declines each core DERControlBase element the catalog has no
 // row for, with the reason. A row for one of these removes it here.
 var notOffered = map[string]string{
-	"opModFixedPFAbsorbW":         "fixed power factor while absorbing: not yet offered",
-	"opModFixedVar":               "needs a FixedVar value kind",
-	"opModFixedW":                 "needs a SignedPerCent value kind",
-	"opModFreqDroop":              "needs a FreqDroopType value kind",
 	"opModFreqWatt":               "curve: needs a stored-curve value kind",
 	"opModHFRTMayTrip":            "curve: needs a stored-curve value kind",
 	"opModHFRTMustTrip":           "curve: needs a stored-curve value kind",
@@ -99,12 +95,10 @@ var notOffered = map[string]string{
 	"opModLVRTMayTrip":            "curve: needs a stored-curve value kind",
 	"opModLVRTMomentaryCessation": "curve: needs a stored-curve value kind",
 	"opModLVRTMustTrip":           "curve: needs a stored-curve value kind",
-	"opModTargetVar":              "needs a ReactivePower value kind",
 	"opModVoltVar":                "curve: needs a stored-curve value kind",
 	"opModVoltWatt":               "curve: needs a stored-curve value kind",
 	"opModWattPF":                 "curve: needs a stored-curve value kind",
 	"opModWattVar":                "curve: needs a stored-curve value kind",
-	"rampTms":                     "a ramp time, not a function: not yet offered",
 }
 
 // Every element the pinned core models is a catalog row or is declined with
@@ -205,6 +199,10 @@ func TestObjectMembersRequiredAsMarked(t *testing.T) {
 	}{
 		{FuncFixedPFInjectW, rowFixedPFInjectW.kind.shape, map[string]any{"displacement": 900, "excitation": true}},
 		{FuncTargetW, rowTargetW.kind.shape, map[string]any{"value": 1, "multiplier": 1}},
+		{FuncFixedPFAbsorbW, rowFixedPFAbsorbW.kind.shape, map[string]any{"displacement": 900, "excitation": false}},
+		{FuncFixedVar, rowFixedVar.kind.shape, map[string]any{"refType": 2, "value": -500}},
+		{FuncFreqDroop, rowFreqDroop.kind.shape, map[string]any{"dBOF": 36, "dBUF": 36, "kOF": 5, "kUF": 5, "openLoopTms": 500}},
+		{FuncTargetVar, rowTargetVar.kind.shape, map[string]any{"value": 1, "multiplier": 1}},
 	} {
 		for _, f := range tc.shape.fields {
 			value := map[string]any{}
@@ -240,6 +238,10 @@ func TestObjectKindsNameTheirRequestKeys(t *testing.T) {
 	}{
 		{FuncFixedPFInjectW, rowFixedPFInjectW.kind.shape, reflect.TypeFor[PowerFactorInput]()},
 		{FuncTargetW, rowTargetW.kind.shape, reflect.TypeFor[ActivePowerInput]()},
+		{FuncFixedPFAbsorbW, rowFixedPFAbsorbW.kind.shape, reflect.TypeFor[PowerFactorInput]()},
+		{FuncFixedVar, rowFixedVar.kind.shape, reflect.TypeFor[FixedVarInput]()},
+		{FuncFreqDroop, rowFreqDroop.kind.shape, reflect.TypeFor[FreqDroopInput]()},
+		{FuncTargetVar, rowTargetVar.kind.shape, reflect.TypeFor[ActivePowerInput]()},
 	} {
 		var keys, fields []string
 		for i := range tc.input.NumField() {

@@ -30,32 +30,50 @@ controls (`feature`) and changes admin startup and stored-control loading
   to every device of an FSA in one request (#972).
 - Devices have a stored name and a kind (aggregator or device), with
   `GET /api/device-profiles` and `PUT /api/device-profiles/{lfdi}`;
-  `POST /api/devices` takes `name` and `kind` in place of `description` (#1032).
-  A device's stored kind gates management pairs: pair create and rekey answer
-  409 for a manager stored as `device`, and a profile PUT answers 409 on a kind
-  change that contradicts existing pairs (#1033).
+  `POST /api/devices` takes `name` and `kind` in place of `description`; a body
+  that still sends `description` gets 400 "invalid JSON" and no device is
+  created (#1032). Management pairs are now gated by device kind: pair create
+  and rekey answer 409 for a manager stored as `device`, for a manager that is
+  itself managed, and for a managed LFDI that is an aggregator (stored or
+  derived from managing a device), and a profile PUT answers 409 on a kind
+  change that contradicts existing pairs (#1033). `kind` is `aggregator` or
+  `device` and is optional: an empty kind follows the pairs. A device with no
+  profile reads as an aggregator if it manages any device, else as a device, so
+  pairs written before this release keep working; existing pairs are not
+  re-checked at upgrade, and the gate applies when a pair or profile is
+  written.
 - Admin UI: manage management pairs from the Devices tab (#926); program
   templates on the FSAs tab (#924); a device Programs drawer with origin and
   restart badges (#925); empty states that point at template creation (#927);
   a control window with device and FSA targets and default or scheduled
   controls (#971, #973); set a program's default control from the catalog and
-  with a checkbox on programs (#1036, #1044); device names shown everywhere
+  with a checkbox on programs (#1036, #1044); device names shown in most views
   (#1034); choose aggregator or device when adding (#1035).
 - `make` takes its run ports from the environment (#960).
 - Admin UI: unassign a device from an FSA in its Programs drawer, per FSA, with
-  the server's refusal text shown when programs block it (#1053).
+  the server's refusal text shown when programs block it (#1053). The existing
+  `DELETE /api/devices/{id}/fsa-assignment` also gains new 409 refusals:
+  `live_controls` while the device holds a live FSA control (#987), and while
+  device programs sit under the FSA (#949).
 
 ### Changed
 
-- The admin listener no longer starts without a key. With `SEP2_ADMIN_KEY`
-  unset, the server reads `admin.secret` in the cert directory (override with
-  `SEP2_ADMIN_SECRET_FILE`), creating it with mode 0600 on first start, and
-  refuses a symlink, a file with loose permissions or owner, an empty file or a
-  key under 16 characters before the admin port opens. `make admin-key` prints
-  the key. The Make targets no longer set `SEP2_ADMIN_KEY=admin`.
-  **Operator action:** an operator who ran without a key must set
-  `SEP2_ADMIN_KEY` (16 characters or more) or let the server generate
-  `admin.secret`, and log in with that key (#646).
+- The admin listener no longer starts without a usable key, and any admin key
+  under 16 characters is refused at boot (v0.17.0 accepted short keys, and its
+  Make targets set `SEP2_ADMIN_KEY=admin`). When an admin listener is
+  configured and `SEP2_ADMIN_KEY` is unset, the server reads `admin.secret` in
+  the cert directory (override with `SEP2_ADMIN_SECRET_FILE`), creating it with
+  mode 0600 on first start, and refuses a symlink, a file with loose
+  permissions or owner, an empty file or a key under 16 characters before the
+  admin port opens. With no admin listener configured, nothing is read,
+  created or required. An admin listener is configured by `SEP2_ADMIN_LISTEN`
+  (or its deprecated alias `SEP2_ADMIN_ADDR`), and the cert directory is
+  `SEP2_CERT_DIR`, default `~/tls`. `make admin-key` prints the key. The Make targets no
+  longer set `SEP2_ADMIN_KEY=admin`.
+  **Operator action:** an operator who ran without a key, or with a key under
+  16 characters, must set `SEP2_ADMIN_KEY` to 16 characters or more or let the
+  server generate `admin.secret`, and log in at `/login` with that key or send
+  it as a Bearer token (#646).
 
 - The server requires `ieee-2030_5-core-go` v0.27.0 (#998, #1012). v0.27.0 adds
   only a vendored decode file, with no server change. DER curve modes are served as
@@ -81,12 +99,15 @@ controls (`feature`) and changes admin startup and stored-control loading
 
 ### Fixed
 
-- DER lists are served in Table 50 order over any backend. The `a` (after)
-  query parameter is now ignored on DER lists (#485).
+- DER lists are served in IEEE 2030.5 Table 50 order over any backend. The `a`
+  (after) query parameter is now ignored on DER lists (#485). This ordering
+  change broke two tests in a consumer (the bridge).
 - Device FSAs are rebuilt from admin assignments at boot (#915), and each FSA
   lists only its own DER programs (#916).
 - A program's default control can be removed and set again (#1043).
-- Server-made IDs have one owner instead of separate generators (#1010).
+- Server-made IDs have one owner instead of separate generators (#1010). This
+  fixes duplicate-ID 500 responses and a shared anonymous usage point, and FSA
+  IDs change from the clock modulo 100000 to the full number.
 - Log values at the first call sites are escaped through one helper; the work
   is partial (part of #1000).
 - The e2e suite no longer races on a stale device field, a `datetime-local`
@@ -95,7 +116,10 @@ controls (`feature`) and changes admin startup and stored-control loading
 
 ### Internal
 
-No wire or API change: DER control building, the write path, FSA assignment,
+No wire or API change, though some admin audit log lines changed: DER control
+audit and refusal lines gain `remote_addr` and `admission` and one message text
+changes to "admin: DER control request refused" (#991), and the FSA undo log's
+`part` value for the scoped FSA is now `scoped_fsa` (#990). DER control building, the write path, FSA assignment,
 refusal logging, scope keys and the boot fixture now share one implementation
 each (#989, #990, #991, #992, #993, #1008, #1020); CodeQL runs as an advanced
 workflow that skips `e2e/` (#1030); `golangci-lint-action` is pinned to a commit
@@ -104,7 +128,7 @@ carries version numbers that go stale (#1056).
 
 ### Security
 
-- The FSA admin writes (create, delete, program attach and detach, and device
+- Security tightening: the FSA admin writes (create, delete, program attach and detach, and device
   FSA assignment and unassignment) now require a real credential from
   loopback: a request admitted only by the loopback bypass gets 401. Operators
   who used these routes or the FSA cards without logging in must log in at

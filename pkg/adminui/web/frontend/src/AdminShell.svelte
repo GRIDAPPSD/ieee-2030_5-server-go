@@ -283,7 +283,7 @@
       <ActivityChart {history} />
     {:else if activeTab === 'devices'}
       <DeviceTable devices={data?.devices ?? []} columns={data?.columns ?? []} {fsas} onChanged={refresh} />
-      <AddDevice onAdded={() => { void refresh(); void loadNames() }} pending={mintedCert} />
+      <AddDevice devices={data?.devices ?? []} onAdded={() => { void refresh(); void loadNames() }} pending={mintedCert} />
       <LookupDevice />
       <ManagementPairs devices={data?.devices ?? []} ready={data !== null || probeError !== ''} />
     {:else if activeTab === 'fsas'}

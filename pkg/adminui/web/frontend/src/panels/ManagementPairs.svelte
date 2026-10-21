@@ -1,13 +1,11 @@
 <script lang="ts">
-  // Management pairs: which aggregator manages which device. A device
-  // answers its protocol reads only for its own manager's pairs, so this is
-  // the operator's way to hand devices to an aggregator. Both LFDIs are
-  // chosen from the registered device list, never typed, so a pair cannot
-  // name a device the server does not hold.
+  // Management pairs: which aggregator manages which device, with removal.
+  // Pairs are created from the Add and Edit device forms, which pick the
+  // managed devices from the registered list.
   import { onDestroy, untrack } from 'svelte'
   import type { DashboardDevice } from '../lib/dashboard'
-  import { canon, deviceLabel } from '../lib/devices'
-  import { createPair, listPairs, pairsKey, removePair, type ManagementPair } from '../lib/management'
+  import { deviceLabelIn } from '../lib/devices'
+  import { listPairs, pairsKey, removePair, type ManagementPair } from '../lib/management'
 
   // ready is false until the shell has received its first device list, so an
   // empty list before then is not mistaken for a server with no devices.
@@ -16,8 +14,6 @@
   let pairs = $state<ManagementPair[]>([])
   let loaded = $state(false)
   let listError = $state('')
-  let manager = $state('')
-  let managed = $state('')
   let busy = $state(false)
   let result = $state('')
   let ok = $state(false)
@@ -48,48 +44,9 @@
     untrack(() => void load(lfdis))
   })
 
-  // A chosen device that leaves the list must not be posted from a select
-  // that no longer shows it.
-  $effect(() => {
-    const present = new Set(lfdis)
-    untrack(() => {
-      if (manager && !present.has(manager)) manager = ''
-      if (managed && !present.has(managed)) managed = ''
-    })
-  })
-
   onDestroy(() => {
     loadSeq++
   })
-
-  async function create() {
-    if (busy) return
-    if (!manager || !managed) {
-      ok = false
-      result = 'Choose a manager and a managed device.'
-      return
-    }
-    if (manager === managed) {
-      ok = false
-      result = 'A device cannot manage itself.'
-      return
-    }
-    busy = true
-    try {
-      const res = await createPair(manager, managed)
-      if (!res.ok) {
-        ok = false
-        result = `Error (${res.status}): ${res.error}`
-        return
-      }
-      ok = true
-      result = `Paired ${res.data.managedLFDI} under ${res.data.managerLFDI}.`
-      managed = ''
-      await load(lfdis)
-    } finally {
-      busy = false
-    }
-  }
 
   async function remove(pair: ManagementPair) {
     if (busy) return
@@ -109,22 +66,13 @@
     }
   }
 
-  // pairLabel names a pair's device from the registered list, so its SFDI is
-  // used when it has no name; a LFDI not in the list falls back to its prefix.
-  function pairLabel(lfdi: string): string {
-    const d = devices.find((x) => canon(x.lfdi) === canon(lfdi))
-    return deviceLabel(lfdi, d?.sfdi)
-  }
-
-  function option(d: DashboardDevice): string {
-    return `${deviceLabel(d.lfdi, d.sfdi)} (${d.lfdi.substring(0, 8)}...)`
-  }
+  const pairLabel = (lfdi: string) => deviceLabelIn(devices, lfdi)
 </script>
 
 <div class="card full-width">
   <h2>Management Pairs</h2>
   <p class="hint">
-    An aggregator reads a device only when a pair names it as that device's manager. Each device has one manager.
+    An aggregator reads a device only when a pair names it as that device's manager. Each device has one manager. Add pairs from a device's Edit or from Add End Device.
   </p>
   <table>
     <thead>
@@ -154,23 +102,6 @@
   {#if listError}
     <div class="result err" role="alert" data-testid="pairs-list-error">{listError}</div>
   {/if}
-  <div class="form-row">
-    <label for="pairManager">Manager</label>
-    <select id="pairManager" bind:value={manager}>
-      <option value="">(pick manager)</option>
-      {#each devices as d (d.lfdi)}
-        <option value={d.lfdi}>{option(d)}</option>
-      {/each}
-    </select>
-    <label for="pairManaged">Managed device</label>
-    <select id="pairManaged" bind:value={managed}>
-      <option value="">(pick device)</option>
-      {#each devices as d (d.lfdi)}
-        <option value={d.lfdi}>{option(d)}</option>
-      {/each}
-    </select>
-    <button class="btn btn-green" disabled={busy} onclick={create}>Create pair</button>
-  </div>
   {#if result}
     <div class="result" class:ok class:err={!ok} role={ok ? 'status' : 'alert'} data-testid="pairs-result">{result}</div>
   {/if}

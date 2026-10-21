@@ -33,8 +33,9 @@ function mintCert(name: string): string {
 }
 
 // addDeviceInUI pastes a certificate into the Add End Device card and
-// returns the identifiers the panel parsed out of it.
-async function addDeviceInUI(page: Page, name: string): Promise<{ sfdi: string; lfdi: string }> {
+// returns the identifiers the panel parsed out of it. With `manages` it adds
+// an aggregator and ticks those devices in the picker.
+async function addDeviceInUI(page: Page, name: string, manages: string[] = []): Promise<{ sfdi: string; lfdi: string }> {
   await page.locator('#addDevCert').fill(mintCert(name));
   await page.getByRole('button', { name: 'Parse Cert' }).click();
   // The readonly fields keep the previous device's values until the parse
@@ -45,8 +46,19 @@ async function addDeviceInUI(page: Page, name: string): Promise<{ sfdi: string; 
   const lfdi = await page.locator('#addDevLFDI').inputValue();
   await page.locator('#addDevDesc').fill(name);
   await page.locator('#addDevPIN').fill('424242');
+  if (manages.length > 0) {
+    await page.locator('#addDevKind').selectOption('aggregator');
+    const picker = page.getByTestId('device-picker');
+    for (const m of manages) {
+      await expect(picker.getByRole('checkbox', { name: m })).toBeVisible({ timeout: 10000 });
+      await picker.getByRole('checkbox', { name: m }).check();
+    }
+  }
   await page.getByRole('button', { name: 'Add Device' }).click();
   await expect(page.locator('#addDevResult')).toContainText(/Created \/edev\//, { timeout: 5000 });
+  if (manages.length > 0) {
+    await expect(page.locator('#addDevResult')).toContainText(`Paired ${manages.length} of ${manages.length} devices.`, { timeout: 10000 });
+  }
   await expect(page.getByTestId('device-label').filter({ hasText: name })).toHaveCount(1, { timeout: 5000 });
   return { sfdi, lfdi };
 }
@@ -71,24 +83,17 @@ test('an empty server becomes controllable from the UI alone', async ({ page, re
   expect(emptyFsas.status()).toBe(200);
   expect(JSON.stringify(await emptyFsas.json())).not.toContain(FSA_MRID);
 
-  // 1) Add an aggregator and a managed device.
+  // 1) Add a device, then an aggregator that manages it.
   await page.goto(`${baseUrl}/ui/devices?token=${KEY}`);
-  const aggregator = await addDeviceInUI(page, 'runtime-aggregator');
   const managed = await addDeviceInUI(page, 'runtime-managed');
+  const aggregator = await addDeviceInUI(page, 'runtime-aggregator', ['runtime-managed']);
   for (const d of [aggregator, managed]) {
     const found = await request.get(`${baseUrl}/api/devices/by-lfdi/${d.lfdi}`, { headers: AUTH });
     expect(found.status()).toBe(200);
     expect(JSON.stringify(await found.json())).toContain(d.sfdi);
   }
 
-  // 2) Pair them from the Devices tab.
-  const manager = page.getByLabel('Manager', { exact: true });
-  const managedSel = page.getByLabel('Managed device', { exact: true });
-  await expect(manager.locator('option', { hasText: 'runtime-aggregator' })).toHaveCount(1, { timeout: 10000 });
-  await manager.selectOption({ value: (await manager.locator('option', { hasText: 'runtime-aggregator' }).getAttribute('value'))! });
-  await managedSel.selectOption({ value: (await managedSel.locator('option', { hasText: 'runtime-managed' }).getAttribute('value'))! });
-  await page.getByRole('button', { name: 'Create pair' }).click();
-  await expect(page.getByTestId('pairs-result')).toContainText('Paired', { timeout: 5000 });
+  // 2) The pair was made by the aggregator's own form.
   const pair = await request.get(
     `${baseUrl}/api/management-pairs?manager=${aggregator.lfdi.toUpperCase()}`,
     { headers: AUTH },

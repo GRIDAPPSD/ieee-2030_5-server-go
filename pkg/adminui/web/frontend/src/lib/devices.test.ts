@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as api from './api'
-import { deviceLabel, deviceName, loadDeviceProfiles, renameDevice, resetDeviceProfiles } from './devices'
+import { deviceKind, deviceLabel, deviceLabelIn, deviceName, loadDeviceProfiles, saveDeviceProfile, resetDeviceProfiles } from './devices'
 import { seedDeviceProfiles } from './devices.fixture'
 
 const LFDI = '0123456789ABCDEF0123456789ABCDEF01234567'
@@ -93,7 +93,18 @@ describe('loadDeviceProfiles', () => {
   })
 })
 
-describe('renameDevice', () => {
+describe('saveDeviceProfile', () => {
+  it('sends a given kind without reading the server first', async () => {
+    const read = vi.spyOn(api, 'fetchJSON')
+    const put = vi.spyOn(api, 'putJSON').mockResolvedValue({ ok: true, data: { lfdi: LFDI, name: 'Agg', kind: 'aggregator' } })
+
+    await saveDeviceProfile(LFDI, 'Agg', 'aggregator')
+
+    expect(put).toHaveBeenCalledWith(`/api/device-profiles/${LFDI}`, { name: 'Agg', kind: 'aggregator' })
+    expect(read).not.toHaveBeenCalled()
+    expect(deviceKind(LFDI)).toBe('aggregator')
+  })
+
   function serverHolds(list: unknown) {
     return vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: true, data: { profiles: list } } as never)
   }
@@ -105,7 +116,7 @@ describe('renameDevice', () => {
       data: { lfdi: LFDI, name: 'Roof', kind: 'aggregator' },
     })
 
-    const res = await renameDevice(LFDI.toLowerCase(), 'Roof')
+    const res = await saveDeviceProfile(LFDI.toLowerCase(), 'Roof')
 
     expect(res.ok).toBe(true)
     expect(put).toHaveBeenCalledWith(`/api/device-profiles/${LFDI}`, { name: 'Roof', kind: 'aggregator' })
@@ -117,7 +128,7 @@ describe('renameDevice', () => {
     serverHolds([{ lfdi: LFDI, name: 'Old', kind: 'aggregator' }])
     const put = vi.spyOn(api, 'putJSON').mockResolvedValue({ ok: true, data: { lfdi: LFDI, name: 'X', kind: 'aggregator' } })
 
-    await renameDevice(LFDI, 'X')
+    await saveDeviceProfile(LFDI, 'X')
 
     expect(put).toHaveBeenCalledWith(`/api/device-profiles/${LFDI}`, { name: 'X', kind: 'aggregator' })
   })
@@ -126,7 +137,7 @@ describe('renameDevice', () => {
     vi.spyOn(api, 'fetchJSON').mockResolvedValue({ ok: false, error: 'down', status: 500 })
     const put = vi.spyOn(api, 'putJSON')
 
-    const res = await renameDevice(LFDI, 'Roof')
+    const res = await saveDeviceProfile(LFDI, 'Roof')
 
     expect(res).toEqual({ ok: false, error: 'down', status: 500 })
     expect(put).not.toHaveBeenCalled()
@@ -137,7 +148,7 @@ describe('renameDevice', () => {
     serverHolds([{ lfdi: LFDI, name: 'Old', kind: '' }])
     vi.spyOn(api, 'putJSON').mockResolvedValue({ ok: false, error: 'name already in use by another device', status: 409 })
 
-    const res = await renameDevice(LFDI, 'Taken')
+    const res = await saveDeviceProfile(LFDI, 'Taken')
 
     expect(res.ok).toBe(false)
     expect(deviceName(LFDI)).toBe('Old')
@@ -147,8 +158,19 @@ describe('renameDevice', () => {
     serverHolds([])
     const put = vi.spyOn(api, 'putJSON').mockResolvedValue({ ok: true, data: { lfdi: LFDI, name: 'First', kind: '' } })
 
-    await renameDevice(LFDI, 'First')
+    await saveDeviceProfile(LFDI, 'First')
 
     expect(put).toHaveBeenCalledWith(`/api/device-profiles/${LFDI}`, { name: 'First', kind: '' })
+  })
+})
+
+describe('deviceLabelIn', () => {
+  it('labels by name, else the SFDI the list holds for that LFDI, matching case-insensitively', async () => {
+    await seedDeviceProfiles([{ lfdi: LFDI, name: 'Roof', kind: '' }])
+    const list = [{ lfdi: 'ab12', sfdi: '999' }]
+
+    expect(deviceLabelIn(list, LFDI.toLowerCase())).toBe('Roof')
+    expect(deviceLabelIn(list, 'AB12')).toBe('999')
+    expect(deviceLabelIn(list, '0123456789ABCDEF0123')).toBe('0123456789ABCDEF...')
   })
 })

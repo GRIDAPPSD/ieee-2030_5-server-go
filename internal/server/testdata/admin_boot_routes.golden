@@ -8,6 +8,7 @@
     GET /api/certs/ca
     GET /api/certs/device-types
     GET /api/der-programs
+    GET /api/der/control-functions
     GET /api/der/controls
     GET /api/derms/commitments
     GET /api/derms/fleets

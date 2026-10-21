@@ -102,3 +102,21 @@ func TestWaitForServerReadyToleratesASlowHandshake(t *testing.T) {
 		t.Fatalf("waitForServerReady = not ready, want ready: the handshake completes after %v", handshakeDelay)
 	}
 }
+
+// TestBootWithBindRetryBootsAgainOnALostPort pins the retry that keeps a
+// port taken by another test process from failing a boot: two bind
+// failures, then a good env, must return that env after exactly three
+// boots.
+func TestBootWithBindRetryBootsAgainOnALostPort(t *testing.T) {
+	boots := 0
+	env := bootWithBindRetry(t, func() (*splitListenerEnv, string) {
+		boots++
+		if boots <= 2 {
+			return nil, "server.Run returned before the admin listener answered: listen tcp 127.0.0.1:1: bind: address already in use"
+		}
+		return &splitListenerEnv{adminAddr: "ok"}, ""
+	})
+	if env.adminAddr != "ok" || boots != 3 {
+		t.Fatalf("env = %+v after %d boots, want the third boot's env after 3", env, boots)
+	}
+}

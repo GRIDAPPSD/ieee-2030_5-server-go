@@ -28,18 +28,13 @@ func TestAdminBootRouteListMatchesGolden(t *testing.T) {
 
 	// A probed port can be taken again before Run binds it; that race says
 	// nothing about the route list, so a boot that loses it is retried.
-	var got string
-	for attempt := 1; ; attempt++ {
+	got := *bootWithBindRetry(t, func() (*string, string) {
 		section, err := bootAdminRouteSection(t, buf)
-		if err == nil {
-			got = section
-			break
+		if err != nil {
+			return nil, err.Error()
 		}
-		if !strings.Contains(err.Error(), "address already in use") || attempt == 3 {
-			t.Fatal(err)
-		}
-		t.Logf("boot attempt %d lost a port race, retrying: %v", attempt, err)
-	}
+		return &section, ""
+	})
 
 	if *updateAdminBootRoutes {
 		if err := os.MkdirAll(filepath.Dir(adminBootRoutesGolden), 0o755); err != nil {

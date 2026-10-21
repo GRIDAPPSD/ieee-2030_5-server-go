@@ -110,7 +110,7 @@ func TestProgramTemplateWithNoFixtureCarriesAControlToTheDevice(t *testing.T) {
 		t.Fatalf("control body %s: %v", body, err)
 	}
 
-	proto := ccmHTTPClient(device.tlsConfig, 3*time.Second)
+	proto := ccmHTTPClient(device.tlsConfig, readyProbeTimeout)
 	assertDeviceReadsCopy(t, proto, c.sep2Probe, devID, programHref, tmpl.MRID, tmpl.DefaultControl.MRID, control.MRID)
 
 	// Restart having lost the program snapshot: the boot rebuild writes the
@@ -184,18 +184,11 @@ func bootForTemplateTest(t *testing.T, c *splitListenerCerts, cfg *config.Config
 	return stop
 }
 
+// protoGetXML reads one resource from a listener the caller has already
+// waited on, so a failed request is a real failure and is not retried.
 func protoGetXML(t *testing.T, client *http.Client, addr, path string, into any) []byte {
 	t.Helper()
-	var resp *http.Response
-	var err error
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		resp, err = client.Get("https://" + addr + path)
-		if err == nil || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
+	resp, err := client.Get("https://" + addr + path)
 	if err != nil {
 		t.Fatalf("device GET %s: %v", path, err)
 	}

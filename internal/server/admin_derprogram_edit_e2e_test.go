@@ -80,7 +80,7 @@ default_der_controls:
 				cfg.DataDir = t.TempDir()
 			}
 			stop := bootForTemplateTest(t, c, cfg, device.tlsConfig)
-			proto := ccmHTTPClient(device.tlsConfig, 3*time.Second)
+			proto := ccmHTTPClient(device.tlsConfig, readyProbeTimeout)
 			admin := &http.Client{Timeout: 3 * time.Second}
 			adminDo := func(method, path, body string) (int, string) {
 				t.Helper()

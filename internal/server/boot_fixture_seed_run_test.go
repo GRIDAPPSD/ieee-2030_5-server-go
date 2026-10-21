@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/xml"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,10 +12,8 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
-	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
-	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
@@ -116,7 +113,7 @@ der_programs:
 		}
 	}
 
-	addr, stop := startSeedRun(t, newConfig, clientTLSCfg)
+	addr, stop := startRunOnFreePort(t, newConfig, clientTLSCfg)
 	if got := getTestDevice(t, client, addr); got.Enabled == nil || !*got.Enabled {
 		t.Fatalf("first run: Enabled = %v, want the fixture's true", got.Enabled)
 	}
@@ -140,7 +137,7 @@ der_programs:
 	}
 	stop()
 
-	addr, stop = startSeedRun(t, newConfig, clientTLSCfg)
+	addr, stop = startRunOnFreePort(t, newConfig, clientTLSCfg)
 	got := getTestDevice(t, client, addr)
 	if got.Enabled == nil || *got.Enabled {
 		t.Errorf("second run: Enabled = %v, want the edited false", got.Enabled)
@@ -164,58 +161,6 @@ der_programs:
 	if _, err := os.Stat(filepath.Join(dataDir, "bootfixture-seed.json")); err != nil {
 		t.Errorf("seed record after two runs: %v", err)
 	}
-}
-
-// startSeedRun starts server.Run and waits until it serves TLS. Only a bind
-// race is retried: any other Run error is the failure under test.
-func startSeedRun(t *testing.T, newConfig func(addr string) *config.Config, clientTLSCfg *gotls.Config) (string, func()) {
-	t.Helper()
-	const startAttempts = 8
-	for attempt := 0; attempt < startAttempts; attempt++ {
-		probe, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("probe listen: %v", err)
-		}
-		addr := probe.Addr().String()
-		_ = probe.Close()
-
-		ctx, cancel := context.WithCancel(context.Background())
-		runErrCh := make(chan error, 1)
-		go func() { runErrCh <- server.Run(ctx, newConfig(addr), nil) }()
-
-		readyCh := make(chan bool, 1)
-		go func() { readyCh <- waitForServerReady(addr, 2*time.Second, clientTLSCfg) }()
-		select {
-		case ok := <-readyCh:
-			if !ok {
-				cancel()
-				t.Fatalf("server did not start accepting TLS on %s", addr)
-			}
-			stop := func() {
-				t.Helper()
-				cancel()
-				select {
-				case err := <-runErrCh:
-					if err != nil {
-						t.Errorf("server.Run returned error after cancel: %v", err)
-					}
-				case <-time.After(3 * time.Second):
-					t.Error("server.Run did not return within 3s after context cancel")
-				}
-			}
-			return addr, stop
-		case err := <-runErrCh:
-			cancel()
-			<-readyCh
-			if err != nil && strings.Contains(err.Error(), "address already in use") {
-				t.Logf("server.Run start attempt %d lost a bind race (%v); retrying", attempt+1, err)
-				continue
-			}
-			t.Fatalf("server.Run failed to start: %v", err)
-		}
-	}
-	t.Fatalf("server failed to start after %d attempts", startAttempts)
-	return "", nil
 }
 
 func getTestDevice(t *testing.T, client *http.Client, addr string) sep2.EndDevice {

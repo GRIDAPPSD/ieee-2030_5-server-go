@@ -65,7 +65,10 @@ func (f *streamFake) lastReq() sep2admin.StreamRequest {
 // the credential chain all run as in production. Loopback bypass is off,
 // so every request needs a real credential.
 type streamPlane struct {
-	srv      *httptest.Server
+	srv *httptest.Server
+	// inflight counts handlers still running, so a test can assert none
+	// is left when it restores state the handler reads.
+	inflight atomic.Int32
 	tickets  *auth.TicketStore
 	sessions *auth.SessionStore
 	cookie   string
@@ -81,7 +84,11 @@ func newStreamPlane(t *testing.T, writeTimeout time.Duration, panels ...sep2admi
 	if sp.cookie, err = sp.sessions.Issue(); err != nil {
 		t.Fatal(err)
 	}
-	sp.srv = httptest.NewUnstartedServer(h)
+	sp.srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sp.inflight.Add(1)
+		defer sp.inflight.Add(-1)
+		h.ServeHTTP(w, r)
+	}))
 	sp.srv.Config.WriteTimeout = writeTimeout
 	sp.srv.Start()
 	t.Cleanup(sp.srv.Close)
@@ -481,10 +488,20 @@ func TestPanelStreamResumesFromLastEventID(t *testing.T) {
 func TestPanelStreamOutlivesTheWriteTimeout(t *testing.T) {
 	savedDeadline, savedBeat := panelStreamWriteDeadline, panelStreamHeartbeatInterval
 	panelStreamWriteDeadline, panelStreamHeartbeatInterval = 300*time.Millisecond, 50*time.Millisecond
-	defer func() { panelStreamWriteDeadline, panelStreamHeartbeatInterval = savedDeadline, savedBeat }()
+	// A cleanup, registered before the plane, runs after the plane's server
+	// close has waited for the stream handler that reads these vars. It
+	// fails if the handler is still running when the vars are restored
+	// (#857).
+	var sp *streamPlane
+	t.Cleanup(func() {
+		if n := sp.inflight.Load(); n != 0 {
+			t.Errorf("%d stream handlers still running when the timing vars are restored", n)
+		}
+		panelStreamWriteDeadline, panelStreamHeartbeatInterval = savedDeadline, savedBeat
+	})
 
 	f := newStreamFake()
-	sp := newStreamPlane(t, 200*time.Millisecond, f.panel("bus"))
+	sp = newStreamPlane(t, 200*time.Millisecond, f.panel("bus"))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	resp := sp.open(t, ctx, "/api/ui/panels/bus/stream?param=a", nil)

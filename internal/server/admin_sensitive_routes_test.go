@@ -196,26 +196,15 @@ func TestSensitiveRoutesStillRefuseUnderNonLoopbackExposure(t *testing.T) {
 		}
 	})
 
-	// Wait for the admin listener to come up, exactly as
-	// TestAdminListenerRefusesNonLoopbackBindWithoutOptIn's opt-in case does:
-	// any response is proof-of-life, the status is asserted separately below.
-	client := &http.Client{Timeout: 500 * time.Millisecond}
-	var resp *http.Response
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err = client.Get("http://" + loopbackProbe + "/api/certs/ca")
-		if err == nil {
-			break
-		}
-		select {
-		case runErr := <-runErrCh:
-			t.Fatalf("server.Run exited during boot: %v", runErr)
-		default:
-		}
-		time.Sleep(25 * time.Millisecond)
+	// The shared wait accepts any status but a foreign listener's 404 or 400;
+	// the status this test cares about is asserted below.
+	if msg, ok := waitForAdminReady(loopbackProbe, false, adminReadyTimeout, runErrCh); !ok {
+		t.Fatal(msg)
 	}
+	client := &http.Client{Timeout: readyProbeTimeout}
+	resp, err := client.Get("http://" + loopbackProbe + "/api/certs/ca")
 	if err != nil {
-		t.Fatalf("admin listener never became ready on %s: %v", loopbackProbe, err)
+		t.Fatalf("GET /api/certs/ca on %s: %v", loopbackProbe, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 

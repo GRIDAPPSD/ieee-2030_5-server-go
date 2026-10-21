@@ -70,6 +70,14 @@ func (e *captureListenerEnv) shutdown(timeout time.Duration) error {
 // admin side, only the auth chain.
 func bootCaptureListener(t *testing.T) *captureListenerEnv {
 	t.Helper()
+	return bootWithBindRetry(t, func() (*captureListenerEnv, string) { return tryBootCaptureListener(t) })
+}
+
+// tryBootCaptureListener is one boot attempt. A readiness failure comes
+// back as a message with a nil env and Run already stopped, so the caller
+// decides whether it is worth another attempt.
+func tryBootCaptureListener(t *testing.T) (*captureListenerEnv, string) {
+	t.Helper()
 	c := newSplitListenerCerts(t)
 	trafficDir := t.TempDir()
 
@@ -111,16 +119,10 @@ func bootCaptureListener(t *testing.T) *captureListenerEnv {
 	runErrCh := make(chan error, 1)
 	go func() { runErrCh <- server.Run(ctx, cfg, c.svc) }()
 
-	if !waitForServerReady(c.sep2Probe, adminReadyTimeout, clientTLSCfg) {
+	if msg, ok := waitForListenersReady(c.sep2Probe, c.adminProbe, clientTLSCfg, runErrCh); !ok {
 		cancel()
 		<-runErrCh
-		t.Fatalf("SEP2 listener never became ready on %s", c.sep2Probe)
-	}
-
-	if msg, ok := waitForAdminReady(c.adminProbe, false, adminReadyTimeout, runErrCh); !ok {
-		cancel()
-		<-runErrCh
-		t.Fatalf("%s on %s", msg, c.adminProbe)
+		return nil, fmt.Sprintf("%s (SEP2 %s, admin %s)", msg, c.sep2Probe, c.adminProbe)
 	}
 
 	env := &captureListenerEnv{
@@ -137,7 +139,7 @@ func bootCaptureListener(t *testing.T) *captureListenerEnv {
 			t.Error(err)
 		}
 	})
-	return env
+	return env, ""
 }
 
 // adminReq builds an admin-listener request forced through the real auth

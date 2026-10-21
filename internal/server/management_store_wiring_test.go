@@ -62,27 +62,10 @@ func TestEndDeviceManagementStoreWiring_ThroughServerRun(t *testing.T) {
 		}
 	})
 
-	client := &http.Client{Timeout: 500 * time.Millisecond}
-	deadline := time.Now().Add(5 * time.Second)
-	var lastErr error
-	for time.Now().Before(deadline) {
-		resp, err := client.Get("http://" + c.adminProbe + "/api/certs/ca")
-		if err == nil {
-			_ = resp.Body.Close()
-			lastErr = nil
-			break
-		}
-		lastErr = err
-		select {
-		case runErr := <-runErrCh:
-			t.Fatalf("server.Run exited during boot: %v", runErr)
-		default:
-		}
-		time.Sleep(25 * time.Millisecond)
+	if msg, ok := waitForAdminReady(c.adminProbe, false, adminReadyTimeout, runErrCh); !ok {
+		t.Fatal(msg)
 	}
-	if lastErr != nil {
-		t.Fatalf("admin listener never became ready on %s: %v", c.adminProbe, lastErr)
-	}
+	client := &http.Client{Timeout: readyProbeTimeout}
 
 	body := `{"managerLFDI":"AAAA000000000000000000000000000000000001","managedLFDI":"BBBB000000000000000000000000000000000002"}`
 	req, err := http.NewRequest(http.MethodPost, "http://"+c.adminProbe+"/api/management-pairs", strings.NewReader(body))

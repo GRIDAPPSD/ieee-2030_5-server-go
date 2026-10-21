@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 	gotls "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls/gotls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
 )
 
@@ -150,29 +153,8 @@ func runServerIdentityTest(t *testing.T) {
 	// device cert even for the probe.
 	clientTLSCfg := ccmClientTLSConfig(t, deviceCertPEM, deviceKeyPEM, caCertPEM)
 
-	// Start the server with a port-pick retry to absorb the port-reuse race
-	// when two subtests run back-to-back (ephemeral ports cycle through
-	// TIME_WAIT). We pick a port via probe-and-close, hand it to Run, and
-	// retry if Run fails to listen.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var (
-		addr     string
-		runErrCh chan error
-	)
-	const startAttempts = 8
-	started := false
-startLoop:
-	for attempt := 0; attempt < startAttempts; attempt++ {
-		probe, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatalf("probe listen: %v", err)
-		}
-		addr = probe.Addr().String()
-		_ = probe.Close()
-
-		cfg := &config.Config{
+	newConfig := func(addr string) *config.Config {
+		return &config.Config{
 			Addr:        addr,
 			CertFile:    certFile,
 			KeyFile:     keyFile,
@@ -183,35 +165,8 @@ startLoop:
 			DSTEnd:      1604214000,
 			TimeQuality: sep2.TimeQualityNTP,
 		}
-
-		runErrCh = make(chan error, 1)
-		go func(c *config.Config) {
-			runErrCh <- server.Run(ctx, c, nil)
-		}(cfg)
-
-		// Race readiness against early Run failure. waitForServerReady
-		// polls TLS handshake; if Run died first (port already bound),
-		// runErrCh fires before the timeout.
-		readyCh := make(chan bool, 1)
-		go func() {
-			readyCh <- waitForServerReady(addr, 2*time.Second, clientTLSCfg)
-		}()
-		select {
-		case ok := <-readyCh:
-			if ok {
-				started = true
-				break startLoop
-			}
-			t.Fatalf("server did not start accepting TLS on %s after retries (attempt %d)", addr, attempt+1)
-		case err := <-runErrCh:
-			t.Logf("server.Run start attempt %d failed (%v); retrying with new port", attempt+1, err)
-			// Drain the ready goroutine to avoid a leak.
-			go func() { <-readyCh }()
-		}
 	}
-	if !started {
-		t.Fatalf("server failed to start after %d attempts", startAttempts)
-	}
+	addr, stop := startRunOnFreePort(t, newConfig, clientTLSCfg)
 
 	// Build a client. The server offers CCM-8 only, so the client dials
 	// through the fork; net/http never populates resp.TLS for a connection
@@ -278,15 +233,7 @@ startLoop:
 	}
 
 	// Shut the server down and verify it exits cleanly.
-	cancel()
-	select {
-	case err := <-runErrCh:
-		if err != nil {
-			t.Errorf("server.Run returned error after cancel: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Error("server.Run did not return within 3s after context cancel")
-	}
+	stop()
 }
 
 // adminReadyTimeout bounds every listener readiness wait that uses it. Under
@@ -320,6 +267,79 @@ func pollReady(what string, timeout time.Duration, runErr chan error, probe func
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
+}
+
+// bindAttempts is how many times bootWithBindRetry boots before giving up.
+const bindAttempts = 3
+
+// bootWithBindRetry runs boot until it returns an env or fails for a reason
+// other than a lost port. mustProbePort cannot see another test process, so
+// a port it handed out can be taken before Run binds it; Run then ends with
+// a bind error and the boot is repeated on fresh ports (#857). boot returns
+// a failure message with a nil env, having stopped Run.
+func bootWithBindRetry[E any](t *testing.T, boot func() (*E, string)) *E {
+	t.Helper()
+	for attempt := 1; ; attempt++ {
+		env, failure := boot()
+		if env != nil {
+			return env
+		}
+		if attempt == bindAttempts || !strings.Contains(failure, "address already in use") {
+			t.Fatal(failure)
+		}
+		t.Logf("boot attempt %d lost a port to another process, retrying: %s", attempt, failure)
+	}
+}
+
+// runHandle is a server.Run that has completed a TLS handshake on addr. The
+// caller cancels it and reads runErrCh.
+type runHandle struct {
+	addr     string
+	cancel   context.CancelFunc
+	runErrCh chan error
+}
+
+// startRun starts server.Run on a probed port with svc and waits until it
+// completes a TLS handshake. Only a lost port is retried (see
+// bootWithBindRetry): any other Run error is the failure under test.
+func startRun(t *testing.T, newConfig func(addr string) *config.Config, svc *handler.AdminCertService, clientTLSCfg *gotls.Config) *runHandle {
+	t.Helper()
+	return bootWithBindRetry(t, func() (*runHandle, string) {
+		addr := mustProbePort(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		runErrCh := make(chan error, 1)
+		go func() { runErrCh <- server.Run(ctx, newConfig(addr), svc) }()
+		if msg, ok := pollReady("SEP2 listener", adminReadyTimeout, runErrCh, sep2HandshakeProbe(addr, clientTLSCfg)); !ok {
+			cancel()
+			<-runErrCh
+			return nil, fmt.Sprintf("%s (%s)", msg, addr)
+		}
+		return &runHandle{addr: addr, cancel: cancel, runErrCh: runErrCh}, ""
+	})
+}
+
+// startRunOnFreePort is startRun with no admin cert service, plus a stop
+// that cancels Run and checks it exits cleanly. stop is also registered as a
+// cleanup and runs once, so a test may call it early.
+func startRunOnFreePort(t *testing.T, newConfig func(addr string) *config.Config, clientTLSCfg *gotls.Config) (string, func()) {
+	t.Helper()
+	run := startRun(t, newConfig, nil, clientTLSCfg)
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			run.cancel()
+			select {
+			case err := <-run.runErrCh:
+				if err != nil {
+					t.Errorf("server.Run returned error after cancel: %v", err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Error("server.Run did not return within 3s after context cancel")
+			}
+		})
+	}
+	t.Cleanup(stop)
+	return run.addr, stop
 }
 
 // sep2HandshakeProbe completes a full TLS handshake against addr. A plain

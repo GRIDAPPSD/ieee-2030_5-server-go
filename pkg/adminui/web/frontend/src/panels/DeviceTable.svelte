@@ -9,7 +9,7 @@
   import type { DashboardColumn, DashboardDevice } from '../lib/dashboard'
   import { commsClass, commsLabel, formatAge } from '../lib/comms'
   import { deviceConnectionView, deviceInverterView } from '../lib/derstatus'
-  import { canon, deviceKind, deviceLabel, deviceName, saveDeviceProfile } from '../lib/devices'
+  import { deviceKind, deviceLabel, deviceLabelIn, deviceName, saveDeviceProfile } from '../lib/devices'
   import { applyPairs, pairFailures } from '../lib/management'
   import ReportedCell from './ReportedCell.svelte'
   import DevicePrograms from './DevicePrograms.svelte'
@@ -109,28 +109,34 @@
     renameError = ''
   }
 
-  function label(lfdi: string): string {
-    return deviceLabel(lfdi, devices.find((d) => canon(d.lfdi) === canon(lfdi))?.sfdi)
-  }
-
   async function saveRename() {
     if (renaming || editingLfdi === '') return
-    if (draftKind === 'aggregator' && !pickerLoaded) return
     const saving = editingLfdi
+    const label = (l: string) => deviceLabelIn(devices, l)
+    const aggregator = draftKind === 'aggregator'
+    // Pairs are diffed only when the picker read them: an unread pair list
+    // must not block a rename, and no tick could have been made without it.
+    const add = pickerLoaded && aggregator ? picked.filter((l) => !held.includes(l)) : []
+    const remove = pickerLoaded ? held.filter((l) => !picked.includes(l)) : []
     renaming = true
     try {
+      // A kind change away from aggregator is refused while pairs are held,
+      // so the unticked ones go first; an aggregator needs its kind stored
+      // before pairs can be added.
+      let failed: string[] = []
+      if (!aggregator && remove.length > 0) failed = pairFailures(await applyPairs(saving, [], remove), label)
       const res = await saveDeviceProfile(saving, draftName.trim(), draftKind === initialKind ? undefined : draftKind)
+      if (failed.length > 0) pairError = `Pair failed for ${failed.join('; ')}`
       if (!res.ok) {
         renameError = `Save failed (${res.status}): ${res.error}`
+        if (remove.length > 0) onChanged()
         return
       }
-      if (draftKind === 'aggregator') {
-        const add = picked.filter((l) => !held.includes(l))
-        const remove = held.filter((l) => !picked.includes(l))
-        const failed = pairFailures(await applyPairs(saving, add, remove), label)
+      if (aggregator && (add.length > 0 || remove.length > 0)) {
+        failed = pairFailures(await applyPairs(saving, add, remove), label)
         if (failed.length > 0) pairError = `Pair failed for ${failed.join('; ')}`
-        onChanged()
       }
+      if (add.length > 0 || remove.length > 0) onChanged()
       if (editingLfdi === saving) cancelRename()
     } finally {
       renaming = false
@@ -189,12 +195,17 @@
                   <option value="device">Device</option>
                   <option value="aggregator">Aggregator</option>
                 </select>
-                {#if draftKind === 'aggregator'}
-                  <DevicePicker {devices} manager={device.lfdi} bind:selected={picked} bind:held bind:loaded={pickerLoaded} />
-                {/if}
+                <DevicePicker
+                  {devices}
+                  manager={device.lfdi}
+                  asAggregator={draftKind === 'aggregator'}
+                  bind:selected={picked}
+                  bind:held
+                  bind:loaded={pickerLoaded}
+                />
                 <button
                   class="btn btn-small"
-                  disabled={renaming || (draftKind === 'aggregator' && !pickerLoaded)}
+                  disabled={renaming}
                   data-testid="device-name-save"
                   onclick={saveRename}>Save</button>
                 <button class="btn btn-small" disabled={renaming} data-testid="device-name-cancel" onclick={cancelRename}>Cancel</button>

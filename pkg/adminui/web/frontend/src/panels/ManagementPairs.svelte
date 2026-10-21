@@ -4,7 +4,7 @@
   // managed devices from the registered list.
   import { onDestroy, untrack } from 'svelte'
   import type { DashboardDevice } from '../lib/dashboard'
-  import { canon, deviceLabel } from '../lib/devices'
+  import { deviceLabelIn } from '../lib/devices'
   import { listPairs, pairsKey, removePair, type ManagementPair } from '../lib/management'
 
   // ready is false until the shell has received its first device list, so an
@@ -66,12 +66,7 @@
     }
   }
 
-  // pairLabel names a pair's device from the registered list, so its SFDI is
-  // used when it has no name; a LFDI not in the list falls back to its prefix.
-  function pairLabel(lfdi: string): string {
-    const d = devices.find((x) => canon(x.lfdi) === canon(lfdi))
-    return deviceLabel(lfdi, d?.sfdi)
-  }
+  const pairLabel = (lfdi: string) => deviceLabelIn(devices, lfdi)
 </script>
 
 <div class="card full-width">

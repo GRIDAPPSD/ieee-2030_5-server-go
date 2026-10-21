@@ -7,7 +7,7 @@
   // the cert the device will present.
   import { postBody, postJSON } from '../lib/api'
   import type { DashboardDevice } from '../lib/dashboard'
-  import { canon, deviceLabel } from '../lib/devices'
+  import { deviceLabelIn } from '../lib/devices'
   import { applyPairs, pairFailures } from '../lib/management'
   import DevicePicker from './DevicePicker.svelte'
   import { downloadText, PEM_MIME } from '../lib/download'
@@ -44,6 +44,7 @@
   let enabled = $state(true)
   let result = $state('')
   let ok = $state(false)
+  let busy = $state(false)
 
   // A tab switch to here unmounts and remounts this component ({#if} in
   // AdminShell.svelte), so a mint that happened on the Certificates tab
@@ -86,6 +87,7 @@
   }
 
   async function addDevice() {
+    if (busy) return
     if (!sfdi || !lfdi) {
       ok = false
       result = 'Parse a cert first (SFDI + LFDI required).'
@@ -96,6 +98,17 @@
       result = 'PIN must be a non-negative integer.'
       return
     }
+    busy = true
+    ok = true
+    result = 'Adding...'
+    try {
+      await submit()
+    } finally {
+      busy = false
+    }
+  }
+
+  async function submit() {
     const res = await postJSON<AddDeviceResponse>('/api/devices', {
       sfdi,
       lfdi,
@@ -114,9 +127,9 @@
     if (kind === 'aggregator' && picked.length > 0) {
       // The device is already stored; a refused pair names its device and
       // leaves the aggregator and the pairs that worked in place.
-      const label = (l: string) => deviceLabel(l, devices.find((d) => canon(d.lfdi) === canon(l))?.sfdi)
       const outcomes = await applyPairs(res.data.lfdi, picked, [])
-      const failed = pairFailures(outcomes, label)
+      const failed = pairFailures(outcomes, (l) => deviceLabelIn(devices, l))
+      picked = []
       const paired = outcomes.length - failed.length
       result += ` Paired ${paired} of ${outcomes.length} devices.`
       if (failed.length > 0) {
@@ -168,7 +181,7 @@
       <option value="device">Device</option>
       <option value="aggregator">Aggregator</option>
     </select>
-    <button class="btn btn-green" onclick={addDevice}>Add Device</button>
+    <button class="btn btn-green" disabled={busy} onclick={addDevice}>{busy ? 'Adding...' : 'Add Device'}</button>
   </div>
   {#if kind === 'aggregator'}
     <DevicePicker {devices} bind:selected={picked} />

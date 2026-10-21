@@ -139,3 +139,56 @@ describe('Devices tab Edit kind and devices', () => {
     expect(calls).toEqual([`put /api/device-profiles/${AGG} device`])
   })
 })
+
+describe('Devices tab Edit: picker lifetime', () => {
+  const failPairsRead = () => {
+    const live = vi.mocked(api.fetchJSON).getMockImplementation()!
+    vi.mocked(api.fetchJSON).mockImplementation(async (path: string, o) =>
+      path.startsWith('/api/management-pairs') ? { ok: false, error: 'pairs down', status: 500 } : live(path, o),
+    )
+  }
+
+  it('renames an aggregator when the pair list cannot be read', async () => {
+    serverKind = 'aggregator'
+    await seedDeviceProfiles([{ lfdi: AGG, name: 'Agg', kind: 'aggregator' }])
+    failPairsRead()
+    await edit('Agg')
+    await fireEvent.input(screen.getByTestId('device-name-input'), { target: { value: 'Roof' } })
+    const save = screen.getByTestId('device-name-save')
+    expect(save).toBeEnabled()
+    await fireEvent.click(save)
+
+    await waitFor(() => expect(screen.queryByTestId('device-name-input')).toBeNull())
+    expect(calls).toEqual([`put /api/device-profiles/${AGG} aggregator`])
+  })
+
+  it('keeps unsaved ticks when the kind is switched to Device and back', async () => {
+    await edit('Agg')
+    await fireEvent.change(screen.getByTestId('device-kind-select'), { target: { value: 'aggregator' } })
+    await waitFor(() => expect(screen.getAllByTestId('device-picker-option')).toHaveLength(2))
+    await fireEvent.click(screen.getByRole('checkbox', { name: '222222222222' }))
+    await fireEvent.change(screen.getByTestId('device-kind-select'), { target: { value: 'device' } })
+    await fireEvent.change(screen.getByTestId('device-kind-select'), { target: { value: 'aggregator' } })
+
+    await waitFor(() => expect(screen.getAllByTestId('device-picker-option')).toHaveLength(2))
+    expect(screen.getByRole('checkbox', { name: '222222222222' })).toBeChecked()
+  })
+
+  it('keeps the held pairs visible after switching to Device, and removes them before the kind change', async () => {
+    serverKind = 'aggregator'
+    await seedDeviceProfiles([{ lfdi: AGG, name: 'Agg', kind: 'aggregator' }])
+    pairs.set(DEV_A, AGG)
+    await edit('Agg')
+    await waitFor(() => expect(screen.getAllByTestId('device-picker-option')).toHaveLength(2))
+    await fireEvent.change(screen.getByTestId('device-kind-select'), { target: { value: 'device' } })
+
+    const box = screen.getByRole('checkbox', { name: '222222222222' })
+    expect(box).toBeChecked()
+    expect(screen.queryByRole('checkbox', { name: '333333333333' })).toBeNull()
+    await fireEvent.click(box)
+    await fireEvent.click(screen.getByTestId('device-name-save'))
+
+    await waitFor(() => expect(screen.queryByTestId('device-name-input')).toBeNull())
+    expect(calls).toEqual([`remove ${DEV_A}`, `put /api/device-profiles/${AGG} device`])
+  })
+})

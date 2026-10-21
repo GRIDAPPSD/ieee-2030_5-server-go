@@ -39,6 +39,12 @@ export function deviceLabel(lfdi: string | undefined, sfdi?: string): string {
   return ''
 }
 
+// deviceLabelIn is deviceLabel for an LFDI looked up in a device list, which
+// supplies the SFDI shown when the device has no name.
+export function deviceLabelIn(list: { lfdi: string; sfdi?: string }[], lfdi: string): string {
+  return deviceLabel(lfdi, list.find((d) => canon(d.lfdi) === canon(lfdi))?.sfdi)
+}
+
 // Loads overlap (every tab entry starts one), so only the newest started
 // read is applied; an older answer arriving late is dropped.
 let loadSeq = 0

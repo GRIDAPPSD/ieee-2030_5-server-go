@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as api from './api'
-import { deviceKind, deviceLabel, deviceName, loadDeviceProfiles, saveDeviceProfile, resetDeviceProfiles } from './devices'
+import { deviceKind, deviceLabel, deviceLabelIn, deviceName, loadDeviceProfiles, saveDeviceProfile, resetDeviceProfiles } from './devices'
 import { seedDeviceProfiles } from './devices.fixture'
 
 const LFDI = '0123456789ABCDEF0123456789ABCDEF01234567'
@@ -161,5 +161,16 @@ describe('saveDeviceProfile', () => {
     await saveDeviceProfile(LFDI, 'First')
 
     expect(put).toHaveBeenCalledWith(`/api/device-profiles/${LFDI}`, { name: 'First', kind: '' })
+  })
+})
+
+describe('deviceLabelIn', () => {
+  it('labels by name, else the SFDI the list holds for that LFDI, matching case-insensitively', async () => {
+    await seedDeviceProfiles([{ lfdi: LFDI, name: 'Roof', kind: '' }])
+    const list = [{ lfdi: 'ab12', sfdi: '999' }]
+
+    expect(deviceLabelIn(list, LFDI.toLowerCase())).toBe('Roof')
+    expect(deviceLabelIn(list, 'AB12')).toBe('999')
+    expect(deviceLabelIn(list, '0123456789ABCDEF0123')).toBe('0123456789ABCDEF...')
   })
 })

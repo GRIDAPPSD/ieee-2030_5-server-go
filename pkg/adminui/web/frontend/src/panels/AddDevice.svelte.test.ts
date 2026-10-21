@@ -329,3 +329,89 @@ describe('AddDevice aggregator', () => {
     expect(api.postJSON).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('AddDevice submit discipline', () => {
+  const AGG_LFDI = '0123456789ABCDEF0123456789ABCDEF01234567'
+  const DEV_A = 'FEDCBA9876543210FEDCBA9876543210FEDCBA98'
+  const DEV_B = '5555555555555555555555555555555555555555'
+  const mk = (sfdi: string, lfdi: string, n: number) => ({
+    sfdi, lfdi, href: `/edev/${n}`, enabled: true, lastRequest: null, comms: 'not_seen' as const, lastKnown: false, ders: [],
+  })
+  const devA = mk('111111111111', DEV_A, 1)
+  const devB = mk('222222222222', DEV_B, 2)
+
+  function setup() {
+    vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string) => {
+      const manager = new URL(path, 'http://x').searchParams.get('manager')
+      return { ok: true, data: { managerLFDI: manager, managedLFDIs: [] } } as never
+    })
+    vi.spyOn(api, 'postBody').mockResolvedValue({ ok: true, data: { sfdi: SFDI, lfdi: AGG_LFDI, subject: 'CN=agg' } })
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const post = vi.spyOn(api, 'postJSON').mockImplementation(async (path: string, body: unknown) => {
+      if (path === '/api/devices') {
+        await gate
+        return { ok: true, data: { href: '/edev/9', sfdi: SFDI, lfdi: AGG_LFDI } } as never
+      }
+      return { ok: true, data: body } as never
+    })
+    return { post, release }
+  }
+
+  async function ready(container: HTMLElement) {
+    await fireEvent.input(container.querySelector('#addDevCert') as HTMLTextAreaElement, { target: { value: PEM } })
+    await fireEvent.click(screen.getByRole('button', { name: 'Parse Cert' }))
+    await waitFor(() => expect((container.querySelector('#addDevLFDI') as HTMLInputElement).value).toBe(AGG_LFDI))
+    await fireEvent.input(container.querySelector('#addDevPIN') as HTMLInputElement, { target: { value: '1234' } })
+    await fireEvent.change(container.querySelector('#addDevKind') as HTMLSelectElement, { target: { value: 'aggregator' } })
+    await waitFor(() => expect(screen.queryAllByTestId('device-picker-option').length).toBeGreaterThan(0))
+  }
+
+  it('sends one device POST for two clicks and disables the button while it is pending', async () => {
+    const { post, release } = setup()
+    const { container } = render(AddDevice, { props: { devices: [devA] } })
+    await ready(container)
+    await fireEvent.click(screen.getByRole('checkbox', { name: '111111111111' }))
+    const button = screen.getByRole('button', { name: /Add Device|Adding/ })
+    await fireEvent.click(button)
+    await fireEvent.click(button)
+
+    expect(button).toBeDisabled()
+    expect(container.querySelector('#addDevResult')).toHaveTextContent('Adding')
+    release()
+    await waitFor(() => expect(container.querySelector('#addDevResult')).toHaveTextContent('Paired 1 of 1'))
+    expect(post.mock.calls.filter((c) => c[0] === '/api/devices')).toHaveLength(1)
+    expect(post.mock.calls.filter((c) => c[0] === '/api/management-pairs')).toHaveLength(1)
+  })
+
+  it('drops a pick that is no longer offered, so it is not posted', async () => {
+    const { post, release } = setup()
+    release()
+    const { container, rerender } = render(AddDevice, { props: { devices: [devA, devB] } })
+    await ready(container)
+    await fireEvent.click(screen.getByRole('checkbox', { name: '111111111111' }))
+    await fireEvent.click(screen.getByRole('checkbox', { name: '222222222222' }))
+    await rerender({ devices: [devB] })
+    await waitFor(() => expect(screen.queryByRole('checkbox', { name: '111111111111' })).toBeNull())
+    await fireEvent.click(screen.getByRole('button', { name: 'Add Device' }))
+
+    await waitFor(() => expect(container.querySelector('#addDevResult')).toHaveTextContent('Paired 1 of 1'))
+    const pairs = post.mock.calls.filter((c) => c[0] === '/api/management-pairs').map((c) => (c[1] as { managedLFDI: string }).managedLFDI)
+    expect(pairs).toEqual([DEV_B])
+  })
+
+  it('clears the picks after a submit, so the next add posts no stale pair', async () => {
+    const { post, release } = setup()
+    release()
+    const { container } = render(AddDevice, { props: { devices: [devA] } })
+    await ready(container)
+    await fireEvent.click(screen.getByRole('checkbox', { name: '111111111111' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'Add Device' }))
+    await waitFor(() => expect(container.querySelector('#addDevResult')).toHaveTextContent('Paired 1 of 1'))
+
+    expect(screen.getByRole('checkbox', { name: '111111111111' })).not.toBeChecked()
+    await fireEvent.click(screen.getByRole('button', { name: 'Add Device' }))
+    await waitFor(() => expect(post.mock.calls.filter((c) => c[0] === '/api/devices')).toHaveLength(2))
+    expect(post.mock.calls.filter((c) => c[0] === '/api/management-pairs')).toHaveLength(1)
+  })
+})

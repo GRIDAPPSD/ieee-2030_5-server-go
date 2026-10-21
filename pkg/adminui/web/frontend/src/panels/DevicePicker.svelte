@@ -15,12 +15,16 @@
     selected = $bindable([]),
     held = $bindable([]),
     loaded = $bindable(false),
+    asAggregator = true,
   }: {
     devices: DashboardDevice[]
     manager?: string
     selected?: string[]
     held?: string[]
     loaded?: boolean
+    // false offers only the devices already held, so they can be unticked
+    // while the kind is being changed away from aggregator.
+    asAggregator?: boolean
   } = $props()
 
   let pairs = $state<ManagementPair[]>([])
@@ -30,7 +34,19 @@
 
   const lfdis = $derived(devices.map((d) => d.lfdi))
   const loadKey = $derived(pairsKey(lfdis))
-  const options = $derived(pickableDevices(devices, pairs, manager))
+  const pickable = $derived(pickableDevices(devices, pairs, manager))
+  const options = $derived(pickable.filter((d) => asAggregator || held.includes(canon(d.lfdi))))
+  const visible = $derived(asAggregator || held.length > 0)
+
+  // A pick that is no longer offered (its device got a manager, or left the
+  // list) must not be posted from a form that no longer shows it.
+  $effect(() => {
+    if (!loaded) return
+    const offered = new Set(pickable.map((d) => canon(d.lfdi)))
+    untrack(() => {
+      if (selected.some((s) => !offered.has(s))) selected = selected.filter((s) => offered.has(s))
+    })
+  })
 
   async function load(ids: string[]) {
     const seq = ++loadSeq
@@ -66,6 +82,7 @@
   }
 </script>
 
+{#if visible}
 <fieldset class="picker" data-testid="device-picker">
   <legend>Managed devices</legend>
   {#if loadError}
@@ -75,7 +92,7 @@
   {:else if options.length === 0}
     <span class="stat-label" data-testid="device-picker-empty">No unmanaged devices to pick</span>
   {/if}
-  {#each options as d (d.lfdi)}
+  {#each loaded ? options : [] as d (d.lfdi)}
     <label class="picker-option">
       <input
         type="checkbox"
@@ -87,6 +104,7 @@
     </label>
   {/each}
 </fieldset>
+{/if}
 
 <style>
   .picker {

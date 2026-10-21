@@ -145,12 +145,7 @@ func (h *AdminFSAHandler) HandleCreateAdminFSA() http.HandlerFunc {
 		if id == "" {
 			id = newFSAID()
 		}
-		fsa := sep2.FunctionSetAssignments{
-			Resource:           sep2.Resource{Href: "/api/fsas/" + id},
-			MRID:               id,
-			Description:        req.Description,
-			DERProgramListLink: &sep2.ListLink{Href: "/api/fsas/" + id + "/programs"},
-		}
+		fsa := newAdminFSA(id, req.Description)
 
 		if err := h.AdminFSAs.Create(r.Context(), id, fsa); err != nil {
 			if errors.Is(err, store.ErrAlreadyExists) {
@@ -392,44 +387,31 @@ func (h *AdminFSAHandler) HandleAssignDeviceFSA() http.HandlerFunc {
 			}
 		}
 
-		// Record the assignment.
-		if err := h.AdminFSAs.AssignDevice(r.Context(), fsaID, deviceID); err != nil {
-			if errors.Is(err, memory.ErrAdminFSADeviceOnly) {
-				h.deviceOnlyRefused(w, fsaID)
-				return
-			}
-			if errors.Is(err, store.ErrAlreadyExists) {
-				writeError(w, http.StatusConflict, "device already assigned to this FSA")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "assign: "+err.Error())
-			return
-		}
-
-		// Materialize into the device-scoped store so /edev/{id}/fsa lists it.
-		// The scoped href differs from the admin href: the spec surface lives
-		// under the device's edev tree.
 		// The assignment is undone last, so a write whose undo fails still
-		// has its assignment, and the boot rebuild completes it.
-		steps := []rollbackStep{{device: deviceID, part: "assignment", undo: func(ctx context.Context) error {
-			return h.AdminFSAs.UnassignDevice(ctx, fsaID, deviceID)
-		}}}
-		if h.DeviceFSAs != nil {
-			scoped := fsaprogram.Scoped(deviceID, fsaID, fsa)
-			switch err := h.DeviceFSAs.Create(r.Context(), deviceID, fsaID, scoped); {
-			case err == nil:
-				steps = append(steps, rollbackStep{device: deviceID, part: "fsa", undo: func(ctx context.Context) error {
-					return h.DeviceFSAs.Delete(ctx, deviceID, fsaID)
-				}})
-			case errors.Is(err, store.ErrAlreadyExists):
-			default:
-				if !h.rollbackAfter(r, err, steps) {
-					h.assignIncomplete(w, deviceID, fsaID)
-					return
+		// has its assignment, and the boot rebuild completes it. The scoped
+		// href differs from the admin href: the spec surface lives under
+		// the device's edev tree.
+		assigned, err := fsaprogram.Assign(r.Context(), h.AdminFSAs, h.DeviceFSAs, deviceID, fsaID, fsa, fsaprogram.RefuseIfAssigned)
+		steps := rollbackSteps(deviceID, assigned)
+		if err != nil {
+			var ae *fsaprogram.AssignError
+			if errors.As(err, &ae) && ae.Stage == fsaprogram.StageAssign {
+				switch {
+				case errors.Is(err, memory.ErrAdminFSADeviceOnly):
+					h.deviceOnlyRefused(w, fsaID)
+				case errors.Is(err, store.ErrAlreadyExists):
+					writeError(w, http.StatusConflict, "device already assigned to this FSA")
+				default:
+					writeError(w, http.StatusInternalServerError, "assign: "+ae.Err.Error())
 				}
-				writeError(w, http.StatusInternalServerError, "scope materialize: "+err.Error())
 				return
 			}
+			if !h.rollbackAfter(r, err, steps) {
+				h.assignIncomplete(w, deviceID, fsaID)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "scope materialize: "+errors.Unwrap(err).Error())
+			return
 		}
 		for _, t := range tmpls {
 			undo, err := h.Copies.Ensure(r.Context(), deviceID, fsaID, t)
@@ -641,6 +623,26 @@ type deviceProgramsPresent struct {
 func (h *AdminFSAHandler) assignIncomplete(w http.ResponseWriter, deviceID, fsaID string) {
 	writeError(w, http.StatusInternalServerError, fmt.Sprintf(
 		"assign failed; device %s stays assigned to fsa %s, and its template copies are completed at the next restart", deviceID, fsaID))
+}
+
+// newAdminFSA is the admin record of an FSA: the one shape the create route
+// and the device-only FSA both write.
+func newAdminFSA(id, description string) sep2.FunctionSetAssignments {
+	return sep2.FunctionSetAssignments{
+		Resource:           sep2.Resource{Href: "/api/fsas/" + id},
+		MRID:               id,
+		Description:        description,
+		DERProgramListLink: &sep2.ListLink{Href: "/api/fsas/" + id + "/programs"},
+	}
+}
+
+// rollbackSteps names the writes fsaprogram.Assign made for deviceID.
+func rollbackSteps(deviceID string, in []fsaprogram.Step) []rollbackStep {
+	out := make([]rollbackStep, 0, len(in))
+	for _, st := range in {
+		out = append(out, rollbackStep{device: deviceID, part: st.Part, undo: st.Undo})
+	}
+	return out
 }
 
 // extractFSAID parses /api/fsas/{id} into id, or returns "".

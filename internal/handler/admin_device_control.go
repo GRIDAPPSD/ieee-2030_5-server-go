@@ -422,12 +422,7 @@ func (h *AdminFSAHandler) ensureDeviceOnlyFSA(w http.ResponseWriter, r *http.Req
 		if len(desc) > maxDescriptionOctets {
 			desc = desc[:maxDescriptionOctets]
 		}
-		fsa = sep2.FunctionSetAssignments{
-			Resource:           sep2.Resource{Href: "/api/fsas/" + id},
-			MRID:               id,
-			Description:        desc,
-			DERProgramListLink: &sep2.ListLink{Href: "/api/fsas/" + id + "/programs"},
-		}
+		fsa = newAdminFSA(id, desc)
 		if err := h.AdminFSAs.CreateDeviceOnly(ctx, id, fsa, deviceID); err != nil {
 			return fail("fsa_create", err)
 		}
@@ -441,23 +436,14 @@ func (h *AdminFSAHandler) ensureDeviceOnlyFSA(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	switch err := h.AdminFSAs.AssignDevice(ctx, fsaID, deviceID); {
-	case err == nil:
-		steps = append(steps, rollbackStep{device: deviceID, part: "assignment", undo: func(ctx context.Context) error {
-			return h.AdminFSAs.UnassignDevice(ctx, fsaID, deviceID)
-		}})
-	case errors.Is(err, store.ErrAlreadyExists):
-	default:
+	assigned, err := fsaprogram.Assign(ctx, h.AdminFSAs, h.DeviceFSAs, deviceID, fsaID, fsa, fsaprogram.CompleteIfAssigned)
+	steps = append(steps, rollbackSteps(deviceID, assigned)...)
+	if err != nil {
+		var ae *fsaprogram.AssignError
+		if errors.As(err, &ae) {
+			return fail(string(ae.Stage), ae.Err)
+		}
 		return fail("assign", err)
-	}
-	switch err := h.DeviceFSAs.Create(ctx, deviceID, fsaID, fsaprogram.Scoped(deviceID, fsaID, fsa)); {
-	case err == nil:
-		steps = append(steps, rollbackStep{device: deviceID, part: "scoped_fsa", undo: func(ctx context.Context) error {
-			return h.DeviceFSAs.Delete(ctx, deviceID, fsaID)
-		}})
-	case errors.Is(err, store.ErrAlreadyExists):
-	default:
-		return fail("scope_materialize", err)
 	}
 	tx.steps = append(tx.steps, steps...)
 	tx.after(func() { h.notify(ctx, "/edev/"+deviceID+"/fsa") })
@@ -477,16 +463,7 @@ func (h *AdminFSAHandler) createDeviceOnlyProgram(w http.ResponseWriter, r *http
 	}
 	undo, err := h.Copies.EnsureDevice(r.Context(), deviceID, fsaID, prog)
 	if err != nil {
-		var part *fsaprogram.PartError
-		switch {
-		case errors.Is(err, fsaprogram.ErrCopyConflict):
-			writeError(w, http.StatusConflict, "the device already holds a program with this id or mRID")
-		case errors.As(err, &part):
-			h.logUndoFailed(r, part.DeviceID, part.TemplateID, part.Part, err)
-			writeError(w, http.StatusInternalServerError, templateInternalError)
-		default:
-			h.templateFailed(w, r, "program_write", err)
-		}
+		h.ensureDeviceFailed(w, r, err)
 		return "", false
 	}
 	tx.steps = append(tx.steps, rollbackStep{device: deviceID, template: prog.ID, part: "program", undo: undo})

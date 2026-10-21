@@ -393,16 +393,7 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 		}
 
 		if _, err := h.Copies.EnsureDevice(r.Context(), deviceID, fsaID, prog); err != nil {
-			var part *fsaprogram.PartError
-			switch {
-			case errors.Is(err, fsaprogram.ErrCopyConflict):
-				writeError(w, http.StatusConflict, "the device already holds a program with this id or mRID")
-			case errors.As(err, &part):
-				h.logUndoFailed(r, part.DeviceID, part.TemplateID, part.Part, err)
-				writeError(w, http.StatusInternalServerError, templateInternalError)
-			default:
-				h.templateFailed(w, r, "program_write", err)
-			}
+			h.ensureDeviceFailed(w, r, err)
 			return
 		}
 
@@ -419,6 +410,21 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 			Version:        prog.Version,
 			DefaultControl: &dflt,
 		})
+	}
+}
+
+// ensureDeviceFailed answers a failed Copies.EnsureDevice: 409 for a program
+// the device already holds, and a logged 500 otherwise.
+func (h *AdminFSAHandler) ensureDeviceFailed(w http.ResponseWriter, r *http.Request, err error) {
+	var part *fsaprogram.PartError
+	switch {
+	case errors.Is(err, fsaprogram.ErrCopyConflict):
+		writeError(w, http.StatusConflict, "the device already holds a program with this id or mRID")
+	case errors.As(err, &part):
+		h.logUndoFailed(r, part.DeviceID, part.TemplateID, part.Part, err)
+		writeError(w, http.StatusInternalServerError, templateInternalError)
+	default:
+		h.templateFailed(w, r, "program_write", err)
 	}
 }
 

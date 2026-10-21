@@ -112,7 +112,8 @@
   }
 
   // act runs one confirmed action: it guards against a second while one is
-  // out, records a refusal under its key, and reloads after a success.
+  // out, records a refusal under its key, and reloads after a success. The
+  // guard is held through the reload and released even if the call throws.
   async function act(
     key: string,
     call: () => Promise<ApiResult<void>>,
@@ -122,20 +123,29 @@
     if (pending !== '') return
     pending = key
     failure = null
-    const res = await call()
-    if (closed) return
-    pending = ''
-    if (!res.ok) {
-      failure = { key, ...refuse(res) }
-      return
+    try {
+      const res = await call()
+      if (closed) return
+      if (!res.ok) {
+        failure = { key, ...refuse(res) }
+        return
+      }
+      await after()
+    } finally {
+      pending = ''
     }
-    await after()
   }
 
-  function remove(id: string) {
-    return act(
+  // A 404 means the thing is already gone, which is what the operator asked
+  // for, so it reloads like a success and drops the stale row.
+  function goneIs404(res: ApiResult<void>): ApiResult<void> {
+    return !res.ok && res.status === 404 ? { ok: true, data: undefined } : res
+  }
+
+  async function remove(id: string) {
+    await act(
       `program:${id}`,
-      () => deleteDeviceProgram(deviceId, id),
+      async () => goneIs404(await deleteDeviceProgram(deviceId, id)),
       (res) => {
         const r = refusalOf(res)
         return r.code === 'live_controls'
@@ -146,15 +156,10 @@
     )
   }
 
-  // A 404 means the assignment is already gone, which is what the operator
-  // asked for, so it reloads like a success and drops the stale group.
   function unassign(fsaId: string) {
     return act(
       `fsa:${fsaId}`,
-      async () => {
-        const res = await unassignDeviceFsa(deviceId, fsaId)
-        return !res.ok && res.status === 404 ? { ok: true as const, data: undefined } : res
-      },
+      async () => goneIs404(await unassignDeviceFsa(deviceId, fsaId)),
       (res) => ({ message: unassignFailure(res), controls: [] }),
       async () => {
         await onFsaChanged()

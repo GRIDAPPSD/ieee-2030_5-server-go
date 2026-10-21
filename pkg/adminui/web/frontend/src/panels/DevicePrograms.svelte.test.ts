@@ -295,6 +295,44 @@ describe('DevicePrograms delete', () => {
     await waitFor(() => expect(calls.filter((c) => c.method === 'GET').length).toBeGreaterThan(1))
   })
 
+  it('keeps Confirm disabled through the reload that follows a delete', async () => {
+    let release: (r: Reply) => void = () => {}
+    let reads = 0
+    const calls = fake({
+      [LIST]: () => (++reads === 1 ? catalog(THREE) : new Promise<Reply>((res) => (release = res))),
+      'DELETE /api/devices/7/der-programs/derp-d': { status: 204 },
+    })
+    mount()
+    await fireEvent.click(await screen.findByTestId('program-delete-derp-d'))
+    const confirm = screen.getByTestId('program-delete-confirm-derp-d')
+    await fireEvent.click(confirm)
+    await waitFor(() => expect(reads).toBe(2))
+
+    expect(confirm).toBeDisabled()
+    await fireEvent.click(confirm)
+    expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(1)
+    release(catalog(THREE.slice(0, 2)))
+    await waitFor(() => expect(screen.queryByTestId('program-row-derp-d')).toBeNull())
+    expect(screen.queryByTestId('program-delete-error-derp-d')).toBeNull()
+  })
+
+  it('treats a 404 on delete as already gone: reloads and shows no error', async () => {
+    let list = catalog(THREE)
+    fake({
+      [LIST]: () => list,
+      'DELETE /api/devices/7/der-programs/derp-d': () => {
+        list = catalog(THREE.slice(0, 2))
+        return { status: 404, body: { error: 'program not found' } }
+      },
+    })
+    mount()
+    await fireEvent.click(await screen.findByTestId('program-delete-derp-d'))
+    await fireEvent.click(screen.getByTestId('program-delete-confirm-derp-d'))
+
+    await waitFor(() => expect(screen.queryByTestId('program-row-derp-d')).toBeNull())
+    expect(screen.queryByTestId('program-delete-error-derp-d')).toBeNull()
+  })
+
   it('shows a refusal as sent, with the live controls that blocked it', async () => {
     fake({
       [LIST]: catalog(THREE),

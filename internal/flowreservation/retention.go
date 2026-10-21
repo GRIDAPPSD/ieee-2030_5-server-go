@@ -14,6 +14,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/interval"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -85,7 +86,7 @@ func endsAt(frp sep2.FlowReservationResponse) int64 {
 	}
 	end := int64(math.MaxInt64)
 	if d := int64(frp.Interval.Duration); frp.Interval.Start <= math.MaxInt64-d {
-		end = frp.Interval.Start + d
+		end = interval.End(frp.Interval.Start, frp.Interval.Duration)
 	}
 	return max(end, frp.CreationTime)
 }

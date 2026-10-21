@@ -18,6 +18,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/interval"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -554,7 +555,7 @@ func chainState(tip *FlowReservationResponseView, now, deadlineAt int64) string 
 		return frStateDenied
 	case tip.EventStatus != nil && tip.EventStatus.CurrentStatus == sep2.EventStatusCancelled:
 		return frStateCancelled
-	case dercontrol.IntervalEnded(&sep2.DateTimeInterval{Start: tip.Interval.Start, Duration: tip.Interval.Duration}, now):
+	case now >= interval.End(tip.Interval.Start, tip.Interval.Duration):
 		return frStateEnded
 	default:
 		return frStateGranted

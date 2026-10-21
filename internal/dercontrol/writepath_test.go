@@ -95,17 +95,24 @@ func TestOneIntervalEnd(t *testing.T) {
 	}
 }
 
-// isIntervalEndExpr matches X.Start + int64(X.Duration), however spaced.
+// isIntervalEndExpr matches X.Start + int64(X.Duration) in either operand
+// order.
 func isIntervalEndExpr(n ast.Node) bool {
 	bin, ok := n.(*ast.BinaryExpr)
 	if !ok || bin.Op != token.ADD {
 		return false
 	}
-	l, ok := bin.X.(*ast.SelectorExpr)
+	return startAndDuration(bin.X, bin.Y) || startAndDuration(bin.Y, bin.X)
+}
+
+// startAndDuration reports whether start is a .Start selector and dur is
+// int64(<x>.Duration).
+func startAndDuration(start, dur ast.Expr) bool {
+	l, ok := start.(*ast.SelectorExpr)
 	if !ok || l.Sel.Name != "Start" {
 		return false
 	}
-	conv, ok := bin.Y.(*ast.CallExpr)
+	conv, ok := dur.(*ast.CallExpr)
 	if !ok || len(conv.Args) != 1 {
 		return false
 	}

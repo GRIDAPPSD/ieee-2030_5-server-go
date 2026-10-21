@@ -92,25 +92,7 @@ func (s *AdminFSAStore) persistOrRollback(undo func()) error {
 
 // Create persists an admin FSA. Returns ErrAlreadyExists if id is taken.
 func (s *AdminFSAStore) Create(_ context.Context, id string, fsa sep2.FunctionSetAssignments) error {
-	s.persistMu.Lock()
-	defer s.persistMu.Unlock()
-	s.mu.Lock()
-	if _, exists := s.fsas[id]; exists {
-		s.mu.Unlock()
-		return store.ErrAlreadyExists
-	}
-	s.fsas[id] = fsa.Copy()
-	idx, _ := slices.BinarySearch(s.keys, id)
-	s.keys = slices.Insert(s.keys, idx, id)
-	s.mu.Unlock()
-	// Persist outside the lock so disk I/O does not block concurrent
-	// readers on s.mu.
-	return s.persistOrRollback(func() {
-		delete(s.fsas, id)
-		if idx, found := slices.BinarySearch(s.keys, id); found {
-			s.keys = slices.Delete(s.keys, idx, idx+1)
-		}
-	})
+	return s.create(id, fsa, "")
 }
 
 // CreateDeviceOnly persists an admin FSA bound to deviceID alone: no other
@@ -121,6 +103,12 @@ func (s *AdminFSAStore) CreateDeviceOnly(_ context.Context, id string, fsa sep2.
 	if deviceID == "" {
 		return fmt.Errorf("%w: a device-only FSA needs its device", ErrInvalidDeviceOnly)
 	}
+	return s.create(id, fsa, deviceID)
+}
+
+// create inserts an FSA, bound to boundDevice when that is not empty, and
+// persists it, undoing the insert when the write fails.
+func (s *AdminFSAStore) create(id string, fsa sep2.FunctionSetAssignments, boundDevice string) error {
 	s.persistMu.Lock()
 	defer s.persistMu.Unlock()
 	s.mu.Lock()
@@ -128,17 +116,23 @@ func (s *AdminFSAStore) CreateDeviceOnly(_ context.Context, id string, fsa sep2.
 		s.mu.Unlock()
 		return store.ErrAlreadyExists
 	}
-	for _, bound := range s.deviceOnly {
-		if bound == deviceID {
-			s.mu.Unlock()
-			return store.ErrAlreadyExists
+	if boundDevice != "" {
+		for _, bound := range s.deviceOnly {
+			if bound == boundDevice {
+				s.mu.Unlock()
+				return store.ErrAlreadyExists
+			}
 		}
 	}
 	s.fsas[id] = fsa.Copy()
-	s.deviceOnly[id] = deviceID
+	if boundDevice != "" {
+		s.deviceOnly[id] = boundDevice
+	}
 	idx, _ := slices.BinarySearch(s.keys, id)
 	s.keys = slices.Insert(s.keys, idx, id)
 	s.mu.Unlock()
+	// Persist outside the lock so disk I/O does not block concurrent
+	// readers on s.mu.
 	return s.persistOrRollback(func() {
 		delete(s.fsas, id)
 		delete(s.deviceOnly, id)

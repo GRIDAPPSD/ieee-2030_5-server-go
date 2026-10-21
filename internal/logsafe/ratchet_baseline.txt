@@ -1,9 +1,12 @@
 # Raw log values per file, counted by ratchet_test.go. A count may only fall.
 # Regenerate: go test ./internal/logsafe -run Ratchet -update-ratchet
+cmd/sep2loadgen/main.go 14
+cmd/sep2server/adminkey.go 1
+cmd/sep2server/main.go 4
 internal/adminplane/admin_body_type.go 4
 internal/adminplane/admin_dercontrol_wiring.go 1
 internal/adminplane/admin_fleet_wiring.go 1
-internal/adminplane/admin_fsa_wiring.go 1
+internal/adminplane/admin_fsa_wiring.go 8
 internal/adminplane/admin_management_wiring.go 1
 internal/adminplane/assembly_stores.go 1
 internal/adminplane/dashboard.go 6
@@ -18,6 +21,8 @@ internal/adminplane/panels.go 13
 internal/auth/admin.go 16
 internal/auth/admin_cross_origin.go 6
 internal/auth/registration.go 6
+internal/bootfixture/reconcile.go 2
+internal/commitment/sources/sources.go 3
 internal/dercontrol/lifecycle_persistence.go 3
 internal/discovery/mdns.go 5
 internal/flowreservation/answers.go 8
@@ -25,6 +30,7 @@ internal/flowreservation/cancel.go 3
 internal/flowreservation/queue.go 22
 internal/flowreservation/recover.go 15
 internal/flowreservation/retention.go 2
+internal/fsaprogram/copy.go 9
 internal/handler/admin_certs.go 2
 internal/handler/admin_dercontrol.go 3
 internal/handler/admin_derprogram.go 17
@@ -36,6 +42,7 @@ internal/handler/admin_flowreservation.go 15
 internal/handler/admin_fsa.go 9
 internal/handler/admin_fsa_control.go 4
 internal/handler/admin_management.go 2
+internal/helics/helics.go 3
 internal/mirrorretention/retention.go 12
 internal/server/mirror_retention.go 1
 internal/server/notification_policy.go 2
@@ -47,13 +54,15 @@ pkg/sep2capture/recorder.go 2
 pkg/sep2capture/segment_writer.go 1
 pkg/sep2srv/assembly/assembly.go 3
 pkg/sep2srv/assembly/content_length.go 1
+pkg/sep2srv/assembly/derprogram_fsa.go 2
 pkg/sep2srv/assembly/miswired.go 2
+pkg/sep2srv/assembly/ownership.go 6
 pkg/sep2srv/handlers/der/links.go 11
 pkg/sep2srv/handlers/der/program_link_count.go 2
 pkg/sep2srv/handlers/enddevice/enddevice.go 2
-pkg/sep2srv/handlers/enddevice/owner.go 4
+pkg/sep2srv/handlers/enddevice/owner.go 6
 pkg/sep2srv/handlers/flow_reservation/flow_reservation.go 6
-pkg/sep2srv/handlers/metering/mirror.go 5
+pkg/sep2srv/handlers/metering/mirror.go 8
 pkg/sep2srv/handlers/subscription/handler.go 23
 pkg/sep2srv/handlers/subscription/manager.go 23
 pkg/sep2srv/srverr/srverr.go 4

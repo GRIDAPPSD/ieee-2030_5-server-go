@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -42,7 +43,7 @@ func Str(s string) string {
 		case r < 0x20 || r == 0x7f:
 			piece = `\x` + hex2(byte(r))
 		case needsUnicodeEscape(r):
-			piece = `\u` + hex4(r)
+			piece = unicodeEscape(r)
 		default:
 			piece = s[i : i+size]
 		}
@@ -63,26 +64,18 @@ func Str(s string) string {
 	return strings.ReplaceAll(out, "\r", `\r`)
 }
 
-// Err returns Str of the error's text, or "<nil>" for a nil error.
+// Err returns Str of the error as fmt prints it, so a nil error and a typed
+// nil whose Error method panics both read "<nil>" instead of panicking.
 func Err(err error) string {
-	if err == nil {
-		return "<nil>"
-	}
-	return Str(err.Error())
+	return Str(fmt.Sprint(err))
 }
 
 // needsUnicodeEscape reports C1 controls, the line and paragraph separators
-// and the bidi and format controls that can reorder or hide log text.
+// and every format character (unicode.Cf: bidi controls, zero-width
+// characters, the byte order mark, the tag block), which can reorder or hide
+// log text.
 func needsUnicodeEscape(r rune) bool {
-	switch {
-	case r >= 0x80 && r <= 0x9f:
-		return true
-	case r == 0x061c, r == 0x200e, r == 0x200f, r == 0x2028, r == 0x2029:
-		return true
-	case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
-		return true
-	}
-	return false
+	return unicode.IsControl(r) || r == 0x2028 || r == 0x2029 || unicode.Is(unicode.Cf, r)
 }
 
 func hex2(b byte) string {
@@ -90,65 +83,9 @@ func hex2(b byte) string {
 	return string([]byte{digits[b>>4], digits[b&0xf]})
 }
 
-func hex4(r rune) string {
-	return fmt.Sprintf("%04x", r)
-}
-
-// Fields accumulates slog key and value arguments with every value escaped.
-// Args is the only way a spread slice reaches a log call.
-type Fields struct {
-	args []any
-}
-
-// Add appends key and v. Strings and errors are escaped, a fmt.Stringer is
-// escaped through its text, numbers and bools are formatted and escaped, and
-// anything else is escaped through its default formatting. The key is
-// escaped too.
-func (f *Fields) Add(key string, v any) {
-	f.args = append(f.args, Str(key), valueString(v))
-}
-
-// Args returns the accumulated arguments as a copy.
-func (f *Fields) Args() []any {
-	return append([]any(nil), f.args...)
-}
-
-func valueString(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return "<nil>"
-	case string:
-		return Str(x)
-	case error:
-		return Err(x)
-	case fmt.Stringer:
-		return Str(x.String())
-	case bool:
-		return Str(strconv.FormatBool(x))
-	case int:
-		return Str(strconv.FormatInt(int64(x), 10))
-	case int8:
-		return Str(strconv.FormatInt(int64(x), 10))
-	case int16:
-		return Str(strconv.FormatInt(int64(x), 10))
-	case int32:
-		return Str(strconv.FormatInt(int64(x), 10))
-	case int64:
-		return Str(strconv.FormatInt(x, 10))
-	case uint:
-		return Str(strconv.FormatUint(uint64(x), 10))
-	case uint8:
-		return Str(strconv.FormatUint(uint64(x), 10))
-	case uint16:
-		return Str(strconv.FormatUint(uint64(x), 10))
-	case uint32:
-		return Str(strconv.FormatUint(uint64(x), 10))
-	case uint64:
-		return Str(strconv.FormatUint(x, 10))
-	case float32:
-		return Str(strconv.FormatFloat(float64(x), 'g', -1, 32))
-	case float64:
-		return Str(strconv.FormatFloat(x, 'g', -1, 64))
+func unicodeEscape(r rune) string {
+	if r > 0xffff {
+		return fmt.Sprintf(`\U%08x`, r)
 	}
-	return Str(fmt.Sprint(v))
+	return fmt.Sprintf(`\u%04x`, r)
 }

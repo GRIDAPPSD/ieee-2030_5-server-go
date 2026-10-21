@@ -20,6 +20,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -471,9 +472,9 @@ func (h *AdminDERControlHandler) log(r *http.Request, level slog.Level, msg, eve
 }
 
 // auditLog is the one builder of an audit line's base fields. The address is
-// passed through logSafe, since a client can shape it on some transports.
+// passed through logsafe.Str, since a client can shape it on some transports.
 func auditLog(lg *slog.Logger, r *http.Request, level slog.Level, msg, event string, attrs []any) {
-	base := []any{"event", event, "remote_addr", logSafe(r.RemoteAddr), "admission", auth.AdmissionPath(r)}
+	base := []any{"event", event, "remote_addr", logsafe.Str(r.RemoteAddr), "admission", auth.AdmissionPath(r)}
 	lg.Log(r.Context(), level, msg, append(base, attrs...)...)
 }
 

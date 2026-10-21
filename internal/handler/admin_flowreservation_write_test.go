@@ -557,6 +557,9 @@ func TestFRWrite_LogLineHoldsNoReasonAndNoInjectedLine(t *testing.T) {
 		t.Fatalf("injected id: status = %d, want 404: %s", rec.Code, rec.Body.String())
 	}
 	assertOneSafeLine(t, f.logs.String(), "event=flow_reservation_answer_refused")
+	if want := `frq_id="frq-1\\r\\nevent=forged"`; !strings.Contains(f.logs.String(), want) {
+		t.Errorf("log line = %q, want the injected id escaped as %s", f.logs.String(), want)
+	}
 }
 
 func assertOneSafeLine(t *testing.T, logs, event string) {
@@ -567,7 +570,9 @@ func assertOneSafeLine(t *testing.T, logs, event string) {
 	if strings.Contains(logs, "\r") {
 		t.Errorf("log line holds a CR: %q", logs)
 	}
-	if n := strings.Count(logs, "event="); n != 1 || !strings.Contains(logs, event) {
+	// A key is preceded by a space; an escaped value keeps its text, "event="
+	// included, inside a quoted attribute.
+	if n := strings.Count(logs, " event="); n != 1 || !strings.Contains(logs, event) {
 		t.Errorf("log line has %d event= keys, want only %s: %q", n, event, logs)
 	}
 }

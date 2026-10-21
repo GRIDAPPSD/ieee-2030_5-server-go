@@ -26,16 +26,13 @@ import (
 // and one device program in it, then issues through the same paths as every
 // other program.
 
-// Primacy bounds. IEEE 2030.5-2018 leaves 65 to 191 to the implementer; the
-// device path prefers it and falls back below it only when no value there
-// outranks the device's other programs.
-const (
-	userPrimacyLow  = 65
-	userPrimacyHigh = 191
-	// noOtherProgram stands in for the lowest primacy of a device that has no
-	// other program, one above any uint8.
-	noOtherProgram = 256
-)
+// noOtherProgram stands in for the lowest primacy of a device that has no
+// other program, one above any uint8.
+const noOtherProgram = 256
+
+// deviceControlRefusedEvent is the audit event of a device-route refusal that
+// answers with its own body instead of through refuse.
+const deviceControlRefusedEvent = "der_device_control_refused"
 
 // deviceProgramDescription is the description of the one program in a
 // device-only FSA.
@@ -157,14 +154,13 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 		}
 
 		fh := h.FSAs
-		if fh.AdminFSAs == nil || fh.DeviceFSAs == nil || fh.Copies == nil {
-			fh.templateFailed(w, r, "no_program_stores", errors.New("program stores are not wired"))
+		if !fh.storesWired(w, r, fh.AdminFSAs != nil && fh.DeviceFSAs != nil && fh.Copies != nil) {
 			return
 		}
 		if !validHrefSegment(deviceID) {
-			fh.logged(r).WarnContext(r.Context(), "admin: device control refused", "event", "der_device_control_refused",
-				"code", "device_href_invalid", "status", http.StatusConflict)
-			writeError(w, http.StatusConflict, "device id cannot form a program href")
+			ref := derControlRefusal{http.StatusConflict, "device_href_invalid", "device id cannot form a program href"}
+			logRefusal(fh.logged(r), r, deviceControlRefusedEvent, ref, &logged)
+			writeError(w, ref.status, ref.message)
 			return
 		}
 
@@ -193,8 +189,9 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 		if err != nil {
 			var none *noOutrankError
 			if errors.As(err, &none) {
-				fh.logged(r).WarnContext(ctx, "admin: device control refused", "event", "der_device_control_refused",
-					"code", "primacy_cannot_outrank", "status", http.StatusConflict, "device", deviceID, "program_href", none.href)
+				logged.add("device", deviceID)
+				logged.add("program_href", none.href)
+				logRefusal(fh.logged(r), r, deviceControlRefusedEvent, derControlRefusal{status: http.StatusConflict, code: "primacy_cannot_outrank"}, &logged)
 				writeJSON(w, http.StatusConflict, programRefusal{Error: none.Error(), Code: "primacy_cannot_outrank"})
 				return
 			}
@@ -290,9 +287,8 @@ func (t *deviceTxn) finish(h *AdminFSAHandler, r *http.Request) {
 	if len(t.steps) == 0 {
 		return
 	}
-	if !h.rollbackAfter(r, errors.New("device control request failed"), t.steps) {
-		h.logged(r).ErrorContext(r.Context(), "admin: device control left partly applied", "event", "device_control_incomplete", "path", r.URL.Path)
-	}
+	h.rolledBack(r, errors.New("device control request failed"), t.steps,
+		&incompleteLog{"admin: device control left partly applied", "device_control_incomplete", []any{"path", r.URL.Path}})
 }
 
 // chosenPrimacy is the primacy a device-only program takes and why. changed
@@ -312,21 +308,23 @@ func (e *noOutrankError) Error() string {
 }
 
 // allowedPrimacy reports whether sep.xsd's PrimacyType assigns p to a
-// provider: 0 to 2 are defined, 65 to 191 are user-defined, and 3 to 64 and
-// 192 to 255 are reserved. It is validPrimacy for a uint8.
+// provider: 0 to definedPrimacyHigh are defined, userPrimacyLow to
+// userPrimacyHigh are user-defined, and the rest are reserved. It is
+// validPrimacy for a uint8.
 func allowedPrimacy(p uint8) bool { return validPrimacy(int64(p)) }
 
 // outrankPrimacy picks the primacy of a program that must beat every other
 // program of its device when the lowest of theirs is lowest (noOtherProgram
 // when there are none): the largest allowed value below lowest, preferring
-// the user-defined range 65 to 191 and then 2, 1, 0. Lower numbers win in
+// the user-defined range (userPrimacyLow to userPrimacyHigh) and then
+// definedPrimacyHigh down to 0. Lower numbers win in
 // 2030.5, and a value below every other program's cannot tie with one. ok is
 // false when lowest is 0.
 func outrankPrimacy(lowest int) (value uint8, userRange, ok bool) {
 	if v := min(lowest-1, userPrimacyHigh); v >= userPrimacyLow {
 		return uint8(v), true, true
 	}
-	if v := min(lowest-1, 2); v >= 0 {
+	if v := min(lowest-1, definedPrimacyHigh); v >= 0 {
 		return uint8(v), false, true
 	}
 	return 0, false, false
@@ -374,9 +372,10 @@ func (h *AdminFSAHandler) choosePrimacy(ctx context.Context, deviceID, fsaID, pr
 	if !ok {
 		return chosenPrimacy{}, &noOutrankError{href: lowestHref}
 	}
-	reason := fmt.Sprintf("%d is the largest user-defined primacy (65 to 191) below the others (%s)", value, others)
+	reason := fmt.Sprintf("%d is the largest user-defined primacy (%d to %d) below the others (%s)", value, userPrimacyLow, userPrimacyHigh, others)
 	if !userRange {
-		reason = fmt.Sprintf("%d is the largest value below the others (%s); it lies outside the user-defined range 65 to 191 because no value there is below them, and 3 to 64 are reserved", value, others)
+		reason = fmt.Sprintf("%d is the largest value below the others (%s); it lies outside the user-defined range %d to %d because no value there is below them, and %d to %d are reserved",
+			value, others, userPrimacyLow, userPrimacyHigh, definedPrimacyHigh+1, userPrimacyLow-1)
 	}
 	if current != nil {
 		reason = fmt.Sprintf("re-picked %d (was %d): %s", value, *current, reason)
@@ -403,10 +402,8 @@ func (h *AdminFSAHandler) ensureDeviceOnlyFSA(w http.ResponseWriter, r *http.Req
 	ctx := r.Context()
 	var steps []rollbackStep
 	fail := func(cause string, err error) (string, bool) {
-		if !h.rollbackAfter(r, err, steps) {
-			h.logged(r).ErrorContext(ctx, "admin: device-only FSA left partly applied", "event", "device_only_fsa_incomplete",
-				"device", deviceID, "fsa", fsaID, "cause", cause, "error", err)
-		}
+		h.rolledBack(r, err, steps, &incompleteLog{"admin: device-only FSA left partly applied", "device_only_fsa_incomplete",
+			[]any{"device", deviceID, "fsa", fsaID, "cause", cause, "error", err}})
 		h.templateFailed(w, r, cause, err)
 		return "", false
 	}

@@ -379,7 +379,7 @@ func (h *AdminFSAControlHandler) HandleCancel() http.HandlerFunc {
 			// as live while the record says otherwise.
 			fh.AdminFSAs.HoldFSAControl(fsaID, t.ID, rec.ID)
 			logged.add("cause", "record_cancel_failed")
-			ch.logRefusal(r, "fsa_cancel", refuseInternal, &logged)
+			logRefusal(ch.logger(), r, refusedEvent("fsa_cancel"), refuseInternal, &logged)
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf(
 				"every copy of control %s is cancelled, but its record could not be written; it is not sent to devices assigned meanwhile, so retry the cancel", rec.MRID))
 			return
@@ -421,7 +421,7 @@ func (h *AdminFSAControlHandler) cancelStopped(w http.ResponseWriter, r *http.Re
 		return
 	}
 	logged.add("device_id", dev)
-	ch.logRefusal(r, "fsa_cancel", refuseInternal, logged)
+	logRefusal(ch.logger(), r, refusedEvent("fsa_cancel"), refuseInternal, logged)
 	writeError(w, http.StatusInternalServerError, fmt.Sprintf(
 		"cancel stopped at device %s; the copies before it are cancelled and control %s is still live, so retry the cancel", dev, rec.MRID))
 }

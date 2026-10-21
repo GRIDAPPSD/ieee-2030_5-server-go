@@ -6,6 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"go/ast"
+	"go/build"
+	"go/importer"
+	"go/parser"
+	"go/token"
 	"go/types"
 	"os"
 	"path/filepath"
@@ -80,8 +84,63 @@ type loadSet struct {
 var loadSets = []loadSet{
 	{name: "default", patterns: []string{"./cmd/...", "./internal/...", "./pkg/..."}},
 	{name: "csip_test_hooks", tags: "csip_test_hooks", patterns: []string{"./cmd/...", "./internal/...", "./pkg/..."}},
-	{name: "helics", tags: "helics", patterns: []string{"./internal/helics"}},
 	{name: "windows", env: []string{"GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0"}, patterns: []string{"./cmd/..."}},
+}
+
+// cgoSets are packages whose build tag pulls in cgo and a system library. They
+// are parsed and type-checked here with go/types and FakeImportC instead of
+// through go list, so the count is the same on a host without the library
+// (CI has no HELICS) and nothing is skipped.
+var cgoSets = []struct {
+	name string
+	dir  string
+	tags []string
+}{
+	{name: "helics", dir: "internal/helics", tags: []string{"helics"}},
+}
+
+// loadCgoPackage returns the package at dir as it builds under tags, with C
+// references left untyped. A type error that is not about C fails the test,
+// so a package that stops checking cannot go silent.
+func loadCgoPackage(t *testing.T, name, dir string, tags []string) *packages.Package {
+	t.Helper()
+	root, err := filepath.Abs(moduleRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := build.Default
+	ctx.BuildTags = append(slices.Clone(ctx.BuildTags), tags...)
+	ctx.CgoEnabled = true
+	bp, err := ctx.ImportDir(filepath.Join(root, dir), 0)
+	if err != nil {
+		t.Fatalf("cgo set %s: %v", name, err)
+	}
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, n := range slices.Concat(bp.GoFiles, bp.CgoFiles) {
+		f, err := parser.ParseFile(fset, filepath.Join(bp.Dir, n), nil, 0)
+		if err != nil {
+			t.Fatalf("cgo set %s: %v", name, err)
+		}
+		files = append(files, f)
+	}
+	if len(files) == 0 {
+		t.Fatalf("cgo set %s: no files under tags %v", name, tags)
+	}
+	info := &types.Info{
+		Types: map[ast.Expr]types.TypeAndValue{},
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
+	}
+	conf := types.Config{
+		FakeImportC: true,
+		Importer:    importer.ForCompiler(fset, "source", nil),
+		Error:       func(err error) { t.Errorf("cgo set %s: type error: %v", name, err) },
+	}
+	if _, err := conf.Check(bp.ImportPath, fset, files, info); err != nil && !t.Failed() {
+		t.Fatalf("cgo set %s: %v", name, err)
+	}
+	return &packages.Package{PkgPath: bp.ImportPath, Fset: fset, Syntax: files, TypesInfo: info}
 }
 
 func loadPackages(t *testing.T, set loadSet) []*packages.Package {
@@ -354,6 +413,9 @@ func treeViolations(t *testing.T) []violation {
 		var all []violation
 		for _, set := range loadSets {
 			all = append(all, checkPackages(loadPackages(t, set))...)
+		}
+		for _, c := range cgoSets {
+			all = append(all, checkPackages([]*packages.Package{loadCgoPackage(t, c.name, c.dir, c.tags)})...)
 		}
 		treeViol = sortedUnique(all)
 	})

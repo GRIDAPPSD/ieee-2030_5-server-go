@@ -77,7 +77,7 @@ func TestPersistence_IssueCancelReloadDerivedStatus(t *testing.T) {
 		t.Fatalf("reload LifecycleStore: %v", err)
 	}
 
-	scopeKey := scopeKeyOf(resA.Scope)
+	scopeKey := resA.Scope.Key()
 	gotA, err := reloadedControls.Get(ctx, scopeKey, resA.ID)
 	if err != nil {
 		t.Fatalf("reloaded control A: %v", err)

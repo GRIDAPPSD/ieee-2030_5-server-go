@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 )
@@ -35,7 +36,7 @@ func ddercPath(edevID string) string {
 // reading the stored value back.
 func seedDefaultDERControl(t *testing.T, stores *assembly.Stores, edevID, mrid string) {
 	t.Helper()
-	key := edevID + "/" + ddercFSA + "/" + ddercDERP
+	key := derhref.ScopeKey(edevID, ddercFSA, ddercDERP)
 	dc := sep2.DefaultDERControl{MRID: mrid}
 	if err := stores.DefaultDERControls.Create(context.Background(), key, coresingleton.SingletonKey, dc); err != nil {
 		t.Fatalf("seed DefaultDERControl under %s: %v", key, err)
@@ -44,7 +45,7 @@ func seedDefaultDERControl(t *testing.T, stores *assembly.Stores, edevID, mrid s
 
 func storedDefaultDERControlMRID(t *testing.T, stores *assembly.Stores, edevID string) string {
 	t.Helper()
-	key := edevID + "/" + ddercFSA + "/" + ddercDERP
+	key := derhref.ScopeKey(edevID, ddercFSA, ddercDERP)
 	dc, err := stores.DefaultDERControls.Get(context.Background(), key, coresingleton.SingletonKey)
 	if err != nil {
 		t.Fatalf("read back DefaultDERControl under %s: %v", key, err)

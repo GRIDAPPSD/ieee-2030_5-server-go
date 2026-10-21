@@ -169,7 +169,8 @@ export interface DeviceControlBody {
 
 export interface ControlFormInput {
   mode: 'scheduled' | 'default'
-  deviceLabel: string
+  // Names what the control is for in the summary, such as "device 123" or "FSA a, program b".
+  target: string
   functions: Record<string, unknown>
   startNow: boolean
   // A datetime-local input value (no zone), used only when startNow is false.
@@ -197,7 +198,7 @@ export function buildDeviceControl(input: ControlFormInput): BuildResult {
     return {
       ok: true,
       body: { kind: 'default', functions: input.functions },
-      summary: `Set the default control ${what} on device ${input.deviceLabel}. It is in force now, has no end, and devices send no responses.`,
+      summary: `Set the default control ${what} on ${input.target}. It is in force now, has no end, and devices send no responses.`,
     }
   }
 
@@ -228,7 +229,7 @@ export function buildDeviceControl(input: ControlFormInput): BuildResult {
   return {
     ok: true,
     body,
-    summary: `Schedule ${what} on device ${input.deviceLabel}, starting ${when}, for ${length}.`,
+    summary: `Schedule ${what} on ${input.target}, starting ${when}, for ${length}.`,
   }
 }
 

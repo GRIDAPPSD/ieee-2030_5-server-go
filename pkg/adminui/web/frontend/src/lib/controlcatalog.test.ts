@@ -135,7 +135,7 @@ describe('buildFunctions', () => {
 describe('buildDeviceControl', () => {
   const input: ControlFormInput = {
     mode: 'scheduled',
-    deviceLabel: '222222222222',
+    target: 'device 222222222222',
     functions: { rowA: true },
     startNow: true,
     startAtLocal: '',

@@ -222,8 +222,7 @@ func (h *AdminFlowReservationHandler) logger() *slog.Logger {
 // writeLine logs the one line of a write. op is "answer", "revise" or
 // "cancel".
 func (h *AdminFlowReservationHandler) writeLine(r *http.Request, level slog.Level, msg, event string, l *frWriteLog) {
-	base := []any{"event", event, "remote_addr", logSafe(r.RemoteAddr), "admission", auth.AdmissionPath(r)}
-	h.logger().Log(r.Context(), level, msg, append(base, l.attrs...)...)
+	auditLog(h.logger(), r, level, msg, event, l.attrs)
 }
 
 // refuseWrite answers kind and writes the request's one line: WARN for a

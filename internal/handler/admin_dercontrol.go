@@ -430,17 +430,23 @@ func (l *derControlLog) addControl(scope dercontrol.Scope, ctrl sep2.DERControl)
 // refusal, ERROR for a 5xx, whose cause l carries. op is "create" or
 // "cancel".
 func (h *AdminDERControlHandler) refuse(w http.ResponseWriter, r *http.Request, op string, ref derControlRefusal, l *derControlLog) {
-	h.logRefusal(r, op, ref, l)
+	logRefusal(h.logger(), r, refusedEvent(op), ref, l)
 	writeError(w, ref.status, ref.message)
 }
 
-func (h *AdminDERControlHandler) logRefusal(r *http.Request, op string, ref derControlRefusal, l *derControlLog) {
-	level, msg, event := slog.LevelWarn, "admin: DER control request refused", "der_control_"+op+"_refused"
+// refusedEvent is the audit event of a refusal on route op ("create",
+// "cancel", "device_control", "fsa_control" or "fsa_cancel").
+func refusedEvent(op string) string { return "der_control_" + op + "_refused" }
+
+// logRefusal writes the request's one refusal line under event, the "_refused"
+// name of the route. A 5xx logs the same name with "_failed" in its place.
+func logRefusal(lg *slog.Logger, r *http.Request, event string, ref derControlRefusal, l *derControlLog) {
+	level, msg := slog.LevelWarn, "admin: DER control request refused"
 	// A client that went away is not a server failure.
 	if ref.status >= http.StatusInternalServerError && ref != refuseClientGone {
-		level, msg, event = slog.LevelError, "admin: DER control request failed", "der_control_"+op+"_failed"
+		level, msg, event = slog.LevelError, "admin: DER control request failed", strings.TrimSuffix(event, "_refused")+"_failed"
 	}
-	h.log(r, level, msg, event, append([]any{"code", ref.code, "status", ref.status}, l.attrs...))
+	auditLog(lg, r, level, msg, event, append([]any{"code", ref.code, "status", ref.status}, l.attrs...))
 }
 
 // refuseConflict answers 409 for a create a commitment refused. The body
@@ -455,14 +461,20 @@ func (h *AdminDERControlHandler) refuseConflict(w http.ResponseWriter, r *http.R
 		return
 	}
 	l.add("conflict_mrid", conflict.MRID)
-	h.logRefusal(r, op, derControlRefusal{http.StatusConflict, string(conflict.Code), message}, l)
+	logRefusal(h.logger(), r, refusedEvent(op), derControlRefusal{http.StatusConflict, string(conflict.Code), message}, l)
 	writeJSON(w, http.StatusConflict, DERControlConflict{Error: message, Code: string(conflict.Code), MRID: conflict.MRID})
 }
 
 // log writes one audit line carrying the fields every line shares.
 func (h *AdminDERControlHandler) log(r *http.Request, level slog.Level, msg, event string, attrs []any) {
-	base := []any{"event", event, "remote_addr", r.RemoteAddr, "admission", auth.AdmissionPath(r)}
-	h.logger().Log(r.Context(), level, msg, append(base, attrs...)...)
+	auditLog(h.logger(), r, level, msg, event, attrs)
+}
+
+// auditLog is the one builder of an audit line's base fields. The address is
+// passed through logSafe, since a client can shape it on some transports.
+func auditLog(lg *slog.Logger, r *http.Request, level slog.Level, msg, event string, attrs []any) {
+	base := []any{"event", event, "remote_addr", logSafe(r.RemoteAddr), "admission", auth.AdmissionPath(r)}
+	lg.Log(r.Context(), level, msg, append(base, attrs...)...)
 }
 
 // DERControlIncomplete is the 500 body when a write failed and could not be
@@ -873,7 +885,7 @@ func (h *AdminDERControlHandler) refuseFSAControl(w http.ResponseWriter, r *http
 	if fsaID != "" {
 		msg = "this control was sent to an FSA; cancel it with POST /api/fsas/" + fsaID + "/der-programs/" + tmplID + "/controls/" + id + "/cancel"
 	}
-	h.logRefusal(r, "cancel", derControlRefusal{http.StatusConflict, "fsa_control", msg}, l)
+	logRefusal(h.logger(), r, refusedEvent("cancel"), derControlRefusal{http.StatusConflict, "fsa_control", msg}, l)
 	writeJSON(w, http.StatusConflict, programRefusal{Error: msg, Code: "fsa_control"})
 }
 
@@ -1024,12 +1036,7 @@ func (h *AdminDERControlHandler) loadDevice(w http.ResponseWriter, r *http.Reque
 // failed operation and route the mux pattern; the store's error text is not
 // logged because it may carry a request-derived id.
 func (h *AdminDERControlHandler) internal(w http.ResponseWriter, r *http.Request, step string) {
-	h.logger().Error("admin: DER control read failed",
-		"event", "der_control_read_failed",
-		"step", step,
-		"route", r.Pattern,
-		"remote_addr", r.RemoteAddr,
-	)
+	h.log(r, slog.LevelError, "admin: DER control read failed", "der_control_read_failed", []any{"step", step, "route", r.Pattern})
 	writeError(w, refuseInternal.status, refuseInternal.message)
 }
 

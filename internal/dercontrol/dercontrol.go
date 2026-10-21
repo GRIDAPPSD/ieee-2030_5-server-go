@@ -190,6 +190,28 @@ const (
 	RefusalTypeAndFunctions   RefusalCode = "type_and_functions"
 )
 
+// RefusalCodes lists every RefusalCode, so a caller that maps codes to wire
+// answers can prove it maps them all.
+var RefusalCodes = []RefusalCode{
+	RefusalPENNotConfigured,
+	RefusalInvalidProgramHref,
+	RefusalProgramNotFound,
+	RefusalNoControlListLink,
+	RefusalStartInPast,
+	RefusalStartTooFarAhead,
+	RefusalDurationOutOfRange,
+	RefusalUnknownType,
+	RefusalMissingValue,
+	RefusalUnexpectedValue,
+	RefusalValueOutOfRange,
+	RefusalControlNotFound,
+	RefusalAlreadyCancelled,
+	RefusalAlreadySuperseded,
+	RefusalEnded,
+	RefusalInvalidDescription,
+	RefusalTypeAndFunctions,
+}
+
 // RefusalError is returned when Issue or Cancel declines. Error() carries
 // only the fixed Code, never a request value, so logging or wrapping it
 // can never leak operator input (acceptance criterion 9).

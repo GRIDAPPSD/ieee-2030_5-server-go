@@ -16,6 +16,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/listhandler"
 	coreresponse "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/response"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -260,7 +261,7 @@ func HandlePostFlowReservationRequest(
 			return
 		}
 
-		frqID := fmt.Sprintf("frq-%d", time.Now().UnixNano())
+		frqID := idmint.Prefixed("frq")
 		frq.Href = fmt.Sprintf("/edev/%s/frq/%s", edevID, frqID)
 		createdAt := time.Now().Unix()
 		frq.CreationTime = createdAt
@@ -460,7 +461,7 @@ func HandlePostResponse(rspStore store.ScopedStore[sep2.Response], authorize Res
 			rsp.EndDeviceLFDI = lfdi
 		}
 
-		id := fmt.Sprintf("rsp-%d", time.Now().UnixNano())
+		id := idmint.Prefixed("rsp")
 		rsp.Href = coreresponse.MemberHref(rspsID, id)
 		rsp.CreatedDateTime = time.Now().Unix()
 

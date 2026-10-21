@@ -7,10 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -77,7 +77,7 @@ func HandleCreateFSA(fsaStore store.ScopedStore[sep2.FunctionSetAssignments]) ht
 			return
 		}
 
-		fsaID := fmt.Sprintf("fsa-%d", time.Now().UnixNano()%100000)
+		fsaID := idmint.Prefixed("fsa")
 		fsa := sep2.FunctionSetAssignments{
 			Resource:           sep2.Resource{Href: fmt.Sprintf("/edev/%s/fsa/%s", edevID, fsaID)},
 			MRID:               fsaID,

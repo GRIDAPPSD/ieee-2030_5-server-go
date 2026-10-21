@@ -13,6 +13,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/metering"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint/idminttest"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
@@ -360,4 +361,15 @@ func TestUsagePointItemMethodsNotMounted(t *testing.T) {
 	if stored.MRID != "ORIGINAL" {
 		t.Errorf("stored MRID = %q, want ORIGINAL: a forbidden method mutated the resource", stored.MRID)
 	}
+}
+
+// Not parallel: it holds the process-wide id clock still (#1010). A POST with
+// no mRID gets a clock-derived id, so equal readings must not share one.
+func TestHandleCreateUsagePoint_ParallelAnonymousPostsGetDistinctIDs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /upt", metering.HandleCreateUsagePoint(memory.NewStore[sep2.UsagePoint]()))
+	body, _ := xml.Marshal(&sep2.UsagePoint{})
+	idminttest.AssertParallelCreatesDistinct(t, mux, 16, func() *http.Request {
+		return httptest.NewRequest(http.MethodPost, "/upt", bytes.NewReader(body))
+	})
 }

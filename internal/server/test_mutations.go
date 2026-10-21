@@ -42,6 +42,7 @@ import (
 	coresep2time "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	coresingleton "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/singleton"
 	coresub "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/subscription"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -368,7 +369,7 @@ func handleTimeAdvance(stores *Stores) http.HandlerFunc {
 		offset := coresep2time.ClockOffset()
 		now := time.Now().Add(offset)
 
-		id := fmt.Sprintf("%020d", now.UnixNano())
+		id := idmint.Sortable()
 		evt := sep2.LogEvent{
 			Resource:        sep2.Resource{Href: "/sdev/log/" + id},
 			CreatedDateTime: now.Unix(),
@@ -738,7 +739,7 @@ type subscriptionCancelRequest struct {
 // Companion knobs (csip_test_hooks only):
 //   - X-CSIP-Test-Subscription-ID header on POST /edev/{id}/sub: lets the
 //     harness pin a deterministic ID instead of the auto-generated
-//     "sub-<unixnano>" : needed so the harness can drive the same ID
+//     "sub-<number>" : needed so the harness can drive the same ID
 //     into the create path and observe the refusal.
 //   - coresub.MarkSubscriptionCanceled / IsSubscriptionCanceled /
 //     ResetCanceledSubscriptions: package-level helpers backing the set (in core).

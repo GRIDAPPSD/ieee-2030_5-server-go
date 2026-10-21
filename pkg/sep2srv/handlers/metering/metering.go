@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -204,7 +204,7 @@ func HandleCreateUsagePoint(uptStore store.ResourceStore[sep2.UsagePoint]) http.
 		// client-supplied mRID can be chosen to land on a synthesized id.
 		id := UsagePointStoreID(upt.MRID)
 		if upt.MRID == "" {
-			id = boundedID(anonymousUsagePointIDDomain, strconv.FormatInt(time.Now().UnixNano(), 10))
+			id = boundedID(anonymousUsagePointIDDomain, strconv.FormatInt(idmint.Next(), 10))
 		}
 
 		// Server-minted, never echoed from the client's body. The client's own

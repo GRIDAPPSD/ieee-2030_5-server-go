@@ -31,11 +31,13 @@ type Descriptor struct {
 }
 
 // FieldInfo is one member of an object value, named as a request names it.
+// Required marks a member a request may not leave out.
 type FieldInfo struct {
-	Name string `json:"name"`
-	Kind string `json:"kind"`
-	Min  *int64 `json:"min,omitempty"`
-	Max  *int64 `json:"max,omitempty"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	Required bool   `json:"required,omitempty"`
+	Min      *int64 `json:"min,omitempty"`
+	Max      *int64 `json:"max,omitempty"`
 }
 
 // ValueRefusal is a refused request value as wire text: Code is the stable

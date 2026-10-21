@@ -407,7 +407,7 @@ func (s shape) describe() Descriptor {
 		d.Fields = make([]FieldInfo, len(s.fields))
 		for i, f := range s.fields {
 			m := f.shape.describe()
-			d.Fields[i] = FieldInfo{Name: f.name, Kind: m.Kind, Min: m.Min, Max: m.Max}
+			d.Fields[i] = FieldInfo{Name: f.name, Kind: m.Kind, Required: f.required, Min: m.Min, Max: m.Max}
 		}
 	case kindCurve:
 		d.CurveType = &s.curveType

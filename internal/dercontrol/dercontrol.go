@@ -142,6 +142,16 @@ func (s Scope) ControlListHref() string {
 	return s.ProgramHref() + "/derc"
 }
 
+// ControlHref is the device-facing href of the control stored under id.
+func (s Scope) ControlHref(id string) string {
+	return s.ControlListHref() + "/" + id
+}
+
+// UnscopedProgramHref lets a caller run the checks that read no program
+// before the scope exists; the real href replaces it before anything is
+// stored.
+const UnscopedProgramHref = "/edev/0/fsa/0/derp/0"
+
 // Result is what Issue returns on success.
 type Result struct {
 	Scope   Scope

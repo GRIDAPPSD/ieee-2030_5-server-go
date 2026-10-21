@@ -5,6 +5,8 @@
 // through the GrantSource and ControlSource it is given, and keeps no copy.
 package commitment
 
+import "github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/interval"
+
 // Window is the half-open interval [Start, Start+Duration). Duration zero
 // covers no instant, so it overlaps nothing and is trivially within any
 // other window.
@@ -15,7 +17,7 @@ type Window struct {
 
 // End returns the first second not covered by w.
 func (w Window) End() int64 {
-	return w.Start + int64(w.Duration)
+	return interval.End(w.Start, w.Duration)
 }
 
 // Overlaps reports whether w and o share a covered instant. Touching at an

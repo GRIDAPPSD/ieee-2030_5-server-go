@@ -87,11 +87,6 @@ func refuseDefaultField(name string) derControlRefusal {
 	return derControlRefusal{http.StatusBadRequest, "default_field_not_allowed", name + ": not allowed for kind default"}
 }
 
-// placeholderProgramHref lets buildCreateRequest and Validate run before the
-// device's program exists, so a bad request is refused with nothing written.
-// The real href replaces it before the control is issued.
-const placeholderProgramHref = "/edev/0/fsa/0/derp/0"
-
 const (
 	kindScheduled = "scheduled"
 	kindDefault   = "default"
@@ -127,7 +122,7 @@ func (h *AdminDeviceControlHandler) HandleCreate() http.HandlerFunc {
 		var req dercontrol.CreateRequest
 		var defaultBase *sep2.DERControlBase
 		if kind == kindScheduled {
-			href := placeholderProgramHref
+			href := dercontrol.UnscopedProgramHref
 			cb.DERProgramHref = &href
 			var ref derControlRefusal
 			var ok bool

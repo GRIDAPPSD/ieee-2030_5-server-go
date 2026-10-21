@@ -17,6 +17,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/auth"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/commitment"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -458,7 +459,7 @@ func liveGrant(frp sep2.FlowReservationResponse, now int64) bool {
 	case frp.EventStatus != nil && frp.EventStatus.CurrentStatus == sep2.EventStatusCancelled:
 		return false
 	default:
-		return now < frp.Interval.Start+int64(frp.Interval.Duration)
+		return !dercontrol.IntervalEnded(frp.Interval, now)
 	}
 }
 

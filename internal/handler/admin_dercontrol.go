@@ -478,7 +478,7 @@ type DERControlIncomplete struct {
 // scope is notified, because devices can read the control, and the 500 body
 // names it so the operator can find it and cancel it.
 func (h *AdminDERControlHandler) incomplete(w http.ResponseWriter, r *http.Request, op, message string, undo *dercontrol.UndoError) {
-	href := undo.Scope.ControlListHref() + "/" + undo.ID
+	href := undo.Scope.ControlHref(undo.ID)
 	h.notify(r.Context(), undo.Scope)
 	h.log(r, slog.LevelError, "admin: DER control write could not be undone", "der_control_"+op+"_incomplete", []any{
 		"code", refuseInternal.code,
@@ -1357,7 +1357,7 @@ func newDERControlView(scope dercontrol.Scope, ctrl sep2.DERControl, lc dercontr
 	}
 	if ctrl.Interval != nil {
 		v.Interval = IntervalView{Start: ctrl.Interval.Start, Duration: ctrl.Interval.Duration}
-		v.Ended = now >= ctrl.Interval.Start+int64(ctrl.Interval.Duration)
+		v.Ended = dercontrol.IntervalEnded(ctrl.Interval, now)
 		st := dercontrol.DeriveStatus(now, ctrl.CreationTime, ctrl.Interval.Start, lc)
 		v.EventStatus = EventStatusView{CurrentStatus: st.CurrentStatus, Status: eventStatusName(st.CurrentStatus), DateTime: st.DateTime}
 	}

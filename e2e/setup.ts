@@ -47,33 +47,42 @@ export async function startServer(extraEnv: Record<string, string> = {}): Promis
     '--out', certDir,
   ], { stdio: 'pipe' });
 
-  // Pick random ports
-  const adminPort = 18443 + Math.floor(Math.random() * 1000);
-  const protocolPort = 19443 + Math.floor(Math.random() * 1000);
-  adminUrl = `https://localhost:${adminPort}`;
+  // Random ports can collide with another worker's server; the server then
+  // exits on bind, so a start that dies early is retried on fresh ports.
+  const attempts = 3;
+  for (let attempt = 1; ; attempt++) {
+    const adminPort = 18443 + Math.floor(Math.random() * 1000);
+    const protocolPort = 19443 + Math.floor(Math.random() * 1000);
+    adminUrl = `https://localhost:${adminPort}`;
 
-  // Start server
-  serverProcess = spawn(sep2server, ['serve'], {
-    env: {
-      ...process.env,
-      SEP2_ADDR: `:${protocolPort}`,
-      SEP2_CERT: join(certDir, 'server.crt'),
-      SEP2_KEY: join(certDir, 'server.key'),
-      SEP2_CA: join(certDir, 'ca.crt'),
-      SEP2_CA_KEY: join(certDir, 'ca.key'),
-      SEP2_ADMIN_ADDR: `:${adminPort}`,
-      SEP2_ADMIN_KEY: ADMIN_KEY,
-      // #161: admin listener defaults to plain HTTP. Force HTTPS with
-      // self-signed cert so the e2e dashboard URL keeps the `https://...`
-      // shape it used pre-split.
-      SEP2_ADMIN_TLS: 'true',
-      ...extraEnv,
-    },
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
+    serverProcess = spawn(sep2server, ['serve'], {
+      env: {
+        ...process.env,
+        SEP2_ADDR: `:${protocolPort}`,
+        SEP2_CERT: join(certDir, 'server.crt'),
+        SEP2_KEY: join(certDir, 'server.key'),
+        SEP2_CA: join(certDir, 'ca.crt'),
+        SEP2_CA_KEY: join(certDir, 'ca.key'),
+        SEP2_ADMIN_ADDR: `:${adminPort}`,
+        SEP2_ADMIN_KEY: ADMIN_KEY,
+        // #161: admin listener defaults to plain HTTP. Force HTTPS with
+        // self-signed cert so the e2e dashboard URL keeps the `https://...`
+        // shape it used pre-split.
+        SEP2_ADMIN_TLS: 'true',
+        ...extraEnv,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
 
-  await waitForServer(adminUrl, 10000);
-  return adminUrl;
+    try {
+      // ResolveAdminBind logs a bare ":port" as "127.0.0.1:port".
+      await waitForReady(serverProcess, new RegExp(`Admin server listening on \\S*:${adminPort} `), 20000);
+      return adminUrl;
+    } catch (err) {
+      stopServer();
+      if (!(err instanceof ServerExitedError) || attempt >= attempts) throw err;
+    }
+  }
 }
 
 export function stopServer() {
@@ -83,31 +92,32 @@ export function stopServer() {
   }
 }
 
-async function waitForServer(url: string, timeoutMs: number): Promise<void> {
-  const start = Date.now();
-  // Node 18+ has global fetch but self-signed certs need special handling
-  // Use a simple TCP connect check instead
-  const { connect } = await import('net');
-  const urlObj = new URL(url);
-  const port = parseInt(urlObj.port);
+class ServerExitedError extends Error {}
 
-  while (Date.now() - start < timeoutMs) {
-    const connected = await new Promise<boolean>((resolve) => {
-      const socket = connect(port, 'localhost', () => {
-        socket.destroy();
-        resolve(true);
-      });
-      socket.on('error', () => {
-        socket.destroy();
-        resolve(false);
-      });
-      socket.setTimeout(500, () => {
-        socket.destroy();
-        resolve(false);
-      });
+// Resolves when the server logs that its admin listener is up (it logs to
+// stderr), rejects if the process exits first or the log line never comes.
+// Both pipes stay drained for the process's life so a full pipe cannot stall it.
+function waitForReady(proc: ChildProcess, readyLine: RegExp, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let output = '';
+    let ready = false;
+    const timer = setTimeout(() => {
+      reject(new Error(`Server did not log ${readyLine} within ${timeoutMs}ms. Output:\n${output}`));
+    }, timeoutMs);
+    const onData = (chunk: Buffer) => {
+      if (ready) return;
+      output += chunk.toString();
+      if (readyLine.test(output)) {
+        ready = true;
+        clearTimeout(timer);
+        resolve();
+      }
+    };
+    proc.stdout?.on('data', onData);
+    proc.stderr?.on('data', onData);
+    proc.once('exit', (code, signal) => {
+      clearTimeout(timer);
+      reject(new ServerExitedError(`Server exited (code ${code}, signal ${signal}) before ready. Output:\n${output}`));
     });
-    if (connected) return;
-    await new Promise(r => setTimeout(r, 200));
-  }
-  throw new Error(`Server did not start within ${timeoutMs}ms`);
+  });
 }

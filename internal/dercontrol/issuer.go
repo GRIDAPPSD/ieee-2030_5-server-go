@@ -10,6 +10,7 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/derhref"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/interval"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -321,7 +322,7 @@ func (i *Issuer) finishPlan(ctx context.Context, t Target, ctrl sep2.DERControl,
 
 // IntervalEnd is the first second after the interval.
 func IntervalEnd(iv *sep2.DateTimeInterval) int64 {
-	return iv.Start + int64(iv.Duration)
+	return interval.End(iv.Start, iv.Duration)
 }
 
 // IntervalEnded reports whether the interval is over at now.

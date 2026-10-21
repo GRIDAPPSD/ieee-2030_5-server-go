@@ -14,6 +14,7 @@ import (
 	"math/big"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/interval"
 )
 
 // Errors a Decision can fail with. ErrAlreadyAnswered is also the outcome
@@ -160,8 +161,8 @@ func grantedInterval(frq sep2.FlowReservationRequest, want *sep2.DateTimeInterva
 // "may create superseding events to modify the interval within the
 // requested timeframe."
 func intervalWithin(inner, outer sep2.DateTimeInterval) bool {
-	innerEnd := inner.Start + int64(inner.Duration)
-	outerEnd := outer.Start + int64(outer.Duration)
+	innerEnd := interval.End(inner.Start, inner.Duration)
+	outerEnd := interval.End(outer.Start, outer.Duration)
 	return inner.Start >= outer.Start && innerEnd <= outerEnd
 }
 

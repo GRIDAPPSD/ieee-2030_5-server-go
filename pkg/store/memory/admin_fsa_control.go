@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/interval"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -52,7 +53,7 @@ func (c FSAControl) Copy() FSAControl {
 
 // Ended reports whether the control's interval has passed at now.
 func (c FSAControl) Ended(now int64) bool {
-	return now >= c.Start+int64(c.Duration)
+	return now >= interval.End(c.Start, c.Duration)
 }
 
 func compareFSAControlKey(c FSAControl, key [2]string) int {

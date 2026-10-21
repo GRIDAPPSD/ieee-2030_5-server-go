@@ -75,21 +75,23 @@ func TestOneWritePath(t *testing.T) {
 	}
 }
 
-// TestOneIntervalEnd pins IntervalEnd as the only place start plus duration
-// is computed in the packages that handle DER control intervals.
+// TestOneIntervalEnd pins interval.End as the only place start plus duration
+// is computed in the packages that handle control, flow reservation and
+// commitment intervals, and in the stores that hold them.
 func TestOneIntervalEnd(t *testing.T) {
 	var found []string
-	for _, dir := range []string{".", "../handler"} {
+	for _, dir := range []string{".", "../handler", "../flowreservation", "../commitment", "../../pkg/store/memory", "../interval"} {
 		for path, f := range parsePackageSources(t, dir) {
 			inspectWithFunc(f, func(fn string, n ast.Node) {
-				if isIntervalEndExpr(n) && fn != "IntervalEnd" {
+				owner := filepath.Base(dir) == "interval" && fn == "End"
+				if isIntervalEndExpr(n) && !owner {
 					found = append(found, filepath.Base(path)+":"+fn)
 				}
 			})
 		}
 	}
 	if len(found) != 0 {
-		t.Errorf("interval end computed by hand in %v; use IntervalEnd", found)
+		t.Errorf("interval end computed by hand in %v; use interval.End", found)
 	}
 }
 

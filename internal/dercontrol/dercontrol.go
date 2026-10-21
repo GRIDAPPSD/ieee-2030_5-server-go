@@ -23,21 +23,8 @@ const (
 	DefaultMaxDuration = 24 * time.Hour
 )
 
-// ControlType selects which DERControlBase shape Issue builds. The set is
-// closed; a control that needs another combination of functions carries a
-// FunctionSet instead.
-type ControlType string
-
-const (
-	Connect        ControlType = "connect"
-	Disconnect     ControlType = "disconnect"
-	MaxLimW        ControlType = "maxLimW"
-	FixedPFInjectW ControlType = "fixedPFInjectW"
-	TargetW        ControlType = "targetW"
-)
-
 // PowerFactorValue is the value object required for FixedPFInjectW.
-// Displacement is thousandths of cos(theta) (1 to 1000); Excitation is
+// Displacement is thousandths of cos(theta); Excitation is
 // true when the DER absorbs reactive power (under-excited), false when it
 // injects (over-excited). IEEE 2030.5-2018 lines 16516-16522. Excitation is
 // a pointer because it has no safe default: a request that omits it is
@@ -67,8 +54,8 @@ type CreateRequest struct {
 	// when it is used.
 	Functions *FunctionSet
 
-	// MaxLimW is required for, and only for, Type == MaxLimW: 0 to 10000
-	// hundredths of a percent of setMaxW.
+	// MaxLimW is required for, and only for, Type == MaxLimW, in hundredths
+	// of a percent of setMaxW.
 	MaxLimW *uint16
 
 	// PowerFactor is required for, and only for, Type == FixedPFInjectW.
@@ -218,6 +205,11 @@ var RefusalCodes = []RefusalCode{
 // can never leak operator input (acceptance criterion 9).
 type RefusalError struct {
 	Code RefusalCode
+
+	// Detail is the value refusal's own wording, such as
+	// excitation_required, when a control value was refused. Like Code it
+	// carries no request text.
+	Detail *ValueRefusal
 }
 
 func (e *RefusalError) Error() string {

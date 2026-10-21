@@ -2,6 +2,7 @@ package dercontrol
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -63,6 +64,10 @@ type kind[I, T, V any] struct {
 	input    func(v T) I // the value as a request gives it: the functions view
 	baseView func(v T) V
 	log      func(v T) []LogAttr // nil logs nothing
+	// stored checks a parsed value against what it names in a store,
+	// answering a refusal worded by l, or an error when the store cannot be
+	// read. It is nil for a kind whose value names nothing stored.
+	stored func(ctx context.Context, curves CurveReader, v T, l label) (*ValueRefusal, error)
 }
 
 // fault is why parse refused a value: a missing member, or one outside
@@ -118,7 +123,7 @@ type function interface {
 	shapeOf() shape
 	present(b *sep2.DERControlBase) bool
 	inSet(s *FunctionSet) bool
-	decode(raw json.RawMessage, dst *FunctionSet) *ValueRefusal
+	decode(ctx context.Context, curves CurveReader, raw json.RawMessage, dst *FunctionSet) (*ValueRefusal, error)
 	build(src *FunctionSet, dst *sep2.DERControlBase) error
 	value(b *sep2.DERControlBase) any
 	setView(b *sep2.DERControlBase, v *DERControlBaseView)
@@ -159,17 +164,24 @@ func (r *typedRow[I, T, V]) shapeOf() shape { return r.kind.shape }
 func (r *typedRow[I, T, V]) inSet(s *FunctionSet) bool { return *r.member(s) != nil }
 
 // decode reads a request's value into dst, refusing it in the row's wording
-// before the issuer sees it.
-func (r *typedRow[I, T, V]) decode(raw json.RawMessage, dst *FunctionSet) *ValueRefusal {
+// before the issuer sees it. A value naming a stored resource is checked
+// against curves here, since the issuer reads no curve store.
+func (r *typedRow[I, T, V]) decode(ctx context.Context, curves CurveReader, raw json.RawMessage, dst *FunctionSet) (*ValueRefusal, error) {
 	var in *I
 	if !decodeStrict(raw, &in) || in == nil {
-		return &ValueRefusal{"function_value_type", "functions." + r.name + ": wrong value type"}
+		return &ValueRefusal{"function_value_type", "functions." + r.name + ": wrong value type"}, nil
 	}
-	if _, f := r.kind.parse(*in); f != nil {
-		return r.label.refusal(f)
+	v, f := r.kind.parse(*in)
+	if f != nil {
+		return r.label.refusal(f), nil
+	}
+	if r.kind.stored != nil {
+		if ref, err := r.kind.stored(ctx, curves, v, r.label); ref != nil || err != nil {
+			return ref, err
+		}
 	}
 	*r.member(dst) = in
-	return nil
+	return nil, nil
 }
 
 func (r *typedRow[I, T, V]) build(src *FunctionSet, dst *sep2.DERControlBase) error {
@@ -355,19 +367,21 @@ func functionSetKey(b *sep2.DERControlBase) string {
 // DecodeFunctions decodes a request's functions member into the set a
 // CreateRequest's Functions carries, in catalog order. A name outside the
 // catalog is skipped: the caller refuses unknown names first, with
-// IsFunction.
-func DecodeFunctions(members map[string]json.RawMessage) (*FunctionSet, *ValueRefusal) {
+// IsFunction. A curve value must name a curve curves holds, of its
+// element's curveType; a nil curves holds none. An error means a store could
+// not be read, and nothing was decided about the request.
+func DecodeFunctions(ctx context.Context, members map[string]json.RawMessage, curves CurveReader) (*FunctionSet, *ValueRefusal, error) {
 	draft := &FunctionSet{}
 	for _, f := range catalog {
 		raw, ok := members[f.info().Name]
 		if !ok {
 			continue
 		}
-		if ref := f.decode(raw, draft); ref != nil {
-			return nil, ref
+		if ref, err := f.decode(ctx, curves, raw, draft); ref != nil || err != nil {
+			return nil, ref, err
 		}
 	}
-	return draft, nil
+	return draft, nil, nil
 }
 
 // TakeLegacy sets req's Type to the legacy type named name and its value

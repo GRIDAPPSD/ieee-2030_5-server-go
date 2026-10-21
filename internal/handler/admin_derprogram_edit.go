@@ -54,13 +54,17 @@ func checkMRID(w http.ResponseWriter, e programEdit, current string) bool {
 
 // decodeProgramEdit reads a PUT body, or answers the request and returns
 // false.
-func decodeProgramEdit(w http.ResponseWriter, r *http.Request) (programEdit, bool) {
+func (h *AdminFSAHandler) decodeProgramEdit(w http.ResponseWriter, r *http.Request) (programEdit, bool) {
 	var body programTemplateBody
 	if ref, ok := decodeDERControlBody(w, r, &body, false); !ok {
 		writeError(w, ref.status, ref.message)
 		return programEdit{}, false
 	}
-	e, msg, ok := buildProgramEdit(body)
+	e, msg, ok, err := buildProgramEdit(r.Context(), h.Curves, body)
+	if err != nil {
+		h.templateFailed(w, r, "default_control_check", err)
+		return programEdit{}, false
+	}
 	if !ok {
 		writeError(w, http.StatusBadRequest, msg)
 	}
@@ -73,7 +77,7 @@ func decodeProgramEdit(w http.ResponseWriter, r *http.Request) (programEdit, boo
 func (h *AdminFSAHandler) HandleUpdateProgramTemplate() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		fsaID, id := r.PathValue("id"), r.PathValue("derpId")
-		e, ok := decodeProgramEdit(w, r)
+		e, ok := h.decodeProgramEdit(w, r)
 		if !ok {
 			return
 		}
@@ -272,7 +276,7 @@ func (h *AdminFSAHandler) copyHolders(w http.ResponseWriter, r *http.Request, fs
 func (h *AdminFSAHandler) HandleUpdateDeviceProgram() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		deviceID, id := r.PathValue("id"), r.PathValue("derpId")
-		e, ok := decodeProgramEdit(w, r)
+		e, ok := h.decodeProgramEdit(w, r)
 		if !ok {
 			return
 		}

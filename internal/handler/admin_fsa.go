@@ -79,6 +79,9 @@ type AdminFSAHandler struct {
 	// Nil refuses an assignment to an FSA whose templates carry a live
 	// control, rather than leave the device without it.
 	Replicas FSAControlReplicator
+	// Curves holds the curves a program's default control may name. Nil
+	// holds none, so every curve value is refused as unknown.
+	Curves dercontrol.CurveReader
 
 	// programMu serializes every program write with assignments, so a device
 	// assigned while a template is created gets exactly one copy of it.

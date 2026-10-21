@@ -70,6 +70,7 @@ func newAdminFSAHandler(stores *Stores) *handler.AdminFSAHandler {
 		Notifier:    stores.AdminNotifier,
 		PEN:         stores.PEN,
 		Retirer:     programRetirer(stores),
+		Curves:      curveReader(stores),
 	}
 }
 

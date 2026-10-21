@@ -1,11 +1,17 @@
 package dercontrol
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol/dercurve"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
 // This file is the one place a DERControlBase element is named. Every other
@@ -25,6 +31,22 @@ const (
 	FuncFreqDroop      = "opModFreqDroop"
 	FuncTargetVar      = "opModTargetVar"
 	FuncRampTms        = "rampTms"
+
+	FuncFreqWatt               = "opModFreqWatt"
+	FuncHFRTMayTrip            = "opModHFRTMayTrip"
+	FuncHFRTMustTrip           = "opModHFRTMustTrip"
+	FuncHVRTMayTrip            = "opModHVRTMayTrip"
+	FuncHVRTMomentaryCessation = "opModHVRTMomentaryCessation"
+	FuncHVRTMustTrip           = "opModHVRTMustTrip"
+	FuncLFRTMayTrip            = "opModLFRTMayTrip"
+	FuncLFRTMustTrip           = "opModLFRTMustTrip"
+	FuncLVRTMayTrip            = "opModLVRTMayTrip"
+	FuncLVRTMomentaryCessation = "opModLVRTMomentaryCessation"
+	FuncLVRTMustTrip           = "opModLVRTMustTrip"
+	FuncVoltVar                = "opModVoltVar"
+	FuncVoltWatt               = "opModVoltWatt"
+	FuncWattPF                 = "opModWattPF"
+	FuncWattVar                = "opModWattVar"
 )
 
 var (
@@ -94,6 +116,69 @@ var (
 		func(b *sep2.DERControlBase) **uint16 { return &b.RampTms },
 		func(s *FunctionSet) **int64 { return &s.RampTms },
 		func(v *DERControlBaseView) **uint16 { return &v.RampTms })
+
+	// The curve modes, in core's declaration order. Each takes a stored
+	// DERCurve of the curveType its element names.
+	rowFreqWatt = curveRow(FuncFreqWatt, "Frequency-watt curve", sep2.CurveTypeOpModFreqWatt,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModFreqWatt },
+		func(s *FunctionSet) **string { return &s.OpModFreqWatt },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModFreqWatt })
+	rowHFRTMayTrip = curveRow(FuncHFRTMayTrip, "High frequency ride-through may-trip curve", sep2.CurveTypeOpModHFRTMayTrip,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModHFRTMayTrip },
+		func(s *FunctionSet) **string { return &s.OpModHFRTMayTrip },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModHFRTMayTrip })
+	rowHFRTMustTrip = curveRow(FuncHFRTMustTrip, "High frequency ride-through must-trip curve", sep2.CurveTypeOpModHFRTMustTrip,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModHFRTMustTrip },
+		func(s *FunctionSet) **string { return &s.OpModHFRTMustTrip },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModHFRTMustTrip })
+	rowHVRTMayTrip = curveRow(FuncHVRTMayTrip, "High voltage ride-through may-trip curve", sep2.CurveTypeOpModHVRTMayTrip,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModHVRTMayTrip },
+		func(s *FunctionSet) **string { return &s.OpModHVRTMayTrip },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModHVRTMayTrip })
+	rowHVRTMomentaryCessation = curveRow(FuncHVRTMomentaryCessation, "High voltage ride-through momentary cessation curve", sep2.CurveTypeOpModHVRTMomentaryCessation,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModHVRTMomentaryCessation },
+		func(s *FunctionSet) **string { return &s.OpModHVRTMomentaryCessation },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModHVRTMomentaryCessation })
+	rowHVRTMustTrip = curveRow(FuncHVRTMustTrip, "High voltage ride-through must-trip curve", sep2.CurveTypeOpModHVRTMustTrip,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModHVRTMustTrip },
+		func(s *FunctionSet) **string { return &s.OpModHVRTMustTrip },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModHVRTMustTrip })
+	rowLFRTMayTrip = curveRow(FuncLFRTMayTrip, "Low frequency ride-through may-trip curve", sep2.CurveTypeOpModLFRTMayTrip,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModLFRTMayTrip },
+		func(s *FunctionSet) **string { return &s.OpModLFRTMayTrip },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModLFRTMayTrip })
+	rowLFRTMustTrip = curveRow(FuncLFRTMustTrip, "Low frequency ride-through must-trip curve", sep2.CurveTypeOpModLFRTMustTrip,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModLFRTMustTrip },
+		func(s *FunctionSet) **string { return &s.OpModLFRTMustTrip },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModLFRTMustTrip })
+	rowLVRTMayTrip = curveRow(FuncLVRTMayTrip, "Low voltage ride-through may-trip curve", sep2.CurveTypeOpModLVRTMayTrip,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModLVRTMayTrip },
+		func(s *FunctionSet) **string { return &s.OpModLVRTMayTrip },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModLVRTMayTrip })
+	rowLVRTMomentaryCessation = curveRow(FuncLVRTMomentaryCessation, "Low voltage ride-through momentary cessation curve", sep2.CurveTypeOpModLVRTMomentaryCessation,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModLVRTMomentaryCessation },
+		func(s *FunctionSet) **string { return &s.OpModLVRTMomentaryCessation },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModLVRTMomentaryCessation })
+	rowLVRTMustTrip = curveRow(FuncLVRTMustTrip, "Low voltage ride-through must-trip curve", sep2.CurveTypeOpModLVRTMustTrip,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModLVRTMustTrip },
+		func(s *FunctionSet) **string { return &s.OpModLVRTMustTrip },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModLVRTMustTrip })
+	rowVoltVar = curveRow(FuncVoltVar, "Volt-var curve", sep2.CurveTypeOpModVoltVar,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModVoltVar },
+		func(s *FunctionSet) **string { return &s.OpModVoltVar },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModVoltVar })
+	rowVoltWatt = curveRow(FuncVoltWatt, "Volt-watt curve", sep2.CurveTypeOpModVoltWatt,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModVoltWatt },
+		func(s *FunctionSet) **string { return &s.OpModVoltWatt },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModVoltWatt })
+	rowWattPF = curveRow(FuncWattPF, "Watt-power factor curve", sep2.CurveTypeOpModWattPF,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModWattPF },
+		func(s *FunctionSet) **string { return &s.OpModWattPF },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModWattPF })
+	rowWattVar = curveRow(FuncWattVar, "Watt-var curve", sep2.CurveTypeOpModWattVar,
+		func(b *sep2.DERControlBase) **sep2.DERCurveLink { return &b.OpModWattVar },
+		func(s *FunctionSet) **string { return &s.OpModWattVar },
+		func(v *DERControlBaseView) **CurveLinkView { return &v.OpModWattVar })
 )
 
 // Bounds shared by more than one row. PerCent and SignedPerCent copy core's,
@@ -114,7 +199,10 @@ var (
 // catalog is every function a control can carry, in the order GET
 // /api/der/control-functions lists them and the views report them.
 var catalog = []function{rowConnect, rowEnergize, rowMaxLimW, rowFixedPFInjectW, rowTargetW,
-	rowFixedPFAbsorbW, rowFixedVar, rowFixedW, rowFreqDroop, rowTargetVar, rowRampTms}
+	rowFixedPFAbsorbW, rowFixedVar, rowFixedW, rowFreqDroop, rowTargetVar, rowRampTms,
+	rowFreqWatt, rowHFRTMayTrip, rowHFRTMustTrip, rowHVRTMayTrip, rowHVRTMomentaryCessation, rowHVRTMustTrip,
+	rowLFRTMayTrip, rowLFRTMustTrip, rowLVRTMayTrip, rowLVRTMomentaryCessation, rowLVRTMustTrip,
+	rowVoltVar, rowVoltWatt, rowWattPF, rowWattVar}
 
 // FunctionSet is the set of functions one control carries, each in the
 // shape a request gives it, so a member left out is refused as missing and
@@ -132,6 +220,22 @@ type FunctionSet struct {
 	OpModFreqDroop      *FreqDroopInput   `json:"opModFreqDroop,omitempty"`
 	OpModTargetVar      *ActivePowerInput `json:"opModTargetVar,omitempty"`
 	RampTms             *int64            `json:"rampTms,omitempty"`
+
+	OpModFreqWatt               *string `json:"opModFreqWatt,omitempty"`
+	OpModHFRTMayTrip            *string `json:"opModHFRTMayTrip,omitempty"`
+	OpModHFRTMustTrip           *string `json:"opModHFRTMustTrip,omitempty"`
+	OpModHVRTMayTrip            *string `json:"opModHVRTMayTrip,omitempty"`
+	OpModHVRTMomentaryCessation *string `json:"opModHVRTMomentaryCessation,omitempty"`
+	OpModHVRTMustTrip           *string `json:"opModHVRTMustTrip,omitempty"`
+	OpModLFRTMayTrip            *string `json:"opModLFRTMayTrip,omitempty"`
+	OpModLFRTMustTrip           *string `json:"opModLFRTMustTrip,omitempty"`
+	OpModLVRTMayTrip            *string `json:"opModLVRTMayTrip,omitempty"`
+	OpModLVRTMomentaryCessation *string `json:"opModLVRTMomentaryCessation,omitempty"`
+	OpModLVRTMustTrip           *string `json:"opModLVRTMustTrip,omitempty"`
+	OpModVoltVar                *string `json:"opModVoltVar,omitempty"`
+	OpModVoltWatt               *string `json:"opModVoltWatt,omitempty"`
+	OpModWattPF                 *string `json:"opModWattPF,omitempty"`
+	OpModWattVar                *string `json:"opModWattVar,omitempty"`
 }
 
 // DERControlBaseView is the JSON form of the DERControlBase values the admin
@@ -149,6 +253,22 @@ type DERControlBaseView struct {
 	OpModFreqDroop      *FreqDroopView        `json:"opModFreqDroop,omitempty"`
 	OpModTargetVar      *ActivePowerView      `json:"opModTargetVar,omitempty"`
 	RampTms             *uint16               `json:"rampTms,omitempty"`
+
+	OpModFreqWatt               *CurveLinkView `json:"opModFreqWatt,omitempty"`
+	OpModHFRTMayTrip            *CurveLinkView `json:"opModHFRTMayTrip,omitempty"`
+	OpModHFRTMustTrip           *CurveLinkView `json:"opModHFRTMustTrip,omitempty"`
+	OpModHVRTMayTrip            *CurveLinkView `json:"opModHVRTMayTrip,omitempty"`
+	OpModHVRTMomentaryCessation *CurveLinkView `json:"opModHVRTMomentaryCessation,omitempty"`
+	OpModHVRTMustTrip           *CurveLinkView `json:"opModHVRTMustTrip,omitempty"`
+	OpModLFRTMayTrip            *CurveLinkView `json:"opModLFRTMayTrip,omitempty"`
+	OpModLFRTMustTrip           *CurveLinkView `json:"opModLFRTMustTrip,omitempty"`
+	OpModLVRTMayTrip            *CurveLinkView `json:"opModLVRTMayTrip,omitempty"`
+	OpModLVRTMomentaryCessation *CurveLinkView `json:"opModLVRTMomentaryCessation,omitempty"`
+	OpModLVRTMustTrip           *CurveLinkView `json:"opModLVRTMustTrip,omitempty"`
+	OpModVoltVar                *CurveLinkView `json:"opModVoltVar,omitempty"`
+	OpModVoltWatt               *CurveLinkView `json:"opModVoltWatt,omitempty"`
+	OpModWattPF                 *CurveLinkView `json:"opModWattPF,omitempty"`
+	OpModWattVar                *CurveLinkView `json:"opModWattVar,omitempty"`
 }
 
 // ControlType selects a legacy control shape. The set is closed: a control
@@ -462,6 +582,70 @@ func freqDroopKind(band, small intRange) kind[FreqDroopInput, sep2.FreqDroopType
 		log: func(v sep2.FreqDroopType) []LogAttr {
 			return []LogAttr{{"dBOF", v.DBOF}, {"dBUF", v.DBUF}, {"kOF", v.KOF}, {"kUF", v.KUF}, {"openLoopTms", v.OpenLoopTms}}
 		},
+	}
+}
+
+// CurveReader reads the stored DERCurves a curve value names. The
+// production implementation is the admin plane's DERCurve store.
+type CurveReader interface {
+	Get(ctx context.Context, id string) (sep2.DERCurve, error)
+}
+
+// CurveLinkView is a curve mode in the derControlBase view: the href of the
+// curve it links, as the wire carries it.
+type CurveLinkView struct {
+	Href string `json:"href"`
+}
+
+type curveRowType = typedRow[string, sep2.DERCurveLink, CurveLinkView]
+
+// curveRow is the row of a curve mode whose curves are of curveType.
+func curveRow(name, what string, curveType uint8, elem func(*sep2.DERControlBase) **sep2.DERCurveLink, member func(*FunctionSet) **string, view func(*DERControlBaseView) **CurveLinkView) *curveRowType {
+	description := what + ": the id of a stored DERCurve of curveType " + strconv.Itoa(int(curveType)) + "."
+	return row(name, description, curveKind(curveType), elem, member, view)
+}
+
+// curveKind is a DERCurveLink element: a request names a stored curve by
+// its id, and the curve must be of curveType. The link is the one dercurve
+// builds, so it is the href GET /dc/{id} serves the curve at.
+func curveKind(curveType uint8) kind[string, sep2.DERCurveLink, CurveLinkView] {
+	return kind[string, sep2.DERCurveLink, CurveLinkView]{
+		shape: shape{kind: kindCurve, curveType: curveType},
+		parse: func(id string) (sep2.DERCurveLink, *fault) {
+			link, err := dercurve.Link(id)
+			if err != nil {
+				return sep2.DERCurveLink{}, &fault{missing: true}
+			}
+			return *link, nil
+		},
+		stored: func(ctx context.Context, curves CurveReader, v sep2.DERCurveLink, l label) (*ValueRefusal, error) {
+			unknown := &ValueRefusal{"unknown_curve", l.path + ": no stored curve has this id"}
+			id, ok := dercurve.ID(v.Href)
+			if !ok || curves == nil {
+				return unknown, nil
+			}
+			c, err := curves.Get(ctx, id)
+			if errors.Is(err, store.ErrNotFound) {
+				return unknown, nil
+			}
+			if err != nil {
+				return nil, fmt.Errorf("dercontrol: read curve: %w", err)
+			}
+			if c.CurveType != curveType {
+				return &ValueRefusal{"wrong_curve_type", l.path + ": the curve's curveType must be " + strconv.Itoa(int(curveType))}, nil
+			}
+			return nil, nil
+		},
+		// Every link this kind builds names an id; one that does not was not
+		// built here, and is reported as its href rather than as an id.
+		input: func(v sep2.DERCurveLink) string {
+			if id, ok := dercurve.ID(v.Href); ok {
+				return id
+			}
+			return v.Href
+		},
+		baseView: func(v sep2.DERCurveLink) CurveLinkView { return CurveLinkView(v) },
+		log:      func(v sep2.DERCurveLink) []LogAttr { return []LogAttr{{"curve", logsafe.Str(v.Href)}} },
 	}
 }
 

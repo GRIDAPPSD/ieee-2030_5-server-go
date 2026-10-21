@@ -83,23 +83,7 @@ func TestNoElementOutsideCatalog(t *testing.T) {
 
 // notOffered declines each core DERControlBase element the catalog has no
 // row for, with the reason. A row for one of these removes it here.
-var notOffered = map[string]string{
-	"opModFreqWatt":               "curve: needs a stored-curve value kind",
-	"opModHFRTMayTrip":            "curve: needs a stored-curve value kind",
-	"opModHFRTMustTrip":           "curve: needs a stored-curve value kind",
-	"opModHVRTMayTrip":            "curve: needs a stored-curve value kind",
-	"opModHVRTMomentaryCessation": "curve: needs a stored-curve value kind",
-	"opModHVRTMustTrip":           "curve: needs a stored-curve value kind",
-	"opModLFRTMayTrip":            "curve: needs a stored-curve value kind",
-	"opModLFRTMustTrip":           "curve: needs a stored-curve value kind",
-	"opModLVRTMayTrip":            "curve: needs a stored-curve value kind",
-	"opModLVRTMomentaryCessation": "curve: needs a stored-curve value kind",
-	"opModLVRTMustTrip":           "curve: needs a stored-curve value kind",
-	"opModVoltVar":                "curve: needs a stored-curve value kind",
-	"opModVoltWatt":               "curve: needs a stored-curve value kind",
-	"opModWattPF":                 "curve: needs a stored-curve value kind",
-	"opModWattVar":                "curve: needs a stored-curve value kind",
-}
+var notOffered = map[string]string{}
 
 // Every element the pinned core models is a catalog row or is declined with
 // a reason, so a core release that adds an element fails here until it is
@@ -219,7 +203,7 @@ func TestObjectMembersRequiredAsMarked(t *testing.T) {
 			if err := json.Unmarshal(raw, &members); err != nil {
 				t.Fatal(err)
 			}
-			_, ref := DecodeFunctions(members)
+			_, ref := decodeNoCurves(t, members)
 			refusedMissing := ref != nil && strings.HasSuffix(ref.Code, "_required")
 			if refusedMissing != f.required {
 				t.Errorf("%s without %s: refusal %+v, required %v", tc.name, f.name, ref, f.required)

@@ -137,7 +137,7 @@ func TestServedIntegerBoundsAreEnforced(t *testing.T) {
 	}
 	decodes := func(b intBound, v int64) bool {
 		name, _, _ := strings.Cut(b.where, ".")
-		_, ref := DecodeFunctions(map[string]json.RawMessage{name: json.RawMessage(b.body(v))})
+		_, ref := decodeNoCurves(t, map[string]json.RawMessage{name: json.RawMessage(b.body(v))})
 		return ref == nil
 	}
 	for _, b := range bounds {
@@ -177,7 +177,7 @@ func TestServedRequiredMatchesDecode(t *testing.T) {
 				parts = append(parts, fmt.Sprintf("%q:%s", o.Name, val))
 			}
 			raw := json.RawMessage("{" + strings.Join(parts, ",") + "}")
-			_, ref := DecodeFunctions(map[string]json.RawMessage{f.Name: raw})
+			_, ref := decodeNoCurves(t, map[string]json.RawMessage{f.Name: raw})
 			if refused := ref != nil; refused != omit.Required {
 				t.Errorf("%s.%s: served required=%v, decode refused omission=%v", f.Name, omit.Name, omit.Required, refused)
 			}

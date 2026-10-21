@@ -201,7 +201,10 @@ func TestCatalog_ListsTheBuiltFunctions(t *testing.T) {
 		}
 	}
 	want := []string{"opModConnect", "opModEnergize", "opModMaxLimW", "opModFixedPFInjectW", "opModTargetW",
-		"opModFixedPFAbsorbW", "opModFixedVar", "opModFixedW", "opModFreqDroop", "opModTargetVar", "rampTms"}
+		"opModFixedPFAbsorbW", "opModFixedVar", "opModFixedW", "opModFreqDroop", "opModTargetVar", "rampTms",
+		"opModFreqWatt", "opModHFRTMayTrip", "opModHFRTMustTrip", "opModHVRTMayTrip", "opModHVRTMomentaryCessation",
+		"opModHVRTMustTrip", "opModLFRTMayTrip", "opModLFRTMustTrip", "opModLVRTMayTrip", "opModLVRTMomentaryCessation",
+		"opModLVRTMustTrip", "opModVoltVar", "opModVoltWatt", "opModWattPF", "opModWattVar"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("catalog names = %v, want %v", names, want)
 	}

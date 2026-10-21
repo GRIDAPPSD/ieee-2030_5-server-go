@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/dercontrol"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/fsaprogram"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/mrid"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/der"
@@ -75,7 +76,11 @@ func (h *AdminFSAHandler) HandleCreateProgramTemplate() http.HandlerFunc {
 			writeError(w, ref.status, ref.message)
 			return
 		}
-		tmpl, msg, ok := buildTemplate(body)
+		tmpl, msg, ok, err := buildTemplate(r.Context(), h.Curves, body)
+		if err != nil {
+			h.templateFailed(w, r, "default_control_check", err)
+			return
+		}
 		if !ok {
 			writeError(w, http.StatusBadRequest, msg)
 			return
@@ -186,18 +191,18 @@ func (h *AdminFSAHandler) HandleListProgramTemplates() http.HandlerFunc {
 }
 
 // buildTemplate validates body into a template with no ids yet, or returns
-// the 400 message naming the first bad field.
-func buildTemplate(body programTemplateBody) (memory.ProgramTemplate, string, bool) {
+// the 400 message naming the first bad field. An error is buildProgramEdit's.
+func buildTemplate(ctx context.Context, curves dercontrol.CurveReader, body programTemplateBody) (memory.ProgramTemplate, string, bool, error) {
 	var t memory.ProgramTemplate
-	e, msg, ok := buildProgramEdit(body)
-	if !ok {
-		return t, msg, false
+	e, msg, ok, err := buildProgramEdit(ctx, curves, body)
+	if !ok || err != nil {
+		return t, msg, false, err
 	}
 	if e.defaultBase == nil {
-		return t, "defaultControl: required", false
+		return t, "defaultControl: required", false, nil
 	}
 	t.Description, t.Primacy, t.MRID, t.DefaultControlBase = e.description, e.primacy, e.mRID, *e.defaultBase
-	return t, "", true
+	return t, "", true, nil
 }
 
 // programEdit is a validated program body. mRID is "" and defaultBase nil
@@ -210,39 +215,43 @@ type programEdit struct {
 }
 
 // buildProgramEdit validates body, or returns the 400 message naming the
-// first bad field.
-func buildProgramEdit(body programTemplateBody) (programEdit, string, bool) {
+// first bad field. An error means the default control could not be checked,
+// which answers 500, never 400.
+func buildProgramEdit(ctx context.Context, curves dercontrol.CurveReader, body programTemplateBody) (programEdit, string, bool, error) {
 	var e programEdit
 	if body.Description == nil || !validTemplateDescription(*body.Description) {
-		return e, "description: 1 to 32 printable ASCII characters required", false
+		return e, "description: 1 to 32 printable ASCII characters required", false, nil
 	}
 	e.description = *body.Description
 	if body.Primacy == nil || !validPrimacy(*body.Primacy) {
-		return e, primacyRefusalText, false
+		return e, primacyRefusalText, false, nil
 	}
 	e.primacy = uint8(*body.Primacy)
 	if body.MRID != nil {
 		m, ok := normalizeMRID(*body.MRID)
 		// mRIDType reserves the high 96 bits all F, for any PEN.
 		if !ok || strings.HasPrefix(m, "FFFFFFFFFFFFFFFFFFFFFFFF") {
-			return e, "mRID: must be 32 hex digits, not the reserved form whose first 24 digits are F", false
+			return e, "mRID: must be 32 hex digits, not the reserved form whose first 24 digits are F", false, nil
 		}
 		e.mRID = m
 	}
 
 	dc := body.DefaultControl
 	if dc == nil {
-		return e, "", true
+		return e, "", true, nil
 	}
-	base, ref, ok, err := controlBaseFromValues(*dc, &derControlLog{})
+	base, ref, ok, err := controlBaseFromValues(ctx, curves, *dc, &derControlLog{})
 	if !ok {
-		return e, "defaultControl." + ref.message, false
+		return e, "defaultControl." + ref.message, false, nil
+	}
+	if readFailed(err) {
+		return e, "", false, fmt.Errorf("default control: %w", err)
 	}
 	if err != nil {
-		return e, "defaultControl: invalid value", false
+		return e, "defaultControl: invalid value", false, nil
 	}
 	e.defaultBase = base
-	return e, "", true
+	return e, "", true, nil
 }
 
 // mintTemplateIDs fills the server-chosen id, the program mRID when the
@@ -322,7 +331,11 @@ func (h *AdminFSAHandler) HandleCreateDeviceProgram() http.HandlerFunc {
 			writeError(w, ref.status, ref.message)
 			return
 		}
-		prog, msg, ok := buildTemplate(body)
+		prog, msg, ok, err := buildTemplate(r.Context(), h.Curves, body)
+		if err != nil {
+			h.templateFailed(w, r, "default_control_check", err)
+			return
+		}
 		if !ok {
 			writeError(w, http.StatusBadRequest, msg)
 			return

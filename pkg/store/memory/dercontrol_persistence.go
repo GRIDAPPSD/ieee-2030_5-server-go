@@ -45,9 +45,10 @@ type DERControlStore struct {
 	// mridMu guards mrid: the mRID-to-scope index used for lookup by mRID
 	// (acceptance criterion 5). Rebuilt from the reloaded records on every
 	// NewDERControlStoreWithPersistence call, since loadFromFile replays
-	// through this wrapper's own Create.
+	// through this wrapper's own Create. An mRID has more than one key only
+	// for the copies of one FSA control, which share their id too (#972).
 	mridMu sync.Mutex
-	mrid   map[string]derControlKey
+	mrid   map[string][]derControlKey
 
 	// writeMu serializes every Create, Update and Delete end to end: the
 	// in-memory mutation, the key and mRID index updates, the snapshot
@@ -95,7 +96,7 @@ func NewDERControlStore() *DERControlStore {
 	return &DERControlStore{
 		inner: NewScopedStore[sep2.DERControl](),
 		keys:  make(map[string][]string),
-		mrid:  make(map[string]derControlKey),
+		mrid:  make(map[string][]derControlKey),
 	}
 }
 
@@ -200,28 +201,42 @@ func (s *DERControlStore) addMRID(mrid string, key derControlKey) {
 	}
 	s.mridMu.Lock()
 	defer s.mridMu.Unlock()
-	s.mrid[mrid] = key
+	if !slices.Contains(s.mrid[mrid], key) {
+		s.mrid[mrid] = append(s.mrid[mrid], key)
+	}
 }
 
-func (s *DERControlStore) dropMRID(mrid string) {
+// dropMRID removes key's entry for mrid, leaving the other copies indexed.
+func (s *DERControlStore) dropMRID(mrid string, key derControlKey) {
 	if mrid == "" {
 		return
 	}
 	s.mridMu.Lock()
 	defer s.mridMu.Unlock()
-	delete(s.mrid, mrid)
+	keys := slices.DeleteFunc(slices.Clone(s.mrid[mrid]), func(k derControlKey) bool { return k == key })
+	if len(keys) == 0 {
+		delete(s.mrid, mrid)
+		return
+	}
+	s.mrid[mrid] = keys
 }
 
-// mridOwner returns the (parentID, id) currently indexed for mrid, or
-// false if none is. A blank mrid is never indexed (see addMRID).
-func (s *DERControlStore) mridOwner(mrid string) (derControlKey, bool) {
+// mridConflict returns a key already indexed for mrid that key may not
+// share it with, or false. Only a record with the same id under another
+// parent, a copy of the same control, may share it. A blank mrid is never
+// indexed (see addMRID).
+func (s *DERControlStore) mridConflict(mrid string, key derControlKey) (derControlKey, bool) {
 	if mrid == "" {
 		return derControlKey{}, false
 	}
 	s.mridMu.Lock()
 	defer s.mridMu.Unlock()
-	key, ok := s.mrid[mrid]
-	return key, ok
+	for _, owner := range s.mrid[mrid] {
+		if owner != key && (owner.ID != key.ID || owner.ParentID == key.ParentID) {
+			return owner, true
+		}
+	}
+	return derControlKey{}, false
 }
 
 // ErrMRIDConflict is returned by Create or Update when the control's mRID
@@ -233,17 +248,27 @@ func (s *DERControlStore) mridOwner(mrid string) (derControlKey, bool) {
 // ErrNotFound for it (round 2, item 2).
 var ErrMRIDConflict = errors.New("dercontrol persistence: mRID already indexed to a different control")
 
-// ByMRID returns the control stored under the given mRID, or ErrNotFound.
+// ErrMRIDShared is returned by ByMRID for an mRID stored under more than one
+// parent: one FSA control fanned out to every device of the FSA (#972).
+var ErrMRIDShared = errors.New("dercontrol persistence: mRID is shared by the copies of one control")
+
+// ByMRID returns the control stored under the given mRID, ErrNotFound, or
+// ErrMRIDShared when copies of one control under several parents carry it.
 // The index is rebuilt from the reloaded stores at construction time
 // (acceptance criterion 5), so this answers correctly for a control found
 // only after a restart, not only one created in this process.
 func (s *DERControlStore) ByMRID(ctx context.Context, mrid string) (parentID, id string, control sep2.DERControl, err error) {
 	s.mridMu.Lock()
-	key, ok := s.mrid[mrid]
+	keys := s.mrid[mrid]
 	s.mridMu.Unlock()
-	if !ok {
+	switch len(keys) {
+	case 0:
 		return "", "", sep2.DERControl{}, store.ErrNotFound
+	case 1:
+	default:
+		return "", "", sep2.DERControl{}, ErrMRIDShared
 	}
+	key := keys[0]
 	control, err = s.inner.Get(ctx, key.ParentID, key.ID)
 	if err != nil {
 		return "", "", sep2.DERControl{}, err
@@ -320,15 +345,15 @@ func (s *DERControlStore) Parents(ctx context.Context) ([]string, error) {
 // observes a Get or ByMRID succeeding for a write this call reported as
 // failed. A non-blank control.MRID already indexed under a different
 // (parentID, id) refuses with ErrMRIDConflict and stores nothing (round 2,
-// item 2): the index maps one mRID to one control, and a second writer
-// silently taking over the entry is what let ByMRID answer ErrNotFound for
-// a control that was never touched.
+// item 2), unless that record is a copy of this one: the same id under
+// another parent. A second writer silently taking over the entry is what let
+// ByMRID answer ErrNotFound for a control that was never touched.
 func (s *DERControlStore) Create(ctx context.Context, parentID, id string, control sep2.DERControl) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
 	key := derControlKey{ParentID: parentID, ID: id}
-	if owner, ok := s.mridOwner(control.MRID); ok && owner != key {
+	if owner, ok := s.mridConflict(control.MRID, key); ok {
 		return fmt.Errorf("%w: %q owned by %s/%s", ErrMRIDConflict, control.MRID, owner.ParentID, owner.ID)
 	}
 
@@ -345,7 +370,7 @@ func (s *DERControlStore) Create(ctx context.Context, parentID, id string, contr
 			return errors.Join(err, fmt.Errorf("dercontrol persistence: rollback create %s/%s: %w", parentID, id, derr))
 		}
 		s.dropKey(parentID, id)
-		s.dropMRID(control.MRID)
+		s.dropMRID(control.MRID, key)
 		return err
 	}
 	return nil
@@ -361,7 +386,7 @@ func (s *DERControlStore) Update(ctx context.Context, parentID, id string, contr
 	defer s.writeMu.Unlock()
 
 	key := derControlKey{ParentID: parentID, ID: id}
-	if owner, ok := s.mridOwner(control.MRID); ok && owner != key {
+	if owner, ok := s.mridConflict(control.MRID, key); ok {
 		return fmt.Errorf("%w: %q owned by %s/%s", ErrMRIDConflict, control.MRID, owner.ParentID, owner.ID)
 	}
 
@@ -373,7 +398,7 @@ func (s *DERControlStore) Update(ctx context.Context, parentID, id string, contr
 		return err
 	}
 	if before.MRID != control.MRID {
-		s.dropMRID(before.MRID)
+		s.dropMRID(before.MRID, key)
 		s.addMRID(control.MRID, key)
 	}
 	if s.afterMutateBeforePersist != nil {
@@ -384,7 +409,7 @@ func (s *DERControlStore) Update(ctx context.Context, parentID, id string, contr
 			return errors.Join(err, fmt.Errorf("dercontrol persistence: rollback update %s/%s: %w", parentID, id, derr))
 		}
 		if before.MRID != control.MRID {
-			s.dropMRID(control.MRID)
+			s.dropMRID(control.MRID, key)
 			s.addMRID(before.MRID, key)
 		}
 		return err
@@ -406,7 +431,7 @@ func (s *DERControlStore) Delete(ctx context.Context, parentID, id string) error
 		return err
 	}
 	s.dropKey(parentID, id)
-	s.dropMRID(before.MRID)
+	s.dropMRID(before.MRID, derControlKey{ParentID: parentID, ID: id})
 	if s.afterMutateBeforePersist != nil {
 		s.afterMutateBeforePersist()
 	}

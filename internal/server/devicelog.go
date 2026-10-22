@@ -15,6 +15,13 @@ import (
 // to reach disk.
 const deviceLogShutdownTimeout = 5 * time.Second
 
+// startDeviceLog is newDeviceLog behind a variable so a test can see the
+// writer Run starts and check that Run closed it.
+var startDeviceLog DeviceLogStarter = newDeviceLog
+
+// DeviceLogStarter is the type of newDeviceLog.
+type DeviceLogStarter = func(cfg *config.Config) (*devicelog.Writer, func(), error)
+
 // newDeviceLog starts the device log writer on the directory startup
 // resolved and probed. It returns a nil writer and a no-op close when
 // logging is off or no directory was resolved, so the router records

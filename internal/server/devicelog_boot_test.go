@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -21,21 +22,50 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
 )
 
+// Not parallel: it swaps the device log starter, which parallel tests read, and the
+// parallel ones do not start until every serial test has finished.
 func TestRunWritesRequestAndLogEventLinesToTheDevicesFile(t *testing.T) {
-	t.Parallel()
+	var started *devicelog.Writer
+	var orig server.DeviceLogStarter
+	orig = server.SetStartDeviceLog(func(cfg *config.Config) (*devicelog.Writer, func(), error) {
+		w, closeLog, err := orig(cfg)
+		started = w
+		return w, closeLog, err
+	})
+	t.Cleanup(func() { server.SetStartDeviceLog(orig) })
+
 	env, logDir := bootWithBindRetryDeviceLog(t)
 
+	// The device's first lines go to the shared file while its registration
+	// lookup runs; GET until its own file exists, then once more after the
+	// target lookup has had time to land.
 	base := "https://" + env.sep2Addr
-	resp, err := env.deviceHTTP.Get(base + "/edev/1")
-	if err != nil {
-		t.Fatalf("GET /edev/1: %v", err)
+	getEdev := func() {
+		resp, err := env.deviceHTTP.Get(base + "/edev/1")
+		if err != nil {
+			t.Fatalf("GET /edev/1: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /edev/1 status = %d, want 200", resp.StatusCode)
+		}
 	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /edev/1 status = %d, want 200", resp.StatusCode)
+	ownFile := filepath.Join(logDir, env.deviceLFDI+".jsonl")
+	for deadline := time.Now().Add(3 * time.Second); ; {
+		getEdev()
+		time.Sleep(10 * time.Millisecond)
+		if _, err := os.Stat(ownFile); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the device never got its own file")
+		}
 	}
+	time.Sleep(100 * time.Millisecond)
+	getEdev()
 
 	ext := uint32(9001)
 	body, err := xml.Marshal(&sep2.LogEvent{
@@ -51,7 +81,7 @@ func TestRunWritesRequestAndLogEventLinesToTheDevicesFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err = env.deviceHTTP.Post(base+"/edev/1/lel?probe=QUERYTOKEN", "application/sep+xml", bytes.NewReader(body))
+	resp, err := env.deviceHTTP.Post(base+"/edev/1/lel?probe=QUERYTOKEN", "application/sep+xml", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST /edev/1/lel: %v", err)
 	}
@@ -60,10 +90,17 @@ func TestRunWritesRequestAndLogEventLinesToTheDevicesFile(t *testing.T) {
 		t.Fatalf("POST /edev/1/lel status = %d, want 201", resp.StatusCode)
 	}
 
-	// Shutdown closes the writer after the listener drains, so the lines are
-	// on disk when Run returns.
+	// Run closes the writer after the listener drains. A writer Run left
+	// open would still accept a line, so the refusal below is what proves
+	// the Close ran.
 	if err := env.shutdown(10 * time.Second); err != nil {
 		t.Fatal(err)
+	}
+	if started == nil {
+		t.Fatal("Run never started a device log writer")
+	}
+	if err := started.Append(env.deviceLFDI, devicelog.Entry{Kind: "request"}); !errors.Is(err, devicelog.ErrClosed) {
+		t.Errorf("Append after Run returned = %v; want ErrClosed: Run must close the writer", err)
 	}
 
 	raw, err := os.ReadFile(filepath.Join(logDir, env.deviceLFDI+".jsonl"))
@@ -98,8 +135,14 @@ func TestRunWritesRequestAndLogEventLinesToTheDevicesFile(t *testing.T) {
 	if !sawGet || !sawPost || !sawEvent {
 		t.Errorf("GET request line %v, POST request line %v, LogEvent line %v; want all three in %s", sawGet, sawPost, sawEvent, raw)
 	}
-	if _, err := os.Stat(filepath.Join(logDir, "unregistered.jsonl")); err == nil {
-		t.Error("the registered device's lines also created unregistered.jsonl")
+	ents, err := os.ReadDir(logDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		if e.Name() != env.deviceLFDI+".jsonl" && e.Name() != "unregistered.jsonl" {
+			t.Errorf("unexpected file %s in the log directory", e.Name())
+		}
 	}
 }
 

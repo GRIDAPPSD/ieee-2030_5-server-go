@@ -516,7 +516,7 @@ func Run(ctx context.Context, cfg *config.Config, svc *handler.AdminCertService)
 	embedCfg.Router.Activity = comms
 	// Registered before the protocol listener's stop below, so the drain
 	// runs first and the writer closes with no request still producing.
-	deviceLog, closeDeviceLog, err := newDeviceLog(cfg)
+	deviceLog, closeDeviceLog, err := startDeviceLog(cfg)
 	if err != nil {
 		return err
 	}

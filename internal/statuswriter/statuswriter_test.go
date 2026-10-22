@@ -1,6 +1,7 @@
 package statuswriter
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,13 +11,10 @@ import (
 
 // The wrapper must restore http.Flusher / http.Hijacker / io.ReaderFrom from
 // the embedded writer, else streaming handlers silently break.
-func TestRecorderPreservesOptionalInterfaces(t *testing.T) {
+func TestRecorderKeepsHijackReadFromAndFlush(t *testing.T) {
 	rec := httptest.NewRecorder()
 	sr := New(rec)
 
-	if _, ok := interface{}(sr).(http.Flusher); !ok {
-		t.Fatal("Recorder does not satisfy http.Flusher")
-	}
 	if _, ok := interface{}(sr).(http.Hijacker); !ok {
 		t.Fatal("Recorder does not satisfy http.Hijacker")
 	}
@@ -24,9 +22,11 @@ func TestRecorderPreservesOptionalInterfaces(t *testing.T) {
 		t.Fatal("Recorder does not satisfy io.ReaderFrom")
 	}
 
-	sr.Flush()
+	if err := http.NewResponseController(sr).Flush(); err != nil {
+		t.Errorf("Flush through the Recorder = %v; want nil from a flushable writer", err)
+	}
 	if !rec.Flushed {
-		t.Error("Recorder.Flush did not delegate to the embedded Flusher")
+		t.Error("Flush did not reach the embedded Flusher")
 	}
 
 	n, err := sr.ReadFrom(strings.NewReader("stream-bytes"))
@@ -77,5 +77,42 @@ func TestRecorderImplicit200OnWrite(t *testing.T) {
 	sr.WriteHeader(http.StatusInternalServerError)
 	if sr.Status != http.StatusOK {
 		t.Errorf("Status = %d, want implicit 200 kept after a body write", sr.Status)
+	}
+}
+
+type refusingFlusher struct{ http.ResponseWriter }
+
+var errRefused = errors.New("flush refused")
+
+func (refusingFlusher) FlushError() error { return errRefused }
+
+// The protocol router's buffer refuses to flush; the Recorder in front of it
+// must pass the refusal on, not turn it into nil.
+func TestRecorderPassesAFlushRefusalThrough(t *testing.T) {
+	sr := New(refusingFlusher{httptest.NewRecorder()})
+	if err := http.NewResponseController(sr).Flush(); !errors.Is(err, errRefused) {
+		t.Errorf("Flush = %v; want the embedded writer's refusal", err)
+	}
+	if _, ok := interface{}(sr).(http.Flusher); ok {
+		t.Error("Recorder satisfies the legacy http.Flusher; that would hide the refusal from w.(http.Flusher) callers")
+	}
+}
+
+func TestRecorderIgnoresInformationalStatuses(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sr := New(rec)
+	sr.WriteHeader(http.StatusContinue)
+	sr.WriteHeader(http.StatusEarlyHints)
+	if sr.Status != http.StatusOK {
+		t.Fatalf("Status = %d after only 1xx codes; want the default 200, not a 1xx", sr.Status)
+	}
+	sr.WriteHeader(http.StatusAccepted)
+	if sr.Status != http.StatusAccepted {
+		t.Errorf("Status = %d; want the final 202 recorded after the 1xx codes", sr.Status)
+	}
+	sr2 := New(httptest.NewRecorder())
+	sr2.WriteHeader(http.StatusSwitchingProtocols)
+	if sr2.Status != http.StatusSwitchingProtocols {
+		t.Errorf("Status = %d; want 101, which is final", sr2.Status)
 	}
 }

@@ -336,8 +336,8 @@ type selfRollingBack interface {
 // MaxDuration takes the package default. A configured (non-zero) bound must
 // be a positive whole number of seconds, and MinDuration must not exceed
 // MaxDuration; NewIssuer rejects a Config that violates either. PEN has no
-// default here: a nil PEN, or a PEN of 0 (IANA-reserved and therefore treated as
-// not configured), makes every Issue call refuse with
+// default here: a nil PEN, or a PEN of 0 (IANA-reserved and therefore
+// treated as not configured), makes every Issue call refuse with
 // RefusalPENNotConfigured. The server wires PEN from SEP2_PEN; the
 // duration and lead bounds take their defaults.
 type Config struct {

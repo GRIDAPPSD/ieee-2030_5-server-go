@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -309,15 +310,29 @@ type Config struct {
 // setting. An explicit 0 parses through and is treated as unset by
 // EffectivePEN.
 func ParsePEN(v string) (*uint32, error) {
+	pen, _, err := ResolvePEN(v)
+	return pen, err
+}
+
+// ResolvePEN is ParsePEN that also reports whether the default was used, so
+// each entry point can log it once.
+func ResolvePEN(v string) (pen *uint32, defaulted bool, err error) {
 	if v == "" {
 		v = certs.DefaultPENText
+		defaulted = true
 	}
 	n, err := strconv.ParseUint(v, 10, 32)
 	if err != nil {
-		return nil, fmt.Errorf("SEP2_PEN: %q is not a valid uint32: %w", v, err)
+		return nil, false, fmt.Errorf("SEP2_PEN: %q is not a valid uint32: %w", v, err)
 	}
-	pen := uint32(n)
-	return &pen, nil
+	p := uint32(n)
+	return &p, defaulted, nil
+}
+
+// LogPENDefault is the one startup line for a defaulted SEP2_PEN, shared by
+// the server and by embedders of the admin plane.
+func LogPENDefault(pen uint32) {
+	log.Printf("SEP2_PEN unset: using the IEEE 2030.5 test PEN %d; set SEP2_PEN to your manufacturer PEN for production", pen)
 }
 
 // ParseSEP2Edition validates the value of SEP2_EDITION: empty (unset,

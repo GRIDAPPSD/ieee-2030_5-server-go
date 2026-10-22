@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"testing"
@@ -229,6 +231,29 @@ func TestConfigFromEnvPEN(t *testing.T) {
 		}
 		if got := cfg.EffectivePEN(); got == nil || *got != 40732 {
 			t.Errorf("EffectivePEN() = %v, want 40732", got)
+		}
+	})
+
+	t.Run("the default is logged once and an explicit value is not", func(t *testing.T) {
+		var buf bytes.Buffer
+		log.SetOutput(&buf)
+		t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+		t.Setenv("SEP2_PEN", "")
+		if _, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"}); err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if got := strings.Count(buf.String(), "SEP2_PEN unset: using the IEEE 2030.5 test PEN 40732"); got != 1 {
+			t.Errorf("default log lines = %d, want 1; log: %q", got, buf.String())
+		}
+
+		buf.Reset()
+		t.Setenv("SEP2_PEN", "12345")
+		if _, err := configFromEnv(&certDirResolver{resolved: true, dir: "/test/certdir"}); err != nil {
+			t.Fatalf("configFromEnv: %v", err)
+		}
+		if strings.Contains(buf.String(), "SEP2_PEN unset") {
+			t.Errorf("explicit SEP2_PEN logged the default notice: %q", buf.String())
 		}
 	})
 

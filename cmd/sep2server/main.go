@@ -321,12 +321,12 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	pen, err := config.ParsePEN(os.Getenv("SEP2_PEN"))
+	pen, penDefaulted, err := config.ResolvePEN(os.Getenv("SEP2_PEN"))
 	if err != nil {
 		return nil, err
 	}
-	if os.Getenv("SEP2_PEN") == "" {
-		log.Printf("SEP2_PEN unset: using the IEEE 2030.5 test PEN %d; set SEP2_PEN to your manufacturer PEN for production", *pen)
+	if penDefaulted {
+		config.LogPENDefault(*pen)
 	}
 	sep2Edition, err := config.ParseSEP2Edition(os.Getenv("SEP2_EDITION"))
 	if err != nil {

@@ -42,8 +42,12 @@ type Settings struct {
 func SettingsFromEnv(getenv func(string) string) (Settings, error) {
 	var s Settings
 	var err error
-	if s.PEN, err = config.ParsePEN(getenv("SEP2_PEN")); err != nil {
+	var penDefaulted bool
+	if s.PEN, penDefaulted, err = config.ResolvePEN(getenv("SEP2_PEN")); err != nil {
 		return Settings{}, err
+	}
+	if penDefaulted {
+		config.LogPENDefault(*s.PEN)
 	}
 	if s.Edition, err = config.ParseSEP2Edition(getenv("SEP2_EDITION")); err != nil {
 		return Settings{}, err

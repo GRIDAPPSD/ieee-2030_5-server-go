@@ -1,7 +1,10 @@
 package sep2adminplane_test
 
 import (
+	"bytes"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -80,5 +83,27 @@ func TestPENZeroLeavesDERControlCreate503(t *testing.T) {
 	p := newPlane(t, cfg)
 	if rec := send(p, http.MethodPost, "/api/der/controls", `{"derProgramHref":"/edev/0/fsa/0/derp/0","type":"connect","durationSeconds":300}`, true); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("POST /api/der/controls with PEN 0 = %d %s, want 503", rec.Code, rec.Body)
+	}
+}
+
+// An embedder (the bridge) gets the same default, so it logs it too.
+func TestSettingsFromEnvLogsPENDefault(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	if _, err := sep2adminplane.SettingsFromEnv(envOf(nil)); err != nil {
+		t.Fatalf("SettingsFromEnv: %v", err)
+	}
+	if got := strings.Count(buf.String(), "SEP2_PEN unset: using the IEEE 2030.5 test PEN 40732"); got != 1 {
+		t.Errorf("default log lines = %d, want 1; log: %q", got, buf.String())
+	}
+
+	buf.Reset()
+	if _, err := sep2adminplane.SettingsFromEnv(envOf(map[string]string{"SEP2_PEN": "12345"})); err != nil {
+		t.Fatalf("SettingsFromEnv: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("explicit SEP2_PEN logged: %q", buf.String())
 	}
 }

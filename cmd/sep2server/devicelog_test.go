@@ -267,3 +267,19 @@ func TestPrepareDeviceLogStartsWithoutHomeWhenEveryCertPathIsExplicit(t *testing
 		t.Errorf("off=%v log=%q; want the log on", cfg.DeviceLogOff, logs.String())
 	}
 }
+
+func TestPrepareDeviceLogExplicitCertDirStaysProtectedWithEveryPathExplicit(t *testing.T) {
+	captureLog(t)
+	certDir := t.TempDir()
+	other := t.TempDir()
+	t.Setenv("SEP2_CERT_DIR", certDir)
+	t.Setenv("SEP2_CA_KEY", filepath.Join(other, "ca.key"))
+	t.Setenv("SEP2_ADMIN_SECRET_FILE", filepath.Join(other, "admin.secret"))
+	cfg := &config.Config{KeyFile: filepath.Join(other, "server.key"), DeviceLogDir: filepath.Join(certDir, "logs")}
+	if err := prepareDeviceLog(cfg, &certDirResolver{}); !errors.Is(err, devicelog.ErrDirProtected) {
+		t.Fatalf("err = %v; want ErrDirProtected for a log directory under the named SEP2_CERT_DIR", err)
+	}
+	if _, err := os.Stat(filepath.Join(certDir, "logs")); err == nil {
+		t.Error("the refused directory was created")
+	}
+}

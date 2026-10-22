@@ -119,6 +119,14 @@ func prepareDeviceLog(cfg *config.Config, r *certDirResolver) error {
 	protected = append(protected, caKey, servingCAKey, deviceCAKey)
 	if r.resolved && r.err == nil {
 		protected = append(protected, r.dir)
+	} else if os.Getenv("SEP2_CERT_DIR") != "" {
+		// A directory the operator named stays off-limits even when every
+		// path is set explicitly elsewhere.
+		certDir, cerr := r.get()
+		if cerr != nil {
+			return fmt.Errorf("device log: cannot resolve SEP2_CERT_DIR to protect it: %w", cerr)
+		}
+		protected = append(protected, certDir)
 	}
 	// The admin secret file is read only when the admin plane can mint, so
 	// an unresolvable default is not in use.

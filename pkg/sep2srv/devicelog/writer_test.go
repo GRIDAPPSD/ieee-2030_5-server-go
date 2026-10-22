@@ -539,3 +539,33 @@ func TestDropsAreLoggedPerDevice(t *testing.T) {
 		t.Errorf("device A's queue-full drop logged %d times; want once (rate limited)", n)
 	}
 }
+
+func TestAppendUnregisteredWritesSharedFileKeepingActor(t *testing.T) {
+	dir := t.TempDir()
+	w := newTestWriter(t, dir, Config{})
+	for i := 0; i < 2; i++ {
+		if err := w.AppendUnregistered(lfdiA, Entry{Kind: "request", Fields: map[string]any{"n": i}}); err != nil {
+			t.Fatalf("AppendUnregistered: %v", err)
+		}
+	}
+	if err := w.AppendUnregistered(lfdiB, Entry{Kind: "request"}); err != nil {
+		t.Fatalf("AppendUnregistered: %v", err)
+	}
+	if err := w.AppendUnregistered("../x", Entry{Kind: "request"}); !errors.Is(err, ErrInvalidLFDI) {
+		t.Errorf("AppendUnregistered(non-canonical) = %v; want ErrInvalidLFDI", err)
+	}
+	closeWriter(t, w)
+
+	if got := listDir(t, dir); len(got) != 1 || got[0] != UnregisteredFile+".jsonl" {
+		t.Fatalf("directory holds %v; want only %s.jsonl", got, UnregisteredFile)
+	}
+	lines := readLines(t, filepath.Join(dir, UnregisteredFile+".jsonl"))
+	if len(lines) != 3 {
+		t.Fatalf("got %d lines, want 3", len(lines))
+	}
+	for i, wantActor := range []string{lfdiA, lfdiA, lfdiB} {
+		if lines[i].Actor != wantActor || lines[i].Seq != uint64(i+1) {
+			t.Errorf("line %d actor/seq = %s/%d; want %s/%d", i, lines[i].Actor, lines[i].Seq, wantActor, i+1)
+		}
+	}
+}

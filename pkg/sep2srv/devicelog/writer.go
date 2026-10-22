@@ -77,6 +77,7 @@ type Entry struct {
 }
 
 type item struct {
+	// lfdi is the file key: a canonical LFDI or UnregisteredFile.
 	lfdi string
 	body []byte
 }
@@ -153,6 +154,11 @@ func New(cfg Config) (*Writer, error) {
 	return w, nil
 }
 
+// UnregisteredFile is the file key shared by every certificate that has no
+// EndDevice record and no management pair. It is not a canonical LFDI, so
+// only AppendUnregistered can reach it and a caller-supplied LFDI never can.
+const UnregisteredFile = "unregistered"
+
 // Append queues one line for the device whose certificate LFDI is lfdi. It
 // returns at once: ErrQueueFull and ErrLineTooLarge mean the line was
 // dropped and counted, and ErrInvalidLFDI means no file was named.
@@ -160,6 +166,24 @@ func (w *Writer) Append(lfdi string, e Entry) error {
 	if !sep2lfdi.IsCanonical(lfdi) {
 		return ErrInvalidLFDI
 	}
+	return w.enqueue(lfdi, lfdi, e)
+}
+
+// AppendUnregistered queues one line for a certificate that is not
+// registered. The line carries the certificate LFDI as its actor but is
+// written to the shared UnregisteredFile, so the number of files stays
+// bounded by the registered devices plus one. Like Append it returns at once.
+func (w *Writer) AppendUnregistered(actor string, e Entry) error {
+	if !sep2lfdi.IsCanonical(actor) {
+		return ErrInvalidLFDI
+	}
+	return w.enqueue(UnregisteredFile, actor, e)
+}
+
+// enqueue encodes one line for the file named by key and hands it to the
+// writer goroutine. key is a canonical LFDI or UnregisteredFile, and actor a
+// canonical LFDI; both are checked by the exported callers.
+func (w *Writer) enqueue(key, actor string, e Entry) error {
 	if e.Kind == "" {
 		return fmt.Errorf("%w: kind is empty", ErrInvalidEntry)
 	}
@@ -170,7 +194,7 @@ func (w *Writer) Append(lfdi string, e Entry) error {
 	delete(fields, "seq")
 	fields["kind"] = e.Kind
 	fields["t"] = w.now().UTC().Format(time.RFC3339Nano)
-	fields["actor"] = lfdi
+	fields["actor"] = actor
 	body, err := json.Marshal(fields)
 	if err != nil {
 		w.dropped.Add(1)
@@ -178,7 +202,7 @@ func (w *Writer) Append(lfdi string, e Entry) error {
 	}
 	if int64(len(body)+seqPrefixMax) > min(int64(MaxLineBytes), w.max) {
 		w.dropped.Add(1)
-		w.note(lfdi, "line too large, dropped", nil)
+		w.note(key, "line too large, dropped", nil)
 		return ErrLineTooLarge
 	}
 
@@ -188,11 +212,11 @@ func (w *Writer) Append(lfdi string, e Entry) error {
 		return ErrClosed
 	}
 	select {
-	case w.queue <- item{lfdi: lfdi, body: body}:
+	case w.queue <- item{lfdi: key, body: body}:
 		return nil
 	default:
 		w.dropped.Add(1)
-		w.note(lfdi, "queue full, line dropped", nil)
+		w.note(key, "queue full, line dropped", nil)
 		return ErrQueueFull
 	}
 }

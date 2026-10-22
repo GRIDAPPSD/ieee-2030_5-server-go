@@ -1,0 +1,211 @@
+package assembly_test
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
+)
+
+// logServer serves the management fleet through a router that writes the
+// device log into a fresh directory. closeLog drains the writer so the files
+// can be read.
+func logServer(t *testing.T, policy assembly.AuthPolicy) (srv *httptest.Server, dir string, closeLog func()) {
+	t.Helper()
+	dir = t.TempDir()
+	w, err := devicelog.New(devicelog.Config{Dir: dir, MaxBytes: 1_000_000})
+	if err != nil {
+		t.Fatalf("devicelog.New: %v", err)
+	}
+	closed := false
+	closeLog = func() {
+		if closed {
+			return
+		}
+		closed = true
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := w.Close(ctx); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}
+	t.Cleanup(closeLog)
+	handler, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{DeviceLog: w}, newManagementFleet(t).stores, policy, "serverSFDI", "serverLFDI", nil)
+	srv = httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	return srv, dir, closeLog
+}
+
+func readLogLines(t *testing.T, path string) (raw string, lines []map[string]any) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	for _, l := range strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(l), &m); err != nil {
+			t.Fatalf("line %q is not one JSON object: %v", l, err)
+		}
+		lines = append(lines, m)
+	}
+	return string(b), lines
+}
+
+func logDirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range ents {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+func putDERStatus(t *testing.T, srv *httptest.Server, asLFDI, query string) int {
+	t.Helper()
+	body := sep2Doc("DERStatus", `<readingTime>1700000102</readingTime>`)
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/edev/"+victimID+"/der/"+victimID+"/ders"+query, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(gateIdentityHeader, asLFDI)
+	req.Header.Set("Content-Type", "application/sep+xml")
+	req.Header.Set("Authorization", "Bearer header-secret-value")
+	req.Header.Set("Cookie", "session=cookie-secret-value")
+	status, _ := sendGateRequest(t, req)
+	return status
+}
+
+func TestDeviceLogRecordsOwnRequestWithoutQueryOrHeaders(t *testing.T) {
+	t.Parallel()
+	srv, dir, closeLog := logServer(t, gateTestPolicy())
+
+	if status := putDERStatus(t, srv, victimLFDI, "?token=query-secret-value"); status != http.StatusNoContent {
+		t.Fatalf("PUT ders status = %d, want 204", status)
+	}
+	closeLog()
+
+	raw, lines := readLogLines(t, filepath.Join(dir, victimLFDI+".jsonl"))
+	if len(lines) != 1 {
+		t.Fatalf("got %d lines, want 1: %s", len(lines), raw)
+	}
+	l := lines[0]
+	want := map[string]any{
+		"kind":   "request",
+		"actor":  victimLFDI,
+		"edev":   victimID,
+		"target": victimLFDI,
+		"method": http.MethodPut,
+		"path":   "/edev/" + victimID + "/der/" + victimID + "/ders",
+		"status": float64(http.StatusNoContent),
+	}
+	for k, v := range want {
+		if l[k] != v {
+			t.Errorf("field %s = %v, want %v", k, l[k], v)
+		}
+	}
+	if n, _ := l["req_bytes"].(float64); n <= 0 {
+		t.Errorf("req_bytes = %v, want the PUT body length", l["req_bytes"])
+	}
+	if _, ok := l["dur_ms"].(float64); !ok {
+		t.Errorf("dur_ms = %v, want a number", l["dur_ms"])
+	}
+	for _, leaked := range []string{"query-secret-value", "token", "header-secret-value", "cookie-secret-value", "Authorization", "Cookie", "readingTime"} {
+		if strings.Contains(raw, leaked) {
+			t.Errorf("line carries %q: %s", leaked, raw)
+		}
+	}
+	if names := logDirNames(t, dir); len(names) != 1 {
+		t.Errorf("directory holds %v, want only the actor's file", names)
+	}
+}
+
+func TestDeviceLogAggregatorRequestLandsInAggregatorFileNamingManagedDevice(t *testing.T) {
+	t.Parallel()
+	srv, dir, closeLog := logServer(t, gateTestPolicy())
+
+	if status := putDERStatus(t, srv, managerLFDI, ""); status != http.StatusNoContent {
+		t.Fatalf("manager PUT ders status = %d, want 204", status)
+	}
+	closeLog()
+
+	_, lines := readLogLines(t, filepath.Join(dir, managerLFDI+".jsonl"))
+	if len(lines) != 1 {
+		t.Fatalf("aggregator file has %d lines, want 1", len(lines))
+	}
+	if lines[0]["actor"] != managerLFDI || lines[0]["target"] != victimLFDI || lines[0]["edev"] != victimID {
+		t.Errorf("actor/target/edev = %v/%v/%v, want %s/%s/%s", lines[0]["actor"], lines[0]["target"], lines[0]["edev"], managerLFDI, victimLFDI, victimID)
+	}
+	if _, err := os.Stat(filepath.Join(dir, victimLFDI+".jsonl")); !os.IsNotExist(err) {
+		t.Errorf("managed device's file exists (err=%v); the line belongs to the requester only", err)
+	}
+}
+
+func TestDeviceLogUnregisteredCertificateGoesToSharedFile(t *testing.T) {
+	t.Parallel()
+	srv, dir, closeLog := logServer(t, gateTestPolicy())
+
+	if status, _ := gateRequest(t, srv, http.MethodGet, "/dcap", recordlessLFDI, ""); status != http.StatusOK {
+		t.Fatalf("GET /dcap status = %d, want 200", status)
+	}
+	closeLog()
+
+	_, lines := readLogLines(t, filepath.Join(dir, devicelog.UnregisteredFile+".jsonl"))
+	if len(lines) != 1 || lines[0]["actor"] != recordlessLFDI || lines[0]["path"] != "/dcap" {
+		t.Errorf("unregistered lines = %v, want one /dcap line with actor %s", lines, recordlessLFDI)
+	}
+	if _, present := lines[0]["edev"]; present {
+		t.Errorf("edev present on /dcap: %v", lines[0])
+	}
+	if names := logDirNames(t, dir); len(names) != 1 {
+		t.Errorf("directory holds %v, want only the shared file", names)
+	}
+}
+
+func TestDeviceLogSkipsRefusedAndAnonymousRequests(t *testing.T) {
+	t.Parallel()
+	srv, dir, closeLog := logServer(t, activityPolicy(victimLFDI))
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/dcap", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Test-Deny", "1")
+	if status, _ := sendGateRequest(t, req); status != http.StatusForbidden {
+		t.Fatalf("control: refused request status = %d, want 403", status)
+	}
+	if status, _ := gateRequest(t, srv, http.MethodGet, "/dcap", "", ""); status != http.StatusOK {
+		t.Fatalf("control: served request status = %d, want 200", status)
+	}
+	closeLog()
+
+	_, lines := readLogLines(t, filepath.Join(dir, victimLFDI+".jsonl"))
+	if len(lines) != 1 {
+		t.Errorf("got %d lines, want only the served request's", len(lines))
+	}
+}
+
+func TestDeviceLogFailureNeverFailsTheRequest(t *testing.T) {
+	t.Parallel()
+	srv, dir, closeLog := logServer(t, gateTestPolicy())
+	closeLog()
+
+	if status := putDERStatus(t, srv, victimLFDI, ""); status != http.StatusNoContent {
+		t.Errorf("PUT ders with the log closed: status = %d, want 204", status)
+	}
+	if names := logDirNames(t, dir); len(names) != 0 {
+		t.Errorf("closed writer wrote %v", names)
+	}
+}

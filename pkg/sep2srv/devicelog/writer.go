@@ -567,6 +567,13 @@ func (w *Writer) writePlaced(it item) {
 }
 
 func (w *Writer) write(it item) {
+	// encode already refuses a longer body; the check is repeated here so the
+	// allocation below has an explicit bound at the point it is made.
+	if len(it.body) > MaxLineBytes-seqPrefixMax {
+		w.dropped.Add(1)
+		w.note(it.lfdi, "line too large, dropped", nil)
+		return
+	}
 	df, err := w.open(it.lfdi)
 	if err != nil {
 		w.fail(it.lfdi, err)

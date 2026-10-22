@@ -692,3 +692,32 @@ func readRaw(t *testing.T, path string) map[string]any {
 	}
 	return m
 }
+
+// The writer goroutine repeats the size check before it allocates a line, so
+// a body that got past encode (it cannot today) is counted, logged and not
+// written. The Writer is closed first so the test may call write itself.
+func TestWriteRefusesAnOversizeBodyBeforeAllocating(t *testing.T) {
+	dir := t.TempDir()
+	var logs bytes.Buffer
+	w := newTestWriter(t, dir, Config{Logger: log.New(&logs, "", 0)})
+	closeWriter(t, w)
+
+	huge := append([]byte(`{"kind":"request","pad":"`), bytes.Repeat([]byte("x"), MaxLineBytes)...)
+	huge = append(huge, `"}`...)
+	w.write(item{lfdi: lfdiA, body: huge})
+
+	if w.Dropped() != 1 {
+		t.Errorf("Dropped = %d; want 1", w.Dropped())
+	}
+	if got := listDir(t, dir); len(got) != 0 {
+		t.Errorf("directory holds %v; an oversize body must create no file", got)
+	}
+	if !strings.Contains(logs.String(), "line too large, dropped") {
+		t.Errorf("no too-large log line: %q", logs.String())
+	}
+	ok := []byte(`{"kind":"request"}`)
+	w.write(item{lfdi: lfdiA, body: ok})
+	if w.Dropped() != 1 || len(listDir(t, dir)) != 1 {
+		t.Errorf("control: a normal body must still be written (dropped %d, files %v)", w.Dropped(), listDir(t, dir))
+	}
+}

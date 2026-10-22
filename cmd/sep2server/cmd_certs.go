@@ -219,7 +219,7 @@ func runGenerateDevice(args []string) error {
 	caKeyFile := fs.String("ca-key", "", "CA private key PEM (default: SEP2_CERT_DIR, or ~/tls, plus ca.key)")
 	deviceType := fs.Int("device-type", 1, "Device type (1=generic, 2=mobile, 3=postMfg)")
 	hwSerial := fs.String("hw-serial", "", "Hardware serial number (required for CSIP section 6.2 HardwareModuleName SAN)")
-	hwType := fs.String("hw-type", "", "manufacturer PEN OID (e.g. 1.3.6.1.4.1.<PEN>) - required for CSIP HardwareModuleName SAN")
+	hwType := fs.String("hw-type", "", "manufacturer PEN OID (e.g. 1.3.6.1.4.1.<PEN>) for the CSIP HardwareModuleName SAN; default "+certs.DefaultHWTypeOID+" (a test value), or "+certs.DefaultHWTypeEnv)
 	name := fs.String("name", "device", "Output filename prefix")
 	outDir := fs.String("out", "", "Output directory (default: SEP2_CERT_DIR, or ~/tls)")
 	isTest := fs.Bool("test", false, "Generate test certificate")
@@ -231,7 +231,12 @@ func runGenerateDevice(args []string) error {
 		return fmt.Errorf("-hw-serial is required (CSIP section 6.2 HardwareModuleName SAN)")
 	}
 	if *hwType == "" {
-		return fmt.Errorf("-hw-type is required: pass your manufacturer's PEN OID (e.g. 1.3.6.1.4.1.<PEN>)")
+		def, err := certs.ResolveDefaultHWType(os.Getenv)
+		if err != nil {
+			return err
+		}
+		*hwType = def
+		fmt.Fprintf(os.Stderr, "-hw-type not given: using the default %s (a test value unless %s is set); production devices should pass their manufacturer's PEN OID\n", *hwType, certs.DefaultHWTypeEnv)
 	}
 	if !validDeviceNamePattern.MatchString(*name) {
 		return fmt.Errorf("-name must match %s (got %q): allowed characters are ASCII letters, digits, '.', '-', '_'; no leading dot, no path separators, max 64 chars", validDeviceNamePattern, *name)

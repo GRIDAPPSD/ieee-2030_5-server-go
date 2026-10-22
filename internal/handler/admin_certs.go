@@ -10,6 +10,7 @@ import (
 
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 )
 
@@ -33,6 +34,11 @@ type AdminCertService struct {
 	servingCACertPEM []byte
 	deviceCACert     *x509.Certificate
 	deviceCAKey      *ecdsa.PrivateKey
+	// defaultHWType is used when a device-cert request names no hwType;
+	// empty means certs.DefaultHWTypeOID.
+	defaultHWType string
+	// hwTypeNotice makes the fallback log line print once per process.
+	hwTypeNotice sync.Once
 }
 
 // NewAdminCertService creates a service with a single CA signing both the
@@ -57,6 +63,15 @@ func NewAdminCertServiceWithCAs(servingCACert *x509.Certificate, servingCAKey *e
 		deviceCACert:     deviceCACert,
 		deviceCAKey:      deviceCAKey,
 	}
+}
+
+// SetDefaultHWType sets the hardware type OID used when a device-cert request
+// omits hwType. The caller validates it (certs.ResolveDefaultHWType); call it
+// before the service starts serving.
+func (s *AdminCertService) SetDefaultHWType(oid string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.defaultHWType = oid
 }
 
 // ServingCA returns the loaded serving CA certificate, or nil when it is not
@@ -245,8 +260,13 @@ func (s *AdminCertService) HandleCreateDeviceCert() http.HandlerFunc {
 			return
 		}
 		if req.HWType == "" {
-			writeError(w, http.StatusBadRequest, "hwType (manufacturer PEN OID) is required")
-			return
+			req.HWType = s.defaultHWType
+			if req.HWType == "" {
+				req.HWType = certs.DefaultHWTypeOID
+			}
+			s.hwTypeNotice.Do(func() {
+				log.Printf("device cert: hwType not given, using the default %s (a test value unless SEP2_HW_TYPE is set); production devices should carry their manufacturer's PEN OID", logsafe.Str(req.HWType))
+			})
 		}
 		hwTypeOID, err := certs.ParseOID(req.HWType)
 		if err != nil {

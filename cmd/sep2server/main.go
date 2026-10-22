@@ -155,9 +155,14 @@ func loadAdminCertService(cfg *config.Config, resolver *certDirResolver) (*handl
 	// admin LISTENER is a separate, narrower question: see AdminCertService
 	// .CanMint and its call site in internal/server/server.go (#638 fix
 	// round 3 item 1).
+	defaultHWType, err := certs.ResolveDefaultHWType(os.Getenv)
+	if err != nil {
+		return nil, err
+	}
 	var svc *handler.AdminCertService
 	if servingCert != nil || deviceCert != nil {
 		svc = handler.NewAdminCertServiceWithCAs(servingCert, servingKey, servingPEM, deviceCert, deviceKey)
+		svc.SetDefaultHWType(defaultHWType)
 		switch {
 		case servingKey != nil && deviceKey != nil:
 			log.Println("CA(s) loaded: admin cert API enabled")

@@ -13,7 +13,9 @@
 #   SERIAL         hardware serial for the CSIP section 6.2 HardwareModuleName SAN
 #
 # Optional env:
-#   HW_TYPE        manufacturer PEN OID (default 1.3.6.1.4.1.40732.99)
+#   HW_TYPE        manufacturer hardware type OID. Unset: no --hw-type is passed, so
+#                  the server binary decides (SEP2_HW_TYPE, else its built-in
+#                  default 1.3.6.1.4.1.40732.99), the same as `make certs`
 #   DEVICE_TYPE    1=Generic (default), 2=Mobile, 3=PostMfg
 #   FORCE          when "1", overwrite an existing cert/key with the same name
 #   CERT_DIR       output directory (default: SEP2_CERT_DIR, or $HOME/tls -
@@ -52,7 +54,7 @@ SERVER_BIN="${SERVER_BIN:-bin/sep2server}"
 
 DEVICE_NAME="${DEVICE_NAME:-}"
 SERIAL="${SERIAL:-}"
-HW_TYPE="${HW_TYPE:-1.3.6.1.4.1.40732.99}"
+HW_TYPE="${HW_TYPE:-}"
 DEVICE_TYPE="${DEVICE_TYPE:-1}"
 FORCE="${FORCE:-}"
 
@@ -93,7 +95,7 @@ if [[ ! "$SERIAL" =~ ^[A-Za-z0-9._:/-]{1,128}$ ]]; then
 fi
 
 # HW_TYPE is a dotted-decimal OID. Strict: digits and dots only.
-if [[ ! "$HW_TYPE" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+if [[ -n "$HW_TYPE" && ! "$HW_TYPE" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
   err "HW_TYPE must be a dotted-decimal OID (e.g. 1.3.6.1.4.1.<PEN>); got: ${HW_TYPE}"
   exit 2
 fi
@@ -129,10 +131,15 @@ if [[ ! -x "$SERVER_BIN" ]]; then
 fi
 
 # --- Issue ---------------------------------------------------------------
+# --hw-type is passed only when HW_TYPE is set, so the binary owns the default.
+HW_TYPE_ARGS=()
+if [[ -n "$HW_TYPE" ]]; then
+  HW_TYPE_ARGS=(--hw-type "$HW_TYPE")
+fi
 "$SERVER_BIN" certs generate-device \
   --ca "${CERT_DIR}/ca.crt" --ca-key "${CERT_DIR}/ca.key" \
   --hw-serial "$SERIAL" \
-  --hw-type "$HW_TYPE" \
+  ${HW_TYPE_ARGS[@]+"${HW_TYPE_ARGS[@]}"} \
   --device-type "$DEVICE_TYPE" \
   --name "$DEVICE_NAME" --out "$CERT_DIR"
 

@@ -42,6 +42,37 @@ make build      # bin/sep2server
 
 Binaries land in `bin/`.
 
+## Device certificate hardware type
+
+**The default hardware type is `1.3.6.1.4.1.40732.99`, a test value under the IEEE 2030.5 arc; production devices use their manufacturer's PEN.**
+It is used by `sep2server certs`, `POST /api/certs/device`, `make certs` and
+`scripts/new-device.sh` when no hardware type is given. The server and the CLI
+note the fallback once per process. `make certs`, `make new-device` and the CLI
+all read `SEP2_HW_TYPE`; `HW_TYPE` overrides it for the two make targets.
+
+The hardware type is a full OID, not the bare PEN number. It needs at least two
+arcs, a first arc of 0, 1 or 2, and a second arc of 0 to 39 when the first is 0
+or 1; the usual form is `1.3.6.1.4.1.<PEN>`, optionally with further arcs.
+`SEP2_PEN` is the opposite: it takes only the bare number.
+
+| Variable | Valid | Invalid |
+|---|---|---|
+| `SEP2_HW_TYPE` (server and `sep2server certs`) | `1.3.6.1.4.1.40732.99` | `40732` (bare PEN, one arc) |
+| `SEP2_PEN` (server mRID) | `40732` | `1.3.6.1.4.1.40732` (an OID, not a number) |
+| `HW_TYPE` (`make certs`, `scripts/new-device.sh`) | `1.3.6.1.4.1.40732.99` | `40732` |
+
+To change the default:
+
+```bash
+SEP2_HW_TYPE=1.3.6.1.4.1.<PEN> sep2server            # server API default
+SEP2_HW_TYPE=1.3.6.1.4.1.<PEN> sep2server certs generate-device ...   # CLI default
+make certs HW_TYPE=1.3.6.1.4.1.<PEN>
+HW_TYPE=1.3.6.1.4.1.<PEN> scripts/new-device.sh ...
+```
+
+A malformed `SEP2_HW_TYPE` stops the server at startup, as a malformed `SEP2_PEN`
+does. An explicit `-hw-type` or `hwType` always wins.
+
 ## Run
 
 ```bash

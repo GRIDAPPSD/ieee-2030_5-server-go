@@ -57,9 +57,7 @@
   // guessed or stale type.
   let deviceType = $state<number | null>(null)
   let hwSerial = $state('')
-  // The route rejects a device-cert request with no hwType: the OID is part
-  // of the CSIP HardwareModuleName SAN and the server cannot invent it.
-  // Without this field every request from here answered 400.
+  // Left empty, the server mints with its test default hardware type OID.
   let hwType = $state('')
   let certResult = $state('')
   let certOk = $state(false)

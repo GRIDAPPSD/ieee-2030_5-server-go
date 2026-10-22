@@ -31,8 +31,15 @@ func logServer(t *testing.T, policy assembly.AuthPolicy) (srv *httptest.Server, 
 // management store before the router is built.
 func logServerWith(t *testing.T, policy assembly.AuthPolicy, wrapManagers func(store.EndDeviceManagementStore) store.EndDeviceManagementStore, wrapDevices func(store.EndDeviceStore) store.EndDeviceStore) (srv *httptest.Server, dir string, closeLog func(), w *devicelog.Writer) {
 	t.Helper()
+	return logServerSized(t, 1_000_000, policy, wrapManagers, wrapDevices)
+}
+
+// logServerSized is logServerWith with the per-file size limit set to
+// maxBytes.
+func logServerSized(t *testing.T, maxBytes int64, policy assembly.AuthPolicy, wrapManagers func(store.EndDeviceManagementStore) store.EndDeviceManagementStore, wrapDevices func(store.EndDeviceStore) store.EndDeviceStore) (srv *httptest.Server, dir string, closeLog func(), w *devicelog.Writer) {
+	t.Helper()
 	dir = t.TempDir()
-	w, err := devicelog.New(devicelog.Config{Dir: dir, MaxBytes: 1_000_000})
+	w, err := devicelog.New(devicelog.Config{Dir: dir, MaxBytes: maxBytes})
 	if err != nil {
 		t.Fatalf("devicelog.New: %v", err)
 	}

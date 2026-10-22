@@ -47,8 +47,13 @@ func newDeviceLog(cfg *config.Config) (*devicelog.Writer, func(), error) {
 		if n := w.Dropped() + w.Failed(); n > 0 {
 			log.Printf("device log: %d lines dropped or lost to file errors since start", n)
 		}
-		if n := w.Unresolved(); n > 0 {
-			log.Printf("device log: %d request lines kept in their device's file because a lookup failed", n)
+		if n := w.Unsettled(); n > 0 {
+			log.Printf("device log: %d request lines were written by the fallback rule (their device file if it already existed, else the shared file, no target) because a lookup failed or had not settled in time", n)
+		}
+		for _, st := range w.Stats() {
+			if n := st.Value(); n > 0 {
+				log.Printf("device log: %s: %d", logsafe.Str(st.Name), n)
+			}
 		}
 	}
 	return w, closeLog, nil

@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
@@ -46,5 +49,33 @@ func TestNewDeviceLogRefusesOutOfRangeLimit(t *testing.T) {
 	t.Parallel()
 	if _, _, err := newDeviceLog(&config.Config{DeviceLogResolvedDir: t.TempDir(), DeviceLogMaxBytes: 5}); err == nil {
 		t.Error("limit 5 accepted; want a refusal")
+	}
+}
+
+// Not parallel: it redirects the standard logger.
+func TestDeviceLogShutdownNamesBothCounters(t *testing.T) {
+	var out bytes.Buffer
+	log.SetOutput(&out)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	w, closeLog, err := newDeviceLog(&config.Config{DeviceLogResolvedDir: t.TempDir()})
+	if err != nil || w == nil {
+		t.Fatalf("newDeviceLog = %v, %v", w, err)
+	}
+	w.AddStat("lookups refused at the in-flight limit", func() uint64 { return 3 })
+	const lfdi = "0123456789ABCDEF0123456789ABCDEF01234567"
+	stillPending := func(_, _ string) devicelog.Resolution { return devicelog.Resolution{Pending: true} }
+	if err := w.AppendResolved(lfdi, "", stillPending, devicelog.Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	closeLog() // releases the parked line by the fallback, which counts it
+
+	for _, want := range []string{
+		"1 request lines were written by the fallback rule",
+		"lookups refused at the in-flight limit: 3",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("shutdown output lacks %q:\n%s", want, out.String())
+		}
 	}
 }

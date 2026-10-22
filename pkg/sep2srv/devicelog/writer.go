@@ -62,6 +62,12 @@ type Config struct {
 	Now func() time.Time
 	// Logger receives write failures; nil means the standard logger.
 	Logger *log.Logger
+	// ParkWait is the longest a request line waits for its lookups to
+	// settle; zero means 500 ms. Deadlines are measured on Now.
+	ParkWait time.Duration
+	// ParkCap is the most lines held at once; a line that would pass it is
+	// written by the fallback rule at once. Zero means 256.
+	ParkCap int
 
 	// onDequeue runs in the writer goroutine before each line is written;
 	// tests use it to stall the writer.
@@ -85,11 +91,22 @@ type Resolution struct {
 	// false. The line is then filed by the existence of the actor's own
 	// file and counted.
 	Err error
+	// Pending reports that an answer the line needs, the registration or,
+	// for a line naming an EndDevice, the target, has none cached yet: its
+	// lookup is running, or could not start for capacity. A cached error is
+	// not pending. The writer holds a pending line until it settles.
+	Pending bool
 }
 
 // Resolver answers AppendResolved lines in the writer goroutine. It must not
 // wait on a store: NewResolver's does a cache read, and starts at most one
 // background lookup per missing key.
+//
+// The writer holds a line whose answer is Pending, oldest first per device,
+// and re-asks every 10 ms until the answer lands. A line still waiting after
+// Config.ParkWait (500 ms), or arriving when Config.ParkCap (256) lines are
+// held, or left when Close runs, is written by the fallback rule in place and
+// counted by Unsettled.
 type Resolver func(actor, edev string) Resolution
 
 // Entry is one line to record. Kind is required. Fields are merged into the
@@ -118,7 +135,16 @@ type pendingLine struct {
 	edev    string
 	entry   Entry
 	resolve Resolver
+	// deadline is when a parked line stops waiting; set when it is parked.
+	deadline time.Time
 }
+
+const (
+	defaultParkWait = 500 * time.Millisecond
+	defaultParkCap  = 256
+	// parkRecheck is how often parked lines are looked at again.
+	parkRecheck = 10 * time.Millisecond
+)
 
 type devFile struct {
 	f    *os.File
@@ -135,6 +161,10 @@ type Writer struct {
 	now      func() time.Time
 	logger   *log.Logger
 	stall    func()
+	parkWait time.Duration
+	parkCap  int
+	parked   []*pendingLine
+	stats    []Stat
 	queue    chan item
 	done     chan struct{}
 	mu       sync.RWMutex
@@ -165,15 +195,23 @@ func New(cfg Config) (*Writer, error) {
 		return nil, fmt.Errorf("device log: limit %d is not positive", cfg.MaxBytes)
 	}
 	w := &Writer{
-		dir:     cfg.Dir,
-		max:     cfg.MaxBytes,
-		maxOpen: cfg.MaxOpenFiles,
-		now:     cfg.Now,
-		logger:  cfg.Logger,
-		stall:   cfg.onDequeue,
-		done:    make(chan struct{}),
-		files:   make(map[string]*devFile),
-		notes:   make(map[string]uint64),
+		dir:      cfg.Dir,
+		max:      cfg.MaxBytes,
+		maxOpen:  cfg.MaxOpenFiles,
+		now:      cfg.Now,
+		logger:   cfg.Logger,
+		stall:    cfg.onDequeue,
+		parkWait: cfg.ParkWait,
+		parkCap:  cfg.ParkCap,
+		done:     make(chan struct{}),
+		files:    make(map[string]*devFile),
+		notes:    make(map[string]uint64),
+	}
+	if w.parkWait <= 0 {
+		w.parkWait = defaultParkWait
+	}
+	if w.parkCap <= 0 {
+		w.parkCap = defaultParkCap
 	}
 	if w.maxOpen <= 0 {
 		w.maxOpen = defaultMaxOpenFiles
@@ -294,20 +332,18 @@ func (w *Writer) encode(actor string, e Entry) ([]byte, error) {
 	return body, nil
 }
 
-// resolvePending asks the Resolver about p and encodes the line. The file is
-// decided from the answer alone, so the writer never waits on a store and a
+// place decides the file for p from res and encodes the line: the one place
+// a request line's file is chosen. The writer never waits on a store and a
 // store failure cannot create files:
 //   - registered: the actor's own file, with the target;
 //   - not registered: the shared file;
-//   - not known: the actor's own file only when it already exists, else the
+//   - not known (a failed lookup, or a line released before its lookup
+//     settled): the actor's own file only when it already exists, else the
 //     shared file, with no target.
 //
-// A failed lookup is counted and its first occurrence per device logged.
-func (w *Writer) resolvePending(p *pendingLine) item {
-	res := Resolution{Known: true, Registered: true}
-	if p.resolve != nil {
-		res = p.resolve(p.actor, p.edev)
-	}
+// A line released before its lookups settled, or filed after a failed one,
+// is counted as unsettled and its first occurrence per device logged.
+func (w *Writer) place(p *pendingLine, res Resolution, released bool) item {
 	e := p.entry
 	if res.Target != "" && res.Known {
 		fields := make(map[string]any, len(e.Fields)+1)
@@ -321,13 +357,15 @@ func (w *Writer) resolvePending(p *pendingLine) item {
 	switch {
 	case res.Known && !res.Registered:
 		key = UnregisteredFile
-	case !res.Known:
+	case !res.Known && !w.ownFileExists(p.actor):
+		key = UnregisteredFile
+	}
+	if released || res.Err != nil {
+		w.unknown.Add(1)
 		if res.Err != nil {
-			w.unknown.Add(1)
 			w.note(p.actor, "lookup failed, line filed by its device file's existence", res.Err)
-		}
-		if !w.ownFileExists(p.actor) {
-			key = UnregisteredFile
+		} else {
+			w.note(p.actor, "lookup did not settle in time, line filed by its device file's existence", nil)
 		}
 	}
 	body, err := w.encode(p.actor, e)
@@ -356,9 +394,27 @@ func (w *Writer) Dropped() uint64 { return w.dropped.Load() }
 // Failed counts lines lost to a file error.
 func (w *Writer) Failed() uint64 { return w.failed.Load() }
 
-// Unresolved counts request lines whose registration lookup failed; each was
-// filed by whether its device's own file already existed.
-func (w *Writer) Unresolved() uint64 { return w.unknown.Load() }
+// Unsettled counts request lines written by the fallback rule: a lookup
+// failed, or had not settled when the line's wait ended (ParkWait, ParkCap
+// or Close). Each went to its device's own file if that already existed,
+// else to the shared file, without a target.
+func (w *Writer) Unsettled() uint64 { return w.unknown.Load() }
+
+// Stat is a named counter that a part of the log keeps outside the Writer,
+// reported with the Writer's own at shutdown.
+type Stat struct {
+	Name  string
+	Value func() uint64
+}
+
+// AddStat registers a counter to be listed by Stats. Call it before the
+// Writer is shared; it is not safe against a concurrent Stats.
+func (w *Writer) AddStat(name string, value func() uint64) {
+	w.stats = append(w.stats, Stat{Name: name, Value: value})
+}
+
+// Stats lists the registered counters.
+func (w *Writer) Stats() []Stat { return append([]Stat(nil), w.stats...) }
 
 // Close stops accepting lines, writes what is queued, and closes every file.
 // It is safe to call again.
@@ -384,12 +440,35 @@ const seqPrefixMax = len(`{"seq":,`) + 20 + len("\n")
 
 func (w *Writer) run() {
 	defer close(w.done)
-	for it := range w.queue {
-		if w.stall != nil {
-			w.stall()
+	var tick *time.Ticker
+	var tickC <-chan time.Time
+	for open := true; open; {
+		// The re-check runs only while lines are parked.
+		if len(w.parked) > 0 && tick == nil {
+			tick = time.NewTicker(parkRecheck)
+			tickC = tick.C
+		} else if len(w.parked) == 0 && tick != nil {
+			tick.Stop()
+			tick, tickC = nil, nil
 		}
-		w.write(it)
+		select {
+		case it, ok := <-w.queue:
+			if !ok {
+				open = false
+				break
+			}
+			if w.stall != nil {
+				w.stall()
+			}
+			w.handle(it)
+		case <-tickC:
+			w.recheckParked()
+		}
 	}
+	if tick != nil {
+		tick.Stop()
+	}
+	w.releaseParked()
 	var errs []error
 	for k, df := range w.files {
 		if err := df.f.Close(); err != nil {
@@ -400,13 +479,94 @@ func (w *Writer) run() {
 	w.closeErr = errors.Join(errs...)
 }
 
-func (w *Writer) write(it item) {
-	if it.pending != nil {
-		it = w.resolvePending(it.pending)
-		if it.body == nil {
-			return
+// handle writes a resolved line, or resolves a pending one: a line whose
+// lookups have settled is placed at once, and one still waiting is parked.
+// An actor with parked lines parks every later line behind them, so a
+// device's lines keep their order. A line that would pass ParkCap is placed
+// by the fallback instead of being held.
+func (w *Writer) handle(it item) {
+	if it.pending == nil {
+		w.write(it)
+		return
+	}
+	p := it.pending
+	res := Resolution{Known: true, Registered: true}
+	if p.resolve != nil {
+		res = p.resolve(p.actor, p.edev)
+	}
+	behind := w.hasParked(p.actor)
+	if !res.Pending && !behind {
+		w.writePlaced(w.place(p, res, false))
+		return
+	}
+	if len(w.parked) >= w.parkCap {
+		w.writePlaced(w.place(p, res, true))
+		return
+	}
+	p.deadline = w.now().Add(w.parkWait)
+	w.parked = append(w.parked, p)
+}
+
+func (w *Writer) hasParked(actor string) bool {
+	for _, p := range w.parked {
+		if p.actor == actor {
+			return true
 		}
 	}
+	return false
+}
+
+// recheckParked looks at the parked lines again, oldest first. A line is
+// written when its lookups settled or its deadline passed, unless an earlier
+// line of the same actor is still held.
+func (w *Writer) recheckParked() {
+	now := w.now()
+	held := w.parked[:0:0]
+	blocked := make(map[string]struct{})
+	for _, p := range w.parked {
+		if _, ok := blocked[p.actor]; ok {
+			held = append(held, p)
+			continue
+		}
+		res := Resolution{Known: true, Registered: true}
+		if p.resolve != nil {
+			res = p.resolve(p.actor, p.edev)
+		}
+		switch {
+		case !res.Pending:
+			w.writePlaced(w.place(p, res, false))
+		case !now.Before(p.deadline):
+			w.writePlaced(w.place(p, res, true))
+		default:
+			blocked[p.actor] = struct{}{}
+			held = append(held, p)
+		}
+	}
+	w.parked = held
+}
+
+// releaseParked writes every parked line by the fallback rule, in order. It
+// runs when Close has drained the queue.
+func (w *Writer) releaseParked() {
+	for _, p := range w.parked {
+		res := Resolution{Known: true, Registered: true}
+		if p.resolve != nil {
+			res = p.resolve(p.actor, p.edev)
+		}
+		w.writePlaced(w.place(p, res, true))
+	}
+	w.parked = nil
+}
+
+// writePlaced writes a line place produced; an empty item is a line place
+// already counted as dropped.
+func (w *Writer) writePlaced(it item) {
+	if it.body != nil {
+		w.write(it)
+	}
+}
+
+func (w *Writer) write(it item) {
 	df, err := w.open(it.lfdi)
 	if err != nil {
 		w.fail(it.lfdi, err)

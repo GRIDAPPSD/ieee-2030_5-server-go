@@ -54,7 +54,9 @@ func newDeviceLogResolver(w *devicelog.Writer, stores *Stores) *devicelog.Cachin
 	if stores != nil {
 		l = deviceLogLookups{devices: stores.EndDevices, managers: stores.EndDeviceManagers}
 	}
-	return devicelog.NewResolver(devicelog.ResolverConfig{Registered: l.registered, Target: l.target})
+	r := devicelog.NewResolver(devicelog.ResolverConfig{Registered: l.registered, Target: l.target})
+	w.AddStat("lookups refused at the in-flight limit", r.Refused)
+	return r
 }
 
 // wrap returns next unchanged when there is no observer, so a router built

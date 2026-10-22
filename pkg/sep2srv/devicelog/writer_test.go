@@ -585,8 +585,8 @@ func TestAppendResolvedRoutesAndAddsTargetInWriter(t *testing.T) {
 	if _, has := shared["target"]; has {
 		t.Errorf("unresolved line carries a target: %v", shared)
 	}
-	if w.Unresolved() != 0 {
-		t.Errorf("Unresolved = %d after clean answers; want 0", w.Unresolved())
+	if w.Unsettled() != 0 {
+		t.Errorf("Unresolved = %d after clean answers; want 0", w.Unsettled())
 	}
 }
 
@@ -628,7 +628,7 @@ func TestAppendResolvedUnknownCreatesNoFileAndFollowsExistingOnes(t *testing.T) 
 	if lines := readLines(t, filepath.Join(dir, UnregisteredFile+".jsonl")); len(lines) != strangers+1 {
 		t.Errorf("shared file has %d lines; want %d", len(lines), strangers+1)
 	}
-	if got := w.Unresolved(); got != strangers+1 {
+	if got := w.Unsettled(); got != strangers+1 {
 		t.Errorf("Unresolved = %d; want %d failed lookups counted (a pending one is not a failure)", got, strangers+1)
 	}
 	if got := strings.Count(logs.String(), "lookup failed"); got != strangers+1 {

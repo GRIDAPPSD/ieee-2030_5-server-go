@@ -8,21 +8,31 @@ import (
 	"time"
 )
 
-// Defaults for NewResolver.
+// Defaults for NewResolver. No store notifies the resolver of a change, so
+// expiry is the only invalidation, and each lifetime below is also the longest
+// a change can go unseen:
+//
+//	Registered (positive)       30 s  A removed device or dropped management
+//	                                  pair keeps writing to its own, already
+//	                                  existing, file for up to 30 s.
+//	Not registered, or error     1 s  A device that registers is filed to its
+//	                                  own file from its first line after 1 s.
+//	Target (id to LFDI)          1 s  A reused EndDevice id shows the old
+//	                                  LFDI for at most 1 s.
+//
+// A miss does not misfile a line: the writer holds the line until the lookup
+// settles (Config.ParkWait), so a short lifetime costs a lookup per burst,
+// never a line in the wrong file.
 const (
 	// DefaultCacheTTL is how long a positive registration answer is reused.
-	// No store notifies the resolver of a change, so a deleted device or a
-	// dropped management pair reaches the log only when its entry expires.
 	DefaultCacheTTL = 30 * time.Second
 	// DefaultErrorTTL is how long a negative answer (not registered, no such
-	// EndDevice) or a failed lookup is reused. It is short so a device that
-	// has just registered gets its own file within this interval.
+	// EndDevice) or a failed lookup is reused.
 	DefaultErrorTTL = time.Second
 	// DefaultTargetTTL is how long a resolved target is reused. An EndDevice
 	// id can be deleted and recreated for another LFDI through a path no
-	// protocol request sees (a fixture, the admin plane), and nothing tells
-	// the resolver, so the target is the one answer kept short: a reused id
-	// can show its old device for at most this long.
+	// protocol request sees (a fixture, the admin plane), so the target is
+	// the one answer kept short.
 	DefaultTargetTTL = time.Second
 	// DefaultLookupTimeout is the context deadline given to one lookup.
 	DefaultLookupTimeout = 250 * time.Millisecond
@@ -119,10 +129,14 @@ func (r *CachingResolver) Refused() uint64 { return r.refused.Load() }
 // Resolve is the Writer's Resolver. It never waits on a store.
 func (r *CachingResolver) Resolve(actor, edev string) Resolution {
 	reg, regErr, regHit := lookup(r, &r.actors, actor, r.cfg.Registered, r.cfg.CacheTTL)
-	res := Resolution{Known: regHit && regErr == nil, Registered: reg, Err: regErr}
+	res := Resolution{Known: regHit && regErr == nil, Registered: reg, Err: regErr, Pending: !regHit && r.cfg.Registered != nil}
 	if edev != "" && r.cfg.Target != nil {
-		if t, tErr, tHit := lookup(r, &r.targets, edev, r.cfg.Target, r.cfg.TargetTTL); tHit && tErr == nil {
+		t, tErr, tHit := lookup(r, &r.targets, edev, r.cfg.Target, r.cfg.TargetTTL)
+		if tHit && tErr == nil {
 			res.Target = t
+		}
+		if !tHit {
+			res.Pending = true
 		}
 	}
 	return res

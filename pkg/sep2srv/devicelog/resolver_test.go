@@ -188,3 +188,68 @@ func TestResolverTargetExpiresBeforeTheRegistrationAnswer(t *testing.T) {
 		t.Errorf("Resolve = %+v; want the new target %s with registration still cached", got, lfdiB)
 	}
 }
+
+// Pending is "no cached answer for a key the line needs", and only that: a
+// cached error is an answer.
+func TestResolverReportsPendingUntilTheAnswerLands(t *testing.T) {
+	release := make(chan struct{})
+	r := NewResolver(ResolverConfig{
+		Registered: func(context.Context, string) (bool, error) { <-release; return true, nil },
+		Target:     func(context.Context, string) (string, error) { return lfdiB, nil },
+	})
+	if got := r.Resolve(lfdiA, "7"); !got.Pending || got.Known {
+		t.Fatalf("cold Resolve = %+v; want pending and not known", got)
+	}
+	if got := r.Resolve(lfdiA, "7"); !got.Pending {
+		t.Errorf("Resolve while the store is still wedged = %+v; want pending", got)
+	}
+	close(release)
+	r.wg.Wait()
+	if got := r.Resolve(lfdiA, "7"); got.Pending || !got.Known || got.Target != lfdiB {
+		t.Errorf("settled Resolve = %+v; want known, not pending, with the target", got)
+	}
+}
+
+func TestResolverTargetKeyAloneKeepsALinePending(t *testing.T) {
+	release := make(chan struct{})
+	r := NewResolver(ResolverConfig{
+		Registered: func(context.Context, string) (bool, error) { return true, nil },
+		Target:     func(context.Context, string) (string, error) { <-release; return lfdiB, nil },
+	})
+	r.Resolve(lfdiA, "7")
+	for i := 0; i < 200 && !r.Resolve(lfdiA, "").Known; i++ {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if got := r.Resolve(lfdiA, "7"); !got.Known || !got.Pending {
+		t.Errorf("Resolve = %+v; want registration known but the line still pending on its target", got)
+	}
+	if got := r.Resolve(lfdiA, ""); got.Pending {
+		t.Errorf("Resolve with no EndDevice = %+v; want not pending", got)
+	}
+	close(release)
+	r.wg.Wait()
+}
+
+func TestResolverCachedErrorIsNotPending(t *testing.T) {
+	r := NewResolver(ResolverConfig{
+		Registered: func(context.Context, string) (bool, error) { return false, errors.New("down") },
+	})
+	r.Resolve(lfdiA, "")
+	r.wg.Wait()
+	if got := r.Resolve(lfdiA, ""); got.Pending || got.Known || got.Err == nil {
+		t.Errorf("Resolve = %+v; want an error answer that is not pending", got)
+	}
+}
+
+func TestResolverRefusedForCapacityIsPending(t *testing.T) {
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	r := NewResolver(ResolverConfig{
+		MaxInFlight: 1,
+		Registered:  func(context.Context, string) (bool, error) { <-block; return true, nil },
+	})
+	r.Resolve("A", "")
+	if got := r.Resolve("B", ""); !got.Pending {
+		t.Errorf("Resolve refused at the limit = %+v; want pending", got)
+	}
+}

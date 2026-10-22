@@ -573,8 +573,8 @@ func TestAppendUnregisteredWritesSharedFileKeepingActor(t *testing.T) {
 func TestAppendResolvedRoutesAndAddsTargetInWriter(t *testing.T) {
 	dir := t.TempDir()
 	w := newTestWriter(t, dir, Config{})
-	registered := func(_ context.Context, _, edev string) (bool, string) { return true, lfdiB }
-	unregistered := func(_ context.Context, _, _ string) (bool, string) { return false, "" }
+	registered := func(_, _ string) Resolution { return Resolution{Registered: true, Target: lfdiB} }
+	unregistered := func(_, _ string) Resolution { return Resolution{} }
 	if err := w.AppendResolved(lfdiA, "7", registered, Entry{Kind: "request", Fields: map[string]any{"edev": "7"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -600,35 +600,79 @@ func TestAppendResolvedRoutesAndAddsTargetInWriter(t *testing.T) {
 	if _, has := shared["target"]; has {
 		t.Errorf("unresolved line carries a target: %v", shared)
 	}
+	if w.Unresolved() != 0 {
+		t.Errorf("Unresolved = %d after clean answers; want 0", w.Unresolved())
+	}
 }
 
-func TestAppendResolvedStalledResolverNeverBlocksCallerAndFallsToShared(t *testing.T) {
-	old := resolveTimeout
-	resolveTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { resolveTimeout = old })
-
+func TestAppendResolvedLookupErrorKeepsLineInOwnFileCountedAndLogged(t *testing.T) {
 	dir := t.TempDir()
-	w := newTestWriter(t, dir, Config{})
-	stall := func(ctx context.Context, _, _ string) (bool, string) {
-		<-ctx.Done()
-		return true, lfdiB
-	}
-	start := time.Now()
-	if err := w.AppendResolved(lfdiA, "7", stall, Entry{Kind: "request"}); err != nil {
-		t.Fatal(err)
-	}
-	if d := time.Since(start); d > 40*time.Millisecond {
-		t.Errorf("AppendResolved took %v with a stalled resolver; want it to return at once", d)
+	var logs bytes.Buffer
+	w := newTestWriter(t, dir, Config{Logger: log.New(&logs, "", 0)})
+	failing := func(_, _ string) Resolution { return Resolution{Err: errors.New("store down")} }
+	for i := 0; i < 3; i++ {
+		if err := w.AppendResolved(lfdiA, "7", failing, Entry{Kind: "request"}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	closeWriter(t, w)
 
-	shared := readRaw(t, filepath.Join(dir, UnregisteredFile+".jsonl"))
-	if shared["actor"] != lfdiA {
-		t.Errorf("shared line = %v; want actor %s", shared, lfdiA)
+	if got := listDir(t, dir); len(got) != 1 || got[0] != lfdiA+".jsonl" {
+		t.Fatalf("directory holds %v; want only the device's own file", got)
 	}
-	if _, has := shared["target"]; has {
-		t.Errorf("line carries a target from a resolver that timed out: %v", shared)
+	if lines := readLines(t, filepath.Join(dir, lfdiA+".jsonl")); len(lines) != 3 {
+		t.Errorf("own file has %d lines; want 3", len(lines))
 	}
+	if w.Unresolved() != 3 {
+		t.Errorf("Unresolved = %d; want 3", w.Unresolved())
+	}
+	if got := strings.Count(logs.String(), "lookup failed"); got != 1 {
+		t.Errorf("log has %d lookup-failed lines; want the first occurrence only: %q", got, logs.String())
+	}
+}
+
+func TestAppendResolvedCarriesTimeOfTheRequest(t *testing.T) {
+	dir := t.TempDir()
+	w := newTestWriter(t, dir, Config{Now: func() time.Time { return time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC) }})
+	at := time.Date(2026, 10, 21, 12, 0, 0, 123, time.UTC)
+	if err := w.AppendResolved(lfdiA, "", nil, Entry{Kind: "request", At: at}); err != nil {
+		t.Fatal(err)
+	}
+	closeWriter(t, w)
+	got := readRaw(t, filepath.Join(dir, lfdiA+".jsonl"))
+	if got["t"] != at.Format(time.RFC3339Nano) {
+		t.Errorf("t = %v; want the request time %s", got["t"], at.Format(time.RFC3339Nano))
+	}
+}
+
+func TestCloseDeadlineReportsQueuedLines(t *testing.T) {
+	dir := t.TempDir()
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	w := newTestWriter(t, dir, Config{QueueSize: 8, onDequeue: func() {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+	}})
+	if err := w.Append(lfdiA, Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	for i := 0; i < 3; i++ {
+		if err := w.Append(lfdiA, Entry{Kind: "request"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := w.Close(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "3 queued lines not written") {
+		t.Errorf("Close = %v; want the deadline error naming 3 queued lines", err)
+	}
+	close(release)
+	closeWriter(t, w)
 }
 
 func readRaw(t *testing.T, path string) map[string]any {

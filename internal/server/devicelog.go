@@ -40,6 +40,9 @@ func newDeviceLog(cfg *config.Config) (*devicelog.Writer, func(), error) {
 		if n := w.Dropped() + w.Failed(); n > 0 {
 			log.Printf("device log: %d lines dropped or lost to file errors since start", n)
 		}
+		if n := w.Unresolved(); n > 0 {
+			log.Printf("device log: %d request lines kept in their device's file because a lookup failed", n)
+		}
 	}
 	return w, closeLog, nil
 }

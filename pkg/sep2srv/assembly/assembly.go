@@ -479,6 +479,12 @@ func BuildProtocolRouter(
 		observers.devices = stores.EndDevices
 		observers.managers = stores.EndDeviceManagers
 	}
+	if cfg.DeviceLog != nil {
+		observers.resolver = devicelog.NewResolver(devicelog.ResolverConfig{
+			Registered: observers.registered,
+			Target:     observers.target,
+		})
+	}
 	inner := observers.wrap(protocolMux)
 	protocolChain := inner
 	if authPolicy.Wrap != nil {

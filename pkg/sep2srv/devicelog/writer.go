@@ -68,15 +68,24 @@ type Config struct {
 	onDequeue func()
 }
 
-// Resolver looks up, for one request line, whether actor is registered and
-// the canonical LFDI of the EndDevice edev names ("" when it does not
-// resolve). It runs in the writer goroutine under a deadline, so a slow
-// store delays only the log. An unregistered answer, or a ctx that expires,
-// sends the line to the shared unregistered file.
-type Resolver func(ctx context.Context, actor, edev string) (registered bool, target string)
+// Resolution is a Resolver's answer for one request line.
+type Resolution struct {
+	// Registered reports whether the actor has an EndDevice record or a
+	// management pair. Meaningful only when Err is nil.
+	Registered bool
+	// Target is the canonical LFDI of the EndDevice the path names, or ""
+	// when it does not resolve.
+	Target string
+	// Err is non-nil when a lookup failed or timed out, so Registered is not
+	// known. The line then stays in the actor's own file, without a target
+	// it could not establish, and is counted.
+	Err error
+}
 
-// resolveTimeout bounds one Resolver call.
-var resolveTimeout = 2 * time.Second
+// Resolver answers AppendResolved lines in the writer goroutine. It must
+// return promptly even when the store behind it stalls: the writer waits for
+// it, so NewResolver is the intended implementation.
+type Resolver func(actor, edev string) Resolution
 
 // Entry is one line to record. Kind is required. Fields are merged into the
 // line; the reserved names seq, t, kind and actor are set by the writer and
@@ -84,6 +93,10 @@ var resolveTimeout = 2 * time.Second
 type Entry struct {
 	Kind   string
 	Fields map[string]any
+	// At is the time the event happened; zero means when the line is encoded.
+	// A caller whose line waits in the queue sets it so the line carries the
+	// event's time and not the writer's.
+	At time.Time
 }
 
 type item struct {
@@ -123,6 +136,7 @@ type Writer struct {
 	closed   bool
 	dropped  atomic.Uint64
 	failed   atomic.Uint64
+	unknown  atomic.Uint64
 	closeErr error
 	noteMu   sync.Mutex
 	notes    map[string]uint64
@@ -249,6 +263,9 @@ func (w *Writer) AppendResolved(actor, edev string, resolve Resolver, e Entry) e
 	if e.Kind == "" {
 		return fmt.Errorf("%w: kind is empty", ErrInvalidEntry)
 	}
+	if e.At.IsZero() {
+		e.At = w.now()
+	}
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	if w.closed {
@@ -265,7 +282,11 @@ func (w *Writer) encode(actor string, e Entry) ([]byte, error) {
 	}
 	delete(fields, "seq")
 	fields["kind"] = e.Kind
-	fields["t"] = w.now().UTC().Format(time.RFC3339Nano)
+	at := e.At
+	if at.IsZero() {
+		at = w.now()
+	}
+	fields["t"] = at.UTC().Format(time.RFC3339Nano)
 	fields["actor"] = actor
 	body, err := json.Marshal(fields)
 	if err != nil {
@@ -277,29 +298,29 @@ func (w *Writer) encode(actor string, e Entry) ([]byte, error) {
 	return body, nil
 }
 
-// resolvePending runs the Resolver for p and encodes the line. A line that
-// cannot be resolved is not lost: it goes to the shared file without a target.
+// resolvePending runs the Resolver for p and encodes the line. A line whose
+// registration could not be established stays in the actor's own file, is
+// counted, and logs its first occurrence per device.
 func (w *Writer) resolvePending(p *pendingLine) item {
-	registered, target := true, ""
+	res := Resolution{Registered: true}
 	if p.resolve != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), resolveTimeout)
-		registered, target = p.resolve(ctx, p.actor, p.edev)
-		if ctx.Err() != nil {
-			registered, target = false, ""
-		}
-		cancel()
+		res = p.resolve(p.actor, p.edev)
 	}
 	e := p.entry
-	if target != "" {
+	if res.Target != "" {
 		fields := make(map[string]any, len(e.Fields)+1)
 		for k, v := range e.Fields {
 			fields[k] = v
 		}
-		fields["target"] = target
+		fields["target"] = res.Target
 		e.Fields = fields
 	}
 	key := p.actor
-	if !registered {
+	switch {
+	case res.Err != nil:
+		w.unknown.Add(1)
+		w.note(p.actor, "lookup failed, line kept in the device's own file", res.Err)
+	case !res.Registered:
 		key = UnregisteredFile
 	}
 	body, err := w.encode(p.actor, e)
@@ -318,6 +339,10 @@ func (w *Writer) Dropped() uint64 { return w.dropped.Load() }
 // Failed counts lines lost to a file error.
 func (w *Writer) Failed() uint64 { return w.failed.Load() }
 
+// Unresolved counts request lines whose registration could not be
+// established; each stayed in its device's own file.
+func (w *Writer) Unresolved() uint64 { return w.unknown.Load() }
+
 // Close stops accepting lines, writes what is queued, and closes every file.
 // It is safe to call again.
 func (w *Writer) Close(ctx context.Context) error {
@@ -331,7 +356,8 @@ func (w *Writer) Close(ctx context.Context) error {
 	case <-w.done:
 		return w.closeErr
 	case <-ctx.Done():
-		return ctx.Err()
+		// The channel is closed, so len is what the writer had not taken yet.
+		return fmt.Errorf("%w: %d queued lines not written at the deadline", ctx.Err(), len(w.queue))
 	}
 }
 

@@ -3,6 +3,7 @@ package assembly_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
@@ -21,12 +23,13 @@ import (
 // can be read.
 func logServer(t *testing.T, policy assembly.AuthPolicy) (srv *httptest.Server, dir string, closeLog func()) {
 	t.Helper()
-	return logServerWith(t, policy, nil)
+	srv, dir, closeLog, _ = logServerWith(t, policy, nil, nil)
+	return srv, dir, closeLog
 }
 
 // logServerWith is logServer with wrapManagers applied to the fleet's
 // management store before the router is built.
-func logServerWith(t *testing.T, policy assembly.AuthPolicy, wrapManagers func(store.EndDeviceManagementStore) store.EndDeviceManagementStore) (srv *httptest.Server, dir string, closeLog func()) {
+func logServerWith(t *testing.T, policy assembly.AuthPolicy, wrapManagers func(store.EndDeviceManagementStore) store.EndDeviceManagementStore, wrapDevices func(store.EndDeviceStore) store.EndDeviceStore) (srv *httptest.Server, dir string, closeLog func(), w *devicelog.Writer) {
 	t.Helper()
 	dir = t.TempDir()
 	w, err := devicelog.New(devicelog.Config{Dir: dir, MaxBytes: 1_000_000})
@@ -50,10 +53,13 @@ func logServerWith(t *testing.T, policy assembly.AuthPolicy, wrapManagers func(s
 	if wrapManagers != nil {
 		stores.EndDeviceManagers = wrapManagers(stores.EndDeviceManagers)
 	}
+	if wrapDevices != nil {
+		stores.EndDevices = wrapDevices(stores.EndDevices)
+	}
 	handler, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{DeviceLog: w}, stores, policy, "serverSFDI", "serverLFDI", nil)
 	srv = httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return srv, dir, closeLog
+	return srv, dir, closeLog, w
 }
 
 func readLogLines(t *testing.T, path string) (raw string, lines []map[string]any) {
@@ -251,10 +257,10 @@ func (s stalledManagers) ManagedBy(ctx context.Context, lfdi string) ([]string, 
 func TestDeviceLogStalledManagementStoreNeverHoldsARequest(t *testing.T) {
 	t.Parallel()
 	stalled := stalledManagers{entered: make(chan struct{}, 1), release: make(chan struct{})}
-	srv, dir, closeLog := logServerWith(t, gateTestPolicy(), func(real store.EndDeviceManagementStore) store.EndDeviceManagementStore {
+	srv, dir, closeLog, w := logServerWith(t, gateTestPolicy(), func(real store.EndDeviceManagementStore) store.EndDeviceManagementStore {
 		stalled.EndDeviceManagementStore = real
 		return stalled
-	})
+	}, nil)
 	released := false
 	release := func() {
 		if !released {
@@ -281,10 +287,40 @@ func TestDeviceLogStalledManagementStoreNeverHoldsARequest(t *testing.T) {
 		t.Errorf("request took %v while the management store was stalled; want it unaffected", elapsed)
 	}
 
-	release()
+	// The lookup gave up, so the line stays in the actor's own file and is
+	// counted, not filed as unregistered.
 	closeLog()
-	_, lines := readLogLines(t, filepath.Join(dir, devicelog.UnregisteredFile+".jsonl"))
+	_, lines := readLogLines(t, filepath.Join(dir, recordlessLFDI+".jsonl"))
 	if len(lines) != 1 || lines[0]["actor"] != recordlessLFDI {
-		t.Errorf("lines after release = %v, want one line for %s", lines, recordlessLFDI)
+		t.Errorf("lines = %v, want one line for %s in its own file", lines, recordlessLFDI)
+	}
+	if w.Unresolved() != 1 {
+		t.Errorf("Unresolved = %d, want 1", w.Unresolved())
+	}
+	release()
+}
+
+// erroringDevices fails GetByLFDI with a real error, not ErrNotFound.
+type erroringDevices struct{ store.EndDeviceStore }
+
+func (erroringDevices) GetByLFDI(context.Context, string) (sep2.EndDevice, error) {
+	return sep2.EndDevice{}, errors.New("backend down")
+}
+
+func TestDeviceLogStoreErrorKeepsRegisteredDeviceInItsOwnFile(t *testing.T) {
+	t.Parallel()
+	srv, dir, closeLog, w := logServerWith(t, gateTestPolicy(), nil, func(real store.EndDeviceStore) store.EndDeviceStore {
+		return erroringDevices{real}
+	})
+	if status, _ := gateRequest(t, srv, http.MethodGet, "/dcap", victimLFDI, ""); status != http.StatusOK {
+		t.Fatalf("GET /dcap status = %d, want 200", status)
+	}
+	closeLog()
+
+	if names := logDirNames(t, dir); len(names) != 1 || names[0] != victimLFDI+".jsonl" {
+		t.Fatalf("directory holds %v, want only the registered device's own file", names)
+	}
+	if w.Unresolved() != 1 {
+		t.Errorf("Unresolved = %d, want 1", w.Unresolved())
 	}
 }

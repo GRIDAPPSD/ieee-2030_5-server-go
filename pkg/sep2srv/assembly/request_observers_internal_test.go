@@ -24,17 +24,3 @@ func TestEdevID(t *testing.T) {
 		}
 	}
 }
-
-func TestCapStringKeepsUTF8Whole(t *testing.T) {
-	t.Parallel()
-	if got := capString("abc", 3); got != "abc" {
-		t.Errorf("capString at the limit = %q, want abc", got)
-	}
-	// "e" + a 2-byte rune (0xC3 0xA9): a cut at 2 would split the rune.
-	if got := capString("e\xc3\xa9x", 2); got != "e" {
-		t.Errorf("capString split a rune: %q", got)
-	}
-	if got := capString(strings.Repeat("a", 300), maxLoggedPath); len(got) != maxLoggedPath {
-		t.Errorf("capString length = %d, want %d", len(got), maxLoggedPath)
-	}
-}

@@ -2,11 +2,12 @@ package assembly
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/statuswriter"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
@@ -32,6 +33,7 @@ type requestObservers struct {
 	log      *devicelog.Writer
 	devices  store.EndDeviceReader
 	managers store.EndDeviceManagementReader
+	resolver *devicelog.CachingResolver
 	now      func() time.Time
 }
 
@@ -71,8 +73,8 @@ func (o requestObservers) logRequest(r *http.Request, lfdi string, rec *statuswr
 		return
 	}
 	fields := map[string]any{
-		"method":     capString(r.Method, maxLoggedMethod),
-		"path":       capString(r.URL.Path, maxLoggedPath),
+		"method":     logsafe.TruncateOctets(r.Method, maxLoggedMethod),
+		"path":       logsafe.TruncateOctets(r.URL.Path, maxLoggedPath),
 		"status":     rec.Status,
 		"dur_ms":     float64(dur.Microseconds()) / 1000,
 		"req_bytes":  max(r.ContentLength, 0),
@@ -87,34 +89,54 @@ func (o requestObservers) logRequest(r *http.Request, lfdi string, rec *statuswr
 	// goroutine, so a slow store delays the log and never this request. The
 	// Writer counts and logs every drop, so the error carries nothing the
 	// request path could act on.
-	_ = o.log.AppendResolved(actor, edev, o.resolve, devicelog.Entry{Kind: "request", Fields: fields})
+	_ = o.log.AppendResolved(actor, edev, o.resolver.Resolve, devicelog.Entry{Kind: "request", Fields: fields})
 }
 
-// resolve runs in the device log's writer goroutine. It reports whether
-// actor has an EndDevice record or a management pair, and the canonical LFDI
-// of the EndDevice edev names ("" when it does not resolve). A store error
-// counts as not registered or no target: the shared file is the bounded place
-// for a line whose owner cannot be established.
-func (o requestObservers) resolve(ctx context.Context, actor, edev string) (registered bool, target string) {
-	if edev != "" && o.devices != nil {
-		if dev, err := o.devices.Get(ctx, edev); err == nil {
-			target, _ = sep2lfdi.Canonical(dev.LFDI)
-		}
-	}
+// registered reports whether actor has an EndDevice record or a management
+// pair. Not found is a definite no; any other store error is returned so the
+// writer keeps the line in the actor's own file and counts it.
+func (o requestObservers) registered(ctx context.Context, actor string) (bool, error) {
 	if o.devices != nil {
-		if _, err := o.devices.GetByLFDI(ctx, actor); err == nil {
-			return true, target
+		_, err := o.devices.GetByLFDI(ctx, actor)
+		switch {
+		case err == nil:
+			return true, nil
+		case !errors.Is(err, store.ErrNotFound):
+			return false, err
 		}
 	}
 	if o.managers != nil {
-		if managed, err := o.managers.ManagedBy(ctx, actor); err == nil && len(managed) > 0 {
-			return true, target
+		managed, err := o.managers.ManagedBy(ctx, actor)
+		if err != nil {
+			return false, err
+		}
+		if len(managed) > 0 {
+			return true, nil
 		}
 		if _, err := o.managers.ManagerOf(ctx, actor); err == nil {
-			return true, target
+			return true, nil
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return false, err
 		}
 	}
-	return false, target
+	return false, nil
+}
+
+// target returns the canonical LFDI of the EndDevice edev names, "" when no
+// such device exists, and an error when the store could not say.
+func (o requestObservers) target(ctx context.Context, edev string) (string, error) {
+	if o.devices == nil {
+		return "", nil
+	}
+	dev, err := o.devices.Get(ctx, edev)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	target, _ := sep2lfdi.Canonical(dev.LFDI)
+	return target, nil
 }
 
 // edevID returns the EndDevice id of an /edev/{id}/... path, or "" for any
@@ -130,15 +152,4 @@ func edevID(path string) string {
 		return ""
 	}
 	return id
-}
-
-// capString cuts s to at most n bytes without splitting a UTF-8 sequence.
-func capString(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
 }

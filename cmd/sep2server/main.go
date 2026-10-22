@@ -6,13 +6,16 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/config"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/server"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
 )
 
 const version = "0.1.0"
@@ -57,6 +60,10 @@ func runServe() error {
 		return err
 	}
 
+	if err := prepareDeviceLog(cfg, &certDirResolver{}); err != nil {
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -85,6 +92,38 @@ func prepareServe(resolver *certDirResolver) (*config.Config, *handler.AdminCert
 		}
 	}
 	return cfg, svc, nil
+}
+
+// prepareDeviceLog checks the device log settings before any listener starts.
+// An explicit SEP2_DEVICE_LOG_DIR that cannot be used stops startup; the
+// default directory only turns the log off, so a deployment whose working
+// directory is read-only still starts.
+func prepareDeviceLog(cfg *config.Config, r *certDirResolver) error {
+	if cfg.DeviceLogOff {
+		log.Printf("device log disabled: SEP2_DEVICE_LOG=false")
+		return nil
+	}
+	limit, err := cfg.EffectiveDeviceLogMaxBytes()
+	if err != nil {
+		return fmt.Errorf("SEP2_DEVICE_LOG_MAX_BYTES: %w", err)
+	}
+	dir, explicit := cfg.EffectiveDeviceLogDir()
+	var protected []string
+	if certDir, err := r.get(); err == nil {
+		protected = append(protected, certDir)
+	}
+	protected = append(protected, filepath.Dir(cfg.KeyFile))
+	resolved, err := devicelog.PrepareDir(dir, protected)
+	if err != nil {
+		if explicit {
+			return fmt.Errorf("SEP2_DEVICE_LOG_DIR: %w", err)
+		}
+		log.Printf("device log disabled: %s: %s", logsafe.Str(dir), logsafe.Str(err.Error()))
+		cfg.DeviceLogOff = true
+		return nil
+	}
+	log.Printf("device log enabled: %s (limit %d bytes per file, one rotated file kept)", logsafe.Str(resolved), limit)
+	return nil
 }
 
 // loadAdminCertService resolves the CA key settings and loads both CA pairs
@@ -267,6 +306,18 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	deviceLogOn, err := config.ParseDeviceLog(os.Getenv("SEP2_DEVICE_LOG"))
+	if err != nil {
+		return nil, err
+	}
+	deviceLogMaxBytes, err := config.ParseDeviceLogMaxBytes(os.Getenv("SEP2_DEVICE_LOG_MAX_BYTES"))
+	if err != nil {
+		return nil, err
+	}
+	deviceLogDir, err := envPathOr("SEP2_DEVICE_LOG_DIR", "")
+	if err != nil {
+		return nil, err
+	}
 	mirrorReadingRetention, err := config.ParseMirrorReadingRetentionSeconds(os.Getenv("SEP2_MIRROR_READING_RETENTION_SECONDS"))
 	if err != nil {
 		return nil, err
@@ -327,6 +378,12 @@ func configFromEnv(r *certDirResolver) (*config.Config, error) {
 		TrafficCapture:    os.Getenv("SEP2_TRAFFIC_CAPTURE") == "true",
 		TrafficCaptureEnv: os.Getenv("SEP2_TRAFFIC_CAPTURE"),
 		TrafficDir:        trafficDir,
+
+		// #1063: on unless SEP2_DEVICE_LOG=false. An empty directory means
+		// the default, which only turns the log off when unusable.
+		DeviceLogOff:      !deviceLogOn,
+		DeviceLogDir:      deviceLogDir,
+		DeviceLogMaxBytes: deviceLogMaxBytes,
 
 		// Observability: dedicated plain-HTTP Prometheus metrics listener.
 		// Empty SEP2_METRICS_ADDR (default) leaves it OFF; set e.g. ":9100"

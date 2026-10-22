@@ -125,3 +125,8 @@ sep_wadl.xml
 
 # Log files
 *.log
+
+# Per-device log files (SEP2_DEVICE_LOG_DIR default). The folder ships with
+# a .gitkeep; what the server writes into it never gets committed.
+/etc/sep2/logs/*
+!/etc/sep2/logs/.gitkeep

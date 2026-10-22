@@ -73,6 +73,11 @@ an unparseable or non-positive value keeps the default and logs a warning naming
 the variable. The connect budget is capped at the POST timeout, because a dial
 that outlives the POST keeps running after the worker has moved on.
 
+Per-device log files go to `./etc/sep2/logs` (`SEP2_DEVICE_LOG_DIR`), rotate
+at 20,000,000 bytes (`SEP2_DEVICE_LOG_MAX_BYTES`, 1000000 to 20000000), and
+`SEP2_DEVICE_LOG=false` turns them off. The folder ships with a `.gitkeep`;
+its contents are gitignored. See [docs/2030_5.md](docs/2030_5.md#device-log-files).
+
 A program embedding the server passes
 `subscription.WithNotificationTimeouts(subscription.NotificationTimeouts{...})`
 to `subscription.NewManager`. Zero fields keep the defaults. The option ignores a

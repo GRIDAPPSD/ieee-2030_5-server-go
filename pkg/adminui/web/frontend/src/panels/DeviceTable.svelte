@@ -13,6 +13,7 @@
   import { applyPairs, pairFailures, pairFailureText } from '../lib/management'
   import ReportedCell from './ReportedCell.svelte'
   import DevicePrograms from './DevicePrograms.svelte'
+  import DeviceLog from './DeviceLog.svelte'
   import DevicePicker from './DevicePicker.svelte'
 
   let {
@@ -74,6 +75,10 @@
   // The device whose Programs drawer is open. A link from another tab may
   // have asked for one; that request is read once, on mount.
   let programsFor = $state(untrack(() => takeProgramsRequest()))
+
+  // The device whose Logs drawer is open; independent of the Programs drawer,
+  // so each kind of drawer has at most one open row.
+  let logsFor = $state('')
 
   let selected = $state<Record<string, string>>({})
   let error = $state('')
@@ -252,6 +257,14 @@
                 aria-label="Programs of device {deviceID}"
                 onclick={() => (programsFor = programsFor === deviceID ? '' : deviceID)}>Programs</button
               >
+              <button
+                class="btn btn-small"
+                data-testid="device-logs-toggle-{deviceID}"
+                aria-expanded={logsFor === deviceID}
+                aria-label="Logs of device {deviceID}"
+                disabled={!device.lfdi}
+                onclick={() => (logsFor = logsFor === deviceID ? '' : deviceID)}>Logs</button
+              >
             </td>
             <td>
               <select id="assignSel-{deviceID}" bind:value={selected[deviceID]}>
@@ -267,6 +280,13 @@
             <tr data-testid="device-programs-row-{deviceID}">
               <td colspan={10 + columns.length}>
                 <DevicePrograms deviceId={deviceID} {fsas} onFsaChanged={onChanged} onClose={() => (programsFor = '')} />
+              </td>
+            </tr>
+          {/if}
+          {#if logsFor === deviceID}
+            <tr data-testid="device-logs-row-{deviceID}">
+              <td colspan={10 + columns.length}>
+                <DeviceLog deviceId={deviceID} lfdi={device.lfdi} {devices} onClose={() => (logsFor = '')} />
               </td>
             </tr>
           {/if}

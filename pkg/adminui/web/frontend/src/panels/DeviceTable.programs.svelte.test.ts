@@ -82,3 +82,37 @@ describe('DeviceTable Programs drawer', () => {
     expect(screen.queryByTestId('device-programs-3')).toBeNull()
   })
 })
+
+describe('DeviceTable Logs drawer', () => {
+  it('opens the Logs drawer beside the Programs drawer and stops its reads when closed', async () => {
+    vi.useFakeTimers()
+    try {
+      const paths: string[] = []
+      vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string) => {
+        paths.push(path)
+        if (path.startsWith('/api/device-logs/')) {
+          return { ok: true, data: { lfdi: '', entries: [], nextBefore: null, nextAfter: null, rotatedRead: false, dropped: 0 } } as never
+        }
+        return { ok: true, data: { templates: [], programs: [], persists: true, total: 0, start: 0, limit: 500 } } as never
+      })
+      mount()
+      await fireEvent.click(screen.getByTestId('device-programs-toggle-3'))
+      await fireEvent.click(screen.getByTestId('device-logs-toggle-3'))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(screen.getByTestId('device-programs-3')).toBeInTheDocument()
+      expect(screen.getByTestId('device-logs-3')).toBeInTheDocument()
+      expect(screen.getByTestId('device-logs-toggle-3')).toHaveAttribute('aria-expanded', 'true')
+
+      await fireEvent.click(screen.getByTestId('device-logs-toggle-4'))
+      expect(screen.queryByTestId('device-logs-3')).toBeNull()
+      expect(screen.getByTestId('device-logs-4')).toBeInTheDocument()
+
+      await fireEvent.click(screen.getByTestId('device-logs-toggle-4'))
+      const before = paths.filter((p) => p.startsWith('/api/device-logs/')).length
+      await vi.advanceTimersByTimeAsync(20000)
+      expect(paths.filter((p) => p.startsWith('/api/device-logs/')).length).toBe(before)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

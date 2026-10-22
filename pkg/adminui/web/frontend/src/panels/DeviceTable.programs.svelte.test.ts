@@ -115,4 +115,20 @@ describe('DeviceTable Logs drawer', () => {
       vi.useRealTimers()
     }
   })
+  it('links the Logs toggle to its open drawer and returns focus to it on Close', async () => {
+    vi.spyOn(api, 'fetchJSON').mockResolvedValue({
+      ok: true,
+      data: { lfdi: '', entries: [], nextBefore: null, nextAfter: null, rotatedRead: false, dropped: 0 },
+    } as never)
+    mount()
+    const toggle = screen.getByTestId('device-logs-toggle-3')
+    expect(toggle).not.toHaveAttribute('aria-controls')
+    await fireEvent.click(toggle)
+    const drawer = await screen.findByTestId('device-logs-3')
+    expect(toggle.getAttribute('aria-controls')).toBe(drawer.id)
+    expect(drawer.id).not.toBe('')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Close logs' }))
+    await vi.waitFor(() => expect(toggle).toHaveFocus())
+  })
 })

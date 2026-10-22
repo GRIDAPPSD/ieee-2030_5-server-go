@@ -48,7 +48,9 @@
   // The controller of the current device; replaced when the device changes
   // and aborted when the drawer closes, which also drops a reply in flight.
   let lifetime: AbortController | undefined
-  let polling = false
+  // The signal of the run whose poll is out. A poll of a replaced run must
+  // not clear it, or the new run's poll would be joined by a second one.
+  let pollingFor: AbortSignal | undefined
 
   function failure(status: number, message: string): string {
     if (status === 404) return 'No log yet for this device.'
@@ -74,8 +76,8 @@
   }
 
   async function poll(signal: AbortSignal) {
-    if (polling) return
-    polling = true
+    if (pollingFor === signal) return
+    pollingFor = signal
     try {
       for (let i = 0; i < MAX_CATCH_UP; i++) {
         const after = loaded ? nextAfter : null
@@ -88,12 +90,16 @@
           loaded = true
         } else {
           entries = mergeNewer(entries, page.entries)
+          // With no cursor yet (the first page was empty) this page is the
+          // newest of everything written since, so the lines before it are
+          // reachable through Older instead of being skipped.
+          if (after === null) nextBefore = page.nextBefore
         }
         if (page.nextAfter !== null) nextAfter = page.nextAfter
         if (initial || page.entries.length < PAGE) return
       }
     } finally {
-      polling = false
+      if (pollingFor === signal) pollingFor = undefined
     }
   }
 
@@ -121,7 +127,7 @@
     nextAfter = null
     loaded = false
     error = ''
-    polling = false
+    pollingFor = undefined
     untrack(() => void poll(mine.signal))
     const timer = setInterval(() => {
       nowMs = Date.now()
@@ -139,7 +145,7 @@
   }
 </script>
 
-<div class="logs" data-testid="device-logs-{deviceId}">
+<div class="logs" id="device-logs-{deviceId}" data-testid="device-logs-{deviceId}">
   <div class="logs-head">
     <strong>Logs</strong>
     <label>
@@ -178,6 +184,7 @@
       </p>
     {:else}
       <table>
+        <caption class="visually-hidden">Log of device {deviceId}</caption>
         <thead>
           <tr><th>Time</th><th>Kind</th><th>Request</th><th>Status</th><th>ms</th><th>Detail</th><th>Made by</th></tr>
         </thead>
@@ -215,6 +222,15 @@
     align-items: center;
     gap: 12px;
     flex-wrap: wrap;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   select {

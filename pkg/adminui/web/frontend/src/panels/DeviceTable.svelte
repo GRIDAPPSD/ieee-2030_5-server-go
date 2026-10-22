@@ -2,7 +2,7 @@
   // The registered EndDevice list, plus the per-device FSA assignment
   // control. The LFDI cell is truncated for width, as it always has been;
   // the untruncated value is available through Lookup Device by LFDI.
-  import { untrack } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import { fetchJSON, postJSON } from '../lib/api'
   import { takeProgramsRequest } from '../lib/programsRequest'
   import { deviceIdFromHref, type AdminFSA } from '../lib/fsa'
@@ -79,6 +79,14 @@
   // The device whose Logs drawer is open; independent of the Programs drawer,
   // so each kind of drawer has at most one open row.
   let logsFor = $state('')
+
+  // Closing from inside the drawer removes the focused Close button, so focus
+  // goes back to the toggle that opened it.
+  async function closeLogs(deviceID: string) {
+    logsFor = ''
+    await tick()
+    document.getElementById(`device-logs-toggle-${deviceID}`)?.focus()
+  }
 
   let selected = $state<Record<string, string>>({})
   let error = $state('')
@@ -259,8 +267,10 @@
               >
               <button
                 class="btn btn-small"
+                id="device-logs-toggle-{deviceID}"
                 data-testid="device-logs-toggle-{deviceID}"
                 aria-expanded={logsFor === deviceID}
+                aria-controls={logsFor === deviceID ? `device-logs-${deviceID}` : undefined}
                 aria-label="Logs of device {deviceID}"
                 disabled={!device.lfdi}
                 onclick={() => (logsFor = logsFor === deviceID ? '' : deviceID)}>Logs</button
@@ -286,7 +296,7 @@
           {#if logsFor === deviceID}
             <tr data-testid="device-logs-row-{deviceID}">
               <td colspan={10 + columns.length}>
-                <DeviceLog deviceId={deviceID} lfdi={device.lfdi} {devices} onClose={() => (logsFor = '')} />
+                <DeviceLog deviceId={deviceID} lfdi={device.lfdi} {devices} onClose={() => closeLogs(deviceID)} />
               </td>
             </tr>
           {/if}

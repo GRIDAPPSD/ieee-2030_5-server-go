@@ -228,4 +228,53 @@ describe('DeviceLog', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]).toHaveTextContent('403')
   })
+  it('runs one poll at a time after the device changes under an open drawer', async () => {
+    const other = 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+    const releases: (() => void)[] = []
+    const paths: string[] = []
+    vi.spyOn(api, 'fetchJSON').mockImplementation(async (path: string) => {
+      paths.push(path)
+      await new Promise<void>((r) => releases.push(r))
+      return page([entry(1)]) as never
+    })
+    const view = mount()
+    await settle()
+    await view.rerender({ deviceId: '8', lfdi: other, devices: DEVICES, onClose: () => {} })
+    await settle()
+    // The old device's reply lands while the new device's first read is out.
+    releases[0]()
+    await settle()
+    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(5000)
+    const forOther = paths.filter((p) => p.includes(other))
+    expect(forOther).toHaveLength(1)
+    releases.forEach((r) => r())
+  })
+
+  it('keeps the older lines reachable when the first page was empty and a full page arrives', async () => {
+    let calls = 0
+    const full = Array.from({ length: 200 }, (_, i) => entry(400 - i))
+    const paths = serve((path) => {
+      calls++
+      if (calls === 1) return page([])
+      if (path.includes('before=')) return page([entry(1)], { nextBefore: null })
+      if (path.includes('after=')) return page([])
+      return page(full, { nextBefore: 'c201' })
+    })
+    mount()
+    await settle()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(screen.getAllByTestId('device-log-row')).toHaveLength(200)
+    await fireEvent.click(screen.getByTestId('device-logs-older'))
+    await settle()
+    expect(paths.at(-1)).toBe(`/api/device-logs/${LFDI}?limit=200&before=c201`)
+    expect(screen.getAllByTestId('device-log-row')).toHaveLength(201)
+  })
+
+  it('gives the table a caption naming the device', async () => {
+    serve(() => page([entry(1)]))
+    mount()
+    await settle()
+    expect(screen.getByRole('table', { name: 'Log of device 7' })).toBeInTheDocument()
+  })
 })

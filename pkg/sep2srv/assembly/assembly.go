@@ -41,6 +41,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	"io"
 	"log"
 	"net/http"
@@ -392,7 +393,7 @@ type AuthPolicy struct {
 	//
 	// If nil, BuildProtocolRouter substitutes a deny-all stub (always
 	// returns ok=false) so handlers fail closed rather than panicking.
-	Identity func(ctx context.Context) (lfdi, sfdi string, ok bool)
+	Identity identity.Func
 
 	// SFDIPrefix derives the EndDevice id prefix from an SFDI, replacing
 	// auth.ExtractSFDIPrefix (the short-SFDI guard,
@@ -1366,7 +1367,7 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(readingTypes))
 }
 
-func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline, frpPendingPollRate time.Duration, identity func(ctx context.Context) (lfdi, sfdi string, ok bool), deviceLog *devicelog.Writer, notifier ResourceNotifier) {
+func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline, frpPendingPollRate time.Duration, identity identity.Func, deviceLog *devicelog.Writer, notifier ResourceNotifier) {
 	if !store.IsAbsent(stores.Configurations) {
 		mux.HandleFunc("GET /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 		mux.HandleFunc("PUT /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
@@ -1578,7 +1579,7 @@ var _ = paging.DefaultLimit
 // certificate identity is that device, or its current manager. A nil
 // identity yields a nil authorizer, which HandlePostResponse treats as
 // refusing every Response that names a device.
-func responseSenderAuthorizer(identity func(ctx context.Context) (lfdi, sfdi string, ok bool), managers store.EndDeviceManagementStore) coreflowrsv.ResponseSenderAuthorizer {
+func responseSenderAuthorizer(identity identity.Func, managers store.EndDeviceManagementStore) coreflowrsv.ResponseSenderAuthorizer {
 	if identity == nil {
 		return nil
 	}

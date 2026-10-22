@@ -5,7 +5,7 @@
 package activity
 
 import (
-	"context"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	"net/http"
 	"strings"
 	"sync"
@@ -107,7 +107,7 @@ func (r *Recorder) State(lfdi string, now time.Time, offlineAfter time.Duration)
 // refused never reaches it, so a refused request does not count as the
 // device being in contact. A request with no identity passes through
 // unrecorded.
-func (r *Recorder) Middleware(identity func(ctx context.Context) (lfdi, sfdi string, ok bool)) func(http.Handler) http.Handler {
+func (r *Recorder) Middleware(identity identity.Func) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if lfdi, _, ok := identity(req.Context()); ok {

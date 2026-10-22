@@ -5,17 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
 )
 
-func fixedIdentity(lfdi string, ok bool) IdentityFunc {
+func fixedIdentity(lfdi string, ok bool) identity.Func {
 	return func(context.Context) (string, string, bool) { return lfdi, "", ok }
 }
 
@@ -151,7 +153,7 @@ func TestLogEventStore_RefusedCreateWritesNothing(t *testing.T) {
 }
 
 func TestLogEventStore_NoUsableIdentityWritesNothing(t *testing.T) {
-	cases := map[string]IdentityFunc{
+	cases := map[string]identity.Func{
 		"not authenticated": fixedIdentity(lfdiA, false),
 		"malformed lfdi":    fixedIdentity("../../etc/passwd", true),
 	}
@@ -163,6 +165,9 @@ func TestLogEventStore_NoUsableIdentityWritesNothing(t *testing.T) {
 			s := NewLogEventStore(inner, w, id)
 			if err := s.Create(context.Background(), "dev1", "abc", sampleEvent()); err != nil {
 				t.Fatalf("Create: %v", err)
+			}
+			if got := w.Dropped(); got != 1 {
+				t.Errorf("Dropped() = %d, want 1: the lost line must be counted", got)
 			}
 			closeWriter(t, w)
 			entries, err := os.ReadDir(dir)
@@ -218,4 +223,21 @@ func TestLogEventStore_FullQueueNeverFailsTheCreate(t *testing.T) {
 	}
 	close(stall)
 	closeWriter(t, w)
+}
+
+func TestLogEventStore_CreateAfterCloseIsCounted(t *testing.T) {
+	dir := t.TempDir()
+	var logs bytes.Buffer
+	w := newTestWriter(t, dir, Config{Logger: log.New(&logs, "", 0)})
+	s := NewLogEventStore(memory.NewScopedStore[sep2.LogEvent](), w, fixedIdentity(lfdiA, true))
+	closeWriter(t, w)
+	if err := s.Create(context.Background(), "dev1", "abc", sampleEvent()); err != nil {
+		t.Fatalf("Create after Close must still succeed: %v", err)
+	}
+	if got := w.Dropped(); got != 1 {
+		t.Errorf("Dropped() = %d, want 1", got)
+	}
+	if !strings.Contains(logs.String(), "writer closed") {
+		t.Errorf("first drop not logged: %q", logs.String())
+	}
 }

@@ -185,6 +185,8 @@ func (w *Writer) Append(lfdi string, e Entry) error {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	if w.closed {
+		w.dropped.Add(1)
+		w.note(lfdi, "writer closed, line dropped", nil)
 		return ErrClosed
 	}
 	select {

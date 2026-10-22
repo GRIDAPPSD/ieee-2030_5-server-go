@@ -26,7 +26,7 @@ func TestChecks(t *testing.T) {
 		{"41 digits", up + "0", false, false, "", false, "", false},
 		{"non-hex", strings.Repeat("G", 40), false, false, "", false, "", false},
 		{"surrounded by whitespace", " \t" + up + "\r\n", false, false, up, true, "", false},
-		{"unicode space is not trimmed", " " + up, false, false, "", false, "", false},
+		{"unicode space is not trimmed", "\u00a0" + up, false, false, "", false, "", false},
 		{"newline inside", up[:20] + "\n" + up[21:], false, false, "", false, "", false},
 		{"nul inside", up[:20] + "\x00" + up[21:], false, false, "", false, "", false},
 		{"even short pads", "aabb", false, false, "", false, strings.Repeat("0", 36) + "AABB", true},

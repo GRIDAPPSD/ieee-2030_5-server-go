@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -79,7 +80,7 @@ func (s *DeviceProfileStore) loadFromFile(path string) error {
 
 // checkProfile is the check every path into the store applies.
 func checkProfile(p store.DeviceProfile) error {
-	if !isCanonicalLFDI(p.LFDI) {
+	if !sep2lfdi.IsCanonical(p.LFDI) {
 		return fmt.Errorf("device profile: LFDI %q is not in canonical form: %w", p.LFDI, store.ErrInvalidDeviceProfile)
 	}
 	switch p.Kind {

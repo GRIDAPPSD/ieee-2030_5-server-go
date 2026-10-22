@@ -22,6 +22,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2/encoding"
 	coreedev "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/enddevice"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/idmint"
+	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -416,54 +417,6 @@ func MirrorHref(id string) string {
 	return "/mup/" + id
 }
 
-// hexBinary160Chars is the canonical width of a HexBinary160 LFDI once fully
-// expanded: 40 hex characters, the 20-byte width core's sep2tls.LFDI always
-// emits ("%X" on a 20-byte slice, never dropping a leading zero byte). IEEE
-// 2030.5-2023 line 10727-10728 states this as the max ("40 hex characters
-// max"), not a fixed width, because HexBinary160 tolerates a shorter hex
-// string that omits leading zero bytes (Table C.17's own example,
-// "<deviceLFDI>00</deviceLFDI>", is exactly that: one significant byte).
-const hexBinary160Chars = 40
-
-// canonicalDeviceLFDI validates and canonicalizes a client-claimed
-// deviceLFDI to its full HexBinary160 width, restoring any leading zero
-// bytes the client omitted, and upper-casing the result.
-//
-// Restoring the omitted width matters for interop, not just tidiness. The
-// EPRI reference client's own serializer (xml_output.c output_hex, "while (i
-// < n-1 && value[i] == 0) i++;") drops every leading zero BYTE of a
-// HexBinary160 value before writing it, and lower-cases what remains
-// (hex_char). A device whose certificate LFDI happens to start with a zero
-// byte therefore self-mirrors with a claim shorter than its own full-width
-// LFDI. Comparing that claim byte-for-byte against the caller's full-width
-// certificate identity (core sep2tls.LFDI, always 40 upper-case hex
-// characters) would refuse the device's OWN mirror with 403: #720 would
-// regress a case the pre-#720 code never had to get right, because it
-// ignored the claim entirely. Left-padding with '0' up to hexBinary160Chars
-// undoes exactly the omission the serializer performs, so the padded claim
-// compares equal to the caller's own identity again.
-//
-// ok is false, and the caller answers 400, when raw cannot be a HexBinary160
-// value at all: not hex, longer than 40 characters even before padding (so
-// padding could not shrink it to fit), or an odd number of hex digits, which
-// cannot represent a whole number of bytes and so cannot be what any
-// encoder, buggy or not, produces for a byte-oriented type. These are
-// distinct from "well-formed but unclaimable", which is a 403 decided later
-// by the mirrorActor: a malformed claim is refused before any authorization
-// question is even asked.
-func canonicalDeviceLFDI(raw string) (device string, ok bool) {
-	if raw == "" || len(raw) > hexBinary160Chars || len(raw)%2 != 0 {
-		return "", false
-	}
-	for _, c := range raw {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return "", false
-		}
-	}
-	padded := strings.Repeat("0", hexBinary160Chars-len(raw)) + raw
-	return strings.ToUpper(padded), true
-}
-
 // resolveMirroredDevice canonicalizes a client-claimed deviceLFDI, or falls
 // back to fallback when the client left it absent.
 //
@@ -482,7 +435,7 @@ func canonicalDeviceLFDI(raw string) (device string, ok bool) {
 // it is treated exactly like an absent element, not like a malformed one.
 //
 // ok is false when the trimmed claim is non-empty but cannot be a valid
-// HexBinary160 value (see canonicalDeviceLFDI); the caller answers 400 in
+// HexBinary160 value (see sep2lfdi.CanonicalPadded); the caller answers 400 in
 // that case, never a silent fallback to fallback, because a malformed claim
 // is a client error, not an absent one.
 func resolveMirroredDevice(raw, fallback string) (device string, ok bool) {
@@ -490,7 +443,7 @@ func resolveMirroredDevice(raw, fallback string) (device string, ok bool) {
 	if trimmed == "" {
 		return fallback, true
 	}
-	return canonicalDeviceLFDI(trimmed)
+	return sep2lfdi.CanonicalPadded(trimmed)
 }
 
 // mirrorActor decides whether caller may act for device: because caller IS

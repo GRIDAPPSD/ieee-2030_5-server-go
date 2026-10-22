@@ -16,6 +16,7 @@ import (
 	sepTLS "github.com/GRIDAPPSD/ieee-2030_5-core-go/pkg/sep2tls"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
+	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -137,7 +138,7 @@ type dashboardDevice struct {
 func HandleDeviceLookupByLFDI(s store.EndDeviceStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		lfdi := r.PathValue("lfdi")
-		if !validLFDI(lfdi) {
+		if !sep2lfdi.IsHex40(lfdi) {
 			writeError(w, http.StatusBadRequest, "lfdi must be 40 hex characters")
 			return
 		}
@@ -211,7 +212,7 @@ func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter, profile
 			writeError(w, http.StatusBadRequest, "sfdi must be 12 decimal digits with valid check digit")
 			return
 		}
-		if !validLFDI(req.LFDI) {
+		if !sep2lfdi.IsHex40(req.LFDI) {
 			writeError(w, http.StatusBadRequest, "lfdi must be 40 hex characters")
 			return
 		}
@@ -300,17 +301,6 @@ func HandleAddEndDevice(s store.EndDeviceStore, regs RegistrationWriter, profile
 			LFDI: lfdiUpper,
 		})
 	}
-}
-
-// validLFDI reports whether s is exactly 40 hex characters (case-insensitive).
-// Per IEEE 2030.5 section 6.3.4 the LFDI is the leading 20 bytes of a SHA-256
-// fingerprint, so 40 hex chars is the canonical representation.
-func validLFDI(s string) bool {
-	if len(s) != 40 {
-		return false
-	}
-	_, err := hex.DecodeString(s)
-	return err == nil
 }
 
 // rollbackBound limits how long a rollback may run once the request is gone.

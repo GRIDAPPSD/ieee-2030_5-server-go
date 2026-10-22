@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/srverr"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store/memory"
@@ -271,7 +272,7 @@ func normalizeLFDI(s string) (string, error) {
 		return "", errors.New("required")
 	}
 	upper := strings.ToUpper(s)
-	if !validLFDI(upper) {
+	if !sep2lfdi.IsHex40(upper) {
 		return "", errors.New("must be 40 hex characters")
 	}
 	return upper, nil

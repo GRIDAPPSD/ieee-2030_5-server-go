@@ -94,24 +94,18 @@ func TestPrepareDeviceLogRefusesExplicitDirs(t *testing.T) {
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	keyDir := filepath.Join(base, "keys")
 	cases := []struct {
 		name string
 		dir  string
-		key  string
 		want error
 	}{
-		{"uncreatable", filepath.Join(file, "sub"), "", devicelog.ErrDirUnusable},
-		{"under the cert directory", filepath.Join(certDir, "logs"), "", devicelog.ErrDirProtected},
-		{"the cert directory itself", certDir, "", devicelog.ErrDirProtected},
-		{"under the key file directory", filepath.Join(keyDir, "logs"), filepath.Join(keyDir, "server.key"), devicelog.ErrDirProtected},
+		{"uncreatable", filepath.Join(file, "sub"), devicelog.ErrDirUnusable},
+		{"under the cert directory", filepath.Join(certDir, "logs"), devicelog.ErrDirProtected},
+		{"the cert directory itself", certDir, devicelog.ErrDirProtected},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := deviceLogCfg(t, certDir)
-			if c.key != "" {
-				cfg.KeyFile = c.key
-			}
 			cfg.DeviceLogDir = c.dir
 			err := prepareDeviceLog(cfg, &certDirResolver{})
 			if !errors.Is(err, c.want) || !strings.Contains(err.Error(), "SEP2_DEVICE_LOG_DIR") {
@@ -175,5 +169,33 @@ func TestPrepareDeviceLogOffTouchesNothing(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "device log disabled") {
 		t.Errorf("log = %q; want a disabled line", logs.String())
+	}
+}
+
+func TestPrepareDeviceLogKeyInWorkingDirectoryKeepsDefaultLogOn(t *testing.T) {
+	logs := captureLog(t)
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	t.Setenv("SEP2_CERT_DIR", t.TempDir())
+	cfg := &config.Config{KeyFile: "./server.key"}
+	if err := prepareDeviceLog(cfg, &certDirResolver{}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DeviceLogOff || !strings.Contains(logs.String(), "device log enabled: ") {
+		t.Errorf("off=%v log=%q; a key in the working directory must not disable the default log", cfg.DeviceLogOff, logs.String())
+	}
+	if fi, err := os.Stat(filepath.Join(cwd, "etc", "sep2", "logs")); err != nil || !fi.IsDir() {
+		t.Errorf("default directory not created: %v", err)
+	}
+}
+
+func TestPrepareDeviceLogRefusesKeyFilePath(t *testing.T) {
+	certDir := t.TempDir()
+	keyDir := t.TempDir()
+	cfg := deviceLogCfg(t, certDir)
+	cfg.KeyFile = filepath.Join(keyDir, "server.key")
+	cfg.DeviceLogDir = cfg.KeyFile
+	if err := prepareDeviceLog(cfg, &certDirResolver{}); err == nil {
+		t.Fatal("a log directory equal to the key file path was accepted")
 	}
 }

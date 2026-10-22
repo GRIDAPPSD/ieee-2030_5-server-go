@@ -2,12 +2,11 @@ package memory
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 
+	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -303,33 +302,13 @@ func (s *EndDeviceManagementStore) RekeyManaged(_ context.Context, oldManagedLFD
 }
 
 // checkCanonicalLFDI refuses input a certificate-derived LFDI never takes, so
-// no comparison ever needs to fold case or trim. The length/hex check (#677
-// fix round item 5) matches internal/handler's normalizeLFDI/validLFDI: the
-// two packages cannot share the check directly (store must not import
-// handler), but a value the API refuses must never arrive from disk and
-// become an entry no API call can address again.
+// no comparison ever needs to fold case or trim. A value the API refuses must
+// never arrive from disk and become an entry no API call can address again.
 func checkCanonicalLFDI(role, lfdi string) error {
-	if !isCanonicalLFDI(lfdi) {
+	if !sep2lfdi.IsCanonical(lfdi) {
 		return fmt.Errorf("enddevice management: %s LFDI %q is not in canonical form: %w", role, lfdi, store.ErrInvalidManagementPair)
 	}
 	return nil
-}
-
-// isCanonicalLFDI reports whether lfdi is non-empty, upper case, unpadded
-// 40-digit hex: the one form every LFDI-keyed store accepts.
-func isCanonicalLFDI(lfdi string) bool {
-	return lfdi != "" && lfdi == strings.TrimSpace(lfdi) && lfdi == strings.ToUpper(lfdi) && isHex40(lfdi)
-}
-
-// isHex40 reports whether s is exactly 40 hex characters: the canonical
-// LFDI length per IEEE 2030.5 section 6.3.4 (the leading 20 bytes of a
-// SHA-256 fingerprint).
-func isHex40(s string) bool {
-	if len(s) != 40 {
-		return false
-	}
-	_, err := hex.DecodeString(s)
-	return err == nil
 }
 
 var (

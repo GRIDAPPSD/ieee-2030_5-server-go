@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -112,7 +111,9 @@ func prepareDeviceLog(cfg *config.Config, r *certDirResolver) error {
 	if certDir, err := r.get(); err == nil {
 		protected = append(protected, certDir)
 	}
-	protected = append(protected, filepath.Dir(cfg.KeyFile))
+	// The key file itself, not its directory: a key at ./server.key would
+	// otherwise protect the whole working directory.
+	protected = append(protected, cfg.KeyFile)
 	resolved, err := devicelog.PrepareDir(dir, protected)
 	if err != nil {
 		if explicit {

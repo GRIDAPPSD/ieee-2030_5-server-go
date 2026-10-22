@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
+	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 )
 
 const (
@@ -29,8 +30,6 @@ const (
 	// always found in the tail window used to recover the sequence number.
 	MaxLineBytes = 32 << 10
 	tailBytes    = 2 * MaxLineBytes
-
-	lfdiLen = 40
 )
 
 var (
@@ -151,7 +150,7 @@ func New(cfg Config) (*Writer, error) {
 // returns at once: ErrQueueFull and ErrLineTooLarge mean the line was
 // dropped and counted, and ErrInvalidLFDI means no file was named.
 func (w *Writer) Append(lfdi string, e Entry) error {
-	if !canonicalLFDI(lfdi) {
+	if !sep2lfdi.IsCanonical(lfdi) {
 		return ErrInvalidLFDI
 	}
 	if e.Kind == "" {
@@ -396,19 +395,4 @@ func lastSeq(f *os.File, size int64) (seq uint64, found, torn bool, err error) {
 		}
 	}
 	return 0, false, torn, nil
-}
-
-// canonicalLFDI reports whether s is exactly 40 upper-case hex digits. It is
-// a file-name guard, so it accepts nothing else: no case folding, no padding.
-func canonicalLFDI(s string) bool {
-	if len(s) != lfdiLen {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c < '0' || c > '9') && (c < 'A' || c > 'F') {
-			return false
-		}
-	}
-	return true
 }

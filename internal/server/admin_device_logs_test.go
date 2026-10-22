@@ -136,7 +136,7 @@ func newLogReader(t *testing.T) (*devicelog.Reader, string) {
 
 func TestDeviceLogsRequireARealCredentialAndHonorTheirStates(t *testing.T) {
 	reader, dir := newLogReader(t)
-	writeLogs(t, dir, map[string]string{logDevice + ".jsonl": logLine(1, 1, "request", logDevice, "", "/dcap")})
+	writeLogs(t, dir, map[string]string{logDevice + ".jsonl": logLine(1, 1, devicelog.KindRequest, logDevice, "", "/dcap")})
 	on := logsRouter(t, reader)
 	off := logsRouter(t, nil)
 
@@ -166,7 +166,7 @@ func TestDeviceLogsRequireARealCredentialAndHonorTheirStates(t *testing.T) {
 
 func TestDeviceLogsRefuseBadInputWith400(t *testing.T) {
 	reader, dir := newLogReader(t)
-	writeLogs(t, dir, map[string]string{logDevice + ".jsonl": logLine(1, 1, "request", logDevice, "", "/dcap")})
+	writeLogs(t, dir, map[string]string{logDevice + ".jsonl": logLine(1, 1, devicelog.KindRequest, logDevice, "", "/dcap")})
 	h := logsRouter(t, reader)
 	base := "/api/device-logs/" + logDevice
 	cursor := decodeLogPage(t, logsGet(t, h, base)).Entries[0].Cursor
@@ -204,10 +204,10 @@ func TestDeviceLogPageSpansRotationAndPagesWithNextBefore(t *testing.T) {
 	reader, dir := newLogReader(t)
 	var old, cur strings.Builder
 	for s := 1; s <= 3; s++ {
-		old.WriteString(logLine(s, s, "request", logDevice, "", fmt.Sprintf("/old%d", s)))
+		old.WriteString(logLine(s, s, devicelog.KindRequest, logDevice, "", fmt.Sprintf("/old%d", s)))
 	}
 	for s := 4; s <= 6; s++ {
-		cur.WriteString(logLine(s, s, "request", logDevice, "", fmt.Sprintf("/cur%d", s)))
+		cur.WriteString(logLine(s, s, devicelog.KindRequest, logDevice, "", fmt.Sprintf("/cur%d", s)))
 	}
 	writeLogs(t, dir, map[string]string{logDevice + ".1.jsonl": old.String(), logDevice + ".jsonl": cur.String()})
 	h := logsRouter(t, reader)
@@ -238,7 +238,7 @@ func TestDeviceLogPageSpansRotationAndPagesWithNextBefore(t *testing.T) {
 	if got := decodeLogPage(t, logsGet(t, h, "/api/device-logs/"+logDevice+"?after="+*p.NextAfter)); len(got.Entries) != 0 {
 		t.Errorf("after the newest cursor: %v, want none", got.keys())
 	}
-	writeLogs(t, dir, map[string]string{logDevice + ".jsonl": cur.String() + logLine(7, 7, "request", logDevice, "", "/cur7")})
+	writeLogs(t, dir, map[string]string{logDevice + ".jsonl": cur.String() + logLine(7, 7, devicelog.KindRequest, logDevice, "", "/cur7")})
 	if got := decodeLogPage(t, logsGet(t, h, "/api/device-logs/"+logDevice+"?after="+*p.NextAfter)); strings.Join(got.keys(), ",") != "own:7" {
 		t.Errorf("after the newest cursor with one new line: %v, want own:7", got.keys())
 	}
@@ -247,16 +247,16 @@ func TestDeviceLogPageSpansRotationAndPagesWithNextBefore(t *testing.T) {
 func TestDeviceLogViewMergesManagerAndUnregisteredLines(t *testing.T) {
 	reader, dir := newLogReader(t)
 	writeLogs(t, dir, map[string]string{
-		logDevice + ".jsonl": logLine(1, 10, "request", logDevice, "", "/own"),
+		logDevice + ".jsonl": logLine(1, 10, devicelog.KindRequest, logDevice, "", "/own"),
 		// The manager's request naming the device is the device's line; its
 		// request naming another device is not.
-		logManager + ".jsonl": logLine(1, 20, "request", logManager, logDevice, "/edev/1/der") +
-			logLine(2, 30, "request", logManager, logOther, "/edev/9/der") +
-			logLine(3, 40, "request", logManager, "", "/dcap"),
+		logManager + ".jsonl": logLine(1, 20, devicelog.KindRequest, logManager, logDevice, "/edev/1/der") +
+			logLine(2, 30, devicelog.KindRequest, logManager, logOther, "/edev/9/der") +
+			logLine(3, 40, devicelog.KindRequest, logManager, "", "/dcap"),
 		// The shared file holds the device's pre-registration line and
 		// another device's.
-		"unregistered.jsonl": logLine(1, 5, "request", logDevice, "", "/before-registering") +
-			logLine(2, 6, "request", logOther, "", "/someone-else"),
+		"unregistered.jsonl": logLine(1, 5, devicelog.KindRequest, logDevice, "", "/before-registering") +
+			logLine(2, 6, devicelog.KindRequest, logOther, "", "/someone-else"),
 	})
 	h := logsRouter(t, reader, [2]string{logManager, logDevice})
 
@@ -279,7 +279,7 @@ func TestDeviceLogViewMergesManagerAndUnregisteredLines(t *testing.T) {
 		t.Fatalf("aggregator managed view = %s, want %s", got, want)
 	}
 
-	none := decodeLogPage(t, logsGet(t, h, "/api/device-logs/"+logDevice+"?kind=logevent"))
+	none := decodeLogPage(t, logsGet(t, h, "/api/device-logs/"+logDevice+"?kind="+devicelog.KindLogEvent))
 	if none.Entries == nil || len(none.Entries) != 0 {
 		t.Errorf("a page with no match has entries %v, want an empty list", none.Entries)
 	}
@@ -287,7 +287,7 @@ func TestDeviceLogViewMergesManagerAndUnregisteredLines(t *testing.T) {
 
 func TestDeviceLogBodyNeverCarriesMarkupOrNull(t *testing.T) {
 	reader, dir := newLogReader(t)
-	writeLogs(t, dir, map[string]string{logDevice + ".jsonl": logLine(1, 1, "request", logDevice, "", `/<script>alert(1)</script>`)})
+	writeLogs(t, dir, map[string]string{logDevice + ".jsonl": logLine(1, 1, devicelog.KindRequest, logDevice, "", `/<script>alert(1)</script>`)})
 	h := logsRouter(t, reader)
 
 	rec := logsGet(t, h, "/api/device-logs/"+logDevice)
@@ -300,7 +300,7 @@ func TestDeviceLogBodyNeverCarriesMarkupOrNull(t *testing.T) {
 	if rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Errorf("headers = %v, want nosniff and no-store", rec.Header())
 	}
-	empty := logsGet(t, h, "/api/device-logs/"+logDevice+"?kind=logevent").Body.String()
+	empty := logsGet(t, h, "/api/device-logs/"+logDevice+"?kind="+devicelog.KindLogEvent).Body.String()
 	if !strings.Contains(empty, `"entries":[]`) || !strings.Contains(empty, `"nextBefore":null`) {
 		t.Errorf("empty page serialises as %s, want entries [] and nextBefore null", empty)
 	}
@@ -312,8 +312,8 @@ func TestDeviceLogBodyNeverCarriesMarkupOrNull(t *testing.T) {
 
 func TestDeviceLogDownloadIsTheTwoFilesOldestFirst(t *testing.T) {
 	reader, dir := newLogReader(t)
-	oldBody := logLine(1, 1, "request", logDevice, "", "/a") + logLine(2, 2, "request", logDevice, "", "/b")
-	curBody := logLine(3, 3, "request", logDevice, "", "/c")
+	oldBody := logLine(1, 1, devicelog.KindRequest, logDevice, "", "/a") + logLine(2, 2, devicelog.KindRequest, logDevice, "", "/b")
+	curBody := logLine(3, 3, devicelog.KindRequest, logDevice, "", "/c")
 	writeLogs(t, dir, map[string]string{logDevice + ".1.jsonl": oldBody, logDevice + ".jsonl": curBody})
 	h := logsRouter(t, reader)
 
@@ -335,7 +335,7 @@ func TestDeviceLogDownloadIsTheTwoFilesOldestFirst(t *testing.T) {
 func TestDeviceLogReadRefusesASymlinkedLogFile(t *testing.T) {
 	reader, dir := newLogReader(t)
 	target := filepath.Join(t.TempDir(), "secret.jsonl")
-	if err := os.WriteFile(target, []byte(logLine(1, 1, "request", logDevice, "", "/secret")), 0o600); err != nil {
+	if err := os.WriteFile(target, []byte(logLine(1, 1, devicelog.KindRequest, logDevice, "", "/secret")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, filepath.Join(dir, logDevice+".jsonl")); err != nil {

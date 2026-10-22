@@ -30,7 +30,7 @@ type fileLine struct {
 func (l fileLine) encode() string {
 	kind := l.kind
 	if kind == "" {
-		kind = "request"
+		kind = KindRequest
 	}
 	s := fmt.Sprintf(`{"seq":%d,"t":%q,"kind":%q,"actor":%q`, l.seq, stamp(l.sec), kind, l.actor)
 	if l.target != "" {
@@ -340,16 +340,16 @@ func mustCursor(t *testing.T, file string, sec float64, seq uint64) string {
 func TestReadFiltersByKindAndTarget(t *testing.T) {
 	r, dir := newTestReader(t)
 	writeLogFile(t, dir, lfdiA+".jsonl",
-		fileLine{seq: 1, sec: 1, actor: lfdiA, kind: "request"},
-		fileLine{seq: 2, sec: 2, actor: lfdiA, kind: "logevent"},
-		fileLine{seq: 3, sec: 3, actor: lfdiA, kind: "request"})
+		fileLine{seq: 1, sec: 1, actor: lfdiA, kind: KindRequest},
+		fileLine{seq: 2, sec: 2, actor: lfdiA, kind: KindLogEvent},
+		fileLine{seq: 3, sec: 3, actor: lfdiA, kind: KindRequest})
 	// B manages A: its lines naming A are A's, its other lines are not.
 	writeLogFile(t, dir, lfdiB+".jsonl",
 		fileLine{seq: 1, sec: 4, actor: lfdiB, target: lfdiA},
 		fileLine{seq: 2, sec: 5, actor: lfdiB},
-		fileLine{seq: 3, sec: 6, actor: lfdiB, target: lfdiA, kind: "logevent"})
+		fileLine{seq: 3, sec: 6, actor: lfdiB, target: lfdiA, kind: KindLogEvent})
 
-	got := walkBefore(t, r, Query{Sources: []Source{{File: lfdiA}}, Limit: 10, Kinds: []string{"logevent"}})
+	got := walkBefore(t, r, Query{Sources: []Source{{File: lfdiA}}, Limit: 10, Kinds: []string{KindLogEvent}})
 	if want := []string{"own:01:2"}; !eq(got, want) {
 		t.Errorf("kind logevent = %v, want %v", got, want)
 	}
@@ -464,7 +464,7 @@ func TestReadRefusesSymlinksAndBadInput(t *testing.T) {
 		t.Errorf("missing file: err = %v, want ErrNotFound", err)
 	}
 	writeLogFile(t, dir, lfdiB+".jsonl", fileLine{seq: 1, sec: 1, actor: lfdiB})
-	p, err := r.Read(Query{Sources: []Source{{File: lfdiB}}, Limit: 5, Kinds: []string{"logevent"}})
+	p, err := r.Read(Query{Sources: []Source{{File: lfdiB}}, Limit: 5, Kinds: []string{KindLogEvent}})
 	if err != nil || len(p.Entries) != 0 || p.NextBefore != "" {
 		t.Errorf("empty match: page %+v err %v, want an empty page", p, err)
 	}

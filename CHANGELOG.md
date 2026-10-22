@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `GET /api/device-logs/{lfdi}` and `/download` on the admin listener read a
+  device's log across its rotated file, with `limit`, `before`, `after`, `kind`
+  and `scope`; a device's view includes its lines in the shared unregistered
+  file and its manager's lines that name it. A real credential is required, and
+  503 means the log is off (#1066). `sep2adminplane.Config` gains `DeviceLogs`.
+
 ## [0.18.0] - 2026-10-21
 
 This entry covers `v0.17.0..v0.18.0`. It is a MINOR release under the 0.x

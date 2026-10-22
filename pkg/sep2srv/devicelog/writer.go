@@ -5,14 +5,12 @@
 package devicelog
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -26,10 +24,9 @@ const (
 	defaultQueueSize    = 1024
 	defaultMaxOpenFiles = 64
 
-	// MaxLineBytes caps one encoded line, so the last line of a file is
-	// always found in the tail window used to recover the sequence number.
+	// MaxLineBytes caps one encoded line, so a line is always whole inside a
+	// backward-scan chunk.
 	MaxLineBytes = 32 << 10
-	tailBytes    = 2 * MaxLineBytes
 )
 
 var (
@@ -635,9 +632,7 @@ func (w *Writer) note(lfdi, kind string, err error) {
 	w.logger.Printf("device log: %s %s (%d so far)", logsafe.Str(lfdi), logsafe.Str(kind), n)
 }
 
-func (w *Writer) paths(lfdi string) (cur, old string) {
-	return filepath.Join(w.dir, lfdi+".jsonl"), filepath.Join(w.dir, lfdi+".1.jsonl")
-}
+func (w *Writer) paths(lfdi string) (cur, old string) { return logPaths(w.dir, lfdi) }
 
 // open returns the device's open file, opening it and recovering its
 // sequence number when it is not open.
@@ -651,7 +646,7 @@ func (w *Writer) open(lfdi string) (*devFile, error) {
 		w.evictOldest()
 	}
 	cur, old := w.paths(lfdi)
-	f, err := os.OpenFile(cur, os.O_RDWR|os.O_CREATE|os.O_APPEND|noFollow, 0o640)
+	f, err := openLogFile(cur, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o640)
 	if err != nil {
 		return nil, err
 	}
@@ -726,7 +721,7 @@ func (w *Writer) rotate(lfdi string, df *devFile) error {
 	if err := os.Rename(cur, old); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(cur, os.O_RDWR|os.O_CREATE|os.O_APPEND|noFollow, 0o640)
+	f, err := openLogFile(cur, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o640)
 	if err != nil {
 		return err
 	}
@@ -737,59 +732,41 @@ func (w *Writer) rotate(lfdi string, df *devFile) error {
 
 // rotatedSeq reads the highest seq in the rotated file, which may be absent.
 func rotatedSeq(path string) (seq uint64, found bool, err error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|noFollow, 0)
+	f, size, err := openForRead(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, false, nil
 	}
 	if err != nil {
 		return 0, false, err
 	}
-	fi, err := f.Stat()
-	if err != nil {
-		_ = f.Close()
-		return 0, false, err
-	}
-	seq, found, _, err = scanSeq(f, fi.Size())
+	seq, found, _, err = scanSeq(f, size)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
 	return seq, found, err
 }
 
-// scanSeq walks f backward in tail-sized windows for the last line that
-// parses and carries a seq, so a long unreadable tail cannot hide earlier
-// lines. Each window starts MaxLineBytes inside the previous one, so a line
-// cut by one window is whole in the next. torn reports a final line with no
-// newline.
+// scanSeq finds the seq of the last line that parses and carries one, so a
+// long unreadable tail cannot hide earlier lines. torn reports a final line
+// with no newline.
 func scanSeq(f *os.File, size int64) (seq uint64, found, torn bool, err error) {
 	if size == 0 {
 		return 0, false, false, nil
 	}
-	end := size
-	for first := true; ; first = false {
-		start := max(0, end-int64(tailBytes))
-		buf := make([]byte, end-start)
-		if _, err := f.ReadAt(buf, start); err != nil {
-			return 0, false, false, err
-		}
-		if first {
-			torn = buf[len(buf)-1] != '\n'
-		}
-		rows := bytes.Split(buf, []byte{'\n'})
-		for i := len(rows) - 1; i >= 0; i-- {
-			if i == 0 && start > 0 {
-				break
-			}
-			var rec struct {
-				Seq *uint64 `json:"seq"`
-			}
-			if json.Unmarshal(rows[i], &rec) == nil && rec.Seq != nil {
-				return *rec.Seq, true, torn, nil
-			}
-		}
-		if start == 0 {
-			return 0, false, torn, nil
-		}
-		end = start + MaxLineBytes
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], size-1); err != nil {
+		return 0, false, false, err
 	}
+	torn = last[0] != '\n'
+	err = eachLineBackward(f, size, func(line []byte) bool {
+		var rec struct {
+			Seq *uint64 `json:"seq"`
+		}
+		if json.Unmarshal(line, &rec) == nil && rec.Seq != nil {
+			seq, found = *rec.Seq, true
+			return false
+		}
+		return true
+	})
+	return seq, found, torn, err
 }

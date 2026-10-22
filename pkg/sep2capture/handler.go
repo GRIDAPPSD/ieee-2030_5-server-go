@@ -2,6 +2,7 @@ package sep2capture
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 )
@@ -139,12 +140,13 @@ func (s *Store) Handler() http.Handler {
 	return mux
 }
 
-// defaultExchangesLimit and maxExchangesLimit are this route's own bound
-// on /exchanges (Q7 item 4: "bounded"), independent of Store.Exchanges,
-// which treats a non-positive limit as unbounded.
+// DefaultPageLimit and MaxPageLimit are the admin page bounds for a list
+// route: this package's /exchanges (Q7 item 4: "bounded", independent of
+// Store.Exchanges, which treats a non-positive limit as unbounded) and the
+// device log read route, which uses the same pair.
 const (
-	defaultExchangesLimit = 200
-	maxExchangesLimit     = 1000
+	DefaultPageLimit = 200
+	MaxPageLimit     = 1000
 )
 
 // clientJSON is the wire shape of one Clients() entry.
@@ -281,7 +283,7 @@ func (s *Store) handleExchangeList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit, err := parseLimit(r.URL.Query().Get("limit"))
+	limit, err := ParsePageLimit(r.URL.Query().Get("limit"), ClampOverMax)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "limit must be a positive integer")
 		return
@@ -304,32 +306,41 @@ func parseAfter(v string) (uint64, error) {
 	return strconv.ParseUint(v, 10, 64)
 }
 
-// parseLimit parses the limit= query parameter against this route's own
-// bound (defaultExchangesLimit, maxExchangesLimit): "" means the default,
-// a non-positive value is an error rather than "unbounded", and anything
-// above the max is silently clamped to it.
-func parseLimit(v string) (int, error) {
+// OverMax is what ParsePageLimit does with a limit above MaxPageLimit.
+type OverMax int
+
+const (
+	// ClampOverMax returns MaxPageLimit.
+	ClampOverMax OverMax = iota
+	// RefuseOverMax returns ErrPageLimit.
+	RefuseOverMax
+)
+
+// ErrPageLimit means a limit is not a whole number from 1 up, or is above
+// MaxPageLimit under RefuseOverMax.
+var ErrPageLimit = errors.New("limit is not a whole number in range")
+
+// ParsePageLimit parses a limit= query parameter against the page bounds:
+// "" means DefaultPageLimit, and a non-positive or non-numeric value is
+// ErrPageLimit rather than "unbounded". A value above MaxPageLimit is
+// clamped or refused as over says. It is the one limit parser for the admin
+// list routes.
+func ParsePageLimit(v string, over OverMax) (int, error) {
 	if v == "" {
-		return defaultExchangesLimit, nil
+		return DefaultPageLimit, nil
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n <= 0 {
-		if err == nil {
-			err = errNonPositiveLimit
-		}
-		return 0, err
+		return 0, ErrPageLimit
 	}
-	if n > maxExchangesLimit {
-		n = maxExchangesLimit
+	if n > MaxPageLimit {
+		if over == RefuseOverMax {
+			return 0, ErrPageLimit
+		}
+		n = MaxPageLimit
 	}
 	return n, nil
 }
-
-var errNonPositiveLimit = &limitError{"limit must be positive"}
-
-type limitError struct{ msg string }
-
-func (e *limitError) Error() string { return e.msg }
 
 // lookupExchangeID parses id from the request's {id} path value and
 // reports whether the caller has already written a response (a 400 on a

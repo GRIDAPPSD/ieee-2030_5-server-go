@@ -90,6 +90,47 @@ func TestRunWritesRequestAndLogEventLinesToTheDevicesFile(t *testing.T) {
 		t.Fatalf("POST /edev/1/lel status = %d, want 201", resp.StatusCode)
 	}
 
+	// #1066: the same lines come back through the admin plane's read route,
+	// which needs the credential even from loopback. The writer is
+	// asynchronous, so poll until the LogEvent line has landed.
+	logsPath := "/api/device-logs/" + env.deviceLFDI
+	if resp, err := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + env.adminAddr + logsPath); err != nil {
+		t.Fatalf("GET %s without a credential: %v", logsPath, err)
+	} else {
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("GET %s without a credential = %d, want 401", logsPath, resp.StatusCode)
+		}
+	}
+	var served struct {
+		Entries []struct {
+			Line map[string]any `json:"line"`
+		} `json:"entries"`
+	}
+	for deadline := time.Now().Add(3 * time.Second); ; {
+		status, text := profileAdminDo(t, env.adminAddr, http.MethodGet, logsPath, "")
+		served.Entries = nil
+		if err := json.Unmarshal([]byte(text), &served); status != http.StatusOK || err != nil {
+			t.Fatalf("GET %s = %d %s (%v), want 200", logsPath, status, text, err)
+		}
+		kinds := map[any]bool{}
+		for _, e := range served.Entries {
+			kinds[e.Line["kind"]] = true
+		}
+		if kinds["logevent"] && kinds["request"] {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the read route never returned both a request and a logevent line: %s", text)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for _, e := range served.Entries {
+		if e.Line["actor"] != env.deviceLFDI {
+			t.Errorf("the read route returned a line of actor %v for %s", e.Line["actor"], env.deviceLFDI)
+		}
+	}
+
 	// Run closes the writer after the listener drains. A writer Run left
 	// open would still accept a line, so the refusal below is what proves
 	// the Close ran.

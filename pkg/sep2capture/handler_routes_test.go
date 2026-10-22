@@ -142,15 +142,15 @@ func TestHandlerExchangeListRequiresClientAndValidatesParams(t *testing.T) {
 }
 
 // TestHandlerExchangeListLimitIsBounded proves Q7 item 1's "bounded":
-// even a limit far above maxExchangesLimit never returns more than
-// maxExchangesLimit entries.
+// even a limit far above MaxPageLimit never returns more than
+// MaxPageLimit entries.
 //
-// Mutant (handler.go, parseLimit): removing the `n > maxExchangesLimit`
+// Mutant (handler.go, ParsePageLimit): removing the `n > MaxPageLimit`
 // clamp makes this RED: the handler would return all 1500 entries instead
-// of stopping at maxExchangesLimit.
+// of stopping at MaxPageLimit.
 func TestHandlerExchangeListLimitIsBounded(t *testing.T) {
 	st := newTestStore(t)
-	for i := uint64(1); i <= maxExchangesLimit+500; i++ {
+	for i := uint64(1); i <= MaxPageLimit+500; i++ {
 		st.Record(makeExchange(i, i, "client-1", 64, 64))
 	}
 	waitQueueDrained(t, st)
@@ -169,8 +169,8 @@ func TestHandlerExchangeListLimitIsBounded(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(body.Exchanges) != maxExchangesLimit {
-		t.Fatalf("len(exchanges): got %d, want %d (maxExchangesLimit)", len(body.Exchanges), maxExchangesLimit)
+	if len(body.Exchanges) != MaxPageLimit {
+		t.Fatalf("len(exchanges): got %d, want %d (MaxPageLimit)", len(body.Exchanges), MaxPageLimit)
 	}
 }
 
@@ -295,11 +295,11 @@ func TestHandlerExchangeListAfterFiltersToNewerIDs(t *testing.T) {
 }
 
 // TestHandlerExchangeListDefaultLimitIs200 is a coverage-lane LOW: the
-// unstated default (no limit= at all) must be defaultExchangesLimit, not
+// unstated default (no limit= at all) must be DefaultPageLimit, not
 // unbounded.
 //
-// Mutant (handler.go, parseLimit): returning 0 (Store.Exchanges' own
-// meaning of unbounded) instead of defaultExchangesLimit when v == "" makes
+// Mutant (handler.go, ParsePageLimit): returning 0 (Store.Exchanges' own
+// meaning of unbounded) instead of DefaultPageLimit when v == "" makes
 // this RED: all 250 recorded exchanges come back instead of 200.
 func TestHandlerExchangeListDefaultLimitIs200(t *testing.T) {
 	st := newTestStore(t)
@@ -322,8 +322,8 @@ func TestHandlerExchangeListDefaultLimitIs200(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(body.Exchanges) != defaultExchangesLimit {
-		t.Fatalf("len(exchanges) with no limit=: got %d, want %d (defaultExchangesLimit)", len(body.Exchanges), defaultExchangesLimit)
+	if len(body.Exchanges) != DefaultPageLimit {
+		t.Fatalf("len(exchanges) with no limit=: got %d, want %d (DefaultPageLimit)", len(body.Exchanges), DefaultPageLimit)
 	}
 }
 
@@ -436,5 +436,31 @@ func TestHandlerSkippedIDBelowHighWaterMarkGives410NotFalse404(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusGone {
 		t.Fatalf("status: got %d, want %d", resp.StatusCode, http.StatusGone)
+	}
+}
+
+func TestParsePageLimit(t *testing.T) {
+	for _, c := range []struct {
+		in      string
+		over    OverMax
+		want    int
+		wantErr bool
+	}{
+		{"", ClampOverMax, DefaultPageLimit, false},
+		{"", RefuseOverMax, DefaultPageLimit, false},
+		{"1", RefuseOverMax, 1, false},
+		{"1000", RefuseOverMax, 1000, false},
+		{"1001", RefuseOverMax, 0, true},
+		{"1001", ClampOverMax, MaxPageLimit, false},
+		{"99999", ClampOverMax, MaxPageLimit, false},
+		{"0", ClampOverMax, 0, true},
+		{"0", RefuseOverMax, 0, true},
+		{"-3", ClampOverMax, 0, true},
+		{"abc", ClampOverMax, 0, true},
+	} {
+		got, err := ParsePageLimit(c.in, c.over)
+		if (err != nil) != c.wantErr || got != c.want {
+			t.Errorf("ParsePageLimit(%q, %v) = %d, %v; want %d, err %v", c.in, c.over, got, err, c.want, c.wantErr)
+		}
 	}
 }

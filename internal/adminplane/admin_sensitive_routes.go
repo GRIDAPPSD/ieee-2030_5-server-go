@@ -45,7 +45,10 @@ var sensitiveAdminPatterns = map[string]struct{}{
 //     the whole family is covered by prefix, not route by route.
 //   - /api/ui/panels (#829): an embedder's panel View may disclose
 //     anything, and the plane cannot tell what.
-var sensitiveAdminReadPrefixes = []string{"/api/management-pairs", "/api/device-profiles", "/api/derms/", "/api/ui/panels"}
+//   - /api/device-logs/ (#1066): a device's log shows its request pattern
+//     and its manager's actions. The trailing slash covers the download
+//     route and any later one.
+var sensitiveAdminReadPrefixes = []string{"/api/management-pairs", "/api/device-profiles", "/api/derms/", "/api/ui/panels", "/api/device-logs/"}
 
 // isSensitiveAdminReadPath reports whether path falls under one of
 // sensitiveAdminReadPrefixes.

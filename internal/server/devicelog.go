@@ -58,3 +58,18 @@ func newDeviceLog(cfg *config.Config) (*devicelog.Writer, func(), error) {
 	}
 	return w, closeLog, nil
 }
+
+// newDeviceLogReader is the admin plane's reader over the directory the
+// writer w appends to. It is nil when logging is off (w is nil), which the
+// read routes answer with 503. A directory that cannot be read as a plain
+// directory is an error: the writer started on it, so this is not expected.
+func newDeviceLogReader(cfg *config.Config, w *devicelog.Writer) (*devicelog.Reader, error) {
+	if w == nil {
+		return nil, nil
+	}
+	r, err := devicelog.NewReader(cfg.DeviceLogResolvedDir)
+	if err != nil {
+		return nil, err
+	}
+	return r.WithDropped(func() uint64 { return w.Dropped() + w.Failed() }), nil
+}

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -77,5 +78,43 @@ func TestDeviceLogShutdownNamesBothCounters(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("shutdown output lacks %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestNewDeviceLogReaderIsNilWhenLoggingIsOff(t *testing.T) {
+	t.Parallel()
+	r, err := newDeviceLogReader(&config.Config{DeviceLogOff: true}, nil)
+	if err != nil || r != nil {
+		t.Errorf("newDeviceLogReader with no writer = %v, %v; want nil, nil", r, err)
+	}
+}
+
+func TestNewDeviceLogReaderReportsTheWritersDroppedLines(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cfg := &config.Config{DeviceLogResolvedDir: dir}
+	w, closeLog, err := newDeviceLog(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const lfdi = "0123456789ABCDEF0123456789ABCDEF01234567"
+	if err := w.Append(lfdi, devicelog.Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	closeLog()
+	// The writer is closed, so this line is dropped and counted.
+	if err := w.Append(lfdi, devicelog.Entry{Kind: "request"}); err == nil {
+		t.Fatal("Append after close succeeded")
+	}
+	r, err := newDeviceLogReader(cfg, w)
+	if err != nil || r == nil {
+		t.Fatalf("newDeviceLogReader = %v, %v; want a reader", r, err)
+	}
+	page, err := r.Read(context.Background(), devicelog.Query{Sources: []devicelog.Source{{File: lfdi}}, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Entries) != 1 || page.Dropped != 1 {
+		t.Errorf("page has %d entries and dropped=%d; want 1 entry from the file and dropped=1 from the writer", len(page.Entries), page.Dropped)
 	}
 }

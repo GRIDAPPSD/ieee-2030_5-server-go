@@ -17,6 +17,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
 )
 
 // Errors New returns for a Config it refuses; test for them with errors.Is.
@@ -123,6 +124,11 @@ type Config struct {
 	// Nil adds none, and the payload's column list is then empty. A nil
 	// entry makes New fail.
 	DeviceColumns []sep2admin.DeviceColumnSource
+	// DeviceLogs reads the per-device log files the protocol router's
+	// RouterConfig.DeviceLog writes, for GET /api/device-logs/{lfdi}. Build
+	// it with devicelog.NewReader on the same directory. Nil means device
+	// logging is off and those routes answer 503.
+	DeviceLogs *devicelog.Reader
 	// TrustedOrigins is the SEP2_ADMIN_TRUSTED_ORIGINS value: a comma-separated
 	// list of origins (scheme://host[:port], lowercase, no path) whose
 	// cross-site writes the plane admits, or "*" to turn the cross-origin
@@ -203,6 +209,7 @@ func New(cfg Config) (*Plane, error) {
 		Activity:          cfg.Activity,
 		CommsOfflineAfter: cfg.CommsOfflineAfter,
 		DeviceColumns:     slices.Clone(cfg.DeviceColumns),
+		DeviceLogs:        cfg.DeviceLogs,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sep2adminplane: %w", err)

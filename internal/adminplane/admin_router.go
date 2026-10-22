@@ -9,6 +9,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/handler"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2admin"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -64,6 +65,9 @@ type Config struct {
 	CommsOfflineAfter time.Duration
 	// DeviceColumns add columns to the Devices tab. Nil adds none.
 	DeviceColumns []sep2admin.DeviceColumnSource
+	// DeviceLogs reads the per-device log files (#1066). Nil means device
+	// logging is off: GET /api/device-logs/ answers 503.
+	DeviceLogs *devicelog.Reader
 }
 
 // Build is the admin router Run serves, with its route list for the boot
@@ -243,6 +247,13 @@ func buildAuthedAdminMux(cfg Config, panels *panelSet) (*recordingMux, http.Hand
 		mountWrite("DELETE /api/management-pairs", mgmtH.HandleRemoveManagementPair())
 		mountWrite("POST /api/management-pairs/rekey", mgmtH.HandleRekeyManagementPair())
 	}
+
+	// #1066 device log read API. Mounted with logging off too, so the answer
+	// is 503 and not an indistinguishable 404. GET only, so ReadOnly leaves
+	// it; the prefix is sensitive (admin_sensitive_routes.go).
+	logH := newAdminDeviceLogHandler(cfg.DeviceLogs, stores)
+	authed.HandleFunc("GET /api/device-logs/{lfdi}", logH.HandleRead())
+	authed.HandleFunc("GET /api/device-logs/{lfdi}/download", logH.HandleDownload())
 
 	// #715 DERMS read API: per-aggregator fleet status, measurements and
 	// availability. Read-only; the same management-pair store above decides

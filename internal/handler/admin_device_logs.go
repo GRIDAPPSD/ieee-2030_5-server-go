@@ -7,12 +7,13 @@ import (
 	"log"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2capture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
+	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -29,6 +30,10 @@ const (
 	// can ask for: each source opens up to two files.
 	maxDeviceLogKinds    = 8
 	maxManagedLogSources = 200
+
+	// deviceLogReadBudget is how long one read may run, under the admin
+	// listener's 30 s write timeout.
+	deviceLogReadBudget = 25 * time.Second
 )
 
 var deviceLogKindRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
@@ -65,37 +70,47 @@ type deviceLogResponse struct {
 func (h *AdminDeviceLogHandler) HandleRead() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if h.Reader == nil {
-			writeDeviceLogError(w, http.StatusServiceUnavailable, "device log disabled")
+			writeError(w, http.StatusServiceUnavailable, "device log disabled")
 			return
 		}
 		lfdi, err := normalizeLFDI(r.PathValue("lfdi"))
 		if err != nil {
-			writeDeviceLogError(w, http.StatusBadRequest, "lfdi: "+err.Error())
+			writeError(w, http.StatusBadRequest, "lfdi: "+err.Error())
 			return
 		}
 		q, msg := parseDeviceLogQuery(r)
 		if msg != "" {
-			writeDeviceLogError(w, http.StatusBadRequest, msg)
+			writeError(w, http.StatusBadRequest, msg)
 			return
 		}
 		sources, status, msg := h.sources(r.Context(), lfdi, q.managed)
 		if status != 0 {
-			writeDeviceLogError(w, status, msg)
+			writeError(w, status, msg)
 			return
 		}
 		q.Query.Sources = sources
 
-		page, err := h.Reader.Read(q.Query)
+		// A read that outlives its client or the server's write timeout
+		// (30 s) stops here instead of running on.
+		ctx, cancel := context.WithTimeout(r.Context(), deviceLogReadBudget)
+		defer cancel()
+		page, err := h.Reader.Read(ctx, q.Query)
 		switch {
+		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
+			writeError(w, http.StatusServiceUnavailable, "device log read did not finish")
+			return
+		case errors.Is(err, devicelog.ErrBadQuery):
+			writeError(w, http.StatusBadRequest, "invalid device log query")
+			return
 		case errors.Is(err, devicelog.ErrNotFound):
-			writeDeviceLogError(w, http.StatusNotFound, "no log for this device")
+			writeError(w, http.StatusNotFound, "no log for this device")
 			return
 		case errors.Is(err, devicelog.ErrBadCursor):
-			writeDeviceLogError(w, http.StatusBadRequest, "before and after must be cursors from an earlier page")
+			writeError(w, http.StatusBadRequest, "before and after must be cursors from an earlier page")
 			return
 		case err != nil:
 			log.Printf("admin: device log read for %s: %s", logsafe.Str(lfdi), logsafe.Str(err.Error()))
-			writeDeviceLogError(w, http.StatusInternalServerError, "device log unreadable")
+			writeError(w, http.StatusInternalServerError, "device log unreadable")
 			return
 		}
 		resp := deviceLogResponse{
@@ -109,7 +124,6 @@ func (h *AdminDeviceLogHandler) HandleRead() http.HandlerFunc {
 		if resp.Entries == nil {
 			resp.Entries = []devicelog.Line{}
 		}
-		setDeviceLogHeaders(w)
 		writeJSON(w, http.StatusOK, resp)
 	}
 }
@@ -120,26 +134,25 @@ func (h *AdminDeviceLogHandler) HandleRead() http.HandlerFunc {
 func (h *AdminDeviceLogHandler) HandleDownload() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if h.Reader == nil {
-			writeDeviceLogError(w, http.StatusServiceUnavailable, "device log disabled")
+			writeError(w, http.StatusServiceUnavailable, "device log disabled")
 			return
 		}
 		lfdi, err := normalizeLFDI(r.PathValue("lfdi"))
 		if err != nil {
-			writeDeviceLogError(w, http.StatusBadRequest, "lfdi: "+err.Error())
+			writeError(w, http.StatusBadRequest, "lfdi: "+err.Error())
 			return
 		}
 		d, err := h.Reader.OpenDownload(lfdi)
 		switch {
 		case errors.Is(err, devicelog.ErrNotFound):
-			writeDeviceLogError(w, http.StatusNotFound, "no log for this device")
+			writeError(w, http.StatusNotFound, "no log for this device")
 			return
 		case err != nil:
 			log.Printf("admin: device log download for %s: %s", logsafe.Str(lfdi), logsafe.Str(err.Error()))
-			writeDeviceLogError(w, http.StatusInternalServerError, "device log unreadable")
+			writeError(w, http.StatusInternalServerError, "device log unreadable")
 			return
 		}
 		defer func() { _ = d.Close() }()
-		setDeviceLogHeaders(w)
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.jsonl"`, lfdi))
 		w.WriteHeader(http.StatusOK)
@@ -156,14 +169,12 @@ type deviceLogRequest struct {
 
 func parseDeviceLogQuery(r *http.Request) (deviceLogRequest, string) {
 	v := r.URL.Query()
-	q := deviceLogRequest{Query: devicelog.Query{Limit: sep2capture.DefaultPageLimit, Before: v.Get("before"), After: v.Get("after")}}
-	if raw := v.Get("limit"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 || n > sep2capture.MaxPageLimit {
-			return q, fmt.Sprintf("limit must be a whole number from 1 to %d", sep2capture.MaxPageLimit)
-		}
-		q.Limit = n
+	q := deviceLogRequest{Query: devicelog.Query{Before: v.Get("before"), After: v.Get("after")}}
+	limit, err := sep2capture.ParsePageLimit(v.Get("limit"), sep2capture.RefuseOverMax)
+	if err != nil {
+		return q, fmt.Sprintf("limit must be a whole number from 1 to %d", sep2capture.MaxPageLimit)
 	}
+	q.Limit = limit
 	if q.Before != "" && q.After != "" {
 		return q, "before and after are mutually exclusive"
 	}
@@ -200,6 +211,9 @@ func (h *AdminDeviceLogHandler) sources(ctx context.Context, lfdi string, manage
 		manager, err := h.Managers.ManagerOf(ctx, lfdi)
 		switch {
 		case err == nil:
+			if !sep2lfdi.IsCanonical(manager) {
+				return nil, http.StatusBadRequest, "the device's manager is not a canonical LFDI"
+			}
 			if !in[manager] {
 				in[manager] = true
 				srcs = append(srcs, devicelog.Source{File: manager, Target: lfdi, Label: "manager"})
@@ -218,6 +232,9 @@ func (h *AdminDeviceLogHandler) sources(ctx context.Context, lfdi string, manage
 				return nil, http.StatusBadRequest, fmt.Sprintf("scope=managed covers at most %d managed devices", maxManagedLogSources)
 			}
 			for _, d := range devices {
+				if !sep2lfdi.IsCanonical(d) {
+					return nil, http.StatusBadRequest, "a managed device is not a canonical LFDI"
+				}
 				actors[d] = true
 				if !in[d] {
 					in[d] = true
@@ -234,16 +251,4 @@ func optionalString(s string) *string {
 		return nil
 	}
 	return &s
-}
-
-// setDeviceLogHeaders keeps a browser from rendering a line as anything but
-// data and from caching a log page.
-func setDeviceLogHeaders(w http.ResponseWriter) {
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Cache-Control", "no-store")
-}
-
-func writeDeviceLogError(w http.ResponseWriter, status int, msg string) {
-	setDeviceLogHeaders(w)
-	writeError(w, status, msg)
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"os"
 	"path/filepath"
@@ -109,7 +110,7 @@ func TestNewDeviceLogReaderReportsTheWritersDroppedLines(t *testing.T) {
 	if err != nil || r == nil {
 		t.Fatalf("newDeviceLogReader = %v, %v; want a reader", r, err)
 	}
-	page, err := r.Read(devicelog.Query{Sources: []devicelog.Source{{File: lfdi}}, Limit: 10})
+	page, err := r.Read(context.Background(), devicelog.Query{Sources: []devicelog.Source{{File: lfdi}}, Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}

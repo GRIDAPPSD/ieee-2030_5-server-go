@@ -2,13 +2,13 @@ package devicelog
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,8 +18,6 @@ import (
 )
 
 const (
-	readChunk = 64 << 10
-
 	// readSkew is how far a line's t can trail the lines written before it
 	// in the same file: a line past the park cap is written ahead of its
 	// device's earlier parked lines, which follow within ParkWait (500 ms).
@@ -47,6 +45,9 @@ var (
 type Reader struct {
 	dir     string
 	dropped func() uint64
+	// betweenOpens runs between the two opens of one source; tests use it to
+	// rotate the files at that moment.
+	betweenOpens func()
 }
 
 // WithDropped sets the count a Page reports as Dropped, normally the sum of
@@ -63,14 +64,25 @@ func NewReader(dir string) (*Reader, error) {
 	if dir == "" {
 		return nil, errors.New("device log: directory is empty")
 	}
-	fi, err := os.Lstat(dir)
+	r := &Reader{dir: dir}
+	if err := r.checkDir(); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// checkDir refuses a directory that is not a real directory. It runs on
+// every read, so a directory swapped for a symlink after NewReader is not
+// followed.
+func (r *Reader) checkDir() error {
+	fi, err := os.Lstat(r.dir)
 	if err != nil {
-		return nil, fmt.Errorf("device log: %s: %w", dir, err)
+		return fmt.Errorf("device log: %s: %w", r.dir, err)
 	}
 	if !fi.IsDir() {
-		return nil, fmt.Errorf("device log: %s is not a directory (a symlink is refused)", dir)
+		return fmt.Errorf("%w: %s is not a directory (a symlink is refused)", ErrNotRegular, r.dir)
 	}
-	return &Reader{dir: dir}, nil
+	return nil
 }
 
 // Source is one stream of lines: the file named File and its rotated
@@ -267,8 +279,13 @@ type lineHead struct {
 	Target string  `json:"target"`
 }
 
-// Read returns one page of the query's merged sources, newest first.
-func (r *Reader) Read(q Query) (Page, error) {
+// Read returns one page of the query's merged sources, newest first. It
+// stops with ctx's error when ctx ends, so a large read does not outlive its
+// caller.
+func (r *Reader) Read(ctx context.Context, q Query) (Page, error) {
+	if err := r.checkDir(); err != nil {
+		return Page{}, err
+	}
 	if q.Limit <= 0 || len(q.Sources) == 0 || (q.Before != "" && q.After != "") {
 		return Page{}, ErrBadQuery
 	}
@@ -305,7 +322,7 @@ func (r *Reader) Read(q Query) (Page, error) {
 	}
 	anyFile := false
 	for _, s := range q.Sources {
-		found, rotated, err := r.scan(s, kinds, c)
+		found, rotated, err := r.scan(ctx, s, kinds, c)
 		if err != nil {
 			return Page{}, err
 		}
@@ -330,30 +347,57 @@ func (r *Reader) Read(q Query) (Page, error) {
 	return page, nil
 }
 
-// scan reads one source newest line first into c. found reports that either
-// file exists; rotated that the rotated file was read.
-func (r *Reader) scan(s Source, kinds map[string]bool, c *collector) (found, rotated bool, err error) {
-	// The rotated file is opened first: a rotation between the two opens
-	// then hands us the older rotated file and the file that has just
-	// become the rotated one, never the same file twice.
-	old, oldSize, err := r.openRegular(s.File + ".1.jsonl")
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+// ctxCheckEvery is how many lines a scan reads between looks at its context.
+const ctxCheckEvery = 256
+
+// scan reads one source newest line first into c. found reports that the
+// source holds something for the query: for a plain source either file
+// exists, and for one filtered by Actors or Target a line that matches the
+// filter was seen, so a shared file that exists but holds nothing for the
+// device is no log for it. rotated reports that the rotated file was read.
+func (r *Reader) scan(ctx context.Context, s Source, kinds map[string]bool, c *collector) (found, rotated bool, err error) {
+	if err := ctx.Err(); err != nil {
 		return false, false, err
 	}
-	if old != nil {
-		defer func() { _ = old.Close() }()
-	}
-	cur, curSize, err := r.openRegular(s.File + ".jsonl")
+	curPath, oldPath := logPaths(r.dir, s.File)
+	// The current file is opened first. The writer rotates by renaming the
+	// current file over the rotated one and then creating a new current
+	// file, so a rotation between the two opens leaves us the file that was
+	// current, now found as the rotated one, and the same file is read once
+	// (below). Opened the other way, that file would be lost.
+	cur, curSize, err := openForRead(curPath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, false, err
 	}
 	if cur != nil {
 		defer func() { _ = cur.Close() }()
 	}
-	found = old != nil || cur != nil
+	if r.betweenOpens != nil {
+		r.betweenOpens()
+	}
+	old, oldSize, err := openForRead(oldPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, false, err
+	}
+	if old != nil {
+		defer func() { _ = old.Close() }()
+		if cur != nil && sameFile(cur, old) {
+			_ = old.Close()
+			old = nil
+		}
+	}
+	filtered := s.Actors != nil || s.Target != ""
+	found = !filtered && (cur != nil || old != nil)
 
 	stopped := false
+	var ctxErr error
+	seen := 0
 	visit := func(line []byte) bool {
+		if seen++; seen%ctxCheckEvery == 0 {
+			if ctxErr = ctx.Err(); ctxErr != nil {
+				return false
+			}
+		}
 		var h lineHead
 		if json.Unmarshal(line, &h) != nil || h.Seq == nil {
 			return true
@@ -367,13 +411,14 @@ func (r *Reader) scan(s Source, kinds map[string]bool, c *collector) (found, rot
 			stopped = true
 			return false
 		}
-		if kinds != nil && !kinds[h.Kind] {
-			return true
-		}
 		if s.Actors != nil && !s.Actors[h.Actor] {
 			return true
 		}
 		if s.Target != "" && h.Target != s.Target {
+			return true
+		}
+		found = true
+		if kinds != nil && !kinds[h.Kind] {
 			return true
 		}
 		if !c.wants(k) {
@@ -387,85 +432,26 @@ func (r *Reader) scan(s Source, kinds map[string]bool, c *collector) (found, rot
 			return found, false, err
 		}
 	}
-	if old != nil && !stopped {
+	if old != nil && !stopped && ctxErr == nil {
 		rotated = true
 		if err := eachLineBackward(old, oldSize, visit); err != nil {
 			return found, rotated, err
 		}
 	}
-	return found, rotated, nil
+	return found, rotated, ctxErr
 }
 
-// openRegular opens a log file for reading and returns its size now. A
-// symlink, and a path that was swapped for another file between the check
-// and the open, are refused; the size bounds the read so a line still being
-// appended is never half-read.
-func (r *Reader) openRegular(name string) (*os.File, int64, error) {
-	path := filepath.Join(r.dir, name)
-	lst, err := os.Lstat(path)
+// sameFile reports whether a and b are the same file.
+func sameFile(a, b *os.File) bool {
+	fa, err := a.Stat()
 	if err != nil {
-		return nil, 0, err
+		return false
 	}
-	if !lst.Mode().IsRegular() {
-		return nil, 0, fmt.Errorf("%w: %s", ErrNotRegular, name)
-	}
-	f, err := os.OpenFile(path, os.O_RDONLY|noFollow, 0)
+	fb, err := b.Stat()
 	if err != nil {
-		return nil, 0, err
+		return false
 	}
-	fi, err := f.Stat()
-	if err != nil {
-		_ = f.Close()
-		return nil, 0, err
-	}
-	if !fi.Mode().IsRegular() || !os.SameFile(lst, fi) {
-		_ = f.Close()
-		return nil, 0, fmt.Errorf("%w: %s changed while opening", ErrNotRegular, name)
-	}
-	return f, fi.Size(), nil
-}
-
-// eachLineBackward calls fn for each complete line of the first size bytes
-// of f, last line first, until fn returns false. fn must copy a line it
-// keeps. A line longer than MaxLineBytes, which the writer never produces,
-// is skipped. A final line still being written has no newline and is cut
-// short, so fn's JSON parse refuses it.
-func eachLineBackward(f *os.File, size int64, fn func(line []byte) bool) error {
-	var carry []byte
-	// dropTail discards the last row of the next chunk: the head of a line
-	// too long to keep.
-	dropTail := false
-	pos := size
-	for pos > 0 {
-		start := max(0, pos-readChunk)
-		buf := make([]byte, pos-start, int(pos-start)+len(carry))
-		if _, err := f.ReadAt(buf, start); err != nil {
-			return err
-		}
-		data := append(buf, carry...)
-		carry = nil
-		rows := bytes.Split(data, []byte{'\n'})
-		if dropTail {
-			rows = rows[:len(rows)-1]
-			dropTail = len(rows) == 0
-		}
-		if start > 0 && len(rows) > 0 {
-			carry, rows = rows[0], rows[1:]
-			if len(carry) > MaxLineBytes {
-				carry, dropTail = nil, true
-			}
-		}
-		for i := len(rows) - 1; i >= 0; i-- {
-			if len(rows[i]) == 0 || len(rows[i]) > MaxLineBytes {
-				continue
-			}
-			if !fn(rows[i]) {
-				return nil
-			}
-		}
-		pos = start
-	}
-	return nil
+	return os.SameFile(fa, fb)
 }
 
 // Download is the open files of one device, ready to stream.
@@ -478,30 +464,58 @@ type downloadPart struct {
 	end int64
 }
 
-// OpenDownload opens the rotated file and then the current file of the
-// device with canonical LFDI lfdi, for WriteTo to stream oldest first. It
-// returns ErrNotFound when neither exists. The caller closes the Download.
+// OpenDownload opens the current file and then the rotated file of the
+// device with canonical LFDI lfdi, for WriteTo to stream oldest first. The
+// order matters for the reason given in scan, and a rotated file that is the
+// current file seen again is dropped. It returns ErrNotFound when neither
+// exists. The caller closes the Download.
 func (r *Reader) OpenDownload(lfdi string) (*Download, error) {
 	if !sep2lfdi.IsCanonical(lfdi) {
 		return nil, fmt.Errorf("%w: %q", ErrBadQuery, lfdi)
 	}
+	if err := r.checkDir(); err != nil {
+		return nil, err
+	}
+	curPath, oldPath := logPaths(r.dir, lfdi)
+	cur, curSize, err := openForRead(curPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if r.betweenOpens != nil {
+		r.betweenOpens()
+	}
+	old, oldSize, err := openForRead(oldPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		if cur != nil {
+			_ = cur.Close()
+		}
+		return nil, err
+	}
+	if old != nil && cur != nil && sameFile(cur, old) {
+		_ = old.Close()
+		old = nil
+	}
 	d := &Download{}
-	for _, name := range []string{lfdi + ".1.jsonl", lfdi + ".jsonl"} {
-		f, size, err := r.openRegular(name)
-		if errors.Is(err, os.ErrNotExist) {
+	// Oldest first: the rotated file, then the current one.
+	for _, p := range []struct {
+		f    *os.File
+		size int64
+	}{{old, oldSize}, {cur, curSize}} {
+		if p.f == nil {
 			continue
 		}
+		end, err := completeEnd(p.f, p.size)
 		if err != nil {
+			_ = p.f.Close()
 			_ = d.Close()
+			for _, q := range []*os.File{old, cur} {
+				if q != nil && q != p.f {
+					_ = q.Close()
+				}
+			}
 			return nil, err
 		}
-		end, err := completeEnd(f, size)
-		if err != nil {
-			_ = f.Close()
-			_ = d.Close()
-			return nil, err
-		}
-		d.parts = append(d.parts, downloadPart{f: f, end: end})
+		d.parts = append(d.parts, downloadPart{f: p.f, end: end})
 	}
 	if len(d.parts) == 0 {
 		return nil, ErrNotFound

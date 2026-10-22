@@ -349,3 +349,20 @@ func TestDeviceLogReadRefusesASymlinkedLogFile(t *testing.T) {
 		}
 	}
 }
+
+// The shared file existing is not a log for every device: a device with no
+// file of its own and no line in the shared one is 404, and one with a line
+// only in the shared file is 200 with it.
+func TestDeviceLogOfADeviceKnownOnlyFromTheSharedFile(t *testing.T) {
+	reader, dir := newLogReader(t)
+	writeLogs(t, dir, map[string]string{"unregistered.jsonl": logLine(1, 1, devicelog.KindRequest, logOther, "", "/before")})
+	h := logsRouter(t, reader)
+
+	if rec := logsGet(t, h, "/api/device-logs/"+logDevice); rec.Code != http.StatusNotFound {
+		t.Errorf("device with nothing anywhere = %d %s, want 404", rec.Code, rec.Body)
+	}
+	p := decodeLogPage(t, logsGet(t, h, "/api/device-logs/"+logOther))
+	if got := strings.Join(p.keys(), ","); got != "unregistered:1" {
+		t.Errorf("device with a line only in the shared file: %s, want unregistered:1", got)
+	}
+}

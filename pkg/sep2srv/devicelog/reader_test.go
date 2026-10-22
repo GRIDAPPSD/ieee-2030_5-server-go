@@ -2,6 +2,7 @@ package devicelog
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -93,7 +94,7 @@ func walkBefore(t *testing.T, r *Reader, q Query) []string {
 	var all []string
 	seen := map[string]bool{}
 	for range 1000 {
-		p, err := r.Read(q)
+		p, err := r.Read(context.Background(), q)
 		if err != nil {
 			t.Fatalf("Read: %v", err)
 		}
@@ -135,7 +136,7 @@ func TestReadPageSpansRotationInOrderWithNextBefore(t *testing.T) {
 	writeLogFile(t, dir, lfdiA+".1.jsonl", old...)
 	writeLogFile(t, dir, lfdiA+".jsonl", cur...)
 
-	p, err := r.Read(Query{Sources: []Source{{File: lfdiA}}, Limit: 6})
+	p, err := r.Read(context.Background(), Query{Sources: []Source{{File: lfdiA}}, Limit: 6})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +151,7 @@ func TestReadPageSpansRotationInOrderWithNextBefore(t *testing.T) {
 		t.Fatalf("NextBefore decodes to %+v (%v), want seq 3 at t+300s", k, err)
 	}
 
-	p2, err := r.Read(Query{Sources: []Source{{File: lfdiA}}, Limit: 6, Before: p.NextBefore})
+	p2, err := r.Read(context.Background(), Query{Sources: []Source{{File: lfdiA}}, Limit: 6, Before: p.NextBefore})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +164,7 @@ func TestReadPageSpansRotationInOrderWithNextBefore(t *testing.T) {
 
 	// Lines are minutes apart, beyond the read skew, so a page the current
 	// file satisfied stops before the rotated file. A page wholly in the current file does not report a rotated read.
-	p3, err := r.Read(Query{Sources: []Source{{File: lfdiA}}, Limit: 2})
+	p3, err := r.Read(context.Background(), Query{Sources: []Source{{File: lfdiA}}, Limit: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +256,7 @@ func TestReadEarlyStopStillFindsALineThatTrailsWithinTheSkew(t *testing.T) {
 		fileLine{seq: 3, sec: 23, actor: lfdiA},
 		fileLine{seq: 4, sec: 25, actor: lfdiA},
 		fileLine{seq: 5, sec: 30, actor: lfdiA})
-	p, err := r.Read(Query{Sources: []Source{{File: lfdiA}}, Limit: 2})
+	p, err := r.Read(context.Background(), Query{Sources: []Source{{File: lfdiA}}, Limit: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +290,7 @@ func TestReadAfterReturnsOldestNewerLinesSoFollowingSkipsNone(t *testing.T) {
 	writeLogFile(t, dir, lfdiA+".jsonl", lines...)
 	srcs := []Source{{File: lfdiA}}
 
-	first, err := r.Read(Query{Sources: srcs, Limit: 3})
+	first, err := r.Read(context.Background(), Query{Sources: srcs, Limit: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +298,7 @@ func TestReadAfterReturnsOldestNewerLinesSoFollowingSkipsNone(t *testing.T) {
 	cursor := first.Entries[len(first.Entries)-1].Cursor // seq 8
 	var got []string
 	for range 10 {
-		p, err := r.Read(Query{Sources: srcs, Limit: 3, After: cursor})
+		p, err := r.Read(context.Background(), Query{Sources: srcs, Limit: 3, After: cursor})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -316,14 +317,14 @@ func TestReadAfterReturnsOldestNewerLinesSoFollowingSkipsNone(t *testing.T) {
 
 	// From the start, 3 at a time: oldest three first (newest first within
 	// the page), then the next three.
-	p, err := r.Read(Query{Sources: srcs, Limit: 3, After: mustCursor(t, lfdiA, 0.5, 0)})
+	p, err := r.Read(context.Background(), Query{Sources: srcs, Limit: 3, After: mustCursor(t, lfdiA, 0.5, 0)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := pageKeys(t, p), []string{"own:01:3", "own:01:2", "own:01:1"}; !eq(got, want) {
 		t.Fatalf("first after page = %v, want %v", got, want)
 	}
-	p, err = r.Read(Query{Sources: srcs, Limit: 3, After: p.NextAfter})
+	p, err = r.Read(context.Background(), Query{Sources: srcs, Limit: 3, After: p.NextAfter})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +402,7 @@ func TestReadRefusesSymlinksAndBadInput(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dir, lfdiA+".jsonl")); err != nil {
 		t.Skipf("no symlinks here: %v", err)
 	}
-	if _, err := r.Read(Query{Sources: srcs, Limit: 5}); !errors.Is(err, ErrNotRegular) {
+	if _, err := r.Read(context.Background(), Query{Sources: srcs, Limit: 5}); !errors.Is(err, ErrNotRegular) {
 		t.Errorf("symlinked current file: err = %v, want ErrNotRegular", err)
 	}
 	if _, err := r.OpenDownload(lfdiA); !errors.Is(err, ErrNotRegular) {
@@ -413,7 +414,7 @@ func TestReadRefusesSymlinksAndBadInput(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dir, lfdiA+".1.jsonl")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Read(Query{Sources: srcs, Limit: 5}); !errors.Is(err, ErrNotRegular) {
+	if _, err := r.Read(context.Background(), Query{Sources: srcs, Limit: 5}); !errors.Is(err, ErrNotRegular) {
 		t.Errorf("symlinked rotated file: err = %v, want ErrNotRegular", err)
 	}
 	// A dangling link is a link, not a missing file.
@@ -423,7 +424,7 @@ func TestReadRefusesSymlinksAndBadInput(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, "gone"), filepath.Join(dir, lfdiA+".jsonl")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Read(Query{Sources: srcs, Limit: 5}); !errors.Is(err, ErrNotRegular) {
+	if _, err := r.Read(context.Background(), Query{Sources: srcs, Limit: 5}); !errors.Is(err, ErrNotRegular) {
 		t.Errorf("dangling link: err = %v, want ErrNotRegular", err)
 	}
 
@@ -451,7 +452,7 @@ func TestReadRefusesSymlinksAndBadInput(t *testing.T) {
 		{"garbage cursor", Query{Sources: srcs, Limit: 5, Before: "!!!"}, ErrBadCursor},
 		{"cursor naming another file", Query{Sources: srcs, Limit: 5, Before: key{t: 1, file: "../x", seq: 1}.encode()}, ErrBadCursor},
 	} {
-		if _, err := r.Read(c.q); !errors.Is(err, c.want) {
+		if _, err := r.Read(context.Background(), c.q); !errors.Is(err, c.want) {
 			t.Errorf("%s: err = %v, want %v", c.name, err, c.want)
 		}
 	}
@@ -460,11 +461,11 @@ func TestReadRefusesSymlinksAndBadInput(t *testing.T) {
 	}
 
 	// No file at all is not found; a file with no matching line is an empty page.
-	if _, err := r.Read(Query{Sources: []Source{{File: lfdiB}}, Limit: 5}); !errors.Is(err, ErrNotFound) {
+	if _, err := r.Read(context.Background(), Query{Sources: []Source{{File: lfdiB}}, Limit: 5}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("missing file: err = %v, want ErrNotFound", err)
 	}
 	writeLogFile(t, dir, lfdiB+".jsonl", fileLine{seq: 1, sec: 1, actor: lfdiB})
-	p, err := r.Read(Query{Sources: []Source{{File: lfdiB}}, Limit: 5, Kinds: []string{KindLogEvent}})
+	p, err := r.Read(context.Background(), Query{Sources: []Source{{File: lfdiB}}, Limit: 5, Kinds: []string{KindLogEvent}})
 	if err != nil || len(p.Entries) != 0 || p.NextBefore != "" {
 		t.Errorf("empty match: page %+v err %v, want an empty page", p, err)
 	}
@@ -520,7 +521,7 @@ func TestReadsWhatTheWriterRotated(t *testing.T) {
 	var got []int
 	q := Query{Sources: []Source{{File: lfdiA}}, Limit: 4}
 	for range 100 {
-		p, err := r.Read(q)
+		p, err := r.Read(context.Background(), q)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -547,5 +548,166 @@ func TestReadsWhatTheWriterRotated(t *testing.T) {
 		if got[i] != got[i-1]-1 {
 			t.Fatalf("read %v: gap or repeat at index %d", got, i)
 		}
+	}
+}
+
+// rotateOnce renames the current file of lfdi over its rotated file and
+// starts a new current file holding newLine, as the writer does.
+func rotateOnce(t *testing.T, dir, lfdi string, newLine fileLine) {
+	t.Helper()
+	cur := filepath.Join(dir, lfdi+".jsonl")
+	if err := os.Rename(cur, filepath.Join(dir, lfdi+".1.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	writeLogFile(t, dir, lfdi+".jsonl", newLine)
+}
+
+// A rotation between the two opens of one source must not lose the file
+// that was current: opened current first, it is still read, as the rotated
+// file the second open then finds.
+func TestReadRotationBetweenTheTwoOpensLosesNoLine(t *testing.T) {
+	r, dir := newTestReader(t)
+	writeLogFile(t, dir, lfdiA+".1.jsonl", fileLine{seq: 1, sec: 1, actor: lfdiA}, fileLine{seq: 2, sec: 2, actor: lfdiA})
+	writeLogFile(t, dir, lfdiA+".jsonl", fileLine{seq: 3, sec: 3, actor: lfdiA}, fileLine{seq: 4, sec: 4, actor: lfdiA})
+	done := false
+	r.betweenOpens = func() {
+		if !done {
+			done = true
+			rotateOnce(t, dir, lfdiA, fileLine{seq: 5, sec: 5, actor: lfdiA})
+		}
+	}
+	p, err := r.Read(context.Background(), Query{Sources: []Source{{File: lfdiA}}, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := pageKeys(t, p), []string{"own:01:4", "own:01:3"}; !eq(got, want) {
+		t.Fatalf("page = %v, want %v (no line of the file that was current may be lost, none twice)", got, want)
+	}
+}
+
+func TestDownloadRotationBetweenTheTwoOpensKeepsTheCurrentFile(t *testing.T) {
+	r, dir := newTestReader(t)
+	oldBody := fileLine{seq: 1, sec: 1, actor: lfdiA}
+	curBody := fileLine{seq: 3, sec: 3, actor: lfdiA}
+	writeLogFile(t, dir, lfdiA+".1.jsonl", oldBody)
+	writeLogFile(t, dir, lfdiA+".jsonl", curBody)
+	done := false
+	r.betweenOpens = func() {
+		if !done {
+			done = true
+			rotateOnce(t, dir, lfdiA, fileLine{seq: 5, sec: 5, actor: lfdiA})
+		}
+	}
+	d, err := r.OpenDownload(lfdiA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = d.Close() }()
+	var out bytes.Buffer
+	if _, err := d.WriteTo(&out); err != nil {
+		t.Fatal(err)
+	}
+	if want := curBody.encode() + "\n"; out.String() != want {
+		t.Fatalf("download = %q, want the file that was current, once: %q", out.String(), want)
+	}
+}
+
+// A rotation between the Lstat and the open is a changed file, not a
+// symlink: the open is retried and reads the new file.
+func TestReadRetriesWhenARotationLandsBetweenLstatAndOpen(t *testing.T) {
+	r, dir := newTestReader(t)
+	writeLogFile(t, dir, lfdiA+".jsonl", fileLine{seq: 1, sec: 1, actor: lfdiA}, fileLine{seq: 2, sec: 2, actor: lfdiA})
+	cur := filepath.Join(dir, lfdiA+".jsonl")
+	done := false
+	afterLstat = func(path string) {
+		if path == cur && !done {
+			done = true
+			rotateOnce(t, dir, lfdiA, fileLine{seq: 3, sec: 3, actor: lfdiA})
+		}
+	}
+	t.Cleanup(func() { afterLstat = nil })
+	p, err := r.Read(context.Background(), Query{Sources: []Source{{File: lfdiA}}, Limit: 10})
+	if err != nil {
+		t.Fatalf("Read = %v, want a rotation to be retried, not refused", err)
+	}
+	if got, want := pageKeys(t, p), []string{"own:01:3", "own:01:2", "own:01:1"}; !eq(got, want) {
+		t.Fatalf("page = %v, want %v", got, want)
+	}
+}
+
+// A shared file that exists but holds nothing for the device is no log for
+// it; lines for it in the shared file alone are a log.
+func TestReadNeedsALineForTheDeviceInAFilteredSource(t *testing.T) {
+	r, dir := newTestReader(t)
+	writeLogFile(t, dir, UnregisteredFile+".jsonl", fileLine{seq: 1, sec: 1, actor: lfdiB})
+	srcs := []Source{{File: lfdiA}, {File: UnregisteredFile, Actors: map[string]bool{lfdiA: true}, Label: "unregistered"}}
+	if _, err := r.Read(context.Background(), Query{Sources: srcs, Limit: 5}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("shared file with only another device's lines: err = %v, want ErrNotFound", err)
+	}
+	// A manager file with no line naming the device is the same.
+	writeLogFile(t, dir, lfdiB+".jsonl", fileLine{seq: 1, sec: 2, actor: lfdiB})
+	srcs = append(srcs, Source{File: lfdiB, Target: lfdiA, Label: "manager"})
+	if _, err := r.Read(context.Background(), Query{Sources: srcs, Limit: 5}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("manager file with no line naming the device: err = %v, want ErrNotFound", err)
+	}
+	writeLogFile(t, dir, UnregisteredFile+".jsonl", fileLine{seq: 1, sec: 1, actor: lfdiB}, fileLine{seq: 2, sec: 3, actor: lfdiA})
+	p, err := r.Read(context.Background(), Query{Sources: srcs, Limit: 5, Kinds: []string{"logevent"}})
+	if err != nil || len(p.Entries) != 0 {
+		t.Fatalf("a matching line filtered out by kind: page %+v err %v, want an empty 200", p, err)
+	}
+	p, err = r.Read(context.Background(), Query{Sources: srcs, Limit: 5})
+	if err != nil || strings.Join(pageKeys(t, p), ",") != "unregistered:01:2" {
+		t.Fatalf("lines only in the shared file: %v err %v", pageKeys(t, p), err)
+	}
+}
+
+func TestReadStopsWhenItsContextEnds(t *testing.T) {
+	r, dir := newTestReader(t)
+	var lines []fileLine
+	for s := 1; s <= 2*ctxCheckEvery+10; s++ {
+		lines = append(lines, fileLine{seq: uint64(s), sec: float64(s), actor: lfdiA})
+	}
+	writeLogFile(t, dir, lfdiA+".jsonl", lines...)
+	srcs := []Source{{File: lfdiA}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := r.Read(ctx, Query{Sources: srcs, Limit: 5}); !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled before the read: err = %v, want context.Canceled", err)
+	}
+	// Ended mid-file: a filtered read that would scan every line.
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	r.betweenOpens = func() { cancel() }
+	if _, err := r.Read(ctx, Query{Sources: srcs, Limit: 5, Kinds: []string{"nothing"}}); !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled between opens: err = %v, want context.Canceled", err)
+	}
+	// Control: a live context reads.
+	r.betweenOpens = nil
+	if _, err := r.Read(context.Background(), Query{Sources: srcs, Limit: 5}); err != nil {
+		t.Errorf("live context: %v", err)
+	}
+}
+
+func TestReadRefusesADirectorySwappedForASymlinkAfterNewReader(t *testing.T) {
+	r, dir := newTestReader(t)
+	writeLogFile(t, dir, lfdiA+".jsonl", fileLine{seq: 1, sec: 1, actor: lfdiA})
+	srcs := []Source{{File: lfdiA}}
+	if _, err := r.Read(context.Background(), Query{Sources: srcs, Limit: 5}); err != nil {
+		t.Fatalf("control read: %v", err)
+	}
+	moved := dir + "-moved"
+	if err := os.Rename(dir, moved); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(moved) })
+	if err := os.Symlink(moved, dir); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	if _, err := r.Read(context.Background(), Query{Sources: srcs, Limit: 5}); !errors.Is(err, ErrNotRegular) {
+		t.Errorf("read through a swapped directory: err = %v, want ErrNotRegular", err)
+	}
+	if _, err := r.OpenDownload(lfdiA); !errors.Is(err, ErrNotRegular) {
+		t.Errorf("download through a swapped directory: err = %v, want ErrNotRegular", err)
 	}
 }

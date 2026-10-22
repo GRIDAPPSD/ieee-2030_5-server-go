@@ -145,7 +145,7 @@ func TestHandlerExchangeListRequiresClientAndValidatesParams(t *testing.T) {
 // even a limit far above MaxPageLimit never returns more than
 // MaxPageLimit entries.
 //
-// Mutant (handler.go, parseLimit): removing the `n > MaxPageLimit`
+// Mutant (handler.go, ParsePageLimit): removing the `n > MaxPageLimit`
 // clamp makes this RED: the handler would return all 1500 entries instead
 // of stopping at MaxPageLimit.
 func TestHandlerExchangeListLimitIsBounded(t *testing.T) {
@@ -298,7 +298,7 @@ func TestHandlerExchangeListAfterFiltersToNewerIDs(t *testing.T) {
 // unstated default (no limit= at all) must be DefaultPageLimit, not
 // unbounded.
 //
-// Mutant (handler.go, parseLimit): returning 0 (Store.Exchanges' own
+// Mutant (handler.go, ParsePageLimit): returning 0 (Store.Exchanges' own
 // meaning of unbounded) instead of DefaultPageLimit when v == "" makes
 // this RED: all 250 recorded exchanges come back instead of 200.
 func TestHandlerExchangeListDefaultLimitIs200(t *testing.T) {
@@ -436,5 +436,31 @@ func TestHandlerSkippedIDBelowHighWaterMarkGives410NotFalse404(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusGone {
 		t.Fatalf("status: got %d, want %d", resp.StatusCode, http.StatusGone)
+	}
+}
+
+func TestParsePageLimit(t *testing.T) {
+	for _, c := range []struct {
+		in      string
+		over    OverMax
+		want    int
+		wantErr bool
+	}{
+		{"", ClampOverMax, DefaultPageLimit, false},
+		{"", RefuseOverMax, DefaultPageLimit, false},
+		{"1", RefuseOverMax, 1, false},
+		{"1000", RefuseOverMax, 1000, false},
+		{"1001", RefuseOverMax, 0, true},
+		{"1001", ClampOverMax, MaxPageLimit, false},
+		{"99999", ClampOverMax, MaxPageLimit, false},
+		{"0", ClampOverMax, 0, true},
+		{"0", RefuseOverMax, 0, true},
+		{"-3", ClampOverMax, 0, true},
+		{"abc", ClampOverMax, 0, true},
+	} {
+		got, err := ParsePageLimit(c.in, c.over)
+		if (err != nil) != c.wantErr || got != c.want {
+			t.Errorf("ParsePageLimit(%q, %v) = %d, %v; want %d, err %v", c.in, c.over, got, err, c.want, c.wantErr)
+		}
 	}
 }

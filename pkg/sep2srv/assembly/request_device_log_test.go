@@ -13,12 +13,20 @@ import (
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/assembly"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
 // logServer serves the management fleet through a router that writes the
 // device log into a fresh directory. closeLog drains the writer so the files
 // can be read.
 func logServer(t *testing.T, policy assembly.AuthPolicy) (srv *httptest.Server, dir string, closeLog func()) {
+	t.Helper()
+	return logServerWith(t, policy, nil)
+}
+
+// logServerWith is logServer with wrapManagers applied to the fleet's
+// management store before the router is built.
+func logServerWith(t *testing.T, policy assembly.AuthPolicy, wrapManagers func(store.EndDeviceManagementStore) store.EndDeviceManagementStore) (srv *httptest.Server, dir string, closeLog func()) {
 	t.Helper()
 	dir = t.TempDir()
 	w, err := devicelog.New(devicelog.Config{Dir: dir, MaxBytes: 1_000_000})
@@ -38,7 +46,11 @@ func logServer(t *testing.T, policy assembly.AuthPolicy) (srv *httptest.Server, 
 		}
 	}
 	t.Cleanup(closeLog)
-	handler, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{DeviceLog: w}, newManagementFleet(t).stores, policy, "serverSFDI", "serverLFDI", nil)
+	stores := newManagementFleet(t).stores
+	if wrapManagers != nil {
+		stores.EndDeviceManagers = wrapManagers(stores.EndDeviceManagers)
+	}
+	handler, _ := assembly.BuildProtocolRouter(assembly.RouterConfig{DeviceLog: w}, stores, policy, "serverSFDI", "serverLFDI", nil)
 	srv = httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	return srv, dir, closeLog
@@ -207,5 +219,72 @@ func TestDeviceLogFailureNeverFailsTheRequest(t *testing.T) {
 	}
 	if names := logDirNames(t, dir); len(names) != 0 {
 		t.Errorf("closed writer wrote %v", names)
+	}
+}
+
+// stalledManagers blocks every lookup until release closes, as a management
+// store stuck on a lock or a slow backend would.
+type stalledManagers struct {
+	store.EndDeviceManagementStore
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s stalledManagers) stall() {
+	select {
+	case s.entered <- struct{}{}:
+	default:
+	}
+	<-s.release
+}
+
+func (s stalledManagers) ManagerOf(ctx context.Context, lfdi string) (string, error) {
+	s.stall()
+	return s.EndDeviceManagementStore.ManagerOf(ctx, lfdi)
+}
+
+func (s stalledManagers) ManagedBy(ctx context.Context, lfdi string) ([]string, error) {
+	s.stall()
+	return s.EndDeviceManagementStore.ManagedBy(ctx, lfdi)
+}
+
+func TestDeviceLogStalledManagementStoreNeverHoldsARequest(t *testing.T) {
+	t.Parallel()
+	stalled := stalledManagers{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	srv, dir, closeLog := logServerWith(t, gateTestPolicy(), func(real store.EndDeviceManagementStore) store.EndDeviceManagementStore {
+		stalled.EndDeviceManagementStore = real
+		return stalled
+	})
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			close(stalled.release)
+		}
+	}
+	t.Cleanup(release)
+
+	start := time.Now()
+	status, _ := gateRequest(t, srv, http.MethodGet, "/dcap", recordlessLFDI, "")
+	elapsed := time.Since(start)
+	if status != http.StatusOK {
+		t.Fatalf("GET /dcap status = %d, want 200", status)
+	}
+	// The control: the store really is stalled with the request already done,
+	// so a request that waited on it could not have returned this fast.
+	select {
+	case <-stalled.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the writer never reached the management store; the stall was not exercised")
+	}
+	if elapsed > time.Second {
+		t.Errorf("request took %v while the management store was stalled; want it unaffected", elapsed)
+	}
+
+	release()
+	closeLog()
+	_, lines := readLogLines(t, filepath.Join(dir, devicelog.UnregisteredFile+".jsonl"))
+	if len(lines) != 1 || lines[0]["actor"] != recordlessLFDI {
+		t.Errorf("lines after release = %v, want one line for %s", lines, recordlessLFDI)
 	}
 }

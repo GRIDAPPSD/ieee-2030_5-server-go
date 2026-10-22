@@ -68,6 +68,16 @@ type Config struct {
 	onDequeue func()
 }
 
+// Resolver looks up, for one request line, whether actor is registered and
+// the canonical LFDI of the EndDevice edev names ("" when it does not
+// resolve). It runs in the writer goroutine under a deadline, so a slow
+// store delays only the log. An unregistered answer, or a ctx that expires,
+// sends the line to the shared unregistered file.
+type Resolver func(ctx context.Context, actor, edev string) (registered bool, target string)
+
+// resolveTimeout bounds one Resolver call.
+var resolveTimeout = 2 * time.Second
+
 // Entry is one line to record. Kind is required. Fields are merged into the
 // line; the reserved names seq, t, kind and actor are set by the writer and
 // any caller value for them is ignored.
@@ -80,6 +90,16 @@ type item struct {
 	// lfdi is the file key: a canonical LFDI or UnregisteredFile.
 	lfdi string
 	body []byte
+	// pending is set instead of lfdi and body for a line the writer
+	// goroutine still has to resolve.
+	pending *pendingLine
+}
+
+type pendingLine struct {
+	actor   string
+	edev    string
+	entry   Entry
+	resolve Resolver
 }
 
 type devFile struct {
@@ -187,6 +207,58 @@ func (w *Writer) enqueue(key, actor string, e Entry) error {
 	if e.Kind == "" {
 		return fmt.Errorf("%w: kind is empty", ErrInvalidEntry)
 	}
+	body, err := w.encode(actor, e)
+	if err != nil {
+		w.dropped.Add(1)
+		if errors.Is(err, ErrLineTooLarge) {
+			w.note(key, "line too large, dropped", nil)
+		}
+		return err
+	}
+
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.closed {
+		return ErrClosed
+	}
+	return w.send(item{lfdi: key, body: body}, key)
+}
+
+// send hands it to the writer goroutine without blocking. The caller holds
+// w.mu for reading and has checked w.closed.
+func (w *Writer) send(it item, noteKey string) error {
+	select {
+	case w.queue <- it:
+		return nil
+	default:
+		w.dropped.Add(1)
+		w.note(noteKey, "queue full, line dropped", nil)
+		return ErrQueueFull
+	}
+}
+
+// AppendResolved queues a request line whose file and target the writer
+// goroutine decides: resolve (nil means registered, no target) reports whether actor is registered and
+// which LFDI edev names, and the line goes to the actor's file or to
+// UnregisteredFile, carrying "target" when one resolved. The caller does no
+// store read and never waits. e.Fields must not be changed after the call.
+func (w *Writer) AppendResolved(actor, edev string, resolve Resolver, e Entry) error {
+	if !sep2lfdi.IsCanonical(actor) {
+		return ErrInvalidLFDI
+	}
+	if e.Kind == "" {
+		return fmt.Errorf("%w: kind is empty", ErrInvalidEntry)
+	}
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.closed {
+		return ErrClosed
+	}
+	return w.send(item{pending: &pendingLine{actor: actor, edev: edev, entry: e, resolve: resolve}}, actor)
+}
+
+// encode builds the JSON body of a line, less the seq the file adds.
+func (w *Writer) encode(actor string, e Entry) ([]byte, error) {
 	fields := make(map[string]any, len(e.Fields)+3)
 	for k, v := range e.Fields {
 		fields[k] = v
@@ -197,28 +269,46 @@ func (w *Writer) enqueue(key, actor string, e Entry) error {
 	fields["actor"] = actor
 	body, err := json.Marshal(fields)
 	if err != nil {
-		w.dropped.Add(1)
-		return fmt.Errorf("%w: %w", ErrInvalidEntry, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidEntry, err)
 	}
 	if int64(len(body)+seqPrefixMax) > min(int64(MaxLineBytes), w.max) {
-		w.dropped.Add(1)
-		w.note(key, "line too large, dropped", nil)
-		return ErrLineTooLarge
+		return nil, ErrLineTooLarge
 	}
+	return body, nil
+}
 
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	if w.closed {
-		return ErrClosed
+// resolvePending runs the Resolver for p and encodes the line. A line that
+// cannot be resolved is not lost: it goes to the shared file without a target.
+func (w *Writer) resolvePending(p *pendingLine) item {
+	registered, target := true, ""
+	if p.resolve != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), resolveTimeout)
+		registered, target = p.resolve(ctx, p.actor, p.edev)
+		if ctx.Err() != nil {
+			registered, target = false, ""
+		}
+		cancel()
 	}
-	select {
-	case w.queue <- item{lfdi: key, body: body}:
-		return nil
-	default:
+	e := p.entry
+	if target != "" {
+		fields := make(map[string]any, len(e.Fields)+1)
+		for k, v := range e.Fields {
+			fields[k] = v
+		}
+		fields["target"] = target
+		e.Fields = fields
+	}
+	key := p.actor
+	if !registered {
+		key = UnregisteredFile
+	}
+	body, err := w.encode(p.actor, e)
+	if err != nil {
 		w.dropped.Add(1)
-		w.note(key, "queue full, line dropped", nil)
-		return ErrQueueFull
+		w.note(key, "resolved line dropped", err)
+		return item{}
 	}
+	return item{lfdi: key, body: body}
 }
 
 // Dropped counts lines refused because the queue was full or the line was
@@ -268,6 +358,12 @@ func (w *Writer) run() {
 }
 
 func (w *Writer) write(it item) {
+	if it.pending != nil {
+		it = w.resolvePending(it.pending)
+		if it.body == nil {
+			return
+		}
+	}
 	df, err := w.open(it.lfdi)
 	if err != nil {
 		w.fail(it.lfdi, err)

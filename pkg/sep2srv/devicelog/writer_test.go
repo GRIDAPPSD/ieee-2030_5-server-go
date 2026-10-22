@@ -569,3 +569,77 @@ func TestAppendUnregisteredWritesSharedFileKeepingActor(t *testing.T) {
 		}
 	}
 }
+
+func TestAppendResolvedRoutesAndAddsTargetInWriter(t *testing.T) {
+	dir := t.TempDir()
+	w := newTestWriter(t, dir, Config{})
+	registered := func(_ context.Context, _, edev string) (bool, string) { return true, lfdiB }
+	unregistered := func(_ context.Context, _, _ string) (bool, string) { return false, "" }
+	if err := w.AppendResolved(lfdiA, "7", registered, Entry{Kind: "request", Fields: map[string]any{"edev": "7"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendResolved(lfdiB, "", unregistered, Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendResolved("../x", "", nil, Entry{Kind: "request"}); !errors.Is(err, ErrInvalidLFDI) {
+		t.Errorf("AppendResolved(non-canonical) = %v; want ErrInvalidLFDI", err)
+	}
+	closeWriter(t, w)
+
+	if got := listDir(t, dir); len(got) != 2 {
+		t.Fatalf("directory holds %v; want the actor file and the shared file", got)
+	}
+	own := readRaw(t, filepath.Join(dir, lfdiA+".jsonl"))
+	if own["actor"] != lfdiA || own["target"] != lfdiB || own["edev"] != "7" {
+		t.Errorf("own line = %v; want actor %s target %s edev 7", own, lfdiA, lfdiB)
+	}
+	shared := readRaw(t, filepath.Join(dir, UnregisteredFile+".jsonl"))
+	if shared["actor"] != lfdiB {
+		t.Errorf("shared line actor = %v; want %s", shared["actor"], lfdiB)
+	}
+	if _, has := shared["target"]; has {
+		t.Errorf("unresolved line carries a target: %v", shared)
+	}
+}
+
+func TestAppendResolvedStalledResolverNeverBlocksCallerAndFallsToShared(t *testing.T) {
+	old := resolveTimeout
+	resolveTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { resolveTimeout = old })
+
+	dir := t.TempDir()
+	w := newTestWriter(t, dir, Config{})
+	stall := func(ctx context.Context, _, _ string) (bool, string) {
+		<-ctx.Done()
+		return true, lfdiB
+	}
+	start := time.Now()
+	if err := w.AppendResolved(lfdiA, "7", stall, Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 40*time.Millisecond {
+		t.Errorf("AppendResolved took %v with a stalled resolver; want it to return at once", d)
+	}
+	closeWriter(t, w)
+
+	shared := readRaw(t, filepath.Join(dir, UnregisteredFile+".jsonl"))
+	if shared["actor"] != lfdiA {
+		t.Errorf("shared line = %v; want actor %s", shared, lfdiA)
+	}
+	if _, has := shared["target"]; has {
+		t.Errorf("line carries a target from a resolver that timed out: %v", shared)
+	}
+}
+
+func readRaw(t *testing.T, path string) map[string]any {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(b), &m); err != nil {
+		t.Fatalf("%s is not one JSON object: %v: %s", path, err, b)
+	}
+	return m
+}

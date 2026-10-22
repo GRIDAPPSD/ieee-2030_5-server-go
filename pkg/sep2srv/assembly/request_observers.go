@@ -61,8 +61,8 @@ func (o requestObservers) wrap(next http.Handler) http.Handler {
 }
 
 // logRequest hands one line to the device log. It runs after the handler
-// has returned, never reads the request body, and never fails the request:
-// a full queue drops and counts the line inside the Writer.
+// has returned, never reads the request body, does no store read, and never
+// fails the request: a full queue drops and counts the line inside the Writer.
 func (o requestObservers) logRequest(r *http.Request, lfdi string, rec *statuswriter.Recorder, dur time.Duration) {
 	actor, ok := sep2lfdi.Canonical(lfdi)
 	if !ok {
@@ -79,54 +79,42 @@ func (o requestObservers) logRequest(r *http.Request, lfdi string, rec *statuswr
 		"resp_bytes": rec.Bytes,
 		"remote":     r.RemoteAddr,
 	}
-	if edev := edevID(r.URL.Path); edev != "" {
+	edev := edevID(r.URL.Path)
+	if edev != "" {
 		fields["edev"] = edev
-		if target := o.targetOf(r.Context(), edev); target != "" {
-			fields["target"] = target
+	}
+	// The store reads for target and registration happen in the writer
+	// goroutine, so a slow store delays the log and never this request. The
+	// Writer counts and logs every drop, so the error carries nothing the
+	// request path could act on.
+	_ = o.log.AppendResolved(actor, edev, o.resolve, devicelog.Entry{Kind: "request", Fields: fields})
+}
+
+// resolve runs in the device log's writer goroutine. It reports whether
+// actor has an EndDevice record or a management pair, and the canonical LFDI
+// of the EndDevice edev names ("" when it does not resolve). A store error
+// counts as not registered or no target: the shared file is the bounded place
+// for a line whose owner cannot be established.
+func (o requestObservers) resolve(ctx context.Context, actor, edev string) (registered bool, target string) {
+	if edev != "" && o.devices != nil {
+		if dev, err := o.devices.Get(ctx, edev); err == nil {
+			target, _ = sep2lfdi.Canonical(dev.LFDI)
 		}
 	}
-	entry := devicelog.Entry{Kind: "request", Fields: fields}
-	// The Writer counts and logs every drop, so the error carries nothing
-	// the request path could act on.
-	if o.isRegistered(r.Context(), actor) {
-		_ = o.log.Append(actor, entry)
-		return
-	}
-	_ = o.log.AppendUnregistered(actor, entry)
-}
-
-// targetOf returns the canonical LFDI of the EndDevice the path names, or ""
-// when it does not resolve.
-func (o requestObservers) targetOf(ctx context.Context, edev string) string {
-	if o.devices == nil {
-		return ""
-	}
-	dev, err := o.devices.Get(ctx, edev)
-	if err != nil {
-		return ""
-	}
-	target, _ := sep2lfdi.Canonical(dev.LFDI)
-	return target
-}
-
-// isRegistered reports whether actor has an EndDevice record or a management
-// pair. A store error counts as not registered: the shared file is the
-// bounded place for a line whose owner cannot be established.
-func (o requestObservers) isRegistered(ctx context.Context, actor string) bool {
 	if o.devices != nil {
 		if _, err := o.devices.GetByLFDI(ctx, actor); err == nil {
-			return true
+			return true, target
 		}
 	}
 	if o.managers != nil {
 		if managed, err := o.managers.ManagedBy(ctx, actor); err == nil && len(managed) > 0 {
-			return true
+			return true, target
 		}
 		if _, err := o.managers.ManagerOf(ctx, actor); err == nil {
-			return true
+			return true, target
 		}
 	}
-	return false
+	return false, target
 }
 
 // edevID returns the EndDevice id of an /edev/{id}/... path, or "" for any

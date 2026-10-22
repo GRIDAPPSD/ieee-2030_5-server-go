@@ -82,7 +82,7 @@ func TestPrepareDeviceLogExplicitDirIsUsed(t *testing.T) {
 	if fi, err := os.Stat(cfg.DeviceLogDir); err != nil || !fi.IsDir() {
 		t.Errorf("explicit directory not created: %v", err)
 	}
-	if cfg.DeviceLogOff || !strings.Contains(logs.String(), "device log enabled: ") {
+	if cfg.DeviceLogOff || !strings.Contains(logs.String(), "device log directory ready: ") {
 		t.Errorf("off=%v log=%q; want enabled line", cfg.DeviceLogOff, logs.String())
 	}
 }
@@ -181,7 +181,7 @@ func TestPrepareDeviceLogKeyInWorkingDirectoryKeepsDefaultLogOn(t *testing.T) {
 	if err := prepareDeviceLog(cfg, &certDirResolver{}); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DeviceLogOff || !strings.Contains(logs.String(), "device log enabled: ") {
+	if cfg.DeviceLogOff || !strings.Contains(logs.String(), "device log directory ready: ") {
 		t.Errorf("off=%v log=%q; a key in the working directory must not disable the default log", cfg.DeviceLogOff, logs.String())
 	}
 	if fi, err := os.Stat(filepath.Join(cwd, "etc", "sep2", "logs")); err != nil || !fi.IsDir() {
@@ -197,5 +197,55 @@ func TestPrepareDeviceLogRefusesKeyFilePath(t *testing.T) {
 	cfg.DeviceLogDir = cfg.KeyFile
 	if err := prepareDeviceLog(cfg, &certDirResolver{}); err == nil {
 		t.Fatal("a log directory equal to the key file path was accepted")
+	}
+}
+
+func TestPrepareDeviceLogRefusesWhenCertDirCannotBeResolved(t *testing.T) {
+	captureLog(t)
+	t.Setenv("HOME", "")
+	t.Setenv("SEP2_CERT_DIR", "")
+	cfg := &config.Config{KeyFile: "/etc/tls/server.key"}
+	err := prepareDeviceLog(cfg, &certDirResolver{})
+	if err == nil || !strings.Contains(err.Error(), "certificate directory") {
+		t.Fatalf("err = %v; want a refusal naming the certificate directory", err)
+	}
+	cfg.DeviceLogOff = true
+	if err := prepareDeviceLog(cfg, &certDirResolver{}); err != nil {
+		t.Errorf("an off log still resolved the cert directory: %v", err)
+	}
+}
+
+func TestPrepareDeviceLogProtectsKeyFilePaths(t *testing.T) {
+	captureLog(t)
+	base := t.TempDir()
+	for _, env := range []string{"SEP2_CA_KEY", "SEP2_SERVING_CA_KEY", "SEP2_DEVICE_CA_KEY", "SEP2_ADMIN_SECRET_FILE"} {
+		t.Run(env, func(t *testing.T) {
+			path := filepath.Join(base, env)
+			t.Setenv("SEP2_CERT_DIR", t.TempDir())
+			t.Setenv(env, path)
+			cfg := &config.Config{KeyFile: filepath.Join(base, "server.key"), DeviceLogDir: path}
+			if err := prepareDeviceLog(cfg, &certDirResolver{}); !errors.Is(err, devicelog.ErrDirProtected) {
+				t.Fatalf("err = %v; want ErrDirProtected for a log directory equal to %s", err, env)
+			}
+		})
+	}
+	cfg := deviceLogCfg(t, t.TempDir())
+	cfg.AdminKeyFile = filepath.Join(base, "admin.key")
+	cfg.DeviceLogDir = cfg.AdminKeyFile
+	if err := prepareDeviceLog(cfg, &certDirResolver{}); !errors.Is(err, devicelog.ErrDirProtected) {
+		t.Errorf("admin key file: err = %v; want ErrDirProtected", err)
+	}
+}
+
+func TestPrepareDeviceLogKeepsResolvedDir(t *testing.T) {
+	captureLog(t)
+	cfg := deviceLogCfg(t, t.TempDir())
+	cfg.DeviceLogDir = filepath.Join(t.TempDir(), "d")
+	if err := prepareDeviceLog(cfg, &certDirResolver{}); err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(cfg.DeviceLogDir)
+	if err != nil || cfg.DeviceLogResolvedDir != want {
+		t.Errorf("DeviceLogResolvedDir = %q; want %q (%v)", cfg.DeviceLogResolvedDir, want, err)
 	}
 }

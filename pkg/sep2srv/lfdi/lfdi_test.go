@@ -50,3 +50,26 @@ func TestChecks(t *testing.T) {
 		})
 	}
 }
+
+func TestCanonicalTrimSpace(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		{up, up, true},
+		{strings.ToLower(up), up, true},
+		{" \t" + up + "\r\n", up, true},
+		{"\u00a0" + up + "\u2003", up, true},
+		{"\v" + up + "\f", up, true},
+		{"", "", false},
+		{"   ", "", false},
+		{up[:39], "", false},
+		{up[:20] + " " + up[21:], "", false},
+	}
+	for _, c := range cases {
+		if got, ok := CanonicalTrimSpace(c.in); got != c.want || ok != c.ok {
+			t.Errorf("CanonicalTrimSpace(%q) = %q, %v; want %q, %v", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}

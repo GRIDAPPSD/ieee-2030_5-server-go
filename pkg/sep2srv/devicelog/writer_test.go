@@ -2,9 +2,12 @@ package devicelog
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -408,5 +411,131 @@ func TestNewRefusesBadConfig(t *testing.T) {
 		if _, err := New(cfg); err == nil {
 			t.Errorf("%s: New succeeded; want a refusal", name)
 		}
+	}
+}
+
+func TestSymlinkedDeviceFileIsNotFollowed(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "ca.key")
+	if err := os.WriteFile(target, []byte("KEY"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, lfdiA+".jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	w := newTestWriter(t, dir, Config{Logger: log.New(&logs, "", 0)})
+	if err := w.Append(lfdiA, Entry{Kind: "request"}); err != nil {
+		t.Fatal(err)
+	}
+	closeWriter(t, w)
+	got, err := os.ReadFile(target)
+	if err != nil || string(got) != "KEY" {
+		t.Errorf("symlink target = %q, %v; want it untouched", got, err)
+	}
+	if w.Failed() != 1 {
+		t.Errorf("Failed() = %d; want 1 for the refused open", w.Failed())
+	}
+	if !strings.Contains(logs.String(), lfdiA) {
+		t.Errorf("log %q does not name the device whose open was refused", logs.String())
+	}
+}
+
+func TestSymlinkedRotatedFileIsNotReadForSeq(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(target, []byte(`{"seq":99}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, lfdiA+".1.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	w := newTestWriter(t, dir, Config{Logger: log.New(io.Discard, "", 0)})
+	appendN(t, w, lfdiA, 1, 1)
+	closeWriter(t, w)
+	if w.Failed() != 1 {
+		t.Errorf("Failed() = %d; want the symlinked rotated file refused", w.Failed())
+	}
+}
+
+func lastRow(t *testing.T, path string) line {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := bytes.Split(bytes.TrimSuffix(raw, []byte("\n")), []byte("\n"))
+	var l line
+	if err := json.Unmarshal(rows[len(rows)-1], &l); err != nil {
+		t.Fatalf("last row %q: %v", rows[len(rows)-1], err)
+	}
+	return l
+}
+
+func TestSeqNeverGoesBackwardWhenTailIsUnreadable(t *testing.T) {
+	good := `{"seq":1,"kind":"request"}` + "\n" + `{"seq":2,"kind":"request"}` + "\n" + `{"seq":3,"kind":"request"}` + "\n"
+	cases := []struct {
+		name, cur, old string
+		want           uint64
+		wantLog        bool
+	}{
+		{"valid lines before a long unreadable tail", good + strings.Repeat("\x00", 70000), "", 4, false},
+		{"nothing parseable, rotated file known", strings.Repeat("\x00", 70000), `{"seq":1}` + "\n" + `{"seq":2}` + "\n", 3, true},
+		{"rotated file higher than a damaged current", `{"seq":1,"kind":"request"}` + "\n" + strings.Repeat("\x00", 70000), `{"seq":7}` + "\n", 8, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cur := filepath.Join(dir, lfdiA+".jsonl")
+			if err := os.WriteFile(cur, []byte(c.cur), 0o640); err != nil {
+				t.Fatal(err)
+			}
+			if c.old != "" {
+				if err := os.WriteFile(filepath.Join(dir, lfdiA+".1.jsonl"), []byte(c.old), 0o640); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var logs bytes.Buffer
+			w := newTestWriter(t, dir, Config{Logger: log.New(&logs, "", 0)})
+			appendN(t, w, lfdiA, 1, 1)
+			closeWriter(t, w)
+			if got := lastRow(t, cur).Seq; got != c.want {
+				t.Errorf("seq = %d; want %d", got, c.want)
+			}
+			if c.wantLog && !strings.Contains(logs.String(), lfdiA) {
+				t.Errorf("log %q does not report the unreadable file", logs.String())
+			}
+		})
+	}
+}
+
+func TestDropsAreLoggedPerDevice(t *testing.T) {
+	dir := t.TempDir()
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	var logs bytes.Buffer
+	w := newTestWriter(t, dir, Config{QueueSize: 1, MaxBytes: 1000, Logger: log.New(&logs, "", 0), onDequeue: func() {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+	}})
+	_ = w.Append(lfdiA, Entry{Kind: "request"})
+	<-started
+	_ = w.Append(lfdiA, Entry{Kind: "request"}) // fills the queue
+	_ = w.Append(lfdiA, Entry{Kind: "request"}) // dropped
+	_ = w.Append(lfdiB, Entry{Kind: "request"}) // dropped, other device
+	_ = w.Append(lfdiB, Entry{Kind: "request", Fields: map[string]any{"pad": strings.Repeat("z", 1000)}})
+	close(release)
+	closeWriter(t, w)
+	out := logs.String()
+	for _, want := range []string{lfdiA, lfdiB, "queue full", "too large"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log %q lacks %q", out, want)
+		}
+	}
+	if n := strings.Count(out, lfdiA+" queue full"); n != 1 {
+		t.Errorf("device A's queue-full drop logged %d times; want once (rate limited)", n)
 	}
 }

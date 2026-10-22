@@ -107,13 +107,24 @@ func prepareDeviceLog(cfg *config.Config, r *certDirResolver) error {
 		return fmt.Errorf("SEP2_DEVICE_LOG_MAX_BYTES: %w", err)
 	}
 	dir, explicit := cfg.EffectiveDeviceLogDir()
-	var protected []string
-	if certDir, err := r.get(); err == nil {
-		protected = append(protected, certDir)
+	// Fail closed: a protected path that cannot be resolved stops startup
+	// rather than dropping out of the list. Set SEP2_CERT_DIR, or
+	// SEP2_DEVICE_LOG=false, on a host with no determinable home directory.
+	certDir, err := r.get()
+	if err != nil {
+		return fmt.Errorf("device log: cannot resolve the certificate directory to protect it: %w", err)
 	}
-	// The key file itself, not its directory: a key at ./server.key would
-	// otherwise protect the whole working directory.
-	protected = append(protected, cfg.KeyFile)
+	protected := []string{certDir, cfg.KeyFile, cfg.AdminKeyFile}
+	caKey, servingCAKey, deviceCAKey, err := caKeyPaths(r)
+	if err != nil {
+		return fmt.Errorf("device log: %w", err)
+	}
+	protected = append(protected, caKey, servingCAKey, deviceCAKey)
+	secret, err := adminSecretPath(r)
+	if err != nil {
+		return fmt.Errorf("device log: %w", err)
+	}
+	protected = append(protected, secret)
 	resolved, err := devicelog.PrepareDir(dir, protected)
 	if err != nil {
 		if explicit {
@@ -123,7 +134,8 @@ func prepareDeviceLog(cfg *config.Config, r *certDirResolver) error {
 		cfg.DeviceLogOff = true
 		return nil
 	}
-	log.Printf("device log enabled: %s (limit %d bytes per file, one rotated file kept)", logsafe.Str(resolved), limit)
+	cfg.DeviceLogResolvedDir = resolved
+	log.Printf("device log directory ready: %s (limit %d bytes per file, one rotated file kept; no request writes to it yet)", logsafe.Str(resolved), limit)
 	return nil
 }
 
@@ -150,15 +162,7 @@ func loadAdminCertService(cfg *config.Config, resolver *certDirResolver) (*handl
 	// key are not a matched pair" (MEDIUM 2): both leave key nil, so
 	// neither is silently paired and neither reaches the admin cert
 	// service as mint-capable, but the two cases get their own log line.
-	caKeyFile, err := resolver.envPathOrCertDir("SEP2_CA_KEY", "ca.key")
-	if err != nil {
-		return nil, err
-	}
-	servingCAKeyFile, err := envPathOr("SEP2_SERVING_CA_KEY", caKeyFile)
-	if err != nil {
-		return nil, err
-	}
-	deviceCAKeyFile, err := envPathOr("SEP2_DEVICE_CA_KEY", caKeyFile)
+	_, servingCAKeyFile, deviceCAKeyFile, err := caKeyPaths(resolver)
 	if err != nil {
 		return nil, err
 	}
@@ -210,6 +214,23 @@ func loadAdminCertService(cfg *config.Config, resolver *certDirResolver) (*handl
 		}
 	}
 	return svc, nil
+}
+
+// caKeyPaths resolves SEP2_CA_KEY and the two role keys that fall back to it.
+func caKeyPaths(r *certDirResolver) (caKey, servingCAKey, deviceCAKey string, err error) {
+	caKey, err = r.envPathOrCertDir("SEP2_CA_KEY", "ca.key")
+	if err != nil {
+		return "", "", "", err
+	}
+	servingCAKey, err = envPathOr("SEP2_SERVING_CA_KEY", caKey)
+	if err != nil {
+		return "", "", "", err
+	}
+	deviceCAKey, err = envPathOr("SEP2_DEVICE_CA_KEY", caKey)
+	if err != nil {
+		return "", "", "", err
+	}
+	return caKey, servingCAKey, deviceCAKey, nil
 }
 
 // configFromEnv builds the server configuration from SEP2_* environment

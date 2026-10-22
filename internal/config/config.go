@@ -146,6 +146,11 @@ type Config struct {
 	DeviceLogDir      string
 	DeviceLogMaxBytes int64
 
+	// DeviceLogResolvedDir is the symlink-resolved, created and probed
+	// directory startup validation settled on; empty until it has run or
+	// when the log is off.
+	DeviceLogResolvedDir string
+
 	// #161: admin listener configuration.
 	//
 	// The SEP2 protocol listener is RequireAnyClientCert + manual verify per

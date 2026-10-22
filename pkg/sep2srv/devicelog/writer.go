@@ -102,6 +102,9 @@ type Writer struct {
 	closed   bool
 	dropped  atomic.Uint64
 	failed   atomic.Uint64
+	closeErr error
+	noteMu   sync.Mutex
+	notes    map[string]uint64
 	files    map[string]*devFile
 	useClock uint64
 }
@@ -112,8 +115,11 @@ func New(cfg Config) (*Writer, error) {
 		return nil, errors.New("device log: directory is empty")
 	}
 	fi, err := os.Stat(cfg.Dir)
-	if err != nil || !fi.IsDir() {
-		return nil, fmt.Errorf("device log: %s is not a directory: %v", cfg.Dir, err)
+	if err != nil {
+		return nil, fmt.Errorf("device log: %s: %w", cfg.Dir, err)
+	}
+	if !fi.IsDir() {
+		return nil, fmt.Errorf("device log: %s is not a directory", cfg.Dir)
 	}
 	if cfg.MaxBytes <= 0 {
 		return nil, fmt.Errorf("device log: limit %d is not positive", cfg.MaxBytes)
@@ -127,6 +133,7 @@ func New(cfg Config) (*Writer, error) {
 		stall:   cfg.onDequeue,
 		done:    make(chan struct{}),
 		files:   make(map[string]*devFile),
+		notes:   make(map[string]uint64),
 	}
 	if w.maxOpen <= 0 {
 		w.maxOpen = defaultMaxOpenFiles
@@ -167,10 +174,11 @@ func (w *Writer) Append(lfdi string, e Entry) error {
 	body, err := json.Marshal(fields)
 	if err != nil {
 		w.dropped.Add(1)
-		return fmt.Errorf("%w: %v", ErrInvalidEntry, err)
+		return fmt.Errorf("%w: %w", ErrInvalidEntry, err)
 	}
 	if int64(len(body)+seqPrefixMax) > min(int64(MaxLineBytes), w.max) {
 		w.dropped.Add(1)
+		w.note(lfdi, "line too large, dropped", nil)
 		return ErrLineTooLarge
 	}
 
@@ -184,6 +192,7 @@ func (w *Writer) Append(lfdi string, e Entry) error {
 		return nil
 	default:
 		w.dropped.Add(1)
+		w.note(lfdi, "queue full, line dropped", nil)
 		return ErrQueueFull
 	}
 }
@@ -206,7 +215,7 @@ func (w *Writer) Close(ctx context.Context) error {
 	w.mu.Unlock()
 	select {
 	case <-w.done:
-		return nil
+		return w.closeErr
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -224,10 +233,14 @@ func (w *Writer) run() {
 		}
 		w.write(it)
 	}
+	var errs []error
 	for k, df := range w.files {
-		_ = df.f.Close()
+		if err := df.f.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing %s: %w", k, err))
+		}
 		delete(w.files, k)
 	}
+	w.closeErr = errors.Join(errs...)
 }
 
 func (w *Writer) write(it item) {
@@ -262,10 +275,34 @@ func (w *Writer) write(it item) {
 }
 
 func (w *Writer) fail(lfdi string, err error) {
-	n := w.failed.Add(1)
-	if n == 1 || n%1000 == 0 {
-		w.logger.Printf("device log: write for %s failed (%d so far): %s", logsafe.Str(lfdi), n, logsafe.Str(err.Error()))
+	w.failed.Add(1)
+	w.note(lfdi, "write failed", err)
+}
+
+// maxNoted bounds the per-device counters behind note; devices past it share
+// one counter so a flood of distinct LFDIs cannot grow the map.
+const maxNoted = 1024
+
+// note logs the first occurrence of kind for a device and every 1000th
+// after it, so one failing device neither floods the log nor hides another.
+func (w *Writer) note(lfdi, kind string, err error) {
+	w.noteMu.Lock()
+	key := lfdi + " " + kind
+	if _, seen := w.notes[key]; !seen && len(w.notes) >= maxNoted {
+		lfdi = "other devices"
+		key = lfdi + " " + kind
 	}
+	w.notes[key]++
+	n := w.notes[key]
+	w.noteMu.Unlock()
+	if n != 1 && n%1000 != 0 {
+		return
+	}
+	if err != nil {
+		w.logger.Printf("device log: %s %s (%d so far): %s", logsafe.Str(lfdi), logsafe.Str(kind), n, logsafe.Str(err.Error()))
+		return
+	}
+	w.logger.Printf("device log: %s %s (%d so far)", logsafe.Str(lfdi), logsafe.Str(kind), n)
 }
 
 func (w *Writer) paths(lfdi string) (cur, old string) {
@@ -284,7 +321,7 @@ func (w *Writer) open(lfdi string) (*devFile, error) {
 		w.evictOldest()
 	}
 	cur, old := w.paths(lfdi)
-	f, err := os.OpenFile(cur, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o640)
+	f, err := os.OpenFile(cur, os.O_RDWR|os.O_CREATE|os.O_APPEND|noFollow, 0o640)
 	if err != nil {
 		return nil, err
 	}
@@ -296,28 +333,21 @@ func (w *Writer) open(lfdi string) (*devFile, error) {
 	}
 	df.size = fi.Size()
 
-	seq, found, torn, err := lastSeq(f, df.size)
+	seq, found, torn, err := scanSeq(f, df.size)
 	if err != nil {
 		_ = f.Close()
 		return nil, err
 	}
-	if !found {
-		if of, oerr := os.Open(old); oerr == nil {
-			ofi, serr := of.Stat()
-			if serr == nil {
-				seq, _, _, err = lastSeq(of, ofi.Size())
-			} else {
-				err = serr
-			}
-			_ = of.Close()
-			if err != nil {
-				_ = f.Close()
-				return nil, err
-			}
-		} else if !errors.Is(oerr, os.ErrNotExist) {
-			_ = f.Close()
-			return nil, oerr
-		}
+	oldSeq, oldFound, err := rotatedSeq(old)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if df.size > 0 && !found {
+		w.logger.Printf("device log: %s: no readable sequence number in %d bytes of the current file; continuing above the rotated file's (found: %v)", logsafe.Str(lfdi), df.size, oldFound)
+	}
+	if oldFound && oldSeq > seq {
+		seq = oldSeq
 	}
 	df.seq = seq
 	if torn {
@@ -348,7 +378,9 @@ func (w *Writer) evictOldest() {
 	if first {
 		return
 	}
-	_ = w.files[oldest].f.Close()
+	if err := w.files[oldest].f.Close(); err != nil {
+		w.note(oldest, "close failed", err)
+	}
 	delete(w.files, oldest)
 }
 
@@ -364,7 +396,7 @@ func (w *Writer) rotate(lfdi string, df *devFile) error {
 	if err := os.Rename(cur, old); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(cur, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o640)
+	f, err := os.OpenFile(cur, os.O_RDWR|os.O_CREATE|os.O_APPEND|noFollow, 0o640)
 	if err != nil {
 		return err
 	}
@@ -373,26 +405,61 @@ func (w *Writer) rotate(lfdi string, df *devFile) error {
 	return nil
 }
 
-// lastSeq reads the tail of f for the highest-position line that parses and
-// carries a seq. torn reports a final line with no newline.
-func lastSeq(f *os.File, size int64) (seq uint64, found, torn bool, err error) {
+// rotatedSeq reads the highest seq in the rotated file, which may be absent.
+func rotatedSeq(path string) (seq uint64, found bool, err error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|noFollow, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return 0, false, err
+	}
+	seq, found, _, err = scanSeq(f, fi.Size())
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return seq, found, err
+}
+
+// scanSeq walks f backward in tail-sized windows for the last line that
+// parses and carries a seq, so a long unreadable tail cannot hide earlier
+// lines. Each window starts MaxLineBytes inside the previous one, so a line
+// cut by one window is whole in the next. torn reports a final line with no
+// newline.
+func scanSeq(f *os.File, size int64) (seq uint64, found, torn bool, err error) {
 	if size == 0 {
 		return 0, false, false, nil
 	}
-	n := min(size, int64(tailBytes))
-	buf := make([]byte, n)
-	if _, err := f.ReadAt(buf, size-n); err != nil {
-		return 0, false, false, err
-	}
-	torn = buf[len(buf)-1] != '\n'
-	rows := bytes.Split(buf, []byte{'\n'})
-	for i := len(rows) - 1; i >= 0; i-- {
-		var rec struct {
-			Seq *uint64 `json:"seq"`
+	end := size
+	for first := true; ; first = false {
+		start := max(0, end-int64(tailBytes))
+		buf := make([]byte, end-start)
+		if _, err := f.ReadAt(buf, start); err != nil {
+			return 0, false, false, err
 		}
-		if json.Unmarshal(rows[i], &rec) == nil && rec.Seq != nil {
-			return *rec.Seq, true, torn, nil
+		if first {
+			torn = buf[len(buf)-1] != '\n'
 		}
+		rows := bytes.Split(buf, []byte{'\n'})
+		for i := len(rows) - 1; i >= 0; i-- {
+			if i == 0 && start > 0 {
+				break
+			}
+			var rec struct {
+				Seq *uint64 `json:"seq"`
+			}
+			if json.Unmarshal(rows[i], &rec) == nil && rec.Seq != nil {
+				return *rec.Seq, true, torn, nil
+			}
+		}
+		if start == 0 {
+			return 0, false, torn, nil
+		}
+		end = start + MaxLineBytes
 	}
-	return 0, false, torn, nil
 }

@@ -1,7 +1,9 @@
 package devicelog
 
 import (
+	"bytes"
 	"errors"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -166,5 +168,34 @@ func TestGitignoreShipsFolderAndIgnoresContents(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "etc/sep2/logs/.gitkeep")); err != nil {
 		t.Errorf("the shipped folder marker is missing: %v", err)
+	}
+}
+
+func TestPrepareDirWritableByOthers(t *testing.T) {
+	base := evalDir(t, t.TempDir())
+	world := filepath.Join(base, "world")
+	group := filepath.Join(base, "group")
+	for _, d := range []string{world, group} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(world, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(group, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareDir(world, nil); !errors.Is(err, ErrDirUnusable) {
+		t.Errorf("world-writable: err = %v; want ErrDirUnusable", err)
+	}
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	if _, err := PrepareDir(group, nil); err != nil {
+		t.Errorf("group-writable refused: %v", err)
+	}
+	if !strings.Contains(logs.String(), "group-writable") {
+		t.Errorf("log %q has no group-writable warning", logs.String())
 	}
 }

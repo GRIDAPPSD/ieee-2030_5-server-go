@@ -46,6 +46,17 @@ func Canonical(s string) (string, bool) {
 	return strings.ToUpper(s), true
 }
 
+// CanonicalTrimSpace is Canonical with the wider strings.TrimSpace trim, which
+// also strips Unicode spaces. The admin API uses it for values an operator
+// pastes; the protocol path keeps the narrower hexBinary collapse.
+func CanonicalTrimSpace(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	if !IsHex40(s) {
+		return "", false
+	}
+	return strings.ToUpper(s), true
+}
+
 // CanonicalPadded validates a client-claimed deviceLFDI and restores its full
 // HexBinary160 width. IEEE 2030.5 allows a shorter hex string that omits
 // leading zero bytes, and the EPRI reference client's serializer drops them

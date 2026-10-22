@@ -20,6 +20,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/flowreservation"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/interval"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/handlers/sep2time"
+	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
 
@@ -387,7 +388,7 @@ func suggestedTarget(tip *FlowReservationResponseView) (frScaled, bool) {
 
 func fleetParam(w http.ResponseWriter, r *http.Request) (string, bool) {
 	v := r.URL.Query().Get("aggregatorLFDI")
-	if len(v) != 40 || strings.Trim(v, "0123456789abcdefABCDEF") != "" {
+	if !sep2lfdi.IsHex40(v) {
 		writeFRRefusal(w, http.StatusBadRequest, "aggregator_lfdi_invalid", "aggregatorLFDI must be 40 hex digits", "")
 		return "", false
 	}

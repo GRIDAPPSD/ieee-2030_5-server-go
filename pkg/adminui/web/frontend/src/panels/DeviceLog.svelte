@@ -5,7 +5,7 @@
   import { untrack } from 'svelte'
   import { fetchJSON } from '../lib/api'
   import { formatAge } from '../lib/comms'
-  import { deviceLabelIn } from '../lib/devices'
+  import { deviceKind, deviceLabelIn } from '../lib/devices'
   import {
     logPath,
     logRow,
@@ -39,6 +39,11 @@
   let error = $state('')
   let olderBusy = $state(false)
   let kind = $state<KindFilter>('all')
+  // The switch is offered for an aggregator only. scope=managed adds each
+  // managed device's lines, so the view then names the device of each line.
+  let scope = $state<'own' | 'managed'>('own')
+  const aggregator = $derived(deviceKind(lfdi) === 'aggregator')
+  const managed = $derived(aggregator && scope === 'managed')
   let errorsOnly = $state(false)
   let nowMs = $state(Date.now())
 
@@ -58,8 +63,12 @@
     return `Could not load the log (${status}): ${message}`
   }
 
-  async function read(query: string, signal: AbortSignal) {
-    const res = await fetchJSON<unknown>(logPath(lfdi, query), { signal, timeoutMs: FETCH_TIMEOUT_MS })
+  function query(extra = ''): string {
+    return `?limit=${PAGE}${managed ? '&scope=managed' : ''}${extra}`
+  }
+
+  async function read(path: string, signal: AbortSignal) {
+    const res = await fetchJSON<unknown>(logPath(lfdi, path), { signal, timeoutMs: FETCH_TIMEOUT_MS })
     if (signal.aborted) return null
     if (!res.ok) {
       error = failure(res.status, res.error)
@@ -81,7 +90,7 @@
     try {
       for (let i = 0; i < MAX_CATCH_UP; i++) {
         const after = loaded ? nextAfter : null
-        const page = await read(`?limit=${PAGE}${after ? `&after=${encodeURIComponent(after)}` : ''}`, signal)
+        const page = await read(query(after ? `&after=${encodeURIComponent(after)}` : ''), signal)
         if (page === null) return
         const initial = !loaded
         if (initial) {
@@ -109,7 +118,7 @@
     if (!before || olderBusy || !signal) return
     olderBusy = true
     try {
-      const page = await read(`?limit=${PAGE}&before=${encodeURIComponent(before)}`, signal)
+      const page = await read(query(`&before=${encodeURIComponent(before)}`), signal)
       if (page === null) return
       entries = mergeOlder(entries, page.entries)
       nextBefore = page.nextBefore
@@ -120,6 +129,7 @@
 
   $effect(() => {
     void lfdi
+    void managed
     const mine = new AbortController()
     lifetime = mine
     entries = []
@@ -140,7 +150,7 @@
   })
 
   function via(actor: string): string {
-    if (actor === '' || actor.toLowerCase() === lfdi.toLowerCase()) return ''
+    if (managed || actor === '' || actor.toLowerCase() === lfdi.toLowerCase()) return ''
     return deviceLabelIn(devices, actor)
   }
 </script>
@@ -157,6 +167,12 @@
         <option value="refused">Refused</option>
       </select>
     </label>
+    {#if aggregator}
+      <span role="radiogroup" aria-label="Whose requests" data-testid="device-logs-scope">
+        <label><input type="radio" name="logs-scope-{deviceId}" value="own" bind:group={scope} /> Own requests</label>
+        <label><input type="radio" name="logs-scope-{deviceId}" value="managed" bind:group={scope} /> Own and managed devices</label>
+      </span>
+    {/if}
     <label><input type="checkbox" bind:checked={errorsOnly} data-testid="device-logs-errors" /> Errors only</label>
     <a
       class="btn btn-small"
@@ -186,7 +202,7 @@
       <table>
         <caption class="visually-hidden">Log of device {deviceId}</caption>
         <thead>
-          <tr><th>Time</th><th>Kind</th><th>Request</th><th>Status</th><th>ms</th><th>Detail</th><th>Made by</th></tr>
+          <tr><th>Time</th><th>Kind</th><th>Request</th><th>Status</th><th>ms</th><th>Detail</th>{#if managed}<th>Device</th>{/if}<th>Made by</th></tr>
         </thead>
         <tbody>
           {#each shown as r (r.cursor)}
@@ -198,6 +214,9 @@
               <td class={r.status !== null && r.status >= 400 ? 'offline' : ''} data-testid="device-log-status">{r.status ?? ''}</td>
               <td>{r.durMs ?? ''}</td>
               <td>{r.detail}</td>
+              {#if managed}
+                <td data-testid="device-log-device">{deviceLabelIn(devices, r.actor)}{r.source === 'unregistered' ? ' (unregistered)' : ''}</td>
+              {/if}
               <td data-testid="device-log-via">
                 {#if by !== ''}via {by}{/if}{#if r.source !== ''}{by !== '' ? ', ' : ''}{r.source}{/if}
               </td>

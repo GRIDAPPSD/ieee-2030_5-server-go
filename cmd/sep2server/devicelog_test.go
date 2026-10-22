@@ -205,6 +205,8 @@ func TestPrepareDeviceLogRefusesWhenCertDirCannotBeResolved(t *testing.T) {
 	t.Setenv("HOME", "")
 	t.Setenv("SEP2_CERT_DIR", "")
 	cfg := &config.Config{KeyFile: "/etc/tls/server.key"}
+	cwd := t.TempDir()
+	t.Chdir(cwd)
 	err := prepareDeviceLog(cfg, &certDirResolver{})
 	if err == nil || !strings.Contains(err.Error(), "certificate directory") {
 		t.Fatalf("err = %v; want a refusal naming the certificate directory", err)
@@ -247,5 +249,21 @@ func TestPrepareDeviceLogKeepsResolvedDir(t *testing.T) {
 	want, err := filepath.EvalSymlinks(cfg.DeviceLogDir)
 	if err != nil || cfg.DeviceLogResolvedDir != want {
 		t.Errorf("DeviceLogResolvedDir = %q; want %q (%v)", cfg.DeviceLogResolvedDir, want, err)
+	}
+}
+
+func TestPrepareDeviceLogStartsWithoutHomeWhenEveryCertPathIsExplicit(t *testing.T) {
+	logs := captureLog(t)
+	t.Setenv("HOME", "")
+	t.Setenv("SEP2_CERT_DIR", "")
+	t.Setenv("SEP2_CA_KEY", "/etc/tls/ca.key")
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	cfg := &config.Config{KeyFile: "/etc/tls/server.key"}
+	if err := prepareDeviceLog(cfg, &certDirResolver{}); err != nil {
+		t.Fatalf("an unused, unresolvable default cert directory stopped startup: %v", err)
+	}
+	if cfg.DeviceLogOff || !strings.Contains(logs.String(), "device log directory ready: ") {
+		t.Errorf("off=%v log=%q; want the log on", cfg.DeviceLogOff, logs.String())
 	}
 }

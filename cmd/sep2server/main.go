@@ -107,24 +107,24 @@ func prepareDeviceLog(cfg *config.Config, r *certDirResolver) error {
 		return fmt.Errorf("SEP2_DEVICE_LOG_MAX_BYTES: %w", err)
 	}
 	dir, explicit := cfg.EffectiveDeviceLogDir()
-	// Fail closed: a protected path that cannot be resolved stops startup
-	// rather than dropping out of the list. Set SEP2_CERT_DIR, or
-	// SEP2_DEVICE_LOG=false, on a host with no determinable home directory.
-	certDir, err := r.get()
-	if err != nil {
-		return fmt.Errorf("device log: cannot resolve the certificate directory to protect it: %w", err)
-	}
-	protected := []string{certDir, cfg.KeyFile, cfg.AdminKeyFile}
+	// Protect only the paths in use. The default certificate directory is in
+	// use only when some setting fell back to it; a server with every path
+	// set explicitly starts without a determinable home directory. A path
+	// that is in use but cannot be resolved stops startup (fail closed).
+	protected := []string{cfg.KeyFile, cfg.AdminKeyFile}
 	caKey, servingCAKey, deviceCAKey, err := caKeyPaths(r)
 	if err != nil {
-		return fmt.Errorf("device log: %w", err)
+		return fmt.Errorf("device log: cannot resolve the certificate directory to protect it (set SEP2_CERT_DIR, or SEP2_DEVICE_LOG=false): %w", err)
 	}
 	protected = append(protected, caKey, servingCAKey, deviceCAKey)
-	secret, err := adminSecretPath(r)
-	if err != nil {
-		return fmt.Errorf("device log: %w", err)
+	if r.resolved && r.err == nil {
+		protected = append(protected, r.dir)
 	}
-	protected = append(protected, secret)
+	// The admin secret file is read only when the admin plane can mint, so
+	// an unresolvable default is not in use.
+	if secret, serr := adminSecretPath(r); serr == nil {
+		protected = append(protected, secret)
+	}
 	resolved, err := devicelog.PrepareDir(dir, protected)
 	if err != nil {
 		if explicit {

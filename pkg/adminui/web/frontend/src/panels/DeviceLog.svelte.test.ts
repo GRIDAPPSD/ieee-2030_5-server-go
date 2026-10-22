@@ -306,7 +306,7 @@ describe('DeviceLog', () => {
     await asAggregator()
     const paths = serve((path) =>
       path.includes('scope=managed')
-        ? page([entry(3, { actor: MANAGER, path: '/theirs' }), entry(2, { actor: LFDI, path: '/mine' })])
+        ? page([entry(3, { actor: MANAGER, path: '/theirs' }), entry(2, { actor: LFDI, path: '/mine' }, 'unregistered')])
         : page([entry(1, { path: '/mine-only' })]),
     )
     mount()
@@ -322,6 +322,8 @@ describe('DeviceLog', () => {
     expect(screen.getByRole('columnheader', { name: 'Device' })).toBeInTheDocument()
     expect(within(rows[0]).getByTestId('device-log-device')).toHaveTextContent('10000000002')
     expect(within(rows[1]).getByTestId('device-log-device')).toHaveTextContent('Agg')
+    expect(within(rows[1]).getByTestId('device-log-device')).toHaveTextContent('Agg (unregistered)')
+    expect(within(rows[0]).getByTestId('device-log-device')).not.toHaveTextContent('unregistered')
     expect(within(rows[0]).getByTestId('device-log-via').textContent?.trim() ?? '').toBe('')
 
     await vi.advanceTimersByTimeAsync(5000)
@@ -331,6 +333,27 @@ describe('DeviceLog', () => {
     await settle()
     expect(paths.at(-1)).toBe(`/api/device-logs/${LFDI}?limit=200`)
     expect(screen.getAllByTestId('device-log-row')).toHaveLength(1)
+    expect(screen.queryByRole('columnheader', { name: 'Device' })).toBeNull()
+  })
+  it('drops a managed-scope reply that lands after the drawer switched back to own', async () => {
+    await asAggregator()
+    let release: () => void = () => {}
+    serve(async (path) => {
+      if (!path.includes('scope=managed')) return page([entry(1, { path: '/mine-only' })])
+      await new Promise<void>((r) => (release = r))
+      return page([entry(9, { actor: MANAGER, path: '/theirs' })])
+    })
+    mount()
+    await settle()
+    await fireEvent.click(screen.getByLabelText('Own and managed devices'))
+    await settle()
+    await fireEvent.click(screen.getByLabelText('Own requests'))
+    await settle()
+    release()
+    await settle()
+    const rows = screen.getAllByTestId('device-log-row')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toHaveTextContent('/mine-only')
     expect(screen.queryByRole('columnheader', { name: 'Device' })).toBeNull()
   })
 })

@@ -42,7 +42,8 @@
   // The switch is offered for an aggregator only. scope=managed adds each
   // managed device's lines, so the view then names the device of each line.
   let scope = $state<'own' | 'managed'>('own')
-  const managed = $derived(deviceKind(lfdi) === 'aggregator' && scope === 'managed')
+  const aggregator = $derived(deviceKind(lfdi) === 'aggregator')
+  const managed = $derived(aggregator && scope === 'managed')
   let errorsOnly = $state(false)
   let nowMs = $state(Date.now())
 
@@ -166,7 +167,7 @@
         <option value="refused">Refused</option>
       </select>
     </label>
-    {#if deviceKind(lfdi) === 'aggregator'}
+    {#if aggregator}
       <span role="radiogroup" aria-label="Whose requests" data-testid="device-logs-scope">
         <label><input type="radio" name="logs-scope-{deviceId}" value="own" bind:group={scope} /> Own requests</label>
         <label><input type="radio" name="logs-scope-{deviceId}" value="managed" bind:group={scope} /> Own and managed devices</label>

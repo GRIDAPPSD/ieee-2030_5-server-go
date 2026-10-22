@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"log"
 	"net/http"
@@ -223,5 +224,45 @@ func TestLoadAdminCertServiceNoServingCertificateLogAgreesWithGetCA(t *testing.T
 
 	if got := buf.String(); strings.Contains(got, "CA download and the banner still use") {
 		t.Errorf("boot log claims CA download still works while the route answered 503:\n%s", got)
+	}
+}
+
+// TestLoadAdminCertServiceHWTypeEnv pins the startup failure
+// for a malformed SEP2_HW_TYPE, and that a valid one reaches the service.
+func TestLoadAdminCertServiceHWTypeEnv(t *testing.T) {
+	unsetCAEnv(t)
+	dir := t.TempDir()
+	writeTestCAPair(t, dir, "1062 CA", "ca.crt", "ca.key")
+	cfg := &config.Config{CAFile: filepath.Join(dir, "ca.crt")}
+	resolver := &certDirResolver{resolved: true, dir: dir}
+
+	t.Setenv("SEP2_HW_TYPE", "40732")
+	if _, err := loadAdminCertService(cfg, resolver); err == nil || !strings.Contains(err.Error(), "SEP2_HW_TYPE") {
+		t.Fatalf("bare PEN: err = %v, want a startup error naming SEP2_HW_TYPE", err)
+	}
+
+	t.Setenv("SEP2_HW_TYPE", "1.3.6.1.4.1.55555.42")
+	svc, err := loadAdminCertService(cfg, resolver)
+	if err != nil {
+		t.Fatalf("loadAdminCertService: %v", err)
+	}
+	w := httptest.NewRecorder()
+	svc.HandleCreateDeviceCert().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(`{"hwSerialNum":"ENV-1"}`)))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		CertPEM string `json:"certPEM"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	cert, err := certs.ParseCertificatePEM([]byte(resp.CertPEM))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	hmn, ok := certs.ExtractHardwareModuleName(cert)
+	if !ok || hmn.HWType.String() != "1.3.6.1.4.1.55555.42" {
+		t.Errorf("HWType = %v (ok=%v), want the SEP2_HW_TYPE value", hmn.HWType, ok)
 	}
 }

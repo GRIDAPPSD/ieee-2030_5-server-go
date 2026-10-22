@@ -405,3 +405,85 @@ func TestGitignoreKeyMaterialRules(t *testing.T) {
 		}
 	}
 }
+
+// TestRunGenerateDeviceHWTypeDefaultsToTestOID pins #1062: with no -hw-type the
+// cert carries the shared test default, and a malformed value is still refused.
+func TestRunGenerateDeviceHWTypeDefaultsToTestOID(t *testing.T) {
+	dir := setupTestCertDir(t)
+
+	err := runGenerateDevice([]string{
+		"-ca", filepath.Join(dir, "ca.crt"),
+		"-ca-key", filepath.Join(dir, "ca.key"),
+		"-out", dir,
+		"-hw-serial", "CLI-DEFAULT-SN",
+		"-name", "device-default",
+	})
+	if err != nil {
+		t.Fatalf("runGenerateDevice without -hw-type: %v", err)
+	}
+	certPEM, err := os.ReadFile(filepath.Join(dir, "device-default.crt"))
+	if err != nil {
+		t.Fatalf("read generated cert: %v", err)
+	}
+	cert, err := certs.ParseCertificatePEM(certPEM)
+	if err != nil {
+		t.Fatalf("parse cert: %v", err)
+	}
+	hmn, ok := certs.ExtractHardwareModuleName(cert)
+	if !ok {
+		t.Fatal("generated cert is missing HardwareModuleName SAN")
+	}
+	if hmn.HWType.String() != "1.3.6.1.4.1.40732.99" {
+		t.Errorf("HWType OID = %v, want 1.3.6.1.4.1.40732.99", hmn.HWType)
+	}
+
+	err = runGenerateDevice([]string{
+		"-ca", filepath.Join(dir, "ca.crt"),
+		"-ca-key", filepath.Join(dir, "ca.key"),
+		"-out", dir,
+		"-hw-serial", "CLI-BAD-SN",
+		"-hw-type", "not-an-oid",
+		"-name", "device-bad",
+	})
+	if err == nil {
+		t.Fatal("malformed -hw-type: want error, got nil")
+	}
+}
+
+// TestRunGenerateDeviceHWTypeEnvOverridesDefault pins the SEP2_HW_TYPE
+// default for the CLI and its startup-style failure on a malformed value.
+func TestRunGenerateDeviceHWTypeEnvOverridesDefault(t *testing.T) {
+	dir := setupTestCertDir(t)
+	args := func(name string) []string {
+		return []string{
+			"-ca", filepath.Join(dir, "ca.crt"),
+			"-ca-key", filepath.Join(dir, "ca.key"),
+			"-out", dir,
+			"-hw-serial", "CLI-ENV-SN",
+			"-name", name,
+		}
+	}
+
+	t.Setenv("SEP2_HW_TYPE", "1.3.6.1.4.1.55555.42")
+	if err := runGenerateDevice(args("device-env")); err != nil {
+		t.Fatalf("runGenerateDevice: %v", err)
+	}
+	certPEM, err := os.ReadFile(filepath.Join(dir, "device-env.crt"))
+	if err != nil {
+		t.Fatalf("read cert: %v", err)
+	}
+	cert, err := certs.ParseCertificatePEM(certPEM)
+	if err != nil {
+		t.Fatalf("parse cert: %v", err)
+	}
+	hmn, ok := certs.ExtractHardwareModuleName(cert)
+	if !ok || hmn.HWType.String() != "1.3.6.1.4.1.55555.42" {
+		t.Errorf("HWType = %v (ok=%v), want 1.3.6.1.4.1.55555.42", hmn.HWType, ok)
+	}
+
+	t.Setenv("SEP2_HW_TYPE", "bogus")
+	err = runGenerateDevice(args("device-envbad"))
+	if err == nil || !strings.Contains(err.Error(), "SEP2_HW_TYPE") {
+		t.Errorf("malformed SEP2_HW_TYPE: err = %v, want one naming the variable", err)
+	}
+}

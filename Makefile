@@ -88,6 +88,10 @@ test-e2e:                 ## Run Playwright E2E tests (requires npm install in e
 
 # --- Certificates ------------------------------------------------
 
+# The device cert's hardware type is the sep2server default, the SunSpec test
+# PEN OID 1.3.6.1.4.1.40732.99. HW_TYPE=<oid> overrides it; it reaches the
+# binary through SEP2_HW_TYPE, never through the shell line.
+certs: export SEP2_HW_TYPE := $(or $(HW_TYPE),$(SEP2_HW_TYPE))
 certs:                    ## Generate CA, server, and device certificates
 	@# -m 700: CERT_DIR now lives outside the repo (default ~/tls) and
 	@# holds a CA private key; -m sets the mode on creation regardless of
@@ -103,7 +107,7 @@ certs:                    ## Generate CA, server, and device certificates
 		--out $(CERT_DIR)
 	$(SERVER) certs generate-device \
 		--ca $(CERT_DIR)/ca.crt --ca-key $(CERT_DIR)/ca.key \
-		--hw-serial INV-001 --hw-type 1.3.6.1.4.1.40732.99 \
+		--hw-serial INV-001 \
 		--name device --out $(CERT_DIR)
 
 # new-device: mint an additional CSIP-conformant device certificate signed by the

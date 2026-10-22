@@ -1196,3 +1196,84 @@ func TestAdminCertServiceServingOnlyPairServesServingRoutesAndRefusesDeviceRoute
 		t.Errorf("serving-only pair: POST /api/certs/device: status = %d, want 503 (no device CA loaded), body: %s", deviceW.Code, deviceW.Body.String())
 	}
 }
+
+// TestHandleCreateDeviceCertHWTypeDefaultsToTestOID pins #1062: an omitted
+// hwType mints with certs.DefaultHWTypeOID and logs that the test default was
+// used.
+func TestHandleCreateDeviceCertHWTypeDefaultsToTestOID(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetFlags(0)
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(prevOut)
+		log.SetFlags(prevFlags)
+	})
+
+	svc := newTestCertService(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(`{"deviceType":1,"hwSerialNum":"DEF-001"}`))
+	w := httptest.NewRecorder()
+	svc.HandleCreateDeviceCert().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201, body: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		CertPEM string `json:"certPEM"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	cert, err := certs.ParseCertificatePEM([]byte(resp.CertPEM))
+	if err != nil {
+		t.Fatalf("parse cert: %v", err)
+	}
+	hmn, ok := certs.ExtractHardwareModuleName(cert)
+	if !ok {
+		t.Fatal("cert is missing HardwareModuleName SAN")
+	}
+	if hmn.HWType.String() != certs.DefaultHWTypeOID {
+		t.Errorf("HWType = %v, want %s", hmn.HWType, certs.DefaultHWTypeOID)
+	}
+	if got := strings.Count(buf.String(), "using the default "+certs.DefaultHWTypeOID); got != 1 {
+		t.Errorf("default notice logged %d times, want 1; log: %q", got, buf.String())
+	}
+}
+
+// TestHandleCreateDeviceCertConfiguredDefaultHWType pins SetDefaultHWType: the
+// configured default replaces the built-in test OID, and an explicit hwType
+// still wins.
+func TestHandleCreateDeviceCertConfiguredDefaultHWType(t *testing.T) {
+	svc := newTestCertService(t)
+	svc.SetDefaultHWType("1.3.6.1.4.1.55555.42")
+
+	mint := func(body string) string {
+		t.Helper()
+		w := httptest.NewRecorder()
+		svc.HandleCreateDeviceCert().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/certs/device", bytes.NewBufferString(body)))
+		if w.Code != http.StatusCreated {
+			t.Fatalf("status = %d, body: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			CertPEM string `json:"certPEM"`
+		}
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		cert, err := certs.ParseCertificatePEM([]byte(resp.CertPEM))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		hmn, ok := certs.ExtractHardwareModuleName(cert)
+		if !ok {
+			t.Fatal("no HardwareModuleName SAN")
+		}
+		return hmn.HWType.String()
+	}
+	if got := mint(`{"hwSerialNum":"CFG-1"}`); got != "1.3.6.1.4.1.55555.42" {
+		t.Errorf("omitted hwType: got %s, want the configured default", got)
+	}
+	if got := mint(`{"hwSerialNum":"CFG-2","hwType":"1.3.6.1.4.1.77777.1"}`); got != "1.3.6.1.4.1.77777.1" {
+		t.Errorf("explicit hwType: got %s, want it unchanged", got)
+	}
+}

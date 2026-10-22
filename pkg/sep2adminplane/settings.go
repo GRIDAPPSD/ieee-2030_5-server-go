@@ -20,7 +20,8 @@ import (
 type Settings struct {
 	// Edition is "", "2018" or "2023". Env: SEP2_EDITION.
 	Edition string
-	// PEN is the Private Enterprise Number; nil when unset. Env: SEP2_PEN.
+	// PEN is the Private Enterprise Number; unset resolves to the IEEE 2030.5
+	// test PEN, and only an explicit 0 is unconfigured. Env: SEP2_PEN.
 	PEN *uint32
 	// FlowReservationDeadline is from 1s to 1h, or zero. Env:
 	// SEP2_FLOW_RESERVATION_DEADLINE_SECONDS.

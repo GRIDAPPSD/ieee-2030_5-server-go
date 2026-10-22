@@ -139,9 +139,12 @@ the device-type policy OID above.
 The default and how to change it are in the README section "Device certificate hardware type" (**default `1.3.6.1.4.1.40732.99`, a test value under the IEEE 2030.5 arc, not a production PEN; override with `SEP2_HW_TYPE` for the server, the CLI, `make certs` and `make new-device`; `HW_TYPE` overrides it for the two make targets and `scripts/new-device.sh`**). `SEP2_HW_TYPE` and `HW_TYPE` take a full OID such as `1.3.6.1.4.1.40732.99`, never the bare number `40732`.
 
 A separate setting, `SEP2_PEN` (a plain decimal number, not an OID), embeds
-this server's own PEN into a minted FlowReservationResponse mRID. Unset by
-default: minted mRIDs are then fully random rather than IEEE 2030.5
-mRIDType-conformant, and the server logs one startup warning saying so.
+this server's own PEN into a minted FlowReservationResponse mRID. **Unset, it
+defaults to `40732`, the IEEE 2030.5 test PEN** (the server logs the default
+once at startup); set it to your manufacturer PEN for production. Only an
+explicit `SEP2_PEN=0` (IANA-reserved) leaves it unconfigured: minted mRIDs are
+then fully random rather than IEEE 2030.5 mRIDType-conformant, and the server
+logs one startup warning saying so.
 
 Inspect with:
 

@@ -53,13 +53,18 @@ func TestSettingsFromEnvParsesEveryValue(t *testing.T) {
 	}
 }
 
+// Unset SEP2_PEN resolves to the IEEE 2030.5 test PEN (#1074); every other
+// setting stays zero.
 func TestSettingsFromEnvUnsetIsZero(t *testing.T) {
 	s, err := sep2adminplane.SettingsFromEnv(envOf(nil))
 	if err != nil {
 		t.Fatalf("SettingsFromEnv: %v", err)
 	}
-	if s.Edition != "" || s.PEN != nil || s.FlowReservationDeadline != 0 || s.RetentionGrace != 0 {
-		t.Fatalf("unset Settings = %+v, want all zero", s)
+	if s.PEN == nil || *s.PEN != 40732 {
+		t.Fatalf("unset PEN = %v, want 40732", s.PEN)
+	}
+	if s.Edition != "" || s.FlowReservationDeadline != 0 || s.RetentionGrace != 0 {
+		t.Fatalf("unset Settings = %+v, want all zero but PEN", s)
 	}
 }
 

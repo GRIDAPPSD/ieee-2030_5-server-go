@@ -209,13 +209,13 @@ func TestConfigFromEnvAdminClientCASystemSentinelSurvivesHomeExpansion(t *testin
 	}
 }
 
-// TestConfigFromEnvPEN pins #665: SEP2_PEN unset leaves Config.PEN nil (so
-// FlowReservationResponse mRIDs mint fully random, per RouterConfig.PEN's
-// contract), a valid base-10 uint32 parses through, and an unparseable
+// TestConfigFromEnvPEN pins #665 and #1074: SEP2_PEN unset resolves to the
+// IEEE 2030.5 test PEN 40732 (so minted mRIDs are conformant out of the
+// box), a valid base-10 uint32 parses through, and an unparseable
 // value is a startup error rather than a silently ignored setting, matching
 // this file's other fallible SEP2_* settings.
 func TestConfigFromEnvPEN(t *testing.T) {
-	t.Run("unset stays nil", func(t *testing.T) {
+	t.Run("unset resolves to the IEEE 2030.5 test PEN", func(t *testing.T) {
 		t.Setenv("SEP2_PEN", "")
 		if err := os.Unsetenv("SEP2_PEN"); err != nil {
 			t.Fatalf("unset SEP2_PEN: %v", err)
@@ -224,8 +224,11 @@ func TestConfigFromEnvPEN(t *testing.T) {
 		if err != nil {
 			t.Fatalf("configFromEnv: %v", err)
 		}
-		if cfg.PEN != nil {
-			t.Errorf("PEN = %v, want nil", *cfg.PEN)
+		if cfg.PEN == nil || *cfg.PEN != 40732 {
+			t.Errorf("PEN = %v, want 40732", cfg.PEN)
+		}
+		if got := cfg.EffectivePEN(); got == nil || *got != 40732 {
+			t.Errorf("EffectivePEN() = %v, want 40732", got)
 		}
 	})
 

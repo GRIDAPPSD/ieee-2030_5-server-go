@@ -3,6 +3,8 @@ package config
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/certs"
 )
 
 // #622: EffectiveServingCA/EffectiveDeviceCA are the shared-default seam a
@@ -391,5 +393,29 @@ func TestEffectiveSEP2Edition(t *testing.T) {
 				t.Errorf("EffectiveSEP2Edition() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestParsePENDefault pins #1074: an empty SEP2_PEN resolves to the IEEE
+// 2030.5 test PEN, and the hardware type default embeds the same number.
+func TestParsePENDefault(t *testing.T) {
+	t.Parallel()
+	got, err := ParsePEN("")
+	if err != nil {
+		t.Fatalf("ParsePEN(\"\"): %v", err)
+	}
+	if got == nil || *got != 40732 {
+		t.Fatalf("ParsePEN(\"\") = %v, want 40732", got)
+	}
+	if want := "1.3.6.1.4.1.40732.99"; certs.DefaultHWTypeOID != want {
+		t.Errorf("DefaultHWTypeOID = %q, want %q", certs.DefaultHWTypeOID, want)
+	}
+
+	zero, err := ParsePEN("0")
+	if err != nil || zero == nil || *zero != 0 {
+		t.Fatalf("ParsePEN(\"0\") = %v, %v, want pointer to 0", zero, err)
+	}
+	if (&Config{PEN: zero}).EffectivePEN() != nil {
+		t.Error("explicit 0 must stay unconfigured through EffectivePEN")
 	}
 }

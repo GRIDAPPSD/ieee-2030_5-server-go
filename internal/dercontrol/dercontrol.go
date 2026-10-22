@@ -16,7 +16,9 @@ import (
 )
 
 // Default bounds applied by NewIssuer when a Config field is the zero
-// value. There is no default PEN: an unset PEN always refuses (RefusalPENNotConfigured).
+// value. This package has no default PEN: an unset PEN always refuses
+// (RefusalPENNotConfigured); the server's SEP2_PEN default is applied before
+// it gets here.
 const (
 	DefaultStartLead   = 7 * 24 * time.Hour
 	DefaultMinDuration = 60 * time.Second
@@ -334,7 +336,7 @@ type selfRollingBack interface {
 // MaxDuration takes the package default. A configured (non-zero) bound must
 // be a positive whole number of seconds, and MinDuration must not exceed
 // MaxDuration; NewIssuer rejects a Config that violates either. PEN has no
-// default: a nil PEN, or a PEN of 0 (IANA-reserved and therefore treated as
+// default here: a nil PEN, or a PEN of 0 (IANA-reserved and therefore treated as
 // not configured), makes every Issue call refuse with
 // RefusalPENNotConfigured. The server wires PEN from SEP2_PEN; the
 // duration and lead bounds take their defaults.

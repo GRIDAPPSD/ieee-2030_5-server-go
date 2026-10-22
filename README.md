@@ -58,7 +58,7 @@ or 1; the usual form is `1.3.6.1.4.1.<PEN>`, optionally with further arcs.
 | Variable | Valid | Invalid |
 |---|---|---|
 | `SEP2_HW_TYPE` (server and `sep2server certs`) | `1.3.6.1.4.1.40732.99` | `40732` (bare PEN, one arc) |
-| `SEP2_PEN` (server mRID) | `40732` | `1.3.6.1.4.1.40732` (an OID, not a number) |
+| `SEP2_PEN` (server mRID; unset means `40732`) | `40732` | `1.3.6.1.4.1.40732` (an OID, not a number) |
 | `HW_TYPE` (`make certs`, `scripts/new-device.sh`) | `1.3.6.1.4.1.40732.99` | `40732` |
 
 To change the default:

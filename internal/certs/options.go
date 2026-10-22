@@ -38,7 +38,12 @@ type DeviceCertOptions struct {
 // project test convention, so a production device must carry its
 // manufacturer's PEN instead. The Makefile and scripts/new-device.sh pass no
 // hardware type of their own, so this is the only place the value is decided.
-const DefaultHWTypeOID = "1.3.6.1.4.1.40732.99"
+const DefaultHWTypeOID = "1.3.6.1.4.1." + DefaultPENText + ".99"
+
+// DefaultPENText is the IEEE 2030.5 test PEN as a decimal string. It is the
+// single place the number is written: DefaultHWTypeOID embeds it, and
+// config.ParsePEN parses it as the SEP2_PEN default.
+const DefaultPENText = "40732"
 
 // DefaultHWTypeEnv names the environment variable that overrides
 // DefaultHWTypeOID for the server API and the sep2server certs command.

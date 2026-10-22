@@ -210,6 +210,7 @@ func (g *ownershipGate) wrap(next func(http.ResponseWriter, *http.Request), dele
 			http.Error(w, "not found", http.StatusNotFound)
 		default:
 			g.denials.record(r, v)
+			noteRefusal(r.Context(), v.reason)
 			http.Error(w, "forbidden", http.StatusForbidden)
 		}
 	}

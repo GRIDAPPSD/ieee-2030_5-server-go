@@ -25,6 +25,21 @@ const (
 	maxLoggedEdevID = 64
 )
 
+// refusalKey carries a *refusal in the request context.
+type refusalKey struct{}
+
+// refusal is what a gate that answers 403 tells the request observer. The
+// reason is one of the gate's fixed reason constants.
+type refusal struct{ reason string }
+
+// noteRefusal records reason for the request observer. It is a no-op when no
+// observer put a refusal in ctx, so a gate built without one behaves as before.
+func noteRefusal(ctx context.Context, reason string) {
+	if ref, ok := ctx.Value(refusalKey{}).(*refusal); ok {
+		ref.reason = reason
+	}
+}
+
 // requestObservers reads the caller's identity once per request that passed
 // Wrap and feeds every observer from that one reading: the activity recorder
 // and the device log. Each observer is optional.
@@ -78,25 +93,29 @@ func (o requestObservers) wrap(next http.Handler) http.Handler {
 			return
 		}
 		rec := statuswriter.New(w)
+		// The ownership gate reports a 403 through this value, so the line
+		// for a refused request says why without the observer re-deciding.
+		ref := &refusal{}
+		r = r.WithContext(context.WithValue(r.Context(), refusalKey{}, ref))
 		start := o.now()
 		// A handler that panics still made a request: write its line as a
 		// 500 and re-panic, so the server's recovery behaves as before.
 		defer func() {
 			if p := recover(); p != nil {
 				rec.Status = http.StatusInternalServerError
-				o.logRequest(r, lfdi, rec, o.now().Sub(start))
+				o.logRequest(r, lfdi, rec, ref, o.now().Sub(start))
 				panic(p)
 			}
 		}()
 		next.ServeHTTP(rec, r)
-		o.logRequest(r, lfdi, rec, o.now().Sub(start))
+		o.logRequest(r, lfdi, rec, ref, o.now().Sub(start))
 	})
 }
 
 // logRequest hands one line to the device log. It runs after the handler
 // has returned, never reads the request body, does no store read, and never
 // fails the request: a full queue drops and counts the line inside the Writer.
-func (o requestObservers) logRequest(r *http.Request, lfdi string, rec *statuswriter.Recorder, dur time.Duration) {
+func (o requestObservers) logRequest(r *http.Request, lfdi string, rec *statuswriter.Recorder, ref *refusal, dur time.Duration) {
 	actor, ok := sep2lfdi.Canonical(lfdi)
 	if !ok {
 		// A certificate identity is always an LFDI; anything else has no
@@ -112,6 +131,19 @@ func (o requestObservers) logRequest(r *http.Request, lfdi string, rec *statuswr
 		"resp_bytes": rec.Bytes,
 		"remote":     r.RemoteAddr,
 	}
+	kind := devicelog.KindRequest
+	if ref.reason != "" && rec.Status == http.StatusForbidden {
+		// A refusal replaces the request line rather than adding a second
+		// one, and carries the gate's fixed reason text, never client text.
+		kind = devicelog.KindRefused
+		fields = map[string]any{
+			"method": fields["method"],
+			"path":   fields["path"],
+			"status": rec.Status,
+			"reason": ref.reason,
+			"remote": r.RemoteAddr,
+		}
+	}
 	edev := edevID(r.URL.Path)
 	if edev != "" {
 		fields["edev"] = edev
@@ -120,7 +152,7 @@ func (o requestObservers) logRequest(r *http.Request, lfdi string, rec *statuswr
 	// goroutine, so a slow store delays the log and never this request. The
 	// Writer counts and logs every drop, so the error carries nothing the
 	// request path could act on.
-	_ = o.log.AppendResolved(actor, edev, o.resolver.Resolve, devicelog.Entry{Kind: "request", Fields: fields})
+	_ = o.log.AppendResolved(actor, edev, o.resolver.Resolve, devicelog.Entry{Kind: kind, Fields: fields})
 }
 
 // registered reports whether actor has an EndDevice record or a management

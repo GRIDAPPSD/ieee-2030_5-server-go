@@ -11,6 +11,7 @@ import (
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/statuswriter"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/activity"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	sep2lfdi "github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/lfdi"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -28,13 +29,32 @@ const (
 // Wrap and feeds every observer from that one reading: the activity recorder
 // and the device log. Each observer is optional.
 type requestObservers struct {
-	identity func(ctx context.Context) (lfdi, sfdi string, ok bool)
+	identity identity.Func
 	activity *activity.Recorder
 	log      *devicelog.Writer
-	devices  store.EndDeviceReader
-	managers store.EndDeviceManagementReader
 	resolver *devicelog.CachingResolver
 	now      func() time.Time
+}
+
+// deviceLogLookups are the store reads behind the device log's choice of
+// file and target, shared by the request observer and the LogEvent decorator
+// so one resolver, with one cache, serves both.
+type deviceLogLookups struct {
+	devices  store.EndDeviceReader
+	managers store.EndDeviceManagementReader
+}
+
+// newDeviceLogResolver returns the resolver for w over stores, or nil when
+// logging is off.
+func newDeviceLogResolver(w *devicelog.Writer, stores *Stores) *devicelog.CachingResolver {
+	if w == nil {
+		return nil
+	}
+	var l deviceLogLookups
+	if stores != nil {
+		l = deviceLogLookups{devices: stores.EndDevices, managers: stores.EndDeviceManagers}
+	}
+	return devicelog.NewResolver(devicelog.ResolverConfig{Registered: l.registered, Target: l.target})
 }
 
 // wrap returns next unchanged when there is no observer, so a router built
@@ -95,7 +115,7 @@ func (o requestObservers) logRequest(r *http.Request, lfdi string, rec *statuswr
 // registered reports whether actor has an EndDevice record or a management
 // pair. Not found is a definite no; any other store error is returned so the
 // writer keeps the line in the actor's own file and counts it.
-func (o requestObservers) registered(ctx context.Context, actor string) (bool, error) {
+func (o deviceLogLookups) registered(ctx context.Context, actor string) (bool, error) {
 	if o.devices != nil {
 		_, err := o.devices.GetByLFDI(ctx, actor)
 		switch {
@@ -124,7 +144,7 @@ func (o requestObservers) registered(ctx context.Context, actor string) (bool, e
 
 // target returns the canonical LFDI of the EndDevice edev names, "" when no
 // such device exists, and an error when the store could not say.
-func (o requestObservers) target(ctx context.Context, edev string) (string, error) {
+func (o deviceLogLookups) target(ctx context.Context, edev string) (string, error) {
 	if o.devices == nil {
 		return "", nil
 	}

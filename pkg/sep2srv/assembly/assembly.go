@@ -41,6 +41,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	"io"
 	"log"
 	"net/http"
@@ -358,9 +359,9 @@ type RouterConfig struct {
 	Activity *activity.Recorder
 
 	// DeviceLog, when set, receives one line per request that gets past
-	// AuthPolicy.Wrap, keyed by the LFDI AuthPolicy.Identity reports. Nil
-	// writes nothing. The caller owns the Writer and closes it after the
-	// listener has drained.
+	// AuthPolicy.Wrap and one line for each LogEvent a device posts, keyed by
+	// the LFDI AuthPolicy.Identity reports. Nil writes nothing. The caller
+	// owns the Writer and closes it after the listener has drained.
 	DeviceLog *devicelog.Writer
 }
 
@@ -394,7 +395,7 @@ type AuthPolicy struct {
 	//
 	// If nil, BuildProtocolRouter substitutes a deny-all stub (always
 	// returns ok=false) so handlers fail closed rather than panicking.
-	Identity func(ctx context.Context) (lfdi, sfdi string, ok bool)
+	Identity identity.Func
 
 	// SFDIPrefix derives the EndDevice id prefix from an SFDI, replacing
 	// auth.ExtractSFDIPrefix (the short-SFDI guard,
@@ -463,8 +464,12 @@ func BuildProtocolRouter(
 	protocolMux.HandleFunc("GET /sdev", coresdev.HandleSelfDevice(serverSFDI, serverLFDI))
 	protocolMux.HandleFunc("GET /sdev/sdi", coredevinfo.HandleDeviceInformation(serverLFDI))
 
+	// One resolver decides which device log file a line belongs to, for the
+	// request observer below and for the LogEvent decorator.
+	deviceLogResolver := newDeviceLogResolver(cfg.DeviceLog, stores)
+
 	if stores != nil {
-		gated := registerGatedRoutes(protocolMux, cfg, stores, authPolicy, notifier)
+		gated := registerGatedRoutes(protocolMux, cfg, stores, authPolicy, notifier, deviceLogResolver)
 		setSubscriberCheck(notifier, gated.checkSubscriber)
 	}
 
@@ -473,17 +478,8 @@ func BuildProtocolRouter(
 		identity: authPolicy.Identity,
 		activity: cfg.Activity,
 		log:      cfg.DeviceLog,
+		resolver: deviceLogResolver,
 		now:      time.Now,
-	}
-	if stores != nil {
-		observers.devices = stores.EndDevices
-		observers.managers = stores.EndDeviceManagers
-	}
-	if cfg.DeviceLog != nil {
-		observers.resolver = devicelog.NewResolver(devicelog.ResolverConfig{
-			Registered: observers.registered,
-			Target:     observers.target,
-		})
 	}
 	inner := observers.wrap(protocolMux)
 	protocolChain := inner
@@ -500,7 +496,7 @@ func BuildProtocolRouter(
 
 // registerGatedRoutes registers every store-backed route on next through one
 // ownership gate and returns the gate.
-func registerGatedRoutes(next routeRegistrar, cfg RouterConfig, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier) *ownershipGate {
+func registerGatedRoutes(next routeRegistrar, cfg RouterConfig, stores *Stores, authPolicy AuthPolicy, notifier ResourceNotifier, deviceLogResolver *devicelog.CachingResolver) *ownershipGate {
 	// Every helper registers through the ownership gate, so each
 	// /edev/{id}-scoped route is bound to the caller wherever it is mounted.
 	gated := newOwnershipGate(next, stores.EndDevices, stores.EndDeviceManagers, authPolicy.Identity)
@@ -508,7 +504,7 @@ func registerGatedRoutes(next routeRegistrar, cfg RouterConfig, stores *Stores, 
 	registerMirrorRoutes(gated, stores, authPolicy, cfg.PostRateProvider)
 	registerDERRoutes(gated, stores)
 	registerMeteringRoutes(gated, stores)
-	registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, notifier)
+	registerNewFunctionSetRoutes(gated, stores, cfg.PEN, cfg.FlowReservationDeadline, cfg.FlowReservationPendingPollRate, authPolicy.Identity, cfg.DeviceLog, deviceLogResolver, notifier)
 	return gated
 }
 
@@ -533,7 +529,7 @@ func NewSubscriberCheck(cfg RouterConfig, stores *Stores) coresub.SubscriberChec
 		Identity:   func(context.Context) (string, string, bool) { return "", "", false },
 		SFDIPrefix: func(string) (string, error) { return "", errors.New("SFDIPrefix not configured: deny") },
 	}
-	return registerGatedRoutes(discardRegistrar{}, cfg, stores, deny, nil).checkSubscriber
+	return registerGatedRoutes(discardRegistrar{}, cfg, stores, deny, nil, nil).checkSubscriber
 }
 
 // topLevelMounts are the prefixes under which the protocol mux is mounted on
@@ -1381,7 +1377,7 @@ func registerMeteringRoutes(mux routeRegistrar, stores *Stores) {
 	mux.HandleFunc("GET /rt/{id}", coremetering.HandleReadingType(readingTypes))
 }
 
-func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline, frpPendingPollRate time.Duration, identity func(ctx context.Context) (lfdi, sfdi string, ok bool), notifier ResourceNotifier) {
+func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint32, frpDeadline, frpPendingPollRate time.Duration, identity identity.Func, deviceLog *devicelog.Writer, deviceLogResolver *devicelog.CachingResolver, notifier ResourceNotifier) {
 	if !store.IsAbsent(stores.Configurations) {
 		mux.HandleFunc("GET /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
 		mux.HandleFunc("PUT /edev/{id}/cfg", coreconfiguration.HandleConfiguration(stores.Configurations))
@@ -1436,7 +1432,10 @@ func registerNewFunctionSetRoutes(mux routeRegistrar, stores *Stores, pen *uint3
 		mux.HandleFunc("GET /edev/{id}/lel", scopedListHandler[sep2.LogEvent, sep2.LogEventList](
 			stores.LogEvents, "id", store.SortByIDAsc, corelogevent.BuildLogEventList, 900,
 		))
-		mux.HandleFunc("POST /edev/{id}/lel", corelogevent.HandlePostLogEvent(stores.LogEvents))
+		// Only the create path is decorated: the device log records what a
+		// device posted, and the list and instance routes read the plain store.
+		mux.HandleFunc("POST /edev/{id}/lel", corelogevent.HandlePostLogEvent(
+			devicelog.NewLogEventStore(stores.LogEvents, deviceLog, identity, deviceLogResolver.Resolve)))
 
 		logEventInstance := scopedResourceHandler[sep2.LogEvent](
 			stores.LogEvents, "id", "lelId", itemMethods{Delete: true}, nil)
@@ -1590,7 +1589,7 @@ var _ = paging.DefaultLimit
 // certificate identity is that device, or its current manager. A nil
 // identity yields a nil authorizer, which HandlePostResponse treats as
 // refusing every Response that names a device.
-func responseSenderAuthorizer(identity func(ctx context.Context) (lfdi, sfdi string, ok bool), managers store.EndDeviceManagementStore) coreflowrsv.ResponseSenderAuthorizer {
+func responseSenderAuthorizer(identity identity.Func, managers store.EndDeviceManagementStore) coreflowrsv.ResponseSenderAuthorizer {
 	if identity == nil {
 		return nil
 	}

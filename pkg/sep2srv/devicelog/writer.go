@@ -190,28 +190,18 @@ func New(cfg Config) (*Writer, error) {
 
 // UnregisteredFile is the file key shared by every certificate that has no
 // EndDevice record and no management pair. It is not a canonical LFDI, so
-// only AppendUnregistered can reach it and a caller-supplied LFDI never can.
+// only AppendResolved can reach it and a caller-supplied LFDI never can.
 const UnregisteredFile = "unregistered"
 
-// Append queues one line for the device whose certificate LFDI is lfdi. It
-// returns at once: ErrQueueFull and ErrLineTooLarge mean the line was
+// Append queues one line for the file of the device whose certificate LFDI is
+// lfdi, with no registration check. Production callers use AppendResolved,
+// which is the one place that decides a line's file. Append returns at once: ErrQueueFull and ErrLineTooLarge mean the line was
 // dropped and counted, and ErrInvalidLFDI means no file was named.
 func (w *Writer) Append(lfdi string, e Entry) error {
 	if !sep2lfdi.IsCanonical(lfdi) {
 		return ErrInvalidLFDI
 	}
 	return w.enqueue(lfdi, lfdi, e)
-}
-
-// AppendUnregistered queues one line for a certificate that is not
-// registered. The line carries the certificate LFDI as its actor but is
-// written to the shared UnregisteredFile, so the number of files stays
-// bounded by the registered devices plus one. Like Append it returns at once.
-func (w *Writer) AppendUnregistered(actor string, e Entry) error {
-	if !sep2lfdi.IsCanonical(actor) {
-		return ErrInvalidLFDI
-	}
-	return w.enqueue(UnregisteredFile, actor, e)
 }
 
 // enqueue encodes one line for the file named by key and hands it to the
@@ -232,15 +222,19 @@ func (w *Writer) enqueue(key, actor string, e Entry) error {
 
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if w.closed {
-		return ErrClosed
-	}
 	return w.send(item{lfdi: key, body: body}, key)
 }
 
-// send hands it to the writer goroutine without blocking. The caller holds
-// w.mu for reading and has checked w.closed.
+// send hands it to the writer goroutine without blocking, the one place a
+// line is refused for a closed writer or a full queue, so both are counted
+// and logged the same way for every caller. The caller holds w.mu for
+// reading.
 func (w *Writer) send(it item, noteKey string) error {
+	if w.closed {
+		w.dropped.Add(1)
+		w.note(noteKey, "writer closed, line dropped", nil)
+		return ErrClosed
+	}
 	select {
 	case w.queue <- it:
 		return nil
@@ -268,9 +262,6 @@ func (w *Writer) AppendResolved(actor, edev string, resolve Resolver, e Entry) e
 	}
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if w.closed {
-		return ErrClosed
-	}
 	return w.send(item{pending: &pendingLine{actor: actor, edev: edev, entry: e, resolve: resolve}}, actor)
 }
 

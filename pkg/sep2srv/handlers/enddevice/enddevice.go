@@ -9,6 +9,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/identity"
 	"io"
 	"log"
 	"net/http"
@@ -65,7 +66,7 @@ type ResourceNotifier interface {
 // context. Returns the LFDI, SFDI, and ok=true when identity is present.
 // Replaces the direct auth.GetIdentity call in the original edev.go.
 // The server wires auth.GetIdentity; tests supply a fixed identity.
-type IdentityFunc func(ctx context.Context) (lfdi, sfdi string, ok bool)
+type IdentityFunc = identity.Func
 
 // SFDIPrefixFunc derives the EndDevice id prefix from an SFDI string.
 // Replaces auth.ExtractSFDIPrefix (the short-SFDI guard,

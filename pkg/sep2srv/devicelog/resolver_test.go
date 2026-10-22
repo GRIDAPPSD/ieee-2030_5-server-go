@@ -110,3 +110,28 @@ func TestResolverDefiniteNoIsNotAnError(t *testing.T) {
 		t.Errorf("Resolve = %+v; want a clean not-registered answer", got)
 	}
 }
+
+func TestResolverNegativeAnswerExpiresQuicklySoANewDeviceMovesToItsOwnFile(t *testing.T) {
+	var registered atomic.Bool
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	r := NewResolver(ResolverConfig{
+		CacheTTL: time.Hour,
+		ErrorTTL: time.Second,
+		Registered: func(context.Context, string) (bool, error) {
+			return registered.Load(), nil
+		},
+	})
+	r.now = func() time.Time { return now }
+
+	if r.Resolve(lfdiA, "").Registered {
+		t.Fatal("registered before registration")
+	}
+	registered.Store(true)
+	if r.Resolve(lfdiA, "").Registered {
+		t.Error("negative answer not reused inside its TTL")
+	}
+	now = now.Add(1100 * time.Millisecond)
+	if !r.Resolve(lfdiA, "").Registered {
+		t.Error("device still unregistered after the short negative TTL; want it re-asked")
+	}
+}

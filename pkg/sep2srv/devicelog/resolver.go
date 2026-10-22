@@ -10,14 +10,15 @@ import (
 
 // Defaults for NewResolver.
 const (
-	// DefaultCacheTTL is how long a registered, not-registered or target
-	// answer is reused. No store notifies the resolver of a change, so a new
-	// registration or management pair reaches the log only when its entry
-	// expires: a device's lines move from the shared file to its own within
-	// one TTL.
+	// DefaultCacheTTL is how long a positive answer (registered, or a
+	// resolved target) is reused. No store notifies the resolver of a change,
+	// so a removed device or a deleted management pair reaches the log only
+	// when its entry expires, within one TTL.
 	DefaultCacheTTL = 30 * time.Second
-	// DefaultErrorTTL is how long a failed lookup is reused, so a stalled
-	// store costs one wait per key per interval and not one per line.
+	// DefaultErrorTTL is how long a negative answer (not registered, no such
+	// EndDevice) or a failed lookup is reused. It is short so a device that
+	// has just registered gets its own file within this interval, and a
+	// stalled store costs one wait per key per interval, not one per line.
 	DefaultErrorTTL = time.Second
 	// DefaultLookupTimeout is the longest the writer waits for one lookup.
 	DefaultLookupTimeout = 250 * time.Millisecond
@@ -108,7 +109,7 @@ func (r *CachingResolver) Resolve(actor, edev string) Resolution {
 	return Resolution{Registered: registered, Target: target, Err: errors.Join(regErr, tErr)}
 }
 
-func cached[T any](r *CachingResolver, m map[string]cacheEntry[T], key string, f func(context.Context, string) (T, error)) (T, error) {
+func cached[T comparable](r *CachingResolver, m map[string]cacheEntry[T], key string, f func(context.Context, string) (T, error)) (T, error) {
 	if f == nil {
 		var zero T
 		return zero, nil
@@ -122,7 +123,8 @@ func cached[T any](r *CachingResolver, m map[string]cacheEntry[T], key string, f
 	}
 	val, err := bounded(r, key, f)
 	ttl := r.cfg.CacheTTL
-	if err != nil {
+	var zero T
+	if err != nil || val == zero {
 		ttl = r.cfg.ErrorTTL
 	}
 	r.mu.Lock()

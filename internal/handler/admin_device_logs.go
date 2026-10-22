@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/internal/logsafe"
+	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2capture"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/sep2srv/devicelog"
 	"github.com/GRIDAPPSD/ieee-2030_5-server-go/pkg/store"
 )
@@ -24,12 +25,6 @@ import (
 // log shows each device's activity and its manager's actions.
 
 const (
-	// The page bounds repeat pkg/sep2capture's /exchanges pair (default 200,
-	// at most 1000), which are unexported there; over the maximum is a 400
-	// here, where capture clamps it.
-	defaultDeviceLogLimit = 200
-	maxDeviceLogLimit     = 1000
-
 	// maxDeviceLogKinds and maxManagedLogSources bound the work one request
 	// can ask for: each source opens up to two files.
 	maxDeviceLogKinds    = 8
@@ -161,11 +156,11 @@ type deviceLogRequest struct {
 
 func parseDeviceLogQuery(r *http.Request) (deviceLogRequest, string) {
 	v := r.URL.Query()
-	q := deviceLogRequest{Query: devicelog.Query{Limit: defaultDeviceLogLimit, Before: v.Get("before"), After: v.Get("after")}}
+	q := deviceLogRequest{Query: devicelog.Query{Limit: sep2capture.DefaultPageLimit, Before: v.Get("before"), After: v.Get("after")}}
 	if raw := v.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 || n > maxDeviceLogLimit {
-			return q, fmt.Sprintf("limit must be a whole number from 1 to %d", maxDeviceLogLimit)
+		if err != nil || n < 1 || n > sep2capture.MaxPageLimit {
+			return q, fmt.Sprintf("limit must be a whole number from 1 to %d", sep2capture.MaxPageLimit)
 		}
 		q.Limit = n
 	}

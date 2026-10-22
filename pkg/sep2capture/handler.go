@@ -139,12 +139,13 @@ func (s *Store) Handler() http.Handler {
 	return mux
 }
 
-// defaultExchangesLimit and maxExchangesLimit are this route's own bound
-// on /exchanges (Q7 item 4: "bounded"), independent of Store.Exchanges,
-// which treats a non-positive limit as unbounded.
+// DefaultPageLimit and MaxPageLimit are the admin page bounds for a list
+// route: this package's /exchanges (Q7 item 4: "bounded", independent of
+// Store.Exchanges, which treats a non-positive limit as unbounded) and the
+// device log read route, which uses the same pair.
 const (
-	defaultExchangesLimit = 200
-	maxExchangesLimit     = 1000
+	DefaultPageLimit = 200
+	MaxPageLimit     = 1000
 )
 
 // clientJSON is the wire shape of one Clients() entry.
@@ -305,12 +306,12 @@ func parseAfter(v string) (uint64, error) {
 }
 
 // parseLimit parses the limit= query parameter against this route's own
-// bound (defaultExchangesLimit, maxExchangesLimit): "" means the default,
+// bound (DefaultPageLimit, MaxPageLimit): "" means the default,
 // a non-positive value is an error rather than "unbounded", and anything
 // above the max is silently clamped to it.
 func parseLimit(v string) (int, error) {
 	if v == "" {
-		return defaultExchangesLimit, nil
+		return DefaultPageLimit, nil
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil || n <= 0 {
@@ -319,8 +320,8 @@ func parseLimit(v string) (int, error) {
 		}
 		return 0, err
 	}
-	if n > maxExchangesLimit {
-		n = maxExchangesLimit
+	if n > MaxPageLimit {
+		n = MaxPageLimit
 	}
 	return n, nil
 }
